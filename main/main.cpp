@@ -5217,6 +5217,10 @@ bool Main::iteration() {
 #endif
 
 	if (fixed_fps != -1) {
+		// The marker below is skipped at a fixed fps.
+		if (Streamline::get_singleton()) {
+			Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_BEFORE_MESSAGE_LOOP);
+		}
 		return exit;
 	}
 
