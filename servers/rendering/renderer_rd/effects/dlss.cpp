@@ -56,6 +56,8 @@ public:
 	sl::DLSSOptions currentDlssOptions;
 	sl::DLSSOptimalSettings currentOptimalSettings;
 	sl::DLSSDOptions currentDlssDOptions; // DLSS Ray Reconstruction options
+	// A driver DLSS override can pin Super Resolution's size but not Ray Reconstruction's.
+	sl::DLSSMode rrMode = sl::DLSSMode::eOff;
 
 	DLSSContextInner();
 	virtual ~DLSSContextInner();
@@ -176,6 +178,10 @@ DLSSContext *DLSSEffect::create_context(Size2i p_internal_size, Size2i p_target_
 	DLSSContextInner *context = memnew(RendererRD::DLSSContextInner);
 
 	context->currentDlssOptions.mode = context->find_optimal_mode(p_target_size.width, p_target_size.height, p_internal_size.width, p_internal_size.height, context->currentOptimalSettings);
+	{
+		sl::DLSSOptimalSettings rr_settings;
+		context->rrMode = context->find_optimal_mode(p_target_size.width, p_target_size.height, p_internal_size.width, p_internal_size.height, rr_settings, true);
+	}
 	context->currentDlssOptions.outputWidth = p_target_size.width;
 	context->currentDlssOptions.outputHeight = p_target_size.height;
 
@@ -342,7 +348,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 
 	if (use_dlss_rr) {
 		// Set DLSS-RR (Ray Reconstruction) options
-		context->currentDlssDOptions.mode = context->currentDlssOptions.mode;
+		context->currentDlssDOptions.mode = context->rrMode != sl::DLSSMode::eOff ? context->rrMode : context->currentDlssOptions.mode;
 		context->currentDlssDOptions.outputWidth = context->currentDlssOptions.outputWidth;
 		context->currentDlssDOptions.outputHeight = context->currentDlssOptions.outputHeight;
 		context->currentDlssDOptions.colorBuffersHDR = sl::Boolean::eTrue;
@@ -534,7 +540,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 	}
 
 	// Evaluate DLSS Super Resolution or DLSS Ray Reconstruction
-	if (context->currentDlssOptions.mode != sl::DLSSMode::eOff) {
+	if ((use_dlss_rr ? context->currentDlssDOptions.mode : context->currentDlssOptions.mode) != sl::DLSSMode::eOff) {
 		const sl::BaseStructure *inputs[] = { &context->viewport };
 		sl::Result result;
 
@@ -595,7 +601,7 @@ void RendererRD::DLSSEffect::_upscale_internal_graph_callback(RenderingDeviceDri
 
 bool DLSSEffect::is_ready(DLSSContext *p_context) {
 	DLSSContextInner *context = (DLSSContextInner *)p_context;
-	if (context->currentDlssOptions.mode == sl::DLSSMode::eOff) {
+	if (context->currentDlssOptions.mode == sl::DLSSMode::eOff && context->rrMode == sl::DLSSMode::eOff) {
 		return false; // unsupported mode.
 	}
 	if (context->delay > 0) {
