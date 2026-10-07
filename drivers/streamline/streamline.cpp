@@ -42,6 +42,7 @@ Streamline *Streamline::singleton = nullptr;
 void Streamline::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_parameter", "parameter_type", "value"), &Streamline::set_parameter);
 	ClassDB::bind_method(D_METHOD("get_capability", "capability_type"), &Streamline::get_capability);
+	ClassDB::bind_method(D_METHOD("get_frame_generation_state"), &Streamline::get_frame_generation_state);
 
 	BIND_ENUM_CONSTANT(STREAMLINE_PARAM_REFLEX_MODE);
 	BIND_ENUM_CONSTANT(STREAMLINE_PARAM_REFLEX_FRAME_LIMIT_US);
@@ -262,6 +263,29 @@ bool Streamline::get_capability(StreamlineCapabilityType p_capability_type) {
 #endif
 	return false;
 }
+Dictionary Streamline::get_frame_generation_state() {
+	Dictionary state;
+	state["active"] = false;
+#ifdef STREAMLINE_ENABLED
+	_THREAD_SAFE_METHOD_
+	StreamlineContext &ctx = StreamlineContext::get();
+	if (ctx.slDLSSGGetState == nullptr || ctx.dlssg_viewport == sl::ViewportHandle(-1)) {
+		return state;
+	}
+	sl::DLSSGState sl_state{};
+	if (ctx.slDLSSGGetState(ctx.dlssg_viewport, sl_state, nullptr) != sl::Result::eOk) {
+		return state;
+	}
+	state["active"] = true;
+	state["status"] = (int)sl_state.status;
+	state["presented"] = (int)sl_state.numFramesActuallyPresented;
+	state["generate_max"] = (int)sl_state.numFramesToGenerateMax;
+	state["min_size"] = (int)sl_state.minWidthOrHeight;
+	state["vram_mb"] = (int)(sl_state.estimatedVRAMUsageInBytes / (1024 * 1024));
+#endif
+	return state;
+}
+
 void Streamline::set_internal_parameter(const char *key, void *value) {
 #ifdef STREAMLINE_ENABLED
 	_THREAD_SAFE_METHOD_

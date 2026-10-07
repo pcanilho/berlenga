@@ -16,6 +16,12 @@
 				Enumerate various capabilities related to Streamline. See [enum StreamlineCapabilityType] for types.
 			</description>
 		</method>
+		<method name="get_frame_generation_state">
+			<return type="Dictionary" />
+			<description>
+				Returns the state of DLSS Frame Generation: [code]active[/code], and while active its [code]status[/code] (0 when working, else the DLSS-G failure flags), [code]presented[/code] (frames presented since the previous call), [code]generate_max[/code], [code]min_size[/code] and [code]vram_mb[/code].
+			</description>
+		</method>
 		<method name="set_parameter">
 			<return type="void" />
 			<param index="0" name="parameter_type" type="int" enum="StreamlineParameterType" />
