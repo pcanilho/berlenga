@@ -61,6 +61,8 @@
 #pragma GCC diagnostic pop
 #endif
 
+#include <cstdio>
+
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 
@@ -500,11 +502,13 @@ void StreamlineContext::initialize(bool d3d12) {
 
 	pref.renderAPI = d3d12 ? sl::RenderAPI::eD3D12 : sl::RenderAPI::eVulkan;
 	pref.applicationId = 0x90d07004;
-	pref.flags = sl::PreferenceFlags::eAllowOTA | sl::PreferenceFlags::eLoadDownloadedPlugins | sl::PreferenceFlags::eDisableCLStateTracking;
+	// Bundled plugins only: OTA plugins can mismatch the interposer.
+	pref.flags = sl::PreferenceFlags::eDisableCLStateTracking;
 
 	if (bool(GLOBAL_GET("rendering/streamline/streamline_log"))) {
 		pref.logLevel = sl::LogLevel::eVerbose;
-		pref.showConsole = true;
+		pref.showConsole = false;
+		pref.logMessageCallback = [](sl::LogType type, const char *msg) { fprintf(stderr, "[sl] %s", msg); };
 	} else {
 		pref.logLevel = sl::LogLevel::eOff;
 		pref.showConsole = false;
