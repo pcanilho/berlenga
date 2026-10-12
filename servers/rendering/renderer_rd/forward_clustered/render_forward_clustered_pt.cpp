@@ -96,15 +96,21 @@
 #include "core/config/project_settings.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/forward_clustered/scene_shader_raytracing.h"
+#include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/particles_storage.h"
+#include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server_default.h" // IWYU pragma: keep. RENDER_TIMESTAMP macro uses RSG.
 
 using namespace RendererSceneRenderImplementation;
+
+// The transparent surfaces' own layer under Ray Reconstruction, freed with its
+// buffers (`RB_SCOPE_DLSS_RR`).
+#define RB_TEX_TRANSPARENCY_LAYER SNAME("transparency_layer")
 
 void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const Color &p_default_bg_color) {
 	ERR_FAIL_NULL(p_render_data);
@@ -584,6 +590,12 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
 	}
 
+	// Under Ray Reconstruction the transparent surfaces go into their own layer,
+	// laid over its output (`_composite_transparency`).
+	const bool transparency_layer = !pt_transparency && raytracing && raytracing->dlss_rr_has_buffers(rb.ptr()) && scale_type == SCALE_3D_DLSS && !use_msaa &&
+			rb->get_view_count() == 1 && !render_list[RENDER_LIST_ALPHA].elements.is_empty() && transparency_composite.pipeline.is_valid() &&
+			RD::get_singleton()->texture_get_format(rb->get_upscaled_texture()).format == RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+
 	if (!pt_transparency) {
 		RENDER_TIMESTAMP("Render 3D Transparent Pass");
 
@@ -599,8 +611,15 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
 
 			RID alpha_framebuffer = rb_data->get_color_pass_fb(transparent_color_pass_flags);
+			BitField<RD::DrawFlags> alpha_draw_flags = RD::DRAW_DEFAULT_ALL;
+			Vector<Color> alpha_clear;
+			if (transparency_layer) {
+				alpha_framebuffer = _transparency_layer_fb(rb.ptr());
+				alpha_draw_flags = RD::DRAW_CLEAR_COLOR_0;
+				alpha_clear.push_back(Color(0, 0, 0, 0));
+			}
 			RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, transparent_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
-			_render_list_with_draw_list(&render_list_params, alpha_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0u, p_render_data->render_region);
+			_render_list_with_draw_list(&render_list_params, alpha_framebuffer, alpha_draw_flags, alpha_clear, 0.0f, 0u, p_render_data->render_region);
 		}
 
 		RD::get_singleton()->draw_command_end_label();
@@ -637,6 +656,9 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			dlss_rr_guides.specular_motion_vectors = raytracing->dlss_rr_get_specular_motion_vectors(rb.ptr());
 		}
 		_render_3d_upscaling(p_render_data, scale_type, using_taa, time_step, dlss_rr_guides);
+		if (transparency_layer) {
+			_composite_transparency(p_render_data);
+		}
 	}
 
 	_debug_draw_cluster(rb);
@@ -964,7 +986,61 @@ void RenderForwardClusteredPT::_render_buffers_debug_draw(const RenderDataRD *p_
 	}
 }
 
+RID RenderForwardClusteredPT::_transparency_layer_fb(RenderSceneBuffersRD *p_render_buffers) {
+	if (!p_render_buffers->has_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER)) {
+		// As the colour it stands in for, so the transparent pass's pipelines
+		// fit its framebuffer.
+		RD::TextureFormat color = RD::get_singleton()->texture_get_format(p_render_buffers->get_internal_texture());
+		p_render_buffers->create_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER, color.format, color.usage_bits);
+	}
+	RID layer = p_render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER);
+	RID depth = p_render_buffers->get_depth_texture();
+	if (p_render_buffers->has_texture(RB_SCOPE_VRS, RB_TEXTURE)) {
+		return FramebufferCacheRD::get_singleton()->get_cache_multiview(1, layer, RID(), RID(), depth, p_render_buffers->get_texture(RB_SCOPE_VRS, RB_TEXTURE));
+	}
+	return FramebufferCacheRD::get_singleton()->get_cache_multiview(1, layer, RID(), RID(), depth);
+}
+
+void RenderForwardClusteredPT::_composite_transparency(const RenderDataRD *p_render_data) {
+	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
+	RID layer = rb->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER);
+	RID color = rb->get_upscaled_texture();
+	Size2i size = rb->get_target_size();
+
+	RD::get_singleton()->draw_command_begin_label("Composite Transparency");
+	RID shader = transparency_composite.shader.version_get_shader(transparency_composite.version, 0);
+	RID sampler = RendererRD::MaterialStorage::get_singleton()->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+	RD::Uniform u_layer(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ sampler, layer }));
+	RD::Uniform u_color(RD::UNIFORM_TYPE_IMAGE, 0, color);
+	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
+
+	struct {
+		int32_t size[2];
+		float jitter_uv[2];
+	} push;
+	push.size[0] = size.x;
+	push.size[1] = size.y;
+	// The jitter is added to the projection after its y flip (`RenderSceneDataRD`),
+	// so the layer's content sits half of it over in UV.
+	push.jitter_uv[0] = p_render_data->scene_data->taa_jitter.x * 0.5f;
+	push.jitter_uv[1] = p_render_data->scene_data->taa_jitter.y * 0.5f;
+
+	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
+	RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, transparency_composite.pipeline);
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_layer), 0);
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_color), 1);
+	RD::get_singleton()->compute_list_set_push_constant(compute_list, &push, sizeof(push));
+	RD::get_singleton()->compute_list_dispatch_threads(compute_list, size.x, size.y, 1);
+	RD::get_singleton()->compute_list_end();
+	RD::get_singleton()->draw_command_end_label();
+}
+
 RenderForwardClusteredPT::RenderForwardClusteredPT() {
+	Vector<String> modes;
+	modes.push_back("");
+	transparency_composite.shader.initialize(modes, "");
+	transparency_composite.version = transparency_composite.shader.version_create();
+	transparency_composite.pipeline = RD::get_singleton()->compute_pipeline_create(transparency_composite.shader.version_get_shader(transparency_composite.version, 0));
 }
 
 RenderForwardClusteredPT::~RenderForwardClusteredPT() {
@@ -974,6 +1050,7 @@ RenderForwardClusteredPT::~RenderForwardClusteredPT() {
 	if (fog_shadows) {
 		memdelete(fog_shadows);
 	}
+	transparency_composite.shader.version_free(transparency_composite.version);
 	if (raytracing) {
 		memdelete(raytracing);
 	}
