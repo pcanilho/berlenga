@@ -34,6 +34,7 @@
 #include "core/object/object.h"
 #include "core/os/thread_safe.h"
 #include "core/variant/binder_common.h" // IWYU pragma: keep
+#include "core/variant/array.h"
 #include "core/variant/dictionary.h"
 #include "core/variant/variant.h"
 #include "drivers/streamline/streamline_data.h"
@@ -53,6 +54,9 @@ public:
 	void set_parameter(StreamlineParameterType p_parameter_type, const Variant &p_value);
 	bool get_capability(StreamlineCapabilityType p_capability_type);
 	Dictionary get_frame_generation_state();
+	Array get_super_resolution_modes(const Vector2i &p_target);
+	Dictionary get_super_resolution_state();
+	float get_super_resolution_scale(const Vector2i &p_target, const String &p_mode);
 
 	void set_internal_parameter(const char *p_key, void *p_value);
 	void *get_internal_parameter(StreamlineInternalParameterType p_internal_parameter_type);

@@ -32,6 +32,7 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "core/math/math_funcs.h"
 #include "core/object/object.h"
 #ifdef STREAMLINE_ENABLED
 #include "drivers/streamline/streamline_context.h"
@@ -43,6 +44,9 @@ void Streamline::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_parameter", "parameter_type", "value"), &Streamline::set_parameter);
 	ClassDB::bind_method(D_METHOD("get_capability", "capability_type"), &Streamline::get_capability);
 	ClassDB::bind_method(D_METHOD("get_frame_generation_state"), &Streamline::get_frame_generation_state);
+	ClassDB::bind_method(D_METHOD("get_super_resolution_modes", "target_size"), &Streamline::get_super_resolution_modes);
+	ClassDB::bind_method(D_METHOD("get_super_resolution_state"), &Streamline::get_super_resolution_state);
+	ClassDB::bind_method(D_METHOD("get_super_resolution_scale", "target_size", "mode"), &Streamline::get_super_resolution_scale);
 
 	BIND_ENUM_CONSTANT(STREAMLINE_PARAM_REFLEX_MODE);
 	BIND_ENUM_CONSTANT(STREAMLINE_PARAM_REFLEX_FRAME_LIMIT_US);
@@ -282,6 +286,79 @@ Dictionary Streamline::get_frame_generation_state() {
 	state["generate_max"] = (int)sl_state.numFramesToGenerateMax;
 	state["min_size"] = (int)sl_state.minWidthOrHeight;
 	state["vram_mb"] = (int)(sl_state.estimatedVRAMUsageInBytes / (1024 * 1024));
+#endif
+	return state;
+}
+
+Array Streamline::get_super_resolution_modes(const Vector2i &p_target) {
+	Array modes;
+#ifdef STREAMLINE_ENABLED
+	_THREAD_SAFE_METHOD_
+	StreamlineContext &ctx = StreamlineContext::get();
+	if (ctx.slDLSSGetOptimalSettings == nullptr || !ctx.streamline_capabilities.dlss_available || p_target.x <= 0 || p_target.y <= 0) {
+		return modes;
+	}
+	const sl::DLSSMode list[] = { sl::DLSSMode::eDLAA, sl::DLSSMode::eMaxQuality, sl::DLSSMode::eBalanced, sl::DLSSMode::eMaxPerformance, sl::DLSSMode::eUltraPerformance };
+	for (sl::DLSSMode mode : list) {
+		sl::DLSSOptions options{};
+		options.mode = mode;
+		options.outputWidth = p_target.x;
+		options.outputHeight = p_target.y;
+		sl::DLSSOptimalSettings settings{};
+		if (ctx.slDLSSGetOptimalSettings(options, settings) != sl::Result::eOk) {
+			continue;
+		}
+		Dictionary d;
+		d["mode"] = StreamlineContext::dlss_mode_name(mode);
+		d["optimal"] = Vector2i(settings.optimalRenderWidth, settings.optimalRenderHeight);
+		d["min"] = Vector2i(settings.renderWidthMin, settings.renderHeightMin);
+		d["max"] = Vector2i(settings.renderWidthMax, settings.renderHeightMax);
+		modes.push_back(d);
+	}
+#endif
+	return modes;
+}
+
+float Streamline::get_super_resolution_scale(const Vector2i &p_target, const String &p_mode) {
+	// The viewport renders at ceil(output * scale) on each axis: a scale that lands on the mode's
+	// optimal size exactly, both axes, where a plain ratio can round one axis a pixel over (240 * 3
+	// lines into 720 gave 241 at 0.3334, and no mode took it).
+	Array modes = get_super_resolution_modes(p_target);
+	for (int i = 0; i < modes.size(); i++) {
+		Dictionary m = modes[i];
+		if (String(m["mode"]) != p_mode) {
+			continue;
+		}
+		Vector2i optimal = m["optimal"];
+		if (optimal.x <= 0 || optimal.y <= 0) {
+			return 0.0;
+		}
+		float hi = MIN(float(optimal.x) / float(p_target.x), float(optimal.y) / float(p_target.y));
+		float lo = MAX(float(optimal.x - 1) / float(p_target.x), float(optimal.y - 1) / float(p_target.y));
+		for (int step = 1; step < 64; step++) {
+			float scale = hi - (hi - lo) * float(step) / 64.0f;
+			if (Math::ceil(float(p_target.x) * scale) == float(optimal.x) && Math::ceil(float(p_target.y) * scale) == float(optimal.y)) {
+				return scale;
+			}
+		}
+		return 0.0;
+	}
+	return 0.0;
+}
+
+Dictionary Streamline::get_super_resolution_state() {
+	Dictionary state;
+	state["working"] = false;
+	state["ray_reconstruction_working"] = false;
+#ifdef STREAMLINE_ENABLED
+	_THREAD_SAFE_METHOD_
+	StreamlineContext &ctx = StreamlineContext::get();
+	state["target"] = ctx.sr_target;
+	state["render"] = ctx.sr_render;
+	state["mode"] = StreamlineContext::dlss_mode_name(ctx.sr_mode);
+	state["working"] = ctx.sr_mode != sl::DLSSMode::eOff;
+	state["ray_reconstruction_mode"] = StreamlineContext::dlss_mode_name(ctx.rr_mode);
+	state["ray_reconstruction_working"] = ctx.rr_mode != sl::DLSSMode::eOff;
 #endif
 	return state;
 }

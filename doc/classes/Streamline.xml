@@ -22,6 +22,27 @@
 				Returns the state of DLSS Frame Generation: [code]active[/code], and while active its [code]status[/code] (0 when working, else the DLSS-G failure flags), [code]presented[/code] (frames presented since the previous call), [code]generate_max[/code], [code]min_size[/code] and [code]vram_mb[/code].
 			</description>
 		</method>
+		<method name="get_super_resolution_modes">
+			<return type="Array" />
+			<param index="0" name="target_size" type="Vector2i" />
+			<description>
+				Returns what DLSS Super Resolution accepts for an output of [param target_size], one [Dictionary] a mode: [code]mode[/code] ([code]"dlaa"[/code], [code]"quality"[/code], [code]"balanced"[/code], [code]"performance"[/code], [code]"ultra_performance"[/code]), [code]optimal[/code], [code]min[/code] and [code]max[/code] render sizes. Super Resolution runs only when the render size ([member Viewport.scaling_3d_scale] times the output) lies within a mode's [code]min[/code] and [code]max[/code]. A driver override (the NVIDIA app's) can pin every mode to one size; render at that size, or use another upscaler. Empty when DLSS is unavailable.
+			</description>
+		</method>
+		<method name="get_super_resolution_scale">
+			<return type="float" />
+			<param index="0" name="target_size" type="Vector2i" />
+			<param index="1" name="mode" type="String" />
+			<description>
+				Returns a [member Viewport.scaling_3d_scale] at which the viewport renders at exactly the optimal size DLSS Super Resolution gives [param mode] (as named by [method get_super_resolution_modes]) for an output of [param target_size], both axes rounded as the viewport rounds them. [code]0.0[/code] when there is none, or DLSS is unavailable: use another upscaler.
+			</description>
+		</method>
+		<method name="get_super_resolution_state">
+			<return type="Dictionary" />
+			<description>
+				Returns how DLSS Super Resolution was last set up: [code]target[/code] (the output size), [code]render[/code] (the render size asked for), [code]mode[/code] (empty when no mode accepts that size) and [code]working[/code]; and for the same sizes, Ray Reconstruction's [code]ray_reconstruction_mode[/code] and [code]ray_reconstruction_working[/code]. Under path tracing Ray Reconstruction upscales and only its pair counts; otherwise, when [code]working[/code] is [code]false[/code] under DLSS scaling, the frame is not upscaled by DLSS: pick a scale [method get_super_resolution_modes] allows, or another upscaler. Under a driver override every mode accepts the same sizes, so [code]mode[/code] can name another mode than the one the scale was chosen for.
+			</description>
+		</method>
 		<method name="set_parameter">
 			<return type="void" />
 			<param index="0" name="parameter_type" type="int" enum="StreamlineParameterType" />

@@ -386,6 +386,25 @@ sl::FrameToken *StreamlineContext::get_new_frame_token() {
 	return last_token;
 }
 
+const char *StreamlineContext::dlss_mode_name(sl::DLSSMode p_mode) {
+	switch (p_mode) {
+		case sl::DLSSMode::eDLAA:
+			return "dlaa";
+		case sl::DLSSMode::eUltraQuality:
+			return "ultra_quality";
+		case sl::DLSSMode::eMaxQuality:
+			return "quality";
+		case sl::DLSSMode::eBalanced:
+			return "balanced";
+		case sl::DLSSMode::eMaxPerformance:
+			return "performance";
+		case sl::DLSSMode::eUltraPerformance:
+			return "ultra_performance";
+		default:
+			return "";
+	}
+}
+
 const char *StreamlineContext::result_to_string(sl::Result result) {
 	switch (result) {
 		case sl::Result::eOk:

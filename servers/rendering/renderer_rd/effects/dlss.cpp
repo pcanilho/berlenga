@@ -143,7 +143,15 @@ public:
 			return modes[closestDistanceMatch];
 		}
 
-		ERR_FAIL_V_MSG(sl::DLSSMode::eOff, "Couldn't find an appropriate DLSS mode.");
+		// Name what the modes do accept: a driver override (the NVIDIA app's) can pin them all to one size,
+		// and the game must then render at it (Streamline.get_super_resolution_modes) or upscale otherwise.
+		String accepted;
+		for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+			if (settings[i].renderWidthMax > 0) {
+				accepted += vformat(" %s %dx%d to %dx%d;", StreamlineContext::dlss_mode_name(modes[i]), settings[i].renderWidthMin, settings[i].renderHeightMin, settings[i].renderWidthMax, settings[i].renderHeightMax);
+			}
+		}
+		ERR_FAIL_V_MSG(sl::DLSSMode::eOff, vformat("Couldn't find an appropriate DLSS%s mode: no mode accepts a %dx%d render for a %dx%d output (accepted:%s).", use_dlss_rr ? " Ray Reconstruction" : " Super Resolution", desiredWidth, desiredHeight, outputWidth, outputHeight, accepted));
 	}
 }; // end class
 }; // end namespace RendererRD
@@ -188,6 +196,11 @@ DLSSContext *DLSSEffect::create_context(Size2i p_internal_size, Size2i p_target_
 	}
 	context->currentDlssOptions.outputWidth = p_target_size.width;
 	context->currentDlssOptions.outputHeight = p_target_size.height;
+	// For scripts (Streamline.get_super_resolution_state): a game can fall back to another upscaler.
+	StreamlineContext::get().sr_target = Vector2i(p_target_size.width, p_target_size.height);
+	StreamlineContext::get().sr_render = Vector2i(p_internal_size.width, p_internal_size.height);
+	StreamlineContext::get().sr_mode = context->currentDlssOptions.mode;
+	StreamlineContext::get().rr_mode = context->rrMode;
 
 	context->is_d3d12 = (RD::get_singleton()->get_device_api_name().to_lower() == "d3d12");
 
@@ -620,9 +633,13 @@ void RendererRD::DLSSEffect::_upscale_internal_graph_callback(RenderingDeviceDri
 	self->last_effect->_upscale_internal(p_command_buffer, self->last_parameters);
 }
 
-bool DLSSEffect::is_ready(DLSSContext *p_context) {
+bool DLSSEffect::is_ready(DLSSContext *p_context, bool p_ray_reconstruction) {
 	DLSSContextInner *context = (DLSSContextInner *)p_context;
-	if (context->currentDlssOptions.mode == sl::DLSSMode::eOff && context->rrMode == sl::DLSSMode::eOff) {
+	// Each path has its own mode: a raster frame whose Super Resolution has none (a driver override
+	// pins it to another size) was declared ready by Ray Reconstruction's, so its output, never
+	// written, was presented as a corrupt frame.
+	sl::DLSSMode mode = p_ray_reconstruction ? (context->rrMode != sl::DLSSMode::eOff ? context->rrMode : context->currentDlssOptions.mode) : context->currentDlssOptions.mode;
+	if (mode == sl::DLSSMode::eOff) {
 		return false; // unsupported mode.
 	}
 	if (context->delay > 0) {
@@ -637,7 +654,7 @@ DLSSContext *DLSSEffect::create_context(Size2i p_internal_size, Size2i p_target_
 	return nullptr;
 }
 void DLSSEffect::upscale(const DLSSContext::Parameters &p_params) {}
-bool DLSSEffect::is_ready(DLSSContext *p_context) {
+bool DLSSEffect::is_ready(DLSSContext *p_context, bool p_ray_reconstruction) {
 	return false;
 }
 void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext::Parameters &p_params) {}

@@ -33,6 +33,8 @@
 #ifdef STREAMLINE_ENABLED
 #include "drivers/streamline/streamline_data.h"
 #include "drivers/streamline/streamline_headers.h"
+
+#include "core/math/vector2i.h"
 class StreamlineContext {
 public:
 	// Interposer
@@ -129,6 +131,15 @@ public:
 	sl::FrameToken *last_token = nullptr; // Main thread only.
 	sl::FrameToken *render_token = nullptr; // Token of the draw being rendered; render thread only.
 	bool is_game = false;
+
+	// Super Resolution as the last DLSS context chose it: the output, the render size asked for and
+	// the mode taken (eOff when none accepts that size, as under a driver override that pins it).
+	Vector2i sr_target;
+	Vector2i sr_render;
+	sl::DLSSMode sr_mode = sl::DLSSMode::eOff;
+	// Ray Reconstruction's mode for the same sizes: an override that pins Super Resolution leaves it free.
+	sl::DLSSMode rr_mode = sl::DLSSMode::eOff;
+	static const char *dlss_mode_name(sl::DLSSMode p_mode);
 
 	sl::ViewportHandle dlssg_viewport;
 	int dlssg_delay = 0;

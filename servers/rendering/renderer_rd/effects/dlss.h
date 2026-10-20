@@ -87,7 +87,8 @@ public:
 	~DLSSEffect();
 	DLSSContext *create_context(Size2i p_internal_size, Size2i p_target_size);
 	void upscale(const DLSSContext::Parameters &p_params);
-	bool is_ready(DLSSContext *context);
+	// Ready for the path the frame takes: Ray Reconstruction (traced) or Super Resolution (raster).
+	bool is_ready(DLSSContext *context, bool p_ray_reconstruction = false);
 
 private:
 	void _upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext::Parameters &p_params);

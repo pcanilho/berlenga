@@ -1949,7 +1949,7 @@ void RenderForwardClustered::_render_3d_upscaling(const RenderDataRD *p_render_d
 			params.cam_projection = cur_proj;
 			params.cam_transform = cur_transform;
 
-			rb->set_upscaler_ready(dlss_effect->is_ready(rb_data->get_dlss_context()));
+			rb->set_upscaler_ready(dlss_effect->is_ready(rb_data->get_dlss_context(), params.dlss_rr));
 			dlss_effect->upscale(params);
 		}
 	} else if (p_scale_type == SCALE_3D_MFX) {
