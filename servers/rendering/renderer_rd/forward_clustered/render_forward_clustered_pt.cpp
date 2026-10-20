@@ -585,16 +585,29 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		}
 	}
 
+	// Under Ray Reconstruction the transparent surfaces go into their own layer,
+	// laid over its output (`_composite_transparency`). A compositor effect
+	// around the transparent pass gets the layer too, made and cleared before
+	// it runs, so what it draws there (premultiplied colour and coverage, at the
+	// internal size, jittered as the frame) is kept from the denoiser as the
+	// particles are: anything it writes into the colour is Ray Reconstruction's
+	// input. Effects before the transparent pass lie under the transparents.
+	const bool layer_effects = _has_compositor_effect(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data) ||
+			_has_compositor_effect(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TRANSPARENT, p_render_data);
+	const bool transparency_layer = !pt_transparency && raytracing && raytracing->dlss_rr_has_buffers(rb.ptr()) && scale_type == SCALE_3D_DLSS && !use_msaa &&
+			rb->get_view_count() == 1 && (!render_list[RENDER_LIST_ALPHA].elements.is_empty() || layer_effects) && transparency_composite.pipeline.is_valid() &&
+			RD::get_singleton()->texture_get_format(rb->get_upscaled_texture()).format == RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+	if (transparency_layer) {
+		Vector<Color> layer_clear;
+		layer_clear.push_back(Color(0, 0, 0, 0));
+		RD::get_singleton()->draw_list_begin(_transparency_layer_fb(rb.ptr()), RD::DRAW_CLEAR_COLOR_0, layer_clear);
+		RD::get_singleton()->draw_list_end();
+	}
+
 	{
 		RENDER_TIMESTAMP("Process Pre Transparent Compositor Effects");
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
 	}
-
-	// Under Ray Reconstruction the transparent surfaces go into their own layer,
-	// laid over its output (`_composite_transparency`).
-	const bool transparency_layer = !pt_transparency && raytracing && raytracing->dlss_rr_has_buffers(rb.ptr()) && scale_type == SCALE_3D_DLSS && !use_msaa &&
-			rb->get_view_count() == 1 && !render_list[RENDER_LIST_ALPHA].elements.is_empty() && transparency_composite.pipeline.is_valid() &&
-			RD::get_singleton()->texture_get_format(rb->get_upscaled_texture()).format == RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
 
 	if (!pt_transparency) {
 		RENDER_TIMESTAMP("Render 3D Transparent Pass");
@@ -614,9 +627,8 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			BitField<RD::DrawFlags> alpha_draw_flags = RD::DRAW_DEFAULT_ALL;
 			Vector<Color> alpha_clear;
 			if (transparency_layer) {
+				// Cleared above, before the effects that may have drawn into it.
 				alpha_framebuffer = _transparency_layer_fb(rb.ptr());
-				alpha_draw_flags = RD::DRAW_CLEAR_COLOR_0;
-				alpha_clear.push_back(Color(0, 0, 0, 0));
 			}
 			RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, transparent_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
 			_render_list_with_draw_list(&render_list_params, alpha_framebuffer, alpha_draw_flags, alpha_clear, 0.0f, 0u, p_render_data->render_region);
