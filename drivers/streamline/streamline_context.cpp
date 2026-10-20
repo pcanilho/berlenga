@@ -90,6 +90,7 @@ void StreamlineContext::load_functions(bool d3d12) {
 	this->slFreeResources = SL_GETPROC(PFun_slFreeResources, "slFreeResources");
 	this->slEvaluateFeature = SL_GETPROC(PFun_slEvaluateFeature, "slEvaluateFeature");
 	this->slSetTag = SL_GETPROC(PFun_slSetTag, "slSetTag");
+	this->slSetTagForFrame = SL_GETPROC(PFun_slSetTagForFrame, "slSetTagForFrame");
 	this->slSetConstants = SL_GETPROC(PFun_slSetConstants, "slSetConstants");
 #undef SL_GETPROC
 
@@ -292,6 +293,13 @@ void StreamlineContext::reflex_set_required_by_dlssg(bool p_required) {
 		// since this can be called from the rendering thread.
 		reflex_options_dirty = true;
 	}
+}
+
+sl::Result StreamlineContext::set_tags(const sl::ViewportHandle &p_viewport, const sl::ResourceTag *p_tags, uint32_t p_count, sl::CommandBuffer *p_cmd) {
+	if (slSetTagForFrame != nullptr && last_token != nullptr) {
+		return slSetTagForFrame(*last_token, p_viewport, p_tags, p_count, p_cmd);
+	}
+	return slSetTag ? slSetTag(p_viewport, p_tags, p_count, p_cmd) : sl::Result::eErrorMissingInputParameter;
 }
 
 void StreamlineContext::dlssg_report_status(const sl::ViewportHandle &p_viewport) {
@@ -503,7 +511,7 @@ void StreamlineContext::initialize(bool d3d12) {
 	pref.renderAPI = d3d12 ? sl::RenderAPI::eD3D12 : sl::RenderAPI::eVulkan;
 	pref.applicationId = 0x90d07004;
 	// Bundled plugins only: OTA plugins can mismatch the interposer.
-	pref.flags = sl::PreferenceFlags::eDisableCLStateTracking;
+	pref.flags = sl::PreferenceFlags::eDisableCLStateTracking | sl::PreferenceFlags::eUseFrameBasedResourceTagging;
 
 	if (bool(GLOBAL_GET("rendering/streamline/streamline_log"))) {
 		pref.logLevel = sl::LogLevel::eVerbose;

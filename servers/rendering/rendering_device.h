@@ -326,7 +326,9 @@ public:
 		CallbackResourceUsage usage = CALLBACK_RESOURCE_USAGE_NONE;
 	};
 
-	Error driver_callback_add(RDD::DriverCallback p_callback, void *p_userdata, VectorView<CallbackResource> p_resources);
+	// p_after_all_recorded: the callback runs after every command recorded before it and before every
+	// command recorded after it, whatever resources they use (the graph otherwise reorders by resource).
+	Error driver_callback_add(RDD::DriverCallback p_callback, void *p_userdata, VectorView<CallbackResource> p_resources, bool p_after_all_recorded = false);
 
 	/*****************/
 	/**** TEXTURE ****/

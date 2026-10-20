@@ -46,6 +46,7 @@ public:
 	PFun_slFreeResources *slFreeResources = nullptr;
 	PFun_slEvaluateFeature *slEvaluateFeature = nullptr;
 	PFun_slSetTag *slSetTag = nullptr;
+	PFun_slSetTagForFrame *slSetTagForFrame = nullptr;
 	PFun_slSetConstants *slSetConstants = nullptr;
 	PFun_slSetFeatureLoaded *slSetFeatureLoaded = nullptr;
 	PFun_slSetD3DDevice *slSetD3DDevice = nullptr;
@@ -135,6 +136,9 @@ public:
 	// Last reported DLSSGStatus bitmask, used to only log status changes.
 	uint32_t dlssg_last_status = 0;
 	void dlssg_report_status(const sl::ViewportHandle &p_viewport);
+	// Tags for this frame's token: the deprecated slSetTag ties a tag to Streamline's own
+	// frame count, which frame generation, reading the tags at present, may not match.
+	sl::Result set_tags(const sl::ViewportHandle &p_viewport, const sl::ResourceTag *p_tags, uint32_t p_count, sl::CommandBuffer *p_cmd);
 
 #if STREAMLINE_ENABLED_VULKAN
 	StreamlineCapabilities enumerate_support_vulkan(void *vk_physical_device);

@@ -1526,7 +1526,7 @@ Error RenderingDevice::buffer_update(RID p_buffer, uint32_t p_offset, uint32_t p
 	return _buffer_update(buffer, p_buffer, p_offset, p_size, p_data);
 }
 
-Error RenderingDevice::driver_callback_add(RDD::DriverCallback p_callback, void *p_userdata, VectorView<CallbackResource> p_resources) {
+Error RenderingDevice::driver_callback_add(RDD::DriverCallback p_callback, void *p_userdata, VectorView<CallbackResource> p_resources, bool p_after_all_recorded) {
 	ERR_RENDER_THREAD_GUARD_V(ERR_UNAVAILABLE);
 
 	ERR_FAIL_COND_V_MSG(draw_list.active, ERR_INVALID_PARAMETER,
@@ -1576,6 +1576,9 @@ Error RenderingDevice::driver_callback_add(RDD::DriverCallback p_callback, void 
 		}
 	}
 
+	if (p_after_all_recorded) {
+		draw_graph.add_synchronization();
+	}
 	draw_graph.add_driver_callback(p_callback, p_userdata, trackers, usages);
 
 	return OK;
