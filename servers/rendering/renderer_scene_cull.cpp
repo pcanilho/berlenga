@@ -181,6 +181,13 @@ void RendererSceneCull::occluder_set_mesh(RID p_occluder, const PackedVector3Arr
 
 /* SCENARIO API */
 
+// Whether a geometry instance is drawn into a light's shadow: only then does a change to it
+// make the light's shadow stale. A lamp's cube was redrawn for every moving instance in its
+// range, its shadow_caster_mask notwithstanding.
+static _FORCE_INLINE_ bool _casts_into(RID p_light_base, uint32_t p_layer_mask) {
+	return (p_layer_mask & RSG::light_storage->light_get_shadow_caster_mask(p_light_base)) != 0;
+}
+
 void RendererSceneCull::_instance_pair(Instance *p_A, Instance *p_B) {
 	RendererSceneCull *self = (RendererSceneCull *)singleton;
 	Instance *A = p_A;
@@ -203,7 +210,7 @@ void RendererSceneCull::_instance_pair(Instance *p_A, Instance *p_B) {
 		geom->lights.insert(B);
 		light->geometries.insert(A);
 
-		if (geom->can_cast_shadows) {
+		if (geom->can_cast_shadows && _casts_into(B->base, A->layer_mask)) {
 			light->make_shadow_dirty();
 		}
 
@@ -328,7 +335,7 @@ void RendererSceneCull::_instance_unpair(Instance *p_A, Instance *p_B) {
 		geom->lights.erase(B);
 		light->geometries.erase(A);
 
-		if (geom->can_cast_shadows) {
+		if (geom->can_cast_shadows && _casts_into(B->base, A->layer_mask)) {
 			light->make_shadow_dirty();
 		}
 
@@ -936,6 +943,7 @@ void RendererSceneCull::instance_set_layer_mask(RID p_instance, uint32_t p_mask)
 	if (instance->layer_mask == p_mask) {
 		return;
 	}
+	const uint32_t old_mask = instance->layer_mask;
 
 	// Particles always need to be unpaired. Geometry may need to be unpaired, but only if lights or decals use pairing.
 	// Needs to happen before layer mask changes so we can avoid attempting to unpair something that was never paired.
@@ -957,6 +965,9 @@ void RendererSceneCull::instance_set_layer_mask(RID p_instance, uint32_t p_mask)
 
 		if (geom->can_cast_shadows) {
 			for (HashSet<RendererSceneCull::Instance *>::Iterator I = geom->lights.begin(); I != geom->lights.end(); ++I) {
+				if (!_casts_into((*I)->base, old_mask | p_mask)) {
+					continue;
+				}
 				InstanceLightData *light = static_cast<InstanceLightData *>((*I)->base_data);
 				light->make_shadow_dirty();
 			}
@@ -1769,6 +1780,9 @@ void RendererSceneCull::_update_instance(Instance *p_instance) const {
 
 		if (geom->can_cast_shadows) {
 			for (const Instance *E : geom->lights) {
+				if (!_casts_into(E->base, p_instance->layer_mask)) {
+					continue;
+				}
 				InstanceLightData *light = static_cast<InstanceLightData *>(E->base_data);
 				light->make_shadow_dirty();
 			}
@@ -4459,6 +4473,9 @@ void RendererSceneCull::_update_dirty_instance(Instance *p_instance) const {
 			if (can_cast_shadows != geom->can_cast_shadows) {
 				//ability to cast shadows change, let lights now
 				for (const Instance *E : geom->lights) {
+					if (!_casts_into(E->base, p_instance->layer_mask)) {
+						continue;
+					}
 					InstanceLightData *light = static_cast<InstanceLightData *>(E->base_data);
 					light->make_shadow_dirty();
 				}
