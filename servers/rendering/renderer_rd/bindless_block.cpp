@@ -85,6 +85,12 @@ uint32_t BindlessBlock::add_texture(RID p_texture) {
 	if (!p_texture.is_valid() || !rd->texture_is_valid(p_texture)) {
 		p_texture = default_texture;
 	}
+	// The block is an array of 2D textures: one 3D, cube or layered texture in it fails the
+	// whole set, and with it every traced frame. Such a texture reads as the default.
+	if (p_texture != default_texture && rd->texture_get_format(p_texture).texture_type != RD::TEXTURE_TYPE_2D) {
+		WARN_PRINT_ONCE("BindlessBlock: a material samples a texture that is not 2D (a 3D, cube or layered texture); the path tracer reads it as white.");
+		p_texture = default_texture;
+	}
 
 	HashMap<RID, uint32_t>::Iterator it = texture_to_index.find(p_texture);
 	if (it != texture_to_index.end()) {
