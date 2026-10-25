@@ -1052,7 +1052,7 @@ public:
 
 	RendererSceneRender::RenderShadowData render_shadow_data[MAX_UPDATE_SHADOWS];
 	// How long a caster stays among a shadow's moving casters after it last changed.
-	static constexpr uint64_t SHADOW_MOVING_FRAMES = 600;
+	static constexpr uint64_t SHADOW_MOVING_FRAMES = 90;
 	// How long after entering a scenario an instance's updates are its placing, not moves.
 	static constexpr uint64_t SHADOW_PLACED_FRAMES = 10;
 	void _shadow_caster_push(RendererSceneRender::RenderShadowData &p_shadow_data, Instance *p_instance, uint64_t &r_moving_signature);
