@@ -492,6 +492,11 @@ public:
 		uint64_t last_frame_pass;
 
 		uint64_t version; // changes to this, and changes to base increase version
+		// The frame a change to this instance last made a light's shadow stale: for a while
+		// after, it counts among the shadow's moving casters.
+		uint64_t shadow_moved_frame = 0;
+		// The frame it entered a scenario.
+		uint64_t placed_frame = 0;
 
 		InstanceBaseData *base_data = nullptr;
 
@@ -729,7 +734,16 @@ public:
 
 	public:
 		bool is_shadow_dirty() const { return shadow_dirty_count != 0; }
-		void make_shadow_dirty() { shadow_dirty_count = light_intersects_multiple_cameras ? 1 : 2; }
+		void make_shadow_dirty() {
+			shadow_dirty_count = light_intersects_multiple_cameras ? 1 : 2;
+			static_shadow_dirty = true;
+		}
+		// Only a moving caster changed: the still casters' part of the shadow holds.
+		void make_shadow_dirty_moving() { shadow_dirty_count = light_intersects_multiple_cameras ? 1 : 2; }
+		// The still casters' part must be drawn again (they or the light changed).
+		bool static_shadow_dirty = true;
+		// The set of moving casters last drawn: when one stops (or starts), the still part changes.
+		uint64_t moving_signature = 0;
 		void detect_light_intersects_multiple_cameras(uint32_t p_frame_id) {
 			// We need to detect the case where shadow updates are occurring
 			// more than once per frame. In this case, we need to turn off
@@ -1037,6 +1051,11 @@ public:
 	LocalVector<InstanceCullResult> scene_cull_result_threads;
 
 	RendererSceneRender::RenderShadowData render_shadow_data[MAX_UPDATE_SHADOWS];
+	// How long a caster stays among a shadow's moving casters after it last changed.
+	static constexpr uint64_t SHADOW_MOVING_FRAMES = 600;
+	// How long after entering a scenario an instance's updates are its placing, not moves.
+	static constexpr uint64_t SHADOW_PLACED_FRAMES = 10;
+	void _shadow_caster_push(RendererSceneRender::RenderShadowData &p_shadow_data, Instance *p_instance, uint64_t &r_moving_signature);
 	uint32_t max_shadows_used = 0;
 
 	RendererSceneRender::RenderSDFGIData render_sdfgi_data[SDFGI_MAX_CASCADES * SDFGI_MAX_REGIONS_PER_CASCADE];

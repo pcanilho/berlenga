@@ -296,6 +296,12 @@ public:
 		RID light;
 		int pass = 0;
 		PagedArray<RenderGeometryInstance *> instances;
+		// A positional light's shadow kept in two parts (`cached`): the casters that stand still
+		// (`instances`), drawn into a copy of their own only when `static_redraw`, and those
+		// that move (`dynamic_instances`), drawn over that copy every time the light redraws.
+		PagedArray<RenderGeometryInstance *> dynamic_instances;
+		bool cached = false;
+		bool static_redraw = true;
 	};
 
 	struct RenderSDFGIData {

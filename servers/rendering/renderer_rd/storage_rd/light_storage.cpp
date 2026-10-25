@@ -582,8 +582,63 @@ RID LightStorage::light_instance_create(RID p_light) {
 	return li;
 }
 
+bool LightStorage::light_instance_ensure_shadow_cache(RID p_light_instance, const Size2i &p_size, RD::DataFormat p_format, bool p_cube) {
+	LightInstance *li = light_instance_owner.get_or_null(p_light_instance);
+	ERR_FAIL_NULL_V(li, false);
+	if (li->shadow_cache.is_valid() && RD::get_singleton()->texture_is_valid(li->shadow_cache) && li->shadow_cache_size == p_size && li->shadow_cache_format == p_format && li->shadow_cache_cube == p_cube) {
+		return false;
+	}
+	light_instance_free_shadow_cache(p_light_instance);
+	RD::TextureFormat tf;
+	tf.format = p_format;
+	tf.width = p_size.x;
+	tf.height = p_size.y;
+	tf.texture_type = p_cube ? RD::TEXTURE_TYPE_CUBE : RD::TEXTURE_TYPE_2D;
+	tf.array_layers = p_cube ? 6 : 1;
+	tf.usage_bits = RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+	li->shadow_cache = RD::get_singleton()->texture_create(tf, RD::TextureView());
+	RD::get_singleton()->set_resource_name(li->shadow_cache, "Shadow Still Casters Cache");
+	for (int i = 0; i < (p_cube ? 6 : 1); i++) {
+		RID side = p_cube ? RD::get_singleton()->texture_create_shared_from_slice(RD::TextureView(), li->shadow_cache, i, 0) : li->shadow_cache;
+		Vector<RID> fbtex;
+		fbtex.push_back(side);
+		li->shadow_cache_fb[i] = RD::get_singleton()->framebuffer_create(fbtex);
+	}
+	li->shadow_cache_size = p_size;
+	li->shadow_cache_format = p_format;
+	li->shadow_cache_cube = p_cube;
+	return true;
+}
+
+RID LightStorage::light_instance_get_shadow_cache(RID p_light_instance) const {
+	const LightInstance *li = light_instance_owner.get_or_null(p_light_instance);
+	ERR_FAIL_NULL_V(li, RID());
+	return li->shadow_cache;
+}
+
+RID LightStorage::light_instance_get_shadow_cache_fb(RID p_light_instance, int p_face) const {
+	const LightInstance *li = light_instance_owner.get_or_null(p_light_instance);
+	ERR_FAIL_NULL_V(li, RID());
+	return li->shadow_cache_fb[p_face];
+}
+
+void LightStorage::light_instance_free_shadow_cache(RID p_light_instance) {
+	LightInstance *li = light_instance_owner.get_or_null(p_light_instance);
+	ERR_FAIL_NULL(li);
+	// the framebuffers and the faces' shared textures go with the texture they depend on
+	if (li->shadow_cache.is_valid() && RD::get_singleton()->texture_is_valid(li->shadow_cache)) {
+		RD::get_singleton()->free_rid(li->shadow_cache);
+	}
+	li->shadow_cache = RID();
+	for (RID &fb : li->shadow_cache_fb) {
+		fb = RID();
+	}
+	li->shadow_cache_size = Size2i();
+}
+
 void LightStorage::light_instance_free(RID p_light) {
 	LightInstance *light_instance = light_instance_owner.get_or_null(p_light);
+	light_instance_free_shadow_cache(p_light);
 
 	//remove from shadow atlases..
 	for (const RID &E : light_instance->shadow_atlases) {
@@ -2767,7 +2822,7 @@ RD::DataFormat LightStorage::get_shadow_atlas_depth_format(bool p_16_bits) {
 }
 
 uint32_t LightStorage::get_shadow_atlas_depth_usage_bits() {
-	return RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+	return RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
 }
 
 /* DIRECTIONAL SHADOW */
@@ -2902,7 +2957,7 @@ RD::DataFormat LightStorage::get_cubemap_depth_format() {
 }
 
 uint32_t LightStorage::get_cubemap_depth_usage_bits() {
-	return RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+	return RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
 }
 
 bool LightStorage::get_shadow_cubemaps_used() const {

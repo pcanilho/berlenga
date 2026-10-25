@@ -132,6 +132,14 @@ private:
 
 		ForwardID forward_id = -1;
 
+		// The still casters' shadow (a cube's six faces, or a spot's square), kept so a
+		// redraw draws only what moves over a copy of it.
+		RID shadow_cache;
+		RID shadow_cache_fb[6];
+		Size2i shadow_cache_size;
+		RD::DataFormat shadow_cache_format = RD::DATA_FORMAT_MAX;
+		bool shadow_cache_cube = false;
+
 		LightInstance() {}
 	};
 
@@ -1161,6 +1169,12 @@ public:
 		ERR_FAIL_NULL_V(atlas, -1);
 		return atlas->shadow_owners[p_light_instance];
 	}
+
+	// Makes (or remakes, at a new size or format) a light's still-casters cache; true when made.
+	bool light_instance_ensure_shadow_cache(RID p_light_instance, const Size2i &p_size, RD::DataFormat p_format, bool p_cube);
+	RID light_instance_get_shadow_cache(RID p_light_instance) const;
+	RID light_instance_get_shadow_cache_fb(RID p_light_instance, int p_face) const;
+	void light_instance_free_shadow_cache(RID p_light_instance);
 
 	_FORCE_INLINE_ RID shadow_atlas_get_texture(RID p_atlas) {
 		ShadowAtlas *atlas = shadow_atlas_owner.get_or_null(p_atlas);
