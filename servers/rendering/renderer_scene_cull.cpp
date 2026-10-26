@@ -3813,6 +3813,16 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 				// There is however a cost to tighter shadow culling in this situation (2 shadow updates in 1 frame),
 				// so we should detect this and switch off tighter caster culling automatically.
 				// This is done in the logic for `decrement_shadow_dirty()`.
+				// Only movers changed: a lamp far from the camera redraws them every 2nd to 4th
+				// frame by distance, its frames spread over the lamps by a phase of its own; a
+				// change to its still casters or to itself redraws at once.
+				if (allow_redraw && !light->static_shadow_dirty) {
+					const real_t d = p_camera_data->main_transform.origin.distance_to(ins->transform.origin);
+					const uint32_t every = d < SHADOW_NEAR_M ? 1 : (d < SHADOW_NEAR_M * 2 ? 2 : (d < SHADOW_NEAR_M * 3 ? 3 : 4));
+					if (every > 1 && (Engine::get_singleton()->get_frames_drawn() + (uint64_t(ins->base.get_id()) * 2654435761u >> 8)) % every != 0) {
+						allow_redraw = false;
+					}
+				}
 				if (allow_redraw) {
 					light->last_version++;
 					light->decrement_shadow_dirty();

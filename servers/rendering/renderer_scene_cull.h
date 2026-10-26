@@ -1055,6 +1055,8 @@ public:
 	static constexpr uint64_t SHADOW_MOVING_FRAMES = 90;
 	// How long after entering a scenario an instance's updates are its placing, not moves.
 	static constexpr uint64_t SHADOW_PLACED_FRAMES = 10;
+	// Lamps nearer than this redraw their movers' shadow every frame; further, every 2nd to 4th.
+	static constexpr real_t SHADOW_NEAR_M = 30.0;
 	void _shadow_caster_push(RendererSceneRender::RenderShadowData &p_shadow_data, Instance *p_instance, uint64_t &r_moving_signature);
 	uint32_t max_shadows_used = 0;
 
