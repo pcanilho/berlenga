@@ -3157,6 +3157,12 @@
 		<member name="rendering/lights_and_shadows/directional_shadow/16_bits" type="bool" setter="" getter="" default="true">
 			Use 16 bits for the directional shadow depth map. Enabling this results in shadows having less precision and may result in shadow acne, but can lead to performance improvements on some devices.
 		</member>
+		<member name="rendering/lights_and_shadows/directional_shadow/far_cascades_every_other_frame" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], a directional light's cascades from [member rendering/lights_and_shadows/directional_shadow/far_cascades_from] on are culled and drawn on every other frame only, the last frame's kept between, while the light has not turned (by 0.03 degrees) and the camera has not moved more than 2 m since they were drawn. What moves in them lags a frame. Saves the far cascades' culling and drawing on half the frames.
+		</member>
+		<member name="rendering/lights_and_shadows/directional_shadow/far_cascades_from" type="int" setter="" getter="" default="2">
+			The first cascade (from 0) [member rendering/lights_and_shadows/directional_shadow/far_cascades_every_other_frame] draws every other frame: [code]2[/code] keeps the third and fourth of four splits.
+		</member>
 		<member name="rendering/lights_and_shadows/directional_shadow/size" type="int" setter="" getter="" default="4096">
 			The directional shadow's size in pixels. Higher values will result in sharper shadows, at the cost of performance. The value is rounded up to the nearest power of 2.
 		</member>

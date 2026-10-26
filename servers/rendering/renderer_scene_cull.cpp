@@ -2277,6 +2277,7 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 
 	cull.shadow_count = p_shadow_index + 1;
 	cull.shadows[p_shadow_index].cascade_count = splits;
+	cull.shadows[p_shadow_index].drawn_cascade_count = splits;
 	cull.shadows[p_shadow_index].light_instance = light->instance;
 	cull.shadows[p_shadow_index].caster_mask = RSG::light_storage->light_get_shadow_caster_mask(p_instance->base);
 
@@ -2445,6 +2446,51 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 			cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
 			cull.shadows[p_shadow_index].cascades[i].range_begin = z_max;
 			cull.shadows[p_shadow_index].cascades[i].uv_scale = uv_scale;
+		}
+	}
+
+	// The far cascades on every other frame: last frame's kept, its matrices with it, while the
+	// light has not turned, the camera is near where they were drawn from and nothing else (another
+	// viewport) drew this light since.
+	const uint64_t frame = Engine::get_singleton()->get_frames_drawn();
+	const Vector3 direction = light_transform.basis.get_column(2);
+	const int from = GLOBAL_GET_CACHED(int, "rendering/lights_and_shadows/directional_shadow/far_cascades_from");
+	if (GLOBAL_GET_CACHED(bool, "rendering/lights_and_shadows/directional_shadow/far_cascades_every_other_frame") && from > 0 && from < splits && (frame & 1)) {
+		bool keep = true;
+		for (int i = from; i < splits; i++) {
+			const InstanceLightData::KeptCascade &k = light->kept_cascades[i];
+			if (frame - k.frame != 1 || k.camera.distance_to(p_cam_transform.origin) > 2.0 || k.direction.dot(direction) < 0.99999985) { // 0.03 degrees
+				keep = false;
+			}
+		}
+		if (keep) {
+			cull.shadows[p_shadow_index].drawn_cascade_count = from;
+		}
+	}
+	for (int i = 0; i < splits; i++) {
+		InstanceLightData::KeptCascade &k = light->kept_cascades[i];
+		Cull::Shadow::Cascade &cascade = cull.shadows[p_shadow_index].cascades[i];
+		if ((uint32_t)i < cull.shadows[p_shadow_index].drawn_cascade_count) {
+			k.projection = cascade.projection;
+			k.transform = cascade.transform;
+			k.zfar = cascade.zfar;
+			k.split = cascade.split;
+			k.shadow_texel_size = cascade.shadow_texel_size;
+			k.bias_scale = cascade.bias_scale;
+			k.range_begin = cascade.range_begin;
+			k.uv_scale = cascade.uv_scale;
+			k.frame = frame;
+			k.camera = p_cam_transform.origin;
+			k.direction = direction;
+		} else {
+			cascade.projection = k.projection;
+			cascade.transform = k.transform;
+			cascade.zfar = k.zfar;
+			cascade.split = k.split;
+			cascade.shadow_texel_size = k.shadow_texel_size;
+			cascade.bias_scale = k.bias_scale;
+			cascade.range_begin = k.range_begin;
+			cascade.uv_scale = k.uv_scale;
 		}
 	}
 }
@@ -3359,7 +3405,7 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 			}
 
 			for (uint32_t j = 0; j < cull_data.cull->shadow_count; j++) {
-				for (uint32_t k = 0; k < cull_data.cull->shadows[j].cascade_count; k++) {
+				for (uint32_t k = 0; k < cull_data.cull->shadows[j].drawn_cascade_count; k++) {
 					if (!light_culler->cull_directional_light(cull_data.scenario->instance_aabbs[i], j, k)) { // pass the cascade index
 						continue;
 					}
@@ -3673,7 +3719,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 				const Cull::Shadow::Cascade &c = cull.shadows[i].cascades[j];
 				//			print_line("shadow " + itos(i) + " cascade " + itos(j) + " elements: " + itos(c.cull_result.size()));
 				RSG::light_storage->light_instance_set_shadow_transform(cull.shadows[i].light_instance, c.projection, c.transform, c.zfar, c.split, j, c.shadow_texel_size, c.bias_scale, c.range_begin, c.uv_scale);
-				if (max_shadows_used == MAX_UPDATE_SHADOWS) {
+				if (max_shadows_used == MAX_UPDATE_SHADOWS || j >= cull.shadows[i].drawn_cascade_count) {
 					continue;
 				}
 				render_shadow_data[max_shadows_used].light = cull.shadows[i].light_instance;

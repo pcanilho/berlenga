@@ -744,6 +744,21 @@ public:
 		bool static_shadow_dirty = true;
 		// The set of moving casters last drawn: when one stops (or starts), the still part changes.
 		uint64_t moving_signature = 0;
+		// A directional light's cascades as last drawn, kept for a frame that does not redraw
+		// the far ones: the frame, the camera and the light's direction they were drawn for.
+		struct KeptCascade {
+			Projection projection;
+			Transform3D transform;
+			real_t zfar = 0;
+			real_t split = 0;
+			real_t shadow_texel_size = 0;
+			real_t bias_scale = 0;
+			real_t range_begin = 0;
+			Vector2 uv_scale;
+			uint64_t frame = 0;
+			Vector3 camera;
+			Vector3 direction;
+		} kept_cascades[4];
 		void detect_light_intersects_multiple_cameras(uint32_t p_frame_id) {
 			// We need to detect the case where shadow updates are occurring
 			// more than once per frame. In this case, we need to turn off
@@ -1162,6 +1177,9 @@ public:
 
 			} cascades[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES]; //max 4 cascades
 			uint32_t cascade_count;
+			// The cascades culled and drawn this frame: those past it keep last frame's (the
+			// far cascades on every other frame, `far_cascades_every_other_frame`).
+			uint32_t drawn_cascade_count;
 
 		} shadows[RendererSceneRender::MAX_DIRECTIONAL_LIGHTS];
 
