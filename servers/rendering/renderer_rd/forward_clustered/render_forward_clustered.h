@@ -225,6 +225,8 @@ protected:
 		COLOR_PASS_FLAG_SEPARATE_SPECULAR = 1 << 1,
 		COLOR_PASS_FLAG_MULTIVIEW = 1 << 2,
 		COLOR_PASS_FLAG_MOTION_VECTORS = 1 << 3,
+		// The path tracer's transparency layer (with TRANSPARENT only).
+		COLOR_PASS_FLAG_TRANSPARENCY_LAYER = 1 << 4,
 	};
 
 	struct RenderElementInfo;
