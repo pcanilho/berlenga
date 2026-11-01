@@ -53,9 +53,36 @@ layout(set = 0, binding = 13, std430) readonly buffer FogLightBuffer {
 	FogLightData fog_lights[];
 };
 
-// The sun through the scene from a point in the air: 1 clear, 0 blocked, between for
-// a shadow-only caster's alpha (its any-hit keeps the transmittance in hit_t).
-float fog_shadow(vec3 p_origin, vec3 p_dir) {
+// The light grid (RenderRaytracing::build_light_grid, as raytracing_lights_inc.glsl
+// reads it): the lights that can reach a point.
+layout(set = 0, binding = 33, std430) readonly buffer FogLightGrid {
+	uint fog_light_grid[];
+};
+
+// The fog volumes with a FogMaterial (RT_FogVolumeData).
+struct FogVolumeData {
+	vec4 inv_xform[3]; // World to local, rows of an affine.
+	vec3 half_size;
+	uint shape; // 0 ellipsoid, 1 cone, 2 cylinder, 3 box, 4 world.
+	vec3 albedo;
+	float density;
+	vec3 emission;
+	float height_falloff;
+	vec3 origin;
+	float edge_fade;
+	vec3 aabb_min;
+	float _pad0;
+	vec3 aabb_max;
+	float _pad1;
+};
+
+layout(set = 0, binding = 34, std430) readonly buffer FogVolumeBuffer {
+	FogVolumeData fog_volumes[];
+};
+
+// From a point in the air towards a light: 1 clear, 0 blocked, between for a
+// shadow-only caster's alpha (its any-hit keeps the transmittance in hit_t).
+float fog_shadow(vec3 p_origin, vec3 p_dir, float p_max) {
 	PathState shadow_ps;
 	shadow_ps.radiance = vec3(0.0);
 	shadow_ps.throughput = vec3(0.0);
@@ -68,11 +95,11 @@ float fog_shadow(vec3 p_origin, vec3 p_dir) {
 #ifdef USE_SER
 	hitObjectEXT hitObject;
 	hitObjectTraceRayEXT(hitObject, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-			RT_MASK_SHADOW, 0, 0, 0, p_origin, 0.001, p_dir, 10000.0, 0);
+			RT_MASK_SHADOW, 0, 0, 0, p_origin, 0.001, p_dir, p_max, 0);
 	bool visible = !hitObjectIsHitEXT(hitObject);
 #else
 	traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-			RT_MASK_SHADOW, 0, 0, 0, p_origin, 0.001, p_dir, 10000.0, 0);
+			RT_MASK_SHADOW, 0, 0, 0, p_origin, 0.001, p_dir, p_max, 0);
 	bool visible = path_unpack(payload).radiance.x > 0.5;
 #endif
 	return visible ? clamp(payload.hit_t, 0.0, 1.0) : 0.0;
@@ -83,30 +110,330 @@ float fog_phase(float p_cos, float p_g) {
 	return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * p_g * p_cos, 1e-4), 1.5));
 }
 
-// K points along the primary ray, stratified with a per-pixel, per-frame offset; a
-// shadow ray from each to every directional light that lights the fog.
+// The medium at a point: extinction, scattering (per colour) and emission per metre.
+// The environment's fog, plus each FogMaterial volume as the froxel fog's fog pass
+// has it (volumetric_fog.glsl: the shapes' signed distances, the height falloff, the
+// edge fade, the cull mask).
+void fog_medium(vec3 p_x, uint p_volume_count, out float r_extinction, out vec3 r_scattering, out vec3 r_emission) {
+	float env_density = get_rt_param(RT_PARAM_FOG_DENSITY);
+	vec3 env_albedo = vec3(get_rt_param(RT_PARAM_FOG_ALBEDO_R), get_rt_param(RT_PARAM_FOG_ALBEDO_G), get_rt_param(RT_PARAM_FOG_ALBEDO_B));
+	r_extinction = env_density;
+	r_scattering = env_albedo * env_density;
+	r_emission = vec3(0.0);
+	for (uint i = 0u; i < p_volume_count; i++) {
+		FogVolumeData v = fog_volumes[i];
+		if (any(lessThan(p_x, v.aabb_min)) || any(greaterThan(p_x, v.aabb_max))) {
+			continue;
+		}
+		vec4 xh = vec4(p_x, 1.0);
+		vec3 lp = vec3(dot(v.inv_xform[0], xh), dot(v.inv_xform[1], xh), dot(v.inv_xform[2], xh));
+		vec3 hs = v.half_size;
+		float sdf = -1.0;
+		if (v.shape == 0u) {
+			float k0 = length(lp / hs);
+			float k1 = length(lp / (hs * hs));
+			sdf = k0 * (k0 - 1.0) / k1;
+		} else if (v.shape == 1u) {
+			float inv_height = 1.0 / max(0.001, hs.y);
+			float radius = 1.0 / max(0.001, (min(hs.x, hs.z) * 0.5));
+			float hypotenuse = sqrt(radius * radius + inv_height * inv_height);
+			vec2 c = vec2(radius / hypotenuse, inv_height / hypotenuse);
+			float q = length(lp.xz);
+			sdf = max(dot(c, vec2(q, lp.y - hs.y)), -hs.y - lp.y);
+		} else if (v.shape == 2u) {
+			vec2 d = abs(vec2(length(lp.xz), lp.y)) - vec2(min(hs.x, hs.z), hs.y);
+			sdf = min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+		} else if (v.shape == 3u) {
+			vec3 q = abs(lp) - hs;
+			sdf = length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+		}
+		float density = v.density * clamp(exp2(-v.height_falloff * (p_x.y - v.origin.y)), 0.0, 1.0);
+		if (v.shape <= 3u) {
+			float cull_mask = 1.0 - smoothstep(-0.1, 0.0, sdf);
+			if (cull_mask <= 0.0) {
+				continue;
+			}
+			density *= cull_mask * pow(clamp(-2.0 * sdf / max(min(min(hs.x, hs.y), hs.z) * 2.0, 1e-4), 0.0, 1.0), v.edge_fade);
+		}
+		r_extinction += density;
+		r_scattering += v.albedo * density;
+		r_emission += v.emission * clamp(density, 0.0, 1.0);
+	}
+	r_extinction = max(r_extinction, 0.0);
+	r_scattering = max(r_scattering, vec3(0.0));
+}
+
+// Where along [p_t0, p_t1] of the ray the light can reach: inside its range's sphere
+// and its spot cone (a single nappe under 90 degrees is convex, so this is one span).
+bool fog_light_span(vec3 p_ro, vec3 p_rd, FogLightData p_light, inout float r_t0, inout float r_t1) {
+	vec3 co = p_ro - p_light.position;
+	if (p_light.max_range_squared > 0.0) {
+		float b = dot(p_rd, co);
+		float c = dot(co, co) - p_light.max_range_squared;
+		float disc = b * b - c;
+		if (disc <= 0.0) {
+			return false;
+		}
+		float q = sqrt(disc);
+		r_t0 = max(r_t0, -b - q);
+		r_t1 = min(r_t1, -b + q);
+		if (r_t1 <= r_t0) {
+			return false;
+		}
+	}
+	if (p_light.type == 3u && p_light.cos_spot_angle > 0.0) {
+		vec3 ax = p_light.spot_direction;
+		float c2 = p_light.cos_spot_angle * p_light.cos_spot_angle;
+		float da = dot(p_rd, ax);
+		float ca = dot(co, ax);
+		float A = da * da - c2;
+		float B = 2.0 * (da * ca - dot(p_rd, co) * c2);
+		float C = ca * ca - dot(co, co) * c2;
+		float pts[4];
+		int np = 0;
+		pts[np++] = r_t0;
+		if (abs(A) > 1e-7) {
+			float disc = B * B - 4.0 * A * C;
+			if (disc > 0.0) {
+				float q = sqrt(disc);
+				float ra = (-B - q) / (2.0 * A);
+				float rb = (-B + q) / (2.0 * A);
+				float lo = min(ra, rb);
+				float hi = max(ra, rb);
+				if (lo > r_t0 && lo < r_t1) {
+					pts[np++] = lo;
+				}
+				if (hi > r_t0 && hi < r_t1) {
+					pts[np++] = hi;
+				}
+			}
+		} else if (abs(B) > 1e-7) {
+			float r = -C / B;
+			if (r > r_t0 && r < r_t1) {
+				pts[np++] = r;
+			}
+		}
+		pts[np++] = r_t1;
+		float lo = 1e30;
+		float hi = -1e30;
+		for (int j = 0; j < np - 1; j++) {
+			vec3 q = co + p_rd * (0.5 * (pts[j] + pts[j + 1]));
+			float qa = dot(q, ax);
+			if (qa >= 0.0 && qa * qa >= c2 * dot(q, q)) {
+				lo = min(lo, pts[j]);
+				hi = max(hi, pts[j + 1]);
+			}
+		}
+		r_t0 = lo;
+		r_t1 = hi;
+	}
+	return r_t1 > r_t0;
+}
+
+// What a positional light adds to the fog at a point, unshadowed and before the
+// medium's scattering: its radiance through the range window, the distance and the
+// cone, by the phase function.
+vec3 fog_light_inscatter(FogLightData p_light, vec3 p_x, vec3 p_dir, float p_g, out vec3 r_to_light, out float r_dist) {
+	vec3 to_l = p_light.position - p_x;
+	float d2 = dot(to_l, to_l);
+	r_dist = sqrt(d2);
+	r_to_light = to_l / max(r_dist, 1e-4);
+	if (p_light.max_range_squared > 0.0 && d2 > p_light.max_range_squared) {
+		return vec3(0.0);
+	}
+	float atten = min(pow(max(r_dist, 0.0001), -p_light.attenuation), 1.0);
+	if (p_light.inv_max_range >= 0.0) {
+		float nd = r_dist * p_light.inv_max_range;
+		nd *= nd;
+		nd *= nd;
+		nd = max(1.0 - nd, 0.0);
+		atten *= nd * nd;
+	}
+	if (p_light.type == 3u) {
+		float scos = dot(-r_to_light, p_light.spot_direction);
+		if (scos <= p_light.cos_spot_angle) {
+			return vec3(0.0);
+		}
+		float spot_rim = max(1e-4, (1.0 - scos) / (1.0 - p_light.cos_spot_angle));
+		atten *= 1.0 - pow(spot_rim, p_light.inv_spot_attenuation);
+	}
+	return p_light.emission * p_light.volumetric_energy * atten * fog_phase(dot(p_dir, r_to_light), p_g);
+}
+
+#define FOG_LIGHT_CANDIDATES 8
+
+// The in-scatter from the positional lights over one stretch [p_a, p_b] of the ray,
+// given a point p_t in it, uniform. Each light is integrated only where it can reach
+// (fog_light_span), its distance drawn by equiangular sampling (Kulla & Fajardo,
+// "Importance Sampling Techniques for Path Tracing in Participating Media", EGSR 2012),
+// which puts the samples near the light, where its 1 / d^2 is: what makes a headlight's
+// cone converge at a sample or two. The light is one of those that reach p_t (the light
+// grid's list there), picked by resampled importance sampling (Talbot et al. 2005) by its
+// unshadowed in-scatter over its span in closed form (the integral of 1 / (h^2 + s^2),
+// Sun et al., "A Practical Analytic Single Scattering Model", SIGGRAPH 2005). A light
+// whose span covers only part of the stretch is in the list at p_t only that part of the
+// time, so its estimate is divided by that share: unbiased.
+vec3 fog_positional(vec3 p_ro, vec3 p_rd, float p_a, float p_b, float p_t, float p_tau_a, float p_extinction, uint p_volume_count, float p_g, inout uint rng) {
+	vec3 x = p_ro + p_rd * p_t;
+	uint g_count = fog_light_grid[3];
+	uint g_start = 8u;
+	uint c_start = 0u;
+	uint c_count = 0u;
+	uvec3 dims = uvec3(fog_light_grid[0], fog_light_grid[1], fog_light_grid[2]);
+	if (dims.x != 0u) {
+		vec3 origin = uintBitsToFloat(uvec3(fog_light_grid[4], fog_light_grid[5], fog_light_grid[6]));
+		vec3 c = floor((x - origin) * uintBitsToFloat(fog_light_grid[7]));
+		if (all(greaterThanEqual(c, vec3(0.0))) && all(lessThan(c, vec3(dims)))) {
+			uvec3 ci = uvec3(c);
+			uint cell = ci.x + dims.x * (ci.y + dims.y * ci.z);
+			uint starts = 8u + g_count;
+			c_start = fog_light_grid[starts + cell];
+			c_count = fog_light_grid[starts + cell + 1u] - c_start;
+		}
+	}
+	uint n = g_count + c_count;
+	if (n == 0u) {
+		return vec3(0.0);
+	}
+	bool enumerate = n <= uint(FOG_LIGHT_CANDIDATES);
+	uint m = enumerate ? n : uint(FOG_LIGHT_CANDIDATES);
+	float w_scale = enumerate ? 1.0 : float(n) / float(m);
+	float w_sum = 0.0;
+	float sel_p_hat = 0.0;
+	uint sel = 0u;
+	float sel_t0 = 0.0;
+	float sel_t1 = 0.0;
+	for (uint i = 0u; i < m; i++) {
+		uint j = enumerate ? i : min(uint(rand(rng) * float(n)), n - 1u);
+		uint idx = j < g_count ? fog_light_grid[g_start + j] : fog_light_grid[c_start + (j - g_count)];
+		FogLightData light = fog_lights[idx];
+		if (light.type == 1u || light.volumetric_energy <= 0.0) {
+			continue;
+		}
+		float t0 = p_a;
+		float t1 = p_b;
+		if (!fog_light_span(p_ro, p_rd, light, t0, t1) || p_t < t0 || p_t > t1) {
+			continue;
+		}
+		float tc = dot(light.position - p_ro, p_rd);
+		float h = max(length(p_ro + p_rd * tc - light.position), 1e-3);
+		float line = (atan((t1 - tc) / h) - atan((t0 - tc) / h)) / h;
+		vec3 mid = p_ro + p_rd * clamp(tc, t0, t1);
+		float lum = dot(abs(light.emission), vec3(0.2126, 0.7152, 0.0722)) * light.volumetric_energy;
+		float p_hat = lum * line * fog_phase(dot(p_rd, normalize(light.position - mid)), p_g);
+		float w = p_hat * w_scale;
+		if (!(w > 0.0)) {
+			continue;
+		}
+		w_sum += w;
+		if (rand(rng) * w_sum < w) {
+			sel = idx;
+			sel_p_hat = p_hat;
+			sel_t0 = t0;
+			sel_t1 = t1;
+		}
+	}
+	if (w_sum <= 0.0) {
+		return vec3(0.0);
+	}
+
+	FogLightData light = fog_lights[sel];
+	// equiangular: t = tc + h tan(theta), theta uniform between the span's ends
+	float tc = dot(light.position - p_ro, p_rd);
+	float h = max(length(p_ro + p_rd * tc - light.position), 1e-3);
+	float th0 = atan((sel_t0 - tc) / h);
+	float th1 = atan((sel_t1 - tc) / h);
+	float ts = clamp(tc + h * tan(mix(th0, th1, rand(rng))), sel_t0, sel_t1);
+	float pdf = h / (max(th1 - th0, 1e-7) * (h * h + (ts - tc) * (ts - tc)));
+	vec3 xs = p_ro + p_rd * ts;
+
+	float ext_s;
+	vec3 scat_s;
+	vec3 emis_s;
+	fog_medium(xs, p_volume_count, ext_s, scat_s, emis_s);
+	if (all(lessThanEqual(scat_s, vec3(0.0)))) {
+		return vec3(0.0);
+	}
+	vec3 to_light;
+	float dist;
+	vec3 inscatter = fog_light_inscatter(light, xs, p_rd, p_g, to_light, dist);
+	if (all(lessThanEqual(abs(inscatter), vec3(0.0)))) {
+		return vec3(0.0);
+	}
+	float v = fog_shadow(xs, to_light, max(dist - 0.01, 0.002));
+	float transmittance = exp(-(p_tau_a + p_extinction * (ts - p_a)));
+	// the share of the stretch this light is listed over
+	float share = (sel_t1 - sel_t0) / max(p_b - p_a, 1e-6);
+	return scat_s * inscatter * v * transmittance / pdf / share * (w_sum / sel_p_hat);
+}
+
+// The fog along the primary ray, in-scatter in rgb and transmittance in a: K stretches
+// over the part of the ray the medium can be in (the environment's fog, or the fog
+// volumes' bounds), stratified with a per-pixel, per-frame offset. At each stretch's
+// point: the medium, the directional lights by a shadow ray each, the ambient light and
+// the emission; and the positional lights over the stretch (fog_positional). The
+// transmittance is taken piecewise constant over the stretches (ray marching, Novák et
+// al., "Monte Carlo Methods for Volumetric Light Transport Simulation", 2018).
 vec4 fog_march(vec3 p_origin, vec3 p_dir, float p_primary_t, uint p_samples, inout uint rng) {
-	float density = get_rt_param(RT_PARAM_FOG_DENSITY);
+	float env_density = get_rt_param(RT_PARAM_FOG_DENSITY);
+	uint volume_count = uint(get_rt_param(RT_PARAM_FOG_VOLUME_COUNT));
 	float reach = get_rt_param(RT_PARAM_FOG_LENGTH);
 	bool sky = p_primary_t < 0.0;
-	float seg = sky ? reach : min(p_primary_t, reach);
+	float t_end = sky ? reach : min(p_primary_t, reach);
 	float weight = sky ? get_rt_param(RT_PARAM_FOG_SKY_AFFECT) : 1.0;
-	if (seg <= 0.0 || density <= 0.0) {
+	if (t_end <= 0.0 || (env_density <= 0.0 && volume_count == 0u)) {
 		return vec4(0.0, 0.0, 0.0, 1.0);
 	}
-	vec3 albedo = vec3(get_rt_param(RT_PARAM_FOG_ALBEDO_R), get_rt_param(RT_PARAM_FOG_ALBEDO_G), get_rt_param(RT_PARAM_FOG_ALBEDO_B));
+	// where the medium can be: all the way in the environment's fog, else the span of
+	// the fog volumes' bounds, so the camera's own clear air takes no samples
+	float t0 = 0.0;
+	float t1 = t_end;
+	if (env_density <= 0.0) {
+		float lo = 1e30;
+		float hi = -1e30;
+		vec3 inv_dir = 1.0 / max(abs(p_dir), vec3(1e-8)) * sign(p_dir + vec3(1e-12));
+		for (uint i = 0u; i < volume_count; i++) {
+			vec3 ta = (fog_volumes[i].aabb_min - p_origin) * inv_dir;
+			vec3 tb = (fog_volumes[i].aabb_max - p_origin) * inv_dir;
+			vec3 tmin = min(ta, tb);
+			vec3 tmax = max(ta, tb);
+			float enter = max(max(tmin.x, tmin.y), tmin.z);
+			float leave = min(min(tmax.x, tmax.y), tmax.z);
+			if (leave > max(enter, 0.0)) {
+				lo = min(lo, max(enter, 0.0));
+				hi = max(hi, leave);
+			}
+		}
+		t0 = max(lo, 0.0);
+		t1 = min(hi, t_end);
+	}
+	if (t1 <= t0) {
+		return vec4(0.0, 0.0, 0.0, 1.0);
+	}
+
 	float g = get_rt_param(RT_PARAM_FOG_ANISOTROPY);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
-	float dx = seg / float(p_samples);
+	vec3 ambient = vec3(get_rt_param(RT_PARAM_FOG_AMBIENT_R), get_rt_param(RT_PARAM_FOG_AMBIENT_G), get_rt_param(RT_PARAM_FOG_AMBIENT_B));
+	float dx = (t1 - t0) / float(p_samples);
 	float offset = rand(rng);
 	vec3 scatter = vec3(0.0);
+	float tau = 0.0; // optical depth to the stretch's start
 	[[dont_unroll]] for (uint i = 0u; i < p_samples; i++) {
-		float t = (float(i) + offset) * dx;
+		float a = t0 + float(i) * dx;
+		float t = a + offset * dx;
 		vec3 x = p_origin + p_dir * t;
-		float transmittance = exp(-density * t);
+		float extinction;
+		vec3 scattering;
+		vec3 emission;
+		fog_medium(x, volume_count, extinction, scattering, emission);
+		float transmittance = exp(-(tau + extinction * (t - a)));
+		// the directional lights lead the light buffer
 		[[dont_unroll]] for (uint li = 0u; li < light_count; li++) {
 			FogLightData light = fog_lights[li];
-			if (light.type != 1u || light.volumetric_energy <= 0.0) {
+			if (light.type != 1u) {
+				break;
+			}
+			if (light.volumetric_energy <= 0.0 || all(lessThanEqual(scattering, vec3(0.0)))) {
 				continue;
 			}
 			// a direction in the sun's disc, so the shafts' edges are as soft as the shadows
@@ -119,17 +446,19 @@ vec4 fog_march(vec3 p_origin, vec3 p_dir, float p_primary_t, uint p_samples, ino
 			vec3 tangent = normalize(abs(axis.y) < 0.999 ? cross(axis, vec3(0.0, 1.0, 0.0)) : cross(axis, vec3(1.0, 0.0, 0.0)));
 			vec3 bitangent = cross(axis, tangent);
 			vec3 L = normalize(tangent * (sin_t * cos(phi)) + bitangent * (sin_t * sin(phi)) + axis * cos_t);
-			float v = fog_shadow(x, L);
-			scatter += light.emission * light.volumetric_energy * fog_phase(dot(p_dir, L), g) * v * transmittance;
+			float v = fog_shadow(x, L, 10000.0);
+			scatter += scattering * light.emission * light.volumetric_energy * fog_phase(dot(p_dir, L), g) * v * transmittance * dx;
 		}
+		// the sky's and the room's light, which no shadow ray stops, and the medium's own
+		scatter += (scattering * ambient + emission) * transmittance * dx;
+		scatter += fog_positional(p_origin, p_dir, a, a + dx, t, tau, extinction, volume_count, g, rng);
+		tau += extinction * dx;
 	}
-	scatter *= albedo * density * dx * weight;
-	float through = sky ? mix(1.0, exp(-density * seg), weight) : exp(-density * seg);
-	// the sky's and the room's light in the fog, which no shadow ray stops: what it adds
-	// over the segment is that light times the share it takes out, 1 - transmittance
-	vec3 ambient = vec3(get_rt_param(RT_PARAM_FOG_AMBIENT_R), get_rt_param(RT_PARAM_FOG_AMBIENT_G), get_rt_param(RT_PARAM_FOG_AMBIENT_B));
-	scatter += albedo * ambient * (1.0 - through);
-	return vec4(scatter, through);
+	float through = exp(-tau);
+	if (sky) {
+		through = mix(1.0, through, weight);
+	}
+	return vec4(scatter * weight, through);
 }
 
 void main() {
@@ -224,13 +553,20 @@ void main() {
 
 	vec3 final_radiance = total_radiance / float(samples_per_pixel);
 
-	imageStore(image, ivec2(pixel), vec4(final_radiance, 1.0));
-
 	uint fog_samples = uint(get_rt_param(RT_PARAM_FOG_SAMPLES));
 	if (fog_samples > 0u) {
 		uint fog_rng = init_rng(pixel, frame_index, 977u);
-		imageStore(rt_fog_image, ivec2(pixel), fog_march(origin.xyz, normalize(direction.xyz), primary_t, fog_samples, fog_rng));
+		vec4 fog = fog_march(origin.xyz, normalize(direction.xyz), primary_t, fog_samples, fog_rng);
+#ifdef DLSS_RR_ENABLED
+		// laid over Ray Reconstruction's output, filtered (_composite_transparency)
+		imageStore(rt_fog_image, ivec2(pixel), fog);
+#else
+		// no layer to lay it in: into the frame, noisier but there
+		final_radiance = final_radiance * fog.a + fog.rgb;
+#endif
 	}
+
+	imageStore(image, ivec2(pixel), vec4(final_radiance, 1.0));
 }
 
 #[miss]
