@@ -3373,6 +3373,9 @@
 		<member name="rendering/reflections/reflection_atlas/reflection_size.mobile" type="int" setter="" getter="" default="128">
 			Lower-end override for [member rendering/reflections/reflection_atlas/reflection_size] on mobile devices, due to performance concerns or driver support.
 		</member>
+		<member name="rendering/reflections/reflection_probes/update_always_faces_per_frame" type="int" setter="" getter="" default="6">
+			Number of cubemap faces re-rendered per frame for a [ReflectionProbe] using [constant ReflectionProbe.UPDATE_ALWAYS]. With [code]6[/code] (the default), every face is rendered every frame. Lower values render the faces round robin, so a full refresh takes [code]6 / value[/code] frames, while the radiance filter still runs every frame. This lowers the cost of a moving probe at the price of reflections lagging by a few frames. Only applies while a single [ReflectionProbe] is updated in a frame.
+		</member>
 		<member name="rendering/reflections/sky_reflections/fast_filter_high_quality" type="bool" setter="" getter="" default="false">
 			Use a higher quality variant of the fast filtering algorithm. Significantly slower than using default quality, but results in smoother reflections. Should only be used when the scene is especially detailed.
 		</member>
