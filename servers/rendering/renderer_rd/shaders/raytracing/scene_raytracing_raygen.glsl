@@ -234,11 +234,11 @@ void main() {
 
 #ifdef USE_SER
 			hitObjectEXT hitObject;
-			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, RT_VIS_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, t_far, 0);
+			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, t_far, 0);
 			reorderThreadEXT(hitObject);
 			hitObjectExecuteShaderEXT(hitObject, 0);
 #else
-			traceRayEXT(tlas, RT_RAY_FLAGS, RT_VIS_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, t_far, 0);
+			traceRayEXT(tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, t_far, 0);
 #endif
 
 			ps = path_unpack(payload);

@@ -17,6 +17,9 @@ layout(constant_id = 0) const uint RT_FLAGS = 0u;
 #define RT_VIS_MASK 0x01u
 #define RT_TMASK_TRANSPARENT 0x02u
 #define RT_SHADOW_GROUPS_MASK 0xFCu
+// Bounce rays also meet shadow-only instances (hidden from the camera, as in raster), so
+// a hidden wall or ceiling still bounces light back into the room.
+#define RT_BOUNCE_MASK (RT_VIS_MASK | RT_SHADOW_GROUPS_MASK)
 
 // Sample mode: 0/1/2 = 1/2/4 samples (compile-time), 3 = dynamic (RT_PARAM_SAMPLE_COUNT).
 #define RT_SAMPLE_MODE_SHIFT 26u
