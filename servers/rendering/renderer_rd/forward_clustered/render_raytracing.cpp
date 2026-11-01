@@ -1857,6 +1857,12 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	if (emission_energy_var.get_type() == Variant::FLOAT) {
 		mat.emission_strength = emission_energy_var;
 	}
+	// Emission without a texture glows by its colour alone, but only while the
+	// material has emission on: BaseMaterial3D keeps the colour param set when
+	// emission is off, and the shader then doesn't declare it.
+	if (material_storage->material_shader_has_uniform(p_material_rid, "emission")) {
+		mat.flags |= RT_MAT_FLAG_HAS_EMISSION;
+	}
 
 	// UV1 scale and offset (vec3 in Godot, we only use xy).
 	Variant uv1_scale_var = material_storage->material_get_param(p_material_rid, "uv1_scale");

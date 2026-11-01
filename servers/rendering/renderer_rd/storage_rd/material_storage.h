@@ -537,6 +537,14 @@ public:
 		return material->shader_id;
 	}
 
+	// True if the material's shader declares the uniform. A BaseMaterial3D
+	// declares a feature's uniforms only while the feature is on, though it
+	// keeps setting their params either way.
+	_FORCE_INLINE_ bool material_shader_has_uniform(RID p_material, const StringName &p_uniform) {
+		Material *material = material_owner.get_or_null(p_material);
+		return material && material->shader && material->shader->data && material->shader->data->uniforms.has(p_uniform);
+	}
+
 	_FORCE_INLINE_ MaterialData *material_get_data(RID p_material, ShaderType p_shader_type) {
 		Material *material = material_owner.get_or_null(p_material);
 		if (!material || material->shader_type != p_shader_type) {
