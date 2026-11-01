@@ -2763,7 +2763,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 			}
 
 			if (mat_data->rt_sbt_offset > 0) {
-				// Custom shader: enable any-hit if it uses alpha clip or has a hint_albedo texture.
+				// Custom shader: enable any-hit if it writes ALPHA (or a scissor or hash) or has a hint_albedo texture.
 				const SceneShaderRaytracing::CustomShaderEntry *cse =
 						rt_shader_singleton->get_custom_shader_entry(mat_data->rt_sbt_offset);
 				if (!cse || (!cse->uses_alpha_clip && cse->alpha_texture_buffer_offset == UINT32_MAX)) {
