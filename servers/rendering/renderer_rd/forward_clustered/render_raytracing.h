@@ -86,7 +86,11 @@ struct alignas(16) RT_GeometryData {
 	// For deformed geometry: previous-frame position buffer used for motion vectors.
 	uint32_t prev_vertex_buffer_address_lo;
 	uint32_t prev_vertex_buffer_address_hi;
-	uint32_t _pad[5];
+	// The positions the BLAS was built from, float3, when they aren't the vertex
+	// buffer's (a flat compressed surface's, decoded to mesh units); 0 otherwise.
+	uint32_t blas_position_address_lo = 0; // Decoded float3 BLAS positions, 0 when the vertex buffer is read directly.
+	uint32_t blas_position_address_hi = 0;
+	uint32_t _pad[3] = {};
 };
 static_assert(sizeof(RT_GeometryData) == 128, "RT_GeometryData must be 128 bytes for std430");
 
