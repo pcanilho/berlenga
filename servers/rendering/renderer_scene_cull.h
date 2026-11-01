@@ -664,6 +664,9 @@ public:
 		SelfList<InstanceReflectionProbeData> update_list;
 
 		int render_step;
+		int slice_face = 0; // UPDATE_ALWAYS time-sliced: the next cubemap face to render.
+		int slice_atlas_index = -1; // The atlas slot its faces were last rendered for (-1: render all six).
+		uint64_t slice_pass = 0; // render_probes() pass that last rendered it.
 
 		InstanceReflectionProbeData() :
 				update_list(this) {
@@ -1237,7 +1240,8 @@ public:
 	bool _scene_particles_request_process(CullData &p_cull_data, RID p_particles);
 	_FORCE_INLINE_ bool _visibility_parent_check(const CullData &p_cull_data, const InstanceData &p_instance_data);
 
-	bool _render_reflection_probe_step(Instance *p_instance, int p_step);
+	bool _render_reflection_probe_step(Instance *p_instance, int p_step, int p_face_from = 0, int p_face_count = 6);
+	uint64_t probe_pass = 0;
 
 	void _render_scene(const RendererSceneRender::CameraData *p_camera_data, const Ref<RenderSceneBuffers> &p_render_buffers, RID p_environment, RID p_force_camera_attributes, RID p_compositor, uint32_t p_visible_layers, RID p_scenario, RID p_viewport, RID p_shadow_atlas, RID p_reflection_probe, int p_reflection_probe_pass, float p_screen_mesh_lod_threshold, float p_window_output_max_value, bool p_using_shadows = true, RenderingServerTypes::RenderInfo *r_render_info = nullptr);
 	void render_empty_scene(const Ref<RenderSceneBuffers> &p_render_buffers, RID p_scenario, RID p_shadow_atlas, float p_window_output_max_value);

@@ -4030,7 +4030,7 @@ void RendererSceneCull::render_empty_scene(const Ref<RenderSceneBuffers> &p_rend
 #endif
 }
 
-bool RendererSceneCull::_render_reflection_probe_step(Instance *p_instance, int p_step) {
+bool RendererSceneCull::_render_reflection_probe_step(Instance *p_instance, int p_step, int p_face_from, int p_face_count) {
 	InstanceReflectionProbeData *reflection_probe = static_cast<InstanceReflectionProbeData *>(p_instance->base_data);
 	Scenario *scenario = p_instance->scenario;
 	ERR_FAIL_NULL_V(scenario, true);
@@ -4080,6 +4080,9 @@ bool RendererSceneCull::_render_reflection_probe_step(Instance *p_instance, int 
 			Vector3 edge = view_normals[face] * probe_size / 2;
 			float distance = Math::abs(view_normals[face].dot(edge) - view_normals[face].dot(origin_offset));
 			max_distance = MAX(max_distance, distance);
+			if ((int)face < p_face_from || (int)face >= p_face_from + p_face_count) {
+				continue; // Time-sliced: this face keeps what it last rendered (the far plane is as unsliced).
+			}
 
 			// Render cubemap side.
 			Projection cm;
@@ -4117,6 +4120,15 @@ void RendererSceneCull::render_probes() {
 	if (ref_probe) {
 		RENDER_TIMESTAMP("Render ReflectionProbes");
 
+		// UPDATE_ALWAYS time-slicing (see below): 1, 2 or 3 faces a frame, 6 = off.
+		int faces_per_frame = GLOBAL_GET_CACHED(int, "rendering/reflections/reflection_probes/update_always_faces_per_frame");
+		faces_per_frame = faces_per_frame >= 3 ? (faces_per_frame >= 6 ? 6 : 3) : MAX(faces_per_frame, 1);
+		probe_pass++;
+		int probe_count = 0;
+		for (SelfList<InstanceReflectionProbeData> *rp = ref_probe; rp; rp = rp->next()) {
+			probe_count++;
+		}
+
 		while (ref_probe) {
 			SelfList<InstanceReflectionProbeData> *next = ref_probe->next();
 			RID base = ref_probe->self()->owner->base;
@@ -4137,6 +4149,29 @@ void RendererSceneCull::render_probes() {
 					busy = true; // Do not render another one of this kind.
 				} break;
 				case RSE::REFLECTION_PROBE_UPDATE_ALWAYS: {
+					// Time-sliced (rendering/reflections/reflection_probes/update_always_faces_per_frame < 6):
+					// only some of the cubemap's faces are re-rendered each frame, round robin, and the
+					// whole cube is converted and filtered every frame, as Unity's "individual faces"
+					// time-slicing does. Only for a lone real-time probe: real-time probes share the
+					// atlas's cube render target, so another would overwrite the faces kept.
+					InstanceReflectionProbeData *rp = ref_probe->self();
+					if (faces_per_frame < 6 && probe_count == 1) {
+						// first time, a pass missed (hidden, other probes) or its atlas slot lost: all six
+						bool whole = rp->slice_atlas_index == -1 || rp->slice_pass + 1 != probe_pass || !RSG::light_storage->reflection_probe_has_atlas_index(rp->instance);
+						int from = whole ? 0 : rp->slice_face;
+						bool done = _render_reflection_probe_step(rp->owner, 0, from, whole ? 6 : faces_per_frame);
+						int step = 1;
+						while (!done) {
+							done = _render_reflection_probe_step(rp->owner, step);
+							step++;
+						}
+						rp->slice_face = whole ? 0 : (from + faces_per_frame) % 6;
+						rp->slice_pass = probe_pass;
+						rp->slice_atlas_index = RSG::light_storage->reflection_probe_has_atlas_index(rp->instance) ? 0 : -1;
+						done_list.push_back(ref_probe);
+						break;
+					}
+					rp->slice_atlas_index = -1;
 					int step = 0;
 					bool done = false;
 					while (!done) {
