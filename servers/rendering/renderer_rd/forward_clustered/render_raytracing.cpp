@@ -31,6 +31,7 @@
 #include "core/config/project_settings.h"
 #include "core/math/math_funcs.h"
 #include "core/math/math_funcs_binary.h"
+#include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/environment/sky.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h"
 #include "servers/rendering/renderer_rd/forward_clustered/scene_shader_raytracing.h"
@@ -148,6 +149,9 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (p_state->light_grid_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->light_grid_buffer);
 	}
+	if (p_state->fog_volume_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(p_state->fog_volume_buffer);
+	}
 	if (p_state->params_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->params_buffer);
 	}
@@ -200,8 +204,11 @@ bool RenderRaytracing::rt_fog_active(const RenderDataRD *p_render_data) const {
 	}
 	RendererEnvironmentStorage *env_storage = RendererEnvironmentStorage::get_singleton();
 	RID env = p_render_data->environment;
-	return env_storage->environment_get_volumetric_fog_enabled(env) && env_storage->environment_get_volumetric_fog_density(env) > 0.0f &&
-			(int)env_storage->environment_get_pathtracing_denoiser(env) == 1 &&
+	// The environment's own fog, or fog volumes (the usual way to haze only part of a
+	// scene). With Ray Reconstruction the fog is laid over its output; without, the
+	// raygen adds it to the frame itself, noisier but there.
+	const bool medium = env_storage->environment_get_volumetric_fog_density(env) > 0.0f || (p_render_data->fog_volumes && p_render_data->fog_volumes->size() > 0);
+	return env_storage->environment_get_volumetric_fog_enabled(env) && medium &&
 			GLOBAL_GET_CACHED(int, "rendering/pathtracing/volumetric_fog_samples") > 0;
 }
 
@@ -3130,6 +3137,8 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, Loca
 		}
 		ld.specular_amount = ls->light_get_param(base, RSE::LIGHT_PARAM_SPECULAR) * 2.0f; // Matches rasterizer convention (light_storage.cpp), normalizes 0.5 default to 1.0.
 		ld.indirect_energy = ls->light_get_param(base, RSE::LIGHT_PARAM_INDIRECT_ENERGY);
+		// The traced volumetric fog's share of this light, in the padding float.
+		ld._pad0 = ls->light_get_param(base, RSE::LIGHT_PARAM_VOLUMETRIC_FOG_ENERGY);
 
 		if (type == RSE::LIGHT_SPOT) {
 			ld.inv_spot_attenuation = 1.0f / MAX(0.001f, ls->light_get_param(base, RSE::LIGHT_PARAM_SPOT_ATTENUATION));
@@ -3150,6 +3159,100 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, Loca
 	}
 
 	return rt_light_count;
+}
+
+uint32_t RenderRaytracing::gather_fog_volumes(const RenderDataRD *p_render_data, LocalVector<RT_FogVolumeData> &r_volumes) const {
+	r_volumes.clear();
+	if (!p_render_data || !p_render_data->fog_volumes) {
+		return 0;
+	}
+	RendererRD::Fog *fog = RendererRD::Fog::get_singleton();
+	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
+	const PagedArray<RID> &volumes = *p_render_data->fog_volumes;
+	for (uint32_t i = 0; i < volumes.size() && r_volumes.size() < RT_FOG_VOLUMES_MAX; i++) {
+		if (!fog->owns_fog_volume_instance(volumes[i])) {
+			continue;
+		}
+		RID volume = fog->fog_volume_instance_get_volume(volumes[i]);
+		Transform3D xform = fog->fog_volume_instance_get_transform(volumes[i]);
+		RSE::FogVolumeShape shape = fog->fog_volume_get_shape(volume);
+		Vector3 size = fog->fog_volume_get_size(volume);
+		RID material = fog->fog_volume_get_material(volume);
+
+		// A FogMaterial's parameters; a fog shader of its own can't be traced.
+		float density = 1.0f;
+		Color albedo(1, 1, 1);
+		Color emission(0, 0, 0);
+		float height_falloff = 0.0f;
+		float edge_fade = 0.1f;
+		if (material.is_valid()) {
+			if (!material_storage->material_shader_has_uniform(material, "density") || !material_storage->material_shader_has_uniform(material, "edge_fade")) {
+				WARN_PRINT_ONCE("Path tracing: a fog volume with a fog shader of its own is left out of the traced fog; only FogMaterial volumes are traced.");
+				continue;
+			}
+			Variant v = material_storage->material_get_param(material, "density");
+			if (v.get_type() == Variant::FLOAT || v.get_type() == Variant::INT) {
+				density = v;
+			}
+			v = material_storage->material_get_param(material, "albedo");
+			if (v.get_type() == Variant::COLOR) {
+				albedo = ((Color)v).srgb_to_linear();
+			}
+			v = material_storage->material_get_param(material, "emission");
+			if (v.get_type() == Variant::COLOR) {
+				emission = ((Color)v).srgb_to_linear();
+			}
+			v = material_storage->material_get_param(material, "height_falloff");
+			if (v.get_type() == Variant::FLOAT || v.get_type() == Variant::INT) {
+				height_falloff = v;
+			}
+			v = material_storage->material_get_param(material, "edge_fade");
+			if (v.get_type() == Variant::FLOAT || v.get_type() == Variant::INT) {
+				edge_fade = v;
+			}
+			v = material_storage->material_get_param(material, "density_texture");
+			if (v.get_type() == Variant::OBJECT || (v.get_type() == Variant::RID && ((RID)v).is_valid())) {
+				WARN_PRINT_ONCE("Path tracing: a FogMaterial's density_texture isn't traced; the volume traces as if it were white.");
+			}
+		}
+		if (density == 0.0f && emission.get_luminance() <= 0.0f) {
+			continue;
+		}
+
+		RT_FogVolumeData d = {};
+		Transform3D inv = xform.affine_inverse();
+		for (int r = 0; r < 3; r++) {
+			d.inv_xform[r * 4 + 0] = inv.basis.rows[r].x;
+			d.inv_xform[r * 4 + 1] = inv.basis.rows[r].y;
+			d.inv_xform[r * 4 + 2] = inv.basis.rows[r].z;
+			d.inv_xform[r * 4 + 3] = inv.origin[r];
+		}
+		d.half_size[0] = size.x * 0.5f;
+		d.half_size[1] = size.y * 0.5f;
+		d.half_size[2] = size.z * 0.5f;
+		d.shape = uint32_t(shape);
+		d.albedo[0] = albedo.r;
+		d.albedo[1] = albedo.g;
+		d.albedo[2] = albedo.b;
+		d.density = density;
+		d.emission[0] = emission.r;
+		d.emission[1] = emission.g;
+		d.emission[2] = emission.b;
+		d.height_falloff = height_falloff;
+		d.origin[0] = xform.origin.x;
+		d.origin[1] = xform.origin.y;
+		d.origin[2] = xform.origin.z;
+		d.edge_fade = edge_fade;
+		AABB box = shape == RSE::FOG_VOLUME_SHAPE_WORLD ? AABB(Vector3(-1e9, -1e9, -1e9), Vector3(2e9, 2e9, 2e9)) : xform.xform(fog->fog_volume_get_aabb(volume));
+		d.aabb_min[0] = box.position.x;
+		d.aabb_min[1] = box.position.y;
+		d.aabb_min[2] = box.position.z;
+		d.aabb_max[0] = box.position.x + box.size.x;
+		d.aabb_max[1] = box.position.y + box.size.y;
+		d.aabb_max[2] = box.position.z + box.size.z;
+		r_volumes.push_back(d);
+	}
+	return r_volumes.size();
 }
 
 // The lights the shaders pick from at a point: a world grid over the lights' reach,
@@ -3438,6 +3541,22 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_FOG_AMBIENT_R] = ambient.r + emission.r;
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_FOG_AMBIENT_G] = ambient.g + emission.g;
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_FOG_AMBIENT_B] = ambient.b + emission.b;
+
+				// The fog volumes (binding 34), grown by doubling.
+				LocalVector<RT_FogVolumeData> &volumes = rt_fog_volume_scratch;
+				uint32_t volume_count = gather_fog_volumes(p_render_data, volumes);
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_FOG_VOLUME_COUNT] = float(volume_count);
+				if (volume_count > 0) {
+					if (!p_state->fog_volume_buffer.is_valid() || p_state->fog_volume_buffer_capacity < volume_count) {
+						if (p_state->fog_volume_buffer.is_valid()) {
+							RD::get_singleton()->free_rid(p_state->fog_volume_buffer);
+						}
+						p_state->fog_volume_buffer_capacity = MAX(8u, Math::next_power_of_2(volume_count));
+						p_state->fog_volume_buffer = RD::get_singleton()->storage_buffer_create(p_state->fog_volume_buffer_capacity * sizeof(RT_FogVolumeData));
+						RD::get_singleton()->set_resource_name(p_state->fog_volume_buffer, "RT Fog Volumes");
+					}
+					RD::get_singleton()->buffer_update(p_state->fog_volume_buffer, 0, volume_count * sizeof(RT_FogVolumeData), volumes.ptr());
+				}
 			}
 		}
 
@@ -3605,6 +3724,19 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		if (p_state->light_grid_buffer.is_valid()) {
 			u.append_id(p_state->light_grid_buffer);
+		} else {
+			u.append_id(RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
+		}
+		uniforms.push_back(u);
+	}
+
+	// Binding 34: the fog volumes (SSBO, RT_FogVolumeData).
+	{
+		RD::Uniform u;
+		u.binding = 34;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		if (p_state->fog_volume_buffer.is_valid()) {
+			u.append_id(p_state->fog_volume_buffer);
 		} else {
 			u.append_id(RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		}

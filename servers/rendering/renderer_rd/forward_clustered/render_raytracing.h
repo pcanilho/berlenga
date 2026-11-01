@@ -149,6 +149,25 @@ struct alignas(16) RT_LightData {
 };
 static_assert(sizeof(RT_LightData) == 80, "RT_LightData must be 80 bytes for std430");
 
+// A fog volume with a FogMaterial, for the traced fog (binding 34). Must match GLSL
+// FogVolumeData (std430, 144 bytes).
+struct alignas(16) RT_FogVolumeData {
+	float inv_xform[12]; // World to the volume's local space, three rows of an affine.
+	float half_size[3];
+	uint32_t shape; // RSE::FogVolumeShape.
+	float albedo[3];
+	float density;
+	float emission[3];
+	float height_falloff;
+	float origin[3]; // The volume's position (the height falloff's base).
+	float edge_fade;
+	float aabb_min[3]; // World bounds.
+	float _pad0;
+	float aabb_max[3];
+	float _pad1;
+};
+static_assert(sizeof(RT_FogVolumeData) == 144, "RT_FogVolumeData must be 144 bytes for std430");
+
 enum {
 	// Lights in the traced light buffer, at most. The shaders sample them through a
 	// world grid of per-cell light lists with resampled importance sampling
@@ -159,6 +178,7 @@ enum {
 	RT_LIGHT_GRID_MAX_CELLS = 32768,
 	RT_LIGHT_GRID_MAX_ENTRIES = 1 << 20,
 	RT_LIGHT_GRID_HEADER = 8,
+	RT_FOG_VOLUMES_MAX = 64,
 };
 
 enum {
@@ -355,6 +375,8 @@ struct RTViewportState {
 	uint32_t light_buffer_capacity = 0; // Lights.
 	RID light_grid_buffer;
 	uint32_t light_grid_buffer_capacity = 0; // uints.
+	RID fog_volume_buffer;
+	uint32_t fog_volume_buffer_capacity = 0; // Volumes.
 	RID params_buffer;
 	RID scene_uniform_set;
 
@@ -525,6 +547,9 @@ public:
 	// The world grid of light lists the shaders pick lights from (layout in
 	// raytracing_lights_inc.glsl).
 	static void build_light_grid(const LocalVector<RT_LightData> &p_lights, LocalVector<uint32_t> &r_grid);
+	// The fog volumes the traced fog marches through, at most RT_FOG_VOLUMES_MAX.
+	uint32_t gather_fog_volumes(const RenderDataRD *p_render_data, LocalVector<RT_FogVolumeData> &r_volumes) const;
+	LocalVector<RT_FogVolumeData> rt_fog_volume_scratch;
 	// Kept between frames so gathering allocates nothing once warm.
 	LocalVector<RT_LightData> rt_light_scratch;
 	LocalVector<uint32_t> rt_light_grid_scratch;

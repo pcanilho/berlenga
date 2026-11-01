@@ -108,6 +108,7 @@ public:
 	static constexpr int RT_PARAM_FOG_SKY_AFFECT = 10;
 	static constexpr int RT_PARAM_FOG_SAMPLES = 11;
 	// Indices 12-13 reserved for future use.
+	static constexpr int RT_PARAM_FOG_VOLUME_COUNT = 12;
 	static constexpr int RT_PARAM_LIGHT_COUNT = 14;
 	static constexpr int RT_PARAM_FRAME_INDEX = 15;
 	static constexpr int RT_PARAM_FOG_AMBIENT_R = 16;

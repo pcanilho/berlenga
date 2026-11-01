@@ -28,7 +28,8 @@
 #define RT_PARAM_FOG_LENGTH 9 // metres marched, at most
 #define RT_PARAM_FOG_SKY_AFFECT 10
 #define RT_PARAM_FOG_SAMPLES 11 // points (and shadow rays) a pixel; 0 off
-// Indices 12-13 reserved for future use
+#define RT_PARAM_FOG_VOLUME_COUNT 12 // fog volumes in the fog volume buffer (binding 34)
+// Index 13 reserved for future use
 #define RT_PARAM_LIGHT_COUNT 14 // rt_params[3].z - Number of active lights in light buffer
 #define RT_PARAM_FRAME_INDEX 15 // rt_params[3].w - Frame counter for temporal variation
 // 16-18: the light the fog takes from the sky and the room (the environment's ambient

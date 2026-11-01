@@ -288,6 +288,12 @@ public:
 		return fvi->volume;
 	}
 
+	Transform3D fog_volume_instance_get_transform(RID p_fog_volume_instance) const {
+		Fog::FogVolumeInstance *fvi = fog_volume_instance_owner.get_or_null(p_fog_volume_instance);
+		ERR_FAIL_NULL_V(fvi, Transform3D());
+		return fvi->transform;
+	}
+
 	Vector3 fog_volume_instance_get_position(RID p_fog_volume_instance) const {
 		Fog::FogVolumeInstance *fvi = fog_volume_instance_owner.get_or_null(p_fog_volume_instance);
 		ERR_FAIL_NULL_V(fvi, Vector3());
