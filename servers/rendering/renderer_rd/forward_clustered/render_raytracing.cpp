@@ -30,6 +30,7 @@
 
 #include "core/config/project_settings.h"
 #include "core/math/math_funcs.h"
+#include "core/math/math_funcs_binary.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
 #include "core/templates/radix_sort.h"
@@ -589,6 +590,9 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	}
 	if (p_state->light_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->light_buffer);
+	}
+	if (p_state->light_grid_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(p_state->light_grid_buffer);
 	}
 	if (p_state->params_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->params_buffer);
@@ -5388,6 +5392,161 @@ void RenderRaytracing::build_decal_volumes(RTViewportState *p_state, const Rende
 // Light gathering
 // ---------------------------------------------------------------------------
 
+// The lights the shaders pick from at a point: a world grid over the lights' reach,
+// each cell listing the lights whose range sphere meets it, after the world-space
+// light grids of ReGIR (Boksansky, Jukarainen & Wyman, "Rendering Many Lights with
+// Grid-Based Reservoirs", Ray Tracing Gems II, 2021) and of clustered shading (Olsson,
+// Billeter & Assarsson 2012). Positional lights without a range are in every cell's
+// list; directional lights are sampled on their own and left out. The shaders
+// resample a few candidates from the point's list by their unshadowed contribution (Talbot et al., "Importance Resampling for Global
+// Illumination", EGSR 2005), so a point near ten of a thousand lights picks among those
+// ten. Layout, in uints:
+//   [0..2] cells along x, y, z (0: no grid), [3] the global count G,
+//   [4..6] the grid's origin, [7] 1 / cell size (floats' bits),
+//   [8, 8 + G) the global lights' indices,
+//   [8 + G, 8 + G + cells + 1) each cell's start in this array, then its end,
+//   then the cells' lists.
+void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p_count, LocalVector<uint32_t> &r_grid) {
+	r_grid.clear();
+	LocalVector<uint32_t> global;
+	LocalVector<uint32_t> bounded;
+	LocalVector<float> ranges;
+	AABB bounds;
+	for (uint32_t i = 0; i < p_count; i++) {
+		const RT_LightData &l = p_lights[i];
+		if (l.masks.type == RT_LIGHT_TYPE_DIRECTIONAL) {
+			continue; // Sampled in their own group.
+		}
+		if (l.range <= 0.0f) {
+			global.push_back(i);
+			continue;
+		}
+		float r = l.range;
+		AABB a(Vector3(l.position[0], l.position[1], l.position[2]) - Vector3(r, r, r), Vector3(r, r, r) * 2.0f);
+		bounds = bounded.is_empty() ? a : bounds.merge(a);
+		bounded.push_back(i);
+		ranges.push_back(r);
+	}
+
+	r_grid.resize(RT_LIGHT_GRID_HEADER);
+	for (uint32_t i = 0; i < RT_LIGHT_GRID_HEADER; i++) {
+		r_grid[i] = 0;
+	}
+	r_grid[3] = global.size();
+	for (uint32_t i = 0; i < global.size(); i++) {
+		r_grid.push_back(global[i]);
+	}
+	if (bounded.is_empty()) {
+		return;
+	}
+
+	// Cells about the size of a light's reach: smaller ones list each light many times,
+	// larger ones list lights that reach only a corner of them.
+	ranges.sort();
+	float cell = ranges[ranges.size() / 2] * 0.75f;
+	Vector3 extent = bounds.size;
+	cell = MAX(cell, Math::pow(MAX(extent.x * extent.y * extent.z, 1e-3f) / float(RT_LIGHT_GRID_MAX_CELLS), 1.0f / 3.0f));
+	cell = MAX(cell, 0.25f);
+
+	const uint32_t list_base = RT_LIGHT_GRID_HEADER + global.size();
+	LocalVector<uint32_t> counts;
+	uint32_t dims[3] = {};
+	for (int attempt = 0; attempt < 16; attempt++) {
+		for (int a = 0; a < 3; a++) {
+			dims[a] = CLAMP((uint32_t)Math::ceil(extent[a] / cell), 1u, 1024u);
+		}
+		uint64_t cells = uint64_t(dims[0]) * dims[1] * dims[2];
+		if (cells > RT_LIGHT_GRID_MAX_CELLS) {
+			cell *= 1.25f;
+			continue;
+		}
+		counts.resize(cells);
+		for (uint32_t c = 0; c < cells; c++) {
+			counts[c] = 0;
+		}
+		uint64_t entries = 0;
+		for (uint32_t bi = 0; bi < bounded.size(); bi++) {
+			const RT_LightData &l = p_lights[bounded[bi]];
+			Vector3 p(l.position[0], l.position[1], l.position[2]);
+			float r = l.range;
+			int lo[3], hi[3];
+			for (int a = 0; a < 3; a++) {
+				lo[a] = CLAMP((int)Math::floor((p[a] - r - bounds.position[a]) / cell), 0, (int)dims[a] - 1);
+				hi[a] = CLAMP((int)Math::floor((p[a] + r - bounds.position[a]) / cell), 0, (int)dims[a] - 1);
+			}
+			for (int z = lo[2]; z <= hi[2]; z++) {
+				for (int y = lo[1]; y <= hi[1]; y++) {
+					for (int x = lo[0]; x <= hi[0]; x++) {
+						// the sphere against the cell's box
+						Vector3 cmin = bounds.position + Vector3(x, y, z) * cell;
+						Vector3 q = p.clamp(cmin, cmin + Vector3(cell, cell, cell));
+						if (q.distance_squared_to(p) > r * r) {
+							continue;
+						}
+						counts[x + dims[0] * (y + dims[1] * z)]++;
+						entries++;
+					}
+				}
+			}
+		}
+		if (entries > RT_LIGHT_GRID_MAX_ENTRIES) {
+			cell *= 1.5f;
+			continue;
+		}
+
+		// the cells' starts, then the lists
+		const uint32_t start = list_base + cells + 1;
+		r_grid.resize(start + entries);
+		uint32_t at = start;
+		for (uint32_t c = 0; c < cells; c++) {
+			r_grid[list_base + c] = at;
+			at += counts[c];
+			counts[c] = r_grid[list_base + c]; // now the cell's fill position
+		}
+		r_grid[list_base + cells] = at;
+		for (uint32_t bi = 0; bi < bounded.size(); bi++) {
+			const RT_LightData &l = p_lights[bounded[bi]];
+			Vector3 p(l.position[0], l.position[1], l.position[2]);
+			float r = l.range;
+			int lo[3], hi[3];
+			for (int a = 0; a < 3; a++) {
+				lo[a] = CLAMP((int)Math::floor((p[a] - r - bounds.position[a]) / cell), 0, (int)dims[a] - 1);
+				hi[a] = CLAMP((int)Math::floor((p[a] + r - bounds.position[a]) / cell), 0, (int)dims[a] - 1);
+			}
+			for (int z = lo[2]; z <= hi[2]; z++) {
+				for (int y = lo[1]; y <= hi[1]; y++) {
+					for (int x = lo[0]; x <= hi[0]; x++) {
+						Vector3 cmin = bounds.position + Vector3(x, y, z) * cell;
+						Vector3 q = p.clamp(cmin, cmin + Vector3(cell, cell, cell));
+						if (q.distance_squared_to(p) > r * r) {
+							continue;
+						}
+						r_grid[counts[x + dims[0] * (y + dims[1] * z)]++] = bounded[bi];
+					}
+				}
+			}
+		}
+		r_grid[0] = dims[0];
+		r_grid[1] = dims[1];
+		r_grid[2] = dims[2];
+		float origin[3] = { bounds.position.x, bounds.position.y, bounds.position.z };
+		float inv_cell = 1.0f / cell;
+		memcpy(&r_grid[4], origin, sizeof(origin));
+		memcpy(&r_grid[7], &inv_cell, sizeof(float));
+		return;
+	}
+	// No grid fits: every bounded light goes in the global list.
+	r_grid.resize(RT_LIGHT_GRID_HEADER);
+	r_grid[3] = global.size() + bounded.size();
+	for (uint32_t i = 0; i < global.size(); i++) {
+		r_grid.push_back(global[i]);
+	}
+	for (uint32_t i = 0; i < bounded.size(); i++) {
+		r_grid.push_back(bounded[i]);
+	}
+}
+
+
 uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, const RTViewportState *p_state, RT_LightData *r_light_data, uint32_t p_max_lights) {
 	uint32_t rt_light_count = 0;
 
@@ -5751,22 +5910,41 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_FOG_USE_LEGACY_BLENDING] = owner->fog_use_legacy_blending_get() ? 1.0 : 0.0;
 
 		// --- Light gathering ---
-		uint32_t rt_light_count = 0;
-		RT_LightData rt_light_data[RT_LIGHTS_MAX] = {};
-
-		rt_light_count = gather_lights(p_render_data, p_state, rt_light_data, RT_LIGHTS_MAX);
+		if (rt_light_scratch.size() != RT_LIGHTS_MAX) {
+			rt_light_scratch.resize(RT_LIGHTS_MAX);
+		}
+		memset((void *)rt_light_scratch.ptr(), 0, RT_LIGHTS_MAX * sizeof(RT_LightData));
+		RT_LightData *rt_light_data = rt_light_scratch.ptr();
+		const uint32_t rt_light_count = gather_lights(p_render_data, p_state, rt_light_data, RT_LIGHTS_MAX);
+		build_light_grid(rt_light_data, rt_light_count, rt_light_grid_scratch);
 
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_COUNT] = float(rt_light_count);
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SELF_SHADOW_MASK] = p_state ? float(p_state->shadow_groups.self_shadow_bit) : 0.0f;
 
-		// Upload light buffer.
+		// Upload the light buffer and the light grid, grown by doubling.
 		{
-			uint32_t buf_size = RT_LIGHTS_MAX * sizeof(RT_LightData);
-			if (!p_state->light_buffer.is_valid()) {
-				p_state->light_buffer = RD::get_singleton()->storage_buffer_create(buf_size);
+			const uint32_t needed = MAX(rt_light_count, 1u);
+			if (!p_state->light_buffer.is_valid() || p_state->light_buffer_capacity < needed) {
+				if (p_state->light_buffer.is_valid()) {
+					RD::get_singleton()->free_rid(p_state->light_buffer);
+				}
+				p_state->light_buffer_capacity = MAX(64u, Math::next_power_of_2(needed));
+				p_state->light_buffer = RD::get_singleton()->storage_buffer_create(p_state->light_buffer_capacity * sizeof(RT_LightData));
 				RD::get_singleton()->set_resource_name(p_state->light_buffer, "RT Light Buffer");
 			}
-			RD::get_singleton()->buffer_update(p_state->light_buffer, 0, buf_size, rt_light_data);
+			RD::get_singleton()->buffer_update(p_state->light_buffer, 0, needed * sizeof(RT_LightData), rt_light_data);
+
+			const LocalVector<uint32_t> &rt_light_grid = rt_light_grid_scratch;
+			const uint32_t grid_needed = rt_light_grid.size();
+			if (!p_state->light_grid_buffer.is_valid() || p_state->light_grid_buffer_capacity < grid_needed) {
+				if (p_state->light_grid_buffer.is_valid()) {
+					RD::get_singleton()->free_rid(p_state->light_grid_buffer);
+				}
+				p_state->light_grid_buffer_capacity = MAX(1024u, Math::next_power_of_2(grid_needed));
+				p_state->light_grid_buffer = RD::get_singleton()->storage_buffer_create(p_state->light_grid_buffer_capacity * sizeof(uint32_t));
+				RD::get_singleton()->set_resource_name(p_state->light_grid_buffer, "RT Light Grid");
+			}
+			RD::get_singleton()->buffer_update(p_state->light_grid_buffer, 0, grid_needed * sizeof(uint32_t), rt_light_grid.ptr());
 		}
 
 		if (!p_state->params_buffer.is_valid()) {
@@ -5877,6 +6055,19 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		if (p_state->light_buffer.is_valid()) {
 			u.append_id(p_state->light_buffer);
+		} else {
+			u.append_id(RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
+		}
+		uniforms.push_back(u);
+	}
+
+	// Binding 42: the light grid (SSBO, uints; build_light_grid).
+	{
+		RD::Uniform u;
+		u.binding = 42;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		if (p_state->light_grid_buffer.is_valid()) {
+			u.append_id(p_state->light_grid_buffer);
 		} else {
 			u.append_id(RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		}

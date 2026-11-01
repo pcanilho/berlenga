@@ -68,6 +68,47 @@ layout(set = 0, binding = RT_LIGHT_BUFFER_BINDING, std430) readonly buffer Light
 
 layout(set = 0, binding = 40) uniform sampler rt_light_projector_sampler;
 
+// The world grid of positional light lists (RenderRaytracing::build_light_grid): which
+// lights can reach a point. In uints: [0..2] cells along x, y, z (0: none), [3] the
+// global count G, [4..6] the origin and [7] 1 / cell size (floats' bits), [8, 8 + G)
+// the lights in every list (no range), then each cell's start, then the cells' lists.
+#ifndef RT_LIGHT_GRID_BINDING
+#define RT_LIGHT_GRID_BINDING 42
+#endif
+
+layout(set = 0, binding = RT_LIGHT_GRID_BINDING, std430) readonly buffer LightGridBuffer {
+	uint rt_light_grid[];
+};
+
+// The lights that can reach p: the global ones at [r_global_start, + r_global_count)
+// and the cell's at [r_cell_start, + r_cell_count), indices into rt_light_buffer.
+void lights_grid_lists(vec3 p, out uint r_global_start, out uint r_global_count, out uint r_cell_start, out uint r_cell_count) {
+	r_global_start = 8u;
+	r_global_count = rt_light_grid[3];
+	r_cell_start = 0u;
+	r_cell_count = 0u;
+	uvec3 dims = uvec3(rt_light_grid[0], rt_light_grid[1], rt_light_grid[2]);
+	if (dims.x == 0u) {
+		return;
+	}
+	vec3 origin = uintBitsToFloat(uvec3(rt_light_grid[4], rt_light_grid[5], rt_light_grid[6]));
+	float inv_cell = uintBitsToFloat(rt_light_grid[7]);
+	vec3 c = floor((p - origin) * inv_cell);
+	if (any(lessThan(c, vec3(0.0))) || any(greaterThanEqual(c, vec3(dims)))) {
+		return;
+	}
+	uvec3 ci = uvec3(c);
+	uint cell = ci.x + dims.x * (ci.y + dims.y * ci.z);
+	uint starts = 8u + r_global_count;
+	r_cell_start = rt_light_grid[starts + cell];
+	r_cell_count = rt_light_grid[starts + cell + 1u] - r_cell_start;
+}
+
+// The i-th light of the union of a point's two lists.
+uint lights_grid_light(uint i, uint global_start, uint global_count, uint cell_start) {
+	return i < global_count ? rt_light_grid[global_start + i] : rt_light_grid[cell_start + (i - global_count)];
+}
+
 uint lights_get_type(uint idx) {
 	return bitfieldExtract(rt_light_buffer[idx].masks, 20, 2);
 }
@@ -378,6 +419,92 @@ bool lights_select(vec3 hit_pos, uint first, uint count, uint instance_layers, i
 	return true;
 }
 
+// A positional light's unshadowed contribution at a point, roughly (luminance,
+// distance and cone falloff, cosine): the target the selection resamples by. Never 0
+// where the light can add anything: sphere lights get the slack of their size on the
+// cosine and the cone, as a sampled direction may stray that far.
+float lights_target(RTLightData light, vec3 p, vec3 N, bool is_indirect_bounce, uint instance_layers) {
+	if ((light.light_masks & instance_layers & 0xFFFFFu) == 0u) {
+		return 0.0;
+	}
+	// abs: a negative light takes light away, and is picked by how much.
+	float lum = dot(abs(light.emission), vec3(0.2126, 0.7152, 0.0722));
+	if (is_indirect_bounce) {
+		lum *= max(light.indirect_energy, 0.0);
+	}
+	if (lum <= 0.0) {
+		return 0.0;
+	}
+	vec3 to_l = light.position - p;
+	float d2 = dot(to_l, to_l);
+	if (light.max_range_squared != 0.0 && d2 > light.max_range_squared) {
+		return 0.0;
+	}
+	float d = sqrt(d2);
+	vec3 dir = to_l / max(d, 1e-4);
+	float slack = light.radius > 0.01 ? min(2.0 * light.radius / max(d, 1e-4), 1.0) : 0.0;
+	// Backlit and transmissive materials are lit from behind too.
+	float cos_n = clamp(abs(dot(N, dir)) + slack, 0.0, 1.0);
+	LightSample ls;
+	ls.distance_sq = d2;
+	float atten = lights_get_attenuation(ls, light.inv_max_range, light.attenuation);
+	if (light.type == RT_LIGHT_TYPE_SPOT) {
+		float one_minus_scos = 1.0 + dot(dir, lights_rotate(light.orientation, vec3(0.0, 0.0, -1.0)));
+		if (one_minus_scos >= light.one_minus_cos_spot + slack) {
+			return 0.0;
+		}
+		float spot_rim = clamp(one_minus_scos / max(light.one_minus_cos_spot, 1e-4), 1e-4, 1.0);
+		float spot = 1.0 - pow(spot_rim, light.inv_spot_attenuation);
+		atten *= max(spot, slack > 0.0 ? 0.02 : 0.0);
+	}
+	// A floor so a light at its range's edge still gets picked now and then.
+	return lum * max(atten, 1e-6) * max(cos_n, 0.05);
+}
+
+// Picks a positional light by resampled importance sampling (Talbot, Cline & Egbert,
+// "Importance Resampling for Global Illumination", EGSR 2005; the candidate step of
+// ReSTIR DI, Bitterli et al. 2020): candidates drawn uniformly from the lights that can
+// reach this point (the light grid's lists), each weighted by its unshadowed
+// contribution over its source pdf, one kept in proportion. r_select_pdf is the
+// estimator's p_hat(y) / mean(w), so contribution / r_select_pdf stays unbiased. With
+// no more lights than candidates, each is taken once, with less noise still.
+bool lights_select_positional(vec3 hit_pos, vec3 N, bool is_indirect_bounce, uint instance_layers, inout uint rng_state,
+		out uint r_idx, out float r_select_pdf) {
+	r_idx = 0u;
+	r_select_pdf = 1.0;
+	uint g_start, g_count, c_start, c_count;
+	lights_grid_lists(hit_pos, g_start, g_count, c_start, c_count);
+	uint n = g_count + c_count;
+	if (n == 0u) {
+		return false;
+	}
+	const bool enumerate = n <= uint(RT_LIGHT_RESERVOIR_SIZE);
+	const uint m = enumerate ? n : uint(RT_LIGHT_RESERVOIR_SIZE);
+	// 1 / (M * source pdf): n / M drawn, 1 enumerated.
+	const float w_scale = enumerate ? 1.0 : float(n) / float(m);
+	float w_sum = 0.0;
+	float selected_p_hat = 0.0;
+	for (uint i = 0u; i < m; i++) {
+		uint j = enumerate ? i : min(uint(rand(rng_state) * float(n)), n - 1u);
+		uint idx = lights_grid_light(j, g_start, g_count, c_start);
+		float p_hat = lights_target(lights_get(idx), hit_pos, N, is_indirect_bounce, instance_layers);
+		float w = p_hat * w_scale;
+		if (w <= 0.0) {
+			continue;
+		}
+		w_sum += w;
+		if (rand(rng_state) * w_sum < w) {
+			r_idx = idx;
+			selected_p_hat = p_hat;
+		}
+	}
+	if (w_sum <= 0.0 || selected_p_hat <= 0.0) {
+		return false;
+	}
+	r_select_pdf = selected_p_hat / w_sum;
+	return true;
+}
+
 // Unweighted contribution of one omni or spot light, one shadow ray.
 vec3 lights_evaluate_positional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V, MaterialProperties material,
 		inout uint rng_state, bool is_indirect_bounce, uint p_receiver_shadow_mask) {
@@ -481,22 +608,29 @@ vec3 lights_evaluate_direct_lighting(
 		uint light_count,
 		uint instance_layers,
 		uint p_receiver_shadow_mask) {
+	// One group, then one light in it: directional lights uniformly, positional ones
+	// through the light grid by resampled importance sampling.
+	uint directional_count = lights_directional_count(light_count);
+	bool has_positional = light_count > directional_count;
+	float group_pdf = (directional_count > 0u && has_positional) ? 0.5 : 1.0;
+	bool pick_directional = directional_count > 0u && (!has_positional || rand(rng_state) < 0.5);
+
 	uint idx;
 	float select_pdf;
-	if (!lights_select(hit_pos, 0u, light_count, instance_layers, rng_state, idx, select_pdf)) {
+	if (pick_directional) {
+		if (!lights_select(hit_pos, 0u, directional_count, instance_layers, rng_state, idx, select_pdf)) {
+			return vec3(0.0);
+		}
+		vec3 contribution = lights_evaluate_directional(lights_get(idx), hit_pos, N, V, material,
+				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
+		return contribution / max(select_pdf * group_pdf, 1e-10);
+	}
+	if (!lights_select_positional(hit_pos, N, is_indirect_bounce, instance_layers, rng_state, idx, select_pdf)) {
 		return vec3(0.0);
 	}
-
-	RTLightData light = lights_get(idx);
-	vec3 contribution;
-	if (light.type == RT_LIGHT_TYPE_DIRECTIONAL) {
-		contribution = lights_evaluate_directional(light, hit_pos, N, V, material,
-				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
-	} else {
-		contribution = lights_evaluate_positional(light, hit_pos, N, V, material,
-				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
-	}
-	return contribution / max(select_pdf, 1e-10);
+	vec3 contribution = lights_evaluate_positional(lights_get(idx), hit_pos, N, V, material,
+			rng_state, is_indirect_bounce, p_receiver_shadow_mask);
+	return contribution / max(select_pdf * group_pdf, 1e-10);
 }
 
 // NEE with up to two shadow rays: one to a directional light and one to a
@@ -521,7 +655,7 @@ vec3 lights_evaluate_direct_lighting_per_group(
 				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
 		result += contribution / max(select_pdf, 1e-10);
 	}
-	if (lights_select(hit_pos, directional_count, light_count - directional_count, instance_layers, rng_state, idx, select_pdf)) {
+	if (light_count > directional_count && lights_select_positional(hit_pos, N, is_indirect_bounce, instance_layers, rng_state, idx, select_pdf)) {
 		vec3 contribution = lights_evaluate_positional(lights_get(idx), hit_pos, N, V, material,
 				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
 		result += contribution / max(select_pdf, 1e-10);

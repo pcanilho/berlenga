@@ -404,9 +404,15 @@ inline uint16_t rt_snorm16(float p_value) {
 }
 
 enum {
-	RT_LIGHTS_MAX = 64,
-	RT_LIGHTS_FRUSTUM_BUDGET = 48,
-	RT_LIGHTS_INDIRECT_BUDGET = RT_LIGHTS_MAX - RT_LIGHTS_FRUSTUM_BUDGET,
+	// Lights in the traced light buffer, at most. The shaders pick a positional light
+	// through a world grid of per-cell light lists with resampled importance sampling
+	// (raytracing_lights_inc.glsl), so a pixel's cost doesn't grow with the count.
+	RT_LIGHTS_MAX = 4096,
+	// The light grid (binding 42): cells at most, and list entries at most (the cell
+	// size grows until the lists fit).
+	RT_LIGHT_GRID_MAX_CELLS = 32768,
+	RT_LIGHT_GRID_MAX_ENTRIES = 1 << 20,
+	RT_LIGHT_GRID_HEADER = 8,
 };
 
 constexpr uint32_t RT_OFFSET_NONE = 0xFFFFFFFFu;
@@ -1094,6 +1100,9 @@ struct RTViewportState {
 	LocalVector<uint32_t> plan_lookup; // By instance rt_index: its record in last frame's arena, see rt_plan_lookup().
 
 	RID light_buffer;
+	uint32_t light_buffer_capacity = 0; // Lights.
+	RID light_grid_buffer;
+	uint32_t light_grid_buffer_capacity = 0; // uints.
 	RID params_buffer;
 	RID scene_uniform_set;
 
@@ -1526,6 +1535,11 @@ public:
 	RTViewportState *build_tlas(const RenderDataRD *p_render_data, uint32_t p_rt_flags, LocalVector<RTCaptureRequest> &r_captures);
 	void build_decal_volumes(RTViewportState *p_state, const RenderDataRD *p_render_data);
 	uint32_t gather_lights(const RenderDataRD *p_render_data, const RTViewportState *p_state, RT_LightData *r_light_data, uint32_t p_max_lights);
+	// The world grid of positional light lists the shaders pick lights from (layout in
+	// render_raytracing.cpp).
+	static void build_light_grid(const RT_LightData *p_lights, uint32_t p_count, LocalVector<uint32_t> &r_grid);
+	LocalVector<RT_LightData> rt_light_scratch;
+	LocalVector<uint32_t> rt_light_grid_scratch;
 	void update_scene_ubo(RTViewportState *p_state, const RenderDataRD *p_render_data, const Size2i &p_screen_size, const Color &p_default_bg_color);
 	RID update_uniform_set(RTViewportState *p_state, const RenderDataRD *p_render_data, uint32_t p_rt_flags);
 
