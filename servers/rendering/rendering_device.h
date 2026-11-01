@@ -1191,6 +1191,7 @@ public:
 	 */
 	RID uniform_set_create(const VectorView<Uniform> &p_uniforms, RID p_shader, uint32_t p_shader_set, bool p_linear_pool = false);
 	bool uniform_set_is_valid(RID p_uniform_set);
+	bool acceleration_structure_is_valid(RID p_acceleration_structure);
 	void uniform_set_set_invalidation_callback(RID p_uniform_set, InvalidationCallback p_callback, void *p_userdata);
 
 	bool uniform_sets_have_linear_pools() const;
