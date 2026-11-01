@@ -177,6 +177,13 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		RID rt_environment = p_render_data->environment.is_valid() ? p_render_data->environment : RID();
 		const bool fog_enabled = rt_environment.is_valid() && environment_get_fog_enabled(rt_environment);
 		rt_flags = SceneShaderRaytracing::compute_rt_flags(rt_environment, fog_enabled);
+		if ((rt_flags & SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED) && scale_type != SCALE_3D_DLSS) {
+			// Ray Reconstruction runs inside DLSS's upscale, which runs only when the
+			// viewport scales with DLSS. Without it the guides would be written for
+			// nothing and the frame left raw: trace without them, and say so once.
+			WARN_PRINT_ONCE("Path tracing: the Ray Reconstruction denoiser needs the viewport's scaling_3d_mode set to DLSS (Viewport.SCALING_3D_MODE_DLSS, any scale, 1.0 for DLAA). Tracing without a denoiser.");
+			rt_flags &= ~uint32_t(SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED);
+		}
 
 		const bool dlss_rr_enabled = (rt_flags & SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED) != 0;
 		if (dlss_rr_enabled) {
