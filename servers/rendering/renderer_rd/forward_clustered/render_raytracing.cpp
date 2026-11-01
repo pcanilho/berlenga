@@ -1542,6 +1542,10 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		s_default_mat.data.uv1_scale[1] = 1.0f;
 		s_default_mat.data.uv1_offset[0] = 0.0f;
 		s_default_mat.data.uv1_offset[1] = 0.0f;
+		s_default_mat.data.triplanar_sharpness = 1.0f;
+		s_default_mat.data.uv1_scale_z = 1.0f;
+		s_default_mat.data.uv1_offset_z = 0.0f;
+		s_default_mat.data._pad0 = 0.0f;
 		s_default_mat_initialized = true;
 	}
 
@@ -1608,6 +1612,10 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	mat.uv1_offset[1] = 0.0f;
 	mat.normal_map_depth = 1.0f;
 	mat.uniform_address = 0;
+	mat.triplanar_sharpness = 1.0f;
+	mat.uv1_scale_z = 1.0f;
+	mat.uv1_offset_z = 0.0f;
+	mat._pad0 = 0.0f;
 
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
@@ -1870,6 +1878,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		Vector3 s = uv1_scale_var;
 		mat.uv1_scale[0] = s.x;
 		mat.uv1_scale[1] = s.y;
+		mat.uv1_scale_z = s.z;
 	}
 
 	Variant uv1_offset_var = material_storage->material_get_param(p_material_rid, "uv1_offset");
@@ -1877,6 +1886,24 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		Vector3 o = uv1_offset_var;
 		mat.uv1_offset[0] = o.x;
 		mat.uv1_offset[1] = o.y;
+		mat.uv1_offset_z = o.z;
+	}
+
+	// Triplanar. BaseMaterial3D pushes its flags as params by name (see
+	// BaseMaterial3D::set_flag), as triplanar is shader-code state rather than a
+	// uniform; uv1_blend_sharpness is a real uniform. Ported from Puddlefunk/godot
+	// bc91da5 (NVIDIA-RTX/godot#11, item 4).
+	Variant triplanar_var = material_storage->material_get_param(p_material_rid, "uv1_triplanar");
+	if (triplanar_var.get_type() == Variant::BOOL && (bool)triplanar_var) {
+		mat.flags |= RT_MAT_FLAG_TRIPLANAR;
+		Variant world_var = material_storage->material_get_param(p_material_rid, "uv1_world_triplanar");
+		if (world_var.get_type() == Variant::BOOL && (bool)world_var) {
+			mat.flags |= RT_MAT_FLAG_TRIPLANAR_WORLD;
+		}
+		Variant sharp_var = material_storage->material_get_param(p_material_rid, "uv1_blend_sharpness");
+		if (sharp_var.get_type() == Variant::FLOAT || sharp_var.get_type() == Variant::INT) {
+			mat.triplanar_sharpness = MAX((float)(double)sharp_var, 0.0f);
+		}
 	}
 
 	// Point filtering: check if material requests nearest filtering (e.g. pixel art).

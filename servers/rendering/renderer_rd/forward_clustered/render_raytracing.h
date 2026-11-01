@@ -96,7 +96,7 @@ struct RT_InstanceMotionData {
 };
 static_assert(sizeof(RT_InstanceMotionData) == 48, "RT_InstanceMotionData must be 48 bytes");
 
-// Must match GLSL MaterialData (std430, 96 bytes).
+// Must match GLSL MaterialData (std430, 112 bytes).
 struct alignas(16) RT_MaterialData {
 	uint32_t albedo_texture_idx;
 	uint32_t normal_texture_idx;
@@ -114,8 +114,14 @@ struct alignas(16) RT_MaterialData {
 	float normal_map_depth; // Strength [0..N], default 1.0 (not Z-depth).
 	float specular; // Dielectric specular [0..1], default 0.5 -> F0 = 0.04.
 	uint64_t uniform_address; // BDA for custom shader uniform buffer (0 = none).
+	// uv1 triplanar: uv1_scale/offset above are vec2, triplanar also needs the z
+	// of Godot's Vector3 params.
+	float triplanar_sharpness; // uv1_blend_sharpness (default 1.0).
+	float uv1_scale_z;
+	float uv1_offset_z;
+	float _pad0;
 };
-static_assert(sizeof(RT_MaterialData) == 96, "RT_MaterialData must be 96 bytes for std430");
+static_assert(sizeof(RT_MaterialData) == 112, "RT_MaterialData must be 112 bytes for std430");
 
 // Light types for raytracing (matches GLSL RT_LIGHT_TYPE_* defines).
 enum RTLightType : uint32_t {
@@ -164,6 +170,9 @@ enum {
 	// Emission is on (emission_color * emission_strength, times the texture if
 	// RT_MAT_FLAG_HAS_EMISSION_TEX).
 	RT_MAT_FLAG_HAS_EMISSION = 8u,
+	// uv1 triplanar mapping, in object or world space.
+	RT_MAT_FLAG_TRIPLANAR = 16u,
+	RT_MAT_FLAG_TRIPLANAR_WORLD = 32u,
 };
 
 // Index format for RT geometry (matches GLSL fetch_indices).

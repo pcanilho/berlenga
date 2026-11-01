@@ -541,20 +541,40 @@ void main() {
 	MaterialData mat = materials[h.geometry_idx];
 	vec2 uv = h.uv * mat.uv1_scale + mat.uv1_offset;
 
+	// Triplanar materials ignore the mesh's UVs and blend three axis projections,
+	// as raster's generated code does (from Puddlefunk/godot bc91da5).
+	bool triplanar = (mat.flags & 16u) != 0u;
+	TriplanarCoords tc;
+	tc.weights = vec3(0.0);
+	tc.pos = vec3(0.0);
+	tc.tangent = vec3(1.0, 0.0, 0.0);
+	tc.binormal = vec3(0.0, 0.0, 1.0);
+	if (triplanar) {
+		tc = compute_triplanar_coords(h, mat, geometries[h.geometry_idx]);
+	}
+
 	// Normal mapping.
 	vec3 tangent_space_normal = vec3(0.0, 0.0, 1.0);
 	vec3 final_normal = h.geometry_normal;
 	if ((mat.flags & 1u) != 0u) {
-		vec3 normal_sample = sample_bindless_texture(mat.normal_texture_idx, uv).rgb;
+		vec3 normal_sample = triplanar
+				? sample_material_texture_triplanar(mat.normal_texture_idx, tc, mat.flags).rgb
+				: sample_bindless_texture(mat.normal_texture_idx, uv).rgb;
 		tangent_space_normal.xy = normal_sample.xy * 2.0 - 1.0;
 		tangent_space_normal.z = sqrt(max(0.0, 1.0 - dot(tangent_space_normal.xy, tangent_space_normal.xy)));
-		final_normal = apply_normal_map(h, tangent_space_normal, mat.normal_map_depth);
+		final_normal = triplanar
+				? apply_normal_map_triplanar(h, tc, tangent_space_normal, mat.normal_map_depth)
+				: apply_normal_map(h, tangent_space_normal, mat.normal_map_depth);
 	}
 
 	// Texture sampling.
-	vec4 albedo_tex = sample_material_texture(mat.albedo_texture_idx, uv, mat.flags);
+	vec4 albedo_tex = triplanar
+			? sample_material_texture_triplanar(mat.albedo_texture_idx, tc, mat.flags)
+			: sample_material_texture(mat.albedo_texture_idx, uv, mat.flags);
 	vec3 albedo = albedo_tex.rgb * mat.albedo_color.rgb;
-	vec3 orm = sample_material_texture(mat.orm_texture_idx, uv, mat.flags).rgb;
+	vec3 orm = (triplanar
+			? sample_material_texture_triplanar(mat.orm_texture_idx, tc, mat.flags)
+			: sample_material_texture(mat.orm_texture_idx, uv, mat.flags)).rgb;
 	float roughness = saturate(orm.g * mat.roughness);
 	float metalness = saturate(orm.b * mat.metallic);
 
@@ -563,7 +583,9 @@ void main() {
 		// Emission on: its colour, times the texture if it has one.
 		emissive = mat.emission_color * mat.emission_strength;
 		if ((mat.flags & 2u) != 0u) {
-			emissive *= sample_material_texture(mat.emission_texture_idx, uv, mat.flags).rgb;
+			emissive *= (triplanar
+					? sample_material_texture_triplanar(mat.emission_texture_idx, tc, mat.flags)
+					: sample_material_texture(mat.emission_texture_idx, uv, mat.flags)).rgb;
 		}
 		emissive *= scene_data_block.data.emissive_exposure_normalization;
 	}
