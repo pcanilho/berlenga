@@ -180,7 +180,7 @@ void main() {
 
 #ifdef USE_SER
 			hitObjectEXT hitObject;
-			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, RT_MASK_SCENE, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
+			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, bounce == 0u ? RT_MASK_SCENE : RT_MASK_BOUNCE, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
 
 			// Reorder with a coherence hint that has 8 bits
 			uint hint = 0;
@@ -192,7 +192,7 @@ void main() {
 
 			hitObjectExecuteShaderEXT(hitObject, 0);
 #else
-			traceRayEXT(tlas, RT_RAY_FLAGS, RT_MASK_SCENE, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
+			traceRayEXT(tlas, RT_RAY_FLAGS, bounce == 0u ? RT_MASK_SCENE : RT_MASK_BOUNCE, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
 #endif
 
 			ps = path_unpack(payload);
@@ -677,8 +677,9 @@ void main() {
 
 #include "raytracing_custom_fragment_inc.glsl"
 
-	if ((geom.flags & FLAG_SHADOW_CASTER) != 0u) {
-		// Only shadow rays reach a caster (its instance mask). Its alpha dims the
+	if ((geom.flags & FLAG_SHADOW_CASTER) != 0u && is_shadow_ray(payload.packed_bounces_flags)) {
+		// On a shadow ray (bounce rays meet casters too, and take them as any
+		// surface below). Its alpha dims the
 		// light, kept as the ray's transmittance in the payload's hit_t, and the
 		// ray goes on: a soft alpha casts a soft shadow with no noise. Once next
 		// to nothing is left, the hit stands and the light is blocked.
@@ -710,7 +711,7 @@ void main() {
 	float alpha = texture(sampler2D(bindless_textures[nonuniformEXT(mat.albedo_texture_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv).a;
 	alpha *= mat.albedo_color.a;
 
-	if ((geom.flags & FLAG_SHADOW_CASTER) != 0u) {
+	if ((geom.flags & FLAG_SHADOW_CASTER) != 0u && is_shadow_ray(payload.packed_bounces_flags)) {
 		// As a custom caster above, by the albedo's alpha.
 		payload.hit_t *= 1.0 - clamp(alpha, 0.0, 1.0);
 		if (payload.hit_t > RT_SHADOW_OPAQUE_TRANSMITTANCE) {

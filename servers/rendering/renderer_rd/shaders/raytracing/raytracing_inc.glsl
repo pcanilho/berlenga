@@ -161,9 +161,11 @@ const uint FLAG_DEFORMED = 4u;
 const uint FLAG_SHADOW_CASTER = 8u;
 
 // Cull masks. Casters carry instance mask 0x02 and every other instance 0xFF,
-// so camera, bounce and specular rays (RT_MASK_SCENE) never meet a caster and
-// shadow rays (RT_MASK_SHADOW) meet both.
+// so camera rays and the denoiser's specular query (RT_MASK_SCENE) never meet a
+// caster, while bounce rays (RT_MASK_BOUNCE) and shadow rays (RT_MASK_SHADOW)
+// meet both: a hidden ceiling still holds the light in and bounces it back.
 #define RT_MASK_SCENE 0x01u
+#define RT_MASK_BOUNCE 0xFFu
 #define RT_MASK_SHADOW 0xFFu
 // A shadow ray's transmittance under this is taken as blocked.
 #define RT_SHADOW_OPAQUE_TRANSMITTANCE (1.0 / 256.0)
