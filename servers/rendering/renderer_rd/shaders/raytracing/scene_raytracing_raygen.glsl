@@ -474,7 +474,11 @@ void main() {
 
 	vec4 origin;
 	vec4 direction;
+	// The ray cone's width at the origin (texture level of detail): 0 at a perspective
+	// eye, one pixel's footprint for an orthogonal camera, whose rays never spread.
+	float cone_width = 0.0;
 	if (abs(scene_data_block.data.projection_matrix[2][3]) < 1e-6) {
+		cone_width = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * float(gl_LaunchSizeEXT.y));
 		// Orthogonal: parallel rays along the view axis, each from its own point on
 		// the near plane (reverse Z: the near plane at NDC z = 1).
 		vec4 near_point = scene_data_block.data.inv_projection_matrix * vec4(d.x, d.y, 1.0, 1.0);
@@ -506,7 +510,7 @@ void main() {
 		PathState ps;
 		ps.radiance = vec3(0.0);
 		ps.throughput = vec3(1.0);
-		ps.packed_bounces_flags = (sample_idx == 0u) ? set_sample_zero(0u) : 0u;
+		ps.packed_bounces_flags = set_cone_width((sample_idx == 0u) ? set_sample_zero(0u) : 0u, cone_width);
 		ps.rng_state = init_rng(pixel, frame_index, sample_idx);
 
 		vec3 ray_origin = origin.xyz;
@@ -876,6 +880,8 @@ void main() {
 	// HG0: StandardMaterial3D evaluation.
 	MaterialData mat = materials[h.geometry_idx];
 	vec2 uv = h.uv * mat.uv1_scale + mat.uv1_offset;
+	// the ray cone's level follows the material's UV scale (triplanar sets its own)
+	rt_texture_lod += 0.5 * log2(max(abs(mat.uv1_scale.x * mat.uv1_scale.y), 1e-12));
 
 	// Triplanar materials ignore the mesh's UVs and blend three axis projections,
 	// as raster's generated code does (from Puddlefunk/godot bc91da5).

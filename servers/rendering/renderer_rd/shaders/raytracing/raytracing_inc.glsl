@@ -116,6 +116,19 @@ uint inc_diffuse_bounce(uint packed) {
 	return packed + 0x101u;
 } // +1 to both total and diffuse
 
+// The ray cone's width at the ray's origin (bits 16-23), for texture level of detail
+// (Akenine-Moller et al., "Texture Level of Detail Strategies for Real-Time Ray
+// Tracing", Ray Tracing Gems 2019): log2(width) in eighths, offset by 128; 0 is a
+// width of 0 (a perspective camera's eye).
+float get_cone_width(uint packed) {
+	uint q = (packed >> 16u) & 0xFFu;
+	return q == 0u ? 0.0 : exp2((float(q) - 128.0) * 0.125);
+}
+uint set_cone_width(uint packed, float width) {
+	uint q = width <= 0.0 ? 0u : uint(clamp(round(log2(width) * 8.0 + 128.0), 1.0, 255.0));
+	return (packed & ~(0xFFu << 16u)) | (q << 16u);
+}
+
 // Sample 0 flag (bit 24) - only write DLSS RR outputs on first sample
 const uint SAMPLE_ZERO_FLAG = (1u << 24);
 uint set_sample_zero(uint packed) {

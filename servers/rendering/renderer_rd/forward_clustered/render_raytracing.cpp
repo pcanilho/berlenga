@@ -965,6 +965,8 @@ static void _fill_surface_geometry_data(
 	geom.normal_stride = normal_stride;
 	geom.tangent_stride = tangent_stride;
 	geom.flags = compressed ? RT_GEOM_FLAG_COMPRESSED : 0;
+	geom.blas_position_address_lo = 0;
+	geom.blas_position_address_hi = 0;
 
 	if (compressed) {
 		AABB surface_aabb = mesh_storage->mesh_surface_get_aabb(p_mesh_surface);
@@ -1072,6 +1074,12 @@ void RenderRaytracing::_populate_surface_blas(
 		geom.aabb_pos_x = geom.aabb_pos_y = geom.aabb_pos_z = 0.0f;
 		blas_vertex_buffer = p_blas_positions;
 		position_stride = sizeof(float) * 3;
+		uint64_t address = RD::get_singleton()->buffer_get_device_address(p_blas_positions);
+		geom.blas_position_address_lo = uint32_t(address & 0xFFFFFFFFu);
+		geom.blas_position_address_hi = uint32_t(address >> 32);
+	} else {
+		geom.blas_position_address_lo = 0;
+		geom.blas_position_address_hi = 0;
 	}
 
 	bool is_2d = RendererRD::MeshStorage::get_singleton()->mesh_surface_get_format(p_mesh_surface) & RSE::ARRAY_FLAG_USE_2D_VERTICES;
@@ -2375,6 +2383,8 @@ bool RenderRaytracing::_build_merged_mm_blas(
 	geom.vertex_count = p_mm_count * vertex_count;
 	geom.position_stride = 12; // float3, uncompressed
 	geom.flags &= ~RT_GEOM_FLAG_COMPRESSED;
+	geom.blas_position_address_lo = 0; // Positions are read from the merged buffer itself.
+	geom.blas_position_address_hi = 0;
 
 	// TBN section starts after all positions in the merged vertex buffer.
 	if (has_tbn) {

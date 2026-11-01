@@ -24,6 +24,83 @@ struct HitData {
 	uint geometry_idx;
 };
 
+// The hit's texture level of detail before each texture's own size (ray cones,
+// rt_texture_cone): the material samplers add 0.5 * log2(width * height). Without a
+// cone (no UVs, a zero width) it stays far negative, so every texture reads level 0.
+const float RT_TEXTURE_LOD_BASE = -1e30;
+float rt_texture_lod = RT_TEXTURE_LOD_BASE;
+// log2 of the cone's footprint on the surface (world units), for materials that
+// map textures by position (triplanar) or scale the mesh's UVs.
+float rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
+
+/// A vertex's position in the BLAS's object space (as gl_ObjectToWorldEXT takes it):
+/// the decoded copy a flat compressed surface's BLAS was built from, a compressed
+/// surface's 16-bit fractions of its AABB (its BLAS is in that unit cube), or floats.
+vec3 fetch_object_position(in GeometryData geom, uint idx) {
+	uint64_t decoded = packUint2x32(uvec2(geom.blas_position_address_lo, geom.blas_position_address_hi));
+	if (decoded != 0ul) {
+		FloatBuffer pb = FloatBuffer(decoded);
+		return vec3(pb.v[idx * 3u], pb.v[idx * 3u + 1u], pb.v[idx * 3u + 2u]);
+	}
+	Uint32Buffer vb = Uint32Buffer(geom.vertex_address);
+	uint stride_words = max(geom.position_stride >> 2, 1u);
+	if ((geom.flags & FLAG_COMPRESSED) != 0u) {
+		uint w0 = vb.v[idx * stride_words];
+		uint w1 = vb.v[idx * stride_words + 1u];
+		return vec3(float(w0 & 0xFFFFu), float(w0 >> 16), float(w1 & 0xFFFFu)) / 65535.0;
+	}
+	return vec3(uintBitsToFloat(vb.v[idx * stride_words]), uintBitsToFloat(vb.v[idx * stride_words + 1u]), uintBitsToFloat(vb.v[idx * stride_words + 2u]));
+}
+
+/// Ray cones (Akenine-Moller, Nilsson, Andersson, Barre-Brisebois, Toth & Karras,
+/// "Texture Level of Detail Strategies for Real-Time Ray Tracing", Ray Tracing Gems
+/// 2019, ch. 20; and "Improved Shader and Texture Level of Detail Using Ray Cones",
+/// JCGT 2021). The cone's width grows by the pixel's spread angle over each segment,
+/// carried in the payload from the eye (or from an orthogonal camera's pixel
+/// footprint), and the level is the triangle's texel density, 0.5 * log2(uv area /
+/// world area), plus log2(width / |n . d|). Ray tracing stages have no screen-space
+/// derivatives, so texture() would always read the base level and distant detail
+/// would alias into fuzz under the denoiser. Bounces keep the eye's spread (no
+/// curvature term), which never blurs more than the paper's.
+void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
+	rt_texture_lod = RT_TEXTURE_LOD_BASE;
+	rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
+	// the cone at this hit
+	float p11 = scene_data_block.data.projection_matrix[1][1];
+	bool ortho = abs(scene_data_block.data.projection_matrix[2][3]) < 1e-6;
+	float spread = ortho ? 0.0 : atan(2.0 / (abs(p11) * float(gl_LaunchSizeEXT.y)));
+	float width = get_cone_width(payload.packed_bounces_flags) + spread * gl_HitTEXT;
+	payload.packed_bounces_flags = set_cone_width(payload.packed_bounces_flags, width);
+	if (width <= 0.0) {
+		return;
+	}
+	// its footprint on the surface, in world units
+	float cos_n = max(abs(dot(world_normal, gl_WorldRayDirectionEXT)), 0.05);
+	rt_cone_footprint_log2 = log2(width / cos_n);
+
+	if (geom.uv_byte_offset == OFFSET_NONE || geom.attribute_address == 0ul || geom.vertex_address == 0ul) {
+		return;
+	}
+	// the triangle's texel density
+	uint i0, i1, i2;
+	get_triangle_indices(geom, i0, i1, i2);
+	mat4x3 o2w = gl_ObjectToWorldEXT;
+	vec3 p0 = o2w * vec4(fetch_object_position(geom, i0), 1.0);
+	vec3 p1 = o2w * vec4(fetch_object_position(geom, i1), 1.0);
+	vec3 p2 = o2w * vec4(fetch_object_position(geom, i2), 1.0);
+	vec2 t0 = fetch_uv(geom, i0, i1, i2, vec3(1.0, 0.0, 0.0));
+	vec2 t1 = fetch_uv(geom, i0, i1, i2, vec3(0.0, 1.0, 0.0));
+	vec2 t2 = fetch_uv(geom, i0, i1, i2, vec3(0.0, 0.0, 1.0));
+	float world_area = length(cross(p1 - p0, p2 - p0));
+	vec2 e1 = t1 - t0;
+	vec2 e2 = t2 - t0;
+	float uv_area = abs(e1.x * e2.y - e1.y * e2.x);
+	if (world_area <= 1e-12 || uv_area <= 1e-14) {
+		return;
+	}
+	rt_texture_lod = 0.5 * log2(uv_area / world_area) + rt_cone_footprint_log2;
+}
+
 /// Fetch vertex attributes and transform to world space.
 /// Requires hitAttributeEXT HitAttribs and GeometryBuffer/MaterialBuffer bindings.
 HitData compute_hit_data() {
@@ -77,6 +154,13 @@ HitData compute_hit_data() {
 
 	h.hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 
+#ifdef ENABLE_INTERSECTION_SHADERS
+	if ((geom.flags & FLAG_PROCEDURAL) == 0u)
+#endif
+	{
+		rt_texture_cone(geom, h.geometry_normal);
+	}
+
 	return h;
 }
 
@@ -85,7 +169,10 @@ HitData compute_hit_data() {
 // ============================================================================
 
 vec4 sample_bindless_texture(uint tex_idx, vec2 uv) {
-	return texture(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv);
+	// the hit's ray-cone level, plus this texture's own size
+	ivec2 size = textureSize(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), 0);
+	float lod = max(rt_texture_lod + 0.5 * log2(float(max(size.x, 1) * max(size.y, 1))), 0.0);
+	return textureLod(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv, lod);
 }
 
 /// Sample with point/nearest filtering (for pixel art textures).
@@ -149,6 +236,14 @@ TriplanarCoords compute_triplanar_coords(HitData h, MaterialData mat, GeometryDa
 
 	p = p * vec3(mat.uv1_scale, mat.uv1_scale_z) + vec3(mat.uv1_offset, mat.uv1_offset_z);
 	tc.pos = p * vec3(1.0, -1.0, 1.0);
+
+	// ray cone level: texture units per world unit are uv1_scale (per model unit
+	// in object mode, so divided by the model's own scale)
+	float tex_per_world = (abs(mat.uv1_scale.x) + abs(mat.uv1_scale.y) + abs(mat.uv1_scale_z)) / 3.0;
+	if (!world_mode) {
+		tex_per_world /= max(pow(abs(determinant(mat3(model))), 1.0 / 3.0), 1e-6);
+	}
+	rt_texture_lod = rt_cone_footprint_log2 + log2(max(tex_per_world, 1e-6));
 
 	// Raster's axis-aligned triplanar frame (material.cpp ~1369-1388),
 	// brought to world space for object mode.
