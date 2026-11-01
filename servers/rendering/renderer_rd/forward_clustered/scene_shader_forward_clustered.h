@@ -106,7 +106,11 @@ public:
 		PIPELINE_COLOR_PASS_FLAG_MULTIVIEW = 1 << 3,
 		PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS = 1 << 4,
 		PIPELINE_COLOR_PASS_FLAG_OIT = 1 << 5, // Only combines with TRANSPARENT (+ LIGHTMAP/MULTIVIEW).
-		PIPELINE_COLOR_PASS_FLAG_OPTIONS = 6,
+		// Drawn into the path tracer's transparency layer (premultiplied colour and
+		// coverage, laid over Ray Reconstruction's output): additive and subtractive
+		// blends leave the coverage alone there, or they would hide what's under them.
+		PIPELINE_COLOR_PASS_FLAG_TRANSPARENCY_LAYER = 1 << 6,
+		PIPELINE_COLOR_PASS_FLAG_OPTIONS = 7,
 		PIPELINE_COLOR_PASS_FLAG_COMBINATIONS = 1 << PIPELINE_COLOR_PASS_FLAG_OPTIONS,
 	};
 
