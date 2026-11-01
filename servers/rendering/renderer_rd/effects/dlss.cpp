@@ -565,6 +565,20 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 		}
 	}
 
+	// For scripts (Streamline.get_super_resolution_state): the sizes and modes of the
+	// frame upscaled last, not only of the context made first, so the state follows a
+	// resize (a new context per size) and a mode that fails to evaluate reads as off.
+	StreamlineContext &sl_state = StreamlineContext::get();
+	// The sizes are the frame's own textures', whatever the context was made for.
+	{
+		RD::TextureFormat out_format = RD::get_singleton()->texture_get_format(p_params.output);
+		RD::TextureFormat in_format = RD::get_singleton()->texture_get_format(p_params.color);
+		sl_state.sr_target = Vector2i(out_format.width, out_format.height);
+		sl_state.sr_render = Vector2i(in_format.width, in_format.height);
+	}
+	sl_state.sr_mode = context->currentDlssOptions.mode;
+	sl_state.rr_mode = context->rrMode;
+
 	// Evaluate DLSS Super Resolution or DLSS Ray Reconstruction
 	if ((use_dlss_rr ? context->currentDlssDOptions.mode : context->currentDlssOptions.mode) != sl::DLSSMode::eOff) {
 		const sl::BaseStructure *inputs[] = { &context->viewport };
@@ -574,12 +588,14 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			// Use DLSS Ray Reconstruction
 			result = StreamlineContext::get().slEvaluateFeature(sl::kFeatureDLSS_RR, *StreamlineContext::get().last_token, inputs, 1, nativeCmdlist);
 			if (result != sl::Result::eOk) {
+				sl_state.rr_mode = sl::DLSSMode::eOff;
 				ERR_FAIL_MSG("Failed to call streamline slEvaluateFeature for DLSS Ray Reconstruction. Result: " + String(StreamlineContext::result_to_string(result)));
 			}
 		} else if (StreamlineContext::get().streamline_capabilities.dlss_available) {
 			// Use regular DLSS
 			result = StreamlineContext::get().slEvaluateFeature(sl::kFeatureDLSS, *StreamlineContext::get().last_token, inputs, 1, nativeCmdlist);
 			if (result != sl::Result::eOk) {
+				sl_state.sr_mode = sl::DLSSMode::eOff;
 				ERR_FAIL_MSG("Failed to call streamline slEvaluateFeature for DLSS Super Resolution. Result: " + String(StreamlineContext::result_to_string(result)));
 			}
 		}
