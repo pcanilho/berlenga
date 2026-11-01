@@ -453,6 +453,14 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 
 	// Color pass -> attachment 0: Color/Diffuse, attachment 1: Separate Specular, attachment 2: Motion Vectors
 	RD::PipelineColorBlendState::Attachment blend_attachment = blend_mode_to_blend_attachment(BlendMode(blend_mode));
+	if ((p_pipeline_key.color_pass_flags & PIPELINE_COLOR_PASS_FLAG_TRANSPARENCY_LAYER) && (blend_mode == BLEND_MODE_ADD || blend_mode == BLEND_MODE_SUB)) {
+		// The layer's alpha is the coverage the composite hides the traced frame by.
+		// Light added (or taken) covers nothing: an additive rim with ALPHA 1 would
+		// otherwise black out the surface under it wherever it drew.
+		blend_attachment.src_alpha_blend_factor = RD::BLEND_FACTOR_ZERO;
+		blend_attachment.dst_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
+		blend_attachment.alpha_blend_op = RD::BLEND_OP_ADD;
+	}
 	RD::PipelineColorBlendState blend_state_color_blend;
 	blend_state_color_blend.attachments = { blend_attachment, RD::PipelineColorBlendState::Attachment(), RD::PipelineColorBlendState::Attachment() };
 	RD::PipelineColorBlendState blend_state_color_opaque = RD::PipelineColorBlendState::create_disabled(3);
