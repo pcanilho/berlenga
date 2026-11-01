@@ -576,8 +576,10 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	}
 
 	bool detected_alpha_clip = false;
+	bool detected_alpha = false;
 	actions.usage_flag_pointers["ALPHA_SCISSOR_THRESHOLD"] = &detected_alpha_clip;
 	actions.usage_flag_pointers["ALPHA_HASH_SCALE"] = &detected_alpha_clip;
+	actions.usage_flag_pointers["ALPHA"] = &detected_alpha;
 
 	HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> uniform_sink;
 	actions.uniforms = &uniform_sink;
@@ -591,7 +593,12 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	}
 
 	r_entry.is_procedural = p_is_procedural;
-	r_entry.uses_alpha_clip = detected_alpha_clip;
+	// A shader that writes ALPHA without a scissor or hash gets the any-hit too:
+	// it passes a ray with probability 1 - alpha (hashed, as a StandardMaterial3D
+	// with alpha), and dims a caster's shadow ray by 1 - alpha. Forced opaque, its
+	// glass blocked every ray that reached it. Surfaces left to the raster alpha
+	// layer never reach the TLAS, so this costs only shaders traced with ALPHA.
+	r_entry.uses_alpha_clip = detected_alpha_clip || detected_alpha;
 	r_entry.vertex_code = gen_code.code.has("vertex") ? gen_code.code["vertex"] : String();
 	r_entry.fragment_code = gen_code.code.has("fragment") ? gen_code.code["fragment"] : String();
 	r_entry.fragment_globals = gen_code.stage_globals[ShaderCompiler::STAGE_FRAGMENT];

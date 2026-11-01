@@ -375,7 +375,7 @@ public:
 		Vector<uint32_t> uniform_offsets;
 		HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> uniforms;
 		Vector<TextureUniformInfo> texture_uniforms; // Sampler2D packed as bindless indices after UBO
-		bool uses_alpha_clip = false; // Writes ALPHA_SCISSOR_THRESHOLD; needs per-HG any-hit
+		bool uses_alpha_clip = false; // Writes ALPHA, ALPHA_SCISSOR_THRESHOLD or ALPHA_HASH_SCALE; needs per-HG any-hit
 		bool is_procedural = false; // Uses intersection shader instead of triangle geometry
 		uint32_t alpha_texture_buffer_offset = UINT32_MAX; // Byte offset of hint_alpha texture index in CustomMaterialUniforms UBO; UINT32_MAX if absent
 	};
