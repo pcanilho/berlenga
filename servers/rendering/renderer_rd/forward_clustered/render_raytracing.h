@@ -183,8 +183,9 @@ enum {
 	RT_GEOM_FLAG_SHADOW_CASTER = 8u,
 };
 
-// Instance masks. Camera, bounce and specular rays cull with 0x01 (RT_MASK_SCENE
-// in raytracing_inc.glsl), so they never meet a caster; shadow rays with 0xFF.
+// Instance masks. Camera rays and the specular query cull with 0x01 (RT_MASK_SCENE
+// in raytracing_inc.glsl), so they never meet a caster; bounce and shadow rays
+// with 0xFF.
 enum {
 	RT_INSTANCE_MASK_SCENE = 0xFFu,
 	RT_INSTANCE_MASK_SHADOW_CASTER = 0x02u,

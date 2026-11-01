@@ -3283,7 +3283,7 @@
 			[b]Note:[/b] Requires a restart to take effect.
 		</member>
 		<member name="rendering/pathtracing/shadow_caster_layers" type="int" setter="" getter="" default="0">
-			Render layers whose shadow-only instances ([constant GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY]) the path tracer traces as shadow casters. Other shadow-only instances are left out of the traced scene. A caster is met only by shadow rays, never by camera or bounce rays, so it changes none of the guides the denoiser reads. Its alpha dims the light through it by [code]1 - alpha[/code] (or by a shader's alpha scissor, if it sets one), so a soft alpha casts a soft shadow without noise.
+			Render layers whose shadow-only instances ([constant GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY]) the path tracer traces as shadow casters. Other shadow-only instances are left out of the traced scene. A caster is never met by camera rays, so it stays hidden and changes none of the guides the denoiser reads, as in the rasterizer. Shadow rays and bounce rays meet it, so a hidden wall or ceiling still blocks the light, casts its shadow and bounces light back into the room. On a shadow ray its alpha dims the light through it by [code]1 - alpha[/code] (or by a shader's alpha scissor, if it sets one), so a soft alpha casts a soft shadow without noise.
 			[b]Note:[/b] Casters are ignored when [member rendering/pathtracing/use_simple_shadows] is [code]true[/code].
 		</member>
 		<member name="rendering/pathtracing/use_shader_execution_reordering" type="bool" setter="" getter="" default="true">
