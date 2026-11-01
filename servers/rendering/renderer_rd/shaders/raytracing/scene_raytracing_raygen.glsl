@@ -261,6 +261,13 @@ vec3 fog_light_inscatter(FogLightData p_light, vec3 p_x, vec3 p_dir, float p_g, 
 }
 
 #define FOG_LIGHT_CANDIDATES 8
+// Per stretch, the positional-light estimates made without a shadow ray (FOG_CANDIDATES),
+// and per ray, the shadow rays traced for the ones resampling keeps (FOG_SHADOW_RAYS):
+// the candidate generation of Volumetric ReSTIR (Lin, Wyman & Yuksel, "Fast Volume
+// Rendering with Spatiotemporal Reservoir Resampling", SIGGRAPH Asia 2021), without its
+// spatial and temporal reuse.
+#define FOG_CANDIDATES 8
+#define FOG_SHADOW_RAYS 2
 
 // The in-scatter from the positional lights over one stretch [p_a, p_b] of the ray,
 // given a point p_t in it, uniform. Each light is integrated only where it can reach
@@ -272,8 +279,13 @@ vec3 fog_light_inscatter(FogLightData p_light, vec3 p_x, vec3 p_dir, float p_g, 
 // unshadowed in-scatter over its span in closed form (the integral of 1 / (h^2 + s^2),
 // Sun et al., "A Practical Analytic Single Scattering Model", SIGGRAPH 2005). A light
 // whose span covers only part of the stretch is in the list at p_t only that part of the
-// time, so its estimate is divided by that share: unbiased.
-vec3 fog_positional(vec3 p_ro, vec3 p_rd, float p_a, float p_b, float p_t, float p_tau_a, float p_extinction, uint p_volume_count, float p_g, inout uint rng) {
+// time, so its estimate is divided by that share: unbiased. Unshadowed: the point and the
+// way to the light come back for fog_march, which resamples the candidates of all its
+// stretches and traces shadow rays only for those it keeps.
+vec3 fog_positional(vec3 p_ro, vec3 p_rd, float p_a, float p_b, float p_t, float p_tau_a, float p_extinction, uint p_volume_count, float p_g, inout uint rng, out vec3 r_x, out vec3 r_to_light, out float r_dist) {
+	r_x = vec3(0.0);
+	r_to_light = vec3(0.0, 1.0, 0.0);
+	r_dist = 0.0;
 	vec3 x = p_ro + p_rd * p_t;
 	uint g_count = fog_light_grid[3];
 	uint g_start = 8u;
@@ -360,11 +372,14 @@ vec3 fog_positional(vec3 p_ro, vec3 p_rd, float p_a, float p_b, float p_t, float
 	if (all(lessThanEqual(abs(inscatter), vec3(0.0)))) {
 		return vec3(0.0);
 	}
-	float v = fog_shadow(xs, to_light, max(dist - 0.01, 0.002));
 	float transmittance = exp(-(p_tau_a + p_extinction * (ts - p_a)));
 	// the share of the stretch this light is listed over
 	float share = (sel_t1 - sel_t0) / max(p_b - p_a, 1e-6);
-	return scat_s * inscatter * v * transmittance / pdf / share * (w_sum / sel_p_hat);
+	r_x = xs;
+	r_to_light = to_light;
+	r_dist = dist;
+	// unshadowed: fog_march resamples these and traces the shadow ray of the ones it keeps
+	return scat_s * inscatter * transmittance / pdf / share * (w_sum / sel_p_hat);
 }
 
 // The fog along the primary ray, in-scatter in rgb and transmittance in a: K stretches
@@ -418,6 +433,21 @@ vec4 fog_march(vec3 p_origin, vec3 p_dir, float p_primary_t, uint p_samples, ino
 	float offset = rand(rng);
 	vec3 scatter = vec3(0.0);
 	float tau = 0.0; // optical depth to the stretch's start
+	// one reservoir per shadow ray, over every stretch's positional-light candidates
+	float res_w_sum[FOG_SHADOW_RAYS];
+	float res_w[FOG_SHADOW_RAYS];
+	vec3 res_est[FOG_SHADOW_RAYS];
+	vec3 res_x[FOG_SHADOW_RAYS];
+	vec3 res_l[FOG_SHADOW_RAYS];
+	float res_d[FOG_SHADOW_RAYS];
+	for (uint r = 0u; r < uint(FOG_SHADOW_RAYS); r++) {
+		res_w_sum[r] = 0.0;
+		res_w[r] = 0.0;
+		res_est[r] = vec3(0.0);
+		res_x[r] = vec3(0.0);
+		res_l[r] = vec3(0.0, 1.0, 0.0);
+		res_d[r] = 0.0;
+	}
 	[[dont_unroll]] for (uint i = 0u; i < p_samples; i++) {
 		float a = t0 + float(i) * dx;
 		float t = a + offset * dx;
@@ -451,8 +481,39 @@ vec4 fog_march(vec3 p_origin, vec3 p_dir, float p_primary_t, uint p_samples, ino
 		}
 		// the sky's and the room's light, which no shadow ray stops, and the medium's own
 		scatter += (scattering * ambient + emission) * transmittance * dx;
-		scatter += fog_positional(p_origin, p_dir, a, a + dx, t, tau, extinction, volume_count, g, rng);
+		// the positional lights: FOG_CANDIDATES unshadowed estimates of this stretch, offered to
+		// the ray's reservoirs (the shadow rays come after the march, for the kept ones only)
+		for (uint c = 0u; c < uint(FOG_CANDIDATES); c++) {
+			float tc = c == 0u ? t : a + rand(rng) * dx;
+			vec3 cx;
+			vec3 cl;
+			float cd;
+			vec3 est = fog_positional(p_origin, p_dir, a, a + dx, tc, tau, extinction, volume_count, g, rng, cx, cl, cd) / float(FOG_CANDIDATES);
+			float w = dot(max(est, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
+			if (!(w > 0.0) || isinf(w)) {
+				continue;
+			}
+			for (uint r = 0u; r < uint(FOG_SHADOW_RAYS); r++) {
+				res_w_sum[r] += w;
+				if (rand(rng) * res_w_sum[r] < w) {
+					res_est[r] = est;
+					res_w[r] = w;
+					res_x[r] = cx;
+					res_l[r] = cl;
+					res_d[r] = cd;
+				}
+			}
+		}
 		tau += extinction * dx;
+	}
+	// the kept candidates, each by its shadow ray: sum(w) / w * estimate * visibility is an
+	// unbiased estimate of the whole ray's positional in-scatter (resampled importance
+	// sampling of a sum, Talbot et al. 2005), averaged over the reservoirs
+	for (uint r = 0u; r < uint(FOG_SHADOW_RAYS); r++) {
+		if (res_w[r] > 0.0) {
+			float v = fog_shadow(res_x[r], res_l[r], max(res_d[r] - 0.01, 0.002));
+			scatter += res_est[r] * v * (res_w_sum[r] / res_w[r]) / float(FOG_SHADOW_RAYS);
+		}
 	}
 	float through = exp(-tau);
 	if (sky) {
