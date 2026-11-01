@@ -548,8 +548,12 @@ void main() {
 	float metalness = saturate(orm.b * mat.metallic);
 
 	vec3 emissive = vec3(0.0);
-	if ((mat.flags & 2u) != 0u) {
-		emissive = sample_material_texture(mat.emission_texture_idx, uv, mat.flags).rgb * mat.emission_color * mat.emission_strength;
+	if ((mat.flags & 8u) != 0u) {
+		// Emission on: its colour, times the texture if it has one.
+		emissive = mat.emission_color * mat.emission_strength;
+		if ((mat.flags & 2u) != 0u) {
+			emissive *= sample_material_texture(mat.emission_texture_idx, uv, mat.flags).rgb;
+		}
 		emissive *= scene_data_block.data.emissive_exposure_normalization;
 	}
 

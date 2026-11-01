@@ -161,6 +161,9 @@ enum {
 	RT_MAT_FLAG_HAS_NORMAL_MAP = 1u,
 	RT_MAT_FLAG_HAS_EMISSION_TEX = 2u,
 	RT_MAT_FLAG_POINT_FILTER = 4u,
+	// Emission is on (emission_color * emission_strength, times the texture if
+	// RT_MAT_FLAG_HAS_EMISSION_TEX).
+	RT_MAT_FLAG_HAS_EMISSION = 8u,
 };
 
 // Index format for RT geometry (matches GLSL fetch_indices).
