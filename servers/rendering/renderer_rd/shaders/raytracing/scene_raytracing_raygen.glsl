@@ -143,9 +143,20 @@ void main() {
 			scene_data_block.data.inv_view_matrix[2],
 			vec4(0.0, 0.0, 0.0, 1.0)));
 
-	vec4 target = scene_data_block.data.inv_projection_matrix * vec4(d.x, d.y, 1.0, 1.0);
-	vec4 origin = inv_view * vec4(0.0, 0.0, 0.0, 1.0);
-	vec4 direction = inv_view * vec4(normalize(target.xyz), 0);
+	vec4 origin;
+	vec4 direction;
+	if (abs(scene_data_block.data.projection_matrix[2][3]) < 1e-6) {
+		// Orthogonal: parallel rays along the view axis, each from its own point on
+		// the near plane (reverse Z: the near plane at NDC z = 1).
+		vec4 near_point = scene_data_block.data.inv_projection_matrix * vec4(d.x, d.y, 1.0, 1.0);
+		origin = inv_view * vec4(near_point.xyz / near_point.w, 1.0);
+		direction = inv_view * vec4(0.0, 0.0, -1.0, 0.0);
+	} else {
+		// Perspective: every ray from the eye, through its pixel.
+		vec4 target = scene_data_block.data.inv_projection_matrix * vec4(d.x, d.y, 1.0, 1.0);
+		origin = inv_view * vec4(0.0, 0.0, 0.0, 1.0);
+		direction = inv_view * vec4(normalize(target.xyz), 0);
+	}
 
 	// Sample count from specialization constant, frame index from uniform
 	const uint samples_per_pixel = RT_GET_SAMPLE_COUNT();
