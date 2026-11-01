@@ -150,9 +150,15 @@ struct alignas(16) RT_LightData {
 static_assert(sizeof(RT_LightData) == 80, "RT_LightData must be 80 bytes for std430");
 
 enum {
-	RT_LIGHTS_MAX = 64,
-	RT_LIGHTS_FRUSTUM_BUDGET = 48,
-	RT_LIGHTS_INDIRECT_BUDGET = RT_LIGHTS_MAX - RT_LIGHTS_FRUSTUM_BUDGET,
+	// Lights in the traced light buffer, at most. The shaders sample them through a
+	// world grid of per-cell light lists with resampled importance sampling
+	// (raytracing_lights_inc.glsl), so a pixel's cost doesn't grow with the count.
+	RT_LIGHTS_MAX = 4096,
+	// The light grid (binding 33): cells at most, and list entries at most (the cell
+	// size grows until the lists fit).
+	RT_LIGHT_GRID_MAX_CELLS = 32768,
+	RT_LIGHT_GRID_MAX_ENTRIES = 1 << 20,
+	RT_LIGHT_GRID_HEADER = 8,
 };
 
 enum {
@@ -346,6 +352,9 @@ struct RTViewportState {
 	uint32_t motion_transform_buffer_capacity = 0;
 
 	RID light_buffer;
+	uint32_t light_buffer_capacity = 0; // Lights.
+	RID light_grid_buffer;
+	uint32_t light_grid_buffer_capacity = 0; // uints.
 	RID params_buffer;
 	RID scene_uniform_set;
 
@@ -512,7 +521,13 @@ public:
 	void cleanup_caches();
 
 	RTViewportState *build_tlas(const RenderDataRD *p_render_data, uint32_t p_rt_flags);
-	uint32_t gather_lights(const RenderDataRD *p_render_data, RT_LightData *r_light_data, uint32_t p_max_lights);
+	uint32_t gather_lights(const RenderDataRD *p_render_data, LocalVector<RT_LightData> &r_light_data, uint32_t p_max_lights);
+	// The world grid of light lists the shaders pick lights from (layout in
+	// raytracing_lights_inc.glsl).
+	static void build_light_grid(const LocalVector<RT_LightData> &p_lights, LocalVector<uint32_t> &r_grid);
+	// Kept between frames so gathering allocates nothing once warm.
+	LocalVector<RT_LightData> rt_light_scratch;
+	LocalVector<uint32_t> rt_light_grid_scratch;
 	RID update_uniform_set(RTViewportState *p_state, const RenderDataRD *p_render_data, uint32_t p_rt_flags);
 
 	void copy_output_texture(const RenderDataRD *p_render_data);
