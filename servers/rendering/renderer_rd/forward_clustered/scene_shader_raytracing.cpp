@@ -1799,6 +1799,10 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["VIEWPORT_SIZE"] = "read_viewport_size";
 
 		actions.renames["FRAGCOORD"] = "rt_frag_coord";
+		// The path tracer's shadow pass: every ray but the camera's (shadow rays and bounces). Geometry a
+		// shader hides from the camera with it (discard or ALPHA unless IN_SHADOW_PASS) still shadows and
+		// bounces light, as it still casts into the shadow maps in raster.
+		actions.renames["IN_SHADOW_PASS"] = "rt_in_shadow_pass";
 		actions.renames["FRONT_FACING"] = "rt_front_facing";
 		actions.renames["RAY_IS_PRIMARY"] = "rt_ray_is_primary(payload.packed_bounces_flags)";
 		actions.renames["RAY_IS_SHADOW"] = "is_shadow_ray(payload.packed_bounces_flags)";
