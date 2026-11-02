@@ -75,7 +75,7 @@ class RenderForwardClusteredPT : public RenderForwardClustered {
 	} transparency_composite;
 
 	RID _transparency_layer_fb(RenderSceneBuffersRD *p_render_buffers, bool p_output_size = false, bool p_depth_only = false);
-	void _composite_transparency(const RenderDataRD *p_render_data, bool p_layer_at_output);
+	void _composite_transparency(const RenderDataRD *p_render_data, bool p_particles_at_output);
 
 protected:
 	virtual void _render_scene(RenderDataRD *p_render_data, const Color &p_default_bg_color) override;
