@@ -30,6 +30,7 @@
 
 #include "render_forward_clustered_pt.h"
 
+#include "core/config/project_settings.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/forward_clustered/scene_shader_raytracing.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
@@ -45,6 +46,9 @@ using namespace RendererSceneRenderImplementation;
 // The transparent surfaces' own layer under Ray Reconstruction, freed with its
 // buffers (`RB_SCOPE_DLSS_RR`).
 #define RB_TEX_TRANSPARENCY_LAYER SNAME("transparency_layer")
+// The same at the output size, and the traced depth brought up to it to test against.
+#define RB_TEX_TRANSPARENCY_LAYER_OUTPUT SNAME("transparency_layer_output")
+#define RB_TEX_TRANSPARENCY_DEPTH_OUTPUT SNAME("transparency_depth_output")
 
 void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const Color &p_default_bg_color) {
 	ERR_FAIL_NULL(p_render_data);
@@ -453,11 +457,37 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 	const bool transparency_layer = raytracing && raytracing->dlss_rr_has_buffers(rb.ptr()) && scale_type == SCALE_3D_DLSS && !use_msaa &&
 			rb->get_view_count() == 1 && (!render_list[RENDER_LIST_ALPHA].elements.is_empty() || layer_effects || fog) && transparency_composite.pipeline.is_valid() &&
 			RD::get_singleton()->texture_get_format(rb->get_upscaled_texture()).format == RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+	// At a low internal size a streak thinner than an internal pixel (rain) survives
+	// only where it crosses a pixel centre, and the jitter moves those every frame:
+	// dots and dashes. Ray Reconstruction can't rebuild it either (handed the layer as its
+	// transparency overlay it averages thin fast streaks away), so particles are drawn into
+	// a second layer at the output size, unjittered, against the traced depth brought up to
+	// that size: the "separate translucency after upscaling" of engines that upscale. Only
+	// particles: a large transparent surface (glass, a dissolving wall) cut by an opaque
+	// edge would step in blocks of the internal pixel there, so it stays in the internal
+	// layer, under the particles.
+	bool particles_at_output = transparency_layer && rb->get_target_size() != rb->get_internal_size() &&
+			GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transparency_at_output_size");
+	if (particles_at_output) {
+		particles_at_output = false;
+		for (const GeometryInstanceSurfaceDataCache *surf : render_list[RENDER_LIST_ALPHA].elements) {
+			if (surf->owner->base_flags & INSTANCE_DATA_FLAG_PARTICLES) {
+				particles_at_output = true;
+				break;
+			}
+		}
+	}
 	if (transparency_layer) {
 		Vector<Color> layer_clear;
 		layer_clear.push_back(Color(0, 0, 0, 0));
 		RD::get_singleton()->draw_list_begin(_transparency_layer_fb(rb.ptr()), RD::DRAW_CLEAR_COLOR_0, layer_clear);
 		RD::get_singleton()->draw_list_end();
+		if (particles_at_output) {
+			Size2i target = rb->get_target_size();
+			copy_effects->copy_r32f_to_depth_fb(raytracing->rt_get_depth_texture(rb.ptr()), _transparency_layer_fb(rb.ptr(), true, true), Rect2i(0, 0, target.x, target.y));
+			RD::get_singleton()->draw_list_begin(_transparency_layer_fb(rb.ptr(), true), RD::DRAW_CLEAR_COLOR_0, layer_clear);
+			RD::get_singleton()->draw_list_end();
+		}
 	}
 
 	{
@@ -474,21 +504,39 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 
 		RID rp_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, radiance_texture, samplers, transparent_pass_uniform_buffer_index, true);
 
+		uint32_t transparent_color_pass_flags = (color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENT)) & ~uint32_t(COLOR_PASS_FLAG_SEPARATE_SPECULAR);
+		// Motion vectors should not be overwritten by transparent objects.
+		transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
 		{
-			uint32_t transparent_color_pass_flags = (color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENT)) & ~uint32_t(COLOR_PASS_FLAG_SEPARATE_SPECULAR);
-			// Motion vectors should not be overwritten by transparent objects.
-			transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
-
 			RID alpha_framebuffer = rb_data->get_color_pass_fb(transparent_color_pass_flags);
 			BitField<RD::DrawFlags> alpha_draw_flags = RD::DRAW_DEFAULT_ALL;
 			Vector<Color> alpha_clear;
+			uint32_t pass_flags = transparent_color_pass_flags;
 			if (transparency_layer) {
 				// Cleared above, before the effects that may have drawn into it.
 				alpha_framebuffer = _transparency_layer_fb(rb.ptr());
-				transparent_color_pass_flags |= uint32_t(COLOR_PASS_FLAG_TRANSPARENCY_LAYER);
+				pass_flags |= uint32_t(COLOR_PASS_FLAG_TRANSPARENCY_LAYER);
 			}
-			RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, transparent_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
+			RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
+			if (particles_at_output) {
+				render_list_params.particles_filter = 0;
+			}
 			_render_list_with_draw_list(&render_list_params, alpha_framebuffer, alpha_draw_flags, alpha_clear, 0.0f, 0u, p_render_data->render_region);
+		}
+
+		if (particles_at_output) {
+			// The particles at the output size, unjittered. The clusters stay at the internal
+			// size, so fragment coordinates are scaled to it.
+			const Vector2 jitter = p_render_data->scene_data->taa_jitter;
+			p_render_data->scene_data->taa_jitter = Vector2();
+			uint32_t output_uniform_buffer_index = _setup_environment(p_render_data, false, screen_size, screen_size, p_default_bg_color, false, false, false,
+					float(rb->get_internal_size().x) / float(rb->get_target_size().x));
+			p_render_data->scene_data->taa_jitter = jitter;
+			RID output_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, radiance_texture, samplers, output_uniform_buffer_index, true);
+			Vector<Color> alpha_clear;
+			RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, transparent_color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENCY_LAYER), rb_data.is_null(), p_render_data->directional_light_soft_shadows, output_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
+			render_list_params.particles_filter = 1;
+			_render_list_with_draw_list(&render_list_params, _transparency_layer_fb(rb.ptr(), true), RD::DRAW_DEFAULT_ALL, alpha_clear, 0.0f, 0u, Rect2i());
 		}
 
 		RD::get_singleton()->draw_command_end_label();
@@ -526,7 +574,7 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		}
 		_render_3d_upscaling(p_render_data, scale_type, using_taa, time_step, dlss_rr_guides);
 		if (transparency_layer) {
-			_composite_transparency(p_render_data, fog);
+			_composite_transparency(p_render_data, fog, particles_at_output);
 		}
 	}
 
@@ -643,7 +691,21 @@ void RenderForwardClusteredPT::_render_buffers_debug_draw(const RenderDataRD *p_
 	}
 }
 
-RID RenderForwardClusteredPT::_transparency_layer_fb(RenderSceneBuffersRD *p_render_buffers) {
+RID RenderForwardClusteredPT::_transparency_layer_fb(RenderSceneBuffersRD *p_render_buffers, bool p_output_size, bool p_depth_only) {
+	if (p_output_size) {
+		Size2i target = p_render_buffers->get_target_size();
+		if (!p_render_buffers->has_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER_OUTPUT)) {
+			RD::TextureFormat color = RD::get_singleton()->texture_get_format(p_render_buffers->get_internal_texture());
+			p_render_buffers->create_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER_OUTPUT, color.format, color.usage_bits, RD::TEXTURE_SAMPLES_1, target);
+			RD::TextureFormat depth = RD::get_singleton()->texture_get_format(p_render_buffers->get_depth_texture());
+			p_render_buffers->create_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_DEPTH_OUTPUT, depth.format, depth.usage_bits, RD::TEXTURE_SAMPLES_1, target);
+		}
+		RID depth = p_render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_DEPTH_OUTPUT);
+		if (p_depth_only) {
+			return FramebufferCacheRD::get_singleton()->get_cache_multiview(1, depth);
+		}
+		return FramebufferCacheRD::get_singleton()->get_cache_multiview(1, p_render_buffers->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER_OUTPUT), RID(), RID(), depth);
+	}
 	if (!p_render_buffers->has_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER)) {
 		// As the colour it stands in for, so the transparent pass's pipelines
 		// fit its framebuffer.
@@ -725,10 +787,11 @@ RID RenderForwardClusteredPT::_filter_fog(const RenderDataRD *p_render_data) {
 	return dest;
 }
 
-void RenderForwardClusteredPT::_composite_transparency(const RenderDataRD *p_render_data, bool p_fog) {
+void RenderForwardClusteredPT::_composite_transparency(const RenderDataRD *p_render_data, bool p_fog, bool p_particles_at_output) {
 	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
 	RID fog = p_fog ? _filter_fog(p_render_data) : RID();
 	RID layer = rb->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER);
+	RID layer_output = p_particles_at_output ? rb->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER_OUTPUT) : layer;
 	RID color = rb->get_upscaled_texture();
 	Size2i size = rb->get_target_size();
 
@@ -739,6 +802,7 @@ void RenderForwardClusteredPT::_composite_transparency(const RenderDataRD *p_ren
 	RD::Uniform u_fog(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ sampler, fog.is_valid() ? fog : layer }));
 	RID nearest = RendererRD::MaterialStorage::get_singleton()->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
 	RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ nearest, fog.is_valid() ? raytracing->rt_get_depth_texture(rb.ptr()) : layer }));
+	RD::Uniform u_layer_output(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 3, Vector<RID>({ nearest, layer_output }));
 	RD::Uniform u_color(RD::UNIFORM_TYPE_IMAGE, 0, color);
 	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
 
@@ -746,7 +810,7 @@ void RenderForwardClusteredPT::_composite_transparency(const RenderDataRD *p_ren
 		int32_t size[2];
 		float jitter_uv[2];
 		int32_t fog;
-		int32_t pad0;
+		int32_t particles_layer;
 	} push = {};
 	push.size[0] = size.x;
 	push.size[1] = size.y;
@@ -755,10 +819,11 @@ void RenderForwardClusteredPT::_composite_transparency(const RenderDataRD *p_ren
 	push.jitter_uv[0] = p_render_data->scene_data->taa_jitter.x * 0.5f;
 	push.jitter_uv[1] = p_render_data->scene_data->taa_jitter.y * 0.5f;
 	push.fog = fog.is_valid() ? 1 : 0;
+	push.particles_layer = p_particles_at_output ? 1 : 0;
 
 	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
 	RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, transparency_composite.pipeline);
-	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_layer, u_fog, u_depth), 0);
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_layer, u_fog, u_depth, u_layer_output), 0);
 	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_color), 1);
 	RD::get_singleton()->compute_list_set_push_constant(compute_list, &push, sizeof(push));
 	RD::get_singleton()->compute_list_dispatch_threads(compute_list, size.x, size.y, 1);

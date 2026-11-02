@@ -247,6 +247,8 @@ protected:
 		float screen_mesh_lod_threshold = 0.0;
 		RD::FramebufferFormatID framebuffer_format = 0;
 		uint32_t element_offset = 0;
+		// -1 draws every element; 0 only those that aren't particles, 1 only particles.
+		int8_t particles_filter = -1;
 		bool use_directional_soft_shadow = false;
 		SceneShaderForwardClustered::ShaderSpecialization base_specialization = {};
 
@@ -314,7 +316,9 @@ protected:
 			uint32_t ss_effects_flags;
 			float ssao_light_affect;
 			float ssao_ao_affect;
-			uint32_t pad1;
+			// Scales gl_FragCoord to the cluster grid's pixels (the screen size): 1, except for a
+			// pass drawn at another size than the frame it shares the clusters with.
+			float frag_coord_scale;
 
 			float sdf_to_bounds[16];
 
@@ -466,7 +470,7 @@ protected:
 
 	static RenderForwardClustered *singleton;
 
-	uint32_t _setup_environment(const RenderDataRD *p_render_data, bool p_no_fog, const Size2i &p_screen_size, const Size2 &p_viewport_size, const Color &p_default_bg_color, bool p_opaque_render_buffers = false, bool p_apply_alpha_multiplier = false, bool p_pancake_shadows = false);
+	uint32_t _setup_environment(const RenderDataRD *p_render_data, bool p_no_fog, const Size2i &p_screen_size, const Size2 &p_viewport_size, const Color &p_default_bg_color, bool p_opaque_render_buffers = false, bool p_apply_alpha_multiplier = false, bool p_pancake_shadows = false, float p_frag_coord_scale = 1.0f);
 	void _setup_voxelgis(const PagedArray<RID> &p_voxelgis);
 	void _setup_lightmaps(const RenderDataRD *p_render_data, const PagedArray<RID> &p_lightmaps, const Transform3D &p_cam_transform);
 	static uint32_t _count_directional_lights(const RenderDataRD *p_render_data);

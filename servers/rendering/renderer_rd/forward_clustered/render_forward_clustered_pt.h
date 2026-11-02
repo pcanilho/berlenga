@@ -61,8 +61,8 @@ class RenderForwardClusteredPT : public RenderForwardClustered {
 		RID pipeline;
 	} transparency_composite;
 
-	RID _transparency_layer_fb(RenderSceneBuffersRD *p_render_buffers);
-	void _composite_transparency(const RenderDataRD *p_render_data, bool p_fog);
+	RID _transparency_layer_fb(RenderSceneBuffersRD *p_render_buffers, bool p_output_size = false, bool p_depth_only = false);
+	void _composite_transparency(const RenderDataRD *p_render_data, bool p_fog, bool p_particles_at_output);
 
 	// The traced volumetric fog's filter: a blur kept to like depths, then an average over
 	// frames into one of two histories, swapped each frame.
