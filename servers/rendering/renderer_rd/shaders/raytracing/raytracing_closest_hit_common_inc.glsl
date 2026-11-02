@@ -746,8 +746,18 @@ vec3 dlss_rr_compute_specular_albedo(MaterialResult m, float NdotV) {
 	return DLSSRR_computeSpecularAlbedo(m.albedo, m.metalness, material_specular_to_f0(m.specular), m.roughness, NdotV);
 }
 
+// The diffuse albedo guide. An emissive surface's light is its own, not reflected, so its
+// albedo alone tells Ray Reconstruction nothing of the pattern it glows in (lettering on a
+// sign, a lit screen): the denoiser takes the emission for noisy lighting and spreads it.
+// As the miss shader bakes the sky's colour into this guide to keep its detail, the
+// emission, mapped into [0, 1) by Reinhard, is taken where it is brighter than the albedo.
+vec3 dlss_rr_diffuse_guide(MaterialResult m) {
+	vec3 emissive_guide = max(m.emissive, vec3(0.0)) / (vec3(1.0) + max(m.emissive, vec3(0.0)));
+	return max(DLSSRR_computeDiffuseAlbedo(m.albedo, m.metalness), emissive_guide);
+}
+
 void dlss_rr_store_albedo_guides(MaterialResult m, float NdotV) {
-	dlss_rr_write_albedo_guides(DLSSRR_computeDiffuseAlbedo(m.albedo, m.metalness), dlss_rr_compute_specular_albedo(m, NdotV));
+	dlss_rr_write_albedo_guides(dlss_rr_diffuse_guide(m), dlss_rr_compute_specular_albedo(m, NdotV));
 }
 
 // Primary hits at least this metallic take the reflection's motion as their own.
@@ -777,7 +787,7 @@ void dlss_rr_guide_hit(HitData h, MaterialResult m, vec3 N, vec3 V, float NdotV,
 	vec3 motion = mirror ? vec3(0.0) : rt_hit_prev_world_pos(h.hit_pos) - h.hit_pos;
 	payload.packed_rt[0] = packHalf2x16(motion.xy);
 	payload.packed_rt[1] = packHalf2x16(vec2(motion.z, 0.0));
-	payload.packed_rt[2] = packUnorm4x8(vec4(DLSSRR_computeDiffuseAlbedo(m.albedo, m.metalness), 0.0));
+	payload.packed_rt[2] = packUnorm4x8(vec4(dlss_rr_diffuse_guide(m), 0.0));
 	payload.rng_state = packUnorm4x8(vec4(dlss_rr_compute_specular_albedo(m, NdotV), 0.0));
 }
 
@@ -791,7 +801,7 @@ void dlss_rr_composite_peel_guides(HitData h, MaterialResult m, vec3 N, vec3 V, 
 	float behind = 1.0 - p_cover;
 
 	vec3 diffuse = imageLoad(dlss_rr_diffuse_albedo, pixel).rgb * behind +
-			DLSSRR_computeDiffuseAlbedo(m.albedo, m.metalness) * source_weight;
+			dlss_rr_diffuse_guide(m) * source_weight;
 	vec3 layer_specular = source_weight * dlss_rr_compute_specular_albedo(m, NdotV);
 	vec3 specular = imageLoad(dlss_rr_specular_albedo, pixel).rgb * behind + layer_specular;
 	dlss_rr_write_albedo_guides(diffuse, specular);
@@ -953,7 +963,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 		vec3 mirror_pos = gl_WorldRayOriginEXT;
 		dlss_rr_write_replaced_guides(mirror_pos + mirror_xform * (h.hit_pos - mirror_pos),
 				mirror_xform * (rt_hit_prev_world_pos(h.hit_pos) - h.hit_pos), vec3(1.0),
-				DLSSRR_computeDiffuseAlbedo(m.albedo, m.metalness), dlss_rr_compute_specular_albedo(m, NdotV));
+				dlss_rr_diffuse_guide(m), dlss_rr_compute_specular_albedo(m, NdotV));
 		ps.packed_bounces_flags &= ~DLSS_RR_REPLACE_PENDING_FLAG;
 	}
 #endif
