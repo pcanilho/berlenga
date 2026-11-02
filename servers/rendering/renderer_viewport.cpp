@@ -149,7 +149,8 @@ Vector<RendererViewport::Viewport *> RendererViewport::_sort_active_viewports() 
 // override (the NVIDIA app forcing a preset) pins every mode to one size, which is rarely a single
 // scale of the output on both axes (Ultra Performance at 2798x1279 takes 933x426 only: ceil(2798 / 3)
 // but round(1279 / 3)), so no scaling_3d_scale reaches it and DLSS would refuse every frame. When no
-// mode takes the scaled size, render at the optimal size of the mode closest to it instead.
+// mode takes the scaled size (Super Resolution's or Ray Reconstruction's), render at the optimal size of
+// the mode closest to it instead.
 void RendererViewport::_snap_dlss_render_size(int p_target_width, int p_target_height, int &r_render_width, int &r_render_height) {
 #ifdef STREAMLINE_ENABLED
 	StreamlineContext &ctx = StreamlineContext::get();
@@ -171,6 +172,20 @@ void RendererViewport::_snap_dlss_render_size(int p_target_width, int p_target_h
 		if (uint32_t(r_render_width) >= settings.renderWidthMin && uint32_t(r_render_width) <= settings.renderWidthMax &&
 				uint32_t(r_render_height) >= settings.renderHeightMin && uint32_t(r_render_height) <= settings.renderHeightMax) {
 			return; // this mode takes the size asked for
+		}
+		// Ray Reconstruction's modes too: an override pins Super Resolution's, not its, so the path
+		// tracer keeps the size asked for while Ray Reconstruction takes it.
+		if (ctx.slDLSSDGetOptimalSettings != nullptr) {
+			sl::DLSSDOptions rr_options{};
+			rr_options.mode = mode;
+			rr_options.outputWidth = p_target_width;
+			rr_options.outputHeight = p_target_height;
+			sl::DLSSDOptimalSettings rr{};
+			if (ctx.slDLSSDGetOptimalSettings(rr_options, rr) == sl::Result::eOk &&
+					uint32_t(r_render_width) >= rr.renderWidthMin && uint32_t(r_render_width) <= rr.renderWidthMax &&
+					uint32_t(r_render_height) >= rr.renderHeightMin && uint32_t(r_render_height) <= rr.renderHeightMax) {
+				return;
+			}
 		}
 		const int64_t dx = int64_t(settings.optimalRenderWidth) - r_render_width;
 		const int64_t dy = int64_t(settings.optimalRenderHeight) - r_render_height;

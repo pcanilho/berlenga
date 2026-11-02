@@ -66,7 +66,7 @@ public:
 	DLSSContextInner();
 	virtual ~DLSSContextInner();
 
-	sl::DLSSMode find_optimal_mode(uint32_t outputWidth, uint32_t outputHeight, uint32_t desiredWidth, uint32_t desiredHeight, sl::DLSSOptimalSettings &out_optimalSettings, bool use_dlss_rr = false) {
+	sl::DLSSMode find_optimal_mode(uint32_t outputWidth, uint32_t outputHeight, uint32_t desiredWidth, uint32_t desiredHeight, sl::DLSSOptimalSettings &out_optimalSettings, bool use_dlss_rr = false, bool p_quiet = false) {
 		// For DLSS-RR, use the DLSS-D API; for regular DLSS, use the standard DLSS API
 		if (use_dlss_rr) {
 			if (StreamlineContext::get().slDLSSDGetOptimalSettings == nullptr) {
@@ -151,6 +151,9 @@ public:
 				accepted += vformat(" %s %dx%d to %dx%d;", StreamlineContext::dlss_mode_name(modes[i]), settings[i].renderWidthMin, settings[i].renderHeightMin, settings[i].renderWidthMax, settings[i].renderHeightMax);
 			}
 		}
+		if (p_quiet) {
+			return sl::DLSSMode::eOff;
+		}
 		ERR_FAIL_V_MSG(sl::DLSSMode::eOff, vformat("Couldn't find an appropriate DLSS%s mode: no mode accepts a %dx%d render for a %dx%d output (accepted:%s).", use_dlss_rr ? " Ray Reconstruction" : " Super Resolution", desiredWidth, desiredHeight, outputWidth, outputHeight, accepted));
 	}
 }; // end class
@@ -189,11 +192,13 @@ DLSSEffect::~DLSSEffect() {
 DLSSContext *DLSSEffect::create_context(Size2i p_internal_size, Size2i p_target_size) {
 	DLSSContextInner *context = memnew(RendererRD::DLSSContextInner);
 
-	context->currentDlssOptions.mode = context->find_optimal_mode(p_target_size.width, p_target_size.height, p_internal_size.width, p_internal_size.height, context->currentOptimalSettings);
+	// Ray Reconstruction first: when it takes the size, Super Resolution refusing it (a driver override
+	// pins only Super Resolution's sizes) is no error, the path tracer's frames still reach the screen.
 	{
 		sl::DLSSOptimalSettings rr_settings;
-		context->rrMode = context->find_optimal_mode(p_target_size.width, p_target_size.height, p_internal_size.width, p_internal_size.height, rr_settings, true);
+		context->rrMode = context->find_optimal_mode(p_target_size.width, p_target_size.height, p_internal_size.width, p_internal_size.height, rr_settings, true, true);
 	}
+	context->currentDlssOptions.mode = context->find_optimal_mode(p_target_size.width, p_target_size.height, p_internal_size.width, p_internal_size.height, context->currentOptimalSettings, false, context->rrMode != sl::DLSSMode::eOff);
 	context->currentDlssOptions.outputWidth = p_target_size.width;
 	context->currentDlssOptions.outputHeight = p_target_size.height;
 	// For scripts (Streamline.get_super_resolution_state): a game can fall back to another upscaler.
