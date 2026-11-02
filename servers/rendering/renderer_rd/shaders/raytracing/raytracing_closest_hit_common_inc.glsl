@@ -650,7 +650,13 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags)) {
 		ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
 
-		vec3 diffuse_albedo = DLSSRR_encodeDiffuseAlbedo(DLSSRR_computeDiffuseAlbedo(m.albedo, m.metalness));
+		// An emissive surface's light is its own, not reflected, so its albedo alone tells Ray
+		// Reconstruction nothing of the pattern it glows in (lettering on a sign, a lit screen):
+		// the denoiser takes the emission for noisy lighting and spreads it. As the miss shader
+		// bakes the sky's colour into this guide to keep its detail, the emission, mapped into
+		// [0, 1) by Reinhard, is taken where it is brighter than the albedo.
+		vec3 emissive_guide = m.emissive / (vec3(1.0) + m.emissive);
+		vec3 diffuse_albedo = DLSSRR_encodeDiffuseAlbedo(max(DLSSRR_computeDiffuseAlbedo(m.albedo, m.metalness), emissive_guide));
 		imageStore(dlss_rr_diffuse_albedo, pixel, vec4(diffuse_albedo, 1.0));
 
 		vec3 specular_albedo = DLSSRR_computeSpecularAlbedo(m.albedo, m.metalness, brdf_mat.dielectricF0, m.roughness, NdotV);
