@@ -30,6 +30,7 @@
 
 #include "render_forward_clustered_pt.h"
 
+#include "core/config/project_settings.h"
 #include "servers/rendering/renderer_rd/environment/fog.h"
 #include "servers/rendering/renderer_rd/forward_clustered/scene_shader_raytracing.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
@@ -524,9 +525,16 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			dlss_rr_guides.normal_roughness = raytracing->dlss_rr_get_normal_roughness(rb.ptr());
 			dlss_rr_guides.specular_hit_dist = raytracing->dlss_rr_get_specular_hit_dist(rb.ptr());
 		}
+		// Ray Reconstruction reconstructs the layer with the frame (its transparency overlay
+		// input), unless the project lays it over the output as drawn. Either way the traced
+		// fog is laid over the output afterwards, under the transparents.
+		const bool layer_to_rr = transparency_layer && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/reconstruct_transparency_layer");
+		if (layer_to_rr) {
+			dlss_rr_guides.transparency_layer = rb->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER);
+		}
 		_render_3d_upscaling(p_render_data, scale_type, using_taa, time_step, dlss_rr_guides);
-		if (transparency_layer) {
-			_composite_transparency(p_render_data, fog);
+		if (transparency_layer && (!layer_to_rr || fog)) {
+			_composite_transparency(p_render_data, fog, layer_to_rr);
 		}
 	}
 
@@ -725,7 +733,7 @@ RID RenderForwardClusteredPT::_filter_fog(const RenderDataRD *p_render_data) {
 	return dest;
 }
 
-void RenderForwardClusteredPT::_composite_transparency(const RenderDataRD *p_render_data, bool p_fog) {
+void RenderForwardClusteredPT::_composite_transparency(const RenderDataRD *p_render_data, bool p_fog, bool p_layer_in_output) {
 	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
 	RID fog = p_fog ? _filter_fog(p_render_data) : RID();
 	RID layer = rb->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_LAYER);
@@ -746,7 +754,7 @@ void RenderForwardClusteredPT::_composite_transparency(const RenderDataRD *p_ren
 		int32_t size[2];
 		float jitter_uv[2];
 		int32_t fog;
-		int32_t pad0;
+		int32_t layer_in_output;
 	} push = {};
 	push.size[0] = size.x;
 	push.size[1] = size.y;
@@ -755,6 +763,7 @@ void RenderForwardClusteredPT::_composite_transparency(const RenderDataRD *p_ren
 	push.jitter_uv[0] = p_render_data->scene_data->taa_jitter.x * 0.5f;
 	push.jitter_uv[1] = p_render_data->scene_data->taa_jitter.y * 0.5f;
 	push.fog = fog.is_valid() ? 1 : 0;
+	push.layer_in_output = p_layer_in_output ? 1 : 0;
 
 	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
 	RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, transparency_composite.pipeline);

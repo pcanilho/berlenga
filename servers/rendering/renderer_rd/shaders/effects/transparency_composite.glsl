@@ -24,7 +24,9 @@ layout(push_constant, std430) uniform Params {
 	// the frame's jitter in UV: the layer was drawn with it, the output has none
 	vec2 jitter_uv;
 	int fog;
-	int pad0;
+	// 1: Ray Reconstruction already reconstructed the layer into the output (its
+	// transparency overlay), so only the fog is laid here, under the layer's coverage.
+	int layer_in_output;
 }
 params;
 
@@ -42,6 +44,19 @@ void main() {
 		return;
 	}
 	vec4 fog = textureLod(fog_texture, uv, 0.0);
+	if (params.layer_in_output != 0) {
+		// The output holds transparents over surfaces. Over the sky the fog lies over both, as
+		// below; elsewhere it lies under the transparents, so it is laid where they don't cover:
+		// out = T + S(1 - a) becomes T + (S fog.a + fog.rgb)(1 - a), with S(1 - a) = out - T.
+		if (textureLod(depth_texture, uv, 0.0).r <= 0.0) {
+			imageStore(color_image, pos, vec4(base.rgb * fog.a + fog.rgb, base.a));
+			return;
+		}
+		vec3 over = min(layer.rgb, base.rgb);
+		vec3 surface = base.rgb - over;
+		imageStore(color_image, pos, vec4(over + surface * fog.a + fog.rgb * (1.0 - layer.a), base.a));
+		return;
+	}
 	if (textureLod(depth_texture, uv, 0.0).r <= 0.0) {
 		vec3 all = layer.rgb + under * (1.0 - layer.a);
 		imageStore(color_image, pos, vec4(all * fog.a + fog.rgb, base.a));

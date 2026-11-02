@@ -3832,6 +3832,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/shadow_caster_layers", PROPERTY_HINT_LAYERS_3D_RENDER), 0);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/volumetric_fog_samples", PROPERTY_HINT_RANGE, "0,8,1"), 2);
 	GLOBAL_DEF("rendering/pathtracing/async_shader_compilation", true);
+	GLOBAL_DEF("rendering/pathtracing/reconstruct_transparency_layer", true);
 	GLOBAL_DEF_RST("rendering/pathtracing/multimesh_cache_cpu_transforms", false);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/deformed_mesh_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,3600,1"), 60);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/multimesh_blas_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,18000,1"), 3600);

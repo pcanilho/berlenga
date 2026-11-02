@@ -67,6 +67,7 @@ public:
 		RID dlss_rr_specular_albedo; // Specular albedo buffer (RGB)
 		RID dlss_rr_normal_roughness; // World-space normal (XYZ) + roughness (W)
 		RID dlss_rr_specular_hit_dist; // Specular hit distance (R16F, -1 = sky)
+		RID dlss_rr_transparency_layer; // Transparents drawn apart (RGB premultiplied, A coverage), reconstructed by DLSS-RR
 	} last_parameters;
 	DLSSEffect *last_effect = nullptr;
 	bool is_d3d12 = false;
