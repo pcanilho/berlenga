@@ -1548,6 +1548,15 @@ void RenderRaytracing::update_procedural_blas(RTProceduralState *p_state, LocalV
 // Material processing
 // ---------------------------------------------------------------------------
 
+// A BaseMaterial3D's shader, as BaseMaterial3D::_update_shader writes it: the only kind the
+// standard material path reads right. A ShaderMaterial with its own `albedo` uniform is custom
+// and keeps its own fragment code (its ALPHA, IN_SHADOW_PASS and the rest).
+static bool _is_base_material_3d(RendererRD::MaterialStorage *p_storage, RID p_material) {
+	const SceneShaderForwardClustered::MaterialData *md = static_cast<const SceneShaderForwardClustered::MaterialData *>(
+			p_storage->material_get_data(p_material, RendererRD::MaterialStorage::SHADER_TYPE_3D));
+	return md && md->shader_data && md->shader_data->code.begins_with("// NOTE: Shader automatically converted from ");
+}
+
 RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t p_material_invalidation_counter) {
 	// Static default material for invalid/null materials
 	static RTMaterialData s_default_mat;
@@ -1703,7 +1712,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	// Colors declared with source_color in Godot shaders are stored in sRGB;
 	// material_get_param returns the raw sRGB value, so we convert to linear here.
 	Variant albedo_var = material_storage->material_get_param(p_material_rid, "albedo");
-	if (albedo_var.get_type() == Variant::COLOR) {
+	if (albedo_var.get_type() == Variant::COLOR && _is_base_material_3d(material_storage, p_material_rid)) {
 		Color c = ((Color)albedo_var).srgb_to_linear();
 		mat.albedo_color[0] = c.r;
 		mat.albedo_color[1] = c.g;
