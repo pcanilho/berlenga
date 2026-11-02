@@ -247,6 +247,8 @@ protected:
 		float screen_mesh_lod_threshold = 0.0;
 		RD::FramebufferFormatID framebuffer_format = 0;
 		uint32_t element_offset = 0;
+		// -1 draws every element; 0 only those that aren't particles, 1 only particles.
+		int8_t particles_filter = -1;
 		bool use_directional_soft_shadow = false;
 		SceneShaderForwardClustered::ShaderSpecialization base_specialization = {};
 
