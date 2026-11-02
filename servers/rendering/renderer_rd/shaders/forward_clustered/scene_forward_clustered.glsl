@@ -1260,7 +1260,7 @@ void fragment_shader(in SceneData scene_data) {
 
 	float normal_map_depth = 1.0;
 
-	vec2 screen_uv = gl_FragCoord.xy * scene_data.screen_pixel_size;
+	vec2 screen_uv = gl_FragCoord.xy * implementation_data.frag_coord_scale * scene_data.screen_pixel_size;
 
 	float sss_strength = 0.0;
 
@@ -1508,7 +1508,7 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef USE_MULTIVIEW
 	uvec2 cluster_pos = uvec2(combined_uv.xy / scene_data.screen_pixel_size) >> implementation_data.cluster_shift;
 #else
-	uvec2 cluster_pos = uvec2(gl_FragCoord.xy) >> implementation_data.cluster_shift;
+	uvec2 cluster_pos = uvec2(gl_FragCoord.xy * implementation_data.frag_coord_scale) >> implementation_data.cluster_shift;
 #endif
 	uint cluster_offset = (implementation_data.cluster_width * cluster_pos.y + cluster_pos.x) * (implementation_data.max_cluster_element_count_div_32 + 32);
 

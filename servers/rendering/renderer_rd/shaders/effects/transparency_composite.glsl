@@ -5,7 +5,7 @@
 #VERSION_DEFINES
 
 // Lays the transparent surfaces, drawn into a layer of their own at the
-// internal size, over the colour the upscaler wrote. The layer holds colour
+// internal size (or at the output size, unjittered), over the colour the upscaler wrote. The layer holds colour
 // premultiplied by coverage and the coverage, as the mix blend leaves them
 // over a cleared target.
 
@@ -24,7 +24,8 @@ layout(push_constant, std430) uniform Params {
 	// the frame's jitter in UV: the layer was drawn with it, the output has none
 	vec2 jitter_uv;
 	int fog;
-	int pad0;
+	// the layer was drawn at the output size without the jitter
+	int layer_unjittered;
 }
 params;
 
@@ -33,8 +34,9 @@ void main() {
 	if (any(greaterThanEqual(pos, params.size))) {
 		return;
 	}
-	vec2 uv = (vec2(pos) + 0.5) / vec2(params.size) + params.jitter_uv;
-	vec4 layer = textureLod(layer_texture, uv, 0.0);
+	vec2 out_uv = (vec2(pos) + 0.5) / vec2(params.size);
+	vec2 uv = out_uv + params.jitter_uv;
+	vec4 layer = textureLod(layer_texture, params.layer_unjittered != 0 ? out_uv : uv, 0.0);
 	vec4 base = imageLoad(color_image, pos);
 	vec3 under = base.rgb;
 	if (params.fog == 0) {

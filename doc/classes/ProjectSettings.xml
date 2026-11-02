@@ -3289,6 +3289,9 @@
 		<member name="rendering/pathtracing/use_shader_execution_reordering" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], enables NVIDIA Shader Execution Reordering in the path tracer. SET reorders ray tracing shader invocations at runtime to improve GPU occupancy and reduce divergence between threads executing different materials. This can significantly improve path tracing performance on NVIDIA Ada Lovelace and later GPUs. Has no effect on hardware that does not support SET.
 		</member>
+		<member name="rendering/pathtracing/transparency_at_output_size" type="bool" setter="" getter="" default="true">
+			Under DLSS Ray Reconstruction, transparent surfaces (particles, glass, rain) are drawn into a layer of their own and laid over Ray Reconstruction's output. If [code]true[/code], that layer is drawn at the output resolution without the frame's jitter, depth-tested against the traced depth brought up to that size, so thin transparents stay continuous at low internal resolutions. If [code]false[/code], it is drawn at the internal resolution, which breaks thin transparents into crawling dots. Compositor effects at [constant RenderingServer.COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT] or [constant RenderingServer.COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TRANSPARENT] keep the layer at the internal resolution.
+		</member>
 		<member name="rendering/pathtracing/use_simple_shadows" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], shadow rays use Ray Queries instead of fully traced rays. Ray Queries are significantly cheaper but rely on a quick alpha texture fetch, which can produce incorrect shadows on materials with generated/animated alpha textures. Fully traced shadow rays are more accurate but incur a higher GPU cost.
 			[b]Note:[/b] Only has an effect when path tracing is enabled on the active [Environment].
