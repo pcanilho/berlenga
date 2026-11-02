@@ -145,6 +145,49 @@ Vector<RendererViewport::Viewport *> RendererViewport::_sort_active_viewports() 
 	return result;
 }
 
+// DLSS Super Resolution takes a render size only within some mode's range for the output. A driver
+// override (the NVIDIA app forcing a preset) pins every mode to one size, which is rarely a single
+// scale of the output on both axes (Ultra Performance at 2798x1279 takes 933x426 only: ceil(2798 / 3)
+// but round(1279 / 3)), so no scaling_3d_scale reaches it and DLSS would refuse every frame. When no
+// mode takes the scaled size, render at the optimal size of the mode closest to it instead.
+void RendererViewport::_snap_dlss_render_size(int p_target_width, int p_target_height, int &r_render_width, int &r_render_height) {
+#ifdef STREAMLINE_ENABLED
+	StreamlineContext &ctx = StreamlineContext::get();
+	if (ctx.slDLSSGetOptimalSettings == nullptr || !ctx.streamline_capabilities.dlss_available) {
+		return;
+	}
+	const sl::DLSSMode modes[] = { sl::DLSSMode::eDLAA, sl::DLSSMode::eMaxQuality, sl::DLSSMode::eBalanced, sl::DLSSMode::eMaxPerformance, sl::DLSSMode::eUltraPerformance };
+	int64_t best_distance = -1;
+	Size2i best;
+	for (sl::DLSSMode mode : modes) {
+		sl::DLSSOptions options{};
+		options.mode = mode;
+		options.outputWidth = p_target_width;
+		options.outputHeight = p_target_height;
+		sl::DLSSOptimalSettings settings{};
+		if (ctx.slDLSSGetOptimalSettings(options, settings) != sl::Result::eOk || settings.optimalRenderWidth == 0 || settings.optimalRenderHeight == 0) {
+			continue;
+		}
+		if (uint32_t(r_render_width) >= settings.renderWidthMin && uint32_t(r_render_width) <= settings.renderWidthMax &&
+				uint32_t(r_render_height) >= settings.renderHeightMin && uint32_t(r_render_height) <= settings.renderHeightMax) {
+			return; // this mode takes the size asked for
+		}
+		const int64_t dx = int64_t(settings.optimalRenderWidth) - r_render_width;
+		const int64_t dy = int64_t(settings.optimalRenderHeight) - r_render_height;
+		const int64_t distance = dx * dx + dy * dy;
+		if (best_distance < 0 || distance < best_distance) {
+			best_distance = distance;
+			best = Size2i(settings.optimalRenderWidth, settings.optimalRenderHeight);
+		}
+	}
+	if (best_distance >= 0) {
+		print_verbose(vformat("DLSS: no mode takes a %dx%d render for a %dx%d output, rendering at %dx%d.", r_render_width, r_render_height, p_target_width, p_target_height, best.x, best.y));
+		r_render_width = best.x;
+		r_render_height = best.y;
+	}
+#endif
+}
+
 void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 	if (p_viewport->render_buffers.is_valid()) {
 		if (p_viewport->size.width == 0 || p_viewport->size.height == 0) {
@@ -260,6 +303,9 @@ void RendererViewport::_configure_3d_render_buffers(Viewport *p_viewport) {
 					target_height = p_viewport->size.height;
 					render_width = MAX(ceilf((float)target_width * scaling_3d_scale), 1.0); // target_width / (target_width * scaling)
 					render_height = MAX(ceilf((float)target_height * scaling_3d_scale), 1.0);
+					if (scaling_3d_mode == RSE::VIEWPORT_SCALING_3D_MODE_DLSS) {
+						_snap_dlss_render_size(target_width, target_height, render_width, render_height);
+					}
 					break;
 				case RSE::VIEWPORT_SCALING_3D_MODE_OFF:
 					target_width = p_viewport->size.width;
