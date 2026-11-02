@@ -338,7 +338,7 @@ struct ImplementationData {
 	uint ss_effects_flags;
 	float ssao_light_affect;
 	float ssao_ao_affect;
-	uint pad1;
+	float frag_coord_scale; // gl_FragCoord to screen (cluster) pixels: 1 but for a pass drawn at another size
 
 	mat4 sdf_to_bounds;
 

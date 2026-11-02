@@ -3871,6 +3871,7 @@ void RenderingServer::init() {
 
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/limits/cluster_builder/max_clustered_elements", PROPERTY_HINT_RANGE, "32,8192,1"), 512);
 	GLOBAL_DEF("rendering/pathtracing/use_shader_execution_reordering", true);
+	GLOBAL_DEF("rendering/pathtracing/transparency_at_output_size", true);
 	GLOBAL_DEF("rendering/pathtracing/async_shader_compilation", true);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/debug_heatmap_max_ticks", PROPERTY_HINT_RANGE, "1,10000000,1,or_greater"), 100000.0);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/debug_heatmap_opacity", PROPERTY_HINT_RANGE, "0,1,0.01"), 0.35);
