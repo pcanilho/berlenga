@@ -29,7 +29,8 @@ layout(buffer_reference, std430) readonly buffer SrcUintBuf {
 	uint v[];
 };
 
-layout(set = 0, binding = 0) restrict writeonly buffer DstVtxBuf {
+// Read too, when keep_prev: the positions there are copied out before they are replaced.
+layout(set = 0, binding = 0) restrict buffer DstVtxBuf {
 	uint v[];
 }
 dst_vtx;
@@ -45,6 +46,12 @@ layout(set = 0, binding = 3) restrict readonly buffer SrcAttrBuf {
 	uint v[];
 }
 src_attr;
+
+// The positions section as it was before this bake (float3 × N*V), when keep_prev.
+layout(set = 0, binding = 5) restrict writeonly buffer PrevVtxBuf {
+	uint v[];
+}
+prev_vtx;
 
 #ifdef MODE_INDEXED
 layout(set = 0, binding = 4) restrict writeonly buffer DstIdxBuf {
@@ -72,6 +79,7 @@ layout(push_constant, std430) uniform PC {
 	uint mm_offset; // mm current instance offset (motion vectors double-buffer)
 	uint has_tbn; // 1 if mesh has normals/tangents, 0 otherwise
 	uint attr_stride_words; // attribute stride in uint words (0 = mesh has no attribs)
+	uint keep_prev; // 1: copy the positions baked last time to prev_vtx first (motion vectors)
 }
 push;
 
@@ -118,6 +126,11 @@ void main() {
 
 		vec3 wp = rot * p + t;
 		uint pos_base = idx * 3u;
+		if (push.keep_prev != 0u) {
+			prev_vtx.v[pos_base + 0u] = dst_vtx.v[pos_base + 0u];
+			prev_vtx.v[pos_base + 1u] = dst_vtx.v[pos_base + 1u];
+			prev_vtx.v[pos_base + 2u] = dst_vtx.v[pos_base + 2u];
+		}
 		dst_vtx.v[pos_base + 0u] = floatBitsToUint(wp.x);
 		dst_vtx.v[pos_base + 1u] = floatBitsToUint(wp.y);
 		dst_vtx.v[pos_base + 2u] = floatBitsToUint(wp.z);

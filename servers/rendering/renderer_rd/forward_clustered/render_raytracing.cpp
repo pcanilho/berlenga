@@ -436,6 +436,10 @@ void RenderRaytracing::cleanup_caches() {
 				rd->free_rid(e->merged_attr_buffer);
 				e->merged_attr_buffer = RID();
 			}
+			if (e->prev_pos_buffer.is_valid()) {
+				rd->free_rid(e->prev_pos_buffer);
+				e->prev_pos_buffer = RID();
+			}
 			if (e->replicated_idx_buffer.is_valid()) {
 				rd->free_rid(e->replicated_idx_buffer);
 				e->replicated_idx_buffer = RID();
@@ -635,6 +639,10 @@ void RenderRaytracing::prepare_frame() {
 			if (e->merged_attr_buffer.is_valid()) {
 				rd->free_rid(e->merged_attr_buffer);
 				e->merged_attr_buffer = RID();
+			}
+			if (e->prev_pos_buffer.is_valid()) {
+				rd->free_rid(e->prev_pos_buffer);
+				e->prev_pos_buffer = RID();
 			}
 			if (e->replicated_idx_buffer.is_valid()) {
 				rd->free_rid(e->replicated_idx_buffer);
@@ -2103,6 +2111,9 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			if (old->merged_attr_buffer.is_valid()) {
 				rd_local->free_rid(old->merged_attr_buffer);
 			}
+			if (old->prev_pos_buffer.is_valid()) {
+				rd_local->free_rid(old->prev_pos_buffer);
+			}
 			if (old->replicated_idx_buffer.is_valid()) {
 				rd_local->free_rid(old->replicated_idx_buffer);
 			}
@@ -2240,6 +2251,20 @@ bool RenderRaytracing::_build_merged_mm_blas(
 
 	const bool needs_rebake = first_touch_this_frame &&
 			(transforms_changed || !entry.blas_built_once);
+	// A rebake over positions already baked keeps them as the previous frame's, so an
+	// instance moved inside the MultiMesh (not only the MultiMesh as a whole) reports its
+	// motion to the denoiser. Not on the first bake, nor after the buffers were remade.
+	const bool keep_prev = needs_rebake && entry.blas_built_once;
+	const uint32_t pos_bytes = p_mm_count * vertex_count * 12;
+	if (keep_prev && (!entry.prev_pos_buffer.is_valid() || entry.prev_pos_capacity_bytes < pos_bytes)) {
+		if (entry.prev_pos_buffer.is_valid()) {
+			rd->free_rid(entry.prev_pos_buffer);
+		}
+		entry.prev_pos_capacity_bytes = pos_bytes;
+		entry.prev_pos_buffer = rd->storage_buffer_create(pos_bytes, {}, 0, RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+		ERR_FAIL_COND_V(!entry.prev_pos_buffer.is_valid(), false);
+		rd->set_resource_name(entry.prev_pos_buffer, "RT MM merged prev pos [" + itos(cache_key) + "]");
+	}
 
 	// --- Single merged dispatch: bake vertices + TBN + attributes + (optional) indices ---
 	if (needs_rebake) {
@@ -2259,6 +2284,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			if (indexed) {
 				push_buf(4, entry.replicated_idx_buffer);
 			}
+			push_buf(5, keep_prev ? entry.prev_pos_buffer : RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		}
 		RID merge_uniform_set = rd->uniform_set_create(uniforms, mm_merge_shader.version_shader[merge_mode], 0, /*p_linear_pool=*/true);
 		ERR_FAIL_COND_V(!merge_uniform_set.is_valid(), false);
@@ -2282,6 +2308,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			uint32_t mm_stride, mm_offset;
 			uint32_t has_tbn;
 			uint32_t attr_stride_words;
+			uint32_t keep_prev;
 		} pc;
 
 		pc.src_vtx_lo = uint32_t(vtx_bda);
@@ -2305,6 +2332,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		pc.mm_offset = mm_cur_offset;
 		pc.has_tbn = has_tbn ? 1u : 0u;
 		pc.attr_stride_words = has_attr ? (attrib_stride / 4) : 0u;
+		pc.keep_prev = keep_prev ? 1u : 0u;
 
 		MergeShader::Mode mode = indexed ? MergeShader::MODE_INDEXED : MergeShader::MODE_NON_INDEXED;
 		rd->compute_list_bind_compute_pipeline(p_compute_list, mm_merge_shader.pipeline[mode]);
@@ -2324,6 +2352,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 				uint32_t mm_stride, mm_offset;
 				uint32_t has_tbn;
 				uint32_t attr_stride_words;
+				uint32_t keep_prev;
 			} pc_ni;
 			pc_ni.src_vtx_lo = pc.src_vtx_lo;
 			pc_ni.src_vtx_hi = pc.src_vtx_hi;
@@ -2337,6 +2366,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			pc_ni.mm_offset = pc.mm_offset;
 			pc_ni.has_tbn = pc.has_tbn;
 			pc_ni.attr_stride_words = pc.attr_stride_words;
+			pc_ni.keep_prev = pc.keep_prev;
 			rd->compute_list_set_push_constant(p_compute_list, &pc_ni, sizeof(MergePCNonIndexed));
 		}
 
@@ -2352,6 +2382,9 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		// Drop the RID now that the dispatch is recorded; the underlying Vulkan
 		// descriptor set lives in the linear pool until frame end.
 		rd->free_rid(merge_uniform_set);
+		if (keep_prev) {
+			entry.prev_pos_frame = current_frame;
+		}
 	}
 
 	// --- Build or refit the merged BLAS (uses merged_vtx_buffer for positions) ---
@@ -2401,6 +2434,19 @@ bool RenderRaytracing::_build_merged_mm_blas(
 	geom.flags &= ~RT_GEOM_FLAG_COMPRESSED;
 	geom.blas_position_address_lo = 0; // Positions are read from the merged buffer itself.
 	geom.blas_position_address_hi = 0;
+
+	// Instances moved inside the MultiMesh this frame: the hit shader takes their previous
+	// positions from the copy kept before the rebake, as it does for a skinned mesh's.
+	if (entry.prev_pos_frame == current_frame && entry.prev_pos_buffer.is_valid()) {
+		const uint64_t prev_addr = rd->buffer_get_device_address(entry.prev_pos_buffer);
+		geom.flags |= RT_GEOM_FLAG_DEFORMED;
+		geom.prev_vertex_buffer_address_lo = static_cast<uint32_t>(prev_addr & 0xFFFFFFFFULL);
+		geom.prev_vertex_buffer_address_hi = static_cast<uint32_t>(prev_addr >> 32);
+	} else {
+		geom.flags &= ~RT_GEOM_FLAG_DEFORMED;
+		geom.prev_vertex_buffer_address_lo = 0;
+		geom.prev_vertex_buffer_address_hi = 0;
+	}
 
 	// TBN section starts after all positions in the merged vertex buffer.
 	if (has_tbn) {

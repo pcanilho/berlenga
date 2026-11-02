@@ -337,6 +337,13 @@ struct RTMergedMMEntry {
 	RID replicated_idx_buffer;
 	uint32_t idx_capacity = 0;
 
+	// The positions section as it was before the latest rebake (float3 × N*V), for motion
+	// vectors of instances moved inside the MultiMesh. Valid only on `prev_pos_frame`:
+	// on any other frame nothing moved and the current positions are the previous ones.
+	RID prev_pos_buffer;
+	uint32_t prev_pos_capacity_bytes = 0;
+	uint32_t prev_pos_frame = UINT32_MAX;
+
 	RID blas;
 	uint32_t last_mm_count = 0;
 	uint32_t last_surface_counter = 0;
