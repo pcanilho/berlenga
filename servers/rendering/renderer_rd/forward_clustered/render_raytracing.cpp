@@ -2862,7 +2862,18 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 			geometry_data.push_back(merged_sd.geometry);
 			sbt_offsets.push_back(pending.mat_data->rt_sbt_offset);
 			material_data.push_back(pending.mat_data->data);
-			motion_indices.push_back(-1);
+			// The merged BLAS holds the MultiMesh's instances in its own space, under the
+			// MultiMeshInstance3D's transform, so that transform's previous value is the
+			// TLAS instance's previous transform. Without it a moving MultiMesh reports no
+			// motion and Ray Reconstruction reprojects it as if it stood still.
+			if (pending.transform_moved) {
+				motion_indices.push_back((int32_t)motion_transforms.size());
+				RT_InstanceMotionData motion = {};
+				RendererRD::MaterialStorage::store_transform_transposed_3x4(pending.prev_instance_transform, motion.prev_object_to_world);
+				motion_transforms.push_back(motion);
+			} else {
+				motion_indices.push_back(-1);
+			}
 			instance_flags.push_back(pending.inst_flags);
 			instance_masks.push_back(RT_INSTANCE_MASK_SCENE);
 #ifdef TOOLS_ENABLED
