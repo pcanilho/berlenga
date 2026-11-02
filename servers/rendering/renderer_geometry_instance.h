@@ -80,6 +80,8 @@ public:
 	// A shadow-only instance reaches the path tracer only on the shadow caster
 	// layers, and then as a caster that shadow rays alone meet.
 	virtual void set_rt_shadows_only(bool p_enable) {}
+	// Cast Shadow Off: seen by camera and bounce rays, passed by shadow rays.
+	virtual void set_rt_casts_no_shadow(bool p_enable) {}
 };
 
 // Base implementation of RenderGeometryInstance shared by internal renderers.

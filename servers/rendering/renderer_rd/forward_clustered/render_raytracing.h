@@ -222,12 +222,14 @@ enum {
 	RT_GEOM_FLAG_SHADOW_CASTER = 8u,
 };
 
-// Instance masks. Camera rays and the specular query cull with 0x01 (RT_MASK_SCENE
-// in raytracing_inc.glsl), so they never meet a caster; bounce and shadow rays
-// with 0xFF.
+// Instance masks, matched by the ray masks in raytracing_inc.glsl. Camera rays and
+// the specular query (RT_MASK_SCENE, 0x09) never meet a caster; shadow rays
+// (RT_MASK_SHADOW, 0xF7) never meet an instance whose Cast Shadow is Off; bounce
+// rays (0xFF) meet all three.
 enum {
 	RT_INSTANCE_MASK_SCENE = 0xFFu,
 	RT_INSTANCE_MASK_SHADOW_CASTER = 0x02u,
+	RT_INSTANCE_MASK_NO_SHADOW = 0x08u,
 };
 
 /// Per-instance state for procedural RT geometry. Heap-allocated, only exists for procedural instances.

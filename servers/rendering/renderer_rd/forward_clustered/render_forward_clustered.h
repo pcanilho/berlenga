@@ -586,6 +586,8 @@ protected:
 		RTProceduralState *rt_procedural = nullptr;
 		// Shadow only: reaching the tracer, a caster for shadow rays alone.
 		bool rt_shadows_only = false;
+		// Cast Shadow Off: no shadow ray meets it.
+		bool rt_casts_no_shadow = false;
 
 		// lightmap
 		RID lightmap_instance;
@@ -633,6 +635,7 @@ protected:
 		virtual void set_rt_procedural(bool p_procedural, const AABB &p_aabb) override;
 		virtual void set_rt_procedural_bounds(const Vector<float> &p_aabb_data, bool p_expose_bounds) override;
 		virtual void set_rt_shadows_only(bool p_enable) override { rt_shadows_only = p_enable; }
+		virtual void set_rt_casts_no_shadow(bool p_enable) override { rt_casts_no_shadow = p_enable; }
 
 		virtual void clear_light_instances() override {}
 		virtual void pair_light_instance(const RID p_light_instance, RSE::LightType light_type, uint32_t placement_idx) override {}

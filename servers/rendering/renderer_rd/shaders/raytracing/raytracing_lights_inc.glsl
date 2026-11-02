@@ -239,7 +239,7 @@ float lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, inout
 	rayQueryEXT shadow_rq;
 	rayQueryInitializeEXT(shadow_rq, tlas,
 			gl_RayFlagsTerminateOnFirstHitEXT,
-			RT_MASK_SCENE, origin, 0.001, direction, max_dist - 0.001);
+			RT_MASK_SHADOW_OPAQUE, origin, 0.001, direction, max_dist - 0.001);
 
 	while (rayQueryProceedEXT(shadow_rq)) {
 		if (rayQueryGetIntersectionTypeEXT(shadow_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT) {
