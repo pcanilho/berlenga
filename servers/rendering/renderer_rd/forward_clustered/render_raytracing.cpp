@@ -2482,6 +2482,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 		Transform3D prev_instance_transform;
 		bool transform_moved;
 		bool shadow_caster;
+		uint8_t instance_mask;
 		RTMaterialData *mat_data;
 		uint32_t inst_flags;
 	};
@@ -2497,7 +2498,12 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 		const Transform3D &instance_transform = inst->transform;
 		// Scene cull lets a shadow-only instance through only on the caster layers.
 		const bool shadow_caster = inst->rt_shadows_only;
-		const uint8_t instance_mask = shadow_caster ? RT_INSTANCE_MASK_SHADOW_CASTER : RT_INSTANCE_MASK_SCENE;
+		uint8_t instance_mask = RT_INSTANCE_MASK_SCENE;
+		if (shadow_caster) {
+			instance_mask = RT_INSTANCE_MASK_SHADOW_CASTER;
+		} else if (inst->rt_casts_no_shadow) {
+			instance_mask = RT_INSTANCE_MASK_NO_SHADOW;
+		}
 		const uint32_t caster_flag = shadow_caster ? RT_GEOM_FLAG_SHADOW_CASTER : 0u;
 
 		// Determine previous-frame transform for motion vectors.
@@ -2674,6 +2680,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 				pending.prev_instance_transform = prev_instance_transform;
 				pending.transform_moved = transform_moved;
 				pending.shadow_caster = shadow_caster;
+				pending.instance_mask = instance_mask;
 				pending.mat_data = mat_data;
 				pending.inst_flags = inst_flags;
 				pending_mm_surfaces.push_back(pending);
@@ -2864,7 +2871,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 			material_data.push_back(pending.mat_data->data);
 			motion_indices.push_back(-1);
 			instance_flags.push_back(pending.inst_flags);
-			instance_masks.push_back(RT_INSTANCE_MASK_SCENE);
+			instance_masks.push_back(pending.instance_mask);
 #ifdef TOOLS_ENABLED
 			if (collect_render_info) {
 				tlas_instance_count++;
@@ -2938,7 +2945,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 				}
 
 				instance_flags.push_back(pending.inst_flags);
-				instance_masks.push_back(pending.shadow_caster ? RT_INSTANCE_MASK_SHADOW_CASTER : RT_INSTANCE_MASK_SCENE);
+				instance_masks.push_back(pending.instance_mask);
 			}
 
 #ifdef TOOLS_ENABLED

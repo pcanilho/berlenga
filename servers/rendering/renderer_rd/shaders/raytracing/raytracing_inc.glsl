@@ -174,13 +174,17 @@ const uint FLAG_DEFORMED = 4u;
 // ray its any-hit multiplies the ray's transmittance by 1 - alpha.
 const uint FLAG_SHADOW_CASTER = 8u;
 
-// Cull masks. Casters carry instance mask 0x02 and every other instance 0xFF,
-// so camera rays and the denoiser's specular query (RT_MASK_SCENE) never meet a
-// caster, while bounce rays (RT_MASK_BOUNCE) and shadow rays (RT_MASK_SHADOW)
-// meet both: a hidden ceiling still holds the light in and bounces it back.
-#define RT_MASK_SCENE 0x01u
+// Cull masks. Casters (Shadows Only) carry instance mask 0x02, instances whose
+// Cast Shadow is Off 0x08, and every other instance 0xFF. Camera rays and the
+// denoiser's specular query (RT_MASK_SCENE) never meet a caster; shadow rays
+// (RT_MASK_SHADOW) never meet a Cast Shadow Off instance, as no shadow map
+// draws one; bounce rays (RT_MASK_BOUNCE) meet all three: a hidden ceiling
+// still holds the light in and bounces it back. The ray query shadow path runs
+// no any-hit, so it leaves casters out too (RT_MASK_SHADOW_OPAQUE).
+#define RT_MASK_SCENE 0x09u
 #define RT_MASK_BOUNCE 0xFFu
-#define RT_MASK_SHADOW 0xFFu
+#define RT_MASK_SHADOW 0xF7u
+#define RT_MASK_SHADOW_OPAQUE 0x01u
 // A shadow ray's transmittance under this is taken as blocked.
 #define RT_SHADOW_OPAQUE_TRANSMITTANCE (1.0 / 256.0)
 
