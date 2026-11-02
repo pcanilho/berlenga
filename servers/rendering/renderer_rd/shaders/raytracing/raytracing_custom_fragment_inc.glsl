@@ -52,6 +52,8 @@ view = -gl_WorldRayDirectionEXT;
 rt_front_facing = rt_front_face;
 rt_screen_uv = vec2(gl_LaunchIDEXT.xy) / vec2(gl_LaunchSizeEXT.xy);
 rt_frag_coord = vec4(gl_LaunchIDEXT.xy, 0.0, 1.0);
+// IN_SHADOW_PASS: true for every ray but the camera's.
+rt_in_shadow_pass = is_shadow_ray(payload.packed_bounces_flags) || get_total_bounces(payload.packed_bounces_flags) != 0u;
 
 // Run vertex shader (computes varyings, may modify built-ins).
 /* RT_CUSTOM_VERTEX_CALL */
