@@ -2020,7 +2020,7 @@ Error RenderingDeviceDriverVulkan::initialize(uint32_t p_device_index, uint32_t 
 #endif
 
 #if defined(STREAMLINE_ENABLED)
-	if (Streamline::get_singleton()) {
+	if (is_main_device && Streamline::get_singleton()) {
 		Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_AFTER_DEVICE_CREATION);
 	}
 #endif
@@ -8000,7 +8000,7 @@ RenderingDeviceDriverVulkan::RenderingDeviceDriverVulkan(RenderingContextDriverV
 
 RenderingDeviceDriverVulkan::~RenderingDeviceDriverVulkan() {
 #if defined(STREAMLINE_ENABLED)
-	if (Streamline::get_singleton()) {
+	if (is_main_device && Streamline::get_singleton()) {
 		Streamline::get_singleton()->emit_marker(STREAMLINE_MARKER_BEFORE_DEVICE_DESTROY);
 	}
 #endif
