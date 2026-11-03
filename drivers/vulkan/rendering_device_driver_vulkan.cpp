@@ -928,6 +928,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDevice16BitStorageFeaturesKHR storage_feature = {};
 		VkPhysicalDeviceMultiviewFeatures multiview_features = {};
 		VkPhysicalDevicePipelineCreationCacheControlFeatures pipeline_cache_control_features = {};
+		VkPhysicalDeviceFaultFeaturesEXT device_fault_features = {};
 		VkPhysicalDeviceVulkanMemoryModelFeatures memory_model_features = {};
 		VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features = {};
 		VkPhysicalDeviceRayTracingInvocationReorderFeaturesEXT raytracing_invocation_reorder_features = {};
@@ -1037,6 +1038,12 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			next_features = &sync_2_features;
 		}
 
+		if (enabled_device_extension_names.has(VK_EXT_DEVICE_FAULT_EXTENSION_NAME)) {
+			device_fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
+			device_fault_features.pNext = next_features;
+			next_features = &device_fault_features;
+		}
+
 		VkPhysicalDeviceFeatures2 device_features_2 = {};
 		device_features_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 		device_features_2.pNext = next_features;
@@ -1114,7 +1121,9 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		}
 
 		if (enabled_device_extension_names.has(VK_EXT_DEVICE_FAULT_EXTENSION_NAME)) {
-			device_fault_support = true;
+			// The extension alone is not enough: vkGetDeviceFaultInfoEXT needs the deviceFault feature
+			// enabled at device creation, and calling it without (NVIDIA) crashes inside the driver.
+			device_fault_support = device_fault_features.deviceFault;
 		}
 #if defined(VK_TRACK_DEVICE_MEMORY)
 		if (enabled_device_extension_names.has(VK_EXT_DEVICE_MEMORY_REPORT_EXTENSION_NAME)) {
@@ -1449,6 +1458,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	if (device_fault_support) {
 		device_fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
 		device_fault_features.pNext = create_info_next;
+		device_fault_features.deviceFault = VK_TRUE;
 		create_info_next = &device_fault_features;
 	}
 
