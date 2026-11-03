@@ -90,7 +90,10 @@ struct alignas(16) RT_GeometryData {
 	// buffer's (a flat compressed surface's, decoded to mesh units); 0 otherwise.
 	uint32_t blas_position_address_lo = 0; // Decoded float3 BLAS positions, 0 when the vertex buffer is read directly.
 	uint32_t blas_position_address_hi = 0;
-	uint32_t _pad[3] = {};
+	// UV2 inside `attribute_stride` (0xFFFFFFFF when the mesh has none), and its fp16 scale for compressed meshes.
+	uint32_t uv2_byte_offset = 0xFFFFFFFFu;
+	uint32_t uv2_scale_packed = 0;
+	uint32_t _pad = 0;
 };
 static_assert(sizeof(RT_GeometryData) == 128, "RT_GeometryData must be 128 bytes for std430");
 

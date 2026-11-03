@@ -68,13 +68,14 @@ void get_triangle_indices(in GeometryData geom, out uint i0, out uint i1, out ui
 // ============================================================================
 // UV FETCHING
 // ============================================================================
-vec2 fetch_uv(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
-	if (geom.uv_byte_offset == OFFSET_NONE || geom.attribute_address == 0ul) {
+// One UV channel: UV (uv_byte_offset) or UV2 (uv2_byte_offset), each with its own scale.
+vec2 fetch_uv_channel(in GeometryData geom, uint p_byte_offset, uint p_scale_packed, uint i0, uint i1, uint i2, vec3 bary) {
+	if (p_byte_offset == OFFSET_NONE || geom.attribute_address == 0ul) {
 		return vec2(0.0);
 	}
 
 	uint stride_words = geom.attribute_stride >> 2;
-	uint uv_word_off = geom.uv_byte_offset >> 2;
+	uint uv_word_off = p_byte_offset >> 2;
 	bool compressed = (geom.flags & FLAG_COMPRESSED) != 0u;
 
 	vec2 uv0, uv1, uv2;
@@ -89,7 +90,7 @@ vec2 fetch_uv(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
 		uv1 = vec2(float(p1 & 0xFFFFu), float(p1 >> 16)) / 65535.0;
 		uv2 = vec2(float(p2 & 0xFFFFu), float(p2 >> 16)) / 65535.0;
 
-		vec2 scale = unpackHalf2x16(geom.uv_scale_packed);
+		vec2 scale = unpackHalf2x16(p_scale_packed);
 		if (scale.x != 0.0 || scale.y != 0.0) {
 			uv0 = (uv0 - 0.5) * scale;
 			uv1 = (uv1 - 0.5) * scale;
@@ -98,7 +99,7 @@ vec2 fetch_uv(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
 	} else {
 		FloatBuffer attr_f = FloatBuffer(geom.attribute_address);
 		uint stride_floats = geom.attribute_stride >> 2;
-		uint uv_float_off = geom.uv_byte_offset >> 2;
+		uint uv_float_off = p_byte_offset >> 2;
 
 		uv0 = vec2(attr_f.v[i0 * stride_floats + uv_float_off],
 				attr_f.v[i0 * stride_floats + uv_float_off + 1u]);
@@ -109,6 +110,14 @@ vec2 fetch_uv(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
 	}
 
 	return bary.x * uv0 + bary.y * uv1 + bary.z * uv2;
+}
+
+vec2 fetch_uv(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
+	return fetch_uv_channel(geom, geom.uv_byte_offset, geom.uv_scale_packed, i0, i1, i2, bary);
+}
+
+vec2 fetch_uv2(in GeometryData geom, uint i0, uint i1, uint i2, vec3 bary) {
+	return fetch_uv_channel(geom, geom.uv2_byte_offset, geom.uv2_scale_packed, i0, i1, i2, bary);
 }
 
 // ============================================================================

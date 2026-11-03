@@ -53,7 +53,10 @@ struct GeometryData {
 	uint blas_position_address_lo;
 	uint blas_position_address_hi;
 
-	uint _pad[3];
+	// UV2 inside `attribute_stride` (OFFSET_NONE when the mesh has none), and its fp16 scale.
+	uint uv2_byte_offset;
+	uint uv2_scale_packed;
+	uint _pad;
 };
 
 void get_aabb_compression_xforms(GeometryData geom, out mat4 aabb_xform, out mat4 inv_aabb_xform) {

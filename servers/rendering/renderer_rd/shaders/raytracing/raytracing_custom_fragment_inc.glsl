@@ -5,6 +5,7 @@
 //   uint  rt_geometry_idx   -- geometry/material index
 //   vec3  rt_hit_pos        -- world-space hit position
 //   vec2  rt_uv             -- interpolated UV
+//   vec2  rt_uv2            -- interpolated UV2 (rt_uv when the mesh has none)
 //   vec3  rt_normal         -- world-space geometry normal (flipped for back-face)
 //   vec3  rt_tangent        -- world-space tangent
 //   vec3  rt_bitangent      -- world-space bitangent
@@ -46,7 +47,7 @@ normal = mat3(rt_world_to_object_decomp) * (rt_front_face ? rt_normal : -rt_norm
 tangent = mat3(rt_world_to_object_decomp) * rt_tangent;
 binormal = mat3(rt_world_to_object_decomp) * rt_bitangent;
 uv_interp = rt_uv;
-uv2_interp = rt_uv;
+uv2_interp = rt_uv2;
 color_interp = rt_color;
 view = -gl_WorldRayDirectionEXT;
 rt_front_facing = rt_front_face;
