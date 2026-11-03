@@ -224,8 +224,39 @@ public:
 	}
 
 	//these go through command queue if they are in another thread
-	FUNC3(texture_2d_update, RID, const Ref<Image> &, int)
-	FUNC2(texture_3d_update, RID, const Vector<Ref<Image>> &)
+	// Queued with a snapshot of the image: callers may keep editing their Image after the call
+	// (as they can when this runs at once), and the render thread must upload what it held
+	// then. The snapshot shares the pixel data copy-on-write, so it costs nothing unless the
+	// caller writes to the image before the render thread has used it.
+	static Ref<Image> _image_snapshot(const Ref<Image> &p_image) {
+		if (p_image.is_null() || p_image->is_empty()) {
+			return p_image;
+		}
+		return Image::create_from_data(p_image->get_width(), p_image->get_height(), p_image->has_mipmaps(), p_image->get_format(), p_image->get_data());
+	}
+	virtual void texture_2d_update(RID p1, const Ref<Image> &p2, int p3) override {
+		WRITE_ACTION
+		if (ASYNC_COND_PUSH) {
+			command_queue.push(server_name, &ServerName::texture_2d_update, p1, _image_snapshot(p2), p3);
+		} else {
+			command_queue.flush_if_pending();
+			server_name->texture_2d_update(p1, p2, p3);
+		}
+	}
+	virtual void texture_3d_update(RID p1, const Vector<Ref<Image>> &p2) override {
+		WRITE_ACTION
+		if (ASYNC_COND_PUSH) {
+			Vector<Ref<Image>> snapshot;
+			snapshot.resize(p2.size());
+			for (int i = 0; i < p2.size(); i++) {
+				snapshot.write[i] = _image_snapshot(p2[i]);
+			}
+			command_queue.push(server_name, &ServerName::texture_3d_update, p1, snapshot);
+		} else {
+			command_queue.flush_if_pending();
+			server_name->texture_3d_update(p1, p2);
+		}
+	}
 	FUNC4(texture_external_update, RID, int, int, uint64_t)
 	FUNC2(texture_proxy_update, RID, RID)
 
