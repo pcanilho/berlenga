@@ -90,7 +90,14 @@ struct VersatileResourceTemplate {
 class RenderingDeviceDriver : public RenderingDeviceCommons {
 	GDSOFTCLASS(RenderingDeviceDriver, RenderingDeviceCommons);
 
+protected:
+	// False for a local device (RenderingDevice::create_local_device). Process-wide
+	// integrations such as Streamline are tied to the main device only: a local device
+	// must not set them up again, nor shut them down when it is freed.
+	bool is_main_device = true;
+
 public:
+	void set_is_main_device(bool p_main) { is_main_device = p_main; }
 	struct ID {
 		uint64_t id = 0;
 		_ALWAYS_INLINE_ ID() = default;
