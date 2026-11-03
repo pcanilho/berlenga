@@ -897,6 +897,15 @@ void main() {
 	uint rt_geometry_idx = h.geometry_idx;
 	vec3 rt_hit_pos = h.hit_pos;
 	vec2 rt_uv = h.uv;
+	vec2 rt_uv2 = rt_uv;
+	{
+		GeometryData rt_geom = geometries[h.geometry_idx];
+		if (rt_geom.uv2_byte_offset != OFFSET_NONE && rt_geom.attribute_address != 0ul && (rt_geom.flags & FLAG_PROCEDURAL) == 0u) {
+			uint rt_i0, rt_i1, rt_i2;
+			get_triangle_indices(rt_geom, rt_i0, rt_i1, rt_i2);
+			rt_uv2 = fetch_uv2(rt_geom, rt_i0, rt_i1, rt_i2, vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y));
+		}
+	}
 	vec4 rt_color = h.color;
 	vec3 rt_normal = h.geometry_normal;
 	vec3 rt_tangent = h.tangent;
@@ -1091,6 +1100,7 @@ void main() {
 	// Compute hit data inline (cannot include closest_hit_common_inc here).
 	uint rt_geometry_idx = geometry_idx;
 	vec2 rt_uv = fetch_uv(geom, i0, i1, i2, bary);
+	vec2 rt_uv2 = geom.uv2_byte_offset != OFFSET_NONE ? fetch_uv2(geom, i0, i1, i2, bary) : rt_uv;
 	TBNResult ah_tbn = fetch_tbn(geom, i0, i1, i2, bary);
 
 	mat3 model_rotation = mat3(gl_ObjectToWorldEXT);
