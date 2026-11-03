@@ -866,6 +866,7 @@ private:
 	LocalVector<RecordedSliceListNode> write_slice_list_nodes;
 	int32_t command_timestamp_index = -1;
 	int32_t command_synchronization_index = -1;
+	LocalVector<int32_t> frame_compute_list_commands; // Compute lists recorded this frame, waited on by ray tracing lists.
 	bool command_synchronization_pending = false;
 	BarrierGroup barrier_group;
 	bool driver_honors_barriers : 1;
