@@ -400,6 +400,20 @@ void RenderingDeviceGraph::_add_command_to_graph(ResourceTracker **p_resource_tr
 		_add_adjacent_command(command_synchronization_index, p_command_index, r_command);
 	}
 
+	if (r_command->type == RecordedCommand::TYPE_COMPUTE_LIST) {
+		frame_compute_list_commands.push_back(p_command_index);
+	} else if (r_command->type == RecordedCommand::TYPE_RAYTRACING_LIST && !frame_compute_list_commands.is_empty()) {
+		// Ray tracing shaders read memory through buffer device addresses (vertex, index and material data, and whatever
+		// those point to), which the graph can't see as resource usages. Treat every compute list recorded earlier in the
+		// frame as a possible writer, so a trace never starts while one of them is still running. Without this, a trace
+		// could overlap compute work it had no tracked dependency on and fault on a device address.
+		for (int32_t compute_command_index : frame_compute_list_commands) {
+			_add_adjacent_command(compute_command_index, p_command_index, r_command);
+		}
+		r_command->memory_barrier.src_access = r_command->memory_barrier.src_access | RDD::BARRIER_ACCESS_SHADER_WRITE_BIT;
+		r_command->memory_barrier.dst_access = r_command->memory_barrier.dst_access | RDD::BARRIER_ACCESS_SHADER_READ_BIT;
+	}
+
 	for (uint32_t i = 0; i < p_resource_count; i++) {
 		ResourceTracker *resource_tracker = p_resource_trackers[i];
 		DEV_ASSERT(resource_tracker != nullptr);
@@ -1775,6 +1789,7 @@ void RenderingDeviceGraph::begin() {
 	command_label_count = 0;
 	command_timestamp_index = -1;
 	command_synchronization_index = -1;
+	frame_compute_list_commands.clear();
 	command_synchronization_pending = false;
 	command_label_index = -1;
 	frames[frame].secondary_command_buffers_used = 0;
