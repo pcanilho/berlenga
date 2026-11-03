@@ -48,34 +48,19 @@
 /**
   PrimitiveMesh
 */
-void PrimitiveMesh::_update() const {
-	Array arr;
-	if (GDVIRTUAL_CALL(_create_mesh_array, arr)) {
-		ERR_FAIL_COND_MSG(arr.size() != RSE::ARRAY_MAX, "_create_mesh_array must return an array of Mesh.ARRAY_MAX elements.");
+bool PrimitiveMesh::_create_surface_arrays(Array &r_arr) const {
+	r_arr = Array();
+	if (GDVIRTUAL_CALL(_create_mesh_array, r_arr)) {
+		ERR_FAIL_COND_V_MSG(r_arr.size() != RSE::ARRAY_MAX, false, "_create_mesh_array must return an array of Mesh.ARRAY_MAX elements.");
 	} else {
-		arr.resize(RSE::ARRAY_MAX);
-		_create_mesh_array(arr);
+		r_arr.resize(RSE::ARRAY_MAX);
+		_create_mesh_array(r_arr);
 	}
 
-	Vector<Vector3> points = arr[RSE::ARRAY_VERTEX];
+	Vector<Vector3> points = r_arr[RSE::ARRAY_VERTEX];
+	ERR_FAIL_COND_V_MSG(points.is_empty(), false, "_create_mesh_array must return at least a vertex array.");
 
-	ERR_FAIL_COND_MSG(points.is_empty(), "_create_mesh_array must return at least a vertex array.");
-
-	aabb = AABB();
-
-	int pc = points.size();
-	ERR_FAIL_COND(pc == 0);
-	{
-		const Vector3 *r = points.ptr();
-		for (int i = 0; i < pc; i++) {
-			if (i == 0) {
-				aabb.position = r[i];
-			} else {
-				aabb.expand_to(r[i]);
-			}
-		}
-	}
-
+	Array &arr = r_arr;
 	Vector<int> indices = arr[RSE::ARRAY_INDEX];
 
 	if (flip_faces) {
@@ -120,6 +105,33 @@ void PrimitiveMesh::_update() const {
 		}
 
 		arr[RSE::ARRAY_TEX_UV2] = uv2;
+	}
+
+	return true;
+}
+
+void PrimitiveMesh::_update() const {
+	Array arr;
+	if (!_create_surface_arrays(arr)) {
+		return;
+	}
+
+	Vector<Vector3> points = arr[RSE::ARRAY_VERTEX];
+	Vector<int> indices = arr[RSE::ARRAY_INDEX];
+
+	aabb = AABB();
+
+	int pc = points.size();
+	ERR_FAIL_COND(pc == 0);
+	{
+		const Vector3 *r = points.ptr();
+		for (int i = 0; i < pc; i++) {
+			if (i == 0) {
+				aabb.position = r[i];
+			} else {
+				aabb.expand_to(r[i]);
+			}
+		}
 	}
 
 	array_len = pc;
@@ -174,7 +186,14 @@ Array PrimitiveMesh::surface_get_arrays(int p_surface) const {
 		_update();
 	}
 
-	return RenderingServer::get_singleton()->mesh_surface_get_arrays(mesh, 0);
+	// The arrays are generated on the CPU: build them again rather than reading them back from
+	// the RenderingServer, which stalls on the render thread (thread_model=2) and returns them
+	// after an octahedral round-trip of the normals and tangents.
+	Array arr;
+	if (!_create_surface_arrays(arr)) {
+		return Array();
+	}
+	return arr;
 }
 
 Dictionary PrimitiveMesh::surface_get_lods(int p_surface) const {
