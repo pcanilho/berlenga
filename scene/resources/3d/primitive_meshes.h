@@ -61,6 +61,7 @@ private:
 
 	// make sure we do an update after we've finished constructing our object
 	mutable bool pending_request = true;
+	bool _create_surface_arrays(Array &r_arr) const;
 	void _update() const;
 
 protected:
