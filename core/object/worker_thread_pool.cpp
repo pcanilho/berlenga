@@ -837,23 +837,40 @@ void WorkerThreadPool::init(int p_thread_count, float p_low_priority_task_ratio)
 }
 
 void WorkerThreadPool::exit_languages_threads() {
-	if (threads.is_empty()) {
-		return;
-	}
-
 	MutexLock lock(task_mutex);
 
-	// Wait until all threads are idle.
-	_switch_runlevel(RUNLEVEL_PRE_EXIT_LANGUAGES);
-	while (runlevel_data.pre_exit_languages.num_idle_threads != threads.size()) {
-		control_cond_var.wait(lock);
+	if (!threads.is_empty()) {
+		// Wait until all threads are idle.
+		_switch_runlevel(RUNLEVEL_PRE_EXIT_LANGUAGES);
+		while (runlevel_data.pre_exit_languages.num_idle_threads != threads.size()) {
+			control_cond_var.wait(lock);
+		}
+
+		// Wait until all threads have detached from scripting languages.
+		_switch_runlevel(RUNLEVEL_EXIT_LANGUAGES);
+		while (runlevel_data.exit_languages.num_exited_threads != threads.size()) {
+			control_cond_var.wait(lock);
+		}
 	}
 
-	// Wait until all threads have detached from scripting languages.
-	_switch_runlevel(RUNLEVEL_EXIT_LANGUAGES);
-	while (runlevel_data.exit_languages.num_exited_threads != threads.size()) {
-		control_cond_var.wait(lock);
+	// Every queue is empty now, so the tasks still in the map ran but were never
+	// waited on. Their Callables may reference script objects (e.g. lambdas), which
+	// must be released while the scripting languages are still alive, not in finish().
+	LocalVector<Callable> leftover_callables;
+	for (KeyValue<TaskID, Task *> &E : tasks) {
+		Task *task = E.value;
+		if (task->callable.is_null()) {
+			continue;
+		}
+		WARN_PRINT(vformat("WorkerThreadPool: Task %d (\"%s\") was never waited on; releasing its Callable before scripting languages finish.", E.key, task->description));
+		leftover_callables.push_back(task->callable);
+		task->callable = Callable();
 	}
+
+	// Release outside the lock: script destructors may call back into the pool.
+	lock.temp_unlock();
+	leftover_callables.clear();
+	lock.temp_relock();
 }
 
 void WorkerThreadPool::finish() {
