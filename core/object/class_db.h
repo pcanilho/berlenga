@@ -33,6 +33,7 @@
 #include "core/object/method_bind.h"
 #include "core/object/method_bind_common.h"
 #include "core/object/object.h"
+#include "core/os/mutex.h"
 #include "core/os/rw_lock.h"
 #include "core/string/print_string.h"
 #include "core/templates/a_hash_map.h"
@@ -212,6 +213,7 @@ public:
 
 	static HashMap<StringName, HashMap<StringName, Variant>> default_values;
 	static HashSet<StringName> default_values_cached;
+	static Mutex default_values_mutex; // Guards default_values and default_values_cached.
 
 	// Native structs, used by binder
 	struct NativeStruct {
