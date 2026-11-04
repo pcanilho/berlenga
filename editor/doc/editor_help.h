@@ -195,6 +195,10 @@ class EditorHelp : public VBoxContainer {
 	inline static Thread loader_thread; // Only load scripts here to avoid deadlocking with main thread.
 
 	inline static SafeFlag _script_docs_loaded = SafeFlag(false);
+	// Set by cleanup_doc(). Doc work queued with call_deferred can still run after
+	// the editor is gone (Main::cleanup() flushes the message queue after the scene
+	// tree, and EditorNode with it, has been freed), so every entry point checks it.
+	inline static bool doc_cleaned_up = false;
 	inline static LocalVector<DocData::ClassDoc> _docs_to_add;
 	inline static LocalVector<String> _docs_to_remove;
 	inline static LocalVector<String> _docs_to_remove_by_path;
