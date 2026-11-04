@@ -273,6 +273,8 @@ protected:
 		uint32_t element_offset = 0;
 		// -1 draws every element; 0 only those that aren't particles, 1 only particles.
 		int8_t particles_filter = -1;
+		// -1 draws every element; 0 only those that don't multiply (blend_mul), 1 only those.
+		int8_t multiply_filter = -1;
 		bool use_directional_soft_shadow = false;
 		SceneShaderForwardClustered::ShaderSpecialization base_specialization = {};
 

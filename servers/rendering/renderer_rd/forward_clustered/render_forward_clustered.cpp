@@ -404,6 +404,9 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 		if (p_params->particles_filter >= 0 && bool(surf->owner->base_flags & INSTANCE_DATA_FLAG_PARTICLES) != bool(p_params->particles_filter)) {
 			continue;
 		}
+		if (p_params->multiply_filter >= 0 && (surf->shader && surf->shader->blend_mode == SceneShaderForwardClustered::ShaderData::BLEND_MODE_MUL) != bool(p_params->multiply_filter)) {
+			continue;
+		}
 
 		if (p_pass_mode == PASS_MODE_COLOR && surf->color_pass_inclusion_mask && (p_color_pass_flags & surf->color_pass_inclusion_mask) == 0) {
 			// Some surfaces can be repeated in multiple render lists. We exclude them from being rendered on the color pass based on the
