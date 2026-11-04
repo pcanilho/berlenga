@@ -1480,9 +1480,7 @@ void ClassDB::add_property(const StringName &p_class, const PropertyInfo &p_pinf
 }
 
 void ClassDB::set_property_default_value(const StringName &p_class, const StringName &p_name, const Variant &p_default) {
-	if (!default_values.has(p_class)) {
-		default_values[p_class] = HashMap<StringName, Variant>();
-	}
+	MutexLock lock(default_values_mutex);
 	default_values[p_class][p_name] = p_default;
 }
 
@@ -2168,12 +2166,21 @@ void ClassDB::get_extensions_for_type(const StringName &p_class, List<String> *p
 
 HashMap<StringName, HashMap<StringName, Variant>> ClassDB::default_values;
 HashSet<StringName> ClassDB::default_values_cached;
+Mutex ClassDB::default_values_mutex;
 
 Variant ClassDB::class_get_default_property_value(const StringName &p_class, const StringName &p_property, bool *r_valid) {
-	if (!default_values_cached.has(p_class)) {
-		if (!default_values.has(p_class)) {
-			default_values[p_class] = HashMap<StringName, Variant>();
-		}
+	// Called from worker threads too (resource imports and saves), so the cache is guarded by its
+	// own mutex. It is never held while an object is instantiated or asked for its properties:
+	// those calls run arbitrary code that can block on other threads (the RenderingServer's
+	// command queue, for one) or come back here.
+	bool cached = false;
+	{
+		MutexLock lock(default_values_mutex);
+		cached = default_values_cached.has(p_class);
+	}
+
+	if (!cached) {
+		HashMap<StringName, Variant> values;
 
 		Object *c = nullptr;
 		bool cleanup_c = false;
@@ -2191,9 +2198,8 @@ Variant ClassDB::class_get_default_property_value(const StringName &p_class, con
 			c->get_property_list(&plist);
 			for (const PropertyInfo &E : plist) {
 				if (E.usage & (PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_EDITOR)) {
-					if (!default_values[p_class].has(E.name)) {
-						Variant v = c->get(E.name);
-						default_values[p_class][E.name] = v;
+					if (!values.has(E.name)) {
+						values[E.name] = c->get(E.name);
 					}
 				}
 			}
@@ -2203,28 +2209,36 @@ Variant ClassDB::class_get_default_property_value(const StringName &p_class, con
 			}
 		}
 
-		default_values_cached.insert(p_class);
+		MutexLock lock(default_values_mutex);
+		if (!default_values_cached.has(p_class)) {
+			// Values set with set_property_default_value() win over the instance's.
+			HashMap<StringName, Variant> &class_values = default_values[p_class];
+			for (const KeyValue<StringName, Variant> &E : values) {
+				if (!class_values.has(E.key)) {
+					class_values[E.key] = E.value;
+				}
+			}
+			default_values_cached.insert(p_class);
+		}
 	}
 
-	if (!default_values.has(p_class)) {
-		if (r_valid != nullptr) {
-			*r_valid = false;
+	Variant var;
+	{
+		MutexLock lock(default_values_mutex);
+		const HashMap<StringName, Variant> *class_values = default_values.getptr(p_class);
+		const Variant *value = class_values ? class_values->getptr(p_property) : nullptr;
+		if (value == nullptr) {
+			if (r_valid != nullptr) {
+				*r_valid = false;
+			}
+			return Variant();
 		}
-		return Variant();
-	}
-
-	if (!default_values[p_class].has(p_property)) {
-		if (r_valid != nullptr) {
-			*r_valid = false;
-		}
-		return Variant();
+		var = *value;
 	}
 
 	if (r_valid != nullptr) {
 		*r_valid = true;
 	}
-
-	Variant var = default_values[p_class][p_property];
 
 #ifdef DEBUG_ENABLED
 	// Some properties may have an instantiated Object as default value,
@@ -2300,8 +2314,11 @@ void ClassDB::unregister_extension_class(const StringName &p_class, bool p_free_
 		}
 	}
 	classes.erase(p_class);
-	default_values_cached.erase(p_class);
-	default_values.erase(p_class);
+	{
+		MutexLock lock(default_values_mutex);
+		default_values_cached.erase(p_class);
+		default_values.erase(p_class);
+	}
 #ifdef TOOLS_ENABLED
 	placeholder_extensions.erase(p_class);
 #endif
