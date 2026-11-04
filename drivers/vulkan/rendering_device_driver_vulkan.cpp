@@ -33,6 +33,8 @@
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/error/error_backtrace.h"
+#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
 #include "core/os/os.h"
 #include "core/templates/fixed_vector.h"
 #include "drivers/vulkan/vulkan_hooks.h"
@@ -1133,6 +1135,10 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		if (enabled_device_extension_names.has(VK_EXT_DEVICE_FAULT_EXTENSION_NAME)) {
 			// vkGetDeviceFaultInfoEXT is only valid with the deviceFault feature enabled; drivers crash without it.
 			device_fault_support = device_fault_features.deviceFault;
+			// The vendor's binary crash dump is opt-in (GODOT_VULKAN_FAULT_DUMP=1): the spec says nothing
+			// about what collecting it costs while the game runs.
+			device_fault_vendor_binary_support = device_fault_support && device_fault_features.deviceFaultVendorBinary &&
+					OS::get_singleton()->get_environment("GODOT_VULKAN_FAULT_DUMP") == "1";
 		}
 #if defined(VK_TRACK_DEVICE_MEMORY)
 		if (enabled_device_extension_names.has(VK_EXT_DEVICE_MEMORY_REPORT_EXTENSION_NAME)) {
@@ -1469,6 +1475,8 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		device_fault_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT;
 		device_fault_features.pNext = create_info_next;
 		device_fault_features.deviceFault = VK_TRUE;
+		// Lets the driver hand over its own binary crash dump, for vendor tools.
+		device_fault_features.deviceFaultVendorBinary = device_fault_vendor_binary_support ? VK_TRUE : VK_FALSE;
 		create_info_next = &device_fault_features;
 	}
 
@@ -7454,9 +7462,15 @@ void RenderingDeviceDriverVulkan::on_device_lost() const {
 			fault_counts.addressInfoCount
 			? (VkDeviceFaultAddressInfoEXT *)memalloc(fault_counts.addressInfoCount * sizeof(VkDeviceFaultAddressInfoEXT))
 			: nullptr;
-	fault_counts.vendorBinarySize = 0;
+	// Ask for the vendor's binary crash dump too. Passing a smaller vendorBinarySize than the driver
+	// reported (e.g. 0) makes the call return VK_INCOMPLETE, which used to drop the whole report.
+	if (!device_fault_vendor_binary_support) {
+		fault_counts.vendorBinarySize = 0;
+	}
+	fault_info.pVendorBinaryData = fault_counts.vendorBinarySize ? memalloc(fault_counts.vendorBinarySize) : nullptr;
 	vkres = device_functions.GetDeviceFaultInfoEXT(vk_device, &fault_counts, &fault_info);
-	if (vkres != VK_SUCCESS) {
+	// VK_INCOMPLETE still fills what fit: report it rather than skip it.
+	if (vkres != VK_SUCCESS && vkres != VK_INCOMPLETE) {
 		_err_print_error(FUNCTION_STR, __FILE__, __LINE__, "vkGetDeviceFaultInfoEXT returned " + itos(vkres) + " when getting fault info, skipping VK_EXT_device_fault report...");
 	} else {
 		err_msg += "** Report from VK_EXT_device_fault **";
@@ -7483,8 +7497,9 @@ void RenderingDeviceDriverVulkan::on_device_lost() const {
 		for (uint32_t ad = 0; ad < fault_counts.addressInfoCount; ++ad) {
 			const VkDeviceFaultAddressInfoEXT *addr_info = &fault_info.pAddressInfos[ad];
 			// From https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkDeviceFaultAddressInfoEXT.html
-			const VkDeviceAddress lower = (addr_info->reportedAddress & ~(addr_info->addressPrecision - 1));
-			const VkDeviceAddress upper = (addr_info->reportedAddress | (addr_info->addressPrecision - 1));
+			const VkDeviceAddress precision_mask = addr_info->addressPrecision ? addr_info->addressPrecision - 1 : 0;
+			const VkDeviceAddress lower = (addr_info->reportedAddress & ~precision_mask);
+			const VkDeviceAddress upper = (addr_info->reportedAddress | precision_mask);
 			err_msg += "\nInfo " + itos(ad);
 			err_msg += "\n   Type            : " + String(addressTypeNames[addr_info->addressType]);
 			err_msg += "\n   Reported address: " + itos(addr_info->reportedAddress);
@@ -7494,8 +7509,28 @@ void RenderingDeviceDriverVulkan::on_device_lost() const {
 		}
 	}
 
+	if (vkres == VK_INCOMPLETE) {
+		err_msg += "\n(vkGetDeviceFaultInfoEXT returned VK_INCOMPLETE: the report above may be partial.)";
+	}
+
+	if (fault_info.pVendorBinaryData && fault_counts.vendorBinarySize > 0 && (vkres == VK_SUCCESS || vkres == VK_INCOMPLETE)) {
+		const String dump_path = OS::get_singleton()->get_user_data_dir().path_join("logs").path_join(vformat("device_fault_%d.bin", (int64_t)OS::get_singleton()->get_unix_time()));
+		Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+		da->make_dir_recursive(dump_path.get_base_dir());
+		Ref<FileAccess> f = FileAccess::open(dump_path, FileAccess::WRITE);
+		if (f.is_valid()) {
+			f->store_buffer((const uint8_t *)fault_info.pVendorBinaryData, fault_counts.vendorBinarySize);
+			err_msg += "\nVendor binary crash dump (" + itos(fault_counts.vendorBinarySize) + " bytes) saved to: " + dump_path;
+		} else {
+			err_msg += "\nVendor binary crash dump (" + itos(fault_counts.vendorBinarySize) + " bytes) could not be saved to: " + dump_path;
+		}
+	}
+
 	_err_print_error(FUNCTION_STR, __FILE__, __LINE__, err_msg);
 
+	if (fault_info.pVendorBinaryData) {
+		memfree(fault_info.pVendorBinaryData);
+	}
 	if (fault_info.pVendorInfos) {
 		memfree(fault_info.pVendorInfos);
 	}
