@@ -32,6 +32,15 @@ float rt_texture_lod = RT_TEXTURE_LOD_BASE;
 // log2 of the cone's footprint on the surface (world units), for materials that
 // map textures by position (triplanar) or scale the mesh's UVs.
 float rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
+// The cone's footprint ellipse in the mesh's UV space (rt_texture_cone): its major
+// and minor axes, as the screen-space derivatives raster texturing takes. When set,
+// textures are sampled with these gradients through the anisotropic sampler, so a
+// floor seen at a grazing angle keeps its detail across the ray as raster does.
+vec2 rt_uv_dx = vec2(0.0);
+vec2 rt_uv_dy = vec2(0.0);
+bool rt_uv_grad = false;
+// The hit material asks for anisotropic filtering (RT_MAT_FLAG_ANISOTROPIC).
+bool rt_uv_aniso = false;
 
 /// A vertex's position in the BLAS's object space (as gl_ObjectToWorldEXT takes it):
 /// the decoded copy a flat compressed surface's BLAS was built from, a compressed
@@ -65,6 +74,7 @@ vec3 fetch_object_position(in GeometryData geom, uint idx) {
 void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
 	rt_texture_lod = RT_TEXTURE_LOD_BASE;
 	rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
+	rt_uv_grad = false;
 	// the cone at this hit
 	float p11 = scene_data_block.data.projection_matrix[1][1];
 	bool ortho = abs(scene_data_block.data.projection_matrix[2][3]) < 1e-6;
@@ -99,6 +109,39 @@ void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
 		return;
 	}
 	rt_texture_lod = 0.5 * log2(uv_area / world_area) + rt_cone_footprint_log2;
+
+	// Anisotropic footprint (JCGT 2021, sec. 4.3 / 5): the cone meets the triangle's
+	// plane in an ellipse, its minor axis the cone's width across the ray and its major
+	// axis that width over the cosine, along the ray's projection on the plane. Mapped
+	// into UV space through the triangle's UV gradients, the two axes are the
+	// derivatives raster would see, and textureGrad filters them anisotropically
+	// instead of blurring the whole footprint to the major axis.
+	vec3 dp1 = p1 - p0;
+	vec3 dp2 = p2 - p0;
+	vec3 tri_n = cross(dp1, dp2);
+	float nn = dot(tri_n, tri_n);
+	vec3 c1 = cross(dp2, tri_n) / nn;
+	vec3 c2 = cross(tri_n, dp1) / nn;
+	vec3 grad_u = e1.x * c1 + e2.x * c2; // world-space gradient of u on the plane
+	vec3 grad_v = e1.y * c1 + e2.y * c2;
+	vec3 plane_n = tri_n * inversesqrt(nn);
+	vec3 dir = gl_WorldRayDirectionEXT;
+	vec3 minor_dir = cross(dir, plane_n);
+	float minor_len = length(minor_dir);
+	if (minor_len < 1e-4) {
+		// Head-on: a circle, any in-plane frame will do.
+		minor_dir = normalize(cross(plane_n, abs(plane_n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+	} else {
+		minor_dir /= minor_len;
+	}
+	vec3 major_dir = cross(plane_n, minor_dir);
+	float cos_plane = max(abs(dot(plane_n, dir)), 0.05);
+	vec3 major_axis = major_dir * (width / cos_plane);
+	vec3 minor_axis = minor_dir * width;
+	rt_uv_dx = vec2(dot(grad_u, major_axis), dot(grad_v, major_axis));
+	rt_uv_dy = vec2(dot(grad_u, minor_axis), dot(grad_v, minor_axis));
+	vec4 grads = vec4(rt_uv_dx, rt_uv_dy);
+	rt_uv_grad = !any(isnan(grads)) && !any(isinf(grads));
 }
 
 /// Fetch vertex attributes and transform to world space.
@@ -169,6 +212,16 @@ HitData compute_hit_data() {
 // ============================================================================
 
 vec4 sample_bindless_texture(uint tex_idx, vec2 uv) {
+	// The samplers are the render buffers' own (binding 16-27), so their mipmap bias
+	// (the upscaler's render-to-display ratio, TAA's and the project's) applies here
+	// as it does in raster, to the gradients and to the explicit level alike.
+	// Anisotropic only when the material asks for it, as in raster.
+	if (rt_uv_grad) {
+		if (rt_uv_aniso) {
+			return textureGrad(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_ANISOTROPIC_REPEAT), uv, rt_uv_dx, rt_uv_dy);
+		}
+		return textureGrad(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv, rt_uv_dx, rt_uv_dy);
+	}
 	// the hit's ray-cone level, plus this texture's own size
 	ivec2 size = textureSize(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), 0);
 	float lod = max(rt_texture_lod + 0.5 * log2(float(max(size.x, 1) * max(size.y, 1))), 0.0);
@@ -230,6 +283,9 @@ TriplanarCoords compute_triplanar_coords(HitData h, MaterialData mat, GeometryDa
 		n = normalize((vec4(h.geometry_normal, 0.0) * model).xyz);
 		p = (aabb_xform * vec4(gl_ObjectRayOriginEXT + gl_HitTEXT * gl_ObjectRayDirectionEXT, 1.0)).xyz;
 	}
+
+	// Triplanar maps by position, not the mesh's UVs: the isotropic level below.
+	rt_uv_grad = false;
 
 	tc.weights = pow(abs(n), vec3(mat.triplanar_sharpness));
 	tc.weights /= dot(tc.weights, vec3(1.0));
