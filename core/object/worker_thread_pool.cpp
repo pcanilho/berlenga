@@ -853,13 +853,16 @@ void WorkerThreadPool::exit_languages_threads() {
 		}
 	}
 
-	// Every queue is empty now, so the tasks still in the map ran but were never
+	// Every queue is empty now, so the completed tasks still in the map were never
 	// waited on. Their Callables may reference script objects (e.g. lambdas), which
 	// must be released while the scripting languages are still alive, not in finish().
+	// Tasks still running (pump tasks such as the rendering server's, which yield
+	// until their owner stops and waits on them later) keep their Callable: it is
+	// executing on another thread.
 	LocalVector<Callable> leftover_callables;
 	for (KeyValue<TaskID, Task *> &E : tasks) {
 		Task *task = E.value;
-		if (task->callable.is_null()) {
+		if (!task->completed || task->callable.is_null()) {
 			continue;
 		}
 		WARN_PRINT(vformat("WorkerThreadPool: Task %d (\"%s\") was never waited on; releasing its Callable before scripting languages finish.", E.key, task->description));
