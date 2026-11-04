@@ -490,10 +490,21 @@ private:
 		String ch_template; // Template GLSL with /* RT_CUSTOM_* */ markers.
 		String ah_template;
 		String is_template;
+		// The full base binary (RAYGEN + MISS + default hit group). It depends only on
+		// the GLSL source, so every pipeline bundle of this source shares it, whatever
+		// its sample count and bounce specialization.
+		Vector<uint8_t> base_binary;
 	};
+	// Keyed by _compile_context_key(): the raygen source variant, not the full
+	// rt_flags, so a sample count or bounce change does not recompile GLSL.
 	HashMap<uint32_t, VariantCompileContext> variant_compile_contexts;
 
+	static uint32_t _compile_context_key(uint32_t p_rt_flags);
 	bool _ensure_variant_compile_context(uint32_t p_rt_flags);
+	bool _build_variant_compile_context(uint32_t p_rt_flags);
+	// GLSL to SPIR-V through a disk cache under the shader cache's user dir.
+	// The caller must not hold spirv_compile_mutex.
+	Vector<uint8_t> _compile_spirv_cached(RD::ShaderStage p_stage, const String &p_source, String *r_error);
 
 	bool async_compilation_enabled = true;
 	Mutex spirv_compile_mutex; // Serialize glslang calls (RD::shader_compile_spirv_from_source).
