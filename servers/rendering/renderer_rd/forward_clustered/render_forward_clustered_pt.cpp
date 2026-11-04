@@ -477,6 +477,19 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			}
 		}
 	}
+	// The layer is laid over the traced frame ("over": colour premultiplied by coverage),
+	// which can't express a multiply: blend_mul surfaces drawn into it multiply the cleared
+	// zero and vanish. They're drawn after the composite instead, onto the output itself,
+	// against the traced depth at the output size.
+	bool multiply_at_output = false;
+	if (transparency_layer) {
+		for (const GeometryInstanceSurfaceDataCache *surf : render_list[RENDER_LIST_ALPHA].elements) {
+			if (surf->shader && surf->shader->blend_mode == SceneShaderForwardClustered::ShaderData::BLEND_MODE_MUL) {
+				multiply_at_output = true;
+				break;
+			}
+		}
+	}
 	if (transparency_layer) {
 		Vector<Color> layer_clear;
 		layer_clear.push_back(Color(0, 0, 0, 0));
@@ -521,6 +534,9 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			if (particles_at_output) {
 				render_list_params.particles_filter = 0;
 			}
+			if (multiply_at_output) {
+				render_list_params.multiply_filter = 0;
+			}
 			_render_list_with_draw_list(&render_list_params, alpha_framebuffer, alpha_draw_flags, alpha_clear, 0.0f, 0u, p_render_data->render_region);
 		}
 
@@ -536,6 +552,9 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			Vector<Color> alpha_clear;
 			RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, transparent_color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENCY_LAYER), rb_data.is_null(), p_render_data->directional_light_soft_shadows, output_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
 			render_list_params.particles_filter = 1;
+			if (multiply_at_output) {
+				render_list_params.multiply_filter = 0;
+			}
 			_render_list_with_draw_list(&render_list_params, _transparency_layer_fb(rb.ptr(), true), RD::DRAW_DEFAULT_ALL, alpha_clear, 0.0f, 0u, Rect2i());
 		}
 
@@ -575,6 +594,31 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		_render_3d_upscaling(p_render_data, scale_type, using_taa, time_step, dlss_rr_guides);
 		if (transparency_layer) {
 			_composite_transparency(p_render_data, fog, particles_at_output);
+		}
+		if (multiply_at_output) {
+			RENDER_TIMESTAMP("Render 3D Multiply Pass");
+			RD::get_singleton()->draw_command_begin_label("Render 3D Multiply Pass");
+			Size2i target = rb->get_target_size();
+			if (!particles_at_output) {
+				// The traced depth at the output size (the particles' pass made it already).
+				copy_effects->copy_r32f_to_depth_fb(raytracing->rt_get_depth_texture(rb.ptr()), _transparency_layer_fb(rb.ptr(), true, true), Rect2i(0, 0, target.x, target.y));
+			}
+			RID output_depth = rb->get_texture(RB_SCOPE_DLSS_RR, RB_TEX_TRANSPARENCY_DEPTH_OUTPUT);
+			RID multiply_fb = FramebufferCacheRD::get_singleton()->get_cache_multiview(1, rb->get_upscaled_texture(), RID(), RID(), output_depth);
+			// At the output size and unjittered, as the particles' pass: the clusters stay at
+			// the internal size, so fragment coordinates are scaled to it.
+			const Vector2 jitter = p_render_data->scene_data->taa_jitter;
+			p_render_data->scene_data->taa_jitter = Vector2();
+			uint32_t multiply_uniform_buffer_index = _setup_environment(p_render_data, false, screen_size, screen_size, p_default_bg_color, false, false, false,
+					float(rb->get_internal_size().x) / float(target.x));
+			p_render_data->scene_data->taa_jitter = jitter;
+			RID multiply_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, radiance_texture, samplers, multiply_uniform_buffer_index, true);
+			uint32_t multiply_pass_flags = ((color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENT)) & ~uint32_t(COLOR_PASS_FLAG_SEPARATE_SPECULAR)) & ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
+			Vector<Color> no_clear;
+			RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, multiply_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, multiply_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
+			render_list_params.multiply_filter = 1;
+			_render_list_with_draw_list(&render_list_params, multiply_fb, RD::DRAW_DEFAULT_ALL, no_clear, 0.0f, 0u, Rect2i());
+			RD::get_singleton()->draw_command_end_label();
 		}
 	}
 
