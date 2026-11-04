@@ -1962,6 +1962,12 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		if (filter_mode == 0 || filter_mode == 2 || filter_mode == 4) {
 			mat.flags |= RT_MAT_FLAG_POINT_FILTER;
 		}
+		// 4 = NEAREST_WITH_MIPMAPS_ANISOTROPIC, 5 = LINEAR_WITH_MIPMAPS_ANISOTROPIC.
+		// Raster only filters anisotropically when the material asks for it, so PT
+		// must not either, or it renders oblique surfaces sharper than raster does.
+		if (filter_mode == 4 || filter_mode == 5) {
+			mat.flags |= RT_MAT_FLAG_ANISOTROPIC;
+		}
 	}
 
 	// Update cache entry

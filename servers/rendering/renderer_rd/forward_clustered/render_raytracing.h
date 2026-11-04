@@ -206,6 +206,9 @@ enum {
 	// uv1 triplanar mapping, in object or world space.
 	RT_MAT_FLAG_TRIPLANAR = 16u,
 	RT_MAT_FLAG_TRIPLANAR_WORLD = 32u,
+	// The material asks for anisotropic filtering (texture_filter *_ANISOTROPIC).
+	// Without it the ray-cone gradients are sampled isotropically, as raster does.
+	RT_MAT_FLAG_ANISOTROPIC = 64u,
 };
 
 // Index format for RT geometry (matches GLSL fetch_indices).

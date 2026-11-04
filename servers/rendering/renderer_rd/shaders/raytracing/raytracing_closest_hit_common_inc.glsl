@@ -39,6 +39,8 @@ float rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
 vec2 rt_uv_dx = vec2(0.0);
 vec2 rt_uv_dy = vec2(0.0);
 bool rt_uv_grad = false;
+// The hit material asks for anisotropic filtering (RT_MAT_FLAG_ANISOTROPIC).
+bool rt_uv_aniso = false;
 
 /// A vertex's position in the BLAS's object space (as gl_ObjectToWorldEXT takes it):
 /// the decoded copy a flat compressed surface's BLAS was built from, a compressed
@@ -213,8 +215,12 @@ vec4 sample_bindless_texture(uint tex_idx, vec2 uv) {
 	// The samplers are the render buffers' own (binding 16-27), so their mipmap bias
 	// (the upscaler's render-to-display ratio, TAA's and the project's) applies here
 	// as it does in raster, to the gradients and to the explicit level alike.
+	// Anisotropic only when the material asks for it, as in raster.
 	if (rt_uv_grad) {
-		return textureGrad(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_ANISOTROPIC_REPEAT), uv, rt_uv_dx, rt_uv_dy);
+		if (rt_uv_aniso) {
+			return textureGrad(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_ANISOTROPIC_REPEAT), uv, rt_uv_dx, rt_uv_dy);
+		}
+		return textureGrad(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv, rt_uv_dx, rt_uv_dy);
 	}
 	// the hit's ray-cone level, plus this texture's own size
 	ivec2 size = textureSize(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), 0);
