@@ -952,6 +952,8 @@ void main() {
 	vec2 uv = h.uv * mat.uv1_scale + mat.uv1_offset;
 	// the ray cone's level follows the material's UV scale (triplanar sets its own)
 	rt_texture_lod += 0.5 * log2(max(abs(mat.uv1_scale.x * mat.uv1_scale.y), 1e-12));
+	rt_uv_dx *= mat.uv1_scale;
+	rt_uv_dy *= mat.uv1_scale;
 
 	// Triplanar materials ignore the mesh's UVs and blend three axis projections,
 	// as raster's generated code does (from Puddlefunk/godot bc91da5).

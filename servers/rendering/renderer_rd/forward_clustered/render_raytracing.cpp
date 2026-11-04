@@ -3869,7 +3869,17 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 	}
 
 	// Bindings 16-27: Material samplers (12 filter/repeat combinations for custom shaders).
-	RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default().append_uniforms(uniforms, 16);
+	// The render buffers' own, as raster's scene pass binds: they carry the mipmap bias
+	// for the upscaler's render-to-display ratio, TAA and the project setting, and the
+	// viewport's anisotropic level. The defaults have neither, so traced textures read
+	// blurrier than raster's under DLSS/FSR.
+	{
+		RendererRD::MaterialStorage::Samplers samplers = rb->get_samplers();
+		if (samplers.is_null()) {
+			samplers = RendererRD::MaterialStorage::get_singleton()->samplers_rd_get_default();
+		}
+		samplers.append_uniforms(uniforms, 16);
+	}
 
 	// Binding 28: Velocity output (RG16F). Past the 16-27 sampler range.
 	{
