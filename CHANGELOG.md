@@ -10,6 +10,8 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 - Path tracer lights particles and transparents: a traced light cache with shadowed lights, sky and bounce replaces the raster lights and ambient for them; `rendering/pathtracing/transparent_lighting/*` settings (#74).
 - CHANGELOG.md: release notes come from its Unreleased entries, and pull requests are checked for one (#73).
 
+## build-57db5e08 (2026-11-05)
+
 ### Fixed
 - Linux arm64 release build used an x86_64 Python (#71).
 
