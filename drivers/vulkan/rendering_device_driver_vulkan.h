@@ -449,6 +449,9 @@ private:
 		LocalVector<uint32_t> command_queues_acquired_semaphores;
 		RenderPassID render_pass;
 		int pre_transform_rotation_degrees = 0;
+		// The size the swap chain's images were created with, which can lag the surface's size
+		// while the window is being resized from another thread.
+		Size2i extent;
 		uint32_t image_index = 0;
 #ifdef ANDROID_ENABLED
 		uint64_t refresh_duration = 0;
@@ -464,6 +467,7 @@ public:
 	virtual FramebufferID swap_chain_acquire_framebuffer(CommandQueueID p_cmd_queue, SwapChainID p_swap_chain, bool &r_resize_required) override final;
 	virtual RenderPassID swap_chain_get_render_pass(SwapChainID p_swap_chain) override final;
 	virtual int swap_chain_get_pre_rotation_degrees(SwapChainID p_swap_chain) override final;
+	virtual Size2i swap_chain_get_extent(SwapChainID p_swap_chain) override final;
 	virtual DataFormat swap_chain_get_format(SwapChainID p_swap_chain) override final;
 	virtual ColorSpace swap_chain_get_color_space(SwapChainID p_swap_chain) override final;
 	virtual bool swap_chain_get_hdr_output_supported(SwapChainID p_swap_chain) override final;
