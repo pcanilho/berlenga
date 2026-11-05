@@ -757,7 +757,7 @@ uint32_t RenderForwardClustered::_setup_environment(const RenderDataRD *p_render
 	scene_state.ubo.pt_light_cache_enabled = pt_light_cache.enabled;
 	scene_state.ubo.pt_light_cache_near = pt_light_cache.z_near;
 	scene_state.ubo.pt_light_cache_inv_log = 1.0f / Math::log(MAX(pt_light_cache.z_far / pt_light_cache.z_near, 1.0001f));
-	scene_state.ubo.pt_light_cache_pad = 0;
+	scene_state.ubo.pt_particle_anisotropy = pt_light_cache.particle_anisotropy;
 
 	if (rd.is_valid()) {
 		if (rd->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED) {
