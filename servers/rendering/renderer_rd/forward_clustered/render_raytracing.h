@@ -93,7 +93,9 @@ struct alignas(16) RT_GeometryData {
 	// UV2 inside `attribute_stride` (0xFFFFFFFF when the mesh has none), and its fp16 scale for compressed meshes.
 	uint32_t uv2_byte_offset = 0xFFFFFFFFu;
 	uint32_t uv2_scale_packed = 0;
-	uint32_t _pad = 0;
+	// Particles (instance mask RT_INSTANCE_MASK_PARTICLES): the triangles of one particle;
+	// their colors, a vec4 a particle, are at the prev_vertex_buffer_address. 0 otherwise.
+	uint32_t particle_primitives = 0;
 };
 static_assert(sizeof(RT_GeometryData) == 128, "RT_GeometryData must be 128 bytes for std430");
 
@@ -230,12 +232,14 @@ enum {
 
 // Instance masks, matched by the ray masks in raytracing_inc.glsl. Camera rays and
 // the specular query (RT_MASK_SCENE, 0x09) never meet a caster; shadow rays
-// (RT_MASK_SHADOW, 0xF7) never meet an instance whose Cast Shadow is Off; bounce
-// rays (0xFF) meet all three.
+// (RT_MASK_SHADOW, 0xE7) never meet an instance whose Cast Shadow is Off; bounce
+// rays (0xEF) meet all three. Particles are met only by the reflections' particle
+// query (RT_MASK_PARTICLES, 0x10).
 enum {
-	RT_INSTANCE_MASK_SCENE = 0xFFu,
+	RT_INSTANCE_MASK_SCENE = 0xEFu,
 	RT_INSTANCE_MASK_SHADOW_CASTER = 0x02u,
 	RT_INSTANCE_MASK_NO_SHADOW = 0x08u,
+	RT_INSTANCE_MASK_PARTICLES = 0x10u,
 };
 
 /// Per-instance state for procedural RT geometry. Heap-allocated, only exists for procedural instances.
@@ -343,6 +347,10 @@ struct RTMergedMMEntry {
 	RID replicated_idx_buffer;
 	uint32_t idx_capacity = 0;
 
+	// Particles: each particle's color (vec4 × N), read by the reflections' particle query.
+	RID color_buffer;
+	uint32_t color_capacity_bytes = 0;
+
 	// The positions section as it was before the latest rebake (float3 × N*V), for motion
 	// vectors of instances moved inside the MultiMesh. Valid only on `prev_pos_frame`:
 	// on any other frame nothing moved and the current positions are the previous ones.
@@ -409,6 +417,8 @@ struct RTViewportState {
 	bool light_cache_active = false;
 	float light_cache_near = 0.5;
 	float light_cache_far = 150.0;
+	// Particle instances in this frame's TLAS (reflections' particle query).
+	uint32_t particle_instances = 0;
 };
 
 class RenderRaytracing {
@@ -467,6 +477,20 @@ class RenderRaytracing {
 		}
 	};
 	LocalVector<MMSurfaceHandles> mm_handles;
+	// The particles' merged geometry, keyed by the particles' RIDs (their own index space).
+	LocalVector<MMSurfaceHandles> particle_handles;
+
+	// What a merged BLAS bakes: N instances' 3x4 transforms (by rows) in a buffer.
+	struct MMMergeSource {
+		RID buffer;
+		uint32_t stride = 0; // floats an instance
+		uint32_t offset = 0; // the first instance drawn (motion vectors' double buffer)
+		uint32_t count = 0;
+		uint64_t last_change = 0; // rebaked when it changes
+		// Particles: rebuilt (not refit) every bake, as they are born anywhere in the
+		// emitter; dead ones are left out; each one's color kept from this word on.
+		uint32_t color_word = 0;
+	};
 
 	RID_Owner<RTDeformedCacheEntry> deformed_pool;
 	LocalVector<RID> deformed_active_this_frame;
@@ -550,10 +574,10 @@ class RenderRaytracing {
 	void _dispatch_position_decodes(RD::ComputeListID p_compute_list);
 	RTMaterialData *process_material(RID p_material_rid, uint16_t p_material_invalidation_counter);
 	bool _build_merged_mm_blas(
-			RID p_mm_rid,
-			RID p_mm_gpu_buffer,
+			RID p_key_rid,
+			LocalVector<MMSurfaceHandles> &p_handles,
+			const MMMergeSource &p_src,
 			void *p_mesh_surface,
-			uint32_t p_mm_count,
 			uint32_t p_surface_index,
 			uint32_t p_surface_counter,
 			RD::ComputeListID p_compute_list,

@@ -33,7 +33,7 @@ global_shader_uniforms;
 #ifndef RT_STAGE_ANY_HIT
 
 layout(set = 0, binding = 6, std140) uniform RaytracingParams {
-	vec4 rt_params[6];
+	vec4 rt_params[7];
 	mat4 prev_vp_unjittered;
 	mat4 curr_vp_unjittered;
 };

@@ -13,6 +13,11 @@
 
 #pragma shader_stage(raygen)
 #extension GL_EXT_ray_tracing : enable
+#extension GL_EXT_ray_query : enable
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_ARB_gpu_shader_int64 : require
+#extension GL_EXT_nonuniform_qualifier : require
 #ifdef USE_SER
 #extension GL_EXT_shader_invocation_reorder : enable
 #endif
@@ -742,6 +747,130 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 	imageStore(plight_images[write * 2u + 1u], ivec3(cell), b);
 }
 
+// Particles in reflections and refractions (#72). Particles are drawn after the trace, so
+// nothing traced sees them: rain was missing from puddles and glass. Their meshes are baked
+// into the TLAS each frame under their own instance mask, which only this query uses: the
+// first mirror-like bounce of a path gathers every particle along its segment, weighs each
+// by its alpha (weighted blended order-independent transparency, McGuire and Bavoil 2013, as
+// RTX Remix composites its particles) and lights it from the light cache above with the
+// transparent pass's phase function. Camera rays, shadows and diffuse bounces never meet them.
+#include "raytracing_data_inc.glsl"
+
+layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+#include "raytracing_samplers_inc.glsl"
+
+layout(set = 0, binding = 3, std430) readonly buffer GeometryBuffer {
+	GeometryData geometries[];
+};
+layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
+	MaterialData materials[];
+};
+
+layout(buffer_reference, std430) readonly buffer ParticleColorBuffer {
+	vec4 v[];
+};
+
+#define PARTICLE_LAYERS 24u
+
+// The light a particle at p_x sends along p_dir (toward the ray's origin), per unit albedo:
+// last frame's light cache cell there (the pair not being written), split as the transparent
+// pass splits it into a light from one direction, scattered by the phase function, and the rest.
+vec3 particle_light(vec3 p_x, vec3 p_dir) {
+	uint state = uint(get_rt_param(RT_PARAM_PLIGHT_STATE));
+	if ((state & 2u) == 0u) {
+		return vec3(0.0);
+	}
+	uint read = 1u - (state & 1u);
+	ivec3 size = imageSize(plight_images[read * 2u]);
+	mat4 view = transpose(mat4(scene_data_block.data.view_matrix[0],
+			scene_data_block.data.view_matrix[1],
+			scene_data_block.data.view_matrix[2],
+			vec4(0.0, 0.0, 0.0, 1.0)));
+	vec3 v = (view * vec4(p_x, 1.0)).xyz;
+	vec4 clip = scene_data_block.data.projection_matrix * vec4(v, 1.0);
+	vec2 uv = clamp(clip.xy / max(abs(clip.w), 1e-6) * 0.5 + 0.5, vec2(0.0), vec2(0.9999));
+	float z_near = get_rt_param(RT_PARAM_PLIGHT_NEAR);
+	float z_far = get_rt_param(RT_PARAM_PLIGHT_FAR);
+	float s = log(max(-v.z, z_near) / z_near) / log(z_far / z_near);
+	uint tile = uint(get_rt_param(RT_PARAM_PLIGHT_TILE));
+	ivec2 grid_xy = max(ivec2(gl_LaunchSizeEXT.xy) / int(tile), ivec2(1));
+	ivec3 cell = ivec3(ivec2(uv * vec2(grid_xy)), int(clamp(s, 0.0, 0.9999) * float(PLIGHT_SLICES)));
+	cell = min(cell, size - 1);
+	vec3 e = imageLoad(plight_images[read * 2u], cell).rgb;
+	vec3 d = imageLoad(plight_images[read * 2u + 1u], cell).xyz;
+	float lum = max(plight_luma(e), 1e-6);
+	float len = length(d);
+	float k = clamp(len / lum, 0.0, 1.0);
+	vec3 to_light = len > 1e-6 ? d / len : vec3(0.0, 1.0, 0.0);
+	float g = get_rt_param(RT_PARAM_PARTICLE_ANISOTROPY);
+	// seen from the ray's origin: forward scatter when the light is behind the particle
+	float c = dot(to_light, p_dir);
+	float hg = (1.0 - g * g) / (4.0 * PI * pow(max(1.0 + g * g - 2.0 * g * c, 1e-4), 1.5));
+	return e * k * (0.7 * hg + 0.3 / (4.0 * PI)) + e * (1.0 - k) * (1.0 / (4.0 * PI));
+}
+
+// The particles between p_origin and p_t_max along p_dir: rgb their light, as seen through
+// the others, a the transmittance through all of them.
+vec4 particles_along(vec3 p_origin, vec3 p_dir, float p_t_max) {
+	rayQueryEXT rq;
+	rayQueryInitializeEXT(rq, tlas, gl_RayFlagsNoOpaqueEXT, RT_MASK_PARTICLES, p_origin, 0.001, p_dir, p_t_max);
+	vec3 sum_c = vec3(0.0);
+	float sum_a = 0.0;
+	float through = 1.0;
+	uint layers = 0u;
+	while (rayQueryProceedEXT(rq)) {
+		if (rayQueryGetIntersectionTypeEXT(rq, false) != gl_RayQueryCandidateIntersectionTriangleEXT) {
+			continue;
+		}
+		uint id = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false));
+		uint prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false));
+		vec2 b = rayQueryGetIntersectionBarycentricsEXT(rq, false);
+		vec3 bary = vec3(1.0 - b.x - b.y, b.x, b.y);
+		GeometryData geom = geometries[id];
+		MaterialData mat = materials[id];
+
+		uint i0 = prim * 3u;
+		uint i1 = i0 + 1u;
+		uint i2 = i0 + 2u;
+		if (geom.index_format != 2u && geom.index_address != 0ul) {
+			Uint32Buffer idx = Uint32Buffer(geom.index_address);
+			i0 = idx.v[prim * 3u];
+			i1 = idx.v[prim * 3u + 1u];
+			i2 = idx.v[prim * 3u + 2u];
+		}
+		vec4 base = mat.albedo_color;
+		if (geom.particle_primitives > 0u && (geom.prev_vertex_address_lo | geom.prev_vertex_address_hi) != 0u) {
+			ParticleColorBuffer colors = ParticleColorBuffer(packUint2x32(uvec2(geom.prev_vertex_address_lo, geom.prev_vertex_address_hi)));
+			base *= colors.v[prim / geom.particle_primitives];
+		}
+		if (mat.albedo_texture_idx != OFFSET_NONE && geom.uv_byte_offset != OFFSET_NONE && geom.attribute_address != 0ul) {
+			FloatBuffer attr = FloatBuffer(geom.attribute_address);
+			uint stride = geom.attribute_stride >> 2u;
+			uint o = geom.uv_byte_offset >> 2u;
+			vec2 uv = bary.x * vec2(attr.v[i0 * stride + o], attr.v[i0 * stride + o + 1u]) +
+					bary.y * vec2(attr.v[i1 * stride + o], attr.v[i1 * stride + o + 1u]) +
+					bary.z * vec2(attr.v[i2 * stride + o], attr.v[i2 * stride + o + 1u]);
+			uv = uv * mat.uv1_scale + mat.uv1_offset;
+			base *= textureLod(sampler2D(bindless_textures[nonuniformEXT(mat.albedo_texture_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv, 1.0);
+		}
+		float a = clamp(base.a, 0.0, 1.0);
+		if (a < 1.0 / 255.0) {
+			continue;
+		}
+		float t = rayQueryGetIntersectionTEXT(rq, false);
+		vec3 l = base.rgb * particle_light(p_origin + p_dir * t, p_dir);
+		sum_c += l * a;
+		sum_a += a;
+		through *= 1.0 - a;
+		layers++;
+		if (layers >= PARTICLE_LAYERS || through < 1.0 / 255.0) {
+			rayQueryTerminateEXT(rq);
+		}
+	}
+	vec3 c = sum_a > 0.0 ? sum_c / sum_a * (1.0 - through) : vec3(0.0);
+	return vec4(c, through);
+}
+
 void main() {
 	uvec2 pixel = gl_LaunchIDEXT.xy;
 	const vec2 pixel_center = vec2(pixel) + vec2(0.5);
@@ -787,6 +916,9 @@ void main() {
 	// the primary ray's hit distance, sample 0 (-1: the sky)
 	float primary_t = -1.0;
 
+	const bool particles_on = get_rt_param(RT_PARAM_PARTICLES) > 0.5 && get_rt_param(RT_PARAM_PLIGHT_ENABLED) > 0.5;
+	const float particle_distance = get_rt_param(RT_PARAM_PARTICLE_DISTANCE);
+
 	[[dont_unroll]] for (uint sample_idx = 0u; sample_idx < samples_per_pixel; sample_idx++) {
 		PathState ps;
 		ps.radiance = vec3(0.0);
@@ -798,7 +930,11 @@ void main() {
 		vec3 ray_dir = direction.xyz;
 
 		[[dont_unroll]] for (uint bounce = 0u; bounce <= max_bounces; bounce++) {
-			if (bounce == 0u) {
+			// the first bounce off a mirror-like surface (a puddle, wet tar, glass) meets the particles
+			bool particles_here = bounce == 1u && particles_on && get_diffuse_bounces(ps.packed_bounces_flags) == 0u;
+			vec3 radiance_before = ps.radiance;
+			vec3 throughput_before = ps.throughput;
+			if (bounce == 0u || particles_here) {
 				ps.hit_t = -1.0;
 			}
 			path_pack(payload, ps);
@@ -823,6 +959,13 @@ void main() {
 			ps = path_unpack(payload);
 			if (bounce == 0u && sample_idx == 0u) {
 				primary_t = ps.hit_t;
+			}
+			if (particles_here) {
+				// the segment's own light (the hit's, or the sky's) seen through the particles, and theirs over it
+				float seg = ps.hit_t > 0.0 ? min(ps.hit_t, particle_distance) : particle_distance;
+				vec4 p = particles_along(ray_origin, ray_dir, seg);
+				ps.radiance = radiance_before + (ps.radiance - radiance_before) * p.a + throughput_before * p.rgb;
+				ps.throughput *= p.a;
 			}
 			if (is_path_terminated(ps.packed_bounces_flags)) {
 				break;

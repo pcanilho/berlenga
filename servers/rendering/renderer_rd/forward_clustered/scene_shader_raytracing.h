@@ -122,7 +122,10 @@ public:
 	static constexpr int RT_PARAM_PLIGHT_STATE = 21;
 	static constexpr int RT_PARAM_PLIGHT_BOUNCE = 22;
 	static constexpr int RT_PARAM_PLIGHT_TILE = 23;
-	static constexpr int RT_PARAM_COUNT = 24;
+	static constexpr int RT_PARAM_PARTICLES = 24;
+	static constexpr int RT_PARAM_PARTICLE_ANISOTROPY = 25;
+	static constexpr int RT_PARAM_PARTICLE_DISTANCE = 26;
+	static constexpr int RT_PARAM_COUNT = 28;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;
