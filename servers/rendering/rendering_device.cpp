@@ -5632,6 +5632,19 @@ RenderingDevice::DrawListID RenderingDevice::draw_list_begin_for_screen(DisplayS
 
 	Rect2i viewport = Rect2i(0, 0, context->surface_get_width(surface), context->surface_get_height(surface));
 
+	// The surface's size is written by the thread that resizes the window, so it can already hold
+	// the next size while this frame's swap chain image still has the old one. A render area larger
+	// than the image makes the GPU write past it (a device fault while a window border is dragged),
+	// so the area never exceeds the image the swap chain was created with.
+	Size2i extent = driver->swap_chain_get_extent(sc_it->value);
+	if (extent.width > 0 && extent.height > 0) {
+		const int rotation = driver->swap_chain_get_pre_rotation_degrees(sc_it->value);
+		if (rotation == 90 || rotation == 270) {
+			SWAP(extent.width, extent.height);
+		}
+		viewport.size = viewport.size.min(extent);
+	}
+
 	_draw_list_start(viewport);
 #ifdef DEBUG_ENABLED
 	draw_list_framebuffer_format = screen_get_framebuffer_format(p_screen);
