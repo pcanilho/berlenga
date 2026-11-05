@@ -3612,6 +3612,7 @@ void RenderingServer::_bind_methods() {
 	BIND_ENUM_CONSTANT(RSE::RENDERING_INFO_PIPELINE_COMPILATIONS_SPECIALIZATION);
 
 	ClassDB::bind_method(D_METHOD("get_rendering_not_ready_reasons"), &RenderingServer::get_rendering_not_ready_reasons);
+	ClassDB::bind_method(D_METHOD("is_pathtracing_ready"), &RenderingServer::is_pathtracing_ready);
 	BIND_BITFIELD_FLAG(RSE::RENDERING_NOT_READY_PIPELINE_COMPILATION);
 	BIND_BITFIELD_FLAG(RSE::RENDERING_NOT_READY_RT_SHADER_COMPILATION);
 	BIND_BITFIELD_FLAG(RSE::RENDERING_NOT_READY_RT_PENDING_SURFACES);
