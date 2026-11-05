@@ -35,8 +35,43 @@ MaterialResult default_material_result(vec3 geometry_normal) {
 // TEXTURE SAMPLING
 // ============================================================================
 
+// Texture level of detail by ray cones (Akenine-Moller, Nilsson, Andersson, Barre-Brisebois,
+// Toth & Karras, "Texture Level of Detail Strategies for Real-Time Ray Tracing", Ray Tracing
+// Gems 2019, ch. 20; "Improved Shader and Texture Level of Detail Using Ray Cones", JCGT 2021).
+// Ray tracing stages have no screen-space derivatives, so texture() reads the base level and
+// distant detail aliases into fuzz under the denoiser. rt_texture_cone() (closest hits) sets
+// the hit's cone; material_uv_sample() turns it into the sampled texture's level:
+// - rt_tex_grad: the footprint ellipse's axes in UV space, sampled with textureGrad.
+// - otherwise rt_tex_lod: log2 of the footprint in texture units, before the texture's own size.
+// Elsewhere (any-hit, shadow queries) they stay unset and the base level is read.
+const float RT_TEXTURE_LOD_BASE = -1e30;
+float rt_tex_lod = RT_TEXTURE_LOD_BASE;
+vec2 rt_tex_dx = vec2(0.0);
+vec2 rt_tex_dy = vec2(0.0);
+bool rt_tex_grad = false;
+bool rt_tex_aniso = false; // The material asks for anisotropic filtering (RT_MAT_FLAG_ANISOTROPIC).
+// The hit's cone, in the mesh's own UV1 (rt_texture_cone): footprint axes, isotropic level, and
+// log2 of the footprint in world units for position-mapped (triplanar) textures.
+vec2 rt_cone_uv_dx = vec2(0.0);
+vec2 rt_cone_uv_dy = vec2(0.0);
+bool rt_cone_uv_grad = false;
+float rt_cone_uv_lod = RT_TEXTURE_LOD_BASE;
+float rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
+
 vec4 sample_bindless_texture(uint tex_idx, vec2 uv) {
-	return texture(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv);
+	// The samplers are the render buffers' own (bindings 16-27), so their mipmap bias (the
+	// upscaler's render-to-display ratio, TAA's and the project's) applies here as in raster,
+	// to the gradients and to the explicit level alike. Anisotropic only when the material
+	// asks for it, as in raster.
+	if (rt_tex_grad) {
+		if (rt_tex_aniso) {
+			return textureGrad(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_ANISOTROPIC_REPEAT), uv, rt_tex_dx, rt_tex_dy);
+		}
+		return textureGrad(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv, rt_tex_dx, rt_tex_dy);
+	}
+	ivec2 size = textureSize(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), 0);
+	float lod = max(rt_tex_lod + 0.5 * log2(float(max(size.x, 1) * max(size.y, 1))), 0.0);
+	return textureLod(sampler2D(bindless_textures[nonuniformEXT(tex_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv, lod);
 }
 
 // Sample with point/nearest filtering (for pixel art textures).
@@ -67,6 +102,11 @@ struct MaterialUV {
 	vec3 blend_normal; // Normal the weights came from, in the mapping space.
 	bool triplanar;
 	bool object_space; // Triplanar mapping runs in model space, not world space.
+	// Ray cone (see rt_tex_lod): UV footprint axes when cone_grad, else the isotropic level.
+	vec2 cone_dx;
+	vec2 cone_dy;
+	bool cone_grad;
+	float cone_lod;
 };
 
 // Addressing parameters of one BaseMaterial3D UV channel.
@@ -76,6 +116,7 @@ struct MaterialUVChannel {
 	float blend_sharpness;
 	bool triplanar;
 	bool object_space;
+	bool uv2; // The cone's UV gradients are UV1's; UV2 takes the base level.
 };
 
 MaterialUVChannel material_uv1_channel(MaterialData mat) {
@@ -85,6 +126,7 @@ MaterialUVChannel material_uv1_channel(MaterialData mat) {
 	ch.blend_sharpness = unpackHalf2x16(mat.blend_sharpness).x;
 	ch.triplanar = (mat.flags & RT_MAT_FLAG_TRIPLANAR) != 0u;
 	ch.object_space = (mat.flags & RT_MAT_FLAG_TRIPLANAR_WORLD) == 0u;
+	ch.uv2 = false;
 	return ch;
 }
 
@@ -96,6 +138,7 @@ MaterialUVChannel material_uv2_channel(MaterialData mat) {
 	ch.blend_sharpness = unpackHalf2x16(mat.blend_sharpness).y;
 	ch.triplanar = (mat.flags & RT_MAT_FLAG_UV2_TRIPLANAR) != 0u;
 	ch.object_space = (mat.flags & RT_MAT_FLAG_UV2_TRIPLANAR_WORLD) == 0u;
+	ch.uv2 = true;
 	return ch;
 }
 
@@ -111,6 +154,17 @@ MaterialUV material_uv_compute(MaterialUVChannel ch, vec2 mesh_uv,
 	muv.blend_normal = world_normal;
 	muv.triplanar = ch.triplanar;
 	muv.object_space = ch.object_space;
+	// The cone's footprint through the channel's UV scale: the mesh UV1's gradients scaled for
+	// plain mapping, the world footprint times the scale for triplanar (per model unit in
+	// object space). UV2 has no gradients of its own here and reads the base level.
+	muv.cone_grad = !ch.uv2 && !ch.triplanar && rt_cone_uv_grad;
+	muv.cone_dx = rt_cone_uv_dx * ch.scale.xy;
+	muv.cone_dy = rt_cone_uv_dy * ch.scale.xy;
+	muv.cone_lod = ch.uv2 ? RT_TEXTURE_LOD_BASE : rt_cone_uv_lod + 0.5 * log2(max(abs(ch.scale.x * ch.scale.y), 1e-12));
+	if (ch.triplanar && !ch.uv2) {
+		float tex_per_world = (abs(ch.scale.x) + abs(ch.scale.y) + abs(ch.scale.z)) / 3.0;
+		muv.cone_lod = rt_cone_footprint_log2 + log2(max(tex_per_world, 1e-6));
+	}
 
 	if (muv.triplanar) {
 		vec3 pos = muv.object_space ? object_pos : world_pos;
@@ -148,6 +202,11 @@ MaterialUV material_uv_from_world(MaterialData mat, GeometryData geom, vec2 mesh
 
 // Sample a material texture through the resolved addressing.
 vec4 material_uv_sample(uint tex_idx, MaterialUV muv, uint mat_flags) {
+	rt_tex_grad = muv.cone_grad;
+	rt_tex_dx = muv.cone_dx;
+	rt_tex_dy = muv.cone_dy;
+	rt_tex_lod = muv.cone_lod;
+	rt_tex_aniso = (mat_flags & RT_MAT_FLAG_ANISOTROPIC) != 0u;
 	if (!muv.triplanar) {
 		return sample_material_texture(tex_idx, muv.uv, mat_flags);
 	}

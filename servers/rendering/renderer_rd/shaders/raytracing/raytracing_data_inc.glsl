@@ -90,6 +90,7 @@ struct InstanceMotionData {
 #define RT_MAT_FLAG_UV2_TRIPLANAR 32768u
 #define RT_MAT_FLAG_UV2_TRIPLANAR_WORLD 65536u
 #define RT_MAT_FLAG_INSTANCE_FADE 131072u
+#define RT_MAT_FLAG_ANISOTROPIC 262144u // texture_filter *_ANISOTROPIC: ray-cone gradients sampled anisotropically.
 
 // Multi-bit fields fill the top bits so new single-bit flags can grow upward.
 // Blend class of transparent surfaces (bits 25-27). Opaque surfaces leave 0.

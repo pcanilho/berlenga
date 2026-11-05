@@ -79,6 +79,18 @@ vec2 rt_motion_vector(vec3 p_pos, vec3 p_prev_pos) {
 	return project_uv(p_prev_pos, prev_vp_unjittered) - project_uv(p_pos, curr_vp_unjittered);
 }
 
+// Ray cones (texture level of detail): the pixel's spread angle, 0 for an orthogonal camera,
+// whose rays start one pixel's footprint wide instead and never spread.
+bool rt_cone_orthogonal() {
+	return scene_data_block.data.projection_matrix[3][3] != 0.0;
+}
+float rt_cone_spread_angle() {
+	return rt_cone_orthogonal() ? 0.0 : atan(2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * float(gl_LaunchSizeEXT.y)));
+}
+float rt_cone_eye_width() {
+	return rt_cone_orthogonal() ? 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * float(gl_LaunchSizeEXT.y)) : 0.0;
+}
+
 float rt_ndc_depth(vec3 p_world_pos) {
 	mat4 view_mat = transpose(mat4(scene_data_block.data.view_matrix[0],
 			scene_data_block.data.view_matrix[1],

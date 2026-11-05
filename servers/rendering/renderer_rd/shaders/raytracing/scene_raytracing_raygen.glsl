@@ -218,6 +218,10 @@ void main() {
 
 		vec3 ray_origin = origin.xyz;
 		vec3 ray_dir = direction.xyz;
+		// The ray cone's width at the segment's origin (texture level of detail, rt_texture_cone):
+		// 0 at a perspective eye, one pixel's footprint for an orthogonal camera, then grown by
+		// the pixel's spread angle over each segment traced.
+		float cone_width = rt_cone_eye_width();
 #ifdef DLSS_RR_ENABLED
 		// Primary surface replacement this sample still owes (only sample 0 starts one).
 		bool replace_pending = false;
@@ -230,6 +234,7 @@ void main() {
 			uint flags_entry = ps.packed_bounces_flags;
 			ps.hit_t = -1.0; // A miss must not retain the previous segment's hit distance.
 			path_pack(payload, ps);
+			payload_set_cone_width(payload, cone_width);
 			float t_far = (bounce == 0u) ? composite_t_max : 10000.0;
 
 #ifdef USE_SER
@@ -242,6 +247,9 @@ void main() {
 #endif
 
 			ps = path_unpack(payload);
+			if (ps.hit_t > 0.0) {
+				cone_width += rt_cone_spread_angle() * ps.hit_t;
+			}
 #ifdef DLSS_RR_ENABLED
 			if (bounce == 0u && (ps.packed_bounces_flags & DLSS_RR_REPLACE_PENDING_FLAG) != 0u) {
 				replace_pending = true;

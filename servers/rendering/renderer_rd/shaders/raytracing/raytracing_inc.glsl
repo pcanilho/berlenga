@@ -72,6 +72,9 @@ struct PathPayload {
 	uint oct_next_dir; //  4 bytes - packUnorm2x16(vec3_to_oct(next direction)); peel-ray input: SCENE_DEPTH, see path_pack_peel()
 };
 
+// Set by payload_set_cone_width(), cleared by path_pack(): oct_next_dir holds the ray cone's width
+// at the ray's origin (texture level of detail), not a direction. Bit 14.
+const uint CONE_WIDTH_FLAG = (1u << 14);
 // Set by path_pack_peel(), cleared by path_pack(): oct_next_dir holds the peel ray's SCENE_DEPTH, not a direction.
 const uint PEEL_SCENE_DEPTH_FLAG = (1u << 7);
 const uint PEEL_RAY_FLAG = (1u << 28);
@@ -112,7 +115,7 @@ void path_pack(inout PathPayload p, PathState s) {
 	p.packed_rt[0] = packHalf2x16(vec2(r.r, r.g));
 	p.packed_rt[1] = packHalf2x16(vec2(r.b, t.r));
 	p.packed_rt[2] = packHalf2x16(vec2(t.g, t.b));
-	p.packed_bounces_flags = s.packed_bounces_flags & ~PEEL_SCENE_DEPTH_FLAG;
+	p.packed_bounces_flags = s.packed_bounces_flags & ~(PEEL_SCENE_DEPTH_FLAG | CONE_WIDTH_FLAG);
 	p.rng_state = s.rng_state;
 	p.hit_t = s.hit_t;
 	p.oct_offset_nrm = packUnorm2x16(vec3_to_oct(s.offset_normal));
@@ -130,6 +133,18 @@ void path_pack_peel(inout PathPayload p, PathState s, float p_scene_depth) {
 bool rt_peel_scene_depth_lost = false; // A peel hit read SCENE_DEPTH after its payload was repacked.
 #endif
 
+// The ray cone's width at the ray's origin (Akenine-Moller et al., "Texture Level of Detail
+// Strategies for Real-Time Ray Tracing", Ray Tracing Gems 2019): raygen sets it after path_pack()
+// on the path's own segments. Without it (peel, shadow and query rays) the width is taken as
+// p_default, the eye's. Hits must read it before their first path_pack().
+void payload_set_cone_width(inout PathPayload p, float p_width) {
+	p.packed_bounces_flags |= CONE_WIDTH_FLAG;
+	p.oct_next_dir = floatBitsToUint(max(p_width, 0.0));
+}
+float payload_cone_width(PathPayload p, float p_default) {
+	return (p.packed_bounces_flags & CONE_WIDTH_FLAG) != 0u ? uintBitsToFloat(p.oct_next_dir) : p_default;
+}
+
 // SCENE_DEPTH of a peel ray, 0.0 (far, no proximity fade) otherwise. Hits must read it before their first path_pack().
 float payload_peel_scene_depth(PathPayload p) {
 	if ((p.packed_bounces_flags & PEEL_SCENE_DEPTH_FLAG) != 0u) {
@@ -142,7 +157,7 @@ float payload_peel_scene_depth(PathPayload p) {
 }
 
 // Bounce count helpers. Bits 0-3: total, must hold RT_MAX_BOUNCES_LIMIT; bits 4-6: diffuse, must hold MAX_DIFFUSE_BOUNCES.
-// Bit 7: PEEL_SCENE_DEPTH_FLAG. Bit 8: LAST_BOUNCE_DIFFUSE_FLAG. Bits 9-13: DLSS-RR guide rays and replacement. Bit 14 is reserved.
+// Bit 7: PEEL_SCENE_DEPTH_FLAG. Bit 8: LAST_BOUNCE_DIFFUSE_FLAG. Bits 9-13: DLSS-RR guide rays and replacement. Bit 14: CONE_WIDTH_FLAG.
 uint get_total_bounces(uint packed) {
 	return packed & 0xFu;
 }

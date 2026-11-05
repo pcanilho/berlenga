@@ -444,6 +444,9 @@ enum {
 	RT_MAT_FLAG_UV2_TRIPLANAR_WORLD = 65536u,
 	// Opaque material traced as transparent only because of the instance fade; it ignores material alpha like raster.
 	RT_MAT_FLAG_INSTANCE_FADE = 131072u,
+	// The material asks for anisotropic filtering (texture_filter *_ANISOTROPIC). Without it the ray-cone
+	// gradients are sampled isotropically, as raster does.
+	RT_MAT_FLAG_ANISOTROPIC = 262144u,
 	// Multi-bit fields fill the top bits so new single-bit flags can grow upward.
 	// Blend class of transparent surfaces (bits 25-27); opaque surfaces leave 0.
 	RT_MAT_BLEND_CLASS_SHIFT = 25u,

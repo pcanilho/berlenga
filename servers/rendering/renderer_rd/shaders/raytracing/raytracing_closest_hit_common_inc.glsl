@@ -25,6 +25,91 @@ struct HitData {
 	uint geometry_idx;
 };
 
+// A vertex's object-space position (as gl_ObjectToWorldEXT takes it): compressed surfaces
+// store unorm16 fractions of their AABB (the BLAS geometry transform decodes them), others floats.
+vec3 fetch_object_position(in GeometryData geom, uint idx) {
+	Uint32Buffer vb = Uint32Buffer(geom.vertex_address);
+	uint stride_words = max(geom.position_stride >> 2, 1u);
+	if ((geom.flags & FLAG_COMPRESSED) != 0u) {
+		uint w0 = vb.v[idx * stride_words];
+		uint w1 = vb.v[idx * stride_words + 1u];
+		vec3 f = vec3(float(w0 & 0xFFFFu), float(w0 >> 16), float(w1 & 0xFFFFu)) / 65535.0;
+		return f * vec3(geom.aabb_size_x, geom.aabb_size_y, geom.aabb_size_z) + vec3(geom.aabb_pos_x, geom.aabb_pos_y, geom.aabb_pos_z);
+	}
+	return vec3(uintBitsToFloat(vb.v[idx * stride_words]), uintBitsToFloat(vb.v[idx * stride_words + 1u]), uintBitsToFloat(vb.v[idx * stride_words + 2u]));
+}
+
+// Ray cones (Akenine-Moller et al., "Texture Level of Detail Strategies for Real-Time Ray Tracing",
+// Ray Tracing Gems 2019, ch. 20; "Improved Shader and Texture Level of Detail Using Ray Cones", JCGT 2021).
+// Ray tracing stages have no screen-space derivatives, so without this every texture reads its base level
+// and distant detail aliases into noise under the denoiser. The cone's width, carried in the payload from
+// the eye, grows by the pixel's spread angle over each segment (bounces keep the eye's spread, which never
+// blurs more than the paper's curvature term). Sets rt_cone_* for material_uv_compute():
+// - rt_cone_footprint_log2: log2 of the footprint on the surface in world units (triplanar, scaled UVs).
+// - rt_cone_uv_lod: the isotropic level in UV units, 0.5 * log2(uv area / world area) + footprint.
+// - rt_cone_uv_dx/dy: the footprint ellipse's axes mapped into UV space, the derivatives raster would see.
+void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
+	rt_cone_uv_lod = RT_TEXTURE_LOD_BASE;
+	rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
+	rt_cone_uv_grad = false;
+	float width = payload_cone_width(payload, rt_cone_eye_width()) + rt_cone_spread_angle() * gl_HitTEXT;
+	if (width <= 0.0) {
+		return;
+	}
+	vec3 dir = gl_WorldRayDirectionEXT;
+	float cos_n = max(abs(dot(world_normal, dir)), 0.05);
+	rt_cone_footprint_log2 = log2(width / cos_n);
+
+	if (geom.uv_byte_offset == OFFSET_NONE || geom.attribute_address == 0ul || geom.vertex_address == 0ul) {
+		return;
+	}
+	uint i0, i1, i2;
+	get_triangle_indices(geom, i0, i1, i2);
+	mat4x3 o2w = gl_ObjectToWorldEXT;
+	vec3 p0 = o2w * vec4(fetch_object_position(geom, i0), 1.0);
+	vec3 p1 = o2w * vec4(fetch_object_position(geom, i1), 1.0);
+	vec3 p2 = o2w * vec4(fetch_object_position(geom, i2), 1.0);
+	vec2 t0 = fetch_uv(geom, i0, i1, i2, vec3(1.0, 0.0, 0.0));
+	vec2 t1 = fetch_uv(geom, i0, i1, i2, vec3(0.0, 1.0, 0.0));
+	vec2 t2 = fetch_uv(geom, i0, i1, i2, vec3(0.0, 0.0, 1.0));
+	vec3 dp1 = p1 - p0;
+	vec3 dp2 = p2 - p0;
+	vec3 tri_n = cross(dp1, dp2);
+	float nn = dot(tri_n, tri_n);
+	vec2 e1 = t1 - t0;
+	vec2 e2 = t2 - t0;
+	float uv_area = abs(e1.x * e2.y - e1.y * e2.x);
+	if (nn <= 1e-24 || uv_area <= 1e-14) {
+		return;
+	}
+	rt_cone_uv_lod = 0.5 * log2(uv_area / sqrt(nn)) + rt_cone_footprint_log2;
+
+	// Anisotropic footprint (JCGT 2021, sec. 4.3 / 5): the cone meets the triangle's plane in an ellipse,
+	// its minor axis the width across the ray and its major axis width / cos along the ray's projection.
+	// Mapped into UV space through the triangle's UV gradients, so textureGrad keeps detail across a grazing
+	// floor instead of blurring the whole footprint to the major axis.
+	vec3 c1 = cross(dp2, tri_n) / nn;
+	vec3 c2 = cross(tri_n, dp1) / nn;
+	vec3 grad_u = e1.x * c1 + e2.x * c2;
+	vec3 grad_v = e1.y * c1 + e2.y * c2;
+	vec3 plane_n = tri_n * inversesqrt(nn);
+	vec3 minor_dir = cross(dir, plane_n);
+	float minor_len = length(minor_dir);
+	if (minor_len < 1e-4) {
+		minor_dir = normalize(cross(plane_n, abs(plane_n.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+	} else {
+		minor_dir /= minor_len;
+	}
+	vec3 major_dir = cross(plane_n, minor_dir);
+	float cos_plane = max(abs(dot(plane_n, dir)), 0.05);
+	vec3 major_axis = major_dir * (width / cos_plane);
+	vec3 minor_axis = minor_dir * width;
+	rt_cone_uv_dx = vec2(dot(grad_u, major_axis), dot(grad_v, major_axis));
+	rt_cone_uv_dy = vec2(dot(grad_u, minor_axis), dot(grad_v, minor_axis));
+	vec4 grads = vec4(rt_cone_uv_dx, rt_cone_uv_dy);
+	rt_cone_uv_grad = !any(isnan(grads)) && !any(isinf(grads));
+}
+
 // Fetch vertex attributes and transform to world space.
 // Requires hitAttributeEXT HitAttribs and GeometryBuffer/MaterialBuffer bindings.
 HitData compute_hit_data() {
@@ -78,6 +163,13 @@ HitData compute_hit_data() {
 	}
 
 	h.hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
+
+#ifdef ENABLE_INTERSECTION_SHADERS
+	if ((geom.flags & FLAG_PROCEDURAL) == 0u)
+#endif
+	{
+		rt_texture_cone(geom, h.geometry_normal);
+	}
 
 	return h;
 }
