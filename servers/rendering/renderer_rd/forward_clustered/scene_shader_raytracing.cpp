@@ -34,7 +34,11 @@
 #include "core/error/error_macros.h"
 #include "core/io/file_access.h"
 #include "core/math/math_defs.h"
+#include "core/config/engine.h"
+#include "core/io/dir_access.h"
 #include "core/os/os.h"
+#include "core/string/string_builder.h"
+#include "core/version.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.h"
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
@@ -360,6 +364,9 @@ SceneShaderRaytracing::~SceneShaderRaytracing() {
 }
 
 void SceneShaderRaytracing::invalidate_pipeline_bundles() {
+	// Variant builds in flight compiled against the state being dropped.
+	_poll_variant_tasks(true);
+	failed_async_variants.clear();
 	// Bundles own HG + base_shader RIDs; free_rid is deferred-safe for in-flight frames.
 	for (KeyValue<uint32_t, PipelineBundle> &kv : pipeline_bundles) {
 		PipelineBundle &b = kv.value;
@@ -702,10 +709,114 @@ SceneShaderRaytracing *SceneShaderRaytracing::get_singleton() {
 
 // Per-rt_flags base SPIR-V + HG templates (immutable cache for worker tasks).
 
+uint32_t SceneShaderRaytracing::_compile_context_key(uint32_t p_rt_flags) {
+	// What changes the GLSL source: the raygen options and the debug define.
+	// Everything else in rt_flags (sample count, bounces, fog) is a specialization constant.
+	uint32_t key = _raygen_variant_from_rt_flags(p_rt_flags);
+	if (p_rt_flags & RT_FLAG_DEBUG_VIS_ENABLED) {
+		key |= 1u << 31;
+	}
+	return key;
+}
+
+Vector<uint8_t> SceneShaderRaytracing::_compile_spirv_cached(RD::ShaderStage p_stage, const String &p_source, String *r_error) {
+	// Same layout and invalidation as ShaderRD's cache: the engine build, the
+	// graphics API and debug info all change the SPIR-V. The device is in the key
+	// too, since the SPIR-V target follows its API version.
+	String path;
+	const String &cache_dir = ShaderRD::get_shader_cache_user_dir();
+	if (!cache_dir.is_empty()) {
+		StringBuilder key;
+		key.append("[GodotVersionHash]");
+		key.append(GODOT_VERSION_HASH);
+		key.append("[Device]");
+		key.append(RD::get_singleton()->get_device_api_name());
+		key.append(RD::get_singleton()->get_device_api_version());
+		key.append(RD::get_singleton()->get_device_name());
+		key.append("[DebugInfo]");
+		key.append(Engine::get_singleton()->is_generate_spirv_debug_info_enabled() ? "1" : "0");
+		key.append("[Stage]");
+		key.append(itos(p_stage));
+		key.append("[Source]");
+		key.append(p_source);
+		path = cache_dir.path_join("RaytracingSPIRV").path_join(key.as_string().sha256_text() + ".spv");
+
+		Ref<FileAccess> f = FileAccess::open(path, FileAccess::READ);
+		if (f.is_valid()) {
+			Vector<uint8_t> spirv = f->get_buffer(f->get_length());
+			// A SPIR-V module starts with its magic number; anything else is a torn write.
+			if (spirv.size() >= 20 && (spirv.size() % 4) == 0 && spirv[0] == 0x03 && spirv[1] == 0x02 && spirv[2] == 0x23 && spirv[3] == 0x07) {
+				return spirv;
+			}
+		}
+	}
+
+	Vector<uint8_t> spirv;
+	{
+		MutexLock lock(spirv_compile_mutex);
+		spirv = RD::get_singleton()->shader_compile_spirv_from_source(p_stage, p_source, RD::SHADER_LANGUAGE_GLSL, r_error);
+	}
+
+	if (!path.is_empty() && !spirv.is_empty()) {
+		DirAccess::make_dir_recursive_absolute(path.get_base_dir());
+		// Write to a temporary name and rename, so a reader never sees half a file.
+		const String tmp_path = path + vformat(".%d.tmp", Thread::get_caller_id());
+		Ref<FileAccess> f = FileAccess::open(tmp_path, FileAccess::WRITE);
+		if (f.is_valid()) {
+			f->store_buffer(spirv);
+			f.unref();
+			Ref<DirAccess> da = DirAccess::create_for_path(path);
+			if (da.is_null() || da->rename(tmp_path, path) != OK) {
+				DirAccess::remove_absolute(tmp_path);
+			}
+		}
+	}
+	return spirv;
+}
+
 bool SceneShaderRaytracing::_ensure_variant_compile_context(uint32_t p_rt_flags) {
-	if (variant_compile_contexts.has(p_rt_flags)) {
+	const uint32_t ctx_key = _compile_context_key(p_rt_flags);
+	if (!variant_compile_contexts.has(ctx_key)) {
+		if (!_build_variant_compile_context(p_rt_flags)) {
+			return false;
+		}
+	}
+	const VariantCompileContext &ctx = variant_compile_contexts[ctx_key];
+
+	// Creates layout-defining base_shader RID for uniform sets (immutable per variant).
+	HashMap<uint32_t, PipelineBundle>::Iterator bit = pipeline_bundles.find(p_rt_flags);
+	if (bit != pipeline_bundles.end() && bit->value.base_shader.is_valid()) {
 		return true;
 	}
+
+	RID base_shader_rd = RD::get_singleton()->shader_create_from_bytecode(ctx.base_binary);
+	ERR_FAIL_COND_V(!base_shader_rd.is_valid(), false);
+
+	PipelineBundle &bundle = pipeline_bundles[p_rt_flags];
+	bundle.base_shader = base_shader_rd;
+	_bundle_resize_for_slots(bundle);
+	if (!bundle.per_hg_states.is_empty()) {
+		bundle.per_hg_states[0] = HGState::Ready;
+	}
+
+	return true;
+}
+
+bool SceneShaderRaytracing::_build_variant_compile_context(uint32_t p_rt_flags) {
+	VariantCompileContext ctx;
+	Vector<String> sources;
+	if (!_prepare_variant_sources(p_rt_flags, ctx, sources)) {
+		return false;
+	}
+	if (!_compile_variant_context(p_rt_flags, sources, ctx)) {
+		return false;
+	}
+	variant_compile_contexts.insert(_compile_context_key(p_rt_flags), ctx);
+	return true;
+}
+
+// Render thread: ShaderRD may (re)initialize the version while building the sources.
+bool SceneShaderRaytracing::_prepare_variant_sources(uint32_t p_rt_flags, VariantCompileContext &r_ctx, Vector<String> &r_sources) {
 	ERR_FAIL_COND_V(!raygen_shader_version.is_valid(), false);
 
 	int variant = (int)_raygen_variant_from_rt_flags(p_rt_flags);
@@ -752,7 +863,7 @@ bool SceneShaderRaytracing::_ensure_variant_compile_context(uint32_t p_rt_flags)
 	int base_ah_ver = base_ah_src.find("#version");
 	ERR_FAIL_COND_V(base_ch_ver < 0 || base_ah_ver < 0, false);
 
-	VariantCompileContext ctx;
+	VariantCompileContext &ctx = r_ctx;
 	ctx.ch_template = base_ch_src.insert(base_ch_src.find("\n", base_ch_ver) + 1, custom_hg_define);
 	ctx.ah_template = base_ah_src.insert(base_ah_src.find("\n", base_ah_ver) + 1, custom_hg_define);
 	if (!intersection_source_template.is_empty()) {
@@ -762,11 +873,33 @@ bool SceneShaderRaytracing::_ensure_variant_compile_context(uint32_t p_rt_flags)
 		}
 	}
 
+	r_sources = sources;
+	return true;
+}
+
+// Any thread: GLSL to SPIR-V (through the disk cache) and the base binary.
+bool SceneShaderRaytracing::_compile_variant_context(uint32_t p_rt_flags, const Vector<String> &p_sources, VariantCompileContext &r_ctx) {
+	const Vector<String> &sources = p_sources;
+	VariantCompileContext &ctx = r_ctx;
+
 	// Full base stages; CH/AH SPIR-V is HG0 default; RG+miss duplicated into each HG bytecode.
 	Vector<RD::ShaderStageSPIRVData> base_stages;
 	{
-		MutexLock lock(spirv_compile_mutex);
-		base_stages = ShaderRD::compile_stages(sources, {});
+		String error;
+		for (int i = 0; i < sources.size(); i++) {
+			if (sources[i].strip_edges().is_empty()) {
+				continue;
+			}
+			RD::ShaderStageSPIRVData sd;
+			sd.shader_stage = RD::ShaderStage(i);
+			sd.spirv = _compile_spirv_cached(sd.shader_stage, sources[i], &error);
+			if (sd.spirv.is_empty()) {
+				ERR_PRINT(vformat("Error compiling raytracing %s shader for variant 0x%x.", RD::SHADER_STAGE_NAMES[i], p_rt_flags));
+				ERR_PRINT(error);
+				return false;
+			}
+			base_stages.push_back(sd);
+		}
 	}
 	ERR_FAIL_COND_V(base_stages.is_empty(), false);
 
@@ -779,32 +912,172 @@ bool SceneShaderRaytracing::_ensure_variant_compile_context(uint32_t p_rt_flags)
 		}
 	}
 
-	variant_compile_contexts.insert(p_rt_flags, ctx);
-
-	// Creates layout-defining base_shader RID for uniform sets (immutable per variant).
-	HashMap<uint32_t, PipelineBundle>::Iterator bit = pipeline_bundles.find(p_rt_flags);
-	if (bit != pipeline_bundles.end() && bit->value.base_shader.is_valid()) {
-		return true;
-	}
-
-	Vector<uint8_t> base_binary;
 	{
 		MutexLock lock(spirv_compile_mutex);
-		base_binary = RD::get_singleton()->shader_compile_binary_from_spirv(base_stages, "RT_base");
+		ctx.base_binary = RD::get_singleton()->shader_compile_binary_from_spirv(base_stages, "RT_base");
 	}
-	ERR_FAIL_COND_V(base_binary.is_empty(), false);
-
-	RID base_shader_rd = RD::get_singleton()->shader_create_from_bytecode(base_binary);
-	ERR_FAIL_COND_V(!base_shader_rd.is_valid(), false);
-
-	PipelineBundle &bundle = pipeline_bundles[p_rt_flags];
-	bundle.base_shader = base_shader_rd;
-	_bundle_resize_for_slots(bundle);
-	if (!bundle.per_hg_states.is_empty()) {
-		bundle.per_hg_states[0] = HGState::Ready;
-	}
-
+	ERR_FAIL_COND_V(ctx.base_binary.is_empty(), false);
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Asynchronous first build of a pipeline variant.
+
+void SceneShaderRaytracing::_variant_build_worker_static(void *p_userdata) {
+	VariantBuildTask *task = static_cast<VariantBuildTask *>(p_userdata);
+	SceneShaderRaytracing::get_singleton()->_variant_build_worker(task);
+}
+
+void SceneShaderRaytracing::_variant_build_worker(VariantBuildTask *p_task) {
+	if (p_task->need_ctx) {
+		if (!_compile_variant_context(p_task->rt_flags, p_task->sources, p_task->ctx)) {
+			return;
+		}
+		p_task->base_binary = p_task->ctx.base_binary;
+	}
+	p_task->shaders_usec = OS::get_singleton()->get_ticks_usec();
+	if (p_task->ctx_only) {
+		p_task->ok = true;
+		return;
+	}
+	p_task->base_shader = RD::get_singleton()->shader_create_from_bytecode(p_task->base_binary);
+	if (p_task->base_shader.is_null()) {
+		return;
+	}
+	p_task->pipeline = _create_initial_pipeline(p_task->rt_flags, p_task->base_shader);
+	p_task->end_usec = OS::get_singleton()->get_ticks_usec();
+	p_task->ok = p_task->pipeline.is_valid();
+}
+
+void SceneShaderRaytracing::_start_variant_task(uint32_t p_rt_flags, bool p_ctx_only) {
+	const uint32_t key = _compile_context_key(p_rt_flags);
+	VariantBuildTask *task = memnew(VariantBuildTask);
+	task->rt_flags = p_rt_flags;
+	task->ctx_only = p_ctx_only;
+	task->start_usec = OS::get_singleton()->get_ticks_usec();
+
+	HashMap<uint32_t, VariantCompileContext>::ConstIterator cit = variant_compile_contexts.find(key);
+	if (cit != variant_compile_contexts.end()) {
+		if (p_ctx_only) {
+			memdelete(task);
+			return;
+		}
+		task->base_binary = cit->value.base_binary;
+	} else {
+		task->need_ctx = true;
+		if (!_prepare_variant_sources(p_rt_flags, task->ctx, task->sources)) {
+			memdelete(task);
+			failed_async_variants.insert(p_rt_flags);
+			return;
+		}
+	}
+
+	variant_tasks.push_back(task);
+	task->worker_id = WorkerThreadPool::get_singleton()->add_native_task(
+			&SceneShaderRaytracing::_variant_build_worker_static, task, /*high_priority=*/true,
+			"RT Variant Build");
+}
+
+void SceneShaderRaytracing::_poll_variant_tasks(bool p_wait) {
+	for (uint32_t i = 0; i < variant_tasks.size();) {
+		VariantBuildTask *task = variant_tasks[i];
+		if (!p_wait && !WorkerThreadPool::get_singleton()->is_task_completed(task->worker_id)) {
+			i++;
+			continue;
+		}
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(task->worker_id);
+		variant_tasks.remove_at(i);
+
+		const uint32_t key = _compile_context_key(task->rt_flags);
+		if (task->ok && task->need_ctx && !variant_compile_contexts.has(key)) {
+			variant_compile_contexts.insert(key, task->ctx);
+		}
+
+		bool used = false;
+		if (task->ok && !task->ctx_only && !p_wait) {
+			HashMap<uint32_t, PipelineBundle>::Iterator it = pipeline_bundles.find(task->rt_flags);
+			if (it == pipeline_bundles.end() || !it->value.initial_pipeline_built) {
+				PipelineBundle &bundle = pipeline_bundles[task->rt_flags];
+				if (bundle.base_shader.is_valid()) {
+					RD::get_singleton()->free_rid(bundle.base_shader);
+				}
+				bundle.base_shader = task->base_shader;
+				_bundle_resize_for_slots(bundle);
+				if (!bundle.per_hg_states.is_empty()) {
+					bundle.per_hg_states[0] = HGState::Ready;
+				}
+				if (_finish_initial_bundle(task->rt_flags, bundle, task->pipeline)) {
+					if (hit_group_slots.size() > 1) {
+						bundle.dirty = true;
+					}
+					bundle.initial_pipeline_built = true;
+					used = true;
+					print_verbose(vformat("Path tracing: built pipeline variant 0x%x on a worker thread in %.1f ms (shaders %.1f ms, pipeline %.1f ms).",
+							task->rt_flags, (task->end_usec - task->start_usec) / 1000.0, (task->shaders_usec - task->start_usec) / 1000.0, (task->end_usec - task->shaders_usec) / 1000.0));
+				} else {
+					// _finish_initial_bundle frees the pipeline on failure; the base shader stays with the bundle.
+					task->pipeline = RID();
+					used = true;
+					failed_async_variants.insert(task->rt_flags);
+				}
+			}
+		} else if (!task->ok && !task->ctx_only) {
+			failed_async_variants.insert(task->rt_flags);
+		}
+
+		if (!used) {
+			if (task->pipeline.is_valid()) {
+				RD::get_singleton()->free_rid(task->pipeline);
+			}
+			if (task->base_shader.is_valid()) {
+				RD::get_singleton()->free_rid(task->base_shader);
+			}
+		}
+		memdelete(task);
+	}
+}
+
+bool SceneShaderRaytracing::is_pipeline_bundle_ready(uint32_t p_rt_flags) const {
+	HashMap<uint32_t, PipelineBundle>::ConstIterator it = pipeline_bundles.find(p_rt_flags);
+	return it != pipeline_bundles.end() && it->value.initial_pipeline_built;
+}
+
+bool SceneShaderRaytracing::request_pipeline_bundle(uint32_t p_rt_flags) {
+	_poll_variant_tasks(false);
+	if (is_pipeline_bundle_ready(p_rt_flags)) {
+		return true;
+	}
+	if (!async_compilation_enabled || failed_async_variants.has(p_rt_flags)) {
+		// Synchronous path, which also reports the errors.
+		return ensure_pipeline_bundle(p_rt_flags).initial_pipeline_built;
+	}
+	for (const VariantBuildTask *task : variant_tasks) {
+		if (task->rt_flags == p_rt_flags && !task->ctx_only) {
+			return false;
+		}
+	}
+	_start_variant_task(p_rt_flags, false);
+	return false;
+}
+
+bool SceneShaderRaytracing::has_pending_builds() {
+	for (const VariantBuildTask *task : variant_tasks) {
+		if (!task->ctx_only) {
+			return true;
+		}
+	}
+	{
+		MutexLock lock(compile_lane.mutex);
+		if (compile_lane.current != nullptr || !compile_lane.queue.is_empty()) {
+			return true;
+		}
+	}
+	for (const KeyValue<uint32_t, PipelineBundle> &kv : pipeline_bundles) {
+		if (kv.value.dirty) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void SceneShaderRaytracing::_bundle_resize_for_slots(PipelineBundle &r_bundle) {
@@ -832,10 +1105,12 @@ const SceneShaderRaytracing::PipelineBundle &SceneShaderRaytracing::ensure_pipel
 		return it->value;
 	}
 
+	const uint64_t build_start = OS::get_singleton()->get_ticks_usec();
 	if (!_ensure_variant_compile_context(p_rt_flags)) {
 		WARN_PRINT(vformat("RT: Failed to build base compile context for variant 0x%x.", p_rt_flags));
 		return EMPTY_BUNDLE;
 	}
+	const uint64_t shaders_done = OS::get_singleton()->get_ticks_usec();
 
 	PipelineBundle &bundle = pipeline_bundles[p_rt_flags];
 	_bundle_resize_for_slots(bundle);
@@ -848,6 +1123,9 @@ const SceneShaderRaytracing::PipelineBundle &SceneShaderRaytracing::ensure_pipel
 		bundle.dirty = true;
 	}
 	bundle.initial_pipeline_built = true;
+	const uint64_t build_end = OS::get_singleton()->get_ticks_usec();
+	print_verbose(vformat("Path tracing: built pipeline variant 0x%x on the render thread in %.1f ms (shaders %.1f ms, pipeline %.1f ms).",
+			p_rt_flags, (build_end - build_start) / 1000.0, (shaders_done - build_start) / 1000.0, (build_end - shaders_done) / 1000.0));
 	return bundle;
 }
 
@@ -857,6 +1135,16 @@ bool SceneShaderRaytracing::_build_initial_bundle(uint32_t p_rt_flags, PipelineB
 	if (!r_bundle.base_shader.is_valid()) {
 		return false;
 	}
+	RID new_pipeline = _create_initial_pipeline(p_rt_flags, r_bundle.base_shader);
+	if (new_pipeline.is_null()) {
+		return false;
+	}
+	return _finish_initial_bundle(p_rt_flags, r_bundle, new_pipeline);
+}
+
+// Any thread (RD synchronizes pipeline creation internally).
+RID SceneShaderRaytracing::_create_initial_pipeline(uint32_t p_rt_flags, RID p_base_shader) {
+	RD::PipelineShader base_ps = { p_base_shader, Vector<RD::PipelineSpecializationConstant>() };
 
 	Vector<RD::PipelineSpecializationConstant> spec_constants;
 	{
@@ -867,7 +1155,7 @@ bool SceneShaderRaytracing::_build_initial_bundle(uint32_t p_rt_flags, PipelineB
 		spec_constants.push_back(sc);
 	}
 
-	RD::PipelineShader base_ps = { r_bundle.base_shader, spec_constants };
+	base_ps.specialization_constants = spec_constants;
 	RD::HitGroup hg0_default;
 	hg0_default.closest_hit_shader = base_ps;
 	hg0_default.any_hit_shader = base_ps;
@@ -884,8 +1172,14 @@ bool SceneShaderRaytracing::_build_initial_bundle(uint32_t p_rt_flags, PipelineB
 			RT_MAX_RECURSION_DEPTH);
 	if (new_pipeline.is_null()) {
 		WARN_PRINT(vformat("RT: initial raytracing_pipeline_create failed for variant 0x%x.", p_rt_flags));
-		return false;
+		return RID();
 	}
+	return new_pipeline;
+}
+
+// Render thread: the hit SBT for a pipeline from _create_initial_pipeline().
+bool SceneShaderRaytracing::_finish_initial_bundle(uint32_t p_rt_flags, PipelineBundle &r_bundle, RID p_pipeline) {
+	RID new_pipeline = p_pipeline;
 	RD::get_singleton()->set_resource_name(new_pipeline, String("RT Pipeline initial [flags=") + itos(p_rt_flags) + "]");
 
 	static constexpr uint32_t HIT_SBT_CAPACITY = 4096;
@@ -925,7 +1219,7 @@ SceneShaderRaytracing::PipelineBuildTask *SceneShaderRaytracing::_make_pipeline_
 	if (!_ensure_variant_compile_context(p_rt_flags)) {
 		return nullptr;
 	}
-	HashMap<uint32_t, VariantCompileContext>::ConstIterator cit = variant_compile_contexts.find(p_rt_flags);
+	HashMap<uint32_t, VariantCompileContext>::ConstIterator cit = variant_compile_contexts.find(_compile_context_key(p_rt_flags));
 	if (cit == variant_compile_contexts.end()) {
 		return nullptr;
 	}
@@ -1114,11 +1408,7 @@ void SceneShaderRaytracing::_build_pipeline_worker(PipelineBuildTask *p_task) {
 		Vector<RD::ShaderStageSPIRVData> custom_stages = p_task->base_non_hit_stages;
 
 		Vector<uint8_t> ch_spirv;
-		{
-			MutexLock lock(spirv_compile_mutex);
-			ch_spirv = RD::get_singleton()->shader_compile_spirv_from_source(
-					RD::SHADER_STAGE_CLOSEST_HIT, si.ch_src, RD::SHADER_LANGUAGE_GLSL, &error);
-		}
+		ch_spirv = _compile_spirv_cached(RD::SHADER_STAGE_CLOSEST_HIT, si.ch_src, &error);
 		if (ch_spirv.is_empty()) {
 			_dump_failed_shader(si.ch_src, vformat("hg%d_v%x_closest_hit", i, p_task->rt_flags));
 			p_task->new_per_hg_shaders[i] = RID();
@@ -1134,11 +1424,7 @@ void SceneShaderRaytracing::_build_pipeline_worker(PipelineBuildTask *p_task) {
 
 		if (si.uses_alpha_clip) {
 			Vector<uint8_t> ah_spirv;
-			{
-				MutexLock lock(spirv_compile_mutex);
-				ah_spirv = RD::get_singleton()->shader_compile_spirv_from_source(
-						RD::SHADER_STAGE_ANY_HIT, si.ah_src, RD::SHADER_LANGUAGE_GLSL, &error);
-			}
+			ah_spirv = _compile_spirv_cached(RD::SHADER_STAGE_ANY_HIT, si.ah_src, &error);
 			if (ah_spirv.is_empty()) {
 				_dump_failed_shader(si.ah_src, vformat("hg%d_v%x_any_hit", i, p_task->rt_flags));
 				p_task->new_per_hg_shaders[i] = RID();
@@ -1155,11 +1441,7 @@ void SceneShaderRaytracing::_build_pipeline_worker(PipelineBuildTask *p_task) {
 
 		if (si.is_procedural && !si.is_src.is_empty()) {
 			Vector<uint8_t> is_spirv;
-			{
-				MutexLock lock(spirv_compile_mutex);
-				is_spirv = RD::get_singleton()->shader_compile_spirv_from_source(
-						RD::SHADER_STAGE_INTERSECTION, si.is_src, RD::SHADER_LANGUAGE_GLSL, &error);
-			}
+			is_spirv = _compile_spirv_cached(RD::SHADER_STAGE_INTERSECTION, si.is_src, &error);
 			if (is_spirv.is_empty()) {
 				_dump_failed_shader(si.is_src, vformat("hg%d_v%x_intersection", i, p_task->rt_flags));
 				p_task->new_per_hg_shaders[i] = RID();
@@ -1468,9 +1750,24 @@ void SceneShaderRaytracing::init(const String p_defines) {
 	// Now create a version to access the embedded raytracing shader
 	raygen_shader_version = raygen_shader.version_create();
 	if (raygen_shader_version.is_valid()) {
-		const PipelineBundle &b = ensure_pipeline_bundle(RT_FLAG_NONE);
-		if (!b.pipeline.is_valid()) {
-			WARN_PRINT("Failed to create default raytracing pipeline bundle");
+		if (async_compilation_enabled) {
+			// Warm the GLSL of the variants a scene will most likely use (the project's
+			// SER and shadow settings, with and without Ray Reconstruction) on worker
+			// threads, so the first traced frame only has to create its pipeline.
+			uint32_t predicted = RT_FLAG_NONE;
+			if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering")) {
+				predicted |= RT_FLAG_SER_ENABLED;
+			}
+			if (GLOBAL_GET("rendering/pathtracing/use_simple_shadows")) {
+				predicted |= RT_FLAG_RAY_QUERY_SHADOWS_ENABLED;
+			}
+			_start_variant_task(predicted, true);
+			_start_variant_task(predicted | RT_FLAG_DLSS_RR_ENABLED, true);
+		} else {
+			const PipelineBundle &b = ensure_pipeline_bundle(RT_FLAG_NONE);
+			if (!b.pipeline.is_valid()) {
+				WARN_PRINT("Failed to create default raytracing pipeline bundle");
+			}
 		}
 	} else {
 		WARN_PRINT("Failed to create raytracing shader version");

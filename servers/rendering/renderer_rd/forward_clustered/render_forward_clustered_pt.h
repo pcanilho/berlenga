@@ -49,6 +49,12 @@ class RenderForwardClusteredPT : public RenderForwardClustered {
 	bool _setup_rt();
 	void _age_out_motion_vectors(const RenderDataRD *p_render_data);
 
+	// The flags of the last frame that traced, so a variant change (samples,
+	// bounces) keeps tracing with them while the new variant builds on a worker.
+	uint32_t last_traced_rt_flags = UINT32_MAX;
+	// The last path-traced viewport traced with its own variant and nothing is compiling.
+	SafeFlag pathtracing_ready;
+
 	/* Transparency over the denoised frame */
 
 	// Ray Reconstruction takes the raster-lit transparent surfaces drawn into
@@ -80,6 +86,8 @@ protected:
 	virtual void _free_rt_viewport_state(RenderSceneBuffersRD *p_render_buffers) override;
 
 public:
+	virtual bool is_pathtracing_ready() override { return pathtracing_ready.is_set(); }
+
 	RenderForwardClusteredPT();
 	~RenderForwardClusteredPT();
 };

@@ -1205,6 +1205,8 @@ public:
 #define ServerName RendererUtilities
 #define server_name RSG::utilities
 	FUNC0RC(String, get_video_adapter_name)
+	// Read directly: the renderer publishes it through an atomic flag.
+	virtual bool is_pathtracing_ready() const override { return RSG::scene->is_pathtracing_ready(); }
 	FUNC0RC(String, get_video_adapter_vendor)
 	FUNC0RC(String, get_video_adapter_api_version)
 #undef server_name

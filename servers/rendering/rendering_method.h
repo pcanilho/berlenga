@@ -128,6 +128,7 @@ public:
 
 	virtual void mesh_generate_pipelines(RID p_mesh, bool p_background_compilation) = 0;
 	virtual uint32_t get_pipeline_compilations(RSE::PipelineSource p_source) = 0;
+	virtual bool is_pathtracing_ready() { return false; }
 
 	/* SKY API */
 

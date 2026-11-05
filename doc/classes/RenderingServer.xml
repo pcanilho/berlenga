@@ -2139,6 +2139,13 @@
 				[b]Warning:[/b] This function is primarily intended for editor usage. For in-game use cases, prefer physics collision.
 			</description>
 		</method>
+		<method name="is_pathtracing_ready" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] when the last path-traced view was traced with its own pipeline and no path-tracing pipeline or custom-material hit group is still compiling. Returns [code]false[/code] while path tracing waits for a pipeline variant built on a worker thread (the view is then drawn without path tracing, or with the previous variant), and on renderers without a path tracer.
+				The value describes the last rendered frame, so after enabling path tracing or changing its samples, bounces or denoiser, wait for at least one frame to be drawn before polling it. A loading screen can stay up until it returns [code]true[/code].
+			</description>
+		</method>
 		<method name="is_on_render_thread">
 			<return type="bool" />
 			<description>
