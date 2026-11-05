@@ -6,6 +6,8 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## Unreleased
 
+## build-2d41bc16 (2026-11-05)
+
 ### Added
 - CHANGELOG.md: release notes come from its Unreleased entries, and pull requests are checked for one (#73).
 
