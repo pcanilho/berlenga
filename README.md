@@ -34,6 +34,12 @@ Engine and stability
 - Fixes for BLAS double frees, the reflection atlas leak, shutdown crashes in the worker thread pool, render thread and editor docs, texture updates from threads, and ray tracing lists racing compute.
 - VK_EXT_device_fault reports kept on device loss.
 
+## References
+
+- Many lights: Talbot, Cline, Egbert, "Importance Resampling for Global Illumination", EGSR 2005. Boksansky, Jukarainen, Wyman, "Rendering Many Lights with Grid-Based Reservoirs" (ReGIR), Ray Tracing Gems II, 2021. Bitterli et al., "Spatiotemporal Reservoir Resampling for Real-Time Ray Tracing with Dynamic Direct Lighting" (ReSTIR DI), SIGGRAPH 2020. Olsson, Billeter, Assarsson, "Clustered Deferred and Forward Shading", HPG 2012.
+- Traced fog: Kulla, Fajardo, "Importance Sampling Techniques for Path Tracing in Participating Media", EGSR 2012. Sun, Ramamoorthi, Narasimhan, Nayar, "A Practical Analytic Single Scattering Model for Real Time Rendering", SIGGRAPH 2005. Lin, Wyman, Yuksel, "Fast Volume Rendering with Spatiotemporal Reservoir Resampling", SIGGRAPH Asia 2021.
+- Texture filtering: Akenine-Möller et al., "Texture Level of Detail Strategies for Real-Time Ray Tracing", Ray Tracing Gems, 2019, ch. 20. Akenine-Möller et al., "Improved Shader and Texture Level of Detail Using Ray Cones", JCGT 10(1), 2021.
+
 Issues: [pcanilho/godot/issues](https://github.com/pcanilho/godot/issues).
 
 ## Everything else
