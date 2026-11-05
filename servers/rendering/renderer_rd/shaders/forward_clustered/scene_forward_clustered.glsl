@@ -2695,7 +2695,16 @@ void fragment_shader(in SceneData scene_data) {
 	}
 
 #ifndef USE_VERTEX_LIGHTING
-	if (pt_lit && dot(pt_light_color, vec3(1.0)) > 0.0) {
+	if (pt_lit && dot(pt_light_color, vec3(1.0)) > 0.0 && bool(instances.data[instance_index].flags & INSTANCE_FLAGS_PARTICLES)) {
+		// A particle is a cloud of drops or grains, not a surface: its light scatters by a
+		// phase function, mostly forward, so rain glints when a lamp or headlight is behind it
+		// and dims side-on (a water drop's lobe, after Garg and Nayar 2006; Henyey-Greenstein
+		// with an isotropic share for the light refracted wide).
+		float g = implementation_data.pt_particle_anisotropy;
+		float c = dot(-pt_light_dir, normalize(view));
+		float hg = (1.0 - g * g) / (4.0 * M_PI * pow(max(1.0 + g * g - 2.0 * g * c, 1e-4), 1.5));
+		diffuse_light += pt_light_color * (0.7 * hg + 0.3 / (4.0 * M_PI));
+	} else if (pt_lit && dot(pt_light_color, vec3(1.0)) > 0.0) {
 		light_compute(normal, pt_light_dir, normalize(view), 0.0, pt_light_color,
 				true, 1.0, f0, roughness, metallic, 1.0, albedo, alpha, screen_uv, energy_compensation,
 #ifdef LIGHT_BACKLIGHT_USED
