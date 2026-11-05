@@ -3834,6 +3834,10 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/shadow_caster_layers", PROPERTY_HINT_LAYERS_3D_RENDER), 0);
 	GLOBAL_DEF("rendering/pathtracing/transparency_at_output_size", true);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/volumetric_fog_samples", PROPERTY_HINT_RANGE, "0,8,1"), 2);
+	GLOBAL_DEF("rendering/pathtracing/transparent_lighting/enabled", true);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/near", PROPERTY_HINT_RANGE, "0.05,100,0.01,or_greater,suffix:m"), 0.5);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/far", PROPERTY_HINT_RANGE, "1,1000,0.1,or_greater,suffix:m"), 150.0);
+	GLOBAL_DEF("rendering/pathtracing/transparent_lighting/bounce", true);
 	GLOBAL_DEF("rendering/pathtracing/async_shader_compilation", true);
 	GLOBAL_DEF_RST("rendering/pathtracing/multimesh_cache_cpu_transforms", false);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/deformed_mesh_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,3600,1"), 60);

@@ -754,6 +754,11 @@ uint32_t RenderForwardClustered::_setup_environment(const RenderDataRD *p_render
 	scene_state.ubo.gi_upscale_for_msaa = false;
 	scene_state.ubo.volumetric_fog_enabled = false;
 
+	scene_state.ubo.pt_light_cache_enabled = pt_light_cache.enabled;
+	scene_state.ubo.pt_light_cache_near = pt_light_cache.z_near;
+	scene_state.ubo.pt_light_cache_inv_log = 1.0f / Math::log(MAX(pt_light_cache.z_far / pt_light_cache.z_near, 1.0001f));
+	scene_state.ubo.pt_light_cache_pad = 0;
+
 	if (rd.is_valid()) {
 		if (rd->get_msaa_3d() != RSE::VIEWPORT_MSAA_DISABLED) {
 			scene_state.ubo.gi_upscale_for_msaa = true;
@@ -3944,6 +3949,15 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		RID ssr_mip_level = (rb_data.is_valid() && !rb_data->ss_effects_data.ssr.half_size && rb->has_texture(RB_SCOPE_SSR, RB_MIP_LEVEL)) ? rb->get_texture(RB_SCOPE_SSR, RB_MIP_LEVEL) : RID();
 		RID texture = ssr_mip_level.is_valid() ? ssr_mip_level : texture_storage->texture_rd_get_default(is_multiview ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
 		u.append_id(texture);
+		uniforms.push_back(u);
+	}
+	for (int i = 0; i < 2; i++) {
+		// The path tracer's light cache for transparents (#72).
+		RD::Uniform u;
+		u.binding = 37 + i;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		RID tex = pt_light_cache.enabled ? (i == 0 ? pt_light_cache.irradiance : pt_light_cache.direction) : RID();
+		u.append_id(tex.is_valid() ? tex : texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK));
 		uniforms.push_back(u);
 	}
 

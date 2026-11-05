@@ -400,6 +400,15 @@ struct RTViewportState {
 	RID scene_uniform_set;
 
 	uint32_t frame_counter = 0;
+
+	// The transparent pass's traced light cache (#72): two image pairs, written in turn.
+	RID light_cache[4];
+	Vector3i light_cache_size;
+	uint32_t light_cache_write = 0;
+	bool light_cache_history = false;
+	bool light_cache_active = false;
+	float light_cache_near = 0.5;
+	float light_cache_far = 150.0;
 };
 
 class RenderRaytracing {
@@ -585,6 +594,8 @@ public:
 	RID rt_get_depth_texture(RenderSceneBuffersRD *p_render_buffers) const;
 	// The fog's in-scatter (rgb) and transmittance to the primary hit (a), at the internal size.
 	RID rt_get_fog_texture(RenderSceneBuffersRD *p_render_buffers) const;
+	// The light cache this frame's trace wrote, for the transparent pass: false when off.
+	bool rt_get_light_cache(RenderSceneBuffersRD *p_render_buffers, RID &r_irradiance, RID &r_direction, float &r_near, float &r_far) const;
 	// Whether this frame traces the volumetric fog: the environment's, under Ray Reconstruction.
 	bool rt_fog_active(const RenderDataRD *p_render_data) const;
 

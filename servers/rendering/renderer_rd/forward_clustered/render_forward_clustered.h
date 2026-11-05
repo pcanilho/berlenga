@@ -334,6 +334,11 @@ protected:
 			float volumetric_fog_inv_length;
 			float volumetric_fog_detail_spread;
 			uint32_t volumetric_fog_pad;
+
+			uint32_t pt_light_cache_enabled;
+			float pt_light_cache_near;
+			float pt_light_cache_inv_log;
+			uint32_t pt_light_cache_pad;
 		};
 
 		struct PushConstantUbershader {
@@ -471,6 +476,16 @@ protected:
 	} scene_state;
 
 	static RenderForwardClustered *singleton;
+
+	// Set by the path-traced render around its transparent passes (#72): they read the
+	// trace's light cache in place of the raster lights and ambient.
+	struct PTLightCache {
+		bool enabled = false;
+		float z_near = 0.5;
+		float z_far = 150.0;
+		RID irradiance;
+		RID direction;
+	} pt_light_cache;
 
 	uint32_t _setup_environment(const RenderDataRD *p_render_data, bool p_no_fog, const Size2i &p_screen_size, const Size2 &p_viewport_size, const Color &p_default_bg_color, bool p_opaque_render_buffers = false, bool p_apply_alpha_multiplier = false, bool p_pancake_shadows = false, float p_frag_coord_scale = 1.0f);
 	void _setup_voxelgis(const PagedArray<RID> &p_voxelgis);
