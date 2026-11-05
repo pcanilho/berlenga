@@ -16,9 +16,11 @@ on:
 
 permissions: {}
 
+# A full scan takes about two hours, longer than the gap between pushes to main, so a running
+# scan is never cancelled. A new push waits behind it; only the newest waiting run is kept.
 concurrency:
   group: codeql
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   analyze:
