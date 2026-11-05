@@ -1,76 +1,45 @@
-# Godot Engine
+# Godot, path tracing fork
 
-<p align="center">
-  <a href="https://godotengine.org">
-    <img src="misc/logo/logo_outlined.svg" width="400" alt="Godot Engine logo">
-  </a>
-</p>
+A Godot 4 fork for real-time path tracing on Vulkan with DLSS Ray Reconstruction. Built on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot).
 
-## 2D and 3D cross-platform game engine
+Windows editor builds: [latest release](https://github.com/pcanilho/godot/releases/latest). The zip holds the exes only. The DLSS, Streamline and Reflex DLLs come from NVIDIA (see the release notes) and go next to the exe.
 
-**[Godot Engine](https://godotengine.org) is a feature-packed, cross-platform
-game engine to create 2D and 3D games from a unified interface.** It provides a
-comprehensive set of [common tools](https://godotengine.org/features), so that
-users can focus on making games without having to reinvent the wheel. Games can
-be exported with one click to a number of platforms, including the major desktop
-platforms (Linux, macOS, Windows), mobile platforms (Android, iOS), as well as
-Web-based platforms and [consoles](https://godotengine.org/consoles).
+## What this fork adds
 
-## Free, open source and community-driven
+Path tracer
+- Up to 4096 lights, sampled through a world grid of light lists with resampled importance sampling (upstream picks 64 per frame).
+- Traced volumetric fog lit by the sun, omni and spot lights, through FogVolumes, with or without Ray Reconstruction.
+- Texture detail matches raster: ray-cone mip selection, raster's mipmap bias, anisotropic filtering where the material asks for it.
+- New pipeline variants build on a worker thread with a SPIR-V disk cache, so changing settings does not stall the render thread. `RenderingServer.is_pathtracing_ready()` reports when the current variant is in use.
+- Material coverage closer to raster: emission without an emission texture, uv1 triplanar, custom shaders that write ALPHA, UV2 and `IN_SHADOW_PASS` in custom shaders, back-face normals in custom vertex code, non-2D textures.
+- Shadow-only casters take part in bounces and shadow rays, opted-in casters with alpha as transmittance. Cast Shadow Off is respected.
+- Orthographic cameras get parallel primary rays.
 
-Godot is completely free and open source under the very permissive [MIT license](https://godotengine.org/license).
-No strings attached, no royalties, nothing. The users' games are theirs, down
-to the last line of engine code. Godot's development is fully independent and
-community-driven, empowering users to help shape their engine to match their
-expectations. It is supported by the [Godot Foundation](https://godot.foundation/)
-not-for-profit.
+DLSS Ray Reconstruction and frame generation
+- Transparents drawn in their own layer over the RR output, at output size and unjittered, so thin transparents and particles stay continuous. Additive, subtractive and `blend_mul` surfaces handled.
+- Compositor effects can draw into that layer.
+- Emission feeds the diffuse albedo guide, so emissive detail keeps its edges.
+- Correct motion vectors for moving and merged MultiMesh instances.
+- Traces without RR guides when the viewport does not scale with DLSS, instead of failing.
+- Frame generation presents its generated frames, and its state is exposed to scripts.
+- Render size respected when a DLSS mode is forced, and super resolution state follows a resize.
 
-Before being open sourced in [February 2014](https://github.com/godotengine/godot/commit/0b806ee0fc9097fa7bda7ac0109191c9c5e0a1ac),
-Godot had been developed by [Juan Linietsky](https://github.com/reduz) and
-[Ariel Manzur](https://github.com/punto-) for several years as an in-house
-engine, used to publish several work-for-hire titles.
+Shadows and reflections
+- Positional lights keep their still casters' shadow and redraw only what moves.
+- Far lamps redraw moving casters every 2nd to 4th frame. Far directional cascades can update every other frame while light and camera hold still.
+- Optional time-sliced updates for UPDATE_ALWAYS reflection probes.
 
-![Screenshot of a 3D scene in the Godot Engine editor](https://raw.githubusercontent.com/godotengine/godot-design/master/screenshots/editor_tps_demo_1920x1080.jpg)
+Engine and stability
+- `RenderingDevice.get_video_memory_budget()` and `get_video_memory_usage()` (VK_EXT_memory_budget).
+- Fixes for BLAS double frees, the reflection atlas leak, shutdown crashes in the worker thread pool, render thread and editor docs, texture updates from threads, and ray tracing lists racing compute.
+- VK_EXT_device_fault reports kept on device loss.
 
-## Getting the engine
+Issues: [pcanilho/godot/issues](https://github.com/pcanilho/godot/issues).
 
-### Binary downloads
+## Everything else
 
-Official binaries for the Godot editor and the export templates can be found
-[on the Godot website](https://godotengine.org/download).
+For the engine itself, documentation, build instructions and community, see [godotengine/godot](https://github.com/godotengine/godot) and [docs.godotengine.org](https://docs.godotengine.org). Build this fork the same way. The Windows release is built with:
 
-### Compiling from source
+    scons platform=windows target=editor optimize=speed
 
-[See the official docs](https://docs.godotengine.org/en/latest/engine_details/development/compiling)
-for compilation instructions for every supported platform.
-
-## Community and contributing
-
-Godot is not only an engine but an ever-growing community of users and engine
-developers. The main community channels are listed [on the homepage](https://godotengine.org/community).
-
-The best way to get in touch with the core engine developers is to join the
-[Godot Contributors Chat](https://chat.godotengine.org).
-
-To get started contributing to the project, see the [contributing guide](CONTRIBUTING.md).
-This document also includes guidelines for reporting bugs.
-
-## Documentation and demos
-
-The official documentation is hosted on [Read the Docs](https://docs.godotengine.org).
-It is maintained by the Godot community in its own [GitHub repository](https://github.com/godotengine/godot-docs).
-
-The [class reference](https://docs.godotengine.org/en/latest/classes/)
-is also accessible from the Godot editor.
-
-We also maintain official demos in their own [GitHub repository](https://github.com/godotengine/godot-demo-projects)
-as well as a list of [awesome Godot community resources](https://github.com/godotengine/awesome-godot).
-
-There are also a number of other
-[learning resources](https://docs.godotengine.org/en/latest/community/tutorials.html)
-provided by the community, such as text and video tutorials, demos, etc.
-Consult the [community channels](https://godotengine.org/community)
-for more information.
-
-[![Code Triagers Badge](https://www.codetriage.com/godotengine/godot/badges/users.svg)](https://www.codetriage.com/godotengine/godot)
-[![Translate on Weblate](https://hosted.weblate.org/widgets/godot-engine/-/godot/svg-badge.svg)](https://hosted.weblate.org/engage/godot-engine/?utm_source=widget)
+Licensed under MIT like Godot. Third-party components keep their own licenses (see `thirdparty/` and `COPYRIGHT.txt`). NVIDIA's DLSS, Streamline and Reflex binaries are not part of this repository's releases and stay under NVIDIA's terms.
