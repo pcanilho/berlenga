@@ -246,6 +246,24 @@ light correctly and the camera can go under water without fog workarounds.
 
 Random-walk subsurface (D120): skin, foliage and wax at close range.
 
+## 10. General engine fixes (small, independent of the path tracer's design)
+
+- Index variants on mesh surfaces, drawn per instance (196834c, ff0ce16,
+  5aa0bad): one mesh, triangles hidden per instance, in raster and trace.
+  Damage, destruction, cut-aways.
+- Pipeline precompile makes each vertex and framebuffer format once
+  (1a8c611); the Vulkan pipeline cache capped and safe past 2 GiB.
+- Skeleton loops over the active blend shapes only; an unchanged blend
+  shape weight does not re-deform its instance; a mesh swapped for one of
+  the same layout keeps its surface caches (4fcb408, 9bc0a2a).
+- MultiMesh: set_buffer on a mirrored MultiMesh uploads once.
+- SurfaceTool hashes Vertex field by field, not over padded bytes.
+- Jolt: cast_motion streams broadphase candidates through its filters; a
+  zero-length motion has a defined step count.
+- RenderingDeviceGraph barrier fixes for acceleration-structure reads
+  (MEMORY_READ, TLAS lists reading their BLASes, in-place writes waiting
+  for device-address reads).
+
 ## Order when work resumes
 
 1. Light tree (finish the draft with D56 cut and D63 falloff), then emissive
