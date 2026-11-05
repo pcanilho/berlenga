@@ -1,6 +1,6 @@
-name: Release (Windows editor)
+name: Release (editor builds)
 
-# Builds the Windows editor from main and publishes it as the latest release.
+# Builds the Windows and macOS editors from main and publishes them as the latest release.
 # Runs on demand, and every Monday when main has moved since the last release.
 on:
   workflow_dispatch:
@@ -24,14 +24,15 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SCONS_FLAGS: platform=windows target=editor optimize=speed lto=none debug_symbols=no accesskit=no d3d12=no
-  SCONS_CACHE: ${{ github.workspace }}/.scons_cache/
   PYTHONIOENCODING: utf8
 
 jobs:
-  release:
-    runs-on: windows-latest
-    timeout-minutes: 340
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+      short: ${{ steps.check.outputs.short }}
+      publish: ${{ steps.check.outputs.publish }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -41,7 +42,6 @@ jobs:
 
       - name: Decide whether to publish
         id: check
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -61,64 +61,156 @@ jobs:
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
+  windows:
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 340
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/.scons_cache/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+
       - name: Restore build cache
-        if: steps.check.outputs.publish == 'true'
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.SCONS_CACHE }}
-          key: release-windows-editor|${{ steps.check.outputs.sha }}
+          key: release-windows-editor|${{ needs.check.outputs.sha }}
           restore-keys: release-windows-editor|
 
       - name: Setup Python and SCons
-        if: steps.check.outputs.publish == 'true'
         uses: ./.github/actions/godot-deps
 
       - name: Build
-        if: steps.check.outputs.publish == 'true'
         shell: bash
-        run: scons ${{ env.SCONS_FLAGS }} cache_path="$SCONS_CACHE" cache_limit=7
+        run: scons platform=windows target=editor optimize=speed lto=none debug_symbols=no accesskit=no d3d12=no cache_path="$SCONS_CACHE" cache_limit=7
 
       - name: Save build cache
-        if: always() && steps.check.outputs.publish == 'true'
+        if: always()
         uses: actions/cache/save@v5
         with:
           path: ${{ env.SCONS_CACHE }}
-          key: release-windows-editor|${{ steps.check.outputs.sha }}
+          key: release-windows-editor|${{ needs.check.outputs.sha }}
         continue-on-error: true
 
       - name: Package
-        if: steps.check.outputs.publish == 'true'
         shell: pwsh
         run: |
-          $short = "${{ steps.check.outputs.short }}"
+          $short = "${{ needs.check.outputs.short }}"
           New-Item -ItemType Directory -Force pkg | Out-Null
           Copy-Item bin/godot.windows.editor.x86_64.exe, bin/godot.windows.editor.x86_64.console.exe, LICENSE.txt, COPYRIGHT.txt pkg/
           Compress-Archive -Path pkg/* -DestinationPath "godot-fork-windows-$short.zip"
           $editor = (Get-FileHash bin/godot.windows.editor.x86_64.exe -Algorithm SHA256).Hash
           $console = (Get-FileHash bin/godot.windows.editor.x86_64.console.exe -Algorithm SHA256).Hash
-          @"
-          Windows editor build (x86_64, Vulkan, path tracing with Streamline) from ``main`` at $short.
+          "- godot.windows.editor.x86_64.exe: $editor`n- godot.windows.editor.x86_64.console.exe: $console" | Set-Content hashes-windows.md
 
-          The zip holds the editor and console executables and the license notices. The DLSS, Streamline and Reflex DLLs are not included: take them from NVIDIA's Streamline and DLSS SDKs (or the NVIDIA-RTX/godot releases) and place them next to the exe. They stay under NVIDIA's terms.
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            godot-fork-windows-*.zip
+            hashes-windows.md
 
-          SHA-256:
+  macos:
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    runs-on: macos-26
+    timeout-minutes: 340
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/.scons_cache/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.check.outputs.sha }}
 
-          - godot.windows.editor.x86_64.exe: $editor
-          - godot.windows.editor.x86_64.console.exe: $console
-          "@ | Set-Content notes.md
+      - name: Restore build cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: release-macos-editor|${{ needs.check.outputs.sha }}
+          restore-keys: release-macos-editor|
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Setup Vulkan SDK
+        run: sh misc/scripts/install_vulkan_sdk_macos.sh
+
+      - name: Build (x86_64)
+        run: scons platform=macos arch=x86_64 target=editor optimize=speed lto=none debug_symbols=no accesskit=no cache_path="$SCONS_CACHE" cache_limit=7
+
+      - name: Build (arm64)
+        run: scons platform=macos arch=arm64 target=editor optimize=speed lto=none debug_symbols=no accesskit=no cache_path="$SCONS_CACHE" cache_limit=7
+
+      - name: Save build cache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: release-macos-editor|${{ needs.check.outputs.sha }}
+        continue-on-error: true
+
+      - name: Package
+        run: |
+          short=${{ needs.check.outputs.short }}
+          lipo -create bin/godot.macos.editor.x86_64 bin/godot.macos.editor.arm64 -output bin/godot.macos.editor.universal
+          cp -R misc/dist/macos_tools.app Godot.app
+          mkdir -p Godot.app/Contents/MacOS
+          cp bin/godot.macos.editor.universal Godot.app/Contents/MacOS/Godot
+          chmod +x Godot.app/Contents/MacOS/Godot
+          codesign --force --deep --sign - Godot.app
+          mkdir pkg
+          mv Godot.app pkg/
+          cp LICENSE.txt COPYRIGHT.txt pkg/
+          ditto -c -k pkg "godot-fork-macos-universal-$short.zip"
+          echo "- Godot.app/Contents/MacOS/Godot (universal): $(shasum -a 256 bin/godot.macos.editor.universal | cut -d' ' -f1)" > hashes-macos.md
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            godot-fork-macos-universal-*.zip
+            hashes-macos.md
+
+  publish:
+    needs: [check, windows, macos]
+    # Windows is required; a failed macOS build leaves only the Mac zip out.
+    if: always() && needs.check.outputs.publish == 'true' && needs.windows.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
       - name: Publish
-        if: steps.check.outputs.publish == 'true'
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          short=${{ steps.check.outputs.short }}
-          tag=build-$short
-          gh release create "$tag" "godot-fork-windows-$short.zip" \
+          short=${{ needs.check.outputs.short }}
+          {
+            echo "Editor builds from \`main\` at $short."
+            echo
+            echo "- Windows (x86_64): Vulkan, path tracing with Streamline. The DLSS, Streamline and Reflex DLLs are not included: take them from NVIDIA's Streamline and DLSS SDKs (or the NVIDIA-RTX/godot releases) and place them next to the exe. They stay under NVIDIA's terms."
+            if ls dist/godot-fork-macos-universal-*.zip >/dev/null 2>&1; then
+              echo "- macOS (universal, Apple Silicon and Intel): raster only, as the path tracer and DLSS need Vulkan ray tracing on NVIDIA hardware. Ad-hoc signed and not notarized: on first launch, right-click Godot.app and choose Open, or run \`xattr -cr Godot.app\`."
+            fi
+            echo
+            echo "SHA-256:"
+            echo
+            cat dist/hashes-*.md
+          } > notes.md
+          gh release create "build-$short" dist/*.zip \
             --repo "$GITHUB_REPOSITORY" \
-            --target "${{ steps.check.outputs.sha }}" \
-            --title "build $short (Windows editor)" \
+            --target "${{ needs.check.outputs.sha }}" \
+            --title "build $short (editor)" \
             --notes-file notes.md \
             --generate-notes \
             --latest
