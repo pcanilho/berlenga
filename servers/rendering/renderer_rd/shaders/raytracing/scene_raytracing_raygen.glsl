@@ -21,7 +21,7 @@
 #define RT_STAGE_RAYGEN 1
 #include "raytracing_common_inc.glsl"
 
-layout(set = 0, binding = 0, rgba32f) uniform image2D image;
+layout(set = 0, binding = 0, rgba16f) uniform image2D image; // RB_TEX_RAYTRACING is R16G16B16A16_SFLOAT.
 layout(set = 0, binding = 1) uniform accelerationStructureEXT tlas;
 
 layout(location = 0) rayPayloadEXT PathPayload payload;
