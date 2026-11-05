@@ -6,6 +6,8 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## Unreleased
 
+## build-ad774282 (2026-11-05)
+
 ### Added
 - Path tracer: particles show in reflections and refractions (rain in puddles and glass), lit from the light cache; `rendering/pathtracing/transparent_lighting/particles_in_reflections` and `particle_reflection_distance` (#79).
 
