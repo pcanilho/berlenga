@@ -1003,7 +1003,7 @@ public:
 	// Why the last drawn frame may differ from a fully converged one; empty when output is final.
 	virtual BitField<RSE::RenderingNotReadyReason> get_rendering_not_ready_reasons() = 0;
 	// Kept for projects written against the fork before the NVIDIA base had get_rendering_not_ready_reasons().
-	bool is_pathtracing_ready() { return get_rendering_not_ready_reasons().get_value() == 0; }
+	bool is_pathtracing_ready() { return get_rendering_not_ready_reasons().is_empty(); }
 
 	virtual String get_video_adapter_name() const = 0;
 	virtual String get_video_adapter_vendor() const = 0;
