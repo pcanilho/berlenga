@@ -20,6 +20,8 @@ UNRELEASED = "## Unreleased"
 def split(text):
     """(head, unreleased body lines, rest) of a changelog."""
     lines = text.split("\n")
+    if UNRELEASED not in lines:
+        return lines, [], []
     start = lines.index(UNRELEASED)
     end = len(lines)
     for i in range(start + 1, len(lines)):
