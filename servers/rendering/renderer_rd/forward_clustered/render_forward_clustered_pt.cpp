@@ -531,6 +531,13 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT, p_render_data);
 	}
 
+	// The transparents read their light from the trace's light cache (#72): the lights
+	// through shadow rays, the sky and a bounce, in place of the raster lights and ambient.
+	pt_light_cache = PTLightCache();
+	if (raytracing && rb.is_valid()) {
+		pt_light_cache.enabled = raytracing->rt_get_light_cache(rb.ptr(), pt_light_cache.irradiance, pt_light_cache.direction, pt_light_cache.z_near, pt_light_cache.z_far);
+	}
+
 	{
 		RENDER_TIMESTAMP("Render 3D Transparent Pass");
 
@@ -644,6 +651,8 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 			RD::get_singleton()->draw_command_end_label();
 		}
 	}
+
+	pt_light_cache = PTLightCache();
 
 	_debug_draw_cluster(rb);
 

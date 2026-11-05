@@ -16,6 +16,7 @@ Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built
 ### Lighting
 - Up to 4096 lights per scene (upstream: 64 per frame), via a light grid and resampled importance sampling.
 - Traced volumetric fog lit by sun, omni and spot lights, through FogVolumes.
+- Particles and transparents lit by the path tracer: a traced froxel light cache with shadowed lights, sky and bounce.
 
 ### Materials and textures
 - Texture sharpness matches raster: ray-cone mip selection, mipmap bias, anisotropic filtering.
@@ -49,6 +50,7 @@ Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built
 |---|---|
 | Many lights | Talbot et al., *Importance Resampling for Global Illumination*, EGSR 2005<br>Boksansky et al., *Rendering Many Lights with Grid-Based Reservoirs* (ReGIR), Ray Tracing Gems II, 2021<br>Bitterli et al., *Spatiotemporal Reservoir Resampling* (ReSTIR DI), SIGGRAPH 2020<br>Olsson et al., *Clustered Deferred and Forward Shading*, HPG 2012 |
 | Traced fog | Kulla, Fajardo, *Importance Sampling Techniques for Path Tracing in Participating Media*, EGSR 2012<br>Sun et al., *A Practical Analytic Single Scattering Model for Real Time Rendering*, SIGGRAPH 2005<br>Lin, Wyman, Yuksel, *Fast Volume Rendering with Spatiotemporal Reservoir Resampling*, SIGGRAPH Asia 2021 |
+| Lit transparents | Wronski, *Volumetric Fog: Unified Compute Shader Based Solution to Atmospheric Scattering*, SIGGRAPH 2014<br>Hillaire, *Physically Based and Unified Volumetric Rendering in Frostbite*, SIGGRAPH 2015<br>NVIDIA, RTX Remix volumetric radiance cache for particles |
 | Texture filtering | Akenine-Möller et al., *Texture Level of Detail Strategies for Real-Time Ray Tracing*, Ray Tracing Gems, 2019<br>Akenine-Möller et al., *Improved Shader and Texture Level of Detail Using Ray Cones*, JCGT 2021 |
 
 ## Everything else

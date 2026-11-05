@@ -116,7 +116,13 @@ public:
 	static constexpr int RT_PARAM_FOG_AMBIENT_R = 16;
 	static constexpr int RT_PARAM_FOG_AMBIENT_G = 17;
 	static constexpr int RT_PARAM_FOG_AMBIENT_B = 18;
-	static constexpr int RT_PARAM_COUNT = 20;
+	static constexpr int RT_PARAM_PLIGHT_ENABLED = 13;
+	static constexpr int RT_PARAM_PLIGHT_NEAR = 19;
+	static constexpr int RT_PARAM_PLIGHT_FAR = 20;
+	static constexpr int RT_PARAM_PLIGHT_STATE = 21;
+	static constexpr int RT_PARAM_PLIGHT_BOUNCE = 22;
+	static constexpr int RT_PARAM_PLIGHT_TILE = 23;
+	static constexpr int RT_PARAM_COUNT = 24;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

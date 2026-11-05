@@ -340,6 +340,13 @@ struct ImplementationData {
 	float volumetric_fog_inv_length;
 	float volumetric_fog_detail_spread;
 	uint volumetric_fog_pad;
+
+	// The path tracer's light cache for transparents (#72): on, the grid's near
+	// distance and 1 / log(far / near).
+	bool pt_light_cache_enabled;
+	float pt_light_cache_near;
+	float pt_light_cache_inv_log;
+	uint pt_light_cache_pad;
 };
 
 layout(set = 1, binding = 1, std140) uniform ImplementationDataBlock {
@@ -479,6 +486,11 @@ layout(set = 1, binding = 34) uniform texture2D ssil_buffer;
 layout(set = 1, binding = 35) uniform texture2D ssr_buffer;
 layout(set = 1, binding = 36) uniform texture2D ssr_mip_level_buffer;
 #endif // USE_MULTIVIEW
+
+// The path tracer's light cache for transparents (#72, scene_raytracing_raygen.glsl
+// plight_update): irradiance and its luminance-weighted direction, a froxel grid.
+layout(set = 1, binding = 37) uniform texture3D pt_light_cache_irradiance;
+layout(set = 1, binding = 38) uniform texture3D pt_light_cache_direction;
 
 #endif
 
