@@ -1,0 +1,124 @@
+name: Release (Windows editor)
+
+# Builds the Windows editor from main and publishes it as the latest release.
+# Runs on demand, and every Monday when main has moved since the last release.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to build
+        default: main
+        required: true
+      force:
+        description: Publish even if this commit already has a release
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  SCONS_FLAGS: platform=windows target=editor optimize=speed lto=none debug_symbols=no accesskit=no d3d12=no
+  SCONS_CACHE: ${{ github.workspace }}/.scons_cache/
+  PYTHONIOENCODING: utf8
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 340
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || 'main' }}
+          fetch-depth: 0
+
+      - name: Decide whether to publish
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          short=${sha:0:8}
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short=$short" >> "$GITHUB_OUTPUT"
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || true)
+          latest_sha=""
+          if [ -n "$latest" ]; then
+            latest_sha=$(git rev-list -n 1 "$latest" 2>/dev/null || true)
+          fi
+          if [ "$latest_sha" = "$sha" ] && [ "${{ inputs.force }}" != "true" ]; then
+            echo "Latest release $latest already points at $short."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore build cache
+        if: steps.check.outputs.publish == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: release-windows-editor|${{ steps.check.outputs.sha }}
+          restore-keys: release-windows-editor|
+
+      - name: Setup Python and SCons
+        if: steps.check.outputs.publish == 'true'
+        uses: ./.github/actions/godot-deps
+
+      - name: Build
+        if: steps.check.outputs.publish == 'true'
+        shell: bash
+        run: scons ${{ env.SCONS_FLAGS }} cache_path="$SCONS_CACHE" cache_limit=7
+
+      - name: Save build cache
+        if: always() && steps.check.outputs.publish == 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: release-windows-editor|${{ steps.check.outputs.sha }}
+        continue-on-error: true
+
+      - name: Package
+        if: steps.check.outputs.publish == 'true'
+        shell: pwsh
+        run: |
+          $short = "${{ steps.check.outputs.short }}"
+          New-Item -ItemType Directory -Force pkg | Out-Null
+          Copy-Item bin/godot.windows.editor.x86_64.exe, bin/godot.windows.editor.x86_64.console.exe, LICENSE.txt, COPYRIGHT.txt pkg/
+          Compress-Archive -Path pkg/* -DestinationPath "godot-fork-windows-$short.zip"
+          $editor = (Get-FileHash bin/godot.windows.editor.x86_64.exe -Algorithm SHA256).Hash
+          $console = (Get-FileHash bin/godot.windows.editor.x86_64.console.exe -Algorithm SHA256).Hash
+          @"
+          Windows editor build (x86_64, Vulkan, path tracing with Streamline) from ``main`` at $short.
+
+          The zip holds the editor and console executables and the license notices. The DLSS, Streamline and Reflex DLLs are not included: take them from NVIDIA's Streamline and DLSS SDKs (or the NVIDIA-RTX/godot releases) and place them next to the exe. They stay under NVIDIA's terms.
+
+          SHA-256:
+
+          - godot.windows.editor.x86_64.exe: $editor
+          - godot.windows.editor.x86_64.console.exe: $console
+          "@ | Set-Content notes.md
+
+      - name: Publish
+        if: steps.check.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short=${{ steps.check.outputs.short }}
+          tag=build-$short
+          gh release create "$tag" "godot-fork-windows-$short.zip" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "${{ steps.check.outputs.sha }}" \
+            --title "build $short (Windows editor)" \
+            --notes-file notes.md \
+            --generate-notes \
+            --latest
