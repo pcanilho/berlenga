@@ -571,10 +571,17 @@ private:
 		String ch_template; // Template GLSL with /* RT_CUSTOM_* */ markers.
 		String ah_template;
 		String is_template;
+		Vector<uint8_t> base_binary; // All base stages, shared by the bundles that differ only in specialization constants.
 	};
+	// Keyed by _compile_context_key(): what changes the GLSL, not the full rt_flags.
 	HashMap<uint32_t, VariantCompileContext> variant_compile_contexts;
 
 	bool _ensure_variant_compile_context(uint32_t p_rt_flags);
+	bool _build_variant_compile_context(uint32_t p_rt_flags);
+	static uint32_t _compile_context_key(uint32_t p_rt_flags);
+	// GLSL to SPIR-V through a disk cache in the shader cache's user dir. Locks spirv_compile_mutex on a miss.
+	Vector<uint8_t> _compile_spirv_cached(RD::ShaderStage p_stage, const String &p_source, String *r_error);
+	Vector<RD::ShaderStageSPIRVData> _compile_stages_cached(const Vector<String> &p_stage_sources);
 
 	bool async_compilation_enabled = true;
 	Mutex spirv_compile_mutex; // Serialize glslang calls (RD::shader_compile_spirv_from_source).
