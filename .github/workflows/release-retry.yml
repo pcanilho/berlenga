@@ -2,8 +2,9 @@ name: Release retry
 
 # A release build that never started (GitHub found no runner for it, as happens
 # with macOS when hosted capacity is short) is retried instead of left out: the
-# failed jobs re-run, and the publish job adds their zips to the release. Up to
-# three attempts; a build that started and failed is a real failure and is left.
+# release waits as a draft, the failed jobs re-run, and the publish job adds their
+# zips and publishes it. Up to three attempts; a build that started and failed is
+# a real failure and is left.
 on:
   workflow_run:
     workflows: ["Release (editor builds)"]

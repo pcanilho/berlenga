@@ -262,6 +262,7 @@ jobs:
 
   publish:
     permissions:
+      actions: read
       contents: write
     needs: [check, windows, macos, linux]
     # Windows is required; a failed macOS or Linux build only leaves that zip out.
@@ -282,34 +283,50 @@ jobs:
           merge-multiple: true
 
       - name: Publish
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           SHORT: ${{ needs.check.outputs.short }}
           SHA: ${{ needs.check.outputs.sha }}
+          ATTEMPT: ${{ github.run_attempt }}
         run: |
           short=$SHORT
+          tag="build-$short"
           # the changelog as built: its Unreleased entries are this release's notes
           git show "$SHA:CHANGELOG.md" > released-changelog.md 2>/dev/null || printf '# Changelog\n\n## Unreleased\n' > released-changelog.md
           python3 .github/scripts/changelog.py notes released-changelog.md > changes.md
           python3 .github/scripts/release_notes.py changes.md dist "$short" "$GITHUB_REPOSITORY" > notes.md
-          if gh release view "build-$short" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # A re-run (say a macOS build that had no runner the first time): add the
-            # zips the release lacks and refresh its notes, keeping the pull request list.
-            gh release upload "build-$short" dist/*.zip --repo "$GITHUB_REPOSITORY" --clobber
-            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="build-$short" --jq .body > generated.md
-            { echo; cat generated.md; } >> notes.md
-            gh release edit "build-$short" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
-          else
-            gh release create "build-$short" dist/*.zip \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$SHA" \
-              --title "build $short (editor)" \
-              --notes-file notes.md \
-              --generate-notes \
-              --latest
+
+          # Builds that never got a runner (macOS when GitHub's hosted capacity is short):
+          # release-retry.yml re-runs them, so while attempts remain the release waits as a
+          # draft. Published releases are immutable, so a zip can't be added afterwards.
+          unstarted=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$ATTEMPT/jobs" \
+            --jq '[.jobs[] | select((.conclusion == "cancelled" or .conclusion == "failure") and ([.steps[]? | select(.conclusion != null and .conclusion != "skipped")] | length) == 0) | .name] | join(", ")')
+          state=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq ".[] | select(.tag_name == \"$tag\") | if .draft then \"draft\" else \"published\" end" | head -1)
+
+          if [ "$state" = published ]; then
+            echo "$tag is already published (immutable); nothing to add."
+            exit 0
           fi
+          if [ -z "$state" ]; then
+            gh release create "$tag" dist/*.zip --repo "$GITHUB_REPOSITORY" --target "$SHA" \
+              --title "build $short (editor)" --notes-file notes.md --generate-notes --draft
+          else
+            gh release upload "$tag" dist/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$tag" -f target_commitish="$SHA" --jq .body > generated.md
+            { echo; cat generated.md; } >> notes.md
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+          fi
+          if [ -n "$unstarted" ] && [ "$ATTEMPT" -lt 3 ]; then
+            echo "Waiting for a retry of: $unstarted. $tag stays a draft."
+            exit 0
+          fi
+          [ -n "$unstarted" ] && echo "Publishing without: $unstarted (no runner after $ATTEMPT attempts)."
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
       - name: Move the released entries in CHANGELOG.md
+        if: steps.publish.outputs.published == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SHORT: ${{ needs.check.outputs.short }}
