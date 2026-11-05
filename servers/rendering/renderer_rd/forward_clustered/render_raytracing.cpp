@@ -702,7 +702,6 @@ static void _light_cache_ensure(RTViewportState *p_state, const Size2i &p_intern
 	p_state->light_cache_size = size;
 	p_state->light_cache_history = false;
 }
-}
 
 bool RenderRaytracing::rt_has_texture(RenderSceneBuffersRD *p_render_buffers) const {
 	return p_render_buffers && p_render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RAYTRACING);
