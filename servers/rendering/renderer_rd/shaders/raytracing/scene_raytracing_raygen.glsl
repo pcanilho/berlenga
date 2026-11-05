@@ -266,50 +266,44 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 		dir_sum += plight_luma(e) * L;
 	}
 
-	// the positional lights that can reach x (the light grid's lists): PLIGHT_CANDIDATES
-	// drawn uniformly, one kept in proportion to its unshadowed irradiance, and its shadow ray
-	{
-		uint g_start, g_count, c_start, c_count;
-		lights_grid_lists(x, g_start, g_count, c_start, c_count);
-		uint n = g_count + c_count;
-		if (n > 0u) {
-			uint m = min(n, PLIGHT_CANDIDATES);
-			float w_sum = 0.0;
-			float w_sel = 0.0;
-			vec3 e_sel = vec3(0.0);
-			vec3 l_sel = vec3(0.0, 1.0, 0.0);
-			float d_sel = 0.0;
-			uint li_sel = 0u;
-			for (uint k = 0u; k < m; k++) {
-				// all of them when they fit, else drawn at random
-				uint pick = (n <= PLIGHT_CANDIDATES) ? k : min(uint(rand(rng) * float(n)), n - 1u);
-				uint li = lights_grid_light(pick, g_start, g_count, c_start);
-				RTLightData light = lights_get(li);
-				if (light.type == RT_LIGHT_TYPE_DIRECTIONAL) {
-					continue;
-				}
-				vec3 to_l;
-				float dist;
-				vec3 e = plight_positional(light, x, to_l, dist);
-				// the candidate's weight: its target over its source pdf (m/n of the lights)
-				float w = plight_luma(e) * (n <= PLIGHT_CANDIDATES ? 1.0 : float(n) / float(m));
-				if (!(w > 0.0) || isinf(w)) {
-					continue;
-				}
-				w_sum += w;
-				if (rand(rng) * w_sum < w) {
-					w_sel = plight_luma(e);
-					e_sel = e;
-					l_sel = to_l;
-					d_sel = dist;
-					li_sel = li;
-				}
+	// the positional lights that can reach x: PLIGHT_CANDIDATES walks down the light tree
+	// (lights_tree_sample, no receiver normal), one kept in proportion to its unshadowed
+	// irradiance over its walk's pdf, and its shadow ray
+	if (lights_tree_node_count() > 0u) {
+		float w_sum = 0.0;
+		float w_sel = 0.0;
+		vec3 e_sel = vec3(0.0);
+		vec3 l_sel = vec3(0.0, 1.0, 0.0);
+		float d_sel = 0.0;
+		uint li_sel = 0u;
+		for (uint k = 0u; k < PLIGHT_CANDIDATES; k++) {
+			uint li;
+			float source_pdf;
+			if (!lights_tree_sample(x, vec3(0.0), 0xFFFFFu, rng, li, source_pdf) || !(source_pdf > 0.0)) {
+				continue;
 			}
-			if (w_sel > 0.0) {
-				vec3 e = e_sel * (w_sum / w_sel) * lights_shadow_transmittance(lights_get(li_sel), x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
-				e_sum += e;
-				dir_sum += plight_luma(e) * l_sel;
+			RTLightData light = lights_get(li);
+			vec3 to_l;
+			float dist;
+			vec3 e = plight_positional(light, x, to_l, dist);
+			// the candidate's weight: its target over its source pdf
+			float w = plight_luma(e) / (float(PLIGHT_CANDIDATES) * source_pdf);
+			if (!(w > 0.0) || isinf(w)) {
+				continue;
 			}
+			w_sum += w;
+			if (rand(rng) * w_sum < w) {
+				w_sel = plight_luma(e);
+				e_sel = e;
+				l_sel = to_l;
+				d_sel = dist;
+				li_sel = li;
+			}
+		}
+		if (w_sel > 0.0) {
+			vec3 e = e_sel * (w_sum / w_sel) * lights_shadow_transmittance(lights_get(li_sel), x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
+			e_sum += e;
+			dir_sum += plight_luma(e) * l_sel;
 		}
 	}
 

@@ -591,8 +591,8 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (p_state->light_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->light_buffer);
 	}
-	if (p_state->light_grid_buffer.is_valid()) {
-		RD::get_singleton()->free_rid(p_state->light_grid_buffer);
+	if (p_state->light_tree_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(p_state->light_tree_buffer);
 	}
 	if (p_state->params_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->params_buffer);
@@ -5449,157 +5449,325 @@ void RenderRaytracing::build_decal_volumes(RTViewportState *p_state, const Rende
 // Light gathering
 // ---------------------------------------------------------------------------
 
-// The lights the shaders pick from at a point: a world grid over the lights' reach,
-// each cell listing the lights whose range sphere meets it, after the world-space
-// light grids of ReGIR (Boksansky, Jukarainen & Wyman, "Rendering Many Lights with
-// Grid-Based Reservoirs", Ray Tracing Gems II, 2021) and of clustered shading (Olsson,
-// Billeter & Assarsson 2012). Positional lights without a range are in every cell's
-// list; directional lights are sampled on their own and left out. The shaders
-// resample a few candidates from the point's list by their unshadowed contribution (Talbot et al., "Importance Resampling for Global
-// Illumination", EGSR 2005), so a point near ten of a thousand lights picks among those
-// ten. Layout, in uints:
-//   [0..2] cells along x, y, z (0: no grid), [3] the global count G,
-//   [4..6] the grid's origin, [7] 1 / cell size (floats' bits),
-//   [8, 8 + G) the global lights' indices,
-//   [8 + G, 8 + G + cells + 1) each cell's start in this array, then its end,
-//   then the cells' lists.
-void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p_count, LocalVector<uint32_t> &r_grid) {
-	r_grid.clear();
-	LocalVector<uint32_t> global;
-	LocalVector<uint32_t> bounded;
-	LocalVector<float> ranges;
-	AABB bounds;
+// The positional lights' bounding volume hierarchy the shaders sample a light from at a
+// point: the light BVH of Conty Estevez & Kulla, "Importance Sampling of Many Lights with
+// Adaptive Tree Splitting" (HPG 2018), as in Cycles and in Moreau, Pharr & Clarberg,
+// "Dynamic Many-Light Sampling for Real-Time Ray Tracing" (HPG 2019). Each node bounds its
+// lights' positions (a box), their emission directions (a cone of axis a, spread theta_o
+// and emission angle theta_e), their total flux, the union of their cull masks and their
+// largest range. The build splits by the surface area orientation heuristic (SAOH, binned).
+// The shaders walk down by each child's importance at the point (raytracing_lights_inc.glsl,
+// lights_tree_sample) and resample a few walks by the lights' unshadowed contribution.
+// Directional lights are sampled on their own and left out. Layout, in uints: a 16-uint
+// header ([0] node count, [1] positional light count, [2] first positional light index),
+// then RT_LIGHT_TREE_NODE_UINTS uints per node, the root first, a node's children side by side.
+namespace {
+
+struct LightTreeCone {
+	Vector3 axis = Vector3(0, 0, 1);
+	float theta_o = 0.0f; // spread of the emission axes
+	float theta_e = 0.0f; // emission angle past the axes
+	bool empty = true;
+};
+
+// The smallest cone holding both (Conty Estevez & Kulla 2018, Algorithm 1).
+LightTreeCone light_tree_cone_union(const LightTreeCone &p_a, const LightTreeCone &p_b) {
+	if (p_a.empty) {
+		return p_b;
+	}
+	if (p_b.empty) {
+		return p_a;
+	}
+	const LightTreeCone &a = p_a.theta_o >= p_b.theta_o ? p_a : p_b;
+	const LightTreeCone &b = p_a.theta_o >= p_b.theta_o ? p_b : p_a;
+	LightTreeCone r;
+	r.empty = false;
+	r.theta_e = MAX(a.theta_e, b.theta_e);
+	const float theta_d = Math::acos(CLAMP(a.axis.dot(b.axis), -1.0f, 1.0f));
+	if (MIN(theta_d + b.theta_o, (float)Math::PI) <= a.theta_o) {
+		r.axis = a.axis;
+		r.theta_o = a.theta_o;
+		return r;
+	}
+	const float theta_o = (a.theta_o + theta_d + b.theta_o) * 0.5f;
+	if (theta_o >= (float)Math::PI) {
+		r.axis = a.axis;
+		r.theta_o = (float)Math::PI;
+		return r;
+	}
+	const float theta_r = theta_o - a.theta_o;
+	Vector3 w = a.axis.cross(b.axis);
+	if (w.length_squared() < 1e-12f) {
+		r.axis = a.axis;
+		r.theta_o = (float)Math::PI;
+		return r;
+	}
+	r.axis = a.axis.rotated(w.normalized(), theta_r).normalized();
+	r.theta_o = theta_o;
+	return r;
+}
+
+// The orientation measure M_Omega of a cone (Conty Estevez & Kulla 2018, eq. 1).
+float light_tree_cone_measure(const LightTreeCone &p_c) {
+	if (p_c.empty) {
+		return 0.0f;
+	}
+	const float theta_w = MIN(p_c.theta_o + p_c.theta_e, (float)Math::PI);
+	const float s = Math::sin(p_c.theta_o);
+	const float c = Math::cos(p_c.theta_o);
+	return 2.0f * (float)Math::PI * (1.0f - c) +
+			(float)Math::PI * 0.5f * (2.0f * theta_w * s - Math::cos(p_c.theta_o - 2.0f * theta_w) - 2.0f * p_c.theta_o * s + c);
+}
+
+struct LightTreeItem {
+	Vector3 position;
+	LightTreeCone cone;
+	float flux = 0.0f;
+	float range = 0.0f; // 0: unbounded
+	uint32_t cull_mask = 0;
+	uint32_t light = 0;
+};
+
+struct LightTreeBounds {
+	AABB box;
+	bool has_box = false;
+	LightTreeCone cone;
+	float flux = 0.0f;
+	float range = 0.0f; // the largest, FLT_MAX when one is unbounded
+	uint32_t cull_mask = 0;
+
+	void add(const LightTreeItem &p_item) {
+		box = has_box ? box.expand(p_item.position) : AABB(p_item.position, Vector3());
+		has_box = true;
+		cone = light_tree_cone_union(cone, p_item.cone);
+		flux += p_item.flux;
+		range = MAX(range, p_item.range > 0.0f ? p_item.range : FLT_MAX);
+		cull_mask |= p_item.cull_mask;
+	}
+	void merge(const LightTreeBounds &p_b) {
+		if (!p_b.has_box) {
+			return;
+		}
+		box = has_box ? box.merge(p_b.box) : p_b.box;
+		has_box = true;
+		cone = light_tree_cone_union(cone, p_b.cone);
+		flux += p_b.flux;
+		range = MAX(range, p_b.range);
+		cull_mask |= p_b.cull_mask;
+	}
+	// A box's surface area, with a floor so lights at one point still split by flux and cone.
+	float area() const {
+		const Vector3 s = box.size + Vector3(1e-3f, 1e-3f, 1e-3f);
+		return 2.0f * (s.x * s.y + s.y * s.z + s.z * s.x);
+	}
+};
+
+void light_tree_write_node(uint32_t *r_node, const LightTreeBounds &p_b, uint32_t p_child, bool p_leaf) {
+	float f[14];
+	const Vector3 lo = p_b.box.position;
+	const Vector3 hi = p_b.box.position + p_b.box.size;
+	f[0] = lo.x;
+	f[1] = lo.y;
+	f[2] = lo.z;
+	f[3] = Math::cos(p_b.cone.theta_o);
+	f[4] = hi.x;
+	f[5] = hi.y;
+	f[6] = hi.z;
+	f[7] = Math::cos(MIN(p_b.cone.theta_e, (float)Math::PI));
+	f[8] = p_b.cone.axis.x;
+	f[9] = p_b.cone.axis.y;
+	f[10] = p_b.cone.axis.z;
+	f[11] = p_b.flux;
+	f[12] = 0.0f;
+	f[13] = p_b.range;
+	memcpy(r_node, f, sizeof(f));
+	r_node[12] = p_b.cull_mask;
+	r_node[14] = p_child;
+	r_node[15] = p_leaf ? 1u : 0u;
+}
+
+} // namespace
+
+void RenderRaytracing::build_light_tree(const RT_LightData *p_lights, uint32_t p_count, LocalVector<uint32_t> &r_tree) {
+	r_tree.resize(RT_LIGHT_TREE_HEADER);
+	for (uint32_t i = 0; i < RT_LIGHT_TREE_HEADER; i++) {
+		r_tree[i] = 0;
+	}
+
+	LocalVector<LightTreeItem> items;
+	uint32_t first_positional = p_count;
 	for (uint32_t i = 0; i < p_count; i++) {
 		const RT_LightData &l = p_lights[i];
 		if (l.masks.type == RT_LIGHT_TYPE_DIRECTIONAL) {
 			continue; // Sampled in their own group.
 		}
-		if (l.range <= 0.0f) {
-			global.push_back(i);
-			continue;
+		first_positional = MIN(first_positional, i);
+		LightTreeItem it;
+		it.position = Vector3(l.position[0], l.position[1], l.position[2]);
+		it.range = l.range;
+		it.cull_mask = l.masks.cull_mask;
+		it.light = i;
+		const float r = Math::half_to_float(l.emission_rg.r);
+		const float g = Math::half_to_float(l.emission_rg.g);
+		const float b = Math::half_to_float(l.emission_b_radius.b);
+		// abs: a negative light takes light away, and is picked by how much.
+		const float lum = Math::abs(r) * 0.2126f + Math::abs(g) * 0.7152f + Math::abs(b) * 0.0722f;
+		// The indirect multiplier can only raise what bounces see; the larger keeps the importance conservative.
+		const float indirect = MAX(Math::half_to_float(l.energy.indirect), 1.0f);
+		it.cone.empty = false;
+		if (l.masks.type == RT_LIGHT_TYPE_SPOT) {
+			const float qx = int16_t(l.orientation_xy.x) / 32767.0f;
+			const float qy = int16_t(l.orientation_xy.y) / 32767.0f;
+			const float qz = int16_t(l.orientation_zw.z) / 32767.0f;
+			const float qw = int16_t(l.orientation_zw.w) / 32767.0f;
+			Quaternion rot(qx, qy, qz, qw);
+			rot = rot.length_squared() > 1e-8f ? rot.normalized() : Quaternion();
+			it.cone.axis = rot.xform(Vector3(0, 0, -1)).normalized();
+			it.cone.theta_o = 0.0f;
+			const float omc = CLAMP(Math::half_to_float(l.spot.one_minus_cos), 0.0f, 2.0f);
+			// A sphere light's cone widens by its size; pi/2 past the axis bounds any.
+			const float radius = Math::half_to_float(l.emission_b_radius.radius);
+			it.cone.theta_e = MIN(Math::acos(1.0f - omc) + (radius > 0.01f ? (float)Math::PI * 0.5f : 0.0f), (float)Math::PI);
+			it.flux = lum * indirect * 2.0f * (float)Math::PI * MAX(omc, 1e-4f);
+		} else {
+			it.cone.axis = Vector3(0, 0, 1);
+			it.cone.theta_o = (float)Math::PI;
+			it.cone.theta_e = (float)Math::PI * 0.5f;
+			it.flux = lum * indirect * 4.0f * (float)Math::PI;
 		}
-		float r = l.range;
-		AABB a(Vector3(l.position[0], l.position[1], l.position[2]) - Vector3(r, r, r), Vector3(r, r, r) * 2.0f);
-		bounds = bounded.is_empty() ? a : bounds.merge(a);
-		bounded.push_back(i);
-		ranges.push_back(r);
+		if (!(it.flux > 0.0f) || !Math::is_finite(it.flux)) {
+			continue; // Lights nothing: never sampled.
+		}
+		items.push_back(it);
 	}
-
-	r_grid.resize(RT_LIGHT_GRID_HEADER);
-	for (uint32_t i = 0; i < RT_LIGHT_GRID_HEADER; i++) {
-		r_grid[i] = 0;
-	}
-	r_grid[3] = global.size();
-	for (uint32_t i = 0; i < global.size(); i++) {
-		r_grid.push_back(global[i]);
-	}
-	if (bounded.is_empty()) {
+	if (items.is_empty()) {
 		return;
 	}
+	r_tree[1] = p_count - first_positional;
+	r_tree[2] = first_positional;
 
-	// Cells about the size of a light's reach: smaller ones list each light many times,
-	// larger ones list lights that reach only a corner of them.
-	ranges.sort();
-	float cell = ranges[ranges.size() / 2] * 0.75f;
-	Vector3 extent = bounds.size;
-	cell = MAX(cell, Math::pow(MAX(extent.x * extent.y * extent.z, 1e-3f) / float(RT_LIGHT_GRID_MAX_CELLS), 1.0f / 3.0f));
-	cell = MAX(cell, 0.25f);
-
-	const uint32_t list_base = RT_LIGHT_GRID_HEADER + global.size();
-	LocalVector<uint32_t> counts;
-	uint32_t dims[3] = {};
-	for (int attempt = 0; attempt < 16; attempt++) {
-		for (int a = 0; a < 3; a++) {
-			dims[a] = CLAMP((uint32_t)Math::ceil(extent[a] / cell), 1u, 1024u);
+	// Nodes as built: a node's children are placed side by side so a walk reads one index.
+	struct BuildNode {
+		LightTreeBounds bounds;
+		uint32_t begin = 0;
+		uint32_t end = 0;
+		uint32_t child = 0; // left child's index; leaf: none
+		bool leaf = false;
+	};
+	LocalVector<BuildNode> nodes;
+	nodes.reserve(items.size() * 2);
+	{
+		BuildNode root;
+		root.begin = 0;
+		root.end = items.size();
+		for (uint32_t i = 0; i < items.size(); i++) {
+			root.bounds.add(items[i]);
 		}
-		uint64_t cells = uint64_t(dims[0]) * dims[1] * dims[2];
-		if (cells > RT_LIGHT_GRID_MAX_CELLS) {
-			cell *= 1.25f;
+		nodes.push_back(root);
+	}
+
+	constexpr int BINS = 12;
+	LocalVector<uint32_t> stack;
+	stack.push_back(0);
+	while (!stack.is_empty()) {
+		const uint32_t ni = stack[stack.size() - 1];
+		stack.remove_at(stack.size() - 1);
+		const uint32_t begin = nodes[ni].begin;
+		const uint32_t end = nodes[ni].end;
+		if (end - begin == 1) {
+			nodes[ni].leaf = true;
+			nodes[ni].child = items[begin].light;
 			continue;
 		}
-		counts.resize(cells);
-		for (uint32_t c = 0; c < cells; c++) {
-			counts[c] = 0;
+		const LightTreeBounds parent = nodes[ni].bounds;
+		AABB centroids(items[begin].position, Vector3());
+		for (uint32_t i = begin + 1; i < end; i++) {
+			centroids.expand_to(items[i].position);
 		}
-		uint64_t entries = 0;
-		for (uint32_t bi = 0; bi < bounded.size(); bi++) {
-			const RT_LightData &l = p_lights[bounded[bi]];
-			Vector3 p(l.position[0], l.position[1], l.position[2]);
-			float r = l.range;
-			int lo[3], hi[3];
-			for (int a = 0; a < 3; a++) {
-				lo[a] = CLAMP((int)Math::floor((p[a] - r - bounds.position[a]) / cell), 0, (int)dims[a] - 1);
-				hi[a] = CLAMP((int)Math::floor((p[a] + r - bounds.position[a]) / cell), 0, (int)dims[a] - 1);
+		const float parent_cost = MAX(parent.flux * parent.area() * light_tree_cone_measure(parent.cone), 1e-20f);
+		const float max_extent = MAX(centroids.size[centroids.get_longest_axis_index()], 1e-6f);
+
+		// SAOH over BINS bins along each axis; the regularizer max_extent / extent keeps splits off thin axes.
+		float best_cost = FLT_MAX;
+		int best_axis = -1;
+		int best_bin = 0;
+		for (int axis = 0; axis < 3; axis++) {
+			const float extent = centroids.size[axis];
+			if (extent <= 1e-6f) {
+				continue;
 			}
-			for (int z = lo[2]; z <= hi[2]; z++) {
-				for (int y = lo[1]; y <= hi[1]; y++) {
-					for (int x = lo[0]; x <= hi[0]; x++) {
-						// the sphere against the cell's box
-						Vector3 cmin = bounds.position + Vector3(x, y, z) * cell;
-						Vector3 q = p.clamp(cmin, cmin + Vector3(cell, cell, cell));
-						if (q.distance_squared_to(p) > r * r) {
-							continue;
-						}
-						counts[x + dims[0] * (y + dims[1] * z)]++;
-						entries++;
-					}
+			LightTreeBounds bins[BINS];
+			for (uint32_t i = begin; i < end; i++) {
+				int bi = CLAMP(int((items[i].position[axis] - centroids.position[axis]) / extent * BINS), 0, BINS - 1);
+				bins[bi].add(items[i]);
+			}
+			const float kr = max_extent / extent;
+			for (int s = 1; s < BINS; s++) {
+				LightTreeBounds left, right;
+				for (int k = 0; k < s; k++) {
+					left.merge(bins[k]);
+				}
+				for (int k = s; k < BINS; k++) {
+					right.merge(bins[k]);
+				}
+				if (!left.has_box || !right.has_box) {
+					continue;
+				}
+				const float cost = kr * (left.flux * left.area() * light_tree_cone_measure(left.cone) + right.flux * right.area() * light_tree_cone_measure(right.cone)) / parent_cost;
+				if (cost < best_cost) {
+					best_cost = cost;
+					best_axis = axis;
+					best_bin = s;
 				}
 			}
 		}
-		if (entries > RT_LIGHT_GRID_MAX_ENTRIES) {
-			cell *= 1.5f;
-			continue;
-		}
 
-		// the cells' starts, then the lists
-		const uint32_t start = list_base + cells + 1;
-		r_grid.resize(start + entries);
-		uint32_t at = start;
-		for (uint32_t c = 0; c < cells; c++) {
-			r_grid[list_base + c] = at;
-			at += counts[c];
-			counts[c] = r_grid[list_base + c]; // now the cell's fill position
-		}
-		r_grid[list_base + cells] = at;
-		for (uint32_t bi = 0; bi < bounded.size(); bi++) {
-			const RT_LightData &l = p_lights[bounded[bi]];
-			Vector3 p(l.position[0], l.position[1], l.position[2]);
-			float r = l.range;
-			int lo[3], hi[3];
-			for (int a = 0; a < 3; a++) {
-				lo[a] = CLAMP((int)Math::floor((p[a] - r - bounds.position[a]) / cell), 0, (int)dims[a] - 1);
-				hi[a] = CLAMP((int)Math::floor((p[a] + r - bounds.position[a]) / cell), 0, (int)dims[a] - 1);
-			}
-			for (int z = lo[2]; z <= hi[2]; z++) {
-				for (int y = lo[1]; y <= hi[1]; y++) {
-					for (int x = lo[0]; x <= hi[0]; x++) {
-						Vector3 cmin = bounds.position + Vector3(x, y, z) * cell;
-						Vector3 q = p.clamp(cmin, cmin + Vector3(cell, cell, cell));
-						if (q.distance_squared_to(p) > r * r) {
-							continue;
-						}
-						r_grid[counts[x + dims[0] * (y + dims[1] * z)]++] = bounded[bi];
-					}
+		uint32_t mid;
+		if (best_axis < 0) {
+			// Every light at one point: split the list in half.
+			mid = begin + (end - begin) / 2;
+		} else {
+			const float extent = centroids.size[best_axis];
+			uint32_t i = begin;
+			uint32_t j = end;
+			while (i < j) {
+				int bi = CLAMP(int((items[i].position[best_axis] - centroids.position[best_axis]) / extent * BINS), 0, BINS - 1);
+				if (bi < best_bin) {
+					i++;
+				} else {
+					j--;
+					SWAP(items[i], items[j]);
 				}
 			}
+			mid = i;
+			if (mid == begin || mid == end) {
+				mid = begin + (end - begin) / 2;
+			}
 		}
-		r_grid[0] = dims[0];
-		r_grid[1] = dims[1];
-		r_grid[2] = dims[2];
-		float origin[3] = { bounds.position.x, bounds.position.y, bounds.position.z };
-		float inv_cell = 1.0f / cell;
-		memcpy(&r_grid[4], origin, sizeof(origin));
-		memcpy(&r_grid[7], &inv_cell, sizeof(float));
-		return;
+
+		BuildNode left, right;
+		left.begin = begin;
+		left.end = mid;
+		right.begin = mid;
+		right.end = end;
+		for (uint32_t k = begin; k < mid; k++) {
+			left.bounds.add(items[k]);
+		}
+		for (uint32_t k = mid; k < end; k++) {
+			right.bounds.add(items[k]);
+		}
+		const uint32_t li = nodes.size();
+		nodes[ni].child = li;
+		nodes.push_back(left);
+		nodes.push_back(right);
+		stack.push_back(li);
+		stack.push_back(li + 1);
 	}
-	// No grid fits: every bounded light goes in the global list.
-	r_grid.resize(RT_LIGHT_GRID_HEADER);
-	r_grid[3] = global.size() + bounded.size();
-	for (uint32_t i = 0; i < global.size(); i++) {
-		r_grid.push_back(global[i]);
-	}
-	for (uint32_t i = 0; i < bounded.size(); i++) {
-		r_grid.push_back(bounded[i]);
+
+	r_tree[0] = nodes.size();
+	r_tree.resize(RT_LIGHT_TREE_HEADER + nodes.size() * RT_LIGHT_TREE_NODE_UINTS);
+	for (uint32_t i = 0; i < nodes.size(); i++) {
+		light_tree_write_node(&r_tree[RT_LIGHT_TREE_HEADER + i * RT_LIGHT_TREE_NODE_UINTS], nodes[i].bounds, nodes[i].child, nodes[i].leaf);
 	}
 }
 
@@ -6001,12 +6169,12 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		memset((void *)rt_light_scratch.ptr(), 0, RT_LIGHTS_MAX * sizeof(RT_LightData));
 		RT_LightData *rt_light_data = rt_light_scratch.ptr();
 		const uint32_t rt_light_count = gather_lights(p_render_data, p_state, rt_light_data, RT_LIGHTS_MAX);
-		build_light_grid(rt_light_data, rt_light_count, rt_light_grid_scratch);
+		build_light_tree(rt_light_data, rt_light_count, rt_light_tree_scratch);
 
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_COUNT] = float(rt_light_count);
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SELF_SHADOW_MASK] = p_state ? float(p_state->shadow_groups.self_shadow_bit) : 0.0f;
 
-		// Upload the light buffer and the light grid, grown by doubling.
+		// Upload the light buffer and the light tree, grown by doubling.
 		{
 			const uint32_t needed = MAX(rt_light_count, 1u);
 			if (!p_state->light_buffer.is_valid() || p_state->light_buffer_capacity < needed) {
@@ -6019,17 +6187,17 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			}
 			RD::get_singleton()->buffer_update(p_state->light_buffer, 0, needed * sizeof(RT_LightData), rt_light_data);
 
-			const LocalVector<uint32_t> &rt_light_grid = rt_light_grid_scratch;
-			const uint32_t grid_needed = rt_light_grid.size();
-			if (!p_state->light_grid_buffer.is_valid() || p_state->light_grid_buffer_capacity < grid_needed) {
-				if (p_state->light_grid_buffer.is_valid()) {
-					RD::get_singleton()->free_rid(p_state->light_grid_buffer);
+			const LocalVector<uint32_t> &rt_light_tree = rt_light_tree_scratch;
+			const uint32_t tree_needed = rt_light_tree.size();
+			if (!p_state->light_tree_buffer.is_valid() || p_state->light_tree_buffer_capacity < tree_needed) {
+				if (p_state->light_tree_buffer.is_valid()) {
+					RD::get_singleton()->free_rid(p_state->light_tree_buffer);
 				}
-				p_state->light_grid_buffer_capacity = MAX(1024u, Math::next_power_of_2(grid_needed));
-				p_state->light_grid_buffer = RD::get_singleton()->storage_buffer_create(p_state->light_grid_buffer_capacity * sizeof(uint32_t));
-				RD::get_singleton()->set_resource_name(p_state->light_grid_buffer, "RT Light Grid");
+				p_state->light_tree_buffer_capacity = MAX(1024u, Math::next_power_of_2(tree_needed));
+				p_state->light_tree_buffer = RD::get_singleton()->storage_buffer_create(p_state->light_tree_buffer_capacity * sizeof(uint32_t));
+				RD::get_singleton()->set_resource_name(p_state->light_tree_buffer, "RT Light Tree");
 			}
-			RD::get_singleton()->buffer_update(p_state->light_grid_buffer, 0, grid_needed * sizeof(uint32_t), rt_light_grid.ptr());
+			RD::get_singleton()->buffer_update(p_state->light_tree_buffer, 0, tree_needed * sizeof(uint32_t), rt_light_tree.ptr());
 		}
 
 		if (!p_state->params_buffer.is_valid()) {
@@ -6146,13 +6314,13 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		uniforms.push_back(u);
 	}
 
-	// Binding 42: the light grid (SSBO, uints; build_light_grid).
+	// Binding 42: the light tree (SSBO, uints; build_light_tree).
 	{
 		RD::Uniform u;
 		u.binding = 42;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-		if (p_state->light_grid_buffer.is_valid()) {
-			u.append_id(p_state->light_grid_buffer);
+		if (p_state->light_tree_buffer.is_valid()) {
+			u.append_id(p_state->light_tree_buffer);
 		} else {
 			u.append_id(RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		}

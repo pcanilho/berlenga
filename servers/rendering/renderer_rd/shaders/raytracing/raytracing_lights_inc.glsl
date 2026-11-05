@@ -68,45 +68,140 @@ layout(set = 0, binding = RT_LIGHT_BUFFER_BINDING, std430) readonly buffer Light
 
 layout(set = 0, binding = 40) uniform sampler rt_light_projector_sampler;
 
-// The world grid of positional light lists (RenderRaytracing::build_light_grid): which
-// lights can reach a point. In uints: [0..2] cells along x, y, z (0: none), [3] the
-// global count G, [4..6] the origin and [7] 1 / cell size (floats' bits), [8, 8 + G)
-// the lights in every list (no range), then each cell's start, then the cells' lists.
-#ifndef RT_LIGHT_GRID_BINDING
-#define RT_LIGHT_GRID_BINDING 42
+// The positional lights' BVH (RenderRaytracing::build_light_tree; Conty Estevez & Kulla,
+// "Importance Sampling of Many Lights with Adaptive Tree Splitting", HPG 2018). In uints: a
+// 16-uint header ([0] node count, 0: no positional light; [1] positional light count; [2]
+// the first positional light's index), then 16 uints per node, the root first: [0..2] box
+// min, [3] cos theta_o, [4..6] box max, [7] cos theta_e, [8..10] cone axis, [11] flux,
+// [12] cull mask union, [13] largest range (FLT_MAX: unbounded), [14] the left child (the
+// right one follows it) or, in a leaf, the light's index, [15] 1 in a leaf.
+#ifndef RT_LIGHT_TREE_BINDING
+#define RT_LIGHT_TREE_BINDING 42
 #endif
 
-layout(set = 0, binding = RT_LIGHT_GRID_BINDING, std430) readonly buffer LightGridBuffer {
-	uint rt_light_grid[];
+// Walks from a node's importance down, this many times, for the resampling.
+#ifndef RT_LIGHT_TREE_CANDIDATES
+#define RT_LIGHT_TREE_CANDIDATES 4
+#endif
+
+#define RT_LIGHT_TREE_HEADER 16u
+#define RT_LIGHT_TREE_NODE_UINTS 16u
+
+layout(set = 0, binding = RT_LIGHT_TREE_BINDING, std430) readonly buffer LightTreeBuffer {
+	uint rt_light_tree[];
 };
 
-// The lights that can reach p: the global ones at [r_global_start, + r_global_count)
-// and the cell's at [r_cell_start, + r_cell_count), indices into rt_light_buffer.
-void lights_grid_lists(vec3 p, out uint r_global_start, out uint r_global_count, out uint r_cell_start, out uint r_cell_count) {
-	r_global_start = 8u;
-	r_global_count = rt_light_grid[3];
-	r_cell_start = 0u;
-	r_cell_count = 0u;
-	uvec3 dims = uvec3(rt_light_grid[0], rt_light_grid[1], rt_light_grid[2]);
-	if (dims.x == 0u) {
-		return;
-	}
-	vec3 origin = uintBitsToFloat(uvec3(rt_light_grid[4], rt_light_grid[5], rt_light_grid[6]));
-	float inv_cell = uintBitsToFloat(rt_light_grid[7]);
-	vec3 c = floor((p - origin) * inv_cell);
-	if (any(lessThan(c, vec3(0.0))) || any(greaterThanEqual(c, vec3(dims)))) {
-		return;
-	}
-	uvec3 ci = uvec3(c);
-	uint cell = ci.x + dims.x * (ci.y + dims.y * ci.z);
-	uint starts = 8u + r_global_count;
-	r_cell_start = rt_light_grid[starts + cell];
-	r_cell_count = rt_light_grid[starts + cell + 1u] - r_cell_start;
+uint lights_tree_node_count() {
+	return rt_light_tree[0];
 }
 
-// The i-th light of the union of a point's two lists.
-uint lights_grid_light(uint i, uint global_start, uint global_count, uint cell_start) {
-	return i < global_count ? rt_light_grid[global_start + i] : rt_light_grid[cell_start + (i - global_count)];
+uint lights_tree_positional_count() {
+	return rt_light_tree[1];
+}
+
+uint lights_tree_first_positional() {
+	return rt_light_tree[2];
+}
+
+// A conservative bound on what a node's lights add at p (Conty Estevez & Kulla 2018, eq. 3):
+// flux over the squared distance (no nearer than the box's half diagonal), times the emission
+// cone's cosine bound towards p and the receiver's towards the box, both widened by the box's
+// angular size. Zero only where none of its lights can reach p: out of every range, outside
+// every cone, or no layer in common. N = 0 drops the receiver's term (a point in a medium).
+float lights_tree_importance(uint p_node, vec3 p, vec3 N, uint instance_layers) {
+	uint base = RT_LIGHT_TREE_HEADER + p_node * RT_LIGHT_TREE_NODE_UINTS;
+	if ((rt_light_tree[base + 12u] & instance_layers & 0xFFFFFu) == 0u) {
+		return 0.0;
+	}
+	vec3 lo = uintBitsToFloat(uvec3(rt_light_tree[base + 0u], rt_light_tree[base + 1u], rt_light_tree[base + 2u]));
+	vec3 hi = uintBitsToFloat(uvec3(rt_light_tree[base + 4u], rt_light_tree[base + 5u], rt_light_tree[base + 6u]));
+	float range = uintBitsToFloat(rt_light_tree[base + 13u]);
+	vec3 nearest = clamp(p, lo, hi);
+	vec3 to_box = nearest - p;
+	if (dot(to_box, to_box) > range * range) {
+		return 0.0;
+	}
+	float flux = uintBitsToFloat(rt_light_tree[base + 11u]);
+	vec3 center = 0.5 * (lo + hi);
+	float half_diag = 0.5 * length(hi - lo);
+	vec3 to_c = center - p;
+	float d2 = dot(to_c, to_c);
+	float d = sqrt(d2);
+	if (d <= half_diag) {
+		return flux / max(half_diag * half_diag, 1e-4); // p is inside the box's sphere: every term 1
+	}
+	vec3 wi = to_c / d;
+	float sin_u = half_diag / d;
+	float cos_u = sqrt(max(1.0 - sin_u * sin_u, 0.0));
+
+	// Emission: theta' = max(0, theta - theta_o - theta_u), none past theta_e.
+	float cos_o = uintBitsToFloat(rt_light_tree[base + 3u]);
+	float cos_e = uintBitsToFloat(rt_light_tree[base + 7u]);
+	vec3 axis = uintBitsToFloat(uvec3(rt_light_tree[base + 8u], rt_light_tree[base + 9u], rt_light_tree[base + 10u]));
+	float cos_theta = dot(axis, -wi);
+	float sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+	float sin_o = sqrt(max(1.0 - cos_o * cos_o, 0.0));
+	// cos(theta - theta_o), then minus theta_u; 1 where theta is inside theta_o + theta_u.
+	float cos_to = cos_theta * cos_o + sin_theta * sin_o;
+	float sin_to = sin_theta * cos_o - cos_theta * sin_o;
+	float cos_emit = 1.0;
+	if (cos_theta < cos_o && cos_to < cos_u) {
+		// theta - theta_o > theta_u here, so sin_to > 0.
+		float cos_tou = cos_to * cos_u + sin_to * sin_u;
+		if (cos_tou <= cos_e) {
+			return 0.0;
+		}
+		// Past pi/2 (a wide cone widened by a sphere light's size) the cosine is floored, not cut.
+		cos_emit = max(cos_tou, 0.02);
+	}
+
+	// The receiver: theta_i' = max(0, theta_i - theta_u). Floored, as backlit and transmissive
+	// materials are lit from behind, so the bound stays above zero.
+	float cos_recv = 1.0;
+	if (dot(N, N) > 0.0) {
+		float cos_i = abs(dot(N, wi));
+		float sin_i = sqrt(max(1.0 - cos_i * cos_i, 0.0));
+		cos_recv = cos_i >= cos_u ? 1.0 : cos_i * cos_u + sin_i * sin_u;
+		cos_recv = max(cos_recv, 0.05);
+	}
+	return flux * cos_emit * cos_recv / d2;
+}
+
+// One walk from the root to a light, each step to a child in proportion to its importance
+// at p. r_pdf is the product of the steps' probabilities. False when no light can reach p.
+bool lights_tree_sample(vec3 p, vec3 N, uint instance_layers, inout uint rng_state, out uint r_light, out float r_pdf) {
+	r_light = 0u;
+	r_pdf = 1.0;
+	if (lights_tree_node_count() == 0u) {
+		return false;
+	}
+	uint node = 0u;
+	if (lights_tree_importance(0u, p, N, instance_layers) <= 0.0) {
+		return false;
+	}
+	for (uint depth = 0u; depth < 64u; depth++) {
+		uint base = RT_LIGHT_TREE_HEADER + node * RT_LIGHT_TREE_NODE_UINTS;
+		if (rt_light_tree[base + 15u] != 0u) {
+			r_light = rt_light_tree[base + 14u];
+			return true;
+		}
+		uint left = rt_light_tree[base + 14u];
+		float il = lights_tree_importance(left, p, N, instance_layers);
+		float ir = lights_tree_importance(left + 1u, p, N, instance_layers);
+		float sum = il + ir;
+		if (!(sum > 0.0) || isinf(sum)) {
+			return false;
+		}
+		float pl = il / sum;
+		if (rand(rng_state) < pl) {
+			node = left;
+			r_pdf *= pl;
+		} else {
+			node = left + 1u;
+			r_pdf *= 1.0 - pl;
+		}
+	}
+	return false;
 }
 
 uint lights_get_type(uint idx) {
@@ -466,39 +561,52 @@ float lights_target(RTLightData light, vec3 p, vec3 N, bool is_indirect_bounce, 
 
 // Picks a positional light by resampled importance sampling (Talbot, Cline & Egbert,
 // "Importance Resampling for Global Illumination", EGSR 2005; the candidate step of
-// ReSTIR DI, Bitterli et al. 2020): candidates drawn uniformly from the lights that can
-// reach this point (the light grid's lists), each weighted by its unshadowed
+// ReSTIR DI, Bitterli et al. 2020): RT_LIGHT_TREE_CANDIDATES walks down the light tree
+// (lights_tree_sample) as the source, each candidate weighted by its unshadowed
 // contribution over its source pdf, one kept in proportion. r_select_pdf is the
-// estimator's p_hat(y) / mean(w), so contribution / r_select_pdf stays unbiased. With
-// no more lights than candidates, each is taken once, with less noise still.
+// estimator's p_hat(y) / sum(w), so contribution / r_select_pdf stays unbiased. With no
+// more positional lights than RT_LIGHT_RESERVOIR_SIZE, each is taken once instead.
 bool lights_select_positional(vec3 hit_pos, vec3 N, bool is_indirect_bounce, uint instance_layers, inout uint rng_state,
 		out uint r_idx, out float r_select_pdf) {
 	r_idx = 0u;
 	r_select_pdf = 1.0;
-	uint g_start, g_count, c_start, c_count;
-	lights_grid_lists(hit_pos, g_start, g_count, c_start, c_count);
-	uint n = g_count + c_count;
-	if (n == 0u) {
+	uint n = lights_tree_positional_count();
+	if (n == 0u || lights_tree_node_count() == 0u) {
 		return false;
 	}
-	const bool enumerate = n <= uint(RT_LIGHT_RESERVOIR_SIZE);
-	const uint m = enumerate ? n : uint(RT_LIGHT_RESERVOIR_SIZE);
-	// 1 / (M * source pdf): n / M drawn, 1 enumerated.
-	const float w_scale = enumerate ? 1.0 : float(n) / float(m);
 	float w_sum = 0.0;
 	float selected_p_hat = 0.0;
-	for (uint i = 0u; i < m; i++) {
-		uint j = enumerate ? i : min(uint(rand(rng_state) * float(n)), n - 1u);
-		uint idx = lights_grid_light(j, g_start, g_count, c_start);
-		float p_hat = lights_target(lights_get(idx), hit_pos, N, is_indirect_bounce, instance_layers);
-		float w = p_hat * w_scale;
-		if (w <= 0.0) {
-			continue;
+	if (n <= uint(RT_LIGHT_RESERVOIR_SIZE)) {
+		uint first = lights_tree_first_positional();
+		for (uint i = 0u; i < n; i++) {
+			uint idx = first + i;
+			float w = lights_target(lights_get(idx), hit_pos, N, is_indirect_bounce, instance_layers);
+			if (w <= 0.0) {
+				continue;
+			}
+			w_sum += w;
+			if (rand(rng_state) * w_sum < w) {
+				r_idx = idx;
+				selected_p_hat = w;
+			}
 		}
-		w_sum += w;
-		if (rand(rng_state) * w_sum < w) {
-			r_idx = idx;
-			selected_p_hat = p_hat;
+	} else {
+		for (uint i = 0u; i < uint(RT_LIGHT_TREE_CANDIDATES); i++) {
+			uint idx;
+			float source_pdf;
+			if (!lights_tree_sample(hit_pos, N, instance_layers, rng_state, idx, source_pdf) || !(source_pdf > 0.0)) {
+				continue;
+			}
+			float p_hat = lights_target(lights_get(idx), hit_pos, N, is_indirect_bounce, instance_layers);
+			float w = p_hat / (float(RT_LIGHT_TREE_CANDIDATES) * source_pdf);
+			if (!(w > 0.0) || isinf(w)) {
+				continue;
+			}
+			w_sum += w;
+			if (rand(rng_state) * w_sum < w) {
+				r_idx = idx;
+				selected_p_hat = p_hat;
+			}
 		}
 	}
 	if (w_sum <= 0.0 || selected_p_hat <= 0.0) {
