@@ -354,11 +354,11 @@ struct ImplementationData {
 	uint volumetric_fog_pad;
 
 	// The path tracer's light cache for transparents (#72): on, the grid's near
-	// distance and 1 / log(far / near).
+	// distance, 1 / log(far / near), and the particles' forward scattering (g).
 	bool pt_light_cache_enabled;
 	float pt_light_cache_near;
 	float pt_light_cache_inv_log;
-	uint pt_light_cache_pad;
+	float pt_particle_anisotropy;
 };
 
 layout(set = 1, binding = 1, std140) uniform ImplementationDataBlock {

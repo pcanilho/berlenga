@@ -362,7 +362,7 @@ protected:
 			uint32_t pt_light_cache_enabled;
 			float pt_light_cache_near;
 			float pt_light_cache_inv_log;
-			uint32_t pt_light_cache_pad;
+			float pt_particle_anisotropy;
 		};
 
 		struct PushConstantUbershader {
@@ -511,6 +511,7 @@ protected:
 		bool enabled = false;
 		float z_near = 0.5;
 		float z_far = 150.0;
+		float particle_anisotropy = 0.75;
 		RID irradiance;
 		RID direction;
 	} pt_light_cache;

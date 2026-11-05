@@ -656,6 +656,7 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 	pt_light_cache = PTLightCache();
 	if (!pt_transparency && raytracing && rb.is_valid()) {
 		pt_light_cache.enabled = raytracing->rt_get_light_cache(p_render_data, pt_light_cache.irradiance, pt_light_cache.direction, pt_light_cache.z_near, pt_light_cache.z_far);
+		pt_light_cache.particle_anisotropy = CLAMP((float)GLOBAL_GET_CACHED(float, "rendering/pathtracing/transparent_lighting/particle_anisotropy"), -0.95f, 0.95f);
 	}
 
 	if (!pt_transparency) {

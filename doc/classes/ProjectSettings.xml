@@ -3359,6 +3359,9 @@
 		<member name="rendering/pathtracing/transparent_lighting/near" type="float" setter="" getter="" default="0.5">
 			The view distance, in meters, where the path tracer's light cache for transparents begins (see [member rendering/pathtracing/transparent_lighting/far]).
 		</member>
+		<member name="rendering/pathtracing/transparent_lighting/particle_anisotropy" type="float" setter="" getter="" default="0.75">
+			How much light particles scatter forward under the path tracer's light cache for transparents (see [member rendering/pathtracing/transparent_lighting/enabled]). Particles are lit by a phase function, not as surfaces: the Henyey-Greenstein lobe with this anisotropy, plus an isotropic share. Raindrops and mist scatter strongly forward, so rain in front of a street lamp or a headlight glints and dims when lit from the side or behind. [code]0[/code] scatters evenly in every direction; negative values scatter back toward the light.
+		</member>
 		<member name="rendering/pathtracing/use_simple_shadows" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], shadow rays use Ray Queries instead of fully traced rays. Ray Queries are significantly cheaper but rely on a quick albedo texture fetch. Both paths use stochastic alpha coverage and tint transmitted light with the transparent material's albedo; generated or animated custom material outputs are more accurate with fully traced shadow rays.
 			[b]Note:[/b] Only has an effect when path tracing is enabled on the active [Environment].

@@ -3876,6 +3876,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/near", PROPERTY_HINT_RANGE, "0.05,100,0.01,or_greater,suffix:m"), 0.5);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/far", PROPERTY_HINT_RANGE, "1,1000,0.1,or_greater,suffix:m"), 150.0);
 	GLOBAL_DEF("rendering/pathtracing/transparent_lighting/bounce", true);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/particle_anisotropy", PROPERTY_HINT_RANGE, "-0.95,0.95,0.01"), 0.75);
 	GLOBAL_DEF("rendering/pathtracing/async_shader_compilation", true);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/debug_heatmap_max_ticks", PROPERTY_HINT_RANGE, "1,10000000,1,or_greater"), 100000.0);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/debug_heatmap_opacity", PROPERTY_HINT_RANGE, "0,1,0.01"), 0.35);
