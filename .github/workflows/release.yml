@@ -1,6 +1,6 @@
 name: Release (editor builds)
 
-# Builds the Windows and macOS editors from main and publishes them as the latest release.
+# Builds the Windows, macOS and Linux editors from main and publishes them as the latest release.
 # Runs on demand, and every Monday when main has moved since the last release.
 on:
   workflow_dispatch:
@@ -178,9 +178,75 @@ jobs:
             godot-fork-macos-universal-*.zip
             hashes-macos.md
 
+  linux:
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 340
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/.scons_cache/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+
+      - name: Restore build cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: release-linux-${{ matrix.arch }}-editor|${{ needs.check.outputs.sha }}
+          restore-keys: release-linux-${{ matrix.arch }}-editor|
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libx11-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libglu1-mesa-dev libasound2-dev libpulse-dev libudev-dev libxi-dev libxrandr-dev libwayland-dev wayland-protocols libwayland-bin
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Build
+        run: scons platform=linuxbsd arch=${{ matrix.arch }} target=editor optimize=speed lto=none debug_symbols=no accesskit=no cache_path="$SCONS_CACHE" cache_limit=7
+
+      - name: Save build cache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: release-linux-${{ matrix.arch }}-editor|${{ needs.check.outputs.sha }}
+        continue-on-error: true
+
+      - name: Package
+        run: |
+          short=${{ needs.check.outputs.short }}
+          bin=godot.linuxbsd.editor.${{ matrix.arch }}
+          strip bin/$bin
+          mkdir pkg
+          cp bin/$bin LICENSE.txt COPYRIGHT.txt pkg/
+          chmod +x pkg/$bin
+          (cd pkg && zip -9 -r "../godot-fork-linux-${{ matrix.arch }}-$short.zip" .)
+          echo "- $bin: $(sha256sum bin/$bin | cut -d' ' -f1)" > hashes-linux-${{ matrix.arch }}.md
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            godot-fork-linux-*.zip
+            hashes-linux-*.md
+
   publish:
-    needs: [check, windows, macos]
-    # Windows is required; a failed macOS build leaves only the Mac zip out.
+    needs: [check, windows, macos, linux]
+    # Windows is required; a failed macOS or Linux build only leaves that zip out.
     if: always() && needs.check.outputs.publish == 'true' && needs.windows.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -201,6 +267,9 @@ jobs:
             echo "- Windows (x86_64): Vulkan, path tracing with Streamline. The DLSS, Streamline and Reflex DLLs are not included: take them from NVIDIA's Streamline and DLSS SDKs (or the NVIDIA-RTX/godot releases) and place them next to the exe. They stay under NVIDIA's terms."
             if ls dist/godot-fork-macos-universal-*.zip >/dev/null 2>&1; then
               echo "- macOS (universal, Apple Silicon and Intel): raster only, as the path tracer and DLSS need Vulkan ray tracing on NVIDIA hardware. Ad-hoc signed and not notarized: on first launch, right-click Godot.app and choose Open, or run \`xattr -cr Godot.app\`."
+            fi
+            if ls dist/godot-fork-linux-*.zip >/dev/null 2>&1; then
+              echo "- Linux (x86_64 and arm64): Vulkan and path tracing; DLSS Ray Reconstruction is Windows-only, so the path tracer runs without it."
             fi
             echo
             echo "SHA-256:"
