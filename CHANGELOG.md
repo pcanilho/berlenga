@@ -6,13 +6,13 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## Unreleased
 
+### Fixed
+- CodeQL scans run to completion: a push to `main` waits behind a running scan instead of cancelling it (#77).
+
 ## build-2d41bc16 (2026-11-05)
 
 ### Added
 - CHANGELOG.md: release notes come from its Unreleased entries, and pull requests are checked for one (#73).
-
-### Fixed
-- CodeQL scans run to completion: a push to `main` waits behind a running scan instead of cancelling it (#77).
 
 ## build-57db5e08 (2026-11-05)
 
