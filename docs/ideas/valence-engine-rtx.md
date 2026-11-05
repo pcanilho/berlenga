@@ -131,31 +131,85 @@ porting anything, check whether part of that gap is the 1 m falloff cap (fixed
 by the NVIDIA rewrite) or a double-applied exposure term that these commits
 describe.
 
-### Lower priority for us
+### Lower priority for a small, dense scene
+
+These matter little for a compact scene, but see the next section: for a
+large open world most of them move to the top.
 
 - Light tree (D55 to D63, Estevez and Kulla 2018 / Conty and Kulla 2018 style
   BVH over lights with an adaptive cut). An alternative to our light grid.
-  Worth a comparison only if the grid shows noise with many dim lamps.
 - Owen-scrambled Sobol sampling, path contribution clamp, Russian roulette as
   settings. Small wins; Ray Reconstruction already dominates noise.
-- Sky light importance table. Our night skies are dim; little to gain.
+- Sky light importance table (D54, D62 to D72).
 - Random-walk subsurface scattering (D120). Faces and hands at close range.
 - Cluster acceleration structures, cluster LOD, partitioned TLAS, geometry
-  streaming, async AS builds (D79 to D98). This is the RTX Mega Geometry path.
-  Large and invasive; our scenes are small enough not to need it.
+  streaming, async AS builds (D79 to D98).
 - Strand hair (linear swept spheres, RTXCR BCSDF). LSS hardware is Blackwell
-  (RTX 50); our characters are single meshes without strands.
-- OpenSubdiv subdivision with displacement. Not needed for our assets.
+  (RTX 50).
+- OpenSubdiv subdivision with displacement.
+
+## Second target: a large open world
+
+The fork also serves a large open-world game. That changes the ranking:
+the limits there are acceleration-structure memory and build time, instance
+counts, light counts and float precision far from the origin, not material
+fidelity in a small set. For that target Valence is the most useful public
+reference we have found, because it already does the RTX Mega Geometry path
+on Vulkan inside this same tracer.
+
+Ranked for open world:
+
+1. Cluster acceleration structures and cluster LOD (D79 to D92).
+   `VK_NV_cluster_acceleration_structure` with meshoptimizer's `clusterlod.h`
+   hierarchy, per-instance LOD cuts selected on the GPU, BLAS sharing between
+   instances at the same cut, cached levels under a memory budget, templates
+   for deformed meshes. This is what lets distant geometry stay in the trace
+   at a coarse level instead of being culled or kept at full detail. Without
+   it, path tracing a large world means either a short trace distance or
+   BLAS memory that grows with view distance.
+2. Partitioned TLAS (D94a to D94c). `VK_NV_partitioned_acceleration_structure`
+   rebuilds only the partitions whose instances changed, so a world with
+   hundreds of thousands of mostly static instances does not pay a full TLAS
+   build every frame.
+3. Geometry streaming and residency (D93a to D93d). Per-cluster blobs, CLAS
+   residency, position fetch, gathers on worker threads, a RAM fallback level.
+   Ties into the engine's streaming of world cells.
+4. Async acceleration-structure builds on the compute queue, a per-frame build
+   budget and a build timer (D97, D98). NVIDIA's rewrite has BLAS budgets; the
+   async queue and timeline semaphores are not in it.
+5. Relative-origin tracing (`relative_origin_grid`, default 16 m) and the
+   ray-origin offset floor from the largest coordinate. Keeps self-intersection
+   and acne under control kilometres from the origin.
+6. Light tree. Our light grid caps at 4096 lights in a fixed world grid; a
+   light BVH with an adaptive cut scales as log n and needs no grid extent.
+   For a city or open world at night this should be benchmarked against the
+   grid, not assumed.
+7. Sky light importance sampling and histogram auto exposure. A daytime
+   world with sun, sky and day-night changes needs both; the small night
+   scene did not.
+8. Opacity micromaps (already item 2 above), more valuable still with
+   vegetation at world scale.
+
+All of this needs hardware and driver support checks on Ada (RTX 40) and a
+raster fallback where the extensions are missing; Valence already gates
+clustering on device support ("load-time clustering only on devices with
+cluster BLAS"), which is the pattern to copy.
 
 ## Recommendation
 
 Do not merge or track this fork. Use it as a reference implementation, with
-its commit messages as design notes, for a few features we lack, each done
-on the NVIDIA rewrite base after the port lands:
+its commit messages as design notes, done on the NVIDIA rewrite base after
+the port lands, each on its own branch with raster and PT comparison shots.
+
+For the small dense scene:
 
 1. Emissive NEE, extended to textured emitters.
 2. Clearcoat and multiple-scattering compensation in the PT BRDF.
 3. Opacity micromaps for alpha-tested foliage and grates.
 4. Thin diffuse transmission.
 
-Each is its own branch with raster and PT comparison shots before it merges.
+For the open world, before committing to an approach, a design note that
+compares Valence's cluster LOD + partitioned TLAS route with what NVIDIA's
+rewrite and RTX Mega Geometry samples (vk_lod_clusters, vk_partitioned_tlas)
+do, measured on a large test world. That decides whether the open world can
+be path traced at all at playable frame rates on the target hardware.
