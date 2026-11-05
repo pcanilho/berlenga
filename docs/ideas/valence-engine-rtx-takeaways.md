@@ -15,6 +15,21 @@ layout and the traps they measured.
 Columns used below: what it does, how, the commits to read, what they
 measured, and the traps.
 
+## Attribution
+
+Anything this fork takes from valence-engine-rtx (Rman887, MIT) is credited:
+
+- Each commit that reimplements or adapts one of its features names it in
+  the message body: `Based on Rman887/valence-engine-rtx <commit> (<D id>)`.
+- The code carries a one-line comment at the feature's entry point naming
+  the same source, next to the papers it implements.
+- Code copied rather than rewritten keeps its MIT copyright and permission
+  notice, and COPYRIGHT.txt gains an entry for it. Third-party code it
+  vendors keeps its own licence entry (RTXCR: MIT; OpenSubdiv: TOST-1.0;
+  RTXTF: NVIDIA RTX SDKs licence, to be checked before vendoring).
+- The CHANGELOG line for such a PR and the README's references section
+  name the project.
+
 ## 1. Many-light sampling: light tree with resampling
 
 What our base has: `nv-port` picks a positional light by resampled importance
@@ -245,6 +260,24 @@ payload, Beer-Lambert along the actual path, so lakes, sea and puddles fade
 light correctly and the camera can go under water without fog workarounds.
 
 Random-walk subsurface (D120): skin, foliage and wax at close range.
+
+## 10. General engine fixes (small, independent of the path tracer's design)
+
+- Index variants on mesh surfaces, drawn per instance (196834c, ff0ce16,
+  5aa0bad): one mesh, triangles hidden per instance, in raster and trace.
+  Damage, destruction, cut-aways.
+- Pipeline precompile makes each vertex and framebuffer format once
+  (1a8c611); the Vulkan pipeline cache capped and safe past 2 GiB.
+- Skeleton loops over the active blend shapes only; an unchanged blend
+  shape weight does not re-deform its instance; a mesh swapped for one of
+  the same layout keeps its surface caches (4fcb408, 9bc0a2a).
+- MultiMesh: set_buffer on a mirrored MultiMesh uploads once.
+- SurfaceTool hashes Vertex field by field, not over padded bytes.
+- Jolt: cast_motion streams broadphase candidates through its filters; a
+  zero-length motion has a defined step count.
+- RenderingDeviceGraph barrier fixes for acceleration-structure reads
+  (MEMORY_READ, TLAS lists reading their BLASes, in-place writes waiting
+  for device-address reads).
 
 ## Order when work resumes
 
