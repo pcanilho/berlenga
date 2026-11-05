@@ -710,6 +710,18 @@
 				This is only used by Vulkan in debug builds. Godot must also be started with the [code]--extra-gpu-memory-tracking[/code] [url=$DOCS_URL/tutorials/editor/command_line_tutorial.html]command line argument[/url].
 			</description>
 		</method>
+		<method name="get_video_memory_budget" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how much device-local (video) memory this process may use, in bytes, summed over the GPU's device-local heaps. With Vulkan and [code]VK_EXT_memory_budget[/code] this is the driver's budget, which already accounts for memory held by other applications; without it, it is the heaps' total size. Returns [code]0[/code] when the driver cannot tell.
+			</description>
+		</method>
+		<method name="get_video_memory_usage" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the device-local (video) memory this process uses now, in bytes. With Vulkan and [code]VK_EXT_memory_budget[/code] this is the driver's figure for the whole process, including memory not allocated through this [RenderingDevice] (for example by DLSS or other libraries); without it, it is the memory blocks of this [RenderingDevice]'s allocator. Returns [code]0[/code] when the driver cannot tell. Compare it with [method get_video_memory_budget] to warn before running out of video memory.
+			</description>
+		</method>
 		<method name="has_feature" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="feature" type="int" enum="RenderingDevice.Features" />

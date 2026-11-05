@@ -620,6 +620,8 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	}
 #endif
 	_register_requested_device_extension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME, false);
+	// The driver's per-heap budget and the whole process's usage (VMA reads them).
+	_register_requested_device_extension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, false);
 
 	{
 		// Debug marker extensions.
@@ -1668,6 +1670,20 @@ Error RenderingDeviceDriverVulkan::_initialize_allocator() {
 	}
 	if (buffer_device_address_support) {
 		allocator_info.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+	}
+
+	// VK_EXT_memory_budget: VMA queries it through vkGetPhysicalDeviceMemoryProperties2(KHR),
+	// which it only imports by itself when told the API version is 1.1 or higher, so hand it over.
+	VmaVulkanFunctions vma_functions = {};
+	memory_budget_support = false;
+	if (enabled_device_extension_names.has(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) {
+		PFN_vkGetPhysicalDeviceMemoryProperties2KHR get_memory_properties_2 = vkGetPhysicalDeviceMemoryProperties2 ? vkGetPhysicalDeviceMemoryProperties2 : vkGetPhysicalDeviceMemoryProperties2KHR;
+		if (get_memory_properties_2 != nullptr) {
+			vma_functions.vkGetPhysicalDeviceMemoryProperties2KHR = get_memory_properties_2;
+			allocator_info.pVulkanFunctions = &vma_functions;
+			allocator_info.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+			memory_budget_support = true;
+		}
 	}
 	VkResult err = vmaCreateAllocator(&allocator_info, &allocator);
 	ERR_FAIL_COND_V_MSG(err, ERR_CANT_CREATE, vformat("Couldn't create Vulkan memory allocator (VkResult error %d).", err));
@@ -7545,6 +7561,32 @@ uint64_t RenderingDeviceDriverVulkan::get_total_memory_used() {
 	}
 
 	return total_memory_used;
+}
+
+void RenderingDeviceDriverVulkan::get_video_memory_info(uint64_t &r_budget, uint64_t &r_usage) {
+	r_budget = 0;
+	r_usage = 0;
+	const VkPhysicalDeviceMemoryProperties *memory_properties = nullptr;
+	vmaGetMemoryProperties(allocator, &memory_properties);
+
+	VmaBudget *budgets = ALLOCA_ARRAY(VmaBudget, memory_properties->memoryHeapCount);
+	vmaGetHeapBudgets(allocator, budgets);
+
+	for (uint32_t i = 0; i < memory_properties->memoryHeapCount; i++) {
+		if (!(memory_properties->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)) {
+			continue;
+		}
+		if (memory_budget_support) {
+			// The driver's figures: what this process may use, given what others hold,
+			// and what the whole process (not only this allocator) uses now.
+			r_budget += budgets[i].budget;
+			r_usage += budgets[i].usage;
+		} else {
+			// No driver figures: the heap's size, and this allocator's own memory blocks.
+			r_budget += memory_properties->memoryHeaps[i].size;
+			r_usage += budgets[i].statistics.blockBytes;
+		}
+	}
 }
 
 uint64_t RenderingDeviceDriverVulkan::get_lazily_memory_used() {

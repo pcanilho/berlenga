@@ -1970,6 +1970,8 @@ public:
 	};
 
 	uint64_t get_memory_usage(MemoryType p_type) const;
+	uint64_t get_video_memory_budget() const;
+	uint64_t get_video_memory_usage() const;
 
 	RenderingDevice *create_local_device();
 
