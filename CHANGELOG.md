@@ -7,7 +7,10 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 ## Unreleased
 
 ### Fixed
-- A re-run release (a macOS build that found no runner) adds the missing zips to the existing release instead of failing (#80).
+- A release build that GitHub found no runner for (macOS when hosted capacity is short) is retried automatically, and the re-run adds its zip to the existing release instead of failing (#80).
+
+### Changed
+- Release notes list the downloads in a table: one row per build with its link and the zip's SHA-256; the executables' hashes are in a collapsed section (#80).
 
 ## build-ad774282 (2026-11-05)
 
