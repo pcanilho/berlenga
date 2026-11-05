@@ -53,6 +53,12 @@ layout(set = 0, binding = 5) restrict writeonly buffer PrevVtxBuf {
 }
 prev_vtx;
 
+// Particles: each instance's color (from its word `color_word` on), one vec4 an instance.
+layout(set = 0, binding = 6) restrict writeonly buffer DstColorBuf {
+	vec4 v[];
+}
+dst_color;
+
 #ifdef MODE_INDEXED
 layout(set = 0, binding = 4) restrict writeonly buffer DstIdxBuf {
 	uint v[];
@@ -80,6 +86,7 @@ layout(push_constant, std430) uniform PC {
 	uint has_tbn; // 1 if mesh has normals/tangents, 0 otherwise
 	uint attr_stride_words; // attribute stride in uint words (0 = mesh has no attribs)
 	uint keep_prev; // 1: copy the positions baked last time to prev_vtx first (motion vectors)
+	uint color_word; // particles: the color's word offset in an instance (0: none, not particles)
 }
 push;
 
@@ -125,6 +132,17 @@ void main() {
 		vec3 t = vec3(row0.w, row1.w, row2.w);
 
 		vec3 wp = rot * p + t;
+		if (push.color_word != 0u) {
+			// A particle not alive has an infinite origin: NaN takes its triangles out of
+			// the BLAS (an inactive primitive), where infinity would wreck the bounds.
+			if (any(isinf(t)) || any(isnan(t))) {
+				wp = vec3(uintBitsToFloat(0x7FC00000u));
+			}
+			if (vtx == 0u) {
+				uint c = b + push.color_word;
+				dst_color.v[inst] = vec4(mm_buf.v[c], mm_buf.v[c + 1u], mm_buf.v[c + 2u], mm_buf.v[c + 3u]);
+			}
+		}
 		uint pos_base = idx * 3u;
 		if (push.keep_prev != 0u) {
 			prev_vtx.v[pos_base + 0u] = dst_vtx.v[pos_base + 0u];

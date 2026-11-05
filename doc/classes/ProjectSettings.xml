@@ -3307,6 +3307,12 @@
 		<member name="rendering/pathtracing/transparent_lighting/particle_anisotropy" type="float" setter="" getter="" default="0.75">
 			How much light particles scatter forward under the path tracer's light cache for transparents (see [member rendering/pathtracing/transparent_lighting/enabled]). Particles are lit by a phase function, not as surfaces: the Henyey-Greenstein lobe with this anisotropy, plus an isotropic share. Raindrops and mist scatter strongly forward, so rain in front of a street lamp or a headlight glints and dims when lit from the side or behind. [code]0[/code] scatters evenly in every direction; negative values scatter back toward the light.
 		</member>
+		<member name="rendering/pathtracing/transparent_lighting/particle_reflection_distance" type="float" setter="" getter="" default="60.0">
+			How far, in meters, a reflection or refraction looks for particles (see [member rendering/pathtracing/transparent_lighting/particles_in_reflections]). Shorter is cheaper: rain seen in a puddle is mostly the rain just above it.
+		</member>
+		<member name="rendering/pathtracing/transparent_lighting/particles_in_reflections" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], visible particles show in path traced reflections and refractions: rain and splashes in puddles, on wet roads and in glass. Each frame the particles' meshes are baked into the ray tracing scene, where only the first mirror-like bounce of a path meets them; it gathers every particle along its ray, weighs each by its alpha (weighted blended order-independent transparency, as RTX Remix lights its particles) and lights them from the light cache with the same phase function as the transparent pass. Camera rays, shadows and diffuse bounces never meet them, and particles with trails are left out. Requires [member rendering/pathtracing/transparent_lighting/enabled]. The material's albedo color and texture and the particle's color are used; custom shaders' own colors are not.
+		</member>
 		<member name="rendering/pathtracing/use_simple_shadows" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], shadow rays use Ray Queries instead of fully traced rays. Ray Queries are significantly cheaper but rely on a quick alpha texture fetch, which can produce incorrect shadows on materials with generated/animated alpha textures. Fully traced shadow rays are more accurate but incur a higher GPU cost.
 			[b]Note:[/b] Only has an effect when path tracing is enabled on the active [Environment].

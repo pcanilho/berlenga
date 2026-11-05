@@ -56,7 +56,9 @@ struct GeometryData {
 	// UV2 inside `attribute_stride` (OFFSET_NONE when the mesh has none), and its fp16 scale.
 	uint uv2_byte_offset;
 	uint uv2_scale_packed;
-	uint _pad;
+	// Particles (RT_MASK_PARTICLES): the triangles of one particle; their colors, a vec4
+	// a particle, at prev_vertex_address. 0 otherwise.
+	uint particle_primitives;
 };
 
 void get_aabb_compression_xforms(GeometryData geom, out mat4 aabb_xform, out mat4 inv_aabb_xform) {

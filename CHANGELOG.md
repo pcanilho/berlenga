@@ -6,6 +6,9 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## Unreleased
 
+### Added
+- Path tracer: particles show in reflections and refractions (rain in puddles and glass), lit from the light cache; `rendering/pathtracing/transparent_lighting/particles_in_reflections` and `particle_reflection_distance` (#79).
+
 ### Fixed
 - CodeQL scans run to completion: a push to `main` waits behind a running scan instead of cancelling it (#77).
 

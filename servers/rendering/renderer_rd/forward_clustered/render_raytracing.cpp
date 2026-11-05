@@ -38,6 +38,7 @@
 #include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/mesh_storage.h"
+#include "servers/rendering/renderer_rd/storage_rd/particles_storage.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/storage/environment_storage.h"
@@ -497,10 +498,15 @@ void RenderRaytracing::cleanup_caches() {
 				rd->free_rid(e->replicated_idx_buffer);
 				e->replicated_idx_buffer = RID();
 			}
+			if (e->color_buffer.is_valid()) {
+				rd->free_rid(e->color_buffer);
+				e->color_buffer = RID();
+			}
 			merged_mm_pool.free(live[i]);
 		}
 	}
 	mm_handles.clear();
+	particle_handles.clear();
 	deformed_active_this_frame.clear();
 	merged_mm_active_this_frame.clear();
 
@@ -700,6 +706,10 @@ void RenderRaytracing::prepare_frame() {
 			if (e->replicated_idx_buffer.is_valid()) {
 				rd->free_rid(e->replicated_idx_buffer);
 				e->replicated_idx_buffer = RID();
+			}
+			if (e->color_buffer.is_valid()) {
+				rd->free_rid(e->color_buffer);
+				e->color_buffer = RID();
 			}
 			merged_mm_pool.free(live[i]);
 		}
@@ -2113,10 +2123,10 @@ void RenderRaytracing::finalize_buffers(RTViewportState *p_state) {
 // ---------------------------------------------------------------------------
 
 bool RenderRaytracing::_build_merged_mm_blas(
-		RID p_mm_rid,
-		RID p_mm_gpu_buffer,
+		RID p_key_rid,
+		LocalVector<MMSurfaceHandles> &p_handles,
+		const MMMergeSource &p_src,
 		void *p_mesh_surface,
-		uint32_t p_mm_count,
 		uint32_t p_surface_index,
 		uint32_t p_surface_counter,
 		RD::ComputeListID p_compute_list,
@@ -2124,6 +2134,8 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		LocalVector<RID> &r_dirty_blas_update_list,
 		RTSurfaceData *r_surf_data) {
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+	const uint32_t p_mm_count = p_src.count;
+	const bool particles = p_src.color_word != 0;
 
 	uint32_t vertex_count = mesh_storage->mesh_surface_get_vertex_count(p_mesh_surface);
 	RID index_buffer = mesh_storage->mesh_surface_get_index_buffer(p_mesh_surface, 0);
@@ -2141,18 +2153,18 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		return false;
 	}
 	static const uint32_t MM_MERGED_BLAS_MAX_TRIANGLES = (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles");
-	if ((uint64_t)p_mm_count * prim_count > MM_MERGED_BLAS_MAX_TRIANGLES) {
+	if ((uint64_t)p_mm_count * prim_count > (particles ? (1u << 20) : MM_MERGED_BLAS_MAX_TRIANGLES)) {
 		return false; // Too large; fall back to expanded TLAS.
 	}
 
 	// Side table -> pool: dense direct index keyed by RID local_index, with a
 	// validator stamp to detect RID local-index recycling for a different MM.
-	const uint32_t li = p_mm_rid.get_local_index();
-	const uint32_t mm_validator = static_cast<uint32_t>(p_mm_rid.get_id() >> 32);
-	if (li >= mm_handles.size()) {
-		mm_handles.resize(li + 1);
+	const uint32_t li = p_key_rid.get_local_index();
+	const uint32_t mm_validator = static_cast<uint32_t>(p_key_rid.get_id() >> 32);
+	if (li >= p_handles.size()) {
+		p_handles.resize(li + 1);
 	}
-	MMSurfaceHandles &mm_entry = mm_handles[li];
+	MMSurfaceHandles &mm_entry = p_handles[li];
 	if (mm_entry.mm_validator != mm_validator) {
 		// Local index has been recycled (or first-ever access). Release any slots
 		// the previous owner left behind so we don't leak until TTL.
@@ -2179,6 +2191,9 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			if (old->replicated_idx_buffer.is_valid()) {
 				rd_local->free_rid(old->replicated_idx_buffer);
 			}
+			if (old->color_buffer.is_valid()) {
+				rd_local->free_rid(old->color_buffer);
+			}
 			merged_mm_pool.free(h);
 			h = RID();
 		}
@@ -2203,7 +2218,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 	// Detect whether instance transforms moved since our last bake. Without this
 	// we'd re-merge + refit every frame even for fully-static MultiMeshes, which
 	// is significant wasted compute for high-instance-count crowds/foliage.
-	const uint64_t mm_last_change = mesh_storage->multimesh_get_last_change(p_mm_rid);
+	const uint64_t mm_last_change = p_src.last_change;
 	const bool transforms_changed = (entry.cached_mm_last_change != mm_last_change);
 
 	bool structure_changed = (entry.last_mm_count != p_mm_count ||
@@ -2296,6 +2311,17 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		}
 	}
 
+	// --- Particles: grow / allocate the colors' buffer ---
+	if (particles && (!entry.color_buffer.is_valid() || entry.color_capacity_bytes < p_mm_count * 16)) {
+		if (entry.color_buffer.is_valid()) {
+			rd->free_rid(entry.color_buffer);
+		}
+		entry.color_capacity_bytes = p_mm_count * 16;
+		entry.color_buffer = rd->storage_buffer_create(entry.color_capacity_bytes, {}, 0, RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT);
+		ERR_FAIL_COND_V(!entry.color_buffer.is_valid(), false);
+		rd->set_resource_name(entry.color_buffer, "RT particle colors [" + itos(cache_key) + "]");
+	}
+
 	RID src_attr_buf;
 	if (has_attr) {
 		src_attr_buf = mesh_storage->mesh_surface_get_attribute_buffer(p_mesh_surface);
@@ -2316,7 +2342,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 	// A rebake over positions already baked keeps them as the previous frame's, so an
 	// instance moved inside the MultiMesh (not only the MultiMesh as a whole) reports its
 	// motion to the denoiser. Not on the first bake, nor after the buffers were remade.
-	const bool keep_prev = needs_rebake && entry.blas_built_once;
+	const bool keep_prev = needs_rebake && entry.blas_built_once && !particles;
 	const uint32_t pos_bytes = p_mm_count * vertex_count * 12;
 	if (keep_prev && (!entry.prev_pos_buffer.is_valid() || entry.prev_pos_capacity_bytes < pos_bytes)) {
 		if (entry.prev_pos_buffer.is_valid()) {
@@ -2340,18 +2366,19 @@ bool RenderRaytracing::_build_merged_mm_blas(
 				uniforms.push_back(u);
 			};
 			push_buf(0, entry.merged_vtx_buffer);
-			push_buf(1, p_mm_gpu_buffer);
+			push_buf(1, p_src.buffer);
 			push_buf(2, entry.merged_attr_buffer);
 			push_buf(3, src_attr_buf);
 			if (indexed) {
 				push_buf(4, entry.replicated_idx_buffer);
 			}
 			push_buf(5, keep_prev ? entry.prev_pos_buffer : RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
+			push_buf(6, particles ? entry.color_buffer : RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		}
 		RID merge_uniform_set = rd->uniform_set_create(uniforms, mm_merge_shader.version_shader[merge_mode], 0, /*p_linear_pool=*/true);
 		ERR_FAIL_COND_V(!merge_uniform_set.is_valid(), false);
-		uint32_t mm_stride = mesh_storage->multimesh_get_stride(p_mm_rid);
-		uint32_t mm_cur_offset = mesh_storage->multimesh_get_current_instance_offset(p_mm_rid);
+		uint32_t mm_stride = p_src.stride;
+		uint32_t mm_cur_offset = p_src.offset;
 		uint32_t tbn_stride_words = tbn_stride / 4;
 		// In the merged vertex buffer the TBN block starts after all N*V float3 positions.
 		uint32_t dst_tbn_base_words = p_mm_count * vertex_count * 3;
@@ -2371,6 +2398,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			uint32_t has_tbn;
 			uint32_t attr_stride_words;
 			uint32_t keep_prev;
+			uint32_t color_word;
 		} pc;
 
 		pc.src_vtx_lo = uint32_t(vtx_bda);
@@ -2395,6 +2423,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		pc.has_tbn = has_tbn ? 1u : 0u;
 		pc.attr_stride_words = has_attr ? (attrib_stride / 4) : 0u;
 		pc.keep_prev = keep_prev ? 1u : 0u;
+		pc.color_word = p_src.color_word;
 
 		MergeShader::Mode mode = indexed ? MergeShader::MODE_INDEXED : MergeShader::MODE_NON_INDEXED;
 		rd->compute_list_bind_compute_pipeline(p_compute_list, mm_merge_shader.pipeline[mode]);
@@ -2415,6 +2444,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 				uint32_t has_tbn;
 				uint32_t attr_stride_words;
 				uint32_t keep_prev;
+				uint32_t color_word;
 			} pc_ni;
 			pc_ni.src_vtx_lo = pc.src_vtx_lo;
 			pc_ni.src_vtx_hi = pc.src_vtx_hi;
@@ -2429,6 +2459,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			pc_ni.has_tbn = pc.has_tbn;
 			pc_ni.attr_stride_words = pc.attr_stride_words;
 			pc_ni.keep_prev = pc.keep_prev;
+			pc_ni.color_word = pc.color_word;
 			rd->compute_list_set_push_constant(p_compute_list, &pc_ni, sizeof(MergePCNonIndexed));
 		}
 
@@ -2463,16 +2494,18 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			as_geom.geometry.triangles.index_count = p_mm_count * index_count;
 		}
 
-		BitField<RD::AccelerationStructureFlagBits> as_flags =
-				RD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT |
-				RD::ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT;
+		// Particles are rebuilt every frame: a refit would stretch the bounds over every
+		// drop born at the top of the emitter and dying at the bottom.
+		BitField<RD::AccelerationStructureFlagBits> as_flags = particles
+				? BitField<RD::AccelerationStructureFlagBits>(RD::ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT)
+				: BitField<RD::AccelerationStructureFlagBits>(RD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT | RD::ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT);
 		entry.blas = rd->blas_create({ &as_geom, 1 }, as_flags);
 		ERR_FAIL_COND_V(!entry.blas.is_valid(), false);
 		rd->set_resource_name(entry.blas, "RT MM merged BLAS [" + itos(cache_key) + "]");
 	}
 
 	if (needs_rebake) {
-		if (!entry.blas_built_once) {
+		if (!entry.blas_built_once || particles) {
 			r_dirty_blas_list.push_back(entry.blas);
 			entry.blas_built_once = true;
 		} else {
@@ -2499,7 +2532,13 @@ bool RenderRaytracing::_build_merged_mm_blas(
 
 	// Instances moved inside the MultiMesh this frame: the hit shader takes their previous
 	// positions from the copy kept before the rebake, as it does for a skinned mesh's.
-	if (entry.prev_pos_frame == current_frame && entry.prev_pos_buffer.is_valid()) {
+	if (particles) {
+		const uint64_t color_addr = rd->buffer_get_device_address(entry.color_buffer);
+		geom.flags &= ~RT_GEOM_FLAG_DEFORMED;
+		geom.prev_vertex_buffer_address_lo = static_cast<uint32_t>(color_addr & 0xFFFFFFFFULL);
+		geom.prev_vertex_buffer_address_hi = static_cast<uint32_t>(color_addr >> 32);
+		geom.particle_primitives = prim_count;
+	} else if (entry.prev_pos_frame == current_frame && entry.prev_pos_buffer.is_valid()) {
 		const uint64_t prev_addr = rd->buffer_get_device_address(entry.prev_pos_buffer);
 		geom.flags |= RT_GEOM_FLAG_DEFORMED;
 		geom.prev_vertex_buffer_address_lo = static_cast<uint32_t>(prev_addr & 0xFFFFFFFFULL);
@@ -2962,10 +3001,91 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 		}
 	}
 
+	// The visible particles, for reflections (#72): each draw pass's surfaces baked into one
+	// BLAS a frame, met only by the reflections' particle query (RT_MASK_PARTICLES) and
+	// lit there from the transparent pass's light cache. Trails are left out.
+	struct PendingParticles {
+		RID particles;
+		void *mesh_surface;
+		uint32_t surface_index;
+		uint32_t surface_counter;
+		Transform3D transform;
+		RTMaterialData *mat_data;
+		MMMergeSource src;
+	};
+	LocalVector<PendingParticles> pending_particles;
+	if (p_render_data->instances && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transparent_lighting/enabled") &&
+			GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transparent_lighting/particles_in_reflections")) {
+		RendererRD::ParticlesStorage *particles_storage = RendererRD::ParticlesStorage::get_singleton();
+		const uint32_t frame = RSG::rasterizer->get_frame_number();
+		const PagedArray<RenderGeometryInstance *> &visible = *p_render_data->instances;
+		for (uint32_t i = 0; i < (uint32_t)visible.size(); i++) {
+			const RenderForwardClustered::GeometryInstanceForwardClustered *inst =
+					static_cast<const RenderForwardClustered::GeometryInstanceForwardClustered *>(visible[i]);
+			if (!inst || !inst->data || inst->data->base_type != RSE::INSTANCE_PARTICLES || inst->trail_steps > 1) {
+				continue;
+			}
+			RID particles = inst->data->base;
+			RID buffer = particles_storage->particles_get_instance_buffer(particles);
+			uint32_t trail_divisor = 1;
+			uint32_t amount = particles_storage->particles_get_amount(particles, trail_divisor);
+			if (!buffer.is_valid() || amount == 0 || trail_divisor > 1) {
+				continue;
+			}
+			uint32_t current_offset = 0;
+			uint32_t prev_offset = 0;
+			particles_storage->particles_get_instance_buffer_motion_vectors_offsets(particles, current_offset, prev_offset);
+			MMMergeSource src;
+			src.buffer = buffer;
+			src.stride = 20; // a 3x4 transform, color and custom
+			src.offset = current_offset;
+			src.count = amount;
+			src.last_change = frame; // they move every frame
+			src.color_word = 12;
+			const Transform3D transform = particles_storage->particles_is_using_local_coords(particles) ? inst->transform : Transform3D();
+			uint32_t surface_slot = 0;
+			const int passes = particles_storage->particles_get_draw_passes(particles);
+			for (int j = 0; j < passes; j++) {
+				RID mesh = particles_storage->particles_get_draw_pass_mesh(particles, j);
+				if (!mesh.is_valid()) {
+					continue;
+				}
+				const int surfaces = mesh_storage->mesh_get_surface_count(mesh);
+				for (int k = 0; k < surfaces; k++, surface_slot++) {
+					void *mesh_surface = mesh_storage->mesh_get_surface(mesh, (uint32_t)k);
+					if (!mesh_surface || mesh_storage->mesh_surface_get_primitive(mesh_surface) != RSE::PRIMITIVE_TRIANGLES) {
+						continue;
+					}
+					RID material_rid = inst->data->material_override.is_valid() ? inst->data->material_override : mesh_storage->mesh_surface_get_material(mesh, k);
+					uint16_t material_counter = material_storage->material_get_rt_invalidation_counter(material_rid);
+					PendingParticles pending;
+					pending.particles = particles;
+					pending.mesh_surface = mesh_surface;
+					pending.surface_index = surface_slot;
+					pending.surface_counter = mesh_storage->mesh_surface_get_rt_invalidation_counter(mesh_surface);
+					pending.transform = transform;
+					pending.mat_data = process_material(material_rid, material_counter);
+					pending.src = src;
+					pending_particles.push_back(pending);
+				}
+			}
+		}
+	}
+
 	// -----------------------------------------------------------------------
 	// Phase 2: GPU compute — merged MultiMesh BLAS dispatches.
 	// -----------------------------------------------------------------------
 	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
+
+	auto multimesh_source = [&](const PendingMMSurface &p_pending) {
+		MMMergeSource src;
+		src.buffer = p_pending.mm_gpu_buffer;
+		src.stride = mesh_storage->multimesh_get_stride(p_pending.mm_rid);
+		src.offset = mesh_storage->multimesh_get_current_instance_offset(p_pending.mm_rid);
+		src.count = p_pending.mm_count;
+		src.last_change = mesh_storage->multimesh_get_last_change(p_pending.mm_rid);
+		return src;
+	};
 
 	for (const PendingMMSurface &pending : pending_mm_surfaces) {
 #ifdef TOOLS_ENABLED
@@ -2976,8 +3096,8 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 		// A caster's MultiMesh takes the expanded path, whose shared BLAS is
 		// built without duplicate any-hit calls.
 		bool use_merged = !pending.shadow_caster && pending.mm_gpu_buffer.is_valid() &&
-				_build_merged_mm_blas(pending.mm_rid, pending.mm_gpu_buffer, pending.mesh_surface,
-						pending.mm_count, pending.surface_index, pending.surface_counter,
+				_build_merged_mm_blas(pending.mm_rid, mm_handles, multimesh_source(pending),
+						pending.mesh_surface, pending.surface_index, pending.surface_counter,
 						compute_list, dirty_blas_list, dirty_blas_update_list, &merged_sd);
 
 		if (use_merged) {
@@ -3091,6 +3211,26 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 			}
 #endif
 		}
+	}
+
+	state->particle_instances = 0;
+	for (const PendingParticles &pending : pending_particles) {
+		RTSurfaceData merged_sd;
+		if (!_build_merged_mm_blas(pending.particles, particle_handles, pending.src, pending.mesh_surface,
+					pending.surface_index, pending.surface_counter,
+					compute_list, dirty_blas_list, dirty_blas_update_list, &merged_sd)) {
+			continue;
+		}
+		blass.push_back(merged_sd.blas);
+		blas_transforms.push_back(pending.transform);
+		geometry_data.push_back(merged_sd.geometry);
+		sbt_offsets.push_back(0);
+		material_data.push_back(pending.mat_data->data);
+		motion_indices.push_back(-1);
+		// Every candidate comes to the query, which weighs it by its alpha.
+		instance_flags.push_back(RD::ACCELERATION_STRUCTURE_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT | RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_NO_OPAQUE_BIT);
+		instance_masks.push_back(RT_INSTANCE_MASK_PARTICLES);
+		state->particle_instances++;
 	}
 
 	// Phase 3: BLAS / TLAS build.
@@ -3667,7 +3807,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			float prev_vp_unjittered[16];
 			float curr_vp_unjittered[16];
 		} rt_ubo = {};
-		static_assert(sizeof(rt_ubo) == 56 * sizeof(float));
+		static_assert(sizeof(rt_ubo) == 60 * sizeof(float));
 
 		if (p_render_data && p_render_data->environment.is_valid()) {
 			RendererEnvironmentStorage *env_storage = RendererEnvironmentStorage::get_singleton();
@@ -3738,6 +3878,11 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PLIGHT_BOUNCE] = GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transparent_lighting/bounce") ? 1.0f : 0.0f;
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PLIGHT_TILE] = float(_light_cache_tile(internal));
 				p_state->light_cache_history = true;
+				if (p_state->particle_instances > 0) {
+					rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PARTICLES] = 1.0f;
+					rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PARTICLE_ANISOTROPY] = CLAMP((float)GLOBAL_GET_CACHED(float, "rendering/pathtracing/transparent_lighting/particle_anisotropy"), -0.95f, 0.95f);
+					rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PARTICLE_DISTANCE] = MAX(0.0f, (float)GLOBAL_GET_CACHED(float, "rendering/pathtracing/transparent_lighting/particle_reflection_distance"));
+				}
 			} else {
 				p_state->light_cache_history = false;
 			}

@@ -3839,6 +3839,8 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/far", PROPERTY_HINT_RANGE, "1,1000,0.1,or_greater,suffix:m"), 150.0);
 	GLOBAL_DEF("rendering/pathtracing/transparent_lighting/bounce", true);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/particle_anisotropy", PROPERTY_HINT_RANGE, "-0.95,0.95,0.01"), 0.75);
+	GLOBAL_DEF("rendering/pathtracing/transparent_lighting/particles_in_reflections", true);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/particle_reflection_distance", PROPERTY_HINT_RANGE, "1,500,0.1,or_greater,suffix:m"), 60.0);
 	GLOBAL_DEF("rendering/pathtracing/async_shader_compilation", true);
 	GLOBAL_DEF_RST("rendering/pathtracing/multimesh_cache_cpu_transforms", false);
 	GLOBAL_DEF_RST(PropertyInfo(Variant::INT, "rendering/pathtracing/deformed_mesh_cache_ttl_frames", PROPERTY_HINT_RANGE, "1,3600,1"), 60);

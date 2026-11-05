@@ -13,7 +13,7 @@
 // ============================================================================
 // RT_PARAMS INDICES - Must match RT_PARAM_* in scene_shader_raytracing.h
 // ============================================================================
-// rt_params is a vec4[5] uniform buffer (20 floats total)
+// rt_params is a vec4[7] uniform buffer (28 floats total)
 // Access: rt_params[idx >> 2][idx & 3] or get_rt_param(idx)
 #define RT_PARAM_VIS_MODE 0 // rt_params[0].x - Debug visualization mode (0 = disabled)
 #define RT_PARAM_SAMPLE_COUNT 1 // rt_params[0].y - Samples per pixel
@@ -45,6 +45,11 @@
 #define RT_PARAM_PLIGHT_STATE 21 // bit 0: the image pair written this frame; bit 1: last frame's is valid
 #define RT_PARAM_PLIGHT_BOUNCE 22 // 1: one sky / bounce ray a cell
 #define RT_PARAM_PLIGHT_TILE 23 // pixels a cell across (8, more at large sizes)
+// Particles in reflections (#72): the particle instances' share of the TLAS, met by the
+// first specular bounce's own query and lit from the light cache.
+#define RT_PARAM_PARTICLES 24 // 1: particle instances in the TLAS
+#define RT_PARAM_PARTICLE_ANISOTROPY 25 // their Henyey-Greenstein g, as the transparent pass's
+#define RT_PARAM_PARTICLE_DISTANCE 26 // metres a reflection ray looks for them, at most
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)
@@ -183,15 +188,18 @@ const uint FLAG_DEFORMED = 4u;
 const uint FLAG_SHADOW_CASTER = 8u;
 
 // Cull masks. Casters (Shadows Only) carry instance mask 0x02, instances whose
-// Cast Shadow is Off 0x08, and every other instance 0xFF. Camera rays and the
+// Cast Shadow is Off 0x08, particles 0x10 and every other instance 0xEF. Camera rays and the
 // denoiser's specular query (RT_MASK_SCENE) never meet a caster; shadow rays
 // (RT_MASK_SHADOW) never meet a Cast Shadow Off instance, as no shadow map
 // draws one; bounce rays (RT_MASK_BOUNCE) meet all three: a hidden ceiling
 // still holds the light in and bounces it back. The ray query shadow path runs
-// no any-hit, so it leaves casters out too (RT_MASK_SHADOW_OPAQUE).
+// no any-hit, so it leaves casters out too (RT_MASK_SHADOW_OPAQUE). Particles
+// (RT_MASK_PARTICLES) are met only by the reflection's own query (raygen), never
+// as a surface.
 #define RT_MASK_SCENE 0x09u
-#define RT_MASK_BOUNCE 0xFFu
-#define RT_MASK_SHADOW 0xF7u
+#define RT_MASK_BOUNCE 0xEFu
+#define RT_MASK_SHADOW 0xE7u
+#define RT_MASK_PARTICLES 0x10u
 #define RT_MASK_SHADOW_OPAQUE 0x01u
 // A shadow ray's transmittance under this is taken as blocked.
 #define RT_SHADOW_OPAQUE_TRANSMITTANCE (1.0 / 256.0)
