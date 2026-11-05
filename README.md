@@ -1,4 +1,4 @@
-# Godot, path tracing fork
+# Godot, path tracing improved
 
 Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot).
 
