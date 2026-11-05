@@ -5,6 +5,8 @@
 Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot).
 
 **Download:** [latest release](https://github.com/pcanilho/godot/releases/latest) for Windows, macOS (universal) and Linux (x86_64, arm64).
+
+**Changes:** [CHANGELOG.md](CHANGELOG.md).
 - Windows: full path tracing with DLSS Ray Reconstruction. Get the DLSS, Streamline and Reflex DLLs from NVIDIA and place them next to the exe.
 - Linux: path tracing without Ray Reconstruction.
 - macOS: raster only.
