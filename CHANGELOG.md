@@ -7,6 +7,7 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 ## Unreleased
 
 ### Fixed
+- Release retry with immutable releases: while a build waits for a runner the release stays a draft, and is published once the retry has added its zip (or after the third attempt) (#82).
 - Release retry: its job had five minutes, all spent waiting before the re-run (#81).
 
 ## build-3b0494b5 (2026-11-05)
