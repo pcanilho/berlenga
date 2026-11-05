@@ -91,7 +91,7 @@ float rt_ndc_depth(vec3 p_world_pos) {
 #ifdef DLSS_RR_ENABLED
 layout(set = 0, binding = 9, rgba16f) uniform image2D dlss_rr_diffuse_albedo;
 layout(set = 0, binding = 10, rgba16f) uniform image2D dlss_rr_specular_albedo;
-layout(set = 0, binding = 11, rgba16f) uniform image2D dlss_rr_normal_roughness;
+layout(set = 0, binding = 11, rgba8_snorm) uniform image2D dlss_rr_normal_roughness; // Created R8G8B8A8_SNORM (render_raytracing.cpp).
 layout(set = 0, binding = 12, rg16f) uniform image2D dlss_rr_specular_motion_vectors;
 
 // Share of a surface's reflectance leaving through the specular lobe, by Rec. 709 luminance.

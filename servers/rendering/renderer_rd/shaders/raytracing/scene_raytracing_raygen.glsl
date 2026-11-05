@@ -37,7 +37,7 @@ void store_path_timing(ivec2 pixel, uvec2 start_clock) {
 #include "raytracing_common_inc.glsl"
 #include "raytracing_samplers_inc.glsl"
 
-layout(set = 0, binding = 0, rgba32f) uniform image2D image;
+layout(set = 0, binding = 0, rgba16f) uniform image2D image; // RB_TEX_RAYTRACING is R16G16B16A16_SFLOAT.
 layout(set = 0, binding = 1) uniform accelerationStructureEXT tlas;
 layout(set = 0, binding = 31) uniform accelerationStructureEXT tlas_transparent;
 layout(set = 0, binding = 29) uniform texture2D prepass_depth_texture;
