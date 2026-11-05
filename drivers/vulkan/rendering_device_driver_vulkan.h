@@ -175,6 +175,7 @@ class RenderingDeviceDriverVulkan : public RenderingDeviceDriver {
 	DescriptorIndexingCapabilities descriptor_indexing_capabilities;
 	bool pipeline_cache_control_support = false;
 	bool device_fault_support = false;
+	bool memory_budget_support = false;
 	bool device_fault_vendor_binary_support = false;
 	bool framebuffer_depth_resolve = false;
 #if defined(VK_TRACK_DEVICE_MEMORY)
@@ -803,6 +804,7 @@ public:
 	virtual uint64_t get_resource_native_handle(DriverResource p_type, ID p_driver_id) override final;
 	virtual uint64_t get_total_memory_used() override final;
 	virtual uint64_t get_lazily_memory_used() override final;
+	virtual void get_video_memory_info(uint64_t &r_budget, uint64_t &r_usage) override final;
 	virtual uint64_t limit_get(Limit p_limit) override final;
 	virtual uint64_t api_trait_get(ApiTrait p_trait) override final;
 	virtual bool has_feature(Features p_feature) override final;

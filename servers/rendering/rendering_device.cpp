@@ -8175,6 +8175,20 @@ uint64_t RenderingDevice::get_memory_usage(MemoryType p_type) const {
 	}
 }
 
+uint64_t RenderingDevice::get_video_memory_budget() const {
+	uint64_t budget = 0;
+	uint64_t usage = 0;
+	driver->get_video_memory_info(budget, usage);
+	return budget;
+}
+
+uint64_t RenderingDevice::get_video_memory_usage() const {
+	uint64_t budget = 0;
+	uint64_t usage = 0;
+	driver->get_video_memory_info(budget, usage);
+	return usage;
+}
+
 void RenderingDevice::_begin_frame(bool p_presented) {
 	GodotProfileZoneGroupedFirst(_profile_zone, "_stall_for_frame");
 	// Before writing to this frame, wait for it to be finished.
@@ -9361,6 +9375,8 @@ void RenderingDevice::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_device_pipeline_cache_uuid"), &RenderingDevice::get_device_pipeline_cache_uuid);
 
 	ClassDB::bind_method(D_METHOD("get_memory_usage", "type"), &RenderingDevice::get_memory_usage);
+	ClassDB::bind_method(D_METHOD("get_video_memory_budget"), &RenderingDevice::get_video_memory_budget);
+	ClassDB::bind_method(D_METHOD("get_video_memory_usage"), &RenderingDevice::get_video_memory_usage);
 
 	ClassDB::bind_method(D_METHOD("get_driver_resource", "resource", "rid", "index"), &RenderingDevice::get_driver_resource);
 
