@@ -281,7 +281,10 @@ vec3 lights_projector_color(RTLightData light, vec3 p_dir) {
 	return projector.rgb * projector.a;
 }
 
+// Raygen (the transparent pass's light cache) has no geometry tables: it traces its shadow rays.
+#ifndef RT_LIGHTS_TRACE_SHADOWS_ONLY
 #include "raytracing_shadow_query_inc.glsl"
+#endif
 
 // ============================================================================
 // Shadow Ray (traceRayEXT pipeline)
@@ -292,7 +295,7 @@ vec3 lights_projector_color(RTLightData light, vec3 p_dir) {
 // TerminateOnFirstHit exits on the first opaque or stochastic alpha blocker.
 // p_shadow_mask is the light's 8-bit shadow-caster group mask.
 vec3 lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, uint p_shadow_mask, inout uint rng_state) {
-#ifdef USE_RAY_QUERY_SHADOWS
+#if defined(USE_RAY_QUERY_SHADOWS) && !defined(RT_LIGHTS_TRACE_SHADOWS_ONLY)
 	// Ray queries are faster but approximate custom or animated material outputs
 	// with a direct albedo texture sample.
 	return ray_query_shadow_transmittance(origin, direction, 0.001, max_dist - 0.001, p_shadow_mask, 0.0, rng_state);

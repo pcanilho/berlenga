@@ -45,6 +45,13 @@ layout(set = 0, binding = 30) uniform texture2D prepass_color_texture;
 
 layout(location = 0) rayPayloadEXT PathPayload payload;
 
+// The light API for the transparent pass's light cache (plight_update).
+#extension GL_EXT_nonuniform_qualifier : require
+layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+#include "brdf_inc.glsl"
+#define RT_LIGHTS_TRACE_SHADOWS_ONLY
+#include "raytracing_lights_inc.glsl"
+
 struct ContinuationReservoir {
 	PathState selected;
 	float selected_weight;
@@ -172,7 +179,7 @@ float plight_luma(vec3 c) {
 
 // A positional light's irradiance at a point facing it, unshadowed (as the raster light
 // loop: the inverse-power attenuation, the range window and the spot cone).
-vec3 plight_positional(FogLightData p_light, vec3 p_x, out vec3 r_to_light, out float r_dist) {
+vec3 plight_positional(RTLightData p_light, vec3 p_x, out vec3 r_to_light, out float r_dist) {
 	vec3 to_l = p_light.position - p_x;
 	float d2 = dot(to_l, to_l);
 	r_dist = sqrt(d2);
@@ -180,7 +187,7 @@ vec3 plight_positional(FogLightData p_light, vec3 p_x, out vec3 r_to_light, out 
 	if (p_light.max_range_squared > 0.0 && d2 > p_light.max_range_squared) {
 		return vec3(0.0);
 	}
-	float atten = min(pow(max(r_dist, 0.0001), -p_light.attenuation), 1.0);
+	float atten = pow(max(r_dist, 0.0001), -p_light.attenuation);
 	if (p_light.inv_max_range >= 0.0) {
 		float nd = r_dist * p_light.inv_max_range;
 		nd *= nd;
@@ -188,12 +195,13 @@ vec3 plight_positional(FogLightData p_light, vec3 p_x, out vec3 r_to_light, out 
 		nd = max(1.0 - nd, 0.0);
 		atten *= nd * nd;
 	}
-	if (p_light.type == 3u) {
-		float scos = dot(-r_to_light, p_light.spot_direction);
-		if (scos <= p_light.cos_spot_angle) {
+	if (p_light.type == RT_LIGHT_TYPE_SPOT) {
+		float scos = dot(-r_to_light, lights_rotate(p_light.orientation, vec3(0.0, 0.0, -1.0)));
+		float cos_spot = 1.0 - p_light.one_minus_cos_spot;
+		if (scos <= cos_spot) {
 			return vec3(0.0);
 		}
-		float spot_rim = max(1e-4, (1.0 - scos) / (1.0 - p_light.cos_spot_angle));
+		float spot_rim = max(1e-4, (1.0 - scos) / max(p_light.one_minus_cos_spot, 1e-4));
 		atten *= 1.0 - pow(spot_rim, p_light.inv_spot_attenuation);
 	}
 	return p_light.emission * atten;
@@ -241,11 +249,9 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 
 	// the directional lights lead the light buffer: one direction in each one's disc
-	[[dont_unroll]] for (uint li = 0u; li < light_count; li++) {
-		FogLightData light = fog_lights[li];
-		if (light.type != 1u) {
-			break;
-		}
+	uint dir_count = lights_directional_count(light_count);
+	[[dont_unroll]] for (uint li = 0u; li < dir_count; li++) {
+		RTLightData light = lights_get(li);
 		vec3 axis = -normalize(light.position);
 		vec2 u = rand2(rng);
 		float cos_max = cos(light.radius);
@@ -255,7 +261,7 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 		vec3 tangent = normalize(abs(axis.y) < 0.999 ? cross(axis, vec3(0.0, 1.0, 0.0)) : cross(axis, vec3(1.0, 0.0, 0.0)));
 		vec3 bitangent = cross(axis, tangent);
 		vec3 L = normalize(tangent * (sin_t * cos(phi)) + bitangent * (sin_t * sin(phi)) + axis * cos_t);
-		vec3 e = light.emission * fog_shadow(x, L, 10000.0);
+		vec3 e = light.emission * lights_shadow_transmittance(light, x, L, 10000.0, 0xFFu, rng);
 		e_sum += e;
 		dir_sum += plight_luma(e) * L;
 	}
@@ -263,22 +269,8 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 	// the positional lights that can reach x (the light grid's lists): PLIGHT_CANDIDATES
 	// drawn uniformly, one kept in proportion to its unshadowed irradiance, and its shadow ray
 	{
-		uint g_count = fog_light_grid[3];
-		uint g_start = 8u;
-		uint c_start = 0u;
-		uint c_count = 0u;
-		uvec3 dims = uvec3(fog_light_grid[0], fog_light_grid[1], fog_light_grid[2]);
-		if (dims.x > 0u) {
-			vec3 origin = uintBitsToFloat(uvec3(fog_light_grid[4], fog_light_grid[5], fog_light_grid[6]));
-			vec3 c = floor((x - origin) * uintBitsToFloat(fog_light_grid[7]));
-			if (all(greaterThanEqual(c, vec3(0.0))) && all(lessThan(c, vec3(dims)))) {
-				uvec3 ci = uvec3(c);
-				uint idx = ci.x + dims.x * (ci.y + dims.y * ci.z);
-				uint starts = 8u + g_count;
-				c_start = fog_light_grid[starts + idx];
-				c_count = fog_light_grid[starts + idx + 1u] - c_start;
-			}
-		}
+		uint g_start, g_count, c_start, c_count;
+		lights_grid_lists(x, g_start, g_count, c_start, c_count);
 		uint n = g_count + c_count;
 		if (n > 0u) {
 			uint m = min(n, PLIGHT_CANDIDATES);
@@ -287,12 +279,13 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 			vec3 e_sel = vec3(0.0);
 			vec3 l_sel = vec3(0.0, 1.0, 0.0);
 			float d_sel = 0.0;
+			uint li_sel = 0u;
 			for (uint k = 0u; k < m; k++) {
 				// all of them when they fit, else drawn at random
 				uint pick = (n <= PLIGHT_CANDIDATES) ? k : min(uint(rand(rng) * float(n)), n - 1u);
-				uint li = pick < g_count ? fog_light_grid[g_start + pick] : fog_light_grid[c_start + (pick - g_count)];
-				FogLightData light = fog_lights[li];
-				if (light.type == 1u) {
+				uint li = lights_grid_light(pick, g_start, g_count, c_start);
+				RTLightData light = lights_get(li);
+				if (light.type == RT_LIGHT_TYPE_DIRECTIONAL) {
 					continue;
 				}
 				vec3 to_l;
@@ -309,10 +302,11 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 					e_sel = e;
 					l_sel = to_l;
 					d_sel = dist;
+					li_sel = li;
 				}
 			}
 			if (w_sel > 0.0) {
-				vec3 e = e_sel * (w_sum / w_sel) * fog_shadow(x, l_sel, max(d_sel - 0.01, 0.002));
+				vec3 e = e_sel * (w_sum / w_sel) * lights_shadow_transmittance(lights_get(li_sel), x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
 				e_sum += e;
 				dir_sum += plight_luma(e) * l_sel;
 			}
@@ -330,11 +324,13 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 		PathState ps;
 		ps.radiance = vec3(0.0);
 		ps.throughput = vec3(1.0);
-		ps.packed_bounces_flags = set_cone_width(0u, 0.0);
+		ps.packed_bounces_flags = 0u;
+		ps.offset_normal = vec3(0.0, 0.0, 1.0);
+		ps.next_ray_dir = dir;
 		ps.rng_state = init_rng(p_pixel, p_frame, 1237u);
 		ps.hit_t = -1.0;
 		path_pack(payload, ps);
-		traceRayEXT(tlas, RT_RAY_FLAGS, RT_MASK_BOUNCE, 0, 0, 0, x, 0.001, dir, 10000.0, 0);
+		traceRayEXT(tlas, RT_RAY_FLAGS, RT_BOUNCE_MASK, 0, 0, 0, x, 0.001, dir, 10000.0, 0);
 		ps = path_unpack(payload);
 		// a uniform sphere sample of radiance, as irradiance: L * 4 pi
 		vec3 e = clamp(ps.radiance, vec3(0.0), vec3(1000.0)) * (4.0 * PI);
@@ -486,8 +482,14 @@ void main() {
 			// Transparency over this segment is bounded closest-hit peeling.
 			// Non-scissored transparent instances are opaque to traversal, so
 			// only the closest hit runs a shader on each layer.
+			// Each segment's own budget gates it: with max_transparency_layers 0 the primary
+			// segment's transparents are drawn by the raster pass over the denoised frame, while
+			// reflections and refractions still peel them (the raster pass can't show them there).
+			uint layer_param = bounce == 0u			? RT_PARAM_MAX_TRANSPARENCY_LAYERS
+					: is_singular_path(flags_entry) ? RT_PARAM_MAX_TRANSPARENCY_LAYERS_REFLECTION
+													: RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT;
 			bool transparency_enabled = get_rt_param(RT_PARAM_TRANSPARENT_COUNT) > 0.0 &&
-					get_rt_param(RT_PARAM_MAX_TRANSPARENCY_LAYERS) > 0.0 &&
+					get_rt_param(layer_param) > 0.0 &&
 					bounce <= uint(get_rt_param(RT_PARAM_TRANSPARENCY_MAX_BOUNCE));
 #ifdef RT_DEBUG_ENABLED
 			transparency_enabled = transparency_enabled && rt_debug_keeps_transparency(int(get_rt_param(RT_PARAM_VIS_MODE)));
@@ -520,9 +522,6 @@ void main() {
 				uint continuation_rng = ps.rng_state;
 
 				float T_total = 1.0;
-				uint layer_param = bounce == 0u			? RT_PARAM_MAX_TRANSPARENCY_LAYERS
-						: is_singular_path(flags_entry) ? RT_PARAM_MAX_TRANSPARENCY_LAYERS_REFLECTION
-														: RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT;
 				uint layer_cap = min(uint(get_rt_param(layer_param)), 64u);
 				float peel_tmin = 0.001;
 				for (uint l = 0u; l < layer_cap && T_total > (1.0 / 256.0) && peel_tmin < seg_end; l++) {
