@@ -6,6 +6,9 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## Unreleased
 
+### Fixed
+- A re-run release (a macOS build that found no runner) adds the missing zips to the existing release instead of failing (#80).
+
 ## build-ad774282 (2026-11-05)
 
 ### Added

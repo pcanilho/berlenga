@@ -309,13 +309,22 @@ jobs:
             echo
             cat dist/hashes-*.md
           } > notes.md
-          gh release create "build-$short" dist/*.zip \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$SHA" \
-            --title "build $short (editor)" \
-            --notes-file notes.md \
-            --generate-notes \
-            --latest
+          if gh release view "build-$short" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # A re-run (say a macOS build that had no runner the first time): add the
+            # zips the release lacks and refresh its notes, keeping the pull request list.
+            gh release upload "build-$short" dist/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="build-$short" --jq .body > generated.md
+            { echo; cat generated.md; } >> notes.md
+            gh release edit "build-$short" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+          else
+            gh release create "build-$short" dist/*.zip \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SHA" \
+              --title "build $short (editor)" \
+              --notes-file notes.md \
+              --generate-notes \
+              --latest
+          fi
 
       - name: Move the released entries in CHANGELOG.md
         env:
