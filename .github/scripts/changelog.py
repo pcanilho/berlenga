@@ -66,6 +66,9 @@ def main():
         if not released:
             print("Nothing to move.")
             return
+        if any(line.startswith(f"## {sys.argv[3]} ") for line in rest):
+            print(f"{sys.argv[3]} is already in CHANGELOG.md.")
+            return
         done = {line for items in released.values() for line in items}
         remaining = entries(body)
         remaining = {k: [e for e in v if e not in done] for k, v in remaining.items()}
