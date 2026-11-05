@@ -213,6 +213,39 @@ with one warning when the extension is missing.
 - Water medium in the payload (ABSORPTION built-in, Beer-Lambert along the
   real path) for puddles and submerged geometry.
 
+## 9. Open world additions (wanted for the open-world game)
+
+Strand hair (D126, e016add0e5, ed8a806f0c, 7d87b757a1, plus the RenderingDevice
+and Vulkan commits of 2026-10-14):
+- `PRIMITIVE_LINES` surfaces with a per-vertex radius in CUSTOM0 build a
+  linear swept sphere (LSS) BLAS through `VK_NV_ray_tracing_linear_swept_spheres`;
+  skinned strands refit; MultiMesh copies supported.
+- BaseMaterial3D gains a hair feature (absorption by melanin or colour,
+  redness, IOR 1.55, cuticle tilt 2 degrees).
+- Shading: the RTXCR material library (MIT) hair BCSDFs ported to GLSL, the
+  far-field model by default and Chiang 2016 as an option, with NEE, MIS and
+  the BCSDF's own sample. Fixed a density bug in RTXCR's Chiang pdf (white
+  furnace +7.6 % before).
+- Trap: Valence has no fallback where the LSS extension is missing. LSS is
+  hardware on RTX 50 (Blackwell); whether the RTX 40 driver exposes the
+  extension has to be checked on the target machine. A fallback is needed
+  either way (strand cards as triangle ribbons shaded with the same BCSDF, or
+  a capsule intersection shader).
+
+Subdivision with displacement (D122, OpenSubdiv 3.7, 13ee3fa1, 68a3c4a9):
+Catmull-Clark refinement on the GPU per frame for deformed meshes, a height
+map baked per refined vertex as Cycles displaces. Geometric detail on
+terrain, rocks and hero assets at close range.
+
+Sky light sampling and exposure (D54, D62 to D72, D115): needed for daylight
+and day/night changes in a large world. See section 8.
+
+Water medium (2dc857368e): ABSORPTION and medium built-ins carried in the
+payload, Beer-Lambert along the actual path, so lakes, sea and puddles fade
+light correctly and the camera can go under water without fog workarounds.
+
+Random-walk subsurface (D120): skin, foliage and wax at close range.
+
 ## Order when work resumes
 
 1. Light tree (finish the draft with D56 cut and D63 falloff), then emissive
@@ -222,3 +255,5 @@ with one warning when the extension is missing.
 4. Open world: relative origin and offset floor first (small), then a
    measured design note on cluster LOD, partitioned TLAS and streaming
    against NVIDIA's samples.
+5. Strand hair with a fallback for hardware without LSS, then sky sampling
+   and exposure, water medium, subdivision, subsurface.
