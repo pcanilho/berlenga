@@ -6,12 +6,19 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## Unreleased
 
+## build-ad774282 (2026-11-05)
+
+### Added
+- Path tracer: particles show in reflections and refractions (rain in puddles and glass), lit from the light cache; `rendering/pathtracing/transparent_lighting/particles_in_reflections` and `particle_reflection_distance` (#79).
+
 ### Fixed
 - CodeQL scans run to completion: a push to `main` waits behind a running scan instead of cancelling it (#77).
 
 ## build-2d41bc16 (2026-11-05)
 
 ### Added
+- Path tracer: particles lit by a forward-scattering phase function from the light cache, so rain glints in front of lamps and headlights; `rendering/pathtracing/transparent_lighting/particle_anisotropy` (#76).
+- Path tracer lights particles and transparents: a traced light cache with shadowed lights, sky and bounce replaces the raster lights and ambient for them; `rendering/pathtracing/transparent_lighting/*` settings (#74).
 - CHANGELOG.md: release notes come from its Unreleased entries, and pull requests are checked for one (#73).
 
 ## build-57db5e08 (2026-11-05)
