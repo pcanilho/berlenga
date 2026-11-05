@@ -114,7 +114,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 24;
+	static constexpr int RT_PARAM_COUNT = 32;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -163,6 +163,13 @@ public:
 				return RT_SAMPLE_MODE_DYNAMIC;
 		}
 	}
+	// The raster transparent pass's traced light cache (max_transparency_layers 0).
+	static constexpr int RT_PARAM_PLIGHT_ENABLED = 24;
+	static constexpr int RT_PARAM_PLIGHT_NEAR = 25;
+	static constexpr int RT_PARAM_PLIGHT_FAR = 26;
+	static constexpr int RT_PARAM_PLIGHT_STATE = 27;
+	static constexpr int RT_PARAM_PLIGHT_BOUNCE = 28;
+	static constexpr int RT_PARAM_PLIGHT_TILE = 29;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

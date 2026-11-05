@@ -51,6 +51,14 @@
 bool rt_debug_keeps_transparency(int p_vis_mode) {
 	return p_vis_mode == 0 || p_vis_mode == RT_VIS_TRANSPARENCY_LAYERS || p_vis_mode == RT_VIS_DYNAMIC_GEOMETRY;
 }
+// The transparent pass's traced light cache (#72, scene_raytracing_raygen.glsl plight_update)
+#define RT_PARAM_PLIGHT_ENABLED 24 // 1: refresh the cache this frame
+#define RT_PARAM_PLIGHT_NEAR 25 // the grid's depth range (view distance, metres)
+#define RT_PARAM_PLIGHT_FAR 26
+#define RT_PARAM_PLIGHT_STATE 27 // bit 0: the image pair written this frame; bit 1: last frame's is valid
+#define RT_PARAM_PLIGHT_BOUNCE 28 // 1: one sky / bounce ray a cell
+#define RT_PARAM_PLIGHT_TILE 29 // pixels a cell across (8, more at large sizes)
+
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)
 // ============================================================================

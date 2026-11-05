@@ -149,6 +149,226 @@ void dlss_rr_replace_primary_surface(vec3 p_origin, vec3 p_dir, float p_hit_t) {
 }
 #endif // DLSS_RR_ENABLED
 
+// The traced light cache of the transparent pass (#72). Transparents and particles are
+// rasterised after the trace (and after Ray Reconstruction); under path tracing they read
+// their light from this camera-aligned froxel grid instead of the raster light loop and
+// ambient. A cell holds what a point in the air there receives: the lights of the light
+// grid through a shadow ray, the sky and one bounce off the traced scene. As the froxel
+// radiance cache RTX Remix lights its particles with (Wronski 2014, Hillaire 2015 for the
+// grid; Talbot et al. 2005 for the resampled light choice).
+//
+// The grid is the internal size / 8 across (a coarser tile past 240 cells) and PLIGHT_SLICES slices deep, log-spaced from
+// the near to the far distance; every pixel's thread refreshes one cell: the 8x8 block's
+// pixels the block's slices. Two images a frame, read back by the next one (ping-pong):
+// [0..1] frame A, [2..3] frame B; each pair rgb = the irradiance sum (normal incidence,
+// the light buffer's units), and xyz = its luminance-weighted direction sum.
+#define PLIGHT_SLICES 64u
+#define PLIGHT_CANDIDATES 8u
+layout(set = 0, binding = 43, rgba16f) uniform image3D plight_images[4];
+
+float plight_luma(vec3 c) {
+	return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+// A positional light's irradiance at a point facing it, unshadowed (as the raster light
+// loop: the inverse-power attenuation, the range window and the spot cone).
+vec3 plight_positional(FogLightData p_light, vec3 p_x, out vec3 r_to_light, out float r_dist) {
+	vec3 to_l = p_light.position - p_x;
+	float d2 = dot(to_l, to_l);
+	r_dist = sqrt(d2);
+	r_to_light = to_l / max(r_dist, 1e-4);
+	if (p_light.max_range_squared > 0.0 && d2 > p_light.max_range_squared) {
+		return vec3(0.0);
+	}
+	float atten = min(pow(max(r_dist, 0.0001), -p_light.attenuation), 1.0);
+	if (p_light.inv_max_range >= 0.0) {
+		float nd = r_dist * p_light.inv_max_range;
+		nd *= nd;
+		nd *= nd;
+		nd = max(1.0 - nd, 0.0);
+		atten *= nd * nd;
+	}
+	if (p_light.type == 3u) {
+		float scos = dot(-r_to_light, p_light.spot_direction);
+		if (scos <= p_light.cos_spot_angle) {
+			return vec3(0.0);
+		}
+		float spot_rim = max(1e-4, (1.0 - scos) / (1.0 - p_light.cos_spot_angle));
+		atten *= 1.0 - pow(spot_rim, p_light.inv_spot_attenuation);
+	}
+	return p_light.emission * atten;
+}
+
+// The view-space point at screen uv and view distance p_z (along -Z).
+vec3 plight_view_point(vec2 p_uv, float p_z, bool p_ortho) {
+	vec2 d = p_uv * 2.0 - 1.0;
+	vec4 t = scene_data_block.data.inv_projection_matrix * vec4(d.x, d.y, 1.0, 1.0);
+	vec3 v = t.xyz / t.w;
+	if (p_ortho) {
+		return vec3(v.xy, -p_z);
+	}
+	return v * (p_z / max(-v.z, 1e-6));
+}
+
+void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
+	uint state = uint(get_rt_param(RT_PARAM_PLIGHT_STATE));
+	uint write = state & 1u;
+	bool history = (state & 2u) != 0u;
+	uint tile = uint(get_rt_param(RT_PARAM_PLIGHT_TILE));
+	uvec2 grid_xy = max(uvec2(gl_LaunchSizeEXT.xy) / tile, uvec2(1u));
+	uvec2 in_tile = p_pixel % tile;
+	// the tile's first 8x8 pixels refresh its 64 slices; any others idle
+	if (any(greaterThanEqual(in_tile, uvec2(8u)))) {
+		return;
+	}
+	uvec3 cell = uvec3(p_pixel / tile, in_tile.x + 8u * in_tile.y);
+	if (any(greaterThanEqual(cell.xy, grid_xy))) {
+		return;
+	}
+	float z_near = get_rt_param(RT_PARAM_PLIGHT_NEAR);
+	float z_far = get_rt_param(RT_PARAM_PLIGHT_FAR);
+	float log_ratio = log(z_far / z_near);
+	bool ortho = abs(scene_data_block.data.projection_matrix[2][3]) < 1e-6;
+
+	uint rng = init_rng(p_pixel, p_frame, 1231u);
+	vec3 j = vec3(rand2(rng), rand(rng));
+	vec2 uv = (vec2(cell.xy) + j.xy) / vec2(grid_xy);
+	float z = z_near * exp(log_ratio * (float(cell.z) + j.z) / float(PLIGHT_SLICES));
+	vec3 x = (p_inv_view * vec4(plight_view_point(uv, z, ortho), 1.0)).xyz;
+
+	vec3 e_sum = vec3(0.0);
+	vec3 dir_sum = vec3(0.0);
+	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
+
+	// the directional lights lead the light buffer: one direction in each one's disc
+	[[dont_unroll]] for (uint li = 0u; li < light_count; li++) {
+		FogLightData light = fog_lights[li];
+		if (light.type != 1u) {
+			break;
+		}
+		vec3 axis = -normalize(light.position);
+		vec2 u = rand2(rng);
+		float cos_max = cos(light.radius);
+		float cos_t = 1.0 - u.x * (1.0 - cos_max);
+		float sin_t = sqrt(max(0.0, 1.0 - cos_t * cos_t));
+		float phi = 2.0 * PI * u.y;
+		vec3 tangent = normalize(abs(axis.y) < 0.999 ? cross(axis, vec3(0.0, 1.0, 0.0)) : cross(axis, vec3(1.0, 0.0, 0.0)));
+		vec3 bitangent = cross(axis, tangent);
+		vec3 L = normalize(tangent * (sin_t * cos(phi)) + bitangent * (sin_t * sin(phi)) + axis * cos_t);
+		vec3 e = light.emission * fog_shadow(x, L, 10000.0);
+		e_sum += e;
+		dir_sum += plight_luma(e) * L;
+	}
+
+	// the positional lights that can reach x (the light grid's lists): PLIGHT_CANDIDATES
+	// drawn uniformly, one kept in proportion to its unshadowed irradiance, and its shadow ray
+	{
+		uint g_count = fog_light_grid[3];
+		uint g_start = 8u;
+		uint c_start = 0u;
+		uint c_count = 0u;
+		uvec3 dims = uvec3(fog_light_grid[0], fog_light_grid[1], fog_light_grid[2]);
+		if (dims.x > 0u) {
+			vec3 origin = uintBitsToFloat(uvec3(fog_light_grid[4], fog_light_grid[5], fog_light_grid[6]));
+			vec3 c = floor((x - origin) * uintBitsToFloat(fog_light_grid[7]));
+			if (all(greaterThanEqual(c, vec3(0.0))) && all(lessThan(c, vec3(dims)))) {
+				uvec3 ci = uvec3(c);
+				uint idx = ci.x + dims.x * (ci.y + dims.y * ci.z);
+				uint starts = 8u + g_count;
+				c_start = fog_light_grid[starts + idx];
+				c_count = fog_light_grid[starts + idx + 1u] - c_start;
+			}
+		}
+		uint n = g_count + c_count;
+		if (n > 0u) {
+			uint m = min(n, PLIGHT_CANDIDATES);
+			float w_sum = 0.0;
+			float w_sel = 0.0;
+			vec3 e_sel = vec3(0.0);
+			vec3 l_sel = vec3(0.0, 1.0, 0.0);
+			float d_sel = 0.0;
+			for (uint k = 0u; k < m; k++) {
+				// all of them when they fit, else drawn at random
+				uint pick = (n <= PLIGHT_CANDIDATES) ? k : min(uint(rand(rng) * float(n)), n - 1u);
+				uint li = pick < g_count ? fog_light_grid[g_start + pick] : fog_light_grid[c_start + (pick - g_count)];
+				FogLightData light = fog_lights[li];
+				if (light.type == 1u) {
+					continue;
+				}
+				vec3 to_l;
+				float dist;
+				vec3 e = plight_positional(light, x, to_l, dist);
+				// the candidate's weight: its target over its source pdf (m/n of the lights)
+				float w = plight_luma(e) * (n <= PLIGHT_CANDIDATES ? 1.0 : float(n) / float(m));
+				if (!(w > 0.0) || isinf(w)) {
+					continue;
+				}
+				w_sum += w;
+				if (rand(rng) * w_sum < w) {
+					w_sel = plight_luma(e);
+					e_sel = e;
+					l_sel = to_l;
+					d_sel = dist;
+				}
+			}
+			if (w_sel > 0.0) {
+				vec3 e = e_sel * (w_sum / w_sel) * fog_shadow(x, l_sel, max(d_sel - 0.01, 0.002));
+				e_sum += e;
+				dir_sum += plight_luma(e) * l_sel;
+			}
+		}
+	}
+
+	// the sky and one bounce off the traced scene: a uniform direction, the path's first
+	// segment (the hit's emission and its own light sampling, or the sky on a miss)
+	if (get_rt_param(RT_PARAM_PLIGHT_BOUNCE) > 0.5) {
+		vec2 u = rand2(rng);
+		float cz = 1.0 - 2.0 * u.x;
+		float sz = sqrt(max(0.0, 1.0 - cz * cz));
+		float phi = 2.0 * PI * u.y;
+		vec3 dir = vec3(sz * cos(phi), sz * sin(phi), cz);
+		PathState ps;
+		ps.radiance = vec3(0.0);
+		ps.throughput = vec3(1.0);
+		ps.packed_bounces_flags = set_cone_width(0u, 0.0);
+		ps.rng_state = init_rng(p_pixel, p_frame, 1237u);
+		ps.hit_t = -1.0;
+		path_pack(payload, ps);
+		traceRayEXT(tlas, RT_RAY_FLAGS, RT_MASK_BOUNCE, 0, 0, 0, x, 0.001, dir, 10000.0, 0);
+		ps = path_unpack(payload);
+		// a uniform sphere sample of radiance, as irradiance: L * 4 pi
+		vec3 e = clamp(ps.radiance, vec3(0.0), vec3(1000.0)) * (4.0 * PI);
+		e_sum += e;
+		dir_sum += plight_luma(e) * dir;
+	}
+
+	// blend into last frame's cell where this point was (an exponential moving average)
+	vec4 prev_a = vec4(0.0);
+	vec4 prev_b = vec4(0.0);
+	float alpha = 1.0;
+	if (history) {
+		vec3 xc = (p_inv_view * vec4(plight_view_point((vec2(cell.xy) + 0.5) / vec2(grid_xy), z_near * exp(log_ratio * (float(cell.z) + 0.5) / float(PLIGHT_SLICES)), ortho), 1.0)).xyz;
+		vec4 prev_clip = prev_vp_unjittered * vec4(xc, 1.0);
+		vec2 motion = project_uv(xc, prev_vp_unjittered) - project_uv(xc, curr_vp_unjittered);
+		vec2 prev_uv = (vec2(cell.xy) + 0.5) / vec2(grid_xy) + motion;
+		float prev_z = ortho ? z_near * exp(log_ratio * (float(cell.z) + 0.5) / float(PLIGHT_SLICES)) : prev_clip.w;
+		if (prev_clip.w > 0.0 && all(greaterThanEqual(prev_uv, vec2(0.0))) && all(lessThan(prev_uv, vec2(1.0))) && prev_z > z_near) {
+			float prev_s = log(prev_z / z_near) / log_ratio * float(PLIGHT_SLICES);
+			if (prev_s < float(PLIGHT_SLICES)) {
+				ivec3 pc = ivec3(ivec2(prev_uv * vec2(grid_xy)), int(prev_s));
+				uint read = 1u - write;
+				prev_a = imageLoad(plight_images[read * 2u], pc);
+				prev_b = imageLoad(plight_images[read * 2u + 1u], pc);
+				alpha = 0.1;
+			}
+		}
+	}
+	vec4 a = mix(prev_a, vec4(e_sum, 1.0), alpha);
+	vec4 b = mix(prev_b, vec4(dir_sum, 1.0), alpha);
+	imageStore(plight_images[write * 2u], ivec3(cell), a);
+	imageStore(plight_images[write * 2u + 1u], ivec3(cell), b);
+}
+
 void main() {
 #ifdef RT_TIMING_ENABLED
 	uvec2 start_clock = clockRealtime2x32EXT();
@@ -435,6 +655,10 @@ void main() {
 
 	vec3 final_radiance = total_radiance / float(samples_per_pixel);
 	imageStore(image, ivec2(pixel), vec4(final_radiance, 1.0));
+
+	if (get_rt_param(RT_PARAM_PLIGHT_ENABLED) > 0.5) {
+		plight_update(pixel, inv_view, frame_index);
+	}
 #ifdef RT_TIMING_ENABLED
 	store_path_timing(ivec2(pixel), start_clock);
 #endif

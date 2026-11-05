@@ -600,6 +600,12 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (p_state->scene_ubo.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->scene_ubo);
 	}
+	for (RID &tex : p_state->light_cache) {
+		if (tex.is_valid()) {
+			RD::get_singleton()->free_rid(tex);
+			tex = RID();
+		}
+	}
 	if (p_state->scene_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(p_state->scene_uniform_set)) {
 		RD::get_singleton()->free_rid(p_state->scene_uniform_set);
 	}
@@ -649,6 +655,53 @@ void RenderRaytracing::rt_ensure_textures(RenderSceneBuffersRD *p_render_buffers
 	if (!p_render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_DEPTH)) {
 		p_render_buffers->create_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_DEPTH, RD::DATA_FORMAT_R32_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1);
 	}
+}
+
+bool RenderRaytracing::rt_get_light_cache(const RenderDataRD *p_render_data, RID &r_irradiance, RID &r_direction, float &r_near, float &r_far) const {
+	const RTViewportState *state = _get_viewport_state(p_render_data);
+	if (!state || !state->light_cache_active) {
+		return false;
+	}
+	r_irradiance = state->light_cache[state->light_cache_write * 2];
+	r_direction = state->light_cache[state->light_cache_write * 2 + 1];
+	r_near = state->light_cache_near;
+	r_far = state->light_cache_far;
+	return r_irradiance.is_valid() && r_direction.is_valid();
+}
+
+// The light cache's grid: the internal size over the tile (8 pixels, more past 240 cells
+// across, which a pixel's thread a cell can't fill: 64 slices need 8x8 pixels a tile).
+static uint32_t _light_cache_tile(const Size2i &p_internal) {
+	return MAX(8u, (uint32_t)Math::division_round_up(p_internal.width, 240));
+}
+
+static void _light_cache_ensure(RTViewportState *p_state, const Size2i &p_internal, bool p_active) {
+	uint32_t tile = _light_cache_tile(p_internal);
+	// Off: a 1x1x1 stand-in, so the trace's bindings stay valid.
+	Vector3i size = p_active ? Vector3i(MAX(1, p_internal.width / int(tile)), MAX(1, p_internal.height / int(tile)), 64) : Vector3i(1, 1, 1);
+	if (size == p_state->light_cache_size && p_state->light_cache[0].is_valid()) {
+		return;
+	}
+	for (RID &tex : p_state->light_cache) {
+		if (tex.is_valid()) {
+			RD::get_singleton()->free_rid(tex);
+		}
+	}
+	RD::TextureFormat tf;
+	tf.texture_type = RD::TEXTURE_TYPE_3D;
+	tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+	tf.width = size.x;
+	tf.height = size.y;
+	tf.depth = size.z;
+	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
+	for (int i = 0; i < 4; i++) {
+		p_state->light_cache[i] = RD::get_singleton()->texture_create(tf, RD::TextureView());
+		RD::get_singleton()->set_resource_name(p_state->light_cache[i], i % 2 ? "RT Light Cache Direction" : "RT Light Cache Irradiance");
+		RD::get_singleton()->texture_clear(p_state->light_cache[i], Color(0, 0, 0, 0), 0, 1, 0, 1);
+	}
+	p_state->light_cache_size = size;
+	p_state->light_cache_history = false;
+}
 }
 
 bool RenderRaytracing::rt_has_texture(RenderSceneBuffersRD *p_render_buffers) const {
@@ -5893,6 +5946,34 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_DECAL_MODE] = float(GLOBAL_GET_CACHED(int, "rendering/pathtracing/decals"));
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSPARENCY_DOMINANT_LAYER_ALPHA] = _rt_dominant_layer_alpha();
 
+		// The transparent pass's light cache (#72): refreshed by the trace, read by the
+		// transparents drawn after it. The pair written flips every frame; the other one
+		// holds last frame's, blended in where it is valid.
+		{
+			// Only for the raster transparent pass: with traced transparency (max_transparency_layers > 0) nothing reads it.
+			bool active = GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transparent_lighting/enabled") &&
+					GLOBAL_GET_CACHED(int, "rendering/pathtracing/max_transparency_layers") == 0;
+			Size2i internal = rb->get_internal_size();
+			_light_cache_ensure(p_state, internal, active);
+			p_state->light_cache_active = active;
+			if (active) {
+				p_state->light_cache_write ^= 1;
+				float z_near = MAX(0.01f, (float)GLOBAL_GET_CACHED(float, "rendering/pathtracing/transparent_lighting/near"));
+				float z_far = MAX(z_near * 1.01f, (float)GLOBAL_GET_CACHED(float, "rendering/pathtracing/transparent_lighting/far"));
+				p_state->light_cache_near = z_near;
+				p_state->light_cache_far = z_far;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PLIGHT_ENABLED] = 1.0f;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PLIGHT_NEAR] = z_near;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PLIGHT_FAR] = z_far;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PLIGHT_STATE] = float(p_state->light_cache_write | (p_state->light_cache_history ? 2u : 0u));
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PLIGHT_BOUNCE] = GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transparent_lighting/bounce") ? 1.0f : 0.0f;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_PLIGHT_TILE] = float(_light_cache_tile(internal));
+				p_state->light_cache_history = true;
+			} else {
+				p_state->light_cache_history = false;
+			}
+		}
+
 		// Unjittered VP for motion vectors (matches raster convention).
 		{
 			Projection correction;
@@ -6099,6 +6180,17 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		u.binding = 15;
 		u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
 		u.append_id(rt_get_depth_texture(rb));
+		uniforms.push_back(u);
+	}
+
+	// Binding 43: the transparent pass's light cache, both image pairs (#72).
+	{
+		RD::Uniform u;
+		u.binding = 43;
+		u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		for (const RID &tex : p_state->light_cache) {
+			u.append_id(tex);
+		}
 		uniforms.push_back(u);
 	}
 

@@ -1125,6 +1125,14 @@ struct RTViewportState {
 	// Set per frame: the screen-space sky texture was drawn and primary-ray
 	// misses should read it instead of the prefiltered radiance octmap.
 	bool sky_screen_enabled = false;
+	// The transparent pass's traced light cache (#72): two image pairs, written in turn.
+	RID light_cache[4];
+	Vector3i light_cache_size;
+	uint32_t light_cache_write = 0;
+	bool light_cache_history = false;
+	bool light_cache_active = false;
+	float light_cache_near = 0.5;
+	float light_cache_far = 150.0;
 };
 
 class RenderRaytracing {
@@ -1562,6 +1570,9 @@ public:
 	bool rt_has_sky_texture(RenderSceneBuffersRD *p_render_buffers) const;
 	RID rt_get_sky_texture(RenderSceneBuffersRD *p_render_buffers) const;
 	RID rt_get_sky_framebuffer(RenderSceneBuffersRD *p_render_buffers) const;
+
+	// The light cache this frame's trace wrote, for the transparent pass: false when off.
+	bool rt_get_light_cache(const RenderDataRD *p_render_data, RID &r_irradiance, RID &r_direction, float &r_near, float &r_far) const;
 
 	// DLSS Ray Reconstruction guide buffers (stored on the render buffers).
 	void dlss_rr_ensure_buffers(RenderSceneBuffersRD *p_render_buffers);

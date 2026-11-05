@@ -1689,6 +1689,32 @@ void fragment_shader(in SceneData scene_data) {
 	vec3 indirect_specular_light = vec3(0.0, 0.0, 0.0);
 	vec3 diffuse_light = vec3(0.0, 0.0, 0.0);
 	vec3 ambient_light = vec3(0.0, 0.0, 0.0);
+
+	// Under path tracing, the transparents' light from the trace's light cache (#72): its
+	// irradiance splits into a directional part along its luminance-weighted direction,
+	// lit as a light, and the rest, spread evenly, as ambient (a sphere's average cosine
+	// is 1/4, and radiance is irradiance over pi). It stands in for the raster lights,
+	// shadow maps, ambient and reflection probes, which know nothing of the traced scene.
+	bool pt_lit = false;
+	vec3 pt_ambient = vec3(0.0);
+	vec3 pt_light_color = vec3(0.0);
+	vec3 pt_light_dir = vec3(0.0, 1.0, 0.0);
+#if !defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED) && !defined(MODE_RENDER_SDF)
+	pt_lit = implementation_data.pt_light_cache_enabled;
+	if (pt_lit) {
+		float pt_s = log(max(-vertex.z, implementation_data.pt_light_cache_near) / implementation_data.pt_light_cache_near) * implementation_data.pt_light_cache_inv_log;
+		vec3 pt_uvw = vec3(screen_uv, clamp(pt_s, 0.0, 1.0));
+		vec3 pt_e = textureLod(sampler3D(pt_light_cache_irradiance, SAMPLER_LINEAR_CLAMP), pt_uvw, 0.0).rgb;
+		vec3 pt_d = textureLod(sampler3D(pt_light_cache_direction, SAMPLER_LINEAR_CLAMP), pt_uvw, 0.0).xyz;
+		float pt_lum = max(dot(pt_e, vec3(0.2126, 0.7152, 0.0722)), 1e-6);
+		float pt_len = length(pt_d);
+		float pt_k = clamp(pt_len / pt_lum, 0.0, 1.0);
+		mat3 pt_view = transpose(mat3(scene_data.view_matrix[0].xyz, scene_data.view_matrix[1].xyz, scene_data.view_matrix[2].xyz));
+		pt_light_dir = pt_len > 1e-6 ? normalize(pt_view * (pt_d / pt_len)) : vec3(0.0, 1.0, 0.0);
+		pt_light_color = pt_e * pt_k;
+		pt_ambient = pt_e * (1.0 - pt_k) * (1.0 / (4.0 * M_PI));
+	}
+#endif
 #ifndef MODE_UNSHADED
 	// Used in regular draw pass and when drawing SDFs for SDFGI and materials for VoxelGI.
 	emission *= scene_data.emissive_exposure_normalization;
@@ -2150,6 +2176,11 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 	}
 
+	if (pt_lit) {
+		ambient_light = pt_ambient;
+		indirect_specular_light = pt_ambient;
+	}
+
 	//finalize ambient light here
 	{
 		ambient_light *= ao;
@@ -2340,7 +2371,7 @@ void fragment_shader(in SceneData scene_data) {
 			for (uint i = 0; i < 1; i++) {
 #else
 		for (uint i = 0; i < 8; i++) {
-			if (i >= scene_data.directional_light_count) {
+			if (i >= scene_data.directional_light_count || pt_lit) {
 				break;
 			}
 #endif
@@ -2583,7 +2614,7 @@ void fragment_shader(in SceneData scene_data) {
 #ifndef USE_VERTEX_LIGHTING
 
 		for (uint i = 0; i < 8; i++) {
-			if (i >= scene_data.directional_light_count) {
+			if (i >= scene_data.directional_light_count || pt_lit) {
 				break;
 			}
 
@@ -2709,6 +2740,34 @@ void fragment_shader(in SceneData scene_data) {
 	}
 
 #ifndef USE_VERTEX_LIGHTING
+	if (pt_lit && dot(pt_light_color, vec3(1.0)) > 0.0) {
+		light_compute(normal, pt_light_dir, normalize(view), 0.0, pt_light_color,
+				true, 1.0, f0, roughness, metallic, 1.0, albedo, alpha, screen_uv, energy_compensation,
+#ifdef LIGHT_BACKLIGHT_USED
+				backlight,
+#endif
+#ifdef LIGHT_TRANSMITTANCE_USED
+				transmittance_color,
+				transmittance_depth,
+				transmittance_boost,
+				0.0,
+#endif
+#ifdef LIGHT_RIM_USED
+				rim, rim_tint,
+#endif
+#ifdef LIGHT_CLEARCOAT_USED
+				clearcoat, clearcoat_roughness, geo_normal,
+#endif // LIGHT_CLEARCOAT_USED
+#ifdef LIGHT_ANISOTROPY_USED
+				binormal,
+				tangent, anisotropy,
+#endif
+				diffuse_light,
+				direct_specular_light);
+	}
+#endif // !USE_VERTEX_LIGHTING
+
+#ifndef USE_VERTEX_LIGHTING
 	{ //omni lights
 
 		uint cluster_omni_offset = cluster_offset;
@@ -2722,6 +2781,9 @@ void fragment_shader(in SceneData scene_data) {
 
 		item_from = subgroupBroadcastFirst(subgroupMin(item_from));
 		item_to = subgroupBroadcastFirst(subgroupMax(item_to));
+		if (pt_lit) {
+			item_to = item_from; // lit by the path tracer's light cache
+		}
 
 		for (uint i = item_from; i < item_to; i++) {
 			uint mask = cluster_buffer.data[cluster_omni_offset + i];
@@ -2783,6 +2845,9 @@ void fragment_shader(in SceneData scene_data) {
 
 		item_from = subgroupBroadcastFirst(subgroupMin(item_from));
 		item_to = subgroupBroadcastFirst(subgroupMax(item_to));
+		if (pt_lit) {
+			item_to = item_from; // lit by the path tracer's light cache
+		}
 
 		for (uint i = item_from; i < item_to; i++) {
 			uint mask = cluster_buffer.data[cluster_spot_offset + i];
@@ -2844,6 +2909,9 @@ void fragment_shader(in SceneData scene_data) {
 
 		item_from = subgroupBroadcastFirst(subgroupMin(item_from));
 		item_to = subgroupBroadcastFirst(subgroupMax(item_to));
+		if (pt_lit) {
+			item_to = item_from; // lit by the path tracer's light cache
+		}
 
 		for (uint i = item_from; i < item_to; i++) {
 			uint mask = cluster_buffer.data[cluster_area_offset + i];
