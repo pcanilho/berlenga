@@ -1,0 +1,43 @@
+name: Changelog
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: changelog-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  entry:
+    # Every pull request adds a line under "## Unreleased" in CHANGELOG.md,
+    # unless it carries the "no changelog" label (Dependabot's are exempt).
+    if: github.actor != 'dependabot[bot]' && !contains(github.event.pull_request.labels.*.name, 'no changelog')
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check for an Unreleased entry
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ! git diff --name-only "$BASE_SHA" HEAD | grep -qx CHANGELOG.md; then
+            echo "::error file=CHANGELOG.md::Add a line under \"## Unreleased\" in CHANGELOG.md (or label the PR \"no changelog\")."
+            exit 1
+          fi
+          git show "$BASE_SHA:CHANGELOG.md" > base.md 2>/dev/null || printf '# Changelog\n\n## Unreleased\n' > base.md
+          python3 .github/scripts/changelog.py notes base.md > before.txt
+          python3 .github/scripts/changelog.py notes CHANGELOG.md > after.txt
+          if cmp -s before.txt after.txt; then
+            echo "::error file=CHANGELOG.md::CHANGELOG.md changed, but not under \"## Unreleased\"."
+            exit 1
+          fi

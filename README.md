@@ -9,6 +9,8 @@ Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built
 - Linux: path tracing without Ray Reconstruction.
 - macOS: raster only.
 
+**Changes:** [CHANGELOG.md](CHANGELOG.md).
+
 ## What this fork adds
 
 ### Lighting
