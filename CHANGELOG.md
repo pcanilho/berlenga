@@ -6,6 +6,9 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## Unreleased
 
+### Fixed
+- Release retry: its job had five minutes, all spent waiting before the re-run (#81).
+
 ## build-3b0494b5 (2026-11-05)
 
 ### Fixed
