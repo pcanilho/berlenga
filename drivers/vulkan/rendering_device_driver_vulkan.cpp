@@ -3771,6 +3771,7 @@ void RenderingDeviceDriverVulkan::_swap_chain_release(SwapChain *swap_chain) {
 	swap_chain->images.clear();
 	swap_chain->image_views.clear();
 	swap_chain->framebuffers.clear();
+	swap_chain->extent = Size2i();
 
 	if (swap_chain->vk_swapchain != VK_NULL_HANDLE) {
 #if defined(SWAPPY_FRAME_PACING_ENABLED)
@@ -3994,6 +3995,7 @@ Error RenderingDeviceDriverVulkan::swap_chain_resize(CommandQueueID p_cmd_queue,
 	swap_create_info.clipped = true;
 	err = device_functions.CreateSwapchainKHR(vk_device, &swap_create_info, VKC::get_allocation_callbacks(VK_OBJECT_TYPE_SWAPCHAIN_KHR), &swap_chain->vk_swapchain);
 	ERR_FAIL_COND_V_MSG(err != VK_SUCCESS, ERR_CANT_CREATE, vformat("Couldn't create Vulkan swapchain (VkResult error %d).", err));
+	swap_chain->extent = Size2i(extent.width, extent.height);
 
 #if defined(SWAPPY_FRAME_PACING_ENABLED)
 	if (swappy_frame_pacer_enable) {
@@ -4205,6 +4207,13 @@ RDD::RenderPassID RenderingDeviceDriverVulkan::swap_chain_get_render_pass(SwapCh
 
 	SwapChain *swap_chain = (SwapChain *)(p_swap_chain.id);
 	return swap_chain->render_pass;
+}
+
+Size2i RenderingDeviceDriverVulkan::swap_chain_get_extent(SwapChainID p_swap_chain) {
+	DEV_ASSERT(p_swap_chain.id != 0);
+
+	SwapChain *swap_chain = (SwapChain *)(p_swap_chain.id);
+	return swap_chain->extent;
 }
 
 int RenderingDeviceDriverVulkan::swap_chain_get_pre_rotation_degrees(SwapChainID p_swap_chain) {
