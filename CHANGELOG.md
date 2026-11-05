@@ -7,6 +7,7 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 ## Unreleased
 
 ### Added
+- README: Credits section naming NVIDIA-RTX/godot and Godot as sources; code or ideas from other repositories are credited there and in the commit that brings them in.
 - Path tracer: compiled shader stages are cached on disk and shared between settings that differ only in samples or bounces, so a second launch or a samples change skips the shader compile.
 - Release workflow: a `build_only` run builds any branch and keeps the zips as workflow artifacts, without publishing a release.
 
