@@ -290,25 +290,8 @@ jobs:
           short=$SHORT
           # the changelog as built: its Unreleased entries are this release's notes
           git show "$SHA:CHANGELOG.md" > released-changelog.md 2>/dev/null || printf '# Changelog\n\n## Unreleased\n' > released-changelog.md
-          {
-            python3 .github/scripts/changelog.py notes released-changelog.md
-            echo
-            echo "## Builds"
-            echo
-            echo "Editor builds from \`main\` at $short."
-            echo
-            echo "- Windows (x86_64): Vulkan, path tracing with Streamline. The DLSS, Streamline and Reflex DLLs are not included: take them from NVIDIA's Streamline and DLSS SDKs (or the NVIDIA-RTX/godot releases) and place them next to the exe. They stay under NVIDIA's terms."
-            if ls dist/godot-fork-macos-universal-*.zip >/dev/null 2>&1; then
-              echo "- macOS (universal, Apple Silicon and Intel): raster only, as the path tracer and DLSS need Vulkan ray tracing on NVIDIA hardware. Ad-hoc signed and not notarized: on first launch, right-click Godot.app and choose Open, or run \`xattr -cr Godot.app\`."
-            fi
-            if ls dist/godot-fork-linux-*.zip >/dev/null 2>&1; then
-              echo "- Linux (x86_64 and arm64): Vulkan and path tracing; DLSS Ray Reconstruction is Windows-only, so the path tracer runs without it."
-            fi
-            echo
-            echo "SHA-256:"
-            echo
-            cat dist/hashes-*.md
-          } > notes.md
+          python3 .github/scripts/changelog.py notes released-changelog.md > changes.md
+          python3 .github/scripts/release_notes.py changes.md dist "$short" "$GITHUB_REPOSITORY" > notes.md
           if gh release view "build-$short" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # A re-run (say a macOS build that had no runner the first time): add the
             # zips the release lacks and refresh its notes, keeping the pull request list.
