@@ -1,0 +1,15 @@
+# Keeps the workflows' pinned actions current. The engine's third-party code is vendored
+# as source, so only GitHub Actions are tracked.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "CI"
