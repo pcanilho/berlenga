@@ -16,7 +16,7 @@ Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built
 Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transparency, traced particles and decals, volumetric fog with traced shadows, shadow groups and asynchronous pipeline compilation. The fork keeps NVIDIA's code wherever it covers the same ground, and adds:
 
 ### Lighting
-- Up to 4096 lights per scene (upstream: 64 per frame), via a light grid and resampled importance sampling.
+- Up to 4096 lights per scene (upstream: 64 per frame), via a light grid around the camera and resampled importance sampling, so lights over a large world stay cheap.
 - Shadow-only casters bounce light, so hidden ceilings and walls still light a room.
 - Raster transparents under the path tracer (`rendering/pathtracing/max_transparency_layers` 0): lit by a traced froxel light cache with shadowed lights, sky and bounce; particles scatter forward, so rain glints against lamps and headlights. Reflections and refractions still trace them (rain in puddles and glass).
 

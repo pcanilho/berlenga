@@ -71,10 +71,15 @@ Trap list for our implementation:
   receiver term entirely.
 - Shadow groups stay per light at evaluation; the tree does not need them.
 
-Our draft: branch `claude/emissive-light-tree` (3a62efa1c2, off `nv-port`
-d5b0948f42, not built or tested) replaces the grid with a binned-SAOH light
-BVH and RIS over full walks. Before it ships it should take D56's cut and
-D63's decay-aware falloff, both measured above.
+Measured 6 Nov 2026 against our light grid (460-light rig, lavapipe, 4 spp
+against 1024 spp): the tree, with D56's cut, D59's coarse cut, D63's falloff
+and a range-aware walk below the cut, lost everywhere. Lamps 4 m apart: grid
+17.8 dB at 230 ms, tree 15.5 dB at 350 ms; 100 m apart: 30.0 against 25.0 dB;
+1 m apart: 17.6 against 16.6 dB. Sixteen tree candidates tie the grid at about
+three times the cost. Valence's gains were against a uniform pick; our grid
+already lists exactly the lights in range of a cell. Kept: the grid, now
+following the camera so a large world keeps small cells. The tree stays on
+branch `claude/emissive-light-tree` for reference.
 
 ## 2. Emissive surfaces as lights
 
