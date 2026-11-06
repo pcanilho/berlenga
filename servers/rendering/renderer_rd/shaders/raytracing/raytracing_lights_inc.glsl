@@ -177,10 +177,31 @@ float lights_tree_importance(uint p_node, vec3 p, vec3 N, uint instance_layers) 
 	return flux * cos_emit * cos_recv * falloff;
 }
 
+// A cheaper bound for the walk below the cut: the cull mask, the range test and the
+// distance falloff, without the cone terms. Keeps the walk spatial, so a candidate lands
+// on a light that can reach p rather than on the strongest light of a wide node.
+float lights_tree_importance_lite(uint p_node, vec3 p, uint instance_layers) {
+	uint base = RT_LIGHT_TREE_HEADER + p_node * RT_LIGHT_TREE_NODE_UINTS;
+	if ((rt_light_tree[base + 12u] & instance_layers & 0xFFFFFu) == 0u) {
+		return 0.0;
+	}
+	vec3 lo = uintBitsToFloat(uvec3(rt_light_tree[base + 0u], rt_light_tree[base + 1u], rt_light_tree[base + 2u]));
+	vec3 hi = uintBitsToFloat(uvec3(rt_light_tree[base + 4u], rt_light_tree[base + 5u], rt_light_tree[base + 6u]));
+	float range = uintBitsToFloat(rt_light_tree[base + 13u]);
+	vec3 to_box = clamp(p, lo, hi) - p;
+	if (dot(to_box, to_box) > range * range) {
+		return 0.0;
+	}
+	float flux = uintBitsToFloat(rt_light_tree[base + 11u]);
+	vec2 decay = unpackHalf2x16(rt_light_tree[base + 15u]);
+	float d = max(max(length(0.5 * (lo + hi) - p), 0.5 * length(hi - lo)), 0.01);
+	return flux * pow(d, -(d >= 1.0 ? decay.x : decay.y));
+}
+
 // The source of the resampling: RT_LIGHT_TREE_CANDIDATES lights drawn through the tree's
 // cut. Each cut node is scored once at p; each candidate takes a cut node in proportion
-// (one weighted reservoir per candidate, so no per-hit array) and then a light under it in
-// proportion to power, a walk that reads only the children's flux. r_pdf[k] is candidate
+// (one weighted reservoir per candidate, so no per-hit array) and then a light under it by
+// a walk on the cheaper bound (lights_tree_importance_lite). r_pdf[k] is candidate
 // k's probability, 0 where none was drawn. A full importance walk per candidate scores two
 // nodes per level and measured far slower (Rman887/valence-engine-rtx, README References).
 // p_coarse takes the smaller cut, for vertices past the first bounce.
@@ -230,9 +251,12 @@ void lights_tree_candidates(vec3 p, vec3 N, uint instance_layers, bool p_coarse,
 				r_pdf[k] = pdf;
 				break;
 			}
-			float fl = uintBitsToFloat(rt_light_tree[RT_LIGHT_TREE_HEADER + link * RT_LIGHT_TREE_NODE_UINTS + 11u]);
-			float fr = uintBitsToFloat(rt_light_tree[RT_LIGHT_TREE_HEADER + (link + 1u) * RT_LIGHT_TREE_NODE_UINTS + 11u]);
-			float pl = fl / max(fl + fr, 1e-30);
+			float il = lights_tree_importance_lite(link, p, instance_layers);
+			float ir = lights_tree_importance_lite(link + 1u, p, instance_layers);
+			if (!(il + ir > 0.0)) {
+				break; // no light under this node reaches p
+			}
+			float pl = il / (il + ir);
 			if (rand(rng_state) < pl) {
 				node = link;
 				pdf *= pl;
