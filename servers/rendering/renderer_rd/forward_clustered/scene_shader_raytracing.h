@@ -33,9 +33,11 @@
 #include "core/object/worker_thread_pool.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/local_vector.h"
+#include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_capture.h"
 #include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
 #include "servers/rendering/renderer_rd/renderer_scene_render_rd.h" // IWYU pragma: keep
 #include "servers/rendering/renderer_rd/shaders/raytracing/scene_raytracing_raygen.glsl.gen.h"
+#include "servers/rendering/rendering_server.h"
 
 namespace RendererSceneRenderImplementation {
 
@@ -71,9 +73,9 @@ public:
 	};
 
 	// Raytracing specialization constant flags (must match shader RT_FLAG_* defines).
-	// Bits 0-20:  Feature flags
-	// Bits 21-28: Sample count
-	// Bits 29-31: Max bounce count (offset by 1: 0=1 bounce, 7=8 bounces)
+	// Bits 0-25:  Feature flags
+	// Bits 26-27: Sample mode (RaytracingSampleMode)
+	// Bits 28-31: Max bounce count (0 = direct lighting only)
 	enum RaytracingFlags {
 		RT_FLAG_NONE = 0,
 		RT_FLAG_DEBUG_VIS_ENABLED = (1 << 0),
@@ -81,63 +83,129 @@ public:
 		RT_FLAG_FOG_ENABLED = (1 << 2),
 		RT_FLAG_SER_ENABLED = (1 << 3),
 		RT_FLAG_RAY_QUERY_SHADOWS_ENABLED = (1 << 4),
+		RT_FLAG_DEPTH_COMPOSITE_ENABLED = (1 << 5),
+		RT_FLAG_TIMING_ENABLED = (1 << 6),
+		RT_FLAG_VOLUMETRIC_FOG_ENABLED = (1 << 7),
+		RT_FLAG_DECALS_ENABLED = (1 << 8), // rendering/pathtracing/max_decals > 0.
 	};
 
-	constexpr static uint32_t RT_SAMPLE_COUNT_SHIFT = 21;
-	constexpr static uint32_t RT_SAMPLE_COUNT_MASK = 0xFF;
+	// Sample count encoding (must match shader RT_SAMPLE_MODE_* defines).
+	// Fixed modes are compile-time loop counts; DYNAMIC reads RT_PARAM_SAMPLE_COUNT.
+	enum RaytracingSampleMode : uint32_t {
+		RT_SAMPLE_MODE_1 = 0,
+		RT_SAMPLE_MODE_2 = 1,
+		RT_SAMPLE_MODE_4 = 2,
+		RT_SAMPLE_MODE_DYNAMIC = 3,
+	};
 
-	constexpr static uint32_t RT_MAX_BOUNCES_SHIFT = 29;
-	constexpr static uint32_t RT_MAX_BOUNCES_MASK = 0x7;
+	constexpr static uint32_t RT_SAMPLE_MODE_SHIFT = 26;
+	constexpr static uint32_t RT_SAMPLE_MODE_MASK = 0x3;
+
+	constexpr static uint32_t RT_MAX_BOUNCES_SHIFT = 28;
+	constexpr static uint32_t RT_MAX_BOUNCES_MASK = 0xF;
+	// Upper bound exposed by Environment::pathtracing_max_bounces.
+	constexpr static uint32_t RT_MAX_BOUNCES_LIMIT = 8;
+
+	static_assert(RT_SAMPLE_MODE_SHIFT + 2 == RT_MAX_BOUNCES_SHIFT && RT_MAX_BOUNCES_SHIFT + 4 == 32, "Sample mode and bounces occupy the top 6 bits.");
+	static_assert(RT_MAX_BOUNCES_LIMIT <= RT_MAX_BOUNCES_MASK, "Bounce limit must fit the bounce field.");
+	static_assert(uint32_t(RT_FLAG_DECALS_ENABLED) < (1u << RT_SAMPLE_MODE_SHIFT), "Feature flags must stay below the sample mode field; update when adding flags.");
 
 	// RT pipeline limits (must match GLSL payload/hit attribute struct sizes).
 	// 1: primary/bounce from raygen
 	// 2: shadow ray from closest_hit (NEE)
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
-	// Pathtracing parameter indices for the float[16] params buffer.
+	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
+	static constexpr int RT_PARAM_COUNT = 32;
+	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
+
+	// Pathtracing parameter indices for the params buffer.
 	// Must match RT_PARAM_* defines in raytracing_inc.glsl.
 	static constexpr int RT_PARAM_VIS_MODE = 0;
+	static constexpr int RT_DEBUG_TIMING_HEATMAP = RS::PT_DEBUG_TIMING_HEATMAP;
+	static constexpr int RT_DEBUG_DYNAMIC_GEOMETRY = RS::PT_DEBUG_DYNAMIC_GEOMETRY;
 	static constexpr int RT_PARAM_SAMPLE_COUNT = 1;
 	static constexpr int RT_PARAM_MAX_BOUNCES = 2;
 	static constexpr int RT_PARAM_DENOISER = 3;
-	// 4-11: the volumetric fog lit through the traced scene.
-	static constexpr int RT_PARAM_FOG_DENSITY = 4;
-	static constexpr int RT_PARAM_FOG_ALBEDO_R = 5;
-	static constexpr int RT_PARAM_FOG_ALBEDO_G = 6;
-	static constexpr int RT_PARAM_FOG_ALBEDO_B = 7;
-	static constexpr int RT_PARAM_FOG_ANISOTROPY = 8;
-	static constexpr int RT_PARAM_FOG_LENGTH = 9;
-	static constexpr int RT_PARAM_FOG_SKY_AFFECT = 10;
-	static constexpr int RT_PARAM_FOG_SAMPLES = 11;
-	// Indices 12-13 reserved for future use.
-	static constexpr int RT_PARAM_FOG_VOLUME_COUNT = 12;
+	static constexpr int RT_PARAM_MAX_TRANSPARENCY_LAYERS = 4;
+	static constexpr int RT_PARAM_TRANSPARENCY_MAX_BOUNCE = 5;
+	static constexpr int RT_PARAM_TRANSPARENT_COUNT = 6;
+	static constexpr int RT_PARAM_TRANSPARENCY_INDIRECT_RANGE = 7;
+	static constexpr int RT_PARAM_TRANSPARENCY_INDIRECT_FADE = 8;
+	static constexpr int RT_PARAM_SKY_SCREEN_ENABLED = 9;
+	static constexpr int RT_PARAM_VOLUMETRIC_FOG_INV_LENGTH = 10; // 0 = volumetric fog disabled.
+	static constexpr int RT_PARAM_VOLUMETRIC_FOG_DETAIL_SPREAD = 11;
+	static constexpr int RT_PARAM_VOLUMETRIC_FOG_SKY_AFFECT = 12;
+	static constexpr int RT_PARAM_FOG_USE_LEGACY_BLENDING = 13;
 	static constexpr int RT_PARAM_LIGHT_COUNT = 14;
 	static constexpr int RT_PARAM_FRAME_INDEX = 15;
-	static constexpr int RT_PARAM_FOG_AMBIENT_R = 16;
-	static constexpr int RT_PARAM_FOG_AMBIENT_G = 17;
-	static constexpr int RT_PARAM_FOG_AMBIENT_B = 18;
-	static constexpr int RT_PARAM_PLIGHT_ENABLED = 13;
-	static constexpr int RT_PARAM_PLIGHT_NEAR = 19;
-	static constexpr int RT_PARAM_PLIGHT_FAR = 20;
-	static constexpr int RT_PARAM_PLIGHT_STATE = 21;
-	static constexpr int RT_PARAM_PLIGHT_BOUNCE = 22;
-	static constexpr int RT_PARAM_PLIGHT_TILE = 23;
-	static constexpr int RT_PARAM_PARTICLES = 24;
-	static constexpr int RT_PARAM_PARTICLE_ANISOTROPY = 25;
-	static constexpr int RT_PARAM_PARTICLE_DISTANCE = 26;
-	static constexpr int RT_PARAM_COUNT = 28;
+	static constexpr int RT_PARAM_DECAL_COUNT = 16;
+	static constexpr int RT_PARAM_DECAL_MODE = 17; // RTDecalMode.
+	static constexpr int RT_PARAM_TRANSPARENCY_DOMINANT_LAYER_ALPHA = 18; // 0 = transparent layers never own depth/velocity.
+	static constexpr int RT_PARAM_MAX_TRANSPARENCY_LAYERS_REFLECTION = 19;
+	static constexpr int RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT = 20;
+	static constexpr int RT_PARAM_SELF_SHADOW_MASK = 21; // RTShadowGroupTable::self_shadow_bit.
+	static constexpr int RT_PARAM_VOLUMETRIC_FOG_SAMPLING = 22; // RSE::EnvironmentVolumetricFogSampling.
+	// Which path vertices receive decals (rendering/pathtracing/decals). Must match RT_DECAL_MODE_* in GLSL.
+	enum RTDecalMode {
+		RT_DECAL_MODE_ALL_HITS = 0,
+		RT_DECAL_MODE_SKIP_AFTER_DIFFUSE = 1,
+		RT_DECAL_MODE_SINGULAR_ONLY = 2,
+	};
+	static inline RaytracingSampleMode rt_sample_mode_from_count(uint32_t p_sample_count) {
+		switch (p_sample_count) {
+			case 0:
+			case 1:
+				return RT_SAMPLE_MODE_1;
+			case 2:
+				return RT_SAMPLE_MODE_2;
+			case 4:
+				return RT_SAMPLE_MODE_4;
+			default:
+				return RT_SAMPLE_MODE_DYNAMIC;
+		}
+	}
+	// The raster transparent pass's traced light cache (max_transparency_layers 0).
+	static constexpr int RT_PARAM_PLIGHT_ENABLED = 24;
+	static constexpr int RT_PARAM_PLIGHT_NEAR = 25;
+	static constexpr int RT_PARAM_PLIGHT_FAR = 26;
+	static constexpr int RT_PARAM_PLIGHT_STATE = 27;
+	static constexpr int RT_PARAM_PLIGHT_BOUNCE = 28;
+	static constexpr int RT_PARAM_PLIGHT_TILE = 29;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;
-		result |= (p_sample_count & RT_SAMPLE_COUNT_MASK) << RT_SAMPLE_COUNT_SHIFT;
-		// Max bounces is offset by 1 (0=1 bounce, 7=8 bounces)
-		result |= (MAX(1u, MIN(8u, p_max_bounces)) - 1u) << RT_MAX_BOUNCES_SHIFT;
+		result |= uint32_t(rt_sample_mode_from_count(p_sample_count)) << RT_SAMPLE_MODE_SHIFT;
+		result |= MIN(p_max_bounces, RT_MAX_BOUNCES_LIMIT) << RT_MAX_BOUNCES_SHIFT;
 		return result;
 	}
 
 	// Build the full packed rt_flags from pathtracing environment settings.
 	// `p_environment` may be invalid (RT active with no pathtracing environment).
-	static uint32_t compute_rt_flags(RID p_environment, bool p_fog_enabled);
+	static uint32_t compute_rt_flags(RID p_environment, bool p_fog_enabled, bool p_volumetric_fog_enabled);
+
+	static bool is_debug_vis_mode(int p_debug_mode) { return p_debug_mode != 0 && p_debug_mode != RT_DEBUG_TIMING_HEATMAP; }
+	static RSE::PathtracingDenoiser get_effective_denoiser(RID p_environment);
+
+	static RTVertexCapture::VertexDependencies compute_vertex_capture_dependencies(const String &p_code);
+
+	static inline bool is_material_buffer_uniform(const ShaderLanguage::ShaderNode::Uniform &p_uniform, const Vector<uint32_t> &p_uniform_offsets) {
+		return !ShaderLanguage::is_sampler_type(p_uniform.type) && p_uniform.scope != ShaderLanguage::ShaderNode::Uniform::SCOPE_INSTANCE &&
+				p_uniform.order >= 0 && p_uniform.order < (int)p_uniform_offsets.size();
+	}
+
+	static inline uint32_t material_buffer_uniform_size(const ShaderLanguage::ShaderNode::Uniform &p_uniform) {
+		if (p_uniform.scope == ShaderLanguage::ShaderNode::Uniform::SCOPE_GLOBAL) {
+			return ShaderLanguage::get_datatype_size(ShaderLanguage::TYPE_UINT);
+		}
+		const uint32_t size = ShaderLanguage::get_datatype_size(p_uniform.type);
+		if (p_uniform.array_size <= 0) {
+			return size;
+		}
+		const uint32_t array_bytes = size * p_uniform.array_size;
+		const uint32_t granule = 16 * p_uniform.array_size;
+		return (array_bytes + granule - 1) / granule * granule;
+	}
 
 	struct ShaderSpecialization {
 		union {
@@ -387,7 +455,10 @@ public:
 		Vector<uint32_t> uniform_offsets;
 		HashMap<StringName, ShaderLanguage::ShaderNode::Uniform> uniforms;
 		Vector<TextureUniformInfo> texture_uniforms; // Sampler2D packed as bindless indices after UBO
-		bool uses_alpha_clip = false; // Writes ALPHA, ALPHA_SCISSOR_THRESHOLD or ALPHA_HASH_SCALE; needs per-HG any-hit
+		bool uses_alpha_clip = false; // Writes ALPHA_SCISSOR_THRESHOLD; needs per-HG any-hit
+		bool needs_full_any_hit = false; // Blend-transparent or alpha: per-HG any-hit for peel/scissor evaluation
+		bool uses_scene_depth = false; // Reads SCENE_DEPTH; gates the rt_scene_depth imageLoad
+		bool uses_instance_custom = false; // Gates the MultiMesh custom-data buffer read.
 		bool is_procedural = false; // Uses intersection shader instead of triangle geometry
 		uint32_t alpha_texture_buffer_offset = UINT32_MAX; // Byte offset of hint_alpha texture index in CustomMaterialUniforms UBO; UINT32_MAX if absent
 	};
@@ -445,11 +516,12 @@ public:
 	HashMap<uint32_t, PipelineBundle> pipeline_bundles;
 
 	// Single-lane async bundle rebuild (worker: SPIR-V + raytracing_pipeline_create; main: SBT + swap).
+	// No queue: a dirty bundle IS the target state (SceneShaderRaytracing::PipelineBundle::dirty), always
+	// re-read fresh the moment the lane has capacity — never a stale pre-built snapshot waiting in line.
 	struct PipelineBuildTask;
 	struct CompileLane {
 		Mutex mutex;
-		PipelineBuildTask *current = nullptr;
-		LocalVector<PipelineBuildTask *> queue;
+		PipelineBuildTask *to_be_built = nullptr; // In flight; owned by the worker until done.
 	};
 
 	uint32_t register_custom_shader(uint32_t p_shader_id, RID p_material);
@@ -459,19 +531,18 @@ public:
 	uint32_t get_hit_group_slot_count() const { return hit_group_slots.size(); }
 
 	bool is_hg_ready_in_bundle(uint32_t p_slot_index, uint32_t p_rt_flags) const;
+	uint32_t get_ready_version() const { return ready_version; }
+	bool is_compiling();
 	void drain_completed_compiles();
 	void finalize_custom_shaders();
 
 	const PipelineBundle &ensure_pipeline_bundle(uint32_t p_rt_flags);
-
 	// Asynchronous first build of a variant: returns true once its bundle is ready.
 	// Until then the variant compiles and creates its pipeline on a worker thread,
 	// so the caller can render without path tracing instead of stalling. Falls back
 	// to a synchronous build when async compilation is off or the worker failed.
 	bool request_pipeline_bundle(uint32_t p_rt_flags);
 	bool is_pipeline_bundle_ready(uint32_t p_rt_flags) const;
-	// True while a variant or a custom hit group is still being compiled.
-	bool has_pending_builds();
 
 	RID get_raytracing_pipeline(uint32_t p_rt_flags) { return ensure_pipeline_bundle(p_rt_flags).pipeline; }
 	RID get_hit_sbt(uint32_t p_rt_flags) { return ensure_pipeline_bundle(p_rt_flags).hit_sbt; }
@@ -490,11 +561,11 @@ private:
 	// Bundle build / rebuild.
 	void _bundle_resize_for_slots(PipelineBundle &r_bundle);
 	bool _build_initial_bundle(uint32_t p_rt_flags, PipelineBundle &r_bundle);
-	void _kick_rebuild_if_idle();
+	RID _create_initial_pipeline(uint32_t p_rt_flags, RID p_base_shader);
+	bool _finish_initial_bundle(uint32_t p_rt_flags, PipelineBundle &r_bundle, RID p_pipeline);
 
 	// Compile lane / worker.
-	void _enqueue_build(PipelineBuildTask *p_task);
-	void _dispatch_next_locked(); // CompileLane::mutex MUST be held.
+	void _start_next_build_if_idle(); // Picks the next dirty bundle (if any) and starts building it.
 	void _build_pipeline_worker(PipelineBuildTask *p_task);
 	static void _build_pipeline_worker_static(void *p_userdata);
 	void _finalize_pipeline_build(PipelineBuildTask *p_task);
@@ -510,22 +581,15 @@ private:
 		String ch_template; // Template GLSL with /* RT_CUSTOM_* */ markers.
 		String ah_template;
 		String is_template;
-		// The full base binary (RAYGEN + MISS + default hit group). It depends only on
-		// the GLSL source, so every pipeline bundle of this source shares it, whatever
-		// its sample count and bounce specialization.
-		Vector<uint8_t> base_binary;
+		Vector<uint8_t> base_binary; // All base stages, shared by the bundles that differ only in specialization constants.
 	};
-	// Keyed by _compile_context_key(): the raygen source variant, not the full
-	// rt_flags, so a sample count or bounce change does not recompile GLSL.
+	// Keyed by _compile_context_key(): what changes the GLSL, not the full rt_flags.
 	HashMap<uint32_t, VariantCompileContext> variant_compile_contexts;
 
-	static uint32_t _compile_context_key(uint32_t p_rt_flags);
 	bool _ensure_variant_compile_context(uint32_t p_rt_flags);
 	bool _build_variant_compile_context(uint32_t p_rt_flags);
 	bool _prepare_variant_sources(uint32_t p_rt_flags, VariantCompileContext &r_ctx, Vector<String> &r_sources);
-	bool _compile_variant_context(uint32_t p_rt_flags, const Vector<String> &p_sources, VariantCompileContext &r_ctx);
-	RID _create_initial_pipeline(uint32_t p_rt_flags, RID p_base_shader);
-	bool _finish_initial_bundle(uint32_t p_rt_flags, PipelineBundle &r_bundle, RID p_pipeline);
+	bool _compile_variant_context(const Vector<String> &p_sources, VariantCompileContext &r_ctx);
 
 	// A variant's first build on a worker (request_pipeline_bundle). Owned by the
 	// render thread; the worker only fills ctx/base_shader/pipeline and sets ok.
@@ -550,13 +614,15 @@ private:
 	void _variant_build_worker(VariantBuildTask *p_task);
 	void _start_variant_task(uint32_t p_rt_flags, bool p_ctx_only);
 	void _poll_variant_tasks(bool p_wait);
-	// GLSL to SPIR-V through a disk cache under the shader cache's user dir.
-	// The caller must not hold spirv_compile_mutex.
+	static uint32_t _compile_context_key(uint32_t p_rt_flags);
+	// GLSL to SPIR-V through a disk cache in the shader cache's user dir. Locks spirv_compile_mutex on a miss.
 	Vector<uint8_t> _compile_spirv_cached(RD::ShaderStage p_stage, const String &p_source, String *r_error);
+	Vector<RD::ShaderStageSPIRVData> _compile_stages_cached(const Vector<String> &p_stage_sources);
 
 	bool async_compilation_enabled = true;
 	Mutex spirv_compile_mutex; // Serialize glslang calls (RD::shader_compile_spirv_from_source).
 	CompileLane compile_lane;
+	uint32_t ready_version = 0;
 
 public:
 	void invalidate_pipeline_bundles();

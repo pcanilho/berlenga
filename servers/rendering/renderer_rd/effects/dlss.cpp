@@ -181,6 +181,7 @@ DLSSEffect::DLSSEffect() {
 	shaders.mvec_decode_shader.initialize(modes, "");
 	shaders.mvec_decode_version = shaders.mvec_decode_shader.version_create();
 	shaders.mvec_decode_pipeline = RD::get_singleton()->compute_pipeline_create(shaders.mvec_decode_shader.version_get_shader(shaders.mvec_decode_version, 0));
+	RD::get_singleton()->set_resource_name(shaders.mvec_decode_pipeline, "DLSS Motion Vector Decode Pipeline");
 }
 
 DLSSEffect::~DLSSEffect() {
@@ -215,6 +216,14 @@ DLSSContext *DLSSEffect::create_context(Size2i p_internal_size, Size2i p_target_
 // that thread, so it writes a line and returns.
 static void _dlssg_api_error(const sl::APIError &p_error) {
 	fprintf(stderr, "[dlssg] present thread API error %d\n", (int)p_error.vkRes);
+}
+
+static String _dlss_texture_desc(RID p_texture) {
+	if (!p_texture.is_valid()) {
+		return "none";
+	}
+	const RD::TextureFormat format = RD::get_singleton()->texture_get_format(p_texture);
+	return vformat("%dx%d", format.width, format.height);
 }
 
 static sl::float4x4 sl_make_identity_matrix() {
@@ -253,9 +262,9 @@ void DLSSEffect::upscale(const DLSSContext::Parameters &p_params) {
 		return;
 	}
 
-	// Begin frame if needed.
-	if (StreamlineContext::get().last_token == nullptr) {
-		StreamlineContext::get().get_new_frame_token();
+	// No frame token yet (first draw before the main loop started).
+	if (StreamlineContext::get().render_token == nullptr) {
+		return;
 	}
 
 	context->last_parameters = p_params;
@@ -318,8 +327,8 @@ void DLSSEffect::upscale(const DLSSContext::Parameters &p_params) {
 		if (p_params.dlss_rr_normal_roughness.is_valid()) {
 			res[num_resources++].rid = p_params.dlss_rr_normal_roughness;
 		}
-		if (p_params.dlss_rr_specular_hit_dist.is_valid()) {
-			res[num_resources++].rid = p_params.dlss_rr_specular_hit_dist;
+		if (p_params.dlss_rr_specular_motion_vectors.is_valid()) {
+			res[num_resources++].rid = p_params.dlss_rr_specular_motion_vectors;
 		}
 	}
 
@@ -487,8 +496,11 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 		context->constants.mvecScale = sl::float2(1.0f, 1.0f);
 		context->constants.orthographicProjection = sl::Boolean::eFalse;
 		context->constants.reset = p_params.reset_accumulation ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-		sl::Result result = StreamlineContext::get().slSetConstants(context->constants, *StreamlineContext::get().last_token, context->viewport);
-		if (result != sl::Result::eOk) {
+		sl::Result result = StreamlineContext::get().slSetConstants(context->constants, *StreamlineContext::get().render_token, context->viewport);
+		if (result == sl::Result::eErrorDuplicatedConstants) {
+			// Viewport drawn twice in one frame (e.g. editor preview redraws); SL keeps the first constants.
+			WARN_PRINT_ONCE("DLSS viewport drawn more than once per frame token; reusing first constants.");
+		} else if (result != sl::Result::eOk) {
 			ERR_FAIL_MSG("Failed to call streamline slSetConstants. Result: " + String(StreamlineContext::result_to_string(result)));
 		}
 	}
@@ -511,7 +523,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			assignResource(resources, resourceTags, numResources, p_params.dlss_rr_specular_albedo, sl::kBufferTypeSpecularAlbedo, sl::ResourceLifecycle::eValidUntilPresent);
 			// kBufferTypeNormalRoughness for packed normal+roughness (XYZ=normal, W=roughness)
 			assignResource(resources, resourceTags, numResources, p_params.dlss_rr_normal_roughness, sl::kBufferTypeNormalRoughness, sl::ResourceLifecycle::eValidUntilPresent);
-			assignResource(resources, resourceTags, numResources, p_params.dlss_rr_specular_hit_dist, sl::kBufferTypeSpecularHitDistance, sl::ResourceLifecycle::eValidUntilPresent);
+			assignResource(resources, resourceTags, numResources, p_params.dlss_rr_specular_motion_vectors, sl::kBufferTypeSpecularMotionVectors, sl::ResourceLifecycle::eValidUntilPresent);
 		}
 
 		sl::Result result = StreamlineContext::get().set_tags(context->viewport, resourceTags, numResources, nativeCmdlist);
@@ -526,13 +538,14 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 		bool wantActivateDLSSG = p_params.dlss_g;
 		bool canActivateDLSSG = StreamlineContext::get().dlssg_delay == 0;
 
-		// Frame generation presents nothing generated without Reflex running (and PCL's markers,
-		// which Reflex reads): Reflex is held at low latency at least while it is wanted, and frame
-		// generation starts only once those options are applied.
+		// DLSS-G presents magenta frames unless Reflex is running alongside it, so it needs both
+		// Reflex and PCL (which provides the latency markers Reflex consumes) to be available.
 		if (wantActivateDLSSG && !(StreamlineContext::get().streamline_capabilities.reflex_available && StreamlineContext::get().streamline_capabilities.pcl_available)) {
-			WARN_PRINT_ONCE("DLSS Frame Generation needs Reflex, which is not available: frame generation stays off.");
+			WARN_PRINT_ONCE("DLSS Frame Generation was requested but Reflex is not available on this system. Frame generation requires Reflex and has been disabled.");
 			wantActivateDLSSG = false;
 		}
+
+		// Reflex has to be turned on before frame generation starts, and stays on for as long as it runs.
 		StreamlineContext::get().reflex_set_required_by_dlssg(wantActivateDLSSG);
 
 		// Disable previous DLSS-G context if needed
@@ -548,7 +561,9 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			StreamlineContext::get().dlssg_last_status = 0;
 		}
 
-		canActivateDLSSG = canActivateDLSSG && StreamlineContext::get().reflex_running();
+		// Wait for Reflex to be running before starting frame generation, otherwise the first
+		// frames are presented as magenta. This costs at most one frame.
+		canActivateDLSSG = canActivateDLSSG && StreamlineContext::get().reflex_is_running();
 
 		// Enable new DLSS-G context if needed
 		if (canActivateDLSSG && wantActivateDLSSG && StreamlineContext::get().dlssg_viewport != context->viewport) {
@@ -565,6 +580,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			StreamlineContext::get().dlssg_viewport = context->viewport;
 		}
 
+		// Report why frame generation is failing instead of silently presenting magenta frames.
 		if (StreamlineContext::get().dlssg_viewport == context->viewport) {
 			StreamlineContext::get().dlssg_report_status(context->viewport);
 		}
@@ -591,14 +607,20 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 
 		if (use_dlss_rr && StreamlineContext::get().streamline_capabilities.dlss_rr_available) {
 			// Use DLSS Ray Reconstruction
-			result = StreamlineContext::get().slEvaluateFeature(sl::kFeatureDLSS_RR, *StreamlineContext::get().last_token, inputs, 1, nativeCmdlist);
+			result = StreamlineContext::get().slEvaluateFeature(sl::kFeatureDLSS_RR, *StreamlineContext::get().render_token, inputs, 1, nativeCmdlist);
 			if (result != sl::Result::eOk) {
 				sl_state.rr_mode = sl::DLSSMode::eOff;
-				ERR_FAIL_MSG("Failed to call streamline slEvaluateFeature for DLSS Ray Reconstruction. Result: " + String(StreamlineContext::result_to_string(result)));
+				// Name what was handed over, so a missing or mismatched input can be told apart.
+				String inputs_desc = vformat(" (mode %s, output %dx%d, color %s, depth %s, motion %s, albedo %s, specular %s, normals %s, specular motion %s)",
+						StreamlineContext::dlss_mode_name(context->currentDlssDOptions.mode), context->currentDlssDOptions.outputWidth, context->currentDlssDOptions.outputHeight,
+						_dlss_texture_desc(p_params.color), _dlss_texture_desc(p_params.depth), _dlss_texture_desc(p_params.velocity),
+						_dlss_texture_desc(p_params.dlss_rr_diffuse_albedo), _dlss_texture_desc(p_params.dlss_rr_specular_albedo),
+						_dlss_texture_desc(p_params.dlss_rr_normal_roughness), _dlss_texture_desc(p_params.dlss_rr_specular_motion_vectors));
+				ERR_FAIL_MSG("Failed to call streamline slEvaluateFeature for DLSS Ray Reconstruction. Result: " + String(StreamlineContext::result_to_string(result)) + inputs_desc);
 			}
 		} else if (StreamlineContext::get().streamline_capabilities.dlss_available) {
 			// Use regular DLSS
-			result = StreamlineContext::get().slEvaluateFeature(sl::kFeatureDLSS, *StreamlineContext::get().last_token, inputs, 1, nativeCmdlist);
+			result = StreamlineContext::get().slEvaluateFeature(sl::kFeatureDLSS, *StreamlineContext::get().render_token, inputs, 1, nativeCmdlist);
 			if (result != sl::Result::eOk) {
 				sl_state.sr_mode = sl::DLSSMode::eOff;
 				ERR_FAIL_MSG("Failed to call streamline slEvaluateFeature for DLSS Super Resolution. Result: " + String(StreamlineContext::result_to_string(result)));
@@ -633,7 +655,7 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 
 		{ // Evaluate NIS
 			const sl::BaseStructure *inputs[] = { &context->viewport };
-			sl::Result result = StreamlineContext::get().slEvaluateFeature(sl::kFeatureNIS, *StreamlineContext::get().last_token, inputs, 1, nativeCmdlist);
+			sl::Result result = StreamlineContext::get().slEvaluateFeature(sl::kFeatureNIS, *StreamlineContext::get().render_token, inputs, 1, nativeCmdlist);
 			if (result != sl::Result::eOk) {
 				ERR_FAIL_MSG("Failed to call streamline slEvaluateFeature for NIS. Result: " + String(StreamlineContext::result_to_string(result)));
 			}

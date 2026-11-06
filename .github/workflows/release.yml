@@ -13,6 +13,10 @@ on:
         description: Publish even if this commit already has a release
         type: boolean
         default: false
+      build_only:
+        description: Build and keep the zips as workflow artifacts, publish no release
+        type: boolean
+        default: false
   schedule:
     - cron: "0 6 * * 1"
 
@@ -35,6 +39,7 @@ jobs:
       sha: ${{ steps.check.outputs.sha }}
       short: ${{ steps.check.outputs.short }}
       publish: ${{ steps.check.outputs.publish }}
+      release: ${{ steps.check.outputs.release }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,6 +53,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force }}
+          BUILD_ONLY: ${{ inputs.build_only }}
         run: |
           sha=$(git rev-parse HEAD)
           short=${sha:0:8}
@@ -58,6 +64,13 @@ jobs:
           if [ -n "$latest" ]; then
             latest_sha=$(git rev-list -n 1 "$latest" 2>/dev/null || true)
           fi
+          if [ "$BUILD_ONLY" = "true" ]; then
+            echo "Build only: no release."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
           if [ "$latest_sha" = "$sha" ] && [ "$FORCE" != "true" ]; then
             echo "Latest release $latest already points at $short."
             echo "publish=false" >> "$GITHUB_OUTPUT"
@@ -266,7 +279,7 @@ jobs:
       contents: write
     needs: [check, windows, macos, linux]
     # Windows is required; a failed macOS or Linux build only leaves that zip out.
-    if: always() && needs.check.outputs.publish == 'true' && needs.windows.result == 'success'
+    if: always() && needs.check.outputs.publish == 'true' && needs.check.outputs.release == 'true' && needs.windows.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
