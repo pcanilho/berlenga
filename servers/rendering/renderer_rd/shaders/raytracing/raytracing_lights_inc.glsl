@@ -68,10 +68,12 @@ layout(set = 0, binding = RT_LIGHT_BUFFER_BINDING, std430) readonly buffer Light
 
 layout(set = 0, binding = 40) uniform sampler rt_light_projector_sampler;
 
-// The world grid of positional light lists (RenderRaytracing::build_light_grid): which
-// lights can reach a point. In uints: [0..2] cells along x, y, z (0: none), [3] the
-// global count G, [4..6] the origin and [7] 1 / cell size (floats' bits), [8, 8 + G)
-// the lights in every list (no range), then each cell's start, then the cells' lists.
+// The grid of positional light lists around the camera (RenderRaytracing::build_light_grid):
+// which lights can reach a point. In uints: [0..2] cells along x, y, z (0: none), [3] the
+// global count G, [4..6] the origin and [7] 1 / cell size (floats' bits), [8] the far
+// count F; from RT_LIGHT_GRID_HEADER the G lights in every list (no range), the F lights
+// reaching past the grid (the list of points outside it), each cell's start, the cells' lists.
+#define RT_LIGHT_GRID_HEADER 12u
 #ifndef RT_LIGHT_GRID_BINDING
 #define RT_LIGHT_GRID_BINDING 42
 #endif
@@ -83,12 +85,14 @@ layout(set = 0, binding = RT_LIGHT_GRID_BINDING, std430) readonly buffer LightGr
 // The lights that can reach p: the global ones at [r_global_start, + r_global_count)
 // and the cell's at [r_cell_start, + r_cell_count), indices into rt_light_buffer.
 void lights_grid_lists(vec3 p, out uint r_global_start, out uint r_global_count, out uint r_cell_start, out uint r_cell_count) {
-	r_global_start = 8u;
+	r_global_start = RT_LIGHT_GRID_HEADER;
 	r_global_count = rt_light_grid[3];
-	r_cell_start = 0u;
-	r_cell_count = 0u;
+	// Outside the grid: the far list, the lights whose reach leaves the grid.
+	r_cell_start = RT_LIGHT_GRID_HEADER + r_global_count;
+	r_cell_count = rt_light_grid[8];
 	uvec3 dims = uvec3(rt_light_grid[0], rt_light_grid[1], rt_light_grid[2]);
 	if (dims.x == 0u) {
+		r_cell_count = 0u;
 		return;
 	}
 	vec3 origin = uintBitsToFloat(uvec3(rt_light_grid[4], rt_light_grid[5], rt_light_grid[6]));
@@ -99,7 +103,7 @@ void lights_grid_lists(vec3 p, out uint r_global_start, out uint r_global_count,
 	}
 	uvec3 ci = uvec3(c);
 	uint cell = ci.x + dims.x * (ci.y + dims.y * ci.z);
-	uint starts = 8u + r_global_count;
+	uint starts = RT_LIGHT_GRID_HEADER + r_global_count + rt_light_grid[8];
 	r_cell_start = rt_light_grid[starts + cell];
 	r_cell_count = rt_light_grid[starts + cell + 1u] - r_cell_start;
 }

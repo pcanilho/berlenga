@@ -5452,21 +5452,24 @@ void RenderRaytracing::build_decal_volumes(RTViewportState *p_state, const Rende
 // Light gathering
 // ---------------------------------------------------------------------------
 
-// The lights the shaders pick from at a point: a world grid over the lights' reach,
-// each cell listing the lights whose range sphere meets it, after the world-space
+// The lights the shaders pick from at a point: a grid over the lights' reach around the
+// camera (at most RT_LIGHT_GRID_HALF_EXTENT on each axis, so cells stay small in a large
+// world), each cell listing the lights whose range sphere meets it, after the world-space
 // light grids of ReGIR (Boksansky, Jukarainen & Wyman, "Rendering Many Lights with
 // Grid-Based Reservoirs", Ray Tracing Gems II, 2021) and of clustered shading (Olsson,
 // Billeter & Assarsson 2012). Positional lights without a range are in every cell's
 // list; directional lights are sampled on their own and left out. The shaders
 // resample a few candidates from the point's list by their unshadowed contribution (Talbot et al., "Importance Resampling for Global
 // Illumination", EGSR 2005), so a point near ten of a thousand lights picks among those
-// ten. Layout, in uints:
+// ten. A point outside the grid picks from the far list: the lights whose reach leaves
+// the grid. Layout, in uints:
 //   [0..2] cells along x, y, z (0: no grid), [3] the global count G,
-//   [4..6] the grid's origin, [7] 1 / cell size (floats' bits),
-//   [8, 8 + G) the global lights' indices,
-//   [8 + G, 8 + G + cells + 1) each cell's start in this array, then its end,
+//   [4..6] the grid's origin, [7] 1 / cell size (floats' bits), [8] the far count F,
+//   [H, H + G) the global lights' indices (H = RT_LIGHT_GRID_HEADER),
+//   [H + G, H + G + F) the far lights' indices,
+//   [H + G + F, + cells + 1) each cell's start in this array, then its end,
 //   then the cells' lists.
-void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p_count, LocalVector<uint32_t> &r_grid) {
+void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p_count, const Vector3 &p_camera, LocalVector<uint32_t> &r_grid) {
 	r_grid.clear();
 	LocalVector<uint32_t> global;
 	LocalVector<uint32_t> bounded;
@@ -5500,6 +5503,30 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 		return;
 	}
 
+	// The grid covers the lights' reach within RT_LIGHT_GRID_HALF_EXTENT of the camera.
+	const float half = (float)RT_LIGHT_GRID_HALF_EXTENT;
+	const AABB around(p_camera - Vector3(half, half, half), Vector3(half, half, half) * 2.0f);
+	if (!bounds.intersects(around)) {
+		bounds = AABB(p_camera, Vector3());
+	} else {
+		bounds = bounds.intersection(around);
+	}
+	bounds.size = bounds.size.max(Vector3(0.01f, 0.01f, 0.01f));
+	// The lights reaching past the grid, for the points outside it.
+	LocalVector<uint32_t> far;
+	for (uint32_t bi = 0; bi < bounded.size(); bi++) {
+		const RT_LightData &l = p_lights[bounded[bi]];
+		const float r = l.range;
+		const AABB a(Vector3(l.position[0], l.position[1], l.position[2]) - Vector3(r, r, r), Vector3(r, r, r) * 2.0f);
+		if (!bounds.encloses(a)) {
+			far.push_back(bounded[bi]);
+		}
+	}
+	r_grid[8] = far.size();
+	for (uint32_t i = 0; i < far.size(); i++) {
+		r_grid.push_back(far[i]);
+	}
+
 	// Cells about the size of a light's reach: smaller ones list each light many times,
 	// larger ones list lights that reach only a corner of them.
 	ranges.sort();
@@ -5508,7 +5535,7 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 	cell = MAX(cell, Math::pow(MAX(extent.x * extent.y * extent.z, 1e-3f) / float(RT_LIGHT_GRID_MAX_CELLS), 1.0f / 3.0f));
 	cell = MAX(cell, 0.25f);
 
-	const uint32_t list_base = RT_LIGHT_GRID_HEADER + global.size();
+	const uint32_t list_base = RT_LIGHT_GRID_HEADER + global.size() + far.size();
 	LocalVector<uint32_t> counts;
 	uint32_t dims[3] = {};
 	for (int attempt = 0; attempt < 16; attempt++) {
@@ -5598,6 +5625,7 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 	// No grid fits: every bounded light goes in the global list.
 	r_grid.resize(RT_LIGHT_GRID_HEADER);
 	r_grid[3] = global.size() + bounded.size();
+	r_grid[8] = 0;
 	for (uint32_t i = 0; i < global.size(); i++) {
 		r_grid.push_back(global[i]);
 	}
@@ -6004,7 +6032,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		memset((void *)rt_light_scratch.ptr(), 0, RT_LIGHTS_MAX * sizeof(RT_LightData));
 		RT_LightData *rt_light_data = rt_light_scratch.ptr();
 		const uint32_t rt_light_count = gather_lights(p_render_data, p_state, rt_light_data, RT_LIGHTS_MAX);
-		build_light_grid(rt_light_data, rt_light_count, rt_light_grid_scratch);
+		build_light_grid(rt_light_data, rt_light_count, p_render_data->scene_data->cam_transform.origin, rt_light_grid_scratch);
 
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_COUNT] = float(rt_light_count);
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SELF_SHADOW_MASK] = p_state ? float(p_state->shadow_groups.self_shadow_bit) : 0.0f;

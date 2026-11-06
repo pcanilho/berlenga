@@ -412,7 +412,10 @@ enum {
 	// size grows until the lists fit).
 	RT_LIGHT_GRID_MAX_CELLS = 32768,
 	RT_LIGHT_GRID_MAX_ENTRIES = 1 << 20,
-	RT_LIGHT_GRID_HEADER = 8,
+	RT_LIGHT_GRID_HEADER = 12,
+	// The grid spans at most this far from the camera on each axis, in metres; lights reaching
+	// past it are also listed for the points outside it.
+	RT_LIGHT_GRID_HALF_EXTENT = 256,
 };
 
 constexpr uint32_t RT_OFFSET_NONE = 0xFFFFFFFFu;
@@ -1548,7 +1551,7 @@ public:
 	uint32_t gather_lights(const RenderDataRD *p_render_data, const RTViewportState *p_state, RT_LightData *r_light_data, uint32_t p_max_lights);
 	// The world grid of positional light lists the shaders pick lights from (layout in
 	// render_raytracing.cpp).
-	static void build_light_grid(const RT_LightData *p_lights, uint32_t p_count, LocalVector<uint32_t> &r_grid);
+	static void build_light_grid(const RT_LightData *p_lights, uint32_t p_count, const Vector3 &p_camera, LocalVector<uint32_t> &r_grid);
 	LocalVector<RT_LightData> rt_light_scratch;
 	LocalVector<uint32_t> rt_light_grid_scratch;
 	void update_scene_ubo(RTViewportState *p_state, const RenderDataRD *p_render_data, const Size2i &p_screen_size, const Color &p_default_bg_color);
