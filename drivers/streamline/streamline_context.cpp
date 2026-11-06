@@ -314,8 +314,10 @@ void StreamlineContext::reflex_set_required_by_dlssg(bool p_required) {
 }
 
 sl::Result StreamlineContext::set_tags(const sl::ViewportHandle &p_viewport, const sl::ResourceTag *p_tags, uint32_t p_count, sl::CommandBuffer *p_cmd) {
-	if (slSetTagForFrame != nullptr && last_token != nullptr) {
-		return slSetTagForFrame(*last_token, p_viewport, p_tags, p_count, p_cmd);
+	// Tags go to the frame being rendered, the token slSetConstants and slEvaluateFeature use.
+	// With a separate rendering thread the main thread's last_token is already the next frame's.
+	if (slSetTagForFrame != nullptr && render_token != nullptr) {
+		return slSetTagForFrame(*render_token, p_viewport, p_tags, p_count, p_cmd);
 	}
 	return slSetTag ? slSetTag(p_viewport, p_tags, p_count, p_cmd) : sl::Result::eErrorMissingInputParameter;
 }
