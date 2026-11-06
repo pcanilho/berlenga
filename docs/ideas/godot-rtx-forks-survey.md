@@ -17,11 +17,9 @@ has `metal-path-tracing.md`.
 
 ## Attribution
 
-Same rule as the Valence notes: anything taken from these projects is
-credited in the commit message (`Based on <owner>/<repo> <commit>`), a
-source comment at the feature, COPYRIGHT.txt for copied code with its
-licence, and the CHANGELOG line and README references. Licences are listed
-per project below; check each before copying code.
+Anything taken from these projects is credited in the README References.
+Copied code also keeps its licence notice in COPYRIGHT.txt. Licences are
+listed per project below.
 
 ## Worth taking
 
