@@ -6,6 +6,9 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## Unreleased
 
+### Fixed
+- Fog, sky, particle and texture blit shaders no longer fail to compile when two of them compile at once on the main and rendering threads (separate rendering thread) (#96).
+
 ## build-a3c71eda (2026-11-06)
 
 ### Added

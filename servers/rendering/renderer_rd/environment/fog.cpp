@@ -390,7 +390,11 @@ void Fog::FogShaderData::set_code(const String &p_code) {
 
 	Fog *fog_singleton = Fog::get_singleton();
 
-	Error err = fog_singleton->volumetric_fog.compiler.compile(RSE::SHADER_FOG, code, &actions, path, gen_code);
+	Error err;
+	{
+		MutexLock compiler_lock(fog_singleton->volumetric_fog.compiler_mutex);
+		err = fog_singleton->volumetric_fog.compiler.compile(RSE::SHADER_FOG, code, &actions, path, gen_code);
+	}
 	ERR_FAIL_COND_MSG(err != OK, "Fog shader compilation failed.");
 
 	if (version.is_null()) {

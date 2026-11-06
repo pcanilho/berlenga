@@ -230,6 +230,7 @@ public:
 	struct SkyShader {
 		SkyShaderRD shader;
 		ShaderCompiler compiler;
+		Mutex compiler_mutex; // SkyShaderData::set_code can run on more than one thread.
 
 		RID default_shader;
 		RID default_material;

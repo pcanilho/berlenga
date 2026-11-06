@@ -560,6 +560,7 @@ private:
 	struct TextureBlitShader {
 		TexBlitShaderRD shader;
 		ShaderCompiler compiler;
+		Mutex compiler_mutex; // TexBlitShaderData::set_code can run on more than one thread.
 
 		bool initialized = false;
 		RID default_shader;
