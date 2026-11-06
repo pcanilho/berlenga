@@ -241,11 +241,16 @@ and Vulkan commits of 2026-10-14):
   far-field model by default and Chiang 2016 as an option, with NEE, MIS and
   the BCSDF's own sample. Fixed a density bug in RTXCR's Chiang pdf (white
   furnace +7.6 % before).
-- Trap: Valence has no fallback where the LSS extension is missing. LSS is
-  hardware on RTX 50 (Blackwell); whether the RTX 40 driver exposes the
-  extension has to be checked on the target machine. A fallback is needed
-  either way (strand cards as triangle ribbons shaded with the same BCSDF, or
-  a capsule intersection shader).
+- Trap: Valence has no fallback where the LSS extension is missing. Checked
+  2026-11-06 on an RTX 4090 (driver 621.01, Vulkan 1.4.357):
+  `VK_NV_ray_tracing_linear_swept_spheres` is absent, so RTX 40 needs the
+  fallback: strand cards as triangle ribbons, or a capsule intersection
+  shader, shaded with the same BCSDF. LSS stays an RTX 50 fast path.
+
+Extension availability on the same RTX 4090: `VK_NV_cluster_acceleration_structure`
+rev 4, `VK_NV_partitioned_acceleration_structure` rev 1, `VK_EXT_opacity_micromap`
+rev 2 (and `VK_KHR_opacity_micromap` rev 1) present; `VK_NV_displacement_micromap`
+absent. Cluster LOD, partitioned TLAS and opacity micromaps can all run there.
 
 Subdivision with displacement (D122, OpenSubdiv 3.7, 13ee3fa1, 68a3c4a9):
 Catmull-Clark refinement on the GPU per frame for deformed meshes, a height
