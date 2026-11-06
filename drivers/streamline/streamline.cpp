@@ -161,8 +161,8 @@ void Streamline::emit_marker(StreamlineMarkerType marker) {
 			}
 
 			sl_context.get_new_frame_token();
-			// Frame generation needs Reflex's sleep every frame it runs.
-			if (sl_context.reflex_options.mode != sl::ReflexMode::eOff || sl_context.reflex_options.frameLimitUs > 0 || sl_context.dlssg_active()) {
+			// DLSS-G requires slReflexSleep to be called every frame while it is active.
+			if (sl_context.reflex_is_active() || sl_context.reflex_options.frameLimitUs > 0 || sl_context.dlssg_active()) {
 				sl_context.reflex_sleep(sl_context.last_token);
 			}
 			break;

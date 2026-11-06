@@ -6,6 +6,11 @@
 
 #define MAX_VIEWS 2
 
+// Per-geometry entry (geometries, materials, motion) of a hit. A TLAS instance's custom index is its
+// first entry; multi-geometry BLASes store one entry per geometry, in geometry order.
+#define RT_HIT_GEOMETRY_IDX (gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT)
+#define RT_RQ_GEOMETRY_IDX(m_rq, m_committed) uint(rayQueryGetIntersectionInstanceCustomIndexEXT(m_rq, m_committed) + rayQueryGetIntersectionGeometryIndexEXT(m_rq, m_committed))
+
 #ifndef PI
 #define PI 3.141592653589f
 #endif
@@ -13,43 +18,46 @@
 // ============================================================================
 // RT_PARAMS INDICES - Must match RT_PARAM_* in scene_shader_raytracing.h
 // ============================================================================
-// rt_params is a vec4[7] uniform buffer (28 floats total)
+// rt_params is a vec4 uniform array of RT_PARAM_COUNT floats, injected from SceneShaderRaytracing
 // Access: rt_params[idx >> 2][idx & 3] or get_rt_param(idx)
 #define RT_PARAM_VIS_MODE 0 // rt_params[0].x - Debug visualization mode (0 = disabled)
 #define RT_PARAM_SAMPLE_COUNT 1 // rt_params[0].y - Samples per pixel
 #define RT_PARAM_MAX_BOUNCES 2 // rt_params[0].z - Maximum ray bounces
 #define RT_PARAM_DENOISER 3 // rt_params[0].w - Denoiser selection (0=none, 1=DLSS RR)
-// 4-11: the volumetric fog the sun lights through the traced scene (sun shafts)
-#define RT_PARAM_FOG_DENSITY 4 // extinction per metre
-#define RT_PARAM_FOG_ALBEDO_R 5
-#define RT_PARAM_FOG_ALBEDO_G 6
-#define RT_PARAM_FOG_ALBEDO_B 7
-#define RT_PARAM_FOG_ANISOTROPY 8 // Henyey-Greenstein g
-#define RT_PARAM_FOG_LENGTH 9 // metres marched, at most
-#define RT_PARAM_FOG_SKY_AFFECT 10
-#define RT_PARAM_FOG_SAMPLES 11 // points (and shadow rays) a pixel; 0 off
-#define RT_PARAM_FOG_VOLUME_COUNT 12 // fog volumes in the fog volume buffer (binding 34)
-// Index 13 reserved for future use
+#define RT_PARAM_MAX_TRANSPARENCY_LAYERS 4 // rt_params[1].x - primary-segment peel budget for all blend modes (0 = transparency off)
+#define RT_PARAM_TRANSPARENCY_MAX_BOUNCE 5 // rt_params[1].y - last bounce with transparency handling
+#define RT_PARAM_TRANSPARENT_COUNT 6 // rt_params[1].z - instances in the unified TLAS transparent camera lane
+#define RT_PARAM_TRANSPARENCY_INDIRECT_RANGE 7 // rt_params[1].w - max peel distance on non-singular bounces (0 = unlimited)
+#define RT_PARAM_TRANSPARENCY_INDIRECT_FADE 8 // rt_params[2].x - fade-out length before that range (0 = hard cutoff)
+#define RT_PARAM_SKY_SCREEN_ENABLED 9 // rt_params[2].y - primary-ray misses read the screen-space sky instead of the octmap
+#define RT_PARAM_VOLUMETRIC_FOG_INV_LENGTH 10 // rt_params[2].z - 1 / fog length, 0 = volumetric fog disabled
+#define RT_PARAM_VOLUMETRIC_FOG_DETAIL_SPREAD 11 // rt_params[2].w - 1 / detail spread
+#define RT_PARAM_VOLUMETRIC_FOG_SKY_AFFECT 12 // rt_params[3].x
+#define RT_PARAM_FOG_USE_LEGACY_BLENDING 13 // rt_params[3].y
 #define RT_PARAM_LIGHT_COUNT 14 // rt_params[3].z - Number of active lights in light buffer
 #define RT_PARAM_FRAME_INDEX 15 // rt_params[3].w - Frame counter for temporal variation
-// 16-18: the light the fog takes from the sky and the room (the environment's ambient
-// light times the fog's ambient inject, plus its emission), unshadowed
-#define RT_PARAM_FOG_AMBIENT_R 16
-#define RT_PARAM_FOG_AMBIENT_G 17
-#define RT_PARAM_FOG_AMBIENT_B 18
+#define RT_PARAM_DECAL_COUNT 16 // rt_params[4].x - decals in the decal volume TLAS
+#define RT_PARAM_DECAL_MODE 17 // rt_params[4].y - RT_DECAL_MODE_*: which path vertices receive decals
+#define RT_PARAM_TRANSPARENCY_DOMINANT_LAYER_ALPHA 18 // rt_params[4].z - min alpha of the first peel layer to own depth/velocity (0 = never)
+#define RT_PARAM_MAX_TRANSPARENCY_LAYERS_REFLECTION 19 // rt_params[4].w - peel budget on singular (mirror) bounce segments
+#define RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT 20 // rt_params[5].x - peel budget on other indirect segments
+#define RT_PARAM_SELF_SHADOW_MASK 21 // rt_params[5].y - TLAS shadow group bit of SELF_SHADOWING casters (0 = none)
+#define RT_PARAM_VOLUMETRIC_FOG_SAMPLING 22 // rt_params[5].z - VOLUMETRIC_FOG_SAMPLING_* froxel lookup filter
+// RT_PARAM_VIS_MODE values. Must match Environment::PathtracingDebugMode.
+#define RT_VIS_TRANSPARENCY_LAYERS 23
+#define RT_VIS_DYNAMIC_GEOMETRY 29
 
+// True when p_vis_mode traces transparency peels: normal shading, and the debug views that show transparent layers.
+bool rt_debug_keeps_transparency(int p_vis_mode) {
+	return p_vis_mode == 0 || p_vis_mode == RT_VIS_TRANSPARENCY_LAYERS || p_vis_mode == RT_VIS_DYNAMIC_GEOMETRY;
+}
 // The transparent pass's traced light cache (#72, scene_raytracing_raygen.glsl plight_update)
-#define RT_PARAM_PLIGHT_ENABLED 13 // 1: refresh the cache this frame
-#define RT_PARAM_PLIGHT_NEAR 19 // the grid's depth range (view distance, metres)
-#define RT_PARAM_PLIGHT_FAR 20
-#define RT_PARAM_PLIGHT_STATE 21 // bit 0: the image pair written this frame; bit 1: last frame's is valid
-#define RT_PARAM_PLIGHT_BOUNCE 22 // 1: one sky / bounce ray a cell
-#define RT_PARAM_PLIGHT_TILE 23 // pixels a cell across (8, more at large sizes)
-// Particles in reflections (#72): the particle instances' share of the TLAS, met by the
-// first specular bounce's own query and lit from the light cache.
-#define RT_PARAM_PARTICLES 24 // 1: particle instances in the TLAS
-#define RT_PARAM_PARTICLE_ANISOTROPY 25 // their Henyey-Greenstein g, as the transparent pass's
-#define RT_PARAM_PARTICLE_DISTANCE 26 // metres a reflection ray looks for them, at most
+#define RT_PARAM_PLIGHT_ENABLED 24 // 1: refresh the cache this frame
+#define RT_PARAM_PLIGHT_NEAR 25 // the grid's depth range (view distance, metres)
+#define RT_PARAM_PLIGHT_FAR 26
+#define RT_PARAM_PLIGHT_STATE 27 // bit 0: the image pair written this frame; bit 1: last frame's is valid
+#define RT_PARAM_PLIGHT_BOUNCE 28 // 1: one sky / bounce ray a cell
+#define RT_PARAM_PLIGHT_TILE 29 // pixels a cell across (8, more at large sizes)
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)
@@ -65,14 +73,24 @@
 
 struct PathPayload {
 	uint packed_rt[3]; // 12 bytes - radiance+throughput interleaved as fp16
-	uint packed_bounces_flags; //  4 bytes - [flags:8][unused:8][diffuse:8][total:8]
+	uint packed_bounces_flags; //  4 bytes - [flags:8][peel_alpha:8][non_singular:1][reserved:7][peel_scene_depth:1][diffuse:3][total:4]
 	uint rng_state; //  4 bytes - RNG state for PCG
-	float hit_t; //  4 bytes - ray distance, used by raygen to rebuild origin
+	float hit_t; //  4 bytes - surface distance, even on termination; -1 on a scene miss
 	uint oct_offset_nrm; //  4 bytes - packUnorm2x16(vec3_to_oct(offset normal))
-	uint oct_next_dir; //  4 bytes - packUnorm2x16(vec3_to_oct(next direction))
+	uint oct_next_dir; //  4 bytes - packUnorm2x16(vec3_to_oct(next direction)); peel-ray input: SCENE_DEPTH, see path_pack_peel()
 };
 
-/// Unpacked fp32 working copy of the payload.
+// Set by payload_set_cone_width(), cleared by path_pack(): oct_next_dir holds the ray cone's width
+// at the ray's origin (texture level of detail), not a direction. Bit 14.
+const uint CONE_WIDTH_FLAG = (1u << 14);
+// Set by path_pack_peel(), cleared by path_pack(): oct_next_dir holds the peel ray's SCENE_DEPTH, not a direction.
+const uint PEEL_SCENE_DEPTH_FLAG = (1u << 7);
+const uint PEEL_RAY_FLAG = (1u << 28);
+const uint PEEL_FIRST_LAYER_FLAG = (1u << 29);
+const uint PEEL_HAS_CONTINUATION_FLAG = (1u << 30);
+const uint PEEL_DEPTH_BARRIER_HIT_FLAG = (1u << 31);
+
+// Unpacked fp32 working copy of the payload.
 struct PathState {
 	vec3 radiance;
 	vec3 throughput;
@@ -105,42 +123,84 @@ void path_pack(inout PathPayload p, PathState s) {
 	p.packed_rt[0] = packHalf2x16(vec2(r.r, r.g));
 	p.packed_rt[1] = packHalf2x16(vec2(r.b, t.r));
 	p.packed_rt[2] = packHalf2x16(vec2(t.g, t.b));
-	p.packed_bounces_flags = s.packed_bounces_flags;
+	p.packed_bounces_flags = s.packed_bounces_flags & ~(PEEL_SCENE_DEPTH_FLAG | CONE_WIDTH_FLAG);
 	p.rng_state = s.rng_state;
 	p.hit_t = s.hit_t;
 	p.oct_offset_nrm = packUnorm2x16(vec3_to_oct(s.offset_normal));
 	p.oct_next_dir = packUnorm2x16(vec3_to_oct(s.next_ray_dir));
 }
 
-// Bounce count helpers (bits 0-7: total, bits 8-15: diffuse)
+// Peel ray setup. p_scene_depth: NDC depth of the segment's opaque hit, 0.0 = far.
+void path_pack_peel(inout PathPayload p, PathState s, float p_scene_depth) {
+	path_pack(p, s);
+	p.packed_bounces_flags |= PEEL_SCENE_DEPTH_FLAG;
+	p.oct_next_dir = floatBitsToUint(p_scene_depth);
+}
+
+#ifdef RT_DEBUG_ENABLED
+bool rt_peel_scene_depth_lost = false; // A peel hit read SCENE_DEPTH after its payload was repacked.
+#endif
+
+// The ray cone's width at the ray's origin (Akenine-Moller et al., "Texture Level of Detail
+// Strategies for Real-Time Ray Tracing", Ray Tracing Gems 2019): raygen sets it after path_pack()
+// on the path's own segments. Without it (peel, shadow and query rays) the width is taken as
+// p_default, the eye's. Hits must read it before their first path_pack().
+void payload_set_cone_width(inout PathPayload p, float p_width) {
+	p.packed_bounces_flags |= CONE_WIDTH_FLAG;
+	p.oct_next_dir = floatBitsToUint(max(p_width, 0.0));
+}
+float payload_cone_width(PathPayload p, float p_default) {
+	return (p.packed_bounces_flags & CONE_WIDTH_FLAG) != 0u ? uintBitsToFloat(p.oct_next_dir) : p_default;
+}
+
+// SCENE_DEPTH of a peel ray, 0.0 (far, no proximity fade) otherwise. Hits must read it before their first path_pack().
+float payload_peel_scene_depth(PathPayload p) {
+	if ((p.packed_bounces_flags & PEEL_SCENE_DEPTH_FLAG) != 0u) {
+		return uintBitsToFloat(p.oct_next_dir);
+	}
+#ifdef RT_DEBUG_ENABLED
+	rt_peel_scene_depth_lost = rt_peel_scene_depth_lost || (p.packed_bounces_flags & PEEL_RAY_FLAG) != 0u;
+#endif
+	return 0.0;
+}
+
+// Bounce count helpers. Bits 0-3: total, must hold RT_MAX_BOUNCES_LIMIT; bits 4-6: diffuse, must hold MAX_DIFFUSE_BOUNCES.
+// Bit 7: PEEL_SCENE_DEPTH_FLAG. Bit 8: LAST_BOUNCE_DIFFUSE_FLAG. Bits 9-13: DLSS-RR guide rays and replacement. Bit 14: CONE_WIDTH_FLAG.
 uint get_total_bounces(uint packed) {
-	return packed & 0xFFu;
+	return packed & 0xFu;
 }
 uint get_diffuse_bounces(uint packed) {
-	return (packed >> 8u) & 0xFFu;
+	return (packed >> 4u) & 0x7u;
+}
+
+// Set once the path has scattered through anything but a (near-)singular lobe.
+const uint NON_SINGULAR_PATH_FLAG = (1u << 15);
+#define SINGULAR_ROUGHNESS_MAX 0.05
+bool is_singular_path(uint packed) {
+	return (packed & NON_SINGULAR_PATH_FLAG) == 0u;
 }
 uint pack_bounces(uint total, uint diffuse) {
-	return total | (diffuse << 8u);
+	return total | (diffuse << 4u);
 }
 uint inc_total_bounce(uint packed) {
 	return packed + 1u;
 }
 uint inc_diffuse_bounce(uint packed) {
-	return packed + 0x101u;
+	return packed + 0x11u;
 } // +1 to both total and diffuse
 
-// The ray cone's width at the ray's origin (bits 16-23), for texture level of detail
-// (Akenine-Moller et al., "Texture Level of Detail Strategies for Real-Time Ray
-// Tracing", Ray Tracing Gems 2019): log2(width) in eighths, offset by 128; 0 is a
-// width of 0 (a perspective camera's eye).
-float get_cone_width(uint packed) {
-	uint q = (packed >> 16u) & 0xFFu;
-	return q == 0u ? 0.0 : exp2((float(q) - 128.0) * 0.125);
-}
-uint set_cone_width(uint packed, float width) {
-	uint q = width <= 0.0 ? 0u : uint(clamp(round(log2(width) * 8.0 + 128.0), 1.0, 255.0));
-	return (packed & ~(0xFFu << 16u)) | (q << 16u);
-}
+// Set when the most recent scatter sampled the diffuse lobe, cleared when it sampled a specular one.
+const uint LAST_BOUNCE_DIFFUSE_FLAG = (1u << 8);
+
+// DLSS-RR primary surface replacement. A guide ray walks mirrors deterministically for the RR guides
+// and carries no radiance; on return, raw payload fields hold the result (see dlss_rr_guide_hit()).
+const uint GUIDE_RAY_FLAG = (1u << 9);
+const uint GUIDE_LAST_FLAG = (1u << 10); //!< Raygen input: the hit must report itself, not continue.
+const uint GUIDE_RESULT_FLAG = (1u << 11); //!< Hit output: the payload holds a guide result.
+const uint GUIDE_MIRROR_FLAG = (1u << 12); //!< Hit output: replaceable mirror, continue along next_ray_dir.
+// Set by a replaceable primary mirror; the path's next singular hit writes the replacement and clears it.
+// Still set after that bounce, raygen falls back to a guide ray walk.
+const uint DLSS_RR_REPLACE_PENDING_FLAG = (1u << 13);
 
 // Sample 0 flag (bit 24) - only write DLSS RR outputs on first sample
 const uint SAMPLE_ZERO_FLAG = (1u << 24);
@@ -160,6 +220,22 @@ bool is_shadow_ray(uint packed) {
 	return (packed & SHADOW_RAY_FLAG) != 0u;
 }
 
+const uint PRIMARY_MISS_FLAG = (1u << 27);
+uint set_primary_miss(uint packed) {
+	return packed | PRIMARY_MISS_FLAG;
+}
+bool is_primary_miss(uint packed) {
+	return (packed & PRIMARY_MISS_FLAG) != 0u;
+}
+
+// Peel traces store per-layer alpha in the spare byte (bits 16-23).
+float get_peel_alpha(uint packed) {
+	return float((packed >> 16u) & 0xFFu) / 255.0;
+}
+uint set_peel_alpha(uint packed, float a) {
+	return (packed & ~0x00FF0000u) | (uint(clamp(a, 0.0, 1.0) * 255.0 + 0.5) << 16u);
+}
+
 const uint PATH_TERMINATED_FLAG = (1u << 26);
 uint set_path_terminated(uint packed) {
 	return packed | PATH_TERMINATED_FLAG;
@@ -171,9 +247,28 @@ bool is_path_terminated(uint packed) {
 	return (packed & PATH_TERMINATED_FLAG) != 0u;
 }
 
+// RAY_* shader built-ins. Shadow rays start from zeroed bounce state, so every query but RAY_IS_SHADOW excludes them.
+// Peel rays report the segment they peel: transparent layers seen by the camera are primary.
+bool rt_ray_is_primary(uint packed) {
+	return !is_shadow_ray(packed) && get_total_bounces(packed) == 0u;
+}
+bool rt_ray_is_diffuse(uint packed) {
+	return (packed & LAST_BOUNCE_DIFFUSE_FLAG) != 0u;
+}
+bool rt_ray_is_specular(uint packed) {
+	return get_total_bounces(packed) > 0u && !rt_ray_is_diffuse(packed);
+}
+bool rt_ray_is_singular(uint packed) {
+	return !is_shadow_ray(packed) && is_singular_path(packed);
+}
+
 // Bounce limits
 #define MAX_DIFFUSE_BOUNCES 2u
 #define MAX_DENOISER_SPECULAR_HIT_THRESHOLD 0.25
+
+// DLSS-RR primary surface replacement only follows mirrors up to this roughness; rougher ones keep
+// their own guides plus a spec MV.
+#define DLSS_RR_REPLACEMENT_ROUGHNESS_MAX 0.01
 
 // ============================================================================
 // CONSTANTS
@@ -183,52 +278,43 @@ const uint FLAG_COMPRESSED = 1u;
 const uint FLAG_PROCEDURAL = 2u;
 // Set when the BLAS uses a per-frame-deformed vertex buffer.
 const uint FLAG_DEFORMED = 4u;
-// A shadow caster (rendering/pathtracing/shadow_caster_layers): on a shadow
-// ray its any-hit multiplies the ray's transmittance by 1 - alpha.
-const uint FLAG_SHADOW_CASTER = 8u;
-
-// Cull masks. Casters (Shadows Only) carry instance mask 0x02, instances whose
-// Cast Shadow is Off 0x08, particles 0x10 and every other instance 0xEF. Camera rays and the
-// denoiser's specular query (RT_MASK_SCENE) never meet a caster; shadow rays
-// (RT_MASK_SHADOW) never meet a Cast Shadow Off instance, as no shadow map
-// draws one; bounce rays (RT_MASK_BOUNCE) meet all three: a hidden ceiling
-// still holds the light in and bounces it back. The ray query shadow path runs
-// no any-hit, so it leaves casters out too (RT_MASK_SHADOW_OPAQUE). Particles
-// (RT_MASK_PARTICLES) are met only by the reflection's own query (raygen), never
-// as a surface.
-#define RT_MASK_SCENE 0x09u
-#define RT_MASK_BOUNCE 0xEFu
-#define RT_MASK_SHADOW 0xE7u
-#define RT_MASK_PARTICLES 0x10u
-#define RT_MASK_SHADOW_OPAQUE 0x01u
-// A shadow ray's transmittance under this is taken as blocked.
-#define RT_SHADOW_OPAQUE_TRANSMITTANCE (1.0 / 256.0)
+// Positions and TBN come from the vertex capture pass.
+const uint FLAG_CAPTURED = 8u;
+// UVs in the attribute buffer are unorm16, independent of FLAG_COMPRESSED.
+const uint FLAG_COMPRESSED_UV = 16u;
+// A triangle hit reported as front facing is a raster back face.
+const uint FLAG_FACING_INVERTED = 32u;
+// Back faces flip the normal, like raster DO_SIDE_CHECK.
+const uint FLAG_SIDE_CHECK = 64u;
+// SELF_SHADOWING receiver: its shadow rays keep RT_PARAM_SELF_SHADOW_MASK.
+const uint FLAG_SELF_SHADOWING = 128u;
 
 // ============================================================================
 // RANDOM NUMBER GENERATION - PCG (Permuted Congruential Generator)
 // ============================================================================
 
-/// PCG random number generator - improved XSH-RR variant with better avalanche
+// PCG random number generator - improved XSH-RR variant with better avalanche
 uint pcg_hash(uint seed) {
 	uint state = seed * 747796405u + 2891336453u;
 	uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
 	return (word >> 22u) ^ word;
 }
 
-/// Initialize RNG state with improved mixing to eliminate patterns
+// Initialize RNG state with improved mixing to eliminate patterns
 uint init_rng(uvec2 pixel, uint frame, uint sample_idx) {
 	// Use Wang hash for better mixing - eliminates linear patterns
 	uint seed = pixel.x + pixel.y * 65536u + frame * 1000000u + sample_idx * 100000000u;
 	return pcg_hash(seed);
 }
 
-/// Random float in [0, 1)
+// Random float in [0, 1)
 float rand(inout uint state) {
 	state = pcg_hash(state);
-	return float(state) / 4294967296.0;
+	// Keep 24 bits, float(state) would round the top values up to exactly 1.0.
+	return float(state >> 8u) * (1.0 / 16777216.0);
 }
 
-/// Random vec2 in [0, 1)
+// Random vec2 in [0, 1)
 vec2 rand2(inout uint state) {
 	return vec2(rand(state), rand(state));
 }

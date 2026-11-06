@@ -56,9 +56,6 @@ public:
 	// Reflex
 	sl::ReflexOptions reflex_options;
 	bool reflex_options_dirty = true;
-	// The mode asked for (project setting, Streamline.set_parameter). The mode applied is
-	// low latency at least while frame generation runs: without Reflex it presents nothing
-	// generated (or magenta frames, `eFailReflexNotDetectedAtRuntime`).
 	sl::ReflexMode reflex_requested_mode = sl::ReflexMode::eOff;
 	bool reflex_required_by_dlssg = false;
 	PFun_slReflexGetState *slReflexGetState = nullptr;
@@ -77,6 +74,14 @@ public:
 	PFun_slDLSSSetOptions *slDLSSSetOptions = nullptr;
 	char dlss_default_preset = '?';
 	char dlss_rr_default_preset = '?';
+
+	// DLSS only accepts render sizes within the ranges its quality modes report, and those ranges
+	// have gaps between them, so a size derived from an arbitrary resolution scale often matches no
+	// mode at all and makes DLSS drop upscaling entirely. Rounds r_render_* down to the exact size
+	// of the nearest mode that is not larger than requested, and returns true if it changed them.
+	// Sizes a mode already accepts are left untouched. Queries the Super Resolution table, matching
+	// DLSSEffect::create_context.
+	bool dlss_clamp_render_size(int p_target_width, int p_target_height, int &r_render_width, int &r_render_height);
 
 	// DLSS Ray Reconstruction (DLSS-D / DLSS-RR)
 	PFun_slDLSSDGetOptimalSettings *slDLSSDGetOptimalSettings = nullptr;
@@ -104,9 +109,13 @@ public:
 
 	void reflex_set_options(const sl::ReflexOptions &opts);
 	void reflex_request_mode(sl::ReflexMode p_mode);
+	// DLSS-G renders magenta frames when Reflex is not running (DLSSGStatus::eFailReflexNotDetectedAtRuntime),
+	// so Reflex is forced on for as long as frame generation is active.
 	void reflex_set_required_by_dlssg(bool p_required);
-	// Reflex options are applied on the main thread (before the message loop): running once applied.
-	bool reflex_running() const { return reflex_options.mode != sl::ReflexMode::eOff && !reflex_options_dirty; }
+	bool reflex_is_active() const { return reflex_options.mode != sl::ReflexMode::eOff; }
+	// True once the active Reflex options have actually been submitted to Streamline, which
+	// happens on the main thread. DLSS-G must not be enabled before that.
+	bool reflex_is_running() const { return reflex_is_active() && !reflex_options_dirty; }
 	void reflex_sleep(sl::FrameToken *frameToken);
 	void reflex_get_state(sl::ReflexState &reflexState);
 	void pcl_set_options(const sl::PCLOptions &opts);
@@ -119,7 +128,8 @@ public:
 
 	static StreamlineContext &get();
 
-	sl::FrameToken *last_token = nullptr;
+	sl::FrameToken *last_token = nullptr; // Main thread only.
+	sl::FrameToken *render_token = nullptr; // Token of the draw being rendered; render thread only.
 	bool is_game = false;
 
 	// Super Resolution as the last DLSS context chose it: the output, the render size asked for and
@@ -134,7 +144,7 @@ public:
 	sl::ViewportHandle dlssg_viewport;
 	int dlssg_delay = 0;
 	bool dlssg_active() const { return (uint32_t)dlssg_viewport != UINT_MAX; }
-	// The last DLSSGStatus seen, so only a change is logged.
+	// Last reported DLSSGStatus bitmask, used to only log status changes.
 	uint32_t dlssg_last_status = 0;
 	void dlssg_report_status(const sl::ViewportHandle &p_viewport);
 	// Tags for this frame's token: the deprecated slSetTag ties a tag to Streamline's own

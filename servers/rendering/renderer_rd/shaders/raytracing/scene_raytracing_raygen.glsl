@@ -6,6 +6,21 @@
 
 #VERSION_DEFINES
 
+#ifdef RT_TIMING_ENABLED
+#extension GL_EXT_shader_realtime_clock : require
+layout(set = 0, binding = 34, r32f) uniform writeonly image2D timing_image;
+
+void store_path_timing(ivec2 pixel, uvec2 start_clock) {
+	uvec2 end_clock = clockRealtime2x32EXT();
+	// Subtract before converting to float, including the low-word borrow.
+	// Device clocks remain coherent across trace calls and shader execution reordering.
+	uvec2 elapsed = uvec2(end_clock.x - start_clock.x,
+			end_clock.y - start_clock.y - uint(end_clock.x < start_clock.x));
+	float ticks = float(elapsed.y) * 4294967296.0 + float(elapsed.x);
+	imageStore(timing_image, pixel, vec4(ticks));
+}
+#endif
+
 // clang-format off
 #include "raytracing_inc.glsl"
 #include "../scene_data_inc.glsl"
@@ -13,11 +28,6 @@
 
 #pragma shader_stage(raygen)
 #extension GL_EXT_ray_tracing : enable
-#extension GL_EXT_ray_query : enable
-#extension GL_EXT_buffer_reference : require
-#extension GL_EXT_buffer_reference2 : require
-#extension GL_ARB_gpu_shader_int64 : require
-#extension GL_EXT_nonuniform_qualifier : require
 #ifdef USE_SER
 #extension GL_EXT_shader_invocation_reorder : enable
 #endif
@@ -25,507 +35,126 @@
 #define GLSL 1
 #define RT_STAGE_RAYGEN 1
 #include "raytracing_common_inc.glsl"
+#include "raytracing_samplers_inc.glsl"
 
 layout(set = 0, binding = 0, rgba16f) uniform image2D image; // RB_TEX_RAYTRACING is R16G16B16A16_SFLOAT.
 layout(set = 0, binding = 1) uniform accelerationStructureEXT tlas;
+layout(set = 0, binding = 31) uniform accelerationStructureEXT tlas_transparent;
+layout(set = 0, binding = 29) uniform texture2D prepass_depth_texture;
+layout(set = 0, binding = 30) uniform texture2D prepass_color_texture;
 
 layout(location = 0) rayPayloadEXT PathPayload payload;
 
-// The volumetric fog lit through the traced scene (sun shafts): in-scatter in rgb,
-// the transmittance to the primary hit in a. Its own image, filtered and laid over
-// Ray Reconstruction's output; never part of the path's radiance, so RR never sees it.
-layout(set = 0, binding = 29, rgba16f) uniform image2D rt_fog_image;
+// The light API for the transparent pass's light cache (plight_update).
+#extension GL_EXT_nonuniform_qualifier : require
+layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+#include "brdf_inc.glsl"
+#define RT_LIGHTS_TRACE_SHADOWS_ONLY
+#include "raytracing_lights_inc.glsl"
 
-// As RTLightData (raytracing_lights_inc.glsl), the volumetric fog energy in _pad0.
-struct FogLightData {
-	vec3 position;
-	uint type;
-	vec3 emission;
-	float radius;
-	float attenuation;
-	float inv_max_range;
-	float max_range_squared;
-	float specular_amount;
-	float indirect_energy;
-	float inv_spot_attenuation;
-	float cos_spot_angle;
-	float volumetric_energy;
-	vec3 spot_direction;
-	float _pad1;
+struct ContinuationReservoir {
+	PathState selected;
+	float selected_weight;
+	float total_weight;
+	bool has_selection;
 };
 
-layout(set = 0, binding = 13, std430) readonly buffer FogLightBuffer {
-	FogLightData fog_lights[];
-};
-
-// The light grid (RenderRaytracing::build_light_grid, as raytracing_lights_inc.glsl
-// reads it): the lights that can reach a point.
-layout(set = 0, binding = 33, std430) readonly buffer FogLightGrid {
-	uint fog_light_grid[];
-};
-
-// The fog volumes with a FogMaterial (RT_FogVolumeData).
-struct FogVolumeData {
-	vec4 inv_xform[3]; // World to local, rows of an affine.
-	vec3 half_size;
-	uint shape; // 0 ellipsoid, 1 cone, 2 cylinder, 3 box, 4 world.
-	vec3 albedo;
-	float density;
-	vec3 emission;
-	float height_falloff;
-	vec3 origin;
-	float edge_fade;
-	vec3 aabb_min;
-	float _pad0;
-	vec3 aabb_max;
-	float _pad1;
-};
-
-layout(set = 0, binding = 34, std430) readonly buffer FogVolumeBuffer {
-	FogVolumeData fog_volumes[];
-};
-
-// From a point in the air towards a light: 1 clear, 0 blocked, between for a
-// shadow-only caster's alpha (its any-hit keeps the transmittance in hit_t).
-float fog_shadow(vec3 p_origin, vec3 p_dir, float p_max) {
-	PathState shadow_ps;
-	shadow_ps.radiance = vec3(0.0);
-	shadow_ps.throughput = vec3(0.0);
-	shadow_ps.packed_bounces_flags = set_shadow_ray(0u);
-	shadow_ps.rng_state = 0u;
-	shadow_ps.hit_t = 1.0;
-	shadow_ps.offset_normal = vec3(0.0, 0.0, 1.0);
-	shadow_ps.next_ray_dir = vec3(0.0, 0.0, 1.0);
-	path_pack(payload, shadow_ps);
-#ifdef USE_SER
-	hitObjectEXT hitObject;
-	hitObjectTraceRayEXT(hitObject, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-			RT_MASK_SHADOW, 0, 0, 0, p_origin, 0.001, p_dir, p_max, 0);
-	bool visible = !hitObjectIsHitEXT(hitObject);
-#else
-	traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT,
-			RT_MASK_SHADOW, 0, 0, 0, p_origin, 0.001, p_dir, p_max, 0);
-	bool visible = path_unpack(payload).radiance.x > 0.5;
-#endif
-	return visible ? clamp(payload.hit_t, 0.0, 1.0) : 0.0;
+ContinuationReservoir continuation_reservoir_initial() {
+	ContinuationReservoir r;
+	r.selected_weight = 0.0;
+	r.total_weight = 0.0;
+	r.has_selection = false;
+	return r;
 }
 
-float fog_phase(float p_cos, float p_g) {
-	float g2 = p_g * p_g;
-	return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * p_g * p_cos, 1e-4), 1.5));
+void continuation_reservoir_add(inout ContinuationReservoir r, PathState candidate, inout uint rng_state) {
+	if (is_path_terminated(candidate.packed_bounces_flags)) {
+		return;
+	}
+	float weight = max(candidate.throughput.x, max(candidate.throughput.y, candidate.throughput.z));
+	if (weight <= 1e-6) {
+		return;
+	}
+	r.total_weight += weight;
+	if (!r.has_selection || rand(rng_state) < weight / r.total_weight) {
+		r.selected = candidate;
+		r.selected_weight = weight;
+		r.has_selection = true;
+	}
 }
 
-// The medium at a point: extinction, scattering (per colour) and emission per metre.
-// The environment's fog, plus each FogMaterial volume as the froxel fog's fog pass
-// has it (volumetric_fog.glsl: the shapes' signed distances, the height falloff, the
-// edge fade, the cull mask).
-void fog_medium(vec3 p_x, uint p_volume_count, out float r_extinction, out vec3 r_scattering, out vec3 r_emission) {
-	float env_density = get_rt_param(RT_PARAM_FOG_DENSITY);
-	vec3 env_albedo = vec3(get_rt_param(RT_PARAM_FOG_ALBEDO_R), get_rt_param(RT_PARAM_FOG_ALBEDO_G), get_rt_param(RT_PARAM_FOG_ALBEDO_B));
-	r_extinction = env_density;
-	r_scattering = env_albedo * env_density;
-	r_emission = vec3(0.0);
-	for (uint i = 0u; i < p_volume_count; i++) {
-		FogVolumeData v = fog_volumes[i];
-		if (any(lessThan(p_x, v.aabb_min)) || any(greaterThan(p_x, v.aabb_max))) {
+// Russian roulette thresholds on the strongest throughput channel, per bounce; the last entry covers
+// deeper bounces. The first bounce carries most of the visible indirect light, so it is cut least.
+const float RT_RUSSIAN_ROULETTE_THRESHOLDS[2] = float[](0.1, 0.25);
+
+// p_next_bounce is the segment about to be traced, 1 for the first bounce. Survivors are scaled back
+// up to the threshold, never above it, so they cannot become fireflies.
+bool russian_roulette_survives(uint p_next_bounce, inout PathState ps) {
+	uint threshold_idx = min(p_next_bounce, uint(RT_RUSSIAN_ROULETTE_THRESHOLDS.length())) - 1u;
+	float survival = max(ps.throughput.x, max(ps.throughput.y, ps.throughput.z)) / RT_RUSSIAN_ROULETTE_THRESHOLDS[threshold_idx];
+	if (survival >= 1.0) {
+		return true;
+	}
+	if (rand(ps.rng_state) >= survival) {
+		return false;
+	}
+	ps.throughput /= survival;
+	return true;
+}
+
+#ifdef DLSS_RR_ENABLED
+// Maximum number of mirrors followed, including the primary one.
+#define DLSS_RR_REPLACEMENT_MAX_MIRRORS 2u
+
+// Fallback primary surface replacement, used when the path's own next hit couldn't provide it.
+// Follows the mirror chain and writes the motion and albedo guides of the surface seen through it.
+// The primary mirror isn't retraced; its normal is read back from the guides.
+void dlss_rr_replace_primary_surface(vec3 p_origin, vec3 p_dir, float p_hit_t) {
+	vec3 own_normal = imageLoad(dlss_rr_normal_roughness, ivec2(gl_LaunchIDEXT.xy)).xyz;
+	mat3 image_xform = dlss_rr_householder(own_normal); // World to mirror-image space, linear part.
+	float scene_length = p_hit_t;
+	vec3 mirror_throughput = vec3(1.0); // Specular albedos of the mirrors after the primary one.
+	vec3 ray_dir = reflect(p_dir, own_normal);
+	vec3 ray_origin = offset_ray_origin(p_origin + p_dir * p_hit_t, ray_dir);
+
+	PathState gs;
+	gs.radiance = vec3(0.0);
+	gs.throughput = vec3(0.0);
+	gs.rng_state = 0u;
+	gs.offset_normal = vec3(0.0, 0.0, 1.0);
+	gs.next_ray_dir = vec3(0.0, 0.0, 1.0);
+	for (uint mirrors = 1u; mirrors <= DLSS_RR_REPLACEMENT_MAX_MIRRORS; mirrors++) {
+		// One bounce and no SAMPLE_ZERO keep the primary depth/velocity/guide writes away.
+		gs.packed_bounces_flags = inc_total_bounce(0u) | GUIDE_RAY_FLAG |
+				(mirrors == DLSS_RR_REPLACEMENT_MAX_MIRRORS ? GUIDE_LAST_FLAG : 0u);
+		gs.hit_t = -1.0;
+		path_pack(payload, gs);
+		traceRayEXT(tlas, RT_RAY_FLAGS, RT_VIS_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
+		if (payload.hit_t < 0.0 || (payload.packed_bounces_flags & GUIDE_RESULT_FLAG) == 0u) {
+			return;
+		}
+		PathState result = path_unpack(payload);
+		scene_length += result.hit_t;
+		vec3 hit_diffuse = unpackUnorm4x8(payload.packed_rt[2]).rgb;
+		vec3 hit_specular = unpackUnorm4x8(payload.rng_state).rgb;
+		if ((result.packed_bounces_flags & GUIDE_MIRROR_FLAG) != 0u) {
+			vec3 mirror_axis = ray_dir - result.next_ray_dir;
+			if (dot(mirror_axis, mirror_axis) < 1e-10) {
+				return;
+			}
+			mirror_throughput *= hit_specular;
+			image_xform = image_xform * dlss_rr_householder(normalize(mirror_axis));
+			ray_origin = offset_ray_origin(ray_origin + ray_dir * result.hit_t, result.offset_normal);
+			ray_dir = result.next_ray_dir;
 			continue;
 		}
-		vec4 xh = vec4(p_x, 1.0);
-		vec3 lp = vec3(dot(v.inv_xform[0], xh), dot(v.inv_xform[1], xh), dot(v.inv_xform[2], xh));
-		vec3 hs = v.half_size;
-		float sdf = -1.0;
-		if (v.shape == 0u) {
-			float k0 = length(lp / hs);
-			float k1 = length(lp / (hs * hs));
-			sdf = k0 * (k0 - 1.0) / k1;
-		} else if (v.shape == 1u) {
-			float inv_height = 1.0 / max(0.001, hs.y);
-			float radius = 1.0 / max(0.001, (min(hs.x, hs.z) * 0.5));
-			float hypotenuse = sqrt(radius * radius + inv_height * inv_height);
-			vec2 c = vec2(radius / hypotenuse, inv_height / hypotenuse);
-			float q = length(lp.xz);
-			sdf = max(dot(c, vec2(q, lp.y - hs.y)), -hs.y - lp.y);
-		} else if (v.shape == 2u) {
-			vec2 d = abs(vec2(length(lp.xz), lp.y)) - vec2(min(hs.x, hs.z), hs.y);
-			sdf = min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
-		} else if (v.shape == 3u) {
-			vec3 q = abs(lp) - hs;
-			sdf = length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
-		}
-		float density = v.density * clamp(exp2(-v.height_falloff * (p_x.y - v.origin.y)), 0.0, 1.0);
-		if (v.shape <= 3u) {
-			float cull_mask = 1.0 - smoothstep(-0.1, 0.0, sdf);
-			if (cull_mask <= 0.0) {
-				continue;
-			}
-			density *= cull_mask * pow(clamp(-2.0 * sdf / max(min(min(hs.x, hs.y), hs.z) * 2.0, 1e-4), 0.0, 1.0), v.edge_fade);
-		}
-		r_extinction += density;
-		r_scattering += v.albedo * density;
-		r_emission += v.emission * clamp(density, 0.0, 1.0);
+
+		vec3 motion = vec3(unpackHalf2x16(payload.packed_rt[0]), unpackHalf2x16(payload.packed_rt[1]).x);
+		dlss_rr_write_replaced_guides(p_origin + p_dir * scene_length, image_xform * motion, mirror_throughput, hit_diffuse, hit_specular);
+		return;
 	}
-	r_extinction = max(r_extinction, 0.0);
-	r_scattering = max(r_scattering, vec3(0.0));
 }
-
-// Where along [p_t0, p_t1] of the ray the light can reach: inside its range's sphere
-// and its spot cone (a single nappe under 90 degrees is convex, so this is one span).
-bool fog_light_span(vec3 p_ro, vec3 p_rd, FogLightData p_light, inout float r_t0, inout float r_t1) {
-	vec3 co = p_ro - p_light.position;
-	if (p_light.max_range_squared > 0.0) {
-		float b = dot(p_rd, co);
-		float c = dot(co, co) - p_light.max_range_squared;
-		float disc = b * b - c;
-		if (disc <= 0.0) {
-			return false;
-		}
-		float q = sqrt(disc);
-		r_t0 = max(r_t0, -b - q);
-		r_t1 = min(r_t1, -b + q);
-		if (r_t1 <= r_t0) {
-			return false;
-		}
-	}
-	if (p_light.type == 3u && p_light.cos_spot_angle > 0.0) {
-		vec3 ax = p_light.spot_direction;
-		float c2 = p_light.cos_spot_angle * p_light.cos_spot_angle;
-		float da = dot(p_rd, ax);
-		float ca = dot(co, ax);
-		float A = da * da - c2;
-		float B = 2.0 * (da * ca - dot(p_rd, co) * c2);
-		float C = ca * ca - dot(co, co) * c2;
-		float pts[4];
-		int np = 0;
-		pts[np++] = r_t0;
-		if (abs(A) > 1e-7) {
-			float disc = B * B - 4.0 * A * C;
-			if (disc > 0.0) {
-				float q = sqrt(disc);
-				float ra = (-B - q) / (2.0 * A);
-				float rb = (-B + q) / (2.0 * A);
-				float lo = min(ra, rb);
-				float hi = max(ra, rb);
-				if (lo > r_t0 && lo < r_t1) {
-					pts[np++] = lo;
-				}
-				if (hi > r_t0 && hi < r_t1) {
-					pts[np++] = hi;
-				}
-			}
-		} else if (abs(B) > 1e-7) {
-			float r = -C / B;
-			if (r > r_t0 && r < r_t1) {
-				pts[np++] = r;
-			}
-		}
-		pts[np++] = r_t1;
-		float lo = 1e30;
-		float hi = -1e30;
-		for (int j = 0; j < np - 1; j++) {
-			vec3 q = co + p_rd * (0.5 * (pts[j] + pts[j + 1]));
-			float qa = dot(q, ax);
-			if (qa >= 0.0 && qa * qa >= c2 * dot(q, q)) {
-				lo = min(lo, pts[j]);
-				hi = max(hi, pts[j + 1]);
-			}
-		}
-		r_t0 = lo;
-		r_t1 = hi;
-	}
-	return r_t1 > r_t0;
-}
-
-// What a positional light adds to the fog at a point, unshadowed and before the
-// medium's scattering: its radiance through the range window, the distance and the
-// cone, by the phase function.
-vec3 fog_light_inscatter(FogLightData p_light, vec3 p_x, vec3 p_dir, float p_g, out vec3 r_to_light, out float r_dist) {
-	vec3 to_l = p_light.position - p_x;
-	float d2 = dot(to_l, to_l);
-	r_dist = sqrt(d2);
-	r_to_light = to_l / max(r_dist, 1e-4);
-	if (p_light.max_range_squared > 0.0 && d2 > p_light.max_range_squared) {
-		return vec3(0.0);
-	}
-	float atten = min(pow(max(r_dist, 0.0001), -p_light.attenuation), 1.0);
-	if (p_light.inv_max_range >= 0.0) {
-		float nd = r_dist * p_light.inv_max_range;
-		nd *= nd;
-		nd *= nd;
-		nd = max(1.0 - nd, 0.0);
-		atten *= nd * nd;
-	}
-	if (p_light.type == 3u) {
-		float scos = dot(-r_to_light, p_light.spot_direction);
-		if (scos <= p_light.cos_spot_angle) {
-			return vec3(0.0);
-		}
-		float spot_rim = max(1e-4, (1.0 - scos) / (1.0 - p_light.cos_spot_angle));
-		atten *= 1.0 - pow(spot_rim, p_light.inv_spot_attenuation);
-	}
-	return p_light.emission * p_light.volumetric_energy * atten * fog_phase(dot(p_dir, r_to_light), p_g);
-}
-
-#define FOG_LIGHT_CANDIDATES 8
-// Per stretch, the positional-light estimates made without a shadow ray (FOG_CANDIDATES),
-// and per ray, the shadow rays traced for the ones resampling keeps (FOG_SHADOW_RAYS):
-// the candidate generation of Volumetric ReSTIR (Lin, Wyman & Yuksel, "Fast Volume
-// Rendering with Spatiotemporal Reservoir Resampling", SIGGRAPH Asia 2021), without its
-// spatial and temporal reuse.
-#define FOG_CANDIDATES 8
-#define FOG_SHADOW_RAYS 2
-
-// The in-scatter from the positional lights over one stretch [p_a, p_b] of the ray,
-// given a point p_t in it, uniform. Each light is integrated only where it can reach
-// (fog_light_span), its distance drawn by equiangular sampling (Kulla & Fajardo,
-// "Importance Sampling Techniques for Path Tracing in Participating Media", EGSR 2012),
-// which puts the samples near the light, where its 1 / d^2 is: what makes a headlight's
-// cone converge at a sample or two. The light is one of those that reach p_t (the light
-// grid's list there), picked by resampled importance sampling (Talbot et al. 2005) by its
-// unshadowed in-scatter over its span in closed form (the integral of 1 / (h^2 + s^2),
-// Sun et al., "A Practical Analytic Single Scattering Model", SIGGRAPH 2005). A light
-// whose span covers only part of the stretch is in the list at p_t only that part of the
-// time, so its estimate is divided by that share: unbiased. Unshadowed: the point and the
-// way to the light come back for fog_march, which resamples the candidates of all its
-// stretches and traces shadow rays only for those it keeps.
-vec3 fog_positional(vec3 p_ro, vec3 p_rd, float p_a, float p_b, float p_t, float p_tau_a, float p_extinction, uint p_volume_count, float p_g, inout uint rng, out vec3 r_x, out vec3 r_to_light, out float r_dist) {
-	r_x = vec3(0.0);
-	r_to_light = vec3(0.0, 1.0, 0.0);
-	r_dist = 0.0;
-	vec3 x = p_ro + p_rd * p_t;
-	uint g_count = fog_light_grid[3];
-	uint g_start = 8u;
-	uint c_start = 0u;
-	uint c_count = 0u;
-	uvec3 dims = uvec3(fog_light_grid[0], fog_light_grid[1], fog_light_grid[2]);
-	if (dims.x != 0u) {
-		vec3 origin = uintBitsToFloat(uvec3(fog_light_grid[4], fog_light_grid[5], fog_light_grid[6]));
-		vec3 c = floor((x - origin) * uintBitsToFloat(fog_light_grid[7]));
-		if (all(greaterThanEqual(c, vec3(0.0))) && all(lessThan(c, vec3(dims)))) {
-			uvec3 ci = uvec3(c);
-			uint cell = ci.x + dims.x * (ci.y + dims.y * ci.z);
-			uint starts = 8u + g_count;
-			c_start = fog_light_grid[starts + cell];
-			c_count = fog_light_grid[starts + cell + 1u] - c_start;
-		}
-	}
-	uint n = g_count + c_count;
-	if (n == 0u) {
-		return vec3(0.0);
-	}
-	bool enumerate = n <= uint(FOG_LIGHT_CANDIDATES);
-	uint m = enumerate ? n : uint(FOG_LIGHT_CANDIDATES);
-	float w_scale = enumerate ? 1.0 : float(n) / float(m);
-	float w_sum = 0.0;
-	float sel_p_hat = 0.0;
-	uint sel = 0u;
-	float sel_t0 = 0.0;
-	float sel_t1 = 0.0;
-	for (uint i = 0u; i < m; i++) {
-		uint j = enumerate ? i : min(uint(rand(rng) * float(n)), n - 1u);
-		uint idx = j < g_count ? fog_light_grid[g_start + j] : fog_light_grid[c_start + (j - g_count)];
-		FogLightData light = fog_lights[idx];
-		if (light.type == 1u || light.volumetric_energy <= 0.0) {
-			continue;
-		}
-		float t0 = p_a;
-		float t1 = p_b;
-		if (!fog_light_span(p_ro, p_rd, light, t0, t1) || p_t < t0 || p_t > t1) {
-			continue;
-		}
-		float tc = dot(light.position - p_ro, p_rd);
-		float h = max(length(p_ro + p_rd * tc - light.position), 1e-3);
-		float line = (atan((t1 - tc) / h) - atan((t0 - tc) / h)) / h;
-		vec3 mid = p_ro + p_rd * clamp(tc, t0, t1);
-		float lum = dot(abs(light.emission), vec3(0.2126, 0.7152, 0.0722)) * light.volumetric_energy;
-		float p_hat = lum * line * fog_phase(dot(p_rd, normalize(light.position - mid)), p_g);
-		float w = p_hat * w_scale;
-		if (!(w > 0.0)) {
-			continue;
-		}
-		w_sum += w;
-		if (rand(rng) * w_sum < w) {
-			sel = idx;
-			sel_p_hat = p_hat;
-			sel_t0 = t0;
-			sel_t1 = t1;
-		}
-	}
-	if (w_sum <= 0.0) {
-		return vec3(0.0);
-	}
-
-	FogLightData light = fog_lights[sel];
-	// equiangular: t = tc + h tan(theta), theta uniform between the span's ends
-	float tc = dot(light.position - p_ro, p_rd);
-	float h = max(length(p_ro + p_rd * tc - light.position), 1e-3);
-	float th0 = atan((sel_t0 - tc) / h);
-	float th1 = atan((sel_t1 - tc) / h);
-	float ts = clamp(tc + h * tan(mix(th0, th1, rand(rng))), sel_t0, sel_t1);
-	float pdf = h / (max(th1 - th0, 1e-7) * (h * h + (ts - tc) * (ts - tc)));
-	vec3 xs = p_ro + p_rd * ts;
-
-	float ext_s;
-	vec3 scat_s;
-	vec3 emis_s;
-	fog_medium(xs, p_volume_count, ext_s, scat_s, emis_s);
-	if (all(lessThanEqual(scat_s, vec3(0.0)))) {
-		return vec3(0.0);
-	}
-	vec3 to_light;
-	float dist;
-	vec3 inscatter = fog_light_inscatter(light, xs, p_rd, p_g, to_light, dist);
-	if (all(lessThanEqual(abs(inscatter), vec3(0.0)))) {
-		return vec3(0.0);
-	}
-	float transmittance = exp(-(p_tau_a + p_extinction * (ts - p_a)));
-	// the share of the stretch this light is listed over
-	float share = (sel_t1 - sel_t0) / max(p_b - p_a, 1e-6);
-	r_x = xs;
-	r_to_light = to_light;
-	r_dist = dist;
-	// unshadowed: fog_march resamples these and traces the shadow ray of the ones it keeps
-	return scat_s * inscatter * transmittance / pdf / share * (w_sum / sel_p_hat);
-}
-
-// The fog along the primary ray, in-scatter in rgb and transmittance in a: K stretches
-// over the part of the ray the medium can be in (the environment's fog, or the fog
-// volumes' bounds), stratified with a per-pixel, per-frame offset. At each stretch's
-// point: the medium, the directional lights by a shadow ray each, the ambient light and
-// the emission; and the positional lights over the stretch (fog_positional). The
-// transmittance is taken piecewise constant over the stretches (ray marching, Novák et
-// al., "Monte Carlo Methods for Volumetric Light Transport Simulation", 2018).
-vec4 fog_march(vec3 p_origin, vec3 p_dir, float p_primary_t, uint p_samples, inout uint rng) {
-	float env_density = get_rt_param(RT_PARAM_FOG_DENSITY);
-	uint volume_count = uint(get_rt_param(RT_PARAM_FOG_VOLUME_COUNT));
-	float reach = get_rt_param(RT_PARAM_FOG_LENGTH);
-	bool sky = p_primary_t < 0.0;
-	float t_end = sky ? reach : min(p_primary_t, reach);
-	float weight = sky ? get_rt_param(RT_PARAM_FOG_SKY_AFFECT) : 1.0;
-	if (t_end <= 0.0 || (env_density <= 0.0 && volume_count == 0u)) {
-		return vec4(0.0, 0.0, 0.0, 1.0);
-	}
-	// where the medium can be: all the way in the environment's fog, else the span of
-	// the fog volumes' bounds, so the camera's own clear air takes no samples
-	float t0 = 0.0;
-	float t1 = t_end;
-	if (env_density <= 0.0) {
-		float lo = 1e30;
-		float hi = -1e30;
-		vec3 inv_dir = 1.0 / max(abs(p_dir), vec3(1e-8)) * sign(p_dir + vec3(1e-12));
-		for (uint i = 0u; i < volume_count; i++) {
-			vec3 ta = (fog_volumes[i].aabb_min - p_origin) * inv_dir;
-			vec3 tb = (fog_volumes[i].aabb_max - p_origin) * inv_dir;
-			vec3 tmin = min(ta, tb);
-			vec3 tmax = max(ta, tb);
-			float enter = max(max(tmin.x, tmin.y), tmin.z);
-			float leave = min(min(tmax.x, tmax.y), tmax.z);
-			if (leave > max(enter, 0.0)) {
-				lo = min(lo, max(enter, 0.0));
-				hi = max(hi, leave);
-			}
-		}
-		t0 = max(lo, 0.0);
-		t1 = min(hi, t_end);
-	}
-	if (t1 <= t0) {
-		return vec4(0.0, 0.0, 0.0, 1.0);
-	}
-
-	float g = get_rt_param(RT_PARAM_FOG_ANISOTROPY);
-	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
-	vec3 ambient = vec3(get_rt_param(RT_PARAM_FOG_AMBIENT_R), get_rt_param(RT_PARAM_FOG_AMBIENT_G), get_rt_param(RT_PARAM_FOG_AMBIENT_B));
-	float dx = (t1 - t0) / float(p_samples);
-	float offset = rand(rng);
-	vec3 scatter = vec3(0.0);
-	float tau = 0.0; // optical depth to the stretch's start
-	// one reservoir per shadow ray, over every stretch's positional-light candidates
-	float res_w_sum[FOG_SHADOW_RAYS];
-	float res_w[FOG_SHADOW_RAYS];
-	vec3 res_est[FOG_SHADOW_RAYS];
-	vec3 res_x[FOG_SHADOW_RAYS];
-	vec3 res_l[FOG_SHADOW_RAYS];
-	float res_d[FOG_SHADOW_RAYS];
-	for (uint r = 0u; r < uint(FOG_SHADOW_RAYS); r++) {
-		res_w_sum[r] = 0.0;
-		res_w[r] = 0.0;
-		res_est[r] = vec3(0.0);
-		res_x[r] = vec3(0.0);
-		res_l[r] = vec3(0.0, 1.0, 0.0);
-		res_d[r] = 0.0;
-	}
-	[[dont_unroll]] for (uint i = 0u; i < p_samples; i++) {
-		float a = t0 + float(i) * dx;
-		float t = a + offset * dx;
-		vec3 x = p_origin + p_dir * t;
-		float extinction;
-		vec3 scattering;
-		vec3 emission;
-		fog_medium(x, volume_count, extinction, scattering, emission);
-		float transmittance = exp(-(tau + extinction * (t - a)));
-		// the directional lights lead the light buffer
-		[[dont_unroll]] for (uint li = 0u; li < light_count; li++) {
-			FogLightData light = fog_lights[li];
-			if (light.type != 1u) {
-				break;
-			}
-			if (light.volumetric_energy <= 0.0 || all(lessThanEqual(scattering, vec3(0.0)))) {
-				continue;
-			}
-			// a direction in the sun's disc, so the shafts' edges are as soft as the shadows
-			vec3 axis = -normalize(light.position);
-			vec2 u = rand2(rng);
-			float cos_max = cos(light.radius);
-			float cos_t = 1.0 - u.x * (1.0 - cos_max);
-			float sin_t = sqrt(max(0.0, 1.0 - cos_t * cos_t));
-			float phi = 2.0 * PI * u.y;
-			vec3 tangent = normalize(abs(axis.y) < 0.999 ? cross(axis, vec3(0.0, 1.0, 0.0)) : cross(axis, vec3(1.0, 0.0, 0.0)));
-			vec3 bitangent = cross(axis, tangent);
-			vec3 L = normalize(tangent * (sin_t * cos(phi)) + bitangent * (sin_t * sin(phi)) + axis * cos_t);
-			float v = fog_shadow(x, L, 10000.0);
-			scatter += scattering * light.emission * light.volumetric_energy * fog_phase(dot(p_dir, L), g) * v * transmittance * dx;
-		}
-		// the sky's and the room's light, which no shadow ray stops, and the medium's own
-		scatter += (scattering * ambient + emission) * transmittance * dx;
-		// the positional lights: FOG_CANDIDATES unshadowed estimates of this stretch, offered to
-		// the ray's reservoirs (the shadow rays come after the march, for the kept ones only)
-		for (uint c = 0u; c < uint(FOG_CANDIDATES); c++) {
-			float tc = c == 0u ? t : a + rand(rng) * dx;
-			vec3 cx;
-			vec3 cl;
-			float cd;
-			vec3 est = fog_positional(p_origin, p_dir, a, a + dx, tc, tau, extinction, volume_count, g, rng, cx, cl, cd) / float(FOG_CANDIDATES);
-			float w = dot(max(est, vec3(0.0)), vec3(0.2126, 0.7152, 0.0722));
-			if (!(w > 0.0) || isinf(w)) {
-				continue;
-			}
-			for (uint r = 0u; r < uint(FOG_SHADOW_RAYS); r++) {
-				res_w_sum[r] += w;
-				if (rand(rng) * res_w_sum[r] < w) {
-					res_est[r] = est;
-					res_w[r] = w;
-					res_x[r] = cx;
-					res_l[r] = cl;
-					res_d[r] = cd;
-				}
-			}
-		}
-		tau += extinction * dx;
-	}
-	// the kept candidates, each by its shadow ray: sum(w) / w * estimate * visibility is an
-	// unbiased estimate of the whole ray's positional in-scatter (resampled importance
-	// sampling of a sum, Talbot et al. 2005), averaged over the reservoirs
-	for (uint r = 0u; r < uint(FOG_SHADOW_RAYS); r++) {
-		if (res_w[r] > 0.0) {
-			float v = fog_shadow(res_x[r], res_l[r], max(res_d[r] - 0.01, 0.002));
-			scatter += res_est[r] * v * (res_w_sum[r] / res_w[r]) / float(FOG_SHADOW_RAYS);
-		}
-	}
-	float through = exp(-tau);
-	if (sky) {
-		through = mix(1.0, through, weight);
-	}
-	return vec4(scatter * weight, through);
-}
+#endif // DLSS_RR_ENABLED
 
 // The traced light cache of the transparent pass (#72). Transparents and particles are
 // rasterised after the trace (and after Ray Reconstruction); under path tracing they read
@@ -542,7 +171,7 @@ vec4 fog_march(vec3 p_origin, vec3 p_dir, float p_primary_t, uint p_samples, ino
 // the light buffer's units), and xyz = its luminance-weighted direction sum.
 #define PLIGHT_SLICES 64u
 #define PLIGHT_CANDIDATES 8u
-layout(set = 0, binding = 35, rgba16f) uniform image3D plight_images[4];
+layout(set = 0, binding = 43, rgba16f) uniform image3D plight_images[4];
 
 float plight_luma(vec3 c) {
 	return dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -550,7 +179,7 @@ float plight_luma(vec3 c) {
 
 // A positional light's irradiance at a point facing it, unshadowed (as the raster light
 // loop: the inverse-power attenuation, the range window and the spot cone).
-vec3 plight_positional(FogLightData p_light, vec3 p_x, out vec3 r_to_light, out float r_dist) {
+vec3 plight_positional(RTLightData p_light, vec3 p_x, out vec3 r_to_light, out float r_dist) {
 	vec3 to_l = p_light.position - p_x;
 	float d2 = dot(to_l, to_l);
 	r_dist = sqrt(d2);
@@ -558,7 +187,7 @@ vec3 plight_positional(FogLightData p_light, vec3 p_x, out vec3 r_to_light, out 
 	if (p_light.max_range_squared > 0.0 && d2 > p_light.max_range_squared) {
 		return vec3(0.0);
 	}
-	float atten = min(pow(max(r_dist, 0.0001), -p_light.attenuation), 1.0);
+	float atten = pow(max(r_dist, 0.0001), -p_light.attenuation);
 	if (p_light.inv_max_range >= 0.0) {
 		float nd = r_dist * p_light.inv_max_range;
 		nd *= nd;
@@ -566,12 +195,13 @@ vec3 plight_positional(FogLightData p_light, vec3 p_x, out vec3 r_to_light, out 
 		nd = max(1.0 - nd, 0.0);
 		atten *= nd * nd;
 	}
-	if (p_light.type == 3u) {
-		float scos = dot(-r_to_light, p_light.spot_direction);
-		if (scos <= p_light.cos_spot_angle) {
+	if (p_light.type == RT_LIGHT_TYPE_SPOT) {
+		float scos = dot(-r_to_light, lights_rotate(p_light.orientation, vec3(0.0, 0.0, -1.0)));
+		float cos_spot = 1.0 - p_light.one_minus_cos_spot;
+		if (scos <= cos_spot) {
 			return vec3(0.0);
 		}
-		float spot_rim = max(1e-4, (1.0 - scos) / (1.0 - p_light.cos_spot_angle));
+		float spot_rim = max(1e-4, (1.0 - scos) / max(p_light.one_minus_cos_spot, 1e-4));
 		atten *= 1.0 - pow(spot_rim, p_light.inv_spot_attenuation);
 	}
 	return p_light.emission * atten;
@@ -619,11 +249,9 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 
 	// the directional lights lead the light buffer: one direction in each one's disc
-	[[dont_unroll]] for (uint li = 0u; li < light_count; li++) {
-		FogLightData light = fog_lights[li];
-		if (light.type != 1u) {
-			break;
-		}
+	uint dir_count = lights_directional_count(light_count);
+	[[dont_unroll]] for (uint li = 0u; li < dir_count; li++) {
+		RTLightData light = lights_get(li);
 		vec3 axis = -normalize(light.position);
 		vec2 u = rand2(rng);
 		float cos_max = cos(light.radius);
@@ -633,7 +261,7 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 		vec3 tangent = normalize(abs(axis.y) < 0.999 ? cross(axis, vec3(0.0, 1.0, 0.0)) : cross(axis, vec3(1.0, 0.0, 0.0)));
 		vec3 bitangent = cross(axis, tangent);
 		vec3 L = normalize(tangent * (sin_t * cos(phi)) + bitangent * (sin_t * sin(phi)) + axis * cos_t);
-		vec3 e = light.emission * fog_shadow(x, L, 10000.0);
+		vec3 e = light.emission * lights_shadow_transmittance(light, x, L, 10000.0, 0xFFu, rng);
 		e_sum += e;
 		dir_sum += plight_luma(e) * L;
 	}
@@ -641,22 +269,8 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 	// the positional lights that can reach x (the light grid's lists): PLIGHT_CANDIDATES
 	// drawn uniformly, one kept in proportion to its unshadowed irradiance, and its shadow ray
 	{
-		uint g_count = fog_light_grid[3];
-		uint g_start = 8u;
-		uint c_start = 0u;
-		uint c_count = 0u;
-		uvec3 dims = uvec3(fog_light_grid[0], fog_light_grid[1], fog_light_grid[2]);
-		if (dims.x > 0u) {
-			vec3 origin = uintBitsToFloat(uvec3(fog_light_grid[4], fog_light_grid[5], fog_light_grid[6]));
-			vec3 c = floor((x - origin) * uintBitsToFloat(fog_light_grid[7]));
-			if (all(greaterThanEqual(c, vec3(0.0))) && all(lessThan(c, vec3(dims)))) {
-				uvec3 ci = uvec3(c);
-				uint idx = ci.x + dims.x * (ci.y + dims.y * ci.z);
-				uint starts = 8u + g_count;
-				c_start = fog_light_grid[starts + idx];
-				c_count = fog_light_grid[starts + idx + 1u] - c_start;
-			}
-		}
+		uint g_start, g_count, c_start, c_count;
+		lights_grid_lists(x, g_start, g_count, c_start, c_count);
 		uint n = g_count + c_count;
 		if (n > 0u) {
 			uint m = min(n, PLIGHT_CANDIDATES);
@@ -665,12 +279,13 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 			vec3 e_sel = vec3(0.0);
 			vec3 l_sel = vec3(0.0, 1.0, 0.0);
 			float d_sel = 0.0;
+			uint li_sel = 0u;
 			for (uint k = 0u; k < m; k++) {
 				// all of them when they fit, else drawn at random
 				uint pick = (n <= PLIGHT_CANDIDATES) ? k : min(uint(rand(rng) * float(n)), n - 1u);
-				uint li = pick < g_count ? fog_light_grid[g_start + pick] : fog_light_grid[c_start + (pick - g_count)];
-				FogLightData light = fog_lights[li];
-				if (light.type == 1u) {
+				uint li = lights_grid_light(pick, g_start, g_count, c_start);
+				RTLightData light = lights_get(li);
+				if (light.type == RT_LIGHT_TYPE_DIRECTIONAL) {
 					continue;
 				}
 				vec3 to_l;
@@ -687,10 +302,11 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 					e_sel = e;
 					l_sel = to_l;
 					d_sel = dist;
+					li_sel = li;
 				}
 			}
 			if (w_sel > 0.0) {
-				vec3 e = e_sel * (w_sum / w_sel) * fog_shadow(x, l_sel, max(d_sel - 0.01, 0.002));
+				vec3 e = e_sel * (w_sum / w_sel) * lights_shadow_transmittance(lights_get(li_sel), x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
 				e_sum += e;
 				dir_sum += plight_luma(e) * l_sel;
 			}
@@ -708,11 +324,13 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 		PathState ps;
 		ps.radiance = vec3(0.0);
 		ps.throughput = vec3(1.0);
-		ps.packed_bounces_flags = set_cone_width(0u, 0.0);
+		ps.packed_bounces_flags = 0u;
+		ps.offset_normal = vec3(0.0, 0.0, 1.0);
+		ps.next_ray_dir = dir;
 		ps.rng_state = init_rng(p_pixel, p_frame, 1237u);
 		ps.hit_t = -1.0;
 		path_pack(payload, ps);
-		traceRayEXT(tlas, RT_RAY_FLAGS, RT_MASK_BOUNCE, 0, 0, 0, x, 0.001, dir, 10000.0, 0);
+		traceRayEXT(tlas, RT_RAY_FLAGS, RT_BOUNCE_MASK, 0, 0, 0, x, 0.001, dir, 10000.0, 0);
 		ps = path_unpack(payload);
 		// a uniform sphere sample of radiance, as irradiance: L * 4 pi
 		vec3 e = clamp(ps.radiance, vec3(0.0), vec3(1000.0)) * (4.0 * PI);
@@ -747,131 +365,10 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 	imageStore(plight_images[write * 2u + 1u], ivec3(cell), b);
 }
 
-// Particles in reflections and refractions (#72). Particles are drawn after the trace, so
-// nothing traced sees them: rain was missing from puddles and glass. Their meshes are baked
-// into the TLAS each frame under their own instance mask, which only this query uses: the
-// first mirror-like bounce of a path gathers every particle along its segment, weighs each
-// by its alpha (weighted blended order-independent transparency, McGuire and Bavoil 2013, as
-// RTX Remix composites its particles) and lights it from the light cache above with the
-// transparent pass's phase function. Camera rays, shadows and diffuse bounces never meet them.
-#include "raytracing_data_inc.glsl"
-
-layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
-#include "raytracing_samplers_inc.glsl"
-
-layout(set = 0, binding = 3, std430) readonly buffer GeometryBuffer {
-	GeometryData geometries[];
-};
-layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
-	MaterialData materials[];
-};
-
-layout(buffer_reference, std430) readonly buffer ParticleColorBuffer {
-	vec4 v[];
-};
-
-#define PARTICLE_LAYERS 24u
-
-// The light a particle at p_x sends along p_dir (toward the ray's origin), per unit albedo:
-// last frame's light cache cell there (the pair not being written), split as the transparent
-// pass splits it into a light from one direction, scattered by the phase function, and the rest.
-vec3 particle_light(vec3 p_x, vec3 p_dir) {
-	uint state = uint(get_rt_param(RT_PARAM_PLIGHT_STATE));
-	if ((state & 2u) == 0u) {
-		return vec3(0.0);
-	}
-	uint read = 1u - (state & 1u);
-	ivec3 size = imageSize(plight_images[read * 2u]);
-	mat4 view = transpose(mat4(scene_data_block.data.view_matrix[0],
-			scene_data_block.data.view_matrix[1],
-			scene_data_block.data.view_matrix[2],
-			vec4(0.0, 0.0, 0.0, 1.0)));
-	vec3 v = (view * vec4(p_x, 1.0)).xyz;
-	vec4 clip = scene_data_block.data.projection_matrix * vec4(v, 1.0);
-	vec2 uv = clamp(clip.xy / max(abs(clip.w), 1e-6) * 0.5 + 0.5, vec2(0.0), vec2(0.9999));
-	float z_near = get_rt_param(RT_PARAM_PLIGHT_NEAR);
-	float z_far = get_rt_param(RT_PARAM_PLIGHT_FAR);
-	float s = log(max(-v.z, z_near) / z_near) / log(z_far / z_near);
-	uint tile = uint(get_rt_param(RT_PARAM_PLIGHT_TILE));
-	ivec2 grid_xy = max(ivec2(gl_LaunchSizeEXT.xy) / int(tile), ivec2(1));
-	ivec3 cell = ivec3(ivec2(uv * vec2(grid_xy)), int(clamp(s, 0.0, 0.9999) * float(PLIGHT_SLICES)));
-	cell = min(cell, size - 1);
-	vec3 e = imageLoad(plight_images[read * 2u], cell).rgb;
-	vec3 d = imageLoad(plight_images[read * 2u + 1u], cell).xyz;
-	float lum = max(plight_luma(e), 1e-6);
-	float len = length(d);
-	float k = clamp(len / lum, 0.0, 1.0);
-	vec3 to_light = len > 1e-6 ? d / len : vec3(0.0, 1.0, 0.0);
-	float g = get_rt_param(RT_PARAM_PARTICLE_ANISOTROPY);
-	// seen from the ray's origin: forward scatter when the light is behind the particle
-	float c = dot(to_light, p_dir);
-	float hg = (1.0 - g * g) / (4.0 * PI * pow(max(1.0 + g * g - 2.0 * g * c, 1e-4), 1.5));
-	return e * k * (0.7 * hg + 0.3 / (4.0 * PI)) + e * (1.0 - k) * (1.0 / (4.0 * PI));
-}
-
-// The particles between p_origin and p_t_max along p_dir: rgb their light, as seen through
-// the others, a the transmittance through all of them.
-vec4 particles_along(vec3 p_origin, vec3 p_dir, float p_t_max) {
-	rayQueryEXT rq;
-	rayQueryInitializeEXT(rq, tlas, gl_RayFlagsNoOpaqueEXT, RT_MASK_PARTICLES, p_origin, 0.001, p_dir, p_t_max);
-	vec3 sum_c = vec3(0.0);
-	float sum_a = 0.0;
-	float through = 1.0;
-	uint layers = 0u;
-	while (rayQueryProceedEXT(rq)) {
-		if (rayQueryGetIntersectionTypeEXT(rq, false) != gl_RayQueryCandidateIntersectionTriangleEXT) {
-			continue;
-		}
-		uint id = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false));
-		uint prim = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false));
-		vec2 b = rayQueryGetIntersectionBarycentricsEXT(rq, false);
-		vec3 bary = vec3(1.0 - b.x - b.y, b.x, b.y);
-		GeometryData geom = geometries[id];
-		MaterialData mat = materials[id];
-
-		uint i0 = prim * 3u;
-		uint i1 = i0 + 1u;
-		uint i2 = i0 + 2u;
-		if (geom.index_format != 2u && geom.index_address != 0ul) {
-			Uint32Buffer idx = Uint32Buffer(geom.index_address);
-			i0 = idx.v[prim * 3u];
-			i1 = idx.v[prim * 3u + 1u];
-			i2 = idx.v[prim * 3u + 2u];
-		}
-		vec4 base = mat.albedo_color;
-		if (geom.particle_primitives > 0u && (geom.prev_vertex_address_lo | geom.prev_vertex_address_hi) != 0u) {
-			ParticleColorBuffer colors = ParticleColorBuffer(packUint2x32(uvec2(geom.prev_vertex_address_lo, geom.prev_vertex_address_hi)));
-			base *= colors.v[prim / geom.particle_primitives];
-		}
-		if (mat.albedo_texture_idx != OFFSET_NONE && geom.uv_byte_offset != OFFSET_NONE && geom.attribute_address != 0ul) {
-			FloatBuffer attr = FloatBuffer(geom.attribute_address);
-			uint stride = geom.attribute_stride >> 2u;
-			uint o = geom.uv_byte_offset >> 2u;
-			vec2 uv = bary.x * vec2(attr.v[i0 * stride + o], attr.v[i0 * stride + o + 1u]) +
-					bary.y * vec2(attr.v[i1 * stride + o], attr.v[i1 * stride + o + 1u]) +
-					bary.z * vec2(attr.v[i2 * stride + o], attr.v[i2 * stride + o + 1u]);
-			uv = uv * mat.uv1_scale + mat.uv1_offset;
-			base *= textureLod(sampler2D(bindless_textures[nonuniformEXT(mat.albedo_texture_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv, 1.0);
-		}
-		float a = clamp(base.a, 0.0, 1.0);
-		if (a < 1.0 / 255.0) {
-			continue;
-		}
-		float t = rayQueryGetIntersectionTEXT(rq, false);
-		vec3 l = base.rgb * particle_light(p_origin + p_dir * t, p_dir);
-		sum_c += l * a;
-		sum_a += a;
-		through *= 1.0 - a;
-		layers++;
-		if (layers >= PARTICLE_LAYERS || through < 1.0 / 255.0) {
-			rayQueryTerminateEXT(rq);
-		}
-	}
-	vec3 c = sum_a > 0.0 ? sum_c / sum_a * (1.0 - through) : vec3(0.0);
-	return vec4(c, through);
-}
-
 void main() {
+#ifdef RT_TIMING_ENABLED
+	uvec2 start_clock = clockRealtime2x32EXT();
+#endif
 	uvec2 pixel = gl_LaunchIDEXT.xy;
 	const vec2 pixel_center = vec2(pixel) + vec2(0.5);
 	const vec2 in_uv = pixel_center / vec2(gl_LaunchSizeEXT.xy);
@@ -882,92 +379,240 @@ void main() {
 			scene_data_block.data.inv_view_matrix[2],
 			vec4(0.0, 0.0, 0.0, 1.0)));
 
-	vec4 origin;
-	vec4 direction;
-	// The ray cone's width at the origin (texture level of detail): 0 at a perspective
-	// eye, one pixel's footprint for an orthogonal camera, whose rays never spread.
-	float cone_width = 0.0;
-	if (abs(scene_data_block.data.projection_matrix[2][3]) < 1e-6) {
-		cone_width = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * float(gl_LaunchSizeEXT.y));
-		// Orthogonal: parallel rays along the view axis, each from its own point on
-		// the near plane (reverse Z: the near plane at NDC z = 1).
-		vec4 near_point = scene_data_block.data.inv_projection_matrix * vec4(d.x, d.y, 1.0, 1.0);
-		origin = inv_view * vec4(near_point.xyz / near_point.w, 1.0);
-		direction = inv_view * vec4(0.0, 0.0, -1.0, 0.0);
-	} else {
-		// Perspective: every ray from the eye, through its pixel.
-		vec4 target = scene_data_block.data.inv_projection_matrix * vec4(d.x, d.y, 1.0, 1.0);
-		origin = inv_view * vec4(0.0, 0.0, 0.0, 1.0);
-		direction = inv_view * vec4(normalize(target.xyz), 0);
+	// Orthogonal cameras shoot parallel rays from the near plane; perspective ones fan out from the eye.
+	const bool orthogonal = scene_data_block.data.projection_matrix[3][3] != 0.0;
+	vec4 target = scene_data_block.data.inv_projection_matrix * vec4(d.x, d.y, 1.0, 1.0);
+	vec3 view_origin = orthogonal ? vec3(target.xy / target.w, 0.0) : vec3(0.0);
+	vec3 view_direction = orthogonal ? vec3(0.0, 0.0, -1.0) : normalize(target.xyz);
+	vec4 origin = inv_view * vec4(view_origin, 1.0);
+	vec4 direction = inv_view * vec4(view_direction, 0.0);
+
+	// Depth composite against a co-tenant viewport (reverse-Z clear is 0.0): primary rays
+	// stop at its depth, and on a primary miss its color/velocity/guides win the pixel.
+	float composite_t_max = 10000.0;
+	float composite_prepass_depth = 0.0;
+	// The co-tenant renders the whole shared target before us, so on a primary miss
+	// its color is the correct background whatever its depth. Testing the depth here
+	// would exclude its sky, which sits at the reverse-Z far value of 0.0.
+	bool composite_enabled = (RT_FLAGS & RT_FLAG_DEPTH_COMPOSITE_ENABLED) != 0u;
+	if (composite_enabled) {
+		composite_prepass_depth = texelFetch(sampler2D(prepass_depth_texture, SAMPLER_NEAREST_CLAMP), ivec2(pixel), 0).r;
+		if (composite_prepass_depth > 0.0) {
+			vec4 prepass_pos = scene_data_block.data.inv_projection_matrix * vec4(d.x, d.y, composite_prepass_depth, 1.0);
+			composite_t_max = length(prepass_pos.xyz / prepass_pos.w - view_origin);
+		}
 	}
 
-	// Sample count from specialization constant, frame index from uniform
+	// Sample count from specialization constant (or uniform in dynamic mode), frame index from uniform
 	const uint samples_per_pixel = RT_GET_SAMPLE_COUNT();
 	uint frame_index = uint(get_rt_param(RT_PARAM_FRAME_INDEX));
 
 	// Accumulate multiple samples per pixel
 	vec3 total_radiance = vec3(0.0);
+	bool composite_passthrough = false;
+
+#ifdef RT_DEBUG_ENABLED
+	uint debug_tlayers = 0u; // VIS 23: primary-segment transparency hits
+#endif
 
 	const uint max_bounces = RT_GET_MAX_BOUNCES();
 
 	// TODO: when we have a spp > 0 the first raycast is always identical,
 	// we should move it out of the loop
 
-	// the primary ray's hit distance, sample 0 (-1: the sky)
-	float primary_t = -1.0;
-
-	const bool particles_on = get_rt_param(RT_PARAM_PARTICLES) > 0.5 && get_rt_param(RT_PARAM_PLIGHT_ENABLED) > 0.5;
-	const float particle_distance = get_rt_param(RT_PARAM_PARTICLE_DISTANCE);
-
 	[[dont_unroll]] for (uint sample_idx = 0u; sample_idx < samples_per_pixel; sample_idx++) {
+		// Every field must be defined: path_pack branches on the octahedral encodes,
+		// and branching on an undefined value lets the driver drop the whole path.
 		PathState ps;
 		ps.radiance = vec3(0.0);
 		ps.throughput = vec3(1.0);
-		ps.packed_bounces_flags = set_cone_width((sample_idx == 0u) ? set_sample_zero(0u) : 0u, cone_width);
+		ps.packed_bounces_flags = (sample_idx == 0u) ? set_sample_zero(0u) : 0u;
 		ps.rng_state = init_rng(pixel, frame_index, sample_idx);
+		ps.hit_t = -1.0;
+		ps.offset_normal = vec3(0.0, 0.0, 1.0);
+		ps.next_ray_dir = vec3(0.0, 0.0, 1.0);
 
 		vec3 ray_origin = origin.xyz;
 		vec3 ray_dir = direction.xyz;
+		// The ray cone's width at the segment's origin (texture level of detail, rt_texture_cone):
+		// 0 at a perspective eye, one pixel's footprint for an orthogonal camera, then grown by
+		// the pixel's spread angle over each segment traced.
+		float cone_width = rt_cone_eye_width();
+#ifdef DLSS_RR_ENABLED
+		// Primary surface replacement this sample still owes (only sample 0 starts one).
+		bool replace_pending = false;
+		float replace_hit_t = 0.0;
+#endif
 
 		[[dont_unroll]] for (uint bounce = 0u; bounce <= max_bounces; bounce++) {
-			// the first bounce off a mirror-like surface (a puddle, wet tar, glass) meets the particles
-			bool particles_here = bounce == 1u && particles_on && get_diffuse_bounces(ps.packed_bounces_flags) == 0u;
-			vec3 radiance_before = ps.radiance;
-			vec3 throughput_before = ps.throughput;
-			if (bounce == 0u || particles_here) {
-				ps.hit_t = -1.0;
-			}
+			vec3 throughput_entry = ps.throughput;
+			vec3 radiance_pre = ps.radiance;
+			uint flags_entry = ps.packed_bounces_flags;
+			ps.hit_t = -1.0; // A miss must not retain the previous segment's hit distance.
 			path_pack(payload, ps);
+			payload_set_cone_width(payload, cone_width);
+			float t_far = (bounce == 0u) ? composite_t_max : 10000.0;
 
 #ifdef USE_SER
 			hitObjectEXT hitObject;
-			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, bounce == 0u ? RT_MASK_SCENE : RT_MASK_BOUNCE, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
-
-			// Reorder with a coherence hint that has 8 bits
-			uint hint = 0;
-			if (hitObjectIsHitEXT(hitObject)) {
-				// TODO: This hint barely does anything. There is a lot of untapped potential here.
-				hint = hitObjectGetInstanceIdEXT(hitObject);
-			}
-			reorderThreadEXT(hitObject, hint, 8);
-
+			hitObjectTraceRayEXT(hitObject, tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, t_far, 0);
+			reorderThreadEXT(hitObject);
 			hitObjectExecuteShaderEXT(hitObject, 0);
 #else
-			traceRayEXT(tlas, RT_RAY_FLAGS, bounce == 0u ? RT_MASK_SCENE : RT_MASK_BOUNCE, 0, 0, 0, ray_origin, 0.001, ray_dir, 10000.0, 0);
+			traceRayEXT(tlas, RT_RAY_FLAGS, bounce == 0u ? RT_VIS_MASK : RT_BOUNCE_MASK, 0, 0, 0, ray_origin, 0.001, ray_dir, t_far, 0);
 #endif
 
 			ps = path_unpack(payload);
-			if (bounce == 0u && sample_idx == 0u) {
-				primary_t = ps.hit_t;
+			if (ps.hit_t > 0.0) {
+				cone_width += rt_cone_spread_angle() * ps.hit_t;
 			}
-			if (particles_here) {
-				// the segment's own light (the hit's, or the sky's) seen through the particles, and theirs over it
-				float seg = ps.hit_t > 0.0 ? min(ps.hit_t, particle_distance) : particle_distance;
-				vec4 p = particles_along(ray_origin, ray_dir, seg);
-				ps.radiance = radiance_before + (ps.radiance - radiance_before) * p.a + throughput_before * p.rgb;
-				ps.throughput *= p.a;
+#ifdef DLSS_RR_ENABLED
+			if (bounce == 0u && (ps.packed_bounces_flags & DLSS_RR_REPLACE_PENDING_FLAG) != 0u) {
+				replace_pending = true;
+				replace_hit_t = ps.hit_t;
+			} else if (bounce == 1u && replace_pending) {
+				// The hit clears the flag once it wrote the replacement; a singular miss reflects the sky.
+				replace_pending = (ps.packed_bounces_flags & DLSS_RR_REPLACE_PENDING_FLAG) != 0u &&
+						!(is_singular_path(flags_entry) && ps.hit_t < 0.0);
+				ps.packed_bounces_flags &= ~DLSS_RR_REPLACE_PENDING_FLAG;
 			}
-			if (is_path_terminated(ps.packed_bounces_flags)) {
+#endif
+			bool opaque_terminated = is_path_terminated(ps.packed_bounces_flags);
+
+			// Transparency over this segment is bounded closest-hit peeling.
+			// Non-scissored transparent instances are opaque to traversal, so
+			// only the closest hit runs a shader on each layer.
+			// Each segment's own budget gates it: with max_transparency_layers 0 the primary
+			// segment's transparents are drawn by the raster pass over the denoised frame, while
+			// reflections and refractions still peel them (the raster pass can't show them there).
+			uint layer_param = bounce == 0u			? RT_PARAM_MAX_TRANSPARENCY_LAYERS
+					: is_singular_path(flags_entry) ? RT_PARAM_MAX_TRANSPARENCY_LAYERS_REFLECTION
+													: RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT;
+			bool transparency_enabled = get_rt_param(RT_PARAM_TRANSPARENT_COUNT) > 0.0 &&
+					get_rt_param(layer_param) > 0.0 &&
+					bounce <= uint(get_rt_param(RT_PARAM_TRANSPARENCY_MAX_BOUNCE));
+#ifdef RT_DEBUG_ENABLED
+			transparency_enabled = transparency_enabled && rt_debug_keeps_transparency(int(get_rt_param(RT_PARAM_VIS_MODE)));
+#endif
+			if (transparency_enabled) {
+				// SCENE_DEPTH for peel hits: NDC depth of this segment's opaque
+				// hit on the primary segment, far (0.0) on bounces.
+				float scene_depth = 0.0;
+				if (bounce == 0u) {
+					if (!is_primary_miss(ps.packed_bounces_flags) && ps.hit_t > 0.0) {
+						scene_depth = rt_ndc_depth(ray_origin + ray_dir * ps.hit_t);
+					} else if (composite_prepass_depth > 0.0) {
+						scene_depth = composite_prepass_depth;
+					}
+				}
+				// Termination only means there is no next bounce. Unshaded surfaces
+				// and hits at the bounce limit still occlude transparency behind them.
+				float seg_end = ps.hit_t >= 0.0 ? min(ps.hit_t, t_far) : t_far;
+				float indirect_range = get_rt_param(RT_PARAM_TRANSPARENCY_INDIRECT_RANGE);
+				float indirect_fade = get_rt_param(RT_PARAM_TRANSPARENCY_INDIRECT_FADE);
+				bool range_limited = bounce > 0u && !is_singular_path(flags_entry) && indirect_range > 0.0;
+				if (range_limited) {
+					seg_end = min(seg_end, indirect_range);
+				}
+				uint peel_hits = 0u;
+				vec3 throughput_after_opaque = ps.throughput;
+				vec3 radiance_after_opaque = ps.radiance;
+				PathState opaque_continuation = ps;
+				ContinuationReservoir continuation = continuation_reservoir_initial();
+				uint continuation_rng = ps.rng_state;
+
+				float T_total = 1.0;
+				uint layer_cap = min(uint(get_rt_param(layer_param)), 64u);
+				float peel_tmin = 0.001;
+				for (uint l = 0u; l < layer_cap && T_total > (1.0 / 256.0) && peel_tmin < seg_end; l++) {
+					ps.hit_t = -1.0;
+					ps.packed_bounces_flags = flags_entry | PEEL_RAY_FLAG;
+					if (l == 0u) {
+						ps.packed_bounces_flags |= PEEL_FIRST_LAYER_FLAG;
+					}
+					ps.rng_state = continuation_rng;
+					ps.throughput = throughput_entry * T_total;
+					vec3 radiance_before_layer = ps.radiance;
+					path_pack_peel(payload, ps, scene_depth);
+					traceRayEXT(tlas_transparent, RT_RAY_FLAGS, RT_TMASK_TRANSPARENT,
+							0, 0, 0, ray_origin, peel_tmin, ray_dir, seg_end, 0);
+					ps = path_unpack(payload);
+					if (ps.hit_t < 0.0) {
+						break;
+					}
+					continuation_rng = ps.rng_state;
+					float layer_weight = 1.0;
+					if (range_limited && indirect_fade > 0.0) {
+						layer_weight = 1.0 - smoothstep(indirect_range - indirect_fade, indirect_range, ps.hit_t);
+						ps.radiance = radiance_before_layer + (ps.radiance - radiance_before_layer) * layer_weight;
+					}
+					if ((ps.packed_bounces_flags & PEEL_HAS_CONTINUATION_FLAG) != 0u) {
+						PathState layer_continuation = ps;
+						layer_continuation.packed_bounces_flags &=
+								~(PEEL_RAY_FLAG | PEEL_FIRST_LAYER_FLAG | PEEL_HAS_CONTINUATION_FLAG | PEEL_DEPTH_BARRIER_HIT_FLAG);
+						layer_continuation.throughput *= layer_weight;
+						continuation_reservoir_add(continuation, layer_continuation, continuation_rng);
+					}
+					float a = get_peel_alpha(ps.packed_bounces_flags) * layer_weight;
+					T_total *= (1.0 - a);
+					peel_hits++;
+					// Advance by one representable positive float to avoid
+					// re-hitting this layer without an identity any-hit shader.
+					peel_tmin = uintBitsToFloat(floatBitsToUint(ps.hit_t) + 1u);
+					if ((ps.packed_bounces_flags & PEEL_DEPTH_BARRIER_HIT_FLAG) != 0u) {
+						break;
+					}
+				}
+
+				if (peel_hits == 0u) {
+					// Preserve primary-miss/composite state when the transparent
+					// lane had no geometry. The peel payload starts from flags_entry.
+					ps = opaque_continuation;
+					opaque_terminated = is_path_terminated(ps.packed_bounces_flags);
+				} else {
+					vec3 peel_sum = ps.radiance - radiance_after_opaque;
+					vec3 segment_radiance = radiance_after_opaque - radiance_pre;
+					if (bounce == 0u && composite_enabled &&
+							is_primary_miss(opaque_continuation.packed_bounces_flags)) {
+						vec3 composite_color = texelFetch(
+								sampler2D(prepass_color_texture, SAMPLER_NEAREST_CLAMP), ivec2(pixel), 0)
+													   .rgb;
+						segment_radiance = throughput_entry * composite_color;
+					}
+					vec3 resolved_radiance = radiance_pre + segment_radiance * T_total + peel_sum;
+
+					opaque_continuation.throughput = throughput_after_opaque * T_total;
+					opaque_continuation.rng_state = continuation_rng;
+					continuation_reservoir_add(continuation, opaque_continuation, continuation_rng);
+					if (continuation.has_selection) {
+						ps = continuation.selected;
+						ps.throughput *= continuation.total_weight / continuation.selected_weight;
+						ps.radiance = resolved_radiance;
+						ps.rng_state = continuation_rng;
+						opaque_terminated = false;
+					} else {
+						ps.radiance = resolved_radiance;
+						ps.throughput = vec3(0.0);
+						ps.packed_bounces_flags = set_path_terminated(flags_entry);
+						ps.rng_state = continuation_rng;
+						opaque_terminated = true;
+					}
+#ifdef DLSS_RR_ENABLED
+					// Glass in front already composited onto the mirror's guides; replacing would drop it.
+					if (bounce == 0u) {
+						replace_pending = false;
+						ps.packed_bounces_flags &= ~DLSS_RR_REPLACE_PENDING_FLAG;
+					}
+#endif
+				}
+#ifdef RT_DEBUG_ENABLED
+				if (bounce == 0u && sample_idx == 0u) {
+					debug_tlayers = peel_hits;
+				}
+#endif
+			}
+
+			if (opaque_terminated || !russian_roulette_survives(bounce + 1u, ps)) {
 				break;
 			}
 			// Reconstruct the next ray origin from the current ray + hit distance, apply bias
@@ -975,30 +620,47 @@ void main() {
 			ray_origin = offset_ray_origin(hit_pos, ps.offset_normal);
 			ray_dir = ps.next_ray_dir;
 		}
+#ifdef DLSS_RR_ENABLED
+		if (replace_pending) {
+			dlss_rr_replace_primary_surface(origin.xyz, direction.xyz, replace_hit_t);
+		}
+#endif
 
 		total_radiance += ps.radiance;
+		composite_passthrough = composite_passthrough || (composite_enabled && is_primary_miss(ps.packed_bounces_flags));
+	}
+
+#ifdef RT_DEBUG_ENABLED
+	if (int(get_rt_param(RT_PARAM_VIS_MODE)) == RT_VIS_TRANSPARENCY_LAYERS) {
+		// Transparency cost heatmap: green 0 -> yellow 2 -> red 4+.
+		float heat_x = clamp(float(debug_tlayers) * 0.25, 0.0, 1.0);
+		vec3 heat = (heat_x < 0.5) ? mix(vec3(0.0, 1.0, 0.0), vec3(1.0, 1.0, 0.0), heat_x * 2.0)
+								   : mix(vec3(1.0, 1.0, 0.0), vec3(1.0, 0.0, 0.0), heat_x * 2.0 - 1.0);
+		imageStore(image, ivec2(pixel), vec4(heat, 1.0));
+		return;
+	}
+#endif
+
+	if (composite_passthrough) {
+		// The co-tenant pixel is nearer than anything traced: keep its color and depth,
+		// leave its velocity and DLSS-RR guides untouched.
+		imageStore(image, ivec2(pixel), texelFetch(sampler2D(prepass_color_texture, SAMPLER_NEAREST_CLAMP), ivec2(pixel), 0));
+		imageStore(rt_depth_image, ivec2(pixel), vec4(composite_prepass_depth));
+#ifdef RT_TIMING_ENABLED
+		store_path_timing(ivec2(pixel), start_clock);
+#endif
+		return;
 	}
 
 	vec3 final_radiance = total_radiance / float(samples_per_pixel);
-
-	uint fog_samples = uint(get_rt_param(RT_PARAM_FOG_SAMPLES));
-	if (fog_samples > 0u) {
-		uint fog_rng = init_rng(pixel, frame_index, 977u);
-		vec4 fog = fog_march(origin.xyz, normalize(direction.xyz), primary_t, fog_samples, fog_rng);
-#ifdef DLSS_RR_ENABLED
-		// laid over Ray Reconstruction's output, filtered (_composite_transparency)
-		imageStore(rt_fog_image, ivec2(pixel), fog);
-#else
-		// no layer to lay it in: into the frame, noisier but there
-		final_radiance = final_radiance * fog.a + fog.rgb;
-#endif
-	}
-
 	imageStore(image, ivec2(pixel), vec4(final_radiance, 1.0));
 
 	if (get_rt_param(RT_PARAM_PLIGHT_ENABLED) > 0.5) {
 		plight_update(pixel, inv_view, frame_index);
 	}
+#ifdef RT_TIMING_ENABLED
+	store_path_timing(ivec2(pixel), start_clock);
+#endif
 }
 
 #[miss]
@@ -1012,15 +674,19 @@ void main() {
 
 #define GLSL 1
 #define RT_STAGE_MISS 1
-
 // clang-format off
 #include "raytracing_inc.glsl"
 #include "../scene_data_inc.glsl"
 #include "brdf_inc.glsl"
 #include "raytracing_common_inc.glsl"
+#include "raytracing_samplers_inc.glsl"
+#include "raytracing_volumetric_fog_inc.glsl"
 // clang-format on
 
 layout(location = 0) rayPayloadInEXT PathPayload payload;
+
+layout(set = 0, binding = 29) uniform texture2D prepass_depth_texture;
+layout(set = 0, binding = 33) uniform texture2D sky_screen_texture;
 
 #ifdef USE_RADIANCE_OCTMAP_ARRAY
 
@@ -1052,12 +718,17 @@ vec3 radiance_octmap_sample(vec2 p_oct_uv, float p_roughness) {
 #endif // USE_RADIANCE_OCTMAP_ARRAY
 
 void main() {
+	// Transparency peel traces own their payload; the scene miss must not touch it.
+	if ((payload.packed_bounces_flags & PEEL_RAY_FLAG) != 0u) {
+		return;
+	}
+
 	PathState ps = path_unpack(payload);
 
 #if !defined(USE_SER)
-	// Shadow rays that miss mean the light is visible (no occluder).
+	// A shadow-ray miss returns its accumulated colored transmittance.
 	if (is_shadow_ray(ps.packed_bounces_flags)) {
-		ps.radiance = vec3(1.0);
+		ps.radiance = ps.throughput;
 		path_pack(payload, ps);
 		return;
 	}
@@ -1065,6 +736,14 @@ void main() {
 
 	// Miss always ends the path.
 	ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
+
+	bool composite_passthrough = false;
+	if (get_total_bounces(ps.packed_bounces_flags) == 0u) {
+		ps.packed_bounces_flags = set_primary_miss(ps.packed_bounces_flags);
+		// Matches raygen: a primary miss always yields the pixel to the co-tenant,
+		// including where the co-tenant left far depth (its own sky).
+		composite_passthrough = (RT_FLAGS & RT_FLAG_DEPTH_COMPOSITE_ENABLED) != 0u;
+	}
 
 #ifdef RT_DEBUG_ENABLED
 	{
@@ -1081,7 +760,7 @@ void main() {
 	// Primary ray miss: write depth, velocity, and DLSS RR defaults (sample 0 only).
 	{
 		uint total_bounces = get_total_bounces(ps.packed_bounces_flags);
-		if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags)) {
+		if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags) && !composite_passthrough) {
 			ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
 
 			imageStore(rt_depth_image, pixel, vec4(0.0));
@@ -1092,42 +771,53 @@ void main() {
 				vec2 curr_uv = project_uv(far_world, curr_vp_unjittered);
 				vec2 prev_uv = project_uv(far_world, prev_vp_unjittered);
 				imageStore(rt_velocity_image, pixel, vec4(prev_uv - curr_uv, 0.0, 0.0));
+#ifdef DLSS_RR_ENABLED
+				dlss_rr_write_specular_motion_vector(prev_uv - curr_uv);
+#endif
 			}
 		}
 	}
 
-	mat3 camera_basis = mat3(scene_data_block.data.inv_view_matrix);
-	mat3 world_to_sky = scene_data_block.data.radiance_inverse_xform * camera_basis;
-	vec3 sky_dir = world_to_sky * gl_WorldRayDirectionEXT;
+	// A camera ray leaves along the pixel it was launched from, and blend-alpha
+	// peels do not refract, so the launch ID still indexes the right texel even
+	// behind transparency. The screen-space sky is the same shader the rasterizer
+	// runs and comes out of sky.glsl already fogged and in render-buffer
+	// luminance, so it takes neither the IBL normalization nor the fog mix below.
+	vec3 sky_color;
+	if (get_rt_param(RT_PARAM_SKY_SCREEN_ENABLED) > 0.5 && get_total_bounces(ps.packed_bounces_flags) == 0u) {
+		sky_color = texelFetch(sampler2D(sky_screen_texture, radiance_sampler), ivec2(gl_LaunchIDEXT.xy), 0).rgb;
+	} else {
+		vec2 sky_uv = rt_sky_oct_uv(gl_WorldRayDirectionEXT);
 
-	vec2 border = vec2(scene_data_block.data.radiance_border_size,
-			1.0 - scene_data_block.data.radiance_border_size * 2.0);
-	vec2 sky_uv = vec3_to_oct_with_border(sky_dir, border);
+		sky_color = radiance_octmap_sample(sky_uv, 0.0);
+		sky_color *= scene_data_block.data.IBL_exposure_normalization;
 
-	vec3 sky_color = radiance_octmap_sample(sky_uv, 0.0);
-	sky_color *= scene_data_block.data.IBL_exposure_normalization;
+		if ((RT_FLAGS & RT_FLAG_FOG_ENABLED) != 0u) {
+			vec3 fog_color = scene_data_block.data.fog_light_color;
 
-	if ((RT_FLAGS & RT_FLAG_FOG_ENABLED) != 0u) {
-		vec3 fog_color = scene_data_block.data.fog_light_color;
+			if (scene_data_block.data.fog_aerial_perspective > 0.0) {
+				vec3 sky_fog = radiance_octmap_sample(sky_uv, 1.0 / MAX_ROUGHNESS_LOD);
+				sky_fog *= scene_data_block.data.IBL_exposure_normalization;
+				fog_color = mix(fog_color, sky_fog, scene_data_block.data.fog_aerial_perspective);
+			}
 
-		if (scene_data_block.data.fog_aerial_perspective > 0.0) {
-			vec3 sky_fog = radiance_octmap_sample(sky_uv, 1.0 / MAX_ROUGHNESS_LOD);
-			sky_fog *= scene_data_block.data.IBL_exposure_normalization;
-			fog_color = mix(fog_color, sky_fog, scene_data_block.data.fog_aerial_perspective);
+			sky_color = mix(sky_color, fog_color, scene_data_block.data.fog_sky_affect);
 		}
 
-		sky_color = mix(sky_color, fog_color, scene_data_block.data.fog_sky_affect);
+		if (get_total_bounces(ps.packed_bounces_flags) == 0u && rt_volumetric_fog_enabled()) {
+			vec3 far_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * 10000.0;
+			sky_color = rt_volumetric_fog_apply_sky(sky_color, project_uv(far_world, curr_vp_unjittered));
+		}
 	}
 
 #ifdef DLSS_RR_ENABLED
 	{
 		uint total_bounces = get_total_bounces(ps.packed_bounces_flags);
-		if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags)) {
+		if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags) && !composite_passthrough) {
 			ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
-			imageStore(dlss_rr_diffuse_albedo, pixel, vec4(DLSSRR_encodeDiffuseAlbedo(sky_color), 1.0));
+			imageStore(dlss_rr_diffuse_albedo, pixel, vec4(vec3(DLSSRR_SKY_DIFFUSE_ALBEDO), 1.0));
 			imageStore(dlss_rr_specular_albedo, pixel, vec4(0.0));
-			imageStore(dlss_rr_normal_roughness, pixel, vec4(-gl_WorldRayDirectionEXT, 0.0));
-			imageStore(dlss_rr_specular_hit_dist, pixel, vec4(-1.0));
+			imageStore(dlss_rr_normal_roughness, pixel, vec4(0.0));
 		}
 	}
 #endif
@@ -1137,6 +827,9 @@ void main() {
 		int VIS_MODE = int(get_rt_param(RT_PARAM_VIS_MODE));
 		if (VIS_MODE == 20) {
 			ps.radiance = vec3(1.0);
+		} else if (VIS_MODE == RT_VIS_VOLUMETRIC_FOG || VIS_MODE == RT_VIS_VOLUMETRIC_FOG_TRANSMITTANCE) {
+			vec3 far_world = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * 10000.0;
+			ps.radiance = rt_volumetric_fog_debug(VIS_MODE, rt_volumetric_fog_sky_sample(project_uv(far_world, curr_vp_unjittered)));
 		} else if (VIS_MODE == 0) {
 			ps.radiance += ps.throughput * sky_color;
 		} else {
@@ -1169,7 +862,6 @@ void main() {
 
 #define GLSL 1
 #define RT_STAGE_CLOSEST_HIT 1
-
 // clang-format off
 #include "raytracing_inc.glsl"
 #include "../scene_data_inc.glsl"
@@ -1203,6 +895,7 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 };
 // clang-format on
 
+#include "raytracing_entry_material_inc.glsl"
 #include "raytracing_lights_inc.glsl"
 
 // clang-format off
@@ -1240,9 +933,17 @@ vec3 radiance_octmap_sample(vec2 p_oct_uv, float p_roughness) {
 
 #endif // USE_RADIANCE_OCTMAP_ARRAY
 
+layout(set = 0, binding = 39) uniform texture2D rt_dfg;
+
+// Same lookup as raster prefiltered_dfg(); the roughness axis is inverted.
+vec2 rt_prefiltered_dfg(float p_roughness, float p_NdotV) {
+	return textureLod(sampler2D(rt_dfg, SAMPLER_LINEAR_CLAMP), vec2(p_NdotV, 1.0 - p_roughness), 0.0).xy;
+}
+
 // clang-format off
 #include "raytracing_material_eval_inc.glsl"
 #include "raytracing_closest_hit_common_inc.glsl"
+#include "raytracing_decals_inc.glsl"
 // clang-format on
 
 // ============================================================================
@@ -1264,15 +965,7 @@ void main() {
 	uint rt_geometry_idx = h.geometry_idx;
 	vec3 rt_hit_pos = h.hit_pos;
 	vec2 rt_uv = h.uv;
-	vec2 rt_uv2 = rt_uv;
-	{
-		GeometryData rt_geom = geometries[h.geometry_idx];
-		if (rt_geom.uv2_byte_offset != OFFSET_NONE && rt_geom.attribute_address != 0ul && (rt_geom.flags & FLAG_PROCEDURAL) == 0u) {
-			uint rt_i0, rt_i1, rt_i2;
-			get_triangle_indices(rt_geom, rt_i0, rt_i1, rt_i2);
-			rt_uv2 = fetch_uv2(rt_geom, rt_i0, rt_i1, rt_i2, vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y));
-		}
-	}
+	vec2 rt_uv2 = h.uv2;
 	vec4 rt_color = h.color;
 	vec3 rt_normal = h.geometry_normal;
 	vec3 rt_tangent = h.tangent;
@@ -1289,25 +982,38 @@ void main() {
 	m.metalness = metallic;
 	m.specular = specular;
 	m.emissive = emission * scene_data_block.data.emissive_exposure_normalization;
-	m.normal = normalize(mat3(inv_view_matrix) * normal); // view space -> world space
+	m.emission_indirect = emission_indirect;
+	m.backlight = backlight;
+	// view space -> world space
+	mat3 view_to_world = mat3(inv_view_matrix);
+	m.normal = normalize(view_to_world * normal);
+
+	// The vertex stage may have rewritten TANGENT/BINORMAL (triplanar mapping
+	// does), so the shading frame comes from the shader, not the mesh TBN.
+	vec3 world_tangent = normalize(view_to_world * tangent);
+	vec3 world_bitangent = normalize(view_to_world * binormal);
 
 	// Apply normal map if it was written.
+	vec3 ts_normal = vec3(0.0, 0.0, 1.0);
 	if (normal_map != vec3(0.5, 0.5, 1.0)) {
-		vec3 ts_normal;
 		ts_normal.xy = normal_map.xy * 2.0 - 1.0;
 		ts_normal.z = sqrt(max(0.0, 1.0 - dot(ts_normal.xy, ts_normal.xy)));
-		m.normal = apply_normal_map(h, ts_normal, normal_map_depth);
+		vec3 mapped = world_tangent * ts_normal.x + world_bitangent * ts_normal.y + m.normal * ts_normal.z;
+		m.normal = normalize(mix(m.normal, mapped, normal_map_depth));
 	}
+
+#ifdef RT_DECALS_ENABLED
+	if (rt_decals_process(h, m)) {
+		return;
+	}
+#endif
 
 #ifdef RT_DEBUG_ENABLED
 	{
 		int VIS_MODE = int(get_rt_param(RT_PARAM_VIS_MODE));
-		if (VIS_MODE != 0) {
-			vec3 V = -gl_WorldRayDirectionEXT;
-			float NdotV = max(dot(m.normal, V), 0.0001);
-			vec3 orm = vec3(1.0, m.roughness, m.metalness);
-			debug_visualize(VIS_MODE, h.geometry_normal, m.normal, normal_map,
-					h.tangent, h.bitangent, h.uv, m.albedo, orm, m.metalness, m.roughness, m.specular, m.emissive, V, NdotV);
+		// VIS 23 (transparency heatmap) shades normally; raygen overrides the image.
+		if (VIS_MODE != 0 && VIS_MODE != 23) {
+			debug_visualize(VIS_MODE, debug_material_inputs(h, m, ts_normal, world_tangent, world_bitangent, h.uv, ao), m.alpha);
 			return;
 		}
 	}
@@ -1315,62 +1021,32 @@ void main() {
 	shade_and_bounce(h, m);
 #else
 	// HG0: StandardMaterial3D evaluation.
-	MaterialData mat = materials[h.geometry_idx];
-	vec2 uv = h.uv * mat.uv1_scale + mat.uv1_offset;
-	// the ray cone's level follows the material's UV scale (triplanar sets its own)
-	rt_texture_lod += 0.5 * log2(max(abs(mat.uv1_scale.x * mat.uv1_scale.y), 1e-12));
-	rt_uv_dx *= mat.uv1_scale;
-	rt_uv_dy *= mat.uv1_scale;
-	rt_uv_aniso = (mat.flags & 64u) != 0u;
+	MaterialData mat = rt_entry_material(h.geometry_idx);
+	MaterialUV muv = material_uv_from_world(mat, geometries[h.geometry_idx], h.uv, h.hit_pos, h.geometry_normal);
 
-	// Triplanar materials ignore the mesh's UVs and blend three axis projections,
-	// as raster's generated code does (from Puddlefunk/godot bc91da5).
-	bool triplanar = (mat.flags & 16u) != 0u;
-	TriplanarCoords tc;
-	tc.weights = vec3(0.0);
-	tc.pos = vec3(0.0);
-	tc.tangent = vec3(1.0, 0.0, 0.0);
-	tc.binormal = vec3(0.0, 0.0, 1.0);
-	if (triplanar) {
-		tc = compute_triplanar_coords(h, mat, geometries[h.geometry_idx]);
+	// Triplanar mapping derives its own tangent frame from the blend normal.
+	if (muv.triplanar) {
+		material_uv_triplanar_tangents(muv, h.tangent, h.bitangent);
 	}
 
 	// Normal mapping.
 	vec3 tangent_space_normal = vec3(0.0, 0.0, 1.0);
 	vec3 final_normal = h.geometry_normal;
-	if ((mat.flags & 1u) != 0u) {
-		vec3 normal_sample = triplanar
-				? sample_material_texture_triplanar(mat.normal_texture_idx, tc, mat.flags).rgb
-				: sample_bindless_texture(mat.normal_texture_idx, uv).rgb;
+	if ((mat.flags & RT_MAT_FLAG_HAS_NORMAL_MAP) != 0u) {
+		vec3 normal_sample = material_uv_sample(mat.normal_texture, muv, mat.flags).rgb;
 		tangent_space_normal.xy = normal_sample.xy * 2.0 - 1.0;
 		tangent_space_normal.z = sqrt(max(0.0, 1.0 - dot(tangent_space_normal.xy, tangent_space_normal.xy)));
-		final_normal = triplanar
-				? apply_normal_map_triplanar(h, tc, tangent_space_normal, mat.normal_map_depth)
-				: apply_normal_map(h, tangent_space_normal, mat.normal_map_depth);
+		final_normal = apply_normal_map(h, tangent_space_normal, mat.normal_map_depth);
 	}
 
 	// Texture sampling.
-	vec4 albedo_tex = triplanar
-			? sample_material_texture_triplanar(mat.albedo_texture_idx, tc, mat.flags)
-			: sample_material_texture(mat.albedo_texture_idx, uv, mat.flags);
+	vec4 albedo_tex = material_uv_sample(mat.albedo_texture, muv, mat.flags);
 	vec3 albedo = albedo_tex.rgb * mat.albedo_color.rgb;
-	vec3 orm = (triplanar
-			? sample_material_texture_triplanar(mat.orm_texture_idx, tc, mat.flags)
-			: sample_material_texture(mat.orm_texture_idx, uv, mat.flags)).rgb;
-	float roughness = saturate(orm.g * mat.roughness);
-	float metalness = saturate(orm.b * mat.metallic);
+	vec2 roughness_metallic = material_roughness_metallic(mat, muv);
+	float roughness = roughness_metallic.x;
+	float metalness = roughness_metallic.y;
 
-	vec3 emissive = vec3(0.0);
-	if ((mat.flags & 8u) != 0u) {
-		// Emission on: its colour, times the texture if it has one.
-		emissive = mat.emission_color * mat.emission_strength;
-		if ((mat.flags & 2u) != 0u) {
-			emissive *= (triplanar
-					? sample_material_texture_triplanar(mat.emission_texture_idx, tc, mat.flags)
-					: sample_material_texture(mat.emission_texture_idx, uv, mat.flags)).rgb;
-		}
-		emissive *= scene_data_block.data.emissive_exposure_normalization;
-	}
+	vec3 emissive = material_emission(mat, muv, h.uv2, h.hit_pos, h.geometry_normal) * scene_data_block.data.emissive_exposure_normalization;
 
 	// Build MaterialResult.
 	MaterialResult m;
@@ -1378,18 +1054,48 @@ void main() {
 	m.alpha = albedo_tex.a * mat.albedo_color.a;
 	m.roughness = roughness;
 	m.metalness = metalness;
-	m.specular = mat.specular;
+	m.specular = rt_material_surface_params(mat).z;
 	m.emissive = emissive;
+	m.emission_indirect = mat.emission_indirect;
 	m.normal = final_normal;
+	m.backlight = vec3(0.0); // TODO: wire up BaseMaterial3D's "Back Lighting" for RT (raster-only today).
+
+	// Proximity/distance fade (BaseMaterial3D feature, mirrors raster).
+	if ((mat.flags & (RT_MAT_FLAG_PROXIMITY_FADE | RT_MAT_FLAG_DISTANCE_FADE)) != 0u) {
+		mat4 fade_view_mat = transpose(mat4(scene_data_block.data.view_matrix[0],
+				scene_data_block.data.view_matrix[1],
+				scene_data_block.data.view_matrix[2],
+				vec4(0.0, 0.0, 0.0, 1.0)));
+		vec3 fade_view_pos = (fade_view_mat * vec4(h.hit_pos, 1.0)).xyz;
+		if ((mat.flags & RT_MAT_FLAG_DISTANCE_FADE) != 0u) {
+			vec2 distance_fade = unpackHalf2x16(mat.distance_fade);
+			m.alpha *= clamp(smoothstep(distance_fade.x, distance_fade.y, length(fade_view_pos)), 0.0, 1.0);
+		}
+		if ((mat.flags & RT_MAT_FLAG_PROXIMITY_FADE) != 0u && (payload.packed_bounces_flags & PEEL_RAY_FLAG) != 0u) {
+			// Peel rays carry the segment's opaque NDC depth; 0.0 = far (no fade).
+			float fade_scene_z = -1e19;
+			float scene_depth = payload_peel_scene_depth(payload);
+			if (scene_depth > 0.0) {
+				vec4 fade_scene_pos = scene_data_block.data.inv_projection_matrix * vec4(0.0, 0.0, scene_depth, 1.0);
+				fade_scene_z = fade_scene_pos.z / fade_scene_pos.w;
+			}
+			m.alpha *= clamp(1.0 - smoothstep(fade_scene_z + mat.proximity_fade_distance, fade_scene_z, fade_view_pos.z), 0.0, 1.0);
+		}
+	}
+
+#ifdef RT_DECALS_ENABLED
+	if (rt_decals_process(h, m)) {
+		return;
+	}
+#endif
 
 #ifdef RT_DEBUG_ENABLED
 	{
 		int VIS_MODE = int(get_rt_param(RT_PARAM_VIS_MODE));
-		if (VIS_MODE != 0) {
-			vec3 V = -gl_WorldRayDirectionEXT;
-			float NdotV = max(dot(m.normal, V), 0.0001);
-			debug_visualize(VIS_MODE, h.geometry_normal, final_normal, tangent_space_normal,
-					h.tangent, h.bitangent, uv, albedo, orm, metalness, roughness, mat.specular, emissive, V, NdotV);
+		// VIS 23 (transparency heatmap) shades normally; raygen overrides the image.
+		if (VIS_MODE != 0 && VIS_MODE != 23) {
+			vec2 debug_uv = muv.triplanar ? muv.triplanar_pos.xy : muv.uv;
+			debug_visualize(VIS_MODE, debug_material_inputs(h, m, tangent_space_normal, h.tangent, h.bitangent, debug_uv, material_ao(mat, muv)), m.alpha);
 			return;
 		}
 	}
@@ -1413,7 +1119,6 @@ void main() {
 
 #define GLSL 1
 #define RT_STAGE_ANY_HIT 1
-
 // clang-format off
 #include "raytracing_inc.glsl"
 #include "../scene_data_inc.glsl"
@@ -1441,11 +1146,15 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 };
 // clang-format on
 
+#include "raytracing_entry_material_inc.glsl"
+
 layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
 
 #include "raytracing_samplers_inc.glsl"
 
 // clang-format off
+#include "raytracing_material_eval_inc.glsl"
+
 layout(set = 0, binding = 32, std430) readonly buffer MotionTransforms {
 	InstanceMotionData motion_transforms[];
 };
@@ -1459,18 +1168,28 @@ layout(set = 0, binding = 32, std430) readonly buffer MotionTransforms {
 #endif
 
 void main() {
-	uint geometry_idx = gl_InstanceCustomIndexEXT;
+	uint geometry_idx = RT_HIT_GEOMETRY_IDX;
 	GeometryData geom = geometries[geometry_idx];
+	MaterialData mat = rt_entry_material(geometry_idx);
+	bool transparent = (mat.flags & RT_MAT_FLAG_TRANSPARENT) != 0u;
+	bool alpha_scissor = (mat.flags & RT_MAT_FLAG_ALPHA_SCISSOR) != 0u;
+	if (!transparent && !alpha_scissor) {
+		return; // Ordinary opaque shadow candidate: accept immediately.
+	}
 
 	uint i0, i1, i2;
 	get_triangle_indices(geom, i0, i1, i2);
 	vec3 bary = vec3(1.0 - attribs.x - attribs.y, attribs.x, attribs.y);
 
+	float hit_alpha = 1.0;
+	vec3 hit_tint = vec3(1.0);
+	float scissor_threshold = -1.0;
+
 #ifdef RT_CUSTOM_HIT_GROUP
 	// Compute hit data inline (cannot include closest_hit_common_inc here).
 	uint rt_geometry_idx = geometry_idx;
 	vec2 rt_uv = fetch_uv(geom, i0, i1, i2, bary);
-	vec2 rt_uv2 = geom.uv2_byte_offset != OFFSET_NONE ? fetch_uv2(geom, i0, i1, i2, bary) : rt_uv;
+	vec2 rt_uv2 = fetch_uv2(geom, i0, i1, i2, bary);
 	TBNResult ah_tbn = fetch_tbn(geom, i0, i1, i2, bary);
 
 	mat3 model_rotation = mat3(gl_ObjectToWorldEXT);
@@ -1483,60 +1202,76 @@ void main() {
 	vec3 rt_tangent = normalize(normal_matrix * ah_tbn.tangent);
 	vec3 rt_bitangent = cross(rt_normal, rt_tangent) * ah_tbn.bitangent_sign;
 
-	bool rt_front_face = (gl_HitKindEXT == gl_HitKindFrontFacingTriangleEXT);
-	if (!rt_front_face) {
-		rt_normal = -rt_normal;
-	}
+	bool rt_front_face = rt_triangle_front_facing(geom);
+	rt_normal = rt_side_checked_normal(geom, rt_normal, rt_front_face);
 
 	vec3 rt_hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 	vec4 rt_color = fetch_color(geom, i0, i1, i2, bary);
 
 #include "raytracing_custom_fragment_inc.glsl"
 
-	if ((geom.flags & FLAG_SHADOW_CASTER) != 0u && is_shadow_ray(payload.packed_bounces_flags)) {
-		// On a shadow ray (bounce rays meet casters too, and take them as any
-		// surface below). Its alpha dims the
-		// light, kept as the ray's transmittance in the payload's hit_t, and the
-		// ray goes on: a soft alpha casts a soft shadow with no noise. Once next
-		// to nothing is left, the hit stands and the light is blocked.
-		float caster_alpha = alpha_scissor_threshold > 0.0 ? step(alpha_scissor_threshold, alpha) : clamp(alpha, 0.0, 1.0);
-		payload.hit_t *= 1.0 - caster_alpha;
-		if (payload.hit_t > RT_SHADOW_OPAQUE_TRANSMITTANCE) {
-			ignoreIntersectionEXT;
-		}
-	} else {
-		if (alpha_scissor_threshold > 0.0 && alpha < alpha_scissor_threshold) {
-			ignoreIntersectionEXT;
-		}
-		// Hashed alpha: the hit passes with probability 1 - alpha, redrawn per ray and frame.
-		if (alpha_scissor_threshold <= 0.0 && alpha < 1.0) {
-			uint h = pcg_hash(gl_LaunchIDEXT.x + gl_LaunchIDEXT.y * 65536u);
-			h = pcg_hash(h ^ floatBitsToUint(gl_HitTEXT));
-			h = pcg_hash(h ^ floatBitsToUint(scene_data_block.data.time) ^ floatBitsToUint(scene_data_block.data.taa_frame_count));
-			h = pcg_hash(h ^ floatBitsToUint(gl_WorldRayDirectionEXT.x + 3.0 * gl_WorldRayDirectionEXT.y));
-			if (alpha < float(h) / 4294967296.0) {
-				ignoreIntersectionEXT;
-			}
-		}
-	}
+	hit_alpha = alpha;
+	hit_tint = clamp(albedo, vec3(0.0), vec3(1.0));
+	scissor_threshold = alpha_scissor_threshold;
 #else
-	// HG0: Standard material alpha test.
-	vec2 uv = fetch_uv(geom, i0, i1, i2, bary);
-	MaterialData mat = materials[geometry_idx];
-	uv = uv * mat.uv1_scale + mat.uv1_offset;
-	float alpha = texture(sampler2D(bindless_textures[nonuniformEXT(mat.albedo_texture_idx)], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv).a;
-	alpha *= mat.albedo_color.a;
-
-	if ((geom.flags & FLAG_SHADOW_CASTER) != 0u && is_shadow_ray(payload.packed_bounces_flags)) {
-		// As a custom caster above, by the albedo's alpha.
-		payload.hit_t *= 1.0 - clamp(alpha, 0.0, 1.0);
-		if (payload.hit_t > RT_SHADOW_OPAQUE_TRANSMITTANCE) {
-			ignoreIntersectionEXT;
+	// HG0: StandardMaterial3D alpha evaluation.
+	{
+		vec3 world_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
+		vec3 world_normal = vec3(0.0, 1.0, 0.0);
+		if ((mat.flags & RT_MAT_FLAG_TRIPLANAR) != 0u) {
+			// Only triplanar needs a normal, and fetching the frame is not free.
+			TBNResult ah_tbn = fetch_tbn(geom, i0, i1, i2, bary);
+			world_normal = normalize(mat3(gl_ObjectToWorldEXT) * ah_tbn.normal);
 		}
-	} else if (alpha < 0.5) {
-		ignoreIntersectionEXT;
+
+		MaterialUV muv = material_uv_from_world(mat, geom, fetch_uv(geom, i0, i1, i2, bary), world_pos, world_normal);
+		vec4 albedo_tex = material_uv_sample(mat.albedo_texture, muv, mat.flags);
+		hit_alpha = albedo_tex.a * mat.albedo_color.a;
+		hit_tint = clamp(albedo_tex.rgb * mat.albedo_color.rgb, vec3(0.0), vec3(1.0));
 	}
 #endif
+	hit_alpha = rt_entry_alpha(mat, hit_alpha, scissor_threshold >= 0.0 ? scissor_threshold : 0.5);
+
+	uint blend_class = (mat.flags & RT_MAT_BLEND_CLASS_MASK) >> RT_MAT_BLEND_CLASS_SHIFT;
+	if (blend_class == RT_BLEND_CLASS_PREMULT && hit_alpha > 1e-6) {
+		hit_tint = clamp(hit_tint / hit_alpha, vec3(0.0), vec3(1.0));
+	}
+
+	if ((mat.flags & RT_MAT_FLAG_INSTANCE_FADE) != 0u) {
+		// rt_entry_alpha() zeroes scissored texels; the fade alone never reaches 0 (fully faded entries are culled).
+		if (hit_alpha <= 0.0) {
+			ignoreIntersectionEXT;
+		}
+	} else if (scissor_threshold >= 0.0) {
+		if (hit_alpha < scissor_threshold) {
+			ignoreIntersectionEXT;
+		}
+	} else if (!transparent && hit_alpha < 0.5) {
+		ignoreIntersectionEXT;
+	}
+	// Alpha-0 texels of Mix/OIT/Add/Sub layers contribute nothing; skip them so
+	// they don't spend a peel layer or take the first-layer depth/guide slot
+	// from what's behind (glyph hull in front of its outline). Premult and Mul
+	// carry light at alpha 0; depth_draw_always keeps raster's occlude-at-zero.
+	if (transparent && hit_alpha < (1.0 / 255.0) &&
+			blend_class != RT_BLEND_CLASS_PREMULT && blend_class != RT_BLEND_CLASS_MUL &&
+			(mat.flags & RT_MAT_FLAG_DEPTH_DRAW_ALWAYS) == 0u) {
+		ignoreIntersectionEXT;
+	}
+	// Transparent shadow candidates use stochastic coverage. Surviving rays
+	// accumulate a colored filter in the existing throughput payload.
+	if (transparent && is_shadow_ray(payload.packed_bounces_flags)) {
+		PathState shadow_ps = path_unpack(payload);
+		float shadow_alpha = clamp(hit_alpha, 0.0, 1.0);
+		bool blocks_light = rand(shadow_ps.rng_state) < shadow_alpha;
+		if (!blocks_light) {
+			shadow_ps.throughput *= mix(vec3(1.0), hit_tint, shadow_alpha);
+		}
+		path_pack(payload, shadow_ps);
+		if (!blocks_light) {
+			ignoreIntersectionEXT;
+		}
+	}
 }
 
 #[intersection]
@@ -1590,6 +1325,8 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 };
 // clang-format on
 
+#include "raytracing_entry_material_inc.glsl"
+
 layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
 
 #include "raytracing_samplers_inc.glsl"
@@ -1604,6 +1341,7 @@ layout(buffer_reference, std140) readonly buffer CustomMaterialUniforms{
 float global_time = scene_data_block.data.time;
 float global_prev_time = 0.0;
 mat4 read_model_matrix = mat4(0.0);
+mat3 model_normal_matrix = mat3(0.0);
 mat4 m_INV_MODEL_MATRIX = mat4(0.0);
 mat4 read_view_matrix = transpose(mat4(scene_data_block.data.view_matrix[0], scene_data_block.data.view_matrix[1], scene_data_block.data.view_matrix[2], vec4(0.0, 0.0, 0.0, 1.0)));
 mat4 inv_view_matrix = transpose(mat4(scene_data_block.data.inv_view_matrix[0], scene_data_block.data.inv_view_matrix[1], scene_data_block.data.inv_view_matrix[2], vec4(0.0, 0.0, 0.0, 1.0)));
@@ -1638,8 +1376,8 @@ void main() {
 	global_prev_time = scene_data_block.prev_data.time;
 
 	// Resolve custom material uniforms via BDA (assigns file-scope address).
-	uint rt_geometry_idx = gl_InstanceCustomIndexEXT;
-	MaterialData rt_mat = materials[rt_geometry_idx];
+	uint rt_geometry_idx = RT_HIT_GEOMETRY_IDX;
+	MaterialData rt_mat = rt_entry_material(rt_geometry_idx);
 	_rt_material_address = rt_mat.uniform_address;
 
 	// Per-primitive AABB bounds (available when expose_aabb_bounds is enabled).
@@ -1653,11 +1391,9 @@ void main() {
 		m_AABB_MAX = vec3(aabb_buf.v[base + 3], aabb_buf.v[base + 4], aabb_buf.v[base + 5]);
 	}
 
-	mat4 rt_aabb_xform;
-	mat4 rt_inv_aabb_xform;
-	get_aabb_compression_xforms(rt_geom, rt_aabb_xform, rt_inv_aabb_xform);
-	read_model_matrix = mat4(gl_ObjectToWorldEXT) * rt_inv_aabb_xform;
-	m_INV_MODEL_MATRIX = rt_aabb_xform * mat4(gl_WorldToObjectEXT);
+	read_model_matrix = mat4(gl_ObjectToWorldEXT);
+	model_normal_matrix = mat3(read_model_matrix);
+	m_INV_MODEL_MATRIX = mat4(gl_WorldToObjectEXT);
 
 	/* RT_CUSTOM_INTERSECTION_CODE */
 
