@@ -17,18 +17,10 @@ measured, and the traps.
 
 ## Attribution
 
-Anything this fork takes from valence-engine-rtx (Rman887, MIT) is credited:
-
-- Each commit that reimplements or adapts one of its features names it in
-  the message body: `Based on Rman887/valence-engine-rtx <commit> (<D id>)`.
-- The code carries a one-line comment at the feature's entry point naming
-  the same source, next to the papers it implements.
-- Code copied rather than rewritten keeps its MIT copyright and permission
-  notice, and COPYRIGHT.txt gains an entry for it. Third-party code it
-  vendors keeps its own licence entry (RTXCR: MIT; OpenSubdiv: TOST-1.0;
-  RTXTF: NVIDIA RTX SDKs licence, to be checked before vendoring).
-- The CHANGELOG line for such a PR and the README's references section
-  name the project.
+Anything taken from valence-engine-rtx (Rman887, MIT) is credited in the
+README References. Copied code keeps its licence notice in COPYRIGHT.txt,
+as does third-party code it vendors (RTXCR: MIT; OpenSubdiv: TOST-1.0;
+RTXTF: NVIDIA RTX SDKs licence, to be checked before vendoring).
 
 ## 1. Many-light sampling: light tree with resampling
 

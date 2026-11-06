@@ -102,6 +102,5 @@ that move and react to bodies.
 ## Attribution
 
 Anything taken from uno1982/godot (Wild Ox Studios, MIT) is credited in the
-commit ("Based on uno1982/godot <commit>"), in a source comment, in
-COPYRIGHT.txt, in CHANGELOG.md and in the README Credits, with the NVIDIA
-BSD-3 notices for PhysX, Blast and Flow.
+README References. Copied code keeps its licence notice in COPYRIGHT.txt,
+with NVIDIA's BSD-3 notices for PhysX, Blast and Flow.
