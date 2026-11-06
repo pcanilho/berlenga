@@ -1258,18 +1258,19 @@ void main() {
 			(mat.flags & RT_MAT_FLAG_DEPTH_DRAW_ALWAYS) == 0u) {
 		ignoreIntersectionEXT;
 	}
-	// Transparent shadow candidates use stochastic coverage. Surviving rays
-	// accumulate a colored filter in the existing throughput payload.
+	// Transparent shadow candidates filter the light by their coverage: the ray keeps
+	// (1 - alpha) of it, tinted, in the throughput payload, the expected value of a
+	// coverage coin flip without its noise. Clear glass casts an even, light shadow.
+	// Geometries are built without duplicate any-hit calls, so each surface counts once.
 	if (transparent && is_shadow_ray(payload.packed_bounces_flags)) {
-		PathState shadow_ps = path_unpack(payload);
 		float shadow_alpha = clamp(hit_alpha, 0.0, 1.0);
-		bool blocks_light = rand(shadow_ps.rng_state) < shadow_alpha;
-		if (!blocks_light) {
-			shadow_ps.throughput *= mix(vec3(1.0), hit_tint, shadow_alpha);
-		}
-		path_pack(payload, shadow_ps);
-		if (!blocks_light) {
-			ignoreIntersectionEXT;
+		if (shadow_alpha < 0.999) {
+			PathState shadow_ps = path_unpack(payload);
+			shadow_ps.throughput *= (1.0 - shadow_alpha) * mix(vec3(1.0), hit_tint, shadow_alpha);
+			path_pack(payload, shadow_ps);
+			if (max(shadow_ps.throughput.r, max(shadow_ps.throughput.g, shadow_ps.throughput.b)) > 1e-3) {
+				ignoreIntersectionEXT;
+			}
 		}
 	}
 }
