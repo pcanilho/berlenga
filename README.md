@@ -47,15 +47,10 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 
 | Area | Papers |
 |---|---|
+| Code | [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot), the path tracer and DLSS integration this fork is built on |
 | Many lights | Talbot et al., *Importance Resampling for Global Illumination*, EGSR 2005<br>Boksansky et al., *Rendering Many Lights with Grid-Based Reservoirs* (ReGIR), Ray Tracing Gems II, 2021<br>Bitterli et al., *Spatiotemporal Reservoir Resampling* (ReSTIR DI), SIGGRAPH 2020<br>Olsson et al., *Clustered Deferred and Forward Shading*, HPG 2012 |
 | Lit transparents | Wronski, *Volumetric Fog: Unified Compute Shader Based Solution to Atmospheric Scattering*, SIGGRAPH 2014<br>Hillaire, *Physically Based and Unified Volumetric Rendering in Frostbite*, SIGGRAPH 2015<br>NVIDIA, RTX Remix volumetric radiance cache for particles<br>Garg, Nayar, *Photorealistic Rendering of Rain Streaks*, SIGGRAPH 2006<br>Henyey, Greenstein, *Diffuse Radiation in the Galaxy*, Astrophysical Journal, 1941<br>McGuire, Bavoil, *Weighted Blended Order-Independent Transparency*, JCGT 2013 |
 | Texture filtering | Akenine-Möller et al., *Texture Level of Detail Strategies for Real-Time Ray Tracing*, Ray Tracing Gems, 2019<br>Akenine-Möller et al., *Improved Shader and Texture Level of Detail Using Ray Cones*, JCGT 2021 |
-
-## Credits
-
-- [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot): the path tracer, DLSS integration, traced transparency, particles, decals and fog this fork is built on. The fork branches from its history, so every NVIDIA commit keeps its author and date.
-- [godotengine/godot](https://github.com/godotengine/godot) and its contributors: the engine underneath.
-- Papers and techniques used are listed under References. Code or ideas taken from any other repository are credited here and in the commit that brings them in.
 
 ## Everything else
 
