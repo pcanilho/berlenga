@@ -1781,7 +1781,11 @@ void ParticlesStorage::ParticlesShaderData::set_code(const String &p_code) {
 
 	actions.uniforms = &uniforms;
 
-	Error err = particles_storage->particles_shader.compiler.compile(RSE::SHADER_PARTICLES, code, &actions, path, gen_code);
+	Error err;
+	{
+		MutexLock compiler_lock(particles_storage->particles_shader.compiler_mutex);
+		err = particles_storage->particles_shader.compiler.compile(RSE::SHADER_PARTICLES, code, &actions, path, gen_code);
+	}
 	ERR_FAIL_COND_MSG(err != OK, "Shader compilation failed.");
 
 	if (version.is_null()) {

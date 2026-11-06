@@ -106,7 +106,11 @@ void SkyRD::SkyShaderData::set_code(const String &p_code) {
 	// !BAS! Contemplate making `SkyShader sky` accessible from this struct or even part of this struct.
 	RendererSceneRenderRD *scene_singleton = static_cast<RendererSceneRenderRD *>(RendererSceneRenderRD::singleton);
 
-	Error err = scene_singleton->sky.sky_shader.compiler.compile(RSE::SHADER_SKY, code, &actions, path, gen_code);
+	Error err;
+	{
+		MutexLock compiler_lock(scene_singleton->sky.sky_shader.compiler_mutex);
+		err = scene_singleton->sky.sky_shader.compiler.compile(RSE::SHADER_SKY, code, &actions, path, gen_code);
+	}
 	ERR_FAIL_COND_MSG(err != OK, "Shader compilation failed.");
 
 	if (version.is_null()) {

@@ -129,6 +129,7 @@ private:
 		};
 
 		ShaderCompiler compiler;
+		Mutex compiler_mutex; // FogShaderData::set_code can run on more than one thread.
 		VolumetricFogShaderRD shader;
 		RID volume_ubo;
 

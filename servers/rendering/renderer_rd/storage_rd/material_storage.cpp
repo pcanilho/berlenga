@@ -1288,7 +1288,11 @@ void MaterialStorage::TexBlitShaderData::set_code(const String &p_code) {
 	actions.render_mode_values["blend_disabled"] = Pair<int *, int>(&blend_modei, BLEND_MODE_DISABLED);
 
 	actions.uniforms = &uniforms;
-	Error err = texture_storage->tex_blit_shader.compiler.compile(RSE::SHADER_TEXTURE_BLIT, code, &actions, path, gen_code);
+	Error err;
+	{
+		MutexLock compiler_lock(texture_storage->tex_blit_shader.compiler_mutex);
+		err = texture_storage->tex_blit_shader.compiler.compile(RSE::SHADER_TEXTURE_BLIT, code, &actions, path, gen_code);
+	}
 	ERR_FAIL_COND_MSG(err != OK, "Shader compilation failed.");
 
 	if (version.is_null()) {
