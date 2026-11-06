@@ -170,7 +170,6 @@ void dlss_rr_replace_primary_surface(vec3 p_origin, vec3 p_dir, float p_hit_t) {
 // [0..1] frame A, [2..3] frame B; each pair rgb = the irradiance sum (normal incidence,
 // the light buffer's units), and xyz = its luminance-weighted direction sum.
 #define PLIGHT_SLICES 64u
-#define PLIGHT_CANDIDATES 8u
 layout(set = 0, binding = 43, rgba16f) uniform image3D plight_images[4];
 
 float plight_luma(vec3 c) {
@@ -266,9 +265,9 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 		dir_sum += plight_luma(e) * L;
 	}
 
-	// the positional lights that can reach x: PLIGHT_CANDIDATES walks down the light tree
-	// (lights_tree_sample, no receiver normal), one kept in proportion to its unshadowed
-	// irradiance over its walk's pdf, and its shadow ray
+	// the positional lights that can reach x: RT_LIGHT_TREE_CANDIDATES drawn through the
+	// light tree (lights_tree_candidates, no receiver normal), one kept in proportion to its
+	// unshadowed irradiance over its source pdf, and its shadow ray
 	if (lights_tree_node_count() > 0u) {
 		float w_sum = 0.0;
 		float w_sel = 0.0;
@@ -276,18 +275,21 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 		vec3 l_sel = vec3(0.0, 1.0, 0.0);
 		float d_sel = 0.0;
 		uint li_sel = 0u;
-		for (uint k = 0u; k < PLIGHT_CANDIDATES; k++) {
-			uint li;
-			float source_pdf;
-			if (!lights_tree_sample(x, vec3(0.0), 0xFFFFFu, rng, li, source_pdf) || !(source_pdf > 0.0)) {
+		uint cand[RT_LIGHT_TREE_CANDIDATES];
+		float cand_pdf[RT_LIGHT_TREE_CANDIDATES];
+		lights_tree_candidates(x, vec3(0.0), 0xFFFFFu, false, rng, cand, cand_pdf);
+		for (uint k = 0u; k < uint(RT_LIGHT_TREE_CANDIDATES); k++) {
+			if (!(cand_pdf[k] > 0.0)) {
 				continue;
 			}
+			uint li = cand[k];
+			float source_pdf = cand_pdf[k];
 			RTLightData light = lights_get(li);
 			vec3 to_l;
 			float dist;
 			vec3 e = plight_positional(light, x, to_l, dist);
 			// the candidate's weight: its target over its source pdf
-			float w = plight_luma(e) / (float(PLIGHT_CANDIDATES) * source_pdf);
+			float w = plight_luma(e) / (float(RT_LIGHT_TREE_CANDIDATES) * source_pdf);
 			if (!(w > 0.0) || isinf(w)) {
 				continue;
 			}

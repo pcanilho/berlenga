@@ -405,12 +405,18 @@ inline uint16_t rt_snorm16(float p_value) {
 
 enum {
 	// Lights in the traced light buffer, at most. The shaders pick a positional light
-	// by walking a light BVH with resampled importance sampling (raytracing_lights_inc.glsl),
-	// so a pixel's cost grows with the log of the count.
+	// from a light BVH with resampled importance sampling (raytracing_lights_inc.glsl): a
+	// fixed cut of the tree is scored per hit, so a pixel's cost barely grows with the count.
 	RT_LIGHTS_MAX = 4096,
-	// The light tree (binding 42): header and node sizes, in uints.
-	RT_LIGHT_TREE_HEADER = 16,
+	// The light tree (binding 42): header and node sizes, in uints, and the two cuts the
+	// header holds (the shallowest nodes, scored once per hit; the coarse one for bounces).
+	RT_LIGHT_TREE_HEADER = 64,
 	RT_LIGHT_TREE_NODE_UINTS = 16,
+	RT_LIGHT_TREE_CUT_OFFSET = 16,
+	RT_LIGHT_TREE_CUT_MAX = 32,
+	RT_LIGHT_TREE_COARSE_CUT_OFFSET = 48,
+	RT_LIGHT_TREE_COARSE_CUT_MAX = 8,
+	RT_LIGHT_TREE_LEAF_BIT = 0x80000000u,
 };
 
 constexpr uint32_t RT_OFFSET_NONE = 0xFFFFFFFFu;

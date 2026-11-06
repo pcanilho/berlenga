@@ -49,6 +49,8 @@
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/storage/environment_storage.h"
 
+#include <cfloat>
+
 using namespace RendererSceneRenderImplementation;
 
 // Device addresses written into the geometry and material tables must follow the RT validation rules in
@@ -5456,11 +5458,17 @@ void RenderRaytracing::build_decal_volumes(RTViewportState *p_state, const Rende
 // lights' positions (a box), their emission directions (a cone of axis a, spread theta_o
 // and emission angle theta_e), their total flux, the union of their cull masks and their
 // largest range. The build splits by the surface area orientation heuristic (SAOH, binned).
-// The shaders walk down by each child's importance at the point (raytracing_lights_inc.glsl,
-// lights_tree_sample) and resample a few walks by the lights' unshadowed contribution.
-// Directional lights are sampled on their own and left out. Layout, in uints: a 16-uint
-// header ([0] node count, [1] positional light count, [2] first positional light index),
-// then RT_LIGHT_TREE_NODE_UINTS uints per node, the root first, a node's children side by side.
+// Per hit the shaders score a fixed cut of the tree (its shallowest nodes) by importance
+// once, draw a few cut nodes in proportion and, under each, a light by power, then
+// resample those candidates by the lights' unshadowed contribution
+// (raytracing_lights_inc.glsl, lights_tree_candidates). A full walk per candidate scores
+// two nodes per level and measured far slower; the cut and the decay-aware falloff follow
+// the measurements of Rman887/valence-engine-rtx (README References). Directional lights
+// are sampled on their own and left out. Layout, in uints: a RT_LIGHT_TREE_HEADER header
+// ([0] node count, [1] positional light count, [2] first positional light index, [3] cut
+// size, [4] coarse cut size, the cut's nodes at RT_LIGHT_TREE_CUT_OFFSET and the coarse
+// cut's at RT_LIGHT_TREE_COARSE_CUT_OFFSET), then RT_LIGHT_TREE_NODE_UINTS uints per node,
+// the root first, a node's children side by side.
 namespace {
 
 struct LightTreeCone {
@@ -5524,6 +5532,7 @@ struct LightTreeItem {
 	LightTreeCone cone;
 	float flux = 0.0f;
 	float range = 0.0f; // 0: unbounded
+	float decay = 2.0f; // the attenuation exponent
 	uint32_t cull_mask = 0;
 	uint32_t light = 0;
 };
@@ -5534,6 +5543,10 @@ struct LightTreeBounds {
 	LightTreeCone cone;
 	float flux = 0.0f;
 	float range = 0.0f; // the largest, FLT_MAX when one is unbounded
+	// The attenuation exponents' span: the importance falls off by the smallest past 1 m and
+	// by the largest within it, so it never falls faster than any light it holds.
+	float decay_min = FLT_MAX;
+	float decay_max = -FLT_MAX;
 	uint32_t cull_mask = 0;
 
 	void add(const LightTreeItem &p_item) {
@@ -5542,6 +5555,8 @@ struct LightTreeBounds {
 		cone = light_tree_cone_union(cone, p_item.cone);
 		flux += p_item.flux;
 		range = MAX(range, p_item.range > 0.0f ? p_item.range : FLT_MAX);
+		decay_min = MIN(decay_min, p_item.decay);
+		decay_max = MAX(decay_max, p_item.decay);
 		cull_mask |= p_item.cull_mask;
 	}
 	void merge(const LightTreeBounds &p_b) {
@@ -5553,6 +5568,8 @@ struct LightTreeBounds {
 		cone = light_tree_cone_union(cone, p_b.cone);
 		flux += p_b.flux;
 		range = MAX(range, p_b.range);
+		decay_min = MIN(decay_min, p_b.decay_min);
+		decay_max = MAX(decay_max, p_b.decay_max);
 		cull_mask |= p_b.cull_mask;
 	}
 	// A box's surface area, with a floor so lights at one point still split by flux and cone.
@@ -5582,8 +5599,8 @@ void light_tree_write_node(uint32_t *r_node, const LightTreeBounds &p_b, uint32_
 	f[13] = p_b.range;
 	memcpy(r_node, f, sizeof(f));
 	r_node[12] = p_b.cull_mask;
-	r_node[14] = p_child;
-	r_node[15] = p_leaf ? 1u : 0u;
+	r_node[14] = p_child | (p_leaf ? (uint32_t)RT_LIGHT_TREE_LEAF_BIT : 0u);
+	r_node[15] = uint32_t(Math::make_half_float(p_b.decay_min)) | (uint32_t(Math::make_half_float(p_b.decay_max)) << 16);
 }
 
 } // namespace
@@ -5606,6 +5623,7 @@ void RenderRaytracing::build_light_tree(const RT_LightData *p_lights, uint32_t p
 		it.position = Vector3(l.position[0], l.position[1], l.position[2]);
 		it.range = l.range;
 		it.cull_mask = l.masks.cull_mask;
+		it.decay = Math::half_to_float(l.attenuation_shadow.attenuation);
 		it.light = i;
 		const float r = Math::half_to_float(l.emission_rg.r);
 		const float g = Math::half_to_float(l.emission_rg.g);
@@ -5769,6 +5787,61 @@ void RenderRaytracing::build_light_tree(const RT_LightData *p_lights, uint32_t p
 	for (uint32_t i = 0; i < nodes.size(); i++) {
 		light_tree_write_node(&r_tree[RT_LIGHT_TREE_HEADER + i * RT_LIGHT_TREE_NODE_UINTS], nodes[i].bounds, nodes[i].child, nodes[i].leaf);
 	}
+
+	// The cuts: the tree's shallowest nodes, a level at a time while a whole level fits,
+	// then the widest of the next level's parents split first. Every light sits under
+	// exactly one cut node.
+	auto make_cut = [&](uint32_t p_max, uint32_t p_offset, uint32_t p_count_slot) {
+		LocalVector<uint32_t> cut;
+		cut.push_back(0);
+		while (true) {
+			LocalVector<uint32_t> inner;
+			for (uint32_t n : cut) {
+				if (!nodes[n].leaf) {
+					inner.push_back(n);
+				}
+			}
+			if (inner.is_empty()) {
+				break;
+			}
+			if (cut.size() + inner.size() <= p_max) {
+				LocalVector<uint32_t> next;
+				for (uint32_t n : cut) {
+					if (nodes[n].leaf) {
+						next.push_back(n);
+					} else {
+						next.push_back(nodes[n].child);
+						next.push_back(nodes[n].child + 1);
+					}
+				}
+				cut = next;
+				continue;
+			}
+			// A partial level: split the widest nodes while room is left.
+			for (uint32_t a = 1; a < inner.size(); a++) {
+				const uint32_t n = inner[a];
+				const float w = nodes[n].bounds.box.size.length_squared();
+				uint32_t b = a;
+				for (; b > 0 && nodes[inner[b - 1]].bounds.box.size.length_squared() < w; b--) {
+					inner[b] = inner[b - 1];
+				}
+				inner[b] = n;
+			}
+			for (uint32_t k = 0; k < inner.size() && cut.size() < p_max; k++) {
+				const uint32_t n = inner[k];
+				const int64_t at = cut.find(n);
+				cut[at] = nodes[n].child;
+				cut.push_back(nodes[n].child + 1);
+			}
+			break;
+		}
+		r_tree[p_count_slot] = cut.size();
+		for (uint32_t k = 0; k < cut.size(); k++) {
+			r_tree[p_offset + k] = cut[k];
+		}
+	};
+	make_cut(RT_LIGHT_TREE_CUT_MAX, RT_LIGHT_TREE_CUT_OFFSET, 3);
+	make_cut(RT_LIGHT_TREE_COARSE_CUT_MAX, RT_LIGHT_TREE_COARSE_CUT_OFFSET, 4);
 }
 
 

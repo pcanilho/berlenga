@@ -70,22 +70,27 @@ layout(set = 0, binding = 40) uniform sampler rt_light_projector_sampler;
 
 // The positional lights' BVH (RenderRaytracing::build_light_tree; Conty Estevez & Kulla,
 // "Importance Sampling of Many Lights with Adaptive Tree Splitting", HPG 2018). In uints: a
-// 16-uint header ([0] node count, 0: no positional light; [1] positional light count; [2]
-// the first positional light's index), then 16 uints per node, the root first: [0..2] box
-// min, [3] cos theta_o, [4..6] box max, [7] cos theta_e, [8..10] cone axis, [11] flux,
+// 64-uint header ([0] node count, 0: no positional light; [1] positional light count; [2]
+// the first positional light's index; [3] the cut's size, its nodes at [16, 48); [4] the
+// coarse cut's size, its nodes at [48, 56)), then 16 uints per node, the root first: [0..2]
+// box min, [3] cos theta_o, [4..6] box max, [7] cos theta_e, [8..10] cone axis, [11] flux,
 // [12] cull mask union, [13] largest range (FLT_MAX: unbounded), [14] the left child (the
-// right one follows it) or, in a leaf, the light's index, [15] 1 in a leaf.
+// right one follows it) or, with bit 31 set, a leaf's light index, [15] the attenuation
+// exponents' min and max (fp16 pair).
 #ifndef RT_LIGHT_TREE_BINDING
 #define RT_LIGHT_TREE_BINDING 42
 #endif
 
-// Walks from a node's importance down, this many times, for the resampling.
+// Candidates drawn through the tree for the resampling.
 #ifndef RT_LIGHT_TREE_CANDIDATES
 #define RT_LIGHT_TREE_CANDIDATES 4
 #endif
 
-#define RT_LIGHT_TREE_HEADER 16u
+#define RT_LIGHT_TREE_HEADER 64u
 #define RT_LIGHT_TREE_NODE_UINTS 16u
+#define RT_LIGHT_TREE_CUT_OFFSET 16u
+#define RT_LIGHT_TREE_COARSE_CUT_OFFSET 48u
+#define RT_LIGHT_TREE_LEAF_BIT 0x80000000u
 
 layout(set = 0, binding = RT_LIGHT_TREE_BINDING, std430) readonly buffer LightTreeBuffer {
 	uint rt_light_tree[];
@@ -104,10 +109,12 @@ uint lights_tree_first_positional() {
 }
 
 // A conservative bound on what a node's lights add at p (Conty Estevez & Kulla 2018, eq. 3):
-// flux over the squared distance (no nearer than the box's half diagonal), times the emission
-// cone's cosine bound towards p and the receiver's towards the box, both widened by the box's
-// angular size. Zero only where none of its lights can reach p: out of every range, outside
-// every cone, or no layer in common. N = 0 drops the receiver's term (a point in a medium).
+// flux times the distance falloff (no nearer than the box's half diagonal), the emission
+// cone's cosine bound towards p and the receiver's towards the box, both widened by the
+// box's angular size. The falloff uses the lights' own attenuation exponents (Godot's
+// default is 1, not inverse square): the smallest past 1 m, the largest within it. Zero
+// only where none of its lights can reach p: out of every range, outside every cone, or no
+// layer in common. N = 0 drops the receiver's term (a point in a medium).
 float lights_tree_importance(uint p_node, vec3 p, vec3 N, uint instance_layers) {
 	uint base = RT_LIGHT_TREE_HEADER + p_node * RT_LIGHT_TREE_NODE_UINTS;
 	if ((rt_light_tree[base + 12u] & instance_layers & 0xFFFFFu) == 0u) {
@@ -122,13 +129,15 @@ float lights_tree_importance(uint p_node, vec3 p, vec3 N, uint instance_layers) 
 		return 0.0;
 	}
 	float flux = uintBitsToFloat(rt_light_tree[base + 11u]);
+	vec2 decay = unpackHalf2x16(rt_light_tree[base + 15u]);
 	vec3 center = 0.5 * (lo + hi);
 	float half_diag = 0.5 * length(hi - lo);
 	vec3 to_c = center - p;
-	float d2 = dot(to_c, to_c);
-	float d = sqrt(d2);
+	float d = length(to_c);
 	if (d <= half_diag) {
-		return flux / max(half_diag * half_diag, 1e-4); // p is inside the box's sphere: every term 1
+		// p is inside the box's sphere: every angular term 1.
+		float r = max(half_diag, 0.01);
+		return flux * pow(r, -(r >= 1.0 ? decay.x : decay.y));
 	}
 	vec3 wi = to_c / d;
 	float sin_u = half_diag / d;
@@ -164,44 +173,75 @@ float lights_tree_importance(uint p_node, vec3 p, vec3 N, uint instance_layers) 
 		cos_recv = cos_i >= cos_u ? 1.0 : cos_i * cos_u + sin_i * sin_u;
 		cos_recv = max(cos_recv, 0.05);
 	}
-	return flux * cos_emit * cos_recv / d2;
+	float falloff = pow(max(d, 0.01), -(d >= 1.0 ? decay.x : decay.y));
+	return flux * cos_emit * cos_recv * falloff;
 }
 
-// One walk from the root to a light, each step to a child in proportion to its importance
-// at p. r_pdf is the product of the steps' probabilities. False when no light can reach p.
-bool lights_tree_sample(vec3 p, vec3 N, uint instance_layers, inout uint rng_state, out uint r_light, out float r_pdf) {
-	r_light = 0u;
-	r_pdf = 1.0;
+// The source of the resampling: RT_LIGHT_TREE_CANDIDATES lights drawn through the tree's
+// cut. Each cut node is scored once at p; each candidate takes a cut node in proportion
+// (one weighted reservoir per candidate, so no per-hit array) and then a light under it in
+// proportion to power, a walk that reads only the children's flux. r_pdf[k] is candidate
+// k's probability, 0 where none was drawn. A full importance walk per candidate scores two
+// nodes per level and measured far slower (Rman887/valence-engine-rtx, README References).
+// p_coarse takes the smaller cut, for vertices past the first bounce.
+void lights_tree_candidates(vec3 p, vec3 N, uint instance_layers, bool p_coarse, inout uint rng_state,
+		out uint r_light[RT_LIGHT_TREE_CANDIDATES], out float r_pdf[RT_LIGHT_TREE_CANDIDATES]) {
+	uint picked[RT_LIGHT_TREE_CANDIDATES];
+	float picked_imp[RT_LIGHT_TREE_CANDIDATES];
+	for (uint k = 0u; k < uint(RT_LIGHT_TREE_CANDIDATES); k++) {
+		r_light[k] = 0u;
+		r_pdf[k] = 0.0;
+		picked[k] = 0u;
+		picked_imp[k] = 0.0;
+	}
 	if (lights_tree_node_count() == 0u) {
-		return false;
+		return;
 	}
-	uint node = 0u;
-	if (lights_tree_importance(0u, p, N, instance_layers) <= 0.0) {
-		return false;
-	}
-	for (uint depth = 0u; depth < 64u; depth++) {
-		uint base = RT_LIGHT_TREE_HEADER + node * RT_LIGHT_TREE_NODE_UINTS;
-		if (rt_light_tree[base + 15u] != 0u) {
-			r_light = rt_light_tree[base + 14u];
-			return true;
+	uint cut_size = rt_light_tree[p_coarse ? 4u : 3u];
+	uint cut_at = p_coarse ? RT_LIGHT_TREE_COARSE_CUT_OFFSET : RT_LIGHT_TREE_CUT_OFFSET;
+	float total = 0.0;
+	for (uint i = 0u; i < cut_size; i++) {
+		uint node = rt_light_tree[cut_at + i];
+		float imp = lights_tree_importance(node, p, N, instance_layers);
+		if (!(imp > 0.0)) {
+			continue;
 		}
-		uint left = rt_light_tree[base + 14u];
-		float il = lights_tree_importance(left, p, N, instance_layers);
-		float ir = lights_tree_importance(left + 1u, p, N, instance_layers);
-		float sum = il + ir;
-		if (!(sum > 0.0) || isinf(sum)) {
-			return false;
-		}
-		float pl = il / sum;
-		if (rand(rng_state) < pl) {
-			node = left;
-			r_pdf *= pl;
-		} else {
-			node = left + 1u;
-			r_pdf *= 1.0 - pl;
+		total += imp;
+		for (uint k = 0u; k < uint(RT_LIGHT_TREE_CANDIDATES); k++) {
+			if (rand(rng_state) * total < imp) {
+				picked[k] = node;
+				picked_imp[k] = imp;
+			}
 		}
 	}
-	return false;
+	if (!(total > 0.0) || isinf(total)) {
+		return;
+	}
+	for (uint k = 0u; k < uint(RT_LIGHT_TREE_CANDIDATES); k++) {
+		if (!(picked_imp[k] > 0.0)) {
+			continue;
+		}
+		float pdf = picked_imp[k] / total;
+		uint node = picked[k];
+		for (uint depth = 0u; depth < 64u; depth++) {
+			uint link = rt_light_tree[RT_LIGHT_TREE_HEADER + node * RT_LIGHT_TREE_NODE_UINTS + 14u];
+			if ((link & RT_LIGHT_TREE_LEAF_BIT) != 0u) {
+				r_light[k] = link & ~RT_LIGHT_TREE_LEAF_BIT;
+				r_pdf[k] = pdf;
+				break;
+			}
+			float fl = uintBitsToFloat(rt_light_tree[RT_LIGHT_TREE_HEADER + link * RT_LIGHT_TREE_NODE_UINTS + 11u]);
+			float fr = uintBitsToFloat(rt_light_tree[RT_LIGHT_TREE_HEADER + (link + 1u) * RT_LIGHT_TREE_NODE_UINTS + 11u]);
+			float pl = fl / max(fl + fr, 1e-30);
+			if (rand(rng_state) < pl) {
+				node = link;
+				pdf *= pl;
+			} else {
+				node = link + 1u;
+				pdf *= 1.0 - pl;
+			}
+		}
+	}
 }
 
 uint lights_get_type(uint idx) {
@@ -561,8 +601,8 @@ float lights_target(RTLightData light, vec3 p, vec3 N, bool is_indirect_bounce, 
 
 // Picks a positional light by resampled importance sampling (Talbot, Cline & Egbert,
 // "Importance Resampling for Global Illumination", EGSR 2005; the candidate step of
-// ReSTIR DI, Bitterli et al. 2020): RT_LIGHT_TREE_CANDIDATES walks down the light tree
-// (lights_tree_sample) as the source, each candidate weighted by its unshadowed
+// ReSTIR DI, Bitterli et al. 2020): RT_LIGHT_TREE_CANDIDATES lights drawn through the light
+// tree (lights_tree_candidates) as the source, each weighted by its unshadowed
 // contribution over its source pdf, one kept in proportion. r_select_pdf is the
 // estimator's p_hat(y) / sum(w), so contribution / r_select_pdf stays unbiased. With no
 // more positional lights than RT_LIGHT_RESERVOIR_SIZE, each is taken once instead.
@@ -591,14 +631,16 @@ bool lights_select_positional(vec3 hit_pos, vec3 N, bool is_indirect_bounce, uin
 			}
 		}
 	} else {
+		uint cand[RT_LIGHT_TREE_CANDIDATES];
+		float cand_pdf[RT_LIGHT_TREE_CANDIDATES];
+		lights_tree_candidates(hit_pos, N, instance_layers, is_indirect_bounce, rng_state, cand, cand_pdf);
 		for (uint i = 0u; i < uint(RT_LIGHT_TREE_CANDIDATES); i++) {
-			uint idx;
-			float source_pdf;
-			if (!lights_tree_sample(hit_pos, N, instance_layers, rng_state, idx, source_pdf) || !(source_pdf > 0.0)) {
+			if (!(cand_pdf[i] > 0.0)) {
 				continue;
 			}
+			uint idx = cand[i];
 			float p_hat = lights_target(lights_get(idx), hit_pos, N, is_indirect_bounce, instance_layers);
-			float w = p_hat / (float(RT_LIGHT_TREE_CANDIDATES) * source_pdf);
+			float w = p_hat / (float(RT_LIGHT_TREE_CANDIDATES) * cand_pdf[i]);
 			if (!(w > 0.0) || isinf(w)) {
 				continue;
 			}

@@ -16,7 +16,7 @@ Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built
 Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transparency, traced particles and decals, volumetric fog with traced shadows, shadow groups and asynchronous pipeline compilation. The fork keeps NVIDIA's code wherever it covers the same ground, and adds:
 
 ### Lighting
-- Up to 4096 lights per scene (upstream: 64 per frame), via a light grid and resampled importance sampling.
+- Up to 4096 lights per scene (upstream: 64 per frame), picked through a light BVH and resampled importance sampling, so lights spread over a large world stay cheap per pixel.
 - Shadow-only casters bounce light, so hidden ceilings and walls still light a room.
 - Raster transparents under the path tracer (`rendering/pathtracing/max_transparency_layers` 0): lit by a traced froxel light cache with shadowed lights, sky and bounce; particles scatter forward, so rain glints against lamps and headlights. Reflections and refractions still trace them (rain in puddles and glass).
 
@@ -48,7 +48,7 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 | Area | Sources |
 |---|---|
 | Code | [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot), the path tracer and DLSS integration this fork is built on |
-| Many lights | Talbot et al., *Importance Resampling for Global Illumination*, EGSR 2005<br>Boksansky et al., *Rendering Many Lights with Grid-Based Reservoirs* (ReGIR), Ray Tracing Gems II, 2021<br>Bitterli et al., *Spatiotemporal Reservoir Resampling* (ReSTIR DI), SIGGRAPH 2020<br>Olsson et al., *Clustered Deferred and Forward Shading*, HPG 2012 |
+| Many lights | Conty Estevez, Kulla, *Importance Sampling of Many Lights with Adaptive Tree Splitting*, HPG 2018<br>Moreau, Pharr, Clarberg, *Dynamic Many-Light Sampling for Real-Time Ray Tracing*, HPG 2019<br>[Rman887/valence-engine-rtx](https://github.com/Rman887/valence-engine-rtx), measurements behind the light tree's per-hit cut and decay-aware falloff<br>Talbot et al., *Importance Resampling for Global Illumination*, EGSR 2005<br>Boksansky et al., *Rendering Many Lights with Grid-Based Reservoirs* (ReGIR), Ray Tracing Gems II, 2021<br>Bitterli et al., *Spatiotemporal Reservoir Resampling* (ReSTIR DI), SIGGRAPH 2020<br>Olsson et al., *Clustered Deferred and Forward Shading*, HPG 2012 |
 | Lit transparents | Wronski, *Volumetric Fog: Unified Compute Shader Based Solution to Atmospheric Scattering*, SIGGRAPH 2014<br>Hillaire, *Physically Based and Unified Volumetric Rendering in Frostbite*, SIGGRAPH 2015<br>NVIDIA, RTX Remix volumetric radiance cache for particles<br>Garg, Nayar, *Photorealistic Rendering of Rain Streaks*, SIGGRAPH 2006<br>Henyey, Greenstein, *Diffuse Radiation in the Galaxy*, Astrophysical Journal, 1941<br>McGuire, Bavoil, *Weighted Blended Order-Independent Transparency*, JCGT 2013 |
 | Texture filtering | Akenine-Möller et al., *Texture Level of Detail Strategies for Real-Time Ray Tracing*, Ray Tracing Gems, 2019<br>Akenine-Möller et al., *Improved Shader and Texture Level of Detail Using Ray Cones*, JCGT 2021 |
 

@@ -71,10 +71,11 @@ Trap list for our implementation:
   receiver term entirely.
 - Shadow groups stay per light at evaluation; the tree does not need them.
 
-Our draft: branch `claude/emissive-light-tree` (3a62efa1c2, off `nv-port`
-d5b0948f42, not built or tested) replaces the grid with a binned-SAOH light
-BVH and RIS over full walks. Before it ships it should take D56's cut and
-D63's decay-aware falloff, both measured above.
+Status: done on main (light tree PR). The fork's tree takes D56's cut (32
+shallowest nodes per hit, a light under the picked node by power), D59's coarse
+cut (8 nodes past the first bounce) and D63's falloff (each node keeps its
+lights' smallest and largest attenuation exponent). No alias table: a power
+walk below the cut node reads only the children's flux.
 
 ## 2. Emissive surfaces as lights
 
