@@ -50,6 +50,8 @@ class RenderForwardClusteredPT : public RenderForwardClustered {
 	RID rt_capture_framebuffer;
 	LocalVector<RTCaptureRequest> rt_capture_requests;
 	uint32_t rt_capture_preload_version = 0;
+	// Pipeline flags of the last path-traced frame; traced with while a new variant builds on a worker.
+	uint32_t last_traced_rt_flags = UINT32_MAX;
 
 	bool _setup_rt();
 	void _record_rt_captures(const RenderDataRD *p_render_data, uint32_t p_rt_flags, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index);

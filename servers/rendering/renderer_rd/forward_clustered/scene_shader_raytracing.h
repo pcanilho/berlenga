@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include "core/object/worker_thread_pool.h"
+#include "core/templates/hash_set.h"
 #include "core/templates/local_vector.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_capture.h"
 #include "servers/rendering/renderer_rd/pipeline_hash_map_rd.h"
@@ -535,6 +537,12 @@ public:
 	void finalize_custom_shaders();
 
 	const PipelineBundle &ensure_pipeline_bundle(uint32_t p_rt_flags);
+	// Asynchronous first build of a variant: returns true once its bundle is ready.
+	// Until then the variant compiles and creates its pipeline on a worker thread,
+	// so the caller can render without path tracing instead of stalling. Falls back
+	// to a synchronous build when async compilation is off or the worker failed.
+	bool request_pipeline_bundle(uint32_t p_rt_flags);
+	bool is_pipeline_bundle_ready(uint32_t p_rt_flags) const;
 
 	RID get_raytracing_pipeline(uint32_t p_rt_flags) { return ensure_pipeline_bundle(p_rt_flags).pipeline; }
 	RID get_hit_sbt(uint32_t p_rt_flags) { return ensure_pipeline_bundle(p_rt_flags).hit_sbt; }
@@ -553,6 +561,8 @@ private:
 	// Bundle build / rebuild.
 	void _bundle_resize_for_slots(PipelineBundle &r_bundle);
 	bool _build_initial_bundle(uint32_t p_rt_flags, PipelineBundle &r_bundle);
+	RID _create_initial_pipeline(uint32_t p_rt_flags, RID p_base_shader);
+	bool _finish_initial_bundle(uint32_t p_rt_flags, PipelineBundle &r_bundle, RID p_pipeline);
 
 	// Compile lane / worker.
 	void _start_next_build_if_idle(); // Picks the next dirty bundle (if any) and starts building it.
@@ -578,6 +588,32 @@ private:
 
 	bool _ensure_variant_compile_context(uint32_t p_rt_flags);
 	bool _build_variant_compile_context(uint32_t p_rt_flags);
+	bool _prepare_variant_sources(uint32_t p_rt_flags, VariantCompileContext &r_ctx, Vector<String> &r_sources);
+	bool _compile_variant_context(const Vector<String> &p_sources, VariantCompileContext &r_ctx);
+
+	// A variant's first build on a worker (request_pipeline_bundle). Owned by the
+	// render thread; the worker only fills ctx/base_shader/pipeline and sets ok.
+	struct VariantBuildTask {
+		uint32_t rt_flags = 0;
+		bool need_ctx = false; // Compile the GLSL; otherwise base_binary is given.
+		bool ctx_only = false; // Warm-up: compile the context, no pipeline.
+		Vector<String> sources;
+		VariantCompileContext ctx;
+		Vector<uint8_t> base_binary;
+		RID base_shader;
+		RID pipeline;
+		bool ok = false;
+		uint64_t start_usec = 0;
+		uint64_t shaders_usec = 0;
+		uint64_t end_usec = 0;
+		WorkerThreadPool::TaskID worker_id = WorkerThreadPool::INVALID_TASK_ID;
+	};
+	LocalVector<VariantBuildTask *> variant_tasks;
+	HashSet<uint32_t> failed_async_variants;
+	static void _variant_build_worker_static(void *p_userdata);
+	void _variant_build_worker(VariantBuildTask *p_task);
+	void _start_variant_task(uint32_t p_rt_flags, bool p_ctx_only);
+	void _poll_variant_tasks(bool p_wait);
 	static uint32_t _compile_context_key(uint32_t p_rt_flags);
 	// GLSL to SPIR-V through a disk cache in the shader cache's user dir. Locks spirv_compile_mutex on a miss.
 	Vector<uint8_t> _compile_spirv_cached(RD::ShaderStage p_stage, const String &p_source, String *r_error);

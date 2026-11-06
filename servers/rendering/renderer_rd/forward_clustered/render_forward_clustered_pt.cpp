@@ -128,7 +128,43 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 	}
 	bool is_reflection_probe = p_render_data->reflection_probe.is_valid();
 
-	const bool use_rt = !is_reflection_probe && pathtracing_is_used(p_render_data->environment, p_render_data->viewport) && _setup_rt();
+	bool use_rt = !is_reflection_probe && pathtracing_is_used(p_render_data->environment, p_render_data->viewport) && _setup_rt();
+
+	// RT pipeline flags (packed with sample count / max bounces). Computed once
+	// here and reused at TLAS build and trace dispatch so the uniform set and the
+	// pipeline agree on spec-constant values.
+	uint32_t rt_flags = SceneShaderRaytracing::RT_FLAG_NONE;
+	if (use_rt && rb_data.is_valid() && raytracing && raytracing->get_shader()) {
+		RID rt_environment = p_render_data->environment;
+		const bool fog_enabled = rt_environment.is_valid() && environment_get_fog_enabled(rt_environment);
+		const bool volumetric_fog_enabled = rt_environment.is_valid() && environment_get_volumetric_fog_enabled(rt_environment);
+		rt_flags = SceneShaderRaytracing::compute_rt_flags(rt_environment, fog_enabled, volumetric_fog_enabled);
+		const bool scale_is_dlss = _resolve_scale_3d_mode(rb) == SCALE_3D_DLSS;
+		if ((rt_flags & SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED) && !scale_is_dlss) {
+			// Ray Reconstruction runs inside DLSS's upscale, which runs only when the
+			// viewport scales with DLSS. Without it the guides would be written for
+			// nothing and the frame left raw: trace without them, and say so once.
+			WARN_PRINT_ONCE("Path tracing: the Ray Reconstruction denoiser needs the viewport's scaling_3d_mode set to DLSS (Viewport.SCALING_3D_MODE_DLSS, any scale, 1.0 for DLAA). Tracing without a denoiser.");
+			rt_flags &= ~uint32_t(SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED);
+		}
+
+		// A variant's first build runs on a worker thread instead of stalling this
+		// frame (seconds on a desktop GPU). Meanwhile keep tracing with the last
+		// variant when it still fits this view, otherwise draw this frame raster.
+		SceneShaderRaytracing *rt_shader = raytracing->get_shader();
+		if (!rt_shader->request_pipeline_bundle(rt_flags)) {
+			const bool last_fits = last_traced_rt_flags != UINT32_MAX && rt_shader->is_pipeline_bundle_ready(last_traced_rt_flags) &&
+					(!(last_traced_rt_flags & SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED) || scale_is_dlss);
+			if (last_fits) {
+				rt_flags = last_traced_rt_flags;
+			} else {
+				use_rt = false;
+			}
+		}
+		if (use_rt) {
+			last_traced_rt_flags = rt_flags;
+		}
+	}
 	const bool timing_enabled = use_rt &&
 			RendererEnvironmentStorage::get_singleton()->environment_get_pathtracing_debug_mode(p_render_data->environment) == SceneShaderRaytracing::RT_DEBUG_TIMING_HEATMAP &&
 			RD::get_singleton()->has_feature(RD::SUPPORTS_SHADER_DEVICE_CLOCK);
@@ -249,10 +285,6 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 		_fill_instance_data(RENDER_LIST_ALPHA, render_info);
 	}
 
-	// RT pipeline flags (packed with sample count / max bounces). Computed once
-	// here and reused at trace-dispatch time below so the uniform set and the
-	// pipeline agree on spec-constant values.
-	uint32_t rt_flags = SceneShaderRaytracing::RT_FLAG_NONE;
 	// Captured from build_tlas/update_uniform_set so the trace-dispatch block
 	// below can bind without RenderRaytracing keeping hidden "current" state.
 	RID rt_uniform_set;
@@ -266,16 +298,6 @@ void RenderForwardClusteredPT::_render_scene(RenderDataRD *p_render_data, const 
 	if (rt_available) {
 		RENDER_TIMESTAMP("Build Acceleration Structures");
 		RID rt_environment = p_render_data->environment.is_valid() ? p_render_data->environment : RID();
-		const bool fog_enabled = rt_environment.is_valid() && environment_get_fog_enabled(rt_environment);
-		const bool volumetric_fog_enabled = rt_environment.is_valid() && environment_get_volumetric_fog_enabled(rt_environment);
-		rt_flags = SceneShaderRaytracing::compute_rt_flags(rt_environment, fog_enabled, volumetric_fog_enabled);
-		if ((rt_flags & SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED) && scale_type != SCALE_3D_DLSS) {
-			// Ray Reconstruction runs inside DLSS's upscale, which runs only when the
-			// viewport scales with DLSS. Without it the guides would be written for
-			// nothing and the frame left raw: trace without them, and say so once.
-			WARN_PRINT_ONCE("Path tracing: the Ray Reconstruction denoiser needs the viewport's scaling_3d_mode set to DLSS (Viewport.SCALING_3D_MODE_DLSS, any scale, 1.0 for DLAA). Tracing without a denoiser.");
-			rt_flags &= ~uint32_t(SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED);
-		}
 
 		const bool dlss_rr_enabled = (rt_flags & SceneShaderRaytracing::RT_FLAG_DLSS_RR_ENABLED) != 0;
 		if (dlss_rr_enabled) {
