@@ -218,6 +218,14 @@ static void _dlssg_api_error(const sl::APIError &p_error) {
 	fprintf(stderr, "[dlssg] present thread API error %d\n", (int)p_error.vkRes);
 }
 
+static String _dlss_texture_desc(RID p_texture) {
+	if (!p_texture.is_valid()) {
+		return "none";
+	}
+	const RD::TextureFormat format = RD::get_singleton()->texture_get_format(p_texture);
+	return vformat("%dx%d", format.width, format.height);
+}
+
 static sl::float4x4 sl_make_identity_matrix() {
 	sl::float4x4 ret;
 	ret.setRow(0, sl::float4(1.0f, 0.0f, 0.0f, 0.0f));
@@ -602,7 +610,13 @@ void DLSSEffect::_upscale_internal(RDD::CommandBufferID cmdid, const DLSSContext
 			result = StreamlineContext::get().slEvaluateFeature(sl::kFeatureDLSS_RR, *StreamlineContext::get().render_token, inputs, 1, nativeCmdlist);
 			if (result != sl::Result::eOk) {
 				sl_state.rr_mode = sl::DLSSMode::eOff;
-				ERR_FAIL_MSG("Failed to call streamline slEvaluateFeature for DLSS Ray Reconstruction. Result: " + String(StreamlineContext::result_to_string(result)));
+				// Name what was handed over, so a missing or mismatched input can be told apart.
+				String inputs_desc = vformat(" (mode %s, output %dx%d, color %s, depth %s, motion %s, albedo %s, specular %s, normals %s, specular motion %s)",
+						StreamlineContext::dlss_mode_name(context->currentDlssDOptions.mode), context->currentDlssDOptions.outputWidth, context->currentDlssDOptions.outputHeight,
+						_dlss_texture_desc(p_params.color), _dlss_texture_desc(p_params.depth), _dlss_texture_desc(p_params.velocity),
+						_dlss_texture_desc(p_params.dlss_rr_diffuse_albedo), _dlss_texture_desc(p_params.dlss_rr_specular_albedo),
+						_dlss_texture_desc(p_params.dlss_rr_normal_roughness), _dlss_texture_desc(p_params.dlss_rr_specular_motion_vectors));
+				ERR_FAIL_MSG("Failed to call streamline slEvaluateFeature for DLSS Ray Reconstruction. Result: " + String(StreamlineContext::result_to_string(result)) + inputs_desc);
 			}
 		} else if (StreamlineContext::get().streamline_capabilities.dlss_available) {
 			// Use regular DLSS

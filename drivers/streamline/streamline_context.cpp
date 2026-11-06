@@ -187,6 +187,24 @@ bool StreamlineContext::dlss_clamp_render_size(int p_target_width, int p_target_
 	sl::DLSSOptimalSettings settings[mode_count] = {};
 	bool valid[mode_count] = {};
 
+	// A driver override (the NVIDIA app's) can pin Super Resolution's sizes but not Ray
+	// Reconstruction's, and a path-traced view upscales with Ray Reconstruction: a size a
+	// Ray Reconstruction mode accepts is left alone, as DLSSEffect::create_context picks it.
+	if (slDLSSDGetOptimalSettings != nullptr && streamline_capabilities.dlss_rr_available) {
+		for (int i = 0; i < mode_count; i++) {
+			sl::DLSSDOptions rr_options = {};
+			rr_options.outputWidth = p_target_width;
+			rr_options.outputHeight = p_target_height;
+			rr_options.mode = modes[i];
+			sl::DLSSDOptimalSettings rr_settings;
+			if (slDLSSDGetOptimalSettings(rr_options, rr_settings) == sl::Result::eOk &&
+					r_render_width >= (int)rr_settings.renderWidthMin && r_render_width <= (int)rr_settings.renderWidthMax &&
+					r_render_height >= (int)rr_settings.renderHeightMin && r_render_height <= (int)rr_settings.renderHeightMax) {
+				return false;
+			}
+		}
+	}
+
 	for (int i = 0; i < mode_count; i++) {
 		sl::DLSSOptions options = {};
 		options.outputWidth = p_target_width;
