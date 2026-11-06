@@ -29,8 +29,8 @@ bool ray_query_alpha_test(uint geometry_idx, uint primitive_id, vec2 candidate_b
 	return ray_query_alpha(geometry_idx, primitive_id, candidate_bary) >= 0.5;
 }
 
-// Colored transmittance along the ray, 0 when an opaque caster is hit. Transparent casters tint the light
-// stochastically by coverage, so all candidates must be visited (no opaque traversal flags).
+// Colored transmittance along the ray, 0 when an opaque caster is hit. Transparent casters filter the light
+// by their coverage, so all candidates must be visited (no opaque traversal flags).
 vec3 ray_query_shadow_transmittance(vec3 origin, vec3 direction, float t_min, float t_max, uint mask, float lod, inout uint rng_state) {
 	vec3 transmittance = vec3(1.0);
 	rayQueryEXT shadow_rq;
@@ -55,8 +55,12 @@ vec3 ray_query_shadow_transmittance(vec3 origin, vec3 direction, float t_min, fl
 		}
 
 		vec4 surface = ray_query_surface(geometry_idx, rayQueryGetIntersectionPrimitiveIndexEXT(shadow_rq, false), rayQueryGetIntersectionBarycentricsEXT(shadow_rq, false), lod);
-		if (transparent_shadow && rand(rng_state) >= surface.a) {
-			transmittance *= mix(vec3(1.0), surface.rgb, surface.a);
+		if (transparent_shadow && surface.a < 0.999) {
+			// Coverage filters the light by (1 - alpha), tinted, without a coin flip's noise.
+			transmittance *= (1.0 - surface.a) * mix(vec3(1.0), surface.rgb, surface.a);
+			if (max(transmittance.r, max(transmittance.g, transmittance.b)) <= 1e-3) {
+				rayQueryConfirmIntersectionEXT(shadow_rq);
+			}
 		} else if (transparent_shadow || surface.a >= 0.5) {
 			rayQueryConfirmIntersectionEXT(shadow_rq);
 		}

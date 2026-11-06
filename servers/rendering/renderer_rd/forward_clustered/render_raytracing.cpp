@@ -2576,6 +2576,8 @@ static bool _fill_surface_blas_geometry(
 
 	r_as_geom = RD::AccelerationStructureGeometry();
 	r_as_geom.type = RD::AccelerationStructureGeometry::TYPE_TRIANGLES;
+	// Shadow rays multiply each transparent surface's coverage in its any-hit: one call per surface.
+	r_as_geom.flags.set_flag(RD::ACCELERATION_STRUCTURE_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT);
 	r_as_geom.geometry.triangles.vertex_buffer = vertex_buffer;
 	r_as_geom.geometry.triangles.vertex_stride = geom.position_stride;
 	r_as_geom.geometry.triangles.vertex_count = geom.vertex_count;
@@ -3834,6 +3836,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 	if (!entry.blas.is_valid()) {
 		RD::AccelerationStructureGeometry as_geom;
 		as_geom.type = RD::AccelerationStructureGeometry::TYPE_TRIANGLES;
+		as_geom.flags.set_flag(RD::ACCELERATION_STRUCTURE_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT);
 		as_geom.geometry.triangles.vertex_buffer = entry.merged_vtx_buffer;
 		as_geom.geometry.triangles.vertex_stride = 12; // float3, positions section only
 		as_geom.geometry.triangles.vertex_count = instance_count * vertex_count;
