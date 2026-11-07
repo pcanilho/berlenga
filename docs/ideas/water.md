@@ -1,0 +1,112 @@
+# Water bodies: rivers, waterfalls, lakes and ocean
+
+Research note, 7 Nov 2026. What shipped engines do for open-world water, and
+what the fork could take. Sources are public talks, docs and press; Crimson
+Desert has no technical talk, so its entries are press-level.
+
+## What others do
+
+### Crimson Desert (Pearl Abyss, BlackSpace)
+
+- FFT ocean plus a shallow water simulation. The simulation runs water over
+  terrain: rivers around rocks and sea waves at the shore (80.lv, GamesRadar).
+- Water reacts to characters and objects. Ice arrows freeze river water into
+  a chunk that drifts downstream and breaks on rocks. Only the parts of a body
+  or horse that touch the water get wet (GamesRadar hands-on).
+- Rendering: per-pixel RT diffuse GI and hybrid SSR plus RT reflections
+  (Digital Foundry via VGTimes). Nothing public on refraction, caustics or
+  foam.
+
+### Unreal Engine Water plugin
+
+- Water bodies are splines:
+  - Ocean: a closed loop.
+  - Lake: a closed loop at one height.
+  - River: an open spline with per-point width, depth and velocity.
+- River velocity is written into a flow map. Rivers have no waves.
+- Waves are Gerstner, 16 by default, set by wind angle, spread and steepness.
+  They fade in shallow water.
+- Terrain is carved under each body from a depth curve.
+- A tiled water mesh covers the bodies; a far mesh covers the horizon.
+
+### Fluid Flux (Unreal add-on)
+
+A 2D shallow water simulation that handles slopes and waterfalls, with
+caustics on slopes and the surface drawn as 128x128 mesh tiles. Published
+detail on how it is baked or run at runtime is thin.
+
+### Horizon Forbidden West (Guerrilla, SIGGRAPH 2022)
+
+- No runtime fluid sim. Houdini simulations of small areas are baked, then
+  instanced and blended at runtime.
+- Breaking waves are artist-laid wavefronts (curves baked to a grid, streamed
+  with world tiles). A compute shader builds the wave mesh from one baked
+  cross-section per frame.
+- Rivers: standing waves, eddies and ripples are baked 3D deformation volumes
+  placed procedurally by Houdini. These also form the waterfall impacts.
+- Foam is per vertex, so mesh density limits it.
+- Artist control was preferred over pulling shapes from a simulation.
+
+### FFT ocean in Godot
+
+GodotOceanWaves (MIT, 2Retr0) is an inverse FFT ocean in Godot compute:
+- JONSWAP/TMA spectrum, Stockham FFT, several cascades to hide tiling.
+- Foam where the surface folds (negative Jacobian), spray as GPU particles.
+- It already runs on RenderingDevice, so it is a reference that fits the fork
+  directly.
+
+### iWave (Tessendorf)
+
+Interactive ripples from a convolution kernel on a height grid, with
+obstacles as a mask. Good for local interaction, not for open ocean. The
+current game already uses it for puddles.
+
+## What this means for the fork
+
+The split agreed in the PhysX discussion still holds:
+- iWave for puddles and local ripples.
+- PhysX fluids only for hero splashes that read the iWave height.
+- An FFT ocean for the open world only.
+
+Rivers and waterfalls fit into that split as below.
+
+| Item | Method | Game |
+|---|---|---|
+| Rivers | Spline water bodies (width, depth, velocity) baked to a flow map. The surface scrolls normals and foam along the flow (two-phase flow mapping). A shallow water sim (Crimson Desert, Fluid Flux) is the upgrade for water that must react: run it in a window around the camera, baked flow outside. | Open world |
+| Waterfalls | Horizon's approach: a mesh sheet with flow-scrolled material, baked deformation at the impact, spray particles, and mist from the same lit sprite and traced haze system the current game uses for steam. | Open world |
+| Lakes | Flat body plus iWave around the player and Gerstner or small FFT waves. | Open world |
+| Ocean | FFT cascades (GodotOceanWaves as the reference), fading in shallow water. | Open world |
+| Puddles, gutters, wet streets | iWave as today. | Current game |
+| Interaction | iWave in a window around the player for wakes and ripples. PhysX hero splashes read its height. | Both |
+| Path traced water | Refraction already comes from the traced transparency in NVIDIA's code. Missing: Beer-Lambert absorption and scattering inside the water (the "water medium" item already on the Valence list), so deep water darkens and tints by depth. | Both |
+| Caustics | A plain path tracer can't find caustics from small lamps through water. Options are a projected caustic texture from the FFT or flow normals, or a ray-traced caustics pass (NVIDIA, Ray Tracing Gems II ch. 30, not read yet). Decide after the water medium works. | Open world |
+| Streaming | Flow maps, baked deformations and water tiles stream with world cells, like Horizon's wavefront grid. | Open world |
+
+## Suggested order (open-world game, after the current engine list)
+
+1. Water medium in the path tracer: absorption and scattering by depth.
+2. Spline rivers and lakes with flow maps, streamed with the world.
+3. FFT ocean cascades.
+4. Waterfalls: sheet, impact, spray and mist.
+5. Shallow water sim near the camera, where the game needs water to react.
+6. Caustics.
+
+## Sources
+
+- 80.lv, Crimson Desert's BlackSpace engine features:
+  https://80.lv/articles/pearl-abyss-demonstrated-crimson-desert-s-blackspace-engine-tech-advancements
+- GamesRadar (via Yahoo), Crimson Desert engine hands-on:
+  https://tech.yahoo.com/gaming/articles/saw-dirty-little-secrets-crimson-140000043.html
+- VGTimes on Digital Foundry's Crimson Desert analysis:
+  https://vgtimes.com/gaming-news/149317-digital-foundry-dazzled-by-crimson-deserts-blackspace-engine-tech.html
+- Epic, Water system and water body actors:
+  https://dev.epicgames.com/documentation/en-us/unreal-engine/water-system-in-unreal-engine
+- 80.lv, Fluid Flux waterfall:
+  https://80.lv/articles/real-time-waterfall-simulation-made-with-the-fluid-flux-add-on/
+- Malan, Water in Horizon Forbidden West, SIGGRAPH Advances 2022:
+  https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Water-Malan.pdf
+- 2Retr0, GodotOceanWaves: https://github.com/2Retr0/GodotOceanWaves
+- Tessendorf, Interactive Water Surfaces (iWave):
+  https://jtessen.people.clemson.edu/reports/papers_files/Interactive_Water_Surfaces.pdf
+- Ray Tracing Gems II, ch. 30, real-time ray traced caustics (not read):
+  https://developer.download.nvidia.com/ray-tracing-gems/rtg2-chapter30-preprint.pdf
