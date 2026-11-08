@@ -3874,6 +3874,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/use_shader_execution_reordering", true);
 	GLOBAL_DEF("rendering/pathtracing/light_visibility_memory", true);
 	GLOBAL_DEF("rendering/pathtracing/radiance_cache", true);
+	GLOBAL_DEF("rendering/pathtracing/simulated_gas", true);
 	GLOBAL_DEF("rendering/pathtracing/transparency_at_output_size", true);
 	GLOBAL_DEF("rendering/pathtracing/transparent_lighting/enabled", true);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparent_lighting/near", PROPERTY_HINT_RANGE, "0.05,100,0.01,or_greater,suffix:m"), 0.5);

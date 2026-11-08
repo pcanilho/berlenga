@@ -36,6 +36,7 @@
 #include "flow_backend.h"
 #include "physx_flow_3d.h"
 
+#include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
@@ -163,7 +164,8 @@ void PhysXFlowRenderEffect::prepare_traced(const RenderData *p_render_data) {
 	const RenderDataRD *rd_data = dynamic_cast<const RenderDataRD *>(p_render_data);
 	RenderSceneDataRD *scene = p_render_data ? Object::cast_to<RenderSceneDataRD>(p_render_data->get_render_scene_data()) : nullptr;
 	if (rd_data == nullptr || scene == nullptr || !rd_data->environment.is_valid() || RendererSceneRenderRD::get_singleton() == nullptr ||
-			!RendererSceneRenderRD::get_singleton()->environment_get_pathtracing_enabled(rd_data->environment)) {
+			!RendererSceneRenderRD::get_singleton()->environment_get_pathtracing_enabled(rd_data->environment) ||
+			!GLOBAL_GET_CACHED(bool, "rendering/pathtracing/simulated_gas")) {
 		return;
 	}
 	MutexLock lock(flows_mutex);
