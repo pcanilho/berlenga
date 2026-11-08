@@ -3306,6 +3306,12 @@
 		<member name="rendering/pathtracing/light_visibility_memory" type="bool" setter="" getter="" default="true">
 			The path tracer remembers, for each small region of the scene, which lights recently lit it and how often each light's samples were blocked or fell on the surface's unlit side. Light selection draws half its candidates from the lights that lit the region and weights each candidate by that memory, so lamps behind walls, lamps inside a building seen from its walls, and a sun under a roof waste fewer samples. Lights that looked hidden keep a small share, so the image stays unbiased and a light that comes into view is found again; only noise changes. Uses 4.25 MiB of video memory.
 		</member>
+		<member name="rendering/pathtracing/cull_max_distance" type="float" setter="" getter="" default="0.0">
+			Distance in meters past which geometry outside the camera's view is left out of path tracing, so it casts no shadows or reflections and bounces no light. What the camera sees is always traced. [code]0.0[/code] uses the camera's far distance, as Godot does. In large worlds a shorter distance lowers acceleration-structure build time and memory.
+		</member>
+		<member name="rendering/pathtracing/cull_min_size" type="float" setter="" getter="" default="0.0">
+			Angular radius in degrees under which an object outside the camera's view is left out of path tracing: its bounding sphere's radius over its distance from the camera, so small objects drop out sooner than large ones. What the camera sees is always traced. [code]0.0[/code] keeps every object, as Godot does. Values around [code]0.1[/code] remove distant clutter from shadows and reflections while keeping buildings and terrain.
+		</member>
 		<member name="rendering/pathtracing/mesh_lod" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], the path tracer traces each static mesh surface at the level of detail the rasterizer would draw it at, using the mesh's LODs (generated on import) and [member rendering/mesh_lod/lod_change/threshold_pixels]. Each level is built once and shared by every instance at that level. Far geometry then costs less acceleration-structure memory and build time, which matters in large worlds; near geometry is unchanged. Skinned, blend-shape and other deformed surfaces always trace at full detail. Off by default, so distant meshes keep their full detail in reflections, shadows and bounce light.
 		</member>
