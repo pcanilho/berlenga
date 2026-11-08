@@ -302,13 +302,13 @@ func shot_physx() -> void:
 
 	# Smoke plume beside the lamp.
 	var flow = ClassDB.instantiate("PhysXFlow3D")
-	flow.smoke_density = 4.0
+	flow.smoke_density = 8.0
 	flow.position = Vector3(2.5, 0, 0.6)
 	add_child(flow)
 	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
 	em.position = Vector3(0, 0.3, 0)
-	em.radius = 0.6
-	em.velocity = Vector3(0, 4.0, 0)
+	em.radius = 0.8
+	em.velocity = Vector3(0, 2.0, 0)
 	em.smoke = 1.0
 	em.temperature = 0.3
 	flow.add_child(em)
@@ -329,7 +329,7 @@ func shot_physx() -> void:
 	var screen := StaticBody3D.new()
 	var ss := CollisionShape3D.new()
 	var sb := BoxShape3D.new()
-	sb.size = Vector3(0.15, 1.6, 1.6)
+	sb.size = Vector3(0.15, 1.1, 2.4)
 	ss.shape = sb
 	screen.add_child(ss)
 	var scm := MeshInstance3D.new()
@@ -338,7 +338,7 @@ func shot_physx() -> void:
 	sbm.material = mat(Color(0.62, 0.64, 0.68), 0.6)
 	scm.mesh = sbm
 	screen.add_child(scm)
-	screen.position = flow.position + Vector3(1.0, 0.8, 0.2)
+	screen.position = flow.position + Vector3(1.15, 0.55, 0.25)
 	screen.rotation.y = -atan2(wind.z, wind.x)
 	add_child(screen)
 
