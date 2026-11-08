@@ -154,6 +154,7 @@ rt_light_vis;
 #define RT_LIGHT_VIS_CELL 1.0 // region size near the camera, metres
 #define RT_LIGHT_VIS_NEAR 16.0 // regions double in size every octave of distance past this
 #define RT_LIGHT_VIS_FADE 3u // counts lose 1 / 2^FADE a frame
+#define RT_LIGHT_VIS_RECORD_EVERY 4u // one pixel in this many records its shadow ray outcomes
 
 uint lights_vis_hash(uint x) {
 	x ^= x >> 16u;
@@ -240,6 +241,12 @@ void lights_vis_list_add(uint region, uint light);
 // One sample's outcome for a light, from this region: p_lit when it added light.
 void lights_vis_record(uint region, uint light, bool p_lit) {
 	if (region == 0u) {
+		return;
+	}
+	// One pixel in RT_LIGHT_VIS_RECORD_EVERY records, a different set each frame: a hit rate is
+	// a ratio, so a subset learns it as well, and the atomics a hot region takes drop with it.
+	uint pick = (gl_LaunchIDEXT.x * 0x8da6b343u) ^ (gl_LaunchIDEXT.y * 0xd8163841u) ^ (uint(get_rt_param(RT_PARAM_FRAME_INDEX)) * 0x9e3779b9u);
+	if (lights_vis_hash(pick) % RT_LIGHT_VIS_RECORD_EVERY != 0u) {
 		return;
 	}
 	if (p_lit && light != RT_LIGHT_VIS_DIRECTIONAL) {
