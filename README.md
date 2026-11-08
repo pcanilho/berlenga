@@ -35,7 +35,7 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 - Transparent surfaces filter shadow rays by their coverage, so clear glass casts an even, tinted shadow instead of a speckled one.
 
 ### DLSS Ray Reconstruction
-- Runs with NVIDIA's DLSS 4.5 DLLs (nvngx_dlssd 310.5), checked on an RTX 4090. The model is chosen with `rendering/streamline/dlss_ray_reconstruction_preset`.
+- Runs with NVIDIA's DLSS 4.5 DLLs (nvngx_dlssd 310.5). The model is chosen with `rendering/streamline/dlss_ray_reconstruction_preset`.
 - Raster transparents are laid over Ray Reconstruction's output, particles at output size and unjittered, so thin rain stays continuous.
 - Additive, subtractive and `blend_mul` surfaces composite correctly.
 - Emissive detail keeps its edges.
@@ -70,7 +70,9 @@ Windows x64 and Linux x86_64 builds include a PhysX 5 physics server with NVIDIA
 Same scene, same samples per pixel, no denoiser, rendered with NVIDIA-RTX/godot of 2 November 2026 and with this fork. The scenes are in [docs/media/showcase](docs/media/showcase): `godot --path docs/media/showcase -- --shot=city --spp=16 --out=city.png` (shots: `city`, `lights`, `textures`, `glass`).
 
 <details>
-<summary>Many lights: a city block grid of 1024 lamps (the image at the top)</summary>
+<summary>Many lights: a city block grid of 1024 lamps</summary>
+
+![1024 street lamps: NVIDIA-RTX/godot keeps 64 of them, this fork lights them all](docs/media/many-lights.jpg)
 
 NVIDIA-RTX/godot passes the 64 highest scoring lights to the path tracer each frame; the rest go dark. The fork samples all of them through the light grid.
 </details>
@@ -88,19 +90,19 @@ NVIDIA-RTX/godot passes the 64 highest scoring lights to the path tracer each fr
 
 ![Checker floor: moire on NVIDIA-RTX/godot, filtered on this fork, raster for reference](docs/media/texture-filtering.jpg)
 
-Top: NVIDIA-RTX/godot has no texture level of detail in its ray tracing shaders and samples the full resolution texture at every distance, so the floor turns to moire (rendered on the CPU; the aliasing is the same on any GPU). Middle: this fork on an RTX 4090. Bottom: the raster renderer on the same GPU for reference.
+Top: NVIDIA-RTX/godot. Its ray tracing shaders pick no texture level of detail, so distant tiles are sampled at full resolution and break up into moire. Middle: this fork. Each ray carries its footprint and samples the matching mip level with anisotropic filtering, so the floor stays clean to the horizon. Bottom: the raster renderer, for reference.
 </details>
 
 ### Fork features on and off
 
-Each of these has a project setting to turn it off. Same build, same scene, no denoiser, 960x540, rendered on the CPU (lavapipe). The scenes are in [docs/media/light-selection](docs/media/light-selection): `godot --path docs/media/light-selection --resolution 960x540 -- --scene=signs --spp=4` (scenes: `signs`, `city`, `street`).
+Each of these has a project setting to turn it off. Same build, same scene, no denoiser, 960x540. The scenes are in [docs/media/light-selection](docs/media/light-selection): `godot --path docs/media/light-selection --resolution 960x540 -- --scene=signs --spp=4` (scenes: `signs`, `city`, `street`).
 
 <details>
 <summary>Emissive surfaces as lights (<code>rendering/pathtracing/emissive_lights</code>)</summary>
 
-![A dark street lit by glowing signs, a lit window and one small lamp: speckled with the setting off, smooth with it on](docs/media/emissive-lights.jpg)
+![A pavement lit by a glowing window: dark and speckled with the setting off, evenly lit with it on](docs/media/emissive-lights.jpg)
 
-4 samples per pixel. Off, light from signs and windows is only found when a bounce ray happens to hit them. On, every shaded point also samples them directly.
+A street lit only by a glowing shop window and small signs, 4 samples per pixel, both sides brightened the same for print. Look at the pavement under the window: off, it stays almost black with scattered dots, because light from the window is only found when a random bounce ray happens to hit it. On, every shaded point also aims a sample at the window, so the pavement and the kerb come out evenly lit and the reflection on the wet road fills in.
 </details>
 
 <details>
