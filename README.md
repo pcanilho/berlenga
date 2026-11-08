@@ -35,6 +35,7 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 - Transparent surfaces filter shadow rays by their coverage, so clear glass casts an even, tinted shadow instead of a speckled one.
 
 ### DLSS Ray Reconstruction
+- Runs with NVIDIA's DLSS 4.5 DLLs (nvngx_dlssd 310.5), checked on an RTX 4090. The model is chosen with `rendering/streamline/dlss_ray_reconstruction_preset`.
 - Raster transparents are laid over Ray Reconstruction's output, particles at output size and unjittered, so thin rain stays continuous.
 - Additive, subtractive and `blend_mul` surfaces composite correctly.
 - Emissive detail keeps its edges.
