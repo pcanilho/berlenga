@@ -1,0 +1,49 @@
+name: Build the PhysX SDKs
+description: Builds (or restores from cache) the PhysX 5, Blast and Flow SDKs for modules/godot_physx and exports PHYSX_SCONS_ARGS for scons.
+
+# The SDK revision and the build presets/patches are pinned in modules/godot_physx/misc,
+# so the cache key is the hash of that directory plus the runner OS and arch.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore PhysX SDK cache
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ${{ github.workspace }}/../physx-sdk/physx/install
+          ${{ github.workspace }}/../physx-sdk/blast/_build/*/release/blast-sdk
+          ${{ github.workspace }}/../physx-sdk/flow/include
+          ${{ github.workspace }}/../physx-sdk/flow/_build/*/release
+        key: physx-sdk|${{ runner.os }}-${{ runner.arch }}|${{ hashFiles('modules/godot_physx/misc/**') }}
+
+    - name: Build PhysX, Blast and Flow
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" = "Windows" ]; then plat=windows; else plat=linuxbsd; fi
+        python modules/godot_physx/misc/build_physx.py --platform "$plat" --blast --flow --jobs 4
+
+    - name: Save PhysX SDK cache
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ${{ github.workspace }}/../physx-sdk/physx/install
+          ${{ github.workspace }}/../physx-sdk/blast/_build/*/release/blast-sdk
+          ${{ github.workspace }}/../physx-sdk/flow/include
+          ${{ github.workspace }}/../physx-sdk/flow/_build/*/release
+        key: physx-sdk|${{ runner.os }}-${{ runner.arch }}|${{ hashFiles('modules/godot_physx/misc/**') }}
+      continue-on-error: true
+
+    - name: Export scons arguments
+      shell: bash
+      run: |
+        root="$(cd "$GITHUB_WORKSPACE/.." && pwd)/physx-sdk"
+        physx=$(ls -d "$root"/physx/install/*-godot/PhysX | head -n 1)
+        blast=$(ls -d "$root"/blast/_build/*/release/blast-sdk 2>/dev/null | head -n 1 || true)
+        args="physx_sdk=$physx flow_sdk=$root/flow"
+        if [ -n "$blast" ]; then args="$args blast_sdk=$blast"; fi
+        echo "PhysX scons arguments: $args"
+        echo "PHYSX_SCONS_ARGS=$args" >> "$GITHUB_ENV"
