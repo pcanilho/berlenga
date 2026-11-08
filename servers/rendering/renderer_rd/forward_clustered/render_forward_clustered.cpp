@@ -5165,6 +5165,7 @@ void RenderForwardClustered::GeometryInstanceForwardClustered::set_transform(con
 		prev_transform = transform;
 		prev_transform_change_frame = frame;
 		transform_status = TransformStatus::MOVED;
+		RenderForwardClustered::get_singleton()->_motion_age_add(this);
 	} else if (unlikely(transform_status == TransformStatus::TELEPORTED)) {
 		prev_transform = transform;
 	}
@@ -5175,6 +5176,42 @@ void RenderForwardClustered::GeometryInstanceForwardClustered::set_transform(con
 void RenderForwardClustered::GeometryInstanceForwardClustered::reset_motion_vectors() {
 	prev_transform = transform;
 	transform_status = TransformStatus::TELEPORTED;
+	RenderForwardClustered::get_singleton()->_motion_age_add(this);
+}
+
+void RenderForwardClustered::_motion_age_add(GeometryInstanceForwardClustered *p_instance) {
+	if (p_instance->motion_age_index != UINT32_MAX) {
+		return;
+	}
+	MutexLock lock(motion_age_mutex);
+	if (p_instance->motion_age_index == UINT32_MAX) {
+		p_instance->motion_age_index = motion_age_list.size();
+		motion_age_list.push_back(p_instance);
+	}
+}
+
+void RenderForwardClustered::_motion_age_remove(GeometryInstanceForwardClustered *p_instance) {
+	const uint32_t index = p_instance->motion_age_index;
+	if (index == UINT32_MAX) {
+		return;
+	}
+	MutexLock lock(motion_age_mutex);
+	GeometryInstanceForwardClustered *last = motion_age_list[motion_age_list.size() - 1];
+	motion_age_list[index] = last;
+	last->motion_age_index = index;
+	motion_age_list.resize(motion_age_list.size() - 1);
+	p_instance->motion_age_index = UINT32_MAX;
+}
+
+void RenderForwardClustered::age_out_moved_instances(uint64_t p_frame) {
+	// Backwards, so an instance that settles can take the last one's place.
+	for (int64_t i = int64_t(motion_age_list.size()) - 1; i >= 0; i--) {
+		GeometryInstanceForwardClustered *instance = motion_age_list[i];
+		instance->age_out_motion(p_frame);
+		if (instance->transform_status == GeometryInstanceForwardClustered::TransformStatus::NONE) {
+			_motion_age_remove(instance);
+		}
+	}
 }
 
 void RenderForwardClustered::GeometryInstanceForwardClustered::age_out_motion(uint64_t p_frame) {
@@ -5277,6 +5314,7 @@ void RenderForwardClustered::geometry_instance_free(RenderGeometryInstance *p_ge
 		surf = next;
 	}
 	memdelete(ginstance->data);
+	_motion_age_remove(ginstance);
 	geometry_instance_rt_index_free_list.push_back(ginstance->rt_index);
 	geometry_instance_alloc.free(ginstance);
 }

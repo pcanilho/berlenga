@@ -1043,29 +1043,9 @@ void RenderForwardClusteredPT::_age_out_motion_vectors(const RenderDataRD *p_ren
 	if (!p_render_data) {
 		return;
 	}
-	const uint64_t frame = RSG::rasterizer->get_frame_number();
-
-	// Process RT-only instances
-	if (p_render_data->rt_instances) {
-		for (uint32_t i = 0; i < (uint32_t)p_render_data->rt_instances->size(); i++) {
-			GeometryInstanceForwardClustered *inst =
-					static_cast<GeometryInstanceForwardClustered *>((*p_render_data->rt_instances)[i]);
-			if (inst) {
-				inst->age_out_motion(frame);
-			}
-		}
-	}
-
-	// Process raster instances
-	if (p_render_data->instances) {
-		for (uint32_t i = 0; i < (uint32_t)p_render_data->instances->size(); i++) {
-			GeometryInstanceForwardClustered *inst =
-					static_cast<GeometryInstanceForwardClustered *>((*p_render_data->instances)[i]);
-			if (inst) {
-				inst->age_out_motion(frame);
-			}
-		}
-	}
+	// Only instances that moved have motion to age out; visiting every listed instance each frame costs a cache miss
+	// per instance in large scenes.
+	age_out_moved_instances(RSG::rasterizer->get_frame_number());
 }
 
 void RenderForwardClusteredPT::_free_rt_viewport_state(RenderSceneBuffersRD *p_render_buffers) {

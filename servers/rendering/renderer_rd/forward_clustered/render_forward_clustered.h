@@ -677,6 +677,7 @@ protected:
 		//used during setup
 		uint64_t prev_transform_change_frame = 0xFFFFFFFF;
 		uint64_t last_aged_frame = 0;
+		uint32_t motion_age_index = UINT32_MAX; // In RenderForwardClustered::motion_age_list while its motion may age out.
 		RID voxel_gi_instances[MAX_VOXEL_GI_INSTANCESS_PER_INSTANCE];
 		SelfList<GeometryInstanceForwardClustered> dirty_list_element;
 
@@ -722,6 +723,18 @@ protected:
 	PagedAllocator<GeometryInstanceForwardClustered> geometry_instance_alloc;
 	PagedAllocator<GeometryInstanceSurfaceDataCache> geometry_instance_surface_alloc;
 	LocalVector<uint32_t> geometry_instance_rt_index_free_list;
+
+	// Instances whose transform changed and whose motion hasn't aged out yet, so ageing visits only these.
+	LocalVector<GeometryInstanceForwardClustered *> motion_age_list;
+	BinaryMutex motion_age_mutex;
+	void _motion_age_add(GeometryInstanceForwardClustered *p_instance);
+	void _motion_age_remove(GeometryInstanceForwardClustered *p_instance);
+
+public:
+	// Ages out the motion of the instances that moved (GeometryInstanceForwardClustered::age_out_motion).
+	void age_out_moved_instances(uint64_t p_frame);
+
+protected:
 	uint32_t geometry_instance_rt_index_count = 0;
 	uint64_t geometry_instance_rt_surfaces_version = 0;
 	PagedAllocator<GeometryInstanceLightmapSH> geometry_instance_lightmap_sh;
