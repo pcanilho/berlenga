@@ -12,6 +12,7 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 ## build-5e22cf31 (2026-11-08)
 
 ### Changed
+- Path tracer: the light visibility memory learns from about 65536 pixels a frame (at most one in four) instead of all of them. On an RTX 4090 at 1080p it cost 8 to 12 ms of a 17 ms frame, mostly contended compare-and-swap updates; quality at 480x270 is unchanged (26.05 vs 26.01 dB) (#114).
 - README: DLSS Ray Reconstruction checked with the DLSS 4.5 DLLs (310.5) on an RTX 4090 (#112).
 
 ### Fixed
