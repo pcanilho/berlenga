@@ -400,7 +400,8 @@ void PhysXCloth3D::_update_gpu_mesh() {
 		if (a >= n || b >= n || c >= n) {
 			continue;
 		}
-		const Vector3 fn = (vw[b] - vw[a]).cross(vw[c] - vw[a]);
+		// Godot's front faces wind clockwise, so this is the front side's normal.
+		const Vector3 fn = (vw[c] - vw[a]).cross(vw[b] - vw[a]);
 		nw[a] += fn;
 		nw[b] += fn;
 		nw[c] += fn;
@@ -505,7 +506,8 @@ void PhysXCloth3D::_update_mesh() {
 		iw[t] = a;
 		iw[t + 1] = b;
 		iw[t + 2] = c;
-		const Vector3 fn = (vw[b] - vw[a]).cross(vw[c] - vw[a]);
+		// Godot's front faces wind clockwise, so this is the front side's normal.
+		const Vector3 fn = (vw[c] - vw[a]).cross(vw[b] - vw[a]);
 		nw[a] += fn;
 		nw[b] += fn;
 		nw[c] += fn;

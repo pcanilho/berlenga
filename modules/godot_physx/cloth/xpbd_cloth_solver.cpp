@@ -119,7 +119,7 @@ void XPBDClothSolver::build_grid(int p_cols, int p_rows, const Vector2 &p_size) 
 		}
 	}
 
-	// Triangle mesh (two per quad).
+	// Triangle mesh (two per quad), clockwise seen from +Z: Godot's front face, so the grid faces +Z.
 	for (int y = 0; y < rows - 1; y++) {
 		for (int x = 0; x < cols - 1; x++) {
 			const int a = y * cols + x;
@@ -127,11 +127,11 @@ void XPBDClothSolver::build_grid(int p_cols, int p_rows, const Vector2 &p_size) 
 			const int c = a + cols;
 			const int d = c + 1;
 			indices.push_back(a);
-			indices.push_back(c);
-			indices.push_back(b);
 			indices.push_back(b);
 			indices.push_back(c);
+			indices.push_back(b);
 			indices.push_back(d);
+			indices.push_back(c);
 		}
 	}
 
