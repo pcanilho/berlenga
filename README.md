@@ -42,9 +42,12 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Continuous thin rain and correct blending over its output; frame generation fixes.
 
 ### Physics (PhysX 5)
+![PhysX: cloth flag in wind, a Blast wall broken by a ball, rigid crates, Flow smoke](docs/media/physx.gif)
+
 Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Settings > Physics > 3D > Physics Engine**.
-- Either engine: cloth, skinned cloth, Blast destruction, Flow smoke and fire, ocean buoyancy, compute-shader fluids.
+- Either engine: tearable cloth, skinned cloth, Blast destruction, Flow smoke and fire, ocean buoyancy, compute-shader fluids.
 - PhysX only: vehicles, CUDA fluids and deformables.
+- **Path-traced smoke and fire** (`rendering/pathtracing/simulated_gas`).
 - Builds without the SDKs skip the module (`modules/godot_physx/README.md`).
 
 ### Other
@@ -84,6 +87,12 @@ Look at the pavement under the window.
 <summary>Radiance cache off vs on, equal time</summary>
 
 ![The same street at 4 bounces and equal render time: 4 samples per pixel with the cache off, 6 with it on](docs/media/radiance-cache.jpg)
+</details>
+
+<details>
+<summary>PhysX scene path traced</summary>
+
+![The PhysX scene path traced at 64 samples per pixel](docs/media/physx-pathtraced.webp)
 </details>
 
 <details>

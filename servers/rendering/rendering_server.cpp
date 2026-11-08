@@ -3882,6 +3882,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/emissive_lights", true);
 	GLOBAL_DEF("rendering/pathtracing/light_visibility_memory", true);
 	GLOBAL_DEF("rendering/pathtracing/radiance_cache", true);
+	GLOBAL_DEF("rendering/pathtracing/simulated_gas", true);
 	GLOBAL_DEF("rendering/pathtracing/mesh_lod", false);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/cull_max_distance", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), 0.0);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/cull_min_size", PROPERTY_HINT_RANGE, "0,5,0.01,suffix:°"), 0.0);

@@ -30,6 +30,8 @@
 
 #include "physx_flow_3d.h"
 
+#include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_volumes.h"
+
 #include "flow_backend.h"
 #include "physx_flow_emitter_3d.h"
 #include "physx_flow_render_effect.h"
@@ -299,8 +301,52 @@ void PhysXFlow3D::_fill_scatter_shadows(LocalVector<FlowScatterRD::Light> &r_lig
 	}
 }
 
+bool PhysXFlow3D::prepare_traced() {
+	traced_this_frame = false;
+	if (grid == nullptr) {
+		return false;
+	}
+	FlowBackend::ScatterSource source;
+	if (!FlowBackend::grid_prepare_rd(grid, &source)) {
+		return false;
+	}
+	traced_this_frame = true;
+	RTSparseVolume v;
+	v.density = RID::from_uint64(source.density_rid);
+	v.table = RID::from_uint64(source.table_rid);
+	memcpy(v.level, source.level, sizeof(v.level));
+	v.world_min = Vector3(source.world_min[0], source.world_min[1], source.world_min[2]);
+	v.world_max = Vector3(source.world_max[0], source.world_max[1], source.world_max[2]);
+	v.block_size = Vector3(source.block_size_world[0], source.block_size_world[1], source.block_size_world[2]);
+	v.layer = source.layer_and_level;
+	v.units_per_meter = FlowBackend::UNITS_PER_METER;
+	{
+		MutexLock lock(scatter_mutex);
+		v.extinction = traced_extinction;
+		v.anisotropy = traced_anisotropy;
+		v.smoke_color = traced_smoke_color;
+		v.emission_scale = traced_emission;
+		v.temperature_range = traced_temperature_range;
+		for (int i = 0; i < 8; i++) {
+			v.heat_ramp[i] = traced_heat[i];
+		}
+	}
+	v.albedo = 0.9f;
+	v.density_majorant = 2.0f;
+	RTVolumes::set_volume(v);
+	return true;
+}
+
 void PhysXFlow3D::render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_rd, const float p_view[16], const float p_projection[16], const Size2i &p_size, const RID &p_depth, const RID &p_color, const Projection &p_inv_view_projection, const Vector3 &p_camera, const PagedArray<RID> *p_lights, const RID &p_shadow_atlas, bool p_first_view, bool p_last_view) {
 	if (grid == nullptr || p_rd != rd) {
+		return;
+	}
+	if (traced_this_frame) {
+		// The path tracer drew the gas: only end the Flow frame its resources belong to.
+		if (p_last_view) {
+			traced_this_frame = false;
+			FlowBackend::grid_render_rd_finish(grid);
+		}
 		return;
 	}
 	LocalVector<FlowScatterRD::Light> lights;
@@ -678,6 +724,20 @@ void PhysXFlow3D::_fill_render_settings(FlowBackend::Settings &r_settings) {
 	}
 	r_settings.temperature_range = temperature_range;
 	r_settings.attenuation = smoke_density;
+	{
+		// The path tracer's emission coefficient (per meter) and medium.
+		MutexLock lock(scatter_mutex);
+		for (int i = 0; i < 8; i++) {
+			const float t = (float)i / 7.0f;
+			const Color heat = heat_ramp.is_valid() ? heat_ramp->get_color_at_offset(t) : _default_heat_at(t);
+			traced_heat[i] = heat.srgb_to_linear() * (heat.a * emission_strength);
+		}
+		traced_smoke_color = smoke_color.srgb_to_linear();
+		traced_extinction = smoke_density;
+		traced_anisotropy = scattering_anisotropy;
+		traced_emission = emission_strength > 0.0f ? smoke_density : 0.0f;
+		traced_temperature_range = temperature_range;
+	}
 	r_settings.light_direction[0] = dir.x;
 	r_settings.light_direction[1] = dir.y;
 	r_settings.light_direction[2] = dir.z;

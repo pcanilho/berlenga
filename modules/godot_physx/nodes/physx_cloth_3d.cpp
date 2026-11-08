@@ -528,6 +528,56 @@ void PhysXCloth3D::_update_mesh() {
 	rs->mesh_set_custom_aabb(mesh, box.grow(solver.vertex_radius() * 4.0f));
 }
 
+// Lets pinned vertices go mid-simulation, without the reset that changing pin_mode or
+// pinned_vertices does: the cloth keeps its motion, so a pinned edge tears free of its pole.
+// The change lasts until the pins are next resolved (a property change or reset()).
+// Rips the cloth along a line (local space, measured on the rest shape's XY plane). Each call
+// cuts one segment; calling it with a lengthening segment over a few frames makes the rip run.
+// CPU solver only: the GPU deformable surface can't drop constraints.
+int PhysXCloth3D::tear(const Vector3 &p_from, const Vector3 &p_to) {
+	if (!built) {
+		return 0;
+	}
+	ERR_FAIL_COND_V_MSG(gpu_cloth.is_valid(), 0, "PhysXCloth3D.tear() needs the CPU solver; set simulation_mode to SIM_CPU.");
+	const int removed = solver.tear(Vector2(p_from.x, p_from.y), Vector2(p_to.x, p_to.y));
+	if (removed > 0) {
+		_update_mesh();
+	}
+	return removed;
+}
+
+int PhysXCloth3D::release_pins(const PackedInt32Array &p_vertices) {
+	if (!built) {
+		return 0;
+	}
+	int released = 0;
+	for (int i = 0; i < p_vertices.size(); i++) {
+		const int v = p_vertices[i];
+		if (v < 0 || v >= solver.vertex_count() || !solver.is_pinned(v)) {
+			continue;
+		}
+		solver.set_pinned(v, false);
+		for (uint32_t k = 0; k < pinned_index_cache.size(); k++) {
+			if (pinned_index_cache[k] == v) {
+				pinned_index_cache.remove_at(k);
+				break;
+			}
+		}
+		released++;
+	}
+	if (released > 0 && gpu_cloth.is_valid()) {
+		GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
+		if (server) {
+			Vector<int32_t> pins;
+			for (uint32_t k = 0; k < pinned_index_cache.size(); k++) {
+				pins.push_back(pinned_index_cache[k]);
+			}
+			server->cloth_set_pinned(gpu_cloth, pins);
+		}
+	}
+	return released;
+}
+
 PackedVector3Array PhysXCloth3D::get_pinned_positions() const {
 	PackedVector3Array out;
 	if (!built) {
@@ -763,6 +813,8 @@ void PhysXCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("reset"), &PhysXCloth3D::reset);
 	ClassDB::bind_method(D_METHOD("get_vertex_count"), &PhysXCloth3D::get_vertex_count);
 	ClassDB::bind_method(D_METHOD("get_pinned_positions"), &PhysXCloth3D::get_pinned_positions);
+	ClassDB::bind_method(D_METHOD("release_pins", "vertices"), &PhysXCloth3D::release_pins);
+	ClassDB::bind_method(D_METHOD("tear", "from", "to"), &PhysXCloth3D::tear);
 	ClassDB::bind_method(D_METHOD("is_gpu_accelerated"), &PhysXCloth3D::is_gpu_accelerated);
 
 	ClassDB::bind_method(D_METHOD("set_simulation_mode", "mode"), &PhysXCloth3D::set_simulation_mode);

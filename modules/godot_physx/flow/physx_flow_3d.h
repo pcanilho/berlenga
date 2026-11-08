@@ -181,6 +181,14 @@ private:
 	LocalVector<ObjectID> scatter_light_ids;
 	int scatter_search_countdown = 0;
 	Mutex scatter_mutex;
+	// The path tracer's view of this flow (filled with the render settings, read on the render thread).
+	Color traced_heat[8];
+	Color traced_smoke_color = Color(0.8, 0.8, 0.8);
+	float traced_extinction = 4.0f;
+	float traced_anisotropy = 0.4f;
+	float traced_emission = 0.0f;
+	float traced_temperature_range = 2.0f;
+	bool traced_this_frame = false; // render thread only
 	LocalVector<FlowScatterRD::Light> scatter_lights;
 	void _gather_scatter_lights();
 	void _fill_scatter_shadows(LocalVector<FlowScatterRD::Light> &r_lights, const PagedArray<RID> *p_instances, const RID &p_shadow_atlas, uint32_t p_flags) const;
@@ -281,6 +289,9 @@ public:
 	// p_lights / p_shadow_atlas: the frame's light instances and shadow atlas
 	// (RenderDataRD), for the scattering pass's shadows. An XR camera's eyes are
 	// drawn one after another in one Flow frame: p_first_view / p_last_view.
+	// Under path tracing, before the trace (render thread): prepares the grid and publishes it to the
+	// path tracer (RTVolumes). render_rd then only ends the Flow frame.
+	bool prepare_traced();
 	void render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_rd, const float p_view[16], const float p_projection[16], const Size2i &p_size, const RID &p_depth, const RID &p_color, const Projection &p_inv_view_projection, const Vector3 &p_camera, const PagedArray<RID> *p_lights, const RID &p_shadow_atlas, bool p_first_view = true, bool p_last_view = true);
 
 	PackedStringArray get_configuration_warnings() const override;

@@ -28,6 +28,7 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#include "render_raytracing_volumes.h"
 #include "core/config/project_settings.h"
 #include "core/math/math_funcs.h"
 #include "core/math/math_funcs_binary.h"
@@ -590,6 +591,10 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	}
 	if (p_state->light_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->light_buffer);
+	}
+	if (p_state->volume_params_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(p_state->volume_params_buffer);
+		p_state->volume_params_buffer = RID();
 	}
 	if (p_state->light_grid_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->light_grid_buffer);
@@ -6504,6 +6509,83 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		} else {
 			u.append_id(RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		}
+		uniforms.push_back(u);
+	}
+
+	// Bindings 47-49: simulated gas for the path tracer (raytracing_volume_inc.glsl), published by
+	// the simulation this frame (RTVolumes); defaults with world_max.w = 0 when there is none.
+	{
+		struct VolumeParams {
+			uint32_t level[40];
+			float world_min[4];
+			float world_max[4];
+			float block_size[4];
+			float medium[4];
+			float emission[4];
+			float heat_ramp[8][4];
+			float smoke_color[4];
+		};
+		static_assert(sizeof(VolumeParams) == 384, "RTVolumeParams layout changed");
+		VolumeParams vp = {};
+		RTSparseVolume vol;
+		const bool has_volume = RTVolumes::get_volume(vol);
+		// Published for this view only: the resources are the simulation's per-frame transients.
+		RTVolumes::clear();
+		if (has_volume) {
+			memcpy(vp.level, vol.level, sizeof(vp.level));
+			vp.world_min[0] = vol.world_min.x;
+			vp.world_min[1] = vol.world_min.y;
+			vp.world_min[2] = vol.world_min.z;
+			vp.world_min[3] = vol.units_per_meter;
+			vp.world_max[0] = vol.world_max.x;
+			vp.world_max[1] = vol.world_max.y;
+			vp.world_max[2] = vol.world_max.z;
+			vp.world_max[3] = 1.0f;
+			vp.block_size[0] = vol.block_size.x;
+			vp.block_size[1] = vol.block_size.y;
+			vp.block_size[2] = vol.block_size.z;
+			vp.block_size[3] = float(vol.layer);
+			vp.medium[0] = vol.extinction;
+			vp.medium[1] = vol.albedo;
+			vp.medium[2] = vol.anisotropy;
+			vp.medium[3] = vol.density_majorant;
+			vp.emission[0] = vol.emission_scale;
+			vp.emission[1] = vol.temperature_range > 0.0f ? 1.0f / vol.temperature_range : 1.0f;
+			vp.emission[2] = vol.emission_scale > 0.0f ? 1.0f : 0.0f;
+			for (int i = 0; i < 8; i++) {
+				vp.heat_ramp[i][0] = vol.heat_ramp[i].r;
+				vp.heat_ramp[i][1] = vol.heat_ramp[i].g;
+				vp.heat_ramp[i][2] = vol.heat_ramp[i].b;
+				vp.heat_ramp[i][3] = 1.0f;
+			}
+			vp.smoke_color[0] = vol.smoke_color.r;
+			vp.smoke_color[1] = vol.smoke_color.g;
+			vp.smoke_color[2] = vol.smoke_color.b;
+		} else {
+			vp.world_min[3] = 1.0f;
+		}
+		if (!p_state->volume_params_buffer.is_valid()) {
+			p_state->volume_params_buffer = RD::get_singleton()->storage_buffer_create(sizeof(VolumeParams));
+			RD::get_singleton()->set_resource_name(p_state->volume_params_buffer, "RT Volume Params");
+		}
+		RD::get_singleton()->buffer_update(p_state->volume_params_buffer, 0, sizeof(VolumeParams), &vp);
+
+		RD::Uniform u;
+		u.binding = 47;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		u.append_id(has_volume ? vol.density : RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK));
+		uniforms.push_back(u);
+
+		u = RD::Uniform();
+		u.binding = 48;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(has_volume ? vol.table : RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
+		uniforms.push_back(u);
+
+		u = RD::Uniform();
+		u.binding = 49;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(p_state->volume_params_buffer);
 		uniforms.push_back(u);
 	}
 

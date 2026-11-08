@@ -32,6 +32,7 @@
 		</member>
 		<member name="couple_rate" type="float" setter="set_couple_rate" getter="get_couple_rate" default="2.0">
 			How strongly the emitter drives the gas toward its values (per second).
+			An emitter with [member smoke], [member fuel], [member burn] and [member temperature] all [code]0[/code] only pushes air: give it a large box [member size], the wind as its [member velocity] and a low rate (around [code]0.5[/code]) to blow the gas with the same wind as the rest of the scene. It leaves the gas's temperature alone, so hot gas keeps rising through it.
 		</member>
 		<member name="divergence" type="float" setter="set_divergence" getter="get_divergence" default="0.0">
 			Expansion put in: positive pushes gas outward, as from an explosion.

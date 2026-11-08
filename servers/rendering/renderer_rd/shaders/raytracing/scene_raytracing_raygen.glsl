@@ -367,6 +367,70 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 	imageStore(plight_images[write * 2u + 1u], ivec3(cell), b);
 }
 
+// Light reaching a scattering point in simulated gas and scattered along -p_dir (the ray arrived
+// travelling along p_dir): every directional light, and one positional light chosen among the light
+// grid's candidates in proportion to its unshadowed contribution (as plight_update), each through a
+// shadow ray whose transmittance includes the gas (ratio tracking), weighted by the
+// Henyey-Greenstein phase function.
+vec3 rt_volume_direct(vec3 x, vec3 p_dir, inout uint rng) {
+	float g = rt_volume.medium.z;
+	vec3 sum = vec3(0.0);
+	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
+	uint dir_count = lights_directional_count(light_count);
+	[[dont_unroll]] for (uint li = 0u; li < dir_count; li++) {
+		RTLightData light = lights_get(li);
+		vec3 axis = -normalize(light.position);
+		vec2 u = rand2(rng);
+		float cos_max = cos(light.radius);
+		float cos_t = 1.0 - u.x * (1.0 - cos_max);
+		float sin_t = sqrt(max(0.0, 1.0 - cos_t * cos_t));
+		float phi = 2.0 * PI * u.y;
+		vec3 tangent = normalize(abs(axis.y) < 0.999 ? cross(axis, vec3(0.0, 1.0, 0.0)) : cross(axis, vec3(1.0, 0.0, 0.0)));
+		vec3 bitangent = cross(axis, tangent);
+		vec3 L = normalize(tangent * (sin_t * cos(phi)) + bitangent * (sin_t * sin(phi)) + axis * cos_t);
+		sum += light.emission * rt_volume_hg(dot(L, p_dir), g) * lights_shadow_transmittance(light, x, L, 10000.0, 0xFFu, rng);
+	}
+	uint g_start, g_count, c_start, c_count;
+	lights_grid_lists(x, g_start, g_count, c_start, c_count);
+	uint n = g_count + c_count;
+	if (n > 0u) {
+		uint m = min(n, PLIGHT_CANDIDATES);
+		float w_sum = 0.0;
+		float w_sel = 0.0;
+		vec3 e_sel = vec3(0.0);
+		vec3 l_sel = vec3(0.0, 1.0, 0.0);
+		float d_sel = 0.0;
+		uint li_sel = 0u;
+		for (uint k = 0u; k < m; k++) {
+			uint pick = (n <= PLIGHT_CANDIDATES) ? k : min(uint(rand(rng) * float(n)), n - 1u);
+			uint li = lights_grid_light(pick, g_start, g_count, c_start);
+			RTLightData light = lights_get(li);
+			if (light.type == RT_LIGHT_TYPE_DIRECTIONAL) {
+				continue;
+			}
+			vec3 to_l;
+			float dist;
+			vec3 e = plight_positional(light, x, to_l, dist) * rt_volume_hg(dot(to_l, p_dir), g);
+			float w = plight_luma(e) * (n <= PLIGHT_CANDIDATES ? 1.0 : float(n) / float(m));
+			if (!(w > 0.0) || isinf(w)) {
+				continue;
+			}
+			w_sum += w;
+			if (rand(rng) * w_sum < w) {
+				w_sel = plight_luma(e);
+				e_sel = e;
+				l_sel = to_l;
+				d_sel = dist;
+				li_sel = li;
+			}
+		}
+		if (w_sel > 0.0) {
+			sum += e_sel * (w_sum / w_sel) * lights_shadow_transmittance(lights_get(li_sel), x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
+		}
+	}
+	return sum;
+}
+
 void main() {
 #ifdef RT_TIMING_ENABLED
 	uvec2 start_clock = clockRealtime2x32EXT();
@@ -477,6 +541,44 @@ void main() {
 #endif
 
 			ps = path_unpack(payload);
+
+			// Simulated gas on this segment (raytracing_volume_inc.glsl). Delta tracking up to the
+			// surface the segment reached: a real collision before it replaces the surface (its
+			// shading is dropped) with a scattering event in the gas.
+			if (rt_volume_enabled()) {
+				float seg_len = ps.hit_t > 0.0 ? min(ps.hit_t, t_far) : t_far;
+				vec3 vol_emitted;
+				float t_vol = rt_volume_free_flight(ray_origin, ray_dir, seg_len, ps.rng_state, vol_emitted);
+				if (t_vol > 0.0) {
+					vec3 x = ray_origin + ray_dir * t_vol;
+					vec3 albedo = rt_volume.smoke_color.rgb * rt_volume.medium.y;
+					ps.radiance = radiance_pre + throughput_entry * vol_emitted;
+					ps.throughput = throughput_entry * albedo;
+					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, ps.rng_state);
+					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG)) | NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
+					ps.hit_t = t_vol;
+					cone_width += rt_cone_spread_angle() * t_vol;
+					if (bounce == 0u) {
+						// The gas is the primary surface: Ray Reconstruction guides at the scattering point.
+						imageStore(rt_depth_image, ivec2(pixel), vec4(rt_ndc_depth(x)));
+						imageStore(rt_velocity_image, ivec2(pixel), vec4(rt_motion_vector(x, x), 0.0, 0.0));
+#ifdef DLSS_RR_ENABLED
+						replace_pending = false;
+						dlss_rr_write_albedo_guides(albedo, vec3(0.0));
+						imageStore(dlss_rr_normal_roughness, ivec2(pixel), vec4(-ray_dir, 1.0));
+						dlss_rr_write_specular_motion_vector(rt_motion_vector(x, x));
+#endif
+					}
+					if (!russian_roulette_survives(bounce + 1u, ps)) {
+						break;
+					}
+					ray_origin = x;
+					ray_dir = rt_volume_sample_hg(ray_dir, rt_volume.medium.z, rand2(ps.rng_state));
+					continue;
+				}
+				ps.radiance += throughput_entry * vol_emitted;
+			}
+
 			if (ps.hit_t > 0.0) {
 				cone_width += rt_cone_spread_angle() * ps.hit_t;
 			}

@@ -1127,6 +1127,7 @@ struct RTViewportState {
 	RID light_visibility_buffer;
 	RID radiance_cache_buffer;
 	uint32_t light_grid_buffer_capacity = 0; // uints.
+	RID volume_params_buffer; // RTVolumeParams (raytracing_volume_inc.glsl), binding 46.
 	RID params_buffer;
 	RID scene_uniform_set;
 

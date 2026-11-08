@@ -454,3 +454,43 @@ void XPBDClothSolver::step(float p_dt, const Vector3 &p_gravity, const Vector3 &
 		}
 	}
 }
+
+static bool _segments_cross(const Vector2 &p_a, const Vector2 &p_b, const Vector2 &p_c, const Vector2 &p_d) {
+	const real_t d1 = (p_b - p_a).cross(p_c - p_a);
+	const real_t d2 = (p_b - p_a).cross(p_d - p_a);
+	const real_t d3 = (p_d - p_c).cross(p_a - p_c);
+	const real_t d4 = (p_d - p_c).cross(p_b - p_c);
+	return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0)) && d1 != 0 && d2 != 0 && d3 != 0 && d4 != 0;
+}
+
+int XPBDClothSolver::tear(const Vector2 &p_from, const Vector2 &p_to) {
+	auto crosses = [&](int p_i, int p_j) {
+		const Vector3 &a = rest_positions[p_i];
+		const Vector3 &b = rest_positions[p_j];
+		return _segments_cross(Vector2(a.x, a.y), Vector2(b.x, b.y), p_from, p_to);
+	};
+	int removed = 0;
+	for (uint32_t i = 0; i < constraints.size();) {
+		if (crosses(constraints[i].a, constraints[i].b)) {
+			constraints.remove_at_unordered(i);
+			removed++;
+		} else {
+			i++;
+		}
+	}
+	LocalVector<int> kept;
+	kept.reserve(indices.size());
+	for (uint32_t t = 0; t + 2 < indices.size(); t += 3) {
+		const int a = indices[t];
+		const int b = indices[t + 1];
+		const int c = indices[t + 2];
+		if (crosses(a, b) || crosses(b, c) || crosses(c, a)) {
+			continue;
+		}
+		kept.push_back(a);
+		kept.push_back(b);
+		kept.push_back(c);
+	}
+	indices = kept;
+	return removed;
+}
