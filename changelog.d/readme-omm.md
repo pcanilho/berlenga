@@ -1,2 +1,2 @@
 ### Changed
-- README: opacity micromaps listed under Large worlds (#PR).
+- README: opacity micromaps listed under Large worlds (#137).
