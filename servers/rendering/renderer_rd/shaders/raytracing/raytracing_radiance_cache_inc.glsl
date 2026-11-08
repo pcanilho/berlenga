@@ -72,7 +72,7 @@ float rt_rc_cell_size(vec3 p) {
 
 uint rt_rc_key(vec3 p, vec3 N) {
 	float cell = rt_rc_cell_size(p);
-	ivec3 c = ivec3(floor(p / cell));
+	ivec3 c = rt_world_cell(p, cell);
 	vec3 a = abs(N);
 	uint axis = a.x > a.y ? (a.x > a.z ? 0u : 2u) : (a.y > a.z ? 1u : 2u);
 	uint side = N[axis] < 0.0 ? 1u : 0u;

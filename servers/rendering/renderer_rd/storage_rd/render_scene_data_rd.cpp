@@ -71,8 +71,16 @@ RID RenderSceneDataRD::create_uniform_buffer() {
 	return RD::get_singleton()->uniform_buffer_create(sizeof(UBODATA));
 }
 
-void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RSE::ViewportDebugDraw p_debug_mode, RID p_env, RID p_reflection_probe_instance, RID p_camera_attributes, bool p_pancake_shadows, const Size2i &p_screen_size, const Size2 &p_viewport_size, const Color &p_default_bg_color, float p_luminance_multiplier, bool p_opaque_render_buffers, bool p_apply_alpha_multiplier) {
+void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RSE::ViewportDebugDraw p_debug_mode, RID p_env, RID p_reflection_probe_instance, RID p_camera_attributes, bool p_pancake_shadows, const Size2i &p_screen_size, const Size2 &p_viewport_size, const Color &p_default_bg_color, float p_luminance_multiplier, bool p_opaque_render_buffers, bool p_apply_alpha_multiplier, const Vector3 &p_origin) {
 	RendererSceneRenderRD *render_scene_render = RendererSceneRenderRD::get_singleton();
+
+	// The cameras relative to p_origin (the path tracer's camera-relative world); zero elsewhere.
+	Transform3D cam_xform = cam_transform;
+	Transform3D prev_cam_xform = prev_cam_transform;
+	Transform3D main_cam_xform = main_cam_transform;
+	cam_xform.origin -= p_origin;
+	prev_cam_xform.origin -= p_origin;
+	main_cam_xform.origin -= p_origin;
 
 	UBODATA ubo_data;
 	memset(&ubo_data, 0, sizeof(UBODATA));
@@ -89,13 +97,13 @@ void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RSE::ViewportDebugDraw 
 	//store camera into ubo
 	RendererRD::MaterialStorage::store_camera(projection, ubo.projection_matrix);
 	RendererRD::MaterialStorage::store_camera(projection.inverse(), ubo.inv_projection_matrix);
-	RendererRD::MaterialStorage::store_transform_transposed_3x4(cam_transform, ubo.inv_view_matrix);
-	RendererRD::MaterialStorage::store_transform_transposed_3x4(cam_transform.affine_inverse(), ubo.view_matrix);
+	RendererRD::MaterialStorage::store_transform_transposed_3x4(cam_xform, ubo.inv_view_matrix);
+	RendererRD::MaterialStorage::store_transform_transposed_3x4(cam_xform.affine_inverse(), ubo.view_matrix);
 
 #ifdef REAL_T_IS_DOUBLE
-	RendererRD::MaterialStorage::split_double(-cam_transform.origin.x, &ubo.inv_view_matrix[3], &ubo.inv_view_precision[0]);
-	RendererRD::MaterialStorage::split_double(-cam_transform.origin.y, &ubo.inv_view_matrix[7], &ubo.inv_view_precision[1]);
-	RendererRD::MaterialStorage::split_double(-cam_transform.origin.z, &ubo.inv_view_matrix[11], &ubo.inv_view_precision[2]);
+	RendererRD::MaterialStorage::split_double(-cam_xform.origin.x, &ubo.inv_view_matrix[3], &ubo.inv_view_precision[0]);
+	RendererRD::MaterialStorage::split_double(-cam_xform.origin.y, &ubo.inv_view_matrix[7], &ubo.inv_view_precision[1]);
+	RendererRD::MaterialStorage::split_double(-cam_xform.origin.z, &ubo.inv_view_matrix[11], &ubo.inv_view_precision[2]);
 #endif
 
 	for (uint32_t v = 0; v < view_count; v++) {
@@ -109,7 +117,7 @@ void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RSE::ViewportDebugDraw 
 		ubo.eye_offset[v][3] = 0.0;
 	}
 
-	RendererRD::MaterialStorage::store_transform(main_cam_transform, ubo.main_cam_inv_view_matrix);
+	RendererRD::MaterialStorage::store_transform(main_cam_xform, ubo.main_cam_inv_view_matrix);
 
 	ubo.taa_jitter[0] = taa_jitter.x;
 	ubo.taa_jitter[1] = taa_jitter.y;
@@ -205,7 +213,7 @@ void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RSE::ViewportDebugDraw 
 
 		if ((ubo.flags & SCENE_DATA_FLAGS_USE_AMBIENT_CUBEMAP) || (ubo.flags & SCENE_DATA_FLAGS_USE_REFLECTION_CUBEMAP)) {
 			Basis sky_transform = render_scene_render->environment_get_sky_orientation(p_env);
-			sky_transform = sky_transform.inverse() * cam_transform.basis;
+			sky_transform = sky_transform.inverse() * cam_xform.basis;
 			RendererRD::MaterialStorage::store_transform_3x3(sky_transform, ubo.radiance_inverse_xform);
 		}
 
@@ -286,13 +294,13 @@ void RenderSceneDataRD::update_ubo(RID p_uniform_buffer, RSE::ViewportDebugDraw 
 		//store camera into ubo
 		RendererRD::MaterialStorage::store_camera(prev_projection, prev_ubo.projection_matrix);
 		RendererRD::MaterialStorage::store_camera(prev_projection.inverse(), prev_ubo.inv_projection_matrix);
-		RendererRD::MaterialStorage::store_transform_transposed_3x4(prev_cam_transform, prev_ubo.inv_view_matrix);
-		RendererRD::MaterialStorage::store_transform_transposed_3x4(prev_cam_transform.affine_inverse(), prev_ubo.view_matrix);
+		RendererRD::MaterialStorage::store_transform_transposed_3x4(prev_cam_xform, prev_ubo.inv_view_matrix);
+		RendererRD::MaterialStorage::store_transform_transposed_3x4(prev_cam_xform.affine_inverse(), prev_ubo.view_matrix);
 
 #ifdef REAL_T_IS_DOUBLE
-		RendererRD::MaterialStorage::split_double(-prev_cam_transform.origin.x, &prev_ubo.inv_view_matrix[3], &prev_ubo.inv_view_precision[0]);
-		RendererRD::MaterialStorage::split_double(-prev_cam_transform.origin.y, &prev_ubo.inv_view_matrix[7], &prev_ubo.inv_view_precision[1]);
-		RendererRD::MaterialStorage::split_double(-prev_cam_transform.origin.z, &prev_ubo.inv_view_matrix[11], &prev_ubo.inv_view_precision[2]);
+		RendererRD::MaterialStorage::split_double(-prev_cam_xform.origin.x, &prev_ubo.inv_view_matrix[3], &prev_ubo.inv_view_precision[0]);
+		RendererRD::MaterialStorage::split_double(-prev_cam_xform.origin.y, &prev_ubo.inv_view_matrix[7], &prev_ubo.inv_view_precision[1]);
+		RendererRD::MaterialStorage::split_double(-prev_cam_xform.origin.z, &prev_ubo.inv_view_matrix[11], &prev_ubo.inv_view_precision[2]);
 #endif
 
 		for (uint32_t v = 0; v < view_count; v++) {

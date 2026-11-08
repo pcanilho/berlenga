@@ -56,12 +56,14 @@ vec2 rt_sky_oct_uv(vec3 p_world_dir) {
 	return vec3_to_oct_with_border(world_to_sky * p_world_dir, border);
 }
 
-#ifndef RT_STAGE_ANY_HIT
-
 layout(set = 0, binding = 6, std140) uniform RaytracingParams {
 	vec4 rt_params[RT_PARAM_COUNT / 4];
 	mat4 prev_vp_unjittered;
 	mat4 curr_vp_unjittered;
+	// The anchor trace positions are relative to: the TLAS, lights, decals, the camera in
+	// scene_data_block and the VPs above all hold world minus rt_origin.xyz (any-hit reads it
+	// to hand user shaders absolute matrices).
+	vec4 rt_origin;
 };
 
 float get_rt_param(uint idx) {
@@ -73,6 +75,17 @@ vec2 project_uv(vec3 world_pos, mat4 vp) {
 	vec4 clip = vp * vec4(world_pos, 1.0);
 	return clip.xy / clip.w * 0.5 + 0.5;
 }
+
+// The cell index of trace position p on a world grid of size p_cell, as if taken in
+// absolute world space: cells stay put when the anchor moves. The anchor's whole cells are
+// added as integers, so the index is exact far from the world origin.
+ivec3 rt_world_cell(vec3 p, float p_cell) {
+	vec3 a = rt_origin.xyz / p_cell;
+	vec3 a_whole = floor(a);
+	return ivec3(a_whole) + ivec3(floor(p / p_cell + (a - a_whole)));
+}
+
+#ifndef RT_STAGE_ANY_HIT
 
 // Uses unjittered VP matrices matching the raster motion_vectors_store convention.
 vec2 rt_motion_vector(vec3 p_pos, vec3 p_prev_pos) {

@@ -72,7 +72,7 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 //   [0]=rg, [1]=bR, [2]=GB  (packHalf2x16 pairs).
 // The next-bounce origin is not stored: raygen reconstructs it from the
 // current ray and hit_t as `offset_ray_origin(ray_origin + ray_dir * hit_t,
-// offset_normal)`. The offset normal and next direction are stored as
+// offset_normal, hit_t)`. The offset normal and next direction are stored as
 // 16-bit unorm octahedral pairs (effective angular error <~0.001 deg,
 // below the 8-bit normal quantization baked into offset_ray_origin).
 // Use PathState + path_pack/path_unpack for fp32 working copies.
@@ -342,11 +342,24 @@ float _offset_component(float p, float n_comp, int of_comp) {
 	return (abs(p) < origin) ? (p + float_scale * n_comp) : p_i;
 }
 
-vec3 offset_ray_origin(vec3 p, vec3 n) {
+// t is the length of the ray that found p. A position's error follows the magnitudes that
+// went into it, not each component's own: on a floor at y near 0 with x and z kilometres out,
+// y moved 1/65536 m while the hit itself is off by ULPs of x and z, and shadow and bounce rays
+// started under the floor. So each component also moves at least a few ULPs of the largest
+// coordinate and 1/65536 of the ray's length along n, whichever is more.
+vec3 offset_ray_origin(vec3 p, vec3 n, float t) {
 	const float int_scale = 256.0;
+	const float floor_scale = 1.0 / 65536.0;
 	ivec3 of = ivec3(int_scale * n);
-	return vec3(
+	vec3 p_wb = vec3(
 			_offset_component(p.x, n.x, of.x),
 			_offset_component(p.y, n.y, of.y),
 			_offset_component(p.z, n.z, of.z));
+	float scale = max(max(max(abs(p.x), abs(p.y)), abs(p.z)) * (1.0 / 32.0), t);
+	vec3 floor_offset = n * (floor_scale * scale);
+	return mix(p_wb, p + floor_offset, greaterThan(abs(floor_offset), abs(p_wb - p)));
+}
+
+vec3 offset_ray_origin(vec3 p, vec3 n) {
+	return offset_ray_origin(p, n, 0.0);
 }

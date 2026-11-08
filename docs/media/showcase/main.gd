@@ -1,6 +1,6 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|textures|glass --spp=N --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|textures|glass|far --spp=N --out=path.png --frames=N --far=N --raster
 var shot := "lights"
 var spp := 16
 var out := "out.png"
@@ -178,6 +178,41 @@ func shot_glass() -> void:
 	sun.shadow_enabled = true
 	add_child(sun)
 	camera(Vector3(5, 4.5, -8), Vector3(0, 0.5, 2), 55)
+
+# A small lit scene --far metres from the world origin on x and z (try 65536), for
+# rendering/pathtracing/relative_origin_grid on and off.
+func shot_far() -> void:
+	env.background_color = Color(0.25, 0.3, 0.4)
+	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	env.pathtracing_max_bounces = 2
+	plane(Vector2(40, 40), mat(Color(0.6, 0.6, 0.6), 0.9))
+	var red := mat(Color(0.7, 0.15, 0.1), 0.5)
+	box(Vector3(1, 1, 1), Vector3(-1, 0.5, 0), red)
+	box(Vector3(2, 0.02, 0.5), Vector3(1, 0.01, 1), red)
+	var shiny := mat(Color(0.8, 0.8, 0.8), 0.1)
+	shiny.metallic = 1.0
+	var s := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.5
+	sm.height = 1.0
+	sm.material = shiny
+	s.mesh = sm
+	s.position = Vector3(1, 0.5, -1)
+	add_child(s)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-35, 40, 0)
+	sun.light_energy = 1.5
+	sun.shadow_enabled = true
+	add_child(sun)
+	var o := OmniLight3D.new()
+	o.position = Vector3(0, 0.4, 1.5)
+	o.omni_range = 6
+	o.light_energy = 2.0
+	o.light_color = Color(1, 0.7, 0.4)
+	o.shadow_enabled = true
+	add_child(o)
+	camera(Vector3(0, 2.5, 5), Vector3(0, 0.3, 0), 50)
+	position = Vector3(far, 0, far)
 
 func _process(_d: float) -> void:
 	n += 1

@@ -36,6 +36,11 @@ inv_view_matrix = transpose(mat4(scene_data_block.data.inv_view_matrix[0],
 		scene_data_block.data.inv_view_matrix[1],
 		scene_data_block.data.inv_view_matrix[2],
 		vec4(0.0, 0.0, 0.0, 1.0)));
+// The trace runs in world minus rt_origin; user code gets the absolute matrices it expects
+// (view_abs = view_rel * translate(-rt_origin)). Their product, MODELVIEW, is unchanged.
+read_model_matrix[3].xyz += rt_origin.xyz;
+inv_view_matrix[3].xyz += rt_origin.xyz;
+read_view_matrix[3].xyz -= mat3(read_view_matrix) * rt_origin.xyz;
 projection_matrix = scene_data_block.data.projection_matrix;
 inv_projection_matrix = scene_data_block.data.inv_projection_matrix;
 read_viewport_size = scene_data_block.data.viewport_size;
@@ -59,7 +64,8 @@ rt_frag_coord = vec4(gl_LaunchIDEXT.xy, 0.0, 1.0);
 // IN_SHADOW_PASS: true for every ray but the camera's.
 rt_in_shadow_pass = is_shadow_ray(payload.packed_bounces_flags) || get_total_bounces(payload.packed_bounces_flags) != 0u;
 
-mat4 rt_default_modelview_matrix = rt_view_matrix * read_model_matrix;
+// Both relative to rt_origin, so the product stays precise far from the world origin.
+mat4 rt_default_modelview_matrix = rt_view_matrix * mat4(gl_ObjectToWorldEXT);
 rt_modelview_matrix = rt_default_modelview_matrix;
 rt_modelview_normal_matrix = mat3(rt_modelview_matrix);
 

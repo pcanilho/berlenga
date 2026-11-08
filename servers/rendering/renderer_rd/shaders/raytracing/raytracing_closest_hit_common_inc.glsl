@@ -439,7 +439,7 @@ vec3 debug_directional_shadow_blocker(vec3 p_geometry_normal, uint p_receiver_sh
 		return vec3(0.1);
 	}
 
-	vec3 origin = offset_ray_origin(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT, p_geometry_normal);
+	vec3 origin = offset_ray_origin(gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT, p_geometry_normal, gl_HitTEXT);
 	vec3 transmittance = vec3(1.0);
 	rayQueryEXT rq;
 	rayQueryInitializeEXT(rq, tlas, gl_RayFlagsNoOpaqueEXT, RT_SHADOW_GROUPS_MASK & p_receiver_shadow_mask, origin, 0.001, to_sun, 10000.0);
@@ -943,7 +943,7 @@ vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_
 	vec3 lit = m.emissive * emission_weight;
 	MaterialProperties material = material_properties_from_result(h, m, N, V);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
-	vec3 hit_pos_offset = offset_ray_origin(h.hit_pos, h.geometry_normal);
+	vec3 hit_pos_offset = offset_ray_origin(h.hit_pos, h.geometry_normal, gl_HitTEXT);
 	uint layers = geometries[h.geometry_idx].layers;
 	uint shadow_mask = rt_receiver_shadow_mask(h.geometry_idx);
 	if (RT_GET_MAX_BOUNCES() == 0u) {
@@ -1032,7 +1032,7 @@ vec2 dlss_rr_specular_motion_vector(vec3 p_hit_pos, vec3 p_prev_hit_pos, vec3 p_
 	}
 	vec3 N = dot(p_plane_normal, V) < 0.0 ? -p_plane_normal : p_plane_normal;
 	vec3 spec_dir = reflect(-V, N);
-	vec3 spec_origin = offset_ray_origin(p_hit_pos, spec_dir);
+	vec3 spec_origin = offset_ray_origin(p_hit_pos, spec_dir, gl_HitTEXT);
 	rayQueryEXT spec_rq;
 	// A/B: TerminateOnFirstHit stops at whichever hit traversal finds first, not the closest.
 	rayQueryInitializeEXT(spec_rq, tlas, RT_RAY_FLAGS | gl_RayFlagsTerminateOnFirstHitEXT, p_mask, spec_origin, 0.001, spec_dir, 10000.0);
