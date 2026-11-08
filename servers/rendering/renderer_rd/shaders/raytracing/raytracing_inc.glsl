@@ -58,6 +58,7 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_PLIGHT_STATE 27 // bit 0: the image pair written this frame; bit 1: last frame's is valid
 #define RT_PARAM_PLIGHT_BOUNCE 28 // 1: one sky / bounce ray a cell
 #define RT_PARAM_PLIGHT_TILE 29 // pixels a cell across (8, more at large sizes)
+#define RT_PARAM_LIGHT_VISIBILITY 30 // 1: light selection reads and feeds the light visibility memory (raytracing_lights_inc.glsl)
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

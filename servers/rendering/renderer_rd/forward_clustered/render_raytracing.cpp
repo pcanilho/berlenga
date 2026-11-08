@@ -594,6 +594,9 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (p_state->light_grid_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->light_grid_buffer);
 	}
+	if (p_state->light_visibility_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(p_state->light_visibility_buffer);
+	}
 	if (p_state->params_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->params_buffer);
 	}
@@ -6036,6 +6039,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_COUNT] = float(rt_light_count);
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SELF_SHADOW_MASK] = p_state ? float(p_state->shadow_groups.self_shadow_bit) : 0.0f;
+		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_VISIBILITY] = (p_state && p_state->light_visibility_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/light_visibility_memory")) ? 1.0f : 0.0f;
 
 		// Upload the light buffer and the light grid, grown by doubling.
 		{
@@ -6174,6 +6178,23 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		} else {
 			u.append_id(RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		}
+		uniforms.push_back(u);
+	}
+
+	// Binding 44: the light visibility memory (SSBO; raytracing_lights_inc.glsl).
+	// Made once, zeroed (an empty table), and kept: what it learns carries over frames.
+	{
+		if (!p_state->light_visibility_buffer.is_valid()) {
+			Vector<uint8_t> zeros;
+			zeros.resize(RT_LIGHT_VISIBILITY_UINTS * sizeof(uint32_t));
+			zeros.fill(0);
+			p_state->light_visibility_buffer = RD::get_singleton()->storage_buffer_create(zeros.size(), zeros);
+			RD::get_singleton()->set_resource_name(p_state->light_visibility_buffer, "RT Light Visibility");
+		}
+		RD::Uniform u;
+		u.binding = 44;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(p_state->light_visibility_buffer);
 		uniforms.push_back(u);
 	}
 

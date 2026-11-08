@@ -416,6 +416,12 @@ enum {
 	// The grid spans at most this far from the camera on each axis, in metres; lights reaching
 	// past it are also listed for the points outside it.
 	RT_LIGHT_GRID_HALF_EXTENT = 256,
+	// The light visibility memory (binding 44): (place, light) pairs of two uints, then
+	// per-place lists of recently visible lights (a key and 8 entries). Must match
+	// RT_LIGHT_VIS_PAIRS / RT_LIGHT_VIS_LISTS in raytracing_lights_inc.glsl. 4.25 MiB.
+	RT_LIGHT_VISIBILITY_PAIRS = 1 << 18,
+	RT_LIGHT_VISIBILITY_LISTS = 1 << 16,
+	RT_LIGHT_VISIBILITY_UINTS = RT_LIGHT_VISIBILITY_PAIRS * 2 + RT_LIGHT_VISIBILITY_LISTS * 9,
 };
 
 constexpr uint32_t RT_OFFSET_NONE = 0xFFFFFFFFu;
@@ -1108,6 +1114,9 @@ struct RTViewportState {
 	RID light_buffer;
 	uint32_t light_buffer_capacity = 0; // Lights.
 	RID light_grid_buffer;
+	// Light visibility memory (binding 44): a hash table of (place, light) -> recent
+	// shadow-ray hits and tries, which light selection reads. Kept across frames.
+	RID light_visibility_buffer;
 	uint32_t light_grid_buffer_capacity = 0; // uints.
 	RID params_buffer;
 	RID scene_uniform_set;
