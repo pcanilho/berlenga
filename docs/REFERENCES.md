@@ -1,0 +1,11 @@
+# References
+
+Papers, talks and engines the fork's features follow. Code taken from other projects is credited in the [README](../README.md#references).
+
+| Area | Sources |
+|---|---|
+| Many lights | Talbot et al., *Importance Resampling for Global Illumination*, EGSR 2005<br>Boksansky et al., *Rendering Many Lights with Grid-Based Reservoirs* (ReGIR), Ray Tracing Gems II, 2021<br>Bitterli et al., *Spatiotemporal Reservoir Resampling* (ReSTIR DI), SIGGRAPH 2020<br>Olsson et al., *Clustered Deferred and Forward Shading*, HPG 2012<br>Narkowicz and Costa, *MegaLights: Stochastic Direct Lighting*, SIGGRAPH Advances 2025<br>NVIDIA, Spatial Hash Radiance Cache (SHaRC), RTXGI SDK |
+| Lit transparents | Wronski, *Volumetric Fog: Unified Compute Shader Based Solution to Atmospheric Scattering*, SIGGRAPH 2014<br>Hillaire, *Physically Based and Unified Volumetric Rendering in Frostbite*, SIGGRAPH 2015<br>NVIDIA, RTX Remix volumetric radiance cache for particles<br>Garg, Nayar, *Photorealistic Rendering of Rain Streaks*, SIGGRAPH 2006<br>Henyey, Greenstein, *Diffuse Radiation in the Galaxy*, Astrophysical Journal, 1941<br>McGuire, Bavoil, *Weighted Blended Order-Independent Transparency*, JCGT 2013 |
+| Large worlds | Wächter, Binder, *A Fast and Robust Method for Avoiding Self-Intersection*, Ray Tracing Gems, 2019<br>[valence-engine-rtx](https://github.com/Rman887/valence-engine-rtx), camera-relative tracing and the ray offset floor |
+| Exposure | Reinhard et al., *Photographic Tone Reproduction for Digital Images*, SIGGRAPH 2002<br>Epic Games, Unreal Engine *Auto Exposure* histogram metering<br>Krawczyk, Myszkowski, Seidel, *Lightness Perception in Tone Reproduction for High Dynamic Range Images*, Eurographics 2005<br>Chen, Paris, Durand, *Real-time Edge-Aware Image Processing with the Bilateral Grid*, SIGGRAPH 2007<br>Epic Games, Unreal Engine 5.1 *Local Exposure* |
+| Texture filtering | Akenine-Möller et al., *Texture Level of Detail Strategies for Real-Time Ray Tracing*, Ray Tracing Gems, 2019<br>Akenine-Möller et al., *Improved Shader and Texture Level of Detail Using Ray Cones*, JCGT 2021 |
