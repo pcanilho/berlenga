@@ -15,6 +15,8 @@ Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built
 
 *1024 omni lights, 16 samples per pixel, no denoiser. Left: NVIDIA-RTX/godot (64 lights per frame). Right: this fork.*
 
+**About the images in this README:** they are raw path tracer output, almost all rendered on the CPU with a software Vulkan driver (only the fork and raster strips of the texture comparison come from a GPU). None of them uses a denoiser or DLSS Ray Reconstruction, so the grain you see is what the denoiser receives; on a GPU with Ray Reconstruction the final frames are clean. They compare the quality of the raw samples, not finished frames.
+
 ## For open-world games
 
 The fork is built with large open worlds in mind, where the limits are float precision far from the origin, the number of lights and the cost of lighting what lies far from the camera:
