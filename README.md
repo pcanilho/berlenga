@@ -78,6 +78,8 @@ Windows x64 and Linux x86_64 builds include a PhysX 5 physics server with NVIDIA
 
 ## Comparisons
 
+**Note:** these images are raw path tracer output, rendered with a software Vulkan driver on the CPU (all except the fork and raster strips of the texture comparison, which come from a GPU). There is no denoiser and no DLSS Ray Reconstruction, so the grain you see is what the denoiser receives. With Ray Reconstruction on a GPU the final frames are clean; the comparisons show how much better the raw samples are.
+
 Same scene, same samples per pixel, no denoiser, rendered with NVIDIA-RTX/godot of 2 November 2026 and with this fork. The scenes are in [docs/media/showcase](docs/media/showcase): `godot --path docs/media/showcase -- --shot=city --spp=16 --out=city.png` (shots: `city`, `lights`, `textures`, `glass`).
 
 <details>
