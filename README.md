@@ -27,9 +27,6 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
-### Large worlds
-See [Open worlds](#open-worlds).
-
 ### Exposure
 - **Histogram metering** (`rendering/camera/auto_exposure/metering`): lamps in view no longer darken the scene.
 - **Dark-scene key** (`dark_scene_luminance`): night stays night.
