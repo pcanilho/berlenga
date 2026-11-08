@@ -54,7 +54,7 @@ Windows x64 and Linux x86_64 builds include PhysX 5 with Blast destruction and F
 - PhysX only: vehicles, CUDA fluids and deformables, GPU rigid bodies (CUDA builds; releases use the CPU solver).
 - **Path-traced smoke and fire** (`rendering/pathtracing/simulated_gas`): the nearest `PhysXFlow3D` is traced as a medium that scatters light, casts soft shadows, shows in reflections and glows from within.
 
-  ![An earlier cut of the scene, path traced: lamp light scatters in the smoke, which shadows the floor](docs/media/physx-pathtraced.webp)
+  ![The same scene path traced at 64 samples per pixel: lamp light scatters in the smoke piling against the wall, and the smoke shadows the floor](docs/media/physx-pathtraced.webp)
 - Builds without the SDKs (`physx_sdk=`, `blast_sdk=`, `flow_sdk=`; see `modules/godot_physx/README.md`) skip the module.
 
 ### Performance, API, stability
