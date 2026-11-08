@@ -1234,6 +1234,7 @@ void RenderRaytracing::prepare_frame() {
 	tlas_instances.clear();
 	tlas_transparent_instances.clear();
 	geometry_data.clear();
+	emissive_candidates.clear();
 	motion_indices.clear();
 	motion_transforms.clear();
 
@@ -5116,6 +5117,28 @@ void RTTlasBuilder::_push_tlas_entry(const RT_GeometryData &p_geometry, const RT
 	geometry.instance_uniforms_ofs = p_uniforms_ofs;
 	_rt_set_entry_material(geometry, p_mat_data, p_material_flags, p_instance_alpha);
 	rt.motion_indices.push_back(p_motion_index);
+
+	// An opaque StandardMaterial3D surface that emits: a light for next event estimation.
+	// Custom shaders' EMISSION is only known on the GPU and stays found by bounce rays.
+	if (p_mat_data && !p_mat_data->is_custom_shader && ((p_material_flags | p_mat_data->data.flags) & (RT_MAT_FLAG_TRANSPARENT | RT_MAT_FLAG_UNSHADED)) == 0) {
+		const RT_MaterialData &m = p_mat_data->data;
+		const float color_lum = Math::abs(m.emission_color[0]) * 0.2126f + Math::abs(m.emission_color[1]) * 0.7152f + Math::abs(m.emission_color[2]) * 0.0722f;
+		const bool textured = (m.flags & RT_MAT_FLAG_HAS_EMISSION_TEX) != 0;
+		// Half of a texture's texels are taken as lit: a guess, the shader evaluates the real ones.
+		const float radiance = ((m.flags & RT_MAT_FLAG_EMISSION_ADD) != 0 ? color_lum + (textured ? 0.5f : 0.0f) : (textured ? 0.5f * color_lum : 0.0f)) * m.emission_strength;
+		if (radiance > 0.0f && Math::is_finite(radiance) && !rt.tlas_instances.transforms.is_empty()) {
+			RenderRaytracing::RTEmissiveCandidate e;
+			e.transform = rt.tlas_instances.transforms[rt.tlas_instances.transforms.size() - 1];
+			const AABB box(Vector3(p_geometry.aabb_pos_x, p_geometry.aabb_pos_y, p_geometry.aabb_pos_z), Vector3(p_geometry.aabb_size_x, p_geometry.aabb_size_y, p_geometry.aabb_size_z));
+			e.world_box = e.transform.xform(box);
+			e.radiance = radiance;
+			e.geometry_idx = rt.geometry_data.size() - 1;
+			// The sides bounce rays can hit: they cull back faces unless the instance disables culling.
+			const bool two_sided = !rt.tlas_instances.flags.is_empty() && (rt.tlas_instances.flags[rt.tlas_instances.flags.size() - 1] & RD::ACCELERATION_STRUCTURE_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT) != 0;
+			e.facing = two_sided ? 1u : ((p_facing_flags & RT_GEOM_FLAG_SIDE_CHECK) != 0 ? 2u : 0u);
+			rt.emissive_candidates.push_back(e);
+		}
+	}
 }
 
 int32_t RTTlasBuilder::_push_motion_transform(const Transform3D &p_prev_transform) {
@@ -5468,6 +5491,7 @@ void RenderRaytracing::build_decal_volumes(RTViewportState *p_state, const Rende
 // the grid. Layout, in uints:
 //   [0..2] cells along x, y, z (0: no grid), [3] the global count G,
 //   [4..6] the grid's origin, [7] 1 / cell size (floats' bits), [8] the far count F,
+//   [9] the emissive section's start (append_emissive_lights; 0: none),
 //   [H, H + G) the global lights' indices (H = RT_LIGHT_GRID_HEADER),
 //   [H + G, H + G + F) the far lights' indices,
 //   [H + G + F, + cells + 1) each cell's start in this array, then its end,
@@ -5637,6 +5661,94 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 	}
 }
 
+
+// Emissive surfaces as lights: the opaque StandardMaterial3D surfaces that emit, picked by
+// their estimated power at the camera, then a triangle uniformly and a point on it uniformly
+// (raytracing_lights_inc.glsl, lights_emissive_sample). Weighed by multiple importance sampling
+// against bounce rays that hit them. Appended to the light grid array; its header [9] holds
+// the section's start E (0: none). Layout, in uints, from E:
+//   [0] entry count N, [1] geometry map size G, [2] the sum of the entries' scores (float), [3] 0,
+//   then N entries of RT_EMISSIVE_ENTRY_UINTS: [0..11] object-to-world (3x4 rows, floats),
+//   [12] geometry index, [13] facing (RTEmissiveCandidate::facing), [14] the CDF up to and with this entry, [15] its probability,
+//   then G uints: per geometry index, its entry + 1 (0: not sampled as a light).
+void RenderRaytracing::append_emissive_lights(const Vector3 &p_camera, LocalVector<uint32_t> &r_grid) const {
+	if (r_grid.size() < RT_LIGHT_GRID_HEADER) {
+		return;
+	}
+	r_grid[9] = 0;
+	if (emissive_candidates.is_empty()) {
+		return;
+	}
+	// Score: radiance times area over the squared distance (no nearer than the surface's size).
+	struct Scored {
+		float score;
+		uint32_t candidate;
+	};
+	LocalVector<Scored> scored;
+	scored.reserve(emissive_candidates.size());
+	for (uint32_t i = 0; i < emissive_candidates.size(); i++) {
+		const RTEmissiveCandidate &c = emissive_candidates[i];
+		const Vector3 s = c.world_box.size;
+		const float area = MAX(s.x * s.y + s.y * s.z + s.z * s.x, 1e-6f); // half the box's surface
+		const Vector3 nearest = p_camera.clamp(c.world_box.position, c.world_box.position + s);
+		const float d2 = MAX(nearest.distance_squared_to(p_camera), area);
+		const float score = c.radiance * area / d2;
+		if (score > 0.0f && Math::is_finite(score)) {
+			scored.push_back({ score, i });
+		}
+	}
+	if (scored.is_empty()) {
+		return;
+	}
+	struct ScoreGreater {
+		_FORCE_INLINE_ bool operator()(const Scored &a, const Scored &b) const { return a.score > b.score; }
+	};
+	if (scored.size() > RT_EMISSIVE_MAX) {
+		scored.sort_custom<ScoreGreater>();
+		scored.resize(RT_EMISSIVE_MAX);
+	}
+	float total = 0.0f;
+	for (const Scored &e : scored) {
+		total += e.score;
+	}
+	const uint32_t n = scored.size();
+	const uint32_t g = geometry_data.size();
+	const uint32_t start = r_grid.size();
+	r_grid.resize(start + RT_EMISSIVE_HEADER + n * RT_EMISSIVE_ENTRY_UINTS + g);
+	r_grid[9] = start;
+	r_grid[start + 0] = n;
+	r_grid[start + 1] = g;
+	memcpy(&r_grid[start + 2], &total, sizeof(float));
+	r_grid[start + 3] = 0;
+	const uint32_t map = start + RT_EMISSIVE_HEADER + n * RT_EMISSIVE_ENTRY_UINTS;
+	for (uint32_t i = 0; i < g; i++) {
+		r_grid[map + i] = 0;
+	}
+	float cdf = 0.0f;
+	for (uint32_t k = 0; k < n; k++) {
+		const RTEmissiveCandidate &c = emissive_candidates[scored[k].candidate];
+		uint32_t *e = &r_grid[start + RT_EMISSIVE_HEADER + k * RT_EMISSIVE_ENTRY_UINTS];
+		float f[16];
+		const Basis &b = c.transform.basis;
+		const Vector3 &o = c.transform.origin;
+		for (int r = 0; r < 3; r++) {
+			f[r * 4 + 0] = b.rows[r].x;
+			f[r * 4 + 1] = b.rows[r].y;
+			f[r * 4 + 2] = b.rows[r].z;
+			f[r * 4 + 3] = o[r];
+		}
+		const float p = scored[k].score / total;
+		cdf = (k + 1 == n) ? 1.0f : cdf + p;
+		f[14] = cdf;
+		f[15] = p;
+		memcpy(e, f, sizeof(f));
+		e[12] = c.geometry_idx;
+		e[13] = c.facing;
+		if (c.geometry_idx < g) {
+			r_grid[map + c.geometry_idx] = k + 1;
+		}
+	}
+}
 
 uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, const RTViewportState *p_state, RT_LightData *r_light_data, uint32_t p_max_lights) {
 	uint32_t rt_light_count = 0;
@@ -6036,6 +6148,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		RT_LightData *rt_light_data = rt_light_scratch.ptr();
 		const uint32_t rt_light_count = gather_lights(p_render_data, p_state, rt_light_data, RT_LIGHTS_MAX);
 		build_light_grid(rt_light_data, rt_light_count, p_render_data->scene_data->cam_transform.origin, rt_light_grid_scratch);
+		append_emissive_lights(p_render_data->scene_data->cam_transform.origin, rt_light_grid_scratch);
 
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_COUNT] = float(rt_light_count);
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SELF_SHADOW_MASK] = p_state ? float(p_state->shadow_groups.self_shadow_bit) : 0.0f;
