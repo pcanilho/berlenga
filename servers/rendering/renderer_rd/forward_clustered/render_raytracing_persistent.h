@@ -149,8 +149,18 @@ struct RTPersistentInstances {
 
 	// Whether the instance at p_rt_index keeps its entries this frame; stamps the slot when it does.
 	bool check_clean(uint32_t p_rt_index, uint64_t p_generation) {
+		if (!can_keep(p_rt_index, p_generation) || stamps[p_rt_index] == build) {
+			return false;
+		}
+		stamps[p_rt_index] = build;
+		stamped++;
+		return true;
+	}
+
+	// check_clean without the stamp, for the parallel pass: reads only.
+	bool can_keep(uint32_t p_rt_index, uint64_t p_generation) const {
 		if (p_rt_index >= slots.size() || (flags[p_rt_index] & (SLOT_STATIC | SLOT_ENABLED | SLOT_REWRITE)) != (SLOT_STATIC | SLOT_ENABLED) ||
-				generations[p_rt_index] != p_generation || stamps[p_rt_index] == build) {
+				generations[p_rt_index] != p_generation) {
 			return false;
 		}
 		if (any_material_changed) {
@@ -162,8 +172,6 @@ struct RTPersistentInstances {
 				}
 			}
 		}
-		stamps[p_rt_index] = build;
-		stamped++;
 		return true;
 	}
 
