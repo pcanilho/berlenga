@@ -6,6 +6,12 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-73a3e160 (2026-11-08)
+
+### Added
+- Persistent instances also keep the per-record instances of large MultiMeshes until a record changes (#147).
+- The open-world test scene can place its objects as MultiMesh tiles (`--multimesh=M`) and change records each frame (`--mmmove=N`) (#147).
+
 ## build-bd7ad4eb (2026-11-08)
 
 ### Changed
