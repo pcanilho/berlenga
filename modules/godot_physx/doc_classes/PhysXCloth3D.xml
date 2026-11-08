@@ -28,6 +28,18 @@
 				Returns [code]true[/code] when the GPU deformable-surface path is in use rather than the CPU XPBD fallback.
 			</description>
 		</method>
+		<method name="get_max_strain" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the largest stretch of any structural edge (its length over its rest length, averaged over the last 50 ms), the measure [member tear_factor] is compared with. It is kept only while tearing is on: set a high [member tear_factor] to watch the loads a cloth takes before choosing one.
+			</description>
+		</method>
+		<method name="is_tearing" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] when strain tearing is on for this cloth: [member tear_factor] is above 1 and the project setting [code]physics/physx_3d/cloth/tearing[/code] is enabled.
+			</description>
+		</method>
 		<method name="release_pins">
 			<return type="int" />
 			<param index="0" name="vertices" type="PackedInt32Array" />
@@ -111,6 +123,9 @@
 		<member name="substeps" type="int" setter="set_substeps" getter="get_substeps" default="12">
 			Solver substeps per physics tick. More substeps make stiff cloth more stable at some CPU cost.
 		</member>
+		<member name="tear_factor" type="float" setter="set_tear_factor" getter="get_tear_factor" default="0.0">
+			How far a structural edge can stretch, as a multiple of its rest length and averaged over 50 ms, before it breaks. When one does, the cloth splits a vertex there in two, so the rip opens without losing any triangles and runs on as the load moves to the next edges; a pinned edge that breaks rips free of what holds it. At most a few vertices split per physics tick. [code]0[/code] (or anything up to [code]1[/code]) turns tearing off. Softer cloth ([member stiffness]) stretches further under the same load, so it tears at a lower force for the same factor. Tearing runs on the CPU solver: with [constant SIM_AUTO] a tearing cloth always uses it. The project setting [code]physics/physx_3d/cloth/tearing[/code] switches tearing off for every cloth. See also [signal torn].
+		</member>
 		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
 			A constant world-space air velocity, added on top of any [member wind_area].
 		</member>
@@ -124,6 +139,14 @@
 			Adds a swirling gust on top of the steady wind, as a fraction of its speed.
 		</member>
 	</members>
+	<signals>
+		<signal name="torn">
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Emitted when [member tear_factor] splits a vertex, once per split, with where the rip opened in the node's local space. Use it for a sound or a puff of dust.
+			</description>
+		</signal>
+	</signals>
 	<constants>
 		<constant name="PIN_NONE" value="0" enum="PinMode">
 			Nothing is pinned; the cloth falls freely.

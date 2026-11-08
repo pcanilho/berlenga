@@ -56,6 +56,7 @@ void PhysXCloth3D::_apply_solver_settings() {
 	s.drag = MAX(drag, 0.0f);
 	s.lift = MAX(lift, 0.0f);
 	s.density = MAX(density, 1.0e-3f);
+	s.tear_factor = is_tearing() ? tear_factor : 0.0f;
 	solver.settings = s;
 }
 
@@ -67,6 +68,7 @@ void PhysXCloth3D::_rebuild() {
 	if (source_mesh.is_valid() && source_mesh->get_surface_count() > 0) {
 		const Array arr = source_mesh->surface_get_arrays(0);
 		const PackedVector3Array verts = arr[Mesh::ARRAY_VERTEX];
+		const PackedVector2Array uv = arr[Mesh::ARRAY_TEX_UV];
 		PackedInt32Array idx = arr[Mesh::ARRAY_INDEX];
 		if (idx.is_empty()) {
 			idx.resize(verts.size());
@@ -74,7 +76,7 @@ void PhysXCloth3D::_rebuild() {
 				idx.write[i] = i;
 			}
 		}
-		solver.build_mesh(verts, idx);
+		solver.build_mesh(verts, idx, uv);
 	} else {
 		solver.build_grid(grid_columns, grid_rows, grid_size);
 	}
@@ -105,8 +107,8 @@ bool PhysXCloth3D::_gpu_available() {
 }
 
 bool PhysXCloth3D::_try_build_gpu() {
-	if (simulation_mode == SIM_CPU) {
-		return false;
+	if (simulation_mode == SIM_CPU || (simulation_mode == SIM_AUTO && is_tearing())) {
+		return false; // strain tearing splits vertices, which only the CPU solver can do
 	}
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	if (!server || !server->has_gpu() || get_world_3d().is_null()) {
@@ -357,7 +359,14 @@ void PhysXCloth3D::_step(double p_delta) {
 	}
 	const Vector3 gravity = gravity_vec.normalized() * gravity_mag;
 
-	solver.step((float)p_delta, gravity, wind_now);
+	const int torn = solver.step((float)p_delta, gravity, wind_now);
+	if (torn > 0) {
+		const Transform3D inv = get_global_transform().affine_inverse();
+		const LocalVector<Vector3> &at = solver.get_last_tears();
+		for (uint32_t i = 0; i < at.size(); i++) {
+			emit_signal(SNAME("torn"), inv.xform(at[i]));
+		}
+	}
 
 	if (collision_enabled) {
 		_collide();
@@ -414,6 +423,9 @@ void PhysXCloth3D::_update_gpu_mesh() {
 	arrays.resize(RSE::ARRAY_MAX);
 	arrays[RSE::ARRAY_VERTEX] = render_verts;
 	arrays[RSE::ARRAY_NORMAL] = render_normals;
+	if (_fill_uvs(render_verts.size())) {
+		arrays[RSE::ARRAY_TEX_UV] = render_uvs;
+	}
 	arrays[RSE::ARRAY_INDEX] = render_indices;
 	rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
 
@@ -474,6 +486,21 @@ void PhysXCloth3D::_collide() {
 	}
 }
 
+// The solver's texture coordinates (a grid's own, or the source mesh's, carried through tears) into
+// render_uvs, when it has one per drawn vertex.
+bool PhysXCloth3D::_fill_uvs(int p_count) {
+	const LocalVector<Vector2> &uv = solver.get_uvs();
+	if (p_count <= 0 || (int)uv.size() != p_count) {
+		return false;
+	}
+	render_uvs.resize(p_count);
+	Vector2 *uw = render_uvs.ptrw();
+	for (int i = 0; i < p_count; i++) {
+		uw[i] = uv[i];
+	}
+	return true;
+}
+
 void PhysXCloth3D::_update_mesh() {
 	if (mesh.is_null()) {
 		return;
@@ -520,6 +547,9 @@ void PhysXCloth3D::_update_mesh() {
 	arrays.resize(RSE::ARRAY_MAX);
 	arrays[RSE::ARRAY_VERTEX] = render_verts;
 	arrays[RSE::ARRAY_NORMAL] = render_normals;
+	if (_fill_uvs(render_verts.size())) {
+		arrays[RSE::ARRAY_TEX_UV] = render_uvs;
+	}
 	arrays[RSE::ARRAY_INDEX] = render_indices;
 	rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
 
@@ -651,6 +681,9 @@ PackedStringArray PhysXCloth3D::get_configuration_warnings() const {
 	if (source_mesh.is_valid() && source_mesh->get_surface_count() == 0) {
 		w.push_back(RTR("\"Source Mesh\" has no surfaces."));
 	}
+	if (simulation_mode == SIM_GPU && is_tearing()) {
+		w.push_back(RTR("\"Tear Factor\" needs the CPU solver: the GPU deformable surface can't split vertices, so this cloth won't tear. Set \"Simulation Mode\" to Auto or CPU."));
+	}
 	if (simulation_mode == SIM_GPU && !_gpu_available()) {
 		w.push_back(RTR("\"Simulation Mode\" is GPU but no CUDA device is available; the cloth runs on the CPU solver."));
 	}
@@ -765,6 +798,20 @@ void PhysXCloth3D::set_lift(float p_v) {
 	_apply_solver_settings();
 }
 
+bool PhysXCloth3D::is_tearing() const {
+	return tear_factor > 1.0f && (bool)GLOBAL_GET("physics/physx_3d/cloth/tearing");
+}
+
+void PhysXCloth3D::set_tear_factor(float p_v) {
+	const bool was = is_tearing();
+	tear_factor = p_v <= 1.0f ? 0.0f : p_v;
+	_apply_solver_settings();
+	if (built && simulation_mode == SIM_AUTO && was != is_tearing() && (was ? !gpu_cloth.is_valid() : gpu_cloth.is_valid())) {
+		_rebuild(); // tearing needs the CPU solver; without it the GPU one may be had again
+	}
+	update_configuration_warnings();
+}
+
 void PhysXCloth3D::set_pin_mode(PinMode p_v) {
 	pin_mode = p_v;
 	if (built) {
@@ -854,6 +901,10 @@ void PhysXCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_drag", "drag"), &PhysXCloth3D::set_drag);
 	ClassDB::bind_method(D_METHOD("get_drag"), &PhysXCloth3D::get_drag);
 	ClassDB::bind_method(D_METHOD("set_lift", "lift"), &PhysXCloth3D::set_lift);
+	ClassDB::bind_method(D_METHOD("set_tear_factor", "factor"), &PhysXCloth3D::set_tear_factor);
+	ClassDB::bind_method(D_METHOD("get_tear_factor"), &PhysXCloth3D::get_tear_factor);
+	ClassDB::bind_method(D_METHOD("is_tearing"), &PhysXCloth3D::is_tearing);
+	ClassDB::bind_method(D_METHOD("get_max_strain"), &PhysXCloth3D::get_max_strain);
 	ClassDB::bind_method(D_METHOD("get_lift"), &PhysXCloth3D::get_lift);
 
 	ClassDB::bind_method(D_METHOD("set_pin_mode", "mode"), &PhysXCloth3D::set_pin_mode);
@@ -894,6 +945,8 @@ void PhysXCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_turbulence", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_wind_turbulence", "get_wind_turbulence");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drag", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_drag", "get_drag");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lift", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lift", "get_lift");
+	ADD_GROUP("Tearing", "tear_");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tear_factor", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_tear_factor", "get_tear_factor");
 	ADD_GROUP("Pinning", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "pin_mode", PROPERTY_HINT_ENUM, "None,Top Edge,Top Corners,Left Edge,Right Edge"), "set_pin_mode", "get_pin_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_INT32_ARRAY, "pinned_vertices"), "set_pinned_vertices", "get_pinned_vertices");
@@ -902,6 +955,8 @@ void PhysXCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision_enabled"), "set_collision_enabled", "is_collision_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_mask", "get_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_friction", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_friction", "get_friction");
+
+	ADD_SIGNAL(MethodInfo("torn", PropertyInfo(Variant::VECTOR3, "position")));
 
 	BIND_ENUM_CONSTANT(PIN_NONE);
 	BIND_ENUM_CONSTANT(PIN_TOP_EDGE);

@@ -43,6 +43,8 @@ void XPBDClothSolver::clear() {
 	pin_target.clear();
 	constraints.clear();
 	indices.clear();
+	uvs.clear();
+	last_tears.clear();
 	cols = 0;
 	rows = 0;
 	rest_volume = 0.0f;
@@ -94,12 +96,15 @@ void XPBDClothSolver::set_rest_length_scale(float p_scale) {
 	applied_rest_scale = p_scale;
 }
 
-void XPBDClothSolver::_add_constraint(int p_a, int p_b, float p_compliance) {
+void XPBDClothSolver::_add_constraint(int p_a, int p_b, float p_compliance, bool p_structural, int p_via_a, int p_via_b) {
 	DistanceConstraint c;
 	c.a = p_a;
 	c.b = p_b;
 	c.rest = (rest_positions[p_a] - rest_positions[p_b]).length();
 	c.compliance = p_compliance;
+	c.structural = p_structural;
+	c.via_a = p_via_a;
+	c.via_b = p_via_b;
 	constraints.push_back(c);
 }
 
@@ -113,9 +118,11 @@ void XPBDClothSolver::build_grid(int p_cols, int p_rows, const Vector2 &p_size) 
 	const float dx = p_size.x / (float)(cols - 1);
 	const float dy = p_size.y / (float)(rows - 1);
 	thickness = 0.5f * MIN(dx, dy);
+	uvs.resize(n);
 	for (int y = 0; y < rows; y++) {
 		for (int x = 0; x < cols; x++) {
 			rest_positions[y * cols + x] = Vector3(-0.5f * p_size.x + x * dx, 0.5f * p_size.y - y * dy, 0.0f);
+			uvs[y * cols + x] = Vector2((float)x / (float)(cols - 1), (float)y / (float)(rows - 1));
 		}
 	}
 
@@ -142,20 +149,20 @@ void XPBDClothSolver::build_grid(int p_cols, int p_rows, const Vector2 &p_size) 
 		for (int x = 0; x < cols; x++) {
 			const int i = y * cols + x;
 			if (x + 1 < cols) {
-				_add_constraint(i, i + 1, stretch); // structural, horizontal
+				_add_constraint(i, i + 1, stretch, true); // structural, horizontal
 			}
 			if (y + 1 < rows) {
-				_add_constraint(i, i + cols, stretch); // structural, vertical
+				_add_constraint(i, i + cols, stretch, true); // structural, vertical
 			}
 			if (x + 1 < cols && y + 1 < rows) {
-				_add_constraint(i, i + cols + 1, shear); // diagonal
-				_add_constraint(i + 1, i + cols, shear); // anti-diagonal
+				_add_constraint(i, i + cols + 1, shear, false, i + 1, i + cols); // diagonal, across the quad's split edge
+				_add_constraint(i + 1, i + cols, shear); // anti-diagonal: the split edge itself
 			}
 			if (x + 2 < cols) {
-				_add_constraint(i, i + 2, bend); // bending, horizontal
+				_add_constraint(i, i + 2, bend, false, i + 1); // bending, horizontal, over i + 1
 			}
 			if (y + 2 < rows) {
-				_add_constraint(i, i + 2 * cols, bend); // bending, vertical
+				_add_constraint(i, i + 2 * cols, bend, false, i + cols); // bending, vertical, over i + cols
 			}
 		}
 	}
@@ -163,7 +170,7 @@ void XPBDClothSolver::build_grid(int p_cols, int p_rows, const Vector2 &p_size) 
 	_finalize();
 }
 
-void XPBDClothSolver::build_mesh(const PackedVector3Array &p_positions, const PackedInt32Array &p_indices) {
+void XPBDClothSolver::build_mesh(const PackedVector3Array &p_positions, const PackedInt32Array &p_indices, const PackedVector2Array &p_uvs) {
 	clear();
 	const int n = p_positions.size();
 	if (n < 3 || p_indices.size() < 3) {
@@ -172,6 +179,12 @@ void XPBDClothSolver::build_mesh(const PackedVector3Array &p_positions, const Pa
 	rest_positions.resize(n);
 	for (int i = 0; i < n; i++) {
 		rest_positions[i] = p_positions[i];
+	}
+	if (p_uvs.size() == n) {
+		uvs.resize(n);
+		for (int i = 0; i < n; i++) {
+			uvs[i] = p_uvs[i];
+		}
 	}
 	indices.resize(p_indices.size());
 	float min_edge = 1.0e20f;
@@ -200,13 +213,13 @@ void XPBDClothSolver::build_mesh(const PackedVector3Array &p_positions, const Pa
 			min_edge = MIN(min_edge, (float)(rest_positions[a] - rest_positions[b]).length());
 			if (!have_structural.has(k)) {
 				have_structural[k] = true;
-				_add_constraint(a, b, stretch);
+				_add_constraint(a, b, stretch, true);
 			}
 			HashMap<uint64_t, int>::Iterator it = edge_other.find(k);
 			if (it == edge_other.end()) {
 				edge_other[k] = opp;
 			} else if (it->value != opp) {
-				_add_constraint(it->value, opp, bend);
+				_add_constraint(it->value, opp, bend, false, a, b); // bend across the shared edge
 			}
 		}
 	}
@@ -309,7 +322,20 @@ void XPBDClothSolver::_solve_volume(float p_sdt) {
 	}
 }
 
+float XPBDClothSolver::get_max_strain() const {
+	float m = 1.0f;
+	for (uint32_t i = 0; i < constraints.size(); i++) {
+		if (constraints[i].structural) {
+			m = MAX(m, constraints[i].strain);
+		}
+	}
+	return m;
+}
+
 void XPBDClothSolver::reset(const Transform3D &p_xform) {
+	for (uint32_t i = 0; i < constraints.size(); i++) {
+		constraints[i].strain = 1.0f;
+	}
 	const int n = rest_positions.size();
 	positions.resize(n);
 	prev.resize(n);
@@ -383,10 +409,11 @@ void XPBDClothSolver::_apply_aero(float p_dt, const Vector3 &p_wind) {
 	}
 }
 
-void XPBDClothSolver::step(float p_dt, const Vector3 &p_gravity, const Vector3 &p_wind) {
+int XPBDClothSolver::step(float p_dt, const Vector3 &p_gravity, const Vector3 &p_wind) {
+	last_tears.clear();
 	const int n = positions.size();
 	if (n == 0 || p_dt <= 0.0f) {
-		return;
+		return 0;
 	}
 	const int substeps = MAX(settings.substeps, 1);
 	const float sdt = p_dt / (float)substeps;
@@ -453,6 +480,8 @@ void XPBDClothSolver::step(float p_dt, const Vector3 &p_gravity, const Vector3 &
 			velocities[i] = v;
 		}
 	}
+
+	return settings.tear_factor > 1.0f ? _tear_overstretched(p_dt) : 0;
 }
 
 static bool _segments_cross(const Vector2 &p_a, const Vector2 &p_b, const Vector2 &p_c, const Vector2 &p_d) {
@@ -493,4 +522,190 @@ int XPBDClothSolver::tear(const Vector2 &p_from, const Vector2 &p_to) {
 	}
 	indices = kept;
 	return removed;
+}
+
+// --- Strain tearing ---------------------------------------------------------------------------
+//
+// PhysX 2's tearable cloth (NX_CLF_TEARABLE with tearFactor, the cloth behind the tearing drapes
+// of Batman: Arkham Asylum): an edge stretched past tearFactor times its rest length breaks, and
+// the mesh opens there by splitting a vertex in two. The split follows the fracture rule of
+// O'Brien and Hodgins ("Graphical Modeling and Animation of Brittle Fracture", SIGGRAPH 1999) as
+// cloth tearing uses it (Metaaphanon, Bando, Chen and Nishita, "Simulation of Tearing Cloth with
+// Frayed Edges", Pacific Graphics 2009): the plane through the vertex across the overloaded edge
+// decides which of its triangles go with the copy. Every constraint through the vertex is then
+// kept, moved to the copy, or dropped, by whether the triangles still join its two ends.
+
+static int _tri_has(const LocalVector<int> &p_idx, int p_t, int p_v) {
+	return p_idx[p_t] == p_v || p_idx[p_t + 1] == p_v || p_idx[p_t + 2] == p_v;
+}
+
+// Is there a triangle holding all of p_a, p_b and (when >= 0) p_c?
+static bool _has_tri(const LocalVector<int> &p_idx, int p_a, int p_b, int p_c = -1) {
+	for (uint32_t t = 0; t + 2 < p_idx.size(); t += 3) {
+		if (_tri_has(p_idx, t, p_a) && _tri_has(p_idx, t, p_b) && (p_c < 0 || _tri_has(p_idx, t, p_c))) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void XPBDClothSolver::_vertex_mass(int p_v) {
+	float m = 0.0f;
+	for (uint32_t t = 0; t + 2 < indices.size(); t += 3) {
+		if (!_tri_has(indices, t, p_v)) {
+			continue;
+		}
+		const Vector3 &a = rest_positions[indices[t]];
+		const Vector3 &b = rest_positions[indices[t + 1]];
+		const Vector3 &c = rest_positions[indices[t + 2]];
+		m += 0.5f * (b - a).cross(c - a).length() * settings.density / 3.0f;
+	}
+	base_inv_mass[p_v] = 1.0f / MAX(m, 1.0e-6f);
+	inv_mass[p_v] = pinned[p_v] ? 0.0f : base_inv_mass[p_v];
+}
+
+// Splits p_v so that the triangles on p_toward's side of the plane through p_v (normal along the
+// edge to p_toward) go with a new copy. A pinned p_v keeps its pin and the copy goes free, so an
+// edge can rip off what holds it. Returns false when there is nothing to separate.
+bool XPBDClothSolver::_split_vertex(int p_v, int p_toward) {
+	Vector3 d = positions[p_toward] - positions[p_v];
+	if (d.length_squared() < 1.0e-12f) {
+		d = rest_positions[p_toward] - rest_positions[p_v];
+	}
+	d.normalize();
+	LocalVector<int> side_pos;
+	int side_neg = 0;
+	for (uint32_t t = 0; t + 2 < indices.size(); t += 3) {
+		if (!_tri_has(indices, t, p_v)) {
+			continue;
+		}
+		const Vector3 centroid = (positions[indices[t]] + positions[indices[t + 1]] + positions[indices[t + 2]]) / 3.0f;
+		// The triangles on the overloaded edge itself always go with the copy.
+		if (_tri_has(indices, t, p_toward) || (centroid - positions[p_v]).dot(d) > 0.0f) {
+			side_pos.push_back(t);
+		} else {
+			side_neg++;
+		}
+	}
+	if (side_pos.is_empty() || (side_neg == 0 && !pinned[p_v])) {
+		return false;
+	}
+
+	const int nv = rest_positions.size();
+	rest_positions.push_back(rest_positions[p_v]);
+	positions.push_back(positions[p_v]);
+	prev.push_back(prev[p_v]);
+	velocities.push_back(velocities[p_v]);
+	inv_mass.push_back(base_inv_mass[p_v]);
+	base_inv_mass.push_back(base_inv_mass[p_v]);
+	pinned.push_back(0);
+	pin_target.push_back(Vector3(NAN, NAN, NAN));
+	if (!uvs.is_empty()) {
+		uvs.push_back(uvs[p_v]);
+	}
+	for (uint32_t k = 0; k < side_pos.size(); k++) {
+		const int t = side_pos[k];
+		for (int e = 0; e < 3; e++) {
+			if (indices[t + e] == p_v) {
+				indices[t + e] = nv;
+			}
+		}
+	}
+	_vertex_mass(p_v);
+	_vertex_mass(nv);
+
+	auto valid = [&](const DistanceConstraint &c) {
+		if (c.via_a < 0) {
+			return _has_tri(indices, c.a, c.b);
+		}
+		if (c.via_b < 0) {
+			return _has_tri(indices, c.a, c.via_a) && _has_tri(indices, c.via_a, c.b);
+		}
+		return _has_tri(indices, c.a, c.via_a, c.via_b) && _has_tri(indices, c.b, c.via_a, c.via_b);
+	};
+	auto moved = [&](int p_i) { return p_i == p_v ? nv : p_i; };
+	for (uint32_t ci = 0; ci < constraints.size();) {
+		DistanceConstraint &c = constraints[ci];
+		if (c.a != p_v && c.b != p_v && c.via_a != p_v && c.via_b != p_v) {
+			ci++;
+			continue;
+		}
+		if (valid(c)) {
+			ci++;
+			continue;
+		}
+		DistanceConstraint m = c;
+		m.a = moved(c.a);
+		m.b = moved(c.b);
+		m.via_a = c.via_a < 0 ? -1 : moved(c.via_a);
+		m.via_b = c.via_b < 0 ? -1 : moved(c.via_b);
+		if (valid(m)) {
+			c = m;
+			ci++;
+		} else {
+			constraints.remove_at_unordered(ci);
+		}
+	}
+	last_tears.push_back(positions[p_v]);
+	return true;
+}
+
+int XPBDClothSolver::_tear_overstretched(float p_dt) {
+	struct Over {
+		float ratio = 0.0f;
+		int a = 0;
+		int b = 0;
+	};
+	struct MostFirst {
+		bool operator()(const Over &p_l, const Over &p_r) const { return p_l.ratio > p_r.ratio; }
+	};
+	const float limit = settings.tear_factor;
+	const float k = 1.0f - Math::exp(-p_dt / TEAR_SMOOTH);
+	LocalVector<Over> over;
+	for (uint32_t ci = 0; ci < constraints.size(); ci++) {
+		DistanceConstraint &c = constraints[ci];
+		if (!c.structural || c.rest <= 0.0f) {
+			continue;
+		}
+		c.strain += ((positions[c.a] - positions[c.b]).length() / c.rest - c.strain) * k;
+		if (c.strain > limit) {
+			over.push_back({ c.strain, c.a, c.b });
+		}
+	}
+	if (over.is_empty()) {
+		return 0;
+	}
+	over.sort_custom<MostFirst>();
+
+	auto tri_count = [&](int p_v) {
+		int k = 0;
+		for (uint32_t t = 0; t + 2 < indices.size(); t += 3) {
+			k += _tri_has(indices, t, p_v) ? 1 : 0;
+		}
+		return k;
+	};
+	LocalVector<int> touched;
+	int splits = 0;
+	for (uint32_t o = 0; o < over.size() && splits < MAX_TEARS_PER_STEP; o++) {
+		const int a = over[o].a;
+		const int b = over[o].b;
+		if (touched.has(a) || touched.has(b) || !_has_tri(indices, a, b)) {
+			continue; // already opened this step, or no longer an edge of the mesh
+		}
+		// A pinned end breaks first (the stress gathers where the cloth is held); otherwise the end
+		// with more triangles, so the rip runs into the cloth rather than along its border.
+		int first = a;
+		int second = b;
+		if (pinned[b] && !pinned[a]) {
+			SWAP(first, second);
+		} else if (pinned[a] == pinned[b] && tri_count(b) > tri_count(a)) {
+			SWAP(first, second);
+		}
+		if (_split_vertex(first, second) || _split_vertex(second, first)) {
+			touched.push_back(a);
+			touched.push_back(b);
+			splits++;
+		}
+	}
+	return splits;
 }

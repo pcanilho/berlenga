@@ -81,6 +81,8 @@ private:
 	float drag = 1.0;
 	float lift = 0.2;
 
+	float tear_factor = 0.0; // 0 = off; else edges stretched past this many rest lengths break
+
 	PinMode pin_mode = PIN_TOP_EDGE;
 	PackedInt32Array pinned_vertices; // extra explicit pins, by vertex index
 	NodePath anchor_path; // if set, pinned vertices follow this node's motion
@@ -101,6 +103,7 @@ private:
 
 	PackedVector3Array render_verts;
 	PackedVector3Array render_normals;
+	PackedVector2Array render_uvs;
 	PackedInt32Array render_indices;
 
 	RID collision_sphere; // PhysicsServer sphere shape reused for the collision pass
@@ -113,6 +116,7 @@ private:
 	void _step(double p_delta);
 	void _collide();
 	void _update_mesh(); // CPU: from the solver
+	bool _fill_uvs(int p_count);
 	void _update_gpu_mesh(); // GPU: from the server readback
 	Vector3 _sample_wind(double p_delta);
 
@@ -175,6 +179,12 @@ public:
 	uint32_t get_collision_mask() const { return collision_mask; }
 	void set_friction(float p_v);
 	float get_friction() const { return friction; }
+
+	void set_tear_factor(float p_v);
+	float get_tear_factor() const { return tear_factor; }
+	// Strain tearing is on for this node and the project (physics/physx_3d/cloth/tearing).
+	bool is_tearing() const;
+	float get_max_strain() const { return solver.get_max_strain(); }
 
 	void set_simulating(bool p_v);
 	bool is_simulating() const { return simulating; }

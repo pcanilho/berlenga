@@ -1,6 +1,6 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|textures|glass|far|night|physx --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|textures|glass|far|night|physx|tearing --spp=N --rr --out=path.png --frames=N --far=N --raster
 # --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
 var shot := "lights"
 var spp := 16
@@ -434,3 +434,112 @@ func _process(_d: float) -> void:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
 		get_tree().quit()
+
+
+# Strain tearing (PhysXCloth3D.tear_factor): nothing is cut by script. A striped ribbon tied between
+# two posts and a checked flag on a pole take a wind that rises to a gale; each tears where it is
+# stretched past its tear factor, the ribbon off a post, the flag from its pole edge.
+func shot_tearing() -> void:
+	if not ClassDB.class_exists("PhysXCloth3D"):
+		push_error("This build has no PhysX module.")
+		get_tree().quit(1)
+		return
+	env.background_color = Color(0.05, 0.06, 0.08)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.25, 0.25, 0.28)
+	camera(Vector3(0.4, 3.1, 5.0), Vector3(0.0, 0.9, -0.2), 52)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-40, 160, 0)
+	sun.light_energy = 2.2
+	sun.shadow_enabled = true
+	add_child(sun)
+	plane(Vector2(40, 40), mat(Color(0.5, 0.5, 0.52), 0.8))
+	var ground := StaticBody3D.new()
+	var gs := CollisionShape3D.new()
+	gs.shape = WorldBoundaryShape3D.new()
+	ground.add_child(gs)
+	add_child(ground)
+	var post_mat := mat(Color(0.3, 0.3, 0.32), 0.4)
+
+	# Ribbon: 4 m of 8 cm wide film, 3 vertices across and 15 cm rows, tied at both ends.
+	box(Vector3(0.06, 1.1, 0.06), Vector3(-2.0, 0.55, 0.6), post_mat)
+	box(Vector3(0.06, 1.1, 0.06), Vector3(2.0, 0.55, 0.6), post_mat)
+	var stripes := Image.create(64, 8, false, Image.FORMAT_RGB8)
+	for x in 64:
+		for y in 8:
+			stripes.set_pixel(x, y, Color(0.95, 0.78, 0.1) if ((x + y) / 8) % 2 == 0 else Color(0.08, 0.08, 0.08))
+	var rib_mat := mat(Color(1, 1, 1), 0.5)
+	rib_mat.albedo_texture = ImageTexture.create_from_image(stripes)
+	rib_mat.uv1_scale = Vector3(12, 1, 1)
+	rib_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# its rest shape hangs 12 cm slack between the ties (a taut line under its own weight would need
+	# infinite tension), drawn in its local XY plane: +Y along it, +X up across its width
+	var verts := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var idx := PackedInt32Array()
+	var rows := 28
+	for r in rows:
+		var t := float(r) / (rows - 1)
+		for j in 3:
+			verts.append(Vector3(-0.12 * 4.0 * t * (1.0 - t) + 0.08 * (j / 2.0 - 0.5), 2.0 - 4.0 * t, 0.0))
+			uvs.append(Vector2(t, j / 2.0))
+	for r in rows - 1:
+		for j in 2:
+			var q := r * 3 + j
+			idx.append_array([q, q + 1, q + 3, q + 1, q + 4, q + 3])
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_TEX_UV] = uvs
+	arr[Mesh.ARRAY_INDEX] = idx
+	var rest := ArrayMesh.new()
+	rest.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	var ribbon = ClassDB.instantiate("PhysXCloth3D")
+	ribbon.simulation_mode = 2
+	ribbon.source_mesh = rest
+	ribbon.pin_mode = 0
+	ribbon.pinned_vertices = PackedInt32Array([1, rows * 3 - 2])   # tied: held at its middle, free to turn
+	ribbon.stiffness = 0.8
+	ribbon.bend_stiffness = 0.05
+	ribbon.density = 0.15
+	ribbon.drag = 0.72
+	ribbon.lift = 0.3
+	ribbon.wind_turbulence = 0.2
+	ribbon.substeps = 40                 # a long thin strip needs them to carry its load without solver stretch
+	ribbon.tear_factor = 1.07             # holds in the breeze, parts in about 11 m/s (get_max_strain)
+	ribbon.rotation_degrees = Vector3(0, 0, 90)   # its length (local Y) along the posts' line, +X up
+	ribbon.position = Vector3(0, 1.06, 0.6)
+	ribbon.material_override = rib_mat
+	add_child(ribbon)
+
+	# Flag: a 24 x 16 grid on its pole, checked so its texture shows through the rip.
+	box(Vector3(0.08, 3.2, 0.08), Vector3(-3.2, 1.6, -2.6), post_mat)
+	var check := Image.create(8, 8, false, Image.FORMAT_RGB8)
+	for x in 8:
+		for y in 8:
+			check.set_pixel(x, y, Color(0.85, 0.22, 0.16) if (x + y) % 2 == 0 else Color(0.92, 0.9, 0.86))
+	var flag_mat := mat(Color(1, 1, 1), 0.7)
+	flag_mat.albedo_texture = ImageTexture.create_from_image(check)
+	flag_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	flag_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var flag = ClassDB.instantiate("PhysXCloth3D")
+	flag.simulation_mode = 2
+	flag.grid_size = Vector2(1.8, 1.1)
+	flag.grid_columns = 24
+	flag.grid_rows = 16
+	flag.pin_mode = 3 # left edge
+	flag.wind_turbulence = 0.6
+	flag.tear_factor = 1.6
+	flag.position = Vector3(-2.26, 2.6, -2.6)
+	flag.material_override = flag_mat
+	add_child(flag)
+
+	# The wind: a breeze, then a gale from 2.5 s.
+	var clock := [0.0]   # simulated seconds (movie capture runs off the wall clock)
+	var blow := func() -> void:
+		clock[0] += 1.0 / Engine.physics_ticks_per_second
+		var tt: float = clock[0]
+		var u := lerpf(3.0, 22.0, clampf((tt - 2.5) / 2.0, 0.0, 1.0))
+		ribbon.wind = Vector3(0.6, 0.0, -1.0).normalized() * u
+		flag.wind = Vector3(1.0, 0.1, 0.3) * u
+	get_tree().physics_frame.connect(blow)

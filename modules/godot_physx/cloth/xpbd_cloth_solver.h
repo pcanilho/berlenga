@@ -68,7 +68,18 @@ public:
 		float pressure = 0.0f;
 		float pressure_stiffness = 0.5f;
 		float max_speed = 0.0f; // 0 = uncapped; else clamps per-vertex speed
+		// Strain tearing, as PhysX 2's tearable cloth (tearFactor): after each step, a structural edge
+		// stretched past tear_factor times its rest length breaks by splitting a vertex. 0 = off.
+		float tear_factor = 0.0f;
 	};
+
+	// Most vertex splits made per step: the rest of the overloaded edges wait a step, so a rip runs
+	// across the cloth over a few frames instead of shattering it at once.
+	static constexpr int MAX_TEARS_PER_STEP = 4;
+	// Seconds the stretch is averaged over before it is compared with tear_factor. One Gauss-Seidel
+	// pass a substep leaves a thin strip's edges briefly over-long as a wave runs down it; a material
+	// breaks under a load it carries, not under one step's solver error.
+	static constexpr float TEAR_SMOOTH = 0.05f;
 
 	Settings settings;
 
@@ -79,7 +90,8 @@ public:
 	void build_grid(int p_cols, int p_rows, const Vector2 &p_size);
 	// Build from an arbitrary triangle mesh. Structural constraints follow the
 	// unique edges; bending constraints span the shared edge of adjacent tris.
-	void build_mesh(const PackedVector3Array &p_positions, const PackedInt32Array &p_indices);
+	// p_uvs (optional, one per vertex) are carried through vertex splits; a grid makes its own.
+	void build_mesh(const PackedVector3Array &p_positions, const PackedInt32Array &p_indices, const PackedVector2Array &p_uvs = PackedVector2Array());
 
 	// Place the rest shape into world space and seed the simulation there.
 	void reset(const Transform3D &p_xform);
@@ -97,7 +109,8 @@ public:
 	void clear_pin_target(int p_vertex);
 
 	// Advance the simulation. p_wind is a world-space air velocity.
-	void step(float p_dt, const Vector3 &p_gravity, const Vector3 &p_wind);
+	// Returns how many vertices tore apart (split) at the end of this step (settings.tear_factor).
+	int step(float p_dt, const Vector3 &p_gravity, const Vector3 &p_wind);
 
 	// Mutable access for the node's post-step world-collision pass.
 	LocalVector<Vector3> &positions_mut() { return positions; }
@@ -105,6 +118,13 @@ public:
 	const LocalVector<Vector3> &get_positions() const { return positions; }
 	const LocalVector<Vector3> &get_velocities() const { return velocities; }
 	const LocalVector<int> &get_indices() const { return indices; }
+	// Texture coordinates per vertex (empty for a mesh built without them).
+	const LocalVector<Vector2> &get_uvs() const { return uvs; }
+	// World positions of the vertices split by the last step's tearing (where each rip opened).
+	const LocalVector<Vector3> &get_last_tears() const { return last_tears; }
+	// The largest smoothed stretch (length / rest) of any structural edge, as tearing measures it
+	// (kept only while tear_factor is on).
+	float get_max_strain() const;
 	float vertex_radius() const { return thickness; }
 	// Total rest surface area, for turning a target total mass into an areal density.
 	float rest_surface_area() const;
@@ -120,6 +140,15 @@ private:
 		int b = 0;
 		float rest = 0.0f;
 		float compliance = 0.0f;
+		// What holds the two ends together through the mesh, checked after a tear: neither (-1, -1),
+		// a structural edge, valid while a triangle has both ends; one vertex (via_a only), a bend
+		// over it, valid while a triangle holds a and via_a and another via_a and b; or an edge
+		// (via_a, via_b), a shear or bend across it, valid while a triangle holds a and that edge
+		// and another b and that edge.
+		int via_a = -1;
+		int via_b = -1;
+		bool structural = false;
+		float strain = 1.0f; // length / rest, smoothed over TEAR_SMOOTH (structural only)
 	};
 
 	LocalVector<Vector3> rest_positions; // local space
@@ -132,6 +161,8 @@ private:
 	LocalVector<Vector3> pin_target; // NaN component == no target
 	LocalVector<DistanceConstraint> constraints;
 	LocalVector<int> indices;
+	LocalVector<Vector2> uvs;
+	LocalVector<Vector3> last_tears;
 
 	int cols = 0;
 	int rows = 0;
@@ -139,7 +170,11 @@ private:
 	float rest_volume = 0.0f; // signed enclosed volume of the rest mesh
 	float applied_rest_scale = 1.0f; // last shrinking_factor applied to constraint rest lengths
 
-	void _add_constraint(int p_a, int p_b, float p_compliance);
+	void _add_constraint(int p_a, int p_b, float p_compliance, bool p_structural = false, int p_via_a = -1, int p_via_b = -1);
+	int _tear_overstretched(float p_dt);
+	bool _split_vertex(int p_v, int p_toward);
+	void _drop_broken_constraints();
+	void _vertex_mass(int p_v);
 	void _finalize();
 	void _apply_aero(float p_dt, const Vector3 &p_wind);
 	void _solve_volume(float p_sdt);
