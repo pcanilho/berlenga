@@ -6,6 +6,14 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-28640b78 (2026-11-08)
+
+### Fixed
+- Path tracer: `rt_vertex_dynamic` surfaces are recaptured every frame. PhysX skinned cloth no longer traces as a stale first capture (a coat left crumpled, or missing, while the raster image is right) (#138).
+
+### Changed
+- README: opacity micromaps listed under Large worlds (#137).
+
 ## build-61af2b42 (2026-11-08)
 
 ### Added
