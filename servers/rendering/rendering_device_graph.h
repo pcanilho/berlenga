@@ -933,6 +933,8 @@ public:
 	void add_buffer_copy(RDD::BufferID p_src, ResourceTracker *p_src_tracker, RDD::BufferID p_dst, ResourceTracker *p_dst_tracker, RDD::BufferCopyRegion p_region);
 	void add_buffer_get_data(RDD::BufferID p_src, ResourceTracker *p_src_tracker, RDD::BufferID p_dst, RDD::BufferCopyRegion p_region);
 	void add_buffer_update(RDD::BufferID p_dst, ResourceTracker *p_dst_tracker, VectorView<RecordedBufferCopy> p_buffer_copies);
+	// Copies without tracking: the caller orders them with full barriers.
+	void add_buffer_update_untracked(RDD::BufferID p_dst, VectorView<RecordedBufferCopy> p_buffer_copies);
 	void add_driver_callback(RDD::DriverCallback p_callback, void *p_userdata, VectorView<ResourceTracker *> p_trackers, VectorView<ResourceUsage> p_usages);
 	void add_raytracing_list_begin();
 	void add_raytracing_list_bind_pipeline(RDD::RaytracingPipelineID p_pipeline);

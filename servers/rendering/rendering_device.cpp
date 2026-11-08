@@ -616,14 +616,14 @@ Error RenderingDevice::tlas_build(RID p_tlas, Span<AccelerationStructureInstance
 	return OK;
 }
 
-// Writes p_instances to an instance buffer of p_tlas and fills the instance fields of r_build. With r_blas_trackers, p_tlas
-// is linked to the BLASes of the instances and the trackers of newly linked ones are appended; without, nothing is linked.
-Error RenderingDevice::_tlas_write_instances(AccelerationStructure *p_tlas, RID p_tlas_id, Span<AccelerationStructureInstance> p_instances, LocalVector<RDG::ResourceTracker *> *r_blas_trackers, RDG::RecordedAccelerationStructureBuild &r_build) {
+// Takes p_size bytes of a CPU-visible instance buffer of p_tlas that the GPU is done with.
+Error RenderingDevice::_tlas_instance_staging(AccelerationStructure *p_tlas, uint32_t p_size, uint32_t &r_buffer_index, uint32_t &r_offset) {
 	uint32_t instance_size = driver->api_trait_get(RDD::API_TRAIT_ACCELERATION_STRUCTURE_INSTANCE_SIZE);
 	uint32_t instance_buffer_size = instance_size * p_tlas->max_instance_count;
+	ERR_FAIL_COND_V(p_size > instance_buffer_size, ERR_INVALID_PARAMETER);
 
 	uint32_t instance_buffer_offset = 0;
-	uint32_t instance_buffer_used_size = instance_size * p_instances.size();
+	const uint32_t instance_buffer_used_size = p_size;
 
 	uint32_t instance_buffer_index = UINT32_MAX;
 	for (uint32_t i = 0; i < p_tlas->instance_buffers.size(); i++) {
@@ -663,6 +663,23 @@ Error RenderingDevice::_tlas_write_instances(AccelerationStructure *p_tlas, RID 
 		instance_buffer_index = p_tlas->instance_buffers.size();
 		p_tlas->instance_buffers.push_back(instance_buffer);
 	}
+
+	r_buffer_index = instance_buffer_index;
+	r_offset = instance_buffer_offset;
+	return OK;
+}
+
+// Writes p_instances to an instance buffer of p_tlas and fills the instance fields of r_build. With r_blas_trackers, p_tlas
+// is linked to the BLASes of the instances and the trackers of newly linked ones are appended; without, nothing is linked.
+Error RenderingDevice::_tlas_write_instances(AccelerationStructure *p_tlas, RID p_tlas_id, Span<AccelerationStructureInstance> p_instances, LocalVector<RDG::ResourceTracker *> *r_blas_trackers, RDG::RecordedAccelerationStructureBuild &r_build) {
+	uint32_t instance_size = driver->api_trait_get(RDD::API_TRAIT_ACCELERATION_STRUCTURE_INSTANCE_SIZE);
+	// The build reads this frame's buffer, so the keyed one is out of date.
+	p_tlas->keyed.valid = false;
+
+	uint32_t instance_buffer_index = 0;
+	uint32_t instance_buffer_offset = 0;
+	Error err = _tlas_instance_staging(p_tlas, instance_size * p_instances.size(), instance_buffer_index, instance_buffer_offset);
+	ERR_FAIL_COND_V(err != OK, err);
 
 	AccelerationStructure::InstanceBuffer &instance_buffer = p_tlas->instance_buffers[instance_buffer_index];
 
@@ -739,6 +756,171 @@ Error RenderingDevice::_tlas_write_instances(AccelerationStructure *p_tlas, RID 
 	r_build.instance_count = written;
 	p_tlas->invalidated = false;
 
+	return OK;
+}
+
+// Writes the instances at p_changed keys into the keyed GPU buffer of p_tlas (every instance when it isn't valid) and
+// fills the instance fields of r_build. Each live instance has a record at a position; a removed one gives its
+// position to the last record, so the records stay packed. Changed records are staged and copied in one command.
+Error RenderingDevice::_tlas_write_keyed(AccelerationStructure *p_tlas, Span<AccelerationStructureInstance> p_instances, Span<uint32_t> p_changed, RDG::RecordedAccelerationStructureBuild &r_build) {
+	ERR_FAIL_COND_V_MSG(p_instances.size() > p_tlas->max_instance_count, ERR_INVALID_PARAMETER, "Exceeded the maximum amount of instances allowed in the TLAS.");
+	const uint32_t instance_size = driver->api_trait_get(RDD::API_TRAIT_ACCELERATION_STRUCTURE_INSTANCE_SIZE);
+	AccelerationStructure::Keyed &keyed = p_tlas->keyed;
+
+	if (!keyed.buffer) {
+		const uint64_t size = uint64_t(instance_size) * MAX(p_tlas->max_instance_count, 1u);
+		keyed.buffer = driver->buffer_create(size, RDD::BUFFER_USAGE_TRANSFER_TO_BIT | RDD::BUFFER_USAGE_DEVICE_ADDRESS_BIT | RDD::BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT, RDD::MEMORY_ALLOCATION_TYPE_GPU, frames_drawn);
+		ERR_FAIL_COND_V(!keyed.buffer, ERR_CANT_CREATE);
+		buffer_memory.add(size);
+		keyed.valid = false;
+	}
+
+	const bool all = !keyed.valid;
+	// Invalid until this build is recorded, so a failure below makes the next build write everything.
+	keyed.valid = false;
+	keyed.touched.clear();
+	if (all) {
+		keyed.keys.clear();
+		keyed.records.clear();
+		keyed.positions.clear();
+	}
+
+	const auto remove = [&](uint32_t p_key) {
+		const uint32_t position = keyed.positions[p_key];
+		keyed.positions[p_key] = UINT32_MAX;
+		const uint32_t last = keyed.keys.size() - 1;
+		if (position != last) {
+			const uint32_t moved_key = keyed.keys[last];
+			keyed.keys[position] = moved_key;
+			keyed.positions[moved_key] = position;
+			memcpy(keyed.records.ptr() + uint64_t(position) * instance_size, keyed.records.ptr() + uint64_t(last) * instance_size, instance_size);
+			keyed.touched.push_back(position);
+		}
+		keyed.keys.resize(last);
+		keyed.records.resize(uint64_t(last) * instance_size);
+	};
+
+	// Keys past the end are gone.
+	for (uint32_t key = p_instances.size(); key < keyed.positions.size(); key++) {
+		if (keyed.positions[key] != UINT32_MAX) {
+			remove(key);
+		}
+	}
+	const uint32_t old_key_count = keyed.positions.size();
+	keyed.positions.resize(p_instances.size());
+	for (uint32_t key = old_key_count; key < p_instances.size(); key++) {
+		keyed.positions[key] = UINT32_MAX;
+	}
+
+	RID last_blas;
+	RDD::AccelerationStructureID last_blas_driver_id;
+	const auto write = [&](uint32_t p_key) -> Error {
+		const AccelerationStructureInstance &rd_instance = p_instances[p_key];
+		if (rd_instance.mask == 0 || !rd_instance.blas.is_valid()) {
+			if (keyed.positions[p_key] != UINT32_MAX) {
+				remove(p_key);
+			}
+			return OK;
+		}
+		ERR_FAIL_COND_V_MSG(!rd_instance.hit_sbt_range, ERR_INVALID_PARAMETER, "Instance " + itos(p_key) + " has an invalid hit shader binding table range.");
+		if (rd_instance.blas != last_blas) {
+			const AccelerationStructure *blas = acceleration_structure_owner.get_or_null(rd_instance.blas);
+			ERR_FAIL_NULL_V_MSG(blas, ERR_INVALID_PARAMETER, "Instance " + itos(p_key) + " references a BLAS that is not valid.");
+			ERR_FAIL_COND_V(blas->type != RDD::ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL, ERR_INVALID_PARAMETER);
+			ERR_FAIL_COND_V_MSG(blas->invalidated, ERR_INVALID_PARAMETER, "BLAS either has not been built yet, or has been invalidated by an operation and needs to be rebuilt.");
+			last_blas = rd_instance.blas;
+			last_blas_driver_id = blas->driver_id;
+		}
+
+		RDD::AccelerationStructureInstance rdd_instance;
+		rdd_instance.transform = rd_instance.transform;
+		rdd_instance.id = rd_instance.id;
+		rdd_instance.mask = rd_instance.mask;
+		rdd_instance.hit_sbt_offset = _decode_hit_sbt_range_offset(rd_instance.hit_sbt_range);
+		rdd_instance.flags = rd_instance.flags;
+		rdd_instance.blas = last_blas_driver_id;
+
+		uint32_t position = keyed.positions[p_key];
+		if (position == UINT32_MAX) {
+			position = keyed.keys.size();
+			keyed.keys.push_back(p_key);
+			keyed.records.resize(uint64_t(position + 1) * instance_size);
+			keyed.positions[p_key] = position;
+		}
+		driver->acceleration_structure_instance_write(keyed.records.ptr() + uint64_t(position) * instance_size, rdd_instance);
+		keyed.touched.push_back(position);
+		return OK;
+	};
+
+	if (all) {
+		for (uint32_t key = 0; key < p_instances.size(); key++) {
+			Error err = write(key);
+			ERR_FAIL_COND_V(err != OK, err);
+		}
+	} else {
+		for (const uint32_t key : p_changed) {
+			ERR_FAIL_COND_V(key >= p_instances.size(), ERR_INVALID_PARAMETER);
+			Error err = write(key);
+			ERR_FAIL_COND_V(err != OK, err);
+		}
+	}
+
+	// Stage the touched records still in use, coalesced into runs of positions.
+	const uint32_t count = keyed.keys.size();
+	keyed.touched.sort();
+	uint32_t staged = 0;
+	for (uint32_t i = 0; i < keyed.touched.size(); i++) {
+		const uint32_t position = keyed.touched[i];
+		if (position < count && (staged == 0 || keyed.touched[staged - 1] != position)) {
+			keyed.touched[staged++] = position;
+		}
+	}
+	keyed.touched.resize(staged);
+
+	if (staged > 0) {
+		uint32_t buffer_index = 0;
+		uint32_t offset = 0;
+		Error err = _tlas_instance_staging(p_tlas, staged * instance_size, buffer_index, offset);
+		ERR_FAIL_COND_V(err != OK, err);
+		const AccelerationStructure::InstanceBuffer &staging = p_tlas->instance_buffers[buffer_index];
+
+		thread_local LocalVector<RDG::RecordedBufferCopy> copies;
+		copies.clear();
+		uint8_t *dst = staging.data_ptr + offset;
+		uint32_t i = 0;
+		while (i < staged) {
+			uint32_t run = 1;
+			while (i + run < staged && keyed.touched[i + run] == keyed.touched[i] + run) {
+				run++;
+			}
+			// Bulk copies: write-combined memory is slow to write field by field.
+			memcpy(dst, keyed.records.ptr() + uint64_t(keyed.touched[i]) * instance_size, uint64_t(run) * instance_size);
+			RDG::RecordedBufferCopy copy;
+			copy.source = staging.driver_id;
+			copy.region.src_offset = offset + uint64_t(i) * instance_size;
+			copy.region.dst_offset = uint64_t(keyed.touched[i]) * instance_size;
+			copy.region.size = uint64_t(run) * instance_size;
+			copies.push_back(copy);
+			dst += uint64_t(run) * instance_size;
+			i += run;
+		}
+
+		if (!acceleration_structure_batch.copies_recorded) {
+			// The previous builds may still read the buffers the copies write.
+			draw_graph.add_full_barrier();
+			acceleration_structure_batch.copies_recorded = true;
+		}
+		draw_graph.add_buffer_update_untracked(keyed.buffer, copies);
+	}
+
+#ifdef DEV_ENABLED
+	p_tlas->batch_blases.clear();
+#endif
+	r_build.instance_buffer = keyed.buffer;
+	r_build.instance_offset = 0;
+	r_build.instance_count = count;
+	p_tlas->invalidated = false;
+	keyed.valid = true;
 	return OK;
 }
 
@@ -831,20 +1013,22 @@ Error RenderingDevice::_blas_batch_add(RID p_blas, bool p_refit) {
 	return OK;
 }
 
-Error RenderingDevice::_tlas_batch_add(RID p_tlas, Span<AccelerationStructureInstance> p_instances) {
-	AccelerationStructure *tlas = acceleration_structure_owner.get_or_null(p_tlas);
+Error RenderingDevice::_tlas_batch_add(const TLASBuild &p_build) {
+	AccelerationStructure *tlas = acceleration_structure_owner.get_or_null(p_build.tlas);
 	ERR_FAIL_NULL_V_MSG(tlas, ERR_INVALID_PARAMETER, "TLAS argument is not valid.");
-
-	Error err = _tlas_validate_instances(tlas, p_instances);
-	if (err != OK) {
-		tlas->invalidated = true;
-		return err;
-	}
 
 	RDG::RecordedAccelerationStructureBuild build;
 	build.type = RDG::RecordedAccelerationStructureBuild::TYPE_TLAS_BUILD;
 	build.acceleration_structure = tlas->driver_id;
-	err = _tlas_write_instances(tlas, p_tlas, p_instances, nullptr, build);
+	Error err = OK;
+	if (p_build.keyed) {
+		err = _tlas_write_keyed(tlas, p_build.instances, p_build.changed, build);
+	} else {
+		err = _tlas_validate_instances(tlas, p_build.instances);
+		if (err == OK) {
+			err = _tlas_write_instances(tlas, p_build.tlas, p_build.instances, nullptr, build);
+		}
+	}
 	if (err == OK) {
 		err = _acceleration_structure_batch_push(build);
 	}
@@ -872,6 +1056,7 @@ Error RenderingDevice::acceleration_structure_build_batch(Span<RID> p_blas_build
 	acceleration_structure_build_serial++;
 	acceleration_structure_batch.builds.clear();
 	acceleration_structure_batch.barrier_pending = false;
+	acceleration_structure_batch.copies_recorded = false;
 	acceleration_structure_scratch.used = 0;
 	acceleration_structure_scratch.batch_peak = 0;
 	acceleration_structure_scratch.batch_rollovers = 0;
@@ -889,7 +1074,7 @@ Error RenderingDevice::acceleration_structure_build_batch(Span<RID> p_blas_build
 	// The TLAS builds read the BLASes built before them.
 	acceleration_structure_batch.barrier_pending = !acceleration_structure_batch.builds.is_empty();
 	for (const TLASBuild &build : p_tlas_builds) {
-		keep_first_error(_tlas_batch_add(build.tlas, build.instances));
+		keep_first_error(_tlas_batch_add(build));
 	}
 
 	if (!acceleration_structure_batch.builds.is_empty()) {
@@ -8382,6 +8567,11 @@ void RenderingDevice::_free_pending_resources(int p_frame) {
 			}
 
 			buffer_memory.sub(instance_buffer_size * acceleration_structure.instance_buffers.size());
+		}
+
+		if (acceleration_structure.keyed.buffer) {
+			buffer_memory.sub(uint64_t(driver->api_trait_get(RDD::API_TRAIT_ACCELERATION_STRUCTURE_INSTANCE_SIZE)) * MAX(acceleration_structure.max_instance_count, 1u));
+			driver->buffer_free(acceleration_structure.keyed.buffer);
 		}
 
 		frames[p_frame].acceleration_structures_to_dispose_of.pop_front();

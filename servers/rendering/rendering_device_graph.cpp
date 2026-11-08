@@ -2035,6 +2035,24 @@ void RenderingDeviceGraph::add_buffer_update(RDD::BufferID p_dst, ResourceTracke
 	_add_command_to_graph(&p_dst_tracker, &buffer_usage, 1, command_index, command);
 }
 
+void RenderingDeviceGraph::add_buffer_update_untracked(RDD::BufferID p_dst, VectorView<RecordedBufferCopy> p_buffer_copies) {
+	size_t buffer_copies_size = p_buffer_copies.size() * sizeof(RecordedBufferCopy);
+	uint64_t command_size = sizeof(RecordedBufferUpdateCommand) + buffer_copies_size;
+	int32_t command_index;
+	RecordedBufferUpdateCommand *command = static_cast<RecordedBufferUpdateCommand *>(_allocate_command(command_size, command_index));
+	command->type = RecordedCommand::TYPE_BUFFER_UPDATE;
+	command->self_stages = RDD::PIPELINE_STAGE_COPY_BIT;
+	command->destination = p_dst;
+	command->buffer_copies_count = p_buffer_copies.size();
+
+	RecordedBufferCopy *buffer_copies = command->buffer_copies();
+	for (uint32_t i = 0; i < command->buffer_copies_count; i++) {
+		buffer_copies[i] = p_buffer_copies[i];
+	}
+
+	_add_command_to_graph(nullptr, nullptr, 0, command_index, command);
+}
+
 void RenderingDeviceGraph::add_driver_callback(RDD::DriverCallback p_callback, void *p_userdata, VectorView<ResourceTracker *> p_trackers, VectorView<RenderingDeviceGraph::ResourceUsage> p_usages) {
 	DEV_ASSERT(p_trackers.size() == p_usages.size());
 

@@ -3830,6 +3830,23 @@ static void _rt_upload_persistent_rows(RID &r_buffer, uint32_t &r_capacity, cons
 	}
 }
 
+// Completes the keys a keyed TLAS build writes: the persistent entries written since the last build (all of them when
+// p_all) and the per-frame entries [p_end, p_size).
+static void _rt_keyed_changes(LocalVector<uint32_t> &r_changed, uint32_t p_end, uint32_t p_size, bool p_all) {
+	if (p_all) {
+		r_changed.resize(p_size);
+		for (uint32_t i = 0; i < p_size; i++) {
+			r_changed[i] = i;
+		}
+		return;
+	}
+	const uint32_t written = r_changed.size();
+	r_changed.resize(written + (p_size - p_end));
+	for (uint32_t i = p_end; i < p_size; i++) {
+		r_changed[written + i - p_end] = i;
+	}
+}
+
 Error RenderRaytracing::build_acceleration_structures(RTViewportState *p_state, const LocalVector<RID> &p_dirty_blas_list, const LocalVector<RID> &p_dirty_blas_update_list) {
 	RENDER_TIMESTAMP("Acceleration Structure Build");
 
@@ -3849,9 +3866,24 @@ Error RenderRaytracing::build_acceleration_structures(RTViewportState *p_state, 
 		{ p_state->tlas, persistent ? Span<RD::AccelerationStructureInstance>(persistent->tlas.ptr(), persistent->tlas.size()) : Span<RD::AccelerationStructureInstance>(tlas_instance_scratch.ptr(), tlas_instance_scratch.size()) },
 		{ p_state->tlas_transparent, persistent ? Span<RD::AccelerationStructureInstance>(persistent->transparent.ptr(), persistent->transparent.size()) : Span<RD::AccelerationStructureInstance>(tlas_transparent_instance_scratch.ptr(), tlas_transparent_instance_scratch.size()) },
 	};
+	if (persistent) {
+		// The TLASes keep the persistent entries on the GPU: only the ones written since the last build and this
+		// frame's entries are sent. After a reset every entry is.
+		_rt_keyed_changes(persistent->changed_tlas, persistent->tlas_end, persistent->tlas.size(), persistent->changed_all);
+		_rt_keyed_changes(persistent->changed_transparent, persistent->transparent_end, persistent->transparent.size(), persistent->changed_all);
+		tlas_builds[0].keyed = true;
+		tlas_builds[0].changed = Span<uint32_t>(persistent->changed_tlas.ptr(), persistent->changed_tlas.size());
+		tlas_builds[1].keyed = true;
+		tlas_builds[1].changed = Span<uint32_t>(persistent->changed_transparent.ptr(), persistent->changed_transparent.size());
+	}
 
 	// The batch waits for the captures and merges writing its inputs; _render_scene() orders its readers after it.
 	const Error err = RD::get_singleton()->acceleration_structure_build_batch(p_dirty_blas_list, p_dirty_blas_update_list, tlas_builds);
+	if (persistent) {
+		persistent->changed_tlas.clear();
+		persistent->changed_transparent.clear();
+		persistent->changed_all = false;
+	}
 	ERR_FAIL_COND_V_MSG(err != OK, err, "Acceleration structure build failed; skipping path tracing for this frame.");
 	return OK;
 }
@@ -4936,6 +4968,7 @@ void RTTlasBuilder::_persistent_commit(const Instance &p_inst, const RTPlanArena
 		const uint32_t custom_index = row_base + (tlas.custom_indices[src] - p_mark.rows);
 		p.tlas[slot.tlas.begin + i] = _rt_rd_instance(tlas.transforms[src], rt.trace_origin, tlas.blass[src], custom_index, tlas.flags[src], tlas.masks[src], tlas.sbt_offsets[src]);
 		p.tlas_owner[slot.tlas.begin + i] = index;
+		p.changed_tlas.push_back(slot.tlas.begin + i);
 		p.ref_blas(tlas.blass[src]);
 	}
 	for (uint32_t i = 0; i < transparent_count; i++) {
@@ -4943,6 +4976,7 @@ void RTTlasBuilder::_persistent_commit(const Instance &p_inst, const RTPlanArena
 		const uint32_t custom_index = row_base + (transparent.custom_indices[src] - p_mark.rows);
 		p.transparent[slot.transparent.begin + i] = _rt_rd_instance(transparent.transforms[src], rt.trace_origin, transparent.blass[src], custom_index, transparent.flags[src], transparent.masks[src], transparent.sbt_offsets[src]);
 		p.transparent_owner[slot.transparent.begin + i] = index;
+		p.changed_transparent.push_back(slot.transparent.begin + i);
 		p.ref_blas(transparent.blass[src]);
 		p.active_transparent++;
 	}
