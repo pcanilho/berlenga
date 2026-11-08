@@ -422,6 +422,9 @@ enum {
 	RT_LIGHT_VISIBILITY_PAIRS = 1 << 18,
 	RT_LIGHT_VISIBILITY_LISTS = 1 << 16,
 	RT_LIGHT_VISIBILITY_UINTS = RT_LIGHT_VISIBILITY_PAIRS * 2 + RT_LIGHT_VISIBILITY_LISTS * 9,
+	// Radiance cache (binding 45, raytracing_radiance_cache_inc.glsl): 16 uints an entry.
+	RT_RADIANCE_CACHE_ENTRIES = 1 << 18,
+	RT_RADIANCE_CACHE_UINTS = RT_RADIANCE_CACHE_ENTRIES * 16,
 	// Emissive surfaces sampled as lights (appended to the light grid buffer, header [9]): at
 	// most this many per frame, the strongest at the camera; the rest are found by bounce rays only.
 	RT_EMISSIVE_MAX = 1024,
@@ -1122,6 +1125,7 @@ struct RTViewportState {
 	// Light visibility memory (binding 44): a hash table of (place, light) -> recent
 	// shadow-ray hits and tries, which light selection reads. Kept across frames.
 	RID light_visibility_buffer;
+	RID radiance_cache_buffer;
 	uint32_t light_grid_buffer_capacity = 0; // uints.
 	RID params_buffer;
 	RID scene_uniform_set;
