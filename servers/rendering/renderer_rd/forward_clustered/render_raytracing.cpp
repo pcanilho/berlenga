@@ -599,6 +599,12 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (p_state->light_grid_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->light_grid_buffer);
 	}
+	if (p_state->light_visibility_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(p_state->light_visibility_buffer);
+	}
+	if (p_state->radiance_cache_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(p_state->radiance_cache_buffer);
+	}
 	if (p_state->params_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->params_buffer);
 	}
@@ -1236,6 +1242,7 @@ void RenderRaytracing::prepare_frame() {
 	tlas_instances.clear();
 	tlas_transparent_instances.clear();
 	geometry_data.clear();
+	emissive_candidates.clear();
 	motion_indices.clear();
 	motion_transforms.clear();
 
@@ -3428,18 +3435,16 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		}
 	}
 
-	// Point filtering: check if material requests nearest filtering (e.g. pixel art).
-	// BaseMaterial3D exposes this as "texture_filter" int param (0=nearest, 1=linear, etc.).
-	Variant filter_var = material_storage->material_get_param(p_material_rid, "texture_filter");
-	if (filter_var.get_type() == Variant::INT) {
-		int filter_mode = filter_var;
-		// 0 = TEXTURE_FILTER_NEAREST, 2 = TEXTURE_FILTER_NEAREST_WITH_MIPMAPS,
-		// 4 = TEXTURE_FILTER_NEAREST_WITH_MIPMAPS_ANISOTROPIC
+	// Texture filter: compiled into BaseMaterial3D's generated code as sampler hints, so it
+	// reaches the path tracer through the packed state (BaseMaterial3D::TextureFilter).
+	if (is_base_material) {
+		const uint32_t filter_mode = rt_state.texture_filter;
+		// 0 = NEAREST, 2 = NEAREST_WITH_MIPMAPS, 4 = NEAREST_WITH_MIPMAPS_ANISOTROPIC.
 		if (filter_mode == 0 || filter_mode == 2 || filter_mode == 4) {
 			mat.flags |= RT_MAT_FLAG_POINT_FILTER;
 		}
-		// 4 = NEAREST_WITH_MIPMAPS_ANISOTROPIC, 5 = LINEAR_WITH_MIPMAPS_ANISOTROPIC. Raster only filters
-		// anisotropically when the material asks for it, so PT must not either.
+		// 4 and 5 (LINEAR_WITH_MIPMAPS_ANISOTROPIC): raster only filters anisotropically when
+		// the material asks for it, so PT must not either.
 		if (filter_mode == 4 || filter_mode == 5) {
 			mat.flags |= RT_MAT_FLAG_ANISOTROPIC;
 		}
@@ -5118,6 +5123,28 @@ void RTTlasBuilder::_push_tlas_entry(const RT_GeometryData &p_geometry, const RT
 	geometry.instance_uniforms_ofs = p_uniforms_ofs;
 	_rt_set_entry_material(geometry, p_mat_data, p_material_flags, p_instance_alpha);
 	rt.motion_indices.push_back(p_motion_index);
+
+	// An opaque StandardMaterial3D surface that emits: a light for next event estimation.
+	// Custom shaders' EMISSION is only known on the GPU and stays found by bounce rays.
+	if (p_mat_data && !p_mat_data->is_custom_shader && ((p_material_flags | p_mat_data->data.flags) & (RT_MAT_FLAG_TRANSPARENT | RT_MAT_FLAG_UNSHADED)) == 0) {
+		const RT_MaterialData &m = p_mat_data->data;
+		const float color_lum = Math::abs(m.emission_color[0]) * 0.2126f + Math::abs(m.emission_color[1]) * 0.7152f + Math::abs(m.emission_color[2]) * 0.0722f;
+		const bool textured = (m.flags & RT_MAT_FLAG_HAS_EMISSION_TEX) != 0;
+		// Half of a texture's texels are taken as lit: a guess, the shader evaluates the real ones.
+		const float radiance = ((m.flags & RT_MAT_FLAG_EMISSION_ADD) != 0 ? color_lum + (textured ? 0.5f : 0.0f) : (textured ? 0.5f * color_lum : 0.0f)) * m.emission_strength;
+		if (radiance > 0.0f && Math::is_finite(radiance) && !rt.tlas_instances.transforms.is_empty()) {
+			RenderRaytracing::RTEmissiveCandidate e;
+			e.transform = rt.tlas_instances.transforms[rt.tlas_instances.transforms.size() - 1];
+			const AABB box(Vector3(p_geometry.aabb_pos_x, p_geometry.aabb_pos_y, p_geometry.aabb_pos_z), Vector3(p_geometry.aabb_size_x, p_geometry.aabb_size_y, p_geometry.aabb_size_z));
+			e.world_box = e.transform.xform(box);
+			e.radiance = radiance;
+			e.geometry_idx = rt.geometry_data.size() - 1;
+			// The sides bounce rays can hit: they cull back faces unless the instance disables culling.
+			const bool two_sided = !rt.tlas_instances.flags.is_empty() && (rt.tlas_instances.flags[rt.tlas_instances.flags.size() - 1] & RD::ACCELERATION_STRUCTURE_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT) != 0;
+			e.facing = two_sided ? 1u : ((p_facing_flags & RT_GEOM_FLAG_SIDE_CHECK) != 0 ? 2u : 0u);
+			rt.emissive_candidates.push_back(e);
+		}
+	}
 }
 
 int32_t RTTlasBuilder::_push_motion_transform(const Transform3D &p_prev_transform) {
@@ -5470,6 +5497,7 @@ void RenderRaytracing::build_decal_volumes(RTViewportState *p_state, const Rende
 // the grid. Layout, in uints:
 //   [0..2] cells along x, y, z (0: no grid), [3] the global count G,
 //   [4..6] the grid's origin, [7] 1 / cell size (floats' bits), [8] the far count F,
+//   [9] the emissive section's start (append_emissive_lights; 0: none),
 //   [H, H + G) the global lights' indices (H = RT_LIGHT_GRID_HEADER),
 //   [H + G, H + G + F) the far lights' indices,
 //   [H + G + F, + cells + 1) each cell's start in this array, then its end,
@@ -5639,6 +5667,94 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 	}
 }
 
+
+// Emissive surfaces as lights: the opaque StandardMaterial3D surfaces that emit, picked by
+// their estimated power at the camera, then a triangle uniformly and a point on it uniformly
+// (raytracing_lights_inc.glsl, lights_emissive_sample). Weighed by multiple importance sampling
+// against bounce rays that hit them. Appended to the light grid array; its header [9] holds
+// the section's start E (0: none). Layout, in uints, from E:
+//   [0] entry count N, [1] geometry map size G, [2] the sum of the entries' scores (float), [3] 0,
+//   then N entries of RT_EMISSIVE_ENTRY_UINTS: [0..11] object-to-world (3x4 rows, floats),
+//   [12] geometry index, [13] facing (RTEmissiveCandidate::facing), [14] the CDF up to and with this entry, [15] its probability,
+//   then G uints: per geometry index, its entry + 1 (0: not sampled as a light).
+void RenderRaytracing::append_emissive_lights(const Vector3 &p_camera, LocalVector<uint32_t> &r_grid) const {
+	if (r_grid.size() < RT_LIGHT_GRID_HEADER) {
+		return;
+	}
+	r_grid[9] = 0;
+	if (emissive_candidates.is_empty()) {
+		return;
+	}
+	// Score: radiance times area over the squared distance (no nearer than the surface's size).
+	struct Scored {
+		float score;
+		uint32_t candidate;
+	};
+	LocalVector<Scored> scored;
+	scored.reserve(emissive_candidates.size());
+	for (uint32_t i = 0; i < emissive_candidates.size(); i++) {
+		const RTEmissiveCandidate &c = emissive_candidates[i];
+		const Vector3 s = c.world_box.size;
+		const float area = MAX(s.x * s.y + s.y * s.z + s.z * s.x, 1e-6f); // half the box's surface
+		const Vector3 nearest = p_camera.clamp(c.world_box.position, c.world_box.position + s);
+		const float d2 = MAX(nearest.distance_squared_to(p_camera), area);
+		const float score = c.radiance * area / d2;
+		if (score > 0.0f && Math::is_finite(score)) {
+			scored.push_back({ score, i });
+		}
+	}
+	if (scored.is_empty()) {
+		return;
+	}
+	struct ScoreGreater {
+		_FORCE_INLINE_ bool operator()(const Scored &a, const Scored &b) const { return a.score > b.score; }
+	};
+	if (scored.size() > RT_EMISSIVE_MAX) {
+		scored.sort_custom<ScoreGreater>();
+		scored.resize(RT_EMISSIVE_MAX);
+	}
+	float total = 0.0f;
+	for (const Scored &e : scored) {
+		total += e.score;
+	}
+	const uint32_t n = scored.size();
+	const uint32_t g = geometry_data.size();
+	const uint32_t start = r_grid.size();
+	r_grid.resize(start + RT_EMISSIVE_HEADER + n * RT_EMISSIVE_ENTRY_UINTS + g);
+	r_grid[9] = start;
+	r_grid[start + 0] = n;
+	r_grid[start + 1] = g;
+	memcpy(&r_grid[start + 2], &total, sizeof(float));
+	r_grid[start + 3] = 0;
+	const uint32_t map = start + RT_EMISSIVE_HEADER + n * RT_EMISSIVE_ENTRY_UINTS;
+	for (uint32_t i = 0; i < g; i++) {
+		r_grid[map + i] = 0;
+	}
+	float cdf = 0.0f;
+	for (uint32_t k = 0; k < n; k++) {
+		const RTEmissiveCandidate &c = emissive_candidates[scored[k].candidate];
+		uint32_t *e = &r_grid[start + RT_EMISSIVE_HEADER + k * RT_EMISSIVE_ENTRY_UINTS];
+		float f[16];
+		const Basis &b = c.transform.basis;
+		const Vector3 &o = c.transform.origin;
+		for (int r = 0; r < 3; r++) {
+			f[r * 4 + 0] = b.rows[r].x;
+			f[r * 4 + 1] = b.rows[r].y;
+			f[r * 4 + 2] = b.rows[r].z;
+			f[r * 4 + 3] = o[r];
+		}
+		const float p = scored[k].score / total;
+		cdf = (k + 1 == n) ? 1.0f : cdf + p;
+		f[14] = cdf;
+		f[15] = p;
+		memcpy(e, f, sizeof(f));
+		e[12] = c.geometry_idx;
+		e[13] = c.facing;
+		if (c.geometry_idx < g) {
+			r_grid[map + c.geometry_idx] = k + 1;
+		}
+	}
+}
 
 uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, const RTViewportState *p_state, RT_LightData *r_light_data, uint32_t p_max_lights) {
 	uint32_t rt_light_count = 0;
@@ -5832,6 +5948,7 @@ void RenderRaytracing::update_scene_ubo(RTViewportState *p_state, const RenderDa
 		RD::get_singleton()->set_resource_name(p_state->scene_ubo, "RT Scene Data UBO");
 	}
 
+	p_state->default_bg_color = p_default_bg_color;
 	RID env = owner->is_environment(p_render_data->environment) ? p_render_data->environment : RID();
 	RID reflection_probe_instance = p_render_data->reflection_probe.is_valid() ? RendererRD::LightStorage::get_singleton()->reflection_probe_instance_get_probe(p_render_data->reflection_probe) : RID();
 	float luminance_multiplier = p_render_data->render_buffers.is_valid() ? p_render_data->render_buffers->get_luminance_multiplier() : 1.0;
@@ -6038,9 +6155,29 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		RT_LightData *rt_light_data = rt_light_scratch.ptr();
 		const uint32_t rt_light_count = gather_lights(p_render_data, p_state, rt_light_data, RT_LIGHTS_MAX);
 		build_light_grid(rt_light_data, rt_light_count, p_render_data->scene_data->cam_transform.origin, rt_light_grid_scratch);
+		append_emissive_lights(p_render_data->scene_data->cam_transform.origin, rt_light_grid_scratch);
 
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_COUNT] = float(rt_light_count);
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SELF_SHADOW_MASK] = p_state ? float(p_state->shadow_groups.self_shadow_bit) : 0.0f;
+		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_VISIBILITY] = (p_state && p_state->light_visibility_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/light_visibility_memory")) ? 1.0f : 0.0f;
+		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
+		// Color backgrounds, as the raster clear (render_forward_clustered.cpp): camera rays that
+		// miss show them instead of the radiance map, which holds no sky here.
+		if (p_render_data && owner->is_environment(p_render_data->environment) && !p_render_data->transparent_bg) {
+			RID env = p_render_data->environment;
+			RSE::EnvironmentBG bg_mode = owner->environment_get_background(env);
+			if (bg_mode == RSE::ENV_BG_COLOR || bg_mode == RSE::ENV_BG_CLEAR_COLOR) {
+				float energy = owner->environment_get_bg_energy_multiplier(env) * owner->environment_get_bg_intensity(env);
+				if (p_render_data->camera_attributes.is_valid()) {
+					energy *= RSG::camera_attributes->camera_attributes_get_exposure_normalization_factor(p_render_data->camera_attributes);
+				}
+				Color bg = (bg_mode == RSE::ENV_BG_CLEAR_COLOR ? (p_state ? p_state->default_bg_color : Color(0, 0, 0)) : owner->environment_get_bg_color(env)).srgb_to_linear();
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_BG_COLOR_R] = bg.r * energy;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_BG_COLOR_G] = bg.g * energy;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_BG_COLOR_B] = bg.b * energy;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_BG_COLOR_ENABLED] = 1.0f;
+			}
+		}
 
 		// Upload the light buffer and the light grid, grown by doubling.
 		{
@@ -6179,6 +6316,40 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		} else {
 			u.append_id(RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		}
+		uniforms.push_back(u);
+	}
+
+	// Binding 44: the light visibility memory (SSBO; raytracing_lights_inc.glsl).
+	// Made once, zeroed (an empty table), and kept: what it learns carries over frames.
+	{
+		if (!p_state->light_visibility_buffer.is_valid()) {
+			Vector<uint8_t> zeros;
+			zeros.resize(RT_LIGHT_VISIBILITY_UINTS * sizeof(uint32_t));
+			zeros.fill(0);
+			p_state->light_visibility_buffer = RD::get_singleton()->storage_buffer_create(zeros.size(), zeros);
+			RD::get_singleton()->set_resource_name(p_state->light_visibility_buffer, "RT Light Visibility");
+		}
+		RD::Uniform u;
+		u.binding = 44;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(p_state->light_visibility_buffer);
+		uniforms.push_back(u);
+	}
+
+	// Binding 45: the radiance cache (SSBO; raytracing_radiance_cache_inc.glsl).
+	// Made once, zeroed, and kept: cells carry their means over frames.
+	{
+		if (!p_state->radiance_cache_buffer.is_valid()) {
+			Vector<uint8_t> zeros;
+			zeros.resize(RT_RADIANCE_CACHE_UINTS * sizeof(uint32_t));
+			zeros.fill(0);
+			p_state->radiance_cache_buffer = RD::get_singleton()->storage_buffer_create(zeros.size(), zeros);
+			RD::get_singleton()->set_resource_name(p_state->radiance_cache_buffer, "RT Radiance Cache");
+		}
+		RD::Uniform u;
+		u.binding = 45;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(p_state->radiance_cache_buffer);
 		uniforms.push_back(u);
 	}
 

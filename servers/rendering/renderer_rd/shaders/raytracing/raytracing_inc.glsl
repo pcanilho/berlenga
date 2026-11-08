@@ -58,6 +58,12 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_PLIGHT_STATE 27 // bit 0: the image pair written this frame; bit 1: last frame's is valid
 #define RT_PARAM_PLIGHT_BOUNCE 28 // 1: one sky / bounce ray a cell
 #define RT_PARAM_PLIGHT_TILE 29 // pixels a cell across (8, more at large sizes)
+#define RT_PARAM_LIGHT_VISIBILITY 30 // 1: light selection reads and feeds the light visibility memory (raytracing_lights_inc.glsl)
+#define RT_PARAM_RADIANCE_CACHE 31 // 1: bounce paths read and train the radiance cache (raytracing_radiance_cache_inc.glsl)
+#define RT_PARAM_BG_COLOR_R 32 // camera-ray background for color environments (linear, energy applied)
+#define RT_PARAM_BG_COLOR_G 33
+#define RT_PARAM_BG_COLOR_B 34
+#define RT_PARAM_BG_COLOR_ENABLED 35
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)
@@ -78,6 +84,7 @@ struct PathPayload {
 	float hit_t; //  4 bytes - surface distance, even on termination; -1 on a scene miss
 	uint oct_offset_nrm; //  4 bytes - packUnorm2x16(vec3_to_oct(offset normal))
 	uint oct_next_dir; //  4 bytes - packUnorm2x16(vec3_to_oct(next direction)); peel-ray input: SCENE_DEPTH, see path_pack_peel()
+	float bsdf_pdf; //  4 bytes - solid-angle density the ray's direction was drawn with at a vertex that also sampled emissive surfaces; 0: none (emission counts in full)
 };
 
 // Set by payload_set_cone_width(), cleared by path_pack(): oct_next_dir holds the ray cone's width
@@ -99,6 +106,7 @@ struct PathState {
 	float hit_t;
 	vec3 offset_normal;
 	vec3 next_ray_dir;
+	float bsdf_pdf; // See PathPayload::bsdf_pdf.
 };
 
 PathState path_unpack(PathPayload p) {
@@ -113,6 +121,7 @@ PathState path_unpack(PathPayload p) {
 	s.hit_t = p.hit_t;
 	s.offset_normal = oct_to_vec3(unpackUnorm2x16(p.oct_offset_nrm) * 2.0 - 1.0);
 	s.next_ray_dir = oct_to_vec3(unpackUnorm2x16(p.oct_next_dir) * 2.0 - 1.0);
+	s.bsdf_pdf = p.bsdf_pdf;
 	return s;
 }
 
@@ -128,6 +137,7 @@ void path_pack(inout PathPayload p, PathState s) {
 	p.hit_t = s.hit_t;
 	p.oct_offset_nrm = packUnorm2x16(vec3_to_oct(s.offset_normal));
 	p.oct_next_dir = packUnorm2x16(vec3_to_oct(s.next_ray_dir));
+	p.bsdf_pdf = s.bsdf_pdf;
 }
 
 // Peel ray setup. p_scene_depth: NDC depth of the segment's opaque hit, 0.0 = far.

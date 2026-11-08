@@ -683,6 +683,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.orm = orm;
 		rt.ambient_occlusion = features[FEATURE_AMBIENT_OCCLUSION];
 		rt.roughness_texture_channel = roughness_texture_channel;
+		rt.texture_filter = texture_filter;
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 

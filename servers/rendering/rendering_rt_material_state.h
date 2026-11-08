@@ -51,7 +51,8 @@ struct RTBaseMaterialState {
 	uint32_t orm : 1;
 	uint32_t ambient_occlusion : 1;
 	uint32_t roughness_texture_channel : 3; // BaseMaterial3D::TextureChannel.
-	uint32_t unused : 16;
+	uint32_t texture_filter : 3; // BaseMaterial3D::TextureFilter.
+	uint32_t unused : 13;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 
