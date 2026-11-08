@@ -18,7 +18,7 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## build-3c75a9b9 (2026-11-08)
 
-Test build of an unmerged branch, published by mistake. It is not a build of main; use build-5437261e or later.
+Test build of an unmerged branch, published by mistake and deleted. It was not a build of main.
 
 ## build-5437261e (2026-11-08)
 
