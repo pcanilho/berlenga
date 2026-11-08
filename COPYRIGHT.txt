@@ -372,6 +372,17 @@ Comment: Jolt Physics
 Copyright: 2021, Jorrit Rouwe
 License: Expat
 
+Files: modules/godot_physx/*
+Comment: PhysX 5 physics module for Godot
+Copyright: 2026, Wild Ox Studios
+License: Expat
+
+Files: modules/godot_physx/misc/physx_patches/*
+ modules/godot_physx/misc/physx_presets/*
+Comment: NVIDIA PhysX 5, Blast and Flow (linked or loaded by modules/godot_physx)
+Copyright: 2008-2025, NVIDIA Corporation
+License: BSD-3-clause
+
 Files: thirdparty/libbacktrace/*
 Comment: libbacktrace
 Copyright: 2012-2021, Free Software Foundation, Inc.
