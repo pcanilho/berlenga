@@ -1144,6 +1144,12 @@ struct RTViewportState {
 
 	uint32_t frame_counter = 0;
 
+	// Camera-relative tracing: every position the trace sees is world minus this anchor, the
+	// camera's cell on a grid of rendering/pathtracing/relative_origin_grid metres (x and z).
+	// It moves only when the camera leaves its cell. Zero when the setting is 0.
+	Vector3 rt_origin;
+	bool rt_origin_valid = false;
+
 	// Set per frame: the screen-space sky texture was drawn and primary-ray
 	// misses should read it instead of the prefiltered radiance octmap.
 	bool sky_screen_enabled = false;
@@ -1171,6 +1177,8 @@ class RenderRaytracing {
 
 	// Caching (chunked sparse caches indexed by RID low bits / 256).
 	Vector<RTCacheEntry *> surface_chunks;
+	// Coarser levels of static surfaces, keyed (surface cache key << 8) | level; see process_surface_lod.
+	HashMap<uint64_t, RTCacheEntry> surface_lod_cache;
 	Vector<RTMaterialCacheEntry *> material_chunks;
 
 	// Merged MultiMesh BLAS cache and compute shader.
@@ -1502,7 +1510,17 @@ class RenderRaytracing {
 			bool p_allow_update,
 			uint32_t p_cache_key,
 			RTSurfaceData *r_surf_data,
+			LocalVector<RID> &r_dirty_blas_list,
+			uint32_t p_lod = 0);
+	// A static surface at one of Godot's mesh LOD levels (1 and up), shared by the instances tracing it.
+	RTSurfaceData *process_surface_lod(
+			const void *p_surf,
+			uint32_t p_cache_key,
+			uint32_t p_mesh_rid_version,
+			uint32_t p_surface_invalidation_counter,
+			uint32_t p_lod,
 			LocalVector<RID> &r_dirty_blas_list);
+	void _evict_surface_lods(uint32_t p_frame);
 	RTMaterialData *process_material(RID p_material_rid, uint16_t p_material_invalidation_counter);
 	bool _build_merged_mm_blas(
 			const RTInstanceSource &p_source,
@@ -1520,6 +1538,9 @@ class RenderRaytracing {
 	void update_procedural_blas(RTProceduralState *p_state, LocalVector<RID> &r_dirty_blas_list);
 	// Instances of the opaque or decal TLAS, and of the transparent TLAS, as handed to RD.
 	LocalVector<RD::AccelerationStructureInstance> tlas_instance_scratch;
+	// The anchor of the view being built (RTViewportState::rt_origin): TLAS, motion, light and
+	// decal uploads subtract it.
+	Vector3 trace_origin;
 	LocalVector<RD::AccelerationStructureInstance> tlas_transparent_instance_scratch;
 	// Creates r_tlas, or recreates it when p_instances outgrew it, and converts p_instances into r_instances.
 	void _prepare_tlas(RID &r_tlas, uint32_t &r_max_instances, const RTInstanceArrays &p_instances, const String &p_name, LocalVector<RD::AccelerationStructureInstance> &r_instances);
@@ -1585,7 +1606,7 @@ public:
 	LocalVector<RT_LightData> rt_light_scratch;
 	LocalVector<uint32_t> rt_light_grid_scratch;
 	// Appends the emissive surfaces' section to the light grid array (layout in render_raytracing.cpp).
-	void append_emissive_lights(const Vector3 &p_camera, LocalVector<uint32_t> &r_grid) const;
+	void append_emissive_lights(const Vector3 &p_camera, const Vector3 &p_origin, LocalVector<uint32_t> &r_grid) const;
 	void update_scene_ubo(RTViewportState *p_state, const RenderDataRD *p_render_data, const Size2i &p_screen_size, const Color &p_default_bg_color);
 	RID update_uniform_set(RTViewportState *p_state, const RenderDataRD *p_render_data, uint32_t p_rt_flags);
 

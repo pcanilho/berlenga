@@ -180,7 +180,7 @@ uint lights_vis_region(vec3 p, vec3 N) {
 	}
 	vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w, scene_data_block.data.inv_view_matrix[2].w);
 	float level = clamp(floor(log2(max(distance(p, cam), RT_LIGHT_VIS_NEAR) / RT_LIGHT_VIS_NEAR)), 0.0, 15.0);
-	ivec3 c = ivec3(floor(p / (RT_LIGHT_VIS_CELL * exp2(level))));
+	ivec3 c = rt_world_cell(p, RT_LIGHT_VIS_CELL * exp2(level));
 	vec3 a = abs(N);
 	uint axis = a.x > a.y ? (a.x > a.z ? 0u : 2u) : (a.y > a.z ? 1u : 2u);
 	uint side = N[axis] < 0.0 ? 1u : 0u;

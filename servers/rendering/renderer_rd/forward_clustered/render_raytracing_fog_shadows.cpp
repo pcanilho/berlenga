@@ -110,7 +110,10 @@ bool RTFogShadows::prepare(RenderRaytracing *p_raytracing, RTViewportState *p_st
 	}
 
 	ParamsUBO params = {};
-	RendererRD::MaterialStorage::store_transform(p_render_data->scene_data->cam_transform, params.view_to_world);
+	// Into trace positions (world minus the anchor), the space of the TLAS it traces.
+	Transform3D view_to_trace = p_render_data->scene_data->cam_transform;
+	view_to_trace.origin -= p_state->rt_origin;
+	RendererRD::MaterialStorage::store_transform(view_to_trace, params.view_to_world);
 	params.frame_index = p_state->frame_counter;
 	params.trace_shadows = GLOBAL_GET_CACHED(bool, "rendering/pathtracing/volumetric_fog_shadows") ? 1 : 0;
 	params.shadow_mask = RT_SHADOW_GROUPS_MASK & ~uint32_t(p_state->shadow_groups.self_shadow_bit);

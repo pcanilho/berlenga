@@ -379,9 +379,20 @@ License: Expat
 
 Files: modules/godot_physx/misc/physx_patches/*
  modules/godot_physx/misc/physx_presets/*
-Comment: NVIDIA PhysX 5, Blast and Flow (linked or loaded by modules/godot_physx)
+Comment: NVIDIA PhysX 5, Blast and Flow (linked or loaded by modules/godot_physx;
+ the Blast and Flow libraries ship next to the editor in Windows and Linux x86_64 builds)
 Copyright: 2008-2025, NVIDIA Corporation
 License: BSD-3-clause
+
+Files: modules/godot_physx/misc/physx_patches/*
+Comment: V-HACD, compiled into NVIDIA Blast's authoring library (NvBlastExtAuthoring)
+Copyright: 2011, Khaled Mamou
+License: BSD-3-clause
+
+Files: modules/godot_physx/misc/physx_patches/*
+Comment: Boost headers, used by NVIDIA Blast's authoring library (NvBlastExtAuthoring)
+Copyright: Boost contributors
+License: BSL-1.0
 
 Files: thirdparty/libbacktrace/*
 Comment: libbacktrace

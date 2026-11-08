@@ -123,7 +123,7 @@ float rt_volume_block_exit(vec3 p_pos_sim, vec3 p_dir, float p_upm) {
 // The ray's span inside the volume's bounds (meters); false when it misses them.
 bool rt_volume_span(vec3 p_origin, vec3 p_dir, float p_t_max, out float r_t0, out float r_t1) {
 	float upm = rt_volume.world_min.w;
-	vec3 o = p_origin * upm;
+	vec3 o = (p_origin + rt_origin.xyz) * upm; // the trace is relative to rt_origin; Flow works in absolute world
 	vec3 inv = 1.0 / p_dir;
 	vec3 a = (rt_volume.world_min.xyz - o) * inv;
 	vec3 b = (rt_volume.world_max.xyz - o) * inv;
@@ -172,7 +172,7 @@ float rt_volume_free_flight(vec3 p_origin, vec3 p_dir, float p_t_max, inout uint
 		if (t >= t1) {
 			return -1.0;
 		}
-		vec3 p = (p_origin + p_dir * t) * upm;
+		vec3 p = (p_origin + rt_origin.xyz + p_dir * t) * upm;
 		vec2 ts;
 		if (!rt_volume_fetch(p, acc, ts)) {
 			// Unallocated block: no gas, jump to its far side.
@@ -211,7 +211,7 @@ float rt_volume_transmittance(vec3 p_origin, vec3 p_dir, float p_t_max, inout ui
 		if (t >= t1) {
 			break;
 		}
-		vec3 p = (p_origin + p_dir * t) * upm;
+		vec3 p = (p_origin + rt_origin.xyz + p_dir * t) * upm;
 		vec2 ts;
 		if (!rt_volume_fetch(p, acc, ts)) {
 			t += rt_volume_block_exit(p, p_dir, upm);

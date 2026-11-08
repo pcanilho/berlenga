@@ -115,7 +115,7 @@ void dlss_rr_replace_primary_surface(vec3 p_origin, vec3 p_dir, float p_hit_t) {
 	float scene_length = p_hit_t;
 	vec3 mirror_throughput = vec3(1.0); // Specular albedos of the mirrors after the primary one.
 	vec3 ray_dir = reflect(p_dir, own_normal);
-	vec3 ray_origin = offset_ray_origin(p_origin + p_dir * p_hit_t, ray_dir);
+	vec3 ray_origin = offset_ray_origin(p_origin + p_dir * p_hit_t, ray_dir, p_hit_t);
 
 	PathState gs;
 	gs.bsdf_pdf = 0.0;
@@ -145,7 +145,7 @@ void dlss_rr_replace_primary_surface(vec3 p_origin, vec3 p_dir, float p_hit_t) {
 			}
 			mirror_throughput *= hit_specular;
 			image_xform = image_xform * dlss_rr_householder(normalize(mirror_axis));
-			ray_origin = offset_ray_origin(ray_origin + ray_dir * result.hit_t, result.offset_normal);
+			ray_origin = offset_ray_origin(ray_origin + ray_dir * result.hit_t, result.offset_normal, result.hit_t);
 			ray_dir = result.next_ray_dir;
 			continue;
 		}
@@ -749,7 +749,7 @@ void main() {
 			}
 			// Reconstruct the next ray origin from the current ray + hit distance, apply bias
 			vec3 hit_pos = ray_origin + ray_dir * ps.hit_t;
-			ray_origin = offset_ray_origin(hit_pos, ps.offset_normal);
+			ray_origin = offset_ray_origin(hit_pos, ps.offset_normal, ps.hit_t);
 			ray_dir = ps.next_ray_dir;
 		}
 #ifdef DLSS_RR_ENABLED
@@ -1542,6 +1542,12 @@ void main() {
 	read_model_matrix = mat4(gl_ObjectToWorldEXT);
 	model_normal_matrix = mat3(read_model_matrix);
 	m_INV_MODEL_MATRIX = mat4(gl_WorldToObjectEXT);
+	// Absolute world for user code; the trace itself is relative to rt_origin.
+	read_model_matrix[3].xyz += rt_origin.xyz;
+	m_INV_MODEL_MATRIX[3].xyz -= mat3(m_INV_MODEL_MATRIX) * rt_origin.xyz;
+	inv_view_matrix[3].xyz += rt_origin.xyz;
+	read_view_matrix[3].xyz -= mat3(read_view_matrix) * rt_origin.xyz;
+	m_WORLD_ORIGIN += rt_origin.xyz;
 
 	/* RT_CUSTOM_INTERSECTION_CODE */
 

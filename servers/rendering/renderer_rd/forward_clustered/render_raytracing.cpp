@@ -907,6 +907,14 @@ void RenderRaytracing::cleanup_caches() {
 	}
 	surface_chunks.clear();
 
+	for (KeyValue<uint64_t, RTCacheEntry> &kv : surface_lod_cache) {
+		if (kv.value.ptr) {
+			_free_blas_resources(blas_transform_pool, kv.value.ptr->blas, &kv.value.ptr->blas_transform, 1);
+			memdelete(kv.value.ptr);
+		}
+	}
+	surface_lod_cache.clear();
+
 	for (KeyValue<RTMeshGroupKey, RTMeshGroupEntry> &kv : mesh_groups) {
 		_free_blas_resources(blas_transform_pool, kv.value.blas, kv.value.transforms.ptr(), kv.value.transforms.size());
 	}
@@ -1264,6 +1272,7 @@ void RenderRaytracing::prepare_frame() {
 	_rt_prune_handle_map(shared_captured_mm_entries, shared_captured_mm_prune, merged_mm_pool);
 
 	_evict_dead_mesh_groups();
+	_evict_surface_lods(current_frame);
 
 	// Finish async HG compiles so live_ready_mask matches this frame (sync path fills at build_tlas end).
 	SceneShaderRaytracing::get_singleton()->drain_completed_compiles();
@@ -1349,6 +1358,57 @@ RTSurfaceData *RenderRaytracing::process_surface_cached(
 	entry->last_used_frame = current_frame;
 
 	return surf_data;
+}
+
+// A coarser level of a static surface (Godot's mesh LODs), cached per (surface, level) and shared by
+// every instance that traces that level.
+RTSurfaceData *RenderRaytracing::process_surface_lod(
+		const void *p_surf,
+		uint32_t p_cache_key,
+		uint32_t p_mesh_rid_version,
+		uint32_t p_surface_invalidation_counter,
+		uint32_t p_lod,
+		LocalVector<RID> &r_dirty_blas_list) {
+	const uint64_t key = (uint64_t(p_cache_key) << 8) | (p_lod & 0xFF);
+	RTCacheEntry *entry = surface_lod_cache.getptr(key);
+	if (!entry) {
+		entry = &surface_lod_cache.insert(key, RTCacheEntry())->value;
+	}
+	const uint32_t current_frame = RSG::rasterizer->get_frame_number();
+	if (entry->ptr && entry->ptr->blas.is_valid() && entry->cached_rid_version == p_mesh_rid_version && entry->cached_counter == p_surface_invalidation_counter) {
+		entry->last_used_frame = current_frame;
+		return entry->ptr;
+	}
+	if (!entry->ptr) {
+		entry->ptr = memnew(RTSurfaceData);
+	} else {
+		_free_blas_resources(blas_transform_pool, entry->ptr->blas, &entry->ptr->blas_transform, 1);
+	}
+	void *mesh_surface = static_cast<const RenderForwardClustered::GeometryInstanceSurfaceDataCache *>(p_surf)->surface;
+	_populate_surface_blas(mesh_surface, RID(), RID(), false, false, false, p_cache_key, entry->ptr, r_dirty_blas_list, p_lod);
+	entry->cached_counter = p_surface_invalidation_counter;
+	entry->cached_rid_version = p_mesh_rid_version;
+	entry->last_used_frame = current_frame;
+	return entry->ptr;
+}
+
+// Frees the LOD levels no instance traced for a while.
+void RenderRaytracing::_evict_surface_lods(uint32_t p_frame) {
+	static const uint32_t LOD_TTL = 120; // Frames a level stays after its last use.
+	LocalVector<uint64_t> expired;
+	for (KeyValue<uint64_t, RTCacheEntry> &kv : surface_lod_cache) {
+		if (p_frame - kv.value.last_used_frame > LOD_TTL) {
+			expired.push_back(kv.key);
+		}
+	}
+	for (uint64_t key : expired) {
+		RTCacheEntry &entry = surface_lod_cache[key];
+		if (entry.ptr) {
+			_free_blas_resources(blas_transform_pool, entry.ptr->blas, &entry.ptr->blas_transform, 1);
+			memdelete(entry.ptr);
+		}
+		surface_lod_cache.erase(key);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -2401,7 +2461,8 @@ static void _fill_surface_geometry_data(
 		RTSurfaceData *r_surf_data,
 		RID *r_vertex_buffer = nullptr,
 		RID *r_attribute_buffer = nullptr,
-		RID *r_index_buffer = nullptr) {
+		RID *r_index_buffer = nullptr,
+		uint32_t p_lod = 0) {
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
 
 	uint64_t surface_format = mesh_storage->mesh_surface_get_format(p_mesh_surface);
@@ -2418,7 +2479,7 @@ static void _fill_surface_geometry_data(
 
 	RID vertex_buffer = mesh_storage->mesh_surface_get_vertex_buffer(p_mesh_surface);
 	RID attribute_buffer = mesh_storage->mesh_surface_get_attribute_buffer(p_mesh_surface);
-	RID index_buffer = mesh_storage->mesh_surface_get_index_buffer(p_mesh_surface, 0);
+	RID index_buffer = mesh_storage->mesh_surface_get_index_buffer(p_mesh_surface, p_lod);
 
 	if (r_vertex_buffer) {
 		*r_vertex_buffer = vertex_buffer;
@@ -2431,7 +2492,7 @@ static void _fill_surface_geometry_data(
 	}
 
 	uint32_t vertex_count = mesh_storage->mesh_surface_get_vertex_count(p_mesh_surface);
-	uint32_t index_count = mesh_storage->mesh_surface_get_index_count(p_mesh_surface, 0);
+	uint32_t index_count = mesh_storage->mesh_surface_get_index_count(p_mesh_surface, p_lod);
 
 	geom.vertex_count = vertex_count;
 
@@ -2550,10 +2611,11 @@ static bool _fill_surface_blas_geometry(
 		RID p_index_buffer_override,
 		bool p_force_uncompressed,
 		RTSurfaceData *r_surf_data,
-		RD::AccelerationStructureGeometry &r_as_geom) {
+		RD::AccelerationStructureGeometry &r_as_geom,
+		uint32_t p_lod = 0) {
 	RID vertex_buffer, attribute_buffer, index_buffer;
 	_fill_surface_geometry_data(p_mesh_surface, p_force_uncompressed, r_surf_data,
-			&vertex_buffer, &attribute_buffer, &index_buffer);
+			&vertex_buffer, &attribute_buffer, &index_buffer, p_lod);
 
 	if (p_vertex_buffer_override.is_valid()) {
 		vertex_buffer = p_vertex_buffer_override;
@@ -2612,14 +2674,15 @@ void RenderRaytracing::_populate_surface_blas(
 		bool p_allow_update,
 		uint32_t p_cache_key,
 		RTSurfaceData *r_surf_data,
-		LocalVector<RID> &r_dirty_blas_list) {
+		LocalVector<RID> &r_dirty_blas_list,
+		uint32_t p_lod) {
 	blas_transform_pool.release(r_surf_data->blas_transform);
 	RD::AccelerationStructureGeometry as_geom;
-	if (!_fill_surface_blas_geometry(p_mesh_surface, p_vertex_buffer_override, p_index_buffer_override, p_force_uncompressed, r_surf_data, as_geom)) {
+	if (!_fill_surface_blas_geometry(p_mesh_surface, p_vertex_buffer_override, p_index_buffer_override, p_force_uncompressed, r_surf_data, as_geom, p_lod)) {
 		return;
 	}
 
-	const String name = String(p_vertex_buffer_override.is_valid() ? "RT BLAS deformed [" : "RT BLAS [") + itos(p_cache_key) + "]";
+	const String name = String(p_vertex_buffer_override.is_valid() ? "RT BLAS deformed [" : "RT BLAS [") + itos(p_cache_key) + (p_lod ? " LOD " + itos(p_lod) : String()) + "]";
 	_assign_compression_transforms(blas_transform_pool, &r_surf_data->geometry, &as_geom, &r_surf_data->blas_transform, 1);
 	r_surf_data->blas = _create_blas({ &as_geom, 1 }, p_prefer_fast_build, p_allow_update, name, r_dirty_blas_list);
 	if (!r_surf_data->blas.is_valid()) {
@@ -3502,6 +3565,7 @@ void RenderRaytracing::_prepare_tlas(RID &r_tlas, uint32_t &r_max_instances, con
 		RD::AccelerationStructureInstance &inst = r_instances[i];
 		inst.id = p_instances.custom_indices[i];
 		inst.transform = p_instances.transforms[i];
+		inst.transform.origin -= trace_origin;
 		inst.blas = p_instances.blass[i];
 		inst.flags = BitField<RD::AccelerationStructureInstanceFlagBits>(p_instances.flags[i]);
 		inst.mask = p_instances.masks[i];
@@ -4248,6 +4312,12 @@ private:
 	// Path-traced billboards face the camera for every ray type, like raster Enabled/Y modes do for the main camera.
 	RenderingBillboard::Camera billboard_camera;
 	RenderingBillboard::Camera prev_billboard_camera;
+	// Mesh LOD as the rasterizer picks it (rendering/pathtracing/mesh_lod); threshold 0 = full detail.
+	float lod_threshold = 0.0f;
+	float lod_distance_multiplier = 1.0f;
+	bool lod_orthogonal = false;
+	Vector3 lod_camera;
+	uint32_t _surface_lod(const Instance &p_inst, const RTPlanSurface &p_surface) const;
 
 	LocalVector<InstanceKind> instance_kinds; // Per rt_instances entry.
 	LocalVector<PendingMMSurface> pending_mm_surfaces;
@@ -4313,7 +4383,7 @@ private:
 	// Applying a plan: every side effect, in TLAS order.
 	void _apply_mesh_instance(const Instance &p_inst, const RTPlanArena &p_arena, const RTPlanInstance &p_record);
 	void _apply_surface_group(const Instance &p_inst, const RTPlanGroup &p_group, Span<const RTPlanSurface> p_members, int32_t p_motion_index);
-	RTSurfaceData *_process_plan_surface(const Instance &p_inst, const RTPlanSurface &p_surface);
+	RTSurfaceData *_process_plan_surface(const Instance &p_inst, const RTPlanSurface &p_surface, uint32_t p_lod = 0);
 	RTDeformedGeometrySource _deformed_source(const Instance &p_inst, const RTPlanSurface &p_surface);
 
 	void _upload_merge_billboards();
@@ -4350,6 +4420,12 @@ RTTlasBuilder::RTTlasBuilder(RenderRaytracing &p_rt, const RenderDataRD *p_rende
 	if (p_render_data->scene_data) {
 		billboard_camera = _rt_billboard_camera(p_render_data->scene_data->cam_transform, p_render_data->scene_data->cam_projection);
 		prev_billboard_camera = _rt_billboard_camera(p_render_data->scene_data->prev_cam_transform, p_render_data->scene_data->prev_cam_projection);
+		if (GLOBAL_GET_CACHED(bool, "rendering/pathtracing/mesh_lod")) {
+			lod_threshold = p_render_data->scene_data->screen_mesh_lod_threshold;
+			lod_distance_multiplier = p_render_data->scene_data->lod_distance_multiplier;
+			lod_orthogonal = p_render_data->scene_data->cam_orthogonal;
+			lod_camera = p_render_data->scene_data->main_cam_transform.origin;
+		}
 	}
 	for (const RTCaptureRequest &capture : r_captures) {
 		pending_surface_count += capture.recorded ? 0 : 1;
@@ -4863,8 +4939,18 @@ void RTTlasBuilder::_apply_surface_group(const Instance &p_inst, const RTPlanGro
 	const DirtyMark mark = _dirty_mark();
 	const uint32_t uniforms_ofs = uint32_t(p_inst.shader_uniforms_offset);
 	const float instance_alpha = _instance_alpha(p_inst);
+	// Members the rasterizer would draw at a coarser LOD trace that level, one BLAS per surface.
+	bool any_lod = false;
+	if (lod_threshold > 0.0f) {
+		for (const RTPlanSurface &member : p_members) {
+			if (_surface_lod(p_inst, member) != 0) {
+				any_lod = true;
+				break;
+			}
+		}
+	}
 	RTMeshGroupEntry *group = nullptr;
-	if (p_members.size() > 1) {
+	if (p_members.size() > 1 && !any_lod) {
 		RTMeshGroupKey group_key;
 		group_key.mesh_id = p_inst.data->base.get_id();
 		group_key.surface_mask = p_group.surface_mask;
@@ -4883,7 +4969,7 @@ void RTTlasBuilder::_apply_surface_group(const Instance &p_inst, const RTPlanGro
 	} else {
 		for (const RTPlanSurface &member : p_members) {
 			const RTMaterialData *mat_data = rt.touch_material(member.material_slot);
-			RTSurfaceData *surf_data = _process_plan_surface(p_inst, member);
+			RTSurfaceData *surf_data = _process_plan_surface(p_inst, member, any_lod ? _surface_lod(p_inst, member) : 0);
 			if (!surf_data || !surf_data->blas.is_valid()) {
 				continue;
 			}
@@ -4904,7 +4990,27 @@ void RTTlasBuilder::_apply_surface_group(const Instance &p_inst, const RTPlanGro
 }
 
 // Deformed geometry of the surface when it has any, else its cached static BLAS.
-RTSurfaceData *RTTlasBuilder::_process_plan_surface(const Instance &p_inst, const RTPlanSurface &p_surface) {
+// The LOD level the rasterizer draws this surface of the instance at (render_forward_clustered.cpp,
+// _fill_render_list): the distance from the camera to the instance's box against each level's edge length.
+uint32_t RTTlasBuilder::_surface_lod(const Instance &p_inst, const RTPlanSurface &p_surface) const {
+	if (lod_threshold <= 0.0f || p_surface.deformed_kind != RT_PLAN_DEFORMED_NONE) {
+		return 0;
+	}
+	const SurfaceCache *surf = static_cast<const SurfaceCache *>(p_surface.surf);
+	if (!surf || !mesh_storage->mesh_surface_has_lod(surf->surface)) {
+		return 0;
+	}
+	float distance = 1.0f;
+	if (!lod_orthogonal) {
+		const Vector3 aabb_min = p_inst.transformed_aabb.position;
+		const Vector3 aabb_max = aabb_min + p_inst.transformed_aabb.size;
+		distance = Vector3().max(aabb_min - lod_camera).max(lod_camera - aabb_max).length();
+	}
+	uint32_t indices = 0;
+	return mesh_storage->mesh_surface_get_lod(surf->surface, p_inst.lod_model_scale * p_inst.lod_bias, distance * lod_distance_multiplier, lod_threshold, indices);
+}
+
+RTSurfaceData *RTTlasBuilder::_process_plan_surface(const Instance &p_inst, const RTPlanSurface &p_surface, uint32_t p_lod) {
 	const SurfaceCache *surf = static_cast<const SurfaceCache *>(p_surface.surf);
 	RTSurfaceData *surf_data = nullptr;
 	if (p_surface.deformed_kind != RT_PLAN_DEFORMED_NONE) {
@@ -4913,7 +5019,13 @@ RTSurfaceData *RTTlasBuilder::_process_plan_surface(const Instance &p_inst, cons
 			surf_data = rt.process_deformed_surface(surf->surface, source, dirty_blas_list, dirty_blas_update_list);
 		}
 	}
-	return surf_data ? surf_data : rt.process_surface_cached(surf, p_surface.cache_key, p_surface.mesh_rid_version, p_surface.surface_counter, p_inst.transform, dirty_blas_list);
+	if (surf_data) {
+		return surf_data;
+	}
+	if (p_lod != 0) {
+		return rt.process_surface_lod(surf, p_surface.cache_key, p_surface.mesh_rid_version, p_surface.surface_counter, p_lod, dirty_blas_list);
+	}
+	return rt.process_surface_cached(surf, p_surface.cache_key, p_surface.mesh_rid_version, p_surface.surface_counter, p_inst.transform, dirty_blas_list);
 }
 
 // Commits the surface's capture, or reads the skeleton or blend shape output of its mesh instance.
@@ -5149,7 +5261,9 @@ void RTTlasBuilder::_push_tlas_entry(const RT_GeometryData &p_geometry, const RT
 
 int32_t RTTlasBuilder::_push_motion_transform(const Transform3D &p_prev_transform) {
 	RT_InstanceMotionData motion = {};
-	RendererRD::MaterialStorage::store_transform_transposed_3x4(p_prev_transform, motion.prev_object_to_world);
+	Transform3D prev = p_prev_transform;
+	prev.origin -= rt.trace_origin; // Relative to this frame's anchor, as the current transform.
+	RendererRD::MaterialStorage::store_transform_transposed_3x4(prev, motion.prev_object_to_world);
 	rt.motion_transforms.push_back(motion);
 	return int32_t(rt.motion_transforms.size() - 1);
 }
@@ -5180,6 +5294,23 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 
 	prepare_frame();
 	mesh_group_build_first_use = mesh_group_use_counter;
+
+	// Camera-relative tracing: positions go to the GPU as world minus an anchor snapped to a
+	// grid on x and z, so 32-bit floats stay precise kilometres from the world origin. y stays
+	// absolute, so heights (fog, user shaders) are exact. The anchor moves only when the camera
+	// leaves its cell; a grid of 0 traces in absolute world positions.
+	{
+		const double grid = GLOBAL_GET_CACHED(double, "rendering/pathtracing/relative_origin_grid");
+		const Vector3 cam = p_render_data->scene_data->cam_transform.origin;
+		if (grid <= 0.0) {
+			state->rt_origin = Vector3();
+		} else if (!state->rt_origin_valid || cam.x < state->rt_origin.x || cam.x >= state->rt_origin.x + grid ||
+				cam.z < state->rt_origin.z || cam.z >= state->rt_origin.z + grid) {
+			state->rt_origin = Vector3(Math::floor(cam.x / grid) * grid, 0.0, Math::floor(cam.z / grid) * grid);
+		}
+		state->rt_origin_valid = grid > 0.0;
+		trace_origin = state->rt_origin;
+	}
 	state->merge_billboards.clear();
 #ifdef RT_VALIDATION_ENABLED
 	_rtv_begin_view();
@@ -5454,6 +5585,10 @@ void RenderRaytracing::build_decal_volumes(RTViewportState *p_state, const Rende
 		d = entry.data;
 		d.modulate[3] *= info.fade;
 		d.emission_energy *= info.fade;
+		// world_to_box takes trace positions (world minus the anchor): its offset gains M * anchor.
+		for (int r = 0; r < 3; r++) {
+			d.world_to_box[r * 4 + 3] += d.world_to_box[r * 4 + 0] * trace_origin.x + d.world_to_box[r * 4 + 1] * trace_origin.y + d.world_to_box[r * 4 + 2] * trace_origin.z;
+		}
 		decal_instances.transforms[i] = entry.box_transform;
 		decal_instances.blass[i] = decal_box_blas;
 		decal_instances.flags[i] = 0;
@@ -5677,7 +5812,7 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 //   then N entries of RT_EMISSIVE_ENTRY_UINTS: [0..11] object-to-world (3x4 rows, floats),
 //   [12] geometry index, [13] facing (RTEmissiveCandidate::facing), [14] the CDF up to and with this entry, [15] its probability,
 //   then G uints: per geometry index, its entry + 1 (0: not sampled as a light).
-void RenderRaytracing::append_emissive_lights(const Vector3 &p_camera, LocalVector<uint32_t> &r_grid) const {
+void RenderRaytracing::append_emissive_lights(const Vector3 &p_camera, const Vector3 &p_origin, LocalVector<uint32_t> &r_grid) const {
 	if (r_grid.size() < RT_LIGHT_GRID_HEADER) {
 		return;
 	}
@@ -5737,7 +5872,7 @@ void RenderRaytracing::append_emissive_lights(const Vector3 &p_camera, LocalVect
 		uint32_t *e = &r_grid[start + RT_EMISSIVE_HEADER + k * RT_EMISSIVE_ENTRY_UINTS];
 		float f[16];
 		const Basis &b = c.transform.basis;
-		const Vector3 &o = c.transform.origin;
+		const Vector3 o = c.transform.origin - p_origin;
 		for (int r = 0; r < 3; r++) {
 			f[r * 4 + 0] = b.rows[r].x;
 			f[r * 4 + 1] = b.rows[r].y;
@@ -5899,7 +6034,7 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, cons
 
 		RT_LightData &ld = r_light_data[rt_light_count];
 		const Transform3D xform = ls->light_instance_get_base_transform(light_instance);
-		store_common(ld, base, type == RSE::LIGHT_SPOT ? RT_LIGHT_TYPE_SPOT : RT_LIGHT_TYPE_OMNI, xform.origin,
+		store_common(ld, base, type == RSE::LIGHT_SPOT ? RT_LIGHT_TYPE_SPOT : RT_LIGHT_TYPE_OMNI, xform.origin - (p_state ? p_state->rt_origin : Vector3()),
 				compute_light_energy(base, type) * positional_lights[i].distance_fade,
 				ls->light_get_param(base, RSE::LIGHT_PARAM_SIZE),
 				ls->light_get_param(base, RSE::LIGHT_PARAM_SPECULAR) * 2.0f, // Matches rasterizer convention (light_storage.cpp), normalizes 0.5 default to 1.0.
@@ -5955,7 +6090,7 @@ void RenderRaytracing::update_scene_ubo(RTViewportState *p_state, const RenderDa
 	float luminance_multiplier = p_render_data->render_buffers.is_valid() ? p_render_data->render_buffers->get_luminance_multiplier() : 1.0;
 
 	// Keep the arguments in sync with the _setup_environment() call in the PT camera pass.
-	p_render_data->scene_data->update_ubo(p_state->scene_ubo, owner->get_debug_draw_mode(), env, reflection_probe_instance, p_render_data->camera_attributes, false, p_screen_size, p_screen_size, p_default_bg_color, luminance_multiplier, false, false);
+	p_render_data->scene_data->update_ubo(p_state->scene_ubo, owner->get_debug_draw_mode(), env, reflection_probe_instance, p_render_data->camera_attributes, false, p_screen_size, p_screen_size, p_default_bg_color, luminance_multiplier, false, false, p_state->rt_origin);
 }
 
 RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderDataRD *p_render_data, uint32_t p_rt_flags) {
@@ -6072,7 +6207,11 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			float params[SceneShaderRaytracing::RT_PARAM_COUNT];
 			float prev_vp_unjittered[16];
 			float curr_vp_unjittered[16];
+			float rt_origin[4]; // The anchor trace positions are relative to (xyz).
 		} rt_ubo = {};
+		rt_ubo.rt_origin[0] = (float)p_state->rt_origin.x;
+		rt_ubo.rt_origin[1] = (float)p_state->rt_origin.y;
+		rt_ubo.rt_origin[2] = (float)p_state->rt_origin.z;
 
 		if (p_render_data && p_render_data->environment.is_valid()) {
 			RendererEnvironmentStorage *env_storage = RendererEnvironmentStorage::get_singleton();
@@ -6132,10 +6271,15 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			Projection correction;
 			correction.set_depth_correction(true);
 
-			Projection prev_vp = (correction * p_render_data->scene_data->prev_cam_projection) * Projection(p_render_data->scene_data->prev_cam_transform.affine_inverse());
+			// Both cameras relative to this frame's anchor, so last frame reprojects across an anchor move.
+			Transform3D prev_cam = p_render_data->scene_data->prev_cam_transform;
+			Transform3D curr_cam = p_render_data->scene_data->cam_transform;
+			prev_cam.origin -= p_state->rt_origin;
+			curr_cam.origin -= p_state->rt_origin;
+			Projection prev_vp = (correction * p_render_data->scene_data->prev_cam_projection) * Projection(prev_cam.affine_inverse());
 			RendererRD::MaterialStorage::store_camera(prev_vp, rt_ubo.prev_vp_unjittered);
 
-			Projection curr_vp = (correction * p_render_data->scene_data->cam_projection) * Projection(p_render_data->scene_data->cam_transform.affine_inverse());
+			Projection curr_vp = (correction * p_render_data->scene_data->cam_projection) * Projection(curr_cam.affine_inverse());
 			RendererRD::MaterialStorage::store_camera(curr_vp, rt_ubo.curr_vp_unjittered);
 		}
 
@@ -6155,8 +6299,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		memset((void *)rt_light_scratch.ptr(), 0, RT_LIGHTS_MAX * sizeof(RT_LightData));
 		RT_LightData *rt_light_data = rt_light_scratch.ptr();
 		const uint32_t rt_light_count = gather_lights(p_render_data, p_state, rt_light_data, RT_LIGHTS_MAX);
-		build_light_grid(rt_light_data, rt_light_count, p_render_data->scene_data->cam_transform.origin, rt_light_grid_scratch);
-		append_emissive_lights(p_render_data->scene_data->cam_transform.origin, rt_light_grid_scratch);
+		// Light positions are relative to the anchor (gather_lights), so is the grid.
+		build_light_grid(rt_light_data, rt_light_count, p_render_data->scene_data->cam_transform.origin - p_state->rt_origin, rt_light_grid_scratch);
+		append_emissive_lights(p_render_data->scene_data->cam_transform.origin, p_state->rt_origin, rt_light_grid_scratch);
 
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_COUNT] = float(rt_light_count);
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SELF_SHADOW_MASK] = p_state ? float(p_state->shadow_groups.self_shadow_bit) : 0.0f;

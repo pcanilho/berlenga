@@ -1,6 +1,6 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|textures|glass|physx --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|textures|glass|far|physx --spp=N --rr --out=path.png --frames=N --far=N --raster
 var shot := "lights"
 var spp := 16
 var out := "out.png"
@@ -202,7 +202,7 @@ func shot_physx() -> void:
 	sun.shadow_enabled = true
 	add_child(sun)
 	var lamp := OmniLight3D.new()
-	lamp.position = Vector3(2.4, 1.6, 1.2)
+	lamp.position = Vector3(3.4, 1.4, 1.6)
 	lamp.light_color = Color(1, 0.6, 0.3)
 	lamp.light_energy = 5
 	lamp.omni_range = 7
@@ -230,6 +230,13 @@ func shot_physx() -> void:
 	flag_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	flag.material_override = flag_mat
 	add_child(flag)
+	# A strong gust tears the lower two thirds of the flag off the pole (release_pins keeps the motion).
+	get_tree().create_timer(3.5, true, true).timeout.connect(func() -> void:
+		var torn := PackedInt32Array()
+		for y in range(5, 16):
+			torn.push_back(y * 24)
+		flag.release_pins(torn)
+		flag.wind = Vector3(16.0, 1.5, 2.5))
 
 	# Blast wall: a box fractured into 40 Voronoi cells, grounded, broken by a ball.
 	var wall_mesh := BoxMesh.new()
@@ -293,16 +300,69 @@ func shot_physx() -> void:
 	# Smoke plume beside the lamp.
 	var flow = ClassDB.instantiate("PhysXFlow3D")
 	flow.smoke_density = 4.0
-	flow.position = Vector3(3.2, 0, -2.0)
+	flow.position = Vector3(2.5, 0, 0.6)
 	add_child(flow)
 	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
 	em.position = Vector3(0, 0.3, 0)
-	em.radius = 0.5
-	em.velocity = Vector3(0.6, 2.2, 0)
+	em.radius = 0.6
+	em.velocity = Vector3(0, 3.0, 0)
 	em.smoke = 1.0
 	em.temperature = 0.3
 	flow.add_child(em)
 	em.flow = em.get_path_to(flow)
+	# A paddle swept through the plume: physics bodies are solids for the gas, so it splits and curls round it.
+	var paddle := AnimatableBody3D.new()
+	var ps := CollisionShape3D.new()
+	var pb := BoxShape3D.new()
+	pb.size = Vector3(1.0, 0.1, 1.2)
+	ps.shape = pb
+	paddle.add_child(ps)
+	var pm := MeshInstance3D.new()
+	var pbm := BoxMesh.new()
+	pbm.size = pb.size
+	pbm.material = mat(Color(0.25, 0.27, 0.3), 0.4)
+	pm.mesh = pbm
+	paddle.add_child(pm)
+	paddle.position = flow.position + Vector3(-1.3, 1.3, 0)
+	add_child(paddle)
+	var tw := create_tween().set_loops().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(paddle, "position:x", flow.position.x + 1.3, 2.5)
+	tw.tween_property(paddle, "position:x", flow.position.x - 1.3, 2.5)
+
+# A small lit scene --far metres from the world origin on x and z (try 65536), for
+# rendering/pathtracing/relative_origin_grid on and off.
+func shot_far() -> void:
+	env.background_color = Color(0.25, 0.3, 0.4)
+	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	env.pathtracing_max_bounces = 2
+	plane(Vector2(40, 40), mat(Color(0.6, 0.6, 0.6), 0.9))
+	var red := mat(Color(0.7, 0.15, 0.1), 0.5)
+	box(Vector3(1, 1, 1), Vector3(-1, 0.5, 0), red)
+	box(Vector3(2, 0.02, 0.5), Vector3(1, 0.01, 1), red)
+	var shiny := mat(Color(0.8, 0.8, 0.8), 0.1)
+	shiny.metallic = 1.0
+	var s := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.5
+	sm.height = 1.0
+	sm.material = shiny
+	s.mesh = sm
+	s.position = Vector3(1, 0.5, -1)
+	add_child(s)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-35, 40, 0)
+	sun.light_energy = 1.5
+	sun.shadow_enabled = true
+	add_child(sun)
+	var o := OmniLight3D.new()
+	o.position = Vector3(0, 0.4, 1.5)
+	o.omni_range = 6
+	o.light_energy = 2.0
+	o.light_color = Color(1, 0.7, 0.4)
+	o.shadow_enabled = true
+	add_child(o)
+	camera(Vector3(0, 2.5, 5), Vector3(0, 0.3, 0), 50)
+	position = Vector3(far, 0, far)
 
 func _process(_d: float) -> void:
 	n += 1
