@@ -1146,6 +1146,7 @@ struct RTViewportState {
 	// Set per frame: the screen-space sky texture was drawn and primary-ray
 	// misses should read it instead of the prefiltered radiance octmap.
 	bool sky_screen_enabled = false;
+	Color default_bg_color; // The viewport clear color (ENV_BG_CLEAR_COLOR), from update_scene_ubo().
 	// The transparent pass's traced light cache (#72): two image pairs, written in turn.
 	RID light_cache[4];
 	Vector3i light_cache_size;

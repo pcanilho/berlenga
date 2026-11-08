@@ -829,8 +829,13 @@ void main() {
 	} else {
 		vec2 sky_uv = rt_sky_oct_uv(gl_WorldRayDirectionEXT);
 
-		sky_color = radiance_octmap_sample(sky_uv, 0.0);
-		sky_color *= scene_data_block.data.IBL_exposure_normalization;
+		if (get_rt_param(RT_PARAM_BG_COLOR_ENABLED) > 0.5 && get_total_bounces(ps.packed_bounces_flags) == 0u) {
+			// A color background, as the raster clear; bounces keep the radiance map.
+			sky_color = vec3(get_rt_param(RT_PARAM_BG_COLOR_R), get_rt_param(RT_PARAM_BG_COLOR_G), get_rt_param(RT_PARAM_BG_COLOR_B));
+		} else {
+			sky_color = radiance_octmap_sample(sky_uv, 0.0);
+			sky_color *= scene_data_block.data.IBL_exposure_normalization;
+		}
 
 		if ((RT_FLAGS & RT_FLAG_FOG_ENABLED) != 0u) {
 			vec3 fog_color = scene_data_block.data.fog_light_color;
