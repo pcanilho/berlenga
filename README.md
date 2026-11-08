@@ -15,6 +15,17 @@ Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built
 
 *1024 omni lights, 16 samples per pixel, no denoiser. Left: NVIDIA-RTX/godot (64 lights per frame). Right: this fork.*
 
+## For open-world games
+
+The fork is built with large open worlds in mind, where the limits are float precision far from the origin, the number of lights and the cost of lighting what lies far from the camera:
+- Camera-relative tracing keeps shadows, reflections and contact points exact kilometres from the world origin.
+- The light grid follows the camera and holds up to 4096 lights, so a city or a road of lamps stays cheap; light visibility memory stops lights hidden behind terrain or buildings from taking samples.
+- Emissive surfaces light their surroundings without placing a light for each sign or window.
+- The radiance cache is camera-following and world-space, so it covers any map size at a fixed 16 MiB.
+- PhysX cloth, destruction, smoke and water work alongside Jolt.
+
+Next for large worlds, in order: RTX Mega Geometry (cluster acceleration structures with level of detail, so distant geometry stays in the trace at low cost), partitioned acceleration structures for scenes with many static objects, and geometry streaming. Every feature has a project setting to turn it off. Research notes are in [docs/ideas](docs/ideas).
+
 ## What this fork adds
 
 Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transparency, traced particles and decals, volumetric fog with traced shadows, shadow groups and asynchronous pipeline compilation. The fork keeps NVIDIA's code wherever it covers the same ground, and adds:
