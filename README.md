@@ -47,15 +47,9 @@ Every feature that changes the look or the cost has a project setting to turn it
 - Warns when used without DLSS upscaling; frame generation presents generated frames.
 
 ### Physics (PhysX 5)
-![PhysX: cloth flag in wind, a Blast wall broken by a ball, rigid crates, Flow smoke](docs/media/physx.gif)
-
 Windows x64 and Linux x86_64 builds include PhysX 5 with Blast destruction and Flow smoke and fire. Pick it per project in **Project Settings > Physics > 3D > Physics Engine** (`Jolt Physics` or `PhysX`); every 3D physics node works with either.
-- With either engine: `PhysXCloth3D` (tearable), `PhysXSkinnedCloth3D`, `PhysXDestructible3D` (editor fracture tool), `PhysXFlow3D`, ocean water with buoyancy, compute-shader fluids and granular material.
+- With either engine: `PhysXCloth3D`, `PhysXSkinnedCloth3D`, `PhysXDestructible3D` (editor fracture tool), `PhysXFlow3D`, ocean water with buoyancy, compute-shader fluids and granular material.
 - PhysX only: vehicles, CUDA fluids and deformables, GPU rigid bodies (CUDA builds; releases use the CPU solver).
-- **Path-traced smoke and fire** (`rendering/pathtracing/simulated_gas`): the nearest `PhysXFlow3D` is traced as a medium that scatters light, casts soft shadows, shows in reflections and glows from within.
-
-  ![An earlier cut of the scene, path traced: lamp light scatters in the smoke, which shadows the floor](docs/media/physx-pathtraced.webp)
-
 - Builds without the SDKs (`physx_sdk=`, `blast_sdk=`, `flow_sdk=`; see `modules/godot_physx/README.md`) skip the module.
 
 ### Performance, API, stability
@@ -65,7 +59,7 @@ Windows x64 and Linux x86_64 builds include PhysX 5 with Blast destruction and F
 
 ## Comparisons
 
-Same scene and samples per pixel, no denoiser. Scenes: [docs/media/showcase](docs/media/showcase) (`godot --path docs/media/showcase -- --shot=<city|lights|textures|glass|physx|far|night>`) and [docs/media/light-selection](docs/media/light-selection) (`-- --scene=<signs|city|street>`).
+Same scene and samples per pixel, no denoiser. Scenes: [docs/media/showcase](docs/media/showcase) (`godot --path docs/media/showcase -- --shot=<city|lights|textures|glass|far|night>`) and [docs/media/light-selection](docs/media/light-selection) (`-- --scene=<signs|city|street>`).
 
 <details>
 <summary>Many lights: 1024 lamps, NVIDIA-RTX/godot vs this fork</summary>
