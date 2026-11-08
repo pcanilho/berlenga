@@ -27,13 +27,6 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
-### Large worlds
-- **Camera-relative tracing** (`rendering/pathtracing/relative_origin_grid`): exact shadows and reflections far from the origin.
-- **Mesh LOD in the path tracer** (`rendering/pathtracing/mesh_lod`).
-- **Off-screen culling** (`rendering/pathtracing/cull_max_distance`, `cull_min_size`).
-- **Opacity micromaps** (`rendering/pathtracing/opacity_micromaps`): cut-out foliage traced without any-hit shaders.
-- **Persistent instances** (`rendering/pathtracing/persistent_instances`): objects that did not change skip the per-frame TLAS work.
-
 ### Exposure
 - **Histogram metering** (`rendering/camera/auto_exposure/metering`): lamps in view no longer darken the scene.
 - **Dark-scene key** (`dark_scene_luminance`): night stays night.
@@ -114,6 +107,28 @@ Look at the pavement under the window.
 
 ![The night street: hot spots on lit walls and black facades without local exposure, detail kept with it](docs/media/local-exposure.jpg)
 </details>
+
+## Open worlds
+
+The fork is built for large open worlds. Each setting below is off unless noted.
+
+- **Camera-relative tracing** (`rendering/pathtracing/relative_origin_grid`, on): exact shadows and reflections far from the origin.
+- **Persistent instances** (`rendering/pathtracing/persistent_instances`): unchanged objects skip the per-frame acceleration structure work.
+- **Mesh LOD in the path tracer** (`rendering/pathtracing/mesh_lod`).
+- **Off-screen culling** (`rendering/pathtracing/cull_max_distance`, `cull_min_size`).
+- **Opacity micromaps** (`rendering/pathtracing/opacity_micromaps`): cut-out foliage traced without any-hit shaders.
+
+Suggested `project.godot`:
+
+```ini
+[rendering]
+pathtracing/persistent_instances=true
+pathtracing/cull_max_distance=500.0
+pathtracing/cull_min_size=0.1
+pathtracing/opacity_micromaps=true
+```
+
+Bench: `godot --path docs/bench/open_world --gpu-profile -- --count=100000 --set=rendering/pathtracing/persistent_instances:1` (also `--movers=N`, `--churn=N`, `--fly=S`, `--raster`). Measurements and design: [open-world geometry](docs/ideas/open-world-geometry.md), [persistent instances](docs/ideas/persistent-instances.md), [opacity micromaps](docs/ideas/opacity-micromaps.md).
 
 ## References
 
