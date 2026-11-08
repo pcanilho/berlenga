@@ -30,7 +30,10 @@
 
 #include "servers/rendering/renderer_geometry_instance.h"
 
+SafeNumeric<uint64_t> RenderGeometryInstanceBase::rt_generation_counter;
+
 void RenderGeometryInstanceBase::set_skeleton(RID p_skeleton) {
+	bump_rt_generation();
 	data->skeleton = p_skeleton;
 
 	_mark_dirty();
@@ -38,6 +41,7 @@ void RenderGeometryInstanceBase::set_skeleton(RID p_skeleton) {
 }
 
 void RenderGeometryInstanceBase::set_material_override(RID p_override) {
+	bump_rt_generation();
 	data->material_override = p_override;
 
 	_mark_dirty();
@@ -45,6 +49,7 @@ void RenderGeometryInstanceBase::set_material_override(RID p_override) {
 }
 
 void RenderGeometryInstanceBase::set_material_overlay(RID p_overlay) {
+	bump_rt_generation();
 	data->material_overlay = p_overlay;
 
 	_mark_dirty();
@@ -52,6 +57,7 @@ void RenderGeometryInstanceBase::set_material_overlay(RID p_overlay) {
 }
 
 void RenderGeometryInstanceBase::set_surface_materials(const Vector<RID> &p_materials) {
+	bump_rt_generation();
 	data->surface_materials = p_materials;
 
 	_mark_dirty();
@@ -59,12 +65,14 @@ void RenderGeometryInstanceBase::set_surface_materials(const Vector<RID> &p_mate
 }
 
 void RenderGeometryInstanceBase::set_mesh_instance(RID p_mesh_instance) {
+	bump_rt_generation();
 	mesh_instance = p_mesh_instance;
 
 	_mark_dirty();
 }
 
 void RenderGeometryInstanceBase::set_transform(const Transform3D &p_transform, const AABB &p_aabb, const AABB &p_transformed_aabb) {
+	bump_rt_generation();
 	transform = p_transform;
 	mirror = p_transform.basis.determinant() < 0;
 	data->aabb = p_aabb;
@@ -86,30 +94,37 @@ void RenderGeometryInstanceBase::set_pivot_data(float p_sorting_offset, bool p_u
 }
 
 void RenderGeometryInstanceBase::set_lod_bias(float p_lod_bias) {
+	bump_rt_generation();
 	lod_bias = p_lod_bias;
 }
 
 void RenderGeometryInstanceBase::set_layer_mask(uint32_t p_layer_mask) {
+	bump_rt_generation();
 	layer_mask = p_layer_mask;
 }
 
 void RenderGeometryInstanceBase::set_rt_shadows_only(bool p_shadows_only) {
+	bump_rt_generation();
 	rt_shadows_only = p_shadows_only;
 }
 
 void RenderGeometryInstanceBase::set_rt_self_shadowing(bool p_self_shadowing) {
+	bump_rt_generation();
 	rt_self_shadowing = p_self_shadowing;
 }
 
 void RenderGeometryInstanceBase::set_rt_shadow_caster(bool p_casts) {
+	bump_rt_generation();
 	rt_shadow_caster = p_casts;
 }
 
 void RenderGeometryInstanceBase::set_rt_blas_update(RSE::RTBlasUpdate p_update) {
+	bump_rt_generation();
 	rt_blas_update = p_update;
 }
 
 void RenderGeometryInstanceBase::set_fade_range(bool p_enable_near, float p_near_begin, float p_near_end, bool p_enable_far, float p_far_begin, float p_far_end) {
+	bump_rt_generation();
 	fade_near = p_enable_near;
 	fade_near_begin = p_near_begin;
 	fade_near_end = p_near_end;
@@ -119,32 +134,38 @@ void RenderGeometryInstanceBase::set_fade_range(bool p_enable_near, float p_near
 }
 
 void RenderGeometryInstanceBase::set_parent_fade_alpha(float p_alpha) {
+	bump_rt_generation();
 	parent_fade_alpha = p_alpha;
 }
 
 void RenderGeometryInstanceBase::set_transparency(float p_transparency) {
+	bump_rt_generation();
 	force_alpha = CLAMP(1.0 - p_transparency, 0, 1);
 }
 
 void RenderGeometryInstanceBase::set_use_baked_light(bool p_enable) {
+	bump_rt_generation();
 	data->use_baked_light = p_enable;
 
 	_mark_dirty();
 }
 
 void RenderGeometryInstanceBase::set_use_dynamic_gi(bool p_enable) {
+	bump_rt_generation();
 	data->use_dynamic_gi = p_enable;
 
 	_mark_dirty();
 }
 
 void RenderGeometryInstanceBase::set_instance_shader_uniforms_offset(int32_t p_offset) {
+	bump_rt_generation();
 	shader_uniforms_offset = p_offset;
 
 	_mark_dirty();
 }
 
 void RenderGeometryInstanceBase::set_cast_double_sided_shadows(bool p_enable) {
+	bump_rt_generation();
 	data->cast_double_sided_shadows = p_enable;
 
 	_mark_dirty();

@@ -28,7 +28,9 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#include "render_raytracing_persistent.h"
 #include "render_raytracing_volumes.h"
+
 #include "core/config/project_settings.h"
 #include "core/math/math_funcs.h"
 #include "core/math/math_funcs_binary.h"
@@ -93,8 +95,14 @@ void RTBlasTransformPool::clear() {
 }
 
 // RD frees a BLAS together with any mesh buffer it was built from, so the BLAS may already be gone.
+// Set while persistent instance slots exist: told of every BLAS the caches free (RenderRaytracing::_persistent_blas_freed).
+static void (*_rt_persistent_blas_freed)(RID p_blas) = nullptr;
+
 static void _free_blas_resources(RTBlasTransformPool &r_pool, RID &r_blas, RTBlasTransformPool::Slot *r_transforms, uint32_t p_count) {
 	RD *rd = RD::get_singleton();
+	if (_rt_persistent_blas_freed && r_blas.is_valid()) {
+		_rt_persistent_blas_freed(r_blas);
+	}
 	if (rd->acceleration_structure_is_valid(r_blas)) {
 		rd->free_rid(r_blas);
 	}
@@ -441,6 +449,19 @@ static void _rt_set_entry_material(RT_GeometryData &r_geometry, const RTMaterial
 	r_geometry.material_flags = p_material_flags;
 }
 
+// One TLAS instance for RenderingDevice, relative to the trace origin; hit group p_sbt_offset of the pipeline.
+static RD::AccelerationStructureInstance _rt_rd_instance(const Transform3D &p_transform, const Vector3 &p_origin, RID p_blas, uint32_t p_custom_index, uint32_t p_flags, uint8_t p_mask, uint32_t p_sbt_offset) {
+	RD::AccelerationStructureInstance inst;
+	inst.id = p_custom_index;
+	inst.transform = p_transform;
+	inst.transform.origin -= p_origin;
+	inst.blas = p_blas;
+	inst.flags = BitField<RD::AccelerationStructureInstanceFlagBits>(p_flags);
+	inst.mask = p_mask;
+	inst.hit_sbt_range = RD::HitShaderBindingTableRange((1ULL << 32) | uint64_t(p_sbt_offset));
+	return inst;
+}
+
 static uint32_t _rt_tlas_flags(const RTSurfaceGroupKey &p_key, const RTTriangleFacing &p_facing) {
 	return p_facing.instance_flags | (p_key.opaque ? uint32_t(RD::ACCELERATION_STRUCTURE_INSTANCE_FORCE_OPAQUE_BIT) : 0u);
 }
@@ -478,8 +499,16 @@ void RendererSceneRenderImplementation::rt_assign_surface_groups(Span<RTSurfaceG
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+static RenderRaytracing *_rt_persistent_owner = nullptr;
+
 void RenderRaytracing::initialize(RenderForwardClustered *p_owner) {
 	owner = p_owner;
+	_rt_persistent_owner = this;
+	_rt_persistent_blas_freed = [](RID p_blas) {
+		if (_rt_persistent_owner) {
+			_rt_persistent_owner->_persistent_blas_freed(p_blas);
+		}
+	};
 	// Initialized eagerly: vertex captures resolve materials before build_tlas() runs prepare_frame().
 	bindless_block = memnew(BindlessBlock);
 	bindless_block->initialize(RD::get_singleton());
@@ -505,6 +534,10 @@ RenderRaytracing::~RenderRaytracing() {
 		_free_viewport_state_internal(kv.value);
 	}
 	viewport_states.clear();
+	if (_rt_persistent_owner == this) {
+		_rt_persistent_owner = nullptr;
+		_rt_persistent_blas_freed = nullptr;
+	}
 
 	cleanup_caches();
 
@@ -632,6 +665,7 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (p_state->decal_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->decal_buffer);
 	}
+	_persistent_free(p_state);
 	memdelete(p_state);
 }
 
@@ -892,6 +926,12 @@ uint64_t RenderRaytracing::mat_ubo_pool_get_address(uint32_t p_slot) const {
 // ---------------------------------------------------------------------------
 
 void RenderRaytracing::cleanup_caches() {
+	// Every BLAS goes below, so persistent slots start over.
+	for (KeyValue<RTViewportStateKey, RTViewportState *> &kv : viewport_states) {
+		if (kv.value->persistent) {
+			kv.value->persistent->reset();
+		}
+	}
 	for (uint32_t i = 0; i < surface_chunks.size(); i++) {
 		if (surface_chunks[i]) {
 			for (uint32_t j = 0; j < RT_CACHE_CHUNK_SIZE; j++) {
@@ -1252,6 +1292,7 @@ void RenderRaytracing::prepare_frame() {
 	geometry_data.clear();
 	emissive_candidates.clear();
 	motion_indices.clear();
+	geometry_material_slots.clear();
 	motion_transforms.clear();
 
 	const uint32_t current_frame = RSG::rasterizer->get_frame_number();
@@ -1840,11 +1881,21 @@ RTPlanArena &RenderRaytracing::_open_plan_arena(RTViewportState *p_state, const 
 	}
 	RTPlanArena &arena = p_state->plan_arenas[p_state->plan_current];
 	if (!opened) {
+		_persistent_open(p_state, p_render_data, p_ctx);
+		RTPersistentInstances *persistent = p_state->persistent && p_state->persistent->active ? p_state->persistent : nullptr;
+		if (persistent) {
+			persistent->clean.resize(count);
+		}
 		plan_capacities.resize(count);
 		for (uint32_t i = 0; i < count; i++) {
 			const RenderForwardClustered::GeometryInstanceForwardClustered *inst =
 					static_cast<const RenderForwardClustered::GeometryInstanceForwardClustered *>(instances[i]);
-			plan_capacities[i] = inst ? inst->rt_surface_count : 0;
+			// An instance whose slot holds its entries unchanged is neither planned nor written: no plan range.
+			const bool clean = persistent && inst && persistent->check_clean(inst->rt_index, inst->rt_generation);
+			if (persistent) {
+				persistent->clean[i] = clean;
+			}
+			plan_capacities[i] = inst && !clean ? inst->rt_surface_count : 0;
 		}
 		rt_plan_reserve(arena, plan_capacities);
 	}
@@ -2304,13 +2355,21 @@ void RenderRaytracing::prepare_vertex_captures(const RenderDataRD *p_render_data
 	ctx.frustum = &frustum;
 	RTPlanArena &arena = _open_plan_arena(state, p_render_data, ctx);
 	const PagedArray<RenderGeometryInstance *> &rt_instances = *p_render_data->rt_instances;
+	// Instances that kept their persistent slot have no capture surface and no plan range.
+	const RTPersistentInstances *persistent = state->persistent && state->persistent->active ? state->persistent : nullptr;
 	_rt_plan_instances(ctx, arena.instances.size(), plan_workspace, [&](const RTPlanContext &p_ctx, RTPlanScratch &r_scratch, uint32_t p_index) {
+		if (persistent && persistent->clean[p_index]) {
+			return true;
+		}
 		return _plan_captures(p_ctx, r_scratch, *state, rt_instances[p_index], arena, p_index);
 	});
 
 	// Bind surfaces whose capture is current; queue the others for the scheduler.
 	dynamic_items.clear();
 	for (uint32_t i = 0; i < arena.instances.size(); i++) {
+		if (persistent && persistent->clean[i]) {
+			continue;
+		}
 		_apply_capture_instance(ctx, state, rt_instances[i], arena, i);
 	}
 
@@ -3527,15 +3586,268 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 // Acceleration structure building
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Persistent instance slots (render_raytracing_persistent.h)
+// ---------------------------------------------------------------------------
+
+bool RenderRaytracing::_persistent_wanted(const RenderDataRD *p_render_data) const {
+	if (!GLOBAL_GET_CACHED(bool, "rendering/pathtracing/persistent_instances")) {
+		return false;
+	}
+#ifdef RT_VALIDATION_ENABLED
+	// Strict validation checks the per-frame arrays as one view.
+	if (rt_validation().strict) {
+		return false;
+	}
+#endif
+	// The dynamic geometry view annotates instances by their order in the per-frame arrays.
+	return !(p_render_data->environment.is_valid() &&
+			RendererEnvironmentStorage::get_singleton()->environment_get_pathtracing_debug_mode(p_render_data->environment) == SceneShaderRaytracing::RT_DEBUG_DYNAMIC_GEOMETRY);
+}
+
+void RenderRaytracing::_persistent_free(RTViewportState *p_state) {
+	if (p_state->persistent) {
+		memdelete(p_state->persistent);
+		p_state->persistent = nullptr;
+	}
+}
+
+void RenderRaytracing::_persistent_blas_freed(RID p_blas) {
+	for (KeyValue<RTViewportStateKey, RTViewportState *> &kv : viewport_states) {
+		RTPersistentInstances *persistent = kv.value->persistent;
+		if (persistent && persistent->blas_refs.has(p_blas)) {
+			persistent->lost_blas.push_back(p_blas);
+		}
+	}
+}
+
+bool RenderRaytracing::_persistent_blas_referenced(RID p_blas) const {
+	for (const KeyValue<RTViewportStateKey, RTViewportState *> &kv : viewport_states) {
+		if (kv.value->persistent && kv.value->persistent->blas_refs.has(p_blas)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Disables the persistent entries whose BLAS was freed under them (a safety net: the caches keep referenced BLASes),
+// and has their slots written again.
+static void _rt_persistent_drop_lost(RTPersistentInstances &r_persistent) {
+	if (r_persistent.lost_blas.is_empty()) {
+		return;
+	}
+	HashSet<RID> lost;
+	for (const RID &blas : r_persistent.lost_blas) {
+		lost.insert(blas);
+	}
+	r_persistent.lost_blas.clear();
+	const auto drop = [&](LocalVector<RD::AccelerationStructureInstance> &r_entries, const LocalVector<uint32_t> &p_owners, uint32_t p_end, bool p_transparent) {
+		for (uint32_t i = 0; i < p_end; i++) {
+			RD::AccelerationStructureInstance &entry = r_entries[i];
+			if (entry.mask != 0 && lost.has(entry.blas)) {
+				r_persistent.disable_entry(entry, p_transparent);
+				r_persistent.flags[p_owners[i]] |= RTPersistentInstances::SLOT_REWRITE;
+			}
+		}
+	};
+	drop(r_persistent.tlas, r_persistent.tlas_owner, r_persistent.tlas_end, false);
+	drop(r_persistent.transparent, r_persistent.transparent_owner, r_persistent.transparent_end, true);
+}
+
+// Starts the frame's use of the slots: what every slot depends on, the shadow-caster groups, and the materials that
+// changed since the last frame. RenderRaytracing::_open_plan_arena then checks each instance.
+void RenderRaytracing::_persistent_open(RTViewportState *p_state, const RenderDataRD *p_render_data, const RTPlanContext &p_ctx) {
+	if (!_persistent_wanted(p_render_data)) {
+		_persistent_free(p_state);
+		return;
+	}
+	if (!p_state->persistent) {
+		p_state->persistent = memnew(RTPersistentInstances);
+	}
+	RTPersistentInstances &p = *p_state->persistent;
+	p.active = true;
+	p.build++;
+	p.stamped = 0;
+	p.written_instances = 0;
+	p.written_primitives = 0;
+	_update_trace_origin(p_state, p_render_data);
+
+	// Inputs of every slot's entries; any change writes every slot again.
+	const RenderSceneDataRD *scene_data = p_render_data->scene_data;
+	const bool lod = scene_data && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/mesh_lod") && scene_data->screen_mesh_lod_threshold > 0.0f;
+	uint64_t key = hash_murmur3_one_64(p_ctx.rt_flags);
+	key = hash_murmur3_one_64(p_ctx.versions.ready_version, key);
+	key = hash_murmur3_one_64(p_ctx.versions.capture_mode_version, key);
+	key = hash_murmur3_one_64(p_ctx.versions.mesh_version, key);
+	key = hash_murmur3_one_64(p_ctx.camera_visible_layers, key);
+	key = hash_murmur3_one_64(uint64_t(lod) | (uint64_t(RenderForwardClustered::get_singleton()->is_front_facing_preserved_when_mirrored()) << 1), key);
+	key = hash_murmur3_one_64(_rt_hash_bytes(&trace_origin, sizeof(Vector3)), key);
+	bool reset = key != p.global_key;
+	p.global_key = key;
+
+	// Shadow-caster groups: kept while the lights' caster masks stay the same set, so kept slots keep their masks.
+	LocalVector<uint32_t> caster_masks;
+	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
+	const PagedArray<RID> *light_lists[] = { p_render_data->lights, p_render_data->rt_lights };
+	for (const PagedArray<RID> *lights : light_lists) {
+		if (!lights) {
+			continue;
+		}
+		for (uint32_t li = 0; li < (uint32_t)lights->size(); li++) {
+			const uint32_t mask = light_storage->light_get_shadow_caster_mask(light_storage->light_instance_get_base_light((*lights)[li]));
+			if (caster_masks.find(mask) == -1) {
+				caster_masks.push_back(mask);
+			}
+		}
+	}
+	caster_masks.sort();
+	bool same_masks = caster_masks.size() == p.caster_masks.size();
+	for (uint32_t i = 0; same_masks && i < caster_masks.size(); i++) {
+		same_masks = caster_masks[i] == p.caster_masks[i];
+	}
+	if (!same_masks) {
+		p.caster_masks = caster_masks;
+		reset = true;
+	}
+
+	// Ranges given up add up; past a quarter of the persistent entries, everything is written again, compactly.
+	const uint32_t live = p.tlas_end + p.transparent_end + p.rows_end;
+	reset = reset || (p.garbage > 4096 && p.garbage * 4 > live);
+
+	_rt_persistent_drop_lost(p);
+	if (reset || p_state->shadow_groups.self_shadow_bit == 0) {
+		p.reset();
+		RTShadowGroupTable &groups = p_state->shadow_groups;
+		groups.reset();
+		for (uint32_t mask : p.caster_masks) {
+			groups.register_caster_mask(mask);
+		}
+		// Always reserved, so a self-shadowing instance never needs the groups rebuilt.
+		groups.reserve_self_shadow_group();
+	}
+
+	// Materials changed since the last frame: slots whose rows use one are written again.
+	p.any_material_changed = false;
+	if (p_ctx.versions.material_version != p.material_version) {
+		p.material_version = p_ctx.versions.material_version;
+		const uint32_t slot_count = uint32_t(material_chunks.size()) * RT_CACHE_CHUNK_SIZE;
+		const uint32_t old_count = p.material_counters.size();
+		p.material_counters.resize(slot_count);
+		p.material_changed.resize(slot_count);
+		for (uint32_t i = old_count; i < slot_count; i++) {
+			p.material_counters[i] = 0;
+		}
+		RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
+		for (uint32_t slot = 0; slot < slot_count; slot++) {
+			p.material_changed[slot] = 0;
+			const RTMaterialCacheEntry *entry = _find_material_cache_entry(slot);
+			if (!entry || !entry->ptr) {
+				continue;
+			}
+			const RID material = RID::from_uint64((uint64_t(entry->cached_rid_version) << 32) | slot);
+			const uint16_t counter = material_storage->owns_material(material) ? material_storage->material_get_rt_invalidation_counter(material) : uint16_t(~entry->cached_counter);
+			if (counter != p.material_counters[slot]) {
+				p.material_counters[slot] = counter;
+				p.material_changed[slot] = 1;
+				p.any_material_changed = true;
+			}
+		}
+	}
+}
+
+// Ends the frame's writes: disables the slots of instances that left the list, and adds the slots' emissive
+// surfaces. Per-frame geometry entries follow the persistent rows, so their indices shift by rows_end.
+void RenderRaytracing::_persistent_finish(RTViewportState *p_state) {
+	RTPersistentInstances *persistent = p_state->persistent;
+	if (!persistent || !persistent->active) {
+		geometry_row_count = geometry_data.size();
+		return;
+	}
+	RTPersistentInstances &p = *persistent;
+	_rt_persistent_drop_lost(p);
+	if (p.stamped != p.enabled) {
+		for (uint32_t i = 0; i < p.slots.size(); i++) {
+			if ((p.flags[i] & RTPersistentInstances::SLOT_ENABLED) && p.stamps[i] != p.build) {
+				p.disable_slot(i);
+			}
+		}
+	}
+	for (RTEmissiveCandidate &candidate : emissive_candidates) {
+		candidate.geometry_idx += p.rows_end;
+	}
+	for (const KeyValue<uint32_t, LocalVector<RTEmissiveCandidate>> &kv : p.emissive) {
+		if (p.flags[kv.key] & RTPersistentInstances::SLOT_ENABLED) {
+			for (const RTEmissiveCandidate &candidate : kv.value) {
+				emissive_candidates.push_back(candidate);
+			}
+		}
+	}
+	geometry_row_count = p.rows_end + geometry_data.size();
+}
+
+// Appends the per-frame entries after the persistent ones, their custom indices past the persistent rows.
+template <typename Instances>
+static void _rt_append_dynamic_instances(LocalVector<RD::AccelerationStructureInstance> &r_entries, uint32_t p_end, const Instances &p_instances, uint32_t p_row_offset, const Vector3 &p_origin) {
+	r_entries.resize(p_end + p_instances.blass.size());
+	for (uint32_t i = 0; i < p_instances.blass.size(); i++) {
+		r_entries[p_end + i] = _rt_rd_instance(p_instances.transforms[i], p_origin, p_instances.blass[i], p_instances.custom_indices[i] + p_row_offset, p_instances.flags[i], p_instances.masks[i], p_instances.sbt_offsets[i]);
+	}
+}
+
+// Uploads persistent rows [0, p_static_count) (only the dirty ones unless p_all) and the per-frame rows after them.
+template <typename T>
+static void _rt_upload_persistent_rows(RID &r_buffer, uint32_t &r_capacity, const LocalVector<T> &p_static, uint32_t p_static_count, const LocalVector<RTMaterialTable::Range> &p_ranges, bool p_all,
+		const LocalVector<T> &p_dynamic, const char *p_name) {
+	RD *rd = RD::get_singleton();
+	const uint64_t size = uint64_t(p_static_count + p_dynamic.size()) * sizeof(T);
+	if (size == 0) {
+		return;
+	}
+	ERR_FAIL_COND(size > UINT32_MAX);
+	if (size > r_capacity) {
+		_free_rid_if_valid(r_buffer);
+		r_capacity = uint32_t(MIN(MAX(size, uint64_t(r_capacity) + r_capacity / 2), uint64_t(UINT32_MAX) / sizeof(T) * sizeof(T)));
+		Vector<uint8_t> init;
+		init.resize(r_capacity);
+		memset(init.ptrw(), 0, r_capacity);
+		memcpy(init.ptrw(), p_static.ptr(), p_static_count * sizeof(T));
+		memcpy(init.ptrw() + p_static_count * sizeof(T), p_dynamic.ptr(), p_dynamic.size() * sizeof(T));
+		r_buffer = rd->storage_buffer_create(r_capacity, init);
+		rd->set_resource_name(r_buffer, p_name);
+		return;
+	}
+	if (p_all) {
+		if (p_static_count > 0) {
+			rd->buffer_update(r_buffer, 0, p_static_count * sizeof(T), p_static.ptr());
+		}
+	} else {
+		for (const RTMaterialTable::Range &range : p_ranges) {
+			rd->buffer_update(r_buffer, range.begin * sizeof(T), (range.end - range.begin) * sizeof(T), &p_static[range.begin]);
+		}
+	}
+	if (!p_dynamic.is_empty()) {
+		rd->buffer_update(r_buffer, p_static_count * sizeof(T), p_dynamic.size() * sizeof(T), p_dynamic.ptr());
+	}
+}
+
 Error RenderRaytracing::build_acceleration_structures(RTViewportState *p_state, const LocalVector<RID> &p_dirty_blas_list, const LocalVector<RID> &p_dirty_blas_update_list) {
 	RENDER_TIMESTAMP("Acceleration Structure Build");
 
-	_prepare_tlas(p_state->tlas, p_state->tlas_max_instances, tlas_instances, "RT TLAS", tlas_instance_scratch);
-	// Built even when empty so the raygen binding stays valid.
-	_prepare_tlas(p_state->tlas_transparent, p_state->tlas_transparent_max_instances, tlas_transparent_instances, "RT TLAS Transparent", tlas_transparent_instance_scratch);
+	RTPersistentInstances *persistent = p_state->persistent && p_state->persistent->active ? p_state->persistent : nullptr;
+	if (persistent) {
+		// The persistent entries stay in place; this frame's follow them.
+		_rt_append_dynamic_instances(persistent->tlas, persistent->tlas_end, tlas_instances, persistent->rows_end, trace_origin);
+		_rt_append_dynamic_instances(persistent->transparent, persistent->transparent_end, tlas_transparent_instances, persistent->rows_end, trace_origin);
+		_ensure_tlas(p_state->tlas, p_state->tlas_max_instances, persistent->tlas.size(), "RT TLAS");
+		_ensure_tlas(p_state->tlas_transparent, p_state->tlas_transparent_max_instances, persistent->transparent.size(), "RT TLAS Transparent");
+	} else {
+		_prepare_tlas(p_state->tlas, p_state->tlas_max_instances, tlas_instances, "RT TLAS", tlas_instance_scratch);
+		// Built even when empty so the raygen binding stays valid.
+		_prepare_tlas(p_state->tlas_transparent, p_state->tlas_transparent_max_instances, tlas_transparent_instances, "RT TLAS Transparent", tlas_transparent_instance_scratch);
+	}
 	RD::TLASBuild tlas_builds[] = {
-		{ p_state->tlas, tlas_instance_scratch },
-		{ p_state->tlas_transparent, tlas_transparent_instance_scratch },
+		{ p_state->tlas, persistent ? Span<RD::AccelerationStructureInstance>(persistent->tlas.ptr(), persistent->tlas.size()) : Span<RD::AccelerationStructureInstance>(tlas_instance_scratch.ptr(), tlas_instance_scratch.size()) },
+		{ p_state->tlas_transparent, persistent ? Span<RD::AccelerationStructureInstance>(persistent->transparent.ptr(), persistent->transparent.size()) : Span<RD::AccelerationStructureInstance>(tlas_transparent_instance_scratch.ptr(), tlas_transparent_instance_scratch.size()) },
 	};
 
 	// The batch waits for the captures and merges writing its inputs; _render_scene() orders its readers after it.
@@ -3549,8 +3861,8 @@ Error RenderRaytracing::_build_one_tlas(RID &r_tlas, uint32_t &r_max_instances, 
 	return _rt_tlas_build(r_tlas, tlas_instance_scratch);
 }
 
-void RenderRaytracing::_prepare_tlas(RID &r_tlas, uint32_t &r_max_instances, const RTInstanceArrays &p_instances, const String &p_name, LocalVector<RD::AccelerationStructureInstance> &r_instances) {
-	uint32_t needed = MAX(p_instances.blass.size(), (uint32_t)1);
+void RenderRaytracing::_ensure_tlas(RID &r_tlas, uint32_t &r_max_instances, uint32_t p_count, const String &p_name) {
+	uint32_t needed = MAX(p_count, (uint32_t)1);
 	if (!r_tlas.is_valid() || needed > r_max_instances) {
 		if (r_tlas.is_valid()) {
 			RD::get_singleton()->free_rid(r_tlas);
@@ -3559,6 +3871,10 @@ void RenderRaytracing::_prepare_tlas(RID &r_tlas, uint32_t &r_max_instances, con
 		r_tlas = RD::get_singleton()->tlas_create(r_max_instances, RD::ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT);
 		RD::get_singleton()->set_resource_name(r_tlas, p_name);
 	}
+}
+
+void RenderRaytracing::_prepare_tlas(RID &r_tlas, uint32_t &r_max_instances, const RTInstanceArrays &p_instances, const String &p_name, LocalVector<RD::AccelerationStructureInstance> &r_instances) {
+	_ensure_tlas(r_tlas, r_max_instances, p_instances.blass.size(), p_name);
 
 	r_instances.resize(p_instances.blass.size());
 	for (uint32_t i = 0; i < p_instances.blass.size(); i++) {
@@ -3576,11 +3892,25 @@ void RenderRaytracing::_prepare_tlas(RID &r_tlas, uint32_t &r_max_instances, con
 
 void RenderRaytracing::finalize_buffers(RTViewportState *p_state) {
 	// Grow-only uploads. Callers must not free these in prepare_frame().
-	_rt_update_or_grow_storage(p_state->geometry_buffer, p_state->geometry_buffer_capacity,
-			geometry_data.ptr(), geometry_data.size() * sizeof(RT_GeometryData), "RT Geometry Buffer");
+	RTPersistentInstances *persistent = p_state->persistent && p_state->persistent->active ? p_state->persistent : nullptr;
+	if (persistent) {
+		LocalVector<RTMaterialTable::Range> ranges;
+		if (!persistent->upload_all) {
+			RTMaterialTable::merge_ranges(persistent->dirty_rows, RTMaterialTable::MERGE_GAP, ranges);
+		}
+		_rt_upload_persistent_rows(p_state->geometry_buffer, p_state->geometry_buffer_capacity, persistent->rows, persistent->rows_end, ranges, persistent->upload_all,
+				geometry_data, "RT Geometry Buffer");
+		_rt_upload_persistent_rows(p_state->motion_index_buffer, p_state->motion_index_buffer_capacity, persistent->motion, persistent->rows_end, ranges, persistent->upload_all,
+				motion_indices, "RT Motion Index Buffer");
+		persistent->dirty_rows.clear();
+		persistent->upload_all = false;
+	} else {
+		_rt_update_or_grow_storage(p_state->geometry_buffer, p_state->geometry_buffer_capacity,
+				geometry_data.ptr(), geometry_data.size() * sizeof(RT_GeometryData), "RT Geometry Buffer");
+		_rt_update_or_grow_storage(p_state->motion_index_buffer, p_state->motion_index_buffer_capacity,
+				motion_indices.ptr(), motion_indices.size() * sizeof(int32_t), "RT Motion Index Buffer");
+	}
 	material_table.upload();
-	_rt_update_or_grow_storage(p_state->motion_index_buffer, p_state->motion_index_buffer_capacity,
-			motion_indices.ptr(), motion_indices.size() * sizeof(int32_t), "RT Motion Index Buffer");
 	_rt_update_or_grow_storage(p_state->motion_transform_buffer, p_state->motion_transform_buffer_capacity,
 			motion_transforms.ptr(), motion_transforms.size() * sizeof(RT_InstanceMotionData), "RT Motion Transform Buffer");
 }
@@ -4076,7 +4406,8 @@ void RenderRaytracing::_trim_mesh_group_variants(uint64_t p_mesh_id) {
 			}
 			variants++;
 			// Variants used by the TLAS being built must outlive it; the limit is exceeded until the next build.
-			if (kv.value.last_used <= mesh_group_build_first_use && kv.value.last_used < oldest_use) {
+			// Persistent slots keep using their group's BLAS without touching it.
+			if (kv.value.last_used <= mesh_group_build_first_use && kv.value.last_used < oldest_use && !_persistent_blas_referenced(kv.value.blas)) {
 				oldest_use = kv.value.last_used;
 				oldest = &kv.key;
 			}
@@ -4247,6 +4578,7 @@ private:
 		INSTANCE_PROCEDURAL,
 		INSTANCE_MERGED, // MultiMesh or particles.
 		INSTANCE_MESH,
+		INSTANCE_PERSISTENT, // Kept its persistent slot unchanged: nothing to do.
 	};
 
 	struct PendingMMSurface {
@@ -4397,7 +4729,13 @@ private:
 			RTSurfaceGroupKey &r_key, uint32_t &r_material_flags) const;
 	uint32_t _push_tlas_instance(const Transform3D &p_transform, RID p_blas, const RTSurfaceGroupKey &p_key, bool p_transparent, bool p_raster_mirror);
 	void _push_tlas_entry(const RT_GeometryData &p_geometry, const RTGeometrySources &p_sources, uint32_t p_facing_flags, const RTMaterialData *p_mat_data,
-			uint32_t p_material_flags, uint32_t p_layers, uint32_t p_uniforms_ofs, float p_instance_alpha, int32_t p_motion_index);
+			uint32_t p_material_flags, uint32_t p_layers, uint32_t p_uniforms_ofs, float p_instance_alpha, int32_t p_motion_index, uint32_t p_material_slot = UINT32_MAX);
+
+	// Persistent instance slots: the instance's entries move from the per-frame arrays into its slot.
+	RTPersistentInstances *persistent = nullptr;
+	RTPersistentInstances::Mark _persistent_mark() const;
+	bool _persistable(const Instance &p_inst, const RTPlanArena &p_arena, const RTPlanInstance &p_record) const;
+	void _persistent_commit(const Instance &p_inst, const RTPlanArena &p_arena, const RTPlanInstance &p_record, const RTPersistentInstances::Mark &p_mark);
 	int32_t _push_motion_transform(const Transform3D &p_prev_transform);
 
 	DirtyMark _dirty_mark() const { return { dirty_blas_list.size(), dirty_blas_update_list.size() }; }
@@ -4444,21 +4782,28 @@ RTTlasBuilder::InstanceKind RTTlasBuilder::_instance_kind(const Instance *p_inst
 }
 
 void RTTlasBuilder::gather_instances(RTPlanArena &r_arena) {
-	_register_shadow_groups();
-
+	persistent = state->persistent && state->persistent->active ? state->persistent : nullptr;
 	const PagedArray<RenderGeometryInstance *> &instances = *render_data->rt_instances;
 	const uint32_t count = r_arena.instances.size();
-	for (uint32_t i = 0; i < count; i++) {
-		const Instance *inst = static_cast<const Instance *>(instances[i]);
-		if (inst && _casts_self_shadow(*inst)) {
-			state->shadow_groups.reserve_self_shadow_group();
-			break;
+	// Persistent slots keep their masks, so the shadow-caster groups persist too (RenderRaytracing::_persistent_open).
+	if (!persistent) {
+		_register_shadow_groups();
+		for (uint32_t i = 0; i < count; i++) {
+			const Instance *inst = static_cast<const Instance *>(instances[i]);
+			if (inst && _casts_self_shadow(*inst)) {
+				state->shadow_groups.reserve_self_shadow_group();
+				break;
+			}
 		}
 	}
 	// Shadow-caster groups are allocated on first use, so masks are assigned serially and in instance order.
 	instance_kinds.resize(count);
 	for (uint32_t i = 0; i < count; i++) {
 		const Instance *inst = static_cast<const Instance *>(instances[i]);
+		if (persistent && persistent->clean[i]) {
+			instance_kinds[i] = INSTANCE_PERSISTENT;
+			continue;
+		}
 		instance_kinds[i] = _instance_kind(inst);
 		if (instance_kinds[i] == INSTANCE_SKIPPED) {
 			continue;
@@ -4492,12 +4837,158 @@ void RTTlasBuilder::gather_instances(RTPlanArena &r_arena) {
 				_gather_mm_surfaces(*inst, _plan_masks(record.key));
 				break;
 			case INSTANCE_MESH:
-				_apply_mesh_instance(*inst, r_arena, record);
+				if (persistent) {
+					const RTPersistentInstances::Mark mark = _persistent_mark();
+					_apply_mesh_instance(*inst, r_arena, record);
+					_persistent_commit(*inst, r_arena, record, mark);
+				} else {
+					_apply_mesh_instance(*inst, r_arena, record);
+				}
 				break;
+			case INSTANCE_PERSISTENT: // Counted in finish().
 			case INSTANCE_SKIPPED:
 				break;
 		}
 	}
+}
+
+RTPersistentInstances::Mark RTTlasBuilder::_persistent_mark() const {
+	RTPersistentInstances::Mark mark;
+	mark.tlas = rt.tlas_instances.blass.size();
+	mark.transparent = rt.tlas_transparent_instances.blass.size();
+	mark.rows = rt.geometry_data.size();
+	mark.emissive = rt.emissive_candidates.size();
+	mark.instances = tlas_instance_count;
+	mark.primitives = tlas_primitive_count;
+	return mark;
+}
+
+// Whether the instance's entries follow from its own state alone, so they stay valid while its rt_generation does.
+bool RTTlasBuilder::_persistable(const Instance &p_inst, const RTPlanArena &p_arena, const RTPlanInstance &p_record) const {
+	if (p_inst.rt_index == UINT32_MAX || p_inst.mesh_instance.is_valid()) {
+		return false;
+	}
+	const uint8_t needed = RT_PLAN_INSTANCE_VALID | RT_PLAN_INSTANCE_HIT_GROUPS_READY;
+	if ((p_record.flags & needed) != needed || (p_record.flags & RT_PLAN_INSTANCE_DYNAMIC) || p_record.pending_surfaces > 0 || p_record.capture_count > 0) {
+		return false;
+	}
+	for (uint32_t g = 0; g < p_record.group_count; g++) {
+		if (p_arena.groups[p_record.range_begin + g].key.billboard.is_camera_dependent()) {
+			return false;
+		}
+	}
+	for (uint32_t s = 0; s < p_record.surface_count; s++) {
+		const RTPlanSurface &surface = p_arena.surfaces[p_record.range_begin + s];
+		if (surface.deformed_kind != RT_PLAN_DEFORMED_NONE) {
+			return false;
+		}
+		// Mesh LOD levels follow the camera.
+		const SurfaceCache *surf = static_cast<const SurfaceCache *>(surface.surf);
+		if (lod_threshold > 0.0f && surf && mesh_storage->mesh_surface_has_lod(surf->surface)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Moves what _apply_mesh_instance just appended past p_mark into the instance's slot, or frees the slot when the
+// instance can't keep one; its entries then stay in the per-frame arrays.
+void RTTlasBuilder::_persistent_commit(const Instance &p_inst, const RTPlanArena &p_arena, const RTPlanInstance &p_record, const RTPersistentInstances::Mark &p_mark) {
+	RTPersistentInstances &p = *persistent;
+	const uint32_t index = p_inst.rt_index;
+	if (index != UINT32_MAX && index < p.slots.size() && p.stamps[index] == p.build) {
+		return; // Listed twice: the first copy holds the slot, this one stays per frame.
+	}
+	if (!_persistable(p_inst, p_arena, p_record)) {
+		p.free_slot(index);
+		return;
+	}
+	p.ensure_slot(index);
+	if (!(p.flags[index] & RTPersistentInstances::SLOT_STATIC)) {
+		p.slots[index] = RTPersistentInstances::Slot();
+	}
+	p.disable_slot(index);
+	RTPersistentInstances::Slot &slot = p.slots[index];
+
+	RenderRaytracing::RTInstanceArrays &tlas = rt.tlas_instances;
+	RenderRaytracing::RTInstanceArrays &transparent = rt.tlas_transparent_instances;
+	const uint32_t tlas_count = tlas.blass.size() - p_mark.tlas;
+	const uint32_t transparent_count = transparent.blass.size() - p_mark.transparent;
+	const uint32_t row_count = rt.geometry_data.size() - p_mark.rows;
+
+	if (RTPersistentInstances::place(slot.tlas, tlas_count, p.tlas_end, p.garbage)) {
+		p.tlas.resize(p.tlas_end);
+		p.tlas_owner.resize(p.tlas_end);
+	}
+	if (RTPersistentInstances::place(slot.transparent, transparent_count, p.transparent_end, p.garbage)) {
+		p.transparent.resize(p.transparent_end);
+		p.transparent_owner.resize(p.transparent_end);
+	}
+	if (RTPersistentInstances::place(slot.rows, row_count, p.rows_end, p.garbage)) {
+		p.rows.resize(p.rows_end);
+		p.motion.resize(p.rows_end);
+		p.material_slots.resize(p.rows_end);
+	}
+
+	const uint32_t row_base = slot.rows.begin;
+	for (uint32_t i = 0; i < tlas_count; i++) {
+		const uint32_t src = p_mark.tlas + i;
+		const uint32_t custom_index = row_base + (tlas.custom_indices[src] - p_mark.rows);
+		p.tlas[slot.tlas.begin + i] = _rt_rd_instance(tlas.transforms[src], rt.trace_origin, tlas.blass[src], custom_index, tlas.flags[src], tlas.masks[src], tlas.sbt_offsets[src]);
+		p.tlas_owner[slot.tlas.begin + i] = index;
+		p.ref_blas(tlas.blass[src]);
+	}
+	for (uint32_t i = 0; i < transparent_count; i++) {
+		const uint32_t src = p_mark.transparent + i;
+		const uint32_t custom_index = row_base + (transparent.custom_indices[src] - p_mark.rows);
+		p.transparent[slot.transparent.begin + i] = _rt_rd_instance(transparent.transforms[src], rt.trace_origin, transparent.blass[src], custom_index, transparent.flags[src], transparent.masks[src], transparent.sbt_offsets[src]);
+		p.transparent_owner[slot.transparent.begin + i] = index;
+		p.ref_blas(transparent.blass[src]);
+		p.active_transparent++;
+	}
+	bool moved = false;
+	for (uint32_t i = 0; i < row_count; i++) {
+		const uint32_t src = p_mark.rows + i;
+		const uint32_t dst = row_base + i;
+		p.rows[dst] = rt.geometry_data[src];
+		p.motion[dst] = rt.motion_indices[src];
+		p.material_slots[dst] = rt.geometry_material_slots[src];
+		p.dirty_rows.push_back(dst);
+		moved = moved || rt.motion_indices[src] >= 0;
+	}
+
+	const uint32_t emissive_count = rt.emissive_candidates.size() - p_mark.emissive;
+	if (emissive_count > 0) {
+		LocalVector<RenderRaytracing::RTEmissiveCandidate> &candidates = p.emissive[index];
+		candidates.resize(emissive_count);
+		for (uint32_t i = 0; i < emissive_count; i++) {
+			candidates[i] = rt.emissive_candidates[p_mark.emissive + i];
+			candidates[i].geometry_idx = row_base + (candidates[i].geometry_idx - p_mark.rows);
+		}
+	} else if (slot.emissive) {
+		p.emissive.erase(index);
+	}
+	slot.emissive = emissive_count > 0;
+	slot.instances = tlas_instance_count - p_mark.instances;
+	slot.primitives = tlas_primitive_count - p_mark.primitives;
+	p.enabled_instances += slot.instances;
+	p.enabled_primitives += slot.primitives;
+	p.written_instances += slot.instances;
+	p.written_primitives += slot.primitives;
+
+	tlas.truncate(p_mark.tlas);
+	transparent.truncate(p_mark.transparent);
+	rt.geometry_data.resize(p_mark.rows);
+	rt.motion_indices.resize(p_mark.rows);
+	rt.geometry_material_slots.resize(p_mark.rows);
+	rt.emissive_candidates.resize(p_mark.emissive);
+
+	// A slot written with motion is written again next frame, which has none once the instance stops.
+	p.flags[index] = RTPersistentInstances::SLOT_STATIC | RTPersistentInstances::SLOT_ENABLED | (moved ? RTPersistentInstances::SLOT_REWRITE : 0);
+	p.generations[index] = p_inst.rt_generation;
+	p.stamps[index] = p.build;
+	p.enabled++;
+	p.stamped++;
 }
 
 void RTTlasBuilder::add_multimesh_surfaces() {
@@ -4527,6 +5018,11 @@ void RTTlasBuilder::add_multimesh_surfaces() {
 }
 
 void RTTlasBuilder::finish() {
+	if (persistent) {
+		// Slots kept this frame: enabled ones not written this frame, after RenderRaytracing::_persistent_finish's sweep.
+		tlas_instance_count += uint32_t(persistent->enabled_instances - persistent->written_instances);
+		tlas_primitive_count += uint32_t(persistent->enabled_primitives - persistent->written_primitives);
+	}
 	if (collect_render_info) {
 		int *visible_info = render_data->render_info->info[RSE::VIEWPORT_RENDER_INFO_TYPE_VISIBLE];
 		visible_info[RSE::VIEWPORT_RENDER_INFO_OBJECTS_IN_FRAME] += tlas_instance_count;
@@ -4628,6 +5124,9 @@ void RTTlasBuilder::_add_procedural_instance(const Instance &p_inst, const Insta
 	const RTMaterialData *mat_data = rt.process_material(material_rid, material_storage->material_get_rt_invalidation_counter(material_rid));
 	_rt_set_entry_material(geom, mat_data, 0, 1.0f);
 	rt.geometry_data.push_back(geom);
+	if (persistent) {
+		rt.geometry_material_slots.push_back(UINT32_MAX);
+	}
 	RT_VALIDATE(RTGeometrySources sources; sources.vertex = ps->gpu_buffer; rt.geometry_sources.push_back(sources));
 	rt.tlas_instances.custom_indices.push_back(rt.geometry_data.size() - 1);
 	rt.motion_indices.push_back(_moved(p_inst) ? _push_motion_transform(_prev_transform(p_inst)) : -1);
@@ -4964,7 +5463,7 @@ void RTTlasBuilder::_apply_surface_group(const Instance &p_inst, const RTPlanGro
 		const uint32_t facing_flags = _push_tlas_instance(tlas_transform, group->blas, instance_key, p_group.transparent, p_inst.mirror);
 		for (uint32_t m = 0; m < p_members.size(); m++) {
 			const RTPlanSurface &member = p_members[m];
-			_push_tlas_entry(group->geometries[m], group->sources[m], facing_flags, rt.touch_material(member.material_slot), member.material_flags, p_inst.layer_mask, uniforms_ofs, instance_alpha, motion_index);
+			_push_tlas_entry(group->geometries[m], group->sources[m], facing_flags, rt.touch_material(member.material_slot), member.material_flags, p_inst.layer_mask, uniforms_ofs, instance_alpha, motion_index, member.material_slot);
 		}
 	} else {
 		for (const RTPlanSurface &member : p_members) {
@@ -4975,7 +5474,7 @@ void RTTlasBuilder::_apply_surface_group(const Instance &p_inst, const RTPlanGro
 			}
 			const bool transparent = member.flags & RT_PLAN_SURFACE_TRANSPARENT;
 			const uint32_t facing_flags = _push_tlas_instance(tlas_transform, surf_data->blas, _rt_member_key(p_group, member), transparent, p_inst.mirror);
-			_push_tlas_entry(surf_data->geometry, surf_data->sources, facing_flags, mat_data, member.material_flags, p_inst.layer_mask, uniforms_ofs, instance_alpha, motion_index);
+			_push_tlas_entry(surf_data->geometry, surf_data->sources, facing_flags, mat_data, member.material_flags, p_inst.layer_mask, uniforms_ofs, instance_alpha, motion_index, member.material_slot);
 		}
 	}
 
@@ -5226,9 +5725,12 @@ uint32_t RTTlasBuilder::_push_tlas_instance(const Transform3D &p_transform, RID 
 }
 
 void RTTlasBuilder::_push_tlas_entry(const RT_GeometryData &p_geometry, const RTGeometrySources &p_sources, uint32_t p_facing_flags, const RTMaterialData *p_mat_data,
-		uint32_t p_material_flags, uint32_t p_layers, uint32_t p_uniforms_ofs, float p_instance_alpha, int32_t p_motion_index) {
+		uint32_t p_material_flags, uint32_t p_layers, uint32_t p_uniforms_ofs, float p_instance_alpha, int32_t p_motion_index, uint32_t p_material_slot) {
 	RT_VALIDATE(rt.geometry_sources.push_back(p_sources));
 	rt.geometry_data.push_back(p_geometry);
+	if (persistent) {
+		rt.geometry_material_slots.push_back(p_material_slot);
+	}
 	RT_GeometryData &geometry = rt.geometry_data[rt.geometry_data.size() - 1];
 	geometry.flags |= p_facing_flags;
 	geometry.layers = p_layers;
@@ -5282,6 +5784,19 @@ void RTTlasBuilder::_record_stats(const DirtyMark &p_mark, uint32_t p_instances,
 	rt_triangles_refit += refits > 0 ? p_blas_primitives : 0;
 }
 
+void RenderRaytracing::_update_trace_origin(RTViewportState *p_state, const RenderDataRD *p_render_data) {
+	const double grid = GLOBAL_GET_CACHED(double, "rendering/pathtracing/relative_origin_grid");
+	const Vector3 cam = p_render_data->scene_data ? p_render_data->scene_data->cam_transform.origin : Vector3();
+	if (grid <= 0.0) {
+		p_state->rt_origin = Vector3();
+	} else if (!p_state->rt_origin_valid || cam.x < p_state->rt_origin.x || cam.x >= p_state->rt_origin.x + grid ||
+			cam.z < p_state->rt_origin.z || cam.z >= p_state->rt_origin.z + grid) {
+		p_state->rt_origin = Vector3(Math::floor(cam.x / grid) * grid, 0.0, Math::floor(cam.z / grid) * grid);
+	}
+	p_state->rt_origin_valid = grid > 0.0;
+	trace_origin = p_state->rt_origin;
+}
+
 RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data, uint32_t p_rt_flags, LocalVector<RTCaptureRequest> &r_captures) {
 	if (!p_render_data || !p_render_data->rt_instances) {
 		return nullptr;
@@ -5299,18 +5814,7 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 	// grid on x and z, so 32-bit floats stay precise kilometres from the world origin. y stays
 	// absolute, so heights (fog, user shaders) are exact. The anchor moves only when the camera
 	// leaves its cell; a grid of 0 traces in absolute world positions.
-	{
-		const double grid = GLOBAL_GET_CACHED(double, "rendering/pathtracing/relative_origin_grid");
-		const Vector3 cam = p_render_data->scene_data->cam_transform.origin;
-		if (grid <= 0.0) {
-			state->rt_origin = Vector3();
-		} else if (!state->rt_origin_valid || cam.x < state->rt_origin.x || cam.x >= state->rt_origin.x + grid ||
-				cam.z < state->rt_origin.z || cam.z >= state->rt_origin.z + grid) {
-			state->rt_origin = Vector3(Math::floor(cam.x / grid) * grid, 0.0, Math::floor(cam.z / grid) * grid);
-		}
-		state->rt_origin_valid = grid > 0.0;
-		trace_origin = state->rt_origin;
-	}
+	_update_trace_origin(state, p_render_data);
 	state->merge_billboards.clear();
 #ifdef RT_VALIDATION_ENABLED
 	_rtv_begin_view();
@@ -5324,11 +5828,12 @@ RTViewportState *RenderRaytracing::build_tlas(const RenderDataRD *p_render_data,
 	RTTlasBuilder builder(*this, p_render_data, ctx, r_captures, state);
 	builder.gather_instances(_open_plan_arena(state, p_render_data, ctx));
 	builder.add_multimesh_surfaces();
+	_persistent_finish(state);
 	builder.finish();
 
 	SceneShaderRaytracing::get_singleton()->finalize_custom_shaders();
 
-	state->transparent_instance_count = tlas_transparent_instances.blass.size();
+	state->transparent_instance_count = tlas_transparent_instances.blass.size() + (state->persistent && state->persistent->active ? state->persistent->active_transparent : 0);
 
 	if (p_render_data->environment.is_valid() &&
 			RendererEnvironmentStorage::get_singleton()->environment_get_pathtracing_debug_mode(p_render_data->environment) == SceneShaderRaytracing::RT_DEBUG_DYNAMIC_GEOMETRY) {
@@ -5802,7 +6307,6 @@ void RenderRaytracing::build_light_grid(const RT_LightData *p_lights, uint32_t p
 	}
 }
 
-
 // Emissive surfaces as lights: the opaque StandardMaterial3D surfaces that emit, picked by
 // their estimated power at the camera, then a triangle uniformly and a point on it uniformly
 // (raytracing_lights_inc.glsl, lights_emissive_sample). Weighed by multiple importance sampling
@@ -5854,7 +6358,7 @@ void RenderRaytracing::append_emissive_lights(const Vector3 &p_camera, const Vec
 		total += e.score;
 	}
 	const uint32_t n = scored.size();
-	const uint32_t g = geometry_data.size();
+	const uint32_t g = geometry_row_count;
 	const uint32_t start = r_grid.size();
 	r_grid.resize(start + RT_EMISSIVE_HEADER + n * RT_EMISSIVE_ENTRY_UINTS + g);
 	r_grid[9] = start;

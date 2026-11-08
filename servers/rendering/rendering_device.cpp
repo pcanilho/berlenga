@@ -309,7 +309,7 @@ Error RenderingDevice::_tlas_validate_instances(const AccelerationStructure *p_t
 	RID last_blas;
 	for (uint32_t i = 0; i < p_instances.size(); i++) {
 		const AccelerationStructureInstance &instance = p_instances[i];
-		if (!instance.blas.is_valid()) {
+		if (!instance.blas.is_valid() || instance.mask == 0) {
 			continue;
 		}
 		ERR_FAIL_COND_V_MSG(!instance.hit_sbt_range, ERR_INVALID_PARAMETER, "Instance " + itos(i) + " has an invalid hit shader binding table range.");
@@ -685,8 +685,15 @@ Error RenderingDevice::_tlas_write_instances(AccelerationStructure *p_tlas, RID 
 	RID last_blas;
 	RDD::AccelerationStructureID last_blas_driver_id;
 
+	uint32_t written = 0;
 	for (uint32_t i = 0; i < p_instances.size(); i++) {
 		const AccelerationStructureInstance &rd_instance = p_instances[i];
+		// No ray can hit an instance with mask 0, so it's left out of the build. Kept, it's legal but costs build
+		// and traversal time, and some drivers fault on it.
+		if (rd_instance.mask == 0) {
+			continue;
+		}
+		written++;
 
 		RDD::AccelerationStructureInstance rdd_instance;
 		rdd_instance.transform = rd_instance.transform;
@@ -729,7 +736,7 @@ Error RenderingDevice::_tlas_write_instances(AccelerationStructure *p_tlas, RID 
 
 	r_build.instance_buffer = instance_buffer.driver_id;
 	r_build.instance_offset = instance_buffer_offset;
-	r_build.instance_count = p_instances.size();
+	r_build.instance_count = written;
 	p_tlas->invalidated = false;
 
 	return OK;

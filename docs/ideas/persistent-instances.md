@@ -130,6 +130,24 @@ Two stages, each behind a setting with today's path as the default:
 **Also, separately:** skip the raster directional shadow cull when the viewport is path
 traced and nothing rasterizes shadows.
 
+## Stage A as built
+
+- `RenderGeometryInstanceBase::rt_generation` is renewed by every setter the trace reads and by surface rebuilds.
+- `RTPersistentInstances` (render_raytracing_persistent.h) keeps, per viewport and by `rt_index`, the instance's
+  TLAS entries (already converted for RenderingDevice), geometry rows, motion indices and emissive candidates.
+  Per-frame instances (MultiMesh, particles, procedural, deformed, captured, billboards, mesh LOD) follow them.
+- A changed material rewrites only the slots whose rows use it, found by scanning the material cache when the
+  global material version moves. Mesh, readiness, pipeline, camera layers, LOD, light caster masks and origin
+  changes rewrite every slot once.
+- Shadow-caster groups persist while the lights' caster masks stay the same set; the self-shadow group is always
+  reserved.
+- Disabled entries get mask 0, and RenderingDevice now leaves mask-0 instances out of every TLAS build. Lavapipe
+  faults on mask-0 and null-BLAS instances, both legal in Vulkan.
+- Still per frame: the plan arena reserve and one load per listed instance, and RenderingDevice's validation and
+  write of all TLAS instances. The second is the next CPU target.
+- Cloud (llvmpipe CPU), 30k objects (42k instances): `build_tlas` CPU 12.7 ms off, 2.7 ms on. Images match the
+  per-frame path except for noise from the TLAS order.
+
 ## Measuring
 
 Each stage uses the same bench runs (W3 to W6: 100k objects, with and without cull)

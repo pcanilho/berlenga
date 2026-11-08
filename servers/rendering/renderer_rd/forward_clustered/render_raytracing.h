@@ -1067,6 +1067,8 @@ struct RTShadowGroupTable {
 	}
 };
 
+struct RTPersistentInstances; // render_raytracing_persistent.h
+
 // Per-viewport raytracing state.
 //
 // Each viewport has its own visibility set (frustum/LOD/visibility ranges), so
@@ -1119,6 +1121,9 @@ struct RTViewportState {
 	uint32_t plan_rt_flags = 0; // RTPlanContext::rt_flags the plans were made with.
 	LocalVector<uint32_t> plan_lookup; // By instance rt_index: its record in last frame's arena, see rt_plan_lookup().
 
+	// Persistent instance slots (rendering/pathtracing/persistent_instances); null while off.
+	RTPersistentInstances *persistent = nullptr;
+
 	RID light_buffer;
 	uint32_t light_buffer_capacity = 0; // Lights.
 	RID light_grid_buffer;
@@ -1168,6 +1173,7 @@ class RenderRaytracing {
 	friend class RenderForwardClustered;
 	friend class RenderForwardClusteredPT;
 	friend class RTTlasBuilder;
+	friend struct RTPersistentInstances;
 
 	RenderForwardClustered *owner = nullptr;
 	SceneShaderRaytracing *shader = nullptr;
@@ -1326,6 +1332,15 @@ class RenderRaytracing {
 	LocalVector<uint32_t> plan_capacities; // Scratch of _open_plan_arena.
 	RTPlanContext _make_plan_context(const RenderDataRD *p_render_data, uint32_t p_rt_flags, const LocalVector<RTCaptureRequest> *p_captures) const;
 	RTPlanArena &_open_plan_arena(RTViewportState *p_state, const RenderDataRD *p_render_data, const RTPlanContext &p_ctx);
+	void _update_trace_origin(RTViewportState *p_state, const RenderDataRD *p_render_data);
+
+	// Persistent instance slots (render_raytracing_persistent.h).
+	bool _persistent_wanted(const RenderDataRD *p_render_data) const;
+	void _persistent_open(RTViewportState *p_state, const RenderDataRD *p_render_data, const RTPlanContext &p_ctx);
+	void _persistent_finish(RTViewportState *p_state);
+	void _persistent_free(RTViewportState *p_state);
+	void _persistent_blas_freed(RID p_blas);
+	bool _persistent_blas_referenced(RID p_blas) const;
 	// Capture part of record p_index for p_inst (a RenderForwardClustered::GeometryInstanceForwardClustered): reused from
 	// last frame's record when it had no capture surface, else planned. False when deferred.
 	bool _plan_captures(const RTPlanContext &p_ctx, RTPlanScratch &r_scratch, const RTViewportState &p_state, const void *p_inst, RTPlanArena &r_arena, uint32_t p_index);
@@ -1369,6 +1384,10 @@ class RenderRaytracing {
 	LocalVector<RTEmissiveCandidate> emissive_candidates;
 	RTMaterialTable material_table;
 	LocalVector<int32_t> motion_indices; // Per-instance: index into motion_transforms[], or -1.
+	// Persistent instances only, parallel to geometry_data: the material cache slot of each entry (UINT32_MAX for none).
+	LocalVector<uint32_t> geometry_material_slots;
+	// Entries of the geometry buffer the last built view uploaded: persistent rows included.
+	uint32_t geometry_row_count = 0;
 	LocalVector<RT_InstanceMotionData> motion_transforms; // Compact: only moving instances.
 
 	struct RTInstanceArrays {
@@ -1396,6 +1415,16 @@ class RenderRaytracing {
 			masks.reset();
 			sbt_offsets.reset();
 			custom_indices.reset();
+		}
+
+		// Drops the entries from p_size on.
+		void truncate(uint32_t p_size) {
+			blass.resize(p_size);
+			transforms.resize(p_size);
+			flags.resize(p_size);
+			masks.resize(p_size);
+			sbt_offsets.resize(p_size);
+			custom_indices.resize(p_size);
 		}
 
 		void push_copy(const RTInstanceArrays &p_src, uint32_t p_index, uint8_t p_mask) {
@@ -1543,6 +1572,7 @@ class RenderRaytracing {
 	Vector3 trace_origin;
 	LocalVector<RD::AccelerationStructureInstance> tlas_transparent_instance_scratch;
 	// Creates r_tlas, or recreates it when p_instances outgrew it, and converts p_instances into r_instances.
+	void _ensure_tlas(RID &r_tlas, uint32_t &r_max_instances, uint32_t p_count, const String &p_name);
 	void _prepare_tlas(RID &r_tlas, uint32_t &r_max_instances, const RTInstanceArrays &p_instances, const String &p_name, LocalVector<RD::AccelerationStructureInstance> &r_instances);
 	// Prepares and builds r_tlas on its own, tracked by RD.
 	Error _build_one_tlas(RID &r_tlas, uint32_t &r_max_instances, const RTInstanceArrays &p_instances, const String &p_name);

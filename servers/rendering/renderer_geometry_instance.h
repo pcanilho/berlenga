@@ -34,6 +34,7 @@
 #include "core/math/rect2.h"
 #include "core/math/transform_3d.h"
 #include "core/templates/rid.h"
+#include "core/templates/safe_refcount.h"
 #include "servers/rendering/storage/utilities.h"
 
 // API definition for our RenderGeometryInstance class so we can expose this through GDExtension in the near future
@@ -121,6 +122,12 @@ public:
 	float force_alpha = 1.0;
 
 	int32_t shader_uniforms_offset = -1;
+
+	// Renewed by every change the path tracer's TLAS reads from this instance; never repeats across instances or
+	// over time, so persistent RT instance slots skip instances whose generation is unchanged.
+	uint64_t rt_generation = 0;
+	static SafeNumeric<uint64_t> rt_generation_counter;
+	void bump_rt_generation() { rt_generation = rt_generation_counter.increment(); }
 
 	struct Data {
 		//data used less often goes into regular heap
