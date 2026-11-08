@@ -554,6 +554,7 @@ vec3 lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, uint p
 #elif defined(USE_SER)
 	PathPayload saved_payload = payload;
 	PathState shadow_ps;
+	shadow_ps.bsdf_pdf = 0.0;
 	shadow_ps.radiance = vec3(0.0);
 	shadow_ps.throughput = vec3(1.0);
 	shadow_ps.packed_bounces_flags = set_shadow_ray(0u);
@@ -580,6 +581,7 @@ vec3 lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, uint p
 	PathPayload saved_payload = payload;
 
 	PathState shadow_ps;
+	shadow_ps.bsdf_pdf = 0.0;
 	shadow_ps.radiance = vec3(0.0);
 	shadow_ps.throughput = vec3(1.0);
 	shadow_ps.packed_bounces_flags = set_shadow_ray(0u);
