@@ -91,12 +91,40 @@ NVIDIA-RTX/godot passes the 64 highest scoring lights to the path tracer each fr
 Top: NVIDIA-RTX/godot has no texture level of detail in its ray tracing shaders and samples the full resolution texture at every distance, so the floor turns to moire (rendered on the CPU; the aliasing is the same on any GPU). Middle: this fork on an RTX 4090. Bottom: the raster renderer on the same GPU for reference.
 </details>
 
+### Fork features on and off
+
+Each of these has a project setting to turn it off. Same build, same scene, no denoiser, 960x540, rendered on the CPU (lavapipe). The scenes are in [docs/media/light-selection](docs/media/light-selection): `godot --path docs/media/light-selection --resolution 960x540 -- --scene=signs --spp=4` (scenes: `signs`, `city`, `street`).
+
+<details>
+<summary>Emissive surfaces as lights (<code>rendering/pathtracing/emissive_lights</code>)</summary>
+
+![A dark street lit by glowing signs, a lit window and one small lamp: speckled with the setting off, smooth with it on](docs/media/emissive-lights.jpg)
+
+4 samples per pixel. Off, light from signs and windows is only found when a bounce ray happens to hit them. On, every shaded point also samples them directly.
+</details>
+
+<details>
+<summary>Light visibility memory (<code>rendering/pathtracing/light_visibility_memory</code>)</summary>
+
+![A street among buildings with lamps hidden inside them: noisy with the setting off, much cleaner with it on](docs/media/light-visibility-memory.jpg)
+
+4 samples per pixel. The buildings hold lamps that are in range of the street but hidden from it, and an arcade roof hides the moon. Off, those lamps keep taking samples that end in shadow; on, the scene learns which lights reach each part of it.
+</details>
+
+<details>
+<summary>Radiance cache (<code>rendering/pathtracing/radiance_cache</code>)</summary>
+
+![The same street at 4 bounces and equal render time: 4 samples per pixel with the cache off, 6 with it on](docs/media/radiance-cache.jpg)
+
+4 bounces at equal render time: off at 4 samples per pixel, on at 6, since paths that read the cache stop early. What the camera sees directly is never cached.
+</details>
+
 <details>
 <summary>Large worlds: the same scene 65 km from the world origin</summary>
 
 ![A cube, a mirror ball and a lamp 65 km from the origin: speckled cube and a broken reflection with absolute positions, the same as at the origin with camera-relative positions](docs/media/far-origin.jpg)
 
-16 samples per pixel, `--shot=far --far=65536`, this fork with `rendering/pathtracing/relative_origin_grid` at 0 (left) and at its default (right). With absolute positions the cube's lit face speckles and the ball reflects the cube in the wrong place. Camera-relative, the frame matches the same scene at the origin to within noise.
+16 samples per pixel, `godot --path docs/media/showcase -- --shot=far --far=65536` with `rendering/pathtracing/relative_origin_grid` at 0 (left) and at its default (right). With absolute positions the cube's lit face speckles and the ball reflects the cube in the wrong place. Camera-relative, the frame matches the same scene at the origin to within noise.
 </details>
 
 ## References
