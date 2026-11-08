@@ -20,6 +20,7 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 - Path tracer: the light grid follows the camera (256 m each way), so lights spread over a large world no longer coarsen its cells; lights reaching past it still light points outside it. A street of 460 lamps with 2000 more over 10 km: 11.7 dB to 17.8 dB at 4 spp, same as the street alone (#98).
 
 ### Fixed
+- Path tracer: materials set to anisotropic filtering are sampled anisotropically, and Nearest materials point-filtered, as in raster; the path tracer read the material's texture filter from a parameter BaseMaterial3D never sets, so grazing surfaces came out softer than raster (#108).
 - Fog, sky, particle and texture blit shaders no longer fail to compile when two of them compile at once on the main and rendering threads (separate rendering thread) (#96).
 
 ## build-a3c71eda (2026-11-06)

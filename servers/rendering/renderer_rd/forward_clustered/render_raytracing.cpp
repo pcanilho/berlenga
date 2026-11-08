@@ -3427,20 +3427,24 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		}
 	}
 
-	// Point filtering: check if material requests nearest filtering (e.g. pixel art).
-	// BaseMaterial3D exposes this as "texture_filter" int param (0=nearest, 1=linear, etc.).
-	Variant filter_var = material_storage->material_get_param(p_material_rid, "texture_filter");
-	if (filter_var.get_type() == Variant::INT) {
-		int filter_mode = filter_var;
-		// 0 = TEXTURE_FILTER_NEAREST, 2 = TEXTURE_FILTER_NEAREST_WITH_MIPMAPS,
-		// 4 = TEXTURE_FILTER_NEAREST_WITH_MIPMAPS_ANISOTROPIC
-		if (filter_mode == 0 || filter_mode == 2 || filter_mode == 4) {
-			mat.flags |= RT_MAT_FLAG_POINT_FILTER;
-		}
-		// 4 = NEAREST_WITH_MIPMAPS_ANISOTROPIC, 5 = LINEAR_WITH_MIPMAPS_ANISOTROPIC. Raster only filters
-		// anisotropically when the material asks for it, so PT must not either.
-		if (filter_mode == 4 || filter_mode == 5) {
-			mat.flags |= RT_MAT_FLAG_ANISOTROPIC;
+	// Texture filter: BaseMaterial3D writes texture_filter into its shader as the samplers' filter hint
+	// (filter_nearest, filter_linear_mipmap_anisotropic, ...), not as a parameter, so read it from the
+	// albedo sampler's uniform, which carries the material's filter for every texture it uses.
+	const RendererRD::MaterialStorage::ShaderData *filter_shader = material_storage->material_get_shader_data(p_material_rid);
+	const ShaderLanguage::ShaderNode::Uniform *albedo_uniform = filter_shader ? filter_shader->uniforms.getptr("texture_albedo") : nullptr;
+	if (albedo_uniform) {
+		switch (albedo_uniform->filter) {
+			case ShaderLanguage::FILTER_NEAREST:
+				// The point sampler has no mipmaps; the nearest-with-mipmaps modes keep the ray-cone levels.
+				mat.flags |= RT_MAT_FLAG_POINT_FILTER;
+				break;
+			case ShaderLanguage::FILTER_NEAREST_MIPMAP_ANISOTROPIC:
+			case ShaderLanguage::FILTER_LINEAR_MIPMAP_ANISOTROPIC:
+				// Raster only filters anisotropically when the material asks for it, so PT must not either.
+				mat.flags |= RT_MAT_FLAG_ANISOTROPIC;
+				break;
+			default:
+				break;
 		}
 	}
 
