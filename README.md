@@ -21,7 +21,7 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 
 ### Lighting
 - Up to 4096 lights per scene (upstream: 64 per frame), via a light grid around the camera and resampled importance sampling, so lights over a large world stay cheap. A street of 460 lamps with 2000 more over 10 km keeps the quality of the street alone (17.8 dB at 4 samples per pixel).
-- Emissive surfaces are lights: glowing signs, screens and windows (StandardMaterial3D, textured or not) get their own light sample, weighed against bounce rays by multiple importance sampling. On a street lit only by signs: 21.2 to 24.0 dB at 4 spp, +2.5 dB at equal time.
+- Emissive surfaces are lights: glowing signs, screens and windows (StandardMaterial3D, textured or not) get their own light sample, weighed against bounce rays by multiple importance sampling. On a street lit only by signs: 21.2 to 24.0 dB at 4 spp, +2.5 dB at equal time (`rendering/pathtracing/emissive_lights`).
 - Light selection remembers which lights actually lit each part of the scene, so lamps behind walls or a sun under a roof stop taking samples (`rendering/pathtracing/light_visibility_memory`). On a test street among lit buildings: 19.0 to 25.3 dB at 4 spp, +5.6 dB at equal time.
 - Radiance cache: rough surfaces learn, in world-space cells around the camera, the light they send back, and a path that bounces onto one reads it there instead of tracing on (`rendering/pathtracing/radiance_cache`). On test streets at 4 bounces and equal render time, 1.0 to 1.7 dB less error; what the camera sees directly is never cached.
 - Shadow-only casters bounce light, so hidden ceilings and walls still light a room.

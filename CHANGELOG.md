@@ -9,6 +9,7 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 ## build-30bb7182 (2026-11-08)
 
 ### Added
+- Project setting `rendering/pathtracing/emissive_lights` (default on) to turn off sampling emissive surfaces as lights (#115).
 - README: texture filtering comparison re-rendered on an RTX 4090 with the anisotropic filtering fix (#108).
 
 ## build-5e22cf31 (2026-11-08)
