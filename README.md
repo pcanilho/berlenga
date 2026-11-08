@@ -2,168 +2,135 @@
 
 [![Release](https://github.com/pcanilho/godot/actions/workflows/release.yml/badge.svg)](https://github.com/pcanilho/godot/actions/workflows/release.yml) [![CodeQL](https://github.com/pcanilho/godot/actions/workflows/codeql.yml/badge.svg)](https://github.com/pcanilho/godot/actions/workflows/codeql.yml) [![Latest release](https://img.shields.io/github/v/release/pcanilho/godot?label=latest)](https://github.com/pcanilho/godot/releases/latest)
 
-Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot).
+Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction, built for large open worlds. Based on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot) of 2 November 2026; NVIDIA's code is kept wherever it covers the same ground.
 
-**Download:** [latest release](https://github.com/pcanilho/godot/releases/latest) for Windows, macOS (universal) and Linux (x86_64, arm64).
-- Windows: full path tracing with DLSS Ray Reconstruction. Get the DLSS, Streamline and Reflex DLLs from NVIDIA and place them next to the exe.
-- Linux: path tracing without Ray Reconstruction.
-- macOS: raster only.
-
-**Changes:** [CHANGELOG.md](CHANGELOG.md).
+**[Download](https://github.com/pcanilho/godot/releases/latest):** Windows (path tracing with Ray Reconstruction; add NVIDIA's DLSS, Streamline and Reflex DLLs next to the exe), Linux x86_64 and arm64 (path tracing, no Ray Reconstruction), macOS universal (raster only). **Changes:** [CHANGELOG.md](CHANGELOG.md).
 
 ![1024 street lamps path traced at 16 samples per pixel: NVIDIA-RTX/godot on the left keeps 64 of them, this fork on the right lights them all](docs/media/many-lights.jpg)
 
-*1024 omni lights, 16 samples per pixel, no denoiser. Left: NVIDIA-RTX/godot (64 lights per frame). Right: this fork.*
+*1024 lights, 16 samples per pixel. Left: NVIDIA-RTX/godot (64 lights per frame). Right: this fork.*
 
-**About the images in this README:** they are raw path tracer output, almost all rendered on the CPU with a software Vulkan driver (only the fork and raster strips of the texture comparison come from a GPU). None of them uses a denoiser or DLSS Ray Reconstruction, so the grain you see is what the denoiser receives; on a GPU with Ray Reconstruction the final frames are clean. They compare the quality of the raw samples, not finished frames.
-
-## For open-world games
-
-The fork is built with large open worlds in mind, where the limits are float precision far from the origin, the number of lights and the cost of lighting what lies far from the camera:
-- Camera-relative tracing keeps shadows, reflections and contact points exact kilometres from the world origin.
-- The light grid follows the camera and holds up to 4096 lights, so a city or a road of lamps stays cheap; light visibility memory stops lights hidden behind terrain or buildings from taking samples.
-- Emissive surfaces light their surroundings without placing a light for each sign or window.
-- The radiance cache is camera-following and world-space, so it covers any map size at a fixed 16 MiB.
-- PhysX cloth, destruction, smoke and water work alongside Jolt.
-
-Next for large worlds, in order: RTX Mega Geometry (cluster acceleration structures with level of detail, so distant geometry stays in the trace at low cost), partitioned acceleration structures for scenes with many static objects, and geometry streaming. Features that change the look or the cost have a project setting to turn them off. Research notes are in [docs/ideas](docs/ideas).
+Images in this README are raw path tracer output, almost all rendered on the CPU (only the fork and raster strips of the texture comparison come from a GPU), with no denoiser or Ray Reconstruction. They compare raw sample quality, not finished frames.
 
 ## What this fork adds
 
-Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transparency, traced particles and decals, volumetric fog with traced shadows, shadow groups and asynchronous pipeline compilation. The fork keeps NVIDIA's code wherever it covers the same ground, and adds:
+Every feature that changes the look or the cost has a project setting to turn it off. Research notes and the large-world roadmap (RTX Mega Geometry, partitioned acceleration structures, geometry streaming) are in [docs/ideas](docs/ideas).
 
 ### Lighting
-- Up to 4096 lights per scene (upstream: 64 per frame), via a light grid around the camera and resampled importance sampling, so lights over a large world stay cheap. A street of 460 lamps with 2000 more over 10 km keeps the quality of the street alone (17.8 dB at 4 samples per pixel).
-- Emissive surfaces are lights: glowing signs, screens and windows (StandardMaterial3D, textured or not) get their own light sample, weighed against bounce rays by multiple importance sampling. On a street lit only by signs: 21.2 to 24.0 dB at 4 spp, +2.5 dB at equal time (`rendering/pathtracing/emissive_lights`).
-- Light selection remembers which lights actually lit each part of the scene, so lamps behind walls or a sun under a roof stop taking samples (`rendering/pathtracing/light_visibility_memory`). On a test street among lit buildings: 19.0 to 25.3 dB at 4 spp, +5.6 dB at equal time.
-- Radiance cache: rough surfaces learn, in world-space cells around the camera, the light they send back, and a path that bounces onto one reads it there instead of tracing on (`rendering/pathtracing/radiance_cache`). On test streets at 4 bounces and equal render time, 1.0 to 1.7 dB less error; what the camera sees directly is never cached.
+- **Many lights:** up to 4096 (upstream: 64 per frame), via a light grid that follows the camera and resampled importance sampling. 460 street lamps plus 2000 more over 10 km trace as well as the street alone.
+- **Emissive surfaces are lights** (`rendering/pathtracing/emissive_lights`): signs, screens and windows get their own light sample, with multiple importance sampling. +2.5 dB at equal time on a sign-lit street.
+- **Light visibility memory** (`rendering/pathtracing/light_visibility_memory`): lights hidden behind walls or roofs stop taking samples. +5.6 dB at equal time on a street among lit buildings.
+- **Radiance cache** (`rendering/pathtracing/radiance_cache`): world-space, camera-following, fixed 16 MiB; bounces end on cached light instead of tracing on. Never used for what the camera sees directly.
 - Shadow-only casters bounce light, so hidden ceilings and walls still light a room.
-- Raster transparents under the path tracer (`rendering/pathtracing/max_transparency_layers` 0): lit by a traced froxel light cache with shadowed lights, sky and bounce; particles scatter forward, so rain glints against lamps and headlights. Reflections and refractions still trace them (rain in puddles and glass).
+- Raster transparents (`rendering/pathtracing/max_transparency_layers` 0) lit by a traced light cache with shadows, sky and bounce; rain glints against lamps and still traces in reflections and refractions.
 
-### Materials and textures
-- Textures filter like raster instead of aliasing at a distance: ray-cone mip selection, mipmap bias, anisotropic filtering.
-- Back faces pass their own normal to `vertex()` code; `IN_SHADOW_PASS` in custom shaders.
-
-### Glass
-- Transparent surfaces filter shadow rays by their coverage, so clear glass casts an even, tinted shadow instead of a speckled one.
-
-### DLSS Ray Reconstruction
-- Runs with NVIDIA's DLSS 4.5 DLLs (nvngx_dlssd 310.5). The model is chosen with `rendering/streamline/dlss_ray_reconstruction_preset`.
-- Raster transparents are laid over Ray Reconstruction's output, particles at output size and unjittered, so thin rain stays continuous.
-- Additive, subtractive and `blend_mul` surfaces composite correctly.
-- Emissive detail keeps its edges.
-- Ray Reconstruction without DLSS upscaling warns instead of failing silently.
-- Frame generation presents generated frames.
-
-### Performance
-- Cached shadows for still casters; far lights update less often.
-- Optional time-sliced reflection probes.
-
-### Exposure
-- Histogram auto exposure (`rendering/camera/auto_exposure/metering`, Average by default): the frame is metered on the pixels between two brightness percentiles (10% and 98% by default), so lamps and signs in view no longer black out a night street. Raster and path tracing.
-- Dark-scene key (`rendering/camera/auto_exposure/dark_scene_luminance`, off by default): with histogram metering, scenes darker than the set brightness are shown darker than mid-grey, half a stop per stop by default (`dark_scene_strength`), so night stays night instead of turning into dusk.
-- Local exposure (`rendering/camera/auto_exposure/local_highlight_contrast` and `local_shadow_contrast`, 1.0 = off by default): each area is exposed partly by its own brightness, read from a bilateral grid, so lamp-lit walls keep their detail and dark facades lift while the street stays as metered. Edges between bright and dark areas do not halo.
-- Auto exposure no longer overshoots and flashes when a frame takes longer than its adaptation time.
+### Materials and glass
+- Textures filter like raster instead of aliasing: ray-cone mip selection, mipmap bias, anisotropic filtering.
+- Clear glass casts an even, tinted shadow instead of a speckled one.
+- Back faces pass their own normal to `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
 ### Large worlds
-- The path tracer works in positions relative to the camera's cell on a 1024 m grid, so shadows, reflections and contact points stay exact kilometres from the world origin (`rendering/pathtracing/relative_origin_grid`, 0 for absolute positions). Without it a scene 65 km out shows speckled shadows and broken reflections, and one 16 km out is 2% darker. Shaders still see absolute world positions.
-- Ray origins move off the surface by at least a few float steps of the largest coordinate and of the ray's length, so a floor near y = 0 does not shadow itself far from the origin.
-- Optional mesh LOD in the path tracer (`rendering/pathtracing/mesh_lod`, off by default): static meshes trace at the level of detail the rasterizer draws them at, each level built once and shared. 120 unique rocks over 1 km: buffer memory 346 to 110 MB, frames 7% faster on the CPU, near rocks unchanged.
-- Optional limits for geometry outside the camera view in the path tracer: a distance (`rendering/pathtracing/cull_max_distance`) and a minimum angular size (`rendering/pathtracing/cull_min_size`), both off by default. Small or far off-screen objects leave the acceleration structure, so they no longer cast shadows or show in reflections; what the camera sees is always traced. 120 rocks around the camera: 121 traced instances to 103 at 0.5 degrees and to 95 at 150 m, the frame unchanged.
+- **Camera-relative tracing** (`rendering/pathtracing/relative_origin_grid`): shadows, reflections and contacts stay exact kilometres from the origin. Shaders still see world positions.
+- Ray offsets scale with coordinate size, so floors do not self-shadow far out.
+- **Mesh LOD in the path tracer** (`rendering/pathtracing/mesh_lod`, off by default): 120 rocks over 1 km, 346 to 110 MB.
+- **Off-screen culling** (`rendering/pathtracing/cull_max_distance`, `cull_min_size`, off by default): small or far off-screen objects leave the acceleration structure; what the camera sees is always traced.
+
+### Exposure
+- **Histogram metering** (`rendering/camera/auto_exposure/metering`): bright lamps in view no longer black out a night street.
+- **Dark-scene key** (`dark_scene_luminance`, `dark_scene_strength`, off by default): night stays night instead of turning into dusk.
+- **Local exposure** (`local_highlight_contrast`, `local_shadow_contrast`, off by default): lit walls keep detail and dark facades lift, without halos.
+- No overshoot flash on long frames.
+
+### DLSS Ray Reconstruction
+- Runs with the DLSS 4.5 DLLs (nvngx_dlssd 310.5); model chosen with `rendering/streamline/dlss_ray_reconstruction_preset`.
+- Raster transparents and particles are laid over its output unjittered at output size, so thin rain stays continuous; additive, subtractive and `blend_mul` composite correctly; emissive detail keeps its edges.
+- Warns when used without DLSS upscaling; frame generation presents generated frames.
 
 ### Physics (PhysX 5)
-Windows x64 and Linux x86_64 builds include a PhysX 5 physics server with NVIDIA Blast destruction and NVIDIA Flow smoke and fire. macOS and Linux ARM64 builds do not.
-- Pick the engine per project in **Project Settings > Physics > 3D > Physics Engine**: `Jolt Physics` or `PhysX`. Every 3D physics node works with either.
-- Works with either engine: `PhysXCloth3D` (free cloth: flags, tarps, umbrellas), `PhysXSkinnedCloth3D` (cloth on skinned characters, painted max distance per vertex), `PhysXDestructible3D` (Blast fracture, editor fracture tool), `PhysXFlow3D` (smoke and fire), ocean water with buoyancy and boats, compute-shader particle fluids and granular material.
-- Needs the PhysX engine: PhysX vehicles, CUDA particle fluids and deformables, GPU rigid body dynamics (CUDA builds only; the release builds use the CPU solver, which is faster while the GPU is busy path tracing).
-- Without the SDKs (`physx_sdk=`, `blast_sdk=`, `flow_sdk=`, see `modules/godot_physx/README.md`) the module is skipped and the build is stock.
+Windows x64 and Linux x86_64 builds include PhysX 5 with Blast destruction and Flow smoke and fire. Pick it per project in **Project Settings > Physics > 3D > Physics Engine** (`Jolt Physics` or `PhysX`); every 3D physics node works with either.
+- With either engine: `PhysXCloth3D`, `PhysXSkinnedCloth3D`, `PhysXDestructible3D` (editor fracture tool), `PhysXFlow3D`, ocean water with buoyancy, compute-shader fluids and granular material.
+- PhysX only: vehicles, CUDA fluids and deformables, GPU rigid bodies (CUDA builds; releases use the CPU solver).
+- Builds without the SDKs (`physx_sdk=`, `blast_sdk=`, `flow_sdk=`; see `modules/godot_physx/README.md`) skip the module.
 
-### API
-- `RenderingServer.is_pathtracing_ready()`: true once `get_rendering_not_ready_reasons()` is empty.
-- `RenderingDevice.get_video_memory_budget()` / `get_video_memory_usage()`
-
-### Stability
-- Fixes for leaks, shutdown crashes and threading races; storage images declared with their textures' formats.
-- VK_EXT_device_fault reports on device loss.
+### Performance, API, stability
+- Cached shadows for still casters; far lights update less often; optional time-sliced reflection probes.
+- `RenderingServer.is_pathtracing_ready()`; `RenderingDevice.get_video_memory_budget()` / `get_video_memory_usage()`.
+- Leak, shutdown and threading fixes; VK_EXT_device_fault reports on device loss.
 
 ## Comparisons
 
-Same scene, same samples per pixel, no denoiser, rendered with NVIDIA-RTX/godot of 2 November 2026 and with this fork. The scenes are in [docs/media/showcase](docs/media/showcase): `godot --path docs/media/showcase -- --shot=city --spp=16 --out=city.png` (shots: `city`, `lights`, `textures`, `glass`).
+Same scene and samples per pixel, no denoiser. Scenes: [docs/media/showcase](docs/media/showcase) (`godot --path docs/media/showcase -- --shot=<city|lights|textures|glass|far|night>`) and [docs/media/light-selection](docs/media/light-selection) (`-- --scene=<signs|city|street>`).
 
 <details>
-<summary>Many lights: a city block grid of 1024 lamps</summary>
+<summary>Many lights: 1024 lamps, NVIDIA-RTX/godot vs this fork</summary>
 
 ![1024 street lamps: NVIDIA-RTX/godot keeps 64 of them, this fork lights them all](docs/media/many-lights.jpg)
 
-NVIDIA-RTX/godot passes the 64 highest scoring lights to the path tracer each frame; the rest go dark. The fork samples all of them through the light grid.
+NVIDIA keeps the 64 highest scoring lights per frame; the rest go dark.
 </details>
 
 <details>
-<summary>Glass shadows: a clear pane in sunlight</summary>
+<summary>Glass shadows: NVIDIA-RTX/godot vs this fork</summary>
 
 ![Glass pane shadow: speckled on NVIDIA-RTX/godot, even and tinted on this fork](docs/media/glass-shadow.jpg)
 
-16 samples per pixel. Shadow rays through the pane pass or stop at random on NVIDIA-RTX/godot; the fork weights them by the pane's coverage and colour.
+NVIDIA passes or stops each shadow ray at random; the fork weights it by the pane's coverage and colour.
 </details>
 
 <details>
-<summary>Texture filtering: a checker floor to the horizon</summary>
+<summary>Texture filtering: NVIDIA-RTX/godot, this fork, raster</summary>
 
 ![Checker floor: moire on NVIDIA-RTX/godot, filtered on this fork, raster for reference](docs/media/texture-filtering.jpg)
 
-Top: NVIDIA-RTX/godot. Its ray tracing shaders pick no texture level of detail, so distant tiles are sampled at full resolution and break up into moire. Middle: this fork. Each ray carries its footprint and samples the matching mip level with anisotropic filtering, so the floor stays clean to the horizon. Bottom: the raster renderer, for reference.
+NVIDIA samples full resolution at every distance, so distant tiles turn to moire. The fork picks the mip level from each ray's footprint, like raster (bottom).
 </details>
 
-### Fork features on and off
-
-Each of these has a project setting to turn it off. Same build, same scene, no denoiser, 960x540. The scenes are in [docs/media/light-selection](docs/media/light-selection): `godot --path docs/media/light-selection --resolution 960x540 -- --scene=signs --spp=4` (scenes: `signs`, `city`, `street`).
-
 <details>
-<summary>Emissive surfaces as lights (<code>rendering/pathtracing/emissive_lights</code>)</summary>
+<summary>Emissive lights off vs on</summary>
 
 ![A pavement lit by a glowing window: dark and speckled with the setting off, evenly lit with it on](docs/media/emissive-lights.jpg)
 
-A street lit only by a glowing shop window and small signs, 4 samples per pixel, both sides brightened by the same amount. Look at the pavement under the window: off, it stays almost black with scattered dots, because light from the window is only found when a random bounce ray happens to hit it. On, every shaded point also aims a sample at the window, so the pavement and the kerb come out evenly lit and the reflection on the wet road fills in.
+4 samples per pixel, both sides brightened equally. Look at the pavement under the window: off, it is only lit when a bounce ray happens to hit the window.
 </details>
 
 <details>
-<summary>Light visibility memory (<code>rendering/pathtracing/light_visibility_memory</code>)</summary>
+<summary>Light visibility memory off vs on</summary>
 
 ![A street among buildings with lamps hidden inside them: noisy with the setting off, much cleaner with it on](docs/media/light-visibility-memory.jpg)
 
-4 samples per pixel. The buildings hold lamps that are in range of the street but hidden from it, and an arcade roof hides the moon. Off, those lamps keep taking samples that end in shadow; on, the scene learns which lights reach each part of it.
+4 samples per pixel. Lamps inside the buildings are in range but hidden; off, they keep taking samples that end in shadow.
 </details>
 
 <details>
-<summary>Radiance cache (<code>rendering/pathtracing/radiance_cache</code>)</summary>
+<summary>Radiance cache off vs on, equal time</summary>
 
 ![The same street at 4 bounces and equal render time: 4 samples per pixel with the cache off, 6 with it on](docs/media/radiance-cache.jpg)
 
-4 bounces at equal render time: off at 4 samples per pixel, on at 6, since paths that read the cache stop early. What the camera sees directly is never cached.
+4 bounces. The cache shortens paths, so the same time buys 6 samples per pixel instead of 4.
 </details>
 
 <details>
-<summary>Large worlds: the same scene 65 km from the world origin</summary>
+<summary>Large worlds: 65 km from the origin, absolute vs camera-relative</summary>
 
 ![A cube, a mirror ball and a lamp 65 km from the origin: speckled cube and a broken reflection with absolute positions, the same as at the origin with camera-relative positions](docs/media/far-origin.jpg)
 
-16 samples per pixel, `godot --path docs/media/showcase -- --shot=far --far=65536` with `rendering/pathtracing/relative_origin_grid` at 0 (left) and at its default (right). With absolute positions the cube's lit face speckles and the ball reflects the cube in the wrong place. Camera-relative, the frame matches the same scene at the origin to within noise.
+`relative_origin_grid` 0 (left) and default (right). With absolute positions the lit face speckles and the reflection lands in the wrong place.
 </details>
 
 <details>
-<summary>Exposure: a night street with lamps in view</summary>
+<summary>Exposure: average, histogram, histogram with dark-scene key</summary>
 
 ![A night street with lamp posts: dark with average metering, readable with histogram metering, darker again with the dark-scene key](docs/media/night-exposure.jpg)
 
-128 samples per pixel, `godot --path docs/media/showcase -- --shot=night`, auto exposure on. Left: Average metering, the bright bulbs pull the exposure down and the street stays dim. Middle: `--set=rendering/camera/auto_exposure/metering:1`, the bulbs are left out and the street is exposed to mid-grey. Right: plus `--set=rendering/camera/auto_exposure/dark_scene_luminance:0.2`, the same street kept darker as a night scene.
+Average metering lets the bulbs pull the street dark; histogram metering ignores them; the dark-scene key keeps it a night scene.
 </details>
 
 <details>
-<summary>Local exposure: the same street with highlight and shadow contrast at 0.5</summary>
+<summary>Local exposure off vs on</summary>
 
 ![The night street with histogram metering: hot spots on lit walls and black facades on the left, then with local exposure: the walls keep their texture and the facades read](docs/media/local-exposure.jpg)
 
-128 samples per pixel, `godot --path docs/media/showcase -- --shot=night --set=rendering/camera/auto_exposure/metering:1`, then with `--set=rendering/camera/auto_exposure/local_highlight_contrast:0.5 --set=rendering/camera/auto_exposure/local_shadow_contrast:0.5` (right). The hot spots under the lamps flatten and the facades facing away from them lift; the lamp posts keep sharp edges against the walls.
+Highlight and shadow contrast at 0.5: hot spots under the lamps flatten, facades lift, edges stay sharp.
 </details>
 
 ## References
