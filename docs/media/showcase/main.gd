@@ -1,12 +1,13 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|textures|glass --spp=N --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|textures|glass|physx --spp=N --rr --out=path.png --frames=N --far=N --raster
 var shot := "lights"
 var spp := 16
 var out := "out.png"
 var frames := 3
 var far := 0
 var raster := false
+var rr := false
 var n := 0
 var env := Environment.new()
 
@@ -18,6 +19,7 @@ func _ready() -> void:
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--far="): far = int(a.substr(6))
 		elif a == "--raster": raster = true
+		elif a == "--rr": rr = true
 	seed(11)
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0, 0, 0)
@@ -25,6 +27,10 @@ func _ready() -> void:
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = 3
 	env.pathtracing_denoiser = 0
+	if rr:
+		# DLSS Ray Reconstruction: needs DLSS scaling on the viewport (RTX GPU, Windows).
+		env.pathtracing_denoiser = RenderingServer.PT_DENOISER_DLSS_RAY_RECONSTRUCTION
+		get_viewport().scaling_3d_mode = Viewport.SCALING_3D_MODE_DLSS
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	var we := WorldEnvironment.new()
 	we.environment = env
@@ -178,6 +184,125 @@ func shot_glass() -> void:
 	sun.shadow_enabled = true
 	add_child(sun)
 	camera(Vector3(5, 4.5, -8), Vector3(0, 0.5, 2), 55)
+
+# PhysX module: a flag in gusty wind, a Blast wall a ball breaks, a crate stack, a smoke plume.
+# Needs a build with the PhysX module; record a clip with --write-movie and --frames=N.
+func shot_physx() -> void:
+	if not ClassDB.class_exists("PhysXCloth3D"):
+		push_error("This build has no PhysX module.")
+		get_tree().quit(1)
+		return
+	env.background_color = Color(0.05, 0.06, 0.08)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.12, 0.12, 0.14)
+	camera(Vector3(0.3, 2.3, 6.6), Vector3(0, 1.2, -0.4), 50)
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-40, 160, 0)
+	sun.light_energy = 1.4
+	sun.shadow_enabled = true
+	add_child(sun)
+	var lamp := OmniLight3D.new()
+	lamp.position = Vector3(2.4, 1.6, 1.2)
+	lamp.light_color = Color(1, 0.6, 0.3)
+	lamp.light_energy = 5
+	lamp.omni_range = 7
+	lamp.shadow_enabled = true
+	add_child(lamp)
+	var floor_mesh := plane(Vector2(40, 40), mat(Color(0.5, 0.5, 0.52), 0.8))
+	var ground := StaticBody3D.new()
+	var gs := CollisionShape3D.new()
+	gs.shape = WorldBoundaryShape3D.new()
+	ground.add_child(gs)
+	add_child(ground)
+	floor_mesh.name = "Floor"
+
+	# Flag on a pole: a 24 x 16 cloth grid pinned along its pole edge.
+	box(Vector3(0.08, 3.2, 0.08), Vector3(-3.6, 1.6, -0.5), mat(Color(0.3, 0.3, 0.32), 0.4))
+	var flag = ClassDB.instantiate("PhysXCloth3D")
+	flag.grid_size = Vector2(1.8, 1.1)
+	flag.grid_columns = 24
+	flag.grid_rows = 16
+	flag.pin_mode = 3 # left edge
+	flag.wind = Vector3(12.0, 0.5, 2.0)
+	flag.wind_turbulence = 0.6
+	flag.position = Vector3(-2.66, 2.6, -0.5)
+	var flag_mat := mat(Color(0.85, 0.22, 0.16), 0.7)
+	flag_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	flag.material_override = flag_mat
+	add_child(flag)
+
+	# Blast wall: a box fractured into 40 Voronoi cells, grounded, broken by a ball.
+	var wall_mesh := BoxMesh.new()
+	wall_mesh.size = Vector3(2.0, 1.6, 0.25)
+	var authoring = ClassDB.instantiate("PhysXBlastAuthoring")
+	var asset = authoring.fracture_mesh(wall_mesh, 40, 7)
+	var wall = ClassDB.instantiate("PhysXDestructible3D")
+	wall.blast_asset = asset
+	wall.anchor = 1 # grounded
+	wall.shatter_speed = 2.5
+	wall.piece_lifetime = 0.0
+	wall.position = Vector3(0.2, 0.8, 0)
+	wall.material_override = mat(Color(0.72, 0.68, 0.62), 0.9)
+	add_child(wall)
+	var ball := RigidBody3D.new()
+	var bc := CollisionShape3D.new()
+	var bs := SphereShape3D.new()
+	bs.radius = 0.25
+	bc.shape = bs
+	ball.add_child(bc)
+	var bm := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.25
+	sm.height = 0.5
+	sm.material = mat(Color(0.15, 0.15, 0.17), 0.3)
+	bm.mesh = sm
+	ball.add_child(bm)
+	ball.mass = 40.0
+	ball.position = Vector3(0.2, 1.0, 6.0)
+	ball.freeze = true
+	add_child(ball)
+	ball.contact_monitor = true
+	ball.max_contacts_reported = 4
+	ball.body_entered.connect(func(_b: Node) -> void:
+		if not wall.is_fractured() and ball.position.z < 1.0:
+			wall.apply_radial_damage(ball.position + Vector3(0, 0, -0.2), 2.5, 0.35, 0.75))
+	get_tree().create_timer(1.0, true, true).timeout.connect(func() -> void:
+		ball.freeze = false
+		ball.linear_velocity = Vector3(0, 1.0, -14.0))
+
+	# Crate stack the debris runs into.
+	var crate_mat := mat(Color(0.55, 0.42, 0.28), 0.8)
+	for i in 6:
+		var c := RigidBody3D.new()
+		var cs := CollisionShape3D.new()
+		var cb := BoxShape3D.new()
+		cb.size = Vector3(0.5, 0.5, 0.5)
+		cs.shape = cb
+		c.add_child(cs)
+		var cm := MeshInstance3D.new()
+		var cbm := BoxMesh.new()
+		cbm.size = cb.size
+		cbm.material = crate_mat
+		cm.mesh = cbm
+		c.add_child(cm)
+		var level := 0 if i < 3 else (1 if i < 5 else 2)
+		var slot := i - (0 if level == 0 else (3 if level == 1 else 5))
+		c.position = Vector3(-0.32 + slot * 0.52 + level * 0.26, 0.25 + level * 0.5, -1.6)
+		add_child(c)
+
+	# Smoke plume beside the lamp.
+	var flow = ClassDB.instantiate("PhysXFlow3D")
+	flow.smoke_density = 4.0
+	flow.position = Vector3(3.2, 0, -2.0)
+	add_child(flow)
+	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
+	em.position = Vector3(0, 0.3, 0)
+	em.radius = 0.5
+	em.velocity = Vector3(0.6, 2.2, 0)
+	em.smoke = 1.0
+	em.temperature = 0.3
+	flow.add_child(em)
+	em.flow = em.get_path_to(flow)
 
 func _process(_d: float) -> void:
 	n += 1

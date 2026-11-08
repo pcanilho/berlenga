@@ -47,6 +47,8 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 - Optional time-sliced reflection probes.
 
 ### Physics (PhysX 5)
+![PhysX: cloth flag in wind, a Blast wall broken by a ball, rigid crates, Flow smoke](docs/media/physx.gif)
+
 Windows x64 and Linux x86_64 builds include a PhysX 5 physics server with NVIDIA Blast destruction and NVIDIA Flow smoke and fire. macOS and Linux ARM64 builds do not.
 - Pick the engine per project in **Project Settings > Physics > 3D > Physics Engine**: `Jolt Physics` or `PhysX`. Every 3D physics node works with either.
 - Works with either engine: `PhysXCloth3D` (free cloth: flags, tarps, umbrellas), `PhysXSkinnedCloth3D` (cloth on skinned characters, painted max distance per vertex), `PhysXDestructible3D` (Blast fracture, editor fracture tool), `PhysXFlow3D` (smoke and fire), ocean water with buoyancy and boats, compute-shader particle fluids and granular material.
@@ -63,7 +65,7 @@ Windows x64 and Linux x86_64 builds include a PhysX 5 physics server with NVIDIA
 
 ## Comparisons
 
-Same scene, same samples per pixel, no denoiser, rendered with NVIDIA-RTX/godot of 2 November 2026 and with this fork. The scenes are in [docs/media/showcase](docs/media/showcase): `godot --path docs/media/showcase -- --shot=city --spp=16 --out=city.png` (shots: `city`, `lights`, `textures`, `glass`).
+Same scene, same samples per pixel, no denoiser, rendered with NVIDIA-RTX/godot of 2 November 2026 and with this fork. The scenes are in [docs/media/showcase](docs/media/showcase): `godot --path docs/media/showcase -- --shot=city --spp=16 --out=city.png` (shots: `city`, `lights`, `textures`, `glass`, `physx`).
 
 <details>
 <summary>Many lights: a city block grid of 1024 lamps (the image at the top)</summary>

@@ -7,3 +7,5 @@ window/size/viewport_height=540
 [rendering]
 pathtracing/async_shader_compilation=false
 pathtracing/use_shader_execution_reordering=false
+[physics]
+3d/physics_engine="PhysX"
