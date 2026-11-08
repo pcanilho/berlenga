@@ -154,7 +154,8 @@ rt_light_vis;
 #define RT_LIGHT_VIS_CELL 1.0 // region size near the camera, metres
 #define RT_LIGHT_VIS_NEAR 16.0 // regions double in size every octave of distance past this
 #define RT_LIGHT_VIS_FADE 3u // counts lose 1 / 2^FADE a frame
-#define RT_LIGHT_VIS_RECORD_EVERY 4u // one pixel in this many records its shadow ray outcomes
+#define RT_LIGHT_VIS_RECORD_EVERY 4u // at most one pixel in this many records its shadow ray outcomes
+#define RT_LIGHT_VIS_RECORD_PIXELS 65536u // pixels that record each frame, whatever the resolution
 
 uint lights_vis_hash(uint x) {
 	x ^= x >> 16u;
@@ -243,10 +244,12 @@ void lights_vis_record(uint region, uint light, bool p_lit) {
 	if (region == 0u) {
 		return;
 	}
-	// One pixel in RT_LIGHT_VIS_RECORD_EVERY records, a different set each frame: a hit rate is
-	// a ratio, so a subset learns it as well, and the atomics a hot region takes drop with it.
+	// About RT_LIGHT_VIS_RECORD_PIXELS pixels record each frame, a different set every frame
+	// (at least one in RT_LIGHT_VIS_RECORD_EVERY): a hit rate is a ratio, so a subset learns it
+	// as well, and the compare-and-swap loops on a hot region stop growing with resolution.
+	uint every = max(RT_LIGHT_VIS_RECORD_EVERY, (gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y) / RT_LIGHT_VIS_RECORD_PIXELS);
 	uint pick = (gl_LaunchIDEXT.x * 0x8da6b343u) ^ (gl_LaunchIDEXT.y * 0xd8163841u) ^ (uint(get_rt_param(RT_PARAM_FRAME_INDEX)) * 0x9e3779b9u);
-	if (lights_vis_hash(pick) % RT_LIGHT_VIS_RECORD_EVERY != 0u) {
+	if (lights_vis_hash(pick) % every != 0u) {
 		return;
 	}
 	if (p_lit && light != RT_LIGHT_VIS_DIRECTIONAL) {
