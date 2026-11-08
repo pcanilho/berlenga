@@ -45,7 +45,11 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 - **Path-traced smoke and fire** (`rendering/pathtracing/simulated_gas`).
 - **Cloth tearing** (`PhysXCloth3D.tear_factor`, `physics/physx_3d/cloth/tearing`): overstretched edges split and the rip runs.
 
+  <details><summary>Clip: a ribbon rips off its post and a flag frays</summary>
+
   ![Cloth tearing: a ribbon rips off its post and a flag frays in rising wind](docs/media/cloth-tearing.gif)
+
+  </details>
 
 - Builds without the SDKs skip the module (`modules/godot_physx/README.md`).
 
