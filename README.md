@@ -11,18 +11,25 @@ Godot 4 with real-time path tracing on Vulkan and DLSS Ray Reconstruction. Built
 
 **Changes:** [CHANGELOG.md](CHANGELOG.md).
 
+![1024 street lamps path traced at 16 samples per pixel: NVIDIA-RTX/godot on the left keeps 64 of them, this fork on the right lights them all](docs/media/many-lights.jpg)
+
+*1024 omni lights, 16 samples per pixel, no denoiser. Left: NVIDIA-RTX/godot (64 lights per frame). Right: this fork.*
+
 ## What this fork adds
 
 Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transparency, traced particles and decals, volumetric fog with traced shadows, shadow groups and asynchronous pipeline compilation. The fork keeps NVIDIA's code wherever it covers the same ground, and adds:
 
 ### Lighting
-- Up to 4096 lights per scene (upstream: 64 per frame), via a light grid around the camera and resampled importance sampling, so lights over a large world stay cheap.
+- Up to 4096 lights per scene (upstream: 64 per frame), via a light grid around the camera and resampled importance sampling, so lights over a large world stay cheap. A street of 460 lamps with 2000 more over 10 km keeps the quality of the street alone (17.8 dB at 4 samples per pixel).
 - Shadow-only casters bounce light, so hidden ceilings and walls still light a room.
 - Raster transparents under the path tracer (`rendering/pathtracing/max_transparency_layers` 0): lit by a traced froxel light cache with shadowed lights, sky and bounce; particles scatter forward, so rain glints against lamps and headlights. Reflections and refractions still trace them (rain in puddles and glass).
 
 ### Materials and textures
-- Texture sharpness matches raster: ray-cone mip selection, mipmap bias, anisotropic filtering.
+- Textures filter like raster instead of aliasing at a distance: ray-cone mip selection, mipmap bias, anisotropic filtering.
 - Back faces pass their own normal to `vertex()` code; `IN_SHADOW_PASS` in custom shaders.
+
+### Glass
+- Transparent surfaces filter shadow rays by their coverage, so clear glass casts an even, tinted shadow instead of a speckled one.
 
 ### DLSS Ray Reconstruction
 - Raster transparents are laid over Ray Reconstruction's output, particles at output size and unjittered, so thin rain stays continuous.
@@ -42,6 +49,32 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 ### Stability
 - Fixes for leaks, shutdown crashes and threading races; storage images declared with their textures' formats.
 - VK_EXT_device_fault reports on device loss.
+
+## Comparisons
+
+Same scene, same samples per pixel, no denoiser, rendered with NVIDIA-RTX/godot of 2 November 2026 and with this fork. The scenes are in [docs/media/showcase](docs/media/showcase): `godot --path docs/media/showcase -- --shot=city --spp=16 --out=city.png` (shots: `city`, `lights`, `textures`, `glass`).
+
+<details>
+<summary>Many lights: a city block grid of 1024 lamps (the image at the top)</summary>
+
+NVIDIA-RTX/godot passes the 64 highest scoring lights to the path tracer each frame; the rest go dark. The fork samples all of them through the light grid.
+</details>
+
+<details>
+<summary>Glass shadows: a clear pane in sunlight</summary>
+
+![Glass pane shadow: speckled on NVIDIA-RTX/godot, even and tinted on this fork](docs/media/glass-shadow.jpg)
+
+16 samples per pixel. Shadow rays through the pane pass or stop at random on NVIDIA-RTX/godot; the fork weights them by the pane's coverage and colour.
+</details>
+
+<details>
+<summary>Texture filtering: a checker floor to the horizon</summary>
+
+![Checker floor: moire on NVIDIA-RTX/godot, filtered on this fork, raster for reference](docs/media/texture-filtering.jpg)
+
+Top: NVIDIA-RTX/godot has no texture level of detail in its ray tracing shaders and samples the full resolution texture at every distance, so the floor turns to moire. Middle: this fork. Bottom: the raster renderer for reference.
+</details>
 
 ## References
 
