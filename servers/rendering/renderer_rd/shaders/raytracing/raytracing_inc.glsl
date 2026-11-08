@@ -59,6 +59,7 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_PLIGHT_BOUNCE 28 // 1: one sky / bounce ray a cell
 #define RT_PARAM_PLIGHT_TILE 29 // pixels a cell across (8, more at large sizes)
 #define RT_PARAM_LIGHT_VISIBILITY 30 // 1: light selection reads and feeds the light visibility memory (raytracing_lights_inc.glsl)
+#define RT_PARAM_RADIANCE_CACHE 31 // 1: bounce paths read and train the radiance cache (raytracing_radiance_cache_inc.glsl)
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

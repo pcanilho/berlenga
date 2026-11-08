@@ -985,3 +985,5 @@ vec3 lights_evaluate_direct_lighting_per_group(
 	}
 	return result;
 }
+
+#include "raytracing_radiance_cache_inc.glsl"

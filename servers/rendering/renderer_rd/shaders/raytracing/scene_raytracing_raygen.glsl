@@ -418,6 +418,9 @@ void main() {
 #endif
 
 	const uint max_bounces = RT_GET_MAX_BOUNCES();
+	if (rt_rc_enabled()) {
+		rt_rc_resolve(pixel.y * gl_LaunchSizeEXT.x + pixel.x, gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y);
+	}
 
 	// TODO: when we have a spp > 0 the first raycast is always identical,
 	// we should move it out of the loop
@@ -447,6 +450,14 @@ void main() {
 		float replace_hit_t = 0.0;
 #endif
 
+		// Radiance cache training (raytracing_radiance_cache_inc.glsl): the surface the first
+		// bounce reached, with the light and throughput the path had before it.
+		uint rc_count = 0u;
+		vec3 rc_pos[1];
+		vec3 rc_normal[1];
+		vec3 rc_radiance[1];
+		vec3 rc_throughput[1];
+
 		[[dont_unroll]] for (uint bounce = 0u; bounce <= max_bounces; bounce++) {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
@@ -468,6 +479,18 @@ void main() {
 			ps = path_unpack(payload);
 			if (ps.hit_t > 0.0) {
 				cone_width += rt_cone_spread_angle() * ps.hit_t;
+			}
+			bool rc_recorded = false;
+			if ((ps.packed_bounces_flags & RT_RC_ELIGIBLE_FLAG) != 0u) {
+				ps.packed_bounces_flags &= ~RT_RC_ELIGIBLE_FLAG;
+				if (rc_count < 1u && ps.hit_t > 0.0) {
+					rc_pos[rc_count] = ray_origin + ray_dir * ps.hit_t;
+					rc_normal[rc_count] = ps.offset_normal;
+					rc_radiance[rc_count] = radiance_pre;
+					rc_throughput[rc_count] = throughput_entry;
+					rc_count++;
+					rc_recorded = true;
+				}
 			}
 #ifdef DLSS_RR_ENABLED
 			if (bounce == 0u && (ps.packed_bounces_flags & DLSS_RR_REPLACE_PENDING_FLAG) != 0u) {
@@ -567,6 +590,10 @@ void main() {
 					}
 				}
 
+				if (peel_hits > 0u && rc_recorded) {
+					// Layers in front of the surface would count as its own bounce light.
+					rc_count--;
+				}
 				if (peel_hits == 0u) {
 					// Preserve primary-miss/composite state when the transparent
 					// lane had no geometry. The peel payload starts from flags_entry.
@@ -628,6 +655,16 @@ void main() {
 			dlss_rr_replace_primary_surface(origin.xyz, direction.xyz, replace_hit_t);
 		}
 #endif
+
+		if (rc_count > 0u) {
+			uint rc_rng = init_rng(pixel, frame_index, 7919u + sample_idx);
+			for (uint i = 0u; i < rc_count; i++) {
+				vec3 t = rc_throughput[i];
+				vec3 past = ps.radiance - rc_radiance[i];
+				vec3 l = vec3(t.r > 1e-6 ? past.r / t.r : 0.0, t.g > 1e-6 ? past.g / t.g : 0.0, t.b > 1e-6 ? past.b / t.b : 0.0);
+				rt_rc_write(rc_pos[i], rc_normal[i], l, rc_rng);
+			}
+		}
 
 		total_radiance += ps.radiance;
 		composite_passthrough = composite_passthrough || (composite_enabled && is_primary_miss(ps.packed_bounces_flags));

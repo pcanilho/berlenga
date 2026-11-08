@@ -1257,6 +1257,22 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	// Environment fog for this ray segment (before surface contribution).
 	apply_segment_fog(gl_HitTEXT, rt_entry_material_flags(h.geometry_idx), total_bounces == 0u, ps.radiance, ps.throughput);
 
+	// Radiance cache: a rough surface a bounce reaches reads all it sends back, its own light
+	// included, from the cell around it, and the path ends. Training pixels shade and trace
+	// on, and raygen records what this surface sent back (raytracing_radiance_cache_inc.glsl).
+	bool rc_eligible = total_bounces == 1u && m.roughness >= RT_RC_MIN_ROUGHNESS && rt_rc_enabled();
+	bool rc_training = rc_eligible && rt_rc_is_training_pixel(gl_LaunchIDEXT.xy);
+	if (rc_eligible && !rc_training && !is_singular_path(ps.packed_bounces_flags) &&
+			gl_HitTEXT >= 0.5 * rt_rc_cell_size(h.hit_pos)) {
+		vec4 cached = rt_rc_read(h.hit_pos, h.geometry_normal);
+		if (cached.w > 0.0) {
+			ps.radiance += ps.throughput * cached.rgb;
+			ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
+			path_pack(payload, ps);
+			return;
+		}
+	}
+
 	path_pack(payload, ps);
 	ps.radiance += ps.throughput * shade_local_surface(h, m, N, V, diffuse_bounces > 0u, ps.bsdf_pdf, ps.rng_state);
 
@@ -1297,6 +1313,10 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 
 	if (!sample_surface_continuation(h, m, N, V, ps)) {
 		ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
+		ps.offset_normal = h.geometry_normal;
+	}
+	if (rc_training) {
+		ps.packed_bounces_flags |= RT_RC_ELIGIBLE_FLAG;
 	}
 	path_pack(payload, ps);
 }
