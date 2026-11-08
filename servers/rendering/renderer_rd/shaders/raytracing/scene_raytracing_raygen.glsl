@@ -118,6 +118,7 @@ void dlss_rr_replace_primary_surface(vec3 p_origin, vec3 p_dir, float p_hit_t) {
 	vec3 ray_origin = offset_ray_origin(p_origin + p_dir * p_hit_t, ray_dir);
 
 	PathState gs;
+	gs.bsdf_pdf = 0.0;
 	gs.radiance = vec3(0.0);
 	gs.throughput = vec3(0.0);
 	gs.rng_state = 0u;
@@ -322,6 +323,7 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 		float phi = 2.0 * PI * u.y;
 		vec3 dir = vec3(sz * cos(phi), sz * sin(phi), cz);
 		PathState ps;
+		ps.bsdf_pdf = 0.0;
 		ps.radiance = vec3(0.0);
 		ps.throughput = vec3(1.0);
 		ps.packed_bounces_flags = 0u;
@@ -424,6 +426,7 @@ void main() {
 		// Every field must be defined: path_pack branches on the octahedral encodes,
 		// and branching on an undefined value lets the driver drop the whole path.
 		PathState ps;
+		ps.bsdf_pdf = 0.0;
 		ps.radiance = vec3(0.0);
 		ps.throughput = vec3(1.0);
 		ps.packed_bounces_flags = (sample_idx == 0u) ? set_sample_zero(0u) : 0u;

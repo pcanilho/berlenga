@@ -172,6 +172,7 @@ public:
 	static constexpr int RT_PARAM_PLIGHT_STATE = 27;
 	static constexpr int RT_PARAM_PLIGHT_BOUNCE = 28;
 	static constexpr int RT_PARAM_PLIGHT_TILE = 29;
+	static constexpr int RT_PARAM_LIGHT_VISIBILITY = 30; // 1: light selection reads and feeds the light visibility memory (binding 44).
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

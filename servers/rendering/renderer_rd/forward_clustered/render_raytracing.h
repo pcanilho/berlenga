@@ -416,6 +416,17 @@ enum {
 	// The grid spans at most this far from the camera on each axis, in metres; lights reaching
 	// past it are also listed for the points outside it.
 	RT_LIGHT_GRID_HALF_EXTENT = 256,
+	// The light visibility memory (binding 44): (place, light) pairs of two uints, then
+	// per-place lists of recently visible lights (a key and 8 entries). Must match
+	// RT_LIGHT_VIS_PAIRS / RT_LIGHT_VIS_LISTS in raytracing_lights_inc.glsl. 4.25 MiB.
+	RT_LIGHT_VISIBILITY_PAIRS = 1 << 18,
+	RT_LIGHT_VISIBILITY_LISTS = 1 << 16,
+	RT_LIGHT_VISIBILITY_UINTS = RT_LIGHT_VISIBILITY_PAIRS * 2 + RT_LIGHT_VISIBILITY_LISTS * 9,
+	// Emissive surfaces sampled as lights (appended to the light grid buffer, header [9]): at
+	// most this many per frame, the strongest at the camera; the rest are found by bounce rays only.
+	RT_EMISSIVE_MAX = 1024,
+	RT_EMISSIVE_HEADER = 4,
+	RT_EMISSIVE_ENTRY_UINTS = 16,
 };
 
 constexpr uint32_t RT_OFFSET_NONE = 0xFFFFFFFFu;
@@ -1108,6 +1119,9 @@ struct RTViewportState {
 	RID light_buffer;
 	uint32_t light_buffer_capacity = 0; // Lights.
 	RID light_grid_buffer;
+	// Light visibility memory (binding 44): a hash table of (place, light) -> recent
+	// shadow-ray hits and tries, which light selection reads. Kept across frames.
+	RID light_visibility_buffer;
 	uint32_t light_grid_buffer_capacity = 0; // uints.
 	RID params_buffer;
 	RID scene_uniform_set;
@@ -1329,6 +1343,16 @@ class RenderRaytracing {
 	// Per-frame scratch arrays. Each unified-TLAS instance records its index
 	// into geometry_data via gl_InstanceCustomIndexEXT.
 	LocalVector<RT_GeometryData> geometry_data;
+	// Opaque surfaces whose StandardMaterial3D emits, one per geometry_data entry, for
+	// sampling them as lights (append_emissive_lights()).
+	struct RTEmissiveCandidate {
+		Transform3D transform;
+		AABB world_box;
+		float radiance = 0.0f; // luminance estimate of the emitted radiance
+		uint32_t geometry_idx = 0;
+		uint32_t facing = 0; // bit 0: emits from both sides (cull disabled), bit 1: from the back (cull front)
+	};
+	LocalVector<RTEmissiveCandidate> emissive_candidates;
 	RTMaterialTable material_table;
 	LocalVector<int32_t> motion_indices; // Per-instance: index into motion_transforms[], or -1.
 	LocalVector<RT_InstanceMotionData> motion_transforms; // Compact: only moving instances.
@@ -1554,6 +1578,8 @@ public:
 	static void build_light_grid(const RT_LightData *p_lights, uint32_t p_count, const Vector3 &p_camera, LocalVector<uint32_t> &r_grid);
 	LocalVector<RT_LightData> rt_light_scratch;
 	LocalVector<uint32_t> rt_light_grid_scratch;
+	// Appends the emissive surfaces' section to the light grid array (layout in render_raytracing.cpp).
+	void append_emissive_lights(const Vector3 &p_camera, LocalVector<uint32_t> &r_grid) const;
 	void update_scene_ubo(RTViewportState *p_state, const RenderDataRD *p_render_data, const Size2i &p_screen_size, const Color &p_default_bg_color);
 	RID update_uniform_set(RTViewportState *p_state, const RenderDataRD *p_render_data, uint32_t p_rt_flags);
 

@@ -21,6 +21,8 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 
 ### Lighting
 - Up to 4096 lights per scene (upstream: 64 per frame), via a light grid around the camera and resampled importance sampling, so lights over a large world stay cheap. A street of 460 lamps with 2000 more over 10 km keeps the quality of the street alone (17.8 dB at 4 samples per pixel).
+- Emissive surfaces are lights: glowing signs, screens and windows (StandardMaterial3D, textured or not) get their own light sample, weighed against bounce rays by multiple importance sampling. On a street lit only by signs: 21.2 to 24.0 dB at 4 spp, +2.5 dB at equal time.
+- Light selection remembers which lights actually lit each part of the scene, so lamps behind walls or a sun under a roof stop taking samples (`rendering/pathtracing/light_visibility_memory`). On a test street among lit buildings: 19.0 to 25.3 dB at 4 spp, +5.6 dB at equal time.
 - Shadow-only casters bounce light, so hidden ceilings and walls still light a room.
 - Raster transparents under the path tracer (`rendering/pathtracing/max_transparency_layers` 0): lit by a traced froxel light cache with shadowed lights, sky and bounce; particles scatter forward, so rain glints against lamps and headlights. Reflections and refractions still trace them (rain in puddles and glass).
 
@@ -81,7 +83,7 @@ Top: NVIDIA-RTX/godot has no texture level of detail in its ray tracing shaders 
 | Area | Sources |
 |---|---|
 | Code | [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot), the path tracer and DLSS integration this fork is built on |
-| Many lights | Talbot et al., *Importance Resampling for Global Illumination*, EGSR 2005<br>Boksansky et al., *Rendering Many Lights with Grid-Based Reservoirs* (ReGIR), Ray Tracing Gems II, 2021<br>Bitterli et al., *Spatiotemporal Reservoir Resampling* (ReSTIR DI), SIGGRAPH 2020<br>Olsson et al., *Clustered Deferred and Forward Shading*, HPG 2012 |
+| Many lights | Talbot et al., *Importance Resampling for Global Illumination*, EGSR 2005<br>Boksansky et al., *Rendering Many Lights with Grid-Based Reservoirs* (ReGIR), Ray Tracing Gems II, 2021<br>Bitterli et al., *Spatiotemporal Reservoir Resampling* (ReSTIR DI), SIGGRAPH 2020<br>Olsson et al., *Clustered Deferred and Forward Shading*, HPG 2012<br>Narkowicz and Costa, *MegaLights: Stochastic Direct Lighting*, SIGGRAPH Advances 2025<br>NVIDIA, Spatial Hash Radiance Cache (SHaRC), RTXGI SDK |
 | Lit transparents | Wronski, *Volumetric Fog: Unified Compute Shader Based Solution to Atmospheric Scattering*, SIGGRAPH 2014<br>Hillaire, *Physically Based and Unified Volumetric Rendering in Frostbite*, SIGGRAPH 2015<br>NVIDIA, RTX Remix volumetric radiance cache for particles<br>Garg, Nayar, *Photorealistic Rendering of Rain Streaks*, SIGGRAPH 2006<br>Henyey, Greenstein, *Diffuse Radiation in the Galaxy*, Astrophysical Journal, 1941<br>McGuire, Bavoil, *Weighted Blended Order-Independent Transparency*, JCGT 2013 |
 | Texture filtering | Akenine-Möller et al., *Texture Level of Detail Strategies for Real-Time Ray Tracing*, Ray Tracing Gems, 2019<br>Akenine-Möller et al., *Improved Shader and Texture Level of Detail Using Ray Cones*, JCGT 2021 |
 
