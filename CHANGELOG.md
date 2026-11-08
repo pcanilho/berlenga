@@ -6,6 +6,13 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-35438dbd (2026-11-08)
+
+### Changed
+- Path tracer: motion vectors age out only on objects that moved, instead of visiting every listed object each frame (#139).
+- Path tracer: the per-object check of persistent instances runs on the worker threads (#140).
+- README: an Open worlds section with the large-world settings, a ready-to-paste project.godot block and the open-world test scene (#141).
+
 ## build-28640b78 (2026-11-08)
 
 ### Fixed
