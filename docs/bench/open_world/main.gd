@@ -3,7 +3,7 @@ extends Node3D
 # around a slowly moving camera. Prints frame timings and memory; run with --gpu-profile for
 # per-pass GPU times (Acceleration Structure Build, TLAS Build, Pathtracer). cpu_ms is the viewport's
 # render time on the CPU (scene cull, TLAS records, command recording), setup_ms the frame setup
-# (dirty instances), process_ms the scripts.
+# (dirty instances). A driver frame limiter caps frame_ms; compare capped runs by cpu_ms and gpu_ms.
 #
 # godot --path docs/bench/open_world --gpu-profile -- [options]
 #   --count=N         instances (default 20000)
@@ -43,7 +43,6 @@ var frame_ms: Array[float] = []
 var gpu_ms: Array[float] = []
 var cpu_ms: Array[float] = []
 var setup_ms: Array[float] = []
-var process_ms: Array[float] = []
 var last_t := 0
 
 func _ready() -> void:
@@ -251,7 +250,6 @@ func _process(delta: float) -> void:
 		gpu_ms.push_back(RenderingServer.viewport_get_measured_render_time_gpu(get_viewport().get_viewport_rid()))
 		cpu_ms.push_back(RenderingServer.viewport_get_measured_render_time_cpu(get_viewport().get_viewport_rid()))
 		setup_ms.push_back(RenderingServer.get_frame_setup_time_cpu())
-		process_ms.push_back(Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0)
 	last_t = now
 	if n == warmup + frames:
 		if out != "":
@@ -261,11 +259,10 @@ func _process(delta: float) -> void:
 		gpu_ms.sort()
 		cpu_ms.sort()
 		setup_ms.sort()
-		process_ms.sort()
 		var mem := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_BUFFER_MEM_USED) / 1048576.0
 		var tex := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TEXTURE_MEM_USED) / 1048576.0
-		print("RESULT frame_ms_median=%.2f frame_ms_p95=%.2f gpu_ms_median=%.2f gpu_ms_p95=%.2f buffer_mb=%.1f texture_mb=%.1f objects=%d cpu_ms_median=%.2f setup_ms_median=%.2f process_ms_median=%.2f" % [
+		print("RESULT frame_ms_median=%.2f frame_ms_p95=%.2f gpu_ms_median=%.2f gpu_ms_p95=%.2f buffer_mb=%.1f texture_mb=%.1f objects=%d cpu_ms_median=%.2f setup_ms_median=%.2f" % [
 			frame_ms[frame_ms.size() / 2], frame_ms[int(frame_ms.size() * 0.95)],
 			gpu_ms[gpu_ms.size() / 2], gpu_ms[int(gpu_ms.size() * 0.95)], mem, tex, get_child_count(),
-			cpu_ms[cpu_ms.size() / 2], setup_ms[setup_ms.size() / 2], process_ms[process_ms.size() / 2]])
+			cpu_ms[cpu_ms.size() / 2], setup_ms[setup_ms.size() / 2]])
 		get_tree().quit()
