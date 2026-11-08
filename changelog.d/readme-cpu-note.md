@@ -1,2 +1,2 @@
 ### Changed
-- README: comparisons note that the images are raw CPU path tracer output without a denoiser or Ray Reconstruction (#PR).
+- README: a note on the images: raw path tracer output, almost all CPU-rendered, without a denoiser or Ray Reconstruction (#122).
