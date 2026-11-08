@@ -54,10 +54,12 @@ namespace {
 
 const char *CLOTH_RENDER_SHADER = R"(
 shader_type spatial;
-render_mode cull_disabled;
+render_mode cull_disabled, rt_vertex_dynamic;
 
 // Drawn from PhysXSkinnedCloth3D's simulated positions: CUSTOM0.x is the
 // particle each vertex belongs to, looked up in the solver's output images.
+// rt_vertex_dynamic: the path tracer recaptures it every frame, as the solver
+// rewrites those images in place without any uniform changing.
 uniform sampler2D cloth_positions : filter_nearest, repeat_disable;
 uniform sampler2D cloth_normals : filter_nearest, repeat_disable;
 uniform int texture_width = 1;

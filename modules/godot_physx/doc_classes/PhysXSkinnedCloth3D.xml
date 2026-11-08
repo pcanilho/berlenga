@@ -134,7 +134,7 @@
 			- [code]uniform float normal_sign[/code]: multiply the normal by it (it matches the simulated normals to the mesh's own winding).
 			[codeblock lang=text]
 			shader_type spatial;
-			render_mode cull_disabled;
+			render_mode cull_disabled, rt_vertex_dynamic;
 			uniform sampler2D cloth_positions : filter_nearest, repeat_disable;
 			uniform sampler2D cloth_normals : filter_nearest, repeat_disable;
 			uniform int texture_width = 1;
@@ -154,7 +154,7 @@
 			    }
 			}
 			[/codeblock]
-			The rest of the shader is yours ([code]fragment()[/code], your own uniforms). The source surface's [code]UV[/code], [code]UV2[/code], [code]COLOR[/code], [code]TANGENT[/code] and [code]CUSTOM1[/code]-[code]CUSTOM3[/code] come along on the cloth's mesh; its own [code]CUSTOM0[/code] can't, the particle index takes its place. There's no skinning to do: the positions are already where the cloth is.
+			The rest of the shader is yours ([code]fragment()[/code], your own uniforms). The source surface's [code]UV[/code], [code]UV2[/code], [code]COLOR[/code], [code]TANGENT[/code] and [code]CUSTOM1[/code]-[code]CUSTOM3[/code] come along on the cloth's mesh; its own [code]CUSTOM0[/code] can't, the particle index takes its place. There's no skinning to do: the positions are already where the cloth is. Keep [code]rt_vertex_dynamic[/code]: the solver rewrites the textures in place, no uniform changes, so without it the path tracer keeps the first frame it captured of the cloth.
 			Each build draws with its own copy of the material, with the inputs set on the copy, so one material can be shared by several garments and isn't changed. Changes to the material after the build don't reach the copy; change [code]get_render_instance().get_surface_override_material(0)[/code], or set [member render_material] again. Setting it on a built cloth changes the look without a rebuild; [code]null[/code] goes back to the built-in look.
 		</member>
 		<member name="self_collision" type="bool" setter="set_self_collision" getter="get_self_collision" default="false">

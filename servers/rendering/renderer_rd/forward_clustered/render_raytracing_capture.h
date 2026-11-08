@@ -86,7 +86,10 @@ public:
 		if (p_traits.override_mode == OVERRIDE_FROZEN) {
 			return 0;
 		}
-		return p_traits.dependencies.mask | (p_camera_billboard ? uint32_t(DEP_CAMERA | DEP_MODEL_TRANSFORM) : 0u);
+		// rt_vertex_dynamic: recaptured every frame. vertex() may read what no stamp sees, such as a texture a compute
+		// pass rewrites in place (simulated cloth): its uniforms, and so the material stamp, never change.
+		const uint32_t every_frame = p_traits.override_mode == OVERRIDE_DYNAMIC ? uint32_t(DEP_TIME) : 0u;
+		return p_traits.dependencies.mask | every_frame | (p_camera_billboard ? uint32_t(DEP_CAMERA | DEP_MODEL_TRANSFORM) : 0u);
 	}
 
 	struct Stamps {

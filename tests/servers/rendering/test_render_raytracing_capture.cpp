@@ -300,10 +300,22 @@ static RTVertexCapture::ShaderTraits make_traits_with_dependencies(RTVertexCaptu
 TEST_CASE("[RTVertexCapture] Camera-dependent billboards add camera and model dependencies") {
 	const RTVertexCapture::ShaderOverride overrides[] = { RTVertexCapture::OVERRIDE_AUTO, RTVertexCapture::OVERRIDE_DYNAMIC };
 	for (const RTVertexCapture::ShaderOverride override_mode : overrides) {
-		CHECK(RTVertexCapture::surface_dependencies(make_traits_with_dependencies(override_mode, 0), false) == 0);
 		CHECK(RTVertexCapture::surface_dependencies(make_traits_with_dependencies(override_mode, RTVertexCapture::DEP_TIME), false) == RTVertexCapture::DEP_TIME);
 		CHECK(RTVertexCapture::surface_dependencies(make_traits_with_dependencies(override_mode, RTVertexCapture::DEP_TIME), true) == (RTVertexCapture::DEP_TIME | RTVertexCapture::DEP_CAMERA | RTVertexCapture::DEP_MODEL_TRANSFORM));
 	}
+	CHECK(RTVertexCapture::surface_dependencies(make_traits_with_dependencies(RTVertexCapture::OVERRIDE_AUTO, 0), false) == 0);
+}
+
+TEST_CASE("[RTVertexCapture] rt_vertex_dynamic surfaces are recaptured every frame") {
+	// vertex() reading a texture a compute pass rewrites in place (simulated cloth) changes no stamp but the frame.
+	const uint32_t dependencies = RTVertexCapture::surface_dependencies(make_traits_with_dependencies(RTVertexCapture::OVERRIDE_DYNAMIC, RTVertexCapture::DEP_MATERIAL_UNIFORMS), false);
+	CHECK(dependencies == (RTVertexCapture::DEP_TIME | RTVertexCapture::DEP_MATERIAL_UNIFORMS));
+	const RTVertexCapture::Stamps previous = make_stamps();
+	RTVertexCapture::Stamps next_frame = previous;
+	next_frame.frame++;
+	CHECK(RTVertexCapture::needs_recapture(true, previous, next_frame, dependencies) == RTVertexCapture::RECAPTURE_UPDATE);
+	CHECK_MESSAGE(RTVertexCapture::needs_recapture(true, previous, next_frame, RTVertexCapture::surface_dependencies(make_traits_with_dependencies(RTVertexCapture::OVERRIDE_AUTO, RTVertexCapture::DEP_MATERIAL_UNIFORMS), false)) == RTVertexCapture::RECAPTURE_NONE,
+			"Automatic surfaces still keep their capture while their inputs don't change.");
 }
 
 TEST_CASE("[RTVertexCapture] Frozen surfaces ignore every vertex() input") {
