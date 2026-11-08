@@ -6,6 +6,17 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-bd7ad4eb (2026-11-08)
+
+### Changed
+- The open-world test scene also prints the CPU render and frame setup times (#143).
+
+### Added
+- Design note on path tracing instanced forests: MultiMesh records in persistent slots, chunked forests, partitioned TLAS (#145).
+
+### Fixed
+- PhysXCloth3D: a generated grid now faces +Z as documented, and cloth normals follow the front face, so two-sided cloth is lit on the side the light falls on in raster and path tracing.
+
 ## build-35438dbd (2026-11-08)
 
 ### Changed
