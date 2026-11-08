@@ -59,6 +59,11 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 - Cached shadows for still casters; far lights update less often.
 - Optional time-sliced reflection probes.
 
+### Exposure
+- Histogram auto exposure (`rendering/camera/auto_exposure/metering`, Average by default): the frame is metered on the pixels between two brightness percentiles (10% and 98% by default), so lamps and signs in view no longer black out a night street. Raster and path tracing.
+- Dark-scene key (`rendering/camera/auto_exposure/dark_scene_luminance`, off by default): with histogram metering, scenes darker than the set brightness are shown darker than mid-grey, half a stop per stop by default (`dark_scene_strength`), so night stays night instead of turning into dusk.
+- Auto exposure no longer overshoots and flashes when a frame takes longer than its adaptation time.
+
 ### Large worlds
 - The path tracer works in positions relative to the camera's cell on a 1024 m grid, so shadows, reflections and contact points stay exact kilometres from the world origin (`rendering/pathtracing/relative_origin_grid`, 0 for absolute positions). Without it a scene 65 km out shows speckled shadows and broken reflections, and one 16 km out is 2% darker. Shaders still see absolute world positions.
 - Ray origins move off the surface by at least a few float steps of the largest coordinate and of the ray's length, so a floor near y = 0 does not shadow itself far from the origin.
@@ -143,6 +148,14 @@ A street lit only by a glowing shop window and small signs, 4 samples per pixel,
 16 samples per pixel, `godot --path docs/media/showcase -- --shot=far --far=65536` with `rendering/pathtracing/relative_origin_grid` at 0 (left) and at its default (right). With absolute positions the cube's lit face speckles and the ball reflects the cube in the wrong place. Camera-relative, the frame matches the same scene at the origin to within noise.
 </details>
 
+<details>
+<summary>Exposure: a night street with lamps in view</summary>
+
+![A night street with lamp posts: dark with average metering, readable with histogram metering, darker again with the dark-scene key](docs/media/night-exposure.jpg)
+
+128 samples per pixel, `godot --path docs/media/showcase -- --shot=night`, auto exposure on. Left: Average metering, the bright bulbs pull the exposure down and the street stays dim. Middle: `--set=rendering/camera/auto_exposure/metering:1`, the bulbs are left out and the street is exposed to mid-grey. Right: plus `--set=rendering/camera/auto_exposure/dark_scene_luminance:0.2`, the same street kept darker as a night scene.
+</details>
+
 ## References
 
 | Area | Sources |
@@ -151,6 +164,7 @@ A street lit only by a glowing shop window and small signs, 4 samples per pixel,
 | Many lights | Talbot et al., *Importance Resampling for Global Illumination*, EGSR 2005<br>Boksansky et al., *Rendering Many Lights with Grid-Based Reservoirs* (ReGIR), Ray Tracing Gems II, 2021<br>Bitterli et al., *Spatiotemporal Reservoir Resampling* (ReSTIR DI), SIGGRAPH 2020<br>Olsson et al., *Clustered Deferred and Forward Shading*, HPG 2012<br>Narkowicz and Costa, *MegaLights: Stochastic Direct Lighting*, SIGGRAPH Advances 2025<br>NVIDIA, Spatial Hash Radiance Cache (SHaRC), RTXGI SDK |
 | Lit transparents | Wronski, *Volumetric Fog: Unified Compute Shader Based Solution to Atmospheric Scattering*, SIGGRAPH 2014<br>Hillaire, *Physically Based and Unified Volumetric Rendering in Frostbite*, SIGGRAPH 2015<br>NVIDIA, RTX Remix volumetric radiance cache for particles<br>Garg, Nayar, *Photorealistic Rendering of Rain Streaks*, SIGGRAPH 2006<br>Henyey, Greenstein, *Diffuse Radiation in the Galaxy*, Astrophysical Journal, 1941<br>McGuire, Bavoil, *Weighted Blended Order-Independent Transparency*, JCGT 2013 |
 | Large worlds | Wächter, Binder, *A Fast and Robust Method for Avoiding Self-Intersection*, Ray Tracing Gems, 2019<br>[valence-engine-rtx](https://github.com/Rman887/valence-engine-rtx), camera-relative tracing and the ray offset floor |
+| Exposure | Reinhard et al., *Photographic Tone Reproduction for Digital Images*, SIGGRAPH 2002<br>Epic Games, Unreal Engine *Auto Exposure* histogram metering<br>Krawczyk, Myszkowski, Seidel, *Lightness Perception in Tone Reproduction for High Dynamic Range Images*, Eurographics 2005 |
 | Texture filtering | Akenine-Möller et al., *Texture Level of Detail Strategies for Real-Time Ray Tracing*, Ray Tracing Gems, 2019<br>Akenine-Möller et al., *Improved Shader and Texture Level of Detail Using Ray Cones*, JCGT 2021 |
 
 ## Everything else

@@ -2907,6 +2907,21 @@
 		<member name="rendering/anti_aliasing/screen_space_roughness_limiter/limit" type="float" setter="" getter="" default="0.18">
 			[b]Note:[/b] This property is only read when the project starts. To control the screen-space roughness limiter at runtime, call [method RenderingServer.screen_space_roughness_limiter_set_active] instead.
 		</member>
+		<member name="rendering/camera/auto_exposure/dark_scene_luminance" type="float" setter="" getter="" default="0.0">
+			With [member rendering/camera/auto_exposure/metering] set to Histogram, a frame whose metered brightness is below this value is exposed darker than mid-grey, so night and storm scenes stay dark instead of being lifted to look like dusk. Measured as the metered mean of each pixel's brightest channel, before exposure. [code]0.0[/code] turns it off, as Godot does. Pick a value a little below the brightness of the darkest scene that should still look like day.
+		</member>
+		<member name="rendering/camera/auto_exposure/dark_scene_strength" type="float" setter="" getter="" default="0.5">
+			How much darker than mid-grey a dark scene is shown, in stops per stop below [member rendering/camera/auto_exposure/dark_scene_luminance]: [code]0.5[/code] shows a scene four times darker than that value one stop darker than mid-grey. At most four stops. [code]0.0[/code] exposes every scene to mid-grey.
+		</member>
+		<member name="rendering/camera/auto_exposure/histogram_high_percent" type="float" setter="" getter="" default="98.0">
+			With [member rendering/camera/auto_exposure/metering] set to Histogram, the brightest pixels above this percentile are left out of metering, so lamps, signs and highlights the camera sees directly do not darken the rest of the frame.
+		</member>
+		<member name="rendering/camera/auto_exposure/histogram_low_percent" type="float" setter="" getter="" default="10.0">
+			With [member rendering/camera/auto_exposure/metering] set to Histogram, the darkest pixels below this percentile are left out of metering, so a black sky or deep shadow does not brighten the rest of the frame.
+		</member>
+		<member name="rendering/camera/auto_exposure/metering" type="int" setter="" getter="" default="0">
+			How auto exposure measures the frame's brightness. [b]Average[/b] uses the mean of every pixel's brightest channel, as Godot does. [b]Histogram[/b] sorts the pixels into 64 brightness bins and averages only those between [member rendering/camera/auto_exposure/histogram_low_percent] and [member rendering/camera/auto_exposure/histogram_high_percent], so a night scene with visible lamps is exposed for the street rather than the lamps. The adaptation speed, sensitivity limits and scale of [CameraAttributes] apply to both. On devices where Godot draws post effects with raster passes instead of compute, Average is always used.
+		</member>
 		<member name="rendering/camera/depth_of_field/depth_of_field_bokeh_quality" type="int" setter="" getter="" default="1">
 			Sets the quality of the depth of field effect. Higher quality takes more samples, which is slower but looks smoother.
 		</member>

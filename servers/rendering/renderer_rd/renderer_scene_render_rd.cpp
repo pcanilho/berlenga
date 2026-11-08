@@ -618,9 +618,21 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		rb->set_auto_exposure_version(auto_exposure_version);
 
 		double step = RSG::camera_attributes->camera_attributes_get_auto_exposure_adjust_speed(p_render_data->camera_attributes) * time_step;
+		// A frame longer than 1 / speed (slow GPU, hitch) would overshoot the metered value and flash.
+		step = MIN(step, 1.0);
 		float auto_exposure_min_sensitivity = RSG::camera_attributes->camera_attributes_get_auto_exposure_min_sensitivity(p_render_data->camera_attributes);
 		float auto_exposure_max_sensitivity = RSG::camera_attributes->camera_attributes_get_auto_exposure_max_sensitivity(p_render_data->camera_attributes);
-		luminance->luminance_reduction(rb->get_internal_texture(), rb->get_internal_size(), luminance_buffers, auto_exposure_min_sensitivity, auto_exposure_max_sensitivity, step, set_immediate);
+		bool metered = false;
+		if (GLOBAL_GET_CACHED(int, "rendering/camera/auto_exposure/metering") == 1) {
+			const float low = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/histogram_low_percent") * 0.01f;
+			const float high = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/histogram_high_percent") * 0.01f;
+			const float dark_luminance = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/dark_scene_luminance");
+			const float dark_strength = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/dark_scene_strength");
+			metered = luminance->luminance_histogram_metering(rb->get_internal_texture(), rb->get_internal_size(), luminance_buffers, auto_exposure_min_sensitivity, auto_exposure_max_sensitivity, step, low, high, dark_luminance, dark_strength, set_immediate);
+		}
+		if (!metered) {
+			luminance->luminance_reduction(rb->get_internal_texture(), rb->get_internal_size(), luminance_buffers, auto_exposure_min_sensitivity, auto_exposure_max_sensitivity, step, set_immediate);
+		}
 
 		// Swap final reduce with prev luminance.
 
