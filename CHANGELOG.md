@@ -6,6 +6,13 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-e7f15277 (2026-11-08)
+
+### Changed
+- Path tracer: with persistent instances, the TLASes keep their instances on the GPU and each build writes only the changed ones (#135).
+- Path tracer: persistent instances prefetch the instances and their slots ahead of the per-frame check, about a third less time in it (#136).
+- Path tracer: the raster sun shadow casters are no longer culled while path tracing, which never draws those shadow maps (#134).
+
 ## build-8cfe788f (2026-11-08)
 
 ### Added
