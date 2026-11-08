@@ -77,7 +77,7 @@ NVIDIA-RTX/godot passes the 64 highest scoring lights to the path tracer each fr
 
 ![Checker floor: moire on NVIDIA-RTX/godot, filtered on this fork, raster for reference](docs/media/texture-filtering.jpg)
 
-Top: NVIDIA-RTX/godot has no texture level of detail in its ray tracing shaders and samples the full resolution texture at every distance, so the floor turns to moire. Middle: this fork. Bottom: the raster renderer for reference.
+Top: NVIDIA-RTX/godot has no texture level of detail in its ray tracing shaders and samples the full resolution texture at every distance, so the floor turns to moire (rendered on the CPU; the aliasing is the same on any GPU). Middle: this fork on an RTX 4090. Bottom: the raster renderer on the same GPU for reference.
 </details>
 
 ## References
