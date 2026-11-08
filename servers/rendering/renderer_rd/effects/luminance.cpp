@@ -79,6 +79,17 @@ Luminance::Luminance(bool p_prefer_raster_effects) {
 		for (int i = 0; i < LUMINANCE_HISTOGRAM_MAX; i++) {
 			luminance_histogram.pipelines[i] = RD::get_singleton()->compute_pipeline_create(luminance_histogram.shader.version_get_shader(luminance_histogram.shader_version, i));
 		}
+
+		Vector<String> local_exposure_modes;
+		local_exposure_modes.push_back("\n#define BUILD_GRID\n");
+		local_exposure_modes.push_back("\n#define BLUR_GRID\n");
+
+		local_exposure.shader.initialize(local_exposure_modes);
+		local_exposure.shader_version = local_exposure.shader.version_create();
+
+		for (int i = 0; i < LOCAL_EXPOSURE_MAX; i++) {
+			local_exposure.pipelines[i] = RD::get_singleton()->compute_pipeline_create(local_exposure.shader.version_get_shader(local_exposure.shader_version, i));
+		}
 	}
 }
 
@@ -88,6 +99,7 @@ Luminance::~Luminance() {
 	} else {
 		luminance_reduce.shader.version_free(luminance_reduce.shader_version);
 		luminance_histogram.shader.version_free(luminance_histogram.shader_version);
+		local_exposure.shader.version_free(local_exposure.shader_version);
 	}
 }
 
@@ -146,6 +158,13 @@ void Luminance::LuminanceBuffers::free_data() {
 	if (histogram.is_valid()) {
 		RD::get_singleton()->free_rid(histogram);
 		histogram = RID();
+	}
+
+	for (int i = 0; i < 2; i++) {
+		if (local_grid[i].is_valid()) {
+			RD::get_singleton()->free_rid(local_grid[i]);
+			local_grid[i] = RID();
+		}
 	}
 }
 
@@ -333,4 +352,74 @@ bool Luminance::luminance_histogram_metering(RID p_source_texture, const Size2i 
 
 	SWAP(p_luminance_buffers->current, p_luminance_buffers->reduce.write[p_luminance_buffers->reduce.size() - 1]);
 	return true;
+}
+
+RID Luminance::local_exposure_grid(RID p_source_texture, const Size2i p_source_size, Ref<LuminanceBuffers> p_luminance_buffers) {
+	if (prefer_raster_effects) {
+		return RID();
+	}
+
+	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
+	ERR_FAIL_NULL_V(uniform_set_cache, RID());
+	MaterialStorage *material_storage = MaterialStorage::get_singleton();
+	ERR_FAIL_NULL_V(material_storage, RID());
+
+	// About 32 cells over the frame's height, whatever the resolution.
+	const int cell_size = MAX(8, (p_source_size.y + 31) / 32);
+	const Size2i grid_size((p_source_size.x + cell_size - 1) / cell_size, (p_source_size.y + cell_size - 1) / cell_size);
+	const int slices = 32; // GRID_SLICES in local_exposure.glsl.
+
+	if (p_luminance_buffers->local_grid[0].is_null() || p_luminance_buffers->local_grid_source_size != p_source_size) {
+		for (int i = 0; i < 2; i++) {
+			if (p_luminance_buffers->local_grid[i].is_valid()) {
+				RD::get_singleton()->free_rid(p_luminance_buffers->local_grid[i]);
+			}
+			RD::TextureFormat tf;
+			tf.texture_type = RD::TEXTURE_TYPE_3D;
+			tf.format = RD::DATA_FORMAT_R32G32_SFLOAT;
+			tf.width = grid_size.x;
+			tf.height = grid_size.y;
+			tf.depth = slices;
+			tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+			p_luminance_buffers->local_grid[i] = RD::get_singleton()->texture_create(tf, RD::TextureView());
+			RD::get_singleton()->set_resource_name(p_luminance_buffers->local_grid[i], i == 0 ? "Local exposure grid" : "Local exposure grid blurred");
+		}
+		p_luminance_buffers->local_grid_source_size = p_source_size;
+	}
+
+	LocalExposurePushConstant push_constant;
+	memset(&push_constant, 0, sizeof(LocalExposurePushConstant));
+	push_constant.source_size[0] = p_source_size.x;
+	push_constant.source_size[1] = p_source_size.y;
+	push_constant.grid_size[0] = grid_size.x;
+	push_constant.grid_size[1] = grid_size.y;
+	push_constant.cell_size = cell_size;
+
+	RID nearest_sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+
+	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
+
+	RID shader = local_exposure.shader.version_get_shader(local_exposure.shader_version, LOCAL_EXPOSURE_BUILD);
+	RD::Uniform u_source(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ nearest_sampler, p_source_texture }));
+	RD::Uniform u_grid(RD::UNIFORM_TYPE_IMAGE, 0, p_luminance_buffers->local_grid[0]);
+	RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, local_exposure.pipelines[LOCAL_EXPOSURE_BUILD]);
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_source), 0);
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_grid), 1);
+	RD::get_singleton()->compute_list_set_push_constant(compute_list, &push_constant, sizeof(LocalExposurePushConstant));
+	RD::get_singleton()->compute_list_dispatch(compute_list, grid_size.x, grid_size.y, 1);
+
+	RD::get_singleton()->compute_list_add_barrier(compute_list);
+
+	shader = local_exposure.shader.version_get_shader(local_exposure.shader_version, LOCAL_EXPOSURE_BLUR);
+	RD::Uniform u_src_grid(RD::UNIFORM_TYPE_IMAGE, 0, p_luminance_buffers->local_grid[0]);
+	RD::Uniform u_dst_grid(RD::UNIFORM_TYPE_IMAGE, 0, p_luminance_buffers->local_grid[1]);
+	RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, local_exposure.pipelines[LOCAL_EXPOSURE_BLUR]);
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_src_grid), 0);
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 1, u_dst_grid), 1);
+	RD::get_singleton()->compute_list_set_push_constant(compute_list, &push_constant, sizeof(LocalExposurePushConstant));
+	RD::get_singleton()->compute_list_dispatch_threads(compute_list, grid_size.x, grid_size.y, slices);
+
+	RD::get_singleton()->compute_list_end();
+
+	return p_luminance_buffers->local_grid[1];
 }
