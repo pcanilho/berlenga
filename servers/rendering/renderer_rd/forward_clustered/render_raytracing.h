@@ -1176,6 +1176,8 @@ class RenderRaytracing {
 
 	// Caching (chunked sparse caches indexed by RID low bits / 256).
 	Vector<RTCacheEntry *> surface_chunks;
+	// Coarser levels of static surfaces, keyed (surface cache key << 8) | level; see process_surface_lod.
+	HashMap<uint64_t, RTCacheEntry> surface_lod_cache;
 	Vector<RTMaterialCacheEntry *> material_chunks;
 
 	// Merged MultiMesh BLAS cache and compute shader.
@@ -1507,7 +1509,17 @@ class RenderRaytracing {
 			bool p_allow_update,
 			uint32_t p_cache_key,
 			RTSurfaceData *r_surf_data,
+			LocalVector<RID> &r_dirty_blas_list,
+			uint32_t p_lod = 0);
+	// A static surface at one of Godot's mesh LOD levels (1 and up), shared by the instances tracing it.
+	RTSurfaceData *process_surface_lod(
+			const void *p_surf,
+			uint32_t p_cache_key,
+			uint32_t p_mesh_rid_version,
+			uint32_t p_surface_invalidation_counter,
+			uint32_t p_lod,
 			LocalVector<RID> &r_dirty_blas_list);
+	void _evict_surface_lods(uint32_t p_frame);
 	RTMaterialData *process_material(RID p_material_rid, uint16_t p_material_invalidation_counter);
 	bool _build_merged_mm_blas(
 			const RTInstanceSource &p_source,

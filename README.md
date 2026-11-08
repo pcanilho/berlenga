@@ -62,6 +62,7 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 ### Large worlds
 - The path tracer works in positions relative to the camera's cell on a 1024 m grid, so shadows, reflections and contact points stay exact kilometres from the world origin (`rendering/pathtracing/relative_origin_grid`, 0 for absolute positions). Without it a scene 65 km out shows speckled shadows and broken reflections, and one 16 km out is 2% darker. Shaders still see absolute world positions.
 - Ray origins move off the surface by at least a few float steps of the largest coordinate and of the ray's length, so a floor near y = 0 does not shadow itself far from the origin.
+- Optional mesh LOD in the path tracer (`rendering/pathtracing/mesh_lod`, off by default): static meshes trace at the level of detail the rasterizer draws them at, each level built once and shared. 120 unique rocks over 1 km: buffer memory 346 to 110 MB, frames 7% faster on the CPU, near rocks unchanged.
 
 ### Physics (PhysX 5)
 Windows x64 and Linux x86_64 builds include a PhysX 5 physics server with NVIDIA Blast destruction and NVIDIA Flow smoke and fire. macOS and Linux ARM64 builds do not.
