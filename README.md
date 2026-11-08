@@ -24,7 +24,7 @@ The fork is built with large open worlds in mind, where the limits are float pre
 - The radiance cache is camera-following and world-space, so it covers any map size at a fixed 16 MiB.
 - PhysX cloth, destruction, smoke and water work alongside Jolt.
 
-Next for large worlds, in order: RTX Mega Geometry (cluster acceleration structures with level of detail, so distant geometry stays in the trace at low cost), partitioned acceleration structures for scenes with many static objects, and geometry streaming. Every feature has a project setting to turn it off. Research notes are in [docs/ideas](docs/ideas).
+Next for large worlds, in order: RTX Mega Geometry (cluster acceleration structures with level of detail, so distant geometry stays in the trace at low cost), partitioned acceleration structures for scenes with many static objects, and geometry streaming. Features that change the look or the cost have a project setting to turn them off. Research notes are in [docs/ideas](docs/ideas).
 
 ## What this fork adds
 
