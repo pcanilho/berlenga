@@ -3438,6 +3438,16 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 			if (cull_data.cull->rt_enabled && (idata.layer_mask & ((1 << 20) - 1))) {
 				// For off-frustum instances, also run LAYER_CHECK and VIS_CHECK to match raster gating.
 				bool rt_in_range = in_frustum || (LAYER_CHECK && cull_data.scenario->instance_aabbs[i].in_aabb(cull_data.cull->rt_aabb) && VIS_CHECK);
+				if (rt_in_range && !in_frustum && cull_data.cull->rt_min_size_ratio > 0.0) {
+					// Solid-angle culling of what the camera can't see: small far objects add little to
+					// shadows and reflections but cost TLAS instances (as Assassin's Creed Shadows' RT).
+					const real_t *b = cull_data.scenario->instance_aabbs[i].bounds;
+					const Vector3 lo(b[0], b[1], b[2]);
+					const Vector3 hi(b[3], b[4], b[5]);
+					const real_t radius = (hi - lo).length() * 0.5;
+					const real_t distance = ((lo + hi) * 0.5).distance_to(cull_data.cull->rt_cam_origin);
+					rt_in_range = radius >= distance * cull_data.cull->rt_min_size_ratio;
+				}
 				if (rt_in_range) {
 					// Exclude visibility-parent children while their parent is in the
 					// FADE_CHILDREN cross-fade band. PT is binary: only one LOD at a time.
@@ -3585,8 +3595,17 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	cull.rt_enabled = p_reflection_probe.is_null() && scene_render->pathtracing_is_used(p_environment, p_viewport);
 	if (cull.rt_enabled) {
 		float z_far = p_camera_data->main_projection.get_z_far();
+		// Off-screen geometry farther than this stays out of the trace (shadows, reflections, bounce).
+		const float rt_max_distance = GLOBAL_GET_CACHED(float, "rendering/pathtracing/cull_max_distance");
+		if (rt_max_distance > 0.0f) {
+			z_far = MIN(z_far, rt_max_distance);
+		}
 		Vector3 cam_origin = p_camera_data->main_transform.origin;
 		cull.rt_aabb = AABB(cam_origin - Vector3(z_far, z_far, z_far), Vector3(z_far, z_far, z_far) * 2.0);
+		cull.rt_cam_origin = cam_origin;
+		// Degrees of angular radius under which an off-screen instance is left out.
+		const float rt_min_size = GLOBAL_GET_CACHED(float, "rendering/pathtracing/cull_min_size");
+		cull.rt_min_size_ratio = rt_min_size > 0.0f ? Math::tan(Math::deg_to_rad(rt_min_size)) : 0.0;
 	}
 
 	Vector<RID> directional_lights;

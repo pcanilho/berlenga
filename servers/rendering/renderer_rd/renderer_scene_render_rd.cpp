@@ -605,6 +605,7 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 	}
 
 	float auto_exposure_scale = 1.0;
+	RID local_exposure_grid;
 
 	if (can_use_effects && RSG::camera_attributes->camera_attributes_uses_auto_exposure(p_render_data->camera_attributes)) {
 		RENDER_TIMESTAMP("Auto exposure");
@@ -618,13 +619,31 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		rb->set_auto_exposure_version(auto_exposure_version);
 
 		double step = RSG::camera_attributes->camera_attributes_get_auto_exposure_adjust_speed(p_render_data->camera_attributes) * time_step;
+		// A frame longer than 1 / speed (slow GPU, hitch) would overshoot the metered value and flash.
+		step = MIN(step, 1.0);
 		float auto_exposure_min_sensitivity = RSG::camera_attributes->camera_attributes_get_auto_exposure_min_sensitivity(p_render_data->camera_attributes);
 		float auto_exposure_max_sensitivity = RSG::camera_attributes->camera_attributes_get_auto_exposure_max_sensitivity(p_render_data->camera_attributes);
-		luminance->luminance_reduction(rb->get_internal_texture(), rb->get_internal_size(), luminance_buffers, auto_exposure_min_sensitivity, auto_exposure_max_sensitivity, step, set_immediate);
+		bool metered = false;
+		if (GLOBAL_GET_CACHED(int, "rendering/camera/auto_exposure/metering") == 1) {
+			const float low = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/histogram_low_percent") * 0.01f;
+			const float high = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/histogram_high_percent") * 0.01f;
+			const float dark_luminance = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/dark_scene_luminance");
+			const float dark_strength = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/dark_scene_strength");
+			metered = luminance->luminance_histogram_metering(rb->get_internal_texture(), rb->get_internal_size(), luminance_buffers, auto_exposure_min_sensitivity, auto_exposure_max_sensitivity, step, low, high, dark_luminance, dark_strength, set_immediate);
+		}
+		if (!metered) {
+			luminance->luminance_reduction(rb->get_internal_texture(), rb->get_internal_size(), luminance_buffers, auto_exposure_min_sensitivity, auto_exposure_max_sensitivity, step, set_immediate);
+		}
 
 		// Swap final reduce with prev luminance.
 
 		auto_exposure_scale = RSG::camera_attributes->camera_attributes_get_auto_exposure_scale(p_render_data->camera_attributes);
+
+		const float local_highlight = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/local_highlight_contrast");
+		const float local_shadow = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/local_shadow_contrast");
+		if ((local_highlight != 1.0f || local_shadow != 1.0f) && rb->get_view_count() == 1) {
+			local_exposure_grid = luminance->local_exposure_grid(rb->get_internal_texture(), rb->get_internal_size(), luminance_buffers);
+		}
 
 		RenderingServerDefault::redraw_request(); // Redraw all the time if auto exposure rendering is on.
 		RD::get_singleton()->draw_command_end_label();
@@ -737,6 +756,12 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		if (can_use_effects && RSG::camera_attributes->camera_attributes_uses_auto_exposure(p_render_data->camera_attributes) && tonemap.exposure_texture.is_valid()) {
 			tonemap.use_auto_exposure = true;
 			tonemap.auto_exposure_scale = auto_exposure_scale;
+			if (local_exposure_grid.is_valid()) {
+				tonemap.use_local_exposure = true;
+				tonemap.local_exposure_grid = local_exposure_grid;
+				tonemap.local_highlight_contrast = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/local_highlight_contrast");
+				tonemap.local_shadow_contrast = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/local_shadow_contrast");
+			}
 		} else {
 			tonemap.exposure_texture = texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
 		}

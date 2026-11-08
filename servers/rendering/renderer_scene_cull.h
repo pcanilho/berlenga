@@ -1206,6 +1206,10 @@ public:
 		// Raytracing: wider AABB cull volume for TLAS and light gathering.
 		bool rt_enabled = false;
 		AABB rt_aabb;
+		// Off-screen instances whose bounding sphere spans less than this ratio of radius to distance
+		// stay out of the TLAS (rendering/pathtracing/cull_min_size); 0 keeps them.
+		Vector3 rt_cam_origin;
+		real_t rt_min_size_ratio = 0.0;
 	} cull;
 
 	struct VisibilityCullData {

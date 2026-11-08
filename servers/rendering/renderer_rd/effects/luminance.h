@@ -31,6 +31,8 @@
 #pragma once
 
 #include "servers/rendering/renderer_rd/pipeline_cache_rd.h"
+#include "servers/rendering/renderer_rd/shaders/effects/local_exposure.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/effects/luminance_histogram.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/luminance_reduce.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/luminance_reduce_raster.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"
@@ -86,6 +88,50 @@ private:
 		PipelineCacheRD pipelines[LUMINANCE_REDUCE_FRAGMENT_MAX];
 	} luminance_reduce_raster;
 
+	enum LuminanceHistogramMode {
+		LUMINANCE_HISTOGRAM_BUILD,
+		LUMINANCE_HISTOGRAM_RESOLVE,
+		LUMINANCE_HISTOGRAM_MAX
+	};
+
+	struct LuminanceHistogramPushConstant {
+		int32_t source_size[2];
+		float max_luminance;
+		float min_luminance;
+		float exposure_adjust;
+		float low_fraction;
+		float high_fraction;
+		uint32_t set_immediate;
+		float dark_luminance;
+		float dark_strength;
+		float pad[2];
+	};
+
+	struct LuminanceHistogram {
+		LuminanceHistogramShaderRD shader;
+		RID shader_version;
+		RID pipelines[LUMINANCE_HISTOGRAM_MAX];
+	} luminance_histogram;
+
+	enum LocalExposureMode {
+		LOCAL_EXPOSURE_BUILD,
+		LOCAL_EXPOSURE_BLUR,
+		LOCAL_EXPOSURE_MAX
+	};
+
+	struct LocalExposurePushConstant {
+		int32_t source_size[2];
+		int32_t grid_size[2];
+		int32_t cell_size;
+		int32_t pad[3];
+	};
+
+	struct LocalExposure {
+		LocalExposureShaderRD shader;
+		RID shader_version;
+		RID pipelines[LOCAL_EXPOSURE_MAX];
+	} local_exposure;
+
 public:
 	class LuminanceBuffers : public RenderBufferCustomDataRD {
 		GDCLASS(LuminanceBuffers, RenderBufferCustomDataRD);
@@ -96,6 +142,9 @@ public:
 	public:
 		Vector<RID> reduce;
 		RID current;
+		RID histogram; // 64 bins for histogram metering, created on first use.
+		RID local_grid[2]; // Bilateral grid for local exposure (raw, blurred), created on first use.
+		Size2i local_grid_source_size;
 
 		virtual void configure(RenderSceneBuffersRD *p_render_buffers) override;
 		virtual void free_data() override;
@@ -106,6 +155,14 @@ public:
 	Ref<LuminanceBuffers> get_luminance_buffers(Ref<RenderSceneBuffersRD> p_render_buffers);
 	RID get_current_luminance_buffer(Ref<RenderSceneBuffersRD> p_render_buffers);
 	void luminance_reduction(RID p_source_texture, const Size2i p_source_size, Ref<LuminanceBuffers> p_luminance_buffers, float p_min_luminance, float p_max_luminance, float p_adjust, bool p_set = false);
+	// Histogram metering: mean of the pixels between two brightness percentiles (fractions 0 to 1),
+	// optionally lowered for scenes darker than p_dark_luminance (0 = off).
+	// Compute only; returns false when it can't run (mobile raster effects), so the caller falls back.
+	bool luminance_histogram_metering(RID p_source_texture, const Size2i p_source_size, Ref<LuminanceBuffers> p_luminance_buffers, float p_min_luminance, float p_max_luminance, float p_adjust, float p_low_fraction, float p_high_fraction, float p_dark_luminance, float p_dark_strength, bool p_set = false);
+
+	// Builds the local exposure grid from the frame and returns it (a 3D texture of log2 brightness
+	// sums and weights), or an invalid RID when it can't run (raster effects).
+	RID local_exposure_grid(RID p_source_texture, const Size2i p_source_size, Ref<LuminanceBuffers> p_luminance_buffers);
 
 	Luminance(bool p_prefer_raster_effects);
 	~Luminance();

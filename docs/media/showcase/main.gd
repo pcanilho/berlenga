@@ -1,6 +1,7 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|textures|glass|far|physx --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|textures|glass|far|night|physx --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
 var shot := "lights"
 var spp := 16
 var out := "out.png"
@@ -20,6 +21,9 @@ func _ready() -> void:
 		elif a.begins_with("--far="): far = int(a.substr(6))
 		elif a == "--raster": raster = true
 		elif a == "--rr": rr = true
+		elif a.begins_with("--set="):
+			var kv := a.substr(6).split(":")
+			ProjectSettings.set_setting(kv[0], float(kv[1]))
 	seed(11)
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0, 0, 0)
@@ -376,6 +380,53 @@ func shot_far() -> void:
 	add_child(o)
 	camera(Vector3(0, 2.5, 5), Vector3(0, 0.3, 0), 50)
 	position = Vector3(far, 0, far)
+
+# A night street with bright lamp bulbs in view, under auto exposure.
+func shot_night() -> void:
+	env.pathtracing_max_bounces = 2
+	var ca := CameraAttributesPractical.new()
+	ca.auto_exposure_enabled = true
+	ca.auto_exposure_speed = 50.0
+	ca.auto_exposure_scale = 0.4
+	get_child(0).camera_attributes = ca
+	plane(Vector2(200, 200), mat(Color(0.4, 0.4, 0.4), 0.8))
+	var wall := mat(Color(0.55, 0.5, 0.45), 0.9)
+	for i in 6:
+		for side in [-1, 1]:
+			var h := 8.0 + (i * 3 % 5)
+			box(Vector3(6, h, 7), Vector3(side * 9.0, h / 2, -6.0 - i * 9.0), wall)
+	var bulb := emissive(Color(1.0, 0.85, 0.6), 60.0)
+	bulb.albedo_color = Color.BLACK
+	var pole := mat(Color(0.15, 0.15, 0.15))
+	for i in 4:
+		for side in [-1, 1]:
+			var z := -4.0 - i * 12.0
+			var p := MeshInstance3D.new()
+			var cm := CylinderMesh.new()
+			cm.top_radius = 0.08
+			cm.bottom_radius = 0.1
+			cm.height = 4.5
+			cm.material = pole
+			p.mesh = cm
+			p.position = Vector3(side * 5.0, 2.25, z)
+			add_child(p)
+			var s := MeshInstance3D.new()
+			var sm := SphereMesh.new()
+			sm.radius = 0.25
+			sm.height = 0.5
+			sm.material = bulb
+			s.mesh = sm
+			s.position = Vector3(side * 5.0, 4.6, z)
+			s.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(s)
+			var l := OmniLight3D.new()
+			l.position = Vector3(side * 5.0, 4.3, z)
+			l.light_color = Color(1.0, 0.85, 0.6)
+			l.light_energy = 1.5
+			l.omni_range = 14.0
+			l.shadow_enabled = true
+			add_child(l)
+	camera(Vector3(0, 1.7, 6), Vector3(0, 2.5, -30), 60)
 
 func _process(_d: float) -> void:
 	n += 1

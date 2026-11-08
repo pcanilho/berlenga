@@ -32,6 +32,7 @@
 
 #include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
+#include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 
 using namespace RendererRD;
@@ -159,6 +160,11 @@ void ToneMapper::tonemapper(RID p_source_color, RID p_dst_framebuffer, const Ton
 	tonemap.push_constant.luminance_multiplier = p_settings.luminance_multiplier;
 	tonemap.push_constant.output_max_value = MAX(p_settings.max_value, 1.0f);
 
+	const bool use_local_exposure = p_settings.use_auto_exposure && p_settings.use_local_exposure && p_settings.local_exposure_grid.is_valid() && p_settings.view_count <= 1;
+	tonemap.push_constant.flags |= use_local_exposure ? TONEMAP_FLAG_USE_LOCAL_EXPOSURE : 0;
+	tonemap.push_constant.local_highlight_contrast = p_settings.local_highlight_contrast;
+	tonemap.push_constant.local_shadow_contrast = p_settings.local_shadow_contrast;
+
 	tonemap.push_constant.flags |= p_settings.use_color_correction ? TONEMAP_FLAG_USE_COLOR_CORRECTION : 0;
 
 	tonemap.push_constant.flags |= p_settings.use_fxaa ? TONEMAP_FLAG_USE_FXAA : 0;
@@ -187,6 +193,8 @@ void ToneMapper::tonemapper(RID p_source_color, RID p_dst_framebuffer, const Ton
 	u_exposure_texture.append_id(default_sampler);
 	u_exposure_texture.append_id(p_settings.exposure_texture);
 
+	RD::Uniform u_local_exposure_grid(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ default_sampler, use_local_exposure ? p_settings.local_exposure_grid : TextureStorage::get_singleton()->texture_rd_get_default(TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK) }));
+
 	RD::Uniform u_glow_texture;
 	u_glow_texture.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
 	u_glow_texture.binding = 0;
@@ -211,7 +219,7 @@ void ToneMapper::tonemapper(RID p_source_color, RID p_dst_framebuffer, const Ton
 	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_dst_framebuffer);
 	RD::get_singleton()->draw_list_bind_render_pipeline(draw_list, tonemap.pipelines[mode].get_render_pipeline(RD::INVALID_ID, RD::get_singleton()->framebuffer_get_format(p_dst_framebuffer), false, RD::get_singleton()->draw_list_get_current_pass()));
 	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 0, u_source_color), 0);
-	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 1, u_exposure_texture), 1);
+	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 1, u_exposure_texture, u_local_exposure_grid), 1);
 	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 2, u_glow_texture, u_glow_map), 2);
 	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 3, u_color_correction_texture), 3);
 
