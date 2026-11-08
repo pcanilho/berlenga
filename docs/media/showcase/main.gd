@@ -1,12 +1,13 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|textures|glass|physx --spp=N --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|textures|glass|physx --spp=N --rr --out=path.png --frames=N --far=N --raster
 var shot := "lights"
 var spp := 16
 var out := "out.png"
 var frames := 3
 var far := 0
 var raster := false
+var rr := false
 var n := 0
 var env := Environment.new()
 
@@ -18,6 +19,7 @@ func _ready() -> void:
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--far="): far = int(a.substr(6))
 		elif a == "--raster": raster = true
+		elif a == "--rr": rr = true
 	seed(11)
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0, 0, 0)
@@ -25,6 +27,10 @@ func _ready() -> void:
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = 3
 	env.pathtracing_denoiser = 0
+	if rr:
+		# DLSS Ray Reconstruction: needs DLSS scaling on the viewport (RTX GPU, Windows).
+		env.pathtracing_denoiser = RenderingServer.PT_DENOISER_DLSS_RAY_RECONSTRUCTION
+		get_viewport().scaling_3d_mode = Viewport.SCALING_3D_MODE_DLSS
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
 	var we := WorldEnvironment.new()
 	we.environment = env
