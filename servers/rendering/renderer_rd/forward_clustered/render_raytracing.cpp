@@ -5943,6 +5943,7 @@ void RenderRaytracing::update_scene_ubo(RTViewportState *p_state, const RenderDa
 		RD::get_singleton()->set_resource_name(p_state->scene_ubo, "RT Scene Data UBO");
 	}
 
+	p_state->default_bg_color = p_default_bg_color;
 	RID env = owner->is_environment(p_render_data->environment) ? p_render_data->environment : RID();
 	RID reflection_probe_instance = p_render_data->reflection_probe.is_valid() ? RendererRD::LightStorage::get_singleton()->reflection_probe_instance_get_probe(p_render_data->reflection_probe) : RID();
 	float luminance_multiplier = p_render_data->render_buffers.is_valid() ? p_render_data->render_buffers->get_luminance_multiplier() : 1.0;
@@ -6155,6 +6156,23 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SELF_SHADOW_MASK] = p_state ? float(p_state->shadow_groups.self_shadow_bit) : 0.0f;
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_VISIBILITY] = (p_state && p_state->light_visibility_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/light_visibility_memory")) ? 1.0f : 0.0f;
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
+		// Color backgrounds, as the raster clear (render_forward_clustered.cpp): camera rays that
+		// miss show them instead of the radiance map, which holds no sky here.
+		if (p_render_data && owner->is_environment(p_render_data->environment) && !p_render_data->transparent_bg) {
+			RID env = p_render_data->environment;
+			RSE::EnvironmentBG bg_mode = owner->environment_get_background(env);
+			if (bg_mode == RSE::ENV_BG_COLOR || bg_mode == RSE::ENV_BG_CLEAR_COLOR) {
+				float energy = owner->environment_get_bg_energy_multiplier(env) * owner->environment_get_bg_intensity(env);
+				if (p_render_data->camera_attributes.is_valid()) {
+					energy *= RSG::camera_attributes->camera_attributes_get_exposure_normalization_factor(p_render_data->camera_attributes);
+				}
+				Color bg = (bg_mode == RSE::ENV_BG_CLEAR_COLOR ? (p_state ? p_state->default_bg_color : Color(0, 0, 0)) : owner->environment_get_bg_color(env)).srgb_to_linear();
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_BG_COLOR_R] = bg.r * energy;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_BG_COLOR_G] = bg.g * energy;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_BG_COLOR_B] = bg.b * energy;
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_BG_COLOR_ENABLED] = 1.0f;
+			}
+		}
 
 		// Upload the light buffer and the light grid, grown by doubling.
 		{
