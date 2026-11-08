@@ -5677,7 +5677,8 @@ void RenderRaytracing::append_emissive_lights(const Vector3 &p_camera, LocalVect
 		return;
 	}
 	r_grid[9] = 0;
-	if (emissive_candidates.is_empty()) {
+	// Off: no emissive section, so the shaders take the old path (emission found by bounce rays only).
+	if (emissive_candidates.is_empty() || !GLOBAL_GET_CACHED(bool, "rendering/pathtracing/emissive_lights")) {
 		return;
 	}
 	// Score: radiance times area over the squared distance (no nearer than the surface's size).

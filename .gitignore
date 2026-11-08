@@ -58,6 +58,7 @@ tests/data/crypto/out*
 *.a
 *.ax
 *.d
+!changelog.d/
 *.dll
 *.lib
 *.lo

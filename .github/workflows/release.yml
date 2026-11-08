@@ -329,7 +329,12 @@ jobs:
           tag="build-$short"
           # the changelog as built: its Unreleased entries are this release's notes
           git show "$SHA:CHANGELOG.md" > released-changelog.md 2>/dev/null || printf '# Changelog\n\n## Unreleased\n' > released-changelog.md
-          python3 .github/scripts/changelog.py notes released-changelog.md > changes.md
+          # and the entry files it was built with
+          mkdir -p released
+          if git ls-tree -d "$SHA" changelog.d | grep -q .; then
+            git archive "$SHA" changelog.d | tar -x -C released
+          fi
+          python3 .github/scripts/changelog.py notes released-changelog.md released/changelog.d > changes.md
           python3 .github/scripts/release_notes.py changes.md dist "$short" "$GITHUB_REPOSITORY" > notes.md
 
           # Builds that never got a runner (macOS when GitHub's hosted capacity is short):
@@ -366,10 +371,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHORT: ${{ needs.check.outputs.short }}
         run: |
-          python3 .github/scripts/changelog.py move released-changelog.md "build-$SHORT" "$(date -u +%F)"
-          if git diff --quiet -- CHANGELOG.md; then
-            exit 0
-          fi
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-            commit -q -m "Changelog: build-$SHORT" -- CHANGELOG.md
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
+          # Main may move while this runs (a merge, another release): retry on the new main.
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for attempt in 1 2 3 4 5; do
+            python3 .github/scripts/changelog.py move released-changelog.md "build-$SHORT" "$(date -u +%F)" released/changelog.d
+            git add -A -- CHANGELOG.md changelog.d
+            if git diff --cached --quiet; then
+              exit 0
+            fi
+            git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Changelog: build-$SHORT"
+            if git push "$remote" HEAD:main; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+            git fetch -q "$remote" main
+            git reset -q --hard FETCH_HEAD
+          done
+          echo "::error::Could not push the changelog move to main."
+          exit 1

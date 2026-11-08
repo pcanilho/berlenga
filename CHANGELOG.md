@@ -2,12 +2,23 @@
 
 What changed in this fork, newest first. Upstream Godot's own changes are in its release notes.
 
-Every pull request adds a line under **Unreleased**, in one of: Added, Changed, Fixed, Removed. Write what changes for someone using the engine, in one line, with the PR number. The release workflow publishes the Unreleased entries as the release notes and moves them under that release's heading.
+Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/README.md](changelog.d/README.md)), in one of: Added, Changed, Fixed, Removed. Write what changes for someone using the engine, in one line, with the PR number. The release workflow publishes those entries as the release notes and moves them here under that release's heading.
 
 ## Unreleased
 
 ### Added
-- PhysX 5 physics engine (Windows x64, Linux x86_64), selectable per project next to Jolt, with cloth, skinned cloth, Blast destruction, Flow smoke and fire, ocean water and particle fluids; cloth, destruction, smoke and water also work with Jolt (#113).
+- Research note `docs/ideas/exposure.md`: auto exposure for dark scenes under path tracing (histogram metering, luminance-dependent key, exposure compensation curve, local exposure) and what the fork should take (#116).
+- Project setting `rendering/pathtracing/emissive_lights` (default on) to turn off sampling emissive surfaces as lights (#115).
+
+## build-30bb7182 (2026-11-08)
+
+### Added
+- README: texture filtering comparison re-rendered on an RTX 4090 with the anisotropic filtering fix (#108).
+
+### Changed
+- Path tracer: the light visibility memory learns from about 65536 pixels a frame (at most one in four) instead of all of them. On an RTX 4090 at 1080p it cost 8 to 12 ms of a 17 ms frame, mostly contended compare-and-swap updates; quality at 480x270 is unchanged (26.05 vs 26.01 dB) (#114).
+
+## build-5e22cf31 (2026-11-08)
 
 ### Changed
 - README: DLSS Ray Reconstruction checked with the DLSS 4.5 DLLs (310.5) on an RTX 4090 (#112).
@@ -18,7 +29,7 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## build-3c75a9b9 (2026-11-08)
 
-Test build of an unmerged branch, published by mistake. It is not a build of main; use build-5437261e or later.
+Test build of an unmerged branch, published by mistake and deleted. It was not a build of main.
 
 ## build-5437261e (2026-11-08)
 

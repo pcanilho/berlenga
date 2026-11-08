@@ -3872,6 +3872,7 @@ void RenderingServer::init() {
 
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/limits/cluster_builder/max_clustered_elements", PROPERTY_HINT_RANGE, "32,8192,1"), 512);
 	GLOBAL_DEF("rendering/pathtracing/use_shader_execution_reordering", true);
+	GLOBAL_DEF("rendering/pathtracing/emissive_lights", true);
 	GLOBAL_DEF("rendering/pathtracing/light_visibility_memory", true);
 	GLOBAL_DEF("rendering/pathtracing/radiance_cache", true);
 	GLOBAL_DEF("rendering/pathtracing/transparency_at_output_size", true);
