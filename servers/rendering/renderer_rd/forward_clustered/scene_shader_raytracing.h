@@ -116,7 +116,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 32;
+	static constexpr int RT_PARAM_COUNT = 36;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -172,6 +172,13 @@ public:
 	static constexpr int RT_PARAM_PLIGHT_STATE = 27;
 	static constexpr int RT_PARAM_PLIGHT_BOUNCE = 28;
 	static constexpr int RT_PARAM_PLIGHT_TILE = 29;
+	static constexpr int RT_PARAM_LIGHT_VISIBILITY = 30; // 1: light selection reads and feeds the light visibility memory (binding 44).
+	static constexpr int RT_PARAM_RADIANCE_CACHE = 31; // 1: bounce paths read and train the radiance cache (binding 45).
+	// Background for camera rays that miss when the environment shows a color, not a sky (linear, energy applied).
+	static constexpr int RT_PARAM_BG_COLOR_R = 32;
+	static constexpr int RT_PARAM_BG_COLOR_G = 33;
+	static constexpr int RT_PARAM_BG_COLOR_B = 34;
+	static constexpr int RT_PARAM_BG_COLOR_ENABLED = 35;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

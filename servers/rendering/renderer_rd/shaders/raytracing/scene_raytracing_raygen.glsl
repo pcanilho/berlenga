@@ -118,6 +118,7 @@ void dlss_rr_replace_primary_surface(vec3 p_origin, vec3 p_dir, float p_hit_t) {
 	vec3 ray_origin = offset_ray_origin(p_origin + p_dir * p_hit_t, ray_dir);
 
 	PathState gs;
+	gs.bsdf_pdf = 0.0;
 	gs.radiance = vec3(0.0);
 	gs.throughput = vec3(0.0);
 	gs.rng_state = 0u;
@@ -322,6 +323,7 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 		float phi = 2.0 * PI * u.y;
 		vec3 dir = vec3(sz * cos(phi), sz * sin(phi), cz);
 		PathState ps;
+		ps.bsdf_pdf = 0.0;
 		ps.radiance = vec3(0.0);
 		ps.throughput = vec3(1.0);
 		ps.packed_bounces_flags = 0u;
@@ -416,6 +418,9 @@ void main() {
 #endif
 
 	const uint max_bounces = RT_GET_MAX_BOUNCES();
+	if (rt_rc_enabled()) {
+		rt_rc_resolve(pixel.y * gl_LaunchSizeEXT.x + pixel.x, gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y);
+	}
 
 	// TODO: when we have a spp > 0 the first raycast is always identical,
 	// we should move it out of the loop
@@ -424,6 +429,7 @@ void main() {
 		// Every field must be defined: path_pack branches on the octahedral encodes,
 		// and branching on an undefined value lets the driver drop the whole path.
 		PathState ps;
+		ps.bsdf_pdf = 0.0;
 		ps.radiance = vec3(0.0);
 		ps.throughput = vec3(1.0);
 		ps.packed_bounces_flags = (sample_idx == 0u) ? set_sample_zero(0u) : 0u;
@@ -443,6 +449,14 @@ void main() {
 		bool replace_pending = false;
 		float replace_hit_t = 0.0;
 #endif
+
+		// Radiance cache training (raytracing_radiance_cache_inc.glsl): the surface the first
+		// bounce reached, with the light and throughput the path had before it.
+		uint rc_count = 0u;
+		vec3 rc_pos[1];
+		vec3 rc_normal[1];
+		vec3 rc_radiance[1];
+		vec3 rc_throughput[1];
 
 		[[dont_unroll]] for (uint bounce = 0u; bounce <= max_bounces; bounce++) {
 			vec3 throughput_entry = ps.throughput;
@@ -465,6 +479,18 @@ void main() {
 			ps = path_unpack(payload);
 			if (ps.hit_t > 0.0) {
 				cone_width += rt_cone_spread_angle() * ps.hit_t;
+			}
+			bool rc_recorded = false;
+			if ((ps.packed_bounces_flags & RT_RC_ELIGIBLE_FLAG) != 0u) {
+				ps.packed_bounces_flags &= ~RT_RC_ELIGIBLE_FLAG;
+				if (rc_count < 1u && ps.hit_t > 0.0) {
+					rc_pos[rc_count] = ray_origin + ray_dir * ps.hit_t;
+					rc_normal[rc_count] = ps.offset_normal;
+					rc_radiance[rc_count] = radiance_pre;
+					rc_throughput[rc_count] = throughput_entry;
+					rc_count++;
+					rc_recorded = true;
+				}
 			}
 #ifdef DLSS_RR_ENABLED
 			if (bounce == 0u && (ps.packed_bounces_flags & DLSS_RR_REPLACE_PENDING_FLAG) != 0u) {
@@ -564,6 +590,10 @@ void main() {
 					}
 				}
 
+				if (peel_hits > 0u && rc_recorded) {
+					// Layers in front of the surface would count as its own bounce light.
+					rc_count--;
+				}
 				if (peel_hits == 0u) {
 					// Preserve primary-miss/composite state when the transparent
 					// lane had no geometry. The peel payload starts from flags_entry.
@@ -625,6 +655,16 @@ void main() {
 			dlss_rr_replace_primary_surface(origin.xyz, direction.xyz, replace_hit_t);
 		}
 #endif
+
+		if (rc_count > 0u) {
+			uint rc_rng = init_rng(pixel, frame_index, 7919u + sample_idx);
+			for (uint i = 0u; i < rc_count; i++) {
+				vec3 t = rc_throughput[i];
+				vec3 past = ps.radiance - rc_radiance[i];
+				vec3 l = vec3(t.r > 1e-6 ? past.r / t.r : 0.0, t.g > 1e-6 ? past.g / t.g : 0.0, t.b > 1e-6 ? past.b / t.b : 0.0);
+				rt_rc_write(rc_pos[i], rc_normal[i], l, rc_rng);
+			}
+		}
 
 		total_radiance += ps.radiance;
 		composite_passthrough = composite_passthrough || (composite_enabled && is_primary_miss(ps.packed_bounces_flags));
@@ -789,8 +829,13 @@ void main() {
 	} else {
 		vec2 sky_uv = rt_sky_oct_uv(gl_WorldRayDirectionEXT);
 
-		sky_color = radiance_octmap_sample(sky_uv, 0.0);
-		sky_color *= scene_data_block.data.IBL_exposure_normalization;
+		if (get_rt_param(RT_PARAM_BG_COLOR_ENABLED) > 0.5 && get_total_bounces(ps.packed_bounces_flags) == 0u) {
+			// A color background, as the raster clear; bounces keep the radiance map.
+			sky_color = vec3(get_rt_param(RT_PARAM_BG_COLOR_R), get_rt_param(RT_PARAM_BG_COLOR_G), get_rt_param(RT_PARAM_BG_COLOR_B));
+		} else {
+			sky_color = radiance_octmap_sample(sky_uv, 0.0);
+			sky_color *= scene_data_block.data.IBL_exposure_normalization;
+		}
 
 		if ((RT_FLAGS & RT_FLAG_FOG_ENABLED) != 0u) {
 			vec3 fog_color = scene_data_block.data.fog_light_color;

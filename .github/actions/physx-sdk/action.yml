@@ -42,7 +42,12 @@ runs:
       run: |
         root="$(cd "$GITHUB_WORKSPACE/.." && pwd)/physx-sdk"
         physx=$(ls -d "$root"/physx/install/*-godot/PhysX | head -n 1)
-        blast=$(ls -d "$root"/blast/_build/*/release/blast-sdk 2>/dev/null | head -n 1 || true)
+        # Blast's packman layout can leave a partial build dir for another
+        # architecture; take the one that has headers.
+        blast=""
+        for d in "$root"/blast/_build/*/release/blast-sdk; do
+          if [ -d "$d/include" ]; then blast="$d"; break; fi
+        done
         args="physx_sdk=$physx flow_sdk=$root/flow"
         if [ -n "$blast" ]; then args="$args blast_sdk=$blast"; fi
         echo "PhysX scons arguments: $args"

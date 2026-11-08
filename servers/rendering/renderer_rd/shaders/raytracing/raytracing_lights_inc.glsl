@@ -113,6 +113,254 @@ uint lights_grid_light(uint i, uint global_start, uint global_count, uint cell_s
 	return i < global_count ? rt_light_grid[global_start + i] : rt_light_grid[cell_start + (i - global_count)];
 }
 
+// ============================================================================
+// LIGHT VISIBILITY MEMORY (binding 44)
+// ============================================================================
+// For each small region of the scene and each light: how many of the last samples of
+// it lit the region (shadow ray through, and light on the surface's lit side).
+// Selection weights candidates by it, so lamps behind walls, lamps inside a building
+// seen from its own walls (no self-shadow ray hit), or a sun under a roof stop eating
+// samples where they never land. This is
+// the visible-light memory of MegaLights (Narkowicz & Costa, "MegaLights: Stochastic
+// Direct Lighting", SIGGRAPH Advances 2025), kept in world space so bounces use it
+// too, in a spatial hash like SHaRC's (NVIDIA RTXGI). A light never seen keeps a
+// floor share, and resampling divides by the weight it picked with, so the result
+// stays unbiased: only where the samples go changes.
+//
+// Two tables in one buffer:
+// - pairs, per (region, light): [2i] key (0 = empty), [2i + 1] tries (bits 0-11), hits
+//   (12-23), frame (24-31). Counts fade a little each frame, so the memory follows
+//   moving lights and doors. Selection weights candidates by it.
+// - lists, per region: [9i] key, then 8 entries of light index + 1 (bits 0-15) and the
+//   frame it was last seen lit (24-31). Lights that shadow rays reached from the region
+//   lately: half the candidates are drawn from it, so in a place where a few of many
+//   lights in range are visible (a street among lit buildings), selection finds them
+//   rather than hoping a uniform draw does. As MegaLights' visible-light list.
+
+#define RT_LIGHT_VIS_BINDING 44
+layout(set = 0, binding = RT_LIGHT_VIS_BINDING, std430) coherent buffer LightVisibilityBuffer {
+	uint data[];
+}
+rt_light_vis;
+
+#define RT_LIGHT_VIS_PAIRS 262144u // must match RT_LIGHT_VISIBILITY_PAIRS (render_raytracing.h)
+#define RT_LIGHT_VIS_LISTS 65536u // must match RT_LIGHT_VISIBILITY_LISTS
+#define RT_LIGHT_VIS_LIST_SIZE 8u
+#define RT_LIGHT_VIS_LIST_BASE (2u * RT_LIGHT_VIS_PAIRS)
+#define RT_LIGHT_VIS_PROBES 4u
+#define RT_LIGHT_VIS_DIRECTIONAL 0xFFFFu // the directional group's entry
+#define RT_LIGHT_VIS_FLOOR 0.02 // share left to a light that looked hidden
+#define RT_LIGHT_VIS_STALE 64u // frames before a slot may be taken by another key
+#define RT_LIGHT_VIS_CELL 1.0 // region size near the camera, metres
+#define RT_LIGHT_VIS_NEAR 16.0 // regions double in size every octave of distance past this
+#define RT_LIGHT_VIS_FADE 3u // counts lose 1 / 2^FADE a frame
+
+uint lights_vis_hash(uint x) {
+	x ^= x >> 16u;
+	x *= 0x7feb352du;
+	x ^= x >> 15u;
+	x *= 0x846ca68bu;
+	x ^= x >> 16u;
+	return x;
+}
+
+bool lights_vis_enabled() {
+	return get_rt_param(RT_PARAM_LIGHT_VISIBILITY) > 0.5 && uint(rt_light_vis.data.length()) >= RT_LIGHT_VIS_LIST_BASE + 9u * RT_LIGHT_VIS_LISTS;
+}
+
+// The region a shading point falls in: RT_LIGHT_VIS_CELL cells near the camera,
+// doubling every octave of distance past RT_LIGHT_VIS_NEAR (as SHaRC's levels), split
+// by the facing axis so
+// a wall's two sides and the floor beside it learn apart. 0 when the memory is off.
+uint lights_vis_region(vec3 p, vec3 N) {
+	if (!lights_vis_enabled()) {
+		return 0u;
+	}
+	vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w, scene_data_block.data.inv_view_matrix[2].w);
+	float level = clamp(floor(log2(max(distance(p, cam), RT_LIGHT_VIS_NEAR) / RT_LIGHT_VIS_NEAR)), 0.0, 15.0);
+	ivec3 c = ivec3(floor(p / (RT_LIGHT_VIS_CELL * exp2(level))));
+	vec3 a = abs(N);
+	uint axis = a.x > a.y ? (a.x > a.z ? 0u : 2u) : (a.y > a.z ? 1u : 2u);
+	uint side = N[axis] < 0.0 ? 1u : 0u;
+	uint h = lights_vis_hash(uint(c.x) + 0x9e3779b9u);
+	h = lights_vis_hash(h ^ uint(c.y));
+	h = lights_vis_hash(h ^ uint(c.z));
+	return max(lights_vis_hash(h ^ (uint(level) | (axis << 4u) | (side << 6u))), 1u);
+}
+
+uint lights_vis_key(uint region, uint light) {
+	return max(lights_vis_hash(region ^ (light * 0x9e3779b9u)), 1u);
+}
+
+uint lights_vis_slots() {
+	return RT_LIGHT_VIS_PAIRS;
+}
+
+// Counts faded to this frame.
+uvec2 lights_vis_counts(uint value, uint frame) {
+	uint age = min((frame - (value >> 24u)) & 0xFFu, 16u);
+	uint tries = value & 0xFFFu;
+	uint hits = (value >> 12u) & 0xFFFu;
+	for (uint i = 0u; i < age; i++) {
+		tries -= tries >> RT_LIGHT_VIS_FADE;
+		hits -= hits >> RT_LIGHT_VIS_FADE;
+	}
+	return uvec2(hits, tries);
+}
+
+// Fraction of recent shadow rays that got through, 0.5 when unknown.
+float lights_vis_read(uint region, uint light) {
+	if (region == 0u) {
+		return 0.5;
+	}
+	uint key = lights_vis_key(region, light);
+	uint slots = lights_vis_slots();
+	uint s = lights_vis_hash(key ^ 0x85ebca6bu) % slots;
+	for (uint i = 0u; i < RT_LIGHT_VIS_PROBES; i++) {
+		uint k = rt_light_vis.data[2u * s];
+		if (k == key) {
+			uvec2 c = lights_vis_counts(rt_light_vis.data[2u * s + 1u], uint(get_rt_param(RT_PARAM_FRAME_INDEX)) & 0xFFu);
+			return (float(c.x) + 0.5) / (float(c.y) + 1.0);
+		}
+		if (k == 0u) {
+			break;
+		}
+		s = (s + 1u) % slots;
+	}
+	return 0.5;
+}
+
+// Selection weight from the memory: 1 where seen, the floor where hidden.
+float lights_vis_weight(uint region, uint light) {
+	return region == 0u ? 1.0 : max(lights_vis_read(region, light), RT_LIGHT_VIS_FLOOR);
+}
+
+void lights_vis_list_add(uint region, uint light);
+
+// One sample's outcome for a light, from this region: p_lit when it added light.
+void lights_vis_record(uint region, uint light, bool p_lit) {
+	if (region == 0u) {
+		return;
+	}
+	if (p_lit && light != RT_LIGHT_VIS_DIRECTIONAL) {
+		lights_vis_list_add(region, light);
+	}
+	uint frame = uint(get_rt_param(RT_PARAM_FRAME_INDEX)) & 0xFFu;
+	uint key = lights_vis_key(region, light);
+	uint slots = lights_vis_slots();
+	uint s = lights_vis_hash(key ^ 0x85ebca6bu) % slots;
+	for (uint i = 0u; i < RT_LIGHT_VIS_PROBES; i++) {
+		uint k = rt_light_vis.data[2u * s];
+		bool mine = k == key;
+		if (!mine && k == 0u) {
+			uint prev = atomicCompSwap(rt_light_vis.data[2u * s], 0u, key);
+			mine = prev == 0u || prev == key;
+			k = prev;
+			if (prev == 0u) {
+				atomicExchange(rt_light_vis.data[2u * s + 1u], frame << 24u);
+			}
+		}
+		if (!mine && k != key) {
+			// A slot nobody has fed for a while goes to the newcomer.
+			uint old_value = rt_light_vis.data[2u * s + 1u];
+			if (((frame - (old_value >> 24u)) & 0xFFu) >= RT_LIGHT_VIS_STALE &&
+					atomicCompSwap(rt_light_vis.data[2u * s], k, key) == k) {
+				atomicExchange(rt_light_vis.data[2u * s + 1u], frame << 24u);
+				mine = true;
+			}
+		}
+		if (mine) {
+			for (uint attempt = 0u; attempt < 8u; attempt++) {
+				uint old_value = rt_light_vis.data[2u * s + 1u];
+				uvec2 c = lights_vis_counts(old_value, frame);
+				uint hits = c.x + (p_lit ? 1u : 0u);
+				uint tries = c.y + 1u;
+				if (tries >= 0xFFFu) {
+					hits >>= 1u;
+					tries >>= 1u;
+				}
+				uint new_value = tries | (hits << 12u) | (frame << 24u);
+				if (atomicCompSwap(rt_light_vis.data[2u * s + 1u], old_value, new_value) == old_value) {
+					break;
+				}
+			}
+			return;
+		}
+		s = (s + 1u) % slots;
+	}
+}
+
+// The region's list slot (its first uint), claiming one when p_claim; ~0u if none.
+uint lights_vis_list_slot(uint region, bool p_claim) {
+	if (region == 0u) {
+		return ~0u;
+	}
+	uint frame = uint(get_rt_param(RT_PARAM_FRAME_INDEX)) & 0xFFu;
+	uint s = lights_vis_hash(region ^ 0x27d4eb2fu) % RT_LIGHT_VIS_LISTS;
+	for (uint i = 0u; i < RT_LIGHT_VIS_PROBES; i++) {
+		uint base = RT_LIGHT_VIS_LIST_BASE + 9u * s;
+		uint k = rt_light_vis.data[base];
+		if (k == region) {
+			return base;
+		}
+		if (p_claim) {
+			if (k == 0u) {
+				uint prev = atomicCompSwap(rt_light_vis.data[base], 0u, region);
+				if (prev == 0u || prev == region) {
+					return base;
+				}
+				k = prev;
+			}
+			// A list none of whose entries was refreshed for a while goes to the newcomer.
+			uint newest = 0u;
+			for (uint e = 0u; e < RT_LIGHT_VIS_LIST_SIZE; e++) {
+				uint v = rt_light_vis.data[base + 1u + e];
+				if (v != 0u) {
+					newest = max(newest, 256u - ((frame - (v >> 24u)) & 0xFFu));
+				}
+			}
+			if (256u - newest >= RT_LIGHT_VIS_STALE && atomicCompSwap(rt_light_vis.data[base], k, region) == k) {
+				for (uint e = 0u; e < RT_LIGHT_VIS_LIST_SIZE; e++) {
+					atomicExchange(rt_light_vis.data[base + 1u + e], 0u);
+				}
+				return base;
+			}
+		} else if (k == 0u) {
+			break;
+		}
+		s = (s + 1u) % RT_LIGHT_VIS_LISTS;
+	}
+	return ~0u;
+}
+
+// A light that lit the region joins its list, in place of the entry seen longest ago.
+void lights_vis_list_add(uint region, uint light) {
+	uint base = lights_vis_list_slot(region, true);
+	if (base == ~0u) {
+		return;
+	}
+	uint frame = uint(get_rt_param(RT_PARAM_FRAME_INDEX)) & 0xFFu;
+	uint entry = (light + 1u) | (frame << 24u);
+	uint oldest = 0u;
+	uint oldest_age = 0u;
+	for (uint e = 0u; e < RT_LIGHT_VIS_LIST_SIZE; e++) {
+		uint v = rt_light_vis.data[base + 1u + e];
+		if ((v & 0xFFFFu) == light + 1u) {
+			if ((v >> 24u) != frame) {
+				atomicCompSwap(rt_light_vis.data[base + 1u + e], v, entry);
+			}
+			return;
+		}
+		uint age = v == 0u ? 256u : (frame - (v >> 24u)) & 0xFFu;
+		if (age >= oldest_age) {
+			oldest_age = age;
+			oldest = e;
+		}
+	}
+	uint v = rt_light_vis.data[base + 1u + oldest];
+	atomicCompSwap(rt_light_vis.data[base + 1u + oldest], v, entry);
+}
+
 uint lights_get_type(uint idx) {
 	return bitfieldExtract(rt_light_buffer[idx].masks, 20, 2);
 }
@@ -306,6 +554,7 @@ vec3 lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, uint p
 #elif defined(USE_SER)
 	PathPayload saved_payload = payload;
 	PathState shadow_ps;
+	shadow_ps.bsdf_pdf = 0.0;
 	shadow_ps.radiance = vec3(0.0);
 	shadow_ps.throughput = vec3(1.0);
 	shadow_ps.packed_bounces_flags = set_shadow_ray(0u);
@@ -332,6 +581,7 @@ vec3 lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, uint p
 	PathPayload saved_payload = payload;
 
 	PathState shadow_ps;
+	shadow_ps.bsdf_pdf = 0.0;
 	shadow_ps.radiance = vec3(0.0);
 	shadow_ps.throughput = vec3(1.0);
 	shadow_ps.packed_bounces_flags = set_shadow_ray(0u);
@@ -474,8 +724,9 @@ float lights_target(RTLightData light, vec3 p, vec3 N, bool is_indirect_bounce, 
 // reach this point (the light grid's lists), each weighted by its unshadowed
 // contribution over its source pdf, one kept in proportion. r_select_pdf is the
 // estimator's p_hat(y) / mean(w), so contribution / r_select_pdf stays unbiased. With
-// no more lights than candidates, each is taken once, with less noise still.
-bool lights_select_positional(vec3 hit_pos, vec3 N, bool is_indirect_bounce, uint instance_layers, inout uint rng_state,
+// no more lights than candidates, each is taken once, with less noise still. The
+// weight also carries what the visibility memory knows of each light from p_region.
+bool lights_select_positional(vec3 hit_pos, vec3 N, bool is_indirect_bounce, uint instance_layers, uint p_region, inout uint rng_state,
 		out uint r_idx, out float r_select_pdf) {
 	r_idx = 0u;
 	r_select_pdf = 1.0;
@@ -487,17 +738,54 @@ bool lights_select_positional(vec3 hit_pos, vec3 N, bool is_indirect_bounce, uin
 	}
 	const bool enumerate = n <= uint(RT_LIGHT_RESERVOIR_SIZE);
 	const uint m = enumerate ? n : uint(RT_LIGHT_RESERVOIR_SIZE);
-	// 1 / (M * source pdf): n / M drawn, 1 enumerated.
-	const float w_scale = enumerate ? 1.0 : float(n) / float(m);
+
+	// The region's visible-light list, when there is one: half the candidates come from
+	// it. Each candidate is weighted by the balance heuristic over both sources
+	// (Veach & Guibas 1995; multi-strategy RIS, Talbot et al. 2005), so a light found
+	// either way counts once.
+	uint list[RT_LIGHT_VIS_LIST_SIZE];
+	uint list_count = 0u;
+	if (!enumerate) {
+		uint base = lights_vis_list_slot(p_region, false);
+		if (base != ~0u) {
+			for (uint e = 0u; e < RT_LIGHT_VIS_LIST_SIZE; e++) {
+				uint v = rt_light_vis.data[base + 1u + e] & 0xFFFFu;
+				if (v != 0u) {
+					list[list_count++] = v - 1u;
+				}
+			}
+		}
+	}
+	const uint m_list = list_count > 0u ? m / 2u : 0u;
+	const uint m_grid = m - m_list;
+
 	float w_sum = 0.0;
 	float selected_p_hat = 0.0;
 	for (uint i = 0u; i < m; i++) {
-		uint j = enumerate ? i : min(uint(rand(rng_state) * float(n)), n - 1u);
-		uint idx = lights_grid_light(j, g_start, g_count, c_start);
+		uint idx;
+		if (i < m_list) {
+			idx = list[min(uint(rand(rng_state) * float(list_count)), list_count - 1u)];
+		} else {
+			uint j = enumerate ? i : min(uint(rand(rng_state) * float(n)), n - 1u);
+			idx = lights_grid_light(j, g_start, g_count, c_start);
+		}
 		float p_hat = lights_target(lights_get(idx), hit_pos, N, is_indirect_bounce, instance_layers);
-		float w = p_hat * w_scale;
-		if (w <= 0.0) {
+		if (p_hat <= 0.0) {
 			continue;
+		}
+		p_hat *= lights_vis_weight(p_region, idx);
+		float w;
+		if (enumerate) {
+			w = p_hat;
+		} else {
+			// Sum over sources of candidates drawn times the source's pdf. A listed light is
+			// assumed to be in the grid's lists here: one it isn't in can't light the point.
+			float in_list = 0.0;
+			for (uint e = 0u; e < list_count; e++) {
+				in_list += list[e] == idx ? 1.0 : 0.0;
+			}
+			float denom = float(m_grid) / float(n) + (list_count > 0u ? float(m_list) * in_list / float(list_count) : 0.0);
+			w = p_hat / denom;
 		}
 		w_sum += w;
 		if (rand(rng_state) * w_sum < w) {
@@ -512,9 +800,11 @@ bool lights_select_positional(vec3 hit_pos, vec3 N, bool is_indirect_bounce, uin
 	return true;
 }
 
-// Unweighted contribution of one omni or spot light, one shadow ray.
+// Unweighted contribution of one omni or spot light, one shadow ray. r_visible: the
+// shadow ray's outcome (1 through, 0 blocked), -1 when none was traced.
 vec3 lights_evaluate_positional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V, MaterialProperties material,
-		inout uint rng_state, bool is_indirect_bounce, uint p_receiver_shadow_mask) {
+		inout uint rng_state, bool is_indirect_bounce, uint p_receiver_shadow_mask, out float r_visible) {
+	r_visible = -1.0;
 	vec3 to_light = light.position - hit_pos;
 	float dist_sq = dot(to_light, to_light);
 
@@ -561,6 +851,7 @@ vec3 lights_evaluate_positional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V,
 	}
 
 	vec3 shadow_transmittance = lights_shadow_transmittance(light, hit_pos, L, shadow_dist, p_receiver_shadow_mask, rng_state);
+	r_visible = max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.5 ? 1.0 : 0.0;
 
 	// Evaluate BRDF (diffuse incl. backlight, specular separately for specular_amount control).
 	vec3 brdf_diffuse, brdf_specular;
@@ -580,9 +871,11 @@ vec3 lights_evaluate_positional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V,
 	return brdf_value * light.emission * projector_color * shadow_transmittance * atten * indirect_mul;
 }
 
-// Unweighted contribution of one directional light, one shadow ray.
+// Unweighted contribution of one directional light, one shadow ray. r_visible as for
+// lights_evaluate_positional.
 vec3 lights_evaluate_directional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V, MaterialProperties material,
-		inout uint rng_state, bool is_indirect_bounce, uint p_receiver_shadow_mask) {
+		inout uint rng_state, bool is_indirect_bounce, uint p_receiver_shadow_mask, out float r_visible) {
+	r_visible = -1.0;
 	LightSample ls = lights_prepare_sample(hit_pos, light);
 	float light_pdf;
 	vec3 L = lights_sample_cone(ls, rand2(rng_state), light_pdf);
@@ -592,6 +885,7 @@ vec3 lights_evaluate_directional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V
 	}
 
 	vec3 shadow_transmittance = lights_shadow_transmittance(light, hit_pos, L, ls.max_distance, p_receiver_shadow_mask, rng_state);
+	r_visible = max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.5 ? 1.0 : 0.0;
 
 	vec3 brdf_diffuse, brdf_specular;
 	evalCombinedBRDFSeparate(N, L, V, material, brdf_diffuse, brdf_specular);
@@ -616,27 +910,44 @@ vec3 lights_evaluate_direct_lighting(
 		uint instance_layers,
 		uint p_receiver_shadow_mask) {
 	// One group, then one light in it: directional lights uniformly, positional ones
-	// through the light grid by resampled importance sampling.
+	// through the light grid by resampled importance sampling. The directional group
+	// gets half the rays, less where the visibility memory has seen it blocked (under
+	// a roof): down to RT_LIGHT_VIS_FLOOR / (1 + RT_LIGHT_VIS_FLOOR).
+	uint region = lights_vis_region(hit_pos, N);
 	uint directional_count = lights_directional_count(light_count);
 	bool has_positional = light_count > directional_count;
-	float group_pdf = (directional_count > 0u && has_positional) ? 0.5 : 1.0;
-	bool pick_directional = directional_count > 0u && (!has_positional || rand(rng_state) < 0.5);
+	float p_directional = 1.0;
+	if (directional_count > 0u && has_positional) {
+		float f = region == 0u ? 1.0 : clamp(2.0 * lights_vis_read(region, RT_LIGHT_VIS_DIRECTIONAL), RT_LIGHT_VIS_FLOOR, 1.0);
+		p_directional = f / (f + 1.0);
+	} else if (directional_count == 0u) {
+		p_directional = 0.0;
+	}
+	bool pick_directional = directional_count > 0u && (!has_positional || rand(rng_state) < p_directional);
+	float group_pdf = pick_directional ? p_directional : 1.0 - p_directional;
 
 	uint idx;
 	float select_pdf;
+	float visible;
 	if (pick_directional) {
 		if (!lights_select(hit_pos, 0u, directional_count, instance_layers, rng_state, idx, select_pdf)) {
 			return vec3(0.0);
 		}
 		vec3 contribution = lights_evaluate_directional(lights_get(idx), hit_pos, N, V, material,
-				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
+				rng_state, is_indirect_bounce, p_receiver_shadow_mask, visible);
+		if (visible >= 0.0 && has_positional) {
+			lights_vis_record(region, RT_LIGHT_VIS_DIRECTIONAL, visible > 0.5 && any(notEqual(contribution, vec3(0.0))));
+		}
 		return contribution / max(select_pdf * group_pdf, 1e-10);
 	}
-	if (!lights_select_positional(hit_pos, N, is_indirect_bounce, instance_layers, rng_state, idx, select_pdf)) {
+	if (!lights_select_positional(hit_pos, N, is_indirect_bounce, instance_layers, region, rng_state, idx, select_pdf)) {
 		return vec3(0.0);
 	}
 	vec3 contribution = lights_evaluate_positional(lights_get(idx), hit_pos, N, V, material,
-			rng_state, is_indirect_bounce, p_receiver_shadow_mask);
+			rng_state, is_indirect_bounce, p_receiver_shadow_mask, visible);
+	if (visible >= 0.0) {
+		lights_vis_record(region, idx, visible > 0.5 && any(notEqual(contribution, vec3(0.0))));
+	}
 	return contribution / max(select_pdf * group_pdf, 1e-10);
 }
 
@@ -653,19 +964,26 @@ vec3 lights_evaluate_direct_lighting_per_group(
 		uint instance_layers,
 		uint p_receiver_shadow_mask) {
 	vec3 result = vec3(0.0);
+	uint region = lights_vis_region(hit_pos, N);
 	uint directional_count = lights_directional_count(light_count);
 
 	uint idx;
 	float select_pdf;
+	float visible;
 	if (lights_select(hit_pos, 0u, directional_count, instance_layers, rng_state, idx, select_pdf)) {
 		vec3 contribution = lights_evaluate_directional(lights_get(idx), hit_pos, N, V, material,
-				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
+				rng_state, is_indirect_bounce, p_receiver_shadow_mask, visible);
 		result += contribution / max(select_pdf, 1e-10);
 	}
-	if (light_count > directional_count && lights_select_positional(hit_pos, N, is_indirect_bounce, instance_layers, rng_state, idx, select_pdf)) {
+	if (light_count > directional_count && lights_select_positional(hit_pos, N, is_indirect_bounce, instance_layers, region, rng_state, idx, select_pdf)) {
 		vec3 contribution = lights_evaluate_positional(lights_get(idx), hit_pos, N, V, material,
-				rng_state, is_indirect_bounce, p_receiver_shadow_mask);
+				rng_state, is_indirect_bounce, p_receiver_shadow_mask, visible);
+		if (visible >= 0.0) {
+			lights_vis_record(region, idx, visible > 0.5 && any(notEqual(contribution, vec3(0.0))));
+		}
 		result += contribution / max(select_pdf, 1e-10);
 	}
 	return result;
 }
+
+#include "raytracing_radiance_cache_inc.glsl"

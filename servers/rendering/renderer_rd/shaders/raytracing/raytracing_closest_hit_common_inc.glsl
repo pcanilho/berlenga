@@ -706,11 +706,239 @@ vec3 ambient_approx(vec3 N, vec3 V, MaterialResult m, MaterialProperties materia
 	return baseColorToDiffuseReflectance(material.baseColor, material.metalness) * ambient + specular;
 }
 
+// ============================================================================
+// EMISSIVE SURFACES AS LIGHTS (RenderRaytracing::append_emissive_lights)
+// ============================================================================
+// The emissive section of the light grid buffer: [9] its start E (0: none); at E the entry
+// count N and the geometry map size G, then N entries of 16 uints, then G uints (entry + 1).
+#define RT_EMISSIVE_ENTRY_UINTS 16u
+#define RT_EMISSIVE_HEADER 4u
+
+uint rt_emissive_count() {
+	uint b = rt_light_grid[9];
+	return b == 0u ? 0u : rt_light_grid[b];
+}
+
+// The entry sampling geometry p_geometry_idx, plus 1; 0 when it is not sampled as a light.
+uint rt_emissive_entry_of(uint p_geometry_idx) {
+	uint b = rt_light_grid[9];
+	if (b == 0u) {
+		return 0u;
+	}
+	uint n = rt_light_grid[b];
+	if (p_geometry_idx >= rt_light_grid[b + 1u]) {
+		return 0u;
+	}
+	return rt_light_grid[b + RT_EMISSIVE_HEADER + n * RT_EMISSIVE_ENTRY_UINTS + p_geometry_idx];
+}
+
+uint rt_emissive_entry_base(uint p_entry) {
+	return rt_light_grid[9] + RT_EMISSIVE_HEADER + p_entry * RT_EMISSIVE_ENTRY_UINTS;
+}
+
+vec3 rt_emissive_to_world(uint p_base, vec3 p_obj) {
+	vec4 p = vec4(p_obj, 1.0);
+	return vec3(
+			dot(uintBitsToFloat(uvec4(rt_light_grid[p_base + 0u], rt_light_grid[p_base + 1u], rt_light_grid[p_base + 2u], rt_light_grid[p_base + 3u])), p),
+			dot(uintBitsToFloat(uvec4(rt_light_grid[p_base + 4u], rt_light_grid[p_base + 5u], rt_light_grid[p_base + 6u], rt_light_grid[p_base + 7u])), p),
+			dot(uintBitsToFloat(uvec4(rt_light_grid[p_base + 8u], rt_light_grid[p_base + 9u], rt_light_grid[p_base + 10u], rt_light_grid[p_base + 11u])), p));
+}
+
+// A triangle's world-space corners.
+void rt_emissive_triangle(uint p_base, GeometryData p_geom, uint p_prim, out vec3 r_p0, out vec3 r_p1, out vec3 r_p2, out uint r_i0, out uint r_i1, out uint r_i2) {
+	get_triangle_indices_ex(p_geom, p_prim, r_i0, r_i1, r_i2);
+	r_p0 = rt_emissive_to_world(p_base, fetch_object_position(p_geom, r_i0));
+	r_p1 = rt_emissive_to_world(p_base, fetch_object_position(p_geom, r_i1));
+	r_p2 = rt_emissive_to_world(p_base, fetch_object_position(p_geom, r_i2));
+}
+
+// Solid-angle density with which lights_emissive_sample() picks the point p_light on triangle
+// (p0, p1, p2) of entry p_entry (index, not + 1), seen from p_from.
+float rt_emissive_pdf(uint p_entry, uint p_triangles, vec3 p0, vec3 p1, vec3 p2, vec3 p_from, vec3 p_light) {
+	vec3 c = cross(p1 - p0, p2 - p0);
+	float twice_area = length(c);
+	if (!(twice_area > 0.0)) {
+		return 0.0;
+	}
+	vec3 n = c / twice_area;
+	vec3 d = p_light - p_from;
+	float d2 = dot(d, d);
+	float cos_l = abs(dot(n, d)) * inversesqrt(max(d2, 1e-12));
+	if (!(cos_l > 1e-6)) {
+		return 0.0;
+	}
+	float prob = uintBitsToFloat(rt_light_grid[rt_emissive_entry_base(p_entry) + 15u]);
+	float pdf_area = prob / (float(p_triangles) * 0.5 * twice_area);
+	return pdf_area * d2 / cos_l;
+}
+
+// Solid-angle density with which sample_surface_continuation() draws L, mirroring its lobe
+// choice: the specular lobe by GGX VNDF reflection, the diffuse one cosine-weighted.
+float surface_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
+	float NdotL = dot(N, L);
+	float NdotV = dot(N, V);
+	if (NdotL <= 0.0) {
+		return 0.0;
+	}
+	vec3 specular_f0 = baseColorToSpecularF0(material.baseColor, material.metalness, material.dielectricF0);
+	vec3 diffuse_reflectance = baseColorToDiffuseReflectance(material.baseColor, material.metalness);
+	float specular_lum = luminance(specular_f0);
+	float diffuse_lum = luminance(diffuse_reflectance);
+	float p_spec;
+	if (diffuse_lum < 0.0001) {
+		p_spec = 1.0;
+	} else if (specular_lum < 0.0001) {
+		p_spec = 0.0;
+	} else {
+		p_spec = clamp(specular_lum / (specular_lum + diffuse_lum), 0.01, 0.99);
+	}
+	float pdf = (1.0 - p_spec) * NdotL / PI;
+	if (p_spec > 0.0) {
+		float alpha = material.roughness * material.roughness;
+		if (alpha <= 0.0) {
+			return 1e30; // a mirror: only the reflection ray finds the light
+		}
+		vec3 H = normalize(V + L);
+		pdf += p_spec * sampleGGXVNDFReflectionPdf(alpha, alpha * alpha, max(dot(N, H), 0.0), max(NdotV, 0.0), max(dot(L, H), 0.0));
+	}
+	return pdf;
+}
+
+// Power heuristic (Veach 1997) for one sample from each of two strategies.
+float rt_mis_power(float p_this, float p_other) {
+	float a = p_this * p_this;
+	float b = p_other * p_other;
+	return (a + b) > 0.0 ? a / (a + b) : 1.0;
+}
+
+// One next event estimation sample of the emissive surfaces at a shaded point: an entry by
+// its probability, a triangle uniformly, a point on it uniformly, weighed against the bounce
+// ray by multiple importance sampling (power heuristic). Returns the contribution, shadowed.
+vec3 lights_emissive_sample(vec3 p_origin, vec3 N, vec3 V, MaterialProperties material, uint p_shadow_mask, inout uint rng_state) {
+	uint b = rt_light_grid[9];
+	uint n = b == 0u ? 0u : rt_light_grid[b];
+	if (n == 0u) {
+		return vec3(0.0);
+	}
+	// The entry: binary search of the CDF.
+	float u = rand(rng_state);
+	uint lo = 0u;
+	uint hi = n - 1u;
+	while (lo < hi) {
+		uint mid = (lo + hi) >> 1u;
+		if (u < uintBitsToFloat(rt_light_grid[rt_emissive_entry_base(mid) + 14u])) {
+			hi = mid;
+		} else {
+			lo = mid + 1u;
+		}
+	}
+	uint entry = lo;
+	uint base = rt_emissive_entry_base(entry);
+	uint geometry_idx = rt_light_grid[base + 12u];
+	GeometryData geom = geometries[geometry_idx];
+	uint triangles = geom.primitive_count;
+	if (triangles == 0u) {
+		return vec3(0.0);
+	}
+	uint prim = min(uint(rand(rng_state) * float(triangles)), triangles - 1u);
+	vec3 p0, p1, p2;
+	uint i0, i1, i2;
+	rt_emissive_triangle(base, geom, prim, p0, p1, p2, i0, i1, i2);
+	vec2 r = rand2(rng_state);
+	float sr = sqrt(r.x);
+	vec3 bary = vec3(1.0 - sr, sr * (1.0 - r.y), sr * r.y);
+	vec3 p_light = p0 * bary.x + p1 * bary.y + p2 * bary.z;
+	vec3 to_light = p_light - p_origin;
+	float dist = length(to_light);
+	if (!(dist > 1e-4)) {
+		return vec3(0.0);
+	}
+	vec3 L = to_light / dist;
+	if (dot(N, L) <= 0.0 && !godotShadesBackfacingLight(material)) {
+		return vec3(0.0);
+	}
+	vec3 c = cross(p1 - p0, p2 - p0);
+	// The surface's normal there, as a hit would shade it (mat3(gl_ObjectToWorldEXT), columns normalized).
+	vec3 n_light = normalize(c);
+	if (geom.normal_byte_offset != OFFSET_NONE) {
+		vec3 n_obj = fetch_tbn(geom, i0, i1, i2, bary).normal;
+		vec3 n_world = vec3(
+				dot(uintBitsToFloat(uvec3(rt_light_grid[base + 0u], rt_light_grid[base + 1u], rt_light_grid[base + 2u])), n_obj),
+				dot(uintBitsToFloat(uvec3(rt_light_grid[base + 4u], rt_light_grid[base + 5u], rt_light_grid[base + 6u])), n_obj),
+				dot(uintBitsToFloat(uvec3(rt_light_grid[base + 8u], rt_light_grid[base + 9u], rt_light_grid[base + 10u])), n_obj));
+		if (dot(n_world, n_world) > 0.0) {
+			n_light = normalize(n_world);
+		}
+	}
+	// Bounce rays cull back faces: only the side they can hit emits towards p_origin. The
+	// front side is the one the vertex normals face (the back one for cull-front materials).
+	uint facing = rt_light_grid[base + 13u];
+	if ((facing & 1u) == 0u) {
+		bool towards = dot(n_light, -L) > 0.0;
+		if (towards == ((facing & 2u) != 0u)) {
+			return vec3(0.0);
+		}
+	}
+	float pdf_l = rt_emissive_pdf(entry, triangles, p0, p1, p2, p_origin, p_light);
+	if (!(pdf_l > 0.0) || isinf(pdf_l)) {
+		return vec3(0.0);
+	}
+
+	// The emitted radiance at the point, as a bounce ray hitting it would read it.
+	MaterialData mat = rt_entry_material(geometry_idx);
+	vec2 uv = fetch_uv(geom, i0, i1, i2, bary);
+	vec2 uv2 = vec2(0.0);
+	if ((mat.flags & RT_MAT_FLAG_EMISSION_UV2) != 0u) {
+		uv2 = fetch_uv_at(geom, geom.uv2_byte_offset, geom.uv2_scale_packed, i0, i1, i2, bary);
+	}
+	vec3 obj_pos = fetch_object_position(geom, i0) * bary.x + fetch_object_position(geom, i1) * bary.y + fetch_object_position(geom, i2) * bary.z;
+	MaterialUV muv = material_uv_compute(material_uv1_channel(mat), uv, obj_pos, n_light, p_light, n_light);
+	muv.cone_grad = false;
+	muv.cone_lod = RT_TEXTURE_LOD_BASE;
+	vec3 Le = material_emission(mat, muv, uv2, p_light, n_light) * scene_data_block.data.emissive_exposure_normalization * mat.emission_indirect;
+	if (all(lessThanEqual(Le, vec3(0.0)))) {
+		return vec3(0.0);
+	}
+
+	vec3 brdf_diffuse, brdf_specular;
+	evalCombinedBRDFSeparate(N, L, V, material, brdf_diffuse, brdf_specular);
+	vec3 f = brdf_diffuse + brdf_specular; // NdotL included
+	if (all(lessThanEqual(f, vec3(0.0)))) {
+		return vec3(0.0);
+	}
+	float w = rt_mis_power(pdf_l, surface_continuation_pdf(N, V, L, material));
+	vec3 vis = lights_trace_shadow_ray(p_origin, L, max(dist * 0.999 - 0.002, 0.0), p_shadow_mask, rng_state);
+	return f * Le * vis * (w / pdf_l);
+}
+
+// The multiple importance sampling weight of emission a bounce ray found on p_geometry_idx at
+// p_hit, drawn from p_from with density p_bsdf_pdf (0: no light sample was taken, weight 1).
+float rt_emissive_hit_weight(uint p_geometry_idx, uint p_prim, vec3 p_from, vec3 p_hit, float p_bsdf_pdf) {
+	if (!(p_bsdf_pdf > 0.0)) {
+		return 1.0;
+	}
+	uint e = rt_emissive_entry_of(p_geometry_idx);
+	if (e == 0u) {
+		return 1.0;
+	}
+	GeometryData geom = geometries[p_geometry_idx];
+	vec3 p0, p1, p2;
+	uint i0, i1, i2;
+	rt_emissive_triangle(rt_emissive_entry_base(e - 1u), geom, p_prim, p0, p1, p2, i0, i1, i2);
+	float pdf_l = rt_emissive_pdf(e - 1u, max(geom.primitive_count, 1u), p0, p1, p2, p_from, p_hit);
+	return rt_mis_power(p_bsdf_pdf, pdf_l);
+}
+
 // p_is_indirect: the path made a diffuse bounce, scaling lights by indirect_energy and emission by emission_indirect.
-vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_indirect, inout uint rng_state) {
+// p_bsdf_pdf: PathState::bsdf_pdf of the ray that hit (0: the emission counts in full).
+vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_indirect, float p_bsdf_pdf, inout uint rng_state) {
 	float emission_weight = p_is_indirect ? m.emission_indirect : 1.0;
 	if (surface_is_unshaded(h.geometry_idx)) {
 		return (m.albedo + m.emissive) * emission_weight;
+	}
+	if (p_bsdf_pdf > 0.0 && any(notEqual(m.emissive, vec3(0.0)))) {
+		// The emissive surfaces' light sample at the last vertex found this light too.
+		emission_weight *= rt_emissive_hit_weight(h.geometry_idx, gl_PrimitiveID, gl_WorldRayOriginEXT, h.hit_pos, p_bsdf_pdf);
 	}
 	vec3 lit = m.emissive * emission_weight;
 	MaterialProperties material = material_properties_from_result(h, m, N, V);
@@ -726,6 +954,9 @@ vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_
 	} else {
 		lit += lights_evaluate_direct_lighting(hit_pos_offset, N, V, material,
 				rng_state, p_is_indirect, light_count, layers, shadow_mask);
+	}
+	if (rt_emissive_count() > 0u) {
+		lit += lights_emissive_sample(hit_pos_offset, N, V, material, shadow_mask, rng_state);
 	}
 	return lit;
 }
@@ -782,6 +1013,9 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	}
 	ps.offset_normal = h.geometry_normal;
 	ps.next_ray_dir = next_dir;
+	// The density for weighing emission this ray finds against the emissive light sample
+	// shade_local_surface() took here (rt_emissive_hit_weight).
+	ps.bsdf_pdf = rt_emissive_count() > 0u ? surface_continuation_pdf(N, V, next_dir, material) : 0.0;
 	return true;
 }
 
@@ -868,6 +1102,7 @@ bool dlss_rr_is_replaceable_mirror(HitData h, MaterialResult m) {
 void dlss_rr_guide_hit(HitData h, MaterialResult m, vec3 N, vec3 V, float NdotV, uint p_flags) {
 	bool mirror = (p_flags & GUIDE_LAST_FLAG) == 0u && dlss_rr_is_replaceable_mirror(h, m);
 	PathState gs;
+	gs.bsdf_pdf = 0.0;
 	gs.radiance = vec3(0.0);
 	gs.throughput = vec3(0.0);
 	gs.packed_bounces_flags = p_flags | GUIDE_RESULT_FLAG | (mirror ? GUIDE_MIRROR_FLAG : 0u);
@@ -965,7 +1200,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 			ps.throughput = fogged_throughput;
 			path_pack(payload, ps);
 			vec3 lit = shade_local_surface(h, m, N, V,
-					get_diffuse_bounces(ps.packed_bounces_flags) > 0u, ps.rng_state);
+					get_diffuse_bounces(ps.packed_bounces_flags) > 0u, ps.bsdf_pdf, ps.rng_state);
 			float source_alpha = (bclass == RT_BLEND_CLASS_PREMULT) ? 1.0 : material_alpha;
 			vec3 contribution = ps.throughput * source_alpha * lit;
 			if (bclass == RT_BLEND_CLASS_SUB) {
@@ -1022,8 +1257,24 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	// Environment fog for this ray segment (before surface contribution).
 	apply_segment_fog(gl_HitTEXT, rt_entry_material_flags(h.geometry_idx), total_bounces == 0u, ps.radiance, ps.throughput);
 
+	// Radiance cache: a rough surface a bounce reaches reads all it sends back, its own light
+	// included, from the cell around it, and the path ends. Training pixels shade and trace
+	// on, and raygen records what this surface sent back (raytracing_radiance_cache_inc.glsl).
+	bool rc_eligible = total_bounces == 1u && m.roughness >= RT_RC_MIN_ROUGHNESS && rt_rc_enabled();
+	bool rc_training = rc_eligible && rt_rc_is_training_pixel(gl_LaunchIDEXT.xy);
+	if (rc_eligible && !rc_training && !is_singular_path(ps.packed_bounces_flags) &&
+			gl_HitTEXT >= 0.5 * rt_rc_cell_size(h.hit_pos)) {
+		vec4 cached = rt_rc_read(h.hit_pos, h.geometry_normal);
+		if (cached.w > 0.0) {
+			ps.radiance += ps.throughput * cached.rgb;
+			ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
+			path_pack(payload, ps);
+			return;
+		}
+	}
+
 	path_pack(payload, ps);
-	ps.radiance += ps.throughput * shade_local_surface(h, m, N, V, diffuse_bounces > 0u, ps.rng_state);
+	ps.radiance += ps.throughput * shade_local_surface(h, m, N, V, diffuse_bounces > 0u, ps.bsdf_pdf, ps.rng_state);
 
 	// =================================================================
 	// DLSS Ray Reconstruction output (primary ray, sample 0 only)
@@ -1062,6 +1313,10 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 
 	if (!sample_surface_continuation(h, m, N, V, ps)) {
 		ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
+		ps.offset_normal = h.geometry_normal;
+	}
+	if (rc_training) {
+		ps.packed_bounces_flags |= RT_RC_ELIGIBLE_FLAG;
 	}
 	path_pack(payload, ps);
 }
