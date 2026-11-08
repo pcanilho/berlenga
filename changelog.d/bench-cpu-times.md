@@ -1,2 +1,2 @@
 ### Changed
-- The open-world test scene also prints the CPU render, frame setup and script times (#143).
+- The open-world test scene also prints the CPU render and frame setup times (#143).
