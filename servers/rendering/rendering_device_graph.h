@@ -123,6 +123,7 @@ public:
 			TYPE_BOTTOM_LEVEL_ACCELERATION_STRUCTURE_UPDATE,
 			TYPE_ACCELERATION_STRUCTURE_BUILD_BATCH,
 			TYPE_FULL_BARRIER,
+			TYPE_MICROMAP_BUILD,
 			TYPE_MAX
 		};
 
@@ -373,6 +374,10 @@ private:
 		RDD::BufferID instance_buffer;
 		uint32_t instance_offset = 0;
 		uint32_t instance_count = 0;
+	};
+
+	struct RecordedMicromapBuildCommand : RecordedCommand {
+		RDD::MicromapBuild build;
 	};
 
 	struct RecordedAccelerationStructureBuildBatchCommand : RecordedCommand {
@@ -929,6 +934,8 @@ public:
 	void add_tlas_build(RDD::AccelerationStructureID p_tlas, RDD::BufferID p_scratch_buffer, RDD::BufferID p_instance_buffer, uint32_t p_instance_offset, uint32_t p_instance_count, ResourceTracker *p_dst_tracker, VectorView<ResourceTracker *> p_src_trackers);
 	void add_acceleration_structure_build_batch(VectorView<RecordedAccelerationStructureBuild> p_builds);
 	void add_full_barrier();
+	// The inputs are read and the micromap's storage written; the driver adds the barriers the micromap stage needs.
+	void add_micromap_build(const RDD::MicromapBuild &p_build, ResourceTracker *p_dst_tracker, VectorView<ResourceTracker *> p_src_trackers);
 	void add_buffer_clear(RDD::BufferID p_dst, ResourceTracker *p_dst_tracker, uint32_t p_offset, uint32_t p_size);
 	void add_buffer_copy(RDD::BufferID p_src, ResourceTracker *p_src_tracker, RDD::BufferID p_dst, ResourceTracker *p_dst_tracker, RDD::BufferCopyRegion p_region);
 	void add_buffer_get_data(RDD::BufferID p_src, ResourceTracker *p_src_tracker, RDD::BufferID p_dst, RDD::BufferCopyRegion p_region);

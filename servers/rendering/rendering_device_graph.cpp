@@ -1140,6 +1140,10 @@ void RenderingDeviceGraph::_run_render_commands(int32_t p_level, const RecordedC
 			case RecordedCommand::TYPE_FULL_BARRIER: {
 				// The barrier itself is recorded with the level, from the command's stages and memory barrier.
 			} break;
+			case RecordedCommand::TYPE_MICROMAP_BUILD: {
+				const RecordedMicromapBuildCommand *micromap_build_command = reinterpret_cast<const RecordedMicromapBuildCommand *>(command);
+				driver->command_build_micromap(r_command_buffer, micromap_build_command->build);
+			} break;
 			case RecordedCommand::TYPE_BUFFER_CLEAR: {
 				const RecordedBufferClearCommand *buffer_clear_command = reinterpret_cast<const RecordedBufferClearCommand *>(command);
 				driver->command_clear_buffer(r_command_buffer, buffer_clear_command->buffer, buffer_clear_command->offset, buffer_clear_command->size);
@@ -1530,6 +1534,9 @@ void RenderingDeviceGraph::_print_render_commands(const RecordedCommandSort *p_s
 			} break;
 			case RecordedCommand::TYPE_FULL_BARRIER: {
 				print_line(command_index, "LEVEL", command_level, "FULL BARRIER");
+			} break;
+			case RecordedCommand::TYPE_MICROMAP_BUILD: {
+				print_line(command_index, "LEVEL", command_level, "MICROMAP BUILD");
 			} break;
 			case RecordedCommand::TYPE_COMPUTE_LIST: {
 				const RecordedComputeListCommand *compute_list_command = reinterpret_cast<const RecordedComputeListCommand *>(command);
@@ -1939,6 +1946,33 @@ void RenderingDeviceGraph::add_acceleration_structure_build_batch(VectorView<Rec
 	}
 
 	_add_command_to_graph(nullptr, nullptr, 0, command_index, command);
+}
+
+void RenderingDeviceGraph::add_micromap_build(const RDD::MicromapBuild &p_build, ResourceTracker *p_dst_tracker, VectorView<ResourceTracker *> p_src_trackers) {
+	DEV_ASSERT(p_dst_tracker != nullptr);
+
+	int32_t command_index;
+	RecordedMicromapBuildCommand *command = static_cast<RecordedMicromapBuildCommand *>(_allocate_command(sizeof(RecordedMicromapBuildCommand), command_index));
+	command->type = RecordedCommand::TYPE_MICROMAP_BUILD;
+	// Synchronization1 has no micromap build stage: the command waits and is waited on as all commands, and the
+	// driver puts a full memory dependency on both sides of the build.
+	command->self_stages = RDD::PIPELINE_STAGE_ALL_COMMANDS_BIT;
+	command->build = p_build;
+
+	thread_local LocalVector<ResourceTracker *> trackers;
+	thread_local LocalVector<ResourceUsage> usages;
+
+	const uint32_t resource_count = p_src_trackers.size() + 1;
+	trackers.resize(resource_count);
+	usages.resize(resource_count);
+	for (uint32_t i = 0; i < p_src_trackers.size(); i++) {
+		trackers[i] = p_src_trackers[i];
+		usages[i] = RESOURCE_USAGE_STORAGE_BUFFER_READ;
+	}
+	trackers[resource_count - 1] = p_dst_tracker;
+	usages[resource_count - 1] = RESOURCE_USAGE_STORAGE_BUFFER_READ_WRITE;
+
+	_add_command_to_graph(trackers.ptr(), usages.ptr(), usages.size(), command_index, command);
 }
 
 void RenderingDeviceGraph::add_full_barrier() {
@@ -2799,6 +2833,7 @@ void RenderingDeviceGraph::end(bool p_reorder_commands, bool p_full_barriers, RD
 			6, // TYPE_BOTTOM_LEVEL_ACCELERATION_STRUCTURE_UPDATE
 			6, // TYPE_ACCELERATION_STRUCTURE_BUILD_BATCH
 			0, // TYPE_FULL_BARRIER
+			6, // TYPE_MICROMAP_BUILD
 		};
 		static_assert(std_size(PriorityTable) == RecordedCommand::TYPE_MAX, "PriorityTable must have one entry per RecordedCommand::Type");
 

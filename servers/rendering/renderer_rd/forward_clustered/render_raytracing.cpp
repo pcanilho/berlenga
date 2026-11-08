@@ -531,6 +531,8 @@ void RenderRaytracing::initialize(RenderForwardClustered *p_owner) {
 		mm_merge_shader.pipeline[i] = RD::get_singleton()->compute_pipeline_create(mm_merge_shader.version_shader[i]);
 		RD::get_singleton()->set_resource_name(mm_merge_shader.pipeline[i], "RT MM merge pipeline [mode=" + itos(i) + "]");
 	}
+
+	_omm_initialize();
 }
 
 RenderRaytracing::~RenderRaytracing() {
@@ -543,6 +545,8 @@ RenderRaytracing::~RenderRaytracing() {
 		_rt_persistent_blas_freed = nullptr;
 	}
 
+	// Before the caches: a micromap's BLASes are its surface's and its mesh groups'.
+	_omm_finalize();
 	cleanup_caches();
 
 	if (mat_ubo_pool_buffer.is_valid()) {
@@ -559,6 +563,9 @@ RenderRaytracing::~RenderRaytracing() {
 	}
 
 	mm_merge_shader.shader.version_free(mm_merge_shader.version);
+	if (omm_shader.version.is_valid()) {
+		omm_shader.shader.version_free(omm_shader.version);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1318,6 +1325,7 @@ void RenderRaytracing::prepare_frame() {
 
 	_evict_dead_mesh_groups();
 	_evict_surface_lods(current_frame);
+	_omm_process();
 
 	// Finish async HG compiles so live_ready_mask matches this frame (sync path fills at build_tlas end).
 	SceneShaderRaytracing::get_singleton()->drain_completed_compiles();
@@ -3262,6 +3270,7 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	// Textures
 	// Albedo is a color texture - needs sRGB->linear conversion
 	RID albedo_rd = get_material_texture("texture_albedo", true);
+	mat_data->albedo_texture_rd = albedo_rd; // The opacity micromap bake reads its alpha.
 	if (albedo_rd.is_valid()) {
 		mat.albedo_texture.index = bindless_block->add_texture(albedo_rd);
 	}
@@ -3723,6 +3732,8 @@ void RenderRaytracing::_persistent_open(RTViewportState *p_state, const RenderDa
 	key = hash_murmur3_one_64(p_ctx.camera_visible_layers, key);
 	key = hash_murmur3_one_64(uint64_t(lod) | (uint64_t(RenderForwardClustered::get_singleton()->is_front_facing_preserved_when_mirrored()) << 1), key);
 	key = hash_murmur3_one_64(_rt_hash_bytes(&trace_origin, sizeof(Vector3)), key);
+	// A micromap that landed or went changes the BLAS of every instance tracing its surface.
+	key = hash_murmur3_one_64(omm_version, key);
 	bool reset = key != p.global_key;
 	p.global_key = key;
 
@@ -4414,7 +4425,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 // Merged mesh surface groups
 // ---------------------------------------------------------------------------
 
-RTMeshGroupEntry *RenderRaytracing::_process_mesh_group(const RTMeshGroupKey &p_key, Span<const RTPlanSurface> p_members, LocalVector<RID> &r_dirty_blas_list) {
+RTMeshGroupEntry *RenderRaytracing::_process_mesh_group(const RTMeshGroupKey &p_key, Span<const RTPlanSurface> p_members, LocalVector<RID> &r_dirty_blas_list, RTOmmEntry *const *p_omm) {
 	RTMeshGroupEntry *entry = mesh_groups.getptr(p_key);
 	if (!entry) {
 		_trim_mesh_group_variants(p_key.mesh_id);
@@ -4424,7 +4435,7 @@ RTMeshGroupEntry *RenderRaytracing::_process_mesh_group(const RTMeshGroupKey &p_
 
 	bool up_to_date = entry->blas.is_valid() && entry->surface_counters.size() == p_members.size();
 	for (uint32_t i = 0; up_to_date && i < p_members.size(); i++) {
-		up_to_date = entry->surface_counters[i] == p_members[i].surface_counter;
+		up_to_date = entry->surface_counters[i] == p_members[i].surface_counter && entry->omm_serials[i] == (p_omm && p_omm[i] ? p_omm[i]->serial : 0);
 	}
 	if (up_to_date) {
 		cache_hits++;
@@ -4438,6 +4449,7 @@ RTMeshGroupEntry *RenderRaytracing::_process_mesh_group(const RTMeshGroupKey &p_
 	entry->geometries.resize(count);
 	entry->sources.resize(count);
 	entry->surface_counters.resize(count);
+	entry->omm_serials.resize(count);
 	entry->transforms.resize(count);
 	LocalVector<RD::AccelerationStructureGeometry> as_geoms;
 	as_geoms.resize(count);
@@ -4452,20 +4464,77 @@ RTMeshGroupEntry *RenderRaytracing::_process_mesh_group(const RTMeshGroupKey &p_
 		if (p_key.opaque_mask & (1ULL << rec.surface_index)) {
 			as_geoms[i].flags.set_flag(RD::ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT);
 		}
+		if (p_omm && p_omm[i]) {
+			if (p_omm[i]->primitive_count != surf_data.geometry.primitive_count) {
+				mesh_groups.erase(p_key);
+				return nullptr;
+			}
+			_omm_attach(p_omm[i], as_geoms[i]);
+		}
+		entry->omm_serials[i] = p_omm && p_omm[i] ? p_omm[i]->serial : 0;
 		entry->geometries[i] = surf_data.geometry;
 		entry->sources[i] = surf_data.sources;
 		entry->surface_counters[i] = rec.surface_counter;
 	}
 
 	_assign_compression_transforms(blas_transform_pool, entry->geometries.ptr(), as_geoms.ptr(), entry->transforms.ptr(), count);
-	const String name = "RT BLAS group [" + itos(RID::from_uint64(p_key.mesh_id).get_local_index()) + ":" + String::num_uint64(p_key.surface_mask, 16) + "]";
+	const String name = "RT BLAS group [" + itos(RID::from_uint64(p_key.mesh_id).get_local_index()) + ":" + String::num_uint64(p_key.surface_mask, 16) + (p_key.omm_key ? " OMM" : "") + "]";
 	entry->blas = _create_blas(as_geoms, false, false, name, r_dirty_blas_list);
 	if (!entry->blas.is_valid()) {
 		_free_blas_resources(blas_transform_pool, entry->blas, entry->transforms.ptr(), count);
 		mesh_groups.erase(p_key);
 		return nullptr;
 	}
+	// A micromap's release frees the groups that carry it first.
+	for (uint32_t i = 0; p_omm && i < count; i++) {
+		if (p_omm[i] && p_omm[i]->groups.find(p_key) < 0) {
+			p_omm[i]->groups.push_back(p_key);
+			omm_stats.blases++;
+		}
+	}
 	return entry;
+}
+
+void RenderRaytracing::_free_mesh_group(const RTMeshGroupKey &p_key) {
+	RTMeshGroupEntry *entry = mesh_groups.getptr(p_key);
+	if (entry) {
+		_free_blas_resources(blas_transform_pool, entry->blas, entry->transforms.ptr(), entry->transforms.size());
+		mesh_groups.erase(p_key);
+	}
+}
+
+void RenderRaytracing::_omm_fill_geometry(void *p_mesh_surface, RTSurfaceData *r_surf_data, RID &r_vertex_buffer, RID &r_attribute_buffer, RID &r_index_buffer) {
+	_fill_surface_geometry_data(p_mesh_surface, false, r_surf_data, &r_vertex_buffer, &r_attribute_buffer, &r_index_buffer);
+}
+
+// A second BLAS over the surface's own buffers, built as its plain one is, carrying the micromap.
+bool RenderRaytracing::_omm_build_surface_blas(RTOmmEntry *p_entry, void *p_mesh_surface, LocalVector<RID> &r_dirty_blas_list) {
+	if (!p_entry->surface) {
+		p_entry->surface = memnew(RTSurfaceData);
+	}
+	RTSurfaceData *surf_data = p_entry->surface;
+	_free_blas_resources(blas_transform_pool, surf_data->blas, &surf_data->blas_transform, 1);
+	RD::AccelerationStructureGeometry as_geom;
+	if (!_fill_surface_blas_geometry(p_mesh_surface, RID(), RID(), false, surf_data, as_geom) || surf_data->geometry.primitive_count != p_entry->primitive_count) {
+		return false;
+	}
+	_omm_attach(p_entry, as_geom);
+	_assign_compression_transforms(blas_transform_pool, &surf_data->geometry, &as_geom, &surf_data->blas_transform, 1);
+	surf_data->blas = _create_blas({ &as_geom, 1 }, false, false, "RT BLAS OMM [" + itos(p_entry->serial) + "]", r_dirty_blas_list);
+	if (!surf_data->blas.is_valid()) {
+		_free_blas_resources(blas_transform_pool, surf_data->blas, &surf_data->blas_transform, 1);
+		return false;
+	}
+	omm_stats.blases++;
+	return true;
+}
+
+void RenderRaytracing::_omm_free_surface_blas(RTOmmEntry *p_entry) {
+	if (p_entry->surface) {
+		_free_blas_resources(blas_transform_pool, p_entry->surface->blas, &p_entry->surface->blas_transform, 1);
+		memdelete(p_entry->surface);
+		p_entry->surface = nullptr;
+	}
 }
 
 void RenderRaytracing::_trim_mesh_group_variants(uint64_t p_mesh_id) {
@@ -5529,7 +5598,20 @@ void RTTlasBuilder::_apply_surface_group(const Instance &p_inst, const RTPlanGro
 		group_key.mesh_id = p_inst.data->base.get_id();
 		group_key.surface_mask = p_group.surface_mask;
 		group_key.opaque_mask = p_group.opaque_mask;
-		group = rt._process_mesh_group(group_key, p_members, dirty_blas_list);
+		// Members with a built opacity micromap make the group a variant of its own that carries them.
+		RTOmmEntry *omm[64] = {};
+		bool any_omm = false;
+		if (rt.omm_enabled && p_members.size() <= 64) {
+			for (uint32_t m = 0; m < p_members.size(); m++) {
+				const RTPlanSurface &member = p_members[m];
+				if (member.deformed_kind == RT_PLAN_DEFORMED_NONE) {
+					omm[m] = rt._omm_built(member.surf, member.surface_counter, rt.touch_material(member.material_slot), member.material_flags, instance_alpha);
+					any_omm = any_omm || omm[m];
+				}
+			}
+			group_key.omm_key = RenderRaytracing::_omm_group_key(omm, p_members.size());
+		}
+		group = rt._process_mesh_group(group_key, p_members, dirty_blas_list, any_omm ? omm : nullptr);
 	}
 	if (group) {
 		// Any-hit runs only on members without the opaque geometry flag.
@@ -5543,9 +5625,13 @@ void RTTlasBuilder::_apply_surface_group(const Instance &p_inst, const RTPlanGro
 	} else {
 		for (const RTPlanSurface &member : p_members) {
 			const RTMaterialData *mat_data = rt.touch_material(member.material_slot);
-			RTSurfaceData *surf_data = _process_plan_surface(p_inst, member, any_lod ? _surface_lod(p_inst, member) : 0);
+			const uint32_t lod = any_lod ? _surface_lod(p_inst, member) : 0;
+			RTSurfaceData *surf_data = _process_plan_surface(p_inst, member, lod);
 			if (!surf_data || !surf_data->blas.is_valid()) {
 				continue;
+			}
+			if (rt.omm_enabled && lod == 0 && member.deformed_kind == RT_PLAN_DEFORMED_NONE) {
+				surf_data = rt._omm_surface(member.surf, member.surface_counter, mat_data, member.material_flags, instance_alpha, surf_data, dirty_blas_list);
 			}
 			const bool transparent = member.flags & RT_PLAN_SURFACE_TRANSPARENT;
 			const uint32_t facing_flags = _push_tlas_instance(tlas_transform, surf_data->blas, _rt_member_key(p_group, member), transparent, p_inst.mirror);
@@ -5728,6 +5814,9 @@ void RTTlasBuilder::_add_expanded_mm_surface(const PendingMMSurface &p_pending, 
 	RTSurfaceData *surf_data = rt.process_surface(p_pending.mm_surf, p_pending.surface_counter, p_pending.instance_transform, dirty_blas_list);
 	if (!surf_data || !surf_data->blas.is_valid()) {
 		return;
+	}
+	if (rt.omm_enabled) {
+		surf_data = rt._omm_surface(p_pending.mm_surf, p_pending.surface_counter, p_pending.mat_data, p_pending.material_flags, p_pending.instance_alpha, surf_data, dirty_blas_list);
 	}
 
 	for (uint32_t mi = 0; mi < source.count; mi++) {

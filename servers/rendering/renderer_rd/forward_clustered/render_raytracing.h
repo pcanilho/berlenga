@@ -44,6 +44,7 @@
 #include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_scheduler.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_validation.h" // IWYU pragma: keep. Class layout depends on RT_VALIDATION_ENABLED.
 #include "servers/rendering/renderer_rd/shaders/raytracing/multimesh_merge.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/raytracing/opacity_micromap.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/rendering_device.h"
 
@@ -666,13 +667,14 @@ struct RTMeshGroupKey {
 	uint64_t mesh_id = 0; // Full RID id, so a recycled mesh slot never matches.
 	uint64_t surface_mask = 0; // Bit i set when surface i is a member.
 	uint64_t opaque_mask = 0; // Bit i set when member i is built with the opaque geometry flag.
+	uint64_t omm_key = 0; // The opacity micromaps its members carry (_omm_group_key); 0 for none.
 
 	bool operator==(const RTMeshGroupKey &p_other) const {
-		return mesh_id == p_other.mesh_id && surface_mask == p_other.surface_mask && opaque_mask == p_other.opaque_mask;
+		return mesh_id == p_other.mesh_id && surface_mask == p_other.surface_mask && opaque_mask == p_other.opaque_mask && omm_key == p_other.omm_key;
 	}
 
 	uint32_t hash() const {
-		return hash_fmix32(hash_murmur3_one_64(opaque_mask, hash_murmur3_one_64(surface_mask, hash_murmur3_one_64(mesh_id))));
+		return hash_fmix32(hash_murmur3_one_64(omm_key, hash_murmur3_one_64(opaque_mask, hash_murmur3_one_64(surface_mask, hash_murmur3_one_64(mesh_id)))));
 	}
 };
 
@@ -683,6 +685,7 @@ struct RTMeshGroupEntry {
 	LocalVector<RT_GeometryData> geometries; // In BLAS geometry order (ascending surface index).
 	LocalVector<RTGeometrySources> sources; // Parallel to `geometries`.
 	LocalVector<uint32_t> surface_counters; // Per member; any change rebuilds the BLAS.
+	LocalVector<uint64_t> omm_serials; // Per member: the opacity micromap its geometry carries (RTOmmEntry::serial), or 0.
 	uint64_t last_used = 0; // Use stamp; picks the variant to drop when a mesh has too many.
 };
 
@@ -937,6 +940,77 @@ struct RTHandleMapCursor {
 struct RTPoolSweep {
 	LocalVector<RID> pending; // RIDs owned when the snapshot was taken; freed ones fail get_or_null.
 	uint32_t cursor = 0; // Next index into pending.
+};
+
+// Opacity micromaps (render_raytracing_omm.cpp, docs/ideas/opacity-micromaps.md). One micromap per mesh surface
+// contents and alpha input of the hit group 0 alpha test, shared by every instance that traces them.
+struct RTOmmKey {
+	uint64_t mesh_id = 0; // Full RID id, so a recycled mesh slot never matches.
+	uint32_t surface_index = 0;
+	uint32_t surface_counter = 0; // The surface's RT invalidation counter.
+	uint64_t texture_id = 0; // The RD texture the any-hit samples for alpha.
+	uint32_t uv_scale[2] = {}; // Float bits.
+	uint32_t uv_offset[2] = {};
+	uint32_t albedo_alpha = 0;
+	uint32_t threshold = 0;
+
+	bool operator==(const RTOmmKey &p_other) const {
+		return mesh_id == p_other.mesh_id && surface_index == p_other.surface_index && surface_counter == p_other.surface_counter && texture_id == p_other.texture_id &&
+				uv_scale[0] == p_other.uv_scale[0] && uv_scale[1] == p_other.uv_scale[1] && uv_offset[0] == p_other.uv_offset[0] && uv_offset[1] == p_other.uv_offset[1] &&
+				albedo_alpha == p_other.albedo_alpha && threshold == p_other.threshold;
+	}
+
+	static uint32_t hash(const RTOmmKey &p_key) {
+		uint32_t h = hash_murmur3_one_64(p_key.mesh_id);
+		h = hash_murmur3_one_32(p_key.surface_index, h);
+		h = hash_murmur3_one_32(p_key.surface_counter, h);
+		h = hash_murmur3_one_64(p_key.texture_id, h);
+		h = hash_murmur3_one_32(p_key.uv_scale[0], h);
+		h = hash_murmur3_one_32(p_key.uv_scale[1], h);
+		h = hash_murmur3_one_32(p_key.uv_offset[0], h);
+		h = hash_murmur3_one_32(p_key.uv_offset[1], h);
+		h = hash_murmur3_one_32(p_key.albedo_alpha, h);
+		h = hash_murmur3_one_32(p_key.threshold, h);
+		return hash_fmix32(h);
+	}
+};
+
+struct RTOmmEntry {
+	enum State {
+		STATE_QUEUED, // Waits for its setup pass.
+		STATE_SETUP, // The setup pass ran; its readback is in flight.
+		STATE_BUILT, // The micromap is built; BLASes may carry it.
+		STATE_FAILED, // Not baked (its surface or texture went away, or an allocation failed); the any-hit decides.
+	};
+	RTOmmKey key;
+	State state = STATE_QUEUED;
+	uint64_t serial = 0; // Unique over the run; mesh group keys refer to it by this.
+	uint64_t ticket = 0; // The readback in flight.
+	uint32_t primitive_count = 0;
+	uint32_t last_used_frame = 0;
+	RID setup_buffer;
+	RID micromap;
+	RID index_buffer; // One int32 a primitive: a micromap entry or a special index.
+	LocalVector<RD::MicromapUsage> index_usages; // The primitives' references per level, special indices left out.
+	RTSurfaceData *surface = nullptr; // The surface's own BLAS with the micromap, for single-surface and expanded MultiMesh instances.
+	LocalVector<RTMeshGroupKey> groups; // The mesh group BLASes that carry it.
+	uint32_t descriptors = 0;
+	uint32_t special_primitives = 0;
+	uint64_t micromap_bytes = 0;
+	uint64_t known = 0; // Micro-triangles, from the bake's counts.
+	uint64_t unknown = 0;
+};
+
+struct RTOmmPyramid {
+	RID buffer;
+	uint32_t level_count = 0;
+	uint32_t last_used_frame = 0;
+};
+
+struct RTOmmReadback {
+	uint64_t ticket = 0;
+	bool stats = false;
+	PackedByteArray data;
 };
 
 struct RTMaterialCacheEntry {
@@ -1359,7 +1433,75 @@ class RenderRaytracing {
 	// Compression transforms of every compressed BLAS. Cleared last in cleanup_caches.
 	RTBlasTransformPool blas_transform_pool;
 
-	RTMeshGroupEntry *_process_mesh_group(const RTMeshGroupKey &p_key, Span<const RTPlanSurface> p_members, LocalVector<RID> &r_dirty_blas_list);
+	// p_omm: per member, the opacity micromap its geometry carries, or null; null for none at all.
+	RTMeshGroupEntry *_process_mesh_group(const RTMeshGroupKey &p_key, Span<const RTPlanSurface> p_members, LocalVector<RID> &r_dirty_blas_list, RTOmmEntry *const *p_omm = nullptr);
+	void _free_mesh_group(const RTMeshGroupKey &p_key);
+
+	// Opacity micromaps (render_raytracing_omm.cpp), with rendering/pathtracing/opacity_micromaps.
+	bool omm_enabled = false;
+	float omm_scale = 2.0f;
+	uint32_t omm_max_level = 10;
+	HashMap<RTOmmKey, RTOmmEntry *, RTOmmKey> omm_entries;
+	HashMap<uint64_t, RTOmmEntry *> omm_pending; // By readback ticket.
+	LocalVector<RTOmmEntry *> omm_queue;
+	LocalVector<RTOmmReadback> omm_readbacks;
+	HashMap<RID, RTOmmPyramid> omm_pyramids; // By texture.
+	uint64_t omm_next_serial = 1;
+	uint64_t omm_next_ticket = 1;
+	uint64_t omm_processed_frame = UINT64_MAX;
+	// Changes when a micromap lands or goes, so persistent slots are written again with or without it.
+	uint64_t omm_version = 0;
+	RID omm_sampler;
+	struct OmmShader {
+		enum Mode {
+			MODE_PYRAMID_BASE,
+			MODE_PYRAMID_REDUCE,
+			MODE_SETUP,
+			MODE_BAKE,
+			MODE_MAX,
+		};
+		OpacityMicromapShaderRD shader;
+		RID version;
+		RID version_shader[MODE_MAX];
+		RID pipeline[MODE_MAX];
+	} omm_shader;
+	struct OmmStats {
+		uint32_t baked = 0;
+		uint32_t failed = 0;
+		uint64_t micromap_bytes = 0;
+		uint64_t descriptors = 0;
+		uint64_t primitives = 0;
+		uint64_t special_primitives = 0;
+		uint64_t blases = 0;
+		uint64_t known = 0;
+		uint64_t unknown = 0;
+	} omm_stats;
+
+	void _omm_initialize();
+	void _omm_finalize();
+	// Once a frame, before the walks: readbacks, expiry and this frame's setup passes.
+	void _omm_process();
+	// The micromap for surface p_surf (a RenderForwardClustered::GeometryInstanceSurfaceDataCache) traced with
+	// p_material on a TLAS entry with p_material_flags and p_instance_alpha; queued for its bake when new. Null when the alpha test is not
+	// the plain hit group 0 one the bake follows.
+	RTOmmEntry *_omm_request(const void *p_surf, uint32_t p_surface_counter, const RTMaterialData *p_material, uint32_t p_material_flags, float p_instance_alpha);
+	// The built micromap of _omm_request, or null.
+	RTOmmEntry *_omm_built(const void *p_surf, uint32_t p_surface_counter, const RTMaterialData *p_material, uint32_t p_material_flags, float p_instance_alpha);
+	// p_plain's surface traced with the micromap of _omm_built when it has one, else p_plain.
+	RTSurfaceData *_omm_surface(const void *p_surf, uint32_t p_surface_counter, const RTMaterialData *p_material, uint32_t p_material_flags, float p_instance_alpha, RTSurfaceData *p_plain, LocalVector<RID> &r_dirty_blas_list);
+	static void _omm_attach(const RTOmmEntry *p_entry, RD::AccelerationStructureGeometry &r_geometry);
+	// The mesh group key part for members carrying p_omm (null where none); 0 when none does.
+	static uint64_t _omm_group_key(RTOmmEntry *const *p_omm, uint32_t p_count);
+	bool _omm_pyramid(RID p_texture, uint32_t p_width, uint32_t p_height, RTOmmPyramid *&r_pyramid);
+	void _omm_setup(RTOmmEntry *p_entry);
+	void _omm_bake(RTOmmEntry *p_entry, const PackedByteArray &p_setup);
+	bool _omm_referenced(const RTOmmEntry *p_entry) const;
+	void _omm_release_entry(RTOmmEntry *p_entry);
+	static void _on_omm_read(const PackedByteArray &p_data, uint64_t p_ticket, bool p_stats);
+	// File-local geometry helpers of render_raytracing.cpp, for the bake and the micromap BLAS.
+	static void _omm_fill_geometry(void *p_mesh_surface, RTSurfaceData *r_surf_data, RID &r_vertex_buffer, RID &r_attribute_buffer, RID &r_index_buffer);
+	bool _omm_build_surface_blas(RTOmmEntry *p_entry, void *p_mesh_surface, LocalVector<RID> &r_dirty_blas_list);
+	void _omm_free_surface_blas(RTOmmEntry *p_entry);
 	void _trim_mesh_group_variants(uint64_t p_mesh_id);
 	void _evict_dead_mesh_groups();
 

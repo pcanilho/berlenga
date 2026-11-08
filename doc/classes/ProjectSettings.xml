@@ -3373,6 +3373,15 @@
 			Maximum total triangle count ([code]instance_count * triangles_per_surface[/code]) for a [MultiMesh] surface to use a single merged BLAS in the path tracer. When the combined triangle count exceeds this value, the path tracer falls back to one TLAS entry per instance sharing a common BLAS instead. Lower this value to reduce peak GPU memory for large MultiMeshes; raise it to prefer the merged path (which avoids per-instance TLAS overhead).
 			[b]Note:[/b] Requires a restart to take effect.
 		</member>
+		<member name="rendering/pathtracing/opacity_micromap_max_level" type="int" setter="" getter="" default="10">
+			The finest subdivision level of an opacity micromap triangle (4^level micro-triangles), also capped by the device. Each level past it costs four times the memory of a triangle that needs it. See [member rendering/pathtracing/opacity_micromaps].
+		</member>
+		<member name="rendering/pathtracing/opacity_micromap_scale" type="float" setter="" getter="" default="2.0">
+			The alpha texels one opacity micromap micro-triangle covers; a triangle's level follows its area in texels. Lower values resolve cutout edges finer at more memory. See [member rendering/pathtracing/opacity_micromaps].
+		</member>
+		<member name="rendering/pathtracing/opacity_micromaps" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], static surfaces whose StandardMaterial3D uses alpha scissor get an opacity micromap (Vulkan [code]VK_EXT_opacity_micromap[/code]), baked on the GPU from the material's albedo alpha the first time they are traced. Ray traversal then skips the cut-out parts and accepts the solid parts of leaves, grass and fences without running the any-hit shader; only micro-triangles a cutout edge crosses still run it. The micromap is exact for the path tracer's alpha test, so the image does not change. Applies to single-surface and grouped static meshes and to MultiMeshes traced one instance per element; skinned, blend shape, custom shader, triplanar, transparent and faded surfaces, mesh LOD levels and merged MultiMeshes keep the any-hit alone. Off asks for no extension. Ignored when the device lacks the extension.
+		</member>
 		<member name="rendering/pathtracing/parallel_planning" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], the path tracer plans its per-frame instance records on the worker thread pool once a viewport has at least 256 instances. Instances that need to create or modify shared resources are deferred and planned serially afterwards, so the result matches serial planning. Disable this to plan on the render thread only, for example to rule out threading issues while debugging.
 		</member>
