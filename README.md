@@ -76,11 +76,11 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 
 Windows x64 and Linux x86_64 builds include a PhysX 5 physics server with NVIDIA Blast destruction and NVIDIA Flow smoke and fire. macOS and Linux ARM64 builds do not.
 - Pick the engine per project in **Project Settings > Physics > 3D > Physics Engine**: `Jolt Physics` or `PhysX`. Every 3D physics node works with either.
-- Works with either engine: `PhysXCloth3D` (free cloth: flags, tarps, umbrellas), `PhysXSkinnedCloth3D` (cloth on skinned characters, painted max distance per vertex), `PhysXDestructible3D` (Blast fracture, editor fracture tool), `PhysXFlow3D` (smoke and fire), ocean water with buoyancy and boats, compute-shader particle fluids and granular material.
+- Works with either engine: `PhysXCloth3D` (free cloth: flags, tarps, umbrellas; can tear along a line), `PhysXSkinnedCloth3D` (cloth on skinned characters, painted max distance per vertex), `PhysXDestructible3D` (Blast fracture, editor fracture tool), `PhysXFlow3D` (smoke and fire), ocean water with buoyancy and boats, compute-shader particle fluids and granular material.
 - Needs the PhysX engine: PhysX vehicles, CUDA particle fluids and deformables, GPU rigid body dynamics (CUDA builds only; the release builds use the CPU solver, which is faster while the GPU is busy path tracing).
 - Path-traced smoke and fire: with path tracing on, the `PhysXFlow3D` nearest the camera is traced as a participating medium instead of drawn over the image. Light scatters inside it, it casts soft shadows, it shows in reflections, and fire glows from within. Off: **Project Settings > Rendering > Path Tracing > Simulated Gas** (then Flow draws its own ray march, as before).
 
-  ![The same scene path traced: lamp light scatters in the smoke, which shadows the floor](docs/media/physx-pathtraced.webp)
+  ![An earlier cut of the scene, path traced: lamp light scatters in the smoke, which shadows the floor](docs/media/physx-pathtraced.webp)
 
 - Without the SDKs (`physx_sdk=`, `blast_sdk=`, `flow_sdk=`, see `modules/godot_physx/README.md`) the module is skipped and the build is stock.
 
