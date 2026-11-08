@@ -100,6 +100,40 @@ rebuild only touched partitions (Valence D94b uses 128 m columns of up to 8192 s
 global partition for movers). That is the existing stage B, and it gains more with forests than
 it did with the 140k-instance bench, where it would save at most 0.3 ms of GPU.
 
+## Step 1 as built
+
+- `Dependency::DEPENDENCY_CHANGED_MULTIMESH_DATA` is sent by `MeshStorage` when a MultiMesh's records change:
+  `multimesh_set_buffer`, and the dirty-region upload of `multimesh_instance_set_*`. The forward
+  clustered geometry instance now tracks its MultiMesh's dependency, and the notification renews
+  its `rt_generation`. A change to the visible instance count renews it too. This uses
+  `rt_generation` instead of a separate buffer generation, so the clean check and slot code stay
+  as they were. The geometry instance has to track the MultiMesh itself: through the scene cull's
+  AABB notification alone, the generation changed one frame late and moving records lagged a
+  frame behind.
+- `gather_instances` notes each MultiMesh instance's pending surfaces. `add_multimesh_surfaces`
+  stores an instance's expanded entries in its slot when every surface expanded (none merged,
+  captured, billboarded, trailed, waiting on a hit group, or without a BLAS). Any other
+  MultiMesh instance gives its slot up.
+- Bench: `--multimesh=M` places the scene as one MultiMesh per mesh in each M-meter tile;
+  `--mmmove=N` spins one record in each of the N nearest MultiMeshes every frame.
+
+Cloud (Lavapipe, 4 cores), 30k objects as 3,944 MultiMeshes of 250 m tiles, all expanded
+(`multimesh_merged_blas_max_triangles` 256), render CPU per frame:
+
+| Run | Slots off | Slots on |
+|---|---|---|
+| Still | 10.5 ms | 1.39 ms |
+| Fly 60 m/s | 11.2 ms | 1.40 ms |
+| 50 MultiMeshes changing each frame | 10.3 ms | 2.16 ms |
+| Same objects as nodes, still | | 2.79 ms |
+
+Images match with slots off, including while records move.
+
+With the default merge cap (65,536 triangles), most of these tiles merge instead. Each one bakes
+its own BLAS, and buffer memory reaches 2.6 GB against 82 MB expanded. With slots on, expanded
+records cost almost nothing while still, so a lower cap may suit forests better. That needs a
+GPU trace-time comparison before any default changes.
+
 ## Measuring
 
 Add `--multimesh=N` to `docs/bench/open_world`: the same rocks and trees placed as N MultiMeshes

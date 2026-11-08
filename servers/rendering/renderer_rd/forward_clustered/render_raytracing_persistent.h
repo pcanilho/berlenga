@@ -37,11 +37,12 @@ namespace RendererSceneRenderImplementation {
 // Persistent instance slots (rendering/pathtracing/persistent_instances).
 //
 // Every traced mesh instance whose TLAS entries follow from its own state alone (no deformation, capture, camera
-// billboard or mesh LOD) owns a slot, by rt_index, with fixed ranges of TLAS instances and geometry rows. The slot
-// records the instance's rt_generation when written. Next frame, an instance whose generation is unchanged and
-// whose slot is still live skips planning and writing: its entries stay in place and its rows stay on the GPU.
-// Everything else (MultiMesh, particles, procedural and deformed instances, decals) is written each frame after
-// the persistent ranges, as before.
+// billboard or mesh LOD) owns a slot, by rt_index, with fixed ranges of TLAS instances and geometry rows. So does a
+// MultiMesh whose surfaces all expand to one TLAS entry per record; its records' changes renew the instance's
+// rt_generation (DEPENDENCY_CHANGED_MULTIMESH_DATA). The slot records the instance's rt_generation when written.
+// Next frame, an instance whose generation is unchanged and whose slot is still live skips planning and writing:
+// its entries stay in place and its rows stay on the GPU. Everything else (merged MultiMeshes, particles,
+// procedural and deformed instances, decals) is written each frame after the persistent ranges, as before.
 //
 // What changes outside the instance invalidates by scope:
 // - A changed material rewrites the slots whose rows use it (material_changed, from the material cache).

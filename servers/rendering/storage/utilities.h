@@ -61,6 +61,7 @@ public:
 		DEPENDENCY_CHANGED_LIGHT_SOFT_SHADOW_AND_PROJECTOR,
 		DEPENDENCY_CHANGED_REFLECTION_PROBE,
 		DEPENDENCY_CHANGED_CULL_MASK,
+		DEPENDENCY_CHANGED_MULTIMESH_DATA, // Instance transforms, colors or custom data written.
 	};
 
 	void changed_notify(DependencyChangedNotification p_notification);

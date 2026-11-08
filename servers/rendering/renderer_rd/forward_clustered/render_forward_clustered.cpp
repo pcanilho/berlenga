@@ -4632,6 +4632,10 @@ void RenderForwardClustered::_geometry_instance_update(RenderGeometryInstance *p
 
 				ginstance->instance_count = mesh_storage->multimesh_get_instances_to_draw(ginstance->data->base);
 			}
+			if (ginstance->data->dirty_dependencies) {
+				// The path tracer's persistent slots follow the records through DEPENDENCY_CHANGED_MULTIMESH_DATA.
+				RSG::utilities->base_update_dependency(ginstance->data->base, &ginstance->data->dependency_tracker);
+			}
 
 		} break;
 #if 0
@@ -5117,8 +5121,13 @@ void RenderForwardClustered::_geometry_instance_dependency_changed(Dependency::D
 			static_cast<RenderGeometryInstance *>(p_tracker->userdata)->_mark_dirty();
 			static_cast<GeometryInstanceForwardClustered *>(p_tracker->userdata)->data->dirty_dependencies = true;
 		} break;
+		case Dependency::DEPENDENCY_CHANGED_MULTIMESH_DATA: {
+			// The path tracer reads the records from the CPU copy each frame they change.
+			static_cast<GeometryInstanceForwardClustered *>(p_tracker->userdata)->bump_rt_generation();
+		} break;
 		case Dependency::DEPENDENCY_CHANGED_MULTIMESH_VISIBLE_INSTANCES: {
 			GeometryInstanceForwardClustered *ginstance = static_cast<GeometryInstanceForwardClustered *>(p_tracker->userdata);
+			ginstance->bump_rt_generation();
 			if (ginstance->data->base_type == RSE::INSTANCE_MULTIMESH) {
 				ginstance->instance_count = RendererRD::MeshStorage::get_singleton()->multimesh_get_instances_to_draw(ginstance->data->base);
 			}
