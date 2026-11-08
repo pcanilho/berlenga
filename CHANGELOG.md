@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-384f62e7 (2026-11-08)
+
+### Added
+- Local exposure from a bilateral grid (`rendering/camera/auto_exposure/local_highlight_contrast`, `local_shadow_contrast`), off by default (#127).
+
 ## build-e071b5eb (2026-11-08)
 
 ### Added
