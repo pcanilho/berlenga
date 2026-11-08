@@ -35,6 +35,13 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 - Cached shadows for still casters; far lights update less often.
 - Optional time-sliced reflection probes.
 
+### Physics (PhysX 5)
+Windows x64 and Linux x86_64 builds include a PhysX 5 physics server with NVIDIA Blast destruction and NVIDIA Flow smoke and fire. macOS and Linux ARM64 builds do not.
+- Pick the engine per project in **Project Settings > Physics > 3D > Physics Engine**: `Jolt Physics` or `PhysX`. Every 3D physics node works with either.
+- Works with either engine: `PhysXCloth3D` (free cloth: flags, tarps, umbrellas), `PhysXSkinnedCloth3D` (cloth on skinned characters, painted max distance per vertex), `PhysXDestructible3D` (Blast fracture, editor fracture tool), `PhysXFlow3D` (smoke and fire), ocean water with buoyancy and boats, compute-shader particle fluids and granular material.
+- Needs the PhysX engine: PhysX vehicles, CUDA particle fluids and deformables, GPU rigid body dynamics (CUDA builds only; the release builds use the CPU solver, which is faster while the GPU is busy path tracing).
+- Without the SDKs (`physx_sdk=`, `blast_sdk=`, `flow_sdk=`, see `modules/godot_physx/README.md`) the module is skipped and the build is stock.
+
 ### API
 - `RenderingServer.is_pathtracing_ready()`: true once `get_rendering_not_ready_reasons()` is empty.
 - `RenderingDevice.get_video_memory_budget()` / `get_video_memory_usage()`
@@ -47,7 +54,7 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 
 | Area | Sources |
 |---|---|
-| Code | [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot), the path tracer and DLSS integration this fork is built on |
+| Code | [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot), the path tracer and DLSS integration this fork is built on<br>[uno1982/godot](https://github.com/uno1982/godot) `feature/physx5-module` (Wild Ox Studios, MIT), the PhysX 5 module; [NVIDIA-Omniverse/PhysX](https://github.com/NVIDIA-Omniverse/PhysX) (BSD-3-Clause), PhysX, Blast and Flow |
 | Many lights | Talbot et al., *Importance Resampling for Global Illumination*, EGSR 2005<br>Boksansky et al., *Rendering Many Lights with Grid-Based Reservoirs* (ReGIR), Ray Tracing Gems II, 2021<br>Bitterli et al., *Spatiotemporal Reservoir Resampling* (ReSTIR DI), SIGGRAPH 2020<br>Olsson et al., *Clustered Deferred and Forward Shading*, HPG 2012 |
 | Lit transparents | Wronski, *Volumetric Fog: Unified Compute Shader Based Solution to Atmospheric Scattering*, SIGGRAPH 2014<br>Hillaire, *Physically Based and Unified Volumetric Rendering in Frostbite*, SIGGRAPH 2015<br>NVIDIA, RTX Remix volumetric radiance cache for particles<br>Garg, Nayar, *Photorealistic Rendering of Rain Streaks*, SIGGRAPH 2006<br>Henyey, Greenstein, *Diffuse Radiation in the Galaxy*, Astrophysical Journal, 1941<br>McGuire, Bavoil, *Weighted Blended Order-Independent Transparency*, JCGT 2013 |
 | Texture filtering | Akenine-Möller et al., *Texture Level of Detail Strategies for Real-Time Ray Tracing*, Ray Tracing Gems, 2019<br>Akenine-Möller et al., *Improved Shader and Texture Level of Detail Using Ray Cones*, JCGT 2021 |

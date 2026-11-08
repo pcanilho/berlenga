@@ -1,0 +1,1284 @@
+# PhysX 3D physics module
+
+A [PhysX 5](https://github.com/NVIDIA-Omniverse/PhysX) implementation of Godot's
+`PhysicsServer3D`, in the same shape as the built-in Jolt and Godot Physics
+backends. It is selected per project and every 3D physics node
+(`RigidBody3D`, `CharacterBody3D`, `Area3D`, the joints, `RayCast3D`, …) works
+against it unchanged.
+
+The reason to use it over Jolt is **GPU rigid-body dynamics** on NVIDIA
+hardware, and the room that a built-in backend leaves for GPU particle,
+destruction and fluid effects that have no representation in the stock physics
+interface. On the CPU alone, Jolt is the better choice.
+
+## Example project and tests
+
+Scenes and a regression-test suite for the module live in a separate Godot
+project: [godot-physx-example](https://github.com/uno1982/godot-physx-example).
+`demo/...` paths referenced in this document (such as the demo boat,
+`demo/common/boat/boat.tscn`) are relative to that repository. Its `test/`
+directory holds per-feature tests that run headless against a custom build;
+see the project's README for the run instructions.
+
+## Building
+
+The PhysX 5 SDK is **not vendored** — it is built out of tree and linked in. The
+module is skipped (with a one-line notice) unless an SDK is configured, so a
+stock Godot build is unaffected.
+
+### Prerequisites
+
+On top of everything a normal Godot Windows editor build needs (Python, SCons,
+Visual Studio with the C++ workload and Windows SDK, the D3D12 Agility SDK):
+
+- **CMake** and **git** — the PhysX SDK builds with its own CMake.
+- **CUDA Toolkit** — only for a GPU build (`--gpu`); built and tested against
+  12.8. On Windows: `winget install Nvidia.CUDA --version 12.8` (installs to
+  `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8` and sets
+  `CUDA_PATH`; open a fresh terminal afterwards). The end-user machine only
+  needs an NVIDIA driver (`nvcuda.dll` / `libcuda.so.1`), not the toolkit.
+  CUDA 13 works too, but needs a newer driver (R580+) and drops `sm_70`, so
+  stick with 12.8.
+- **Visual Studio 2026** works without Visual Studio 2022: add its individual
+  component **"MSVC v143 – VS 2022 C++ x64/x86 build tools"**. The PhysX SDK
+  and Flow are then built with v143 as on VS 2022 (so CUDA 12.8 still works;
+  Blast brings its own compiler either way), and Godot builds with VS 2026's
+  own compiler; they link together fine. It needs a CMake that knows VS 2026
+  (the one VS 2026 installs does).
+
+On **Linux**, on top of a normal Godot Linux editor build: **CMake**, **git**
+and **clang** (the PhysX SDK is built with clang even when Godot itself is built
+with GCC, the two link together fine). Tested with clang 18 and 22, and GCC
+13 and 16 for Blast. For GPU builds nvcc might want an older GCC, point it
+there with `NVCC_CCBIN` (Arch's `cuda` package already does).
+
+Win64 / MSVC and Linux x86-64 are built and tested, CPU and GPU, with and
+without Blast and Flow. On Linux `SCsub` copies `libPhysXGpu_64.so` and the
+Blast and Flow `.so` files next to the binary and sets an `$ORIGIN` rpath so
+they're found.
+
+The `.so` files need the glibc of the machine that built them (or newer), so
+build release SDKs on an older distro, not a rolling one. The
+`nvidia/cuda:12.8.1-devel-ubuntu24.04` docker image works for both the GPU
+and Blast builds.
+
+### Step 1 — build the PhysX SDK
+
+```
+python modules/godot_physx/misc/build_physx.py            # CPU only
+python modules/godot_physx/misc/build_physx.py --gpu      # + GPU dynamics / fluid
+```
+
+`--platform` defaults to the host OS (`windows` on Windows, `linuxbsd`
+elsewhere) — pass it explicitly to be sure, e.g. `--platform linuxbsd --gpu`.
+Run it on the machine you're building for.
+
+This clones NVIDIA's PhysX repo (pinned) into a `physx-sdk/` folder next to the
+Godot repo, applies the Godot-tuned preset, builds and installs it, then prints
+the exact `scons` command for step 2. Pass `--src <dir>` to reuse an existing
+PhysX checkout instead of cloning.
+
+To build the SDK by hand instead: static libraries, static CRT
+(`NV_USE_STATIC_WINCRT=True`, i.e. `/MT` on Windows), `release` config. Then
+point scons at the install directory (the one containing `include/` and `bin/`)
+with `physx_sdk=<path>` or the `PHYSX_SDK` environment variable.
+
+### Step 2 — build the editor
+
+```
+scons platform=windows target=editor physx_sdk=<path from step 1>            # CPU
+scons platform=windows target=editor physx_sdk=<path> physx_gpu=yes          # GPU
+scons platform=linuxbsd target=editor physx_sdk=<path from step 1>           # Linux (CPU)
+scons platform=linuxbsd target=editor physx_sdk=<path> physx_gpu=yes         # Linux (GPU)
+```
+
+For a **GPU** build, `SCsub` also copies `PhysXGpu_64.dll` (`libPhysXGpu_64.so`
+on Linux) next to the built binary automatically (a real SCons dependency,
+keyed on `physx_sdk=`'s own library — it only re-copies when that changes,
+not on every build).
+
+At startup a GPU build logs `PhysX: CUDA context ready on device '...'`; if no
+usable CUDA device is found it warns and falls back to CPU simulation.
+
+`build_physx.py` compiles native GPU code (SASS) for `sm_75` (Turing) through
+`sm_120` (Blackwell), plus a PTX fallback the driver JITs for anything newer.
+Older cards (Pascal `sm_61` and below) aren't targeted; widen the SASS list in
+`misc/physx_patches/0002-gpu-turing-sm75-arch.patch` if you need one. A card
+with no matching SASS still runs, but every kernel is JIT-compiled at load and
+GPU dynamics is several times slower.
+
+To confirm a stock build is unaffected, build with
+`module_godot_physx_enabled=no` (or simply without an SDK configured).
+
+### Optional — Blast SDK (`PhysXDestructible3D`)
+
+Runtime mesh fracture/destruction (`PhysXDestructible3D`, the in-editor
+fracture dialog) needs a second, separate SDK on top of PhysX: NVIDIA's
+[NvBlast](https://github.com/NVIDIA-Omniverse/PhysX/tree/main/blast). It lives
+in the *same* checkout `build_physx.py` clones for PhysX itself (a `blast/`
+subdirectory of that monorepo, version-locked to the same release), builds
+with its own premake5-based build system, and is entirely optional — the
+module is skipped (again with a one-line notice) unless `blast_sdk=` is also
+set, so a PhysX build without it is unaffected.
+
+```
+python modules/godot_physx/misc/build_physx.py --blast          # + CPU-only PhysX
+python modules/godot_physx/misc/build_physx.py --gpu --blast    # + GPU PhysX
+```
+
+This builds PhysX as usual, then also runs Blast's own `build.bat`/`build.sh`
+and prints the resulting SDK path plus the exact `scons` command for step 2.
+Unlike PhysX's static libraries, Blast ships as DLLs (`.so` on Linux):
+`NvBlast`, `NvBlastGlobals`, `NvBlastExtAuthoring`, `NvBlastExtShaders`.
+`SCsub` copies all four next to the built binary when `blast_sdk=` is set,
+same as the GPU library above.
+
+On Linux Blast is built with your own GCC instead of NVIDIA's build
+container (`build.sh --no-docker`, patch 0005 makes that work). The first run
+downloads about 3 GB of deps into `~/.cache/packman`.
+
+```
+scons platform=windows target=editor physx_sdk=<path> blast_sdk=<path from --blast>            # CPU
+scons platform=windows target=editor physx_sdk=<path> physx_gpu=yes blast_sdk=<path from --blast>  # GPU
+scons platform=linuxbsd target=editor physx_sdk=<path> blast_sdk=<path from --blast>           # Linux (CPU)
+scons platform=linuxbsd target=editor physx_sdk=<path> physx_gpu=yes blast_sdk=<path from --blast> # Linux (GPU)
+```
+
+To build the SDK by hand instead: point scons at the Blast install directory
+(the one containing `include/` and `bin/`) with `blast_sdk=<path>` or the
+`BLAST_SDK` environment variable.
+
+To confirm a Blast-less build still works, build with `physx_sdk=` set but no
+`blast_sdk=` — `PhysXDestructible3D` and the fracture dialog simply won't be
+registered.
+
+### Optional — NVIDIA Flow (`PhysXFlow3D`)
+
+Smoke, fire and dust (`PhysXFlow3D`, `PhysXFlowEmitter3D`) need NVIDIA Flow,
+the `flow/` subdirectory of the same PhysX monorepo. Like Blast it is entirely
+optional: without `flow_sdk=` the Flow nodes simply aren't registered, and
+scenes that use them open with placeholders.
+
+```
+python modules/godot_physx/misc/build_physx.py --flow                  # + CPU-only PhysX
+python modules/godot_physx/misc/build_physx.py --gpu --blast --flow    # everything
+```
+
+This runs Flow's own `build.bat`/`build.sh` after PhysX (and Blast), and ends
+with one `scons` command for everything built, e.g.:
+
+```
+scons platform=windows target=editor physx_sdk=<path> physx_gpu=yes blast_sdk=<path> flow_sdk=<PhysX checkout>/flow
+```
+
+`flow_sdk=` is the checkout's `flow/` directory itself. To build Flow by hand,
+run its script from that directory; MSVC 14.44 needs warning C4756 silenced
+(the script does this for you):
+
+```
+cd <PhysX checkout>/flow
+set CL=/wd4756
+build.bat
+```
+
+Nothing is linked: Flow's loader opens `nvflow.dll` and `nvflowext.dll`
+(`libnvflow.so` and `libnvflowext.so` on Linux) at run time, and `SCsub`
+copies both next to the built binary. Without them the Flow
+nodes show a configuration warning and stay inert.
+
+## Exporting a game
+
+Godot's downloadable export templates don't contain this module, so a game
+exports with a template you build yourself, **with the same options as the
+editor** (`physx_gpu`, `blast_sdk`, `flow_sdk`):
+
+```
+scons platform=windows target=template_release physx_sdk=<path> physx_gpu=yes blast_sdk=<path> flow_sdk=<path>
+scons platform=windows target=template_debug   physx_sdk=<path> physx_gpu=yes blast_sdk=<path> flow_sdk=<path>
+```
+
+(`platform=linuxbsd` for Linux.) Both land in `bin/` next to the editor, and
+`SCsub` copies the module's libraries there too. In the export preset, set
+**Custom Template → Release / Debug** to those binaries. Until you do, the
+export dialog reports that no export template was found: there are no
+official templates for this build, and the custom path is what replaces them.
+
+Alternatively, install them as this version's templates: copy them into the
+editor's export templates folder (**Editor → Manage Export Templates → Open
+Folder**, then the `<version>` folder, e.g. `4.7.3.rc`; create it if missing) named
+`windows_release_x86_64.exe` / `windows_debug_x86_64.exe` (Linux:
+`linux_release.x86_64` / `linux_debug.x86_64`), **with the module's libraries
+next to them**. Presets then need no custom path.
+
+The editor then ships the libraries with the game by itself: when exporting
+for Windows or Linux it copies them from the **folder of the export template**
+the preset uses (the custom template's, or else the editor's templates folder
+for this version) next to the exported executable, along with
+`PHYSX-LICENSE.txt` (the BSD-3-Clause notice the binaries must carry). Because
+they come from the template's folder, a Windows editor exporting with a Linux
+template folder ships the Linux `.so` files. If one is missing there, the
+export warns and says what the game loses:
+
+| Library | Without it |
+| --- | --- |
+| `NvBlast.dll`, `NvBlastGlobals.dll`, `NvBlastExtAuthoring.dll`, `NvBlastExtShaders.dll` (`libNvBlast*.so`) | the game doesn't start (Blast is linked at load time) |
+| `PhysXGpu_64.dll` (`libPhysXGpu_64.so`, ~350 MB) | PhysX runs on the CPU; the game logs which file is missing |
+| `nvflow.dll`, `nvflowext.dll` (`libnvflow*.so`) | the Flow nodes stay inert |
+
+On Linux the binary looks for the `.so` files next to itself (`SCsub` sets an
+`$ORIGIN` rpath). Other platforms (Android, macOS, web) aren't supported by
+the module yet.
+
+## Selecting the backend
+
+**Project Settings → Physics → 3D → Physics Engine → `PhysX`**, or in
+`project.godot`:
+
+```
+[physics]
+3d/physics_engine="PhysX"
+```
+
+The choice is project-wide and applied at startup; it cannot be changed per
+scene or at runtime.
+
+## Project settings
+
+Under `physics/physx_3d/simulation/`:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `solver_type` | `PGS` | `PGS` is PhysX's classic solver and matches the other backends' feel in large rigid-body scenes. `TGS` is steadier for joint chains under sustained external forces (wind, thrusters) but can be looser on joints in big mixed piles. GPU soft bodies need `TGS` for firm soft-vs-soft contact. |
+| `enhanced_determinism` | `false` | Makes the CPU simulation reproducible across runs on the same binary and platform, independent of worker-thread count and API call order. It is **not** cross-platform deterministic and has a performance cost. Enabling it forces the CPU solver even when a CUDA device is present, because the GPU solver is never deterministic. |
+| `gpu_dynamics` | `true` | GPU builds only. When off, no CUDA context is made and the scene runs on the CPU solver, as on a machine without CUDA (`PhysX.is_gpu_available()` is `false`). Every step waits for the GPU's results, so the CPU solver can be faster when the GPU is busy with other work (heavy rendering, a voice or language model on the same card) or the scene has few awake bodies but many joints, such as ragdolls. The GPU features fall back as they do without CUDA: `PhysXParticleFluid3D` and `PhysXGranular3D` on `Auto` use the MPM solver (compute shaders, any GPU), `PhysXCloth3D` on `Auto` uses its CPU solver, `SoftBody3D` on `Auto` runs on the CPU, and `PhysXSkinnedCloth3D` never needed CUDA. On the example project's playground (RTX 5070) the GPU path stepped a ball pile in 8–9.5 ms against the CPU's 11 ms with the GPU idle, but 21–23 ms against 7.6 ms with another program keeping the GPU about 90% busy. Measure both in your own scene. |
+| `allow_sleep` | `true` | When off, no rigid body ever sleeps — the same as turning `RigidBody3D.can_sleep` off on every body. Useful for debugging or setups that need every body integrated every step. |
+| `stabilization` | `true` | `PxSceneFlag::eENABLE_STABILIZATION` — damps low-mass stacked bodies toward rest so piles settle and sleep instead of jittering. Turn it off if it causes visible drift on very light bodies. |
+| `max_depenetration_velocity` | `0.0` | The fastest (m/s) overlapping rigid bodies are pushed apart. `0` (the default) = unlimited, PhysX's own default. A cap (around `4`) lets bodies that start inside each other (spawns, a growing shape) ease apart instead of popping, but stacks and piles then sink into each other and slump: tall stacks of loose boxes no longer hold. Applies to `RigidBody3D`-style bodies, not to vehicles, cloth or fluids. |
+| `cpu_worker_threads` | `0` (auto) | Size of the PhysX CPU task pool. `0` picks a value based on the active path: a small pool (2–4) when GPU dynamics is running, since the CPU mostly waits on the GPU each step; most of the machine otherwise. A fixed value overrides this in both cases — setting it high while on the GPU path will usually cost performance, not gain it. |
+
+And `physics/physx_3d/soft_body/mode` — `Auto` / `CPU` / `GPU` for the stock
+`SoftBody3D` node (see [Soft bodies](#soft-bodies--stock-softbody3d)).
+
+The standard `physics/3d/sleep_threshold_linear`, `sleep_threshold_angular` and
+`time_before_sleep` project settings also apply — they are mapped onto PhysX's
+sleep energy threshold and wake counter.
+
+### Physics on its own thread
+
+The standard `physics/3d/run_on_separate_thread` setting is supported: the
+PhysX step runs on the physics server's thread while the main thread processes
+and renders the next frame. The module's own nodes (vehicles, `PhysXCloth3D`,
+`PhysXParticleFluid3D`, `PXTGI3D`) follow the same rules as the stock bodies:
+what they change outside `_physics_process()` reaches PhysX in order before
+the next step, and the vehicles' getters read outside it return the state as
+of the end of the last `_physics_process()`, as `RigidBody3D`'s do. Inside
+`_physics_process()` everything reads and writes the live simulation.
+
+## Lens dirt — `PhysXLensDirt3D`
+
+Dust, smudges and droplet marks on the lens that light up where bright light
+reaches it, the way other engines' bloom dirt masks do: the frame's bright
+light, spread wide as a lens scatters it, multiplies a dirt texture and is
+added on top. Any bright light lights it (sky, sun, fire, headlights, the
+light shafts, Flow flames); clean (black) parts of the texture and dark parts
+of the frame stay untouched. Add the node, give it a dirt texture (bright on
+black, at the screen's aspect ratio: it's stretched to fit).
+
+- `threshold` `0` (default): all light counts, brighter light more. Godot's
+  default sky sits around `0.5` and only the sun's disk goes past `1`, so a
+  threshold near `1` keeps the dirt to the brightest sources.
+- Unlike `Environment.glow_map`, which multiplies Godot's glow by a texture
+  (dimming it where the texture is dark), this only adds light.
+- Forward+ and Mobile, about 0.05 ms at 1080p. Demo: the light shafts demos,
+  key `3`; example texture `demo/common/textures/lens_dirt.png`.
+
+## Lens flare — `PhysXLensFlare3D`
+
+A camera lens flare: every bright part of the frame (sun, fire, headlights,
+Flow flames) is reflected back over the screen as a row of soft, tinted
+ghosts through the screen's center, plus a faint halo ring. It's image-based,
+so no light needs tagging, and a light that's covered or leaves the frame
+stops flaring. Add the node; that's all.
+
+- The look is a `PhysXLensFlareSettings` resource (`settings`): ghost colors
+  and scales (up to 8), chroma split, halo width / mask / fisheye
+  compression, threshold, tint. Save it from the Inspector to reuse a look as
+  a preset; with none, the node draws the default warm eight-ghost flare.
+- Drawn after the light shafts and before `PhysXLensDirt3D`, so the flare
+  lights a dirty lens too.
+- Forward+ and Mobile, about 0.05 ms at 1080p. Demo: the light shafts demos,
+  key `4`.
+
+## Global illumination — `PXTGI3D` (experimental)
+
+PXTGI: real-time bounce light with nothing to bake. Light from the sun, omni
+and spot lights and emissive surfaces bounces off what it reaches, every
+frame, and moving bodies take part as they move. Add the node anywhere in the
+scene; hide it to turn it off (Godot's own lighting comes back).
+
+Rays from the visible surfaces first follow what's on screen; where they
+leave it, they continue against the scene's collision shapes, which stand in
+for the geometry (a body's color comes from its mesh's material). Light
+reaching off-screen surfaces is kept in a radiance cache, which also gives
+multiple bounces.
+
+- Only what has collision shapes bounces light off screen: box, sphere,
+  capsule, cylinder, convex, concave (trimesh) and heightmap shapes.
+  `Area3D` shapes are trigger volumes and take no part. Emissive meshes
+  without a body count as their bounding box (not with `gi_mode` Disabled).
+  `WorldBoundaryShape3D` and Blast chunks (`PhysXDestructible3D`) don't take
+  part yet, except as what's on screen. Radiance-cache rays that leave the
+  scene see the sky (or the background colour).
+- A body's look comes from the mesh under it, or else the mesh it sits
+  under (a model with its collision body as a child), or else the first
+  mesh beside it in a small group (up to 8 children): its albedo from the first surface with a
+  `StandardMaterial3D`, its glow from its brightest surface. PXTGI can't
+  read a `ShaderMaterial`; give one a `pxtgi_albedo` and/or
+  `pxtgi_emission` Color in its metadata (or put them on the
+  `MeshInstance3D` or the physics body), or it bounces as neutral gray with
+  no glow off screen.
+- Lights: the sun is the brightest visible `DirectionalLight3D` that lights
+  surfaces; of omni and spot lights, the 8 of each Godot draws that come
+  nearest the camera, chosen every frame. Nodes added or removed are picked
+  up within a few frames, from the scene tree's signals (no periodic walk
+  of the whole scene).
+- With physical light units on, lights and emission are taken at the
+  strength Godot renders them (lumens, lux, `emission_intensity`, the
+  camera's exposure).
+- Forward+ only. It uses SDFGI as its switch: while visible it turns SDFGI on
+  in the scene's `Environment` at its cheapest settings and replaces its
+  light; hidden or removed, the environment's own SDFGI settings are back.
+  The scene needs an `Environment`. While visible, Godot's SDFGI step is
+  replaced in every world, so another `World3D` can't use SDFGI at the same
+  time (VoxelGI alone is fine). Each viewport keeps its own history.
+- Reflections: surfaces at or below `reflection_roughness_cutoff` (`0.5`)
+  get traced reflections, rougher ones keep Godot's (probes, sky). Raising
+  the cutoff into common materials' roughness costs a lot.
+- Reflection probes override PXTGI inside their box, as they do SDFGI and
+  VoxelGI: a probe's cubemap replaces the traced reflections (any
+  `intensity` above 0) and its ambient replaces the bounce light (any
+  `ambient_mode` but `Disabled`). PXTGI skips tracing what a probe
+  replaces (its box less its `blend_distance`), so probe-lit areas cost
+  little. A probe with `ambient_mode` `Disabled` keeps PXTGI's bounce light
+  and only supplies reflections; `intensity` 0 keeps the traced ones.
+- Cost (RTX 5070, 1920×1080): about 0.5–0.8 ms in the demo rooms; in the
+  physics playground (2,000 boxes being blown apart) about 2 ms with
+  `rays_per_texel` `2`. `rays_per_texel` and `world_ray_distance` trade
+  quality for speed.
+- `emissive_candidates` (default `6`) steadies the light from emissives: each
+  point weighs that many and traces one, so light beside a strip doesn't crawl
+  in a scene with many of them. More is steadier and costs a little more of the
+  trace pass; a scene with no emissives pays nothing.
+- Demos: `demo/editor/rendering/gi_courtyard.tscn`, `gi_courtyard_night.tscn`,
+  `gi_cornell_box.tscn`, `demo/cpu/physx_playground_gi.tscn` (key `G`).
+
+## Characters on debris piles
+
+A `CharacterBody3D` rides the floor it stands on: the body's velocity at the
+character's origin, spin included (as on Jolt and Godot Physics). On a pile
+of loose boxes or rubble that reads as being shoved around whenever a box
+shifts or tips underfoot. Put the debris on its own collision layer, include
+that layer in the character's `collision_mask` and leave it out of its
+`platform_floor_layers`: the character stands on, walks over and kicks the
+debris, but doesn't ride its motion. Props and platforms on other layers
+still carry it. The playground demo (`demo/cpu/physx_playground.tscn`) does
+this with a `debris` layer.
+
+## Area3D overrides
+
+Areas detect rigid, kinematic and static bodies (`body_entered`,
+`get_overlapping_bodies()`), as Godot Physics and Jolt do, moving areas
+included.
+
+`Area3D` gravity, damping and wind overrides are applied to the rigid bodies
+that overlap the area, each physics step, folded across overlapping areas in
+`priority` order (`COMBINE` adds, `REPLACE` replaces):
+
+- **Gravity** — directional or point (`gravity_point`), with the optional
+  `gravity_point_unit_distance` falloff.
+- **Linear / angular damp** — applied as a velocity-proportional drag on top of
+  each body's own damping.
+- **Wind** — `wind_force_magnitude` along the `wind_source_path` node's −Z, with
+  `wind_attenuation_factor` falloff over downwind distance. Note that stock Godot
+  and Jolt apply area wind only to `SoftBody3D`; this backend also applies it to
+  rigid bodies.
+
+## GPU fluid — `PhysXParticleFluid3D`
+
+A `GeometryInstance3D`-derived node that fills a box region with GPU position-
+based fluid particles (PhysX 5 `PxPBDParticleSystem`). The particles collide with
+the rigid bodies in the same space and are drawn as a `MultiMesh` of spheres
+(`material_override` applies). Tunables: `particle_count`, `particle_size`,
+`viscosity`, `surface_tension`, `cohesion`, `vorticity`, and against the
+surfaces it touches `adhesion` and `surface_friction` (too little friction and a
+pool frays into single droplets that creep across the floor).
+
+Set `emitting` to stream particles in over time instead of spawning them all at
+once — a faucet or hose. Particles spawn near the node origin at `emission_rate`
+per second within `emission_radius` and with `emission_velocity` (node-local),
+and once `particle_count` is reached the oldest particles are recycled.
+
+Set `foam_enabled` to have the solver spawn diffuse particles — foam, spray and
+bubbles — where the fluid is agitated (`PxParticleAndDiffuseBuffer`). They render
+to match `render_mode` (see below), do not affect the fluid, and are tuned with
+`foam_particle_count`, `foam_lifetime`, `foam_threshold`, `foam_buoyancy`.
+
+`get_submersion(world_aabb)` returns the 0..1 fraction of a box currently filled
+with fluid — a primitive for script-side buoyancy.
+
+Rigid-body interaction is collision only: bodies splash and displace the fluid,
+but PhysX PBD does not produce accurate density-based buoyancy (a light body
+does not cleanly float, a dense one does not cleanly sink through). Use
+`get_submersion()` to apply your own buoyant force where that matters.
+
+`solver` picks the backend: `PBD (CUDA)` is the above; `MPM (compute)` is a
+cross-vendor MLS-MPM fluid on plain `RenderingDevice` compute (no CUDA);
+`Auto` uses PBD when a CUDA device is present, else MPM. The MPM path runs on
+the engine's main render device and reads back asynchronously, so visuals and
+the collider reaction land a few frames later.
+
+The MPM fluid grid is **block-sparse and boundless** — it allocates only the
+4³-cell blocks the fluid touches and follows the fluid as it flows, so
+`mpm_domain_size` no longer confines it (it's now just the `spawn()` box, the
+`mpm_auto_colliders` scan volume, and — via its Y — the implicit floor height).
+Fluid runs off ledges and spreads freely; add a `WorldBoundaryShape3D` to
+`mpm_colliders` or lower the domain for a true drop. The grid cell size is
+`2 × particle_size` (`mpm_grid_resolution` is `PhysXGranular3D`-only — its dense
+box grid still uses it). Cost is at parity with the old fixed-box grid.
+
+`mpm_colliders` takes sphere, box, capsule, cylinder and world boundary shapes, from a
+body's first shape; anything else collides as a rough sphere, and the node warns
+about it. For a mesh, like a statue, add a `GPUParticlesCollisionSDF3D` around it
+(the stock node for GPU particles), press **Bake SDF** in the 3D editor's toolbar,
+and list that node in `mpm_colliders`:
+
+- It's about as cheap as a box: with a 100,000-particle pool on an RTX 5070, a solve
+  took 1.66 ms on one field against 1.63 ms on a box, and 1.77 ms on four. A field
+  outside its box costs almost nothing, and fields share their memory (4 bytes a
+  voxel) when they share a texture.
+- It bakes the meshes visible inside its box, so keep the floor out with `bake_mask`.
+- It bakes a mesh's stored vertices and ignores its skeleton, so a skinned mesh is
+  baked in its bind pose, which can differ from the pose you see (by 10 cm on average
+  on the demo's retargeted mannequin). For a skinned statue, freeze the pose first:
+  save what `MeshInstance3D.bake_mesh_from_current_skeleton_pose()` returns, draw that
+  instead, and bake it.
+- A closed mesh is solid, and so is one whose openings are under about two voxels
+  wide. A mesh with a wider opening, like a bell, stays hollow, and only its walls
+  hold the fluid: bake them at least as thick as the fluid's grid cell
+  (`2 × particle_size`). A wall's thickness is the voxel size times `thickness`, so
+  a higher `resolution` makes walls *thinner*. A fast stream still leaks a little
+  (1-2% at 15 m/s through 5 cm walls). A warning is printed if a hollow mesh's walls
+  are too thin.
+- The node can move and turn, and takes a uniform scale. Detail thinner than a grid
+  cell is lost, and a mesh that deforms isn't followed.
+
+Static and kinematic colliders couple cleanly; a **dynamic `RigidBody3D` in MPM
+fluid has soft buoyancy** and may sink slowly or over-bounce — feed it through
+`mpm_colliders` for the splash and drive real buoyancy from `get_submersion()`.
+`PhysXGranular3D` (MPM sand/snow) runs the original dense box grid, unchanged.
+
+GPU-only: the node is inert unless the active physics engine is PhysX and the
+build has GPU/compute support (`PBD` additionally needs a CUDA device). See the
+class reference for details.
+
+### Editor
+
+`PhysXParticleFluid3D` has a viewport gizmo: a wireframe box for `spawn_region_size`
+(with drag handles), a ring for `emission_radius` and an arrow for
+`emission_velocity`. The node shows configuration warnings when the 3D physics
+engine is not PhysX, when `surface_anisotropy` is set without `surface_mesh` or
+while emitting, or at very high particle counts. The GPU sim does not run in the
+editor — press Play to see the fluid.
+
+### Surface rendering
+
+`render_mode` picks how the fluid is drawn:
+
+- **Particles** (default) — the sphere `MultiMesh`; foam is a second sphere cloud.
+- **Isosurface** — a smooth liquid mesh: the particles are smoothed and
+  marching-cubed into a triangle mesh (PBD: `PxIsosurfaceExtractor` on the GPU;
+  MPM: a compute march), rendered as an `ArrayMesh` through the normal material
+  pipeline. Give it a water look with `material_override` (transparency +
+  refraction). It's a real mesh — it casts shadows and shows in reflections and
+  other cameras — but the most expensive mode, re-meshed every few steps.
+  `surface_anisotropy` optionally feeds PhysX per-particle anisotropy to the PBD
+  extractor for sharper crests — off by default; leave it off while emitting,
+  where fast particles along the stream can mesh as spikes. Foam is its own
+  coarser froth mesh. (Scenes saved with the older `surface_mesh = true` load as
+  Isosurface.)
+- **Screen Space** — the surface is built on the screen each frame instead: the
+  particles are splatted as spheres into a depth and thickness buffer, the depth
+  is smoothed, and the scene lights the result: a quad drawn first in Godot's
+  transparent pass puts the surface where the particles are (`LIGHT_VERTEX`,
+  `NORMAL`), so every light and its shadows, ambient light, sky and probe
+  reflections light it like any surface -- it darkens in shadow and at night
+  instead of glowing. What's behind shows through it refracted, tinted by
+  `screen_space_tint` over its thickness. The cost follows the pixels the fluid covers, not its volume,
+  and nothing is read back — on the debris showcase (30k particles, 1080p, RTX
+  5070) a physics frame costs 1.5 ms on MPM and 4.6 ms on PBD, against 4.0 and
+  13.5 ms for Isosurface. `screen_space_resolution` (Full / Half / Quarter,
+  default Half) is the splat and smoothing resolution; the shading and the edge
+  against geometry stay full resolution. A `StandardMaterial3D`
+  `material_override` sets the look as it does on a mesh (albedo and alpha: the
+  fluid's own lit colour, mixed with what's behind -- the material's alpha wherever
+  there's fluid, as on a mesh, and denser where it's thicker; roughness, metallic, refraction, emission); any other
+  material falls back to the `screen_space_*` settings. PBD foam draws as soft white flecks over
+  the surface, fading with depth below it.
+
+  It draws just before transparent geometry, in the camera that renders it, and
+  writes the liquid's depth into the frame: transparent objects in front of the
+  liquid draw over it, those behind it are hidden where it's solid (they aren't
+  seen through clear liquid), and Flow's smoke and fire sort against it the
+  same way. It casts no shadow, isn't fogged, isn't seen in reflections, and a
+  material that reads the screen (refractive glass) doesn't see it; all screen-space fluids in
+  view merge into one surface (shaded with the nearest one's look). It installs
+  itself as a compositor effect the same way `PhysXFlow3D` does (see below).
+
+## Granular — `PhysXGranular3D`
+
+A `PhysXParticleFluid3D` subclass whose particles behave as grains — sand, gravel,
+snow — rather than a liquid: they pile up, hold a slope up to `friction` (the
+angle of repose, in degrees), and get plowed and cratered by bodies moving
+through them. `density`, `hardness` and `grain_cohesion` tune the material;
+emission, colliders, the domain and the sphere `MultiMesh` render are all
+inherited. There is no isosurface.
+
+Only the MPM compute solver holds a real angle of repose (PhysX PBD particle
+friction cannot pile), so `solver = Auto` always resolves to MPM here — which
+also means it runs on any GPU, no CUDA needed. Pick `PBD (CUDA)` explicitly only
+for a pour or cascade that never has to hold a shape. Granular uses the dense
+box grid, so unlike the fluid it *is* confined to `mpm_domain_size`.
+
+## Smoke, fire and dust — `PhysXFlow3D` (NVIDIA Flow)
+
+`PhysXFlow3D` runs NVIDIA Flow: a sparse, unbounded grid that grows wherever
+the gas goes, with pressure projection, vorticity confinement and combustion
+(fuel, temperature, burn). It runs on Godot's own `RenderingDevice` (Vulkan or
+Direct3D 12), not CUDA, so it works on any GPU the Forward+ or Mobile renderer
+does. Nothing goes through the CPU unless `cpu_readback` is on (for
+`sample_smoke()` and `sample_temperature()`, e.g. heat damage from a fire).
+
+Gas comes from `PhysXFlowEmitter3D` nodes: a sphere or box with `velocity`,
+`temperature`, `fuel`, `burn`, `smoke`, `divergence` and `couple_rate`. An
+emitter feeds the flow its `flow` path names, or with it empty, the scene's
+only flow — so emitters can live inside other scenes (a vehicle's wheels, a
+weapon's nozzle). With `collision` on, an emitter is a solid instead. Physics
+bodies within `collision_range` of the emitters are solids already (box,
+sphere, capsule and cylinder shapes), and moving bodies push the gas.
+
+`PhysXFlowRenderEffect` draws every flow with Flow's own ray marcher after
+transparent geometry, self-shadowed by the scene's first `DirectionalLight3D`,
+back to front. It installs itself: with no `Compositor` in the world it puts
+one on the `World3D`, and a user's own `Compositor` gets the effect at the
+rendering-server level only — its effects array is never modified — and all
+of it is undone when the last flow leaves. A screen-space `PhysXParticleFluid3D`
+installs the same way (the two never displace each other) and writes its
+surface into the depth before transparent geometry, so the gas is marched only
+up to a liquid surface in front of the scene. The look is per flow:
+`smoke_density`, `smoke_color` / `smoke_ramp`, `heat_ramp`,
+`temperature_range`, `emission_strength`, `shadow_steps`.
+
+**Point and spot lights in the gas.** Flow's renderer only lights gas with the
+directional light. Turn on `light_scattering` and nearby `OmniLight3D` /
+`SpotLight3D` nodes glow in it too, each in its own color and with its own
+range, attenuation and spot cone, dimmed by the gas between it and each point
+(`scattering_shadow_steps`). With `scattering_receive_shadows` (Omni and Spot
+by default), scene objects block that glow using the lights' own shadow maps,
+so pillars in front of a lamp cut dark shafts through fog. A light's
+`light_volumetric_fog_energy` scales its glow, as it does for Godot's
+volumetric fog; set it to 0 to keep a light out of the gas. To light gas from a
+lamp inside an object, put the object on a render layer of its own and leave
+that layer out of the light's `shadow_caster_mask`. It's an extra pass over the
+pixels the gas covers, worked out at `scattering_resolution` (Quarter by
+default: the glow is soft, and that reads the same as full) and scaled up
+depth-aware — about 0.7 ms at 1080p with one shadowed light over a screen of
+ground fog in the demo (`demo/editor/flow/light_scattering.tscn`, which also
+shows the frame and Flow timings). The directional light still shades the gas
+only through the gas itself; its scene shadows, GI and area lights don't reach
+the gas yet.
+
+Things worth knowing:
+- `max_blocks` is a GPU memory budget: Flow reserves textures for all of it
+  when the grid starts (about 0.45 MB a block; the default 1024 is about
+  0.5 GB). A small plume uses a few hundred; `get_stats()` reports
+  `active_blocks`, and gas that needs more is cut off with a warning.
+- Nozzle-like emitters need a high `couple_rate` (~100-250): the default 2
+  only nudges the gas toward the emitter's velocity.
+- An emitter keeps every block inside its bounds active, every step, so its
+  volume, not its shape, sets the cost: a thin box over the floor for ground
+  fog is cheap, a sphere wide enough to cover the same floor is just as tall
+  and keeps about three times the blocks. A low `couple_rate` (~0.1-0.3) on a
+  wide emitter lets the gas drift and streak instead of being held in place.
+- Heightmap and trimesh terrain isn't a solid for the gas: `floor_enabled`
+  keeps it above `floor_height`. Cold gas (`temperature` below 0, with
+  `buoyancy`) slumps and spreads along a floor like dry-ice fog.
+- A solid moves the gas with its own velocity where it is, spin included, so
+  a rotor, a door or a walker on a turntable stirs it. A body's collision
+  shapes must be its direct children (a `CollisionShape3D` under a plain
+  `Node3D` isn't part of the body).
+- Burning fuel adds a lot of heat, so a fuel jet rises fast at the default
+  `buoyancy`; lower it for flame throwers. Negative `divergence` keeps a jet
+  tight.
+- A grid can't resolve a crisp blowtorch or rocket cone (the flame front is
+  far thinner than a cell); pair Flow with a glowing mesh for the sharp core
+  — an opaque one, since Flow composites around depth.
+- Shaders compile the first time each is used and are kept in Godot's shader
+  cache folder; the editor's flows pause while the project runs from the
+  editor.
+
+## Light shafts — `PhysXLightShafts3D`
+
+Screen-space sun shafts ("god rays"), the light shafts other engines offer
+as a post effect: add a `PhysXLightShafts3D` as a child of the
+`DirectionalLight3D` and the sun's light streams outward through the gaps in
+whatever stands in front of it (bloom), with the open air darkened along the
+rays it blocks (occlusion; the blockers themselves aren't, so a wall hiding
+the sun is no darker for it). It works on the rendered frame, so no fog is needed and
+it costs the same at any distance (a few tenths of a millisecond at 1080p),
+unlike Godot's volumetric fog, whose shafts are soft, end at
+`volumetric_fog_length` and need fog across the whole scene.
+Its "shaft bloom" isn't the Environment's glow: glow
+blurs every bright pixel into a halo, shaft bloom smears only the unblocked sky
+around the sun outward along lines from it (the two stack).
+
+- `mode` picks bloom, occlusion or both; `shaft_bloom_threshold` is relative to the
+  light's energy, so only the sun and the sky right around it stream by
+  default; `ray_length` and `edge_fade` set how far the rays reach and how
+  fast they fade as the sun leaves the screen.
+- Geometry and a screen-space `PhysXParticleFluid3D` block the light; a
+  `PhysXFlow3D` gas blocks it by how much it darkens what's behind it (smoke
+  does, fire doesn't), and glowing gas never streams like the sun (the light
+  comes from the frame before the gas was drawn).
+- Forward+ and Mobile renderers (the same look and cost, ~0.1 ms at 1080p on
+  an RTX 5070); not Compatibility, which has no compositor effects. On Mobile,
+  where Godot has no volumetric fog, this is the way to get sun shafts.
+- Nothing is drawn with the sun behind the camera or an orthogonal camera.
+  One shafts node per frame is drawn.
+- Demos: `demo/editor/rendering/light_shafts.tscn` (keys to compare against
+  Godot's volumetric fog), and `demo/editor/flow/light_shafts.tscn`, the same
+  with a `PhysXFlow3D` fire in front of the sun.
+
+## Cloth — `PhysXCloth3D`
+
+A cloth patch: a generated grid or a supplied triangle mesh, simulated and drawn
+as an `ArrayMesh` with a standard `material_override`. `simulation_mode` picks the
+solver:
+
+- **GPU** — a PhysX `PxDeformableSurface` (its own XPBD solver on CUDA). High
+  vertex counts, proper draping and two-way rigid-body contact. Needs a
+  `physx_gpu=yes` build and a CUDA device.
+- **CPU** — a built-in extended position-based-dynamics solver (`cloth/`). No
+  PhysX dependency, so it runs on any platform. Collision goes through
+  `PhysicsDirectSpaceState3D` queries and works regardless of the active engine.
+
+`Auto` (the default) uses the GPU path when it can and falls back to the CPU one
+otherwise, transparently — the same node either way. `is_gpu_accelerated()`
+reports which ran.
+
+Pin an edge, the corners or explicit vertex indices with `pin_mode` /
+`pinned_vertices`, or attach the pins to a moving `Node3D` with `anchor_path`.
+Wind comes from an assigned `wind_area` (`Area3D`) plus a constant `wind` vector,
+with `drag` / `lift` / `wind_turbulence` shaping the response. The node has a
+viewport gizmo: the rest-grid outline with size handles, a marker on each pinned
+vertex and a wind arrow.
+
+## Character cloth — `PhysXSkinnedCloth3D`
+
+Clothing on a character: a robe, cape or skirt that moves with the animation
+and swings and drapes on its own. Point `mesh_instance_path` at the skinned
+`MeshInstance3D` (it needs a `Skin` and a `Skeleton3D`) and pick its `surface`;
+that surface becomes the cloth, and the source mesh is hidden and drawn from
+the simulated positions instead, straight from GPU textures.
+
+Each vertex has a **max distance** it may stray from where the animation puts
+it: `0` follows the animation exactly (shoulders, a waistband), larger values
+swing freely (a hem, the tail of a cape). Paint them in the viewport — select
+the node and press **Paint Cloth**: the garment shows as a heat map, left drag
+paints toward the brush value, `Shift` toward `0`, `Ctrl` smooths, with
+**Fill** and **Ramp** buttons and undo per stroke. Or take them from the mesh's
+vertex colors (`use_vertex_color`, painted in a modeling tool), or let
+`pin_height` / `max_distance` ramp them automatically from the waist down.
+
+It collides with the character's physical bones: run **Skeleton3D > Create
+Physical Skeleton** and every enabled capsule, sphere or box shape on the
+`PhysicalBone3D`s is a collider (the bones don't need to simulate). Without a
+physical skeleton, capsules are placed automatically between the hips, spine,
+legs and arms, fitted to `body_mesh_path` if set. `use_physical_bones` off
+uses the automatic capsules even with a physical skeleton,
+`physical_bone_skip` leaves bones out, and `set_body_capsules()` adds your own
+capsules (world space, read every step: a held shield, a body proxy; they
+collide even with `collide_with_body` off); changing them takes effect live,
+without a rebuild. Collisions are swept across substeps so fast limbs don't
+jump through, and they win over the max distances; `backstop` keeps the cloth
+from sinking into the body, and free vertices are tethered to their nearest
+pinned one so long garments don't stretch. `animation_drive` pulls the cloth
+back toward its authored shape (useful for long robes), and `self_collision`
+is available, off by default.
+
+It runs on compute shaders (no CUDA, any GPU the renderer supports), only in a
+running game, and after the animation each frame (`process_priority` 100).
+
+By default the cloth is drawn with a built-in material that takes the source
+material's albedo texture, albedo colour and roughness. To draw it your own
+way (your character shader, normal maps, vertex colors), set
+`render_material` to a `ShaderMaterial` whose shader places the vertices from
+the simulation: `CUSTOM0.x` is the vertex's particle, and the cloth sets
+`cloth_positions` / `cloth_normals` (one texel per particle, source mesh
+space), `texture_width` and `normal_sign` on it. The class reference has a
+`vertex()` to start from. The source surface's UV, UV2, COLOR, TANGENT and
+CUSTOM1-3 come along (CUSTOM0 is the particle index). Each build draws with its
+own copy of the material, so one can be shared by several garments; setting
+it on a built cloth swaps the look without a rebuild.
+
+A build (on entering the tree, `rebuild()`, or a new `mesh_instance_path` /
+`body_mesh_path`) prepares the garment on the CPU and gives it a new render
+copy: about 9 ms for the demo's 2048-particle skirt. The shaders are compiled
+once per run and shared by every cloth, so only the first build pays for that.
+A script that draws the garment itself finds the render copy with
+`get_render_instance()`, and the particle each of its vertices is drawn from
+with `get_vertex_particles()`.
+
+## Soft bodies — stock `SoftBody3D`
+
+The stock `SoftBody3D` node works on this backend (the `soft_body_*`
+`PhysicsServer3D` API is implemented) — its gizmo for painting pinned vertices
+and its inspector (`total_mass`, `pressure_coefficient`, `linear_stiffness`,
+`simulation_precision`, `damping_coefficient`, `drag_coefficient`,
+`shrinking_factor`) all apply, no module-specific node.
+
+Each soft body resolves independently to one of two paths:
+
+- **GPU** — a PhysX `PxDeformableVolume` (tetrahedral FEM on CUDA). Cooked from
+  the render mesh with a conforming tet mesh, so the collision surface lines up
+  with the render vertices and reads straight back each step. GPU volumes also
+  collide with **each other** (firmly under the TGS solver; on PGS the contact
+  is soft and transient — a stack slowly compacts).
+- **CPU** — the same XPBD solver as CPU cloth (`cloth/`), over the welded render
+  mesh. Edge constraints hold the shape; `pressure_coefficient > 0` adds a
+  volume constraint that keeps a closed mesh from collapsing. Collision against
+  rigid bodies is a per-vertex `PhysicsDirectSpaceState3D` query. Soft bodies do
+  **not** collide with each other on this path (same as Jolt and Godot Physics).
+
+`physics/physx_3d/soft_body/mode` picks the path: `Auto` (default — GPU when the
+mesh tetrahedralizes and CUDA is present, else CPU, decided per body), `CPU`, or
+`GPU`. A per-body override is the node metadata `physx_soft_mode` = `"cpu"` or
+`"gpu"`. `enhanced_determinism` or `gpu_dynamics` off forces every soft body to CPU (no CUDA context).
+
+## Chunk bursts — `PhysXChunkEmitter3D`
+
+Call `spawn_at(position, direction)` — typically from a raycast hit — and a burst
+of small rigid-body chunks flies out, bounces and settles. Real `PhysicsServer3D`
+bodies, not a particle effect, so they land on slopes and pile up convincingly;
+drawn as one `MultiMesh`. General-purpose: impact debris (the "shoot the ground
+and chunks fly everywhere" effect from PhysX-sponsored titles of the GameWorks
+era — Borderlands 2's debris system, for one), an exploding crate (`spread_degrees
+= 180` scatters a burst in every direction instead of a cone), a rockslide or
+falling debris (`emitting` + `emission_rate` for a continuous stream instead of a
+one-off burst), confetti that actually collides — anything that wants many small
+solid things flying and settling for real. `chunk_shape` picks box or sphere
+chunks; `chunk_mesh` overrides the default box/sphere with any mesh.
+
+Needs no PhysX-specific code (it talks to `PhysicsServer3D` generically, so it
+works on any backend), but on this module with a `physx_gpu=yes` build and a
+CUDA device it automatically rides the same GPU rigid-body dynamics as the rest
+of the scene — the whole space is GPU-accelerated, not individual actors — which
+is what makes a high `chunk_count` / `max_active` affordable. Lower them on the
+CPU path, the same way PhysX-era games scaled debris down without a supporting
+GPU.
+
+`max_active` is a hard budget shared across every chunk this emitter has spawned,
+burst or continuous: past it, the oldest chunks are freed to make room. `lifetime`
+additionally recycles a chunk after it's been alive that long even under budget,
+so chunks never linger forever.
+
+## Destruction — `PhysXDestructible3D`
+
+Real runtime mesh fracture via NVIDIA's [NvBlast](https://github.com/NVIDIA-Omniverse/PhysX/tree/main/blast)
+(needs the separate `blast_sdk=` build — see Building above). Right-click a
+`MeshInstance3D` in the Scene tree dock, or a `Mesh` resource in the
+FileSystem dock, and pick **Fracture with Blast...** to open a live
+in-viewport authoring dialog: pick a fracture pattern, tune it, and Accept
+replaces the node with a `PhysXDestructible3D` using the result. (The same
+pipeline is script-callable headless as `PhysXBlastAuthoring.fracture_mesh()`.)
+
+Three fracture patterns: **Voronoi** (random cells, the default), **Slicing**
+(brick-like, evenly spaced planes per axis), and **Cutout** (a caller-supplied
+grayscale pattern texture extruded through the mesh — glass/tile-style
+breaks; needs cracks that reach the image edge, like a real broken pane, or
+the fracture is rejected before ever touching the native SDK).
+
+While intact, a `PhysXDestructible3D` renders and collides as the whole
+unfractured mesh. `apply_radial_damage(world_position, damage, min_radius,
+max_radius)` breaks it explicitly (an explosion, a weapon hit). A break splits
+it into connected pieces: whatever is still held together moves as one body
+(one convex hull per chunk), so a small hit chips a few chunks off and the rest
+stands; a single loose chunk becomes debris with a `shatter_speed`-scaled
+outward kick from the damage origin. `dynamic = true`
+additionally makes the intact object fall/collide like any other rigid body
+and auto-fractures it from a hard enough physical impact
+(`impact_strength`/`impact_damage_scale`), the way stacked destructible props
+behave in Unreal's own Blast integration; `dynamic = false` (the default)
+keeps it a fixed prop that only ever breaks from an explicit
+`apply_radial_damage()` call. For a fixed prop, `anchor` decides which pieces
+stay put once it breaks (debris always falls): **Framed** (the default) keeps
+any piece still touching the bottom, top, left or right edge of the intact
+mesh — a wall in a building, a door, a window: the part above a cut hangs from
+the frame, a chunk punched out of the middle drops; **Grounded** keeps only
+pieces touching the bottom — a freestanding wall or pillar: cut through, the
+top is let go; **None** lets everything go at the first break. Edges are the
+mesh's local X (left/right) and Y (bottom/top). Debris that falls below
+`kill_y` is removed for good. `mass` auto-computes from the mesh's volume
+(uncheck `auto_mass` for a true override) and is distributed across split
+pieces proportional to each one's own volume. `gi_mode` controls VoxelGI
+static/dynamic baking per piece (defaults to Static, matching a plain
+`MeshInstance3D`'s default — opt into Dynamic per-node, since a single
+fracture can spawn many pieces at once and a VoxelGI's dynamic-object
+tracking cost scales with how many it has to follow).
+
+## Vehicles — `PhysXVehicle3D`, `PhysXMotorcycle3D`, `PhysXTank3D`
+
+Vehicle nodes backed by PhysX's `PxVehicle2`. The stock `VehicleBody3D` /
+`VehicleWheel3D` already work on this backend and remain the right choice for a
+project that may switch engines; these nodes exist for what that model can't
+offer: an engine torque response, Ackermann steering, a slip-based tire friction
+curve (grip peaks at small slip and falls off when sliding), and per-wheel drive.
+
+The node layout mirrors `VehicleBody3D`: a `CollisionShape3D` child with a
+`BoxShape3D` for the chassis, plus `PhysXVehicleWheel3D` children. Like
+`VehicleBody3D`, a vehicle faces its local **+Z** (`Vector3.MODEL_FRONT`, the
+front of an imported model), with +X on its left; `get_forward()` returns that
+axis and `get_forward_speed()` is positive driving forward. A wheel's own
+`position` is where it rests under static load, so a mesh parented under it
+follows the live suspension, steering and roll with no syncing code, and already
+sits at the right height in the editor. Wheels carry the suspension
+(`suspension_stiffness` / `_damping` / `_travel`) and tire
+(`tire_rest_grip`, `tire_slide_grip`, stiffnesses) parameters.
+
+- **`PhysXVehicle3D`** — 4 wheels, exactly 2 with `use_as_steering` (the front
+  axle). Drive with `throttle` / `brake` (0..1), `steer` (−1..1) and `reverse`.
+  Front/rear anti-roll bars, `ackermann_strength`, custom `center_of_mass`.
+  `drivetrain` picks how throttle reaches the wheels:
+  - **Direct** (the default): throttle is wheel torque up to `max_engine_torque`,
+    forward or in reverse.
+  - **Engine**: PhysX's engine drive. An engine (`engine_peak_torque`,
+    `engine_max_rpm`, `engine_idle_rpm`, an optional `engine_torque_curve`)
+    drives the traction wheels through a clutch and a gearbox (`gear_ratios`
+    first to top, `reverse_gear_ratio`, `final_drive_ratio`, `gear_switch_time`).
+    With `automatic_transmission` on, the autobox shifts up and down
+    (`autobox_up_ratio` / `_down_ratio` of max RPM, `autobox_latency`), and
+    holds its gear while the clutch is pressed past halfway, so revving
+    against the clutch for a launch doesn't climb the gears standing still.
+    Otherwise the gearbox goes to `gear` (−1 reverse, 0 neutral, 1..). `reverse`
+    selects the reverse gear either way, and `clutch` (0 engaged .. 1 pressed)
+    is read every tick. With `clutch_assist` off, a manual gearbox only changes
+    gear while the clutch is pressed past halfway. `differential` is **Open** (the torque is split evenly)
+    or **Limited Slip** (torque moves off a wheel spinning faster than its
+    partner; `limited_slip_*` biases per axle and between axles).
+    `get_current_gear()`, `get_target_gear()` and `get_engine_rpm()` report the
+    state. Every setting defaults to PhysX's own vehicle samples, which make a
+    quick car; `engine_peak_torque` and the gear ratios tame it.
+
+  `tire_force_point` (0..1) sets the height where the tires push on the
+  chassis. At 0 (the default, PhysX's own) that's the suspension mount, usually
+  above the center of mass, so the body barely pitches or rolls under the tire
+  forces. At 1 it's the contact patch on the ground, like `VehicleBody3D`'s
+  wheels: hard acceleration squats the rear and can lift the front (a wheelie
+  with a high, rear-set center of mass and rear grip), and braking dives the
+  nose. Cornering gets the same lever, so a grippy car with a high center of
+  mass can roll over in a hard turn. Less front grip than rear, a lower center
+  of mass, or anti-roll bars keep it on its wheels.
+- **`PhysXMotorcycle3D`** — 2 wheels, front steering, rear traction. `PxVehicle2`
+  has no balance mechanism, so staying upright is the script's job: read
+  `get_roll_angle()` / `get_angular_velocity()` each tick and correct with
+  `apply_torque_impulse()`, like a rider would. `drivetrain` works as on
+  `PhysXVehicle3D` (Direct, or Engine with the same engine, gearbox, clutch and
+  `clutch_assist` settings, and no differential: one wheel is driven). The
+  engine settings default to a sport bike's: 110 N·m to 12000 RPM, six close
+  gears, about 115 km/h in first. A bike without a rider carries little load on
+  its rear tire, so it needs more `tire_friction` there than a road tire's, or
+  the engine just spins it.
+- **`PhysXTank3D`** — 2–16 wheels, skid-steer. Each wheel is assigned to the left
+  or right track from the sign of its local X (+X is the left side). Drive with signed `left_ratio` /
+  `right_ratio` (−1..1): the sign is the direction, so opposite signs pivot in
+  place without a gear change.
+
+All three sleep when parked (`can_sleep`) and only simulate in a running game,
+never in the editor. `collision_mask` applies to the chassis and to the wheels:
+like a `RayCast3D`, a wheel only rests on shapes whose layer is in the mask, and
+never on an `Area3D`. `physics_material_override` sets the chassis box's contact
+material — how it grips or slides when the body itself touches something, on
+its roof after a flip or along a wall (default friction 0.5); tire grip is the
+wheels' own.
+
+Scripts can push and place a vehicle as they would a `RigidBody3D` (an
+autopilot, a ferry ramp, a respawn): `apply_force()` / `apply_impulse()` /
+`apply_torque()` and their central variants, `set_linear_velocity()` /
+`set_angular_velocity()`, and `teleport(transform)`, which moves the vehicle
+without rebuilding it. `tire_grip` scales every tire's grip live, for ice or
+mud, and the car and motorcycle have a rear-wheel `handbrake`.
+
+To the rest of the physics world a vehicle looks like a body. Raycasts, shape
+queries and `CharacterBody3D` motion hit its chassis and report the vehicle node
+as the collider, with `get_rid()` as its RID: put that in a query's `exclude` to
+see past the vehicle, and a character can stand on a moving car's roof.
+`add_collision_exception_with()` stops a vehicle colliding with a body or another
+vehicle, chassis and wheels both; from the body's side,
+`PhysicsServer3D.body_add_collision_exception(body.get_rid(), vehicle.get_rid())`
+does the same. `Area3D` doesn't detect vehicles yet.
+
+## Water — `PhysXWaterSurface3D`
+
+An animated water surface with two GPU compute layers summed into one displaced
+mesh (created automatically as a child): a Tessendorf FFT ocean with a
+fetch-limited JONSWAP wind spectrum (`wind_speed`, `wind_direction`, `fetch`,
+over `ocean_domain_size`; heights in meters at `wave_amplitude` 1) and a local
+ripple layer — a damped shallow-water wave equation over `domain_size` whose
+wave speed follows `depth` — that bodies disturb.
+
+The water is a square by default. Set `surface_mesh` to any flat mesh (a disc
+baked from `CSGCylinder3D`, a kidney bean, a lake with an island) and its X/Z
+footprint becomes the water: the ripple grid fits itself to the outline, waves
+reflect off the shoreline, and the rendered surface is the footprint resampled
+into an even grid, so a coarse or fan-triangulated mesh still animates
+everywhere. With `fetch` left at 0 the footprint also sets the fetch, so an
+enclosed pool only gets small, short wind ripples while an open square is a
+developed sea. The simulation is centered on the node's position; keep the node
+unrotated and unscaled.
+
+`choppiness` adds the ocean waves' horizontal displacement, so crests come
+to a point and troughs flatten. Where it squeezes the surface past
+`foam_threshold` whitecap foam forms; it's kept with the water, not the wave,
+and fades over `foam_persistence` seconds, so crests leave streaks that break
+into lace. A strong wind gets whitecaps and a light one doesn't. `normal_mode` picks how normals and foam are shaded: Per Pixel
+(default) uses exact slopes from the FFT, so crests stay smooth at any mesh
+density; Per Vertex follows the mesh, for a softer or faceted, stylized look.
+
+Set `seabed_from_floor` for water over uneven ground, like a beach or a lake
+bed: each ripple cell's depth is measured once from the floor (static bodies in
+`seabed_collision_mask`). Waves then travel at the local shallow-water speed,
+slowing over shallows, the shoreline falls wherever the ground rises above the
+water, and the ocean chop fades out over the last `shallow_fade_depth` meters.
+Without it, the constant `depth` applies everywhere. On a beach, each arriving
+crest also leaves a thin foam sheet at the waterline (`shore_foam_band`) that
+surges in with the wave and slides back out with the backwash and undertow
+(`shore_undertow`), the shallows turn milky, and the surface feathers out onto
+the sand along a waterline that scallops with the arriving waves rather than
+following the depth contour. That edge is measured in meters of water
+(`swash_reach`, `shore_edge_softness` in the material), so it behaves the same
+whatever `shallow_fade_depth` is. The bigger waves also run up past the
+still-water line as a thin film on the sand (`swash_run_up`,
+`swash_drain_speed`), and the sand they cover stays dark and glossy while it
+dries (`wet_sand_dry_time`). The material's `shore_detail_scale` sets how fine
+the swash edge, the rim lace and the wet-sand line are. The shore patterns
+mirror-repeat past the simulated square, so the beach keeps its variation all
+along the shore.
+
+For open water, `render_extent` renders the surface out to the horizon: the FFT
+ocean tiles seamlessly past the simulated square and ripples settle to still
+water there. The surface draws only the side facing the camera (the top from
+above, the underside from below), and its shaders take their clock from the
+node's `water_time` parameter rather than `TIME`, so an open scene doesn't
+keep the editor redrawing (and competing with Play Scene for the GPU).
+
+**An endless sea that follows the player.** The FFT ocean is periodic and
+fixed to the world (it's sampled at world X/Z, by the shader and by
+`sample_height()` alike), so it has no edge: it covers the whole world by
+itself. Only the ripple square is bounded — the interactive patch where
+floaters splash — so keep it with the player: call `recenter(position)` when
+the player gets some distance from the node (the ocean storm demo uses 10 m).
+It moves the square without rebuilding the surface: the mesh, the textures and
+the ocean carry on, the waves don't move, and only the square's ripples are
+cleared (a surface with a `surface_mesh` footprint or a measured seabed still
+rebuilds, since its depths depend on where the square is). Together with
+`render_extent` that's an endless ocean out to the horizon. The one limit is
+ordinary floating-point precision far from the world origin — at hundreds of
+kilometers rendering and physics start to jitter, as for any Godot scene; large
+worlds shift their origin or use a double-precision build. Over a coastline,
+turn on `open_sea_beyond` so the sea past a moving square stays open deep water
+instead of carrying the square's edge — its seabed, shore foam and wet sand —
+outward.
+
+A custom water material must sample the ocean textures at world X/Z too
+(`world_xz / ocean_domain_size`, not relative to `grid_center`), or its drawn
+waves slide by the re-centre distance on every `recenter()` while the physics
+stays put.
+
+The sea state can change during play: setting `wind_speed`, `wind_direction`,
+`wave_amplitude` or `fetch` on a running surface (or all four at once with
+`set_sea_state()`) regenerates the wave spectrum in place — every wave keeps its
+phase and grows, calms or turns, and ripples, wakes and foam carry on — so a
+storm can build smoothly, every frame if needed. Changing `ocean_domain_size`
+still rebuilds the surface.
+
+`sample_height(position)` returns the same combined surface height on the CPU,
+for buoyancy scripts. Over dry cells (outside a `surface_mesh` footprint, or
+where the seabed is above the water) it returns `-INF` and `is_wet()` is false,
+so floaters on dry land don't float. Call `submit_sphere()` once per physics tick per floating
+body so it actually pushes the water (`ripple_amplitude` scales the wake), or
+`submit_impulse()` for one-off splashes.
+
+`caustics_enabled` (off by default -- the pass draws every frame, so turn it on
+where a floor shows through shallow water) renders a light-space caustic map
+with a direct `RenderingDevice` draw pass along `caustics_sun_direction`. Any material — the
+floor, walls, submerged props — can sample it by projecting its world position
+with `get_caustics_texture()`, `get_caustics_origin()`,
+`get_caustics_light_right()` / `_up()` and `get_caustics_half_extent()`, so the
+light pattern lands on anything under the water rather than only a flat floor.
+The map's green channel marks where sunlight actually came through the water
+(multiply by it, or a pool wall's outside picks up caustics), and the pattern
+repeats every `ocean_domain_size` (`get_caustics_tile_size()`), so a receiver
+can fold its position into one tile and light a whole seabed.
+
+Runs on any GPU with compute support, no CUDA needed. Without compute (e.g.
+headless) the surface stays flat and `sample_height()` returns `water_level`.
+
+## Boats — `PhysXBuoyancy3D`, `PhysXBoat3D`, `PhysXWaterWake3D`, `PhysXWaterSpray3D`
+
+Four nodes, each a child of a `RigidBody3D`, that float and drive it on a
+`PhysXWaterSurface3D`. Buoyancy and the boat only apply `RigidBody3D` forces,
+so they work with whichever physics engine is selected, Jolt included.
+
+- **`PhysXBuoyancy3D`** floats the body: sample points on the hull (six from
+  its collision shapes' bounds by default) each carry a share of `hull_area`
+  and are pushed up by the water they displace, so the body settles at its
+  real draft, pitches and rolls with the waves and rights itself. It reads the
+  water with `sample_height()`, refreshed every physics tick, waves and other
+  bodies' wakes included.
+- **`PhysXBoat3D`** drives it: thrust from a propeller at `propeller_position`
+  (only while it's in the water) that `steering` turns like an outboard, the
+  water across the propeller's leg (it steers with flow and holds the stern on
+  course), and hull drag in the boat's frame — low along the keel, high
+  sideways and vertically, at the bow and stern so the hull's length resists
+  turning and pitching. `hull_drag.z` with `max_thrust` sets the top speed.
+- **`PhysXWaterWake3D`** leaves a wake: a small GPU ripple grid that slides
+  with the boat (fixed to the water, so the wake stays where it was made) and
+  that the hull pushes down, plus foam — two bands peeling off the hull's
+  sides and a propeller band down the middle, fading over `foam_persistence`.
+  The water material draws it and `sample_height()` includes it, so other
+  floaters ride it. A grid big enough to hold a turning circle (`size`, with
+  `cells` for about 0.25 m cells) and a `foam_persistence` of about a lap let
+  the wake close into a ring. `hull_profile` gives the hull's shape seen from
+  above (8 half-beam widths, bow to stern), so a pointed bow's foam hugs its
+  sides; left empty, the hull is treated as a box.
+- **`PhysXWaterSpray3D`** drives ordinary `GPUParticles3D` nodes authored in
+  the editor: bow emitters with speed, stern emitters with thrust, one-shot
+  slam emitters when the hull drops back onto the water. Emitters are held at
+  the water under their place on the hull. The spray leaves foam where it
+  lands (worked out from the emitters' launch geometry, no particle collision
+  needed); `water_collision` adds a collider on the water for spray that
+  should land and skid. Save the emitters with `emitting` off — the node
+  starts them — or the editor redraws every frame for them.
+
+The demo boat is `demo/common/boat/boat.tscn`, on the beach.
+
+## Active ragdolls — joint drives
+
+Godot's joint API has no room for the drives an active ragdoll needs, so the
+`PhysX` singleton adds them. Each call takes a joint's RID
+(`Joint3D.get_rid()`, or `PhysX.physical_bone_get_joint(bone)` for a
+`PhysicalBone3D`) and works on pin, hinge, cone twist and Generic6DOF joints:
+
+| Call | What it does |
+| --- | --- |
+| `joint_set_slerp_drive(joint, enabled, stiffness, damping, torque_limit = INF)` | One spring that turns body B toward the drive target's rotation along the shortest path, all three angles at once, in place of the 6DOF's per-axis angular springs and motors. It works through the joint's angular limits (a 6DOF axis without a valid limit range is freed, as for its springs). On a hinge it drives the hinge angle; the hinge is rebuilt as a PhysX D6 joint the first time, with the same limits and motor. |
+| `joint_set_drive_acceleration(joint, enabled)` | The joint's spring stiffness and damping are accelerations, not forces: the same gains drive a light and a heavy bone alike. Motors keep their force units. |
+| `joint_set_linear_spring_force_limit(joint, axis, limit)`, `joint_set_angular_spring_torque_limit(joint, axis, limit)` | The most force or torque a 6DOF spring may use (infinite by default), so a stiff spring can't snap a body around. |
+| `joint_set_drive_target(joint, target, delta = 0)` | The pose the drives pull toward: body B's joint frame relative to body A's. One call that only moves the target, cheap enough for every bone every frame. With `delta` (the time since the last target, e.g. the physics frame's) the drives also move at the target's own velocity; without it they damp toward standing still and trail a moving target. A 6DOF joint's springs pull toward their equilibrium points until it's set; setting a new equilibrium point takes over again. |
+| `joint_set_drive_target_from_poses(joint, pose_a, pose_b, delta = 0)` | The target that puts body A at global transform `pose_a` and body B at `pose_b`; no need to know the joint's frames. |
+| `physical_bone_get_joint(bone)` | The RID of the joint between a `PhysicalBone3D` and its parent bone (empty for the root bone or `JOINT_TYPE_NONE`). |
+
+The settings read back with matching getters (`joint_is_slerp_drive_enabled`,
+`joint_get_drive_target`, …). To make a simulated skeleton follow an animation,
+drive each bone toward the pose an animated copy of the skeleton is in (a
+`PhysicalBone3D`'s body sits at `bone pose * body_offset`):
+
+```gdscript
+func _physics_process(delta: float) -> void:
+	for bone: PhysicalBone3D in bones:
+		var joint := PhysX.physical_bone_get_joint(bone)
+		if joint.is_valid():
+			var parent: PhysicalBone3D = parent_of[bone]
+			PhysX.joint_set_drive_target_from_poses(joint,
+					animated.get_bone_global_pose(parent.get_bone_id()) * parent.body_offset,
+					animated.get_bone_global_pose(bone.get_bone_id()) * bone.body_offset, delta)
+```
+
+with `PhysX.joint_set_slerp_drive(joint, true, 2000.0, 80.0)` and
+`PhysX.joint_set_drive_acceleration(joint, true)` once at the start. Only the
+two poses relative to each other matter, so skeleton-space poses do. An
+acceleration drive only counts the two bones at its joint, so a joint that
+carries more of the body (the spine holds up the torso, arms and head) needs
+its stiffness scaled up by about the mass it carries over its own bone's mass,
+or it sags to its limit. The drives act at the joints only: they hold the
+limbs' shape, while keeping the whole body upright (balance) stays up to the
+game, as in other engines. A pose a joint can't reach (past its limits, or a
+knee bent about another axis than its hinge's) is held as close as it goes, and
+every bone beyond it inherits the miss: a physical skeleton made for a limp
+ragdoll often has tighter limits than the animations need.
+
+A bone between two physical bones that has no `PhysicalBone3D` of its own (a
+clavicle between the chest and the upper arm, if Create Physical Skeleton
+skipped it) is still posed by the animation, while the arm hangs from the
+socket of the pose the joints were made in (the skeleton's rest pose). If those
+differ -- a retargeted rig's rest is usually a T-pose -- the mesh tears open at
+that bone. Give such a bone a physical bone too, so it's driven like the rest.
+Bones past the last physical bone (head, fingers) can keep their animation:
+play the same clip on the ragdoll's skeleton in step with the source.
+
+The example project's `demo/editor/joints/active_ragdoll.tscn` does this with
+the demo mannequin, its hips held where the animation has them by a
+`Generic6DOFJoint3D` to a static anchor (whose target is set the same way).
+
+## Determinism and multiplayer
+
+- **GPU dynamics is never deterministic** — GPU solver scheduling varies run to
+  run. Not usable for lockstep netcode or replays.
+- **CPU simulation is deterministic only with `enhanced_determinism`** enabled,
+  and only for the same binary on the same platform.
+
+For deterministic lockstep multiplayer, use the Jolt backend.
+
+## Known limitations
+
+- **Joint chains under sustained force.** With the default `PGS` solver a chain
+  of roughly three or more pin/6DOF joints will drift apart under a continuous
+  external force such as area wind. Short chains, ragdolls and pendulums are
+  fine; for longer wind-loaded chains switch `solver_type` to `TGS`, or add a
+  `Generic6DOFJoint3D` linear/angular spring on each link to pull it back toward
+  its rest pose (PhysX 5 removed joint projection, so a spring is the closest
+  substitute).
+- **Not yet implemented:** joint softness / bias / restitution parameters.
+  (6DOF linear and angular springs and motors are supported, mapped onto PhysX
+  joint drives; a motor's force limit is a force or torque, as in Jolt, and a
+  running motor keeps its bodies awake. SLERP and acceleration drives, spring
+  force limits and drive targets are on the `PhysX` singleton, see
+  [Active ragdolls](#active-ragdolls--joint-drives).)
+  Unsupported shapes are treated as having no collision and log a warning once.
+- **Bounce between two bouncy bodies.** Godot Physics and Jolt combine two
+  bodies' `bounce` as their sum, clamped to 0..1. PhysX can only pick one
+  side's value, so this backend uses the larger one: exact whenever one side's
+  bounce is 0 (a bouncy ball on an ordinary floor), but two bouncy bodies bounce
+  less than the sum, and an `absorbent` material counts as 0 instead of
+  canceling the other side's bounce. Friction matches Godot's rule (`rough`
+  wins), except that a `rough` material against a higher-friction one gets the
+  higher friction.
+- **`SeparationRayShape3D`** has no PhysX geometry: it's cast as a ray. In
+  `move_and_slide` it lifts a character until its tip sits on what it hits
+  (stairs), as on Godot Physics and Jolt. On a rigid body it's applied before
+  each step as a frictional contact at the tip, not inside the PhysX solver,
+  so a body on rays settles a little differently from Jolt (it loses more
+  energy crossing bumps).
+- **Area-to-area detection** (`Area3D` monitoring another `Area3D`) works, but
+  unlike every other collision pair in this module it costs real per-step
+  work: PhysX never reports trigger-trigger pairs (only trigger-vs-rigid), so
+  `GodotPhysXSpace3D` polls it manually every step with a naive O(n²) pass
+  over every `(monitoring, monitorable)` area pair, each a real shape-vs-shape
+  `PxGeometryQuery::overlap()` test. Both `monitoring` and `monitorable`
+  default to `true` on every `Area3D`, so this runs for every area pair by
+  default unless a scene explicitly opts areas out with `monitorable = false`.
+  Fine for the handful of areas a scene typically wants this on; revisit with
+  a broad-phase pre-filter if a scene ever has many mutually-monitoring areas.
+- **`HeightMapShape3D`** works — a `PxHeightField` quantized to 16 bits over the
+  map's height range (so vertical resolution is `(max_height − min_height) /
+  65535`). Like concave (trimesh) shapes, it is static/kinematic only. The GPU
+  build requires the bundled PhysX patch
+  (`misc/physx_patches/0001-heightfield-gpu-boundary-crash.patch`, upstream
+  [PR #503](https://github.com/NVIDIA-Omniverse/PhysX/pull/503)) — without it a
+  body straddling the height-field boundary faults the GPU narrowphase and kills
+  the CUDA context. `build_physx.py` applies it automatically.
+- **Node scale** is baked into the collision geometry when the actor is built
+  (PhysX actor poses carry no scale): box per-axis, convex and trimesh via
+  `PxMeshScale`, height field via row/column/height scale — full non-uniform
+  scale on all of those, like Jolt. **Sphere and capsule are uniform-only**;
+  non-uniform scale on them collapses to the mean axis and logs a warning once
+  (a PhysX capsule/sphere can't be an ellipsoid), again matching Jolt. Changing
+  a body's scale at runtime re-cooks its shapes.
+- **`PhysicalBone3D`** (physics-driven skeleton bones / ragdolls) simulates —
+  bodies, joints, `omit_force_integration` (Custom Integrator bones / active
+  ragdolls) and the per-step transform sync all work. The Bullet-era joint
+  softness / bias / relaxation / ERP parameters are ignored (as they are on
+  Jolt), so joint stiffness itself can't be dialed in; PhysX's `PxD6` cone
+  defaults sit a little softer than Jolt's. For bones driven toward a pose
+  (active ragdolls), see [Active ragdolls](#active-ragdolls--joint-drives). `SkeletonModifier3D` spring bones
+  (`SpringBoneSimulator3D`,
+  for hair and clothing) are engine-side and unaffected — they work identically
+  on any backend.
+- **Cylinder shapes** are approximated by a 16-sided convex prism.
+- **Concave (trimesh) shapes** are supported on static and kinematic bodies
+  only, as in most engines. They collide on their front faces only unless
+  `backface_collision` is on, as on Jolt; with it on, the mesh is cooked with a
+  flipped copy of every triangle (PhysX has no two-sided contact option), so
+  it takes twice the memory and triangle tests. One difference from Jolt:
+  overlap queries (`intersect_shape`, `collide_shape`, `get_rest_info`) see a
+  one-sided mesh from behind too.
+- **`PhysXCloth3D` self-collision** is disabled; that cloth can pass through
+  itself (`PhysXSkinnedCloth3D` has opt-in `self_collision`). Cloth tearing is
+  not implemented. `PhysXCloth3D` pins follow a single shared
+  `anchor_path`; for cloth driven by a skeleton (a cape or robe on a
+  character), use `PhysXSkinnedCloth3D`, or stock `SoftBody3D` with
+  per-vertex pins.
+- **NVIDIA Flow** (`PhysXFlow3D`):
+  - only box, sphere, capsule and cylinder shapes are solids for the gas;
+    convex, concave and height-field shapes aren't yet;
+  - it needs the Forward+ or Mobile renderer (not Compatibility, not
+    headless);
+  - each flow is its own grid, drawn back to front by distance: flows that
+    share the same space can still sort wrongly;
+  - it draws after transparent geometry, so an additive mesh inside the gas
+    is painted over — use an opaque glowing mesh for a flame core;
+  - NanoVDB (volume) emitters aren't supported;
+  - Flow doesn't build on macOS.
+- Windows and Linux x86-64 are the only platforms built and tested.
+
+## Layout
+
+| Path | Contents |
+| --- | --- |
+| `godot_physx_server_3d.*` | `PhysicsServer3D` implementation; owns the PhysX foundation, physics, CPU dispatcher and CUDA context |
+| `godot_physx_project_settings.*` | registers and reads the `physics/physx_3d/*` settings |
+| `godot_physx_conversions.h` | `Vector3` / `Quaternion` / `Transform3D` ↔ PhysX conversions |
+| `objects/` | rigid bodies, areas, the GPU fluid, the GPU cloth surface and GPU soft bodies |
+| `shapes/` | collision shape wrappers and mesh cooking |
+| `spaces/` | the `PxScene` wrapper, direct space/body state, area-override application |
+| `joints/` | all `Joint3D` types |
+| `cloth/` | the CPU (XPBD) cloth solver, and `PhysXSkinnedCloth3D` with its compute-shader solver — no PhysX dependency |
+| `nodes/` | `PhysXParticleFluid3D`, `PhysXGranular3D`, `PhysXCloth3D`, `PhysXChunkEmitter3D` |
+| `particles/` | the MPM fluid/granular compute solvers and their GLSL shaders |
+| `vehicle/` | `PhysXVehicle3D`, `PhysXMotorcycle3D`, `PhysXTank3D`, `PhysXVehicleWheel3D` and the `PxVehicle2` glue |
+| `water/` | `PhysXWaterSurface3D` and its ripple / FFT ocean / caustics compute and draw passes; `PhysXBuoyancy3D`, `PhysXBoat3D`, `PhysXWaterWake3D` (and its wake compute pass) and `PhysXWaterSpray3D` |
+| `flow/` | `PhysXFlow3D`, `PhysXFlowEmitter3D`, `PhysXFlowRenderEffect`, and Flow's context on Godot's `RenderingDevice` — optional, gated on `flow_sdk=` (see Building above) |
+| `blast/` | `PhysXDestructible3D`, `PhysXBlastAsset`, and the NvBlast fracture-authoring bridge — optional, gated on `blast_sdk=` (see Building above) |
+| `editor/` | viewport gizmos for the fluid and cloth nodes; the Blast fracture dialog and its FileSystem/Inspector plugins |
+
+## License
+
+The module's own source is under the MIT License — see [`LICENSE`](LICENSE).
+Copyright (c) 2026 Wild Ox Studios.
+
+It links **NVIDIA PhysX 5** (<https://github.com/NVIDIA-Omniverse/PhysX>),
+which is distributed under the BSD-3-Clause license — a full copy is in
+[`PHYSX-LICENSE.md`](PHYSX-LICENSE.md). The PhysX SDK is *not* vendored here;
+`SCsub` links it from an out-of-tree build pointed at by `physx_sdk=` /
+`PHYSX_SDK`. The static PhysX libraries are compiled into the Godot binary, so
+any binary you distribute must carry the PhysX copyright notice and disclaimer
+(e.g. by shipping `PHYSX-LICENSE.md` alongside it or adding a stanza to the
+engine's `COPYRIGHT.txt`).
+
+With `physx_gpu=yes` the build also depends on `PhysXGpu_64.dll` /
+`libPhysXGpu_64.so` (same PhysX SDK, same BSD-3-Clause license, built from its
+GPU source) and, at runtime, on an NVIDIA driver's CUDA library (`nvcuda.dll` /
+`libcuda.so.1`) — the CUDA toolkit is only needed to *build* the SDK, not to
+ship it.
+
+With `blast_sdk=` set, the build also links **NvBlast**
+(<https://github.com/NVIDIA-Omniverse/PhysX/tree/main/blast>) — the same
+`NVIDIA-Omniverse/PhysX` repository as PhysX itself, so the same
+BSD-3-Clause license in `PHYSX-LICENSE.md` covers it too. Unlike PhysX's
+static libraries, Blast ships as shared libraries (`NvBlast`, `NvBlastGlobals`,
+`NvBlastExtAuthoring`, `NvBlastExtShaders`) that must ship next to the Godot
+binary — see Building above.
+
+With `flow_sdk=` set, the build loads **NVIDIA Flow**
+(<https://github.com/NVIDIA-Omniverse/PhysX/tree/main/flow>) at run time —
+again the same repository and BSD-3-Clause license. `nvflow.dll` and
+`nvflowext.dll` (`.so` on Linux) must ship next to the Godot binary.
