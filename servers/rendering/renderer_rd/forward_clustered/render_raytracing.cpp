@@ -52,6 +52,10 @@
 #include "servers/rendering/rendering_server_globals.h"
 #include "servers/rendering/storage/environment_storage.h"
 
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+#include <xmmintrin.h>
+#endif
+
 using namespace RendererSceneRenderImplementation;
 
 // Device addresses written into the geometry and material tables must follow the RT validation rules in
@@ -1864,6 +1868,16 @@ RTPlanContext RenderRaytracing::_make_plan_context(const RenderDataRD *p_render_
 	return ctx;
 }
 
+static _FORCE_INLINE_ void _rt_prefetch(const void *p_address) {
+#if defined(__GNUC__) || defined(__clang__)
+	__builtin_prefetch(p_address);
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+	_mm_prefetch(static_cast<const char *>(p_address), _MM_HINT_T0);
+#else
+	(void)p_address;
+#endif
+}
+
 // prepare_vertex_captures and build_tlas plan into the same records, so whichever runs first in a frame opens the arena.
 RTPlanArena &RenderRaytracing::_open_plan_arena(RTViewportState *p_state, const RenderDataRD *p_render_data, const RTPlanContext &p_ctx) {
 	// Plans don't record the pipeline their hit groups were checked against, so a flags change drops them.
@@ -1887,9 +1901,36 @@ RTPlanArena &RenderRaytracing::_open_plan_arena(RTViewportState *p_state, const 
 			persistent->clean.resize(count);
 		}
 		plan_capacities.resize(count);
+		using GeometryInstance = RenderForwardClustered::GeometryInstanceForwardClustered;
+		// The instances are scattered in memory, so the loop is bound by cache misses: fetch the instances
+		// RT_PREFETCH_AHEAD ahead and, once they're in, their slot state half as far ahead (as Valence does).
+		constexpr uint32_t RT_PREFETCH_AHEAD = 16;
+		const auto prefetch_instance = [&](uint32_t p_index) {
+			const GeometryInstance *inst = static_cast<const GeometryInstance *>(instances[p_index]);
+			if (inst) {
+				_rt_prefetch(&inst->rt_index);
+				_rt_prefetch(&inst->rt_generation);
+			}
+		};
+		const auto prefetch_slot = [&](uint32_t p_index) {
+			const GeometryInstance *inst = static_cast<const GeometryInstance *>(instances[p_index]);
+			if (inst && inst->rt_index < persistent->slots.size()) {
+				_rt_prefetch(&persistent->generations[inst->rt_index]);
+				_rt_prefetch(&persistent->stamps[inst->rt_index]);
+				_rt_prefetch(&persistent->flags[inst->rt_index]);
+			}
+		};
+		for (uint32_t i = 0; i < MIN(count, RT_PREFETCH_AHEAD); i++) {
+			prefetch_instance(i);
+		}
 		for (uint32_t i = 0; i < count; i++) {
-			const RenderForwardClustered::GeometryInstanceForwardClustered *inst =
-					static_cast<const RenderForwardClustered::GeometryInstanceForwardClustered *>(instances[i]);
+			if (i + RT_PREFETCH_AHEAD < count) {
+				prefetch_instance(i + RT_PREFETCH_AHEAD);
+			}
+			if (persistent && i + RT_PREFETCH_AHEAD / 2 < count) {
+				prefetch_slot(i + RT_PREFETCH_AHEAD / 2);
+			}
+			const GeometryInstance *inst = static_cast<const GeometryInstance *>(instances[i]);
 			// An instance whose slot holds its entries unchanged is neither planned nor written: no plan range.
 			const bool clean = persistent && inst && persistent->check_clean(inst->rt_index, inst->rt_generation);
 			if (persistent) {
