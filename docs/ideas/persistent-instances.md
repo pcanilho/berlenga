@@ -128,7 +128,7 @@ Two stages, each behind a setting with today's path as the default:
   cross-vendor Vulkan version appears, map the same ops onto it.
 
 **Also, separately:** skip the raster directional shadow cull when the viewport is path
-traced and nothing rasterizes shadows.
+traced and nothing rasterizes shadows (done, see below).
 
 ## Stage A as built
 
@@ -147,6 +147,19 @@ traced and nothing rasterizes shadows.
   write of all TLAS instances. The second is the next CPU target.
 - Cloud (llvmpipe CPU), 30k objects (42k instances): `build_tlas` CPU 12.7 ms off, 2.7 ms on. Images match the
   per-frame path except for noise from the TLAS order.
+- 4090, 100k objects, frame ms off and on (median; images match within noise):
+
+  | Run | Off | On | GPU off | GPU on | AS build off | AS build on |
+  |---|---|---|---|---|---|---|
+  | Still | 25.3 | 6.7 | 7.1 | 2.5 | 2.1 | 0.86 |
+  | Cull 0.1 deg / 500 m | 15.6 | 6.5 | 4.3 | 2.1 | 0.92 | 0.43 |
+  | 500 movers | 25.9 | 7.4 | 6.8 | 2.6 | 2.1 | 0.87 |
+  | Fly at 60 m/s | 29.7 | 7.4 | 5.2 | 2.6 | 1.2 | 0.90 |
+
+  The GPU passes get faster too, most likely because the GPU no longer idles between CPU-bound frames. The frame
+  is still CPU-bound (6.7 ms for 2.5 ms of GPU). Raster runs the same scene in 10.9 ms.
+- The raster directional shadow caster cull is skipped while path tracing, as positional shadows already were:
+  the path tracer never draws the shadow maps.
 
 ## Measuring
 

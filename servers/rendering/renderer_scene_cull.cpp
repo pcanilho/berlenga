@@ -3404,7 +3404,9 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 				}
 			}
 
-			for (uint32_t j = 0; j < cull_data.cull->shadow_count; j++) {
+			// Path tracing never draws the shadow maps (as for positional shadows below), so their casters aren't gathered.
+			const uint32_t directional_shadow_count = cull_data.cull->rt_enabled ? 0 : cull_data.cull->shadow_count;
+			for (uint32_t j = 0; j < directional_shadow_count; j++) {
 				for (uint32_t k = 0; k < cull_data.cull->shadows[j].drawn_cascade_count; k++) {
 					if (!light_culler->cull_directional_light(cull_data.scenario->instance_aabbs[i], j, k)) { // pass the cascade index
 						continue;
