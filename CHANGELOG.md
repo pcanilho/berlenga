@@ -6,6 +6,8 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 
 ## Unreleased
 
+## build-30bb7182 (2026-11-08)
+
 ### Added
 - README: texture filtering comparison re-rendered on an RTX 4090 with the anisotropic filtering fix (#108).
 
