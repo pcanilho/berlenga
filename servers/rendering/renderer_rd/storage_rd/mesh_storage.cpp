@@ -2240,6 +2240,7 @@ void MeshStorage::_multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_
 			multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_AABB);
 		}
 	}
+	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH_DATA);
 }
 
 RID MeshStorage::_multimesh_get_command_buffer_rd_rid(RID p_multimesh) const {
@@ -2382,6 +2383,7 @@ void MeshStorage::_update_dirty_multimeshes() {
 
 				multimesh->previous_data_cache_dirty_region_count = multimesh->data_cache_dirty_region_count;
 				multimesh->data_cache_dirty_region_count = 0;
+				multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH_DATA);
 			}
 
 			if (multimesh->aabb_dirty) {

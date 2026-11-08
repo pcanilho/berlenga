@@ -16,6 +16,8 @@ extends Node3D
 #   --movers=N        N extra boxes near the camera that move every frame
 #   --churn=N         free N objects and add N new ones every frame
 #   --recolor         change the blocks' material every frame
+#   --multimesh=M     scatter as MultiMeshes, one per mesh in each M-meter tile, instead of nodes
+#   --mmmove=N        with --multimesh, move one record in each of N MultiMeshes every frame
 #   --fly=S           camera flies along X at S m/s instead of circling (crosses origin cells)
 #   --set=setting:value  any project setting, e.g. --set=rendering/pathtracing/mesh_lod:1
 #   --out=path.png    save the last frame
@@ -34,6 +36,10 @@ var mover_count := 0
 var churn := 0
 var recolor := false
 var fly := 0.0
+var mm_tile := 0.0
+var mm_records := {}
+var mm_move := 0
+var mm_nodes: Array[MultiMeshInstance3D] = []
 var box_mat: StandardMaterial3D
 var churn_mesh: BoxMesh
 var n := 0
@@ -59,6 +65,8 @@ func _ready() -> void:
 		elif a.begins_with("--churn="): churn = int(a.substr(8))
 		elif a == "--recolor": recolor = true
 		elif a.begins_with("--fly="): fly = float(a.substr(6))
+		elif a.begins_with("--multimesh="): mm_tile = float(a.substr(12))
+		elif a.begins_with("--mmmove="): mm_move = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
@@ -95,7 +103,7 @@ func _ready() -> void:
 	add_child(cam)
 	_place_camera(0.0)
 	RenderingServer.viewport_set_measure_render_time(get_viewport().get_viewport_rid(), true)
-	print("BENCH count=%d radius=%d unique=%d spp=%d bounces=%d raster=%s" % [count, radius, unique, spp, bounces, raster])
+	print("BENCH count=%d radius=%d unique=%d spp=%d bounces=%d raster=%s multimesh=%d nodes=%d" % [count, radius, unique, spp, bounces, raster, mm_tile, get_child_count()])
 
 func mat(c: Color, r := 0.8) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -150,7 +158,7 @@ func _scatter() -> void:
 	var box := BoxMesh.new()
 	box_mat = mat(Color(0.6, 0.58, 0.55))
 	box.material = box_mat
-	# MultiMesh-free on purpose: one instance per object, as a streamed world of scene nodes.
+	# By default one instance per object, as a streamed world of scene nodes; --multimesh tiles them instead.
 	for i in count:
 		# Uniform over the disk, but denser near the centre so near detail exists.
 		var r := radius * pow(randf(), 0.75)
@@ -164,19 +172,19 @@ func _scatter() -> void:
 			mi.position = pos + Vector3(0, 0.4, 0)
 			mi.rotation.y = randf() * TAU
 			mi.scale = Vector3.ONE * randf_range(0.5, 3.0)
-			add_child(mi)
+			_place(mi)
 		elif kind < 9:
 			var s := randf_range(0.7, 1.5)
 			var t := MeshInstance3D.new()
 			t.mesh = tree[0]
 			t.position = pos + Vector3(0, 2.0 * s, 0)
 			t.scale = Vector3.ONE * s
-			add_child(t)
+			_place(t)
 			var c := MeshInstance3D.new()
 			c.mesh = tree[1]
 			c.position = pos + Vector3(0, 5.0 * s, 0)
 			c.scale = Vector3.ONE * s
-			add_child(c)
+			_place(c)
 		else:
 			var b := MeshInstance3D.new()
 			b.mesh = box
@@ -184,7 +192,38 @@ func _scatter() -> void:
 			b.scale = sz
 			b.position = pos + Vector3(0, sz.y / 2, 0)
 			b.rotation.y = randf() * TAU
-			add_child(b)
+			_place(b)
+	_build_multimeshes()
+
+# Adds the node, or with --multimesh records its transform for its tile's MultiMesh of that mesh.
+func _place(p_node: MeshInstance3D) -> void:
+	if mm_tile <= 0.0:
+		add_child(p_node)
+		return
+	var tile := Vector2i(floori(p_node.position.x / mm_tile), floori(p_node.position.z / mm_tile))
+	var key := [tile, p_node.mesh, p_node.material_override]
+	if not mm_records.has(key):
+		mm_records[key] = []
+	mm_records[key].push_back(p_node.transform)
+	p_node.free()
+
+func _build_multimeshes() -> void:
+	for key in mm_records:
+		var xforms: Array = mm_records[key]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = key[1]
+		mm.instance_count = xforms.size()
+		for i in xforms.size():
+			mm.set_instance_transform(i, xforms[i])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.material_override = key[2]
+		add_child(mmi)
+		mm_nodes.push_back(mmi)
+	mm_records.clear()
+	# Nearest first, so --mmmove changes records in view.
+	mm_nodes.sort_custom(func(p_a, p_b): return p_a.multimesh.get_instance_transform(0).origin.length() < p_b.multimesh.get_instance_transform(0).origin.length())
 
 func _add_movers() -> void:
 	var box := BoxMesh.new()
@@ -225,6 +264,14 @@ func _churn() -> void:
 		b.position = cam.position + Vector3(cos(a) * r, b.scale.y / 2 - cam.position.y, sin(a) * r)
 		add_child(b)
 
+# Spins record 0 of the first N MultiMeshes, so their slots are rewritten every frame.
+func _move_records(t: float) -> void:
+	for i in mini(mm_move, mm_nodes.size()):
+		var mm := mm_nodes[i].multimesh
+		var x := mm.get_instance_transform(0)
+		x.basis = x.basis.rotated(Vector3.UP, 0.05)
+		mm.set_instance_transform(0, x)
+
 func _place_camera(t: float) -> void:
 	if fly > 0.0:
 		cam.position = Vector3(t * fly - 1500.0, 2.5, 5.0)
@@ -242,6 +289,8 @@ func _process(delta: float) -> void:
 		_move_movers(float(n) / 60.0)
 	if churn > 0:
 		_churn()
+	if mm_move > 0:
+		_move_records(float(n) / 60.0)
 	if recolor:
 		box_mat.albedo_color = Color.from_hsv(fmod(float(n) * 0.01, 1.0), 0.4, 0.7)
 	var now := Time.get_ticks_usec()

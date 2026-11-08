@@ -4838,6 +4838,15 @@ private:
 
 	LocalVector<InstanceKind> instance_kinds; // Per rt_instances entry.
 	LocalVector<PendingMMSurface> pending_mm_surfaces;
+	// A MultiMesh instance's surfaces in pending_mm_surfaces. With persistent slots, an instance whose surfaces all
+	// expand to one TLAS entry per record keeps those entries in its slot while its rt_generation holds.
+	struct MMInstanceSurfaces {
+		const Instance *inst = nullptr;
+		uint32_t begin = 0;
+		uint32_t end = 0;
+		bool persistable = false;
+	};
+	LocalVector<MMInstanceSurfaces> mm_instances;
 	uint32_t pending_surface_count = 0; // Surfaces left out until their hit group or capture is ready.
 
 	const bool collect_render_info = false;
@@ -4883,7 +4892,9 @@ private:
 	void _register_shadow_groups();
 	InstanceMasks _instance_masks(const Instance &p_inst) const;
 	void _add_procedural_instance(const Instance &p_inst, const InstanceMasks &p_masks);
-	void _gather_mm_surfaces(const Instance &p_inst, const InstanceMasks &p_masks);
+	// False when a surface's entries depend on more than the instance's own state (particles, captures, billboards,
+	// trails, hit groups still compiling): the instance can't keep a persistent slot.
+	bool _gather_mm_surfaces(const Instance &p_inst, const InstanceMasks &p_masks);
 
 	// Planning: reads p_ctx and the caches, writes only the record p_index of r_arena and r_scratch, so it runs on workers.
 	// p_ctx is ctx, with allow_mutation off on workers (see RenderRaytracing::_plan_surface_material).
@@ -4907,7 +4918,8 @@ private:
 	void _resolve_merged_jobs(LocalVector<MergedJob> &r_jobs);
 	bool _resolve_instance_data(const RTInstanceSource &p_source, MMInstanceData &r_data);
 	bool _add_merged_mm_surface(const PendingMMSurface &p_pending, const MergedJob &p_job, const MMInstanceData &p_instance_data, RD::ComputeListID p_compute_list);
-	void _add_expanded_mm_surface(const PendingMMSurface &p_pending, const MMInstanceData &p_instance_data);
+	// False when the surface has no records or BLAS yet, so nothing was added.
+	bool _add_expanded_mm_surface(const PendingMMSurface &p_pending, const MMInstanceData &p_instance_data);
 
 	bool _hit_group_ready(const RTMaterialData *p_mat_data) const;
 	void _fill_surface_key(const ShaderData *p_shader, const RTMaterialData *p_mat_data, ShaderData::RTBlendClass p_blend_class, uint8_t p_tlas_mask,
@@ -4921,6 +4933,8 @@ private:
 	RTPersistentInstances::Mark _persistent_mark() const;
 	bool _persistable(const Instance &p_inst, const RTPlanArena &p_arena, const RTPlanInstance &p_record) const;
 	void _persistent_commit(const Instance &p_inst, const RTPlanArena &p_arena, const RTPlanInstance &p_record, const RTPersistentInstances::Mark &p_mark);
+	bool _persistent_listed_twice(const Instance &p_inst) const;
+	void _persistent_store(const Instance &p_inst, const RTPersistentInstances::Mark &p_mark);
 	int32_t _push_motion_transform(const Transform3D &p_prev_transform);
 
 	DirtyMark _dirty_mark() const { return { dirty_blas_list.size(), dirty_blas_update_list.size() }; }
@@ -5018,9 +5032,14 @@ void RTTlasBuilder::gather_instances(RTPlanArena &r_arena) {
 			case INSTANCE_PROCEDURAL:
 				_add_procedural_instance(*inst, _plan_masks(record.key));
 				break;
-			case INSTANCE_MERGED:
-				_gather_mm_surfaces(*inst, _plan_masks(record.key));
-				break;
+			case INSTANCE_MERGED: {
+				MMInstanceSurfaces surfaces;
+				surfaces.inst = inst;
+				surfaces.begin = pending_mm_surfaces.size();
+				surfaces.persistable = _gather_mm_surfaces(*inst, _plan_masks(record.key)) && persistent && inst->rt_index != UINT32_MAX;
+				surfaces.end = pending_mm_surfaces.size();
+				mm_instances.push_back(surfaces);
+			} break;
 			case INSTANCE_MESH:
 				if (persistent) {
 					const RTPersistentInstances::Mark mark = _persistent_mark();
@@ -5079,15 +5098,25 @@ bool RTTlasBuilder::_persistable(const Instance &p_inst, const RTPlanArena &p_ar
 // Moves what _apply_mesh_instance just appended past p_mark into the instance's slot, or frees the slot when the
 // instance can't keep one; its entries then stay in the per-frame arrays.
 void RTTlasBuilder::_persistent_commit(const Instance &p_inst, const RTPlanArena &p_arena, const RTPlanInstance &p_record, const RTPersistentInstances::Mark &p_mark) {
-	RTPersistentInstances &p = *persistent;
-	const uint32_t index = p_inst.rt_index;
-	if (index != UINT32_MAX && index < p.slots.size() && p.stamps[index] == p.build) {
-		return; // Listed twice: the first copy holds the slot, this one stays per frame.
+	if (_persistent_listed_twice(p_inst)) {
+		return; // The first copy holds the slot, this one stays per frame.
 	}
 	if (!_persistable(p_inst, p_arena, p_record)) {
-		p.free_slot(index);
+		persistent->free_slot(p_inst.rt_index);
 		return;
 	}
+	_persistent_store(p_inst, p_mark);
+}
+
+bool RTTlasBuilder::_persistent_listed_twice(const Instance &p_inst) const {
+	const uint32_t index = p_inst.rt_index;
+	return index != UINT32_MAX && index < persistent->slots.size() && persistent->stamps[index] == persistent->build;
+}
+
+// Moves the entries appended past p_mark into the instance's slot.
+void RTTlasBuilder::_persistent_store(const Instance &p_inst, const RTPersistentInstances::Mark &p_mark) {
+	RTPersistentInstances &p = *persistent;
+	const uint32_t index = p_inst.rt_index;
 	p.ensure_slot(index);
 	if (!(p.flags[index] & RTPersistentInstances::SLOT_STATIC)) {
 		p.slots[index] = RTPersistentInstances::Slot();
@@ -5184,23 +5213,45 @@ void RTTlasBuilder::add_multimesh_surfaces() {
 	_resolve_merged_jobs(jobs);
 
 	LocalVector<MMFallback> fallbacks;
+	// Per instance of mm_instances, its first fallback; the instance stays persistable only if every surface expands.
+	LocalVector<uint32_t> first_fallback;
+	first_fallback.resize(mm_instances.size());
 	const RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
-	for (uint32_t i = 0; i < pending_mm_surfaces.size(); i++) {
-		const PendingMMSurface &pending = pending_mm_surfaces[i];
-		MMInstanceData instance_data;
-		if (!_resolve_instance_data(pending.source, instance_data)) {
-			continue;
-		}
-		const bool merged = _add_merged_mm_surface(pending, jobs[i], instance_data, compute_list);
-		if (!merged && !pending.source.particles && !pending.bake.captured) {
-			fallbacks.push_back({ i, instance_data });
+	for (uint32_t m = 0; m < mm_instances.size(); m++) {
+		MMInstanceSurfaces &surfaces = mm_instances[m];
+		first_fallback[m] = fallbacks.size();
+		for (uint32_t i = surfaces.begin; i < surfaces.end; i++) {
+			const PendingMMSurface &pending = pending_mm_surfaces[i];
+			MMInstanceData instance_data;
+			if (!_resolve_instance_data(pending.source, instance_data)) {
+				surfaces.persistable = false;
+				continue;
+			}
+			const bool merged = _add_merged_mm_surface(pending, jobs[i], instance_data, compute_list);
+			if (!merged && !pending.source.particles && !pending.bake.captured) {
+				fallbacks.push_back({ i, instance_data });
+			} else {
+				surfaces.persistable = false;
+			}
 		}
 	}
 	// process_surface updates and copies buffers, which RD forbids inside a compute list.
 	RD::get_singleton()->compute_list_end();
 
-	for (const MMFallback &fallback : fallbacks) {
-		_add_expanded_mm_surface(pending_mm_surfaces[fallback.pending_index], fallback.instance_data);
+	for (uint32_t m = 0; m < mm_instances.size(); m++) {
+		const MMInstanceSurfaces &surfaces = mm_instances[m];
+		const uint32_t end = m + 1 < mm_instances.size() ? first_fallback[m + 1] : fallbacks.size();
+		const bool keep = persistent && surfaces.persistable && !_persistent_listed_twice(*surfaces.inst);
+		const RTPersistentInstances::Mark mark = keep ? _persistent_mark() : RTPersistentInstances::Mark();
+		bool complete = true;
+		for (uint32_t f = first_fallback[m]; f < end; f++) {
+			complete = _add_expanded_mm_surface(pending_mm_surfaces[fallbacks[f].pending_index], fallbacks[f].instance_data) && complete;
+		}
+		if (keep && complete) {
+			_persistent_store(*surfaces.inst, mark);
+		} else if (persistent && !_persistent_listed_twice(*surfaces.inst)) {
+			persistent->free_slot(surfaces.inst->rt_index);
+		}
 	}
 }
 
@@ -5326,12 +5377,13 @@ void RTTlasBuilder::_add_procedural_instance(const Instance &p_inst, const Insta
 }
 
 // Resolves materials and warms data caches; compute dispatches and TLAS assembly happen in add_multimesh_surfaces.
-void RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMasks &p_masks) {
+bool RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMasks &p_masks) {
 	const bool is_particles = p_inst.data->base_type == RSE::INSTANCE_PARTICLES;
 	RTInstanceSource source;
 	if (!_rt_instance_source(p_inst.data->base_type, p_inst.data->base, source)) {
-		return;
+		return false;
 	}
+	bool persistable = !is_particles;
 	if (!is_particles) {
 		// Populate data cache now - first access triggers GPU readback, safe here.
 		mesh_storage->multimesh_get_local_data_ptr(source.base);
@@ -5355,6 +5407,7 @@ void RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMa
 		RTMaterialData *mat_data = rt._surface_material(mm_surf);
 		if (!_hit_group_ready(mat_data)) {
 			pending_surface_count++;
+			persistable = false;
 			continue;
 		}
 
@@ -5362,6 +5415,7 @@ void RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMa
 		const bool uses_trails = (mm_surf->flags & SurfaceCache::FLAG_USES_PARTICLE_TRAILS) && source.trail_steps > 1;
 		const bool captured = rt._resolve_captured_mm(mm_surf, captures, pending.capture_entry, pending.capture_action, pending.bake);
 		// Trail ribbons are only shaped by the vertex shader, so they can't be traced from mesh vertices.
+		persistable = persistable && !captured && !uses_trails;
 		if (uses_trails && !captured) {
 			if (RenderRaytracing::is_capture_surface(mm_surf, RenderRaytracing::read_capture_mode())) {
 				pending_surface_count++;
@@ -5389,6 +5443,7 @@ void RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMa
 		pending.instance_alpha = _instance_alpha(p_inst);
 		// Captured positions already include the billboard.
 		if (!captured && mm_surf->shader && mm_surf->shader->billboard.is_camera_dependent()) {
+			persistable = false;
 			pending.billboard = mm_surf->shader->billboard;
 			pending.billboard_key = RTMMSurfaceKey{ source.base.get_id(), uint64_t(uintptr_t(&p_inst)), pending.surface_key };
 			pending.bake.billboard_index = state->merge_billboards.size();
@@ -5401,6 +5456,7 @@ void RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMa
 						(pending.bake.billboard_index != UINT32_MAX && state->merge_billboards[pending.bake.billboard_index] != state->merge_billboards[pending.bake.prev_billboard_index]));
 		pending_mm_surfaces.push_back(pending);
 	}
+	return persistable;
 }
 
 // TLAS part of record p_index: reused from last frame or planned. True for instances that aren't meshes; false when deferred.
@@ -5846,17 +5902,17 @@ bool RTTlasBuilder::_add_merged_mm_surface(const PendingMMSurface &p_pending, co
 }
 
 // Adds one TLAS instance per MultiMesh instance, all sharing the surface's BLAS.
-void RTTlasBuilder::_add_expanded_mm_surface(const PendingMMSurface &p_pending, const MMInstanceData &p_instance_data) {
+bool RTTlasBuilder::_add_expanded_mm_surface(const PendingMMSurface &p_pending, const MMInstanceData &p_instance_data) {
 	const RTInstanceSource &source = p_pending.source;
 	const float *mm_data = mesh_storage->multimesh_get_local_data_ptr(source.base);
 	if (!mm_data) {
-		return;
+		return false;
 	}
 
 	const DirtyMark mark = _dirty_mark();
 	RTSurfaceData *surf_data = rt.process_surface(p_pending.mm_surf, p_pending.surface_counter, p_pending.instance_transform, dirty_blas_list);
 	if (!surf_data || !surf_data->blas.is_valid()) {
-		return;
+		return false;
 	}
 	if (rt.omm_enabled) {
 		surf_data = rt._omm_surface(p_pending.mm_surf, p_pending.surface_counter, p_pending.mat_data, p_pending.material_flags, p_pending.instance_alpha, surf_data, dirty_blas_list);
@@ -5891,6 +5947,7 @@ void RTTlasBuilder::_add_expanded_mm_surface(const PendingMMSurface &p_pending, 
 		const uint32_t prim_count = _rt_indices_to_primitives(p_pending.mm_surf->primitive, vertices);
 		_record_stats(mark, source.count, prim_count * source.count, prim_count);
 	}
+	return true;
 }
 
 // Custom hit groups are traced once they are live in the pipeline bundle.

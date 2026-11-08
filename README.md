@@ -113,7 +113,7 @@ Look at the pavement under the window.
 The fork aims at large streamed worlds: tens of thousands of objects over kilometres, with most of them unchanged from one frame to the next.
 
 - **Camera-relative tracing** (`rendering/pathtracing/relative_origin_grid`): exact shadows and reflections far from the origin.
-- **Persistent instances** (`rendering/pathtracing/persistent_instances`): objects that did not change keep their ray tracing instances on the GPU and cost no per-frame work.
+- **Persistent instances** (`rendering/pathtracing/persistent_instances`): objects and large MultiMeshes that did not change keep their ray tracing instances on the GPU and cost no per-frame work.
 - **Off-screen culling** (`rendering/pathtracing/cull_max_distance`, `cull_min_size`): small or distant objects the camera can't see leave the trace.
 - **Opacity micromaps** (`rendering/pathtracing/opacity_micromaps`): cut-out foliage traced without any-hit shaders.
 - **Mesh LOD in the path tracer** (`rendering/pathtracing/mesh_lod`).
@@ -135,7 +135,7 @@ Test scene: rocks, trees and blocks scattered over 2 km, with timing and memory 
 godot --path docs/bench/open_world --gpu-profile -- --count=100000 --set=rendering/pathtracing/persistent_instances:1
 ```
 
-Options: `--movers=N`, `--churn=N`, `--recolor`, `--fly=S`, `--raster`, `--out=frame.png`. Design and measurements: [open-world geometry](docs/ideas/open-world-geometry.md), [persistent instances](docs/ideas/persistent-instances.md), [opacity micromaps](docs/ideas/opacity-micromaps.md).
+Options: `--movers=N`, `--churn=N`, `--recolor`, `--fly=S`, `--multimesh=M` (MultiMesh tiles of M meters), `--mmmove=N`, `--raster`, `--out=frame.png`. Design and measurements: [open-world geometry](docs/ideas/open-world-geometry.md), [persistent instances](docs/ideas/persistent-instances.md), [instanced forests](docs/ideas/instanced-forests.md), [opacity micromaps](docs/ideas/opacity-micromaps.md).
 
 ## References
 
