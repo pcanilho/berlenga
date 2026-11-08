@@ -6,6 +6,14 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-e071b5eb (2026-11-08)
+
+### Added
+- Histogram auto exposure metering (`rendering/camera/auto_exposure/metering`) and a dark-scene key (`rendering/camera/auto_exposure/dark_scene_luminance`), both off by default (#126).
+
+### Fixed
+- Auto exposure overshooting when a frame is longer than the adaptation time (#126).
+
 ## build-f7c2227f (2026-11-08)
 
 ### Added
