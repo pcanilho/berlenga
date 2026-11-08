@@ -46,6 +46,10 @@ Based on NVIDIA-RTX/godot of 2 November 2026, which brings path traced transpare
 - Cached shadows for still casters; far lights update less often.
 - Optional time-sliced reflection probes.
 
+### Large worlds
+- The path tracer works in positions relative to the camera's cell on a 1024 m grid, so shadows, reflections and contact points stay exact kilometres from the world origin (`rendering/pathtracing/relative_origin_grid`, 0 for absolute positions). Without it a scene 65 km out shows speckled shadows and broken reflections, and one 16 km out is 2% darker. Shaders still see absolute world positions.
+- Ray origins move off the surface by at least a few float steps of the largest coordinate and of the ray's length, so a floor near y = 0 does not shadow itself far from the origin.
+
 ### Physics (PhysX 5)
 Windows x64 and Linux x86_64 builds include a PhysX 5 physics server with NVIDIA Blast destruction and NVIDIA Flow smoke and fire. macOS and Linux ARM64 builds do not.
 - Pick the engine per project in **Project Settings > Physics > 3D > Physics Engine**: `Jolt Physics` or `PhysX`. Every 3D physics node works with either.
@@ -115,6 +119,14 @@ Each of these has a project setting to turn it off. Same build, same scene, no d
 4 bounces at equal render time: off at 4 samples per pixel, on at 6, since paths that read the cache stop early. What the camera sees directly is never cached.
 </details>
 
+<details>
+<summary>Large worlds: the same scene 65 km from the world origin</summary>
+
+![A cube, a mirror ball and a lamp 65 km from the origin: speckled cube and a broken reflection with absolute positions, the same as at the origin with camera-relative positions](docs/media/far-origin.jpg)
+
+16 samples per pixel, `godot --path docs/media/showcase -- --shot=far --far=65536` with `rendering/pathtracing/relative_origin_grid` at 0 (left) and at its default (right). With absolute positions the cube's lit face speckles and the ball reflects the cube in the wrong place. Camera-relative, the frame matches the same scene at the origin to within noise.
+</details>
+
 ## References
 
 | Area | Sources |
@@ -122,6 +134,7 @@ Each of these has a project setting to turn it off. Same build, same scene, no d
 | Code | [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot), the path tracer and DLSS integration this fork is built on<br>[uno1982/godot](https://github.com/uno1982/godot) `feature/physx5-module` (Wild Ox Studios, MIT), the PhysX 5 module; [NVIDIA-Omniverse/PhysX](https://github.com/NVIDIA-Omniverse/PhysX) (BSD-3-Clause), PhysX, Blast and Flow |
 | Many lights | Talbot et al., *Importance Resampling for Global Illumination*, EGSR 2005<br>Boksansky et al., *Rendering Many Lights with Grid-Based Reservoirs* (ReGIR), Ray Tracing Gems II, 2021<br>Bitterli et al., *Spatiotemporal Reservoir Resampling* (ReSTIR DI), SIGGRAPH 2020<br>Olsson et al., *Clustered Deferred and Forward Shading*, HPG 2012<br>Narkowicz and Costa, *MegaLights: Stochastic Direct Lighting*, SIGGRAPH Advances 2025<br>NVIDIA, Spatial Hash Radiance Cache (SHaRC), RTXGI SDK |
 | Lit transparents | Wronski, *Volumetric Fog: Unified Compute Shader Based Solution to Atmospheric Scattering*, SIGGRAPH 2014<br>Hillaire, *Physically Based and Unified Volumetric Rendering in Frostbite*, SIGGRAPH 2015<br>NVIDIA, RTX Remix volumetric radiance cache for particles<br>Garg, Nayar, *Photorealistic Rendering of Rain Streaks*, SIGGRAPH 2006<br>Henyey, Greenstein, *Diffuse Radiation in the Galaxy*, Astrophysical Journal, 1941<br>McGuire, Bavoil, *Weighted Blended Order-Independent Transparency*, JCGT 2013 |
+| Large worlds | Wächter, Binder, *A Fast and Robust Method for Avoiding Self-Intersection*, Ray Tracing Gems, 2019<br>[valence-engine-rtx](https://github.com/Rman887/valence-engine-rtx), camera-relative tracing and the ray offset floor |
 | Texture filtering | Akenine-Möller et al., *Texture Level of Detail Strategies for Real-Time Ray Tracing*, Ray Tracing Gems, 2019<br>Akenine-Möller et al., *Improved Shader and Texture Level of Detail Using Ray Cones*, JCGT 2021 |
 
 ## Everything else

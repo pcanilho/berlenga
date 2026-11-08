@@ -167,7 +167,7 @@ MaterialUV material_uv_compute(MaterialUVChannel ch, vec2 mesh_uv,
 	}
 
 	if (muv.triplanar) {
-		vec3 pos = muv.object_space ? object_pos : world_pos;
+		vec3 pos = muv.object_space ? object_pos : world_pos + rt_origin.xyz; // Absolute world, as raster.
 		muv.blend_normal = muv.object_space ? object_normal : world_normal;
 
 		vec3 weight = pow(abs(muv.blend_normal), vec3(ch.blend_sharpness));
