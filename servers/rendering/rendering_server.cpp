@@ -3875,6 +3875,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/emissive_lights", true);
 	GLOBAL_DEF("rendering/pathtracing/light_visibility_memory", true);
 	GLOBAL_DEF("rendering/pathtracing/radiance_cache", true);
+	GLOBAL_DEF("rendering/pathtracing/mesh_lod", false);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/relative_origin_grid", PROPERTY_HINT_RANGE, "0,65536,1,suffix:m"), 1024.0);
 	GLOBAL_DEF("rendering/pathtracing/transparency_at_output_size", true);
 	GLOBAL_DEF("rendering/pathtracing/transparent_lighting/enabled", true);
