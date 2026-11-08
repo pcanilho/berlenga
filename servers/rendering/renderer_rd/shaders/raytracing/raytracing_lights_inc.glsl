@@ -290,6 +290,8 @@ vec3 lights_projector_color(RTLightData light, vec3 p_dir) {
 #include "raytracing_shadow_query_inc.glsl"
 #endif
 
+#include "raytracing_volume_inc.glsl"
+
 // ============================================================================
 // Shadow Ray (traceRayEXT pipeline)
 // ============================================================================
@@ -364,6 +366,10 @@ vec3 lights_shadow_transmittance(RTLightData light, vec3 origin, vec3 direction,
 		return vec3(1.0);
 	}
 	vec3 traced = lights_trace_shadow_ray(origin, direction, max_dist, (light.light_masks >> 24u) & p_receiver_shadow_mask, rng_state);
+	if (max(traced.r, max(traced.g, traced.b)) > 0.0) {
+		// Simulated gas between the point and the light (ratio tracking).
+		traced *= rt_volume_transmittance(origin, direction, max_dist, rng_state);
+	}
 	return mix(vec3(1.0), traced, light.shadow_opacity);
 }
 

@@ -41,6 +41,7 @@
 #include "scene/3d/camera_3d.h"
 #include "scene/resources/3d/world_3d.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
+#include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_data_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_scene_data_rd.h"
@@ -148,12 +149,60 @@ void PhysXFlowRenderEffect::detach_world(const ObjectID &p_world) {
 	}
 	worlds.erase(p_world);
 	PhysXCompositorEffects::uninstall(p_world, get_shared());
+	PhysXCompositorEffects::uninstall(p_world, PhysXFlowTracedEffect::get_shared());
 }
 
 void PhysXFlowRenderEffect::install(World3D *p_world, Camera3D *p_camera) {
 	ERR_FAIL_NULL(p_world);
 	ERR_FAIL_COND(!worlds.has(p_world->get_instance_id()));
 	PhysXCompositorEffects::install(p_world, p_camera, get_shared(), PhysXCompositorEffects::ORDER_FLOW);
+	PhysXCompositorEffects::install(p_world, p_camera, PhysXFlowTracedEffect::get_shared(), PhysXCompositorEffects::ORDER_FLOW);
+}
+
+void PhysXFlowRenderEffect::prepare_traced(const RenderData *p_render_data) {
+	const RenderDataRD *rd_data = dynamic_cast<const RenderDataRD *>(p_render_data);
+	RenderSceneDataRD *scene = p_render_data ? Object::cast_to<RenderSceneDataRD>(p_render_data->get_render_scene_data()) : nullptr;
+	if (rd_data == nullptr || scene == nullptr || !rd_data->environment.is_valid() || RendererSceneRenderRD::get_singleton() == nullptr ||
+			!RendererSceneRenderRD::get_singleton()->environment_get_pathtracing_enabled(rd_data->environment)) {
+		return;
+	}
+	MutexLock lock(flows_mutex);
+	const Vector3 eye = scene->get_cam_transform().origin;
+	PhysXFlow3D *nearest = nullptr;
+	real_t best = 0.0;
+	for (PhysXFlow3D *flow : flows) {
+		const real_t d = eye.distance_squared_to(flow->get_draw_center());
+		if (nearest == nullptr || d < best) {
+			nearest = flow;
+			best = d;
+		}
+	}
+	// One traced volume per frame for now; the others keep Flow's own ray march.
+	if (nearest != nullptr) {
+		nearest->prepare_traced();
+	}
+}
+
+Ref<PhysXFlowTracedEffect> PhysXFlowTracedEffect::shared_traced;
+
+Ref<PhysXFlowTracedEffect> PhysXFlowTracedEffect::get_shared() {
+	if (shared_traced.is_null()) {
+		shared_traced.instantiate();
+	}
+	return shared_traced;
+}
+
+void PhysXFlowTracedEffect::free_shared() {
+	shared_traced.unref();
+}
+
+PhysXFlowTracedEffect::PhysXFlowTracedEffect() {
+	set_effect_callback_type(EFFECT_CALLBACK_TYPE_PRE_OPAQUE);
+	RenderingServer::get_singleton()->compositor_effect_set_callback(get_rid(), RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_PRE_OPAQUE, callable_mp(this, &PhysXFlowTracedEffect::_render));
+}
+
+void PhysXFlowTracedEffect::_render(int p_callback_type, const RenderData *p_render_data) {
+	PhysXFlowRenderEffect::prepare_traced(p_render_data);
 }
 
 Ref<Compositor> PhysXFlowRenderEffect::get_world_compositor(const Ref<World3D> &p_world) {

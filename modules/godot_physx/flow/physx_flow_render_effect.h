@@ -109,6 +109,26 @@ public:
 	static Ref<PhysXFlowRenderEffect> get_shared();
 	static void free_shared();
 
+	// Under path tracing (render thread, before the trace): the nearest flow publishes its gas to the
+	// path tracer instead of being ray marched over the frame.
+	static void prepare_traced(const RenderData *p_render_data);
+
 	PhysXFlowRenderEffect();
 	~PhysXFlowRenderEffect();
+};
+
+// Runs before the opaque pass: hands the path tracer the gas it traces this frame.
+class PhysXFlowTracedEffect : public CompositorEffect {
+	GDCLASS(PhysXFlowTracedEffect, CompositorEffect);
+
+	static Ref<PhysXFlowTracedEffect> shared_traced;
+	void _render(int p_callback_type, const RenderData *p_render_data);
+
+protected:
+	static void _bind_methods() {}
+
+public:
+	static Ref<PhysXFlowTracedEffect> get_shared();
+	static void free_shared();
+	PhysXFlowTracedEffect();
 };

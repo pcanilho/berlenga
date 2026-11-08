@@ -137,6 +137,11 @@ struct ScatterSource {
 // p_offscreen: run Flow's view-independent lighting pass first. Several views
 // in one Flow frame (an XR camera's eyes) run it for the first one only.
 uint64_t grid_render_rd(Grid *p_grid, const float p_view[16], const float p_projection[16], uint32_t p_width, uint32_t p_height, uint64_t p_depth_rid, uint32_t p_depth_width, uint32_t p_depth_height, uint64_t p_color_rid, ScatterSource *r_scatter = nullptr, bool p_offscreen = true);
+// For the path tracer: runs Flow's view-independent render preparation (the
+// offscreen pass) without its ray march, and fills r_source with the density
+// atlas and sparse table the path tracer samples. They stay valid until
+// grid_render_rd_finish, which must follow in the same frame.
+bool grid_prepare_rd(Grid *p_grid, ScatterSource *r_source);
 // Ends the render's Flow frame; call after the result has been copied (after
 // the last view's).
 void grid_render_rd_finish(Grid *p_grid);

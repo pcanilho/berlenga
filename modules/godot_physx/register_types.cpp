@@ -158,6 +158,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXFlow3D);
 		GDREGISTER_CLASS(PhysXFlowEmitter3D);
 		GDREGISTER_CLASS(PhysXFlowRenderEffect);
+		GDREGISTER_CLASS(PhysXFlowTracedEffect);
 #endif
 	}
 
@@ -183,6 +184,7 @@ void uninitialize_godot_physx_module(ModuleInitializationLevel p_level) {
 #ifdef GODOT_PHYSX_FLOW
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
 		PhysXFlowRenderEffect::free_shared();
+		PhysXFlowTracedEffect::free_shared();
 	}
 #endif
 }

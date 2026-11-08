@@ -224,6 +224,31 @@ Grid *grid_create_rd(RenderingDevice *p_rd, uint32_t p_max_blocks) {
 	return g;
 }
 
+static void fill_source(Grid *p_grid, ScatterSource *r_scatter) {
+	*r_scatter = ScatterSource();
+	NvFlowGridRenderData data = {};
+	p_grid->loader->gridInterface.getRenderData(p_grid->context, p_grid->grid, &data);
+	const NvFlowSparseParams &sp = data.sparseParams;
+	if (data.densityTexture != nullptr && data.sparseBuffer != nullptr && sp.levelCount > 0 && sp.layerCount > 0) {
+		static_assert(sizeof(NvFlowSparseLevelParams) == sizeof(r_scatter->level), "NvFlowSparseLevelParams changed size");
+		memcpy(r_scatter->level, &sp.levels[0], sizeof(r_scatter->level)); // density is level 0
+		const NvFlowSparseLayerParams &layer = sp.layers[0];
+		r_scatter->block_size_world[0] = layer.blockSizeWorld.x;
+		r_scatter->block_size_world[1] = layer.blockSizeWorld.y;
+		r_scatter->block_size_world[2] = layer.blockSizeWorld.z;
+		r_scatter->layer_and_level = layer.layerAndLevel;
+		r_scatter->world_min[0] = layer.worldMin.x;
+		r_scatter->world_min[1] = layer.worldMin.y;
+		r_scatter->world_min[2] = layer.worldMin.z;
+		r_scatter->world_max[0] = layer.worldMax.x;
+		r_scatter->world_max[1] = layer.worldMax.y;
+		r_scatter->world_max[2] = layer.worldMax.z;
+		r_scatter->density_rid = FlowContextRD::transient_texture_rid(data.densityTexture);
+		r_scatter->table_rid = FlowContextRD::transient_buffer_rid(data.sparseBuffer);
+		r_scatter->valid = r_scatter->density_rid != 0 && r_scatter->table_rid != 0 && layer.numLocations > 0;
+	}
+}
+
 uint64_t grid_render_rd(Grid *p_grid, const float p_view[16], const float p_projection[16], uint32_t p_width, uint32_t p_height, uint64_t p_depth_rid, uint32_t p_depth_width, uint32_t p_depth_height, uint64_t p_color_rid, ScatterSource *r_scatter, bool p_offscreen) {
 	std::unique_lock<std::mutex> lock(device_mutex, std::try_to_lock);
 	if (!lock.owns_lock() || p_grid == nullptr || p_grid->rd_context == nullptr || p_width == 0 || p_height == 0) {
@@ -251,30 +276,26 @@ uint64_t grid_render_rd(Grid *p_grid, const float p_view[16], const float p_proj
 	if (r_scatter != nullptr) {
 		// The volume the ray march just read (after offscreen(): Flow's shadow
 		// output, its sun light in z), and the table to find blocks in it.
-		*r_scatter = ScatterSource();
-		NvFlowGridRenderData data = {};
-		p_grid->loader->gridInterface.getRenderData(p_grid->context, p_grid->grid, &data);
-		const NvFlowSparseParams &sp = data.sparseParams;
-		if (data.densityTexture != nullptr && data.sparseBuffer != nullptr && sp.levelCount > 0 && sp.layerCount > 0) {
-			static_assert(sizeof(NvFlowSparseLevelParams) == sizeof(r_scatter->level), "NvFlowSparseLevelParams changed size");
-			memcpy(r_scatter->level, &sp.levels[0], sizeof(r_scatter->level)); // density is level 0
-			const NvFlowSparseLayerParams &layer = sp.layers[0];
-			r_scatter->block_size_world[0] = layer.blockSizeWorld.x;
-			r_scatter->block_size_world[1] = layer.blockSizeWorld.y;
-			r_scatter->block_size_world[2] = layer.blockSizeWorld.z;
-			r_scatter->layer_and_level = layer.layerAndLevel;
-			r_scatter->world_min[0] = layer.worldMin.x;
-			r_scatter->world_min[1] = layer.worldMin.y;
-			r_scatter->world_min[2] = layer.worldMin.z;
-			r_scatter->world_max[0] = layer.worldMax.x;
-			r_scatter->world_max[1] = layer.worldMax.y;
-			r_scatter->world_max[2] = layer.worldMax.z;
-			r_scatter->density_rid = FlowContextRD::transient_texture_rid(data.densityTexture);
-			r_scatter->table_rid = FlowContextRD::transient_buffer_rid(data.sparseBuffer);
-			r_scatter->valid = r_scatter->density_rid != 0 && r_scatter->table_rid != 0 && layer.numLocations > 0;
-		}
+		fill_source(p_grid, r_scatter);
 	}
 	return out != nullptr ? FlowContextRD::transient_texture_rid(out) : 0;
+}
+
+bool grid_prepare_rd(Grid *p_grid, ScatterSource *r_source) {
+	std::unique_lock<std::mutex> lock(device_mutex, std::try_to_lock);
+	if (!lock.owns_lock() || p_grid == nullptr || p_grid->rd_context == nullptr || r_source == nullptr) {
+		return false;
+	}
+	NvFlowGridParamsInterface &params_if = p_grid->loader->gridParamsInterface;
+	NvFlowGridParamsSnapshot *params_snapshot = params_if.getParamsSnapshot(p_grid->params, p_grid->last_time, 0llu);
+	NvFlowGridParamsDesc desc = {};
+	if (!params_if.mapParamsDesc(p_grid->params, params_snapshot, &desc)) {
+		return false;
+	}
+	p_grid->loader->gridInterface.offscreen(p_grid->context, p_grid->grid, &desc);
+	params_if.unmapParamsDesc(p_grid->params, params_snapshot);
+	fill_source(p_grid, r_source);
+	return r_source->valid;
 }
 
 void grid_render_rd_finish(Grid *p_grid) {
