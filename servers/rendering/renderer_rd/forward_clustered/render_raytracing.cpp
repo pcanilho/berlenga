@@ -1886,6 +1886,23 @@ static _FORCE_INLINE_ void _rt_prefetch(const void *p_address) {
 #endif
 }
 
+// Instances per planning task.
+static constexpr uint32_t RT_PLAN_CHUNK_SIZE = 64;
+static constexpr uint32_t RT_PLAN_PARALLEL_MIN_INSTANCES = 256;
+
+// Strict validation re-plans reused records into one shared arena, so it keeps planning serial.
+static bool _rt_plan_parallel(uint32_t p_count) {
+#ifdef RT_VALIDATION_ENABLED
+	if (rt_validation().strict) {
+		return false;
+	}
+#endif
+	return p_count >= RT_PLAN_PARALLEL_MIN_INSTANCES && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/parallel_planning");
+}
+
+// Instances per task of the clean check in _open_plan_arena.
+static constexpr uint32_t RT_CLEAN_CHUNK_SIZE = 2048;
+
 // prepare_vertex_captures and build_tlas plan into the same records, so whichever runs first in a frame opens the arena.
 RTPlanArena &RenderRaytracing::_open_plan_arena(RTViewportState *p_state, const RenderDataRD *p_render_data, const RTPlanContext &p_ctx) {
 	// Plans don't record the pipeline their hit groups were checked against, so a flags change drops them.
@@ -1909,62 +1926,88 @@ RTPlanArena &RenderRaytracing::_open_plan_arena(RTViewportState *p_state, const 
 			persistent->clean.resize(count);
 		}
 		plan_capacities.resize(count);
+		plan_rt_indices.resize(count);
 		using GeometryInstance = RenderForwardClustered::GeometryInstanceForwardClustered;
-		// The instances are scattered in memory, so the loop is bound by cache misses: fetch the instances
-		// RT_PREFETCH_AHEAD ahead and, once they're in, their slot state half as far ahead (as Valence does).
-		constexpr uint32_t RT_PREFETCH_AHEAD = 16;
-		const auto prefetch_instance = [&](uint32_t p_index) {
-			const GeometryInstance *inst = static_cast<const GeometryInstance *>(instances[p_index]);
-			if (inst) {
-				_rt_prefetch(&inst->rt_index);
-				_rt_prefetch(&inst->rt_generation);
+		struct Job {
+			const PagedArray<RenderGeometryInstance *> *instances;
+			const RTPersistentInstances *persistent;
+			uint8_t *clean;
+			uint32_t *capacities;
+			uint32_t *rt_indices;
+			uint32_t count;
+		};
+		Job job = { &instances, persistent, persistent ? persistent->clean.ptr() : nullptr, plan_capacities.ptr(), plan_rt_indices.ptr(), count };
+		// Reads each instance and its slot: whether it can keep its entries, and its plan capacity if it can't. The
+		// instances are scattered in memory, so this is bound by cache misses: chunks run on the worker pool, and each
+		// fetches the instances RT_PREFETCH_AHEAD ahead and their slot state half as far ahead (as Valence does).
+		const auto run_chunk = [](void *p_job, uint32_t p_chunk) {
+			constexpr uint32_t RT_PREFETCH_AHEAD = 16;
+			const Job &j = *static_cast<const Job *>(p_job);
+			const uint32_t begin = p_chunk * RT_CLEAN_CHUNK_SIZE;
+			const uint32_t end = MIN(begin + RT_CLEAN_CHUNK_SIZE, j.count);
+			const PagedArray<RenderGeometryInstance *> &list = *j.instances;
+			const RTPersistentInstances *p = j.persistent;
+			for (uint32_t i = begin; i < MIN(end, begin + RT_PREFETCH_AHEAD); i++) {
+				if (const GeometryInstance *inst = static_cast<const GeometryInstance *>(list[i])) {
+					_rt_prefetch(&inst->rt_index);
+					_rt_prefetch(&inst->rt_generation);
+				}
+			}
+			for (uint32_t i = begin; i < end; i++) {
+				if (i + RT_PREFETCH_AHEAD < end) {
+					if (const GeometryInstance *inst = static_cast<const GeometryInstance *>(list[i + RT_PREFETCH_AHEAD])) {
+						_rt_prefetch(&inst->rt_index);
+						_rt_prefetch(&inst->rt_generation);
+					}
+				}
+				if (p && i + RT_PREFETCH_AHEAD / 2 < end) {
+					const GeometryInstance *inst = static_cast<const GeometryInstance *>(list[i + RT_PREFETCH_AHEAD / 2]);
+					if (inst && inst->rt_index < p->slots.size()) {
+						_rt_prefetch(&p->generations[inst->rt_index]);
+						_rt_prefetch(&p->stamps[inst->rt_index]);
+						_rt_prefetch(&p->flags[inst->rt_index]);
+					}
+				}
+				const GeometryInstance *inst = static_cast<const GeometryInstance *>(list[i]);
+				const bool keep = p && inst && p->can_keep(inst->rt_index, inst->rt_generation);
+				if (p) {
+					j.clean[i] = keep;
+				}
+				j.rt_indices[i] = inst ? inst->rt_index : UINT32_MAX;
+				j.capacities[i] = inst ? inst->rt_surface_count : 0;
 			}
 		};
-		const auto prefetch_slot = [&](uint32_t p_index) {
-			const GeometryInstance *inst = static_cast<const GeometryInstance *>(instances[p_index]);
-			if (inst && inst->rt_index < persistent->slots.size()) {
-				_rt_prefetch(&persistent->generations[inst->rt_index]);
-				_rt_prefetch(&persistent->stamps[inst->rt_index]);
-				_rt_prefetch(&persistent->flags[inst->rt_index]);
+		const uint32_t chunks = (count + RT_CLEAN_CHUNK_SIZE - 1) / RT_CLEAN_CHUNK_SIZE;
+		if (chunks > 1 && _rt_plan_parallel(count)) {
+			WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
+			pool->wait_for_group_task_completion(pool->add_native_group_task(run_chunk, &job, int(chunks), -1, true));
+		} else {
+			for (uint32_t c = 0; c < chunks; c++) {
+				run_chunk(&job, c);
 			}
-		};
-		for (uint32_t i = 0; i < MIN(count, RT_PREFETCH_AHEAD); i++) {
-			prefetch_instance(i);
 		}
-		for (uint32_t i = 0; i < count; i++) {
-			if (i + RT_PREFETCH_AHEAD < count) {
-				prefetch_instance(i + RT_PREFETCH_AHEAD);
+		if (persistent) {
+			// Serially and in list order, so an instance listed twice keeps its slot through its first copy only.
+			for (uint32_t i = 0; i < count; i++) {
+				if (!persistent->clean[i]) {
+					continue;
+				}
+				uint32_t &stamp = persistent->stamps[plan_rt_indices[i]];
+				if (stamp == persistent->build) {
+					persistent->clean[i] = false;
+					continue;
+				}
+				stamp = persistent->build;
+				persistent->stamped++;
+				// An instance whose slot holds its entries unchanged is neither planned nor written: no plan range.
+				plan_capacities[i] = 0;
 			}
-			if (persistent && i + RT_PREFETCH_AHEAD / 2 < count) {
-				prefetch_slot(i + RT_PREFETCH_AHEAD / 2);
-			}
-			const GeometryInstance *inst = static_cast<const GeometryInstance *>(instances[i]);
-			// An instance whose slot holds its entries unchanged is neither planned nor written: no plan range.
-			const bool clean = persistent && inst && persistent->check_clean(inst->rt_index, inst->rt_generation);
-			if (persistent) {
-				persistent->clean[i] = clean;
-			}
-			plan_capacities[i] = inst && !clean ? inst->rt_surface_count : 0;
 		}
 		rt_plan_reserve(arena, plan_capacities);
 	}
 	// The pass planning now validates against its own context; the TLAS pass runs last, so its versions are kept.
 	arena.versions = p_ctx.versions;
 	return arena;
-}
-
-// Instances per planning task.
-static constexpr uint32_t RT_PLAN_CHUNK_SIZE = 64;
-static constexpr uint32_t RT_PLAN_PARALLEL_MIN_INSTANCES = 256;
-
-// Strict validation re-plans reused records into one shared arena, so it keeps planning serial.
-static bool _rt_plan_parallel(uint32_t p_count) {
-#ifdef RT_VALIDATION_ENABLED
-	if (rt_validation().strict) {
-		return false;
-	}
-#endif
-	return p_count >= RT_PLAN_PARALLEL_MIN_INSTANCES && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/parallel_planning");
 }
 
 // Calls p_plan(ctx, scratch, index) for instances [0, p_count): first on the worker pool with mutation off, then serially,

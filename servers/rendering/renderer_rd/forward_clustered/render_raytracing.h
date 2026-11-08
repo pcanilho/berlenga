@@ -1404,6 +1404,7 @@ class RenderRaytracing {
 	// Instance plans of the views, see render_raytracing_plan.h. Plans run before their apply pass, which keeps every
 	// side effect; the context and arena of a view are opened once per frame.
 	LocalVector<uint32_t> plan_capacities; // Scratch of _open_plan_arena.
+	LocalVector<uint32_t> plan_rt_indices; // Scratch of _open_plan_arena.
 	RTPlanContext _make_plan_context(const RenderDataRD *p_render_data, uint32_t p_rt_flags, const LocalVector<RTCaptureRequest> *p_captures) const;
 	RTPlanArena &_open_plan_arena(RTViewportState *p_state, const RenderDataRD *p_render_data, const RTPlanContext &p_ctx);
 	void _update_trace_origin(RTViewportState *p_state, const RenderDataRD *p_render_data);
