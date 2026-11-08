@@ -75,6 +75,7 @@ private:
 		TONEMAP_FLAG_USE_FXAA = (1 << 4),
 		TONEMAP_FLAG_USE_8_BIT_DEBANDING = (1 << 5),
 		TONEMAP_FLAG_CONVERT_TO_SRGB = (1 << 6),
+		TONEMAP_FLAG_USE_LOCAL_EXPOSURE = (1 << 7),
 	};
 
 	enum FlagsMobile {
@@ -122,6 +123,10 @@ private:
 		float luminance_multiplier; //  4 - 96
 
 		float tonemapper_params[4]; //  16 - 112
+
+		float local_highlight_contrast; //  4 - 116
+		float local_shadow_contrast; //  4 - 120
+		float local_pad[2]; //  8 - 128
 	};
 
 	struct TonemapPushConstantMobile {
@@ -184,6 +189,12 @@ public:
 		float auto_exposure_scale = 0.5;
 		RID exposure_texture;
 		float luminance_multiplier = 1.0;
+
+		// Local exposure (needs auto exposure): bilateral grid from Luminance::local_exposure_grid().
+		bool use_local_exposure = false;
+		RID local_exposure_grid;
+		float local_highlight_contrast = 1.0;
+		float local_shadow_contrast = 1.0;
 
 		bool use_bcs = false;
 		float brightness = 1.0;

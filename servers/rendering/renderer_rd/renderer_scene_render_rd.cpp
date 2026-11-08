@@ -605,6 +605,7 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 	}
 
 	float auto_exposure_scale = 1.0;
+	RID local_exposure_grid;
 
 	if (can_use_effects && RSG::camera_attributes->camera_attributes_uses_auto_exposure(p_render_data->camera_attributes)) {
 		RENDER_TIMESTAMP("Auto exposure");
@@ -637,6 +638,12 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		// Swap final reduce with prev luminance.
 
 		auto_exposure_scale = RSG::camera_attributes->camera_attributes_get_auto_exposure_scale(p_render_data->camera_attributes);
+
+		const float local_highlight = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/local_highlight_contrast");
+		const float local_shadow = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/local_shadow_contrast");
+		if ((local_highlight != 1.0f || local_shadow != 1.0f) && rb->get_view_count() == 1) {
+			local_exposure_grid = luminance->local_exposure_grid(rb->get_internal_texture(), rb->get_internal_size(), luminance_buffers);
+		}
 
 		RenderingServerDefault::redraw_request(); // Redraw all the time if auto exposure rendering is on.
 		RD::get_singleton()->draw_command_end_label();
@@ -749,6 +756,12 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		if (can_use_effects && RSG::camera_attributes->camera_attributes_uses_auto_exposure(p_render_data->camera_attributes) && tonemap.exposure_texture.is_valid()) {
 			tonemap.use_auto_exposure = true;
 			tonemap.auto_exposure_scale = auto_exposure_scale;
+			if (local_exposure_grid.is_valid()) {
+				tonemap.use_local_exposure = true;
+				tonemap.local_exposure_grid = local_exposure_grid;
+				tonemap.local_highlight_contrast = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/local_highlight_contrast");
+				tonemap.local_shadow_contrast = GLOBAL_GET_CACHED(float, "rendering/camera/auto_exposure/local_shadow_contrast");
+			}
 		} else {
 			tonemap.exposure_texture = texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
 		}

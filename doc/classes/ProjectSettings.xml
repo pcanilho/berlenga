@@ -2919,6 +2919,12 @@
 		<member name="rendering/camera/auto_exposure/histogram_low_percent" type="float" setter="" getter="" default="10.0">
 			With [member rendering/camera/auto_exposure/metering] set to Histogram, the darkest pixels below this percentile are left out of metering, so a black sky or deep shadow does not brighten the rest of the frame.
 		</member>
+		<member name="rendering/camera/auto_exposure/local_highlight_contrast" type="float" setter="" getter="" default="1.0">
+			Local exposure for areas brighter than the metered brightness. Each pixel is exposed partly by the mean brightness of the pixels around it that are also close to it in brightness (a bilateral grid), so a lit window or a lamp-lit wall keeps its detail while the street around it is unchanged. [code]1.0[/code] keeps the global exposure, as Godot does; [code]0.5[/code] halves the contrast between bright areas and the metered brightness. Detail within an area keeps its contrast, and edges between bright and dark areas do not halo. Needs auto exposure and the Forward+ renderer; not used in XR.
+		</member>
+		<member name="rendering/camera/auto_exposure/local_shadow_contrast" type="float" setter="" getter="" default="1.0">
+			As [member rendering/camera/auto_exposure/local_highlight_contrast], for areas darker than the metered brightness: below [code]1.0[/code], dark areas such as the far side of a street at night are lifted toward the metered brightness. [code]1.0[/code] keeps the global exposure, as Godot does.
+		</member>
 		<member name="rendering/camera/auto_exposure/metering" type="int" setter="" getter="" default="0">
 			How auto exposure measures the frame's brightness. [b]Average[/b] uses the mean of every pixel's brightest channel, as Godot does. [b]Histogram[/b] sorts the pixels into 64 brightness bins and averages only those between [member rendering/camera/auto_exposure/histogram_low_percent] and [member rendering/camera/auto_exposure/histogram_high_percent], so a night scene with visible lamps is exposed for the street rather than the lamps. The adaptation speed, sensitivity limits and scale of [CameraAttributes] apply to both. On devices where Godot draws post effects with raster passes instead of compute, Average is always used.
 		</member>

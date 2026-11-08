@@ -46,6 +46,7 @@ layout(location = 0) in vec2 uv_interp;
 
 layout(set = 0, binding = 0) uniform SAMPLER_FORMAT source_color;
 layout(set = 1, binding = 0) uniform sampler2D source_auto_exposure;
+layout(set = 1, binding = 1) uniform sampler3D local_exposure_grid; // See local_exposure.glsl.
 layout(set = 2, binding = 0) uniform SAMPLER_FORMAT source_glow;
 layout(set = 2, binding = 1) uniform sampler2D glow_map; // TODO needs multiview support
 
@@ -62,6 +63,7 @@ layout(set = 3, binding = 0) uniform sampler3D source_color_correction;
 #define FLAG_USE_FXAA (1 << 4)
 #define FLAG_USE_8_BIT_DEBANDING (1 << 5)
 #define FLAG_CONVERT_TO_SRGB (1 << 6)
+#define FLAG_USE_LOCAL_EXPOSURE (1 << 7)
 
 layout(push_constant, std430) uniform Params {
 	vec3 bcs;
@@ -84,6 +86,10 @@ layout(push_constant, std430) uniform Params {
 	float luminance_multiplier;
 
 	vec4 tonemapper_params;
+
+	float local_highlight_contrast;
+	float local_shadow_contrast;
+	float local_pad[2];
 }
 params;
 
@@ -864,7 +870,27 @@ void main() {
 	float exposure = params.exposure;
 
 	if (bool(params.flags & FLAG_USE_AUTO_EXPOSURE)) {
-		exposure *= 1.0 / (texelFetch(source_auto_exposure, ivec2(0, 0), 0).r * params.luminance_multiplier / params.auto_exposure_scale);
+		float metered = texelFetch(source_auto_exposure, ivec2(0, 0), 0).r;
+		exposure *= 1.0 / (metered * params.luminance_multiplier / params.auto_exposure_scale);
+
+#ifndef USE_MULTIVIEW
+		if (bool(params.flags & FLAG_USE_LOCAL_EXPOSURE)) {
+			// Local exposure: compress the brightness of the pixel's neighbourhood (from the bilateral
+			// grid) around the metered brightness, highlights and shadows separately. Detail within
+			// the neighbourhood keeps its contrast.
+			const float log2_min = -16.0;
+			const float log2_max = 16.0;
+			vec3 raw = color.rgb / params.luminance_multiplier;
+			float l = max(raw.r, max(raw.g, raw.b));
+			float ev = clamp(l > 0.0 ? log2(l) : log2_min, log2_min, log2_max);
+			float z = (ev - log2_min) / (log2_max - log2_min);
+			vec2 cell = textureLod(local_exposure_grid, vec3(uv_interp, z), 0.0).rg;
+			float local_ev = cell.y > 1e-4 ? cell.x / cell.y : ev;
+			float d = local_ev - log2(max(metered, 1e-6));
+			float shift = d * ((d > 0.0 ? params.local_highlight_contrast : params.local_shadow_contrast) - 1.0);
+			exposure *= exp2(clamp(shift, -4.0, 4.0));
+		}
+#endif
 	}
 
 	color.rgb *= exposure;
