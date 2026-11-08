@@ -9,6 +9,8 @@ Every pull request adds a line under **Unreleased**, in one of: Added, Changed, 
 ### Added
 - README: texture filtering comparison re-rendered on an RTX 4090 with the anisotropic filtering fix (#108).
 
+## build-5e22cf31 (2026-11-08)
+
 ### Changed
 - README: DLSS Ray Reconstruction checked with the DLSS 4.5 DLLs (310.5) on an RTX 4090 (#112).
 
