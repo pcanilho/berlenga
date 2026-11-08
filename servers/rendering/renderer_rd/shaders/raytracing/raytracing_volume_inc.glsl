@@ -29,11 +29,11 @@ struct RTVolumeParams {
 	vec4 smoke_color; // rgb: scattering color
 };
 
-layout(set = 0, binding = 44) uniform texture3D rt_volume_density; // r: temperature, a: smoke
-layout(set = 0, binding = 45, std430) restrict readonly buffer RTVolumeTable {
+layout(set = 0, binding = 47) uniform texture3D rt_volume_density; // r: temperature, a: smoke
+layout(set = 0, binding = 48, std430) restrict readonly buffer RTVolumeTable {
 	uint rt_volume_table[];
 };
-layout(set = 0, binding = 46, std430) restrict readonly buffer RTVolumeParamsBuffer {
+layout(set = 0, binding = 49, std430) restrict readonly buffer RTVolumeParamsBuffer {
 	RTVolumeParams rt_volume;
 };
 

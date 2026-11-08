@@ -6366,7 +6366,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		uniforms.push_back(u);
 	}
 
-	// Bindings 44-46: simulated gas for the path tracer (raytracing_volume_inc.glsl), published by
+	// Bindings 47-49: simulated gas for the path tracer (raytracing_volume_inc.glsl), published by
 	// the simulation this frame (RTVolumes); defaults with world_max.w = 0 when there is none.
 	{
 		struct VolumeParams {
@@ -6425,19 +6425,19 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		RD::get_singleton()->buffer_update(p_state->volume_params_buffer, 0, sizeof(VolumeParams), &vp);
 
 		RD::Uniform u;
-		u.binding = 44;
+		u.binding = 47;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
 		u.append_id(has_volume ? vol.density : RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK));
 		uniforms.push_back(u);
 
 		u = RD::Uniform();
-		u.binding = 45;
+		u.binding = 48;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		u.append_id(has_volume ? vol.table : RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		uniforms.push_back(u);
 
 		u = RD::Uniform();
-		u.binding = 46;
+		u.binding = 49;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		u.append_id(p_state->volume_params_buffer);
 		uniforms.push_back(u);
