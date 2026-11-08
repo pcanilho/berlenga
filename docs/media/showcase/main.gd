@@ -461,9 +461,14 @@ func shot_tearing() -> void:
 	add_child(ground)
 	var post_mat := mat(Color(0.3, 0.3, 0.32), 0.4)
 
-	# Ribbon: 4 m of 8 cm wide film, 3 vertices across and 15 cm rows, tied at both ends.
-	box(Vector3(0.06, 1.1, 0.06), Vector3(-2.0, 0.55, 0.6), post_mat)
-	box(Vector3(0.06, 1.1, 0.06), Vector3(2.0, 0.55, 0.6), post_mat)
+	# One wind for both, across the ribbon's line and along the flag's.
+	var wind_dir := Vector3(1.0, 0.0, -1.0).normalized()
+	# Ribbon: 4 m of 8 cm wide film, 3 vertices across and 15 cm rows, tied at both ends, its line square
+	# to the wind.
+	var line := Vector3(1.0, 0.0, 1.0).normalized()
+	var mid := Vector3(0.4, 0.0, 0.4)
+	box(Vector3(0.06, 1.1, 0.06), mid - line * 2.0 + Vector3(0, 0.55, 0), post_mat)
+	box(Vector3(0.06, 1.1, 0.06), mid + line * 2.0 + Vector3(0, 0.55, 0), post_mat)
 	var stripes := Image.create(64, 8, false, Image.FORMAT_RGB8)
 	for x in 64:
 		for y in 8:
@@ -507,8 +512,9 @@ func shot_tearing() -> void:
 	ribbon.wind_turbulence = 0.2
 	ribbon.substeps = 40                 # a long thin strip needs them to carry its load without solver stretch
 	ribbon.tear_factor = 1.07             # holds in the breeze, parts in about 11 m/s (get_max_strain)
-	ribbon.rotation_degrees = Vector3(0, 0, 90)   # its length (local Y) along the posts' line, +X up
-	ribbon.position = Vector3(0, 1.06, 0.6)
+	# local +Y along its line (row 0 at the first post), +X up across its width, +Z its face
+	ribbon.basis = Basis(Vector3.UP, -line, Vector3.UP.cross(-line))
+	ribbon.position = mid + Vector3(0, 1.06, 0)
 	ribbon.material_override = rib_mat
 	add_child(ribbon)
 
@@ -540,6 +546,6 @@ func shot_tearing() -> void:
 		clock[0] += 1.0 / Engine.physics_ticks_per_second
 		var tt: float = clock[0]
 		var u := lerpf(3.0, 22.0, clampf((tt - 2.5) / 2.0, 0.0, 1.0))
-		ribbon.wind = Vector3(0.6, 0.0, -1.0).normalized() * u
-		flag.wind = Vector3(1.0, 0.1, 0.3) * u
+		ribbon.wind = wind_dir * u
+		flag.wind = wind_dir * u
 	get_tree().physics_frame.connect(blow)
