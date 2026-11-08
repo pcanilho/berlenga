@@ -95,6 +95,10 @@ struct RTPersistentInstances {
 	LocalVector<RD::AccelerationStructureInstance> transparent;
 	LocalVector<uint32_t> transparent_owner;
 	uint32_t transparent_end = 0;
+	// Persistent entries written since the last TLAS build, which writes only these and the per-frame entries.
+	LocalVector<uint32_t> changed_tlas;
+	LocalVector<uint32_t> changed_transparent;
+	bool changed_all = true;
 	LocalVector<RT_GeometryData> rows;
 	LocalVector<int32_t> motion; // Parallel to rows.
 	LocalVector<uint32_t> material_slots; // Parallel to persistent rows.
@@ -192,6 +196,9 @@ struct RTPersistentInstances {
 		}
 		if (p_transparent) {
 			active_transparent--;
+			changed_transparent.push_back(uint32_t(&r_entry - transparent.ptr()));
+		} else {
+			changed_tlas.push_back(uint32_t(&r_entry - tlas.ptr()));
 		}
 		unref_blas(r_entry.blas);
 		r_entry.blas = RID();
@@ -247,6 +254,9 @@ struct RTPersistentInstances {
 		tlas_end = transparent_end = rows_end = 0;
 		dirty_rows.clear();
 		upload_all = true;
+		changed_tlas.clear();
+		changed_transparent.clear();
+		changed_all = true;
 		garbage = 0;
 		active_transparent = 0;
 		enabled = 0;

@@ -143,8 +143,12 @@ traced and nothing rasterizes shadows (done, see below).
   reserved.
 - Disabled entries get mask 0, and RenderingDevice now leaves mask-0 instances out of every TLAS build. Lavapipe
   faults on mask-0 and null-BLAS instances, both legal in Vulkan.
-- Still per frame: the plan arena reserve and one load per listed instance, and RenderingDevice's validation and
-  write of all TLAS instances. The second is the next CPU target.
+- Still per frame: the plan arena reserve and one load per listed instance (the next CPU target).
+- Keyed TLAS builds (`RD::TLASBuild::keyed`): the TLAS keeps its instances in a GPU buffer, packed, with a CPU copy
+  of their driver records. A build writes only the instances listed as changed (written slots, disabled entries and
+  the per-frame tail), stages them and copies them in one command behind a barrier. A removed instance gives its
+  place to the last one, so the build never sees mask-0 or null-BLAS instances. On the cloud renderer the
+  RenderingDevice validation and write fell from about the cost of the gather to nothing measurable.
 - Cloud (llvmpipe CPU), 30k objects (42k instances): `build_tlas` CPU 12.7 ms off, 2.7 ms on. Images match the
   per-frame path except for noise from the TLAS order.
 - 4090, 100k objects, frame ms off and on (median; images match within noise):

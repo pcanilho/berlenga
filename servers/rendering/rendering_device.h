@@ -1371,6 +1371,17 @@ private:
 		};
 
 		LocalVector<InstanceBuffer> instance_buffers;
+
+		// Keyed builds (TLASBuild::keyed): the instances live in a GPU buffer, densely packed, with a CPU copy of
+		// their driver records so that one can move into another's place when it's removed.
+		struct Keyed {
+			RDD::BufferID buffer; // max_instance_count records.
+			LocalVector<uint32_t> positions; // By key: where its record is, UINT32_MAX when it has none.
+			LocalVector<uint32_t> keys; // By position.
+			LocalVector<uint8_t> records; // By position.
+			LocalVector<uint32_t> touched; // Positions written by the build.
+			bool valid = false; // The buffer holds the records; false until the first keyed build.
+		} keyed;
 	};
 
 	struct AccelerationStructureScratch {
@@ -1385,6 +1396,7 @@ private:
 	struct AccelerationStructureBatch {
 		LocalVector<RDG::RecordedAccelerationStructureBuild> builds;
 		bool barrier_pending = false;
+		bool copies_recorded = false; // Keyed TLAS records were copied (behind a barrier) for this batch.
 	};
 
 	AccelerationStructureScratch acceleration_structure_scratch;
@@ -1469,6 +1481,14 @@ public:
 	struct TLASBuild {
 		RID tlas;
 		Span<AccelerationStructureInstance> instances;
+		// Keyed build: the TLAS keeps its instances in a GPU buffer between builds, keyed by their index in
+		// `instances`, and writes only the ones at `changed` (every one on its first keyed build, after a build that
+		// wasn't keyed and after a failed one). Keys past the end of `instances` are removed, as are instances with
+		// mask 0 or no BLAS. The order of the instances on the GPU doesn't follow the keys, so shaders mustn't read
+		// the instance index. The caller must list an instance as changed when its BLAS is freed or rebuilt into a
+		// new structure.
+		bool keyed = false;
+		Span<uint32_t> changed;
 	};
 
 	Error acceleration_structure_build_batch(Span<RID> p_blas_builds, Span<RID> p_blas_refits, Span<TLASBuild> p_tlas_builds);
@@ -1486,7 +1506,9 @@ public:
 
 private:
 	Error _tlas_validate_instances(const AccelerationStructure *p_tlas, Span<AccelerationStructureInstance> p_instances);
-	Error _tlas_batch_add(RID p_tlas, Span<AccelerationStructureInstance> p_instances);
+	Error _tlas_batch_add(const TLASBuild &p_build);
+	Error _tlas_instance_staging(AccelerationStructure *p_tlas, uint32_t p_size, uint32_t &r_buffer_index, uint32_t &r_offset);
+	Error _tlas_write_keyed(AccelerationStructure *p_tlas, Span<AccelerationStructureInstance> p_instances, Span<uint32_t> p_changed, RDG::RecordedAccelerationStructureBuild &r_build);
 	Error _tlas_write_instances(AccelerationStructure *p_tlas, RID p_tlas_id, Span<AccelerationStructureInstance> p_instances, LocalVector<RDG::ResourceTracker *> *r_blas_trackers, RDG::RecordedAccelerationStructureBuild &r_build);
 
 	/**********************************/
