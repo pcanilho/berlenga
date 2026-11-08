@@ -110,6 +110,9 @@ public:
 	float rest_surface_area() const;
 	// Scale every constraint's rest length (SoftBody3D shrinking_factor).
 	void set_rest_length_scale(float p_scale);
+	// Cut the cloth along a segment in its local rest XY plane: constraints and triangles whose
+	// rest edges cross it are removed, so the two sides separate. Returns the constraints removed.
+	int tear(const Vector2 &p_from, const Vector2 &p_to);
 
 private:
 	struct DistanceConstraint {

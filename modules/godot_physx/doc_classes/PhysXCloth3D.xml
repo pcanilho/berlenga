@@ -35,6 +35,14 @@
 				Lets the given pinned vertices go while the cloth keeps moving, so an edge can tear free of what holds it (a flag ripping off its pole, a tarp losing a tie). Unlike changing [member pin_mode] or [member pinned_vertices], this does not reset the simulation. Returns how many vertices were released. Vertices of a generated grid are numbered row by row from the top-left corner: row [code]y[/code], column [code]x[/code] is [code]y * grid_columns + x[/code]. The pins come back the next time they are resolved: on [method reset] or when a pin or grid property changes.
 			</description>
 		</method>
+		<method name="tear">
+			<return type="int" />
+			<param index="0" name="from" type="Vector3" />
+			<param index="1" name="to" type="Vector3" />
+			<description>
+				Rips the cloth along the segment from [param from] to [param to], in the node's local space measured on the rest shape's XY plane (a generated grid lies in that plane, centered on the node). Every constraint and triangle whose rest edge crosses the segment is removed, so the two sides pull apart under wind and gravity. Call it over several frames with a lengthening segment to make a rip run across the fabric. Returns how many constraints were removed. The rip lasts until the cloth is rebuilt (a grid or mesh property change). Needs the CPU solver ([constant SIM_CPU], or [constant SIM_AUTO] without CUDA).
+			</description>
+		</method>
 		<method name="reset">
 			<return type="void" />
 			<description>

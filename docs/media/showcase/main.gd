@@ -188,6 +188,8 @@ func shot_glass() -> void:
 # PhysX module: a flag in gusty wind, a Blast wall a ball breaks, a crate stack, a smoke plume.
 # Needs a build with the PhysX module; record a clip with --write-movie and --frames=N.
 func shot_physx() -> void:
+	# One wind for the scene: the flag and the smoke both get it.
+	var wind := Vector3(4.5, 0.2, 1.0)
 	if not ClassDB.class_exists("PhysXCloth3D"):
 		push_error("This build has no PhysX module.")
 		get_tree().quit(1)
@@ -223,20 +225,21 @@ func shot_physx() -> void:
 	flag.grid_columns = 24
 	flag.grid_rows = 16
 	flag.pin_mode = 3 # left edge
-	flag.wind = Vector3(12.0, 0.5, 2.0)
+	flag.wind = wind
+	flag.simulation_mode = 2 # CPU solver: tear() needs it
 	flag.wind_turbulence = 0.6
 	flag.position = Vector3(-2.66, 2.6, -0.5)
 	var flag_mat := mat(Color(0.85, 0.22, 0.16), 0.7)
 	flag_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	flag.material_override = flag_mat
 	add_child(flag)
-	# A strong gust tears the lower two thirds of the flag off the pole (release_pins keeps the motion).
-	get_tree().create_timer(3.5, true, true).timeout.connect(func() -> void:
-		var torn := PackedInt32Array()
-		for y in range(5, 16):
-			torn.push_back(y * 24)
-		flag.release_pins(torn)
-		flag.wind = Vector3(16.0, 1.5, 2.5))
+	# A gust rips the flag through the middle, from the free end toward the pole (tear() cuts
+	# a lengthening line over half a second), leaving two tails.
+	get_tree().create_timer(3.2, true, true).timeout.connect(func() -> void:
+		flag.wind = wind * 2.5
+		for k in 12:
+			flag.tear(Vector3(1.0, 0.0, 0.0), Vector3(1.0 - 0.13 * (k + 1), 0.0, 0.0))
+			await get_tree().create_timer(0.04, true, true).timeout)
 
 	# Blast wall: a box fractured into 40 Voronoi cells, grounded, broken by a ball.
 	var wall_mesh := BoxMesh.new()
@@ -305,29 +308,39 @@ func shot_physx() -> void:
 	var em = ClassDB.instantiate("PhysXFlowEmitter3D")
 	em.position = Vector3(0, 0.3, 0)
 	em.radius = 0.6
-	em.velocity = Vector3(0, 3.0, 0)
+	em.velocity = Vector3(0, 4.0, 0)
 	em.smoke = 1.0
 	em.temperature = 0.3
 	flow.add_child(em)
 	em.flow = em.get_path_to(flow)
-	# A paddle swept through the plume: physics bodies are solids for the gas, so it splits and curls round it.
-	var paddle := AnimatableBody3D.new()
-	var ps := CollisionShape3D.new()
-	var pb := BoxShape3D.new()
-	pb.size = Vector3(1.0, 0.1, 1.2)
-	ps.shape = pb
-	paddle.add_child(ps)
-	var pm := MeshInstance3D.new()
-	var pbm := BoxMesh.new()
-	pbm.size = pb.size
-	pbm.material = mat(Color(0.25, 0.27, 0.3), 0.4)
-	pm.mesh = pbm
-	paddle.add_child(pm)
-	paddle.position = flow.position + Vector3(-1.3, 1.3, 0)
-	add_child(paddle)
-	var tw := create_tween().set_loops().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS).set_trans(Tween.TRANS_SINE)
-	tw.tween_property(paddle, "position:x", flow.position.x + 1.3, 2.5)
-	tw.tween_property(paddle, "position:x", flow.position.x - 1.3, 2.5)
+	# The same wind for the gas: a box emitter that only pushes air.
+	var air = ClassDB.instantiate("PhysXFlowEmitter3D")
+	air.shape = 1 # box
+	air.size = Vector3(8, 6, 8)
+	air.position = Vector3(0, 3, 0)
+	air.smoke = 0.0
+	air.temperature = 0.0
+	air.velocity = wind
+	air.couple_rate = 0.5
+	flow.add_child(air)
+	air.flow = air.get_path_to(flow)
+	# A static wall downwind: physics bodies are solids for the gas, so the smoke piles up
+	# against it and spills round its sides and over its top.
+	var screen := StaticBody3D.new()
+	var ss := CollisionShape3D.new()
+	var sb := BoxShape3D.new()
+	sb.size = Vector3(0.15, 1.6, 1.6)
+	ss.shape = sb
+	screen.add_child(ss)
+	var scm := MeshInstance3D.new()
+	var sbm := BoxMesh.new()
+	sbm.size = sb.size
+	sbm.material = mat(Color(0.62, 0.64, 0.68), 0.6)
+	scm.mesh = sbm
+	screen.add_child(scm)
+	screen.position = flow.position + Vector3(1.0, 0.8, 0.2)
+	screen.rotation.y = -atan2(wind.z, wind.x)
+	add_child(screen)
 
 # A small lit scene --far metres from the world origin on x and z (try 65536), for
 # rendering/pathtracing/relative_origin_grid on and off.

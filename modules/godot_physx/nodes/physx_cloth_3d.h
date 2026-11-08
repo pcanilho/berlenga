@@ -185,6 +185,7 @@ public:
 	// Local-space positions of the currently pinned vertices (for the editor gizmo).
 	PackedVector3Array get_pinned_positions() const;
 	int release_pins(const PackedInt32Array &p_vertices);
+	int tear(const Vector3 &p_from, const Vector3 &p_to);
 	// True when the GPU (PhysX deformable-surface) path is in use.
 	bool is_gpu_accelerated() const { return gpu_cloth.is_valid(); }
 

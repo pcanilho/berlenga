@@ -115,7 +115,10 @@ void set_channels(T &r_params, const Emitter &p_emitter) {
 	r_params.divergence = p_emitter.divergence;
 	const float c = p_emitter.couple_rate;
 	r_params.coupleRateVelocity = c;
-	r_params.coupleRateTemperature = c;
+	// An emitter that puts in no smoke, fuel, burn or heat only pushes air (wind): it leaves
+	// the gas's own temperature alone, so a hot plume keeps rising through it.
+	const bool air_only = p_emitter.smoke <= 0.0f && p_emitter.fuel <= 0.0f && p_emitter.burn <= 0.0f && p_emitter.temperature == 0.0f;
+	r_params.coupleRateTemperature = air_only ? 0.0f : c;
 	r_params.coupleRateFuel = p_emitter.fuel > 0.0f ? c : 0.0f;
 	r_params.coupleRateSmoke = p_emitter.smoke > 0.0f ? c : 0.0f;
 	r_params.coupleRateBurn = p_emitter.burn > 0.0f ? c : 0.0f;
