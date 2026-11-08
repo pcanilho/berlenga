@@ -11,6 +11,10 @@ extends Node3D
 #   --spp=N --bounces=N  path tracing samples and bounces (default 1, 2)
 #   --raster          raster only, for comparison
 #   --still           camera does not move
+#   --movers=N        N extra boxes near the camera that move every frame
+#   --churn=N         free N objects and add N new ones every frame
+#   --recolor         change the blocks' material every frame
+#   --fly=S           camera flies along X at S m/s instead of circling (crosses origin cells)
 #   --set=setting:value  any project setting, e.g. --set=rendering/pathtracing/mesh_lod:1
 #   --out=path.png    save the last frame
 var count := 20000
@@ -23,6 +27,13 @@ var bounces := 2
 var raster := false
 var still := false
 var out := ""
+var movers: Array[Node3D] = []
+var mover_count := 0
+var churn := 0
+var recolor := false
+var fly := 0.0
+var box_mat: StandardMaterial3D
+var churn_mesh: BoxMesh
 var n := 0
 var t0 := 0
 var cam: Camera3D
@@ -40,6 +51,10 @@ func _ready() -> void:
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a == "--raster": raster = true
 		elif a == "--still": still = true
+		elif a.begins_with("--movers="): mover_count = int(a.substr(9))
+		elif a.begins_with("--churn="): churn = int(a.substr(8))
+		elif a == "--recolor": recolor = true
+		elif a.begins_with("--fly="): fly = float(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
@@ -69,6 +84,7 @@ func _ready() -> void:
 	ground.mesh = pm
 	add_child(ground)
 	_scatter()
+	_add_movers()
 	cam = Camera3D.new()
 	cam.fov = 60
 	cam.far = radius * 1.5
@@ -128,7 +144,8 @@ func _scatter() -> void:
 	var rock_mat := mat(Color(0.5, 0.47, 0.43))
 	var tree := _tree()
 	var box := BoxMesh.new()
-	box.material = mat(Color(0.6, 0.58, 0.55))
+	box_mat = mat(Color(0.6, 0.58, 0.55))
+	box.material = box_mat
 	# MultiMesh-free on purpose: one instance per object, as a streamed world of scene nodes.
 	for i in count:
 		# Uniform over the disk, but denser near the centre so near detail exists.
@@ -165,7 +182,50 @@ func _scatter() -> void:
 			b.rotation.y = randf() * TAU
 			add_child(b)
 
+func _add_movers() -> void:
+	var box := BoxMesh.new()
+	box.material = mat(Color(0.7, 0.3, 0.25))
+	for i in mover_count:
+		var m := MeshInstance3D.new()
+		m.mesh = box
+		add_child(m)
+		movers.push_back(m)
+	_move_movers(0.0)
+
+# Movers circle the camera's path, each on its own radius and phase.
+func _move_movers(t: float) -> void:
+	for i in movers.size():
+		var r := 20.0 + float(i % 97) * 1.7
+		var a := t * 0.4 + float(i) * 0.61
+		movers[i].position = Vector3(cos(a) * r, 1.0 + float(i % 7) * 0.5, sin(a) * r)
+		movers[i].rotation.y = a
+
+# Frees the oldest scattered objects and adds as many new ones, so instance slots are reused.
+func _churn() -> void:
+	var removed := 0
+	for c in get_children():
+		if removed >= churn:
+			break
+		if c is MeshInstance3D and c.mesh is BoxMesh and not movers.has(c):
+			c.queue_free()
+			removed += 1
+	if churn_mesh == null:
+		churn_mesh = BoxMesh.new()
+		churn_mesh.material = box_mat
+	for i in removed:
+		var b := MeshInstance3D.new()
+		b.mesh = churn_mesh
+		var a := randf() * TAU
+		var r := randf_range(10.0, 300.0)
+		b.scale = Vector3(randf_range(2, 6), randf_range(2, 10), randf_range(2, 6))
+		b.position = cam.position + Vector3(cos(a) * r, b.scale.y / 2 - cam.position.y, sin(a) * r)
+		add_child(b)
+
 func _place_camera(t: float) -> void:
+	if fly > 0.0:
+		cam.position = Vector3(t * fly - 1500.0, 2.5, 5.0)
+		cam.look_at(cam.position + Vector3(100.0, 0.0, 30.0))
+		return
 	var a := t * 0.05
 	cam.position = Vector3(cos(a) * 30.0, 2.5, sin(a) * 30.0)
 	cam.look_at(Vector3(cos(a + 0.6) * 200.0, 3.0, sin(a + 0.6) * 200.0))
@@ -174,6 +234,12 @@ func _process(delta: float) -> void:
 	n += 1
 	if not still:
 		_place_camera(float(n) / 60.0)
+	if not movers.is_empty():
+		_move_movers(float(n) / 60.0)
+	if churn > 0:
+		_churn()
+	if recolor:
+		box_mat.albedo_color = Color.from_hsv(fmod(float(n) * 0.01, 1.0), 0.4, 0.7)
 	var now := Time.get_ticks_usec()
 	if n > warmup:
 		frame_ms.push_back((now - last_t) / 1000.0)

@@ -4329,6 +4329,7 @@ uint32_t RenderForwardClustered::sdfgi_get_pending_region_cascade(const Ref<Rend
 }
 
 void RenderForwardClustered::GeometryInstanceForwardClustered::_mark_dirty() {
+	bump_rt_generation();
 	if (dirty_list_element.in_list()) {
 		return;
 	}
@@ -5213,6 +5214,7 @@ void RenderForwardClustered::GeometryInstanceForwardClustered::set_lightmap_capt
 
 void RenderForwardClustered::GeometryInstanceForwardClustered::_renew_rt_surfaces_version() {
 	rt_surfaces_version = ++RenderForwardClustered::get_singleton()->geometry_instance_rt_surfaces_version;
+	bump_rt_generation();
 }
 
 RTProceduralState *RenderForwardClustered::GeometryInstanceForwardClustered::_ensure_procedural_state() {
