@@ -102,7 +102,7 @@ Each of these has a project setting to turn it off. Same build, same scene, no d
 
 ![A pavement lit by a glowing window: dark and speckled with the setting off, evenly lit with it on](docs/media/emissive-lights.jpg)
 
-A street lit only by a glowing shop window and small signs, 4 samples per pixel, both sides brightened the same for print. Look at the pavement under the window: off, it stays almost black with scattered dots, because light from the window is only found when a random bounce ray happens to hit it. On, every shaded point also aims a sample at the window, so the pavement and the kerb come out evenly lit and the reflection on the wet road fills in.
+A street lit only by a glowing shop window and small signs, 4 samples per pixel, both sides brightened by the same amount. Look at the pavement under the window: off, it stays almost black with scattered dots, because light from the window is only found when a random bounce ray happens to hit it. On, every shaded point also aims a sample at the window, so the pavement and the kerb come out evenly lit and the reflection on the wet road fills in.
 </details>
 
 <details>
