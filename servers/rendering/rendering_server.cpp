@@ -3791,6 +3791,11 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/camera/depth_of_field/depth_of_field_bokeh_shape", PROPERTY_HINT_ENUM, "Box (Fast),Hexagon (Average),Circle (Slowest)"), 1);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/camera/depth_of_field/depth_of_field_bokeh_quality", PROPERTY_HINT_ENUM, "Very Low (Fastest),Low (Fast),Medium (Average),High (Slow)"), 1);
 	GLOBAL_DEF("rendering/camera/depth_of_field/depth_of_field_use_jitter", false);
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/camera/auto_exposure/metering", PROPERTY_HINT_ENUM, "Average,Histogram"), 0);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/camera/auto_exposure/histogram_low_percent", PROPERTY_HINT_RANGE, "0,100,0.1,suffix:%"), 10.0);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/camera/auto_exposure/histogram_high_percent", PROPERTY_HINT_RANGE, "0,100,0.1,suffix:%"), 98.0);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/camera/auto_exposure/dark_scene_luminance", PROPERTY_HINT_RANGE, "0,10,0.001,or_greater"), 0.0);
+	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/camera/auto_exposure/dark_scene_strength", PROPERTY_HINT_RANGE, "0,1,0.01"), 0.5);
 
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/environment/ssao/quality", PROPERTY_HINT_ENUM, "Very Low (Fast),Low (Fast),Medium (Average),High (Slow),Ultra (Custom)"), 2);
 	GLOBAL_DEF("rendering/environment/ssao/half_size", true);
