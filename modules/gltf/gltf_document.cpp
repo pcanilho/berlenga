@@ -2981,6 +2981,27 @@ Error GLTFDocument::_serialize_materials(Ref<GLTFState> p_state) {
 			}
 			extensions["KHR_materials_transmission"] = mat_transmission;
 			p_state->add_used_extension("KHR_materials_transmission");
+			if (!base_material->is_transmission_thin_walled()) {
+				// A medium behind the surface: its absorption and index of refraction.
+				Dictionary mat_volume;
+				mat_volume["thicknessFactor"] = 1.0f;
+				const float attenuation_distance = base_material->get_transmission_attenuation_distance();
+				if (attenuation_distance > 0.0f) {
+					const Color c = base_material->get_transmission_attenuation_color().srgb_to_linear();
+					Array attenuation_color;
+					attenuation_color.push_back(c.r);
+					attenuation_color.push_back(c.g);
+					attenuation_color.push_back(c.b);
+					mat_volume["attenuationColor"] = attenuation_color;
+					mat_volume["attenuationDistance"] = attenuation_distance;
+				}
+				extensions["KHR_materials_volume"] = mat_volume;
+				p_state->add_used_extension("KHR_materials_volume");
+				Dictionary mat_ior;
+				mat_ior["ior"] = base_material->get_transmission_ior();
+				extensions["KHR_materials_ior"] = mat_ior;
+				p_state->add_used_extension("KHR_materials_ior");
+			}
 		}
 		if (!extensions.is_empty()) {
 			mat_dict["extensions"] = extensions;
@@ -3030,8 +3051,19 @@ Error GLTFDocument::_parse_materials(Ref<GLTFState> p_state) {
 			}
 		}
 
+		if (material_extensions.has("KHR_materials_ior")) {
+			// The dielectric's reflectance follows its IOR: F0 = ((ior - 1) / (ior + 1))^2, and BaseMaterial3D's F0 is 0.16 * specular^2.
+			Dictionary ior_dict = material_extensions["KHR_materials_ior"];
+			const float ior = ior_dict.get("ior", 1.5f);
+			if (ior >= 1.0f) {
+				const float f0 = Math::pow((ior - 1.0f) / (ior + 1.0f), 2.0f);
+				material->set_specular(CLAMP(Math::sqrt(f0 / 0.16f), 0.0f, 1.0f));
+				material->set_transmission_ior(ior);
+			}
+		}
+
 		if (material_extensions.has("KHR_materials_transmission")) {
-			// Thin-walled transmission; KHR_materials_volume's refraction is not imported.
+			// KHR_materials_volume with a thickness turns the thin surface into the boundary of a medium.
 			Dictionary transmission = material_extensions["KHR_materials_transmission"];
 			const float factor = transmission.get("transmissionFactor", 0.0f);
 			if (factor > 0.0f) {
@@ -3041,6 +3073,19 @@ Error GLTFDocument::_parse_materials(Ref<GLTFState> p_state) {
 					const Dictionary &transmission_tex_dict = transmission["transmissionTexture"];
 					if (transmission_tex_dict.has("index")) {
 						material->set_texture(BaseMaterial3D::TEXTURE_TRANSMISSION, _get_texture(p_state, transmission_tex_dict["index"], TEXTURE_TYPE_GENERIC));
+					}
+				}
+				if (material_extensions.has("KHR_materials_volume")) {
+					Dictionary volume = material_extensions["KHR_materials_volume"];
+					if (float(volume.get("thicknessFactor", 0.0f)) > 0.0f) {
+						material->set_transmission_thin_walled(false);
+						const float attenuation_distance = volume.get("attenuationDistance", 0.0f);
+						const Array attenuation_color = volume.get("attenuationColor", Array());
+						if (attenuation_distance > 0.0f && attenuation_color.size() == 3) {
+							// glTF colours are linear; the material's are sRGB.
+							material->set_transmission_attenuation_color(Color(attenuation_color[0], attenuation_color[1], attenuation_color[2]).linear_to_srgb());
+							material->set_transmission_attenuation_distance(attenuation_distance);
+						}
 					}
 				}
 			}
@@ -7052,7 +7097,9 @@ HashSet<String> GLTFDocument::get_supported_gltf_extensions_hashset() {
 	supported_extensions.insert("KHR_animation_pointer");
 	supported_extensions.insert("KHR_lights_punctual");
 	supported_extensions.insert("KHR_materials_emissive_strength");
+	supported_extensions.insert("KHR_materials_ior");
 	supported_extensions.insert("KHR_materials_transmission");
+	supported_extensions.insert("KHR_materials_volume");
 	supported_extensions.insert("KHR_materials_pbrSpecularGlossiness");
 	supported_extensions.insert("KHR_materials_unlit");
 	supported_extensions.insert("KHR_node_visibility");

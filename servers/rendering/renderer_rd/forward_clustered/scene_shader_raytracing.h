@@ -150,6 +150,7 @@ public:
 	static constexpr uint32_t RT_MATERIAL_FEATURE_CLEARCOAT = 1; // rendering/pathtracing/clearcoat.
 	static constexpr uint32_t RT_MATERIAL_FEATURE_BACK_LIGHTING = 2; // rendering/pathtracing/back_lighting.
 	static constexpr uint32_t RT_MATERIAL_FEATURE_TRANSMISSION = 4; // rendering/pathtracing/transmission.
+	static constexpr uint32_t RT_MATERIAL_FEATURE_REFRACTION = 8; // rendering/pathtracing/refraction.
 	// Which path vertices receive decals (rendering/pathtracing/decals). Must match RT_DECAL_MODE_* in GLSL.
 	enum RTDecalMode {
 		RT_DECAL_MODE_ALL_HITS = 0,

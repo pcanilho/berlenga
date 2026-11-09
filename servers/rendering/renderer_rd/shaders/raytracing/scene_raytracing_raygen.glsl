@@ -508,6 +508,8 @@ void main() {
 		// 0 at a perspective eye, one pixel's footprint for an orthogonal camera, then grown by
 		// the pixel's spread angle over each segment traced.
 		float cone_width = rt_cone_eye_width();
+		// The medium the ray travels in (MEDIUM_CHANGE_FLAG): 0 outside any, where the camera is.
+		uint medium_code = 0u;
 #ifdef DLSS_RR_ENABLED
 		// Primary surface replacement this sample still owes (only sample 0 starts one).
 		bool replace_pending = false;
@@ -579,6 +581,21 @@ void main() {
 				ps.radiance += throughput_entry * vol_emitted;
 			}
 
+			// Beer-Lambert absorption of a segment inside a medium (refraction into RT_MAT_FLAG_VOLUME
+			// surfaces): the surface it reached, and all that surface sends back, is seen through it.
+			vec3 medium_transmittance = vec3(1.0);
+			if (medium_code != 0u && ps.hit_t > 0.0) {
+				medium_transmittance = rt_medium_transmittance(medium_code, ps.hit_t);
+				ps.radiance = radiance_pre + (ps.radiance - radiance_pre) * medium_transmittance;
+				ps.throughput *= medium_transmittance;
+			}
+			// The next segment starts in the medium the hit's continuation crossed into.
+			if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) != 0u) {
+				medium_code = floatBitsToUint(ps.bsdf_pdf);
+				ps.bsdf_pdf = 0.0;
+				ps.packed_bounces_flags &= ~MEDIUM_CHANGE_FLAG;
+			}
+
 			if (ps.hit_t > 0.0) {
 				cone_width += rt_cone_spread_angle() * ps.hit_t;
 			}
@@ -589,7 +606,8 @@ void main() {
 					rc_pos[rc_count] = ray_origin + ray_dir * ps.hit_t;
 					rc_normal[rc_count] = ps.offset_normal;
 					rc_radiance[rc_count] = radiance_pre;
-					rc_throughput[rc_count] = throughput_entry;
+					// The light it sent back reached the path through the medium, so it is read before that.
+					rc_throughput[rc_count] = throughput_entry * medium_transmittance;
 					rc_count++;
 					rc_recorded = true;
 				}
@@ -1423,6 +1441,11 @@ void main() {
 		// transparent casters give).
 		PathState shadow_ps = path_unpack(payload);
 		shadow_ps.throughput *= rt_material_shadow_transmittance(mat, hit_tint, hit_alpha, hit_layers, shadow_transmission, shadow_back_lighting);
+		if ((mat.flags & RT_MAT_FLAG_VOLUME) != 0u && rt_material_feature(RT_MATERIAL_FEATURE_REFRACTION) && !rt_triangle_front_facing(geom)) {
+			// Leaving a medium: the light was absorbed all the way from the shaded point (Beer-Lambert),
+			// taken straight, without the bend of refraction (transmit shadows).
+			shadow_ps.throughput *= rt_medium_transmittance(rt_material_medium(mat), gl_HitTEXT);
+		}
 		path_pack(payload, shadow_ps);
 		if (max(shadow_ps.throughput.r, max(shadow_ps.throughput.g, shadow_ps.throughput.b)) > 1e-3) {
 			ignoreIntersectionEXT;

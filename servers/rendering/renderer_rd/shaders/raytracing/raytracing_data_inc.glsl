@@ -95,6 +95,7 @@ struct InstanceMotionData {
 #define RT_MAT_FLAG_TRANSMISSIVE 1048576u // Transmission or Refraction: light passes through, see rt_material_transmission().
 #define RT_MAT_FLAG_BACKLIT 2097152u // BaseMaterial3D back lighting: shadow rays keep the light it passes through.
 #define RT_MAT_FLAG_CUSTOM_TRANSMITTANCE 4194304u // Custom TRANSMISSION or BACKLIGHT: the any-hit evaluates the fragment for shadow rays.
+#define RT_MAT_FLAG_VOLUME 8388608u // Transmission, thin_walled off: the surface bounds a medium, see rt_material_ior(), rt_material_medium().
 
 // Multi-bit fields fill the top bits so new single-bit flags can grow upward.
 // Blend class of transparent surfaces (bits 25-27). Opaque surfaces leave 0.
@@ -147,14 +148,14 @@ struct MaterialData {
 	uint uv2_scale_offset_z; // fp16x2: scale.z, offset.z (modulo 1).
 	uint metallic_texture; // texture_metallic, or texture_orm for ORMMaterial3D.
 	uint ao_texture; // AO texture when AO is enabled; 0 (white) otherwise.
-	uint emission_indirect_transmission; // Bits 0-15 fp16 emission_indirect_energy, 16-23 transmission (unorm8).
+	uint emission_indirect_transmission; // Bits 0-15 fp16 emission_indirect_energy, 16-23 transmission (unorm8), 24-31 IOR.
 
 	// BaseMaterial3D layer textures, 0 (white) when absent. See material_clearcoat(), material_backlight(),
 	// material_transmission().
 	uint clearcoat_texture; // Red scales clearcoat, green clearcoat_roughness.
 	uint backlight_texture; // Added to the back light colour, as raster.
 	uint transmission_texture; // Red scales transmission.
-	uint reserved;
+	uint medium; // With RT_MAT_FLAG_VOLUME: the medium code of the volume it bounds, see rt_medium_absorption().
 };
 
 // Bindless index of a MaterialData *_texture.
@@ -200,6 +201,16 @@ float rt_material_emission_indirect(MaterialData p_mat) {
 // BaseMaterial3D transmission (or 1 with RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA).
 float rt_material_transmission(MaterialData p_mat) {
 	return unpackUnorm4x8(p_mat.emission_indirect_transmission).z;
+}
+
+// Index of refraction of the medium an RT_MAT_FLAG_VOLUME surface bounds (1 to 3).
+float rt_material_ior(MaterialData p_mat) {
+	return 1.0 + 2.0 * unpackUnorm4x8(p_mat.emission_indirect_transmission).w;
+}
+
+// Medium code of the volume an RT_MAT_FLAG_VOLUME surface bounds; never 0 (C++ rt_medium_code()).
+uint rt_material_medium(MaterialData p_mat) {
+	return p_mat.medium;
 }
 
 // BaseMaterial3D clearcoat and clearcoat_roughness (x, y); x is 0 without the coat.

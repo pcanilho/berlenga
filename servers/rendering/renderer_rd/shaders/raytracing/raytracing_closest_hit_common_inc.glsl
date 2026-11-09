@@ -1090,7 +1090,18 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 		if (rand(ps.rng_state) < p_trans) {
 			vec3 trans_dir;
 			vec3 trans_weight;
-			if (!sampleThinTransmission(rand2(ps.rng_state), N, h.geometry_normal, V, material, trans_dir, trans_weight)) {
+			MaterialData medium_mat = rt_entry_material(h.geometry_idx);
+			bool volume = (medium_mat.flags & RT_MAT_FLAG_VOLUME) != 0u && rt_material_feature(RT_MATERIAL_FEATURE_REFRACTION) &&
+					(ps.packed_bounces_flags & PEEL_RAY_FLAG) == 0u;
+			bool refracted = true;
+			if (volume) {
+				// Into the medium through a front face, out of it through a back face (raygen tracks it).
+				float ior = rt_material_ior(medium_mat);
+				if (!sampleDielectricRefraction(rand2(ps.rng_state), N, h.geometry_normal, V, material, h.is_front_face ? 1.0 / ior : ior,
+							trans_dir, trans_weight, refracted)) {
+					return false;
+				}
+			} else if (!sampleThinTransmission(rand2(ps.rng_state), N, h.geometry_normal, V, material, trans_dir, trans_weight)) {
 				return false;
 			}
 			ps.throughput *= trans_weight / p_trans;
@@ -1098,9 +1109,14 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 			if (material.roughness > SINGULAR_ROUGHNESS_MAX) {
 				ps.packed_bounces_flags |= NON_SINGULAR_PATH_FLAG;
 			}
-			ps.offset_normal = -h.geometry_normal;
+			ps.offset_normal = refracted ? -h.geometry_normal : h.geometry_normal;
 			ps.next_ray_dir = trans_dir;
 			ps.bsdf_pdf = 0.0;
+			if (volume && refracted) {
+				// The ray crossed the surface: raygen takes the medium it is in now from bsdf_pdf.
+				ps.packed_bounces_flags |= MEDIUM_CHANGE_FLAG;
+				ps.bsdf_pdf = uintBitsToFloat(h.is_front_face ? rt_material_medium(medium_mat) : 0u);
+			}
 			return true;
 		}
 		ps.throughput /= 1.0 - p_trans;

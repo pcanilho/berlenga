@@ -47,6 +47,7 @@
 #define RT_MATERIAL_FEATURE_CLEARCOAT 1u // rendering/pathtracing/clearcoat
 #define RT_MATERIAL_FEATURE_BACK_LIGHTING 2u // rendering/pathtracing/back_lighting
 #define RT_MATERIAL_FEATURE_TRANSMISSION 4u // rendering/pathtracing/transmission
+#define RT_MATERIAL_FEATURE_REFRACTION 8u // rendering/pathtracing/refraction
 
 // RT_PARAM_VIS_MODE values. Must match Environment::PathtracingDebugMode.
 #define RT_VIS_TRANSPARENCY_LAYERS 23
@@ -190,6 +191,22 @@ uint get_diffuse_bounces(uint packed) {
 
 // Set once the path has scattered through anything but a (near-)singular lobe.
 const uint NON_SINGULAR_PATH_FLAG = (1u << 15);
+// Hit output on non-peel rays: the continuation crossed a medium's surface (RT_MAT_FLAG_VOLUME), and
+// bsdf_pdf holds the medium code the ray is in now (0: none) instead of a density. Raygen clears both.
+const uint MEDIUM_CHANGE_FLAG = (1u << 17);
+
+// Absorption coefficients (per metre) of medium code p_code (C++ rt_medium_code()): 9-bit log codes per channel.
+vec3 rt_medium_absorption(uint p_code) {
+	uvec3 c = uvec3(p_code, p_code >> 9u, p_code >> 18u) & 511u;
+	vec3 sigma = exp2(-12.0 + 24.0 * (vec3(c) - 1.0) / 510.0);
+	return mix(vec3(0.0), sigma, greaterThan(c, uvec3(0u)));
+}
+
+// Beer-Lambert transmittance through p_distance of medium p_code (1 outside any medium, code 0).
+vec3 rt_medium_transmittance(uint p_code, float p_distance) {
+	return p_code == 0u ? vec3(1.0) : exp(-rt_medium_absorption(p_code) * max(p_distance, 0.0));
+}
+
 #define SINGULAR_ROUGHNESS_MAX 0.05
 bool is_singular_path(uint packed) {
 	return (packed & NON_SINGULAR_PATH_FLAG) == 0u;

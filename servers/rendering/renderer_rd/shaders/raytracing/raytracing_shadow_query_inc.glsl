@@ -6,6 +6,7 @@
 #ifndef RT_SHADOW_QUERY_TRANSMISSION
 #define RT_SHADOW_QUERY_TRANSMISSION rt_material_feature(RT_MATERIAL_FEATURE_TRANSMISSION)
 #define RT_SHADOW_QUERY_BACK_LIGHTING rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING)
+#define RT_SHADOW_QUERY_REFRACTION rt_material_feature(RT_MATERIAL_FEATURE_REFRACTION)
 #endif
 
 // UV1 of a candidate hit with the material's scale and offset.
@@ -76,6 +77,11 @@ vec3 ray_query_shadow_transmittance(vec3 origin, vec3 direction, float t_min, fl
 					}
 				}
 				transmittance *= rt_material_shadow_transmittance(mat, surface.rgb, surface.a, layers, trans, back);
+				bool front = rayQueryGetIntersectionFrontFaceEXT(shadow_rq, false) != ((geometries[geometry_idx].flags & FLAG_FACING_INVERTED) != 0u);
+				if (trans && (mat_flags & RT_MAT_FLAG_VOLUME) != 0u && RT_SHADOW_QUERY_REFRACTION && !front) {
+					// Leaving a medium: absorbed from the origin on (Beer-Lambert), as the any-hit shader does.
+					transmittance *= rt_medium_transmittance(rt_material_medium(mat), rayQueryGetIntersectionTEXT(shadow_rq, false));
+				}
 				if (max(transmittance.r, max(transmittance.g, transmittance.b)) <= 1e-3) {
 					rayQueryConfirmIntersectionEXT(shadow_rq);
 				}

@@ -438,11 +438,24 @@
 			How much light passes straight through the surface, as thin glass does ([code]KHR_materials_transmission[/code] in glTF). The light behind is tinted by the albedo and reduced by what the surface reflects; roughness blurs it. Unlike [member transparency], the surface itself is fully present: it reflects light and is lit at full strength. Multiplied by the red channel of [member transmission_texture].
 			In the rasterizer the scene behind the surface is read from the screen, as [member refraction_enabled] does, so other transparent objects behind it are not seen through it. The path tracer traces the light through it, with tinted shadows; see [member ProjectSettings.rendering/pathtracing/transmission].
 		</member>
+		<member name="transmission_attenuation_color" type="Color" setter="set_transmission_attenuation_color" getter="get_transmission_attenuation_color" default="Color(1, 1, 1, 1)">
+			The colour white light turns after travelling [member transmission_attenuation_distance] inside the medium ([code]attenuationColor[/code] of glTF's [code]KHR_materials_volume[/code]). Light is absorbed exponentially with the distance it travels (Beer-Lambert), so deeper water is darker and more strongly tinted. Pure water keeps about [code]Color(0.70, 0.94, 0.99)[/code] in linear colour after one metre: red is absorbed first, which is why clear water turns blue-green with depth. Only used when [member transmission_thin_walled] is [code]false[/code].
+		</member>
+		<member name="transmission_attenuation_distance" type="float" setter="set_transmission_attenuation_distance" getter="get_transmission_attenuation_distance" default="0.0">
+			The distance in metres at which white light inside the medium has turned [member transmission_attenuation_color]. [code]0.0[/code] absorbs nothing. Only used when [member transmission_thin_walled] is [code]false[/code].
+		</member>
 		<member name="transmission_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
 			If [code]true[/code], light passes through the surface as through thin glass. See [member transmission_amount].
 		</member>
+		<member name="transmission_ior" type="float" setter="set_transmission_ior" getter="get_transmission_ior" default="1.5">
+			Index of refraction of the medium behind the surface ([code]KHR_materials_ior[/code] in glTF): 1.33 for water, 1.5 for glass. Light bends by it where it enters and leaves, and from inside it reflects completely past the critical angle (total internal reflection). It does not change the surface's reflectance, which [member metallic_specular] sets: for water, a specular of [code]0.354[/code] gives its 2% reflectance head-on. Only used when [member transmission_thin_walled] is [code]false[/code].
+		</member>
 		<member name="transmission_texture" type="Texture2D" setter="set_texture" getter="get_texture">
 			Texture whose red channel scales [member transmission_amount] per pixel.
+		</member>
+		<member name="transmission_thin_walled" type="bool" setter="set_transmission_thin_walled" getter="is_transmission_thin_walled" default="true">
+			If [code]true[/code], the surface is thin, like a window pane: light passes straight through it. If [code]false[/code], the surface bounds a solid or liquid medium, like water or a glass block ([code]KHR_materials_volume[/code] in glTF): light bends by [member transmission_ior] where it enters and is absorbed inside by [member transmission_attenuation_color] and [member transmission_attenuation_distance]. The mesh should be closed, or close the medium with opaque geometry, such as a pool's floor and walls under a water surface.
+			In the rasterizer the scene behind is read from the screen at the refracted position, and darkened and tinted by the depth behind the surface in the depth buffer. The path tracer refracts every ray into and out of the medium and absorbs it inside; see [member ProjectSettings.rendering/pathtracing/refraction].
 		</member>
 		<member name="transparency" type="int" setter="set_transparency" getter="get_transparency" enum="BaseMaterial3D.Transparency" default="0">
 			The material's transparency mode. Some transparency modes will disable shadow casting. Any transparency mode other than [constant TRANSPARENCY_DISABLED] has a greater performance impact compared to opaque rendering. See also [member blend_mode].
