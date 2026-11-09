@@ -212,6 +212,7 @@ Target: tens of thousands of objects over kilometres, mostly static.
 - **Off-screen culling** (`rendering/pathtracing/cull_max_distance`, `cull_min_size`): small or distant unseen objects leave the trace.
 - **Opacity micromaps** (`rendering/pathtracing/opacity_micromaps`): cut-out foliage traced without any-hit shaders.
 - **Mesh LOD in the path tracer** (`rendering/pathtracing/mesh_lod`).
+- **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 
 Settings for a large world, in `project.godot`:
 
