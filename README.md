@@ -15,7 +15,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Lights**: 4096 path-traced lights (upstream 64); emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering, hair; textures filter like raster.
-- **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, camera under water.
+- **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
 - **Physics**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
 - **Open worlds**: camera-relative tracing, persistent instances, culling, mesh LOD.
@@ -86,6 +86,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Caustics** (`rendering/pathtracing/caustics`): sunlight lines under rippled water.
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 - **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
+- **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows and breaks on the beach.
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
 - **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
@@ -94,6 +95,7 @@ Each feature that changes the look or the cost can be turned off with the settin
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
   - Joins lakes, the sea and other rivers (`mouth_target`), ponding to the water level; tributaries add their flow.
   - Waterfalls (`fall_min_height`): a falling sheet that thins, whitens and breaks up, with a boiling pool and spray.
+  - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
 - **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
 <details><summary>Images and clips: murky water, caustics, ocean, currents, live flow, white water, rivers, under water</summary>
@@ -113,6 +115,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Open sea with one wave layer and with three](docs/media/ocean-swell.jpg)
 
 *Ocean swell: one layer repeats the same foam patches; three layers add long swell.*
+
+![Waves breaking on a beach, raster](docs/media/shore-waves.gif)
+
+*Shore waves: swell breaks into foam on the beach.*
 
 ![Floating boxes drift on a current past a rock](docs/media/currents.gif)
 
