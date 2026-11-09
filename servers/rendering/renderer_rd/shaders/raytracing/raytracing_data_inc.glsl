@@ -68,7 +68,7 @@ struct InstanceMotionData {
 };
 
 // ============================================================================
-// MATERIAL DATA (matches C++ layout, 144 bytes)
+// MATERIAL DATA (matches C++ layout, 160 bytes)
 // ============================================================================
 
 // MaterialData::flags bits (must match RT_MAT_FLAG_* in render_raytracing.h).
@@ -155,7 +155,11 @@ struct MaterialData {
 	uint clearcoat_texture; // Red scales clearcoat, green clearcoat_roughness.
 	uint backlight_texture; // Added to the back light colour, as raster.
 	uint transmission_texture; // Red scales transmission.
-	uint medium; // With RT_MAT_FLAG_VOLUME: the medium code of the volume it bounds, see rt_medium_absorption().
+	uint medium; // With RT_MAT_FLAG_VOLUME: the extinction code of the volume it bounds, see rt_medium_absorption().
+	uint scatter; // unorm8x4: single-scatter albedo of that volume (rgb) and (g + 1) / 2 of its phase. See rt_material_scatter().
+	uint reserved0;
+	uint reserved1;
+	uint reserved2;
 };
 
 // Bindless index of a MaterialData *_texture.
@@ -201,6 +205,12 @@ float rt_material_emission_indirect(MaterialData p_mat) {
 // BaseMaterial3D transmission (or 1 with RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA).
 float rt_material_transmission(MaterialData p_mat) {
 	return unpackUnorm4x8(p_mat.emission_indirect_transmission).z;
+}
+
+// Single-scatter albedo (rgb) and Henyey-Greenstein g (w) of the volume an RT_MAT_FLAG_VOLUME surface bounds.
+vec4 rt_material_scatter(MaterialData p_mat) {
+	vec4 s = unpackUnorm4x8(p_mat.scatter);
+	return vec4(s.rgb, s.a * 2.0 - 1.0);
 }
 
 // Index of refraction of the medium an RT_MAT_FLAG_VOLUME surface bounds (1 to 3).

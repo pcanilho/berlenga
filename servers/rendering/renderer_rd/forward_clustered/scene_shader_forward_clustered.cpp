@@ -1026,6 +1026,8 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["EMISSION"] = "emission";
 		actions.renames["EMISSION_INDIRECT"] = "emission_indirect";
 		actions.renames["TRANSMISSION"] = "transmission";
+		actions.renames["IOR"] = "ior";
+		actions.renames["ABSORPTION"] = "absorption";
 		actions.renames["POINT_COORD"] = "point_coord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";
 		actions.renames["SCREEN_UV"] = "screen_uv";
