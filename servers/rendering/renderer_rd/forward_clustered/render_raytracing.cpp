@@ -649,6 +649,9 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (p_state->radiance_cache_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->radiance_cache_buffer);
 	}
+	if (p_state->caustics_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(p_state->caustics_buffer);
+	}
 	if (p_state->params_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->params_buffer);
 	}
@@ -7128,6 +7131,24 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transmission") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_TRANSMISSION : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_REFRACTION : 0u));
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
+		// Water caustics (raytracing_caustics_inc.glsl): the slot written turns every frame; the
+		// shader centres the map's square on what the camera looked at.
+		if (p_state && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/caustics") && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction")) {
+			if (!p_state->caustics_buffer.is_valid()) {
+				Vector<uint8_t> zeros;
+				zeros.resize(RT_CAUSTICS_UINTS * sizeof(uint32_t));
+				zeros.fill(0);
+				p_state->caustics_buffer = RD::get_singleton()->storage_buffer_create(zeros.size(), zeros);
+				RD::get_singleton()->set_resource_name(p_state->caustics_buffer, "RT Caustics");
+				p_state->caustics_history = false;
+			}
+			p_state->caustics_slot = (p_state->caustics_slot + 1) % 3;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CAUSTICS_STATE] = float(1u + p_state->caustics_slot + (p_state->caustics_history ? 4u : 0u));
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CAUSTICS_SIZE] = MAX(1.0f, (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/caustics_area"));
+			p_state->caustics_history = true;
+		} else if (p_state) {
+			p_state->caustics_history = false;
+		}
 		// Color backgrounds, as the raster clear (render_forward_clustered.cpp): camera rays that
 		// miss show them instead of the radiance map, which holds no sky here.
 		if (p_render_data && owner->is_environment(p_render_data->environment) && !p_render_data->transparent_bg) {
@@ -7317,6 +7338,16 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		u.binding = 45;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		u.append_id(p_state->radiance_cache_buffer);
+		uniforms.push_back(u);
+	}
+
+	// Binding 46: the water caustics map (SSBO; raytracing_caustics_inc.glsl). A small stand-in
+	// until caustics are first enabled.
+	{
+		RD::Uniform u;
+		u.binding = 46;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(p_state->caustics_buffer.is_valid() ? p_state->caustics_buffer : RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		uniforms.push_back(u);
 	}
 

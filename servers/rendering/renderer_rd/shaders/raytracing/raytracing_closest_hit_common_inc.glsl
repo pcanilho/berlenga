@@ -53,6 +53,10 @@ void rt_texture_cone(in GeometryData geom, vec3 world_normal) {
 	rt_cone_footprint_log2 = RT_TEXTURE_LOD_BASE;
 	rt_cone_uv_grad = false;
 	float width = payload_cone_width(payload, rt_cone_eye_width()) + rt_cone_spread_angle() * gl_HitTEXT;
+	if ((payload.packed_bounces_flags & (CAUSTIC_PHOTON_FLAG | PEEL_RAY_FLAG)) == CAUSTIC_PHOTON_FLAG) {
+		// Caustic photons start far up the sun's direction: their width is the map's texel, not a pixel's cone.
+		width = payload_cone_width(payload, 0.0);
+	}
 	if (width <= 0.0) {
 		return;
 	}
@@ -1345,6 +1349,27 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	vec3 N = clampShadingNormal(m.normal, h.geometry_normal, V, RT_SHADING_NORMAL_CLAMP_THRESHOLD);
 	float NdotV = max(dot(N, V), 0.0001);
 
+	if ((ps.packed_bounces_flags & (CAUSTIC_PHOTON_FLAG | PEEL_RAY_FLAG)) == CAUSTIC_PHOTON_FLAG) {
+		// A caustic photon (raytracing_caustics_inc.glsl): report the surface, shade nothing.
+		ps.packed_bounces_flags &= ~MEDIUM_CHANGE_FLAG;
+		ps.bsdf_pdf = 0.0;
+		ps.offset_normal = h.geometry_normal;
+		if (m.transmission > 0.0 && m.ior >= 1.0 && rt_material_feature(RT_MATERIAL_FEATURE_REFRACTION)) {
+			ps.packed_bounces_flags |= MEDIUM_CHANGE_FLAG;
+			ps.offset_normal = -h.geometry_normal;
+			ps.next_ray_dir = gl_WorldRayDirectionEXT;
+			if (h.is_front_face) {
+				vec3 t = refract(gl_WorldRayDirectionEXT, N, 1.0 / m.ior);
+				if (dot(t, t) > 0.0) {
+					ps.next_ray_dir = normalize(t);
+					ps.bsdf_pdf = 1.0;
+				}
+			}
+		}
+		path_pack(payload, ps);
+		return;
+	}
+
 #ifdef DLSS_RR_ENABLED
 	if ((ps.packed_bounces_flags & GUIDE_RAY_FLAG) != 0u) {
 		dlss_rr_guide_hit(h, m, N, V, NdotV, ps.packed_bounces_flags);
@@ -1435,10 +1460,11 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	// Radiance cache: a rough surface a bounce reaches reads all it sends back, its own light
 	// included, from the cell around it, and the path ends. Training pixels shade and trace
 	// on, and raygen records what this surface sent back (raytracing_radiance_cache_inc.glsl).
+	// Points under water caustics shade on, since a cell would average the lines away.
 	bool rc_eligible = total_bounces == 1u && m.roughness >= RT_RC_MIN_ROUGHNESS && rt_rc_enabled();
 	bool rc_training = rc_eligible && rt_rc_is_training_pixel(gl_LaunchIDEXT.xy);
 	if (rc_eligible && !rc_training && !is_singular_path(ps.packed_bounces_flags) &&
-			gl_HitTEXT >= 0.5 * rt_rc_cell_size(h.hit_pos)) {
+			gl_HitTEXT >= 0.5 * rt_rc_cell_size(h.hit_pos) && !rt_caustics_covers(h.hit_pos)) {
 		vec4 cached = rt_rc_read(h.hit_pos, h.geometry_normal);
 		if (cached.w > 0.0) {
 			ps.radiance += ps.throughput * cached.rgb;

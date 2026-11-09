@@ -17,8 +17,13 @@ extends Node3D
 #                     --water=murky: the same pool with lake water that scatters (Transmission scatter,
 #                     glTF KHR_materials_scatter); --water=shader: clear water from a ShaderMaterial writing
 #                     TRANSMISSION, IOR and ABSORPTION
+#                     caustics: the same pool's shallow half from above (use with --ripples);
+#                     caustics_far: the same from 70 m through a long lens
+#                     --ripples: a rippled surface (normal map, or NORMAL_MAP in the shader), which
+#                     gathers the sun into caustics on the floor (rendering/pathtracing/caustics)
 #                     water_depths: unshaded white tiles under 0.25, 0.5, 1, 2 and 4 m of water, seen straight
 #                     down in an orthogonal view with linear tone mapping, to read Beer-Lambert off the pixels
+#   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
 #   --raster          raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
 #   --frames=N        frames rendered before --out is saved (default 8)
@@ -36,6 +41,8 @@ var bounces := 3
 var frames := 8
 var out := ""
 var water := "clear"
+var ripples := false
+var debug_mode := 0
 var n := 0
 
 
@@ -48,6 +55,8 @@ func _ready() -> void:
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--water="): water = a.substr(8)
+		elif a == "--ripples": ripples = true
+		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":", true, 1)
 			ProjectSettings.set_setting(kv[0], str_to_var(kv[1]))
@@ -62,6 +71,7 @@ func _ready() -> void:
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = bounces
+	env.pathtracing_debug_mode = debug_mode
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -101,6 +111,19 @@ func _ready() -> void:
 			ground.visible = false
 			sun.rotation_degrees = Vector3(-55, -150, 0)
 			cam.look_at_from_position(Vector3(0, 5.5, 7.5), Vector3(0, -1.2, 0))
+			_water_pool()
+		"caustics":
+			# The pool's shallow half from above, with --ripples.
+			ground.visible = false
+			sun.rotation_degrees = Vector3(-60, -150, 0)
+			cam.look_at_from_position(Vector3(-1.0, 4.0, 2.2), Vector3(-1.0, -1.0, 0.0))
+			_water_pool()
+		"caustics_far":
+			# The same pool from 70 m away through a long lens, as an isometric game camera sees it.
+			ground.visible = false
+			sun.rotation_degrees = Vector3(-60, -150, 0)
+			cam.fov = 6
+			cam.look_at_from_position(Vector3(-1.0, 50.0, 48.0), Vector3(-1.0, -1.0, 0.0))
 			_water_pool()
 		"water_depths":
 			ground.visible = false
@@ -283,8 +306,18 @@ void fragment() {
 	TRANSMISSION = 1.0;
 	IOR = 1.33;
 	ABSORPTION = vec3(0.35, 0.06, 0.01);
+	if (RIPPLES) {
+		// Three crossing sine swells, about 0.5 to 0.9 m long.
+		vec2 p = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xz;
+		vec2 g = vec2(0.0);
+		g += 0.18 * vec2(1.0, 0.3) * cos(dot(p, vec2(1.0, 0.3)) * 7.0);
+		g += 0.14 * vec2(-0.4, 1.0) * cos(dot(p, vec2(-0.4, 1.0)) * 9.0 + 1.3);
+		g += 0.1 * vec2(0.7, -0.7) * cos(dot(p, vec2(0.7, -0.7)) * 12.0 + 2.1);
+		NORMAL_MAP = normalize(vec3(-g.x, -g.y, 1.0)) * 0.5 + 0.5;
+	}
 }
 """
+		sh.code = sh.code.replace("RIPPLES", "true" if ripples else "false")
 		sm.shader = sh
 		return sm
 	var w := StandardMaterial3D.new()
@@ -295,6 +328,10 @@ void fragment() {
 	w.transmission_ior = 1.33
 	w.transmission_attenuation_color = Color(exp(-0.35), exp(-0.06), exp(-0.01)).linear_to_srgb()
 	w.transmission_attenuation_distance = 1.0
+	if ripples:
+		w.normal_enabled = true
+		w.normal_texture = _ripple_normal_map()
+		w.uv1_scale = Vector3(4.0, 4.0 / 1.5, 1.0) # 1.5 m tiles on the 6 x 4 m pool.
 	if water == "murky":
 		# Green lake water: light fades within a few metres and much of it scatters back.
 		w.transmission_attenuation_color = Color(0.55, 0.72, 0.6)
@@ -303,6 +340,31 @@ void fragment() {
 		w.transmission_scatter_color = Color(0.45, 0.62, 0.5)
 		w.transmission_scatter_anisotropy = 0.6
 	return w
+
+
+# A 1.5 m tile of three crossing swells (periodic, so it repeats): slopes up to about 0.3.
+func _ripple_normal_map() -> ImageTexture:
+	var n_px := 256
+	var waves := [Vector3(2, 1, 0.26), Vector3(-1, 2, 0.22), Vector3(3, -2, 0.14)] # tile cycles x, y; slope
+	var data := PackedByteArray()
+	data.resize(n_px * n_px * 3)
+	var i := 0
+	for y in n_px:
+		for x in n_px:
+			var gx := 0.0
+			var gy := 0.0
+			for wv: Vector3 in waves:
+				var c: float = wv.z * cos(TAU * (wv.x * x + wv.y * y) / n_px + wv.x) / Vector2(wv.x, wv.y).length()
+				gx += wv.x * c
+				gy += wv.y * c
+			var n := Vector3(-gx, -gy, 1.0).normalized()
+			data[i] = int((n.x * 0.5 + 0.5) * 255.0)
+			data[i + 1] = int((n.y * 0.5 + 0.5) * 255.0)
+			data[i + 2] = int((n.z * 0.5 + 0.5) * 255.0)
+			i += 3
+	var img := Image.create_from_data(n_px, n_px, false, Image.FORMAT_RGB8, data)
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
 
 
 func _box(p_size: Vector3, p_pos: Vector3, p_mat: Material, p_rot := Vector3.ZERO) -> void:
