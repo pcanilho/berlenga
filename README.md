@@ -15,7 +15,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Many lights**: 4096 path-traced lights (upstream 64), emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting and thin-glass transmission in the path tracer; textures filter like raster.
-- **Water**: refraction, depth tint, murky water and caustics in the path tracer.
+- **Water**: refraction, depth tint, murky water, caustics and a path-traced ocean.
 - **Exposure**: histogram metering and local exposure that keep night scenes dark.
 - **Physics**: PhysX 5 next to Jolt, with cloth, tearing, destruction and path-traced smoke.
 - **Open worlds**: far-origin precision, persistent ray tracing instances, mesh LOD in the tracer.
@@ -78,6 +78,16 @@ Look at the green glow filling the deep end.
 ![A rippled pool path traced: with caustics off the floor is evenly lit; with them on bright wavy lines of sunlight cross the floor and posts](docs/media/caustics.jpg)
 
 Look at the bright lines on the pool floor.
+
+</details>
+
+- **Path-traced ocean**: `PhysXWaterSurface3D` is real water under path tracing, bending light through the waves, tinting with depth and catching sun caustics on the seabed (material `pathtraced_absorption`, `pathtraced_roughness`; caustics via `rendering/pathtracing/caustics`).
+
+<details><summary>Image: ocean shallows, raster vs path traced</summary>
+
+![Looking down into shallow waves with floating crates: raster shows a flat grey-blue surface; path traced shows the sand through the water with caustic light on it](docs/media/ocean.jpg)
+
+Look at the sand showing through the water and the caustic light on it.
 
 </details>
 
