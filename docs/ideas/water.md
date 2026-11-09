@@ -457,6 +457,74 @@ Transmission section's scatter is material-only); a shader `SCATTER` output is t
    while none bend in from outside, so the bent/straight ratio dipped into a dark line on the sand.
    The ratio now fades to the plain sun over the outer 8% of the map.
 
+## Step 3b as built: baked flow (9 Nov)
+
+Paulo picked baked flow everywhere plus a live shallow-water solve near the player; this is the baked
+half.
+
+- **`current`** (m/s) on `PhysXWaterSurface3D`. With a measured seabed (`seabed_from_floor`, or a
+  `surface_mesh` footprint) the flow over the simulated square is solved once, on the CPU, when the
+  seabed or the current changes: the depth-weighted stream function above, `div(grad(psi) / h) = 0`
+  by SOR, dry cells as walls (each dry patch one psi value: banks take theirs from the square's edge,
+  islands the value that sends no net flow round them, updated Gauss-Seidel after each sweep or the
+  two fight and diverge), the square's edge integrating the current's flux with inflow and outflow
+  scaled to match. About 400 sweeps on a 160 x 160 grid, about 90 ms. Velocity `(dpsi/dz, -dpsi/dx) / h`, depth
+  floored at 25 cm and speed capped at 4x the current. Past the square, and without a seabed, the
+  flow is the current.
+- **The surface is carried along it.** Every ocean texture read (height, choppy displacement,
+  slopes, foam) goes through two-phase flow: two copies offset along the local flow for one
+  `flow_period` (2 s) each and restarted half a period apart, weights `1 - |1 - 2p|`, the phase
+  shifted by low-frequency noise so the restarts don't pulse in step. The foam lace is carried with
+  the same phases. The CPU `sample_height()` does the same, so floaters ride the drawn waves.
+- **Buoyancy in the current.** `PhysXBuoyancy3D` drags against `v_body - sample_flow()`, so floaters
+  drift downstream and turn round rocks with the flow. On the bench (`--view=river --current=1,0`) the
+  boxes drift about 3 m in the first 10 s, accelerating towards the current.
+- Path tracing reads the same shader, so the moving surface is the same there.
+
+Not yet: wakes and eddies behind rocks (potential flow has none; the live solve brings them), foam
+spawned where the flow speeds up, and the ripple layer is still not advected.
+
+## The full live version (documented, not built)
+
+Paulo asked for this to be written down: the whole river, lake and flooded street as a live
+shallow-water simulation, the way Fluid Flux does it in Unreal, rather than only a window near the
+player.
+
+**What it would do that the chosen design can't:** water that changes volume and goes where the
+ground lets it. A river rising in a storm and spilling over its banks, a dam breaking, rain filling
+a street and draining into gutters, a tide coming in over flats, a ship's bow wave reaching both
+banks, debris piling up and backing the water up behind it.
+
+**Method.** Chentanez and Müller 2010 on the GPU: water height and velocity per cell on a grid over
+the terrain heightfield; semi-Lagrangian advection of velocity, height from the divergence of the
+flux, their overshoot fix at steep fronts, wet/dry fronts that move. Two-way coupling with PhysX
+bodies (bodies displace water and feel its drag and buoyancy, as `submit_sphere()` and
+`PhysXBuoyancy3D` already do), particles spawned where the surface breaks (PhysX PBD particles or
+`PhysXWaterSpray3D`), NVIDIA Flow mist over falls. Where a 3D effect is needed (a waterfall's
+plunge) Chentanez, Müller and Kim 2014 add a local 3D grid.
+
+**Making it fit an open world.**
+- *Sparse tiles:* only tiles with water, or next to it, exist and step; a river 5 km long and 30 m
+  wide at 0.5 m cells is about 600,000 cells, a few milliseconds a step on a desktop GPU, far less
+  than a dense grid over the map.
+- *Level of detail:* fine cells near the player, coarser further out, and tiles past a few hundred
+  metres stepped less often (or frozen to their baked state) since nobody sees the difference.
+- *Streaming:* tiles saved with the world chunk and restored on load; a river's sources keep
+  feeding water in at fixed rates so it settles back to its baked state when nothing disturbs it.
+- *Rendering and physics:* the surface reads tile height and velocity instead of the baked flow;
+  the path tracer reads it through the same shader; `sample_height()` / `sample_flow()` read a CPU
+  copy of the tiles near bodies.
+
+**Costs and risks.** GPU time every frame for water nobody is looking at, memory for every wet tile,
+stability at high speeds (the CFL limit makes fast rapids need small steps), and save-game size. It
+also makes water nondeterministic across machines unless stepped in fixed point, which matters for
+multiplayer.
+
+**Path from the chosen design.** The live window near the player (next step) is this same solver on
+one tile set; turning it into the full version is mostly the tile manager (allocation, LOD,
+streaming) around it, plus sources and sinks. Hand-placed live areas (a flood scene, a hero river)
+are the step between: the same tiles, only where a level designer marks them.
+
 ## Sources
 
 - Chentanez and Müller, Real-time Simulation of Large Bodies of Water with Small Scale Details, SCA
