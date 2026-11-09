@@ -61,7 +61,7 @@ Look at the floor under the glass and cards, the highlights on the spheres, and 
 *Refraction off, then on: the posts shift where they enter the water and the floor darkens and tints with depth.*
 
 - **Refraction** (`rendering/pathtracing/refraction`): water and glass blocks (Transmission, thin-walled off) bend light by their IOR, reflect it totally at grazing angles, and darken and tint with depth; glTF `KHR_materials_volume` and `KHR_materials_ior`.
-- **Murky water** (same setting): Transmission media scatter light (strength, colour, anisotropy; glTF `KHR_materials_scatter` draft); shaders can write `IOR` and `ABSORPTION`.
+- **Murky water** (same setting): Transmission media scatter light (strength, colour, anisotropy; glTF `KHR_materials_scatter` draft); shaders can write `IOR`, `ABSORPTION` and `SCATTERING`.
 
 <details><summary>Image: clear vs murky water</summary>
 
@@ -81,7 +81,7 @@ Look at the bright lines on the pool floor.
 
 </details>
 
-- **Path-traced ocean**: `PhysXWaterSurface3D` is real water under path tracing, bending light through the waves, tinting with depth and catching sun caustics on the seabed (material `pathtraced_absorption`, `pathtraced_roughness`; caustics via `rendering/pathtracing/caustics`).
+- **Path-traced ocean**: `PhysXWaterSurface3D` is real water under path tracing, bending light through the waves, tinting with depth, scattering blue in deep water and catching sun caustics on the seabed (material `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`; caustics via `rendering/pathtracing/caustics`).
 
 <details><summary>Image: ocean shallows, raster vs path traced</summary>
 
