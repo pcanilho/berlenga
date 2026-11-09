@@ -34,7 +34,7 @@ const COLOR_SHADER := """
 shader_type spatial;
 render_mode cull_disabled;
 void vertex() {
-	COLOR = vec4(fract(VERTEX.x * 0.5), 0.3, 1.0 - fract(VERTEX.x * 0.5), 1.0);
+	COLOR = vec4(0.5 + 0.5 * sin(VERTEX.x * 1.3), 0.3, 0.5 - 0.5 * sin(VERTEX.x * 1.3), 1.0);
 	VERTEX.x += 0.75;
 }
 void fragment() {
