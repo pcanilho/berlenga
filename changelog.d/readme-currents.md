@@ -1,2 +1,2 @@
 ### Changed
-- README: currents line and clip (#N)
+- README: currents line and clip (#176)
