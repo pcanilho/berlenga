@@ -1035,7 +1035,10 @@ the shader's path-traced copy writes `TRANSMISSION`, `IOR` 1.33 and
 and the path tracer's own sun caustics (`rendering/pathtracing/caustics`) land
 on the seabed. Foam stays an opaque, rough white layer on top. The material's
 `pathtraced_absorption` (per meter, red absorbed fastest) sets how quickly the
-water tints, and `pathtraced_roughness` how sharp the refraction is; the raster
+water tints, `pathtraced_scattering` (per meter) and
+`pathtraced_scattering_anisotropy` how much light the water scatters, which
+gives deep water its blue (higher is milkier), and `pathtraced_roughness` how
+sharp the refraction is; the raster
 look's `water_color` / `shallow_color` don't apply there, since the depth tint
 comes from the water itself. The raster look is unchanged. The light-space
 caustics map above is for raster receivers; the path tracer doesn't need it.

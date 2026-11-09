@@ -1118,6 +1118,9 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 				// The ray crossed the surface: raygen takes the medium it is in now from bsdf_pdf.
 				ps.packed_bounces_flags |= MEDIUM_CHANGE_FLAG;
 				ps.bsdf_pdf = uintBitsToFloat(h.is_front_face ? m.medium : 0u);
+				if (h.is_front_face && (m.medium & RT_MEDIUM_CODE_SCATTER) != 0u) {
+					imageStore(rt_medium_image, ivec2(gl_LaunchIDEXT.xy), uvec4(m.medium_scatter));
+				}
 			}
 			return true;
 		}

@@ -137,6 +137,13 @@ uniform vec4 water_color : source_color = vec4(0.09, 0.32, 0.42, 0.65);
 // (default: clear coastal water, a little more than pure water's 0.35, 0.06,
 // 0.01 from Pope and Fry 1997), and the surface's roughness.
 uniform vec3 pathtraced_absorption = vec3(0.45, 0.09, 0.05);
+// Path tracing only: light scattered per metre -- what gives deep water its
+// blue body colour instead of black (pure water's molecular scattering is
+// about 0.001, 0.002, 0.005 from Smith and Baker 1981; fine particles in
+// coastal water add more, bluer the finer) -- and how much it keeps going
+// forward (Petzold's ocean measurements: ~0.9). Higher = milkier.
+uniform vec3 pathtraced_scattering = vec3(0.05, 0.08, 0.12);
+uniform float pathtraced_scattering_anisotropy : hint_range(-0.9, 0.95) = 0.85;
 uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.02;
 // Persistent whitecap foam (0..1) on the ocean grid, injected where the
 // waves fold and fading over the node's foam_persistence (set by
@@ -518,6 +525,8 @@ void fragment() {
 	TRANSMISSION = 1.0 - foam;
 	IOR = 1.33;
 	ABSORPTION = pathtraced_absorption;
+	SCATTERING = pathtraced_scattering;
+	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
 	ALPHA = smoothstep(0.0, soft, shore);
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else

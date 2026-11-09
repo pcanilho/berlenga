@@ -155,6 +155,8 @@ void dlss_rr_write_albedo_guides(vec3 p_diffuse, vec3 p_specular) {
 // the first free slot past them so we do not collide with either.
 layout(set = 0, binding = 28, rg16f) uniform image2D rt_velocity_image;
 layout(set = 0, binding = 15, r32f) uniform image2D rt_depth_image;
+// A shader medium's scattering (RT_MEDIUM_CODE_SCATTER), from the hit that entered it to raygen.
+layout(set = 0, binding = 50, r32ui) uniform uimage2D rt_medium_image;
 
 #ifdef DLSS_RR_ENABLED
 // Reflection through a plane with unit normal p_n; the sign of p_n does not matter.

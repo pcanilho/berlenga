@@ -415,6 +415,21 @@ and crossed by caustics; with caustics off it matches the raster pattern. Deep w
 teal rather than blue, since a shader can't yet give the water a scattering colour (the
 Transmission section's scatter is material-only); a shader `SCATTER` output is the follow-up.
 
+## Step 3a follow-up: scattering from shaders, caustics edge (9 Nov)
+
+1. **SCATTERING and SCATTERING_ANISOTROPY shader outputs.** A shader medium only absorbed, so deep
+   water went black under path tracing: its blue body colour is light scattered back up. Unreal's
+   Single Layer Water material takes the same three inputs (absorption, scattering coefficients,
+   phase g). The medium code a hit hands raygen carries the extinction (absorption plus scattering);
+   the single-scatter albedo and g, which don't fit in the payload, go into a one-uint-a-pixel image
+   (`rt_medium_image`, binding 50) written by the hit that entered the medium and read by raygen
+   right after, flagged by `RT_MEDIUM_CODE_SCATTER`. Shadow rays leaving the medium attenuate by the
+   extinction. `PhysXWaterSurface3D` writes `pathtraced_scattering` (default 0.05, 0.08, 0.12 per
+   metre: clear coastal water) with g 0.85 (Petzold's ocean measurements are about 0.9).
+2. **Caustics map edge.** Near the border of the caustics square, photons bent out of it are lost
+   while none bend in from outside, so the bent/straight ratio dipped into a dark line on the sand.
+   The ratio now fades to the plain sun over the outer 8% of the map.
+
 ## Sources
 
 - 80.lv, Crimson Desert's BlackSpace engine features:
