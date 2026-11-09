@@ -366,9 +366,10 @@ void apply_segment_fog(float segment_dist, uint mat_flags, bool camera_segment, 
 // ============================================================================
 
 // BRDF inputs for a surface. 'p_mat_flags' supplies the Godot light model and
-// 'p_NdotV' the rasterizer's DFG energy compensation.
-MaterialProperties material_properties(vec3 p_albedo, float p_metallic, float p_roughness, float p_specular,
-		vec3 p_backlight, uint p_mat_flags, float p_NdotV) {
+// 'p_NdotV' the rasterizer's DFG energy compensation. 'p_clearcoat' (0 = none) and
+// 'p_clearcoat_roughness' describe a coat on 'p_coat_normal', the unbumped normal.
+MaterialProperties material_properties_coated(vec3 p_albedo, float p_metallic, float p_roughness, float p_specular,
+		vec3 p_backlight, uint p_mat_flags, float p_NdotV, float p_clearcoat, float p_clearcoat_roughness, vec3 p_coat_normal) {
 	MaterialProperties material;
 	material.baseColor = p_albedo;
 	material.metalness = p_metallic;
@@ -377,7 +378,10 @@ MaterialProperties material_properties(vec3 p_albedo, float p_metallic, float p_
 	material.emissive = vec3(0.0);
 	material.transmissivness = 0.0;
 	material.opacity = 1.0;
-	vec3 f0 = baseColorToSpecularF0(p_albedo, p_metallic, material.dielectricF0);
+	material.clearcoat = p_clearcoat;
+	material.clearcoatAlpha = clearcoatAlphaFromRoughness(p_clearcoat_roughness);
+	material.coatNormal = p_coat_normal;
+	vec3 f0 = materialSpecularF0(material);
 	float dfg_y = rt_prefiltered_dfg(p_roughness, clamp(p_NdotV, 0.0001, 1.0)).y;
 	material.energyCompensation = 1.0 + f0 * (1.0 / dfg_y - 1.0);
 	material.backlight = p_backlight;
@@ -386,9 +390,16 @@ MaterialProperties material_properties(vec3 p_albedo, float p_metallic, float p_
 	return material;
 }
 
+// The same without a coat.
+MaterialProperties material_properties(vec3 p_albedo, float p_metallic, float p_roughness, float p_specular,
+		vec3 p_backlight, uint p_mat_flags, float p_NdotV) {
+	return material_properties_coated(p_albedo, p_metallic, p_roughness, p_specular, p_backlight, p_mat_flags, p_NdotV,
+			0.0, 0.0, vec3(0.0, 0.0, 1.0));
+}
+
 MaterialProperties material_properties_from_result(HitData h, MaterialResult m, vec3 N, vec3 V) {
-	MaterialProperties material = material_properties(m.albedo, m.metalness, m.roughness, m.specular, m.backlight,
-			rt_entry_material_flags(h.geometry_idx), dot(N, V));
+	MaterialProperties material = material_properties_coated(m.albedo, m.metalness, m.roughness, m.specular, m.backlight,
+			rt_entry_material_flags(h.geometry_idx), dot(N, V), m.clearcoat, m.clearcoat_roughness, h.geometry_normal);
 	material.emissive = m.emissive;
 	return material;
 }
@@ -696,14 +707,25 @@ vec3 ambient_approx(vec3 N, vec3 V, MaterialResult m, MaterialProperties materia
 		if (material.diffuseMode == GODOT_DIFFUSE_TOON) {
 			specular *= m.specular * material.metalness * material.baseColor * 2.0;
 		} else {
-			vec3 f0 = baseColorToSpecularF0(material.baseColor, material.metalness, material.dielectricF0);
+			vec3 f0 = materialSpecularF0(material);
 			vec2 env_brdf = rt_prefiltered_dfg(roughness, clamp(dot(N, V), 0.0001, 1.0));
 			float f90 = clamp(50.0 * f0.g, material.metalness, 1.0);
 			specular *= material.energyCompensation * ((f90 - f0) * env_brdf.x + f0 * env_brdf.y);
 		}
 	}
 
-	return baseColorToDiffuseReflectance(material.baseColor, material.metalness) * ambient + specular;
+	vec3 diffuse = baseColorToDiffuseReflectance(material.baseColor, material.metalness) * ambient;
+	if (material.clearcoat > 0.0 && material.diffuseMode != GODOT_DIFFUSE_TOON) {
+		// The coat's sky reflection on the vertex normal, weighted by its Fresnel (raster cc_specular_light).
+		float coat_fresnel = clearcoatFresnel(material.clearcoat, dot(material.coatNormal, V));
+		diffuse *= 1.0 - coat_fresnel;
+		specular *= 1.0 - coat_fresnel;
+		if ((flags & SCENE_DATA_FLAGS_USE_REFLECTION_CUBEMAP) != 0u) {
+			vec3 cc_ref_vec = mix(reflect(-V, material.coatNormal), material.coatNormal, material.clearcoatAlpha);
+			specular += radiance_octmap_sample(rt_sky_oct_uv(cc_ref_vec), sqrt(material.clearcoatAlpha)) * sky_scale * coat_fresnel;
+		}
+	}
+	return diffuse + specular;
 }
 
 // ============================================================================
@@ -772,15 +794,15 @@ float rt_emissive_pdf(uint p_entry, uint p_triangles, vec3 p0, vec3 p1, vec3 p2,
 	return pdf_area * d2 / cos_l;
 }
 
-// Solid-angle density with which sample_surface_continuation() draws L, mirroring its lobe
-// choice: the specular lobe by GGX VNDF reflection, the diffuse one cosine-weighted.
-float surface_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
+// Solid-angle density with which sample_surface_continuation() draws L off the base, mirroring
+// its lobe choice: the specular lobe by GGX VNDF reflection, the diffuse one cosine-weighted.
+float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
 	float NdotL = dot(N, L);
 	float NdotV = dot(N, V);
 	if (NdotL <= 0.0) {
 		return 0.0;
 	}
-	vec3 specular_f0 = baseColorToSpecularF0(material.baseColor, material.metalness, material.dielectricF0);
+	vec3 specular_f0 = materialSpecularF0(material);
 	vec3 diffuse_reflectance = baseColorToDiffuseReflectance(material.baseColor, material.metalness);
 	float specular_lum = luminance(specular_f0);
 	float diffuse_lum = luminance(diffuse_reflectance);
@@ -802,6 +824,15 @@ float surface_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties materi
 		pdf += p_spec * sampleGGXVNDFReflectionPdf(alpha, alpha * alpha, max(dot(N, H), 0.0), max(NdotV, 0.0), max(dot(L, H), 0.0));
 	}
 	return pdf;
+}
+
+// The same with the coat lobe, taken with probability clearcoatLobeProbability().
+float surface_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
+	float p_coat = clearcoatLobeProbability(material, V);
+	if (p_coat <= 0.0) {
+		return base_continuation_pdf(N, V, L, material);
+	}
+	return (1.0 - p_coat) * base_continuation_pdf(N, V, L, material) + p_coat * clearcoatPdf(material, V, L);
 }
 
 // Power heuristic (Veach 1997) for one sample from each of two strategies.
@@ -961,6 +992,28 @@ vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_
 	return lit;
 }
 
+// A bounce ray off the coat, taken with probability p_coat. Counts as a specular bounce.
+bool sample_coat_continuation(HitData h, MaterialProperties material, vec3 N, vec3 V, float p_coat, inout PathState ps) {
+	vec3 next_dir;
+	vec3 weight;
+	if (!sampleClearcoat(rand2(ps.rng_state), h.geometry_normal, V, material, next_dir, weight)) {
+		vec3 recovered_dir;
+		if (luminance(weight) == 0.0 || !recoverBelowHemisphereSample(next_dir, h.geometry_normal, recovered_dir)) {
+			return false;
+		}
+		next_dir = recovered_dir;
+	}
+	ps.throughput *= weight / p_coat;
+	ps.packed_bounces_flags = inc_total_bounce(ps.packed_bounces_flags) & ~LAST_BOUNCE_DIFFUSE_FLAG;
+	if (sqrt(material.clearcoatAlpha) > SINGULAR_ROUGHNESS_MAX) {
+		ps.packed_bounces_flags |= NON_SINGULAR_PATH_FLAG;
+	}
+	ps.offset_normal = h.geometry_normal;
+	ps.next_ray_dir = next_dir;
+	ps.bsdf_pdf = rt_emissive_count() > 0u ? surface_continuation_pdf(N, V, next_dir, material) : 0.0;
+	return true;
+}
+
 bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, inout PathState ps) {
 	if (surface_is_unshaded(h.geometry_idx)) {
 		return false;
@@ -972,10 +1025,21 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	}
 
 	MaterialProperties material = material_properties_from_result(h, m, N, V);
-	vec3 specular_f0 = baseColorToSpecularF0(material.baseColor, material.metalness, material.dielectricF0);
+	vec3 specular_f0 = materialSpecularF0(material);
 	vec3 diffuse_reflectance = baseColorToDiffuseReflectance(material.baseColor, material.metalness);
 	float specular_lum = luminance(specular_f0);
 	float diffuse_lum = luminance(diffuse_reflectance);
+
+	// The coat first, with the probability of its Fresnel at the view angle. The base lobes keep
+	// the rest, and their weight carries the coat's attenuation (1 - Fc), as raster's ambient.
+	float p_coat = clearcoatLobeProbability(material, V);
+	if (p_coat > 0.0) {
+		if (rand(ps.rng_state) < p_coat) {
+			return sample_coat_continuation(h, material, N, V, p_coat, ps);
+		}
+		float coat_fresnel = clearcoatFresnel(material.clearcoat, dot(material.coatNormal, V));
+		ps.throughput *= (1.0 - coat_fresnel) / (1.0 - p_coat);
+	}
 
 	int brdf_type;
 	if (diffuse_lum < 0.0001) {
@@ -1068,8 +1132,21 @@ vec2 dlss_rr_specular_motion_vector(vec3 p_hit_pos, vec3 p_prev_hit_pos, vec3 p_
 	return rt_motion_vector(virtual_pos, virtual_prev_pos);
 }
 
+// The environment's specular albedo. A coat adds its Fresnel and attenuates the base by the rest
+// (raster ambient), its base F0 taken under the coat.
 vec3 dlss_rr_compute_specular_albedo(MaterialResult m, float NdotV) {
-	return DLSSRR_computeSpecularAlbedo(m.albedo, m.metalness, material_specular_to_f0(m.specular), m.roughness, NdotV);
+	if (m.clearcoat <= 0.0) {
+		return DLSSRR_computeSpecularAlbedo(m.albedo, m.metalness, material_specular_to_f0(m.specular), m.roughness, NdotV);
+	}
+	vec3 f0 = baseColorToSpecularF0(m.albedo, m.metalness, material_specular_to_f0(m.specular));
+	f0 = mix(f0, f0ClearCoatToSurface(f0), m.clearcoat);
+	float coat_fresnel = clearcoatFresnel(m.clearcoat, NdotV);
+	return material_specular_albedo(f0, m.roughness, NdotV) * (1.0 - coat_fresnel) + vec3(coat_fresnel);
+}
+
+// The roughness guide: a coat's sharp reflection over a rough base pulls it toward the coat's.
+float dlss_rr_roughness(MaterialResult m) {
+	return mix(m.roughness, min(m.roughness, sqrt(clearcoatAlphaFromRoughness(m.clearcoat_roughness))), m.clearcoat);
 }
 
 // The diffuse albedo guide. An emissive surface's light is its own, not reflected, so its
@@ -1138,11 +1215,11 @@ void dlss_rr_composite_peel_guides(HitData h, MaterialResult m, vec3 N, vec3 V, 
 	// Sky stores a zero normal, so the blend can be zero when share is 0.
 	vec3 blended_n = mix(prev_nr.xyz, N, share);
 	blended_n = dot(blended_n, blended_n) > 0.0 ? normalize(blended_n) : blended_n;
-	imageStore(dlss_rr_normal_roughness, pixel, vec4(blended_n, mix(prev_nr.w, m.roughness, share)));
+	imageStore(dlss_rr_normal_roughness, pixel, vec4(blended_n, mix(prev_nr.w, dlss_rr_roughness(m), share)));
 
 	// Blended motion vectors would point at neither surface, so the larger share owns them.
 	if (share >= 0.5) {
-		vec2 specular_mv = dlss_rr_specular_motion_vector(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), h.geometry_normal, V, m.roughness, RT_VIS_MASK | RT_TMASK_TRANSPARENT);
+		vec2 specular_mv = dlss_rr_specular_motion_vector(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), h.geometry_normal, V, dlss_rr_roughness(m), RT_VIS_MASK | RT_TMASK_TRANSPARENT);
 		dlss_rr_write_specular_motion_vector(specular_mv);
 	}
 }
@@ -1283,8 +1360,9 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	if (total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags)) {
 		ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
 		dlss_rr_store_albedo_guides(m, NdotV);
-		imageStore(dlss_rr_normal_roughness, pixel, vec4(N, m.roughness));
-		vec2 specular_mv = dlss_rr_specular_motion_vector(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), h.geometry_normal, V, m.roughness, RT_VIS_MASK);
+		float rr_roughness = dlss_rr_roughness(m);
+		imageStore(dlss_rr_normal_roughness, pixel, vec4(N, rr_roughness));
+		vec2 specular_mv = dlss_rr_specular_motion_vector(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), h.geometry_normal, V, rr_roughness, RT_VIS_MASK);
 		dlss_rr_write_specular_motion_vector(specular_mv);
 		// Metals show nothing of their own, so primary motion follows the reflection (which is the
 		// surface motion again past the spec MV roughness limit).

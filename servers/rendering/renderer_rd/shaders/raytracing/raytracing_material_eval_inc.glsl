@@ -14,6 +14,8 @@ struct MaterialResult {
 	float emission_indirect; // EMISSION_INDIRECT: weight of emissive (and unshaded) radiance on indirect paths.
 	vec3 normal; // Final shading normal (world space, after normal mapping).
 	vec3 backlight; // Light "leaking through" thin/translucent surfaces (BACKLIGHT).
+	float clearcoat; // CLEARCOAT, 0 = no coat (or rendering/pathtracing/clearcoat off).
+	float clearcoat_roughness; // CLEARCOAT_ROUGHNESS.
 };
 
 // Sensible default for a mid-grey diffuse surface.
@@ -28,6 +30,8 @@ MaterialResult default_material_result(vec3 geometry_normal) {
 	r.emission_indirect = 1.0;
 	r.normal = geometry_normal;
 	r.backlight = vec3(0.0);
+	r.clearcoat = 0.0;
+	r.clearcoat_roughness = 0.0;
 	return r;
 }
 
