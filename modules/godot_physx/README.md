@@ -1046,7 +1046,11 @@ water itself does the rest, so rocks and banks shed wakes and eddies that
 meander downstream, the surface's waves and foam swirl with them, and
 `sample_flow()` and floaters feel them. `wall_friction` (1/s) sets how strongly
 dry ground slows the water running along it, which is what sheds the eddies.
-Off, the square keeps the solved flow and only ripples.
+Off, the square keeps the solved flow and only ripples. The live flow also makes
+white water: foam where the water shears (the lines trailing a rock, eddies, the
+edges of a jet) and where it runs supercritical through chutes and rapids,
+carried downstream and fading (`flow_foam` for how much, 0 for none;
+`flow_foam_persistence` for how long it lasts).
 
 **Under path tracing** the surface is real water rather than a tinted overlay:
 the shader's path-traced copy writes `TRANSMISSION`, `IOR` 1.33 and
