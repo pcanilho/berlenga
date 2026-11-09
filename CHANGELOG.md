@@ -6,6 +6,18 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-9d094a32 (2026-11-09)
+
+### Changed
+- The fork is named Berlenga in the window title, About box and startup header; the executables, data folders and Vulkan engine name stay Godot's.
+- The editor and Project Manager use the Berlenga icon (window, Windows executable, macOS bundle, Linux desktop entry); exported projects keep the neutral default icon.
+- README: the fork is named Berlenga (#162)
+- README: water gets its own section (#161)
+- README: refraction line and water image (#160)
+
+### Added
+- Murky water: Transmission media scatter light with `transmission_scatter_strength`, `transmission_scatter_color` and `transmission_scatter_anisotropy` (glTF draft `KHR_materials_scatter`, volumetric mode, imported and exported). The path tracer draws collisions inside the medium and lights each from every light; the rasterizer shows the scattered colour in the share the depth hides. Shaders bound a medium with the new path-traced outputs `IOR` and `ABSORPTION` (#163)
+
 ## build-50273c52 (2026-11-09)
 
 ### Added
