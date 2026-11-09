@@ -344,6 +344,8 @@ public:
 			bool uses_normal_texture = false;
 			bool force_opaque = false; // render_mode rt_force_opaque
 			bool force_transparent = false; // render_mode rt_force_transparent
+			bool unshaded = false; // render_mode unshaded in the RT variant
+			bool fog_disabled = false; // render_mode fog_disabled in the RT variant
 		};
 		RTClassification *rt = nullptr;
 

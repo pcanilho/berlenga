@@ -77,7 +77,15 @@ namespace {
 // this material caused a genuine overexposure bug.
 const char *WATER_SHADER_SRC = R"(
 shader_type spatial;
+#if defined(RT)
+// The path tracer's copy (the shader is compiled again with RT defined) is a
+// real water surface instead: a medium boundary with IOR and absorption, so it
+// bends light, tints with depth and casts caustics, lit by the scene's own
+// lights. The raster look below stays as it is.
+render_mode cull_disabled;
+#else
 render_mode blend_mix, cull_disabled, unshaded;
+#endif
 
 uniform sampler2D ripple_height_tex : hint_default_black, filter_linear, repeat_disable;
 uniform sampler2D ocean_height_tex : hint_default_black, filter_linear, repeat_enable;
@@ -125,6 +133,11 @@ uniform float water_level = 0.0;
 // is a static preview there anyway).
 uniform float water_time = 0.0;
 uniform vec4 water_color : source_color = vec4(0.09, 0.32, 0.42, 0.65);
+// Path tracing only: light absorbed per metre of water, red, green and blue
+// (default: clear coastal water, a little more than pure water's 0.35, 0.06,
+// 0.01 from Pope and Fry 1997), and the surface's roughness.
+uniform vec3 pathtraced_absorption = vec3(0.45, 0.09, 0.05);
+uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.02;
 // Persistent whitecap foam (0..1) on the ocean grid, injected where the
 // waves fold and fading over the node's foam_persistence (set by
 // PhysXWaterSurface3D).
@@ -381,8 +394,20 @@ float shore_signal(vec2 world_xz, float time) {
 }
 
 void vertex() {
+#if defined(RT)
+	// The path tracer runs this at a ray hit on the captured surface, which
+	// is already offset and displaced: undo the horizontal (choppy) part by
+	// fixed-point iteration to find the resting point the hit came from, as
+	// the raster varyings have it. Converges while the waves don't fold.
+	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec2 hit_xz = world_pos.xz;
+	for (int i = 0; i < 4; i++) {
+		world_pos.xz = hit_xz - surface_offset(world_pos.xz).xz;
+	}
+#else
 	VERTEX += (inverse(MODEL_MATRIX) * vec4(mesh_offset.x, 0.0, mesh_offset.y, 0.0)).xyz;
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+#endif
 	v_rest_xz = world_pos.xz;
 	VERTEX += surface_offset(world_pos.xz);
 	v_world_normal = vec3(0.0, 1.0, 0.0);
@@ -412,10 +437,12 @@ void fragment() {
 	// behind its front, far waves seen through near ones) the far side
 	// painted over the near one as jagged translucent teeth, and the
 	// pattern changed wherever the mesh order did, drawing a seam.
+#if !defined(RT)
 	bool camera_above = CAMERA_POSITION_WORLD.y > MODEL_MATRIX[3].y + water_level;
 	if (FRONT_FACING != camera_above) {
 		discard;
 	}
+#endif
 	vec3 world_normal = v_world_normal;
 	float foam = v_foam;
 	if (per_pixel_normals) {
@@ -479,8 +506,24 @@ void fragment() {
 	// mirrored patterns bring dry beach (not wet) out over the open sea.
 	wet *= 1.0 - smoothstep(0.05, 0.35, depth_r(v_rest_xz, cuv_fade));
 	float wet_a = wet * wet * (3.0 - 2.0 * wet) * wet_sand_color.a * (1.0 - water_a);
+#if defined(RT)
+	// Both faces bound the water: the top enters it, the underside leaves it
+	// (the path tracer tracks the medium between them). Foam is an opaque,
+	// rough white layer on top; where the swash has left the sand, no surface.
+	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
+	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
+	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
+	SPECULAR = 0.5;
+	METALLIC = 0.0;
+	TRANSMISSION = 1.0 - foam;
+	IOR = 1.33;
+	ABSORPTION = pathtraced_absorption;
+	ALPHA = smoothstep(0.0, soft, shore);
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
+#else
 	ALPHA = water_a + wet_a;
 	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);
+#endif
 }
 )";
 
