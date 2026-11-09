@@ -6,6 +6,17 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-458afd8b (2026-11-09)
+
+### Added
+- PhysXWaterSurface3D is real water under path tracing: light bends through the waves, the water tints with depth and sun caustics land on the seabed; raster look unchanged (#170)
+
+### Fixed
+- Path tracing takes a shader's unshaded and fog_disabled render modes from its path-traced variant (#170)
+
+### Changed
+- README: caustics line and image (#167)
+
 ## build-7eae6464 (2026-11-09)
 
 ### Added
