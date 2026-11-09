@@ -164,6 +164,32 @@ TEST_CASE("[RenderRaytracing] BaseMaterial3D state survives the material paramet
 	CHECK(decoded.encode() == packed);
 }
 
+TEST_CASE("[RenderRaytracing] A medium packs its IOR and Beer-Lambert absorption") {
+	RT_MaterialData d = rt_material_data_default();
+	CHECK(d.emission_indirect_transmission.ior == 0u);
+	CHECK(d.medium == 0u);
+
+	// Water-like: 30% red left after 1 m, green and blue nearly clear, none of the last.
+	const float color[3] = { 0.3f, 0.95f, 1.0f };
+	rt_material_set_medium(d, 1.33f, color, 1.0f);
+	CHECK(d.emission_indirect_transmission.ior == rt_unorm8(0.165f));
+	CHECK(d.emission_indirect_transmission.emission_indirect == Math::make_half_float(1.0f));
+	CHECK((d.medium & (1u << 29)) != 0u);
+	CHECK((d.medium >> 27) == 0b100u); // Read as a float: a normal exponent, never inf or NaN.
+	CHECK(((d.medium >> 18) & 511u) == 0u); // Blue absorbs nothing.
+
+	// GLSL rt_medium_absorption(): sigma = 2^(-12 + 24 * (c - 1) / 510), within a step (about 3%) of -ln(color).
+	for (int i = 0; i < 2; i++) {
+		const uint32_t c = (d.medium >> (9 * i)) & 511u;
+		const float sigma = Math::pow(2.0f, -12.0f + 24.0f * (float(c) - 1.0f) / 510.0f);
+		CHECK(sigma == doctest::Approx(-Math::log(color[i])).epsilon(0.02));
+	}
+
+	// No attenuation distance: refraction without absorption, still a medium.
+	rt_material_set_medium(d, 1.5f, color, 0.0f);
+	CHECK(d.medium == (1u << 29));
+}
+
 TEST_CASE("[RenderRaytracing] The default material is a non-emissive dielectric with identity UV transforms") {
 	const RT_MaterialData d = rt_material_data_default();
 	CHECK(d.flags == 0u);

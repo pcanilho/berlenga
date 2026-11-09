@@ -12,6 +12,10 @@ extends Node3D
 #                     coat stripes (clearcoat_texture), a card back lit through a checker (backlight_texture),
 #                     a pane let through by a checker (transmission_texture), custom TRANSMISSION and
 #                     custom BACKLIGHT
+#                     water: a pool sloping from 0.1 m (left) to 4 m (right) deep, checker floor, posts
+#                     through the surface; pure water (Pope and Fry 1997), IOR 1.33, Transmission not thin-walled
+#                     water_depths: unshaded white tiles under 0.25, 0.5, 1, 2 and 4 m of water, seen straight
+#                     down in an orthogonal view with linear tone mapping, to read Beer-Lambert off the pixels
 #   --raster          raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
 #   --frames=N        frames rendered before --out is saved (default 8)
@@ -88,6 +92,21 @@ func _ready() -> void:
 		"textures":
 			sun.rotation_degrees = Vector3(-25, 165, 0)
 			_layer_textures()
+		"water":
+			ground.visible = false
+			sun.rotation_degrees = Vector3(-55, -150, 0)
+			cam.look_at_from_position(Vector3(0, 5.5, 7.5), Vector3(0, -1.2, 0))
+			_water_pool()
+		"water_depths":
+			ground.visible = false
+			env.background_mode = Environment.BG_COLOR
+			env.background_color = Color(0, 0, 0)
+			env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+			sun.visible = false
+			cam.projection = Camera3D.PROJECTION_ORTHOGONAL
+			cam.size = 6.0
+			cam.look_at_from_position(Vector3(0, 6, 0), Vector3(0, 0, 0), Vector3(0, 0, -1))
+			_water_depths()
 		_:
 			push_error("Unknown scene: " + scene)
 
@@ -243,6 +262,94 @@ func _layer_textures() -> void:
 		var b := StandardMaterial3D.new()
 		b.albedo_color = colors[i]
 		_sphere(Vector3(-1.5 + i * 1.5, 0.5, -1.6), b)
+
+
+# Pure water: absorption 0.35, 0.06 and 0.01 per metre in red, green and blue (Pope and Fry 1997),
+# as the colour left after 1 m.
+func _water() -> StandardMaterial3D:
+	var w := StandardMaterial3D.new()
+	w.roughness = 0.05
+	w.specular = 0.354 # F0 0.02, ((1.33 - 1) / (1.33 + 1))^2.
+	w.transmission_enabled = true
+	w.transmission_thin_walled = false
+	w.transmission_ior = 1.33
+	w.transmission_attenuation_color = Color(exp(-0.35), exp(-0.06), exp(-0.01)).linear_to_srgb()
+	w.transmission_attenuation_distance = 1.0
+	return w
+
+
+func _box(p_size: Vector3, p_pos: Vector3, p_mat: Material, p_rot := Vector3.ZERO) -> void:
+	var mi := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = p_size
+	mi.mesh = box
+	mi.material_override = p_mat
+	mi.position = p_pos
+	mi.rotation_degrees = p_rot
+	add_child(mi)
+
+
+func _water_pool() -> void:
+	# Pool 6 x 4 m; the deck's top is at 0, the water's surface just under it.
+	var deck := StandardMaterial3D.new()
+	deck.albedo_color = Color(0.6, 0.58, 0.52)
+	deck.roughness = 0.8
+	_box(Vector3(40, 0.5, 18), Vector3(0, -0.25, -11), deck)
+	_box(Vector3(40, 0.5, 18), Vector3(0, -0.25, 11), deck)
+	_box(Vector3(17, 0.5, 4), Vector3(-11.5, -0.25, 0), deck)
+	_box(Vector3(17, 0.5, 4), Vector3(11.5, -0.25, 0), deck)
+	var tiles := StandardMaterial3D.new()
+	tiles.albedo_texture = _checker(Color(0.85, 0.85, 0.85), Color(0.25, 0.25, 0.25))
+	tiles.uv1_triplanar = true
+	tiles.uv1_world_triplanar = true
+	tiles.uv1_scale = Vector3(0.25, 0.25, 0.25) # 0.5 m squares.
+	tiles.roughness = 0.7
+	_box(Vector3(6, 4.5, 0.2), Vector3(0, -2.25, -2.1), tiles)
+	_box(Vector3(6, 4.5, 0.2), Vector3(0, -2.25, 2.1), tiles)
+	_box(Vector3(0.2, 4.5, 4.4), Vector3(-3.1, -2.25, 0), tiles)
+	_box(Vector3(0.2, 4.5, 4.4), Vector3(3.1, -2.25, 0), tiles)
+	# Floor from 0.1 m deep at the left wall to 4 m at the right, its ends tucked into the walls.
+	var slope := atan2(3.9, 6.0)
+	var floor_mid := Vector3(0, -2.05, 0) + Vector3(sin(slope), -cos(slope), 0) * 0.1
+	_box(Vector3(6.0 / cos(slope) + 0.2, 0.2, 4.0), floor_mid, tiles, Vector3(0, 0, -rad_to_deg(slope)))
+	# Posts standing out of the water.
+	var colors := [Color(0.9, 0.9, 0.9), Color(0.8, 0.1, 0.08), Color(0.95, 0.75, 0.1), Color(0.9, 0.9, 0.9)]
+	for i in 4:
+		var post := StandardMaterial3D.new()
+		post.albedo_color = colors[i]
+		post.roughness = 0.5
+		var mi := MeshInstance3D.new()
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = 0.1
+		cyl.bottom_radius = 0.1
+		cyl.height = 5.3
+		mi.mesh = cyl
+		mi.material_override = post
+		mi.position = Vector3(-2.0 + i * 1.5, -1.85, 0.4) # 0.8 m above the water.
+		add_child(mi)
+	var water := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(6, 4)
+	water.mesh = plane
+	water.material_override = _water()
+	water.position = Vector3(0, -0.02, 0)
+	add_child(water)
+
+
+func _water_depths() -> void:
+	var tile := StandardMaterial3D.new()
+	tile.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	tile.albedo_color = Color(1, 1, 1)
+	var depths := [0.0, 0.25, 0.5, 1.0, 2.0, 4.0]
+	for i in depths.size():
+		_box(Vector3(0.8, 0.1, 0.8), Vector3(-2.5 + i * 1.0, -depths[i] - 0.05, 0), tile)
+	var water := MeshInstance3D.new()
+	var plane := PlaneMesh.new()
+	plane.size = Vector2(5.2, 1.6)
+	water.mesh = plane
+	water.material_override = _water()
+	water.position = Vector3(0.5, 0.0, 0)
+	add_child(water)
 
 
 func _process(_delta: float) -> void:

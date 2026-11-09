@@ -153,6 +153,40 @@ Caustics stay out of step 1. Without them, the bed under bright sun is evenly li
 patterned. Options after step 1: a projected caustic texture from the surface normals, or the
 ray traced caustics of Ray Tracing Gems II ch. 30.
 
+## Step 1 as built: refraction and depth tint (9 Nov)
+
+- **Material.** Transmission has `transmission_thin_walled` (on by default), `transmission_ior`,
+  `transmission_attenuation_color` and `transmission_attenuation_distance`. glTF
+  `KHR_materials_volume` (a thickness above 0 turns thin-walled off) and `KHR_materials_ior` are
+  imported and exported; an imported IOR also sets `specular` so F0 matches it.
+- **Record.** The IOR takes the spare byte of `emission_indirect_transmission` (1 to 3 in steps of
+  2/255). The absorption goes in the last word, renamed `medium`: a 9-bit log code per channel
+  (2^-12 to 2^12 per metre, about 3% steps), with bit 29 set so the word is never 0 and is a normal
+  float. New flag `RT_MAT_FLAG_VOLUME`. Such surfaces are traced with culling off, since rays leave
+  the water through its back faces.
+- **Lobe.** `sampleDielectricRefraction()` in `brdf_inc.glsl`: a GGX VNDF half vector, `refract()`
+  with eta 1/IOR on front faces and IOR on back faces, weight (1 - F) G2/G1 with the exact dielectric
+  Fresnel. The base lobes keep the surface's F0 reflection, as for thin glass. At total internal
+  reflection the lobe reflects the rest, (1 - F0 Fresnel) G2/G1, so looking up from below past the
+  critical angle is a mirror. The eta^2 radiance scaling is left out; it cancels on the way out.
+- **Medium tracking.** A refracted continuation sets `MEDIUM_CHANGE_FLAG` (payload bit 17) and puts
+  the new medium code in `bsdf_pdf` (0 when leaving). Raygen keeps the code per sample, multiplies
+  each segment inside by `exp(-sigma t)` (the surface it reached and all it sends back), then
+  switches medium. One medium at a time; the camera starts outside.
+- **Shadows.** A shadow ray that leaves a medium through a back face is multiplied by
+  `exp(-sigma t)` to that face, in the any-hit shader and in ray-query shadows (fog), on top of the
+  surface's (1 - F0) tint. The bend is ignored (transmit shadows), so the floor is evenly lit.
+- **Raster.** The screen is read where the view ray refracted by the IOR meets the depth buffer,
+  falling back to straight behind when that point is in front of the surface, and tinted by
+  `color^(d / distance)` with d the distance to that point.
+- **Setting.** `rendering/pathtracing/refraction` (on). Off traces these surfaces as thin glass.
+- **Test scenes.** `docs/bench/materials --scene=water` (pool sloping 0.1 to 4 m, checker floor,
+  posts) and `--scene=water_depths` (unshaded white tiles under 0.25 to 4 m, orthogonal view, linear
+  tone mapping) to read Beer-Lambert off the pixels.
+- **Not yet.** Shader outputs for IOR and absorption (custom water shaders stay thin), scattering,
+  caustics, nested media and a camera under water. Shadow rays inside the water that never cross
+  its surface (a lamp under water) are not absorbed.
+
 ## Sources
 
 - 80.lv, Crimson Desert's BlackSpace engine features:

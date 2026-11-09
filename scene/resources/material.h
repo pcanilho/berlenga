@@ -389,6 +389,7 @@ private:
 		uint64_t grow : 1;
 		uint64_t proximity_fade : 1;
 		uint64_t orm : 1;
+		uint64_t transmission_volume : 1;
 
 		// flag bitfield
 		uint32_t feature_mask;
@@ -443,6 +444,7 @@ private:
 		mk.emission_op = emission_op;
 		mk.alpha_antialiasing_mode = alpha_antialiasing_mode;
 		mk.orm = orm;
+		mk.transmission_volume = !transmission_thin_walled;
 
 		mk.stencil_mode = stencil_mode;
 		mk.stencil_flags = stencil_flags;
@@ -486,6 +488,9 @@ private:
 		StringName backlight;
 		StringName refraction;
 		StringName transmission;
+		StringName transmission_ior;
+		StringName transmission_attenuation_color;
+		StringName transmission_attenuation_distance;
 		StringName point_size;
 		StringName uv1_scale;
 		StringName uv1_offset;
@@ -566,6 +571,10 @@ private:
 	Color backlight;
 	float refraction = 0.0f;
 	float transmission = 0.0f;
+	bool transmission_thin_walled = true;
+	float transmission_ior = 1.5f;
+	Color transmission_attenuation_color = Color(1, 1, 1);
+	float transmission_attenuation_distance = 0.0f;
 	float point_size = 0.0f;
 	float alpha_scissor_threshold = 0.0f;
 	float alpha_hash_scale = 0.0f;
@@ -735,6 +744,18 @@ public:
 
 	void set_transmission(float p_transmission);
 	float get_transmission() const;
+
+	void set_transmission_thin_walled(bool p_thin_walled);
+	bool is_transmission_thin_walled() const;
+
+	void set_transmission_ior(float p_ior);
+	float get_transmission_ior() const;
+
+	void set_transmission_attenuation_color(const Color &p_color);
+	Color get_transmission_attenuation_color() const;
+
+	void set_transmission_attenuation_distance(float p_distance);
+	float get_transmission_attenuation_distance() const;
 
 	void set_point_size(float p_point_size);
 	float get_point_size() const;

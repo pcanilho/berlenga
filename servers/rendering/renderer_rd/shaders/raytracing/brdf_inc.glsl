@@ -1223,6 +1223,56 @@ bool sampleThinTransmission(float2 u, float3 shadingNormal, float3 geometryNorma
 	return dot(geometryNormal, rayDirection) < 0.0f && luminance(sampleWeight) > 0.0f;
 }
 
+// -------------------------------------------------------------------------
+//    Refraction into a medium (BaseMaterial3D Transmission, thin-walled off)
+// -------------------------------------------------------------------------
+
+// Fresnel reflectance of a smooth dielectric interface for unpolarised light; cosI is the cosine
+// on the incident side and eta = n_incident / n_transmitted. 1 at total internal reflection.
+float dielectricFresnel(float cosI, float eta) {
+	float sinT2 = eta * eta * max(1.0f - cosI * cosI, 0.0f);
+	if (sinT2 >= 1.0f) {
+		return 1.0f;
+	}
+	float cosT = sqrt(1.0f - sinT2);
+	float rs = (eta * cosI - cosT) / (eta * cosI + cosT);
+	float rp = (cosI - eta * cosT) / (cosI + eta * cosT);
+	return 0.5f * (rs * rs + rp * rp);
+}
+
+// Samples a ray through a rough dielectric interface (Walter, Marschner, Li and Torrance 2007,
+// with Heitz's GGX VNDF): the half vector refracts the ray with eta = n_incident / n_transmitted.
+// The surface's base lobes already reflect its F0 share, so this lobe carries what the interface
+// lets through, (1 - F) * G2 / G1 times the tint, and at total internal reflection the light the
+// base reflection misses, (1 - F0 Fresnel) * G2 / G1. 'refracted' is false for that reflection.
+// The radiance scaling by eta squared is left out: it cancels once a path leaves the medium again.
+bool sampleDielectricRefraction(float2 u, float3 shadingNormal, float3 geometryNormal, float3 V, MaterialProperties material, float eta,
+		OUT_PARAMETER(float3) rayDirection, OUT_PARAMETER(float3) sampleWeight, OUT_PARAMETER(bool) refracted) {
+	float4 qRotationToZ = getRotationToZAxis(shadingNormal);
+	float3 Vlocal = rotatePoint(qRotationToZ, V);
+	float alpha = material.roughness * material.roughness;
+	float3 Hlocal = (alpha > 0.0f && Vlocal.z > 0.0f) ? sampleGGXVNDF(Vlocal, float2(alpha, alpha), u) : float3(0.0f, 0.0f, 1.0f);
+	float VdotH = saturate(dot(Vlocal, Hlocal));
+	float F = dielectricFresnel(VdotH, eta);
+	sampleWeight = float3(0.0f, 0.0f, 0.0f);
+	refracted = F < 1.0f;
+	float3 Llocal = refracted ? refract(-Vlocal, Hlocal, eta) : reflect(-Vlocal, Hlocal);
+	rayDirection = normalize(rotatePoint(invertRotation(qRotationToZ), Llocal));
+	float NdotL = refracted ? -Llocal.z : Llocal.z;
+	if (Vlocal.z <= 0.0f || NdotL <= 0.0f) {
+		return false;
+	}
+	float g = alpha > 0.0f ? Smith_G2_Over_G1_Height_Correlated(alpha, alpha * alpha, min(NdotL, 1.0f), min(Vlocal.z, 1.0f)) : 1.0f;
+	if (refracted) {
+		sampleWeight = material.baseColor * (material.transmissivness * (1.0f - F) * g);
+		return dot(geometryNormal, rayDirection) < 0.0f && luminance(sampleWeight) > 0.0f;
+	}
+	float3 f0 = materialSpecularF0(material);
+	float3 Fbase = evalFresnel(f0, godotF90(f0, material.metalness), VdotH);
+	sampleWeight = (float3(1.0f, 1.0f, 1.0f) - Fbase) * (material.transmissivness * g);
+	return dot(geometryNormal, rayDirection) > 0.0f && luminance(sampleWeight) > 0.0f;
+}
+
 // Precalculates commonly used terms in BRDF evaluation
 // Clamps around dot products prevent NaNs and ensure numerical stability, but make sure to
 // correctly ignore rays outside of the sampling hemisphere, by using 'Vbackfacing' and 'Lbackfacing' flags

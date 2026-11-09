@@ -56,7 +56,8 @@ struct RTBaseMaterialState {
 	uint32_t backlight : 1;
 	uint32_t transmission : 1;
 	uint32_t refraction : 1;
-	uint32_t unused : 9;
+	uint32_t transmission_volume : 1; // Transmission with thin_walled off: the surface bounds a medium.
+	uint32_t unused : 8;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 

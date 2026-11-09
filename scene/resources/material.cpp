@@ -579,6 +579,9 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->backlight = "backlight";
 	shader_names->refraction = "refraction";
 	shader_names->transmission = "transmission";
+	shader_names->transmission_ior = "transmission_ior";
+	shader_names->transmission_attenuation_color = "transmission_attenuation_color";
+	shader_names->transmission_attenuation_distance = "transmission_attenuation_distance";
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
 	shader_names->uv1_offset = "uv1_offset";
@@ -690,6 +693,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.backlight = features[FEATURE_BACKLIGHT];
 		rt.transmission = features[FEATURE_TRANSMISSION];
 		rt.refraction = features[FEATURE_REFRACTION];
+		rt.transmission_volume = features[FEATURE_TRANSMISSION] && !transmission_thin_walled;
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -1113,6 +1117,9 @@ uniform vec4 refraction_texture_channel;
 		code += vformat(R"(
 uniform float transmission : hint_range(0.0, 1.0, 0.01);
 uniform sampler2D texture_transmission : hint_default_white, %s;
+uniform float transmission_ior : hint_range(1.0, 3.0, 0.01);
+uniform vec4 transmission_attenuation_color : source_color;
+uniform float transmission_attenuation_distance : hint_range(0.0, 1000.0, 0.01);
 )",
 				texfilter_str);
 	}
@@ -1121,7 +1128,7 @@ uniform sampler2D texture_transmission : hint_default_white, %s;
 		code += "uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear_mipmap;\n";
 	}
 
-	if (features[FEATURE_REFRACTION]) {
+	if (features[FEATURE_REFRACTION] || (features[FEATURE_TRANSMISSION] && !transmission_thin_walled)) {
 		code += "uniform sampler2D depth_texture : hint_depth_texture, repeat_disable, filter_nearest;\n";
 	}
 
@@ -1778,16 +1785,46 @@ void fragment() {)";
 		} else {
 			code += "	float transmission_tex = texture(texture_transmission, base_uv).r;\n";
 		}
+		const char *transmission_uv = features[FEATURE_REFRACTION] ? "refraction_uv" : "SCREEN_UV";
+		code += "	vec3 transmission_absorption = vec3(1.0);\n";
+		if (!transmission_thin_walled) {
+			// Into a medium (glTF KHR_materials_volume, KHR_materials_ior): the view ray refracts by the IOR over
+			// the depth behind the surface, and the light it finds is absorbed over that path (Beer-Lambert).
+			transmission_uv = "transmission_uv";
+			code += R"(	float transmission_depth_tex = textureLod(depth_texture, SCREEN_UV, 0.0).r;
+	vec4 transmission_ndc = OUTPUT_IS_SRGB ? vec4(vec3(SCREEN_UV, transmission_depth_tex) * 2.0 - 1.0, 1.0) : vec4(SCREEN_UV * 2.0 - 1.0, transmission_depth_tex, 1.0);
+	vec4 transmission_back = INV_PROJECTION_MATRIX * transmission_ndc;
+	transmission_back.xyz /= transmission_back.w;
+	// The view ray (VIEW points at the eye even in orthogonal projection).
+	vec3 transmission_incident = PROJECTION_MATRIX[3][3] == 1.0 ? vec3(0.0, 0.0, -1.0) : normalize(VERTEX);
+	vec3 transmission_ray = refract(transmission_incident, NORMAL, 1.0 / max(transmission_ior, 1.0));
+	vec4 transmission_clip = PROJECTION_MATRIX * vec4(VERTEX + transmission_ray * min(distance(transmission_back.xyz, VERTEX), 1.0e4), 1.0);
+	vec2 transmission_uv = clamp(transmission_clip.xy / transmission_clip.w * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+	transmission_depth_tex = textureLod(depth_texture, transmission_uv, 0.0).r;
+	transmission_ndc = OUTPUT_IS_SRGB ? vec4(vec3(transmission_uv, transmission_depth_tex) * 2.0 - 1.0, 1.0) : vec4(transmission_uv * 2.0 - 1.0, transmission_depth_tex, 1.0);
+	vec4 transmission_found = INV_PROJECTION_MATRIX * transmission_ndc;
+	transmission_found.xyz /= transmission_found.w;
+	if (transmission_found.z > VERTEX.z) {
+		// The refracted point is in front of the surface: read straight behind it instead.
+		transmission_uv = SCREEN_UV;
+		transmission_found = transmission_back;
+	}
+	if (transmission_attenuation_distance > 0.0) {
+		float transmission_path = min(distance(transmission_found.xyz, VERTEX), 1.0e4);
+		transmission_absorption = pow(max(transmission_attenuation_color.rgb, vec3(1.0e-4)), vec3(transmission_path / transmission_attenuation_distance));
+	}
+)";
+		}
 		code += vformat(R"(	// Transmission: Enabled
 	float transmission_amount = clamp(transmission * transmission_tex, 0.0, 1.0) * (1.0 - METALLIC);
 	float transmission_f0 = 0.16 * SPECULAR * SPECULAR;
 	float transmission_fresnel = transmission_f0 + (1.0 - transmission_f0) * pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
-	EMISSION += textureLod(screen_texture, %s, ROUGHNESS * 8.0).rgb * ALBEDO * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
+	EMISSION += textureLod(screen_texture, %s, ROUGHNESS * 8.0).rgb * ALBEDO * transmission_absorption * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
 	ALBEDO *= 1.0 - transmission_amount;
 	// Force transparency on the material (required to read the screen behind it).
 	ALPHA = 1.0;
 )",
-				features[FEATURE_REFRACTION] ? "refraction_uv" : "SCREEN_UV");
+				transmission_uv);
 	} else if (features[FEATURE_REFRACTION]) {
 		// Refraction already set ALPHA.
 	} else if (transparency != TRANSPARENCY_DISABLED || flags[FLAG_USE_SHADOW_TO_OPACITY] || (distance_fade == DISTANCE_FADE_PIXEL_ALPHA) || proximity_fade_enabled) {
@@ -2320,6 +2357,43 @@ float BaseMaterial3D::get_transmission() const {
 	return transmission;
 }
 
+void BaseMaterial3D::set_transmission_thin_walled(bool p_thin_walled) {
+	transmission_thin_walled = p_thin_walled;
+	_queue_shader_change();
+	notify_property_list_changed();
+}
+
+bool BaseMaterial3D::is_transmission_thin_walled() const {
+	return transmission_thin_walled;
+}
+
+void BaseMaterial3D::set_transmission_ior(float p_ior) {
+	transmission_ior = CLAMP(p_ior, 1.0f, 3.0f);
+	_material_set_param(shader_names->transmission_ior, transmission_ior);
+}
+
+float BaseMaterial3D::get_transmission_ior() const {
+	return transmission_ior;
+}
+
+void BaseMaterial3D::set_transmission_attenuation_color(const Color &p_color) {
+	transmission_attenuation_color = p_color;
+	_material_set_param(shader_names->transmission_attenuation_color, transmission_attenuation_color);
+}
+
+Color BaseMaterial3D::get_transmission_attenuation_color() const {
+	return transmission_attenuation_color;
+}
+
+void BaseMaterial3D::set_transmission_attenuation_distance(float p_distance) {
+	transmission_attenuation_distance = MAX(p_distance, 0.0f);
+	_material_set_param(shader_names->transmission_attenuation_distance, transmission_attenuation_distance);
+}
+
+float BaseMaterial3D::get_transmission_attenuation_distance() const {
+	return transmission_attenuation_distance;
+}
+
 void BaseMaterial3D::set_detail_uv(DetailUV p_detail_uv) {
 	if (detail_uv == p_detail_uv) {
 		return;
@@ -2569,6 +2643,10 @@ void BaseMaterial3D::_validate_property(PropertyInfo &p_property) const {
 		}
 
 		if (p_property.name == "point_size" && !flags[FLAG_USE_POINT_SIZE]) {
+			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+		}
+
+		if ((p_property.name == "transmission_ior" || p_property.name == "transmission_attenuation_color" || p_property.name == "transmission_attenuation_distance") && transmission_thin_walled) {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 
@@ -3408,6 +3486,18 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_transmission", "transmission"), &BaseMaterial3D::set_transmission);
 	ClassDB::bind_method(D_METHOD("get_transmission"), &BaseMaterial3D::get_transmission);
 
+	ClassDB::bind_method(D_METHOD("set_transmission_thin_walled", "thin_walled"), &BaseMaterial3D::set_transmission_thin_walled);
+	ClassDB::bind_method(D_METHOD("is_transmission_thin_walled"), &BaseMaterial3D::is_transmission_thin_walled);
+
+	ClassDB::bind_method(D_METHOD("set_transmission_ior", "ior"), &BaseMaterial3D::set_transmission_ior);
+	ClassDB::bind_method(D_METHOD("get_transmission_ior"), &BaseMaterial3D::get_transmission_ior);
+
+	ClassDB::bind_method(D_METHOD("set_transmission_attenuation_color", "color"), &BaseMaterial3D::set_transmission_attenuation_color);
+	ClassDB::bind_method(D_METHOD("get_transmission_attenuation_color"), &BaseMaterial3D::get_transmission_attenuation_color);
+
+	ClassDB::bind_method(D_METHOD("set_transmission_attenuation_distance", "distance"), &BaseMaterial3D::set_transmission_attenuation_distance);
+	ClassDB::bind_method(D_METHOD("get_transmission_attenuation_distance"), &BaseMaterial3D::get_transmission_attenuation_distance);
+
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
 	ClassDB::bind_method(D_METHOD("get_point_size"), &BaseMaterial3D::get_point_size);
 
@@ -3694,6 +3784,10 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "transmission_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_TRANSMISSION);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_transmission", "get_transmission");
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "transmission_texture", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_TRANSMISSION);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "transmission_thin_walled"), "set_transmission_thin_walled", "is_transmission_thin_walled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_ior", PROPERTY_HINT_RANGE, "1,3,0.01"), "set_transmission_ior", "get_transmission_ior");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "transmission_attenuation_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_transmission_attenuation_color", "get_transmission_attenuation_color");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_attenuation_distance", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater,suffix:m"), "set_transmission_attenuation_distance", "get_transmission_attenuation_distance");
 
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
@@ -3951,6 +4045,9 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_transmittance_boost(0.0);
 	set_refraction(0.05);
 	set_transmission(1.0);
+	set_transmission_ior(1.5);
+	set_transmission_attenuation_color(Color(1, 1, 1));
+	set_transmission_attenuation_distance(0.0);
 	set_point_size(1);
 	set_uv1_offset(Vector3(0, 0, 0));
 	set_uv1_scale(Vector3(1, 1, 1));

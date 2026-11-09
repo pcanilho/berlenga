@@ -220,7 +220,7 @@ struct alignas(16) RT_MaterialData {
 	struct {
 		uint32_t emission_indirect : 16; // fp16 BaseMaterial3D emission_indirect_energy: emission weight on indirect paths.
 		uint32_t transmission : 8; // unorm8 BaseMaterial3D transmission (GLSL rt_material_transmission()), 0 = none.
-		uint32_t unused : 8;
+		uint32_t ior : 8; // Index of refraction with RT_MAT_FLAG_VOLUME, see rt_material_set_medium().
 	} emission_indirect_transmission;
 	// BaseMaterial3D's layer textures, 0 (white) when absent; the top bits are unused.
 	struct { // texture_clearcoat: red scales clearcoat, green clearcoat_roughness.
@@ -235,7 +235,7 @@ struct alignas(16) RT_MaterialData {
 		uint32_t index : TEXTURE_INDEX_BITS;
 		uint32_t unused : 8;
 	} transmission_texture;
-	uint32_t reserved;
+	uint32_t medium; // Absorption of the medium behind RT_MAT_FLAG_VOLUME surfaces, see rt_material_set_medium().
 };
 static_assert(sizeof(RT_MaterialData) == 144, "RT_MaterialData must be 144 bytes for std430, with every bitfield struct in one uint");
 static_assert(BindlessBlock::MAX_BINDLESS_TEXTURES <= (1u << RT_MaterialData::TEXTURE_INDEX_BITS), "Bindless texture indices must fit RT_MaterialData textures");
@@ -255,6 +255,37 @@ constexpr void rt_material_set_surface_params(RT_MaterialData &r_mat, float p_ro
 	r_mat.surface_params.roughness = rt_unorm8(p_roughness);
 	r_mat.surface_params.metallic = rt_unorm8(p_metallic);
 	r_mat.surface_params.specular = rt_unorm8(p_specular);
+}
+
+// Medium code of absorption coefficients p_sigma (per metre): 9-bit log codes per channel
+// (0: none, else 2^(-12 + 24 * (c - 1) / 510)) with bit 29 set, so the code is never 0 and, read as
+// a float, is a normal finite number (it rides in the path payload's bsdf_pdf; GLSL rt_medium_absorption()).
+inline uint32_t rt_medium_code(const float p_sigma[3]) {
+	uint32_t code = 1u << 29;
+	for (int i = 0; i < 3; i++) {
+		uint32_t c = 0;
+		if (p_sigma[i] >= 0.000244140625f) {
+			const float t = (Math::log2(p_sigma[i]) + 12.0f) / 24.0f * 510.0f + 1.0f;
+			c = uint32_t(CLAMP(t + 0.5f, 1.0f, 511.0f));
+		}
+		code |= c << (9 * i);
+	}
+	return code;
+}
+
+// The medium behind a Transmission surface that is not thin-walled (RT_MAT_FLAG_VOLUME): index of
+// refraction p_ior (stored 1 to 3 in steps of 2/255) and absorption from glTF KHR_materials_volume,
+// attenuation colour p_color reached at p_distance metres: sigma = -ln(color) / distance per channel
+// (none when p_distance is 0).
+inline void rt_material_set_medium(RT_MaterialData &r_mat, float p_ior, const float p_color[3], float p_distance) {
+	r_mat.emission_indirect_transmission.ior = rt_unorm8((p_ior - 1.0f) * 0.5f);
+	float sigma[3] = { 0.0f, 0.0f, 0.0f };
+	if (p_distance > 0.0f) {
+		for (int i = 0; i < 3; i++) {
+			sigma[i] = -Math::log(CLAMP(p_color[i], 1e-4f, 1.0f)) / p_distance;
+		}
+	}
+	r_mat.medium = rt_medium_code(sigma);
 }
 
 // Stores BaseMaterial3D's back light colour (sRGB unorm8 per channel, GLSL rt_material_backlight()) in
@@ -509,6 +540,8 @@ enum {
 	RT_MAT_FLAG_BACKLIT = 2097152u,
 	// Custom shader writing TRANSMISSION or BACKLIGHT: its any-hit evaluates the fragment for shadow rays.
 	RT_MAT_FLAG_CUSTOM_TRANSMITTANCE = 4194304u,
+	// BaseMaterial3D Transmission with thin_walled off: the surface bounds a medium that refracts and absorbs.
+	RT_MAT_FLAG_VOLUME = 8388608u,
 	// Multi-bit fields fill the top bits so new single-bit flags can grow upward.
 	// Blend class of transparent surfaces (bits 25-27); opaque surfaces leave 0.
 	RT_MAT_BLEND_CLASS_SHIFT = 25u,

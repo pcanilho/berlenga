@@ -3589,6 +3589,14 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		if (mat.emission_indirect_transmission.transmission != 0u) {
 			mat.flags |= RT_MAT_FLAG_TRANSMISSIVE;
 			mat.transmission_texture.index = get_texture_idx("texture_transmission");
+			if (rt_state.transmission_volume) {
+				// The surface bounds a medium (glTF KHR_materials_volume and KHR_materials_ior).
+				const Variant attenuation = material_storage->material_get_param(p_material_rid, "transmission_attenuation_color");
+				const Color c = attenuation.get_type() == Variant::COLOR ? Color(attenuation).srgb_to_linear() : Color(1, 1, 1);
+				const float color[3] = { c.r, c.g, c.b };
+				mat.flags |= RT_MAT_FLAG_VOLUME;
+				rt_material_set_medium(mat, get_float("transmission_ior", 1.5f), color, get_float("transmission_attenuation_distance", 0.0f));
+			}
 		}
 	} else if (rt_state.refraction) {
 		// Refraction lets through 1 - alpha, as raster's ref_amount; the shader reads the alpha.
@@ -5988,7 +5996,8 @@ bool RTTlasBuilder::_hit_group_ready(const RTMaterialData *p_mat_data) const {
 void RTTlasBuilder::_fill_surface_key(const ShaderData *p_shader, const RTMaterialData *p_mat_data, ShaderData::RTBlendClass p_blend_class, uint8_t p_tlas_mask,
 		RTSurfaceGroupKey &r_key, uint32_t &r_material_flags) const {
 	const bool alpha_scissor = _rt_uses_alpha_scissor(p_shader, p_mat_data, rt_shader);
-	r_key.cull_mode = _rt_cull_mode(p_shader);
+	// A medium's surface is crossed from both sides: rays leaving the water hit its back faces.
+	r_key.cull_mode = (p_mat_data->data.flags & RT_MAT_FLAG_VOLUME) ? RSE::CULL_MODE_DISABLED : _rt_cull_mode(p_shader);
 	r_key.sbt_offset = p_mat_data->rt_sbt_offset;
 	r_key.tlas_mask = p_tlas_mask;
 	r_key.opaque = !alpha_scissor;
@@ -7113,7 +7122,8 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_MATERIAL_FEATURES] = float(
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/clearcoat") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_CLEARCOAT : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/back_lighting") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_BACK_LIGHTING : 0u) |
-				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transmission") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_TRANSMISSION : 0u));
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transmission") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_TRANSMISSION : 0u) |
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_REFRACTION : 0u));
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
 		// Color backgrounds, as the raster clear (render_forward_clustered.cpp): camera rays that
 		// miss show them instead of the radiance map, which holds no sky here.
