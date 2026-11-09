@@ -38,16 +38,22 @@
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/light_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/window.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/primitive_meshes.h"
+#include "scene/resources/sky.h"
 #include "scene/resources/3d/world_3d.h"
+#include "scene/resources/environment.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/shader.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/texture_rd.h"
 #include "servers/physics_3d/physics_server_3d.h"
+#include "servers/rendering/rendering_server.h"
 
 namespace {
 // A plain spatial Shader (Godot's own shading language, NOT the RD compute
@@ -78,7 +84,14 @@ namespace {
 // this material caused a genuine overexposure bug.
 const char *WATER_SHADER_SRC = R"(
 shader_type spatial;
-#if defined(RT)
+// The same source builds three materials. Plain: the surface. UNDERWATER_SURFACE: its next pass while
+// the camera is under water, the surface seen from below. UNDERWATER_FOG: a full screen pass that fogs
+// what lies under the water and splits the image at the water line (see "The camera under water").
+#if defined(UNDERWATER_FOG)
+render_mode blend_mix, cull_disabled, unshaded, fog_disabled, depth_test_disabled, depth_draw_never, shadows_disabled, rt_vertex_static;
+#elif defined(UNDERWATER_SURFACE)
+render_mode blend_mix, cull_disabled, unshaded, fog_disabled, depth_draw_never, shadows_disabled;
+#elif defined(RT)
 // The path tracer's copy (the shader is compiled again with RT defined) is a
 // real water surface instead: a medium boundary with IOR and absorption, so it
 // bends light, tints with depth and casts caustics, lit by the scene's own
@@ -205,6 +218,23 @@ uniform float shore_rim_strength : hint_range(0.0, 1.0) = 0.8;
 varying vec3 v_world_normal;
 varying float v_foam;
 varying vec2 v_rest_xz;
+
+// The camera under water (raster; the path tracer starts its camera rays in the water instead). Set by
+// PhysXWaterSurface3D while the camera is near the water: whether it is under the surface, and the light
+// reaching into the water: the sun's direction once refracted, its irradiance past the surface
+// (pi x energy x colour x Fresnel transmission), and the sky's radiance from above. The medium is the
+// path tracer's (pathtraced_absorption, pathtraced_scattering), so both modes fog alike.
+uniform bool underwater_active = false;
+uniform bool underwater_camera_below = false;
+uniform vec3 underwater_sun_direction = vec3(0.0, -1.0, 0.0);
+uniform vec3 underwater_sun_irradiance = vec3(0.0);
+uniform vec3 underwater_sky_radiance = vec3(0.0);
+// How dark the thin line where the surface crosses the lens is (0 none).
+uniform float underwater_meniscus : hint_range(0.0, 1.0) = 0.35;
+#if (defined(UNDERWATER_FOG) || defined(UNDERWATER_SURFACE)) && !defined(RT)
+uniform sampler2D underwater_screen : hint_screen_texture, filter_linear, repeat_disable;
+uniform sampler2D underwater_depth : hint_depth_texture, filter_nearest, repeat_disable;
+#endif
 
 // Flow (PhysXWaterSurface3D::current): the current in m/s past the simulated
 // square, and the flow solved round the ground inside it (flow_tex, RG m/s,
@@ -476,6 +506,145 @@ float shore_signal(vec2 world_xz, float time) {
 	return depth - offset * (1.0 - smoothstep(0.0, 0.08, run_up)) + run_up + jitter;
 }
 
+// The camera under water.
+
+// Height of the displaced surface above world_xz (choppy offset inverted, as the RT vertex() does).
+float surface_height_world(vec2 world_xz, float base_y) {
+	vec2 p = world_xz;
+	for (int i = 0; i < 3; i++) {
+		p = world_xz - surface_offset(p).xz;
+	}
+	return base_y + surface_offset(p).y;
+}
+
+vec3 uw_sigma_t() {
+	return max(pathtraced_absorption, vec3(0.0)) + max(pathtraced_scattering, vec3(0.0));
+}
+
+float uw_hg(float cos_theta, float g) {
+	float g2 = g * g;
+	return (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * g * cos_theta, 1e-4), 1.5));
+}
+
+// The integral of exp(-b t) over [0, L], per channel.
+vec3 uw_segment(vec3 b, float len) {
+	vec3 r;
+	for (int i = 0; i < 3; i++) {
+		r[i] = abs(b[i] * len) < 1e-4 ? len : (1.0 - exp(-b[i] * len)) / b[i];
+	}
+	return r;
+}
+
+// Single scattering toward the eye over len metres of water along d (unit), from a point z0 metres
+// under the surface, in closed form: at depth z the sun is dimmed by exp(-sigma_t z / mu) along its
+// refracted slant and the sky by exp(-1.2 sigma_t z) (diffuse light crossing the Snell window
+// slantwise); the sun scatters by the water's Henyey-Greenstein phase, the sky isotropically
+// (half the sphere lit). The path tracer does the same by sampling.
+vec3 uw_inscatter(float z0, vec3 d, float len) {
+	vec3 st = uw_sigma_t();
+	vec3 ss = max(pathtraced_scattering, vec3(0.0));
+	float mu = max(-underwater_sun_direction.y, 0.05);
+	vec3 a = st / mu;
+	vec3 sun = underwater_sun_irradiance * uw_hg(dot(underwater_sun_direction, -d), pathtraced_scattering_anisotropy) *
+			exp(-a * z0) * uw_segment(st - a * d.y, len);
+	vec3 k = st * 1.2;
+	vec3 sky = underwater_sky_radiance * 0.5 * exp(-k * z0) * uw_segment(st - k * d.y, len);
+	return ss * (sun + sky);
+}
+
+// The share of the surface's light left at depth z (raster lights ignore the water above a surface).
+vec3 uw_light_at_depth(float z) {
+	vec3 st = uw_sigma_t();
+	float mu = max(-underwater_sun_direction.y, 0.05);
+	float w_sun = dot(underwater_sun_irradiance, vec3(1.0 / 3.0)) * mu / PI;
+	float w_sky = dot(underwater_sky_radiance, vec3(1.0 / 3.0));
+	return (w_sun * exp(-st * z / mu) + w_sky * exp(-st * 1.2 * z)) / max(w_sun + w_sky, 1e-6);
+}
+
+// Fresnel reflectance of the water's underside (exact, unpolarised), 1 past the critical angle.
+float uw_fresnel_from_below(float cos_i) {
+	const float n1 = 1.33;
+	float sin_t2 = n1 * n1 * max(1.0 - cos_i * cos_i, 0.0);
+	if (sin_t2 >= 1.0) {
+		return 1.0;
+	}
+	float cos_t = sqrt(1.0 - sin_t2);
+	float rs = (n1 * cos_i - cos_t) / (n1 * cos_i + cos_t);
+	float rp = (cos_i - n1 * cos_t) / (cos_i + n1 * cos_t);
+	return 0.5 * (rs * rs + rp * rp);
+}
+
+#if defined(UNDERWATER_FOG)
+// A full screen pass (Crest's underwater effect, with the path tracer's medium). Its mesh is a 2 mm quad
+// at the node, so the path tracer, which never shows it anyway, has nothing in the way.
+void vertex() {
+	POSITION = vec4(VERTEX.xy * 1000.0, 1.0, 1.0);
+}
+
+void fragment() {
+#if defined(RT)
+	ALPHA = 0.0;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
+#else
+	vec2 ndc = SCREEN_UV * 2.0 - 1.0;
+	vec4 near_v = INV_PROJECTION_MATRIX * vec4(ndc, 1.0, 1.0);
+	near_v /= near_v.w;
+	vec3 p_near = (INV_VIEW_MATRIX * vec4(near_v.xyz, 1.0)).xyz;
+	bool orthogonal = PROJECTION_MATRIX[3][3] != 0.0;
+	vec3 d = orthogonal ? -INV_VIEW_MATRIX[2].xyz : (INV_VIEW_MATRIX * vec4(normalize(near_v.xyz), 0.0)).xyz;
+	d = normalize(d);
+	float base_y = MODEL_MATRIX[3].y;
+	// Each pixel's point on the near plane against the surface over it: the water line across the lens.
+	float above = p_near.y - surface_height_world(p_near.xz, base_y);
+	// Meniscus: a dark line a couple of pixels wide where the surface meets the lens.
+	float band = max(length(dFdy(p_near)), 1e-5) * 2.0;
+	float meniscus = underwater_meniscus * exp(-(above * above) / (band * band));
+	if (above > 0.0 && (d.y >= 0.0 || above > band * 8.0)) {
+		if (meniscus < 0.004) {
+			discard;
+		}
+		ALBEDO = vec3(0.0);
+		ALPHA = meniscus;
+	} else if (above > 0.0) {
+		// Just over the water line, looking down: the mesh (straight triangles) and these heights
+		// (filtered) can disagree by a few millimetres, leaving the floor seen past the near plane with
+		// no surface in front of it. Fog the part of the ray under the water.
+		float depth = texture(underwater_depth, SCREEN_UV).r;
+		float len = 1e4;
+		if (depth > 0.0) {
+			vec4 o_v = INV_PROJECTION_MATRIX * vec4(ndc, depth, 1.0);
+			len = distance((INV_VIEW_MATRIX * vec4(o_v.xyz / o_v.w, 1.0)).xyz, p_near);
+		}
+		float seg = max(len - above / -d.y, 0.0);
+		vec3 scene = texture(underwater_screen, SCREEN_UV).rgb;
+		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter(0.0, d, seg)) * (1.0 - meniscus);
+		ALPHA = 1.0;
+	} else {
+		float z0 = -above;
+		float depth = texture(underwater_depth, SCREEN_UV).r;
+		float len = 1e4;
+		vec3 p_o = p_near + d * len;
+		if (depth > 0.0) {
+			vec4 o_v = INV_PROJECTION_MATRIX * vec4(ndc, depth, 1.0);
+			o_v /= o_v.w;
+			p_o = (INV_VIEW_MATRIX * vec4(o_v.xyz, 1.0)).xyz;
+			len = distance(p_o, p_near);
+		}
+		// Only the stretch under the water: past the surface the underside pass draws.
+		float to_surface = d.y > 1e-4 ? z0 / d.y : 1e4;
+		vec3 scene = texture(underwater_screen, SCREEN_UV).rgb;
+		if (len <= to_surface) {
+			// A surface under water: the water above it took part of its light on the way down.
+			scene *= uw_light_at_depth(max(surface_height_world(p_o.xz, base_y) - p_o.y, 0.0));
+		}
+		float seg = min(len, to_surface);
+		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter(z0, d, seg)) * (1.0 - meniscus);
+		ALPHA = 1.0;
+	}
+#endif
+}
+#else
+
 void vertex() {
 	// Under path tracing too: a hit re-runs this on the captured rest pose.
 	VERTEX += (inverse(MODEL_MATRIX) * vec4(mesh_offset.x, 0.0, mesh_offset.y, 0.0)).xyz;
@@ -510,10 +679,17 @@ void fragment() {
 	// painted over the near one as jagged translucent teeth, and the
 	// pattern changed wherever the mesh order did, drawing a seam.
 #if !defined(RT)
-	bool camera_above = CAMERA_POSITION_WORLD.y > MODEL_MATRIX[3].y + water_level;
-	if (FRONT_FACING != camera_above) {
+	bool camera_above = underwater_active ? !underwater_camera_below : CAMERA_POSITION_WORLD.y > MODEL_MATRIX[3].y + water_level;
+#if defined(UNDERWATER_SURFACE)
+	if (FRONT_FACING || camera_above) {
 		discard;
 	}
+#else
+	// With the camera under water the underside pass draws it.
+	if (FRONT_FACING != camera_above || (underwater_active && !camera_above)) {
+		discard;
+	}
+#endif
 #endif
 	vec3 world_normal = v_world_normal;
 	float foam = v_foam;
@@ -521,6 +697,82 @@ void fragment() {
 		world_normal = surface_normal_pixel(v_rest_xz);
 		foam = foam_at(v_rest_xz);
 	}
+#if defined(UNDERWATER_SURFACE) && defined(RT)
+	ALPHA = 0.0; // the path tracer has the real surface
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
+#elif defined(UNDERWATER_SURFACE)
+	// The surface from below (Crest's ApplyReflectionUnderwater, exact Fresnel): the world above through
+	// Snell's window, refracted, and past the critical angle (48.6 degrees) a mirror of the water's own
+	// in-scattered light (total internal reflection); then the fog of the water between.
+	vec3 p_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec3 cam = CAMERA_POSITION_WORLD;
+	vec3 d = normalize(p_w - cam);
+	vec3 n_w = -world_normal; // the underside faces down
+	if (dot(n_w, d) > 0.0) {
+		n_w = -n_w;
+	}
+	float fresnel = uw_fresnel_from_below(clamp(dot(-d, n_w), 0.0, 1.0));
+	float dist = distance(p_w, cam);
+	vec3 from_above = underwater_sky_radiance;
+	if (fresnel < 1.0) {
+		vec3 t = normalize(refract(d, n_w, 1.33));
+		// The refracted ray read off the screen where it meets what is behind the surface (its depth
+		// straight behind; sky: far); off screen, the sky's radiance.
+		float reach = 200.0;
+		float depth_bg = texture(underwater_depth, SCREEN_UV).r;
+		if (depth_bg > 0.0) {
+			vec4 bg_v = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, depth_bg, 1.0);
+			reach = clamp(length(bg_v.xyz / bg_v.w) - length(VERTEX), 0.5, 200.0);
+		}
+		vec4 clip = PROJECTION_MATRIX * VIEW_MATRIX * vec4(p_w + t * reach, 1.0);
+		if (clip.w > 0.0) {
+			vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+			vec2 inside2 = smoothstep(vec2(0.0), vec2(0.04), uv) * smoothstep(vec2(0.0), vec2(0.04), 1.0 - uv);
+			from_above = mix(underwater_sky_radiance, texture(underwater_screen, clamp(uv, vec2(0.0), vec2(1.0))).rgb, inside2.x * inside2.y);
+		}
+	}
+	// The mirror below: the reflected ray marched across the screen (a short screen-space reflection)
+	// to what it meets under the water, seen through the water between; else the water's own light.
+	vec3 r = reflect(d, n_w);
+	vec3 mirrored = uw_inscatter(0.0, r, 1e4);
+	if (fresnel > 0.02) {
+		float t_prev = 0.0;
+		for (int i = 1; i <= 16; i++) {
+			float t = 0.25 * pow(1.3, float(i)); // 0.3 m to 17 m
+			vec3 q = p_w + r * t;
+			vec4 qc = PROJECTION_MATRIX * VIEW_MATRIX * vec4(q, 1.0);
+			if (qc.w <= 0.0) {
+				break;
+			}
+			vec2 quv = qc.xy / qc.w * 0.5 + 0.5;
+			if (any(lessThan(quv, vec2(0.0))) || any(greaterThan(quv, vec2(1.0)))) {
+				break;
+			}
+			float scene_depth = texture(underwater_depth, quv).r;
+			// Reverse Z: the ray point is behind what the screen shows there.
+			if (scene_depth > qc.z / qc.w) {
+				vec4 sv = INV_PROJECTION_MATRIX * vec4(quv * 2.0 - 1.0, scene_depth, 1.0);
+				vec3 hit = (INV_VIEW_MATRIX * vec4(sv.xyz / sv.w, 1.0)).xyz;
+				float t_hit = distance(hit, p_w);
+				// Thickness test: a hit far behind the step is something else in front.
+				if (t_hit < t + (t - t_prev) * 2.0 + 0.5) {
+					float z_hit = max(MODEL_MATRIX[3].y + water_level - hit.y, 0.0);
+					vec3 seen = texture(underwater_screen, quv).rgb * uw_light_at_depth(z_hit);
+					vec2 edge = smoothstep(vec2(0.0), vec2(0.06), quv) * smoothstep(vec2(0.0), vec2(0.06), 1.0 - quv);
+					mirrored = mix(mirrored, seen * exp(-uw_sigma_t() * t_hit) + uw_inscatter(0.0, r, t_hit), edge.x * edge.y);
+				}
+				break;
+			}
+			t_prev = t;
+		}
+	}
+	vec3 surf = from_above * (1.0 - fresnel) + mirrored * fresnel;
+	// Foam from below: a lit, rough layer that lets little through.
+	surf = mix(surf, foam_color.rgb * (underwater_sky_radiance + underwater_sun_irradiance / PI) * 0.5, foam * 0.85);
+	float z_cam = max(MODEL_MATRIX[3].y + water_level - cam.y, 0.0);
+	ALBEDO = surf * exp(-uw_sigma_t() * dist) + uw_inscatter(z_cam, d, dist);
+	ALPHA = 1.0;
+#else
 	// unshaded + a small self-contained, bounded normal-based shading term --
 	// NOT Godot's real diffuse/specular PBR response. Real root cause of the
 	// "whitewash": this material used render_mode diffuse_burley,
@@ -598,7 +850,9 @@ void fragment() {
 	ALPHA = water_a + wet_a;
 	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);
 #endif
+#endif // UNDERWATER_SURFACE
 }
+#endif // UNDERWATER_FOG
 )";
 
 // Sign of the X/Z cross product of an up-facing PlaneMesh triangle -- measured
@@ -763,6 +1017,11 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &PhysXWaterSurface3D::set_water_material);
 	ClassDB::bind_method(D_METHOD("get_water_material"), &PhysXWaterSurface3D::get_water_material);
 
+	ClassDB::bind_method(D_METHOD("set_underwater_enabled", "enabled"), &PhysXWaterSurface3D::set_underwater_enabled);
+	ClassDB::bind_method(D_METHOD("get_underwater_enabled"), &PhysXWaterSurface3D::get_underwater_enabled);
+	ClassDB::bind_method(D_METHOD("set_underwater_meniscus", "strength"), &PhysXWaterSurface3D::set_underwater_meniscus);
+	ClassDB::bind_method(D_METHOD("get_underwater_meniscus"), &PhysXWaterSurface3D::get_underwater_meniscus);
+	ClassDB::bind_method(D_METHOD("is_camera_underwater"), &PhysXWaterSurface3D::is_camera_underwater);
 	ClassDB::bind_method(D_METHOD("set_caustics_enabled", "enabled"), &PhysXWaterSurface3D::set_caustics_enabled);
 	ClassDB::bind_method(D_METHOD("get_caustics_enabled"), &PhysXWaterSurface3D::get_caustics_enabled);
 	ClassDB::bind_method(D_METHOD("set_caustics_sun_direction", "direction"), &PhysXWaterSurface3D::set_caustics_sun_direction);
@@ -841,6 +1100,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cull_margin", PROPERTY_HINT_RANGE, "0,500,0.1,or_greater,suffix:m"), "set_cull_margin", "get_cull_margin");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "normal_mode", PROPERTY_HINT_ENUM, "Per Pixel,Per Vertex"), "set_normal_mode", "get_normal_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "water_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_water_material", "get_water_material");
+
+	ADD_GROUP("Underwater", "underwater_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "underwater_enabled"), "set_underwater_enabled", "get_underwater_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "underwater_meniscus", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_underwater_meniscus", "get_underwater_meniscus");
 
 	ADD_GROUP("Caustics", "caustic");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "caustics_enabled"), "set_caustics_enabled", "get_caustics_enabled");
@@ -1583,6 +1846,193 @@ void PhysXWaterSurface3D::set_water_material(const Ref<ShaderMaterial> &p_materi
 	}
 }
 
+void PhysXWaterSurface3D::set_underwater_enabled(bool p_enabled) {
+	underwater_enabled = p_enabled;
+	if (!underwater_enabled) {
+		_set_underwater_shown(false);
+	}
+}
+
+void PhysXWaterSurface3D::set_underwater_meniscus(float p_strength) {
+	underwater_meniscus = CLAMP(p_strength, 0.0f, 1.0f);
+}
+
+void PhysXWaterSurface3D::_set_underwater_shown(bool p_shown) {
+	if (p_shown == underwater_shown) {
+		return;
+	}
+	underwater_shown = p_shown;
+	if (p_shown && underwater_fog_material.is_null()) {
+		// The same source as the surface, built twice more (see WATER_SHADER_SRC's head).
+		Ref<Shader> fog_shader;
+		fog_shader.instantiate();
+		fog_shader->set_code(String("#define UNDERWATER_FOG\n") + WATER_SHADER_SRC);
+		underwater_fog_material.instantiate();
+		underwater_fog_material->set_shader(fog_shader);
+		// Before the surface's underside among the transparent draws, which then covers it.
+		underwater_fog_material->set_render_priority(-1);
+		Ref<Shader> surface_shader;
+		surface_shader.instantiate();
+		surface_shader->set_code(String("#define UNDERWATER_SURFACE\n") + WATER_SHADER_SRC);
+		underwater_surface_material.instantiate();
+		underwater_surface_material->set_shader(surface_shader);
+		List<PropertyInfo> uniforms;
+		fog_shader->get_shader_uniform_list(&uniforms);
+		underwater_shared_params.clear();
+		for (const PropertyInfo &pi : uniforms) {
+			if (!pi.name.begins_with("underwater_")) {
+				underwater_shared_params.push_back(pi.name);
+			}
+		}
+	}
+	if (p_shown && underwater_fog_instance == nullptr) {
+		underwater_fog_instance = memnew(MeshInstance3D);
+		Ref<QuadMesh> quad;
+		quad.instantiate();
+		// 2 mm across: the vertex shader stretches it over the screen (POSITION); the path tracer sees a speck.
+		quad->set_size(Vector2(0.002, 0.002));
+		underwater_fog_instance->set_mesh(quad);
+		underwater_fog_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+		underwater_fog_instance->set_extra_cull_margin(16384.0);
+		underwater_fog_instance->set_material_override(underwater_fog_material);
+		add_child(underwater_fog_instance, false, INTERNAL_MODE_BACK);
+	}
+	if (underwater_fog_instance != nullptr) {
+		underwater_fog_instance->set_visible(p_shown);
+	}
+	if (water_material.is_valid()) {
+		if (p_shown && water_material->get_next_pass().is_null()) {
+			water_material->set_next_pass(underwater_surface_material);
+		} else if (!p_shown && water_material->get_next_pass() == underwater_surface_material) {
+			water_material->set_next_pass(Ref<Material>());
+		}
+		water_material->set_shader_parameter("underwater_active", p_shown);
+	}
+	if (!p_shown) {
+		underwater_camera_below = false;
+		if (water_material.is_valid()) {
+			water_material->set_shader_parameter("underwater_camera_below", false);
+		}
+	}
+}
+
+// Shows the underwater passes while the camera is within reach of the water and feeds them the
+// camera's side of the surface and the light entering the water.
+void PhysXWaterSurface3D::_update_underwater() {
+	const Viewport *vp = get_viewport();
+	const Camera3D *cam = vp != nullptr ? vp->get_camera_3d() : nullptr;
+	if (!underwater_enabled || cam == nullptr || water_material.is_null() || !is_visible_in_tree()) {
+		_set_underwater_shown(false);
+		return;
+	}
+	const Vector3 cp = cam->get_global_position();
+	const float level = get_global_position().y + water_level;
+	// The waves reach a few amplitudes up; the near plane a little further.
+	const float reach = MAX(wave_amplitude * 4.0f, 2.0f) + (float)cam->get_near() * 2.0f;
+	const bool wet_here = is_wet(cp);
+	if (!wet_here || cp.y > level + reach) {
+		_set_underwater_shown(false);
+		return;
+	}
+	_set_underwater_shown(true);
+
+	float h = sample_height(cp);
+	if (!Math::is_finite(h)) {
+		h = level;
+	}
+	underwater_camera_below = cp.y < h;
+
+	// The sun: the first visible directional light, looked up again now and then.
+	DirectionalLight3D *sun = ObjectDB::get_instance<DirectionalLight3D>(underwater_sun);
+	if ((sun == nullptr || !sun->is_inside_tree()) && underwater_sun_search-- <= 0) {
+		underwater_sun_search = 60;
+		underwater_sun = ObjectID();
+		TypedArray<Node> lights = get_tree()->get_root()->find_children("*", "DirectionalLight3D", true, false);
+		for (int i = 0; i < lights.size(); i++) {
+			DirectionalLight3D *l = Object::cast_to<DirectionalLight3D>(lights[i]);
+			if (l != nullptr && l->is_visible_in_tree() && l->get_sky_mode() != DirectionalLight3D::SKY_MODE_SKY_ONLY) {
+				underwater_sun = l->get_instance_id();
+				sun = l;
+				break;
+			}
+		}
+	}
+	Vector3 sun_dir(0, -1, 0);
+	Vector3 sun_irradiance;
+	if (sun != nullptr && sun->is_visible_in_tree()) {
+		// Light travels along the light's -Z; refracted down into the water (Snell, IOR 1.33) and
+		// thinned by the surface's Fresnel reflection. Raster lights are pi x energy in irradiance.
+		const Vector3 travel = -sun->get_global_transform().basis.get_column(2).normalized();
+		const float cos_i = -travel.y;
+		if (cos_i > 0.0f) {
+			const float sin_i = Math::sqrt(MAX(1.0f - cos_i * cos_i, 0.0f));
+			const float sin_t = sin_i / 1.33f;
+			const float cos_t = Math::sqrt(MAX(1.0f - sin_t * sin_t, 0.0f));
+			Vector2 hz(travel.x, travel.z);
+			hz = hz.length() > 1e-6f ? hz.normalized() : Vector2();
+			sun_dir = Vector3(hz.x * sin_t, -cos_t, hz.y * sin_t);
+			const float rs = (cos_i - 1.33f * cos_t) / (cos_i + 1.33f * cos_t);
+			const float rp = (1.33f * cos_i - cos_t) / (1.33f * cos_i + cos_t);
+			const float transmit = 1.0f - 0.5f * (rs * rs + rp * rp);
+			const Color c = sun->get_color().srgb_to_linear() * sun->get_param(Light3D::PARAM_ENERGY) * Math::PI * transmit;
+			sun_irradiance = Vector3(c.r, c.g, c.b);
+		}
+	}
+
+	// The sky's radiance from above: the ambient light a white floor facing up would get, from the
+	// environment's irradiance (baked once per sky).
+	Ref<Environment> env = cam->get_environment();
+	if (env.is_null() && get_world_3d().is_valid()) {
+		env = get_world_3d()->get_environment();
+	}
+	Color sky;
+	if (env.is_valid()) {
+		const Color ambient = env->get_ambient_light_color().srgb_to_linear() * env->get_ambient_light_energy();
+		const Environment::AmbientSource source = env->get_ambient_source();
+		const bool from_sky = env->get_sky().is_valid() && (source == Environment::AMBIENT_SOURCE_SKY ||
+																	(source == Environment::AMBIENT_SOURCE_BG && env->get_background() == Environment::BG_SKY));
+		if (from_sky) {
+			const RID sky_rid = env->get_sky()->get_rid();
+			// Again every few seconds (a sky that changes with the time of day), and until the sky has
+			// been drawn once (before that the bake comes back black).
+			if (sky_rid != underwater_sky_baked || --underwater_sky_rebake <= 0) {
+				underwater_sky_baked = sky_rid;
+				underwater_sky_radiance = Color(0, 0, 0);
+				Ref<Image> pano = RS::get_singleton()->sky_bake_panorama(sky_rid, 1.0, true, Size2i(32, 16));
+				if (pano.is_valid() && !pano->is_empty()) {
+					Color sum;
+					for (int x = 0; x < pano->get_width(); x++) {
+						sum += pano->get_pixel(x, 0);
+					}
+					underwater_sky_radiance = sum / (float)pano->get_width();
+				}
+				underwater_sky_rebake = underwater_sky_radiance.get_luminance() > 0.0f ? 240 : 10;
+			}
+			const float sc = env->get_ambient_light_sky_contribution();
+			sky = underwater_sky_radiance * env->get_ambient_light_energy() * sc + ambient * (1.0f - sc);
+		} else if (source != Environment::AMBIENT_SOURCE_DISABLED) {
+			sky = ambient;
+		}
+	}
+
+	for (Ref<ShaderMaterial> m : { underwater_fog_material, underwater_surface_material }) {
+		for (const StringName &name : underwater_shared_params) {
+			const Variant v = water_material->get_shader_parameter(name);
+			if (v.get_type() != Variant::NIL) {
+				m->set_shader_parameter(name, v);
+			}
+		}
+	}
+	for (Ref<ShaderMaterial> m : { water_material, underwater_fog_material, underwater_surface_material }) {
+		m->set_shader_parameter("underwater_active", true);
+		m->set_shader_parameter("underwater_camera_below", underwater_camera_below);
+		m->set_shader_parameter("underwater_sun_direction", sun_dir);
+		m->set_shader_parameter("underwater_sun_irradiance", sun_irradiance);
+		m->set_shader_parameter("underwater_sky_radiance", Vector3(sky.r, sky.g, sky.b));
+		m->set_shader_parameter("underwater_meniscus", underwater_meniscus);
+	}
+}
+
 void PhysXWaterSurface3D::set_caustics_enabled(bool p_enabled) {
 	caustics_enabled = p_enabled;
 	_rebuild();
@@ -1613,6 +2063,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 		case NOTIFICATION_EXIT_WORLD: {
 			set_physics_process_internal(false);
 			set_process_internal(false);
+			_set_underwater_shown(false);
 			// The solver's textures go with this node (or are rebuilt on the
 			// way back in): let go of them first.
 			_detach_textures();
@@ -1626,6 +2077,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 					_frame_update();
 				}
 				_update_mesh_offset();
+				_update_underwater();
 			}
 		} break;
 	}

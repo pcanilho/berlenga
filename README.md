@@ -15,7 +15,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Many lights**: 4096 path-traced lights (upstream 64), emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting and thin-glass transmission in the path tracer; textures filter like raster.
-- **Water**: refraction, depth tint, murky water, caustics, currents, white water and a path-traced ocean.
+- **Water**: refraction, depth tint, murky water, caustics, currents, white water, rivers from a path, a path-traced ocean and a camera that dives under water.
 - **Exposure**: histogram metering and local exposure that keep night scenes dark.
 - **Physics**: PhysX 5 next to Jolt, with cloth, tearing, destruction and path-traced smoke.
 - **Open worlds**: far-origin precision, persistent ray tracing instances, mesh LOD in the tracer.
@@ -118,6 +118,28 @@ Look behind the rock: with live flow the streaks roll up into a wake instead of 
 ![Looking down on a rock in a current: foam lines peel off both sides and drift downstream](docs/media/white-water.gif)
 
 Foam lines peel off both sides of the rock and wander with its wake.
+
+</details>
+
+- **Rivers from a path** (`PhysXRiver3D`: `discharge`, `roughness`, `max_slope`): draw a curve with widths and a discharge; the river finds its depth on the ground, never runs uphill, falls as cascades with white water below, and floats objects downstream.
+
+<details><summary>Image: a river with a cascade, raster vs path traced</summary>
+
+![A river drawn as a path through a valley, dropping over a cascade into white water, raster and path traced](docs/media/river.jpg)
+
+Look at the cascade and the white water below it.
+
+</details>
+
+- **Camera under water**: fog, scattering and the surface seen from below (Snell's window, total internal reflection), with the image split at the water line. Path traced automatically; raster with `PhysXWaterSurface3D.underwater_enabled`.
+
+<details><summary>Image and clip: under water, raster vs path traced; a dive through the surface</summary>
+
+![Under water near crates on a sandy floor: raster fog and a wavy surface above, path traced scattering with caustic light on the sand](docs/media/underwater.jpg)
+
+![The camera dives through the water surface, raster](docs/media/underwater-dive.gif)
+
+Look at the light scattering through the water and the surface seen from below.
 
 </details>
 

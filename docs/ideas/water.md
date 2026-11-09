@@ -795,6 +795,118 @@ mesh ground. The river is its first brush; it never edits terrain itself.
   the deformer will leave. In the bench (flat valley floor, `--carve`) the bench script plays the
   deformer: it lowers its mesh ground to the brushes and rebuilds the collision.
 
+## The camera under water: research (9 Nov)
+
+### What the fork has today
+
+- **Path tracing:** the water is a real medium (refraction, Beer-Lambert, scattering, total internal
+  reflection in the dielectric lobe), but raygen starts every camera ray outside any medium. A camera
+  under the surface traces its first segment as if in air, then treats the underside as the way
+  *into* the water: no fog between the eye and the first surface, and the world above comes out
+  dark (absorbed on a path that never happened). A ray that misses everything inside clear water
+  is not absorbed either.
+- **Raster:** the PhysX water shader is unshaded and alpha blended. From below it draws the
+  underside with the same tint as the top. Nothing fogs what is under the water, and the image does
+  not split where the surface crosses the lens.
+
+### How others do it
+
+- **Crest (Unity, MIT, code read).** `UnderwaterRenderer` draws the water surface into a mask
+  (front faces above, back faces below) plus a horizon line from the camera's far plane against the
+  sea level, so each pixel knows if it is under water. A full screen pass fogs those pixels:
+  `lerp(scene, scatter_colour, 1 - exp(-density * distance))` with a density per channel; the scatter
+  colour comes from the sun and ambient light at the camera's depth. The surface seen from below is
+  shaded by the ocean shader itself: Fresnel worked out on the air side through Snell's law, so it
+  reaches 1 past the critical angle (total internal reflection), and the reflected part is the
+  scatter colour. A meniscus darkens three pixels each side of the mask's edge across the lens.
+- **Unity HDRP water.** A full screen pass with an absorption distance and a scattering colour; if
+  volumetric fog is on the water goes into the volumetric buffer and gets light shafts from shadows.
+  The water line across the lens is drawn from a per pixel "is underwater" buffer that custom passes
+  can read. Docs do not mention total internal reflection.
+- **Unreal Water.** Each water body has an underwater post process material, switched on when the
+  camera is inside the body (the water height under the camera). It fogs with the Single Layer Water
+  material's absorption and scattering. Splitting the image at the water line is left to the
+  material.
+- **Godot add-ons (code read).** tessarakkt's godot4-oceanfft checks the camera against the wave
+  height and swaps in a volumetric fog (one grey density, so no colour shift with distance) and a
+  full screen tint; no water line. Boujie Water Shader uses a FogVolume. Ben K's waterline shader
+  (0BSD) is a full screen quad that compares each pixel's near plane point with the water height,
+  and for a displaced surface rebuilds the exact triangle under the point, since a bilinear read of
+  the height map misses the creases of the mesh.
+- **Offline path tracers.** PBRT and Mitsuba make the camera's medium a scene setting. Cycles
+  finds it: before the camera rays it casts a probe ray and keeps a volume stack from the faces it
+  crosses (front face in, back face out), so a camera that dips into a volume needs no setup.
+
+### Plan
+
+- **Path tracing, Cycles' way.** Each pixel probes straight up from its point on the near plane
+  (the same plane raster clips at, so the water line splits the lens in the same place). The first
+  medium surface it meets decides: its back face means the pixel starts inside that medium, with
+  that surface's extinction and scattering; a front face or nothing means air. Other surfaces (a
+  pier, a boat's hull) are passed through. Camera rays then start at the near plane. Misses inside
+  clear water are absorbed. One probe a pixel a frame, only with refraction on.
+- **Raster, Crest's way, with the path tracer's numbers.** The fog and the underside use the
+  water's own `pathtraced_absorption` and `pathtraced_scattering`, so both modes agree:
+  - A full screen pass under the water fogs what is behind each pixel: transmittance
+    `exp(-sigma_t d)` per channel, plus single scattering of the sun (Henyey-Greenstein phase with the
+    water's anisotropy, the sun refracted at the surface) and the sky, each dimmed by the depth it
+    crossed, in closed form along the ray. Surfaces under water lose the light the water took on
+    the way down.
+  - Per pixel near plane test against the displaced surface (the same heights the mesh uses, with
+    the choppy offset inverted), so the image splits at the water line, with a thin meniscus.
+  - The underside: refraction of the screen up through the surface (Snell's window), exact
+    dielectric Fresnel from the water side reaching 1 at 48.6 degrees, the reflected part the
+    water's own in-scattered light, and the fog of the distance to it.
+  - Only when the camera is near or under the water, so above water costs nothing.
+- **Reuse:** the surface heights, normals and foam from `PhysXWaterSurface3D`'s shader, its
+  medium parameters, and the path tracer's medium tracking from step 1.
+- **Not in this step:** raster light shafts (the path tracer has them), raster caustics on the
+  floor, fogging transparent objects under water in raster (Crest needs a per-material fog for that
+  too), underwater bubbles and particles.
+
+## The camera under water: as built (9 Nov)
+
+- **Path tracing.** Raygen starts each pixel's camera ray on the near plane (where raster clips) and
+  first calls `rt_camera_medium()`: a probe straight up through the caustic photon mode of the hit
+  shader, which now reports a medium surface's back face with its medium code (sign bit set, so
+  photons still read it as not entering) and leaves its scattering in `rt_medium_image`. The first
+  medium surface met decides; other surfaces are passed through (up to 4). The probe starts 1 cm
+  below the point, so a surface within the trace's 1 mm minimum distance is not skipped (it left a
+  band of unfogged floor along the water line). The path then starts in
+  that medium, so fog, scattering, the surface from below (refraction, Fresnel, total internal
+  reflection) and shadows out of the water all come from the existing medium tracking. A camera ray
+  that misses everything inside clear water is now absorbed (black) instead of seeing the sky. Only
+  with `rendering/pathtracing/refraction` on.
+- **Raster.** `PhysXWaterSurface3D.underwater_enabled` (on) and `underwater_meniscus` (0.35). While
+  the camera is within reach of the waves the node shows two more materials built from the water
+  shader's own source (`#define UNDERWATER_FOG`, `UNDERWATER_SURFACE`), copying its parameters each
+  frame:
+  - *Fog pass:* a full screen quad (2 mm mesh, so the path tracer has nothing in its way), drawn
+    first among transparents. Per pixel: the near plane point against the displaced surface
+    (`surface_height_world()`, choppy offset inverted) splits the image; the meniscus darkens a two
+    pixel band there; just above the line, looking down, the part of the ray under the water is
+    fogged too (the mesh's straight triangles and the filtered heights disagree by millimetres
+    there, Ben K's crease problem). Under the water: `scene x light_at_depth x exp(-sigma_t d) + in-scatter`, d
+    clipped where the ray reaches the surface. In-scatter is single scattering in closed form along
+    the ray: the sun refracted into the water (Snell, IOR 1.33, Fresnel transmission, the first
+    visible DirectionalLight3D) with the Henyey-Greenstein phase of `pathtraced_scattering_anisotropy`,
+    dimmed by `exp(-sigma_t z / mu)`; the sky (the environment's irradiance from above, baked with
+    `sky_bake_panorama` every few seconds) isotropic, dimmed by `exp(-1.2 sigma_t z)`.
+  - *Underside pass* (the water material's next pass): the screen read along the refracted ray
+    (Snell's window), exact Fresnel from the water side (1 past 48.6 degrees), the mirror below as a
+    16 step screen-space march (fogged by its own distance), falling back to the water's in-scatter;
+    foam as a lit, rough layer; then the fog of the distance to the camera.
+  - The plain surface pass skips its underside while the camera is under (`underwater_camera_below`
+    from `sample_height()` at the camera).
+- **Bench.** `docs/bench/water_surface --view=submerged|waterline|up` (slope 12 degrees by default
+  there; waterline with 0.3 m waves), `--cam-dy=M`, and `--dive=M --seq=N` to lower the camera through
+  the surface over a sequence.
+- **Compared (960x540, 16 spp, 16 to 32 frames):** water column and rock within about 10% between
+  raster and path tracing. Raster's floor is darker and has no caustics; its mirror past the
+  critical angle only shows what is on screen. Shots: /mnt/project-files/fork/water/underwater/.
+- **Not built:** raster light shafts, raster caustics, fog on transparent objects under water in
+  raster, bubbles. With several cameras the node follows the active one.
+
 ## Sources
 
 - Chentanez and Müller, Real-time Simulation of Large Bodies of Water with Small Scale Details, SCA
@@ -892,3 +1004,14 @@ mesh ground. The river is its first brush; it never edits terrain itself.
 - Leopold and Maddock, The Hydraulic Geometry of Stream Channels, USGS Professional Paper 252, 1953.
 - Rosgen, A Classification of Natural Rivers, Catena 22, 1994.
 - Dunne and Leopold, Water in Environmental Planning, 1978.
+- Crest underwater (MIT): https://github.com/wave-harmonic/crest (UnderwaterRenderer,
+  UnderwaterEffectShared.hlsl, OceanReflection.hlsl ApplyReflectionUnderwater)
+- Unity HDRP, underwater view:
+  https://docs.unity3d.com/Packages/com.unity.render-pipelines.high-definition@17.0/manual/water-underwater-view.html
+- Epic, FUnderwaterPostProcessSettings:
+  https://dev.epicgames.com/documentation/en-us/unreal-engine/API/Plugins/Water/FUnderwaterPostProcessSettings
+- tessarakkt, godot4-oceanfft OceanEnvironment.gd: https://github.com/tessarakkt/godot4-oceanfft
+- Boujie Water Shader: https://github.com/Chrisknyfe/boujie_water_shader
+- Ben K, Godot waterline shader: https://mcspider.codeberg.page/godot-waterline-shader.html
+- Blender Cycles, volume stack initialisation from the camera (kernel/integrator/volume_stack.h).
+- Pharr, Jakob, Humphreys, PBRT 4th ed., 11.3 Media (camera medium).
