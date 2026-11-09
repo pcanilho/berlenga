@@ -6,6 +6,15 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-09874cea (2026-11-09)
+
+### Added
+- Strand hair: HairGroom (strands grown on a scalp mesh, or read from a HAIR file) drawn by HairMesh as crossed strips; BaseMaterial3D Hair direction Strands, where the path tracer shades each strand from where on the fibre the ray lands (#196)
+
+### Changed
+- README: ocean swell
+- README: strand hair
+
 ## build-56219800 (2026-11-09)
 
 ### Added

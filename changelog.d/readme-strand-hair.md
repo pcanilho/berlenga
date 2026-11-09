@@ -1,2 +1,0 @@
-### Changed
-- README: strand hair
