@@ -659,11 +659,11 @@ func _strands_sim() -> void:
 	sim_head.add_child(hi)
 	var groom := HairGroom.new()
 	var wavy := hair.contains("wavy")
-	groom.grow_on_mesh(head, 0, 5000, 0.32, 24 if wavy else 20, scalp, Vector3(0, 0.11, -0.03), 0.8, 0.8, 0.01 if wavy else 0.0, 9.0 if wavy else 0.0, 0.02, 11)
+	groom.grow_on_mesh(head, 0, 30000, 0.32, 24 if wavy else 20, scalp, Vector3(0, 0.11, -0.03), 0.8, 0.8, 0.01 if wavy else 0.0, 9.0 if wavy else 0.0, 0.02, 11)
 	var h := PhysXHair3D.new()
 	h.groom = groom
-	h.root_width = 0.0005
-	h.tip_width = 0.0002
+	h.root_width = 0.0003
+	h.tip_width = 0.0001
 	h.melanin = 0.3
 	if hair.contains("all"):
 		h.guide_ratio = 1.0

@@ -81,21 +81,21 @@ class HairStrandSolver {
 
 public:
 	struct Settings {
-		float damping = 0.05f; // fraction of velocity lost per second besides air drag (internal friction)
-		float root_follow = 0.3f; // pull toward the groomed pose at the root, per 1/60 s
-		float tip_follow = 0.0f; // the same at the tip
-		float follow_range = 0.3f; // share of the strand, from the root, over which root_follow fades to tip_follow
-		float shape_stiffness = 0.5f; // pull toward each segment's groomed bend, per 1/60 s
-		float length_damping = 0.9f; // DFTL: share of each length correction taken back from the parent
+		// AMD TressFX 4.1's parameters and defaults, in metres and seconds.
+		float damping = 0.08f; // velocity decay toward the air's, exp(-damping * 60 dt)
+		float global_stiffness = 0.1f; // pull toward the groomed pose, per 1/60 s
+		float global_range = 0.3f; // share of the strand, from the root, that global shape acts on
+		float local_stiffness = 0.9f; // keeps each segment's groomed angle to its parent (0..1)
+		int local_iterations = 2;
+		int length_iterations = 2;
+		float vsp_coeff = 0.8f; // share of the head's motion that carries the strand along (VSP)
+		float vsp_accel_threshold = 50.0f; // m/s^2: root acceleration above which VSP is total
+		float max_speed = 12.0f; // m/s, speed clamp
 		Vector3 gravity = Vector3(0, -9.8f, 0);
 		Vector3 wind; // air velocity, m/s
 		float gust = 0.3f; // 0..1, how much the wind rises and falls per strand
-		float air_drag = 5.0f; // 1/s: how fast a strand takes up the air's velocity
 		float turbulence = 0.35f; // 0..1, eddies in the wind as a share of its speed
 		float turbulence_size = 0.08f; // m, eddy size
-		float shape_damping = 0.5f; // 0..1: share of the global shape pull that does not become velocity
-		float inertia_scale = 0.6f; // 0 the hair moves with the head, 1 full inertia
-		float inertia_limit = 0.5f; // m/s: head speed above which inertia_scale applies
 		float margin = 0.002f; // kept between strands and the collision spheres (m)
 		Vector<Vector4> spheres; // world centre, radius
 		Transform3D output_xform; // world -> the render copy's space
