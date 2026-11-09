@@ -129,6 +129,33 @@ carve it by name (water.md Step 4). Gaps at open-world scale: region loading is 
 (`load_region()`), collision is dynamic heightmap tiles (already PhysX heightfields here, but one
 material), no edit layers. Those can be contributed upstream (MIT) rather than forked.
 
+**A+. Terrain3D for the ground, a Berlenga deformation layer on top (hybrid).** Terrain3D keeps
+what it is good at (material, tools, LOD, foliage, collision tiles); the fork adds the part it
+lacks: non-destructive height layers. A fork node (working name `TerrainDeformer3D`) holds a stack
+of height brushes (a river's channel, a road cut, a crater, a dig) and writes their result into
+whichever ground is under them:
+
+- **Brushes.** Each brush is a height patch in world XZ: target height plus a blend mask and a
+  mode (lower to, raise to, add). A `PhysXRiver3D` produces its brush from its own cross-section
+  (the river owns the carve profile); other nodes produce theirs the same way.
+- **Compose.** The deformer keeps a copy of the base heights of every cell a brush touches, so a
+  brush that moves or is deleted restores the ground (Unreal's edit layers and Water landscape
+  brush work this way). Order is the stack order.
+- **Write, Terrain3D backend (by name).** For each touched region: `Terrain3DData.set_pixel` on
+  `TYPE_HEIGHT` (or `set_height`), then `update_maps(TYPE_HEIGHT, false)`, which re-uploads only
+  the edited regions' layers of the height array; then Terrain3D's collision tiles rebuild for
+  that area (they go through the physics server, so they become PhysX heightfields here). Holes
+  through the control map's hole bit. No build or load dependency: the backend is skipped if no
+  `Terrain3D` node is found.
+- **Write, plain backends.** `HeightMapShape3D` collision and a generated heightfield mesh, so the
+  same brushes carve a test scene or a game that does not use Terrain3D.
+- **Cost and limits.** One region re-upload per edit (a 1024 x 1024 float region is 4 MB), so it
+  suits authoring-time carving and occasional runtime events (an explosion, a dig), not per-frame
+  deformation. Per-frame marks (tyre ruts, footprints, snow trails) are a shading effect with a
+  local collision patch, a separate topic.
+- **Bake.** In the editor, the result can be baked into Terrain3D's own region files so a shipped
+  game pays nothing at load; the stack stays in the scene for later edits.
+
 **A2. Vendor Terrain3D as a fork module.** Same features, built in. Rejected: a godot-cpp to core
 port, an active upstream to merge, and a dependency Paulo does not want shipped with the engine.
 
@@ -177,7 +204,8 @@ outside dependency. What it costs: a terrain system and, eventually, its editor 
 
 ## Recommendation
 
-A first, B only if the numbers say so.
+A+ : Terrain3D for the ground (by name), the fork's deformation layer for carving and runtime
+edits, and a measurement before anything bigger.
 
 Terrain3D's quality is in its material and tools, and both carry into path tracing now that #182
 fixed displaced varyings. What it costs us under path tracing is a recapture and refit of the
