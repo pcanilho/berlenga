@@ -75,7 +75,7 @@ Rivers and waterfalls fit into that split as below.
 | Rivers | Spline water bodies (width, depth, velocity) baked to a flow map. The surface scrolls normals and foam along the flow (two-phase flow mapping). A shallow water sim (Crimson Desert, Fluid Flux) is the upgrade for water that must react: run it in a window around the camera, baked flow outside. | Open world |
 | Waterfalls | Horizon's approach: a mesh sheet with flow-scrolled material, baked deformation at the impact, spray particles, and mist from the same lit sprite and traced haze system the current game uses for steam. | Open world |
 | Lakes | Flat body plus iWave around the player and Gerstner or small FFT waves. | Open world |
-| Ocean | FFT cascades (GodotOceanWaves as the reference), fading in shallow water. | Open world |
+| Ocean | FFT cascades, fading in shallow water. One FFT domain already in the PhysX module as `PhysXWaterSurface3D` (step 3 research); more cascades to hide tiling are still to add. | Open world |
 | Puddles, gutters, wet streets | iWave as today. | Current game |
 | Interaction | iWave in a window around the player for wakes and ripples. PhysX hero splashes read its height. | Both |
 | Path traced water | Refraction already comes from the traced transparency in NVIDIA's code. Missing: Beer-Lambert absorption and scattering inside the water (the "water medium" item already on the Valence list), so deep water darkens and tints by depth. | Both |
@@ -284,6 +284,106 @@ The ray-guided caustics map, but feeding the path tracer's sun light instead of 
   accumulation smooth the rest.
 - Caustics stop at the square's edge (cascades, as the chapter does, would extend it).
 
+## Step 3 research: flow, rivers and buoyancy (9 Nov)
+
+### What the fork already has (PhysX module, #113)
+
+Missed in the first pass of this note: `modules/godot_physx/water/` already holds most of an
+ocean (one FFT domain, no extra cascades yet), so the ocean is not a new build.
+
+- `PhysXWaterSurface3D`: Tessendorf FFT ocean (fetch-limited JONSWAP, choppiness, whitecap foam
+  that stays with the water), plus a local ripple layer (a damped shallow-water wave equation that
+  bodies disturb), shore swash, wet sand, `recenter()` for an endless sea, and a raster caustics map.
+  `sample_height()` gives the same surface on the CPU.
+- `PhysXBuoyancy3D`, `PhysXBoat3D`, `PhysXWaterWake3D`, `PhysXWaterSpray3D`: probe buoyancy
+  (density x g x area x depth per sample point), drag, outboard thrust, a sliding wake grid, spray.
+
+Gaps:
+1. **No flow anywhere.** No river, no current: the surface, foam and buoyancy drag all assume still
+   water.
+2. **The path tracer sees it as alpha glass.** The surface material is `unshaded` with `blend_mix`
+   alpha, so path tracing peels it and gets none of steps 1 to 2 (bending, depth tint, murk,
+   caustics). Its vertex displacement already reaches the path tracer (vertex capture).
+3. **No river geometry.** Nothing builds a river mesh from a path.
+
+### How engines and games do flow
+
+| Who | How flow is defined | Storage | Surface | Notes |
+|---|---|---|---|---|
+| Valve, Left 4 Dead 2 / Portal 2 (Vlachos 2010, Grimes 2011) | Houdini: field from plane normals, attractors for upwellings, curl for vortices; painted direction masks | 256² DXT5, RG = flow (length = speed), A = colour mask; about 4 texels per metre | Normal map scrolled along flow in two layers half a phase apart, noise offsets the phase to hide the pulse; normal strength scaled down with speed; debris uses offset interval so it is undistorted at the peak; foam lookup distorted again by the flowed normal | The basis of everything below. 2 extra fetches, 21 ALU |
+| Unreal Water plugin | River spline, per point `RiverWidth`, `Depth`, `WaterVelocityScalar` | All water bodies rendered into one world "water info texture" (velocity packed as magnitude + angle, `r.Water.MaxFlowVelocity` 1024) | Flow-mapped normals and foam | One texture for rivers, lakes and ocean is how bodies meet |
+| Unity HDRP water | Painted current map | RG direction, B influence | Current translates the FFT swell/agitation bands; foam follows with "current influence" | Current moves the simulated waves, not just a scrolled normal |
+| Crest (Unity) | Flow inputs: area, spline (per-point speed), paint, texture (RG velocity) | Flow is a simulation layer in its camera-centred LOD textures | Flow transports waves, foam, normals and caustics; streams can bake a shallow-water sim to a texture | Closest to what the fork needs |
+| Waterways (Godot addon, Arnklit) | Bezier river mesh; bake raycasts the river for obstacles, dilates to a distance field, takes its gradient turned 90 degrees as flow (round obstacles), "pressure" = blocked share across the width | RG flow + B foam, R distance + G pressure, in the river's UV2 | Catlike two-phase with jump offsets and two scales (2x octave near the camera); speed = base + steepness + distance-from-bank + pressure | Godot 3 only (forks: TokisanGames, .NET port for 4.2) |
+| Horizon Zero Dawn / Forbidden West | Houdini river tool: spline rolled down terrain, never uphill; width/depth ramps; Forbidden West bakes local sims to deformation flipbooks | Vertex colour flow and foam | Flowed normals, baked deformations for standing waves and impacts | Artist control preferred over runtime sim |
+| Sea of Thieves (SIGGRAPH 2018) | FFT ocean; shallow water GPU sim (Mei 2007) for streams and waterfalls | Sim textures | Foam from FFT choppiness and depth intersection, blurred with feedback | |
+| Proland (Yu, Neyret, Bruneton, Holzschuch 2009) | Velocity from a stream function stored on the banks; interpolated by distance to nearby banks | Procedural | Wave sprites carried by particles, faded in and out (no pulsing, no contrast loss) | Stateful particles; best quality, costs a particle system |
+| BeamNG, CryEngine, Unigine | Spline rivers with a scalar speed (BeamNG); flowmap painting tools (Unigine) | | | Nothing new |
+
+### Techniques for the flowing surface
+
+- **Two-phase flow maps** (Vlachos; formulas from Flick's Catlike Coding article): per phase
+  `progress = fract(t + phase)`, `uv = uv0 - flow * (progress + offset)`, weight `1 - |1 - 2 progress|`,
+  phase B shifted half a cycle and half a tile; noise added to `t` hides the pulse; a "jump"
+  `(t - progress) * jump` (about 0.24, 0.21) shifts the texture each cycle so it does not repeat.
+  Stateless, cheap, works in any shader, including a ray-tracing hit shader.
+- **Its weaknesses and fixes:**
+  - Contrast loss at the crossover (two half-weight copies): Mikkelsen's hex-tiling (JCGT 2022)
+    sharpens blend weights with an exponent and renormalises; for normals, blend in surface-gradient
+    form (sum the height derivatives, not the unit normals), as Flick's derivative maps do. Variance
+    restoration (Burley 2019, Heitz and Neyret 2018) assumes independent samples, which two phases of
+    one texture are not, so it would over-correct.
+  - Stretching: the cycle bounds it; speed scales distortion, not time.
+  - One scale looks fake: two octaves at different tilings and speeds (Waterways).
+- **Lagrangian advection** (Yu et al. 2009/2011; Bousseau et al. 2007 bidirectional): textures or
+  sprites carried by particles, faded in and out. Best spectrum, but needs per-frame state, so it does
+  not run in a hit shader. Not now.
+- **Water surface wavelets** (Jeschke et al. 2018): wave amplitudes advected on a grid, reflections
+  and diffraction round obstacles. Strong for interactive open water, heavy (a 4096² amplitude grid);
+  research-grade, not shipped. Not now.
+
+### Generating the flow
+
+- From a **river path**: direction = path tangent, speed from per-point velocity, width and depth
+  (Unreal, BeamNG, Waterways, Horizon).
+- Round **obstacles**: Waterways' distance-field heuristic works but is not mass-conserving. Better:
+  solve a **stream function** across the river (Laplace on a grid, each bank held at a constant, the
+  difference = discharge, rocks held at their bank's value): depth-averaged velocity
+  `u = (dpsi/dy, -dpsi/dx) / depth` goes round rocks and speeds up through narrows. This is the bank
+  stream function Proland interpolates, solved properly once at bake time. A few hundred Jacobi or
+  multigrid sweeps on the GPU, done in the editor.
+- From a **simulation**: shallow-water bake (Crest streams, Fluid Flux, Sea of Thieves). The ripple
+  layer here is a wave equation without advection, so it cannot give currents; a full SWE solver is
+  the later upgrade for water that must react.
+
+### Buoyancy
+
+- Probe buoyancy, as `PhysXBuoyancy3D` and every engine read (Crest, godot4-oceanfft, Habrador)
+  do: per probe `F = rho g area depth`, applied at the probe, so it rights itself. Triangle clipping at
+  the waterline (Kerner, Just Cause 3; Arc Blanc 2025) is for hero boats only (about 1 ms per hull).
+- **What is missing is the current.** Drag must use the velocity relative to the water,
+  `v_rel = v_body - v_flow` (Kerner; Arc Blanc: `F_d = -1/2 Cd rho A |v_rel| v_rel`), so debris
+  drifts downstream, spins in eddies and piles up at rocks.
+- Water height and flow reach physics from a CPU copy: `sample_height()` already does this for the
+  ocean; the flow bake is static, so a CPU copy of it is free.
+
+### Plan
+
+One world-space water info layer, as Unreal and Crest do, so rivers, lakes and the sea meet in one
+place and every consumer (surface shader, path tracer, buoyancy, foam) reads the same flow:
+
+1. **Path-traced water surface.** `PhysXWaterSurface3D`'s material writes `TRANSMISSION`, `IOR` and
+   `ABSORPTION` under path tracing, so the ocean and lakes get bending, depth tint, murk and
+   caustics from steps 1 to 2. Also what the engine-rendered logo needs.
+2. **Flow.** A `flow` input on `PhysXWaterSurface3D`: a flow texture (RG velocity in m/s over the
+   surface's extent) or constant current. The surface shader runs two-phase flow with noise, jumps,
+   two octaves and surface-gradient blending; foam is carried by the same flow. The FFT ocean's
+   waves are carried along too (HDRP, Crest).
+3. **Rivers.** A `PhysXRiver3D` (Path3D with per-point width, depth, speed) builds its mesh and bakes
+   its flow with the stream-function solve above (rocks from collision), and joins a lake or the sea
+   by writing into the same water info layer.
+4. **Buoyancy in the current.** `PhysXBuoyancy3D` drags against `v_body - v_flow`.
+
 ## Sources
 
 - 80.lv, Crimson Desert's BlackSpace engine features:
@@ -299,6 +399,36 @@ The ray-guided caustics map, but feeding the path tracer's sun light instead of 
 - Malan, Water in Horizon Forbidden West, SIGGRAPH Advances 2022:
   https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Water-Malan.pdf
 - 2Retr0, GodotOceanWaves: https://github.com/2Retr0/GodotOceanWaves
+- Vlachos, Water Flow in Portal 2, SIGGRAPH 2010:
+  https://www.advances.realtimerendering.com/s2010/Vlachos-Waterflow(SIGGRAPH%202010%20Advanced%20RealTime%20Rendering%20Course).pdf
+- Grimes, Making and Using Non-Standard Textures, GDC 2011:
+  https://www.hlportal.de/files/GDC2011_BronwenGrimes_NonstandardTextures.pdf
+- Flick, Texture Distortion (Catlike Coding): https://catlikecoding.com/unity/tutorials/flow/texture-distortion/
+- Mikkelsen, Practical Real-Time Hex-Tiling, JCGT 2022: https://jcgt.org/published/0011/03/05/paper.pdf
+- Burley, On Histogram-preserving Blending for Randomized Texture Tiling, JCGT 2019:
+  https://www.jcgt.org/published/0008/04/02/paper.pdf
+- Yu, Neyret, Bruneton, Holzschuch, Scalable Real-Time Animation of Rivers, 2009:
+  https://artis.inrialpes.fr/Publications/2009/YNBH09/ ; Proland river plugin:
+  https://proland.inrialpes.fr/doc/proland-4.0/river/html/index.html
+- Bousseau et al., Video Watercolorization using Bidirectional Texture Advection, 2007:
+  https://core.ac.uk/download/50362841.pdf
+- Jeschke et al., Water Surface Wavelets, 2018:
+  https://pub.ista.ac.at/group_wojtan/projects/2018_Jeschke_WaterSurfaceWavelets/WaterSurfaceWavelets.pdf
+- Unreal water spline metadata:
+  https://docs.unrealengine.com/4.27/API/Plugins/Water/UWaterSplineMetadata/index.html ;
+  r.Water.MaxFlowVelocity: https://indxzero.github.io/ue544cvarwiki/articles/r.water.maxflowvelocity
+- Unity HDRP current map:
+  https://docs.unity3d.com/Packages/com.unity.render-pipelines.high-definition@17.2/manual/water-create-a-current-in-the-water-system
+- Crest flow: https://docs.crest.waveharmonic.com/Manual/Simulation/Flow.html
+- Arnklit, Waterways (Godot): https://github.com/Arnklit/Waterways
+- tessarakkt, godot4-oceanfft (probe buoyancy): https://github.com/tessarakkt/godot4-oceanfft
+- Simon Schreibt, River 2k19 (Horizon-style Houdini river): https://simonschreibt.de/gat/river ;
+  80.lv, Horizon Zero Dawn procedural rivers: https://80.lv/articles/horizon-zero-dawn-procedural-rivers-wires/
+- Ang, The Technical Art of Sea of Thieves, SIGGRAPH 2018:
+  https://history.siggraph.org/wp-content/uploads/2022/09/2018-Talks-Ang_The-Technical-Art-of-Sea-of-Thieves.pdf
+- Kerner, Water interaction model for boats in video games (Just Cause 3):
+  https://gamedeveloper.com/programming/water-interaction-model-for-boats-in-video-games
+- Arc Blanc, real-time ocean and solid coupling, 2025: https://www.arxiv.org/pdf/2503.03326
 - Tessendorf, Interactive Water Surfaces (iWave):
   https://jtessen.people.clemson.edu/reports/papers_files/Interactive_Water_Surfaces.pdf
 - Khronos, KHR_materials_volume:
