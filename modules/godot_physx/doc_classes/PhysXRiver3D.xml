@@ -59,6 +59,12 @@
 				The number of cross-sections (one every [member step_length]).
 			</description>
 		</method>
+		<method name="get_waterfalls" qualifiers="const">
+			<return type="Array" />
+			<description>
+				One [Dictionary] per waterfall (see [member fall_min_height]): [code]lip[/code] and [code]impact[/code] (world [Vector3], on the bed at the lip and on the pool where the jet lands), [code]height[/code] (m, lip surface to pool), [code]discharge[/code] (m³/s), [code]width[/code] (m), [code]lip_speed[/code] and [code]impact_speed[/code] (m/s), [code]breakup_length[/code] (m of fall after which the sheet is broken into clumps, [code]6 q^0.32[/code] after Horeni) and [code]throw[/code] (m from the lip to where the jet lands).
+			</description>
+		</method>
 		<method name="is_live_running" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -143,6 +149,18 @@
 		</member>
 		<member name="discharge" type="float" setter="set_discharge" getter="get_discharge" default="2.0">
 			Water carried by the river (m³/s). A brook carries 0.1 to 1, a small river 5 to 50.
+		</member>
+		<member name="fall_material" type="ShaderMaterial" setter="set_fall_material" getter="get_fall_material">
+			The waterfalls' falling sheet. Left empty, a built-in shader: a thin slab of water whose streaks ride the falling water, turning white with the air it takes in and breaking into clumps past its break-up length. Its vertex data: UV = (travel time since the lip in s, distance across in m), UV2.x = speed, COLOR.r = edge fade, COLOR.g = aeration, COLOR.b = how far past break-up.
+		</member>
+		<member name="fall_min_height" type="float" setter="set_fall_min_height" getter="get_fall_min_height" default="1.5">
+			A drop at least this tall (m), over which the water can fall clear of the ground, is a waterfall: the surface draws down to the brink depth before the lip, the water leaves it and falls as a free jet onto the water below, which boils white. Lower drops, and chutes the jet would run down, stay cascades. 0 turns waterfalls off.
+		</member>
+		<member name="fall_mist" type="bool" setter="set_fall_mist" getter="get_fall_mist" default="true">
+			Mist at the foot of each waterfall, drifting out on the air the fall drags down with it: a [code]PhysXFlowEmitter3D[/code] feeding the scene's [code]PhysXFlow3D[/code] (nothing without one, or in a build without NVIDIA Flow). Scaled with the fall's power.
+		</member>
+		<member name="fall_spray" type="bool" setter="set_fall_spray" getter="get_fall_spray" default="true">
+			Spray thrown up where each waterfall lands: droplets launched at a share of the impact speed (a [GPUParticles3D] made by the river), scaled with the fall's power. Not in the editor.
 		</member>
 		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="0.25">
 			White water made by the live window where the water runs fast and shears (as [member PhysXWaterSurface3D.flow_foam]); lower than the sea's, since a river runs fast everywhere. 0: none.

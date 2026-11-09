@@ -45,6 +45,14 @@
 #include "scene/resources/shader.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
+#include "scene/3d/gpu_particles_3d.h"
+#include "scene/resources/3d/primitive_meshes.h"
+#include "scene/resources/particle_process_material.h"
+
+#ifdef GODOT_PHYSX_FLOW
+#include "../flow/physx_flow_emitter_3d.h"
+#endif
+
 namespace {
 
 // The river surface. Per vertex (built by PhysXRiver3D): UV = (arc length,
@@ -245,6 +253,73 @@ void fragment() {
 }
 )";
 
+// A waterfall's falling sheet: a thin slab of water (two faces q/|v| apart, so
+// the path tracer refracts through a real sheet). Per vertex (built by
+// PhysXRiver3D): UV = (travel time since the lip in s, distance across in m),
+// UV2.x = speed (m/s), COLOR.r = fade at the sheet's edges, COLOR.g =
+// aeration (white water), COLOR.b = how far past its break-up length the
+// sheet has fallen (0 whole, 1 broken into clumps).
+const char *FALL_SHADER_SRC = R"(
+shader_type spatial;
+#if defined(RT)
+render_mode cull_back;
+#else
+render_mode blend_mix, cull_back, unshaded;
+#endif
+
+uniform float water_time = 0.0;
+uniform vec4 water_color : source_color = vec4(0.30, 0.42, 0.42, 0.45);
+uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
+uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
+uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.05;
+// Streaks: per metre across, and per second of travel along (the pattern rides
+// the water, so it stretches as the sheet speeds up).
+uniform float streak_scale = 3.0;
+uniform float streak_rate = 5.0;
+
+float f_hash(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+float f_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(f_hash(i), f_hash(i + vec2(1.0, 0.0)), u.x),
+			mix(f_hash(i + vec2(0.0, 1.0)), f_hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+void fragment() {
+	float edge = COLOR.r;
+	float aeration = COLOR.g;
+	float broken = COLOR.b;
+	vec2 p = vec2(UV.y * streak_scale, (UV.x - water_time) * streak_rate);
+	float streak = 0.55 * f_noise(p * vec2(1.0, 0.35)) + 0.3 * f_noise(p * vec2(2.3, 0.9) + 7.0) + 0.15 * f_noise(p * vec2(5.1, 2.4) - 3.0);
+	float foam = smoothstep(0.15, 0.85, aeration + (streak - 0.5) * 0.9);
+	// Past break-up the sheet is clumps and streaks with air between them; the
+	// thin edges go first.
+	float holes = broken * 0.8 + (1.0 - edge) * 0.6;
+	float cover = smoothstep(-0.04, 0.04, streak - holes + 0.12);
+#if defined(RT)
+	ALBEDO = mix(vec3(1.0), foam_color.rgb, foam);
+	ROUGHNESS = mix(pathtraced_roughness, 0.8, foam);
+	SPECULAR = 0.5;
+	METALLIC = 0.0;
+	TRANSMISSION = 1.0 - foam;
+	IOR = 1.33;
+	ABSORPTION = pathtraced_absorption;
+	ALPHA = cover;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
+#else
+	float ndotl = clamp(dot(NORMAL, (VIEW_MATRIX * vec4(0.3, 0.85, 0.4, 0.0)).xyz), 0.0, 1.0);
+	ALBEDO = mix(water_color.rgb * mix(0.8, 1.15, ndotl), foam_color.rgb * mix(0.85, 1.05, ndotl), foam);
+	ALPHA = mix(water_color.a, foam_color.a, foam) * cover;
+#endif
+}
+)";
+
 constexpr float GRAVITY = 9.81f;
 constexpr float MAX_SPEED = 12.0f; // m/s cap (a fall's sheet, not a sustained river)
 constexpr float CASCADE_MIN_DROP = 0.15f; // m
@@ -289,6 +364,15 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXRiver3D::get_foam_persistence);
 	ClassDB::bind_method(D_METHOD("set_mouth_target", "path"), &PhysXRiver3D::set_mouth_target);
 	ClassDB::bind_method(D_METHOD("get_mouth_target"), &PhysXRiver3D::get_mouth_target);
+	ClassDB::bind_method(D_METHOD("set_fall_min_height", "height"), &PhysXRiver3D::set_fall_min_height);
+	ClassDB::bind_method(D_METHOD("get_fall_min_height"), &PhysXRiver3D::get_fall_min_height);
+	ClassDB::bind_method(D_METHOD("set_fall_spray", "enabled"), &PhysXRiver3D::set_fall_spray);
+	ClassDB::bind_method(D_METHOD("get_fall_spray"), &PhysXRiver3D::get_fall_spray);
+	ClassDB::bind_method(D_METHOD("set_fall_mist", "enabled"), &PhysXRiver3D::set_fall_mist);
+	ClassDB::bind_method(D_METHOD("get_fall_mist"), &PhysXRiver3D::get_fall_mist);
+	ClassDB::bind_method(D_METHOD("set_fall_material", "material"), &PhysXRiver3D::set_fall_material);
+	ClassDB::bind_method(D_METHOD("get_fall_material"), &PhysXRiver3D::get_fall_material);
+	ClassDB::bind_method(D_METHOD("get_waterfalls"), &PhysXRiver3D::get_waterfalls);
 	ClassDB::bind_method(D_METHOD("set_mouth_blend", "blend"), &PhysXRiver3D::set_mouth_blend);
 	ClassDB::bind_method(D_METHOD("get_mouth_blend"), &PhysXRiver3D::get_mouth_blend);
 	ClassDB::bind_method(D_METHOD("get_discharge_at", "s"), &PhysXRiver3D::get_discharge_at);
@@ -351,6 +435,11 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_GROUP("Mouth", "mouth_");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "mouth_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D,PhysXRiver3D"), "set_mouth_target", "get_mouth_target");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mouth_blend", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater,suffix:m"), "set_mouth_blend", "get_mouth_blend");
+	ADD_GROUP("Waterfalls", "fall_");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_min_height", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_fall_min_height", "get_fall_min_height");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_spray"), "set_fall_spray", "get_fall_spray");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_mist"), "set_fall_mist", "get_fall_mist");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fall_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_fall_material", "get_fall_material");
 	ADD_SIGNAL(MethodInfo("rebuilt"));
 	ADD_GROUP("Live flow", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_flow"), "set_live_flow", "get_live_flow");
@@ -995,6 +1084,9 @@ void PhysXRiver3D::_notification(int p_what) {
 			if (water_material.is_valid()) {
 				water_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
 			}
+			if (fall_material.is_valid() && !falls.is_empty()) {
+				fall_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
+			}
 		} break;
 	}
 }
@@ -1105,6 +1197,7 @@ float PhysXRiver3D::_carve_target(const Section &p_sec, float p_n, float &r_mask
 void PhysXRiver3D::_build() {
 	build_pending = false;
 	sections.clear();
+	falls.clear();
 	const Ref<Curve3D> c = get_curve();
 	if (!is_inside_tree() || c.is_null() || c->get_point_count() < 2 || c->get_baked_length() < 0.05f) {
 		_build_mesh();
@@ -1416,6 +1509,7 @@ void PhysXRiver3D::_build() {
 			}
 		}
 	}
+	_find_falls(space, bed, ds);
 	for (int i = 0; i < count; i++) {
 		const int a = MAX(0, i - half_window);
 		const int b = MIN(count - 1, i + half_window);
@@ -1458,12 +1552,14 @@ void PhysXRiver3D::_build() {
 		if (sec.cascade) {
 			source = 1.0f;
 		}
+		source = MAX(source, sec.plunge);
 		carried_foam *= Math::exp(-ds / (MAX(sec.speed, 0.1f) * foam_persistence));
 		carried_foam = MAX(carried_foam, source);
 		sec.foam = carried_foam;
 	}
 	_solve_flow(ds);
 	_build_mesh();
+	_build_fall_effects();
 	live_fields_dirty = true;
 	_register_mouth();
 	emit_signal(SNAME("rebuilt"));
@@ -1735,6 +1831,7 @@ void PhysXRiver3D::_solve_flow(float p_ds) {
 				if (sec.cascade) {
 					src = 1.0f;
 				}
+				src = MAX(src, sec.plunge);
 				// A rock next to this sample.
 				bool by_rock = false;
 				for (int di = -1; di <= 1 && !by_rock; di++) {
@@ -1792,6 +1889,7 @@ void PhysXRiver3D::_build_mesh() {
 	const int count = (int)sections.size();
 	if (count < 2) {
 		mesh_instance->set_mesh(Ref<Mesh>());
+		_build_fall_mesh();
 		return;
 	}
 	const int m = cross_segments;
@@ -1842,7 +1940,7 @@ void PhysXRiver3D::_build_mesh() {
 			const int k11 = k10 + 1;
 			// Skip quads that are dry all round (ground well above the water).
 			const float dmax = MAX(MAX(sections[i].depth[j], sections[i].depth[j + 1]), MAX(sections[i + 1].depth[j], sections[i + 1].depth[j + 1]));
-			if (dmax < -0.05f || MAX(sections[i].mouth_fade, sections[i + 1].mouth_fade) <= 0.0f) {
+			if (dmax < -0.05f || MAX(sections[i].mouth_fade, sections[i + 1].mouth_fade) <= 0.0f || sections[i].fall_drop) {
 				continue;
 			}
 			// Clockwise seen from above: the top is the front face, which the path
@@ -1856,6 +1954,7 @@ void PhysXRiver3D::_build_mesh() {
 			indices.push_back(k10);
 		}
 	}
+	_build_fall_mesh();
 	if (indices.is_empty()) {
 		mesh_instance->set_mesh(Ref<Mesh>());
 		return;
@@ -1872,6 +1971,408 @@ void PhysXRiver3D::_build_mesh() {
 	mesh.instantiate();
 	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
 	mesh_instance->set_mesh(mesh);
+}
+
+// Waterfalls (docs/ideas/water.md "Step 4f"). A run of cascade sections that
+// drops at least fall_min_height, where a free jet from the lip stays clear
+// of the ground, is a free overfall: the surface draws down to the brink depth
+// 0.715 y_c (Rouse 1936) over about 4 y_c, the water leaves the lip at
+// v0 = q / y_b and falls as a projectile, the ribbon under the jet is hidden
+// and the water where it lands boils white.
+void PhysXRiver3D::_find_falls(PhysicsDirectSpaceState3D *p_space, const LocalVector<float> &p_bed, float p_ds) {
+	falls.clear();
+	const int count = (int)sections.size();
+	for (Section &sec : sections) {
+		sec.fall_drop = false;
+		sec.plunge = 0.0f;
+	}
+	if (fall_min_height <= 0.0f || count < 3) {
+		return;
+	}
+	auto bed_at_s = [&](float p_s) -> float {
+		const float f = CLAMP(p_s / p_ds, 0.0f, (float)(count - 1));
+		const int i = MIN((int)f, count - 2);
+		return Math::lerp(p_bed[i], p_bed[i + 1], f - i);
+	};
+	int i = 1;
+	while (i < count) {
+		if (!sections[i].cascade) {
+			i++;
+			continue;
+		}
+		const int a = i - 1;
+		int b = i;
+		while (b + 1 < count && sections[b + 1].cascade) {
+			b++;
+		}
+		i = b + 1;
+		const Section &sa = sections[a];
+		const float height = sa.surface - sections[b].surface;
+		if (height < fall_min_height) {
+			continue;
+		}
+		Fall fall;
+		fall.brink = a;
+		fall.foot = b;
+		fall.side = sa.side;
+		fall.tangent = Vector3(-sa.side.z, 0.0f, sa.side.x);
+		fall.width = sa.width;
+		fall.q = sa.discharge / MAX(sa.width, 0.5f);
+		const float yc = Math::pow(fall.q * fall.q / GRAVITY, 1.0f / 3.0f);
+		const float yb = MAX(0.715f * yc, 0.01f);
+		fall.lip_speed = MIN(fall.q / yb, MAX_SPEED);
+		// The lip: where the ground between the last high section and the next
+		// one drops away (bisected), or halfway with no ground to measure.
+		float t_lip = 0.5f;
+		if (p_space != nullptr) {
+			const Vector3 from = sa.centre;
+			const Vector3 to = sections[a + 1].centre;
+			const float edge = p_bed[a] - 0.5f * height;
+			float lo = 0.0f;
+			float hi = 1.0f;
+			for (int it = 0; it < 10; it++) {
+				const float mid = 0.5f * (lo + hi);
+				float y = 0.0f;
+				if (_base_ground_at(p_space, from.lerp(to, mid), y) && y > edge) {
+					lo = mid;
+				} else {
+					hi = mid;
+				}
+			}
+			t_lip = lo;
+		}
+		fall.lip_s = sa.s + t_lip * p_ds;
+		fall.lip = sa.centre.lerp(sections[a + 1].centre, t_lip);
+		fall.lip.y = p_bed[a];
+		fall.pool = sections[b].surface;
+		// The free jet must stay clear of the ground (the underside of the sheet
+		// against the bed under it); a steep chute it would run down stays a cascade.
+		const float drop = fall.lip.y + 0.5f * yb - fall.pool;
+		if (drop <= 0.0f) {
+			continue;
+		}
+		const float tau_land = Math::sqrt(2.0f * drop / GRAVITY);
+		bool clear = true;
+		for (int k = 1; k <= 16 && clear; k++) {
+			const float tau = tau_land * k / 16.0f;
+			const float s = fall.lip_s + fall.lip_speed * tau;
+			const float under = fall.lip.y - 0.5f * GRAVITY * tau * tau;
+			if (s < sections[count - 1].s && under < bed_at_s(s) - 0.05f && under > fall.pool + 0.1f) {
+				clear = false;
+			}
+		}
+		if (!clear) {
+			continue;
+		}
+		fall.height = sa.surface - fall.pool;
+		fall.land_s = fall.lip_s + fall.lip_speed * tau_land;
+		fall.impact_speed = Math::sqrt(fall.lip_speed * fall.lip_speed + 2.0f * GRAVITY * drop);
+		// Break-up length of a nappe, L_b = 6 q^0.32 (Horeni 1956).
+		fall.breakup = 6.0f * Math::pow(MAX(fall.q, 1e-3f), 0.32f);
+		// Draw-down to the brink over about 4 y_c upstream of the lip.
+		const float brink = fall.lip.y + yb;
+		for (int k = a; k >= 0; k--) {
+			Section &sec = sections[k];
+			const float f = 1.0f - (fall.lip_s - sec.s) / MAX(4.0f * yc, 1e-3f);
+			if (f <= 0.0f) {
+				break;
+			}
+			const float y = Math::lerp(sec.surface, MAX(brink, p_bed[k] + 0.02f), f * f);
+			sec.surface = MIN(sec.surface, y);
+			sec.centre.y = sec.surface;
+		}
+		// Under the jet: hide the ribbon draped down the cliff.
+		for (int k = a; k < b; k++) {
+			sections[k].fall_drop = true;
+		}
+		// Where it lands, and the pool round it, boil white: from the foot of the
+		// cliff to a few metres past the landing.
+		const float pool_end = fall.land_s + MAX(2.0f, 0.3f * fall.height);
+		for (int k = b; k < count; k++) {
+			Section &sec = sections[k];
+			if (sec.s > pool_end + 2.0f) {
+				break;
+			}
+			const float f = CLAMP((pool_end + 2.0f - sec.s) / 2.0f, 0.0f, 1.0f);
+			// Boiling, not a solid sheet: the lace still shows through.
+			sec.plunge = MAX(sec.plunge, 0.8f * f);
+			sec.cascade = false;
+		}
+		falls.push_back(fall);
+	}
+}
+
+// The falling sheet of each waterfall: one column per wet cross sample at the
+// brink, each following the projectile from its own unit discharge; a slab
+// with front and back faces q/|v| apart (aerated water bulks up to three
+// times). Rows are spaced evenly in travel time.
+void PhysXRiver3D::_build_fall_mesh() {
+	if (falls.is_empty() || sections.size() < 2) {
+		if (fall_instance != nullptr) {
+			fall_instance->set_mesh(Ref<Mesh>());
+		}
+		return;
+	}
+	if (fall_instance == nullptr) {
+		fall_instance = memnew(MeshInstance3D);
+		fall_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+		add_child(fall_instance, false, INTERNAL_MODE_BACK);
+	}
+	if (fall_material.is_null()) {
+		Ref<Shader> shader;
+		shader.instantiate();
+		shader->set_code(FALL_SHADER_SRC);
+		fall_material.instantiate();
+		fall_material->set_shader(shader);
+	}
+	fall_instance->set_material_override(fall_material);
+	const int m = cross_segments;
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedVector2Array uvs;
+	PackedVector2Array uv2s;
+	PackedColorArray colors;
+	PackedInt32Array indices;
+	for (const Fall &fall : falls) {
+		const Section &sa = sections[fall.brink];
+		const float half = 0.5f * sa.width + bank_margin;
+		// Wet span at the brink.
+		int j0 = -1;
+		int j1 = -1;
+		for (int j = 0; j <= m; j++) {
+			if (sa.depth[j] > 0.02f) {
+				j0 = j0 < 0 ? j : j0;
+				j1 = j;
+			}
+		}
+		if (j0 < 0 || j1 <= j0) {
+			continue;
+		}
+		const int cols = j1 - j0 + 1;
+		const int rows = CLAMP((int)Math::ceil(fall.height * 3.0f), 8, 64);
+		const int per_face = cols * (rows + 2);
+		for (int face = 0; face < 2; face++) {
+			const float sign = face == 0 ? 1.0f : -1.0f;
+			const int base = verts.size();
+			for (int jj = 0; jj < cols; jj++) {
+				const int j = j0 + jj;
+				const float n = -half + 2.0f * half * j / m;
+				const float q = MAX(sa.speed_at[j] * sa.depth[j], 0.0f);
+				const float yc = Math::pow(q * q / GRAVITY, 1.0f / 3.0f);
+				const float yb = MAX(0.715f * yc, 0.005f);
+				const float v0 = CLAMP(q / yb, 0.3f, MAX_SPEED);
+				const float breakup = 6.0f * Math::pow(MAX(q, 1e-3f), 0.32f);
+				const float edge = MIN(1.0f, MIN((float)jj, (float)(cols - 1 - jj)) / 2.0f) * CLAMP(q / MAX(fall.q, 1e-3f), 0.0f, 1.0f);
+				const Vector3 lip = fall.lip + fall.side * n;
+				const float mid_y = fall.lip.y + 0.5f * yb;
+				const float tau_land = Math::sqrt(2.0f * MAX(mid_y - fall.pool, 0.01f) / GRAVITY) + 0.05f;
+				// Row 0: the brink section's surface, joining the ribbon.
+				{
+					const Vector3 p = sa.centre + sa.side * n;
+					verts.push_back(face == 0 ? p : Vector3(p.x, fall.lip.y - 0.05f, p.z));
+					normals.push_back(Vector3(0, sign, 0));
+					uvs.push_back(Vector2(-(fall.lip_s - sa.s) / MAX(v0, 0.3f), n));
+					uv2s.push_back(Vector2(v0, 0.0f));
+					colors.push_back(Color(edge, 0.0f, 0.0f, 1.0f));
+				}
+				for (int k = 0; k <= rows; k++) {
+					const float tau = tau_land * k / rows;
+					const float z = 0.5f * GRAVITY * tau * tau; // fallen so far
+					const Vector3 vel = fall.tangent * v0 - Vector3(0, GRAVITY * tau, 0);
+					const float speed = vel.length();
+					const float aeration = CLAMP(0.15f + 0.85f * z / breakup, 0.0f, 1.0f);
+					const float broken = CLAMP((z - breakup) / (0.5f * breakup), 0.0f, 1.0f);
+					const float thick = q / MAX(speed, 0.1f) * (1.0f + 2.0f * aeration);
+					// Outward: away from the cliff and up at the lip.
+					Vector3 out = fall.side.cross(vel).normalized();
+					if (out.dot(fall.tangent) < -1e-4f || (Math::abs(out.dot(fall.tangent)) <= 1e-4f && out.y < 0.0f)) {
+						out = -out;
+					}
+					// The sheet spreads sideways by a few per cent of the fall (Ervine and Falvey 1987).
+					const Vector3 spread = fall.side * (n * 0.04f * z / MAX(half, 0.5f));
+					const Vector3 centre = Vector3(lip.x, mid_y, lip.z) + fall.tangent * (v0 * tau) - Vector3(0, z, 0) + spread;
+					verts.push_back(centre + out * (0.5f * thick * sign));
+					normals.push_back(out * sign);
+					uvs.push_back(Vector2(tau, n));
+					uv2s.push_back(Vector2(speed, aeration));
+					colors.push_back(Color(edge, aeration, broken, 1.0f));
+				}
+			}
+			const int rr = rows + 2;
+			for (int jj = 0; jj + 1 < cols; jj++) {
+				for (int k = 0; k + 1 < rr; k++) {
+					const int k00 = base + jj * rr + k;
+					const int k01 = k00 + 1;
+					const int k10 = k00 + rr;
+					const int k11 = k10 + 1;
+					// Front faces wound so the outward side is the front (as the ribbon:
+					// the path tracer takes the front as entering the water).
+					const Vector3 e1 = verts[k10] - verts[k00];
+					const Vector3 e2 = verts[k01] - verts[k00];
+					const bool flip = e1.cross(e2).dot(normals[k00]) > 0.0f;
+					if (!flip) {
+						indices.push_back(k00);
+						indices.push_back(k10);
+						indices.push_back(k01);
+						indices.push_back(k10);
+						indices.push_back(k11);
+						indices.push_back(k01);
+					} else {
+						indices.push_back(k00);
+						indices.push_back(k01);
+						indices.push_back(k10);
+						indices.push_back(k10);
+						indices.push_back(k01);
+						indices.push_back(k11);
+					}
+				}
+			}
+			(void)per_face;
+		}
+	}
+	if (indices.is_empty()) {
+		fall_instance->set_mesh(Ref<Mesh>());
+		return;
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_TEX_UV] = uvs;
+	arrays[Mesh::ARRAY_TEX_UV2] = uv2s;
+	arrays[Mesh::ARRAY_COLOR] = colors;
+	arrays[Mesh::ARRAY_INDEX] = indices;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	fall_instance->set_mesh(mesh);
+}
+
+// Spray and mist where each jet lands, scaled with the fall's power
+// rho g Q H. Spray: droplets thrown up from the impact line at a share of the
+// impact speed (GPUParticles3D, small spheres, lit, so they show under path
+// tracing). Mist: the finest drops, which fall at a few cm/s and drift out on
+// the air the fall drags down -- a cool PhysXFlowEmitter3D feeding the
+// scene's PhysXFlow3D (it does nothing without one).
+void PhysXRiver3D::_build_fall_effects() {
+	for (Node3D *n : fall_effects) {
+		if (n != nullptr) {
+			remove_child(n);
+			memdelete(n);
+		}
+	}
+	fall_effects.clear();
+	if (Engine::get_singleton()->is_editor_hint() || (!fall_spray && !fall_mist)) {
+		return;
+	}
+	const Ref<Curve3D> c = get_curve();
+	for (const Fall &fall : falls) {
+		const float power = 1000.0f * GRAVITY * fall.q * fall.width * fall.height; // W
+		Vector3 land = fall.lip + fall.tangent * (fall.land_s - fall.lip_s);
+		land.y = fall.pool;
+		Transform3D xf;
+		xf.basis = Basis(fall.side, Vector3(0, 1, 0), -fall.tangent).orthonormalized();
+		xf.origin = land;
+		if (fall_spray) {
+			GPUParticles3D *spray = memnew(GPUParticles3D);
+			spray->set_name("FallSpray");
+			spray->set_transform(xf);
+			spray->set_amount(CLAMP((int)(power / 200.0f), 64, 4096));
+			const float rise = 0.35f * fall.impact_speed;
+			spray->set_lifetime(MAX(0.6f, 2.0f * rise / GRAVITY));
+			spray->set_pre_process_time(2.0);
+			spray->set_visibility_aabb(AABB(Vector3(-fall.width - 4.0f, -1.0f, -6.0f), Vector3(2.0f * fall.width + 8.0f, rise * rise / GRAVITY + 3.0f, 12.0f)));
+			Ref<ParticleProcessMaterial> pm;
+			pm.instantiate();
+			pm->set_emission_shape(ParticleProcessMaterial::EMISSION_SHAPE_BOX);
+			pm->set_emission_box_extents(Vector3(0.5f * fall.width, 0.1f, 0.3f));
+			pm->set_direction(Vector3(0, 1, 0.35f));
+			pm->set_spread(40.0f);
+			pm->set_param_min(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.4f * rise);
+			pm->set_param_max(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, rise);
+			pm->set_gravity(Vector3(0, -GRAVITY, 0));
+			pm->set_param_min(ParticleProcessMaterial::PARAM_DAMPING, 0.5f);
+			pm->set_param_max(ParticleProcessMaterial::PARAM_DAMPING, 1.5f);
+			pm->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.04f);
+			pm->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 0.12f);
+			spray->set_process_material(pm);
+			Ref<SphereMesh> drop;
+			drop.instantiate();
+			drop->set_radius(0.5f);
+			drop->set_height(1.0f);
+			drop->set_radial_segments(6);
+			drop->set_rings(3);
+			Ref<StandardMaterial3D> dm;
+			dm.instantiate();
+			dm->set_albedo(Color(0.95f, 0.97f, 1.0f));
+			dm->set_roughness(0.25f);
+			drop->set_material(dm);
+			spray->set_draw_pass_mesh(0, drop);
+			add_child(spray, false, INTERNAL_MODE_BACK);
+			fall_effects.push_back(spray);
+		}
+#ifdef GODOT_PHYSX_FLOW
+		if (fall_mist) {
+			PhysXFlowEmitter3D *mist = memnew(PhysXFlowEmitter3D);
+			mist->set_name("FallMist");
+			Transform3D mxf = xf;
+			mxf.origin += Vector3(0, 0.6f, 0);
+			mist->set_transform(mxf);
+			mist->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+			mist->set_size(Vector3(fall.width + 1.0f, 1.2f, 2.0f));
+			// The fall's wind: out from the foot at a fraction of the impact speed.
+			mist->set_velocity(Vector3(0, 0.4f, -0.15f * fall.impact_speed));
+			mist->set_temperature(0.0f);
+			mist->set_smoke(CLAMP(power / 100000.0f, 0.2f, 2.0f));
+			add_child(mist, false, INTERNAL_MODE_BACK);
+			fall_effects.push_back(mist);
+		}
+#endif
+	}
+	(void)c;
+}
+
+void PhysXRiver3D::set_fall_min_height(float p_height) {
+	fall_min_height = MAX(p_height, 0.0f);
+	_queue_build();
+}
+
+void PhysXRiver3D::set_fall_spray(bool p_enabled) {
+	fall_spray = p_enabled;
+	_queue_build();
+}
+
+void PhysXRiver3D::set_fall_mist(bool p_enabled) {
+	fall_mist = p_enabled;
+	_queue_build();
+}
+
+void PhysXRiver3D::set_fall_material(const Ref<ShaderMaterial> &p_material) {
+	fall_material = p_material;
+	if (fall_instance != nullptr) {
+		fall_instance->set_material_override(fall_material);
+	}
+}
+
+Array PhysXRiver3D::get_waterfalls() const {
+	Array out;
+	const Transform3D xf = is_inside_tree() ? get_global_transform() : get_transform();
+	for (const Fall &fall : falls) {
+		Vector3 land = fall.lip + fall.tangent * (fall.land_s - fall.lip_s);
+		land.y = fall.pool;
+		Dictionary d;
+		d["lip"] = xf.xform(fall.lip);
+		d["impact"] = xf.xform(land);
+		d["height"] = fall.height;
+		d["discharge"] = fall.q * fall.width;
+		d["width"] = fall.width;
+		d["lip_speed"] = fall.lip_speed;
+		d["impact_speed"] = fall.impact_speed;
+		d["breakup_length"] = fall.breakup;
+		d["throw"] = fall.land_s - fall.lip_s;
+		out.push_back(d);
+	}
+	return out;
 }
 
 bool PhysXRiver3D::_locate(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const {
@@ -1985,6 +2486,8 @@ Dictionary PhysXRiver3D::get_section(int p_index) const {
 	d["speed"] = sec.speed;
 	d["foam"] = sec.foam;
 	d["cascade"] = sec.cascade;
+	d["under_fall"] = sec.fall_drop;
+	d["plunge"] = sec.plunge;
 	PackedFloat32Array depth;
 	PackedFloat32Array speed;
 	PackedFloat32Array across;

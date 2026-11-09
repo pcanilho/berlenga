@@ -23,6 +23,9 @@ extends Node3D
 #                    flows into, and a tributary joining from the side below the step
 #   --view=joins     from above: the tributary's confluence and the lake
 #   --view=mouth     the river's mouth and its plume into the lake
+#   --falls          the step is a 6 m cliff: the river goes over it as a waterfall
+#   --view=fall      the waterfall from the side
+#   --view=fallfront the waterfall from downstream, looking up at the falling sheet
 #   --live           the live window: shallow-water simulation round the rocks (eddies, live foam)
 #   --report         print the cross-sections and the boxes' positions
 #
@@ -40,6 +43,7 @@ var report := false
 var carve := false
 var live := false
 var joins := false
+var falls := false
 var lake: Node3D
 var tributary: Node3D
 var focus: Marker3D
@@ -55,13 +59,14 @@ var n := 0
 
 
 func _valley_x(z: float) -> float:
-	return 6.0 * sin(z / 15.0)
+	# With --falls the valley runs straight through the cliff, so the lip is square to the flow.
+	return 0.0 if falls else 6.0 * sin(z / 15.0)
 
 
 # Ground height: a valley falling 0.5% downstream (+z), a 1.5 m step at z = 0, a parabolic channel 6 m wide.
 # With --joins: a lake basin from z = 30 down, and a side valley for the tributary.
 func _ground(x: float, z: float) -> float:
-	var base := -0.005 * z - 1.5 * smoothstep(-0.75, 0.75, z)
+	var base := -0.005 * z - (6.0 * smoothstep(-0.1, 0.1, z) if falls else 1.5 * smoothstep(-0.75, 0.75, z))
 	var d := absf(x - _valley_x(z))
 	var channel := 1.2 * (1.0 - pow(d / 3.0, 2.0)) if d < 3.0 and not carve else 0.0
 	var wall := 3.0
@@ -96,6 +101,7 @@ func _ready() -> void:
 		elif a == "--carve": carve = true
 		elif a == "--live": live = true
 		elif a == "--joins": joins = true
+		elif a == "--falls": falls = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -222,6 +228,12 @@ func _ready() -> void:
 			var s: Dictionary = river.call("get_section", i)
 			print("s=%5.1f surface=%6.2f slope=%.3f speed=%.2f foam=%.2f cascade=%s q=%.1f" % [s.s, s.surface, s.slope, s.speed, s.foam, s.cascade, river.call("get_discharge_at", s.s)])
 		_print_cross()
+		if falls:
+			for i in range(92, 112):
+				var s2: Dictionary = river.call("get_section", i)
+				print("  i=%d s=%.2f surf=%.2f casc=%s under=%s plunge=%.2f" % [i, s2.s, s2.surface, s2.cascade, s2.under_fall, s2.plunge])
+		for f in river.call("get_waterfalls"):
+			print("fall lip=%s impact=%s height=%.2f q=%.2f lip_speed=%.2f impact_speed=%.2f breakup=%.2f throw=%.2f" % [f.lip, f.impact, f.height, f.discharge, f.lip_speed, f.impact_speed, f.breakup_length, f.throw])
 
 	# Floating boxes, dropped upstream.
 	for i in 3:
@@ -261,6 +273,10 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(6.0, 62.0, 44.0), Vector3(5.0, -2.0, 18.0))
 		"mouth":
 			cam.look_at_from_position(Vector3(_valley_x(30.0) - 10.0, 8.0, 20.0), Vector3(_valley_x(38.0), -2.35, 40.0))
+		"fall":
+			cam.look_at_from_position(Vector3(_valley_x(0.0) + 16.0, 0.5, 4.0), Vector3(_valley_x(0.0), -3.5, 1.5))
+		"fallfront":
+			cam.look_at_from_position(Vector3(_valley_x(12.0) + 3.0, -2.5, 13.0), Vector3(_valley_x(0.0), -3.0, 0.0))
 		"rocks":
 			cam.look_at_from_position(Vector3(_valley_x(-22.0) + 0.5, 16.0, -20.0), Vector3(_valley_x(-22.0), -1.0, -21.99))
 		"top":

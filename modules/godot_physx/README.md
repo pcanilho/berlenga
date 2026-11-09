@@ -1101,6 +1101,14 @@ over `mouth_blend`, and its outflow spreads into a lake or the sea as a plume
 (a turbulent jet the waves, foam and floaters ride); into another river, that
 river carries the added discharge from the join down.
 
+**Waterfalls.** A drop of at least `fall_min_height` (1.5 m) that the water can
+clear is a waterfall. The surface draws down to the brink depth, the water
+leaves the lip and falls as a projectile, in a sheet that thins as it speeds up,
+turns white with the air it takes in, and breaks into clumps past its break-up
+length. The pool boils white where it lands, spray is thrown up (`fall_spray`),
+and mist drifts out on the scene's Flow (`fall_mist`). `get_waterfalls()`
+reports each fall.
+
 **Live window.** With `live_flow` on, the shallow-water solver of the sea's
 live flow runs on a square (`live_domain_size`) round the camera, fed the
 river's depth and flow: rocks shed eddies and a meandering wake drawn by live
