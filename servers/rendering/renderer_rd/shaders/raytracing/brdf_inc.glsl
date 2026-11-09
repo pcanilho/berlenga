@@ -1093,6 +1093,11 @@ bool recoverBelowHemisphereSample(
 //    Combined BRDF
 // -------------------------------------------------------------------------
 
+// The base's diffuse reflectance: what transmission does not let through.
+float3 materialDiffuseReflectance(MaterialProperties material) {
+	return baseColorToDiffuseReflectance(material.baseColor, material.metalness) * (1.0f - material.transmissivness);
+}
+
 // The base layer's F0, taken under the coat where there is one.
 float3 materialSpecularF0(MaterialProperties material) {
 	float3 f0 = baseColorToSpecularF0(material.baseColor, material.metalness, material.dielectricF0);
@@ -1164,7 +1169,7 @@ float clearcoatLobeProbability(MaterialProperties material, float3 V) {
 		return 0.0f;
 	}
 	float coat = clearcoatFresnel(material.clearcoat, dot(material.coatNormal, V));
-	float base = (1.0f - coat) * (luminance(materialSpecularF0(material)) + luminance(baseColorToDiffuseReflectance(material.baseColor, material.metalness)));
+	float base = (1.0f - coat) * (luminance(materialSpecularF0(material)) + luminance(materialDiffuseReflectance(material)));
 	return clamp(coat / max(coat + base, 1e-4f), 0.01f, 0.99f);
 }
 
@@ -1174,7 +1179,7 @@ float clearcoatLobeProbability(MaterialProperties material, float3 V) {
 
 // Reflectance of light passing through the surface (BACKLIGHT times the diffuse albedo, as raster).
 float3 backlightTransmittance(MaterialProperties material) {
-	return baseColorToDiffuseReflectance(material.baseColor, material.metalness) * material.backlight;
+	return materialDiffuseReflectance(material) * material.backlight;
 }
 
 // Samples a bounce ray through the surface: Lambertian transmission, cosine-weighted about -N.
@@ -1183,6 +1188,38 @@ bool sampleBacklight(float2 u, float3 shadingNormal, float3 geometryNormal, Mate
 	float4 qRotationToZ = getRotationToZAxis(-shadingNormal);
 	rayDirection = normalize(rotatePoint(invertRotation(qRotationToZ), sampleHemisphere(u)));
 	sampleWeight = backlightTransmittance(material);
+	return dot(geometryNormal, rayDirection) < 0.0f && luminance(sampleWeight) > 0.0f;
+}
+
+// -------------------------------------------------------------------------
+//    Thin transmission (BaseMaterial3D Transmission)
+// -------------------------------------------------------------------------
+
+// Light a thin transmissive surface lets through head-on, for picking its lobe: its tint times
+// transmission, less the reflection off its face.
+float3 thinTransmittance(MaterialProperties material) {
+	return material.baseColor * (material.transmissivness * (1.0f - luminance(materialSpecularF0(material))));
+}
+
+// Samples a ray through a thin dielectric (Falcor / RTXPT isThinSurface): a GGX VNDF half vector
+// gives the reflection direction, which is mirrored through the surface plane, so the ray goes
+// straight on, blurred by roughness, without the offset of refraction. 'sampleWeight' is
+// (1 - F) * G2 / G1 times the tint. False when the ray would not leave by the back.
+bool sampleThinTransmission(float2 u, float3 shadingNormal, float3 geometryNormal, float3 V, MaterialProperties material, OUT_PARAMETER(float3) rayDirection, OUT_PARAMETER(float3) sampleWeight) {
+	float4 qRotationToZ = getRotationToZAxis(shadingNormal);
+	float3 Vlocal = rotatePoint(qRotationToZ, V);
+	float alpha = material.roughness * material.roughness;
+	float3 Hlocal = (alpha > 0.0f && Vlocal.z > 0.0f) ? sampleGGXVNDF(Vlocal, float2(alpha, alpha), u) : float3(0.0f, 0.0f, 1.0f);
+	float3 Llocal = reflect(-Vlocal, Hlocal);
+	sampleWeight = float3(0.0f, 0.0f, 0.0f);
+	rayDirection = normalize(rotatePoint(invertRotation(qRotationToZ), float3(Llocal.x, Llocal.y, -Llocal.z)));
+	if (Vlocal.z <= 0.0f || Llocal.z <= 0.0f) {
+		return false;
+	}
+	float3 f0 = materialSpecularF0(material);
+	float3 F = evalFresnel(f0, godotF90(f0, material.metalness), saturate(dot(Hlocal, Llocal)));
+	float g = alpha > 0.0f ? Smith_G2_Over_G1_Height_Correlated(alpha, alpha * alpha, min(Llocal.z, 1.0f), min(Vlocal.z, 1.0f)) : 1.0f;
+	sampleWeight = (float3(1.0f, 1.0f, 1.0f) - F) * material.baseColor * (material.transmissivness * g);
 	return dot(geometryNormal, rayDirection) < 0.0f && luminance(sampleWeight) > 0.0f;
 }
 
@@ -1213,7 +1250,7 @@ BrdfData prepareBRDFData(float3 N, float3 L, float3 V, MaterialProperties materi
 
 	// Unpack material properties
 	data.specularF0 = materialSpecularF0(material);
-	data.diffuseReflectance = baseColorToDiffuseReflectance(material.baseColor, material.metalness);
+	data.diffuseReflectance = materialDiffuseReflectance(material);
 
 	// Unpack 'perceptively linear' -> 'linear' -> 'squared' roughness
 	data.roughness = material.roughness;

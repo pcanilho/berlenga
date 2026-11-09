@@ -434,6 +434,16 @@
 		<member name="texture_repeat" type="bool" setter="set_flag" getter="get_flag" default="true">
 			If [code]true[/code], the texture repeats when exceeding the texture's size. See [constant FLAG_USE_TEXTURE_REPEAT].
 		</member>
+		<member name="transmission_amount" type="float" setter="set_transmission" getter="get_transmission" default="1.0">
+			How much light passes straight through the surface, as thin glass does ([code]KHR_materials_transmission[/code] in glTF). The light behind is tinted by the albedo and reduced by what the surface reflects; roughness blurs it. Unlike [member transparency], the surface itself is fully present: it reflects light and is lit at full strength. Multiplied by the red channel of [member transmission_texture].
+			In the rasterizer the scene behind the surface is read from the screen, as [member refraction_enabled] does, so other transparent objects behind it are not seen through it. The path tracer traces the light through it, with tinted shadows; see [member ProjectSettings.rendering/pathtracing/transmission].
+		</member>
+		<member name="transmission_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
+			If [code]true[/code], light passes through the surface as through thin glass. See [member transmission_amount].
+		</member>
+		<member name="transmission_texture" type="Texture2D" setter="set_texture" getter="get_texture">
+			Texture whose red channel scales [member transmission_amount] per pixel.
+		</member>
 		<member name="transparency" type="int" setter="set_transparency" getter="get_transparency" enum="BaseMaterial3D.Transparency" default="0">
 			The material's transparency mode. Some transparency modes will disable shadow casting. Any transparency mode other than [constant TRANSPARENCY_DISABLED] has a greater performance impact compared to opaque rendering. See also [member blend_mode].
 		</member>
@@ -512,6 +522,9 @@
 		<constant name="TEXTURE_BENT_NORMAL" value="18" enum="TextureParam">
 			Texture specifying per-pixel bent normal vector.
 		</constant>
+		<constant name="TEXTURE_TRANSMISSION" value="19" enum="TextureParam">
+			Texture specifying per-pixel transmission.
+		</constant>
 		<constant name="TEXTURE_RIM" value="5" enum="TextureParam">
 			Texture specifying per-pixel rim value.
 		</constant>
@@ -551,7 +564,7 @@
 		<constant name="TEXTURE_ORM" value="17" enum="TextureParam">
 			Texture holding ambient occlusion, roughness, and metallic.
 		</constant>
-		<constant name="TEXTURE_MAX" value="19" enum="TextureParam">
+		<constant name="TEXTURE_MAX" value="20" enum="TextureParam">
 			Represents the size of the [enum TextureParam] enum.
 		</constant>
 		<constant name="TEXTURE_FILTER_NEAREST" value="0" enum="TextureFilter">
@@ -650,7 +663,10 @@
 		<constant name="FEATURE_BENT_NORMAL_MAPPING" value="12" enum="Feature">
 			Constant for setting [member bent_normal_enabled].
 		</constant>
-		<constant name="FEATURE_MAX" value="13" enum="Feature">
+		<constant name="FEATURE_TRANSMISSION" value="13" enum="Feature">
+			Constant for setting [member transmission_enabled].
+		</constant>
+		<constant name="FEATURE_MAX" value="14" enum="Feature">
 			Represents the size of the [enum Feature] enum.
 		</constant>
 		<constant name="BLEND_MODE_MIX" value="0" enum="BlendMode">

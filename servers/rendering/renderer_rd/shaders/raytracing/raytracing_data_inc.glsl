@@ -91,6 +91,9 @@ struct InstanceMotionData {
 #define RT_MAT_FLAG_UV2_TRIPLANAR_WORLD 65536u
 #define RT_MAT_FLAG_INSTANCE_FADE 131072u
 #define RT_MAT_FLAG_ANISOTROPIC 262144u // texture_filter *_ANISOTROPIC: ray-cone gradients sampled anisotropically.
+#define RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA 524288u // Refraction: transmission is 1 - alpha and the surface is opaque.
+#define RT_MAT_FLAG_TRANSMISSIVE 1048576u // Transmission or Refraction: light passes through, see rt_material_transmission().
+#define RT_MAT_FLAG_BACKLIT 2097152u // BaseMaterial3D back lighting: shadow rays keep the light it passes through.
 
 // Multi-bit fields fill the top bits so new single-bit flags can grow upward.
 // Blend class of transparent surfaces (bits 25-27). Opaque surfaces leave 0.
@@ -143,7 +146,7 @@ struct MaterialData {
 	uint uv2_scale_offset_z; // fp16x2: scale.z, offset.z (modulo 1).
 	uint metallic_texture; // texture_metallic, or texture_orm for ORMMaterial3D.
 	uint ao_texture; // AO texture when AO is enabled; 0 (white) otherwise.
-	float emission_indirect; // BaseMaterial3D emission_indirect_energy, see MaterialResult::emission_indirect.
+	uint emission_indirect_transmission; // Bits 0-15 fp16 emission_indirect_energy, 16-23 transmission (unorm8).
 };
 
 // Bindless index of a MaterialData *_texture.
@@ -181,6 +184,16 @@ vec3 rt_material_backlight(MaterialData p_mat) {
 	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), greaterThan(c, vec3(0.04045)));
 }
 
+// BaseMaterial3D emission_indirect_energy, see MaterialResult::emission_indirect.
+float rt_material_emission_indirect(MaterialData p_mat) {
+	return unpackHalf2x16(p_mat.emission_indirect_transmission).x;
+}
+
+// BaseMaterial3D transmission (or 1 with RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA).
+float rt_material_transmission(MaterialData p_mat) {
+	return unpackUnorm4x8(p_mat.emission_indirect_transmission).z;
+}
+
 // BaseMaterial3D clearcoat and clearcoat_roughness (x, y); x is 0 without the coat.
 vec2 rt_material_clearcoat(MaterialData p_mat) {
 	return unpackUnorm4x8(p_mat.proximity_fade_clearcoat).zw;
@@ -189,4 +202,24 @@ vec2 rt_material_clearcoat(MaterialData p_mat) {
 // BaseMaterial3D roughness, metallic, specular (x, y, z).
 vec3 rt_material_surface_params(MaterialData p_mat) {
 	return unpackUnorm4x8(p_mat.surface_params).xyz;
+}
+
+// What an opaque thin caster lets a shadow ray keep, given its albedo p_tint and alpha p_alpha:
+// Transmission's light straight through, less one face's reflection head-on (raster F0 from
+// specular), and back lighting's light through the surface (albedo times back light, all the
+// light its diffuse transmission sends on, taken straight through). 0: blocks the ray.
+vec3 rt_material_shadow_transmittance(MaterialData p_mat, vec3 p_tint, float p_alpha, bool p_transmission, bool p_back_lighting) {
+	vec3 params = rt_material_surface_params(p_mat);
+	vec3 t = vec3(0.0);
+	if (p_transmission && (p_mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u) {
+		float transmission = rt_material_transmission(p_mat) * (1.0 - 0.16 * params.z * params.z);
+		if ((p_mat.flags & RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA) != 0u) {
+			transmission *= 1.0 - clamp(p_alpha, 0.0, 1.0);
+		}
+		t += p_tint * transmission;
+	}
+	if (p_back_lighting && (p_mat.flags & RT_MAT_FLAG_BACKLIT) != 0u) {
+		t += p_tint * rt_material_backlight(p_mat);
+	}
+	return clamp(t * (1.0 - params.y), vec3(0.0), vec3(1.0));
 }

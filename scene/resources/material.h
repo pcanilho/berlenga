@@ -164,6 +164,7 @@ public:
 		TEXTURE_DETAIL_NORMAL,
 		TEXTURE_ORM,
 		TEXTURE_BENT_NORMAL,
+		TEXTURE_TRANSMISSION,
 		TEXTURE_MAX
 	};
 
@@ -220,6 +221,7 @@ public:
 		FEATURE_REFRACTION,
 		FEATURE_DETAIL,
 		FEATURE_BENT_NORMAL_MAPPING,
+		FEATURE_TRANSMISSION,
 		FEATURE_MAX
 	};
 
@@ -483,6 +485,7 @@ private:
 		StringName transmittance_boost;
 		StringName backlight;
 		StringName refraction;
+		StringName transmission;
 		StringName point_size;
 		StringName uv1_scale;
 		StringName uv1_offset;
@@ -562,6 +565,7 @@ private:
 
 	Color backlight;
 	float refraction = 0.0f;
+	float transmission = 0.0f;
 	float point_size = 0.0f;
 	float alpha_scissor_threshold = 0.0f;
 	float alpha_hash_scale = 0.0f;
@@ -728,6 +732,9 @@ public:
 
 	void set_refraction(float p_refraction);
 	float get_refraction() const;
+
+	void set_transmission(float p_transmission);
+	float get_transmission() const;
 
 	void set_point_size(float p_point_size);
 	float get_point_size() const;

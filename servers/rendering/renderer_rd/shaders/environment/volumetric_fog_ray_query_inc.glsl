@@ -34,6 +34,8 @@ fog_ray_query;
 
 layout(set = 2, binding = 0) uniform texture2D bindless_textures[];
 
+#define RT_SHADOW_QUERY_TRANSMISSION true
+#define RT_SHADOW_QUERY_BACK_LIGHTING true
 #include "../raytracing/raytracing_shadow_query_inc.glsl"
 
 layout(constant_id = 0) const uint FOG_RQ_POSITIONAL_SHADOW_RAYS = 2u;

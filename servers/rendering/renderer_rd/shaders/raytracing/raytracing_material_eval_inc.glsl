@@ -16,6 +16,7 @@ struct MaterialResult {
 	vec3 backlight; // Light "leaking through" thin/translucent surfaces (BACKLIGHT).
 	float clearcoat; // CLEARCOAT, 0 = no coat (or rendering/pathtracing/clearcoat off).
 	float clearcoat_roughness; // CLEARCOAT_ROUGHNESS.
+	float transmission; // BaseMaterial3D transmission times (1 - metallic): light let straight through, tinted by albedo.
 };
 
 // Sensible default for a mid-grey diffuse surface.
@@ -32,6 +33,7 @@ MaterialResult default_material_result(vec3 geometry_normal) {
 	r.backlight = vec3(0.0);
 	r.clearcoat = 0.0;
 	r.clearcoat_roughness = 0.0;
+	r.transmission = 0.0;
 	return r;
 }
 

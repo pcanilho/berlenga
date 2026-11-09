@@ -102,6 +102,36 @@ the surface now start on its back side: from the front they hit the surface itse
 from lights behind never reached opaque cards before. Glass follows as option (b), a Transmission
 section (Paulo's choice, 9 Nov).
 
+## Transmission section (option b) design
+
+Godot already has the raster half: BaseMaterial3D's Refraction reads the screen behind the
+surface, adds it as emission (`ref_amount = 1 - alpha`, blurred by `ROUGHNESS * 8` mip levels),
+scales albedo by `1 - ref_amount` and draws the surface with alpha 1. The path tracer ignores it,
+so refractive glass traces opaque today. The Transmission section reuses that path:
+
+- **Properties.** `FEATURE_TRANSMISSION` (appended, so saved feature values keep their meaning),
+  `transmission` (0 to 1) and `transmission_texture` (red channel), as glTF
+  `KHR_materials_transmission`. Thin-walled: no refraction offset unless Refraction is also on.
+- **Raster.** The screen behind, at the refraction UV when Refraction is on, tinted by albedo and
+  scaled by `transmission * (1 - metallic) * (1 - F(NdotV))` with the material's dielectric F0,
+  is added to emission; albedo is scaled by `1 - transmission`. Depth draw always, like Refraction.
+- **Path tracer.** A thin dielectric lobe (Falcor / RTXPT `isThinSurface`): a GGX VNDF half vector,
+  the reflection direction mirrored through the surface plane, weight `(1 - F) * G2 / G1 * albedo *
+  transmission`. Diffuse is scaled by `1 - transmission`. The lobe is picked by its share of the
+  surface's light. Direct light does not use the lobe (a thin smooth pane passes a light as a
+  delta), and a ray through it weighs emission it finds in full. Refraction-enabled materials take
+  the same lobe with `1 - alpha` as their transmission, so existing refractive glass stops tracing
+  opaque.
+- **Shadows.** Shadow rays pass transmissive surfaces with transmittance `albedo * transmission *
+  (1 - F0)`, through the any-hit path tinted glass shadows already use.
+- **Back-lit shadows** (Paulo, 9 Nov: "I want our engine being capable of that"). Opaque
+  back-lit BaseMaterial3D surfaces let shadow rays keep albedo times back light: all the light
+  their diffuse transmission sends on, taken straight through. A sunlit curtain or leaf canopy
+  then lets coloured light into its shadow. Under `rendering/pathtracing/back_lighting`.
+- **glTF.** The importer sets the section from `KHR_materials_transmission` and the exporter
+  writes it.
+- **Setting.** `rendering/pathtracing/transmission` (on; off traces these surfaces opaque, as before).
+
 ## Settings
 
 - `rendering/pathtracing/clearcoat` (on; off = today's look).

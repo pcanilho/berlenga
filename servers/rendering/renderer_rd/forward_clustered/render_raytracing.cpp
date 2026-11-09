@@ -3569,6 +3569,9 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		if (backlight.get_type() == Variant::COLOR) {
 			const Color c = backlight;
 			rt_material_set_backlight(mat, c.r, c.g, c.b);
+			if (c.r > 0.0f || c.g > 0.0f || c.b > 0.0f) {
+				mat.flags |= RT_MAT_FLAG_BACKLIT;
+			}
 		}
 	}
 	if (rt_state.clearcoat) {
@@ -3576,7 +3579,18 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		rt_material_set_clearcoat(mat, get_float("clearcoat", 1.0f), get_float("clearcoat_roughness", 0.5f));
 	}
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
-	mat.emission_indirect = get_float("emission_indirect_energy", 1.0f);
+	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
+	if (rt_state.transmission) {
+		// The transmission texture is not read.
+		mat.emission_indirect_transmission.transmission = rt_unorm8(get_float("transmission", 1.0f));
+		if (mat.emission_indirect_transmission.transmission != 0u) {
+			mat.flags |= RT_MAT_FLAG_TRANSMISSIVE;
+		}
+	} else if (rt_state.refraction) {
+		// Refraction lets through 1 - alpha, as raster's ref_amount; the shader reads the alpha.
+		mat.emission_indirect_transmission.transmission = 255u;
+		mat.flags |= RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA | RT_MAT_FLAG_TRANSMISSIVE;
+	}
 
 	// Addressing stored in fp16 slots, packed once below.
 	float uv1_blend_sharpness = 1.0f;
@@ -7088,7 +7102,8 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_VISIBILITY] = (p_state && p_state->light_visibility_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/light_visibility_memory")) ? 1.0f : 0.0f;
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_MATERIAL_FEATURES] = float(
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/clearcoat") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_CLEARCOAT : 0u) |
-				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/back_lighting") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_BACK_LIGHTING : 0u));
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/back_lighting") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_BACK_LIGHTING : 0u) |
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transmission") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_TRANSMISSION : 0u));
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
 		// Color backgrounds, as the raster clear (render_forward_clustered.cpp): camera rays that
 		// miss show them instead of the radiance map, which holds no sky here.

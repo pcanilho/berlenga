@@ -401,6 +401,7 @@ MaterialProperties material_properties_from_result(HitData h, MaterialResult m, 
 	MaterialProperties material = material_properties_coated(m.albedo, m.metalness, m.roughness, m.specular, m.backlight,
 			rt_entry_material_flags(h.geometry_idx), dot(N, V), m.clearcoat, m.clearcoat_roughness, h.geometry_normal);
 	material.emissive = m.emissive;
+	material.transmissivness = m.transmission;
 	return material;
 }
 
@@ -714,7 +715,7 @@ vec3 ambient_approx(vec3 N, vec3 V, MaterialResult m, MaterialProperties materia
 		}
 	}
 
-	vec3 diffuse = baseColorToDiffuseReflectance(material.baseColor, material.metalness) * ambient;
+	vec3 diffuse = materialDiffuseReflectance(material) * ambient;
 	if (material.clearcoat > 0.0 && material.diffuseMode != GODOT_DIFFUSE_TOON) {
 		// The coat's sky reflection on the vertex normal, weighted by its Fresnel (raster cc_specular_light).
 		float coat_fresnel = clearcoatFresnel(material.clearcoat, dot(material.coatNormal, V));
@@ -806,7 +807,7 @@ float backlight_lobe_probability(MaterialProperties material) {
 	if (back_lum <= 0.0) {
 		return 0.0;
 	}
-	float lum = back_lum + luminance(materialSpecularF0(material)) + luminance(baseColorToDiffuseReflectance(material.baseColor, material.metalness));
+	float lum = back_lum + luminance(materialSpecularF0(material)) + luminance(materialDiffuseReflectance(material));
 	return clamp(back_lum / lum, 0.01, 0.99);
 }
 
@@ -818,7 +819,7 @@ float reflection_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties mat
 		return 0.0;
 	}
 	vec3 specular_f0 = materialSpecularF0(material);
-	vec3 diffuse_reflectance = baseColorToDiffuseReflectance(material.baseColor, material.metalness);
+	vec3 diffuse_reflectance = materialDiffuseReflectance(material);
 	float specular_lum = luminance(specular_f0);
 	float diffuse_lum = luminance(diffuse_reflectance);
 	float p_spec;
@@ -841,12 +842,30 @@ float reflection_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties mat
 	return pdf;
 }
 
-float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
+float opaque_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
 	float p_back = backlight_lobe_probability(material);
 	if (p_back > 0.0) {
 		return (1.0 - p_back) * reflection_continuation_pdf(N, V, L, material) + p_back * max(-dot(N, L), 0.0) / PI;
 	}
 	return reflection_continuation_pdf(N, V, L, material);
+}
+
+// Probability of a bounce ray passing through a thin transmissive surface: the transmitted
+// share of its light.
+float transmission_lobe_probability(MaterialProperties material) {
+	if (material.transmissivness <= 0.0) {
+		return 0.0;
+	}
+	float trans_lum = luminance(thinTransmittance(material));
+	float lum = trans_lum + luminance(materialSpecularF0(material)) + luminance(materialDiffuseReflectance(material)) + luminance(backlightTransmittance(material));
+	return lum > 0.0 ? clamp(trans_lum / lum, 0.01, 0.99) : 0.0;
+}
+
+// The reflection and back light lobes' density. The thin transmission lobe adds none: no light
+// sample draws its directions (a ray through it weighs what it finds in full).
+float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
+	float p_trans = transmission_lobe_probability(material);
+	return (1.0 - p_trans) * opaque_continuation_pdf(N, V, L, material);
 }
 
 // The same with the coat lobe, taken with probability clearcoatLobeProbability().
@@ -949,7 +968,7 @@ vec3 lights_emissive_sample(vec3 p_origin, vec3 N, vec3 V, MaterialProperties ma
 	MaterialUV muv = material_uv_compute(material_uv1_channel(mat), uv, obj_pos, n_light, p_light, n_light);
 	muv.cone_grad = false;
 	muv.cone_lod = RT_TEXTURE_LOD_BASE;
-	vec3 Le = material_emission(mat, muv, uv2, p_light, n_light) * scene_data_block.data.emissive_exposure_normalization * mat.emission_indirect;
+	vec3 Le = material_emission(mat, muv, uv2, p_light, n_light) * scene_data_block.data.emissive_exposure_normalization * rt_material_emission_indirect(mat);
 	if (all(lessThanEqual(Le, vec3(0.0)))) {
 		return vec3(0.0);
 	}
@@ -1050,7 +1069,7 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 
 	MaterialProperties material = material_properties_from_result(h, m, N, V);
 	vec3 specular_f0 = materialSpecularF0(material);
-	vec3 diffuse_reflectance = baseColorToDiffuseReflectance(material.baseColor, material.metalness);
+	vec3 diffuse_reflectance = materialDiffuseReflectance(material);
 	float specular_lum = luminance(specular_f0);
 	float diffuse_lum = luminance(diffuse_reflectance);
 
@@ -1063,6 +1082,28 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 		}
 		float coat_fresnel = clearcoatFresnel(material.clearcoat, dot(material.coatNormal, V));
 		ps.throughput *= (1.0 - coat_fresnel) / (1.0 - p_coat);
+	}
+
+	// Thin transmission: straight through the surface, with its share of the light.
+	float p_trans = transmission_lobe_probability(material);
+	if (p_trans > 0.0) {
+		if (rand(ps.rng_state) < p_trans) {
+			vec3 trans_dir;
+			vec3 trans_weight;
+			if (!sampleThinTransmission(rand2(ps.rng_state), N, h.geometry_normal, V, material, trans_dir, trans_weight)) {
+				return false;
+			}
+			ps.throughput *= trans_weight / p_trans;
+			ps.packed_bounces_flags = inc_total_bounce(ps.packed_bounces_flags) & ~LAST_BOUNCE_DIFFUSE_FLAG;
+			if (material.roughness > SINGULAR_ROUGHNESS_MAX) {
+				ps.packed_bounces_flags |= NON_SINGULAR_PATH_FLAG;
+			}
+			ps.offset_normal = -h.geometry_normal;
+			ps.next_ray_dir = trans_dir;
+			ps.bsdf_pdf = 0.0;
+			return true;
+		}
+		ps.throughput /= 1.0 - p_trans;
 	}
 
 	// Back lighting: a diffuse bounce through the surface, with its share of the base's light.
