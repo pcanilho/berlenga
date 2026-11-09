@@ -599,12 +599,26 @@ void fragment() {
 	// Meniscus: a dark line a couple of pixels wide where the surface meets the lens.
 	float band = max(length(dFdy(p_near)), 1e-5) * 2.0;
 	float meniscus = underwater_meniscus * exp(-(above * above) / (band * band));
-	if (above > 0.0) {
+	if (above > 0.0 && (d.y >= 0.0 || above > band * 8.0)) {
 		if (meniscus < 0.004) {
 			discard;
 		}
 		ALBEDO = vec3(0.0);
 		ALPHA = meniscus;
+	} else if (above > 0.0) {
+		// Just over the water line, looking down: the mesh (straight triangles) and these heights
+		// (filtered) can disagree by a few millimetres, leaving the floor seen past the near plane with
+		// no surface in front of it. Fog the part of the ray under the water.
+		float depth = texture(underwater_depth, SCREEN_UV).r;
+		float len = 1e4;
+		if (depth > 0.0) {
+			vec4 o_v = INV_PROJECTION_MATRIX * vec4(ndc, depth, 1.0);
+			len = distance((INV_VIEW_MATRIX * vec4(o_v.xyz / o_v.w, 1.0)).xyz, p_near);
+		}
+		float seg = max(len - above / -d.y, 0.0);
+		vec3 scene = texture(underwater_screen, SCREEN_UV).rgb;
+		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter(0.0, d, seg)) * (1.0 - meniscus);
+		ALPHA = 1.0;
 	} else {
 		float z0 = -above;
 		float depth = texture(underwater_depth, SCREEN_UV).r;

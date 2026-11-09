@@ -843,6 +843,49 @@ carving terrain.
   floor, fogging transparent objects under water in raster (Crest needs a per-material fog for that
   too), underwater bubbles and particles.
 
+## The camera under water: as built (9 Nov)
+
+- **Path tracing.** Raygen starts each pixel's camera ray on the near plane (where raster clips) and
+  first calls `rt_camera_medium()`: a probe straight up through the caustic photon mode of the hit
+  shader, which now reports a medium surface's back face with its medium code (sign bit set, so
+  photons still read it as not entering) and leaves its scattering in `rt_medium_image`. The first
+  medium surface met decides; other surfaces are passed through (up to 4). The probe starts 1 cm
+  below the point, so a surface within the trace's 1 mm minimum distance is not skipped (it left a
+  band of unfogged floor along the water line). The path then starts in
+  that medium, so fog, scattering, the surface from below (refraction, Fresnel, total internal
+  reflection) and shadows out of the water all come from the existing medium tracking. A camera ray
+  that misses everything inside clear water is now absorbed (black) instead of seeing the sky. Only
+  with `rendering/pathtracing/refraction` on.
+- **Raster.** `PhysXWaterSurface3D.underwater_enabled` (on) and `underwater_meniscus` (0.35). While
+  the camera is within reach of the waves the node shows two more materials built from the water
+  shader's own source (`#define UNDERWATER_FOG`, `UNDERWATER_SURFACE`), copying its parameters each
+  frame:
+  - *Fog pass:* a full screen quad (2 mm mesh, so the path tracer has nothing in its way), drawn
+    first among transparents. Per pixel: the near plane point against the displaced surface
+    (`surface_height_world()`, choppy offset inverted) splits the image; the meniscus darkens a two
+    pixel band there; just above the line, looking down, the part of the ray under the water is
+    fogged too (the mesh's straight triangles and the filtered heights disagree by millimetres
+    there, Ben K's crease problem). Under the water: `scene x light_at_depth x exp(-sigma_t d) + in-scatter`, d
+    clipped where the ray reaches the surface. In-scatter is single scattering in closed form along
+    the ray: the sun refracted into the water (Snell, IOR 1.33, Fresnel transmission, the first
+    visible DirectionalLight3D) with the Henyey-Greenstein phase of `pathtraced_scattering_anisotropy`,
+    dimmed by `exp(-sigma_t z / mu)`; the sky (the environment's irradiance from above, baked with
+    `sky_bake_panorama` every few seconds) isotropic, dimmed by `exp(-1.2 sigma_t z)`.
+  - *Underside pass* (the water material's next pass): the screen read along the refracted ray
+    (Snell's window), exact Fresnel from the water side (1 past 48.6 degrees), the mirror below as a
+    16 step screen-space march (fogged by its own distance), falling back to the water's in-scatter;
+    foam as a lit, rough layer; then the fog of the distance to the camera.
+  - The plain surface pass skips its underside while the camera is under (`underwater_camera_below`
+    from `sample_height()` at the camera).
+- **Bench.** `docs/bench/water_surface --view=submerged|waterline|up` (slope 12 degrees by default
+  there; waterline with 0.3 m waves), `--cam-dy=M`, and `--dive=M --seq=N` to lower the camera through
+  the surface over a sequence.
+- **Compared (960x540, 16 spp, 16 to 32 frames):** water column and rock within about 10% between
+  raster and path tracing. Raster's floor is darker and has no caustics; its mirror past the
+  critical angle only shows what is on screen. Shots: /mnt/project-files/fork/water/underwater/.
+- **Not built:** raster light shafts, raster caustics, fog on transparent objects under water in
+  raster, bubbles. With several cameras the node follows the active one.
+
 ## Sources
 
 - Chentanez and Müller, Real-time Simulation of Large Bodies of Water with Small Scale Details, SCA

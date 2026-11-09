@@ -511,8 +511,10 @@ bool rt_caustics_land(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out 
 // that medium (its code, as the hit reports it; scattering left in rt_medium_image). A front face or
 // no medium surface at all: air. Other surfaces (a pier, a hull) are passed through.
 uint rt_camera_medium(vec3 p_origin) {
-	vec3 o = p_origin;
 	const vec3 up = vec3(0.0, 1.0, 0.0);
+	// From 1 cm below: a surface within the trace's 1 mm minimum distance of the point is still met
+	// (a start just over the water then meets the top first, and reads as air).
+	vec3 o = p_origin - up * 0.01;
 	for (uint i = 0u; i < 4u; i++) {
 		PathState ps;
 		if (!rt_caustics_trace(o, up, 0.0, 0u, ps)) {

@@ -23,6 +23,8 @@ extends Node3D
 #   --pt-from=N     rasterize until frame N, path trace from then on (a long settle at raster speed)
 #   --tracers=N     N white flecks floating on the surface, carried by sample_flow() (shows the flow)
 #   --seq=N         also save the N frames after --frames, as path_0000.png ... (for a GIF)
+#   --dive=M        over the --seq frames, lower the camera by M metres (through the surface at --view=waterline)
+#   --cam-dy=M      raise (or lower) the camera by M metres
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
 #
 # Run with --fixed-fps 30 so raster and path traced frames show the same waves.
@@ -35,6 +37,9 @@ var frames := 12
 var out := ""
 var debug_mode := 0
 var slope_deg := -1.0
+var cam_dy := 0.0
+var dive := 0.0
+var bench_cam: Camera3D
 var water_params := {}
 var node_params := {}
 var current := Vector2.ZERO
@@ -67,6 +72,8 @@ func _ready() -> void:
 		elif a.begins_with("--tracers="): tracers = int(a.substr(10))
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
+		elif a.begins_with("--cam-dy="): cam_dy = float(a.substr(9))
+		elif a.begins_with("--dive="): dive = float(a.substr(7))
 		elif a.begins_with("--water="):
 			var wkv := a.substr(8).split(":", true, 1)
 			water_params[wkv[0]] = str_to_var(wkv[1])
@@ -183,6 +190,10 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(0, 4.5, 12.0), Vector3(0, -0.5, -6.0))
 
 
+	cam.position.y += cam_dy
+	bench_cam = cam
+
+
 func _checker(a: Color, b: Color) -> ImageTexture:
 	var img := Image.create(8, 8, true, Image.FORMAT_RGB8)
 	for y in 8:
@@ -278,6 +289,8 @@ func _process(_delta: float) -> void:
 		fa.store_buffer(cells.to_byte_array())
 		get_tree().quit()
 		return
+	if dive != 0.0 and seq > 0 and n >= frames and n < frames + seq:
+		bench_cam.position.y -= dive / seq
 	if out != "" and seq > 0 and n >= frames and n < frames + seq:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out.get_basename() + "_%04d.png" % (n - frames))
