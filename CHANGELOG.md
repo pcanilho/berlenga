@@ -6,6 +6,17 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-eded33cb (2026-11-09)
+
+### Added
+- Moving strand hair: PhysXHair3D simulates a HairGroom's strands on the GPU (follow-the-leader with shape constraints, wind, collision spheres) and draws them as path traced hair fibres; shaders can shade as hair with HAIR, HAIR_ABSORPTION and HAIR_ROUGHNESS
+- PhysXWaterSurface3D shore_waves: swell that turns with the seabed, grows in the shallows and breaks on the beach as white bores (shore_wave_height, shore_wave_period, shore_wave_direction) (#197)
+- PhysXRiver3D living waterline: the river edge laps, is ragged and carries a thin foam band (edge_lap_height, edge_relief, edge_foam) (#197)
+
+### Changed
+- README: moving strand hair
+- README: shore waves, living waterline
+
 ## build-09874cea (2026-11-09)
 
 ### Added
