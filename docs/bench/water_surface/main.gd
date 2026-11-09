@@ -9,6 +9,7 @@ extends Node3D
 #   --view=waterline  the camera at the surface: the lens split between above and below
 #   --view=up       from 2.5 m down, looking up at the surface: Snell's window and the mirror past it
 #   --view=river    from above, the rock standing out of the water (with --current)
+#   --view=surf     low along the beach, the shore waves rolling in and breaking (--node=shore_waves:true)
 #   --view=sea      out to sea from 6 m up (with --node=wave_cascades:3 for swell under the chop)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
@@ -26,6 +27,7 @@ extends Node3D
 #   --seq=N         also save the N frames after --frames, as path_0000.png ... (for a GIF)
 #   --dive=M        over the --seq frames, lower the camera by M metres (through the surface at --view=waterline)
 #   --cam-dy=M      raise (or lower) the camera by M metres
+#   --profile       print the surface height along x = 0, out to sea and up the beach, at the last frame
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
 #
 # Run with --fixed-fps 30 so raster and path traced frames show the same waves.
@@ -55,6 +57,7 @@ var tracer_rng := RandomNumberGenerator.new()
 var n := 0
 var water: Node3D
 var sea_series := PackedFloat32Array()
+var profile := false
 
 
 func _ready() -> void:
@@ -74,6 +77,7 @@ func _ready() -> void:
 		elif a.begins_with("--tracers="): tracers = int(a.substr(10))
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
+		elif a == "--profile": profile = true
 		elif a.begins_with("--cam-dy="): cam_dy = float(a.substr(9))
 		elif a.begins_with("--dive="): dive = float(a.substr(7))
 		elif a.begins_with("--water="):
@@ -188,6 +192,8 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(-1.0, 9.0, 1.0), Vector3(-4.0, -1.0, -7.0))
 		"wake":
 			cam.look_at_from_position(Vector3(1.0, 16.0, -9.0), Vector3(1.0, 0.0, -9.01))
+		"surf":
+			cam.look_at_from_position(Vector3(10.0, 2.2, 9.0), Vector3(-2.0, -0.6, -6.0))
 		"sea":
 			cam.look_at_from_position(Vector3(0, 4.0, -40.0), Vector3(0, -1.0, -110.0))
 		_:
@@ -270,6 +276,14 @@ func _process(_delta: float) -> void:
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
 	_tracers_step(1.0 / 30.0)
+	if profile and n == frames - 1:
+		# Depth and surface along x = 0 toward the beach (sample_height includes the shore waves).
+		var line := ""
+		for i in 41:
+			var z := -20.0 + i
+			var h := float(water.call("sample_height", Vector3(0.0, 0.0, z)))
+			line += "z=%d h=%.2f  " % [z, h]
+		print(line)
 	if view == "sea" and n > 30:
 		# Significant wave height, 4 sigma of the height at one point over time (a line through the square is
 		# shorter than the swell).

@@ -137,6 +137,14 @@ uniform sampler2D cascade_deriv_3 : hint_default_black, filter_linear, repeat_en
 uniform sampler2D cascade_foam_1 : hint_default_black, filter_linear, repeat_enable;
 uniform sampler2D cascade_foam_2 : hint_default_black, filter_linear, repeat_enable;
 uniform sampler2D cascade_foam_3 : hint_default_black, filter_linear, repeat_enable;
+// Shore waves (PhysXWaterSurface3D::shore_waves), on the ripple grid: a = (phase,
+// height) of trains 1 and 2, b = their phase gradients (k times the direction of
+// travel, world xz); omega = each train's angular frequency.
+uniform bool shore_waves_enabled = false;
+uniform sampler2D shore_wave_tex_a : hint_default_black, filter_linear, repeat_disable;
+uniform sampler2D shore_wave_tex_b : hint_default_black, filter_linear, repeat_disable;
+uniform vec2 shore_wave_omega = vec2(0.785, 0.695);
+const float BREAKER = 0.78;
 // World XZ both height fields are centered on (set by PhysXWaterSurface3D).
 uniform vec2 grid_center = vec2(0.0);
 // Open, deep sea past the simulated square (PhysXWaterSurface3D::open_sea_beyond) instead of the edge's seabed.
@@ -447,6 +455,56 @@ float wake_foam(vec2 world_xz) {
 	return min(wake_sample(world_xz).y, 1.0);
 }
 
+// Shore waves at the water resting at world_xz: returns (dx, eta, dz); r_slope
+// = (d eta/dx, d eta/dz), r_white = white water of breaking crests. Each train
+// is a trochoid riding its refracted phase; where its height reaches the
+// breaker limit (0.78 of the depth) the front steepens (the profile is skewed
+// shoreward) and the crest and the water behind it turn white. Heights vary
+// slowly along the crests, so the waves come in sets with calmer gaps.
+vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
+	r_slope = vec2(0.0);
+	r_white = 0.0;
+	if (!shore_waves_enabled) {
+		return vec3(0.0);
+	}
+	vec2 rel = world_xz - grid_center;
+	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	vec2 a_c = abs(rel / ripple_domain_size);
+	float inside = 1.0 - smoothstep(0.46, 0.5, max(a_c.x, a_c.y));
+	if (inside <= 0.0) {
+		return vec3(0.0);
+	}
+	vec4 a = texture(shore_wave_tex_a, cuv_r);
+	vec4 b = texture(shore_wave_tex_b, cuv_r);
+	float depth = max(depth_r(world_xz, cuv_r), 0.0);
+	float vary = 0.55 + 0.45 * flow_value_noise(world_xz * 0.04 + vec2(water_time * 0.03, 0.0));
+	vec3 off = vec3(0.0);
+	for (int i = 0; i < 2; i++) {
+		float phi = i == 0 ? a.x : a.z;
+		float height = i == 0 ? a.y : a.w;
+		vec2 g = i == 0 ? b.xy : b.zw;
+		float om = i == 0 ? shore_wave_omega.x : shore_wave_omega.y;
+		float k = length(g);
+		if (height <= 1e-4 || k <= 1e-5) {
+			continue;
+		}
+		vec2 dir = g / k;
+		float brk = smoothstep(0.8, 0.98, height / max(BREAKER * depth, 1e-3));
+		float amp = 0.5 * height * vary * inside;
+		float th = phi - om * water_time;
+		float skew = 0.6 * brk;
+		float ps = th - skew * cos(th);
+		off.y += amp * cos(ps);
+		r_slope += -amp * sin(ps) * (1.0 + skew * sin(th)) * g;
+		float hor = min(amp, 0.8 / k) * 0.8;
+		off.xz += -dir * hor * sin(ps);
+		// White water: the breaking crest, and the bore's foam trailing behind it.
+		float behind = fract(-th / 6.28318530718);
+		r_white = max(r_white, brk * vary * max(smoothstep(0.35, 0.95, cos(ps)), 0.7 * exp(-behind * 5.0)));
+	}
+	return off;
+}
+
 vec3 surface_offset(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
@@ -459,6 +517,11 @@ vec3 surface_offset(vec2 world_xz) {
 	float inside = 1.0 - smoothstep(0.46, 0.5, max(from_center.x, from_center.y));
 	float ripple = mix(water_level, texture(ripple_height_tex, cuv_r).r, inside);
 	float h = ripple + ocean_height_all(world_xz).r * fade;
+	vec2 shore_slope;
+	float shore_white;
+	vec3 shore = shore_wave(world_xz, shore_slope, shore_white);
+	h += shore.y;
+	d += shore.xz;
 	// The wake grid is laid out where the water is now, not where it rests
 	// (its sources sit under the hull, and sample_height() reads it there):
 	// read it at this point's displaced position.
@@ -498,6 +561,11 @@ vec3 surface_normal_pixel(vec2 world_xz) {
 	vec2 wake_xz = world_xz + s * disp.rg;
 	rx += (wake_height(wake_xz + vec2(ew, 0.0)) - wake_height(wake_xz - vec2(ew, 0.0))) / (2.0 * ew);
 	rz += (wake_height(wake_xz + vec2(0.0, ew)) - wake_height(wake_xz - vec2(0.0, ew))) / (2.0 * ew);
+	vec2 shore_slope;
+	float shore_white;
+	shore_wave(world_xz, shore_slope, shore_white);
+	rx += shore_slope.x;
+	rz += shore_slope.y;
 	vec3 tx = vec3(1.0 + s * der.z, der.x * fade + rx, s * dxz);
 	vec3 tz = vec3(s * dxz, der.y * fade + rz, 1.0 + s * der.w);
 	return normalize(cross(tz, tx));
@@ -528,6 +596,12 @@ float foam_at(vec2 world_xz) {
 	if (flow_foam_live) {
 		vec2 a = abs(rel / ripple_domain_size);
 		amount = max(amount, texture(flow_tex, cuv_r).b * (1.0 - smoothstep(0.44, 0.5, max(a.x, a.y))));
+	}
+	{
+		vec2 shore_slope;
+		float shore_white;
+		shore_wave(world_xz, shore_slope, shore_white);
+		amount = max(amount, shore_white);
 	}
 	// Wake foam at the displaced position, as surface_offset() reads the wake.
 	amount = max(amount, wake_foam(world_xz - choppiness * fade * ocean_disp_all(world_xz).rg));
@@ -577,7 +651,9 @@ float shore_signal(vec2 world_xz, float time) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float depth = depth_r(world_xz, cuv_r);
-	float eta = ocean_height_all(world_xz).r; // unfaded: the waves arriving here
+	vec2 shore_slope;
+	float shore_white;
+	float eta = ocean_height_all(world_xz).r + shore_wave(world_xz, shore_slope, shore_white).y; // unfaded: the waves arriving here
 	// Lobes a few meters across (like real swash), drifting, with the waves
 	// pushing the whole edge in and out over time.
 	vec2 p = world_xz * 0.45;
@@ -1048,6 +1124,14 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_speed"), &PhysXWaterSurface3D::get_wind_speed);
 	ClassDB::bind_method(D_METHOD("set_wind_direction", "dir"), &PhysXWaterSurface3D::set_wind_direction);
 	ClassDB::bind_method(D_METHOD("get_wind_direction"), &PhysXWaterSurface3D::get_wind_direction);
+	ClassDB::bind_method(D_METHOD("set_shore_waves", "enabled"), &PhysXWaterSurface3D::set_shore_waves);
+	ClassDB::bind_method(D_METHOD("get_shore_waves"), &PhysXWaterSurface3D::get_shore_waves);
+	ClassDB::bind_method(D_METHOD("set_shore_wave_height", "height"), &PhysXWaterSurface3D::set_shore_wave_height);
+	ClassDB::bind_method(D_METHOD("get_shore_wave_height"), &PhysXWaterSurface3D::get_shore_wave_height);
+	ClassDB::bind_method(D_METHOD("set_shore_wave_period", "period"), &PhysXWaterSurface3D::set_shore_wave_period);
+	ClassDB::bind_method(D_METHOD("get_shore_wave_period"), &PhysXWaterSurface3D::get_shore_wave_period);
+	ClassDB::bind_method(D_METHOD("set_shore_wave_direction", "direction"), &PhysXWaterSurface3D::set_shore_wave_direction);
+	ClassDB::bind_method(D_METHOD("get_shore_wave_direction"), &PhysXWaterSurface3D::get_shore_wave_direction);
 	ClassDB::bind_method(D_METHOD("set_wave_cascades", "count"), &PhysXWaterSurface3D::set_wave_cascades);
 	ClassDB::bind_method(D_METHOD("get_wave_cascades"), &PhysXWaterSurface3D::get_wave_cascades);
 	ClassDB::bind_method(D_METHOD("set_wave_cascade_ratio", "ratio"), &PhysXWaterSurface3D::set_wave_cascade_ratio);
@@ -1164,6 +1248,11 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "step_mode", PROPERTY_HINT_ENUM, "Per Tick,Per Frame"), "set_step_mode", "get_step_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_rest_threshold", PROPERTY_HINT_RANGE, "0,0.05,0.0001,or_greater,suffix:m"), "set_ripple_rest_threshold", "get_ripple_rest_threshold");
 
+	ADD_GROUP("Shore waves", "shore_wave");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shore_waves"), "set_shore_waves", "get_shore_waves");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_height", PROPERTY_HINT_RANGE, "0,5,0.01,or_greater,suffix:m"), "set_shore_wave_height", "get_shore_wave_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_period", PROPERTY_HINT_RANGE, "1,30,0.1,suffix:s"), "set_shore_wave_period", "get_shore_wave_period");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "shore_wave_direction"), "set_shore_wave_direction", "get_shore_wave_direction");
 	ADD_GROUP("Seabed", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "seabed_from_floor"), "set_seabed_from_floor", "get_seabed_from_floor");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seabed_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_seabed_collision_mask", "get_seabed_collision_mask");
@@ -1343,6 +1432,284 @@ void PhysXWaterSurface3D::_configure_cascades(const WaterSolver::Settings &p_bas
 
 PhysXWaterSurface3D::~PhysXWaterSurface3D() {
 	_clear_cascades();
+}
+
+void PhysXWaterSurface3D::set_shore_waves(bool p_enabled) {
+	shore_waves = p_enabled;
+	_bake_shore_waves();
+}
+
+void PhysXWaterSurface3D::set_shore_wave_height(float p_height) {
+	shore_wave_height = MAX(p_height, 0.0f);
+	_bake_shore_waves();
+}
+
+void PhysXWaterSurface3D::set_shore_wave_period(float p_period) {
+	shore_wave_period = CLAMP(p_period, 1.0f, 30.0f);
+	_bake_shore_waves();
+}
+
+void PhysXWaterSurface3D::set_shore_wave_direction(Vector2 p_direction) {
+	shore_wave_direction = p_direction;
+	_bake_shore_waves();
+}
+
+static float _flow_value_noise(float p_x, float p_y);
+
+// Wavenumber for angular frequency w in depth h: w^2 = g k tanh(k h), by
+// Fenton and McKee's (1990) explicit approximation (within 1.5%).
+static float _shore_k(float p_omega, float p_h) {
+	const float k_deep = p_omega * p_omega / 9.81f;
+	const float x = k_deep * MAX(p_h, 1e-3f);
+	return k_deep / Math::pow(Math::tanh(Math::pow(x, 0.75f)), 2.0f / 3.0f);
+}
+
+// Group velocity in depth h.
+static float _shore_cg(float p_omega, float p_h) {
+	const float k = _shore_k(p_omega, p_h);
+	const float kh = MIN(k * MAX(p_h, 1e-3f), 20.0f);
+	return 0.5f * (p_omega / k) * (1.0f + 2.0f * kh / Math::sinh(2.0f * kh));
+}
+
+// Shore waves over the measured seabed, per ripple cell. The phase obeys the
+// eikonal equation of ray theory, |grad phase| = k(h), solved by fast sweeping
+// (Zhao 2005) from the edges the waves come in through, so the crests slow and
+// turn to follow the depth contours (refraction) and bunch up in the shallows.
+// The height follows energy flux (shoaling, H = H0 sqrt(cg0 / cg)), capped at
+// the breaker limit 0.78 h; past the point where it reaches it the wave is a
+// breaking bore. Where the water is deeper than a quarter wavelength the
+// shore waves fade out and the FFT ocean carries the sea alone.
+void PhysXWaterSurface3D::_bake_shore_waves() {
+	const int n = grid_resolution;
+	if (!shore_waves || cell_depth.size() != n * n || n < 4) {
+		for (int t = 0; t < SHORE_TRAINS; t++) {
+			shore_phase[t].clear();
+			shore_height[t].clear();
+			shore_grad_x[t].clear();
+			shore_grad_z[t].clear();
+		}
+		_update_shore_material();
+		return;
+	}
+	const Vector2 cell = active_domain_size / (real_t)n;
+	const float h_cell = 0.5f * (cell.x + cell.y);
+	Vector2 dir0 = shore_wave_direction.length_squared() > 1e-8f ? shore_wave_direction.normalized() : wind_direction.normalized();
+	if (dir0.length_squared() < 1e-8f) {
+		dir0 = Vector2(1, 0);
+	}
+	const float *dw = cell_depth.ptr();
+	for (int t = 0; t < SHORE_TRAINS; t++) {
+		// The second train: a little longer, lower and from a few degrees round,
+		// so the two beat into sets.
+		const float period = shore_wave_period * (t == 0 ? 1.0f : 1.13f);
+		const float h0 = shore_wave_height * (t == 0 ? 1.0f : 0.6f);
+		const Vector2 dir = t == 0 ? dir0 : dir0.rotated(0.14f);
+		const float omega = Math::TAU / period;
+		shore_omega[t] = omega;
+		const float k_deep = omega * omega / 9.81f;
+		const float cg_deep = 9.81f / (2.0f * omega);
+		Vector<float> &phase = shore_phase[t];
+		phase.resize(n * n);
+		float *pw = phase.ptrw();
+		LocalVector<float> k_cell;
+		k_cell.resize(n * n);
+		for (int i = 0; i < n * n; i++) {
+			pw[i] = Math::INF;
+			k_cell[i] = dw[i] > 0.02f ? _shore_k(omega, dw[i]) : 0.0f;
+		}
+		// Sources: wet cells on the edges the waves come in through, with the
+		// incoming plane wave's phase.
+		const Vector2 grid_min = -active_domain_size * 0.5f;
+		auto pos = [&](int x, int z) { return grid_min + Vector2(x + 0.5f, z + 0.5f) * cell; };
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				if (k_cell[z * n + x] <= 0.0f) {
+					continue;
+				}
+				const bool in = (x == 0 && dir.x > 0.05f) || (x == n - 1 && dir.x < -0.05f) || (z == 0 && dir.y > 0.05f) || (z == n - 1 && dir.y < -0.05f);
+				if (in) {
+					pw[z * n + x] = k_deep * pos(x, z).dot(dir);
+				}
+			}
+		}
+		// Fast sweeping: four orderings, a few rounds.
+		for (int round = 0; round < 3; round++) {
+			for (int sweep = 0; sweep < 4; sweep++) {
+				const int x0 = (sweep & 1) ? n - 1 : 0;
+				const int dx = (sweep & 1) ? -1 : 1;
+				const int z0 = (sweep & 2) ? n - 1 : 0;
+				const int dz = (sweep & 2) ? -1 : 1;
+				for (int zi = 0, z = z0; zi < n; zi++, z += dz) {
+					for (int xi = 0, x = x0; xi < n; xi++, x += dx) {
+						const int i = z * n + x;
+						const float f = k_cell[i] * h_cell;
+						if (f <= 0.0f) {
+							continue;
+						}
+						const float a = MIN(x > 0 ? pw[i - 1] : Math::INF, x < n - 1 ? pw[i + 1] : Math::INF);
+						const float b = MIN(z > 0 ? pw[i - n] : Math::INF, z < n - 1 ? pw[i + n] : Math::INF);
+						if (!Math::is_finite(a) && !Math::is_finite(b)) {
+							continue;
+						}
+						float v;
+						if (!Math::is_finite(a) || !Math::is_finite(b) || Math::abs(a - b) >= f) {
+							v = MIN(a, b) + f;
+						} else {
+							v = 0.5f * (a + b + Math::sqrt(2.0f * f * f - (a - b) * (a - b)));
+						}
+						if (v < pw[i]) {
+							pw[i] = v;
+						}
+					}
+				}
+			}
+		}
+		// Dry cells (and any the waves can't reach) take their wet neighbours'
+		// phase, so the texture blends smoothly up to the waterline.
+		for (int pass = 0; pass < 6; pass++) {
+			Vector<float> next = phase;
+			float *nw = next.ptrw();
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					const int i = z * n + x;
+					if (Math::is_finite(pw[i])) {
+						continue;
+					}
+					float sum = 0.0f;
+					int used = 0;
+					const int nb[4] = { x > 0 ? i - 1 : -1, x < n - 1 ? i + 1 : -1, z > 0 ? i - n : -1, z < n - 1 ? i + n : -1 };
+					for (int j : nb) {
+						if (j >= 0 && Math::is_finite(pw[j])) {
+							sum += pw[j];
+							used++;
+						}
+					}
+					if (used > 0) {
+						nw[i] = sum / used;
+					}
+				}
+			}
+			phase = next;
+			pw = phase.ptrw();
+		}
+		for (int i = 0; i < n * n; i++) {
+			if (!Math::is_finite(pw[i])) {
+				pw[i] = 0.0f;
+			}
+		}
+		// Gradient (k times the direction of travel) and height.
+		Vector<float> &gx = shore_grad_x[t];
+		Vector<float> &gz = shore_grad_z[t];
+		Vector<float> &hh = shore_height[t];
+		gx.resize(n * n);
+		gz.resize(n * n);
+		hh.resize(n * n);
+		const float wavelength_deep = Math::TAU / k_deep;
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				const int xl = MAX(x - 1, 0), xr = MIN(x + 1, n - 1);
+				const int zl = MAX(z - 1, 0), zr = MIN(z + 1, n - 1);
+				Vector2 g((pw[z * n + xr] - pw[z * n + xl]) / ((xr - xl) * cell.x), (pw[zr * n + x] - pw[zl * n + x]) / ((zr - zl) * cell.y));
+				// Keep |g| = k where wet (finite differences across the waterline aren't).
+				const float k = k_cell[i] > 0.0f ? k_cell[i] : k_deep;
+				g = g.length_squared() > 1e-10f ? g.normalized() * k : dir * k;
+				gx.write[i] = g.x;
+				gz.write[i] = g.y;
+				const float h = dw[i];
+				float height = 0.0f;
+				if (h > 0.02f) {
+					const float shoal = Math::sqrt(cg_deep / MAX(_shore_cg(omega, h), 1e-3f));
+					height = MIN(h0 * shoal, BREAKER_INDEX * h);
+					// Deep water: the FFT ocean's swell, not these.
+					height *= 1.0f - Math::smoothstep(0.25f * wavelength_deep, 0.5f * wavelength_deep, h);
+				}
+				hh.write[i] = height;
+			}
+		}
+	}
+	_update_shore_material();
+}
+
+void PhysXWaterSurface3D::_update_shore_material() {
+	if (water_material.is_null()) {
+		return;
+	}
+	const int n = grid_resolution;
+	const bool on = shore_waves && shore_phase[0].size() == n * n && shore_phase[1].size() == n * n;
+	water_material->set_shader_parameter("shore_waves_enabled", on);
+	if (!on) {
+		return;
+	}
+	Vector<uint8_t> a_bytes;
+	Vector<uint8_t> b_bytes;
+	a_bytes.resize(n * n * 16);
+	b_bytes.resize(n * n * 16);
+	float *a = (float *)a_bytes.ptrw();
+	float *b = (float *)b_bytes.ptrw();
+	for (int i = 0; i < n * n; i++) {
+		a[i * 4 + 0] = shore_phase[0][i];
+		a[i * 4 + 1] = shore_height[0][i];
+		a[i * 4 + 2] = shore_phase[1][i];
+		a[i * 4 + 3] = shore_height[1][i];
+		b[i * 4 + 0] = shore_grad_x[0][i];
+		b[i * 4 + 1] = shore_grad_z[0][i];
+		b[i * 4 + 2] = shore_grad_x[1][i];
+		b[i * 4 + 3] = shore_grad_z[1][i];
+	}
+	Ref<Image> ia = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, a_bytes);
+	Ref<Image> ib = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, b_bytes);
+	if (shore_wave_tex_a.is_valid() && shore_wave_tex_a->get_width() == n) {
+		shore_wave_tex_a->update(ia);
+		shore_wave_tex_b->update(ib);
+	} else {
+		shore_wave_tex_a = ImageTexture::create_from_image(ia);
+		shore_wave_tex_b = ImageTexture::create_from_image(ib);
+	}
+	water_material->set_shader_parameter("shore_wave_tex_a", shore_wave_tex_a);
+	water_material->set_shader_parameter("shore_wave_tex_b", shore_wave_tex_b);
+	water_material->set_shader_parameter("shore_wave_omega", Vector2(shore_omega[0], shore_omega[1]));
+}
+
+// As the shader's shore_wave() (height only, at the resting point: the shore
+// waves' horizontal sway is left out here).
+float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) const {
+	if (r_rate != nullptr) {
+		*r_rate = 0.0f;
+	}
+	const int n = grid_resolution;
+	if (!shore_waves || shore_phase[0].size() != n * n || shore_phase[1].size() != n * n) {
+		return 0.0f;
+	}
+	const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_x / active_domain_size.x), Math::abs(p_z / active_domain_size.y)));
+	if (inside <= 0.0f) {
+		return 0.0f;
+	}
+	const float depth = MAX(_bilinear_sample(cell_depth, n, active_domain_size, p_x, p_z), 0.0f);
+	const float wx = p_x + grid_center.x, wz = p_z + grid_center.y;
+	const float time = (float)Math::fmod(water_time, 3600.0);
+	const float vary = 0.55f + 0.45f * _flow_value_noise(wx * 0.04f + time * 0.03f, wz * 0.04f);
+	float eta = 0.0f;
+	float rate = 0.0f;
+	for (int t = 0; t < SHORE_TRAINS; t++) {
+		const float height = _bilinear_sample(shore_height[t], n, active_domain_size, p_x, p_z);
+		if (height <= 1e-4f) {
+			continue;
+		}
+		const float phi = _bilinear_sample(shore_phase[t], n, active_domain_size, p_x, p_z);
+		const float brk = Math::smoothstep(0.8f, 0.98f, height / MAX(BREAKER_INDEX * depth, 1e-3f));
+		const float amp = 0.5f * height * vary * inside;
+		const float th = phi - shore_omega[t] * time;
+		const float skew = 0.6f * brk;
+		const float ps = th - skew * Math::cos(th);
+		eta += amp * Math::cos(ps);
+		// d/dt of amp cos(th - skew cos th), th' = -omega.
+		rate += amp * Math::sin(ps) * (1.0f + skew * Math::sin(th)) * shore_omega[t];
+	}
+	if (r_rate != nullptr) {
+		*r_rate = rate;
+	}
+	return eta;
 }
 
 void PhysXWaterSurface3D::set_cull_margin(float p_margin) {
@@ -2542,6 +2909,7 @@ void PhysXWaterSurface3D::_update_cell_fade() {
 	for (int i = 0; i < cell_depth.size(); i++) {
 		fw[i] = WaterSolver::shallow_fade(cell_depth[i], shallow_fade_depth);
 	}
+	_bake_shore_waves();
 }
 
 void PhysXWaterSurface3D::_configure_solver() {
@@ -2821,6 +3189,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 	}
 	textures_bound = true;
 	_update_flow_material(); // the live flow's texture exists now
+	_update_shore_material();
 }
 
 void PhysXWaterSurface3D::_refresh_cpu_cache() {
@@ -2990,6 +3359,11 @@ float PhysXWaterSurface3D::sample_vertical_speed(Vector3 p_world_pos) const {
 	if (!solver.is_ripple_resting() && ripple_dt > 0.0 && !cached_ripple_height.is_empty() && previous_ripple_height.size() == cached_ripple_height.size()) {
 		speed += (_ripple_height_at(cached_ripple_height, x, z) - _ripple_height_at(previous_ripple_height, x, z)) / (float)ripple_dt;
 	}
+	{
+		float rate = 0.0f;
+		_shore_eta_at(x, z, &rate);
+		speed += rate;
+	}
 	const double ocean_dt = cached_ocean_time - previous_ocean_time;
 	if (ocean_dt > 0.0 && !cached_ocean_height.is_empty() && previous_ocean_height.size() == cached_ocean_height.size()) {
 		const float fade = _ocean_fade_at(x, z);
@@ -3062,7 +3436,7 @@ float PhysXWaterSurface3D::sample_height_excluding_wake(Vector3 p_world_pos, Obj
 	if (wake != 0.0f && !cell_depth.is_empty()) {
 		wake *= Math::smoothstep(0.0f, 0.3f, Math::lerp(_bilinear_sample(cell_depth, grid_resolution, active_domain_size, x, z), 1000.0f, beyond));
 	}
-	return get_global_position().y + ripple + ocean + wake;
+	return get_global_position().y + ripple + ocean + wake + _shore_eta_at(x, z);
 }
 
 bool PhysXWaterSurface3D::_open_beyond() const {

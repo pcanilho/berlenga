@@ -1029,6 +1029,74 @@ peaks near 165 m wavelength and has `Hs = 0.22 U^2 / g`, about 4.4 m
   step will use all of them); caustics are from cascade 0; whitecaps are per
   cascade, not from the summed Jacobian.
 
+## Step 5b: breaking shore waves (9 Nov)
+
+### What the sea had
+
+The FFT ocean fades out in the shallows (`shallow_fade_depth`), and the shore
+had swash, wet sand and shore foam driven by the ocean's height at the
+waterline. No wave turned toward the beach, grew, or broke.
+
+### How others do it
+
+- **Horizon Forbidden West** (Malan, SIGGRAPH 2022): artists draw shape, guide
+  and animation curves per beach. A Coons patch interpolates the wavefronts,
+  and one hand-animated breaking cross-section (a 2D texture, rising at 0.27,
+  steepening at 0.4, curling into foam at 0.5) is played along them. It looks
+  superb, but it is authored per beach.
+- **Procedural shore waves** (Sea of Thieves, Crest, Unreal community tools):
+  a distance field to the shore steers Gerstner-like trains toward it, with
+  heights shaped by depth and foam where they break.
+- **Physics.** Linear wave theory gives everything needed:
+  - Dispersion `w^2 = g k tanh(k h)`, using the explicit inverse of Fenton and McKee 1990.
+  - Ray theory: the phase obeys the eikonal `|grad S| = k(h)`, so crests turn to follow the depth contours.
+  - Shoaling from energy flux: `H = H0 sqrt(cg0 / cg)`.
+  - Depth-limited breaking at `H / h = 0.78` (McCowan 1894). Inside the surf zone the height stays near that limit, as a bore.
+
+### As built
+
+- `shore_waves`, `shore_wave_height` (0.8 m), `shore_wave_period` (8 s) and
+  `shore_wave_direction` (the wind's by default). There are two trains: the
+  second is 1.13 times the period, 0.6 times the height, and 8 degrees round,
+  so the waves come in sets.
+- A CPU bake over the ripple grid runs whenever the seabed is measured:
+  - The phase is solved by fast sweeping (Zhao 2005) from the edges the waves come in through, and dry cells are filled from their wet neighbours.
+  - The gradient gives `k` and the direction of travel. The height is the shoaled height, capped at `0.78 h`, and fades out deeper than a quarter of the deep-water wavelength, where the FFT ocean carries the sea.
+  - The results go into two RGBA float textures.
+- Shader: each train is a trochoid riding `S - w t`. Where `H` reaches the
+  breaker limit, the profile is skewed shoreward (`cos(th - a cos th)`, which
+  steepens the front), and the crest and a trailing band behind it turn white.
+  Heights vary slowly along the crests. Normals use the analytic slope.
+  `shore_signal()` (the moving waterline) includes them.
+- `sample_height()` and `sample_vertical_speed()` include them, at the resting
+  point, without the horizontal sway.
+- Bench: `docs/bench/water_surface --view=surf --node=shore_waves:true`.
+  `--profile` prints the surface along the beach: troughs of -0.6 m over about
+  2 m of water, crests of +0.2 m over the last half metre, travelling in.
+- Limits: there is no plunging curl (the profile only steepens). The GPU
+  swash's run-up still reads the FFT ocean, while the visible edge follows
+  the shore waves through `shore_signal()`. There is no reflection off steep
+  shores, and no wave-current interaction.
+
+### The living waterline (9 Nov)
+
+Paulo asked for a waterline that is not a ruler-straight line. What each
+water already had, and what this step adds:
+
+- **Sea and lakes** already break the line: `shore_signal()` moves it with the
+  waves (now including the shore waves), swash runs up and back, the wet sand
+  band darkens behind it, and the shore foam lace is broken by noise lobes.
+- **Rivers** had none of that: the edge was where the flat surface met the
+  bank. The river shader now:
+  - laps the edge with noise that rides the flow phases (`edge_lap_height`,
+    `edge_lap_scale`), plus a slow breathing term, so the line creeps up and
+    back along the bank;
+  - adds a static relief (`edge_relief`, three octaves) for small stones and
+    hollows, so the line is ragged even where the bank is steep;
+  - draws a thin foam band in the last few centimetres (`edge_foam`).
+- These are shading effects on the depth the river already stores, so they
+  cost a few noise lookups per pixel and work the same raster and path traced.
+
 ## The camera under water: research (9 Nov)
 
 ### What the fork has today
@@ -1265,3 +1333,7 @@ peaks near 165 m wavelength and has `Hs = 0.22 U^2 / g`, about 4.4 m
   J. Geophys. Res. 90, 1985.
 - Unity HDRP Water System, simulation bands: https://docs.unity3d.com/Packages/com.unity.render-pipelines.high-definition@17.0/manual/water-water-system-simulation.html
 - Ang, Catling et al., The Technical Art of Sea of Thieves, SIGGRAPH 2018 Talks.
+- Fenton and McKee, On calculating the lengths of water waves, Coastal Engineering 14, 1990.
+- Zhao, A fast sweeping method for eikonal equations, Math. Comp. 74, 2005.
+- McCowan, On the highest wave of permanent type, Phil. Mag. 38, 1894; Dean and Dalrymple, Water Wave Mechanics
+  for Engineers and Scientists (shoaling, refraction, breaking).
