@@ -6,6 +6,15 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-7eae6464 (2026-11-09)
+
+### Added
+- Water caustics: the path tracer gathers sunlight through rippled water into bright moving lines on the floor below, from normal maps and shader normals alike, with a photon map from the first directional light around the point the camera looks at. Settings `rendering/pathtracing/caustics` and `rendering/pathtracing/caustics_area` (#166)
+
+### Changed
+- README: call the fork Berlenga throughout, links to the renamed repo, title icon, independence note (#165)
+- README: murky water line and image (#164)
+
 ## build-9d094a32 (2026-11-09)
 
 ### Changed
