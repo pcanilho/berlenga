@@ -4688,10 +4688,11 @@ static uint32_t _rt_surface_mat_flags(const SceneShaderForwardClustered::ShaderD
 	uint32_t flags = 0u;
 	if (sd) {
 		flags |= rt_material_shading_mode_flags(sd->diffuse_mode, sd->specular_mode);
-		if (sd->unshaded) {
+		// A shader's `#if defined(RT)` variant sets its own render modes.
+		if (sd->rt ? sd->rt->unshaded : sd->unshaded) {
 			flags |= RT_MAT_FLAG_UNSHADED;
 		}
-		if (sd->fog_disabled) {
+		if (sd->rt ? sd->rt->fog_disabled : sd->fog_disabled) {
 			flags |= RT_MAT_FLAG_FOG_DISABLED;
 		}
 	}
