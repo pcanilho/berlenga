@@ -520,6 +520,10 @@ enum {
 	// Radiance cache (binding 45, raytracing_radiance_cache_inc.glsl): 16 uints an entry.
 	RT_RADIANCE_CACHE_ENTRIES = 1 << 18,
 	RT_RADIANCE_CACHE_UINTS = RT_RADIANCE_CACHE_ENTRIES * 16,
+	// Water caustics map (binding 46, raytracing_caustics_inc.glsl): three slots of RES x RES
+	// texels, 3 uints each, then 4 uints a slot of header. Must match the shader's. 9 MiB.
+	RT_CAUSTICS_RES = 512,
+	RT_CAUSTICS_UINTS = RT_CAUSTICS_RES * RT_CAUSTICS_RES * 3 * 3 + 12,
 	// Emissive surfaces sampled as lights (appended to the light grid buffer, header [9]): at
 	// most this many per frame, the strongest at the camera; the rest are found by bounce rays only.
 	RT_EMISSIVE_MAX = 1024,
@@ -1309,8 +1313,12 @@ struct RTViewportState {
 	// shadow-ray hits and tries, which light selection reads. Kept across frames.
 	RID light_visibility_buffer;
 	RID radiance_cache_buffer;
+	// Water caustics map (binding 46): made when first enabled, kept.
+	RID caustics_buffer;
+	uint32_t caustics_slot = 0; // written this frame
+	bool caustics_history = false; // last frame wrote a slot
 	uint32_t light_grid_buffer_capacity = 0; // uints.
-	RID volume_params_buffer; // RTVolumeParams (raytracing_volume_inc.glsl), binding 46.
+	RID volume_params_buffer; // RTVolumeParams (raytracing_volume_inc.glsl), binding 49.
 	RID params_buffer;
 	RID scene_uniform_set;
 

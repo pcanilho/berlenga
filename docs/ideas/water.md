@@ -79,7 +79,7 @@ Rivers and waterfalls fit into that split as below.
 | Puddles, gutters, wet streets | iWave as today. | Current game |
 | Interaction | iWave in a window around the player for wakes and ripples. PhysX hero splashes read its height. | Both |
 | Path traced water | Refraction already comes from the traced transparency in NVIDIA's code. Missing: Beer-Lambert absorption and scattering inside the water (the "water medium" item already on the Valence list), so deep water darkens and tints by depth. | Both |
-| Caustics | A plain path tracer can't find caustics from small lamps through water. Options are a projected caustic texture from the FFT or flow normals, or a ray-traced caustics pass (NVIDIA, Ray Tracing Gems II ch. 30, not read yet). Decide after the water medium works. | Open world |
+| Caustics | A plain path tracer can't find caustics from small lamps through water. Built for the sun as a caustics map traced from the light (step 2 below). | Open world |
 | Streaming | Flow maps, baked deformations and water tiles stream with world cells, like Horizon's wavefront grid. | Open world |
 
 ## Suggested order (open-world game, after the current engine list)
@@ -215,6 +215,75 @@ ray traced caustics of Ray Tracing Gems II ch. 30.
   they would with no limit. Sky light reaches a scattering point only through further bounces, not as
   a light sample. Murky water is noisy at low sample counts.
 
+## Step 2: caustics from the sun (9 Nov)
+
+### Why a plain path tracer misses them
+
+Under water, a point's sun sample is a shadow ray straight up through the surface. The real light
+reached it along a bent path through a ripple, which a straight ray never finds (the sun is a
+point-like source seen through a specular surface: a specular-diffuse-specular path). So the floor
+is evenly lit, tinted by depth.
+
+### Techniques looked at
+
+- **Photon mapping** (Jensen 2001): trace photons from the light, gather them at the visible
+  points. Every real-time caustics method below is a version of it.
+- **Ray-guided water caustics** (Gruen, Ray Tracing Gems 2019; Yang and Ouyang, Ray Tracing Gems II
+  ch. 30, 2021, NVIDIA's UE4 RTX branch, shipped in JX3): draw the water from the light into a
+  caustics map, trace one refracted ray per texel, and turn the landing points into light: splatted
+  footprints sized by the spread of neighbouring rays ("photon difference scattering"), or a mesh of
+  the landing points ("procedural caustic mesh"); cascades like shadow maps for oceans. Lights the
+  screen in a deferred pass, so it is not seen in reflections, and only one bend counts.
+- **Adaptive anisotropic photon scattering** (same chapter): photons with ray differentials through
+  several bounces for glass and metal objects, splatted on screen. For glass objects, later.
+- **Manifold next event estimation** (Hanika, Droske and Fascione 2015; Blender Cycles "shadow
+  caustics" since 3.2): at the floor point, Newton-solve for the point on the water surface that
+  bends the sun towards it. Per pixel and exact, but it needs smooth geometric normals and their
+  derivatives. Game water gets its ripples from normal maps and shaders (iWave, FFT normals), which
+  it cannot use.
+
+### What was built
+
+The ray-guided caustics map, but feeding the path tracer's sun light instead of the screen:
+
+1. **Photons.** Raygen shoots one photon a pixel from the first directional light across a square of
+   `rendering/pathtracing/caustics_area` metres (default 16), centred on the surface the middle of the
+   screen showed last frame (at least half the width ahead of the camera, so it works for a close
+   third-person view and a far isometric one alike), jittered every frame. A photon hitting the front of a medium's surface (Transmission not thin-walled, or a shader
+   writing `IOR`) is bent there by the surface's own shading normal, so normal maps and shader
+   ripples count. The closest-hit shader reports the surface instead of shading it
+   (`CAUSTIC_PHOTON_FLAG`).
+2. **A straight twin.** From the same entry point a second photon goes on unbent. Both land on the
+   first surface past the medium and add to the light-space texel above their landing point
+   (512 x 512, bilinear). The straight twins also add their depth.
+3. **The ratio.** A texel's bent count over its straight count is how much the surface focuses the sun
+   there: 1 under flat water, above 1 in the bright lines, below 1 between them. The twins replace the
+   footprint sizing of the published methods: the same jittered photons give both counts, so no
+   neighbour lookups or areas are needed, and they cancel where a texel's photons were blocked.
+4. **Use.** The sun's shadow ray already crosses the water straight, with Fresnel and Beer-Lambert
+   absorption (step 1). `lights_evaluate_directional()` multiplies the sunlight by the ratio at the
+   shaded point, at every bounce, so caustics also show in reflections and light the pool by bounce.
+   A point whose texel saw no straight twin, or whose depth is more than 0.3 m off theirs, keeps the
+   plain sun.
+5. **No extra pass.** The map has three slots: a frame adds to one, reads the one the last frame
+   wrote, and each pixel's thread clears a share of the one it read last frame. One frame of delay.
+6. **Radiance cache.** A rough surface the first bounce reaches normally reads the radiance cache
+   and stops. Under water that averaged the lines away within a few frames, since a 0.25 m cell holds
+   a whole ripple. Points the map covers shade on instead.
+7. **Setting.** `rendering/pathtracing/caustics` (on). Off, or with refraction off, is the old even
+   light.
+
+### Limits
+
+- One directional light. Lamps under or over water cast none (a point-light version would need a
+  cube map or MNEE).
+- One bend: light reflected off the surface onto walls, and light bent twice, is missing.
+- The rasterizer draws no caustics.
+- Sharpness against reach: 512 texels over 16 m is 3 cm a texel. At 32 m the lines of small ripples
+  blur into soft bands; at 8 m they are sharp. About 8 photons a texel at 1080p; the denoiser and
+  accumulation smooth the rest.
+- Caustics stop at the square's edge (cascades, as the chapter does, would extend it).
+
 ## Sources
 
 - 80.lv, Crimson Desert's BlackSpace engine features:
@@ -244,5 +313,10 @@ ray traced caustics of Ray Tracing Gems II ch. 30.
   https://help.autodesk.com/cloudhelp/ENU/AR-Core/files/ac-shading/ac-surface-shaders/ac-standard-surface/ac-transmission/arnold_user_guide_ac_transmission_ac_nested_dielectrics_html.html
 - Walter, Marschner, Li, Torrance, Microfacet Models for Refraction through Rough Surfaces, 2007.
 - Pope and Fry, Absorption spectrum of pure water, Applied Optics, 1997.
-- Ray Tracing Gems II, ch. 30, real-time ray traced caustics (not read):
+- Yang and Ouyang, Real-Time Ray Traced Caustics, Ray Tracing Gems II ch. 30, 2021:
   https://developer.download.nvidia.com/ray-tracing-gems/rtg2-chapter30-preprint.pdf
+- Gruen, Ray-Guided Volumetric Water Caustics in Single Scattering Media with DXR, Ray Tracing Gems
+  ch. 14, 2019.
+- Hanika, Droske and Fascione, Manifold Next Event Estimation, EGSR 2015.
+- Blender manual, Cycles shadow caustics (MNEE): https://docs.blender.org/manual/en/latest/render/cycles/object_settings/object_data.html#caustics
+- Jensen, Realistic Image Synthesis Using Photon Mapping, 2001.

@@ -70,6 +70,9 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_BG_COLOR_G 33
 #define RT_PARAM_BG_COLOR_B 34
 #define RT_PARAM_BG_COLOR_ENABLED 35
+// Water caustics for the first directional light (raytracing_caustics_inc.glsl)
+#define RT_PARAM_CAUSTICS_STATE 36 // 0 off, else 1 + the slot written + 4 when last frame's is valid
+#define RT_PARAM_CAUSTICS_SIZE 37 // the area's width, metres
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

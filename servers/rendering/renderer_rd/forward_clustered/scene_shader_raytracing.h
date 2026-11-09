@@ -116,7 +116,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 36;
+	static constexpr int RT_PARAM_COUNT = 40;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -184,6 +184,9 @@ public:
 	static constexpr int RT_PARAM_BG_COLOR_G = 33;
 	static constexpr int RT_PARAM_BG_COLOR_B = 34;
 	static constexpr int RT_PARAM_BG_COLOR_ENABLED = 35;
+	// Water caustics for the first directional light (binding 46, raytracing_caustics_inc.glsl).
+	static constexpr int RT_PARAM_CAUSTICS_STATE = 36; // 0 off, else 1 + the slot written + 4 when last frame's is valid.
+	static constexpr int RT_PARAM_CAUSTICS_SIZE = 37; // the square's width, metres
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;
