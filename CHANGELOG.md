@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-fa54fb14 (2026-11-09)
+
+### Changed
+- PhysXHair3D moves like hair: air drag from fibre physics with wind in m/s and carried turbulence, guide strands with follow strands (moves in clumps, simulates a tenth), inertia scale and limit, damped shape spring
+
 ## build-cd4f28ce (2026-11-09)
 
 ### Changed
