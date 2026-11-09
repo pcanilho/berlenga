@@ -481,8 +481,51 @@ half.
   boxes drift about 3 m in the first 10 s, accelerating towards the current.
 - Path tracing reads the same shader, so the moving surface is the same there.
 
-Not yet: wakes and eddies behind rocks (potential flow has none; the live solve brings them), foam
-spawned where the flow speeds up, and the ripple layer is still not advected.
+Not yet: wakes and eddies behind rocks (potential flow has none; the live solve, step 3c, brings
+them), foam spawned where the flow speeds up.
+
+## Step 3c as built: live flow near the player (9 Nov)
+
+The other half of Paulo's pick: the simulated square (the ripple grid) now solves the shallow-water
+equations, so the flow there is live.
+
+**Method.** Chentanez and Müller 2010's heightfield solver on the existing ripple grid, which
+replaces the iWave-style wave equation (for small waves on still water the two are the same; the
+shallow-water equations linearise to the wave equation with `c^2 = g h`):
+- Staggered grid: surface height at cell centres, velocity on faces (each cell stores its +x and +z
+  face).
+- Velocity is the baked flow plus a live part. The baked flow goes in as face fluxes taken from the
+  stream function at cell corners, so every cell's inflow and outflow cancel exactly: with nothing
+  disturbing it the water stays flat, and a cleared or re-centred grid restarts from the baked flow.
+  The square's edge passes the baked flux (still water in, the cell's height out).
+- Two compute passes a tick. Height from the face fluxes with the upwind face depth (their eq. 4-6),
+  the live part's depth capped at `0.45 dx^2 / (g dt^2)` for stability (their `h_avgmax` plays the
+  same role). Then face velocities: semi-Lagrangian self-advection, gravity from the new heights
+  (their eq. 8), the `|v| <= 0.5 dx / dt` clamp.
+- Advection uses Catmull-Rom interpolation clamped to the four nearest values (the monotone cubic
+  of Fedkiw, Stam and Jensen 2001) instead of their modified MacCormack, which needs one more pass;
+  both keep eddies from smearing out the way plain bilinear does.
+- **Wall friction.** Faces running along dry ground are slowed (`wall_friction`, 1.5/s). Without
+  it the walls are slippery and potential flow has no reason to separate; with it the flow leaves
+  rocks in shear layers that roll up into a wake. On the river bench the wake behind the rock
+  starts as a recirculation bubble and after about 30 s meanders like the start of a vortex street.
+- Damping (`damping`) acts on the live part only, so the baked current never decays.
+- No moving wet/dry fronts yet (the swash pass still draws run-up), no overshoot fix (no breaking
+  waves at these speeds).
+
+**Where it shows.** The surface's two-phase flow reads the live velocity texture instead of the
+baked one when it runs, so waves and foam swirl round rocks; `sample_flow()` adds the read-back
+live velocity, so floaters and `PhysXBuoyancy3D` feel the eddies; the path tracer uses the same
+shader and heights. `live_flow` off is the baked flow of step 3b.
+
+**Bench.** `--view=wake --current=1,0 --tracers=4000` drops flecks along lanes upstream of the rock
+and carries them with `sample_flow()`: off, the streaks part round the rock and close behind it;
+on, they roll up in its wake. `--node=live_flow:false` for the comparison, `--pt-from=N` to settle at
+raster speed and path trace the last frames.
+
+**Cost.** Two passes over the grid a tick (160 x 160: 25,600 cells, a 4 x 4 cubic per face) plus
+one readback of the state for the CPU while a current runs; a still lake costs the same as the old
+wave equation's one pass did, twice.
 
 ## The full live version (documented, not built)
 
@@ -534,6 +577,8 @@ are the step between: the same tiles, only where a level designer marks them.
   https://matthias-research.github.io/pages/publications/hybridsim_preprinted.pdf
 - Solenthaler et al., SPH Based Shallow Water Simulation, VRIPHYS 2011:
   https://matthias-research.github.io/pages/publications/SPHShallow.pdf
+- Fedkiw, Stam and Jensen, Visual Simulation of Smoke, SIGGRAPH 2001 (monotone cubic interpolation
+  in semi-Lagrangian advection): https://web.stanford.edu/class/cs237d/smoke.pdf
 - Fluid Flux (Unreal shallow-water rivers): https://80.lv/articles/fluid-flux-a-cool-water-simulation-system-for-unreal-engine/
 
 - 80.lv, Crimson Desert's BlackSpace engine features:

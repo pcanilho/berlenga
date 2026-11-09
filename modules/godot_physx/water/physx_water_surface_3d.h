@@ -278,6 +278,18 @@ public:
 	// The solved flow over the simulated square (RG: m/s along world X and Z);
 	// null without a seabed or current.
 	Ref<Texture2D> get_flow_texture() const;
+	// Live flow (docs/ideas/water.md step 3c): the local water square runs the
+	// shallow-water equations on top of the baked flow, so rocks and banks
+	// shed wakes and eddies and floaters feel them. Off = the baked flow only,
+	// and the square only ripples.
+	void set_live_flow(bool p_enabled);
+	bool is_live_flow() const { return live_flow; }
+	// How strongly dry ground slows the flow running along it (1/s): what
+	// makes rocks shed eddies. 0 = slippery walls.
+	void set_wall_friction(float p_friction);
+	float get_wall_friction() const { return wall_friction; }
+	// The live flow's velocity at cell centres (RG m/s), or null when off.
+	Ref<Texture2D> get_live_flow_texture() const;
 	// Solves the flow again (after the seabed or the current changed; done
 	// automatically for both).
 	void rebake_flow();
@@ -361,6 +373,13 @@ private:
 	float flow_period = 2.0f;
 	// Solved flow per ripple cell (x, z m/s), empty = the uniform current.
 	PackedVector2Array flow_cells;
+	bool live_flow = true;
+	float wall_friction = 1.5f;
+	PackedFloat32Array flow_faces; // baked face fluxes sent to the solver (4 a cell), empty = none
+	Vector<float> cached_live_velocity; // live face velocities read back (2 a cell)
+	Ref<Texture2DRD> live_flow_texture;
+	void _send_flow_to_solver();
+	Vector2 _live_flow_at(float p_x, float p_z) const;
 	Ref<Image> flow_image;
 	Ref<ImageTexture> flow_texture;
 	void _bake_flow();

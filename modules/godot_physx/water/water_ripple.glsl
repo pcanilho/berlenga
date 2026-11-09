@@ -3,97 +3,193 @@
 
 #include "water_inc.glsl"
 
-// iWave-style local ripple layer (Tessendorf's damped 2D wave equation),
-// reflecting (clamped/Neumann) walls at the grid edge, plus sphere/impulse
-// body-disturbance coupling -- port of caustic-volume's `ripple` shader
-// (sandbox/src/10_sim.js), simplified for Phase 1. This alone IS the water
-// height for now (WATER_LEVEL + this layer's h); Phase 2 composes it with
-// the FFT ocean spectrum layer instead of standing in for the whole surface.
+// Local water layer: the shallow-water equations on a staggered grid, after Chentanez and Müller,
+// "Real-time Simulation of Large Bodies of Water with Small Scale Details" (SCA 2010), carrying
+// the baked current (docs/ideas/water.md, step 3c). It used to be an iWave-style damped wave
+// equation; for small waves on still water the two are the same water (the shallow-water
+// equations linearise to the wave equation with c^2 = g * depth), but this one also moves water:
+// the current runs through it, rocks shed wakes and eddies, and floaters read its velocity.
 //
-// Written flat -- no helper functions beyond simple, non-recursive, single-
-// call-site ones -- deliberately, per this session's own hard-won lesson
-// about a heavily-inlined branchy helper hanging the Blackwell driver's PSO
-// compiler in a completely different shader (mpm_bs_march.glsl). This
-// shader's real cost is O(GRID_N^2) with a small constant-time body per
-// cell (one 5-point Laplacian, a short loop over active spheres/impulses),
-// not a deep inlined call chain -- a different risk shape, but keep it that
-// way as MAX_SPHERES/MAX_IMPULSES grow.
+// Per cell: x = surface height above still water (eta), y = u' on the cell's +x face, z = foam
+// (carried), w = w' on its +z face. u' and w' are the live part of the velocity: the total is the
+// baked flow (base_flux_tex, exactly divergence-free face fluxes from the stream function) plus
+// them, so a cleared grid starts as the baked flow, and with nothing disturbing it the height
+// stays flat. The faces on the grid's edge keep u' = 0: the baked flow goes in and out there.
+//
+// Two passes a tick (res_count.w), ping-ponged by the caller (A -> B -> A):
+//   0: height from the face fluxes (their eq. 4, upwind face depth, depth capped for stability),
+//      bodies' soft targets, and the cell-centre velocity image;
+//   1: face velocities: semi-Lagrangian self-advection with clamped Catmull-Rom interpolation
+//      (low diffusion, so eddies survive; the paper uses modified MacCormack, which needs one
+//      more pass), the gravity term from the new heights (their eq. 8), wall friction along dry
+//      ground, damping of the live part, and the |v| <= 0.5 dx / dt clamp.
+//
+// Written flat with small helpers on purpose (see this module's history with a heavily-inlined
+// helper hanging one driver's compiler).
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
-void main() {
-	ivec2 c = ivec2(gl_GlobalInvocationID.xy);
-	if (c.x >= GRID_N || c.y >= GRID_N) {
-		return;
+// Baked flow as face fluxes (m^2/s, depth times velocity): x +x face, y +z face, z -x face,
+// w -z face (only the grid's own edge faces need the last two). Zero = still water.
+layout(set = 0, binding = 7) uniform sampler2D base_flux_tex;
+// Total velocity at cell centres (m/s, xy), for materials and debugging.
+layout(set = 0, binding = 8, rgba16f) uniform restrict writeonly image2D velocity_image;
+
+#define PASS (res_count.w)
+#define WALL_FRICTION (ripple_control.y)
+#define MIN_FLOW_DEPTH 0.25 // m: the depth face fluxes divide by, at least (as the bake)
+
+float still_depth(ivec2 c) {
+	return max(cell_depth(c), 0.0);
+}
+
+// Still-water depth a face's flux divides by.
+float face_depth(ivec2 a, ivec2 b) {
+	return max(0.5 * (still_depth(a) + still_depth(b)), MIN_FLOW_DEPTH);
+}
+
+// Total velocity on the +x face of cell f (0 where either side is dry). f clamped into the grid.
+float face_u(ivec2 f) {
+	f = clamp(f, ivec2(0), ivec2(GRID_N - 1));
+	ivec2 b = ivec2(min(f.x + 1, GRID_N - 1), f.y);
+	if (!is_wet(f) || !is_wet(b)) {
+		return 0.0;
 	}
-	int idx = grid_index(c);
-	if (!is_wet(c)) {
-		// Dry (seabed above the water, or outside the surface mesh's
-		// footprint): never simulated. Its
-		// rendered height continues the adjacent water (mean of its wet 3x3
-		// neighbors, last step's values) instead of pinning to WATER_LEVEL:
-		// the surface mesh's rim lies between the last wet and first dry cell
-		// centers, and a flat dry texel there turns every wave crest at the
-		// staircase shoreline into a one-cell sawtooth. Matches the zero-
-		// gradient wall the wet cells see.
-		float sum = 0.0;
-		float count = 0.0;
-		for (int dy = -1; dy <= 1; dy++) {
-			for (int dx = -1; dx <= 1; dx++) {
-				ivec2 nc = clamp(c + ivec2(dx, dy), ivec2(0), ivec2(GRID_N - 1));
-				if (is_wet(nc)) {
-					sum += state_in[grid_index(nc)].x;
-					count += 1.0;
-				}
-			}
+	return texelFetch(base_flux_tex, f, 0).x / face_depth(f, b) + state_in[grid_index(f)].y;
+}
+
+// Total velocity on the +z face of cell f.
+float face_w(ivec2 f) {
+	f = clamp(f, ivec2(0), ivec2(GRID_N - 1));
+	ivec2 b = ivec2(f.x, min(f.y + 1, GRID_N - 1));
+	if (!is_wet(f) || !is_wet(b)) {
+		return 0.0;
+	}
+	return texelFetch(base_flux_tex, f, 0).y / face_depth(f, b) + state_in[grid_index(f)].w;
+}
+
+float catmull_rom(float p0, float p1, float p2, float p3, float t) {
+	float t2 = t * t;
+	float t3 = t2 * t;
+	return 0.5 * (2.0 * p1 + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t3);
+}
+
+// The x-face velocity field at p (grid units, cell (i,j) spans [i, i+1] x [j, j+1]; its +x face
+// sits at (i + 1, j + 0.5)), Catmull-Rom clamped to the four nearest values so it adds no new
+// extremes (Fedkiw, Stam and Jensen 2001's monotone cubic, simplified).
+float sample_u(vec2 p) {
+	vec2 g = p - vec2(1.0, 0.5);
+	ivec2 i0 = ivec2(floor(g));
+	vec2 t = g - vec2(i0);
+	float rows[4];
+	float lo = 1e30;
+	float hi = -1e30;
+	for (int r = 0; r < 4; r++) {
+		int y = i0.y - 1 + r;
+		float v0 = face_u(ivec2(i0.x - 1, y));
+		float v1 = face_u(ivec2(i0.x, y));
+		float v2 = face_u(ivec2(i0.x + 1, y));
+		float v3 = face_u(ivec2(i0.x + 2, y));
+		if (r == 1 || r == 2) {
+			lo = min(lo, min(v1, v2));
+			hi = max(hi, max(v1, v2));
 		}
-		state_out[idx] = vec4(0.0);
-		height_out[idx] = WATER_LEVEL + (count > 0.0 ? sum / count : 0.0);
-		return;
+		rows[r] = catmull_rom(v0, v1, v2, v3, t.x);
 	}
+	return clamp(catmull_rom(rows[0], rows[1], rows[2], rows[3], t.y), lo, hi);
+}
+
+float sample_w(vec2 p) {
+	vec2 g = p - vec2(0.5, 1.0);
+	ivec2 i0 = ivec2(floor(g));
+	vec2 t = g - vec2(i0);
+	float rows[4];
+	float lo = 1e30;
+	float hi = -1e30;
+	for (int r = 0; r < 4; r++) {
+		int y = i0.y - 1 + r;
+		float v0 = face_w(ivec2(i0.x - 1, y));
+		float v1 = face_w(ivec2(i0.x, y));
+		float v2 = face_w(ivec2(i0.x + 1, y));
+		float v3 = face_w(ivec2(i0.x + 2, y));
+		if (r == 1 || r == 2) {
+			lo = min(lo, min(v1, v2));
+			hi = max(hi, max(v1, v2));
+		}
+		rows[r] = catmull_rom(v0, v1, v2, v3, t.x);
+	}
+	return clamp(catmull_rom(rows[0], rows[1], rows[2], rows[3], t.y), lo, hi);
+}
+
+float eta_at(ivec2 c) {
+	return state_in[grid_index(c)].x;
+}
+
+// Depth the live part of a face's flux may carry: the explicit gravity-wave scheme is stable
+// while sqrt(g * h) * dt / dx stays under about 0.67 (2D, staggered); deeper water is treated
+// as this deep (its waves run slower than real ones, as the old wave equation's clamp did).
+// Chentanez and Müller cap the face depth in the same place (their h_avgmax).
+float depth_cap() {
+	return 0.45 * CELL * CELL / (GRAV * DT * DT);
+}
+
+// Flux (m^2/s) through the face between wet cells a (upstream side for positive velocity) and b,
+// with base flux q and live velocity v: q + eta_upwind * q / d + min(depth_upwind, cap) * v.
+float face_flux(ivec2 a, ivec2 b, float q, float v) {
+	float d = face_depth(a, b);
+	float total = q / d + v;
+	ivec2 up = total >= 0.0 ? a : b;
+	float eta_up = eta_at(up);
+	float depth_up = max(still_depth(up) + eta_up, 0.0);
+	return q + eta_up * (q / d) + min(depth_up, depth_cap()) * v;
+}
+
+void height_pass(ivec2 c, int idx) {
 	vec4 st = state_in[idx];
-	float h = st.x, hp = st.y;
-
-	int xl = max(c.x - 1, 0), xr = min(c.x + 1, GRID_N - 1);
-	int yl = max(c.y - 1, 0), yr = min(c.y + 1, GRID_N - 1);
-	// Variable-depth wave equation in flux form: each face between two wet
-	// cells carries the mean of their coefficients, so it stays symmetric
-	// (energy-conserving) as the depth changes -- waves slow and bunch up
-	// over shallows. A dry neighbor (or the clamped grid edge, which
-	// contributes h - h = 0) has no face: a reflecting wall.
-	float k_c = wave_coefficient(c);
-	ivec2 nbr[4] = ivec2[4](ivec2(xl, c.y), ivec2(xr, c.y), ivec2(c.x, yl), ivec2(c.x, yr));
-	float flux = 0.0;
-	for (int i = 0; i < 4; i++) {
-		if (is_wet(nbr[i])) {
-			flux += 0.5 * (k_c + wave_coefficient(nbr[i])) * (state_in[grid_index(nbr[i])].x - h);
+	float eta = st.x;
+	vec4 q = texelFetch(base_flux_tex, c, 0);
+	// Fluxes through the four faces. A dry neighbour is a wall (no flux); the grid's edge passes
+	// the baked flux, carrying still water (eta 0) in and this cell's eta out.
+	float f_right = 0.0;
+	float f_left = 0.0;
+	float f_top = 0.0;
+	float f_bottom = 0.0;
+	if (c.x < GRID_N - 1) {
+		ivec2 r = c + ivec2(1, 0);
+		if (is_wet(r)) {
+			f_right = face_flux(c, r, q.x, st.y);
 		}
+	} else {
+		f_right = q.x * (1.0 + (q.x > 0.0 ? eta / max(still_depth(c), MIN_FLOW_DEPTH) : 0.0));
 	}
-	// Explicit damped wave equation, backward-difference damping (h_t ~=
-	// (h-hp)/dt): hn = h*(2-a) - hp*(1-a) + flux, a = ALPHA*DT. At a local
-	// bump the flux is negative and pulls it back down -- its sign is what
-	// keeps this stable (getting it backwards once turned a small impulse
-	// into 1e8+ within ~150 steps).
-	float a = ALPHA * DT;
-	float hn = h * (2.0 - a) - hp * (1.0 - a) + flux;
+	if (c.x > 0) {
+		ivec2 l = c - ivec2(1, 0);
+		if (is_wet(l)) {
+			f_left = face_flux(l, c, texelFetch(base_flux_tex, l, 0).x, state_in[grid_index(l)].y);
+		}
+	} else {
+		f_left = q.z * (1.0 + (q.z < 0.0 ? eta / max(still_depth(c), MIN_FLOW_DEPTH) : 0.0));
+	}
+	if (c.y < GRID_N - 1) {
+		ivec2 t = c + ivec2(0, 1);
+		if (is_wet(t)) {
+			f_top = face_flux(c, t, q.y, st.w);
+		}
+	} else {
+		f_top = q.y * (1.0 + (q.y > 0.0 ? eta / max(still_depth(c), MIN_FLOW_DEPTH) : 0.0));
+	}
+	if (c.y > 0) {
+		ivec2 b = c - ivec2(0, 1);
+		if (is_wet(b)) {
+			f_bottom = face_flux(b, c, texelFetch(base_flux_tex, b, 0).y, state_in[grid_index(b)].w);
+		}
+	} else {
+		f_bottom = q.w * (1.0 + (q.w < 0.0 ? eta / max(still_depth(c), MIN_FLOW_DEPTH) : 0.0));
+	}
+	float hn = eta - DT / CELL * (f_right - f_left + f_top - f_bottom);
 
-	// Body-disturbance coupling: pull the surface toward a soft target set by
-	// nearby spheres/impulses, rather than snapping to it instantly -- a
-	// single-pole low-pass keeps this from injecting energy discontinuously.
-	//
-	// `weight` gates how much this blend actually applies at this cell --
-	// real, load-bearing, not a nicety. target defaults to 0 with no body
-	// nearby, and the naive `hn += (target-hn)*rate` (no weight) that used to
-	// be here applied that unconditionally EVERYWHERE, every step: with
-	// target=0 almost everywhere, it collapsed to hn *= 0.9 -- an ambient,
-	// unintended ~10%/tick pull toward zero across the WHOLE field, every
-	// tick, dwarfing the wave equation's own ALPHA damping (which is what a
-	// real user correctly read as "feels like jello/syrup, ripples don't
-	// travel" -- confirmed empirically: lowering ALPHA alone did nothing,
-	// because this term, not ALPHA, was the dominant damping mechanism the
-	// whole time). Gating by proximity weight makes the blend vanish far
-	// from any body, letting the wave equation's own dynamics actually
-	// govern how ripples propagate and persist.
+	// Body-disturbance coupling: pull the surface toward a soft target set by nearby
+	// spheres/impulses, gated by proximity (an ungated blend damped the whole field every step).
 	vec2 xz = (vec2(c) + 0.5) / float(GRID_N) * DOMAIN * 2.0 - DOMAIN;
 	float target = 0.0;
 	float weight = 0.0;
@@ -116,7 +212,98 @@ void main() {
 		}
 	}
 	hn += (target * RIPPLE_AMPLITUDE - hn) * weight * clamp(6.0 * DT, 0.0, 1.0);
+	hn = max(hn, 0.02 - still_depth(c)); // (no wet/dry fronts: the water never empties a cell)
+	if (!(abs(hn) < 1e4)) {
+		hn = 0.0; // NaN / runaway guard: one bad cell would spread over the grid
+	}
 
-	state_out[idx] = vec4(hn, h, st.z, 0.0);
+	state_out[idx] = vec4(hn, st.y, st.z, st.w);
 	height_out[idx] = WATER_LEVEL + hn;
+	vec2 v = vec2(0.5 * (face_u(c) + face_u(c - ivec2(1, 0))), 0.5 * (face_w(c) + face_w(c - ivec2(0, 1))));
+	if (c.x == 0) {
+		v.x = 0.5 * (face_u(c) + q.z / max(still_depth(c), MIN_FLOW_DEPTH));
+	}
+	if (c.y == 0) {
+		v.y = 0.5 * (face_w(c) + q.w / max(still_depth(c), MIN_FLOW_DEPTH));
+	}
+	imageStore(velocity_image, c, vec4(v, 0.0, 0.0));
+}
+
+// One face's new live velocity. a, b: its two cells; along_wall: dry ground beside the face
+// (its tangential flow is slowed there, which is what sheds eddies off rocks and banks).
+float face_velocity(ivec2 a, ivec2 b, vec2 pos, float total, float other, float base, bool along_wall, bool x_face) {
+	float limit = 0.5 * CELL / DT;
+	vec2 vel = x_face ? vec2(total, other) : vec2(other, total);
+	vec2 back = pos - clamp(vel, vec2(-limit), vec2(limit)) * DT / CELL;
+	float adv = x_face ? sample_u(back) : sample_w(back);
+	float v = adv - GRAV * DT / CELL * (eta_at(b) - eta_at(a));
+	if (along_wall) {
+		v *= 1.0 - clamp(WALL_FRICTION * DT, 0.0, 1.0);
+	}
+	v = clamp(v, -limit, limit);
+	float live = (v - base) * (1.0 - clamp(ALPHA * DT, 0.0, 1.0));
+	return abs(live) < 1e3 ? live : 0.0;
+}
+
+void velocity_pass(ivec2 c, int idx) {
+	vec4 st = state_in[idx];
+	vec4 q = texelFetch(base_flux_tex, c, 0);
+	float u_new = 0.0;
+	float w_new = 0.0;
+	if (c.x < GRID_N - 1) {
+		ivec2 r = c + ivec2(1, 0);
+		if (is_wet(r)) {
+			float base = q.x / face_depth(c, r);
+			float other = 0.25 * (face_w(c) + face_w(r) + face_w(c - ivec2(0, 1)) + face_w(r - ivec2(0, 1)));
+			bool wall = !is_wet(clamp(c + ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(c - ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(r + ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(r - ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1)));
+			u_new = face_velocity(c, r, vec2(c) + vec2(1.0, 0.5), base + st.y, other, base, wall, true);
+		}
+	}
+	if (c.y < GRID_N - 1) {
+		ivec2 t = c + ivec2(0, 1);
+		if (is_wet(t)) {
+			float base = q.y / face_depth(c, t);
+			float other = 0.25 * (face_u(c) + face_u(t) + face_u(c - ivec2(1, 0)) + face_u(t - ivec2(1, 0)));
+			bool wall = !is_wet(clamp(c + ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(c - ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(t + ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1))) || !is_wet(clamp(t - ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1)));
+			w_new = face_velocity(c, t, vec2(c) + vec2(0.5, 1.0), base + st.w, other, base, wall, false);
+		}
+	}
+	state_out[idx] = vec4(st.x, u_new, st.z, w_new);
+}
+
+void main() {
+	ivec2 c = ivec2(gl_GlobalInvocationID.xy);
+	if (c.x >= GRID_N || c.y >= GRID_N) {
+		return;
+	}
+	int idx = grid_index(c);
+	if (!is_wet(c)) {
+		// Dry (seabed above the water, or outside the surface mesh's footprint): never simulated.
+		// Its rendered height continues the adjacent water (mean of its wet 3x3 neighbours) instead
+		// of pinning to WATER_LEVEL: the surface mesh's rim lies between the last wet and first dry
+		// cell centres, and a flat dry texel there turns every crest at the staircase shoreline
+		// into a one-cell sawtooth.
+		state_out[idx] = vec4(0.0);
+		if (PASS == 0) {
+			float sum = 0.0;
+			float count = 0.0;
+			for (int dy = -1; dy <= 1; dy++) {
+				for (int dx = -1; dx <= 1; dx++) {
+					ivec2 nc = clamp(c + ivec2(dx, dy), ivec2(0), ivec2(GRID_N - 1));
+					if (is_wet(nc)) {
+						sum += state_in[grid_index(nc)].x;
+						count += 1.0;
+					}
+				}
+			}
+			height_out[idx] = WATER_LEVEL + (count > 0.0 ? sum / count : 0.0);
+			imageStore(velocity_image, c, vec4(0.0));
+		}
+		return;
+	}
+	if (PASS == 0) {
+		height_pass(c, idx);
+	} else {
+		velocity_pass(c, idx);
+	}
 }
