@@ -69,7 +69,7 @@
 			Density of the water (kg/m³). [code]1000[/code] for fresh water, about [code]1025[/code] for sea water.
 		</member>
 		<member name="water_surface_path" type="NodePath" setter="set_water_surface_path" getter="get_water_surface_path" default="NodePath(&quot;&quot;)">
-			The [PhysXWaterSurface3D] to float on.
+			The [PhysXWaterSurface3D] or [PhysXRiver3D] to float on. On a river the body drags against its current; it does not disturb the river surface yet.
 		</member>
 	</members>
 </class>

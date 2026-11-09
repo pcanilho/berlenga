@@ -1,0 +1,254 @@
+extends Node3D
+# River bench: a PhysXRiver3D drawn down a valley with a bend, a rock and a 1.5 m step, a few
+# boxes floating down it, raster or path traced. Needs a build with the PhysX module.
+#
+#   --view=overview  the valley from above and downstream (default)
+#   --view=cascade   closer, on the step and the white water below it
+#   --view=top       straight down on the cascade, for the foam
+#   --raster         raster only, for comparison
+#   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
+#   --frames=N       frames rendered before --out is saved (default 12)
+#   --pt-from=N      rasterize until frame N, path trace from then on
+#   --out=path.png   save the last frame and quit
+#   --seq=N          also save the N frames after --frames (for a GIF)
+#   --river=prop:value  a PhysXRiver3D property, e.g. --river=discharge:12.0
+#   --water=param:value a river shader parameter
+#   --set=setting:value any project setting
+#   --debug=N        path tracing debug view (8 = albedo)
+#   --report         print the cross-sections and the boxes' positions
+#
+# Run with --fixed-fps 30.
+
+var view := "overview"
+var raster := false
+var spp := 16
+var bounces := 3
+var frames := 12
+var pt_from := 0
+var out := ""
+var seq := 0
+var report := false
+var debug_mode := 0
+var river_params := {}
+var water_params := {}
+var bench_env: Environment
+var river: Node3D
+var boxes: Array[RigidBody3D] = []
+var n := 0
+
+
+func _valley_x(z: float) -> float:
+	return 6.0 * sin(z / 15.0)
+
+
+# Ground height: a valley falling 0.5% downstream (+z), a 1.5 m step at z = 0, a parabolic channel 6 m wide.
+func _ground(x: float, z: float) -> float:
+	var base := -0.005 * z - 1.5 * smoothstep(-0.75, 0.75, z)
+	var d := absf(x - _valley_x(z))
+	var channel := 1.2 * (1.0 - pow(d / 3.0, 2.0)) if d < 3.0 else 0.0
+	return base - channel + minf(maxf(d - 3.0, 0.0) * 0.4, 3.0)
+
+
+func _ready() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--view="): view = a.substr(7)
+		elif a == "--raster": raster = true
+		elif a == "--report": report = true
+		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
+		elif a.begins_with("--spp="): spp = int(a.substr(6))
+		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
+		elif a.begins_with("--frames="): frames = int(a.substr(9))
+		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
+		elif a.begins_with("--out="): out = a.substr(6)
+		elif a.begins_with("--seq="): seq = int(a.substr(6))
+		elif a.begins_with("--river="):
+			var rkv := a.substr(8).split(":", true, 1)
+			river_params[rkv[0]] = str_to_var(rkv[1])
+		elif a.begins_with("--water="):
+			var wkv := a.substr(8).split(":", true, 1)
+			water_params[wkv[0]] = str_to_var(wkv[1])
+		elif a.begins_with("--set="):
+			var kv := a.substr(6).split(":", true, 1)
+			ProjectSettings.set_setting(kv[0], str_to_var(kv[1]))
+
+	var sky_mat := ProceduralSkyMaterial.new()
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+	var env := Environment.new()
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = not raster and pt_from <= 0
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	env.pathtracing_debug_mode = debug_mode
+	bench_env = env
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-50, -140, 0)
+	sun.shadow_enabled = true
+	add_child(sun)
+
+	_build_ground()
+	var rock_mat := StandardMaterial3D.new()
+	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
+	rock_mat.roughness = 0.8
+	# A rock in the channel above the step, standing out of the water.
+	var rz := -14.0
+	_slab(Vector3(1.0, 2.0, 1.4), Vector3(_valley_x(rz) + 0.8, _ground(_valley_x(rz), rz) + 0.6, rz), Vector3(0.2, 0.5, 0.1), rock_mat)
+
+	if not ClassDB.class_exists("PhysXRiver3D"):
+		push_error("This build has no PhysXRiver3D.")
+		get_tree().quit(1)
+		return
+	river = ClassDB.instantiate("PhysXRiver3D")
+	var curve := Curve3D.new()
+	var z := -48.0
+	while z <= 48.0:
+		curve.add_point(Vector3(_valley_x(z), _ground(_valley_x(z), z), z))
+		z += 4.0
+	river.set("curve", curve)
+	river.set("default_width", 5.0)
+	river.set("discharge", 6.0)
+	river.set("step_length", 0.5)
+	river.set("cross_segments", 24)
+	for k in river_params:
+		river.set(k, river_params[k])
+	add_child(river)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var wm: ShaderMaterial = river.get("water_material")
+	for k in water_params:
+		if wm: wm.set_shader_parameter(k, water_params[k])
+	if report:
+		for i in range(0, river.call("get_section_count"), 8):
+			var s: Dictionary = river.call("get_section", i)
+			print("s=%5.1f surface=%6.2f slope=%.3f speed=%.2f foam=%.2f cascade=%s" % [s.s, s.surface, s.slope, s.speed, s.foam, s.cascade])
+
+	# Floating boxes, dropped upstream.
+	for i in 3:
+		var body := RigidBody3D.new()
+		body.mass = 30.0
+		var cs := CollisionShape3D.new()
+		var box := BoxShape3D.new()
+		box.size = Vector3(0.6, 0.3, 0.6)
+		cs.shape = box
+		body.add_child(cs)
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = box.size
+		mi.mesh = bm
+		var m := StandardMaterial3D.new()
+		m.albedo_color = [Color(0.8, 0.3, 0.2), Color(0.85, 0.75, 0.3), Color(0.3, 0.5, 0.8)][i]
+		mi.material_override = m
+		body.add_child(mi)
+		var b: Node3D = ClassDB.instantiate("PhysXBuoyancy3D")
+		body.add_child(b)
+		var bz := -30.0 + 4.0 * i
+		var bx := _valley_x(bz) + (i - 1) * 0.6
+		body.position = Vector3(bx, river.call("sample_height", Vector3(bx, 0, bz)) + 0.2, bz)
+		add_child(body)
+		b.set("water_surface_path", b.get_path_to(river))
+		boxes.append(body)
+
+	var cam := Camera3D.new()
+	cam.fov = 45
+	add_child(cam)
+	match view:
+		"cascade":
+			cam.look_at_from_position(Vector3(9.0, 5.0, 10.0), Vector3(_valley_x(0.0), -2.0, 0.0))
+		"top":
+			cam.look_at_from_position(Vector3(_valley_x(2.0), 14.0, 2.0), Vector3(_valley_x(2.0), -2.0, 2.01))
+		_:
+			cam.look_at_from_position(Vector3(16.0, 12.0, 30.0), Vector3(0.0, -1.0, -6.0))
+
+
+func _build_ground() -> void:
+	var step := 0.5
+	var nx := 160
+	var nz := 200
+	var verts := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	for j in nz + 1:
+		for i in nx + 1:
+			var x := -40.0 + i * step
+			var z := -50.0 + j * step
+			verts.push_back(Vector3(x, _ground(x, z), z))
+			uvs.push_back(Vector2(x, z) * 0.25)
+	var idx := PackedInt32Array()
+	for j in nz:
+		for i in nx:
+			var k := j * (nx + 1) + i
+			idx.append_array([k, k + 1, k + nx + 1, k + 1, k + nx + 2, k + nx + 1])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var st := SurfaceTool.new()
+	st.create_from_arrays(arrays)
+	st.generate_normals()
+	var mesh := st.commit()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = _checker(Color(0.52, 0.48, 0.36), Color(0.42, 0.39, 0.3))
+	mat.roughness = 0.95
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var body := StaticBody3D.new()
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = mat
+	body.add_child(mi)
+	var cs := CollisionShape3D.new()
+	cs.shape = mesh.create_trimesh_shape()
+	body.add_child(cs)
+	add_child(body)
+
+
+func _checker(a: Color, b: Color) -> ImageTexture:
+	var img := Image.create(8, 8, true, Image.FORMAT_RGB8)
+	for y in 8:
+		for x in 8:
+			img.set_pixel(x, y, a if (x / 4 + y / 4) % 2 == 0 else b)
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
+
+
+func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material) -> void:
+	var body := StaticBody3D.new()
+	var cs := CollisionShape3D.new()
+	var shape := BoxShape3D.new()
+	shape.size = p_size
+	cs.shape = shape
+	body.add_child(cs)
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = p_size
+	mi.mesh = bm
+	mi.material_override = p_mat
+	body.add_child(mi)
+	body.position = p_pos
+	body.rotation = p_rot
+	add_child(body)
+
+
+func _process(_delta: float) -> void:
+	n += 1
+	if pt_from > 0 and n == pt_from:
+		bench_env.pathtracing_enabled = true
+	if report and n % 60 == 0:
+		for b in boxes:
+			print("frame %d box at %s flow %s" % [n, b.global_position, river.call("sample_flow", b.global_position)])
+	if out != "" and seq > 0 and n >= frames and n < frames + seq:
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(out.get_basename() + "_%04d.png" % (n - frames))
+		return
+	if out != "" and n >= frames + seq:
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(out)
+		get_tree().quit()
+	elif out == "" and n >= frames:
+		get_tree().quit()

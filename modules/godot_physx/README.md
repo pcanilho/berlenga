@@ -1069,10 +1069,30 @@ caustics map above is for raster receivers; the path tracer doesn't need it.
 Runs on any GPU with compute support, no CUDA needed. Without compute (e.g.
 headless) the surface stays flat and `sample_height()` returns `water_level`.
 
+## Rivers — `PhysXRiver3D`
+
+A river drawn as a path (`PhysXRiver3D` is a `Path3D`): draw the curve from the
+source to the mouth, give each point a width (`widths`) and optionally a depth
+(`depths`), and give the river its `discharge` (m³/s). With `snap_to_ground` it
+measures the static ground under it by raycasts. Where no depth is given the
+water stands at Manning's normal depth for the real cross-section and the
+ground's slope (`roughness` is Manning's n), and the surface never runs uphill.
+Where the ground drops faster than `max_slope` the water falls as a cascade.
+
+The discharge is the same all along the river, so narrows run fast and pools
+slow; across the channel the flow is shared as depth^(5/3), fastest over the
+deep middle and still at the banks. White water rises where the flow is
+supercritical and at the foot of every cascade, and is carried downstream,
+fading over `foam_persistence`. The surface's ripples and foam ride the current
+(two-phase flow). Under path tracing the surface is a water medium, as on
+`PhysXWaterSurface3D`. `sample_height()`, `sample_flow()`, `sample_depth()` and
+`sample_foam()` read it from scripts, and `PhysXBuoyancy3D` floats bodies on it
+and drags them with the current (point its `water_surface_path` at the river).
+
 ## Boats — `PhysXBuoyancy3D`, `PhysXBoat3D`, `PhysXWaterWake3D`, `PhysXWaterSpray3D`
 
 Four nodes, each a child of a `RigidBody3D`, that float and drive it on a
-`PhysXWaterSurface3D`. Buoyancy and the boat only apply `RigidBody3D` forces,
+`PhysXWaterSurface3D` (buoyancy also on a `PhysXRiver3D`). Buoyancy and the boat only apply `RigidBody3D` forces,
 so they work with whichever physics engine is selected, Jolt included.
 
 - **`PhysXBuoyancy3D`** floats the body: sample points on the hull (six from
