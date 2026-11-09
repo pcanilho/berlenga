@@ -138,7 +138,7 @@ struct MaterialData {
 
 	uint blend_sharpness; // fp16x2: UV1, UV2 triplanar per-axis blend exponents (default 1.0)
 	uint distance_fade; // fp16x2: distance_fade_min, distance_fade_max.
-	float proximity_fade_distance;
+	uint proximity_fade_clearcoat; // Bits 0-15 fp16 proximity_fade_distance, 16-23 clearcoat, 24-31 clearcoat_roughness (unorm8).
 	uint uv2_offset_xy; // fp16x2, modulo 1.
 	uint uv2_scale_offset_z; // fp16x2: scale.z, offset.z (modulo 1).
 	uint metallic_texture; // texture_metallic, or texture_orm for ORMMaterial3D.
@@ -168,6 +168,16 @@ float rt_entry_alpha(MaterialData p_mat, float p_alpha, float p_scissor_threshol
 		p_alpha = (p_mat.flags & RT_MAT_FLAG_ALPHA_SCISSOR) != 0u && p_alpha < p_scissor_threshold ? 0.0 : 1.0;
 	}
 	return p_alpha * rt_instance_alpha(p_mat);
+}
+
+// BaseMaterial3D proximity_fade_distance.
+float rt_material_proximity_fade_distance(MaterialData p_mat) {
+	return unpackHalf2x16(p_mat.proximity_fade_clearcoat).x;
+}
+
+// BaseMaterial3D clearcoat and clearcoat_roughness (x, y); x is 0 without the coat.
+vec2 rt_material_clearcoat(MaterialData p_mat) {
+	return unpackUnorm4x8(p_mat.proximity_fade_clearcoat).zw;
 }
 
 // BaseMaterial3D roughness, metallic, specular (x, y, z).

@@ -3327,6 +3327,9 @@
 		<member name="rendering/pathtracing/light_visibility_memory" type="bool" setter="" getter="" default="true">
 			The path tracer remembers, for each small region of the scene, which lights recently lit it and how often each light's samples were blocked or fell on the surface's unlit side. Light selection draws half its candidates from the lights that lit the region and weights each candidate by that memory, so lamps behind walls, lamps inside a building seen from its walls, and a sun under a roof waste fewer samples. Lights that looked hidden keep a small share, so the image stays unbiased and a light that comes into view is found again; only noise changes. Uses 4.25 MiB of video memory.
 		</member>
+		<member name="rendering/pathtracing/clearcoat" type="bool" setter="" getter="" default="true">
+			If [code]true[/code], the path tracer traces the clear coat of materials ([member BaseMaterial3D.clearcoat_enabled], or [code]CLEARCOAT[/code] in a shader) as the rasterizer shades it: a thin glossy dielectric layer over the surface, reflecting about 4% of light head-on and more at grazing angles, on the mesh's normal without the normal map. Its reflections, lights and bounce rays are all traced, and the surface under it receives the light it lets through. [member BaseMaterial3D.clearcoat_texture] is not read: the coat is uniform over the surface. When disabled, coats are ignored, as Godot's path tracer did before.
+		</member>
 		<member name="rendering/pathtracing/cull_max_distance" type="float" setter="" getter="" default="0.0">
 			Distance in meters past which geometry outside the camera's view is left out of path tracing, so it casts no shadows or reflections and bounces no light. What the camera sees is always traced. [code]0.0[/code] uses the camera's far distance, as Godot does. In large worlds a shorter distance lowers acceleration-structure build time and memory.
 		</member>

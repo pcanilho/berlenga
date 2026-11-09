@@ -146,6 +146,7 @@ public:
 	static constexpr int RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT = 20;
 	static constexpr int RT_PARAM_SELF_SHADOW_MASK = 21; // RTShadowGroupTable::self_shadow_bit.
 	static constexpr int RT_PARAM_VOLUMETRIC_FOG_SAMPLING = 22; // RSE::EnvironmentVolumetricFogSampling.
+	static constexpr int RT_PARAM_CLEARCOAT = 23; // 1: materials' clearcoat is traced (rendering/pathtracing/clearcoat).
 	// Which path vertices receive decals (rendering/pathtracing/decals). Must match RT_DECAL_MODE_* in GLSL.
 	enum RTDecalMode {
 		RT_DECAL_MODE_ALL_HITS = 0,

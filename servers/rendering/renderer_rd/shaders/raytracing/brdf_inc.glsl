@@ -293,6 +293,10 @@ struct MaterialProperties {
 	float3 backlight; // BACKLIGHT; light leaking through from behind the surface.
 	uint diffuseMode; // GODOT_DIFFUSE_*
 	uint specularMode; // GODOT_SPECULAR_*
+
+	float clearcoat; // Coat strength, 0 = no coat (CLEARCOAT).
+	float clearcoatAlpha; // The coat's GGX alpha, see clearcoatAlphaFromRoughness().
+	float3 coatNormal; // The coat's normal: the interpolated vertex normal, which normal maps do not reach.
 };
 
 // Data needed to evaluate BRDF (surface and material properties at given point + configuration of light and normal vectors)
@@ -356,6 +360,32 @@ float luminance(float3 rgb) {
 
 float3 baseColorToSpecularF0(float3 baseColor, float metalness, float dielectricF0) {
 	return lerp(float3(dielectricF0, dielectricF0, dielectricF0), baseColor, metalness);
+}
+
+// -------------------------------------------------------------------------
+//    Clearcoat
+// -------------------------------------------------------------------------
+// Godot's rasterizer coat (light_compute() in scene_forward_lights_inc.glsl, after Filament):
+// a dielectric GGX layer of IOR 1.5 (F0 0.04) on the vertex normal. The base under it is
+// attenuated by the coat's Fresnel only, and its F0 is taken for an interface from IOR 1.5.
+
+#define CLEARCOAT_F0 0.04f
+
+// The coat's Fresnel times its strength at cosine p_cos (raster Fr / F).
+float clearcoatFresnel(float clearcoat, float cosTheta) {
+	float f = 1.0f - saturate(cosTheta);
+	float f2 = f * f;
+	return lerp(CLEARCOAT_F0, 1.0f, f2 * f2 * f) * clearcoat;
+}
+
+// The coat's GGX alpha from CLEARCOAT_ROUGHNESS, as raster maps it.
+float clearcoatAlphaFromRoughness(float roughness) {
+	return lerp(0.001f, 0.1f, saturate(roughness));
+}
+
+// iorTof0(f0ToIor(f0), 1.5): the base's F0 under a coat of IOR 1.5 (raster f0_Clear_Coat_To_Surface()).
+float3 f0ClearCoatToSurface(float3 f0) {
+	return clamp(f0 * (f0 * (0.941892f - 0.263008f * f0) + 0.346479f) - 0.0285998f, float3(0.0f, 0.0f, 0.0f), float3(1.0f, 1.0f, 1.0f));
 }
 
 float3 baseColorToDiffuseReflectance(float3 baseColor, float metalness) {
@@ -1063,6 +1093,81 @@ bool recoverBelowHemisphereSample(
 //    Combined BRDF
 // -------------------------------------------------------------------------
 
+// The base layer's F0, taken under the coat where there is one.
+float3 materialSpecularF0(MaterialProperties material) {
+	float3 f0 = baseColorToSpecularF0(material.baseColor, material.metalness, material.dielectricF0);
+	return material.clearcoat > 0.0f ? lerp(f0, f0ClearCoatToSurface(f0), material.clearcoat) : f0;
+}
+
+// Coat specular times NdotL for one light, as raster: GGX D, Kelemen visibility, Fresnel at LdotH.
+// 'fresnel' receives the coat's Fresnel, by which the base is attenuated (1 - fresnel).
+float evalClearcoatNdotL(MaterialProperties material, float3 L, float3 V, OUT_PARAMETER(float) fresnel) {
+	fresnel = 0.0f;
+	if (material.clearcoat <= 0.0f) {
+		return 0.0f;
+	}
+	float3 H = normalize(L + V);
+	float LdotH = saturate(dot(L, H));
+	fresnel = clearcoatFresnel(material.clearcoat, LdotH);
+	float NdotL = dot(material.coatNormal, L);
+	if (NdotL <= 0.0f || dot(material.coatNormal, V) <= 0.0f) {
+		return 0.0f;
+	}
+	float D = GGX_D(material.clearcoatAlpha * material.clearcoatAlpha, saturate(dot(material.coatNormal, H)));
+	float kelemen = saturate(0.25f / (LdotH * LdotH + 1e-4f));
+	return D * kelemen * fresnel * NdotL;
+}
+
+// Samples a bounce ray off the coat: GGX VNDF on the coat normal. 'sampleWeight' is the coat BRDF
+// times NdotL over the density, F * G2 / G1 (the exact estimator raster's Kelemen term approximates).
+// Same return convention as evalIndirectCombinedBRDF().
+bool sampleClearcoat(float2 u, float3 geometryNormal, float3 V, MaterialProperties material, OUT_PARAMETER(float3) rayDirection, OUT_PARAMETER(float3) sampleWeight) {
+	float4 qRotationToZ = getRotationToZAxis(material.coatNormal);
+	float3 Vlocal = rotatePoint(qRotationToZ, V);
+	float alpha = material.clearcoatAlpha;
+	float3 Hlocal = Vlocal.z > 0.0f ? sampleGGXVNDF(Vlocal, float2(alpha, alpha), u) : float3(0.0f, 0.0f, 1.0f);
+	float3 Llocal = reflect(-Vlocal, Hlocal);
+	rayDirection = normalize(rotatePoint(invertRotation(qRotationToZ), Llocal));
+	sampleWeight = float3(0.0f, 0.0f, 0.0f);
+	if (Vlocal.z <= 0.0f || Llocal.z <= 0.0f) {
+		return false;
+	}
+	float NdotL = min(Llocal.z, 1.0f);
+	float NdotV = min(Vlocal.z, 1.0f);
+	float F = clearcoatFresnel(material.clearcoat, saturate(dot(Hlocal, Llocal)));
+	float w = F * Smith_G2_Over_G1_Height_Correlated(alpha, alpha * alpha, NdotL, NdotV);
+	sampleWeight = float3(w, w, w);
+	if (w <= 0.0f) {
+		return false;
+	}
+	return dot(geometryNormal, rayDirection) > 0.0f;
+}
+
+// Solid-angle density of sampleClearcoat() drawing L.
+float clearcoatPdf(MaterialProperties material, float3 V, float3 L) {
+	float NdotL = dot(material.coatNormal, L);
+	float NdotV = dot(material.coatNormal, V);
+	if (NdotL <= 0.0f || NdotV <= 0.0f) {
+		return 0.0f;
+	}
+	float3 H = normalize(V + L);
+	float alpha = material.clearcoatAlpha;
+	return sampleGGXVNDFReflectionPdf(alpha, alpha * alpha, saturate(dot(material.coatNormal, H)), NdotV, saturate(dot(L, H)));
+}
+
+// Probability of a bounce ray taking the coat lobe: the coat's share of the reflected light, its
+// Fresnel at the view angle against the base's albedo under it. A dark base gives the coat most
+// rays, where its reflection is most of what shows; picking by Fresnel alone left a few percent
+// of rays carrying bright sky over dark paint, which shows as speckle.
+float clearcoatLobeProbability(MaterialProperties material, float3 V) {
+	if (material.clearcoat <= 0.0f) {
+		return 0.0f;
+	}
+	float coat = clearcoatFresnel(material.clearcoat, dot(material.coatNormal, V));
+	float base = (1.0f - coat) * (luminance(materialSpecularF0(material)) + luminance(baseColorToDiffuseReflectance(material.baseColor, material.metalness)));
+	return clamp(coat / max(coat + base, 1e-4f), 0.01f, 0.99f);
+}
+
 // Precalculates commonly used terms in BRDF evaluation
 // Clamps around dot products prevent NaNs and ensure numerical stability, but make sure to
 // correctly ignore rays outside of the sampling hemisphere, by using 'Vbackfacing' and 'Lbackfacing' flags
@@ -1089,7 +1194,7 @@ BrdfData prepareBRDFData(float3 N, float3 L, float3 V, MaterialProperties materi
 	data.VdotH = saturate(dot(V, data.H));
 
 	// Unpack material properties
-	data.specularF0 = baseColorToSpecularF0(material.baseColor, material.metalness, material.dielectricF0);
+	data.specularF0 = materialSpecularF0(material);
 	data.diffuseReflectance = baseColorToDiffuseReflectance(material.baseColor, material.metalness);
 
 	// Unpack 'perceptively linear' -> 'linear' -> 'squared' roughness
@@ -1111,8 +1216,12 @@ void evalCombinedBRDFSeparate(float3 N, float3 L, float3 V, MaterialProperties m
 	const BrdfData data = prepareBRDFData(N, L, V, material);
 	float diffuseNdotL = godotDiffuseNdotL(data, dot(N, L), material.diffuseMode);
 	float3 backlit = material.backlight * (ONE_OVER_PI - diffuseNdotL);
-	outDiffuse = data.diffuseReflectance * (float3(diffuseNdotL, diffuseNdotL, diffuseNdotL) + backlit);
-	outSpecular = godotSpecularNdotL(data, material.specularMode, material.energyCompensation);
+	// The coat attenuates the base's diffuse and specular, not the back light (as raster).
+	float coatFresnel;
+	float coat = evalClearcoatNdotL(material, L, V, coatFresnel);
+	float baseScale = 1.0f - coatFresnel;
+	outDiffuse = data.diffuseReflectance * (float3(diffuseNdotL, diffuseNdotL, diffuseNdotL) * baseScale + backlit);
+	outSpecular = godotSpecularNdotL(data, material.specularMode, material.energyCompensation) * baseScale + float3(coat, coat, coat);
 }
 
 // This is an entry point for evaluation of all other BRDFs based on selected configuration (for indirect light)

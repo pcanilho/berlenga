@@ -196,7 +196,11 @@ struct alignas(16) RT_MaterialData {
 		uint32_t min_distance : 16;
 		uint32_t max_distance : 16;
 	} distance_fade;
-	float proximity_fade_distance;
+	struct {
+		uint32_t proximity_fade_distance : 16; // fp16 BaseMaterial3D proximity_fade_distance.
+		uint32_t clearcoat : 8; // unorm8 BaseMaterial3D clearcoat, 0 without the feature (GLSL rt_material_clearcoat()).
+		uint32_t clearcoat_roughness : 8; // unorm8 BaseMaterial3D clearcoat_roughness.
+	} proximity_fade_clearcoat;
 	struct { // fp16, modulo 1.
 		uint32_t x : 16;
 		uint32_t y : 16;
@@ -233,6 +237,12 @@ constexpr void rt_material_set_surface_params(RT_MaterialData &r_mat, float p_ro
 	r_mat.surface_params.roughness = rt_unorm8(p_roughness);
 	r_mat.surface_params.metallic = rt_unorm8(p_metallic);
 	r_mat.surface_params.specular = rt_unorm8(p_specular);
+}
+
+// Stores BaseMaterial3D's clearcoat and clearcoat_roughness (0 clearcoat: no coat).
+constexpr void rt_material_set_clearcoat(RT_MaterialData &r_mat, float p_clearcoat, float p_roughness) {
+	r_mat.proximity_fade_clearcoat.clearcoat = rt_unorm8(p_clearcoat);
+	r_mat.proximity_fade_clearcoat.clearcoat_roughness = rt_unorm8(p_roughness);
 }
 
 // BaseMaterial3D::TextureChannel values (matches GLSL RT_TEXTURE_CHANNEL_* in raytracing_data_inc.glsl).

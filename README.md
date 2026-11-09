@@ -23,6 +23,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Lit raster transparents and rain (`rendering/pathtracing/max_transparency_layers` 0), still traced in reflections.
 
 ### Materials
+- **Clearcoat** (`rendering/pathtracing/clearcoat`): coated paint as raster shades it, with traced coat reflections.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.

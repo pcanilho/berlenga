@@ -81,6 +81,17 @@ Plan:
 3. **Shadow rays through thin surfaces** carry the same transmittance, so leaves and windows
    cast tinted, partial shadows. Opacity micromaps and any-hit stay as they are for cutouts.
 
+## Clearcoat as built
+
+Steps 1 to 5 above, with one change to step 3: the coat lobe's probability is its Fresnel against
+the base's albedo under it (Falcor's albedo-based lobe choice), not its Fresnel alone. With Fresnel
+alone, a few percent of rays reflected bright sky off dark paint and showed as speckle; a dark base
+now sends most rays to the coat. The coat is stored in the material record next to the proximity
+fade distance, which moved to fp16. BaseMaterial3D's clearcoat texture is not read.
+
+`docs/bench/materials` renders the coat rows; at 512 samples the path tracer matches the
+rasterizer, and coats off gives the old look.
+
 ## Settings
 
 - `rendering/pathtracing/clearcoat` (on; off = today's look).

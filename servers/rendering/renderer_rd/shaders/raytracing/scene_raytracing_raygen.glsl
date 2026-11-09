@@ -1131,6 +1131,8 @@ void main() {
 	m.emissive = emission * scene_data_block.data.emissive_exposure_normalization;
 	m.emission_indirect = emission_indirect;
 	m.backlight = backlight;
+	m.clearcoat = clamp(clearcoat, 0.0, 1.0) * get_rt_param(RT_PARAM_CLEARCOAT);
+	m.clearcoat_roughness = clamp(clearcoat_roughness, 0.0, 1.0);
 	// view space -> world space
 	mat3 view_to_world = mat3(inv_view_matrix);
 	m.normal = normalize(view_to_world * normal);
@@ -1206,6 +1208,9 @@ void main() {
 	m.emission_indirect = mat.emission_indirect;
 	m.normal = final_normal;
 	m.backlight = vec3(0.0); // TODO: wire up BaseMaterial3D's "Back Lighting" for RT (raster-only today).
+	vec2 coat = rt_material_clearcoat(mat);
+	m.clearcoat = coat.x * get_rt_param(RT_PARAM_CLEARCOAT);
+	m.clearcoat_roughness = coat.y;
 
 	// Proximity/distance fade (BaseMaterial3D feature, mirrors raster).
 	if ((mat.flags & (RT_MAT_FLAG_PROXIMITY_FADE | RT_MAT_FLAG_DISTANCE_FADE)) != 0u) {
@@ -1226,7 +1231,7 @@ void main() {
 				vec4 fade_scene_pos = scene_data_block.data.inv_projection_matrix * vec4(0.0, 0.0, scene_depth, 1.0);
 				fade_scene_z = fade_scene_pos.z / fade_scene_pos.w;
 			}
-			m.alpha *= clamp(1.0 - smoothstep(fade_scene_z + mat.proximity_fade_distance, fade_scene_z, fade_view_pos.z), 0.0, 1.0);
+			m.alpha *= clamp(1.0 - smoothstep(fade_scene_z + rt_material_proximity_fade_distance(mat), fade_scene_z, fade_view_pos.z), 0.0, 1.0);
 		}
 	}
 
