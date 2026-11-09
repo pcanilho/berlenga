@@ -6,6 +6,19 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-3620d951 (2026-11-09)
+
+### Added
+- Shader outputs SCATTERING and SCATTERING_ANISOTROPY: a shader-defined medium (IOR + ABSORPTION) can scatter light under path tracing; PhysXWaterSurface3D uses them so deep water reads blue (#172)
+- PhysXWaterSurface3D current: water flows round rocks and along the shore (solved from the seabed), waves and foam are carried with it, sample_flow() returns it, and PhysXBuoyancy3D drags floaters downstream (#175)
+
+### Fixed
+- Path-traced caustics fade out at the edge of their area instead of drawing a dark line on the seabed (#172)
+
+### Changed
+- README: shader SCATTERING and deep-water scattering in the Water lines (#173)
+- README: path-traced ocean line and image (#171)
+
 ## build-458afd8b (2026-11-09)
 
 ### Added
