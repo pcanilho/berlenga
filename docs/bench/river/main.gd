@@ -5,6 +5,7 @@ extends Node3D
 #   --view=overview  the valley from above and downstream (default)
 #   --view=cascade   closer, on the step and the white water below it
 #   --view=top       straight down on the cascade, for the foam
+#   --view=bend      looking up a bend (with --carve: deep on the outside)
 #   --raster         raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N       frames rendered before --out is saved (default 12)
@@ -15,6 +16,8 @@ extends Node3D
 #   --water=param:value a river shader parameter
 #   --set=setting:value any project setting
 #   --debug=N        path tracing debug view (8 = albedo)
+#   --carve          no channel in the ground: the river carves its own (the bench applies its
+#                    brushes to the ground mesh, as a terrain deformer would)
 #   --report         print the cross-sections and the boxes' positions
 #
 # Run with --fixed-fps 30.
@@ -28,6 +31,9 @@ var pt_from := 0
 var out := ""
 var seq := 0
 var report := false
+var carve := false
+var ground_body: StaticBody3D
+var ground_heights := PackedFloat32Array()
 var debug_mode := 0
 var river_params := {}
 var water_params := {}
@@ -45,7 +51,7 @@ func _valley_x(z: float) -> float:
 func _ground(x: float, z: float) -> float:
 	var base := -0.005 * z - 1.5 * smoothstep(-0.75, 0.75, z)
 	var d := absf(x - _valley_x(z))
-	var channel := 1.2 * (1.0 - pow(d / 3.0, 2.0)) if d < 3.0 else 0.0
+	var channel := 1.2 * (1.0 - pow(d / 3.0, 2.0)) if d < 3.0 and not carve else 0.0
 	return base - channel + minf(maxf(d - 3.0, 0.0) * 0.4, 3.0)
 
 
@@ -54,6 +60,7 @@ func _ready() -> void:
 		if a.begins_with("--view="): view = a.substr(7)
 		elif a == "--raster": raster = true
 		elif a == "--report": report = true
+		elif a == "--carve": carve = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -99,7 +106,7 @@ func _ready() -> void:
 	rock_mat.roughness = 0.8
 	# A rock in the channel above the step, standing out of the water.
 	var rz := -14.0
-	_slab(Vector3(1.0, 2.0, 1.4), Vector3(_valley_x(rz) + 0.8, _ground(_valley_x(rz), rz) + 0.6, rz), Vector3(0.2, 0.5, 0.1), rock_mat)
+	_slab(Vector3(1.0, 2.0, 1.4), Vector3(_valley_x(rz) + 0.8, _ground(_valley_x(rz), rz) + (-0.6 if carve else 0.6), rz), Vector3(0.2, 0.5, 0.1), rock_mat)
 
 	if not ClassDB.class_exists("PhysXRiver3D"):
 		push_error("This build has no PhysXRiver3D.")
@@ -116,11 +123,21 @@ func _ready() -> void:
 	river.set("discharge", 6.0)
 	river.set("step_length", 0.5)
 	river.set("cross_segments", 24)
+	if carve:
+		river.set("carve", true)
+		river.set("carve_depth", 1.2)
+		river.set("default_width", 6.0)
 	for k in river_params:
 		river.set(k, river_params[k])
 	add_child(river)
+	if carve:
+		river.set("base_height_source", river.get_path_to(self))
 	await get_tree().physics_frame
 	await get_tree().physics_frame
+	if carve:
+		_apply_brushes(river.call("get_carve_brushes", 64.0))
+		await get_tree().physics_frame
+		river.call("rebuild")
 	var wm: ShaderMaterial = river.get("water_material")
 	for k in water_params:
 		if wm: wm.set_shader_parameter(k, water_params[k])
@@ -161,23 +178,62 @@ func _ready() -> void:
 	match view:
 		"cascade":
 			cam.look_at_from_position(Vector3(9.0, 5.0, 10.0), Vector3(_valley_x(0.0), -2.0, 0.0))
+		"bend":
+			cam.look_at_from_position(Vector3(_valley_x(-23.6) + 2.0, 6.0, -14.0), Vector3(_valley_x(-23.6), -1.5, -23.6))
 		"top":
 			cam.look_at_from_position(Vector3(_valley_x(2.0), 14.0, 2.0), Vector3(_valley_x(2.0), -2.0, 2.01))
 		_:
 			cam.look_at_from_position(Vector3(16.0, 12.0, 30.0), Vector3(0.0, -1.0, -6.0))
 
 
-func _build_ground() -> void:
+# The uncarved ground, for the river (a terrain deformer's base heights).
+func base_height_at(p_xz: Vector2) -> float:
+	return _ground(p_xz.x, p_xz.y)
+
+
+# What a terrain deformer does with the river's brushes: lower the ground to them ("lower to"), blended by the mask.
+func _apply_brushes(p_brushes: Array) -> void:
+	var step := 0.5
+	var nx := 160
+	for b in p_brushes:
+		var rect: Rect2 = b.rect
+		var cell: float = b.cell_size
+		var size: Vector2i = b.size
+		var heights: PackedFloat32Array = b.heights
+		var mask: PackedFloat32Array = b.mask
+		for j in ground_heights.size() / (nx + 1):
+			for i in nx + 1:
+				var x := -40.0 + i * step
+				var z := -50.0 + j * step
+				var cx := int(floor((x - rect.position.x) / cell))
+				var cz := int(floor((z - rect.position.y) / cell))
+				if cx < 0 or cz < 0 or cx >= size.x or cz >= size.y:
+					continue
+				var m := mask[cz * size.x + cx]
+				if m <= 0.0:
+					continue
+				var k := j * (nx + 1) + i
+				ground_heights[k] = lerpf(ground_heights[k], minf(ground_heights[k], heights[cz * size.x + cx]), m)
+	print("carved with %d brushes" % p_brushes.size())
+	ground_body.queue_free()
+	_build_ground(false)
+
+
+func _build_ground(p_fresh := true) -> void:
 	var step := 0.5
 	var nx := 160
 	var nz := 200
 	var verts := PackedVector3Array()
 	var uvs := PackedVector2Array()
+	if p_fresh:
+		ground_heights.resize((nx + 1) * (nz + 1))
 	for j in nz + 1:
 		for i in nx + 1:
 			var x := -40.0 + i * step
 			var z := -50.0 + j * step
-			verts.push_back(Vector3(x, _ground(x, z), z))
+			if p_fresh:
+				ground_heights[j * (nx + 1) + i] = _ground(x, z)
+			verts.push_back(Vector3(x, ground_heights[j * (nx + 1) + i], z))
 			uvs.push_back(Vector2(x, z) * 0.25)
 	var idx := PackedInt32Array()
 	for j in nz:
@@ -206,6 +262,7 @@ func _build_ground() -> void:
 	cs.shape = mesh.create_trimesh_shape()
 	body.add_child(cs)
 	add_child(body)
+	ground_body = body
 
 
 func _checker(a: Color, b: Color) -> ImageTexture:

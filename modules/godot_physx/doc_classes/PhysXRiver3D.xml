@@ -13,6 +13,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_carve_brushes" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="tile_size" type="float" default="64.0" />
+			<description>
+				With [member carve] on, the channel as height brushes for a terrain deformer: one [Dictionary] per square tile of [param tile_size] m (world XZ) the river touches, with [code]rect[/code] ([Rect2], world XZ), [code]cell_size[/code], [code]size[/code] ([Vector2i] cells), [code]heights[/code] (world heights, row-major) and [code]mask[/code] (0 to 1) as [PackedFloat32Array], and [code]mode[/code] ([code]"lower"[/code]: the ground goes down to the height, blended by the mask, never up). Empty when [member carve] is off.
+			</description>
+		</method>
 		<method name="get_length" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -68,8 +75,26 @@
 		</method>
 	</methods>
 	<members>
+		<member name="base_height_source" type="NodePath" setter="set_base_height_source" getter="get_base_height_source" default="NodePath(&quot;&quot;)">
+			A node with a [code]base_height_at(world_xz: Vector2) -&gt; float[/code] method giving the ground as it was before carving (a terrain deformer keeps those heights). When set, the river reads the ground from it instead of measuring, so once its channel is carved it does not measure the channel and carve deeper on every rebuild. Return NAN where there is no ground.
+		</member>
 		<member name="bank_margin" type="float" setter="set_bank_margin" getter="get_bank_margin" default="1.0">
 			How far (m) the water mesh reaches past each bank, so the waterline can follow the measured ground.
+		</member>
+		<member name="carve" type="bool" setter="set_carve" getter="get_carve" default="false">
+			The river designs its own channel and offers it to a terrain deformer as height brushes ([method get_carve_brushes], [signal carve_changed]): a flat floor [member carve_depth] below the uncarved ground that never climbs downstream (through a rise it cuts), banks sloping up to the ground, and at a bend the deep part moved towards the outer bank. The water then sits in that channel. The river does not change any ground itself.
+		</member>
+		<member name="carve_bank_slope" type="float" setter="set_carve_bank_slope" getter="get_carve_bank_slope" default="0.5">
+			How steeply (m of rise per m) the carved ground rises again past the banks, where the river cuts through higher ground.
+		</member>
+		<member name="carve_cell_size" type="float" setter="set_carve_cell_size" getter="get_carve_cell_size" default="0.5">
+			Cell size (m) of the carve brushes; match the terrain's.
+		</member>
+		<member name="carve_depth" type="float" setter="set_carve_depth" getter="get_carve_depth" default="1.0">
+			How deep (m) the channel's floor is cut below the uncarved ground at the centre.
+		</member>
+		<member name="carve_falloff" type="float" setter="set_carve_falloff" getter="get_carve_falloff" default="2.0">
+			How far (m) past the banks the brush fades out, so the cut blends into the ground.
 		</member>
 		<member name="cross_segments" type="int" setter="set_cross_segments" getter="get_cross_segments" default="12">
 			Samples across the river, for the ground, the depth and the flow.
@@ -108,4 +133,11 @@
 			River width (m) at each curve point, in order. Empty, or 0 at a point: [member default_width].
 		</member>
 	</members>
+	<signals>
+		<signal name="carve_changed">
+			<description>
+				Emitted after a rebuild with [member carve] on: the channel's brushes ([method get_carve_brushes]) may have changed.
+			</description>
+		</signal>
+	</signals>
 </class>
