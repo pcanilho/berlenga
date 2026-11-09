@@ -2,13 +2,13 @@
 
 [![Release](https://github.com/pcanilho/godot/actions/workflows/release.yml/badge.svg)](https://github.com/pcanilho/godot/actions/workflows/release.yml) [![CodeQL](https://github.com/pcanilho/godot/actions/workflows/codeql.yml/badge.svg)](https://github.com/pcanilho/godot/actions/workflows/codeql.yml) [![Latest release](https://img.shields.io/github/v/release/pcanilho/godot?label=latest)](https://github.com/pcanilho/godot/releases/latest)
 
-A Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for large open worlds. Based on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot) (2 November 2026).
+Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for large open worlds. Based on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot) (2 November 2026).
 
 **[Download](https://github.com/pcanilho/godot/releases/latest):** Windows (Ray Reconstruction: add NVIDIA's DLSS, Streamline and Reflex DLLs next to the exe), Linux x86_64/arm64 (no Ray Reconstruction), macOS (raster only). **Changes:** [CHANGELOG.md](CHANGELOG.md).
 
-![1024 street lamps: NVIDIA-RTX/godot on the left keeps 64 of them, this fork on the right lights them all](docs/media/many-lights.jpg)
+![1024 street lamps: NVIDIA-RTX/godot on the left keeps 64 of them, Berlenga on the right lights them all](docs/media/many-lights.jpg)
 
-*1024 lights, 16 samples per pixel. Left: NVIDIA-RTX/godot. Right: this fork. Images here are raw path tracer output, mostly CPU-rendered, with no denoiser or Ray Reconstruction.*
+*1024 lights, 16 samples per pixel. Left: NVIDIA-RTX/godot. Right: Berlenga. Images here are raw path tracer output, mostly CPU-rendered, with no denoiser or Ray Reconstruction.*
 
 ## At a glance
 
@@ -20,7 +20,7 @@ A Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for l
 - **Physics**: PhysX 5 next to Jolt, with cloth, tearing, destruction and path-traced smoke.
 - **Open worlds**: far-origin precision, persistent ray tracing instances, mesh LOD in the tracer.
 
-## What this fork adds
+## What Berlenga adds
 
 Each feature that changes the look or the cost can be turned off with the setting shown.
 
@@ -105,15 +105,15 @@ Windows x64 and Linux x86_64. Choose `PhysX` or `Jolt Physics` in **Project Sett
 Scenes: [docs/media/showcase](docs/media/showcase) and [docs/media/light-selection](docs/media/light-selection).
 
 <details>
-<summary>Glass shadows: NVIDIA-RTX/godot vs this fork</summary>
+<summary>Glass shadows: NVIDIA-RTX/godot vs Berlenga</summary>
 
-![Glass pane shadow: speckled on NVIDIA-RTX/godot, even and tinted on this fork](docs/media/glass-shadow.jpg)
+![Glass pane shadow: speckled on NVIDIA-RTX/godot, even and tinted on Berlenga](docs/media/glass-shadow.jpg)
 </details>
 
 <details>
-<summary>Texture filtering: NVIDIA-RTX/godot, this fork, raster</summary>
+<summary>Texture filtering: NVIDIA-RTX/godot, Berlenga, raster</summary>
 
-![Checker floor: moire on NVIDIA-RTX/godot, filtered on this fork, raster for reference](docs/media/texture-filtering.jpg)
+![Checker floor: moire on NVIDIA-RTX/godot, filtered on Berlenga, raster for reference](docs/media/texture-filtering.jpg)
 </details>
 
 <details>
@@ -162,7 +162,7 @@ Look at the pavement under the window.
 
 ## Open worlds
 
-The fork aims at large streamed worlds: tens of thousands of objects over kilometres, with most of them unchanged from one frame to the next.
+Berlenga aims at large streamed worlds: tens of thousands of objects over kilometres, with most of them unchanged from one frame to the next.
 
 - **Camera-relative tracing** (`rendering/pathtracing/relative_origin_grid`): exact shadows and reflections far from the origin.
 - **Persistent instances** (`rendering/pathtracing/persistent_instances`): objects and large MultiMeshes that did not change keep their ray tracing instances on the GPU and cost no per-frame work.
