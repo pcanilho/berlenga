@@ -19,6 +19,7 @@ struct MaterialResult {
 	float transmission; // BaseMaterial3D transmission times (1 - metallic): light let straight through, tinted by albedo.
 	float ior; // With transmission: the IOR of the medium the surface bounds; 0 for a thin surface.
 	uint medium; // With ior: the medium's payload code (MEDIUM_CHANGE_FLAG, RT_MEDIUM_CODE_GEOMETRY).
+	uint medium_scatter; // With RT_MEDIUM_CODE_SCATTER in medium: rt_medium_scatter_pack().
 };
 
 // Sensible default for a mid-grey diffuse surface.
@@ -38,6 +39,7 @@ MaterialResult default_material_result(vec3 geometry_normal) {
 	r.transmission = 0.0;
 	r.ior = 0.0;
 	r.medium = 0u;
+	r.medium_scatter = 0u;
 	return r;
 }
 

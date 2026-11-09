@@ -2222,6 +2222,8 @@ void main() {
 	float transmission = 0.0; // Written by TRANSMISSION; path tracing only.
 	float ior = 0.0; // Written by IOR; path tracing only.
 	vec3 absorption = vec3(0.0); // Written by ABSORPTION; path tracing only.
+	vec3 scattering = vec3(0.0); // Written by SCATTERING; path tracing only.
+	float scattering_anisotropy = 0.0; // Written by SCATTERING_ANISOTROPY; path tracing only.
 	float roughness = 1.0;
 	float rim = 0.0;
 	float rim_tint = 0.0;

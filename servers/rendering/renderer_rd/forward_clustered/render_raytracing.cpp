@@ -714,6 +714,10 @@ void RenderRaytracing::rt_ensure_textures(RenderSceneBuffersRD *p_render_buffers
 	if (!p_render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_DEPTH)) {
 		p_render_buffers->create_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_DEPTH, RD::DATA_FORMAT_R32_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1);
 	}
+	// A shader medium's scattering, handed from the hit that entered it to raygen (one uint a pixel).
+	if (!p_render_buffers->has_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_MEDIUM)) {
+		p_render_buffers->create_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_MEDIUM, RD::DATA_FORMAT_R32_UINT, RD::TEXTURE_USAGE_STORAGE_BIT, RD::TEXTURE_SAMPLES_1);
+	}
 }
 
 bool RenderRaytracing::rt_get_light_cache(const RenderDataRD *p_render_data, RID &r_irradiance, RID &r_direction, float &r_near, float &r_far) const {
@@ -7462,6 +7466,15 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		u.binding = 15;
 		u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
 		u.append_id(rt_get_depth_texture(rb));
+		uniforms.push_back(u);
+	}
+
+	// Binding 50: a shader medium's scattering (RT_MEDIUM_CODE_SCATTER), from the hit that entered it to raygen.
+	{
+		RD::Uniform u;
+		u.binding = 50;
+		u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		u.append_id(rb->get_texture(RB_SCOPE_FORWARD_CLUSTERED, RB_TEX_RT_MEDIUM));
 		uniforms.push_back(u);
 	}
 

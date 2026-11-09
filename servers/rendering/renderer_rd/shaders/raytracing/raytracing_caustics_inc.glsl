@@ -29,6 +29,7 @@
 #define RT_CAUSTICS_DEPTH_BIAS 50000.0 // depths are stored from -500 m to 500 m around the area's centre
 #define RT_CAUSTICS_DEPTH_TOLERANCE 0.3 // metres a point may lie off the depth its texel's photons landed at
 #define RT_CAUSTICS_MAX_RATIO 32.0
+#define RT_CAUSTICS_EDGE_FADE 0.08 // share of the map across, at each border, over which caustics fade out
 #define RT_CAUSTICS_SUN_HEIGHT 2000.0 // metres above the area's centre the photons start
 
 // Ray input on non-peel rays: a caustic photon. The hit reports the surface instead of shading
@@ -159,7 +160,11 @@ float rt_caustics_lookup(vec3 p) {
 	if (abs(depth_sum / straight - rt_caustics_depth(f, p)) > tolerance) {
 		return -1.0;
 	}
-	return min(bent / straight, RT_CAUSTICS_MAX_RATIO);
+	// Near the border photons bent out of the square are lost while none bend in from past it, so
+	// the ratio dips into a dark line: fade to the plain sun over the outer texels.
+	vec2 edge = min(st + 0.5, vec2(float(RT_CAUSTICS_RES) - 0.5) - st);
+	float fade = smoothstep(0.0, RT_CAUSTICS_EDGE_FADE * float(RT_CAUSTICS_RES), min(edge.x, edge.y));
+	return mix(1.0, min(bent / straight, RT_CAUSTICS_MAX_RATIO), fade);
 }
 
 // The sun's multiplier at p (1: as the straight shadow ray has it).
