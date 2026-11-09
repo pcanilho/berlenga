@@ -187,6 +187,34 @@ ray traced caustics of Ray Tracing Gems II ch. 30.
   caustics, nested media and a camera under water. Shadow rays inside the water that never cross
   its surface (a lamp under water) are not absorbed.
 
+## Step 1b as built: scattering and shader water (9 Nov)
+
+- **Parameters.** glTF's draft `KHR_materials_scatter` (open PR #2579, volumetric mode):
+  `transmission_scatter_strength`, `transmission_scatter_color` (the multi-scatter albedo, the
+  colour the medium looks after many bounces) and `transmission_scatter_anisotropy` (Henyey-Greenstein
+  g). The attenuation colour and distance now give the extinction; the single-scatter albedo from
+  Kulla and Conty's fit, `s = 4.09712 + 4.20863 c - sqrt(9.59217 + 41.6808 c + 17.7126 c^2)`,
+  `albedo = (1 - s^2) / (1 - g s^2)`, splits it into scattering and absorption. Computed on the CPU
+  and stored as unorm8 albedo plus g in a new word; `RT_MaterialData` grows to 160 bytes.
+- **Medium code.** A path entering a base material medium carries `RT_MEDIUM_CODE_GEOMETRY` (bit 30)
+  plus the TLAS entry, and raygen reads the medium from that entry's material (raygen now binds the
+  geometry and material buffers). Shader media carry the inline extinction code.
+- **Tracking.** Spectral one-sample MIS free flight (Wilkie et al. 2014; Miller, Georgiev and Jarosz
+  2019): the collision distance is drawn on a random channel and weighed by the mean of the three
+  channel densities. A collision before the surface replaces it with a scattering event: every
+  light through `rt_volume_direct()` (shared with the smoke, now taking g) and a Henyey-Greenstein
+  continuation. No collision: transmittance over the mean no-collision probability. Clear water
+  (no scattering) keeps exact Beer-Lambert; the depth tiles still match within 1%.
+- **Raster.** Kulla and Conty's idea in reverse: a dense medium looks like a diffuse surface of its
+  multi-scatter colour, so the surface gets that albedo in the share `1 - T` the depth hides.
+- **Shader outputs.** `IOR` (1 or more turns the surface into a medium boundary) and `ABSORPTION`
+  (per metre) with `TRANSMISSION`; path traced only, no scattering. Such shaders are traced from both
+  sides and their shadows are absorbed leaving the medium.
+- **Test scene.** `--scene=water --water=murky|shader`.
+- **Limits.** Multiple scattering ends at the bounce limit, so dense media come out darker than
+  they would with no limit. Sky light reaches a scattering point only through further bounces, not as
+  a light sample. Murky water is noisy at low sample counts.
+
 ## Sources
 
 - 80.lv, Crimson Desert's BlackSpace engine features:

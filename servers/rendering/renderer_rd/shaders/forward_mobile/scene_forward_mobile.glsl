@@ -1162,6 +1162,8 @@ void main() {
 	vec3 emission_highp = vec3(0.0);
 	float emission_indirect = 1.0; // Written by EMISSION_INDIRECT; no indirect emission here.
 	float transmission = 0.0; // Written by TRANSMISSION; path tracing only.
+	float ior = 0.0; // Written by IOR; path tracing only.
+	vec3 absorption = vec3(0.0); // Written by ABSORPTION; path tracing only.
 	float roughness_highp = 1.0;
 	float rim_highp = 0.0;
 	float rim_tint_highp = 0.0;

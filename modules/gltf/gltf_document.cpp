@@ -2997,6 +2997,20 @@ Error GLTFDocument::_serialize_materials(Ref<GLTFState> p_state) {
 				}
 				extensions["KHR_materials_volume"] = mat_volume;
 				p_state->add_used_extension("KHR_materials_volume");
+				if (base_material->get_transmission_scatter_strength() > 0.0f) {
+					// KHR_materials_scatter (draft), volumetric mode.
+					Dictionary mat_scatter;
+					const Color sc = base_material->get_transmission_scatter_color().srgb_to_linear();
+					Array scatter_color;
+					scatter_color.push_back(sc.r);
+					scatter_color.push_back(sc.g);
+					scatter_color.push_back(sc.b);
+					mat_scatter["scatterStrengthFactor"] = base_material->get_transmission_scatter_strength();
+					mat_scatter["multiscatterColorFactor"] = scatter_color;
+					mat_scatter["scatterAnisotropy"] = base_material->get_transmission_scatter_anisotropy();
+					extensions["KHR_materials_scatter"] = mat_scatter;
+					p_state->add_used_extension("KHR_materials_scatter");
+				}
 				Dictionary mat_ior;
 				mat_ior["ior"] = base_material->get_transmission_ior();
 				extensions["KHR_materials_ior"] = mat_ior;
@@ -3085,6 +3099,16 @@ Error GLTFDocument::_parse_materials(Ref<GLTFState> p_state) {
 							// glTF colours are linear; the material's are sRGB.
 							material->set_transmission_attenuation_color(Color(attenuation_color[0], attenuation_color[1], attenuation_color[2]).linear_to_srgb());
 							material->set_transmission_attenuation_distance(attenuation_distance);
+						}
+						if (material_extensions.has("KHR_materials_scatter")) {
+							// KHR_materials_scatter (draft), volumetric mode: the multi-scatter colour, its strength and the phase's g.
+							Dictionary scatter = material_extensions["KHR_materials_scatter"];
+							material->set_transmission_scatter_strength(scatter.get("scatterStrengthFactor", 0.0f));
+							const Array scatter_color = scatter.get("multiscatterColorFactor", Array());
+							if (scatter_color.size() == 3) {
+								material->set_transmission_scatter_color(Color(scatter_color[0], scatter_color[1], scatter_color[2]).linear_to_srgb());
+							}
+							material->set_transmission_scatter_anisotropy(scatter.get("scatterAnisotropy", 0.0f));
 						}
 					}
 				}
@@ -7101,6 +7125,7 @@ HashSet<String> GLTFDocument::get_supported_gltf_extensions_hashset() {
 	supported_extensions.insert("KHR_materials_transmission");
 	supported_extensions.insert("KHR_materials_volume");
 	supported_extensions.insert("KHR_materials_pbrSpecularGlossiness");
+	supported_extensions.insert("KHR_materials_scatter");
 	supported_extensions.insert("KHR_materials_unlit");
 	supported_extensions.insert("KHR_node_visibility");
 	supported_extensions.insert("KHR_texture_transform");

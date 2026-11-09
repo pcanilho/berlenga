@@ -147,7 +147,7 @@ struct RT_InstanceMotionData {
 };
 static_assert(sizeof(RT_InstanceMotionData) == 48, "RT_InstanceMotionData must be 48 bytes");
 
-// Must match GLSL MaterialData (std430, 144 bytes). Bitfields fill from the low bit on every supported compiler,
+// Must match GLSL MaterialData (std430, 160 bytes). Bitfields fill from the low bit on every supported compiler,
 // which test_render_raytracing.h checks; GLSL unpacks them with the accessors in raytracing_data_inc.glsl.
 struct alignas(16) RT_MaterialData {
 	// Bits of the bindless texture index (GLSL rt_texture_index()) in every *_texture; 0 = white.
@@ -235,9 +235,16 @@ struct alignas(16) RT_MaterialData {
 		uint32_t index : TEXTURE_INDEX_BITS;
 		uint32_t unused : 8;
 	} transmission_texture;
-	uint32_t medium; // Absorption of the medium behind RT_MAT_FLAG_VOLUME surfaces, see rt_material_set_medium().
+	uint32_t medium; // Extinction of the medium behind RT_MAT_FLAG_VOLUME surfaces, see rt_material_set_medium().
+	struct { // Scattering in that medium, see rt_material_set_scatter(); black albedo: none.
+		uint32_t albedo_r : 8; // unorm8 single-scatter albedo, the share of extinction that scatters.
+		uint32_t albedo_g : 8;
+		uint32_t albedo_b : 8;
+		uint32_t anisotropy : 8; // Henyey-Greenstein g, unorm8 of (g + 1) / 2.
+	} scatter;
+	uint32_t reserved[3];
 };
-static_assert(sizeof(RT_MaterialData) == 144, "RT_MaterialData must be 144 bytes for std430, with every bitfield struct in one uint");
+static_assert(sizeof(RT_MaterialData) == 160, "RT_MaterialData must be 160 bytes for std430, with every bitfield struct in one uint");
 static_assert(BindlessBlock::MAX_BINDLESS_TEXTURES <= (1u << RT_MaterialData::TEXTURE_INDEX_BITS), "Bindless texture indices must fit RT_MaterialData textures");
 
 // p_value clamped to [0, 1] as GLSL unpackUnorm4x8() reads one byte.
@@ -290,6 +297,26 @@ inline void rt_material_set_medium(RT_MaterialData &r_mat, float p_ior, const fl
 
 // Stores BaseMaterial3D's back light colour (sRGB unorm8 per channel, GLSL rt_material_backlight()) in
 // the spare bytes of surface_params, normal_texture and emission_texture. Black: no back lighting.
+// Scattering in a medium from glTF KHR_materials_scatter (volumetric mode): the multi-scatter albedo
+// p_color (linear) times p_strength, mapped to the single-scatter albedo for anisotropy p_g by Kulla and
+// Conty's fit (2017), so the medium looks p_color after many bounces whatever g is.
+inline void rt_material_set_scatter(RT_MaterialData &r_mat, const float p_color[3], float p_strength, float p_g) {
+	const float g = CLAMP(p_g, -0.99f, 0.99f);
+	uint32_t albedo[3];
+	for (int i = 0; i < 3; i++) {
+		const float ms = CLAMP(p_color[i], 0.0f, 1.0f) * CLAMP(p_strength, 0.0f, 1.0f);
+		float s = 1.0f;
+		if (ms > 0.0f) {
+			s = CLAMP(4.09712f + 4.20863f * ms - Math::sqrt(9.59217f + 41.6808f * ms + 17.7126f * ms * ms), 0.0f, 1.0f);
+		}
+		albedo[i] = rt_unorm8((1.0f - s * s) / (1.0f - g * s * s));
+	}
+	r_mat.scatter.albedo_r = albedo[0];
+	r_mat.scatter.albedo_g = albedo[1];
+	r_mat.scatter.albedo_b = albedo[2];
+	r_mat.scatter.anisotropy = rt_unorm8((g + 1.0f) * 0.5f);
+}
+
 constexpr void rt_material_set_backlight(RT_MaterialData &r_mat, float p_r, float p_g, float p_b) {
 	r_mat.surface_params.backlight_r = rt_unorm8(p_r);
 	r_mat.normal_texture.backlight_g = rt_unorm8(p_g);

@@ -194,12 +194,23 @@ const uint NON_SINGULAR_PATH_FLAG = (1u << 15);
 // Hit output on non-peel rays: the continuation crossed a medium's surface (RT_MAT_FLAG_VOLUME), and
 // bsdf_pdf holds the medium code the ray is in now (0: none) instead of a density. Raygen clears both.
 const uint MEDIUM_CHANGE_FLAG = (1u << 17);
+// Medium code bit: the rest is the TLAS geometry entry of the medium's surface, whose material holds the
+// medium (scattering included). Codes without it carry the extinction inline (rt_medium_absorption()).
+// Either way the code read as a float is a normal finite number, so the payload carries it unchanged.
+const uint RT_MEDIUM_CODE_GEOMETRY = (1u << 30);
 
 // Absorption coefficients (per metre) of medium code p_code (C++ rt_medium_code()): 9-bit log codes per channel.
 vec3 rt_medium_absorption(uint p_code) {
 	uvec3 c = uvec3(p_code, p_code >> 9u, p_code >> 18u) & 511u;
 	vec3 sigma = exp2(-12.0 + 24.0 * (vec3(c) - 1.0) / 510.0);
 	return mix(vec3(0.0), sigma, greaterThan(c, uvec3(0u)));
+}
+
+// Inline medium code (C++ rt_medium_code()) of absorption coefficients p_sigma per metre.
+uint rt_medium_code(vec3 p_sigma) {
+	uvec3 c = uvec3(clamp(floor((log2(max(p_sigma, vec3(1e-30))) + 12.0) / 24.0 * 510.0 + 1.5), 1.0, 511.0));
+	c = mix(uvec3(0u), c, greaterThanEqual(p_sigma, vec3(0.000244140625)));
+	return (1u << 29) | c.x | (c.y << 9u) | (c.z << 18u);
 }
 
 // Beer-Lambert transmittance through p_distance of medium p_code (1 outside any medium, code 0).

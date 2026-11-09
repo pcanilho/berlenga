@@ -17,6 +17,8 @@ struct MaterialResult {
 	float clearcoat; // CLEARCOAT, 0 = no coat (or rendering/pathtracing/clearcoat off).
 	float clearcoat_roughness; // CLEARCOAT_ROUGHNESS.
 	float transmission; // BaseMaterial3D transmission times (1 - metallic): light let straight through, tinted by albedo.
+	float ior; // With transmission: the IOR of the medium the surface bounds; 0 for a thin surface.
+	uint medium; // With ior: the medium's payload code (MEDIUM_CHANGE_FLAG, RT_MEDIUM_CODE_GEOMETRY).
 };
 
 // Sensible default for a mid-grey diffuse surface.
@@ -34,6 +36,8 @@ MaterialResult default_material_result(vec3 geometry_normal) {
 	r.clearcoat = 0.0;
 	r.clearcoat_roughness = 0.0;
 	r.transmission = 0.0;
+	r.ior = 0.0;
+	r.medium = 0u;
 	return r;
 }
 

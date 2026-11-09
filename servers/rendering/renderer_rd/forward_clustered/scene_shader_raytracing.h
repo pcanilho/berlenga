@@ -470,6 +470,7 @@ public:
 		bool uses_alpha_clip = false; // Writes ALPHA_SCISSOR_THRESHOLD; needs per-HG any-hit
 		bool needs_full_any_hit = false; // Blend-transparent or alpha: per-HG any-hit for peel/scissor evaluation
 		bool casts_transmitted_shadow = false; // Writes TRANSMISSION or BACKLIGHT: shadow rays keep the light it lets through.
+		bool bounds_medium = false; // Writes TRANSMISSION and IOR: rays cross it into a medium, so it is traced from both sides.
 		bool uses_scene_depth = false; // Reads SCENE_DEPTH; gates the rt_scene_depth imageLoad
 		bool uses_instance_custom = false; // Gates the MultiMesh custom-data buffer read.
 		bool is_procedural = false; // Uses intersection shader instead of triangle geometry

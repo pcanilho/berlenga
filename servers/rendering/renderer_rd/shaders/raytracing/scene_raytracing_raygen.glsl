@@ -45,6 +45,21 @@ layout(set = 0, binding = 30) uniform texture2D prepass_color_texture;
 
 layout(location = 0) rayPayloadEXT PathPayload payload;
 
+// Materials, for the medium a path travels in (water scattering).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_ARB_gpu_shader_int64 : require
+#include "raytracing_data_inc.glsl"
+// clang-format off
+layout(set = 0, binding = 3, std430) readonly buffer GeometryBuffer {
+	GeometryData geometries[];
+};
+layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
+	MaterialData materials[];
+};
+// clang-format on
+#include "raytracing_entry_material_inc.glsl"
+
 // The light API for the transparent pass's light cache (plight_update).
 #extension GL_EXT_nonuniform_qualifier : require
 layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
@@ -371,9 +386,8 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 // travelling along p_dir): every directional light, and one positional light chosen among the light
 // grid's candidates in proportion to its unshadowed contribution (as plight_update), each through a
 // shadow ray whose transmittance includes the gas (ratio tracking), weighted by the
-// Henyey-Greenstein phase function.
-vec3 rt_volume_direct(vec3 x, vec3 p_dir, inout uint rng) {
-	float g = rt_volume.medium.z;
+// Henyey-Greenstein phase function of anisotropy g (the gas's, or a water medium's).
+vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, inout uint rng) {
 	vec3 sum = vec3(0.0);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 	uint dir_count = lights_directional_count(light_count);
@@ -429,6 +443,23 @@ vec3 rt_volume_direct(vec3 x, vec3 p_dir, inout uint rng) {
 		}
 	}
 	return sum;
+}
+
+// The medium of payload code p_code (MEDIUM_CHANGE_FLAG): 0 none, RT_MEDIUM_CODE_GEOMETRY plus the TLAS entry
+// of an RT_MAT_FLAG_VOLUME surface, or an inline extinction code (rt_medium_absorption(), no scattering).
+void rt_medium_set(uint p_code, out bool r_in_medium, out vec3 r_sigma_t, out vec3 r_albedo, out float r_g) {
+	r_in_medium = p_code != 0u;
+	r_albedo = vec3(0.0);
+	r_g = 0.0;
+	if ((p_code & RT_MEDIUM_CODE_GEOMETRY) != 0u) {
+		MaterialData mat = rt_entry_material(p_code & ~RT_MEDIUM_CODE_GEOMETRY);
+		r_sigma_t = rt_medium_absorption(rt_material_medium(mat));
+		vec4 scatter = rt_material_scatter(mat);
+		r_albedo = scatter.rgb;
+		r_g = scatter.w;
+	} else {
+		r_sigma_t = rt_medium_absorption(p_code);
+	}
 }
 
 void main() {
@@ -508,8 +539,12 @@ void main() {
 		// 0 at a perspective eye, one pixel's footprint for an orthogonal camera, then grown by
 		// the pixel's spread angle over each segment traced.
 		float cone_width = rt_cone_eye_width();
-		// The medium the ray travels in (MEDIUM_CHANGE_FLAG): 0 outside any, where the camera is.
-		uint medium_code = 0u;
+		// The medium the ray travels in (MEDIUM_CHANGE_FLAG), where the camera is outside any: its extinction
+		// per metre, single-scatter albedo and phase anisotropy (rt_medium_set()).
+		bool in_medium = false;
+		vec3 medium_sigma_t = vec3(0.0);
+		vec3 medium_albedo = vec3(0.0);
+		float medium_g = 0.0;
 #ifdef DLSS_RR_ENABLED
 		// Primary surface replacement this sample still owes (only sample 0 starts one).
 		bool replace_pending = false;
@@ -556,7 +591,7 @@ void main() {
 					vec3 albedo = rt_volume.smoke_color.rgb * rt_volume.medium.y;
 					ps.radiance = radiance_pre + throughput_entry * vol_emitted;
 					ps.throughput = throughput_entry * albedo;
-					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, ps.rng_state);
+					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, rt_volume.medium.z, ps.rng_state);
 					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG)) | NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
 					ps.hit_t = t_vol;
 					cone_width += rt_cone_spread_angle() * t_vol;
@@ -581,17 +616,54 @@ void main() {
 				ps.radiance += throughput_entry * vol_emitted;
 			}
 
-			// Beer-Lambert absorption of a segment inside a medium (refraction into RT_MAT_FLAG_VOLUME
-			// surfaces): the surface it reached, and all that surface sends back, is seen through it.
+			// A segment inside a medium (refraction into RT_MAT_FLAG_VOLUME surfaces). Without scattering,
+			// Beer-Lambert absorption: the surface it reached, and all it sends back, is seen through it.
+			// With scattering, a free flight is drawn on one colour channel picked at random and weighed
+			// over all three (spectral MIS, Wilkie et al. 2014; Miller, Georgiev and Jarosz 2019): a
+			// collision before the surface replaces it with a scattering event in the water.
 			vec3 medium_transmittance = vec3(1.0);
-			if (medium_code != 0u && ps.hit_t > 0.0) {
-				medium_transmittance = rt_medium_transmittance(medium_code, ps.hit_t);
-				ps.radiance = radiance_pre + (ps.radiance - radiance_pre) * medium_transmittance;
-				ps.throughput *= medium_transmittance;
+			if (in_medium) {
+				float seg_len = ps.hit_t > 0.0 ? min(ps.hit_t, t_far) : t_far;
+				bool scatters = max(medium_albedo.r, max(medium_albedo.g, medium_albedo.b)) > 0.0;
+				float t_coll = 1e30;
+				if (scatters) {
+					float u_channel = rand(ps.rng_state);
+					float sigma_c = u_channel < 1.0 / 3.0 ? medium_sigma_t.r : (u_channel < 2.0 / 3.0 ? medium_sigma_t.g : medium_sigma_t.b);
+					if (sigma_c > 0.0) {
+						t_coll = -log(max(1.0 - rand(ps.rng_state), 1e-30)) / sigma_c;
+					}
+				}
+				if (t_coll < seg_len) {
+					vec3 tr = exp(-medium_sigma_t * t_coll);
+					float pdf = dot(medium_sigma_t * tr, vec3(1.0 / 3.0));
+					vec3 x = ray_origin + ray_dir * t_coll;
+					ps.radiance = radiance_pre;
+					ps.throughput = throughput_entry * medium_albedo * medium_sigma_t * tr / max(pdf, 1e-30);
+					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, ps.rng_state);
+					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG | MEDIUM_CHANGE_FLAG)) |
+							NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
+					ps.hit_t = t_coll;
+					ps.bsdf_pdf = 0.0;
+					cone_width += rt_cone_spread_angle() * t_coll;
+					if (!russian_roulette_survives(bounce + 1u, ps)) {
+						break;
+					}
+					ray_origin = x;
+					ray_dir = rt_volume_sample_hg(ray_dir, medium_g, rand2(ps.rng_state));
+					continue;
+				}
+				if (ps.hit_t > 0.0 || scatters) {
+					medium_transmittance = exp(-medium_sigma_t * seg_len);
+					// Probability of no collision over the segment, averaged over the channels it was drawn on.
+					float p_pass = scatters ? dot(medium_transmittance, vec3(1.0 / 3.0)) : 1.0;
+					medium_transmittance /= max(p_pass, 1e-30);
+					ps.radiance = radiance_pre + (ps.radiance - radiance_pre) * medium_transmittance;
+					ps.throughput *= medium_transmittance;
+				}
 			}
 			// The next segment starts in the medium the hit's continuation crossed into.
 			if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) != 0u) {
-				medium_code = floatBitsToUint(ps.bsdf_pdf);
+				rt_medium_set(floatBitsToUint(ps.bsdf_pdf), in_medium, medium_sigma_t, medium_albedo, medium_g);
 				ps.bsdf_pdf = 0.0;
 				ps.packed_bounces_flags &= ~MEDIUM_CHANGE_FLAG;
 			}
@@ -1152,6 +1224,9 @@ void main() {
 	m.clearcoat = rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT) ? clamp(clearcoat, 0.0, 1.0) : 0.0;
 	m.clearcoat_roughness = clamp(clearcoat_roughness, 0.0, 1.0);
 	m.transmission = rt_material_feature(RT_MATERIAL_FEATURE_TRANSMISSION) ? clamp(transmission, 0.0, 1.0) * (1.0 - clamp(metallic, 0.0, 1.0)) : 0.0;
+	// IOR and ABSORPTION: the surface bounds a medium (water), absorbing per metre, without scattering.
+	m.ior = ior >= 1.0 ? ior : 0.0;
+	m.medium = rt_medium_code(max(absorption, vec3(0.0)));
 	// view space -> world space
 	mat3 view_to_world = mat3(inv_view_matrix);
 	m.normal = normalize(view_to_world * normal);
@@ -1232,6 +1307,8 @@ void main() {
 	m.clearcoat = coat.x;
 	m.clearcoat_roughness = coat.y;
 	m.transmission = 0.0;
+	m.ior = (mat.flags & RT_MAT_FLAG_VOLUME) != 0u ? rt_material_ior(mat) : 0.0;
+	m.medium = RT_MEDIUM_CODE_GEOMETRY | h.geometry_idx;
 	if ((mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u) {
 		// Refraction lets through 1 - alpha and draws the surface opaque, as raster.
 		float transmission = clamp(rt_material_transmission(mat) * layers.transmission, 0.0, 1.0);
@@ -1409,6 +1486,10 @@ void main() {
 		PathState shadow_ps = path_unpack(payload);
 		shadow_ps.throughput *= rt_shadow_transmittance(hit_tint, shadow_transmission ? transmission : 0.0,
 				shadow_back_lighting ? backlight : vec3(0.0), specular, metallic);
+		if (ior >= 1.0 && shadow_transmission && rt_material_feature(RT_MATERIAL_FEATURE_REFRACTION) && !rt_front_face) {
+			// Leaving the medium of IOR and ABSORPTION: absorbed from the shaded point on.
+			shadow_ps.throughput *= exp(-max(absorption, vec3(0.0)) * gl_HitTEXT);
+		}
 		path_pack(payload, shadow_ps);
 		if (max(shadow_ps.throughput.r, max(shadow_ps.throughput.g, shadow_ps.throughput.b)) > 1e-3) {
 			ignoreIntersectionEXT;

@@ -612,6 +612,9 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	bool uses_backlight = false;
 	actions.usage_flag_pointers["TRANSMISSION"] = &uses_transmission;
 	actions.usage_flag_pointers["BACKLIGHT"] = &uses_backlight;
+	// A medium behind the surface: traced from both sides.
+	bool uses_ior = false;
+	actions.usage_flag_pointers["IOR"] = &uses_ior;
 	actions.function_renames["fwidth"] = "rt_fwidth";
 	int blend_modei = RendererRD::MaterialStorage::ShaderData::BLEND_MODE_MIX;
 	actions.render_mode_values["blend_add"] = Pair<int *, int>(&blend_modei, RendererRD::MaterialStorage::ShaderData::BLEND_MODE_ADD);
@@ -635,6 +638,7 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 	r_entry.is_procedural = p_is_procedural;
 	r_entry.uses_alpha_clip = detected_alpha_clip;
 	r_entry.casts_transmitted_shadow = !p_is_procedural && (uses_transmission || uses_backlight);
+	r_entry.bounds_medium = !p_is_procedural && uses_transmission && uses_ior;
 	r_entry.needs_full_any_hit = detected_alpha || blend_modei != RendererRD::MaterialStorage::ShaderData::BLEND_MODE_MIX || r_entry.casts_transmitted_shadow;
 	r_entry.uses_scene_depth = uses_scene_depth;
 	r_entry.uses_instance_custom = uses_instance_custom;
@@ -2129,6 +2133,8 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["EMISSION"] = "emission";
 		actions.renames["EMISSION_INDIRECT"] = "emission_indirect";
 		actions.renames["TRANSMISSION"] = "transmission";
+		actions.renames["IOR"] = "ior";
+		actions.renames["ABSORPTION"] = "absorption";
 		actions.renames["POINT_COORD"] = "rt_point_coord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";
 		actions.renames["SCREEN_UV"] = "rt_screen_uv";

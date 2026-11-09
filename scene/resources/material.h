@@ -491,6 +491,9 @@ private:
 		StringName transmission_ior;
 		StringName transmission_attenuation_color;
 		StringName transmission_attenuation_distance;
+		StringName transmission_scatter_strength;
+		StringName transmission_scatter_color;
+		StringName transmission_scatter_anisotropy;
 		StringName point_size;
 		StringName uv1_scale;
 		StringName uv1_offset;
@@ -575,6 +578,9 @@ private:
 	float transmission_ior = 1.5f;
 	Color transmission_attenuation_color = Color(1, 1, 1);
 	float transmission_attenuation_distance = 0.0f;
+	float transmission_scatter_strength = 0.0f;
+	Color transmission_scatter_color = Color(1, 1, 1);
+	float transmission_scatter_anisotropy = 0.0f;
 	float point_size = 0.0f;
 	float alpha_scissor_threshold = 0.0f;
 	float alpha_hash_scale = 0.0f;
@@ -756,6 +762,15 @@ public:
 
 	void set_transmission_attenuation_distance(float p_distance);
 	float get_transmission_attenuation_distance() const;
+
+	void set_transmission_scatter_strength(float p_strength);
+	float get_transmission_scatter_strength() const;
+
+	void set_transmission_scatter_color(const Color &p_color);
+	Color get_transmission_scatter_color() const;
+
+	void set_transmission_scatter_anisotropy(float p_anisotropy);
+	float get_transmission_scatter_anisotropy() const;
 
 	void set_point_size(float p_point_size);
 	float get_point_size() const;
