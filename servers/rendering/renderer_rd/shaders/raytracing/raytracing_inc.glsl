@@ -48,6 +48,7 @@
 #define RT_MATERIAL_FEATURE_BACK_LIGHTING 2u // rendering/pathtracing/back_lighting
 #define RT_MATERIAL_FEATURE_TRANSMISSION 4u // rendering/pathtracing/transmission
 #define RT_MATERIAL_FEATURE_REFRACTION 8u // rendering/pathtracing/refraction
+#define RT_MATERIAL_FEATURE_SUBSURFACE 16u // rendering/pathtracing/subsurface_scattering
 
 // RT_PARAM_VIS_MODE values. Must match Environment::PathtracingDebugMode.
 #define RT_VIS_TRANSPARENCY_LAYERS 23
@@ -73,6 +74,7 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 // Water caustics for the first directional light (raytracing_caustics_inc.glsl)
 #define RT_PARAM_CAUSTICS_STATE 36 // 0 off, else 1 + the slot written + 4 when last frame's is valid
 #define RT_PARAM_CAUSTICS_SIZE 37 // the area's width, metres
+#define RT_PARAM_SSS_SCALE 38 // subsurface scattering radius at strength 1, metres
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)
@@ -197,6 +199,15 @@ const uint NON_SINGULAR_PATH_FLAG = (1u << 15);
 // Hit output on non-peel rays: the continuation crossed a medium's surface (RT_MAT_FLAG_VOLUME), and
 // bsdf_pdf holds the medium code the ray is in now (0: none) instead of a density. Raygen clears both.
 const uint MEDIUM_CHANGE_FLAG = (1u << 17);
+// Hit output on non-peel rays: the continuation enters a subsurface scattering medium (sample_subsurface_entry()).
+// bsdf_pdf holds the extinction code of 1 / radius per channel (rt_medium_code()) and this pixel's
+// rt_medium_image the colour (unorm8 rgb); raygen walks the medium (rt_sss_walk()) and clears both.
+const uint SSS_ENTER_FLAG = (1u << 19);
+// Raygen input: a subsurface probe ray (rt_sss_probe()). The hit reports hit_t, its interpolated normal
+// (oct_offset_nrm) and TLAS entry (oct_next_dir) without shading; a miss sets hit_t to -1.
+const uint SSS_PROBE_FLAG = (1u << 20);
+// Probe output: the probe left through a back face.
+const uint SSS_PROBE_BACK_FACE_FLAG = (1u << 21);
 // Medium code bit: the rest is the TLAS geometry entry of the medium's surface, whose material holds the
 // medium (scattering included). Codes without it carry the extinction inline (rt_medium_absorption()).
 // Either way the code read as a float is a normal finite number, so the payload carries it unchanged.

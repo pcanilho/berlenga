@@ -297,6 +297,7 @@ struct MaterialProperties {
 	float clearcoat; // Coat strength, 0 = no coat (CLEARCOAT).
 	float clearcoatAlpha; // The coat's GGX alpha, see clearcoatAlphaFromRoughness().
 	float3 coatNormal; // The coat's normal: the interpolated vertex normal, which normal maps do not reach.
+	float subsurface; // 1: the diffuse lobe is subsurface scattering, whose light arrives through the random walk, not here.
 };
 
 // Data needed to evaluate BRDF (surface and material properties at given point + configuration of light and normal vectors)
@@ -1325,7 +1326,8 @@ void evalCombinedBRDFSeparate(float3 N, float3 L, float3 V, MaterialProperties m
 	float coatFresnel;
 	float coat = evalClearcoatNdotL(material, L, V, coatFresnel);
 	float baseScale = 1.0f - coatFresnel;
-	outDiffuse = data.diffuseReflectance * (float3(diffuseNdotL, diffuseNdotL, diffuseNdotL) * baseScale + backlit);
+	float diffuseScale = baseScale * (1.0f - material.subsurface);
+	outDiffuse = data.diffuseReflectance * (float3(diffuseNdotL, diffuseNdotL, diffuseNdotL) * diffuseScale + backlit);
 	outSpecular = godotSpecularNdotL(data, material.specularMode, material.energyCompensation) * baseScale + float3(coat, coat, coat);
 }
 

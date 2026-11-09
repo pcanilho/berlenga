@@ -151,6 +151,7 @@ public:
 	static constexpr uint32_t RT_MATERIAL_FEATURE_BACK_LIGHTING = 2; // rendering/pathtracing/back_lighting.
 	static constexpr uint32_t RT_MATERIAL_FEATURE_TRANSMISSION = 4; // rendering/pathtracing/transmission.
 	static constexpr uint32_t RT_MATERIAL_FEATURE_REFRACTION = 8; // rendering/pathtracing/refraction.
+	static constexpr uint32_t RT_MATERIAL_FEATURE_SUBSURFACE = 16; // rendering/pathtracing/subsurface_scattering.
 	// Which path vertices receive decals (rendering/pathtracing/decals). Must match RT_DECAL_MODE_* in GLSL.
 	enum RTDecalMode {
 		RT_DECAL_MODE_ALL_HITS = 0,
@@ -187,6 +188,7 @@ public:
 	// Water caustics for the first directional light (binding 46, raytracing_caustics_inc.glsl).
 	static constexpr int RT_PARAM_CAUSTICS_STATE = 36; // 0 off, else 1 + the slot written + 4 when last frame's is valid.
 	static constexpr int RT_PARAM_CAUSTICS_SIZE = 37; // the square's width, metres
+	static constexpr int RT_PARAM_SSS_SCALE = 38; // subsurface scattering radius at strength 1, metres
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;
