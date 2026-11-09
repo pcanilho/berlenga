@@ -457,6 +457,27 @@ void vertex_shader(vec3 vertex_input,
 	billboard_apply_render_modes(modelview, modelview_normal, read_view_matrix, scene_data.main_cam_inv_view_matrix, inv_view_matrix, projection_matrix, instance_custom, OUTPUT_IS_MULTIVIEW);
 #endif
 
+#ifdef MODE_RT_CAPTURE
+	// vertex()'s inputs, taken to view space like its outputs are below, but with the transforms before vertex()
+	// could override MODELVIEW_MATRIX: the rest pose the path tracer's hits re-run vertex() on.
+#if defined(SKIP_TRANSFORM_USED)
+	vec3 rt_rest_vertex = vertex;
+	vec3 rt_rest_normal = normal_highp;
+	vec3 rt_rest_tangent = tangent;
+	vec3 rt_rest_binormal = binormal;
+#elif defined(VERTEX_WORLD_COORDS_USED)
+	vec3 rt_rest_vertex = (read_view_matrix * vec4(vertex, 1.0)).xyz;
+	vec3 rt_rest_normal = mat3(read_view_matrix) * normal_highp;
+	vec3 rt_rest_tangent = mat3(read_view_matrix) * tangent;
+	vec3 rt_rest_binormal = mat3(read_view_matrix) * binormal;
+#else
+	vec3 rt_rest_vertex = (modelview * vec4(vertex, 1.0)).xyz;
+	vec3 rt_rest_normal = modelview_normal * normal_highp;
+	vec3 rt_rest_tangent = modelview_normal * tangent;
+	vec3 rt_rest_binormal = modelview_normal * binormal;
+#endif
+#endif
+
 	{
 #CODE : VERTEX
 	}
@@ -497,7 +518,7 @@ void vertex_shader(vec3 vertex_input,
 #endif
 
 #ifdef MODE_RT_CAPTURE
-	rt_capture_store(vertex, normal, tangent, binormal, sc_multimesh() && rt_capture_is_non_finite(matrix[3].xyz));
+	rt_capture_store(vertex, normal, tangent, binormal, rt_rest_vertex, rt_rest_normal, rt_rest_tangent, rt_rest_binormal, sc_multimesh() && rt_capture_is_non_finite(matrix[3].xyz));
 #endif
 
 	vertex_interp = vertex;

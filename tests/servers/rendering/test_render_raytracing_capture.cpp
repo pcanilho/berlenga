@@ -273,6 +273,32 @@ TEST_CASE("[RTVertexCapture] Point index of an instanced capture matches the mer
 	CHECK(params.tbn_offset + point * (layout.tbn_stride() / 4) == (64 + layout.position_bytes() + point * layout.tbn_stride()) / 4);
 }
 
+TEST_CASE("[RTVertexCapture] Rest block mirrors the captured block") {
+	RTVertexCapture::ShaderTraits traits;
+	CHECK_FALSE(RTVertexCapture::needs_rest(traits));
+	traits.keeps_vertex_outputs = true;
+	CHECK_MESSAGE(RTVertexCapture::needs_rest(traits), "Varyings, UV, UV2 or COLOR written by vertex() need the rest pose at a hit.");
+
+	RTVertexCapture::Layout layout;
+	layout.vertex_count = 5;
+	layout.instance_count = 3;
+	layout.has_normal = true;
+	layout.has_tangent = true;
+	const uint64_t block = layout.block_bytes();
+	CHECK(layout.total_bytes() == block);
+	CHECK(RTVertexCapture::make_draw_params(layout, 64, Transform3D(), Transform3D(), Vector3()).flags == (RTVertexCapture::DRAW_FLAG_NORMAL | RTVertexCapture::DRAW_FLAG_TANGENT));
+
+	layout.has_rest = true;
+	CHECK(layout.block_bytes() == block);
+	CHECK(layout.total_bytes() == 2 * block);
+	const RTVertexCapture::DrawParams params = RTVertexCapture::make_draw_params(layout, 64, Transform3D(), Transform3D(), Vector3());
+	CHECK(params.flags & RTVertexCapture::DRAW_FLAG_REST);
+	// The same point lands at the same relative offset in both blocks, which the hit and the merge rely on.
+	const uint64_t point = layout.point_index(2, 1);
+	CHECK(params.rest_position_offset + point * 3 == params.position_offset + point * 3 + block / 4);
+	CHECK(params.rest_tbn_offset + point * 2 == params.tbn_offset + point * 2 + block / 4);
+}
+
 TEST_CASE("[RTVertexCapture] Drawn instances of MultiMeshes and particle trails") {
 	const RTVertexCapture::Instances plain = RTVertexCapture::drawn_instances(12, 20, 1, false);
 	CHECK(plain.count == 12);

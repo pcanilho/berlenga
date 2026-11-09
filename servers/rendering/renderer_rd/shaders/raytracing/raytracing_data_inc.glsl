@@ -12,7 +12,7 @@ layout(buffer_reference, std430) readonly buffer Uint32Buffer {
 };
 
 // ============================================================================
-// GEOMETRY DATA (matches C++ RT_GeometryData, 152 bytes, 8-byte alignment)
+// GEOMETRY DATA (matches C++ RT_GeometryData, 160 bytes, 8-byte alignment)
 // ============================================================================
 struct GeometryData {
 	uint64_t vertex_address;
@@ -58,6 +58,10 @@ struct GeometryData {
 	uint debug_state; // See RTDynamicGeometryDebug::pack().
 	uint material_index; // See rt_pack_material_index().
 	uint material_flags;
+	// With FLAG_REST: byte offset from vertex_address of the rest block (vertex() inputs, same layout as the
+	// positions and TBN before it).
+	uint rest_byte_offset;
+	uint rest_pad;
 };
 
 // ============================================================================

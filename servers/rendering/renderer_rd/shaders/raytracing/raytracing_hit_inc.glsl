@@ -314,4 +314,33 @@ VertexAttributes fetch_vertex_attributes(in GeometryData geom, vec2 hit_attribs,
 
 	return attrs;
 }
+
+// The rest pose of a captured triangle at the hit: vertex()'s inputs (VERTEX, NORMAL, TANGENT, BINORMAL), stored by the
+// capture in BLAS space and interpolated with the hit's barycentrics. False when the capture didn't keep them.
+// Raster runs vertex() on these, so re-running it on them gives the hit the varyings raster interpolates.
+bool fetch_rest_attributes(in GeometryData geom, vec2 hit_attribs, out vec3 r_vertex, out TBNResult r_tbn) {
+	r_vertex = vec3(0.0);
+	r_tbn.normal = vec3(0.0, 1.0, 0.0);
+	r_tbn.tangent = vec3(1.0, 0.0, 0.0);
+	r_tbn.binormal = vec3(0.0, 0.0, 1.0);
+	r_tbn.bitangent_sign = 1.0;
+	if ((geom.flags & FLAG_REST) == 0u || geom.vertex_address == 0ul) {
+		return false;
+	}
+	uint i0, i1, i2;
+	get_triangle_indices(geom, i0, i1, i2);
+	vec3 bary = vec3(1.0 - hit_attribs.x - hit_attribs.y, hit_attribs.x, hit_attribs.y);
+
+	// The rest block mirrors the captured one: float3 positions, then the packed TBN at the same relative offsets.
+	GeometryData rest = geom;
+	rest.vertex_address = geom.vertex_address + uint64_t(geom.rest_byte_offset);
+	rest.flags &= ~FLAG_COMPRESSED;
+	Uint32Buffer vb = Uint32Buffer(rest.vertex_address);
+	vec3 p0 = uintBitsToFloat(uvec3(vb.v[i0 * 3u], vb.v[i0 * 3u + 1u], vb.v[i0 * 3u + 2u]));
+	vec3 p1 = uintBitsToFloat(uvec3(vb.v[i1 * 3u], vb.v[i1 * 3u + 1u], vb.v[i1 * 3u + 2u]));
+	vec3 p2 = uintBitsToFloat(uvec3(vb.v[i2 * 3u], vb.v[i2 * 3u + 1u], vb.v[i2 * 3u + 2u]));
+	r_vertex = bary.x * p0 + bary.y * p1 + bary.z * p2;
+	r_tbn = fetch_tbn(rest, i0, i1, i2, bary);
+	return true;
+}
 #endif

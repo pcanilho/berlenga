@@ -202,6 +202,11 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.write_flag_pointers["TANGENT"] = &writes_tangent;
 	actions.write_flag_pointers["BINORMAL"] = &writes_tangent;
 	actions.write_flag_pointers["Z_CLIP_SCALE"] = &uses_z_clip_scale;
+	// Read-only outside vertex(), so any write is a vertex() output the path tracer's hit keeps.
+	bool writes_vertex_attributes = false;
+	actions.write_flag_pointers["UV"] = &writes_vertex_attributes;
+	actions.write_flag_pointers["UV2"] = &writes_vertex_attributes;
+	actions.write_flag_pointers["COLOR"] = &writes_vertex_attributes;
 
 	actions.stencil_mode_values["read"] = Pair<int *, int>(&stencil_readi, STENCIL_FLAG_READ);
 	actions.stencil_mode_values["write"] = Pair<int *, int>(&stencil_writei, STENCIL_FLAG_WRITE);
@@ -250,6 +255,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	writes_modelview_or_projection = writes_modelview || writes_projection;
 	rt_capture.writes_modelview = writes_modelview;
 	rt_capture.particle_trails = uses_particle_trails;
+	rt_capture.keeps_vertex_outputs = gen_code.uses_vertex_varyings || writes_vertex_attributes;
 	if (depth_test_disabledi) {
 		depth_test = DEPTH_TEST_DISABLED;
 	} else if (depth_test_invertedi) {
