@@ -37,6 +37,8 @@ layout(set = 0, binding = 8, rgba16f) uniform restrict writeonly image2D velocit
 
 #define PASS (res_count.w)
 #define WALL_FRICTION (ripple_control.y)
+#define FLOW_FOAM (ripple_control.z)
+#define FLOW_FOAM_PERSISTENCE (ripple_control.w)
 #define MIN_FLOW_DEPTH 0.25 // m: the depth face fluxes divide by, at least (as the bake)
 
 float still_depth(ivec2 c) {
@@ -119,6 +121,52 @@ float sample_w(vec2 p) {
 		rows[r] = catmull_rom(v0, v1, v2, v3, t.x);
 	}
 	return clamp(catmull_rom(rows[0], rows[1], rows[2], rows[3], t.y), lo, hi);
+}
+
+float eta_at(ivec2 c);
+
+// Total velocity at a cell's centre (faces averaged; the grid's own edge reads the nearest face).
+vec2 centre_velocity(ivec2 c) {
+	c = clamp(c, ivec2(0), ivec2(GRID_N - 1));
+	if (!is_wet(c)) {
+		return vec2(0.0);
+	}
+	float r = face_u(c);
+	float t = face_w(c);
+	float l = c.x > 0 ? face_u(c - ivec2(1, 0)) : r;
+	float b = c.y > 0 ? face_w(c - ivec2(0, 1)) : t;
+	return 0.5 * vec2(r + l, t + b);
+}
+
+// Foam carried on the water (state z), bilinear between cell centres; dry cells hold none.
+float foam_sample(vec2 p) {
+	vec2 g = p - 0.5;
+	ivec2 i0 = ivec2(floor(g));
+	vec2 t = g - vec2(i0);
+	float f00 = state_in[grid_index(clamp(i0, ivec2(0), ivec2(GRID_N - 1)))].z;
+	float f10 = state_in[grid_index(clamp(i0 + ivec2(1, 0), ivec2(0), ivec2(GRID_N - 1)))].z;
+	float f01 = state_in[grid_index(clamp(i0 + ivec2(0, 1), ivec2(0), ivec2(GRID_N - 1)))].z;
+	float f11 = state_in[grid_index(clamp(i0 + ivec2(1, 1), ivec2(0), ivec2(GRID_N - 1)))].z;
+	return mix(mix(f00, f10, t.x), mix(f01, f11, t.x), t.y);
+}
+
+// White water the flow makes this tick, after Ihmsen et al. 2012's whitewater potentials, on the
+// grid: air is trapped where neighbouring water moves past each other (shear: wakes, the edges of
+// a jet, eddies), and where the flow is supercritical (Froude number past about 1: chutes,
+// rapids, hydraulic jumps), gated by the water's own speed so slow water never foams.
+float flow_foam_source(ivec2 c, vec2 v) {
+	float shear = 0.0;
+	shear += length(v - centre_velocity(c + ivec2(1, 0)));
+	shear += length(v - centre_velocity(c - ivec2(1, 0)));
+	shear += length(v - centre_velocity(c + ivec2(0, 1)));
+	shear += length(v - centre_velocity(c - ivec2(0, 1)));
+	shear *= 0.25 * 0.25 / CELL; // mean m/s change over 25 cm, so the cell size doesn't matter
+	float speed = length(v);
+	float froude = speed / sqrt(GRAV * max(still_depth(c) + eta_at(c), 0.02));
+	float trapped_air = smoothstep(0.15, 0.6, shear);
+	float supercritical = smoothstep(0.8, 1.6, froude);
+	float energy = smoothstep(0.5, 1.5, speed);
+	return energy * max(trapped_air, supercritical);
 }
 
 float eta_at(ivec2 c) {
@@ -217,7 +265,16 @@ void height_pass(ivec2 c, int idx) {
 		hn = 0.0; // NaN / runaway guard: one bad cell would spread over the grid
 	}
 
-	state_out[idx] = vec4(hn, st.y, st.z, st.w);
+	// Flow foam: carried with the water, made where it runs fast and shears, fading over its
+	// persistence.
+	vec2 v_old = centre_velocity(c);
+	float foam = foam_sample(vec2(c) + 0.5 - clamp(v_old, vec2(-0.5 * CELL / DT), vec2(0.5 * CELL / DT)) * DT / CELL);
+	if (FLOW_FOAM > 0.0) {
+		foam += FLOW_FOAM * flow_foam_source(c, v_old) * DT * 2.0; // (full in about half a second)
+	}
+	foam = clamp(foam * exp(-DT / max(FLOW_FOAM_PERSISTENCE, 0.05)), 0.0, 1.0);
+
+	state_out[idx] = vec4(hn, st.y, foam, st.w);
 	height_out[idx] = WATER_LEVEL + hn;
 	vec2 v = vec2(0.5 * (face_u(c) + face_u(c - ivec2(1, 0))), 0.5 * (face_w(c) + face_w(c - ivec2(0, 1))));
 	if (c.x == 0) {
@@ -226,7 +283,7 @@ void height_pass(ivec2 c, int idx) {
 	if (c.y == 0) {
 		v.y = 0.5 * (face_w(c) + q.w / max(still_depth(c), MIN_FLOW_DEPTH));
 	}
-	imageStore(velocity_image, c, vec4(v, 0.0, 0.0));
+	imageStore(velocity_image, c, vec4(v, foam, 0.0)); // (b: flow foam, for materials)
 }
 
 // One face's new live velocity. a, b: its two cells; along_wall: dry ground beside the face

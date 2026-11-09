@@ -139,6 +139,8 @@ public:
 	RID tex_velocity;
 	bool has_base_flux = false;
 	float wall_friction = 1.5f;
+	float flow_foam = 1.0f; // white water made by the live flow (water_ripple.glsl), 0 = none
+	float flow_foam_persistence = 8.0f; // s
 	RID buf_blit_ripple_params, buf_blit_ocean_params; // just {n}, uploaded once at build (grid resolution is fixed per configure())
 	RID uset_blit_ripple, uset_blit_ocean;
 
@@ -251,6 +253,7 @@ public:
 	// The baked current's face fluxes (4 floats a cell, grid_resolution^2 cells; empty = still water) and the wall
 	// friction (1/s) along dry ground, in place: the live velocities restart from the new flow.
 	void rt_set_base_flux(Ref<WaterSolverGPU> p_self, PackedFloat32Array p_flux, float p_wall_friction);
+	void rt_set_flow_foam(Ref<WaterSolverGPU> p_self, float p_strength, float p_persistence);
 
 	// Async readback callbacks: RenderingDevice invokes them with the data as
 	// the runtime arg; Callable::bind APPENDS the bound args, so the data
@@ -381,6 +384,8 @@ public:
 	// configure() of the same grid size. While a current runs the ripple layer never rests.
 	void set_base_flux(const PackedFloat32Array &p_flux, float p_wall_friction);
 	bool has_base_flux() const { return !base_flux.is_empty(); }
+	// White water the live flow makes where it runs fast and shears (0 = none), and how long it lasts (s).
+	void set_flow_foam(float p_strength, float p_persistence);
 	// Live face velocities read back from the GPU (u' on each cell's +x face, w' on its +z face, m/s, on top of the
 	// baked flow); empty until a readback lands with a current running.
 	void get_velocity_grid(Vector<float> &r_velocity) const;

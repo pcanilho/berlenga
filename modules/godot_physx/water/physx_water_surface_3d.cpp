@@ -215,6 +215,7 @@ uniform sampler2D flow_tex : hint_default_black, filter_linear, repeat_disable;
 uniform bool flow_baked = false;
 uniform vec2 current = vec2(0.0);
 uniform float flow_period = 2.0;
+uniform bool flow_foam_live = false; // flow_tex is the live velocity, with flow foam in b
 
 vec2 flow_at(vec2 world_xz) {
 	if (!flow_baked) {
@@ -400,6 +401,11 @@ float foam_at(vec2 world_xz) {
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float fade = fade_r(world_xz, cuv_r);
 	float amount = ocean_tex(ocean_foam_tex, world_xz).r * fade;
+	// White water from the live flow (its velocity texture's b), fading out at the square's edge.
+	if (flow_foam_live) {
+		vec2 a = abs(rel / ripple_domain_size);
+		amount = max(amount, texture(flow_tex, cuv_r).b * (1.0 - smoothstep(0.44, 0.5, max(a.x, a.y))));
+	}
 	// Wake foam at the displaced position, as surface_offset() reads the wake.
 	amount = max(amount, wake_foam(world_xz - choppiness * fade * ocean_tex(ocean_disp_tex, world_xz).rg));
 	// The lace is carried with the foam (the same two phases).
@@ -725,6 +731,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_wall_friction", "friction"), &PhysXWaterSurface3D::set_wall_friction);
 	ClassDB::bind_method(D_METHOD("get_wall_friction"), &PhysXWaterSurface3D::get_wall_friction);
 	ClassDB::bind_method(D_METHOD("get_live_flow_texture"), &PhysXWaterSurface3D::get_live_flow_texture);
+	ClassDB::bind_method(D_METHOD("set_flow_foam", "strength"), &PhysXWaterSurface3D::set_flow_foam);
+	ClassDB::bind_method(D_METHOD("get_flow_foam"), &PhysXWaterSurface3D::get_flow_foam);
+	ClassDB::bind_method(D_METHOD("set_flow_foam_persistence", "seconds"), &PhysXWaterSurface3D::set_flow_foam_persistence);
+	ClassDB::bind_method(D_METHOD("get_flow_foam_persistence"), &PhysXWaterSurface3D::get_flow_foam_persistence);
 	ClassDB::bind_method(D_METHOD("set_choppiness", "choppiness"), &PhysXWaterSurface3D::set_choppiness);
 	ClassDB::bind_method(D_METHOD("get_choppiness"), &PhysXWaterSurface3D::get_choppiness);
 	ClassDB::bind_method(D_METHOD("set_normal_mode", "mode"), &PhysXWaterSurface3D::set_normal_mode);
@@ -834,6 +844,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_period", PROPERTY_HINT_RANGE, "0.25,10,0.05,or_greater,suffix:s"), "set_flow_period", "get_flow_period");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_flow"), "set_live_flow", "is_live_flow");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:1/s"), "set_wall_friction", "get_wall_friction");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam", PROPERTY_HINT_RANGE, "0,4,0.05,or_greater"), "set_flow_foam", "get_flow_foam");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_flow_foam_persistence", "get_flow_foam_persistence");
 
 	ADD_GROUP("Rendering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_extent", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_render_extent", "get_render_extent");
@@ -1008,6 +1020,17 @@ void PhysXWaterSurface3D::set_live_flow(bool p_enabled) {
 	_send_flow_to_solver();
 }
 
+void PhysXWaterSurface3D::set_flow_foam(float p_strength) {
+	flow_foam = MAX(p_strength, 0.0f);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	_update_flow_material();
+}
+
+void PhysXWaterSurface3D::set_flow_foam_persistence(float p_seconds) {
+	flow_foam_persistence = MAX(p_seconds, 0.1f);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence);
+}
+
 void PhysXWaterSurface3D::set_wall_friction(float p_friction) {
 	wall_friction = MAX(p_friction, 0.0f);
 	_send_flow_to_solver();
@@ -1071,6 +1094,7 @@ void PhysXWaterSurface3D::_update_flow_material() {
 	water_material->set_shader_parameter("current", current);
 	water_material->set_shader_parameter("flow_period", flow_period);
 	water_material->set_shader_parameter("flow_baked", live || baked);
+	water_material->set_shader_parameter("flow_foam_live", live && flow_foam > 0.0f);
 	water_material->set_shader_parameter("flow_tex", live ? Variant(live_flow_texture) : (baked ? Variant(flow_texture) : Variant()));
 }
 
@@ -1814,6 +1838,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	solver.configure(s);
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
+	solver.set_flow_foam(flow_foam, flow_foam_persistence);
 	if (!solver.has_device() && !warned_no_device) {
 		warned_no_device = true;
 		WARN_PRINT("PhysXWaterSurface3D: the water compute solver could not start (no RenderingDevice / compute support).");

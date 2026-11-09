@@ -527,6 +527,32 @@ raster speed and path trace the last frames.
 one readback of the state for the CPU while a current runs; a still lake costs the same as the old
 wave equation's one pass did, twice.
 
+## Step 3d as built: white water from the flow (9 Nov)
+
+**How others do it.** Offline and in Houdini, white water is spawned from Ihmsen, Akinci, Akinci
+and Teschner's whitewater potentials (Unified Spray, Foam and Bubbles for Particle-Based Fluids,
+2012): air is trapped where neighbouring water moves past each other, at wave crests, and only
+where the water has the energy to churn. Chentanez and Müller 2010 spawn foam particles on their
+heightfield at steep, rising crests. Shallow-water river tools (Fluid Flux) keep a foam map that
+the simulation fills where flow is fast or turbulent and that advects with the water. Hydraulics
+gives the other trigger: water foams through chutes and hydraulic jumps, where the flow is
+supercritical (Froude number `|v| / sqrt(g h)` above about 1; Chanson's measurements of air
+entrainment in jumps).
+
+**What was built.** A foam amount per cell of the live grid (the state's spare channel), in the
+height pass:
+- carried with the water (semi-Lagrangian, the cell-centre velocity), fading over
+  `flow_foam_persistence` (8 s);
+- made at `flow_foam` times `energy * max(trapped_air, supercritical)`: `trapped_air` from the
+  mean change of velocity to the four neighbours over 25 cm (0.15 to 0.6 m/s), `supercritical`
+  from the Froude number (0.8 to 1.6), `energy` from speed (0.5 to 1.5 m/s), so still and slow
+  water never foams;
+- written to the live velocity texture's blue channel; the surface draws it as foam with the same
+  lace breakup as whitecaps, faded out over the square's last 6 %. Path tracing reads the same.
+
+On the river bench at 1 m/s the rock's two shear layers trail foam lines a few metres downstream
+that wander with the wake. Off: `flow_foam` 0.
+
 ## The full live version (documented, not built)
 
 Paulo asked for this to be written down: the whole river, lake and flooded street as a live
@@ -577,6 +603,10 @@ are the step between: the same tiles, only where a level designer marks them.
   https://matthias-research.github.io/pages/publications/hybridsim_preprinted.pdf
 - Solenthaler et al., SPH Based Shallow Water Simulation, VRIPHYS 2011:
   https://matthias-research.github.io/pages/publications/SPHShallow.pdf
+- Ihmsen, Akinci, Akinci and Teschner, Unified Spray, Foam and Bubbles for Particle-Based Fluids,
+  The Visual Computer 28 (2012)
+- Chanson, air entrainment in hydraulic jumps (University of Queensland reports):
+  https://core.ac.uk/download/15116299.pdf
 - Fedkiw, Stam and Jensen, Visual Simulation of Smoke, SIGGRAPH 2001 (monotone cubic interpolation
   in semi-Lagrangian advection): https://web.stanford.edu/class/cs237d/smoke.pdf
 - Fluid Flux (Unreal shallow-water rivers): https://80.lv/articles/fluid-flux-a-cool-water-simulation-system-for-unreal-engine/

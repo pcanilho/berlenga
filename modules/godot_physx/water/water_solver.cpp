@@ -810,6 +810,11 @@ void WaterSolverGPU::rt_set_base_flux(Ref<WaterSolverGPU> p_self, PackedFloat32A
 	rt_clear_ripples(p_self);
 }
 
+void WaterSolverGPU::rt_set_flow_foam(Ref<WaterSolverGPU> p_self, float p_strength, float p_persistence) {
+	flow_foam = MAX(p_strength, 0.0f);
+	flow_foam_persistence = MAX(p_persistence, 0.05f);
+}
+
 void WaterSolverGPU::rt_clear_ripples(Ref<WaterSolverGPU> p_self) {
 	{
 		MutexLock lock(cache_mtx);
@@ -901,8 +906,8 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 				put_i(44, 0); // pass (water_ripple.glsl): 0 height, then 1 velocity below
 				put_f(48, p_ripple_amplitude);
 				put_f(52, wall_friction);
-				put_f(56, 0.0f);
-				put_f(60, 0.0f);
+				put_f(56, flow_foam);
+				put_f(60, flow_foam_persistence);
 				rd->buffer_update(buf_params, 0, PARAMS_BYTES, b.ptr());
 				params_bytes = b;
 			}
@@ -1429,6 +1434,13 @@ void WaterSolver::set_base_flux(const PackedFloat32Array &p_flux, float p_wall_f
 	}
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_base_flux).bind(gpu, base_flux, wall_friction));
 	queued_disturbed = true;
+}
+
+void WaterSolver::set_flow_foam(float p_strength, float p_persistence) {
+	if (gpu.is_null()) {
+		return;
+	}
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_flow_foam).bind(gpu, p_strength, p_persistence));
 }
 
 void WaterSolver::get_velocity_grid(Vector<float> &r_velocity) const {
