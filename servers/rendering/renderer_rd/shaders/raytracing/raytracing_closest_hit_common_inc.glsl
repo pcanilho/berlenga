@@ -1403,9 +1403,9 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 
 	// Subsurface scattering's light comes through the walk after a bounce, so where the path ends
 	// here (bounce limits, unshaded) or the ray is a transparency peel, the surface is plain diffuse.
-	if (m.subsurface > 0.0 && ((ps.packed_bounces_flags & PEEL_RAY_FLAG) != 0u || surface_is_unshaded(h.geometry_idx) ||
-										  get_total_bounces(ps.packed_bounces_flags) >= RT_GET_MAX_BOUNCES() ||
-										  get_diffuse_bounces(ps.packed_bounces_flags) >= MAX_DIFFUSE_BOUNCES)) {
+	bool path_ends = get_total_bounces(ps.packed_bounces_flags) >= RT_GET_MAX_BOUNCES() ||
+			get_diffuse_bounces(ps.packed_bounces_flags) >= MAX_DIFFUSE_BOUNCES;
+	if ((ps.packed_bounces_flags & PEEL_RAY_FLAG) != 0u || surface_is_unshaded(h.geometry_idx) || path_ends) {
 		m.subsurface = 0.0;
 	}
 
