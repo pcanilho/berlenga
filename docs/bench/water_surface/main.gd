@@ -5,6 +5,7 @@ extends Node3D
 #
 #   --view=beach    the shore from above: shallows, swash and the sea beyond (default)
 #   --view=under    looking down into the shallows, where the floor shows through
+#   --view=river    from above, the rock standing out of the water (with --current)
 #   --raster        raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N      frames rendered before --out is saved (default 12)
@@ -12,6 +13,9 @@ extends Node3D
 #   --out=path.png  save the last frame and quit
 #   --debug=N       path tracing debug view (Environment.pathtracing_debug_mode)
 #   --water=param:value  a water shader parameter, e.g. --water=pathtraced_scattering:Vector3(0,0,0)
+#   --current=X,Z   a current in m/s (flow round the rocks, boxes drift)
+#   --flow-out=path.png  save the solved flow (speed as brightness, direction as hue) and quit
+#   --seq=N         also save the N frames after --frames, as path_0000.png ... (for a GIF)
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
 #
 # Run with --fixed-fps 30 so raster and path traced frames show the same waves.
@@ -25,6 +29,9 @@ var out := ""
 var debug_mode := 0
 var slope_deg := 5.0
 var water_params := {}
+var current := Vector2.ZERO
+var flow_out := ""
+var seq := 0
 var n := 0
 var water: Node3D
 
@@ -38,6 +45,11 @@ func _ready() -> void:
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
+		elif a.begins_with("--current="):
+			var c := a.substr(10).split(",")
+			current = Vector2(float(c[0]), float(c[1]))
+		elif a.begins_with("--flow-out="): flow_out = a.substr(11)
+		elif a.begins_with("--seq="): seq = int(a.substr(6))
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
 		elif a.begins_with("--water="):
 			var wkv := a.substr(8).split(":", true, 1)
@@ -79,6 +91,8 @@ func _ready() -> void:
 	rock_mat.roughness = 0.8
 	for p in [Vector3(-2.5, -1.4, -4.0), Vector3(1.5, -1.9, -7.0), Vector3(3.0, -0.9, -1.5)]:
 		_slab(Vector3(1.2, 1.2, 1.2), p, Vector3(0.3, 0.7, 0.2), rock_mat)
+	# A rock standing out of the water, for a current to go round.
+	_slab(Vector3(2.0, 4.0, 3.0), Vector3(-6.0, -1.0, -9.0), Vector3(0.0, 0.4, 0.0), rock_mat)
 
 	if not ClassDB.class_exists("PhysXWaterSurface3D"):
 		push_error("This build has no PhysX module.")
@@ -93,6 +107,7 @@ func _ready() -> void:
 	water.set("wind_direction", Vector2(-0.3, 1.0))
 	water.set("choppiness", 1.0)
 	water.set("render_extent", 600.0)
+	water.set("current", current)
 	add_child(water)
 	var wm: ShaderMaterial = water.call("get_water_material")
 	for k in water_params:
@@ -119,6 +134,7 @@ func _ready() -> void:
 		body.add_child(b)
 		body.position = Vector3(-2.0 + 2.0 * i, 0.3, -3.0 - 2.0 * i)
 		add_child(body)
+		b.set("water_surface_path", b.get_path_to(water))
 
 	var cam := Camera3D.new()
 	cam.fov = 45
@@ -126,6 +142,8 @@ func _ready() -> void:
 	match view:
 		"under":
 			cam.look_at_from_position(Vector3(0, 3.5, 5.0), Vector3(0, -1.0, -1.5))
+		"river":
+			cam.look_at_from_position(Vector3(-1.0, 9.0, 1.0), Vector3(-4.0, -1.0, -7.0))
 		_:
 			cam.look_at_from_position(Vector3(0, 4.5, 12.0), Vector3(0, -0.5, -6.0))
 
@@ -159,7 +177,28 @@ func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material) -> 
 
 func _process(_delta: float) -> void:
 	n += 1
-	if out != "" and n >= frames:
+	if flow_out != "" and n >= frames:
+		# The flow as the surface samples it, over the simulated square (40 m), 10 cm a pixel.
+		var size := 400
+		var vis := Image.create(size, size, false, Image.FORMAT_RGB8)
+		var top := maxf(current.length() * 2.0, 0.01)
+		for y in size:
+			for x in size:
+				var p := Vector3(-20.0 + 40.0 * (x + 0.5) / size, 0.0, -20.0 + 40.0 * (y + 0.5) / size)
+				var f: Vector3 = water.call("sample_flow", p)
+				var v := Vector2(f.x, f.z)
+				vis.set_pixel(x, y, Color.from_hsv(fposmod(v.angle() / TAU, 1.0), 0.8, clampf(v.length() / top, 0.0, 1.0)))
+		vis.save_png(flow_out)
+		get_tree().quit()
+		return
+	if out != "" and seq > 0 and n >= frames and n < frames + seq:
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(out.get_basename() + "_%04d.png" % (n - frames))
+		return
+	if out != "" and n >= frames + seq:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
+		for b in get_children():
+			if b is RigidBody3D:
+				print("box at ", b.global_position, " flow there ", water.call("sample_flow", b.global_position))
 		get_tree().quit()
