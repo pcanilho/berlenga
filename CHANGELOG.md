@@ -6,6 +6,22 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-8c6c8958 (2026-11-09)
+
+### Changed
+- README: rivers round rocks
+- README: subsurface scattering line and image
+- README: terrain deformation line
+
+### Added
+- PhysXRiver3D: the current parts round rocks (a diffusive-wave stream function solved over the river), with white water on each rock and trailing behind it; obstacle_collision_mask finds rocks for carving rivers (#190)
+- Path tracing: subsurface scattering as a random walk inside the mesh (Cycles' method), for BaseMaterial3D subsurface scattering and `SSS_STRENGTH`; radius set by `rendering/pathtracing/subsurface_scattering_scale`, toggle `rendering/pathtracing/subsurface_scattering` (#189).
+- `TerrainDeformer3D`: non-destructive height brushes over a heightfield ground (Unreal-style edit layers). Keeps and saves the base heights under every brush, composites the stack in order (lower, raise, flatten, add, blended by each brush's mask) and writes only changed vertices, so moving or removing a brush restores the ground. Grounds: a Terrain3D node, called by name and never bundled (edited regions re-uploaded and saved, collision rebuilt), or a `HeightMapShape3D` with an optional mesh rebuilt from the same heights. `base_height_at()` gives brushes such as `PhysXRiver3D` the uncarved ground.
+- `TerrainBrush3D`: circle or rectangle brush, flat or bowl, with a soft edge, for craters, plots and road beds.
+
+### Fixed
+- `test_render_raytracing_capture.cpp` compiles with GCC (a doctest `CHECK` on a bitwise and).
+
 ## build-bae7c3f5 (2026-11-09)
 
 ### Changed
