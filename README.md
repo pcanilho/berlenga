@@ -15,7 +15,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Lights**: 4096 path-traced lights (upstream 64); emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering, hair; textures filter like raster.
-- **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers, camera under water.
+- **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
 - **Physics**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
 - **Open worlds**: camera-relative tracing, persistent instances, culling, mesh LOD.
