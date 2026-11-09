@@ -292,7 +292,7 @@ TEST_CASE("[RTVertexCapture] Rest block mirrors the captured block") {
 	CHECK(layout.block_bytes() == block);
 	CHECK(layout.total_bytes() == 2 * block);
 	const RTVertexCapture::DrawParams params = RTVertexCapture::make_draw_params(layout, 64, Transform3D(), Transform3D(), Vector3());
-	CHECK(params.flags & RTVertexCapture::DRAW_FLAG_REST);
+	CHECK((params.flags & RTVertexCapture::DRAW_FLAG_REST) != 0);
 	// The same point lands at the same relative offset in both blocks, which the hit and the merge rely on.
 	const uint64_t point = layout.point_index(2, 1);
 	CHECK(params.rest_position_offset + point * 3 == params.position_offset + point * 3 + block / 4);

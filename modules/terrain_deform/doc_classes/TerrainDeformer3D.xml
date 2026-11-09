@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TerrainDeformer3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Non-destructive height brushes (rivers, craters, building plots, road beds) stacked over a heightfield ground.
+	</brief_description>
+	<description>
+		Composites a stack of height brushes over the ground's base heights and writes the result into the ground, the edit-layer model of Unreal Engine's Landscape. The deformer remembers the base height of every grid vertex a brush covers, so moving, changing or removing a brush restores the ground it left. Those base heights are saved with the scene, so a ground saved carved can still be restored.
+		Two grounds are supported:
+		- A [code]Terrain3D[/code] node (the Terrain3D addon, installed separately). It is called by name only: the engine does not include or require it. Edited regions are re-uploaded to the height texture array, marked modified so they save, and the addon's collision is rebuilt.
+		- A [CollisionShape3D] holding a [HeightMapShape3D] (not rotated, same scale on X and Z), with an optional [member ground_mesh] that is regenerated from the same heights so it draws and path traces exactly what collides.
+		A brush is any node with a [code]get_carve_brush()[/code] method returning a [Dictionary], or a [code]get_carve_brushes(tile_size)[/code] method returning an [Array] of them (as [code]PhysXRiver3D[/code] does, called with [member brush_tile_size]). Each has [code]rect[/code] ([Rect2], world X and Z), [code]cell_size[/code] ([float]), [code]size[/code] ([Vector2i], samples along X and Z; defaults to [code]rect.size / cell_size[/code]), [code]heights[/code] ([PackedFloat32Array], world Y, row-major with rows along Z), [code]mask[/code] ([PackedFloat32Array], 0 to 1, optional) and [code]mode[/code] ([code]"lower"[/code], [code]"raise"[/code], [code]"flatten"[/code] or [code]"add"[/code]). Samples sit at cell centres: sample [code](i, j)[/code] is at [code]rect.position + (Vector2(i, j) + Vector2(0.5, 0.5)) * cell_size[/code]. [code]"lower"[/code] gives [code]lerp(ground, min(ground, height), mask)[/code], [code]"raise"[/code] the same with [code]max[/code], [code]"flatten"[/code] [code]lerp(ground, height, mask)[/code] and [code]"add"[/code] [code]ground + height * mask[/code]. A NaN height leaves the ground alone. A brush that emits a [code]carve_changed[/code] signal is re-applied automatically when [member auto_apply] is on. [TerrainBrush3D] is a ready-made brush.
+		A brush that measures the ground to place itself (a river following the terrain) should read [method base_height_at] or [method get_base_height], not the carved surface, so re-applying it never digs deeper. Point a [code]PhysXRiver3D[/code]'s [code]base_height_source[/code] at the deformer.
+		Each apply re-uploads the touched Terrain3D regions, so the deformer suits authoring and occasional runtime events (an explosion, a dig), not per-frame deformation.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="add_brush">
+			<return type="void" />
+			<param index="0" name="brush" type="Node" />
+			<description>
+				Appends [param brush] to the top of the stack.
+			</description>
+		</method>
+		<method name="apply">
+			<return type="int" />
+			<description>
+				Composites every brush over the base heights and writes the changed vertices into the ground. Returns how many grid vertices changed; [code]0[/code] when nothing did.
+			</description>
+		</method>
+		<method name="base_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_xz" type="Vector2" />
+			<description>
+				Same as [method get_base_height], taking world X and Z. This is the call a [code]PhysXRiver3D[/code] makes on its [code]base_height_source[/code].
+			</description>
+		</method>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Restores every carved vertex to its base height and forgets the base heights.
+			</description>
+		</method>
+		<method name="get_backend" qualifiers="const">
+			<return type="int" enum="TerrainDeformer3D.Backend" />
+			<description>
+				The kind of ground [member terrain] points to.
+			</description>
+		</method>
+		<method name="get_base_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The ground's height at [param global_position] (X and Z) without any brush, interpolated between grid vertices. NaN outside the ground.
+			</description>
+		</method>
+		<method name="get_carved_vertex_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many grid vertices the deformer keeps a base height for.
+			</description>
+		</method>
+		<method name="get_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The ground's current height at [param global_position] (X and Z), interpolated between grid vertices. NaN outside the ground.
+			</description>
+		</method>
+		<method name="queue_apply">
+			<return type="void" />
+			<description>
+				Applies once at the end of the frame, however many times it is called.
+			</description>
+		</method>
+		<method name="remove_brush">
+			<return type="void" />
+			<param index="0" name="brush" type="Node" />
+			<description>
+				Removes [param brush] from the stack. The ground under it is restored on the next apply.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="auto_apply" type="bool" setter="set_auto_apply" getter="is_auto_apply" default="true">
+			If [code]true[/code], applies when the node is ready and whenever a brush emits [code]carve_changed[/code] or the stack changes.
+		</member>
+		<member name="brush_tile_size" type="float" setter="set_brush_tile_size" getter="get_brush_tile_size" default="64.0">
+			Tile size, in metres, passed to brushes that return their carve as tiles ([code]get_carve_brushes(tile_size)[/code]).
+		</member>
+		<member name="brushes" type="NodePath[]" setter="set_brushes" getter="get_brushes" default="[]">
+			The brush stack, bottom first. Later brushes composite over earlier ones.
+		</member>
+		<member name="ground_mesh" type="NodePath" setter="set_ground_mesh" getter="get_ground_mesh" default="NodePath(&quot;&quot;)">
+			For a [HeightMapShape3D] ground: a [MeshInstance3D] whose mesh is rebuilt from the heights after each apply (world-space UVs in metres; the first surface's material is kept).
+		</member>
+		<member name="terrain" type="NodePath" setter="set_terrain" getter="get_terrain" default="NodePath(&quot;&quot;)">
+			The ground: a [code]Terrain3D[/code] node, or a [CollisionShape3D] with a [HeightMapShape3D]. Changing it restores the previous ground first.
+		</member>
+	</members>
+	<signals>
+		<signal name="applied">
+			<param index="0" name="vertices" type="int" />
+			<description>
+				Emitted after an apply that changed [param vertices] grid vertices.
+			</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="BACKEND_NONE" value="0" enum="Backend">
+			No usable ground.
+		</constant>
+		<constant name="BACKEND_TERRAIN3D" value="1" enum="Backend">
+			A [code]Terrain3D[/code] node.
+		</constant>
+		<constant name="BACKEND_HEIGHT_MAP" value="2" enum="Backend">
+			A [CollisionShape3D] with a [HeightMapShape3D].
+		</constant>
+	</constants>
+</class>
