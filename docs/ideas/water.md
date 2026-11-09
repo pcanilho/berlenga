@@ -594,6 +594,147 @@ one tile set; turning it into the full version is mostly the tile manager (alloc
 streaming) around it, plus sources and sinks. Hand-placed live areas (a flood scene, a hero river)
 are the step between: the same tiles, only where a level designer marks them.
 
+## Step 4 research: rivers from a path (9 Nov)
+
+Goal: draw a path, get a river. Its surface runs downhill, it is as wide and deep as the path
+says, it flows along the path and round rocks, it foams where it is steep, it carries what floats
+in it, and it joins a lake or the sea. Everything built in steps 1 to 3 (path-traced medium,
+caustics, baked flow, live flow, white water, buoyancy against the current) should work on it
+unchanged.
+
+### How engines and tools build rivers
+
+| Who | Authoring | Surface along the river | Ground | Flow | Physics | Joins |
+|---|---|---|---|---|---|---|
+| Unreal Water plugin (`WaterBodyRiver`) | Spline; per point `Depth`, `River Width`, `Velocity` (sign = direction), audio intensity; optional curl noise | Points may have different heights (lakes may not); no waves on rivers | Carves the Landscape through an edit-layer brush: elevation curve (default S-curve) times per-point depth, channel edge offset, ramp width, falloff by angle or width, blend modes (alpha, min, max), blur, terracing | Velocity written to a flow map along the spline | Depth and flow are queryable for gameplay and buoyancy | Rivers are meant to connect lakes and the sea; "River to Lake" and "River to Ocean" transition materials; all bodies share one water mesh and one water info texture |
+| Crest (Unity) | Spline at the water surface; per-point flow speed | `RegisterHeightInput` sets the water level from the spline | None | `RegisterFlowInput` moves the water along the spline; FFT waves can run along it | Shared with the ocean | Lakes are spline-shaped height inputs over the global sea; example scene joins two lakes with a river |
+| Waterways (Godot 3 addon) | Bezier `Curve3D` with a width per point, step count | Follows the curve | None; the river sits where it is drawn | Bakes a flow map in the ribbon's UV2: raycasts the collision for obstacles, distance field, gradient turned 90 degrees, a "pressure" pass for narrows, a foam pass | None built in | None |
+| Horizon Zero Dawn (Houdini tool, 2017 talk) | A curve plus the terrain | Curve snapped to terrain, then a running minimum along it: "it only goes down; rather than going over the hill, it cuts the hill" | Edges projected back to the terrain; width from a ramp, narrower where steep (canyons); bed let "slide down" the terrain | Vertex colour flow | | Reservoirs and cascades where it would otherwise climb |
+| Horizon Forbidden West (Malan 2022) | As above | Local Houdini sims baked to flipbook deformation volumes (128 layers) for standing waves round rocks, eddies, ripples, placed procedurally and reviewed by artists | | | | Waterfalls: separate system, not covered |
+| BeamNG, Torque 3D | 3D spline; width per node (BeamNG depth is global; Torque per node) | Flat by default; nodes rotated to slope it (Torque) | None; artist hides the edges under terrain by hand | One scalar `FlowMagnitude` force for the whole river | Density and viscosity for buoyancy and drag | None |
+| Proland (Yu et al. 2009) | A graph of bank curves with a stream-function value per bank, plus an axis curve | Terrain mesh | Elevation layer under the river | Velocity from the stream function interpolated between the nearest banks, evaluated per point, no global solve; wave sprites carried by screen-space particles | | |
+
+What they agree on: the river is a spline with width, depth and speed per point; its surface is
+not flat; flow follows the spline; the river owns its own surface mesh. Where they differ is the
+ground: Unreal carves its own landscape, Horizon edits the terrain in Houdini, everyone else sits on
+whatever ground is there.
+
+### What papers add
+
+- **Peytavie et al. 2019, Procedural Riverscapes.** River types after Rosgen (A, B, C, D, E, F, G).
+  Cross-sections are unit-area templates scaled per point by discharge over speed (continuity). Bends
+  get an asymmetric section (deep on the outside, a shallow bar on the inside), straights a
+  symmetric one, braided reaches several channels. The surface is checked to fall monotonically
+  along the river; where the bed is steeper than a threshold they level it and insert a cascade with
+  a plunge pool. Rapids: turbulence on steep straights; vortices behind rocks.
+- **Génevaux et al. 2013, Terrain Generation Using Procedural Models Based on Hydrology.** River
+  primitives blended into the terrain: the river's height is its axis height plus a cross profile of
+  the distance to the axis, blended with the ground by a compact weight `(1 - d^2/r^2)^k`. Also the
+  discharge law `Q = 0.42 A^0.69` (drainage area A, from Dunne and Leopold).
+- **Kipfer and Westermann 2006, Realistic and Interactive Simulation of Rivers.** SPH particles
+  over terrain with a surface built from them, 3,000 to 20,000 particles at 12 to 68 fps. Shows a
+  whole river can be simulated, at a particle budget that would not cover a game river; the
+  heightfield route (Chentanez and Müller, step 3c) is what scales.
+- **Yu, Neyret, Bruneton and Holzschuch 2009.** The bank stream function (step 3 above): the same
+  quantity the fork already solves at bake time.
+
+### What hydraulics adds
+
+Rivers obey a few rules that make the authoring easier and the result believable:
+
+- **Continuity.** Without tributaries the discharge `Q = width x depth x speed` is the same all
+  along the river. So narrows are fast, pools are slow, and the author only has to give the flow
+  once: set `discharge`, and each point's width and depth decide its speed. (A tributary is a second
+  river whose mouth adds to it.)
+- **Manning's equation** (uniform open-channel flow): `v = R^(2/3) S^(1/2) / n`, with `R` the
+  hydraulic radius (area over wetted perimeter, about the depth for a wide river), `S` the surface
+  slope and `n` the roughness (about 0.03 for a clean natural channel, 0.05 for a weedy or stony one,
+  0.013 for concrete). With `Q` and the width known it gives the depth for each slope; or with the
+  depth known, the speed. Example: 6 m wide, 0.8 m deep, `n = 0.035`: slope 0.2% gives 0.9 m/s
+  (Froude 0.3, calm); slope 3% gives 3.6 m/s (Froude 1.3, supercritical). The white water from step
+  3d already keys on Froude above 0.8, so steep reaches foam by themselves.
+- **Across the channel** (divided-channel method, Chow 1959): with the same slope everywhere across,
+  each strip's discharge goes as `d^(5/3)`, so the flow is fastest over the deep middle and slows to
+  nothing at the banks. Integrated across, that is the stream function's profile from bank to bank:
+  `psi(n) = Q * int_0^n d^(5/3) / int_0^W d^(5/3)`.
+- **Leopold hydraulic geometry** (Leopold and Maddock 1953): downstream, width grows as `Q^0.5`, depth
+  as `Q^0.4`, speed as `Q^0.1`. Gives sensible defaults when the author only sets the discharge.
+- **Slope limits.** Gravel rivers run about 0.1% to 2%; above about 4% to 6% a river becomes steps
+  and pools (Rosgen A); where the ground drops more steeply than that, the surface should step: a
+  cascade or a fall, as Peytavie and Horizon do.
+
+### Design for the fork
+
+**A `PhysXRiver3D` node built on the parts we have.** The key move, from Waterways: run everything in
+the river's own *strip* coordinates. Unroll the river along its arc length `s` and across its width
+`n`; the strip is a rectangle. In the strip:
+
+- the **baked flow** is the stream-function solve already in `_bake_flow()`, with the left bank held
+  at 0 and the right bank at `Q`, the cross profile from the `d^(5/3)` rule as the start, rocks found
+  by raycast as before;
+- the **live flow** is the same shallow-water solver (step 3c) on a window of the strip around the
+  player; heights are measured from the river's rest surface, which slopes, so the solver itself does
+  not need to know about slope (gravity and bed friction balance in the base flow; the solver works
+  on the disturbance, exactly as on the flat surface today). Bends add metric terms of order
+  `width / radius`, small for any river that is not a hairpin; ignored at first;
+- **white water**, flow foam and the two-phase flowed normals read the strip textures through the
+  ribbon's UV, so the shader code is shared with `PhysXWaterSurface3D`;
+- the **path tracer** sees an ordinary mesh with the water medium (steps 1 to 3a), so bending, depth
+  tint, murk and caustics come for free. The surface is real geometry, so a slope or a step is no
+  problem for it.
+
+**Surface height.** Each path point's height is snapped to the ground (or taken from the path), then
+a running minimum downstream, so it never climbs (Horizon, Peytavie). Where the drop between points
+is steeper than `max_slope` the surface steps: a cascade, with a plunge pool and white water at its
+foot. Between points the surface follows Manning's slope.
+
+**Authoring.** `Curve3D` points carry `width`, `depth` and optionally `speed`; one `discharge` for the
+river; `roughness` (Manning `n`). Two of width, depth and speed decide the third by continuity. Points
+are spaced by curvature for the ribbon (Waterways' step count), about 4 flow texels per metre (Valve's
+density).
+
+**Buoyancy and physics.** `PhysXBuoyancy3D` today points at one `PhysXWaterSurface3D`. The river
+offers the same `sample_height()` and `sample_flow()` (height from the strip, flow from the strip
+textures turned back into world space), and buoyancy accepts either body, so floaters drift
+downstream, catch on rocks and spin in eddies. The river's CPU copy is the same strip grid.
+
+**Joins.** The river's last point snaps to the lake's or sea's `water_level`; its ribbon fades into
+that surface over a short band (Unreal's transition materials do the same); its outflow later feeds
+the lake's current as an inflow jet. Tributaries: a river whose mouth lies on another river adds its
+discharge downstream.
+
+**Level of detail.** The ribbon is cut into chunks along `s` with visibility ranges; flow textures
+are per chunk; the live window and the CPU copy only exist near the player. A 5 km river at 4 texels
+per metre and 30 m wide is about 2.4 M texels of baked flow (about 19 MB at RGBA16F), streamed by
+chunk.
+
+### The open choice: what does the river do to the ground?
+
+1. **Sit on the ground.** The river raycasts the existing collision for its bed and banks, as the
+   seabed and rocks do today. Works on any terrain, mesh or city canal, needs no terrain system; the
+   ground must already have a channel, or the water clips into it. Edges where the surface meets the
+   ground get the shore fade and foam that lakes already have.
+2. **Also build a channel.** As 1, plus the node can generate its own bed and bank mesh with
+   collision from the cross-section (trapezoid, or asymmetric at bends after Peytavie), skirted down
+   into the ground. Good for flat ground, blockouts and city canals.
+3. **Carve the terrain.** Unreal's way: the river writes its channel into a terrain heightmap. Godot
+   has no terrain in core; it would need an adapter per terrain addon (Terrain3D, HTerrain) or an
+   exported height image to import. Most work, and the one an open world wants long term.
+
+Recommendation: 1 and 2 now (2 as an option on the same node); 3 later as an adapter, since its
+input is the same cross-section that 2 builds.
+
+### Plan
+
+1. `PhysXRiver3D`: path, per-point width/depth/speed, discharge, roughness; surface by running
+   minimum and Manning; ribbon mesh with strip UVs; shared water material (path traced).
+2. Baked flow in the strip: `d^(5/3)` cross profile, stream-function solve round rocks; flowed
+   normals and foam.
+3. Cascades where the drop is too steep; white water from Froude at their foot.
+4. Buoyancy reads rivers; `sample_height()` / `sample_flow()` on the river.
+5. Live flow window in the strip (solver reused); joins to a lake or the sea.
+6. Option: the generated channel (choice 2). Later: terrain carving adapter (choice 3).
+
 ## Sources
 
 - Chentanez and Müller, Real-time Simulation of Large Bodies of Water with Small Scale Details, SCA
@@ -675,3 +816,19 @@ are the step between: the same tiles, only where a level designer marks them.
 - Hanika, Droske and Fascione, Manifold Next Event Estimation, EGSR 2015.
 - Blender manual, Cycles shadow caustics (MNEE): https://docs.blender.org/manual/en/latest/render/cycles/object_settings/object_data.html#caustics
 - Jensen, Realistic Image Synthesis Using Photon Mapping, 2001.
+- Epic, Water body actors (river spline, landscape carving):
+  https://dev.epicgames.com/documentation/unreal-engine/water-body-actors-in-unreal-engine
+- Crest, water bodies and water inputs: https://crest.readthedocs.io/en/4.20/user/water-bodies.html ;
+  https://crest.readthedocs.io/en/4.20/user/water-inputs.html
+- BeamNG river editor: https://documentation.beamng.com/world_editor/tools/river_editor/
+- Torque 3D river editor:
+  https://docs.torque3d.org/for-designers/editors/world-editor/spline-based-tools/river-editor
+- Peytavie, Dupont, Guérin, Cortial, Benes, Gain, Galin, Procedural Riverscapes, CGF 2019:
+  https://www.cs.purdue.edu/homes/bbenes/papers/Peytavie19CGF.pdf
+- Génevaux, Galin, Guérin, Peytavie, Benes, Terrain Generation Using Procedural Models Based on
+  Hydrology, ACM ToG 2013: https://www.cs.purdue.edu/homes/bbenes/papers/Genevaux13ToG.pdf
+- Kipfer and Westermann, Realistic and Interactive Simulation of Rivers, Graphics Interface 2006.
+- Chow, Open-Channel Hydraulics, McGraw-Hill 1959 (Manning's equation, divided-channel method).
+- Leopold and Maddock, The Hydraulic Geometry of Stream Channels, USGS Professional Paper 252, 1953.
+- Rosgen, A Classification of Natural Rivers, Catena 22, 1994.
+- Dunne and Leopold, Water in Environmental Planning, 1978.
