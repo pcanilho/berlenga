@@ -14,7 +14,8 @@ Godot 4 with Vulkan path tracing and DLSS Ray Reconstruction, built for large op
 
 - **Many lights**: 4096 path-traced lights (upstream 64), emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
-- **Materials**: clearcoat, back lighting, thin-glass transmission, water refraction and depth tint in the path tracer; textures filter like raster.
+- **Materials**: clearcoat, back lighting and thin-glass transmission in the path tracer; textures filter like raster.
+- **Water**: refraction and depth tint in the path tracer.
 - **Exposure**: histogram metering and local exposure that keep night scenes dark.
 - **Physics**: PhysX 5 next to Jolt, with cloth, tearing, destruction and path-traced smoke.
 - **Open worlds**: far-origin precision, persistent ray tracing instances, mesh LOD in the tracer.
@@ -35,17 +36,14 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Back lighting** (`rendering/pathtracing/back_lighting`): light passes through leaves, paper and curtains, back light texture included, from lights and bounces, into coloured shadows.
 - **Transmission** (new BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass passes light straight through, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): coated paint as raster shades it, coat texture included, with traced coat reflections.
-- **Refraction** (`rendering/pathtracing/refraction`): water and glass blocks (Transmission, thin-walled off) bend light by their IOR, reflect it totally at grazing angles, and darken and tint with depth; glTF `KHR_materials_volume` and `KHR_materials_ior`.
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` pass light into their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
-<details><summary>Images: transmission, refraction, back lighting, clearcoat, layer textures</summary>
+<details><summary>Images: transmission, back lighting, clearcoat, layer textures</summary>
 
 ![Green glass panes before coloured spheres: raster, path traced with transmission on (the spheres show through and the panes cast green-tinted light), and off (grey opaque panes, dark shadows)](docs/media/transmission.jpg)
-
-![A pool with a checkered floor and coloured posts: with refraction off the water is clear and the posts run straight; with it on the posts shift where they enter the water and the floor turns blue and darker with depth](docs/media/water-refraction.jpg)
 
 ![Back-lit leaf cards and a red curtain: green and red light on the floor with back lighting on, plain shadows with it off](docs/media/back-lighting.jpg)
 
@@ -53,9 +51,16 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ![Checkered back light and transmission textures: raster casts plain shadows, the path tracer casts checkered coloured ones](docs/media/layer-textures.jpg)
 
-Look at the floor under the glass and cards, the posts shifting where they enter the water, the highlights on the spheres, and the checkered shadows.
+Look at the floor under the glass and cards, the highlights on the spheres, and the checkered shadows.
 
 </details>
+
+### Water
+![A pool with a checkered floor and coloured posts: with refraction off the water is clear and the posts run straight; with it on the posts shift where they enter the water and the floor turns blue and darker with depth](docs/media/water-refraction.jpg)
+
+*Refraction off, then on: the posts shift where they enter the water and the floor darkens and tints with depth.*
+
+- **Refraction** (`rendering/pathtracing/refraction`): water and glass blocks (Transmission, thin-walled off) bend light by their IOR, reflect it totally at grazing angles, and darken and tint with depth; glTF `KHR_materials_volume` and `KHR_materials_ior`.
 
 ### Exposure
 - **Histogram metering** (`rendering/camera/auto_exposure/metering`): lamps in view no longer darken the scene.
