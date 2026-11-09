@@ -32,8 +32,10 @@
 
 #include "scene/3d/path_3d.h"
 #include "scene/resources/material.h"
+#include "water_solver.h"
 
 class MeshInstance3D;
+class Texture2DRD;
 
 // A river drawn as a path. Each curve point carries a width and optionally a
 // depth; the river carries one discharge (m^3/s). The surface never runs
@@ -69,6 +71,7 @@ public:
 		LocalVector<float> speed_at; // along-stream speed per cross sample
 		LocalVector<float> across_at; // speed towards the left bank per cross sample
 		LocalVector<float> foam_at; // white water per cross sample
+		LocalVector<float> psi_at; // stream function (m^3/s from the right bank) per cross sample
 	};
 
 private:
@@ -93,6 +96,29 @@ private:
 	float carve_cell_size = 0.5f;
 	NodePath base_height_source;
 
+	// The live window: shallow-water simulation on a square round the camera.
+	bool live_flow = false;
+	float live_domain_size = 48.0f; // m
+	int live_grid_resolution = 192;
+	float wall_friction = 1.5f; // 1/s, along rocks and banks
+	float flow_foam = 0.25f; // a river runs fast everywhere: less than the sea's 1
+	float flow_foam_persistence = 4.0f; // s
+	float live_damping = 0.05f;
+	NodePath live_follow; // empty: the viewport's camera
+
+	WaterSolver live_solver;
+	bool live_configured = false;
+	bool live_bound = false;
+	bool live_fields_dirty = false;
+	Vector2 live_center;
+	Ref<Texture2DRD> live_height_tex;
+	Ref<Texture2DRD> live_flow_tex;
+	Vector<float> live_height_cache;
+	Vector<float> live_velocity_cache;
+	PackedFloat32Array live_depth; // still-water depth per window cell, for the tilt fit
+	Vector3 live_tilt; // the window's mean plane (h0, dh/dx, dh/dz), taken out
+	int live_refresh = 0;
+
 	MeshInstance3D *mesh_instance = nullptr;
 	LocalVector<Section> sections;
 	bool build_pending = false;
@@ -104,6 +130,15 @@ private:
 	void _build_mesh();
 	void _on_curve_changed();
 	void _solve_flow(float p_ds);
+	bool _strip_at(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const;
+	float _psi_at(const Vector3 &p_world, float &r_depth) const;
+	void _live_fields(PackedFloat32Array &r_depth, PackedFloat32Array &r_flux) const;
+	void _live_update(double p_delta);
+	void _live_stop();
+	void _live_material();
+	void _live_fit_tilt();
+	Vector2 _live_velocity_at(const Vector3 &p_world) const;
+	float _live_height_at(const Vector3 &p_world) const;
 	bool _ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y, uint32_t p_mask) const;
 	bool _base_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y) const;
 	float _carve_target(const Section &p_sec, float p_n, float &r_mask) const;
@@ -155,6 +190,28 @@ public:
 	// The channel as height brushes for a terrain deformer, one per square tile
 	// of p_tile_size m (world XZ) the river touches.
 	Array get_carve_brushes(float p_tile_size = 64.0f) const;
+	void set_live_flow(bool p_enabled);
+	bool get_live_flow() const { return live_flow; }
+	void set_live_domain_size(float p_size);
+	float get_live_domain_size() const { return live_domain_size; }
+	void set_live_grid_resolution(int p_n);
+	int get_live_grid_resolution() const { return live_grid_resolution; }
+	void set_wall_friction(float p_friction);
+	float get_wall_friction() const { return wall_friction; }
+	void set_flow_foam(float p_strength);
+	float get_flow_foam() const { return flow_foam; }
+	void set_flow_foam_persistence(float p_seconds);
+	float get_flow_foam_persistence() const { return flow_foam_persistence; }
+	void set_live_damping(float p_damping);
+	float get_live_damping() const { return live_damping; }
+	void set_live_follow(const NodePath &p_path);
+	NodePath get_live_follow() const { return live_follow; }
+	// Where the live window is (world xz centre), and whether it runs.
+	Vector2 get_live_center() const { return live_center; }
+	bool is_live_running() const { return live_configured && live_solver.is_available(); }
+	// A floating body pushing the live water (as PhysXWaterSurface3D::submit_sphere()).
+	void submit_sphere(int p_owner, const Vector3 &p_world_pos, float p_radius, float p_strength = 1.0f);
+	void clear_sphere(int p_owner);
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
 

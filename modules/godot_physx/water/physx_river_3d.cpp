@@ -34,7 +34,10 @@
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_set.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/main/viewport.h"
+#include "scene/resources/texture_rd.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/shader.h"
@@ -79,6 +82,18 @@ uniform float foam_detail_scale = 1.5;
 uniform float foam_breakup : hint_range(0.0, 1.0) = 0.6;
 // The surface fades out over this much water depth (m) at the waterline.
 uniform float edge_softness : hint_range(0.0, 0.5, 0.005) = 0.06;
+// The live window (set by PhysXRiver3D while live_flow runs): a square of
+// shallow-water simulation round the camera. Height is the disturbance on the
+// river's own surface; flow is the total velocity (rg, world xz, m/s) with the
+// white water it made in b.
+uniform bool live_enabled = false;
+uniform vec2 live_center = vec2(0.0);
+uniform vec2 live_size = vec2(48.0);
+uniform vec2 live_texel = vec2(0.25);
+// The window's mean plane (h0, dh/dx, dh/dz about live_center), taken out.
+uniform vec3 live_tilt = vec3(0.0);
+uniform sampler2D live_height_tex : hint_default_black, filter_linear, repeat_disable;
+uniform sampler2D live_flow_tex : hint_default_black, filter_linear, repeat_disable;
 
 varying vec3 v_world;
 varying vec2 v_flow;
@@ -131,24 +146,56 @@ float flow_phases(vec2 p, vec2 flow, out vec2 o_a, out vec2 o_b) {
 	return 1.0 - abs(1.0 - 2.0 * p_a);
 }
 
+// How far inside the live window a world point is: 1 inside, easing to 0 over
+// its outer edge; and its texture coordinate.
+float live_weight(vec2 world_xz, out vec2 cuv) {
+	vec2 rel = (world_xz - live_center) / live_size;
+	cuv = clamp(rel + 0.5, vec2(0.0), vec2(1.0));
+	vec2 a = abs(rel);
+	return live_enabled ? 1.0 - smoothstep(0.44, 0.5, max(a.x, a.y)) : 0.0;
+}
+
 void vertex() {
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_flow = (MODEL_MATRIX * vec4(UV2.x, 0.0, UV2.y, 0.0)).xz;
 	v_info = COLOR;
 	v_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	vec2 cuv;
+	float live = live_weight(v_world.xz, cuv);
+	if (live > 0.0) {
+		// The live water's rise and fall on the river's surface.
+		vec2 off = v_world.xz - live_center;
+		float h = (textureLod(live_height_tex, cuv, 0.0).r - (live_tilt.x + dot(live_tilt.yz, off))) * live * step(0.0, v_info.r * 4.0 - 1.0);
+		VERTEX.y += h;
+		v_world.y += h;
+	}
 }
 
 void fragment() {
+	vec2 flow = v_flow;
+	float live_foam = 0.0;
+	vec2 live_slope = vec2(0.0);
+	vec2 cuv;
+	float live = live_weight(v_world.xz, cuv);
+	if (live > 0.0) {
+		vec4 lf = texture(live_flow_tex, cuv);
+		flow = mix(flow, lf.rg, live);
+		live_foam = lf.b * live;
+		vec2 du = live_texel / live_size;
+		float hx = texture(live_height_tex, cuv + vec2(du.x, 0.0)).r - texture(live_height_tex, cuv - vec2(du.x, 0.0)).r;
+		float hz = texture(live_height_tex, cuv + vec2(0.0, du.y)).r - texture(live_height_tex, cuv - vec2(0.0, du.y)).r;
+		live_slope = (vec2(hx, hz) / (2.0 * live_texel) - live_tilt.yz) * live;
+	}
 	vec2 p = v_world.xz * ripple_scale;
 	vec2 o_a;
 	vec2 o_b;
-	float w = flow_phases(v_world.xz, v_flow, o_a, o_b);
+	float w = flow_phases(v_world.xz, flow, o_a, o_b);
 	// Surface-gradient blend of the two phases, renormalised so the crossover
 	// doesn't flatten the ripples (phase B is shifted half a tile, so the two are
 	// close to independent).
 	vec2 slope = (ripple_slope(p - o_a * ripple_scale) * w + ripple_slope(p - o_b * ripple_scale + vec2(13.1, 7.7)) * (1.0 - w))
 			/ sqrt(w * w + (1.0 - w) * (1.0 - w));
-	float speed = length(v_flow);
+	float speed = length(flow);
 	float depth = v_info.r * 4.0 - 1.0;
 	// Calm at the waterline: ripples die out over the last 15 cm.
 	slope *= (ripple_strength + ripple_speed_strength * speed) * smoothstep(0.0, 0.15, depth);
@@ -156,6 +203,7 @@ void fragment() {
 	if (n_mesh.y < 0.0) {
 		n_mesh = -n_mesh;
 	}
+	slope += live_slope * smoothstep(0.0, 0.15, depth);
 	vec3 world_normal = normalize(n_mesh - vec3(slope.x, 0.0, slope.y));
 
 	// White water, broken into lace that rides the current.
@@ -164,7 +212,7 @@ void fragment() {
 	float lace_a = 0.5 * r_noise(q_a) + 0.3 * r_noise(q_a * 2.7 + 17.0) + 0.2 * r_noise(q_a * 7.3 - 5.0);
 	float lace_b = 0.5 * r_noise(q_b) + 0.3 * r_noise(q_b * 2.7 + 17.0) + 0.2 * r_noise(q_b * 7.3 - 5.0);
 	float lace = lace_a * w + lace_b * (1.0 - w);
-	float foam = clamp(v_info.g * (1.0 + foam_breakup) - lace * foam_breakup, 0.0, 1.0);
+	float foam = clamp(max(v_info.g, live_foam) * (1.0 + foam_breakup) - lace * foam_breakup, 0.0, 1.0);
 	foam = foam * foam * (3.0 - 2.0 * foam);
 
 #if defined(RT)
@@ -201,6 +249,15 @@ constexpr float CASCADE_MIN_DROP = 0.15f; // m
 
 } // namespace
 
+namespace {
+float cross_value(const PhysXRiver3D::Section &p_sec, const LocalVector<float> &p_values, float p_n, float p_margin, int p_m) {
+	const float half = 0.5f * p_sec.width + p_margin;
+	const float u = CLAMP((p_n + half) / (2.0f * half) * p_m, 0.0f, (float)p_m);
+	const int j = MIN((int)u, p_m - 1);
+	return Math::lerp(p_values[j], p_values[j + 1], u - j);
+}
+} // namespace
+
 void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_widths", "widths"), &PhysXRiver3D::set_widths);
 	ClassDB::bind_method(D_METHOD("get_widths"), &PhysXRiver3D::get_widths);
@@ -228,6 +285,26 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bank_margin"), &PhysXRiver3D::get_bank_margin);
 	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXRiver3D::set_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXRiver3D::get_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_live_flow", "enabled"), &PhysXRiver3D::set_live_flow);
+	ClassDB::bind_method(D_METHOD("get_live_flow"), &PhysXRiver3D::get_live_flow);
+	ClassDB::bind_method(D_METHOD("set_live_domain_size", "size"), &PhysXRiver3D::set_live_domain_size);
+	ClassDB::bind_method(D_METHOD("get_live_domain_size"), &PhysXRiver3D::get_live_domain_size);
+	ClassDB::bind_method(D_METHOD("set_live_grid_resolution", "resolution"), &PhysXRiver3D::set_live_grid_resolution);
+	ClassDB::bind_method(D_METHOD("get_live_grid_resolution"), &PhysXRiver3D::get_live_grid_resolution);
+	ClassDB::bind_method(D_METHOD("set_wall_friction", "friction"), &PhysXRiver3D::set_wall_friction);
+	ClassDB::bind_method(D_METHOD("get_wall_friction"), &PhysXRiver3D::get_wall_friction);
+	ClassDB::bind_method(D_METHOD("set_flow_foam", "strength"), &PhysXRiver3D::set_flow_foam);
+	ClassDB::bind_method(D_METHOD("get_flow_foam"), &PhysXRiver3D::get_flow_foam);
+	ClassDB::bind_method(D_METHOD("set_flow_foam_persistence", "seconds"), &PhysXRiver3D::set_flow_foam_persistence);
+	ClassDB::bind_method(D_METHOD("get_flow_foam_persistence"), &PhysXRiver3D::get_flow_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_live_damping", "damping"), &PhysXRiver3D::set_live_damping);
+	ClassDB::bind_method(D_METHOD("get_live_damping"), &PhysXRiver3D::get_live_damping);
+	ClassDB::bind_method(D_METHOD("set_live_follow", "path"), &PhysXRiver3D::set_live_follow);
+	ClassDB::bind_method(D_METHOD("get_live_follow"), &PhysXRiver3D::get_live_follow);
+	ClassDB::bind_method(D_METHOD("get_live_center"), &PhysXRiver3D::get_live_center);
+	ClassDB::bind_method(D_METHOD("is_live_running"), &PhysXRiver3D::is_live_running);
+	ClassDB::bind_method(D_METHOD("submit_sphere", "owner", "world_pos", "radius", "strength"), &PhysXRiver3D::submit_sphere, DEFVAL(1.0f));
+	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &PhysXRiver3D::clear_sphere);
 	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &PhysXRiver3D::set_water_material);
 	ClassDB::bind_method(D_METHOD("get_water_material"), &PhysXRiver3D::get_water_material);
 	ClassDB::bind_method(D_METHOD("set_carve", "carve"), &PhysXRiver3D::set_carve);
@@ -264,6 +341,15 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.01,0.15,0.001"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_slope", PROPERTY_HINT_RANGE, "0.005,1,0.005,or_greater"), "set_max_slope", "get_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
+	ADD_GROUP("Live flow", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_flow"), "set_live_flow", "get_live_flow");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_domain_size", PROPERTY_HINT_RANGE, "8,256,1,or_greater,suffix:m"), "set_live_domain_size", "get_live_domain_size");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "live_grid_resolution", PROPERTY_HINT_RANGE, "32,512,1"), "set_live_grid_resolution", "get_live_grid_resolution");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,suffix:1/s"), "set_wall_friction", "get_wall_friction");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam", PROPERTY_HINT_RANGE, "0,4,0.05"), "set_flow_foam", "get_flow_foam");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_foam_persistence", PROPERTY_HINT_RANGE, "0.1,60,0.1,suffix:s"), "set_flow_foam_persistence", "get_flow_foam_persistence");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_damping", PROPERTY_HINT_RANGE, "0,1,0.005"), "set_live_damping", "get_live_damping");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "live_follow", PROPERTY_HINT_NODE_TYPE, "Node3D"), "set_live_follow", "get_live_follow");
 	ADD_GROUP("Carve", "carve_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "carve"), "set_carve", "get_carve");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "carve_depth", PROPERTY_HINT_RANGE, "0,20,0.05,or_greater,suffix:m"), "set_carve_depth", "get_carve_depth");
@@ -309,11 +395,432 @@ RIVER_SETTER(base_height_source, const NodePath &, base_height_source, p_value)
 
 #undef RIVER_SETTER
 
+void PhysXRiver3D::set_live_flow(bool p_enabled) {
+	live_flow = p_enabled;
+	if (!live_flow) {
+		_live_stop();
+	}
+}
+
+void PhysXRiver3D::set_live_domain_size(float p_size) {
+	live_domain_size = MAX(p_size, 4.0f);
+	_live_stop();
+}
+
+void PhysXRiver3D::set_live_grid_resolution(int p_n) {
+	live_grid_resolution = CLAMP(p_n, 16, 1024);
+	_live_stop();
+}
+
+void PhysXRiver3D::set_live_damping(float p_damping) {
+	live_damping = MAX(p_damping, 0.0f);
+	_live_stop();
+}
+
+void PhysXRiver3D::set_wall_friction(float p_friction) {
+	wall_friction = MAX(p_friction, 0.0f);
+	live_fields_dirty = true;
+}
+
+void PhysXRiver3D::set_flow_foam(float p_strength) {
+	flow_foam = MAX(p_strength, 0.0f);
+	if (live_configured) {
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	}
+}
+
+void PhysXRiver3D::set_flow_foam_persistence(float p_seconds) {
+	flow_foam_persistence = MAX(p_seconds, 0.05f);
+	if (live_configured) {
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
+	}
+}
+
+void PhysXRiver3D::set_live_follow(const NodePath &p_path) {
+	live_follow = p_path;
+}
+
+void PhysXRiver3D::submit_sphere(int p_owner, const Vector3 &p_world_pos, float p_radius, float p_strength) {
+	if (live_configured) {
+		live_solver.submit_sphere((uint64_t)p_owner, p_world_pos, p_radius, p_strength);
+	}
+}
+
+void PhysXRiver3D::clear_sphere(int p_owner) {
+	if (live_configured) {
+		live_solver.clear_sphere((uint64_t)p_owner);
+	}
+}
+
+// Strip coordinates of a world point: section, fraction to the next, distance
+// across (local m, + towards the left bank). Unlike _locate(), never refuses a
+// point past the banks or the ends (it clamps along the river); returns
+// whether the point is on the river.
+bool PhysXRiver3D::_strip_at(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const {
+	const int count = (int)sections.size();
+	const Ref<Curve3D> c = get_curve();
+	if (count < 2 || c.is_null() || !is_inside_tree()) {
+		return false;
+	}
+	const Vector3 local = get_global_transform().affine_inverse().xform(p_world);
+	const float ds = sections[1].s - sections[0].s;
+	const float s = c->get_closest_offset(local);
+	const float x = s / ds;
+	const int i = CLAMP((int)Math::floor(x), 0, count - 2);
+	const float t = CLAMP(x - i, 0.0f, 1.0f);
+	const Section &a = sections[i];
+	const Section &b = sections[i + 1];
+	const Vector3 centre = a.centre.lerp(b.centre, t);
+	const Vector3 side = a.side.lerp(b.side, t).normalized();
+	const Vector3 rel = Vector3(local.x - centre.x, 0.0f, local.z - centre.z);
+	const Vector3 tangent(-side.z, 0.0f, side.x);
+	const float along = rel.dot(tangent);
+	r_section = i;
+	r_t = t;
+	r_n = rel.dot(side);
+	const float half = 0.5f * Math::lerp(a.width, b.width, t) + bank_margin;
+	const bool past_end = (i == 0 && t <= 0.0f && along < -0.5f * ds) || (i == count - 2 && t >= 1.0f && along > 0.5f * ds);
+	return !past_end && Math::abs(r_n) <= half;
+}
+
+// The river's stream function at a world point, for the live window's face
+// fluxes (the bank's value past the banks), and the water depth there
+// (WaterSolver::WALL_DEPTH off the river).
+float PhysXRiver3D::_psi_at(const Vector3 &p_world, float &r_depth) const {
+	int i;
+	float t;
+	float n;
+	r_depth = WaterSolver::WALL_DEPTH;
+	if (sections.size() < 2) {
+		return 0.0f;
+	}
+	const bool on = _strip_at(p_world, i, t, n);
+	const int m = cross_segments;
+	auto value = [&](const Section &p_sec, const LocalVector<float> &p_values) -> float {
+		return cross_value(p_sec, p_values, n, bank_margin, m);
+	};
+	if (sections[i].psi_at.size() != (uint32_t)(m + 1) || sections[i + 1].psi_at.size() != (uint32_t)(m + 1)) {
+		return 0.0f;
+	}
+	if (on) {
+		const float d = Math::lerp(value(sections[i], sections[i].depth), value(sections[i + 1], sections[i + 1].depth), t);
+		r_depth = d > 0.0f ? d : 0.0f;
+	}
+	return Math::lerp(value(sections[i], sections[i].psi_at), value(sections[i + 1], sections[i + 1].psi_at), t);
+}
+
+// The live window's still-water depth per cell and baked face fluxes (m^2/s:
+// +x, +z, -x, -z per cell), from the river's stream function at the cell
+// corners, as PhysXWaterSurface3D does from its own bake. The ocean's
+// convention is u = (dpsi/dz, -dpsi/dx) / h; the river's psi grows towards the
+// left bank, which is the opposite turn, so it goes in negated.
+void PhysXRiver3D::_live_fields(PackedFloat32Array &r_depth, PackedFloat32Array &r_flux) const {
+	const int n = live_grid_resolution;
+	const float cell = live_domain_size / n;
+	const float y = get_global_position().y;
+	r_depth.resize(n * n);
+	LocalVector<float> psi;
+	psi.resize(n * n);
+	float *dw = r_depth.ptrw();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const Vector3 w(live_center.x + (x + 0.5f - 0.5f * n) * cell, y, live_center.y + (z + 0.5f - 0.5f * n) * cell);
+			float d = 0.0f;
+			psi[z * n + x] = -_psi_at(w, d);
+			dw[z * n + x] = d;
+		}
+	}
+	LocalVector<float> corner;
+	corner.resize((n + 1) * (n + 1));
+	for (int j = 0; j <= n; j++) {
+		for (int i = 0; i <= n; i++) {
+			float sum = 0.0f;
+			float dry_psi = 0.0f;
+			bool dry = false;
+			for (int k = 0; k < 4; k++) {
+				const int cx = CLAMP(i - 1 + (k & 1), 0, n - 1);
+				const int cz = CLAMP(j - 1 + (k >> 1), 0, n - 1);
+				const int c = cz * n + cx;
+				if (dw[c] <= 0.0f && !dry) {
+					dry = true;
+					dry_psi = psi[c];
+				}
+				sum += psi[c];
+			}
+			corner[j * (n + 1) + i] = dry ? dry_psi : 0.25f * sum;
+		}
+	}
+	auto at = [&](int i, int j) { return corner[j * (n + 1) + i]; };
+	r_flux.resize(n * n * 4);
+	float *q = r_flux.ptrw();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			q[i * 4 + 0] = (at(x + 1, z + 1) - at(x + 1, z)) / cell;
+			q[i * 4 + 1] = -(at(x + 1, z + 1) - at(x, z + 1)) / cell;
+			q[i * 4 + 2] = (at(x, z + 1) - at(x, z)) / cell;
+			q[i * 4 + 3] = -(at(x + 1, z) - at(x, z)) / cell;
+		}
+	}
+	for (int k = 0; k < (int)r_flux.size(); k++) {
+		if (!Math::is_finite(q[k])) {
+			q[k] = 0.0f;
+		}
+	}
+}
+
+void PhysXRiver3D::_live_stop() {
+	if (live_height_tex.is_valid()) {
+		live_height_tex->set_texture_rd_rid(RID());
+	}
+	if (live_flow_tex.is_valid()) {
+		live_flow_tex->set_texture_rd_rid(RID());
+	}
+	live_bound = false;
+	live_configured = false;
+	live_height_cache.clear();
+	live_velocity_cache.clear();
+	live_tilt = Vector3();
+	_live_material();
+}
+
+void PhysXRiver3D::_live_material() {
+	if (water_material.is_null()) {
+		return;
+	}
+	const bool on = live_bound && live_configured;
+	water_material->set_shader_parameter(SNAME("live_enabled"), on);
+	if (on) {
+		water_material->set_shader_parameter(SNAME("live_center"), live_center);
+		water_material->set_shader_parameter(SNAME("live_size"), Vector2(live_domain_size, live_domain_size));
+		water_material->set_shader_parameter(SNAME("live_texel"), Vector2(live_domain_size, live_domain_size) / live_grid_resolution);
+		water_material->set_shader_parameter(SNAME("live_height_tex"), live_height_tex);
+		water_material->set_shader_parameter(SNAME("live_flow_tex"), live_flow_tex);
+		water_material->set_shader_parameter(SNAME("live_tilt"), live_tilt);
+	}
+}
+
+// The live window: the shallow-water solver of PhysXWaterSurface3D's live flow
+// (Chentanez and Mueller 2010, water_ripple.glsl) on a square round the camera,
+// fed the river's depth and baked fluxes. The river's surface slopes, but the
+// solver only carries the disturbance on it (gravity and bed friction balance in
+// the baked flow), so its heights are added to the river's own. Moving more
+// than a quarter of the square re-centres it and restarts it from the baked flow.
+void PhysXRiver3D::_live_update(double p_delta) {
+	if (!live_flow || Engine::get_singleton()->is_editor_hint() || sections.size() < 2 || build_pending) {
+		return;
+	}
+	Vector3 follow;
+	Node3D *target = live_follow.is_empty() ? nullptr : Object::cast_to<Node3D>(get_node_or_null(live_follow));
+	if (target != nullptr) {
+		follow = target->get_global_position();
+	} else if (get_viewport() != nullptr && get_viewport()->get_camera_3d() != nullptr) {
+		const Camera3D *cam = get_viewport()->get_camera_3d();
+		// The water the camera looks at: where its view meets the river's height.
+		const Vector3 o = cam->get_global_position();
+		const Vector3 dir = -cam->get_global_transform().basis.get_column(2);
+		const float y = get_global_position().y;
+		const float t = dir.y < -0.05f ? (y - o.y) / dir.y : 0.0f;
+		follow = o + dir * CLAMP(t, 0.0f, 0.4f * live_domain_size + Math::abs(o.y - y));
+	} else {
+		return;
+	}
+	const float cell = live_domain_size / live_grid_resolution;
+	const Vector2 want(Math::snapped(follow.x, cell), Math::snapped(follow.z, cell));
+	if (!live_configured) {
+		live_center = want;
+		PackedFloat32Array depth;
+		PackedFloat32Array flux;
+		_live_fields(depth, flux);
+		float mean = 0.0f;
+		int wet = 0;
+		for (int k = 0; k < depth.size(); k++) {
+			if (depth[k] > 0.0f) {
+				mean += depth[k];
+				wet++;
+			}
+		}
+		WaterSolver::Settings st;
+		st.grid_resolution = live_grid_resolution;
+		st.domain_size = Vector2(live_domain_size, live_domain_size);
+		st.grid_center = live_center;
+		st.cell_depth = depth;
+		st.depth = wet > 0 ? mean / wet : 1.0f;
+		st.damping = live_damping;
+		st.gravity = GRAVITY;
+		st.water_level = 0.0f; // the solver's heights are the disturbance on the river's surface
+		st.ocean_grid_resolution = 16; // no waves on a river: the smallest ocean layer, amplitude 0
+		st.ocean_domain_size = Vector2(live_domain_size, live_domain_size);
+		st.wave_amplitude = 0.0f;
+		st.caustics_enabled = false;
+		live_depth = depth;
+		live_tilt = Vector3();
+		live_solver.configure(st);
+		live_solver.set_flow_foam(flow_foam, flow_foam_persistence);
+		live_solver.set_base_flux(flux, wall_friction);
+		live_configured = true;
+		live_fields_dirty = false;
+		live_bound = false;
+	} else if (MAX(Math::abs(want.x - live_center.x), Math::abs(want.y - live_center.y)) > 0.25f * live_domain_size || live_fields_dirty) {
+		live_center = want;
+		live_solver.recenter(live_center);
+		PackedFloat32Array depth;
+		PackedFloat32Array flux;
+		_live_fields(depth, flux);
+		live_solver.update_seabed(depth);
+		live_depth = depth;
+		live_tilt = Vector3();
+		live_solver.set_base_flux(flux, wall_friction);
+		live_fields_dirty = false;
+		live_height_cache.clear();
+		live_velocity_cache.clear();
+		_live_material();
+	}
+	live_solver.step(p_delta);
+	if (!live_bound && live_solver.is_available()) {
+		if (live_height_tex.is_null()) {
+			live_height_tex.instantiate();
+		}
+		if (live_flow_tex.is_null()) {
+			live_flow_tex.instantiate();
+		}
+		live_height_tex->set_texture_rd_rid(live_solver.get_ripple_height_texture_rd_rid());
+		live_flow_tex->set_texture_rd_rid(live_solver.get_velocity_texture_rd_rid());
+		live_bound = true;
+		_live_material();
+	}
+	if (++live_refresh >= 2) {
+		live_refresh = 0;
+		int n = 0;
+		Vector2 domain;
+		live_solver.get_height_grid(live_height_cache, n, domain);
+		live_solver.get_velocity_grid(live_velocity_cache);
+		_live_fit_tilt();
+	}
+}
+
+// The live water settles into a gentle tilt across the window: the velocity
+// head (v^2 / 2g) of a river speeding up or slowing down, which the baked
+// surface (Manning's normal depth) leaves out. Kept, it would step the surface
+// at the window's edge and move with the window; so the window's mean plane
+// over its wet cells is taken out and only local disturbances (eddies, wakes,
+// waves round rocks) stay. A least-squares plane, refitted at each readback.
+void PhysXRiver3D::_live_fit_tilt() {
+	const int n = live_grid_resolution;
+	if (live_height_cache.size() != n * n || live_depth.size() != n * n) {
+		return;
+	}
+	const float cell = live_domain_size / n;
+	double s1 = 0, sx = 0, sz = 0, sxx = 0, szz = 0, sxz = 0, sh = 0, sxh = 0, szh = 0;
+	const float *h = live_height_cache.ptr();
+	const float *d = live_depth.ptr();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			if (!(d[i] > 0.05f) || !Math::is_finite(h[i])) {
+				continue;
+			}
+			const double px = (x + 0.5 - 0.5 * n) * cell;
+			const double pz = (z + 0.5 - 0.5 * n) * cell;
+			s1 += 1;
+			sx += px;
+			sz += pz;
+			sxx += px * px;
+			szz += pz * pz;
+			sxz += px * pz;
+			sh += h[i];
+			sxh += px * h[i];
+			szh += pz * h[i];
+		}
+	}
+	if (s1 < 16) {
+		return;
+	}
+	// Normal equations for h = a + b x + c z (3 x 3, Cramer).
+	const double m[3][3] = { { s1, sx, sz }, { sx, sxx, sxz }, { sz, sxz, szz } };
+	const double r[3] = { sh, sxh, szh };
+	auto det3 = [](const double p[3][3]) {
+		return p[0][0] * (p[1][1] * p[2][2] - p[1][2] * p[2][1]) - p[0][1] * (p[1][0] * p[2][2] - p[1][2] * p[2][0]) + p[0][2] * (p[1][0] * p[2][1] - p[1][1] * p[2][0]);
+	};
+	const double det = det3(m);
+	if (Math::abs(det) < 1e-9) {
+		return;
+	}
+	double out[3];
+	for (int k = 0; k < 3; k++) {
+		double mk[3][3];
+		for (int a = 0; a < 3; a++) {
+			for (int b = 0; b < 3; b++) {
+				mk[a][b] = b == k ? r[a] : m[a][b];
+			}
+		}
+		out[k] = det3(mk) / det;
+	}
+	live_tilt = Vector3((float)out[0], (float)out[1], (float)out[2]);
+	if (water_material.is_valid() && live_bound) {
+		water_material->set_shader_parameter(SNAME("live_tilt"), live_tilt);
+	}
+}
+
+// The live window's disturbance height at a world point, 0 outside it (eased
+// over its edge, as the shader).
+float PhysXRiver3D::_live_height_at(const Vector3 &p_world) const {
+	const int n = live_grid_resolution;
+	if (!live_configured || live_height_cache.size() != n * n) {
+		return 0.0f;
+	}
+	const Vector2 rel = (Vector2(p_world.x, p_world.z) - live_center) / live_domain_size;
+	const float inside = 1.0f - Math::smoothstep(0.44f, 0.5f, MAX(Math::abs(rel.x), Math::abs(rel.y)));
+	if (inside <= 0.0f) {
+		return 0.0f;
+	}
+	const float gx = CLAMP((rel.x + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
+	const float gz = CLAMP((rel.y + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
+	const int x0 = MIN((int)gx, n - 2);
+	const int z0 = MIN((int)gz, n - 2);
+	const float fx = gx - x0;
+	const float fz = gz - z0;
+	const float *h = live_height_cache.ptr();
+	const float a = Math::lerp(h[z0 * n + x0], h[z0 * n + x0 + 1], fx);
+	const float b = Math::lerp(h[(z0 + 1) * n + x0], h[(z0 + 1) * n + x0 + 1], fx);
+	const Vector2 off = Vector2(p_world.x, p_world.z) - live_center;
+	return (Math::lerp(a, b, fz) - (live_tilt.x + live_tilt.y * off.x + live_tilt.z * off.y)) * inside;
+}
+
+// The live part of the flow (the solver's read-back face velocities, averaged to
+// cell centres), world xz m/s, 0 outside the window.
+Vector2 PhysXRiver3D::_live_velocity_at(const Vector3 &p_world) const {
+	const int n = live_grid_resolution;
+	if (!live_configured || live_velocity_cache.size() != n * n * 2) {
+		return Vector2();
+	}
+	const Vector2 rel = (Vector2(p_world.x, p_world.z) - live_center) / live_domain_size;
+	const float inside = 1.0f - Math::smoothstep(0.44f, 0.5f, MAX(Math::abs(rel.x), Math::abs(rel.y)));
+	if (inside <= 0.0f) {
+		return Vector2();
+	}
+	const float *v = live_velocity_cache.ptr();
+	auto centre = [&](int x, int z) {
+		const int i = z * n + x;
+		const float u = 0.5f * (v[i * 2] + (x > 0 ? v[(i - 1) * 2] : 0.0f));
+		const float w = 0.5f * (v[i * 2 + 1] + (z > 0 ? v[(i - n) * 2 + 1] : 0.0f));
+		return Vector2(u, w);
+	};
+	const float gx = CLAMP((rel.x + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
+	const float gz = CLAMP((rel.y + 0.5f) * n - 0.5f, 0.0f, (float)(n - 1));
+	const int x0 = MIN((int)gx, n - 2);
+	const int z0 = MIN((int)gz, n - 2);
+	const float fx = gx - x0;
+	const float fz = gz - z0;
+	return centre(x0, z0).lerp(centre(x0 + 1, z0), fx).lerp(centre(x0, z0 + 1).lerp(centre(x0 + 1, z0 + 1), fx), fz) * inside;
+}
+
 void PhysXRiver3D::set_water_material(const Ref<ShaderMaterial> &p_material) {
 	water_material = p_material;
 	if (mesh_instance != nullptr) {
 		mesh_instance->set_material_override(water_material);
 	}
+	_live_material();
 }
 
 void PhysXRiver3D::_notification(int p_what) {
@@ -329,12 +836,14 @@ void PhysXRiver3D::_notification(int p_what) {
 		case NOTIFICATION_EXIT_TREE: {
 			set_physics_process_internal(false);
 			set_process_internal(false);
+			_live_stop();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			// Ground rays need the ground in the physics space, which it is by the first tick.
 			if (build_pending) {
 				_build();
 			}
+			_live_update(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			water_time += get_process_delta_time();
@@ -741,6 +1250,7 @@ void PhysXRiver3D::_build() {
 	}
 	_solve_flow(ds);
 	_build_mesh();
+	live_fields_dirty = true;
 	update_configuration_warnings();
 	if (carve) {
 		emit_signal(SNAME("carve_changed"));
@@ -960,6 +1470,10 @@ void PhysXRiver3D::_solve_flow(float p_ds) {
 		Section &sec = sections[i];
 		sec.across_at.resize(row);
 		sec.foam_at.resize(row);
+		sec.psi_at.resize(row);
+		for (int j = 0; j <= m; j++) {
+			sec.psi_at[j] = psi[i * row + j];
+		}
 		const float dn = dn_of(i);
 		for (int j = 0; j <= m; j++) {
 			const int k = i * row + j;
@@ -1056,6 +1570,7 @@ void PhysXRiver3D::_build_mesh() {
 		shader->set_code(RIVER_SHADER_SRC);
 		water_material.instantiate();
 		water_material->set_shader(shader);
+		_live_material();
 	}
 	mesh_instance->set_material_override(water_material);
 	const int count = (int)sections.size();
@@ -1179,14 +1694,6 @@ bool PhysXRiver3D::_locate(const Vector3 &p_world, int &r_section, float &r_t, f
 	return true;
 }
 
-namespace {
-float cross_value(const PhysXRiver3D::Section &p_sec, const LocalVector<float> &p_values, float p_n, float p_margin, int p_m) {
-	const float half = 0.5f * p_sec.width + p_margin;
-	const float u = CLAMP((p_n + half) / (2.0f * half) * p_m, 0.0f, (float)p_m);
-	const int j = MIN((int)u, p_m - 1);
-	return Math::lerp(p_values[j], p_values[j + 1], u - j);
-}
-} // namespace
 
 float PhysXRiver3D::sample_depth(const Vector3 &p_world_pos) const {
 	int i;
@@ -1214,7 +1721,7 @@ float PhysXRiver3D::sample_height(const Vector3 &p_world_pos) const {
 	const float local_y = Math::lerp(sections[i].surface, sections[i + 1].surface, t);
 	const Transform3D xf = get_global_transform();
 	const Vector3 local = xf.affine_inverse().xform(p_world_pos);
-	return xf.xform(Vector3(local.x, local_y, local.z)).y;
+	return xf.xform(Vector3(local.x, local_y, local.z)).y + _live_height_at(p_world_pos);
 }
 
 Vector3 PhysXRiver3D::sample_flow(const Vector3 &p_world_pos) const {
@@ -1230,7 +1737,8 @@ Vector3 PhysXRiver3D::sample_flow(const Vector3 &p_world_pos) const {
 			cross_value(sections[i + 1], sections[i + 1].across_at, n, bank_margin, cross_segments), t);
 	const Vector3 side = sections[i].side.lerp(sections[i + 1].side, t).normalized();
 	const Vector3 tangent(-side.z, 0.0f, side.x);
-	return get_global_transform().basis.xform(tangent * v + side * a);
+	const Vector2 live = _live_velocity_at(p_world_pos);
+	return get_global_transform().basis.xform(tangent * v + side * a) + Vector3(live.x, 0.0f, live.y);
 }
 
 float PhysXRiver3D::sample_foam(const Vector3 &p_world_pos) const {

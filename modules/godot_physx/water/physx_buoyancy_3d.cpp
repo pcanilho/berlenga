@@ -197,7 +197,8 @@ void PhysXBuoyancy3D::_find_wake() {
 void PhysXBuoyancy3D::_physics_step() {
 	_find_wake();
 	RigidBody3D *body = get_body();
-	PhysXWaterSurface3D *water = get_water_surface(); // null on a river (no ripple layer there yet)
+	PhysXWaterSurface3D *water = get_water_surface(); // null on a river
+	PhysXRiver3D *river = get_river();
 	if (body == nullptr || !_has_water() || points.is_empty()) {
 		submerged_fraction = 0.0f;
 		return;
@@ -234,17 +235,26 @@ void PhysXBuoyancy3D::_physics_step() {
 		body->apply_torque(-ang * (angular_drag * submerged_fraction));
 	}
 
-	if (disturb_water && water != nullptr) {
-		// Only near the surface, harder the faster it moves -- a still
-		// floater only dimples the water.
-		const float above = xf.origin.y - water->sample_height_excluding_wake(xf.origin, wake_id);
-		const float proximity = CLAMP(1.0f - above / radius, 0.0f, 1.0f);
+	if (disturb_water && (water != nullptr || river != nullptr)) {
+		// Only near the surface, harder the faster it moves (relative to the
+		// water, on a river) -- a still floater only dimples the water.
+		const int owner = (int)(uint64_t)get_instance_id();
+		const float surface = water != nullptr ? water->sample_height_excluding_wake(xf.origin, wake_id) : river->sample_height(xf.origin);
+		const float above = xf.origin.y - surface;
+		const float proximity = Math::is_finite(surface) ? CLAMP(1.0f - above / radius, 0.0f, 1.0f) : 0.0f;
 		if (proximity > 0.0f) {
-			const float speed_frac = lin.length() / ripple_reference_speed;
+			const Vector3 rel = water != nullptr ? lin : lin - river->sample_flow(xf.origin);
+			const float speed_frac = rel.length() / ripple_reference_speed;
 			const float strength = CLAMP(ripple_rest_strength + (1.0f - ripple_rest_strength) * speed_frac, ripple_rest_strength, 1.0f) * proximity;
-			water->submit_sphere((int)(uint64_t)get_instance_id(), xf.origin, radius, strength);
+			if (water != nullptr) {
+				water->submit_sphere(owner, xf.origin, radius, strength);
+			} else {
+				river->submit_sphere(owner, xf.origin, radius, strength);
+			}
+		} else if (water != nullptr) {
+			water->clear_sphere(owner);
 		} else {
-			water->clear_sphere((int)(uint64_t)get_instance_id());
+			river->clear_sphere(owner);
 		}
 	}
 }
@@ -264,6 +274,9 @@ void PhysXBuoyancy3D::_notification(int p_what) {
 			PhysXWaterSurface3D *water = get_water_surface();
 			if (water != nullptr) {
 				water->clear_sphere((int)(uint64_t)get_instance_id());
+			}
+			if (PhysXRiver3D *river = get_river()) {
+				river->clear_sphere((int)(uint64_t)get_instance_id());
 			}
 		} break;
 	}
@@ -303,6 +316,10 @@ void PhysXBuoyancy3D::set_disturb_water(bool p_enabled) {
 	PhysXWaterSurface3D *water = get_water_surface();
 	if (!disturb_water && water != nullptr) {
 		water->clear_sphere((int)(uint64_t)get_instance_id());
+	}
+	PhysXRiver3D *river = get_river();
+	if (!disturb_water && river != nullptr) {
+		river->clear_sphere((int)(uint64_t)get_instance_id());
 	}
 }
 
