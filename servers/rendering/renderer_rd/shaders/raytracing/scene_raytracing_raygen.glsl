@@ -462,6 +462,103 @@ void rt_medium_set(uint p_code, out bool r_in_medium, out vec3 r_sigma_t, out ve
 	}
 }
 
+// One caustic photon segment: the payload's report of the first surface along the ray.
+bool rt_caustics_trace(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out PathState r_ps) {
+	r_ps.bsdf_pdf = 0.0;
+	r_ps.radiance = vec3(0.0);
+	r_ps.throughput = vec3(1.0);
+	// One bounce in, so the hit writes no primary depth, velocity or guides.
+	r_ps.packed_bounces_flags = inc_total_bounce(0u) | CAUSTIC_PHOTON_FLAG;
+	r_ps.rng_state = p_rng;
+	r_ps.hit_t = -1.0;
+	r_ps.offset_normal = vec3(0.0, 0.0, 1.0);
+	r_ps.next_ray_dir = p_dir;
+	path_pack(payload, r_ps);
+	payload_set_cone_width(payload, p_width);
+	traceRayEXT(tlas, RT_RAY_FLAGS, RT_BOUNCE_MASK, 0, 0, 0, p_origin, 0.001, p_dir, 10000.0, 0);
+	r_ps = path_unpack(payload);
+	return r_ps.hit_t >= 0.0;
+}
+
+// From a point just past a medium's surface on to the first other surface, through any further
+// medium surfaces unbent.
+bool rt_caustics_land(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out vec3 r_p) {
+	vec3 o = p_origin;
+	r_p = o;
+	for (uint i = 0u; i < 4u; i++) {
+		PathState ps;
+		if (!rt_caustics_trace(o, p_dir, p_width, p_rng, ps)) {
+			return false;
+		}
+		vec3 hit = o + p_dir * ps.hit_t;
+		if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u) {
+			r_p = hit;
+			return true;
+		}
+		o = offset_ray_origin(hit, ps.offset_normal, ps.hit_t);
+	}
+	return false;
+}
+
+// This pixel's share of the caustics map (raytracing_caustics_inc.glsl): clear part of the slot
+// the next frame writes, then trace one photon from the sun. The square is centred where the
+// camera looked last frame, at least half its width ahead; the centre pixel measures that
+// distance for the next frame.
+void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_forward) {
+	uint write = rt_caustics_write_slot();
+	uint clear = (write + 1u) % 3u;
+	uint threads = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
+	uint tid = p_pixel.y * gl_LaunchSizeEXT.x + p_pixel.x;
+	uint share = (RT_CAUSTICS_SLOT_UINTS + threads - 1u) / threads;
+	for (uint k = 0u; k < share; k++) {
+		uint i = tid * share + k;
+		if (i < RT_CAUSTICS_SLOT_UINTS) {
+			rt_caustics.data[clear * RT_CAUSTICS_SLOT_UINTS + i] = 0u;
+		}
+	}
+
+	float half_size = 0.5 * max(get_rt_param(RT_PARAM_CAUSTICS_SIZE), 0.01);
+	uint last = (write + 2u) % 3u;
+	float look = rt_caustics_history() ? uintBitsToFloat(rt_caustics.data[RT_CAUSTICS_HEADER + last * 4u]) : 0.0;
+	vec3 center = p_cam_pos + p_cam_forward * clamp(look, half_size, 5000.0);
+	uint h = RT_CAUSTICS_HEADER + write * 4u;
+	if (p_pixel == gl_LaunchSizeEXT.xy / 2u) {
+		PathState look_ps;
+		rt_caustics_trace(p_cam_pos, p_cam_forward, 0.0, 0u, look_ps);
+		rt_caustics.data[h] = floatBitsToUint(look_ps.hit_t);
+	}
+	if (all(equal(p_pixel, uvec2(0u)))) {
+		rt_caustics.data[h + 1u] = floatBitsToUint(center.x);
+		rt_caustics.data[h + 2u] = floatBitsToUint(center.y);
+		rt_caustics.data[h + 3u] = floatBitsToUint(center.z);
+	}
+
+	CausticsFrame f;
+	if (!rt_caustics_frame(center, f)) {
+		return;
+	}
+	uint rng = init_rng(p_pixel, p_frame, 7919u);
+	vec2 uv = (vec2(p_pixel) + rand2(rng)) / vec2(gl_LaunchSizeEXT.xy);
+	vec2 q = f.origin + uv * f.size;
+	vec3 start = q.x * f.r + q.y * f.u + (f.ref_depth + RT_CAUSTICS_SUN_HEIGHT) * f.L;
+	vec3 dir = -f.L;
+	float width = f.size / float(RT_CAUSTICS_RES);
+	PathState ps;
+	// Only photons entering a medium through its front face count.
+	if (!rt_caustics_trace(start, dir, width, rng, ps) || (ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u || ps.bsdf_pdf < 0.5) {
+		return;
+	}
+	vec3 entry = start + dir * ps.hit_t;
+	vec3 o = offset_ray_origin(entry, ps.offset_normal, ps.hit_t);
+	vec3 p;
+	if (rt_caustics_land(o, ps.next_ray_dir, width, rng, p)) {
+		rt_caustics_deposit(f, write, p, 0u);
+	}
+	if (rt_caustics_land(o, dir, width, rng, p)) {
+		rt_caustics_deposit(f, write, p, 1u);
+	}
+}
+
 void main() {
 #ifdef RT_TIMING_ENABLED
 	uvec2 start_clock = clockRealtime2x32EXT();
@@ -511,6 +608,10 @@ void main() {
 #ifdef RT_DEBUG_ENABLED
 	uint debug_tlayers = 0u; // VIS 23: primary-segment transparency hits
 #endif
+
+	if (rt_caustics_enabled()) {
+		rt_caustics_photon(pixel, frame_index, inv_view[3].xyz, normalize(-inv_view[2].xyz));
+	}
 
 	const uint max_bounces = RT_GET_MAX_BOUNCES();
 	if (rt_rc_enabled()) {

@@ -549,6 +549,7 @@ vec3 lights_projector_color(RTLightData light, vec3 p_dir) {
 #endif
 
 #include "raytracing_volume_inc.glsl"
+#include "raytracing_caustics_inc.glsl"
 
 // ============================================================================
 // Shadow Ray (traceRayEXT pipeline)
@@ -921,6 +922,10 @@ vec3 lights_evaluate_directional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V
 
 	vec3 shadow_transmittance = lights_shadow_transmittance(light, hit_pos, L, ls.max_distance, p_receiver_shadow_mask, rng_state);
 	r_visible = max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.5 ? 1.0 : 0.0;
+	if (max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.0 && rt_caustics_enabled() && light.position == lights_get(0u).position) {
+		// Under water, the sun's light gathered into lines by the surface (raytracing_caustics_inc.glsl).
+		shadow_transmittance *= rt_caustics_ratio(hit_pos);
+	}
 
 	vec3 brdf_diffuse, brdf_specular;
 	evalCombinedBRDFSeparate(N, L, V, material, brdf_diffuse, brdf_specular);
