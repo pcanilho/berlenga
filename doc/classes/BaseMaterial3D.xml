@@ -933,7 +933,10 @@
 		<constant name="HAIR_DIRECTION_BITANGENT" value="2" enum="HairDirection">
 			Strands run along the mesh's bitangent (its UV's V direction), as hair cards are usually laid out.
 		</constant>
-		<constant name="HAIR_DIRECTION_MAX" value="3" enum="HairDirection">
+		<constant name="HAIR_DIRECTION_STRANDS" value="3" enum="HairDirection">
+			Strand geometry from a [HairMesh]: strands run along its bitangent, light passes through as with [member hair_cards], and the path tracer reads where on the fibre each ray lands from the strip's UV.
+		</constant>
+		<constant name="HAIR_DIRECTION_MAX" value="4" enum="HairDirection">
 			Represents the size of the [enum HairDirection] enum.
 		</constant>
 		<constant name="EMISSION_OP_ADD" value="0" enum="EmissionOperator">

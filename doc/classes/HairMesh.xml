@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="HairMesh" inherits="PrimitiveMesh" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Draws a [HairGroom]'s strands.
+	</brief_description>
+	<description>
+		[HairMesh] draws each strand of a [HairGroom] as two strips crossed at right angles along every segment, so a strand has width from any side, in path traced reflections as on screen. UV.x runs across a strip and UV.y from root ([code]0[/code]) to tip ([code]1[/code]).
+		Draw it with a [BaseMaterial3D] with [member BaseMaterial3D.hair_enabled], [member BaseMaterial3D.hair_direction] set to [constant BaseMaterial3D.HAIR_DIRECTION_STRANDS] and [member BaseMaterial3D.cull_mode] set to [constant BaseMaterial3D.CULL_DISABLED]. The path tracer then shades each strand as a hair fibre, from where on the fibre the ray lands.
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="crossed" type="bool" setter="set_crossed" getter="is_crossed" default="true">
+			If [code]true[/code], each segment has two crossed strips. If [code]false[/code], one strip, at half the triangles; strands seen edge-on then disappear.
+		</member>
+		<member name="groom" type="HairGroom" setter="set_groom" getter="get_groom">
+			The strands to draw. Without one, the mesh is a single 10 cm strand.
+		</member>
+		<member name="root_width" type="float" setter="set_root_width" getter="get_root_width" default="0.0004">
+			The strand's width at its root, in metres.
+		</member>
+		<member name="tip_width" type="float" setter="set_tip_width" getter="get_tip_width" default="0.0001">
+			The strand's width at its tip, in metres.
+		</member>
+	</members>
+</class>

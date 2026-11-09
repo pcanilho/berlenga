@@ -1681,9 +1681,11 @@ void main() {
 		float hair_mask = clamp(material_texture_channel(material_uv_sample(mat.hair_mask_texture, muv, mat.flags), mat.hair_mask_texture), 0.0, 1.0);
 		vec3 hp = rt_material_hair(mat);
 		vec3 hair_color = m.albedo;
+		vec3 fibre_sigma_a = hair_sigma_a_from_color(m.albedo, hp.y);
 		if (rt_material_hair_melanin(mat)) {
+			fibre_sigma_a = rt_medium_absorption(mat.hair_absorption);
 			// The colour melanin gives a mass of hair; the raster and the hair-off path show it too.
-			hair_color = hair_color_from_sigma_a(rt_medium_absorption(mat.hair_absorption), hp.y);
+			hair_color = hair_color_from_sigma_a(fibre_sigma_a, hp.y);
 			m.albedo = mix(m.albedo, hair_color, hair_mask);
 		}
 		if (rt_material_feature(RT_MATERIAL_FEATURE_HAIR)) {
@@ -1691,12 +1693,28 @@ void main() {
 		}
 		m.hair_params = vec4(hp, 0.0); // h is drawn per path vertex in shade_and_bounce().
 		m.hair_cards = rt_material_hair_cards(mat);
-		m.hair_sigma_a = hair_mass_sigma_a(hair_color);
+		// Strands are real fibres: the path tracer scatters light among them, so they keep their own
+		// absorption. Shells and cards stand for the whole mass.
+		m.hair_sigma_a = rt_material_hair_direction(mat) == 3u ? fibre_sigma_a : hair_mass_sigma_a(hair_color);
 	}
 	if (m.hair > 0.0) {
 		uint direction = rt_material_hair_direction(mat);
 		vec3 t;
-		if (direction == 0u) {
+		if (direction == 3u) {
+			// Strand geometry (HairMesh): crossed strips around each fibre, UV.x across a strip
+			// (its tangent), UV.y along the strand (the bitangent). The fibre offset h is the
+			// hit's distance from the fibre's axis across the view, over the radius (pbrt's
+			// convention: positive toward cross(view, fibre)).
+			t = normalize(h.bitangent);
+			vec3 v_perp = -gl_WorldRayDirectionEXT;
+			v_perp -= dot(v_perp, t) * t;
+			vec3 across = h.tangent - dot(h.tangent, t) * t;
+			if (dot(v_perp, v_perp) > 1e-12 && dot(across, across) > 1e-12) {
+				vec3 y = cross(normalize(v_perp), t);
+				m.hair_params.w = clamp((2.0 * clamp(h.uv.x, 0.0, 1.0) - 1.0) * dot(normalize(across), y), -0.999, 0.999);
+			}
+			m.hair_strand = true;
+		} else if (direction == 0u) {
 			// Away from the crown, in object space (skinned meshes trace their posed vertices).
 			vec3 p_obj = (mat4(gl_WorldToObjectEXT) * vec4(h.hit_pos, 1.0)).xyz;
 			t = mat3(gl_ObjectToWorldEXT) * (p_obj - rt_material_hair_crown(mat));
