@@ -1,2 +1,2 @@
 ### Changed
-- README: refraction line and water image (#N)
+- README: refraction line and water image (#160)
