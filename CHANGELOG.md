@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-4975e792 (2026-11-09)
+
+### Changed
+- PhysXHair3D's solver is now a port of AMD TressFX 4.1's (MIT): two pinned root points, damped Verlet toward the air's velocity, global shape over a range, velocity shock propagation, iterated local shape and length constraints, collisions that stop the point, speed clamp. New properties global_stiffness, global_range, local_stiffness, local_iterations, length_iterations, vsp_coeff, vsp_accel_threshold, max_speed (TressFX defaults); root_follow, tip_follow, follow_range, shape_stiffness, length_damping, air_drag, shape_damping, inertia_scale and inertia_limit removed
+
 ## build-fa54fb14 (2026-11-09)
 
 ### Changed
