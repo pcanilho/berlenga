@@ -80,6 +80,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Murky water** (same setting): scattering media; `IOR`, `ABSORPTION` and `SCATTERING` in shaders; glTF `KHR_materials_scatter` draft.
 - **Caustics** (`rendering/pathtracing/caustics`): sunlight lines under rippled water.
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
+- **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
 - **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
@@ -103,6 +104,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Ocean shallows with floating crates, raster vs path traced](docs/media/ocean.jpg)
 
 *Ocean: sand and caustic light through the water.*
+
+![Open sea with one wave layer and with three](docs/media/ocean-swell.jpg)
+
+*Ocean swell: one layer repeats the same foam patches; three layers add long swell.*
 
 ![Floating boxes drift on a current past a rock](docs/media/currents.gif)
 
