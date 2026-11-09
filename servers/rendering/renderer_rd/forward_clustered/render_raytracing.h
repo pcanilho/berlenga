@@ -256,9 +256,31 @@ struct alignas(16) RT_MaterialData {
 		uint32_t index : TEXTURE_INDEX_BITS;
 		uint32_t unused : 8;
 	} subsurface_texture;
-	uint32_t reserved[1];
+	// BaseMaterial3D Hair (RT_MAT_FLAG_HAIR), see rt_material_set_hair() and GLSL rt_material_hair().
+	struct {
+		uint32_t roughness : 8; // unorm8 hair_roughness: longitudinal roughness beta_m.
+		uint32_t radial_roughness : 8; // unorm8 hair_radial_roughness: azimuthal roughness beta_n.
+		uint32_t tilt : 8; // unorm8 of (hair_cuticle_tilt + 10) / 20, degrees.
+		uint32_t direction : 2; // BaseMaterial3D::HairDirection.
+		uint32_t melanin : 1; // HAIR_COLOR_MELANIN: absorption from `absorption`, else from the albedo.
+		uint32_t cards : 1; // hair_cards: light passes through, no folding back.
+		uint32_t unused : 4;
+	} hair;
+	uint32_t hair_absorption; // rt_medium_code() of the melanin absorption per fibre diameter.
+	struct { // texture_hair_mask: where the surface is hair; 0 (white) = everywhere.
+		uint32_t index : TEXTURE_INDEX_BITS;
+		uint32_t channel : 8; // RTTextureChannel.
+	} hair_mask_texture;
+	struct { // fp16 hair_crown, object space.
+		uint32_t x : 16;
+		uint32_t y : 16;
+	} hair_crown_xy;
+	struct {
+		uint32_t z : 16;
+		uint32_t unused : 16;
+	} hair_crown_z;
 };
-static_assert(sizeof(RT_MaterialData) == 160, "RT_MaterialData must be 160 bytes for std430, with every bitfield struct in one uint");
+static_assert(sizeof(RT_MaterialData) == 176, "RT_MaterialData must be 176 bytes for std430, with every bitfield struct in one uint");
 static_assert(BindlessBlock::MAX_BINDLESS_TEXTURES <= (1u << RT_MaterialData::TEXTURE_INDEX_BITS), "Bindless texture indices must fit RT_MaterialData textures");
 
 // p_value clamped to [0, 1] as GLSL unpackUnorm4x8() reads one byte.
@@ -335,6 +357,36 @@ constexpr void rt_material_set_backlight(RT_MaterialData &r_mat, float p_r, floa
 	r_mat.surface_params.backlight_r = rt_unorm8(p_r);
 	r_mat.normal_texture.backlight_g = rt_unorm8(p_g);
 	r_mat.emission_texture.backlight_b = rt_unorm8(p_b);
+}
+
+// BaseMaterial3D Hair: Chiang et al. 2016 fibre scattering in the path tracer (the caller sets
+// RT_MAT_FLAG_HAIR). p_melanin_mode takes the
+// absorption from eumelanin p_melanin and pheomelanin share p_redness (Chiang's normalised mapping, as
+// Cycles' Principled Hair), else the hit shader derives it from the albedo. p_tilt_deg is clamped to
+// [-10, 10] degrees.
+inline void rt_material_set_hair(RT_MaterialData &r_mat, float p_roughness, float p_radial_roughness, float p_tilt_deg,
+		uint32_t p_direction, bool p_melanin_mode, float p_melanin, float p_redness, bool p_cards, const Vector3 &p_crown) {
+	r_mat.hair.roughness = rt_unorm8(p_roughness);
+	r_mat.hair.radial_roughness = rt_unorm8(p_radial_roughness);
+	r_mat.hair.tilt = rt_unorm8((p_tilt_deg + 10.0f) / 20.0f);
+	r_mat.hair.direction = p_direction & 3u;
+	r_mat.hair.melanin = p_melanin_mode ? 1u : 0u;
+	r_mat.hair.cards = p_cards ? 1u : 0u;
+	float sigma[3] = { 0.0f, 0.0f, 0.0f };
+	if (p_melanin_mode) {
+		// Eumelanin and pheomelanin absorption per fibre diameter, Cycles' Principled Hair values.
+		const float eu[3] = { 0.506f, 0.841f, 1.653f };
+		const float pheo[3] = { 0.343f, 0.733f, 1.924f };
+		const float m = -Math::log(MAX(1.0f - CLAMP(p_melanin, 0.0f, 1.0f), 1e-4f));
+		const float red = CLAMP(p_redness, 0.0f, 1.0f);
+		for (int i = 0; i < 3; i++) {
+			sigma[i] = m * (1.0f - red) * eu[i] + m * red * pheo[i];
+		}
+	}
+	r_mat.hair_absorption = rt_medium_code(sigma);
+	r_mat.hair_crown_xy.x = Math::make_half_float(p_crown.x);
+	r_mat.hair_crown_xy.y = Math::make_half_float(p_crown.y);
+	r_mat.hair_crown_z.z = Math::make_half_float(p_crown.z);
 }
 
 // Stores BaseMaterial3D's clearcoat and clearcoat_roughness (0 clearcoat: no coat).
@@ -587,6 +639,8 @@ enum {
 	RT_MAT_FLAG_CUSTOM_TRANSMITTANCE = 4194304u,
 	// BaseMaterial3D Transmission with thin_walled off: the surface bounds a medium that refracts and absorbs.
 	RT_MAT_FLAG_VOLUME = 8388608u,
+	// BaseMaterial3D Hair: fibre scattering (Chiang et al. 2016) where the hair mask is set, see rt_material_set_hair().
+	RT_MAT_FLAG_HAIR = 16777216u,
 	// Multi-bit fields fill the top bits so new single-bit flags can grow upward.
 	// Blend class of transparent surfaces (bits 25-27); opaque surfaces leave 0.
 	RT_MAT_BLEND_CLASS_SHIFT = 25u,

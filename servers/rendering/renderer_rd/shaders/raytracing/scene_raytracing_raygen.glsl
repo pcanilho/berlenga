@@ -63,6 +63,7 @@ layout(set = 0, binding = 5, std430) readonly buffer MaterialBuffer {
 // The light API for the transparent pass's light cache (plight_update).
 #extension GL_EXT_nonuniform_qualifier : require
 layout(set = 1, binding = 0) uniform texture2D bindless_textures[];
+#include "raytracing_hair_inc.glsl"
 #include "brdf_inc.glsl"
 #define RT_LIGHTS_TRACE_SHADOWS_ONLY
 #include "raytracing_lights_inc.glsl"
@@ -1234,6 +1235,7 @@ void main() {
 // clang-format off
 #include "raytracing_inc.glsl"
 #include "../scene_data_inc.glsl"
+#include "raytracing_hair_inc.glsl"
 #include "brdf_inc.glsl"
 #include "raytracing_common_inc.glsl"
 #include "raytracing_samplers_inc.glsl"
@@ -1431,6 +1433,7 @@ void main() {
 // clang-format off
 #include "raytracing_inc.glsl"
 #include "../scene_data_inc.glsl"
+#include "raytracing_hair_inc.glsl"
 #include "brdf_inc.glsl"
 #include "raytracing_common_inc.glsl"
 // clang-format on
@@ -1574,6 +1577,7 @@ void main() {
 #else
 	m.subsurface_skin = false;
 #endif
+	material_result_no_hair(m);
 	// view space -> world space
 	mat3 view_to_world = mat3(inv_view_matrix);
 	m.normal = normalize(view_to_world * normal);
@@ -1669,6 +1673,41 @@ void main() {
 		if (rt_material_feature(RT_MATERIAL_FEATURE_TRANSMISSION)) {
 			m.transmission = transmission * (1.0 - m.metalness);
 		}
+	}
+
+	// Hair (BaseMaterial3D): fibre scattering where the mask is set, strands along hair_direction.
+	material_result_no_hair(m);
+	if ((mat.flags & RT_MAT_FLAG_HAIR) != 0u) {
+		float hair_mask = clamp(material_texture_channel(material_uv_sample(mat.hair_mask_texture, muv, mat.flags), mat.hair_mask_texture), 0.0, 1.0);
+		vec3 hp = rt_material_hair(mat);
+		vec3 hair_color = m.albedo;
+		if (rt_material_hair_melanin(mat)) {
+			// The colour melanin gives a mass of hair; the raster and the hair-off path show it too.
+			hair_color = hair_color_from_sigma_a(rt_medium_absorption(mat.hair_absorption), hp.y);
+			m.albedo = mix(m.albedo, hair_color, hair_mask);
+		}
+		if (rt_material_feature(RT_MATERIAL_FEATURE_HAIR)) {
+			m.hair = hair_mask;
+		}
+		m.hair_params = vec4(hp, 0.0); // h is drawn per path vertex in shade_and_bounce().
+		m.hair_cards = rt_material_hair_cards(mat);
+		m.hair_sigma_a = hair_mass_sigma_a(hair_color);
+	}
+	if (m.hair > 0.0) {
+		uint direction = rt_material_hair_direction(mat);
+		vec3 t;
+		if (direction == 0u) {
+			// Away from the crown, in object space (skinned meshes trace their posed vertices).
+			vec3 p_obj = (mat4(gl_WorldToObjectEXT) * vec4(h.hit_pos, 1.0)).xyz;
+			t = mat3(gl_ObjectToWorldEXT) * (p_obj - rt_material_hair_crown(mat));
+		} else {
+			t = direction == 1u ? h.tangent : h.bitangent;
+		}
+		t -= dot(t, m.normal) * m.normal;
+		if (dot(t, t) < 1e-12) {
+			t = h.tangent - dot(h.tangent, m.normal) * m.normal;
+		}
+		m.hair_tangent = dot(t, t) > 1e-12 ? normalize(t) : vec3(1.0, 0.0, 0.0);
 	}
 
 	// Proximity/distance fade (BaseMaterial3D feature, mirrors raster).

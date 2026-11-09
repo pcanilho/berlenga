@@ -22,7 +22,20 @@ struct MaterialResult {
 	uint medium_scatter; // With RT_MEDIUM_CODE_SCATTER in medium: rt_medium_scatter_pack().
 	float subsurface; // SSS_STRENGTH: subsurface scattering radius over rendering/pathtracing/subsurface_scattering_scale; 0 = none.
 	bool subsurface_skin; // Skin Mode (sss_mode_skin): measured skin's per-channel radii.
+	float hair; // BaseMaterial3D Hair: the share of the surface that is hair (its mask), 0 = none.
+	vec3 hair_sigma_a; // Absorption per fibre diameter.
+	vec3 hair_tangent; // World space, along the strands.
+	vec4 hair_params; // Longitudinal roughness, azimuthal roughness, cuticle tilt (degrees), fibre offset h.
+	bool hair_cards; // Light passes through (cards); otherwise a shell folds it back out.
 };
+
+void material_result_no_hair(inout MaterialResult r) {
+	r.hair = 0.0;
+	r.hair_sigma_a = vec3(0.0);
+	r.hair_tangent = vec3(1.0, 0.0, 0.0);
+	r.hair_params = vec4(0.3, 0.3, 2.0, 0.0);
+	r.hair_cards = false;
+}
 
 // Sensible default for a mid-grey diffuse surface.
 MaterialResult default_material_result(vec3 geometry_normal) {
@@ -44,6 +57,7 @@ MaterialResult default_material_result(vec3 geometry_normal) {
 	r.medium_scatter = 0u;
 	r.subsurface = 0.0;
 	r.subsurface_skin = false;
+	material_result_no_hair(r);
 	return r;
 }
 

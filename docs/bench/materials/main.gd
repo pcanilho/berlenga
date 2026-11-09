@@ -30,6 +30,11 @@ extends Node3D
 #                     1 m spheres scatter as a 10 cm object at the default 0.01
 #                     water_depths: unshaded white tiles under 0.25, 0.5, 1, 2 and 4 m of water, seen straight
 #                     down in an orthogonal view with linear tone mapping, to read Beer-Lambert off the pixels
+#                     hair: hair shells (BaseMaterial3D Hair, strands from the crown) on spheres, melanin 0.1
+#                     to 0.9 left to right; back row the same colours without Hair, for comparison
+#                     --hair=back: the sun low behind them (light through the fibres);
+#                     --hair=mask: front row hair on the upper half only (hair_mask_texture);
+#                     --hair=cards: hair cards (hair_cards, strands along the bitangent) against a low sun
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
 #   --raster          raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
@@ -48,6 +53,7 @@ var bounces := 3
 var frames := 8
 var out := ""
 var water := "clear"
+var hair := ""
 var ripples := false
 var debug_mode := 0
 var n := 0
@@ -65,6 +71,7 @@ func _ready() -> void:
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--water="): water = a.substr(8)
+		elif a.begins_with("--hair="): hair = a.substr(7)
 		elif a == "--ripples": ripples = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--set="):
@@ -151,6 +158,10 @@ func _ready() -> void:
 			cam.size = 6.0
 			cam.look_at_from_position(Vector3(0, 6, 0), Vector3(0, 0, 0), Vector3(0, 0, -1))
 			_water_depths()
+		"hair":
+			sun.rotation_degrees = Vector3(-12, 180, 0) if hair in ["back", "cards"] else Vector3(-40, -120, 0)
+			cam.look_at_from_position(Vector3(0, 2.4, 6.5), Vector3(0, 0.7, 0))
+			_hair()
 		_:
 			push_error("Unknown scene: " + scene)
 
@@ -505,6 +516,51 @@ func _water_depths() -> void:
 	water.material_override = _water()
 	water.position = Vector3(0.5, 0.0, 0)
 	add_child(water)
+
+
+# The colour a mass of fibres with this melanin shows (BaseMaterial3D's raster hair colour).
+func _melanin_color(p_melanin: float) -> Color:
+	var m := -log(maxf(1.0 - p_melanin, 1e-4))
+	var d := 5.969 - 0.215 * 0.3 + 2.532 * 0.09 - 10.73 * 0.027 + 5.574 * 0.0081 + 0.245 * 0.00243
+	var sigma := Vector3(0.506, 0.841, 1.653) * m
+	return Color(exp(-sqrt(sigma.x) * d), exp(-sqrt(sigma.y) * d), exp(-sqrt(sigma.z) * d)).linear_to_srgb()
+
+
+func _hair() -> void:
+	if hair == "cards":
+		for i in 5:
+			var m := StandardMaterial3D.new()
+			m.albedo_color = Color(0.85, 0.7, 0.45)
+			m.cull_mode = BaseMaterial3D.CULL_DISABLED
+			m.hair_enabled = true
+			m.hair_cards = true
+			m.hair_direction = BaseMaterial3D.HAIR_DIRECTION_BITANGENT
+			m.hair_roughness = 0.15 + 0.1 * i
+			_quad(Vector2(0.9, 1.6), Vector3((i - 2) * 1.2, 0.9, 0.0), m)
+		return
+	var mask: ImageTexture = null
+	if hair == "mask":
+		var img := Image.create(4, 64, false, Image.FORMAT_L8)
+		for y in 64:
+			for x in 4:
+				img.set_pixel(x, y, Color.WHITE if y < 26 else Color.BLACK)
+		mask = ImageTexture.create_from_image(img)
+	for row in 2:
+		for i in 5:
+			var melanin := 0.1 + 0.2 * i
+			var m := StandardMaterial3D.new()
+			m.roughness = 0.3
+			if row == 1:
+				m.hair_enabled = true
+				m.hair_color_mode = BaseMaterial3D.HAIR_COLOR_MELANIN
+				m.hair_melanin = melanin
+				m.hair_crown = Vector3(0, 0.5, 0)
+				if mask:
+					m.albedo_color = Color(0.8, 0.6, 0.5)
+					m.hair_mask_texture = mask
+			else:
+				m.albedo_color = _melanin_color(melanin)
+			_sphere(Vector3((i - 2) * 1.25, 0.5, -1.0 + row * 1.6), m)
 
 
 func _process(_delta: float) -> void:
