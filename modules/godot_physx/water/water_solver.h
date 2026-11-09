@@ -243,6 +243,7 @@ public:
 	void rt_free(Ref<WaterSolverGPU> p_self);
 	void rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow);
 	void rt_set_swash(Ref<WaterSolverGPU> p_self, float p_run_up, float p_drain_speed, float p_dry_time);
+	void rt_set_band(Ref<WaterSolverGPU> p_self, float p_k_min, float p_k_max);
 	void rt_reinit_spectrum(Ref<WaterSolverGPU> p_self, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
 	// The ripple layer moved (a re-centre): its state + composed height zeroed in place -- the ocean, its textures and
 	// every other buffer stay (see WaterSolver::recenter).
@@ -286,6 +287,10 @@ private:
 	PackedFloat32Array _init_cell_depth;
 	PackedFloat32Array _init_base_flux;
 	float _init_depth = 3.0f;
+	// Wavenumber band this ocean carries (rad/m; 0 = no bound): one cascade of a
+	// multi-cascade ocean leaves the rest of the spectrum to the others.
+	float _init_k_min = 0.0f;
+	float _init_k_max = 0.0f;
 
 	void _rt_store_velocity_cache(const uint8_t *p_state, int p_bytes);
 
@@ -337,6 +342,10 @@ public:
 		// tall and how long the wind waves get (JONSWAP). 100 km is a fully
 		// developed open sea; a pool's size gives tiny, short ripples.
 		float fetch = 100000.0f;
+		// Only wavenumbers in [ocean_k_min, ocean_k_max) (rad/m; 0 = unbounded):
+		// one cascade of a multi-cascade ocean (PhysXWaterSurface3D::wave_cascades).
+		float ocean_k_min = 0.0f;
+		float ocean_k_max = 0.0f;
 
 		// Light-space caustic map (see water_caustics_map.glsl). The grid/
 		// buffers are only built if this is true at configure() time -- keep

@@ -21,7 +21,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 domain_wind; // xy domain size (world, full extent), z wind_speed, w wind_dir_x
 	vec4 misc; // x wind_dir_z, y gravity, z amplitude (squared multiplier), w unused
 	ivec4 res; // x N, yzw unused
-	vec4 extra; // x fetch (m), y depth (m), zw unused
+	vec4 extra; // x fetch (m), y depth (m), z k_min, w k_max (rad/m, 0 = unbounded: one cascade's band)
 };
 
 layout(set = 0, binding = 1, std430) restrict buffer H0 {
@@ -49,7 +49,7 @@ vec2 gaussian_pair(ivec2 m) {
 	return vec2(r * cos(6.28318530718 * u2), r * sin(6.28318530718 * u2));
 }
 
-// JONSWAP wind-sea spectrum turned into a 2D wavenumber spectrum E(k)
+// TMA (JONSWAP in finite depth) wind-sea spectrum turned into a 2D wavenumber spectrum E(k)
 // (m^4, integrating to the height variance). Fetch -- how far the wind has
 // blown over open water -- sets both the energy (alpha) and the peak
 // frequency, so a pool's meters of fetch give short, tiny ripples and an
@@ -68,6 +68,12 @@ float jonswap(vec2 k, vec2 wind_dir, float wind_speed, float gravity, float fetc
 	float sigma = w <= wp ? 0.07 : 0.09;
 	float r = exp(-(w - wp) * (w - wp) / (2.0 * sigma * sigma * wp * wp));
 	float s_w = alpha * gravity * gravity / pow(w, 5.0) * exp(-1.25 * pow(wp / w, 4.0)) * pow(3.3, r);
+	// TMA (Bouws et al. 1985): in finite depth the spectrum is capped by the
+	// Kitaigorodskii depth function of w_h = w sqrt(d / g) -- shallow water
+	// holds less energy in the long waves (Horvath 2015's approximation).
+	float wh = w * sqrt(depth / gravity);
+	float phi = wh <= 1.0 ? 0.5 * wh * wh : (wh < 2.0 ? 1.0 - 0.5 * (2.0 - wh) * (2.0 - wh) : 1.0);
+	s_w *= phi;
 	// cos^2 spreading about the wind (normalized over the forward half), and
 	// a weak back lobe so waves running against the wind aren't absent.
 	float c = dot(k / kl, wind_dir);
@@ -106,6 +112,11 @@ void main() {
 	// a complex Gaussian (unit variance per component). With amplitude 1 the
 	// field's height variance is the spectrum's integral over the resolved
 	// wavenumbers -- physical meters, no empirical scale.
+	float kl = length(k);
+	if (kl < extra.z || (extra.w > 0.0 && kl >= extra.w)) {
+		h0[c.y * n + c.x] = vec4(0.0);
+		return;
+	}
 	float dk2 = (6.28318530718 / domain.x) * (6.28318530718 / domain.y);
 	float p1 = jonswap(k, wind_dir, wind_speed, gravity, fetch, depth) * dk2 * 0.5 * amplitude;
 	float p2 = jonswap(-k, wind_dir, wind_speed, gravity, fetch, depth) * dk2 * 0.5 * amplitude;
