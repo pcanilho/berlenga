@@ -30,7 +30,7 @@
 			<return type="Dictionary" />
 			<param index="0" name="index" type="int" />
 			<description>
-				One cross-section, for tools and tests: [code]centre[/code] (world), [code]s[/code] (m along the river), [code]width[/code], [code]surface[/code] (world height), [code]slope[/code], [code]speed[/code] (mean, m/s), [code]foam[/code], [code]cascade[/code], and per sample across, [code]depths[/code] and [code]speeds[/code].
+				One cross-section, for tools and tests: [code]centre[/code] (world), [code]s[/code] (m along the river), [code]width[/code], [code]surface[/code] (world height), [code]slope[/code], [code]speed[/code] (mean, m/s), [code]foam[/code], [code]cascade[/code], and per sample across, [code]depths[/code], [code]speeds[/code] (along the river), [code]across[/code] (towards the left bank) and [code]foams[/code].
 			</description>
 		</method>
 		<method name="get_section_count" qualifiers="const">
@@ -56,7 +56,7 @@
 			<return type="Vector3" />
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
-				Depth-averaged water velocity (m/s, world) at a world position; zero off the river.
+				Depth-averaged water velocity (m/s, world) at a world position; zero off the river. It bends round rocks: the flow is a stream function solved over the river with Manning's friction (the diffusive wave), so the water parts in front of a rock, runs faster past its sides and slows behind it.
 			</description>
 		</method>
 		<method name="sample_foam" qualifiers="const">
@@ -116,6 +116,9 @@
 		</member>
 		<member name="max_slope" type="float" setter="set_max_slope" getter="get_max_slope" default="0.08">
 			Drops steeper than this (m per m) are cascades: the water falls down them instead of flowing.
+		</member>
+		<member name="obstacle_collision_mask" type="int" setter="set_obstacle_collision_mask" getter="get_obstacle_collision_mask" default="0">
+			Physics layers of rocks and other obstacles in the river, measured on top of the ground. The flow parts round them and white water gathers at them. Needed with [member carve], since a carving river measures the uncarved terrain from [member base_height_source]; without carving, rocks on the [member ground_collision_mask] layers are found anyway.
 		</member>
 		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.035">
 			Manning's roughness: about 0.013 for concrete, 0.03 for a clean natural channel, 0.05 for a stony or weedy one. Rougher rivers run slower and deeper.

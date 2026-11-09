@@ -1089,6 +1089,12 @@ fading over `foam_persistence`. The surface's ripples and foam ride the current
 `sample_foam()` read it from scripts, and `PhysXBuoyancy3D` floats bodies on it
 and drags them with the current (point its `water_surface_path` at the river).
 
+**Rocks.** The flow is a stream function solved over the whole river with
+Manning's friction (the diffusive wave), so the current parts round rocks, runs
+faster past their sides and slows behind them; white water gathers on a rock's
+upstream face and trails from its sides. Rocks are found by the ground rays, or
+on the `obstacle_collision_mask` layers (needed with `carve`).
+
 **Carving.** With `carve` on, the river designs its own channel instead of
 needing one in the ground: a floor `carve_depth` below the uncarved ground that
 never climbs downstream (through a rise it cuts), banks sloping back up to the
