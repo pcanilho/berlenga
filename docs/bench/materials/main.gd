@@ -13,6 +13,11 @@ extends Node3D
 #   --frames=N        frames rendered before --out is saved (default 8)
 #   --set=setting:value  any project setting, e.g. --set=rendering/pathtracing/clearcoat:0
 #   --out=path.png    save the last frame and quit
+#
+# Software Vulkan (lavapipe) needs shader execution reordering off, read at startup, so put
+# it in an override.cfg next to project.godot (not --set):
+#   [rendering]
+#   pathtracing/use_shader_execution_reordering=false
 var scene := "clearcoat"
 var raster := false
 var spp := 64
