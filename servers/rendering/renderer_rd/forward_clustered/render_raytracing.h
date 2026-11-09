@@ -76,7 +76,7 @@ namespace RendererSceneRenderImplementation {
 class RenderForwardClustered;
 class SceneShaderRaytracing;
 
-// Must match GLSL GeometryData (std430, 144 bytes, 8-byte alignment).
+// Must match GLSL GeometryData (std430, 160 bytes, 8-byte alignment).
 struct alignas(8) RT_GeometryData {
 	uint64_t vertex_buffer_address;
 	uint64_t attribute_buffer_address;
@@ -113,8 +113,12 @@ struct alignas(8) RT_GeometryData {
 	uint32_t debug_state; // See RTDynamicGeometryDebug::pack().
 	uint32_t material_index; // See rt_pack_material_index().
 	uint32_t material_flags;
+	// With RT_GEOM_FLAG_REST: byte offset from vertex_buffer_address of the rest block, the vertex() inputs of a
+	// capture in the same layout as the positions and TBN before it.
+	uint32_t rest_byte_offset;
+	uint32_t rest_pad;
 };
-static_assert(sizeof(RT_GeometryData) == 152, "RT_GeometryData must be 152 bytes for std430");
+static_assert(sizeof(RT_GeometryData) == 160, "RT_GeometryData must be 160 bytes for std430");
 
 // Marks an absent field in RT_GeometryData::instance_data_layout.
 static constexpr uint32_t RT_INSTANCE_DATA_FIELD_NONE = 0xFF;
@@ -650,6 +654,8 @@ enum {
 	RT_GEOM_FLAG_SIDE_CHECK = 64u,
 	// SHADOW_CASTING_SETTING_SELF_SHADOWING receiver: its shadow rays keep the self-shadow group bit.
 	RT_GEOM_FLAG_SELF_SHADOWING = 128u,
+	// Captured geometry that also keeps its vertex() inputs at rest_byte_offset: hit shaders re-run vertex() on them.
+	RT_GEOM_FLAG_REST = 256u,
 };
 
 // Facing state of the path traced triangles of one TLAS instance.
@@ -816,6 +822,7 @@ struct RTDeformedGeometrySource {
 	RID current_vb;
 	uint32_t current_vb_offset = 0; // Byte offset of the surface's positions in `current_vb`.
 	bool captured = false; // Vertex capture output (RT_GEOM_FLAG_CAPTURED). Only `change_stamp` tells captures apart.
+	bool has_rest = false; // The capture also holds vertex()'s inputs (RTVertexCapture::Layout::has_rest).
 	bool force_rebuild = false; // Rebuild the BLAS even when a refit would do.
 	RID prev_vb; // Previous-frame positions for motion vectors. Optional.
 	uint64_t change_stamp = 0; // Changes when `current_vb` contents change.
@@ -986,6 +993,7 @@ struct RTMergeBakeInputs {
 	bool captured = false;
 	// Byte offset of this view's capture in the capture arena; RT_OFFSET_NONE keeps the entry's last bake.
 	uint32_t capture_offset = RT_OFFSET_NONE;
+	bool has_rest = false; // The capture also holds vertex()'s inputs (RTVertexCapture::Layout::has_rest).
 };
 
 // Cache entry for a per-(MultiMesh, surface) merged BLAS.
@@ -1013,6 +1021,7 @@ struct RTMergedMMEntry {
 	RID blas;
 	uint32_t last_mm_count = 0;
 	uint32_t last_surface_counter = 0;
+	bool last_has_rest = false; // The merged buffer holds a rest block (RTMergeBakeInputs::has_rest).
 	uint32_t last_used_frame = 0;
 	uint64_t cached_mm_last_change = 0;
 	bool blas_built_once = false;
@@ -1385,6 +1394,7 @@ class RenderRaytracing {
 		enum BakeFlags : uint32_t {
 			BAKE_TBN = 1u, // Bake normals and tangents.
 			BAKE_CAPTURED = 2u, // Copy positions and TBN from a vertex capture instead of transforming mesh vertices.
+			BAKE_REST = 4u, // With BAKE_CAPTURED: also copy the capture's rest block (vertex() inputs) after the TBN block.
 		};
 		MultimeshMergeShaderRD shader;
 		RID version;

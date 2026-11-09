@@ -477,20 +477,9 @@ float shore_signal(vec2 world_xz, float time) {
 }
 
 void vertex() {
-#if defined(RT)
-	// The path tracer runs this at a ray hit on the captured surface, which
-	// is already offset and displaced: undo the horizontal (choppy) part by
-	// fixed-point iteration to find the resting point the hit came from, as
-	// the raster varyings have it. Converges while the waves don't fold.
-	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	vec2 hit_xz = world_pos.xz;
-	for (int i = 0; i < 4; i++) {
-		world_pos.xz = hit_xz - surface_offset(world_pos.xz).xz;
-	}
-#else
+	// Under path tracing too: a hit re-runs this on the captured rest pose.
 	VERTEX += (inverse(MODEL_MATRIX) * vec4(mesh_offset.x, 0.0, mesh_offset.y, 0.0)).xyz;
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-#endif
 	v_rest_xz = world_pos.xz;
 	VERTEX += surface_offset(world_pos.xz);
 	v_world_normal = vec3(0.0, 1.0, 0.0);

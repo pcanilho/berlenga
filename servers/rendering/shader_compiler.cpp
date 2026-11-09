@@ -706,6 +706,7 @@ String ShaderCompiler::_dump_node_code(const SL::Node *p_node, int p_level, Gene
 				if (varying.type < SL::TYPE_INT) {
 					continue; // Ignore boolean types to prevent crashing (if varying is just declared).
 				}
+				r_gen_code.uses_vertex_varyings = true;
 
 				String type_str = _prestr(varying.precision, ShaderLanguage::is_float_type(varying.type)) + _typestr(varying.type);
 				String name_str = _mkid(varying_name);
@@ -1660,6 +1661,7 @@ Error ShaderCompiler::compile(RSE::ShaderMode p_mode, const String &p_code, Iden
 	r_gen_code.uses_screen_texture = false;
 	r_gen_code.uses_depth_texture = false;
 	r_gen_code.uses_normal_roughness_texture = false;
+	r_gen_code.uses_vertex_varyings = false;
 
 	used_name_defines.clear();
 	used_rmode_defines.clear();

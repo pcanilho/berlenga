@@ -77,6 +77,9 @@ public:
 		bool writes_vertex = false; // The injected billboard code doesn't count.
 		bool writes_modelview = false; // PROJECTION_MATRIX writes don't count: captures are in view space.
 		bool particle_trails = false;
+		// vertex() writes something the path tracer's hit keeps (a varying, UV, UV2 or COLOR), so the hit re-runs it
+		// on the rest inputs the capture stores (Layout::has_rest) rather than on the displaced hit point.
+		bool keeps_vertex_outputs = false;
 		VertexDependencies dependencies;
 		uint32_t code_version = 0;
 	};
@@ -163,18 +166,27 @@ public:
 
 	// float3 positions (instance * V + vertex), then the packed TBN block when the mesh has normals.
 	// Must match the deformed and merged MultiMesh vertex buffers BLASes are built from.
+	// With has_rest, a second block of the same layout follows: the vertex() inputs (VERTEX, NORMAL, TANGENT,
+	// BINORMAL) in the same capture space, which the hit interpolates and re-runs vertex() on for its varyings.
 	struct Layout {
 		uint32_t vertex_count = 0;
 		uint32_t instance_count = 1;
 		bool has_normal = false;
 		bool has_tangent = false; // Only stored together with the normal.
+		bool has_rest = false;
 
 		constexpr uint64_t point_count() const { return uint64_t(vertex_count) * instance_count; }
 		constexpr uint64_t point_index(uint32_t p_instance, uint32_t p_vertex) const { return uint64_t(p_instance) * vertex_count + p_vertex; }
 		constexpr uint32_t tbn_stride() const { return has_normal ? (has_tangent ? 8u : 4u) : 0u; }
 		constexpr uint64_t position_bytes() const { return point_count() * 12u; }
-		constexpr uint64_t total_bytes() const { return point_count() * (12u + tbn_stride()); }
+		// Bytes of the displaced block; the rest block, when present, starts here.
+		constexpr uint64_t block_bytes() const { return point_count() * (12u + tbn_stride()); }
+		constexpr uint64_t total_bytes() const { return block_bytes() * (has_rest ? 2u : 1u); }
 	};
+
+	static constexpr bool needs_rest(const ShaderTraits &p_traits) {
+		return p_traits.keeps_vertex_outputs;
+	}
 
 	struct Instances {
 		uint32_t count = 0;
@@ -191,6 +203,7 @@ public:
 	enum DrawFlags : uint32_t {
 		DRAW_FLAG_NORMAL = 1u << 0,
 		DRAW_FLAG_TANGENT = 1u << 1,
+		DRAW_FLAG_REST = 1u << 2,
 	};
 
 	// Must match RTCaptureDraw in rt_capture_inc.glsl (std430).
@@ -201,8 +214,11 @@ public:
 		uint32_t vertex_count = 0;
 		uint32_t flags = 0;
 		float dead_position[4] = {}; // Where culled instances and non-finite points collapse to.
+		uint32_t rest_position_offset = 0; // In words; read with DRAW_FLAG_REST.
+		uint32_t rest_tbn_offset = 0; // In words.
+		uint32_t pad[2] = {};
 	};
-	static_assert(sizeof(DrawParams) == 80, "Must match RTCaptureDraw in rt_capture_inc.glsl.");
+	static_assert(sizeof(DrawParams) == 96, "Must match RTCaptureDraw in rt_capture_inc.glsl.");
 
 	// p_arena_offset must be 4-byte aligned. p_dead_position is in capture space.
 	static DrawParams make_draw_params(const Layout &p_layout, uint32_t p_arena_offset, const Transform3D &p_local_to_world, const Transform3D &p_camera, const Vector3 &p_dead_position) {
@@ -217,7 +233,11 @@ public:
 		params.position_offset = p_arena_offset / 4u;
 		params.tbn_offset = uint32_t((p_arena_offset + p_layout.position_bytes()) / 4u);
 		params.vertex_count = p_layout.vertex_count;
-		params.flags = (p_layout.has_normal ? uint32_t(DRAW_FLAG_NORMAL) : 0u) | (p_layout.has_normal && p_layout.has_tangent ? uint32_t(DRAW_FLAG_TANGENT) : 0u);
+		params.flags = (p_layout.has_normal ? uint32_t(DRAW_FLAG_NORMAL) : 0u) | (p_layout.has_normal && p_layout.has_tangent ? uint32_t(DRAW_FLAG_TANGENT) : 0u) |
+				(p_layout.has_rest ? uint32_t(DRAW_FLAG_REST) : 0u);
+		const uint64_t rest_base = uint64_t(p_arena_offset) + p_layout.block_bytes();
+		params.rest_position_offset = uint32_t(rest_base / 4u);
+		params.rest_tbn_offset = uint32_t((rest_base + p_layout.position_bytes()) / 4u);
 		params.dead_position[0] = float(p_dead_position.x);
 		params.dead_position[1] = float(p_dead_position.y);
 		params.dead_position[2] = float(p_dead_position.z);

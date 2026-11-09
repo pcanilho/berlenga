@@ -347,6 +347,8 @@ const uint FLAG_FACING_INVERTED = 32u;
 const uint FLAG_SIDE_CHECK = 64u;
 // SELF_SHADOWING receiver: its shadow rays keep RT_PARAM_SELF_SHADOW_MASK.
 const uint FLAG_SELF_SHADOWING = 128u;
+// Captured geometry that also keeps its vertex() inputs (the rest pose) at GeometryData::rest_byte_offset.
+const uint FLAG_REST = 256u;
 
 // ============================================================================
 // RANDOM NUMBER GENERATION - PCG (Permuted Congruential Generator)

@@ -1497,7 +1497,10 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 	uint32_t position_stride = is_2d ? (uint32_t)sizeof(float) * 2u : (uint32_t)sizeof(float) * 3u;
 	uint32_t tbn_section_per_vertex = has_n ? (has_t ? 8u : 4u) : 0u;
 	uint32_t per_vertex_bytes = position_stride + tbn_section_per_vertex;
-	uint32_t full_size = per_vertex_bytes * vertex_count;
+	// A capture with vertex() inputs carries a second block of the same layout (RTVertexCapture::Layout::has_rest).
+	const bool has_rest = p_source.captured && p_source.has_rest && !is_2d;
+	uint32_t block_size = per_vertex_bytes * vertex_count;
+	uint32_t full_size = block_size * (has_rest ? 2u : 1u);
 	uint32_t pos_size = position_stride * vertex_count;
 
 	if (vertex_count == 0 || full_size == 0) {
@@ -1587,8 +1590,10 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 	}
 
 	if (entry.ptr && entry.ptr->blas.is_valid()) {
-		const uint32_t kept_flags = entry.ptr->geometry.flags & ~uint32_t(RT_GEOM_FLAG_CAPTURED);
-		entry.ptr->geometry.flags = kept_flags | RT_GEOM_FLAG_DEFORMED | (p_source.captured ? uint32_t(RT_GEOM_FLAG_CAPTURED) : 0u);
+		const uint32_t kept_flags = entry.ptr->geometry.flags & ~uint32_t(RT_GEOM_FLAG_CAPTURED | RT_GEOM_FLAG_REST);
+		entry.ptr->geometry.flags = kept_flags | RT_GEOM_FLAG_DEFORMED | (p_source.captured ? uint32_t(RT_GEOM_FLAG_CAPTURED) : 0u) |
+				(has_rest ? uint32_t(RT_GEOM_FLAG_REST) : 0u);
+		entry.ptr->geometry.rest_byte_offset = has_rest ? block_size : RT_OFFSET_NONE;
 		const uint64_t prev_addr = _rt_buffer_address(entry.prev_pos_vb, entry.prev_pos_vb_address, entry.ptr->sources.prev_vertex);
 		entry.ptr->geometry.prev_vertex_buffer_address_lo = static_cast<uint32_t>(prev_addr & 0xFFFFFFFFULL);
 		entry.ptr->geometry.prev_vertex_buffer_address_hi = static_cast<uint32_t>(prev_addr >> 32);
@@ -2125,7 +2130,8 @@ static bool _rt_plan_element_equal(const RTPlanSurface &p_a, const RTPlanSurface
 // The entry memo is resolved by apply, so it isn't part of the plan.
 static bool _rt_plan_element_equal(const RTPlanCapture &p_a, const RTPlanCapture &p_b) {
 	return p_a.surf == p_b.surf && p_a.layout.vertex_count == p_b.layout.vertex_count && p_a.layout.instance_count == p_b.layout.instance_count &&
-			p_a.layout.has_normal == p_b.layout.has_normal && p_a.layout.has_tangent == p_b.layout.has_tangent && p_a.dependencies == p_b.dependencies &&
+			p_a.layout.has_normal == p_b.layout.has_normal && p_a.layout.has_tangent == p_b.layout.has_tangent && p_a.layout.has_rest == p_b.layout.has_rest &&
+			p_a.dependencies == p_b.dependencies &&
 			p_a.triangle_count == p_b.triangle_count && p_a.surface_key == p_b.surface_key &&
 			(p_a.flags & RT_PLAN_CAPTURE_IDENTITY_FLAGS) == (p_b.flags & RT_PLAN_CAPTURE_IDENTITY_FLAGS);
 }
@@ -2340,6 +2346,7 @@ bool RenderRaytracing::_plan_capture_instance(const RTPlanContext &p_ctx, const 
 			continue;
 		}
 		RTVertexCapture::Layout layout = _rt_capture_layout(surf->surface);
+		layout.has_rest = RTVertexCapture::needs_rest(surf->shader->rt_capture);
 		if (merged) {
 			layout.instance_count = _rt_drawn_instances(source, surf->flags & RenderForwardClustered::GeometryInstanceSurfaceDataCache::FLAG_USES_PARTICLE_TRAILS).count;
 		}
@@ -2573,6 +2580,7 @@ bool RenderRaytracing::_resolve_captured_source(const void *p_surf, LocalVector<
 		r_source.current_vb_offset = recorded->arena_offset;
 	}
 	r_source.captured = true;
+	r_source.has_rest = RTVertexCapture::needs_rest(static_cast<const RenderForwardClustered::GeometryInstanceSurfaceDataCache *>(p_surf)->shader->rt_capture);
 	r_source.force_rebuild = recorded && binding->rebuild;
 	r_source.change_stamp = _capture_state(*binding)->stamp;
 	r_source.cache_key = uint64_t(uintptr_t(p_surf));
@@ -2594,6 +2602,7 @@ bool RenderRaytracing::_resolve_captured_mm(const void *p_surf, LocalVector<RTCa
 	}
 	r_bake.captured = true;
 	r_bake.capture_offset = recorded ? recorded->arena_offset : RT_OFFSET_NONE;
+	r_bake.has_rest = RTVertexCapture::needs_rest(static_cast<const RenderForwardClustered::GeometryInstanceSurfaceDataCache *>(p_surf)->shader->rt_capture);
 	return true;
 }
 
@@ -2633,6 +2642,7 @@ static void _fill_surface_geometry_data(
 
 	RT_GeometryData &geom = r_surf_data->geometry;
 	memset(&geom, 0, sizeof(geom));
+	geom.rest_byte_offset = RT_OFFSET_NONE;
 	r_surf_data->sources = RTGeometrySources();
 
 	RID vertex_buffer = mesh_storage->mesh_surface_get_vertex_buffer(p_mesh_surface);
@@ -4205,8 +4215,9 @@ bool RenderRaytracing::_build_merged_mm_blas(
 			? new_capture
 			: entry.cached_mm_last_change != mm_last_change || (billboarded && entry.baked_billboard != p_state->merge_billboards[p_inputs.billboard_index]);
 
+	const bool has_rest = p_inputs.captured && p_inputs.has_rest;
 	bool structure_changed = (entry.last_mm_count != instance_count ||
-			entry.last_surface_counter != p_surface_counter);
+			entry.last_surface_counter != p_surface_counter || entry.last_has_rest != has_rest);
 	if (p_action == RT_SCHEDULER_HOLD && (structure_changed || !entry.blas_built_once)) {
 		return false; // Held before its first build: nothing to trace yet.
 	}
@@ -4225,6 +4236,7 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		release_blas();
 		entry.last_mm_count = instance_count;
 		entry.last_surface_counter = p_surface_counter;
+		entry.last_has_rest = has_rest;
 		entry.surface_valid = false;
 	}
 
@@ -4244,7 +4256,9 @@ bool RenderRaytracing::_build_merged_mm_blas(
 	uint32_t src_tbn_byte_offset = vertex_count * 12; // after all float3 positions
 
 	// Merged vertex buffer: [float3 pos × N*V] + [packed TBN × N*V] (if TBN present).
-	uint32_t merged_vtx_bytes = instance_count * vertex_count * 12 + (has_tbn ? instance_count * vertex_count * tbn_stride : 0);
+	// A capture with vertex() inputs adds a second block of the same layout (RTVertexCapture::Layout::has_rest).
+	const uint32_t merged_block_bytes = instance_count * vertex_count * 12 + (has_tbn ? instance_count * vertex_count * tbn_stride : 0);
+	uint32_t merged_vtx_bytes = merged_block_bytes * (has_rest ? 2u : 1u);
 
 	// Every merged buffer size below derives from the structure, so a valid surface never sees a resize.
 	if (!entry.surface_valid) {
@@ -4378,7 +4392,8 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		pc.dst_tbn_base_words = dst_tbn_base_words;
 		pc.mm_stride = p_source.stride;
 		pc.mm_offset = p_mm_offset;
-		pc.bake_flags = (p_full && has_tbn ? uint32_t(MergeShader::BAKE_TBN) : 0u) | (p_inputs.captured ? uint32_t(MergeShader::BAKE_CAPTURED) : 0u);
+		pc.bake_flags = (p_full && has_tbn ? uint32_t(MergeShader::BAKE_TBN) : 0u) | (p_inputs.captured ? uint32_t(MergeShader::BAKE_CAPTURED) : 0u) |
+				(p_full && has_rest ? uint32_t(MergeShader::BAKE_REST) : 0u);
 		pc.attr_stride_words = (p_full && has_attr) ? (attrib_stride / 4) : 0u;
 		pc.billboard_index = p_billboard_index;
 		pc.dead_position[0] = p_source.dead_position.x;
@@ -4466,7 +4481,8 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		geom.vertex_count = instance_count * vertex_count;
 		geom.position_stride = 12; // float3, uncompressed
 		geom.flags &= ~RT_GEOM_FLAG_COMPRESSED;
-		geom.flags |= RT_GEOM_FLAG_DEFORMED | (p_inputs.captured ? uint32_t(RT_GEOM_FLAG_CAPTURED) : 0u);
+		geom.flags |= RT_GEOM_FLAG_DEFORMED | (p_inputs.captured ? uint32_t(RT_GEOM_FLAG_CAPTURED) : 0u) | (has_rest ? uint32_t(RT_GEOM_FLAG_REST) : 0u);
+		geom.rest_byte_offset = has_rest ? merged_block_bytes : RT_OFFSET_NONE;
 
 		// TBN section starts after all positions in the merged vertex buffer.
 		if (has_tbn) {

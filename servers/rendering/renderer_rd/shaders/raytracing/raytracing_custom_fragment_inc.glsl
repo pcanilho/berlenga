@@ -75,6 +75,20 @@ vec3 rt_captured_vertex = vertex;
 vec3 rt_captured_normal = normal;
 vec3 rt_captured_tangent = tangent;
 vec3 rt_captured_binormal = binormal;
+#ifdef RT_HIT_ATTRIBS_DECLARED
+// The hit point is already displaced: give vertex() the rest pose raster gives it, when the capture kept it
+// (shaders whose varyings, UV, UV2 or COLOR outlive vertex()). Otherwise vertex() sees the displaced point.
+if (rt_captured) {
+	vec3 rt_rest_vertex;
+	TBNResult rt_rest_tbn;
+	if (fetch_rest_attributes(rt_geom, attribs, rt_rest_vertex, rt_rest_tbn)) {
+		vertex = rt_rest_vertex;
+		normal = rt_rest_tbn.normal;
+		tangent = rt_rest_tbn.tangent;
+		binormal = rt_rest_tbn.binormal;
+	}
+}
+#endif
 
 // Run vertex shader (computes varyings, may modify built-ins).
 /* RT_CUSTOM_VERTEX_CALL */
