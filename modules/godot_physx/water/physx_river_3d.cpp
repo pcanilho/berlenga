@@ -197,6 +197,7 @@ void fragment() {
 
 constexpr float GRAVITY = 9.81f;
 constexpr float MAX_SPEED = 12.0f; // m/s cap (a fall's sheet, not a sustained river)
+constexpr float CASCADE_MIN_DROP = 0.15f; // m
 
 } // namespace
 
@@ -217,6 +218,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_snap_to_ground"), &PhysXRiver3D::get_snap_to_ground);
 	ClassDB::bind_method(D_METHOD("set_ground_collision_mask", "mask"), &PhysXRiver3D::set_ground_collision_mask);
 	ClassDB::bind_method(D_METHOD("get_ground_collision_mask"), &PhysXRiver3D::get_ground_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_obstacle_collision_mask", "mask"), &PhysXRiver3D::set_obstacle_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_obstacle_collision_mask"), &PhysXRiver3D::get_obstacle_collision_mask);
 	ClassDB::bind_method(D_METHOD("set_step_length", "length"), &PhysXRiver3D::set_step_length);
 	ClassDB::bind_method(D_METHOD("get_step_length"), &PhysXRiver3D::get_step_length);
 	ClassDB::bind_method(D_METHOD("set_cross_segments", "segments"), &PhysXRiver3D::set_cross_segments);
@@ -255,6 +258,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "default_width", PROPERTY_HINT_RANGE, "0.1,100,0.05,or_greater,suffix:m"), "set_default_width", "get_default_width");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snap_to_ground"), "set_snap_to_ground", "get_snap_to_ground");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ground_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_ground_collision_mask", "get_ground_collision_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "obstacle_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_obstacle_collision_mask", "get_obstacle_collision_mask");
 	ADD_GROUP("Hydraulics", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "discharge", PROPERTY_HINT_RANGE, "0.01,1000,0.01,or_greater,suffix:m³/s"), "set_discharge", "get_discharge");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.01,0.15,0.001"), "set_roughness", "get_roughness");
@@ -291,6 +295,7 @@ RIVER_SETTER(roughness, float, roughness, CLAMP(p_value, 0.005f, 0.5f))
 RIVER_SETTER(max_slope, float, max_slope, MAX(p_value, 0.001f))
 RIVER_SETTER(snap_to_ground, bool, snap_to_ground, p_value)
 RIVER_SETTER(ground_collision_mask, uint32_t, ground_collision_mask, p_value)
+RIVER_SETTER(obstacle_collision_mask, uint32_t, obstacle_collision_mask, p_value)
 RIVER_SETTER(step_length, float, step_length, MAX(p_value, 0.05f))
 RIVER_SETTER(cross_segments, int, cross_segments, CLAMP(p_value, 2, 256))
 RIVER_SETTER(bank_margin, float, bank_margin, MAX(p_value, 0.0f))
@@ -360,7 +365,7 @@ float PhysXRiver3D::_point_value(const PackedFloat32Array &p_values, int p_index
 	return v > 0.0f ? v : p_default;
 }
 
-bool PhysXRiver3D::_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y) const {
+bool PhysXRiver3D::_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y, uint32_t p_mask) const {
 	if (p_space == nullptr) {
 		return false;
 	}
@@ -371,7 +376,7 @@ bool PhysXRiver3D::_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 
 	PhysicsDirectSpaceState3D::RayParameters ray;
 	ray.from = xf.xform(p_local + Vector3(0, PROBE_ABOVE, 0));
 	ray.to = xf.xform(p_local - Vector3(0, PROBE_BELOW, 0));
-	ray.collision_mask = ground_collision_mask;
+	ray.collision_mask = p_mask;
 	ray.collide_with_areas = false;
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 	for (int skip = 0; skip < MAX_SKIPS; skip++) {
@@ -409,7 +414,7 @@ bool PhysXRiver3D::_base_ground_at(PhysicsDirectSpaceState3D *p_space, const Vec
 		r_y = xf.affine_inverse().xform(Vector3(w.x, h, w.z)).y;
 		return true;
 	}
-	return _ground_at(p_space, p_local, r_y);
+	return _ground_at(p_space, p_local, r_y, ground_collision_mask);
 }
 
 // The carved channel's height (local y) at p_n across a section, and how much
@@ -529,7 +534,7 @@ void PhysXRiver3D::_build() {
 			ground[i * (m + 1) + j] = y;
 		}
 	}
-	if (carve) {
+	{
 		// Curvature smoothed over about 6 m (a bend, not the polyline's kinks).
 		const int cw = MAX(1, (int)Math::round(3.0f / ds));
 		LocalVector<float> raw;
@@ -546,6 +551,8 @@ void PhysXRiver3D::_build() {
 			}
 			sections[i].curvature = sum / used;
 		}
+	}
+	if (carve) {
 		// The channel floor: carve_depth under the uncarved ground, never
 		// climbing downstream -- through a rise it cuts (Horizon's river tool).
 		for (int i = 0; i < count; i++) {
@@ -567,6 +574,28 @@ void PhysXRiver3D::_build() {
 				const float base = ground_found[k] ? ground[k] : sec.carve_top;
 				ground[k] = Math::lerp(base, MIN(base, target), mask);
 				ground_found[k] = 1;
+			}
+		}
+	}
+	// Rocks and other obstacles on their own layers stand on the (base or
+	// carved) ground: a carved river measures the uncarved terrain, which has
+	// no rocks in it.
+	PhysicsDirectSpaceState3D *obstacle_space = space;
+	if (obstacle_space == nullptr && obstacle_collision_mask != 0 && is_inside_world() && get_world_3d().is_valid()) {
+		obstacle_space = get_world_3d()->get_direct_space_state();
+	}
+	if (obstacle_collision_mask != 0 && obstacle_space != nullptr) {
+		for (int i = 0; i < count; i++) {
+			const Section &sec = sections[i];
+			const float half = 0.5f * sec.width + bank_margin;
+			for (int j = 0; j <= m; j++) {
+				const float n = -half + j * (2.0f * half / m);
+				float y = 0.0f;
+				const int k = i * (m + 1) + j;
+				if (_ground_at(obstacle_space, sec.centre + sec.side * n, y, obstacle_collision_mask) && (!ground_found[k] || y > ground[k])) {
+					ground[k] = y;
+					ground_found[k] = 1;
+				}
 			}
 		}
 	}
@@ -657,7 +686,11 @@ void PhysXRiver3D::_build() {
 		if (i > 0) {
 			sec.surface = MIN(sec.surface, sections[i - 1].surface);
 		}
-		sec.cascade = i > 0 && (sections[i - 1].surface - sec.surface) / ds > max_slope;
+		// A cascade is a real fall: steeper than max_slope and more than a few
+		// centimetres (the running minimum leaves small steps where a rock's
+		// backwater meets the reach below it; those are not falls).
+		const float drop = i > 0 ? sections[i - 1].surface - sec.surface : 0.0f;
+		sec.cascade = drop / ds > max_slope && drop > CASCADE_MIN_DROP;
 		sec.centre.y = sec.surface;
 	}
 	for (int i = 0; i < count; i++) {
@@ -706,10 +739,308 @@ void PhysXRiver3D::_build() {
 		carried_foam = MAX(carried_foam, source);
 		sec.foam = carried_foam;
 	}
+	_solve_flow(ds);
 	_build_mesh();
 	update_configuration_warnings();
 	if (carve) {
 		emit_signal(SNAME("carve_changed"));
+	}
+}
+
+// Flow round rocks. Steady river flow is friction dominated (Manning), so the
+// unit discharge q follows the surface gradient: q = -K grad(eta) with
+// K = d^(5/3) / (n sqrt(S)) (the diffusive-wave model of flood codes such as
+// LISFLOOD-FP, Bates and De Roo 2000). Continuity, div q = 0, then makes q the
+// curl of a stream function psi with div(grad(psi) / K) = 0. In a straight
+// reach that gives exactly the divided channel's d^(5/3) profile, and round a
+// rock (dry cells inside the river) the flow parts, speeds up past its sides
+// and slows in front and behind. Solved in the river's own strip coordinates
+// (s along, n across) with the bend's metric h = 1 - curvature n, psi held at
+// 0 on the right bank and the discharge on the left, ends held at the
+// section's own profile; an island's psi is chosen so no net flow goes round
+// it (as PhysXWaterSurface3D's flow bake). Then white water per sample:
+// Froude, cascades, and where the current strikes or grazes a rock, carried
+// downstream along the flow.
+void PhysXRiver3D::_solve_flow(float p_ds) {
+	const int count = (int)sections.size();
+	const int m = cross_segments;
+	const int row = m + 1;
+	const int cells = count * row;
+	constexpr float DRY = 0.02f; // m: shallower is a wall
+	constexpr float MIN_D = 0.05f; // m: depth floor for weights and speeds
+	auto is_wet = [&](int p_i, int p_j) -> bool {
+		return sections[p_i].depth[p_j] > DRY;
+	};
+	auto dn_of = [&](int p_i) -> float {
+		return (sections[p_i].width + 2.0f * bank_margin) / m;
+	};
+	auto n_of = [&](int p_i, int p_j) -> float {
+		const float half = 0.5f * sections[p_i].width + bank_margin;
+		return -half + p_j * (2.0f * half / m);
+	};
+	auto metric = [&](int p_i, int p_j) -> float {
+		return MAX(0.2f, 1.0f - sections[p_i].curvature * n_of(p_i, p_j));
+	};
+	LocalVector<float> inv_k; // 1 / d^(5/3), 0 where dry
+	inv_k.resize(cells);
+	for (int i = 0; i < count; i++) {
+		for (int j = 0; j <= m; j++) {
+			inv_k[i * row + j] = is_wet(i, j) ? Math::pow(MAX(sections[i].depth[j], MIN_D), -5.0f / 3.0f) : 0.0f;
+		}
+	}
+
+	// Start from each section's own d^(5/3) profile, integrated from the right bank.
+	LocalVector<float> psi;
+	psi.resize(cells);
+	for (int i = 0; i < count; i++) {
+		const float dn = dn_of(i);
+		float acc = 0.0f;
+		psi[i * row] = 0.0f;
+		for (int j = 1; j <= m; j++) {
+			const float a = is_wet(i, j - 1) ? Math::pow(sections[i].depth[j - 1], 5.0f / 3.0f) : 0.0f;
+			const float b = is_wet(i, j) ? Math::pow(sections[i].depth[j], 5.0f / 3.0f) : 0.0f;
+			acc += 0.5f * (a + b) * dn;
+			psi[i * row + j] = acc;
+		}
+		const float scale = acc > 1e-9f ? discharge / acc : 0.0f;
+		for (int j = 0; j <= m; j++) {
+			psi[i * row + j] *= scale;
+		}
+	}
+
+	// Dry patches: the banks keep their start values (0 and the discharge);
+	// a patch that touches neither bank edge nor an end is an island, solved for.
+	LocalVector<int> comp;
+	comp.resize(cells);
+	for (int c = 0; c < cells; c++) {
+		comp[c] = -1;
+	}
+	LocalVector<uint8_t> comp_island;
+	LocalVector<int> stack;
+	int comps = 0;
+	for (int c = 0; c < cells; c++) {
+		if (comp[c] >= 0 || inv_k[c] > 0.0f) {
+			continue;
+		}
+		bool island = true;
+		stack.clear();
+		stack.push_back(c);
+		comp[c] = comps;
+		while (!stack.is_empty()) {
+			const int k = stack[stack.size() - 1];
+			stack.remove_at(stack.size() - 1);
+			const int i = k / row;
+			const int j = k % row;
+			if (i == 0 || i == count - 1 || j == 0 || j == m) {
+				island = false;
+			}
+			const int nb[4] = { i > 0 ? k - row : -1, i < count - 1 ? k + row : -1, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
+			for (int q = 0; q < 4; q++) {
+				if (nb[q] >= 0 && comp[nb[q]] < 0 && inv_k[nb[q]] == 0.0f) {
+					comp[nb[q]] = comps;
+					stack.push_back(nb[q]);
+				}
+			}
+		}
+		comp_island.push_back(island ? 1 : 0);
+		comps++;
+	}
+	bool any_island = false;
+	for (int q = 0; q < comps; q++) {
+		any_island = any_island || comp_island[q];
+	}
+	// An island's start value: the mean of its cells' start values.
+	LocalVector<float> comp_value;
+	comp_value.resize(comps);
+	if (any_island) {
+		LocalVector<int> comp_cells;
+		comp_cells.resize(comps);
+		for (int q = 0; q < comps; q++) {
+			comp_value[q] = 0.0f;
+			comp_cells[q] = 0;
+		}
+		for (int c = 0; c < cells; c++) {
+			if (comp[c] >= 0 && comp_island[comp[c]]) {
+				comp_value[comp[c]] += psi[c];
+				comp_cells[comp[c]]++;
+			}
+		}
+		for (int q = 0; q < comps; q++) {
+			if (comp_island[q]) {
+				comp_value[q] /= MAX(comp_cells[q], 1);
+			}
+		}
+		for (int c = 0; c < cells; c++) {
+			if (comp[c] >= 0 && comp_island[comp[c]]) {
+				psi[c] = comp_value[comp[c]];
+			}
+		}
+
+		// SOR on div(grad(psi) / K) = 0 with the bend metric. Face weights:
+		// along s 1 / (h K ds^2), across h / (K dn^2); a face onto a wall
+		// takes the wet cell's own K.
+		const float ds2 = p_ds * p_ds;
+		auto face = [&](int p_a, int p_b, bool p_along, float p_h, float p_dn2) -> float {
+			const float ka = inv_k[p_a];
+			const float kb = inv_k[p_b];
+			const float k = (ka > 0.0f && kb > 0.0f) ? 0.5f * (ka + kb) : MAX(ka, kb);
+			return p_along ? k / (p_h * ds2) : k * p_h / p_dn2;
+		};
+		LocalVector<float> comp_num;
+		LocalVector<float> comp_den;
+		comp_num.resize(comps);
+		comp_den.resize(comps);
+		const float omega = 1.85f;
+		const float tolerance = 1e-5f * discharge;
+		for (int iter = 0; iter < 4000; iter++) {
+			float max_change = 0.0f;
+			for (int i = 1; i < count - 1; i++) {
+				const float dn2 = dn_of(i) * dn_of(i);
+				for (int j = 0; j <= m; j++) {
+					const int k = i * row + j;
+					if (inv_k[k] == 0.0f) {
+						continue;
+					}
+					const float h = metric(i, j);
+					float num = 0.0f;
+					float den = 0.0f;
+					const int nb[4] = { k - row, k + row, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
+					for (int q = 0; q < 4; q++) {
+						if (nb[q] < 0) {
+							continue; // the strip's side edge: no flow across it
+						}
+						const float w = face(k, nb[q], q < 2, h, dn2);
+						num += w * psi[nb[q]];
+						den += w;
+					}
+					if (den > 0.0f) {
+						const float change = omega * (num / den - psi[k]);
+						psi[k] += change;
+						max_change = MAX(max_change, Math::abs(change));
+					}
+				}
+			}
+			// Islands: psi where the flow round them sums to zero.
+			for (int q = 0; q < comps; q++) {
+				comp_num[q] = 0.0f;
+				comp_den[q] = 0.0f;
+			}
+			for (int i = 1; i < count - 1; i++) {
+				const float dn2 = dn_of(i) * dn_of(i);
+				for (int j = 0; j <= m; j++) {
+					const int k = i * row + j;
+					if (inv_k[k] == 0.0f) {
+						continue;
+					}
+					const int nb[4] = { k - row, k + row, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
+					for (int q = 0; q < 4; q++) {
+						if (nb[q] < 0 || comp[nb[q]] < 0 || !comp_island[comp[nb[q]]]) {
+							continue;
+						}
+						const float w = face(k, nb[q], q < 2, metric(i, j), dn2);
+						comp_num[comp[nb[q]]] += w * psi[k];
+						comp_den[comp[nb[q]]] += w;
+					}
+				}
+			}
+			for (int c = 0; c < cells; c++) {
+				const int q = comp[c];
+				if (q >= 0 && comp_island[q] && comp_den[q] > 0.0f) {
+					psi[c] = comp_num[q] / comp_den[q];
+				}
+			}
+			if (max_change < tolerance && iter > 4) {
+				break;
+			}
+		}
+	}
+
+	// Velocity from psi: along = dpsi/dn / d, across = -dpsi/ds / (h d).
+	for (int i = 0; i < count; i++) {
+		Section &sec = sections[i];
+		sec.across_at.resize(row);
+		sec.foam_at.resize(row);
+		const float dn = dn_of(i);
+		for (int j = 0; j <= m; j++) {
+			const int k = i * row + j;
+			if (inv_k[k] == 0.0f) {
+				sec.speed_at[j] = 0.0f;
+				sec.across_at[j] = 0.0f;
+				continue;
+			}
+			const int jl = MAX(j - 1, 0);
+			const int jr = MIN(j + 1, m);
+			const int il = MAX(i - 1, 0);
+			const int ir = MIN(i + 1, count - 1);
+			const float d = MAX(sec.depth[j], MIN_D);
+			const float dpsi_dn = (psi[i * row + jr] - psi[i * row + jl]) / ((jr - jl) * dn);
+			const float dpsi_ds = ir > il ? (psi[ir * row + j] - psi[il * row + j]) / ((ir - il) * p_ds) : 0.0f;
+			sec.speed_at[j] = CLAMP(dpsi_dn / d, -MAX_SPEED, MAX_SPEED);
+			sec.across_at[j] = CLAMP(-dpsi_ds / (metric(i, j) * d), -MAX_SPEED, MAX_SPEED);
+		}
+	}
+
+	// White water per sample. Sources: the local Froude number (so it gathers in
+	// the fast core), cascades across the whole river, and the current meeting
+	// a rock -- the pillow on its upstream face and the shear lines past its
+	// sides (an island's wet neighbours, faster water foaming more). Carried
+	// downstream along the local flow, fading at the mean current's pace, so
+	// two trails close in behind each rock.
+	LocalVector<float> carried;
+	carried.resize(row);
+	for (int i = 0; i < count; i++) {
+		Section &sec = sections[i];
+		const float decay = Math::exp(-p_ds / (MAX(sec.speed, 0.1f) * foam_persistence));
+		const float dn = dn_of(i);
+		for (int j = 0; j <= m; j++) {
+			const int k = i * row + j;
+			float src = 0.0f;
+			if (inv_k[k] > 0.0f) {
+				// Supercritical water and cascades.
+				const float d = MAX(sec.depth[j], MIN_D);
+				const float speed = Math::sqrt(sec.speed_at[j] * sec.speed_at[j] + sec.across_at[j] * sec.across_at[j]);
+				const float fr = speed / Math::sqrt(GRAVITY * d);
+				float f = CLAMP((fr - 0.8f) / 0.8f, 0.0f, 1.0f);
+				src = f * f * (3.0f - 2.0f * f);
+				if (sec.cascade) {
+					src = 1.0f;
+				}
+				// A rock next to this sample.
+				bool by_rock = false;
+				for (int di = -1; di <= 1 && !by_rock; di++) {
+					for (int dj = -1; dj <= 1; dj++) {
+						const int ii = i + di;
+						const int jj = j + dj;
+						if (ii < 0 || ii >= count || jj < 0 || jj > m) {
+							continue;
+						}
+						const int c = comp[ii * row + jj];
+						if (c >= 0 && comp_island[c]) {
+							by_rock = true;
+							break;
+						}
+					}
+				}
+				if (by_rock) {
+					// Lace rather than a sheet: up to 0.75, from 0.5 m/s, full at 2.5 m/s.
+					float r = CLAMP((speed - 0.5f) / 2.0f, 0.0f, 1.0f);
+					src = MAX(src, 0.75f * r * r * (3.0f - 2.0f * r));
+				}
+			}
+			float up = 0.0f;
+			if (i > 0 && inv_k[k] > 0.0f) {
+				// Where this sample's water was one step upstream.
+				const float along = MAX(sec.speed_at[j], 0.05f);
+				const float shift = CLAMP(sec.across_at[j] / along * p_ds / dn, -1.0f, 1.0f);
+				const float u = CLAMP((float)j - shift, 0.0f, (float)m);
+				const int j0 = MIN((int)u, m - 1);
+				up = Math::lerp(carried[j0], carried[j0 + 1], u - j0) * decay;
+			}
+			sec.foam_at[j] = inv_k[k] > 0.0f ? MAX(src, up) : 0.0f;
+		}
+		for (int j = 0; j <= m; j++) {
+			carried[j] = sec.foam_at[j];
+		}
 	}
 }
 
@@ -749,20 +1080,14 @@ void PhysXRiver3D::_build_mesh() {
 		const Section &sec = sections[i];
 		const float half = 0.5f * sec.width + bank_margin;
 		const Vector3 tangent(-sec.side.z, 0.0f, sec.side.x);
-		float sec_max_speed = 0.0f;
-		for (int j = 0; j <= m; j++) {
-			sec_max_speed = MAX(sec_max_speed, sec.speed_at[j]);
-		}
 		for (int j = 0; j <= m; j++) {
 			const int k = i * row + j;
 			const float n = -half + 2.0f * half * j / m;
 			verts.set(k, sec.centre + sec.side * n);
 			uvs.set(k, Vector2(sec.s, n));
-			const Vector3 v = tangent * sec.speed_at[j];
+			const Vector3 v = tangent * sec.speed_at[j] + sec.side * sec.across_at[j];
 			uv2s.set(k, Vector2(v.x, v.z));
-			// White water gathers in the fast core; at a cascade it spans the river.
-			const float core = sec_max_speed > 1e-4f ? sec.speed_at[j] / sec_max_speed : 0.0f;
-			const float foam = sec.foam * (sec.cascade ? 1.0f : MIN(1.0f, 0.25f + core));
+			const float foam = sec.foam_at[j];
 			const float width_fade = 1.0f - CLAMP((Math::abs(n) - 0.5f * sec.width) / MAX(bank_margin, 1e-3f), 0.0f, 1.0f);
 			colors.set(k, Color(CLAMP((sec.depth[j] + 1.0f) * 0.25f, 0.0f, 1.0f), foam, width_fade, 1.0f));
 		}
@@ -901,9 +1226,11 @@ Vector3 PhysXRiver3D::sample_flow(const Vector3 &p_world_pos) const {
 	}
 	const float v = Math::lerp(cross_value(sections[i], sections[i].speed_at, n, bank_margin, cross_segments),
 			cross_value(sections[i + 1], sections[i + 1].speed_at, n, bank_margin, cross_segments), t);
+	const float a = Math::lerp(cross_value(sections[i], sections[i].across_at, n, bank_margin, cross_segments),
+			cross_value(sections[i + 1], sections[i + 1].across_at, n, bank_margin, cross_segments), t);
 	const Vector3 side = sections[i].side.lerp(sections[i + 1].side, t).normalized();
 	const Vector3 tangent(-side.z, 0.0f, side.x);
-	return get_global_transform().basis.xform(tangent * v);
+	return get_global_transform().basis.xform(tangent * v + side * a);
 }
 
 float PhysXRiver3D::sample_foam(const Vector3 &p_world_pos) const {
@@ -913,7 +1240,8 @@ float PhysXRiver3D::sample_foam(const Vector3 &p_world_pos) const {
 	if (!_locate(p_world_pos, i, t, n)) {
 		return 0.0f;
 	}
-	return Math::lerp(sections[i].foam, sections[i + 1].foam, t);
+	return Math::lerp(cross_value(sections[i], sections[i].foam_at, n, bank_margin, cross_segments),
+			cross_value(sections[i + 1], sections[i + 1].foam_at, n, bank_margin, cross_segments), t);
 }
 
 float PhysXRiver3D::get_length() const {
@@ -935,12 +1263,18 @@ Dictionary PhysXRiver3D::get_section(int p_index) const {
 	d["cascade"] = sec.cascade;
 	PackedFloat32Array depth;
 	PackedFloat32Array speed;
+	PackedFloat32Array across;
+	PackedFloat32Array foam;
 	for (uint32_t j = 0; j < sec.depth.size(); j++) {
 		depth.push_back(sec.depth[j]);
 		speed.push_back(sec.speed_at[j]);
+		across.push_back(sec.across_at[j]);
+		foam.push_back(sec.foam_at[j]);
 	}
 	d["depths"] = depth;
 	d["speeds"] = speed;
+	d["across"] = across;
+	d["foams"] = foam;
 	return d;
 }
 
