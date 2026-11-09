@@ -257,6 +257,20 @@ with open(bpy.path.abspath("//hair.hair"), "wb") as f:
   and render modes `hair_strands` / `hair_cards`, read by the custom hit-group path the same way
   BaseMaterial3D's Hair section is. The node's built-in shader uses them, with melanin colour.
 - No strand-strand collision (TressFX and Frostbite skip it too; shape constraints keep volume).
+- Revision after the first clips read as heavy rope (HairWorks' Physical tab as the reference:
+  mass scale, damping, inertia scale and limit, stiffness strength / damping / root / tip / bend,
+  hair interaction; guide curves with interpolated strands):
+  - **Air**: velocity relaxes toward the air's at `air_drag` (5/s; one loose fibre is ~20/s,
+    falling at ~0.5 m/s), implicit. `wind` is the air's velocity in m/s, with `turbulence`:
+    eddies of `turbulence_size` carried along by the wind (Taylor's frozen turbulence).
+  - **Guides**: `guide_ratio` (0.1) of the strands simulate; the rest follow their three nearest
+    guides by root (inverse square distance), each guide's point at the same share of its length
+    plus the groomed offset turned with the guide's segment (TressFX follow hairs). Strands move
+    in clumps and keep their own curl.
+  - **Inertia scale / limit** (0.6, 0.5 m/s): above the limit, part of the head's motion carries
+    the strands instead of being left to inertia.
+  - **Shape damping** (0.5): part of the global shape pull moves the point without becoming
+    velocity, so it settles instead of bouncing.
 - Bench: `docs/bench/materials --scene=strands_sim --fixed-fps 30 --write-movie` (`--hair=wind`: head
   still in a gusty gale).
 

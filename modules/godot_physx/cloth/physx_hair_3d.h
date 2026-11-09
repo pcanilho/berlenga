@@ -59,7 +59,7 @@ class PhysXHair3D : public Node3D {
 
 	bool simulating = true;
 	int substeps = 4;
-	float damping = 0.5f;
+	float damping = 0.05f;
 	float root_follow = 0.3f;
 	float tip_follow = 0.0f;
 	float follow_range = 0.3f;
@@ -69,6 +69,13 @@ class PhysXHair3D : public Node3D {
 	Vector3 fixed_gravity = Vector3(0, -9.8f, 0);
 	Vector3 wind;
 	float gust = 0.3f;
+	float air_drag = 5.0f;
+	float turbulence = 0.35f;
+	float turbulence_size = 0.08f;
+	float guide_ratio = 0.1f;
+	float shape_damping = 0.5f;
+	float inertia_scale = 0.6f;
+	float inertia_limit = 0.5f;
 	PackedVector4Array collision_spheres; // this node's space: centre, radius
 
 	HairStrandSolver *solver = nullptr;
@@ -87,6 +94,7 @@ class PhysXHair3D : public Node3D {
 	void _make_material();
 	void _step(double p_delta);
 	Vector3 _fibre_absorption() const;
+	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) const;
 	Color _mass_color() const;
 
 protected:
@@ -137,6 +145,20 @@ public:
 	Vector3 get_wind() const;
 	void set_gust(float p_gust);
 	float get_gust() const;
+	void set_guide_ratio(float p_ratio);
+	float get_guide_ratio() const;
+	void set_shape_damping(float p_damping);
+	float get_shape_damping() const;
+	void set_inertia_scale(float p_scale);
+	float get_inertia_scale() const;
+	void set_inertia_limit(float p_limit);
+	float get_inertia_limit() const;
+	void set_air_drag(float p_drag);
+	float get_air_drag() const;
+	void set_turbulence(float p_turbulence);
+	float get_turbulence() const;
+	void set_turbulence_size(float p_size);
+	float get_turbulence_size() const;
 	void set_collision_spheres(const PackedVector4Array &p_spheres);
 	PackedVector4Array get_collision_spheres() const;
 

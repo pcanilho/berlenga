@@ -53,7 +53,7 @@ public:
 
 	RID shader, pipeline;
 	bool owns_shader = false;
-	RID buf_params, buf_rest, buf_strands, buf_pos, buf_prev, tex_out;
+	RID buf_params, buf_rest, buf_strands, buf_pos, buf_prev, buf_follow, tex_out;
 	RID uniform_set;
 
 	int strand_count = 0;
@@ -63,7 +63,7 @@ public:
 	bool needs_reset = true;
 
 	void rt_compile(Ref<HairStrandSolverGPU> p_self);
-	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands);
+	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow);
 	void rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps);
 	void rt_reset(Ref<HairStrandSolverGPU> p_self);
 	void rt_free_buffers();
@@ -81,15 +81,21 @@ class HairStrandSolver {
 
 public:
 	struct Settings {
-		float damping = 0.5f; // fraction of velocity lost per second
+		float damping = 0.05f; // fraction of velocity lost per second besides air drag (internal friction)
 		float root_follow = 0.3f; // pull toward the groomed pose at the root, per 1/60 s
 		float tip_follow = 0.0f; // the same at the tip
 		float follow_range = 0.3f; // share of the strand, from the root, over which root_follow fades to tip_follow
 		float shape_stiffness = 0.5f; // pull toward each segment's groomed bend, per 1/60 s
 		float length_damping = 0.9f; // DFTL: share of each length correction taken back from the parent
 		Vector3 gravity = Vector3(0, -9.8f, 0);
-		Vector3 wind; // m/s^2, added to gravity
+		Vector3 wind; // air velocity, m/s
 		float gust = 0.3f; // 0..1, how much the wind rises and falls per strand
+		float air_drag = 5.0f; // 1/s: how fast a strand takes up the air's velocity
+		float turbulence = 0.35f; // 0..1, eddies in the wind as a share of its speed
+		float turbulence_size = 0.08f; // m, eddy size
+		float shape_damping = 0.5f; // 0..1: share of the global shape pull that does not become velocity
+		float inertia_scale = 0.6f; // 0 the hair moves with the head, 1 full inertia
+		float inertia_limit = 0.5f; // m/s: head speed above which inertia_scale applies
 		float margin = 0.002f; // kept between strands and the collision spheres (m)
 		Vector<Vector4> spheres; // world centre, radius
 		Transform3D output_xform; // world -> the render copy's space
@@ -98,8 +104,9 @@ public:
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }
 
 	// p_rest: 4 floats per point (groom-space position, length of the segment from the previous
-	// point). p_strands: 2 ints per strand (first point, point count).
-	void build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands);
+	// point). p_strands: 2 ints per strand (first point, point count). p_follow: 8 floats per strand:
+	// up to three guide strands (x, y, z; w -1 for a guide, which simulates) and their weights.
+	void build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow);
 	// p_xform: groom space -> world this frame.
 	void step(const Transform3D &p_xform, double p_delta, int p_substeps, const Settings &p_settings);
 	void reset();
