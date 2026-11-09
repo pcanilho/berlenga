@@ -78,7 +78,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
 - **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
-- **Rivers** (`PhysXRiver3D`: `discharge`, `roughness`, `max_slope`): drawn as a curve; finds its depth, never runs uphill, falls as cascades into white water; `carve` emits channel brushes for a terrain deformer.
+- **Rivers** (`PhysXRiver3D`: `discharge`, `roughness`, `max_slope`): drawn as a curve; finds its depth, never runs uphill, falls as cascades into white water; `carve` emits channel brushes for a terrain deformer. The current parts round rocks and trails foam behind them (`obstacle_collision_mask`).
 - **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
 <details><summary>Images and clips: murky water, caustics, ocean, currents, live flow, white water, rivers, under water</summary>
@@ -110,6 +110,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A river with a cascade, raster vs path traced](docs/media/river.jpg)
 
 *Rivers: the cascade and the white water below it.*
+
+![A river parting round a rock, raster vs path traced](docs/media/river-rocks.jpg)
+
+*Rivers round rocks: foam trails behind the rock.*
 
 ![Under water near crates, raster vs path traced](docs/media/underwater.jpg)
 
