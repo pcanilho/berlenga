@@ -276,6 +276,7 @@
 #include "scene/3d/world_environment.h"
 #include "scene/animation/root_motion_view.h"
 #include "scene/resources/3d/fog_material.h"
+#include "scene/resources/3d/hair_groom.h"
 #include "scene/resources/3d/importer_mesh.h"
 #include "scene/resources/3d/joint_limitation_3d.h"
 #include "scene/resources/3d/joint_limitation_cone_3d.h"
@@ -902,6 +903,8 @@ void register_scene_types() {
 	GDREGISTER_CLASS(TorusMesh);
 	GDREGISTER_CLASS(TubeTrailMesh);
 	GDREGISTER_CLASS(RibbonTrailMesh);
+	GDREGISTER_CLASS(HairGroom);
+	GDREGISTER_CLASS(HairMesh);
 	GDREGISTER_CLASS(PointMesh);
 	GDREGISTER_ABSTRACT_CLASS(BaseMaterial3D);
 	GDREGISTER_CLASS(StandardMaterial3D);

@@ -289,10 +289,19 @@ vec3 hair_sample(HairFibre f, vec3 wo, vec2 u0, vec2 u1) {
 // Chiang et al. 2016, section 4.2: a mass of fibres with absorption sigma_a (per fibre diameter)
 // and azimuthal roughness beta_n looks colour exp(-d(beta_n) sqrt(sigma_a)) once light has scattered
 // through many of them.
-vec3 hair_color_from_sigma_a(vec3 sigma_a, float beta_n) {
+float hair_color_d(float beta_n) {
 	float b = clamp(beta_n, 0.01, 1.0);
-	float d = 5.969 - 0.215 * b + 2.532 * b * b - 10.73 * pow(b, 3.0) + 5.574 * pow(b, 4.0) + 0.245 * pow(b, 5.0);
-	return exp(-d * sqrt(max(sigma_a, vec3(0.0))));
+	return 5.969 - 0.215 * b + 2.532 * b * b - 10.73 * pow(b, 3.0) + 5.574 * pow(b, 4.0) + 0.245 * pow(b, 5.0);
+}
+
+vec3 hair_color_from_sigma_a(vec3 sigma_a, float beta_n) {
+	return exp(-hair_color_d(beta_n) * sqrt(max(sigma_a, vec3(0.0))));
+}
+
+// The inverse: the absorption of real fibres that, scattering among each other, show colour c.
+vec3 hair_sigma_a_from_color(vec3 c, float beta_n) {
+	vec3 s = log(clamp(c, vec3(1e-4), vec3(1.0))) / hair_color_d(beta_n);
+	return s * s;
 }
 
 // Shells and cards stand for a whole mass of hair but scatter once, so the light that would wander

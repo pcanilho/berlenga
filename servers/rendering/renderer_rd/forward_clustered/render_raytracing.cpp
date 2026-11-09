@@ -3634,7 +3634,8 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.flags |= RT_MAT_FLAG_HAIR;
 		const Variant crown = material_storage->material_get_param(p_material_rid, "hair_crown");
 		rt_material_set_hair(mat, get_float("hair_roughness", 0.3f), get_float("hair_radial_roughness", 0.3f), get_float("hair_cuticle_tilt", 2.0f),
-				rt_state.hair_direction, rt_state.hair_melanin, get_float("hair_melanin", 0.5f), get_float("hair_melanin_redness", 0.0f), rt_state.hair_cards,
+				rt_state.hair_direction, rt_state.hair_melanin, get_float("hair_melanin", 0.5f), get_float("hair_melanin_redness", 0.0f),
+				rt_state.hair_cards || rt_state.hair_direction == 3u, // BaseMaterial3D::HAIR_DIRECTION_STRANDS.
 				crown.get_type() == Variant::VECTOR3 ? Vector3(crown) : Vector3(0, 1.7, 0));
 		set_texture(mat.hair_mask_texture, get_texture_idx("texture_hair_mask"), get_mask_channel("hair_mask_texture_channel"));
 	}

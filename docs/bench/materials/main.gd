@@ -35,6 +35,9 @@ extends Node3D
 #                     --hair=back: the sun low behind them (light through the fibres);
 #                     --hair=mask: front row hair on the upper half only (hair_mask_texture);
 #                     --hair=cards: hair cards (hair_cards, strands along the bitangent) against a low sun
+#                     strands: three heads with strand hair (HairGroom grown on the scalp, HairMesh, Hair
+#                     direction Strands): straight light brown, wavy brown, curly black;
+#                     --hair=back: the sun low behind them; --hair=thin: one strip per segment, not crossed
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
 #   --raster          raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
@@ -162,6 +165,13 @@ func _ready() -> void:
 			sun.rotation_degrees = Vector3(-12, 180, 0) if hair in ["back", "cards"] else Vector3(-40, -120, 0)
 			cam.look_at_from_position(Vector3(0, 2.4, 6.5), Vector3(0, 0.7, 0))
 			_hair()
+		"strands":
+			sun.rotation_degrees = Vector3(-15, 180, 0) if hair == "back" else Vector3(-30, -120, 0)
+			cam.fov = 30
+			# Light finds its way through a head of hair over many fibres.
+			env.pathtracing_max_bounces = maxi(bounces, 12)
+			cam.look_at_from_position(Vector3(0, 0.45, 1.75), Vector3(0, 0.25, 0))
+			_strands()
 		_:
 			push_error("Unknown scene: " + scene)
 
@@ -561,6 +571,53 @@ func _hair() -> void:
 			else:
 				m.albedo_color = _melanin_color(melanin)
 			_sphere(Vector3((i - 2) * 1.25, 0.5, -1.0 + row * 1.6), m)
+
+
+func _strands() -> void:
+	var scalp := Image.create(4, 64, false, Image.FORMAT_L8)
+	for y in 64:
+		for x in 4:
+			scalp.set_pixel(x, y, Color.WHITE if y < 27 else Color.BLACK)
+	var looks := [
+		# melanin, length, droop, curl radius, curls per metre, frizz
+		[0.25, 0.30, 0.8, 0.0, 0.0, 0.02],
+		[0.55, 0.26, 0.6, 0.008, 12.0, 0.04],
+		[0.9, 0.12, 0.15, 0.006, 45.0, 0.08],
+	]
+	for i in 3:
+		var head := SphereMesh.new()
+		head.radius = 0.1
+		head.height = 0.22
+		head.radial_segments = 64
+		head.rings = 32
+		var skin := StandardMaterial3D.new()
+		skin.albedo_color = Color(0.8, 0.6, 0.5)
+		skin.roughness = 0.5
+		var hi := MeshInstance3D.new()
+		hi.mesh = head
+		hi.material_override = skin
+		hi.position = Vector3((i - 1) * 0.45, 0.27, 0.0)
+		add_child(hi)
+
+		var l: Array = looks[i]
+		var groom := HairGroom.new()
+		groom.grow_on_mesh(head, 0, 6000, l[1], 24, scalp, Vector3(0, 0.11, -0.03), 0.8, l[2], l[3], l[4], l[5], 7 + i)
+		var hair_mesh := HairMesh.new()
+		hair_mesh.groom = groom
+		hair_mesh.root_width = 0.0005
+		hair_mesh.tip_width = 0.0002
+		hair_mesh.crossed = hair != "thin"
+		var m := StandardMaterial3D.new()
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		m.hair_enabled = true
+		m.hair_color_mode = BaseMaterial3D.HAIR_COLOR_MELANIN
+		m.hair_melanin = l[0]
+		m.hair_direction = BaseMaterial3D.HAIR_DIRECTION_STRANDS
+		var mi := MeshInstance3D.new()
+		mi.mesh = hair_mesh
+		mi.material_override = m
+		mi.position = hi.position
+		add_child(mi)
 
 
 func _process(_delta: float) -> void:

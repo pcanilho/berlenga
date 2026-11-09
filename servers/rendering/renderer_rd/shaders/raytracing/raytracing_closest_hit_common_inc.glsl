@@ -1441,7 +1441,7 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	PathState ps = path_unpack(payload);
 	// Every surface bounds this ray segment, even if it cannot continue the path.
 	ps.hit_t = gl_HitTEXT;
-	if (m.hair > 0.0) {
+	if (m.hair > 0.0 && !m.hair_strand) {
 		// Where on a fibre the path meets it: shells and cards have no fibres, so every path vertex
 		// draws its own offset, which averages over the fibre's width (the far-field view).
 		m.hair_params.w = rand(ps.rng_state) * 2.0 - 1.0;

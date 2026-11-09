@@ -2857,6 +2857,10 @@ void BaseMaterial3D::_validate_property(PropertyInfo &p_property) const {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 
+		if (p_property.name == "hair_cards" && hair_direction == HAIR_DIRECTION_STRANDS) {
+			p_property.usage = PROPERTY_USAGE_NO_EDITOR; // Strands always let light through.
+		}
+
 		if (p_property.name == "proximity_fade_distance" && !proximity_fade_enabled) {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
@@ -4047,7 +4051,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hair_roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hair_roughness", "get_hair_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hair_radial_roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hair_radial_roughness", "get_hair_radial_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hair_cuticle_tilt", PROPERTY_HINT_RANGE, "-10,10,0.1,degrees"), "set_hair_cuticle_tilt", "get_hair_cuticle_tilt");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "hair_direction", PROPERTY_HINT_ENUM, "Crown,Tangent,Bitangent"), "set_hair_direction", "get_hair_direction");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "hair_direction", PROPERTY_HINT_ENUM, "Crown,Tangent,Bitangent,Strands"), "set_hair_direction", "get_hair_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "hair_crown", PROPERTY_HINT_NONE, "suffix:m"), "set_hair_crown", "get_hair_crown");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hair_cards"), "set_hair_cards", "is_hair_cards");
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "hair_mask_texture", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_HAIR_MASK);
@@ -4267,6 +4271,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(HAIR_DIRECTION_CROWN);
 	BIND_ENUM_CONSTANT(HAIR_DIRECTION_TANGENT);
 	BIND_ENUM_CONSTANT(HAIR_DIRECTION_BITANGENT);
+	BIND_ENUM_CONSTANT(HAIR_DIRECTION_STRANDS);
 	BIND_ENUM_CONSTANT(HAIR_DIRECTION_MAX);
 
 	BIND_ENUM_CONSTANT(EMISSION_OP_ADD);

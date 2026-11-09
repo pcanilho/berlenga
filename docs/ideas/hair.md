@@ -205,6 +205,37 @@ code was simpler or measured better:
 - **Bench**: `docs/bench/materials --scene=hair [--hair=back|mask|cards]`.
 - **Open**: RR check on the PC (hair speckle is a known RR weak spot).
 
+## Stage 2a as built: strand geometry
+
+- **HairGroom** resource: strands as polylines (`points`, `strand_point_counts`), root triangle and
+  barycentrics when grown. `grow_on_mesh()` spreads roots by area under a mask, leaves the
+  surface combed away from a crown, droops, curls (helix) and frizzes, kept outside the ellipsoid
+  of the scalp's bounds. `load_hair_file()` reads Cem Yuksel's HAIR format.
+- **HairMesh** (PrimitiveMesh): two crossed strips per segment (the DOTS layout, written from its
+  description, not NVIDIA's proprietary geometry library), tapered root to tip, strip frames
+  carried by parallel transport. UV.x across the strip (its tangent), UV.y root to tip.
+- **Hair direction Strands** on BaseMaterial3D: strands along the bitangent, light passes through,
+  and the path tracer takes the true fibre offset `h` from the hit instead of drawing it: the
+  offset across the strip, projected on the axis across the view (pbrt's sign convention).
+- From Blender (hair curves object selected), a HAIR file for `load_hair_file()`:
+
+```python
+import bpy, struct
+obj = bpy.context.active_object
+curves = obj.data
+sizes = [c.points_length for c in curves.curves]
+with open(bpy.path.abspath("//hair.hair"), "wb") as f:
+    f.write(b"HAIR" + struct.pack("<III", len(sizes), len(curves.points), 3))
+    f.write(struct.pack("<Ifffff", 0, 1.0, 0.0, 1.0, 1.0, 1.0) + bytes(88))  # 128-byte header
+    f.write(struct.pack(f"<{len(sizes)}H", *[n - 1 for n in sizes]))
+    for p in curves.points:
+        v = obj.matrix_world @ p.position
+        f.write(struct.pack("<fff", v.x, v.y, v.z))
+```
+
+  (Blender is Z-up in metres: load with `load_hair_file(path, 1.0, true)`.)
+- **Next (2b)**: guide strands simulated on the cloth compute, render strands following them.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.

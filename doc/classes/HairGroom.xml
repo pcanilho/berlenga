@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="HairGroom" inherits="Resource" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Hair as strands: polylines grown from a scalp.
+	</brief_description>
+	<description>
+		A [HairGroom] holds hair strands as polylines of points, root first. Draw it with a [HairMesh]. Build one with [method grow_on_mesh], read one from Cem Yuksel's HAIR file format with [method load_hair_file], or fill [member points] and [member strand_point_counts] from a script.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_point_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of points in all strands.
+			</description>
+		</method>
+		<method name="get_strand_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of strands.
+			</description>
+		</method>
+		<method name="grow_on_mesh">
+			<return type="bool" />
+			<param index="0" name="mesh" type="Mesh" />
+			<param index="1" name="surface" type="int" />
+			<param index="2" name="count" type="int" />
+			<param index="3" name="length" type="float" />
+			<param index="4" name="points_per_strand" type="int" />
+			<param index="5" name="mask" type="Image" />
+			<param index="6" name="crown" type="Vector3" />
+			<param index="7" name="comb" type="float" />
+			<param index="8" name="droop" type="float" />
+			<param index="9" name="curl_radius" type="float" />
+			<param index="10" name="curls_per_metre" type="float" />
+			<param index="11" name="frizz" type="float" />
+			<param index="12" name="seed" type="int" />
+			<description>
+				Replaces the strands with [param count] strands of [param length] metres and [param points_per_strand] points, grown from surface [param surface] of [param mesh]. Roots are spread by area over the triangles where [param mask] (optional, sampled at the mesh's UV) is above one half.
+				Each strand leaves the surface along its normal, combed away from [param crown] by [param comb] ([code]0[/code] straight out, [code]1[/code] flat along the surface), falls under [param droop] ([code]0[/code] stiff, [code]1[/code] limp), curls in a helix of [param curl_radius] metres with [param curls_per_metre] turns per metre, and wanders by [param frizz]. Strands are kept outside the ellipsoid that fits the surface's bounds, a stand-in for the head.
+				Records each root's triangle and barycentric coordinates in [member root_triangles] and [member root_barycentrics]. Returns [code]false[/code] if no triangle can grow hair.
+			</description>
+		</method>
+		<method name="is_valid" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] if [member strand_point_counts] adds up to the number of [member points].
+			</description>
+		</method>
+		<method name="load_hair_file">
+			<return type="int" enum="Error" />
+			<param index="0" name="path" type="String" />
+			<param index="1" name="scale" type="float" default="1.0" />
+			<param index="2" name="z_up" type="bool" default="true" />
+			<description>
+				Replaces the strands with those in a file in Cem Yuksel's HAIR format. Points are multiplied by [param scale] and turned from the format's Z-up to Y-up when [param z_up] is [code]true[/code]. Per-point thickness, transparency and colour in the file are ignored.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="points" type="PackedVector3Array" setter="set_points" getter="get_points" default="PackedVector3Array()">
+			Every strand's points, root first, one strand after another.
+		</member>
+		<member name="root_barycentrics" type="PackedVector3Array" setter="set_root_barycentrics" getter="get_root_barycentrics" default="PackedVector3Array()">
+			For each strand, where in its [member root_triangles] triangle it grows. Empty when the strands were not grown on a mesh.
+		</member>
+		<member name="root_triangles" type="PackedInt32Array" setter="set_root_triangles" getter="get_root_triangles" default="PackedInt32Array()">
+			For each strand, the triangle of the scalp surface it grows from. Empty when the strands were not grown on a mesh.
+		</member>
+		<member name="strand_point_counts" type="PackedInt32Array" setter="set_strand_point_counts" getter="get_strand_point_counts" default="PackedInt32Array()">
+			The number of points in each strand.
+		</member>
+	</members>
+</class>
