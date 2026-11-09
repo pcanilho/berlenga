@@ -16,6 +16,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="clear_inflow">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<description>
+				Removes the inflow [param owner] registered with [method set_inflow].
+			</description>
+		</method>
 		<method name="clear_sphere">
 			<return type="void" />
 			<param index="0" name="owner" type="int" />
@@ -120,6 +127,17 @@
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
 				How fast the surface above [param world_pos]'s XZ is rising, in meters per second (negative while it falls): the ripple and ocean layers' change between the last two readbacks, so it is as far behind the GPU simulation as [method sample_height]. Wakes are left out. Returns [code]0.0[/code] where [method is_wet] is [code]false[/code], and until two readbacks have landed.
+			</description>
+		</method>
+		<method name="set_inflow">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<param index="1" name="at" type="Vector3" />
+			<param index="2" name="direction" type="Vector3" />
+			<param index="3" name="width" type="float" />
+			<param index="4" name="discharge" type="float" />
+			<description>
+				A river flowing in at [param at] (world, its mouth) heading along [param direction], [param width] metres wide and carrying [param discharge] m³/s. Its outflow spreads as a turbulent plane jet (Rajaratnam): a core about three widths long at the mouth speed, then slowing as the square root of the distance while it widens, worn down by the bed in shallow water. The plume is added to the flow over the simulated square, so the waves, foam and floating bodies ride it; the live water does not simulate it. [PhysXRiver3D] calls this for its [member PhysXRiver3D.mouth_target]; [param owner] identifies the inflow.
 			</description>
 		</method>
 		<method name="set_sea_state">

@@ -30,6 +30,8 @@
 
 #include "physx_river_3d.h"
 
+#include "physx_water_surface_3d.h"
+
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -285,6 +287,11 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bank_margin"), &PhysXRiver3D::get_bank_margin);
 	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXRiver3D::set_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXRiver3D::get_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_mouth_target", "path"), &PhysXRiver3D::set_mouth_target);
+	ClassDB::bind_method(D_METHOD("get_mouth_target"), &PhysXRiver3D::get_mouth_target);
+	ClassDB::bind_method(D_METHOD("set_mouth_blend", "blend"), &PhysXRiver3D::set_mouth_blend);
+	ClassDB::bind_method(D_METHOD("get_mouth_blend"), &PhysXRiver3D::get_mouth_blend);
+	ClassDB::bind_method(D_METHOD("get_discharge_at", "s"), &PhysXRiver3D::get_discharge_at);
 	ClassDB::bind_method(D_METHOD("set_live_flow", "enabled"), &PhysXRiver3D::set_live_flow);
 	ClassDB::bind_method(D_METHOD("get_live_flow"), &PhysXRiver3D::get_live_flow);
 	ClassDB::bind_method(D_METHOD("set_live_domain_size", "size"), &PhysXRiver3D::set_live_domain_size);
@@ -341,6 +348,10 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.01,0.15,0.001"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_slope", PROPERTY_HINT_RANGE, "0.005,1,0.005,or_greater"), "set_max_slope", "get_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
+	ADD_GROUP("Mouth", "mouth_");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "mouth_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D,PhysXRiver3D"), "set_mouth_target", "get_mouth_target");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mouth_blend", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater,suffix:m"), "set_mouth_blend", "get_mouth_blend");
+	ADD_SIGNAL(MethodInfo("rebuilt"));
 	ADD_GROUP("Live flow", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_flow"), "set_live_flow", "get_live_flow");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_domain_size", PROPERTY_HINT_RANGE, "8,256,1,or_greater,suffix:m"), "set_live_domain_size", "get_live_domain_size");
@@ -394,6 +405,139 @@ RIVER_SETTER(carve_cell_size, float, carve_cell_size, MAX(p_value, 0.05f))
 RIVER_SETTER(base_height_source, const NodePath &, base_height_source, p_value)
 
 #undef RIVER_SETTER
+
+Node *PhysXRiver3D::_mouth_node() const {
+	if (mouth_target.is_empty() || !is_inside_tree()) {
+		return nullptr;
+	}
+	Node *n = get_node_or_null(mouth_target);
+	return n == this ? nullptr : n;
+}
+
+void PhysXRiver3D::set_mouth_target(const NodePath &p_path) {
+	_unregister_mouth();
+	mouth_target = p_path;
+	_queue_build();
+}
+
+void PhysXRiver3D::set_mouth_blend(float p_blend) {
+	mouth_blend = MAX(p_blend, 0.0f);
+	_queue_build();
+}
+
+float PhysXRiver3D::get_discharge_at(float p_s) const {
+	float q = discharge;
+	for (const Tributary &t : tributaries) {
+		if (p_s >= t.s) {
+			q += t.discharge;
+		}
+	}
+	return q;
+}
+
+void PhysXRiver3D::set_tributary(ObjectID p_river, const Vector3 &p_world, float p_discharge) {
+	for (Tributary &e : tributaries) {
+		if (e.river == p_river) {
+			if (e.at.distance_to(p_world) < 0.5f && Math::abs(e.discharge - p_discharge) < 1e-3f) {
+				return; // unchanged: no rebuild (the two rivers would keep waking each other)
+			}
+			e.at = p_world;
+			e.discharge = p_discharge;
+			_queue_build();
+			return;
+		}
+	}
+	Tributary trib;
+	trib.river = p_river;
+	trib.at = p_world;
+	trib.discharge = p_discharge;
+	tributaries.push_back(trib);
+	_queue_build();
+}
+
+void PhysXRiver3D::clear_tributary(ObjectID p_river) {
+	for (uint32_t k = 0; k < tributaries.size(); k++) {
+		if (tributaries[k].river == p_river) {
+			tributaries.remove_at(k);
+			_queue_build();
+			return;
+		}
+	}
+}
+
+// Tell the water this river flows into: a river adds the discharge downstream
+// of the join; a lake or the sea gets the outflow as a plume (a turbulent
+// jet spreading from the mouth).
+void PhysXRiver3D::_register_mouth() {
+	Node *target = _mouth_node();
+	if (target == nullptr || sections.size() < 2) {
+		_unregister_mouth();
+		return;
+	}
+	if (mouth_id.is_valid() && mouth_id != target->get_instance_id()) {
+		_unregister_mouth();
+	}
+	const Transform3D xf = get_global_transform();
+	int mouth = -1;
+	for (uint32_t i = 1; i < sections.size(); i++) {
+		if (sections[i].mouth_fade < 1.0f) {
+			mouth = (int)i - 1;
+			break;
+		}
+	}
+	if (mouth < 0) {
+		mouth = (int)sections.size() - 1;
+	}
+	const Section &sec = sections[mouth];
+	const Vector3 at = xf.xform(sec.centre);
+	const Vector3 dir = xf.basis.xform(Vector3(-sec.side.z, 0.0f, sec.side.x)).normalized();
+	if (PhysXRiver3D *main = Object::cast_to<PhysXRiver3D>(target)) {
+		if (!main->is_connected(SNAME("rebuilt"), callable_mp(this, &PhysXRiver3D::_on_target_rebuilt))) {
+			main->connect(SNAME("rebuilt"), callable_mp(this, &PhysXRiver3D::_on_target_rebuilt));
+		}
+		main->set_tributary(get_instance_id(), at, sec.discharge);
+	} else if (PhysXWaterSurface3D *sea = Object::cast_to<PhysXWaterSurface3D>(target)) {
+		sea->set_inflow((int64_t)(uint64_t)get_instance_id(), at, dir, sec.width, sec.discharge);
+	}
+	mouth_id = target->get_instance_id();
+}
+
+void PhysXRiver3D::_unregister_mouth() {
+	if (!mouth_id.is_valid()) {
+		return;
+	}
+	Object *o = ObjectDB::get_instance(mouth_id);
+	if (PhysXRiver3D *main = Object::cast_to<PhysXRiver3D>(o)) {
+		if (main->is_connected(SNAME("rebuilt"), callable_mp(this, &PhysXRiver3D::_on_target_rebuilt))) {
+			main->disconnect(SNAME("rebuilt"), callable_mp(this, &PhysXRiver3D::_on_target_rebuilt));
+		}
+		main->clear_tributary(get_instance_id());
+	} else if (PhysXWaterSurface3D *sea = Object::cast_to<PhysXWaterSurface3D>(o)) {
+		sea->clear_inflow((int64_t)(uint64_t)get_instance_id());
+	}
+	mouth_id = ObjectID();
+}
+
+// The river this one flows into was rebuilt: follow its surface at the join
+// if it moved (more than a centimetre, so the two settle instead of waking
+// each other for ever).
+void PhysXRiver3D::_on_target_rebuilt() {
+	PhysXRiver3D *main = Object::cast_to<PhysXRiver3D>(_mouth_node());
+	if (main == nullptr || sections.size() < 2) {
+		return;
+	}
+	const Transform3D xf = get_global_transform();
+	for (uint32_t i = 0; i < sections.size(); i++) {
+		const Vector3 w = xf.xform(sections[i].centre);
+		if (main->sample_depth(w) > 0.0f) {
+			const float level = main->sample_height(w);
+			if (!Math::is_finite(mouth_level_seen) || Math::abs(level - mouth_level_seen) > 0.01f) {
+				_queue_build();
+			}
+			return;
+		}
+	}
+}
 
 void PhysXRiver3D::set_live_flow(bool p_enabled) {
 	live_flow = p_enabled;
@@ -837,6 +981,7 @@ void PhysXRiver3D::_notification(int p_what) {
 			set_physics_process_internal(false);
 			set_process_internal(false);
 			_live_stop();
+			_unregister_mouth();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			// Ground rays need the ground in the physics space, which it is by the first tick.
@@ -998,6 +1143,18 @@ void PhysXRiver3D::_build() {
 		space = get_world_3d()->get_direct_space_state();
 	}
 
+	// Where each tributary joins: its mouth's place along this river, and which bank.
+	{
+		const Transform3D inv = get_global_transform().affine_inverse();
+		for (Tributary &t : tributaries) {
+			const Vector3 local = inv.xform(t.at);
+			t.s = c->get_closest_offset(local);
+			const Vector3 on = c->sample_baked(t.s, true);
+			const Vector3 ahead = c->sample_baked(MIN(t.s + 0.5f, length), true) - c->sample_baked(MAX(t.s - 0.5f, 0.0f), true);
+			const Vector3 side(ahead.z, 0.0f, -ahead.x); // towards the left bank
+			t.from_right = (local - on).dot(side) < 0.0f;
+		}
+	}
 	// Centre line: position, heading, width, given depth (0 = from Manning), bed.
 	sections.resize(count);
 	LocalVector<float> given_depth;
@@ -1021,6 +1178,14 @@ void PhysXRiver3D::_build() {
 		last_tangent = t;
 		sec.side = Vector3(t.z, 0.0f, -t.x);
 		sec.width = interp(widths, default_width, sec.s);
+		sec.discharge = get_discharge_at(sec.s);
+		sec.psi_right = 0.0f;
+		for (const Tributary &t : tributaries) {
+			if (t.from_right && sec.s >= t.s) {
+				sec.psi_right -= t.discharge;
+			}
+		}
+		sec.mouth_fade = 1.0f;
 		given_depth[i] = depths.is_empty() ? 0.0f : interp(depths, 0.0f, sec.s);
 		float y = 0.0f;
 		bed_found[i] = _base_ground_at(space, sec.centre, y) ? 1 : 0;
@@ -1172,7 +1337,7 @@ void PhysXRiver3D::_build() {
 			// Bisect for the surface whose conveyance carries the discharge:
 			// Q = K(surface) S^(1/2). Without measured ground, the parabola's
 			// centre depth is the unknown instead.
-			const float target = discharge / Math::sqrt(bed_slope[i]);
+			const float target = sec.discharge / Math::sqrt(bed_slope[i]);
 			float lo = 0.0f;
 			float hi = 20.0f;
 			for (int it = 0; it < 30; it++) {
@@ -1188,7 +1353,7 @@ void PhysXRiver3D::_build() {
 			centre_depth[i] = d;
 		} else {
 			surface = sec.centre.y;
-			centre_depth[i] = Math::pow(discharge * roughness / (sec.width * Math::sqrt(bed_slope[i])), 0.6f);
+			centre_depth[i] = Math::pow(sec.discharge * roughness / (sec.width * Math::sqrt(bed_slope[i])), 0.6f);
 			bed[i] = surface - centre_depth[i];
 		}
 		sec.surface = surface;
@@ -1201,6 +1366,55 @@ void PhysXRiver3D::_build() {
 		const float drop = i > 0 ? sections[i - 1].surface - sec.surface : 0.0f;
 		sec.cascade = drop / ds > max_slope && drop > CASCADE_MIN_DROP;
 		sec.centre.y = sec.surface;
+	}
+	// The mouth: the river ends in a lake, the sea or another river. Its surface
+	// can't fall below the water it flows into (the level pool: the reach
+	// ponds back until its own normal depth rises above that level), and past
+	// the shoreline the ribbon fades into that water over mouth_blend.
+	{
+		Node *target = _mouth_node();
+		PhysXWaterSurface3D *sea = Object::cast_to<PhysXWaterSurface3D>(target);
+		PhysXRiver3D *main = Object::cast_to<PhysXRiver3D>(target);
+		if (sea != nullptr || main != nullptr) {
+			const Transform3D xf = get_global_transform();
+			const Transform3D inv = xf.affine_inverse();
+			int mouth = -1;
+			float level_world = 0.0f;
+			// The mouth: the first section over that water whose own surface has
+			// come down to its level (upstream of it the river may run over
+			// water that only floods its bed, still above it).
+			for (int i = 0; i < count; i++) {
+				const Vector3 w = xf.xform(sections[i].centre);
+				if (sea != nullptr ? !sea->is_wet(w) : !(main->sample_depth(w) > 0.0f)) {
+					continue;
+				}
+				const float level = sea != nullptr ? sea->get_global_position().y + sea->get_water_level() : main->sample_height(w);
+				if (Math::is_finite(level) && w.y <= level + 0.02f) {
+					mouth = i;
+					level_world = level;
+					break;
+				}
+			}
+			if (main != nullptr) {
+				mouth_level_seen = mouth >= 0 && Math::is_finite(level_world) ? level_world : -Math::INF;
+			}
+			if (mouth >= 0 && Math::is_finite(level_world)) {
+				for (int i = 0; i < count; i++) {
+					Section &sec = sections[i];
+					const float level = inv.xform(Vector3(xf.xform(sec.centre).x, level_world, xf.xform(sec.centre).z)).y;
+					if (sec.surface < level) {
+						sec.surface = level;
+						sec.centre.y = level;
+						sec.cascade = false;
+					}
+					if (i > mouth) {
+						const float past = sec.s - sections[mouth].s;
+						const float f = mouth_blend > 1e-3f ? CLAMP(past / mouth_blend, 0.0f, 1.0f) : 1.0f;
+						sec.mouth_fade = 1.0f - f * f * (3.0f - 2.0f * f);
+					}
+				}
+			}
+		}
 	}
 	for (int i = 0; i < count; i++) {
 		const int a = MAX(0, i - half_window);
@@ -1232,9 +1446,9 @@ void PhysXRiver3D::_build() {
 		for (int j = 0; j <= m; j++) {
 			const float d = sec.depth[j];
 			// v = q / d = Q d^(2/3) / integral(d^(5/3)).
-			sec.speed_at[j] = (d > 0.0f && conveyance > 1e-6f) ? MIN(discharge * Math::pow(d, 2.0f / 3.0f) / conveyance, MAX_SPEED) : 0.0f;
+			sec.speed_at[j] = (d > 0.0f && conveyance > 1e-6f) ? MIN(sec.discharge * Math::pow(d, 2.0f / 3.0f) / conveyance, MAX_SPEED) : 0.0f;
 		}
-		sec.speed = area > 1e-6f ? MIN(discharge / area, MAX_SPEED) : 0.0f;
+		sec.speed = area > 1e-6f ? MIN(sec.discharge / area, MAX_SPEED) : 0.0f;
 		// White water: supercritical flow (Froude above ~1) and the foot of every
 		// cascade, then carried downstream at the current's speed, fading.
 		const float mean_depth = wet_width > 1e-4f ? area / wet_width : 0.0f;
@@ -1251,6 +1465,8 @@ void PhysXRiver3D::_build() {
 	_solve_flow(ds);
 	_build_mesh();
 	live_fields_dirty = true;
+	_register_mouth();
+	emit_signal(SNAME("rebuilt"));
 	update_configuration_warnings();
 	if (carve) {
 		emit_signal(SNAME("carve_changed"));
@@ -1312,9 +1528,9 @@ void PhysXRiver3D::_solve_flow(float p_ds) {
 			acc += 0.5f * (a + b) * dn;
 			psi[i * row + j] = acc;
 		}
-		const float scale = acc > 1e-9f ? discharge / acc : 0.0f;
+		const float scale = acc > 1e-9f ? sections[i].discharge / acc : 0.0f;
 		for (int j = 0; j <= m; j++) {
-			psi[i * row + j] *= scale;
+			psi[i * row + j] = sections[i].psi_right + psi[i * row + j] * scale;
 		}
 	}
 
@@ -1401,7 +1617,7 @@ void PhysXRiver3D::_solve_flow(float p_ds) {
 		comp_num.resize(comps);
 		comp_den.resize(comps);
 		const float omega = 1.85f;
-		const float tolerance = 1e-5f * discharge;
+		const float tolerance = 1e-5f * sections[count - 1].discharge;
 		for (int iter = 0; iter < 4000; iter++) {
 			float max_change = 0.0f;
 			for (int i = 1; i < count - 1; i++) {
@@ -1602,8 +1818,8 @@ void PhysXRiver3D::_build_mesh() {
 			uvs.set(k, Vector2(sec.s, n));
 			const Vector3 v = tangent * sec.speed_at[j] + sec.side * sec.across_at[j];
 			uv2s.set(k, Vector2(v.x, v.z));
-			const float foam = sec.foam_at[j];
-			const float width_fade = 1.0f - CLAMP((Math::abs(n) - 0.5f * sec.width) / MAX(bank_margin, 1e-3f), 0.0f, 1.0f);
+			const float foam = sec.foam_at[j] * sec.mouth_fade;
+			const float width_fade = (1.0f - CLAMP((Math::abs(n) - 0.5f * sec.width) / MAX(bank_margin, 1e-3f), 0.0f, 1.0f)) * sec.mouth_fade;
 			colors.set(k, Color(CLAMP((sec.depth[j] + 1.0f) * 0.25f, 0.0f, 1.0f), foam, width_fade, 1.0f));
 		}
 	}
@@ -1626,7 +1842,7 @@ void PhysXRiver3D::_build_mesh() {
 			const int k11 = k10 + 1;
 			// Skip quads that are dry all round (ground well above the water).
 			const float dmax = MAX(MAX(sections[i].depth[j], sections[i].depth[j + 1]), MAX(sections[i + 1].depth[j], sections[i + 1].depth[j + 1]));
-			if (dmax < -0.05f) {
+			if (dmax < -0.05f || MAX(sections[i].mouth_fade, sections[i + 1].mouth_fade) <= 0.0f) {
 				continue;
 			}
 			// Clockwise seen from above: the top is the front face, which the path

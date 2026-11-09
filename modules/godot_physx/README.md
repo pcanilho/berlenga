@@ -1095,6 +1095,12 @@ faster past their sides and slows behind them; white water gathers on a rock's
 upstream face and trails from its sides. Rocks are found by the ground rays, or
 on the `obstacle_collision_mask` layers (needed with `carve`).
 
+**Joins.** Point `mouth_target` at a lake or the sea (`PhysXWaterSurface3D`)
+or another river. The river ponds back to that water's level, fades into it
+over `mouth_blend`, and its outflow spreads into a lake or the sea as a plume
+(a turbulent jet the waves, foam and floaters ride); into another river, that
+river carries the added discharge from the join down.
+
 **Live window.** With `live_flow` on, the shallow-water solver of the sea's
 live flow runs on a square (`live_domain_size`) round the camera, fed the
 river's depth and flow: rocks shed eddies and a meandering wake drawn by live
