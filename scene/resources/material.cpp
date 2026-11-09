@@ -578,6 +578,7 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->subsurface_scattering_strength = "subsurface_scattering_strength";
 	shader_names->backlight = "backlight";
 	shader_names->refraction = "refraction";
+	shader_names->transmission = "transmission";
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
 	shader_names->uv1_offset = "uv1_offset";
@@ -621,6 +622,7 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->texture_names[TEXTURE_EMISSION] = "texture_emission";
 	shader_names->texture_names[TEXTURE_NORMAL] = "texture_normal";
 	shader_names->texture_names[TEXTURE_BENT_NORMAL] = "texture_bent_normal";
+	shader_names->texture_names[TEXTURE_TRANSMISSION] = "texture_transmission";
 	shader_names->texture_names[TEXTURE_RIM] = "texture_rim";
 	shader_names->texture_names[TEXTURE_CLEARCOAT] = "texture_clearcoat";
 	shader_names->texture_names[TEXTURE_FLOWMAP] = "texture_flowmap";
@@ -686,6 +688,8 @@ void BaseMaterial3D::_update_shader() {
 		rt.texture_filter = texture_filter;
 		rt.clearcoat = features[FEATURE_CLEARCOAT];
 		rt.backlight = features[FEATURE_BACKLIGHT];
+		rt.transmission = features[FEATURE_TRANSMISSION];
+		rt.refraction = features[FEATURE_REFRACTION];
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -793,7 +797,7 @@ void BaseMaterial3D::_update_shader() {
 	}
 
 	DepthDrawMode ddm = depth_draw_mode;
-	if (features[FEATURE_REFRACTION]) {
+	if (features[FEATURE_REFRACTION] || features[FEATURE_TRANSMISSION]) {
 		ddm = DEPTH_DRAW_ALWAYS;
 	}
 
@@ -929,6 +933,11 @@ void BaseMaterial3D::_update_shader() {
 		} else if (alpha_antialiasing_mode == ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE_AND_TO_ONE) {
 			code += ", alpha_to_coverage_and_one";
 		}
+	}
+	if (features[FEATURE_TRANSMISSION] || features[FEATURE_REFRACTION]) {
+		// The path tracer traces the light through these surfaces itself (it has no screen to read),
+		// so it hits them as opaque surfaces rather than alpha-blending them.
+		code += ", rt_force_opaque";
 	}
 
 	code += ";\n";
@@ -1100,7 +1109,15 @@ uniform vec4 refraction_texture_channel;
 				texfilter_str);
 	}
 
-	if (features[FEATURE_REFRACTION]) {
+	if (features[FEATURE_TRANSMISSION]) {
+		code += vformat(R"(
+uniform float transmission : hint_range(0.0, 1.0, 0.01);
+uniform sampler2D texture_transmission : hint_default_white, %s;
+)",
+				texfilter_str);
+	}
+
+	if (features[FEATURE_REFRACTION] || features[FEATURE_TRANSMISSION]) {
 		code += "uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear_mipmap;\n";
 	}
 
@@ -1741,12 +1758,38 @@ void fragment() {)";
 
 	// If the depth buffer is lower then the model's Z position, use the refracted UV, otherwise use the normal screen UV.
 	// At low depth differences, decrease refraction intensity to avoid sudden discontinuities.
-	EMISSION += textureLod(screen_texture, mix(SCREEN_UV, ref_ofs, smoothstep(0.0, 1.0, VERTEX.z - refraction_view_pos.z)), ROUGHNESS * 8.0).rgb * ref_amount * EXPOSURE;
+	vec2 refraction_uv = mix(SCREEN_UV, ref_ofs, smoothstep(0.0, 1.0, VERTEX.z - refraction_view_pos.z));
+)";
+		if (!features[FEATURE_TRANSMISSION]) {
+			// With Transmission, the transmission code below reads the screen at the refracted UV.
+			code += R"(	EMISSION += textureLod(screen_texture, refraction_uv, ROUGHNESS * 8.0).rgb * ref_amount * EXPOSURE;
 	ALBEDO *= 1.0 - ref_amount;
 	// Force transparency on the material (required for refraction).
 	ALPHA = 1.0;
 )";
+		}
+	}
 
+	if (features[FEATURE_TRANSMISSION]) {
+		// Thin-walled transmission (glTF KHR_materials_transmission): the scene behind shows through, tinted
+		// by the albedo, less the dielectric's Fresnel reflection, and blurred by roughness.
+		if (flags[FLAG_UV1_USE_TRIPLANAR]) {
+			code += "	float transmission_tex = triplanar_texture(texture_transmission, uv1_power_normal, uv1_triplanar_pos).r;\n";
+		} else {
+			code += "	float transmission_tex = texture(texture_transmission, base_uv).r;\n";
+		}
+		code += vformat(R"(	// Transmission: Enabled
+	float transmission_amount = clamp(transmission * transmission_tex, 0.0, 1.0) * (1.0 - METALLIC);
+	float transmission_f0 = 0.16 * SPECULAR * SPECULAR;
+	float transmission_fresnel = transmission_f0 + (1.0 - transmission_f0) * pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
+	EMISSION += textureLod(screen_texture, %s, ROUGHNESS * 8.0).rgb * ALBEDO * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
+	ALBEDO *= 1.0 - transmission_amount;
+	// Force transparency on the material (required to read the screen behind it).
+	ALPHA = 1.0;
+)",
+				features[FEATURE_REFRACTION] ? "refraction_uv" : "SCREEN_UV");
+	} else if (features[FEATURE_REFRACTION]) {
+		// Refraction already set ALPHA.
 	} else if (transparency != TRANSPARENCY_DISABLED || flags[FLAG_USE_SHADOW_TO_OPACITY] || (distance_fade == DISTANCE_FADE_PIXEL_ALPHA) || proximity_fade_enabled) {
 		code += "	ALPHA *= albedo.a * albedo_tex.a;\n";
 	}
@@ -2266,6 +2309,15 @@ void BaseMaterial3D::set_refraction(float p_refraction) {
 
 float BaseMaterial3D::get_refraction() const {
 	return refraction;
+}
+
+void BaseMaterial3D::set_transmission(float p_transmission) {
+	transmission = p_transmission;
+	_material_set_param(shader_names->transmission, transmission);
+}
+
+float BaseMaterial3D::get_transmission() const {
+	return transmission;
 }
 
 void BaseMaterial3D::set_detail_uv(DetailUV p_detail_uv) {
@@ -3353,6 +3405,9 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_refraction", "refraction"), &BaseMaterial3D::set_refraction);
 	ClassDB::bind_method(D_METHOD("get_refraction"), &BaseMaterial3D::get_refraction);
 
+	ClassDB::bind_method(D_METHOD("set_transmission", "transmission"), &BaseMaterial3D::set_transmission);
+	ClassDB::bind_method(D_METHOD("get_transmission"), &BaseMaterial3D::get_transmission);
+
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
 	ClassDB::bind_method(D_METHOD("get_point_size"), &BaseMaterial3D::get_point_size);
 
@@ -3635,6 +3690,11 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "refraction_texture", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_REFRACTION);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "refraction_texture_channel", PROPERTY_HINT_ENUM, "Red,Green,Blue,Alpha,Gray"), "set_refraction_texture_channel", "get_refraction_texture_channel");
 
+	ADD_GROUP("Transmission", "transmission_");
+	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "transmission_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_TRANSMISSION);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_transmission", "get_transmission");
+	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "transmission_texture", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_TRANSMISSION);
+
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "detail_mask", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_DETAIL_MASK);
@@ -3716,6 +3776,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(TEXTURE_EMISSION);
 	BIND_ENUM_CONSTANT(TEXTURE_NORMAL);
 	BIND_ENUM_CONSTANT(TEXTURE_BENT_NORMAL);
+	BIND_ENUM_CONSTANT(TEXTURE_TRANSMISSION);
 	BIND_ENUM_CONSTANT(TEXTURE_RIM);
 	BIND_ENUM_CONSTANT(TEXTURE_CLEARCOAT);
 	BIND_ENUM_CONSTANT(TEXTURE_FLOWMAP);
@@ -3767,6 +3828,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FEATURE_REFRACTION);
 	BIND_ENUM_CONSTANT(FEATURE_DETAIL);
 	BIND_ENUM_CONSTANT(FEATURE_BENT_NORMAL_MAPPING);
+	BIND_ENUM_CONSTANT(FEATURE_TRANSMISSION);
 	BIND_ENUM_CONSTANT(FEATURE_MAX);
 
 	BIND_ENUM_CONSTANT(BLEND_MODE_MIX);
@@ -3888,6 +3950,7 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_transmittance_depth(0.1);
 	set_transmittance_boost(0.0);
 	set_refraction(0.05);
+	set_transmission(1.0);
 	set_point_size(1);
 	set_uv1_offset(Vector3(0, 0, 0));
 	set_uv1_scale(Vector3(1, 1, 1));

@@ -1133,6 +1133,7 @@ void main() {
 	m.backlight = backlight;
 	m.clearcoat = rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT) ? clamp(clearcoat, 0.0, 1.0) : 0.0;
 	m.clearcoat_roughness = clamp(clearcoat_roughness, 0.0, 1.0);
+	m.transmission = 0.0;
 	// view space -> world space
 	mat3 view_to_world = mat3(inv_view_matrix);
 	m.normal = normalize(view_to_world * normal);
@@ -1205,12 +1206,24 @@ void main() {
 	m.metalness = metalness;
 	m.specular = rt_material_surface_params(mat).z;
 	m.emissive = emissive;
-	m.emission_indirect = mat.emission_indirect;
+	m.emission_indirect = rt_material_emission_indirect(mat);
 	m.normal = final_normal;
 	m.backlight = rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING) ? rt_material_backlight(mat) : vec3(0.0);
 	vec2 coat = rt_material_clearcoat(mat);
 	m.clearcoat = rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT) ? coat.x : 0.0;
 	m.clearcoat_roughness = coat.y;
+	m.transmission = 0.0;
+	if ((mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u) {
+		// Refraction lets through 1 - alpha and draws the surface opaque, as raster.
+		float transmission = rt_material_transmission(mat);
+		if ((mat.flags & RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA) != 0u) {
+			transmission *= 1.0 - m.alpha;
+			m.alpha = 1.0;
+		}
+		if (rt_material_feature(RT_MATERIAL_FEATURE_TRANSMISSION)) {
+			m.transmission = transmission * (1.0 - m.metalness);
+		}
+	}
 
 	// Proximity/distance fade (BaseMaterial3D feature, mirrors raster).
 	if ((mat.flags & (RT_MAT_FLAG_PROXIMITY_FADE | RT_MAT_FLAG_DISTANCE_FADE)) != 0u) {
@@ -1325,7 +1338,12 @@ void main() {
 	MaterialData mat = rt_entry_material(geometry_idx);
 	bool transparent = (mat.flags & RT_MAT_FLAG_TRANSPARENT) != 0u;
 	bool alpha_scissor = (mat.flags & RT_MAT_FLAG_ALPHA_SCISSOR) != 0u;
-	if (!transparent && !alpha_scissor) {
+	// Thin glass lets shadow rays through; other rays hit it as an opaque surface.
+	bool shadow_transmission = rt_material_feature(RT_MATERIAL_FEATURE_TRANSMISSION);
+	bool shadow_back_lighting = rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING);
+	bool transmissive_shadow = !transparent && !alpha_scissor && is_shadow_ray(payload.packed_bounces_flags) &&
+			(((mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u && shadow_transmission) || ((mat.flags & RT_MAT_FLAG_BACKLIT) != 0u && shadow_back_lighting));
+	if (!transparent && !alpha_scissor && !transmissive_shadow) {
 		return; // Ordinary opaque shadow candidate: accept immediately.
 	}
 
@@ -1380,6 +1398,19 @@ void main() {
 		vec4 albedo_tex = material_uv_sample(mat.albedo_texture, muv, mat.flags);
 		hit_alpha = albedo_tex.a * mat.albedo_color.a;
 		hit_tint = clamp(albedo_tex.rgb * mat.albedo_color.rgb, vec3(0.0), vec3(1.0));
+	}
+#endif
+#ifndef RT_CUSTOM_HIT_GROUP
+	if (transmissive_shadow) {
+		// Glass and back-lit cloth or leaves: the light they let through, tinted (an even shadow, as
+		// transparent casters give).
+		PathState shadow_ps = path_unpack(payload);
+		shadow_ps.throughput *= rt_material_shadow_transmittance(mat, hit_tint, hit_alpha, shadow_transmission, shadow_back_lighting);
+		path_pack(payload, shadow_ps);
+		if (max(shadow_ps.throughput.r, max(shadow_ps.throughput.g, shadow_ps.throughput.b)) > 1e-3) {
+			ignoreIntersectionEXT;
+		}
+		return;
 	}
 #endif
 	hit_alpha = rt_entry_alpha(mat, hit_alpha, scissor_threshold >= 0.0 ? scissor_threshold : 0.5);

@@ -1,6 +1,13 @@
 // Requires raytracing_inc.glsl, raytracing_hit_inc.glsl and raytracing_entry_material_inc.glsl. The includer
 // declares tlas, geometries[], materials[], bindless_textures[] and SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT.
 
+// Whether thin transmissive casters let light through (rendering/pathtracing/transmission). Includers
+// without the path tracer's params define it first.
+#ifndef RT_SHADOW_QUERY_TRANSMISSION
+#define RT_SHADOW_QUERY_TRANSMISSION rt_material_feature(RT_MATERIAL_FEATURE_TRANSMISSION)
+#define RT_SHADOW_QUERY_BACK_LIGHTING rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING)
+#endif
+
 vec4 ray_query_surface(uint geometry_idx, uint primitive_id, vec2 candidate_bary, float lod) {
 	vec3 bary = vec3(1.0 - candidate_bary.x - candidate_bary.y, candidate_bary.x, candidate_bary.y);
 
@@ -43,6 +50,17 @@ vec3 ray_query_shadow_transmittance(vec3 origin, vec3 direction, float t_min, fl
 		uint geometry_idx = RT_RQ_GEOMETRY_IDX(shadow_rq, false);
 		uint mat_flags = rt_entry_material_flags(geometry_idx);
 		if ((mat_flags & (RT_MAT_FLAG_TRANSPARENT | RT_MAT_FLAG_ALPHA_SCISSOR)) == 0u) {
+			bool trans = (mat_flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u && RT_SHADOW_QUERY_TRANSMISSION;
+			bool back = (mat_flags & RT_MAT_FLAG_BACKLIT) != 0u && RT_SHADOW_QUERY_BACK_LIGHTING;
+			if (trans || back) {
+				// Glass and back-lit surfaces, as the any-hit shader filters them.
+				vec4 surface = ray_query_surface(geometry_idx, rayQueryGetIntersectionPrimitiveIndexEXT(shadow_rq, false), rayQueryGetIntersectionBarycentricsEXT(shadow_rq, false), lod);
+				transmittance *= rt_material_shadow_transmittance(rt_entry_material(geometry_idx), surface.rgb, surface.a, trans, back);
+				if (max(transmittance.r, max(transmittance.g, transmittance.b)) <= 1e-3) {
+					rayQueryConfirmIntersectionEXT(shadow_rq);
+				}
+				continue;
+			}
 			rayQueryConfirmIntersectionEXT(shadow_rq);
 			continue;
 		}

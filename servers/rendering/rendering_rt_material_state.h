@@ -54,7 +54,9 @@ struct RTBaseMaterialState {
 	uint32_t texture_filter : 3; // BaseMaterial3D::TextureFilter.
 	uint32_t clearcoat : 1;
 	uint32_t backlight : 1;
-	uint32_t unused : 11;
+	uint32_t transmission : 1;
+	uint32_t refraction : 1;
+	uint32_t unused : 9;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 

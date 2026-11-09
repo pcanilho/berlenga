@@ -2966,6 +2966,22 @@ Error GLTFDocument::_serialize_materials(Ref<GLTFState> p_state) {
 			extensions["KHR_materials_emissive_strength"] = mat_emissive_strength;
 			p_state->add_used_extension("KHR_materials_emissive_strength");
 		}
+		if (base_material->get_feature(BaseMaterial3D::FEATURE_TRANSMISSION)) {
+			Dictionary mat_transmission;
+			mat_transmission["transmissionFactor"] = base_material->get_transmission();
+			Ref<Texture2D> transmission_texture = base_material->get_texture(BaseMaterial3D::TEXTURE_TRANSMISSION);
+			if (_image_format != "None" && transmission_texture.is_valid() && transmission_texture->get_image().is_valid()) {
+				_set_material_texture_name(transmission_texture, transmission_texture->get_path(), mat_name, "_transmission");
+				GLTFTextureIndex gltf_texture_index = _set_texture(p_state, transmission_texture, base_material->get_texture_filter(), base_material->get_flag(BaseMaterial3D::FLAG_USE_TEXTURE_REPEAT));
+				if (gltf_texture_index != -1) {
+					Dictionary transmission_tex_dict;
+					transmission_tex_dict["index"] = gltf_texture_index;
+					mat_transmission["transmissionTexture"] = transmission_tex_dict;
+				}
+			}
+			extensions["KHR_materials_transmission"] = mat_transmission;
+			p_state->add_used_extension("KHR_materials_transmission");
+		}
 		if (!extensions.is_empty()) {
 			mat_dict["extensions"] = extensions;
 		}
@@ -3011,6 +3027,22 @@ Error GLTFDocument::_parse_materials(Ref<GLTFState> p_state) {
 			Dictionary emissive_strength = material_extensions["KHR_materials_emissive_strength"];
 			if (emissive_strength.has("emissiveStrength")) {
 				material->set_emission_energy_multiplier(emissive_strength["emissiveStrength"]);
+			}
+		}
+
+		if (material_extensions.has("KHR_materials_transmission")) {
+			// Thin-walled transmission; KHR_materials_volume's refraction is not imported.
+			Dictionary transmission = material_extensions["KHR_materials_transmission"];
+			const float factor = transmission.get("transmissionFactor", 0.0f);
+			if (factor > 0.0f) {
+				material->set_feature(BaseMaterial3D::FEATURE_TRANSMISSION, true);
+				material->set_transmission(factor);
+				if (transmission.has("transmissionTexture")) {
+					const Dictionary &transmission_tex_dict = transmission["transmissionTexture"];
+					if (transmission_tex_dict.has("index")) {
+						material->set_texture(BaseMaterial3D::TEXTURE_TRANSMISSION, _get_texture(p_state, transmission_tex_dict["index"], TEXTURE_TYPE_GENERIC));
+					}
+				}
 			}
 		}
 
@@ -7020,6 +7052,7 @@ HashSet<String> GLTFDocument::get_supported_gltf_extensions_hashset() {
 	supported_extensions.insert("KHR_animation_pointer");
 	supported_extensions.insert("KHR_lights_punctual");
 	supported_extensions.insert("KHR_materials_emissive_strength");
+	supported_extensions.insert("KHR_materials_transmission");
 	supported_extensions.insert("KHR_materials_pbrSpecularGlossiness");
 	supported_extensions.insert("KHR_materials_unlit");
 	supported_extensions.insert("KHR_node_visibility");

@@ -3883,6 +3883,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/light_visibility_memory", true);
 	GLOBAL_DEF("rendering/pathtracing/back_lighting", true);
 	GLOBAL_DEF("rendering/pathtracing/clearcoat", true);
+	GLOBAL_DEF("rendering/pathtracing/transmission", true);
 	GLOBAL_DEF("rendering/pathtracing/radiance_cache", true);
 	GLOBAL_DEF("rendering/pathtracing/simulated_gas", true);
 	GLOBAL_DEF("rendering/pathtracing/mesh_lod", false);

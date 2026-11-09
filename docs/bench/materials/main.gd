@@ -6,6 +6,8 @@ extends Node3D
 #   --scene=NAME      clearcoat (default): red paint, coat strength 0 to 1 left to right,
 #                     coat roughness 0 (back row) and 1 (front row)
 #                     backlight: leaf-green cards against a low sun, back light 0 to 1 left to right
+#                     transmission: glass panes (Transmission) before coloured spheres, roughness 0 to 1
+#                     left to right, green tint in the back row
 #   --raster          raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
 #   --frames=N        frames rendered before --out is saved (default 8)
@@ -69,6 +71,8 @@ func _ready() -> void:
 	match scene:
 		"clearcoat":
 			_clearcoat_rows()
+		"transmission":
+			_transmission_panes()
 		"backlight":
 			sun.rotation_degrees = Vector3(-12, 180, 0)
 			_backlight_cards()
@@ -116,6 +120,42 @@ func _backlight_cards() -> void:
 		mi.material_override = m
 		mi.position = Vector3((i - 2) * 1.25, 0.8, 0.0)
 		add_child(mi)
+	# A curtain the sun shines through, for its coloured shadow.
+	var c := StandardMaterial3D.new()
+	c.albedo_color = Color(0.8, 0.25, 0.2)
+	c.cull_mode = BaseMaterial3D.CULL_DISABLED
+	c.backlight_enabled = true
+	c.backlight = Color(0.6, 0.6, 0.6)
+	var curtain := MeshInstance3D.new()
+	var quad := QuadMesh.new()
+	quad.size = Vector2(2.0, 1.2)
+	curtain.mesh = quad
+	curtain.material_override = c
+	curtain.position = Vector3(0.0, 1.0, -3.0)
+	add_child(curtain)
+
+
+func _transmission_panes() -> void:
+	var colors := [Color(0.8, 0.1, 0.1), Color(0.9, 0.7, 0.1), Color(0.1, 0.6, 0.2), Color(0.1, 0.3, 0.8), Color(0.7, 0.7, 0.7)]
+	for i in 5:
+		var s := StandardMaterial3D.new()
+		s.albedo_color = colors[i]
+		_sphere(Vector3((i - 2) * 1.25, 0.5, -2.0), s)
+	for row in 2:
+		for i in 5:
+			var m := StandardMaterial3D.new()
+			m.albedo_color = Color(1, 1, 1) if row == 0 else Color(0.55, 0.85, 0.6)
+			m.roughness = i / 4.0 * 0.6
+			m.transmission_enabled = true
+			m.transmission_amount = 1.0
+			m.cull_mode = BaseMaterial3D.CULL_DISABLED
+			var mi := MeshInstance3D.new()
+			var quad := QuadMesh.new()
+			quad.size = Vector2(1.1, 0.5)
+			mi.mesh = quad
+			mi.material_override = m
+			mi.position = Vector3((i - 2) * 1.25, 0.25 + row * 0.55, 0.0)
+			add_child(mi)
 
 
 func _process(_delta: float) -> void:

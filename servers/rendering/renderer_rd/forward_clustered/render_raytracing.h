@@ -217,7 +217,11 @@ struct alignas(16) RT_MaterialData {
 		uint32_t index : TEXTURE_INDEX_BITS;
 		uint32_t channel : 8; // RTTextureChannel (GLSL rt_texture_channel()).
 	} ao_texture;
-	float emission_indirect; // BaseMaterial3D emission_indirect_energy: emission weight on indirect paths.
+	struct {
+		uint32_t emission_indirect : 16; // fp16 BaseMaterial3D emission_indirect_energy: emission weight on indirect paths.
+		uint32_t transmission : 8; // unorm8 BaseMaterial3D transmission (GLSL rt_material_transmission()), 0 = none.
+		uint32_t unused : 8;
+	} emission_indirect_transmission;
 };
 static_assert(sizeof(RT_MaterialData) == 128, "RT_MaterialData must be 128 bytes for std430, with every bitfield struct in one uint");
 static_assert(BindlessBlock::MAX_BINDLESS_TEXTURES <= (1u << RT_MaterialData::TEXTURE_INDEX_BITS), "Bindless texture indices must fit RT_MaterialData textures");
@@ -301,7 +305,7 @@ inline RT_MaterialData rt_material_data_default() {
 		d.uv1_scale[i] = 1.0f;
 	}
 	d.normal_map_depth = 1.0f;
-	d.emission_indirect = 1.0f;
+	d.emission_indirect_transmission.emission_indirect = Math::make_half_float(1.0f);
 	rt_material_set_surface_params(d, 1.0f, 0.0f, 0.5f);
 	rt_material_set_packed_uv(d, 1.0f, Vector3(1, 1, 1), Vector3(), 1.0f);
 	return d;
@@ -483,6 +487,12 @@ enum {
 	// The material asks for anisotropic filtering (texture_filter *_ANISOTROPIC). Without it the ray-cone
 	// gradients are sampled isotropically, as raster does.
 	RT_MAT_FLAG_ANISOTROPIC = 262144u,
+	// Refraction-enabled BaseMaterial3D: transmission is 1 - alpha and the surface is drawn opaque (raster ref_amount).
+	RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA = 524288u,
+	// BaseMaterial3D Transmission or Refraction: light passes straight through (shadow rays too).
+	RT_MAT_FLAG_TRANSMISSIVE = 1048576u,
+	// BaseMaterial3D back lighting: shadow rays keep the light it passes through.
+	RT_MAT_FLAG_BACKLIT = 2097152u,
 	// Multi-bit fields fill the top bits so new single-bit flags can grow upward.
 	// Blend class of transparent surfaces (bits 25-27); opaque surfaces leave 0.
 	RT_MAT_BLEND_CLASS_SHIFT = 25u,

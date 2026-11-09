@@ -46,6 +46,7 @@
 #define RT_PARAM_MATERIAL_FEATURES 23 // rt_params[5].w - RT_MATERIAL_FEATURE_* bits of the traced material features
 #define RT_MATERIAL_FEATURE_CLEARCOAT 1u // rendering/pathtracing/clearcoat
 #define RT_MATERIAL_FEATURE_BACK_LIGHTING 2u // rendering/pathtracing/back_lighting
+#define RT_MATERIAL_FEATURE_TRANSMISSION 4u // rendering/pathtracing/transmission
 
 // RT_PARAM_VIS_MODE values. Must match Environment::PathtracingDebugMode.
 #define RT_VIS_TRANSPARENCY_LAYERS 23
