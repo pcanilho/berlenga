@@ -1131,7 +1131,7 @@ void main() {
 	m.emissive = emission * scene_data_block.data.emissive_exposure_normalization;
 	m.emission_indirect = emission_indirect;
 	m.backlight = backlight;
-	m.clearcoat = clamp(clearcoat, 0.0, 1.0) * get_rt_param(RT_PARAM_CLEARCOAT);
+	m.clearcoat = rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT) ? clamp(clearcoat, 0.0, 1.0) : 0.0;
 	m.clearcoat_roughness = clamp(clearcoat_roughness, 0.0, 1.0);
 	// view space -> world space
 	mat3 view_to_world = mat3(inv_view_matrix);
@@ -1207,9 +1207,9 @@ void main() {
 	m.emissive = emissive;
 	m.emission_indirect = mat.emission_indirect;
 	m.normal = final_normal;
-	m.backlight = vec3(0.0); // TODO: wire up BaseMaterial3D's "Back Lighting" for RT (raster-only today).
+	m.backlight = rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING) ? rt_material_backlight(mat) : vec3(0.0);
 	vec2 coat = rt_material_clearcoat(mat);
-	m.clearcoat = coat.x * get_rt_param(RT_PARAM_CLEARCOAT);
+	m.clearcoat = rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT) ? coat.x : 0.0;
 	m.clearcoat_roughness = coat.y;
 
 	// Proximity/distance fade (BaseMaterial3D feature, mirrors raster).

@@ -796,7 +796,22 @@ float rt_emissive_pdf(uint p_entry, uint p_triangles, vec3 p0, vec3 p1, vec3 p2,
 
 // Solid-angle density with which sample_surface_continuation() draws L off the base, mirroring
 // its lobe choice: the specular lobe by GGX VNDF reflection, the diffuse one cosine-weighted.
-float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
+// Probability of a bounce ray passing through the surface (back lighting): the transmitted
+// share of the base's reflected and transmitted light.
+float backlight_lobe_probability(MaterialProperties material) {
+	if (!rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING)) {
+		return 0.0;
+	}
+	float back_lum = luminance(backlightTransmittance(material));
+	if (back_lum <= 0.0) {
+		return 0.0;
+	}
+	float lum = back_lum + luminance(materialSpecularF0(material)) + luminance(baseColorToDiffuseReflectance(material.baseColor, material.metalness));
+	return clamp(back_lum / lum, 0.01, 0.99);
+}
+
+// The density of the reflection lobes alone.
+float reflection_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
 	float NdotL = dot(N, L);
 	float NdotV = dot(N, V);
 	if (NdotL <= 0.0) {
@@ -824,6 +839,14 @@ float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material)
 		pdf += p_spec * sampleGGXVNDFReflectionPdf(alpha, alpha * alpha, max(dot(N, H), 0.0), max(NdotV, 0.0), max(dot(L, H), 0.0));
 	}
 	return pdf;
+}
+
+float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
+	float p_back = backlight_lobe_probability(material);
+	if (p_back > 0.0) {
+		return (1.0 - p_back) * reflection_continuation_pdf(N, V, L, material) + p_back * max(-dot(N, L), 0.0) / PI;
+	}
+	return reflection_continuation_pdf(N, V, L, material);
 }
 
 // The same with the coat lobe, taken with probability clearcoatLobeProbability().
@@ -938,7 +961,7 @@ vec3 lights_emissive_sample(vec3 p_origin, vec3 N, vec3 V, MaterialProperties ma
 		return vec3(0.0);
 	}
 	float w = rt_mis_power(pdf_l, surface_continuation_pdf(N, V, L, material));
-	vec3 vis = lights_trace_shadow_ray(p_origin, L, max(dist * 0.999 - 0.002, 0.0), p_shadow_mask, rng_state);
+	vec3 vis = lights_trace_shadow_ray(rt_shadow_origin(p_origin, L), L, max(dist * 0.999 - 0.002, 0.0), p_shadow_mask, rng_state);
 	return f * Le * vis * (w / pdf_l);
 }
 
@@ -975,6 +998,7 @@ vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_
 	MaterialProperties material = material_properties_from_result(h, m, N, V);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 	vec3 hit_pos_offset = offset_ray_origin(h.hit_pos, h.geometry_normal, gl_HitTEXT);
+	rt_set_shadow_origins(hit_pos_offset, offset_ray_origin(h.hit_pos, -h.geometry_normal, gl_HitTEXT), h.geometry_normal);
 	uint layers = geometries[h.geometry_idx].layers;
 	uint shadow_mask = rt_receiver_shadow_mask(h.geometry_idx);
 	if (RT_GET_MAX_BOUNCES() == 0u) {
@@ -1030,8 +1054,8 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	float specular_lum = luminance(specular_f0);
 	float diffuse_lum = luminance(diffuse_reflectance);
 
-	// The coat first, with the probability of its Fresnel at the view angle. The base lobes keep
-	// the rest, and their weight carries the coat's attenuation (1 - Fc), as raster's ambient.
+	// The coat first, with its share of the reflected light (clearcoatLobeProbability()). The base
+	// lobes keep the rest, and their weight carries the coat's attenuation (1 - Fc), as raster's ambient.
 	float p_coat = clearcoatLobeProbability(material, V);
 	if (p_coat > 0.0) {
 		if (rand(ps.rng_state) < p_coat) {
@@ -1039,6 +1063,25 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 		}
 		float coat_fresnel = clearcoatFresnel(material.clearcoat, dot(material.coatNormal, V));
 		ps.throughput *= (1.0 - coat_fresnel) / (1.0 - p_coat);
+	}
+
+	// Back lighting: a diffuse bounce through the surface, with its share of the base's light.
+	float p_back = backlight_lobe_probability(material);
+	if (p_back > 0.0) {
+		if (rand(ps.rng_state) < p_back) {
+			vec3 back_dir;
+			vec3 back_weight;
+			if (!sampleBacklight(rand2(ps.rng_state), N, h.geometry_normal, material, back_dir, back_weight)) {
+				return false;
+			}
+			ps.throughput *= back_weight / p_back;
+			ps.packed_bounces_flags = inc_diffuse_bounce(ps.packed_bounces_flags) | LAST_BOUNCE_DIFFUSE_FLAG | NON_SINGULAR_PATH_FLAG;
+			ps.offset_normal = -h.geometry_normal;
+			ps.next_ray_dir = back_dir;
+			ps.bsdf_pdf = rt_emissive_count() > 0u ? surface_continuation_pdf(N, V, back_dir, material) : 0.0;
+			return true;
+		}
+		ps.throughput /= 1.0 - p_back;
 	}
 
 	int brdf_type;

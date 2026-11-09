@@ -43,7 +43,10 @@
 #define RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT 20 // rt_params[5].x - peel budget on other indirect segments
 #define RT_PARAM_SELF_SHADOW_MASK 21 // rt_params[5].y - TLAS shadow group bit of SELF_SHADOWING casters (0 = none)
 #define RT_PARAM_VOLUMETRIC_FOG_SAMPLING 22 // rt_params[5].z - VOLUMETRIC_FOG_SAMPLING_* froxel lookup filter
-#define RT_PARAM_CLEARCOAT 23 // rt_params[5].w - 1: materials' clearcoat is traced (rendering/pathtracing/clearcoat)
+#define RT_PARAM_MATERIAL_FEATURES 23 // rt_params[5].w - RT_MATERIAL_FEATURE_* bits of the traced material features
+#define RT_MATERIAL_FEATURE_CLEARCOAT 1u // rendering/pathtracing/clearcoat
+#define RT_MATERIAL_FEATURE_BACK_LIGHTING 2u // rendering/pathtracing/back_lighting
+
 // RT_PARAM_VIS_MODE values. Must match Environment::PathtracingDebugMode.
 #define RT_VIS_TRANSPARENCY_LAYERS 23
 #define RT_VIS_DYNAMIC_GEOMETRY 29
