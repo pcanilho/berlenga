@@ -1327,6 +1327,8 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["TRANSMISSION"] = "transmission";
 		actions.renames["IOR"] = "ior";
 		actions.renames["ABSORPTION"] = "absorption";
+		actions.renames["SCATTERING"] = "scattering";
+		actions.renames["SCATTERING_ANISOTROPY"] = "scattering_anisotropy";
 		actions.renames["POINT_COORD"] = "gl_PointCoord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";
 		actions.renames["SCREEN_UV"] = "screen_uv";

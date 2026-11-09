@@ -201,6 +201,19 @@ const uint MEDIUM_CHANGE_FLAG = (1u << 17);
 // medium (scattering included). Codes without it carry the extinction inline (rt_medium_absorption()).
 // Either way the code read as a float is a normal finite number, so the payload carries it unchanged.
 const uint RT_MEDIUM_CODE_GEOMETRY = (1u << 30);
+// Inline code bit: the medium also scatters (a shader's SCATTERING); the hit that entered it left the
+// single-scatter albedo and phase anisotropy in this pixel's rt_medium_image (rt_medium_scatter_pack()).
+const uint RT_MEDIUM_CODE_SCATTER = (1u << 28);
+
+// Single-scatter albedo (8 bits a channel) and phase anisotropy g (8 bits) in one uint.
+uint rt_medium_scatter_pack(vec3 p_albedo, float p_g) {
+	return packUnorm4x8(vec4(clamp(p_albedo, vec3(0.0), vec3(1.0)), clamp(p_g, -0.99, 0.99) * 0.5 + 0.5));
+}
+
+vec4 rt_medium_scatter_unpack(uint p_packed) {
+	vec4 v = unpackUnorm4x8(p_packed);
+	return vec4(v.rgb, v.a * 2.0 - 1.0);
+}
 
 // Absorption coefficients (per metre) of medium code p_code (C++ rt_medium_code()): 9-bit log codes per channel.
 vec3 rt_medium_absorption(uint p_code) {

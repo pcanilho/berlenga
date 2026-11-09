@@ -50,6 +50,7 @@
 
 #define RB_TEX_RAYTRACING SNAME("raytracing")
 #define RB_TEX_RT_DEPTH SNAME("rt_depth")
+#define RB_TEX_RT_MEDIUM SNAME("rt_medium")
 #define RB_TEX_RT_SKY SNAME("rt_sky")
 
 #define RB_SCOPE_RT_TIMING SNAME("rt_timing")

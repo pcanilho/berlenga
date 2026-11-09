@@ -446,7 +446,8 @@ vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, inout uint rng) {
 }
 
 // The medium of payload code p_code (MEDIUM_CHANGE_FLAG): 0 none, RT_MEDIUM_CODE_GEOMETRY plus the TLAS entry
-// of an RT_MAT_FLAG_VOLUME surface, or an inline extinction code (rt_medium_absorption(), no scattering).
+// of an RT_MAT_FLAG_VOLUME surface, or an inline extinction code (rt_medium_absorption(); with
+// RT_MEDIUM_CODE_SCATTER, the scattering the entering hit left in rt_medium_image).
 void rt_medium_set(uint p_code, out bool r_in_medium, out vec3 r_sigma_t, out vec3 r_albedo, out float r_g) {
 	r_in_medium = p_code != 0u;
 	r_albedo = vec3(0.0);
@@ -459,6 +460,11 @@ void rt_medium_set(uint p_code, out bool r_in_medium, out vec3 r_sigma_t, out ve
 		r_g = scatter.w;
 	} else {
 		r_sigma_t = rt_medium_absorption(p_code);
+		if ((p_code & RT_MEDIUM_CODE_SCATTER) != 0u) {
+			vec4 scatter = rt_medium_scatter_unpack(imageLoad(rt_medium_image, ivec2(gl_LaunchIDEXT.xy)).r);
+			r_albedo = scatter.rgb;
+			r_g = scatter.w;
+		}
 	}
 }
 
@@ -1325,9 +1331,17 @@ void main() {
 	m.clearcoat = rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT) ? clamp(clearcoat, 0.0, 1.0) : 0.0;
 	m.clearcoat_roughness = clamp(clearcoat_roughness, 0.0, 1.0);
 	m.transmission = rt_material_feature(RT_MATERIAL_FEATURE_TRANSMISSION) ? clamp(transmission, 0.0, 1.0) * (1.0 - clamp(metallic, 0.0, 1.0)) : 0.0;
-	// IOR and ABSORPTION: the surface bounds a medium (water), absorbing per metre, without scattering.
+	// IOR, ABSORPTION and SCATTERING: the surface bounds a medium (water) that absorbs and scatters
+	// per metre; the code carries the extinction, the pixel's rt_medium_image the scattering.
 	m.ior = ior >= 1.0 ? ior : 0.0;
-	m.medium = rt_medium_code(max(absorption, vec3(0.0)));
+	vec3 sigma_s = max(scattering, vec3(0.0));
+	vec3 sigma_t = max(absorption, vec3(0.0)) + sigma_s;
+	m.medium = rt_medium_code(sigma_t);
+	m.medium_scatter = 0u;
+	if (max(sigma_s.r, max(sigma_s.g, sigma_s.b)) > 0.0) {
+		m.medium |= RT_MEDIUM_CODE_SCATTER;
+		m.medium_scatter = rt_medium_scatter_pack(sigma_s / max(sigma_t, vec3(1e-6)), scattering_anisotropy);
+	}
 	// view space -> world space
 	mat3 view_to_world = mat3(inv_view_matrix);
 	m.normal = normalize(view_to_world * normal);
@@ -1410,6 +1424,7 @@ void main() {
 	m.transmission = 0.0;
 	m.ior = (mat.flags & RT_MAT_FLAG_VOLUME) != 0u ? rt_material_ior(mat) : 0.0;
 	m.medium = RT_MEDIUM_CODE_GEOMETRY | h.geometry_idx;
+	m.medium_scatter = 0u;
 	if ((mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u) {
 		// Refraction lets through 1 - alpha and draws the surface opaque, as raster.
 		float transmission = clamp(rt_material_transmission(mat) * layers.transmission, 0.0, 1.0);
@@ -1588,8 +1603,8 @@ void main() {
 		shadow_ps.throughput *= rt_shadow_transmittance(hit_tint, shadow_transmission ? transmission : 0.0,
 				shadow_back_lighting ? backlight : vec3(0.0), specular, metallic);
 		if (ior >= 1.0 && shadow_transmission && rt_material_feature(RT_MATERIAL_FEATURE_REFRACTION) && !rt_front_face) {
-			// Leaving the medium of IOR and ABSORPTION: absorbed from the shaded point on.
-			shadow_ps.throughput *= exp(-max(absorption, vec3(0.0)) * gl_HitTEXT);
+			// Leaving the medium of IOR, ABSORPTION and SCATTERING: its extinction from the shaded point on.
+			shadow_ps.throughput *= exp(-(max(absorption, vec3(0.0)) + max(scattering, vec3(0.0))) * gl_HitTEXT);
 		}
 		path_pack(payload, shadow_ps);
 		if (max(shadow_ps.throughput.r, max(shadow_ps.throughput.g, shadow_ps.throughput.b)) > 1e-3) {

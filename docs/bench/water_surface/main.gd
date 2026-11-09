@@ -11,6 +11,8 @@ extends Node3D
 #   --set=setting:value  any project setting, e.g. --set=rendering/pathtracing/refraction:0
 #   --out=path.png  save the last frame and quit
 #   --debug=N       path tracing debug view (Environment.pathtracing_debug_mode)
+#   --water=param:value  a water shader parameter, e.g. --water=pathtraced_scattering:Vector3(0,0,0)
+#   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
 #
 # Run with --fixed-fps 30 so raster and path traced frames show the same waves.
 
@@ -21,6 +23,8 @@ var bounces := 3
 var frames := 12
 var out := ""
 var debug_mode := 0
+var slope_deg := 5.0
+var water_params := {}
 var n := 0
 var water: Node3D
 
@@ -34,6 +38,10 @@ func _ready() -> void:
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
+		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
+		elif a.begins_with("--water="):
+			var wkv := a.substr(8).split(":", true, 1)
+			water_params[wkv[0]] = str_to_var(wkv[1])
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":", true, 1)
 			ProjectSettings.set_setting(kv[0], str_to_var(kv[1]))
@@ -64,7 +72,7 @@ func _ready() -> void:
 	sand_mat.albedo_texture = _checker(Color(0.78, 0.7, 0.55), Color(0.62, 0.55, 0.42))
 	sand_mat.uv1_scale = Vector3(100, 100, 1)
 	sand_mat.roughness = 0.95
-	var slope := deg_to_rad(5.0)
+	var slope := deg_to_rad(slope_deg)
 	_slab(Vector3(200, 1, 200), Vector3(0, -1.2, 0), Vector3(-slope, 0, 0), sand_mat)
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
@@ -86,6 +94,9 @@ func _ready() -> void:
 	water.set("choppiness", 1.0)
 	water.set("render_extent", 600.0)
 	add_child(water)
+	var wm: ShaderMaterial = water.call("get_water_material")
+	for k in water_params:
+		if wm: wm.set_shader_parameter(k, water_params[k])
 
 	# Floating boxes.
 	for i in 3:
