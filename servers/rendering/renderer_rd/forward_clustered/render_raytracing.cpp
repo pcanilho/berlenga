@@ -3596,6 +3596,10 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 				const float color[3] = { c.r, c.g, c.b };
 				mat.flags |= RT_MAT_FLAG_VOLUME;
 				rt_material_set_medium(mat, get_float("transmission_ior", 1.5f), color, get_float("transmission_attenuation_distance", 0.0f));
+				const Variant scatter = material_storage->material_get_param(p_material_rid, "transmission_scatter_color");
+				const Color sc = scatter.get_type() == Variant::COLOR ? Color(scatter).srgb_to_linear() : Color(1, 1, 1);
+				const float scatter_color[3] = { sc.r, sc.g, sc.b };
+				rt_material_set_scatter(mat, scatter_color, get_float("transmission_scatter_strength", 0.0f), get_float("transmission_scatter_anisotropy", 0.0f));
 			}
 		}
 	} else if (rt_state.refraction) {
@@ -5996,8 +6000,10 @@ bool RTTlasBuilder::_hit_group_ready(const RTMaterialData *p_mat_data) const {
 void RTTlasBuilder::_fill_surface_key(const ShaderData *p_shader, const RTMaterialData *p_mat_data, ShaderData::RTBlendClass p_blend_class, uint8_t p_tlas_mask,
 		RTSurfaceGroupKey &r_key, uint32_t &r_material_flags) const {
 	const bool alpha_scissor = _rt_uses_alpha_scissor(p_shader, p_mat_data, rt_shader);
+	const SceneShaderRaytracing::CustomShaderEntry *entry = p_mat_data->rt_sbt_offset > 0 ? rt_shader->get_custom_shader_entry(p_mat_data->rt_sbt_offset) : nullptr;
 	// A medium's surface is crossed from both sides: rays leaving the water hit its back faces.
-	r_key.cull_mode = (p_mat_data->data.flags & RT_MAT_FLAG_VOLUME) ? RSE::CULL_MODE_DISABLED : _rt_cull_mode(p_shader);
+	const bool medium = (p_mat_data->data.flags & RT_MAT_FLAG_VOLUME) || (entry && entry->bounds_medium);
+	r_key.cull_mode = medium ? RSE::CULL_MODE_DISABLED : _rt_cull_mode(p_shader);
 	r_key.sbt_offset = p_mat_data->rt_sbt_offset;
 	r_key.tlas_mask = p_tlas_mask;
 	r_key.opaque = !alpha_scissor;
@@ -6005,11 +6011,8 @@ void RTTlasBuilder::_fill_surface_key(const ShaderData *p_shader, const RTMateri
 	if (alpha_scissor) {
 		r_material_flags |= RT_MAT_FLAG_ALPHA_SCISSOR;
 	}
-	if (p_mat_data->rt_sbt_offset > 0) {
-		const SceneShaderRaytracing::CustomShaderEntry *entry = rt_shader->get_custom_shader_entry(p_mat_data->rt_sbt_offset);
-		if (entry && entry->casts_transmitted_shadow) {
-			r_material_flags |= RT_MAT_FLAG_CUSTOM_TRANSMITTANCE;
-		}
+	if (entry && entry->casts_transmitted_shadow) {
+		r_material_flags |= RT_MAT_FLAG_CUSTOM_TRANSMITTANCE;
 	}
 	if (p_blend_class != ShaderData::RT_BLEND_OPAQUE && _shader_blend_class(p_shader) == ShaderData::RT_BLEND_OPAQUE) {
 		r_material_flags |= RT_MAT_FLAG_INSTANCE_FADE;

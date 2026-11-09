@@ -582,6 +582,9 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->transmission_ior = "transmission_ior";
 	shader_names->transmission_attenuation_color = "transmission_attenuation_color";
 	shader_names->transmission_attenuation_distance = "transmission_attenuation_distance";
+	shader_names->transmission_scatter_strength = "transmission_scatter_strength";
+	shader_names->transmission_scatter_color = "transmission_scatter_color";
+	shader_names->transmission_scatter_anisotropy = "transmission_scatter_anisotropy";
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
 	shader_names->uv1_offset = "uv1_offset";
@@ -1120,6 +1123,9 @@ uniform sampler2D texture_transmission : hint_default_white, %s;
 uniform float transmission_ior : hint_range(1.0, 3.0, 0.01);
 uniform vec4 transmission_attenuation_color : source_color;
 uniform float transmission_attenuation_distance : hint_range(0.0, 1000.0, 0.01);
+uniform float transmission_scatter_strength : hint_range(0.0, 1.0, 0.01);
+uniform vec4 transmission_scatter_color : source_color;
+uniform float transmission_scatter_anisotropy : hint_range(-0.99, 0.99, 0.01);
 )",
 				texfilter_str);
 	}
@@ -1786,7 +1792,7 @@ void fragment() {)";
 			code += "	float transmission_tex = texture(texture_transmission, base_uv).r;\n";
 		}
 		const char *transmission_uv = features[FEATURE_REFRACTION] ? "refraction_uv" : "SCREEN_UV";
-		code += "	vec3 transmission_absorption = vec3(1.0);\n";
+		code += "	vec3 transmission_absorption = vec3(1.0);\n	vec3 transmission_scatter = vec3(0.0);\n";
 		if (!transmission_thin_walled) {
 			// Into a medium (glTF KHR_materials_volume, KHR_materials_ior): the view ray refracts by the IOR over
 			// the depth behind the surface, and the light it finds is absorbed over that path (Beer-Lambert).
@@ -1813,6 +1819,9 @@ void fragment() {)";
 		float transmission_path = min(distance(transmission_found.xyz, VERTEX), 1.0e4);
 		transmission_absorption = pow(max(transmission_attenuation_color.rgb, vec3(1.0e-4)), vec3(transmission_path / transmission_attenuation_distance));
 	}
+	// What the medium scatters back looks, after many bounces, like a diffuse surface of its multi-scatter
+	// colour (Kulla and Conty 2017, as glTF KHR_materials_scatter defines it), in the share the depth hides.
+	transmission_scatter = transmission_scatter_color.rgb * (transmission_scatter_strength * (1.0 - transmission_absorption));
 )";
 		}
 		code += vformat(R"(	// Transmission: Enabled
@@ -1821,6 +1830,7 @@ void fragment() {)";
 	float transmission_fresnel = transmission_f0 + (1.0 - transmission_f0) * pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
 	EMISSION += textureLod(screen_texture, %s, ROUGHNESS * 8.0).rgb * ALBEDO * transmission_absorption * (transmission_amount * (1.0 - transmission_fresnel)) * EXPOSURE;
 	ALBEDO *= 1.0 - transmission_amount;
+	ALBEDO += transmission_scatter * transmission_amount;
 	// Force transparency on the material (required to read the screen behind it).
 	ALPHA = 1.0;
 )",
@@ -2394,6 +2404,33 @@ float BaseMaterial3D::get_transmission_attenuation_distance() const {
 	return transmission_attenuation_distance;
 }
 
+void BaseMaterial3D::set_transmission_scatter_strength(float p_strength) {
+	transmission_scatter_strength = CLAMP(p_strength, 0.0f, 1.0f);
+	_material_set_param(shader_names->transmission_scatter_strength, transmission_scatter_strength);
+}
+
+float BaseMaterial3D::get_transmission_scatter_strength() const {
+	return transmission_scatter_strength;
+}
+
+void BaseMaterial3D::set_transmission_scatter_color(const Color &p_color) {
+	transmission_scatter_color = p_color;
+	_material_set_param(shader_names->transmission_scatter_color, transmission_scatter_color);
+}
+
+Color BaseMaterial3D::get_transmission_scatter_color() const {
+	return transmission_scatter_color;
+}
+
+void BaseMaterial3D::set_transmission_scatter_anisotropy(float p_anisotropy) {
+	transmission_scatter_anisotropy = CLAMP(p_anisotropy, -0.99f, 0.99f);
+	_material_set_param(shader_names->transmission_scatter_anisotropy, transmission_scatter_anisotropy);
+}
+
+float BaseMaterial3D::get_transmission_scatter_anisotropy() const {
+	return transmission_scatter_anisotropy;
+}
+
 void BaseMaterial3D::set_detail_uv(DetailUV p_detail_uv) {
 	if (detail_uv == p_detail_uv) {
 		return;
@@ -2646,7 +2683,9 @@ void BaseMaterial3D::_validate_property(PropertyInfo &p_property) const {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 
-		if ((p_property.name == "transmission_ior" || p_property.name == "transmission_attenuation_color" || p_property.name == "transmission_attenuation_distance") && transmission_thin_walled) {
+		if ((p_property.name == "transmission_ior" || p_property.name == "transmission_attenuation_color" || p_property.name == "transmission_attenuation_distance" ||
+					p_property.name == "transmission_scatter_strength" || p_property.name == "transmission_scatter_color" || p_property.name == "transmission_scatter_anisotropy") &&
+				transmission_thin_walled) {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 
@@ -3498,6 +3537,15 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_transmission_attenuation_distance", "distance"), &BaseMaterial3D::set_transmission_attenuation_distance);
 	ClassDB::bind_method(D_METHOD("get_transmission_attenuation_distance"), &BaseMaterial3D::get_transmission_attenuation_distance);
 
+	ClassDB::bind_method(D_METHOD("set_transmission_scatter_strength", "strength"), &BaseMaterial3D::set_transmission_scatter_strength);
+	ClassDB::bind_method(D_METHOD("get_transmission_scatter_strength"), &BaseMaterial3D::get_transmission_scatter_strength);
+
+	ClassDB::bind_method(D_METHOD("set_transmission_scatter_color", "color"), &BaseMaterial3D::set_transmission_scatter_color);
+	ClassDB::bind_method(D_METHOD("get_transmission_scatter_color"), &BaseMaterial3D::get_transmission_scatter_color);
+
+	ClassDB::bind_method(D_METHOD("set_transmission_scatter_anisotropy", "anisotropy"), &BaseMaterial3D::set_transmission_scatter_anisotropy);
+	ClassDB::bind_method(D_METHOD("get_transmission_scatter_anisotropy"), &BaseMaterial3D::get_transmission_scatter_anisotropy);
+
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
 	ClassDB::bind_method(D_METHOD("get_point_size"), &BaseMaterial3D::get_point_size);
 
@@ -3788,6 +3836,9 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_ior", PROPERTY_HINT_RANGE, "1,3,0.01"), "set_transmission_ior", "get_transmission_ior");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "transmission_attenuation_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_transmission_attenuation_color", "get_transmission_attenuation_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_attenuation_distance", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater,suffix:m"), "set_transmission_attenuation_distance", "get_transmission_attenuation_distance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_scatter_strength", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_transmission_scatter_strength", "get_transmission_scatter_strength");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "transmission_scatter_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_transmission_scatter_color", "get_transmission_scatter_color");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_scatter_anisotropy", PROPERTY_HINT_RANGE, "-0.99,0.99,0.01"), "set_transmission_scatter_anisotropy", "get_transmission_scatter_anisotropy");
 
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
@@ -4048,6 +4099,9 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_transmission_ior(1.5);
 	set_transmission_attenuation_color(Color(1, 1, 1));
 	set_transmission_attenuation_distance(0.0);
+	set_transmission_scatter_strength(0.0);
+	set_transmission_scatter_color(Color(1, 1, 1));
+	set_transmission_scatter_anisotropy(0.0);
 	set_point_size(1);
 	set_uv1_offset(Vector3(0, 0, 0));
 	set_uv1_scale(Vector3(1, 1, 1));

@@ -450,6 +450,15 @@
 		<member name="transmission_ior" type="float" setter="set_transmission_ior" getter="get_transmission_ior" default="1.5">
 			Index of refraction of the medium behind the surface ([code]KHR_materials_ior[/code] in glTF): 1.33 for water, 1.5 for glass. Light bends by it where it enters and leaves, and from inside it reflects completely past the critical angle (total internal reflection). It does not change the surface's reflectance, which [member metallic_specular] sets: for water, a specular of [code]0.354[/code] gives its 2% reflectance head-on. Only used when [member transmission_thin_walled] is [code]false[/code].
 		</member>
+		<member name="transmission_scatter_anisotropy" type="float" setter="set_transmission_scatter_anisotropy" getter="get_transmission_scatter_anisotropy" default="0.0">
+			Direction light keeps when it scatters inside the medium (the Henyey-Greenstein [code]g[/code], [code]scatterAnisotropy[/code] of glTF's draft [code]KHR_materials_scatter[/code]): [code]0.0[/code] scatters evenly, positive values mostly forward, as particles in natural water do, negative values mostly back. Only used when [member transmission_thin_walled] is [code]false[/code].
+		</member>
+		<member name="transmission_scatter_color" type="Color" setter="set_transmission_scatter_color" getter="get_transmission_scatter_color" default="Color(1, 1, 1, 1)">
+			The colour the medium looks once light has scattered inside it many times, such as the green of a lake or the white of milk ([code]multiscatterColorFactor[/code] of glTF's draft [code]KHR_materials_scatter[/code]). Of the light [member transmission_attenuation_color] takes out, this share scatters on and the rest is absorbed. Only used when [member transmission_thin_walled] is [code]false[/code].
+		</member>
+		<member name="transmission_scatter_strength" type="float" setter="set_transmission_scatter_strength" getter="get_transmission_scatter_strength" default="0.0">
+			How much of the light the medium takes out scatters instead of being absorbed, scaling [member transmission_scatter_color]. [code]0.0[/code] only absorbs, as clear water does. The path tracer scatters rays inside the medium, so murky water glows with the light that enters it and sunlight shows as shafts below the surface; see [member ProjectSettings.rendering/pathtracing/refraction]. The rasterizer approximates it by giving the surface a diffuse [member transmission_scatter_color] in the share the depth hides. Only used when [member transmission_thin_walled] is [code]false[/code].
+		</member>
 		<member name="transmission_texture" type="Texture2D" setter="set_texture" getter="get_texture">
 			Texture whose red channel scales [member transmission_amount] per pixel.
 		</member>

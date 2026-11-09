@@ -14,6 +14,9 @@ extends Node3D
 #                     custom BACKLIGHT
 #                     water: a pool sloping from 0.1 m (left) to 4 m (right) deep, checker floor, posts
 #                     through the surface; pure water (Pope and Fry 1997), IOR 1.33, Transmission not thin-walled
+#                     --water=murky: the same pool with lake water that scatters (Transmission scatter,
+#                     glTF KHR_materials_scatter); --water=shader: clear water from a ShaderMaterial writing
+#                     TRANSMISSION, IOR and ABSORPTION
 #                     water_depths: unshaded white tiles under 0.25, 0.5, 1, 2 and 4 m of water, seen straight
 #                     down in an orthogonal view with linear tone mapping, to read Beer-Lambert off the pixels
 #   --raster          raster only, for comparison
@@ -32,6 +35,7 @@ var spp := 64
 var bounces := 3
 var frames := 8
 var out := ""
+var water := "clear"
 var n := 0
 
 
@@ -43,6 +47,7 @@ func _ready() -> void:
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
+		elif a.begins_with("--water="): water = a.substr(8)
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":", true, 1)
 			ProjectSettings.set_setting(kv[0], str_to_var(kv[1]))
@@ -266,7 +271,22 @@ func _layer_textures() -> void:
 
 # Pure water: absorption 0.35, 0.06 and 0.01 per metre in red, green and blue (Pope and Fry 1997),
 # as the colour left after 1 m.
-func _water() -> StandardMaterial3D:
+func _water() -> Material:
+	if water == "shader":
+		var sm := ShaderMaterial.new()
+		var sh := Shader.new()
+		sh.code = """shader_type spatial;
+void fragment() {
+	ALBEDO = vec3(1.0);
+	ROUGHNESS = 0.05;
+	SPECULAR = 0.354;
+	TRANSMISSION = 1.0;
+	IOR = 1.33;
+	ABSORPTION = vec3(0.35, 0.06, 0.01);
+}
+"""
+		sm.shader = sh
+		return sm
 	var w := StandardMaterial3D.new()
 	w.roughness = 0.05
 	w.specular = 0.354 # F0 0.02, ((1.33 - 1) / (1.33 + 1))^2.
@@ -275,6 +295,13 @@ func _water() -> StandardMaterial3D:
 	w.transmission_ior = 1.33
 	w.transmission_attenuation_color = Color(exp(-0.35), exp(-0.06), exp(-0.01)).linear_to_srgb()
 	w.transmission_attenuation_distance = 1.0
+	if water == "murky":
+		# Green lake water: light fades within a few metres and much of it scatters back.
+		w.transmission_attenuation_color = Color(0.55, 0.72, 0.6)
+		w.transmission_attenuation_distance = 1.0
+		w.transmission_scatter_strength = 1.0
+		w.transmission_scatter_color = Color(0.45, 0.62, 0.5)
+		w.transmission_scatter_anisotropy = 0.6
 	return w
 
 

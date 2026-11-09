@@ -190,6 +190,25 @@ TEST_CASE("[RenderRaytracing] A medium packs its IOR and Beer-Lambert absorption
 	CHECK(d.medium == (1u << 29));
 }
 
+TEST_CASE("[RenderRaytracing] Scattering maps the multi-scatter colour to the single-scatter albedo") {
+	RT_MaterialData d = rt_material_data_default();
+	CHECK(d.scatter.albedo_r == 0u);
+
+	// No strength or a black colour: absorption only. A white colour: every collision scatters.
+	const float color[3] = { 0.0f, 1.0f, 0.5f };
+	rt_material_set_scatter(d, color, 1.0f, 0.0f);
+	CHECK(d.scatter.albedo_r == 0u);
+	CHECK(d.scatter.albedo_g == 255u);
+	// Kulla and Conty: a medium that looks 50% after many bounces scatters most of what it meets.
+	CHECK(d.scatter.albedo_b > 200u);
+	CHECK(d.scatter.albedo_b < 255u);
+	CHECK(d.scatter.anisotropy == rt_unorm8(0.5f));
+
+	rt_material_set_scatter(d, color, 0.0f, 0.6f);
+	CHECK(d.scatter.albedo_g == 0u);
+	CHECK(d.scatter.anisotropy == rt_unorm8(0.8f));
+}
+
 TEST_CASE("[RenderRaytracing] The default material is a non-emissive dielectric with identity UV transforms") {
 	const RT_MaterialData d = rt_material_data_default();
 	CHECK(d.flags == 0u);
