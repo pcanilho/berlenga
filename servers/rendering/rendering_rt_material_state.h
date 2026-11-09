@@ -59,7 +59,11 @@ struct RTBaseMaterialState {
 	uint32_t transmission_volume : 1; // Transmission with thin_walled off: the surface bounds a medium.
 	uint32_t subsurface_scattering : 1;
 	uint32_t subsurface_skin : 1; // FLAG_SUBSURFACE_MODE_SKIN.
-	uint32_t unused : 6;
+	uint32_t hair : 1;
+	uint32_t hair_melanin : 1; // BaseMaterial3D::HAIR_COLOR_MELANIN.
+	uint32_t hair_direction : 2; // BaseMaterial3D::HairDirection.
+	uint32_t hair_cards : 1;
+	uint32_t unused : 1;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 

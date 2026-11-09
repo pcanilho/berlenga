@@ -392,6 +392,12 @@ MaterialProperties material_properties_coated(vec3 p_albedo, float p_metallic, f
 	material.diffuseMode = (p_mat_flags >> RT_MAT_DIFFUSE_MODE_SHIFT) & RT_MAT_SHADING_MODE_MASK;
 	material.specularMode = (p_mat_flags >> RT_MAT_SPECULAR_MODE_SHIFT) & RT_MAT_SHADING_MODE_MASK;
 	material.subsurface = 0.0;
+	material.hair = 0.0;
+	material.hairSigmaA = vec3(0.0);
+	material.hairTangent = vec3(1.0, 0.0, 0.0);
+	material.hairPlaneNormal = p_coat_normal;
+	material.hairParams = vec4(0.3, 0.3, 2.0, 0.0);
+	material.hairCards = false;
 	return material;
 }
 
@@ -408,6 +414,12 @@ MaterialProperties material_properties_from_result(HitData h, MaterialResult m, 
 	material.emissive = m.emissive;
 	material.transmissivness = m.transmission;
 	material.subsurface = m.subsurface > 0.0 ? 1.0 : 0.0;
+	material.hair = m.hair;
+	material.hairSigmaA = m.hair_sigma_a;
+	material.hairTangent = m.hair_tangent;
+	material.hairPlaneNormal = h.geometry_normal;
+	material.hairParams = m.hair_params;
+	material.hairCards = m.hair_cards;
 	return material;
 }
 
@@ -875,12 +887,24 @@ float base_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material)
 }
 
 // The same with the coat lobe, taken with probability clearcoatLobeProbability().
-float surface_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
+float surface_continuation_pdf_unhaired(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
 	float p_coat = clearcoatLobeProbability(material, V);
 	if (p_coat <= 0.0) {
 		return base_continuation_pdf(N, V, L, material);
 	}
 	return (1.0 - p_coat) * base_continuation_pdf(N, V, L, material) + p_coat * clearcoatPdf(material, V, L);
+}
+
+// And the hair fibres, taken with the probability of the hair mask (sample_surface_continuation()).
+float surface_continuation_pdf(vec3 N, vec3 V, vec3 L, MaterialProperties material) {
+	if (material.hair <= 0.0) {
+		return surface_continuation_pdf_unhaired(N, V, L, material);
+	}
+	float pdf = material.hair * hairPdf(material, L, V);
+	if (material.hair < 1.0) {
+		pdf += (1.0 - material.hair) * surface_continuation_pdf_unhaired(N, V, L, material);
+	}
+	return pdf;
 }
 
 // Power heuristic (Veach 1997) for one sample from each of two strategies.
@@ -1123,6 +1147,23 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	}
 
 	MaterialProperties material = material_properties_from_result(h, m, N, V);
+
+	// Hair fibres, with the share of the surface the hair mask gives them. Either choice weighs
+	// its own lobes in full: the mask's probability cancels the mask's share.
+	if (material.hair > 0.0 && (material.hair >= 1.0 || rand(ps.rng_state) < material.hair)) {
+		vec3 hair_dir;
+		vec3 hair_weight;
+		if (!sampleHair(vec4(rand2(ps.rng_state), rand2(ps.rng_state)), V, material, hair_dir, hair_weight)) {
+			return false;
+		}
+		ps.throughput *= hair_weight;
+		ps.packed_bounces_flags = (inc_total_bounce(ps.packed_bounces_flags) & ~LAST_BOUNCE_DIFFUSE_FLAG) | NON_SINGULAR_PATH_FLAG;
+		ps.offset_normal = dot(hair_dir, h.geometry_normal) >= 0.0 ? h.geometry_normal : -h.geometry_normal;
+		ps.next_ray_dir = hair_dir;
+		ps.bsdf_pdf = rt_emissive_count() > 0u ? surface_continuation_pdf(N, V, hair_dir, material) : 0.0;
+		return true;
+	}
+
 	vec3 specular_f0 = materialSpecularF0(material);
 	vec3 diffuse_reflectance = materialDiffuseReflectance(material);
 	float specular_lum = luminance(specular_f0);
@@ -1400,6 +1441,11 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	PathState ps = path_unpack(payload);
 	// Every surface bounds this ray segment, even if it cannot continue the path.
 	ps.hit_t = gl_HitTEXT;
+	if (m.hair > 0.0) {
+		// Where on a fibre the path meets it: shells and cards have no fibres, so every path vertex
+		// draws its own offset, which averages over the fibre's width (the far-field view).
+		m.hair_params.w = rand(ps.rng_state) * 2.0 - 1.0;
+	}
 
 	// Subsurface scattering's light comes through the walk after a bounce, so where the path ends
 	// here (bounce limits, unshaded) or the ray is a transparency peel, the surface is plain diffuse.

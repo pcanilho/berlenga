@@ -165,6 +165,7 @@ public:
 		TEXTURE_ORM,
 		TEXTURE_BENT_NORMAL,
 		TEXTURE_TRANSMISSION,
+		TEXTURE_HAIR_MASK,
 		TEXTURE_MAX
 	};
 
@@ -222,6 +223,7 @@ public:
 		FEATURE_DETAIL,
 		FEATURE_BENT_NORMAL_MAPPING,
 		FEATURE_TRANSMISSION,
+		FEATURE_HAIR,
 		FEATURE_MAX
 	};
 
@@ -316,6 +318,19 @@ public:
 		TEXTURE_CHANNEL_MAX
 	};
 
+	enum HairColorMode {
+		HAIR_COLOR_ALBEDO,
+		HAIR_COLOR_MELANIN,
+		HAIR_COLOR_MAX
+	};
+
+	enum HairDirection {
+		HAIR_DIRECTION_CROWN,
+		HAIR_DIRECTION_TANGENT,
+		HAIR_DIRECTION_BITANGENT,
+		HAIR_DIRECTION_MAX
+	};
+
 	enum EmissionOperator {
 		EMISSION_OP_ADD,
 		EMISSION_OP_MULTIPLY,
@@ -390,6 +405,9 @@ private:
 		uint64_t proximity_fade : 1;
 		uint64_t orm : 1;
 		uint64_t transmission_volume : 1;
+		uint64_t hair_color_mode : 1;
+		uint64_t hair_direction : 2;
+		uint64_t hair_cards : 1;
 
 		// flag bitfield
 		uint32_t feature_mask;
@@ -445,6 +463,9 @@ private:
 		mk.alpha_antialiasing_mode = alpha_antialiasing_mode;
 		mk.orm = orm;
 		mk.transmission_volume = !transmission_thin_walled;
+		mk.hair_color_mode = hair_color_mode;
+		mk.hair_direction = hair_direction;
+		mk.hair_cards = hair_cards;
 
 		mk.stencil_mode = stencil_mode;
 		mk.stencil_flags = stencil_flags;
@@ -494,6 +515,13 @@ private:
 		StringName transmission_scatter_strength;
 		StringName transmission_scatter_color;
 		StringName transmission_scatter_anisotropy;
+		StringName hair_melanin;
+		StringName hair_melanin_redness;
+		StringName hair_roughness;
+		StringName hair_radial_roughness;
+		StringName hair_cuticle_tilt;
+		StringName hair_crown;
+		StringName hair_mask_texture_channel;
 		StringName point_size;
 		StringName uv1_scale;
 		StringName uv1_offset;
@@ -581,6 +609,16 @@ private:
 	float transmission_scatter_strength = 0.0f;
 	Color transmission_scatter_color = Color(1, 1, 1);
 	float transmission_scatter_anisotropy = 0.0f;
+	HairColorMode hair_color_mode = HAIR_COLOR_ALBEDO;
+	float hair_melanin = 0.0f;
+	float hair_melanin_redness = 0.0f;
+	float hair_roughness = 0.0f;
+	float hair_radial_roughness = 0.0f;
+	float hair_cuticle_tilt = 0.0f;
+	HairDirection hair_direction = HAIR_DIRECTION_CROWN;
+	Vector3 hair_crown;
+	bool hair_cards = false;
+	TextureChannel hair_mask_texture_channel = TEXTURE_CHANNEL_RED;
 	float point_size = 0.0f;
 	float alpha_scissor_threshold = 0.0f;
 	float alpha_hash_scale = 0.0f;
@@ -772,6 +810,36 @@ public:
 	void set_transmission_scatter_anisotropy(float p_anisotropy);
 	float get_transmission_scatter_anisotropy() const;
 
+	void set_hair_color_mode(HairColorMode p_mode);
+	HairColorMode get_hair_color_mode() const;
+
+	void set_hair_melanin(float p_melanin);
+	float get_hair_melanin() const;
+
+	void set_hair_melanin_redness(float p_redness);
+	float get_hair_melanin_redness() const;
+
+	void set_hair_roughness(float p_roughness);
+	float get_hair_roughness() const;
+
+	void set_hair_radial_roughness(float p_roughness);
+	float get_hair_radial_roughness() const;
+
+	void set_hair_cuticle_tilt(float p_degrees);
+	float get_hair_cuticle_tilt() const;
+
+	void set_hair_direction(HairDirection p_direction);
+	HairDirection get_hair_direction() const;
+
+	void set_hair_crown(const Vector3 &p_crown);
+	Vector3 get_hair_crown() const;
+
+	void set_hair_cards(bool p_cards);
+	bool is_hair_cards() const;
+
+	void set_hair_mask_texture_channel(TextureChannel p_channel);
+	TextureChannel get_hair_mask_texture_channel() const;
+
 	void set_point_size(float p_point_size);
 	float get_point_size() const;
 
@@ -956,6 +1024,8 @@ VARIANT_ENUM_CAST(BaseMaterial3D::SpecularMode)
 VARIANT_ENUM_CAST(BaseMaterial3D::BillboardMode)
 VARIANT_ENUM_CAST(BaseMaterial3D::TextureChannel)
 VARIANT_ENUM_CAST(BaseMaterial3D::EmissionOperator)
+VARIANT_ENUM_CAST(BaseMaterial3D::HairColorMode)
+VARIANT_ENUM_CAST(BaseMaterial3D::HairDirection)
 VARIANT_ENUM_CAST(BaseMaterial3D::DistanceFadeMode)
 VARIANT_ENUM_CAST(BaseMaterial3D::StencilMode)
 VARIANT_ENUM_CAST(BaseMaterial3D::StencilFlags)
