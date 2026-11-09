@@ -774,6 +774,27 @@ Not yet: the stream-function solve round rocks inside the river (a rock now only
 in the cross-section), the live window, joins to lakes and the sea, the optional channel mesh, and
 carving terrain.
 
+## Step 4b as built: the river as a carve brush (9 Nov)
+
+Paulo's choice (18:28): ground shaping goes through a Berlenga deformation layer (terrain note,
+section A+) that keeps the uncarved heights, stacks brushes and writes to Terrain3D (by name) or a
+mesh ground. The river is its first brush; it never edits terrain itself.
+
+- `carve` on: the channel floor is `carve_depth` under the uncarved ground at the centre, with a
+  running minimum downstream (Horizon's "it cuts the hill"). The section is a trapezoid, the floor
+  40% of the width, banks smoothstepped up to the ground; past the banks the brush rises at
+  `carve_bank_slope` and fades over `carve_falloff` (Génevaux et al.'s compact blend weight, here a
+  smoothstep). At bends the floor shifts towards the outer bank by `curvature x width^2 / 4`, at most
+  a quarter of the half width (Peytavie et al.'s asymmetric section for type C reaches); curvature is
+  averaged over about 6 m.
+- Brushes: one per 64 m world tile, `rect`, `cell_size`, `size`, `heights`, `mask`, `mode = "lower"`
+  (the ground goes down to the height, blended by the mask, never up), re-sent on `carve_changed`.
+- `base_height_source`: a node answering `base_height_at(world_xz)` with the uncarved ground. Without
+  it the river would measure its own carved channel on the next rebuild and cut deeper each time.
+- The water uses the carved profile for its Manning depth, so its surface and flow match the channel
+  the deformer will leave. In the bench (flat valley floor, `--carve`) the bench script plays the
+  deformer: it lowers its mesh ground to the brushes and rebuilds the collision.
+
 ## The camera under water: research (9 Nov)
 
 ### What the fork has today
