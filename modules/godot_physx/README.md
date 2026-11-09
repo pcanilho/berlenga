@@ -942,6 +942,13 @@ times larger, each carrying its own band of longer waves: swell under the chop,
 without visible repeats. At 14 m/s over deep water, three cascades give about
 3.5 m significant wave height where one tile gives 1.1 m.
 
+`shore_waves` rolls swell in onto the beach over the measured seabed: the crests
+follow a phase field solved over the depth (the eikonal equation of ray theory),
+so they slow, turn to follow the depth contours and bunch up in the shallows;
+they grow as the water shoals and break where their height reaches 0.78 of the
+depth, running in as white bores (`shore_wave_height`, `shore_wave_period`,
+`shore_wave_direction`).
+
 The water is a square by default. Set `surface_mesh` to any flat mesh (a disc
 baked from `CSGCylinder3D`, a kidney bean, a lake with an island) and its X/Z
 footprint becomes the water: the ripple grid fits itself to the outline, waves

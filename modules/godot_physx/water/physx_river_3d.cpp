@@ -92,6 +92,17 @@ uniform float foam_detail_scale = 1.5;
 uniform float foam_breakup : hint_range(0.0, 1.0) = 0.6;
 // The surface fades out over this much water depth (m) at the waterline.
 uniform float edge_softness : hint_range(0.0, 0.5, 0.005) = 0.06;
+// A living waterline: the edge laps in and out by up to this much water depth
+// (m) -- small wavelets and the current's swirls arriving at the bank, so on a
+// gentle bank the line wanders by decimetres and is never straight -- with a
+// lace of foam caught along it.
+uniform float edge_lap_height : hint_range(0.0, 0.2, 0.005) = 0.035;
+uniform float edge_lap_scale = 0.8;
+uniform float edge_foam : hint_range(0.0, 1.0, 0.01) = 0.35;
+// The bank's own small relief the ground mesh is too coarse to carry (pebbles,
+// ruts, tufts): up to this much depth (m), fixed to the ground, so the line
+// runs in and out of little bays and points instead of following the mesh.
+uniform float edge_relief : hint_range(0.0, 0.3, 0.005) = 0.05;
 // The live window (set by PhysXRiver3D while live_flow runs): a square of
 // shallow-water simulation round the camera. Height is the disturbance on the
 // river's own surface; flow is the total velocity (rg, world xz, m/s) with the
@@ -207,6 +218,16 @@ void fragment() {
 			/ sqrt(w * w + (1.0 - w) * (1.0 - w));
 	float speed = length(flow);
 	float depth = v_info.r * 4.0 - 1.0;
+	// The waterline laps: carried by the current (the same two phases as the
+	// ripples) and breathing in and out over a few seconds.
+	vec2 e_a = (v_world.xz - o_a) * edge_lap_scale;
+	vec2 e_b = (v_world.xz - o_b) * edge_lap_scale + vec2(3.7, 9.1);
+	float lap_n = (0.6 * r_noise(e_a) + 0.4 * r_noise(e_a * 2.9 + 4.0)) * w + (0.6 * r_noise(e_b) + 0.4 * r_noise(e_b * 2.9 + 4.0)) * (1.0 - w);
+	float breathe = 0.5 + 0.5 * sin(water_time * 1.3 + r_noise(v_world.xz * 0.15) * 6.28318);
+	depth += edge_lap_height * ((lap_n - 0.5) * 2.0 + (breathe - 0.5));
+	vec2 rq = v_world.xz * 0.35;
+	float relief = 0.5 * r_noise(rq) + 0.3 * r_noise(rq * 3.1 + 17.0) + 0.2 * r_noise(rq * 8.3 - 5.0);
+	depth += edge_relief * (relief - 0.5) * 2.0;
 	// Calm at the waterline: ripples die out over the last 15 cm.
 	slope *= (ripple_strength + ripple_speed_strength * speed) * smoothstep(0.0, 0.15, depth);
 	vec3 n_mesh = normalize(v_normal);
@@ -222,7 +243,9 @@ void fragment() {
 	float lace_a = 0.5 * r_noise(q_a) + 0.3 * r_noise(q_a * 2.7 + 17.0) + 0.2 * r_noise(q_a * 7.3 - 5.0);
 	float lace_b = 0.5 * r_noise(q_b) + 0.3 * r_noise(q_b * 2.7 + 17.0) + 0.2 * r_noise(q_b * 7.3 - 5.0);
 	float lace = lace_a * w + lace_b * (1.0 - w);
-	float foam = clamp(max(v_info.g, live_foam) * (1.0 + foam_breakup) - lace * foam_breakup, 0.0, 1.0);
+	// Foam caught along the waterline, broken into lace.
+	float edge_band = edge_foam * (1.0 - smoothstep(0.0, 0.12, depth)) * smoothstep(-0.01, 0.02, depth);
+	float foam = clamp(max(max(v_info.g, live_foam), edge_band) * (1.0 + foam_breakup) - lace * foam_breakup, 0.0, 1.0);
 	foam = foam * foam * (3.0 - 2.0 * foam);
 
 #if defined(RT)

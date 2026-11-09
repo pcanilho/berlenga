@@ -138,6 +138,18 @@ public:
 	float get_wave_cascade_ratio() const { return wave_cascade_ratio; }
 	// Tile size of cascade i (0 = ocean_domain_size).
 	Vector2 get_wave_cascade_size(int p_index) const;
+	// Shore waves (docs/ideas/water.md "Step 5b"): swell that turns with the
+	// depth contours, steepens and breaks on the beach -- two wave trains whose
+	// crests follow a phase field solved over the seabed (ray theory), heights
+	// from energy flux (shoaling) capped at breaking (H = 0.78 h).
+	void set_shore_waves(bool p_enabled);
+	bool get_shore_waves() const { return shore_waves; }
+	void set_shore_wave_height(float p_height);
+	float get_shore_wave_height() const { return shore_wave_height; }
+	void set_shore_wave_period(float p_period);
+	float get_shore_wave_period() const { return shore_wave_period; }
+	void set_shore_wave_direction(Vector2 p_direction);
+	Vector2 get_shore_wave_direction() const { return shore_wave_direction; }
 	// Extra room around the surface before it is culled, for a material displacing it further than the waves.
 	void set_cull_margin(float p_margin);
 	float get_cull_margin() const { return cull_margin; }
@@ -357,6 +369,25 @@ private:
 	float wave_amplitude = 1.0f;
 	int wave_cascades = 1;
 	float wave_cascade_ratio = 6.0f;
+	bool shore_waves = false;
+	float shore_wave_height = 0.8f; // m, offshore
+	float shore_wave_period = 8.0f; // s
+	Vector2 shore_wave_direction; // (0, 0) = wind_direction
+	static constexpr int SHORE_TRAINS = 2;
+	static constexpr float BREAKER_INDEX = 0.78f; // H / h at breaking (McCowan)
+	// Per ripple cell, per train: phase (rad), height (m), phase gradient (k times
+	// the travel direction, rad/m); and each train's angular frequency.
+	Vector<float> shore_phase[SHORE_TRAINS];
+	Vector<float> shore_height[SHORE_TRAINS];
+	Vector<float> shore_grad_x[SHORE_TRAINS];
+	Vector<float> shore_grad_z[SHORE_TRAINS];
+	float shore_omega[SHORE_TRAINS] = {};
+	Ref<ImageTexture> shore_wave_tex_a;
+	Ref<ImageTexture> shore_wave_tex_b;
+	void _bake_shore_waves();
+	void _update_shore_material();
+	// The shore waves' height at (p_x, p_z) relative to the grid centre, and its rate of change.
+	float _shore_eta_at(float p_x, float p_z, float *r_rate = nullptr) const;
 	// Cascades 1.. (cascade 0 is the main solver's own ocean): an ocean-only
 	// WaterSolver each (a tiny resting ripple grid), its textures and readbacks.
 	struct WaveCascade {
