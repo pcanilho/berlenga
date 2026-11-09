@@ -3629,6 +3629,15 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.emission_indirect_transmission.transmission = 255u;
 		mat.flags |= RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA | RT_MAT_FLAG_TRANSMISSIVE;
 	}
+	if (rt_state.hair) {
+		// Fibre scattering where the hair mask is set (Chiang et al. 2016, raytracing_hair_inc.glsl).
+		mat.flags |= RT_MAT_FLAG_HAIR;
+		const Variant crown = material_storage->material_get_param(p_material_rid, "hair_crown");
+		rt_material_set_hair(mat, get_float("hair_roughness", 0.3f), get_float("hair_radial_roughness", 0.3f), get_float("hair_cuticle_tilt", 2.0f),
+				rt_state.hair_direction, rt_state.hair_melanin, get_float("hair_melanin", 0.5f), get_float("hair_melanin_redness", 0.0f), rt_state.hair_cards,
+				crown.get_type() == Variant::VECTOR3 ? Vector3(crown) : Vector3(0, 1.7, 0));
+		set_texture(mat.hair_mask_texture, get_texture_idx("texture_hair_mask"), get_mask_channel("hair_mask_texture_channel"));
+	}
 
 	// Addressing stored in fp16 slots, packed once below.
 	float uv1_blend_sharpness = 1.0f;
@@ -7156,7 +7165,8 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/back_lighting") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_BACK_LIGHTING : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transmission") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_TRANSMISSION : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_REFRACTION : 0u) |
-				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/subsurface_scattering") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_SUBSURFACE : 0u));
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/subsurface_scattering") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_SUBSURFACE : 0u) |
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/hair") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_HAIR : 0u));
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SSS_SCALE] = MAX(0.0f, (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/subsurface_scattering_scale"));
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
 		// Water caustics (raytracing_caustics_inc.glsl): the slot written turns every frame; the

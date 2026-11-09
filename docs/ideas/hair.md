@@ -180,6 +180,31 @@ everything further is card or shell hair, which is why stage 1 matters even when
 - **Cost at scale**: strands for the player and characters within a few metres only; crowds
   and anything past the cutoff use stage 1 hair.
 
+## Stage 1 as built
+
+Paulo picked B (stage 1 now, strands after). Stage 1 differs from the design above where the
+code was simpler or measured better:
+
+- **Properties**: `hair_enabled`, `hair_color_mode` (albedo or melanin), `hair_melanin`,
+  `hair_melanin_redness`, `hair_roughness`, `hair_radial_roughness`, `hair_cuticle_tilt`,
+  `hair_direction` (crown, tangent, bitangent), `hair_crown`, `hair_cards`, `hair_mask_texture`
+  (for single-material characters such as Tripo's). No custom shader outputs yet.
+- **Path tracer** (`raytracing_hair_inc.glsl`): written from pbrt-v3/v4's `HairBxDF`
+  (Chiang 2016, residual lobe included in the pdf and sampled), not ported from RTXCR. The
+  fibre offset `h` is drawn per path vertex, which averages over the fibre the way a far-field
+  model does. Checked in a Python mirror: white furnace 1.000, pdf integrates to 1, sampling
+  density matches the pdf.
+- **Shells** fold the scattering across the geometry plane (`f(L) + f(mirror L)`), cards pass
+  it through. Instead of Zinke's dual scattering, both use the colour Chiang's section 4.2
+  gives a mass of hair: the fibre's absorption is raised to `-ln(c) / (pi / 2)`, which makes one
+  fibre's albedo match `c` within 0.05 for `c` from 0.3 to 0.9, so the path tracer, the raster
+  and `rendering/pathtracing/hair` off all show the same hair colour. The cost: one scatter, so
+  no soft multiple-scattering glow deep in light hair.
+- **Raster**: anisotropic GGX across the strands (ANISOTROPY 0.8, Kajiya-Kay-like band) and
+  the melanin colour, not the Karis fit. A Karis/Marschner raster lobe is a follow-up.
+- **Bench**: `docs/bench/materials --scene=hair [--hair=back|mask|cards]`.
+- **Open**: RR check on the PC (hair speckle is a known RR weak spot).
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.

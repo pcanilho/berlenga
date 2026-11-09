@@ -585,6 +585,13 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->transmission_scatter_strength = "transmission_scatter_strength";
 	shader_names->transmission_scatter_color = "transmission_scatter_color";
 	shader_names->transmission_scatter_anisotropy = "transmission_scatter_anisotropy";
+	shader_names->hair_melanin = "hair_melanin";
+	shader_names->hair_melanin_redness = "hair_melanin_redness";
+	shader_names->hair_roughness = "hair_roughness";
+	shader_names->hair_radial_roughness = "hair_radial_roughness";
+	shader_names->hair_cuticle_tilt = "hair_cuticle_tilt";
+	shader_names->hair_crown = "hair_crown";
+	shader_names->hair_mask_texture_channel = "hair_mask_texture_channel";
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
 	shader_names->uv1_offset = "uv1_offset";
@@ -629,6 +636,7 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->texture_names[TEXTURE_NORMAL] = "texture_normal";
 	shader_names->texture_names[TEXTURE_BENT_NORMAL] = "texture_bent_normal";
 	shader_names->texture_names[TEXTURE_TRANSMISSION] = "texture_transmission";
+	shader_names->texture_names[TEXTURE_HAIR_MASK] = "texture_hair_mask";
 	shader_names->texture_names[TEXTURE_RIM] = "texture_rim";
 	shader_names->texture_names[TEXTURE_CLEARCOAT] = "texture_clearcoat";
 	shader_names->texture_names[TEXTURE_FLOWMAP] = "texture_flowmap";
@@ -699,6 +707,10 @@ void BaseMaterial3D::_update_shader() {
 		rt.transmission_volume = features[FEATURE_TRANSMISSION] && !transmission_thin_walled;
 		rt.subsurface_scattering = features[FEATURE_SUBSURFACE_SCATTERING];
 		rt.subsurface_skin = features[FEATURE_SUBSURFACE_SCATTERING] && flags[FLAG_SUBSURFACE_MODE_SKIN];
+		rt.hair = features[FEATURE_HAIR];
+		rt.hair_melanin = hair_color_mode == HAIR_COLOR_MELANIN;
+		rt.hair_direction = hair_direction;
+		rt.hair_cards = hair_cards;
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -1132,6 +1144,21 @@ uniform float transmission_scatter_anisotropy : hint_range(-0.99, 0.99, 0.01);
 				texfilter_str);
 	}
 
+	if (features[FEATURE_HAIR]) {
+		code += vformat(R"(
+uniform float hair_melanin : hint_range(0.0, 1.0, 0.01);
+uniform float hair_melanin_redness : hint_range(0.0, 1.0, 0.01);
+uniform float hair_roughness : hint_range(0.0, 1.0, 0.01);
+uniform float hair_radial_roughness : hint_range(0.0, 1.0, 0.01);
+uniform float hair_cuticle_tilt : hint_range(-10.0, 10.0, 0.1);
+uniform vec3 hair_crown;
+uniform sampler2D texture_hair_mask : hint_default_white, %s;
+uniform vec4 hair_mask_texture_channel;
+varying vec2 hair_flow;
+)",
+				texfilter_str);
+	}
+
 	if (features[FEATURE_REFRACTION] || features[FEATURE_TRANSMISSION]) {
 		code += "uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_linear_mipmap;\n";
 	}
@@ -1423,6 +1450,26 @@ void vertex() {)";
 		PROJECTION_MATRIX[1][1] = f;
 	}
 )";
+	}
+
+	if (features[FEATURE_HAIR]) {
+		// The strand direction in the mesh's tangent space, for the anisotropic highlight below.
+		switch (hair_direction) {
+			case HAIR_DIRECTION_CROWN: {
+				code += R"(
+	// Hair: strands run away from the crown along the surface.
+	vec3 hair_dir = VERTEX - hair_crown;
+	hair_dir -= dot(hair_dir, NORMAL) * NORMAL;
+	hair_flow = vec2(dot(hair_dir, TANGENT), dot(hair_dir, BINORMAL));
+)";
+			} break;
+			case HAIR_DIRECTION_TANGENT: {
+				code += "	hair_flow = vec2(1.0, 0.0);\n";
+			} break;
+			default: {
+				code += "	hair_flow = vec2(0.0, 1.0);\n";
+			} break;
+		}
 	}
 
 	// End of the vertex shader function.
@@ -1940,6 +1987,32 @@ void fragment() {)";
 )";
 	}
 
+	if (features[FEATURE_HAIR]) {
+		// The rasterizer's stand-in for the path tracer's fibre scattering: GGX stretched across
+		// the strands (rough around the fibre, smooth along it), as Kajiya-Kay's highlight band.
+		code += "	// Hair: Enabled\n";
+		if (flags[FLAG_UV1_USE_TRIPLANAR]) {
+			code += "	float hair_mask = dot(triplanar_texture(texture_hair_mask, uv1_power_normal, uv1_triplanar_pos), hair_mask_texture_channel);\n";
+		} else {
+			code += "	float hair_mask = dot(texture(texture_hair_mask, base_uv), hair_mask_texture_channel);\n";
+		}
+		if (hair_color_mode == HAIR_COLOR_MELANIN) {
+			// The colour a mass of such fibres shows: Chiang et al. 2016's colour-to-absorption fit, inverted.
+			code += R"(	float hair_m = -log(max(1.0 - hair_melanin, 1e-4));
+	vec3 hair_sigma = hair_m * ((1.0 - hair_melanin_redness) * vec3(0.506, 0.841, 1.653) + hair_melanin_redness * vec3(0.343, 0.733, 1.924));
+	float hair_bn = clamp(hair_radial_roughness, 0.01, 1.0);
+	float hair_d = 5.969 - 0.215 * hair_bn + 2.532 * hair_bn * hair_bn - 10.73 * pow(hair_bn, 3.0) + 5.574 * pow(hair_bn, 4.0) + 0.245 * pow(hair_bn, 5.0);
+	ALBEDO = mix(ALBEDO, exp(-sqrt(hair_sigma) * hair_d), hair_mask);
+)";
+		}
+		code += R"(	vec2 hair_dir_ts = normalize(hair_flow + vec2(1e-6, 0.0));
+	ROUGHNESS = mix(ROUGHNESS, hair_roughness, hair_mask);
+	METALLIC *= 1.0 - hair_mask;
+	ANISOTROPY = mix(ANISOTROPY, 0.8, hair_mask);
+	ANISOTROPY_FLOW = mix(ANISOTROPY_FLOW, vec2(-hair_dir_ts.y, hair_dir_ts.x), hair_mask);
+)";
+	}
+
 	if (features[FEATURE_AMBIENT_OCCLUSION]) {
 		code += R"(
 	// Ambient Occlusion: Enabled
@@ -2415,6 +2488,91 @@ float BaseMaterial3D::get_transmission_scatter_strength() const {
 	return transmission_scatter_strength;
 }
 
+void BaseMaterial3D::set_hair_color_mode(HairColorMode p_mode) {
+	ERR_FAIL_INDEX(p_mode, HAIR_COLOR_MAX);
+	hair_color_mode = p_mode;
+	_queue_shader_change();
+	notify_property_list_changed();
+}
+
+BaseMaterial3D::HairColorMode BaseMaterial3D::get_hair_color_mode() const {
+	return hair_color_mode;
+}
+
+void BaseMaterial3D::set_hair_melanin(float p_melanin) {
+	hair_melanin = CLAMP(p_melanin, 0.0f, 1.0f);
+	_material_set_param(shader_names->hair_melanin, hair_melanin);
+}
+
+float BaseMaterial3D::get_hair_melanin() const {
+	return hair_melanin;
+}
+
+void BaseMaterial3D::set_hair_melanin_redness(float p_redness) {
+	hair_melanin_redness = CLAMP(p_redness, 0.0f, 1.0f);
+	_material_set_param(shader_names->hair_melanin_redness, hair_melanin_redness);
+}
+
+float BaseMaterial3D::get_hair_melanin_redness() const {
+	return hair_melanin_redness;
+}
+
+void BaseMaterial3D::set_hair_roughness(float p_roughness) {
+	hair_roughness = CLAMP(p_roughness, 0.0f, 1.0f);
+	_material_set_param(shader_names->hair_roughness, hair_roughness);
+}
+
+float BaseMaterial3D::get_hair_roughness() const {
+	return hair_roughness;
+}
+
+void BaseMaterial3D::set_hair_radial_roughness(float p_roughness) {
+	hair_radial_roughness = CLAMP(p_roughness, 0.0f, 1.0f);
+	_material_set_param(shader_names->hair_radial_roughness, hair_radial_roughness);
+}
+
+float BaseMaterial3D::get_hair_radial_roughness() const {
+	return hair_radial_roughness;
+}
+
+void BaseMaterial3D::set_hair_cuticle_tilt(float p_degrees) {
+	hair_cuticle_tilt = CLAMP(p_degrees, -10.0f, 10.0f);
+	_material_set_param(shader_names->hair_cuticle_tilt, hair_cuticle_tilt);
+}
+
+float BaseMaterial3D::get_hair_cuticle_tilt() const {
+	return hair_cuticle_tilt;
+}
+
+void BaseMaterial3D::set_hair_direction(HairDirection p_direction) {
+	ERR_FAIL_INDEX(p_direction, HAIR_DIRECTION_MAX);
+	hair_direction = p_direction;
+	_queue_shader_change();
+	notify_property_list_changed();
+}
+
+BaseMaterial3D::HairDirection BaseMaterial3D::get_hair_direction() const {
+	return hair_direction;
+}
+
+void BaseMaterial3D::set_hair_crown(const Vector3 &p_crown) {
+	hair_crown = p_crown;
+	_material_set_param(shader_names->hair_crown, hair_crown);
+}
+
+Vector3 BaseMaterial3D::get_hair_crown() const {
+	return hair_crown;
+}
+
+void BaseMaterial3D::set_hair_cards(bool p_cards) {
+	hair_cards = p_cards;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_hair_cards() const {
+	return hair_cards;
+}
+
 void BaseMaterial3D::set_transmission_scatter_color(const Color &p_color) {
 	transmission_scatter_color = p_color;
 	_material_set_param(shader_names->transmission_scatter_color, transmission_scatter_color);
@@ -2688,6 +2846,14 @@ void BaseMaterial3D::_validate_property(PropertyInfo &p_property) const {
 		if ((p_property.name == "transmission_ior" || p_property.name == "transmission_attenuation_color" || p_property.name == "transmission_attenuation_distance" ||
 					p_property.name == "transmission_scatter_strength" || p_property.name == "transmission_scatter_color" || p_property.name == "transmission_scatter_anisotropy") &&
 				transmission_thin_walled) {
+			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+		}
+
+		if ((p_property.name == "hair_melanin" || p_property.name == "hair_melanin_redness") && hair_color_mode != HAIR_COLOR_MELANIN) {
+			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+		}
+
+		if (p_property.name == "hair_crown" && hair_direction != HAIR_DIRECTION_CROWN) {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 
@@ -3084,6 +3250,16 @@ void BaseMaterial3D::set_ao_texture_channel(TextureChannel p_channel) {
 
 BaseMaterial3D::TextureChannel BaseMaterial3D::get_ao_texture_channel() const {
 	return ao_texture_channel;
+}
+
+void BaseMaterial3D::set_hair_mask_texture_channel(TextureChannel p_channel) {
+	ERR_FAIL_INDEX(int(p_channel), 5);
+	hair_mask_texture_channel = p_channel;
+	_material_set_param(shader_names->hair_mask_texture_channel, _get_texture_mask(p_channel));
+}
+
+BaseMaterial3D::TextureChannel BaseMaterial3D::get_hair_mask_texture_channel() const {
+	return hair_mask_texture_channel;
 }
 
 void BaseMaterial3D::set_refraction_texture_channel(TextureChannel p_channel) {
@@ -3548,6 +3724,27 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_transmission_scatter_anisotropy", "anisotropy"), &BaseMaterial3D::set_transmission_scatter_anisotropy);
 	ClassDB::bind_method(D_METHOD("get_transmission_scatter_anisotropy"), &BaseMaterial3D::get_transmission_scatter_anisotropy);
 
+	ClassDB::bind_method(D_METHOD("set_hair_color_mode", "mode"), &BaseMaterial3D::set_hair_color_mode);
+	ClassDB::bind_method(D_METHOD("get_hair_color_mode"), &BaseMaterial3D::get_hair_color_mode);
+	ClassDB::bind_method(D_METHOD("set_hair_melanin", "melanin"), &BaseMaterial3D::set_hair_melanin);
+	ClassDB::bind_method(D_METHOD("get_hair_melanin"), &BaseMaterial3D::get_hair_melanin);
+	ClassDB::bind_method(D_METHOD("set_hair_melanin_redness", "redness"), &BaseMaterial3D::set_hair_melanin_redness);
+	ClassDB::bind_method(D_METHOD("get_hair_melanin_redness"), &BaseMaterial3D::get_hair_melanin_redness);
+	ClassDB::bind_method(D_METHOD("set_hair_roughness", "roughness"), &BaseMaterial3D::set_hair_roughness);
+	ClassDB::bind_method(D_METHOD("get_hair_roughness"), &BaseMaterial3D::get_hair_roughness);
+	ClassDB::bind_method(D_METHOD("set_hair_radial_roughness", "roughness"), &BaseMaterial3D::set_hair_radial_roughness);
+	ClassDB::bind_method(D_METHOD("get_hair_radial_roughness"), &BaseMaterial3D::get_hair_radial_roughness);
+	ClassDB::bind_method(D_METHOD("set_hair_cuticle_tilt", "degrees"), &BaseMaterial3D::set_hair_cuticle_tilt);
+	ClassDB::bind_method(D_METHOD("get_hair_cuticle_tilt"), &BaseMaterial3D::get_hair_cuticle_tilt);
+	ClassDB::bind_method(D_METHOD("set_hair_direction", "direction"), &BaseMaterial3D::set_hair_direction);
+	ClassDB::bind_method(D_METHOD("get_hair_direction"), &BaseMaterial3D::get_hair_direction);
+	ClassDB::bind_method(D_METHOD("set_hair_crown", "crown"), &BaseMaterial3D::set_hair_crown);
+	ClassDB::bind_method(D_METHOD("get_hair_crown"), &BaseMaterial3D::get_hair_crown);
+	ClassDB::bind_method(D_METHOD("set_hair_cards", "cards"), &BaseMaterial3D::set_hair_cards);
+	ClassDB::bind_method(D_METHOD("is_hair_cards"), &BaseMaterial3D::is_hair_cards);
+	ClassDB::bind_method(D_METHOD("set_hair_mask_texture_channel", "channel"), &BaseMaterial3D::set_hair_mask_texture_channel);
+	ClassDB::bind_method(D_METHOD("get_hair_mask_texture_channel"), &BaseMaterial3D::get_hair_mask_texture_channel);
+
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
 	ClassDB::bind_method(D_METHOD("get_point_size"), &BaseMaterial3D::get_point_size);
 
@@ -3842,6 +4039,20 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "transmission_scatter_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_transmission_scatter_color", "get_transmission_scatter_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_scatter_anisotropy", PROPERTY_HINT_RANGE, "-0.99,0.99,0.01"), "set_transmission_scatter_anisotropy", "get_transmission_scatter_anisotropy");
 
+	ADD_GROUP("Hair", "hair_");
+	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "hair_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_HAIR);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "hair_color_mode", PROPERTY_HINT_ENUM, "Albedo,Melanin"), "set_hair_color_mode", "get_hair_color_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hair_melanin", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hair_melanin", "get_hair_melanin");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hair_melanin_redness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hair_melanin_redness", "get_hair_melanin_redness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hair_roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hair_roughness", "get_hair_roughness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hair_radial_roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_hair_radial_roughness", "get_hair_radial_roughness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hair_cuticle_tilt", PROPERTY_HINT_RANGE, "-10,10,0.1,degrees"), "set_hair_cuticle_tilt", "get_hair_cuticle_tilt");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "hair_direction", PROPERTY_HINT_ENUM, "Crown,Tangent,Bitangent"), "set_hair_direction", "get_hair_direction");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "hair_crown", PROPERTY_HINT_NONE, "suffix:m"), "set_hair_crown", "get_hair_crown");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hair_cards"), "set_hair_cards", "is_hair_cards");
+	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "hair_mask_texture", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_HAIR_MASK);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "hair_mask_texture_channel", PROPERTY_HINT_ENUM, "Red,Green,Blue,Alpha,Gray"), "set_hair_mask_texture_channel", "get_hair_mask_texture_channel");
+
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "detail_mask", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_DETAIL_MASK);
@@ -3924,6 +4135,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(TEXTURE_NORMAL);
 	BIND_ENUM_CONSTANT(TEXTURE_BENT_NORMAL);
 	BIND_ENUM_CONSTANT(TEXTURE_TRANSMISSION);
+	BIND_ENUM_CONSTANT(TEXTURE_HAIR_MASK);
 	BIND_ENUM_CONSTANT(TEXTURE_RIM);
 	BIND_ENUM_CONSTANT(TEXTURE_CLEARCOAT);
 	BIND_ENUM_CONSTANT(TEXTURE_FLOWMAP);
@@ -3976,6 +4188,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FEATURE_DETAIL);
 	BIND_ENUM_CONSTANT(FEATURE_BENT_NORMAL_MAPPING);
 	BIND_ENUM_CONSTANT(FEATURE_TRANSMISSION);
+	BIND_ENUM_CONSTANT(FEATURE_HAIR);
 	BIND_ENUM_CONSTANT(FEATURE_MAX);
 
 	BIND_ENUM_CONSTANT(BLEND_MODE_MIX);
@@ -4047,6 +4260,15 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(TEXTURE_CHANNEL_ALPHA);
 	BIND_ENUM_CONSTANT(TEXTURE_CHANNEL_GRAYSCALE);
 
+	BIND_ENUM_CONSTANT(HAIR_COLOR_ALBEDO);
+	BIND_ENUM_CONSTANT(HAIR_COLOR_MELANIN);
+	BIND_ENUM_CONSTANT(HAIR_COLOR_MAX);
+
+	BIND_ENUM_CONSTANT(HAIR_DIRECTION_CROWN);
+	BIND_ENUM_CONSTANT(HAIR_DIRECTION_TANGENT);
+	BIND_ENUM_CONSTANT(HAIR_DIRECTION_BITANGENT);
+	BIND_ENUM_CONSTANT(HAIR_DIRECTION_MAX);
+
 	BIND_ENUM_CONSTANT(EMISSION_OP_ADD);
 	BIND_ENUM_CONSTANT(EMISSION_OP_MULTIPLY);
 
@@ -4104,6 +4326,13 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_transmission_scatter_strength(0.0);
 	set_transmission_scatter_color(Color(1, 1, 1));
 	set_transmission_scatter_anisotropy(0.0);
+	set_hair_melanin(0.5);
+	set_hair_melanin_redness(0.0);
+	set_hair_roughness(0.3);
+	set_hair_radial_roughness(0.3);
+	set_hair_cuticle_tilt(2.0);
+	set_hair_crown(Vector3(0, 1.7, 0));
+	set_hair_mask_texture_channel(TEXTURE_CHANNEL_RED);
 	set_point_size(1);
 	set_uv1_offset(Vector3(0, 0, 0));
 	set_uv1_scale(Vector3(1, 1, 1));

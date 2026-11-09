@@ -298,6 +298,13 @@ struct MaterialProperties {
 	float clearcoatAlpha; // The coat's GGX alpha, see clearcoatAlphaFromRoughness().
 	float3 coatNormal; // The coat's normal: the interpolated vertex normal, which normal maps do not reach.
 	float subsurface; // 1: the diffuse lobe is subsurface scattering, whose light arrives through the random walk, not here.
+
+	float hair; // Share of the surface that is hair fibres (raytracing_hair_inc.glsl), 0 = none.
+	float3 hairSigmaA; // Absorption per fibre diameter.
+	float3 hairTangent; // Along the strands.
+	float3 hairPlaneNormal; // The geometry normal: shells fold the light that would enter them back across it.
+	float4 hairParams; // Longitudinal roughness, azimuthal roughness, cuticle tilt (degrees), fibre offset h.
+	bool hairCards; // Light passes through instead of folding back.
 };
 
 // Data needed to evaluate BRDF (surface and material properties at given point + configuration of light and normal vectors)
@@ -1002,9 +1009,69 @@ float3 godotSpecularNdotL(const BrdfData data, uint specularMode, float3 energyC
 	return energyCompensation * evalMicrofacet(data);
 }
 
+// -------------------------------------------------------------------------
+//    Hair fibres (raytracing_hair_inc.glsl)
+// -------------------------------------------------------------------------
+
+// The fibre scattering of a hair surface towards V from L, cosine included. A card passes light
+// through; a shell (a sculpted hair mass with a head under it) folds what its fibres send into it
+// back out across its plane, as the hair under the surface would scatter it out again.
+float3 hairEval(MaterialProperties material, float3 L, float3 V) {
+	HairFibre fibre = hair_fibre(material.hairParams.w, material.hairSigmaA, material.hairParams.x, material.hairParams.y, material.hairParams.z);
+	mat3 frame = hair_frame(material.hairTangent, material.hairPlaneNormal);
+	mat3 to_local = transpose(frame);
+	float3 wo = to_local * V;
+	if (material.hairCards) {
+		return hair_f(fibre, wo, to_local * L);
+	}
+	float c = dot(L, material.hairPlaneNormal);
+	if (c <= 0.0f) {
+		return float3(0.0f, 0.0f, 0.0f);
+	}
+	float3 mirrored = L - 2.0f * c * material.hairPlaneNormal;
+	return hair_f(fibre, wo, to_local * L) + hair_f(fibre, wo, to_local * mirrored);
+}
+
+// Density with which sampleHair() draws L.
+float hairPdf(MaterialProperties material, float3 L, float3 V) {
+	HairFibre fibre = hair_fibre(material.hairParams.w, material.hairSigmaA, material.hairParams.x, material.hairParams.y, material.hairParams.z);
+	mat3 frame = hair_frame(material.hairTangent, material.hairPlaneNormal);
+	mat3 to_local = transpose(frame);
+	float3 wo = to_local * V;
+	if (material.hairCards) {
+		return hair_pdf(fibre, wo, to_local * L);
+	}
+	float c = dot(L, material.hairPlaneNormal);
+	if (c <= 0.0f) {
+		return 0.0f;
+	}
+	float3 mirrored = L - 2.0f * c * material.hairPlaneNormal;
+	return hair_pdf(fibre, wo, to_local * L) + hair_pdf(fibre, wo, to_local * mirrored);
+}
+
+// A direction off the fibres by their importance sampling (folded for shells) and its weight
+// hairEval() / hairPdf(). False when the sample carries nothing.
+bool sampleHair(float4 u, float3 V, MaterialProperties material, OUT_PARAMETER(float3) rayDirection, OUT_PARAMETER(float3) sampleWeight) {
+	HairFibre fibre = hair_fibre(material.hairParams.w, material.hairSigmaA, material.hairParams.x, material.hairParams.y, material.hairParams.z);
+	mat3 frame = hair_frame(material.hairTangent, material.hairPlaneNormal);
+	float3 wo = transpose(frame) * V;
+	float3 L = normalize(frame * hair_sample(fibre, wo, u.xy, u.zw));
+	if (!material.hairCards && dot(L, material.hairPlaneNormal) < 0.0f) {
+		L -= 2.0f * dot(L, material.hairPlaneNormal) * material.hairPlaneNormal;
+	}
+	rayDirection = L;
+	float pdf = hairPdf(material, L, V);
+	if (!(pdf > 1e-6f)) {
+		sampleWeight = float3(0.0f, 0.0f, 0.0f);
+		return false;
+	}
+	sampleWeight = hairEval(material, L, V) / pdf;
+	return luminance(sampleWeight) > 0.0f;
+}
+
 // True when a light behind the shading normal can still contribute.
 bool godotShadesBackfacingLight(MaterialProperties material) {
-	return any(greaterThan(material.backlight, float3(0.0f, 0.0f, 0.0f))) ||
+	return (material.hair > 0.0f && material.hairCards) || any(greaterThan(material.backlight, float3(0.0f, 0.0f, 0.0f))) ||
 			material.diffuseMode == GODOT_DIFFUSE_LAMBERT_WRAP || material.diffuseMode == GODOT_DIFFUSE_TOON ||
 			material.specularMode == GODOT_SPECULAR_TOON;
 }
@@ -1329,6 +1396,11 @@ void evalCombinedBRDFSeparate(float3 N, float3 L, float3 V, MaterialProperties m
 	float diffuseScale = baseScale * (1.0f - material.subsurface);
 	outDiffuse = data.diffuseReflectance * (float3(diffuseNdotL, diffuseNdotL, diffuseNdotL) * diffuseScale + backlit);
 	outSpecular = godotSpecularNdotL(data, material.specularMode, material.energyCompensation) * baseScale + float3(coat, coat, coat);
+	if (material.hair > 0.0f) {
+		// Hair takes its share of the surface; its fibres scatter into both lobes' place.
+		outDiffuse = outDiffuse * (1.0f - material.hair) + material.hair * hairEval(material, L, V);
+		outSpecular *= 1.0f - material.hair;
+	}
 }
 
 // This is an entry point for evaluation of all other BRDFs based on selected configuration (for indirect light)

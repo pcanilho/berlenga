@@ -247,6 +247,42 @@
 		<member name="grow_amount" type="float" setter="set_grow" getter="get_grow" default="0.0">
 			Grows object vertices in the direction of their normals. Only effective if [member grow] is [code]true[/code].
 		</member>
+		<member name="hair_cards" type="bool" setter="set_hair_cards" getter="is_hair_cards" default="false">
+			If [code]true[/code], the hair is thin cards (alpha-tested strips of strands): the path tracer lets light pass through them, so lights behind the hair shine through it. If [code]false[/code], the hair is a solid shell over the head, as photogrammetry and generated character meshes model it: light that the fibres would send into the shell is folded back out of it, as the hair beneath the surface would scatter it out again.
+		</member>
+		<member name="hair_color_mode" type="int" setter="set_hair_color_mode" getter="get_hair_color_mode" enum="BaseMaterial3D.HairColorMode" default="0">
+			How the fibres' absorption is chosen. [constant HAIR_COLOR_ALBEDO] takes it from the albedo (colour and texture), so a textured character keeps its hair colours. [constant HAIR_COLOR_MELANIN] takes it from [member hair_melanin] and [member hair_melanin_redness], and the rasterizer shows the colour such hair has.
+		</member>
+		<member name="hair_crown" type="Vector3" setter="set_hair_crown" getter="get_hair_crown" default="Vector3(0, 1.7, 0)">
+			The crown of the head in the mesh's own space, with [constant HAIR_DIRECTION_CROWN]: strands run away from it along the surface. The default is the top of an adult's head for a mesh whose origin is at the feet.
+		</member>
+		<member name="hair_cuticle_tilt" type="float" setter="set_hair_cuticle_tilt" getter="get_hair_cuticle_tilt" default="2.0">
+			Tilt of the scales on the fibre's surface, in degrees. It separates the white highlight (shifted towards the root) from the coloured second highlight (shifted towards the tip). Human hair is about 2 to 3 degrees.
+		</member>
+		<member name="hair_direction" type="int" setter="set_hair_direction" getter="get_hair_direction" enum="BaseMaterial3D.HairDirection" default="0">
+			Which way the strands run over the surface. The highlights stretch across them.
+		</member>
+		<member name="hair_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
+			If [code]true[/code], the surface is shaded as hair where [member hair_mask_texture] is set (everywhere without one). The path tracer scatters light off it as hair fibres do (Chiang, Bitterli, Tappan and Burley 2016: a white highlight, light through the fibres and a coloured second highlight, with all longer paths), see [member ProjectSettings.rendering/pathtracing/hair]. The rasterizer draws an anisotropic highlight across the strands instead, with [member hair_roughness]; it replaces [member anisotropy] where the mask is set.
+		</member>
+		<member name="hair_mask_texture" type="Texture2D" setter="set_texture" getter="get_texture">
+			Where the surface is hair (1) or keeps the rest of the material (0), read from [member hair_mask_texture_channel]. Lets one material shade a whole character whose hair is part of the same mesh and texture.
+		</member>
+		<member name="hair_mask_texture_channel" type="int" setter="set_hair_mask_texture_channel" getter="get_hair_mask_texture_channel" enum="BaseMaterial3D.TextureChannel" default="0">
+			The channel of [member hair_mask_texture] to read.
+		</member>
+		<member name="hair_melanin" type="float" setter="set_hair_melanin" getter="get_hair_melanin" default="0.5">
+			Amount of melanin in the fibres with [constant HAIR_COLOR_MELANIN], from none (white) to black, as Blender Cycles' Principled Hair BSDF. Blonde is about 0.25, brown about 0.6, black about 0.9.
+		</member>
+		<member name="hair_melanin_redness" type="float" setter="set_hair_melanin_redness" getter="get_hair_melanin_redness" default="0.0">
+			Share of the melanin that is pheomelanin, which makes hair red, with [constant HAIR_COLOR_MELANIN].
+		</member>
+		<member name="hair_radial_roughness" type="float" setter="set_hair_radial_roughness" getter="get_hair_radial_roughness" default="0.3">
+			Roughness around the fibre (azimuthal): low values give the sharp glints of straight, smooth hair, high values the soft look of curly or fine hair. Path tracing only.
+		</member>
+		<member name="hair_roughness" type="float" setter="set_hair_roughness" getter="get_hair_roughness" default="0.3">
+			Roughness along the fibre (longitudinal): the width of the highlights. Also the rasterizer's roughness where the surface is hair.
+		</member>
 		<member name="heightmap_deep_parallax" type="bool" setter="set_heightmap_deep_parallax" getter="is_heightmap_deep_parallax_enabled" default="false">
 			If [code]true[/code], uses parallax occlusion mapping to represent depth in the material instead of simple offset mapping (see [member heightmap_enabled]). This results in a more convincing depth effect, but is much more expensive on the GPU. Only enable this on materials where it makes a significant visual difference.
 		</member>
@@ -586,7 +622,10 @@
 		<constant name="TEXTURE_ORM" value="17" enum="TextureParam">
 			Texture holding ambient occlusion, roughness, and metallic.
 		</constant>
-		<constant name="TEXTURE_MAX" value="20" enum="TextureParam">
+		<constant name="TEXTURE_HAIR_MASK" value="20" enum="TextureParam">
+			Texture specifying where the surface is hair, see [member hair_mask_texture].
+		</constant>
+		<constant name="TEXTURE_MAX" value="21" enum="TextureParam">
 			Represents the size of the [enum TextureParam] enum.
 		</constant>
 		<constant name="TEXTURE_FILTER_NEAREST" value="0" enum="TextureFilter">
@@ -688,7 +727,10 @@
 		<constant name="FEATURE_TRANSMISSION" value="13" enum="Feature">
 			Constant for setting [member transmission_enabled].
 		</constant>
-		<constant name="FEATURE_MAX" value="14" enum="Feature">
+		<constant name="FEATURE_HAIR" value="14" enum="Feature">
+			Constant for setting [member hair_enabled].
+		</constant>
+		<constant name="FEATURE_MAX" value="15" enum="Feature">
 			Represents the size of the [enum Feature] enum.
 		</constant>
 		<constant name="BLEND_MODE_MIX" value="0" enum="BlendMode">
@@ -872,6 +914,27 @@
 		</constant>
 		<constant name="TEXTURE_CHANNEL_GRAYSCALE" value="4" enum="TextureChannel">
 			Used to read from the linear (non-perceptual) average of the red, green and blue channels of a texture.
+		</constant>
+		<constant name="HAIR_COLOR_ALBEDO" value="0" enum="HairColorMode">
+			The fibres absorb what makes a mass of them look the albedo colour (Chiang et al. 2016's colour mapping).
+		</constant>
+		<constant name="HAIR_COLOR_MELANIN" value="1" enum="HairColorMode">
+			The fibres absorb as [member hair_melanin] and [member hair_melanin_redness] say.
+		</constant>
+		<constant name="HAIR_COLOR_MAX" value="2" enum="HairColorMode">
+			Represents the size of the [enum HairColorMode] enum.
+		</constant>
+		<constant name="HAIR_DIRECTION_CROWN" value="0" enum="HairDirection">
+			Strands run away from [member hair_crown] along the surface. Fits a sculpted hair mass with no strand layout in its UVs.
+		</constant>
+		<constant name="HAIR_DIRECTION_TANGENT" value="1" enum="HairDirection">
+			Strands run along the mesh's tangent (its UV's U direction).
+		</constant>
+		<constant name="HAIR_DIRECTION_BITANGENT" value="2" enum="HairDirection">
+			Strands run along the mesh's bitangent (its UV's V direction), as hair cards are usually laid out.
+		</constant>
+		<constant name="HAIR_DIRECTION_MAX" value="3" enum="HairDirection">
+			Represents the size of the [enum HairDirection] enum.
 		</constant>
 		<constant name="EMISSION_OP_ADD" value="0" enum="EmissionOperator">
 			Adds the emission color to the color from the emission texture.

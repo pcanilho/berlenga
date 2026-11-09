@@ -99,6 +99,7 @@ struct InstanceMotionData {
 #define RT_MAT_FLAG_TRANSMISSIVE 1048576u // Transmission or Refraction: light passes through, see rt_material_transmission().
 #define RT_MAT_FLAG_BACKLIT 2097152u // BaseMaterial3D back lighting: shadow rays keep the light it passes through.
 #define RT_MAT_FLAG_CUSTOM_TRANSMITTANCE 4194304u // Custom TRANSMISSION or BACKLIGHT: the any-hit evaluates the fragment for shadow rays.
+#define RT_MAT_FLAG_HAIR 16777216u // BaseMaterial3D Hair: fibre scattering where the mask is set, see rt_material_hair().
 #define RT_MAT_FLAG_VOLUME 8388608u // Transmission, thin_walled off: the surface bounds a medium, see rt_material_ior(), rt_material_medium().
 
 // Multi-bit fields fill the top bits so new single-bit flags can grow upward.
@@ -163,7 +164,11 @@ struct MaterialData {
 	uint scatter; // unorm8x4: single-scatter albedo of that volume (rgb) and (g + 1) / 2 of its phase. See rt_material_scatter().
 	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode. See rt_material_subsurface().
 	uint subsurface_texture; // texture_subsurface_scattering: red scales the strength.
-	uint reserved2;
+	uint hair; // unorm8 beta_m, beta_n, (tilt + 10) / 20; bits 24-25 direction, 26 melanin, 27 cards. See rt_material_hair().
+	uint hair_absorption; // Melanin absorption per fibre diameter (rt_medium_absorption() code).
+	uint hair_mask_texture; // Where the surface is hair; 0 (white) = everywhere.
+	uint hair_crown_xy; // fp16x2 hair_crown, object space.
+	uint hair_crown_z; // fp16 in bits 0-15.
 };
 
 // Bindless index of a MaterialData *_texture.
@@ -238,6 +243,28 @@ vec2 rt_material_clearcoat(MaterialData p_mat) {
 }
 
 // BaseMaterial3D roughness, metallic, specular (x, y, z).
+// BaseMaterial3D Hair: longitudinal and azimuthal roughness, cuticle tilt in degrees (x, y, z).
+vec3 rt_material_hair(MaterialData p_mat) {
+	vec3 v = unpackUnorm4x8(p_mat.hair).xyz;
+	return vec3(v.xy, v.z * 20.0 - 10.0);
+}
+
+uint rt_material_hair_direction(MaterialData p_mat) {
+	return (p_mat.hair >> 24u) & 3u;
+}
+
+bool rt_material_hair_melanin(MaterialData p_mat) {
+	return ((p_mat.hair >> 26u) & 1u) != 0u;
+}
+
+bool rt_material_hair_cards(MaterialData p_mat) {
+	return ((p_mat.hair >> 27u) & 1u) != 0u;
+}
+
+vec3 rt_material_hair_crown(MaterialData p_mat) {
+	return vec3(unpackHalf2x16(p_mat.hair_crown_xy), unpackHalf2x16(p_mat.hair_crown_z).x);
+}
+
 vec3 rt_material_surface_params(MaterialData p_mat) {
 	return unpackUnorm4x8(p_mat.surface_params).xyz;
 }
