@@ -161,8 +161,8 @@ struct MaterialData {
 	uint transmission_texture; // Red scales transmission.
 	uint medium; // With RT_MAT_FLAG_VOLUME: the extinction code of the volume it bounds, see rt_medium_absorption().
 	uint scatter; // unorm8x4: single-scatter albedo of that volume (rgb) and (g + 1) / 2 of its phase. See rt_material_scatter().
-	uint reserved0;
-	uint reserved1;
+	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode. See rt_material_subsurface().
+	uint subsurface_texture; // texture_subsurface_scattering: red scales the strength.
 	uint reserved2;
 };
 
@@ -228,6 +228,11 @@ uint rt_material_medium(MaterialData p_mat) {
 }
 
 // BaseMaterial3D clearcoat and clearcoat_roughness (x, y); x is 0 without the coat.
+// BaseMaterial3D subsurface scattering strength (x, 0: none) and Skin Mode (y, 0 or 1).
+vec2 rt_material_subsurface(MaterialData p_mat) {
+	return vec2(float(p_mat.subsurface & 0xFFu) / 255.0, float((p_mat.subsurface >> 8u) & 1u));
+}
+
 vec2 rt_material_clearcoat(MaterialData p_mat) {
 	return unpackUnorm4x8(p_mat.proximity_fade_clearcoat).zw;
 }

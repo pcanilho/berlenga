@@ -21,6 +21,13 @@ extends Node3D
 #                     caustics_far: the same from 70 m through a long lens
 #                     --ripples: a rippled surface (normal map, or NORMAL_MAP in the shader), which
 #                     gathers the sun into caustics on the floor (rendering/pathtracing/caustics)
+#                     subsurface: subsurface scattering under a low side sun. Front row: skin (Skin Mode),
+#                     strength 0 to 1 left to right. Back row: wax candles (strength 1, plain mode), a skin
+#                     sphere with a fine checker albedo (texture detail), a marble block
+#                     subsurface_back: the same skin lit from behind: slabs 2, 5, 10 and 20 cm thick
+#                     (light through thin parts), and an open card (traced as plain diffuse)
+#                     Both set rendering/pathtracing/subsurface_scattering_scale to 0.05 m, so the
+#                     1 m spheres scatter as a 10 cm object at the default 0.01
 #                     water_depths: unshaded white tiles under 0.25, 0.5, 1, 2 and 4 m of water, seen straight
 #                     down in an orthogonal view with linear tone mapping, to read Beer-Lambert off the pixels
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
@@ -47,6 +54,9 @@ var n := 0
 
 
 func _ready() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--scene=subsurface"):
+			ProjectSettings.set_setting("rendering/pathtracing/subsurface_scattering_scale", 0.05)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--scene="): scene = a.substr(8)
 		elif a == "--raster": raster = true
@@ -125,6 +135,12 @@ func _ready() -> void:
 			cam.fov = 6
 			cam.look_at_from_position(Vector3(-1.0, 50.0, 48.0), Vector3(-1.0, -1.0, 0.0))
 			_water_pool()
+		"subsurface":
+			sun.rotation_degrees = Vector3(-20, 95, 0)
+			_subsurface_rows()
+		"subsurface_back":
+			sun.rotation_degrees = Vector3(-15, 180, 0)
+			_subsurface_back()
 		"water_depths":
 			ground.visible = false
 			env.background_mode = Environment.BG_COLOR
@@ -376,6 +392,56 @@ func _box(p_size: Vector3, p_pos: Vector3, p_mat: Material, p_rot := Vector3.ZER
 	mi.position = p_pos
 	mi.rotation_degrees = p_rot
 	add_child(mi)
+
+
+func _skin(p_strength: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.85, 0.6, 0.5)
+	m.roughness = 0.5
+	m.subsurf_scatter_enabled = true
+	m.subsurf_scatter_skin_mode = true
+	m.subsurf_scatter_strength = p_strength
+	return m
+
+
+func _subsurface_rows() -> void:
+	for i in 5:
+		_sphere(Vector3((i - 2) * 1.25, 0.5, 0.6), _skin(i / 4.0))
+	var wax := StandardMaterial3D.new()
+	wax.albedo_color = Color(0.92, 0.86, 0.7)
+	wax.roughness = 0.35
+	wax.subsurf_scatter_enabled = true
+	wax.subsurf_scatter_strength = 1.0
+	for i in 2:
+		var mi := MeshInstance3D.new()
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = 0.18
+		cyl.bottom_radius = 0.18
+		cyl.height = 1.2 - i * 0.4
+		cyl.radial_segments = 64
+		mi.mesh = cyl
+		mi.material_override = wax
+		mi.position = Vector3(-2.4 + i * 0.5, cyl.height * 0.5, -1.2)
+		add_child(mi)
+	var textured := _skin(1.0)
+	textured.albedo_texture = _checker(Color(1, 1, 1), Color(0.55, 0.3, 0.3))
+	textured.uv1_scale = Vector3(4, 4, 1)
+	_sphere(Vector3(0.0, 0.5, -1.2), textured)
+	var marble := StandardMaterial3D.new()
+	marble.albedo_color = Color(0.95, 0.95, 0.93)
+	marble.roughness = 0.2
+	marble.subsurf_scatter_enabled = true
+	marble.subsurf_scatter_strength = 0.6
+	_box(Vector3(1.0, 0.8, 0.8), Vector3(2.2, 0.4, -1.2), marble, Vector3(0, 25, 0))
+
+
+func _subsurface_back() -> void:
+	var thickness := [0.02, 0.05, 0.1, 0.2]
+	for i in 4:
+		_box(Vector3(0.8, 1.2, thickness[i]), Vector3((i - 2) * 1.1, 0.6, 0.0), _skin(1.0))
+	var card := _skin(1.0)
+	card.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_quad(Vector2(0.8, 1.2), Vector3(2.2, 0.6, 0.0), card)
 
 
 func _water_pool() -> void:

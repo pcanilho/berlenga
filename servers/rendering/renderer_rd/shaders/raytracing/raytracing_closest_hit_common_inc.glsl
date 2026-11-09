@@ -391,6 +391,7 @@ MaterialProperties material_properties_coated(vec3 p_albedo, float p_metallic, f
 	material.backlight = p_backlight;
 	material.diffuseMode = (p_mat_flags >> RT_MAT_DIFFUSE_MODE_SHIFT) & RT_MAT_SHADING_MODE_MASK;
 	material.specularMode = (p_mat_flags >> RT_MAT_SPECULAR_MODE_SHIFT) & RT_MAT_SHADING_MODE_MASK;
+	material.subsurface = 0.0;
 	return material;
 }
 
@@ -406,6 +407,7 @@ MaterialProperties material_properties_from_result(HitData h, MaterialResult m, 
 			rt_entry_material_flags(h.geometry_idx), dot(N, V), m.clearcoat, m.clearcoat_roughness, h.geometry_normal);
 	material.emissive = m.emissive;
 	material.transmissivness = m.transmission;
+	material.subsurface = m.subsurface > 0.0 ? 1.0 : 0.0;
 	return material;
 }
 
@@ -1061,6 +1063,55 @@ bool sample_coat_continuation(HitData h, MaterialProperties material, vec3 N, ve
 	return true;
 }
 
+// Subsurface scattering (docs/ideas/subsurface-scattering.md, Cycles' Random Walk): the diffuse lobe
+// enters the surface along a cosine direction about -N and raygen walks the medium below it
+// (SSS_ENTER_FLAG, rt_sss_walk()). The walk adds the albedo, so the weight is the diffuse lobe's
+// without it. The medium's colour is the albedo; its radius the strength times
+// rendering/pathtracing/subsurface_scattering_scale, per channel as measured skin in Skin Mode
+// (Jensen et al. 2001, skin1: diffuse mean free paths 3.67, 1.37 and 0.68 mm).
+bool sample_subsurface_entry(HitData h, MaterialResult m, MaterialProperties material, vec3 N, inout PathState ps) {
+	float4 q = getRotationToZAxis(-N);
+	vec3 dir = normalize(rotatePoint(invertRotation(q), sampleHemisphere(rand2(ps.rng_state))));
+	if (dot(h.geometry_normal, dir) >= 0.0) {
+		return false;
+	}
+	vec3 profile = m.subsurface_skin ? vec3(1.0, 0.373, 0.185) : vec3(1.0);
+	vec3 radius = max(m.subsurface * get_rt_param(RT_PARAM_SSS_SCALE) * profile, vec3(1.0 / 4096.0));
+	ps.throughput *= (1.0 - material.metalness) * (1.0 - material.transmissivness);
+	ps.packed_bounces_flags = inc_diffuse_bounce(ps.packed_bounces_flags) | LAST_BOUNCE_DIFFUSE_FLAG | NON_SINGULAR_PATH_FLAG | SSS_ENTER_FLAG;
+	ps.offset_normal = -h.geometry_normal;
+	ps.next_ray_dir = dir;
+	ps.bsdf_pdf = uintBitsToFloat(rt_medium_code(1.0 / radius));
+	imageStore(rt_medium_image, ivec2(gl_LaunchIDEXT.xy), uvec4(packUnorm4x8(vec4(clamp(material.baseColor, vec3(0.0), vec3(1.0)), 0.0))));
+	return true;
+}
+
+// A subsurface probe ray's hit (SSS_PROBE_FLAG): distance, facing, interpolated normal and TLAS entry,
+// without evaluating the material.
+void rt_sss_probe_hit() {
+	uint geometry_idx = RT_HIT_GEOMETRY_IDX;
+	GeometryData geom = geometries[geometry_idx];
+	mat3 model_rotation = mat3(gl_ObjectToWorldEXT);
+	mat3 normal_matrix = mat3(normalize(model_rotation[0]), normalize(model_rotation[1]), normalize(model_rotation[2]));
+	vec3 n;
+	bool front;
+#ifdef ENABLE_INTERSECTION_SHADERS
+	if ((geom.flags & FLAG_PROCEDURAL) != 0u) {
+		n = normalize(normal_matrix * normalize(unpackSnorm4x8(hit_attribs.packed_normal).xyz));
+		front = dot(n, gl_WorldRayDirectionEXT) < 0.0;
+	} else
+#endif
+	{
+		VertexAttributes attrs = fetch_vertex_attributes(geom, attribs, FETCH_TBN);
+		n = normalize(normal_matrix * attrs.normal);
+		front = rt_triangle_front_facing(geom);
+	}
+	payload.hit_t = gl_HitTEXT;
+	payload.oct_offset_nrm = packUnorm2x16(vec3_to_oct(n));
+	payload.oct_next_dir = geometry_idx;
+	payload.packed_bounces_flags = SSS_PROBE_FLAG | (front ? 0u : SSS_PROBE_BACK_FACE_FLAG);
+}
+
 bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, inout PathState ps) {
 	if (surface_is_unshaded(h.geometry_idx)) {
 		return false;
@@ -1160,6 +1211,10 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 			brdf_type = DIFFUSE_TYPE;
 			ps.throughput /= (1.0 - brdf_probability);
 		}
+	}
+
+	if (brdf_type == DIFFUSE_TYPE && material.subsurface > 0.5) {
+		return sample_subsurface_entry(h, m, material, N, ps);
 	}
 
 	vec3 next_dir;
@@ -1345,6 +1400,14 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	PathState ps = path_unpack(payload);
 	// Every surface bounds this ray segment, even if it cannot continue the path.
 	ps.hit_t = gl_HitTEXT;
+
+	// Subsurface scattering's light comes through the walk after a bounce, so where the path ends
+	// here (bounce limits, unshaded) or the ray is a transparency peel, the surface is plain diffuse.
+	bool path_ends = get_total_bounces(ps.packed_bounces_flags) >= RT_GET_MAX_BOUNCES() ||
+			get_diffuse_bounces(ps.packed_bounces_flags) >= MAX_DIFFUSE_BOUNCES;
+	if ((ps.packed_bounces_flags & PEEL_RAY_FLAG) != 0u || surface_is_unshaded(h.geometry_idx) || path_ends) {
+		m.subsurface = 0.0;
+	}
 
 	vec3 V = -gl_WorldRayDirectionEXT;
 

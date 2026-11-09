@@ -20,6 +20,8 @@ struct MaterialResult {
 	float ior; // With transmission: the IOR of the medium the surface bounds; 0 for a thin surface.
 	uint medium; // With ior: the medium's payload code (MEDIUM_CHANGE_FLAG, RT_MEDIUM_CODE_GEOMETRY).
 	uint medium_scatter; // With RT_MEDIUM_CODE_SCATTER in medium: rt_medium_scatter_pack().
+	float subsurface; // SSS_STRENGTH: subsurface scattering radius over rendering/pathtracing/subsurface_scattering_scale; 0 = none.
+	bool subsurface_skin; // Skin Mode (sss_mode_skin): measured skin's per-channel radii.
 };
 
 // Sensible default for a mid-grey diffuse surface.
@@ -40,6 +42,8 @@ MaterialResult default_material_result(vec3 geometry_normal) {
 	r.ior = 0.0;
 	r.medium = 0u;
 	r.medium_scatter = 0u;
+	r.subsurface = 0.0;
+	r.subsurface_skin = false;
 	return r;
 }
 
@@ -306,6 +310,15 @@ vec2 material_clearcoat(MaterialData mat, MaterialUV muv) {
 		coat *= material_uv_sample(mat.clearcoat_texture, muv, mat.flags).xy;
 	}
 	return coat;
+}
+
+// BaseMaterial3D subsurface scattering strength scaled by texture_subsurface_scattering's red, as raster.
+float material_subsurface(MaterialData mat, MaterialUV muv) {
+	float strength = rt_material_subsurface(mat).x;
+	if (strength > 0.0 && rt_texture_index(mat.subsurface_texture) != 0u) {
+		strength *= material_uv_sample(mat.subsurface_texture, muv, mat.flags).r;
+	}
+	return strength;
 }
 
 // texture_transmission's red and texture_backlight at the hit; the back light texture defaults to black.
