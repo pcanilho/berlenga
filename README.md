@@ -23,7 +23,8 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Lit raster transparents and rain (`rendering/pathtracing/max_transparency_layers` 0), still traced in reflections.
 
 ### Materials
-- **Back lighting** (`rendering/pathtracing/back_lighting`): light passes through leaves, paper and curtains, from lights and bounces.
+- **Back lighting** (`rendering/pathtracing/back_lighting`): light passes through leaves, paper and curtains, from lights and bounces, into coloured shadows.
+- **Transmission** (new BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass passes light straight through, tinted and blurred by roughness, with tinted shadows; glTF `KHR_materials_transmission`.
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): coated paint as raster shades it, with traced coat reflections.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
