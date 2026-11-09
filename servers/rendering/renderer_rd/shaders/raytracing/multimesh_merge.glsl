@@ -9,7 +9,8 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 // Bakes the per-(MultiMesh, surface) merged BLAS inputs in a single dispatch:
 //   * world-space positions (per instance) into the merged vertex buffer,
 //   * rotated normals/tangents (if the source mesh has them),
-//     or, with BAKE_CAPTURED, both copied from a vertex capture already in the merged layout,
+//     or, with BAKE_CAPTURED, both copied from a vertex capture already in the merged layout
+//     (with BAKE_REST also its second block, the vertex() inputs, in the same layout after the first),
 //   * per-vertex attributes replicated N times into the merged attribute buffer,
 //   * (MODE_INDEXED only) the index buffer replicated and offset by inst * V.
 //
@@ -84,6 +85,7 @@ src_idx_buf;
 
 #define BAKE_TBN 1u
 #define BAKE_CAPTURED 2u
+#define BAKE_REST 4u
 
 layout(push_constant, std430) uniform PC {
 	uint index_count; // indices per instance (MODE_INDEXED)
@@ -158,6 +160,19 @@ void copy_captured(uint idx) {
 		uint tbn = push.dst_tbn_base_words + idx * push.src_tbn_stride_words;
 		for (uint w = 0u; w < push.src_tbn_stride_words; w++) {
 			dst_vtx.v[tbn + w] = captured.v[push.captured_base_words + tbn + w];
+		}
+	}
+	if ((push.bake_flags & BAKE_REST) != 0u) {
+		uint points = push.vertex_count * push.instance_count;
+		uint rest = points * (3u + (((push.bake_flags & BAKE_TBN) != 0u) ? push.src_tbn_stride_words : 0u));
+		for (uint w = 0u; w < 3u; w++) {
+			dst_vtx.v[rest + pos_base + w] = captured.v[push.captured_base_words + rest + pos_base + w];
+		}
+		if ((push.bake_flags & BAKE_TBN) != 0u) {
+			uint tbn = rest + push.dst_tbn_base_words + idx * push.src_tbn_stride_words;
+			for (uint w = 0u; w < push.src_tbn_stride_words; w++) {
+				dst_vtx.v[tbn + w] = captured.v[push.captured_base_words + tbn + w];
+			}
 		}
 	}
 }
