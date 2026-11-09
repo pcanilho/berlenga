@@ -5,6 +5,9 @@ extends Node3D
 #
 #   --view=beach    the shore from above: shallows, swash and the sea beyond (default)
 #   --view=under    looking down into the shallows, where the floor shows through
+#   --view=submerged  the camera 1.4 m under the water, looking along the floor to the rock (--slope=12)
+#   --view=waterline  the camera at the surface: the lens split between above and below
+#   --view=up       from 2.5 m down, looking up at the surface: Snell's window and the mirror past it
 #   --view=river    from above, the rock standing out of the water (with --current)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
@@ -31,7 +34,7 @@ var bounces := 3
 var frames := 12
 var out := ""
 var debug_mode := 0
-var slope_deg := 5.0
+var slope_deg := -1.0
 var water_params := {}
 var node_params := {}
 var current := Vector2.ZERO
@@ -101,6 +104,9 @@ func _ready() -> void:
 	sand_mat.albedo_texture = _checker(Color(0.78, 0.7, 0.55), Color(0.62, 0.55, 0.42))
 	sand_mat.uv1_scale = Vector3(100, 100, 1)
 	sand_mat.roughness = 0.95
+	if slope_deg < 0.0:
+		# Under water the floor needs to fall away faster, for depth to look through.
+		slope_deg = 12.0 if view in ["submerged", "waterline", "up"] else 5.0
 	var slope := deg_to_rad(slope_deg)
 	_slab(Vector3(200, 1, 200), Vector3(0, -1.2, 0), Vector3(-slope, 0, 0), sand_mat)
 	var rock_mat := StandardMaterial3D.new()
@@ -125,6 +131,8 @@ func _ready() -> void:
 	water.set("choppiness", 1.0)
 	water.set("render_extent", 600.0)
 	water.set("current", current)
+	if view == "waterline":
+		water.set("wave_amplitude", 0.3) # small waves, so the surface stays across the lens
 	for k in node_params:
 		water.set(k, node_params[k])
 	add_child(water)
@@ -161,6 +169,12 @@ func _ready() -> void:
 	match view:
 		"under":
 			cam.look_at_from_position(Vector3(0, 3.5, 5.0), Vector3(0, -1.0, -1.5))
+		"submerged":
+			cam.look_at_from_position(Vector3(2.0, -1.4, -15.0), Vector3(-6.0, -1.0, -9.0))
+		"waterline":
+			cam.look_at_from_position(Vector3(3.0, 0.02, -14.0), Vector3(-6.0, -0.4, -9.0))
+		"up":
+			cam.look_at_from_position(Vector3(0.0, -2.5, -14.0), Vector3(-1.0, 1.5, -20.0))
 		"river":
 			cam.look_at_from_position(Vector3(-1.0, 9.0, 1.0), Vector3(-4.0, -1.0, -7.0))
 		"wake":
