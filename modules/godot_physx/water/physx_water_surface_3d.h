@@ -32,6 +32,7 @@
 
 #include "water_solver.h"
 
+#include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 
 class Mesh;
@@ -216,6 +217,16 @@ public:
 
 	// Light-space caustics: a direct RenderingDevice draw pass that projects
 	// refracted surface-grid samples into a texture, without a SubViewport.
+	// The camera under water (raster): a full screen fog pass under the surface, the image split at the
+	// water line, and the surface drawn from below (Snell's window, total internal reflection). Only
+	// while the camera is near the water. The path tracer needs nothing: it finds the camera's medium.
+	void set_underwater_enabled(bool p_enabled);
+	bool get_underwater_enabled() const { return underwater_enabled; }
+	void set_underwater_meniscus(float p_strength);
+	float get_underwater_meniscus() const { return underwater_meniscus; }
+	// True while the active camera is under the surface (as the last frame drew it).
+	bool is_camera_underwater() const { return underwater_camera_below; }
+
 	void set_caustics_enabled(bool p_enabled);
 	bool get_caustics_enabled() const { return caustics_enabled; }
 	void set_caustics_sun_direction(Vector3 p_direction);
@@ -421,6 +432,21 @@ private:
 	// of drawing with freed textures.
 	void _detach_textures();
 
+	bool underwater_enabled = true;
+	float underwater_meniscus = 0.35f;
+	bool underwater_shown = false;
+	bool underwater_camera_below = false;
+	MeshInstance3D *underwater_fog_instance = nullptr;
+	Ref<ShaderMaterial> underwater_fog_material;
+	Ref<ShaderMaterial> underwater_surface_material;
+	LocalVector<StringName> underwater_shared_params; // uniforms the passes copy from water_material
+	ObjectID underwater_sun;
+	int underwater_sun_search = 0;
+	RID underwater_sky_baked;
+	int underwater_sky_rebake = 0;
+	Color underwater_sky_radiance;
+	void _update_underwater();
+	void _set_underwater_shown(bool p_shown);
 	bool caustics_enabled = false; // off by default: a draw pass every frame, only worth it over a visible floor
 	Vector3 caustics_sun_direction = Vector3(-0.35f, -1.0f, -0.25f);
 	float caustics_reference_depth = 2.5f;
