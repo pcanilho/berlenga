@@ -61,6 +61,9 @@
 #include "core/version.h"
 #include "drivers/register_driver_types.h"
 #include "main/app_icon.gen.h"
+#ifdef TOOLS_ENABLED
+#include "main/editor_icon.gen.h"
+#endif
 #include "main/main_timer_sync.h"
 #include "main/performance.h"
 #include "main/splash.gen.h"
@@ -4031,7 +4034,7 @@ void Main::setup_boot_logo() {
 
 #if defined(TOOLS_ENABLED) && defined(MACOS_ENABLED)
 		if (DisplayServer::get_singleton()->has_feature(DisplayServerEnums::FEATURE_ICON) && OS::get_singleton()->get_bundle_icon_path().is_empty()) {
-			Ref<Image> icon = memnew(Image(app_icon_png));
+			Ref<Image> icon = memnew(Image((editor || project_manager) ? editor_icon_png : app_icon_png));
 			DisplayServer::get_singleton()->set_icon(icon);
 		}
 #endif
@@ -4873,7 +4876,12 @@ int Main::start() {
 	}
 
 	if (DisplayServer::get_singleton()->has_feature(DisplayServerEnums::FEATURE_ICON) && !has_icon && OS::get_singleton()->get_bundle_icon_path().is_empty()) {
+#ifdef TOOLS_ENABLED
+		// The editor and Project Manager show the fork's icon; projects keep the neutral default.
+		Ref<Image> icon = memnew(Image((editor || project_manager) ? editor_icon_png : app_icon_png));
+#else
 		Ref<Image> icon = memnew(Image(app_icon_png));
+#endif
 		DisplayServer::get_singleton()->set_icon(icon);
 	}
 

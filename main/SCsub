@@ -30,6 +30,14 @@ if env_main.editor_build and not env_main["no_editor_splash"]:
         env.Run(main_builders.make_splash_editor),
     )
 
+if env_main.editor_build:
+    # The editor's and Project Manager's own window icon; projects keep the neutral app_icon.png.
+    env_main.CommandNoCache(
+        "#main/editor_icon.gen.h",
+        "#main/editor_icon.png",
+        env.Run(main_builders.make_editor_icon),
+    )
+
 env_main.CommandNoCache(
     "#main/app_icon.gen.h",
     "#main/app_icon.png",
