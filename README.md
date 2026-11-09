@@ -10,6 +10,15 @@ Godot 4 with Vulkan path tracing and DLSS Ray Reconstruction, built for large op
 
 *1024 lights, 16 samples per pixel. Left: NVIDIA-RTX/godot. Right: this fork. Images here are raw path tracer output, mostly CPU-rendered, with no denoiser or Ray Reconstruction.*
 
+## At a glance
+
+- **Many lights**: 4096 path-traced lights (upstream 64), emissive surfaces count as lights.
+- **Faster convergence**: light visibility memory and a radiance cache.
+- **Materials**: clearcoat, back lighting and thin-glass transmission in the path tracer; textures filter like raster.
+- **Exposure**: histogram metering and local exposure that keep night scenes dark.
+- **Physics**: PhysX 5 next to Jolt, with cloth, tearing, destruction and path-traced smoke.
+- **Open worlds**: far-origin precision, persistent ray tracing instances, mesh LOD in the tracer.
+
 ## What this fork adds
 
 Each feature that changes the look or the cost can be turned off with the setting shown.
@@ -29,6 +38,18 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
+
+<details><summary>Images: transmission, back lighting, clearcoat</summary>
+
+![Thin glass panes: light and shadow pass through tinted with transmission on, grey opaque panes with it off](docs/media/transmission.jpg)
+
+![Back-lit leaf cards and a red curtain: green and red light on the floor with back lighting on, plain shadows with it off](docs/media/back-lighting.jpg)
+
+![Red coated spheres: raster, path traced with clearcoat on (sharp coat highlights match raster), and off (dull)](docs/media/clearcoat.jpg)
+
+Look at the floor under the glass and cards, and the highlights on the spheres.
+
+</details>
 
 ### Exposure
 - **Histogram metering** (`rendering/camera/auto_exposure/metering`): lamps in view no longer darken the scene.
