@@ -40,7 +40,9 @@ extends Node3D
 #                     --hair=back: the sun low behind them; --hair=thin: one strip per segment, not crossed
 #                     strands_sim: one head of long strand hair simulated on the GPU (PhysXHair3D) that
 #                     shakes side to side for two seconds, then turns and stops; a breeze from the
-#                     left. Record it with --fixed-fps 30 --write-movie (frame time is fixed to 1/30 s)
+#                     left. Record it with --fixed-fps 30 --write-movie (frame time is fixed to 1/30 s).
+#                     --hair=compare: held still, beside the same groom on a HairMesh with BaseMaterial3D
+#                     Hair; --hair=compare_shader: that HairMesh through a shader's HAIR outputs instead
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
 #   --raster          raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
@@ -180,7 +182,10 @@ func _ready() -> void:
 			sun.rotation_degrees = Vector3(-30, -120, 0)
 			cam.fov = 30
 			env.pathtracing_max_bounces = maxi(bounces, 12)
-			cam.look_at_from_position(Vector3(0.55, 0.45, 1.45), Vector3(0, 0.2, 0))
+			if hair.begins_with("compare"):
+				cam.look_at_from_position(Vector3(0.15, 0.4, 1.7), Vector3(0.15, 0.22, 0))
+			else:
+				cam.look_at_from_position(Vector3(0.55, 0.45, 1.45), Vector3(0, 0.2, 0))
 			_strands_sim()
 		_:
 			push_error("Unknown scene: " + scene)
@@ -669,6 +674,36 @@ func _strands_sim() -> void:
 	body.material_override = skin
 	body.position = Vector3(0, -0.27, 0)
 	sim_head.add_child(body)
+	if hair.begins_with("compare"):
+		# The same groom drawn still by HairMesh with BaseMaterial3D Hair, beside it.
+		h.simulating = false
+		var hm := HairMesh.new()
+		hm.groom = groom
+		hm.root_width = 0.0005
+		hm.tip_width = 0.0002
+		var m := StandardMaterial3D.new()
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		m.hair_enabled = true
+		m.hair_color_mode = BaseMaterial3D.HAIR_COLOR_MELANIN
+		m.hair_melanin = 0.3
+		m.hair_direction = BaseMaterial3D.HAIR_DIRECTION_STRANDS
+		var mi := MeshInstance3D.new()
+		mi.mesh = hm
+		mi.material_override = m
+		if hair == "compare_shader":
+			# The same through a custom shader's HAIR outputs, to tell the shader path from the node.
+			var sh := Shader.new()
+			sh.code = "shader_type spatial;\nrender_mode cull_disabled, hair_strands;\nvoid fragment() {\n\tALBEDO = vec3(0.3, 0.2, 0.1);\n\tHAIR = 1.0;\n\tHAIR_ABSORPTION = vec3(0.18, 0.30, 0.59);\n\tHAIR_ROUGHNESS = vec2(0.3);\n}\n"
+			var sm := ShaderMaterial.new()
+			sm.shader = sh
+			mi.material_override = sm
+		mi.position = Vector3(0.3, 0.3, 0)
+		add_child(mi)
+		var hi2 := MeshInstance3D.new()
+		hi2.mesh = head
+		hi2.material_override = skin
+		hi2.position = mi.position
+		add_child(hi2)
 
 
 func _process(_delta: float) -> void:
