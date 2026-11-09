@@ -45,6 +45,7 @@
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/shader.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/texture_rd.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
@@ -205,6 +206,70 @@ varying vec3 v_world_normal;
 varying float v_foam;
 varying vec2 v_rest_xz;
 
+// Flow (PhysXWaterSurface3D::current): the current in m/s past the simulated
+// square, and the flow solved round the ground inside it (flow_tex, RG m/s,
+// when flow_baked). The waves and foam are carried along it with two-phase
+// flow (Vlachos 2010): two copies, each offset along the flow for one
+// flow_period and then restarted, blended so each restarts while unseen.
+uniform sampler2D flow_tex : hint_default_black, filter_linear, repeat_disable;
+uniform bool flow_baked = false;
+uniform vec2 current = vec2(0.0);
+uniform float flow_period = 2.0;
+
+vec2 flow_at(vec2 world_xz) {
+	if (!flow_baked) {
+		return current;
+	}
+	vec2 rel = world_xz - grid_center;
+	vec2 a = abs(rel / ripple_domain_size);
+	vec2 cuv = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	return mix(texture(flow_tex, cuv).rg, current, smoothstep(0.46, 0.5, max(a.x, a.y)));
+}
+
+float flow_hash(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+float flow_value_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(flow_hash(i), flow_hash(i + vec2(1.0, 0.0)), u.x),
+			mix(flow_hash(i + vec2(0.0, 1.0)), flow_hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+// The two phases' offsets at world_xz and the first one's weight (1 and no
+// offsets in still water). Noise in the phase keeps the restarts from
+// pulsing across the whole surface at once.
+float flow_phases(vec2 world_xz, out vec2 o_a, out vec2 o_b) {
+	vec2 f = flow_at(world_xz);
+	o_a = vec2(0.0);
+	o_b = vec2(0.0);
+	if (dot(f, f) < 1e-8) {
+		return 1.0;
+	}
+	float t = water_time / max(flow_period, 0.05) + flow_value_noise(world_xz * 0.05);
+	float p_a = fract(t);
+	float p_b = fract(t + 0.5);
+	o_a = f * (p_a - 0.5) * flow_period;
+	o_b = f * (p_b - 0.5) * flow_period;
+	return 1.0 - abs(1.0 - 2.0 * p_a);
+}
+
+// An ocean texture at world_xz, carried by the flow.
+vec4 ocean_tex(sampler2D tex, vec2 world_xz) {
+	vec2 o_a;
+	vec2 o_b;
+	float w = flow_phases(world_xz, o_a, o_b);
+	vec2 uv = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic, anchored to the world
+	if (w >= 1.0) {
+		return texture(tex, uv);
+	}
+	return texture(tex, uv - o_a / ocean_domain_size) * w + texture(tex, uv - o_b / ocean_domain_size) * (1.0 - w);
+}
+
 // Offset of the surface point that rests at world_xz: (dx, height, dz).
 // One wake grid's height (x) and foam (y) at world_xz, faded out toward its edges.
 vec2 wake_one(sampler2D tex, vec4 rect, vec2 world_xz) {
@@ -261,16 +326,15 @@ float wake_foam(vec2 world_xz) {
 vec3 surface_offset(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	vec2 cuv_o = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic -- anchored to the WORLD, so moving grid_center (a re-centre) never slides the waves
 	float fade = fade_r(world_xz, cuv_r);
 	// Negative: the displacement points away from crests in this FFT's sign
 	// convention, so moving against it gathers points into the crests.
-	vec2 d = -choppiness * fade * texture(ocean_disp_tex, cuv_o).rg;
+	vec2 d = -choppiness * fade * ocean_tex(ocean_disp_tex, world_xz).rg;
 	// The ripple layer isn't periodic: past its domain, ease back to still water.
 	vec2 from_center = abs(rel / ripple_domain_size);
 	float inside = 1.0 - smoothstep(0.46, 0.5, max(from_center.x, from_center.y));
 	float ripple = mix(water_level, texture(ripple_height_tex, cuv_r).r, inside);
-	float h = ripple + texture(ocean_height_tex, cuv_o).r * fade;
+	float h = ripple + ocean_tex(ocean_height_tex, world_xz).r * fade;
 	// The wake grid is laid out where the water is now, not where it rests
 	// (its sources sit under the hull, and sample_height() reads it there):
 	// read it at this point's displaced position.
@@ -289,11 +353,11 @@ vec3 surface_offset(vec2 world_xz) {
 vec3 surface_normal_pixel(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	vec2 cuv_o = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic -- anchored to the WORLD, so moving grid_center (a re-centre) never slides the waves
 	float fade = fade_r(world_xz, cuv_r);
 	float s = -choppiness * fade;
-	vec4 der = texture(ocean_deriv_tex, cuv_o);
-	float dxz = texture(ocean_disp_tex, cuv_o).b;
+	vec4 der = ocean_tex(ocean_deriv_tex, world_xz);
+	vec3 disp = ocean_tex(ocean_disp_tex, world_xz).rgb;
+	float dxz = disp.b;
 	const float e = 0.2;
 	vec2 du = vec2(e) / ripple_domain_size;
 	float rx = (texture(ripple_height_tex, cuv_r + vec2(du.x, 0.0)).r - texture(ripple_height_tex, cuv_r - vec2(du.x, 0.0)).r) / (2.0 * e);
@@ -307,7 +371,7 @@ vec3 surface_normal_pixel(vec2 world_xz) {
 	// Wake slopes (zero over the shore grid), at the displaced position as
 	// surface_offset() reads the wake.
 	const float ew = 0.12;
-	vec2 wake_xz = world_xz + s * texture(ocean_disp_tex, cuv_o).rg;
+	vec2 wake_xz = world_xz + s * disp.rg;
 	rx += (wake_height(wake_xz + vec2(ew, 0.0)) - wake_height(wake_xz - vec2(ew, 0.0))) / (2.0 * ew);
 	rz += (wake_height(wake_xz + vec2(0.0, ew)) - wake_height(wake_xz - vec2(0.0, ew))) / (2.0 * ew);
 	vec3 tx = vec3(1.0 + s * der.z, der.x * fade + rx, s * dxz);
@@ -334,13 +398,20 @@ float foam_value_noise(vec2 p) {
 float foam_at(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	vec2 cuv_o = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic -- anchored to the WORLD, so moving grid_center (a re-centre) never slides the waves
 	float fade = fade_r(world_xz, cuv_r);
-	float amount = texture(ocean_foam_tex, cuv_o).r * fade;
+	float amount = ocean_tex(ocean_foam_tex, world_xz).r * fade;
 	// Wake foam at the displaced position, as surface_offset() reads the wake.
-	amount = max(amount, wake_foam(world_xz - choppiness * fade * texture(ocean_disp_tex, cuv_o).rg));
-	vec2 p = world_xz * foam_detail_scale;
+	amount = max(amount, wake_foam(world_xz - choppiness * fade * ocean_tex(ocean_disp_tex, world_xz).rg));
+	// The lace is carried with the foam (the same two phases).
+	vec2 o_a;
+	vec2 o_b;
+	float w = flow_phases(world_xz, o_a, o_b);
+	vec2 p = (world_xz - o_a) * foam_detail_scale;
 	float n = 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.7 + 17.0) + 0.2 * foam_value_noise(p * 7.3 - 5.0);
+	if (w < 1.0) {
+		vec2 q = (world_xz - o_b) * foam_detail_scale;
+		n = n * w + (0.5 * foam_value_noise(q) + 0.3 * foam_value_noise(q * 2.7 + 17.0) + 0.2 * foam_value_noise(q * 7.3 - 5.0)) * (1.0 - w);
+	}
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and
 	// lacy as the noise eats into it, rather than cutting off at an edge.
 	float f = clamp(amount * (1.0 + foam_breakup) - n * foam_breakup, 0.0, 1.0);
@@ -376,9 +447,8 @@ float shore_foam_at(vec2 world_xz) {
 float shore_signal(vec2 world_xz, float time) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	vec2 cuv_o = world_xz / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic -- anchored to the WORLD, so moving grid_center (a re-centre) never slides the waves
 	float depth = depth_r(world_xz, cuv_r);
-	float eta = texture(ocean_height_tex, cuv_o).r; // unfaded: the waves arriving here
+	float eta = ocean_tex(ocean_height_tex, world_xz).r; // unfaded: the waves arriving here
 	// Lobes a few meters across (like real swash), drifting, with the waves
 	// pushing the whole edge in and out over time.
 	vec2 p = world_xz * 0.45;
@@ -643,6 +713,13 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fetch", "fetch"), &PhysXWaterSurface3D::set_fetch);
 	ClassDB::bind_method(D_METHOD("get_fetch"), &PhysXWaterSurface3D::get_fetch);
 	ClassDB::bind_method(D_METHOD("get_effective_fetch"), &PhysXWaterSurface3D::get_effective_fetch);
+	ClassDB::bind_method(D_METHOD("set_current", "current"), &PhysXWaterSurface3D::set_current);
+	ClassDB::bind_method(D_METHOD("get_current"), &PhysXWaterSurface3D::get_current);
+	ClassDB::bind_method(D_METHOD("set_flow_period", "period"), &PhysXWaterSurface3D::set_flow_period);
+	ClassDB::bind_method(D_METHOD("get_flow_period"), &PhysXWaterSurface3D::get_flow_period);
+	ClassDB::bind_method(D_METHOD("sample_flow", "world_position"), &PhysXWaterSurface3D::sample_flow);
+	ClassDB::bind_method(D_METHOD("get_flow_texture"), &PhysXWaterSurface3D::get_flow_texture);
+	ClassDB::bind_method(D_METHOD("rebake_flow"), &PhysXWaterSurface3D::rebake_flow);
 	ClassDB::bind_method(D_METHOD("set_choppiness", "choppiness"), &PhysXWaterSurface3D::set_choppiness);
 	ClassDB::bind_method(D_METHOD("get_choppiness"), &PhysXWaterSurface3D::get_choppiness);
 	ClassDB::bind_method(D_METHOD("set_normal_mode", "mode"), &PhysXWaterSurface3D::set_normal_mode);
@@ -746,6 +823,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swash_run_up", PROPERTY_HINT_RANGE, "0,1,0.01,or_greater,suffix:m"), "set_swash_run_up", "get_swash_run_up");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swash_drain_speed", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater,suffix:m/s"), "set_swash_drain_speed", "get_swash_drain_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_sand_dry_time", PROPERTY_HINT_RANGE, "0.1,60,0.1,or_greater,suffix:s"), "set_wet_sand_dry_time", "get_wet_sand_dry_time");
+
+	ADD_GROUP("Flow", "");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "current", PROPERTY_HINT_NONE, "suffix:m/s"), "set_current", "get_current");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_period", PROPERTY_HINT_RANGE, "0.25,10,0.05,or_greater,suffix:s"), "set_flow_period", "get_flow_period");
 
 	ADD_GROUP("Rendering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_extent", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_render_extent", "get_render_extent");
@@ -892,6 +973,368 @@ void PhysXWaterSurface3D::_reinit_spectrum() {
 		return;
 	}
 	_rebuild();
+}
+
+void PhysXWaterSurface3D::set_current(Vector2 p_current) {
+	if (current == p_current) {
+		return;
+	}
+	current = p_current;
+	_bake_flow();
+}
+
+void PhysXWaterSurface3D::set_flow_period(float p_period) {
+	flow_period = MAX(p_period, 0.05f);
+	_update_flow_material();
+}
+
+void PhysXWaterSurface3D::rebake_flow() {
+	_bake_flow();
+}
+
+Ref<Texture2D> PhysXWaterSurface3D::get_flow_texture() const {
+	return flow_cells.is_empty() ? Ref<Texture2D>() : Ref<Texture2D>(flow_texture);
+}
+
+void PhysXWaterSurface3D::_update_flow_material() {
+	if (water_material.is_null()) {
+		return;
+	}
+	const bool baked = !flow_cells.is_empty() && flow_texture.is_valid();
+	water_material->set_shader_parameter("current", current);
+	water_material->set_shader_parameter("flow_period", flow_period);
+	water_material->set_shader_parameter("flow_baked", baked);
+	water_material->set_shader_parameter("flow_tex", baked ? Variant(flow_texture) : Variant());
+}
+
+// The flow over the simulated square, round dry ground and rocks (docs/ideas/water.md, step 3 research):
+// a depth-averaged, incompressible, irrotational flow from a stream function psi, with
+// u = (dpsi/dz, -dpsi/dx) / depth, so div(depth * u) = 0 (what flows in flows out) and
+// div(grad(psi) / depth) = 0 (no eddies of its own). Dry cells are walls: each connected patch of
+// them holds one psi value, the banks' fixed by the edge and an island's chosen so no net flow goes
+// round it. Along the square's edge psi integrates the current's flux, its inflow and outflow scaled
+// to match so the bake conserves the water. Solved once (SOR) per seabed or current change.
+void PhysXWaterSurface3D::_bake_flow() {
+	flow_cells.clear();
+	const int n = grid_resolution;
+	if (current.length_squared() < 1e-10f || cell_depth.size() != n * n || n < 4) {
+		_update_flow_material();
+		return;
+	}
+	const float dx = active_domain_size.x / n;
+	const float dz = active_domain_size.y / n;
+	const float DRY = 0.05f; // m: shallower counts as ground
+	const float MIN_DEPTH = 0.25f; // m: the depth the flow divides by, at least (no racing films)
+	const int cells = n * n;
+	LocalVector<float> h;
+	h.resize(cells);
+	for (int i = 0; i < cells; i++) {
+		h[i] = cell_depth[i] > DRY ? CLAMP(cell_depth[i], MIN_DEPTH, 1000.0f) : 0.0f; // (a ray that found no floor reads as deep)
+	}
+	// Dry patches (4-connected): component id per dry cell, -1 wet.
+	LocalVector<int> comp;
+	comp.resize(cells);
+	for (int i = 0; i < cells; i++) {
+		comp[i] = -1;
+	}
+	int comp_count = 0;
+	LocalVector<int> stack;
+	for (int i = 0; i < cells; i++) {
+		if (h[i] > 0.0f || comp[i] >= 0) {
+			continue;
+		}
+		comp[i] = comp_count;
+		stack.push_back(i);
+		while (!stack.is_empty()) {
+			const int c = stack[stack.size() - 1];
+			stack.resize(stack.size() - 1);
+			const int cx = c % n;
+			const int cz = c / n;
+			const int nb[4] = { cx > 0 ? c - 1 : -1, cx < n - 1 ? c + 1 : -1, cz > 0 ? c - n : -1, cz < n - 1 ? c + n : -1 };
+			for (int k = 0; k < 4; k++) {
+				if (nb[k] >= 0 && h[nb[k]] <= 0.0f && comp[nb[k]] < 0) {
+					comp[nb[k]] = comp_count;
+					stack.push_back(nb[k]);
+				}
+			}
+		}
+		comp_count++;
+	}
+	// Edge walk (counter-clockwise in index space), integrating the current's flux.
+	LocalVector<int> ring;
+	for (int x = 0; x < n; x++) {
+		ring.push_back(x);
+	}
+	for (int z = 1; z < n; z++) {
+		ring.push_back(z * n + n - 1);
+	}
+	for (int x = n - 2; x >= 0; x--) {
+		ring.push_back((n - 1) * n + x);
+	}
+	for (int z = n - 2; z >= 1; z--) {
+		ring.push_back(z * n);
+	}
+	const int rn = (int)ring.size();
+	LocalVector<float> step;
+	step.resize(rn);
+	float pos_sum = 0.0f;
+	float neg_sum = 0.0f;
+	for (int r = 0; r < rn; r++) {
+		const int a = ring[r];
+		const int b = ring[(r + 1) % rn];
+		const float ddx = (b % n - a % n) * dx;
+		const float ddz = (b / n - a / n) * dz;
+		const float hm = (h[a] > 0.0f && h[b] > 0.0f) ? 0.5f * (h[a] + h[b]) : 0.0f;
+		step[r] = hm * (current.x * ddz - current.y * ddx);
+		if (step[r] > 0.0f) {
+			pos_sum += step[r];
+		} else {
+			neg_sum -= step[r];
+		}
+	}
+	if (pos_sum <= 0.0f || neg_sum <= 0.0f) {
+		_update_flow_material(); // nothing flows in or out through wet edge cells
+		return;
+	}
+	const float mean = 0.5f * (pos_sum + neg_sum);
+	LocalVector<float> psi;
+	psi.resize(cells);
+	LocalVector<uint8_t> fixed;
+	fixed.resize(cells);
+	for (int i = 0; i < cells; i++) {
+		psi[i] = 0.0f;
+		fixed[i] = 0;
+	}
+	LocalVector<float> comp_value;
+	LocalVector<uint8_t> comp_fixed;
+	comp_value.resize(comp_count);
+	comp_fixed.resize(comp_count);
+	for (int c = 0; c < comp_count; c++) {
+		comp_value[c] = 0.0f;
+		comp_fixed[c] = 0;
+	}
+	float acc = 0.0f;
+	for (int r = 0; r < rn; r++) {
+		const int a = ring[r];
+		psi[a] = acc;
+		fixed[a] = 1;
+		if (comp[a] >= 0 && !comp_fixed[comp[a]]) {
+			comp_fixed[comp[a]] = 1; // a bank: the first edge value it touches (constant along a dry run)
+			comp_value[comp[a]] = acc;
+		}
+		acc += step[r] * (step[r] > 0.0f ? mean / pos_sum : mean / neg_sum);
+	}
+	// Interior start: the uniform current's psi, so the solve only adds the bends.
+	float ref_h = 0.0f;
+	int ref_count = 0;
+	for (int i = 0; i < cells; i++) {
+		if (h[i] > 0.0f) {
+			ref_h += h[i];
+			ref_count++;
+		}
+	}
+	ref_h = ref_count > 0 ? ref_h / ref_count : 1.0f;
+	for (int z = 1; z < n - 1; z++) {
+		for (int x = 1; x < n - 1; x++) {
+			const int i = z * n + x;
+			const float px = (x + 0.5f) * dx - 0.5f * active_domain_size.x;
+			const float pz = (z + 0.5f) * dz - 0.5f * active_domain_size.y;
+			psi[i] = ref_h * (current.x * pz - current.y * px) + psi[0] - ref_h * (current.x * (0.5f * dz - 0.5f * active_domain_size.y) - current.y * (0.5f * dx - 0.5f * active_domain_size.x));
+		}
+	}
+	for (int i = 0; i < cells; i++) {
+		if (comp[i] >= 0 && comp_fixed[comp[i]]) {
+			psi[i] = comp_value[comp[i]];
+		}
+	}
+	// SOR on div(grad(psi) / h) = 0; face weights 1 / (mean depth) / spacing^2.
+	const float wx = 1.0f / (dx * dx);
+	const float wz = 1.0f / (dz * dz);
+	const float omega = 2.0f / (1.0f + Math::sin(Math::PI / n));
+	const float tolerance = 1e-5f * mean; // float psi stalls near 1e-6 of its range
+	struct IslandLink {
+		int cell;
+		int comp;
+		float w;
+	};
+	LocalVector<IslandLink> island_links;
+	for (int z = 1; z < n - 1; z++) {
+		for (int x = 1; x < n - 1; x++) {
+			const int i = z * n + x;
+			if (fixed[i] || h[i] <= 0.0f) {
+				continue;
+			}
+			const int nb[4] = { i - 1, i + 1, i - n, i + n };
+			const float sw[4] = { wx, wx, wz, wz };
+			for (int k = 0; k < 4; k++) {
+				const int j = nb[k];
+				if (h[j] <= 0.0f && comp[j] >= 0 && !comp_fixed[comp[j]]) {
+					island_links.push_back({ i, comp[j], sw[k] / h[i] });
+				}
+			}
+		}
+	}
+	LocalVector<float> comp_num;
+	LocalVector<float> comp_den;
+	comp_num.resize(comp_count);
+	comp_den.resize(comp_count);
+	for (int iter = 0; iter < 4000; iter++) {
+		float max_change = 0.0f;
+		for (int c = 0; c < comp_count; c++) {
+			comp_num[c] = 0.0f;
+			comp_den[c] = 0.0f;
+		}
+		for (int z = 1; z < n - 1; z++) {
+			for (int x = 1; x < n - 1; x++) {
+				const int i = z * n + x;
+				if (fixed[i] || h[i] <= 0.0f) {
+					continue;
+				}
+				const int nb[4] = { i - 1, i + 1, i - n, i + n };
+				const float sw[4] = { wx, wx, wz, wz };
+				float num = 0.0f;
+				float den = 0.0f;
+				for (int k = 0; k < 4; k++) {
+					const int j = nb[k];
+					// A wall face: the wet cell's own depth (the wall holds its patch's psi).
+					const float hf = h[j] > 0.0f ? 0.5f * (h[i] + h[j]) : h[i];
+					const float w = sw[k] / hf;
+					num += w * psi[j];
+					den += w;
+				}
+				if (!(den > 0.0f)) {
+					continue;
+				}
+				const float target = num / den;
+				const float change = omega * (target - psi[i]);
+				psi[i] += change;
+				max_change = MAX(max_change, Math::abs(change));
+			}
+		}
+		// Islands: the value that sends no net flow round them (their wet neighbours' weighted mean, after
+		// this sweep: Gauss-Seidel on the island's own unknown too, or the two fight and diverge).
+		for (const IslandLink &l : island_links) {
+			comp_num[l.comp] += l.w * psi[l.cell];
+			comp_den[l.comp] += l.w;
+		}
+		for (int i = 0; i < cells; i++) {
+			const int c = comp[i];
+			if (c >= 0 && !comp_fixed[c] && comp_den[c] > 0.0f) {
+				psi[i] = comp_num[c] / comp_den[c];
+			}
+		}
+		if (max_change < tolerance && iter > 20) {
+			break;
+		}
+	}
+	// Velocity per wet cell from central differences.
+	const float max_speed = 4.0f * current.length();
+	flow_cells.resize(cells);
+	Vector2 *fw = flow_cells.ptrw();
+	PackedByteArray bytes;
+	bytes.resize(cells * 2 * sizeof(float));
+	float *bw = (float *)bytes.ptrw();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			Vector2 u;
+			if (h[i] > 0.0f) {
+				const int xl = MAX(x - 1, 0), xr = MIN(x + 1, n - 1);
+				const int zl = MAX(z - 1, 0), zr = MIN(z + 1, n - 1);
+				const float dpsi_dz = (psi[zr * n + x] - psi[zl * n + x]) / ((zr - zl) * dz);
+				const float dpsi_dx = (psi[z * n + xr] - psi[z * n + xl]) / ((xr - xl) * dx);
+				u = Vector2(dpsi_dz, -dpsi_dx) / h[i];
+				if (!u.is_finite()) {
+					u = Vector2();
+				} else if (u.length() > max_speed) {
+					u = u.normalized() * max_speed;
+				}
+			}
+			fw[i] = u;
+			bw[i * 2] = u.x;
+			bw[i * 2 + 1] = u.y;
+		}
+	}
+	flow_image = Image::create_from_data(n, n, false, Image::FORMAT_RGF, bytes);
+	if (flow_texture.is_valid() && flow_texture->get_width() == n && flow_texture->get_height() == n) {
+		flow_texture->update(flow_image);
+	} else {
+		flow_texture = ImageTexture::create_from_image(flow_image);
+	}
+	_update_flow_material();
+}
+
+Vector2 PhysXWaterSurface3D::_flow_at(float p_x, float p_z) const {
+	if (flow_cells.is_empty()) {
+		return current;
+	}
+	const int n = grid_resolution;
+	const float gx = (p_x / active_domain_size.x + 0.5f) * n - 0.5f;
+	const float gz = (p_z / active_domain_size.y + 0.5f) * n - 0.5f;
+	const int x0 = CLAMP((int)Math::floor(gx), 0, n - 1);
+	const int z0 = CLAMP((int)Math::floor(gz), 0, n - 1);
+	const int x1 = MIN(x0 + 1, n - 1);
+	const int z1 = MIN(z0 + 1, n - 1);
+	const float fx = CLAMP(gx - x0, 0.0f, 1.0f);
+	const float fz = CLAMP(gz - z0, 0.0f, 1.0f);
+	const Vector2 *f = flow_cells.ptr();
+	const Vector2 v = f[z0 * n + x0].lerp(f[z0 * n + x1], fx).lerp(f[z1 * n + x0].lerp(f[z1 * n + x1], fx), fz);
+	const float out = Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_x / active_domain_size.x), Math::abs(p_z / active_domain_size.y)));
+	return v.lerp(current, out);
+}
+
+// The shader's flow_hash() / flow_value_noise(), for the same phase noise on the CPU.
+static float _flow_hash(float p_x, float p_y) {
+	auto fract = [](float v) { return v - Math::floor(v); };
+	float x = fract(p_x * 0.1031f), y = fract(p_y * 0.1031f), z = fract(p_x * 0.1031f);
+	const float d = x * (y + 33.33f) + y * (z + 33.33f) + z * (x + 33.33f);
+	x += d;
+	y += d;
+	z += d;
+	return fract((x + y) * z);
+}
+
+static float _flow_value_noise(float p_x, float p_y) {
+	const float ix = Math::floor(p_x), iy = Math::floor(p_y);
+	const float fx = p_x - ix, fy = p_y - iy;
+	const float ux = fx * fx * (3.0f - 2.0f * fx), uy = fy * fy * (3.0f - 2.0f * fy);
+	return Math::lerp(Math::lerp(_flow_hash(ix, iy), _flow_hash(ix + 1.0f, iy), ux),
+			Math::lerp(_flow_hash(ix, iy + 1.0f), _flow_hash(ix + 1.0f, iy + 1.0f), ux), uy);
+}
+
+float PhysXWaterSurface3D::_flow_phases(float p_x, float p_z, Vector2 &r_offset_a, Vector2 &r_offset_b) const {
+	const Vector2 f = _flow_at(p_x, p_z);
+	r_offset_a = Vector2();
+	r_offset_b = Vector2();
+	if (f.length_squared() < 1e-8f) {
+		return 1.0f;
+	}
+	const float wx = p_x + grid_center.x, wz = p_z + grid_center.y;
+	const float t = (float)Math::fmod(water_time, 3600.0) / MAX(flow_period, 0.05f) + _flow_value_noise(wx * 0.05f, wz * 0.05f);
+	const float pa = t - Math::floor(t);
+	const float pb = (t + 0.5f) - Math::floor(t + 0.5f);
+	r_offset_a = f * ((pa - 0.5f) * flow_period);
+	r_offset_b = f * ((pb - 0.5f) * flow_period);
+	return 1.0f - Math::abs(1.0f - 2.0f * pa);
+}
+
+float PhysXWaterSurface3D::_ocean_flow_sample(const Vector<float> &p_grid, float p_x, float p_z, float p_weight, const Vector2 &p_offset_a, const Vector2 &p_offset_b) const {
+	const float wx = p_x + grid_center.x, wz = p_z + grid_center.y;
+	const float a = _bilinear_sample(p_grid, cached_ocean_n, cached_ocean_domain, wx - p_offset_a.x, wz - p_offset_a.y, true);
+	if (p_weight >= 1.0f) {
+		return a;
+	}
+	return a * p_weight + _bilinear_sample(p_grid, cached_ocean_n, cached_ocean_domain, wx - p_offset_b.x, wz - p_offset_b.y, true) * (1.0f - p_weight);
+}
+
+Vector3 PhysXWaterSurface3D::sample_flow(Vector3 p_world_pos) const {
+	if (!is_wet(p_world_pos)) {
+		return Vector3();
+	}
+	const float x = p_world_pos.x - grid_center.x;
+	const float z = p_world_pos.z - grid_center.y;
+	const Vector2 f = _flow_at(x, z);
+	return Vector3(f.x, 0.0f, f.y);
 }
 
 void PhysXWaterSurface3D::set_choppiness(float p_choppiness) {
@@ -1124,6 +1567,8 @@ void PhysXWaterSurface3D::_rebuild() {
 	water_material->set_shader_parameter("water_level", water_level);
 	water_material->set_shader_parameter("choppiness", choppiness);
 	water_material->set_shader_parameter("per_pixel_normals", normal_mode == NORMAL_MODE_PER_PIXEL);
+	flow_cells.clear(); // solved again for the new square once its seabed is known (_configure_solver())
+	_update_flow_material();
 
 	// NOTIFICATION_INTERNAL_PHYSICS_PROCESS fires in the editor too, not just
 	// Play -- same gotcha PhysXVehicle3D/PhysXDestructible3D already guard
@@ -1251,6 +1696,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	previous_ripple_height.clear();
 	previous_ocean_height.clear();
 	frames_since_refresh = REFRESH_EVERY_FRAMES; // force an immediate CPU cache refresh on the next _update()
+	_bake_flow();
 }
 
 void PhysXWaterSurface3D::_detach_textures() {
@@ -1333,6 +1779,7 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 			_sample_seabed();
 			_update_cell_fade();
 			solver.update_seabed(cell_depth);
+			_bake_flow();
 		}
 	}
 	if (step_mode == STEP_MODE_PER_FRAME) {
@@ -1525,14 +1972,17 @@ float PhysXWaterSurface3D::_ocean_fade_at(float p_x, float p_z) const {
 float PhysXWaterSurface3D::_ocean_height_at(const Vector<float> &p_height, const Vector<float> &p_dx, const Vector<float> &p_dz, float p_x, float p_z, float p_fade) const {
 	Vector2 p0(p_x, p_z);
 	const float s = -choppiness * p_fade;
+	// Carried by the flow as the shader draws it (ocean_tex()); the phases change slowly over p0's few
+	// centimetres of iteration, so they are taken at the point itself.
+	Vector2 oa, ob;
+	const float w = _flow_phases(p_x, p_z, oa, ob);
 	if (s != 0.0f && p_dx.size() == p_height.size() && p_dz.size() == p_height.size()) {
 		for (int i = 0; i < 4; i++) {
-			const Vector2 d(_bilinear_sample(p_dx, cached_ocean_n, cached_ocean_domain, p0.x + grid_center.x, p0.y + grid_center.y, true),
-					_bilinear_sample(p_dz, cached_ocean_n, cached_ocean_domain, p0.x + grid_center.x, p0.y + grid_center.y, true));
+			const Vector2 d(_ocean_flow_sample(p_dx, p0.x, p0.y, w, oa, ob), _ocean_flow_sample(p_dz, p0.x, p0.y, w, oa, ob));
 			p0 = Vector2(p_x, p_z) - d * s;
 		}
 	}
-	return _bilinear_sample(p_height, cached_ocean_n, cached_ocean_domain, p0.x + grid_center.x, p0.y + grid_center.y, true) * p_fade;
+	return _ocean_flow_sample(p_height, p0.x, p0.y, w, oa, ob) * p_fade;
 }
 
 float PhysXWaterSurface3D::sample_vertical_speed(Vector3 p_world_pos) const {

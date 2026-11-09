@@ -39,6 +39,8 @@ class MeshInstance3D;
 class ShaderMaterial;
 class Texture2DRD;
 class Texture2D;
+class Image;
+class ImageTexture;
 
 // The real water surface node: owns a WaterSolver (ripple + FFT ocean
 // layers), renders it via a plain child MeshInstance3D (a subdivided
@@ -256,6 +258,30 @@ public:
 	// False outside the surface_mesh footprint (always true without one).
 	bool is_wet(Vector3 p_world_pos) const;
 
+	// Flow (docs/ideas/water.md step 3b): a current in m/s. With a measured
+	// seabed (seabed_from_floor, or a surface_mesh footprint) the flow over
+	// the simulated square is solved once round dry ground and rocks (a
+	// depth-weighted stream function), so it goes round them, speeds up
+	// through narrows and slows in the shallows; past the square, and
+	// without a seabed, it is the current everywhere. The waves and foam are
+	// carried along it (two-phase flow), and PhysXBuoyancy3D drags floaters
+	// with it.
+	void set_current(Vector2 p_current);
+	Vector2 get_current() const { return current; }
+	// Seconds one flow phase lasts before it restarts: longer = waves carried
+	// further before they blend back (more stretch), shorter = more blending.
+	void set_flow_period(float p_period);
+	float get_flow_period() const { return flow_period; }
+	// The water's velocity at a world position (m/s, horizontal), as the
+	// surface is drawn: zero over dry ground.
+	Vector3 sample_flow(Vector3 p_world_pos) const;
+	// The solved flow over the simulated square (RG: m/s along world X and Z);
+	// null without a seabed or current.
+	Ref<Texture2D> get_flow_texture() const;
+	// Solves the flow again (after the seabed or the current changed; done
+	// automatically for both).
+	void rebake_flow();
+
 	void submit_sphere(int p_owner, Vector3 p_world_pos, float p_radius, float p_strength = 1.0f);
 	void clear_sphere(int p_owner);
 	void submit_impulse(Vector3 p_world_pos, float p_radius, float p_strength);
@@ -331,6 +357,20 @@ private:
 	bool seabed_pending = false;
 	bool seabed_remeasure_pending = false; // remeasure_seabed(): rays on the next tick, then in place
 	Ref<ShaderMaterial> water_material;
+	Vector2 current;
+	float flow_period = 2.0f;
+	// Solved flow per ripple cell (x, z m/s), empty = the uniform current.
+	PackedVector2Array flow_cells;
+	Ref<Image> flow_image;
+	Ref<ImageTexture> flow_texture;
+	void _bake_flow();
+	void _update_flow_material();
+	// Flow at grid-relative (x, z), as the shader's flow_at().
+	Vector2 _flow_at(float p_x, float p_z) const;
+	// The shader's flow_phases() at grid-relative (x, z): the two phases' offsets and the first's weight.
+	float _flow_phases(float p_x, float p_z, Vector2 &r_offset_a, Vector2 &r_offset_b) const;
+	// An ocean grid at grid-relative (x, z), carried by the flow (the shader's ocean_tex()).
+	float _ocean_flow_sample(const Vector<float> &p_grid, float p_x, float p_z, float p_weight, const Vector2 &p_offset_a, const Vector2 &p_offset_b) const;
 	ObjectID wakes[MAX_WAKES];
 	Vector2 mesh_offset; // see _update_mesh_offset()
 	void _update_mesh_offset();

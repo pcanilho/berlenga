@@ -1029,6 +1029,17 @@ The map's green channel marks where sunlight actually came through the water
 repeats every `ocean_domain_size` (`get_caustics_tile_size()`), so a receiver
 can fold its position into one tile and light a whole seabed.
 
+**Currents and rivers.** `current` (m/s) makes the water flow. With a measured
+seabed (`seabed_from_floor`, or a `surface_mesh` footprint) the flow over the
+simulated square is solved once round dry ground and rocks standing out of the
+water: it goes round them, speeds up through narrows and over shallows, and
+runs along the shore. Past the square, and without a seabed, it is the current
+everywhere. The waves and foam are carried along the flow (two-phase flow;
+`flow_period` sets how long each phase runs), `sample_flow(position)` returns
+the water's velocity there, and `PhysXBuoyancy3D` drags floaters with it, so
+debris drifts downstream. Changing the current or remeasuring the seabed solves
+the flow again (about 90 ms on the CPU for a 160-cell square, so not every frame).
+
 **Under path tracing** the surface is real water rather than a tinted overlay:
 the shader's path-traced copy writes `TRANSMISSION`, `IOR` 1.33 and
 `ABSORPTION`, so light bends through the waves, the colour deepens with depth,

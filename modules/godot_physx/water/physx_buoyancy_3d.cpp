@@ -189,7 +189,10 @@ void PhysXBuoyancy3D::_physics_step() {
 		const float d = MIN(depth, height);
 		used += d;
 		const Vector3 offset = wp - xf.origin;
-		const Vector3 v = lin + ang.cross(offset);
+		// Relative to the water: in a current the drag carries the body along
+		// (PhysXWaterSurface3D::current), so debris drifts downstream and
+		// turns round rocks with the flow.
+		const Vector3 v = lin + ang.cross(offset) - water->sample_flow(wp);
 		// Archimedes for this point's share of the footprint, plus drag on
 		// the part that's in the water.
 		Vector3 force = up * (water_density * g * a * d);
