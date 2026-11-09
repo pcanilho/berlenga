@@ -6,6 +6,7 @@ extends Node3D
 #   --view=cascade   closer, on the step and the white water below it
 #   --view=top       straight down on the cascade, for the foam
 #   --view=bend      looking up a bend (with --carve: deep on the outside)
+#   --view=rocks     straight down on the rocks: the current parting round them, foam trails behind
 #   --raster         raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N       frames rendered before --out is saved (default 12)
@@ -104,9 +105,13 @@ func _ready() -> void:
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
 	rock_mat.roughness = 0.8
-	# A rock in the channel above the step, standing out of the water.
-	var rz := -14.0
-	_slab(Vector3(1.0, 2.0, 1.4), Vector3(_valley_x(rz) + 0.8, _ground(_valley_x(rz), rz) + (-0.6 if carve else 0.6), rz), Vector3(0.2, 0.5, 0.1), rock_mat)
+	# Rocks in the channel above the step, standing out of the water, on their own physics layer (2)
+	# so a carving river, which measures the uncarved terrain, still finds them.
+	for r in [[-14.0, 0.8, Vector3(1.0, 2.0, 1.4), 0.5], [-24.0, -0.9, Vector3(1.2, 2.0, 1.0), -0.4], [-31.0, 0.3, Vector3(0.8, 2.0, 0.9), 1.1]]:
+		var rz: float = r[0]
+		var rx: float = _valley_x(rz) + r[1]
+		var size: Vector3 = r[2]
+		_slab(size, Vector3(rx, _ground(rx, rz) - (1.2 if carve else 0.0) + 0.6, rz), Vector3(0.2, r[3], 0.1), rock_mat, 3)
 
 	if not ClassDB.class_exists("PhysXRiver3D"):
 		push_error("This build has no PhysXRiver3D.")
@@ -123,6 +128,7 @@ func _ready() -> void:
 	river.set("discharge", 6.0)
 	river.set("step_length", 0.5)
 	river.set("cross_segments", 24)
+	river.set("obstacle_collision_mask", 2)
 	if carve:
 		river.set("carve", true)
 		river.set("carve_depth", 1.2)
@@ -145,6 +151,14 @@ func _ready() -> void:
 		for i in range(0, river.call("get_section_count"), 8):
 			var s: Dictionary = river.call("get_section", i)
 			print("s=%5.1f surface=%6.2f slope=%.3f speed=%.2f foam=%.2f cascade=%s" % [s.s, s.surface, s.slope, s.speed, s.foam, s.cascade])
+		# Across the river beside the middle rock: along and across speeds, and the white water.
+		for zq in [-34.0, -31.0, -28.0, -26.0, -24.0, -22.0, -20.0, -17.0, -14.0, -10.0]:
+			var line := "z=%5.1f" % zq
+			for k in range(-6, 7):
+				var p := Vector3(_valley_x(zq) + 0.5 * k, 0.0, zq)
+				var f: Vector3 = river.call("sample_flow", p)
+				line += " %4.1f/%+4.1f/%.2f/%.2f" % [f.length(), f.x, river.call("sample_foam", p), river.call("sample_depth", p)]
+			print(line)
 
 	# Floating boxes, dropped upstream.
 	for i in 3:
@@ -180,6 +194,8 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(9.0, 5.0, 10.0), Vector3(_valley_x(0.0), -2.0, 0.0))
 		"bend":
 			cam.look_at_from_position(Vector3(_valley_x(-23.6) + 2.0, 6.0, -14.0), Vector3(_valley_x(-23.6), -1.5, -23.6))
+		"rocks":
+			cam.look_at_from_position(Vector3(_valley_x(-22.0) + 0.5, 16.0, -20.0), Vector3(_valley_x(-22.0), -1.0, -21.99))
 		"top":
 			cam.look_at_from_position(Vector3(_valley_x(2.0), 14.0, 2.0), Vector3(_valley_x(2.0), -2.0, 2.01))
 		_:
@@ -274,8 +290,9 @@ func _checker(a: Color, b: Color) -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 
-func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material) -> void:
+func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material, p_layers := 1) -> void:
 	var body := StaticBody3D.new()
+	body.collision_layer = p_layers
 	var cs := CollisionShape3D.new()
 	var shape := BoxShape3D.new()
 	shape.size = p_size

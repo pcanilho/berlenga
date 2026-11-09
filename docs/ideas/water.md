@@ -795,6 +795,46 @@ mesh ground. The river is its first brush; it never edits terrain itself.
   the deformer will leave. In the bench (flat valley floor, `--carve`) the bench script plays the
   deformer: it lowers its mesh ground to the brushes and rebuilds the collision.
 
+## Step 4c: flow round rocks (9 Nov)
+
+Until now each cross-section shared the discharge out by itself (`d^(5/3)`), so a rock only made a
+dry patch: the water beside it ran straight on, and nothing foamed at it.
+
+**What others do.** Waterways (Godot 3) bakes a flow map round obstacles from a distance field
+turned 90 degrees, plus a "pressure" pass for narrows and a foam pass. Proland (Yu et al. 2009)
+interpolates a stream function between the banks. Peytavie et al. 2019 put vortices behind rocks;
+Horizon Forbidden West places baked Houdini flipbooks for standing waves and eddies round rocks.
+Flood models (LISFLOOD-FP, Bates and De Roo 2000; Hunter et al. 2005) drop inertia from the shallow
+water equations where friction dominates, which is the river's normal state: the *diffusive wave*.
+
+**Built: a diffusive-wave stream function in the river's strip.** With friction in charge, the unit
+discharge follows the surface gradient, `q = -K grad(eta)`, `K = d^(5/3) / (n sqrt(S))` (Manning).
+Continuity makes `q` the curl of a stream function `psi`; that `q / K` is a gradient gives
+`div(grad(psi) / K) = 0`. This is the ocean's flow bake (step 3, weight `1 / d`) with Manning's
+weight `1 / d^(5/3)` instead, and the difference matters: in a straight reach its solution is
+exactly the divided channel's `d^(5/3)` profile (fast middle, still banks), where the `1 / d`
+weight would flatten the speed across the river. Round a rock the same equation parts the water,
+speeds it up past the rock's sides and slows it in front and behind.
+
+- Solved on the ribbon's own grid (`step_length` along, `cross_segments` across) in strip
+  coordinates, with the bend's metric `h = 1 - curvature n`: along-faces weigh `1 / (h K ds^2)`,
+  across-faces `h / (K dn^2)`. `psi` is 0 on the right bank and the discharge on the left; both
+  ends keep their own section's profile; a rock is an island whose single `psi` is chosen so no
+  net flow goes round it (as the ocean bake). SOR from the section profiles, so a river with no
+  rocks needs no iterations at all.
+- Velocity: along `= dpsi/dn / d`, across `= -dpsi/ds / (h d)`. The mesh's UV2 and
+  `sample_flow()` now carry both, so ripples, foam and floating bodies swing round rocks.
+- White water per sample instead of per section: the local Froude number, every cascade, and the
+  water touching a rock (its upstream pillow and the shear lines past its sides, more the faster
+  it runs). It is carried downstream along the local flow and fades at the mean current's pace,
+  so the two trails from each rock close in behind it, as on a real river.
+- Rocks are found by the ground rays. A carving river measures the uncarved terrain (which has no
+  rocks), so `obstacle_collision_mask` adds rays against rocks on their own physics layers.
+
+**Not in it.** The diffusive wave has no inertia, so no eddies shed behind a rock, no standing
+wave over a submerged boulder and no hydraulic jump. Those need the shallow water equations with
+their advection term: the live window (next).
+
 ## The camera under water: research (9 Nov)
 
 ### What the fork has today

@@ -67,6 +67,8 @@ public:
 		// Across: half_extent / cross_segments spacing, from -half to +half.
 		LocalVector<float> depth; // water depth per cross sample (<= 0 dry)
 		LocalVector<float> speed_at; // along-stream speed per cross sample
+		LocalVector<float> across_at; // speed towards the left bank per cross sample
+		LocalVector<float> foam_at; // white water per cross sample
 	};
 
 private:
@@ -78,6 +80,7 @@ private:
 	float max_slope = 0.08f; // steeper drops are cascades
 	bool snap_to_ground = true;
 	uint32_t ground_collision_mask = 1;
+	uint32_t obstacle_collision_mask = 0; // rocks measured on top of the (base) ground
 	float step_length = 1.0f; // m between cross-sections
 	int cross_segments = 12;
 	float bank_margin = 1.0f; // m of ribbon past each bank, for the waterline fade
@@ -100,7 +103,8 @@ private:
 	void _build();
 	void _build_mesh();
 	void _on_curve_changed();
-	bool _ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y) const;
+	void _solve_flow(float p_ds);
+	bool _ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y, uint32_t p_mask) const;
 	bool _base_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y) const;
 	float _carve_target(const Section &p_sec, float p_n, float &r_mask) const;
 	bool _locate(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const;
@@ -126,6 +130,8 @@ public:
 	bool get_snap_to_ground() const { return snap_to_ground; }
 	void set_ground_collision_mask(uint32_t p_mask);
 	uint32_t get_ground_collision_mask() const { return ground_collision_mask; }
+	void set_obstacle_collision_mask(uint32_t p_mask);
+	uint32_t get_obstacle_collision_mask() const { return obstacle_collision_mask; }
 	void set_step_length(float p_length);
 	float get_step_length() const { return step_length; }
 	void set_cross_segments(int p_segments);
