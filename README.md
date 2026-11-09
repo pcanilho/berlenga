@@ -38,12 +38,13 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): matches raster, with traced coat reflections; coat texture.
 - **Subsurface scattering** (`rendering/pathtracing/subsurface_scattering`, radius `subsurface_scattering_scale`): random walk inside closed meshes; skin, wax and marble soften and thin parts glow when backlit.
 - **Hair** (BaseMaterial3D Hair section, `rendering/pathtracing/hair`): Chiang fibre scattering on mesh and card hair; colour from albedo or melanin; mask for single-material characters.
+- **Strand hair** (`HairGroom`, `HairMesh`; Hair direction Strands): grown on a scalp mesh or loaded from a HAIR file, drawn as crossed strips, shaded per fibre under path tracing.
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
-<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering, hair</summary>
+<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering, hair, strand hair</summary>
 
 ![Glass panes before coloured spheres: raster, path traced with transmission on, and off](docs/media/transmission.jpg)
 
@@ -68,6 +69,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Hair-shaded spheres and cards: raster, path traced, sun behind, cards backlit](docs/media/hair.jpg)
 
 *Hair: fibre highlights and a bright rim against the sun.*
+
+![Strand hair grooms: raster, path traced, and path traced with the sun behind](docs/media/hair-strands.jpg)
+
+*Strand hair: per-fibre colour and a backlit rim.*
 
 </details>
 
