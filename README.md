@@ -14,7 +14,8 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 
 - **Lights**: 4096 path-traced lights (upstream 64); emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
-- **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering, hair; textures filter like raster.
+- **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
+- **Hair**: fibre shading, strand grooms, TressFX strand simulation.
 - **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
 - **Physics**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
@@ -37,15 +38,12 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Transmission** (BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): matches raster, with traced coat reflections; coat texture.
 - **Subsurface scattering** (`rendering/pathtracing/subsurface_scattering`, radius `subsurface_scattering_scale`): random walk inside closed meshes; skin, wax and marble soften and thin parts glow when backlit.
-- **Hair** (BaseMaterial3D Hair section, `rendering/pathtracing/hair`): Chiang fibre scattering on mesh and card hair; colour from albedo or melanin; mask for single-material characters.
-- **Strand hair** (`HairGroom`, `HairMesh`; Hair direction Strands): grown on a scalp mesh or loaded from a HAIR file, drawn as crossed strips, shaded per fibre under path tracing.
-- **Moving strand hair** (`PhysXHair3D`): simulates a `HairGroom` on the GPU (follow-the-leader, shape constraints, wind, collision spheres), path traced as fibres; `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` in shaders.
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
-<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering, hair, strand hair, moving hair</summary>
+<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering</summary>
 
 ![Glass panes before coloured spheres: raster, path traced with transmission on, and off](docs/media/transmission.jpg)
 
@@ -66,18 +64,6 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Backlit skin slabs 2 to 20 cm thick, subsurface scattering off and on](docs/media/subsurface.jpg)
 
 *Subsurface scattering: thin slabs glow, thick ones stay dark.*
-
-![Hair-shaded spheres and cards: raster, path traced, sun behind, cards backlit](docs/media/hair.jpg)
-
-*Hair: fibre highlights and a bright rim against the sun.*
-
-![Strand hair grooms: raster, path traced, and path traced with the sun behind](docs/media/hair-strands.jpg)
-
-*Strand hair: per-fibre colour and a backlit rim.*
-
-![Simulated strand hair swinging on a head, raster](docs/media/hair-sim.gif)
-
-*Moving strand hair: the groom swings and settles.*
 
 </details>
 
@@ -162,6 +148,28 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![The camera dives through the water surface](docs/media/underwater-dive.gif)
 
 *Under water: light scattering and the surface seen from below.*
+
+</details>
+
+### Hair
+- **Fibre shading** (BaseMaterial3D Hair section, `rendering/pathtracing/hair`): Chiang hair model under path tracing, melanin colour, on shells, cards and strands; mask for single-material characters.
+- **Strand grooms** (`HairGroom`, `HairMesh`): grown on a scalp mesh or loaded from a HAIR file.
+- **Moving strand hair** (`PhysXHair3D`): AMD TressFX's simulation on GPU compute, guide and follow strands, velocity shock propagation, wind with gusts and turbulence, collision spheres.
+- **Custom hair shaders**: `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes.
+
+<details><summary>Images and clip: hair shading, strand hair, moving hair</summary>
+
+![Hair-shaded spheres and cards: raster, path traced, sun behind, cards backlit](docs/media/hair.jpg)
+
+*Fibre shading: fibre highlights and a bright rim against the sun.*
+
+![Strand hair grooms: raster, path traced, and path traced with the sun behind](docs/media/hair-strands.jpg)
+
+*Strand hair: per-fibre colour and a backlit rim.*
+
+![Simulated strand hair blown by gusting wind, raster](docs/media/hair-sim.gif)
+
+*Moving strand hair: the groom streams and flutters in gusting wind.*
 
 </details>
 
@@ -286,7 +294,7 @@ Options: `--movers=N`, `--churn=N`, `--recolor`, `--fly=S`, `--multimesh=M` (Mul
 
 ## References
 
-Code: [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot) (path tracer, DLSS); [uno1982/godot](https://github.com/uno1982/godot) `feature/physx5-module` (Wild Ox Studios, MIT); [NVIDIA-Omniverse/PhysX](https://github.com/NVIDIA-Omniverse/PhysX) (BSD-3-Clause); [valence-engine-rtx](https://github.com/Rman887/valence-engine-rtx) (camera-relative tracing, ray offset, persistent instance slots, opacity micromap bake). Papers: [docs/REFERENCES.md](docs/REFERENCES.md). Research notes: [docs/ideas](docs/ideas).
+Code: [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot) (path tracer, DLSS); [uno1982/godot](https://github.com/uno1982/godot) `feature/physx5-module` (Wild Ox Studios, MIT); [NVIDIA-Omniverse/PhysX](https://github.com/NVIDIA-Omniverse/PhysX) (BSD-3-Clause); [GPUOpen-Effects/TressFX](https://github.com/GPUOpen-Effects/TressFX) (AMD, MIT; strand hair simulation and rendering); [valence-engine-rtx](https://github.com/Rman887/valence-engine-rtx) (camera-relative tracing, ray offset, persistent instance slots, opacity micromap bake). Papers: [docs/REFERENCES.md](docs/REFERENCES.md). Research notes: [docs/ideas](docs/ideas).
 
 ## License
 
