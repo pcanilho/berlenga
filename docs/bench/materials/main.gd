@@ -39,8 +39,9 @@ extends Node3D
 #                     direction Strands): straight light brown, wavy brown, curly black;
 #                     --hair=back: the sun low behind them; --hair=thin: one strip per segment, not crossed
 #                     strands_sim: one head of long strand hair simulated on the GPU (PhysXHair3D) that
-#                     shakes side to side for two seconds, then turns and stops; a breeze from the
+#                     shakes side to side for two and a half seconds, then turns and stops; a breeze from the
 #                     left. Record it with --fixed-fps 30 --write-movie (frame time is fixed to 1/30 s).
+#                     --hair=wind: the head held still in a strong gusty side wind;
 #                     --hair=compare: held still, beside the same groom on a HairMesh with BaseMaterial3D
 #                     Hair; --hair=compare_shader: that HairMesh through a shader's HAIR outputs instead
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
@@ -663,6 +664,10 @@ func _strands_sim() -> void:
 	h.tip_width = 0.0002
 	h.melanin = 0.3
 	h.wind = Vector3(1.5, 0, 0)
+	if hair == "wind":
+		# Head held still in a strong, gusty side wind.
+		h.wind = Vector3(16.0, 3.0, 2.0)
+		h.gust = 0.7
 	# The skull and the shoulders, so the strands drape instead of falling through.
 	h.collision_spheres = PackedVector4Array([Vector4(0, 0, 0, 0.1), Vector4(0, -0.27, 0, 0.16)])
 	sim_head.add_child(h)
@@ -708,13 +713,14 @@ func _strands_sim() -> void:
 
 func _process(_delta: float) -> void:
 	n += 1
-	if sim_head:
+	if sim_head and hair != "wind":
 		var t := n / 30.0
-		if t < 2.0:
+		# Shake for three full periods (ends back at x = 0), then turn.
+		if t < 2.5:
 			sim_head.position.x = 0.08 * sin(TAU * 1.2 * t)
-		elif t < 2.6:
+		else:
 			sim_head.position.x = 0.0
-			sim_head.rotation.y = lerpf(0.0, 1.2, smoothstep(2.0, 2.6, t))
+			sim_head.rotation.y = lerpf(0.0, 1.2, smoothstep(2.5, 3.1, t))
 	if n == frames:
 		if out != "":
 			await RenderingServer.frame_post_draw

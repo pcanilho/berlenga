@@ -28,6 +28,9 @@
 		<member name="fixed_gravity" type="Vector3" setter="set_fixed_gravity" getter="get_fixed_gravity" default="Vector3(0, -9.8, 0)">
 			The gravity used when [member use_world_gravity] is off.
 		</member>
+		<member name="follow_range" type="float" setter="set_follow_range" getter="get_follow_range" default="0.3">
+			How much of the strand, from the root, is held toward its groomed pose: [member root_follow] fades to [member tip_follow] over this share, so the hair stays styled at the scalp and swings free below (TressFX's global shape range). Raise it for short or styled hair.
+		</member>
 		<member name="groom" type="HairGroom" setter="set_groom" getter="get_groom">
 			The strands, in this node's space.
 		</member>
@@ -50,7 +53,7 @@
 			A material of your own to draw the strands with, instead of the built-in one.
 		</member>
 		<member name="root_follow" type="float" setter="set_root_follow" getter="get_root_follow" default="0.3">
-			How strongly points near the root are pulled toward their groomed pose on the head each substep (global shape). It falls to [member tip_follow] along the strand.
+			How strongly points near the root are pulled toward their groomed pose on the head each substep (global shape). It fades to [member tip_follow] over [member follow_range].
 		</member>
 		<member name="root_width" type="float" setter="set_root_width" getter="get_root_width" default="0.0004">
 			The width of a strand at the root, in metres. A real hair is 0.00005 to 0.0001 m; drawn strands are wider so fewer of them cover the head.

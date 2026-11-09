@@ -387,6 +387,7 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 	f[16] = CLAMP(p_settings.length_damping, 0.0f, 1.0f);
 	f[17] = MAX(p_settings.margin, 0.0f);
 	f[18] = (float)Math::fmod(time, 3600.0);
+	f[19] = CLAMP(p_settings.follow_range, 0.0f, 1.0f);
 	// matrices
 	put_mat4(f + 20, has_last ? last_xform : p_xform);
 	put_mat4(f + 36, p_xform);

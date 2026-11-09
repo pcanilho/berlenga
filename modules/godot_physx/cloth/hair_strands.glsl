@@ -29,7 +29,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 step; // x dt (substep), y velocity kept per substep, z global shape at the root, w at the tip (per substep)
 	vec4 accel; // xyz gravity (m/s^2), w local shape (per substep)
 	vec4 wind; // xyz wind and other acceleration (m/s^2), w gust strength (0..1)
-	vec4 misc; // x DFTL damping (0..1), y collision margin (m), z time (s), w unused
+	vec4 misc; // x DFTL damping (0..1), y collision margin (m), z time (s), w follow range (share of the strand)
 	mat4 xform_prev; // groom space -> world, last frame
 	mat4 xform_cur; // groom space -> world, this frame
 	mat4 world_to_out; // world -> the render copy's space
@@ -132,7 +132,8 @@ void main() {
 		prev[k] = vec4(p, 1.0);
 		p += v + acc * dt * dt;
 		float along = float(i) / float(max(n - 1, 1));
-		p += (to_world(m, rest[k].xyz) - p) * mix(step.z, step.w, along);
+		// TressFX global shape: held near the scalp, free past the follow range (bar the tip pull).
+		p += (to_world(m, rest[k].xyz) - p) * mix(step.z, step.w, smoothstep(0.0, max(misc.w, 1e-3), along));
 		pos[k] = vec4(p, 1.0);
 	}
 

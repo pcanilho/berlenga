@@ -358,6 +358,7 @@ void PhysXHair3D::_step(double p_delta) {
 	s.tip_follow = tip_follow;
 	s.shape_stiffness = shape_stiffness;
 	s.length_damping = length_damping;
+	s.follow_range = follow_range;
 	s.gravity = fixed_gravity;
 	if (use_world_gravity && is_inside_tree()) {
 		const Ref<World3D> w = get_world_3d();
@@ -555,6 +556,14 @@ float PhysXHair3D::get_shape_stiffness() const {
 	return shape_stiffness;
 }
 
+void PhysXHair3D::set_follow_range(float p_range) {
+	follow_range = CLAMP(p_range, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_follow_range() const {
+	return follow_range;
+}
+
 void PhysXHair3D::set_length_damping(float p_damping) {
 	length_damping = CLAMP(p_damping, 0.0f, 1.0f);
 }
@@ -632,6 +641,8 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_tip_follow"), &PhysXHair3D::get_tip_follow);
 	ClassDB::bind_method(D_METHOD("set_shape_stiffness", "stiffness"), &PhysXHair3D::set_shape_stiffness);
 	ClassDB::bind_method(D_METHOD("get_shape_stiffness"), &PhysXHair3D::get_shape_stiffness);
+	ClassDB::bind_method(D_METHOD("set_follow_range", "range"), &PhysXHair3D::set_follow_range);
+	ClassDB::bind_method(D_METHOD("get_follow_range"), &PhysXHair3D::get_follow_range);
 	ClassDB::bind_method(D_METHOD("set_length_damping", "damping"), &PhysXHair3D::set_length_damping);
 	ClassDB::bind_method(D_METHOD("get_length_damping"), &PhysXHair3D::get_length_damping);
 	ClassDB::bind_method(D_METHOD("set_use_world_gravity", "enabled"), &PhysXHair3D::set_use_world_gravity);
@@ -661,6 +672,7 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping", PROPERTY_HINT_RANGE, "0,0.999,0.001"), "set_damping", "get_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "root_follow", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_root_follow", "get_root_follow");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tip_follow", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_tip_follow", "get_tip_follow");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "follow_range", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_follow_range", "get_follow_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shape_stiffness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_shape_stiffness", "get_shape_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "length_damping", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_length_damping", "get_length_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_world_gravity"), "set_use_world_gravity", "is_using_world_gravity");
