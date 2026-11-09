@@ -221,7 +221,7 @@ void WaterSolverGPU::_rt_free_buffers() {
 			*b = RID();
 		}
 	}
-	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_ocean_disp, &tex_ocean_deriv, &tex_ocean_foam, &tex_shore_foam, &tex_shore_foam_tmp, &tex_caustics, &tex_cell_depth, &tex_ocean_fade, &tex_shore_depth, &tex_swash, &tex_swash_tmp };
+	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_ocean_disp, &tex_ocean_deriv, &tex_ocean_foam, &tex_shore_foam, &tex_shore_foam_tmp, &tex_caustics, &tex_cell_depth, &tex_ocean_fade, &tex_shore_depth, &tex_swash, &tex_swash_tmp, &tex_base_flux, &tex_velocity };
 	for (RID *t : texs) {
 		if (t->is_valid()) {
 			rd->free_rid(*t);
@@ -283,6 +283,31 @@ void WaterSolverGPU::_rt_build_buffers() {
 		Vector<Vector<uint8_t>> shore_data;
 		shore_data.push_back(shore_bytes);
 		tex_shore_depth = rd->texture_create(depth_tf, RD::TextureView(), shore_data);
+
+		// Baked current (face fluxes) for the shallow-water passes, and the live velocity they write.
+		has_base_flux = _init_base_flux.size() == cells * 4;
+		RD::TextureFormat flux_tf = depth_tf;
+		flux_tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
+		Vector<uint8_t> flux_bytes;
+		flux_bytes.resize(cells * 4 * sizeof(float));
+		if (has_base_flux) {
+			memcpy(flux_bytes.ptrw(), _init_base_flux.ptr(), flux_bytes.size());
+		} else {
+			memset(flux_bytes.ptrw(), 0, flux_bytes.size());
+		}
+		Vector<Vector<uint8_t>> flux_data;
+		flux_data.push_back(flux_bytes);
+		tex_base_flux = rd->texture_create(flux_tf, RD::TextureView(), flux_data);
+
+		RD::TextureFormat velocity_tf = depth_tf;
+		velocity_tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+		velocity_tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+		Vector<uint8_t> velocity_bytes;
+		velocity_bytes.resize(cells * 4 * sizeof(uint16_t));
+		memset(velocity_bytes.ptrw(), 0, velocity_bytes.size());
+		Vector<Vector<uint8_t>> velocity_data;
+		velocity_data.push_back(velocity_bytes);
+		tex_velocity = rd->texture_create(velocity_tf, RD::TextureView(), velocity_data);
 	}
 
 	auto make_uset = [&](RID p_state_in, RID p_state_out) {
@@ -301,6 +326,17 @@ void WaterSolverGPU::_rt_build_buffers() {
 		depth_uniform.append_id(sampler_linear);
 		depth_uniform.append_id(tex_cell_depth);
 		uniforms.push_back(depth_uniform);
+		RD::Uniform flux_uniform;
+		flux_uniform.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+		flux_uniform.binding = 7;
+		flux_uniform.append_id(sampler_linear);
+		flux_uniform.append_id(tex_base_flux);
+		uniforms.push_back(flux_uniform);
+		RD::Uniform velocity_uniform;
+		velocity_uniform.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		velocity_uniform.binding = 8;
+		velocity_uniform.append_id(tex_velocity);
+		uniforms.push_back(velocity_uniform);
 		return rd->uniform_set_create(uniforms, shader_ripple, 0);
 	};
 	uset_atob = make_uset(buf_state_a, buf_state_b);
@@ -754,7 +790,31 @@ void WaterSolverGPU::rt_update_depth(Ref<WaterSolverGPU> p_self, PackedFloat32Ar
 	ripple_quiet.set(0);
 }
 
+void WaterSolverGPU::rt_set_base_flux(Ref<WaterSolverGPU> p_self, PackedFloat32Array p_flux, float p_wall_friction) {
+	wall_friction = p_wall_friction;
+	_init_base_flux = p_flux;
+	const int cells = grid_resolution * grid_resolution;
+	if (rd == nullptr || !shaders_ok || tex_base_flux.is_null() || (!p_flux.is_empty() && p_flux.size() != cells * 4)) {
+		return; // (the next build uploads it: a configure() sends the flow first, for the new grid)
+	}
+	has_base_flux = !p_flux.is_empty();
+	Vector<uint8_t> bytes;
+	bytes.resize(cells * 4 * sizeof(float));
+	if (has_base_flux) {
+		memcpy(bytes.ptrw(), p_flux.ptr(), bytes.size());
+	} else {
+		memset(bytes.ptrw(), 0, bytes.size());
+	}
+	rd->texture_update(tex_base_flux, 0, bytes);
+	// The live velocities were relative to the old flow: the water starts over on the new one.
+	rt_clear_ripples(p_self);
+}
+
 void WaterSolverGPU::rt_clear_ripples(Ref<WaterSolverGPU> p_self) {
+	{
+		MutexLock lock(cache_mtx);
+		ripple_velocity_cache.clear();
+	}
 	if (rd == nullptr || !shaders_ok || buf_state_a.is_null()) {
 		return;
 	}
@@ -812,6 +872,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		int impulse_at = 0;
 		const float *prev_spheres = nullptr;
 		int prev_sphere_count = -1;
+		Vector<uint8_t> params_bytes;
 		for (int t = 0; t < ticks; t++) {
 			const float dt = (float)p_deltas[t];
 			const int sphere_count = t < p_sphere_counts.size() ? p_sphere_counts[t] : 0;
@@ -837,12 +898,13 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 				put_i(32, n);
 				put_i(36, sphere_count);
 				put_i(40, impulse_count);
-				put_i(44, 0);
+				put_i(44, 0); // pass (water_ripple.glsl): 0 height, then 1 velocity below
 				put_f(48, p_ripple_amplitude);
-				put_f(52, 0.0f);
+				put_f(52, wall_friction);
 				put_f(56, 0.0f);
 				put_f(60, 0.0f);
 				rd->buffer_update(buf_params, 0, PARAMS_BYTES, b.ptr());
+				params_bytes = b;
 			}
 			const bool same_spheres = sphere_count > 0 && prev_sphere_count == sphere_count && memcmp(prev_spheres, spheres, sphere_count * 4 * sizeof(float)) == 0;
 			if (sphere_count > 0 && !same_spheres) {
@@ -861,12 +923,20 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 				memcpy(ib.ptrw(), impulses, MIN((size_t)impulse_count * 4 * sizeof(float), (size_t)ib.size()));
 				rd->buffer_update(buf_impulses, 0, ib.size(), ib.ptr());
 			}
-			RD::ComputeListID cl = rd->compute_list_begin();
-			rd->compute_list_bind_compute_pipeline(cl, pipeline_ripple);
-			rd->compute_list_bind_uniform_set(cl, a_is_current ? uset_atob : uset_btoa, 0);
-			rd->compute_list_dispatch(cl, groups_for(n), groups_for(n), 1);
-			rd->compute_list_end();
-			a_is_current = !a_is_current;
+			// Shallow-water step: heights (current -> other buffer), then face velocities from the new heights (back).
+			for (int pass = 0; pass < 2; pass++) {
+				if (pass == 1) {
+					const int32_t one = 1;
+					memcpy(params_bytes.ptrw() + 44, &one, sizeof(int32_t));
+					rd->buffer_update(buf_params, 0, PARAMS_BYTES, params_bytes.ptr());
+				}
+				RD::ComputeListID cl = rd->compute_list_begin();
+				rd->compute_list_bind_compute_pipeline(cl, pipeline_ripple);
+				rd->compute_list_bind_uniform_set(cl, a_is_current ? uset_atob : uset_btoa, 0);
+				rd->compute_list_dispatch(cl, groups_for(n), groups_for(n), 1);
+				rd->compute_list_end();
+				a_is_current = !a_is_current;
+			}
 		}
 	}
 	for (int t = 0; t < ticks; t++) {
@@ -1034,6 +1104,10 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 				memcpy(ripple_height_cache.ptrw(), rraw.ptr(), MIN((size_t)rraw.size(), (size_t)(n * n * sizeof(float))));
 			}
 			_rt_note_ripple_peak(ripple_height_cache.ptr(), ripple_height_cache.size(), p_serial);
+			if (has_base_flux) {
+				Vector<uint8_t> sraw = rd->buffer_get_data(a_is_current ? buf_state_a : buf_state_b, 0, n * n * 4 * sizeof(float));
+				_rt_store_velocity_cache(sraw.ptr(), sraw.size());
+			}
 		}
 		Vector<uint8_t> oraw = rd->buffer_get_data(buf_fft_b, 0, on * on * 2 * sizeof(float));
 		ocean_height_cache.resize(on * on);
@@ -1069,9 +1143,33 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 	// convention as every other async readback in this module.
 	if (!p_rest) {
 		rd->buffer_get_data_async(buf_height, callable_mp(this, &WaterSolverGPU::rt_on_ripple_height).bind(ocean_time_accum, p_self, p_serial), 0, n * n * sizeof(float));
+		if (has_base_flux) {
+			rd->buffer_get_data_async(a_is_current ? buf_state_a : buf_state_b, callable_mp(this, &WaterSolverGPU::rt_on_ripple_state).bind(p_self), 0, n * n * 4 * sizeof(float));
+		}
 	}
 	rd->buffer_get_data_async(buf_fft_b, callable_mp(this, &WaterSolverGPU::rt_on_ocean_height).bind(ocean_time_accum, p_self), 0, on * on * 2 * sizeof(float));
 	rd->buffer_get_data_async(buf_fft_d, callable_mp(this, &WaterSolverGPU::rt_on_ocean_dz).bind(p_self), 0, on * on * 2 * sizeof(float));
+}
+
+void WaterSolverGPU::rt_on_ripple_state(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self) {
+	MutexLock lock(cache_mtx);
+	_rt_store_velocity_cache(p_data.ptr(), p_data.size());
+}
+
+// (cache_mtx held.) Keeps y (u') and w (w') of each cell's state.
+void WaterSolverGPU::_rt_store_velocity_cache(const uint8_t *p_state, int p_bytes) {
+	const int cells = grid_resolution * grid_resolution;
+	if (p_state == nullptr || p_bytes < cells * 4 * (int)sizeof(float)) {
+		ripple_velocity_cache.clear();
+		return;
+	}
+	const float *st = (const float *)p_state;
+	ripple_velocity_cache.resize(cells * 2);
+	float *w = ripple_velocity_cache.ptrw();
+	for (int i = 0; i < cells; i++) {
+		w[i * 2] = st[i * 4 + 1];
+		w[i * 2 + 1] = st[i * 4 + 3];
+	}
 }
 
 void WaterSolverGPU::rt_on_ocean_dz(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self) {
@@ -1321,6 +1419,37 @@ void WaterSolver::update_seabed(const PackedFloat32Array &p_cell_depth) {
 	queued_disturbed = true; // a resting ripple layer has to see the new shore
 }
 
+void WaterSolver::set_base_flux(const PackedFloat32Array &p_flux, float p_wall_friction) {
+	flush_ticks(); // ticks recorded so far ran on the old flow
+	base_flux = p_flux;
+	wall_friction = p_wall_friction;
+	ripple_resting = false;
+	if (gpu.is_null()) {
+		return;
+	}
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_base_flux).bind(gpu, base_flux, wall_friction));
+	queued_disturbed = true;
+}
+
+void WaterSolver::get_velocity_grid(Vector<float> &r_velocity) const {
+	r_velocity.clear();
+	if (gpu.is_null() || base_flux.is_empty()) {
+		return;
+	}
+	MutexLock lock(gpu->cache_mtx);
+	r_velocity = gpu->ripple_velocity_cache;
+	if (r_velocity.size() != settings.grid_resolution * settings.grid_resolution * 2) {
+		r_velocity.clear();
+	}
+}
+
+RID WaterSolver::get_velocity_texture_rd_rid() const {
+	if (gpu.is_null()) {
+		return RID();
+	}
+	return gpu->tex_velocity;
+}
+
 void WaterSolver::configure(const Settings &p_settings) {
 	flush_ticks(); // the old surface takes the ticks it already had (the ocean clock survives a rebuild)
 	_clear_queue();
@@ -1333,6 +1462,11 @@ void WaterSolver::configure(const Settings &p_settings) {
 	if (gpu.is_null()) {
 		return; // no device (headless): the callable below would be built on a null object
 	}
+	if (base_flux.size() != settings.grid_resolution * settings.grid_resolution * 4) {
+		base_flux.clear(); // (another grid's flow)
+	}
+	// Before the build, so it uploads the flow (an empty one clears it).
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_base_flux).bind(gpu, base_flux, wall_friction));
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled, settings.cell_depth, settings.depth, settings.shallow_fade_depth, settings.fetch));
 }
 
@@ -1403,7 +1537,7 @@ void WaterSolver::flush_ticks() {
 		return;
 	}
 	step_serial++;
-	ripple_resting = rest_threshold > 0.0f && !queued_disturbed && gpu->ripple_quiet.get() >= REST_QUIET_READBACKS;
+	ripple_resting = rest_threshold > 0.0f && base_flux.is_empty() && !queued_disturbed && gpu->ripple_quiet.get() >= REST_QUIET_READBACKS; // (a current never rests)
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_step).bind(gpu, queued_deltas, settings.depth, settings.damping, settings.gravity, settings.water_level, settings.ripple_amplitude, queued_spheres, queued_sphere_counts, queued_impulses, queued_impulse_counts, ripple_resting, step_serial, queued_disturbed, rest_threshold));
 	_clear_queue();
 }

@@ -720,6 +720,11 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("sample_flow", "world_position"), &PhysXWaterSurface3D::sample_flow);
 	ClassDB::bind_method(D_METHOD("get_flow_texture"), &PhysXWaterSurface3D::get_flow_texture);
 	ClassDB::bind_method(D_METHOD("rebake_flow"), &PhysXWaterSurface3D::rebake_flow);
+	ClassDB::bind_method(D_METHOD("set_live_flow", "enabled"), &PhysXWaterSurface3D::set_live_flow);
+	ClassDB::bind_method(D_METHOD("is_live_flow"), &PhysXWaterSurface3D::is_live_flow);
+	ClassDB::bind_method(D_METHOD("set_wall_friction", "friction"), &PhysXWaterSurface3D::set_wall_friction);
+	ClassDB::bind_method(D_METHOD("get_wall_friction"), &PhysXWaterSurface3D::get_wall_friction);
+	ClassDB::bind_method(D_METHOD("get_live_flow_texture"), &PhysXWaterSurface3D::get_live_flow_texture);
 	ClassDB::bind_method(D_METHOD("set_choppiness", "choppiness"), &PhysXWaterSurface3D::set_choppiness);
 	ClassDB::bind_method(D_METHOD("get_choppiness"), &PhysXWaterSurface3D::get_choppiness);
 	ClassDB::bind_method(D_METHOD("set_normal_mode", "mode"), &PhysXWaterSurface3D::set_normal_mode);
@@ -827,6 +832,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_GROUP("Flow", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "current", PROPERTY_HINT_NONE, "suffix:m/s"), "set_current", "get_current");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_period", PROPERTY_HINT_RANGE, "0.25,10,0.05,or_greater,suffix:s"), "set_flow_period", "get_flow_period");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_flow"), "set_live_flow", "is_live_flow");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:1/s"), "set_wall_friction", "get_wall_friction");
 
 	ADD_GROUP("Rendering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_extent", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_render_extent", "get_render_extent");
@@ -992,6 +999,63 @@ void PhysXWaterSurface3D::rebake_flow() {
 	_bake_flow();
 }
 
+void PhysXWaterSurface3D::set_live_flow(bool p_enabled) {
+	if (live_flow == p_enabled) {
+		return;
+	}
+	live_flow = p_enabled;
+	cached_live_velocity.clear();
+	_send_flow_to_solver();
+}
+
+void PhysXWaterSurface3D::set_wall_friction(float p_friction) {
+	wall_friction = MAX(p_friction, 0.0f);
+	_send_flow_to_solver();
+}
+
+Ref<Texture2D> PhysXWaterSurface3D::get_live_flow_texture() const {
+	if (!live_flow || !solver.has_base_flux() || live_flow_texture.is_null() || !live_flow_texture->get_texture_rd_rid().is_valid()) {
+		return Ref<Texture2D>();
+	}
+	return live_flow_texture;
+}
+
+void PhysXWaterSurface3D::_send_flow_to_solver() {
+	if (Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	solver.set_base_flux(live_flow ? flow_faces : PackedFloat32Array(), wall_friction);
+	_update_flow_material();
+}
+
+// The live part of the flow at grid-relative (x, z): the read-back face velocities averaged to
+// cell centres, bilinear between them.
+Vector2 PhysXWaterSurface3D::_live_flow_at(float p_x, float p_z) const {
+	const int n = grid_resolution;
+	if (cached_live_velocity.size() != n * n * 2) {
+		return Vector2();
+	}
+	const float *v = cached_live_velocity.ptr();
+	auto centre = [&](int x, int z) {
+		const int i = z * n + x;
+		const float u = 0.5f * (v[i * 2] + (x > 0 ? v[(i - 1) * 2] : 0.0f));
+		const float w = 0.5f * (v[i * 2 + 1] + (z > 0 ? v[(i - n) * 2 + 1] : 0.0f));
+		return Vector2(u, w);
+	};
+	const float gx = (p_x / active_domain_size.x + 0.5f) * n - 0.5f;
+	const float gz = (p_z / active_domain_size.y + 0.5f) * n - 0.5f;
+	if (gx < -0.5f || gz < -0.5f || gx > n - 0.5f || gz > n - 0.5f) {
+		return Vector2();
+	}
+	const int x0 = CLAMP((int)Math::floor(gx), 0, n - 1);
+	const int z0 = CLAMP((int)Math::floor(gz), 0, n - 1);
+	const int x1 = MIN(x0 + 1, n - 1);
+	const int z1 = MIN(z0 + 1, n - 1);
+	const float fx = CLAMP(gx - x0, 0.0f, 1.0f);
+	const float fz = CLAMP(gz - z0, 0.0f, 1.0f);
+	return centre(x0, z0).lerp(centre(x1, z0), fx).lerp(centre(x0, z1).lerp(centre(x1, z1), fx), fz);
+}
+
 Ref<Texture2D> PhysXWaterSurface3D::get_flow_texture() const {
 	return flow_cells.is_empty() ? Ref<Texture2D>() : Ref<Texture2D>(flow_texture);
 }
@@ -1000,11 +1064,14 @@ void PhysXWaterSurface3D::_update_flow_material() {
 	if (water_material.is_null()) {
 		return;
 	}
+	// The live water's velocity when it runs (the surface's waves and foam then swirl round
+	// rocks with it), else the baked flow.
+	const bool live = live_flow && textures_bound && solver.has_base_flux() && live_flow_texture.is_valid() && live_flow_texture->get_texture_rd_rid().is_valid();
 	const bool baked = !flow_cells.is_empty() && flow_texture.is_valid();
 	water_material->set_shader_parameter("current", current);
 	water_material->set_shader_parameter("flow_period", flow_period);
-	water_material->set_shader_parameter("flow_baked", baked);
-	water_material->set_shader_parameter("flow_tex", baked ? Variant(flow_texture) : Variant());
+	water_material->set_shader_parameter("flow_baked", live || baked);
+	water_material->set_shader_parameter("flow_tex", live ? Variant(live_flow_texture) : (baked ? Variant(flow_texture) : Variant()));
 }
 
 // The flow over the simulated square, round dry ground and rocks (docs/ideas/water.md, step 3 research):
@@ -1016,8 +1083,21 @@ void PhysXWaterSurface3D::_update_flow_material() {
 // to match so the bake conserves the water. Solved once (SOR) per seabed or current change.
 void PhysXWaterSurface3D::_bake_flow() {
 	flow_cells.clear();
+	flow_faces.clear();
 	const int n = grid_resolution;
 	if (current.length_squared() < 1e-10f || cell_depth.size() != n * n || n < 4) {
+		if (current.length_squared() >= 1e-10f && cell_depth.is_empty() && n >= 4) {
+			// No seabed: the same depth everywhere, the current straight through every face.
+			flow_faces.resize(n * n * 4);
+			float *q = flow_faces.ptrw();
+			for (int i = 0; i < n * n; i++) {
+				q[i * 4 + 0] = depth * current.x;
+				q[i * 4 + 1] = depth * current.y;
+				q[i * 4 + 2] = depth * current.x;
+				q[i * 4 + 3] = depth * current.y;
+			}
+		}
+		_send_flow_to_solver();
 		_update_flow_material();
 		return;
 	}
@@ -1093,6 +1173,7 @@ void PhysXWaterSurface3D::_bake_flow() {
 		}
 	}
 	if (pos_sum <= 0.0f || neg_sum <= 0.0f) {
+		_send_flow_to_solver();
 		_update_flow_material(); // nothing flows in or out through wet edge cells
 		return;
 	}
@@ -1255,6 +1336,49 @@ void PhysXWaterSurface3D::_bake_flow() {
 			bw[i * 2 + 1] = u.y;
 		}
 	}
+	// Face fluxes for the live water (water_ripple.glsl): psi at cell corners, differenced along each
+	// face, so every cell's in and out sum to exactly zero. A corner touching dry ground takes that
+	// ground's psi, so no water crosses a bank or a rock.
+	{
+		LocalVector<float> corner;
+		corner.resize((n + 1) * (n + 1));
+		for (int j = 0; j <= n; j++) {
+			for (int i = 0; i <= n; i++) {
+				float sum = 0.0f;
+				float dry_psi = 0.0f;
+				bool dry = false;
+				for (int k = 0; k < 4; k++) {
+					const int cx = CLAMP(i - 1 + (k & 1), 0, n - 1);
+					const int cz = CLAMP(j - 1 + (k >> 1), 0, n - 1);
+					const int c = cz * n + cx;
+					if (h[c] <= 0.0f && !dry) {
+						dry = true;
+						dry_psi = psi[c];
+					}
+					sum += psi[c];
+				}
+				corner[j * (n + 1) + i] = dry ? dry_psi : 0.25f * sum;
+			}
+		}
+		auto at = [&](int i, int j) { return corner[j * (n + 1) + i]; };
+		flow_faces.resize(cells * 4);
+		float *q = flow_faces.ptrw();
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				q[i * 4 + 0] = (at(x + 1, z + 1) - at(x + 1, z)) / dz; // +x face: dpsi/dz
+				q[i * 4 + 1] = -(at(x + 1, z + 1) - at(x, z + 1)) / dx; // +z face: -dpsi/dx
+				q[i * 4 + 2] = (at(x, z + 1) - at(x, z)) / dz; // -x face
+				q[i * 4 + 3] = -(at(x + 1, z) - at(x, z)) / dx; // -z face
+			}
+		}
+		for (int k = 0; k < (int)flow_faces.size(); k++) {
+			if (!Math::is_finite(q[k])) {
+				q[k] = 0.0f;
+			}
+		}
+	}
+	_send_flow_to_solver();
 	flow_image = Image::create_from_data(n, n, false, Image::FORMAT_RGF, bytes);
 	if (flow_texture.is_valid() && flow_texture->get_width() == n && flow_texture->get_height() == n) {
 		flow_texture->update(flow_image);
@@ -1265,8 +1389,9 @@ void PhysXWaterSurface3D::_bake_flow() {
 }
 
 Vector2 PhysXWaterSurface3D::_flow_at(float p_x, float p_z) const {
+	const Vector2 live = live_flow ? _live_flow_at(p_x, p_z) : Vector2();
 	if (flow_cells.is_empty()) {
-		return current;
+		return current + live;
 	}
 	const int n = grid_resolution;
 	const float gx = (p_x / active_domain_size.x + 0.5f) * n - 0.5f;
@@ -1280,7 +1405,7 @@ Vector2 PhysXWaterSurface3D::_flow_at(float p_x, float p_z) const {
 	const Vector2 *f = flow_cells.ptr();
 	const Vector2 v = f[z0 * n + x0].lerp(f[z0 * n + x1], fx).lerp(f[z1 * n + x0].lerp(f[z1 * n + x1], fx), fz);
 	const float out = Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_x / active_domain_size.x), Math::abs(p_z / active_domain_size.y)));
-	return v.lerp(current, out);
+	return (v + live).lerp(current, out);
 }
 
 // The shader's flow_hash() / flow_value_noise(), for the same phase noise on the CPU.
@@ -1568,6 +1693,7 @@ void PhysXWaterSurface3D::_rebuild() {
 	water_material->set_shader_parameter("choppiness", choppiness);
 	water_material->set_shader_parameter("per_pixel_normals", normal_mode == NORMAL_MODE_PER_PIXEL);
 	flow_cells.clear(); // solved again for the new square once its seabed is known (_configure_solver())
+	cached_live_velocity.clear();
 	_update_flow_material();
 
 	// NOTIFICATION_INTERNAL_PHYSICS_PROCESS fires in the editor too, not just
@@ -1700,13 +1826,14 @@ void PhysXWaterSurface3D::_configure_solver() {
 }
 
 void PhysXWaterSurface3D::_detach_textures() {
-	const Ref<Texture2DRD> textures[] = { ripple_height_tex, ocean_height_tex, ocean_fade_tex, shore_depth_tex, ocean_disp_tex, ocean_deriv_tex, ocean_foam_tex, shore_foam_tex, swash_tex, caustics_texture };
+	const Ref<Texture2DRD> textures[] = { ripple_height_tex, ocean_height_tex, ocean_fade_tex, shore_depth_tex, ocean_disp_tex, ocean_deriv_tex, ocean_foam_tex, shore_foam_tex, swash_tex, caustics_texture, live_flow_texture };
 	for (const Ref<Texture2DRD> &texture : textures) {
 		if (texture.is_valid()) {
 			texture->set_texture_rd_rid(RID());
 		}
 	}
 	textures_bound = false; // rebound once the solver's (new) textures exist
+	_update_flow_material(); // (the baked flow until then)
 }
 
 void PhysXWaterSurface3D::_update_mesh_offset() {
@@ -1847,6 +1974,10 @@ void PhysXWaterSurface3D::_bind_textures() {
 		ocean_foam_tex.instantiate();
 	}
 	ocean_foam_tex->set_texture_rd_rid(solver.get_ocean_foam_texture_rd_rid());
+	if (live_flow_texture.is_null()) {
+		live_flow_texture.instantiate();
+	}
+	live_flow_texture->set_texture_rd_rid(solver.get_velocity_texture_rd_rid());
 	if (shore_foam_tex.is_null()) {
 		shore_foam_tex.instantiate();
 	}
@@ -1880,6 +2011,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 		water_material->set_shader_parameter("swash_tex", swash_tex);
 	}
 	textures_bound = true;
+	_update_flow_material(); // the live flow's texture exists now
 }
 
 void PhysXWaterSurface3D::_refresh_cpu_cache() {
@@ -1897,6 +2029,9 @@ void PhysXWaterSurface3D::_refresh_cpu_cache() {
 		cached_ripple_time = ripple_time;
 	}
 	cached_ripple_height = ripple;
+	if (live_flow) {
+		solver.get_velocity_grid(cached_live_velocity);
+	}
 	Vector<float> ocean;
 	Vector<float> ocean_dx;
 	double ocean_time = cached_ocean_time;

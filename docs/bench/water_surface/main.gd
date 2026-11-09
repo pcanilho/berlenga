@@ -6,6 +6,7 @@ extends Node3D
 #   --view=beach    the shore from above: shallows, swash and the sea beyond (default)
 #   --view=under    looking down into the shallows, where the floor shows through
 #   --view=river    from above, the rock standing out of the water (with --current)
+#   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N      frames rendered before --out is saved (default 12)
@@ -13,8 +14,11 @@ extends Node3D
 #   --out=path.png  save the last frame and quit
 #   --debug=N       path tracing debug view (Environment.pathtracing_debug_mode)
 #   --water=param:value  a water shader parameter, e.g. --water=pathtraced_scattering:Vector3(0,0,0)
+#   --node=prop:value  a PhysXWaterSurface3D property (e.g. live_flow:false)
 #   --current=X,Z   a current in m/s (flow round the rocks, boxes drift)
 #   --flow-out=path.png  save the solved flow (speed as brightness, direction as hue) and quit
+#   --pt-from=N     rasterize until frame N, path trace from then on (a long settle at raster speed)
+#   --tracers=N     N white flecks floating on the surface, carried by sample_flow() (shows the flow)
 #   --seq=N         also save the N frames after --frames, as path_0000.png ... (for a GIF)
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
 #
@@ -29,9 +33,16 @@ var out := ""
 var debug_mode := 0
 var slope_deg := 5.0
 var water_params := {}
+var node_params := {}
 var current := Vector2.ZERO
 var flow_out := ""
 var seq := 0
+var tracers := 0
+var pt_from := 0
+var bench_env: Environment
+var tracer_mm: MultiMesh
+var tracer_pos := PackedVector3Array()
+var tracer_rng := RandomNumberGenerator.new()
 var n := 0
 var water: Node3D
 
@@ -50,10 +61,15 @@ func _ready() -> void:
 			current = Vector2(float(c[0]), float(c[1]))
 		elif a.begins_with("--flow-out="): flow_out = a.substr(11)
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
+		elif a.begins_with("--tracers="): tracers = int(a.substr(10))
+		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
 		elif a.begins_with("--water="):
 			var wkv := a.substr(8).split(":", true, 1)
 			water_params[wkv[0]] = str_to_var(wkv[1])
+		elif a.begins_with("--node="):
+			var nkv := a.substr(7).split(":", true, 1)
+			node_params[nkv[0]] = str_to_var(nkv[1])
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":", true, 1)
 			ProjectSettings.set_setting(kv[0], str_to_var(kv[1]))
@@ -66,7 +82,8 @@ func _ready() -> void:
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.tonemap_mode = Environment.TONE_MAPPER_AGX
-	env.pathtracing_enabled = not raster
+	env.pathtracing_enabled = not raster and pt_from <= 0
+	bench_env = env
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = bounces
 	env.pathtracing_debug_mode = debug_mode
@@ -108,6 +125,8 @@ func _ready() -> void:
 	water.set("choppiness", 1.0)
 	water.set("render_extent", 600.0)
 	water.set("current", current)
+	for k in node_params:
+		water.set(k, node_params[k])
 	add_child(water)
 	var wm: ShaderMaterial = water.call("get_water_material")
 	for k in water_params:
@@ -144,6 +163,8 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(0, 3.5, 5.0), Vector3(0, -1.0, -1.5))
 		"river":
 			cam.look_at_from_position(Vector3(-1.0, 9.0, 1.0), Vector3(-4.0, -1.0, -7.0))
+		"wake":
+			cam.look_at_from_position(Vector3(1.0, 16.0, -9.0), Vector3(1.0, 0.0, -9.01))
 		_:
 			cam.look_at_from_position(Vector3(0, 4.5, 12.0), Vector3(0, -0.5, -6.0))
 
@@ -175,8 +196,51 @@ func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material) -> 
 	add_child(body)
 
 
+func _tracer_spawn(p_anywhere: bool) -> Vector3:
+	# Streaklines: released along lanes 0.5 m apart, as dye from a row of nozzles upstream.
+	var x := tracer_rng.randf_range(-16.0, 8.0) if p_anywhere else tracer_rng.randf_range(-17.0, -16.5)
+	var lane := tracer_rng.randi_range(0, 20)
+	return Vector3(x, 0.0, -14.0 + 0.5 * lane + tracer_rng.randf_range(-0.04, 0.04))
+
+
+func _tracers_step(p_dt: float) -> void:
+	if tracers <= 0:
+		return
+	if tracer_mm == null:
+		tracer_rng.seed = 7
+		var quad := QuadMesh.new()
+		quad.size = Vector2(0.12, 0.12)
+		quad.orientation = PlaneMesh.FACE_Y
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = Color(1.0, 0.95, 0.6)
+		quad.material = mat
+		tracer_mm = MultiMesh.new()
+		tracer_mm.transform_format = MultiMesh.TRANSFORM_3D
+		tracer_mm.mesh = quad
+		tracer_mm.instance_count = tracers
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = tracer_mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mmi)
+		for i in tracers:
+			tracer_pos.push_back(_tracer_spawn(true))
+	for i in tracers:
+		var p := tracer_pos[i]
+		var f: Vector3 = water.call("sample_flow", p)
+		p += f * p_dt
+		if p.x > 9.0 or p.z < -16.0 or p.z > -2.0 or f.length() < 0.02:
+			p = _tracer_spawn(false)
+		p.y = float(water.call("sample_height", p)) + 0.03
+		tracer_pos[i] = p
+		tracer_mm.set_instance_transform(i, Transform3D(Basis(), p))
+
+
 func _process(_delta: float) -> void:
 	n += 1
+	if pt_from > 0 and n == pt_from:
+		bench_env.pathtracing_enabled = true
+	_tracers_step(1.0 / 30.0)
 	if flow_out != "" and n >= frames:
 		# The flow as the surface samples it, over the simulated square (40 m), 10 cm a pixel.
 		var size := 400
@@ -189,6 +253,15 @@ func _process(_delta: float) -> void:
 				var v := Vector2(f.x, f.z)
 				vis.set_pixel(x, y, Color.from_hsv(fposmod(v.angle() / TAU, 1.0), 0.8, clampf(v.length() / top, 0.0, 1.0)))
 		vis.save_png(flow_out)
+		# The flow at every cell centre of the square (160 a side), as float pairs, for a closer look.
+		var cells := PackedFloat32Array()
+		for z in 160:
+			for x in 160:
+				var f: Vector3 = water.call("sample_flow", Vector3(-20.0 + 0.25 * (x + 0.5), 0.0, -20.0 + 0.25 * (z + 0.5)))
+				cells.push_back(f.x)
+				cells.push_back(f.z)
+		var fa := FileAccess.open(flow_out.get_basename() + "_cells.bin", FileAccess.WRITE)
+		fa.store_buffer(cells.to_byte_array())
 		get_tree().quit()
 		return
 	if out != "" and seq > 0 and n >= frames and n < frames + seq:
