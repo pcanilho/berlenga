@@ -835,6 +835,38 @@ speeds it up past the rock's sides and slows it in front and behind.
 wave over a submerged boulder and no hydraulic jump. Those need the shallow water equations with
 their advection term: the live window (next).
 
+## Step 4d: the live window on a river (9 Nov)
+
+The design above put the live flow in the river's strip coordinates. Built instead on a world
+square, because the solver, its textures, readback, foam and body coupling already exist for
+`PhysXWaterSurface3D` (step 3c) and work unchanged:
+
+- **The same solver.** `PhysXRiver3D` owns a `WaterSolver` (Chentanez and Müller 2010's
+  heightfield shallow water, water_ripple.glsl) on a square of `live_domain_size` (48 m) and
+  `live_grid_resolution` (192) round the point of the river the camera looks at, or round
+  `live_follow`. Its smallest ocean layer runs with zero amplitude (a river has no wind sea).
+- **Fed from the river.** Each cell's still depth is the river's depth there (cells off the
+  river are walls); the baked face fluxes are differences of the river's stream function (step
+  4c) at cell corners, so the baked flow enters the live solve divergence-free and, left alone,
+  stays put. The river's psi grows towards its left bank, the ocean's the other way, so it goes in
+  negated. Moving a quarter of the square re-centres it and restarts it from the baked flow.
+- **On a sloping surface.** The solver carries only the disturbance on the river's own surface:
+  gravity and bed friction balance in the baked flow, so the live part needs neither. What it
+  adds by itself is the velocity head, `v^2 / 2g`, that Manning's normal depth leaves out: a
+  tilt of 10 to 25 cm across the window where the river speeds up. Kept, that would step the
+  surface at the window's edge and slide with it, so the window's mean plane (least squares over
+  its wet cells, refitted at each readback) is taken out and only local motion stays.
+- **What it gives.** Wall friction along rocks separates the flow into shear layers that roll
+  up: behind each rock a recirculation bubble, then within 10 to 20 s a meandering wake (the start
+  of a von Kármán street), drawn by the live flow foam (`flow_foam`, 0.25 by default on a river,
+  since a river runs fast everywhere). The shader reads the live height (vertex rise and per-pixel
+  slope), the total velocity (ripples and foam ride it) and the live foam; `sample_height()` and
+  `sample_flow()` add the read-back live parts, so floaters swirl in the eddies, and floating
+  bodies push the live water as on the sea.
+- **Limits.** A river's source or mouth inside the window has no flux in or out there (water
+  piles at the end); joins to lakes and the sea come next and give the mouth somewhere to go.
+  Past the square's edge the baked flow carries on.
+
 ## The camera under water: research (9 Nov)
 
 ### What the fork has today
