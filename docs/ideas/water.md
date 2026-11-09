@@ -867,6 +867,49 @@ square, because the solver, its textures, readback, foam and body coupling alrea
   piles at the end); joins to lakes and the sea come next and give the mouth somewhere to go.
   Past the square's edge the baked flow carries on.
 
+## Step 4e: joins to lakes, the sea and other rivers (9 Nov)
+
+**What others do.** Unreal's water bodies are meant to connect: a river's last spline point sits
+on the lake or ocean, and "River to Lake" / "River to Ocean" transition materials blend the
+river's surface into the other body's over the overlap; all bodies share one water mesh. Crest
+joins lakes with a river by height inputs over a global sea. Hydraulics adds three things:
+
+- **Level pool / backwater.** A river can't run below the water it flows into: near the mouth the
+  water ponds back until its own normal depth rises above that level (the M1 backwater curve of
+  gradually varied flow, Chow 1959; the level pool is its usual first approximation).
+- **The plume.** Outflow into still water is a turbulent jet (Rajaratnam 1976, Turbulent Jets): a
+  potential core a few widths long at the mouth speed, then a centreline speed falling as
+  `x^(-1/2)` while the half-width grows by about 0.1 per metre, a Gaussian profile across; in
+  shallow water bed friction wears it down over about `2h / c_f` (Giger, Dracos and Jirka 1991,
+  shallow jets). River plumes at sea add buoyancy (Horner-Devine, Hetland and MacDonald 2015);
+  not modelled.
+- **Confluences.** Below a junction the discharges add (continuity); Best 1987's confluence zones
+  (stagnation at the corner, flow deflection, a separation zone below the side bank, a shear layer
+  between the two streams) are inertial, so they belong to the live window.
+
+**Built.**
+- `mouth_target` on `PhysXRiver3D`: a `PhysXWaterSurface3D` (lake or sea) or another
+  `PhysXRiver3D`. The mouth is the first section over that water whose own surface has come down
+  to its level; the river's surface never falls below that level (level pool), and past the mouth
+  the ribbon fades out over `mouth_blend` (6 m) into the other water, foam with it.
+- Into a lake or the sea: the river registers its mouth (`set_inflow()`: point, heading, width,
+  discharge). The water surface bakes each inflow as Rajaratnam's plane jet over its simulated
+  square into a plume texture added to its flow: waves and foam ride it, `sample_flow()` includes
+  it, so floaters are carried out from the mouth. The live water does not simulate the plume.
+- Into another river: the main river adds the tributary's discharge from the join down
+  (`get_discharge_at()`), so it runs deeper or faster below it (Manning with the new discharge),
+  and its stream function steps by that discharge on the bank the tributary joins from. The
+  tributary takes the main river's surface at the join as its level; when the main river is
+  rebuilt it re-reads it (only a change over 1 cm wakes it, so the two settle).
+- Bench: `docs/bench/river --joins` (a lake basin at the bottom of the valley and a stony creek
+  joining below the step), `--view=joins|mouth`. On it the main river carries 6 m3/s down to the
+  junction and 8 below it, ponds to the lake level about 2 m before the shore, and its plume still
+  runs at about 1.6 m/s 20 m out into the lake.
+
+**Not yet.** A lake's outlet (a river whose source is a lake's shore) works by drawing the river from
+there, but the lake does not drain towards it. Lakes have no level budget (inflow does not raise
+them).
+
 ## The camera under water: research (9 Nov)
 
 ### What the fork has today

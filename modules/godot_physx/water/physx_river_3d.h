@@ -72,6 +72,9 @@ public:
 		LocalVector<float> across_at; // speed towards the left bank per cross sample
 		LocalVector<float> foam_at; // white water per cross sample
 		LocalVector<float> psi_at; // stream function (m^3/s from the right bank) per cross sample
+		float discharge = 0.0f; // m^3/s here: the river's own plus tributaries joined upstream
+		float psi_right = 0.0f; // psi on the right bank (lowered by tributaries joining from the right)
+		float mouth_fade = 1.0f; // 1 on the river, fading to 0 past its mouth into the water it joins
 	};
 
 private:
@@ -119,6 +122,21 @@ private:
 	Vector3 live_tilt; // the window's mean plane (h0, dh/dx, dh/dz), taken out
 	int live_refresh = 0;
 
+	// Joins: where the river ends (a lake, the sea, or another river), and the
+	// rivers flowing into this one.
+	NodePath mouth_target;
+	float mouth_blend = 6.0f; // m past the shoreline over which the ribbon fades into the water it joins
+	struct Tributary {
+		ObjectID river;
+		Vector3 at; // world, its mouth
+		float s = 0.0f; // where it joins this river (found on each build)
+		float discharge = 0.0f;
+		bool from_right = false;
+	};
+	LocalVector<Tributary> tributaries;
+	ObjectID mouth_id; // what this river last registered with
+	float mouth_level_seen = -Math::INF; // the target river's surface at the join, last build
+
 	MeshInstance3D *mesh_instance = nullptr;
 	LocalVector<Section> sections;
 	bool build_pending = false;
@@ -137,6 +155,10 @@ private:
 	void _live_stop();
 	void _live_material();
 	void _live_fit_tilt();
+	Node *_mouth_node() const;
+	void _register_mouth();
+	void _unregister_mouth();
+	void _on_target_rebuilt();
 	Vector2 _live_velocity_at(const Vector3 &p_world) const;
 	float _live_height_at(const Vector3 &p_world) const;
 	bool _ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y, uint32_t p_mask) const;
@@ -212,6 +234,15 @@ public:
 	// A floating body pushing the live water (as PhysXWaterSurface3D::submit_sphere()).
 	void submit_sphere(int p_owner, const Vector3 &p_world_pos, float p_radius, float p_strength = 1.0f);
 	void clear_sphere(int p_owner);
+	void set_mouth_target(const NodePath &p_path);
+	NodePath get_mouth_target() const { return mouth_target; }
+	void set_mouth_blend(float p_blend);
+	float get_mouth_blend() const { return mouth_blend; }
+	// A river joining this one at p_world (its mouth) adds p_discharge downstream of there.
+	void set_tributary(ObjectID p_river, const Vector3 &p_world, float p_discharge);
+	void clear_tributary(ObjectID p_river);
+	// Discharge (m^3/s) at a distance along the river, tributaries included.
+	float get_discharge_at(float p_s) const;
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
 

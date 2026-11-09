@@ -247,14 +247,20 @@ uniform vec2 current = vec2(0.0);
 uniform float flow_period = 2.0;
 uniform bool flow_foam_live = false; // flow_tex is the live velocity, with flow foam in b
 
+// Plumes of rivers flowing in (RG m/s over the simulated square), added on top.
+uniform sampler2D plume_tex : hint_default_black, filter_linear, repeat_disable;
+uniform bool plume_enabled = false;
+
 vec2 flow_at(vec2 world_xz) {
-	if (!flow_baked) {
-		return current;
-	}
 	vec2 rel = world_xz - grid_center;
 	vec2 a = abs(rel / ripple_domain_size);
 	vec2 cuv = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	return mix(texture(flow_tex, cuv).rg, current, smoothstep(0.46, 0.5, max(a.x, a.y)));
+	float outside = smoothstep(0.46, 0.5, max(a.x, a.y));
+	vec2 f = flow_baked ? mix(texture(flow_tex, cuv).rg, current, outside) : current;
+	if (plume_enabled) {
+		f += texture(plume_tex, cuv).rg * (1.0 - outside);
+	}
+	return f;
 }
 
 float flow_hash(vec2 p) {
@@ -1042,6 +1048,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("submit_sphere", "owner", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_sphere, DEFVAL(1.0f));
 	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &PhysXWaterSurface3D::clear_sphere);
 	ClassDB::bind_method(D_METHOD("submit_impulse", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_impulse);
+	ClassDB::bind_method(D_METHOD("set_inflow", "owner", "at", "direction", "width", "discharge"), &PhysXWaterSurface3D::set_inflow);
+	ClassDB::bind_method(D_METHOD("clear_inflow", "owner"), &PhysXWaterSurface3D::clear_inflow);
 
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_VERTEX);
@@ -1220,6 +1228,7 @@ void PhysXWaterSurface3D::recenter(Vector3 p_world_position) {
 		water_material->set_shader_parameter("grid_center", grid_center);
 	}
 	solver.recenter(grid_center);
+	_bake_plumes();
 	cached_ripple_height.clear(); // (the old square's heights are not this one's)
 	previous_ripple_height.clear();
 	frames_since_refresh = REFRESH_EVERY_FRAMES;
@@ -1348,6 +1357,134 @@ void PhysXWaterSurface3D::_update_flow_material() {
 	water_material->set_shader_parameter("flow_baked", live || baked);
 	water_material->set_shader_parameter("flow_foam_live", live && flow_foam > 0.0f);
 	water_material->set_shader_parameter("flow_tex", live ? Variant(live_flow_texture) : (baked ? Variant(flow_texture) : Variant()));
+	const bool plumes = !plume_cells.is_empty() && plume_texture.is_valid();
+	water_material->set_shader_parameter("plume_enabled", plumes);
+	water_material->set_shader_parameter("plume_tex", plumes ? Variant(plume_texture) : Variant());
+}
+
+void PhysXWaterSurface3D::set_inflow(int64_t p_owner, const Vector3 &p_at, const Vector3 &p_direction, float p_width, float p_discharge) {
+	Inflow f;
+	f.owner = p_owner;
+	f.at = p_at;
+	f.direction = Vector3(p_direction.x, 0.0f, p_direction.z).normalized();
+	f.width = MAX(p_width, 0.1f);
+	f.discharge = MAX(p_discharge, 0.0f);
+	bool found = false;
+	for (Inflow &e : inflows) {
+		if (e.owner == p_owner) {
+			e = f;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		inflows.push_back(f);
+	}
+	_bake_plumes();
+}
+
+void PhysXWaterSurface3D::clear_inflow(int64_t p_owner) {
+	for (uint32_t k = 0; k < inflows.size(); k++) {
+		if (inflows[k].owner == p_owner) {
+			inflows.remove_at(k);
+			_bake_plumes();
+			return;
+		}
+	}
+}
+
+// A river's outflow as a turbulent plane jet (Rajaratnam 1976, Turbulent
+// Jets): a potential core about 3 river widths long at the mouth speed, then a
+// centreline speed falling as x^(-1/2) while its half-width grows by 0.1 per
+// metre, a Gaussian profile across, and the bed's friction wearing it down
+// over 2h / c_f in shallow water (Giger, Dracos and Jirka 1991). The plume is
+// carried on top of the flow (the waves and foam ride it, floating bodies
+// drift in it); the live water does not simulate it.
+void PhysXWaterSurface3D::_bake_plumes() {
+	const int n = grid_resolution;
+	plume_cells.clear();
+	if (inflows.is_empty() || n < 4) {
+		_update_flow_material();
+		return;
+	}
+	const float dx = active_domain_size.x / n;
+	const float dz = active_domain_size.y / n;
+	plume_cells.resize(n * n);
+	Vector2 *out = plume_cells.ptrw();
+	const bool has_depth = cell_depth.size() == n * n;
+	auto depth_at_cell = [&](int x, int z) -> float {
+		return has_depth ? cell_depth[z * n + x] : depth;
+	};
+	for (int i = 0; i < n * n; i++) {
+		out[i] = Vector2();
+	}
+	for (const Inflow &f : inflows) {
+		// Depth at the mouth, for its speed.
+		const int mx = CLAMP((int)Math::floor(((f.at.x - grid_center.x) / active_domain_size.x + 0.5f) * n), 0, n - 1);
+		const int mz = CLAMP((int)Math::floor(((f.at.z - grid_center.y) / active_domain_size.y + 0.5f) * n), 0, n - 1);
+		const float h0 = CLAMP(depth_at_cell(mx, mz), 0.3f, 50.0f);
+		const float u0 = MIN(f.discharge / (f.width * h0), 6.0f);
+		const float core = 3.0f * f.width;
+		const Vector2 dir(f.direction.x, f.direction.z);
+		const Vector2 perp(-dir.y, dir.x);
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const float h = depth_at_cell(x, z);
+				if (!(h > 0.05f)) {
+					continue;
+				}
+				const Vector2 p(grid_center.x + (x + 0.5f - 0.5f * n) * dx - f.at.x, grid_center.y + (z + 0.5f - 0.5f * n) * dz - f.at.z);
+				const float along = p.dot(dir);
+				if (along < -0.5f * f.width || along > 80.0f * f.width) {
+					continue;
+				}
+				const float across = p.dot(perp);
+				const float a = MAX(along, 0.0f);
+				const float half = 0.5f * f.width + 0.1f * MAX(a - core, 0.0f);
+				const float um = u0 * (a < core ? 1.0f : Math::sqrt(core / a));
+				const float cf = 9.81f * 0.03f * 0.03f / Math::pow(MAX(h, 0.1f), 1.0f / 3.0f);
+				const float wear = Math::exp(-cf * a / (2.0f * MAX(h, 0.1f)));
+				const float r = across / half;
+				const float u = um * Math::exp(-0.693f * r * r) * wear * (along < 0.0f ? 1.0f + along / (0.5f * f.width) : 1.0f);
+				// Spreading: a little outward with the growing width.
+				out[z * n + x] += dir * u + perp * (u * 0.1f * CLAMP(r, -2.0f, 2.0f) * 0.5f);
+			}
+		}
+	}
+	PackedByteArray bytes;
+	bytes.resize(n * n * 8);
+	float *b = (float *)bytes.ptrw();
+	for (int i = 0; i < n * n; i++) {
+		b[i * 2] = out[i].x;
+		b[i * 2 + 1] = out[i].y;
+	}
+	Ref<Image> img = Image::create_from_data(n, n, false, Image::FORMAT_RGF, bytes);
+	if (plume_texture.is_valid() && plume_texture->get_width() == n && plume_texture->get_height() == n) {
+		plume_texture->update(img);
+	} else {
+		plume_texture = ImageTexture::create_from_image(img);
+	}
+	_update_flow_material();
+}
+
+Vector2 PhysXWaterSurface3D::_plume_at(float p_x, float p_z) const {
+	const int n = grid_resolution;
+	if (plume_cells.size() != n * n) {
+		return Vector2();
+	}
+	const float gx = (p_x / active_domain_size.x + 0.5f) * n - 0.5f;
+	const float gz = (p_z / active_domain_size.y + 0.5f) * n - 0.5f;
+	if (gx < -0.5f || gz < -0.5f || gx > n - 0.5f || gz > n - 0.5f) {
+		return Vector2();
+	}
+	const int x0 = CLAMP((int)Math::floor(gx), 0, n - 1);
+	const int z0 = CLAMP((int)Math::floor(gz), 0, n - 1);
+	const int x1 = MIN(x0 + 1, n - 1);
+	const int z1 = MIN(z0 + 1, n - 1);
+	const float fx = CLAMP(gx - x0, 0.0f, 1.0f);
+	const float fz = CLAMP(gz - z0, 0.0f, 1.0f);
+	const Vector2 *f = plume_cells.ptr();
+	return f[z0 * n + x0].lerp(f[z0 * n + x1], fx).lerp(f[z1 * n + x0].lerp(f[z1 * n + x1], fx), fz);
 }
 
 // The flow over the simulated square, round dry ground and rocks (docs/ideas/water.md, step 3 research):
@@ -1358,6 +1495,7 @@ void PhysXWaterSurface3D::_update_flow_material() {
 // round it. Along the square's edge psi integrates the current's flux, its inflow and outflow scaled
 // to match so the bake conserves the water. Solved once (SOR) per seabed or current change.
 void PhysXWaterSurface3D::_bake_flow() {
+	_bake_plumes();
 	flow_cells.clear();
 	flow_faces.clear();
 	const int n = grid_resolution;
@@ -1665,7 +1803,7 @@ void PhysXWaterSurface3D::_bake_flow() {
 }
 
 Vector2 PhysXWaterSurface3D::_flow_at(float p_x, float p_z) const {
-	const Vector2 live = live_flow ? _live_flow_at(p_x, p_z) : Vector2();
+	const Vector2 live = (live_flow ? _live_flow_at(p_x, p_z) : Vector2()) + _plume_at(p_x, p_z);
 	if (flow_cells.is_empty()) {
 		return current + live;
 	}
