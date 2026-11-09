@@ -288,7 +288,14 @@ public:
 	// makes rocks shed eddies. 0 = slippery walls.
 	void set_wall_friction(float p_friction);
 	float get_wall_friction() const { return wall_friction; }
-	// The live flow's velocity at cell centres (RG m/s), or null when off.
+	// White water the live flow makes where it runs fast (rapids, chutes)
+	// and shears (wakes, eddies, the edges of a jet); 0 = none. It is carried
+	// with the water and fades over flow_foam_persistence seconds.
+	void set_flow_foam(float p_strength);
+	float get_flow_foam() const { return flow_foam; }
+	void set_flow_foam_persistence(float p_seconds);
+	float get_flow_foam_persistence() const { return flow_foam_persistence; }
+	// The live flow's velocity at cell centres (RG m/s, B flow foam), or null when off.
 	Ref<Texture2D> get_live_flow_texture() const;
 	// Solves the flow again (after the seabed or the current changed; done
 	// automatically for both).
@@ -375,6 +382,8 @@ private:
 	PackedVector2Array flow_cells;
 	bool live_flow = true;
 	float wall_friction = 1.5f;
+	float flow_foam = 1.0f;
+	float flow_foam_persistence = 8.0f;
 	PackedFloat32Array flow_faces; // baked face fluxes sent to the solver (4 a cell), empty = none
 	Vector<float> cached_live_velocity; // live face velocities read back (2 a cell)
 	Ref<Texture2DRD> live_flow_texture;
