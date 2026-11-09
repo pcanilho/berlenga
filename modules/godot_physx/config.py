@@ -57,6 +57,7 @@ def get_doc_classes():
         "PhysXVehicleWheel3D",
         "PhysXMotorcycle3D",
         "PhysXTank3D",
+        "PhysXRiver3D",
         "PhysXWaterSurface3D",
         "PhysXBuoyancy3D",
         "PhysXBoat3D",

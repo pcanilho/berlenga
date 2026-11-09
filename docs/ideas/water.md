@@ -736,6 +736,44 @@ input is the same cross-section that 2 builds.
 5. Live flow window in the strip (solver reused); joins to a lake or the sea.
 6. Option: the generated channel (choice 2). Later: terrain carving adapter (choice 3).
 
+## Step 4a as built: the river node (9 Nov)
+
+`PhysXRiver3D` (a `Path3D`): curve from source to mouth, `widths` and optional `depths` per curve
+point, one `discharge`, Manning `roughness`, `max_slope`, `snap_to_ground`.
+
+- **Ground.** With `snap_to_ground` the river raycasts the static ground once per cross-section
+  sample (every `step_length` along, `cross_segments` across), the same way the ocean measures its
+  seabed. It sits on whatever ground is there: terrain, a mesh, a city canal.
+- **Surface.** Where no depth is given, the surface is the height at which the measured
+  cross-section carries the discharge: Manning's equation over the divided channel,
+  `Q = sum(d^(5/3) dn) S^(1/2) / n`, solved by bisection per section. `S` is the bed slope averaged
+  over about 10 m, leaving out steps steeper than `max_slope`; counting a fall in the average
+  drained the water either side of it to a film. Then a running minimum downstream, so it never
+  climbs, and drops steeper than `max_slope` are flagged as cascades: the ribbon itself becomes the
+  falling sheet.
+- **Flow.** Continuity across: each sample carries `Q d^(5/3) / sum(d^(5/3) dn)`, so the speed is
+  `Q d^(2/3) / sum(...)`: fastest over the deep middle, zero at the waterline, faster in narrows. In
+  the bench (6 m3/s, parabolic channel 6 m wide, 0.5% slope) that is about 1.8 m/s mean; floating
+  boxes drift downstream along the core.
+- **White water.** Froude number from the mean speed and mean depth,
+  `smoothstep(0.8, 1.6, Fr)` as in step 3d, and 1 at every cascade; carried downstream, fading as
+  `exp(-ds / (v persistence))`, so the foam trails 10 to 20 m below the fall. Across, it gathers in
+  the fast core; at a cascade it spans the river.
+- **Mesh and shader.** One ribbon, built on the CPU: UV = (arc length, distance across), UV2 = flow
+  (m/s), COLOR = depth, foam, fade past the banks. All three reach the path tracer's hit shader, so
+  the river needs no textures and is not affected by the displaced-shader issue. The shader runs
+  two-phase flowed ripples (value-noise slopes, three octaves, blended as surface gradients and
+  renormalised) that get rougher with speed, and the same flowed foam lace as the ocean. Under path
+  tracing it writes the same water medium as `PhysXWaterSurface3D` (IOR 1.33, absorption,
+  scattering), a little murkier by default.
+- **Buoyancy.** `PhysXBuoyancy3D` accepts a river as its water: height and flow come from
+  `sample_height()` / `sample_flow()`, which find the section from the curve's closest offset and
+  interpolate across.
+
+Not yet: the stream-function solve round rocks inside the river (a rock now only makes a dry patch
+in the cross-section), the live window, joins to lakes and the sea, the optional channel mesh, and
+carving terrain.
+
 ## Sources
 
 - Chentanez and Müller, Real-time Simulation of Large Bodies of Water with Small Scale Details, SCA

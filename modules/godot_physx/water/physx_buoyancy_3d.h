@@ -32,10 +32,11 @@
 
 #include "scene/3d/node_3d.h"
 
+class PhysXRiver3D;
 class PhysXWaterSurface3D;
 class RigidBody3D;
 
-// Floats its parent RigidBody3D on a PhysXWaterSurface3D. Sample points on
+// Floats its parent RigidBody3D on a PhysXWaterSurface3D or a PhysXRiver3D. Sample points on
 // the hull each carry a share of the hull's footprint: the water pushes each
 // one up by the weight of the water it displaces (density * g * area *
 // depth, up to hull_height), so the body settles at its real draft and
@@ -59,6 +60,7 @@ class PhysXBuoyancy3D : public Node3D {
 
 	// Resolved at runtime.
 	ObjectID water_id;
+	ObjectID river_id;
 	ObjectID wake_id; // a sibling PhysXWaterWake3D: its own dip doesn't count
 	PackedVector3Array points; // in use (explicit or generated)
 	float area = 1.0f;
@@ -70,6 +72,9 @@ class PhysXBuoyancy3D : public Node3D {
 	void _resolve();
 	void _find_wake();
 	void _physics_step();
+	bool _has_water() const;
+	float _height_at(const Vector3 &p_world_pos) const;
+	Vector3 _flow_at(const Vector3 &p_world_pos) const;
 
 protected:
 	void _notification(int p_what);
@@ -78,6 +83,7 @@ protected:
 public:
 	RigidBody3D *get_body() const;
 	PhysXWaterSurface3D *get_water_surface() const;
+	PhysXRiver3D *get_river() const;
 
 	void set_water_surface_path(const NodePath &p_path);
 	NodePath get_water_surface_path() const { return water_surface_path; }
