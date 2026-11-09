@@ -13,6 +13,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="clear_sphere">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<description>
+				Stops [param owner] pushing the live water.
+			</description>
+		</method>
 		<method name="get_carve_brushes" qualifiers="const">
 			<return type="Array" />
 			<param index="0" name="tile_size" type="float" default="64.0" />
@@ -26,6 +33,12 @@
 				The river's length along its path (m).
 			</description>
 		</method>
+		<method name="get_live_center" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				World XZ centre of the live window.
+			</description>
+		</method>
 		<method name="get_section" qualifiers="const">
 			<return type="Dictionary" />
 			<param index="0" name="index" type="int" />
@@ -37,6 +50,12 @@
 			<return type="int" />
 			<description>
 				The number of cross-sections (one every [member step_length]).
+			</description>
+		</method>
+		<method name="is_live_running" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether the live window is simulating (its compute solver has started).
 			</description>
 		</method>
 		<method name="rebuild">
@@ -71,6 +90,16 @@
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
 				Water surface height at a world position; [code]-INF[/code] off the river or over dry ground.
+			</description>
+		</method>
+		<method name="submit_sphere">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<param index="1" name="world_pos" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="strength" type="float" default="1.0" />
+			<description>
+				A floating body pushing the live water, as [method PhysXWaterSurface3D.submit_sphere]. [PhysXBuoyancy3D] calls it.
 			</description>
 		</method>
 	</methods>
@@ -108,11 +137,32 @@
 		<member name="discharge" type="float" setter="set_discharge" getter="get_discharge" default="2.0">
 			Water carried by the river (m³/s). A brook carries 0.1 to 1, a small river 5 to 50.
 		</member>
+		<member name="flow_foam" type="float" setter="set_flow_foam" getter="get_flow_foam" default="0.25">
+			White water made by the live window where the water runs fast and shears (as [member PhysXWaterSurface3D.flow_foam]); lower than the sea's, since a river runs fast everywhere. 0: none.
+		</member>
+		<member name="flow_foam_persistence" type="float" setter="set_flow_foam_persistence" getter="get_flow_foam_persistence" default="4.0">
+			Seconds the live window's white water lasts as the water carries it.
+		</member>
 		<member name="foam_persistence" type="float" setter="set_foam_persistence" getter="get_foam_persistence" default="4.0">
 			Seconds white water lasts as the current carries it downstream.
 		</member>
 		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
 			The physics layers measured as ground. Only static bodies count.
+		</member>
+		<member name="live_damping" type="float" setter="set_live_damping" getter="get_live_damping" default="0.05">
+			How fast the live part of the flow dies away (1/s). The baked flow never decays.
+		</member>
+		<member name="live_domain_size" type="float" setter="set_live_domain_size" getter="get_live_domain_size" default="48.0">
+			Side of the live window's square (m).
+		</member>
+		<member name="live_flow" type="bool" setter="set_live_flow" getter="get_live_flow" default="false">
+			Run the live window: a square of shallow-water simulation (the solver of [member PhysXWaterSurface3D.live_flow]) round the camera, fed the river's depth and flow. Rocks shed eddies and a meandering wake, and floating bodies swirl in them and disturb the water. The window's mean tilt (the velocity head the baked surface leaves out) is taken out, so only local motion shows. Outside the square the baked flow carries on.
+		</member>
+		<member name="live_follow" type="NodePath" setter="set_live_follow" getter="get_live_follow" default="NodePath(&quot;&quot;)">
+			A node the live window follows. Empty: the point on the river the current camera looks at.
+		</member>
+		<member name="live_grid_resolution" type="int" setter="set_live_grid_resolution" getter="get_live_grid_resolution" default="192">
+			Cells along each side of the live window.
 		</member>
 		<member name="max_slope" type="float" setter="set_max_slope" getter="get_max_slope" default="0.08">
 			Drops steeper than this (m per m) are cascades: the water falls down them instead of flowing.
@@ -128,6 +178,9 @@
 		</member>
 		<member name="step_length" type="float" setter="set_step_length" getter="get_step_length" default="1.0">
 			Distance (m) between cross-sections along the river.
+		</member>
+		<member name="wall_friction" type="float" setter="set_wall_friction" getter="get_wall_friction" default="1.5">
+			In the live window, how fast water running along a rock or bank is slowed (1/s). It makes the flow separate behind rocks and roll up into eddies.
 		</member>
 		<member name="water_material" type="ShaderMaterial" setter="set_water_material" getter="get_water_material">
 			The surface's material; created with the river shader if empty. Its parameters set the look in raster and under path tracing.

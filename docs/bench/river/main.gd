@@ -19,6 +19,7 @@ extends Node3D
 #   --debug=N        path tracing debug view (8 = albedo)
 #   --carve          no channel in the ground: the river carves its own (the bench applies its
 #                    brushes to the ground mesh, as a terrain deformer would)
+#   --live           the live window: shallow-water simulation round the rocks (eddies, live foam)
 #   --report         print the cross-sections and the boxes' positions
 #
 # Run with --fixed-fps 30.
@@ -33,6 +34,8 @@ var out := ""
 var seq := 0
 var report := false
 var carve := false
+var live := false
+var focus: Marker3D
 var ground_body: StaticBody3D
 var ground_heights := PackedFloat32Array()
 var debug_mode := 0
@@ -62,6 +65,7 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a == "--report": report = true
 		elif a == "--carve": carve = true
+		elif a == "--live": live = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -129,6 +133,13 @@ func _ready() -> void:
 	river.set("step_length", 0.5)
 	river.set("cross_segments", 24)
 	river.set("obstacle_collision_mask", 2)
+	if live:
+		focus = Marker3D.new()
+		focus.position = Vector3(_valley_x(-22.0), 0.0, -22.0)
+		add_child(focus)
+		river.set("live_flow", true)
+		river.set("live_domain_size", 32.0)
+		river.set("live_grid_resolution", 160)
 	if carve:
 		river.set("carve", true)
 		river.set("carve_depth", 1.2)
@@ -136,6 +147,8 @@ func _ready() -> void:
 	for k in river_params:
 		river.set(k, river_params[k])
 	add_child(river)
+	if live:
+		river.set("live_follow", river.get_path_to(focus))
 	if carve:
 		river.set("base_height_source", river.get_path_to(self))
 	await get_tree().physics_frame
@@ -151,14 +164,7 @@ func _ready() -> void:
 		for i in range(0, river.call("get_section_count"), 8):
 			var s: Dictionary = river.call("get_section", i)
 			print("s=%5.1f surface=%6.2f slope=%.3f speed=%.2f foam=%.2f cascade=%s" % [s.s, s.surface, s.slope, s.speed, s.foam, s.cascade])
-		# Across the river beside the middle rock: along and across speeds, and the white water.
-		for zq in [-34.0, -31.0, -28.0, -26.0, -24.0, -22.0, -20.0, -17.0, -14.0, -10.0]:
-			var line := "z=%5.1f" % zq
-			for k in range(-6, 7):
-				var p := Vector3(_valley_x(zq) + 0.5 * k, 0.0, zq)
-				var f: Vector3 = river.call("sample_flow", p)
-				line += " %4.1f/%+4.1f/%.2f/%.2f" % [f.length(), f.x, river.call("sample_foam", p), river.call("sample_depth", p)]
-			print(line)
+		_print_cross()
 
 	# Floating boxes, dropped upstream.
 	for i in 3:
@@ -290,6 +296,17 @@ func _checker(a: Color, b: Color) -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 
+# Across the river beside the rocks: speed, x velocity, white water, depth, height.
+func _print_cross() -> void:
+	for zq in [-34.0, -31.0, -28.0, -26.0, -24.0, -22.0, -20.0, -17.0, -14.0, -10.0]:
+		var line := "z=%5.1f" % zq
+		for k in range(-6, 7):
+			var p := Vector3(_valley_x(zq) + 0.5 * k, 0.0, zq)
+			var f: Vector3 = river.call("sample_flow", p)
+			line += " %4.1f/%+4.1f/%.2f/%+.2f" % [f.length(), f.x, river.call("sample_foam", p), river.call("sample_height", p)]
+		print(line)
+
+
 func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material, p_layers := 1) -> void:
 	var body := StaticBody3D.new()
 	body.collision_layer = p_layers
@@ -320,6 +337,9 @@ func _process(_delta: float) -> void:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out.get_basename() + "_%04d.png" % (n - frames))
 		return
+	if report and live and n == frames - 1:
+		print("live window, frame %d:" % n)
+		_print_cross()
 	if out != "" and n >= frames + seq:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)

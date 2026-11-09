@@ -1095,6 +1095,12 @@ faster past their sides and slows behind them; white water gathers on a rock's
 upstream face and trails from its sides. Rocks are found by the ground rays, or
 on the `obstacle_collision_mask` layers (needed with `carve`).
 
+**Live window.** With `live_flow` on, the shallow-water solver of the sea's
+live flow runs on a square (`live_domain_size`) round the camera, fed the
+river's depth and flow: rocks shed eddies and a meandering wake drawn by live
+foam (`flow_foam`), floaters swirl in them and push the water. Outside the
+square the baked flow carries on.
+
 **Carving.** With `carve` on, the river designs its own channel instead of
 needing one in the ground: a floor `carve_depth` below the uncarved ground that
 never climbs downstream (through a rise it cuts), banks sloping back up to the
