@@ -8,17 +8,17 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 
 ![1024 street lamps: NVIDIA-RTX/godot on the left keeps 64 of them, Berlenga on the right lights them all](docs/media/many-lights.jpg)
 
-*1024 lights, 16 samples per pixel. Left: NVIDIA-RTX/godot. Right: Berlenga. Images here are raw path tracer output, mostly CPU-rendered, with no denoiser or Ray Reconstruction.*
+*1024 lights, 16 samples per pixel. Left: NVIDIA-RTX/godot. Right: Berlenga. Images are raw path tracer output, mostly CPU-rendered, without denoiser or Ray Reconstruction.*
 
 ## At a glance
 
-- **Many lights**: 4096 path-traced lights (upstream 64), emissive surfaces count as lights.
+- **Lights**: 4096 path-traced lights (upstream 64); emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
-- **Materials**: clearcoat, back lighting and thin-glass transmission in the path tracer; textures filter like raster.
-- **Water**: refraction, depth tint, murky water, caustics, currents, white water, rivers from a path, a path-traced ocean and a camera that dives under water.
-- **Exposure**: histogram metering and local exposure that keep night scenes dark.
-- **Physics**: PhysX 5 next to Jolt, with cloth, tearing, destruction and path-traced smoke.
-- **Open worlds**: far-origin precision, persistent ray tracing instances, mesh LOD in the tracer.
+- **Materials**: clearcoat, back lighting, thin-glass transmission; textures filter like raster.
+- **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers, camera under water.
+- **Exposure**: histogram metering, dark-scene key, local exposure.
+- **Physics**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
+- **Open worlds**: camera-relative tracing, persistent instances, culling, mesh LOD.
 
 ## What Berlenga adds
 
@@ -33,113 +33,84 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Lit raster transparents and rain (`rendering/pathtracing/max_transparency_layers` 0), still traced in reflections.
 
 ### Materials
-- **Back lighting** (`rendering/pathtracing/back_lighting`): light passes through leaves, paper and curtains, back light texture included, from lights and bounces, into coloured shadows.
-- **Transmission** (new BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass passes light straight through, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.
-- **Clearcoat** (`rendering/pathtracing/clearcoat`): coated paint as raster shades it, coat texture included, with traced coat reflections.
-- Shaders writing `BACKLIGHT` or `TRANSMISSION` pass light into their shadows.
+- **Back lighting** (`rendering/pathtracing/back_lighting`): light through leaves, paper and curtains, with coloured shadows; back light texture.
+- **Transmission** (BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.
+- **Clearcoat** (`rendering/pathtracing/clearcoat`): matches raster, with traced coat reflections; coat texture.
+- Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
 <details><summary>Images: transmission, back lighting, clearcoat, layer textures</summary>
 
-![Green glass panes before coloured spheres: raster, path traced with transmission on (the spheres show through and the panes cast green-tinted light), and off (grey opaque panes, dark shadows)](docs/media/transmission.jpg)
+![Glass panes before coloured spheres: raster, path traced with transmission on, and off](docs/media/transmission.jpg)
 
-![Back-lit leaf cards and a red curtain: green and red light on the floor with back lighting on, plain shadows with it off](docs/media/back-lighting.jpg)
+*Transmission: the spheres show through and the floor gets green-tinted light.*
 
-![Red coated spheres: raster, path traced with clearcoat on (sharp coat highlights match raster), and off (dull)](docs/media/clearcoat.jpg)
+![Back-lit leaf cards and a red curtain, back lighting on and off](docs/media/back-lighting.jpg)
 
-![Checkered back light and transmission textures: raster casts plain shadows, the path tracer casts checkered coloured ones](docs/media/layer-textures.jpg)
+*Back lighting: green and red light on the floor.*
 
-Look at the floor under the glass and cards, the highlights on the spheres, and the checkered shadows.
+![Red coated spheres: raster, path traced with clearcoat on, and off](docs/media/clearcoat.jpg)
+
+*Clearcoat: sharp coat highlights, as in raster.*
+
+![Checkered back light and transmission textures, raster vs path traced](docs/media/layer-textures.jpg)
+
+*Layer textures: checkered coloured shadows.*
 
 </details>
 
 ### Water
-![A pool with a checkered floor and coloured posts: with refraction off the water is clear and the posts run straight; with it on the posts shift where they enter the water and the floor turns blue and darker with depth](docs/media/water-refraction.jpg)
+![A pool with a checkered floor and coloured posts, refraction off and on](docs/media/water-refraction.jpg)
 
-*Refraction off, then on: the posts shift where they enter the water and the floor darkens and tints with depth.*
+*Refraction off, then on: the posts shift at the surface and the floor darkens with depth.*
 
-- **Refraction** (`rendering/pathtracing/refraction`): water and glass blocks (Transmission, thin-walled off) bend light by their IOR, reflect it totally at grazing angles, and darken and tint with depth; glTF `KHR_materials_volume` and `KHR_materials_ior`.
-- **Murky water** (same setting): Transmission media scatter light (strength, colour, anisotropy; glTF `KHR_materials_scatter` draft); shaders can write `IOR`, `ABSORPTION` and `SCATTERING`.
+- **Refraction** (`rendering/pathtracing/refraction`): water and glass blocks bend light by their IOR, with total internal reflection and depth tint; glTF `KHR_materials_volume`, `KHR_materials_ior`.
+- **Murky water** (same setting): scattering media; `IOR`, `ABSORPTION` and `SCATTERING` in shaders; glTF `KHR_materials_scatter` draft.
+- **Caustics** (`rendering/pathtracing/caustics`): sunlight lines under rippled water.
+- **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
+- **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
+- **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
+- **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
+- **Rivers** (`PhysXRiver3D`: `discharge`, `roughness`, `max_slope`): drawn as a curve; finds its depth, never runs uphill, falls as cascades into white water.
+- **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
-<details><summary>Image: clear vs murky water</summary>
+<details><summary>Images and clips: murky water, caustics, ocean, currents, live flow, white water, rivers, under water</summary>
 
-![The same pool path traced with clear water and with murky water: in the murky one a green glow fills the deep end and the posts fade below the surface](docs/media/murky-water.jpg)
+![The pool with clear and with murky water](docs/media/murky-water.jpg)
 
-Look at the green glow filling the deep end.
+*Murky water: a green glow fills the deep end.*
 
-</details>
+![A rippled pool, caustics off and on](docs/media/caustics.jpg)
 
-- **Caustics** (`rendering/pathtracing/caustics`): sunlight gathers into moving lines on the floor under rippled water.
+*Caustics: bright lines on the pool floor.*
 
-<details><summary>Image: caustics off vs on</summary>
+![Ocean shallows with floating crates, raster vs path traced](docs/media/ocean.jpg)
 
-![A rippled pool path traced: with caustics off the floor is evenly lit; with them on bright wavy lines of sunlight cross the floor and posts](docs/media/caustics.jpg)
+*Ocean: sand and caustic light through the water.*
 
-Look at the bright lines on the pool floor.
+![Floating boxes drift on a current past a rock](docs/media/currents.gif)
 
-</details>
+*Currents: the boxes drift past the rock.*
 
-- **Path-traced ocean**: `PhysXWaterSurface3D` is real water under path tracing, bending light through the waves, tinting with depth, scattering blue in deep water and catching sun caustics on the seabed (material `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`; caustics via `rendering/pathtracing/caustics`).
+![Flecks carried past a rock, baked flow vs live flow](docs/media/live-flow.gif)
 
-<details><summary>Image: ocean shallows, raster vs path traced</summary>
+*Live flow: the streaks roll up into a wake behind the rock.*
 
-![Looking down into shallow waves with floating crates: raster shows a flat grey-blue surface; path traced shows the sand through the water with caustic light on it](docs/media/ocean.jpg)
+![Foam lines trailing a rock in a current](docs/media/white-water.gif)
 
-Look at the sand showing through the water and the caustic light on it.
+*White water: foam peels off both sides of the rock.*
 
-</details>
+![A river with a cascade, raster vs path traced](docs/media/river.jpg)
 
-- **Currents** (`PhysXWaterSurface3D` `current`, `flow_period`): water flows round rocks and along the shore, carrying waves, foam and floating objects.
+*Rivers: the cascade and the white water below it.*
 
-<details><summary>Clip: boxes drift with the current past a rock</summary>
+![Under water near crates, raster vs path traced](docs/media/underwater.jpg)
 
-![Floating boxes drift downstream on a current that bends round a rock](docs/media/currents.gif)
+![The camera dives through the water surface](docs/media/underwater-dive.gif)
 
-Watch the boxes drift with the current past the rock.
-
-</details>
-
-- **Live flow** (`PhysXWaterSurface3D` `live_flow`, tuned by `wall_friction`): water near the player runs live, so rocks and banks shed wakes and eddies that waves, foam and floating objects follow.
-
-<details><summary>Clip: baked flow vs live flow past a rock</summary>
-
-![Flecks carried past a rock: with baked flow the streaks close straight behind it, with live flow they roll up into a wake](docs/media/live-flow.gif)
-
-Look behind the rock: with live flow the streaks roll up into a wake instead of closing straight behind it.
-
-</details>
-
-- **White water** (`PhysXWaterSurface3D` `flow_foam`): fast, churning water foams in lines trailing rocks, in eddies and through rapids, and the foam drifts downstream.
-
-<details><summary>Clip: foam trailing a rock in a current</summary>
-
-![Looking down on a rock in a current: foam lines peel off both sides and drift downstream](docs/media/white-water.gif)
-
-Foam lines peel off both sides of the rock and wander with its wake.
-
-</details>
-
-- **Rivers from a path** (`PhysXRiver3D`: `discharge`, `roughness`, `max_slope`): draw a curve with widths and a discharge; the river finds its depth on the ground, never runs uphill, falls as cascades with white water below, and floats objects downstream.
-
-<details><summary>Image: a river with a cascade, raster vs path traced</summary>
-
-![A river drawn as a path through a valley, dropping over a cascade into white water, raster and path traced](docs/media/river.jpg)
-
-Look at the cascade and the white water below it.
-
-</details>
-
-- **Camera under water**: fog, scattering and the surface seen from below (Snell's window, total internal reflection), with the image split at the water line. Path traced automatically; raster with `PhysXWaterSurface3D.underwater_enabled`.
-
-<details><summary>Image and clip: under water, raster vs path traced; a dive through the surface</summary>
-
-![Under water near crates on a sandy floor: raster fog and a wavy surface above, path traced scattering with caustic light on the sand](docs/media/underwater.jpg)
-
-![The camera dives through the water surface, raster](docs/media/underwater-dive.gif)
-
-Look at the light scattering through the water and the surface seen from below.
+*Under water: light scattering and the surface seen from below.*
 
 </details>
 
@@ -234,11 +205,11 @@ Look at the pavement under the window.
 
 ## Open worlds
 
-Berlenga aims at large streamed worlds: tens of thousands of objects over kilometres, with most of them unchanged from one frame to the next.
+Target: tens of thousands of objects over kilometres, mostly static.
 
 - **Camera-relative tracing** (`rendering/pathtracing/relative_origin_grid`): exact shadows and reflections far from the origin.
-- **Persistent instances** (`rendering/pathtracing/persistent_instances`): objects and large MultiMeshes that did not change keep their ray tracing instances on the GPU and cost no per-frame work.
-- **Off-screen culling** (`rendering/pathtracing/cull_max_distance`, `cull_min_size`): small or distant objects the camera can't see leave the trace.
+- **Persistent instances** (`rendering/pathtracing/persistent_instances`): unchanged objects and MultiMeshes cost no per-frame work.
+- **Off-screen culling** (`rendering/pathtracing/cull_max_distance`, `cull_min_size`): small or distant unseen objects leave the trace.
 - **Opacity micromaps** (`rendering/pathtracing/opacity_micromaps`): cut-out foliage traced without any-hit shaders.
 - **Mesh LOD in the path tracer** (`rendering/pathtracing/mesh_lod`).
 
@@ -253,7 +224,7 @@ pathtracing/cull_min_size=0.1
 pathtracing/opacity_micromaps=true
 ```
 
-Test scene: rocks, trees and blocks scattered over 2 km, with timing and memory printed at the end.
+Test scene (2 km, prints timing and memory):
 
 ```sh
 godot --path docs/bench/open_world --gpu-profile -- --count=100000 --set=rendering/pathtracing/persistent_instances:1
