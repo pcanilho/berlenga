@@ -33,6 +33,7 @@
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/templates/hash_set.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/mesh.h"
@@ -226,6 +227,19 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXRiver3D::get_foam_persistence);
 	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &PhysXRiver3D::set_water_material);
 	ClassDB::bind_method(D_METHOD("get_water_material"), &PhysXRiver3D::get_water_material);
+	ClassDB::bind_method(D_METHOD("set_carve", "carve"), &PhysXRiver3D::set_carve);
+	ClassDB::bind_method(D_METHOD("get_carve"), &PhysXRiver3D::get_carve);
+	ClassDB::bind_method(D_METHOD("set_carve_depth", "depth"), &PhysXRiver3D::set_carve_depth);
+	ClassDB::bind_method(D_METHOD("get_carve_depth"), &PhysXRiver3D::get_carve_depth);
+	ClassDB::bind_method(D_METHOD("set_carve_bank_slope", "slope"), &PhysXRiver3D::set_carve_bank_slope);
+	ClassDB::bind_method(D_METHOD("get_carve_bank_slope"), &PhysXRiver3D::get_carve_bank_slope);
+	ClassDB::bind_method(D_METHOD("set_carve_falloff", "falloff"), &PhysXRiver3D::set_carve_falloff);
+	ClassDB::bind_method(D_METHOD("get_carve_falloff"), &PhysXRiver3D::get_carve_falloff);
+	ClassDB::bind_method(D_METHOD("set_carve_cell_size", "size"), &PhysXRiver3D::set_carve_cell_size);
+	ClassDB::bind_method(D_METHOD("get_carve_cell_size"), &PhysXRiver3D::get_carve_cell_size);
+	ClassDB::bind_method(D_METHOD("set_base_height_source", "path"), &PhysXRiver3D::set_base_height_source);
+	ClassDB::bind_method(D_METHOD("get_base_height_source"), &PhysXRiver3D::get_base_height_source);
+	ClassDB::bind_method(D_METHOD("get_carve_brushes", "tile_size"), &PhysXRiver3D::get_carve_brushes, DEFVAL(64.0f));
 	ClassDB::bind_method(D_METHOD("rebuild"), &PhysXRiver3D::rebuild);
 	ClassDB::bind_method(D_METHOD("sample_height", "world_pos"), &PhysXRiver3D::sample_height);
 	ClassDB::bind_method(D_METHOD("sample_flow", "world_pos"), &PhysXRiver3D::sample_flow);
@@ -246,6 +260,16 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.01,0.15,0.001"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_slope", PROPERTY_HINT_RANGE, "0.005,1,0.005,or_greater"), "set_max_slope", "get_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
+	ADD_GROUP("Carve", "carve_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "carve"), "set_carve", "get_carve");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "carve_depth", PROPERTY_HINT_RANGE, "0,20,0.05,or_greater,suffix:m"), "set_carve_depth", "get_carve_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "carve_bank_slope", PROPERTY_HINT_RANGE, "0.05,5,0.05,or_greater"), "set_carve_bank_slope", "get_carve_bank_slope");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "carve_falloff", PROPERTY_HINT_RANGE, "0,20,0.05,or_greater,suffix:m"), "set_carve_falloff", "get_carve_falloff");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "carve_cell_size", PROPERTY_HINT_RANGE, "0.05,4,0.05,or_greater,suffix:m"), "set_carve_cell_size", "get_carve_cell_size");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "base_height_source"), "set_base_height_source", "get_base_height_source");
+
+	ADD_SIGNAL(MethodInfo("carve_changed"));
+
 	ADD_GROUP("Mesh", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "step_length", PROPERTY_HINT_RANGE, "0.1,10,0.05,or_greater,suffix:m"), "set_step_length", "get_step_length");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cross_segments", PROPERTY_HINT_RANGE, "2,64,1"), "set_cross_segments", "get_cross_segments");
@@ -271,6 +295,12 @@ RIVER_SETTER(step_length, float, step_length, MAX(p_value, 0.05f))
 RIVER_SETTER(cross_segments, int, cross_segments, CLAMP(p_value, 2, 256))
 RIVER_SETTER(bank_margin, float, bank_margin, MAX(p_value, 0.0f))
 RIVER_SETTER(foam_persistence, float, foam_persistence, MAX(p_value, 0.05f))
+RIVER_SETTER(carve, bool, carve, p_value)
+RIVER_SETTER(carve_depth, float, carve_depth, MAX(p_value, 0.0f))
+RIVER_SETTER(carve_bank_slope, float, carve_bank_slope, MAX(p_value, 0.01f))
+RIVER_SETTER(carve_falloff, float, carve_falloff, MAX(p_value, 0.0f))
+RIVER_SETTER(carve_cell_size, float, carve_cell_size, MAX(p_value, 0.05f))
+RIVER_SETTER(base_height_source, const NodePath &, base_height_source, p_value)
 
 #undef RIVER_SETTER
 
@@ -359,6 +389,60 @@ bool PhysXRiver3D::_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 
 	return false;
 }
 
+// The ground as it was before any carving: from base_height_source's
+// base_height_at(world_xz) when set (a terrain deformer keeps the uncarved
+// heights; measuring the carved ground would carve deeper on every rebuild),
+// else measured.
+bool PhysXRiver3D::_base_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y) const {
+	Node *source = base_height_source.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(base_height_source);
+	if (source != nullptr && source->has_method(SNAME("base_height_at"))) {
+		const Transform3D xf = get_global_transform();
+		const Vector3 w = xf.xform(p_local);
+		const Variant v = source->call(SNAME("base_height_at"), Vector2(w.x, w.z));
+		if (v.get_type() != Variant::FLOAT && v.get_type() != Variant::INT) {
+			return false;
+		}
+		const float h = v;
+		if (Math::is_nan(h)) {
+			return false;
+		}
+		r_y = xf.affine_inverse().xform(Vector3(w.x, h, w.z)).y;
+		return true;
+	}
+	return _ground_at(p_space, p_local, r_y);
+}
+
+// The carved channel's height (local y) at p_n across a section, and how much
+// the brush applies there (1 inside the banks, fading to 0 past them). A
+// trapezoid: a flat floor 40% of the width, banks sloping up to the
+// uncarved ground; at a bend the floor moves towards the outer bank (deep
+// outside, a shallow bar inside -- Peytavie et al. 2019's asymmetric sections).
+float PhysXRiver3D::_carve_target(const Section &p_sec, float p_n, float &r_mask) const {
+	const float half = 0.5f * p_sec.width;
+	const float offset = CLAMP(-p_sec.curvature * p_sec.width * p_sec.width * 0.25f, -0.25f * half, 0.25f * half);
+	const float floor_half = 0.4f * half;
+	const float lo = offset - floor_half;
+	const float hi = offset + floor_half;
+	const float an = Math::abs(p_n);
+	r_mask = 1.0f;
+	if (an > half) {
+		const float f = carve_falloff > 1e-4f ? CLAMP((an - half) / carve_falloff, 0.0f, 1.0f) : 1.0f;
+		r_mask = 1.0f - f * f * (3.0f - 2.0f * f);
+		return p_sec.carve_top + (an - half) * carve_bank_slope;
+	}
+	float shape;
+	if (p_n < lo) {
+		shape = (p_n + half) / MAX(lo + half, 1e-3f);
+	} else if (p_n > hi) {
+		shape = (half - p_n) / MAX(half - hi, 1e-3f);
+	} else {
+		shape = 1.0f;
+	}
+	shape = CLAMP(shape, 0.0f, 1.0f);
+	shape = shape * shape * (3.0f - 2.0f * shape);
+	return p_sec.carve_top - (p_sec.carve_top - p_sec.carve_bed) * shape;
+}
+
 void PhysXRiver3D::_build() {
 	build_pending = false;
 	sections.clear();
@@ -419,12 +503,13 @@ void PhysXRiver3D::_build() {
 			t = last_tangent;
 		}
 		t.normalize();
+		sec.curvature = i > 0 ? last_tangent.cross(t).y / ds : 0.0f;
 		last_tangent = t;
 		sec.side = Vector3(t.z, 0.0f, -t.x);
 		sec.width = interp(widths, default_width, sec.s);
 		given_depth[i] = depths.is_empty() ? 0.0f : interp(depths, 0.0f, sec.s);
 		float y = 0.0f;
-		bed_found[i] = _ground_at(space, sec.centre, y) ? 1 : 0;
+		bed_found[i] = _base_ground_at(space, sec.centre, y) ? 1 : 0;
 		bed[i] = bed_found[i] ? y : sec.centre.y - (given_depth[i] > 0.0f ? given_depth[i] : 0.0f);
 	}
 
@@ -440,8 +525,49 @@ void PhysXRiver3D::_build() {
 		for (int j = 0; j <= m; j++) {
 			const float n = -half + j * (2.0f * half / m);
 			float y = 0.0f;
-			ground_found[i * (m + 1) + j] = _ground_at(space, sec.centre + sec.side * n, y) ? 1 : 0;
+			ground_found[i * (m + 1) + j] = _base_ground_at(space, sec.centre + sec.side * n, y) ? 1 : 0;
 			ground[i * (m + 1) + j] = y;
+		}
+	}
+	if (carve) {
+		// Curvature smoothed over about 6 m (a bend, not the polyline's kinks).
+		const int cw = MAX(1, (int)Math::round(3.0f / ds));
+		LocalVector<float> raw;
+		raw.resize(count);
+		for (int i = 0; i < count; i++) {
+			raw[i] = sections[i].curvature;
+		}
+		for (int i = 0; i < count; i++) {
+			float sum = 0.0f;
+			int used = 0;
+			for (int k = MAX(0, i - cw); k <= MIN(count - 1, i + cw); k++) {
+				sum += raw[k];
+				used++;
+			}
+			sections[i].curvature = sum / used;
+		}
+		// The channel floor: carve_depth under the uncarved ground, never
+		// climbing downstream -- through a rise it cuts (Horizon's river tool).
+		for (int i = 0; i < count; i++) {
+			Section &sec = sections[i];
+			sec.carve_top = bed[i];
+			sec.carve_bed = bed[i] - carve_depth;
+			if (i > 0) {
+				sec.carve_bed = MIN(sec.carve_bed, sections[i - 1].carve_bed);
+			}
+			bed[i] = sec.carve_bed;
+			bed_found[i] = 1;
+			// The water sees the ground as the brush leaves it ("lower to").
+			const float half = 0.5f * sec.width + bank_margin;
+			for (int j = 0; j <= m; j++) {
+				const float n = -half + j * (2.0f * half / m);
+				float mask = 0.0f;
+				const float target = _carve_target(sec, n, mask);
+				const int k = i * (m + 1) + j;
+				const float base = ground_found[k] ? ground[k] : sec.carve_top;
+				ground[k] = Math::lerp(base, MIN(base, target), mask);
+				ground_found[k] = 1;
+			}
 		}
 	}
 	// Water depth across section i for a surface height: measured ground, or
@@ -582,6 +708,9 @@ void PhysXRiver3D::_build() {
 	}
 	_build_mesh();
 	update_configuration_warnings();
+	if (carve) {
+		emit_signal(SNAME("carve_changed"));
+	}
 }
 
 void PhysXRiver3D::_build_mesh() {
@@ -813,6 +942,88 @@ Dictionary PhysXRiver3D::get_section(int p_index) const {
 	d["depths"] = depth;
 	d["speeds"] = speed;
 	return d;
+}
+
+Array PhysXRiver3D::get_carve_brushes(float p_tile_size) const {
+	Array brushes;
+	const int count = (int)sections.size();
+	const Ref<Curve3D> c = get_curve();
+	if (!carve || count < 2 || c.is_null() || !is_inside_tree()) {
+		return brushes;
+	}
+	const float tile = MAX(p_tile_size, 1.0f);
+	const float cell = carve_cell_size;
+	const Transform3D xf = get_global_transform();
+	const Transform3D inv = xf.affine_inverse();
+	const float ds = sections[1].s - sections[0].s;
+	// Tiles the channel and its fade touch.
+	HashSet<Vector2i> tiles;
+	for (int i = 0; i < count; i++) {
+		const Section &sec = sections[i];
+		const float reach = 0.5f * sec.width + carve_falloff;
+		for (int e = -2; e <= 2; e++) {
+			const Vector3 w = xf.xform(sec.centre + sec.side * (reach * e * 0.5f));
+			tiles.insert(Vector2i((int)Math::floor(w.x / tile), (int)Math::floor(w.z / tile)));
+		}
+	}
+	const int res = (int)Math::ceil(tile / cell);
+	for (const Vector2i &t : tiles) {
+		const Vector2 origin(t.x * tile, t.y * tile);
+		PackedFloat32Array heights;
+		PackedFloat32Array mask;
+		heights.resize(res * res);
+		mask.resize(res * res);
+		float *hw = heights.ptrw();
+		float *mw = mask.ptrw();
+		float max_mask = 0.0f;
+		for (int z = 0; z < res; z++) {
+			for (int x = 0; x < res; x++) {
+				const int k = z * res + x;
+				hw[k] = 0.0f;
+				mw[k] = 0.0f;
+				const Vector3 world(origin.x + (x + 0.5f) * cell, xf.origin.y, origin.y + (z + 0.5f) * cell);
+				Vector3 local = inv.xform(world);
+				const float sq = c->get_closest_offset(local) / ds;
+				const int i = CLAMP((int)Math::floor(sq), 0, count - 2);
+				const float tt = CLAMP(sq - i, 0.0f, 1.0f);
+				const Section &a = sections[i];
+				const Section &b = sections[i + 1];
+				const Vector3 centre = a.centre.lerp(b.centre, tt);
+				const Vector3 side = a.side.lerp(b.side, tt).normalized();
+				const Vector3 rel(local.x - centre.x, 0.0f, local.z - centre.z);
+				const Vector3 tangent(-side.z, 0.0f, side.x);
+				const float along = rel.dot(tangent);
+				if ((i == 0 && tt <= 0.0f && along < -0.5f * ds) || (i == count - 2 && tt >= 1.0f && along > 0.5f * ds)) {
+					continue; // past either end
+				}
+				const float n = rel.dot(side);
+				float ma;
+				float mb;
+				const float ya = _carve_target(a, n, ma);
+				const float yb = _carve_target(b, n, mb);
+				const float m_here = Math::lerp(ma, mb, tt);
+				if (m_here <= 0.0f) {
+					continue;
+				}
+				local.y = Math::lerp(ya, yb, tt);
+				hw[k] = xf.xform(local).y;
+				mw[k] = m_here;
+				max_mask = MAX(max_mask, m_here);
+			}
+		}
+		if (max_mask <= 0.0f) {
+			continue;
+		}
+		Dictionary brush;
+		brush["rect"] = Rect2(origin, Vector2(res * cell, res * cell));
+		brush["cell_size"] = cell;
+		brush["size"] = Vector2i(res, res);
+		brush["heights"] = heights;
+		brush["mask"] = mask;
+		brush["mode"] = "lower";
+		brushes.push_back(brush);
+	}
+	return brushes;
 }
 
 PackedStringArray PhysXRiver3D::get_configuration_warnings() const {
