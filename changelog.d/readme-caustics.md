@@ -1,2 +1,2 @@
 ### Changed
-- README: caustics line and image (#N)
+- README: caustics line and image (#167)
