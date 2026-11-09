@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXRiver3D" inherits="Path3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A river drawn as a path: a sloped water surface that follows the ground, flows along the path and foams where it is fast or falls.
+	</brief_description>
+	<description>
+		Draw the [member Path3D.curve] from the source to the mouth. Each curve point has a width in [member widths] and optionally a depth in [member depths]; the river carries one [member discharge].
+		[b]Surface.[/b] With [member snap_to_ground], the river measures the static ground under it by raycasts (its bed and its banks). Where no depth is given, the water stands at Manning's normal depth: the height at which the real cross-section, with [member roughness], carries the discharge down the bed's slope. The surface never runs uphill (a running minimum downstream); where the ground drops faster than [member max_slope], the water falls as a cascade.
+		[b]Flow.[/b] The discharge is the same all along the river, so narrows and shallows run fast and pools run slow. Across the channel each strip carries flow in proportion to its depth to the power 5/3 (the divided-channel method), so the deep middle runs fastest and the banks are still.
+		[b]White water[/b] rises where the flow is supercritical (Froude number above about 1) and at the foot of every cascade, and is carried downstream, fading over [member foam_persistence].
+		The surface is a mesh of its own, drawn with [member water_material]; under path tracing it is a water medium (refraction, depth tint, scattering, caustics), as [PhysXWaterSurface3D] is. A [PhysXBuoyancy3D] whose [member PhysXBuoyancy3D.water_surface_path] points at the river floats on it and drifts with its current.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_length" qualifiers="const">
+			<return type="float" />
+			<description>
+				The river's length along its path (m).
+			</description>
+		</method>
+		<method name="get_section" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="index" type="int" />
+			<description>
+				One cross-section, for tools and tests: [code]centre[/code] (world), [code]s[/code] (m along the river), [code]width[/code], [code]surface[/code] (world height), [code]slope[/code], [code]speed[/code] (mean, m/s), [code]foam[/code], [code]cascade[/code], and per sample across, [code]depths[/code] and [code]speeds[/code].
+			</description>
+		</method>
+		<method name="get_section_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of cross-sections (one every [member step_length]).
+			</description>
+		</method>
+		<method name="rebuild">
+			<return type="void" />
+			<description>
+				Measures the ground and rebuilds the river now. It rebuilds by itself on the next physics tick after any change.
+			</description>
+		</method>
+		<method name="sample_depth" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_pos" type="Vector3" />
+			<description>
+				Water depth (m) under a world position; 0 or less off the river or over dry ground.
+			</description>
+		</method>
+		<method name="sample_flow" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="world_pos" type="Vector3" />
+			<description>
+				Depth-averaged water velocity (m/s, world) at a world position; zero off the river.
+			</description>
+		</method>
+		<method name="sample_foam" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_pos" type="Vector3" />
+			<description>
+				White water (0 to 1) at a world position.
+			</description>
+		</method>
+		<method name="sample_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_pos" type="Vector3" />
+			<description>
+				Water surface height at a world position; [code]-INF[/code] off the river or over dry ground.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="bank_margin" type="float" setter="set_bank_margin" getter="get_bank_margin" default="1.0">
+			How far (m) the water mesh reaches past each bank, so the waterline can follow the measured ground.
+		</member>
+		<member name="cross_segments" type="int" setter="set_cross_segments" getter="get_cross_segments" default="12">
+			Samples across the river, for the ground, the depth and the flow.
+		</member>
+		<member name="default_width" type="float" setter="set_default_width" getter="get_default_width" default="4.0">
+			The width (m) where [member widths] has no value.
+		</member>
+		<member name="depths" type="PackedFloat32Array" setter="set_depths" getter="get_depths" default="PackedFloat32Array()">
+			Water depth (m) at each curve point, in order. Empty, or 0 at a point: Manning's normal depth for the discharge there.
+		</member>
+		<member name="discharge" type="float" setter="set_discharge" getter="get_discharge" default="2.0">
+			Water carried by the river (m³/s). A brook carries 0.1 to 1, a small river 5 to 50.
+		</member>
+		<member name="foam_persistence" type="float" setter="set_foam_persistence" getter="get_foam_persistence" default="4.0">
+			Seconds white water lasts as the current carries it downstream.
+		</member>
+		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
+			The physics layers measured as ground. Only static bodies count.
+		</member>
+		<member name="max_slope" type="float" setter="set_max_slope" getter="get_max_slope" default="0.08">
+			Drops steeper than this (m per m) are cascades: the water falls down them instead of flowing.
+		</member>
+		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.035">
+			Manning's roughness: about 0.013 for concrete, 0.03 for a clean natural channel, 0.05 for a stony or weedy one. Rougher rivers run slower and deeper.
+		</member>
+		<member name="snap_to_ground" type="bool" setter="set_snap_to_ground" getter="get_snap_to_ground" default="true">
+			Measure the ground under the river by raycasts. Off: the curve is the water surface, and the bed is a parabola [member depths] deep.
+		</member>
+		<member name="step_length" type="float" setter="set_step_length" getter="get_step_length" default="1.0">
+			Distance (m) between cross-sections along the river.
+		</member>
+		<member name="water_material" type="ShaderMaterial" setter="set_water_material" getter="get_water_material">
+			The surface's material; created with the river shader if empty. Its parameters set the look in raster and under path tracing.
+		</member>
+		<member name="widths" type="PackedFloat32Array" setter="set_widths" getter="get_widths" default="PackedFloat32Array()">
+			River width (m) at each curve point, in order. Empty, or 0 at a point: [member default_width].
+		</member>
+	</members>
+</class>

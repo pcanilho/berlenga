@@ -30,6 +30,7 @@
 
 #include "physx_buoyancy_3d.h"
 
+#include "physx_river_3d.h"
 #include "physx_water_surface_3d.h"
 #include "physx_water_wake_3d.h"
 
@@ -68,7 +69,7 @@ void PhysXBuoyancy3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_effective_sample_points"), &PhysXBuoyancy3D::get_effective_sample_points);
 	ClassDB::bind_method(D_METHOD("get_water_height", "world_pos"), &PhysXBuoyancy3D::get_water_height);
 
-	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "water_surface_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D"), "set_water_surface_path", "get_water_surface_path");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "water_surface_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D,PhysXRiver3D"), "set_water_surface_path", "get_water_surface_path");
 	ADD_GROUP("Hull", "");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "sample_points"), "set_sample_points", "get_sample_points");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hull_area", PROPERTY_HINT_RANGE, "0,100,0.01,or_greater,suffix:m²"), "set_hull_area", "get_hull_area");
@@ -92,14 +93,43 @@ PhysXWaterSurface3D *PhysXBuoyancy3D::get_water_surface() const {
 	return ObjectDB::get_instance<PhysXWaterSurface3D>(water_id);
 }
 
+PhysXRiver3D *PhysXBuoyancy3D::get_river() const {
+	return ObjectDB::get_instance<PhysXRiver3D>(river_id);
+}
+
+bool PhysXBuoyancy3D::_has_water() const {
+	return get_water_surface() != nullptr || get_river() != nullptr;
+}
+
+float PhysXBuoyancy3D::_height_at(const Vector3 &p_world_pos) const {
+	if (PhysXWaterSurface3D *water = get_water_surface()) {
+		return water->sample_height_excluding_wake(p_world_pos, wake_id);
+	}
+	if (PhysXRiver3D *river = get_river()) {
+		return river->sample_height(p_world_pos);
+	}
+	return -Math::INF;
+}
+
+Vector3 PhysXBuoyancy3D::_flow_at(const Vector3 &p_world_pos) const {
+	if (PhysXWaterSurface3D *water = get_water_surface()) {
+		return water->sample_flow(p_world_pos);
+	}
+	if (PhysXRiver3D *river = get_river()) {
+		return river->sample_flow(p_world_pos);
+	}
+	return Vector3();
+}
+
 float PhysXBuoyancy3D::get_water_height(const Vector3 &p_world_pos) const {
-	PhysXWaterSurface3D *water = get_water_surface();
-	return water != nullptr ? water->sample_height_excluding_wake(p_world_pos, wake_id) : -Math::INF;
+	return _height_at(p_world_pos);
 }
 
 void PhysXBuoyancy3D::_resolve() {
 	PhysXWaterSurface3D *water = Object::cast_to<PhysXWaterSurface3D>(get_node_or_null(water_surface_path));
 	water_id = water != nullptr ? water->get_instance_id() : ObjectID();
+	PhysXRiver3D *river = Object::cast_to<PhysXRiver3D>(get_node_or_null(water_surface_path));
+	river_id = river != nullptr ? river->get_instance_id() : ObjectID();
 	_find_wake();
 
 	// Hull bounds from the body's collision shapes, in the body's space.
@@ -167,8 +197,8 @@ void PhysXBuoyancy3D::_find_wake() {
 void PhysXBuoyancy3D::_physics_step() {
 	_find_wake();
 	RigidBody3D *body = get_body();
-	PhysXWaterSurface3D *water = get_water_surface();
-	if (body == nullptr || water == nullptr || points.is_empty()) {
+	PhysXWaterSurface3D *water = get_water_surface(); // null on a river (no ripple layer there yet)
+	if (body == nullptr || !_has_water() || points.is_empty()) {
 		submerged_fraction = 0.0f;
 		return;
 	}
@@ -181,7 +211,7 @@ void PhysXBuoyancy3D::_physics_step() {
 	float used = 0.0f;
 	for (int i = 0; i < points.size(); i++) {
 		const Vector3 wp = xf.xform(points[i]);
-		const float depth = water->sample_height_excluding_wake(wp, wake_id) - wp.y;
+		const float depth = _height_at(wp) - wp.y;
 		point_depths.set(i, depth);
 		if (!(depth > 0.0f)) {
 			continue;
@@ -192,7 +222,7 @@ void PhysXBuoyancy3D::_physics_step() {
 		// Relative to the water: in a current the drag carries the body along
 		// (PhysXWaterSurface3D::current), so debris drifts downstream and
 		// turns round rocks with the flow.
-		const Vector3 v = lin + ang.cross(offset) - water->sample_flow(wp);
+		const Vector3 v = lin + ang.cross(offset) - _flow_at(wp);
 		// Archimedes for this point's share of the footprint, plus drag on
 		// the part that's in the water.
 		Vector3 force = up * (water_density * g * a * d);
@@ -204,7 +234,7 @@ void PhysXBuoyancy3D::_physics_step() {
 		body->apply_torque(-ang * (angular_drag * submerged_fraction));
 	}
 
-	if (disturb_water) {
+	if (disturb_water && water != nullptr) {
 		// Only near the surface, harder the faster it moves -- a still
 		// floater only dimples the water.
 		const float above = xf.origin.y - water->sample_height_excluding_wake(xf.origin, wake_id);
@@ -289,7 +319,7 @@ PackedStringArray PhysXBuoyancy3D::get_configuration_warnings() const {
 		warnings.push_back(RTR("PhysXBuoyancy3D only floats a RigidBody3D: make it a child of one."));
 	}
 	if (water_surface_path.is_empty()) {
-		warnings.push_back(RTR("Set water_surface_path to the PhysXWaterSurface3D to float on."));
+		warnings.push_back(RTR("Set water_surface_path to the PhysXWaterSurface3D or PhysXRiver3D to float on."));
 	}
 	return warnings;
 }
