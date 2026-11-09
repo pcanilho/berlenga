@@ -91,6 +91,68 @@ Rivers and waterfalls fit into that split as below.
 5. Shallow water sim near the camera, where the game needs water to react.
 6. Caustics.
 
+## Step 1 design: refraction and a water medium in the path tracer (9 Nov)
+
+### What the path tracer does today
+
+- Water drawn with alpha blending is peeled straight through: no bending, no Fresnel split
+  between reflection and refraction, no darkening or tint with depth.
+- Opaque water shaders (the game's puddles and drains) reflect only.
+- Transmission (#153, #155) is thin-walled: light passes straight on, with no medium behind.
+- `brdf_inc.glsl` has GGX reflection only. There is no BTDF, no IOR and no notion of being inside
+  a medium. The smoke volume (`raytracing_volume_inc.glsl`) already does delta tracking with a
+  Henyey-Greenstein phase, so scattering inside water can reuse it later.
+
+### How others do it
+
+- **glTF.** `KHR_materials_transmission` with `KHR_materials_volume` (`thicknessFactor`,
+  `attenuationColor`, `attenuationDistance`) and `KHR_materials_ior` describe a solid dielectric.
+  Light inside is absorbed by Beer-Lambert, `T = attenuationColor ^ (d / attenuationDistance)`,
+  so `sigma_a = -ln(attenuationColor) / attenuationDistance`.
+- **Unreal Single Layer Water.** It takes absorption and scattering coefficients per metre and a
+  phase G, which is the physical description of water. Raster only, but it is the parameter set
+  artists already know.
+- **Falcor and RTXPT.** StandardBSDF with specular transmission, IOR and volume absorption. Nested
+  media are tracked with an interior list and nested priorities (Schmidt and Budge 2002), so a ray
+  knows which medium it is in when it hits the next interface.
+- **Offline renderers** (Arnold, Cycles, RenderMan): a rough dielectric BTDF (Walter et al. 2007)
+  picks reflection or refraction by Fresnel and handles total internal reflection. Shadow rays
+  through glass and water skip the refraction offset (Arnold's transmit shadows), since a path
+  tracer cannot find lights through a bending interface by itself.
+- **Pure water** (Pope and Fry 1997) absorbs about 0.35 per metre in red, 0.06 in green and 0.01
+  in blue. That is why clear water turns blue-green with depth. Lakes, rivers and the sea add
+  dissolved matter and sediment on top.
+
+### Plan
+
+1. **Material.** The Transmission section gains `thin_walled` (on by default, so nothing
+   changes), `ior` (1.33 for water), `attenuation_color` and `attenuation_distance`, matching
+   glTF. Custom shaders get `IOR` and `ATTENUATION` (absorption per metre), so the game's own
+   water shaders can use them. Raster keeps Godot's screen-space Refraction, with the offset taken
+   from the IOR.
+2. **BSDF.** A rough dielectric lobe (Walter et al. 2007): a GGX VNDF half vector, then
+   reflection or refraction picked by the exact dielectric Fresnel for the IOR, with total
+   internal reflection. It replaces the thin lobe when `thin_walled` is off.
+3. **Medium tracking.** The path payload carries the current medium: absorption in fp16 RGB and
+   the IOR. Refracting into a front face enters it, and leaving through a back face exits. One
+   medium at a time in v1. Nested priorities and cameras under water come later.
+4. **Absorption.** Every segment inside the medium is multiplied by `exp(-sigma_a * t)`. That
+   covers camera, bounce and shadow rays. A shadow ray from a point under water passes the
+   surface straight, weighted by `(1 - F)` and the absorption to its hit distance. This is the
+   transmit-shadow approximation: sunlight reaches the riverbed tinted, without caustics.
+5. **Scattering** (later step): the existing smoke delta tracking with a homogeneous medium,
+   for murky water and light shafts under the surface.
+6. **Ray Reconstruction.** The refracted path's hit distance and albedo go in the specular guides,
+   as for glass. This needs the PC check.
+7. **Setting.** `rendering/pathtracing/refraction` (on). Off traces these surfaces as today.
+8. **Test scene.** `docs/bench/materials --scene=water`: a pool sloping from 0 to 4 m with a
+   checker floor and coloured posts, sun and sky. Depth tint is checked against Beer-Lambert at
+   known depths, and raster is shown next to it.
+
+Caustics stay out of step 1. Without them, the bed under bright sun is evenly lit rather than
+patterned. Options after step 1: a projected caustic texture from the surface normals, or the
+ray traced caustics of Ray Tracing Gems II ch. 30.
+
 ## Sources
 
 - 80.lv, Crimson Desert's BlackSpace engine features:
@@ -108,5 +170,17 @@ Rivers and waterfalls fit into that split as below.
 - 2Retr0, GodotOceanWaves: https://github.com/2Retr0/GodotOceanWaves
 - Tessendorf, Interactive Water Surfaces (iWave):
   https://jtessen.people.clemson.edu/reports/papers_files/Interactive_Water_Surfaces.pdf
+- Khronos, KHR_materials_volume:
+  https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_volume/README.md
+- Epic, Single Layer Water shading model:
+  https://dev.epicgames.com/documentation/en-us/unreal-engine/single-layer-water-shading-model-in-unreal-engine
+- Schmidt and Budge, Simple Nested Dielectrics in Ray Traced Images, 2002:
+  https://escholarship.org/content/qt9h83s3m0/qt9h83s3m0_noSplash_693fb7df0433335e068723e435d6a371.pdf
+- Falcor path tracer (nested dielectrics, StandardBSDF):
+  https://github.com/NVIDIAGameWorks/Falcor/blob/master/docs/usage/path-tracer.md
+- Arnold, transmission and nested dielectrics:
+  https://help.autodesk.com/cloudhelp/ENU/AR-Core/files/ac-shading/ac-surface-shaders/ac-standard-surface/ac-transmission/arnold_user_guide_ac_transmission_ac_nested_dielectrics_html.html
+- Walter, Marschner, Li, Torrance, Microfacet Models for Refraction through Rough Surfaces, 2007.
+- Pope and Fry, Absorption spectrum of pure water, Applied Optics, 1997.
 - Ray Tracing Gems II, ch. 30, real-time ray traced caustics (not read):
   https://developer.download.nvidia.com/ray-tracing-gems/rtg2-chapter30-preprint.pdf
