@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-cd4f28ce (2026-11-09)
+
+### Changed
+- PhysXHair3D: the pull toward the groomed pose holds only the strand's first follow_range (0.3) from the root, so hair swings and blows freely below the scalp
+
 ## build-bdcf0b67 (2026-11-09)
 
 ### Fixed
