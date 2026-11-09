@@ -38,7 +38,7 @@
 			How much of each length correction is taken back from the parent point's velocity (the DFTL damping). Without it, follow-the-leader strands gain energy and whip; [code]1[/code] is the paper's value.
 		</member>
 		<member name="melanin" type="float" setter="set_melanin" getter="get_melanin" default="0.5">
-			The hair colour as melanin concentration: [code]0[/code] white, [code]0.3[/code] blonde, [code]0.5[/code] light brown, [code]0.9[/code] and above black.
+			The hair colour as melanin concentration: [code]0[/code] white, [code]0.1[/code] to [code]0.25[/code] blonde to light brown, [code]0.5[/code] brown, [code]0.9[/code] and above black.
 		</member>
 		<member name="melanin_redness" type="float" setter="set_melanin_redness" getter="get_melanin_redness" default="0.0">
 			The share of red melanin (pheomelanin), from brown and black hair at [code]0[/code] to red and auburn hair.

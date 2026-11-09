@@ -480,6 +480,7 @@ public:
 		bool uses_scene_depth = false; // Reads SCENE_DEPTH; gates the rt_scene_depth imageLoad
 		bool uses_instance_custom = false; // Gates the MultiMesh custom-data buffer read.
 		bool is_procedural = false; // Uses intersection shader instead of triangle geometry
+		String render_mode_defines; // The render modes the hit shading reads (hair_strands, hair_cards, sss_mode_skin).
 		uint32_t alpha_texture_buffer_offset = UINT32_MAX; // Byte offset of hint_alpha texture index in CustomMaterialUniforms UBO; UINT32_MAX if absent
 	};
 

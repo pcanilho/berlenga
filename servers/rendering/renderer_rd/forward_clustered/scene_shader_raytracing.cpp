@@ -649,6 +649,15 @@ bool SceneShaderRaytracing::_preprocess_shader(RID p_material, bool p_is_procedu
 		r_entry.intersection_code = gen_code.code.has("intersection") ? gen_code.code["intersection"] : String();
 		r_entry.intersection_globals = gen_code.stage_globals[ShaderCompiler::STAGE_INTERSECTION];
 	}
+	// Render modes the raygen's custom path tests with #ifdef; the rest are raster-only.
+	static const char *rt_render_mode_defines[] = { "#define HAIR_CARDS", "#define HAIR_STRANDS", "#define SSS_MODE_SKIN" };
+	for (const String &define : gen_code.defines) {
+		for (const char *rt_define : rt_render_mode_defines) {
+			if (define.strip_edges() == rt_define) {
+				r_entry.render_mode_defines += String(rt_define) + "\n";
+			}
+		}
+	}
 	r_entry.uniform_members = gen_code.uniforms;
 	r_entry.uniform_total_size = gen_code.uniform_total_size;
 	r_entry.uniform_offsets = gen_code.uniform_offsets;
@@ -1558,6 +1567,7 @@ SceneShaderRaytracing::PipelineBuildTask *SceneShaderRaytracing::_make_pipeline_
 		if (entry.uses_instance_custom) {
 			tex_defines += "#define RT_USES_INSTANCE_CUSTOM\n";
 		}
+		tex_defines += entry.render_mode_defines;
 
 		String vertex_function;
 		String vertex_call;
