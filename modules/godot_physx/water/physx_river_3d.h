@@ -61,6 +61,9 @@ public:
 		float speed = 0.0f; // mean speed, m/s
 		float foam = 0.0f; // 0..1 white water on the centre line
 		bool cascade = false;
+		float curvature = 0.0f; // 1/m, positive turning towards +side
+		float carve_bed = 0.0f; // local y of the carved channel's floor
+		float carve_top = 0.0f; // local y of the uncarved ground at the centre
 		// Across: half_extent / cross_segments spacing, from -half to +half.
 		LocalVector<float> depth; // water depth per cross sample (<= 0 dry)
 		LocalVector<float> speed_at; // along-stream speed per cross sample
@@ -80,6 +83,12 @@ private:
 	float bank_margin = 1.0f; // m of ribbon past each bank, for the waterline fade
 	float foam_persistence = 4.0f; // s
 	Ref<ShaderMaterial> water_material;
+	bool carve = false;
+	float carve_depth = 1.0f; // m below the uncarved ground at the centre
+	float carve_bank_slope = 0.5f; // m of rise per m outside the banks
+	float carve_falloff = 2.0f; // m past the banks over which the brush fades
+	float carve_cell_size = 0.5f;
+	NodePath base_height_source;
 
 	MeshInstance3D *mesh_instance = nullptr;
 	LocalVector<Section> sections;
@@ -92,6 +101,8 @@ private:
 	void _build_mesh();
 	void _on_curve_changed();
 	bool _ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y) const;
+	bool _base_ground_at(PhysicsDirectSpaceState3D *p_space, const Vector3 &p_local, float &r_y) const;
+	float _carve_target(const Section &p_sec, float p_n, float &r_mask) const;
 	bool _locate(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const;
 
 protected:
@@ -123,6 +134,21 @@ public:
 	float get_bank_margin() const { return bank_margin; }
 	void set_foam_persistence(float p_seconds);
 	float get_foam_persistence() const { return foam_persistence; }
+	void set_carve(bool p_carve);
+	bool get_carve() const { return carve; }
+	void set_carve_depth(float p_depth);
+	float get_carve_depth() const { return carve_depth; }
+	void set_carve_bank_slope(float p_slope);
+	float get_carve_bank_slope() const { return carve_bank_slope; }
+	void set_carve_falloff(float p_falloff);
+	float get_carve_falloff() const { return carve_falloff; }
+	void set_carve_cell_size(float p_size);
+	float get_carve_cell_size() const { return carve_cell_size; }
+	void set_base_height_source(const NodePath &p_path);
+	NodePath get_base_height_source() const { return base_height_source; }
+	// The channel as height brushes for a terrain deformer, one per square tile
+	// of p_tile_size m (world XZ) the river touches.
+	Array get_carve_brushes(float p_tile_size = 64.0f) const;
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
 

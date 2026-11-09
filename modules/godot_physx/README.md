@@ -1089,6 +1089,15 @@ fading over `foam_persistence`. The surface's ripples and foam ride the current
 `sample_foam()` read it from scripts, and `PhysXBuoyancy3D` floats bodies on it
 and drags them with the current (point its `water_surface_path` at the river).
 
+**Carving.** With `carve` on, the river designs its own channel instead of
+needing one in the ground: a floor `carve_depth` below the uncarved ground that
+never climbs downstream (through a rise it cuts), banks sloping back up to the
+ground, deeper on the outside of bends. It does not edit any terrain itself: it
+offers the channel as height brushes (`get_carve_brushes()`, re-sent with
+`carve_changed`) for a terrain deformer to apply, and reads the uncarved ground
+from `base_height_source` (a node with `base_height_at(world_xz)`), so it never
+measures its own channel and carves deeper.
+
 ## Boats — `PhysXBuoyancy3D`, `PhysXBoat3D`, `PhysXWaterWake3D`, `PhysXWaterSpray3D`
 
 Four nodes, each a child of a `RigidBody3D`, that float and drive it on a
