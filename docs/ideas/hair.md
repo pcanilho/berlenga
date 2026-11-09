@@ -274,6 +274,43 @@ with open(bpy.path.abspath("//hair.hair"), "wb") as f:
 - Bench: `docs/bench/materials --scene=strands_sim --fixed-fps 30 --write-movie` (`--hair=wind`: head
   still in a gusty gale).
 
+## Stage 2c: the TressFX solver
+
+The approximation above (DFTL, my own shape and inertia terms) was replaced by a port of AMD
+TressFX 4.1's simulation (MIT, GPUOpen; `TressFXSimulation.hlsl`), after Paulo asked for the
+weight of HairWorks hair (HairWorks itself is DX11/12, GameWorks-licensed and discontinued).
+TressFX runs one kernel per stage over all strands; here one thread walks a guide strand through
+the same stages, which is the same maths (length constraints run Gauss-Seidel root to tip
+instead of TressFX's red-black Jacobi, which converges faster). Per substep:
+
+1. **Pinned roots**: the first two points follow the head (TressFX's immovable vertices), so the
+   root segment keeps the groomed direction.
+2. **Integrate**: Verlet with TressFX's `decay = exp(-damping * 60 dt)` (damping 0.08), except
+   the velocity decays toward the air's rather than zero: in still air it is TressFX's, in
+   `wind` (m/s, with gusts and carried turbulence, kept from 2b) the hair takes up the air at
+   4.8/s, the drag rate that read right in 2b.
+3. **Global shape**: `p += global_stiffness * (groomed - p)` for points within `global_range`
+   (0.1 per 1/60 s over 0.3 of the strand; TressFX ships 0 and 0, so this is a groom choice).
+4. **Velocity shock propagation**: the rotation from the old root segment to the new, plus the
+   root's move, applied to the rest of the strand and its previous positions with weight
+   `vsp_coeff` (0.8), or 1 when the root's acceleration exceeds `vsp_accel_threshold`
+   (TressFX's 1.4 cm/frame² at 60 Hz, about 50 m/s²). This is what makes the hair weighty but
+   attached: it keeps up with a turning head instead of trailing like rope.
+5. **Local shape**, `local_iterations` (2) times: for each point, the next segment's groomed
+   vector turned by the rotation from the groomed parent segment to the current one; both ends
+   moved toward it, stiffness `0.5 * min(local_stiffness, 0.95)` (0.9 by default). Keeps waves
+   and curls.
+6. **Length**, `length_iterations` (2) times: distance constraints, half each, all on the free
+   end next to a pinned point.
+7. **Collisions**: points inside a sphere are pushed out and their velocity zeroed (prev = pos).
+8. **Speed clamp**: `max_speed` (12 m/s; TressFX's 20 cm per frame).
+
+Stiffnesses given per 1/60 s are converted per substep (`1 - (1 - s)^(60 dt)`), so `substeps`
+changes accuracy, not the look. Follow strands are unchanged from 2b (three nearest guides, the
+groomed offset turned with the guide segment; TressFX adds its offset unturned).
+
+Test head: 30,000 strands (3,000 guides) of 20 points, 0.3 mm wide at the root.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.
@@ -295,6 +332,7 @@ groom to test with.
 - Zinke, Yuksel, Weber, Keyser. Dual Scattering Approximation for Fast Multiple Scattering in Hair. SIGGRAPH 2008.
 - Karis. Physically Based Hair Shading in Unreal. SIGGRAPH 2016 course.
 - Muller, Kim, Chentanez. Fast Simulation of Inextensible Hair and Fur. VRIPHYS 2012.
+- AMD. TressFX 4.1, `TressFXSimulation.hlsl` and `TressFXSettings.h` (GPUOpen, MIT, 2019). Han, Harada. Real-time Hair Simulation with Efficient Hair Style Preservation. VRIPHYS 2012.
 - Kugelstadt, Schomer. Position and Orientation Based Cosserat Rods. SCA 2016.
 - Woop, Benthin, Wald, Johnson, Tabellion. Exploiting Local Orientation Similarity for Efficient Ray Traversal of Hair and Fur. HPG 2014.
 - Reshetov, Luebke. Phantom Ray-Hair Intersector. HPG 2018.

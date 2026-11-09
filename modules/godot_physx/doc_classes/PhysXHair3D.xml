@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		Simulates every strand of [member groom] with compute shaders, so it runs on any GPU the renderer supports (no CUDA needed). The node is the head: the groom is in its space and the roots follow it, so put it under a [BoneAttachment3D] on the head bone. Strands fall under gravity against the air, blow in the [member wind] and its eddies, keep their groomed shape and length, and stay out of the [member collision_spheres].
-		A share of the strands ([member guide_ratio]) is simulated as guides and the rest follow them. Each guide is a chain of points. Every substep the root moves with the head, the other points take a step under gravity and air drag and are pulled toward the groomed pose carried by the head ([member root_follow] at the root to [member tip_follow] at the tip), then, root to tip, each segment is bent back toward its groomed bend ([member shape_stiffness]), pushed out of the spheres and put back at its rest length behind its parent (dynamic follow-the-leader, Müller et al. 2012, with the shape constraints of AMD TressFX). Strands don't collide with each other.
+		The solver is a port of AMD TressFX 4.1's (MIT), with its parameters and defaults in metres and seconds. A share of the strands ([member guide_ratio]) is simulated as guides and the rest follow them. Each guide is a chain of points whose first two are pinned to the head. Every substep the other points take a damped step under gravity and the air ([member damping]), the part near the root is pulled toward the groomed pose ([member global_stiffness] over [member global_range]), the head's motion carries the strand along (velocity shock propagation, [member vsp_coeff]), each segment is turned back toward its groomed angle to its parent ([member local_stiffness]), the segments are put back to their rest lengths, points inside the spheres are pushed out and stopped, and the speed is clamped ([member max_speed]). Strands don't collide with each other.
 		The strands are drawn like [HairMesh] (two crossed strips per segment), rebuilt in the vertex shader straight from the simulated positions on the GPU (no CPU readback). Under path tracing they shade as hair fibres (the Chiang 2016 model, with [member melanin] for the colour); in raster as an anisotropic highlight. To draw them your own way, set [member render_material]: a [ShaderMaterial] whose shader reads the [code]hair_positions[/code] texture like the built-in one and sets [code]HAIR[/code], [code]HAIR_ABSORPTION[/code] and [code]HAIR_ROUGHNESS[/code].
 		In the editor the groom is drawn still. The simulation runs only in a running game.
 	</description>
@@ -22,35 +22,38 @@
 		<member name="collision_spheres" type="PackedVector4Array" setter="set_collision_spheres" getter="get_collision_spheres" default="PackedVector4Array()">
 			Spheres the strands stay out of, in this node's space: [code]x, y, z[/code] the centre and [code]w[/code] the radius. Usually the skull, the neck and the shoulders. Up to 32.
 		</member>
-		<member name="air_drag" type="float" setter="set_air_drag" getter="get_air_drag" default="5.0">
-			How fast, per second, a strand takes up the velocity of the air around it. Hair is so light that air, not its weight, sets how it moves: a single loose fibre falls at about 0.5 m/s (a drag rate near 20), and a head of hair, where strands shield each other, moves like a lower rate. Higher is floatier and follows the [member wind] more closely; lower is heavier and swings longer.
-		</member>
-		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.05">
-			How much of each point's velocity is lost per second besides [member air_drag] (friction between fibres).
+		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.08">
+			How fast a point's velocity relaxes toward the air's: each substep it keeps [code]exp(-damping * 60 * dt)[/code] of the difference (TressFX's damping). In still air this slows the hair; in [member wind] it is how quickly the hair takes up the wind. Hair is light enough that air, not its weight, sets how it moves: higher is floatier, lower is heavier and swings longer.
 		</member>
 		<member name="fixed_gravity" type="Vector3" setter="set_fixed_gravity" getter="get_fixed_gravity" default="Vector3(0, -9.8, 0)">
 			The gravity used when [member use_world_gravity] is off.
 		</member>
-		<member name="follow_range" type="float" setter="set_follow_range" getter="get_follow_range" default="0.3">
-			How much of the strand, from the root, is held toward its groomed pose: [member root_follow] fades to [member tip_follow] over this share, so the hair stays styled at the scalp and swings free below (TressFX's global shape range). Raise it for short or styled hair.
+		<member name="global_range" type="float" setter="set_global_range" getter="get_global_range" default="0.3">
+			How much of each strand, from the root, [member global_stiffness] acts on, so the hair stays styled at the scalp and swings free below. Raise it for short or styled hair.
 		</member>
-		<member name="guide_ratio" type="float" setter="set_guide_ratio" getter="get_guide_ratio" default="0.1">
-			The share of strands that are simulated (guide hairs, as in HairWorks and TressFX). Every other strand follows its three nearest guides, keeping its own groomed curl, so the hair moves in clumps like real hair and the simulation costs a tenth. [code]1[/code] simulates every strand on its own.
+		<member name="global_stiffness" type="float" setter="set_global_stiffness" getter="get_global_stiffness" default="0.1">
+			How strongly the points within [member global_range] are pulled toward their groomed pose on the head, per 1/60 s (TressFX's global shape constraint).
 		</member>
 		<member name="groom" type="HairGroom" setter="set_groom" getter="get_groom">
 			The strands, in this node's space.
 		</member>
+		<member name="guide_ratio" type="float" setter="set_guide_ratio" getter="get_guide_ratio" default="0.1">
+			The share of strands that are simulated (guide hairs, as in HairWorks and TressFX). Every other strand follows its three nearest guides, keeping its own groomed curl, so the hair moves in clumps like real hair and the simulation costs a tenth. [code]1[/code] simulates every strand on its own.
+		</member>
 		<member name="gust" type="float" setter="set_gust" getter="get_gust" default="0.3">
 			How much the wind varies over time and from strand to strand, so the hair flutters instead of leaning stiffly.
 		</member>
-		<member name="inertia_limit" type="float" setter="set_inertia_limit" getter="get_inertia_limit" default="0.5">
-			The head speed, in m/s, above which [member inertia_scale] applies. Below it the hair has its full inertia.
+		<member name="length_iterations" type="int" setter="set_length_iterations" getter="get_length_iterations" default="2">
+			How many times per substep the segments are put back to their rest lengths. More keeps long hair from stretching.
 		</member>
-		<member name="inertia_scale" type="float" setter="set_inertia_scale" getter="get_inertia_scale" default="0.6">
-			How much of the head's motion above [member inertia_limit] the hair is left to catch up with ([code]1[/code], full inertia) rather than carried along with ([code]0[/code]). Lower keeps the hair calm and weighty when the character turns or runs, as games do (HairWorks' inertia scale).
+		<member name="local_iterations" type="int" setter="set_local_iterations" getter="get_local_iterations" default="2">
+			How many times per substep [member local_stiffness] is applied.
 		</member>
-		<member name="length_damping" type="float" setter="set_length_damping" getter="get_length_damping" default="0.9">
-			How much of each length correction is taken back from the parent point's velocity (the DFTL damping). Without it, follow-the-leader strands gain energy and whip; [code]1[/code] is the paper's value.
+		<member name="local_stiffness" type="float" setter="set_local_stiffness" getter="get_local_stiffness" default="0.9">
+			How strongly each segment keeps its groomed angle to its parent, so bends, waves and curls stay in (TressFX's local shape constraint; halved and capped at 0.95 inside, as TressFX does). [code]0[/code] hangs like rope.
+		</member>
+		<member name="max_speed" type="float" setter="set_max_speed" getter="get_max_speed" default="12.0">
+			The fastest a point may move, in m/s, so a sudden jump of the head doesn't fling the hair.
 		</member>
 		<member name="melanin" type="float" setter="set_melanin" getter="get_melanin" default="0.5">
 			The hair colour as melanin concentration: [code]0[/code] white, [code]0.1[/code] to [code]0.25[/code] blonde to light brown, [code]0.5[/code] brown, [code]0.9[/code] and above black.
@@ -64,29 +67,17 @@
 		<member name="render_material" type="ShaderMaterial" setter="set_render_material" getter="get_render_material">
 			A material of your own to draw the strands with, instead of the built-in one.
 		</member>
-		<member name="root_follow" type="float" setter="set_root_follow" getter="get_root_follow" default="0.3">
-			How strongly points near the root are pulled toward their groomed pose on the head each substep (global shape). It fades to [member tip_follow] over [member follow_range].
-		</member>
 		<member name="root_width" type="float" setter="set_root_width" getter="get_root_width" default="0.0004">
 			The width of a strand at the root, in metres. A real hair is 0.00005 to 0.0001 m; drawn strands are wider so fewer of them cover the head.
 		</member>
 		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.3">
 			How rough the fibres are along their length: low gives a tight, bright highlight.
 		</member>
-		<member name="shape_stiffness" type="float" setter="set_shape_stiffness" getter="get_shape_stiffness" default="0.5">
-			How strongly each segment keeps its groomed bend relative to its parent (local shape), so curls and waves stay in. [code]0[/code] hangs like rope.
-		</member>
-		<member name="shape_damping" type="float" setter="set_shape_damping" getter="get_shape_damping" default="0.5">
-			The damping of the pull toward the groomed pose ([member root_follow]): how much of it moves the strand without turning into speed. Higher settles back without bouncing.
-		</member>
 		<member name="simulating" type="bool" setter="set_simulating" getter="is_simulating" default="true">
 			When off, the strands hold their last pose relative to the head.
 		</member>
 		<member name="substeps" type="int" setter="set_substeps" getter="get_substeps" default="4">
 			Solver steps per frame. More keeps long hair stiffer and fast heads cleaner, at a small GPU cost.
-		</member>
-		<member name="tip_follow" type="float" setter="set_tip_follow" getter="get_tip_follow" default="0.0">
-			The pull toward the groomed pose at the tips. Raise it for short or styled hair that should hold its shape.
 		</member>
 		<member name="tip_width" type="float" setter="set_tip_width" getter="get_tip_width" default="0.0001">
 			The width of a strand at the tip, in metres.
@@ -100,8 +91,14 @@
 		<member name="use_world_gravity" type="bool" setter="set_use_world_gravity" getter="is_using_world_gravity" default="true">
 			Use the world's gravity (from the physics settings) instead of [member fixed_gravity].
 		</member>
+		<member name="vsp_accel_threshold" type="float" setter="set_vsp_accel_threshold" getter="get_vsp_accel_threshold" default="50.0">
+			The root acceleration, in m/s², above which the hair is carried with the head entirely ([member vsp_coeff] taken as [code]1[/code]), so a very fast turn doesn't overstretch it.
+		</member>
+		<member name="vsp_coeff" type="float" setter="set_vsp_coeff" getter="get_vsp_coeff" default="0.8">
+			How much of the head's motion each substep carries the whole strand, and its velocity, along (TressFX's velocity shock propagation). [code]0[/code] leaves the hair to catch up by itself; higher keeps it with the head when the character turns or runs.
+		</member>
 		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
-			The air's velocity in world space, in m/s. Strands are pulled toward it at [member air_drag]; a head moving through still air is slowed the same way.
+			The air's velocity in world space, in m/s. Strands take up its velocity at the rate set by [member damping]; a head moving through still air is slowed the same way.
 		</member>
 	</members>
 </class>

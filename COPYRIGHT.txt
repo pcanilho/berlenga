@@ -377,6 +377,11 @@ Comment: PhysX 5 physics module for Godot
 Copyright: 2026, Wild Ox Studios
 License: Expat
 
+Files: modules/godot_physx/cloth/hair_strands.glsl
+Comment: AMD TressFX 4.1 hair simulation (ported from TressFXSimulation.hlsl)
+Copyright: 2019, Advanced Micro Devices, Inc.
+License: Expat
+
 Files: modules/godot_physx/misc/physx_patches/*
  modules/godot_physx/misc/physx_presets/*
 Comment: NVIDIA PhysX 5, Blast and Flow (linked or loaded by modules/godot_physx;

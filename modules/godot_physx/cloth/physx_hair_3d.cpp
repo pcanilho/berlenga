@@ -468,11 +468,14 @@ void PhysXHair3D::_step(double p_delta) {
 	}
 	HairStrandSolver::Settings s;
 	s.damping = damping;
-	s.root_follow = root_follow;
-	s.tip_follow = tip_follow;
-	s.shape_stiffness = shape_stiffness;
-	s.length_damping = length_damping;
-	s.follow_range = follow_range;
+	s.global_stiffness = global_stiffness;
+	s.global_range = global_range;
+	s.local_stiffness = local_stiffness;
+	s.local_iterations = local_iterations;
+	s.length_iterations = length_iterations;
+	s.vsp_coeff = vsp_coeff;
+	s.vsp_accel_threshold = vsp_accel_threshold;
+	s.max_speed = max_speed;
 	s.gravity = fixed_gravity;
 	if (use_world_gravity && is_inside_tree()) {
 		const Ref<World3D> w = get_world_3d();
@@ -485,10 +488,6 @@ void PhysXHair3D::_step(double p_delta) {
 	}
 	s.wind = wind;
 	s.gust = gust;
-	s.air_drag = air_drag;
-	s.shape_damping = shape_damping;
-	s.inertia_scale = inertia_scale;
-	s.inertia_limit = inertia_limit;
 	s.turbulence = turbulence;
 	s.turbulence_size = turbulence_size;
 	const Transform3D xform = get_global_transform();
@@ -645,51 +644,75 @@ int PhysXHair3D::get_substeps() const {
 }
 
 void PhysXHair3D::set_damping(float p_damping) {
-	damping = CLAMP(p_damping, 0.0f, 0.999f);
+	damping = CLAMP(p_damping, 0.0f, 1.0f);
 }
 
 float PhysXHair3D::get_damping() const {
 	return damping;
 }
 
-void PhysXHair3D::set_root_follow(float p_follow) {
-	root_follow = CLAMP(p_follow, 0.0f, 1.0f);
+void PhysXHair3D::set_global_stiffness(float p_value) {
+	global_stiffness = CLAMP(p_value, 0.0f, 1.0f);
 }
 
-float PhysXHair3D::get_root_follow() const {
-	return root_follow;
+float PhysXHair3D::get_global_stiffness() const {
+	return global_stiffness;
 }
 
-void PhysXHair3D::set_tip_follow(float p_follow) {
-	tip_follow = CLAMP(p_follow, 0.0f, 1.0f);
+void PhysXHair3D::set_global_range(float p_value) {
+	global_range = CLAMP(p_value, 0.0f, 1.0f);
 }
 
-float PhysXHair3D::get_tip_follow() const {
-	return tip_follow;
+float PhysXHair3D::get_global_range() const {
+	return global_range;
 }
 
-void PhysXHair3D::set_shape_stiffness(float p_stiffness) {
-	shape_stiffness = CLAMP(p_stiffness, 0.0f, 1.0f);
+void PhysXHair3D::set_local_stiffness(float p_value) {
+	local_stiffness = CLAMP(p_value, 0.0f, 1.0f);
 }
 
-float PhysXHair3D::get_shape_stiffness() const {
-	return shape_stiffness;
+float PhysXHair3D::get_local_stiffness() const {
+	return local_stiffness;
 }
 
-void PhysXHair3D::set_follow_range(float p_range) {
-	follow_range = CLAMP(p_range, 0.0f, 1.0f);
+void PhysXHair3D::set_local_iterations(int p_value) {
+	local_iterations = CLAMP(p_value, 0, 16);
 }
 
-float PhysXHair3D::get_follow_range() const {
-	return follow_range;
+int PhysXHair3D::get_local_iterations() const {
+	return local_iterations;
 }
 
-void PhysXHair3D::set_length_damping(float p_damping) {
-	length_damping = CLAMP(p_damping, 0.0f, 1.0f);
+void PhysXHair3D::set_length_iterations(int p_value) {
+	length_iterations = CLAMP(p_value, 0, 16);
 }
 
-float PhysXHair3D::get_length_damping() const {
-	return length_damping;
+int PhysXHair3D::get_length_iterations() const {
+	return length_iterations;
+}
+
+void PhysXHair3D::set_vsp_coeff(float p_value) {
+	vsp_coeff = CLAMP(p_value, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_vsp_coeff() const {
+	return vsp_coeff;
+}
+
+void PhysXHair3D::set_vsp_accel_threshold(float p_value) {
+	vsp_accel_threshold = MAX(p_value, 0.0f);
+}
+
+float PhysXHair3D::get_vsp_accel_threshold() const {
+	return vsp_accel_threshold;
+}
+
+void PhysXHair3D::set_max_speed(float p_value) {
+	max_speed = MAX(p_value, 0.0f);
+}
+
+float PhysXHair3D::get_max_speed() const {
+	return max_speed;
 }
 
 void PhysXHair3D::set_use_world_gravity(bool p_use) {
@@ -731,38 +754,6 @@ void PhysXHair3D::set_guide_ratio(float p_ratio) {
 
 float PhysXHair3D::get_guide_ratio() const {
 	return guide_ratio;
-}
-
-void PhysXHair3D::set_shape_damping(float p_damping) {
-	shape_damping = CLAMP(p_damping, 0.0f, 1.0f);
-}
-
-float PhysXHair3D::get_shape_damping() const {
-	return shape_damping;
-}
-
-void PhysXHair3D::set_inertia_scale(float p_scale) {
-	inertia_scale = CLAMP(p_scale, 0.0f, 1.0f);
-}
-
-float PhysXHair3D::get_inertia_scale() const {
-	return inertia_scale;
-}
-
-void PhysXHair3D::set_inertia_limit(float p_limit) {
-	inertia_limit = MAX(p_limit, 0.0f);
-}
-
-float PhysXHair3D::get_inertia_limit() const {
-	return inertia_limit;
-}
-
-void PhysXHair3D::set_air_drag(float p_drag) {
-	air_drag = MAX(p_drag, 0.0f);
-}
-
-float PhysXHair3D::get_air_drag() const {
-	return air_drag;
 }
 
 void PhysXHair3D::set_turbulence(float p_turbulence) {
@@ -812,16 +803,22 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_substeps"), &PhysXHair3D::get_substeps);
 	ClassDB::bind_method(D_METHOD("set_damping", "damping"), &PhysXHair3D::set_damping);
 	ClassDB::bind_method(D_METHOD("get_damping"), &PhysXHair3D::get_damping);
-	ClassDB::bind_method(D_METHOD("set_root_follow", "follow"), &PhysXHair3D::set_root_follow);
-	ClassDB::bind_method(D_METHOD("get_root_follow"), &PhysXHair3D::get_root_follow);
-	ClassDB::bind_method(D_METHOD("set_tip_follow", "follow"), &PhysXHair3D::set_tip_follow);
-	ClassDB::bind_method(D_METHOD("get_tip_follow"), &PhysXHair3D::get_tip_follow);
-	ClassDB::bind_method(D_METHOD("set_shape_stiffness", "stiffness"), &PhysXHair3D::set_shape_stiffness);
-	ClassDB::bind_method(D_METHOD("get_shape_stiffness"), &PhysXHair3D::get_shape_stiffness);
-	ClassDB::bind_method(D_METHOD("set_follow_range", "range"), &PhysXHair3D::set_follow_range);
-	ClassDB::bind_method(D_METHOD("get_follow_range"), &PhysXHair3D::get_follow_range);
-	ClassDB::bind_method(D_METHOD("set_length_damping", "damping"), &PhysXHair3D::set_length_damping);
-	ClassDB::bind_method(D_METHOD("get_length_damping"), &PhysXHair3D::get_length_damping);
+	ClassDB::bind_method(D_METHOD("set_global_stiffness", "value"), &PhysXHair3D::set_global_stiffness);
+	ClassDB::bind_method(D_METHOD("get_global_stiffness"), &PhysXHair3D::get_global_stiffness);
+	ClassDB::bind_method(D_METHOD("set_global_range", "value"), &PhysXHair3D::set_global_range);
+	ClassDB::bind_method(D_METHOD("get_global_range"), &PhysXHair3D::get_global_range);
+	ClassDB::bind_method(D_METHOD("set_local_stiffness", "value"), &PhysXHair3D::set_local_stiffness);
+	ClassDB::bind_method(D_METHOD("get_local_stiffness"), &PhysXHair3D::get_local_stiffness);
+	ClassDB::bind_method(D_METHOD("set_local_iterations", "value"), &PhysXHair3D::set_local_iterations);
+	ClassDB::bind_method(D_METHOD("get_local_iterations"), &PhysXHair3D::get_local_iterations);
+	ClassDB::bind_method(D_METHOD("set_length_iterations", "value"), &PhysXHair3D::set_length_iterations);
+	ClassDB::bind_method(D_METHOD("get_length_iterations"), &PhysXHair3D::get_length_iterations);
+	ClassDB::bind_method(D_METHOD("set_vsp_coeff", "value"), &PhysXHair3D::set_vsp_coeff);
+	ClassDB::bind_method(D_METHOD("get_vsp_coeff"), &PhysXHair3D::get_vsp_coeff);
+	ClassDB::bind_method(D_METHOD("set_vsp_accel_threshold", "value"), &PhysXHair3D::set_vsp_accel_threshold);
+	ClassDB::bind_method(D_METHOD("get_vsp_accel_threshold"), &PhysXHair3D::get_vsp_accel_threshold);
+	ClassDB::bind_method(D_METHOD("set_max_speed", "value"), &PhysXHair3D::set_max_speed);
+	ClassDB::bind_method(D_METHOD("get_max_speed"), &PhysXHair3D::get_max_speed);
 	ClassDB::bind_method(D_METHOD("set_use_world_gravity", "enabled"), &PhysXHair3D::set_use_world_gravity);
 	ClassDB::bind_method(D_METHOD("is_using_world_gravity"), &PhysXHair3D::is_using_world_gravity);
 	ClassDB::bind_method(D_METHOD("set_fixed_gravity", "gravity"), &PhysXHair3D::set_fixed_gravity);
@@ -832,14 +829,6 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_gust"), &PhysXHair3D::get_gust);
 	ClassDB::bind_method(D_METHOD("set_guide_ratio", "ratio"), &PhysXHair3D::set_guide_ratio);
 	ClassDB::bind_method(D_METHOD("get_guide_ratio"), &PhysXHair3D::get_guide_ratio);
-	ClassDB::bind_method(D_METHOD("set_shape_damping", "damping"), &PhysXHair3D::set_shape_damping);
-	ClassDB::bind_method(D_METHOD("get_shape_damping"), &PhysXHair3D::get_shape_damping);
-	ClassDB::bind_method(D_METHOD("set_inertia_scale", "scale"), &PhysXHair3D::set_inertia_scale);
-	ClassDB::bind_method(D_METHOD("get_inertia_scale"), &PhysXHair3D::get_inertia_scale);
-	ClassDB::bind_method(D_METHOD("set_inertia_limit", "limit"), &PhysXHair3D::set_inertia_limit);
-	ClassDB::bind_method(D_METHOD("get_inertia_limit"), &PhysXHair3D::get_inertia_limit);
-	ClassDB::bind_method(D_METHOD("set_air_drag", "drag"), &PhysXHair3D::set_air_drag);
-	ClassDB::bind_method(D_METHOD("get_air_drag"), &PhysXHair3D::get_air_drag);
 	ClassDB::bind_method(D_METHOD("set_turbulence", "turbulence"), &PhysXHair3D::set_turbulence);
 	ClassDB::bind_method(D_METHOD("get_turbulence"), &PhysXHair3D::get_turbulence);
 	ClassDB::bind_method(D_METHOD("set_turbulence_size", "size"), &PhysXHair3D::set_turbulence_size);
@@ -860,22 +849,21 @@ void PhysXHair3D::_bind_methods() {
 	ADD_GROUP("Simulation", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simulating"), "set_simulating", "is_simulating");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "guide_ratio", PROPERTY_HINT_RANGE, "0.01,1,0.01"), "set_guide_ratio", "get_guide_ratio");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shape_damping", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_shape_damping", "get_shape_damping");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "inertia_scale", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_inertia_scale", "get_inertia_scale");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "inertia_limit", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m/s"), "set_inertia_limit", "get_inertia_limit");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "substeps", PROPERTY_HINT_RANGE, "1,32,1"), "set_substeps", "get_substeps");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping", PROPERTY_HINT_RANGE, "0,0.999,0.001"), "set_damping", "get_damping");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "root_follow", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_root_follow", "get_root_follow");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tip_follow", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_tip_follow", "get_tip_follow");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "follow_range", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_follow_range", "get_follow_range");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shape_stiffness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_shape_stiffness", "get_shape_stiffness");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "length_damping", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_length_damping", "get_length_damping");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_damping", "get_damping");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "global_stiffness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_global_stiffness", "get_global_stiffness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "global_range", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_global_range", "get_global_range");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "local_stiffness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_local_stiffness", "get_local_stiffness");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "local_iterations", PROPERTY_HINT_RANGE, "0,16,1"), "set_local_iterations", "get_local_iterations");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "length_iterations", PROPERTY_HINT_RANGE, "0,16,1"), "set_length_iterations", "get_length_iterations");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vsp_coeff", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_vsp_coeff", "get_vsp_coeff");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vsp_accel_threshold", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m/s²"), "set_vsp_accel_threshold", "get_vsp_accel_threshold");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_speed", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater,suffix:m/s"), "set_max_speed", "get_max_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_world_gravity"), "set_use_world_gravity", "is_using_world_gravity");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "fixed_gravity", PROPERTY_HINT_NONE, "suffix:m/s²"), "set_fixed_gravity", "get_fixed_gravity");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gust", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_gust", "get_gust");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_turbulence", "get_turbulence");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater,suffix:m"), "set_turbulence_size", "get_turbulence_size");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "air_drag", PROPERTY_HINT_RANGE, "0,30,0.1,or_greater,suffix:1/s"), "set_air_drag", "get_air_drag");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "collision_spheres"), "set_collision_spheres", "get_collision_spheres");
 }

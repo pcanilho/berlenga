@@ -381,32 +381,32 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 	ints[3] = MIN(p_settings.spheres.size(), HairStrandSolverGPU::MAX_SPHERES);
 	// step
 	f[4] = dt;
-	f[5] = Math::pow(1.0f - CLAMP(p_settings.damping, 0.0f, 0.999f), dt);
-	f[6] = per_substep(p_settings.root_follow);
-	f[7] = per_substep(p_settings.tip_follow);
+	f[5] = Math::exp(-MAX(p_settings.damping, 0.0f) * 60.0f * dt); // TressFX's decay, per substep
+	f[6] = per_substep(p_settings.global_stiffness);
+	f[7] = CLAMP(p_settings.global_range, 0.0f, 1.0f);
 	// accel
 	f[8] = p_settings.gravity.x;
 	f[9] = p_settings.gravity.y;
 	f[10] = p_settings.gravity.z;
-	f[11] = per_substep(p_settings.shape_stiffness);
+	// TressFX halves the local stiffness and caps it (1.0 is unstable); given per 1/60 s.
+	f[11] = per_substep(0.5f * MIN(MAX(p_settings.local_stiffness, 0.0f), 0.95f));
 	// wind
 	f[12] = p_settings.wind.x;
 	f[13] = p_settings.wind.y;
 	f[14] = p_settings.wind.z;
 	f[15] = CLAMP(p_settings.gust, 0.0f, 1.0f);
 	// misc
-	f[16] = CLAMP(p_settings.length_damping, 0.0f, 1.0f);
+	f[16] = CLAMP(p_settings.vsp_coeff, 0.0f, 1.0f);
 	f[17] = MAX(p_settings.margin, 0.0f);
 	f[18] = (float)Math::fmod(time, 3600.0);
-	f[19] = CLAMP(p_settings.follow_range, 0.0f, 1.0f);
+	f[19] = MAX(p_settings.vsp_accel_threshold, 0.0f);
 	// air
-	f[20] = MAX(p_settings.air_drag, 0.0f);
+	f[20] = MAX(p_settings.max_speed, 0.0f);
 	f[21] = CLAMP(p_settings.turbulence, 0.0f, 1.0f);
 	f[22] = MAX(p_settings.turbulence_size, 0.001f);
-	f[23] = CLAMP(p_settings.shape_damping, 0.0f, 1.0f);
-	// inertia
-	f[24] = CLAMP(p_settings.inertia_scale, 0.0f, 1.0f);
-	f[25] = MAX(p_settings.inertia_limit, 0.0f);
+	// iterations
+	f[24] = (float)CLAMP(p_settings.local_iterations, 0, 16);
+	f[25] = (float)CLAMP(p_settings.length_iterations, 0, 16);
 	// matrices
 	put_mat4(f + 28, has_last ? last_xform : p_xform);
 	put_mat4(f + 44, p_xform);

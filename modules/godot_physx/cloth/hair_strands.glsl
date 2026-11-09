@@ -1,16 +1,17 @@
 #[compute]
 #version 450
 
-// Strand hair on any GPU (RenderingDevice compute), for PhysXHair3D. One thread per strand walks it
-// root to tip (Muller et al. 2012, "Fast Simulation of Inextensible Hair and Fur": dynamic
-// follow-the-leader, DFTL), with TressFX-style shape constraints (AMD TressFX 4: global shape pulls
-// toward the groomed pose carried by the head, local shape keeps each segment's groomed bend
-// relative to its parent). Per substep:
-//   MODE_STEP    the root follows the head (its transform blended across the substeps); every other
-//                point takes a Verlet step under gravity, wind and damping and is pulled toward the
-//                groomed pose (global shape, stronger at the root). Then root to tip: the local shape
-//                pull, collision spheres, and the segment's length restored by moving the point
-//                along it (FTL), with that correction fed back into the parent's velocity (DFTL).
+// Strand hair on any GPU (RenderingDevice compute), for PhysXHair3D: a port of AMD TressFX 4.1's
+// strand simulation (TressFXSimulation.hlsl, github.com/GPUOpen-Effects/TressFX; Copyright (c) 2019
+// Advanced Micro Devices, Inc., MIT licence, see COPYRIGHT.txt), one thread
+// per guide strand walking it root to tip. Per substep (MODE_STEP):
+//   the first two points are pinned to the head; every other point takes a damped Verlet step under
+//   gravity and the air (wind, gusts, turbulence) and is pulled toward the groomed pose near the
+//   root (global shape); velocity shock propagation carries the strand with the head's motion;
+//   iterated local shape keeps each segment's groomed angle to its parent; iterated length
+//   constraints keep the segments' lengths; collision spheres push points out and stop them;
+//   the speed is clamped.
+// MODE_FOLLOW then places the follow strands on their guides (HairWorks / TressFX follow hairs).
 // Per frame:
 //   MODE_RESET   (first frame / teleport) every point placed on the groomed pose.
 //   MODE_OUTPUT  positions written, in the render copy's space, to an RGBA32F image the hair
@@ -27,12 +28,12 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(set = 0, binding = 0, std140) uniform Params {
 	ivec4 counts; // x strands, y points, z output width, w spheres
-	vec4 step; // x dt (substep), y velocity kept per substep, z global shape at the root, w at the tip (per substep)
-	vec4 accel; // xyz gravity (m/s^2), w local shape (per substep)
+	vec4 step; // x dt (substep), y velocity decay toward the air's per substep, z global shape stiffness (per substep), w global range (share of the strand)
+	vec4 accel; // xyz gravity (m/s^2), w local shape stiffness (per iteration)
 	vec4 wind; // xyz air velocity (m/s), w gust strength (0..1)
-	vec4 misc; // x DFTL damping (0..1), y collision margin (m), z time (s), w follow range (share of the strand)
-	vec4 air; // x drag rate (1/s), y turbulence (0..1), z turbulence eddy size (m), w damping of the global shape spring (0..1)
-	vec4 inertia; // x inertia scale (0 the hair moves with the head, 1 full inertia), y the head speed it starts at (m/s)
+	vec4 misc; // x VSP coefficient, y collision margin (m), z time (s), w VSP acceleration threshold (m/s^2)
+	vec4 air; // x speed clamp (m/s), y turbulence (0..1), z turbulence eddy size (m), w unused
+	vec4 inertia; // x local shape iterations, y length iterations
 	mat4 xform_prev; // groom space -> world, last frame
 	mat4 xform_cur; // groom space -> world, this frame
 	mat4 world_to_out; // world -> the render copy's space
@@ -185,91 +186,146 @@ void main() {
 	if (!is_guide) {
 		return;
 	}
-	// Inertia scale (HairWorks): above the inertia limit, part of the head's motion carries the
-	// strand along instead of being left to inertia, so fast moves don't whip the hair.
-	mat4 m_last = xform_prev + (xform_cur - xform_prev) * pass.frac_prev;
 
+	// AMD TressFX 4.1 simulation (MIT; TressFXSimulation.hlsl), one thread per guide strand, in
+	// metres and seconds. Per substep: integrate, global shape, velocity shock propagation, local
+	// shape, length constraints, collisions, then a speed clamp.
 	float dt = step.x;
 	// A zero step (the first frame after building) only places the strands.
 	float inv_dt = dt > 0.0 ? 1.0 / dt : 0.0;
-	// Gusts: the wind rises and falls, each strand a little out of step with its neighbours.
+
+	// The first two points are pinned to the head (TressFX's immovable vertices).
+	vec3 old0 = pos[first].xyz;
+	vec3 new0 = to_world(m, rest[first].xyz);
+	prev[first] = vec4(old0, 1.0);
+	pos[first] = vec4(new0, 1.0);
+	if (n < 2) {
+		return;
+	}
+	vec3 old1 = pos[first + 1].xyz;
+	vec3 oldold1 = prev[first + 1].xyz;
+	vec3 new1 = to_world(m, rest[first + 1].xyz);
+	prev[first + 1] = vec4(old1, 1.0);
+	pos[first + 1] = vec4(new1, 1.0);
+	if (n < 3) {
+		return;
+	}
+
+	// Integrate (Verlet). TressFX's damping, decay = exp(-damping * 60 dt), here relaxes the
+	// velocity toward the air's rather than toward rest: in still air it is TressFX's, in wind the
+	// strand takes up the air's velocity at that rate. The air carries gusts and turbulence (eddies
+	// blown along with the wind, Taylor's frozen turbulence) so neighbouring strands flutter together.
 	float gust = 1.0 + wind.w * sin(misc.z * 2.3 + hash11(float(id)) * 6.2832) * (0.6 + 0.4 * sin(misc.z * 0.7 + float(id) * 0.013));
 	vec3 air_v = wind.xyz * gust;
 	float wind_speed = length(wind.xyz);
-	float drag = air.x;
-
-	// Root: carried by the head.
-	vec3 root = to_world(m, rest[first].xyz);
-	prev[first] = pos[first];
-	pos[first] = vec4(root, 1.0);
-
-	// Verlet step and the global shape pull.
-	for (int i = 1; i < n; i++) {
+	float decay = step.y;
+	float global_range = step.w * float(n);
+	for (int i = 2; i < n; i++) {
 		int k = first + i;
 		vec3 p = pos[k].xyz;
-		vec3 pp = prev[k].xyz;
-		if (inertia.x < 1.0) {
-			vec3 carried = to_world(m, rest[k].xyz) - to_world(m_last, rest[k].xyz);
-			float speed = length(carried) * inv_dt;
-			float share = (1.0 - inertia.x) * clamp((speed - inertia.y) / max(speed, 1e-6), 0.0, 1.0);
-			p += carried * share;
-			pp += carried * share;
-		}
-		vec3 v = (p - pp) * (step.y * inv_dt);
-		prev[k] = vec4(p, 1.0);
-		// Air: a fibre is so light that drag, not inertia, sets how it moves (a loose hair falls at
-		// about 0.5 m/s). Velocity relaxes toward the air's at the drag rate (implicit, so stable at
-		// any rate), and the air carries turbulence: eddies blown along with the wind (Taylor's
-		// frozen turbulence), so neighbouring strands flutter together and differ along a strand.
+		vec3 v = (p - prev[k].xyz) * inv_dt;
 		vec3 a = air_v;
 		if (air.y > 0.0 && wind_speed > 1e-3) {
 			a += air.y * wind_speed * eddies((p - wind.xyz * misc.z) / max(air.z, 1e-3));
 		}
-		v = (v + (accel.xyz + drag * a) * dt) / (1.0 + drag * dt);
-		p += v * dt;
-		float along = float(i) / float(max(n - 1, 1));
-		// TressFX global shape: held near the scalp, free past the follow range (bar the tip pull).
-		vec3 pull = (to_world(m, rest[k].xyz) - p) * mix(step.z, step.w, smoothstep(0.0, max(misc.w, 1e-3), along));
-		p += pull;
-		// The spring's own damping (HairWorks stiffness damping): the pull moves the point without
-		// all of it turning into velocity, so the hair settles instead of bouncing.
-		prev[k].xyz += pull * air.w;
-		pos[k] = vec4(p, 1.0);
+		v = a + (v - a) * decay + accel.xyz * dt;
+		vec3 np = p + v * dt;
+		// Global shape: pulled toward the groomed pose carried by the head, over the first
+		// global_range share of the strand.
+		if (float(i) < global_range) {
+			np += step.z * (to_world(m, rest[k].xyz) - np);
+		}
+		prev[k] = vec4(p, 1.0);
+		pos[k] = vec4(np, 1.0);
 	}
 
-	// Root to tip: local shape, collisions, follow-the-leader length.
-	for (int i = 1; i < n; i++) {
-		int k = first + i;
-		vec3 parent = pos[k - 1].xyz;
-		vec3 seg = basis * (rest[k].xyz - rest[k - 1].xyz);
-		if (i >= 2) {
-			vec3 rest_parent = basis * (rest[k - 1].xyz - rest[k - 2].xyz);
-			vec3 cur_parent = parent - pos[k - 2].xyz;
-			if (dot(rest_parent, rest_parent) > 1e-14 && dot(cur_parent, cur_parent) > 1e-14) {
-				seg = rotate_between(normalize(rest_parent), normalize(cur_parent), seg);
+	// Velocity shock propagation: the head's motion this step (the rotation taking the old root
+	// segment to the new one, plus the root's move) carries vsp_coeff of the strand and its
+	// velocity along, all of it when the root accelerates past the threshold, so a fast head turn
+	// doesn't leave the hair behind and overstretch it.
+	vec3 u = old1 - old0;
+	vec3 w = new1 - new0;
+	if (dot(u, u) > 1e-14 && dot(w, w) > 1e-14) {
+		u = normalize(u);
+		w = normalize(w);
+		float shock = length(new1 - 2.0 * old1 + oldold1) * inv_dt * inv_dt;
+		float vsp = shock > misc.w ? 1.0 : misc.x;
+		if (vsp > 0.0) {
+			for (int i = 2; i < n; i++) {
+				int k = first + i;
+				vec3 p = pos[k].xyz;
+				vec3 pp = prev[k].xyz;
+				pos[k].xyz = mix(p, new0 + rotate_between(u, w, p - old0), vsp);
+				prev[k].xyz = mix(pp, new0 + rotate_between(u, w, pp - old0), vsp);
 			}
 		}
-		vec3 p = pos[k].xyz;
-		p += (parent + seg - p) * accel.w;
+	}
 
+	// Local shape: each segment keeps its groomed angle to its parent (bend and curl), the
+	// correction split between the two points.
+	int local_iterations = int(inertia.x + 0.5);
+	for (int it = 0; it < local_iterations; it++) {
+		for (int i = 1; i < n - 1; i++) {
+			int k = first + i;
+			vec3 p = pos[k].xyz;
+			vec3 next = pos[k + 1].xyz;
+			vec3 last = p - pos[k - 1].xyz;
+			vec3 bind_last = basis * (rest[k].xyz - rest[k - 1].xyz);
+			vec3 bind = basis * (rest[k + 1].xyz - rest[k].xyz);
+			if (dot(last, last) > 1e-14 && dot(bind_last, bind_last) > 1e-14) {
+				bind = rotate_between(normalize(bind_last), normalize(last), bind);
+			}
+			vec3 del = accel.w * (p + bind - next);
+			if (i >= 2) {
+				pos[k].xyz = p - del;
+			}
+			pos[k + 1].xyz = next + del;
+		}
+	}
+
+	// Length constraints, root to tip; a pinned end takes none of the correction.
+	int length_iterations = int(inertia.y + 0.5);
+	for (int it = 0; it < length_iterations; it++) {
+		for (int i = 1; i < n - 1; i++) {
+			int k = first + i;
+			vec3 p0 = pos[k].xyz;
+			vec3 p1 = pos[k + 1].xyz;
+			vec3 d = p1 - p0;
+			float len = max(length(d), 1e-7);
+			d *= 1.0 - rest[k + 1].w / len;
+			if (i >= 2) {
+				pos[k].xyz = p0 + 0.5 * d;
+				pos[k + 1].xyz = p1 - 0.5 * d;
+			} else {
+				pos[k + 1].xyz = p1 - d;
+			}
+		}
+	}
+
+	// Collisions (a point pushed out loses its velocity), then the speed clamp.
+	float max_move = air.x * dt;
+	for (int i = 2; i < n; i++) {
+		int k = first + i;
+		vec3 p = pos[k].xyz;
+		bool hit = false;
 		for (int s = 0; s < counts.w; s++) {
 			vec3 d = p - spheres[s].xyz;
 			float r = spheres[s].w + misc.y;
 			float l2 = dot(d, d);
 			if (l2 < r * r && l2 > 1e-14) {
 				p = spheres[s].xyz + d * (r / sqrt(l2));
+				hit = true;
 			}
 		}
-
-		vec3 dir = p - parent;
-		float len = length(dir);
-		vec3 fixed_p = len > 1e-9 ? parent + dir * (rest[k].w / len) : parent + seg;
-		vec3 correction = fixed_p - p;
-		pos[k] = vec4(fixed_p, 1.0);
-		// DFTL: the parent's velocity takes back part of the correction, which damps the
-		// otherwise stiff look of plain FTL (Muller 2012, eq. 9).
-		if (i >= 2) {
-			prev[k - 1].xyz += correction * misc.x;
+		pos[k].xyz = p;
+		if (hit) {
+			prev[k].xyz = p;
+		} else if (max_move > 0.0) {
+			vec3 d = p - prev[k].xyz;
+			float l = length(d);
+			if (l > max_move) {
+				prev[k].xyz = p - d * (max_move / l);
+			}
 		}
 	}
 }
