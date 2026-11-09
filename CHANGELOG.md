@@ -6,6 +6,16 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-b69095d3 (2026-11-09)
+
+### Added
+- BaseMaterial3D Hair: hair fibre scattering in the path tracer (Chiang et al. 2016: white highlight, light through the fibres, coloured second highlight), colour from the albedo or from melanin, a mask for characters whose hair shares one material, strands running from a crown point or along the UVs, shells or cards; an anisotropic highlight across the strands in raster; setting rendering/pathtracing/hair (#191)
+- PhysXRiver3D live window: the sea's shallow-water solver runs on a square round the camera, fed the river's depth and flow, so rocks shed eddies and a meandering wake with live foam and floaters swirl in them (live_flow) (#192)
+
+### Changed
+- README: hair line and image
+- README: river live flow
+
 ## build-8c6c8958 (2026-11-09)
 
 ### Changed
