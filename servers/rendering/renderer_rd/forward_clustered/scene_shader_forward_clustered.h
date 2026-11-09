@@ -279,6 +279,9 @@ public:
 		bool uses_alpha_clip = false;
 		bool uses_alpha_antialiasing = false;
 		bool uses_depth_prepass_alpha = false;
+		// render_mode rt_force_opaque / rt_force_transparent of the shader itself, for shaders without an RT variant.
+		bool rt_force_opaque = false;
+		bool rt_force_transparent = false;
 		bool uses_discard = false;
 		bool uses_roughness = false;
 		bool uses_normal = false;
@@ -370,7 +373,10 @@ public:
 		// RT-side alpha-pass helpers; fall back to raster when no divergence.
 		_FORCE_INLINE_ bool rt_uses_alpha_pass() const {
 			if (!rt) {
-				return uses_alpha_pass();
+				if (rt_force_opaque) {
+					return false;
+				}
+				return rt_force_transparent || uses_alpha_pass();
 			}
 			if (rt->force_opaque) {
 				return false;

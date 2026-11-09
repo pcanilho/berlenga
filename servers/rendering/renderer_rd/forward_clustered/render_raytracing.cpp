@@ -3564,7 +3564,8 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	rt_material_set_surface_params(mat, rt_state.orm ? 1.0f : get_float("roughness", 1.0f),
 			rt_state.orm ? 1.0f : get_float("metallic", 0.0f), get_float("specular", 0.5f));
 	if (rt_state.backlight) {
-		// The back light texture is not read.
+		// Raster adds texture_backlight (default black) to the colour.
+		mat.backlight_texture.index = get_texture_idx("texture_backlight");
 		const Variant backlight = material_storage->material_get_param(p_material_rid, "backlight");
 		if (backlight.get_type() == Variant::COLOR) {
 			const Color c = backlight;
@@ -3573,18 +3574,21 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 				mat.flags |= RT_MAT_FLAG_BACKLIT;
 			}
 		}
+		if (mat.backlight_texture.index != 0u) {
+			mat.flags |= RT_MAT_FLAG_BACKLIT;
+		}
 	}
 	if (rt_state.clearcoat) {
-		// The clearcoat texture is not read: the coat is uniform over the surface.
 		rt_material_set_clearcoat(mat, get_float("clearcoat", 1.0f), get_float("clearcoat_roughness", 0.5f));
+		mat.clearcoat_texture.index = get_texture_idx("texture_clearcoat");
 	}
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
 	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
 	if (rt_state.transmission) {
-		// The transmission texture is not read.
 		mat.emission_indirect_transmission.transmission = rt_unorm8(get_float("transmission", 1.0f));
 		if (mat.emission_indirect_transmission.transmission != 0u) {
 			mat.flags |= RT_MAT_FLAG_TRANSMISSIVE;
+			mat.transmission_texture.index = get_texture_idx("texture_transmission");
 		}
 	} else if (rt_state.refraction) {
 		// Refraction lets through 1 - alpha, as raster's ref_amount; the shader reads the alpha.
@@ -5991,6 +5995,12 @@ void RTTlasBuilder::_fill_surface_key(const ShaderData *p_shader, const RTMateri
 	r_material_flags = _rt_surface_mat_flags(p_shader, p_blend_class);
 	if (alpha_scissor) {
 		r_material_flags |= RT_MAT_FLAG_ALPHA_SCISSOR;
+	}
+	if (p_mat_data->rt_sbt_offset > 0) {
+		const SceneShaderRaytracing::CustomShaderEntry *entry = rt_shader->get_custom_shader_entry(p_mat_data->rt_sbt_offset);
+		if (entry && entry->casts_transmitted_shadow) {
+			r_material_flags |= RT_MAT_FLAG_CUSTOM_TRANSMITTANCE;
+		}
 	}
 	if (p_blend_class != ShaderData::RT_BLEND_OPAQUE && _shader_blend_class(p_shader) == ShaderData::RT_BLEND_OPAQUE) {
 		r_material_flags |= RT_MAT_FLAG_INSTANCE_FADE;

@@ -8,17 +8,24 @@
 #define RT_SHADOW_QUERY_BACK_LIGHTING rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING)
 #endif
 
-vec4 ray_query_surface(uint geometry_idx, uint primitive_id, vec2 candidate_bary, float lod) {
+// UV1 of a candidate hit with the material's scale and offset.
+vec2 ray_query_uv(uint geometry_idx, uint primitive_id, vec2 candidate_bary, MaterialData mat) {
 	vec3 bary = vec3(1.0 - candidate_bary.x - candidate_bary.y, candidate_bary.x, candidate_bary.y);
 
 	GeometryData geom = geometries[geometry_idx];
 	uint i0, i1, i2;
 	get_triangle_indices_ex(geom, primitive_id, i0, i1, i2);
-	vec2 uv = fetch_uv(geom, i0, i1, i2, bary);
+	return fetch_uv(geom, i0, i1, i2, bary) * mat.uv1_scale.xy + mat.uv1_offset.xy;
+}
 
+vec4 ray_query_texture(uint p_texture, vec2 uv, float lod) {
+	return textureLod(sampler2D(bindless_textures[nonuniformEXT(rt_texture_index(p_texture))], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv, lod);
+}
+
+vec4 ray_query_surface(uint geometry_idx, uint primitive_id, vec2 candidate_bary, float lod) {
 	MaterialData mat = rt_entry_material(geometry_idx);
-	uv = uv * mat.uv1_scale.xy + mat.uv1_offset.xy;
-	vec4 albedo = textureLod(sampler2D(bindless_textures[nonuniformEXT(rt_texture_index(mat.albedo_texture))], SAMPLER_LINEAR_WITH_MIPMAPS_REPEAT), uv, lod);
+	vec2 uv = ray_query_uv(geometry_idx, primitive_id, candidate_bary, mat);
+	vec4 albedo = ray_query_texture(mat.albedo_texture, uv, lod);
 	albedo *= mat.albedo_color;
 	albedo.a = rt_entry_alpha(mat, albedo.a, 0.5);
 	if ((mat.flags & RT_MAT_BLEND_CLASS_MASK) == RT_BLEND_CLASS_PREMULT && albedo.a > 1e-6) {
@@ -54,8 +61,21 @@ vec3 ray_query_shadow_transmittance(vec3 origin, vec3 direction, float t_min, fl
 			bool back = (mat_flags & RT_MAT_FLAG_BACKLIT) != 0u && RT_SHADOW_QUERY_BACK_LIGHTING;
 			if (trans || back) {
 				// Glass and back-lit surfaces, as the any-hit shader filters them.
-				vec4 surface = ray_query_surface(geometry_idx, rayQueryGetIntersectionPrimitiveIndexEXT(shadow_rq, false), rayQueryGetIntersectionBarycentricsEXT(shadow_rq, false), lod);
-				transmittance *= rt_material_shadow_transmittance(rt_entry_material(geometry_idx), surface.rgb, surface.a, trans, back);
+				uint primitive_id = rayQueryGetIntersectionPrimitiveIndexEXT(shadow_rq, false);
+				vec2 candidate_bary = rayQueryGetIntersectionBarycentricsEXT(shadow_rq, false);
+				vec4 surface = ray_query_surface(geometry_idx, primitive_id, candidate_bary, lod);
+				MaterialData mat = rt_entry_material(geometry_idx);
+				MaterialLayerTextures layers = material_layer_textures_none();
+				if (rt_texture_index(mat.transmission_texture) != 0u || rt_texture_index(mat.backlight_texture) != 0u) {
+					vec2 uv = ray_query_uv(geometry_idx, primitive_id, candidate_bary, mat);
+					if (trans && rt_texture_index(mat.transmission_texture) != 0u) {
+						layers.transmission = ray_query_texture(mat.transmission_texture, uv, lod).r;
+					}
+					if (back && rt_texture_index(mat.backlight_texture) != 0u) {
+						layers.backlight = ray_query_texture(mat.backlight_texture, uv, lod).rgb;
+					}
+				}
+				transmittance *= rt_material_shadow_transmittance(mat, surface.rgb, surface.a, layers, trans, back);
 				if (max(transmittance.r, max(transmittance.g, transmittance.b)) <= 1e-3) {
 					rayQueryConfirmIntersectionEXT(shadow_rq);
 				}

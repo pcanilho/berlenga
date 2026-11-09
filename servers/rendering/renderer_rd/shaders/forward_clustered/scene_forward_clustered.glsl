@@ -1230,6 +1230,7 @@ void fragment_shader(in SceneData scene_data) {
 	float specular = 0.5;
 	vec3 emission = vec3(0.0);
 	float emission_indirect = 1.0;
+	float transmission = 0.0; // Written by TRANSMISSION; path tracing only.
 	float roughness_highp = 1.0;
 	float rim = 0.0;
 	float rim_tint = 0.0;

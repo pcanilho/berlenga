@@ -64,6 +64,7 @@ float normal_map_depth = 1.0;
 float ao = 1.0;
 float ao_light_affect = 0.0;
 vec3 backlight = vec3(0.0);
+float transmission = 0.0; // TRANSMISSION: light let straight through, tinted by albedo (thin-walled).
 float sss_strength = 0.0;
 float rim = 0.0;
 float rim_tint = 0.0;

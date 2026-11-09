@@ -289,6 +289,32 @@ float material_ao(MaterialData mat, MaterialUV muv) {
 }
 
 // ============================================================================
+// LAYER TEXTURES (clearcoat, back light, transmission)
+// ============================================================================
+
+// BaseMaterial3D clearcoat and clearcoat_roughness (x, y), scaled by texture_clearcoat's red and green
+// as raster. x is 0 without the coat.
+vec2 material_clearcoat(MaterialData mat, MaterialUV muv) {
+	vec2 coat = rt_material_clearcoat(mat);
+	if (coat.x > 0.0 && rt_texture_index(mat.clearcoat_texture) != 0u) {
+		coat *= material_uv_sample(mat.clearcoat_texture, muv, mat.flags).xy;
+	}
+	return coat;
+}
+
+// texture_transmission's red and texture_backlight at the hit; the back light texture defaults to black.
+MaterialLayerTextures material_layer_textures(MaterialData mat, MaterialUV muv) {
+	MaterialLayerTextures l = material_layer_textures_none();
+	if ((mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u && rt_texture_index(mat.transmission_texture) != 0u) {
+		l.transmission = material_uv_sample(mat.transmission_texture, muv, mat.flags).r;
+	}
+	if ((mat.flags & RT_MAT_FLAG_BACKLIT) != 0u && rt_texture_index(mat.backlight_texture) != 0u) {
+		l.backlight = material_uv_sample(mat.backlight_texture, muv, mat.flags).rgb;
+	}
+	return l;
+}
+
+// ============================================================================
 // EMISSION
 // ============================================================================
 
