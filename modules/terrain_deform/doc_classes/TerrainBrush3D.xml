@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TerrainBrush3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A circle or rectangle height brush for [TerrainDeformer3D]: craters, building plots, road beds.
+	</brief_description>
+	<description>
+		Lowers, raises, flattens or offsets the ground to this node's global height, inside its [member shape] and over a soft [member falloff] band around it. Follows the node's position, rotation around Y and scale. Add it to a [TerrainDeformer3D]'s [member TerrainDeformer3D.brushes]; moving it re-applies the deformer.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_carve_brush" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				The brush as [TerrainDeformer3D] reads it: [code]rect[/code], [code]cell_size[/code], [code]size[/code], [code]heights[/code], [code]mask[/code] and [code]mode[/code]. Empty when disabled.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="0.5">
+			Spacing of the brush's height samples, in metres. Keep it at or below the ground's vertex spacing.
+		</member>
+		<member name="depth" type="float" setter="set_depth" getter="get_depth" default="0.0">
+			How far below this node's height the target sits. With [constant PROFILE_BOWL] it is the depth at the centre, falling to [code]0[/code] at the edge. With [constant MODE_ADD] it is the offset subtracted from the ground.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			If [code]false[/code], the brush carves nothing and the ground under it is restored.
+		</member>
+		<member name="falloff" type="float" setter="set_falloff" getter="get_falloff" default="2.0">
+			Width of the soft band outside the shape, in metres, over which the brush blends into the ground (smoothstep).
+		</member>
+		<member name="mode" type="int" setter="set_mode" getter="get_mode" enum="TerrainBrush3D.Mode" default="2">
+			How the target combines with the ground.
+		</member>
+		<member name="profile" type="int" setter="set_profile" getter="get_profile" enum="TerrainBrush3D.Profile" default="0">
+			Flat target or a bowl.
+		</member>
+		<member name="shape" type="int" setter="set_shape" getter="get_shape" enum="TerrainBrush3D.Shape" default="0">
+			Circle (an ellipse when [member size] differs on its axes) or rectangle.
+		</member>
+		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(10, 10)">
+			Width (local X) and length (local Z) of the shape, in metres, before the falloff band.
+		</member>
+	</members>
+	<signals>
+		<signal name="carve_changed">
+			<description>
+				Emitted when the brush moves or a property changes.
+			</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="SHAPE_CIRCLE" value="0" enum="Shape">
+			A circle or ellipse.
+		</constant>
+		<constant name="SHAPE_RECTANGLE" value="1" enum="Shape">
+			A rectangle.
+		</constant>
+		<constant name="MODE_LOWER" value="0" enum="Mode">
+			Cuts the ground down to the target, never raises it.
+		</constant>
+		<constant name="MODE_RAISE" value="1" enum="Mode">
+			Builds the ground up to the target, never lowers it.
+		</constant>
+		<constant name="MODE_FLATTEN" value="2" enum="Mode">
+			Sets the ground to the target.
+		</constant>
+		<constant name="MODE_ADD" value="3" enum="Mode">
+			Offsets the ground by minus [member depth].
+		</constant>
+		<constant name="PROFILE_FLAT" value="0" enum="Profile">
+			The same target everywhere.
+		</constant>
+		<constant name="PROFILE_BOWL" value="1" enum="Profile">
+			A target [member depth] deep at the centre, rising to this node's height at the edge.
+		</constant>
+	</constants>
+</class>

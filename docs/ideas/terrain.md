@@ -222,6 +222,38 @@ would not justify writing a terrain system. So:
 
 B's design stays here so the decision is quick if step 1 goes badly.
 
+## Deformation layer: what was built (step 1 of A+)
+
+Paulo picked A+ on 9 Nov. Research for the layer itself:
+
+- **Unreal Landscape edit layers.** Height layers composited in order over the base, each
+  non-destructive; Landscape Blueprint Brushes (the Landmass plugin) render into a layer with blend
+  types Alpha Blend, Min, Max and Additive, and Unreal Water's bodies carve through the same brush
+  path. Moving or deleting a brush re-renders the stack, so the ground comes back.
+- **Terrain3D's API** has no layers: heights live in one `FORMAT_RF` image per region. Its own
+  editor writes pixels, flags the region `edited` so `update_maps(TYPE_HEIGHT, false)` re-uploads
+  only that layer of the texture array, then clears the flag; `modified` makes it save. Collision
+  is rebuilt with `Terrain3DCollision.update(..., true)`.
+
+What `modules/terrain_deform` does:
+
+- `TerrainDeformer3D` keeps the base height of every grid vertex any brush covers (saved with the
+  scene as `base_keys` / `base_values`), composites the stack in order (lower = Min, raise = Max,
+  flatten = Alpha Blend, add = Additive, each lerped by the brush mask) and writes only vertices
+  whose height changed. Vertices no brush covers any more get their base height back.
+- Brushes are duck-typed: `get_carve_brush()` or `get_carve_brushes(tile_size)` returning
+  cell-centred height grids (PhysXRiver3D's contract, #187). `base_height_at(Vector2)` answers the
+  river's `base_height_source`, so a river measuring the ground never measures its own channel.
+- Backends: Terrain3D by name (region images, edited flag, update_maps, height range, collision),
+  and a `HeightMapShape3D` with an optional mesh regenerated from the same heights.
+- `TerrainBrush3D`: circle or rectangle, flat or bowl, with a smoothstep falloff band, for craters,
+  plots and road beds.
+- Bench and checks: `docs/bench/terrain_deform` (`--test`, `--test --terrain3d`).
+
+Limits: one region re-upload per apply (authoring and occasional events, not per-frame marks);
+the Terrain3D capture under path tracing may keep the old ground until the camera moves (the
+capture is keyed on camera and uniforms, not on texture contents); to check on the PC.
+
 ## Open questions
 
 - Region and chunk sizes against the partitioned TLAS cell (128 m columns in Valence, 1024 m
