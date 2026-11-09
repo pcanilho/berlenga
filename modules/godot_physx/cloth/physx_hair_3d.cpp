@@ -31,8 +31,11 @@
 #include "physx_hair_3d.h"
 
 #include "core/config/engine.h"
+#include "core/math/random_pcg.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/templates/hash_map.h"
+#include "core/templates/local_vector.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/material.h"
@@ -113,6 +116,117 @@ Color PhysXHair3D::_mass_color() const {
 	const float d = 5.969f - 0.215f * b + 2.532f * b * b - 10.73f * b * b * b + 5.574f * b * b * b * b + 0.245f * b * b * b * b * b;
 	const Vector3 s = _fibre_absorption();
 	return Color(Math::exp(-d * Math::sqrt(s.x)), Math::exp(-d * Math::sqrt(s.y)), Math::exp(-d * Math::sqrt(s.z))).linear_to_srgb();
+}
+
+// Guide strands and who follows them (HairWorks guide curves, TressFX follow hairs): a seeded
+// random share of the strands simulates, and every other strand follows its three nearest guides
+// by root, weighted by inverse squared distance. 8 floats per strand, see HairStrandSolver::build().
+PackedFloat32Array PhysXHair3D::_follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) const {
+	const int sc = p_counts.size();
+	PackedFloat32Array follow;
+	follow.resize(sc * 8);
+	float *f = follow.ptrw();
+	memset(f, 0, sizeof(float) * sc * 8);
+
+	LocalVector<Vector3> roots;
+	roots.resize(sc);
+	int start = 0;
+	for (int i = 0; i < sc; i++) {
+		roots[i] = p_points[start];
+		start += p_counts[i];
+	}
+	const int guide_n = guide_ratio >= 1.0f ? sc : CLAMP((int)Math::ceil(sc * guide_ratio), 1, sc);
+	LocalVector<int> order;
+	order.resize(sc);
+	for (int i = 0; i < sc; i++) {
+		order[i] = i;
+	}
+	RandomPCG rng{ 0x6a1du };
+	for (int i = sc - 1; i > 0; i--) {
+		SWAP(order[i], order[rng.rand() % (uint32_t)(i + 1)]);
+	}
+	LocalVector<bool> guide;
+	guide.resize(sc);
+	for (int i = 0; i < sc; i++) {
+		guide[i] = false;
+	}
+	AABB box;
+	for (int i = 0; i < guide_n; i++) {
+		const int g = order[i];
+		guide[g] = true;
+		f[g * 8 + 3] = -1.0f;
+		if (i == 0) {
+			box = AABB(roots[g], Vector3());
+		} else {
+			box.expand_to(roots[g]);
+		}
+	}
+	if (guide_n == sc) {
+		return follow;
+	}
+
+	// A grid of about one guide per cell, searched in growing shells.
+	const float cell = MAX(box.get_longest_axis_size() / MAX(Math::pow((float)guide_n, 1.0f / 3.0f), 1.0f), 1e-4f);
+	auto cell_of = [&](const Vector3 &p_p) {
+		return Vector3i((int)Math::floor(p_p.x / cell), (int)Math::floor(p_p.y / cell), (int)Math::floor(p_p.z / cell));
+	};
+	HashMap<Vector3i, LocalVector<int>> grid;
+	for (int i = 0; i < guide_n; i++) {
+		grid[cell_of(roots[order[i]])].push_back(order[i]);
+	}
+	for (int s = 0; s < sc; s++) {
+		if (guide[s]) {
+			continue;
+		}
+		int best[3] = { -1, -1, -1 };
+		float best_d[3] = { 1e30f, 1e30f, 1e30f };
+		const Vector3i c = cell_of(roots[s]);
+		for (int r = 0; r < 256; r++) {
+			if (best[2] >= 0 && (r - 1) * cell > Math::sqrt(best_d[2])) {
+				break;
+			}
+			for (int x = -r; x <= r; x++) {
+				for (int y = -r; y <= r; y++) {
+					for (int z = -r; z <= r; z++) {
+						if (MAX(Math::abs(x), MAX(Math::abs(y), Math::abs(z))) != r) {
+							continue;
+						}
+						const LocalVector<int> *list = grid.getptr(c + Vector3i(x, y, z));
+						if (list == nullptr) {
+							continue;
+						}
+						for (const int g : *list) {
+							const float d = roots[s].distance_squared_to(roots[g]);
+							for (int k = 0; k < 3; k++) {
+								if (d < best_d[k]) {
+									for (int j = 2; j > k; j--) {
+										best[j] = best[j - 1];
+										best_d[j] = best_d[j - 1];
+									}
+									best[k] = g;
+									best_d[k] = d;
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		float wsum = 0.0f;
+		float w[3] = { 0.0f, 0.0f, 0.0f };
+		for (int k = 0; k < 3; k++) {
+			if (best[k] >= 0) {
+				w[k] = 1.0f / (best_d[k] + 1e-8f);
+				wsum += w[k];
+			}
+		}
+		for (int k = 0; k < 3; k++) {
+			f[s * 8 + k] = best[k] >= 0 ? (float)best[k] : 0.0f;
+			f[s * 8 + 4 + k] = wsum > 0.0f ? w[k] / wsum : 0.0f;
+		}
+	}
+	return follow;
 }
 
 void PhysXHair3D::_make_material() {
@@ -340,7 +454,7 @@ void PhysXHair3D::_build() {
 		render_instance = nullptr;
 		ERR_FAIL_MSG("PhysXHair3D: no RenderingDevice, the hair can't be simulated.");
 	}
-	solver->build(rest, strands);
+	solver->build(rest, strands, _follow_data(pts, counts));
 	pos_texture.instantiate();
 	pos_texture->set_texture_rd_rid(solver->get_position_texture_rd_rid());
 	_make_material();
@@ -371,6 +485,12 @@ void PhysXHair3D::_step(double p_delta) {
 	}
 	s.wind = wind;
 	s.gust = gust;
+	s.air_drag = air_drag;
+	s.shape_damping = shape_damping;
+	s.inertia_scale = inertia_scale;
+	s.inertia_limit = inertia_limit;
+	s.turbulence = turbulence;
+	s.turbulence_size = turbulence_size;
 	const Transform3D xform = get_global_transform();
 	for (const Vector4 &sp : collision_spheres) {
 		const Vector3 c = xform.xform(Vector3(sp.x, sp.y, sp.z));
@@ -604,6 +724,63 @@ float PhysXHair3D::get_gust() const {
 	return gust;
 }
 
+void PhysXHair3D::set_guide_ratio(float p_ratio) {
+	guide_ratio = CLAMP(p_ratio, 0.01f, 1.0f);
+	_queue_build();
+}
+
+float PhysXHair3D::get_guide_ratio() const {
+	return guide_ratio;
+}
+
+void PhysXHair3D::set_shape_damping(float p_damping) {
+	shape_damping = CLAMP(p_damping, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_shape_damping() const {
+	return shape_damping;
+}
+
+void PhysXHair3D::set_inertia_scale(float p_scale) {
+	inertia_scale = CLAMP(p_scale, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_inertia_scale() const {
+	return inertia_scale;
+}
+
+void PhysXHair3D::set_inertia_limit(float p_limit) {
+	inertia_limit = MAX(p_limit, 0.0f);
+}
+
+float PhysXHair3D::get_inertia_limit() const {
+	return inertia_limit;
+}
+
+void PhysXHair3D::set_air_drag(float p_drag) {
+	air_drag = MAX(p_drag, 0.0f);
+}
+
+float PhysXHair3D::get_air_drag() const {
+	return air_drag;
+}
+
+void PhysXHair3D::set_turbulence(float p_turbulence) {
+	turbulence = CLAMP(p_turbulence, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_turbulence() const {
+	return turbulence;
+}
+
+void PhysXHair3D::set_turbulence_size(float p_size) {
+	turbulence_size = MAX(p_size, 0.001f);
+}
+
+float PhysXHair3D::get_turbulence_size() const {
+	return turbulence_size;
+}
+
 void PhysXHair3D::set_collision_spheres(const PackedVector4Array &p_spheres) {
 	collision_spheres = p_spheres;
 }
@@ -653,6 +830,20 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind"), &PhysXHair3D::get_wind);
 	ClassDB::bind_method(D_METHOD("set_gust", "gust"), &PhysXHair3D::set_gust);
 	ClassDB::bind_method(D_METHOD("get_gust"), &PhysXHair3D::get_gust);
+	ClassDB::bind_method(D_METHOD("set_guide_ratio", "ratio"), &PhysXHair3D::set_guide_ratio);
+	ClassDB::bind_method(D_METHOD("get_guide_ratio"), &PhysXHair3D::get_guide_ratio);
+	ClassDB::bind_method(D_METHOD("set_shape_damping", "damping"), &PhysXHair3D::set_shape_damping);
+	ClassDB::bind_method(D_METHOD("get_shape_damping"), &PhysXHair3D::get_shape_damping);
+	ClassDB::bind_method(D_METHOD("set_inertia_scale", "scale"), &PhysXHair3D::set_inertia_scale);
+	ClassDB::bind_method(D_METHOD("get_inertia_scale"), &PhysXHair3D::get_inertia_scale);
+	ClassDB::bind_method(D_METHOD("set_inertia_limit", "limit"), &PhysXHair3D::set_inertia_limit);
+	ClassDB::bind_method(D_METHOD("get_inertia_limit"), &PhysXHair3D::get_inertia_limit);
+	ClassDB::bind_method(D_METHOD("set_air_drag", "drag"), &PhysXHair3D::set_air_drag);
+	ClassDB::bind_method(D_METHOD("get_air_drag"), &PhysXHair3D::get_air_drag);
+	ClassDB::bind_method(D_METHOD("set_turbulence", "turbulence"), &PhysXHair3D::set_turbulence);
+	ClassDB::bind_method(D_METHOD("get_turbulence"), &PhysXHair3D::get_turbulence);
+	ClassDB::bind_method(D_METHOD("set_turbulence_size", "size"), &PhysXHair3D::set_turbulence_size);
+	ClassDB::bind_method(D_METHOD("get_turbulence_size"), &PhysXHair3D::get_turbulence_size);
 	ClassDB::bind_method(D_METHOD("set_collision_spheres", "spheres"), &PhysXHair3D::set_collision_spheres);
 	ClassDB::bind_method(D_METHOD("get_collision_spheres"), &PhysXHair3D::get_collision_spheres);
 	ClassDB::bind_method(D_METHOD("reset_simulation"), &PhysXHair3D::reset_simulation);
@@ -668,6 +859,10 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "render_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_render_material", "get_render_material");
 	ADD_GROUP("Simulation", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simulating"), "set_simulating", "is_simulating");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "guide_ratio", PROPERTY_HINT_RANGE, "0.01,1,0.01"), "set_guide_ratio", "get_guide_ratio");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shape_damping", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_shape_damping", "get_shape_damping");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "inertia_scale", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_inertia_scale", "get_inertia_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "inertia_limit", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m/s"), "set_inertia_limit", "get_inertia_limit");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "substeps", PROPERTY_HINT_RANGE, "1,32,1"), "set_substeps", "get_substeps");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping", PROPERTY_HINT_RANGE, "0,0.999,0.001"), "set_damping", "get_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "root_follow", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_root_follow", "get_root_follow");
@@ -677,7 +872,10 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "length_damping", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_length_damping", "get_length_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_world_gravity"), "set_use_world_gravity", "is_using_world_gravity");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "fixed_gravity", PROPERTY_HINT_NONE, "suffix:m/s²"), "set_fixed_gravity", "get_fixed_gravity");
-	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s²"), "set_wind", "get_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gust", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_gust", "get_gust");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_turbulence", "get_turbulence");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater,suffix:m"), "set_turbulence_size", "get_turbulence_size");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "air_drag", PROPERTY_HINT_RANGE, "0,30,0.1,or_greater,suffix:1/s"), "set_air_drag", "get_air_drag");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "collision_spheres"), "set_collision_spheres", "get_collision_spheres");
 }

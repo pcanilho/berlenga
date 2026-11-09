@@ -41,7 +41,8 @@ extends Node3D
 #                     strands_sim: one head of long strand hair simulated on the GPU (PhysXHair3D) that
 #                     shakes side to side for two and a half seconds, then turns and stops; a breeze from the
 #                     left. Record it with --fixed-fps 30 --write-movie (frame time is fixed to 1/30 s).
-#                     --hair=wind: the head held still in a strong gusty side wind;
+#                     --hair=wind: the head held still in a 6 m/s gusty breeze; add "wavy" (--hair=wind_wavy,
+#                     --hair=wavy) for wavy hair;
 #                     --hair=compare: held still, beside the same groom on a HairMesh with BaseMaterial3D
 #                     Hair; --hair=compare_shader: that HairMesh through a shader's HAIR outputs instead
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
@@ -657,17 +658,20 @@ func _strands_sim() -> void:
 	hi.material_override = skin
 	sim_head.add_child(hi)
 	var groom := HairGroom.new()
-	groom.grow_on_mesh(head, 0, 5000, 0.32, 20, scalp, Vector3(0, 0.11, -0.03), 0.8, 0.8, 0.0, 0.0, 0.02, 11)
+	var wavy := hair.contains("wavy")
+	groom.grow_on_mesh(head, 0, 5000, 0.32, 24 if wavy else 20, scalp, Vector3(0, 0.11, -0.03), 0.8, 0.8, 0.01 if wavy else 0.0, 9.0 if wavy else 0.0, 0.02, 11)
 	var h := PhysXHair3D.new()
 	h.groom = groom
 	h.root_width = 0.0005
 	h.tip_width = 0.0002
 	h.melanin = 0.3
+	if hair.contains("all"):
+		h.guide_ratio = 1.0
 	h.wind = Vector3(1.5, 0, 0)
-	if hair == "wind":
-		# Head held still in a strong, gusty side wind.
-		h.wind = Vector3(16.0, 3.0, 2.0)
-		h.gust = 0.7
+	if hair.contains("wind"):
+		# Head held still in a moderate breeze (6 m/s, Beaufort 4) with gusts.
+		h.wind = Vector3(6.0, 0.5, 1.5)
+		h.gust = 0.5
 	# The skull and the shoulders, so the strands drape instead of falling through.
 	h.collision_spheres = PackedVector4Array([Vector4(0, 0, 0, 0.1), Vector4(0, -0.27, 0, 0.16)])
 	sim_head.add_child(h)
@@ -713,7 +717,7 @@ func _strands_sim() -> void:
 
 func _process(_delta: float) -> void:
 	n += 1
-	if sim_head and hair != "wind":
+	if sim_head and not hair.contains("wind"):
 		var t := n / 30.0
 		# Shake for three full periods (ends back at x = 0), then turn.
 		if t < 2.5:
