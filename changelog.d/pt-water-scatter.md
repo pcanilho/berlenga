@@ -1,2 +1,0 @@
-### Added
-- Murky water: Transmission media scatter light with `transmission_scatter_strength`, `transmission_scatter_color` and `transmission_scatter_anisotropy` (glTF draft `KHR_materials_scatter`, volumetric mode, imported and exported). The path tracer draws collisions inside the medium and lights each from every light; the rasterizer shows the scattered colour in the share the depth hides. Shaders bound a medium with the new path-traced outputs `IOR` and `ABSORPTION` (#163)
