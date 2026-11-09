@@ -486,6 +486,140 @@ bool rt_caustics_trace(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out
 	return r_ps.hit_t >= 0.0;
 }
 
+// ============================================================================
+// SUBSURFACE SCATTERING (docs/ideas/subsurface-scattering.md)
+// ============================================================================
+// A random walk through the medium under a surface, as Cycles' Random Walk (Chiang, Kutz and Burley,
+// SIGGRAPH 2016; src/kernel/integrator/subsurface_random_walk.h): free flights on one colour channel
+// chosen by throughput times single-scatter albedo, combined over the three by the balance heuristic,
+// isotropic scattering, until a probe ray leaves the mesh through a back face.
+
+#define RT_SSS_MAX_STEPS 256u
+
+// Traces a subsurface probe from p_origin along p_dir with no face culling: the nearest surface's
+// distance (-1: none), whether the ray leaves through it (a back face), its normal and TLAS entry.
+float rt_sss_probe(vec3 p_origin, vec3 p_dir, out bool r_back_face, out vec3 r_normal, out uint r_geometry) {
+	payload.packed_rt[0] = 0u;
+	payload.packed_rt[1] = 0u;
+	payload.packed_rt[2] = 0u;
+	payload.packed_bounces_flags = SSS_PROBE_FLAG;
+	payload.rng_state = 0u;
+	payload.hit_t = -1.0;
+	payload.oct_offset_nrm = 0u;
+	payload.oct_next_dir = 0u;
+	payload.bsdf_pdf = 0.0;
+	traceRayEXT(tlas, gl_RayFlagsNoneEXT, RT_BOUNCE_MASK, 0, 0, 0, p_origin, 0.0, p_dir, 10000.0, 0);
+	r_back_face = (payload.packed_bounces_flags & SSS_PROBE_BACK_FACE_FLAG) != 0u;
+	r_normal = oct_to_vec3(unpackUnorm2x16(payload.oct_offset_nrm) * 2.0 - 1.0);
+	r_geometry = payload.oct_next_dir;
+	return payload.hit_t;
+}
+
+#define RT_SSS_LOST 0u
+#define RT_SSS_EXIT 1u
+#define RT_SSS_THIN 2u
+
+// Walks from p_origin (just inside the surface) along p_dir in a medium whose colour after many
+// scattering events is p_color and whose extinction is 1 / radius (p_sigma_t). Returns RT_SSS_EXIT
+// with the exit point, its outward normal, TLAS entry and the walk's weight; RT_SSS_THIN when the
+// first probe does not leave the mesh through a back face (an open surface: plain diffuse at the
+// entry); RT_SSS_LOST when the walk ends inside (absorbed, escaped or out of steps).
+uint rt_sss_walk(vec3 p_origin, vec3 p_dir, vec3 p_color, vec3 p_sigma_t, inout uint rng,
+		out vec3 r_weight, out vec3 r_pos, out vec3 r_normal, out uint r_geometry) {
+	r_weight = vec3(0.0);
+	r_pos = p_origin;
+	r_normal = -p_dir;
+	r_geometry = 0u;
+	// Single-scatter albedo from the multi-scatter colour: van de Hulst's relation as in d'Eon's
+	// "A Hitchhiker's Guide to Multiple Scattering", eq. 53.7 (Cycles), isotropic phase.
+	vec3 c = clamp(p_color, vec3(0.0), vec3(0.999));
+	vec3 s = 4.09712 + 4.20863 * c - sqrt(9.59217 + 41.6808 * c + 17.7126 * c * c);
+	vec3 alpha = clamp(1.0 - s * s, vec3(0.0), vec3(0.999999));
+	vec3 throughput = vec3(1.0);
+	// Low albedos: a floor of 0.2 with the weight scaled to match (Cycles), against sharp edges.
+	for (int i = 0; i < 3; i++) {
+		if (alpha[i] < 0.2) {
+			throughput[i] *= alpha[i] / 0.2;
+			alpha[i] = 0.2;
+		}
+	}
+	vec3 sigma_t = max(p_sigma_t, vec3(1e-6));
+	vec3 sigma_s = sigma_t * alpha;
+	vec3 x = p_origin;
+	vec3 dir = p_dir;
+	[[dont_unroll]] for (uint walk_step = 0u; walk_step < RT_SSS_MAX_STEPS; walk_step++) {
+		vec3 channel_weight = throughput * alpha;
+		float channel_sum = channel_weight.r + channel_weight.g + channel_weight.b;
+		if (!(channel_sum > 0.0)) {
+			return RT_SSS_LOST;
+		}
+		vec3 channel_pdf = channel_weight / channel_sum;
+		float u = rand(rng);
+		float sigma_c = u < channel_pdf.r ? sigma_t.r : (u < channel_pdf.r + channel_pdf.g ? sigma_t.g : sigma_t.b);
+		float t = -log(max(1.0 - rand(rng), 1e-30)) / sigma_c;
+
+		bool back_face;
+		vec3 n;
+		uint geometry;
+		float hit_t = rt_sss_probe(x, dir, back_face, n, geometry);
+		if (hit_t < 0.0 || !back_face) {
+			// Not inside a closed mesh: an open surface on the first step, else lost.
+			return walk_step == 0u ? RT_SSS_THIN : RT_SSS_LOST;
+		}
+		bool exits = hit_t <= t;
+		float d = exits ? hit_t : t;
+		vec3 tr = exp(-sigma_t * d);
+		vec3 pdf = exits ? tr : sigma_t * tr;
+		throughput *= (exits ? tr : sigma_s * tr) / max(dot(channel_pdf, pdf), 1e-30);
+		if (exits) {
+			r_pos = x + dir * hit_t;
+			r_normal = dot(n, dir) < 0.0 ? -n : n;
+			r_geometry = geometry;
+			r_weight = throughput;
+			return RT_SSS_EXIT;
+		}
+		x += dir * d;
+		// Isotropic phase function.
+		vec2 v = rand2(rng);
+		float cos_t = 1.0 - 2.0 * v.x;
+		float sin_t = sqrt(max(0.0, 1.0 - cos_t * cos_t));
+		float phi = 2.0 * PI * v.y;
+		dir = vec3(sin_t * cos(phi), sin_t * sin(phi), cos_t);
+		// Russian roulette on faint walks.
+		float m = max(throughput.r, max(throughput.g, throughput.b));
+		if (m < 0.25) {
+			if (rand(rng) * 0.25 >= m) {
+				return RT_SSS_LOST;
+			}
+			throughput *= 0.25 / m;
+		}
+	}
+	return RT_SSS_LOST;
+}
+
+// Light reaching the exit point of a walk: a white Lambertian surface on p_normal (Cycles' exit),
+// sampled with the surfaces' light selection.
+vec3 rt_sss_exit_direct(vec3 p_pos, vec3 p_normal, uint p_layers, uint p_shadow_mask, bool p_is_indirect, inout uint rng) {
+	MaterialProperties lambert;
+	lambert.baseColor = vec3(1.0);
+	lambert.metalness = 0.0;
+	lambert.emissive = vec3(0.0);
+	lambert.roughness = 1.0;
+	lambert.dielectricF0 = 0.0;
+	lambert.transmissivness = 0.0;
+	lambert.opacity = 1.0;
+	lambert.energyCompensation = vec3(1.0);
+	lambert.backlight = vec3(0.0);
+	lambert.diffuseMode = GODOT_DIFFUSE_LAMBERT;
+	lambert.specularMode = GODOT_SPECULAR_DISABLED;
+	lambert.clearcoat = 0.0;
+	lambert.clearcoatAlpha = 0.0;
+	lambert.coatNormal = p_normal;
+	lambert.subsurface = 0.0;
+	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
+	return lights_evaluate_direct_lighting(p_pos, p_normal, p_normal, lambert, rng, p_is_indirect, light_count, p_layers, p_shadow_mask);
+}
+
 // From a point just past a medium's surface on to the first other surface, through any further
 // medium surfaces unbent.
 bool rt_caustics_land(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out vec3 r_p) {
@@ -990,6 +1124,46 @@ void main() {
 			}
 			// Reconstruct the next ray origin from the current ray + hit distance, apply bias
 			vec3 hit_pos = ray_origin + ray_dir * ps.hit_t;
+			if ((ps.packed_bounces_flags & SSS_ENTER_FLAG) != 0u) {
+				// Subsurface scattering: walk the medium under the surface, then go on from where the
+				// walk left it as from a white Lambertian surface (rt_sss_walk(), Cycles' Random Walk).
+				ps.packed_bounces_flags &= ~SSS_ENTER_FLAG;
+				vec3 sigma_t = rt_medium_absorption(floatBitsToUint(ps.bsdf_pdf));
+				vec3 color = unpackUnorm4x8(imageLoad(rt_medium_image, ivec2(pixel)).r).rgb;
+				ps.bsdf_pdf = 0.0;
+				vec3 outward = -ps.offset_normal;
+				vec3 weight;
+				vec3 exit_pos;
+				vec3 exit_normal;
+				uint exit_geometry;
+				uint walk = rt_sss_walk(offset_ray_origin(hit_pos, ps.offset_normal, ps.hit_t), ps.next_ray_dir, color, sigma_t,
+						ps.rng_state, weight, exit_pos, exit_normal, exit_geometry);
+				if (walk == RT_SSS_LOST) {
+					break;
+				}
+				uint layers = 0xFFFFFFFFu;
+				uint shadow_mask = ~uint(get_rt_param(RT_PARAM_SELF_SHADOW_MASK)) & 0xFFu;
+				float exit_t = ps.hit_t;
+				if (walk == RT_SSS_THIN) {
+					exit_pos = hit_pos;
+					exit_normal = outward;
+					weight = color;
+				} else {
+					layers = geometries[exit_geometry].layers;
+					if ((geometries[exit_geometry].flags & FLAG_SELF_SHADOWING) != 0u) {
+						shadow_mask = 0xFFu;
+					}
+					exit_t = max(exit_t, distance(hit_pos, exit_pos));
+				}
+				ps.throughput *= weight;
+				ray_origin = offset_ray_origin(exit_pos, exit_normal, exit_t);
+				// The entry already counted a diffuse bounce, so lights are indirect after an earlier one.
+				bool is_indirect = get_diffuse_bounces(ps.packed_bounces_flags) > 1u;
+				ps.radiance += ps.throughput * rt_sss_exit_direct(ray_origin, exit_normal, layers, shadow_mask, is_indirect, ps.rng_state);
+				float4 q = getRotationToZAxis(exit_normal);
+				ray_dir = normalize(rotatePoint(invertRotation(q), sampleHemisphere(rand2(ps.rng_state))));
+				continue;
+			}
 			ray_origin = offset_ray_origin(hit_pos, ps.offset_normal, ps.hit_t);
 			ray_dir = ps.next_ray_dir;
 		}
@@ -1101,6 +1275,10 @@ vec3 radiance_octmap_sample(vec2 p_oct_uv, float p_roughness) {
 #endif // USE_RADIANCE_OCTMAP_ARRAY
 
 void main() {
+	if ((payload.packed_bounces_flags & SSS_PROBE_FLAG) != 0u) {
+		payload.hit_t = -1.0;
+		return;
+	}
 	// Transparency peel traces own their payload; the scene miss must not touch it.
 	if ((payload.packed_bounces_flags & PEEL_RAY_FLAG) != 0u) {
 		return;
@@ -1345,6 +1523,10 @@ vec2 rt_prefiltered_dfg(float p_roughness, float p_NdotV) {
 // MAIN
 // ============================================================================
 void main() {
+	if ((payload.packed_bounces_flags & SSS_PROBE_FLAG) != 0u) {
+		rt_sss_probe_hit();
+		return;
+	}
 	HitData h = compute_hit_data();
 	write_primary_hit_depth(h.hit_pos);
 	write_primary_hit_velocity(h.hit_pos);
@@ -1386,6 +1568,12 @@ void main() {
 		m.medium |= RT_MEDIUM_CODE_SCATTER;
 		m.medium_scatter = rt_medium_scatter_pack(sigma_s / max(sigma_t, vec3(1e-6)), scattering_anisotropy);
 	}
+	m.subsurface = rt_material_feature(RT_MATERIAL_FEATURE_SUBSURFACE) ? clamp(sss_strength, 0.0, 1.0) : 0.0;
+#ifdef SSS_MODE_SKIN
+	m.subsurface_skin = true;
+#else
+	m.subsurface_skin = false;
+#endif
 	// view space -> world space
 	mat3 view_to_world = mat3(inv_view_matrix);
 	m.normal = normalize(view_to_world * normal);
@@ -1469,6 +1657,8 @@ void main() {
 	m.ior = (mat.flags & RT_MAT_FLAG_VOLUME) != 0u ? rt_material_ior(mat) : 0.0;
 	m.medium = RT_MEDIUM_CODE_GEOMETRY | h.geometry_idx;
 	m.medium_scatter = 0u;
+	m.subsurface = rt_material_feature(RT_MATERIAL_FEATURE_SUBSURFACE) ? material_subsurface(mat, muv) : 0.0;
+	m.subsurface_skin = rt_material_subsurface(mat).y > 0.5;
 	if ((mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u) {
 		// Refraction lets through 1 - alpha and draws the surface opaque, as raster.
 		float transmission = clamp(rt_material_transmission(mat) * layers.transmission, 0.0, 1.0);

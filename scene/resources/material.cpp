@@ -697,6 +697,8 @@ void BaseMaterial3D::_update_shader() {
 		rt.transmission = features[FEATURE_TRANSMISSION];
 		rt.refraction = features[FEATURE_REFRACTION];
 		rt.transmission_volume = features[FEATURE_TRANSMISSION] && !transmission_thin_walled;
+		rt.subsurface_scattering = features[FEATURE_SUBSURFACE_SCATTERING];
+		rt.subsurface_skin = features[FEATURE_SUBSURFACE_SCATTERING] && flags[FLAG_SUBSURFACE_MODE_SKIN];
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 

@@ -247,7 +247,16 @@ struct alignas(16) RT_MaterialData {
 		uint32_t albedo_b : 8;
 		uint32_t anisotropy : 8; // Henyey-Greenstein g, unorm8 of (g + 1) / 2.
 	} scatter;
-	uint32_t reserved[3];
+	struct { // BaseMaterial3D subsurface scattering (GLSL rt_material_subsurface()), 0 strength = none.
+		uint32_t strength : 8; // unorm8 subsurface_scattering_strength.
+		uint32_t skin : 1; // Skin Mode: measured skin's per-channel radii.
+		uint32_t unused : 23;
+	} subsurface;
+	struct { // texture_subsurface_scattering: red scales the strength.
+		uint32_t index : TEXTURE_INDEX_BITS;
+		uint32_t unused : 8;
+	} subsurface_texture;
+	uint32_t reserved[1];
 };
 static_assert(sizeof(RT_MaterialData) == 160, "RT_MaterialData must be 160 bytes for std430, with every bitfield struct in one uint");
 static_assert(BindlessBlock::MAX_BINDLESS_TEXTURES <= (1u << RT_MaterialData::TEXTURE_INDEX_BITS), "Bindless texture indices must fit RT_MaterialData textures");

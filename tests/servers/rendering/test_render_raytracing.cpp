@@ -142,6 +142,8 @@ TEST_CASE("[RenderRaytracing] BaseMaterial3D state survives the material paramet
 	state.emission_on_uv2 = true;
 	state.ambient_occlusion = true;
 	state.roughness_texture_channel = 4;
+	state.subsurface_scattering = true;
+	state.subsurface_skin = true;
 
 	const int64_t packed = state.encode();
 	CHECK(packed > 0);
@@ -161,6 +163,8 @@ TEST_CASE("[RenderRaytracing] BaseMaterial3D state survives the material paramet
 	CHECK_FALSE(decoded.orm);
 	CHECK(decoded.ambient_occlusion);
 	CHECK(decoded.roughness_texture_channel == 4);
+	CHECK(decoded.subsurface_scattering);
+	CHECK(decoded.subsurface_skin);
 	CHECK(decoded.encode() == packed);
 }
 

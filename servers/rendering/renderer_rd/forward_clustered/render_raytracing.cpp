@@ -3599,6 +3599,11 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		rt_material_set_clearcoat(mat, get_float("clearcoat", 1.0f), get_float("clearcoat_roughness", 0.5f));
 		mat.clearcoat_texture.index = get_texture_idx("texture_clearcoat");
 	}
+	if (rt_state.subsurface_scattering) {
+		mat.subsurface.strength = rt_unorm8(get_float("subsurface_scattering_strength", 0.0f));
+		mat.subsurface.skin = rt_state.subsurface_skin;
+		mat.subsurface_texture.index = get_texture_idx("texture_subsurface_scattering");
+	}
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
 	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
 	if (rt_state.transmission) {
@@ -7150,7 +7155,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/clearcoat") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_CLEARCOAT : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/back_lighting") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_BACK_LIGHTING : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transmission") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_TRANSMISSION : 0u) |
-				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_REFRACTION : 0u));
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_REFRACTION : 0u) |
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/subsurface_scattering") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_SUBSURFACE : 0u));
+		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SSS_SCALE] = MAX(0.0f, (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/subsurface_scattering_scale"));
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
 		// Water caustics (raytracing_caustics_inc.glsl): the slot written turns every frame; the
 		// shader centres the map's square on what the camera looked at.
