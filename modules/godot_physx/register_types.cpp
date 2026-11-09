@@ -39,6 +39,7 @@
 #include "blast/physx_blast_authoring.h"
 #include "blast/physx_destructible_3d.h"
 #endif
+#include "cloth/physx_hair_3d.h"
 #include "cloth/physx_skinned_cloth_3d.h"
 #ifdef GODOT_PHYSX_FLOW
 #include "flow/physx_flow_3d.h"
@@ -121,6 +122,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXGranular3D);
 		GDREGISTER_CLASS(PhysXCloth3D);
 		GDREGISTER_CLASS(PhysXSkinnedCloth3D);
+		GDREGISTER_CLASS(PhysXHair3D);
 		GDREGISTER_CLASS(PhysXChunkEmitter3D);
 		GDREGISTER_CLASS(PhysXLightShafts3D);
 		GDREGISTER_INTERNAL_CLASS(PhysXLightShaftsEffect);
@@ -177,6 +179,7 @@ void uninitialize_godot_physx_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
 		PhysXFluidRenderEffect::free_shared();
 		PhysXSkinnedCloth3D::free_shared();
+		PhysXHair3D::free_shared();
 		PhysXLightShaftsEffect::free_shared();
 		PhysXLensDirtEffect::free_shared();
 		PhysXLensFlareEffect::free_shared();

@@ -69,6 +69,9 @@ float ior = 0.0; // IOR: with TRANSMISSION, the IOR of the medium the surface bo
 vec3 absorption = vec3(0.0); // ABSORPTION: that medium's absorption per metre.
 vec3 scattering = vec3(0.0); // SCATTERING: that medium's scattering per metre.
 float scattering_anisotropy = 0.0; // SCATTERING_ANISOTROPY: its phase function's g (-1 back, 1 forward).
+float hair = 0.0; // HAIR: the share of the surface that is hair fibres (raytracing_hair_inc.glsl).
+vec3 hair_absorption = vec3(-1.0); // HAIR_ABSORPTION: per fibre diameter; negative = from ALBEDO.
+vec2 hair_roughness = vec2(0.3); // HAIR_ROUGHNESS: longitudinal and azimuthal roughness.
 float sss_strength = 0.0;
 float rim = 0.0;
 float rim_tint = 0.0;

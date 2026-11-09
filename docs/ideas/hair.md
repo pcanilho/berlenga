@@ -236,6 +236,28 @@ with open(bpy.path.abspath("//hair.hair"), "wb") as f:
   (Blender is Z-up in metres: load with `load_hair_file(path, 1.0, true)`.)
 - **Next (2b)**: guide strands simulated on the cloth compute, render strands following them.
 
+## Stage 2b as built: strand simulation
+
+- **PhysXHair3D** (PhysX module, `cloth/`): a node that is the head. It simulates every strand of
+  a HairGroom on compute (`hair_strands.glsl`, one thread per strand, any GPU, no CUDA) and draws
+  it as crossed strips rebuilt in `vertex()` from a positions texture (no CPU readback). Its own
+  pass next to `skinned_cloth.glsl` rather than the cloth solver itself: a strand is a chain, so
+  one thread walks it root to tip and the cloth's graph colouring and tethers are not needed.
+- Per substep: the root moves with the head (transform blended across substeps, so a fast head
+  sweeps its roots); the other points take a Verlet step under gravity, wind with per-strand
+  gusts and drag, and are pulled toward the groomed pose carried by the head (TressFX global
+  shape, `root_follow` to `tip_follow`). Then root to tip: local shape (each rest segment turned
+  by the parent's change of direction, `shape_stiffness`), collision spheres, and
+  follow-the-leader length with the DFTL velocity correction (`length_damping`, Muller 2012).
+- Every strand simulates; no guide interpolation yet. 5,000 strands of 20 points is 100k points,
+  a small dispatch next to the path tracer. Guides plus interpolation (TressFX, Frostbite) are the
+  step for 100k-strand grooms.
+- Custom shaders shade as hair under PT: new outputs `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS`
+  and render modes `hair_strands` / `hair_cards`, read by the custom hit-group path the same way
+  BaseMaterial3D's Hair section is. The node's built-in shader uses them, with melanin colour.
+- No strand-strand collision (TressFX and Frostbite skip it too; shape constraints keep volume).
+- Bench: `docs/bench/materials --scene=strands_sim --fixed-fps 30 --write-movie`.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.
