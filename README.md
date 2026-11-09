@@ -39,12 +39,13 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Subsurface scattering** (`rendering/pathtracing/subsurface_scattering`, radius `subsurface_scattering_scale`): random walk inside closed meshes; skin, wax and marble soften and thin parts glow when backlit.
 - **Hair** (BaseMaterial3D Hair section, `rendering/pathtracing/hair`): Chiang fibre scattering on mesh and card hair; colour from albedo or melanin; mask for single-material characters.
 - **Strand hair** (`HairGroom`, `HairMesh`; Hair direction Strands): grown on a scalp mesh or loaded from a HAIR file, drawn as crossed strips, shaded per fibre under path tracing.
+- **Moving strand hair** (`PhysXHair3D`): simulates a `HairGroom` on the GPU (follow-the-leader, shape constraints, wind, collision spheres), path traced as fibres; `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` in shaders.
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
-<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering, hair, strand hair</summary>
+<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering, hair, strand hair, moving hair</summary>
 
 ![Glass panes before coloured spheres: raster, path traced with transmission on, and off](docs/media/transmission.jpg)
 
@@ -73,6 +74,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Strand hair grooms: raster, path traced, and path traced with the sun behind](docs/media/hair-strands.jpg)
 
 *Strand hair: per-fibre colour and a backlit rim.*
+
+![Simulated strand hair swinging on a head, raster](docs/media/hair-sim.gif)
+
+*Moving strand hair: the groom swings and settles.*
 
 </details>
 
