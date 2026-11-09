@@ -14,7 +14,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 
 - **Lights**: 4096 path-traced lights (upstream 64); emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
-- **Materials**: clearcoat, back lighting, thin-glass transmission; textures filter like raster.
+- **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
 - **Physics**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
@@ -36,12 +36,13 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Back lighting** (`rendering/pathtracing/back_lighting`): light through leaves, paper and curtains, with coloured shadows; back light texture.
 - **Transmission** (BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): matches raster, with traced coat reflections; coat texture.
+- **Subsurface scattering** (`rendering/pathtracing/subsurface_scattering`, radius `subsurface_scattering_scale`): random walk inside closed meshes; skin, wax and marble soften and thin parts glow when backlit.
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
-<details><summary>Images: transmission, back lighting, clearcoat, layer textures</summary>
+<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering</summary>
 
 ![Glass panes before coloured spheres: raster, path traced with transmission on, and off](docs/media/transmission.jpg)
 
@@ -58,6 +59,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Checkered back light and transmission textures, raster vs path traced](docs/media/layer-textures.jpg)
 
 *Layer textures: checkered coloured shadows.*
+
+![Backlit skin slabs 2 to 20 cm thick, subsurface scattering off and on](docs/media/subsurface.jpg)
+
+*Subsurface scattering: thin slabs glow, thick ones stay dark.*
 
 </details>
 
