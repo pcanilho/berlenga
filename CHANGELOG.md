@@ -6,6 +6,25 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-effa664d (2026-11-09)
+
+### Added
+- `PhysXCloth3D.tear_factor`: cloth tears by itself where it is stretched past this multiple of its rest length, splitting vertices so the rip runs across it; `torn` signal, texture coordinates on generated grids and source meshes, project setting `physics/physx_3d/cloth/tearing`.
+- Design note on clearcoat and thin transmission in the path tracer (#150).
+- Path-traced back lighting: BaseMaterial3D back light, bounce light through the surface, `rendering/pathtracing/back_lighting` (#152).
+- Path-traced clearcoat matching the rasterizer, `rendering/pathtracing/clearcoat` (#151).
+- Materials test scene, `docs/bench/materials` (#151).
+- BaseMaterial3D Transmission section: thin glass in raster (screen read) and the path tracer, tinted shadows, glTF `KHR_materials_transmission`, `rendering/pathtracing/transmission` (#153).
+- Path tracer: Refraction-enabled materials pass `1 - alpha` of the light through (#153).
+- Path tracer: back-lit surfaces let coloured light into their shadows (#153).
+
+### Fixed
+- Path tracer: lights behind a back-lit surface no longer shadowed by the surface itself (#152).
+
+### Changed
+- README: the cloth tearing clip is collapsed, so one GIF plays by default (#149).
+- README: cloth tearing line and clip in the Physics section (#148).
+
 ## build-73a3e160 (2026-11-08)
 
 ### Added
