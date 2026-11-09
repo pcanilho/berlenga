@@ -356,6 +356,33 @@ Gaps:
   layer here is a wave equation without advection, so it cannot give currents; a full SWE solver is
   the later upgrade for water that must react.
 
+### What PhysX and NVIDIA's own research bring
+
+The PhysX team published the method for exactly this kind of water, built for games on the GPU:
+
+- **Chentanez and Müller 2010**, "Real-time Simulation of Large Bodies of Water with Small Scale
+  Details" (SCA): a shallow-water heightfield solved on the GPU (semi-Lagrangian advection of
+  velocity, height update from the divergence, stabilised against overshoot at steep fronts), with
+  particles spawned where the surface breaks or overturns for spray and splashes, and two-way
+  coupling with rigid bodies (bodies displace the water and feel its drag and buoyancy). Müller's
+  GDC 2008 talk "Fast Water Simulation for Games Using Height Fields" is the simpler wave-equation
+  form our ripple layer already is.
+- **Chentanez, Müller and Kim 2014**, "Coupling 3D Eulerian, Heightfield and Particle Methods"
+  (SCA): the same heightfield where water is shallow and calm, a 3D grid only where it gets violent
+  (waterfalls, rapids), particles for spray. The heightfield part is what fits an open world.
+- **Solenthaler, Bucher, Chentanez, Müller and Gross 2011**, "SPH Based Shallow Water Simulation"
+  (VRIPHYS): the particle version, for water that runs over arbitrary terrain.
+
+What the module already has that this builds on: the ripple layer is a heightfield on a sliding grid
+around the player (Müller 2008's wave equation), bodies already push it (`submit_sphere()`), and
+`PhysXBuoyancy3D` already reads its height. Turning that grid into Chentanez and Müller's
+shallow-water solve adds advection, so it carries a current, and wakes and eddies form behind rocks
+and boats; outside the grid the baked stream-function flow takes over, the same way the FFT ocean
+takes over past the ripple square today. `PhysXParticleFluid3D` (PhysX 5 PBD particles) or
+`PhysXWaterSpray3D` gives the spray where the solve marks breaking water, and NVIDIA Flow
+(`PhysXFlow3D`) the mist over rapids and falls. Unreal's Fluid Flux plugin runs the same kind of
+shallow-water solve over the whole river, which is the heavy end.
+
 ### Buoyancy
 
 - Probe buoyancy, as `PhysXBuoyancy3D` and every engine read (Crest, godot4-oceanfft, Habrador)
@@ -431,6 +458,15 @@ Transmission section's scatter is material-only); a shader `SCATTER` output is t
    The ratio now fades to the plain sun over the outer 8% of the map.
 
 ## Sources
+
+- Chentanez and Müller, Real-time Simulation of Large Bodies of Water with Small Scale Details, SCA
+  2010: https://matthias-research.github.io/pages/publications/hfFluid.pdf
+- Chentanez, Müller and Kim, Coupling 3D Eulerian, Heightfield and Particle Methods for Interactive
+  Simulation of Large Scale Liquid Phenomena, SCA 2014:
+  https://matthias-research.github.io/pages/publications/hybridsim_preprinted.pdf
+- Solenthaler et al., SPH Based Shallow Water Simulation, VRIPHYS 2011:
+  https://matthias-research.github.io/pages/publications/SPHShallow.pdf
+- Fluid Flux (Unreal shallow-water rivers): https://80.lv/articles/fluid-flux-a-cool-water-simulation-system-for-unreal-engine/
 
 - 80.lv, Crimson Desert's BlackSpace engine features:
   https://80.lv/articles/pearl-abyss-demonstrated-crimson-desert-s-blackspace-engine-tech-advancements
