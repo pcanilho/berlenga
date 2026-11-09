@@ -101,6 +101,16 @@ Watch the boxes drift with the current past the rock.
 
 </details>
 
+- **Live flow** (`PhysXWaterSurface3D` `live_flow`, tuned by `wall_friction`): water near the player runs live, so rocks and banks shed wakes and eddies that waves, foam and floating objects follow.
+
+<details><summary>Clip: baked flow vs live flow past a rock</summary>
+
+![Flecks carried past a rock: with baked flow the streaks close straight behind it, with live flow they roll up into a wake](docs/media/live-flow.gif)
+
+Look behind the rock: with live flow the streaks roll up into a wake instead of closing straight behind it.
+
+</details>
+
 ### Exposure
 - **Histogram metering** (`rendering/camera/auto_exposure/metering`): lamps in view no longer darken the scene.
 - **Dark-scene key** (`dark_scene_luminance`): night stays night.
