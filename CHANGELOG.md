@@ -6,6 +6,11 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-bdcf0b67 (2026-11-09)
+
+### Fixed
+- Path tracing: custom shaders' render modes hair_strands, hair_cards and sss_mode_skin now reach the path tracer (strands shaded as a dense shell, near black)
+
 ## build-eded33cb (2026-11-09)
 
 ### Added
