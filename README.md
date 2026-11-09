@@ -15,7 +15,7 @@ A Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for l
 - **Many lights**: 4096 path-traced lights (upstream 64), emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting and thin-glass transmission in the path tracer; textures filter like raster.
-- **Water**: refraction and depth tint in the path tracer.
+- **Water**: refraction, depth tint and murky water in the path tracer.
 - **Exposure**: histogram metering and local exposure that keep night scenes dark.
 - **Physics**: PhysX 5 next to Jolt, with cloth, tearing, destruction and path-traced smoke.
 - **Open worlds**: far-origin precision, persistent ray tracing instances, mesh LOD in the tracer.
@@ -61,6 +61,15 @@ Look at the floor under the glass and cards, the highlights on the spheres, and 
 *Refraction off, then on: the posts shift where they enter the water and the floor darkens and tints with depth.*
 
 - **Refraction** (`rendering/pathtracing/refraction`): water and glass blocks (Transmission, thin-walled off) bend light by their IOR, reflect it totally at grazing angles, and darken and tint with depth; glTF `KHR_materials_volume` and `KHR_materials_ior`.
+- **Murky water** (same setting): Transmission media scatter light (strength, colour, anisotropy; glTF `KHR_materials_scatter` draft); shaders can write `IOR` and `ABSORPTION`.
+
+<details><summary>Image: clear vs murky water</summary>
+
+![The same pool path traced with clear water and with murky water: in the murky one a green glow fills the deep end and the posts fade below the surface](docs/media/murky-water.jpg)
+
+Look at the green glow filling the deep end.
+
+</details>
 
 ### Exposure
 - **Histogram metering** (`rendering/camera/auto_exposure/metering`): lamps in view no longer darken the scene.
