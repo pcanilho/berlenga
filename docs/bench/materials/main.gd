@@ -38,6 +38,9 @@ extends Node3D
 #                     strands: three heads with strand hair (HairGroom grown on the scalp, HairMesh, Hair
 #                     direction Strands): straight light brown, wavy brown, curly black;
 #                     --hair=back: the sun low behind them; --hair=thin: one strip per segment, not crossed
+#                     strands_sim: one head of long strand hair simulated on the GPU (PhysXHair3D) that
+#                     shakes side to side for two seconds, then turns and stops; a breeze from the
+#                     left. Record it with --fixed-fps 30 --write-movie (frame time is fixed to 1/30 s)
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
 #   --raster          raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
@@ -60,6 +63,7 @@ var hair := ""
 var ripples := false
 var debug_mode := 0
 var n := 0
+var sim_head: Node3D = null
 
 
 func _ready() -> void:
@@ -172,6 +176,12 @@ func _ready() -> void:
 			env.pathtracing_max_bounces = maxi(bounces, 12)
 			cam.look_at_from_position(Vector3(0, 0.45, 1.75), Vector3(0, 0.25, 0))
 			_strands()
+		"strands_sim":
+			sun.rotation_degrees = Vector3(-30, -120, 0)
+			cam.fov = 30
+			env.pathtracing_max_bounces = maxi(bounces, 12)
+			cam.look_at_from_position(Vector3(0.55, 0.45, 1.45), Vector3(0, 0.2, 0))
+			_strands_sim()
 		_:
 			push_error("Unknown scene: " + scene)
 
@@ -620,8 +630,56 @@ func _strands() -> void:
 		add_child(mi)
 
 
+func _strands_sim() -> void:
+	var scalp := Image.create(4, 64, false, Image.FORMAT_L8)
+	for y in 64:
+		for x in 4:
+			scalp.set_pixel(x, y, Color.WHITE if y < 27 else Color.BLACK)
+	sim_head = Node3D.new()
+	sim_head.position = Vector3(0, 0.3, 0)
+	add_child(sim_head)
+	var head := SphereMesh.new()
+	head.radius = 0.1
+	head.height = 0.22
+	head.radial_segments = 64
+	head.rings = 32
+	var skin := StandardMaterial3D.new()
+	skin.albedo_color = Color(0.8, 0.6, 0.5)
+	skin.roughness = 0.5
+	var hi := MeshInstance3D.new()
+	hi.mesh = head
+	hi.material_override = skin
+	sim_head.add_child(hi)
+	var groom := HairGroom.new()
+	groom.grow_on_mesh(head, 0, 5000, 0.32, 20, scalp, Vector3(0, 0.11, -0.03), 0.8, 0.8, 0.0, 0.0, 0.02, 11)
+	var h := PhysXHair3D.new()
+	h.groom = groom
+	h.root_width = 0.0005
+	h.tip_width = 0.0002
+	h.melanin = 0.3
+	h.wind = Vector3(1.5, 0, 0)
+	# The skull and the shoulders, so the strands drape instead of falling through.
+	h.collision_spheres = PackedVector4Array([Vector4(0, 0, 0, 0.1), Vector4(0, -0.27, 0, 0.16)])
+	sim_head.add_child(h)
+	var body := MeshInstance3D.new()
+	var torso := SphereMesh.new()
+	torso.radius = 0.15
+	torso.height = 0.3
+	body.mesh = torso
+	body.material_override = skin
+	body.position = Vector3(0, -0.27, 0)
+	sim_head.add_child(body)
+
+
 func _process(_delta: float) -> void:
 	n += 1
+	if sim_head:
+		var t := n / 30.0
+		if t < 2.0:
+			sim_head.position.x = 0.08 * sin(TAU * 1.2 * t)
+		elif t < 2.6:
+			sim_head.position.x = 0.0
+			sim_head.rotation.y = lerpf(0.0, 1.2, smoothstep(2.0, 2.6, t))
 	if n == frames:
 		if out != "":
 			await RenderingServer.frame_post_draw

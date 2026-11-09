@@ -1166,6 +1166,9 @@ void main() {
 	vec3 absorption = vec3(0.0); // Written by ABSORPTION; path tracing only.
 	vec3 scattering = vec3(0.0); // Written by SCATTERING; path tracing only.
 	float scattering_anisotropy = 0.0; // Written by SCATTERING_ANISOTROPY; path tracing only.
+	float hair = 0.0; // Written by HAIR; path tracing only.
+	vec3 hair_absorption = vec3(-1.0); // Written by HAIR_ABSORPTION; path tracing only.
+	vec2 hair_roughness = vec2(0.3); // Written by HAIR_ROUGHNESS; path tracing only.
 	float roughness_highp = 1.0;
 	float rim_highp = 0.0;
 	float rim_tint_highp = 0.0;

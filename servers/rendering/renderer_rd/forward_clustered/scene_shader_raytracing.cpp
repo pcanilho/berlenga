@@ -2137,6 +2137,9 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["ABSORPTION"] = "absorption";
 		actions.renames["SCATTERING"] = "scattering";
 		actions.renames["SCATTERING_ANISOTROPY"] = "scattering_anisotropy";
+		actions.renames["HAIR"] = "hair";
+		actions.renames["HAIR_ABSORPTION"] = "hair_absorption";
+		actions.renames["HAIR_ROUGHNESS"] = "hair_roughness";
 		actions.renames["POINT_COORD"] = "rt_point_coord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";
 		actions.renames["SCREEN_UV"] = "rt_screen_uv";
@@ -2234,6 +2237,8 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.render_mode_defines["diffuse_toon"] = "#define DIFFUSE_TOON\n";
 
 		actions.render_mode_defines["sss_mode_skin"] = "#define SSS_MODE_SKIN\n";
+		actions.render_mode_defines["hair_cards"] = "#define HAIR_CARDS\n";
+		actions.render_mode_defines["hair_strands"] = "#define HAIR_STRANDS\n";
 
 		actions.render_mode_defines["specular_schlick_ggx"] = "#define SPECULAR_SCHLICK_GGX\n";
 

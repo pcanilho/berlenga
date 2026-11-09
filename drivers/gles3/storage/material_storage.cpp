@@ -1329,6 +1329,9 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["ABSORPTION"] = "absorption";
 		actions.renames["SCATTERING"] = "scattering";
 		actions.renames["SCATTERING_ANISOTROPY"] = "scattering_anisotropy";
+		actions.renames["HAIR"] = "hair";
+		actions.renames["HAIR_ABSORPTION"] = "hair_absorption";
+		actions.renames["HAIR_ROUGHNESS"] = "hair_roughness";
 		actions.renames["POINT_COORD"] = "gl_PointCoord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";
 		actions.renames["SCREEN_UV"] = "screen_uv";

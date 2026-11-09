@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXHair3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Strand hair that moves: a [HairGroom]'s strands simulated on the GPU and drawn as fibres.
+	</brief_description>
+	<description>
+		Simulates every strand of [member groom] with compute shaders, so it runs on any GPU the renderer supports (no CUDA needed). The node is the head: the groom is in its space and the roots follow it, so put it under a [BoneAttachment3D] on the head bone. Strands fall under gravity, blow in the [member wind], keep their groomed shape and length, and stay out of the [member collision_spheres].
+		Each strand is a chain of points. Every substep the root moves with the head, the other points take a Verlet step and are pulled toward the groomed pose carried by the head ([member root_follow] at the root to [member tip_follow] at the tip), then, root to tip, each segment is bent back toward its groomed bend ([member shape_stiffness]), pushed out of the spheres and put back at its rest length behind its parent (dynamic follow-the-leader, Müller et al. 2012, with the shape constraints of AMD TressFX). Strands don't collide with each other.
+		The strands are drawn like [HairMesh] (two crossed strips per segment), rebuilt in the vertex shader straight from the simulated positions on the GPU (no CPU readback). Under path tracing they shade as hair fibres (the Chiang 2016 model, with [member melanin] for the colour); in raster as an anisotropic highlight. To draw them your own way, set [member render_material]: a [ShaderMaterial] whose shader reads the [code]hair_positions[/code] texture like the built-in one and sets [code]HAIR[/code], [code]HAIR_ABSORPTION[/code] and [code]HAIR_ROUGHNESS[/code].
+		In the editor the groom is drawn still. The simulation runs only in a running game.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="reset_simulation">
+			<description>
+				Puts every strand back in its groomed pose on the head, at rest. Call it after teleporting the character.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="collision_spheres" type="PackedVector4Array" setter="set_collision_spheres" getter="get_collision_spheres" default="PackedVector4Array()">
+			Spheres the strands stay out of, in this node's space: [code]x, y, z[/code] the centre and [code]w[/code] the radius. Usually the skull, the neck and the shoulders. Up to 32.
+		</member>
+		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.5">
+			How much of each point's velocity is lost per second, like air drag. Higher settles faster.
+		</member>
+		<member name="fixed_gravity" type="Vector3" setter="set_fixed_gravity" getter="get_fixed_gravity" default="Vector3(0, -9.8, 0)">
+			The gravity used when [member use_world_gravity] is off.
+		</member>
+		<member name="groom" type="HairGroom" setter="set_groom" getter="get_groom">
+			The strands, in this node's space.
+		</member>
+		<member name="gust" type="float" setter="set_gust" getter="get_gust" default="0.3">
+			How much the wind varies over time and from strand to strand, so the hair flutters instead of leaning stiffly.
+		</member>
+		<member name="length_damping" type="float" setter="set_length_damping" getter="get_length_damping" default="0.9">
+			How much of each length correction is taken back from the parent point's velocity (the DFTL damping). Without it, follow-the-leader strands gain energy and whip; [code]1[/code] is the paper's value.
+		</member>
+		<member name="melanin" type="float" setter="set_melanin" getter="get_melanin" default="0.5">
+			The hair colour as melanin concentration: [code]0[/code] white, [code]0.3[/code] blonde, [code]0.5[/code] light brown, [code]0.9[/code] and above black.
+		</member>
+		<member name="melanin_redness" type="float" setter="set_melanin_redness" getter="get_melanin_redness" default="0.0">
+			The share of red melanin (pheomelanin), from brown and black hair at [code]0[/code] to red and auburn hair.
+		</member>
+		<member name="radial_roughness" type="float" setter="set_radial_roughness" getter="get_radial_roughness" default="0.3">
+			How rough the fibres are around their axis, which spreads the highlight across the strand (path tracing only).
+		</member>
+		<member name="render_material" type="ShaderMaterial" setter="set_render_material" getter="get_render_material">
+			A material of your own to draw the strands with, instead of the built-in one.
+		</member>
+		<member name="root_follow" type="float" setter="set_root_follow" getter="get_root_follow" default="0.3">
+			How strongly points near the root are pulled toward their groomed pose on the head each substep (global shape). It falls to [member tip_follow] along the strand.
+		</member>
+		<member name="root_width" type="float" setter="set_root_width" getter="get_root_width" default="0.0004">
+			The width of a strand at the root, in metres. A real hair is 0.00005 to 0.0001 m; drawn strands are wider so fewer of them cover the head.
+		</member>
+		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.3">
+			How rough the fibres are along their length: low gives a tight, bright highlight.
+		</member>
+		<member name="shape_stiffness" type="float" setter="set_shape_stiffness" getter="get_shape_stiffness" default="0.5">
+			How strongly each segment keeps its groomed bend relative to its parent (local shape), so curls and waves stay in. [code]0[/code] hangs like rope.
+		</member>
+		<member name="simulating" type="bool" setter="set_simulating" getter="is_simulating" default="true">
+			When off, the strands hold their last pose relative to the head.
+		</member>
+		<member name="substeps" type="int" setter="set_substeps" getter="get_substeps" default="4">
+			Solver steps per frame. More keeps long hair stiffer and fast heads cleaner, at a small GPU cost.
+		</member>
+		<member name="tip_follow" type="float" setter="set_tip_follow" getter="get_tip_follow" default="0.0">
+			The pull toward the groomed pose at the tips. Raise it for short or styled hair that should hold its shape.
+		</member>
+		<member name="tip_width" type="float" setter="set_tip_width" getter="get_tip_width" default="0.0001">
+			The width of a strand at the tip, in metres.
+		</member>
+		<member name="use_world_gravity" type="bool" setter="set_use_world_gravity" getter="is_using_world_gravity" default="true">
+			Use the world's gravity (from the physics settings) instead of [member fixed_gravity].
+		</member>
+		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
+			A steady acceleration on every point, in world space, like wind.
+		</member>
+	</members>
+</class>

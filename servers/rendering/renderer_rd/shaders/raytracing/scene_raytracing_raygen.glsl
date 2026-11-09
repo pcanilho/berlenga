@@ -1596,6 +1596,34 @@ void main() {
 		m.normal = normalize(mix(m.normal, mapped, normal_map_depth));
 	}
 
+	// HAIR: fibres along BINORMAL (a shell folds light back out); render_mode hair_cards lets it
+	// through, hair_strands also takes the fibre offset across the strip from UV.x (HairMesh layout).
+	if (hair > 0.0 && rt_material_feature(RT_MATERIAL_FEATURE_HAIR)) {
+		vec2 hair_beta = clamp(hair_roughness, vec2(0.01), vec2(1.0));
+		vec3 fibre_sigma_a = all(greaterThanEqual(hair_absorption, vec3(0.0))) ? hair_absorption : hair_sigma_a_from_color(m.albedo, hair_beta.y);
+		m.hair = clamp(hair, 0.0, 1.0);
+		m.hair_params = vec4(hair_beta, 2.0, 0.0);
+		vec3 t = world_bitangent;
+#ifdef HAIR_STRANDS
+		m.hair_cards = true;
+		m.hair_strand = true;
+		m.hair_sigma_a = fibre_sigma_a;
+		vec3 v_perp = -gl_WorldRayDirectionEXT;
+		v_perp -= dot(v_perp, t) * t;
+		vec3 across = world_tangent - dot(world_tangent, t) * t;
+		if (dot(v_perp, v_perp) > 1e-12 && dot(across, across) > 1e-12) {
+			m.hair_params.w = clamp((2.0 * clamp(rt_uv.x, 0.0, 1.0) - 1.0) * dot(normalize(across), cross(normalize(v_perp), t)), -0.999, 0.999);
+		}
+#else
+#ifdef HAIR_CARDS
+		m.hair_cards = true;
+#endif
+		m.hair_sigma_a = hair_mass_sigma_a(hair_color_from_sigma_a(fibre_sigma_a, hair_beta.y));
+		t -= dot(t, m.normal) * m.normal;
+#endif
+		m.hair_tangent = dot(t, t) > 1e-12 ? normalize(t) : world_tangent;
+	}
+
 #ifdef RT_DECALS_ENABLED
 	if (rt_decals_process(h, m)) {
 		return;
