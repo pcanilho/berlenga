@@ -932,8 +932,8 @@ An animated water surface with two GPU compute layers summed into one displaced
 mesh (created automatically as a child): a Tessendorf FFT ocean with a
 fetch-limited JONSWAP wind spectrum (`wind_speed`, `wind_direction`, `fetch`,
 over `ocean_domain_size`; heights in meters at `wave_amplitude` 1) and a local
-ripple layer — a damped shallow-water wave equation over `domain_size` whose
-wave speed follows `depth` — that bodies disturb.
+ripple layer — the shallow-water equations over `domain_size`, whose wave speed
+follows `depth` — that bodies disturb and currents run through.
 
 The water is a square by default. Set `surface_mesh` to any flat mesh (a disc
 baked from `CSGCylinder3D`, a kidney bean, a lake with an island) and its X/Z
@@ -1039,6 +1039,14 @@ everywhere. The waves and foam are carried along the flow (two-phase flow;
 the water's velocity there, and `PhysXBuoyancy3D` drags floaters with it, so
 debris drifts downstream. Changing the current or remeasuring the seabed solves
 the flow again (about 90 ms on the CPU for a 160-cell square, so not every frame).
+
+With `live_flow` on (the default) the square also runs the flow live on the GPU:
+the solved flow is its starting point and what comes in at its edges, and the
+water itself does the rest, so rocks and banks shed wakes and eddies that
+meander downstream, the surface's waves and foam swirl with them, and
+`sample_flow()` and floaters feel them. `wall_friction` (1/s) sets how strongly
+dry ground slows the water running along it, which is what sheds the eddies.
+Off, the square keeps the solved flow and only ripples.
 
 **Under path tracing** the surface is real water rather than a tinted overlay:
 the shader's path-traced copy writes `TRANSMISSION`, `IOR` 1.33 and

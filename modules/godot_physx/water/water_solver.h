@@ -132,6 +132,13 @@ public:
 	RID tex_shore_depth;
 	bool has_cell_depth = false;
 	float shallow_fade_depth = 1.0f;
+	// Baked current as face fluxes (RGBA32F, m^2/s: +x, +z, -x, -z faces; see water_ripple.glsl),
+	// read by the shallow-water passes; zeros = still water. And the live total velocity at cell
+	// centres (RGBA16F, m/s in rg) the first pass writes for materials.
+	RID tex_base_flux;
+	RID tex_velocity;
+	bool has_base_flux = false;
+	float wall_friction = 1.5f;
 	RID buf_blit_ripple_params, buf_blit_ocean_params; // just {n}, uploaded once at build (grid resolution is fixed per configure())
 	RID uset_blit_ripple, uset_blit_ocean;
 
@@ -171,6 +178,7 @@ public:
 	// by cache_mtx, same convention as mpm_fluid_solver.h's mm_cache et al.
 	Mutex cache_mtx;
 	Vector<float> ripple_height_cache;
+	Vector<float> ripple_velocity_cache; // live face velocities (u' on +x, w' on +z) per cell, while a current runs
 	Vector<float> ocean_height_cache;
 	Vector<float> ocean_imag_cache; // x displacement (see water_spectrum_evolve.glsl)
 	Vector<float> ocean_dz_cache; // z displacement
@@ -240,6 +248,9 @@ public:
 	// New per-cell depths for the same grid, written into the depth textures in place: nothing is freed, and the
 	// ripples, foam and swash carry on.
 	void rt_update_depth(Ref<WaterSolverGPU> p_self, PackedFloat32Array p_cell_depth);
+	// The baked current's face fluxes (4 floats a cell, grid_resolution^2 cells; empty = still water) and the wall
+	// friction (1/s) along dry ground, in place: the live velocities restart from the new flow.
+	void rt_set_base_flux(Ref<WaterSolverGPU> p_self, PackedFloat32Array p_flux, float p_wall_friction);
 
 	// Async readback callbacks: RenderingDevice invokes them with the data as
 	// the runtime arg; Callable::bind APPENDS the bound args, so the data
@@ -250,6 +261,7 @@ public:
 	void rt_on_ripple_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self, int64_t p_serial);
 	void rt_on_ocean_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self);
 	void rt_on_ocean_dz(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
+	void rt_on_ripple_state(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
 
 	~WaterSolverGPU();
 
@@ -269,7 +281,10 @@ private:
 	float _init_fetch = 100000.0f;
 	bool _init_caustics_enabled = false;
 	PackedFloat32Array _init_cell_depth;
+	PackedFloat32Array _init_base_flux;
 	float _init_depth = 3.0f;
+
+	void _rt_store_velocity_cache(const uint8_t *p_state, int p_bytes);
 
 	void _rt_free_buffers();
 	void _rt_build_buffers();
@@ -362,6 +377,13 @@ public:
 	void recenter(Vector2 p_grid_center);
 	// The seabed was measured again: new per-cell depths for the same grid, no rebuild.
 	void update_seabed(const PackedFloat32Array &p_cell_depth);
+	// The baked current the local water carries (WaterSolverGPU::rt_set_base_flux); empty = still water. Survives a
+	// configure() of the same grid size. While a current runs the ripple layer never rests.
+	void set_base_flux(const PackedFloat32Array &p_flux, float p_wall_friction);
+	bool has_base_flux() const { return !base_flux.is_empty(); }
+	// Live face velocities read back from the GPU (u' on each cell's +x face, w' on its +z face, m/s, on top of the
+	// baked flow); empty until a readback lands with a current running.
+	void get_velocity_grid(Vector<float> &r_velocity) const;
 	// One physics tick: the whole surface steps now (= queue_tick() + flush_ticks()).
 	void step(double p_delta);
 	// Per-frame stepping: record one physics tick (its dt and a snapshot of the bodies / impulses submitted so far)
@@ -397,6 +419,8 @@ public:
 	// these with no CPU round trip at all.
 	RID get_ripple_height_texture_rd_rid() const;
 	RID get_ocean_height_texture_rd_rid() const;
+	// RGBA16F live total velocity (m/s, rg) at ripple cell centres; valid once is_available().
+	RID get_velocity_texture_rd_rid() const;
 	// R8 shallow-water fade for the ocean layer over the ripple domain (1 =
 	// full chop, 0 = none); valid once is_available().
 	RID get_ocean_fade_texture_rd_rid() const;
@@ -522,6 +546,8 @@ private:
 	int64_t step_serial = 0;
 	float rest_threshold = 0.0f;
 	bool ripple_resting = false;
+	PackedFloat32Array base_flux;
+	float wall_friction = 1.5f;
 	void _clear_queue();
 
 	PackedFloat32Array _pack_spheres() const;
