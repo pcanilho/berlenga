@@ -68,7 +68,7 @@ struct InstanceMotionData {
 };
 
 // ============================================================================
-// MATERIAL DATA (matches C++ layout, 128 bytes)
+// MATERIAL DATA (matches C++ layout, 144 bytes)
 // ============================================================================
 
 // MaterialData::flags bits (must match RT_MAT_FLAG_* in render_raytracing.h).
@@ -94,6 +94,7 @@ struct InstanceMotionData {
 #define RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA 524288u // Refraction: transmission is 1 - alpha and the surface is opaque.
 #define RT_MAT_FLAG_TRANSMISSIVE 1048576u // Transmission or Refraction: light passes through, see rt_material_transmission().
 #define RT_MAT_FLAG_BACKLIT 2097152u // BaseMaterial3D back lighting: shadow rays keep the light it passes through.
+#define RT_MAT_FLAG_CUSTOM_TRANSMITTANCE 4194304u // Custom TRANSMISSION or BACKLIGHT: the any-hit evaluates the fragment for shadow rays.
 
 // Multi-bit fields fill the top bits so new single-bit flags can grow upward.
 // Blend class of transparent surfaces (bits 25-27). Opaque surfaces leave 0.
@@ -147,6 +148,13 @@ struct MaterialData {
 	uint metallic_texture; // texture_metallic, or texture_orm for ORMMaterial3D.
 	uint ao_texture; // AO texture when AO is enabled; 0 (white) otherwise.
 	uint emission_indirect_transmission; // Bits 0-15 fp16 emission_indirect_energy, 16-23 transmission (unorm8).
+
+	// BaseMaterial3D layer textures, 0 (white) when absent. See material_clearcoat(), material_backlight(),
+	// material_transmission().
+	uint clearcoat_texture; // Red scales clearcoat, green clearcoat_roughness.
+	uint backlight_texture; // Added to the back light colour, as raster.
+	uint transmission_texture; // Red scales transmission.
+	uint reserved;
 };
 
 // Bindless index of a MaterialData *_texture.
@@ -204,22 +212,41 @@ vec3 rt_material_surface_params(MaterialData p_mat) {
 	return unpackUnorm4x8(p_mat.surface_params).xyz;
 }
 
-// What an opaque thin caster lets a shadow ray keep, given its albedo p_tint and alpha p_alpha:
-// Transmission's light straight through, less one face's reflection head-on (raster F0 from
-// specular), and back lighting's light through the surface (albedo times back light, all the
-// light its diffuse transmission sends on, taken straight through). 0: blocks the ray.
-vec3 rt_material_shadow_transmittance(MaterialData p_mat, vec3 p_tint, float p_alpha, bool p_transmission, bool p_back_lighting) {
+// What BaseMaterial3D's layer textures hold at a hit (white transmission, black back light when absent).
+struct MaterialLayerTextures {
+	float transmission; // Scales rt_material_transmission().
+	vec3 backlight; // Added to rt_material_backlight().
+};
+
+MaterialLayerTextures material_layer_textures_none() {
+	MaterialLayerTextures l;
+	l.transmission = 1.0;
+	l.backlight = vec3(0.0);
+	return l;
+}
+
+// What an opaque thin caster lets a shadow ray keep, given its albedo p_tint: transmission's light
+// straight through, less one face's reflection head-on (raster F0 from p_specular), and back
+// lighting's light through the surface (albedo times back light, all the light its diffuse
+// transmission sends on, taken straight through). 0: blocks the ray.
+vec3 rt_shadow_transmittance(vec3 p_tint, float p_transmission, vec3 p_backlight, float p_specular, float p_metallic) {
+	vec3 t = p_tint * (clamp(p_transmission, 0.0, 1.0) * (1.0 - 0.16 * p_specular * p_specular) + max(p_backlight, vec3(0.0)));
+	return clamp(t * (1.0 - clamp(p_metallic, 0.0, 1.0)), vec3(0.0), vec3(1.0));
+}
+
+// rt_shadow_transmittance() of a BaseMaterial3D with alpha p_alpha (Refraction lets 1 - alpha through).
+vec3 rt_material_shadow_transmittance(MaterialData p_mat, vec3 p_tint, float p_alpha, MaterialLayerTextures p_layers, bool p_transmission, bool p_back_lighting) {
 	vec3 params = rt_material_surface_params(p_mat);
-	vec3 t = vec3(0.0);
+	float transmission = 0.0;
 	if (p_transmission && (p_mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u) {
-		float transmission = rt_material_transmission(p_mat) * (1.0 - 0.16 * params.z * params.z);
+		transmission = rt_material_transmission(p_mat) * p_layers.transmission;
 		if ((p_mat.flags & RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA) != 0u) {
 			transmission *= 1.0 - clamp(p_alpha, 0.0, 1.0);
 		}
-		t += p_tint * transmission;
 	}
+	vec3 backlight = vec3(0.0);
 	if (p_back_lighting && (p_mat.flags & RT_MAT_FLAG_BACKLIT) != 0u) {
-		t += p_tint * rt_material_backlight(p_mat);
+		backlight = rt_material_backlight(p_mat) + p_layers.backlight;
 	}
-	return clamp(t * (1.0 - params.y), vec3(0.0), vec3(1.0));
+	return rt_shadow_transmittance(p_tint, transmission, backlight, params.z, params.y);
 }

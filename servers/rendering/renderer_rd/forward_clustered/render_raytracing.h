@@ -147,7 +147,7 @@ struct RT_InstanceMotionData {
 };
 static_assert(sizeof(RT_InstanceMotionData) == 48, "RT_InstanceMotionData must be 48 bytes");
 
-// Must match GLSL MaterialData (std430, 128 bytes). Bitfields fill from the low bit on every supported compiler,
+// Must match GLSL MaterialData (std430, 144 bytes). Bitfields fill from the low bit on every supported compiler,
 // which test_render_raytracing.h checks; GLSL unpacks them with the accessors in raytracing_data_inc.glsl.
 struct alignas(16) RT_MaterialData {
 	// Bits of the bindless texture index (GLSL rt_texture_index()) in every *_texture; 0 = white.
@@ -222,8 +222,22 @@ struct alignas(16) RT_MaterialData {
 		uint32_t transmission : 8; // unorm8 BaseMaterial3D transmission (GLSL rt_material_transmission()), 0 = none.
 		uint32_t unused : 8;
 	} emission_indirect_transmission;
+	// BaseMaterial3D's layer textures, 0 (white) when absent; the top bits are unused.
+	struct { // texture_clearcoat: red scales clearcoat, green clearcoat_roughness.
+		uint32_t index : TEXTURE_INDEX_BITS;
+		uint32_t unused : 8;
+	} clearcoat_texture;
+	struct { // texture_backlight: added to backlight, as raster (GLSL material_backlight()).
+		uint32_t index : TEXTURE_INDEX_BITS;
+		uint32_t unused : 8;
+	} backlight_texture;
+	struct { // texture_transmission: red scales transmission.
+		uint32_t index : TEXTURE_INDEX_BITS;
+		uint32_t unused : 8;
+	} transmission_texture;
+	uint32_t reserved;
 };
-static_assert(sizeof(RT_MaterialData) == 128, "RT_MaterialData must be 128 bytes for std430, with every bitfield struct in one uint");
+static_assert(sizeof(RT_MaterialData) == 144, "RT_MaterialData must be 144 bytes for std430, with every bitfield struct in one uint");
 static_assert(BindlessBlock::MAX_BINDLESS_TEXTURES <= (1u << RT_MaterialData::TEXTURE_INDEX_BITS), "Bindless texture indices must fit RT_MaterialData textures");
 
 // p_value clamped to [0, 1] as GLSL unpackUnorm4x8() reads one byte.
@@ -493,6 +507,8 @@ enum {
 	RT_MAT_FLAG_TRANSMISSIVE = 1048576u,
 	// BaseMaterial3D back lighting: shadow rays keep the light it passes through.
 	RT_MAT_FLAG_BACKLIT = 2097152u,
+	// Custom shader writing TRANSMISSION or BACKLIGHT: its any-hit evaluates the fragment for shadow rays.
+	RT_MAT_FLAG_CUSTOM_TRANSMITTANCE = 4194304u,
 	// Multi-bit fields fill the top bits so new single-bit flags can grow upward.
 	// Blend class of transparent surfaces (bits 25-27); opaque surfaces leave 0.
 	RT_MAT_BLEND_CLASS_SHIFT = 25u,

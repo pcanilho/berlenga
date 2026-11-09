@@ -132,6 +132,24 @@ so refractive glass traces opaque today. The Transmission section reuses that pa
   writes it.
 - **Setting.** `rendering/pathtracing/transmission` (on; off traces these surfaces opaque, as before).
 
+## Layer textures and shader TRANSMISSION as built
+
+- **Textures.** The material record grew from 128 to 144 bytes to hold three more bindless indices:
+  `texture_clearcoat` (red scales the coat, green its roughness), `texture_backlight` (added to the
+  back light colour) and `texture_transmission` (red scales transmission), each read as raster
+  reads it. Camera, bounce and shadow rays all use them, so a checker back light or transmission
+  texture gives a checkered coloured shadow.
+- **Shaders.** `TRANSMISSION` is a new fragment output (float, 0 to 1): the path tracer traces it
+  as BaseMaterial3D's Transmission. The rasterizer ignores it; a shader wanting raster glass reads
+  the screen behind itself, as BaseMaterial3D does. Shaders writing `TRANSMISSION` or `BACKLIGHT`
+  get their own any-hit, which runs the fragment for shadow rays, so their shadows pass the light
+  too. Ray-query shadows (volumetric fog) still treat them as opaque, as they cannot run the
+  shader.
+- **Fix.** `render_mode rt_force_opaque` was only read from a shader's RT variant, so a
+  BaseMaterial3D with Transmission or Refraction (no RT variant) still traced alpha-blended:
+  camera rays saw through it, but shadow rays were stopped by its alpha of 1. It is now read from
+  the shader itself, and glass shadows pass the tinted light.
+
 ## Settings
 
 - `rendering/pathtracing/clearcoat` (on; off = today's look).

@@ -171,6 +171,9 @@ TEST_CASE("[RenderRaytracing] The default material is a non-emissive dielectric 
 	CHECK(d.emission_indirect_transmission.emission_indirect == Math::make_half_float(1.0f));
 	CHECK(d.emission_indirect_transmission.transmission == 0u);
 	CHECK(d.emission_texture.index == 0u);
+	CHECK(d.clearcoat_texture.index == 0u);
+	CHECK(d.backlight_texture.index == 0u);
+	CHECK(d.transmission_texture.index == 0u);
 	CHECK(d.albedo_color[3] == 1.0f);
 	CHECK(d.albedo_texture.index == 0u);
 	CHECK(d.albedo_texture.instance_transparency == 0u);

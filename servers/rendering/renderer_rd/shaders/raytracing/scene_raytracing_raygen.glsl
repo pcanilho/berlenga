@@ -1133,7 +1133,7 @@ void main() {
 	m.backlight = backlight;
 	m.clearcoat = rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT) ? clamp(clearcoat, 0.0, 1.0) : 0.0;
 	m.clearcoat_roughness = clamp(clearcoat_roughness, 0.0, 1.0);
-	m.transmission = 0.0;
+	m.transmission = rt_material_feature(RT_MATERIAL_FEATURE_TRANSMISSION) ? clamp(transmission, 0.0, 1.0) * (1.0 - clamp(metallic, 0.0, 1.0)) : 0.0;
 	// view space -> world space
 	mat3 view_to_world = mat3(inv_view_matrix);
 	m.normal = normalize(view_to_world * normal);
@@ -1208,14 +1208,15 @@ void main() {
 	m.emissive = emissive;
 	m.emission_indirect = rt_material_emission_indirect(mat);
 	m.normal = final_normal;
-	m.backlight = rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING) ? rt_material_backlight(mat) : vec3(0.0);
-	vec2 coat = rt_material_clearcoat(mat);
-	m.clearcoat = rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT) ? coat.x : 0.0;
+	MaterialLayerTextures layers = material_layer_textures(mat, muv);
+	m.backlight = rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING) ? rt_material_backlight(mat) + layers.backlight : vec3(0.0);
+	vec2 coat = rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT) ? material_clearcoat(mat, muv) : vec2(0.0);
+	m.clearcoat = coat.x;
 	m.clearcoat_roughness = coat.y;
 	m.transmission = 0.0;
 	if ((mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u) {
 		// Refraction lets through 1 - alpha and draws the surface opaque, as raster.
-		float transmission = rt_material_transmission(mat);
+		float transmission = clamp(rt_material_transmission(mat) * layers.transmission, 0.0, 1.0);
 		if ((mat.flags & RT_MAT_FLAG_TRANSMISSION_FROM_ALPHA) != 0u) {
 			transmission *= 1.0 - m.alpha;
 			m.alpha = 1.0;
@@ -1342,7 +1343,8 @@ void main() {
 	bool shadow_transmission = rt_material_feature(RT_MATERIAL_FEATURE_TRANSMISSION);
 	bool shadow_back_lighting = rt_material_feature(RT_MATERIAL_FEATURE_BACK_LIGHTING);
 	bool transmissive_shadow = !transparent && !alpha_scissor && is_shadow_ray(payload.packed_bounces_flags) &&
-			(((mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u && shadow_transmission) || ((mat.flags & RT_MAT_FLAG_BACKLIT) != 0u && shadow_back_lighting));
+			(((mat.flags & RT_MAT_FLAG_TRANSMISSIVE) != 0u && shadow_transmission) || ((mat.flags & RT_MAT_FLAG_BACKLIT) != 0u && shadow_back_lighting) ||
+					((mat.flags & RT_MAT_FLAG_CUSTOM_TRANSMITTANCE) != 0u && (shadow_transmission || shadow_back_lighting)));
 	if (!transparent && !alpha_scissor && !transmissive_shadow) {
 		return; // Ordinary opaque shadow candidate: accept immediately.
 	}
@@ -1354,6 +1356,7 @@ void main() {
 	float hit_alpha = 1.0;
 	vec3 hit_tint = vec3(1.0);
 	float scissor_threshold = -1.0;
+	MaterialLayerTextures hit_layers = material_layer_textures_none();
 
 #ifdef RT_CUSTOM_HIT_GROUP
 	// Compute hit data inline (cannot include closest_hit_common_inc here).
@@ -1383,6 +1386,17 @@ void main() {
 	hit_alpha = alpha;
 	hit_tint = clamp(albedo, vec3(0.0), vec3(1.0));
 	scissor_threshold = alpha_scissor_threshold;
+	if (transmissive_shadow) {
+		// TRANSMISSION and BACKLIGHT, as BaseMaterial3D's Transmission and Back Lighting.
+		PathState shadow_ps = path_unpack(payload);
+		shadow_ps.throughput *= rt_shadow_transmittance(hit_tint, shadow_transmission ? transmission : 0.0,
+				shadow_back_lighting ? backlight : vec3(0.0), specular, metallic);
+		path_pack(payload, shadow_ps);
+		if (max(shadow_ps.throughput.r, max(shadow_ps.throughput.g, shadow_ps.throughput.b)) > 1e-3) {
+			ignoreIntersectionEXT;
+		}
+		return;
+	}
 #else
 	// HG0: StandardMaterial3D alpha evaluation.
 	{
@@ -1398,6 +1412,9 @@ void main() {
 		vec4 albedo_tex = material_uv_sample(mat.albedo_texture, muv, mat.flags);
 		hit_alpha = albedo_tex.a * mat.albedo_color.a;
 		hit_tint = clamp(albedo_tex.rgb * mat.albedo_color.rgb, vec3(0.0), vec3(1.0));
+		if (transmissive_shadow) {
+			hit_layers = material_layer_textures(mat, muv);
+		}
 	}
 #endif
 #ifndef RT_CUSTOM_HIT_GROUP
@@ -1405,7 +1422,7 @@ void main() {
 		// Glass and back-lit cloth or leaves: the light they let through, tinted (an even shadow, as
 		// transparent casters give).
 		PathState shadow_ps = path_unpack(payload);
-		shadow_ps.throughput *= rt_material_shadow_transmittance(mat, hit_tint, hit_alpha, shadow_transmission, shadow_back_lighting);
+		shadow_ps.throughput *= rt_material_shadow_transmittance(mat, hit_tint, hit_alpha, hit_layers, shadow_transmission, shadow_back_lighting);
 		path_pack(payload, shadow_ps);
 		if (max(shadow_ps.throughput.r, max(shadow_ps.throughput.g, shadow_ps.throughput.b)) > 1e-3) {
 			ignoreIntersectionEXT;

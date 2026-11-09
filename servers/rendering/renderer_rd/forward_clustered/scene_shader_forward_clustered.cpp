@@ -65,6 +65,8 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	uses_alpha_antialiasing = false;
 	uses_blend_alpha = false;
 	uses_depth_prepass_alpha = false;
+	rt_force_opaque = false;
+	rt_force_transparent = false;
 	uses_discard = false;
 	uses_roughness = false;
 	uses_normal = false;
@@ -166,6 +168,8 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.usage_flag_pointers["ALPHA_ANTIALIASING_EDGE"] = &uses_alpha_antialiasing;
 	actions.usage_flag_pointers["ALPHA_TEXTURE_COORDINATE"] = &uses_alpha_antialiasing;
 	actions.render_mode_flags["depth_prepass_alpha"] = &uses_depth_prepass_alpha;
+	actions.render_mode_flags["rt_force_opaque"] = &rt_force_opaque;
+	actions.render_mode_flags["rt_force_transparent"] = &rt_force_transparent;
 
 	actions.usage_flag_pointers["SSS_STRENGTH"] = &uses_sss;
 	actions.usage_flag_pointers["SSS_TRANSMITTANCE_DEPTH"] = &uses_transmittance;
@@ -1021,6 +1025,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["AO_LIGHT_AFFECT"] = "ao_light_affect";
 		actions.renames["EMISSION"] = "emission";
 		actions.renames["EMISSION_INDIRECT"] = "emission_indirect";
+		actions.renames["TRANSMISSION"] = "transmission";
 		actions.renames["POINT_COORD"] = "point_coord";
 		actions.renames["INSTANCE_CUSTOM"] = "instance_custom";
 		actions.renames["SCREEN_UV"] = "screen_uv";

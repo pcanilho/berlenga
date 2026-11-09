@@ -8,6 +8,10 @@ extends Node3D
 #                     backlight: leaf-green cards against a low sun, back light 0 to 1 left to right
 #                     transmission: glass panes (Transmission) before coloured spheres, roughness 0 to 1
 #                     left to right, green tint in the back row
+#                     textures: layer textures and custom shader outputs, sun behind. Left to right:
+#                     coat stripes (clearcoat_texture), a card back lit through a checker (backlight_texture),
+#                     a pane let through by a checker (transmission_texture), custom TRANSMISSION and
+#                     custom BACKLIGHT
 #   --raster          raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
 #   --frames=N        frames rendered before --out is saved (default 8)
@@ -81,6 +85,9 @@ func _ready() -> void:
 		"backlight":
 			sun.rotation_degrees = Vector3(-12, 180, 0)
 			_backlight_cards()
+		"textures":
+			sun.rotation_degrees = Vector3(-25, 165, 0)
+			_layer_textures()
 		_:
 			push_error("Unknown scene: " + scene)
 
@@ -161,6 +168,81 @@ func _transmission_panes() -> void:
 			mi.material_override = m
 			mi.position = Vector3((i - 2) * 1.25, 0.25 + row * 0.55, 0.0)
 			add_child(mi)
+
+
+# A 64 px checker of 8 px cells, p_on in one cell colour and p_off in the other.
+func _checker(p_on: Color, p_off: Color) -> ImageTexture:
+	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	for y in 64:
+		for x in 64:
+			img.set_pixel(x, y, p_on if ((x / 8) + (y / 8)) % 2 == 0 else p_off)
+	return ImageTexture.create_from_image(img)
+
+
+func _quad(p_size: Vector2, p_pos: Vector3, p_mat: Material) -> void:
+	var mi := MeshInstance3D.new()
+	var quad := QuadMesh.new()
+	quad.size = p_size
+	mi.mesh = quad
+	mi.material_override = p_mat
+	mi.position = p_pos
+	add_child(mi)
+
+
+func _layer_textures() -> void:
+	# Coat in stripes: red channel 1 or 0, green (roughness scale) 0.
+	var coat := StandardMaterial3D.new()
+	coat.albedo_color = Color(0.55, 0.03, 0.03)
+	coat.roughness = 0.6
+	coat.clearcoat_enabled = true
+	coat.clearcoat = 1.0
+	coat.clearcoat_roughness = 1.0
+	var stripes := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	for y in 64:
+		for x in 64:
+			stripes.set_pixel(x, y, Color(1, 0, 0) if (x / 8) % 2 == 0 else Color(0, 0, 0))
+	coat.clearcoat_texture = ImageTexture.create_from_image(stripes)
+	coat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	_sphere(Vector3(-3.0, 0.5, 0.0), coat)
+
+	# Back light only where the checker is white.
+	var card := StandardMaterial3D.new()
+	card.albedo_color = Color(0.25, 0.5, 0.12)
+	card.cull_mode = BaseMaterial3D.CULL_DISABLED
+	card.backlight_enabled = true
+	card.backlight = Color(0, 0, 0)
+	card.backlight_texture = _checker(Color(1, 1, 1), Color(0, 0, 0))
+	card.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	_quad(Vector2(1.2, 1.2), Vector3(-1.5, 0.8, 0.0), card)
+
+	# Glass only where the checker is red.
+	var pane := StandardMaterial3D.new()
+	pane.albedo_color = Color(0.55, 0.85, 0.6)
+	pane.roughness = 0.0
+	pane.transmission_enabled = true
+	pane.transmission_amount = 1.0
+	pane.transmission_texture = _checker(Color(1, 0, 0), Color(0, 0, 0))
+	pane.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	pane.cull_mode = BaseMaterial3D.CULL_DISABLED
+	_quad(Vector2(1.2, 1.2), Vector3(0.0, 0.8, 0.0), pane)
+
+	# Custom shaders writing TRANSMISSION and BACKLIGHT.
+	var glass := Shader.new()
+	glass.code = "shader_type spatial;\nrender_mode cull_disabled;\nvoid fragment() {\n\tALBEDO = vec3(0.3, 0.5, 0.9);\n\tROUGHNESS = 0.0;\n\tTRANSMISSION = 1.0;\n}\n"
+	var glass_mat := ShaderMaterial.new()
+	glass_mat.shader = glass
+	_quad(Vector2(1.2, 1.2), Vector3(1.5, 0.8, 0.0), glass_mat)
+	var leaf := Shader.new()
+	leaf.code = "shader_type spatial;\nrender_mode cull_disabled;\nvoid fragment() {\n\tALBEDO = vec3(0.8, 0.25, 0.2);\n\tROUGHNESS = 0.8;\n\tBACKLIGHT = vec3(0.6);\n}\n"
+	var leaf_mat := ShaderMaterial.new()
+	leaf_mat.shader = leaf
+	_quad(Vector2(1.2, 1.2), Vector3(3.0, 0.8, 0.0), leaf_mat)
+
+	var colors := [Color(0.8, 0.1, 0.1), Color(0.9, 0.7, 0.1), Color(0.1, 0.3, 0.8)]
+	for i in 3:
+		var b := StandardMaterial3D.new()
+		b.albedo_color = colors[i]
+		_sphere(Vector3(-1.5 + i * 1.5, 0.5, -1.6), b)
 
 
 func _process(_delta: float) -> void:
