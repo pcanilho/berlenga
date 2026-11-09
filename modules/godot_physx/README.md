@@ -1029,6 +1029,17 @@ The map's green channel marks where sunlight actually came through the water
 repeats every `ocean_domain_size` (`get_caustics_tile_size()`), so a receiver
 can fold its position into one tile and light a whole seabed.
 
+**Under path tracing** the surface is real water rather than a tinted overlay:
+the shader's path-traced copy writes `TRANSMISSION`, `IOR` 1.33 and
+`ABSORPTION`, so light bends through the waves, the colour deepens with depth,
+and the path tracer's own sun caustics (`rendering/pathtracing/caustics`) land
+on the seabed. Foam stays an opaque, rough white layer on top. The material's
+`pathtraced_absorption` (per meter, red absorbed fastest) sets how quickly the
+water tints, and `pathtraced_roughness` how sharp the refraction is; the raster
+look's `water_color` / `shallow_color` don't apply there, since the depth tint
+comes from the water itself. The raster look is unchanged. The light-space
+caustics map above is for raster receivers; the path tracer doesn't need it.
+
 Runs on any GPU with compute support, no CUDA needed. Without compute (e.g.
 headless) the surface stays flat and `sample_height()` returns `water_level`.
 

@@ -364,6 +364,12 @@ void SceneShaderForwardClustered::ShaderData::set_code_rt(const String &p_code_r
 
 	actions.render_mode_flags["depth_prepass_alpha"] = &local_uses_depth_prepass_alpha;
 
+	// Shading mode flags the path tracer's per-instance material copy reads (render_raytracing.cpp).
+	bool local_unshaded = false;
+	bool local_fog_disabled = false;
+	actions.render_mode_flags["unshaded"] = &local_unshaded;
+	actions.render_mode_flags["fog_disabled"] = &local_fog_disabled;
+
 	actions.usage_flag_pointers["ALPHA"] = &local_uses_alpha;
 	actions.usage_flag_pointers["ALPHA_SCISSOR_THRESHOLD"] = &local_uses_alpha_clip;
 	actions.usage_flag_pointers["ALPHA_HASH_SCALE"] = &local_uses_alpha_clip;
@@ -414,6 +420,8 @@ void SceneShaderForwardClustered::ShaderData::set_code_rt(const String &p_code_r
 	}
 
 	rt->uses_alpha = local_uses_alpha;
+	rt->unshaded = local_unshaded;
+	rt->fog_disabled = local_fog_disabled;
 	rt->uses_alpha_clip = local_uses_alpha_clip;
 	rt->uses_alpha_antialiasing = local_uses_alpha_antialiasing;
 	rt->uses_depth_prepass_alpha = local_uses_depth_prepass_alpha;

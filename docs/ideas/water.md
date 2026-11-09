@@ -384,6 +384,37 @@ place and every consumer (surface shader, path tracer, buoyancy, foam) reads the
    by writing into the same water info layer.
 4. **Buoyancy in the current.** `PhysXBuoyancy3D` drags against `v_body - v_flow`.
 
+## Step 3a as built: path-traced water surface (9 Nov)
+
+`PhysXWaterSurface3D`'s shader now has a path-traced copy (`#if defined(RT)`, compiled only for
+the path tracer). It drops `unshaded` and the blend, and writes `TRANSMISSION` (1 minus foam),
+`IOR` 1.33, `ABSORPTION` (`pathtraced_absorption`, default 0.45/0.09/0.05 per meter) and the
+per-pixel wave normal, with `ALPHA` scissor for the swash edge. Both faces bound the medium, so
+the path tracer enters the water at the top and leaves at the underside, and steps 1 to 2 apply
+as they are: bending, total internal reflection, Beer-Lambert depth tint, and sun caustics on the
+sand. Foam stays an opaque rough white layer. The raster shader is unchanged.
+
+Two engine fixes it needed:
+
+1. **Render modes of the path-traced copy.** The path tracer took `unshaded` and `fog_disabled`
+   from the raster shader, so the water came out flat white. They now come from the shader's own
+   `#if defined(RT)` variant (`RTClassification`), like its outputs already did.
+2. **Varyings at a hit.** For captured (vertex-displaced) geometry the path tracer re-runs
+   `vertex()` at the hit point to get the varyings, but that point is already moved. The water's
+   `vertex()` added its mesh offset and read its rest position there, so every shore lookup
+   (depth, swash, shore foam) landed several meters off and foam covered the shallows. The
+   path-traced copy of `vertex()` now inverts the displacement instead: four fixed-point steps of
+   `rest = hit - offset(rest)`, which converge while the waves don't fold (the usual way to look up a
+   choppy FFT surface by world position). Any shader that both displaces and reads its pre-displacement
+   position in a varying meets the same thing; storing the rest position at capture time would fix
+   it for all of them (issue #169).
+
+Bench: `docs/bench/water_surface` (sloping sand, rocks, three floating boxes; `--view=beach|under`,
+`--raster`). At 100% crop the sand checker shows through the path-traced water, bent by the waves
+and crossed by caustics; with caustics off it matches the raster pattern. Deep water reads dark
+teal rather than blue, since a shader can't yet give the water a scattering colour (the
+Transmission section's scatter is material-only); a shader `SCATTER` output is the follow-up.
+
 ## Sources
 
 - 80.lv, Crimson Desert's BlackSpace engine features:
