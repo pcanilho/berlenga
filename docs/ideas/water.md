@@ -910,6 +910,78 @@ joins lakes with a river by height inputs over a global sea. Hydraulics adds thr
 there, but the lake does not drain towards it. Lakes have no level budget (inflow does not raise
 them).
 
+## Step 4f: waterfalls (9 Nov)
+
+Until now a fall was a cascade: the ribbon draped down the cliff at whatever
+slope the ground had. A real fall leaves the lip and drops free.
+
+### What the hydraulics says
+
+- **Brink depth.** At a free overfall the flow passes through critical depth
+  a few critical depths upstream, and at the lip the depth is
+  `y_b = 0.715 y_c`, with `y_c = (q^2/g)^(1/3)` (Rouse 1936; Chanson,
+  *The Hydraulics of Open Channel Flow*). So the surface draws down over about
+  `4 y_c` before the lip. The water leaves the lip at `v0 = q / y_b`.
+- **The nappe.** Past the lip the water falls freely, so its path is a
+  projectile: `x = v0 t`, `y = -g t^2 / 2`. Its thickness thins as it speeds
+  up: `t = q / |v|`, `|v| = sqrt(v0^2 + (g t)^2)`.
+- **Break-up.** A falling sheet takes in air at its surfaces, spreads by a few
+  per cent of the fall, and breaks into clumps and droplets once the
+  disturbances reach its core (Ervine and Falvey 1987; Ervine, Falvey and
+  Withers 1997). For a nappe the break-up length is about
+  `L_b = 6 q^0.32` m, with `q` in m^2/s (Horeni 1956, as used by Castillo
+  2006 and Carrillo 2020). Below `L_b` the fall arrives as white streaks,
+  not a sheet.
+- **Plunge pool.** The jet enters at `v = sqrt(v0^2 + 2 g H)`, carries air
+  down, and the pool boils white over a few jet thicknesses to a few metres.
+  Spray is thrown up at a good fraction of the impact speed. Mist is the
+  finest drops, whose fall speed is a few cm/s (Stokes), carried out by the
+  air the fall drags down with it, the "waterfall wind".
+
+### How others do it
+
+- **Games.** Most waterfalls are hand-placed meshes with scrolling textures,
+  plus particles at the foot (Unreal Water tutorials, community UE5 setups).
+  Horizon Forbidden West's water talk (Malan, SIGGRAPH 2022) leaves
+  waterfalls out except for baked 2D impact effects on the pool.
+- **Particle fluids.** Bagar, Scherzer and Wimmer (EGSR 2010) render an SPH
+  waterfall and class each particle as water or foam by its Weber number
+  `We = rho v^2 l / sigma`. That is too costly for a river system, but it
+  confirms the idea that speed decides whiteness.
+
+### Design for the fork
+
+1. Find falls in the river: a run of cascade sections that drops more than
+   `fall_min_height` (default 1.5 m), and only where the free jet stays clear
+   of the ground (a steep chute stays a cascade).
+2. Find the lip by bisecting ground raycasts between the last high section
+   and the next one. Draw the surface down to `0.715 y_c` over `4 y_c`.
+3. Build a curtain mesh, a thin slab with two faces `q/|v|` apart, so the
+   path tracer sees a real sheet of water. One column per wet cross sample
+   follows the projectile from that sample's own `q`. UV carries the travel
+   time, so the streaks move with the water and stretch as it speeds up.
+   Aeration grows to white over `L_b`, and past it the sheet breaks up
+   (alpha holes from noise).
+4. Hide the ribbon under the jet. White water starts where the jet lands.
+5. Add spray (GPUParticles3D, launched from the impact line at a share of the
+   impact speed) and optional mist (a PhysXFlowEmitter3D at the foot, fed
+   into the scene's PhysXFlow3D, so it is traced under path tracing). Both
+   scale with the fall's power `rho g Q H`.
+6. `get_waterfalls()` reports each fall: lip, height, impact point and speed,
+   and break-up length.
+
+### As built
+
+`fall_min_height`, `fall_spray`, `fall_mist`, `fall_material`, `get_waterfalls()`.
+Bench: `docs/bench/river --falls` (views `fall`, `fallfront`), a 6 m cliff with
+6 m^3/s on a 5 m river. It reports q = 1.2 m^2/s, lip speed 3.2 m/s,
+impact 10.6 m/s, throw 3.3 m and break-up length 6.4 m, so this sheet arrives
+just whole. Under path tracing the sheet refracts and keeps the raster streaks
+at 100% crop. Mist needs a build with NVIDIA Flow and a PhysXFlow3D in the
+scene, so it is not shown in the cloud shots. Limits: the lip is taken as
+level across the river, each column's jet is independent (no contraction of
+the sheet), and the live window does not see the fall.
+
 ## The camera under water: research (9 Nov)
 
 ### What the fork has today
@@ -1130,3 +1202,13 @@ them).
 - Ben K, Godot waterline shader: https://mcspider.codeberg.page/godot-waterline-shader.html
 - Blender Cycles, volume stack initialisation from the camera (kernel/integrator/volume_stack.h).
 - Pharr, Jakob, Humphreys, PBRT 4th ed., 11.3 Media (camera medium).
+- Rouse, Discharge characteristics of the free overfall, Civil Engineering 6, 1936; Chanson, The Hydraulics
+  of Open Channel Flow, 2nd ed., 2004 (free overfall, nappe flow).
+- Ervine and Falvey, Behaviour of turbulent water jets in the atmosphere and in plunge pools, Proc. ICE 83,
+  1987; Ervine, Falvey and Withers, Pressure fluctuations on plunge pool floors, J. Hydraulic Research 35, 1997.
+- Castillo, Turbulence and break-up length of rectangular falling jets (Horeni 1956 `L_b = 6 q^0.32`),
+  IAHR 2006; Carrillo, Castillo et al., Water 13(11) 1593, 2021: https://www.mdpi.com/2073-4441/13/11/1593
+- Bagar, Scherzer and Wimmer, A Layered Particle-Based Fluid Model for Real-Time Rendering of Water, EGSR 2010:
+  https://www.cg.tuwien.ac.at/research/publications/2010/bagar2010/bagar2010-draft.pdf
+- Malan, Real-time water in Horizon Forbidden West, SIGGRAPH 2022 Advances:
+  https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Water-Malan.pdf

@@ -75,6 +75,25 @@ public:
 		float discharge = 0.0f; // m^3/s here: the river's own plus tributaries joined upstream
 		float psi_right = 0.0f; // psi on the right bank (lowered by tributaries joining from the right)
 		float mouth_fade = 1.0f; // 1 on the river, fading to 0 past its mouth into the water it joins
+		bool fall_drop = false; // the ribbon from here to the next section is under a waterfall's jet (hidden)
+		float plunge = 0.0f; // 0..1 white water where a waterfall's jet lands
+	};
+	// A free overfall: the water leaves the lip and falls clear of the ground.
+	struct Fall {
+		int brink = 0; // last section above the lip
+		int foot = 0; // first section at the bottom
+		float lip_s = 0.0f; // arc length of the lip
+		Vector3 lip; // local, centre of the lip on the bed
+		Vector3 tangent; // local, horizontal downstream
+		Vector3 side; // local, horizontal to the left bank
+		float pool = 0.0f; // local y of the water the jet lands in
+		float height = 0.0f; // lip surface to pool, m
+		float q = 0.0f; // mean unit discharge at the lip, m^2/s
+		float lip_speed = 0.0f; // m/s
+		float impact_speed = 0.0f; // m/s
+		float land_s = 0.0f; // arc length where the centre of the jet lands
+		float breakup = 0.0f; // m of fall over which the sheet breaks up (Horeni)
+		float width = 0.0f; // wet width at the lip
 	};
 
 private:
@@ -137,7 +156,16 @@ private:
 	ObjectID mouth_id; // what this river last registered with
 	float mouth_level_seen = -Math::INF; // the target river's surface at the join, last build
 
+	// Waterfalls (see docs/ideas/water.md "Step 4f").
+	float fall_min_height = 1.5f; // m; 0 turns falls off (every drop stays a cascade)
+	bool fall_spray = true;
+	bool fall_mist = true;
+	Ref<ShaderMaterial> fall_material;
+	LocalVector<Fall> falls;
+	LocalVector<Node3D *> fall_effects; // spray particles and mist emitters, rebuilt with the falls
+
 	MeshInstance3D *mesh_instance = nullptr;
+	MeshInstance3D *fall_instance = nullptr;
 	LocalVector<Section> sections;
 	bool build_pending = false;
 	double water_time = 0.0;
@@ -146,6 +174,9 @@ private:
 	void _queue_build();
 	void _build();
 	void _build_mesh();
+	void _find_falls(PhysicsDirectSpaceState3D *p_space, const LocalVector<float> &p_bed, float p_ds);
+	void _build_fall_mesh();
+	void _build_fall_effects();
 	void _on_curve_changed();
 	void _solve_flow(float p_ds);
 	bool _strip_at(const Vector3 &p_world, int &r_section, float &r_t, float &r_n) const;
@@ -243,6 +274,16 @@ public:
 	void clear_tributary(ObjectID p_river);
 	// Discharge (m^3/s) at a distance along the river, tributaries included.
 	float get_discharge_at(float p_s) const;
+	void set_fall_min_height(float p_height);
+	float get_fall_min_height() const { return fall_min_height; }
+	void set_fall_spray(bool p_enabled);
+	bool get_fall_spray() const { return fall_spray; }
+	void set_fall_mist(bool p_enabled);
+	bool get_fall_mist() const { return fall_mist; }
+	void set_fall_material(const Ref<ShaderMaterial> &p_material);
+	Ref<ShaderMaterial> get_fall_material() const { return fall_material; }
+	// Each waterfall: lip and impact (world), height, speeds, break-up length.
+	Array get_waterfalls() const;
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
 
