@@ -84,6 +84,7 @@ public:
 		float damping = 0.5f; // fraction of velocity lost per second
 		float root_follow = 0.3f; // pull toward the groomed pose at the root, per 1/60 s
 		float tip_follow = 0.0f; // the same at the tip
+		float follow_range = 0.3f; // share of the strand, from the root, over which root_follow fades to tip_follow
 		float shape_stiffness = 0.5f; // pull toward each segment's groomed bend, per 1/60 s
 		float length_damping = 0.9f; // DFTL: share of each length correction taken back from the parent
 		Vector3 gravity = Vector3(0, -9.8f, 0);

@@ -246,7 +246,8 @@ with open(bpy.path.abspath("//hair.hair"), "wb") as f:
 - Per substep: the root moves with the head (transform blended across substeps, so a fast head
   sweeps its roots); the other points take a Verlet step under gravity, wind with per-strand
   gusts and drag, and are pulled toward the groomed pose carried by the head (TressFX global
-  shape, `root_follow` to `tip_follow`). Then root to tip: local shape (each rest segment turned
+  shape, `root_follow` fading to `tip_follow` over `follow_range`, 0.3 of the strand: pulled along the
+  whole strand, even a gale barely moved the hair). Then root to tip: local shape (each rest segment turned
   by the parent's change of direction, `shape_stiffness`), collision spheres, and
   follow-the-leader length with the DFTL velocity correction (`length_damping`, Muller 2012).
 - Every strand simulates; no guide interpolation yet. 5,000 strands of 20 points is 100k points,
@@ -256,7 +257,8 @@ with open(bpy.path.abspath("//hair.hair"), "wb") as f:
   and render modes `hair_strands` / `hair_cards`, read by the custom hit-group path the same way
   BaseMaterial3D's Hair section is. The node's built-in shader uses them, with melanin colour.
 - No strand-strand collision (TressFX and Frostbite skip it too; shape constraints keep volume).
-- Bench: `docs/bench/materials --scene=strands_sim --fixed-fps 30 --write-movie`.
+- Bench: `docs/bench/materials --scene=strands_sim --fixed-fps 30 --write-movie` (`--hair=wind`: head
+  still in a gusty gale).
 
 ## Options for scope
 

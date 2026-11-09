@@ -62,6 +62,7 @@ class PhysXHair3D : public Node3D {
 	float damping = 0.5f;
 	float root_follow = 0.3f;
 	float tip_follow = 0.0f;
+	float follow_range = 0.3f;
 	float shape_stiffness = 0.5f;
 	float length_damping = 0.9f;
 	bool use_world_gravity = true;
@@ -122,6 +123,8 @@ public:
 	float get_root_follow() const;
 	void set_tip_follow(float p_follow);
 	float get_tip_follow() const;
+	void set_follow_range(float p_range);
+	float get_follow_range() const;
 	void set_shape_stiffness(float p_stiffness);
 	float get_shape_stiffness() const;
 	void set_length_damping(float p_damping);
