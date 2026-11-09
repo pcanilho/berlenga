@@ -6,6 +6,19 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-40b63b1b (2026-11-09)
+
+### Added
+- Path tracing reads the clearcoat, back light and transmission textures, and shaders can write `TRANSMISSION`; shaders writing `TRANSMISSION` or `BACKLIGHT` pass light into their shadows (#155).
+
+### Fixed
+- Path-traced shadows of Transmission and Refraction materials let the tinted light through instead of blocking it (#155).
+
+### Changed
+- README: layer textures and shader TRANSMISSION in the material lines, with an image (#156)
+- README: summary section and transmission, back lighting and clearcoat images (#154)
+- README: transmission image retaken with glass shadows that pass light (#157)
+
 ## build-effa664d (2026-11-09)
 
 ### Added
