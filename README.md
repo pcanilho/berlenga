@@ -23,6 +23,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Lit raster transparents and rain (`rendering/pathtracing/max_transparency_layers` 0), still traced in reflections.
 
 ### Materials
+- **Back lighting** (`rendering/pathtracing/back_lighting`): light passes through leaves, paper and curtains, from lights and bounces.
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): coated paint as raster shades it, with traced coat reflections.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.

@@ -1168,6 +1168,24 @@ float clearcoatLobeProbability(MaterialProperties material, float3 V) {
 	return clamp(coat / max(coat + base, 1e-4f), 0.01f, 0.99f);
 }
 
+// -------------------------------------------------------------------------
+//    Back lighting (diffuse transmission)
+// -------------------------------------------------------------------------
+
+// Reflectance of light passing through the surface (BACKLIGHT times the diffuse albedo, as raster).
+float3 backlightTransmittance(MaterialProperties material) {
+	return baseColorToDiffuseReflectance(material.baseColor, material.metalness) * material.backlight;
+}
+
+// Samples a bounce ray through the surface: Lambertian transmission, cosine-weighted about -N.
+// 'sampleWeight' is backlightTransmittance(). False when the ray would not leave by the back.
+bool sampleBacklight(float2 u, float3 shadingNormal, float3 geometryNormal, MaterialProperties material, OUT_PARAMETER(float3) rayDirection, OUT_PARAMETER(float3) sampleWeight) {
+	float4 qRotationToZ = getRotationToZAxis(-shadingNormal);
+	rayDirection = normalize(rotatePoint(invertRotation(qRotationToZ), sampleHemisphere(u)));
+	sampleWeight = backlightTransmittance(material);
+	return dot(geometryNormal, rayDirection) < 0.0f && luminance(sampleWeight) > 0.0f;
+}
+
 // Precalculates commonly used terms in BRDF evaluation
 // Clamps around dot products prevent NaNs and ensure numerical stability, but make sure to
 // correctly ignore rays outside of the sampling hemisphere, by using 'Vbackfacing' and 'Lbackfacing' flags

@@ -119,9 +119,9 @@ struct InstanceMotionData {
 
 struct MaterialData {
 	uint albedo_texture; // Bits 24-31: transparency of the TLAS entry's instance (set by rt_entry_material()), see rt_instance_alpha().
-	uint normal_texture;
+	uint normal_texture; // Bits 24-31: back light green, see rt_material_backlight().
 	uint roughness_texture; // texture_roughness, or texture_orm for ORMMaterial3D.
-	uint emission_texture;
+	uint emission_texture; // Bits 24-31: back light blue.
 
 	vec4 albedo_color;
 	vec3 emission_color;
@@ -130,7 +130,7 @@ struct MaterialData {
 	vec3 uv1_scale; // UV1 scale (default 1,1,1)
 	float normal_map_depth; // Normal map strength (default 1.0)
 	vec3 uv1_offset; // UV1 offset (default 0,0,0)
-	uint surface_params; // unorm8x4: roughness, metallic, specular, unused. See rt_material_surface_params().
+	uint surface_params; // unorm8x4: roughness, metallic, specular, back light red. See rt_material_surface_params().
 
 	uint uv2_scale_xy; // fp16x2. UV2 transform: identity unless triplanar or applied by the vertex stage.
 	uint flags; // See RT_MAT_FLAG_*.
@@ -173,6 +173,12 @@ float rt_entry_alpha(MaterialData p_mat, float p_alpha, float p_scissor_threshol
 // BaseMaterial3D proximity_fade_distance.
 float rt_material_proximity_fade_distance(MaterialData p_mat) {
 	return unpackHalf2x16(p_mat.proximity_fade_clearcoat).x;
+}
+
+// BaseMaterial3D back light colour, linear (stored sRGB in the textures' and surface_params' top bytes).
+vec3 rt_material_backlight(MaterialData p_mat) {
+	vec3 c = vec3(p_mat.surface_params >> 24u, p_mat.normal_texture >> 24u, p_mat.emission_texture >> 24u) / 255.0;
+	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), greaterThan(c, vec3(0.04045)));
 }
 
 // BaseMaterial3D clearcoat and clearcoat_roughness (x, y); x is 0 without the coat.

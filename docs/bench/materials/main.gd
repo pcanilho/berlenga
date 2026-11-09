@@ -5,6 +5,7 @@ extends Node3D
 # godot --path docs/bench/materials -- [options]
 #   --scene=NAME      clearcoat (default): red paint, coat strength 0 to 1 left to right,
 #                     coat roughness 0 (back row) and 1 (front row)
+#                     backlight: leaf-green cards against a low sun, back light 0 to 1 left to right
 #   --raster          raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
 #   --frames=N        frames rendered before --out is saved (default 8)
@@ -68,6 +69,9 @@ func _ready() -> void:
 	match scene:
 		"clearcoat":
 			_clearcoat_rows()
+		"backlight":
+			sun.rotation_degrees = Vector3(-12, 180, 0)
+			_backlight_cards()
 		_:
 			push_error("Unknown scene: " + scene)
 
@@ -95,6 +99,23 @@ func _clearcoat_rows() -> void:
 			m.clearcoat = i / 4.0
 			m.clearcoat_roughness = 0.0 if row == 0 else 1.0
 			_sphere(Vector3((i - 2) * 1.25, 0.5, -1.0 + row * 1.6), m)
+
+
+func _backlight_cards() -> void:
+	for i in 5:
+		var m := StandardMaterial3D.new()
+		m.albedo_color = Color(0.25, 0.5, 0.12)
+		m.roughness = 0.7
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		m.backlight_enabled = true
+		m.backlight = Color(1, 1, 1) * (i / 4.0)
+		var mi := MeshInstance3D.new()
+		var quad := QuadMesh.new()
+		quad.size = Vector2(1.0, 1.4)
+		mi.mesh = quad
+		mi.material_override = m
+		mi.position = Vector3((i - 2) * 1.25, 0.8, 0.0)
+		add_child(mi)
 
 
 func _process(_delta: float) -> void:

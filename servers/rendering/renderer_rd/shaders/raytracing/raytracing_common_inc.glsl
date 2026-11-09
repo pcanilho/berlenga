@@ -70,6 +70,11 @@ float get_rt_param(uint idx) {
 	return rt_params[idx >> 2u][idx & 3u];
 }
 
+// True when the RT_MATERIAL_FEATURE_* setting p_feature is on.
+bool rt_material_feature(uint p_feature) {
+	return (uint(get_rt_param(RT_PARAM_MATERIAL_FEATURES)) & p_feature) != 0u;
+}
+
 // Project a world-space point to UV through an unjittered VP.
 vec2 project_uv(vec3 world_pos, mat4 vp) {
 	vec4 clip = vp * vec4(world_pos, 1.0);

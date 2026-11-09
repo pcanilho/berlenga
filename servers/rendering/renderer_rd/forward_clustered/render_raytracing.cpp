@@ -3563,6 +3563,14 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 	// ORMMaterial3D uses the texture values directly, without the scalar multipliers.
 	rt_material_set_surface_params(mat, rt_state.orm ? 1.0f : get_float("roughness", 1.0f),
 			rt_state.orm ? 1.0f : get_float("metallic", 0.0f), get_float("specular", 0.5f));
+	if (rt_state.backlight) {
+		// The back light texture is not read.
+		const Variant backlight = material_storage->material_get_param(p_material_rid, "backlight");
+		if (backlight.get_type() == Variant::COLOR) {
+			const Color c = backlight;
+			rt_material_set_backlight(mat, c.r, c.g, c.b);
+		}
+	}
 	if (rt_state.clearcoat) {
 		// The clearcoat texture is not read: the coat is uniform over the surface.
 		rt_material_set_clearcoat(mat, get_float("clearcoat", 1.0f), get_float("clearcoat_roughness", 0.5f));
@@ -7078,7 +7086,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_COUNT] = float(rt_light_count);
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SELF_SHADOW_MASK] = p_state ? float(p_state->shadow_groups.self_shadow_bit) : 0.0f;
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_VISIBILITY] = (p_state && p_state->light_visibility_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/light_visibility_memory")) ? 1.0f : 0.0f;
-		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CLEARCOAT] = GLOBAL_GET_CACHED(bool, "rendering/pathtracing/clearcoat") ? 1.0f : 0.0f;
+		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_MATERIAL_FEATURES] = float(
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/clearcoat") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_CLEARCOAT : 0u) |
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/back_lighting") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_BACK_LIGHTING : 0u));
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
 		// Color backgrounds, as the raster clear (render_forward_clustered.cpp): camera rays that
 		// miss show them instead of the radiance map, which holds no sky here.

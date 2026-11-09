@@ -621,10 +621,29 @@ vec3 lights_trace_shadow_ray(vec3 origin, vec3 direction, float max_dist, uint p
 
 // Shadow transmittance from origin towards the light, blended towards 1 by the light's shadow opacity.
 // Skips the trace when the path tracer draws no shadow for this light. p_receiver_shadow_mask filters the light's caster groups.
+// The shaded point's shadow ray origins on its two sides (rt_set_shadow_origins()). A light
+// behind the surface (back lighting, wrap, toon) is traced from the back side: from the front,
+// its shadow ray would start by hitting the surface itself.
+vec3 rt_shadow_front_origin = vec3(0.0);
+vec3 rt_shadow_back_origin = vec3(0.0);
+vec3 rt_shadow_side_normal = vec3(0.0);
+
+void rt_set_shadow_origins(vec3 p_front, vec3 p_back, vec3 p_geometry_normal) {
+	rt_shadow_front_origin = p_front;
+	rt_shadow_back_origin = p_back;
+	rt_shadow_side_normal = p_geometry_normal;
+}
+
+// p_origin, or the back origin for a light behind the shaded point (p_origin its front origin).
+vec3 rt_shadow_origin(vec3 p_origin, vec3 p_direction) {
+	return p_origin == rt_shadow_front_origin && dot(p_direction, rt_shadow_side_normal) < 0.0 ? rt_shadow_back_origin : p_origin;
+}
+
 vec3 lights_shadow_transmittance(RTLightData light, vec3 origin, vec3 direction, float max_dist, uint p_receiver_shadow_mask, inout uint rng_state) {
 	if (light.shadow_opacity <= 0.001) {
 		return vec3(1.0);
 	}
+	origin = rt_shadow_origin(origin, direction);
 	vec3 traced = lights_trace_shadow_ray(origin, direction, max_dist, (light.light_masks >> 24u) & p_receiver_shadow_mask, rng_state);
 	if (max(traced.r, max(traced.g, traced.b)) > 0.0) {
 		// Simulated gas between the point and the light (ratio tracking).

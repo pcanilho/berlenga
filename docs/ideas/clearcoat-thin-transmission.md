@@ -92,6 +92,16 @@ fade distance, which moved to fp16. BaseMaterial3D's clearcoat texture is not re
 `docs/bench/materials` renders the coat rows; at 512 samples the path tracer matches the
 rasterizer, and coats off gives the old look.
 
+## Back lighting as built
+
+Plan step 1. BaseMaterial3D's back light colour is stored sRGB in three spare bytes of the material
+record (the texture is not read). Bounce rays pass through the surface as Lambertian transmission
+with reflectance albedo times back light, picked by its share of the base's light, and the emissive
+light sample's density includes it. Direct light keeps raster's term. Shadow rays for lights behind
+the surface now start on its back side: from the front they hit the surface itself, so `BACKLIGHT`
+from lights behind never reached opaque cards before. Glass follows as option (b), a Transmission
+section (Paulo's choice, 9 Nov).
+
 ## Settings
 
 - `rendering/pathtracing/clearcoat` (on; off = today's look).

@@ -159,7 +159,7 @@ struct alignas(16) RT_MaterialData {
 	} albedo_texture;
 	struct {
 		uint32_t index : TEXTURE_INDEX_BITS;
-		uint32_t unused : 8;
+		uint32_t backlight_g : 8; // See rt_material_set_backlight().
 	} normal_texture;
 	struct { // texture_roughness, or texture_orm for ORMMaterial3D.
 		uint32_t index : TEXTURE_INDEX_BITS;
@@ -167,7 +167,7 @@ struct alignas(16) RT_MaterialData {
 	} roughness_texture;
 	struct {
 		uint32_t index : TEXTURE_INDEX_BITS;
-		uint32_t unused : 8;
+		uint32_t backlight_b : 8; // See rt_material_set_backlight().
 	} emission_texture;
 	float albedo_color[4];
 	float emission_color[3];
@@ -179,7 +179,7 @@ struct alignas(16) RT_MaterialData {
 		uint32_t roughness : 8;
 		uint32_t metallic : 8;
 		uint32_t specular : 8; // Dielectric specular, default 0.5 -> F0 = 0.04.
-		uint32_t unused : 8;
+		uint32_t backlight_r : 8; // See rt_material_set_backlight().
 	} surface_params;
 	// UV2 transform, fp16 (see rt_material_set_packed_uv()): identity unless triplanar or applied by the vertex stage.
 	struct {
@@ -237,6 +237,14 @@ constexpr void rt_material_set_surface_params(RT_MaterialData &r_mat, float p_ro
 	r_mat.surface_params.roughness = rt_unorm8(p_roughness);
 	r_mat.surface_params.metallic = rt_unorm8(p_metallic);
 	r_mat.surface_params.specular = rt_unorm8(p_specular);
+}
+
+// Stores BaseMaterial3D's back light colour (sRGB unorm8 per channel, GLSL rt_material_backlight()) in
+// the spare bytes of surface_params, normal_texture and emission_texture. Black: no back lighting.
+constexpr void rt_material_set_backlight(RT_MaterialData &r_mat, float p_r, float p_g, float p_b) {
+	r_mat.surface_params.backlight_r = rt_unorm8(p_r);
+	r_mat.normal_texture.backlight_g = rt_unorm8(p_g);
+	r_mat.emission_texture.backlight_b = rt_unorm8(p_b);
 }
 
 // Stores BaseMaterial3D's clearcoat and clearcoat_roughness (0 clearcoat: no coat).
