@@ -15,7 +15,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Many lights**: 4096 path-traced lights (upstream 64), emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting and thin-glass transmission in the path tracer; textures filter like raster.
-- **Water**: refraction, depth tint, murky water, caustics, currents and a path-traced ocean.
+- **Water**: refraction, depth tint, murky water, caustics, currents, white water and a path-traced ocean.
 - **Exposure**: histogram metering and local exposure that keep night scenes dark.
 - **Physics**: PhysX 5 next to Jolt, with cloth, tearing, destruction and path-traced smoke.
 - **Open worlds**: far-origin precision, persistent ray tracing instances, mesh LOD in the tracer.
@@ -108,6 +108,16 @@ Watch the boxes drift with the current past the rock.
 ![Flecks carried past a rock: with baked flow the streaks close straight behind it, with live flow they roll up into a wake](docs/media/live-flow.gif)
 
 Look behind the rock: with live flow the streaks roll up into a wake instead of closing straight behind it.
+
+</details>
+
+- **White water** (`PhysXWaterSurface3D` `flow_foam`): fast, churning water foams in lines trailing rocks, in eddies and through rapids, and the foam drifts downstream.
+
+<details><summary>Clip: foam trailing a rock in a current</summary>
+
+![Looking down on a rock in a current: foam lines peel off both sides and drift downstream](docs/media/white-water.gif)
+
+Foam lines peel off both sides of the rock and wander with its wake.
 
 </details>
 
