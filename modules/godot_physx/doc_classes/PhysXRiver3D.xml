@@ -27,6 +27,13 @@
 				With [member carve] on, the channel as height brushes for a terrain deformer: one [Dictionary] per square tile of [param tile_size] m (world XZ) the river touches, with [code]rect[/code] ([Rect2], world XZ), [code]cell_size[/code], [code]size[/code] ([Vector2i] cells), [code]heights[/code] (world heights, row-major) and [code]mask[/code] (0 to 1) as [PackedFloat32Array], and [code]mode[/code] ([code]"lower"[/code]: the ground goes down to the height, blended by the mask, never up). Empty when [member carve] is off.
 			</description>
 		</method>
+		<method name="get_discharge_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="s" type="float" />
+			<description>
+				Discharge (m³/s) at [param s] metres along the river: [member discharge] plus every tributary (a river whose [member mouth_target] is this one) joining upstream of there.
+			</description>
+		</method>
 		<method name="get_length" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -167,6 +174,12 @@
 		<member name="max_slope" type="float" setter="set_max_slope" getter="get_max_slope" default="0.08">
 			Drops steeper than this (m per m) are cascades: the water falls down them instead of flowing.
 		</member>
+		<member name="mouth_blend" type="float" setter="set_mouth_blend" getter="get_mouth_blend" default="6.0">
+			Metres past the mouth over which the river's surface fades into the water it flows into.
+		</member>
+		<member name="mouth_target" type="NodePath" setter="set_mouth_target" getter="get_mouth_target" default="NodePath(&quot;&quot;)">
+			Where the river ends: a lake or the sea ([PhysXWaterSurface3D]) or another [PhysXRiver3D]. The river's surface never falls below that water's level (it ponds back to it), and past the mouth its surface fades into that water over [member mouth_blend]. A lake or the sea gets the outflow as a plume (a turbulent jet spreading from the mouth) that its waves, foam and floating bodies ride; another river carries the added discharge downstream of the join.
+		</member>
 		<member name="obstacle_collision_mask" type="int" setter="set_obstacle_collision_mask" getter="get_obstacle_collision_mask" default="0">
 			Physics layers of rocks and other obstacles in the river, measured on top of the ground. The flow parts round them and white water gathers at them. Needed with [member carve], since a carving river measures the uncarved terrain from [member base_height_source]; without carving, rocks on the [member ground_collision_mask] layers are found anyway.
 		</member>
@@ -193,6 +206,11 @@
 		<signal name="carve_changed">
 			<description>
 				Emitted after a rebuild with [member carve] on: the channel's brushes ([method get_carve_brushes]) may have changed.
+			</description>
+		</signal>
+		<signal name="rebuilt">
+			<description>
+				Emitted after the river has been rebuilt (its surface, flow and mesh). Rivers flowing into this one listen for it to follow its surface at the join.
 			</description>
 		</signal>
 	</signals>

@@ -105,6 +105,10 @@ public:
 	int get_grid_resolution() const { return grid_resolution; }
 	void set_depth(float p_depth);
 	float get_depth() const { return depth; }
+	// A river flowing in at p_at (world, its mouth) along p_direction: its
+	// outflow spreads into this water as a plume. Called by PhysXRiver3D.
+	void set_inflow(int64_t p_owner, const Vector3 &p_at, const Vector3 &p_direction, float p_width, float p_discharge);
+	void clear_inflow(int64_t p_owner);
 	void set_water_level(float p_level);
 	float get_water_level() const { return water_level; }
 	void set_damping(float p_damping);
@@ -406,6 +410,20 @@ private:
 	void _update_flow_material();
 	// Flow at grid-relative (x, z), as the shader's flow_at().
 	Vector2 _flow_at(float p_x, float p_z) const;
+	// Rivers flowing in (PhysXRiver3D's mouth): each spreads as a turbulent
+	// jet, a plume added to the flow over the simulated square.
+	struct Inflow {
+		int64_t owner = 0;
+		Vector3 at; // world, the shoreline
+		Vector3 direction; // world, horizontal unit
+		float width = 1.0f;
+		float discharge = 0.0f;
+	};
+	LocalVector<Inflow> inflows;
+	PackedVector2Array plume_cells; // m/s per ripple cell, world xz
+	Ref<ImageTexture> plume_texture;
+	void _bake_plumes();
+	Vector2 _plume_at(float p_x, float p_z) const;
 	// The shader's flow_phases() at grid-relative (x, z): the two phases' offsets and the first's weight.
 	float _flow_phases(float p_x, float p_z, Vector2 &r_offset_a, Vector2 &r_offset_b) const;
 	// An ocean grid at grid-relative (x, z), carried by the flow (the shader's ocean_tex()).
