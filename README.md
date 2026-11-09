@@ -15,7 +15,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Many lights**: 4096 path-traced lights (upstream 64), emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting and thin-glass transmission in the path tracer; textures filter like raster.
-- **Water**: refraction, depth tint, murky water, caustics, currents, white water and a path-traced ocean.
+- **Water**: refraction, depth tint, murky water, caustics, currents, white water, rivers from a path and a path-traced ocean.
 - **Exposure**: histogram metering and local exposure that keep night scenes dark.
 - **Physics**: PhysX 5 next to Jolt, with cloth, tearing, destruction and path-traced smoke.
 - **Open worlds**: far-origin precision, persistent ray tracing instances, mesh LOD in the tracer.
@@ -118,6 +118,16 @@ Look behind the rock: with live flow the streaks roll up into a wake instead of 
 ![Looking down on a rock in a current: foam lines peel off both sides and drift downstream](docs/media/white-water.gif)
 
 Foam lines peel off both sides of the rock and wander with its wake.
+
+</details>
+
+- **Rivers from a path** (`PhysXRiver3D`: `discharge`, `roughness`, `max_slope`): draw a curve with widths and a discharge; the river finds its depth on the ground, never runs uphill, falls as cascades with white water below, and floats objects downstream.
+
+<details><summary>Image: a river with a cascade, raster vs path traced</summary>
+
+![A river drawn as a path through a valley, dropping over a cascade into white water, raster and path traced](docs/media/river.jpg)
+
+Look at the cascade and the white water below it.
 
 </details>
 
