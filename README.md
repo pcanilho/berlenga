@@ -32,14 +32,15 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Lit raster transparents and rain (`rendering/pathtracing/max_transparency_layers` 0), still traced in reflections.
 
 ### Materials
-- **Back lighting** (`rendering/pathtracing/back_lighting`): light passes through leaves, paper and curtains, from lights and bounces, into coloured shadows.
-- **Transmission** (new BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass passes light straight through, tinted and blurred by roughness, with tinted shadows; glTF `KHR_materials_transmission`.
-- **Clearcoat** (`rendering/pathtracing/clearcoat`): coated paint as raster shades it, with traced coat reflections.
+- **Back lighting** (`rendering/pathtracing/back_lighting`): light passes through leaves, paper and curtains, back light texture included, from lights and bounces, into coloured shadows.
+- **Transmission** (new BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass passes light straight through, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.
+- **Clearcoat** (`rendering/pathtracing/clearcoat`): coated paint as raster shades it, coat texture included, with traced coat reflections.
+- Shaders writing `BACKLIGHT` or `TRANSMISSION` pass light into their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
-<details><summary>Images: transmission, back lighting, clearcoat</summary>
+<details><summary>Images: transmission, back lighting, clearcoat, layer textures</summary>
 
 ![Thin glass panes: light and shadow pass through tinted with transmission on, grey opaque panes with it off](docs/media/transmission.jpg)
 
@@ -47,7 +48,9 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ![Red coated spheres: raster, path traced with clearcoat on (sharp coat highlights match raster), and off (dull)](docs/media/clearcoat.jpg)
 
-Look at the floor under the glass and cards, and the highlights on the spheres.
+![Checkered back light and transmission textures: raster casts plain shadows, the path tracer casts checkered coloured ones](docs/media/layer-textures.jpg)
+
+Look at the floor under the glass and cards, the highlights on the spheres, and the checkered shadows.
 
 </details>
 
