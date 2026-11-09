@@ -407,7 +407,7 @@ Two engine fixes it needed:
    `rest = hit - offset(rest)`, which converge while the waves don't fold (the usual way to look up a
    choppy FFT surface by world position). Any shader that both displaces and reads its pre-displacement
    position in a varying meets the same thing; storing the rest position at capture time would fix
-   it for all of them and is noted as a follow-up.
+   it for all of them (issue #169).
 
 Bench: `docs/bench/water_surface` (sloping sand, rocks, three floating boxes; `--view=beach|under`,
 `--raster`). At 100% crop the sand checker shows through the path-traced water, bent by the waves

@@ -59,13 +59,13 @@ func _ready() -> void:
 	sun.shadow_enabled = true
 	add_child(sun)
 
-	# Sand: a 60 m slab sloping down away from the camera, from dry beach into 3 m of water, with a few rocks.
+	# Sand: a 200 m slab sloping down away from the camera, from dry beach out to about 9 m of water, with a few rocks.
 	var sand_mat := StandardMaterial3D.new()
 	sand_mat.albedo_texture = _checker(Color(0.78, 0.7, 0.55), Color(0.62, 0.55, 0.42))
-	sand_mat.uv1_scale = Vector3(30, 30, 1)
+	sand_mat.uv1_scale = Vector3(100, 100, 1)
 	sand_mat.roughness = 0.95
 	var slope := deg_to_rad(5.0)
-	_slab(Vector3(60, 1, 60), Vector3(0, -1.2, 0), Vector3(-slope, 0, 0), sand_mat)
+	_slab(Vector3(200, 1, 200), Vector3(0, -1.2, 0), Vector3(-slope, 0, 0), sand_mat)
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
 	rock_mat.roughness = 0.8
