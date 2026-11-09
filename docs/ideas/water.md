@@ -982,6 +982,53 @@ scene, so it is not shown in the cloud shots. Limits: the lip is taken as
 level across the river, each column's jet is independent (no contraction of
 the sheet), and the live window does not see the fall.
 
+## Step 5a: ocean wave cascades and the TMA spectrum (9 Nov)
+
+### Problem
+
+The ocean was one FFT tile (`ocean_domain_size`, 40 m by default). A tile holds
+no wave longer than itself, and its longest waves repeat visibly. A strong wind
+over open water should raise long, tall swell. At 14 m/s a fully developed sea
+peaks near 165 m wavelength and has `Hs = 0.22 U^2 / g`, about 4.4 m
+(Pierson-Moskowitz). The tile gave 1.1 m.
+
+### How others do it
+
+- **Several tiles of growing size, each with its own band of the spectrum.**
+  Unity HDRP Water has three bands: swell, agitation and ripples. Crest sums
+  wave cascades per LOD. Sea of Thieves (SIGGRAPH 2018) and the Godot FFT
+  ocean write-ups by Jump Trajectory and others use 3 to 4 cascades, cutting
+  each tile's lowest few modes and handing them to the next, larger tile. That
+  hides the repeat, because no tile's own fundamental shows.
+- **Spectrum in finite depth: TMA** (Bouws et al. 1985). JONSWAP times the
+  Kitaigorodskii depth factor `Phi(w_h)`, `w_h = w sqrt(d/g)`. Horvath
+  ("Empirical directional wave spectra for computer graphics", DigiPro 2015)
+  gives the piecewise form used here, and recommends TMA as the base spectrum
+  for shallow seas.
+
+### As built
+
+- `wave_cascades` (1 to 4, default 1, unchanged) and `wave_cascade_ratio`
+  (default 6): cascade `i` is a tile `ocean_domain_size * ratio^i`. Each cascade
+  keeps waves shorter than a quarter of its tile (`k >= 8 pi / L_i`) and hands
+  longer ones to the next. For N >= 32 and ratio <= 8, the next tile's Nyquist
+  limit stays above the split.
+- Each extra cascade is an ocean-only `WaterSolver` (a resting 8x8 ripple grid)
+  with a `k_min` / `k_max` band in the spectrum init. Its height, displacement,
+  derivative and foam textures are summed in the surface shader (foam takes the
+  most of any), and its readbacks are summed in `sample_height()` (the choppy
+  displacement inversion included) and `sample_vertical_speed()`.
+- The spectrum init multiplies by TMA's `Phi`. Shallow `depth` (3 m by default)
+  now takes energy out of waves longer than about 7 s. For open water, set
+  `depth` to the real depth.
+- Bench: `docs/bench/water_surface --view=sea` prints `Hs` from 40 s of
+  `sample_height()` at one point. At 14 m/s and depth 60 m: 1 cascade 1.09 m,
+  3 cascades 3.55 m (fetch-limited, near the shallows), against 4.4 m for a
+  fully developed sea.
+- Limits: shore foam and swash still see cascade 0 only (the breaking-waves
+  step will use all of them); caustics are from cascade 0; whitecaps are per
+  cascade, not from the summed Jacobian.
+
 ## The camera under water: research (9 Nov)
 
 ### What the fork has today
@@ -1212,3 +1259,9 @@ the sheet), and the live window does not see the fall.
   https://www.cg.tuwien.ac.at/research/publications/2010/bagar2010/bagar2010-draft.pdf
 - Malan, Real-time water in Horizon Forbidden West, SIGGRAPH 2022 Advances:
   https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Water-Malan.pdf
+- Horvath, Empirical directional wave spectra for computer graphics, DigiPro 2015:
+  https://dl.acm.org/doi/10.1145/2791261.2791267
+- Bouws, Guenther, Rosenthal and Vincent, Similarity of the wind wave spectrum in finite depth water (TMA),
+  J. Geophys. Res. 90, 1985.
+- Unity HDRP Water System, simulation bands: https://docs.unity3d.com/Packages/com.unity.render-pipelines.high-definition@17.0/manual/water-water-system-simulation.html
+- Ang, Catling et al., The Technical Art of Sea of Thieves, SIGGRAPH 2018 Talks.

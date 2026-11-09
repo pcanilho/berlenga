@@ -641,8 +641,8 @@ void WaterSolverGPU::_rt_spectrum_init() {
 		put_i(44, 0);
 		put_f(48, _init_fetch);
 		put_f(52, _init_depth);
-		put_f(56, 0.0f);
-		put_f(60, 0.0f);
+		put_f(56, _init_k_min);
+		put_f(60, _init_k_max);
 		rd->buffer_update(buf_ocean_init_params, 0, OCEAN_INIT_PARAMS_BYTES, ib.ptr());
 
 		RD::ComputeListID cl = rd->compute_list_begin();
@@ -660,6 +660,11 @@ void WaterSolverGPU::_rt_spectrum_init() {
 		// rt_step() runs, and rt_build()/rt_step() are always posted to the
 		// render thread in that order, so ordering is already guaranteed.
 	}
+}
+
+void WaterSolverGPU::rt_set_band(Ref<WaterSolverGPU> p_self, float p_k_min, float p_k_max) {
+	_init_k_min = MAX(p_k_min, 0.0f);
+	_init_k_max = MAX(p_k_max, 0.0f);
 }
 
 // A new sea state (wind / direction / height / fetch) WITHOUT a rebuild: only h0 is regenerated, in place. The
@@ -1479,6 +1484,7 @@ void WaterSolver::configure(const Settings &p_settings) {
 	}
 	// Before the build, so it uploads the flow (an empty one clears it).
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_base_flux).bind(gpu, base_flux, wall_friction));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_band).bind(gpu, settings.ocean_k_min, settings.ocean_k_max));
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled, settings.cell_depth, settings.depth, settings.shallow_fade_depth, settings.fetch));
 }
 

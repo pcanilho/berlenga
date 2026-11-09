@@ -935,6 +935,13 @@ over `ocean_domain_size`; heights in meters at `wave_amplitude` 1) and a local
 ripple layer — the shallow-water equations over `domain_size`, whose wave speed
 follows `depth` — that bodies disturb and currents run through.
 
+The spectrum is TMA (JONSWAP in finite depth, Bouws et al. 1985): `depth`
+takes energy out of the long waves in shallow water. One FFT tile holds no wave
+longer than itself, so `wave_cascades` (up to 4) adds tiles `wave_cascade_ratio`
+times larger, each carrying its own band of longer waves: swell under the chop,
+without visible repeats. At 14 m/s over deep water, three cascades give about
+3.5 m significant wave height where one tile gives 1.1 m.
+
 The water is a square by default. Set `surface_mesh` to any flat mesh (a disc
 baked from `CSGCylinder3D`, a kidney bean, a lake with an island) and its X/Z
 footprint becomes the water: the ripple grid fits itself to the outline, waves

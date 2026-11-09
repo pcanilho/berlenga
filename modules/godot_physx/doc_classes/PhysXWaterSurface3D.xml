@@ -72,6 +72,13 @@
 				The fetch (meters of open water the wind blows over) the wave spectrum actually uses: [member fetch] when it's above 0, otherwise the automatic value -- the longest side of the [member surface_mesh] footprint for enclosed water, or 100 km (a fully developed open sea) for the plain square.
 			</description>
 		</method>
+		<method name="get_wave_cascade_size" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="index" type="int" />
+			<description>
+				The tile size of wave cascade [param index]: [member ocean_domain_size] times [member wave_cascade_ratio] to the power [param index].
+			</description>
+		</method>
 		<method name="is_camera_underwater" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -190,7 +197,7 @@
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
 		</member>
 		<member name="depth" type="float" setter="set_depth" getter="get_depth" default="3.0">
-			Still-water depth in meters used everywhere unless [member seabed_from_floor] measures it per cell (then it only applies where no floor is found below the water). Sets the ripple layer's wave speed, [code]sqrt(g * depth)[/code], and the ocean layer's dispersion.
+			Still-water depth in meters used everywhere unless [member seabed_from_floor] measures it per cell (then it only applies where no floor is found below the water). Sets the ripple layer's wave speed, [code]sqrt(g * depth)[/code], and the ocean layer's dispersion and spectrum: in shallow water the long waves carry less energy (TMA spectrum), so set it to the real depth of open water (tens of meters for a sea).
 		</member>
 		<member name="domain_size" type="Vector2" setter="set_domain_size" getter="get_domain_size" default="Vector2(20, 20)">
 			World-space extent (X, Z) of the local ripple layer -- independent of [member ocean_domain_size], see [member ocean_grid_resolution]'s own note on why. Ignored when [member surface_mesh] is set: the ripple grid is then fitted to the footprint's bounds.
@@ -273,6 +280,12 @@
 		</member>
 		<member name="wave_amplitude" type="float" setter="set_wave_amplitude" getter="get_wave_amplitude" default="1.0">
 			Linear height multiplier for the FFT ocean waves. At [code]1.0[/code] they have physical heights for the JONSWAP spectrum at [member wind_speed] and [member fetch] (in meters); below 1 reduces them proportionally, 0 removes the FFT ocean waves. This does not scale local ripple disturbances.
+		</member>
+		<member name="wave_cascade_ratio" type="float" setter="set_wave_cascade_ratio" getter="get_wave_cascade_ratio" default="6.0">
+			How much larger each wave cascade's tile is than the last.
+		</member>
+		<member name="wave_cascades" type="int" setter="set_wave_cascades" getter="get_wave_cascades" default="1">
+			Number of FFT tiles summed into the ocean. 1 is the single tile of [member ocean_domain_size], which holds no wave longer than the tile, so a strong wind on open water stays short and low. Each extra cascade is a tile [member wave_cascade_ratio] times larger, carrying the band of longer waves (swell), and every tile keeps only waves shorter than a quarter of its size, so none of them shows its repeat. Each extra cascade costs one more FFT ocean on the GPU.
 		</member>
 		<member name="wet_sand_dry_time" type="float" setter="set_wet_sand_dry_time" getter="get_wet_sand_dry_time" default="12.0">
 			Time constant (s) for sand uncovered by the swash to dry: the wet darkening fades to about a third over this long. See [member swash_run_up].

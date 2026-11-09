@@ -126,6 +126,18 @@ public:
 	Vector2 get_wind_direction() const { return wind_direction; }
 	void set_wave_amplitude(float p_amp);
 	float get_wave_amplitude() const { return wave_amplitude; }
+	// Wave cascades: 1 = the one FFT tile of ocean_domain_size; more add larger
+	// tiles (each wave_cascade_ratio times the last) carrying the longer waves,
+	// each its own band of the spectrum, so the sea has swell and chop together
+	// without visible tiling.
+	static constexpr int MAX_WAVE_CASCADES = 4;
+	~PhysXWaterSurface3D();
+	void set_wave_cascades(int p_count);
+	int get_wave_cascades() const { return wave_cascades; }
+	void set_wave_cascade_ratio(float p_ratio);
+	float get_wave_cascade_ratio() const { return wave_cascade_ratio; }
+	// Tile size of cascade i (0 = ocean_domain_size).
+	Vector2 get_wave_cascade_size(int p_index) const;
 	// Extra room around the surface before it is culled, for a material displacing it further than the waves.
 	void set_cull_margin(float p_margin);
 	float get_cull_margin() const { return cull_margin; }
@@ -343,6 +355,33 @@ private:
 	float wind_speed = 8.0f;
 	Vector2 wind_direction = Vector2(1, 0);
 	float wave_amplitude = 1.0f;
+	int wave_cascades = 1;
+	float wave_cascade_ratio = 6.0f;
+	// Cascades 1.. (cascade 0 is the main solver's own ocean): an ocean-only
+	// WaterSolver each (a tiny resting ripple grid), its textures and readbacks.
+	struct WaveCascade {
+		WaterSolver solver;
+		Vector2 domain;
+		Ref<Texture2DRD> height_tex;
+		Ref<Texture2DRD> disp_tex;
+		Ref<Texture2DRD> deriv_tex;
+		Ref<Texture2DRD> foam_tex;
+		Vector<float> height;
+		Vector<float> dx;
+		Vector<float> dz;
+		Vector<float> previous_height;
+		Vector<float> previous_dx;
+		Vector<float> previous_dz;
+		int n = 0;
+		Vector2 cached_domain;
+		double time = 0.0;
+		double previous_time = 0.0;
+	};
+	LocalVector<WaveCascade *> extra_cascades;
+	void _configure_cascades(const WaterSolver::Settings &p_base);
+	void _clear_cascades();
+	// The wavenumber where cascade i hands over to cascade i + 1 (rad/m).
+	float _cascade_split(int p_index) const;
 	float cull_margin = 0.0f;
 	float fetch = 0.0f;
 	float render_extent = 0.0f;
@@ -427,7 +466,7 @@ private:
 	// The shader's flow_phases() at grid-relative (x, z): the two phases' offsets and the first's weight.
 	float _flow_phases(float p_x, float p_z, Vector2 &r_offset_a, Vector2 &r_offset_b) const;
 	// An ocean grid at grid-relative (x, z), carried by the flow (the shader's ocean_tex()).
-	float _ocean_flow_sample(const Vector<float> &p_grid, float p_x, float p_z, float p_weight, const Vector2 &p_offset_a, const Vector2 &p_offset_b) const;
+	float _ocean_flow_sample(const Vector<float> &p_grid, float p_x, float p_z, float p_weight, const Vector2 &p_offset_a, const Vector2 &p_offset_b, int p_n = -1, Vector2 p_domain = Vector2()) const;
 	ObjectID wakes[MAX_WAKES];
 	Vector2 mesh_offset; // see _update_mesh_offset()
 	void _update_mesh_offset();
@@ -488,7 +527,9 @@ private:
 	double previous_ocean_time = 0.0;
 	float _ripple_height_at(const Vector<float> &p_height, float p_x, float p_z) const;
 	float _ocean_fade_at(float p_x, float p_z) const;
-	float _ocean_height_at(const Vector<float> &p_height, const Vector<float> &p_dx, const Vector<float> &p_dz, float p_x, float p_z, float p_fade) const;
+	// All cascades' height at the surface point now over (p_x, p_z) (inverting the choppy displacement); with
+	// p_previous, from the readbacks before the cached ones.
+	float _ocean_height_at(bool p_previous, float p_x, float p_z, float p_fade) const;
 
 	int frames_since_refresh = 0;
 	// CPU cache refresh for sample_height() only -- rendering is unthrottled/automatic via the zero-copy textures.

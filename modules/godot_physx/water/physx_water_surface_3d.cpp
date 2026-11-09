@@ -119,6 +119,24 @@ uniform sampler2D ocean_deriv_tex : hint_default_black, filter_linear, repeat_en
 uniform bool per_pixel_normals = true;
 uniform vec2 ripple_domain_size = vec2(20.0, 20.0);
 uniform vec2 ocean_domain_size = vec2(40.0, 40.0);
+// Wave cascades past the first (PhysXWaterSurface3D::wave_cascades): larger
+// tiles carrying the longer waves, summed with ocean_*_tex.
+uniform int wave_cascade_count = 1;
+uniform vec2 cascade_domain_1 = vec2(240.0);
+uniform vec2 cascade_domain_2 = vec2(1440.0);
+uniform vec2 cascade_domain_3 = vec2(8640.0);
+uniform sampler2D cascade_height_1 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_height_2 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_height_3 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_disp_1 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_disp_2 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_disp_3 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_deriv_1 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_deriv_2 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_deriv_3 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_foam_1 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_foam_2 : hint_default_black, filter_linear, repeat_enable;
+uniform sampler2D cascade_foam_3 : hint_default_black, filter_linear, repeat_enable;
 // World XZ both height fields are centered on (set by PhysXWaterSurface3D).
 uniform vec2 grid_center = vec2(0.0);
 // Open, deep sea past the simulated square (PhysXWaterSurface3D::open_sea_beyond) instead of the edge's seabed.
@@ -307,6 +325,75 @@ vec4 ocean_tex(sampler2D tex, vec2 world_xz) {
 	return texture(tex, uv - o_a / ocean_domain_size) * w + texture(tex, uv - o_b / ocean_domain_size) * (1.0 - w);
 }
 
+// The same for a larger cascade's tile.
+vec4 cascade_tex(sampler2D tex, vec2 domain, vec2 world_xz) {
+	vec2 o_a;
+	vec2 o_b;
+	float w = flow_phases(world_xz, o_a, o_b);
+	vec2 uv = world_xz / domain + 0.5;
+	if (w >= 1.0) {
+		return texture(tex, uv);
+	}
+	return texture(tex, uv - o_a / domain) * w + texture(tex, uv - o_b / domain) * (1.0 - w);
+}
+
+// All cascades summed (heights, displacements and their derivatives add; foam is the most of any).
+vec4 ocean_height_all(vec2 world_xz) {
+	vec4 v = ocean_tex(ocean_height_tex, world_xz);
+	if (wave_cascade_count > 1) {
+		v += cascade_tex(cascade_height_1, cascade_domain_1, world_xz);
+	}
+	if (wave_cascade_count > 2) {
+		v += cascade_tex(cascade_height_2, cascade_domain_2, world_xz);
+	}
+	if (wave_cascade_count > 3) {
+		v += cascade_tex(cascade_height_3, cascade_domain_3, world_xz);
+	}
+	return v;
+}
+
+vec4 ocean_disp_all(vec2 world_xz) {
+	vec4 v = ocean_tex(ocean_disp_tex, world_xz);
+	if (wave_cascade_count > 1) {
+		v += cascade_tex(cascade_disp_1, cascade_domain_1, world_xz);
+	}
+	if (wave_cascade_count > 2) {
+		v += cascade_tex(cascade_disp_2, cascade_domain_2, world_xz);
+	}
+	if (wave_cascade_count > 3) {
+		v += cascade_tex(cascade_disp_3, cascade_domain_3, world_xz);
+	}
+	return v;
+}
+
+vec4 ocean_deriv_all(vec2 world_xz) {
+	vec4 v = ocean_tex(ocean_deriv_tex, world_xz);
+	if (wave_cascade_count > 1) {
+		v += cascade_tex(cascade_deriv_1, cascade_domain_1, world_xz);
+	}
+	if (wave_cascade_count > 2) {
+		v += cascade_tex(cascade_deriv_2, cascade_domain_2, world_xz);
+	}
+	if (wave_cascade_count > 3) {
+		v += cascade_tex(cascade_deriv_3, cascade_domain_3, world_xz);
+	}
+	return v;
+}
+
+float ocean_foam_all(vec2 world_xz) {
+	float f = ocean_tex(ocean_foam_tex, world_xz).r;
+	if (wave_cascade_count > 1) {
+		f = max(f, cascade_tex(cascade_foam_1, cascade_domain_1, world_xz).r);
+	}
+	if (wave_cascade_count > 2) {
+		f = max(f, cascade_tex(cascade_foam_2, cascade_domain_2, world_xz).r);
+	}
+	if (wave_cascade_count > 3) {
+		f = max(f, cascade_tex(cascade_foam_3, cascade_domain_3, world_xz).r);
+	}
+	return f;
+}
+
 // Offset of the surface point that rests at world_xz: (dx, height, dz).
 // One wake grid's height (x) and foam (y) at world_xz, faded out toward its edges.
 vec2 wake_one(sampler2D tex, vec4 rect, vec2 world_xz) {
@@ -366,12 +453,12 @@ vec3 surface_offset(vec2 world_xz) {
 	float fade = fade_r(world_xz, cuv_r);
 	// Negative: the displacement points away from crests in this FFT's sign
 	// convention, so moving against it gathers points into the crests.
-	vec2 d = -choppiness * fade * ocean_tex(ocean_disp_tex, world_xz).rg;
+	vec2 d = -choppiness * fade * ocean_disp_all(world_xz).rg;
 	// The ripple layer isn't periodic: past its domain, ease back to still water.
 	vec2 from_center = abs(rel / ripple_domain_size);
 	float inside = 1.0 - smoothstep(0.46, 0.5, max(from_center.x, from_center.y));
 	float ripple = mix(water_level, texture(ripple_height_tex, cuv_r).r, inside);
-	float h = ripple + ocean_tex(ocean_height_tex, world_xz).r * fade;
+	float h = ripple + ocean_height_all(world_xz).r * fade;
 	// The wake grid is laid out where the water is now, not where it rests
 	// (its sources sit under the hull, and sample_height() reads it there):
 	// read it at this point's displaced position.
@@ -392,8 +479,8 @@ vec3 surface_normal_pixel(vec2 world_xz) {
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float fade = fade_r(world_xz, cuv_r);
 	float s = -choppiness * fade;
-	vec4 der = ocean_tex(ocean_deriv_tex, world_xz);
-	vec3 disp = ocean_tex(ocean_disp_tex, world_xz).rgb;
+	vec4 der = ocean_deriv_all(world_xz);
+	vec3 disp = ocean_disp_all(world_xz).rgb;
 	float dxz = disp.b;
 	const float e = 0.2;
 	vec2 du = vec2(e) / ripple_domain_size;
@@ -436,14 +523,14 @@ float foam_at(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float fade = fade_r(world_xz, cuv_r);
-	float amount = ocean_tex(ocean_foam_tex, world_xz).r * fade;
+	float amount = ocean_foam_all(world_xz) * fade;
 	// White water from the live flow (its velocity texture's b), fading out at the square's edge.
 	if (flow_foam_live) {
 		vec2 a = abs(rel / ripple_domain_size);
 		amount = max(amount, texture(flow_tex, cuv_r).b * (1.0 - smoothstep(0.44, 0.5, max(a.x, a.y))));
 	}
 	// Wake foam at the displaced position, as surface_offset() reads the wake.
-	amount = max(amount, wake_foam(world_xz - choppiness * fade * ocean_tex(ocean_disp_tex, world_xz).rg));
+	amount = max(amount, wake_foam(world_xz - choppiness * fade * ocean_disp_all(world_xz).rg));
 	// The lace is carried with the foam (the same two phases).
 	vec2 o_a;
 	vec2 o_b;
@@ -490,7 +577,7 @@ float shore_signal(vec2 world_xz, float time) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float depth = depth_r(world_xz, cuv_r);
-	float eta = ocean_tex(ocean_height_tex, world_xz).r; // unfaded: the waves arriving here
+	float eta = ocean_height_all(world_xz).r; // unfaded: the waves arriving here
 	// Lobes a few meters across (like real swash), drifting, with the waves
 	// pushing the whole edge in and out over time.
 	vec2 p = world_xz * 0.45;
@@ -961,6 +1048,11 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_speed"), &PhysXWaterSurface3D::get_wind_speed);
 	ClassDB::bind_method(D_METHOD("set_wind_direction", "dir"), &PhysXWaterSurface3D::set_wind_direction);
 	ClassDB::bind_method(D_METHOD("get_wind_direction"), &PhysXWaterSurface3D::get_wind_direction);
+	ClassDB::bind_method(D_METHOD("set_wave_cascades", "count"), &PhysXWaterSurface3D::set_wave_cascades);
+	ClassDB::bind_method(D_METHOD("get_wave_cascades"), &PhysXWaterSurface3D::get_wave_cascades);
+	ClassDB::bind_method(D_METHOD("set_wave_cascade_ratio", "ratio"), &PhysXWaterSurface3D::set_wave_cascade_ratio);
+	ClassDB::bind_method(D_METHOD("get_wave_cascade_ratio"), &PhysXWaterSurface3D::get_wave_cascade_ratio);
+	ClassDB::bind_method(D_METHOD("get_wave_cascade_size", "index"), &PhysXWaterSurface3D::get_wave_cascade_size);
 	ClassDB::bind_method(D_METHOD("set_wave_amplitude", "amplitude"), &PhysXWaterSurface3D::set_wave_amplitude);
 	ClassDB::bind_method(D_METHOD("get_wave_amplitude"), &PhysXWaterSurface3D::get_wave_amplitude);
 	ClassDB::bind_method(D_METHOD("set_cull_margin", "margin"), &PhysXWaterSurface3D::set_cull_margin);
@@ -1083,6 +1175,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_speed"), "set_wind_speed", "get_wind_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_direction"), "set_wind_direction", "get_wind_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_amplitude"), "set_wave_amplitude", "get_wave_amplitude");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_cascades", PROPERTY_HINT_RANGE, "1,4,1"), "set_wave_cascades", "get_wave_cascades");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_cascade_ratio", PROPERTY_HINT_RANGE, "2,16,0.1"), "set_wave_cascade_ratio", "get_wave_cascade_ratio");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fetch", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), "set_fetch", "get_fetch");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "choppiness", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_choppiness", "get_choppiness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "foam_enabled"), "set_foam_enabled", "get_foam_enabled");
@@ -1196,6 +1290,61 @@ void PhysXWaterSurface3D::set_wave_amplitude(float p_amp) {
 	_reinit_spectrum();
 }
 
+void PhysXWaterSurface3D::set_wave_cascades(int p_count) {
+	wave_cascades = CLAMP(p_count, 1, MAX_WAVE_CASCADES);
+	_rebuild();
+}
+
+void PhysXWaterSurface3D::set_wave_cascade_ratio(float p_ratio) {
+	wave_cascade_ratio = CLAMP(p_ratio, 2.0f, 16.0f);
+	_rebuild();
+}
+
+Vector2 PhysXWaterSurface3D::get_wave_cascade_size(int p_index) const {
+	return ocean_domain_size * Math::pow(wave_cascade_ratio, (float)CLAMP(p_index, 0, MAX_WAVE_CASCADES - 1));
+}
+
+// Cascade i keeps the waves shorter than a quarter of its tile; longer ones go to
+// the next, larger tile (whose own Nyquist limit, pi N / (ratio L), stays above
+// that for N >= 32 at ratio <= 8), so no tile shows its few longest, tiling waves.
+float PhysXWaterSurface3D::_cascade_split(int p_index) const {
+	const Vector2 size = get_wave_cascade_size(p_index);
+	return 4.0f * Math::TAU / MIN(size.x, size.y);
+}
+
+void PhysXWaterSurface3D::_clear_cascades() {
+	for (WaveCascade *c : extra_cascades) {
+		memdelete(c);
+	}
+	extra_cascades.clear();
+}
+
+// Ocean-only solvers for cascades 1.. : the same sea state on a larger tile and
+// its band of the spectrum; their ripple layer is a tiny grid left resting.
+void PhysXWaterSurface3D::_configure_cascades(const WaterSolver::Settings &p_base) {
+	_clear_cascades();
+	for (int i = 1; i < wave_cascades; i++) {
+		WaveCascade *c = memnew(WaveCascade);
+		WaterSolver::Settings s = p_base;
+		s.grid_resolution = 8;
+		s.domain_size = Vector2(8, 8);
+		s.cell_depth = PackedFloat32Array();
+		s.caustics_enabled = false;
+		s.ocean_domain_size = get_wave_cascade_size(i);
+		s.ocean_k_max = _cascade_split(i - 1);
+		s.ocean_k_min = i + 1 < wave_cascades ? _cascade_split(i) : 0.0f;
+		c->domain = s.ocean_domain_size;
+		c->solver.set_rest_threshold(1e-3f);
+		c->solver.configure(s);
+		c->solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+		extra_cascades.push_back(c);
+	}
+}
+
+PhysXWaterSurface3D::~PhysXWaterSurface3D() {
+	_clear_cascades();
+}
+
 void PhysXWaterSurface3D::set_cull_margin(float p_margin) {
 	cull_margin = MAX(p_margin, 0.0f);
 	_update_cull_box();
@@ -1249,6 +1398,9 @@ void PhysXWaterSurface3D::remeasure_seabed() {
 void PhysXWaterSurface3D::_reinit_spectrum() {
 	if (solver.is_available() && !Engine::get_singleton()->is_editor_hint()) {
 		solver.reinit_spectrum(wind_speed, wind_direction, wave_amplitude, get_effective_fetch());
+		for (WaveCascade *c : extra_cascades) {
+			c->solver.reinit_spectrum(wind_speed, wind_direction, wave_amplitude, get_effective_fetch());
+		}
 		_update_cull_box();
 		return;
 	}
@@ -1857,13 +2009,15 @@ float PhysXWaterSurface3D::_flow_phases(float p_x, float p_z, Vector2 &r_offset_
 	return 1.0f - Math::abs(1.0f - 2.0f * pa);
 }
 
-float PhysXWaterSurface3D::_ocean_flow_sample(const Vector<float> &p_grid, float p_x, float p_z, float p_weight, const Vector2 &p_offset_a, const Vector2 &p_offset_b) const {
+float PhysXWaterSurface3D::_ocean_flow_sample(const Vector<float> &p_grid, float p_x, float p_z, float p_weight, const Vector2 &p_offset_a, const Vector2 &p_offset_b, int p_n, Vector2 p_domain) const {
+	const int n = p_n < 0 ? cached_ocean_n : p_n;
+	const Vector2 domain = p_n < 0 ? cached_ocean_domain : p_domain;
 	const float wx = p_x + grid_center.x, wz = p_z + grid_center.y;
-	const float a = _bilinear_sample(p_grid, cached_ocean_n, cached_ocean_domain, wx - p_offset_a.x, wz - p_offset_a.y, true);
+	const float a = _bilinear_sample(p_grid, n, domain, wx - p_offset_a.x, wz - p_offset_a.y, true);
 	if (p_weight >= 1.0f) {
 		return a;
 	}
-	return a * p_weight + _bilinear_sample(p_grid, cached_ocean_n, cached_ocean_domain, wx - p_offset_b.x, wz - p_offset_b.y, true) * (1.0f - p_weight);
+	return a * p_weight + _bilinear_sample(p_grid, n, domain, wx - p_offset_b.x, wz - p_offset_b.y, true) * (1.0f - p_weight);
 }
 
 Vector3 PhysXWaterSurface3D::sample_flow(Vector3 p_world_pos) const {
@@ -2410,11 +2564,14 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.wave_amplitude = wave_amplitude;
 	s.fetch = get_effective_fetch();
 	s.caustics_enabled = caustics_enabled;
+	s.ocean_k_min = wave_cascades > 1 ? _cascade_split(0) : 0.0f;
+	s.ocean_k_max = 0.0f;
 	// configure() frees the solver's textures and makes new ones: let go of
 	// the old ones first (a runtime change -- wave_amplitude, say -- drew with
 	// freed textures until the new ones were bound).
 	_detach_textures();
 	solver.configure(s);
+	_configure_cascades(s);
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 	solver.set_flow_foam(flow_foam, flow_foam_persistence);
@@ -2435,6 +2592,17 @@ void PhysXWaterSurface3D::_detach_textures() {
 		if (texture.is_valid()) {
 			texture->set_texture_rd_rid(RID());
 		}
+	}
+	for (WaveCascade *c : extra_cascades) {
+		const Ref<Texture2DRD> textures_c[] = { c->height_tex, c->disp_tex, c->deriv_tex, c->foam_tex };
+		for (const Ref<Texture2DRD> &texture : textures_c) {
+			if (texture.is_valid()) {
+				texture->set_texture_rd_rid(RID());
+			}
+		}
+	}
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("wave_cascade_count", 1);
 	}
 	textures_bound = false; // rebound once the solver's (new) textures exist
 	_update_flow_material(); // (the baked flow until then)
@@ -2479,7 +2647,7 @@ void PhysXWaterSurface3D::_update_cull_box() {
 	if (mesh_offset.is_finite() && mesh_offset != Vector2()) {
 		box.position += mesh_instance->get_global_transform().basis.xform_inv(Vector3(mesh_offset.x, 0, mesh_offset.y));
 	}
-	mesh_instance->set_custom_aabb(box.grow(MAX(wave_amplitude * 4.0f, 2.0f) + cull_margin));
+	mesh_instance->set_custom_aabb(box.grow(MAX(wave_amplitude * 4.0f, 2.0f) * wave_cascades + cull_margin));
 }
 
 void PhysXWaterSurface3D::_update(double p_delta) {
@@ -2516,11 +2684,17 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 	if (step_mode == STEP_MODE_PER_FRAME) {
 		// Bodies / impulses submitted up to this tick are snapshotted with it; the GPU work waits for the frame.
 		solver.queue_tick(p_delta); // no-ops until solver.is_available(), like step()
+		for (WaveCascade *c : extra_cascades) {
+			c->solver.queue_tick(p_delta);
+		}
 		// Readbacks land at the end of a frame: this tick's sample_height() sees them, as it does per tick.
 		_refresh_cpu_cache();
 		return;
 	}
 	solver.step(p_delta); // no-ops internally until solver.is_available() (see water_solver.cpp)
+	for (WaveCascade *c : extra_cascades) {
+		c->solver.step(p_delta);
+	}
 	_after_step();
 }
 
@@ -2535,12 +2709,21 @@ void PhysXWaterSurface3D::_frame_update() {
 		return; // no physics tick since the last frame: nothing moved
 	}
 	solver.flush_ticks();
+	for (WaveCascade *c : extra_cascades) {
+		c->solver.flush_ticks();
+	}
 	_after_step();
 }
 
 void PhysXWaterSurface3D::_after_step() {
-	if (!textures_bound && solver.is_available()) {
-		_bind_textures();
+	if (solver.is_available()) {
+		bool cascades_ready = true;
+		for (WaveCascade *c : extra_cascades) {
+			cascades_ready = cascades_ready && c->solver.is_available();
+		}
+		if (!textures_bound && cascades_ready) {
+			_bind_textures();
+		}
 	}
 	if (solver.is_available() && caustics_enabled) {
 		solver.render_caustics(Vector3(grid_center.x, get_global_position().y, grid_center.y), caustics_sun_direction, caustics_reference_depth, 1.333f, _open_beyond());
@@ -2614,6 +2797,28 @@ void PhysXWaterSurface3D::_bind_textures() {
 		water_material->set_shader_parameter("shore_foam_tex", shore_foam_tex);
 		water_material->set_shader_parameter("swash_tex", swash_tex);
 	}
+	for (int i = 0; i < (int)extra_cascades.size(); i++) {
+		WaveCascade *c = extra_cascades[i];
+		const Ref<Texture2DRD> *slots[4] = { &c->height_tex, &c->disp_tex, &c->deriv_tex, &c->foam_tex };
+		const RID rids[4] = { c->solver.get_ocean_height_texture_rd_rid(), c->solver.get_ocean_displacement_texture_rd_rid(), c->solver.get_ocean_derivative_texture_rd_rid(), c->solver.get_ocean_foam_texture_rd_rid() };
+		const char *names[4] = { "cascade_height_", "cascade_disp_", "cascade_deriv_", "cascade_foam_" };
+		for (int k = 0; k < 4; k++) {
+			Ref<Texture2DRD> &t = const_cast<Ref<Texture2DRD> &>(*slots[k]);
+			if (t.is_null()) {
+				t.instantiate();
+			}
+			t->set_texture_rd_rid(rids[k]);
+			if (water_material.is_valid()) {
+				water_material->set_shader_parameter(String(names[k]) + itos(i + 1), t);
+			}
+		}
+		if (water_material.is_valid()) {
+			water_material->set_shader_parameter("cascade_domain_" + itos(i + 1), c->domain);
+		}
+	}
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("wave_cascade_count", 1 + (int)extra_cascades.size());
+	}
 	textures_bound = true;
 	_update_flow_material(); // the live flow's texture exists now
 }
@@ -2650,6 +2855,22 @@ void PhysXWaterSurface3D::_refresh_cpu_cache() {
 	cached_ocean_height = ocean;
 	cached_ocean_dx = ocean_dx;
 	solver.get_ocean_dz_grid(cached_ocean_dz);
+	for (WaveCascade *c : extra_cascades) {
+		Vector<float> h;
+		Vector<float> dx;
+		double t = c->time;
+		c->solver.get_ocean_height_grid(h, dx, c->n, c->cached_domain, &t);
+		if (t != c->time) {
+			c->previous_height = c->height;
+			c->previous_dx = c->dx;
+			c->previous_dz = c->dz;
+			c->previous_time = c->time;
+			c->time = t;
+		}
+		c->height = h;
+		c->dx = dx;
+		c->solver.get_ocean_dz_grid(c->dz);
+	}
 }
 
 float PhysXWaterSurface3D::_bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z, bool p_repeat) const {
@@ -2708,20 +2929,53 @@ float PhysXWaterSurface3D::_ocean_fade_at(float p_x, float p_z) const {
 // fixed-point iteration (s matches the shader's -choppiness * fade), then read the ocean height there.
 // (The ocean layer is anchored to the world, as the shader reads it: its samples are at world xz, so a re-centre of the
 // ripple grid never slides the waves a boat rides.)
-float PhysXWaterSurface3D::_ocean_height_at(const Vector<float> &p_height, const Vector<float> &p_dx, const Vector<float> &p_dz, float p_x, float p_z, float p_fade) const {
+float PhysXWaterSurface3D::_ocean_height_at(bool p_previous, float p_x, float p_z, float p_fade) const {
+	struct Layer {
+		const Vector<float> *height;
+		const Vector<float> *dx;
+		const Vector<float> *dz;
+		int n;
+		Vector2 domain;
+	};
+	Layer layers[MAX_WAVE_CASCADES];
+	int count = 0;
+	if (p_previous) {
+		layers[count++] = { &previous_ocean_height, &previous_ocean_dx, &previous_ocean_dz, cached_ocean_n, cached_ocean_domain };
+	} else {
+		layers[count++] = { &cached_ocean_height, &cached_ocean_dx, &cached_ocean_dz, cached_ocean_n, cached_ocean_domain };
+	}
+	for (const WaveCascade *c : extra_cascades) {
+		if (count >= MAX_WAVE_CASCADES) {
+			break;
+		}
+		// A cascade without a previous readback yet stands still (adds no speed).
+		const bool prev = p_previous && c->previous_height.size() == c->height.size();
+		layers[count++] = prev ? Layer{ &c->previous_height, &c->previous_dx, &c->previous_dz, c->n, c->cached_domain } : Layer{ &c->height, &c->dx, &c->dz, c->n, c->cached_domain };
+	}
 	Vector2 p0(p_x, p_z);
 	const float s = -choppiness * p_fade;
 	// Carried by the flow as the shader draws it (ocean_tex()); the phases change slowly over p0's few
 	// centimetres of iteration, so they are taken at the point itself.
 	Vector2 oa, ob;
 	const float w = _flow_phases(p_x, p_z, oa, ob);
-	if (s != 0.0f && p_dx.size() == p_height.size() && p_dz.size() == p_height.size()) {
-		for (int i = 0; i < 4; i++) {
-			const Vector2 d(_ocean_flow_sample(p_dx, p0.x, p0.y, w, oa, ob), _ocean_flow_sample(p_dz, p0.x, p0.y, w, oa, ob));
+	if (s != 0.0f) {
+		for (int it = 0; it < 4; it++) {
+			Vector2 d;
+			for (int l = 0; l < count; l++) {
+				const Layer &L = layers[l];
+				if (L.dx->size() == L.height->size() && L.dz->size() == L.height->size() && !L.height->is_empty()) {
+					d += Vector2(_ocean_flow_sample(*L.dx, p0.x, p0.y, w, oa, ob, L.n, L.domain), _ocean_flow_sample(*L.dz, p0.x, p0.y, w, oa, ob, L.n, L.domain));
+				}
+			}
 			p0 = Vector2(p_x, p_z) - d * s;
 		}
 	}
-	return _ocean_flow_sample(p_height, p0.x, p0.y, w, oa, ob) * p_fade;
+	float h = 0.0f;
+	for (int l = 0; l < count; l++) {
+		const Layer &L = layers[l];
+		h += _ocean_flow_sample(*L.height, p0.x, p0.y, w, oa, ob, L.n, L.domain);
+	}
+	return h * p_fade;
 }
 
 float PhysXWaterSurface3D::sample_vertical_speed(Vector3 p_world_pos) const {
@@ -2739,7 +2993,7 @@ float PhysXWaterSurface3D::sample_vertical_speed(Vector3 p_world_pos) const {
 	const double ocean_dt = cached_ocean_time - previous_ocean_time;
 	if (ocean_dt > 0.0 && !cached_ocean_height.is_empty() && previous_ocean_height.size() == cached_ocean_height.size()) {
 		const float fade = _ocean_fade_at(x, z);
-		speed += (_ocean_height_at(cached_ocean_height, cached_ocean_dx, cached_ocean_dz, x, z, fade) - _ocean_height_at(previous_ocean_height, previous_ocean_dx, previous_ocean_dz, x, z, fade)) / (float)ocean_dt;
+		speed += (_ocean_height_at(false, x, z, fade) - _ocean_height_at(true, x, z, fade)) / (float)ocean_dt;
 	}
 	return speed;
 }
@@ -2790,7 +3044,7 @@ float PhysXWaterSurface3D::sample_height_excluding_wake(Vector3 p_world_pos, Obj
 	// readback lands. Both are relative to the node, like the rendered mesh.
 	const float ripple = cached_ripple_height.is_empty() ? water_level : _ripple_height_at(cached_ripple_height, x, z);
 	const float fade = _ocean_fade_at(x, z);
-	const float ocean = _ocean_height_at(cached_ocean_height, cached_ocean_dx, cached_ocean_dz, x, z, fade);
+	const float ocean = _ocean_height_at(false, x, z, fade);
 	const float beyond = (open_sea_beyond && _open_beyond()) ? Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(x / active_domain_size.x), Math::abs(z / active_domain_size.y))) : 0.0f;
 	// Wakes, everywhere (as the shader draws them).
 	float wake = 0.0f;

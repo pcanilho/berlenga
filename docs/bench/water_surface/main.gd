@@ -9,6 +9,7 @@ extends Node3D
 #   --view=waterline  the camera at the surface: the lens split between above and below
 #   --view=up       from 2.5 m down, looking up at the surface: Snell's window and the mirror past it
 #   --view=river    from above, the rock standing out of the water (with --current)
+#   --view=sea      out to sea from 6 m up (with --node=wave_cascades:3 for swell under the chop)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
@@ -53,6 +54,7 @@ var tracer_pos := PackedVector3Array()
 var tracer_rng := RandomNumberGenerator.new()
 var n := 0
 var water: Node3D
+var sea_series := PackedFloat32Array()
 
 
 func _ready() -> void:
@@ -186,6 +188,8 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(-1.0, 9.0, 1.0), Vector3(-4.0, -1.0, -7.0))
 		"wake":
 			cam.look_at_from_position(Vector3(1.0, 16.0, -9.0), Vector3(1.0, 0.0, -9.01))
+		"sea":
+			cam.look_at_from_position(Vector3(0, 4.0, -40.0), Vector3(0, -1.0, -110.0))
 		_:
 			cam.look_at_from_position(Vector3(0, 4.5, 12.0), Vector3(0, -0.5, -6.0))
 
@@ -266,6 +270,21 @@ func _process(_delta: float) -> void:
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
 	_tracers_step(1.0 / 30.0)
+	if view == "sea" and n > 30:
+		# Significant wave height, 4 sigma of the height at one point over time (a line through the square is
+		# shorter than the swell).
+		var hv := float(water.call("sample_height", Vector3(3.0, 0.0, -15.0)))
+		if is_finite(hv):
+			sea_series.push_back(hv)
+		if n == frames - 1:
+			var mean := 0.0
+			for h in sea_series: mean += h
+			mean /= maxi(sea_series.size(), 1)
+			var v := 0.0
+			for h in sea_series: v += (h - mean) * (h - mean)
+			print("sea Hs=%.2f m over %d frames (cascades %d)" % [4.0 * sqrt(v / maxi(sea_series.size(), 1)), sea_series.size(), water.get("wave_cascades")])
+			if out == "":
+				get_tree().quit()
 	if flow_out != "" and n >= frames:
 		# The flow as the surface samples it, over the simulated square (40 m), 10 cm a pixel.
 		var size := 400
