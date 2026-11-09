@@ -947,7 +947,11 @@ follow a phase field solved over the depth (the eikonal equation of ray theory),
 so they slow, turn to follow the depth contours and bunch up in the shallows;
 they grow as the water shoals and break where their height reaches 0.78 of the
 depth, running in as white bores (`shore_wave_height`, `shore_wave_period`,
-`shore_wave_direction`).
+`shore_wave_direction`). Each bore runs up the sand as far as the empirical
+run-up for that slope (Stockdon et al. 2006) and drains back. Where the beach
+slope and swell steepness make plunging breakers (Battjes' surf similarity
+number), the crest is thrown over its own face and the lip falls ahead
+(`shore_wave_curl`); set `mesh_detail` to 2-4 so the mesh can fold.
 
 The water is a square by default. Set `surface_mesh` to any flat mesh (a disc
 baked from `CSGCylinder3D`, a kidney bean, a lake with an island) and its X/Z

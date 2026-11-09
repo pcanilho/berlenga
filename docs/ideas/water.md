@@ -1097,6 +1097,117 @@ water already had, and what this step adds:
 - These are shading effects on the depth the river already stores, so they
   cost a few noise lookups per pixel and work the same raster and path traced.
 
+## Step 5c: run-up and curling breakers (9 Nov)
+
+### Run-up
+
+The swash used to read only the FFT ocean, so the breaking shore waves reached
+the waterline but the film on the sand ignored them. It now adds the shore
+waves' surface rise at the waterline (the same phases, heights and clock as
+the material), and caps the reach with the empirical 2% run-up of Stockdon et
+al. (2006):
+
+`R2 = 1.1 (0.35 b sqrt(H0 L0) + 0.5 sqrt(H0 L0 (0.563 b^2 + 0.004)))`
+
+with the deep-water height H0, wavelength L0 = g T^2 / 2 pi and the local
+beach slope b. For 0.8 m, 8 s swell on a 1:11 beach that is about 0.6 m
+vertical, roughly 7 m up the sand.
+
+### Curling breakers: how others do it
+
+- **Fournier and Reeves (1986)**: particle orbits that tilt and flatten in
+  shallow water, plus a phase term that speeds up the top of the orbit, so the
+  crest overtakes the face and overhangs.
+- **Horizon Forbidden West (Malan, SIGGRAPH 2022)**: one hand-animated breaking
+  cross-section stored in a texture (rows are frames: rising at 0.27,
+  steepening at 0.4, curling into foam at 0.5) and played along authored
+  wavefronts on a finely tessellated strip. Overhangs come straight from the
+  displacement.
+- **Thurey et al. (2007)**: steep fronts of a shallow-water solver are tracked
+  as lines that spawn particle sheets for the falling lip, then drops and foam.
+- **Which breakers plunge**: the surf similarity (Iribarren) number
+  `xi = tan b / sqrt(H0 / L0)` (Battjes 1974): spilling below about 0.5,
+  plunging from 0.5 to 3.3, surging above.
+
+### As built
+
+A procedural cross-section in the spirit of Malan's, driven by physics instead
+of authored curves:
+- The bake stores, per cell and train, how far the wave is through breaking
+  (its unbroken shoaled height over the breaker height 0.78 h: 1 at the break
+  point, rising shoreward) and the surf similarity number from the local
+  slope.
+- As a wave breaks its crest sharpens and its trough flattens, as in cnoidal
+  waves: `((1 + cos) / 2)^q` with q from 1 to 2.5, kept zero-mean.
+- On plunging beaches the crest is thrown shoreward by up to 0.7 / k (a
+  fraction of the wavelength) over the steepening face, so the surface folds
+  over; then the lip falls by up to 1.6 times the amplitude onto the water
+  ahead and turns white, over one stage of breaking, and the wave runs on as a
+  bore.
+- Normals come from differences of the full displacement, so the underside of
+  the lip faces down. The raster pass draws both sides of the surface inside
+  the plunge; the path tracer sees the folded geometry as it is (the folded
+  layer's winding is reversed, which is the right way round for the water
+  under the lip).
+- `shore_wave_curl` scales it; `mesh_detail` (1-4) refines the mesh. The fold
+  needs cells of about a tenth of the wave height: 0.1 m cells for a 1 m
+  breaker.
+- A profile check of the cross-section through one period (0.8 m, 8 s swell,
+  1:11 beach) shows the crest overtaking the face and the lip hooking down for
+  about a second before the bore.
+
+Limits: no air tube is resolved in the raster pass (the water is drawn without
+depth, so the lip and face blend), no spray sheet from the lip (Thurey's
+particles would be the next step, with PhysXWaterSpray3D), and the stage is a
+function of depth, so every crest plunges at the same place along a ray.
+
+## Step 5d: whitecaps across cascades, and a performance pass (9 Nov)
+
+### Whitecaps where the cascades add up
+
+Each cascade's foam pass sees only its own band, so the chop riding a long
+swell crest, where the waves really break, never folded in any one of them.
+The material now also takes the Jacobian of the summed displacement
+(Tessendorf's folding test on all cascades together) and whitens the crests
+where it drops below `foam_threshold`. The persistent foam stays per cascade
+(the cascades' tiles differ, so one persistent map cannot follow all of them).
+At 14 m/s with three cascades the whitecap cover in the bench's sea view went
+from 0.01% to 0.18% of the water. (Monahan's fit gives about 3% at that wind;
+`foam_threshold` raises it.)
+
+Shore foam, swash and caustics still read cascade 0 only, on purpose: near the
+shore the long swell is carried by the shore waves (adding the long FFT
+cascades as well would count it twice), and caustics come from the curvature
+of the short waves.
+
+### Performance pass
+
+Measured in the cloud (software Vulkan, so GPU numbers are only relative), bench
+`docs/bench/water_surface --view=beach --perf --node=wave_cascades:3
+--node=shore_waves:true`, with `--gpu-profile` (the water passes are now
+labelled: Water ripples, FFT ocean, blits, foam, shore foam, swash, caustics).
+
+- CPU: the node's physics tick takes 0.22 ms with three cascades and shore
+  waves; `sample_height()` costs 1.2-1.3 us a call. The shore wave bake runs
+  once per seabed measure.
+- GPU, share of the frame: the water material's transparent pass is the
+  largest (about 90 ms of 244 ms in software), then the FFT (three cascades,
+  three times one), then the ripple grid.
+- Done: the fragment reads the cascades' derivatives and displacement once
+  and shares them between the normal and the foam (they were read twice for
+  the whitecaps), and skips the shore waves' extra normal samples where no
+  shore wave reaches. The transparent pass went from 91 ms to 69 ms (-25%).
+- Fixed: with `step_mode` per frame, the swash never got the shore waves'
+  clock.
+- Not done: running the larger cascades on 64x64 grids would quarter their FFT
+  work, but their shortest waves (a quarter of the first tile) would get only
+  2.7 samples per wavelength and lose about 30% of their height in the
+  interpolation. On a real GPU three 128x128 FFTs cost a fraction of a
+  millisecond, so the quality stays.
+- For the PC: `--gpu-profile` on the RTX 4090 for real timings, with
+  `mesh_detail` 1 and 3, raster and path traced (the BLAS refit grows with the
+  mesh).
+
 ## The camera under water: research (9 Nov)
 
 ### What the fork has today
@@ -1210,6 +1321,12 @@ water already had, and what this step adds:
   raster, bubbles. With several cameras the node follows the active one.
 
 ## Sources
+
+- Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).
+- Battjes, Surf similarity, Coastal Engineering Proceedings (1974).
+- Fournier and Reeves, A simple model of ocean waves, SIGGRAPH 1986.
+- Malan, Water in Horizon Forbidden West, SIGGRAPH Advances 2022.
+- Thurey, Muller-Fischer, Schirm and Gross, Real-time breaking waves for shallow water simulations, Pacific Graphics 2007.
 
 - Chentanez and Müller, Real-time Simulation of Large Bodies of Water with Small Scale Details, SCA
   2010: https://matthias-research.github.io/pages/publications/hfFluid.pdf

@@ -57,7 +57,7 @@ constexpr int FFT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_fft.glsl's Params
 constexpr int BLIT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_blit_*.glsl's Params
 constexpr int FOAM_PARAMS_BYTES = 32; // vec4 + ivec4 -- see water_foam.glsl's Params
 constexpr int SHORE_FOAM_PARAMS_BYTES = 64; // 3 * vec4 + ivec4 -- see water_shore_foam.glsl's Params
-constexpr int SWASH_PARAMS_BYTES = 64; // 3 * vec4 + ivec4 -- see water_swash.glsl's Params
+constexpr int SWASH_PARAMS_BYTES = 96; // 3 * vec4 + ivec4 + 2 * vec4 -- see water_swash.glsl's Params
 constexpr int CAUSTICS_PARAMS_BYTES = 112; // 7 * vec4, std140 -- see water_caustics_map.glsl's Params
 constexpr uint32_t GROUP = 8; // matches every water_*.glsl's local_size_x/y
 
@@ -185,7 +185,9 @@ void WaterSolverGPU::_rt_free_buffers() {
 		&uset_fft_c_to_e, &uset_fft_etof, &uset_fft_ftoe, &uset_fft_d_to_g, &uset_fft_gtoh, &uset_fft_htog,
 		&uset_blit_ripple, &uset_blit_ocean, &uset_caustics, &uset_foam, &uset_shore_foam, &uset_shore_foam_copy, &uset_swash, &uset_swash_copy };
 	for (RID *u : usets) {
-		if (u->is_valid()) {
+		// A set is freed with any texture it uses: the swash's goes with the
+		// surface's shore wave texture.
+		if (u->is_valid() && rd->uniform_set_is_valid(*u)) {
 			rd->free_rid(*u);
 			*u = RID();
 		}
@@ -580,34 +582,7 @@ void WaterSolverGPU::_rt_build_buffers() {
 		memcpy(cb.ptrw() + 48, copy_res, sizeof(copy_res));
 		rd->buffer_update(buf_swash_copy_params, 0, SWASH_PARAMS_BYTES, cb.ptr());
 	}
-	auto make_swash_uset = [&](RID p_params, RID p_src, RID p_dst) {
-		Vector<RD::Uniform> uniforms;
-		RD::Uniform u0;
-		u0.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
-		u0.binding = 0;
-		u0.append_id(p_params);
-		uniforms.push_back(u0);
-		const RID sampled[3] = { tex_cell_depth, tex_ripple_height, tex_ocean_height };
-		for (int i = 0; i < 3; i++) {
-			RD::Uniform u;
-			u.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
-			u.binding = i + 1;
-			u.append_id(sampler_linear);
-			u.append_id(sampled[i]);
-			uniforms.push_back(u);
-		}
-		const RID images[2] = { p_src, p_dst };
-		for (int i = 0; i < 2; i++) {
-			RD::Uniform u;
-			u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
-			u.binding = 4 + i;
-			u.append_id(images[i]);
-			uniforms.push_back(u);
-		}
-		return rd->uniform_set_create(uniforms, shader_swash, 0);
-	};
-	uset_swash = make_swash_uset(buf_swash_params, tex_swash, tex_swash_tmp);
-	uset_swash_copy = make_swash_uset(buf_swash_copy_params, tex_swash_tmp, tex_swash);
+	_make_swash_usets();
 
 	// h0 depends only on static settings (wind/domain/amplitude) -- generate
 	// it once here, not every step.
@@ -872,6 +847,13 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		ripple_quiet.set(0);
 	}
 
+	// GPU profile labels (--gpu-profile, the visual profiler): main device only.
+	auto stamp = [&](const char *p_name) {
+		if (!local) {
+			rd->capture_timestamp(p_name);
+		}
+	};
+	stamp("Water ripples");
 	// Ripple layer: one sub-step per tick, each with that tick's dt and bodies (the wave equation's coefficient is
 	// clamped per step, so one big dt would not be the same water). The sphere / impulse buffers are re-uploaded only
 	// when a tick's data differs from the one before.
@@ -953,6 +935,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		step_delta += p_deltas[t];
 	}
 
+	stamp("Water FFT ocean");
 	// FFT ocean layer: evolve, then the Stockham butterfly passes. The spectrum is evaluated AT ocean_time_accum (no
 	// state carried between steps), so one evaluation after N ticks is the same ocean as the last of N; the clock adds
 	// each tick's dt in order, exactly as one call per tick did.
@@ -1023,6 +1006,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 	// Always lands in fft_b (and fft_d, fft_f, fft_h) -- 2*log2(N) passes is
 	// always even (see the header's note).
 
+	stamp("Water blits");
 	// Blit both layers into their real RD textures for zero-copy rendering (a resting ripple layer's texture already
 	// holds its last height).
 	if (!p_rest) {
@@ -1039,6 +1023,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		rd->compute_list_dispatch(cl, groups_for(on), groups_for(on), 1);
 		rd->compute_list_end();
 	}
+	stamp("Water foam");
 	// Persistent foam: inject where the surface folds, fade the rest.
 	{
 		float fp[4] = { Math::exp(-(float)step_delta / MAX(foam_persistence, 0.01f)), foam_choppiness, foam_threshold, 0.25f };
@@ -1054,6 +1039,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		rd->compute_list_dispatch(cl, groups_for(on), groups_for(on), 1);
 		rd->compute_list_end();
 	}
+	stamp("Water shore foam");
 	// Shore foam over the shallows, on the ripple grid. Lingers a bit longer
 	// than the whitecaps.
 	{
@@ -1077,8 +1063,9 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		rd->compute_list_dispatch(cl, groups_for(n), groups_for(n), 1);
 		rd->compute_list_end();
 	}
+	stamp("Water swash");
 	// Swash run-up and wet sand, on the ripple grid.
-	{
+	if (rd->uniform_set_is_valid(uset_swash) && rd->uniform_set_is_valid(uset_swash_copy)) {
 		const float dt = (float)step_delta;
 		float wp[12] = {
 			dt, swash_run_up, swash_drain_speed, Math::exp(-dt / MAX(wet_sand_dry_time, 0.05f)),
@@ -1086,10 +1073,16 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 			p_water_level, (float)Math::fmod(ocean_time_accum, 10000.0), 0.25f, 1.0f - Math::exp(-dt / 6.0f)
 		};
 		int32_t wr[4] = { n, 0, 0, 0 };
+		const bool shore_live = shore_on && shore_wave_tex.is_valid() && rd->texture_is_valid(shore_wave_tex);
+		float ws[8] = {
+			shore_omega[0], shore_omega[1], (float)Math::fmod(shore_time, 3600.0), shore_live ? 1.0f : 0.0f,
+			shore_center.x, shore_center.y, shore_h0, shore_l0
+		};
 		Vector<uint8_t> wb;
 		wb.resize(SWASH_PARAMS_BYTES);
 		memcpy(wb.ptrw(), wp, sizeof(wp));
 		memcpy(wb.ptrw() + sizeof(wp), wr, sizeof(wr));
+		memcpy(wb.ptrw() + sizeof(wp) + sizeof(wr), ws, sizeof(ws));
 		rd->buffer_update(buf_swash_params, 0, SWASH_PARAMS_BYTES, wb.ptr());
 		RD::ComputeListID cl = rd->compute_list_begin();
 		rd->compute_list_bind_compute_pipeline(cl, pipeline_swash);
@@ -1101,6 +1094,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		rd->compute_list_end();
 	}
 
+	stamp(">Water step end");
 	if (local) {
 		rd->submit();
 		rd->sync();
@@ -1233,6 +1227,9 @@ void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_su
 
 	Vector<Color> clear_colors;
 	clear_colors.push_back(Color(0, 0, 0, 1));
+	if (!local) {
+		rd->capture_timestamp("Water caustics");
+	}
 	RD::DrawListID draw_list = rd->draw_list_begin(caustics_framebuffer, RD::DRAW_CLEAR_COLOR_0, clear_colors);
 	rd->draw_list_set_viewport(draw_list, Rect2(0, 0, CAUSTICS_MAP_SIZE, CAUSTICS_MAP_SIZE));
 	rd->draw_list_bind_render_pipeline(draw_list, pipeline_caustics);
@@ -1242,6 +1239,9 @@ void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_su
 	// Instance 0: the refracted caustics (R); instance 1: the water mask (G).
 	rd->draw_list_draw(draw_list, true, 2);
 	rd->draw_list_end();
+	if (!local) {
+		rd->capture_timestamp(">Water caustics end");
+	}
 }
 
 void WaterSolverGPU::rt_on_ripple_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self, int64_t p_serial) {
@@ -1300,6 +1300,66 @@ void WaterSolverGPU::rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, flo
 	foam_choppiness = p_choppiness;
 	foam_threshold = p_threshold;
 	foam_persistence = p_persistence;
+}
+
+void WaterSolverGPU::_make_swash_usets() {
+	auto make_swash_uset = [&](RID p_params, RID p_src, RID p_dst) {
+		Vector<RD::Uniform> uniforms;
+		RD::Uniform u0;
+		u0.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
+		u0.binding = 0;
+		u0.append_id(p_params);
+		uniforms.push_back(u0);
+		// Without shore waves the ocean height stands in (shore.w is 0, so
+		// the shader never reads it).
+		const RID shore = shore_wave_tex.is_valid() && rd->texture_is_valid(shore_wave_tex) ? shore_wave_tex : tex_ocean_height;
+		const RID sampled[4] = { tex_cell_depth, tex_ripple_height, tex_ocean_height, shore };
+		const int bindings[4] = { 1, 2, 3, 6 };
+		for (int i = 0; i < 4; i++) {
+			RD::Uniform u;
+			u.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+			u.binding = bindings[i];
+			u.append_id(sampler_linear);
+			u.append_id(sampled[i]);
+			uniforms.push_back(u);
+		}
+		const RID images[2] = { p_src, p_dst };
+		for (int i = 0; i < 2; i++) {
+			RD::Uniform u;
+			u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+			u.binding = 4 + i;
+			u.append_id(images[i]);
+			uniforms.push_back(u);
+		}
+		return rd->uniform_set_create(uniforms, shader_swash, 0);
+	};
+	if (uset_swash.is_valid() && rd->uniform_set_is_valid(uset_swash)) {
+		rd->free_rid(uset_swash);
+	}
+	if (uset_swash_copy.is_valid() && rd->uniform_set_is_valid(uset_swash_copy)) {
+		rd->free_rid(uset_swash_copy);
+	}
+	uset_swash = make_swash_uset(buf_swash_params, tex_swash, tex_swash_tmp);
+	uset_swash_copy = make_swash_uset(buf_swash_copy_params, tex_swash_tmp, tex_swash);
+}
+
+void WaterSolverGPU::rt_set_shore_waves(Ref<WaterSolverGPU> p_self, RID p_texture, bool p_on, Vector2 p_omega, float p_h0, float p_l0) {
+	shore_on = p_on && p_texture.is_valid();
+	shore_omega[0] = p_omega.x;
+	shore_omega[1] = p_omega.y;
+	shore_h0 = p_h0;
+	shore_l0 = p_l0;
+	if (p_texture != shore_wave_tex) {
+		shore_wave_tex = p_texture;
+		if (rd != nullptr && shader_swash.is_valid() && tex_swash.is_valid()) {
+			_make_swash_usets();
+		}
+	}
+}
+
+void WaterSolverGPU::rt_set_shore_clock(Ref<WaterSolverGPU> p_self, double p_time, Vector2 p_center) {
+	shore_time = p_time;
+	shore_center = p_center;
 }
 
 void WaterSolverGPU::rt_set_swash(Ref<WaterSolverGPU> p_self, float p_run_up, float p_drain_speed, float p_dry_time) {
@@ -1663,6 +1723,20 @@ void WaterSolver::set_swash_settings(float p_run_up, float p_drain_speed, float 
 		return;
 	}
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_swash).bind(gpu, p_run_up, p_drain_speed, p_dry_time));
+}
+
+void WaterSolver::set_shore_waves(RID p_rd_texture, bool p_on, Vector2 p_omega, float p_h0, float p_l0) {
+	if (gpu.is_null()) {
+		return;
+	}
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_shore_waves).bind(gpu, p_rd_texture, p_on, p_omega, p_h0, p_l0));
+}
+
+void WaterSolver::set_shore_clock(double p_time, Vector2 p_center) {
+	if (gpu.is_null()) {
+		return;
+	}
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_shore_clock).bind(gpu, p_time, p_center));
 }
 
 RID WaterSolver::get_swash_texture_rd_rid() const {

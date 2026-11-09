@@ -24,12 +24,19 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 domains; // xy ripple domain size, zw ocean domain size
 	vec4 misc; // x water_level, y time (s), z uprush speed (m/s, vertical), w rise mean-square blend this step
 	ivec4 res; // x = ripple grid n, y = 1 for copy mode
+	vec4 shore; // x, y the shore wave trains' angular frequencies (rad/s), z the surface's clock (s), w 1 when shore waves are on
+	vec4 shore_b; // xy grid centre (world XZ), z deep-water wave height H0 (m), w deep-water wavelength L0 (m)
 };
 layout(set = 0, binding = 1) uniform sampler2D cell_depth_tex;
 layout(set = 0, binding = 2) uniform sampler2D ripple_height_tex;
 layout(set = 0, binding = 3) uniform sampler2D ocean_height_tex;
 layout(set = 0, binding = 4, rgba32f) uniform restrict readonly image2D src_tex;
 layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2D dst_tex;
+// PhysXWaterSurface3D's shore waves on the ripple grid: phase 1, height 1,
+// phase 2, height 2 (see shore_wave() in its material shader).
+layout(set = 0, binding = 6) uniform sampler2D shore_wave_tex;
+
+const float BREAKER = 0.78;
 
 // Still water shallower than this (m) is where waves set the run-up.
 const float SOURCE_DEPTH = 0.6;
@@ -57,6 +64,32 @@ float src_r_bilinear(vec2 p, int n) {
 	float c = imageLoad(src_tex, ivec2(i0.x, i1.y)).r;
 	float d = imageLoad(src_tex, i1).r;
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Surface rise (m) of the breaking shore waves at a cell, as the water
+// material's shore_wave() draws it (height only).
+float shore_eta(ivec2 c, vec2 rel, float depth, int n) {
+	if (shore.w < 0.5 || textureSize(shore_wave_tex, 0).x != n) {
+		return 0.0;
+	}
+	vec4 a = texelFetch(shore_wave_tex, c, 0);
+	vec2 world = rel + shore_b.xy;
+	float t = shore.z;
+	float vary = 0.55 + 0.45 * value_noise(world * 0.04 + vec2(t * 0.03, 0.0));
+	float eta = 0.0;
+	for (int i = 0; i < 2; i++) {
+		float phi = i == 0 ? a.x : a.z;
+		float height = i == 0 ? a.y : a.w;
+		if (height <= 1e-4) {
+			continue;
+		}
+		float brk = smoothstep(0.8, 0.98, height / max(BREAKER * max(depth, 0.0), 1e-3));
+		float th = phi - (i == 0 ? shore.x : shore.y) * t;
+		float qs = 1.0 + 1.5 * brk;
+		float base = 0.5 + 0.5 * cos(th - 0.6 * brk * cos(th));
+		eta += height * vary * (pow(base, qs) - inversesqrt(3.14159265359 * (qs + 0.25)));
+	}
+	return eta;
 }
 
 // Depth for the slope estimate; a wall neighbor counts as this cell's own
@@ -94,7 +127,7 @@ void main() {
 		// up in tongues.
 		vec2 rel = ((vec2(c) + 0.5) / float(n) - 0.5) * domains.xy;
 		vec2 uv_o = clamp(rel / domains.zw + 0.5, vec2(0.0), vec2(1.0));
-		float rise = texelFetch(ripple_height_tex, c, 0).r - misc.x + texture(ocean_height_tex, uv_o).r;
+		float rise = texelFetch(ripple_height_tex, c, 0).r - misc.x + texture(ocean_height_tex, uv_o).r + shore_eta(c, rel, depth, n);
 		ms = mix(ms, rise * rise, misc.w);
 		float rms = sqrt(max(ms, 1e-6));
 		float nz = value_noise(rel * 0.3 + vec2(misc.y * 0.06, misc.y * 0.025));
@@ -103,7 +136,20 @@ void main() {
 		// it leaves -- scallops along the shore instead of tracing one
 		// height contour.
 		float cusp = 0.65 * value_noise(rel * 0.07 + vec2(11.0, misc.y * 0.004)) + 0.35 * value_noise(rel * 0.19 - vec2(4.0, 0.0));
-		float cap = swash.y * (0.25 + 0.75 * cusp);
+		float cap_max = swash.y;
+		if (shore.w > 0.5 && shore_b.z > 0.0) {
+			// With shore waves, the reach follows the empirical run-up of
+			// Stockdon et al. (2006): the 2% exceedance run-up from the
+			// deep-water height H0, wavelength L0 and the beach slope here.
+			float cell = domains.x / float(n);
+			vec2 g = vec2(slope_depth(c + ivec2(1, 0), depth, n) - slope_depth(c - ivec2(1, 0), depth, n),
+					slope_depth(c + ivec2(0, 1), depth, n) - slope_depth(c - ivec2(0, 1), depth, n));
+			float beta = clamp(length(g) / (2.0 * cell), 0.005, 0.3);
+			float hl = sqrt(shore_b.z * shore_b.w);
+			float r2 = 1.1 * (0.35 * beta * hl + 0.5 * sqrt(shore_b.z * shore_b.w * (0.563 * beta * beta + 0.004)));
+			cap_max = max(cap_max, r2);
+		}
+		float cap = cap_max * (0.25 + 0.75 * cusp);
 		// Each wave reaches in proportion to how big it is, so successive
 		// waves stop at different places.
 		float strength = clamp((rise / rms - 0.5) / 1.5, 0.0, 1.0);

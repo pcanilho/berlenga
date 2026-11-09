@@ -110,6 +110,9 @@ uniform sampler2D ocean_fade_tex : hint_default_white, filter_linear, repeat_dis
 // choppiness (both set by PhysXWaterSurface3D).
 uniform sampler2D ocean_disp_tex : hint_default_black, filter_linear, repeat_enable;
 uniform float choppiness = 1.0;
+// The foam pass's Jacobian threshold (PhysXWaterSurface3D::foam_threshold),
+// for whitecaps where the cascades together fold the surface (very low: off).
+uniform float foam_crest_threshold = -100.0;
 // Ocean slopes and displacement derivatives (dh/dx, dh/dz, dDx/dx, dDz/dz),
 // straight from the FFT, for exact per-pixel normals and foam.
 uniform sampler2D ocean_deriv_tex : hint_default_black, filter_linear, repeat_enable;
@@ -143,7 +146,9 @@ uniform sampler2D cascade_foam_3 : hint_default_black, filter_linear, repeat_ena
 uniform bool shore_waves_enabled = false;
 uniform sampler2D shore_wave_tex_a : hint_default_black, filter_linear, repeat_disable;
 uniform sampler2D shore_wave_tex_b : hint_default_black, filter_linear, repeat_disable;
+uniform sampler2D shore_wave_tex_c : hint_default_black, filter_linear, repeat_disable;
 uniform vec2 shore_wave_omega = vec2(0.785, 0.695);
+uniform float shore_curl = 1.0;
 const float BREAKER = 0.78;
 // World XZ both height fields are centered on (set by PhysXWaterSurface3D).
 uniform vec2 grid_center = vec2(0.0);
@@ -476,8 +481,12 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 	}
 	vec4 a = texture(shore_wave_tex_a, cuv_r);
 	vec4 b = texture(shore_wave_tex_b, cuv_r);
+	vec4 c = texture(shore_wave_tex_c, cuv_r);
 	float depth = max(depth_r(world_xz, cuv_r), 0.0);
 	float vary = 0.55 + 0.45 * flow_value_noise(world_xz * 0.04 + vec2(water_time * 0.03, 0.0));
+	// Plunging or spilling, from the surf similarity number (Battjes 1974):
+	// spilling below about 0.5, plunging up to about 3.3, surging beyond.
+	float plunging = smoothstep(0.35, 0.6, c.z) * (1.0 - smoothstep(2.6, 3.3, c.z)) * shore_curl;
 	vec3 off = vec3(0.0);
 	for (int i = 0; i < 2; i++) {
 		float phi = i == 0 ? a.x : a.z;
@@ -492,17 +501,53 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 		float brk = smoothstep(0.8, 0.98, height / max(BREAKER * depth, 1e-3));
 		float amp = 0.5 * height * vary * inside;
 		float th = phi - om * water_time;
-		float skew = 0.6 * brk;
+		// The plunging lip, as a cross-section played through the surf zone
+		// (after Malan 2022, with the stage from how far the wave is past its
+		// break point instead of an authored curve): the crest is thrown
+		// shoreward over the steepening face, then falls onto the water ahead
+		// and collapses into the bore.
+		float stage = clamp(((i == 0 ? c.x : c.y) - 0.95) / 1.0, 0.0, 1.0);
+		float throw_w = plunging * vary * smoothstep(0.0, 0.45, stage) * (1.0 - smoothstep(0.7, 1.0, stage));
+		float drop_w = plunging * vary * smoothstep(0.3, 0.75, stage) * (1.0 - smoothstep(0.8, 1.0, stage));
+		float skew = min(0.6 * brk + 0.3 * throw_w, 0.92);
 		float ps = th - skew * cos(th);
-		off.y += amp * cos(ps);
-		r_slope += -amp * sin(ps) * (1.0 + skew * sin(th)) * g;
+		// Breaking waves in shallow water have sharp crests and long, flat
+		// troughs (as cnoidal waves): ((1 + cos) / 2)^q, kept zero-mean
+		// (1 / sqrt(pi (q + 1/4)) is the mean to within half a percent).
+		float q = 1.0 + 1.5 * brk;
+		float base = 0.5 + 0.5 * cos(ps);
+		off.y += amp * 2.0 * (pow(base, q) - inversesqrt(3.14159265359 * (q + 0.25)));
+		r_slope += -amp * q * pow(max(base, 1e-4), q - 1.0) * sin(ps) * (1.0 + skew * sin(th)) * g;
 		float hor = min(amp, 0.8 / k) * 0.8;
 		off.xz += -dir * hor * sin(ps);
+		// Phase from the crest, -pi..pi, positive on the shoreward face.
+		float pc = ps - 6.28318530718 * floor((ps + 3.14159265359) / 6.28318530718);
+		// The throw is a fraction of the wavelength: the crest overtakes its
+		// own front face (the surface folds over), and the lip falls.
+		float lip = exp(-pow((pc - 0.2) / 0.45, 2.0));
+		off.xz += dir * (0.7 / k * throw_w * lip);
+		off.y -= 1.6 * amp * drop_w * exp(-pow((pc - 0.35) / 0.35, 2.0));
 		// White water: the breaking crest, and the bore's foam trailing behind it.
 		float behind = fract(-th / 6.28318530718);
 		r_white = max(r_white, brk * vary * max(smoothstep(0.35, 0.95, cos(ps)), 0.7 * exp(-behind * 5.0)));
+		// The lip turns white as it falls, and the plunge throws up a splash.
+		r_white = max(r_white, drop_w * lip);
 	}
 	return off;
+}
+
+// How much of a plunging lip there is at world_xz (0 none), so the folded
+// part of the surface is drawn from both sides.
+float shore_curl_at(vec2 world_xz) {
+	if (!shore_waves_enabled || shore_curl <= 0.0) {
+		return 0.0;
+	}
+	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	vec4 c = texture(shore_wave_tex_c, cuv_r);
+	float plunging = smoothstep(0.35, 0.6, c.z) * (1.0 - smoothstep(2.6, 3.3, c.z));
+	// The whole plunge, a little either side, so no part of the fold is lost.
+	float st = max(c.x, c.y);
+	return plunging * smoothstep(0.85, 0.95, st) * (1.0 - smoothstep(2.0, 2.2, st));
 }
 
 vec3 surface_offset(vec2 world_xz) {
@@ -537,13 +582,13 @@ vec3 surface_offset(vec2 world_xz) {
 // Exact normal of the displaced surface at the point resting at world_xz:
 // tangents of P(x0) = x0 + s D(x0) + h(x0) from the FFT's own derivatives. The ripple layer has no FFT, so its slope
 // is a small central difference.
-vec3 surface_normal_pixel(vec2 world_xz) {
+// der and disp: ocean_deriv_all() and ocean_disp_all() at world_xz (the
+// fragment reads them once for the normal and the foam).
+vec3 surface_normal_pixel(vec2 world_xz, vec4 der, vec3 disp) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float fade = fade_r(world_xz, cuv_r);
 	float s = -choppiness * fade;
-	vec4 der = ocean_deriv_all(world_xz);
-	vec3 disp = ocean_disp_all(world_xz).rgb;
 	float dxz = disp.b;
 	const float e = 0.2;
 	vec2 du = vec2(e) / ripple_domain_size;
@@ -561,13 +606,20 @@ vec3 surface_normal_pixel(vec2 world_xz) {
 	vec2 wake_xz = world_xz + s * disp.rg;
 	rx += (wake_height(wake_xz + vec2(ew, 0.0)) - wake_height(wake_xz - vec2(ew, 0.0))) / (2.0 * ew);
 	rz += (wake_height(wake_xz + vec2(0.0, ew)) - wake_height(wake_xz - vec2(0.0, ew))) / (2.0 * ew);
-	vec2 shore_slope;
-	float shore_white;
-	shore_wave(world_xz, shore_slope, shore_white);
-	rx += shore_slope.x;
-	rz += shore_slope.y;
 	vec3 tx = vec3(1.0 + s * der.z, der.x * fade + rx, s * dxz);
 	vec3 tz = vec3(s * dxz, der.y * fade + rz, 1.0 + s * der.w);
+	vec4 shore_a = texture(shore_wave_tex_a, cuv_r);
+	if (shore_waves_enabled && max(shore_a.y, shore_a.w) > 1e-4) {
+		// The shore waves move points sideways as well as up (and fold the
+		// surface over in a plunging lip): their tangents by differences.
+		vec2 sl;
+		float sw;
+		const float es = 0.08;
+		vec3 sx = (shore_wave(world_xz + vec2(es, 0.0), sl, sw) - shore_wave(world_xz - vec2(es, 0.0), sl, sw)) / (2.0 * es);
+		vec3 sz = (shore_wave(world_xz + vec2(0.0, es), sl, sw) - shore_wave(world_xz - vec2(0.0, es), sl, sw)) / (2.0 * es);
+		tx += vec3(sx.x, sx.y, sx.z);
+		tz += vec3(sz.x, sz.y, sz.z);
+	}
 	return normalize(cross(tz, tx));
 }
 
@@ -587,11 +639,21 @@ float foam_value_noise(vec2 p) {
 
 // Visible foam for the water resting at world_xz: the persistent foam amount,
 // eroded by fixed-to-the-water noise so it breaks into lace as it fades.
-float foam_at(vec2 world_xz) {
+float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float fade = fade_r(world_xz, cuv_r);
 	float amount = ocean_foam_all(world_xz) * fade;
+	// Each cascade's foam pass sees only its own waves, but crests break
+	// where they add up: the long swell steepens the chop riding on it. The
+	// Jacobian of the summed displacement (Tessendorf) catches those crests
+	// as they break; the persistent foam stays per cascade.
+	if (wave_cascade_count > 1 && foam_crest_threshold > -50.0) {
+		float s = -choppiness;
+		float dxz = disp.b;
+		float jacobian = (1.0 + s * der.z) * (1.0 + s * der.w) - s * s * dxz * dxz;
+		amount = max(amount, clamp((foam_crest_threshold - jacobian) / 0.25, 0.0, 1.0) * fade);
+	}
 	// White water from the live flow (its velocity texture's b), fading out at the square's edge.
 	if (flow_foam_live) {
 		vec2 a = abs(rel / ripple_domain_size);
@@ -604,7 +666,7 @@ float foam_at(vec2 world_xz) {
 		amount = max(amount, shore_white);
 	}
 	// Wake foam at the displaced position, as surface_offset() reads the wake.
-	amount = max(amount, wake_foam(world_xz - choppiness * fade * ocean_disp_all(world_xz).rg));
+	amount = max(amount, wake_foam(world_xz - choppiness * fade * disp.rg));
 	// The lace is carried with the foam (the same two phases).
 	vec2 o_a;
 	vec2 o_b;
@@ -619,6 +681,10 @@ float foam_at(vec2 world_xz) {
 	// lacy as the noise eats into it, rather than cutting off at an edge.
 	float f = clamp(amount * (1.0 + foam_breakup) - n * foam_breakup, 0.0, 1.0);
 	return f * f * (3.0 - 2.0 * f);
+}
+
+float foam_at(vec2 world_xz) {
+	return foam_at_with(world_xz, ocean_deriv_all(world_xz), ocean_disp_all(world_xz).rgb);
 }
 
 // Visible shore foam at world_xz: finer, heavier lace at partial strength.
@@ -854,8 +920,10 @@ void fragment() {
 		discard;
 	}
 #else
-	// With the camera under water the underside pass draws it.
-	if (FRONT_FACING != camera_above || (underwater_active && !camera_above)) {
+	// With the camera under water the underside pass draws it. A plunging
+	// lip folds the surface over itself: its underside faces the other way
+	// and is drawn too.
+	if ((FRONT_FACING != camera_above && shore_curl_at(v_rest_xz) < 0.02) || (underwater_active && !camera_above)) {
 		discard;
 	}
 #endif
@@ -863,8 +931,10 @@ void fragment() {
 	vec3 world_normal = v_world_normal;
 	float foam = v_foam;
 	if (per_pixel_normals) {
-		world_normal = surface_normal_pixel(v_rest_xz);
-		foam = foam_at(v_rest_xz);
+		vec4 der = ocean_deriv_all(v_rest_xz);
+		vec3 disp = ocean_disp_all(v_rest_xz).rgb;
+		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
+		foam = foam_at_with(v_rest_xz, der, disp);
 	}
 #if defined(UNDERWATER_SURFACE) && defined(RT)
 	ALPHA = 0.0; // the path tracer has the real surface
@@ -1128,6 +1198,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shore_waves"), &PhysXWaterSurface3D::get_shore_waves);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_height", "height"), &PhysXWaterSurface3D::set_shore_wave_height);
 	ClassDB::bind_method(D_METHOD("get_shore_wave_height"), &PhysXWaterSurface3D::get_shore_wave_height);
+	ClassDB::bind_method(D_METHOD("set_mesh_detail", "detail"), &PhysXWaterSurface3D::set_mesh_detail);
+	ClassDB::bind_method(D_METHOD("get_mesh_detail"), &PhysXWaterSurface3D::get_mesh_detail);
+	ClassDB::bind_method(D_METHOD("set_shore_wave_curl", "curl"), &PhysXWaterSurface3D::set_shore_wave_curl);
+	ClassDB::bind_method(D_METHOD("get_shore_wave_curl"), &PhysXWaterSurface3D::get_shore_wave_curl);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_period", "period"), &PhysXWaterSurface3D::set_shore_wave_period);
 	ClassDB::bind_method(D_METHOD("get_shore_wave_period"), &PhysXWaterSurface3D::get_shore_wave_period);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_direction", "direction"), &PhysXWaterSurface3D::set_shore_wave_direction);
@@ -1252,6 +1326,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shore_waves"), "set_shore_waves", "get_shore_waves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_height", PROPERTY_HINT_RANGE, "0,5,0.01,or_greater,suffix:m"), "set_shore_wave_height", "get_shore_wave_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_period", PROPERTY_HINT_RANGE, "1,30,0.1,suffix:s"), "set_shore_wave_period", "get_shore_wave_period");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_curl", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_shore_wave_curl", "get_shore_wave_curl");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "shore_wave_direction"), "set_shore_wave_direction", "get_shore_wave_direction");
 	ADD_GROUP("Seabed", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "seabed_from_floor"), "set_seabed_from_floor", "get_seabed_from_floor");
@@ -1260,6 +1335,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 
 	ADD_GROUP("Ocean", "ocean_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_grid_resolution"), "set_ocean_grid_resolution", "get_ocean_grid_resolution");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "mesh_detail", PROPERTY_HINT_RANGE, "1,4,1"), "set_mesh_detail", "get_mesh_detail");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "ocean_domain_size"), "set_ocean_domain_size", "get_ocean_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_speed"), "set_wind_speed", "get_wind_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_direction"), "set_wind_direction", "get_wind_direction");
@@ -1449,6 +1525,13 @@ void PhysXWaterSurface3D::set_shore_wave_period(float p_period) {
 	_bake_shore_waves();
 }
 
+void PhysXWaterSurface3D::set_shore_wave_curl(float p_curl) {
+	shore_wave_curl = CLAMP(p_curl, 0.0f, 1.5f);
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("shore_curl", shore_wave_curl);
+	}
+}
+
 void PhysXWaterSurface3D::set_shore_wave_direction(Vector2 p_direction) {
 	shore_wave_direction = p_direction;
 	_bake_shore_waves();
@@ -1487,7 +1570,9 @@ void PhysXWaterSurface3D::_bake_shore_waves() {
 			shore_height[t].clear();
 			shore_grad_x[t].clear();
 			shore_grad_z[t].clear();
+			shore_stage[t].clear();
 		}
+		shore_iribarren.clear();
 		_update_shore_material();
 		return;
 	}
@@ -1601,9 +1686,11 @@ void PhysXWaterSurface3D::_bake_shore_waves() {
 		Vector<float> &gx = shore_grad_x[t];
 		Vector<float> &gz = shore_grad_z[t];
 		Vector<float> &hh = shore_height[t];
+		Vector<float> &st = shore_stage[t];
 		gx.resize(n * n);
 		gz.resize(n * n);
 		hh.resize(n * n);
+		st.resize(n * n);
 		const float wavelength_deep = Math::TAU / k_deep;
 		for (int z = 0; z < n; z++) {
 			for (int x = 0; x < n; x++) {
@@ -1618,13 +1705,55 @@ void PhysXWaterSurface3D::_bake_shore_waves() {
 				gz.write[i] = g.y;
 				const float h = dw[i];
 				float height = 0.0f;
+				// Past the break point the wave is a bore: stage 3 on dry sand.
+				float stage = 3.0f;
 				if (h > 0.02f) {
 					const float shoal = Math::sqrt(cg_deep / MAX(_shore_cg(omega, h), 1e-3f));
-					height = MIN(h0 * shoal, BREAKER_INDEX * h);
 					// Deep water: the FFT ocean's swell, not these.
-					height *= 1.0f - Math::smoothstep(0.25f * wavelength_deep, 0.5f * wavelength_deep, h);
+					const float deep_fade = 1.0f - Math::smoothstep(0.25f * wavelength_deep, 0.5f * wavelength_deep, h);
+					const float unbroken = h0 * shoal * deep_fade;
+					height = MIN(unbroken, BREAKER_INDEX * h);
+					stage = unbroken / (BREAKER_INDEX * h);
 				}
 				hh.write[i] = height;
+				st.write[i] = stage;
+			}
+		}
+	}
+	// Surf similarity (Iribarren) number per cell, xi = tan(beta) / sqrt(H0 / L0),
+	// from the beach slope over the cell and its neighbours (Battjes 1974).
+	{
+		const float l0 = 9.81f * shore_wave_period * shore_wave_period / Math::TAU;
+		const float steep = Math::sqrt(MAX(shore_wave_height, 0.01f) / MAX(l0, 0.1f));
+		LocalVector<float> slope;
+		slope.resize(n * n);
+		auto dep = [&](int x, int z) {
+			const float d = dw[CLAMP(z, 0, n - 1) * n + CLAMP(x, 0, n - 1)];
+			return d < WaterSolver::WALL_DEPTH * 0.5f ? 0.0f : CLAMP(d, -1.0f, 50.0f);
+		};
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const float sx = (dep(x + 1, z) - dep(x - 1, z)) / (2.0f * cell.x);
+				const float sz = (dep(x, z + 1) - dep(x, z - 1)) / (2.0f * cell.y);
+				slope[z * n + x] = Math::sqrt(sx * sx + sz * sz);
+			}
+		}
+		shore_iribarren.resize(n * n);
+		float *xw = shore_iribarren.ptrw();
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				float sum = 0.0f;
+				int used = 0;
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int xx = x + dx, zz = z + dz;
+						if (xx >= 0 && xx < n && zz >= 0 && zz < n) {
+							sum += slope[zz * n + xx];
+							used++;
+						}
+					}
+				}
+				xw[z * n + x] = (sum / MAX(used, 1)) / steep;
 			}
 		}
 	}
@@ -1636,17 +1765,21 @@ void PhysXWaterSurface3D::_update_shore_material() {
 		return;
 	}
 	const int n = grid_resolution;
-	const bool on = shore_waves && shore_phase[0].size() == n * n && shore_phase[1].size() == n * n;
+	const bool on = shore_waves && shore_phase[0].size() == n * n && shore_phase[1].size() == n * n && shore_iribarren.size() == n * n;
 	water_material->set_shader_parameter("shore_waves_enabled", on);
 	if (!on) {
+		solver.set_shore_waves(RID(), false, Vector2(), 0.0f, 0.0f);
 		return;
 	}
 	Vector<uint8_t> a_bytes;
 	Vector<uint8_t> b_bytes;
+	Vector<uint8_t> c_bytes;
 	a_bytes.resize(n * n * 16);
 	b_bytes.resize(n * n * 16);
+	c_bytes.resize(n * n * 16);
 	float *a = (float *)a_bytes.ptrw();
 	float *b = (float *)b_bytes.ptrw();
+	float *cc = (float *)c_bytes.ptrw();
 	for (int i = 0; i < n * n; i++) {
 		a[i * 4 + 0] = shore_phase[0][i];
 		a[i * 4 + 1] = shore_height[0][i];
@@ -1656,19 +1789,33 @@ void PhysXWaterSurface3D::_update_shore_material() {
 		b[i * 4 + 1] = shore_grad_z[0][i];
 		b[i * 4 + 2] = shore_grad_x[1][i];
 		b[i * 4 + 3] = shore_grad_z[1][i];
+		cc[i * 4 + 0] = shore_stage[0][i];
+		cc[i * 4 + 1] = shore_stage[1][i];
+		cc[i * 4 + 2] = shore_iribarren[i];
+		cc[i * 4 + 3] = 0.0f;
 	}
 	Ref<Image> ia = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, a_bytes);
 	Ref<Image> ib = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, b_bytes);
+	Ref<Image> ic = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, c_bytes);
 	if (shore_wave_tex_a.is_valid() && shore_wave_tex_a->get_width() == n) {
 		shore_wave_tex_a->update(ia);
 		shore_wave_tex_b->update(ib);
+		shore_wave_tex_c->update(ic);
 	} else {
 		shore_wave_tex_a = ImageTexture::create_from_image(ia);
 		shore_wave_tex_b = ImageTexture::create_from_image(ib);
+		shore_wave_tex_c = ImageTexture::create_from_image(ic);
 	}
 	water_material->set_shader_parameter("shore_wave_tex_a", shore_wave_tex_a);
 	water_material->set_shader_parameter("shore_wave_tex_b", shore_wave_tex_b);
+	water_material->set_shader_parameter("shore_wave_tex_c", shore_wave_tex_c);
+	water_material->set_shader_parameter("shore_curl", shore_wave_curl);
 	water_material->set_shader_parameter("shore_wave_omega", Vector2(shore_omega[0], shore_omega[1]));
+	// The swash runs the breaking waves up the sand: it reads the same
+	// phases and heights, on the render thread.
+	const float l0 = 9.81f * shore_wave_period * shore_wave_period / Math::TAU;
+	solver.set_shore_waves(RS::get_singleton()->texture_get_rd_texture(shore_wave_tex_a->get_rid()), true,
+			Vector2(shore_omega[0], shore_omega[1]), shore_wave_height, l0);
 }
 
 // As the shader's shore_wave() (height only, at the resting point: the shore
@@ -1700,11 +1847,27 @@ float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) co
 		const float brk = Math::smoothstep(0.8f, 0.98f, height / MAX(BREAKER_INDEX * depth, 1e-3f));
 		const float amp = 0.5f * height * vary * inside;
 		const float th = phi - shore_omega[t] * time;
-		const float skew = 0.6f * brk;
+		float skew = 0.6f * brk;
+		float drop_w = 0.0f;
+		if (shore_stage[t].size() == n * n && shore_iribarren.size() == n * n) {
+			const float xi = _bilinear_sample(shore_iribarren, n, active_domain_size, p_x, p_z);
+			const float plunging = Math::smoothstep(0.35f, 0.6f, xi) * (1.0f - Math::smoothstep(2.6f, 3.3f, xi)) * shore_wave_curl;
+			const float stage = CLAMP((_bilinear_sample(shore_stage[t], n, active_domain_size, p_x, p_z) - 0.95f) / 1.0f, 0.0f, 1.0f);
+			const float throw_w = plunging * vary * Math::smoothstep(0.0f, 0.45f, stage) * (1.0f - Math::smoothstep(0.7f, 1.0f, stage));
+			drop_w = plunging * vary * Math::smoothstep(0.3f, 0.75f, stage) * (1.0f - Math::smoothstep(0.8f, 1.0f, stage));
+			skew = MIN(skew + 0.3f * throw_w, 0.92f);
+		}
 		const float ps = th - skew * Math::cos(th);
-		eta += amp * Math::cos(ps);
+		const float sharp = 1.0f + 1.5f * brk;
+		const float base = 0.5f + 0.5f * Math::cos(ps);
+		eta += amp * 2.0f * (Math::pow(base, sharp) - 1.0f / Math::sqrt(Math::PI * (sharp + 0.25f)));
+		{
+			const float pc = ps - Math::TAU * Math::floor((ps + Math::PI) / Math::TAU);
+			const float q = (pc - 0.35f) / 0.35f;
+			eta -= 1.6f * amp * drop_w * Math::exp(-q * q);
+		}
 		// d/dt of amp cos(th - skew cos th), th' = -omega.
-		rate += amp * Math::sin(ps) * (1.0f + skew * Math::sin(th)) * shore_omega[t];
+		rate += amp * sharp * Math::pow(MAX(base, 1e-4f), sharp - 1.0f) * Math::sin(ps) * (1.0f + skew * Math::sin(th)) * shore_omega[t];
 	}
 	if (r_rate != nullptr) {
 		*r_rate = rate;
@@ -2407,6 +2570,9 @@ void PhysXWaterSurface3D::set_choppiness(float p_choppiness) {
 
 void PhysXWaterSurface3D::set_foam_enabled(bool p_enabled) {
 	foam_enabled = p_enabled;
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? foam_threshold : -100.0f);
+	}
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 }
 
@@ -2444,6 +2610,9 @@ void PhysXWaterSurface3D::set_shore_foam_band(float p_depth) {
 
 void PhysXWaterSurface3D::set_foam_threshold(float p_threshold) {
 	foam_threshold = p_threshold;
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? foam_threshold : -100.0f);
+	}
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 }
 
@@ -2485,6 +2654,11 @@ void PhysXWaterSurface3D::set_seabed_collision_mask(uint32_t p_mask) {
 
 void PhysXWaterSurface3D::set_shallow_fade_depth(float p_depth) {
 	shallow_fade_depth = MAX(p_depth, 0.01f);
+	_rebuild();
+}
+
+void PhysXWaterSurface3D::set_mesh_detail(int p_detail) {
+	mesh_detail = CLAMP(p_detail, 1, 4);
 	_rebuild();
 }
 
@@ -2787,19 +2961,19 @@ void PhysXWaterSurface3D::_rebuild() {
 			const real_t padded = side * (real_t)grid_resolution / (real_t)MAX(grid_resolution - 2, 1);
 			active_domain_size = Vector2(padded, padded);
 			footprint_mask = _rasterize_wet_mask(tris, local_center, active_domain_size, grid_resolution);
-			water_mesh = _build_footprint_mesh(tris, bounds, MAX(grid_resolution, ocean_grid_resolution));
+			water_mesh = _build_footprint_mesh(tris, bounds, MAX(grid_resolution, ocean_grid_resolution) * mesh_detail);
 		}
 	}
 	if (water_mesh.is_null() && render_extent > MAX(ocean_domain_size.x, ocean_domain_size.y)) {
-		water_mesh = _build_extended_plane(ocean_domain_size, ocean_grid_resolution, render_extent);
+		water_mesh = _build_extended_plane(ocean_domain_size, ocean_grid_resolution * mesh_detail, render_extent);
 	}
 	if (water_mesh.is_null()) {
 		Ref<PlaneMesh> plane;
 		plane.instantiate();
 		plane->set_size(ocean_domain_size);
 		// Subdivisions, not vertex count -- PlaneMesh's own convention.
-		plane->set_subdivide_width(ocean_grid_resolution);
-		plane->set_subdivide_depth(ocean_grid_resolution);
+		plane->set_subdivide_width(ocean_grid_resolution * mesh_detail);
+		plane->set_subdivide_depth(ocean_grid_resolution * mesh_detail);
 		water_mesh = plane;
 	}
 	mesh_instance->set_mesh(water_mesh);
@@ -3049,6 +3223,10 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 			_bake_flow();
 		}
 	}
+	if (shore_waves) {
+		// The swash reads the shore waves on the render thread, at this clock.
+		solver.set_shore_clock(water_time, grid_center);
+	}
 	if (step_mode == STEP_MODE_PER_FRAME) {
 		// Bodies / impulses submitted up to this tick are snapshotted with it; the GPU work waits for the frame.
 		solver.queue_tick(p_delta); // no-ops until solver.is_available(), like step()
@@ -3186,6 +3364,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 	}
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("wave_cascade_count", 1 + (int)extra_cascades.size());
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? foam_threshold : -100.0f);
 	}
 	textures_bound = true;
 	_update_flow_material(); // the live flow's texture exists now
