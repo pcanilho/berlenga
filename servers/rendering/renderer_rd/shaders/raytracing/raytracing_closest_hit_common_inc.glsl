@@ -1367,6 +1367,14 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 					ps.next_ray_dir = normalize(t);
 					ps.bsdf_pdf = 1.0;
 				}
+			} else {
+				// A back face: the ray came from inside this medium. Its code, with the sign bit set
+				// (a negative finite float, so photons still read it as "not entering"), for the
+				// camera's medium probe (rt_camera_medium()).
+				ps.bsdf_pdf = uintBitsToFloat(m.medium | 0x80000000u);
+				if ((m.medium & RT_MEDIUM_CODE_SCATTER) != 0u) {
+					imageStore(rt_medium_image, ivec2(gl_LaunchIDEXT.xy), uvec4(m.medium_scatter));
+				}
 			}
 		}
 		path_pack(payload, ps);

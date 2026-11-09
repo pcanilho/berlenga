@@ -65,6 +65,12 @@
 				The fetch (meters of open water the wind blows over) the wave spectrum actually uses: [member fetch] when it's above 0, otherwise the automatic value -- the longest side of the [member surface_mesh] footprint for enclosed water, or 100 km (a fully developed open sea) for the plain square.
 			</description>
 		</method>
+		<method name="is_camera_underwater" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether the active camera was under the surface (by [method sample_height] at the camera) when the node last updated the underwater view. Always [code]false[/code] while [member underwater_enabled] is off or the camera is out of reach of the water.
+			</description>
+		</method>
 		<method name="is_ripple_resting" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -234,6 +240,12 @@
 		</member>
 		<member name="swash_run_up" type="float" setter="set_swash_run_up" getter="get_swash_run_up" default="0.3">
 			Swash: the bigger arriving waves (the crests well above the usual ones, so it comes in sets) run up past the still-water line onto the dry sand as a thin film, at most this high (m above still water, not distance along the sand), in tongues that vary along the beach, then slide back down at [member swash_drain_speed]. The run-up grows with the sea state, so a calm lake barely moves. Sand the water has covered stays dark and glossy and dries over [member wet_sand_dry_time]. Needs a varying depth ([member seabed_from_floor]); a pool's walls don't get it. [code]0[/code] turns the run-up off (the sand below the still water still reads wet). The default material draws the film on the sand ([code]swash_film_thickness[/code]) with a ragged, fingered edge ([code]swash_edge_breakup[/code]; [code]shore_detail_scale[/code] sets how fine that, the rim lace and the wet-sand edge are -- [code]foam_detail_scale[/code] only covers the whitecaps and the shore foam sheet) and blends [code]wet_sand_color[/code] over the ground, so it works with any floor material.
+		</member>
+		<member name="underwater_enabled" type="bool" setter="set_underwater_enabled" getter="get_underwater_enabled" default="true">
+			The view from under the water, in raster: while the camera is under the surface (or within reach of the waves), a full screen pass fogs what lies under the water by the distance the light travels in it, with the medium of the path traced water ([code]pathtraced_absorption[/code], [code]pathtraced_scattering[/code] and [code]pathtraced_scattering_anisotropy[/code] on [member water_material]), lit by the first visible [DirectionalLight3D] refracted into the water and by the environment's sky. The image splits where the surface crosses the lens, and the surface seen from below shows the world above through Snell's window, refracted, and a mirror of the water past the critical angle (total internal reflection). Surfaces under the water lose the light the water above them absorbed. Off, or with the camera away from the water, nothing extra is drawn. The path tracer needs no setting: it starts the camera's rays in the water by itself (with [code]rendering/pathtracing/refraction[/code] on). Transparent objects under the water are not fogged in raster.
+		</member>
+		<member name="underwater_meniscus" type="float" setter="set_underwater_meniscus" getter="get_underwater_meniscus" default="0.35">
+			How dark the thin line is where the surface crosses the lens, with [member underwater_enabled]. [code]0.0[/code] draws none.
 		</member>
 		<member name="water_level" type="float" setter="set_water_level" getter="get_water_level" default="0.0">
 			Mean world-space Y of the surface -- place the node here rather than relying on its own transform, since the rendered mesh and both simulation layers are displaced relative to this baseline.

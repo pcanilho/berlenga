@@ -506,6 +506,30 @@ bool rt_caustics_land(vec3 p_origin, vec3 p_dir, float p_width, uint p_rng, out 
 	return false;
 }
 
+// The medium the camera ray of this pixel starts in (a camera under water), Cycles' way: probe straight
+// up from the ray's start; the first medium surface met decides. Its back face: the start is inside
+// that medium (its code, as the hit reports it; scattering left in rt_medium_image). A front face or
+// no medium surface at all: air. Other surfaces (a pier, a hull) are passed through.
+uint rt_camera_medium(vec3 p_origin) {
+	const vec3 up = vec3(0.0, 1.0, 0.0);
+	// From 1 cm below: a surface within the trace's 1 mm minimum distance of the point is still met
+	// (a start just over the water then meets the top first, and reads as air).
+	vec3 o = p_origin - up * 0.01;
+	for (uint i = 0u; i < 4u; i++) {
+		PathState ps;
+		if (!rt_caustics_trace(o, up, 0.0, 0u, ps)) {
+			return 0u;
+		}
+		if ((ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) != 0u) {
+			return ps.bsdf_pdf < 0.0 ? (floatBitsToUint(ps.bsdf_pdf) & 0x7FFFFFFFu) : 0u;
+		}
+		// On past it: off the surface on its upper side.
+		vec3 n = dot(ps.offset_normal, up) >= 0.0 ? ps.offset_normal : -ps.offset_normal;
+		o = offset_ray_origin(o + up * ps.hit_t, n, ps.hit_t);
+	}
+	return 0u;
+}
+
 // This pixel's share of the caustics map (raytracing_caustics_inc.glsl): clear part of the slot
 // the next frame writes, then trace one photon from the sun. The square is centred where the
 // camera looked last frame, at least half its width ahead; the centre pixel measures that
@@ -619,6 +643,22 @@ void main() {
 		rt_caustics_photon(pixel, frame_index, inv_view[3].xyz, normalize(-inv_view[2].xyz));
 	}
 
+	// A camera under water (or in any medium): each pixel starts on the near plane, as raster clips
+	// there, in the medium the probe finds above that point, so the water line splits the lens where
+	// raster splits it.
+	vec3 camera_ray_origin = origin.xyz;
+	float camera_t_far = composite_t_max;
+	uint camera_medium = 0u;
+	if (rt_material_feature(RT_MATERIAL_FEATURE_REFRACTION)) {
+		if (!orthogonal) {
+			vec3 near_view = target.xyz / target.w;
+			float t_near = length(near_view);
+			camera_ray_origin = origin.xyz + direction.xyz * t_near;
+			camera_t_far = max(composite_t_max - t_near, 0.001);
+		}
+		camera_medium = rt_camera_medium(camera_ray_origin);
+	}
+
 	const uint max_bounces = RT_GET_MAX_BOUNCES();
 	if (rt_rc_enabled()) {
 		rt_rc_resolve(pixel.y * gl_LaunchSizeEXT.x + pixel.x, gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y);
@@ -640,18 +680,21 @@ void main() {
 		ps.offset_normal = vec3(0.0, 0.0, 1.0);
 		ps.next_ray_dir = vec3(0.0, 0.0, 1.0);
 
-		vec3 ray_origin = origin.xyz;
+		vec3 ray_origin = camera_ray_origin;
 		vec3 ray_dir = direction.xyz;
 		// The ray cone's width at the segment's origin (texture level of detail, rt_texture_cone):
 		// 0 at a perspective eye, one pixel's footprint for an orthogonal camera, then grown by
 		// the pixel's spread angle over each segment traced.
 		float cone_width = rt_cone_eye_width();
-		// The medium the ray travels in (MEDIUM_CHANGE_FLAG), where the camera is outside any: its extinction
+		// The medium the ray travels in (MEDIUM_CHANGE_FLAG), starting in the camera's (rt_camera_medium()): its extinction
 		// per metre, single-scatter albedo and phase anisotropy (rt_medium_set()).
 		bool in_medium = false;
 		vec3 medium_sigma_t = vec3(0.0);
 		vec3 medium_albedo = vec3(0.0);
 		float medium_g = 0.0;
+		if (camera_medium != 0u) {
+			rt_medium_set(camera_medium, in_medium, medium_sigma_t, medium_albedo, medium_g);
+		}
 #ifdef DLSS_RR_ENABLED
 		// Primary surface replacement this sample still owes (only sample 0 starts one).
 		bool replace_pending = false;
@@ -673,7 +716,7 @@ void main() {
 			ps.hit_t = -1.0; // A miss must not retain the previous segment's hit distance.
 			path_pack(payload, ps);
 			payload_set_cone_width(payload, cone_width);
-			float t_far = (bounce == 0u) ? composite_t_max : 10000.0;
+			float t_far = (bounce == 0u) ? camera_t_far : 10000.0;
 
 #ifdef USE_SER
 			hitObjectEXT hitObject;
@@ -759,7 +802,8 @@ void main() {
 					ray_dir = rt_volume_sample_hg(ray_dir, medium_g, rand2(ps.rng_state));
 					continue;
 				}
-				if (ps.hit_t > 0.0 || scatters) {
+				// A miss in the water is absorbed over the whole far distance too (black in clear water).
+				{
 					medium_transmittance = exp(-medium_sigma_t * seg_len);
 					// Probability of no collision over the segment, averaged over the channels it was drawn on.
 					float p_pass = scatters ? dot(medium_transmittance, vec3(1.0 / 3.0)) : 1.0;
@@ -951,7 +995,7 @@ void main() {
 		}
 #ifdef DLSS_RR_ENABLED
 		if (replace_pending) {
-			dlss_rr_replace_primary_surface(origin.xyz, direction.xyz, replace_hit_t);
+			dlss_rr_replace_primary_surface(camera_ray_origin, direction.xyz, replace_hit_t);
 		}
 #endif
 
