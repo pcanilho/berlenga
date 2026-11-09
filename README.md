@@ -42,7 +42,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 <details><summary>Images: transmission, back lighting, clearcoat, layer textures</summary>
 
-![Thin glass panes: light and shadow pass through tinted with transmission on, grey opaque panes with it off](docs/media/transmission.jpg)
+![Green glass panes before coloured spheres: raster, path traced with transmission on (the spheres show through and the panes cast green-tinted light), and off (grey opaque panes, dark shadows)](docs/media/transmission.jpg)
 
 ![Back-lit leaf cards and a red curtain: green and red light on the floor with back lighting on, plain shadows with it off](docs/media/back-lighting.jpg)
 
