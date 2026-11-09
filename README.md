@@ -15,7 +15,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Many lights**: 4096 path-traced lights (upstream 64), emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting and thin-glass transmission in the path tracer; textures filter like raster.
-- **Water**: refraction, depth tint and murky water in the path tracer.
+- **Water**: refraction, depth tint, murky water and caustics in the path tracer.
 - **Exposure**: histogram metering and local exposure that keep night scenes dark.
 - **Physics**: PhysX 5 next to Jolt, with cloth, tearing, destruction and path-traced smoke.
 - **Open worlds**: far-origin precision, persistent ray tracing instances, mesh LOD in the tracer.
@@ -68,6 +68,16 @@ Look at the floor under the glass and cards, the highlights on the spheres, and 
 ![The same pool path traced with clear water and with murky water: in the murky one a green glow fills the deep end and the posts fade below the surface](docs/media/murky-water.jpg)
 
 Look at the green glow filling the deep end.
+
+</details>
+
+- **Caustics** (`rendering/pathtracing/caustics`): sunlight gathers into moving lines on the floor under rippled water.
+
+<details><summary>Image: caustics off vs on</summary>
+
+![A rippled pool path traced: with caustics off the floor is evenly lit; with them on bright wavy lines of sunlight cross the floor and posts](docs/media/caustics.jpg)
+
+Look at the bright lines on the pool floor.
 
 </details>
 
