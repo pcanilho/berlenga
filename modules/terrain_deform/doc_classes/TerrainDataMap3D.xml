@@ -151,7 +151,7 @@
 			Width of the square map in metres, centred on the node.
 		</member>
 		<member name="water_sources" type="NodePath[]" setter="set_water_sources" getter="get_water_sources" default="[]">
-			Water nodes. A node with [code]sample_height(Vector3)[/code] (such as a river) gives its surface height, -INF outside it. A node with only [code]get_water_level()[/code] (a water surface) is a level plane at its height plus that level, covering all lower ground in the map.
+			Water nodes. A node with [code]get_water_level()[/code] (a water surface, sea or lake) is a level plane at its height plus that level, covering all lower ground in the map; its waves are left out. Otherwise a node with [code]sample_height(Vector3)[/code] (such as a river) gives its surface height, -INF outside it. A river that also has [code]get_section_count()[/code] and [code]get_section(index)[/code] ([PhysXRiver3D]) is only asked about the cells near its channel, so world-size maps bake in seconds.
 		</member>
 	</members>
 	<signals>

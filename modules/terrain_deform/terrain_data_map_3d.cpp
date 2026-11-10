@@ -262,20 +262,9 @@ void TerrainDataMap3D::_sample_water(const LocalVector<float> &p_h, LocalVector<
 		if (!w) {
 			continue;
 		}
-		if (w->has_method("sample_height")) {
-			// Rivers: surface height per point, -inf outside the channel.
-			for (int z = 0; z < n; z++) {
-				for (int x = 0; x < n; x++) {
-					const int i = z * n + x;
-					const Vector3 p(rect.position.x + (x + 0.5f) * cell, p_h[i], rect.position.y + (z + 0.5f) * cell);
-					const float y = w->call("sample_height", p);
-					if (Math::is_finite(y)) {
-						r_surface[i] = MAX(r_surface[i], y);
-					}
-				}
-			}
-		} else if (w->has_method("get_water_level")) {
-			// Water surfaces (sea, lakes): a level plane at the node height plus water_level.
+		if (w->has_method("get_water_level")) {
+			// Water surfaces (sea, lakes): a level plane at the node height plus water_level. Their
+			// waves (sample_height) are left out: a bake should not depend on the wave phase.
 			float level = w->call("get_water_level");
 			Node3D *w3 = Object::cast_to<Node3D>(w);
 			if (w3 && w3->is_inside_tree()) {
@@ -283,6 +272,51 @@ void TerrainDataMap3D::_sample_water(const LocalVector<float> &p_h, LocalVector<
 			}
 			for (int i = 0; i < n * n; i++) {
 				r_surface[i] = MAX(r_surface[i], level);
+			}
+		} else if (w->has_method("sample_height")) {
+			// Rivers: surface height per point, -inf outside the channel. A river that lists its
+			// cross-sections (PhysXRiver3D) is asked only about the cells near its channel: each
+			// pair of sections marks the cells in its box, grown by the half width, bank and one
+			// section spacing (sample_height finds the nearest point on the curve, so a call per
+			// cell of a world-size map took minutes).
+			LocalVector<uint8_t> near;
+			bool all = true;
+			if (w->has_method("get_section_count") && w->has_method("get_section")) {
+				const int count = w->call("get_section_count");
+				if (count >= 2) {
+					all = false;
+					near.resize(n * n);
+					memset(near.ptr(), 0, n * n);
+					const float margin = w->get("bank_margin");
+					Dictionary prev = w->call("get_section", 0);
+					for (int k = 1; k < count; k++) {
+						const Dictionary cur = w->call("get_section", k);
+						const Vector3 a = prev["centre"];
+						const Vector3 b = cur["centre"];
+						const float grow = 0.5f * MAX(float(prev["width"]), float(cur["width"])) + margin + a.distance_to(b) + cell;
+						const int x0 = MAX(int(Math::floor((MIN(a.x, b.x) - grow - rect.position.x) / cell)), 0);
+						const int x1 = MIN(int(Math::floor((MAX(a.x, b.x) + grow - rect.position.x) / cell)), n - 1);
+						const int z0 = MAX(int(Math::floor((MIN(a.z, b.z) - grow - rect.position.y) / cell)), 0);
+						const int z1 = MIN(int(Math::floor((MAX(a.z, b.z) + grow - rect.position.y) / cell)), n - 1);
+						for (int z = z0; z <= z1; z++) {
+							memset(near.ptr() + z * n + x0, 1, MAX(x1 - x0 + 1, 0));
+						}
+						prev = cur;
+					}
+				}
+			}
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					const int i = z * n + x;
+					if (!all && !near[i]) {
+						continue;
+					}
+					const Vector3 p(rect.position.x + (x + 0.5f) * cell, p_h[i], rect.position.y + (z + 0.5f) * cell);
+					const float y = w->call("sample_height", p);
+					if (Math::is_finite(y)) {
+						r_surface[i] = MAX(r_surface[i], y);
+					}
+				}
 			}
 		}
 	}
