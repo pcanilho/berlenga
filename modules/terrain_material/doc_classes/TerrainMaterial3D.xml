@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TerrainMaterial3D" inherits="ShaderMaterial" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A ground material built from geology, erosion detail, grass tint, wetness and snow.
+	</brief_description>
+	<description>
+		A material that writes its own shader. It picks among five [TerrainMaterialLayer]s per pixel: bare rock, scree, soil, alluvium and beach sand. With a [TerrainGenerator3D] (see [method use_generator]) the choice follows the generator's geology maps; without one, rock takes slopes past [member rock_slope] and soil the rest. Layers meet by height blending (Mishkinis 2013). Past [member cliff_slope] textures are mapped biplanar (Quilez 2020) so cliffs do not stretch. Over the layers come the generator's erosion detail normal, the [GrassField3D] ground tint, the [WeatherMap3D]'s wetness and the [SnowCover3D] snowpack, using the same shader code as [BaseMaterial3D] (see [method BaseMaterial3D.get_snow_shader_code]), so snow and wet ground look the same on the terrain as on every other surface, rasterized or path traced.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_layer" qualifiers="const">
+			<return type="TerrainMaterialLayer" />
+			<param index="0" name="layer" type="int" enum="TerrainMaterial3D.Layer" />
+			<description>
+				Returns the layer for a surface, or [code]null[/code] for the default.
+			</description>
+		</method>
+		<method name="get_shader_code" qualifiers="const">
+			<return type="String" />
+			<description>
+				Returns the shader code the material writes for its current settings.
+			</description>
+		</method>
+		<method name="set_layer">
+			<return type="void" />
+			<param index="0" name="layer" type="int" enum="TerrainMaterial3D.Layer" />
+			<param index="1" name="value" type="TerrainMaterialLayer" />
+			<description>
+				Sets the layer for a surface. [code]null[/code] uses a plain default.
+			</description>
+		</method>
+		<method name="update_shader">
+			<return type="void" />
+			<description>
+				Writes the shader again. Setters that change the code call it themselves.
+			</description>
+		</method>
+		<method name="use_generator">
+			<return type="void" />
+			<param index="0" name="generator" type="Object" />
+			<description>
+				Takes [member sea_level] and the erosion detail code from a [TerrainGenerator3D] that has generated. The geology maps reach the shader through the generator's global uniforms.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="alluvium_area" type="float" setter="set_alluvium_area" getter="get_alluvium_area" default="5.5">
+			Log10 of the drainage area (m²) past which soil turns to alluvium.
+		</member>
+		<member name="alluvium_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
+			River sediment along valley floors.
+		</member>
+		<member name="beach_height" type="float" setter="set_beach_height" getter="get_beach_height" default="2.5">
+			Height above [member sea_level] that sand reaches.
+		</member>
+		<member name="blend_depth" type="float" setter="set_blend_depth" getter="get_blend_depth" default="0.2">
+			Height-blend transition depth. Smaller gives sharper borders between layers.
+		</member>
+		<member name="cliff_slope" type="float" setter="set_cliff_slope" getter="get_cliff_slope" default="50.0">
+			Slope in degrees past which textures are mapped biplanar.
+		</member>
+		<member name="detail_code" type="String" setter="set_detail_code" getter="get_detail_code" default="&quot;&quot;">
+			Shader code that defines [code]terrain_detail_normal()[/code], usually [method TerrainGenerator3D.get_detail_shader_code]. Empty: no erosion detail.
+		</member>
+		<member name="detail_octaves" type="int" setter="set_detail_octaves" getter="get_detail_octaves" default="4">
+			Octaves of the erosion detail normal. It fades out where a pixel covers it.
+		</member>
+		<member name="geology_enabled" type="bool" setter="set_geology_enabled" getter="is_geology_enabled" default="true">
+			Follow the generator's geology maps when they are set.
+		</member>
+		<member name="grass_tint_enabled" type="bool" setter="set_grass_tint_enabled" getter="is_grass_tint_enabled" default="true">
+			Tint the ground where [GrassField3D] grows, as [method GrassField3D.get_ground_shader_code] does.
+		</member>
+		<member name="rock_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
+			Bare rock.
+		</member>
+		<member name="rock_slope" type="float" setter="set_rock_slope" getter="get_rock_slope" default="40.0">
+			Slope in degrees past which rock shows, with or without geology.
+		</member>
+		<member name="sand_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
+			Beach sand.
+		</member>
+		<member name="scree_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
+			Loose rock below cliffs.
+		</member>
+		<member name="sea_level" type="float" setter="set_sea_level" getter="get_sea_level" default="0.0">
+			Height of the sea, the base of the beach band.
+		</member>
+		<member name="snow_enabled" type="bool" setter="set_snow_enabled" getter="is_snow_enabled" default="true">
+			Lay the [SnowCover3D] snowpack over the ground.
+		</member>
+		<member name="snow_max_slope" type="float" setter="set_snow_max_slope" getter="get_snow_max_slope" default="60.0">
+			Slope in degrees past which snow slides off (see [member BaseMaterial3D.snow_max_slope]).
+		</member>
+		<member name="soil_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
+			Soil on gentle ground.
+		</member>
+		<member name="wetness_enabled" type="bool" setter="set_wetness_enabled" getter="is_wetness_enabled" default="true">
+			Darken and smooth the ground where the [WeatherMap3D] says it is wet, by each layer's [member TerrainMaterialLayer.porosity].
+		</member>
+	</members>
+	<constants>
+		<constant name="LAYER_ROCK" value="0" enum="Layer">
+			Bare rock.
+		</constant>
+		<constant name="LAYER_SCREE" value="1" enum="Layer">
+			Scree.
+		</constant>
+		<constant name="LAYER_SOIL" value="2" enum="Layer">
+			Soil.
+		</constant>
+		<constant name="LAYER_ALLUVIUM" value="3" enum="Layer">
+			Alluvium.
+		</constant>
+		<constant name="LAYER_SAND" value="4" enum="Layer">
+			Sand.
+		</constant>
+		<constant name="LAYER_MAX" value="5" enum="Layer">
+			Number of layers.
+		</constant>
+	</constants>
+</class>

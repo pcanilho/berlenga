@@ -24,11 +24,23 @@
 				Returns [code]true[/code] if the specified [param flag] is enabled.
 			</description>
 		</method>
+		<method name="get_snow_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Returns the shader code [BaseMaterial3D] uses for [member snow_enabled] with [member snow_from_weather], for use in a [ShaderMaterial] (a terrain shader, for example). It declares the global uniforms [code]snow_map[/code], [code]snow_map_rect[/code], [code]snow_world_map[/code] and [code]snow_world_rect[/code] and [code]snow_catch_map[/code] (set by [SnowCover3D]) and the functions [code]snow_cover_at(world_pos)[/code] (covered share, albedo, melt water, 1 where a pack answers), [code]snow_cover_weight(cover, max_slope, geo_normal, normal)[/code], [code]snow_cover_apply(snow, albedo_s, wet, inout albedo, inout roughness, inout metallic, inout specular)[/code], [code]snow_glint(pos, normal, footprint)[/code] and [code]snow_glint_apply(...)[/code]. Paste it at the top level of the shader, before [code]fragment()[/code]; the text is the same [BaseMaterial3D] writes into its own shader, so both show the same snow.
+			</description>
+		</method>
 		<method name="get_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<param index="0" name="param" type="int" enum="BaseMaterial3D.TextureParam" />
 			<description>
 				Returns the [Texture2D] associated with the specified texture [param param].
+			</description>
+		</method>
+		<method name="get_wetness_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Returns the shader code [BaseMaterial3D] uses for [member wetness_enabled] with [member wetness_from_weather], for use in a [ShaderMaterial]. It declares the global uniforms [code]weather_state_map[/code] and [code]weather_map_rect[/code] (set by [WeatherMap3D]) and the functions [code]weather_wetness_at(world_pos)[/code] and [code]weather_wetness_apply(wet, normal_y, metallic, porosity, inout albedo, inout roughness)[/code].
 			</description>
 		</method>
 		<method name="set_feature">
