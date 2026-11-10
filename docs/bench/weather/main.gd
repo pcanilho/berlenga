@@ -19,6 +19,8 @@ extends Node3D
 #   --view=street     a street that the rain has wetted, with puddles, and a flag in the weather's wind
 #   --view=clouds     broken cumulus over fields from a rise, WeatherSkyMaterial sky, cloud shadows on the sun
 #   --view=clouds_low the same from 220 m, looking down on the cloud shadows
+#   --view=lightning  a storm at night over fields; a ground flash 1.4 km off on the last frame
+#                     (--strike-frames=K: K frames after the flash)
 #   --view=projector  a checker projected by the sun (DirectionalLight3D projector), raster against path traced
 #   --rain=H          hours of 5 mm/h rain before the shot (street view; 0 = dry)
 #   --dry=H           then this many hours without rain
@@ -45,12 +47,18 @@ var rain_hours := 1.0
 var dry_hours := 0.0
 var test := false
 var only_shelter := false
+var only_lightning := false
+var strike_frames := 1
+var light_scale := 1.0
+var thunder_out := ""
 var reprojection := true
 var pan := 0.0
 var pan_cam: Camera3D
 var n := 0
 var env: Environment
 var weather: Node3D
+var lightning: Node3D
+var strike_at := Vector3(150, 0, -1400)
 
 
 func _ready() -> void:
@@ -61,6 +69,7 @@ func _ready() -> void:
 		elif a.begins_with("--pan="): pan = float(a.substr(6))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
+		elif a == "--test=lightning": test = true; only_lightning = true
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -69,6 +78,9 @@ func _ready() -> void:
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--rain="): rain_hours = float(a.substr(7))
 		elif a.begins_with("--dry="): dry_hours = float(a.substr(6))
+		elif a.begins_with("--strike-frames="): strike_frames = int(a.substr(16))
+		elif a.begins_with("--light-scale="): light_scale = float(a.substr(14))
+		elif a.begins_with("--thunder-out="): thunder_out = a.substr(14)
 
 	if not ClassDB.class_exists("WeatherMap3D"):
 		push_error("This build has no weather module.")
@@ -77,6 +89,8 @@ func _ready() -> void:
 	if test:
 		if only_shelter:
 			await _shelter_tests()
+		elif only_lightning:
+			await _lightning_tests()
 		else:
 			await _run_tests()
 		get_tree().quit()
@@ -90,6 +104,9 @@ func _ready() -> void:
 		return
 	if view == "projector":
 		_build_projector()
+		return
+	if view == "lightning":
+		await _build_lightning()
 		return
 	_build_street()
 
@@ -413,6 +430,128 @@ void fragment() {
 	await get_tree().physics_frame
 
 
+# Lightning: Price and Rind's rate and ground share, a storm's flashes against that rate, a ground
+# flash's channel and timing, and the thunder's delay, length and pitch with distance.
+func _lightning_tests() -> void:
+	if not ClassDB.class_exists("WeatherLightning3D"):
+		print("lightning: no WeatherLightning3D in this build")
+		return
+	var m := _new_map()
+	m.cloud_type = 0.3
+	m.temperature = 15.0
+	var lt: Node3D = ClassDB.instantiate("WeatherLightning3D")
+	lt.thunder_enabled = false
+	add_child(lt)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 2, 0)
+	add_child(cam)
+	cam.make_current()
+	# Ground, and a 60 m mast where the scripted strike lands.
+	var ground := StaticBody3D.new()
+	var gs := CollisionShape3D.new()
+	gs.shape = WorldBoundaryShape3D.new()
+	ground.add_child(gs)
+	add_child(ground)
+	var mast := StaticBody3D.new()
+	var ms := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(4, 60, 4)
+	ms.shape = box
+	mast.add_child(ms)
+	mast.position = Vector3(800, 30, -1200)
+	add_child(mast)
+	await get_tree().physics_frame
+
+	print("lightning: Price and Rind (1992) flashes per minute by cloud top (land, sea):")
+	for h in [6000.0, 9000.0, 12000.0]:
+		lt.marine = false
+		var land: float = lt.get_flash_rate(h)
+		lt.marine = true
+		print("  %5.0f m: %.2f, %.2f" % [h, land, lt.get_flash_rate(h)])
+	lt.marine = false
+	print("lightning: ground share by cloud top over a 2.3 km freezing level (Price and Rind 1993):")
+	for h in [8000.0, 10000.0, 12000.0, 15000.0]:
+		print("  %5.0f m: %.2f" % [h, ClassDB.class_call_static("WeatherLightning3D", "ground_flash_fraction", h, 2300.0)])
+
+	# A storm 3 km off, grown in (no lifetime: it rises over 600 s), many times the natural rate.
+	m.add_storm(Vector2(3000, 0), 2000.0, 40.0, 10.0, 0.0)
+	m.advance(1200.0)
+	await get_tree().physics_frame
+	lt.rate_scale = 100.0
+	var seconds := 0.0
+	var frames := 0
+	var start: int = lt.get_strike_count()
+	while seconds < 20.0:
+		await get_tree().process_frame
+		seconds += get_process_delta_time()
+		frames += 1
+	var st = m.get_cloud_state() if m.has_method("get_cloud_state") else null
+	var got: int = lt.get_strike_count() - start
+	var ground_n: int = lt.get_ground_strike_count()
+	print("lightning: storm made %d flashes in %.1f s (%d frames), %d to the ground" % [got, seconds, frames, ground_n])
+
+	# A scripted ground flash over the mast.
+	lt.rate_scale = 0.0
+	lt.strike(Vector3(800, 0, -1200), true)
+	var ch: PackedVector3Array = lt.get_last_channel()
+	var length := 0.0
+	var max_turn := 0.0
+	for i in ch.size() - 1:
+		length += ch[i].distance_to(ch[i + 1])
+	print("lightning: channel %d points, %.0f m from y %.0f to y %.1f (mast top 60), %.2f times the straight drop" % [ch.size(), length, ch[0].y, ch[ch.size() - 1].y, length / max(ch[0].distance_to(ch[ch.size() - 1]), 1.0)])
+	var bright := PackedFloat32Array()
+	for i in 40:
+		await get_tree().process_frame
+		bright.append(lt.get_flash_brightness())
+	var line := ""
+	for b in bright:
+		line += "%.2f " % b
+	print("lightning: brightness by frame: " + line)
+
+	# Flashes 340 m and 2 km off with their thunder played: the sound starts at the distance over c.
+	# --thunder-out=dir saves each flash's thunder there.
+	var heard := [0]
+	lt.struck.connect(func(_p, _cg, _d): heard[0] += 1)
+	lt.thunder_enabled = true
+	for d in [340.0, 2000.0]:
+		lt.strike(Vector3(d, 0, 0), true)
+		var waited := 0.0
+		var played: AudioStreamPlayer3D = null
+		while waited < 10.0 and played == null:
+			await get_tree().process_frame
+			waited += get_process_delta_time()
+			for c in lt.get_children(true):
+				if c is AudioStreamPlayer3D and c.playing:
+					played = c
+		print("lightning: %4.0f m flash, thunder playing after %.2f s (first sound due %.2f s), %.1f s long" % [d, waited, lt.get_last_thunder_delay(), lt.get_last_thunder_length()])
+		if played and thunder_out != "":
+			played.stream.save_to_wav(thunder_out + "/thunder_%d.wav" % int(d))
+		if played:
+			played.stop()
+	print("lightning: struck signal %d times" % heard[0])
+	lt.thunder_enabled = false
+
+	# Thunder from a straight 1500 m channel at 1, 3 and 8 km.
+	var straight := PackedVector3Array()
+	for i in 151:
+		straight.append(Vector3(0, 1500.0 - i * 10.0, 0))
+	print("lightning: thunder from a straight 1500 m channel (delay, length, peak dBFS, zero crossings per s, build ms):")
+	for d in [1000.0, 3000.0, 8000.0]:
+		var wav: AudioStreamWAV = lt.make_thunder(straight, Vector3(d, 2, 0), 15.0)
+		var data: PackedByteArray = wav.data
+		var peak := 0.0
+		var crossings := 0
+		var prev := 0
+		for i in range(0, data.size(), 2):
+			var v := data.decode_s16(i)
+			peak = max(peak, abs(v) / 32767.0)
+			if (v >= 0) != (prev >= 0):
+				crossings += 1
+			prev = v
+		var secs := data.size() / 2.0 / wav.mix_rate
+		print("  %4.0f m: %.2f s (sound %.2f), %.2f s, %.1f dB, %.0f/s, %.1f ms" % [d, lt.get_last_thunder_delay(), d / (331.3 + 0.606 * 15.0), lt.get_last_thunder_length(), 20.0 * log(max(peak, 1e-6)) / log(10.0), crossings / secs / 2.0, lt.get_last_thunder_build_time()])
+
+
 func _corr(a: PackedFloat32Array, b: PackedFloat32Array) -> float:
 	var ma := _mean(a)
 	var mb := _mean(b)
@@ -719,6 +858,91 @@ func _build_clouds() -> void:
 	print("clouds: sun visibility under the camera %.2f" % weather.get_sun_visibility_at(cam.position))
 
 
+# A storm at night over fields and a village, a ground flash 1.4 km off.
+func _build_lightning() -> void:
+	var sky_mat = ClassDB.instantiate("WeatherSkyMaterial")
+	sky_mat.cloud_reprojection = reprojection
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+	sky.process_mode = Sky.PROCESS_MODE_REALTIME
+	env = Environment.new()
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.glow_enabled = true
+	env.pathtracing_enabled = not raster and pt_from <= 0
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	env.pathtracing_sky_shader_enabled = true
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+
+	# Night: a dim moon behind the storm.
+	var moon := DirectionalLight3D.new()
+	moon.rotation_degrees = Vector3(-30, 150, 0)
+	moon.light_energy = 0.03
+	moon.light_color = Color(0.7, 0.75, 1.0)
+	add_child(moon)
+
+	var cam := Camera3D.new()
+	cam.far = 60000.0
+	cam.fov = 60
+	cam.position = Vector3(0, 3, 0)
+	add_child(cam)
+	cam.look_at_from_position(cam.position, Vector3(0, 380, -1500), Vector3.UP)
+	cam.make_current()
+
+	weather = ClassDB.instantiate("WeatherMap3D")
+	weather.extent = 8192.0
+	weather.resolution = 64
+	weather.wind_speed = 9.0
+	weather.cloud_cover = 0.85
+	weather.cloud_type = 0.8
+	weather.cloud_thickness = 2500.0
+	weather.transition_time = 0.0
+	add_child(weather)
+	weather.add_storm(Vector2(0, -2500), 3000.0, 40.0, 12.0, 0.0)
+	weather.advance(1200.0)
+
+	var gm := StandardMaterial3D.new()
+	gm.albedo_color = Color(0.25, 0.3, 0.18)
+	gm.roughness = 0.9
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(20000, 20000)
+	ground.mesh = pm
+	ground.material_override = gm
+	add_child(ground)
+	var body := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	shape.shape = WorldBoundaryShape3D.new()
+	body.add_child(shape)
+	add_child(body)
+	var bm := StandardMaterial3D.new()
+	bm.albedo_color = Color(0.7, 0.66, 0.6)
+	bm.roughness = 0.8
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	for i in 40:
+		var b := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(rng.randf_range(6, 14), rng.randf_range(5, 12), rng.randf_range(6, 14))
+		b.mesh = box
+		b.material_override = bm
+		b.position = Vector3(rng.randf_range(-120, 120), box.size.y * 0.5, rng.randf_range(-260, -40))
+		add_child(b)
+
+	lightning = ClassDB.instantiate("WeatherLightning3D")
+	lightning.rate_scale = 0.0
+	lightning.seed = 5
+	lightning.raster_light_scale = light_scale
+	add_child(lightning)
+	await get_tree().physics_frame
+	weather.snap_to_settings()
+
+
 # A checker projected by the sun, to check that the rasterizer and the path tracer place it alike.
 func _build_projector() -> void:
 	env = Environment.new()
@@ -816,6 +1040,8 @@ func _process(_delta: float) -> void:
 		pan_cam.rotate_y(deg_to_rad(pan) * _delta)
 	if pt_from > 0 and n == pt_from:
 		env.pathtracing_enabled = not raster
+	if lightning and n == frames - strike_frames - 1:
+		lightning.strike(strike_at, true)
 	if out != "" and n >= frames:
 		get_viewport().get_texture().get_image().save_png(out)
 		get_tree().quit()

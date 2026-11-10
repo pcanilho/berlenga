@@ -1296,20 +1296,7 @@ void WeatherMap3D::_push_sky() {
 	if (active != this || !is_inside_tree()) {
 		return;
 	}
-	Ref<Environment> env;
-	Viewport *vp = get_viewport();
-	Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
-	if (cam && cam->get_environment().is_valid()) {
-		env = cam->get_environment();
-	}
-	Ref<World3D> world = get_world_3d();
-	if (env.is_null() && world.is_valid()) {
-		env = world->get_environment().is_valid() ? world->get_environment() : world->get_fallback_environment();
-	}
-	if (env.is_null() || env->get_sky().is_null()) {
-		return;
-	}
-	Ref<WeatherSkyMaterial> sky_material = env->get_sky()->get_material();
+	Ref<WeatherSkyMaterial> sky_material = WeatherSkyMaterial::find_for(this);
 	if (sky_material.is_valid()) {
 		sky_material->set_cloud_state(_cloud_state());
 	}

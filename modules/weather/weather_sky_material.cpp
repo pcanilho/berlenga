@@ -31,6 +31,11 @@
 #include "weather_sky_material.h"
 
 #include "core/object/class_db.h"
+#include "scene/3d/camera_3d.h"
+#include "scene/main/viewport.h"
+#include "scene/resources/3d/world_3d.h"
+#include "scene/resources/environment.h"
+#include "scene/resources/sky.h"
 #include "servers/rendering/rendering_server.h"
 
 Ref<Shader> WeatherSkyMaterial::shared_shader;
@@ -70,6 +75,12 @@ group_uniforms weather_map; // Set by WeatherMap3D each update.
 )";
 
 const char *SKY_BODY = R"(
+group_uniforms;
+
+group_uniforms lightning; // Set by WeatherLightning3D while flashes last.
+uniform int lightning_count = 0;
+uniform vec4 lightning_flashes[4]; // world position, energy this frame
+uniform vec3 lightning_color = vec3(0.82, 0.86, 1.0);
 group_uniforms;
 
 const vec3 UP = vec3(0.0, 1.0, 0.0);
@@ -216,6 +227,26 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 	return vec4(radiance * fade, mix(1.0, transmittance, fade));
 }
 
+// Lightning inside the clouds. Each flash is a point source whose light diffuses through the cloud as
+// the sun's does in march_clouds (two-stream, Bohren 1987), spread over 4 pi r^2 (r no less than
+// 200 m, the size of the lit core), and seen where the view ray passes nearest it, through the
+// cloud's opacity along the ray. Drawn at full resolution, so cloud reprojection never smears a flash.
+vec3 lightning_glow(vec3 cam, vec3 rd, float opacity) {
+	vec3 sum = vec3(0.0);
+	for (int i = 0; i < 4; i++) {
+		if (i >= lightning_count) {
+			break;
+		}
+		vec3 p = lightning_flashes[i].xyz;
+		float t = max(dot(p - cam, rd), 0.0);
+		float d = length(cam + rd * t - p);
+		float sigma = wc_extinction(p, wc_cover_type(p.xz), false, 200.0);
+		float diffuse = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * sigma * d);
+		sum += vec3(lightning_flashes[i].w * diffuse / (4.0 * PI * (d * d + 40000.0)));
+	}
+	return sum * lightning_color * opacity;
+}
+
 void sky() {
 	vec3 sun_dir = LIGHT0_ENABLED ? normalize(LIGHT0_DIRECTION) : UP;
 	float light_energy = LIGHT0_ENABLED ? LIGHT0_ENERGY : 0.0;
@@ -235,7 +266,12 @@ void sky() {
 		ALPHA = clouds.a;
 	} else {
 		vec3 air = LIGHT0_ENABLED ? atmosphere(EYEDIR, sun_dir, light_energy, LIGHT0_COLOR, LIGHT0_SIZE, true) : vec3(0.0);
-		COLOR = (air * HALF_RES_COLOR.a + HALF_RES_COLOR.rgb) * exposure;
+		vec3 glow = vec3(0.0);
+		if (lightning_count > 0 && !AT_CUBEMAP_PASS) {
+			// Not in the radiance map: the channel or the flash's light already lights the scene.
+			glow = lightning_glow(POSITION, EYEDIR, 1.0 - HALF_RES_COLOR.a);
+		}
+		COLOR = (air * HALF_RES_COLOR.a + HALF_RES_COLOR.rgb + glow) * exposure;
 	}
 }
 )";
@@ -269,6 +305,45 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 		storms.write[i] = Vector4(p_state.storms[i][0], p_state.storms[i][1], MAX(p_state.storms[i][2], 1.0f), p_state.storms[i][3]);
 	}
 	rs->material_set_param(m, "cloud_storms", storms);
+}
+
+void WeatherSkyMaterial::set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color) {
+	RenderingServer *rs = RS::get_singleton();
+	const RID m = get_rid();
+	PackedVector4Array flashes;
+	flashes.resize(4);
+	p_count = CLAMP(p_count, 0, 4);
+	for (int i = 0; i < 4; i++) {
+		flashes.write[i] = i < p_count ? p_flashes[i] : Vector4();
+	}
+	rs->material_set_param(m, "lightning_count", p_count);
+	rs->material_set_param(m, "lightning_flashes", flashes);
+	rs->material_set_param(m, "lightning_color", Vector3(p_color.r, p_color.g, p_color.b));
+}
+
+Ref<WeatherSkyMaterial> WeatherSkyMaterial::find_for(Node *p_node) {
+	if (!p_node || !p_node->is_inside_tree()) {
+		return Ref<WeatherSkyMaterial>();
+	}
+	Ref<Environment> env = find_environment(p_node);
+	if (env.is_null() || env->get_sky().is_null()) {
+		return Ref<WeatherSkyMaterial>();
+	}
+	return env->get_sky()->get_material();
+}
+
+Ref<Environment> WeatherSkyMaterial::find_environment(Node *p_node) {
+	Ref<Environment> env;
+	Viewport *vp = p_node->get_viewport();
+	Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
+	if (cam && cam->get_environment().is_valid()) {
+		env = cam->get_environment();
+	}
+	Ref<World3D> world = vp ? vp->find_world_3d() : Ref<World3D>();
+	if (env.is_null() && world.is_valid()) {
+		env = world->get_environment().is_valid() ? world->get_environment() : world->get_fallback_environment();
+	}
+	return env;
 }
 
 void WeatherSkyMaterial::_update_shader() {

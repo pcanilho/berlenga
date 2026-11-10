@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WeatherLightning3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+		Lightning and thunder from the weather map's storms.
+	</brief_description>
+	<description>
+		Watches the active [WeatherMap3D]'s storms and makes them flash. Each storm flashes at the Price and Rind (1992) rate for the top of the cloud the sky draws over it. Each flash reaches the ground with the Price and Rind (1993) share for the cloud's depth above the freezing level, which comes from the map's air temperature. The rate is per real second, so [method WeatherMap3D.advance] makes no flashes.
+		A ground flash is a channel grown as a random walk whose pieces turn about 16 degrees from each other, with branches that die out (Reed and Wyvill 1994), and finer kinks added by midpoint displacement. The stepped leader comes down, then 1 to 8 return strokes run about 60 ms apart; only the first lights the branches. About a third of ground flashes keep glowing after a stroke (continuing current). Each stroke's light is integrated over the frame, as a camera's exposure would take it.
+		The channel is drawn as tubes with an opaque emissive [StandardMaterial3D]. The path tracer samples it as a light, so under path tracing the scene is lit by the channel. The rasterizer has no emissive lights, so it gets an [OmniLight3D] at the channel point nearest the camera instead. That light is off under path tracing, so the light is never counted twice. Cloud flashes keep their light in both renderers, placed in the glowing cloud. Flashes glow inside a [WeatherSkyMaterial]'s clouds, drawn at full resolution and kept out of the radiance map.
+		Thunder is synthesized on a worker thread from the channel the player saw, after Few (1969) and Ribner and Roy (1982). Every piece of channel sends an N-wave whose period comes from Few's relaxation radius. Each wave is delayed by its distance at the speed of sound for the map's air temperature and low-passed for air absorption (ISO 9613-1). It plays through an [AudioStreamPlayer3D] at the nearest piece of channel, from the moment the first sound arrives.
+		See [code]docs/ideas/weather.md[/code], "Lightning and thunder".
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_active_flash_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of flashes whose light has not yet faded (at most four).
+			</description>
+		</method>
+		<method name="get_flash_brightness" qualifiers="const">
+			<return type="float" />
+			<description>
+				The brightest flash's main channel this frame, averaged over the frame. About 1 on the first frame of a first stroke at 60 frames a second.
+			</description>
+		</method>
+		<method name="get_flash_rate" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="cloud_top" type="float" />
+			<description>
+				Flashes per minute of one storm cell whose cloud top is [param cloud_top] metres above the ground, from Price and Rind (1992), before [member rate_scale]. [member marine] selects the fit over sea.
+			</description>
+		</method>
+		<method name="get_ground_strike_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Ground flashes so far.
+			</description>
+		</method>
+		<method name="get_last_channel" qualifiers="const">
+			<return type="PackedVector3Array" />
+			<description>
+				The newest flash's main channel, from the cloud to the ground, in world space. Empty for cloud flashes.
+			</description>
+		</method>
+		<method name="get_last_thunder_build_time" qualifiers="const">
+			<return type="float" />
+			<description>
+				How long the last thunder took to synthesize, in milliseconds.
+			</description>
+		</method>
+		<method name="get_last_thunder_delay" qualifiers="const">
+			<return type="float" />
+			<description>
+				Seconds from the last thunder's flash to its first sound.
+			</description>
+		</method>
+		<method name="get_last_thunder_length" qualifiers="const">
+			<return type="float" />
+			<description>
+				The last thunder's length, in seconds.
+			</description>
+		</method>
+		<method name="get_strike_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Flashes so far, ground and cloud.
+			</description>
+		</method>
+		<method name="ground_flash_fraction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="cloud_top" type="float" />
+			<param index="1" name="freezing_level" type="float" />
+			<description>
+				The share of flashes that reach the ground, from the depth of cloud between [param freezing_level] and [param cloud_top] (metres above the ground), after Price and Rind (1993). The depth is clamped to their fitted range of 5.5 to 14 km.
+			</description>
+		</method>
+		<method name="make_thunder">
+			<return type="AudioStreamWAV" />
+			<param index="0" name="channel" type="PackedVector3Array" />
+			<param index="1" name="listener" type="Vector3" />
+			<param index="2" name="temperature" type="float" default="15.0" />
+			<description>
+				Synthesizes the thunder of one stroke down [param channel] as heard from [param listener], at [param temperature] degrees Celsius, without playing it. The stream starts at the first sound; [method get_last_thunder_delay] gives the delay before it.
+			</description>
+		</method>
+		<method name="strike">
+			<return type="int" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="cloud_to_ground" type="bool" default="true" />
+			<description>
+				Makes a flash now over world [param position]'s x and z. A ground flash finds the ground with a physics ray down from the cloud base, so it hits the tallest thing there. Returns the flash's id.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="channel_color" type="Color" setter="set_channel_color" getter="get_channel_color" default="Color(0.82, 0.86, 1, 1)">
+			The colour of the channel, its light and its glow in the clouds.
+		</member>
+		<member name="channel_energy" type="float" setter="set_channel_energy" getter="get_channel_energy" default="6000.0">
+			The channel's radiance times its width at the peak of a first stroke. The emission falls as the drawn width grows, so a flash gives the same light whatever [member min_pixel_width] makes of it.
+		</member>
+		<member name="channel_width" type="float" setter="set_channel_width" getter="get_channel_width" default="0.5">
+			The main channel's drawn width, in metres. Branches are drawn at 0.6 of it.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			Storms make flashes. [method strike] works either way.
+		</member>
+		<member name="marine" type="bool" setter="set_marine" getter="is_marine" default="false">
+			Use Price and Rind's fit over sea, which gives about a fifth of the rate over land.
+		</member>
+		<member name="min_pixel_width" type="float" setter="set_min_pixel_width" getter="get_min_pixel_width" default="1.5">
+			The channel is drawn at least this many pixels wide at its mean distance from the camera.
+		</member>
+		<member name="raster_light_scale" type="float" setter="set_raster_light_scale" getter="get_raster_light_scale" default="1.0">
+			A scale on the rasterizer's light. At 1 it gives, at the camera, the irradiance the channel gives under path tracing.
+		</member>
+		<member name="raster_light_shadows" type="bool" setter="set_raster_light_shadows" getter="get_raster_light_shadows" default="true">
+			The rasterizer's light casts shadows.
+		</member>
+		<member name="rate_scale" type="float" setter="set_rate_scale" getter="get_rate_scale" default="1.0">
+			A scale on every storm's flash rate.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="1">
+			The seed for the flashes' timing and shape.
+		</member>
+		<member name="sky_flash_energy" type="float" setter="set_sky_flash_energy" getter="get_sky_flash_energy" default="2e+07">
+			The power of a flash's glow inside the clouds of a [WeatherSkyMaterial].
+		</member>
+		<member name="strike_range" type="float" setter="set_strike_range" getter="get_strike_range" default="20000.0">
+			Storms farther than this from the camera, plus their radius, make no flashes.
+		</member>
+		<member name="thunder_bus" type="StringName" setter="set_thunder_bus" getter="get_thunder_bus" default="&amp;&quot;Master&quot;">
+			The audio bus thunder plays on.
+		</member>
+		<member name="thunder_enabled" type="bool" setter="set_thunder_enabled" getter="is_thunder_enabled" default="true">
+			Flashes make thunder.
+		</member>
+		<member name="thunder_volume_db" type="float" setter="set_thunder_volume_db" getter="get_thunder_volume_db" default="0.0">
+			The thunder's volume. The fall with distance is already in the samples.
+		</member>
+	</members>
+	<signals>
+		<signal name="struck">
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="cloud_to_ground" type="bool" />
+			<param index="2" name="distance" type="float" />
+			<description>
+				A flash began: where it struck the ground (ground flashes) or the centre of its glow (cloud flashes), and how far that is from the camera.
+			</description>
+		</signal>
+	</signals>
+</class>
