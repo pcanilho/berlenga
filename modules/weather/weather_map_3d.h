@@ -248,12 +248,14 @@ private:
 		bool volumetric_enabled = false;
 		float volumetric_density = 0.0f;
 		float volumetric_length = 64.0f;
+		float volumetric_ambient_inject = 0.0f;
 	} fog_base;
 	Ref<Environment> fog_environment;
 	float applied_haze = -1.0f;
 	void _apply_haze();
 	void _restore_fog();
 	float _haze_weight(const HazeSource &p_source, const Vector3 &p_position) const;
+	float _haze_base(const HazeSource &p_source) const;
 
 	void _allocate();
 	void _build_gusts();
