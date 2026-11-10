@@ -43,14 +43,23 @@ class WeatherSkyMaterial : public ShaderMaterial {
 	GDCLASS(WeatherSkyMaterial, ShaderMaterial);
 
 	static Ref<Shader> shared_shader;
+	static Ref<Shader> shared_shader_plain; // without half_res_reprojection
+
+	bool cloud_reprojection = true;
+	void _update_shader();
 
 protected:
 	void _validate_property(PropertyInfo &p_property) const;
-	static void _bind_methods() {}
+	static void _bind_methods();
 
 public:
 	// Sets the cloud uniforms straight on the material (not saved with it).
 	void set_cloud_state(const WeatherClouds::State &p_state);
+
+	// Clouds drawn a sixteenth of the pixels a frame at full resolution, the rest reprojected
+	// (render_mode half_res_reprojection); off: every half resolution pixel every frame.
+	void set_cloud_reprojection(bool p_enabled);
+	bool is_cloud_reprojection_enabled() const;
 
 	static void cleanup();
 

@@ -34,6 +34,7 @@
 #include "servers/rendering/rendering_server.h"
 
 Ref<Shader> WeatherSkyMaterial::shared_shader;
+Ref<Shader> WeatherSkyMaterial::shared_shader_plain;
 
 namespace {
 
@@ -42,7 +43,7 @@ namespace {
 const char *SKY_HEAD = R"(
 // NOTE: Shader of WeatherSkyMaterial (modules/weather).
 shader_type sky;
-render_mode use_half_res_pass, use_debanding;
+render_mode use_half_res_pass, half_res_reprojection, use_debanding;
 
 uniform float rayleigh : hint_range(0, 64) = 2.0;
 uniform vec4 rayleigh_color : source_color = vec4(0.3, 0.405, 0.6, 1.0);
@@ -225,6 +226,10 @@ void sky() {
 		// From below: the sky's light off the ground (its colour as albedo), lit by the sun where clear.
 		vec3 ambient_bottom = ambient_top * 0.5 + ground_color.rgb * sun_radiance * max(sun_dir.y, 0.0) * (1.0 - 0.7 * cloud_cover) / PI;
 		float jitter = AT_CUBEMAP_PASS ? 0.5 : fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+#ifdef CLOUD_REPROJECTION
+		// Reprojected (half_res_reprojection): a new start each frame, which the resolve averages.
+		jitter = AT_CUBEMAP_PASS ? 0.5 : fract(jitter + 0.61803399 * floor(TIME * 60.0));
+#endif
 		vec4 clouds = march_clouds(POSITION, EYEDIR, sun_dir, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter);
 		COLOR = clouds.rgb;
 		ALPHA = clouds.a;
@@ -266,17 +271,47 @@ void WeatherSkyMaterial::set_cloud_state(const WeatherClouds::State &p_state) {
 	rs->material_set_param(m, "cloud_storms", storms);
 }
 
+void WeatherSkyMaterial::_update_shader() {
+	Ref<Shader> &shader = cloud_reprojection ? shared_shader : shared_shader_plain;
+	if (shader.is_null()) {
+		shader.instantiate();
+		String head = String(SKY_HEAD);
+		if (cloud_reprojection) {
+			head = head.replace("shader_type sky;\n", "shader_type sky;\n#define CLOUD_REPROJECTION\n");
+		} else {
+			head = head.replace("half_res_reprojection, ", "");
+		}
+		shader->set_code(head + String(WeatherClouds::GLSL) + String(SKY_BODY));
+	}
+	set_shader(shader);
+}
+
+void WeatherSkyMaterial::set_cloud_reprojection(bool p_enabled) {
+	if (cloud_reprojection == p_enabled) {
+		return;
+	}
+	cloud_reprojection = p_enabled;
+	_update_shader();
+}
+
+bool WeatherSkyMaterial::is_cloud_reprojection_enabled() const {
+	return cloud_reprojection;
+}
+
+void WeatherSkyMaterial::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_cloud_reprojection", "enabled"), &WeatherSkyMaterial::set_cloud_reprojection);
+	ClassDB::bind_method(D_METHOD("is_cloud_reprojection_enabled"), &WeatherSkyMaterial::is_cloud_reprojection_enabled);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cloud_reprojection"), "set_cloud_reprojection", "is_cloud_reprojection_enabled");
+}
+
 void WeatherSkyMaterial::cleanup() {
 	shared_shader.unref();
+	shared_shader_plain.unref();
 	WeatherClouds::free_textures();
 }
 
 WeatherSkyMaterial::WeatherSkyMaterial() {
-	if (shared_shader.is_null()) {
-		shared_shader.instantiate();
-		shared_shader->set_code(String(SKY_HEAD) + String(WeatherClouds::GLSL) + String(SKY_BODY));
-	}
-	set_shader(shared_shader);
+	_update_shader();
 	RS::get_singleton()->material_set_param(get_rid(), "cloud_shape", WeatherClouds::shape_texture()->get_rid());
 	RS::get_singleton()->material_set_param(get_rid(), "cloud_detail", WeatherClouds::detail_texture()->get_rid());
 }
