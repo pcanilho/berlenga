@@ -57,7 +57,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
-- Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
+- Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders; `SPECULAR_NORMAL` output, a separate normal for the specular lobe under path tracing.
 
 <details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering, wet surfaces</summary>
 
@@ -434,6 +434,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Wind moves lying snow** (`SnowCover3D.wind_transport_enabled`): windward shoulders and crests are scoured and the lee fills with wind-packed snow.
 - **Melt-freeze crusts** (`SnowCover3D.crust_enabled`): a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.
 - **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
+- **Exact path traced sparkle** (`snow_exact_glints`, off by default): every 2 mm ice grain is a facet hit per ray.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.
 
 <details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle, shelter, crust, wind transport</summary>
@@ -481,6 +482,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Snow surface close up: dry in raster, dry path traced, and wet](docs/media/snow-sparkle.jpg)
 
 *Sparkle: dry snow glints in raster and path tracing; wet snow loses it.*
+
+![Snow sparkle in raster, path traced with the grid model, and path traced with exact grains](docs/media/snow-exact-glints.jpg)
+
+*Exact sparkle: each ice grain catches the sun on its own, densest round the highlight.*
 
 ![A shelter and snow-laden trees, raster and path traced](docs/media/snow-shelter.jpg)
 
