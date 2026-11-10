@@ -1258,6 +1258,11 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 	if (brdf_type == DIFFUSE_TYPE && material.subsurface > 0.5) {
 		return sample_subsurface_entry(h, m, material, N, ps);
 	}
+	if (brdf_type == DIFFUSE_TYPE) {
+		// Indirect light reuse may shade this lobe instead (raytracing_indirect_reuse_inc.glsl).
+		rt_ir_diffuse_taken = true;
+		rt_ir_weight = ps.throughput * diffuse_reflectance;
+	}
 
 	vec3 next_dir;
 	vec3 brdf_weight;
@@ -1575,6 +1580,16 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	uint total_bounces = get_total_bounces(ps.packed_bounces_flags);
 	uint diffuse_bounces = get_diffuse_bounces(ps.packed_bounces_flags);
 
+	// Indirect light reuse: the first bounce of a pixel whose first hit took the diffuse lobe
+	// reports this surface's normal (for the reconnection's cosine) and whether it is rough
+	// enough to be seen the same from nearby surfaces.
+	if (total_bounces == 1u && (ps.packed_bounces_flags & RT_IR_DIFFUSE_FLAG) != 0u) {
+		ps.offset_normal = h.geometry_normal;
+		if (m.roughness < RT_IR_MIN_ROUGHNESS || m.transmission > 0.0 || m.hair > 0.0) {
+			ps.packed_bounces_flags &= ~RT_IR_DIFFUSE_FLAG;
+		}
+	}
+
 	// Environment fog for this ray segment (before surface contribution).
 	apply_segment_fog(gl_HitTEXT, rt_entry_material_flags(h.geometry_idx), total_bounces == 0u, ps.radiance, ps.throughput);
 
@@ -1645,9 +1660,25 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	}
 #endif
 
-	if (!sample_surface_continuation(h, m, N, V, ps)) {
+	rt_ir_diffuse_taken = false;
+	bool continued = sample_surface_continuation(h, m, N, V, ps);
+	if (!continued) {
 		ps.packed_bounces_flags = set_path_terminated(ps.packed_bounces_flags);
 		ps.offset_normal = h.geometry_normal;
+	}
+	// Indirect light reuse: a camera ray's first hit records the surface (every sample hits the
+	// same one); raygen shades the diffuse lobe from the reservoirs for the samples that took it
+	// (raytracing_indirect_reuse_inc.glsl). Sample 0 always writes the record, a sample taking the
+	// diffuse lobe writes it with the lobe's weight.
+	if (total_bounces == 0u) {
+		ps.packed_bounces_flags &= ~(RT_IR_SURFACE_FLAG | RT_IR_DIFFUSE_FLAG);
+		bool diffuse = continued && rt_ir_diffuse_taken && (ps.packed_bounces_flags & SSS_ENTER_FLAG) == 0u;
+		if ((diffuse || is_sample_zero(ps.packed_bounces_flags)) && rt_ir_enabled()) {
+			MaterialProperties ir_material = material_properties_from_result(h, m, N, V);
+			rt_ir_diffuse_taken = diffuse;
+			rt_ir_write_record(h.hit_pos, rt_hit_prev_world_pos(h.hit_pos), N, h.geometry_normal, ir_material.roughness, ir_material.diffuseMode == GODOT_DIFFUSE_BURLEY);
+			ps.packed_bounces_flags |= RT_IR_SURFACE_FLAG | (diffuse ? RT_IR_DIFFUSE_FLAG : 0u);
+		}
 	}
 	if (rc_training) {
 		ps.packed_bounces_flags |= RT_RC_ELIGIBLE_FLAG;

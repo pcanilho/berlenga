@@ -57,6 +57,8 @@ class SnowCover3D;
 // deep (Pomeroy and Gray 1990) and finer snow is lifted into a suspension layer, both moving with
 // the logarithmic wind profile, only over loose dry snow. The amount follows the saltation flux,
 // which grows as u*^3 (1 - u_t^2 / u^2) (Pomeroy 1989).
+class WeatherMap3D;
+
 class SnowFall3D : public Node3D {
 	GDCLASS(SnowFall3D, Node3D);
 
@@ -101,6 +103,17 @@ class SnowFall3D : public Node3D {
 	float cur_blow = 0.0f;
 	float cur_threshold = 0.0f;
 	float cur_wind10 = 0.0f;
+	float cur_blow_sigma = 0.0f; // per m at 1 m above the snow
+	float cur_blow_scale = 0.0f; // m, e-folding height of the blowing-snow haze
+	float pushed_fall = -1.0f;
+	float pushed_blow = -1.0f;
+	float pushed_scale = -1.0f;
+	Vector3 pushed_base;
+	bool haze_enabled = true;
+	float turbulence = 1.0f;
+	double turb_clock = 0.0;
+	void _push_haze(WeatherMap3D *p_weather);
+	void _clear_haze();
 
 	SnowCover3D *_cover() const;
 	Vector3 _follow_position() const;
@@ -153,6 +166,16 @@ public:
 	float get_blowing_amount() const { return cur_blow; } // 0..1 of max_blowing
 	float get_threshold_wind() const { return cur_threshold; }
 	float get_wind_speed_10m() const { return cur_wind10; }
+	float get_blowing_extinction() const { return cur_blow_sigma; }
+	float get_blowing_height_scale() const { return cur_blow_scale; }
+	void set_haze_enabled(bool p_enabled);
+	bool is_haze_enabled() const { return haze_enabled; }
+	void set_turbulence(float p_scale) { turbulence = MAX(p_scale, 0.0f); }
+	float get_turbulence() const { return turbulence; }
+	// Suspended blowing snow (Pomeroy and Male 1992): mass concentration (kg/m3) at height z over the snow
+	// for a 10 m wind, and the extinction (per m) of that snow (geometric optics, grains of 40 um radius).
+	static float blowing_concentration(float p_wind10, float p_height);
+	static float blowing_extinction(float p_concentration);
 	// The falling snow beyond the particle box, as fog: extinction per metre and visibility in metres.
 	float get_extinction() const { return snowfall_extinction(cur_rate); }
 	float get_visibility() const { const float s = get_extinction(); return s > 0.0f ? 3.912f / s : 1e9f; }

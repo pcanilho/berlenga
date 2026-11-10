@@ -722,6 +722,13 @@ protected:
 	virtual bool _can_use_render_priority() const override { return true; }
 
 public:
+	// The weather's wetness and the snowpack's snow as shader code any spatial shader can use (docs/ideas/terrain-material.md).
+	// BaseMaterial3D generates its own wetness and snow from the same functions.
+	static String get_wetness_functions_code(bool p_from_weather);
+	static String get_snow_functions_code(bool p_from_weather);
+	static String get_wetness_shader_code();
+	static String get_snow_shader_code();
+
 	void set_albedo(const Color &p_albedo);
 	Color get_albedo() const;
 

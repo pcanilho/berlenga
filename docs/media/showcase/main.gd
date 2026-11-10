@@ -1,6 +1,6 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|plaza|textures|glass|far|night|physx|tearing --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|plaza|room|textures|glass|far|night|physx|tearing --spp=N --rr --out=path.png --frames=N --far=N --raster
 # --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
 # --bounces=N (path tracing bounces after the shot sets its own; 0: direct light only)
 var shot := "lights"
@@ -89,6 +89,39 @@ func emissive(c: Color, e: float) -> StandardMaterial3D:
 	img.fill(Color.WHITE)
 	m.emission_texture = ImageTexture.create_from_image(img)
 	return m
+
+# A closed room lit by the sun through one window: a bright patch on the floor, and everything else
+# (walls, ceiling, the far corner, a table and a cabinet) lit only by light bounced off it.
+func shot_room() -> void:
+	env.tonemap_exposure = 2.0
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-35, 110, 0)
+	sun.light_energy = 3.0
+	sun.shadow_enabled = true
+	add_child(sun)
+	var wall := mat(Color(0.75, 0.72, 0.66), 0.9)
+	var floor_m := mat(Color(0.55, 0.42, 0.3), 0.7)
+	var t := 0.3
+	# floor, ceiling, back (-z), left (-x), right (+x) walls of an 8 x 3 x 6 m room
+	box(Vector3(8 + 2 * t, t, 6 + 2 * t), Vector3(0, -t / 2, 0), floor_m)
+	box(Vector3(8 + 2 * t, t, 6 + 2 * t), Vector3(0, 3 + t / 2, 0), wall)
+	box(Vector3(8 + 2 * t, 3, t), Vector3(0, 1.5, -3 - t / 2), wall)
+	box(Vector3(t, 3, 6), Vector3(-4 - t / 2, 1.5, 0), wall)
+	# the right wall has a 1.6 x 1.4 m window, its sill 0.9 m up
+	box(Vector3(t, 3, 2.2), Vector3(4 + t / 2, 1.5, -1.9), wall)
+	box(Vector3(t, 3, 2.2), Vector3(4 + t / 2, 1.5, 1.9), wall)
+	box(Vector3(t, 0.9, 1.6), Vector3(4 + t / 2, 0.45, 0), wall)
+	box(Vector3(t, 0.7, 1.6), Vector3(4 + t / 2, 2.65, 0), wall)
+	# front wall (+z) behind the camera, with the camera inside the room
+	box(Vector3(8 + 2 * t, 3, t), Vector3(0, 1.5, 3 + t / 2), wall)
+	var wood := mat(Color(0.35, 0.22, 0.14), 0.6)
+	box(Vector3(1.6, 0.06, 0.9), Vector3(-1.5, 0.75, -1.2), wood)
+	for x in [-2.2, -0.8]:
+		for z in [-1.55, -0.85]:
+			box(Vector3(0.06, 0.72, 0.06), Vector3(x, 0.36, z), wood)
+	box(Vector3(1.2, 1.8, 0.5), Vector3(-3.3, 0.9, -2.5), mat(Color(0.3, 0.4, 0.5), 0.8))
+	box(Vector3(0.5, 0.5, 0.5), Vector3(1.5, 0.25, 1.0), mat(Color(0.7, 0.2, 0.15), 0.5))
+	camera(Vector3(2.6, 1.6, 2.7), Vector3(-2.0, 0.9, -2.0), 70)
 
 # A long night street: two rows of lamp posts, 4 m apart for 600 m (300 lamps), plus --far lamps over 10 km.
 func shot_lights() -> void:

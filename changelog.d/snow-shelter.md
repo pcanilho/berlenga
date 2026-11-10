@@ -1,1 +1,0 @@
-- Snow: ground under roofs and overhangs stays bare (a catch map read by materials, the path tracer and SnowSurface3D; `SnowCover3D.shelter_collision_mask` for roofs over a height source), and trees hold snow in their crowns and unload it later (Hedstrom-Pomeroy interception over WeatherMap3D's canopy, `canopy_enabled`).
