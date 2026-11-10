@@ -545,9 +545,14 @@ channel and arrives late by its distance.
   path tracer samples as a light (emissive next event estimation). The main channel and the branches
   get separate materials, so later strokes light only the main channel. The tube width holds at least
   about one and a half pixels.
-- **Raster lighting.** The raster has no emissive lights, so an OmniLight3D sits at the channel
-  point nearest the camera. It is turned off under path tracing, where the channel itself lights the
-  scene, so the light is never counted twice.
+- **Raster lighting.** The raster has no emissive lights, so a light stands in for the channel. It
+  gives the channel's irradiance at the camera: the sum over the channel's pieces of radiance times
+  projected area over r^2, in the direction of that sum. Ground flashes more than 400 m away use a
+  directional light from that direction. Like the sun, a source that far is close to parallel across
+  the scene, and its cascaded shadow maps stay sharp, where an omni light's cube map spread over
+  kilometres kept no shadow detail (10 Nov fix). Nearer flashes use an omni light. Either is off
+  under path tracing, where the channel itself lights the scene, so the light is never counted
+  twice.
 - **Cloud glow.** WeatherSkyMaterial gets up to four flash points, drawn in the full resolution pass
   so cloud reprojection does not smear them. They are kept out of the radiance map, so they do not
   light the scene twice.

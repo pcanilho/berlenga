@@ -39,7 +39,7 @@
 class AudioStreamPlayer3D;
 class AudioStreamWAV;
 class MeshInstance3D;
-class OmniLight3D;
+class Light3D;
 class WeatherMap3D;
 
 // Lightning from the active WeatherMap3D's storms, and its thunder (docs/ideas/weather.md,
@@ -47,7 +47,8 @@ class WeatherMap3D;
 // the cloud the sky draws over it; the cold cloud depth sets the share that reach the ground
 // (Price and Rind 1993). A ground flash is a channel of tubes grown as a Reed and Wyvill (1994)
 // random walk, with an emissive material the path tracer samples as a light; the rasterizer gets
-// an OmniLight3D at the channel instead, which is off under path tracing. Flashes glow in a
+// a light at the channel instead (directional from far flashes, so its shadows stay sharp), which is
+// off under path tracing. Flashes glow in a
 // WeatherSkyMaterial's clouds. Thunder is made from the channel (Few 1969, Ribner and Roy 1982):
 // an N-wave per piece, late by its distance at the speed of sound, filtered by the air.
 class WeatherLightning3D : public Node3D {
@@ -98,7 +99,10 @@ private:
 		LocalVector<LocalVector<Vector3>> branches;
 		LocalVector<LocalVector<Vector3>> in_cloud; // heard, not drawn
 		MeshInstance3D *mesh = nullptr;
-		OmniLight3D *light = nullptr;
+		Light3D *light = nullptr; // directional for far flashes, omni for near ones
+		float light_distance = 0.0f; // m, from the camera when it struck
+		float irradiance = 0.0f; // the channel's at the camera, per unit of channel_energy
+		bool directional = false;
 		Ref<StandardMaterial3D> main_material;
 		Ref<StandardMaterial3D> branch_material;
 		float brightness = 0.0f; // main channel, this frame, frame averaged
@@ -124,6 +128,7 @@ private:
 	float sky_flash_energy = 2.0e7f;
 	float raster_light_scale = 1.0f;
 	bool raster_light_shadows = true;
+	float raster_shadow_distance = 400.0f;
 	bool thunder_enabled = true;
 	float thunder_volume_db = 0.0f;
 	StringName thunder_bus = SNAME("Master");
@@ -183,6 +188,8 @@ public:
 	float get_raster_light_scale() const { return raster_light_scale; }
 	void set_raster_light_shadows(bool p_enabled);
 	bool get_raster_light_shadows() const { return raster_light_shadows; }
+	void set_raster_shadow_distance(float p_distance);
+	float get_raster_shadow_distance() const { return raster_shadow_distance; }
 	void set_thunder_enabled(bool p_enabled);
 	bool is_thunder_enabled() const { return thunder_enabled; }
 	void set_thunder_volume_db(float p_db);

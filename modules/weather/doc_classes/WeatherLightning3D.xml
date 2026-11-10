@@ -6,7 +6,7 @@
 	<description>
 		Watches the active [WeatherMap3D]'s storms and makes them flash. Each storm flashes at the Price and Rind (1992) rate for the top of the cloud the sky draws over it. Each flash reaches the ground with the Price and Rind (1993) share for the cloud's depth above the freezing level, which comes from the map's air temperature. The rate is per real second, so [method WeatherMap3D.advance] makes no flashes.
 		A ground flash is a channel grown as a random walk whose pieces turn about 16 degrees from each other, with branches that die out (Reed and Wyvill 1994), and finer kinks added by midpoint displacement. The stepped leader comes down, then 1 to 8 return strokes run about 60 ms apart; only the first lights the branches. About a third of ground flashes keep glowing after a stroke (continuing current). Each stroke's light is integrated over the frame, as a camera's exposure would take it.
-		The channel is drawn as tubes with an opaque emissive [StandardMaterial3D]. The path tracer samples it as a light, so under path tracing the scene is lit by the channel. The rasterizer has no emissive lights, so it gets an [OmniLight3D] at the channel point nearest the camera instead. That light is off under path tracing, so the light is never counted twice. Cloud flashes keep their light in both renderers, placed in the glowing cloud. Flashes glow inside a [WeatherSkyMaterial]'s clouds, drawn at full resolution and kept out of the radiance map.
+		The channel is drawn as tubes with an opaque emissive [StandardMaterial3D]. The path tracer samples it as a light, so under path tracing the scene is lit by the channel. The rasterizer has no emissive lights, so it gets a light that gives the channel's irradiance at the camera, from the channel's direction weighted by its brightness there. Ground flashes more than 400 m away use a [DirectionalLight3D], whose cascaded shadows stay sharp (a cube shadow map spread over kilometres keeps no detail). Nearer ones use an [OmniLight3D]. That light is off under path tracing, so the light is never counted twice. Cloud flashes keep their light in both renderers, placed in the glowing cloud. Flashes glow inside a [WeatherSkyMaterial]'s clouds, drawn at full resolution and kept out of the radiance map.
 		Thunder is synthesized on a worker thread from the channel the player saw, after Few (1969) and Ribner and Roy (1982). Every piece of channel sends an N-wave whose period comes from Few's relaxation radius. Each wave is delayed by its distance at the speed of sound for the map's air temperature and low-passed for air absorption (ISO 9613-1). It plays through an [AudioStreamPlayer3D] at the nearest piece of channel, from the moment the first sound arrives.
 		See [code]docs/ideas/weather.md[/code], "Lightning and thunder".
 	</description>
@@ -118,6 +118,9 @@
 		</member>
 		<member name="raster_light_shadows" type="bool" setter="set_raster_light_shadows" getter="get_raster_light_shadows" default="true">
 			The rasterizer's light casts shadows.
+		</member>
+		<member name="raster_shadow_distance" type="float" setter="set_raster_shadow_distance" getter="get_raster_shadow_distance" default="400.0">
+			How far from the camera the directional light of a far flash casts shadows, in metres ([member Light3D.directional_shadow_max_distance]).
 		</member>
 		<member name="rate_scale" type="float" setter="set_rate_scale" getter="get_rate_scale" default="1.0">
 			A scale on every storm's flash rate.
