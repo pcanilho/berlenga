@@ -247,6 +247,11 @@ private:
 		uint32_t motion_vectors_current_offset = 0;
 		uint32_t motion_vectors_previous_offset = 0;
 		uint64_t motion_vectors_last_change = -1;
+		uint64_t records_version = 0; // Bumped with every DEPENDENCY_CHANGED_MULTIMESH_DATA, motion vectors or not.
+		// multimesh_mark_buffer_rd_changed(): one GPU->CPU copy of the records in flight at a time.
+		uint32_t rd_readback_ticket = 0; // Bumped by every allocation and every readback issued.
+		bool rd_readback_in_flight = false;
+		bool rd_readback_again = false;
 		uint32_t stride_cache = 0;
 		uint32_t color_offset_cache = 0;
 		uint32_t custom_data_offset_cache = 0;
@@ -281,6 +286,8 @@ private:
 	void _multimesh_mark_dirty(MultiMesh *multimesh, int p_index, bool p_aabb);
 	void _multimesh_mark_all_dirty(MultiMesh *multimesh, bool p_data, bool p_aabb);
 	void _multimesh_re_create_aabb(MultiMesh *multimesh, const float *p_data, int p_instances);
+	void _multimesh_request_rd_readback(MultiMesh *multimesh, RID p_multimesh);
+	static void _multimesh_on_rd_readback(const Vector<uint8_t> &p_data, RID p_multimesh, uint32_t p_ticket);
 
 	/* Skeleton */
 
@@ -773,6 +780,7 @@ public:
 	virtual void _multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_buffer) override;
 	virtual RID _multimesh_get_command_buffer_rd_rid(RID p_multimesh) const override;
 	virtual RID _multimesh_get_buffer_rd_rid(RID p_multimesh) const override;
+	virtual void _multimesh_mark_buffer_rd_changed(RID p_multimesh) override;
 	virtual Vector<float> _multimesh_get_buffer(RID p_multimesh) const override;
 
 	virtual void _multimesh_set_visible_instances(RID p_multimesh, int p_visible) override;
@@ -831,6 +839,9 @@ public:
 		if (!mm) {
 			return nullptr;
 		}
+		if (mm->data_cache.is_empty() && mm->rd_readback_in_flight) {
+			return nullptr; // GPU-written records arrive through multimesh_mark_buffer_rd_changed()'s readback, without a stall.
+		}
 		_multimesh_make_local(mm);
 		return mm->data_cache.is_empty() ? nullptr : mm->data_cache.ptr();
 	}
@@ -857,7 +868,7 @@ public:
 
 	_FORCE_INLINE_ uint64_t multimesh_get_last_change(RID p_multimesh) const {
 		MultiMesh *mm = multimesh_owner.get_or_null(p_multimesh);
-		return mm ? mm->motion_vectors_last_change : (uint64_t)-1;
+		return mm ? mm->records_version : (uint64_t)-1;
 	}
 
 	_FORCE_INLINE_ RID multimesh_get_gpu_buffer(RID p_multimesh) const {

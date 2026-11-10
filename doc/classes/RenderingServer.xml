@@ -2870,6 +2870,7 @@
 			<param index="0" name="multimesh" type="RID" />
 			<description>
 				Returns the [RenderingDevice] [RID] handle of the [MultiMesh], which can be used as any other buffer on the Rendering Device.
+				After writing records into it from a compute shader, call [method multimesh_mark_buffer_rd_changed].
 			</description>
 		</method>
 		<method name="multimesh_get_command_buffer_rd_rid" qualifiers="const">
@@ -3006,6 +3007,16 @@
 			<description>
 				Prevents physics interpolation for all instances during the current physics tick.
 				This is useful when moving all instances to new locations, to give instantaneous changes rather than interpolation from the previous locations.
+			</description>
+		</method>
+		<method name="multimesh_mark_buffer_rd_changed">
+			<return type="void" />
+			<param index="0" name="multimesh" type="RID" />
+			<description>
+				Tells the engine that the instance records of the [MultiMesh] were written on the GPU, through the buffer returned by [method multimesh_get_buffer_rd_rid]. Call it after the compute work that writes them has been submitted. Records are read from the start of the buffer, in the layout described in [method multimesh_set_buffer].
+				The engine then keeps everything that reads the records up to date: the path tracer rebakes a merged MultiMesh at once (it reads the GPU buffer), and an asynchronous copy of the records to the CPU, without a stall, updates the instance AABB (unless [method multimesh_set_custom_aabb] was used) and the path tracer's per-instance records of a large MultiMesh, usually one or two frames later. Calls made while a copy is in flight are merged into one more copy.
+				When motion vectors are in use, the written records are copied to the buffer's second half too, so they show no motion on the frame they change.
+				[b]Note:[/b] With [code]use_indirect[/code], the path tracer traces [method multimesh_get_visible_instances] records (all of them by default), not the count in the command buffer. Collapse unused records to zero scale.
 			</description>
 		</method>
 		<method name="multimesh_set_buffer">
