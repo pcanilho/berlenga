@@ -1271,6 +1271,9 @@ String WeatherMap3D::get_wind_shader_code() {
 	c += "}\n\n";
 	c += "// Air velocity (m/s) at a world position and a height above the ground.\n";
 	c += "vec3 weather_wind(vec3 wp, float height) {\n";
+	c += "	if (weather_map_rect.z <= 0.0 || weather_map_rect.w <= 0.0) {\n";
+	c += "		return vec3(0.0); // no WeatherMap3D: no wind\n";
+	c += "	}\n";
 	c += "	float z0 = max(weather_wind_info.w, 1e-5);\n";
 	c += "	vec2 m10 = textureLod(weather_wind_map, (wp.xz - weather_map_rect.xy) / weather_map_rect.zw, 0.0).rg;\n";
 	c += "	vec4 sh = vec4(0.0, 0.0, 1.0, 0.0);\n";

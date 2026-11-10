@@ -33,6 +33,7 @@
 #include "weather_map_3d.h"
 #include "weather_sky_material.h"
 
+#include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 
 void initialize_weather_module(ModuleInitializationLevel p_level) {
@@ -41,6 +42,35 @@ void initialize_weather_module(ModuleInitializationLevel p_level) {
 	}
 	GDREGISTER_CLASS(WeatherMap3D);
 	GDREGISTER_CLASS(WeatherSkyMaterial);
+
+	// A shader that names a global uniform only compiles once the global exists, so the ones
+	// WeatherMap3D.get_wind_shader_code() reads are declared here with no data, as BaseMaterial3D
+	// declares weather_state_map and weather_map_rect: a wind shader compiles before a
+	// WeatherMap3D publishes, or with none (rect width 0: no wind). A project's own declaration wins.
+	const struct {
+		const char *name;
+		const char *type;
+	} globals[] = {
+		{ "weather_wind_map", "sampler2D" },
+		{ "weather_gusts", "sampler2D" },
+		{ "weather_shelter_map", "sampler2D" },
+		{ "weather_wind_info", "vec4" },
+		{ "weather_shelter_rect", "vec4" },
+		{ "weather_patch_info", "vec4" },
+		{ "weather_ground_height", "float" },
+	};
+	for (const auto &g : globals) {
+		Dictionary d;
+		d["type"] = g.type;
+		if (String(g.type) == "vec4") {
+			d["value"] = Vector4();
+		} else if (String(g.type) == "float") {
+			d["value"] = 0.0;
+		} else {
+			d["value"] = "";
+		}
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, String("shader_globals/") + g.name, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), d);
+	}
 }
 
 void uninitialize_weather_module(ModuleInitializationLevel p_level) {
