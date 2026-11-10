@@ -222,6 +222,7 @@ public:
 	real_t get_drainage_area(const Vector3 &p_global_position) const;
 	real_t get_sediment_depth(const Vector3 &p_global_position) const;
 	Ref<Image> get_height_image() const;
+	Ref<Image> sample_heights(const Vector2 &p_origin, real_t p_spacing, const Vector2i &p_size) const;
 	Ref<Image> get_drainage_image() const;
 	Ref<Image> get_sediment_image() const;
 	Ref<Image> get_uplift_image() const;

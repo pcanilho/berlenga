@@ -2,3 +2,7 @@
 
 - `TerrainGenerator3D`: generates mountain ranges for a whole world from tectonic uplift (painted map, Path3D ranges, noise) against stream power erosion (Cordonnier et al. 2016, Braun and Willett 2013 implicit solver), with sediment-filled basins, a critical slope, hillslope diffusion and multiple-flow-direction drainage. Deterministic per seed. Writes into Terrain3D (by name) or a `HeightMapShape3D`, re-applying a `TerrainDeformer3D`'s brushes on the new ground; exposes height, drainage area and sediment maps.
 - `TerrainGenerator3D` detail: an erosion filter (Clay John 2018, Fewes 2023, Johansen 2026) carves branching gullies and spurs into the simulated ranges, computed per point so tiles join exactly; written in parallel (`detail_wavelength`, `detail_octaves`, `detail_depth`).
+
+### Fixed
+
+- `TerrainGenerator3D` detail no longer notches crests into a comb of teeth: the filter fades with the slope's coherence where opposite slopes meet. New `sample_heights()` returns the final ground on a grid, filled in parallel.

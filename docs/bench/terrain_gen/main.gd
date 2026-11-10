@@ -233,6 +233,42 @@ func _run_checks() -> void:
 	for i in 2000:
 		fp2.append(gen.get_height(Vector3(-2000.0 + 4000.0 * fposmod(i * 0.618034, 1.0), 0, -2000.0 + 4000.0 * fposmod(i * 0.414214, 1.0))))
 	check(fp == fp2, "detail is a pure function of position")
+	# Crests stay whole: where opposite slopes meet, the detail fades (slope coherence), so gullies do not notch a
+	# crest into a comb. Measured by the second difference of the offset over 2 m steps along crests running north
+	# to south, against the same across the gullies of slopes facing east or west. Without the fade crests bend
+	# about 7 times as much; with it about 2 times.
+	var hgrid := gen.get_height_image()
+	var gs := gen.get_grid_size()
+	var cs := gen.cell_size
+	var o := func(q: Vector3) -> float: return gen.get_height(q) - gen.get_base_height(q)
+	var crest_bend := 0.0
+	var crest_n := 0
+	var slope_bend := 0.0
+	var slope_n := 0
+	for z in range(4, gs.y - 4):
+		for x in range(4, gs.x - 4):
+			var h0 := hgrid.get_pixel(x, z).r
+			var dl := h0 - hgrid.get_pixel(x - 1, z).r
+			var dr := h0 - hgrid.get_pixel(x + 1, z).r
+			var dz := (hgrid.get_pixel(x, z + 1).r - hgrid.get_pixel(x, z - 1).r) * 0.5
+			var pc := Vector3(-WORLD * 0.5 + x * cs, 0, -WORLD * 0.5 + z * cs)
+			var bend := func() -> float: return absf(o.call(pc + Vector3(0, 0, 2)) - 2.0 * o.call(pc) + o.call(pc - Vector3(0, 0, 2)))
+			if dl > 0.1 * cs and dr > 0.1 * cs and absf(dz) < 0.1 * cs:
+				crest_bend += bend.call()
+				crest_n += 1
+			elif x % 3 == 0 and z % 3 == 0 and absf(dl + dr) < 0.02 * cs and absf(dl) > 0.15 * cs and absf(dz) < 0.05 * cs:
+				slope_bend += bend.call()
+				slope_n += 1
+	crest_bend /= maxi(crest_n, 1)
+	slope_bend /= maxi(slope_n, 1)
+	check(crest_n >= 10 and slope_n > 100 and crest_bend < 3.0 * slope_bend, "detail fades on crests (bend %.2f m along %d crest points, %.2f m across %d slope points)" % [crest_bend, crest_n, slope_bend, slope_n])
+	# sample_heights gives the same ground as get_height.
+	var tile := gen.sample_heights(Vector2(-300, 200), 2.0, Vector2i(16, 8))
+	var tile_worst := 0.0
+	for z in 8:
+		for x in 16:
+			tile_worst = maxf(tile_worst, absf(tile.get_pixel(x, z).r - gen.get_height(Vector3(-300 + 2.0 * x, 0, 200 + 2.0 * z))))
+	check(tile_worst < 1e-4, "sample_heights matches get_height (worst %.6f m)" % tile_worst)
 	gen.detail_enabled = false
 	check(gen.get_height(Vector3(100, 0, 100)) == gen.get_base_height(Vector3(100, 0, 100)), "detail_enabled off gives the simulated ground")
 	gen.detail_enabled = true
@@ -319,46 +355,74 @@ func _save_map(path: String) -> void:
 	print("saved ", path)
 
 
+const VIEW_SHADER := """
+shader_type spatial;
+// Grass, rock and snow from the world normal and height, per pixel, so colour borders follow the surface and not
+// the triangles of the display mesh.
+uniform float hmax = 1000.0;
+void fragment() {
+	vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	float t = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y / hmax;
+	vec3 col = mix(vec3(0.2, 0.3, 0.12), vec3(0.36, 0.33, 0.29), smoothstep(0.9, 0.75, wn.y));
+	col = mix(col, vec3(0.9, 0.9, 0.92), smoothstep(0.8, 0.92, t) * smoothstep(0.6, 0.8, wn.y));
+	ALBEDO = pow(col, vec3(2.2));
+	ROUGHNESS = 0.95;
+}
+"""
+
+
 func _build_view() -> void:
-	# A display mesh of the generated ground with slope and height colours (grass, rock, snow).
-	var res := int(args.get("view-res", "1024"))
+	# A display mesh of the generated ground; the close view uses a finer one. Heights come from sample_heights
+	# (rows in parallel), normals from the neighbouring vertices.
+	var res := int(args.get("view-res", "2048" if args.has("close") else "1024"))
 	var step := WORLD / res
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var n := res + 1
+	var heights := gen.sample_heights(Vector2(-WORLD * 0.5, -WORLD * 0.5), step, Vector2i(n, n)).get_data().to_float32_array()
 	var hmax := 1.0
-	var img := gen.get_height_image()
-	var g := gen.get_grid_size()
-	for z in g.y:
-		for x in g.x:
-			hmax = maxf(hmax, img.get_pixel(x, z).r)
-	for z in res + 1:
-		for x in res + 1:
-			var p := Vector3(-WORLD * 0.5 + x * step, 0, -WORLD * 0.5 + z * step)
-			p.y = gen.get_height(p)
-			var hx := gen.get_height(p + Vector3(step, 0, 0)) - gen.get_height(p - Vector3(step, 0, 0))
-			var hz := gen.get_height(p + Vector3(0, 0, step)) - gen.get_height(p - Vector3(0, 0, step))
-			if is_nan(hx):
-				hx = 0.0
-			if is_nan(hz):
-				hz = 0.0
-			var n := Vector3(-hx, 2.0 * step, -hz).normalized()
-			var t := p.y / hmax
-			var col := Color(0.2, 0.3, 0.12).lerp(Color(0.36, 0.33, 0.29), smoothstep(0.9, 0.75, n.y))
-			col = col.lerp(Color(0.9, 0.9, 0.92), smoothstep(0.8, 0.92, t) * smoothstep(0.6, 0.8, n.y))
-			st.set_color(col)
-			st.set_normal(n)
-			st.add_vertex(p)
+	for i in heights.size():
+		if is_nan(heights[i]):
+			heights[i] = 0.0
+		hmax = maxf(hmax, heights[i])
+	var verts := PackedVector3Array()
+	verts.resize(n * n)
+	var norms := PackedVector3Array()
+	norms.resize(n * n)
+	for z in n:
+		var zu := maxi(z - 1, 0) * n
+		var zd := mini(z + 1, n - 1) * n
+		for x in n:
+			var i := z * n + x
+			var hx := heights[z * n + mini(x + 1, n - 1)] - heights[z * n + maxi(x - 1, 0)]
+			var hz := heights[zd + x] - heights[zu + x]
+			verts[i] = Vector3(-WORLD * 0.5 + x * step, heights[i], -WORLD * 0.5 + z * step)
+			norms[i] = Vector3(-hx, 2.0 * step, -hz).normalized()
+	var idx := PackedInt32Array()
+	idx.resize(res * res * 6)
+	var k := 0
 	for z in res:
 		for x in res:
-			var i := z * (res + 1) + x
-			for k in [i, i + 1, i + res + 1, i + 1, i + res + 2, i + res + 1]:
-				st.add_index(k)
+			var i := z * n + x
+			idx[k] = i
+			idx[k + 1] = i + 1
+			idx[k + 2] = i + n
+			idx[k + 3] = i + 1
+			idx[k + 4] = i + n + 1
+			idx[k + 5] = i + n
+			k += 6
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = norms
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	var mi := MeshInstance3D.new()
-	mi.mesh = st.commit()
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.vertex_color_is_srgb = true
-	mat.roughness = 0.95
+	mi.mesh = mesh
+	var shader := Shader.new()
+	shader.code = VIEW_SHADER
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	mat.set_shader_parameter("hmax", hmax)
 	mi.material_override = mat
 	add_child(mi)
 	if ground_mesh:

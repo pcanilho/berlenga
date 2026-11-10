@@ -343,18 +343,36 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 	if (!detail_enabled || detail_octaves <= 0 || detail_depth <= 0.0 || Math::is_nan(base)) {
 		return base;
 	}
-	// Gradient of the simulated surface by central differences over a grid cell either side, clamped inside the
-	// rectangle so border vertices still get one. The wide stencil makes the gradient fall to zero across sharp
-	// ridge crests and valley floors (opposite slopes average out), which is where the filter fades to the fade
-	// target; a point gradient flips at a crest and leaves a seam of teeth along it.
+	// Gradient of the simulated surface over a 3x3 stencil one grid cell wide, clamped inside the rectangle. The
+	// four quarter gradients also give the coherence of the slope: their mean length over their mean (Kass and
+	// Witkin 1987, Bigun and Granlund 1987). It is 1 on an even slope and falls towards 0 where opposite slopes meet
+	// (crests, valley floors); the filter fades with it, so gullies do not notch a crest into a comb.
 	const Rect2 &rect = result_rect;
 	const real_t e = result_cell;
-	const real_t xa = MAX(p_x - e, rect.position.x);
-	const real_t xb = MIN(p_x + e, rect.position.x + rect.size.x);
-	const real_t za = MAX(p_z - e, rect.position.y);
-	const real_t zb = MIN(p_z + e, rect.position.y + rect.size.y);
-	const double gx = (double(_sample(heights, xb, p_z)) - _sample(heights, xa, p_z)) / MAX(double(xb - xa), 1e-6);
-	const double gz = (double(_sample(heights, p_x, zb)) - _sample(heights, p_x, za)) / MAX(double(zb - za), 1e-6);
+	const real_t xs[3] = { MAX(p_x - e, rect.position.x), p_x, MIN(p_x + e, rect.position.x + rect.size.x) };
+	const real_t zs[3] = { MAX(p_z - e, rect.position.y), p_z, MIN(p_z + e, rect.position.y + rect.size.y) };
+	double hs[3][3];
+	for (int j = 0; j < 3; j++) {
+		for (int i = 0; i < 3; i++) {
+			hs[j][i] = (i == 1 && j == 1) ? double(base) : double(_sample(heights, xs[i], zs[j]));
+		}
+	}
+	double gx = 0.0;
+	double gz = 0.0;
+	double glen = 0.0;
+	for (int j = 0; j < 2; j++) {
+		for (int i = 0; i < 2; i++) {
+			const double wx = MAX(double(xs[i + 1] - xs[i]), 1e-6);
+			const double wz = MAX(double(zs[j + 1] - zs[j]), 1e-6);
+			const double qx = (hs[j][i + 1] - hs[j][i] + hs[j + 1][i + 1] - hs[j + 1][i]) / (2.0 * wx);
+			const double qz = (hs[j + 1][i] - hs[j][i] + hs[j + 1][i + 1] - hs[j][i + 1]) / (2.0 * wz);
+			gx += 0.25 * qx;
+			gz += 0.25 * qz;
+			glen += 0.25 * Math::sqrt(qx * qx + qz * qz);
+		}
+	}
+	// Remapped so an even slope (and a gently curved one) keeps the full effect.
+	const double coherence = glen > 1e-9 ? (Math::sqrt(gx * gx + gz * gz) / glen - 0.3) / 0.6 : 0.0;
 	TerrainErosionFilter::Params ep;
 	ep.seed = uint32_t(seed) * 0x2545F491u + 1u;
 	ep.wavelength = detail_wavelength;
@@ -365,7 +383,7 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 	ep.assumed_slope = detail_assumed_slope;
 	ep.valley_height = result_min;
 	ep.peak_height = MAX(result_max, result_min + 1.0f);
-	const double off = TerrainErosionFilter::offset(ep, p_x, p_z, base, gx, gz);
+	const double off = TerrainErosionFilter::offset(ep, p_x, p_z, base, gx, gz, coherence);
 	// Never below the outlets: the filter must not cut the coast or the sea floor.
 	return float(MAX(double(base) + off, double(MIN(base, result_min))));
 }
@@ -415,6 +433,17 @@ Ref<Image> TerrainGenerator3D::_grid_image(const LocalVector<float> &p_grid) con
 
 Ref<Image> TerrainGenerator3D::get_height_image() const {
 	return _grid_image(heights);
+}
+
+// The final ground (simulated plus detail) on a regular grid of world points, rows in parallel: p_size points from
+// p_origin (x, z) every p_spacing metres. NaN outside the generated rectangle.
+Ref<Image> TerrainGenerator3D::sample_heights(const Vector2 &p_origin, real_t p_spacing, const Vector2i &p_size) const {
+	ERR_FAIL_COND_V(p_size.x <= 0 || p_size.y <= 0 || p_size.x > 16384 || p_size.y > 16384, Ref<Image>());
+	ERR_FAIL_COND_V(p_spacing <= 0.0, Ref<Image>());
+	Vector<uint8_t> bytes;
+	bytes.resize(size_t(p_size.x) * p_size.y * sizeof(float));
+	_fill(p_origin.x, p_origin.y, p_spacing, p_size.x, p_size.y, reinterpret_cast<float *>(bytes.ptrw()));
+	return Image::create_from_data(p_size.x, p_size.y, false, Image::FORMAT_RF, bytes);
 }
 
 Ref<Image> TerrainGenerator3D::get_drainage_image() const {
@@ -636,6 +665,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear_result"), &TerrainGenerator3D::clear_result);
 	ClassDB::bind_method(D_METHOD("get_height", "global_position"), &TerrainGenerator3D::get_height);
 	ClassDB::bind_method(D_METHOD("get_base_height", "global_position"), &TerrainGenerator3D::get_base_height);
+	ClassDB::bind_method(D_METHOD("sample_heights", "origin", "spacing", "size"), &TerrainGenerator3D::sample_heights);
 	ClassDB::bind_method(D_METHOD("get_drainage_area", "global_position"), &TerrainGenerator3D::get_drainage_area);
 	ClassDB::bind_method(D_METHOD("get_sediment_depth", "global_position"), &TerrainGenerator3D::get_sediment_depth);
 	ClassDB::bind_method(D_METHOD("get_height_image"), &TerrainGenerator3D::get_height_image);

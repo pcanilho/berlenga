@@ -277,8 +277,10 @@ wavelength wide; stripes through each pivot run down the steering slope (cos hei
 the first 4x4 version left straight seams at 0.5 m crops); partial normalization (lengths over 1/2 to 1); fade
 approach with an altitude fade target; stacked fading (each octave's result is the next fade target, its creases and
 ridges multiply into the mask with the `detail_reach` power); straight gullies (the next octave steers by the sign of
-this one's slope); gully weight. The input gradient is a central difference one coarse cell either side, so it falls
-to zero across sharp crests and valley floors where the filter fades out.
+this one's slope); gully weight. The input gradient comes from a 3x3 stencil one coarse cell wide, and its four
+quarter gradients give the slope's coherence (mean gradient length over mean length of the quarters; Kass and Witkin
+1987, Bigun and Granlund 1987): 1 on an even slope, near 0 where opposite slopes meet. The filter's first mask is
+multiplied by it, so gullies stop short of crests and valley floors instead of cutting through them.
 
 `TerrainGenerator3D` applies it in `get_height()`, and the terrain write fills rows in parallel through
 `WorkerThreadPool` from the same function, so written ground equals `get_height()` at every vertex and tiles join
@@ -286,8 +288,13 @@ exactly. Defaults: 128 m, 4 octaves, depth 0.08, gully weight 0.5. Cost: about 1
 cloud core (66k vertices written in 47 ms on 4 threads). Bake only; no frame cost.
 
 Look: raster and path traced close views at 100% crop show the same gullies and ridges; the path tracer keeps all
-the detail (the frame is noisier at 16 samples on the CPU, nothing missing). A thin comb a few metres tall remains on
-some summit silhouettes; to tune. Still open: the same function in the terrain material for detail under the vertex
+the detail (the frame is noisier at 16 samples on the CPU, nothing missing).
+
+Dented crests (fixed after the first merge): without the coherence fade, the gullies of both flanks met on the crest
+and notched it into a comb of teeth a few metres tall, plain on summit silhouettes. With it the offset bends about a
+third as much along crests (bench: 0.65 m against 2.0 m for a 2 m step; open slopes 0.3 m) and the silhouettes are
+clean. The jagged colour borders in the first shots were the bench's colouring, per vertex on a 4 m mesh; the bench
+now colours per pixel from the normal and builds the close view at 2 m through `sample_heights()`. Still open: the same function in the terrain material for detail under the vertex
 spacing (needs a GPU timing), and a ridge map output for texturing. Speed-ups when worlds grow: threading the per-cell passes, and FastFlow-style GPU
 routing (Jain et al. 2024).
 

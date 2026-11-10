@@ -62,8 +62,11 @@ public:
 		double peak_height = 1000.0; // ... and +1
 	};
 
-	// Returns the height offset to add at world (x, z), given the input height and its gradient there.
-	static double offset(const Params &p, double x, double z, double h, double gx, double gz) {
+	// Returns the height offset to add at world (x, z), given the input height and its gradient there. coherence
+	// (0..1) says how well the gradient keeps one direction around the point (1 on an even slope, 0 where opposite
+	// slopes meet on a crest or a valley floor); the effect fades with it, so gullies stop short of a crest instead
+	// of notching it.
+	static double offset(const Params &p, double x, double z, double h, double gx, double gz, double coherence = 1.0) {
 		const double slope = std::sqrt(gx * gx + gz * gz);
 		if (slope < 1e-9 || p.octaves <= 0) {
 			return 0.0;
@@ -72,7 +75,7 @@ public:
 		double sx = gx / slope * p.assumed_slope;
 		double sz = gz / slope * p.assumed_slope;
 		double fade = _clamp((h - p.valley_height) / (p.peak_height - p.valley_height + 1e-9), 0.0, 1.0) * 2.0 - 1.0;
-		double mask = _ease_out(slope / p.slope_fade);
+		double mask = _ease_out(slope / p.slope_fade) * _smooth(coherence);
 		double total = 0.0;
 		double lambda = p.wavelength;
 		const double gw = p.gully_weight > 1e-3 ? p.gully_weight : 1e-3;
@@ -147,6 +150,10 @@ private:
 	static double _ease_out(double t) {
 		const double v = 1.0 - _clamp(t, 0.0, 1.0);
 		return 1.0 - v * v;
+	}
+	static double _smooth(double t) {
+		const double v = _clamp(t, 0.0, 1.0);
+		return v * v * (3.0 - 2.0 * v);
 	}
 	static uint32_t _hash(uint32_t x, uint32_t z, uint32_t seed) {
 		uint32_t h = x * 0x8DA6B343u ^ z * 0xD8163841u ^ seed * 0xCB1AB31Fu;

@@ -125,6 +125,15 @@
 				Whether [method generate] has run since the node was created or [method clear_result].
 			</description>
 		</method>
+		<method name="sample_heights" qualifiers="const">
+			<return type="Image" />
+			<param index="0" name="origin" type="Vector2" />
+			<param index="1" name="spacing" type="float" />
+			<param index="2" name="size" type="Vector2i" />
+			<description>
+				The final ground (as [method get_height]) on a regular grid of [param size] points starting at world [param origin] (x, z), [param spacing] metres apart, as an [constant Image.FORMAT_RF] image. Rows are computed in parallel. Points outside the rectangle are NaN.
+			</description>
+		</method>
 		<method name="write_to_terrain">
 			<return type="int" />
 			<description>
