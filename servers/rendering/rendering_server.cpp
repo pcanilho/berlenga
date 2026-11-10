@@ -3883,6 +3883,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/use_shader_execution_reordering", true);
 	GLOBAL_DEF("rendering/pathtracing/emissive_lights", true);
 	GLOBAL_DEF("rendering/pathtracing/light_visibility_memory", true);
+	GLOBAL_DEF("rendering/pathtracing/light_reuse", false);
 	GLOBAL_DEF("rendering/pathtracing/back_lighting", true);
 	GLOBAL_DEF("rendering/pathtracing/clearcoat", true);
 	GLOBAL_DEF("rendering/pathtracing/transmission", true);

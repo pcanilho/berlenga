@@ -190,6 +190,8 @@ public:
 	static constexpr int RT_PARAM_CAUSTICS_STATE = 36; // 0 off, else 1 + the slot written + 4 when last frame's is valid.
 	static constexpr int RT_PARAM_CAUSTICS_SIZE = 37; // the square's width, metres
 	static constexpr int RT_PARAM_SSS_SCALE = 38; // subsurface scattering radius at strength 1, metres
+	// Light reuse across pixels and frames (binding 51, ReSTIR DI): 0 off, else 1 + the slot written + 2 when last frame's is valid.
+	static constexpr int RT_PARAM_LIGHT_REUSE = 39;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

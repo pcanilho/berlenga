@@ -1,7 +1,8 @@
 extends Node3D
 # Neutral showcase scenes for the README. Args after --:
-# --shot=city|lights|textures|glass|far|night|physx|tearing --spp=N --rr --out=path.png --frames=N --far=N --raster
+# --shot=city|lights|plaza|textures|glass|far|night|physx|tearing --spp=N --rr --out=path.png --frames=N --far=N --raster
 # --set=setting:value (project setting, e.g. --set=rendering/camera/auto_exposure/metering:1)
+# --bounces=N (path tracing bounces after the shot sets its own; 0: direct light only)
 var shot := "lights"
 var spp := 16
 var out := "out.png"
@@ -9,6 +10,7 @@ var frames := 3
 var far := 0
 var raster := false
 var rr := false
+var bounces := -1
 var n := 0
 var env := Environment.new()
 
@@ -21,6 +23,7 @@ func _ready() -> void:
 		elif a.begins_with("--far="): far = int(a.substr(6))
 		elif a == "--raster": raster = true
 		elif a == "--rr": rr = true
+		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
 			ProjectSettings.set_setting(kv[0], float(kv[1]))
@@ -40,6 +43,8 @@ func _ready() -> void:
 	we.environment = env
 	add_child(we)
 	call("shot_" + shot)
+	if bounces >= 0:
+		env.pathtracing_max_bounces = bounces
 
 func mat(c: Color, r := 0.6) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -113,6 +118,32 @@ func shot_lights() -> void:
 		fl.light_energy = 2.0
 		add_child(fl)
 	camera(Vector3(0, 4.0, 18), Vector3(0, 2.0, -200), 50)
+
+# A square under festoon lights: 400 bulbs on strings 4 m up, each reaching 30 m, so every point
+# sees a hundred or more lights at once, with columns and kiosks casting shadows among them.
+func shot_plaza() -> void:
+	env.tonemap_exposure = 1.2
+	plane(Vector2(120, 120), mat(Color(0.4, 0.38, 0.36), 0.5))
+	var stone := mat(Color(0.55, 0.52, 0.48), 0.8)
+	for i in 6:
+		for j in 6:
+			if (i + j) % 2 == 0:
+				box(Vector3(0.8, 5.0, 0.8), Vector3((i - 2.5) * 7.0, 2.5, (j - 2.5) * 7.0), stone)
+			elif i % 3 == 1:
+				box(Vector3(2.5, 2.2, 1.6), Vector3((i - 2.5) * 7.0, 1.1, (j - 2.5) * 7.0), stone)
+	for k in 400:
+		var row := k / 20
+		var col := k % 20
+		var p := Vector3((col - 9.5) * 2.2, 4.2 - 0.4 * sin(PI * (col + 0.5) / 20.0), (row - 9.5) * 2.2)
+		var l := OmniLight3D.new()
+		l.position = p
+		l.omni_range = 30.0
+		l.light_energy = 0.25
+		l.light_color = Color.from_hsv(randf(), 0.5, 1.0)
+		l.light_size = 0.05
+		l.shadow_enabled = true
+		add_child(l)
+	camera(Vector3(0, 1.8, 26), Vector3(0, 1.5, 0), 60)
 
 # Blocks of a city at night: 1024 street lamps on a 32 x 32 grid, 14 m apart, seen from above.
 func shot_city() -> void:
