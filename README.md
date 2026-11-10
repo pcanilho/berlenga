@@ -16,6 +16,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
+- **Terrain**: mountain ranges raised and eroded per seed; non-destructive height brushes; terrain data maps.
 - **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Clouds**: a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
@@ -217,14 +218,34 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 </details>
 
+### Terrain
+- **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
+- **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
+- **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
+
+<details><summary>Images: mountain generation, terrain data maps</summary>
+
+![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
+
+*Mountain generation: ridges, valleys and the rivers that carved them, from one seed.*
+
+![The generated range, raster and path traced](docs/media/terrain-generator.jpg)
+
+*Mountain generation: the same range in 3D, raster and path traced.*
+
+![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
+
+*Terrain data maps: the stream bed, wet ground and banks come from the maps alone.*
+
+</details>
+
 ### Vegetation
 - **Plant placement** (`VegetationField3D`, `Biome`, `PlantSpecies`): places species by spacing, footprint and rules on slope, wetness and distance to water over a `TerrainDataMap3D`; evenly spread, the same for a seed. 12,899 plants over 256 m place once in about 45 ms, then draw as ordinary MultiMeshes.
 - **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.
 - **GPU-placed instances** (`RenderingServer.multimesh_mark_buffer_rd_changed()`): MultiMesh records written by a compute shader reach culling, motion vectors and path tracing.
 - **Instance bones** (`MultiMesh.bones_per_instance`): each instance is skinned from its own records, so thousands of plants bend in the wind without a Skeleton3D each; raster and path traced. 900 swaying stems: 0.30 ms render CPU, against 5.97 ms as 900 Skeleton3D.
-- **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images and clip: plant placement, grass, grass in wind, GPU-placed instances, instance bones, terrain data maps</summary>
+<details><summary>Images and clip: plant placement, grass, grass in wind, GPU-placed instances, instance bones</summary>
 
 ![A valley with trees, bushes and reeds placed by biome rules, raster and path traced](docs/media/vegetation-placement.jpg)
 
@@ -245,10 +266,6 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Stems in rest pose, then bent by instance bones in one MultiMesh, path traced](docs/media/instance-bones.jpg)
 
 *Instance bones: one MultiMesh, every stem bent by its own bones.*
-
-![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
-
-*Terrain data maps: the stream bed, wet ground and banks come from the maps alone.*
 
 </details>
 
@@ -388,7 +405,6 @@ Target: tens of thousands of objects over kilometres, mostly static.
 - **Off-screen culling** (`rendering/pathtracing/cull_max_distance`, `cull_min_size`): small or distant unseen objects leave the trace.
 - **Opacity micromaps** (`rendering/pathtracing/opacity_micromaps`): cut-out foliage traced without any-hit shaders.
 - **Mesh LOD in the path tracer** (`rendering/pathtracing/mesh_lod`).
-- **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 
 Settings for a large world, in `project.godot`:
 
