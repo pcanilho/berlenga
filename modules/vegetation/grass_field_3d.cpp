@@ -70,6 +70,33 @@ float unit16(uint32_t p_h) {
 
 } // namespace
 
+// Shared by the blades and the ground under them (get_ground_shader_code()), so both drift to the
+// same colours at the same places: a gap between blades then shows the base of the same sward.
+static const char *GRASS_COLOR_CODE = R"(
+float grass_hash(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float grass_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(grass_hash(i), grass_hash(i + vec2(1.0, 0.0)), f.x), mix(grass_hash(i + vec2(0.0, 1.0)), grass_hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+// Colour variation at three scales (patches of soil and water, clumps, single blades), as in
+// Ghost of Tsushima and Horizon: a field of one flat green reads as carpet, not grass.
+vec3 grass_patch_tint(vec2 xz, float blade, float value, float variation) {
+	float patches = grass_noise(xz * 0.11) * 0.65 + grass_noise(xz * 0.47 + 3.7) * 0.35;
+	float hue = (patches - 0.5) * 1.6 + (blade - 0.5) * 0.7;
+	vec3 warm = vec3(1.18, 1.08, 0.62); // yellower, drier
+	vec3 cool = vec3(0.82, 0.96, 1.02); // bluer, lusher
+	vec3 tint = hue > 0.0 ? mix(vec3(1.0), warm, min(hue, 1.0)) : mix(vec3(1.0), cool, min(-hue, 1.0));
+	tint *= 0.82 + 0.36 * value;
+	return mix(vec3(1.0), tint, variation);
+}
+)";
+
 void GrassField3D::_ensure_resources() {
 	if (blade_mesh.is_null()) {
 		// A strip of blade_segments quads and a tip: VERTEX.x is the side (-0.5..0.5), VERTEX.y
@@ -144,17 +171,9 @@ varying float v_wet;
 varying vec3 v_tint;
 
 uniform float color_variation;
-
-float grass_hash(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-float grass_noise(vec2 p) {
-	vec2 i = floor(p);
-	vec2 f = fract(p);
-	f = f * f * (3.0 - 2.0 * f);
-	return mix(mix(grass_hash(i), grass_hash(i + vec2(1.0, 0.0)), f.x), mix(grass_hash(i + vec2(0.0, 1.0)), grass_hash(i + vec2(1.0, 1.0)), f.x), f.y);
-}
+)";
+	code += GRASS_COLOR_CODE;
+	code += R"(
 
 void vertex() {
 	float h = INSTANCE_CUSTOM.x;
@@ -214,16 +233,7 @@ void vertex() {
 	v_t = t;
 	v_dry = rnd;
 	v_wet = 0.0;
-	// Colour variation at three scales (patches of soil and water, clumps, single blades), as in
-	// Ghost of Tsushima and Horizon: a field of one flat green reads as carpet, not grass.
-	float patches = grass_noise(base_w.xz * 0.11) * 0.65 + grass_noise(base_w.xz * 0.47 + 3.7) * 0.35;
-	float blade = fract(rnd * 7.31 + 0.13);
-	float hue = (patches - 0.5) * 1.6 + (blade - 0.5) * 0.7;
-	vec3 warm = vec3(1.18, 1.08, 0.62); // yellower, drier
-	vec3 cool = vec3(0.82, 0.96, 1.02); // bluer, lusher
-	vec3 tint = hue > 0.0 ? mix(vec3(1.0), warm, min(hue, 1.0)) : mix(vec3(1.0), cool, min(-hue, 1.0));
-	tint *= 0.82 + 0.36 * fract(rnd * 13.7 + 0.51);
-	v_tint = mix(vec3(1.0), tint, color_variation);
+	v_tint = grass_patch_tint(base_w.xz, fract(rnd * 7.31 + 0.13), fract(rnd * 13.7 + 0.51), color_variation);
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
@@ -494,15 +504,26 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	rs->global_shader_parameter_set("grass_ground_map", ground_texture->get_rid());
 	rs->global_shader_parameter_set("grass_ground_rect", rect);
 	rs->global_shader_parameter_set("grass_ground_color", Vector4(ground_tint.r, ground_tint.g, ground_tint.b, ground_tint.a));
+	rs->global_shader_parameter_set("grass_ground_dry", Vector4(dry_color.r, dry_color.g, dry_color.b, dryness));
+	rs->global_shader_parameter_set("grass_ground_params", Vector4(color_variation, 0.0f, 0.0f, 0.0f));
 }
 
 String GrassField3D::get_ground_shader_code() {
-	return R"(
-// GrassField3D ground tint: mix a terrain albedo towards the grass's ground colour where grass grows.
+	String code = R"(
+// GrassField3D turf under the grass, for terrain shaders. Where grass grows the ground becomes the
+// base of the sward rather than soil (Serious Sam 4, GDC 2019: grass "albedo colored from the
+// floor", floor and blades matched; Ghost of Tsushima and Star Citizen colour the terrain from the
+// grass on it): the blades' own root colour with the same colour patches as the blades, fine
+// streaks of out-of-focus blades, dead thatch, and the dark of the roots. A gap in the carpet then
+// shows more grass, not ground.
 global uniform sampler2D grass_ground_map : filter_linear;
 global uniform vec4 grass_ground_rect;
-global uniform vec4 grass_ground_color;
-
+global uniform vec4 grass_ground_color; // rgb: the sward's root colour; a: how much it covers the soil.
+global uniform vec4 grass_ground_dry; // rgb: thatch colour; a: the grass's dryness.
+global uniform vec4 grass_ground_params; // x: colour variation.
+)";
+	code += GRASS_COLOR_CODE;
+	code += R"(
 float grass_ground_cover(vec3 world_pos) {
 	if (grass_ground_rect.z <= 0.0) {
 		return 0.0;
@@ -515,10 +536,32 @@ float grass_ground_cover(vec3 world_pos) {
 	return textureLod(grass_ground_map, clamp(uv, half_texel, 1.0 - half_texel), 0.0).r * inside;
 }
 
+// The turf colour at a point: blades' root colour, patch tint, streaks, thatch.
+vec3 grass_turf(vec3 world_pos) {
+	vec2 xz = world_pos.xz;
+	// Streaks: fine noise stretched along a direction that turns slowly, like matted blades.
+	float ang = grass_noise(xz * 0.6) * 6.2832;
+	vec2 dir = vec2(cos(ang), sin(ang));
+	vec2 q = vec2(dot(xz, dir), dot(xz, vec2(-dir.y, dir.x)));
+	float streak = grass_noise(q * vec2(9.0, 70.0)) * 0.6 + grass_noise(q * vec2(4.0, 31.0) + 7.1) * 0.4;
+	vec3 c = grass_ground_color.rgb * grass_patch_tint(xz, grass_noise(xz * 3.0), streak, grass_ground_params.x);
+	c *= 0.7 + 0.6 * streak;
+	// Dead thatch where the grass is dry, in matted patches.
+	float thatch = grass_noise(q * vec2(5.0, 40.0) + 13.0) * 0.5 + grass_noise(xz * 1.3) * 0.5;
+	// Shaded at the base of the sward, so darker than the dry tips above it.
+	c = mix(c, grass_ground_dry.rgb * (0.25 + 0.2 * streak), 0.8 * smoothstep(0.8 - grass_ground_dry.a * 0.5, 0.95 - grass_ground_dry.a * 0.5, thatch));
+	return c;
+}
+
 vec3 grass_ground(vec3 world_pos, vec3 albedo) {
-	return mix(albedo, grass_ground_color.rgb, grass_ground_cover(world_pos) * grass_ground_color.a);
+	float cover = grass_ground_cover(world_pos);
+	if (cover <= 0.0) {
+		return albedo;
+	}
+	return mix(albedo, grass_turf(world_pos), cover * grass_ground_color.a);
 }
 )";
+	return code;
 }
 
 void GrassField3D::set_blade_segments(int p_segments) {
@@ -883,12 +926,14 @@ void GrassField3D::set_tip_color(const Color &p_color) {
 }
 void GrassField3D::set_dry_color(const Color &p_color) {
 	dry_color = p_color;
+	ground_baked = false;
 	if (material.is_valid()) {
 		material->set_shader_parameter("dry_color", dry_color);
 	}
 }
 void GrassField3D::set_color_variation(float p_amount) {
 	color_variation = CLAMP(p_amount, 0.0f, 1.0f);
+	ground_baked = false;
 	if (material.is_valid()) {
 		material->set_shader_parameter("color_variation", color_variation);
 	}
@@ -896,6 +941,7 @@ void GrassField3D::set_color_variation(float p_amount) {
 
 void GrassField3D::set_dryness(float p_dryness) {
 	dryness = CLAMP(p_dryness, 0.0f, 1.0f);
+	ground_baked = false;
 	if (material.is_valid()) {
 		material->set_shader_parameter("dryness", dryness);
 	}

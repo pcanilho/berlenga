@@ -17,6 +17,7 @@ extends Node3D
 #   --forest         a wood of stand-in trees: forest floor (litter, moss, bilberry, fern) in
 #                    their shade, meadow in the open (PlantSpecies.shade_range)
 #   --forest=in      the same, standing inside the wood
+#   --turf=0         without the near turf layer
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
 const SIZE := 96.0
@@ -39,6 +40,8 @@ var close := false
 var forest := false
 var forest_in := false
 var ground_mat: ShaderMaterial
+var turf: GrassField3D
+var no_turf := false
 var notex := false
 var t_frames := 0
 var under: GrassField3D
@@ -71,6 +74,7 @@ func _ready() -> void:
 		elif a == "--layers=0": layers = false
 		elif a == "--close": close = true
 		elif a == "--forest": forest = true
+		elif a == "--turf=0": no_turf = true
 		elif a == "--forest=in":
 			forest = true
 			forest_in = true
@@ -132,11 +136,32 @@ func _ready() -> void:
 		under.base_color = Color(0.1, 0.2, 0.05)
 		under.tip_color = Color(0.38, 0.52, 0.16)
 		under.dryness = 0.35
-		# Under a dense carpet the soil is thatch in the blades' shade: darker than the blades themselves.
-		under.ground_tint = Color(0.035, 0.045, 0.018, 1.0)
+		# The ground under the carpet is the sward's base (GrassField3D.get_ground_shader_code()):
+		# the blades' root colour, streaks and thatch, so a gap shows more grass, not soil.
+		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
 		grass.ground_tint_enabled = false # The undercoat grows everywhere, so it owns the tint.
 		add_child(under)
 		under.data_map = under.get_path_to(dm)
+		# Turf: a third, very dense and very short grid near the camera only (Serious Sam 4's
+		# overlapped density grids), where gaps between the longer blades show the most.
+		turf = GrassField3D.new()
+		turf.name = "Turf"
+		turf.fallback_wind = wind
+		turf.blade_segments = 1
+		turf.blade_height = Vector2(0.03, 0.07)
+		turf.blade_width = 0.012
+		turf.density = 1600.0
+		turf.radius = 5.0
+		turf.tile_size = 2.0
+		turf.clump_size = 0.3
+		turf.lean = 0.6
+		turf.base_color = Color(0.08, 0.16, 0.04)
+		turf.tip_color = Color(0.3, 0.42, 0.12)
+		turf.dryness = 0.35
+		turf.ground_tint_enabled = false
+		add_child(turf)
+		turf.data_map = turf.get_path_to(dm)
+		turf.visible = not no_turf
 		cover = VegetationField3D.new()
 		cover.name = "Cover"
 		cover.populate_on_ready = false
@@ -146,7 +171,7 @@ func _ready() -> void:
 		cover.data_map = cover.get_path_to(dm)
 		if forest:
 			# The sward stays out from under the crowns.
-			for g in [grass, under]:
+			for g in [grass, under, turf]:
 				var r: PlantSpecies = g.rules if g.rules else PlantSpecies.new()
 				# A wide fade: the sward thins out over a few metres under the crown edge.
 				r.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.3))
@@ -660,6 +685,7 @@ func _process(dt: float) -> void:
 			if forest:
 				grass.rebuild()
 				under.rebuild()
+				turf.rebuild()
 				_frame_forest()
 	if trample and n > 2:
 		_move(dt)
