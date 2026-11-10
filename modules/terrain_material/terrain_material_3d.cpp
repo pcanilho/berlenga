@@ -126,6 +126,9 @@ String TerrainMaterial3D::get_shader_code() const {
 	if (snow_enabled) {
 		c += BaseMaterial3D::get_snow_shader_code();
 	}
+	if (ground_deform_enabled) {
+		c += BaseMaterial3D::get_ground_deform_shader_code();
+	}
 	c += R"(
 uniform bool tm_geology = true;
 uniform float tm_sea_level = 0.0;
@@ -233,6 +236,11 @@ vec3 tm_perturb(vec3 nt, ivec2 axes) {
 			c += vformat("\th = texture(tm_%s_height_tex, pr.uv0).r * pr.w0 + (pr.w1 > 0.0 ? texture(tm_%s_height_tex, pr.uv1).r * pr.w1 : 0.0);\n", n, n);
 		}
 		c += "}\n";
+	}
+	if (ground_deform_enabled) {
+		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
+		// with a copy of this material, takes the printed surface.
+		c += "\nvoid vertex() {\n\tground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n}\n";
 	}
 	c += R"(
 void fragment() {
@@ -365,6 +373,10 @@ void fragment() {
 	}
 	if (grass_tint_enabled) {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
+	}
+	if (ground_deform_enabled) {
+		// Freshly turned ground is darker until it dries.
+		c += "\tvec2 gd = ground_deform_tint(wp);\n\talbedo *= gd.x;\n\trough = clamp(rough * gd.y, 0.0, 1.0);\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5;\n";
 	if (wetness_enabled) {
@@ -502,6 +514,7 @@ MAT_SETTER_CODE(const String &, detail_code)
 MAT_SETTER_CODE(bool, grass_tint_enabled)
 MAT_SETTER_CODE(bool, wetness_enabled)
 MAT_SETTER_CODE(bool, snow_enabled)
+MAT_SETTER_CODE(bool, ground_deform_enabled)
 
 void TerrainMaterial3D::use_generator(Object *p_generator) {
 	TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(p_generator);
@@ -538,6 +551,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::BOOL, wetness_enabled, is_wetness_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, snow_enabled, is_snow_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, snow_max_slope, get_snow_max_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")
+	BIND_PROP(Variant::BOOL, ground_deform_enabled, is_ground_deform_enabled, PROPERTY_HINT_NONE, "")
 #undef BIND_PROP
 
 	BIND_ENUM_CONSTANT(LAYER_ROCK);
