@@ -65,6 +65,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	uses_alpha_antialiasing = false;
 	uses_blend_alpha = false;
 	uses_depth_prepass_alpha = false;
+	uses_alpha_motion_vectors = false;
 	rt_force_opaque = false;
 	rt_force_transparent = false;
 	uses_discard = false;
@@ -168,6 +169,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.usage_flag_pointers["ALPHA_ANTIALIASING_EDGE"] = &uses_alpha_antialiasing;
 	actions.usage_flag_pointers["ALPHA_TEXTURE_COORDINATE"] = &uses_alpha_antialiasing;
 	actions.render_mode_flags["depth_prepass_alpha"] = &uses_depth_prepass_alpha;
+	actions.render_mode_flags["alpha_motion_vectors"] = &uses_alpha_motion_vectors;
 	actions.render_mode_flags["rt_force_opaque"] = &rt_force_opaque;
 	actions.render_mode_flags["rt_force_transparent"] = &rt_force_transparent;
 
@@ -662,6 +664,27 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 			}
 
 			blend_state = blend_state_color_blend;
+			if (p_pipeline_key.color_pass_flags & PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS) {
+				// alpha_motion_vectors: the motion vector blends over what lies behind by the
+				// surface's alpha (the shader writes it in the vector's w), so thin blended surfaces
+				// such as hair strands take over a pixel's motion as they take over its colour.
+				RD::PipelineColorBlendState::Attachment &mv = blend_state.attachments.write[2];
+				mv.enable_blend = true;
+				mv.color_blend_op = RD::BLEND_OP_ADD;
+				mv.src_color_blend_factor = RD::BLEND_FACTOR_SRC_ALPHA;
+				mv.dst_color_blend_factor = RD::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+				mv.alpha_blend_op = RD::BLEND_OP_ADD;
+				mv.src_alpha_blend_factor = RD::BLEND_FACTOR_ZERO;
+				mv.dst_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
+			} else {
+				// An alpha pass that writes motion vectors for alpha_motion_vectors surfaces leaves
+				// them untouched for every other blended surface.
+				RD::PipelineColorBlendState::Attachment &mv = blend_state.attachments.write[2];
+				mv.write_r = false;
+				mv.write_g = false;
+				mv.write_b = false;
+				mv.write_a = false;
+			}
 
 			if (p_pipeline_key.color_pass_flags & PIPELINE_COLOR_PASS_FLAG_OIT) {
 				// WBOIT MRT: accum (ONE/ONE) + revealage (ZERO/ONE_MINUS_SRC_COLOR).
@@ -1011,6 +1034,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["OUTPUT_IS_SRGB"] = "SHADER_IS_SRGB";
 		actions.renames["CLIP_SPACE_FAR"] = "SHADER_SPACE_FAR";
 		actions.renames["IN_SHADOW_PASS"] = "bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_IN_SHADOW_PASS)";
+		actions.renames["PREVIOUS_FRAME"] = "global_previous_frame";
 		// True while the path tracer captures the geometry (vertex() run for its BLAS).
 		actions.renames["IN_PATH_TRACER"] = "SHADER_IN_PATH_TRACER";
 		actions.renames["VIEWPORT_SIZE"] = "read_viewport_size";

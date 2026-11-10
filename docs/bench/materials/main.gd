@@ -45,9 +45,10 @@ extends Node3D
 #                     --hair=wavy) for wavy hair; "blonde" for light hair, "back" for the sun low behind
 #                     the head, "plain" for Godot's standard lighting instead of hair_shading, "far" for the
 #                     camera 8 m away, "nolod" to draw every strand at any distance, "novolume" for
-#                     strands that pass through each other (volume_enabled off); "box" for square
-#                     shoulders (spheres only on the skull), "body" to make the shoulders (round, or
-#                     square with "box") the collision body, held still and seen from the side,
+#                     strands that pass through each other (volume_enabled off), "taa" for temporal
+#                     antialiasing, "mvview" to see the motion vectors; "box" for broad
+#                     rounded shoulders (spheres only on the skull), "body" to make the shoulders (with
+#                     or without "box") the collision body, held still and seen from the side,
 #                     "skinned" to skin them to a tilted bone (the head stays still), "hidebox" to see the drape;
 #                     --hair=compare: held still, beside the same groom on a HairMesh with BaseMaterial3D
 #                     Hair; --hair=compare_shader: that HairMesh through a shader's HAIR outputs instead
@@ -687,6 +688,12 @@ func _strands_sim() -> void:
 	h.hair_shading = not hair.contains("plain")
 	h.lod_enabled = not hair.contains("nolod")
 	h.volume_enabled = not hair.contains("novolume")
+	if hair.contains("taa"):
+		# Temporal antialiasing, which follows the strands by their motion vectors.
+		get_viewport().use_taa = true
+	if hair.contains("mvview"):
+		# The motion vectors themselves (Godot's debug view).
+		get_viewport().debug_draw = Viewport.DEBUG_DRAW_MOTION_VECTORS
 	if hair.contains("back"):
 		# The sun low behind the head, toward the camera: light through the hair.
 		for c in get_children():
@@ -715,10 +722,11 @@ func _strands_sim() -> void:
 		h.collision_spheres = PackedVector4Array([Vector4(0, 0, 0, 0.1)])
 		h.collision_body = h.get_path_to(body)
 	if hair.contains("box"):
-		# Square shoulders, which spheres fit badly: "body" makes them the collision body (a
-		# distance field), "skinned" skins them to a bone tilted 25 degrees.
-		var shoulders := BoxMesh.new()
-		shoulders.size = Vector3(0.42, 0.16, 0.4)
+		# Broad rounded shoulders, which the spheres fit badly: "body" makes them the collision
+		# body (a distance field), "skinned" skins them to a bone tilted 25 degrees.
+		var shoulders := SphereMesh.new()
+		shoulders.radius = 0.21
+		shoulders.height = 0.16
 		body.mesh = shoulders
 		body.position = Vector3(0, -0.22, 0)
 		h.collision_spheres = PackedVector4Array([Vector4(0, 0, 0, 0.1)])
@@ -772,7 +780,7 @@ func _strands_sim() -> void:
 
 
 # The box's surface skinned wholly to bone 0, in the bone's bind space at rest.
-func _skinned_box(p_box: BoxMesh) -> ArrayMesh:
+func _skinned_box(p_box: PrimitiveMesh) -> ArrayMesh:
 	var a := p_box.get_mesh_arrays()
 	var verts: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
 	var bones := PackedInt32Array()

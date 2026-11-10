@@ -465,6 +465,29 @@ pushes). Only guides take part (follow strands ride them). Off: as before.
 
 Bench: `--scene=strands_sim --raster --hair=wavy` against `--hair=wavy_novolume`.
 
+## Stage 2i: motion vectors for raster strands
+
+TAA, FSR 2 and DLSS reproject each pixel by its motion vector. Godot writes motion vectors only
+for opaque surfaces, so the blended strands took the vectors of what lay behind them (the head,
+or the still background): moving hair smeared and ghosted. Two things were missing: the vertex
+function, which Godot runs a second time with last frame's transforms for the motion vector, read
+this frame's strand positions both times; and the alpha pass did not write motion vectors at all.
+
+What engines do: Unreal writes hair strand velocity from its own previous-position buffer (the
+groom keeps last frame's positions), and translucent materials can opt in to writing velocity
+("Output Velocity"). TressFX keeps no previous positions.
+
+Ours: MODE_OUTPUT keeps where each point was put last frame (per point, so the far-to-near draw
+order can change between frames) and writes it beside this frame's positions in a second image;
+the shader built-in PREVIOUS_FRAME (true while the vertex function runs for last frame) makes the
+hair shader rebuild the ribbon there. The render mode `alpha_motion_vectors` lets a blended
+surface write motion vectors in the alpha pass, blended by its alpha (the shader passes alpha in
+the vector's w; other blended surfaces leave the target untouched), so dense hair takes over a
+pixel's motion as it takes over its colour. A paused simulation copies the current positions to
+the previous ones (no stale motion). Raster only; the path tracer's own motion is unchanged.
+
+Bench: `--scene=strands_sim --raster --hair=wavy_taa`.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.

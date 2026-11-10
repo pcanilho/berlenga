@@ -510,7 +510,10 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 				}
 
 				if constexpr ((p_color_pass_flags & COLOR_PASS_FLAG_MOTION_VECTORS) != 0) {
-					pipeline_key.color_pass_flags |= SceneShaderForwardClustered::PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS;
+					// In the alpha pass only alpha_motion_vectors surfaces write motion vectors.
+					if ((p_color_pass_flags & COLOR_PASS_FLAG_TRANSPARENT) == 0 || (surf->flags & GeometryInstanceSurfaceDataCache::FLAG_ALPHA_MOTION_VECTORS)) {
+						pipeline_key.color_pass_flags |= SceneShaderForwardClustered::PIPELINE_COLOR_PASS_FLAG_MOTION_VECTORS;
+					}
 				}
 
 				if constexpr ((p_color_pass_flags & COLOR_PASS_FLAG_TRANSPARENT) != 0) {
@@ -2716,8 +2719,21 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	{
 		uint32_t transparent_color_pass_flags = (color_pass_flags | uint32_t(COLOR_PASS_FLAG_TRANSPARENT)) & ~uint32_t(COLOR_PASS_FLAG_SEPARATE_SPECULAR);
-		// Motion vectors should not be overwritten by transparent objects.
-		transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
+		// Motion vectors should not be overwritten by transparent objects, except those that ask
+		// to (render_mode alpha_motion_vectors, such as strand hair): then the pass keeps the
+		// motion vector target and only they write to it, blended by their alpha.
+		bool alpha_motion_vectors = false;
+		if (transparent_color_pass_flags & COLOR_PASS_FLAG_MOTION_VECTORS) {
+			for (const GeometryInstanceSurfaceDataCache *surf : render_list[RENDER_LIST_ALPHA].elements) {
+				if (surf->flags & GeometryInstanceSurfaceDataCache::FLAG_ALPHA_MOTION_VECTORS) {
+					alpha_motion_vectors = true;
+					break;
+				}
+			}
+		}
+		if (!alpha_motion_vectors) {
+			transparent_color_pass_flags &= ~uint32_t(COLOR_PASS_FLAG_MOTION_VECTORS);
+		}
 
 		RID alpha_framebuffer = rb_data.is_valid() ? rb_data->get_color_pass_fb(transparent_color_pass_flags) : color_only_framebuffer;
 		RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, transparent_color_pass_flags, rb_data.is_null(), p_render_data->directional_light_soft_shadows, rp_uniform_set, get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_WIREFRAME, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, p_render_data->scene_data->view_count, 0, base_specialization);
@@ -4398,6 +4414,10 @@ void RenderForwardClustered::_geometry_instance_add_surface_with_material(Geomet
 
 	if (p_material->shader_data->blend_mode == SceneShaderForwardClustered::ShaderData::BLEND_MODE_OIT) {
 		flags |= GeometryInstanceSurfaceDataCache::FLAG_USES_OIT;
+	}
+
+	if (p_material->shader_data->uses_alpha_motion_vectors) {
+		flags |= GeometryInstanceSurfaceDataCache::FLAG_ALPHA_MOTION_VECTORS;
 	}
 
 	// Raster-side pass classification.

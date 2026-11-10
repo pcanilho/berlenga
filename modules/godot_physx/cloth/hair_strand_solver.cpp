@@ -172,7 +172,8 @@ void HairStrandSolverGPU::rt_free_buffers() {
 		rd->free_rid(uniform_set);
 	}
 	uniform_set = RID();
-	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &buf_tris, &buf_sdf, &buf_vol, &buf_vol_rest };
+	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &tex_out_prev, &buf_last, &buf_tris, &buf_sdf, &buf_vol, &buf_vol_rest };
+	history = false;
 	vol_cells = 0;
 	tris_capacity = 0;
 	for (RID *r : rids) {
@@ -238,6 +239,10 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 	Vector<Vector<uint8_t>> data;
 	data.push_back(zeros);
 	tex_out = rd->texture_create(tf, RD::TextureView(), data);
+	tf.usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
+	tex_out_prev = rd->texture_create(tf, RD::TextureView(), data);
+	buf_last = storage_from(rd, nullptr, point_count * 16);
+	history = false;
 
 	// No collision body yet: placeholders, grown on the first step that has one.
 	buf_tris = storage_from(rd, nullptr, 16);
@@ -320,11 +325,38 @@ void HairStrandSolverGPU::rt_make_uniform_set() {
 		u.append_id(buf_vol_rest);
 		uniforms.push_back(u);
 	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		u.binding = 12;
+		u.append_id(tex_out_prev);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 13;
+		u.append_id(buf_last);
+		uniforms.push_back(u);
+	}
 	uniform_set = rd->uniform_set_create(uniforms, shader, 0);
 }
 
 void HairStrandSolverGPU::rt_reset(Ref<HairStrandSolverGPU> p_self) {
 	needs_reset = true;
+	history = false;
+}
+
+void HairStrandSolverGPU::rt_hold(Ref<HairStrandSolverGPU> p_self) {
+	if (rd == nullptr || !built.is_set() || tex_out.is_null() || tex_out_prev.is_null()) {
+		return;
+	}
+	rd->texture_copy(tex_out, tex_out_prev, Vector3(), Vector3(), Vector3(tex_width, tex_height, 1), 0, 0, 0, 0);
+	history = false; // on resuming, the first frame starts from where the hair is
+	if (local) {
+		rd->submit();
+		rd->sync();
+	}
 }
 
 void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps, PackedFloat32Array p_tris) {
@@ -373,6 +405,7 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 	if (needs_reset) {
 		run(MODE_RESET, 1.0f, 1.0f, strand_count);
 		needs_reset = false;
+		history = false; // teleported: no motion this frame
 	}
 	if (fl[VOL_PARAMS + 7] > 0.5f) {
 		run(MODE_VOL_CLEAR, 1.0f, 1.0f, vol_cells * vol_cells * vol_cells * 4);
@@ -408,10 +441,11 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 				run(MODE_SORT_STEP, (float)j, 0.0f, sort_size, k);
 			}
 		}
-		run(MODE_OUTPUT, 1.0f, 1.0f, strand_count * slot_points);
+		run(MODE_OUTPUT, 1.0f, 1.0f, strand_count * slot_points, history ? 1 : 0);
 	} else {
-		run(MODE_OUTPUT, 1.0f, 1.0f, point_count);
+		run(MODE_OUTPUT, 1.0f, 1.0f, point_count, history ? 1 : 0);
 	}
+	history = true;
 	rd->compute_list_end();
 	if (local) {
 		rd->submit();
@@ -676,6 +710,17 @@ void HairStrandSolver::reset() {
 
 RID HairStrandSolver::get_position_texture_rd_rid() const {
 	return gpu.is_valid() ? gpu->tex_out : RID();
+}
+
+RID HairStrandSolver::get_previous_position_texture_rd_rid() const {
+	return gpu.is_valid() ? gpu->tex_out_prev : RID();
+}
+
+void HairStrandSolver::hold() {
+	if (gpu.is_null()) {
+		return;
+	}
+	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_hold).bind(gpu));
 }
 
 int HairStrandSolver::get_texture_width() const {

@@ -26,7 +26,8 @@
 //                the two pinned ones inside the margin is pushed out along the field's gradient.
 //   MODE_RESET   (first frame / teleport) every point placed on the groomed pose.
 //   MODE_OUTPUT  positions written, in the render copy's space, to an RGBA32F image the hair
-//                material reads (no CPU readback).
+//                material reads (no CPU readback), and last frame's positions of the same points to
+//                a second image, for the raster's motion vectors (TAA, FSR 2, DLSS).
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -71,7 +72,7 @@ layout(push_constant, std430) uniform Pass {
 	int mode;
 	float frac; // substep fraction, for blending the head's transform
 	float frac_prev; // the previous substep's
-	int pad1; // MODE_SORT_STEP: the bitonic block size k (frac holds the stride j)
+	int pad1; // MODE_SORT_STEP: the bitonic block size k (frac holds the stride j); MODE_SDF_JUMP: the step; MODE_OUTPUT: 1 with history
 }
 pass;
 
@@ -92,6 +93,12 @@ layout(set = 0, binding = 4, std430) restrict buffer Prev {
 };
 
 layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2D out_image;
+
+layout(set = 0, binding = 12, rgba32f) uniform restrict writeonly image2D prev_image;
+
+layout(set = 0, binding = 13, std430) restrict buffer Last {
+	vec4 last[]; // per point: where MODE_OUTPUT put it last frame (render copy's space)
+};
 
 layout(set = 0, binding = 7, std430) restrict buffer Order {
 	vec2 order[]; // draw order, far to near: x the strand's depth key, y the strand
@@ -475,11 +482,17 @@ void main() {
 	}
 	if (pass.mode == MODE_OUTPUT) {
 		int w = max(counts.z, 1);
+		// pass.pad1: 1 when last[] holds last frame's positions (0 after a build or reset: no motion).
+		bool history = pass.pad1 == 1;
 		if (slot_points <= 0) {
 			if (id >= counts.y) {
 				return;
 			}
-			imageStore(out_image, ivec2(id % w, id / w), vec4(to_world(world_to_out, pos[id].xyz), 1.0));
+			vec3 o = to_world(world_to_out, pos[id].xyz);
+			vec3 before = history ? last[id].xyz : o;
+			last[id] = vec4(o, 1.0);
+			imageStore(out_image, ivec2(id % w, id / w), vec4(o, 1.0));
+			imageStore(prev_image, ivec2(id % w, id / w), vec4(before, 1.0));
 			return;
 		}
 		// Sorted: slot s holds the s-th strand from the back, slot_points texels each; w is the
@@ -498,7 +511,16 @@ void main() {
 		if (along >= 0.0 && strand_rank(strand) >= air.w) {
 			along += 2.0;
 		}
-		imageStore(out_image, ivec2(id % w, id / w), vec4(to_world(world_to_out, pos[sp].xyz), along));
+		vec3 o = to_world(world_to_out, pos[sp].xyz);
+		vec3 before = o;
+		if (k < sn) {
+			// One texel per real point (padding past the end only repeats the last one), so each
+			// point's history is read and replaced by a single thread.
+			before = history ? last[sp].xyz : o;
+			last[sp] = vec4(o, 1.0);
+		}
+		imageStore(out_image, ivec2(id % w, id / w), vec4(o, along));
+		imageStore(prev_image, ivec2(id % w, id / w), vec4(before, along));
 		return;
 	}
 

@@ -104,6 +104,7 @@ class PhysXHair3D : public Node3D {
 	MeshInstance3D *render_instance = nullptr;
 	Ref<ShaderMaterial> copy_material;
 	Ref<Texture2DRD> pos_texture;
+	Ref<Texture2DRD> prev_pos_texture; // last frame's positions, for motion vectors
 	bool built = false;
 	bool build_pending = false;
 
