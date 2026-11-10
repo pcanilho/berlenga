@@ -17,7 +17,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
 - **Terrain**: mountain ranges raised and eroded per seed, with geology and river networks; non-destructive height brushes; terrain data maps.
-- **Snow**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced.
+- **Snow**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced; deep snow with tracks.
 - **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Clouds**: a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
@@ -341,9 +341,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ### Snow
 - **Snow cover** (`SnowCover3D`): a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift.
+- **Deep snow** (`SnowSurface3D`, `snow_deform` group): deep snow as geometry with prints and tracks; bodies sink by weight (Bekker) and rest in their own tracks; tracks refill with new snow and wind.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced.
 
-<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt</summary>
+<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks</summary>
 
 ![Snow on a mountain, raster and path traced](docs/media/snow-mountain.jpg)
 
@@ -360,6 +361,14 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Time-lapse of snow building up on props](docs/media/snow-props.gif)
 
 *Snowfall on props: the ground covers first, then the flatter tops of the props.*
+
+![Prints and tracks in deep snow, raster and path traced](docs/media/snow-tracks.jpg)
+
+*Deep snow: prints and tracks behind the bodies, raster and path traced.*
+
+![Bodies leaving prints and tracks in deep snow](docs/media/snow-tracks.gif)
+
+*Tracks: bodies sink in by weight as they move.*
 
 </details>
 
