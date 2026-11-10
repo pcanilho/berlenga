@@ -536,6 +536,15 @@ of it the four compute passes; the GPU cost is on the PC queue.
 
 Bench: `--scene=strands_sim --raster --hair=wavy` against `--hair=wavy_nodeep`.
 
+Tried and not kept: Zinke's dual scattering (as Unreal) driven by the map's hair count, with
+the forward transmittance af^n, the lobes spread by n fibre widths and the back-scattering A_b
+in place of the wrapped multiple-scattering term. Against the same path traced frame the error
+rose from 43 to 60-82 (best fibre density): for brown hair a fibre passes little light forward,
+so A_b is small and the lit side lost the light the wrapped term gave it. The far side's
+remaining gap does not move with any of it: there the head blocks the sun, and the path tracer
+lights it with the sky and the light the floor bounces, which raster gets only from global
+illumination (SDFGI, VoxelGI), not from the hair shading.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.
