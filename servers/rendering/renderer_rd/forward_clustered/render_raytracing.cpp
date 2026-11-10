@@ -7401,6 +7401,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				}
 				RID catch_rd = has_snow && catch_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(catch_tex) : RID();
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_CATCH_MAP] = catch_rd.is_valid() ? float(bindless_block->add_texture(catch_rd)) : 0.0f;
+				static const StringName snow_exact_name = "snow_exact_glints";
+				const Variant exact_var = ms->global_shader_parameter_get_internal(snow_exact_name);
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_EXACT_GLINTS] = (exact_var.get_type() == Variant::BOOL && bool(exact_var)) ? 1.0f : 0.0f;
 			}
 			// The world tier, the same way.
 			static const StringName snow_world_map_name = "snow_world_map";

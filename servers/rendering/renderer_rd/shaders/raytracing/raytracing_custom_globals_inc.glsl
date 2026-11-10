@@ -77,6 +77,7 @@ float rim = 0.0;
 float rim_tint = 0.0;
 float clearcoat = 0.0;
 float clearcoat_roughness = 0.0;
+vec3 specular_normal = vec3(0.0); // SPECULAR_NORMAL: view-space normal for the base specular lobe only (zero: NORMAL).
 float anisotropy = 0.0;
 vec2 anisotropy_flow = vec2(1.0, 0.0);
 float alpha_scissor_threshold = -1.0; // Negative until the shader writes ALPHA_SCISSOR_THRESHOLD; 0 keeps every texel, as in raster.

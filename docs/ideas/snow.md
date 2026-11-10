@@ -698,3 +698,44 @@ Gray, Saltation of snow, Water Resources Research 26(7), 1990. Pomeroy and Male,
 of snow, J. Hydrology 136, 1992. Li and Pomeroy, Estimates of threshold wind speeds for snow transport
 using meteorological data, J. Applied Meteorology 36, 1997. Tabler, Snow transport as a function of wind
 speed and height, Cold Regions Engineering, ASCE 1991.
+
+## Follow-up 5: exact sparkle under the path tracer (built 10 Nov 2026)
+
+Stage 5's sparkle is a footprint grid: one facet per cell, sized to the pixel, the same in raster and
+path tracing. A path tracer can do better: it already shoots many rays through a pixel, so if every grain
+is a facet the samples integrate the grains in the footprint themselves, at any distance and on every
+bounce. The glint papers (Jakob, Hasan, Yan, Lawrence, Ramamoorthi and Marschner 2014; Yan, Hasan, Jakob,
+Lawrence, Marschner and Ramamoorthi 2014; Chermain, Sauvage, Dischler and Dachsbacher 2020) count facets
+in a footprint to get that integral cheaply; their reference is the brute-force one, every facet traced,
+which is what this is. Atanasov and Koylazov (2016, V-Ray's glints) do the same per-ray facet sampling
+in production.
+
+- **The facet.** Each 2 mm grain cell (hashed from the world position) holds one facet, its normal
+  GGX-sampled with alpha 0.4 around the snow's normal, as stage 5's facets.
+- **Specular on its own normal.** The path tracer's material result gets a `specular_normal`: when set,
+  the base specular lobe (evaluation, sampling and its pdf) lies on it while the diffuse keeps the
+  shading normal. Snow sets it to the facet, at roughness 0.22 (alpha 0.05, a smooth ice face). An
+  earlier try carried the facet on the coat lobe, as stage 5 does: snow came out 7% darker (mean
+  luminance 0.576 against 0.623), because the coat dims the diffuse under it.
+- **For custom shaders.** A new spatial fragment output, `SPECULAR_NORMAL` (view space, like `NORMAL`),
+  sets it; raster ignores it. `SnowSurface3D` uses it, and `snow_glint_apply_specular()` in
+  `get_snow_shader_code()` gives other snow shaders the same (the terrain material).
+- **Wet and trodden snow** fade to the plain rough lobe exactly as stage 5's glints do.
+- **Toggle.** The global shader parameter `snow_exact_glints` (rt_param 57), off by default: at the
+  samples a CPU check can afford the result is grainy (8% of pixels glint at 16 samples against 0.1%
+  for the grid), which the denoiser is there to settle. Off, the path tracer keeps stage 5's grid.
+
+**Checks.** `--view=sparkle --spp=16 --glints=exact` (and `--view=trail ...` for `SnowSurface3D`): mean
+luminance 0.634 against 0.624 for the grid and 0.619 in raster (with the samples spread over the
+pixel, as main now does; 0.604 against 0.623 before); the deep snow of the trail view 1% brighter than
+with the grid; a glitter path toward the sun in both. All snow and ground checks pass.
+
+**Cost.** One hash and a GGX sample per snow hit, the same BRDF work; GPU time and the look with Ray
+Reconstruction on the PC queue before it can be on by default.
+
+Sources: Jakob, Hasan, Yan, Lawrence, Ramamoorthi and Marschner, Discrete stochastic microfacet models,
+SIGGRAPH 2014. Yan, Hasan, Jakob, Lawrence, Marschner and Ramamoorthi, Rendering glints on
+high-resolution normal-mapped specular surfaces, SIGGRAPH 2014. Chermain, Sauvage, Dischler and
+Dachsbacher, Procedural physically based BRDF for real-time rendering of glints, Pacific Graphics 2020.
+Atanasov and Koylazov, A practical stochastic algorithm for rendering mirror-like flakes, SIGGRAPH 2016
+Talks.

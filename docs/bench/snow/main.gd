@@ -23,7 +23,8 @@ extends Node3D
 #   --view=climate   a winter baked over the mountain (SnowClimate): snow line, shaded north faces, loaded lee
 #   --view=cornice   a corniced ridge from below its lee face
 #   --view=sparkle    dry new snow at the feet against a low sun ahead: glinting grains; --melt=H hours of thaw
-#                     first wets it (the glints go); prints the share of glinting pixels
+#                     first wets it (the glints go); --glints=exact: every grain a facet under the path tracer
+#                     (sparkle) prints the share of glinting pixels and the mean luminance
 #   --view=shelter    a shed and young spruces after a snowfall: bare ground under the roof, snow in the
 #                     crowns and less under them (--test=shelter for the checks)
 #   --test=crust      melt-freeze crusts: formed by a thaw and a frost, harder each cycle, a boot breaks a
@@ -75,6 +76,9 @@ var transport := true
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--view="): view = a.substr(7)
+		if a == "--glints=exact":
+			# Every grain a facet under the path tracer (follow-up 5), against the footprint grid (stage 5).
+			RenderingServer.global_shader_parameter_set("snow_exact_glints", true)
 		elif a == "--raster": raster = true
 		elif a.begins_with("--test"):
 			test = true
@@ -1389,15 +1393,17 @@ func _build_sparkle(cam: Camera3D) -> void:
 			lum[y * w + x] = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
 	var count := 0
 	var total := 0
+	var mean_lum := 0.0
 	for y in range(h / 2, h - 2):
 		for x in range(2, w - 2):
 			var ring := 0.0
 			for d in [Vector2i(-2, 0), Vector2i(2, 0), Vector2i(0, -2), Vector2i(0, 2), Vector2i(-2, -2), Vector2i(2, 2), Vector2i(-2, 2), Vector2i(2, -2)]:
 				ring += lum[(y + d.y) * w + x + d.x]
 			total += 1
+			mean_lum += lum[y * w + x]
 			if lum[y * w + x] > ring / 8.0 * 1.2:
 				count += 1
-	print("sparkle: glinting %.3f%% of %d pixels" % [100.0 * count / total, total])
+	print("sparkle: glinting %.3f%% of %d pixels, mean luminance %.4f" % [100.0 * count / total, total, mean_lum / total])
 	get_tree().quit()
 
 
