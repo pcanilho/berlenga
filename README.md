@@ -310,7 +310,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ![A generated range with its ground material: rock, scree, soil and a sand beach](docs/media/terrain-ground.jpg)
 
-*Ground material: bare rock on the ridges, soil and green in the valleys, a sand beach at the coast, all from the generator's geology.*
+*Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
 ![Footprints and tracks in dry sand, damp sand, soil, mud and leaf litter, raster and path traced](docs/media/ground-footprints.jpg)
 
