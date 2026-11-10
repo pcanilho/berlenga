@@ -89,6 +89,17 @@ private:
 	real_t detail_reach = 1.0;
 	real_t detail_gully_weight = 0.5;
 	real_t detail_assumed_slope = 0.6;
+	real_t detail_crest = 1.0; // ridged noise on crests, times the gully amplitude
+
+	// Geology and rivers (stage 5).
+	real_t soil_production = 0.5; // mm/yr on bare rock
+	real_t soil_depth_scale = 0.5; // m
+	real_t max_soil_depth = 2.0; // m
+	real_t talus_angle = 35.0; // degrees
+	real_t talus_reach = 120.0; // m
+	real_t river_runoff = 1000.0; // mm/yr
+	real_t river_width_coefficient = 7.0; // width = coefficient * discharge^0.5
+	bool publish_shader_globals = true;
 
 	// Output.
 	NodePath terrain_path;
@@ -102,6 +113,12 @@ private:
 	LocalVector<float> drainage;
 	LocalVector<float> sediment;
 	LocalVector<float> uplift_field;
+	LocalVector<float> soil;
+	LocalVector<float> rock;
+	LocalVector<float> talus;
+	LocalVector<int32_t> receivers;
+	LocalVector<float> channel_area; // D8 drainage area along the receivers, for the rivers
+	Ref<ImageTexture> geology_texture;
 	Rect2 result_rect; // where the last generate() ran; the result stays there if the node moves
 	real_t result_cell = 1.0;
 	float result_min = 0.0f;
@@ -126,6 +143,8 @@ private:
 		float *out; // width * rows, NaN outside
 	};
 	static void _fill_row(void *p_job, uint32_t p_row);
+	void _publish_globals();
+	Vector3 _cell_position(int p_cell) const;
 	void _fill(real_t p_x0, real_t p_z0, real_t p_spacing, int p_width, int p_rows, float *r_out) const;
 
 protected:
@@ -191,8 +210,28 @@ public:
 	real_t get_detail_reach() const { return detail_reach; }
 	void set_detail_gully_weight(real_t p_value) { detail_gully_weight = CLAMP(p_value, real_t(0.05), real_t(1.0)); }
 	real_t get_detail_gully_weight() const { return detail_gully_weight; }
+	void set_detail_crest(real_t p_value) { detail_crest = MAX(p_value, real_t(0.0)); }
+	real_t get_detail_crest() const { return detail_crest; }
 	void set_detail_assumed_slope(real_t p_value) { detail_assumed_slope = MAX(p_value, real_t(0.01)); }
 	real_t get_detail_assumed_slope() const { return detail_assumed_slope; }
+
+	// Geology and rivers.
+	void set_soil_production(real_t p_value) { soil_production = MAX(p_value, real_t(1e-6)); }
+	real_t get_soil_production() const { return soil_production; }
+	void set_soil_depth_scale(real_t p_value) { soil_depth_scale = MAX(p_value, real_t(0.0)); }
+	real_t get_soil_depth_scale() const { return soil_depth_scale; }
+	void set_max_soil_depth(real_t p_value) { max_soil_depth = MAX(p_value, real_t(0.0)); }
+	real_t get_max_soil_depth() const { return max_soil_depth; }
+	void set_talus_angle(real_t p_value) { talus_angle = CLAMP(p_value, real_t(5.0), real_t(80.0)); }
+	real_t get_talus_angle() const { return talus_angle; }
+	void set_talus_reach(real_t p_value) { talus_reach = MAX(p_value, real_t(1.0)); }
+	real_t get_talus_reach() const { return talus_reach; }
+	void set_river_runoff(real_t p_value) { river_runoff = MAX(p_value, real_t(0.0)); }
+	real_t get_river_runoff() const { return river_runoff; }
+	void set_river_width_coefficient(real_t p_value) { river_width_coefficient = MAX(p_value, real_t(0.0)); }
+	real_t get_river_width_coefficient() const { return river_width_coefficient; }
+	void set_publish_shader_globals(bool p_enable) { publish_shader_globals = p_enable; }
+	bool is_publishing_shader_globals() const { return publish_shader_globals; }
 
 	void set_terrain(const NodePath &p_path) { terrain_path = p_path; }
 	NodePath get_terrain() const { return terrain_path; }
@@ -226,6 +265,18 @@ public:
 	Ref<Image> get_drainage_image() const;
 	Ref<Image> get_sediment_image() const;
 	Ref<Image> get_uplift_image() const;
+
+	// Geology (soil, rock, talus) and rivers.
+	real_t get_soil_depth(const Vector3 &p_global_position) const;
+	real_t get_rock_exposure(const Vector3 &p_global_position) const;
+	real_t get_talus(const Vector3 &p_global_position) const;
+	Color get_geology_at(const Vector3 &p_global_position) const;
+	Ref<Image> get_geology_image() const;
+	Ref<Texture2D> get_geology_texture() const { return geology_texture; }
+	static String get_geology_shader_code();
+	real_t get_discharge(real_t p_area) const;
+	Array get_rivers(real_t p_min_area) const;
+	Array build_river_paths(Node *p_parent, real_t p_min_area);
 
 	double get_last_generate_msec() const { return last_generate_msec; }
 	double get_last_write_msec() const { return last_write_msec; }

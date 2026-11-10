@@ -48,6 +48,17 @@ func _ready() -> void:
 		print("%d checks, %d failed" % [checks, failures])
 		print("PASS" if failures == 0 else "FAIL")
 		get_tree().quit(1 if failures else 0)
+	elif args.has("geology"):
+		if args.has("view"):
+			gen.uplift = 6.0
+			gen.range_width = 1300.0
+		gen.generate()
+		_save_geology(args["geology"])
+		if args.has("dump"):
+			var fd := FileAccess.open(args["dump"], FileAccess.WRITE)
+			fd.store_buffer(gen.get_height_image().get_data())
+			fd.close()
+		get_tree().quit()
 	elif args.has("map"):
 		gen.generate()
 		_save_map(args["map"])
@@ -57,6 +68,8 @@ func _ready() -> void:
 		gen.uplift = 6.0
 		gen.range_width = 1300.0
 		gen.detail_enabled = not args.has("no-detail")
+		if args.has("crest"):
+			gen.detail_crest = float(args["crest"])
 		gen.bake()
 		_build_view()
 		var raster := args.has("raster")
@@ -227,16 +240,19 @@ func _run_checks() -> void:
 		dmax = maxf(dmax, absf(d))
 		dsum += absf(d)
 		fp.append(gen.get_height(p))
-	var bound := gen.detail_depth / gen.detail_gully_weight * gen.detail_wavelength * 2.0
+	var bound := gen.detail_depth / gen.detail_gully_weight * gen.detail_wavelength * (2.0 + gen.detail_crest)
 	check(dmax > 1.0 and dmax < bound, "detail carves the ground (mean %.2f m, max %.1f m, bound %.1f m)" % [dsum / 2000.0, dmax, bound])
 	var fp2 := PackedFloat32Array()
 	for i in 2000:
 		fp2.append(gen.get_height(Vector3(-2000.0 + 4000.0 * fposmod(i * 0.618034, 1.0), 0, -2000.0 + 4000.0 * fposmod(i * 0.414214, 1.0))))
 	check(fp == fp2, "detail is a pure function of position")
-	# Crests stay whole: where opposite slopes meet, the detail fades (slope coherence), so gullies do not notch a
-	# crest into a comb. Measured by the second difference of the offset over 2 m steps along crests running north
-	# to south, against the same across the gullies of slopes facing east or west. Without the fade crests bend
-	# about 7 times as much; with it about 2 times.
+	# Crests: the gullies fade to a share where opposite slopes meet (slope coherence), so they do not notch a crest
+	# into a regular comb, and a ridged noise gives the crest irregular pinnacles and cols instead. The comb is
+	# measured with the crest noise off: the second difference of the offset over 2 m steps along crests running
+	# north to south, against the same across the gullies of slopes facing east or west (without the fade about 7
+	# times as much). Then the crest noise must move the crests.
+	var crest_amount := gen.detail_crest
+	gen.detail_crest = 0.0
 	var hgrid := gen.get_height_image()
 	var gs := gen.get_grid_size()
 	var cs := gen.cell_size
@@ -261,7 +277,22 @@ func _run_checks() -> void:
 				slope_n += 1
 	crest_bend /= maxi(crest_n, 1)
 	slope_bend /= maxi(slope_n, 1)
-	check(crest_n >= 10 and slope_n > 100 and crest_bend < 3.0 * slope_bend, "detail fades on crests (bend %.2f m along %d crest points, %.2f m across %d slope points)" % [crest_bend, crest_n, slope_bend, slope_n])
+	check(crest_n >= 10 and slope_n > 100 and crest_bend < 4.0 * slope_bend, "gullies fade on crests, no comb (bend %.2f m along %d crest points, %.2f m across %d slope points)" % [crest_bend, crest_n, slope_bend, slope_n])
+	var crest_pts: Array[Vector3] = []
+	for z in range(4, gs.y - 4):
+		for x in range(4, gs.x - 4):
+			var h0 := hgrid.get_pixel(x, z).r
+			if h0 - hgrid.get_pixel(x - 1, z).r > 0.1 * cs and h0 - hgrid.get_pixel(x + 1, z).r > 0.1 * cs:
+				crest_pts.append(Vector3(-WORLD * 0.5 + x * cs, 0, -WORLD * 0.5 + z * cs))
+	var before := PackedFloat32Array()
+	for q in crest_pts:
+		before.append(gen.get_height(q))
+	gen.detail_crest = crest_amount
+	var moved := 0.0
+	for i in crest_pts.size():
+		moved += absf(gen.get_height(crest_pts[i]) - before[i])
+	moved /= maxi(crest_pts.size(), 1)
+	check(moved > 1.0, "crest noise shapes the crests (mean %.1f m at %d crest points)" % [moved, crest_pts.size()])
 	# sample_heights gives the same ground as get_height.
 	var tile := gen.sample_heights(Vector2(-300, 200), 2.0, Vector2i(16, 8))
 	var tile_worst := 0.0
@@ -272,6 +303,94 @@ func _run_checks() -> void:
 	gen.detail_enabled = false
 	check(gen.get_height(Vector3(100, 0, 100)) == gen.get_base_height(Vector3(100, 0, 100)), "detail_enabled off gives the simulated ground")
 	gen.detail_enabled = true
+
+	# Geology: rock bare on steep ground, soil on gentle ground, scree under cliffs.
+	var geo := gen.get_geology_image()
+	check(geo != null and geo.get_width() == gs.x and geo.get_format() == Image.FORMAT_RGBAF, "geology map present")
+	var rock_steep := 0.0
+	var n_steep := 0
+	var rock_flat := 0.0
+	var soil_flat := 0.0
+	var soil_steep := 0.0
+	var n_flat := 0
+	var talus_n := 0
+	var talus_slope := 0.0
+	var bad := 0
+	var repose := tan(deg_to_rad(gen.talus_angle))
+	for z in range(1, gs.y - 1):
+		for x in range(1, gs.x - 1):
+			var c := geo.get_pixel(x, z)
+			if c.r < 0.0 or c.g < 0.0 or c.g > 1.0 or c.b < 0.0 or c.b > 1.0:
+				bad += 1
+			var h0 := hgrid.get_pixel(x, z).r
+			var sl := maxf(maxf(absf(h0 - hgrid.get_pixel(x - 1, z).r), absf(h0 - hgrid.get_pixel(x + 1, z).r)), maxf(absf(h0 - hgrid.get_pixel(x, z - 1).r), absf(h0 - hgrid.get_pixel(x, z + 1).r))) / cs
+			if sl > 0.6:
+				rock_steep += c.g
+				soil_steep += c.r
+				n_steep += 1
+			elif sl < 0.1:
+				rock_flat += c.g
+				soil_flat += c.r
+				n_flat += 1
+			if c.b > 0.3:
+				talus_n += 1
+				talus_slope += sl
+	check(bad == 0, "geology values in range")
+	rock_steep /= maxi(n_steep, 1)
+	rock_flat /= maxi(n_flat, 1)
+	soil_steep /= maxi(n_steep, 1)
+	soil_flat /= maxi(n_flat, 1)
+	check(rock_steep > 0.5 and rock_flat < 0.2, "rock bare on steep ground (%.2f), covered on gentle ground (%.2f)" % [rock_steep, rock_flat])
+	check(soil_flat > 4.0 * soil_steep, "soil deeper on gentle ground (%.2f m) than steep (%.2f m)" % [soil_flat, soil_steep])
+	talus_slope /= maxi(talus_n, 1)
+	check(talus_n > 50 and talus_slope < repose, "scree lies below repose (%d cells, mean slope %.2f, repose %.2f)" % [talus_n, talus_slope, repose])
+	var gc := gen.get_geology_at(Vector3(100, 0, 100))
+	check(absf(gc.r - gen.get_soil_depth(Vector3(100, 0, 100))) < 1e-5 and absf(gc.g - gen.get_rock_exposure(Vector3(100, 0, 100))) < 1e-5, "get_geology_at agrees with the single queries")
+
+	# Rivers: trunk first, downhill, widening downstream, every tributary ending on the river it joins.
+	var rivers := gen.get_rivers(5.0e5)
+	check(rivers.size() > 3, "river network extracted (%d rivers over 0.5 km2)" % rivers.size())
+	var trunk: Dictionary = rivers[0]
+	var most := 0.0
+	for r in rivers:
+		most = maxf(most, r["discharge"])
+	check(trunk["joins"] == -1 and is_equal_approx(trunk["discharge"], most), "the first river is the largest (%.3f m3/s)" % trunk["discharge"])
+	var downhill := true
+	var widening := true
+	var joined := true
+	var own_sum := 0.0
+	for ri in rivers.size():
+		var r: Dictionary = rivers[ri]
+		var pts: PackedVector3Array = r["points"]
+		var wd: PackedFloat32Array = r["widths"]
+		if pts[pts.size() - 1].y > pts[0].y + 1.0:
+			downhill = false
+		for k in range(1, wd.size()):
+			if wd[k] < wd[k - 1] - 1e-4:
+				widening = false
+		if r["joins"] >= 0:
+			var parent: PackedVector3Array = rivers[r["joins"]]["points"]
+			var end := pts[pts.size() - 1]
+			var best := INF
+			for q in parent:
+				best = minf(best, Vector2(q.x - end.x, q.z - end.z).length())
+			if best > cs:
+				joined = false
+		own_sum += r["own_discharge"]
+	check(downhill, "every river ends lower than it starts")
+	check(widening, "widths never shrink downstream")
+	check(joined, "every tributary ends on the river it joins")
+	var outlet_sum := 0.0
+	for r in rivers:
+		if r["joins"] == -1:
+			outlet_sum += r["discharge"]
+	check(absf(own_sum - outlet_sum) < 1e-3 * outlet_sum, "own discharges add up to the outlets' (%.3f vs %.3f m3/s)" % [own_sum, outlet_sum])
+	var holder := Node3D.new()
+	add_child(holder)
+	var paths := gen.build_river_paths(holder, 2.0e6)
+	var n_big := gen.get_rivers(2.0e6).size()
+	check(paths.size() == n_big and holder.get_child_count() == n_big and (paths[0] as Path3D).curve.point_count > 2, "build_river_paths makes one %s per river (%d)" % [(paths[0] as Node).get_class(), n_big])
+	holder.queue_free()
 
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
 	var plot := TerrainBrush3D.new()
@@ -357,18 +476,61 @@ func _save_map(path: String) -> void:
 
 const VIEW_SHADER := """
 shader_type spatial;
-// Grass, rock and snow from the world normal and height, per pixel, so colour borders follow the surface and not
-// the triangles of the display mesh.
+// Grass on soil, bare rock, scree and snow, per pixel from the generator's geology map (terrain_geology(), published
+// as shader globals), the world normal and height.
 uniform float hmax = 1000.0;
+%s
 void fragment() {
 	vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
-	float t = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y / hmax;
-	vec3 col = mix(vec3(0.2, 0.3, 0.12), vec3(0.36, 0.33, 0.29), smoothstep(0.9, 0.75, wn.y));
-	col = mix(col, vec3(0.9, 0.9, 0.92), smoothstep(0.8, 0.92, t) * smoothstep(0.6, 0.8, wn.y));
+	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec4 geo = terrain_geology(wp);
+	vec3 col = mix(vec3(0.2, 0.3, 0.12), vec3(0.36, 0.33, 0.29), max(geo.y, smoothstep(0.85, 0.7, wn.y)));
+	col = mix(col, vec3(0.5, 0.45, 0.38), geo.z);
+	col = mix(col, vec3(0.9, 0.9, 0.92), smoothstep(0.8, 0.92, wp.y / hmax) * smoothstep(0.6, 0.8, wn.y));
 	ALBEDO = pow(col, vec3(2.2));
 	ROUGHNESS = 0.95;
 }
 """
+
+
+func _save_geology(path: String) -> void:
+	# Geology map: soil (green, darker where deeper), bare rock (grey), scree (ochre), shaded by the relief; rivers
+	# over 0.5 km2 drawn from get_rivers() at their widths times 20.
+	var h := gen.get_height_image()
+	var geo := gen.get_geology_image()
+	var g := gen.get_grid_size()
+	var cell := gen.cell_size
+	var img := Image.create(g.x, g.y, false, Image.FORMAT_RGB8)
+	var sun := Vector3(-1, 1.2, -1).normalized()
+	for z in g.y:
+		for x in g.x:
+			var hx := (h.get_pixel(mini(x + 1, g.x - 1), z).r - h.get_pixel(maxi(x - 1, 0), z).r) / (2.0 * cell)
+			var hz := (h.get_pixel(x, mini(z + 1, g.y - 1)).r - h.get_pixel(x, maxi(z - 1, 0)).r) / (2.0 * cell)
+			var n := Vector3(-hx, 1.0, -hz).normalized()
+			var c := geo.get_pixel(x, z)
+			var col := Color(0.55, 0.62, 0.35).lerp(Color(0.3, 0.38, 0.18), clampf(c.r / 4.0, 0.0, 1.0))
+			col = col.lerp(Color(0.62, 0.6, 0.58), c.g)
+			col = col.lerp(Color(0.78, 0.6, 0.32), c.b)
+			img.set_pixel(x, z, col * (0.35 + 0.8 * maxf(n.dot(sun), 0.0)))
+	var half := Vector2(gen.size.x, gen.size.y) * 0.5
+	for r in gen.get_rivers(5.0e5):
+		var pts: PackedVector3Array = r["points"]
+		var wd: PackedFloat32Array = r["widths"]
+		for k in range(1, pts.size()):
+			var a := (Vector2(pts[k - 1].x, pts[k - 1].z) + half) / cell
+			var b := (Vector2(pts[k].x, pts[k].z) + half) / cell
+			var rad := maxf(wd[k] * 20.0 / cell * 0.5, 0.5)
+			for t in 8:
+				var q := a.lerp(b, t / 8.0)
+				for oz in range(-int(rad), int(rad) + 1):
+					for ox in range(-int(rad), int(rad) + 1):
+						var px := int(q.x) + ox
+						var pz := int(q.y) + oz
+						if px >= 0 and pz >= 0 and px < g.x and pz < g.y and ox * ox + oz * oz <= rad * rad + 0.5:
+							img.set_pixel(px, pz, Color(0.15, 0.35, 0.75))
+	img.resize(g.x * 2, g.y * 2, Image.INTERPOLATE_NEAREST)
+	img.save_png(path)
+	print("saved ", path)
 
 
 func _build_view() -> void:
@@ -419,7 +581,7 @@ func _build_view() -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	var shader := Shader.new()
-	shader.code = VIEW_SHADER
+	shader.code = VIEW_SHADER % TerrainGenerator3D.get_geology_shader_code()
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
 	mat.set_shader_parameter("hmax", hmax)

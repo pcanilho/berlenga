@@ -19,6 +19,14 @@
 				[method generate] then [method write_to_terrain]. Returns the number of vertices written.
 			</description>
 		</method>
+		<method name="build_river_paths">
+			<return type="Array" />
+			<param index="0" name="parent" type="Node" />
+			<param index="1" name="min_area" type="float" />
+			<description>
+				Adds one path per river from [method get_rivers] under [param parent]: a [code]PhysXRiver3D[/code] when that class exists (curve, [code]widths[/code], its own discharge, and [code]mouth_target[/code] set to the river it joins), otherwise a [Path3D] with the widths, discharge and joined river as metadata. Points are converted into [param parent]'s space. In the editor the paths are owned by the edited scene. Returns the new nodes, trunk rivers first.
+			</description>
+		</method>
 		<method name="clear_result">
 			<return type="void" />
 			<description>
@@ -38,6 +46,13 @@
 				The simulated ground at a world position, without the detail filter. NaN outside the rectangle or before [method generate].
 			</description>
 		</method>
+		<method name="get_discharge" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="area" type="float" />
+			<description>
+				Mean discharge in m³/s of a drainage area [param area] in m² at [member river_runoff].
+			</description>
+		</method>
 		<method name="get_drainage_area" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -49,6 +64,31 @@
 			<return type="Image" />
 			<description>
 				Drainage area per grid node, [constant Image.FORMAT_RF], square metres.
+			</description>
+		</method>
+		<method name="get_geology_at" qualifiers="const">
+			<return type="Color" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Soil depth (m), rock exposure (0..1), talus (0..1) and log10 of the drainage area (m²) at a world position, as a [Color] (r, g, b, a).
+			</description>
+		</method>
+		<method name="get_geology_image" qualifiers="const">
+			<return type="Image" />
+			<description>
+				The geology map, one texel per grid node, as an [constant Image.FORMAT_RGBAF] image: soil depth (m), rock exposure, talus, log10 drainage area.
+			</description>
+		</method>
+		<method name="get_geology_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Shader code declaring the [code]terrain_geology_map[/code] and [code]terrain_geology_rect[/code] shader globals and a function [code]vec4 terrain_geology(vec3 world_pos)[/code] returning what [method get_geology_at] returns. Paste it into a spatial shader, for example a terrain material that blends rock, scree and grass.
+			</description>
+		</method>
+		<method name="get_geology_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The geology map as a texture, updated by [method generate]. Also published as the [code]terrain_geology_map[/code] shader global when [member publish_shader_globals] is on.
 			</description>
 		</method>
 		<method name="get_grid_size" qualifiers="const">
@@ -94,6 +134,20 @@
 				Time the last [method write_to_terrain] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_rivers" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="min_area" type="float" />
+			<description>
+				Rivers draining at least [param min_area] m², trunk rivers first. Channels follow the receivers of the erosion run (D8 area, so it grows downstream); each river runs upstream from an outlet or junction along the donor with the largest area (Hack's main stem), and the other donors start tributaries. Each river is a [Dictionary]: [code]points[/code] ([PackedVector3Array], world, head to mouth, on the ground, smoothed), [code]widths[/code] (m, from the discharge: [code]width = river_width_coefficient * discharge^0.5[/code], Leopold and Maddock 1953), [code]areas[/code], [code]discharge[/code] (m³/s at the mouth), [code]own_discharge[/code] (that minus its tributaries'), [code]joins[/code] (index of the river it joins, -1 at an outlet). A tributary's last point is the junction on the river it joins.
+			</description>
+		</method>
+		<method name="get_rock_exposure" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				How bare the rock is at a world position, 0 (covered) to 1 (bare): where the loose cover (soil, basin fill, alluvium) is thinner than about 0.3 m, less any talus. 0 before [method generate].
+			</description>
+		</method>
 		<method name="get_sediment_depth" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -105,6 +159,20 @@
 			<return type="Image" />
 			<description>
 				Sediment thickness per grid node, [constant Image.FORMAT_RF], metres.
+			</description>
+		</method>
+		<method name="get_soil_depth" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Depth of loose cover at a world position, in metres: soil from the exponential soil production function (Heimsath et al. 1997) where production [member soil_production] meets the local erosion rate (channel incision plus hillslope creep), stripped on slopes near [member critical_slope]; plus basin fill; plus alluvium on channels gentle for their drainage area (channel steepness index well below that of the fastest-uplifting ground, Wobus et al. 2006).
+			</description>
+		</method>
+		<method name="get_talus" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Scree at a world position, 0..1: shed by bare rock steeper than [member talus_angle], carried down the receivers and laid where the slope eases below it, thinning over [member talus_reach]; none on channels.
 			</description>
 		</method>
 		<method name="get_uplift_image" qualifiers="const">
@@ -160,6 +228,9 @@
 		<member name="detail_assumed_slope" type="float" setter="set_detail_assumed_slope" getter="get_detail_assumed_slope" default="0.6">
 			Slope the simulated ground is treated as having when steering the first gullies. Near the typical slope of the result.
 		</member>
+		<member name="detail_crest" type="float" setter="set_detail_crest" getter="get_detail_crest" default="1.0">
+			Ridged noise on crests, as a share of twice the gully amplitude. Where opposite slopes meet (crests), the gullies fade to a share so they do not notch the crest into a regular comb, and this noise gives the crest irregular pinnacles and cols instead. 0 leaves crests to the gullies alone.
+		</member>
 		<member name="detail_depth" type="float" setter="set_detail_depth" getter="get_detail_depth" default="0.08">
 			Gully depth as a fraction of its wavelength.
 		</member>
@@ -202,14 +273,26 @@
 		<member name="max_height" type="float" setter="set_max_height" getter="get_max_height" default="0.0">
 			When above 0, the relief is scaled so the highest point is this far above [member sea_level]. 0 keeps the simulated heights.
 		</member>
+		<member name="max_soil_depth" type="float" setter="set_max_soil_depth" getter="get_max_soil_depth" default="2.0">
+			Deepest soil and alluvium (basin fill comes on top).
+		</member>
 		<member name="outlet_edges" type="int" setter="set_outlet_edges" getter="get_outlet_edges" default="15">
 			Edges of the rectangle held at [member sea_level] where water leaves: bits [constant OUTLET_NEGATIVE_X], [constant OUTLET_POSITIVE_X], [constant OUTLET_NEGATIVE_Z], [constant OUTLET_POSITIVE_Z].
+		</member>
+		<member name="publish_shader_globals" type="bool" setter="set_publish_shader_globals" getter="is_publishing_shader_globals" default="true">
+			Publishes the geology map as the [code]terrain_geology_map[/code] and [code]terrain_geology_rect[/code] shader globals after each [method generate] (see [method get_geology_shader_code]).
 		</member>
 		<member name="range_width" type="float" setter="set_range_width" getter="get_range_width" default="800.0">
 			Half width in metres of the uplift band around each Path3D in [member ranges]. A path's [code]width[/code] metadata overrides it, and its [code]uplift[/code] metadata sets its strength (default 1).
 		</member>
 		<member name="ranges" type="NodePath[]" setter="set_ranges" getter="get_ranges" default="[]">
 			Path3D nodes along which mountain ranges rise.
+		</member>
+		<member name="river_runoff" type="float" setter="set_river_runoff" getter="get_river_runoff" default="1000.0">
+			Mean runoff for river discharge, in mm a year (water reaching the channels per unit of drainage area).
+		</member>
+		<member name="river_width_coefficient" type="float" setter="set_river_width_coefficient" getter="get_river_width_coefficient" default="7.0">
+			River width per square root of discharge: [code]width = coefficient * discharge^0.5[/code] (hydraulic geometry, Leopold and Maddock 1953). About 7 for mean flows.
 		</member>
 		<member name="sea_level" type="float" setter="set_sea_level" getter="get_sea_level" default="0.0">
 			Height of the outlets and of the flat start.
@@ -220,8 +303,20 @@
 		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(4096, 4096)">
 			Width (X) and depth (Z) in metres of the rectangle generated, centred on the node.
 		</member>
+		<member name="soil_depth_scale" type="float" setter="set_soil_depth_scale" getter="get_soil_depth_scale" default="0.5">
+			Depth over which soil production halves, e-fold (h0 in Heimsath et al. 1997). Larger gives deeper soils.
+		</member>
+		<member name="soil_production" type="float" setter="set_soil_production" getter="get_soil_production" default="0.5">
+			Rate at which bare rock weathers into soil, in mm a year (P0 in Heimsath et al. 1997; measured 0.05 to 0.5). Ground eroding faster than this is bare rock: fast-rising ranges are bare, plains and gentle hills covered.
+		</member>
 		<member name="steps" type="int" setter="set_steps" getter="get_steps" default="300">
 			Time steps to simulate.
+		</member>
+		<member name="talus_angle" type="float" setter="set_talus_angle" getter="get_talus_angle" default="35.0">
+			Angle of repose for scree: rock steeper than this sheds talus, which settles on slopes below it.
+		</member>
+		<member name="talus_reach" type="float" setter="set_talus_reach" getter="get_talus_reach" default="120.0">
+			Distance below a cliff over which scree thins out.
 		</member>
 		<member name="terrain" type="NodePath" setter="set_terrain" getter="get_terrain" default="NodePath(&quot;&quot;)">
 			The ground to write: a [code]Terrain3D[/code] node or a [CollisionShape3D] with a [HeightMapShape3D].

@@ -291,12 +291,45 @@ Look: raster and path traced close views at 100% crop show the same gullies and 
 the detail (the frame is noisier at 16 samples on the CPU, nothing missing).
 
 Dented crests (fixed after the first merge): without the coherence fade, the gullies of both flanks met on the crest
-and notched it into a comb of teeth a few metres tall, plain on summit silhouettes. With it the offset bends about a
-third as much along crests (bench: 0.65 m against 2.0 m for a 2 m step; open slopes 0.3 m) and the silhouettes are
-clean. The jagged colour borders in the first shots were the bench's colouring, per vertex on a 4 m mesh; the bench
-now colours per pixel from the normal and builds the close view at 2 m through `sample_heights()`. Still open: the same function in the terrain material for detail under the vertex
+and notched it into a regular comb of teeth a few metres tall, plain on summit silhouettes. Fading them fully made
+crests and spurs straight, which lost character. Now the gullies keep 40% on crests (`crest_keep`; along crests
+the offset bends about half as much as without the fade, bench check), and a ridged gradient-noise fBm (Musgrave's
+ridged multifractal family) takes over where they fade, on convex ground only, so crests get irregular pinnacles
+and cols (`detail_crest`, amplitude twice the gully amplitude). Valley floors (concave) get no crest noise. The
+jagged colour borders in the first shots were the bench's colouring, per vertex on a 4 m mesh; the bench now
+colours per pixel and builds the close view at 2 m through `sample_heights()`. Still open: the same function in the terrain material for detail under the vertex
 spacing (needs a GPU timing), and a ridge map output for texturing. Speed-ups when worlds grow: threading the per-cell passes, and FastFlow-style GPU
 routing (Jain et al. 2024).
+
+## Stage 5: what was built
+
+`terrain_geology.h` (plain C++, run at the end of `generate()` over the final grid, its MFD drainage area, basin
+fill, and the D8 receivers and stack of the last routing):
+
+- Soil: the exponential soil production function (Heimsath, Dietrich, Nishiizumi and Finkel 1997). Bare rock weathers
+  at P0 (`soil_production`, 0.5 mm/yr), slowing as e^(-h/h0) (`soil_depth_scale`), so soil settles at
+  h = h0 ln(P0 / E) where E is the local erosion rate of the same laws the run used: K A^m S plus D times the
+  convexity. Slopes near the critical slope shed it. Ranges rising at mm a year come out bare; plains and gentle hills
+  covered. Basin fill adds on top.
+- Alluvium: channels gentle for their drainage area are alluvial. Their channel steepness index k_s = S A^m (Wobus et
+  al. 2006) falls below a fifth of U_max / K (the steady-state k_s of the fastest-rising ground), the bedrock against
+  alluvial channel split of Montgomery et al. 1996. They get a full cover.
+- Rock exposure: where the loose cover is under about 0.3 m.
+- Talus: scree shed by bare rock steeper than `talus_angle`, carried down the receivers and laid where the slope eases
+  below repose (above about 7 degrees), thinning over `talus_reach`; none on channels; a 3x3 spread.
+- Rivers: a D8 area along the receivers (an MFD area can fall downstream where flow splits, which broke widths);
+  each river runs upstream from an outlet or junction along the largest donor (Hack's main stem), other donors start
+  tributaries, so trunks come first and every tributary names the river it joins. Widths from hydraulic geometry
+  (w = 7 Q^0.5, Leopold and Maddock 1953) at `river_runoff`; each river's own discharge is its mouth's less its
+  tributaries', so PhysXRiver3D adds them back at the joins.
+
+Output: `get_soil_depth()`, `get_rock_exposure()`, `get_talus()`, `get_geology_at()`, `get_geology_image()` (RGBA
+float), a texture published as shader globals `terrain_geology_map` / `terrain_geology_rect` with
+`get_geology_shader_code()` giving `terrain_geology(world_pos)`, `get_rivers(min_area)` and
+`build_river_paths(parent, min_area)` (PhysXRiver3D by name when present, else Path3D). TerrainDataMap3D is left as
+it is: its `height_source` can point at the generator, and placement can read the geology straight from it. Bench: 34
+checks, including rock on steep ground against cover on gentle ground, scree below repose, rivers downhill, widening,
+joined, and discharges adding up. Cost: one pass over the grid, about 100 ms at 1025 squared on one core (the erosion run takes minutes), so generation time is unchanged within noise (257 squared: 5.1 s).
 
 ## Sources
 
@@ -304,6 +337,13 @@ routing (Jain et al. 2024).
 - Musgrave, Kolb, Mace, The synthesis and rendering of eroded fractal terrains, SIGGRAPH 1989.
 - Ebert, Musgrave, Peachey, Perlin, Worley, Texturing and Modeling: A Procedural Approach.
 - Quilez, noise derivatives and domain warping: https://iquilezles.org/articles/
+- Heimsath, Dietrich, Nishiizumi, Finkel, The soil production function and landscape equilibrium, Nature 388, 1997.
+- Wobus, Whipple, Kirby et al., Tectonics from topography: procedures, promise, and pitfalls, GSA Special Paper 398, 2006.
+- Montgomery, Abbe, Buffington et al., Distribution of bedrock and alluvial channels in forested mountain drainage
+  basins, Nature 381, 1996.
+- Leopold and Maddock, The hydraulic geometry of stream channels and some physiographic implications, USGS PP 252, 1953.
+- Hack, Studies of longitudinal stream profiles in Virginia and Maryland, USGS PP 294-B, 1957.
+- Kass and Witkin, Analyzing oriented patterns, CVGIP 37, 1987.
 - Johansen, Fast and Gorgeous Erosion Filter, 2026:
   https://blog.runevision.com/2026/03/fast-and-gorgeous-erosion-filter.html
 - Mei, Decaudin, Hu, Fast Hydraulic Erosion Simulation and Visualization on GPU, PG 2007.

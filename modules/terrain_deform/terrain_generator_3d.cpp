@@ -32,8 +32,11 @@
 
 #include "terrain_deformer_3d.h"
 #include "terrain_erosion_filter.h"
+#include "terrain_geology.h"
 #include "terrain_stream_power.h"
 
+#include "core/config/engine.h"
+#include "core/config/project_settings.h"
 #include "core/io/image.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -42,6 +45,7 @@
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/path_3d.h"
 #include "scene/resources/curve.h"
+#include "servers/rendering/rendering_server.h"
 
 static inline int _gen_floor_div(int p_a, int p_b) {
 	const int q = p_a / p_b;
@@ -293,6 +297,41 @@ bool TerrainGenerator3D::generate() {
 		sediment[i] = float(sed[i] * scale);
 		uplift_field[i] = float(up[i] * 1.0e3);
 	}
+
+	// Geology (soil, rock, talus) from the final ground, and the receivers for the rivers.
+	receivers.resize(n);
+	memcpy(receivers.ptr(), rec.ptr(), sizeof(int32_t) * n);
+	soil.resize(n);
+	rock.resize(n);
+	talus.resize(n);
+	TerrainGeology::Params gp;
+	gp.nx = nx;
+	gp.ny = ny;
+	gp.dx = cell_size;
+	gp.erodibility = erodibility;
+	gp.area_exponent = area_exponent;
+	gp.diffusion = hillslope_diffusion;
+	gp.critical_slope = sp.p.talus > 0.0 ? sp.p.talus : 10.0;
+	gp.soil_production = soil_production * 1.0e-3;
+	gp.soil_scale = soil_depth_scale;
+	gp.soil_max = max_soil_depth;
+	gp.repose = Math::tan(Math::deg_to_rad(double(talus_angle)));
+	gp.talus_reach = talus_reach;
+	double umax = 0.0;
+	for (int i = 0; i < n; i++) {
+		umax = MAX(umax, up[i]);
+	}
+	gp.steepness_ref = MAX(umax / MAX(double(erodibility), 1e-12), 1e-6);
+	channel_area.resize(n);
+	TerrainGeology::d8_area(n, receivers.ptr(), stack.ptr(), double(cell_size) * cell_size, channel_area.ptr());
+	TerrainGeology::compute(gp, heights.ptr(), drainage.ptr(), sediment.ptr(), receivers.ptr(), stack.ptr(), soil.ptr(), rock.ptr(), talus.ptr());
+	Ref<Image> geo = get_geology_image();
+	if (geology_texture.is_valid() && geology_texture->get_width() == nx && geology_texture->get_height() == ny) {
+		geology_texture->update(geo);
+	} else {
+		geology_texture = ImageTexture::create_from_image(geo);
+	}
+	_publish_globals();
 	last_generate_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("generated"));
 	return true;
@@ -305,6 +344,11 @@ void TerrainGenerator3D::clear_result() {
 	drainage.clear();
 	sediment.clear();
 	uplift_field.clear();
+	soil.clear();
+	rock.clear();
+	talus.clear();
+	receivers.clear();
+	channel_area.clear();
 }
 
 // Catmull-Rom bicubic between grid nodes (interpolating, so every node keeps its eroded height), clamped at the
@@ -383,7 +427,20 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 	ep.assumed_slope = detail_assumed_slope;
 	ep.valley_height = result_min;
 	ep.peak_height = MAX(result_max, result_min + 1.0f);
-	const double off = TerrainErosionFilter::offset(ep, p_x, p_z, base, gx, gz, coherence);
+	double off = TerrainErosionFilter::offset(ep, p_x, p_z, base, gx, gz, coherence);
+	// Crests: where the gullies fade (low coherence) on convex ground, an irregular ridged noise takes over, so a
+	// crest line keeps pinnacles and cols of varied size instead of turning straight (or a regular comb).
+	if (detail_crest > 0.0) {
+		const double convex = -(hs[1][0] + hs[1][2] + hs[0][1] + hs[2][1] - 4.0 * hs[1][1]) / (4.0 * e);
+		const double c = CLAMP(coherence, 0.0, 1.0);
+		const double fade = 1.0 - c * c * (3.0 - 2.0 * c);
+		const double t = CLAMP(convex / 0.05, 0.0, 1.0);
+		const double w = fade * t * t * (3.0 - 2.0 * t);
+		if (w > 0.0) {
+			const double amp = double(detail_crest) * 2.0 * detail_depth / MAX(double(detail_gully_weight), 1e-3) * detail_wavelength;
+			off += w * amp * TerrainErosionFilter::crest_noise(ep.seed ^ 0x5bd1e995u, p_x, p_z, detail_wavelength * 2.0, MAX(detail_octaves, 1) + 2);
+		}
+	}
 	// Never below the outlets: the filter must not cut the coast or the sea floor.
 	return float(MAX(double(base) + off, double(MIN(base, result_min))));
 }
@@ -456,6 +513,206 @@ Ref<Image> TerrainGenerator3D::get_sediment_image() const {
 
 Ref<Image> TerrainGenerator3D::get_uplift_image() const {
 	return _grid_image(uplift_field);
+}
+
+/* Geology and rivers */
+
+real_t TerrainGenerator3D::get_soil_depth(const Vector3 &p_global_position) const {
+	return MAX(_sample(soil, p_global_position.x, p_global_position.z), 0.0f);
+}
+
+real_t TerrainGenerator3D::get_rock_exposure(const Vector3 &p_global_position) const {
+	return CLAMP(_sample(rock, p_global_position.x, p_global_position.z), 0.0f, 1.0f);
+}
+
+real_t TerrainGenerator3D::get_talus(const Vector3 &p_global_position) const {
+	return CLAMP(_sample(talus, p_global_position.x, p_global_position.z), 0.0f, 1.0f);
+}
+
+Color TerrainGenerator3D::get_geology_at(const Vector3 &p_global_position) const {
+	const real_t a = _sample(drainage, p_global_position.x, p_global_position.z);
+	return Color(get_soil_depth(p_global_position), get_rock_exposure(p_global_position), get_talus(p_global_position), std::log10(double(MAX(a, real_t(1.0)))));
+}
+
+// RGBA float: soil depth (m), rock exposure, talus, log10 drainage area (m^2).
+Ref<Image> TerrainGenerator3D::get_geology_image() const {
+	const int n = nx * ny;
+	if (nx <= 0 || soil.size() != uint32_t(n)) {
+		return Ref<Image>();
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(n * 4 * sizeof(float));
+	float *w = reinterpret_cast<float *>(bytes.ptrw());
+	for (int i = 0; i < n; i++) {
+		w[i * 4 + 0] = soil[i];
+		w[i * 4 + 1] = rock[i];
+		w[i * 4 + 2] = talus[i];
+		w[i * 4 + 3] = float(std::log10(MAX(double(drainage[i]), 1.0)));
+	}
+	return Image::create_from_data(nx, ny, false, Image::FORMAT_RGBAF, bytes);
+}
+
+void TerrainGenerator3D::_publish_globals() {
+	if (!publish_shader_globals || geology_texture.is_null() || !is_inside_tree()) {
+		return;
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	static HashSet<StringName> added;
+	auto set_global = [&](const StringName &p_name, const Variant &p_value, RSE::GlobalShaderParameterType p_type) {
+		if (!added.has(p_name) && !ProjectSettings::get_singleton()->has_setting("shader_globals/" + String(p_name))) {
+			added.insert(p_name);
+			rs->global_shader_parameter_add(p_name, p_type, p_value);
+			return;
+		}
+		rs->global_shader_parameter_set(p_name, p_value);
+	};
+	// The texels are grid nodes: the rectangle runs from the first node centre to the last.
+	const Rect2 &r = result_rect;
+	set_global("terrain_geology_map", geology_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+	set_global("terrain_geology_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+}
+
+String TerrainGenerator3D::get_geology_shader_code() {
+	String c;
+	c += "// Geology from TerrainGenerator3D (TerrainGenerator3D.get_geology_shader_code()).\n";
+	c += "// terrain_geology(p) = (soil depth m, rock exposure 0..1, talus 0..1, log10 drainage area m2)\n";
+	c += "global uniform sampler2D terrain_geology_map;\n";
+	c += "global uniform vec4 terrain_geology_rect;\n\n";
+	c += "vec4 terrain_geology(vec3 world_pos) {\n";
+	c += "	// Texel centres are the grid nodes at the rectangle's corners.\n";
+	c += "	vec2 size = vec2(textureSize(terrain_geology_map, 0));\n";
+	c += "	vec2 g = clamp((world_pos.xz - terrain_geology_rect.xy) / terrain_geology_rect.zw, 0.0, 1.0);\n";
+	c += "	return textureLod(terrain_geology_map, (g * (size - 1.0) + 0.5) / size, 0.0);\n";
+	c += "}\n";
+	return c;
+}
+
+Vector3 TerrainGenerator3D::_cell_position(int p_cell) const {
+	const real_t x = result_rect.position.x + (p_cell % nx) * result_cell;
+	const real_t z = result_rect.position.y + (p_cell / nx) * result_cell;
+	return Vector3(x, 0.0, z);
+}
+
+// Mean discharge (m^3/s) of a drainage area (m^2) at river_runoff.
+real_t TerrainGenerator3D::get_discharge(real_t p_area) const {
+	return p_area * river_runoff * 1.0e-3 / 31557600.0;
+}
+
+// Rivers draining at least p_min_area m^2, trunk rivers first. Each is a Dictionary: points (world, head to mouth,
+// on the ground), widths (m, hydraulic geometry w = a Q^0.5, Leopold and Maddock 1953), areas, discharge (m^3/s at
+// the mouth), own_discharge (that minus its tributaries'), joins (index of the river it joins, -1 at an outlet).
+Array TerrainGenerator3D::get_rivers(real_t p_min_area) const {
+	Array out;
+	const int n = nx * ny;
+	if (nx <= 0 || receivers.size() != uint32_t(n)) {
+		return out;
+	}
+	std::vector<TerrainGeology::River> rivers;
+	TerrainGeology::rivers(n, channel_area.ptr(), receivers.ptr(), MAX(double(p_min_area), double(result_cell * result_cell)), rivers);
+	LocalVector<double> own;
+	own.resize(rivers.size());
+	for (uint32_t r = 0; r < rivers.size(); r++) {
+		const TerrainGeology::River &rv = rivers[r];
+		// A tributary's mouth is the cell before the junction.
+		const int mouth = rv.joins >= 0 && rv.cells.size() > 1 ? rv.cells[rv.cells.size() - 2] : rv.cells.back();
+		own[r] = get_discharge(channel_area[mouth]);
+	}
+	for (uint32_t r = 0; r < rivers.size(); r++) {
+		if (rivers[r].joins >= 0) {
+			const TerrainGeology::River &rv = rivers[r];
+			const int mouth = rv.cells.size() > 1 ? rv.cells[rv.cells.size() - 2] : rv.cells.back();
+			own[rivers[r].joins] -= get_discharge(channel_area[mouth]);
+		}
+	}
+	for (uint32_t r = 0; r < rivers.size(); r++) {
+		const TerrainGeology::River &rv = rivers[r];
+		const int m = int(rv.cells.size());
+		// D8 steps smoothed into a curve (two passes of a 1-2-1 filter), the ends kept.
+		std::vector<Vector3> pts(m);
+		for (int k = 0; k < m; k++) {
+			pts[k] = _cell_position(rv.cells[k]);
+		}
+		for (int pass = 0; pass < 2 && m > 2; pass++) {
+			std::vector<Vector3> tmp = pts;
+			for (int k = 1; k < m - 1; k++) {
+				tmp[k] = (pts[k - 1] + pts[k] * 2.0 + pts[k + 1]) * 0.25;
+			}
+			pts = tmp;
+		}
+		PackedVector3Array points;
+		PackedFloat32Array widths;
+		PackedFloat32Array areas;
+		points.resize(m);
+		widths.resize(m);
+		areas.resize(m);
+		for (int k = 0; k < m; k++) {
+			const real_t a = channel_area[rv.cells[k]];
+			Vector3 p = pts[k];
+			p.y = _ground(p.x, p.z);
+			points.set(k, p);
+			areas.set(k, a);
+			widths.set(k, river_width_coefficient * Math::sqrt(get_discharge(a)));
+		}
+		const int mouth = rv.joins >= 0 && m > 1 ? rv.cells[m - 2] : rv.cells[m - 1];
+		Dictionary d;
+		d["points"] = points;
+		d["widths"] = widths;
+		d["areas"] = areas;
+		d["discharge"] = get_discharge(channel_area[mouth]);
+		d["own_discharge"] = MAX(own[r], 0.0);
+		d["joins"] = rv.joins;
+		out.push_back(d);
+	}
+	return out;
+}
+
+// One path per river under p_parent: a PhysXRiver3D when that class exists (curve, widths, its own discharge, and
+// mouth_target set to the river it joins), otherwise a Path3D with the widths and discharge as metadata.
+Array TerrainGenerator3D::build_river_paths(Node *p_parent, real_t p_min_area) {
+	Array nodes;
+	ERR_FAIL_NULL_V(p_parent, nodes);
+	const Array rivers = get_rivers(p_min_area);
+	const bool physx = ClassDB::class_exists("PhysXRiver3D");
+	Node3D *parent3d = Object::cast_to<Node3D>(p_parent);
+	const Transform3D to_local = parent3d && parent3d->is_inside_tree() ? parent3d->get_global_transform().affine_inverse() : Transform3D();
+	for (int r = 0; r < rivers.size(); r++) {
+		const Dictionary d = rivers[r];
+		const PackedVector3Array pts = d["points"];
+		Path3D *path = physx ? Object::cast_to<Path3D>(ClassDB::instantiate("PhysXRiver3D")) : memnew(Path3D);
+		ERR_CONTINUE(!path);
+		path->set_name(vformat("River%d", r));
+		Ref<Curve3D> curve;
+		curve.instantiate();
+		for (int k = 0; k < pts.size(); k++) {
+			curve->add_point(to_local.xform(pts[k]));
+		}
+		path->set_curve(curve);
+		if (physx) {
+			path->set("widths", d["widths"]);
+			path->set("discharge", d["own_discharge"]);
+		} else {
+			path->set_meta("widths", d["widths"]);
+			path->set_meta("discharge", d["own_discharge"]);
+		}
+		path->set_meta("joins", d["joins"]);
+		p_parent->add_child(path, true);
+		if (Engine::get_singleton()->is_editor_hint()) {
+			// Saved with the scene being edited.
+			path->set_owner(p_parent->get_owner() ? p_parent->get_owner() : p_parent);
+		}
+		nodes.push_back(path);
+	}
+	if (physx) {
+		for (int r = 0; r < nodes.size(); r++) {
+			const int j = int(Dictionary(rivers[r])["joins"]);
+			if (j >= 0) {
+				Node *a = Object::cast_to<Node>(nodes[r]);
+				Node *b = Object::cast_to<Node>(nodes[j]);
+				a->set("mouth_target", a->get_path_to(b));
+			}
+		}
+	}
+	return nodes;
 }
 
 int TerrainGenerator3D::write_to_terrain() {
@@ -646,6 +903,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_detail_reach"), &TerrainGenerator3D::get_detail_reach);
 	ClassDB::bind_method(D_METHOD("set_detail_gully_weight", "weight"), &TerrainGenerator3D::set_detail_gully_weight);
 	ClassDB::bind_method(D_METHOD("get_detail_gully_weight"), &TerrainGenerator3D::get_detail_gully_weight);
+	ClassDB::bind_method(D_METHOD("set_detail_crest", "amount"), &TerrainGenerator3D::set_detail_crest);
+	ClassDB::bind_method(D_METHOD("get_detail_crest"), &TerrainGenerator3D::get_detail_crest);
 	ClassDB::bind_method(D_METHOD("set_detail_assumed_slope", "slope"), &TerrainGenerator3D::set_detail_assumed_slope);
 	ClassDB::bind_method(D_METHOD("get_detail_assumed_slope"), &TerrainGenerator3D::get_detail_assumed_slope);
 
@@ -666,6 +925,32 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_height", "global_position"), &TerrainGenerator3D::get_height);
 	ClassDB::bind_method(D_METHOD("get_base_height", "global_position"), &TerrainGenerator3D::get_base_height);
 	ClassDB::bind_method(D_METHOD("sample_heights", "origin", "spacing", "size"), &TerrainGenerator3D::sample_heights);
+	ClassDB::bind_method(D_METHOD("get_soil_depth", "global_position"), &TerrainGenerator3D::get_soil_depth);
+	ClassDB::bind_method(D_METHOD("get_rock_exposure", "global_position"), &TerrainGenerator3D::get_rock_exposure);
+	ClassDB::bind_method(D_METHOD("get_talus", "global_position"), &TerrainGenerator3D::get_talus);
+	ClassDB::bind_method(D_METHOD("get_geology_at", "global_position"), &TerrainGenerator3D::get_geology_at);
+	ClassDB::bind_method(D_METHOD("get_geology_image"), &TerrainGenerator3D::get_geology_image);
+	ClassDB::bind_method(D_METHOD("get_geology_texture"), &TerrainGenerator3D::get_geology_texture);
+	ClassDB::bind_static_method("TerrainGenerator3D", D_METHOD("get_geology_shader_code"), &TerrainGenerator3D::get_geology_shader_code);
+	ClassDB::bind_method(D_METHOD("get_discharge", "area"), &TerrainGenerator3D::get_discharge);
+	ClassDB::bind_method(D_METHOD("get_rivers", "min_area"), &TerrainGenerator3D::get_rivers);
+	ClassDB::bind_method(D_METHOD("build_river_paths", "parent", "min_area"), &TerrainGenerator3D::build_river_paths);
+	ClassDB::bind_method(D_METHOD("set_soil_production", "rate"), &TerrainGenerator3D::set_soil_production);
+	ClassDB::bind_method(D_METHOD("get_soil_production"), &TerrainGenerator3D::get_soil_production);
+	ClassDB::bind_method(D_METHOD("set_soil_depth_scale", "depth"), &TerrainGenerator3D::set_soil_depth_scale);
+	ClassDB::bind_method(D_METHOD("get_soil_depth_scale"), &TerrainGenerator3D::get_soil_depth_scale);
+	ClassDB::bind_method(D_METHOD("set_max_soil_depth", "depth"), &TerrainGenerator3D::set_max_soil_depth);
+	ClassDB::bind_method(D_METHOD("get_max_soil_depth"), &TerrainGenerator3D::get_max_soil_depth);
+	ClassDB::bind_method(D_METHOD("set_talus_angle", "degrees"), &TerrainGenerator3D::set_talus_angle);
+	ClassDB::bind_method(D_METHOD("get_talus_angle"), &TerrainGenerator3D::get_talus_angle);
+	ClassDB::bind_method(D_METHOD("set_talus_reach", "distance"), &TerrainGenerator3D::set_talus_reach);
+	ClassDB::bind_method(D_METHOD("get_talus_reach"), &TerrainGenerator3D::get_talus_reach);
+	ClassDB::bind_method(D_METHOD("set_river_runoff", "runoff"), &TerrainGenerator3D::set_river_runoff);
+	ClassDB::bind_method(D_METHOD("get_river_runoff"), &TerrainGenerator3D::get_river_runoff);
+	ClassDB::bind_method(D_METHOD("set_river_width_coefficient", "coefficient"), &TerrainGenerator3D::set_river_width_coefficient);
+	ClassDB::bind_method(D_METHOD("get_river_width_coefficient"), &TerrainGenerator3D::get_river_width_coefficient);
+	ClassDB::bind_method(D_METHOD("set_publish_shader_globals", "enable"), &TerrainGenerator3D::set_publish_shader_globals);
+	ClassDB::bind_method(D_METHOD("is_publishing_shader_globals"), &TerrainGenerator3D::is_publishing_shader_globals);
 	ClassDB::bind_method(D_METHOD("get_drainage_area", "global_position"), &TerrainGenerator3D::get_drainage_area);
 	ClassDB::bind_method(D_METHOD("get_sediment_depth", "global_position"), &TerrainGenerator3D::get_sediment_depth);
 	ClassDB::bind_method(D_METHOD("get_height_image"), &TerrainGenerator3D::get_height_image);
@@ -713,7 +998,18 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_depth", PROPERTY_HINT_RANGE, "0,0.5,0.001"), "set_detail_depth", "get_detail_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_reach", PROPERTY_HINT_RANGE, "0.1,5,0.01"), "set_detail_reach", "get_detail_reach");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_gully_weight", PROPERTY_HINT_RANGE, "0.05,1,0.01"), "set_detail_gully_weight", "get_detail_gully_weight");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_crest", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_detail_crest", "get_detail_crest");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_assumed_slope", PROPERTY_HINT_RANGE, "0.01,3,0.01"), "set_detail_assumed_slope", "get_detail_assumed_slope");
+
+	ADD_GROUP("Geology", "");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "soil_production", PROPERTY_HINT_RANGE, "0.001,10,0.001,or_greater,suffix:mm/yr"), "set_soil_production", "get_soil_production");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "soil_depth_scale", PROPERTY_HINT_RANGE, "0,5,0.01,or_greater,suffix:m"), "set_soil_depth_scale", "get_soil_depth_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_soil_depth", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_max_soil_depth", "get_max_soil_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "talus_angle", PROPERTY_HINT_RANGE, "5,80,0.5,degrees"), "set_talus_angle", "get_talus_angle");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "talus_reach", PROPERTY_HINT_RANGE, "1,1000,1,or_greater,suffix:m"), "set_talus_reach", "get_talus_reach");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_runoff", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:mm/yr"), "set_river_runoff", "get_river_runoff");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_width_coefficient", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater"), "set_river_width_coefficient", "get_river_width_coefficient");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "publish_shader_globals"), "set_publish_shader_globals", "is_publishing_shader_globals");
 
 	ADD_GROUP("Output", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain"), "set_terrain", "get_terrain");

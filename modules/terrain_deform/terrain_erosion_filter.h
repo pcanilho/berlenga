@@ -60,12 +60,13 @@ public:
 		double slope_fade = 0.5; // input slopes below this fade the effect (flat peaks, valley floors)
 		double valley_height = 0.0; // heights mapped to the fade target -1 ...
 		double peak_height = 1000.0; // ... and +1
+		double crest_keep = 0.4; // share of the gullies kept where coherence is 0 (crests, valley floors)
 	};
 
 	// Returns the height offset to add at world (x, z), given the input height and its gradient there. coherence
 	// (0..1) says how well the gradient keeps one direction around the point (1 on an even slope, 0 where opposite
-	// slopes meet on a crest or a valley floor); the effect fades with it, so gullies stop short of a crest instead
-	// of notching it.
+	// slopes meet on a crest or a valley floor); the effect fades with it to crest_keep, so gullies only lightly
+	// notch a crest instead of cutting it into a regular comb.
 	static double offset(const Params &p, double x, double z, double h, double gx, double gz, double coherence = 1.0) {
 		const double slope = std::sqrt(gx * gx + gz * gz);
 		if (slope < 1e-9 || p.octaves <= 0) {
@@ -75,7 +76,7 @@ public:
 		double sx = gx / slope * p.assumed_slope;
 		double sz = gz / slope * p.assumed_slope;
 		double fade = _clamp((h - p.valley_height) / (p.peak_height - p.valley_height + 1e-9), 0.0, 1.0) * 2.0 - 1.0;
-		double mask = _ease_out(slope / p.slope_fade) * _smooth(coherence);
+		double mask = _ease_out(slope / p.slope_fade) * (p.crest_keep + (1.0 - p.crest_keep) * _smooth(coherence));
 		double total = 0.0;
 		double lambda = p.wavelength;
 		const double gw = p.gully_weight > 1e-3 ? p.gully_weight : 1e-3;
@@ -145,7 +146,47 @@ public:
 		return total;
 	}
 
+	// Ridged gradient-noise fBm (Musgrave's ridged multifractal family, Ebert et al. 2003): sum of (1/2 - |n|) over
+	// octaves, so it has sharp maxima (pinnacles) and rounded minima (cols), -1/2..1/2 per octave weight. Used on
+	// crests, where the gullies fade, so a crest keeps an irregular, jagged line instead of a straight one.
+	static double crest_noise(uint32_t p_seed, double x, double z, double p_wavelength, int p_octaves) {
+		double sum = 0.0;
+		double amp = 1.0;
+		double norm = 0.0;
+		double f = 1.0 / p_wavelength;
+		for (int o = 0; o < p_octaves; o++) {
+			sum += amp * (0.5 - std::fabs(_gradient_noise(p_seed + uint32_t(o) * 0x632BE5ABu, x * f, z * f)));
+			norm += amp;
+			amp *= 0.5;
+			f *= 2.0;
+		}
+		return norm > 0.0 ? sum / norm : 0.0;
+	}
+
 private:
+	// Perlin gradient noise, about -0.7..0.7.
+	static double _gradient_noise(uint32_t p_seed, double x, double z) {
+		const double fx = std::floor(x);
+		const double fz = std::floor(z);
+		const int ix = int(fx);
+		const int iz = int(fz);
+		const double tx = x - fx;
+		const double tz = z - fz;
+		auto grad = [&](int cx, int cz, double dx, double dz) -> double {
+			const uint32_t h = _hash(uint32_t(cx), uint32_t(cz), p_seed);
+			const double a = (h & 0xffff) * (6.283185307179586 / 65536.0);
+			return std::cos(a) * dx + std::sin(a) * dz;
+		};
+		const double ux = tx * tx * tx * (tx * (tx * 6.0 - 15.0) + 10.0);
+		const double uz = tz * tz * tz * (tz * (tz * 6.0 - 15.0) + 10.0);
+		const double n00 = grad(ix, iz, tx, tz);
+		const double n10 = grad(ix + 1, iz, tx - 1.0, tz);
+		const double n01 = grad(ix, iz + 1, tx, tz - 1.0);
+		const double n11 = grad(ix + 1, iz + 1, tx - 1.0, tz - 1.0);
+		const double a = n00 + (n10 - n00) * ux;
+		const double b = n01 + (n11 - n01) * ux;
+		return a + (b - a) * uz;
+	}
 	static double _clamp(double v, double a, double b) { return v < a ? a : (v > b ? b : v); }
 	static double _ease_out(double t) {
 		const double v = 1.0 - _clamp(t, 0.0, 1.0);
