@@ -43,7 +43,8 @@ extends Node3D
 #                     left. Record it with --fixed-fps 30 --write-movie (frame time is fixed to 1/30 s).
 #                     --hair=wind: the head held still in a 6 m/s gusty breeze; add "wavy" (--hair=wind_wavy,
 #                     --hair=wavy) for wavy hair; "blonde" for light hair, "back" for the sun low behind
-#                     the head, "plain" for Godot's standard lighting instead of hair_shading;
+#                     the head, "plain" for Godot's standard lighting instead of hair_shading, "far" for the
+#                     camera 8 m away, "nolod" to draw every strand at any distance;
 #                     --hair=compare: held still, beside the same groom on a HairMesh with BaseMaterial3D
 #                     Hair; --hair=compare_shader: that HairMesh through a shader's HAIR outputs instead
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
@@ -193,6 +194,9 @@ func _ready() -> void:
 			env.pathtracing_max_bounces = maxi(bounces, 12)
 			if hair.begins_with("compare"):
 				cam.look_at_from_position(Vector3(0.15, 0.4, 1.7), Vector3(0.15, 0.22, 0))
+			elif hair.contains("far"):
+				# 8 m away: the distance LOD draws about half the strands.
+				cam.look_at_from_position(Vector3(3.0, 2.0, 7.2), Vector3(0, 0.2, 0))
 			else:
 				cam.look_at_from_position(Vector3(0.55, 0.45, 1.45), Vector3(0, 0.2, 0))
 			_strands_sim()
@@ -674,6 +678,7 @@ func _strands_sim() -> void:
 	h.melanin = 0.12 if hair.contains("blonde") else 0.3
 	# "plain": Godot's standard lighting on the strands instead of the hair shading.
 	h.hair_shading = not hair.contains("plain")
+	h.lod_enabled = not hair.contains("nolod")
 	if hair.contains("back"):
 		# The sun low behind the head, toward the camera: light through the hair.
 		for c in get_children():

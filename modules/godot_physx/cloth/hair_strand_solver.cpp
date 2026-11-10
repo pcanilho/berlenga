@@ -435,6 +435,7 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 	f[20] = MAX(p_settings.max_speed, 0.0f);
 	f[21] = CLAMP(p_settings.turbulence, 0.0f, 1.0f);
 	f[22] = MAX(p_settings.turbulence_size, 0.001f);
+	f[23] = CLAMP(p_settings.lod_keep, 0.0f, 1.0f);
 	// iterations
 	f[24] = (float)CLAMP(p_settings.local_iterations, 0, 16);
 	f[25] = (float)CLAMP(p_settings.length_iterations, 0, 16);

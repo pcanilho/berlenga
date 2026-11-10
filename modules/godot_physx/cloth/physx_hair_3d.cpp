@@ -75,8 +75,10 @@ uniform vec3 fibre_absorption = vec3(0.4, 0.7, 1.4);
 uniform vec2 fibre_roughness = vec2(0.3, 0.3);
 uniform float root_width = 0.0004;
 uniform float tip_width = 0.0001;
+uniform float lod_width_scale = 1.0; // raster: 1 / the share of strands drawn (distance LOD)
 
-// xyz the point, w its share along the strand (by point), or -1 past the strand's end.
+// xyz the point, w its share along the strand (by point), or -1 past the strand's end; w + 2 on a
+// strand the distance LOD leaves out of the raster draw.
 vec4 hair_point(float p_index) {
 	int i = int(p_index + 0.5);
 	return texelFetch(hair_positions, ivec2(i % texture_width, i / texture_width), 0);
@@ -91,14 +93,16 @@ void vertex() {
 	vec4 here = hair_point(CUSTOM0.x);
 	vec4 before = hair_point(CUSTOM0.y);
 	vec4 after = hair_point(CUSTOM0.z);
+	bool lod_dropped = here.w > 1.5;
+	float along = lod_dropped ? here.w - 2.0 : here.w;
 	vec3 p = here.xyz;
 	vec3 t = (after.w < 0.0 ? p : after.xyz) - (before.w < 0.0 ? p : before.xyz);
 	t = dot(t, t) > 1e-14 ? normalize(t) : vec3(0.0, 1.0, 0.0);
 	vec3 a = normalize(cross(t, abs(t.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 across = CUSTOM1.w > 0.5 ? cross(t, a) : a;
 	// Past the strand's end (a shorter strand padded to the slot) the width is zero: nothing drawn.
-	float half_width = here.w < 0.0 ? 0.0 : 0.5 * mix(root_width, tip_width, here.w);
-	UV = vec2(CUSTOM0.w > 0.0 ? 1.0 : 0.0, max(here.w, 0.0));
+	float half_width = along < 0.0 ? 0.0 : 0.5 * mix(root_width, tip_width, along);
+	UV = vec2(CUSTOM0.w > 0.0 ? 1.0 : 0.0, max(along, 0.0));
 	VERTEX = p + across * (half_width * CUSTOM0.w);
 	NORMAL = cross(across, t);
 	TANGENT = across;
@@ -119,15 +123,19 @@ void vertex() {
 		vec3 right = cross(tv, eye);
 		right = dot(right, right) > 1e-12 ? normalize(right) : normalize(cross(tv, vec3(0.0, 1.0, 0.0)));
 		vec4 clip = PROJECTION_MATRIX * vec4(pv, 1.0);
-		float px = 2.0 * clip.w / max(PROJECTION_MATRIX[1][1] * VIEWPORT_SIZE.y, 1e-6); // one pixel, in metres
+		// abs: the projection flips y (Vulkan), so [1][1] is negative.
+		float px = 2.0 * clip.w / max(abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y, 1e-6); // one pixel, in metres
 		// The widening is capped (2 mm in shadow maps, about a texel of a close cascade, and 1 cm
 		// otherwise): a far cascade's texel, or a pass with a tiny viewport, would otherwise widen
 		// every strand to centimetres and flood the pass with fragments. Coverage keeps the total
 		// opacity right at any drawn width.
 		float grow = min(0.71 * px, IN_SHADOW_PASS ? 0.002 : 0.01);
-		float drawn = half_width + grow;
+		// Distance LOD (TressFX): the strands left in are widened so the hair keeps its opacity;
+		// those left out, and the padding past a strand's end, collapse and draw nothing.
+		half_width = lod_dropped ? 0.0 : half_width * lod_width_scale;
+		float drawn = half_width > 0.0 ? half_width + grow : 0.0;
 		strand_half_px = half_width / px;
-		strand_drawn_px = drawn / px;
+		strand_drawn_px = max(drawn / px, 1e-6);
 		// The second strip is not needed facing the camera: collapsed to a line, it draws nothing.
 		float side = CUSTOM1.w > 0.5 ? 0.0 : strand_across;
 		POSITION = PROJECTION_MATRIX * vec4(pv + right * (drawn * side), 1.0);
@@ -406,6 +414,7 @@ void PhysXHair3D::_make_material() {
 	copy_material->set_shader_parameter("texture_width", solver ? solver->get_texture_width() : 1);
 	copy_material->set_shader_parameter("root_width", root_width);
 	copy_material->set_shader_parameter("tip_width", tip_width);
+	copy_material->set_shader_parameter("lod_width_scale", lod_width_scale);
 	if (render_instance) {
 		render_instance->set_material_override(copy_material);
 	}
@@ -675,6 +684,20 @@ void PhysXHair3D::_step(double p_delta) {
 	// The draw order is sorted from the viewport's camera.
 	const Camera3D *camera = is_inside_tree() ? get_viewport()->get_camera_3d() : nullptr;
 	s.view_xform = camera ? camera->get_global_transform().affine_inverse() : Transform3D();
+	// Distance LOD (TressFX): from lod_start_distance to lod_end_distance the rasterizer draws a
+	// shrinking random share of the strands, down to lod_strand_ratio, widened to keep the hair's
+	// opacity. Strands far away are under a pixel, so fewer, wider ones look the same for less
+	// fill. Simulation and the path tracer keep every strand.
+	s.lod_keep = 1.0f;
+	if (lod_enabled && camera) {
+		const float d = camera->get_global_transform().origin.distance_to(xform.origin);
+		const float t = lod_end_distance > lod_start_distance ? CLAMP((d - lod_start_distance) / (lod_end_distance - lod_start_distance), 0.0f, 1.0f) : (d >= lod_end_distance ? 1.0f : 0.0f);
+		s.lod_keep = Math::lerp(1.0f, lod_strand_ratio, t);
+	}
+	if (copy_material.is_valid() && !Math::is_equal_approx(1.0f / s.lod_keep, lod_width_scale)) {
+		lod_width_scale = 1.0f / s.lod_keep;
+		copy_material->set_shader_parameter("lod_width_scale", lod_width_scale);
+	}
 	solver->step(xform, p_delta, substeps, s);
 }
 
@@ -803,6 +826,38 @@ void PhysXHair3D::set_hair_shading(bool p_enabled) {
 
 bool PhysXHair3D::is_hair_shading() const {
 	return hair_shading;
+}
+
+void PhysXHair3D::set_lod_enabled(bool p_enabled) {
+	lod_enabled = p_enabled;
+}
+
+bool PhysXHair3D::is_lod_enabled() const {
+	return lod_enabled;
+}
+
+void PhysXHair3D::set_lod_start_distance(float p_distance) {
+	lod_start_distance = MAX(p_distance, 0.0f);
+}
+
+float PhysXHair3D::get_lod_start_distance() const {
+	return lod_start_distance;
+}
+
+void PhysXHair3D::set_lod_end_distance(float p_distance) {
+	lod_end_distance = MAX(p_distance, 0.0f);
+}
+
+float PhysXHair3D::get_lod_end_distance() const {
+	return lod_end_distance;
+}
+
+void PhysXHair3D::set_lod_strand_ratio(float p_ratio) {
+	lod_strand_ratio = CLAMP(p_ratio, 0.01f, 1.0f);
+}
+
+float PhysXHair3D::get_lod_strand_ratio() const {
+	return lod_strand_ratio;
 }
 
 void PhysXHair3D::set_render_material(const Ref<ShaderMaterial> &p_material) {
@@ -992,6 +1047,14 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_roughness"), &PhysXHair3D::get_roughness);
 	ClassDB::bind_method(D_METHOD("set_radial_roughness", "roughness"), &PhysXHair3D::set_radial_roughness);
 	ClassDB::bind_method(D_METHOD("get_radial_roughness"), &PhysXHair3D::get_radial_roughness);
+	ClassDB::bind_method(D_METHOD("set_lod_enabled", "enabled"), &PhysXHair3D::set_lod_enabled);
+	ClassDB::bind_method(D_METHOD("is_lod_enabled"), &PhysXHair3D::is_lod_enabled);
+	ClassDB::bind_method(D_METHOD("set_lod_start_distance", "distance"), &PhysXHair3D::set_lod_start_distance);
+	ClassDB::bind_method(D_METHOD("get_lod_start_distance"), &PhysXHair3D::get_lod_start_distance);
+	ClassDB::bind_method(D_METHOD("set_lod_end_distance", "distance"), &PhysXHair3D::set_lod_end_distance);
+	ClassDB::bind_method(D_METHOD("get_lod_end_distance"), &PhysXHair3D::get_lod_end_distance);
+	ClassDB::bind_method(D_METHOD("set_lod_strand_ratio", "ratio"), &PhysXHair3D::set_lod_strand_ratio);
+	ClassDB::bind_method(D_METHOD("get_lod_strand_ratio"), &PhysXHair3D::get_lod_strand_ratio);
 	ClassDB::bind_method(D_METHOD("set_hair_shading", "enabled"), &PhysXHair3D::set_hair_shading);
 	ClassDB::bind_method(D_METHOD("is_hair_shading"), &PhysXHair3D::is_hair_shading);
 	ClassDB::bind_method(D_METHOD("set_render_material", "material"), &PhysXHair3D::set_render_material);
@@ -1048,6 +1111,11 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radial_roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_radial_roughness", "get_radial_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hair_shading"), "set_hair_shading", "is_hair_shading");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "render_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_render_material", "get_render_material");
+	ADD_GROUP("LOD", "lod_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lod_enabled"), "set_lod_enabled", "is_lod_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_start_distance", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_lod_start_distance", "get_lod_start_distance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_end_distance", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m"), "set_lod_end_distance", "get_lod_end_distance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_strand_ratio", PROPERTY_HINT_RANGE, "0.01,1,0.01"), "set_lod_strand_ratio", "get_lod_strand_ratio");
 	ADD_GROUP("Simulation", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simulating"), "set_simulating", "is_simulating");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "guide_ratio", PROPERTY_HINT_RANGE, "0.01,1,0.01"), "set_guide_ratio", "get_guide_ratio");

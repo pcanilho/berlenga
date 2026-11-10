@@ -98,6 +98,7 @@ public:
 		float gust = 0.3f; // 0..1, how much the wind rises and falls per strand
 		float turbulence = 0.35f; // 0..1, eddies in the wind as a share of its speed
 		float turbulence_size = 0.08f; // m, eddy size
+		float lod_keep = 1.0f; // share of the strands the rasterizer draws (distance LOD), 0..1
 		float margin = 0.002f; // kept between strands and the collision spheres (m)
 		Vector<Vector4> spheres; // world centre, radius
 		Transform3D output_xform; // world -> the render copy's space
