@@ -71,3 +71,32 @@ All checks pass:
 Cost: 45 ms for the whole 256 m field (12,899 plants) on the cloud CPU, once; drawing is
 ordinary MultiMeshes, one per mesh per tile. Raster and path traced frames of the field
 match (docs/bench/vegetation `--out`).
+
+## Geology rules (soil, rock, scree)
+
+Slope alone lets trees stand on bare cliffs and scree fans that happen to be gentle. Real plant
+cover follows the ground: trees need soil deep enough to root (most temperate trees want half
+a metre or more; on thin soil over rock they are stunted or absent), grasses and herbs take
+thin soil, and bare rock carries lichens and mosses only. Scree is too loose and dry for most
+plants, with a few specialists.
+
+How others do it: Ghost of Tsushima and Horizon drive species from painted or generated
+ground-type layers (the same rule as a material layer weight in Unreal PCG's density filter);
+Far Cry 5 and Wildlands derive soil and rock masks from their terrain erosion and feed them
+to the biome rules; World Machine and Gaea export soil depth, flow and talus masks for the same
+purpose. All of them treat the ground's material as one more map the placement reads.
+
+What we build: `TerrainDataMap3D.geology_source` points at a `TerrainGenerator3D` (or any node
+with `get_geology_at(pos) -> Color(soil m, rock, talus, ...)`); the bake copies soil depth,
+rock exposure and talus into three more channels (`CHANNEL_SOIL_DEPTH`, `CHANNEL_ROCK`,
+`CHANNEL_TALUS`, `get_soil_depth_at`, `get_rock_at`, `get_talus_at`). `PlantSpecies` gets
+three more rules, `soil_depth`, `rock` and `talus`, ranges with soft edges like the others;
+they apply only when the map has geology, so existing scenes are unchanged. `GrassField3D`
+reads the same species rules, so grass thins on rock too. Suggested ranges: trees soil 0.5 m
+and up, rock under 0.3, talus under 0.2; shrubs soil 0.2 m and up; grasses soil 0.05 m and up;
+moss and lichen any soil, rock welcome.
+
+Check (bench `docs/bench/vegetation --test`): a geology node with bare rock east of 60 m and
+thin soil from 40 to 60 m; trees set to need 0.5 m of soil and under 0.3 rock place none past
+40 m and still fill the rest; without a geology source the field is identical to before.
+Cost: one generator lookup per map cell at bake time.

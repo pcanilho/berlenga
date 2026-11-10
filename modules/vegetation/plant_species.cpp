@@ -43,6 +43,9 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_WATER_DEPTH] = Vector2(0.0f, 0.0f);
 	fades[RULE_WATER_DEPTH] = 0.05f;
 	ranges[RULE_WATER_DISTANCE] = Vector2(-1000000.0f, 1000000.0f);
+	ranges[RULE_SOIL_DEPTH] = Vector2(0.0f, 100000.0f);
+	ranges[RULE_ROCK] = Vector2(0.0f, 1.0f);
+	ranges[RULE_TALUS] = Vector2(0.0f, 1.0f);
 }
 
 void PlantSpecies::set_meshes(const TypedArray<Mesh> &p_meshes) {
@@ -121,6 +124,13 @@ float PlantSpecies::get_suitability(const TerrainDataMap3D *p_map, const Vector3
 	w *= rule_weight(RULE_WETNESS, p_map->get_wetness_at(p_pos));
 	w *= rule_weight(RULE_CURVATURE, p_map->get_curvature_at(p_pos));
 	w *= rule_weight(RULE_HEIGHT, p_map->get_height_at(p_pos));
+	if (p_map->has_geology()) {
+		// Soil, bare rock and scree from the terrain generator: trees need soil to root in,
+		// lichens and cushion plants take the rock, a few specialists the scree.
+		w *= rule_weight(RULE_SOIL_DEPTH, p_map->get_soil_depth_at(p_pos));
+		w *= rule_weight(RULE_ROCK, p_map->get_rock_at(p_pos));
+		w *= rule_weight(RULE_TALUS, p_map->get_talus_at(p_pos));
+	}
 	if (patch_scale > 0.0f) {
 		w *= get_patch_weight(p_pos);
 	}
@@ -231,6 +241,12 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "water_depth_fade", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_WATER_DEPTH);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "water_distance_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_WATER_DISTANCE);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "water_distance_fade", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_WATER_DISTANCE);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "soil_depth_range", PROPERTY_HINT_NONE, "suffix:m"), "set_rule_range", "get_rule_range", RULE_SOIL_DEPTH);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "soil_depth_fade", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m"), "set_rule_fade", "get_rule_fade", RULE_SOIL_DEPTH);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "rock_range"), "set_rule_range", "get_rule_range", RULE_ROCK);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "rock_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_ROCK);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "talus_range"), "set_rule_range", "get_rule_range", RULE_TALUS);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "talus_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_TALUS);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -238,6 +254,9 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_WETNESS);
 	BIND_ENUM_CONSTANT(RULE_WATER_DEPTH);
 	BIND_ENUM_CONSTANT(RULE_WATER_DISTANCE);
+	BIND_ENUM_CONSTANT(RULE_SOIL_DEPTH);
+	BIND_ENUM_CONSTANT(RULE_ROCK);
+	BIND_ENUM_CONSTANT(RULE_TALUS);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 }
 

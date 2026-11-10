@@ -29,6 +29,16 @@ class River extends Node3D:
 			return -INF
 		return 0.03 * (p.z + 100.0) + 0.3
 
+# Geology for the soil and rock rules: bare rock east of x = 60 m (a cliff band), thin soil
+# between 40 and 60 m, deep soil elsewhere.
+class Geology extends Node3D:
+	func get_geology_at(p: Vector3) -> Color:
+		if p.x > 60.0:
+			return Color(0.0, 1.0, 0.0, 0.0)
+		if p.x > 40.0:
+			return Color(0.15, 0.4, 0.0, 0.0)
+		return Color(1.2, 0.0, 0.0, 0.0)
+
 static func height(x: float, z: float) -> float:
 	var pit := -0.8 * exp(-(x * x + (z - 40.0) * (z - 40.0)) / 30.0)
 	return 0.03 * (z + 100.0) + 0.12 * sqrt(x * x + 25.0) - 0.6 + 0.1 * sin(x * 0.31) * sin(z * 0.27) + pit
@@ -212,6 +222,31 @@ func _checks() -> void:
 	_check("seed changes the field", field.get_placements(0) != first, field.get_placements(0).size())
 	field.seed = 0
 	field.populate()
+	# Geology: trees need 0.5 m of soil and little bare rock; nothing else changes without it.
+	var geo := Geology.new()
+	geo.name = "Geology"
+	add_child(geo)
+	dm.geology_source = dm.get_path_to(geo)
+	dm.bake()
+	var tree_sp: PlantSpecies = field.biome.species[0]
+	tree_sp.set_rule_range(PlantSpecies.RULE_SOIL_DEPTH, Vector2(0.5, 100000))
+	tree_sp.set_rule_fade(PlantSpecies.RULE_SOIL_DEPTH, 0.1)
+	tree_sp.set_rule_range(PlantSpecies.RULE_ROCK, Vector2(0.0, 0.3))
+	tree_sp.set_rule_fade(PlantSpecies.RULE_ROCK, 0.1)
+	field.populate()
+	var on_rock := 0
+	var west := 0
+	for p in field.get_placements(0):
+		if p.x > 40.0:
+			on_rock += 1
+		elif p.x > 0.0:
+			west += 1
+	_check("geology: map has it", dm.has_geology() and is_equal_approx(dm.get_rock_at(Vector3(100, 0, 0)), 1.0), dm.get_rock_at(Vector3(100, 0, 0)))
+	_check("geology: no tree on thin soil or bare rock", on_rock == 0 and west > 10, [on_rock, west])
+	dm.geology_source = NodePath()
+	dm.bake()
+	field.populate()
+	_check("geology: rules ignored without a source", field.get_placements(0) == first, field.get_placements(0).size())
 	print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
 func _build_view() -> void:

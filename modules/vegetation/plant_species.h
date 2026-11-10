@@ -50,6 +50,9 @@ public:
 		RULE_WETNESS, // Topographic wetness index.
 		RULE_WATER_DEPTH, // Metres, 0 on land.
 		RULE_WATER_DISTANCE, // Metres, negative under water.
+		RULE_SOIL_DEPTH, // Metres of soil over bedrock (needs the map's geology_source).
+		RULE_ROCK, // Bare rock exposure, 0 to 1 (geology).
+		RULE_TALUS, // Scree cover, 0 to 1 (geology).
 		RULE_MAX,
 	};
 

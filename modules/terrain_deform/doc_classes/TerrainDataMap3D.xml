@@ -75,6 +75,13 @@
 				The baked area in world XZ (position is the corner at the lowest X and Z).
 			</description>
 		</method>
+		<method name="get_rock_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Bare rock exposure at [param global_position], 0 to 1, from [member geology_source] (0 without one).
+			</description>
+		</method>
 		<method name="get_shader_code" qualifiers="static">
 			<return type="String" />
 			<description>
@@ -86,6 +93,20 @@
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
 				Slope in radians (0 is flat).
+			</description>
+		</method>
+		<method name="get_soil_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Soil depth over bedrock in metres at [param global_position], from [member geology_source] (0 without one).
+			</description>
+		</method>
+		<method name="get_talus_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Scree (talus) cover at [param global_position], 0 to 1, from [member geology_source] (0 without one).
 			</description>
 		</method>
 		<method name="get_water_depth_at" qualifiers="const">
@@ -115,6 +136,12 @@
 				Topographic wetness index [code]ln(a / tan(slope))[/code], a = upslope area per metre of contour. Higher is wetter: about 4 to 7 on hillsides, 10 and above on flat ground where water collects (meadows, swamps).
 			</description>
 		</method>
+		<method name="has_geology" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether the last bake read a [member geology_source]. [PlantSpecies] soil, rock and talus rules apply only then.
+			</description>
+		</method>
 		<method name="is_baked" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -134,6 +161,9 @@
 		</member>
 		<member name="flow_exponent" type="float" setter="set_flow_exponent" getter="get_flow_exponent" default="1.1">
 			Exponent of the slope weight in multiple flow direction routing (Holmgren 1994). Around 1.1 spreads flow over hillsides like real overland flow; higher values concentrate it into channels.
+		</member>
+		<member name="geology_source" type="NodePath" setter="set_geology_source" getter="get_geology_source" default="NodePath(&quot;&quot;)">
+			Optional [TerrainGenerator3D] (or any node with [code]get_geology_at(Vector3) -> Color[/code] returning soil depth, rock and talus in r, g, b) whose geology is baked into the map with the rest, so plant placement can keep trees off bare rock and scree.
 		</member>
 		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
 			Physics layers hit by the rays used where [member height_source] gives no height.
@@ -186,7 +216,16 @@
 		<constant name="CHANNEL_WATER_DISTANCE" value="7" enum="Channel">
 			Signed distance to water in metres.
 		</constant>
-		<constant name="CHANNEL_MAX" value="8" enum="Channel">
+		<constant name="CHANNEL_SOIL_DEPTH" value="8" enum="Channel">
+			Soil depth over bedrock in metres (from [member geology_source]).
+		</constant>
+		<constant name="CHANNEL_ROCK" value="9" enum="Channel">
+			Bare rock exposure, 0 to 1 (from [member geology_source]).
+		</constant>
+		<constant name="CHANNEL_TALUS" value="10" enum="Channel">
+			Scree cover, 0 to 1 (from [member geology_source]).
+		</constant>
+		<constant name="CHANNEL_MAX" value="11" enum="Channel">
 			Number of channels.
 		</constant>
 	</constants>

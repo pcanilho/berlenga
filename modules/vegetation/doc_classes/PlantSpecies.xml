@@ -103,6 +103,12 @@
 		<member name="random_yaw" type="bool" setter="set_random_yaw" getter="is_random_yaw" default="true">
 			If [code]true[/code], each plant turns to a random angle around its up axis.
 		</member>
+		<member name="rock_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member rock_range].
+		</member>
+		<member name="rock_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
+			Bare rock exposure (0 to 1) where the species grows, from the map's [member TerrainDataMap3D.geology_source]. Trees and most plants need little: for example [code]Vector2(0, 0.3)[/code]. Ignored when the map has no geology.
+		</member>
 		<member name="scale_range" type="Vector2" setter="set_scale_range" getter="get_scale_range" default="Vector2(0.8, 1.2)">
 			Each plant's uniform scale is picked between [code]x[/code] and [code]y[/code].
 		</member>
@@ -112,8 +118,20 @@
 		<member name="slope_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 90)">
 			Ground slope range in degrees (0 is flat).
 		</member>
+		<member name="soil_depth_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member soil_depth_range], in metres.
+		</member>
+		<member name="soil_depth_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 100000)">
+			Soil depth over bedrock (metres) where the species grows, from the map's [member TerrainDataMap3D.geology_source]. Trees need room to root, for example [code]Vector2(0.5, 100000)[/code]; grasses take thin soil. Ignored when the map has no geology.
+		</member>
 		<member name="spacing" type="float" setter="set_spacing" getter="get_spacing" default="2.0">
 			Minimum distance in metres between two plants of this species (Poisson-disk radius).
+		</member>
+		<member name="talus_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member talus_range].
+		</member>
+		<member name="talus_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
+			Scree cover (0 to 1) where the species grows, from the map's geology. Keep most species to [code]Vector2(0, 0.2)[/code]; a few scree specialists take more. Ignored when the map has no geology.
 		</member>
 		<member name="visibility_range" type="float" setter="set_visibility_range" getter="get_visibility_range" default="0.0">
 			Distance, in metres, beyond which the species is not drawn (it fades out over the last 15%). For ground cover too small to see far away. 0 draws it at any distance.
@@ -156,7 +174,16 @@
 		<constant name="RULE_WATER_DISTANCE" value="5" enum="Rule">
 			Signed distance to water in metres.
 		</constant>
-		<constant name="RULE_MAX" value="6" enum="Rule">
+		<constant name="RULE_SOIL_DEPTH" value="6" enum="Rule">
+			Soil depth over bedrock in metres (needs the map's geology).
+		</constant>
+		<constant name="RULE_ROCK" value="7" enum="Rule">
+			Bare rock exposure, 0 to 1 (needs the map's geology).
+		</constant>
+		<constant name="RULE_TALUS" value="8" enum="Rule">
+			Scree cover, 0 to 1 (needs the map's geology).
+		</constant>
+		<constant name="RULE_MAX" value="9" enum="Rule">
 			Number of rules.
 		</constant>
 	</constants>

@@ -52,6 +52,9 @@ public:
 		CHANNEL_WETNESS,
 		CHANNEL_WATER_DEPTH,
 		CHANNEL_WATER_DISTANCE,
+		CHANNEL_SOIL_DEPTH, // Metres (geology_source only).
+		CHANNEL_ROCK, // Bare rock exposure, 0 to 1 (geology_source only).
+		CHANNEL_TALUS, // Scree cover, 0 to 1 (geology_source only).
 		CHANNEL_MAX,
 	};
 
@@ -61,6 +64,8 @@ private:
 	NodePath height_source;
 	uint32_t ground_collision_mask = 1;
 	TypedArray<NodePath> water_sources;
+	NodePath geology_source;
+	bool baked_geology = false;
 	float flow_exponent = 1.1f;
 	bool bake_on_ready = true;
 	bool publish_shader_globals = true;
@@ -95,6 +100,9 @@ public:
 	NodePath get_height_source() const { return height_source; }
 	void set_ground_collision_mask(uint32_t p_mask);
 	uint32_t get_ground_collision_mask() const { return ground_collision_mask; }
+	void set_geology_source(const NodePath &p_path) { geology_source = p_path; }
+	NodePath get_geology_source() const { return geology_source; }
+	bool has_geology() const { return baked_geology; }
 	void set_water_sources(const TypedArray<NodePath> &p_sources);
 	TypedArray<NodePath> get_water_sources() const { return water_sources; }
 	void set_flow_exponent(float p_exponent);
@@ -118,6 +126,9 @@ public:
 	float get_wetness_at(const Vector3 &p_global_position) const;
 	float get_water_depth_at(const Vector3 &p_global_position) const;
 	float get_water_distance_at(const Vector3 &p_global_position) const;
+	float get_soil_depth_at(const Vector3 &p_global_position) const;
+	float get_rock_at(const Vector3 &p_global_position) const;
+	float get_talus_at(const Vector3 &p_global_position) const;
 
 	Ref<Texture2D> get_data_texture() const { return data_texture; }
 	Ref<Texture2D> get_water_texture() const { return water_texture; }

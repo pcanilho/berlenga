@@ -31,6 +31,7 @@
 #include "terrain_data_map_3d.h"
 
 #include "terrain_deformer_3d.h"
+#include "terrain_generator_3d.h"
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
@@ -369,6 +370,42 @@ Error TerrainDataMap3D::bake() {
 	for (int c = 0; c < CHANNEL_MAX; c++) {
 		channels[c].resize(nn);
 	}
+	// Geology from a TerrainGenerator3D (or any node with get_geology_at(Vector3) -> Color(soil
+	// depth m, rock, talus, ...)): copied per cell so placement rules read it with the rest.
+	baked_geology = false;
+	{
+		float *ch_soil = channels[CHANNEL_SOIL_DEPTH].ptr();
+		float *ch_rock = channels[CHANNEL_ROCK].ptr();
+		float *ch_talus = channels[CHANNEL_TALUS].ptr();
+		Node *gs = geology_source.is_empty() ? nullptr : get_node_or_null(geology_source);
+		TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(gs);
+		if (gs && (gen || gs->has_method("get_geology_at"))) {
+			for (int z = 0; z < n; z++) {
+				for (int x = 0; x < n; x++) {
+					const int i = z * n + x;
+					const Vector3 p(rect.position.x + (x + 0.5f) * cell, h[i], rect.position.y + (z + 0.5f) * cell);
+					if (gen) {
+						ch_soil[i] = gen->get_soil_depth(p);
+						ch_rock[i] = gen->get_rock_exposure(p);
+						ch_talus[i] = gen->get_talus(p);
+					} else {
+						const Color g = gs->call("get_geology_at", p);
+						ch_soil[i] = g.r;
+						ch_rock[i] = g.g;
+						ch_talus[i] = g.b;
+					}
+				}
+			}
+			baked_geology = true;
+		} else {
+			ERR_FAIL_COND_V_MSG(gs, ERR_INVALID_PARAMETER, "TerrainDataMap3D: geology_source needs a TerrainGenerator3D or a node with get_geology_at().");
+			for (int i = 0; i < nn; i++) {
+				ch_soil[i] = 0.0f;
+				ch_rock[i] = 0.0f;
+				ch_talus[i] = 0.0f;
+			}
+		}
+	}
 	float *ch_h = channels[CHANNEL_HEIGHT].ptr();
 	float *ch_slope = channels[CHANNEL_SLOPE].ptr();
 	float *ch_aspect = channels[CHANNEL_ASPECT].ptr();
@@ -655,6 +692,15 @@ float TerrainDataMap3D::get_water_depth_at(const Vector3 &p_pos) const {
 float TerrainDataMap3D::get_water_distance_at(const Vector3 &p_pos) const {
 	return _sample(CHANNEL_WATER_DISTANCE, p_pos);
 }
+float TerrainDataMap3D::get_soil_depth_at(const Vector3 &p_pos) const {
+	return _sample(CHANNEL_SOIL_DEPTH, p_pos);
+}
+float TerrainDataMap3D::get_rock_at(const Vector3 &p_pos) const {
+	return _sample(CHANNEL_ROCK, p_pos);
+}
+float TerrainDataMap3D::get_talus_at(const Vector3 &p_pos) const {
+	return _sample(CHANNEL_TALUS, p_pos);
+}
 
 Ref<Image> TerrainDataMap3D::get_channel_image(Channel p_channel) const {
 	ERR_FAIL_INDEX_V(p_channel, CHANNEL_MAX, Ref<Image>());
@@ -739,6 +785,12 @@ void TerrainDataMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_size"), &TerrainDataMap3D::get_size);
 	ClassDB::bind_method(D_METHOD("set_resolution", "resolution"), &TerrainDataMap3D::set_resolution);
 	ClassDB::bind_method(D_METHOD("get_resolution"), &TerrainDataMap3D::get_resolution);
+	ClassDB::bind_method(D_METHOD("set_geology_source", "path"), &TerrainDataMap3D::set_geology_source);
+	ClassDB::bind_method(D_METHOD("get_geology_source"), &TerrainDataMap3D::get_geology_source);
+	ClassDB::bind_method(D_METHOD("has_geology"), &TerrainDataMap3D::has_geology);
+	ClassDB::bind_method(D_METHOD("get_soil_depth_at", "global_position"), &TerrainDataMap3D::get_soil_depth_at);
+	ClassDB::bind_method(D_METHOD("get_rock_at", "global_position"), &TerrainDataMap3D::get_rock_at);
+	ClassDB::bind_method(D_METHOD("get_talus_at", "global_position"), &TerrainDataMap3D::get_talus_at);
 	ClassDB::bind_method(D_METHOD("set_height_source", "path"), &TerrainDataMap3D::set_height_source);
 	ClassDB::bind_method(D_METHOD("get_height_source"), &TerrainDataMap3D::get_height_source);
 	ClassDB::bind_method(D_METHOD("set_ground_collision_mask", "mask"), &TerrainDataMap3D::set_ground_collision_mask);
@@ -773,6 +825,7 @@ void TerrainDataMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "size", PROPERTY_HINT_RANGE, "1,16384,1,or_greater,suffix:m"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "resolution", PROPERTY_HINT_RANGE, "8,4096,1"), "set_resolution", "get_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "height_source"), "set_height_source", "get_height_source");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "geology_source"), "set_geology_source", "get_geology_source");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ground_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_ground_collision_mask", "get_ground_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "water_sources", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_water_sources", "get_water_sources");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_exponent", PROPERTY_HINT_RANGE, "0.5,10,0.01"), "set_flow_exponent", "get_flow_exponent");
@@ -789,5 +842,8 @@ void TerrainDataMap3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(CHANNEL_WETNESS);
 	BIND_ENUM_CONSTANT(CHANNEL_WATER_DEPTH);
 	BIND_ENUM_CONSTANT(CHANNEL_WATER_DISTANCE);
+	BIND_ENUM_CONSTANT(CHANNEL_SOIL_DEPTH);
+	BIND_ENUM_CONSTANT(CHANNEL_ROCK);
+	BIND_ENUM_CONSTANT(CHANNEL_TALUS);
 	BIND_ENUM_CONSTANT(CHANNEL_MAX);
 }
