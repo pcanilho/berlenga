@@ -17,6 +17,7 @@ extends Node3D
 #                     --water=murky: the same pool with lake water that scatters (Transmission scatter,
 #                     glTF KHR_materials_scatter); --water=shader: clear water from a ShaderMaterial writing
 #                     TRANSMISSION, IOR and ABSORPTION
+#                     water_lamps: the murky pool at night, lit only by two lamps under the water
 #                     caustics: the same pool's shallow half from above (use with --ripples);
 #                     caustics_far: the same from 70 m through a long lens
 #                     --ripples: a rippled surface (normal map, or NORMAL_MAP in the shader), which
@@ -153,6 +154,24 @@ func _ready() -> void:
 			sun.rotation_degrees = Vector3(-55, -150, 0)
 			cam.look_at_from_position(Vector3(0, 5.5, 7.5), Vector3(0, -1.2, 0))
 			_water_pool()
+		"water_lamps":
+			# Night: the murky pool lit only by two lamps under the water (equiangular sampling).
+			ground.visible = false
+			sun.visible = false
+			env.background_mode = Environment.BG_COLOR
+			env.background_color = Color(0.0, 0.0, 0.0)
+			water = "murky"
+			cam.look_at_from_position(Vector3(0, 5.5, 7.5), Vector3(0, -1.2, 0))
+			_water_pool()
+			for lp: Vector3 in [Vector3(-1.2, -0.8, 0.3), Vector3(1.4, -2.0, -0.4)]:
+				var l := OmniLight3D.new()
+				l.position = lp
+				l.light_color = Color(1.0, 0.85, 0.6)
+				l.light_energy = 2.0
+				l.omni_range = 8.0
+				l.omni_attenuation = 2.0
+				l.shadow_enabled = true
+				add_child(l)
 		"caustics":
 			# The pool's shallow half from above, with --ripples.
 			ground.visible = false

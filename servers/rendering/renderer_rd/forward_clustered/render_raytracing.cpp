@@ -7215,7 +7215,8 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/transmission") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_TRANSMISSION : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_REFRACTION : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/subsurface_scattering") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_SUBSURFACE : 0u) |
-				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/hair") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_HAIR : 0u));
+								(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/hair") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_HAIR : 0u) |
+				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/equiangular_media") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_EQUIANGULAR : 0u));
 		// Light reuse (ReSTIR DI, raytracing_lights_inc.glsl): two frames of per-pixel reservoirs,
 		// the slot written turning every frame, and a table renumbering last frame's lights.
 		if (light_reuse) {

@@ -388,7 +388,141 @@ void plight_update(uvec2 p_pixel, mat4 p_inv_view, uint p_frame) {
 // grid's candidates in proportion to its unshadowed contribution (as plight_update), each through a
 // shadow ray whose transmittance includes the gas (ratio tracking), weighted by the
 // Henyey-Greenstein phase function of anisotropy g (the gas's, or a water medium's).
+// Equiangular sampling (Kulla and Fajardo, "Importance Sampling Techniques for Path Tracing in
+// Participating Media", EGSR 2012) for lamps inside a homogeneous scattering medium (murky
+// water). Along each segment through it, one positional light is chosen and a point drawn
+// with density proportional to 1/r^2 from it, the light reached from there; the collision
+// point the free flight draws lights the same light too, and the two are weighed by the
+// balance heuristic over the distance along the segment. See docs/ideas/equiangular-media.md.
+struct RTMediumSegment {
+	bool enabled; // the collision's light sample is weighed against the equiangular one
+	vec3 origin;
+	vec3 dir;
+	float extent;
+	vec3 sigma_t;
+	float t; // where the collision is
+};
+
+// The free flight's density of colliding at p_t: one colour channel picked at random.
+float rt_medium_distance_pdf(vec3 p_sigma_t, float p_t) {
+	return dot(p_sigma_t * exp(-p_sigma_t * p_t), vec3(1.0 / 3.0));
+}
+
+// The part of the segment [0, p_length] from p_origin along p_dir that light p_light reaches (its
+// range sphere), and the equiangular parameters over it: the foot of the light on the ray (r_t0),
+// its distance from the ray (r_d) and the angles to the part's ends. False when it misses.
+bool rt_equiangular_span(RTLightData p_light, vec3 p_origin, vec3 p_dir, float p_length, out float r_a, out float r_b, out float r_t0, out float r_d,
+		out float r_theta_a, out float r_theta_b) {
+	vec3 to_l = p_light.position - p_origin;
+	r_t0 = dot(to_l, p_dir);
+	vec3 foot = p_origin + p_dir * r_t0;
+	r_d = max(distance(foot, p_light.position), 1e-4);
+	r_a = 0.0;
+	r_b = p_length;
+	if (p_light.max_range_squared > 0.0) {
+		float h2 = p_light.max_range_squared - r_d * r_d;
+		if (h2 <= 0.0) {
+			return false;
+		}
+		float h = sqrt(h2);
+		r_a = max(r_a, r_t0 - h);
+		r_b = min(r_b, r_t0 + h);
+	}
+	if (r_b <= r_a) {
+		return false;
+	}
+	r_theta_a = atan(r_a - r_t0, r_d);
+	r_theta_b = atan(r_b - r_t0, r_d);
+	return r_theta_b - r_theta_a > 1e-6;
+}
+
+// The equiangular density at p_t for light p_light (0 outside the part it reaches).
+float rt_equiangular_pdf(RTLightData p_light, RTMediumSegment p_seg, float p_t) {
+	float a, b, t0, d, ta, tb;
+	if (!rt_equiangular_span(p_light, p_seg.origin, p_seg.dir, p_seg.extent, a, b, t0, d, ta, tb) || p_t < a || p_t > b) {
+		return 0.0;
+	}
+	float x = p_t - t0;
+	return d / ((tb - ta) * (d * d + x * x));
+}
+
+// The equiangular half: one light chosen where a uniformly drawn point of the segment lies in
+// its range (so a light's chance is the share of the segment it reaches, which divides back
+// out), and one point on that share drawn equiangularly. Light reaching the segment's start,
+// per unit of the path's throughput there.
+vec3 rt_medium_equiangular(RTMediumSegment p_seg, vec3 p_sigma_s, float g, inout uint rng) {
+	float t_u = rand(rng) * p_seg.extent;
+	vec3 x_u = p_seg.origin + p_seg.dir * t_u;
+	uint g_start, g_count, c_start, c_count;
+	lights_grid_lists(x_u, g_start, g_count, c_start, c_count);
+	uint n = g_count + c_count;
+	if (n == 0u) {
+		return vec3(0.0);
+	}
+	uint m = min(n, PLIGHT_CANDIDATES);
+	float w_sum = 0.0;
+	float w_sel = 0.0;
+	uint li_sel = 0u;
+	for (uint k = 0u; k < m; k++) {
+		uint pick = (n <= PLIGHT_CANDIDATES) ? k : min(uint(rand(rng) * float(n)), n - 1u);
+		uint li = lights_grid_light(pick, g_start, g_count, c_start);
+		RTLightData light = lights_get(li);
+		if (light.type == RT_LIGHT_TYPE_DIRECTIONAL) {
+			continue;
+		}
+		if (light.max_range_squared > 0.0 && dot(x_u - light.position, x_u - light.position) > light.max_range_squared) {
+			continue;
+		}
+		float a, b, t0, d, ta, tb;
+		if (!rt_equiangular_span(light, p_seg.origin, p_seg.dir, p_seg.extent, a, b, t0, d, ta, tb)) {
+			continue;
+		}
+		// Target: the light's power times the integral of 1/r^2 over the part it reaches.
+		float target = plight_luma(light.emission) * (tb - ta) / d;
+		float w = target * (n <= PLIGHT_CANDIDATES ? 1.0 : float(n) / float(m));
+		if (!(w > 0.0) || isinf(w)) {
+			continue;
+		}
+		w_sum += w;
+		if (rand(rng) * w_sum < w) {
+			w_sel = target;
+			li_sel = li;
+		}
+	}
+	if (!(w_sel > 0.0)) {
+		return vec3(0.0);
+	}
+	RTLightData light = lights_get(li_sel);
+	float a, b, t0, d, ta, tb;
+	rt_equiangular_span(light, p_seg.origin, p_seg.dir, p_seg.extent, a, b, t0, d, ta, tb);
+	float reach = (b - a) / p_seg.extent; // the chance a uniform point lies in range
+	float t = clamp(t0 + d * tan(mix(ta, tb, rand(rng))), a, b);
+	float x = t - t0;
+	float pdf = d / ((tb - ta) * (d * d + x * x));
+	vec3 pos = p_seg.origin + p_seg.dir * t;
+	vec3 to_l;
+	float dist;
+	vec3 e = plight_positional(light, pos, to_l, dist);
+	if (all(equal(e, vec3(0.0)))) {
+		return vec3(0.0);
+	}
+	float p_d = rt_medium_distance_pdf(p_seg.sigma_t, t);
+	float mis = pdf / (pdf + p_d);
+	vec3 f = p_sigma_s * exp(-p_seg.sigma_t * t) * e * rt_volume_hg(dot(to_l, p_seg.dir), g);
+	vec3 vis = lights_shadow_transmittance(light, pos, to_l, max(dist - 0.01, 0.002), 0xFFu, rng);
+	return f * vis * (mis / pdf) * (w_sum / w_sel) / reach;
+}
+
+vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, RTMediumSegment p_seg, inout uint rng);
+
 vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, inout uint rng) {
+	RTMediumSegment seg;
+	seg.enabled = false;
+	return rt_volume_direct(x, p_dir, g, seg, rng);
+}
+
+// p_seg active: the positional light is weighed against rt_medium_equiangular()'s sample of it.
+vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, RTMediumSegment p_seg, inout uint rng) {
 	vec3 sum = vec3(0.0);
 	uint light_count = uint(get_rt_param(RT_PARAM_LIGHT_COUNT));
 	uint dir_count = lights_directional_count(light_count);
@@ -440,7 +574,12 @@ vec3 rt_volume_direct(vec3 x, vec3 p_dir, float g, inout uint rng) {
 			}
 		}
 		if (w_sel > 0.0) {
-			sum += e_sel * (w_sum / w_sel) * lights_shadow_transmittance(lights_get(li_sel), x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
+			float mis = 1.0;
+			if (p_seg.enabled) {
+				float p_d = rt_medium_distance_pdf(p_seg.sigma_t, p_seg.t);
+				mis = p_d / (p_d + rt_equiangular_pdf(lights_get(li_sel), p_seg, p_seg.t));
+			}
+			sum += e_sel * (mis * w_sum / w_sel) * lights_shadow_transmittance(lights_get(li_sel), x, l_sel, max(d_sel - 0.01, 0.002), 0xFFu, rng);
 		}
 	}
 	return sum;
@@ -960,13 +1099,24 @@ void main() {
 						t_coll = -log(max(1.0 - rand(ps.rng_state), 1e-30)) / sigma_c;
 					}
 				}
+				// Lamps in the medium: an equiangular light sample along the segment, weighed against
+				// the collision's own (rt_medium_equiangular()).
+				RTMediumSegment seg;
+				seg.enabled = scatters && rt_material_feature(RT_MATERIAL_FEATURE_EQUIANGULAR) && get_rt_param(RT_PARAM_LIGHT_COUNT) > 0.0;
+				seg.origin = ray_origin;
+				seg.dir = ray_dir;
+				seg.extent = min(seg_len, 1000.0);
+				seg.sigma_t = medium_sigma_t;
+				seg.t = t_coll;
+				vec3 equiangular = seg.enabled ? throughput_entry * rt_medium_equiangular(seg, medium_albedo * medium_sigma_t, medium_g, ps.rng_state) : vec3(0.0);
 				if (t_coll < seg_len) {
 					vec3 tr = exp(-medium_sigma_t * t_coll);
 					float pdf = dot(medium_sigma_t * tr, vec3(1.0 / 3.0));
 					vec3 x = ray_origin + ray_dir * t_coll;
-					ps.radiance = radiance_pre;
+					ps.radiance = radiance_pre + equiangular;
 					ps.throughput = throughput_entry * medium_albedo * medium_sigma_t * tr / max(pdf, 1e-30);
-					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, ps.rng_state);
+					seg.enabled = seg.enabled && t_coll < seg.extent;
+					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, seg, ps.rng_state);
 					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG | MEDIUM_CHANGE_FLAG)) |
 							NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
 					ps.hit_t = t_coll;
@@ -985,7 +1135,7 @@ void main() {
 					// Probability of no collision over the segment, averaged over the channels it was drawn on.
 					float p_pass = scatters ? dot(medium_transmittance, vec3(1.0 / 3.0)) : 1.0;
 					medium_transmittance /= max(p_pass, 1e-30);
-					ps.radiance = radiance_pre + (ps.radiance - radiance_pre) * medium_transmittance;
+					ps.radiance = radiance_pre + (ps.radiance - radiance_pre) * medium_transmittance + equiangular;
 					ps.throughput *= medium_transmittance;
 				}
 			}

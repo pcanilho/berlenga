@@ -50,6 +50,7 @@
 #define RT_MATERIAL_FEATURE_REFRACTION 8u // rendering/pathtracing/refraction
 #define RT_MATERIAL_FEATURE_SUBSURFACE 16u // rendering/pathtracing/subsurface_scattering
 #define RT_MATERIAL_FEATURE_HAIR 32u // rendering/pathtracing/hair
+#define RT_MATERIAL_FEATURE_EQUIANGULAR 64u // rendering/pathtracing/equiangular_media
 
 // RT_PARAM_VIS_MODE values. Must match Environment::PathtracingDebugMode.
 #define RT_VIS_TRANSPARENCY_LAYERS 23

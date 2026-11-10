@@ -3892,6 +3892,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/transmission", true);
 	GLOBAL_DEF("rendering/pathtracing/refraction", true);
 	GLOBAL_DEF("rendering/pathtracing/hair", true);
+	GLOBAL_DEF("rendering/pathtracing/equiangular_media", true);
 	GLOBAL_DEF("rendering/pathtracing/caustics", true);
 	GLOBAL_DEF("rendering/pathtracing/subsurface_scattering", true);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/subsurface_scattering_scale", PROPERTY_HINT_RANGE, "0.0001,1,0.0001,or_greater,suffix:m"), 0.01);
