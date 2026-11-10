@@ -367,10 +367,11 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Deep snow** (`SnowSurface3D`, `snow_deform` group): deep snow as geometry with prints and tracks; bodies sink by weight (Bekker) and rest in their own tracks; tracks refill with new snow and wind.
 - **Falling snow** (`SnowFall3D`): falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.
 - **Snow climate** (`SnowClimate`): bakes a winter over the whole terrain, with snow lines, shaded faces that keep their snow and loaded lee slopes; the cover carries it on with the weather and draws it far away.
-- **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision.
+- **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
+- **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced.
 
-<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices</summary>
+<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle</summary>
 
 ![Snow on a mountain, raster and path traced](docs/media/snow-mountain.jpg)
 
@@ -411,6 +412,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A snow cornice overhanging a lee crest, raster and path traced](docs/media/snow-cornice.jpg)
 
 *Cornice: a lip of snow over the lee side of a crest.*
+
+![Snow surface close up: dry in raster, dry path traced, and wet](docs/media/snow-sparkle.jpg)
+
+*Sparkle: dry snow glints in raster and path tracing; wet snow loses it.*
 
 </details>
 
