@@ -46,7 +46,8 @@ extends Node3D
 #                     the head, "plain" for Godot's standard lighting instead of hair_shading, "far" for the
 #                     camera 8 m away, "nolod" to draw every strand at any distance, "novolume" for
 #                     strands that pass through each other (volume_enabled off); "box" for square
-#                     shoulders (spheres only on the skull), "body" to make them the collision body,
+#                     shoulders (spheres only on the skull), "body" to make the shoulders (round, or
+#                     square with "box") the collision body, held still and seen from the side,
 #                     "skinned" to skin them to a tilted bone (the head stays still), "hidebox" to see the drape;
 #                     --hair=compare: held still, beside the same groom on a HairMesh with BaseMaterial3D
 #                     Hair; --hair=compare_shader: that HairMesh through a shader's HAIR outputs instead
@@ -197,7 +198,7 @@ func _ready() -> void:
 			env.pathtracing_max_bounces = maxi(bounces, 12)
 			if hair.begins_with("compare"):
 				cam.look_at_from_position(Vector3(0.15, 0.4, 1.7), Vector3(0.15, 0.22, 0))
-			elif hair.contains("box"):
+			elif hair.contains("box") or hair.contains("body"):
 				# From the side, the hair against the shoulders' top and back.
 				cam.look_at_from_position(Vector3(1.5, 0.3, 0.2), Vector3(0, 0.12, -0.05))
 			elif hair.contains("far"):
@@ -709,6 +710,10 @@ func _strands_sim() -> void:
 	body.material_override = skin
 	body.position = Vector3(0, -0.27, 0)
 	sim_head.add_child(body)
+	if hair.contains("body") and not hair.contains("box"):
+		# The rounded shoulders as the collision body (a distance field) instead of a sphere.
+		h.collision_spheres = PackedVector4Array([Vector4(0, 0, 0, 0.1)])
+		h.collision_body = h.get_path_to(body)
 	if hair.contains("box"):
 		# Square shoulders, which spheres fit badly: "body" makes them the collision body (a
 		# distance field), "skinned" skins them to a bone tilted 25 degrees.
@@ -786,7 +791,7 @@ func _skinned_box(p_box: BoxMesh) -> ArrayMesh:
 
 func _process(_delta: float) -> void:
 	n += 1
-	if sim_head and not hair.contains("wind") and not hair.contains("box"):
+	if sim_head and not hair.contains("wind") and not hair.contains("box") and not hair.contains("body"):
 		var t := n / 30.0
 		# Shake for three full periods (ends back at x = 0), then turn.
 		if t < 2.5:
