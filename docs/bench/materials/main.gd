@@ -18,6 +18,7 @@ extends Node3D
 #                     glTF KHR_materials_scatter); --water=shader: clear water from a ShaderMaterial writing
 #                     TRANSMISSION, IOR and ABSORPTION
 #                     water_lamps: the murky pool at night, lit only by two lamps under the water
+#                     water_lamps_silty: the same in thinner water (light fades over about 5 m)
 #                     caustics: the same pool's shallow half from above (use with --ripples);
 #                     caustics_far: the same from 70 m through a long lens
 #                     --ripples: a rippled surface (normal map, or NORMAL_MAP in the shader), which
@@ -58,6 +59,7 @@ extends Node3D
 #   --aa=MODE         raster anti-aliasing: taa, msaa (4x), both or none (default)
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
 #   --frames=N        frames rendered before --out is saved (default 8)
+#   --linear          linear tone mapping at 0.08 exposure, for comparing means (no clipping)
 #   --set=setting:value  any project setting, e.g. --set=rendering/pathtracing/clearcoat:0
 #   --out=path.png    save the last frame and quit
 #
@@ -74,6 +76,7 @@ var out := ""
 var water := "clear"
 var hair := ""
 var ripples := false
+var linear := false
 var debug_mode := 0
 var n := 0
 var sim_head: Node3D = null
@@ -93,6 +96,7 @@ func _ready() -> void:
 		elif a.begins_with("--water="): water = a.substr(8)
 		elif a.begins_with("--hair="): hair = a.substr(7)
 		elif a == "--ripples": ripples = true
+		elif a == "--linear": linear = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--aa="):
 			# Raster anti-aliasing: taa, msaa (4x), both, or none (the default).
@@ -109,7 +113,9 @@ func _ready() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
-	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR if linear else Environment.TONE_MAPPER_AGX
+	if linear:
+		env.tonemap_exposure = 0.08
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = bounces
@@ -154,18 +160,21 @@ func _ready() -> void:
 			sun.rotation_degrees = Vector3(-55, -150, 0)
 			cam.look_at_from_position(Vector3(0, 5.5, 7.5), Vector3(0, -1.2, 0))
 			_water_pool()
-		"water_lamps":
-			# Night: the murky pool lit only by two lamps under the water (equiangular sampling).
+		"water_lamps", "water_lamps_silty", "water_lamps_above":
+			# Night: the murky pool lit only by two lamps under the water (equiangular sampling);
+			# _silty: thinner water, light fading over about 5 m. _above: the lamps 1 m and more over the silty water,
+			# so no path in the water comes near a lamp (finite variance both ways: a check that on and
+			# off agree on the mean).
 			ground.visible = false
 			sun.visible = false
 			env.background_mode = Environment.BG_COLOR
 			env.background_color = Color(0.0, 0.0, 0.0)
-			water = "murky"
+			water = "murky" if scene == "water_lamps" else "silty"
 			cam.look_at_from_position(Vector3(0, 5.5, 7.5), Vector3(0, -1.2, 0))
 			_water_pool()
 			for lp: Vector3 in [Vector3(-1.2, -0.8, 0.3), Vector3(1.4, -2.0, -0.4)]:
 				var l := OmniLight3D.new()
-				l.position = lp
+				l.position = lp + (Vector3(0, 3.0, 0) if scene == "water_lamps_above" else Vector3.ZERO)
 				l.light_color = Color(1.0, 0.85, 0.6)
 				l.light_energy = 2.0
 				l.omni_range = 8.0
@@ -424,13 +433,15 @@ void fragment() {
 		w.normal_enabled = true
 		w.normal_texture = _ripple_normal_map()
 		w.uv1_scale = Vector3(4.0, 4.0 / 1.5, 1.0) # 1.5 m tiles on the 6 x 4 m pool.
-	if water == "murky":
+	if water == "murky" or water == "silty":
 		# Green lake water: light fades within a few metres and much of it scatters back.
 		w.transmission_attenuation_color = Color(0.55, 0.72, 0.6)
 		w.transmission_attenuation_distance = 1.0
 		w.transmission_scatter_strength = 1.0
 		w.transmission_scatter_color = Color(0.45, 0.62, 0.5)
 		w.transmission_scatter_anisotropy = 0.6
+		if water == "silty":
+			w.transmission_attenuation_distance = 5.0
 	return w
 
 

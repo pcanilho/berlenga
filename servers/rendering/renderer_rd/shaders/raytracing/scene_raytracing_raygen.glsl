@@ -990,6 +990,7 @@ void main() {
 		// The medium the ray travels in (MEDIUM_CHANGE_FLAG), starting in the camera's (rt_camera_medium()): its extinction
 		// per metre, single-scatter albedo and phase anisotropy (rt_medium_set()).
 		bool in_medium = false;
+		bool medium_scattered = false; // equiangular sampling only until the path's first collision in a medium
 		vec3 medium_sigma_t = vec3(0.0);
 		vec3 medium_albedo = vec3(0.0);
 		float medium_g = 0.0;
@@ -1102,7 +1103,10 @@ void main() {
 				// Lamps in the medium: an equiangular light sample along the segment, weighed against
 				// the collision's own (rt_medium_equiangular()).
 				RTMediumSegment seg;
-				seg.enabled = scatters && rt_material_feature(RT_MATERIAL_FEATURE_EQUIANGULAR) && get_rt_param(RT_PARAM_LIGHT_COUNT) > 0.0;
+				// Only on segments before the path's first collision: they draw the lamp's glow (single
+				// scattering, where equiangular sampling gains), while deeper segments carry diffuse
+				// multiple scattering, where it gains little for a shadow ray each.
+				seg.enabled = scatters && !medium_scattered && rt_material_feature(RT_MATERIAL_FEATURE_EQUIANGULAR) && get_rt_param(RT_PARAM_LIGHT_COUNT) > 0.0;
 				seg.origin = ray_origin;
 				seg.dir = ray_dir;
 				seg.extent = min(seg_len, 1000.0);
@@ -1116,6 +1120,7 @@ void main() {
 					ps.radiance = radiance_pre + equiangular;
 					ps.throughput = throughput_entry * medium_albedo * medium_sigma_t * tr / max(pdf, 1e-30);
 					seg.enabled = seg.enabled && t_coll < seg.extent;
+					medium_scattered = true;
 					ps.radiance += ps.throughput * rt_volume_direct(x, ray_dir, medium_g, seg, ps.rng_state);
 					ps.packed_bounces_flags = inc_total_bounce(flags_entry & ~(PATH_TERMINATED_FLAG | PRIMARY_MISS_FLAG | DLSS_RR_REPLACE_PENDING_FLAG | MEDIUM_CHANGE_FLAG)) |
 							NON_SINGULAR_PATH_FLAG | LAST_BOUNCE_DIFFUSE_FLAG;
