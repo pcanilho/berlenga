@@ -55,6 +55,7 @@ class PhysXHair3D : public Node3D {
 	float melanin_redness = 0.0f;
 	float roughness = 0.3f;
 	float radial_roughness = 0.3f;
+	bool hair_shading = true;
 	Ref<ShaderMaterial> render_material;
 
 	bool simulating = true;
@@ -84,7 +85,7 @@ class PhysXHair3D : public Node3D {
 	bool built = false;
 	bool build_pending = false;
 
-	static Ref<Shader> render_shader;
+	static Ref<Shader> render_shaders[2]; // Godot standard lighting, hair shading
 
 	void _groom_changed();
 	void _queue_build();
@@ -117,6 +118,8 @@ public:
 	float get_roughness() const;
 	void set_radial_roughness(float p_roughness);
 	float get_radial_roughness() const;
+	void set_hair_shading(bool p_enabled);
+	bool is_hair_shading() const;
 	void set_render_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_render_material() const;
 

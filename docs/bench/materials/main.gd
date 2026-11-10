@@ -42,7 +42,8 @@ extends Node3D
 #                     shakes side to side for two and a half seconds, then turns and stops; a breeze from the
 #                     left. Record it with --fixed-fps 30 --write-movie (frame time is fixed to 1/30 s).
 #                     --hair=wind: the head held still in a 6 m/s gusty breeze; add "wavy" (--hair=wind_wavy,
-#                     --hair=wavy) for wavy hair;
+#                     --hair=wavy) for wavy hair; "blonde" for light hair, "back" for the sun low behind
+#                     the head, "plain" for Godot's standard lighting instead of hair_shading;
 #                     --hair=compare: held still, beside the same groom on a HairMesh with BaseMaterial3D
 #                     Hair; --hair=compare_shader: that HairMesh through a shader's HAIR outputs instead
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
@@ -670,7 +671,14 @@ func _strands_sim() -> void:
 	h.groom = groom
 	h.root_width = 0.0003
 	h.tip_width = 0.0001
-	h.melanin = 0.3
+	h.melanin = 0.12 if hair.contains("blonde") else 0.3
+	# "plain": Godot's standard lighting on the strands instead of the hair shading.
+	h.hair_shading = not hair.contains("plain")
+	if hair.contains("back"):
+		# The sun low behind the head, toward the camera: light through the hair.
+		for c in get_children():
+			if c is DirectionalLight3D:
+				c.rotation_degrees = Vector3(-15, 160, 0)
 	if hair.contains("all"):
 		h.guide_ratio = 1.0
 	h.wind = Vector3(1.5, 0, 0)
