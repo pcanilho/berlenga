@@ -487,6 +487,7 @@ public:
 	FUNC2(multimesh_set_buffer, RID, const Vector<float> &)
 	FUNC1RC(RID, multimesh_get_command_buffer_rd_rid, RID)
 	FUNC1RC(RID, multimesh_get_buffer_rd_rid, RID)
+	FUNC1(multimesh_mark_buffer_rd_changed, RID)
 	FUNC1RC(Vector<float>, multimesh_get_buffer, RID)
 
 	FUNC3(multimesh_set_buffer_interpolated, RID, const Vector<float> &, const Vector<float> &)
