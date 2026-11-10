@@ -35,6 +35,7 @@
 #include "terrain_erosion_filter.h"
 #include "terrain_geology.h"
 #include "terrain_hydraulic.h"
+#include "terrain_runoff.h"
 #include "terrain_stream_power.h"
 
 #include "core/config/engine.h"
@@ -561,6 +562,8 @@ bool TerrainGenerator3D::generate() {
 	memcpy(receivers.ptr(), rec.ptr(), sizeof(int32_t) * n);
 	channel_area.resize(n);
 	TerrainGeology::d8_area(n, receivers.ptr(), stack.ptr(), double(cell_size) * cell_size, channel_area.ptr());
+	// Rain and snowmelt from the climate (before the lakes, whose balance takes the mean runoff).
+	_bake_runoff(sea_mask);
 	// Lakes behind natural dams (they change the ground, so before the geology).
 	_make_lakes(sea_mask);
 	uint64_t water_usec = OS::get_singleton()->get_ticks_usec() - tw;
@@ -618,9 +621,14 @@ void TerrainGenerator3D::clear_result() {
 	water_body.clear();
 	water_depth.clear();
 	lake_rim.clear();
+	lake_rim_weight.clear();
 	river_receivers.clear();
 	river_area.clear();
 	lake_info.clear();
+	runoff_fields.clear();
+	runoff_n = 0;
+	flow_index.clear();
+	flows.clear();
 	has_sea = false;
 	tile_delta.clear();
 	tile_flow.clear();
@@ -755,8 +763,13 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 		const int z = CLAMP(int(Math::round((p_z - result_rect.position.y) / result_cell)), 0, ny - 1);
 		const float level = lake_rim[z * nx + x];
 		if (!Math::is_nan(level)) {
-			const float base = _sample(heights, p_x, p_z);
-			g = MAX(g, MIN(base, level + 0.05f));
+			// Full within a cell of the water, fading out over the next two (a hard edge at the ring left terraces with
+			// stepped walls along the cell lines).
+			const float w = CLAMP(_sample(lake_rim_weight, p_x, p_z), 0.0f, 1.0f);
+			const float hold = MIN(_sample(heights, p_x, p_z), level + 0.05f);
+			if (g < hold) {
+				g = Math::lerp(g, hold, w);
+			}
 		}
 	}
 	return g;
@@ -1040,7 +1053,7 @@ Array TerrainGenerator3D::get_waterfalls(real_t p_min_area, real_t p_min_height)
 				w["bottom"] = bottom;
 				w["height"] = top.y - bottom.y;
 				w["width"] = widths[k];
-				w["discharge"] = get_discharge(areas[k]);
+				w["discharge"] = _flow(cells[k], river_month);
 				w["river"] = r;
 				w["index"] = k;
 				w["hardness"] = get_rock_hardness(top);
@@ -1050,6 +1063,249 @@ Array TerrainGenerator3D::get_waterfalls(real_t p_min_area, real_t p_min_height)
 		}
 	}
 	return out;
+}
+
+/* Rain and snowmelt (terrain_runoff.h; docs/ideas/terrain-generation.md "Rain and snowmelt feed the rivers") */
+
+namespace {
+constexpr int RUNOFF_STRIDE = 28; // 12 runoff, 12 snow, precipitation, shortwave, winter shortwave, surface
+constexpr int RUNOFF_MIN_CELLS = 8;
+} // namespace
+
+// The climate on a coarse grid of the result (about the recipe's sun_cell), the sea as water, then each cell's
+// monthly water balance.
+void TerrainGenerator3D::_bake_runoff(const LocalVector<uint8_t> &p_sea) {
+	runoff_fields.clear();
+	runoff_n = 0;
+	runoff_mean = 0.0;
+	runoff_msec = 0.0;
+	flow_index.clear();
+	flows.clear();
+	if (climate_recipe.is_null() || nx < 2 || ny < 2) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	const TerrainClimate::Params &cp = climate_recipe->get_params();
+	const int f = MAX(1, int(Math::round(climate_recipe->get_sun_cell() / cell_size)));
+	const int N = MAX((nx + f - 1) / f, (ny + f - 1) / f);
+	const float cell = float(cell_size) * f;
+	std::vector<float> surf(N * N);
+	std::vector<uint8_t> sea(N * N);
+	for (int cz = 0; cz < N; cz++) {
+		for (int cx = 0; cx < N; cx++) {
+			double sum = 0.0;
+			int count = 0, wet = 0;
+			for (int z = cz * f; z < (cz + 1) * f; z++) {
+				for (int x = cx * f; x < (cx + 1) * f; x++) {
+					const int i = MIN(z, ny - 1) * nx + MIN(x, nx - 1);
+					const bool s = p_sea.size() == uint32_t(nx * ny) && p_sea[i];
+					sum += s ? MAX(heights[i], result_min) : heights[i];
+					wet += s ? 1 : 0;
+					count++;
+				}
+			}
+			surf[cz * N + cx] = float(sum / count);
+			sea[cz * N + cx] = 2 * wet > count;
+		}
+	}
+	std::vector<float> precip(N * N), sw(N * N), sww(N * N), sky(N * N), hz;
+	TerrainClimate::precipitation_on(cp, surf.data(), N, cell, climate_recipe->get_precipitation_cell(), precip.data());
+	TerrainClimate::horizons(cp, surf.data(), N, cell, hz);
+	TerrainClimate::shortwave(cp, surf.data(), N, cell, hz, sw.data(), sww.data(), sky.data());
+	runoff_fields.resize(N * N * RUNOFF_STRIDE);
+	float *rf = runoff_fields.ptr();
+	TerrainClimate::parallel_for(N, [&](int z) {
+		for (int x = 0; x < N; x++) {
+			const int c = z * N + x;
+			float *o = rf + c * RUNOFF_STRIDE;
+			TerrainRunoff::Cell b;
+			if (sea[c]) {
+				for (int m = 0; m < 12; m++) {
+					b.runoff[m] = 0.0f;
+					b.snow[m] = 0.0f;
+				}
+			} else {
+				TerrainRunoff::balance(cp, surf[c], precip[c], sw[c], sww[c], -1.0f, b);
+			}
+			for (int m = 0; m < 12; m++) {
+				o[m] = b.runoff[m];
+				o[12 + m] = b.snow[m];
+			}
+			o[24] = precip[c];
+			o[25] = sw[c];
+			o[26] = sww[c];
+			o[27] = surf[c];
+		}
+	});
+	double sum = 0.0;
+	int land = 0;
+	for (int c = 0; c < N * N; c++) {
+		if (!sea[c]) {
+			for (int m = 0; m < 12; m++) {
+				sum += rf[c * RUNOFF_STRIDE + m];
+			}
+			land++;
+		}
+	}
+	runoff_mean = land > 0 ? sum / land : 0.0;
+	runoff_n = N;
+	runoff_f = f;
+	runoff_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+}
+
+// Bilinear between coarse cell centres (field 0..RUNOFF_STRIDE-1).
+float TerrainGenerator3D::_runoff_sample(int p_field, real_t p_x, real_t p_z) const {
+	if (runoff_n <= 0) {
+		return 0.0f;
+	}
+	const int N = runoff_n;
+	const real_t half = 0.5 * (runoff_f - 1);
+	const real_t gx = CLAMP(((p_x - result_rect.position.x) / result_cell - half) / runoff_f, real_t(0.0), real_t(N - 1));
+	const real_t gz = CLAMP(((p_z - result_rect.position.y) / result_cell - half) / runoff_f, real_t(0.0), real_t(N - 1));
+	const int x0 = MIN(int(gx), N - 1), z0 = MIN(int(gz), N - 1);
+	const int x1 = MIN(x0 + 1, N - 1), z1 = MIN(z0 + 1, N - 1);
+	const float fx = float(gx - x0), fz = float(gz - z0);
+	auto at = [&](int x, int z) { return runoff_fields[(z * N + x) * RUNOFF_STRIDE + p_field]; };
+	return Math::lerp(Math::lerp(at(x0, z0), at(x1, z0), fx), Math::lerp(at(x0, z1), at(x1, z1), fx), fz);
+}
+
+// Each month's runoff accumulated down the rivers' routing (lake cells drain to their outlets and lose their open
+// water evaporation; the sea takes everything). Channel cells keep their twelve monthly discharges.
+void TerrainGenerator3D::_route_runoff(const LocalVector<int32_t> &p_receivers, const LocalVector<int32_t> &p_order) {
+	flow_index.clear();
+	flows.clear();
+	if (runoff_n <= 0) {
+		return;
+	}
+	const int n = nx * ny;
+	const double ca = double(cell_size) * cell_size;
+	flow_index.resize(n);
+	int kept = 0;
+	for (int i = 0; i < n; i++) {
+		flow_index[i] = river_area[i] >= RUNOFF_MIN_CELLS * ca ? kept++ : -1;
+	}
+	flows.resize(kept * 12);
+	// Lake cells: open water (rain and melt less the lake's evaporation), at the lake's level.
+	const TerrainClimate::Params &cp = climate_recipe->get_params();
+	LocalVector<int32_t> lake_cells;
+	for (int i = 0; i < n; i++) {
+		if (water_body.size() == uint32_t(n) && water_body[i] >= 2) {
+			lake_cells.push_back(i);
+		}
+	}
+	LocalVector<float> lake_runoff;
+	lake_runoff.resize(lake_cells.size() * 12);
+	TerrainClimate::parallel_for(int(lake_cells.size()), [&](int k) {
+		const int i = lake_cells[k];
+		const Vector3 p = _cell_position(i);
+		TerrainRunoff::Cell b;
+		TerrainRunoff::balance(cp, lake_info[water_body[i] - 2].level, _runoff_sample(24, p.x, p.z), _runoff_sample(25, p.x, p.z), _runoff_sample(26, p.x, p.z), float(lake_evaporation), b);
+		for (int m = 0; m < 12; m++) {
+			lake_runoff[k * 12 + m] = b.runoff[m];
+		}
+	});
+	LocalVector<int32_t> lake_slot;
+	lake_slot.resize(n);
+	for (int i = 0; i < n; i++) {
+		lake_slot[i] = -1;
+	}
+	for (uint32_t k = 0; k < lake_cells.size(); k++) {
+		lake_slot[lake_cells[k]] = int32_t(k);
+	}
+	LocalVector<double> acc;
+	acc.resize(n);
+	for (int m = 0; m < 12; m++) {
+		const double to_flow = 1.0e-3 * ca / (TerrainRunoff::DAYS[m] * 86400.0);
+		TerrainClimate::parallel_for(ny, [&](int z) {
+			for (int x = 0; x < nx; x++) {
+				const int i = z * nx + x;
+				const int32_t b = water_body.size() == uint32_t(n) ? water_body[i] : 0;
+				double mm;
+				if (b == 1) {
+					mm = 0.0;
+				} else if (b >= 2) {
+					mm = lake_runoff[lake_slot[i] * 12 + m];
+				} else {
+					const Vector3 p = _cell_position(i);
+					mm = _runoff_sample(m, p.x, p.z);
+				}
+				acc[i] = mm * to_flow;
+			}
+		});
+		for (uint32_t q = 0; q < p_order.size(); q++) {
+			const int32_t i = p_order[q];
+			const int32_t r = p_receivers[i];
+			if (r != i) {
+				acc[r] += acc[i];
+			}
+		}
+		for (int i = 0; i < n; i++) {
+			if (flow_index[i] >= 0) {
+				flows[flow_index[i] * 12 + m] = float(MAX(acc[i], 0.0));
+			}
+		}
+	}
+}
+
+// Discharge (m^3/s) of a cell in a month (-1: the annual mean). Without a climate, river_runoff times the area.
+float TerrainGenerator3D::_flow(int p_cell, int p_month) const {
+	if (p_cell < 0 || p_cell >= int(river_area.size())) {
+		return 0.0f;
+	}
+	if (flow_index.is_empty()) {
+		return float(get_discharge(river_area[p_cell]));
+	}
+	const int k = flow_index[p_cell];
+	if (k < 0) {
+		// A small headwater: its own area at the local runoff.
+		const Vector3 p = _cell_position(p_cell);
+		if (p_month >= 0) {
+			return float(MAX(_runoff_sample(p_month, p.x, p.z), 0.0f) * 1.0e-3 * river_area[p_cell] / (TerrainRunoff::DAYS[p_month] * 86400.0));
+		}
+		float year = 0.0f;
+		for (int m = 0; m < 12; m++) {
+			year += _runoff_sample(m, p.x, p.z);
+		}
+		return float(MAX(year, 0.0f) * 1.0e-3 * river_area[p_cell] / 31536000.0);
+	}
+	if (p_month >= 0) {
+		return flows[k * 12 + p_month];
+	}
+	double sum = 0.0;
+	for (int m = 0; m < 12; m++) {
+		sum += double(flows[k * 12 + m]) * TerrainRunoff::DAYS[m];
+	}
+	return float(sum / 365.0);
+}
+
+real_t TerrainGenerator3D::get_runoff_at(const Vector3 &p_global_position, int p_month) const {
+	if (runoff_n <= 0) {
+		return p_month < 0 ? river_runoff : river_runoff * TerrainRunoff::DAYS[CLAMP(p_month, 0, 11)] / 365.0;
+	}
+	if (p_month >= 0) {
+		return _runoff_sample(CLAMP(p_month, 0, 11), p_global_position.x, p_global_position.z);
+	}
+	real_t year = 0.0;
+	for (int m = 0; m < 12; m++) {
+		year += _runoff_sample(m, p_global_position.x, p_global_position.z);
+	}
+	return year;
+}
+
+real_t TerrainGenerator3D::get_snow_water_at(const Vector3 &p_global_position, int p_month) const {
+	if (runoff_n <= 0) {
+		return 0.0;
+	}
+	return MAX(_runoff_sample(12 + CLAMP(p_month, 0, 11), p_global_position.x, p_global_position.z), 0.0f);
+}
+
+real_t TerrainGenerator3D::get_discharge_at(const Vector3 &p_global_position, int p_month) const {
+	if (nx < 2 || river_area.size() != uint32_t(nx * ny)) {
+		return 0.0;
+	}
+	const int x = CLAMP(int(Math::round((p_global_position.x - result_rect.position.x) / result_cell)), 0, nx - 1);
+	const int z = CLAMP(int(Math::round((p_global_position.z - result_rect.position.y) / result_cell)), 0, ny - 1);
+	return _flow(z * nx + x, CLAMP(p_month, -1, 11));
 }
 
 Color TerrainGenerator3D::get_geology_at(const Vector3 &p_global_position) const {
@@ -1385,7 +1641,7 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 	lp.ny = ny;
 	lp.dx = cell_size;
 	lp.min_area = lake_min_area;
-	lp.runoff = river_runoff * 1.0e-3;
+	lp.runoff = (runoff_n > 0 ? runoff_mean : double(river_runoff)) * 1.0e-3;
 	lp.evaporation = lake_evaporation * 1.0e-3;
 	lp.max_cells = MAX(n / 4, 16);
 	std::vector<float> before(n);
@@ -1562,6 +1818,7 @@ void TerrainGenerator3D::_route_rivers() {
 			}
 		}
 	}
+	_route_runoff(rec2, queue);
 	river_receivers = rec2;
 	water_depth.resize(n);
 	for (int i = 0; i < n; i++) {
@@ -1574,10 +1831,13 @@ void TerrainGenerator3D::_route_rivers() {
 	}
 	// The ring of three cells around each lake (and the lake itself) carries its level, for _ground().
 	lake_rim.clear();
+	lake_rim_weight.clear();
 	if (!lake_info.is_empty()) {
 		lake_rim.resize(n);
+		lake_rim_weight.resize(n);
 		for (int i = 0; i < n; i++) {
 			lake_rim[i] = Math::NaN;
+			lake_rim_weight[i] = 0.0f;
 		}
 		for (int i = 0; i < n; i++) {
 			const int32_t b = water_body[i];
@@ -1591,6 +1851,8 @@ void TerrainGenerator3D::_route_rivers() {
 				for (int xx = MAX(x - 3, 0); xx <= MIN(x + 3, nx - 1); xx++) {
 					float &r = lake_rim[zz * nx + xx];
 					r = Math::is_nan(r) ? level : MAX(r, level);
+					const int d = MAX(Math::abs(zz - z), Math::abs(xx - x));
+					lake_rim_weight[zz * nx + xx] = MAX(lake_rim_weight[zz * nx + xx], CLAMP((3.0f - d) / 2.0f, 0.0f, 1.0f));
 				}
 			}
 		}
@@ -1909,13 +2171,13 @@ Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells) const {
 		const TerrainGeology::River &rv = rivers[r];
 		// A tributary's mouth is the cell before the junction.
 		const int mouth = rv.joins >= 0 && rv.cells.size() > 1 ? rv.cells[rv.cells.size() - 2] : rv.cells.back();
-		own[r] = get_discharge(river_area[mouth]);
+		own[r] = _flow(mouth, river_month);
 	}
 	for (uint32_t r = 0; r < rivers.size(); r++) {
 		if (rivers[r].joins >= 0) {
 			const TerrainGeology::River &rv = rivers[r];
 			const int mouth = rv.cells.size() > 1 ? rv.cells[rv.cells.size() - 2] : rv.cells.back();
-			own[rivers[r].joins] -= get_discharge(river_area[mouth]);
+			own[rivers[r].joins] -= _flow(mouth, river_month);
 		}
 	}
 	for (uint32_t r = 0; r < rivers.size(); r++) {
@@ -1952,14 +2214,20 @@ Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells) const {
 			}
 			points.set(k, p);
 			areas.set(k, a);
-			widths.set(k, river_width_coefficient * Math::sqrt(get_discharge(a)));
+			widths.set(k, river_width_coefficient * Math::sqrt(_flow(rv.cells[k], river_month)));
 		}
 		const int mouth = rv.joins >= 0 && m > 1 ? rv.cells[m - 2] : rv.cells[m - 1];
 		Dictionary d;
 		d["points"] = points;
 		d["widths"] = widths;
 		d["areas"] = areas;
-		d["discharge"] = get_discharge(river_area[mouth]);
+		d["discharge"] = _flow(mouth, river_month);
+		PackedFloat32Array monthly;
+		monthly.resize(12);
+		for (int m = 0; m < 12; m++) {
+			monthly.set(m, _flow(mouth, m));
+		}
+		d["monthly_discharge"] = monthly;
 		d["own_discharge"] = MAX(own[r], 0.0);
 		d["joins"] = rv.joins;
 		// Where it ends and starts: "sea", "lake" (index in "lake"), "river" (a tributary) or "edge"; "from_lake" is
@@ -2305,6 +2573,16 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_static_method("TerrainGenerator3D", D_METHOD("get_geology_shader_code"), &TerrainGenerator3D::get_geology_shader_code);
 	ClassDB::bind_method(D_METHOD("get_detail_shader_code"), &TerrainGenerator3D::get_detail_shader_code);
 	ClassDB::bind_method(D_METHOD("get_discharge", "area"), &TerrainGenerator3D::get_discharge);
+	ClassDB::bind_method(D_METHOD("set_climate_recipe", "recipe"), &TerrainGenerator3D::set_climate_recipe);
+	ClassDB::bind_method(D_METHOD("get_climate_recipe"), &TerrainGenerator3D::get_climate_recipe);
+	ClassDB::bind_method(D_METHOD("set_river_month", "month"), &TerrainGenerator3D::set_river_month);
+	ClassDB::bind_method(D_METHOD("get_river_month"), &TerrainGenerator3D::get_river_month);
+	ClassDB::bind_method(D_METHOD("has_runoff"), &TerrainGenerator3D::has_runoff);
+	ClassDB::bind_method(D_METHOD("get_last_runoff_msec"), &TerrainGenerator3D::get_last_runoff_msec);
+	ClassDB::bind_method(D_METHOD("get_mean_runoff"), &TerrainGenerator3D::get_mean_runoff);
+	ClassDB::bind_method(D_METHOD("get_runoff_at", "global_position", "month"), &TerrainGenerator3D::get_runoff_at, DEFVAL(-1));
+	ClassDB::bind_method(D_METHOD("get_snow_water_at", "global_position", "month"), &TerrainGenerator3D::get_snow_water_at);
+	ClassDB::bind_method(D_METHOD("get_discharge_at", "global_position", "month"), &TerrainGenerator3D::get_discharge_at, DEFVAL(-1));
 	ClassDB::bind_method(D_METHOD("set_ocean_edges", "edges"), &TerrainGenerator3D::set_ocean_edges);
 	ClassDB::bind_method(D_METHOD("get_ocean_edges"), &TerrainGenerator3D::get_ocean_edges);
 	ClassDB::bind_method(D_METHOD("set_coast_distance", "distance"), &TerrainGenerator3D::set_coast_distance);
@@ -2432,6 +2710,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_soil_depth", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_max_soil_depth", "get_max_soil_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "talus_angle", PROPERTY_HINT_RANGE, "5,80,0.5,degrees"), "set_talus_angle", "get_talus_angle");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "talus_reach", PROPERTY_HINT_RANGE, "1,1000,1,or_greater,suffix:m"), "set_talus_reach", "get_talus_reach");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "climate_recipe", PROPERTY_HINT_RESOURCE_TYPE, "ClimateRecipe"), "set_climate_recipe", "get_climate_recipe");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "river_month", PROPERTY_HINT_ENUM, "Annual mean:-1,January:0,February:1,March:2,April:3,May:4,June:5,July:6,August:7,September:8,October:9,November:10,December:11"), "set_river_month", "get_river_month");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_runoff", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:mm/yr"), "set_river_runoff", "get_river_runoff");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_width_coefficient", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater"), "set_river_width_coefficient", "get_river_width_coefficient");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "publish_shader_globals"), "set_publish_shader_globals", "is_publishing_shader_globals");

@@ -71,6 +71,14 @@
 				Mean discharge in m³/s of a drainage area [param area] in m² at [member river_runoff].
 			</description>
 		</method>
+		<method name="get_discharge_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<param index="1" name="month" type="int" default="-1" />
+			<description>
+				Discharge in m³/s at the grid node nearest [param global_position] in [param month] (0 January to 11 December; -1 the annual mean). With a [member climate_recipe], each month's runoff accumulated down the rivers (lakes lose their evaporation); without, [method get_discharge] of its drainage area.
+			</description>
+		</method>
 		<method name="get_drainage_area" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -158,6 +166,12 @@
 				Time the last [method generate] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_last_runoff_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Time the last [method generate] spent on the climate and the water balance, in milliseconds (0 without a [member climate_recipe]).
+			</description>
+		</method>
 		<method name="get_last_steps" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -182,11 +196,17 @@
 				Time the last [method write_to_terrain] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_mean_runoff" qualifiers="const">
+			<return type="float" />
+			<description>
+				Mean runoff over the land of the last [method generate] with a [member climate_recipe], in mm a year. Lakes balance their inflow and evaporation with it.
+			</description>
+		</method>
 		<method name="get_rivers" qualifiers="const">
 			<return type="Array" />
 			<param index="0" name="min_area" type="float" />
 			<description>
-				Rivers draining at least [param min_area] m², trunk rivers first. Channels follow the receivers of the erosion run (D8 area, so it grows downstream); each river runs upstream from an outlet or junction along the donor with the largest area (Hack's main stem), and the other donors start tributaries. Each river is a [Dictionary]: [code]points[/code] ([PackedVector3Array], world, head to mouth, on the ground, smoothed), [code]widths[/code] (m, from the discharge: [code]width = river_width_coefficient * discharge^0.5[/code], Leopold and Maddock 1953), [code]areas[/code], [code]discharge[/code] (m³/s at the mouth), [code]own_discharge[/code] (that minus its tributaries'), [code]joins[/code] (index of the river it joins, -1 at an outlet), [code]ends_in[/code] ([code]"sea"[/code], [code]"lake"[/code], [code]"river"[/code] or [code]"edge"[/code]), [code]lake[/code] (the lake it ends in, else -1) and [code]from_lake[/code] (the lake whose outflow it is, else -1). A tributary's last point is the junction on the river it joins. Rivers end at the first cell of the sea or a lake, on the water; a lake's outflow starts at its outlet and carries its whole catchment.
+				Rivers draining at least [param min_area] m², trunk rivers first. Channels follow the receivers of the erosion run (D8 area, so it grows downstream); each river runs upstream from an outlet or junction along the donor with the largest area (Hack's main stem), and the other donors start tributaries. Each river is a [Dictionary]: [code]points[/code] ([PackedVector3Array], world, head to mouth, on the ground, smoothed), [code]widths[/code] (m, from the discharge: [code]width = river_width_coefficient * discharge^0.5[/code], Leopold and Maddock 1953), [code]areas[/code], [code]discharge[/code] (m³/s at the mouth, in [member river_month]), [code]monthly_discharge[/code] ([PackedFloat32Array], the twelve months at the mouth), [code]own_discharge[/code] (that minus its tributaries'), [code]joins[/code] (index of the river it joins, -1 at an outlet), [code]ends_in[/code] ([code]"sea"[/code], [code]"lake"[/code], [code]"river"[/code] or [code]"edge"[/code]), [code]lake[/code] (the lake it ends in, else -1) and [code]from_lake[/code] (the lake whose outflow it is, else -1). A tributary's last point is the junction on the river it joins. Rivers end at the first cell of the sea or a lake, on the water; a lake's outflow starts at its outlet and carries its whole catchment.
 			</description>
 		</method>
 		<method name="get_rock_exposure" qualifiers="const">
@@ -203,6 +223,14 @@
 				The rock at the surface with [member strata_enabled]: 1 in a hard band, 0 in soft rock, the contacts blended over about 2 m. 0 with the strata off or before [method generate].
 			</description>
 		</method>
+		<method name="get_runoff_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<param index="1" name="month" type="int" default="-1" />
+			<description>
+				Water leaving the ground at a position for the rivers, in mm: in [param month] (0 January to 11 December), or a year with -1. A monthly water balance (McCabe and Markstrom 2007) of the [member climate_recipe]'s climate: rain and snow split by temperature, the snowpack melting by degree days and sunshine (Hock 1999), a soil water store losing Thornthwaite evapotranspiration (Thornthwaite and Mather 1957), a share of the rain running off at once and the rest of the surplus through a groundwater store. Without a recipe, [member river_runoff].
+			</description>
+		</method>
 		<method name="get_sediment_depth" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -214,6 +242,14 @@
 			<return type="Image" />
 			<description>
 				Sediment thickness per grid node, [constant Image.FORMAT_RF], metres.
+			</description>
+		</method>
+		<method name="get_snow_water_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<param index="1" name="month" type="int" />
+			<description>
+				Snow water equivalent (mm) lying at a position at the end of [param month] (0 January to 11 December), from the water balance of [method get_runoff_at]. 0 without a [member climate_recipe]. Cells that never melt out keep gaining (a glacier's accumulation; its flow is not modelled).
 			</description>
 		</method>
 		<method name="get_soil_depth" qualifiers="const">
@@ -270,6 +306,14 @@
 				Height of the water surface (the sea's or a lake's) over a point; NaN on dry ground or outside.
 			</description>
 		</method>
+		<method name="get_waterfalls" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="min_area" type="float" default="100000.0" />
+			<param index="1" name="min_height" type="float" default="5.0" />
+			<description>
+				Waterfalls along the rivers of [method get_rivers] ([param min_area]): runs of the channel steeper than 45 degrees in the eroded ground that drop at least [param min_height] m. Soft rock never stands steeper than [member critical_slope], so they form where rivers cut the hard bands of [member strata_enabled]. Each is a [Dictionary]: [code]top[/code] and [code]bottom[/code] (the lip and the foot, on the ground), [code]height[/code], [code]width[/code] and [code]discharge[/code] (of the river at the lip), [code]river[/code] (index in [method get_rivers]), [code]index[/code] (the lip's point in that river) and [code]hardness[/code] (of the rock at the lip; a lip that has just broken off stands on soft rock for a while).
+			</description>
+		</method>
 		<method name="get_world_rect" qualifiers="const">
 			<return type="Rect2" />
 			<description>
@@ -282,12 +326,10 @@
 				Whether [method generate] has run since the node was created or [method clear_result].
 			</description>
 		</method>
-		<method name="get_waterfalls" qualifiers="const">
-			<return type="Array" />
-			<param index="0" name="min_area" type="float" default="100000.0" />
-			<param index="1" name="min_height" type="float" default="5.0" />
+		<method name="has_runoff" qualifiers="const">
+			<return type="bool" />
 			<description>
-				Waterfalls along the rivers of [method get_rivers] ([param min_area]): runs of the channel steeper than 45 degrees in the eroded ground that drop at least [param min_height] m. Soft rock never stands steeper than [member critical_slope], so they form where rivers cut the hard bands of [member strata_enabled]. Each is a [Dictionary]: [code]top[/code] and [code]bottom[/code] (the lip and the foot, on the ground), [code]height[/code], [code]width[/code] and [code]discharge[/code] (of the river at the lip), [code]river[/code] (index in [method get_rivers]), [code]index[/code] (the lip's point in that river) and [code]hardness[/code] (of the rock at the lip; a lip that has just broken off stands on soft rock for a while).
+				Whether the last [method generate] had a [member climate_recipe], so rivers carry rain and snowmelt by month.
 			</description>
 		</method>
 		<method name="has_sea_result" qualifiers="const">
@@ -327,6 +369,9 @@
 		</member>
 		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="16.0">
 			Metres between grid nodes. Coarse on purpose: this stage shapes ranges and valleys, finer detail is added on top.
+		</member>
+		<member name="climate_recipe" type="ClimateRecipe" setter="set_climate_recipe" getter="get_climate_recipe">
+			With a recipe, [method generate] bakes its climate on the result (precipitation with the rain shadow, temperature by month and height, sunshine with horizons; the sea and lakes as water, cells of about its [member ClimateRecipe.sun_cell]) and feeds the rivers from a monthly water balance: [method get_runoff_at], [method get_snow_water_at], [method get_discharge_at] and the discharges of [method get_rivers] and [method get_waterfalls]. Snowmelt floods come in spring, summer evaporation lowers the rivers, lee slopes give less. Without one, every river carries [member river_runoff]. Costs about a tenth of the generation.
 		</member>
 		<member name="coarse_levels" type="int" setter="set_coarse_levels" getter="get_coarse_levels" default="-1">
 			Coarse to fine, the V-cycle of Tzathas et al. (2024) with the time-stepping solver at every level: [member steps] run on a grid halved this many times (each halving a quarter of the cells), then each finer level starts from the bilinear upsample of the one below and runs [member refine_steps]. -1 halves while the coarse grid keeps at least 129 nodes a side (257: one level, 513: two, 1025: three); 0 runs every step at full resolution, as before. Needs [code](nodes - 1)[/code] even at each halving. About 2.1 times faster at 257 nodes, 3.1 at 513, 3.7 at 1025, with heights, slopes, crests and drainage density within 2% of the single-level result.
@@ -439,8 +484,11 @@
 		<member name="refine_steps" type="int" setter="set_refine_steps" getter="get_refine_steps" default="60">
 			Steps run at each finer level after [member coarse_levels] coarsened; enough for small valleys, hillslopes and sharp crests to form again at that resolution.
 		</member>
+		<member name="river_month" type="int" setter="set_river_month" getter="get_river_month" default="-1">
+			The month (0 January to 11 December) whose discharge [method get_rivers], [method get_waterfalls] and [method build_river_paths] use, -1 the annual mean: a spring flood or a late summer low. Needs a [member climate_recipe]; without one every month is the mean.
+		</member>
 		<member name="river_runoff" type="float" setter="set_river_runoff" getter="get_river_runoff" default="1000.0">
-			Mean runoff for river discharge, in mm a year (water reaching the channels per unit of drainage area).
+			Mean runoff for river discharge without a [member climate_recipe], in mm a year (water reaching the channels per unit of drainage area).
 		</member>
 		<member name="river_width_coefficient" type="float" setter="set_river_width_coefficient" getter="get_river_width_coefficient" default="7.0">
 			River width per square root of discharge: [code]width = coefficient * discharge^0.5[/code] (hydraulic geometry, Leopold and Maddock 1953). About 7 for mean flows.

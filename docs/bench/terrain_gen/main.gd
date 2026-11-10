@@ -9,6 +9,8 @@
 #   godot --headless --path docs/bench/terrain_gen -- --coast --geology=map.png  island map, lakes and rivers listed
 #   godot --headless --path docs/bench/terrain_gen -- --map=map.png      shaded relief with rivers
 #   godot --headless --path docs/bench/terrain_gen -- --soil [--uplift=6]  soil and rock by slope above the valley floors
+#   godot --headless --path docs/bench/terrain_gen -- [--coast] --runoff[=out.csv] [--jan=-4 --jul=15 --precip=1100
+#       --season=0 --peak=0]  rivers fed by rain and snowmelt: monthly discharge, snow by height, cost
 #   godot --headless --path docs/bench/terrain_gen -- --strata --geology=map.png [--profiles=rivers.csv]  layered rock:
 #       waterfalls listed, river long profiles (x, z, height, hardness, log area); view: --strata --focus=fall --close
 #   godot --headless --path docs/bench/terrain_gen -- --compare=prefix [--cell=8] [--refine=40]  coarse-to-fine
@@ -59,6 +61,9 @@ func _ready() -> void:
 		print("%d checks, %d failed" % [checks, failures])
 		print("PASS" if failures == 0 else "FAIL")
 		get_tree().quit(1 if failures else 0)
+	elif args.has("runoff"):
+		_runoff_report()
+		get_tree().quit()
 	elif args.has("geology"):
 		if args.has("view"):
 			gen.uplift = 6.0
@@ -148,6 +153,9 @@ func _build_generator(cell: float) -> void:
 		gen.coarse_levels = int(args["levels"])
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
+	if args.has("climate-rivers"):
+		gen.climate_recipe = _runoff_recipe()
+		gen.river_month = int(args.get("month", "-1"))
 	if args.has("strata"):
 		gen.strata_enabled = true
 	for a in args:
@@ -531,6 +539,7 @@ func _run_checks() -> void:
 	await _coast_checks()
 	await _climate_checks()
 	_strata_checks()
+	_runoff_checks()
 
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
 	var plot := TerrainBrush3D.new()
@@ -1071,6 +1080,77 @@ func _strata_checks() -> void:
 	check(gen.get_height_image().get_data() == base and gen.get_rock_hardness(Vector3.ZERO) == 0.0, "strata off again: the same ground, no hardness map")
 
 
+func _peak_month(m: PackedFloat32Array) -> int:
+	var best := 0
+	for k in 12:
+		if m[k] > m[best]:
+			best = k
+	return best
+
+
+func _runoff_checks() -> void:
+	# Rivers fed by rain and snowmelt from the climate (McCabe and Markstrom 2007 balance, Hock 1999 melt).
+	gen.climate_recipe = null
+	gen.generate()
+	check(not gen.has_runoff() and is_equal_approx(gen.get_runoff_at(Vector3.ZERO), gen.river_runoff), "runoff: without a climate, rivers keep river_runoff")
+	var cold := ClimateRecipe.new()
+	cold.temperature_january = -4.0
+	cold.temperature_july = 15.0
+	cold.precipitation = 1100.0
+	gen.climate_recipe = cold
+	gen.generate()
+	var rivers := gen.get_rivers(1.0e5)
+	var trunk: Dictionary = rivers[0]
+	var m: PackedFloat32Array = trunk["monthly_discharge"]
+	var mean := 0.0
+	var days := [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+	for k in 12:
+		mean += m[k] * days[k] / 365.0
+	check(gen.has_runoff() and absf(mean - trunk["discharge"]) < 0.01 * trunk["discharge"], "runoff: annual discharge is the mean of the months (%.3f, %.3f m3/s)" % [trunk["discharge"], mean])
+	var peak := _peak_month(m)
+	check(peak >= 2 and peak <= 5 and m[peak] > 2.0 * m[7], "runoff: cold climate, the snowmelt flood in spring (peak month %d, %.3f against %.3f in August)" % [peak + 1, m[peak], m[7]])
+	# Snow lies longer and deeper up the range.
+	var low := Vector3.ZERO
+	var high := Vector3.ZERO
+	for z in range(-1900, 1900, 64):
+		for x in range(-1900, 1900, 64):
+			var q := Vector3(x, 0, z)
+			q.y = gen.get_base_height(q)
+			if low == Vector3.ZERO or q.y < low.y:
+				low = q
+			if q.y > high.y:
+				high = q
+	var months_low := 0
+	var months_high := 0
+	for k in 12:
+		months_low += 1 if gen.get_snow_water_at(low, k) > 1.0 else 0
+		months_high += 1 if gen.get_snow_water_at(high, k) > 1.0 else 0
+	check(gen.get_snow_water_at(high, 2) > gen.get_snow_water_at(low, 2) and months_high >= months_low, "runoff: snow lies deeper and longer up the range (March %.0f mm at %.0f m, %.0f mm at %.0f m)" % [gen.get_snow_water_at(high, 2), high.y, gen.get_snow_water_at(low, 2), low.y])
+	check(gen.get_mean_runoff() > 0.2 * cold.precipitation and gen.get_mean_runoff() < 1.5 * cold.precipitation, "runoff: mean runoff %.0f mm a year of %.0f mm of precipitation (more on the range)" % [gen.get_mean_runoff(), cold.precipitation])
+	check(gen.get_last_runoff_msec() < 0.2 * gen.get_last_generate_msec(), "runoff: %.0f ms of %.0f ms generation" % [gen.get_last_runoff_msec(), gen.get_last_generate_msec()])
+	gen.river_month = 3
+	var april: Dictionary = gen.get_rivers(1.0e5)[0]
+	check(is_equal_approx(april["discharge"], m[3]) and april["widths"][-2] > trunk["widths"][-2], "runoff: river_month picks April's flood for the rivers (%.3f m3/s, wider)" % april["discharge"])
+	gen.river_month = -1
+	# A mild winter with even precipitation: the high flows come in winter, when little evaporates.
+	var mild := ClimateRecipe.new()
+	mild.temperature_january = 8.0
+	mild.temperature_july = 24.0
+	gen.climate_recipe = mild
+	gen.generate()
+	var wm: PackedFloat32Array = gen.get_rivers(1.0e5)[0]["monthly_discharge"]
+	var wp := _peak_month(wm)
+	check(wp >= 10 or wp <= 2, "runoff: mild climate, high water in winter (peak month %d)" % (wp + 1))
+	# Summer rain (a monsoon): precipitation_seasonality moves the high water to summer.
+	mild.precipitation_seasonality = 0.9
+	mild.precipitation_peak_month = 6
+	gen.generate()
+	var sp := _peak_month(gen.get_rivers(1.0e5)[0]["monthly_discharge"])
+	check(sp >= 5 and sp <= 9, "runoff: summer rain brings the high water to summer (peak month %d)" % (sp + 1))
+	gen.climate_recipe = null
+	gen.generate()
+
+
 func _climate_checks() -> void:
 	# Climate maps on a 24 km square around a 1500 m Gaussian hill (sigma 3 km), westerly wet winds.
 	var hill := _hill_source(1500.0, 3000.0)
@@ -1343,3 +1423,55 @@ func _print_waterfalls() -> void:
 				var g: Color = gen.get_geology_at(p)
 				fd.store_line("%d,%.1f,%.1f,%.2f,%.2f,%.2f" % [r, p.x, p.z, gen.get_base_height(p), gen.get_rock_hardness(p), g.a])
 		print("profiles ", args["profiles"])
+
+
+func _runoff_recipe() -> ClimateRecipe:
+	# A cool mountain climate: snow on the range in winter, melt in spring.
+	var r := ClimateRecipe.new()
+	r.temperature_january = float(args.get("jan", "-4"))
+	r.temperature_july = float(args.get("jul", "15"))
+	r.precipitation = float(args.get("precip", "1100"))
+	r.precipitation_seasonality = float(args.get("season", "0"))
+	r.precipitation_peak_month = float(args.get("peak", "0"))
+	return r
+
+
+func _runoff_report() -> void:
+	gen.generate()
+	var plain := gen.get_rivers(1.0e5)
+	var t_plain := gen.get_last_generate_msec()
+	gen.climate_recipe = _runoff_recipe()
+	gen.generate()
+	print("generate %.0f ms without climate, %.0f ms with (runoff %.0f ms); mean runoff %.0f mm a year" % [t_plain, gen.get_last_generate_msec(), gen.get_last_runoff_msec(), gen.get_mean_runoff()])
+	var rivers := gen.get_rivers(1.0e5)
+	var out: FileAccess = FileAccess.open(args["runoff"], FileAccess.WRITE) if args["runoff"] != "1" else null
+	const MONTHS := ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"]
+	for r in mini(rivers.size(), 6):
+		var d: Dictionary = rivers[r]
+		var pts: PackedVector3Array = d["points"]
+		var m: PackedFloat32Array = d["monthly_discharge"]
+		var line := ""
+		for k in 12:
+			line += "%s %.3f  " % [MONTHS[k], m[k]]
+		print("river %d (head %.0f m): %.3f m3/s (was %.3f)  %s" % [r, pts[0].y, d["discharge"], plain[r]["discharge"] if r < plain.size() else 0.0, line])
+		if out:
+			out.store_line("river,%d,%s" % [r, ",".join(Array(m).map(func(v): return "%.4f" % v))])
+	for h in [0.0, 150.0, 300.0, 450.0]:
+		var best := Vector3.ZERO
+		var bd := 1e9
+		for z in range(-1900, 1900, 64):
+			for x in range(-1900, 1900, 64):
+				var q := Vector3(x, 0, z)
+				var dh := absf(gen.get_base_height(q) - h)
+				if dh < bd:
+					bd = dh
+					best = Vector3(x, gen.get_base_height(q), z)
+		var sw := ""
+		for k in 12:
+			sw += "%.0f " % gen.get_snow_water_at(best, k)
+		print("at %4.0f m: runoff %.0f mm a year; snow water by month end: %s" % [best.y, gen.get_runoff_at(best), sw])
+		if out:
+			var snow := []
+			for k in 12:
+				snow.append("%.1f" % gen.get_snow_water_at(best, k))
+			out.store_line("snow,%.0f,%s" % [best.y, ",".join(snow)])

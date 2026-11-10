@@ -35,6 +35,7 @@
 #include "scene/resources/image_texture.h"
 #include "scene/resources/mesh.h"
 
+#include "climate_recipe.h"
 #include "modules/noise/noise.h"
 
 // Generates mountain ranges for a whole world: uplift (where the rock rises: a painted map, Path3D ranges, noise)
@@ -121,7 +122,9 @@ private:
 	real_t strata_dip_direction = 0.0; // degrees clockwise from north, the way the layers go down
 	real_t strata_wobble = 12.0; // m, layer heights wander by this much
 	real_t strata_channel_area = 20000.0; // m^2, drainage from which the bed's rock counts (channel heads)
-	real_t river_runoff = 1000.0; // mm/yr
+	real_t river_runoff = 1000.0; // mm/yr, without a climate_recipe
+	Ref<ClimateRecipe> climate_recipe; // rivers from rain and snowmelt (terrain_runoff.h)
+	int river_month = -1; // the month build_river_paths and get_rivers use, -1 the annual mean
 	real_t river_width_coefficient = 7.0; // width = coefficient * discharge^0.5
 	bool publish_shader_globals = true;
 
@@ -169,8 +172,19 @@ private:
 	LocalVector<int32_t> water_body;
 	LocalVector<float> water_depth;
 	LocalVector<float> lake_rim; // the level of a lake within three cells, NaN elsewhere
+	LocalVector<float> lake_rim_weight; // how firmly the ground holds that level: 1 within a cell, 0 at three
 	LocalVector<int32_t> river_receivers;
 	LocalVector<float> river_area;
+	// Water balance on the climate grid (side runoff_n, runoff_f fine cells per side): per cell 12 monthly runoff (mm),
+	// 12 snow water equivalents (mm), precipitation (mm a year), annual and winter shortwave (W/m2), surface height.
+	LocalVector<float> runoff_fields;
+	int runoff_n = 0;
+	int runoff_f = 1;
+	double runoff_mean = 0.0; // mm a year over land
+	double runoff_msec = 0.0;
+	// Monthly discharge (m^3/s, 12 per cell) of channel cells (river area of RUNOFF_MIN_CELLS cells or more).
+	LocalVector<int32_t> flow_index;
+	LocalVector<float> flows;
 	struct LakeInfo {
 		real_t level = 0.0;
 		real_t bed = 0.0;
@@ -244,6 +258,10 @@ private:
 	void _publish_globals();
 	Vector3 _cell_position(int p_cell) const;
 	Array _rivers(real_t p_min_area, bool p_cells) const;
+	void _bake_runoff(const LocalVector<uint8_t> &p_sea);
+	float _runoff_sample(int p_field, real_t p_x, real_t p_z) const;
+	float _flow(int p_cell, int p_month) const;
+	void _route_runoff(const LocalVector<int32_t> &p_receivers, const LocalVector<int32_t> &p_order);
 	void _fill(real_t p_x0, real_t p_z0, real_t p_spacing, int p_width, int p_rows, float *r_out) const;
 
 protected:
@@ -366,6 +384,16 @@ public:
 	real_t get_strata_wobble() const { return strata_wobble; }
 	void set_river_runoff(real_t p_value) { river_runoff = MAX(p_value, real_t(0.0)); }
 	real_t get_river_runoff() const { return river_runoff; }
+	void set_climate_recipe(const Ref<ClimateRecipe> &p_recipe) { climate_recipe = p_recipe; }
+	Ref<ClimateRecipe> get_climate_recipe() const { return climate_recipe; }
+	void set_river_month(int p_month) { river_month = CLAMP(p_month, -1, 11); }
+	int get_river_month() const { return river_month; }
+	bool has_runoff() const { return !flow_index.is_empty(); }
+	double get_last_runoff_msec() const { return runoff_msec; }
+	real_t get_mean_runoff() const { return real_t(runoff_mean); }
+	real_t get_runoff_at(const Vector3 &p_global_position, int p_month = -1) const;
+	real_t get_snow_water_at(const Vector3 &p_global_position, int p_month) const;
+	real_t get_discharge_at(const Vector3 &p_global_position, int p_month = -1) const;
 	void set_river_width_coefficient(real_t p_value) { river_width_coefficient = MAX(p_value, real_t(0.0)); }
 	real_t get_river_width_coefficient() const { return river_width_coefficient; }
 	void set_publish_shader_globals(bool p_enable) { publish_shader_globals = p_enable; }

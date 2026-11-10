@@ -692,8 +692,83 @@ stands higher than in one rock: the hard bands hold the rivers up (relief rises 
 receivers pass and per-face creep). Off, the output is byte-identical (bench check). Not done: the falls' water
 (the showcase scene builds it from get_waterfalls), overhangs (a height field has none), plunge pools.
 
+## Rain and snowmelt feed the rivers (Paulo picked 10 Nov 22:49)
+
+Today every river carries `river_runoff` (1000 mm a year) times its drainage area: the same depth of water off a
+glacier, a dry lee slope and a lake, all year. The climate maps already know temperature by month, precipitation
+(with the rain shadow), snow share and sunshine per cell, so the flow can come from them.
+
+Research (what hydrology models do at this scale):
+
+- Monthly water balance models: Thornthwaite and Mather 1957 (soil water bucket, withdrawal ST = ST0
+  exp(-deficit/STC)) and the USGS monthly water balance model of McCabe and Markstrom 2007 (OFR 2007-1088): rain
+  and snow split by temperature, a snowpack store, direct runoff 5% of rain, soil capacity about 150 mm, and half
+  the surplus running off each month (the rest carried over: a linear groundwater reservoir). Used for continental
+  runoff maps; works on monthly means only, which is what the climate maps give.
+- Snowmelt by temperature index (Hock 2003): melt = DDF x positive degree days, DDF 2.5 to 6 mm/day/K for snow;
+  Hock 1999 adds the sun (melt = (MF + a I) T), so south slopes melt out first. Positive degree days of a month
+  from its mean and the daily spread, analytically (Calov and Greve 2005), the same normal spread the climate maps
+  already use for the snow share.
+- Rain or snow per day below the rain-snow threshold (Jennings et al. 2018, 1 C), as the climate maps do.
+- Open water: a lake loses its evaporation (`lake_evaporation`, spread over the months by PET).
+- Routing: flow accumulation weighted by runoff along the river receivers (as TopoToolbox and global models like
+  WBM do). A month is longer than travel times on a few tens of kilometres, so no channel lag; the groundwater
+  reservoir gives the delay (a single linear reservoir, the first stage of a Nash 1957 cascade).
+- Engines: UE5 Water, HDRP and Houdini Terrain take river flow as an artist input or a uniform rain; World Machine
+  and Gaea's erosion use uniform rain; none of their docs tie river flow to a climate.
+
+Plan:
+
+1. `TerrainClimate::thornthwaite_pet` returns the months too; a new terrain_runoff.h runs the monthly balance per
+   climate cell: rain and snow split, Hock 1999 melt with that month's sunshine, Thornthwaite-Mather soil bucket,
+   direct runoff and the groundwater reservoir, three years of spin-up. Out: twelve months of runoff and snowpack
+   (snow water equivalent) per cell. Precipitation by month: the year's total on a harmonic with new
+   ClimateRecipe settings `precipitation_seasonality` (0 = even) and `precipitation_peak_month`.
+2. TerrainGenerator3D gets `climate_recipe`. With one, generate() bakes the climate on its own heights (sun cell,
+   lakes and sea as water) and accumulates each month's runoff along the river routing, storing monthly
+   discharge for channel cells only (a compact index, not twelve full grids). Without, nothing changes.
+3. Rivers, waterfalls and lakes use it: `get_rivers` gives `discharge` (annual mean) and `monthly_discharge`;
+   `river_month` (-1 the annual mean) picks the month build_river_paths uses, so a spring flood can be shown;
+   the lake balance uses the map's mean climate runoff. New: `get_runoff_at(pos, month)`,
+   `get_discharge_at(pos, month)`, `get_snow_water_at(pos, month)` (the snow thread can start its cover from it).
+4. Bench: water balance closes (runoff + evapotranspiration + change in storage = precipitation), snowmelt peak
+   later with height, wet windward rivers carry more per km2, lake-less river flow equals summed runoff, cost.
+
+### Rain and snowmelt: what was built (10 Nov)
+
+As planned, in terrain_runoff.h (`TerrainRunoff::balance`) and TerrainGenerator3D (`climate_recipe`,
+`river_month`, `get_runoff_at`, `get_snow_water_at`, `get_discharge_at`, `get_mean_runoff`). The climate is baked
+on the generator's own result at the recipe's `sun_cell` (TerrainDataMap3D and the generator now share
+`TerrainClimate::precipitation_on`). Channel cells (8 cells of drainage or more) keep 12 monthly discharges.
+New ClimateRecipe settings: `precipitation_seasonality`, `precipitation_peak_month`, `melt_factor` 1.8,
+`radiation_melt_factor` 0.015, `soil_capacity` 150, `direct_runoff` 0.05, `groundwater_release` 0.5.
+
+Bench (`--runoff[=csv]`, 4 km range, cold climate -4 / 15 C, 1100 mm): mean runoff 711 mm a year; the trunk river
+peaks in April at 0.23 m3/s (snowmelt), 9x its August low; snow lies to the end of March on the crest, February at
+the foot. A mild climate with even rain runs high in winter (February); summer rain (seasonality 0.9, peak July)
+moves the high water to September, after the soils refill. Lakes balance on the map's mean runoff and lose their
+open-water evaporation month by month. Cost: 230 ms of 2.7 s generation at 16 m cells (8%); none without a
+recipe, and the output is then unchanged. Media fork/terrain/runoff/. Not done: glaciers (cells that never melt
+out keep their snow; no ice flow), channel travel time within a month, rain shadow on maps smaller than the
+rain's drift (about 20 km, see Climate maps).
+
+Found on the lake shots: the ring that keeps detail from cutting below a lake's level (3 cells, nearest node) left
+flat terraces with walls stepping along the cell lines on the dam flanks. The hold is now full within one cell of
+the water and fades out over the next two (bilinear weight), so the detail runs on beside the lake
+(fork/terrain/runoff/lake_rim_before_after.png).
+
 ## Sources
 
+- McCabe, Markstrom, A monthly water-balance model driven by a graphical user interface, USGS Open-File Report
+  2007-1088, 2007.
+- Thornthwaite, Mather, Instructions and tables for computing potential evapotranspiration and the water balance,
+  Publications in Climatology 10(3), 1957.
+- Hock, Temperature index melt modelling in mountain areas, Journal of Hydrology 282, 2003.
+- Hock, A distributed temperature-index ice- and snowmelt model including potential direct solar radiation, Journal
+  of Glaciology 45, 1999.
+- Calov, Greve, A semi-analytical solution for the positive degree-day model with stochastic temperature
+  variations, Journal of Glaciology 51, 2005.
+- Nash, The form of the instantaneous unit hydrograph, IAHS Publication 45, 1957.
 - Gilbert, Rate of recession of Niagara Falls, USGS Bulletin 306, 1907.
 - Haviv, Enzel, Whipple et al., Evolution of vertical knickpoints (waterfalls) with resistant caprock: insights from
   numerical modeling, JGR 115, F03028, 2010.
