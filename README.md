@@ -40,12 +40,13 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Transmission** (BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): matches raster, with traced coat reflections; coat texture.
 - **Subsurface scattering** (`rendering/pathtracing/subsurface_scattering`, radius `subsurface_scattering_scale`): random walk inside closed meshes; skin, wax and marble soften and thin parts glow when backlit.
+- **Wet surfaces** (BaseMaterial3D Wetness: `wetness_enabled`, `wetness_porosity`): porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced.
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
-<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering</summary>
+<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering, wet surfaces</summary>
 
 ![Glass panes before coloured spheres: raster, path traced with transmission on, and off](docs/media/transmission.jpg)
 
@@ -66,6 +67,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Backlit skin slabs 2 to 20 cm thick, subsurface scattering off and on](docs/media/subsurface.jpg)
 
 *Subsurface scattering: thin slabs glow, thick ones stay dark.*
+
+![Spheres of rising porosity, dry and wet, raster and path traced](docs/media/wet-materials.jpg)
+
+*Wet surfaces: the more porous, the darker and glossier when wet; raster and path traced match.*
 
 </details>
 
@@ -231,7 +236,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Wind**: slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.
 - **Wind near the ground** (`add_canopy`, `add_shelter_box`, `gust_patch_size`): shelter inside plant canopies and behind buildings; gust patches sweep across fields.
 - **Storms** (`add_storm`): drift with the wind, with a rain core and a downdraft.
-- **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation.
+- **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.
 - **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).
 - **Clouds** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): a cloud layer shaped from the map's cover, type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
 - **Cloud shadows** (`sun_light`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.
