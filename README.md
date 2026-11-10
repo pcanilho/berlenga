@@ -16,7 +16,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
-- **Terrain**: mountain ranges raised and eroded per seed; non-destructive height brushes; terrain data maps.
+- **Terrain**: mountain ranges raised and eroded per seed, with geology and river networks; non-destructive height brushes; terrain data maps.
 - **Snow**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced.
 - **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
@@ -226,11 +226,13 @@ Each feature that changes the look or the cost can be turned off with the settin
 </details>
 
 ### Terrain
-- **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`, `detail_wavelength`, `detail_octaves`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly, and fade on crests so silhouettes stay clean; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
+- **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`, `detail_wavelength`, `detail_octaves`, `detail_crest`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; on crests gullies keep part of their depth and a ridged noise adds irregular pinnacles; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
+- **Geology maps** (`terrain_geology()` in shaders): soil, bare rock and scree from the erosion run.
+- **River network** (`build_river_paths()`): rivers with widths and discharges, made into joined `PhysXRiver3D` paths.
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: mountain generation, terrain data maps</summary>
+<details><summary>Images: mountain generation, crests, geology, terrain data maps</summary>
 
 ![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
 
@@ -244,9 +246,13 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Mountain generation up close, raster and path traced.*
 
-![Summit crests before and after detail fades on crests](docs/media/terrain-crest.jpg)
+![Summit crests: a regular comb before, irregular crests now](docs/media/terrain-crest.jpg)
 
-*Crests: before, a thin comb along the summits; after, clean silhouettes.*
+*Crests: before, a thin regular comb along the summits; now, irregular crests and pinnacles.*
+
+![Geology map with soil, rock, scree and rivers, and the range path traced and coloured from it](docs/media/terrain-geology.jpg)
+
+*Geology: soil green, bare rock grey, scree ochre, rivers blue; the shader colours the range from the map.*
 
 ![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
 
