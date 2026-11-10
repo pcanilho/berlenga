@@ -193,6 +193,9 @@ public:
 	void set_open_sea_beyond(bool p_open);
 	// Wind / direction / height / fetch at once — ONE in-place spectrum update (no rebuild once built).
 	void set_sea_state(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
+	// Take wind speed and direction from the WeatherMap3D, with duration-limited wave growth.
+	void set_follow_weather(bool p_enabled);
+	bool get_follow_weather() const { return follow_weather; }
 	void recenter(Vector3 p_world_position);
 	void remeasure_seabed();
 	bool get_open_sea_beyond() const { return open_sea_beyond; }
@@ -434,6 +437,12 @@ private:
 	float fetch = 0.0f;
 	float render_extent = 0.0f;
 	int mesh_detail = 1;
+	bool follow_weather = false;
+	bool weather_sea_valid = false;
+	double weather_check_accum = 0.0;
+	float weather_sea_speed = 8.0f;
+	Vector2 weather_sea_direction = Vector2(1, 0);
+	void _follow_weather(double p_delta);
 	double water_time = 0.0; // shader clock (water_time), advanced only in a running game
 	float choppiness = 1.0f;
 	NormalMode normal_mode = NORMAL_MODE_PER_PIXEL;

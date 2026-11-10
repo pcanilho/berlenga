@@ -88,6 +88,110 @@ space and time.
 5. Snow accumulation and trails.
 6. Lightning in clouds under path tracing.
 
+## Step 1: the weather map and world wind (10 Nov 2026)
+
+Research for this step, on top of the notes above.
+
+- **Far Cry 6** (Ubisoft article and GDC 2022 abstract, Weick and Zhou): a
+  weather manager reads hourly presets per region from a forecast, with
+  per-region min/max curves. Static wetness is masked by a top-down "wetness
+  shadow map"; dynamic objects ray cast for rain exposure. Puddles are terrain
+  decals that grow from their centre. Indirect light fades with cloud cover.
+  No numbers for transitions or drying.
+- **Assassin's Creed 4** (Wronski, GDC 2014): rain occlusion from a 128x128
+  top-down depth map (shared with world AO); wetness darkens albedo and raises
+  gloss in the lighting pass; rain ripples in a 256x256 wrapped heightfield
+  (about 0.6 ms); up to 320k GPU rain drops pushed by wind. The weather state
+  machine itself is not in the slides.
+- **Ghost of Tsushima** (Rockenbeck, GDC 2021, via Game Developer): one global
+  wind vector plus Perlin noise, plus "vorticles" (small spheres of wind) that
+  particles sum by brute force, hundreds at a time; no fluid solve. Grass reads
+  a shared 2D noise wind (Wohllaib, GDC 2021).
+- **God of War** (Renard, GDC 2019): a full 3D GPU fluid simulation of wind
+  with motors (abstract only; the talk is members-only).
+- **Godot addons** (code read): TCA_Weather_System keeps 0-1 floats (rain,
+  snow, fog, cloud cover, wetness) and one wind vector with sine gusts, pushed
+  per material with `set_shader_parameter`; presets snap, nothing is spatial.
+  GodotWeatherSystem picks weighted random weather resources; Sky3D has no
+  weather or wind. None of them is a map.
+- **Wind science.** Mean wind with height: the log law
+  u(z) = u10 ln(z/z0) / ln(10/z0), z0 the roughness length (0.0002 m sea,
+  0.03 m open land, about 1 m city). Gusts: the Kaimal spectrum of IEC 61400-1,
+  f S(f)/sigma^2 = 4 f L/U / (1 + 6 f L/U)^(5/3), with sigma_v = 0.8 sigma_u,
+  sigma_w = 0.5 sigma_u and turbulence intensity I = 1/ln(z/z0); turned into a
+  field by Taylor's frozen turbulence (the gust pattern drifts with the mean
+  wind), as the game's `wind.gd` does in time only. Storm outflow: the
+  Oseguera-Bowles downburst profile (NASA TM-100632, 1988), radial speed
+  proportional to (R/r)(1 - exp(-(r/R)^2)).
+- **Drying.** Penman's (1948) open-water wind function,
+  E = 0.26 (1 + 0.54 u) (e_s - e_a) mm/day with vapour pressures in hPa and
+  e_s from the Magnus formula: a 0.5 mm film dries in about 3 to 4 hours at
+  15 C, 70% humidity and 3 m/s.
+- **Sea growth.** Waves take time to grow to the fetch-limited sea: the Shore
+  Protection Manual's duration, g t/U = 68.8 (g F/U^2)^(2/3).
+
+What everyone shares: one place holds the weather, everything reads it. What
+nobody here does: let it vary across the world. Nubis's map does, for clouds.
+
+### What we build
+
+`WeatherMap3D` (a new `weather` module, so every platform has it): a square
+map, `extent` metres wide at `resolution` cells, that follows the camera (or a
+target node) and snaps to its cells, Nubis-style.
+
+- **State per cell**, refreshed on the CPU at `update_rate` Hz: mean wind at
+  10 m (x, z), cloud cover, cloud type, rain rate (mm/h), and two quantities
+  that integrate over time: the water film (mm) and puddle depth (mm).
+  Wetness is the film over the surface's storage (`surface_storage`, mm);
+  past it, water collects as puddles, which drain at `puddle_drain_rate` and
+  evaporate.
+- **Where the state comes from:** the base weather (`wind_speed`,
+  `wind_direction`, `cloud_cover`, `cloud_type`, `rain_rate`, `temperature`,
+  `humidity`), which the map eases toward over `transition_time`; cloud
+  cover broken up by noise drifting with the steering wind; an optional
+  painted map (Nubis channels: R cover, G rain, B type) over a world rect; and
+  storm cells (`add_storm`) that drift with the steering wind and carry a rain
+  core and a downburst outflow.
+- **Gusts** are not stored: they are a sum of Kaimal-weighted waves drifting
+  with the mean wind, the same few numbers on the CPU and in shaders, so
+  every consumer sees the same gust at the same place and time.
+- **Time:** `time_scale` makes weather run faster than the clock (a game day
+  in an hour); drying, wave growth and storm drift use it.
+- **Out to everything:** global shader uniforms (`weather_wind_map`,
+  `weather_state_map`, `weather_map_rect`, `weather_gusts`), so any shader,
+  raster or path traced, reads the same weather; and `get_wind_at()`,
+  `get_rain_at()`, `get_wetness_at()`, `get_puddle_at()`, `get_cloud_cover_at()`
+  for scripts and C++.
+- **First readers:** PhysXWaterSurface3D (`follow_weather`: wind speed and
+  direction at the sea, with duration-limited wave growth), PhysXCloth3D and
+  PhysXHair3D (their wind, when a map exists), and a bench material that
+  darkens and glosses with wetness (to check raster against path tracing).
+
+Not in this step: clouds and their shadows (step 3), the sky (step 2), rain
+occlusion under roofs (the AC4 / Far Cry 6 top-down map, with step 4),
+snow, lightning.
+
+### Checks (docs/bench/weather, `--test`)
+
+- Log law, u10 8 m/s over z0 0.03 m: 5.79, 8.00 and 9.91 m/s at 2, 10 and
+  40 m (formula 5.78, 8.00, 9.91).
+- Gusts at 10 m over 60 s: sigma_u / U 0.138. The IEC value 0.165 is for a
+  10 minute record; a minute holds 70% of the Kaimal variance
+  ((1 + 6 n)^(-2/3) at n = L / (U 60 s)), which gives 0.138. sigma_v / sigma_u
+  0.86 (0.8), sigma_w / sigma_u 0.57 (0.5); peak 10.7 m/s on 8.
+- Storm, R 1000 m, outflow 15 m/s: 0, 10.4, 14.9, 15.0, 14.0 and 11.5 m/s at
+  0, 500, 1000, 1121, 1500 and 2000 m.
+- An hour of 5 mm/h leaves the film full and 2.7 mm of puddle (5 in, 0.5
+  held, 2 drained); at 15 C, 70% and 3 m/s the puddles go in 1.3 h and the
+  surface is dry after 5.3 h (Penman 0.12 mm/h).
+- Sea after the weather jumps from 4 to 15 m/s over 20 km of fetch (SPM 2.7 h
+  to full growth): its wind is 8.7, 10.6 and 12.2 m/s after 20, 60 and 120
+  minutes.
+- One map update, 128 x 128 cells and a storm, rows on the worker threads:
+  about 1 ms on the 4 cloud cores (4 updates a second by default).
+- The wet street (bench `--view=street`): raster and path traced frames
+  match at 100% crop; path tracing adds the reflections in the puddles.
+
 ## Sources
 
 - Schneider, The Real-time Volumetric Cloudscapes of Horizon Zero Dawn,
@@ -103,3 +207,19 @@ space and time.
   2020: https://advances.realtimerendering.com/s2020/
 - Studio Gobo, Sparkly but not too Sparkly, SIGGRAPH Advances 2015:
   https://advances.realtimerendering.com/s2015/
+- Ubisoft, Simulating Tropical Weather in Far Cry 6 (article), and Weick and
+  Zhou, GDC 2022 (abstract):
+  https://www.ubisoft.com/en-us/company/how-we-make-games/technology/articles/simulating-tropical-weather-in-far-cry-6
+- Wronski, Assassin's Creed 4: Black Flag, Lighting, Weather and Atmospheric
+  Effects, GDC 2014.
+- Rockenbeck, Blowing from the West: Simulating Wind in Ghost of Tsushima, GDC
+  2021: https://www.gamedeveloper.com/design/using-vorticles-to-simulate-wind-in-i-ghost-of-tsushima-i-
+- Renard, Wind Simulation in God of War, GDC 2019 (abstract):
+  https://gdcvault.com/play/1025972/Wind-Simulation-in-God-of
+- IEC 61400-1 (2005), Annex B: Kaimal turbulence model.
+- Oseguera and Bowles, A Simple Analytic 3-Dimensional Downburst Model Based on
+  Boundary Layer Stagnation Flow, NASA TM-100632 (1988).
+- Penman, Natural evaporation from open water, bare soil and grass, Proc. R.
+  Soc. A 193 (1948).
+- US Army CERC, Shore Protection Manual (1984), wave growth.
+- TCA_Weather_System (MIT): https://github.com/kS222138/TCA_Weather_System

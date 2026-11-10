@@ -1,0 +1,259 @@
+/**************************************************************************/
+/*  weather_map_3d.h                                                      */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#pragma once
+
+#include "core/io/image.h"
+#include "scene/3d/node_3d.h"
+#include "scene/resources/image_texture.h"
+
+// One weather state for a region of the world, after Guerrilla's Nubis weather map
+// (Schneider 2015): a square of cells that follows the camera and holds, per cell, the
+// mean wind at 10 m, cloud cover and type, rain rate, and the water that rain has left
+// on surfaces (a film, then puddles). Everything that reacts to weather reads it: shaders
+// through global uniforms, scripts and nodes through get_*_at(). See docs/ideas/weather.md.
+class WeatherMap3D : public Node3D {
+	GDCLASS(WeatherMap3D, Node3D);
+
+public:
+	// Gust components: Kaimal-weighted plane waves drifting with the mean wind (Taylor's
+	// frozen turbulence). GUSTS_PER_AXIS each for the along-wind, cross-wind and vertical
+	// parts; the same numbers go to shaders as the weather_gusts texture.
+	static constexpr int GUSTS_PER_AXIS = 8;
+	static constexpr int GUST_COUNT = GUSTS_PER_AXIS * 3;
+
+private:
+	struct Storm {
+		int id = 0;
+		Vector2 position; // world x, z (m)
+		float radius = 1500.0f; // rain core radius (m)
+		float rain_rate = 30.0f; // peak, mm/h
+		float cloud_cover = 1.0f;
+		float outflow = 10.0f; // peak downburst outflow speed (m/s)
+		float lifetime = 3600.0f; // weather seconds; <= 0 lasts until removed
+		float age = 0.0f;
+	};
+
+	struct Gust {
+		Vector2 k; // wave vector in the wind frame (along, across), rad/m
+		float amplitude = 0.0f; // per unit sigma
+		double phase = 0.0;
+	};
+
+	// Settings.
+	float extent = 4096.0f;
+	int resolution = 128;
+	NodePath follow_target;
+	float update_rate = 4.0f;
+	float time_scale = 1.0f;
+	float transition_time = 600.0f;
+	float ground_height = 0.0f;
+
+	float wind_speed = 5.0f; // m/s at 10 m
+	Vector2 wind_direction = Vector2(1, 0); // the way the wind blows toward (x, z)
+	float roughness_length = 0.03f; // z0, m
+	float gust_intensity = 1.0f; // scale on the log-law turbulence intensity
+	float cloud_cover = 0.4f;
+	float cloud_type = 0.3f;
+	float cloud_variation = 0.35f;
+	float cloud_scale = 6000.0f; // m, size of the cloud cover noise
+	float rain_rate = 0.0f; // mm/h
+	float temperature = 15.0f; // C
+	float humidity = 0.7f; // relative, 0..1
+	float surface_storage = 0.5f; // mm a surface holds before water pools
+	float puddle_max_depth = 20.0f; // mm
+	float puddle_drain_rate = 2.0f; // mm/h
+	Ref<Texture2D> painted_map;
+	Rect2 painted_map_rect = Rect2(-2048, -2048, 4096, 4096);
+	bool publish_shader_globals = true;
+
+	// The eased base state (what the cells see; the settings above are its targets).
+	float cur_wind_speed = 5.0f;
+	Vector2 cur_wind_direction = Vector2(1, 0);
+	float cur_cloud_cover = 0.4f;
+	float cur_cloud_type = 0.3f;
+	float cur_rain_rate = 0.0f;
+	float cur_temperature = 15.0f;
+	float cur_humidity = 0.7f;
+	bool eased_once = false;
+
+	// Cells, row-major in z then x; the map's corner sits on a whole cell.
+	Vector2i origin_cell; // world cell index of cell (0, 0)
+	bool origin_valid = false;
+	Vector<float> cell_wind; // 2 per cell, mean wind at 10 m (m/s)
+	Vector<float> cell_cover;
+	Vector<float> cell_type;
+	Vector<float> cell_rain; // mm/h
+	Vector<float> cell_film; // mm
+	Vector<float> cell_puddle; // mm
+	Ref<Image> painted_image;
+
+	Vector<Storm> storms;
+	int next_storm_id = 1;
+
+	struct CellPass {
+		float dt_h = 0.0f;
+		float to_2m = 1.0f;
+		Vector2 base_wind;
+		float cover_gate = 1.0f;
+		bool painted = false;
+		float *wind = nullptr;
+		float *cover = nullptr;
+		float *type = nullptr;
+		float *rain = nullptr;
+		float *film = nullptr;
+		float *puddle = nullptr;
+	};
+	CellPass cell_pass;
+
+	Gust gusts[GUST_COUNT];
+	float gust_sigma_scale = 1.0f; // turbulence intensity of the base wind, for shaders
+	double weather_time = 0.0;
+	double update_accum = 0.0;
+	Vector2 cloud_drift; // m, how far the cloud noise has drifted
+
+	Ref<Image> wind_image;
+	Ref<Image> state_image;
+	Ref<Image> gust_image;
+	Ref<ImageTexture> wind_texture;
+	Ref<ImageTexture> state_texture;
+	Ref<ImageTexture> gust_texture;
+	bool globals_added = false;
+
+	static WeatherMap3D *active;
+
+	void _allocate();
+	void _build_gusts();
+	void _advance(double p_weather_dt, double p_real_dt);
+	void _ease_base(double p_dt);
+	void _follow(Vector3 p_center);
+	void _shift(Vector2i p_new_origin);
+	void _update_cells(double p_weather_dt);
+	void _update_row(uint32_t p_row, CellPass *p_pass);
+	void _fill_gust_image();
+	void _upload();
+	void _publish_globals();
+	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
+	Vector3 _follow_position() const;
+
+	float _cell_size() const { return extent / resolution; }
+	float _sample(const Vector<float> &p_field, Vector2 p_xz, int p_stride = 1, int p_offset = 0) const;
+	float _cloud_noise(Vector2 p_xz) const;
+	float _storm_weight(const Storm &p_storm) const;
+	Vector3 _gust_at(Vector3 p_position, Vector2 p_mean) const;
+
+protected:
+	void _notification(int p_what);
+	static void _bind_methods();
+
+public:
+	// The map other nodes read: the last one that entered the tree.
+	static WeatherMap3D *get_active() { return active; }
+
+	void set_extent(float p_extent);
+	float get_extent() const { return extent; }
+	void set_resolution(int p_resolution);
+	int get_resolution() const { return resolution; }
+	void set_follow_target(const NodePath &p_path);
+	NodePath get_follow_target() const { return follow_target; }
+	void set_update_rate(float p_rate);
+	float get_update_rate() const { return update_rate; }
+	void set_time_scale(float p_scale);
+	float get_time_scale() const { return time_scale; }
+	void set_transition_time(float p_time);
+	float get_transition_time() const { return transition_time; }
+	void set_ground_height(float p_height);
+	float get_ground_height() const { return ground_height; }
+
+	void set_wind_speed(float p_speed);
+	float get_wind_speed() const { return wind_speed; }
+	void set_wind_direction(Vector2 p_direction);
+	Vector2 get_wind_direction() const { return wind_direction; }
+	void set_roughness_length(float p_z0);
+	float get_roughness_length() const { return roughness_length; }
+	void set_gust_intensity(float p_scale);
+	float get_gust_intensity() const { return gust_intensity; }
+	void set_cloud_cover(float p_cover);
+	float get_cloud_cover() const { return cloud_cover; }
+	void set_cloud_type(float p_type);
+	float get_cloud_type() const { return cloud_type; }
+	void set_cloud_variation(float p_variation);
+	float get_cloud_variation() const { return cloud_variation; }
+	void set_cloud_scale(float p_scale);
+	float get_cloud_scale() const { return cloud_scale; }
+	void set_rain_rate(float p_rate);
+	float get_rain_rate() const { return rain_rate; }
+	void set_temperature(float p_celsius);
+	float get_temperature() const { return temperature; }
+	void set_humidity(float p_humidity);
+	float get_humidity() const { return humidity; }
+	void set_surface_storage(float p_mm);
+	float get_surface_storage() const { return surface_storage; }
+	void set_puddle_max_depth(float p_mm);
+	float get_puddle_max_depth() const { return puddle_max_depth; }
+	void set_puddle_drain_rate(float p_mm_per_hour);
+	float get_puddle_drain_rate() const { return puddle_drain_rate; }
+	void set_painted_map(const Ref<Texture2D> &p_map);
+	Ref<Texture2D> get_painted_map() const { return painted_map; }
+	void set_painted_map_rect(Rect2 p_rect);
+	Rect2 get_painted_map_rect() const { return painted_map_rect; }
+	void set_publish_shader_globals(bool p_enabled);
+	bool get_publish_shader_globals() const { return publish_shader_globals; }
+
+	// Jump the eased state to the settings (no transition), e.g. when a scene loads.
+	void snap_to_settings();
+	// Run the weather forward by p_seconds of weather time at once (wetting, drying, storms).
+	void advance(float p_seconds);
+
+	int add_storm(Vector2 p_position, float p_radius, float p_rain_rate, float p_outflow, float p_lifetime);
+	void remove_storm(int p_id);
+	void clear_storms();
+	int get_storm_count() const { return storms.size(); }
+
+	// Air velocity at a world position (m/s), mean wind on the log law plus gusts.
+	// p_height_above_ground < 0 takes it from ground_height.
+	Vector3 get_wind_at(Vector3 p_position, float p_height_above_ground = -1.0f) const;
+	// Mean wind at 10 m, no gusts (x, z).
+	Vector2 get_mean_wind_at(Vector3 p_position) const;
+	float get_rain_at(Vector3 p_position) const; // mm/h
+	float get_cloud_cover_at(Vector3 p_position) const;
+	float get_cloud_type_at(Vector3 p_position) const;
+	float get_wetness_at(Vector3 p_position) const; // 0..1
+	float get_puddle_at(Vector3 p_position) const; // mm
+	double get_weather_time() const { return weather_time; }
+
+	Ref<Texture2D> get_wind_texture() const { return wind_texture; }
+	Ref<Texture2D> get_state_texture() const { return state_texture; }
+	Ref<Texture2D> get_gust_texture() const { return gust_texture; }
+	Rect2 get_map_rect() const;
+
+	WeatherMap3D();
+	~WeatherMap3D();
+};

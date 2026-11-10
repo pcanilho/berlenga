@@ -45,6 +45,11 @@
 #include "scene/resources/texture_rd.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
+#include "modules/modules_enabled.gen.h" // For weather.
+#ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_map_3d.h"
+#endif
+
 namespace {
 
 // Drawn from PhysXHair3D's simulated points, which the solver writes to hair_positions sorted far to
@@ -566,6 +571,13 @@ void PhysXHair3D::_step(double p_delta) {
 		}
 	}
 	s.wind = wind;
+#ifdef MODULE_WEATHER_ENABLED
+	if (weather_wind && is_inside_tree()) {
+		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
+			s.wind += weather->get_wind_at(get_global_transform().origin);
+		}
+	}
+#endif
 	s.gust = gust;
 	s.turbulence = turbulence;
 	s.turbulence_size = turbulence_size;
@@ -813,6 +825,14 @@ Vector3 PhysXHair3D::get_fixed_gravity() const {
 	return fixed_gravity;
 }
 
+void PhysXHair3D::set_weather_wind(bool p_enabled) {
+	weather_wind = p_enabled;
+}
+
+bool PhysXHair3D::get_weather_wind() const {
+	return weather_wind;
+}
+
 void PhysXHair3D::set_wind(const Vector3 &p_wind) {
 	wind = p_wind;
 }
@@ -905,6 +925,8 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_using_world_gravity"), &PhysXHair3D::is_using_world_gravity);
 	ClassDB::bind_method(D_METHOD("set_fixed_gravity", "gravity"), &PhysXHair3D::set_fixed_gravity);
 	ClassDB::bind_method(D_METHOD("get_fixed_gravity"), &PhysXHair3D::get_fixed_gravity);
+	ClassDB::bind_method(D_METHOD("set_weather_wind", "enabled"), &PhysXHair3D::set_weather_wind);
+	ClassDB::bind_method(D_METHOD("get_weather_wind"), &PhysXHair3D::get_weather_wind);
 	ClassDB::bind_method(D_METHOD("set_wind", "wind"), &PhysXHair3D::set_wind);
 	ClassDB::bind_method(D_METHOD("get_wind"), &PhysXHair3D::get_wind);
 	ClassDB::bind_method(D_METHOD("set_gust", "gust"), &PhysXHair3D::set_gust);
@@ -944,6 +966,7 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_world_gravity"), "set_use_world_gravity", "is_using_world_gravity");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "fixed_gravity", PROPERTY_HINT_NONE, "suffix:m/s²"), "set_fixed_gravity", "get_fixed_gravity");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wind"), "set_weather_wind", "get_weather_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gust", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_gust", "get_gust");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_turbulence", "get_turbulence");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater,suffix:m"), "set_turbulence_size", "get_turbulence_size");

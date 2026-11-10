@@ -214,6 +214,9 @@
 		<member name="foam_threshold" type="float" setter="set_foam_threshold" getter="get_foam_threshold" default="0.7">
 			How squeezed the surface must be before whitecap foam forms: foam is injected where the choppy displacement's area Jacobian drops below this ([code]1[/code] = unsqueezed, [code]0[/code] = folding over). Lower gives fewer whitecaps, needing steeper waves; higher gives more. Depends on [member choppiness] -- without it nothing folds and no foam forms.
 		</member>
+		<member name="follow_weather" type="bool" setter="set_follow_weather" getter="get_follow_weather" default="false">
+			If [code]true[/code], [member wind_speed] and [member wind_direction] follow the [WeatherMap3D]'s mean wind at this node. Waves take time to build: the wind the spectrum sees follows the real one over a third of the Shore Protection Manual's growth time for the fetch, g t / U = 68.8 (g F / U^2)^(2/3), in weather time. The spectrum is updated in place, so the waves keep their phases as they grow or turn.
+		</member>
 		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="96">
 			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].
 		</member>

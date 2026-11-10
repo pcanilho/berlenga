@@ -46,6 +46,11 @@
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/sky.h"
 #include "scene/resources/3d/world_3d.h"
+
+#include "modules/modules_enabled.gen.h" // For weather.
+#ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_map_3d.h"
+#endif
 #include "scene/resources/environment.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
@@ -1252,6 +1257,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shore_foam_band"), &PhysXWaterSurface3D::get_shore_foam_band);
 	ClassDB::bind_method(D_METHOD("set_open_sea_beyond", "open"), &PhysXWaterSurface3D::set_open_sea_beyond);
 	ClassDB::bind_method(D_METHOD("set_sea_state", "wind_speed", "wind_direction", "wave_amplitude", "fetch"), &PhysXWaterSurface3D::set_sea_state);
+	ClassDB::bind_method(D_METHOD("set_follow_weather", "enabled"), &PhysXWaterSurface3D::set_follow_weather);
+	ClassDB::bind_method(D_METHOD("get_follow_weather"), &PhysXWaterSurface3D::get_follow_weather);
 	ClassDB::bind_method(D_METHOD("recenter", "world_position"), &PhysXWaterSurface3D::recenter);
 	ClassDB::bind_method(D_METHOD("remeasure_seabed"), &PhysXWaterSurface3D::remeasure_seabed);
 	ClassDB::bind_method(D_METHOD("get_open_sea_beyond"), &PhysXWaterSurface3D::get_open_sea_beyond);
@@ -1343,6 +1350,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "ocean_domain_size"), "set_ocean_domain_size", "get_ocean_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_speed"), "set_wind_speed", "get_wind_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_direction"), "set_wind_direction", "get_wind_direction");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "follow_weather"), "set_follow_weather", "get_follow_weather");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_amplitude"), "set_wave_amplitude", "get_wave_amplitude");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_cascades", PROPERTY_HINT_RANGE, "1,4,1"), "set_wave_cascades", "get_wave_cascades");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_cascade_ratio", PROPERTY_HINT_RANGE, "2,16,0.1"), "set_wave_cascade_ratio", "get_wave_cascade_ratio");
@@ -1882,6 +1890,53 @@ float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) co
 void PhysXWaterSurface3D::set_cull_margin(float p_margin) {
 	cull_margin = MAX(p_margin, 0.0f);
 	_update_cull_box();
+}
+
+// follow_weather: the sea takes its wind from the WeatherMap3D. Waves need time to grow: the Shore Protection
+// Manual's (CERC 1984) duration for a fetch-limited sea, g t / U = 68.8 (g F / U^2)^(2/3), sets how fast the
+// wind the spectrum sees follows the real one (a first-order lag of a third of that time, in weather time).
+// The spectrum is updated in place (set_sea_state), so the waves keep their phases while they grow or turn.
+void PhysXWaterSurface3D::_follow_weather(double p_delta) {
+#ifdef MODULE_WEATHER_ENABLED
+	if (!follow_weather || Engine::get_singleton()->is_editor_hint() || !is_inside_tree()) {
+		return;
+	}
+	const WeatherMap3D *weather = WeatherMap3D::get_active();
+	if (weather == nullptr) {
+		return;
+	}
+	weather_check_accum += p_delta;
+	if (weather_check_accum < 0.25 && weather_sea_valid) {
+		return;
+	}
+	const double dt = weather_check_accum * weather->get_time_scale();
+	weather_check_accum = 0.0;
+	const Vector2 w = weather->get_mean_wind_at(get_global_position());
+	const float target_speed = MAX(w.length(), 0.5f);
+	const Vector2 target_dir = w.length_squared() > 1e-6f ? w.normalized() : (wind_direction.length_squared() > 1e-6f ? wind_direction.normalized() : Vector2(1, 0));
+	if (!weather_sea_valid) {
+		weather_sea_speed = target_speed;
+		weather_sea_direction = target_dir;
+		weather_sea_valid = true;
+	} else {
+		const float g = 9.81f;
+		const float u = MAX(weather_sea_speed, 0.5f);
+		const float f = get_effective_fetch();
+		const float t_full = 68.8f * Math::pow(g * f / (u * u), 2.0f / 3.0f) * u / g;
+		const float a = 1.0f - Math::exp(-float(dt) / MAX(t_full / 3.0f, 1.0f));
+		weather_sea_speed = Math::lerp(weather_sea_speed, target_speed, a);
+		weather_sea_direction = weather_sea_direction.rotated(weather_sea_direction.angle_to(target_dir) * a).normalized();
+	}
+	const Vector2 cur_dir = wind_direction.length_squared() > 1e-6f ? wind_direction.normalized() : Vector2(1, 0);
+	if (Math::abs(weather_sea_speed - wind_speed) > 0.02f * wind_speed || Math::abs(cur_dir.angle_to(weather_sea_direction)) > Math::deg_to_rad(2.0f)) {
+		set_sea_state(weather_sea_speed, weather_sea_direction, wave_amplitude, fetch);
+	}
+#endif
+}
+
+void PhysXWaterSurface3D::set_follow_weather(bool p_enabled) {
+	follow_weather = p_enabled;
+	weather_sea_valid = false;
 }
 
 void PhysXWaterSurface3D::set_sea_state(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch) {
@@ -2906,6 +2961,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			_detach_textures();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+			_follow_weather(get_physics_process_delta_time());
 			_update(get_physics_process_delta_time());
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {

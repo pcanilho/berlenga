@@ -126,6 +126,9 @@
 		<member name="tear_factor" type="float" setter="set_tear_factor" getter="get_tear_factor" default="0.0">
 			How far a structural edge can stretch, as a multiple of its rest length and averaged over 50 ms, before it breaks. When one does, the cloth splits a vertex there in two, so the rip opens without losing any triangles and runs on as the load moves to the next edges; a pinned edge that breaks rips free of what holds it. At most a few vertices split per physics tick. [code]0[/code] (or anything up to [code]1[/code]) turns tearing off. Softer cloth ([member stiffness]) stretches further under the same load, so it tears at a lower force for the same factor. Tearing runs on the CPU solver: with [constant SIM_AUTO] a tearing cloth always uses it. The project setting [code]physics/physx_3d/cloth/tearing[/code] switches tearing off for every cloth. See also [signal torn].
 		</member>
+		<member name="weather_wind" type="bool" setter="set_weather_wind" getter="get_weather_wind" default="true">
+			If [code]true[/code] and a [WeatherMap3D] is in the scene, its wind at the cloth (mean wind on the log law plus its gusts) is added to [member wind] and the [member wind_area] wind. [member wind_turbulence] still shapes only those two.
+		</member>
 		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
 			A constant world-space air velocity, added on top of any [member wind_area].
 		</member>

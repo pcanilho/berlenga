@@ -71,6 +71,7 @@ class PhysXHair3D : public Node3D {
 	bool use_world_gravity = true;
 	Vector3 fixed_gravity = Vector3(0, -9.8f, 0);
 	Vector3 wind;
+	bool weather_wind = true; // add the WeatherMap3D wind when there is one
 	float gust = 0.3f;
 	float turbulence = 0.35f;
 	float turbulence_size = 0.08f;
@@ -146,6 +147,8 @@ public:
 	bool is_using_world_gravity() const;
 	void set_fixed_gravity(const Vector3 &p_gravity);
 	Vector3 get_fixed_gravity() const;
+	void set_weather_wind(bool p_enabled);
+	bool get_weather_wind() const;
 	void set_wind(const Vector3 &p_wind);
 	Vector3 get_wind() const;
 	void set_gust(float p_gust);

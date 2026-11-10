@@ -40,6 +40,11 @@
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
+#include "modules/modules_enabled.gen.h" // For weather.
+#ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_map_3d.h"
+#endif
+
 // Map a friendly 0..1 stiffness to XPBD compliance (m/N). 1 -> rigid, 0 -> slack.
 static float _stiffness_to_compliance(float p_stiffness, float p_max_compliance) {
 	const float s = CLAMP(p_stiffness, 0.0f, 1.0f);
@@ -298,6 +303,22 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 		w += perp * (speed * wind_turbulence * 0.5f * sway);
 		w += up * (speed * wind_turbulence * 0.3f * Math::sin(t * 3.7f));
 	}
+#ifdef MODULE_WEATHER_ENABLED
+	// The world's wind at the cloth, with its own gusts (wind_turbulence only shapes the local wind above).
+	const WeatherMap3D *weather = weather_wind ? WeatherMap3D::get_active() : nullptr;
+	if (weather) {
+		const LocalVector<Vector3> &sp = solver.get_positions();
+		Vector3 center = get_global_transform().origin;
+		if (!sp.is_empty()) {
+			center = Vector3();
+			for (uint32_t i = 0; i < sp.size(); i++) {
+				center += sp[i];
+			}
+			center /= (float)sp.size();
+		}
+		w += weather->get_wind_at(center);
+	}
+#endif
 	return w;
 }
 
@@ -784,6 +805,10 @@ void PhysXCloth3D::set_wind(const Vector3 &p_v) {
 	update_gizmos();
 }
 
+void PhysXCloth3D::set_weather_wind(bool p_v) {
+	weather_wind = p_v;
+}
+
 void PhysXCloth3D::set_wind_turbulence(float p_v) {
 	wind_turbulence = MAX(p_v, 0.0f);
 }
@@ -896,6 +921,8 @@ void PhysXCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_area"), &PhysXCloth3D::get_wind_area);
 	ClassDB::bind_method(D_METHOD("set_wind", "wind"), &PhysXCloth3D::set_wind);
 	ClassDB::bind_method(D_METHOD("get_wind"), &PhysXCloth3D::get_wind);
+	ClassDB::bind_method(D_METHOD("set_weather_wind", "enabled"), &PhysXCloth3D::set_weather_wind);
+	ClassDB::bind_method(D_METHOD("get_weather_wind"), &PhysXCloth3D::get_weather_wind);
 	ClassDB::bind_method(D_METHOD("set_wind_turbulence", "turbulence"), &PhysXCloth3D::set_wind_turbulence);
 	ClassDB::bind_method(D_METHOD("get_wind_turbulence"), &PhysXCloth3D::get_wind_turbulence);
 	ClassDB::bind_method(D_METHOD("set_drag", "drag"), &PhysXCloth3D::set_drag);
@@ -943,6 +970,7 @@ void PhysXCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "wind_area", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Area3D"), "set_wind_area", "get_wind_area");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_turbulence", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_wind_turbulence", "get_wind_turbulence");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wind"), "set_weather_wind", "get_weather_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drag", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_drag", "get_drag");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lift", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lift", "get_lift");
 	ADD_GROUP("Tearing", "tear_");

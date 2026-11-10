@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WeatherMap3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		One weather state for a region of the world: wind, cloud, rain and the water rain leaves on surfaces.
+	</brief_description>
+	<description>
+		A square map of weather cells, [member extent] metres wide, that follows the camera (or [member follow_target]), after the weather map of Guerrilla's Nubis clouds. Each cell holds the mean wind at 10 m, cloud cover and type, the rain rate, and the water that rain has left on surfaces: a film up to [member surface_storage], then puddles. The film dries by evaporation (Penman's wind function, from [member temperature] and [member humidity]) and puddles also drain.
+		The weather comes from the base settings, which the map eases toward over [member transition_time]; cloud cover broken up by noise that drifts with the wind aloft; an optional [member painted_map]; and storms ([method add_storm]) that drift with the wind and bring a rain core and a downburst outflow.
+		Wind follows the log law with height over [member roughness_length], plus gusts from the Kaimal spectrum (IEC 61400-1) carried by the mean wind (Taylor's frozen turbulence), so every reader sees the same gust at the same place and time.
+		Readers: [method get_wind_at] and the other [code]get_*_at[/code] methods; [PhysXWaterSurface3D] with [member PhysXWaterSurface3D.follow_weather]; [PhysXCloth3D] and [PhysXHair3D] (their [code]weather_wind[/code]); and any shader, raster or path traced, through these global uniforms (added at run time when the project does not declare them):
+		- [code]weather_wind_map[/code] ([code]sampler2D[/code]): mean wind at 10 m in m/s (RG, x and z), cloud cover (B), cloud type (A).
+		- [code]weather_state_map[/code] ([code]sampler2D[/code]): rain in mm/h (R), wetness 0 to 1 (G), puddle depth in mm (B), film in mm (A).
+		- [code]weather_map_rect[/code] ([code]vec4[/code]): the map's world rect, x and z of its corner, then its size. A world point's map UV is [code](world.xz - rect.xy) / rect.zw[/code].
+		- [code]weather_gusts[/code] ([code]sampler2D[/code], [constant GUST_COUNT] by 1): per gust wave, its wavenumber along and across the base wind (rad/m), amplitude per unit sigma and phase. The first [constant GUSTS_PER_AXIS] are along the local wind, the next across it, the last vertical.
+		- [code]weather_wind_info[/code] ([code]vec4[/code]): base wind direction (x, z), sigma_u over the 10 m wind, and [member roughness_length].
+		- [code]weather_ground_height[/code] ([code]float[/code]): [member ground_height].
+		The last [WeatherMap3D] to enter the tree is the one the other nodes read.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="add_storm">
+			<return type="int" />
+			<param index="0" name="position" type="Vector2" />
+			<param index="1" name="radius" type="float" default="1500.0" />
+			<param index="2" name="rain_rate" type="float" default="30.0" />
+			<param index="3" name="outflow" type="float" default="10.0" />
+			<param index="4" name="lifetime" type="float" default="3600.0" />
+			<description>
+				Adds a storm centred on [param position] (world x, z) and returns its id. Its rain core has [param radius] metres and peaks at [param rain_rate] mm/h; its downburst outflow (Oseguera and Bowles 1988) blows outward, strongest at about 1.12 times [param radius] with [param outflow] m/s. It drifts with the wind aloft, grows in and fades out over [param lifetime] seconds of weather time ([code]0[/code] or less: until removed).
+			</description>
+		</method>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<description>
+				Runs the weather forward by [param seconds] of weather time at once (in steps of a minute): storms drift, the base state eases, surfaces wet and dry.
+			</description>
+		</method>
+		<method name="clear_storms">
+			<return type="void" />
+			<description>
+				Removes every storm.
+			</description>
+		</method>
+		<method name="get_cloud_cover_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Cloud cover at [param position], 0 (clear) to 1 (overcast).
+			</description>
+		</method>
+		<method name="get_cloud_type_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Cloud type at [param position], 0 (stratus) to 1 (cumulonimbus), as in the Nubis weather map.
+			</description>
+		</method>
+		<method name="get_gust_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The texture published as [code]weather_gusts[/code].
+			</description>
+		</method>
+		<method name="get_map_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The world rect the map covers now (x and z of its corner, and its size).
+			</description>
+		</method>
+		<method name="get_mean_wind_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The mean wind at 10 m at [param position] (x, z, m/s), without gusts.
+			</description>
+		</method>
+		<method name="get_puddle_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Puddle depth at [param position], in millimetres.
+			</description>
+		</method>
+		<method name="get_rain_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Rain rate at [param position], in mm/h.
+			</description>
+		</method>
+		<method name="get_state_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The texture published as [code]weather_state_map[/code].
+			</description>
+		</method>
+		<method name="get_storm_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of storms.
+			</description>
+		</method>
+		<method name="get_weather_time" qualifiers="const">
+			<return type="float" />
+			<description>
+				Seconds of weather time since the map started ([member time_scale] times the clock).
+			</description>
+		</method>
+		<method name="get_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How wet surfaces are at [param position]: the water film over [member surface_storage], 1 where water stands.
+			</description>
+		</method>
+		<method name="get_wind_at" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="height_above_ground" type="float" default="-1.0" />
+			<description>
+				Air velocity at [param position] in m/s: the mean wind on the log law at [param height_above_ground] metres (when negative, the height above [member ground_height]), plus gusts.
+			</description>
+		</method>
+		<method name="get_wind_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The texture published as [code]weather_wind_map[/code].
+			</description>
+		</method>
+		<method name="remove_storm">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes the storm with this [param id].
+			</description>
+		</method>
+		<method name="snap_to_settings">
+			<return type="void" />
+			<description>
+				Jumps the eased weather to the settings at once, without a transition (for example when a scene loads).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="cloud_cover" type="float" setter="set_cloud_cover" getter="get_cloud_cover" default="0.4">
+			Cloud cover, 0 (clear) to 1 (overcast). With [member cloud_variation], it is how much of the sky is cloud, in patches.
+		</member>
+		<member name="cloud_scale" type="float" setter="set_cloud_scale" getter="get_cloud_scale" default="6000.0">
+			Size of the cloud cover patches, in metres.
+		</member>
+		<member name="cloud_type" type="float" setter="set_cloud_type" getter="get_cloud_type" default="0.3">
+			Cloud type, 0 (stratus) to 1 (cumulonimbus).
+		</member>
+		<member name="cloud_variation" type="float" setter="set_cloud_variation" getter="get_cloud_variation" default="0.35">
+			How far the drifting noise moves the cloud cover up or down from [member cloud_cover]. [code]0[/code] gives an even sky.
+		</member>
+		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="4096.0">
+			Width of the map, in metres.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			The node the map stays centred on. Empty: the viewport's camera.
+		</member>
+		<member name="ground_height" type="float" setter="set_ground_height" getter="get_ground_height" default="0.0">
+			Height of the ground, for [method get_wind_at] when no height above ground is given.
+		</member>
+		<member name="gust_intensity" type="float" setter="set_gust_intensity" getter="get_gust_intensity" default="1.0">
+			Scale on the turbulence. [code]1[/code] gives the measured turbulence intensity for [member roughness_length], 1 / ln(10 / z0) at 10 m.
+		</member>
+		<member name="humidity" type="float" setter="set_humidity" getter="get_humidity" default="0.7">
+			Relative humidity of the air, 0 to 1. Drier air dries surfaces faster. While it rains, the air is taken as at least 97%.
+		</member>
+		<member name="painted_map" type="Texture2D" setter="set_painted_map" getter="get_painted_map">
+			An authored weather map over [member painted_map_rect], in the Nubis channels: R cloud cover (replaces [member cloud_cover]), G a scale on [member rain_rate], B cloud type.
+		</member>
+		<member name="painted_map_rect" type="Rect2" setter="set_painted_map_rect" getter="get_painted_map_rect" default="Rect2(-2048, -2048, 4096, 4096)">
+			The world rect [member painted_map] covers (x and z of its corner, and its size, in metres).
+		</member>
+		<member name="publish_shader_globals" type="bool" setter="set_publish_shader_globals" getter="get_publish_shader_globals" default="true">
+			If [code]true[/code], the map publishes the global shader uniforms listed in the description.
+		</member>
+		<member name="puddle_drain_rate" type="float" setter="set_puddle_drain_rate" getter="get_puddle_drain_rate" default="2.0">
+			How fast puddles drain into the ground and gutters, in mm/h, on top of evaporation.
+		</member>
+		<member name="puddle_max_depth" type="float" setter="set_puddle_max_depth" getter="get_puddle_max_depth" default="20.0">
+			The deepest puddles get, in millimetres.
+		</member>
+		<member name="rain_rate" type="float" setter="set_rain_rate" getter="get_rain_rate" default="0.0">
+			Rain rate where the cloud is thick, in mm/h (2.5 is light rain, 10 heavy, 50 a downpour).
+		</member>
+		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="128">
+			Cells along each side of the map.
+		</member>
+		<member name="roughness_length" type="float" setter="set_roughness_length" getter="get_roughness_length" default="0.03">
+			Aerodynamic roughness length z0 of the ground, in metres: about 0.0002 over the sea, 0.03 over open land, 0.5 to 1 over a town. It sets how the wind slows near the ground and how gusty it is.
+		</member>
+		<member name="surface_storage" type="float" setter="set_surface_storage" getter="get_surface_storage" default="0.5">
+			Water a surface holds as a film before it collects in puddles, in millimetres.
+		</member>
+		<member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="15.0">
+			Air temperature, in degrees Celsius, for evaporation.
+		</member>
+		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
+			Weather seconds per real second: storms, transitions, wetting and drying run this much faster than the clock (60 makes a game hour a real minute). Gusts always run in real time.
+		</member>
+		<member name="transition_time" type="float" setter="set_transition_time" getter="get_transition_time" default="600.0">
+			Time constant over which the weather eases toward changed settings, in weather seconds. [code]0[/code] changes at once.
+		</member>
+		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="4.0">
+			How often the cells are refreshed, per second. Gusts are evaluated every frame regardless.
+		</member>
+		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
+			The way the wind blows toward, as x and z.
+		</member>
+		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="5.0">
+			Mean wind speed at 10 m above the ground, in m/s.
+		</member>
+	</members>
+	<constants>
+		<constant name="GUSTS_PER_AXIS" value="8">
+			Gust waves for each of the three wind axes.
+		</constant>
+		<constant name="GUST_COUNT" value="24">
+			Gust waves in all: the width of the [code]weather_gusts[/code] texture.
+		</constant>
+	</constants>
+</class>

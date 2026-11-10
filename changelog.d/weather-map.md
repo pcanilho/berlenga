@@ -1,0 +1,4 @@
+### Added
+- WeatherMap3D (new weather module): one weather state across the world, following the camera. Per cell: mean wind on the log law with Kaimal gusts (IEC 61400-1, frozen turbulence), cloud cover and type, rain rate, and the water rain leaves on surfaces (a film, then puddles that drain and dry by Penman evaporation). Storms drift with the wind aloft and bring a rain core and a downburst outflow. Published to every shader as global uniforms (weather_wind_map, weather_state_map, weather_map_rect, weather_gusts), raster and path traced (#206)
+- PhysXWaterSurface3D follow_weather: the sea takes its wind from the weather map, building up over the Shore Protection Manual's growth time for its fetch (#206)
+- PhysXCloth3D and PhysXHair3D weather_wind: cloth and hair move in the weather map's wind and gusts (#206)
