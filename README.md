@@ -328,7 +328,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.
 - **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).
 
-<details><summary>Images: weather map, wet ground</summary>
+<details><summary>Images: weather map, wet ground, lightning</summary>
 
 ![Weather map fields round a storm: cloud cover, rain, wind at 10 m, wetness](docs/media/weather-map.jpg)
 
@@ -337,6 +337,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A beach dry and after rain: darker sand, puddles and a sheen](docs/media/weather-wet.jpg)
 
 *Wet surfaces: the sand darkens, puddles form and catch the sky.*
+
+![A lightning strike among blocks, raster and path traced](docs/media/weather-lightning.jpg)
+
+*Lightning: under path tracing the channel lights the ground and the faces of the blocks.*
 
 </details>
 
