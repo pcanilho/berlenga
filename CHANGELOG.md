@@ -6,6 +6,22 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-eb40e5d1 (2026-11-10)
+
+### Fixed
+- Path tracing works again: the light buffer declarations lost their semicolons in the cloud shadow change, so the path tracer's shaders failed to compile and every view fell back to raster.
+
+### Changed
+- README: raster hair shading
+
+## build-62ff210c (2026-11-10)
+
+### Added
+- PhysXHair3D `hair_shading` (on by default): raster strands are lit with the Marschner hair model as Unreal Engine evaluates it, with multiple scattering, and let part of the light through in shadow maps, so the side away from the light is lit through the hair instead of falling black
+
+### Changed
+- README: weather clouds, cloud shadows, sun projector; weather sources in docs/REFERENCES.md
+
 ## build-b08716a5 (2026-11-10)
 
 ### Added

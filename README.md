@@ -166,9 +166,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Strand grooms** (`HairGroom`, `HairMesh`): grown on a scalp mesh or loaded from a HAIR file.
 - **Moving strand hair** (`PhysXHair3D`): AMD TressFX's simulation on GPU compute, guide and follow strands, velocity shock propagation, wind with gusts and turbulence, collision spheres.
 - **Raster strands** (TressFX coverage): blended and sorted far to near on the GPU each frame; smooth without TAA or MSAA, and the hair shadows itself.
+- **Raster hair shading** (`PhysXHair3D.hair_shading`): Marschner model as Unreal evaluates it, with multiple scattering and light through the strands in shadow maps, so backlit hair glows.
 - **Custom hair shaders**: `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.
 
-<details><summary>Images and clip: hair shading, strand hair, moving hair, raster strands</summary>
+<details><summary>Images and clip: hair shading, strand hair, moving hair, raster strands, raster shading</summary>
 
 ![Hair-shaded spheres and cards: raster, path traced, sun behind, cards backlit](docs/media/hair.jpg)
 
@@ -185,6 +186,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Raster strand hair: older strands with MSAA and TAA, new sorted blending with no AA](docs/media/hair-raster.jpg)
 
 *Raster strands: before with MSAA and TAA, then sorted blending with no AA.*
+
+![Backlit strand hair in raster, before and with Marschner shading](docs/media/hair-raster-shading.jpg)
+
+*Raster hair shading: backlit, the strands glow warm instead of flat white.*
 
 </details>
 
