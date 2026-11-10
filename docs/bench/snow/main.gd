@@ -28,6 +28,11 @@ extends Node3D
 #                     crowns and less under them (--test=shelter for the checks)
 #   --test=crust      melt-freeze crusts: formed by a thaw and a frost, harder each cycle, a boot breaks a
 #                     first-cycle crust and stands on a second-cycle one, new snow over it
+#   --view=windblown  a ridge after new snow and a day of 15 m/s wind (--snow=H hours of wind, default 24;
+#                     --transport=0 without the wind moving lying snow)
+#   --test=transport  the wind moving lying snow (SnowTran-3D): the flux against Tabler (1991), a ridge
+#                     scoured on its windward side and crest and loaded below it in the lee, mass kept, a crust
+#                     and warm snow holding
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
 #                     under the boots, balls and wheel; 2 holds the boots (--close: down on the boot prints)
 #   --view=props      close: bumpy ground, boxes, a sphere, a 45 degree board and a 70 degree wall after snow
@@ -64,6 +69,7 @@ var wind := 4.0
 var only := ""
 var melt_hours := 0.0
 var crust_cycles := 0.0
+var transport := true
 
 
 func _ready() -> void:
@@ -82,6 +88,7 @@ func _ready() -> void:
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
 		elif a.begins_with("--melt="): melt_hours = float(a.substr(7))
 		elif a.begins_with("--crust="): crust_cycles = float(a.substr(8))
+		elif a.begins_with("--transport="): transport = a.substr(12) != "0"
 	if test:
 		if only == "climate":
 			await _run_climate_tests()
@@ -89,6 +96,8 @@ func _ready() -> void:
 			await _run_shelter_tests()
 		elif only == "crust":
 			await _run_crust_tests()
+		elif only == "transport":
+			await _run_transport_tests()
 
 		else:
 			await _run_tests()
@@ -251,6 +260,7 @@ func _run_tests() -> void:
 
 	# Drift over a ridge with 14 m/s from the west (toward +x).
 	await _setup("ridge", 512.0, 128, -8.0)
+	snow.wind_transport_enabled = false # the falling snow's drift alone (--test=transport moves lying snow)
 	weather.wind_speed = 14.0
 	weather.wind_direction = Vector2(1, 0)
 	weather.snap_to_settings()
@@ -263,6 +273,7 @@ func _run_tests() -> void:
 	_check("drift: lee gains", lee > windward * 1.2, "lee / windward %.2f" % (lee / maxf(windward, 0.01)))
 	_check("drift keeps the water", absf(mean - 20.0) < 0.5, "%.2f mm of 20 mm" % mean)
 
+	await _run_transport_tests()
 	await _run_surface_tests()
 	await _run_crust_tests()
 	await _run_fall_tests()
@@ -334,6 +345,73 @@ func _trail_stats(z: float) -> Dictionary:
 	for e in edges:
 		var_sum += (e - emean) * (e - emean)
 	return {"dent": dsum / 40.0, "edge": emean, "cv": sqrt(var_sum / edges.size()) / maxf(absf(emean), 1e-6)}
+
+
+func _ridge_band(x0: float, x1: float) -> float:
+	var sum := 0.0
+	var k := 0
+	var x := x0
+	while x <= x1:
+		for z in [-40.0, 0.0, 40.0]:
+			sum += snow.get_swe_at(Vector3(x, 0, z))
+			k += 1
+		x += 4.0
+	return sum / k
+
+
+func _run_transport_tests() -> void:
+	print("Wind moving lying snow:")
+	# Tabler (1991): transport in the lowest 5 m, Q = U10^3.8 / 233847 kg/(m s), from Wyoming measurements.
+	var ok := true
+	var row := ""
+	for u in [10.0, 15.0, 20.0]:
+		var q := SnowCover3D.transport_flux(u, -10.0, 100.0)
+		var tab := pow(u, 3.8) / 233847.0
+		row += " %.0f m/s %.3f (Tabler %.3f)" % [u, q, tab]
+		if u >= 15.0:
+			ok = ok and q > tab / 3.0 and q < tab * 3.0
+	_check("flux against Tabler (1991), within a factor of 3 in a gale (closer to the threshold it falls below his fit, which has none)", ok, row)
+	var ut := SnowCover3D.transport_threshold(-10.0, 100.0)
+	_check("no transport at the threshold, none in warm or packed snow", SnowCover3D.transport_flux(ut - 0.01, -10.0, 100.0) == 0.0 and SnowCover3D.transport_flux(15.0, 0.5, 100.0) == 0.0 and SnowCover3D.transport_flux(9.0, -10.0, 450.0) == 0.0, "threshold %.1f m/s at -10 C (Li and Pomeroy), %.1f m/s at 450 kg/m3 (Liston et al. 2007)" % [ut, SnowCover3D.transport_threshold(-10.0, 450.0)])
+	# A 100 m ridge across a 15 m/s wind from the west for six hours, 40 mm of new snow on it.
+	await _setup("ridge", 512.0, 128, -8.0)
+	snow.drift_enabled = false
+	snow.add_snow(40.0, 100.0)
+	weather.wind_speed = 15.0
+	weather.wind_direction = Vector2(1, 0)
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var total0 := snow.get_total_water()
+	var wind0 := _ridge_band(-24.0, -4.0)
+	var lee0 := _ridge_band(0.0, 30.0)
+	var flank0 := _ridge_band(-120.0, -40.0)
+	snow.advance(6.0 * 3600.0)
+	var wind1 := _ridge_band(-24.0, -4.0)
+	var lee1 := _ridge_band(0.0, 30.0)
+	var flank1 := _ridge_band(-120.0, -40.0)
+	var prof := "  profile (x: mm):"
+	for x in [-240, -160, -120, -80, -40, -12, 0, 12, 24, 40, 80, 160, 240]:
+		prof += " %d: %.0f" % [x, snow.get_swe_at(Vector3(x, 0, 0))]
+	print(prof)
+	print("  largest flux %.3f kg/(m s), %.1f mm per cell moved in the last step; one update of 128 x 128 cells with transport %.2f ms" % [snow.get_blown_flux_max(), snow.get_blown_mean(), snow.get_update_time_msec()])
+	_check("the windward shoulder is scoured, the lee below the crest loaded, the even slope between passes it on", wind1 < wind0 * 0.5 and lee1 > lee0 * 1.5 and absf(flank1 - flank0) < 0.05 * flank0, "shoulder %.1f to %.1f mm, lee %.1f to %.1f mm, mid-flank %.1f to %.1f mm" % [wind0, wind1, lee0, lee1, flank0, flank1])
+	var lee_rho := snow.get_density_at(Vector3(12.0, 0, 0))
+	_check("wind-laid snow is wind-packed", lee_rho > 150.0, "%.0f kg/m3 in the lee (laid at 300, the new snow was 100)" % lee_rho)
+	var total1 := snow.get_total_water()
+	_check("transport keeps the water", absf(total1 - total0) / total0 < 0.01, "%.3f%% change" % (100.0 * (total1 - total0) / total0))
+	# The same wind over a frozen crust, and over snow at +1 C: nothing moves.
+	await _setup("ridge", 512.0, 128, -8.0)
+	snow.drift_enabled = false
+	snow.add_snow(40.0, 100.0)
+	snow.add_crust(0.02, 2.0)
+	weather.wind_speed = 15.0
+	weather.wind_direction = Vector2(1, 0)
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var c0 := _ridge_band(-120.0, -10.0)
+	snow.advance(6.0 * 3600.0)
+	var c1 := _ridge_band(-120.0, -10.0)
+	_check("a frozen crust holds the snow", absf(c1 - c0) < 0.1, "%.2f to %.2f mm on the windward side" % [c0, c1])
 
 
 func _run_crust_tests() -> void:
@@ -901,6 +979,8 @@ func _build_view() -> void:
 		await _setup("cornice", 512.0, 256, -6.0)
 	elif view == "sparkle":
 		await _setup("flat", 32.0, 128, -6.0)
+	elif view == "windblown":
+		await _setup("ridge", 512.0, 256, -8.0)
 	elif view == "shelter":
 		await _setup("flat", 32.0, 128, -6.0)
 	else:
@@ -943,6 +1023,9 @@ func _build_view() -> void:
 		return
 	elif view == "sparkle":
 		await _build_sparkle(cam)
+		return
+	elif view == "windblown":
+		await _build_windblown(cam)
 		return
 	elif view == "shelter":
 		await _build_shelter(cam)
@@ -1173,6 +1256,38 @@ func _build_climate(cam: Camera3D) -> void:
 		we.environment.pathtracing_enabled = true
 	await get_tree().physics_frame
 	await get_tree().process_frame
+	await _save_frame("")
+	get_tree().quit()
+
+
+func _build_windblown(cam: Camera3D) -> void:
+	# A 100 m ridge after 20 mm of new snow and a day of 15 m/s wind from the west (left): the windward
+	# shoulder scoured, the snow laid in the lee below the crest. --transport=0 for the same day without it.
+	snow.drift_enabled = false
+	snow.wind_transport_enabled = transport
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-24.0, -150.0, 0.0)
+	_add_terrain(512.0, 256, Color(0.33, 0.31, 0.27), 32.0)
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	snow.add_snow(20.0, 100.0)
+	weather.wind_speed = 15.0
+	weather.wind_direction = Vector2(1, 0)
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance((snow_hours if snow_hours >= 0.0 else 24.0) * 3600.0)
+	var prof := "profile (x: mm):"
+	for x in [-60, -30, -16, -8, 0, 8, 16, 30, 60]:
+		prof += " %d: %.0f" % [x, snow.get_swe_at(Vector3(x, 0, 0))]
+	print(prof)
+	# From the south along the crest, a little to the lee: both flanks, the wind blowing left to right.
+	cam.position = Vector3(40.0, 175.0, 260.0)
+	cam.far = 2000.0
+	cam.look_at(Vector3(0.0, 60.0, 0.0))
+	cam.fov = 45.0
+	for i in 4:
+		await get_tree().physics_frame
 	await _save_frame("")
 	get_tree().quit()
 
