@@ -24,6 +24,7 @@ extends Node3D
 #                    shallows, soft rush on the wet shore (docs/ideas/plant-generator.md)
 #   --swamp=close    the same, looking down on a water lily
 #   --turf=0         without the near turf layer
+#   --floor=0        without the litter on the ground under the crowns (cost comparison)
 #   --terrain-material  the ground drawn with TerrainMaterial3D (its grass tint calls grass_ground())
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
@@ -48,6 +49,7 @@ var forest := false
 var forest_in := false
 var stand := "beech"
 var stand_set := false
+var no_floor := false
 var swamp := false
 var swamp_close := false
 var ground_mat: ShaderMaterial
@@ -91,6 +93,7 @@ func _ready() -> void:
 			swamp = true
 			swamp_close = true
 		elif a == "--turf=0": no_turf = true
+		elif a == "--floor=0": no_floor = true
 		elif a == "--terrain-material": terrain_mat = true
 		elif a == "--forest=in":
 			forest = true
@@ -188,6 +191,7 @@ func _ready() -> void:
 		cover.populate_on_ready = false
 		cover.tile_size = 4.0
 		cover.biome = _cover_biome()
+		cover.forest_floor_enabled = not no_floor
 		add_child(cover)
 		cover.data_map = cover.get_path_to(dm)
 		if forest:
