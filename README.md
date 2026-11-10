@@ -15,7 +15,8 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Lights**: 4096 path-traced lights (upstream 64); emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
-- **Hair**: fibre shading, strand grooms, TressFX strand simulation.
+- **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
+- **Vegetation**: GPU-placed instances seen by culling, motion vectors and path tracing.
 - **Weather**: one weather map for wind, storms, clouds and their shadows, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
@@ -201,6 +202,17 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Strand hair over a box body: no collision, body collision, body skinned to a tilted bone](docs/media/hair-body-collision.jpg)
 
 *Body collision: without it the hair falls through the shoulders; with it the hair drapes over them, also when the body is skinned and tilted.*
+
+</details>
+
+### Vegetation
+- **GPU-placed instances** (`RenderingServer.multimesh_mark_buffer_rd_changed()`): MultiMesh records written by a compute shader reach culling, motion vectors and path tracing.
+
+<details><summary>Image: GPU-placed instances</summary>
+
+![GPU-written MultiMesh records, path traced: before and after the call](docs/media/gpu-multimesh-records.jpg)
+
+*GPU-placed instances: without the call the GPU-written instances never appear.*
 
 </details>
 

@@ -6,6 +6,14 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-16937fed (2026-11-10)
+
+### Added
+- PhysXHair3D `collision_body`: strands collide with a body mesh (skinned or not) through a signed distance field built on the GPU every frame, as AMD TressFX; `collision_cell_size` sets its resolution
+
+### Changed
+- README: hair distance LOD line; raster hair images replaced with sharp strands.
+
 ## build-b95bf5f6 (2026-11-10)
 
 ### Added
