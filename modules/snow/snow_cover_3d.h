@@ -36,6 +36,10 @@
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
+class PhysicsDirectSpaceState3D;
+class TerrainDeformer3D;
+class TerrainDataMap3D;
+
 class WeatherMap3D;
 
 // The snowpack on a square of cells that follows the camera (docs/ideas/snow.md). Per cell it keeps the
@@ -89,6 +93,7 @@ class SnowCover3D : public Node3D {
 	Vector<float> cell_albedo;
 	Vector<float> cell_runoff; // mm/h leaving the pack, last update
 	Vector<float> cell_sx; // degrees, Winstral's maximum upwind slope
+	Vector<float> cell_new_depth; // m of new snow laid by the last update (SnowSurface3D refills trails with it)
 	Vector<uint8_t> cell_height_valid;
 	Vector2 sx_direction;
 	bool sx_valid = false;
@@ -119,12 +124,25 @@ class SnowCover3D : public Node3D {
 	bool globals_added = false;
 	double update_accum = 0.0;
 	double update_msec = 0.0;
+	uint64_t update_count = 0;
+	float last_step_hours = 0.0f;
+	float last_drift = 0.0f;
 
 	float _cell_size() const { return extent / resolution; }
 	Vector3 _follow_position() const;
 	void _allocate();
 	void _follow(Vector3 p_center);
 	void _shift(Vector2i p_new_origin);
+	struct GroundQuery {
+		TerrainDeformer3D *deformer = nullptr;
+		TerrainDataMap3D *data_map = nullptr;
+		Object *getter = nullptr;
+		PhysicsDirectSpaceState3D *space = nullptr;
+		uint32_t mask = 1;
+		float y0 = 0.0f;
+	};
+	GroundQuery _ground_query() const;
+	static float _query_ground(const GroundQuery &p_q, Vector3 p_position);
 	void _sample_heights(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only = nullptr);
 	void _start_sx(Vector2 p_wind_dir);
 	void _finish_sx(bool p_wait);
@@ -214,6 +232,13 @@ public:
 	float get_wetness_at(Vector3 p_position) const; // liquid over what the pack holds, 0..1
 	float get_runoff_at(Vector3 p_position) const; // mm/h
 	float get_ground_height_at(Vector3 p_position) const;
+	float get_new_snow_at(Vector3 p_position) const; // m laid by the last update
+	// The ground straight from the height source (finer than the cells), NaN where nothing answers.
+	float sample_ground_height(Vector3 p_position) const;
+	void sample_ground_heights(Vector2 p_origin, float p_spacing, int p_width, int p_height, float *r_heights) const;
+	uint64_t get_update_count() const { return update_count; }
+	float get_last_step_hours() const { return last_step_hours; }
+	float get_drift_factor() const { return last_drift; } // 0..1, wind above the blowing threshold
 	float get_total_water() const; // kg (mm over m2) on the whole map
 	double get_update_time_msec() const { return update_msec; }
 	Ref<Texture2D> get_snow_texture() const { return snow_texture; }

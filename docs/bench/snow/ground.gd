@@ -19,6 +19,9 @@ func get_height(p: Vector3) -> float:
 		"wall":
 			# Flat ground, a 60 degree face 40 m high from x = 0 to x = 23 m, a plateau beyond.
 			return clampf(p.x * tan(deg_to_rad(60.0)), 0.0, 40.0)
+		"meadow":
+			# Gentle ground with knee-high hummocks, for the trail view.
+			return 0.25 * noise.get_noise_2d(p.x * 30.0, p.z * 30.0) + 0.03 * p.x
 		"ridge":
 			# A 100 m ridge along z, 25 degree flanks.
 			return maxf(0.0, 100.0 - absf(p.x) * tan(deg_to_rad(25.0)))

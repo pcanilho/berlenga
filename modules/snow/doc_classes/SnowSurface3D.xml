@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SnowSurface3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Deep snow as geometry, with prints, tracks and rims that bodies sink into.
+	</brief_description>
+	<description>
+		A mesh around the camera lifted to the ground plus the depth of the [SnowCover3D] pack, so snow has real volume: it casts shadows, buries small things and is traced as geometry under path tracing. Snow thinner than [member min_depth] stays a material effect.
+		Nodes in [member deform_groups] press it. A pressed column compacts toward [member compacted_density] and pushes [member rim_share] of the snow it loses into a rim, so mass is kept. Loaded bodies sink by Bekker's pressure-sinkage relation (Bekker 1969). A heightfield collision patch follows the deformed surface, so bodies rest in their own tracks. New snow and wind fill prints; as the pack around them settles their depth shrinks; when the pack melts they go with it. Tiles of prints the field leaves are kept and come back.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="bekker_sinkage" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="pressure_kpa" type="float" />
+			<param index="1" name="width" type="float" />
+			<param index="2" name="n" type="float" />
+			<param index="3" name="kc" type="float" />
+			<param index="4" name="kphi" type="float" />
+			<description>
+				Returns Bekker's pressure-sinkage depth in metres, [code](p / (kc / b + kphi))^(1 / n)[/code], for a load of [param pressure_kpa] kilopascals on a patch [param width] metres wide (Bekker 1969).
+			</description>
+		</method>
+		<method name="clear_deformation">
+			<return type="void" />
+			<description>
+				Removes every print and rim, in the live field and in the tile cache.
+			</description>
+		</method>
+		<method name="get_cached_tile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of deformation tiles kept for areas the field has left.
+			</description>
+		</method>
+		<method name="get_deform_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				Returns the world rectangle (x and z) of the live deformation field.
+			</description>
+		</method>
+		<method name="get_dent_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns how far the snow is pressed below its undisturbed surface at [param position], in metres.
+			</description>
+		</method>
+		<method name="get_moved_volume" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				Returns the volume of the prints (x) and of the rims (y) over the live field, in cubic metres.
+			</description>
+		</method>
+		<method name="get_rim_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the height of pushed-up snow at [param position], in metres.
+			</description>
+		</method>
+		<method name="get_step_time_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the CPU time of the last physics step (presses, refill, collision and upload), in milliseconds.
+			</description>
+		</method>
+		<method name="get_surface_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the height of the snow surface at [param position]: the ground plus the pack depth, minus prints, plus rims. Where the snow is thinner than [member min_depth] it returns the ground.
+			</description>
+		</method>
+		<method name="get_surface_material" qualifiers="const">
+			<return type="ShaderMaterial" />
+			<description>
+				Returns the surface's material, for its parameters.
+			</description>
+		</method>
+		<method name="press">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="bottom" type="float" />
+			<param index="3" name="sink" type="float" default="0.0" />
+			<param index="4" name="round" type="bool" default="true" />
+			<description>
+				Presses the snow down to [param bottom] (the world height of a body's underside) within [param radius] of [param position]: a bowl when [param round], flat otherwise. [param sink] presses that much further below the undisturbed surface (Bekker sinkage). Snow never goes below what [member compacted_density] allows; [member rim_share] of what moves goes into a rim around the print. Returns the volume moved, in cubic metres. Nothing happens unless the underside touches the snow.
+			</description>
+		</method>
+		<method name="press_box">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="size" type="Vector2" />
+			<param index="2" name="yaw" type="float" />
+			<param index="3" name="bottom" type="float" />
+			<param index="4" name="sink" type="float" default="0.0" />
+			<description>
+				Like [method press], with a flat rectangular print [param size] wide (x) and long (y), turned by [param yaw] radians about up: a boot, a runner, a crate.
+			</description>
+		</method>
+		<method name="refresh_ground">
+			<return type="void" />
+			<description>
+				Samples the ground again, for example after the terrain was carved.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="bekker_kc" type="float" setter="set_bekker_kc" getter="get_bekker_kc" default="4.37">
+			Bekker's cohesive modulus, kN/m^(n+1). The default is Wong's value for snow ([i]Theory of Ground Vehicles[/i]).
+		</member>
+		<member name="bekker_kphi" type="float" setter="set_bekker_kphi" getter="get_bekker_kphi" default="196.72">
+			Bekker's frictional modulus, kN/m^(n+2).
+		</member>
+		<member name="bekker_n" type="float" setter="set_bekker_n" getter="get_bekker_n" default="1.6">
+			Bekker's sinkage exponent.
+		</member>
+		<member name="character_contact_area" type="float" setter="set_character_contact_area" getter="get_character_contact_area" default="0.035">
+			The area one boot presses for a [CharacterBody3D] in a deform group, in square metres, unless the node has a [code]snow_contact_area[/code] meta.
+		</member>
+		<member name="character_mass" type="float" setter="set_character_mass" getter="get_character_mass" default="75.0">
+			The mass of a [CharacterBody3D] in a deform group, in kilograms, unless the node has a [code]snow_mass[/code] meta.
+		</member>
+		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
+			If [code]true[/code], a heightfield body follows the deformed snow surface around the camera, so bodies stand on the snow and sink into their own prints.
+		</member>
+		<member name="collision_extent" type="float" setter="set_collision_extent" getter="get_collision_extent" default="16.0">
+			The width of the collision patch, in metres.
+		</member>
+		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
+			The physics layers of the collision patch.
+		</member>
+		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
+			The physics mask of the collision patch.
+		</member>
+		<member name="collision_rate" type="float" setter="set_collision_rate" getter="get_collision_rate" default="15.0">
+			How many times a second the collision patch follows the snow.
+		</member>
+		<member name="compacted_density" type="float" setter="set_compacted_density" getter="get_compacted_density" default="450.0">
+			The density pressed snow reaches under a boot or a wheel, in kg/m3. Snow already that dense takes no prints.
+		</member>
+		<member name="contact_tolerance" type="float" setter="set_contact_tolerance" getter="get_contact_tolerance" default="0.03">
+			How close an underside must come to the snow, in metres, to press it.
+		</member>
+		<member name="deform_enabled" type="bool" setter="set_deform_enabled" getter="is_deform_enabled" default="true">
+			If [code]true[/code], nodes in [member deform_groups] press prints and tracks into the snow.
+		</member>
+		<member name="deform_extent" type="float" setter="set_deform_extent" getter="get_deform_extent" default="32.0">
+			The width of the deformation field around the camera, in metres. The mesh is at [member detail_spacing] over it.
+		</member>
+		<member name="deform_groups" type="PackedStringArray" setter="set_deform_groups" getter="get_deform_groups" default="PackedStringArray(&quot;snow_deform&quot;, &quot;grass_trample&quot;)">
+			Groups whose [Node3D]s press the snow. The shape is the first [CollisionShape3D] child: spheres and capsules press a bowl, upright cylinders and boxes a flat print (boxes turned with the shape, so a box per foot gives boot prints), lying cylinders a wheel track. [RigidBody3D]s sink by their mass, [CharacterBody3D]s by [member character_mass], any node by a [code]snow_mass[/code] meta; other nodes press only as deep as their underside. A [code]snow_radius[/code] meta overrides the radius. The grass trample group is included so one set of movers drives both.
+		</member>
+		<member name="deform_resolution" type="int" setter="set_deform_resolution" getter="get_deform_resolution" default="512">
+			Texels across the deformation field (a multiple of 64).
+		</member>
+		<member name="detail_spacing" type="float" setter="set_detail_spacing" getter="get_detail_spacing" default="0.125">
+			The mesh spacing over the deformation field, in metres. Fragments shade the finer texel detail.
+		</member>
+		<member name="edge_fade" type="float" setter="set_edge_fade" getter="get_edge_fade" default="8.0">
+			The distance over which the snow tapers to the ground at the mesh edge, in metres; beyond it materials carry the snow.
+		</member>
+		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="96.0">
+			The width of the snow mesh around the camera, in metres.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			The node the mesh and the deformation field follow. Empty: the current camera.
+		</member>
+		<member name="ground_spacing" type="float" setter="set_ground_spacing" getter="get_ground_spacing" default="0.25">
+			The spacing of the ground samples under the mesh, in metres.
+		</member>
+		<member name="max_cached_tiles" type="int" setter="set_max_cached_tiles" getter="get_max_cached_tiles" default="1024">
+			How many 4 m deformation tiles are kept for areas the field has left (16 KB each); the oldest go first.
+		</member>
+		<member name="max_spacing" type="float" setter="set_max_spacing" getter="get_max_spacing" default="2.0">
+			The largest mesh spacing, at the outer edge.
+		</member>
+		<member name="micro_relief" type="float" setter="set_micro_relief" getter="get_micro_relief" default="1.0">
+			The strength of the millimetre wind ripples in the shading.
+		</member>
+		<member name="min_depth" type="float" setter="set_min_depth" getter="get_min_depth" default="0.03">
+			Snow thinner than this, in metres, is left to the materials ([member BaseMaterial3D.snow_enabled]); the surface tucks under the ground there.
+		</member>
+		<member name="refill_share" type="float" setter="set_refill_share" getter="get_refill_share" default="0.5">
+			The share of each new snowfall that settles into prints, on top of the snow that covers everything evenly.
+		</member>
+		<member name="rim_share" type="float" setter="set_rim_share" getter="get_rim_share" default="0.3">
+			The share of pressed snow pushed into a rim around the print; the rest compacts in place.
+		</member>
+		<member name="snow_cover" type="NodePath" setter="set_snow_cover" getter="get_snow_cover" default="NodePath(&quot;&quot;)">
+			The [SnowCover3D] giving the pack depth, albedo and wetness. Empty: the active one.
+		</member>
+		<member name="tint" type="Color" setter="set_tint" getter="get_tint" default="Color(1, 1, 1, 1)">
+			A tint on the snow albedo.
+		</member>
+		<member name="wind_fill_rate" type="float" setter="set_wind_fill_rate" getter="get_wind_fill_rate" default="0.5">
+			How fast wind fills prints and planes rims, per weather hour at full drift ([method SnowCover3D.get_drift_factor]).
+		</member>
+	</members>
+</class>

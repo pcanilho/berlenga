@@ -56,6 +56,12 @@
 				Returns the depth of snow at [param position], in metres.
 			</description>
 		</method>
+		<method name="get_drift_factor" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns how far the wind of the last update was above the blowing-snow threshold, from 0 (calm) to 1. [SnowSurface3D] fills trails with it.
+			</description>
+		</method>
 		<method name="get_ground_height_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -67,6 +73,13 @@
 			<return type="Rect2" />
 			<description>
 				Returns the world XZ rectangle the map covers.
+			</description>
+		</method>
+		<method name="get_new_snow_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the depth of new snow, in metres, the last update (or [method add_snow]) laid at [param position].
 			</description>
 		</method>
 		<method name="get_runoff_at" qualifiers="const">
@@ -93,6 +106,12 @@
 			<return type="float" />
 			<description>
 				Returns the water held in snow on the whole map, in kg.
+			</description>
+		</method>
+		<method name="get_update_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many updates the snowpack has run, so other nodes can tell when it changed.
 			</description>
 		</method>
 		<method name="get_update_time_msec" qualifiers="const">
@@ -128,6 +147,13 @@
 			<return type="void" />
 			<description>
 				Samples the ground again for every cell, after the terrain under the map changed.
+			</description>
+		</method>
+		<method name="sample_ground_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the ground height at [param position] straight from [member height_source] (or a ray down on [member ground_collision_mask]), finer than the cells. NaN where nothing answers.
 			</description>
 		</method>
 		<method name="snowfall_fraction" qualifiers="static">

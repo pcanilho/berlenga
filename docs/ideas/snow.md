@@ -270,4 +270,63 @@ GPU timing queued for the PC.
 **Known limits, for later stages.** Snow on a material reads the ground's map, so a surface
 under an overhang shows the snow of the cell above (a top-down occlusion map fixes this, as for
 rain). Cells entering the moving map take the nearest edge state until the world tier exists.
-Weather still counts snowfall as rain for its water film (asked of the weather owners).
+Weather counted snowfall as rain for its water film: fixed on the weather side (#219), which
+also takes the pack's runoff as the film's input under the pack.
+
+## Stage 2: deep snow geometry and deformation (built 10 Nov 2026)
+
+`SnowSurface3D` (modules/snow). Methods and where we depart from them:
+
+- **Geometry, God of War Ragnarok's choice over parallax.** A grid around the camera is lifted in
+  its vertex shader to the ground plus the pack depth plus the deformation, so snow has real
+  volume: it casts shadows, buries the feet of walls and is traced as geometry (displaced
+  surfaces are traced from their capture, docs/ideas/displaced-hit-varyings.md). Instead of
+  hardware tessellation (Godot has none) the grid is a tensor grid, 12.5 cm over the 32 m
+  deformation field and growing by a fifth per step to 2 m at 48 m (309 x 309 vertices): no
+  T-junctions, so no cracks and no stitching. The fragment stage recomputes the normal from the
+  6.25 cm deformation texels plus 4 mm and 1.5 mm wind ripples, so print edges stay sharp
+  between vertices in both renderers. Snow thinner than 3 cm stays the material effect of stage
+  1; the surface tucks 5 cm under the ground there, and tapers to the ground over the last 8 m.
+- **Deformation field, Batman AO / RotTR.** A 32 m field at 6.25 cm (512 x 512, dent and rim in
+  half floats, 1 MB) follows the camera in 4 m tiles. Unlike those games the trail is not a
+  painted depth: a pressed column keeps `1 - f` of the snow it loses as compaction, up to 450
+  kg/m3, and pushes `f = rim_share` (0.3) into a rim ring half the print's radius wide. The
+  deepest possible print is `D (1 - rho / rho_c) / (1 - f rho / rho_c)`, which comes out of the
+  mass balance, so fresh powder takes deep prints and an old dense pack almost none.
+- **Sinkage, Bekker (1969).** Loaded bodies sink by `z = (p / (kc / b + kphi))^(1 / n)` with
+  Wong's snow values (n 1.6, kc 4.37, kphi 196.72): an 80 kg person on a 0.035 m2 boot sinks
+  0.23 m in fresh snow. Round bodies and wheels solve for their own contact patch (it grows with
+  sinkage) in a few fixed-point steps. Rigid bodies use their mass, characters 75 kg, any node a
+  `snow_mass` meta; other nodes press to their underside.
+- **Shapes.** Spheres and capsules press a bowl, upright cylinders a flat disc, lying cylinders
+  a wheel track as wide as the tyre, boxes an oriented flat print (a box per foot gives boot
+  prints in the walking direction).
+- **Collision.** A heightfield patch (16 m at 12.5 cm) follows the deformed surface at 15 Hz, so
+  bodies stand on the snow and sit in their own prints.
+- **Refill and decay.** Half of each new snowfall settles into prints (the rest covers
+  everything evenly); wind above the blowing threshold fills prints and planes rims; as the pack
+  settles toward the compacted density the step shrinks to nothing; melt takes it with the pack.
+- **Persistence.** Tiles leaving the field go to a cache (1024 x 16 KB by default, oldest out)
+  and come back when the camera returns. Wind while away is not replayed.
+- **Shared movers with grass.** The `grass_trample` group is in the default groups: one set of
+  movers presses grass and snow. The grass keeps its own field; one splat feeding both is left
+  for when grass moves its trample to the GPU.
+
+**Checks (`--test`, all pass).** Boot sinkage 0.23 m at 22.4 kPa; surface on the pack to 1 mm;
+a full press stops at 0.334 m (formula 0.334), column at 450 kg/m3; rim holds 30.0% of the
+moved volume; collision ray hits the print floor to 1 mm; a boot box turned 90 deg prints along
+its length only; a 25 kg ball dropped on the snow sinks 6.7 cm into its own print; a walking
+character leaves a 0.21 m trail; the trail is the same after the field leaves (4 tiles cached)
+and returns; 0.1 m of new snow fills prints by 0.05 m; after two weeks of settling the print is
+at the mass limit; after a warm month there is no print and no snow.
+
+**Cost (cloud CPU).** A physics step with four bodies pressing: 0.86 ms (press, refill,
+collision patch, texture upload). GPU: a 190k-triangle displaced mesh with a handful of texture
+reads per vertex and per pixel; under path tracing its capture and BLAS refit each frame. Both
+timed on the PC queue.
+
+**Known limits.** Prints are pressed straight down (no bow wave ahead of a fast body). The mesh
+follows the pack's ground, not overhangs: snow under a roof or a bridge reads the cell's depth
+(same as stage 1). Thin snow on the ground is the material's, deep snow the mesh's; the switch
+at 3 cm is hidden by the taper but a terrain mesh much coarser than 0.25 m can poke through
+thin snow.

@@ -128,6 +128,8 @@ void SnowCover3D::_allocate() {
 	cell_albedo.resize(nn);
 	cell_runoff.resize(nn);
 	cell_sx.resize(nn);
+	cell_new_depth.resize(nn);
+	cell_new_depth.fill(0.0f);
 	cell_height_valid.resize(nn);
 	cell_ground.fill(0.0f);
 	cell_swe.fill(0.0f);
@@ -154,28 +156,72 @@ Vector3 SnowCover3D::_cell_center(int p_x, int p_z) const {
 	return Vector3((origin_cell.x + p_x + 0.5f) * cs, cell_ground.size() > i ? cell_ground[i] : 0.0f, (origin_cell.y + p_z + 0.5f) * cs);
 }
 
-void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only) {
-	const int n = resolution;
+SnowCover3D::GroundQuery SnowCover3D::_ground_query() const {
+	GroundQuery q;
 	Node *src = height_source.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(height_source);
-	TerrainDeformer3D *deformer = Object::cast_to<TerrainDeformer3D>(src);
-	TerrainDataMap3D *data_map = Object::cast_to<TerrainDataMap3D>(src);
-	Object *getter = nullptr;
-	if (src && !deformer && !data_map) {
+	q.deformer = Object::cast_to<TerrainDeformer3D>(src);
+	q.data_map = Object::cast_to<TerrainDataMap3D>(src);
+	if (q.data_map && !q.data_map->is_baked()) {
+		q.data_map = nullptr;
+	}
+	if (src && !q.deformer && !Object::cast_to<TerrainDataMap3D>(src)) {
 		if (src->has_method("get_height")) {
-			getter = src;
+			q.getter = src;
 		} else if (src->has_method("get_data")) {
 			// Terrain3D, by name: Terrain3D.get_data().get_height(position).
-			Object *data = src->call("get_data");
-			if (data && data->has_method("get_height")) {
-				getter = data;
+			Object *terrain_data = src->call("get_data");
+			if (terrain_data && terrain_data->has_method("get_height")) {
+				q.getter = terrain_data;
 			}
 		}
 	}
-	PhysicsDirectSpaceState3D *space = nullptr;
 	if (is_inside_tree() && get_world_3d().is_valid()) {
-		space = get_world_3d()->get_direct_space_state();
+		q.space = get_world_3d()->get_direct_space_state();
 	}
-	const float y0 = is_inside_tree() ? get_global_position().y : 0.0f;
+	q.mask = ground_collision_mask;
+	q.y0 = is_inside_tree() ? get_global_position().y : 0.0f;
+	return q;
+}
+
+float SnowCover3D::_query_ground(const GroundQuery &p_q, Vector3 p_position) {
+	const Vector3 p(p_position.x, p_q.y0, p_position.z);
+	float h = Math::NaN;
+	if (p_q.deformer) {
+		h = p_q.deformer->get_height(p);
+	} else if (p_q.data_map && p_q.data_map->get_map_rect().has_point(Vector2(p.x, p.z))) {
+		h = p_q.data_map->get_height_at(p);
+	} else if (p_q.getter) {
+		h = p_q.getter->call("get_height", p);
+	}
+	if (!Math::is_finite(h) && p_q.space) {
+		PhysicsDirectSpaceState3D::RayParameters rp;
+		rp.from = Vector3(p.x, p_q.y0 + 10000.0f, p.z);
+		rp.to = Vector3(p.x, p_q.y0 - 10000.0f, p.z);
+		rp.collision_mask = p_q.mask;
+		PhysicsDirectSpaceState3D::RayResult rr;
+		if (p_q.space->intersect_ray(rp, rr)) {
+			h = rr.position.y;
+		}
+	}
+	return h;
+}
+
+float SnowCover3D::sample_ground_height(Vector3 p_position) const {
+	return _query_ground(_ground_query(), p_position);
+}
+
+void SnowCover3D::sample_ground_heights(Vector2 p_origin, float p_spacing, int p_width, int p_height, float *r_heights) const {
+	const GroundQuery q = _ground_query();
+	for (int z = 0; z < p_height; z++) {
+		for (int x = 0; x < p_width; x++) {
+			r_heights[z * p_width + x] = _query_ground(q, Vector3(p_origin.x + x * p_spacing, 0.0f, p_origin.y + z * p_spacing));
+		}
+	}
+}
+
+void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only) {
+	const int n = resolution;
+	const GroundQuery q = _ground_query();
 	const float cs = _cell_size();
 	for (int z = p_from_row; z < p_to_row; z++) {
 		for (int x = 0; x < n; x++) {
@@ -183,27 +229,9 @@ void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uin
 			if (p_only && !(*p_only)[i]) {
 				continue;
 			}
-			const Vector3 p((origin_cell.x + x + 0.5f) * cs, y0, (origin_cell.y + z + 0.5f) * cs);
-			float h = Math::NaN;
-			if (deformer) {
-				h = deformer->get_height(p);
-			} else if (data_map && data_map->is_baked() && data_map->get_map_rect().has_point(Vector2(p.x, p.z))) {
-				h = data_map->get_height_at(p);
-			} else if (getter) {
-				h = getter->call("get_height", p);
-			}
-			if (!Math::is_finite(h) && space) {
-				PhysicsDirectSpaceState3D::RayParameters rp;
-				rp.from = Vector3(p.x, y0 + 10000.0f, p.z);
-				rp.to = Vector3(p.x, y0 - 10000.0f, p.z);
-				rp.collision_mask = ground_collision_mask;
-				PhysicsDirectSpaceState3D::RayResult rr;
-				if (space->intersect_ray(rp, rr)) {
-					h = rr.position.y;
-				}
-			}
+			const float h = _query_ground(q, Vector3((origin_cell.x + x + 0.5f) * cs, 0.0f, (origin_cell.y + z + 0.5f) * cs));
 			cell_height_valid.write[i] = Math::is_finite(h) ? 1 : 0;
-			cell_ground.write[i] = Math::is_finite(h) ? h : y0;
+			cell_ground.write[i] = Math::is_finite(h) ? h : q.y0;
 		}
 	}
 	steep_dirty = true;
@@ -232,7 +260,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the state of the
 	// nearest cell that was inside it (the snowpack of the world tier replaces this, docs/ideas/snow.md).
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -445,10 +473,12 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		float alb = cell_albedo[i];
 		float runoff = 0.0f;
 
+		cell_new_depth.write[i] = 0.0f;
 		if (snow > 0.0f) {
 			const float rho_new = new_snow_density(t);
 			const float depth_old = swe > SWE_MIN ? swe / rho : 0.0f;
 			const float depth_new = snow / rho_new;
+			cell_new_depth.write[i] = depth_new;
 			swe = (swe > SWE_MIN ? swe : 0.0f) + snow;
 			rho = swe / MAX(depth_old + depth_new, 1e-6f);
 			alb += (ALBEDO_FRESH - alb) * MIN(snow / SNOW_REFRESH_MM, 1.0f);
@@ -651,6 +681,14 @@ void SnowCover3D::_slide() {
 void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	_prepare_inputs(p_weather_dt, p_blocking);
+	// The rows write the fields in parallel through write[]: make each one unique first, or a copy held
+	// elsewhere (the weather map keeps the runoff) turns every write into a racing copy-on-write.
+	cell_swe.ptrw();
+	cell_liquid.ptrw();
+	cell_density.ptrw();
+	cell_albedo.ptrw();
+	cell_runoff.ptrw();
+	cell_new_depth.ptrw();
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &SnowCover3D::_update_row, (void *)nullptr, resolution, -1, true, String("SnowCover3D cells"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
 	// Sliding is slow next to a frame: a pass every slide_interval of weather time.
@@ -665,6 +703,9 @@ void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
 		weather->set_surface_water_source_cells(get_instance_id(), cell_runoff, resolution, get_map_rect());
 	}
 	update_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	last_step_hours = inputs.dt_h;
+	last_drift = inputs.wind_factor;
+	update_count++;
 }
 
 void SnowCover3D::_upload() {
@@ -752,7 +793,11 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density) {
 		cell_swe.write[i] = swe;
 		cell_density.write[i] = swe / MAX(depth_old + MAX(p_swe_mm, 0.0f) / rho_new, 1e-6f);
 		cell_albedo.write[i] = ALBEDO_FRESH;
+		cell_new_depth.write[i] = MAX(p_swe_mm, 0.0f) / rho_new;
 	}
+	last_step_hours = 0.0f;
+	last_drift = 0.0f;
+	update_count++;
 	_upload();
 }
 
@@ -816,6 +861,10 @@ float SnowCover3D::get_wetness_at(Vector3 p_position) const {
 
 float SnowCover3D::get_runoff_at(Vector3 p_position) const {
 	return MAX(_sample(cell_runoff, Vector2(p_position.x, p_position.z)), 0.0f);
+}
+
+float SnowCover3D::get_new_snow_at(Vector3 p_position) const {
+	return _sample(cell_new_depth, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_ground_height_at(Vector3 p_position) const {
@@ -1056,6 +1105,10 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wetness_at", "position"), &SnowCover3D::get_wetness_at);
 	ClassDB::bind_method(D_METHOD("get_runoff_at", "position"), &SnowCover3D::get_runoff_at);
 	ClassDB::bind_method(D_METHOD("get_ground_height_at", "position"), &SnowCover3D::get_ground_height_at);
+	ClassDB::bind_method(D_METHOD("get_new_snow_at", "position"), &SnowCover3D::get_new_snow_at);
+	ClassDB::bind_method(D_METHOD("sample_ground_height", "position"), &SnowCover3D::sample_ground_height);
+	ClassDB::bind_method(D_METHOD("get_update_count"), &SnowCover3D::get_update_count);
+	ClassDB::bind_method(D_METHOD("get_drift_factor"), &SnowCover3D::get_drift_factor);
 	ClassDB::bind_method(D_METHOD("get_total_water"), &SnowCover3D::get_total_water);
 	ClassDB::bind_method(D_METHOD("get_update_time_msec"), &SnowCover3D::get_update_time_msec);
 	ClassDB::bind_method(D_METHOD("get_snow_texture"), &SnowCover3D::get_snow_texture);

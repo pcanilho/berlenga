@@ -13,6 +13,7 @@ extends Node3D
 #                       drift over a ridge: lee against windward, mass kept
 #                       the cost of one update
 #   --view=mountain   a 700 m mountain after a day of snow and two days of sun (snow line, south faces melted)
+#   --view=trail      deep snow as geometry: a walker, rolling balls and a wheel leave tracks (SnowSurface3D)
 #   --view=props      close: bumpy ground, boxes, a sphere, a 45 degree board and a 70 degree wall after snow
 #   --snow=H          hours of 2 mm/h precipitation (default 24 mountain, 8 props)
 #   --sun=H           then hours of sun (mountain; default 48)
@@ -39,6 +40,10 @@ var weather: WeatherMap3D
 var ground: Node3D
 var sun: DirectionalLight3D
 var fails := 0
+var surface: SnowSurface3D
+var walker: CharacterBody3D
+var walk_t := 0.0
+var walking := false
 
 
 func _ready() -> void:
@@ -91,6 +96,7 @@ func _setup(kind: String, extent: float, resolution: int, temperature: float) ->
 	weather.snap_to_settings()
 	weather.advance(1.0)
 	snow = SnowCover3D.new()
+	snow.name = "SnowCover3D"
 	snow.extent = extent
 	snow.resolution = resolution
 	snow.height_source = NodePath("../Ground")
@@ -224,6 +230,8 @@ func _run_tests() -> void:
 	_check("drift: lee gains", lee > windward * 1.2, "lee / windward %.2f" % (lee / maxf(windward, 0.01)))
 	_check("drift keeps the water", absf(mean - 20.0) < 0.5, "%.2f mm of 20 mm" % mean)
 
+	await _run_surface_tests()
+
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
 	weather.rain_rate = 2.0
@@ -243,6 +251,149 @@ func _run_tests() -> void:
 		print("  one update, 256 x 256 cells, %s: %.2f ms" % [mode, total / 10.0])
 
 
+func _surface_setup(swe: float, density: float) -> void:
+	await _setup("flat", 64.0, 64, -4.0)
+	var floor_body := StaticBody3D.new()
+	var floor_shape := CollisionShape3D.new()
+	floor_shape.shape = WorldBoundaryShape3D.new()
+	floor_body.add_child(floor_shape)
+	add_child(floor_body)
+	snow.add_snow(swe, density)
+	var probe := Marker3D.new()
+	probe.name = "Probe"
+	add_child(probe)
+	surface = SnowSurface3D.new()
+	surface.name = "Surface"
+	surface.snow_cover = NodePath("../SnowCover3D") if has_node("SnowCover3D") else NodePath("")
+	surface.follow_target = NodePath("../Probe")
+	add_child(surface)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+
+
+func _run_surface_tests() -> void:
+	print("Deep snow (SnowSurface3D):")
+	# Bekker for a boot: 80 kg on 0.035 m2, 0.11 m wide, Wong's snow values.
+	var z_boot := SnowSurface3D.bekker_sinkage(80.0 * 9.81 / 1000.0 / 0.035, sqrt(0.035 / 3.0), 1.6, 4.37, 196.72)
+	_check("Bekker sinkage of a boot in fresh snow", z_boot > 0.15 and z_boot < 0.4, "%.2f m at %.1f kPa" % [z_boot, 80.0 * 9.81 / 1000.0 / 0.035])
+
+	# 45 mm of water at 110 kg/m3: 0.41 m of fresh snow.
+	await _surface_setup(45.0, 110.0)
+	var d0 := snow.get_depth_at(Vector3.ZERO)
+	var p := Vector3(1.03, 0, 0.51)
+	_check("surface stands on the pack", absf(surface.get_surface_height_at(p) - d0) < 0.01, "%.3f m surface, %.3f m pack" % [surface.get_surface_height_at(p), d0])
+	# A flat foot pressed all the way: the column compacts to 450 kg/m3 with 30% pushed into the rim.
+	var rho := snow.get_density_at(p)
+	var want := d0 * (1.0 - rho / 450.0) / (1.0 - 0.3 * rho / 450.0)
+	var moved := surface.press(Vector3(p.x, 0.0, p.z), 0.3, -1.0, 0.0, false)
+	var dent := surface.get_dent_at(p)
+	_check("pressed column stops at the compacted density", absf(dent - want) < 0.005, "dent %.3f m, expected %.3f m" % [dent, want])
+	var left := d0 - dent
+	var mass_left := d0 * rho - 0.3 * dent * rho
+	_check("compacted column density", absf(mass_left / left - 450.0) < 5.0, "%.0f kg/m3" % (mass_left / left))
+	var vol := surface.get_moved_volume()
+	_check("rim holds the pushed share (mass conserved)", absf(vol.y - 0.3 * vol.x) < 0.01 * vol.x, "dent %.4f m3, rim %.4f m3 (%.1f%%), moved %.4f m3" % [vol.x, vol.y, 100.0 * vol.y / vol.x, moved])
+	var rim_at := surface.get_rim_at(Vector3(p.x + 0.36, 0, p.z))
+	_check("a raised rim beside the print", rim_at > 0.01, "%.3f m at 6 cm outside" % rim_at)
+
+	# A boot print turned 90 degrees: long along x, narrow along z.
+	var bp := Vector3(6.0, 0, -6.0)
+	surface.press_box(bp, Vector2(0.1, 0.28), PI * 0.5, -1.0, 0.0)
+	var along := surface.get_dent_at(bp + Vector3(0.08, 0, 0))
+	var across := surface.get_dent_at(bp + Vector3(0, 0, 0.12))
+	_check("boot prints follow the heading", along > 0.3 and across < 0.05, "%.3f m along the boot, %.3f m beside it" % [along, across])
+
+	# Collision follows the deformed surface.
+	await get_tree().create_timer(0.2).timeout
+	var space := get_world_3d().direct_space_state
+	var q := PhysicsRayQueryParameters3D.create(Vector3(p.x, 5, p.z), Vector3(p.x, -5, p.z))
+	var hit := space.intersect_ray(q)
+	var hy: float = hit.position.y if hit else -99.0
+	_check("collision sits in the print", absf(hy - (d0 - dent)) < 0.03, "ray hits %.3f m, surface %.3f m" % [hy, d0 - dent])
+
+	# A 25 kg ball (radius 0.25 m) dropped on the snow sinks by Bekker and rests in its own print.
+	var ball := RigidBody3D.new()
+	ball.mass = 25.0
+	var bs := CollisionShape3D.new()
+	bs.shape = SphereShape3D.new()
+	(bs.shape as SphereShape3D).radius = 0.25
+	ball.add_child(bs)
+	ball.add_to_group("snow_deform")
+	ball.position = Vector3(-4.0, d0 + 0.6, -3.0)
+	add_child(ball)
+	for i in 240:
+		await get_tree().physics_frame
+	var sink := d0 - (ball.global_position.y - 0.25)
+	var bd := surface.get_dent_at(ball.global_position)
+	_check("a ball sinks into fresh snow and rests there", sink > 0.03 and sink < want + 0.03 and absf(sink - bd) < 0.04, "sank %.3f m, print %.3f m, floor %.3f m" % [sink, bd, want])
+	ball.queue_free()
+
+	# A walker leaves a line of prints and the trail is kept when the field moves away and back.
+	var wk := CharacterBody3D.new()
+	var ws := CollisionShape3D.new()
+	ws.shape = CapsuleShape3D.new()
+	(ws.shape as CapsuleShape3D).radius = 0.15
+	(ws.shape as CapsuleShape3D).height = 1.8
+	wk.add_child(ws)
+	wk.add_to_group("grass_trample") # the grass's movers press the snow too
+	add_child(wk)
+	for i in 60:
+		wk.global_position = Vector3(-3.0 + i * 0.1, d0 + 0.9, 3.0)
+		await get_tree().physics_frame
+	var trail := surface.get_dent_at(Vector3(0.0, 0, 3.0))
+	_check("a character walking leaves a trail", trail > 0.1, "%.3f m deep" % trail)
+	wk.queue_free()
+	var probe: Node3D = get_node("Probe")
+	probe.global_position = Vector3(300.0, 0, 0)
+	for i in 4:
+		await get_tree().physics_frame
+	var cached := surface.get_cached_tile_count()
+	probe.global_position = Vector3.ZERO
+	for i in 4:
+		await get_tree().physics_frame
+	var back := surface.get_dent_at(Vector3(0.0, 0, 3.0))
+	_check("trails survive leaving and coming back", cached > 0 and absf(back - trail) < 0.002, "%d tiles cached, %.3f m after, %.3f m before" % [cached, back, trail])
+
+	# New snow settles into the prints; the pack settling shrinks the step; melt takes it all.
+	var before := surface.get_dent_at(p)
+	snow.add_snow(10.0, 100.0) # 0.1 m of new snow
+	await get_tree().physics_frame
+	var after := surface.get_dent_at(p)
+	_check("new snow fills prints (refill_share 0.5)", absf((before - after) - 0.05) < 0.005, "%.3f m to %.3f m" % [before, after])
+	snow.advance(14.0 * 24.0 * 3600.0)
+	await get_tree().physics_frame
+	var rho2 := snow.get_density_at(p)
+	var d2 := snow.get_depth_at(p)
+	var cap := d2 * (1.0 - rho2 / 450.0) / (1.0 - 0.3 * rho2 / 450.0)
+	_check("settled pack: the print is no deeper than the compaction allows", surface.get_dent_at(p) <= cap + 0.002, "%.3f m, limit %.3f m (pack %.0f kg/m3, %.2f m)" % [surface.get_dent_at(p), cap, rho2, d2])
+	weather.temperature = 10.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	sun.visible = true
+	sun.rotation_degrees = Vector3(-60, 0, 0)
+	snow.advance(30.0 * 24.0 * 3600.0)
+	await get_tree().physics_frame
+	_check("melted out: no prints, surface on the ground", surface.get_dent_at(p) == 0.0 and absf(surface.get_surface_height_at(p)) < 0.001, "dent %.3f, surface %.3f, pack %.3f m" % [surface.get_dent_at(p), surface.get_surface_height_at(p), snow.get_depth_at(p)])
+
+	# Cost of a frame with four movers in the field.
+	await _surface_setup(45.0, 110.0)
+	for k in 4:
+		var b := RigidBody3D.new()
+		b.mass = 30.0
+		var c := CollisionShape3D.new()
+		c.shape = SphereShape3D.new()
+		b.add_child(c)
+		b.add_to_group("snow_deform")
+		b.position = Vector3(-6.0 + k * 4.0, 1.0, 0.0)
+		b.linear_velocity = Vector3(0, 0, 3.0)
+		add_child(b)
+	var tot := 0.0
+	for i in 60:
+		await get_tree().physics_frame
+		tot += surface.get_step_time_msec()
+	print("  SnowSurface3D step with 4 rolling bodies (press, relax, collision at 15 Hz, upload): %.2f ms" % (tot / 60.0))
+
+
 func _snow_line() -> float:
 	# The lowest ground where at least half the day's precipitation (48 mm) stayed as snow.
 	var lowest := INF
@@ -260,6 +411,8 @@ func _snow_line() -> float:
 func _build_view() -> void:
 	if view == "mountain":
 		await _setup("mountain", 2048.0, 256, 4.0)
+	elif view == "trail":
+		await _setup("meadow", 64.0, 64, -4.0)
 	else:
 		await _setup("flat", 32.0, 128, -4.0)
 	var env := Environment.new()
@@ -289,6 +442,9 @@ func _build_view() -> void:
 		cam.far = 8000.0
 		cam.look_at(Vector3(0, 250, 0))
 		cam.fov = 45.0
+	elif view == "trail":
+		await _build_trail(cam)
+		return
 	else:
 		snow.drift_enabled = false
 		sun.visible = true
@@ -330,6 +486,176 @@ func _build_view() -> void:
 				print("probe %s ground %.0f swe %.1f depth %.2f rho %.0f alb %.2f" % [q, snow.get_ground_height_at(q), snow.get_swe_at(q), snow.get_depth_at(q), snow.get_density_at(q), snow.get_albedo_at(q)])
 	await _save_frame("")
 	get_tree().quit()
+
+
+func _build_trail(cam: Camera3D) -> void:
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	# Low afternoon sun across the tracks so their walls cast shadows.
+	# Low sun from behind the tracks, toward the camera and from the left: the print walls throw
+	# shadows forward and the rims catch the light.
+	sun.rotation_degrees = Vector3(-16.0, 140.0, 0.0)
+	sun.directional_shadow_max_distance = 40.0
+	_add_terrain(64.0, 256, Color(0.36, 0.33, 0.28), 6.0)
+	cam.position = Vector3(2.6, 1.35, 5.4)
+	cam.look_at(Vector3(-0.6, 0.15, 0.6))
+	cam.fov = 55.0
+	var target := Marker3D.new()
+	target.name = "Probe"
+	add_child(target)
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	var hours := snow_hours if snow_hours >= 0.0 else 0.0
+	if hours > 0.0:
+		_precipitate(hours, 2.0)
+	else:
+		snow.add_snow(45.0, 110.0) # 0.41 m of fresh snow
+	surface = SnowSurface3D.new()
+	surface.snow_cover = NodePath("../SnowCover3D")
+	surface.follow_target = NodePath("../Probe")
+	add_child(surface)
+	# Movers, driven on set paths so the shot is the same each run: a walker whose two boots print the
+	# snow (boot boxes in the snow_deform group, 80 kg on 0.035 m2: Bekker), a cart wheel and two balls
+	# rolling through it at a set depth.
+	var dark := StandardMaterial3D.new()
+	dark.albedo_color = Color(0.15, 0.17, 0.22)
+	walker = CharacterBody3D.new()
+	var ws := CollisionShape3D.new()
+	ws.shape = CapsuleShape3D.new()
+	(ws.shape as CapsuleShape3D).radius = 0.14
+	(ws.shape as CapsuleShape3D).height = 1.6
+	walker.add_child(ws)
+	var wm := MeshInstance3D.new()
+	var cm := CapsuleMesh.new()
+	cm.radius = 0.14
+	cm.height = 1.6
+	wm.mesh = cm
+	wm.material_override = dark
+	walker.add_child(wm)
+	walker.position = Vector3(-7.0, 1.5, 1.3)
+	add_child(walker)
+	for k in 2:
+		var foot := Node3D.new()
+		foot.name = "Foot%d" % k
+		var fs := CollisionShape3D.new()
+		fs.shape = BoxShape3D.new()
+		(fs.shape as BoxShape3D).size = Vector3(0.11, 0.06, 0.29)
+		foot.add_child(fs)
+		var fm := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.11, 0.06, 0.29)
+		fm.mesh = bm
+		fm.material_override = dark
+		foot.add_child(fm)
+		foot.set_meta("snow_mass", 80.0)
+		foot.set_meta("snow_contact_area", 0.035)
+		foot.add_to_group("snow_deform")
+		foot.visible = false
+		add_child(foot)
+	var ball_mat := StandardMaterial3D.new()
+	ball_mat.albedo_color = Color(0.6, 0.12, 0.08)
+	for k in 2:
+		var b := Node3D.new()
+		b.name = "Ball%d" % k
+		var c := CollisionShape3D.new()
+		c.shape = SphereShape3D.new()
+		(c.shape as SphereShape3D).radius = 0.22 + 0.1 * k
+		b.add_child(c)
+		var bmi := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.22 + 0.1 * k
+		sm.height = 2.0 * sm.radius
+		bmi.mesh = sm
+		bmi.material_override = ball_mat
+		b.add_child(bmi)
+		b.add_to_group("snow_deform")
+		add_child(b)
+	var wheel := Node3D.new()
+	wheel.name = "Wheel"
+	var wc := CollisionShape3D.new()
+	wc.shape = CylinderShape3D.new()
+	(wc.shape as CylinderShape3D).radius = 0.4
+	(wc.shape as CylinderShape3D).height = 0.12
+	wc.rotation_degrees = Vector3(90, 0, 0)
+	wheel.add_child(wc)
+	var wmi := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.4
+	cyl.bottom_radius = 0.4
+	cyl.height = 0.12
+	wmi.mesh = cyl
+	wmi.rotation_degrees = Vector3(90, 0, 0)
+	wmi.material_override = dark
+	wheel.add_child(wmi)
+	wheel.add_to_group("snow_deform")
+	add_child(wheel)
+	walking = true
+	# Path tracing is slow on a CPU device: simulate under raster, trace only the saved frames.
+	var we: WorldEnvironment = null
+	for c in get_children():
+		if c is WorldEnvironment:
+			we = c
+	if we and not raster:
+		we.environment.pathtracing_enabled = false
+	var frames := steps if steps > 0 else 1
+	var secs := 6.5
+	for s in frames:
+		for i in int(secs * 60.0 / frames):
+			await get_tree().physics_frame
+		if steps > 0:
+			walking = false # hold the movers while the frame is saved
+			await _save_frame("_%03d" % s)
+			walking = true
+	walking = false
+	print("surface step %.2f ms" % surface.get_step_time_msec())
+	if we and not raster:
+		we.environment.pathtracing_enabled = true
+	await _save_frame("")
+	get_tree().quit()
+
+
+func _undisturbed(p: Vector3) -> float:
+	return surface.get_surface_height_at(p) + surface.get_dent_at(p) - surface.get_rim_at(p)
+
+
+func _physics_process(delta: float) -> void:
+	if not walking or walker == null:
+		return
+	walk_t += delta
+	# The walker: 1.4 m/s on a gentle S, a 0.7 m stride, boots planted for one step each.
+	var x := -7.0 + 1.4 * walk_t
+	var z := 1.3 + 0.5 * sin(walk_t * 0.9)
+	walker.velocity = (Vector3(x, walker.global_position.y, z) - walker.global_position) / delta
+	walker.velocity.y = -2.0
+	walker.move_and_slide()
+	var step := int(walk_t * 1.4 / 0.7)
+	for k in 2:
+		var foot: Node3D = get_node("Foot%d" % k)
+		var planted := step % 2 == k
+		foot.visible = planted
+		if planted:
+			var sx := -7.0 + step * 0.7 + 0.35
+			var st := (sx + 7.0) / 1.4
+			var sz := 1.3 + 0.5 * sin(st * 0.9)
+			var side := 0.12 if k == 0 else -0.12
+			var hd := atan2(-0.45 * cos(st * 0.9), 1.4)
+			var p := Vector3(sx, 0, sz) + Vector3(sin(hd), 0, cos(hd)) * side
+			if foot.get_meta("step", -1) != step:
+				foot.set_meta("step", step)
+				foot.rotation = Vector3(0, hd + PI * 0.5, 0)
+				foot.global_position = Vector3(p.x, _undisturbed(p) + 0.03, p.z)
+	# Balls and the wheel roll through at a set depth below the undisturbed snow (plough, no Bekker).
+	for k in 2:
+		var b: Node3D = get_node("Ball%d" % k)
+		var r := 0.22 + 0.1 * k
+		var p := Vector3(-6.0 + (1.1 + 0.3 * k) * walk_t, 0, -0.5 - 1.8 * k)
+		b.global_position = Vector3(p.x, _undisturbed(p) - 0.12 - 0.06 * k + r, p.z)
+		b.rotation.z = -p.x / r
+	var w: Node3D = get_node("Wheel")
+	var wp := Vector3(-8.0 + 1.7 * walk_t, 0, -4.0)
+	w.global_position = Vector3(wp.x, _undisturbed(wp) - 0.2 + 0.4, wp.z)
+	w.rotation.z = -wp.x / 0.4
 
 
 func _save_frame(suffix: String) -> void:
