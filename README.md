@@ -114,7 +114,7 @@ Each feature that changes the look or the cost can be turned off with the settin
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
 - **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
-<details><summary>Images and clips: murky water, caustics, ocean, currents, live flow, white water, rivers, under water</summary>
+<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, currents, live flow, white water, rivers, under water</summary>
 
 ![The pool with clear and with murky water](docs/media/murky-water.jpg)
 
@@ -131,6 +131,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Open sea with one wave layer and with three](docs/media/ocean-swell.jpg)
 
 *Ocean swell: one layer repeats the same foam patches; three layers add long swell.*
+
+![Sea surface height from above, 160 m at 14 m/s, four spreading models](docs/media/ocean-spreading.jpg)
+
+*Wave spreading: cos² gave long parallel crests; the measured spreading breaks them up, and swell adds long crests back.*
 
 ![Waves breaking on a beach, raster](docs/media/shore-waves.gif)
 
