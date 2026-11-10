@@ -341,6 +341,43 @@ the pixel the real fibre covers. Ours, in the PhysXHair3D render shader, raster 
 
 Bench: `--scene=strands_sim --raster --aa=taa|msaa|both|none`.
 
+## Stage 2e: raster hair shading and light through the hair
+
+With Godot's standard anisotropic GGX on the strands, the side away from the light fell black: a
+lambert-style N.L on a ribbon facing the camera, and shadow maps where every strand blocked
+light fully. Real hair is lit there by light travelling through the fibres (TT) and by multiple
+scattering between them, which is most of what blonde hair looks like (Zinke et al. 2008: the
+multiply scattered part dominates for light hair). What engines do:
+
+- Unreal (Karis 2016, `HairShading` in `ShadingModels.ush`): Marschner's R, TT and TRT lobes with
+  Gaussian longitudinal terms and cheap fits for the azimuthal terms (`Np` R `0.25 cos(phi/2)`,
+  TT `exp(-3.65 cos phi - 3.98)`, TRT `exp(17 cos phi - 16.78)`), absorption as powers of the base
+  colour, and a multiple scattering approximation: light wrapped around a normal facing the
+  viewer, mixed with Kajiya-Kay diffuse, tinted `pow(base / luma, 1 - shadow)` so deeper hair
+  turns a richer colour. Strand groom adds deep opacity maps and a dual scattering LUT.
+- TressFX: Kajiya-Kay with two shifted highlights plus deep shadow / opacity fragments.
+- Frostbite and others: Marschner-like lobes in one form or another, with deep opacity shadows.
+- Zinke et al. 2008, dual scattering: global multiple scattering along the shadow path is the
+  forward transmittance of one fibre to the power of the strands crossed (from a deep opacity map),
+  plus a local constant term.
+
+Ours (PhysXHair3D `hair_shading`, default on; off = the previous standard lighting):
+
+- A `light()` in the render shader evaluates Unreal's model per light, with the strand tangent
+  from the vertex stage. The longitudinal widths use Chiang's mapping of the fibre roughness and
+  the same 2 degree cuticle tilt, so the raster highlights sit where the path tracer puts them.
+  All of it goes to `SPECULAR_LIGHT` (colour is already in the lobes).
+- The shadow term for the tint is the light's attenuation for directional lights (shadow only);
+  omni and spot lights mix falloff into it, so their tint uses 1 (no tint).
+- Shadow maps: each strand keeps `coverage * (1 - 0.91 * luma(sqrt(base)))` of its texels: one
+  fibre's forward transmittance (two Fresnel crossings at n = 1.55, absorption across it as
+  Unreal's `Tp` at normal incidence). Through n strands, light falls as that to the n-th power,
+  the dual scattering global term, with no deep opacity map: our stochastic shadow map already
+  counts strands. Blonde lets about 60% through a fibre, dark brown about 20%.
+- The path tracer ignores `light()` and keeps its own Chiang BSDF.
+
+Bench: `--scene=strands_sim --raster --hair=wind_wavy[_back][_blonde][_plain]`.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.

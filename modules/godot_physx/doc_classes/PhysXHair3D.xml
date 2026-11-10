@@ -43,6 +43,9 @@
 		<member name="gust" type="float" setter="set_gust" getter="get_gust" default="0.3">
 			How much the wind varies over time and from strand to strand, so the hair flutters instead of leaning stiffly.
 		</member>
+		<member name="hair_shading" type="bool" setter="set_hair_shading" getter="is_hair_shading" default="true">
+			Lights the strands in raster with the Marschner hair model as Unreal Engine evaluates it (Karis 2016): the white highlight, the coloured second highlight, light through the fibres when lit from behind, and multiple scattering, so the side away from the light is lit through the hair instead of falling black. Strands also let part of the light through in shadow maps (dual scattering's forward transmittance, Zinke et al. 2008): blonde hair more, dark hair less. Off, the strands take Godot's standard anisotropic lighting and block light fully. The path tracer always uses its own hair fibre shading.
+		</member>
 		<member name="length_iterations" type="int" setter="set_length_iterations" getter="get_length_iterations" default="2">
 			How many times per substep the segments are put back to their rest lengths. More keeps long hair from stretching.
 		</member>

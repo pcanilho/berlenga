@@ -58,9 +58,15 @@ namespace {
 // CUSTOM1.w = which strip. The strips are rebuilt around the simulated strand, as HairMesh lays them
 // out (UV.x across, UV.y along), so the path tracer's hair_strands shading reads the fibre offset the
 // same way. rt_vertex_dynamic: the path tracer recaptures it every frame.
-const char *HAIR_RENDER_SHADER = R"(
+//
+// HAIR_SCATTERING (hair_shading on) lights the raster strands with the Marschner hair model as
+// Unreal Engine evaluates it (Karis 2016), see light(). Off, Godot's standard anisotropic lighting.
+const char *HAIR_RENDER_HEAD = R"(
 shader_type spatial;
 render_mode cull_disabled, rt_vertex_dynamic, rt_force_opaque, hair_strands;
+)";
+
+const char *HAIR_RENDER_SHADER = R"(
 
 uniform sampler2D hair_positions : filter_nearest, repeat_disable;
 uniform int texture_width = 1;
@@ -79,6 +85,7 @@ vec4 hair_point(float p_index) {
 varying float strand_across; // -1..1 across the drawn ribbon (raster)
 varying float strand_half_px; // the strand's real half width, in pixels (raster)
 varying float strand_drawn_px; // the drawn half width, in pixels (raster)
+varying vec3 strand_tangent; // along the strand, view space (raster lighting)
 
 void vertex() {
 	vec4 here = hair_point(CUSTOM0.x);
@@ -99,6 +106,7 @@ void vertex() {
 	strand_across = sign(CUSTOM0.w);
 	strand_half_px = 1.0;
 	strand_drawn_px = 1.0;
+	strand_tangent = normalize(mat3(MODELVIEW_MATRIX) * t);
 	if (!IN_PATH_TRACER) {
 		// Raster (and its shadow maps): AMD TressFX's strand rendering. One ribbon facing the camera,
 		// widened by 0.71 px a side so no strand falls between pixels, with its opacity cut to the
@@ -148,6 +156,17 @@ void fragment() {
 			coverage = clamp(2.0 * strand_half_px / strand_drawn_px * (1.0 - d / strand_drawn_px), 0.0, 1.0);
 		}
 	}
+#ifdef HAIR_SCATTERING
+	// Raster shadow maps only: the path tracer's shadow rays also run with IN_SHADOW_PASS, and
+	// there the fibres stay solid (its hair BSDF carries the light through them).
+	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
+		// Light passes through a fibre: what the TT lobe carries straight on (Fresnel twice and the
+		// absorption across it, Unreal's Tp at normal incidence) is not blocked, as in dual
+		// scattering's forward transmittance (Zinke et al. 2008). Blonde hair lets most light
+		// through and dark hair little; the shadow behind n strands falls as that to the n-th power.
+		coverage *= 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+	}
+#endif
 	if (IN_SHADOW_PASS) {
 		// Shadow maps take no blending: the coverage becomes the share of texels kept (interleaved
 		// gradient noise), so the hair's shadow is partial and builds up through the volume.
@@ -162,14 +181,78 @@ void fragment() {
 	// the pixel it covers. Thin strands are faint, so the blend barely depends on draw order.
 	ALPHA = coverage;
 }
+
+#ifdef HAIR_SCATTERING
+// Unreal Engine's hair shading (Karis, "Physically Based Hair Shading in Unreal", SIGGRAPH 2016):
+// Marschner et al.'s three lobes (R reflection, TT through the fibre, TRT the coloured second
+// highlight) in d'Eon's form, with Unreal's fits for the azimuthal terms, plus its approximation
+// of multiple scattering so the side away from the light is lit through the hair, tinted deeper
+// the more hair the light crosses. Widths and tilt follow the path tracer's fibre (Chiang 2016) so
+// the highlights sit where the path tracer puts them.
+float hair_g(float b, float x) {
+	b = max(b, 1e-3);
+	return exp(-0.5 * x * x / (b * b)) / (2.5066283 * b);
+}
+
+float hair_f(float c) {
+	const float f0 = 0.0465; // n = 1.55
+	return f0 + (1.0 - f0) * pow(1.0 - clamp(c, 0.0, 1.0), 5.0);
+}
+
+void light() {
+	vec3 T = normalize(strand_tangent);
+	vec3 base = ALBEDO;
+	float sin_l = clamp(dot(T, LIGHT), -1.0, 1.0);
+	float sin_v = clamp(dot(T, VIEW), -1.0, 1.0);
+	float cos_d = max(cos(0.5 * abs(asin(sin_v) - asin(sin_l))), 0.05);
+	vec3 lp = LIGHT - sin_l * T;
+	vec3 vp = VIEW - sin_v * T;
+	float cos_phi = dot(lp, vp) * inversesqrt(dot(lp, lp) * dot(vp, vp) + 1e-4);
+	float cos_half_phi = sqrt(clamp(0.5 + 0.5 * cos_phi, 0.0, 1.0));
+	float n_prime = 1.19 / cos_d + 0.36 * cos_d;
+	// Longitudinal width: Chiang's mapping of the fibre roughness, as the path tracer.
+	float bm = fibre_roughness.x;
+	float b = 0.726 * bm + 0.812 * bm * bm + 3.7 * pow(bm, 20.0);
+	const float tilt = 0.035; // cuticle scales, 2 degrees
+
+	vec3 s = vec3(0.0);
+	// R
+	float sa = sin(-2.0 * tilt);
+	float ca = cos(-2.0 * tilt);
+	float shift = 2.0 * sa * (ca * cos_half_phi * sqrt(1.0 - sin_v * sin_v) + sa * sin_v);
+	s += vec3(hair_g(b * 1.41421 * cos_half_phi, sin_l + sin_v - shift) * 0.25 * cos_half_phi * hair_f(sqrt(clamp(0.5 + 0.5 * dot(VIEW, LIGHT), 0.0, 1.0))));
+	// TT
+	float a = 1.0 / n_prime;
+	float h = cos_half_phi * (1.0 + a * (0.6 - 0.8 * cos_phi));
+	float f = hair_f(cos_d * sqrt(clamp(1.0 - h * h, 0.0, 1.0)));
+	vec3 tp = pow(base, vec3(0.5 * sqrt(clamp(1.0 - h * h * a * a, 0.0, 1.0)) / cos_d));
+	s += hair_g(0.5 * b, sin_l + sin_v - tilt) * exp(-3.65 * cos_phi - 3.98) * (1.0 - f) * (1.0 - f) * tp;
+	// TRT
+	f = hair_f(0.5 * cos_d);
+	tp = pow(base, vec3(0.8 / cos_d));
+	s += hair_g(2.0 * b, sin_l + sin_v - 4.0 * tilt) * exp(17.0 * cos_phi - 16.78) * (1.0 - f) * (1.0 - f) * f * tp;
+	// Multiple scattering: wrapped light around a normal facing the viewer, blended with
+	// Kajiya-Kay's diffuse, tinted by the hair's colour the deeper it is in shadow. Only a
+	// directional light's attenuation is its shadow alone.
+	vec3 vn = VIEW - T * sin_v;
+	vn = dot(vn, vn) > 1e-8 ? normalize(vn) : VIEW;
+	float wrap = clamp((dot(vn, LIGHT) + 1.0) * 0.25, 0.0, 1.0);
+	float scatter = (1.0 / PI) * mix(wrap, 1.0 - abs(sin_l), 0.33);
+	float luma = max(dot(base, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
+	float shadow = LIGHT_IS_DIRECTIONAL ? clamp(ATTENUATION, 0.0, 1.0) : 1.0;
+	s += sqrt(base) * scatter * pow(base / luma, vec3(1.0 - shadow));
+	SPECULAR_LIGHT += max(s, vec3(0.0)) * LIGHT_COLOR * ATTENUATION;
+}
+#endif
 )";
 
 } // namespace
 
-Ref<Shader> PhysXHair3D::render_shader;
+Ref<Shader> PhysXHair3D::render_shaders[2];
 
 void PhysXHair3D::free_shared() {
-	render_shader.unref();
+	render_shaders[0].unref();
+	render_shaders[1].unref();
 	HairStrandSolverGPU::free_shared();
 }
 
@@ -308,12 +391,13 @@ void PhysXHair3D::_make_material() {
 	if (render_material.is_valid() && render_material->get_shader().is_valid()) {
 		copy_material = render_material->duplicate();
 	} else {
-		if (render_shader.is_null()) {
-			render_shader.instantiate();
-			render_shader->set_code(HAIR_RENDER_SHADER);
+		Ref<Shader> &shader = render_shaders[hair_shading ? 1 : 0];
+		if (shader.is_null()) {
+			shader.instantiate();
+			shader->set_code(String(HAIR_RENDER_HEAD) + (hair_shading ? "#define HAIR_SCATTERING\n" : "") + HAIR_RENDER_SHADER);
 		}
 		copy_material.instantiate();
-		copy_material->set_shader(render_shader);
+		copy_material->set_shader(shader);
 	}
 	copy_material->set_shader_parameter("hair_color", _mass_color());
 	copy_material->set_shader_parameter("fibre_absorption", _fibre_absorption());
@@ -710,6 +794,17 @@ float PhysXHair3D::get_radial_roughness() const {
 	return radial_roughness;
 }
 
+void PhysXHair3D::set_hair_shading(bool p_enabled) {
+	hair_shading = p_enabled;
+	if (built) {
+		_make_material();
+	}
+}
+
+bool PhysXHair3D::is_hair_shading() const {
+	return hair_shading;
+}
+
 void PhysXHair3D::set_render_material(const Ref<ShaderMaterial> &p_material) {
 	render_material = p_material;
 	if (built && solver != nullptr) {
@@ -897,6 +992,8 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_roughness"), &PhysXHair3D::get_roughness);
 	ClassDB::bind_method(D_METHOD("set_radial_roughness", "roughness"), &PhysXHair3D::set_radial_roughness);
 	ClassDB::bind_method(D_METHOD("get_radial_roughness"), &PhysXHair3D::get_radial_roughness);
+	ClassDB::bind_method(D_METHOD("set_hair_shading", "enabled"), &PhysXHair3D::set_hair_shading);
+	ClassDB::bind_method(D_METHOD("is_hair_shading"), &PhysXHair3D::is_hair_shading);
 	ClassDB::bind_method(D_METHOD("set_render_material", "material"), &PhysXHair3D::set_render_material);
 	ClassDB::bind_method(D_METHOD("get_render_material"), &PhysXHair3D::get_render_material);
 	ClassDB::bind_method(D_METHOD("set_simulating", "simulating"), &PhysXHair3D::set_simulating);
@@ -949,6 +1046,7 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melanin_redness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_melanin_redness", "get_melanin_redness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radial_roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_radial_roughness", "get_radial_roughness");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hair_shading"), "set_hair_shading", "is_hair_shading");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "render_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_render_material", "get_render_material");
 	ADD_GROUP("Simulation", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simulating"), "set_simulating", "is_simulating");
