@@ -34,6 +34,7 @@
 #include "weather_shelter.h"
 
 #include "core/io/image.h"
+#include "core/object/object_id.h"
 #include "core/object/worker_thread_pool.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
@@ -43,6 +44,10 @@
 // mean wind at 10 m, cloud cover and type, rain rate, and the water that rain has left
 // on surfaces (a film, then puddles). Everything that reacts to weather reads it: shaders
 // through global uniforms, scripts and nodes through get_*_at(). See docs/ideas/weather.md.
+class Environment;
+class FogMaterial;
+class FogVolume;
+
 class WeatherMap3D : public Node3D {
 	GDCLASS(WeatherMap3D, Node3D);
 
@@ -222,6 +227,34 @@ private:
 
 	static WeatherMap3D *active;
 
+	// Haze from falling and blowing precipitation (docs/ideas/weather.md, "Precipitation haze").
+	struct HazeSource {
+		ObjectID source;
+		float sigma = 0.0f; // extinction, 1/m
+		float height_scale = 0.0f; // m; <= 0: the same at every height
+		float albedo = 0.95f;
+		Vector3 centre;
+		float radius = 0.0f; // m; <= 0: everywhere
+		FogVolume *volume = nullptr;
+		Ref<FogMaterial> material;
+	};
+	LocalVector<HazeSource> haze_sources;
+	bool drive_environment_fog = true;
+	struct FogBase {
+		bool saved = false;
+		bool fog_enabled = false;
+		float fog_density = 0.0f;
+		float aerial_perspective = 0.0f;
+		bool volumetric_enabled = false;
+		float volumetric_density = 0.0f;
+		float volumetric_length = 64.0f;
+	} fog_base;
+	Ref<Environment> fog_environment;
+	float applied_haze = -1.0f;
+	void _apply_haze();
+	void _restore_fog();
+	float _haze_weight(const HazeSource &p_source, const Vector3 &p_position) const;
+
 	void _allocate();
 	void _build_gusts();
 	void _advance(double p_weather_dt, double p_real_dt);
@@ -383,6 +416,17 @@ public:
 	// The storm cells, and how far each has grown (0..1, its rise and decay over its lifetime).
 	const Vector<Storm> &get_storms() const { return storms; }
 	float get_storm_strength(const Storm &p_storm) const { return _storm_weight(p_storm); }
+	// Haze from precipitation: each source (a SnowFall3D, rain) pushes its extinction (1/m), a height
+	// scale for a layer near the ground (<= 0: uniform), its albedo, and optionally a centre and radius.
+	// Sources add up. With drive_environment_fog, the uniform part goes into the environment's
+	// exponential fog, lit by the sky (aerial perspective), and each layer into a lit FogVolume over
+	// the ground; the path tracer reads both.
+	void set_precipitation_extinction(Object *p_source, float p_sigma, float p_height_scale, float p_albedo = 0.95f, Vector3 p_centre = Vector3(), float p_radius = 0.0f);
+	void clear_precipitation_extinction(Object *p_source);
+	float get_precipitation_extinction_at(Vector3 p_position) const;
+	void set_drive_environment_fog(bool p_enabled);
+	bool get_drive_environment_fog() const { return drive_environment_fog; }
+
 	// The cloud layer as the sky draws it now.
 	WeatherClouds::State get_cloud_state() const { return _cloud_state(); }
 	// The top of the cloud the sky draws over a point (world y, m): the base plus the column's
