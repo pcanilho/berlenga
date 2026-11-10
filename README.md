@@ -237,6 +237,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ### Terrain
 - **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`, `detail_wavelength`, `detail_octaves`, `detail_crest`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; on crests gullies keep part of their depth and a ridged noise adds irregular pinnacles; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
+- **Coarse-to-fine erosion** (`coarse_levels`, `refine_steps`): about 3.7 times faster at 4 m cells, with the same relief.
 - **Tile erosion** (`tile_erosion_enabled`): droplet hydraulic and thermal erosion in seamless overlapping tiles.
 - **Material detail** (`get_detail_shader_code()`): erosion detail below the vertex spacing in the terrain material; path tracing keeps it.
 - **Geology maps** (`terrain_geology()` in shaders): soil, bare rock and scree from the erosion run.
@@ -248,11 +249,15 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: mountain generation, crests, tile erosion, material detail, geology, coast, climate, ground material, footprints, terrain data maps</summary>
+<details><summary>Images: mountain generation, coarse to fine, crests, tile erosion, material detail, geology, coast, climate, ground material, footprints, terrain data maps</summary>
 
 ![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
 
 *Mountain generation: ridges, valleys and the rivers that carved them, from one seed.*
+
+![The same range eroded directly and coarse to fine, 8 m cells](docs/media/terrain-coarse-to-fine.jpg)
+
+*Coarse to fine: the same relief at 8 m cells in a third of the time.*
 
 ![The generated range with erosion detail, raster](docs/media/terrain-detail-wide.jpg)
 
