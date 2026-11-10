@@ -257,6 +257,20 @@ public:
 	Ref<ArrayMesh> generate();
 	TypedArray<ArrayMesh> generate_variants(int p_count);
 	void apply_preset_colors();
+
+	// Forest floor sets, matching TreeGenerator's stand types (docs/ideas/forest-floor.md).
+	enum FloorStand {
+		FLOOR_BEECH,
+		FLOOR_OAK_MIXED,
+		FLOOR_MONTANE_CONIFER,
+		FLOOR_SUBALPINE,
+		FLOOR_PINE_HEATH,
+		FLOOR_RIPARIAN,
+		FLOOR_HEDGEROW,
+		FLOOR_MAX,
+	};
+	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true);
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
+VARIANT_ENUM_CAST(PlantGenerator::FloorStand);

@@ -17,6 +17,15 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="make_floor" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.FloorStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<description>
+				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code].
+			</description>
+		</method>
 		<method name="apply_preset_colors">
 			<return type="void" />
 			<description>
@@ -174,6 +183,30 @@
 		</constant>
 		<constant name="PRESET_MAX" value="33" enum="Preset">
 			Number of presets.
+		</constant>
+		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
+			Beech wood: deep leaf litter, beech seedlings, woodruff, wood sorrel, wood anemone, few ferns.
+		</constant>
+		<constant name="FLOOR_OAK_MIXED" value="1" enum="FloorStand">
+			Oak, lime and ash: a rich herb layer, bramble under the crowns, ivy carpets, wood anemone, ferns, bracken in gaps.
+		</constant>
+		<constant name="FLOOR_MONTANE_CONIFER" value="2" enum="FloorStand">
+			Montane spruce, fir and beech: wood sorrel, ferns and bilberry on mixed leaf and needle litter.
+		</constant>
+		<constant name="FLOOR_SUBALPINE" value="3" enum="FloorStand">
+			Subalpine larch and spruce: bilberry carpets, heather in the light, few herbs.
+		</constant>
+		<constant name="FLOOR_PINE_HEATH" value="4" enum="FloorStand">
+			Pine heath: bilberry, heather and hair-grass under open crowns, bracken in gaps.
+		</constant>
+		<constant name="FLOOR_RIPARIAN" value="5" enum="FloorStand">
+			Riparian alder and willow: nettle, sedge and rush near water, ferns.
+		</constant>
+		<constant name="FLOOR_HEDGEROW" value="6" enum="FloorStand">
+			Hedgerow bottom: bramble, nettle, ivy, foxglove, fern.
+		</constant>
+		<constant name="FLOOR_MAX" value="7" enum="FloorStand">
+			Number of floor stand types.
 		</constant>
 	</constants>
 </class>

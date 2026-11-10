@@ -17,9 +17,9 @@ extends Node3D
 #   --forest         a wood of stand-in trees: forest floor (litter, moss, bilberry, fern) in
 #                    their shade, meadow in the open (PlantSpecies.shade_range)
 #   --forest=in      the same, standing inside the wood
-#   --stand=S        the wood's trees: beech (default), spruce, pine or mixed (beech and spruce);
-#                    the floor follows them (needles, feather moss and bilberry under conifers,
-#                    leaf litter and wood sorrel under beech). With --forest=in.
+#   --stand=S        the wood's trees and their floor set (PlantGenerator.make_floor): beech, oak,
+#                    spruce (montane), pine (heath), larch (subalpine) or mixed (beech and spruce);
+#                    the ground's litter follows the crowns. Use with --forest=in.
 #   --swamp          wetland zonation round the pond: water lilies afloat, bulrush and reed in the
 #                    shallows, soft rush on the wet shore (docs/ideas/plant-generator.md)
 #   --swamp=close    the same, looking down on a water lily
@@ -47,6 +47,7 @@ var close := false
 var forest := false
 var forest_in := false
 var stand := "beech"
+var stand_set := false
 var swamp := false
 var swamp_close := false
 var ground_mat: ShaderMaterial
@@ -95,7 +96,10 @@ func _ready() -> void:
 			forest = true
 			forest_in = true
 		elif a == "--notex": notex = true
-		elif a.begins_with("--stand="): stand = a.substr(8)
+		elif a.begins_with("--stand="):
+			stand = a.substr(8)
+			stand_set = true
+			forest = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -475,7 +479,7 @@ func _cover_biome() -> Biome:
 			(sp as PlantSpecies).set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.4))
 			(sp as PlantSpecies).set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
 		# Bigger plants first: the edge shrubs and bracken claim their space before the herbs.
-		var floor_sp := _floor_species()
+		var floor_sp := _stand_floor()
 		b.species = _stand_trees() + floor_sp.slice(0, 3) + b.species + floor_sp.slice(3)
 	if swamp:
 		b.species = _wetland_species() + b.species
@@ -576,10 +580,19 @@ func _tree_species() -> PlantSpecies:
 	tree.canopy_opacity = 0.9
 	return tree
 
+# The floor for --stand from PlantGenerator.make_floor(); the bench's own set without one.
+func _stand_floor() -> Array:
+	var sets := {"beech": PlantGenerator.FLOOR_BEECH, "oak": PlantGenerator.FLOOR_OAK_MIXED,
+			"spruce": PlantGenerator.FLOOR_MONTANE_CONIFER, "mixed": PlantGenerator.FLOOR_MONTANE_CONIFER,
+			"pine": PlantGenerator.FLOOR_PINE_HEATH, "larch": PlantGenerator.FLOOR_SUBALPINE}
+	if not stand_set or not sets.has(stand):
+		return _floor_species()
+	return Array(PlantGenerator.make_floor(sets[stand], 3, not notex))
+
 # The wood's stand-in trees by --stand. Conifers set canopy_conifer, which the floor reads.
 func _stand_trees() -> Array:
 	match stand:
-		"spruce": return [_conifer_species(false)]
+		"spruce", "larch": return [_conifer_species(false)]
 		"pine": return [_conifer_species(true)]
 		"mixed":
 			var b := _tree_species()

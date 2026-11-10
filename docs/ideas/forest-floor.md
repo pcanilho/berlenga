@@ -94,6 +94,28 @@ crowns start 4 m up, pine crowns open, opacity 0.55). Floor species by rules: le
 conifer 0 to 0.5, needle litter 0.5 to 1, bilberry 0.4 to 1, wood sorrel in deep shade, seedlings
 at shade 0.4 to 0.97, twigs everywhere in shade.
 
+## Built: floor sets per stand (steps 4 and 5)
+
+`PlantGenerator.make_floor(stand, variants)` returns the floor species for the tree generator's
+seven stand types, to append to its stand Biome after the trees and woody shrubs. New presets:
+woodruff, wood anemone, ivy carpet, heather (plus needle litter, twigs, wood sorrel, seedling and
+feather moss from step 3).
+
+| Stand | Floor |
+|---|---|
+| Beech | bramble and foxglove in gaps, few ferns, many seedlings, woodruff, wood anemone, wood sorrel, moss, twigs, leaf litter |
+| Oak, lime, ash | bramble under the crowns too, bracken and foxglove in gaps, ferns, ivy carpets, wood anemone, woodruff |
+| Montane spruce-fir-beech | ferns, bilberry, wood sorrel, seedlings, both litters by the conifer rule |
+| Subalpine larch-spruce | bilberry carpets (also under larch), heather in the light, few ferns |
+| Pine heath | bilberry, heather, hair-grass, bracken in gaps |
+| Riparian alder-willow | nettle, sedge within 15 m of water, rush within 8 m, ferns |
+| Hedgerow | bramble, nettle, ivy, foxglove, fern |
+
+Gaps need no special case: the shade rule already hands half-light to bramble, bracken and
+foxglove (step 5). Bench: `docs/bench/grass --forest=in --stand=beech|oak|spruce|pine|larch|mixed`.
+Triangles per plant: heather 14k and woodruff 6.4k are the heaviest; they wait for the far-distance
+LOD work (stage 6) before dense use.
+
 ## References
 
 - Ellenberg, *Vegetation Mitteleuropas mit den Alpen*, 5th ed., 1996; Ellenberg and Leuschner,

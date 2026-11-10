@@ -193,6 +193,13 @@ func _checks() -> void:
 		_check(NAMES[p] + " grows from the ground", aabb.position.y > -0.08, aabb.position.y)
 		_check(NAMES[p] + " same seed, same plant", _tris(again) == _tris(m) and again.get_aabb() == aabb, _tris(again))
 		_check(NAMES[p] + " other seed, other plant", other.get_aabb() != aabb, other.get_aabb())
+	# Forest floor sets per stand type: species with meshes, placed by shade or by water.
+	for st in PlantGenerator.FLOOR_MAX:
+		var set := PlantGenerator.make_floor(st, 1, false)
+		var ok := set.size() >= 6
+		for sp in set:
+			ok = ok and (sp as PlantSpecies).meshes.size() == 1 and ((sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_SHADE) != Vector2(0, 1) or (sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_WATER_DISTANCE).y < 100.0)
+		_check("floor set %d" % st, ok, set.size())
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
 func _process(_d: float) -> void:

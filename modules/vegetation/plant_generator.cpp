@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "plant_generator.h"
+#include "plant_species.h"
 
 #include "modules/weather/weather_map_3d.h"
 
@@ -3246,6 +3247,151 @@ TypedArray<ArrayMesh> PlantGenerator::generate_variants(int p_count) {
 	return res;
 }
 
+// Forest floor sets per stand type (docs/ideas/forest-floor.md; Ellenberg and Leuschner 2010):
+// every species placed by light under the crowns (RULE_SHADE from the placed canopy) and, where it
+// matters, by the stand overhead (RULE_CONIFER), so a mixed stand sorts its own floor. Gap and
+// edge plants take the half-light; the deep-shade herbs, mosses and litter the closed floor.
+// Order: bigger plants first, so they claim their space before the herbs.
+namespace {
+struct FloorSpec {
+	PlantGenerator::Preset preset;
+	float spacing, footprint, density, scale_min, scale_max;
+	float patch_scale, patch_cover; // 0 scale: no patches.
+	float shade_min, shade_max, shade_fade;
+	float conifer_min, conifer_max; // 0..1: any stand.
+	float visibility;
+	float water_max = 0.0f; // > 0: within this distance of water (riparian).
+};
+} // namespace
+
+TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_variants, bool p_textures) {
+	using P = PlantGenerator;
+	// Shared by every stand.
+	const FloorSpec gap_bramble = { P::PRESET_BRAMBLE, 1.4f, 0.6f, 0.8f, 0.8f, 1.2f, 7.0f, 0.4f, 0.05f, 0.7f, 0.15f, 0.0f, 1.0f, 45.0f };
+	const FloorSpec gap_foxglove = { P::PRESET_FOXGLOVE, 0.8f, 0.2f, 0.5f, 0.8f, 1.1f, 6.0f, 0.3f, 0.1f, 0.7f, 0.1f, 0.0f, 0.6f, 40.0f };
+	const FloorSpec gap_bracken = { P::PRESET_BRACKEN, 0.7f, 0.3f, 0.9f, 0.9f, 1.3f, 9.0f, 0.55f, 0.1f, 0.8f, 0.15f, 0.0f, 1.0f, 45.0f };
+	const FloorSpec fern = { P::PRESET_FERN, 0.9f, 0.3f, 0.7f, 1.3f, 2.0f, 6.0f, 0.5f, 0.35f, 1.0f, 0.15f, 0.0f, 1.0f, 35.0f };
+	const FloorSpec seedling = { P::PRESET_SEEDLING, 0.8f, 0.15f, 0.5f, 0.8f, 1.2f, 5.0f, 0.3f, 0.4f, 0.97f, 0.1f, 0.0f, 1.0f, 30.0f };
+	const FloorSpec sorrel = { P::PRESET_WOOD_SORREL, 0.25f, 0.1f, 0.9f, 0.9f, 1.2f, 3.0f, 0.35f, 0.55f, 1.0f, 0.15f, 0.0f, 1.0f, 18.0f };
+	const FloorSpec moss = { P::PRESET_MOSS, 0.3f, 0.0f, 0.6f, 0.8f, 1.6f, 4.0f, 0.3f, 0.6f, 1.0f, 0.15f, 0.0f, 1.0f, 15.0f };
+	const FloorSpec twigs = { P::PRESET_TWIGS, 0.9f, 0.0f, 0.5f, 0.8f, 1.2f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 1.0f, 18.0f };
+	const FloorSpec leaves = { P::PRESET_LEAF_LITTER, 0.2f, 0.0f, 0.6f, 1.2f, 1.8f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 0.5f, 15.0f };
+	const FloorSpec needles = { P::PRESET_NEEDLE_LITTER, 0.35f, 0.0f, 0.8f, 0.8f, 1.3f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.5f, 1.0f, 15.0f };
+	const FloorSpec bilberry = { P::PRESET_BILBERRY, 0.35f, 0.12f, 0.9f, 1.0f, 1.4f, 7.0f, 0.6f, 0.3f, 1.0f, 0.15f, 0.4f, 1.0f, 25.0f };
+	LocalVector<FloorSpec> set;
+	switch (p_stand) {
+		case FLOOR_BEECH:
+			// Deep shade, deep leaf litter, a sparse herb layer: woodruff, wood sorrel, anemone.
+			set = LocalVector<FloorSpec>({ gap_bramble, gap_foxglove, fern, seedling,
+				{ P::PRESET_WOODRUFF, 0.3f, 0.1f, 0.9f, 0.9f, 1.2f, 4.0f, 0.3f, 0.5f, 1.0f, 0.15f, 0.0f, 0.5f, 20.0f },
+				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 5.0f, 0.3f, 0.4f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
+				sorrel, moss, twigs, leaves, needles });
+			set[2].density = 0.35f; // Few ferns under beech.
+			set[3].density = 0.8f; // Beech seedlings carpet the floor.
+			break;
+		case FLOOR_OAK_MIXED:
+			// More light: a rich herb layer, bramble and ivy carpets, anemone, male fern.
+			set = LocalVector<FloorSpec>({ gap_bramble, gap_bracken, gap_foxglove, fern, seedling,
+				{ P::PRESET_IVY, 0.6f, 0.0f, 0.9f, 0.9f, 1.3f, 6.0f, 0.45f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 25.0f },
+				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 6.0f, 0.4f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
+				{ P::PRESET_WOODRUFF, 0.3f, 0.1f, 0.7f, 0.9f, 1.2f, 4.0f, 0.2f, 0.5f, 1.0f, 0.15f, 0.0f, 0.5f, 20.0f },
+				moss, twigs, leaves, needles });
+			set[0].shade_max = 0.9f; // Bramble runs under oak, not only in gaps.
+			set[0].patch_cover = 0.5f;
+			break;
+		case FLOOR_MONTANE_CONIFER:
+			// Spruce, fir and beech: wood sorrel, ferns and bilberry on mixed litter.
+			set = LocalVector<FloorSpec>({ gap_bramble, gap_foxglove, fern, seedling, bilberry, sorrel, moss, twigs, leaves, needles });
+			set[2].density = 0.9f;
+			set[2].patch_cover = 0.6f;
+			break;
+		case FLOOR_SUBALPINE:
+			// Larch and spruce near the tree line: bilberry and heather, few herbs.
+			set = LocalVector<FloorSpec>({ fern, seedling, bilberry,
+				{ P::PRESET_HEATHER, 0.45f, 0.15f, 0.9f, 0.9f, 1.3f, 8.0f, 0.5f, 0.0f, 0.6f, 0.15f, 0.0f, 1.0f, 30.0f },
+				sorrel, moss, twigs, needles });
+			set[0].density = 0.3f;
+			set[2].density = 1.0f;
+			set[2].patch_cover = 0.8f;
+			set[2].conifer_min = 0.0f; // Bilberry under larch (needle litter, open crowns) too.
+			break;
+		case FLOOR_PINE_HEATH:
+			// Open pine crowns: bilberry, heather and wavy hair-grass, bracken in the gaps.
+			set = LocalVector<FloorSpec>({ gap_bracken, seedling, bilberry,
+				{ P::PRESET_HEATHER, 0.45f, 0.15f, 0.9f, 0.9f, 1.3f, 8.0f, 0.55f, 0.0f, 0.7f, 0.15f, 0.0f, 1.0f, 30.0f },
+				{ P::PRESET_DRY_GRASS, 0.3f, 0.0f, 0.7f, 0.7f, 1.1f, 6.0f, 0.45f, 0.0f, 0.8f, 0.15f, 0.0f, 1.0f, 15.0f },
+				moss, twigs, needles });
+			set[1].density = 0.25f;
+			set[2].density = 1.0f;
+			set[2].patch_cover = 0.7f;
+			set[2].conifer_min = 0.0f;
+			break;
+		case FLOOR_RIPARIAN:
+			// Alder and willow on wet ground: nettle, sedge, rush, ferns.
+			set = LocalVector<FloorSpec>({ { P::PRESET_NETTLE, 0.5f, 0.15f, 0.9f, 0.9f, 1.3f, 6.0f, 0.55f, 0.0f, 0.9f, 0.15f, 0.0f, 1.0f, 35.0f },
+				fern,
+				{ P::PRESET_SEDGE, 0.35f, 0.1f, 0.9f, 0.9f, 1.4f, 5.0f, 0.5f, 0.0f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f, 15.0f },
+				{ P::PRESET_RUSH, 0.6f, 0.2f, 0.7f, 0.9f, 1.2f, 5.0f, 0.4f, 0.0f, 0.8f, 0.15f, 0.0f, 1.0f, 30.0f, 8.0f },
+				moss, twigs, leaves });
+			break;
+		case FLOOR_HEDGEROW:
+			// Hedge bottoms: bramble, nettle, ivy, foxglove, fern.
+			set = LocalVector<FloorSpec>({ gap_bramble,
+				{ P::PRESET_NETTLE, 0.5f, 0.15f, 0.8f, 0.9f, 1.3f, 5.0f, 0.45f, 0.0f, 0.9f, 0.15f, 0.0f, 1.0f, 35.0f },
+				gap_foxglove, fern,
+				{ P::PRESET_IVY, 0.6f, 0.0f, 0.9f, 0.9f, 1.3f, 5.0f, 0.5f, 0.2f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f },
+				twigs, leaves });
+			set[0].shade_max = 0.95f;
+			set[0].density = 1.0f;
+			set[0].patch_cover = 0.7f;
+			break;
+		case FLOOR_MAX:
+			break;
+	}
+	TypedArray<Resource> out;
+	int seed_base = 1000 + int(p_stand) * 100;
+	for (const FloorSpec &f : set) {
+		Ref<PlantGenerator> gen;
+		gen.instantiate();
+		gen->set_textures(p_textures);
+		gen->set_preset(f.preset);
+		gen->apply_preset_colors();
+		gen->set_seed(seed_base);
+		Ref<PlantSpecies> sp;
+		sp.instantiate();
+		TypedArray<Mesh> meshes;
+		const TypedArray<ArrayMesh> v = gen->generate_variants(MAX(p_variants, 1));
+		for (int i = 0; i < v.size(); i++) {
+			meshes.push_back(v[i]);
+		}
+		sp->set_meshes(meshes);
+		sp->set_spacing(f.spacing);
+		sp->set_footprint(f.footprint);
+		sp->set_density(f.density);
+		sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
+		if (f.patch_scale > 0.0f) {
+			sp->set_patch_scale(f.patch_scale);
+			sp->set_patch_cover(f.patch_cover);
+			sp->set_patch_seed(seed_base + 7);
+		}
+		sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(f.shade_min, f.shade_max));
+		sp->set_rule_fade(PlantSpecies::RULE_SHADE, f.shade_fade);
+		if (f.conifer_min > 0.0f || f.conifer_max < 1.0f) {
+			sp->set_rule_range(PlantSpecies::RULE_CONIFER, Vector2(f.conifer_min, f.conifer_max));
+			sp->set_rule_fade(PlantSpecies::RULE_CONIFER, 0.15f);
+		}
+		if (f.water_max > 0.0f) {
+			sp->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, f.water_max));
+			sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, f.water_max * 0.3f);
+		}
+		sp->set_visibility_range(f.visibility);
+		sp->set_meta("floor", true);
+		out.push_back(sp);
+		seed_base += 11;
+	}
+	return out;
+}
+
 void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_preset", "preset"), &PlantGenerator::set_preset);
 	ClassDB::bind_method(D_METHOD("get_preset"), &PlantGenerator::get_preset);
@@ -3319,5 +3465,14 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_WOOD_ANEMONE);
 	BIND_ENUM_CONSTANT(PRESET_IVY);
 	BIND_ENUM_CONSTANT(PRESET_HEATHER);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true));
+	BIND_ENUM_CONSTANT(FLOOR_BEECH);
+	BIND_ENUM_CONSTANT(FLOOR_OAK_MIXED);
+	BIND_ENUM_CONSTANT(FLOOR_MONTANE_CONIFER);
+	BIND_ENUM_CONSTANT(FLOOR_SUBALPINE);
+	BIND_ENUM_CONSTANT(FLOOR_PINE_HEATH);
+	BIND_ENUM_CONSTANT(FLOOR_RIPARIAN);
+	BIND_ENUM_CONSTANT(FLOOR_HEDGEROW);
+	BIND_ENUM_CONSTANT(FLOOR_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }
