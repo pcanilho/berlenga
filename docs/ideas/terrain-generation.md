@@ -606,8 +606,47 @@ Found on the way: with a sea, the finest level kept the coarse outlet mask (a bu
 run-to-run difference; fixed before merging). Rivers ending in a lake could stop 0.35 m above its water where the shore's detail lifts the
 ground in the shallowest margin; a mouth now sits on the water.
 
+## Soil on mountainsides (fix, 10 Nov)
+
+The trees thread found every mountainside of the bench range bare: soil 0 and rock 0.9 to 1 on all slopes over
+about 30 degrees. Two defects in the stage 5 soil: the erosion rate fed to the soil production function counted
+stream incision K A^m S on every cell, so hillslope cells read their own small area as a stream (0.3 to 0.5 mm a
+year against 0.5 mm of production); and soil faded out from 60% of the critical gradient (27 degrees). Against
+the literature: soil-mantled hillslopes hold up to near the critical gradient (Roering, Kirchner and Dietrich
+1999), and threshold hillslopes of fast-eroding ranges keep thin forested soils (Heimsath et al. 2012; Larsen et
+al. 2014), with rock on sharp crests and cliffs. Now:
+
+- incision counts on channels only (20 to 200 cells of drainage, above the channel heads of Montgomery and
+  Dietrich 1988 hillslopes lower by creep and landslides);
+- creep is nonlinear (Roering et al. 1999, transport over 1 - (S/Sc)^2), so steep sharp crests lower fast and
+  go bare while rounded hilltops keep soil; curvature over a 3x3 window (the one-cell zigzag of threshold slopes
+  checkered the soil);
+- soil thins from 85% of the critical gradient, a third left at it, none past 110% (cliffs).
+
+Hillslope cells of the bench range (`--soil [--uplift=6]`; drainage under 1e5 m2, 40 m above the lowest ground):
+
+| slope | before: soil / rock / share with 0.2 m | after |
+| --- | --- | --- |
+| 20-25 | 0.13 m / 0.46 / 41% | 0.94 m / 0.17 / 77% |
+| 25-30 | 0.07 / 0.63 / 7% | 0.86 / 0.19 / 71% |
+| 30-35 | 0.02 / 0.67 / 0% | 0.75 / 0.30 / 56% |
+| 35-40 | 0.00 / 0.72 / 0% | 0.68 / 0.36 / 54% |
+| 40-45 | 0.00 / 0.96 / 0% | 0.59 / 0.20 / 77% |
+
+(uplift 2; with uplift 6, 30-35 degrees goes from 9% to 87% of cells with soil, 40-45 from 0% to 65%). The relief
+is unchanged; only the geology maps move. Map fork/terrain/soil_before_after.png. The slope distribution itself
+(40% of hillslope cells at 35 to 45 degrees, piled at the 40 degree `critical_slope`) is a threshold landscape;
+real ones sit nearer 30 to 35 degrees (Montgomery and Brandon 2002), which `critical_slope = 35` gives.
+
 ## Sources
 
+- Roering, Kirchner, Dietrich, Evidence for nonlinear, diffusive sediment transport on hillslopes, Water Resources
+  Research 35, 1999.
+- Heimsath, DiBiase, Whipple, Soil production limits and the transition to bedrock-dominated landscapes, Nature
+  Geoscience 5, 2012.
+- Larsen, Almond, Eger et al., Rapid soil production and weathering in the Southern Alps, Science 343, 2014.
+- Montgomery, Dietrich, Where do channels begin?, Nature 336, 1988.
+- Montgomery, Brandon, Topographic controls on erosion rates in tectonically active mountain ranges, EPSL 201, 2002.
 - Tzathas, Gailleton, Steer, Cordonnier, Physically-based analytical erosion for fast terrain generation, Computer
   Graphics Forum 43(2), 2024.
 - Smith, Barstad, A linear theory of orographic precipitation, Journal of the Atmospheric Sciences 61, 2004.
