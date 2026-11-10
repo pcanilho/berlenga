@@ -262,7 +262,7 @@ for _glsl in _water_glsl:
 
 # FFT ocean spectrum layer (Phase 2) -- each shader is self-contained (its own
 # small Params block), no shared _inc.glsl, so no extra Depends() needed.
-_water_fft_glsl = ("water_spectrum_init.glsl", "water_spectrum_evolve.glsl", "water_fft.glsl")
+_water_fft_glsl = ("water_spectrum_init.glsl", "water_spectrum_evolve.glsl", "water_fft.glsl", "water_fft_rows.glsl")
 for _glsl in _water_fft_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))
 

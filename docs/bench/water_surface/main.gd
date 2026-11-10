@@ -12,12 +12,15 @@ extends Node3D
 #   --view=surf     low along the beach, the shore waves rolling in and breaking (--node=shore_waves:true)
 #   --view=lip      low in the shallows, looking back at the plunging lips (--node=shore_waves:true)
 #   --view=sea      out to sea from 6 m up (with --node=wave_cascades:3 for swell under the chop)
+#   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
 #   --frames=N      frames rendered before --out is saved (default 12)
 #   --set=setting:value  any project setting, e.g. --set=rendering/pathtracing/refraction:0
 #   --out=path.png  save the last frame and quit
+#   --height-out=path.png  the surface height over 160 m of open sea (sample_height), and the slope spread along x and
+#                   z, at the last frame
 #   --debug=N       path tracing debug view (Environment.pathtracing_debug_mode)
 #   --water=param:value  a water shader parameter, e.g. --water=pathtraced_scattering:Vector3(0,0,0)
 #   --node=prop:value  a PhysXWaterSurface3D property (e.g. live_flow:false)
@@ -66,6 +69,7 @@ var tracer_rng := RandomNumberGenerator.new()
 var n := 0
 var water: Node3D
 var sea_series := PackedFloat32Array()
+var height_out := ""
 var profile := false
 var perf := false
 var breakers := false
@@ -78,6 +82,39 @@ var perf_phys := 0.0
 var perf_n := 0
 
 
+# The surface height from sample_height() on a 256 x 256 grid over 160 m of open sea, grey from -2 to +2 sigma,
+# and the mean square slope along x and z: their ratio shows the directional spread (Cox and Munk 1954 measured
+# upwind / crosswind 1.48 at 14 m/s).
+func _save_heights() -> void:
+	var px := 256
+	var span := 160.0
+	var h := PackedFloat32Array()
+	h.resize(px * px)
+	var mean := 0.0
+	for y in px:
+		for x in px:
+			var v := float(water.call("sample_height", Vector3((x + 0.5) / px * span - span * 0.5, 0.0, -100.0 + (y + 0.5) / px * span - span * 0.5)))
+			h[y * px + x] = v
+			mean += v
+	mean /= px * px
+	var var_h := 0.0
+	var sx := 0.0
+	var sz := 0.0
+	var dx := span / px
+	for y in px - 1:
+		for x in px - 1:
+			var v := h[y * px + x] - mean
+			var_h += v * v
+			sx += pow((h[y * px + x + 1] - h[y * px + x]) / dx, 2)
+			sz += pow((h[(y + 1) * px + x] - h[y * px + x]) / dx, 2)
+	var sigma := sqrt(var_h / ((px - 1) * (px - 1)))
+	var img := Image.create(px, px, false, Image.FORMAT_L8)
+	for y in px:
+		for x in px:
+			img.set_pixel(x, y, Color.from_hsv(0, 0, clampf(0.5 + (h[y * px + x] - mean) / (4.0 * sigma), 0.0, 1.0)))
+	img.save_png(height_out)
+	print("heights: Hs %.2f m, mean square slope along x %.4f, along z %.4f, z/x %.2f (wind direction %s)" % [4.0 * sigma, sx / ((px - 1) * (px - 1)), sz / ((px - 1) * (px - 1)), sz / maxf(sx, 1e-9), water.get("wind_direction")])
+
 func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--view="): view = a.substr(7)
@@ -85,6 +122,7 @@ func _ready() -> void:
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
+		elif a.begins_with("--height-out="): height_out = a.substr(13)
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--current="):
@@ -236,6 +274,8 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(0.0, 40.0, -6.0), Vector3(0.0, 0.0, -6.01))
 		"sea":
 			cam.look_at_from_position(Vector3(0, 4.0, -40.0), Vector3(0, -1.0, -110.0))
+		"sea_top":
+			cam.look_at_from_position(Vector3(0, 90.0, -110.0), Vector3(0, 0.0, -110.01))
 		_:
 			cam.look_at_from_position(Vector3(0, 4.5, 12.0), Vector3(0, -0.5, -6.0))
 
@@ -375,6 +415,8 @@ func _process(_delta: float) -> void:
 			var h := float(water.call("sample_height", Vector3(0.0, 0.0, z)))
 			line += "z=%d h=%.2f  " % [z, h]
 		print(line)
+	if height_out != "" and n == frames - 1:
+		_save_heights()
 	if view == "sea" and n > 30:
 		# Significant wave height, 4 sigma of the height at one point over time (a line through the square is
 		# shorter than the swell).
