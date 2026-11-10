@@ -56,6 +56,11 @@ class PhysXHair3D : public Node3D {
 	float roughness = 0.3f;
 	float radial_roughness = 0.3f;
 	bool hair_shading = true;
+	bool lod_enabled = true;
+	float lod_start_distance = 2.0f;
+	float lod_end_distance = 12.0f;
+	float lod_strand_ratio = 0.25f;
+	float lod_width_scale = 1.0f; // last set on the material
 	Ref<ShaderMaterial> render_material;
 
 	bool simulating = true;
@@ -121,6 +126,14 @@ public:
 	float get_radial_roughness() const;
 	void set_hair_shading(bool p_enabled);
 	bool is_hair_shading() const;
+	void set_lod_enabled(bool p_enabled);
+	bool is_lod_enabled() const;
+	void set_lod_start_distance(float p_distance);
+	float get_lod_start_distance() const;
+	void set_lod_end_distance(float p_distance);
+	float get_lod_end_distance() const;
+	void set_lod_strand_ratio(float p_ratio);
+	float get_lod_strand_ratio() const;
 	void set_render_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_render_material() const;
 

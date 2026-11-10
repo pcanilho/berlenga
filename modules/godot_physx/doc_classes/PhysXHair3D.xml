@@ -55,6 +55,18 @@
 		<member name="local_stiffness" type="float" setter="set_local_stiffness" getter="get_local_stiffness" default="0.9">
 			How strongly each segment keeps its groomed angle to its parent, so bends, waves and curls stay in (TressFX's local shape constraint; halved and capped at 0.95 inside, as TressFX does). [code]0[/code] hangs like rope.
 		</member>
+		<member name="lod_enabled" type="bool" setter="set_lod_enabled" getter="is_lod_enabled" default="true">
+			Distance level of detail, as AMD TressFX: between [member lod_start_distance] and [member lod_end_distance] from the camera, the rasterizer draws a shrinking random share of the strands, down to [member lod_strand_ratio], and widens the rest so the hair keeps its opacity. Far away, strands are thinner than a pixel, so fewer, wider ones look the same for less fill. The simulation and the path tracer always keep every strand at its real width. Off, every strand is drawn at any distance.
+		</member>
+		<member name="lod_end_distance" type="float" setter="set_lod_end_distance" getter="get_lod_end_distance" default="12.0">
+			The camera distance (metres, to this node) at and beyond which only [member lod_strand_ratio] of the strands are drawn.
+		</member>
+		<member name="lod_start_distance" type="float" setter="set_lod_start_distance" getter="get_lod_start_distance" default="2.0">
+			The camera distance (metres, to this node) within which every strand is drawn.
+		</member>
+		<member name="lod_strand_ratio" type="float" setter="set_lod_strand_ratio" getter="get_lod_strand_ratio" default="0.25">
+			The share of the strands drawn at [member lod_end_distance] and beyond, each widened by its inverse.
+		</member>
 		<member name="max_speed" type="float" setter="set_max_speed" getter="get_max_speed" default="12.0">
 			The fastest a point may move, in m/s, so a sudden jump of the head doesn't fling the hair.
 		</member>

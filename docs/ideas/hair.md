@@ -378,6 +378,40 @@ Ours (PhysXHair3D `hair_shading`, default on; off = the previous standard lighti
 
 Bench: `--scene=strands_sim --raster --hair=wind_wavy[_back][_blonde][_plain]`.
 
+## Stage 2f: distance LOD
+
+Hair far away is all fill: tens of thousands of blended ribbons, each under a pixel. What
+engines do:
+
+- TressFX 4.1: `LODStartDistance`, `LODEndDistance`, `LODPercent` and `LODWidthMultiplier`;
+  the strands are shuffled at load, so drawing the first share of them is an even random subset,
+  and the drawn ones are widened.
+- Unreal groom: LOD levels with a curve decimation share and a thickness scale per level, then
+  cards and meshes further out; strand count follows screen size.
+- HairWorks: density and width scaled with distance (`lodDistanceFactor`, `lodWidthFactor`).
+
+Ours (PhysXHair3D `lod_enabled`, `lod_start_distance` 2 m, `lod_end_distance` 12 m,
+`lod_strand_ratio` 0.25): the share drawn falls linearly with camera distance to the ratio. Each
+strand has a fixed random rank (PCG hash of its index), and MODE_OUTPUT flags a strand ranked
+above the share by adding 2 to its texels' w. The render shader collapses flagged strands in
+raster (zero width, no fragments) and widens the rest by 1 / share, so with TressFX coverage the
+hair's total opacity stays the same. The padding past a strand's end now also draws nothing
+(before, a zero-coverage ribbon). The simulation (guides and followers) and the path tracer keep
+every strand at real width: path tracing must not lose detail, and a dropped strand that came
+back would need its follow positions anyway.
+
+Found while measuring it: since #203 the pixel size was computed from `PROJECTION_MATRIX[1][1]`,
+which is negative (the projection flips y), so it came out huge and every raster strand was
+widened by the 1 cm cap (2 mm in shadow maps) instead of 0.71 px: hair was a soft smudge of 2 cm
+ribbons at any distance, and that much wider ribbon hid the LOD's drop in strands. With `abs()`
+the strands are sharp, a near frame renders about 3x faster on lavapipe, and LOD at 8 m matches
+drawing every strand (mean colour within 0.3/255) while the frame takes about a third less.
+
+Not done: dropping the vertex work too (the index buffer still covers every slot; a draw range
+over the sorted slots could do it), screen-size rather than distance, and cards at range.
+
+Bench: `--scene=strands_sim --raster --hair=wind_wavy_far[_nolod]`.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.

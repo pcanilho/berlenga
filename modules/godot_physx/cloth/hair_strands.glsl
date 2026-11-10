@@ -34,7 +34,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 accel; // xyz gravity (m/s^2), w local shape stiffness (per iteration)
 	vec4 wind; // xyz air velocity (m/s), w gust strength (0..1)
 	vec4 misc; // x VSP coefficient, y collision margin (m), z time (s), w VSP acceleration threshold (m/s^2)
-	vec4 air; // x speed clamp (m/s), y turbulence (0..1), z turbulence eddy size (m), w unused
+	vec4 air; // x speed clamp (m/s), y turbulence (0..1), z turbulence eddy size (m), w share of strands the rasterizer draws (LOD)
 	vec4 inertia; // x local shape iterations, y length iterations, z points per output slot (0: no sorting), w sort size (a power of two)
 	mat4 xform_prev; // groom space -> world, last frame
 	mat4 xform_cur; // groom space -> world, this frame
@@ -93,6 +93,14 @@ vec3 rotate_between(vec3 a, vec3 b, vec3 v) {
 
 float hash11(float x) {
 	return fract(sin(x * 12.9898) * 43758.5453);
+}
+
+// A fixed random rank in 0..1 per strand (PCG hash), for the LOD subset.
+float strand_rank(int s) {
+	uint v = uint(s) * 747796405u + 2891336453u;
+	uint w = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
+	w = (w >> 22u) ^ w;
+	return float(w) * (1.0 / 4294967296.0);
 }
 
 // Smooth divergence-light swirl in -1..1 at q (in eddies): two octaves of crossed sines.
@@ -155,6 +163,12 @@ void main() {
 		int sn = strands[strand].y;
 		int sp = strands[strand].x + clamp(k, 0, max(sn - 1, 0));
 		float along = k < sn ? float(k) / float(max(sn - 1, 1)) : -1.0;
+		// Distance LOD (TressFX): a fixed random subset of the strands is left out of the raster
+		// draw, flagged by along + 2; the render shader widens the rest to keep the hair's opacity.
+		// The path tracer still draws every strand at its real width.
+		if (along >= 0.0 && strand_rank(strand) >= air.w) {
+			along += 2.0;
+		}
 		imageStore(out_image, ivec2(id % w, id / w), vec4(to_world(world_to_out, pos[sp].xyz), along));
 		return;
 	}
