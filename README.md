@@ -17,6 +17,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
 - **Terrain**: mountain ranges raised and eroded per seed; non-destructive height brushes; terrain data maps.
+- **Snow**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced.
 - **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Clouds**: a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
@@ -328,6 +329,30 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Cloud shadows moving across a field, seen from above, path traced](docs/media/weather-cloud-shadows.jpg)
 
 *Cloud shadows: dark patches on the ground under the clouds.*
+
+</details>
+
+### Snow
+- **Snow cover** (`SnowCover3D`): a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift.
+- **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced.
+
+<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt</summary>
+
+![Snow on a mountain, raster and path traced](docs/media/snow-mountain.jpg)
+
+*Snow cover: deep on the cold summit, thinning to patches lower down.*
+
+![Thin snow over the ground and props, raster and path traced](docs/media/snow-props.jpg)
+
+*Thin snow: ground and props partly covered, raster and path traced match.*
+
+![Time-lapse of snow building up and melting on a mountain](docs/media/snow-mountain.gif)
+
+*Snowfall and melt: snow builds up down the slopes, then melts back to the summit.*
+
+![Time-lapse of snow building up on props](docs/media/snow-props.gif)
+
+*Snowfall on props: the ground covers first, then the flatter tops of the props.*
 
 </details>
 
