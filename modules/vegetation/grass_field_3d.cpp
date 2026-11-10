@@ -527,6 +527,7 @@ global uniform vec4 grass_ground_dry; // rgb: thatch colour; a: the grass's dryn
 global uniform vec4 grass_ground_params; // x: colour variation.
 )";
 	code += GRASS_COLOR_CODE;
+	code += VegetationField3D::get_floor_shader_code();
 	code += R"(
 float grass_ground_cover(vec3 world_pos) {
 	if (grass_ground_rect.z <= 0.0) {
@@ -557,7 +558,10 @@ vec3 grass_turf(vec3 world_pos) {
 	return c;
 }
 
+// The ground's albedo under the vegetation: litter where the canopy closes (forest_floor()), then
+// the sward's turf where grass grows.
 vec3 grass_ground(vec3 world_pos, vec3 albedo) {
+	albedo = forest_floor(world_pos, albedo);
 	float cover = grass_ground_cover(world_pos);
 	if (cover <= 0.0) {
 		return albedo;

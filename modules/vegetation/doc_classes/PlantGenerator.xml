@@ -146,7 +146,7 @@
 			White water lily: round floating pads with a cleft to the stalk and a few white flowers on the surface. Its origin is the water surface (see [member PlantSpecies.floating]).
 		</constant>
 		<constant name="PRESET_NEEDLE_LITTER" value="24" enum="Preset">
-			Needle litter: a low rusty mat of fallen pine and spruce needles with loose needles, a few cones; the floor under conifers.
+			Needle litter: loose fallen needles lying across each other and a few cones, the relief over the needle carpet that [method VegetationField3D.get_floor_shader_code] draws on the ground under conifers.
 		</constant>
 		<constant name="PRESET_TWIGS" value="25" enum="Preset">
 			Fallen twigs and small branches lying on the forest floor.
@@ -155,7 +155,7 @@
 			Wood sorrel: carpets of three folded heart-shaped leaflets on slender stalks, with a few white flowers; for shady woods.
 		</constant>
 		<constant name="PRESET_SEEDLING" value="27" enum="Preset">
-			Tree seedling: a thin zigzag woody stem with flat sprays of oval, wavy-edged leaves, 10 to 60 cm tall.
+			Tree seedling: a thin zigzag woody stem with two-ranked oval, wavy-edged leaves, 8 to 75 cm tall; the youngest keep their broad seed leaves, older ones grow flat side sprays from the upper nodes (shade form).
 		</constant>
 		<constant name="PRESET_FEATHER_MOSS" value="28" enum="Preset">
 			Feather moss: wide, flat, yellow-green carpets as under spruce and pine.

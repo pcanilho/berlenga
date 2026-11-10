@@ -1392,46 +1392,22 @@ static float tex_fbm(float p_x, float p_y, uint32_t p_seed) {
 // Needle litter under pines and spruces: a low, rusty mat with loose needles lying on it, a few
 // cones, a twig.
 void PlantGenerator::_build_needle_litter() {
-	Builder &b = builders[SURFACE_CENTRE];
+	// The ground's own shader draws the needle carpet (VegetationField3D.get_floor_shader_code());
+	// this adds its relief near the camera: loose needles lying across each other, and cones.
 	const float radius = _rand(0.12f, 0.2f);
-	const int rings = 4;
-	const int sectors = 16;
-	const int first = b.verts.size();
-	const float ph = _rand(0.0f, Math::TAU);
-	for (int r = 0; r <= rings; r++) {
-		const float u = float(r) / rings;
-		for (int k = 0; k < sectors; k++) {
-			const float a = k * Math::TAU / sectors;
-			const float rr = radius * u * (1.0f + 0.15f * Math::sin(3.0f * a + ph));
-			const float x = Math::cos(a) * rr;
-			const float z = Math::sin(a) * rr;
-			b.verts.push_back(Vector3(x, 0.012f * (1.0f - u * u) * (1.0f + 0.4f * Math::sin(x * 60.0f + z * 45.0f + ph)) - 0.002f, z));
-			b.uvs.push_back(Vector2(x, z) / 0.05f);
-			b.uv2s.push_back(Vector2(0.0f, 0.0f));
-			const float ao = Math::lerp(1.0f, 0.8f, u);
-			b.colors.push_back(Color(ao, ao, ao));
-		}
-	}
-	for (int r = 0; r < rings; r++) {
-		for (int k = 0; k < sectors; k++) {
-			const int a = first + r * sectors + k;
-			const int c = first + r * sectors + (k + 1) % sectors;
-			b.indices.append_array(PackedInt32Array({ a, c, a + sectors, c, c + sectors, a + sectors }));
-		}
-	}
 	// Loose needles on top, crossing every way.
 	Leaf n;
 	n.shape = LEAF_LINEAR;
 	n.width = 0.0012f;
 	n.fold = 0.0f;
 	n.segments = 2;
-	const int needles = int(_rand(90.0f, 160.0f));
+	const int needles = int(_rand(70.0f, 120.0f));
 	for (int i = 0; i < needles; i++) {
 		n.length = _rand(0.012f, 0.045f); // Spruce short, pine long.
 		n.bend = _rand(-0.3f, 0.3f);
 		const float r = radius * 1.1f * Math::sqrt(rng.randf());
 		const float a = _rand(0.0f, Math::TAU);
-		const float lift = 0.012f * (1.0f - MIN(r / radius, 1.0f) * MIN(r / radius, 1.0f));
+		const float lift = 0.0f;
 		const Vector3 at(Math::cos(a) * r, lift + 0.001f + 0.003f * rng.randf(), Math::sin(a) * r);
 		const float k = _rand(0.7f, 1.3f);
 		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.15f, 0.15f)), Vector3(0, 1, 0)), at), n, 0.0f, 0.9f, Color(k, k * 0.9f, k * 0.8f));
@@ -1469,19 +1445,20 @@ void PlantGenerator::_build_twigs() {
 // Wood sorrel (Oxalis acetosella): carpets of three folded, heart-shaped leaflets on slender
 // reddish stalks; a few white flowers veined with lilac.
 void PlantGenerator::_build_wood_sorrel() {
-	const int leaves = int(_rand(6.0f, 14.0f));
+	// Leaves rise singly from a creeping rhizome, so they spread as a patch, held level 5 to 9 cm up.
+	const int leaves = int(_rand(10.0f, 20.0f));
 	for (int i = 0; i < leaves; i++) {
-		Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.2f, 1.5f));
-		base.origin = Vector3(_rand(-0.05f, 0.05f), 0.0f, _rand(-0.05f, 0.05f));
-		const Transform3D top = _add_stem(base, _rand(0.05f, 0.11f), 0.0009f, 0.0007f, _rand(0.2f, 0.6f), 4, 0.0f);
+		Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.35f, 1.55f));
+		base.origin = Vector3(_rand(-0.09f, 0.09f), 0.0f, _rand(-0.09f, 0.09f));
+		const Transform3D top = _add_stem(base, _rand(0.05f, 0.09f), 0.0009f, 0.0007f, _rand(0.05f, 0.25f), 4, 0.0f);
 		const float spin = _rand(0.0f, Math::TAU);
 		Leaf l;
 		l.shape = LEAF_SPATULATE; // Obcordate: widest at the notched tip.
 		l.lobes = 1;
 		l.lobe_depth = 0.25f;
-		l.width = _rand(0.014f, 0.022f);
-		l.length = l.width * 0.9f;
-		l.fold = _rand(0.3f, 0.7f); // Folded along the midrib, more in strong light.
+		l.width = _rand(0.016f, 0.024f);
+		l.length = l.width * 0.85f;
+		l.fold = _rand(0.15f, 0.4f); // Folded along the midrib; open in the shade, shut in sun.
 		l.bend = 0.3f;
 		l.segments = 5;
 		for (int k = 0; k < 3; k++) {
@@ -1506,34 +1483,71 @@ void PlantGenerator::_build_wood_sorrel() {
 	}
 }
 
-// Tree seedling (beech-like): a thin woody stem, zigzag at the buds, carrying flat sprays of
-// oval leaves with wavy margins; under a closed canopy they wait for a gap, 10 to 60 cm tall.
+// Tree seedling (beech-like): a thin woody stem, zigzag at the buds, two-ranked oval leaves with
+// wavy margins held flat. First-year plants still carry the broad fleshy seed leaves; older ones
+// (advance regeneration, waiting under the canopy for a gap) grow flat horizontal sprays from the
+// upper nodes, the shade form that catches the 1 to 5% of light that reaches the floor.
 void PlantGenerator::_build_seedling() {
-	const float len = _rand(0.12f, 0.6f);
-	Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.4f, 1.55f));
-	const int nodes = MAX(3, int(len * 14.0f));
+	const float len = _rand(0.08f, 0.75f);
+	const float age = CLAMP((len - 0.15f) / 0.5f, 0.0f, 1.0f);
+	const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.4f, 1.55f));
+	const int nodes = MAX(3, int(2.0f + len * 15.0f));
+	const float r_base = 0.0015f + 0.004f * len;
+	Leaf l;
+	l.shape = LEAF_OVATE;
+	l.lobes = 6;
+	l.lobe_depth = 0.04f;
+	l.petiole = 0.06f;
+	l.fold = 0.15f;
+	l.bend = 0.1f;
+	l.segments = 6;
+	const Vector3 up(0, 1, 0);
 	Transform3D at = base;
 	float az = _rand(0.0f, Math::TAU);
 	for (int k = 0; k < nodes; k++) {
+		const float t0 = float(k) / nodes, t1 = float(k + 1) / nodes;
 		const float seg = len / nodes;
 		// Zigzag: the stem turns a little at every bud.
-		const Vector3 d = (at.basis.get_column(2) + Vector3(Math::cos(az), 0.0f, Math::sin(az)) * 0.18f).normalized();
-		at = _add_stem(Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), seg, 0.0028f * (1.0f - 0.6f * k / nodes), 0.0028f * (1.0f - 0.6f * (k + 1) / nodes), 0.0f, 1, float(k) / nodes);
+		const Vector3 d = (at.basis.get_column(2) + Vector3(Math::cos(az), 0.0f, Math::sin(az)) * 0.16f).normalized();
+		at = _add_stem(Transform3D(organ_frame(d, up), at.origin), seg, r_base * (1.0f - 0.6f * t0), r_base * (1.0f - 0.6f * t1), 0.0f, 1, t0);
 		az += Math::PI;
-		if (k > 0 || nodes <= 3) {
-			// Two-ranked leaves held flat to catch the little light.
-			Leaf l;
-			l.shape = LEAF_OVATE;
-			l.lobes = 6;
-			l.lobe_depth = 0.04f;
-			l.length = _rand(0.035f, 0.07f);
-			l.width = l.length * 0.6f;
-			l.petiole = 0.08f;
-			l.fold = 0.15f;
-			l.bend = 0.1f;
-			l.segments = 6;
-			const Vector3 side(Math::cos(az), 0.0f, Math::sin(az));
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((side + Vector3(0, 0.15f, 0)).normalized(), Vector3(0, 1, 0)), at.origin), l, float(k + 1) / nodes);
+		const Vector3 side(Math::cos(az), 0.0f, Math::sin(az));
+		if (k == 0 && age < 0.3f) {
+			// Seed leaves: a fleshy pair, fan-shaped, wider than long.
+			Leaf c = l;
+			c.lobes = 0;
+			c.length = _rand(0.015f, 0.02f);
+			c.width = c.length * 1.8f;
+			c.petiole = 0.1f;
+			c.fold = 0.05f;
+			for (int s = -1; s <= 1; s += 2) {
+				const Vector3 cd = (Vector3(-side.z, 0.0f, side.x) * float(s) + Vector3(0, 0.25f, 0)).normalized();
+				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(cd, up), at.origin), c, t1);
+			}
+			continue;
+		}
+		// Shade leaves: large and thin, the lowest the oldest.
+		l.length = _rand(0.045f, 0.075f) * (0.75f + 0.25f * age);
+		l.width = l.length * _rand(0.55f, 0.65f);
+		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((side + Vector3(0, 0.12f, 0)).normalized(), up), at.origin), l, t1);
+		// Side shoots from the upper nodes, longest low down: a layered, flat crown.
+		if (age > 0.25f && t1 > 0.3f && t1 < 0.92f && rng.randf() < 0.3f + 0.35f * age) {
+			const Vector3 sd = (side + Vector3(0, _rand(0.0f, 0.15f), 0)).normalized();
+			const float sl = len * (0.1f + 0.3f * (1.0f - t1)) * _rand(0.7f, 1.1f);
+			const int sn = MAX(2, int(sl * 32.0f));
+			Transform3D s_at(organ_frame(sd, up), at.origin);
+			float s_side = rng.randf() < 0.5f ? -1.0f : 1.0f;
+			for (int j = 0; j < sn; j++) {
+				const Vector3 fwd = s_at.basis.get_column(2);
+				s_at = _add_stem(Transform3D(organ_frame((fwd + Vector3(0, -0.04f, 0)).normalized(), up), s_at.origin), sl / sn, r_base * 0.45f * (1.0f - 0.5f * j / sn), r_base * 0.45f * (1.0f - 0.5f * (j + 1) / sn), 0.0f, 1, t1);
+				// Two-ranked: leaves alternate left and right in the shoot's flat plane.
+				const Vector3 across = fwd.cross(up).normalized() * s_side;
+				s_side = -s_side;
+				Leaf sl_leaf = l;
+				sl_leaf.length = _rand(0.035f, 0.065f) * (1.0f - 0.25f * j / sn);
+				sl_leaf.width = sl_leaf.length * _rand(0.55f, 0.65f);
+				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((across + fwd * 0.45f + Vector3(0, 0.05f, 0)).normalized(), up), s_at.origin), sl_leaf, MIN(1.0f, t1 + 0.1f * (j + 1)));
+			}
 		}
 	}
 }

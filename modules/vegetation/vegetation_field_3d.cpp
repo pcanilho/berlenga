@@ -38,6 +38,7 @@
 #include "core/templates/hashfuncs.h"
 #include "scene/3d/multimesh_instance_3d.h"
 #include "scene/resources/multimesh.h"
+#include "servers/rendering/rendering_server.h"
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/weather/weather_map_3d.h"
@@ -360,6 +361,7 @@ Error VegetationField3D::populate() {
 		}
 	}
 	_publish_canopy(rect);
+	_publish_floor(rect);
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("populated"));
 	return OK;
@@ -465,6 +467,200 @@ void VegetationField3D::_publish_canopy(const Rect2 &p_rect) {
 	wm->set_canopy_map(ImageTexture::create_from_image(img));
 }
 
+// The forest floor under the placed crowns, for the ground's shader (get_floor_shader_code()):
+// canopy closure (the shade, 1 - transmitted sky light) in red and the conifer share of the
+// cover in green, on half-metre cells. Under a closed canopy the floor is litter, not soil
+// (docs/ideas/forest-floor.md), and its kind follows the trees: leaves under broadleaves,
+// needles and moss under conifers.
+void VegetationField3D::_publish_floor(const Rect2 &p_rect) {
+	if (!forest_floor_enabled || !is_inside_tree() || crowns.is_empty()) {
+		return; // Another field with crowns may own the floor map; an empty one leaves it alone.
+	}
+	const int w = CLAMP(int(Math::ceil(p_rect.size.x * 2.0f)), 1, 2048);
+	const int h = CLAMP(int(Math::ceil(p_rect.size.y * 2.0f)), 1, 2048);
+	Vector<uint8_t> data;
+	data.resize(w * h * 2);
+	uint8_t *d = data.ptrw();
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			const Vector2 p = p_rect.position + Vector2((x + 0.5f) * p_rect.size.x / w, (y + 0.5f) * p_rect.size.y / h);
+			float conifer = 0.0f;
+			const float shade = _shade_at(p, &conifer);
+			d[(y * w + x) * 2 + 0] = uint8_t(CLAMP(shade, 0.0f, 1.0f) * 255.0f + 0.5f);
+			d[(y * w + x) * 2 + 1] = uint8_t(CLAMP(conifer, 0.0f, 1.0f) * 255.0f + 0.5f);
+		}
+	}
+	floor_texture = ImageTexture::create_from_image(Image::create_from_data(w, h, false, Image::FORMAT_RG8, data));
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->global_shader_parameter_set("forest_floor_map", floor_texture->get_rid());
+	rs->global_shader_parameter_set("forest_floor_rect", Vector4(p_rect.position.x, p_rect.position.y, p_rect.size.x, p_rect.size.y));
+}
+
+void VegetationField3D::set_forest_floor_enabled(bool p_enabled) {
+	forest_floor_enabled = p_enabled;
+	if (!p_enabled && floor_texture.is_valid() && is_inside_tree()) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("forest_floor_rect", Vector4());
+		floor_texture.unref();
+	}
+}
+
+String VegetationField3D::get_floor_shader_code() {
+	return R"(
+// VegetationField3D forest floor, for terrain shaders (docs/ideas/forest-floor.md). Under a closed
+// canopy only 1 to 5% of daylight reaches the ground and the floor is a continuous litter layer
+// 2 to 10 cm deep (Gilliam 2007): fallen leaves under broadleaves, needles over feather moss
+// under conifers. Litter is the ground's own material here (the litter-material recipe of
+// forest games: a floor material matching the canopy, 3D litter and plants on top near the
+// camera), so no soil shows between plants. Leaves are a stochastic sprite layer: jittered
+// cells, one leaf per cell at a random turn and size, overlapping their neighbours, two layers;
+// needles the same with thin strokes. Each layer fades to its mean colour once a pixel covers
+// its detail, so it neither aliases nor costs anything far away.
+global uniform sampler2D forest_floor_map : filter_linear;
+global uniform vec4 forest_floor_rect; // xy: corner, zw: size; z 0 = no forest.
+
+vec2 ff_hash2(vec2 p) {
+	p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+	return fract(sin(p) * 43758.5453);
+}
+
+float ff_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(ff_hash2(i).x, ff_hash2(i + vec2(1.0, 0.0)).x, f.x), mix(ff_hash2(i + vec2(0.0, 1.0)).x, ff_hash2(i + vec2(1.0, 1.0)).x, f.x), f.y);
+}
+
+// Closure (x) and conifer share (y) at a point; zero outside the map.
+vec2 forest_floor_at(vec3 world_pos) {
+	if (forest_floor_rect.z <= 0.0) {
+		return vec2(0.0);
+	}
+	vec2 uv = (world_pos.xz - forest_floor_rect.xy) / forest_floor_rect.zw;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec2(0.0);
+	}
+	return textureLod(forest_floor_map, uv, 0.0).rg;
+}
+
+// Fallen leaves of one layer, cell size s metres. rgb: colour, a: cover.
+vec4 ff_leaf_layer(vec2 xz, float s, float seed) {
+	vec2 p = xz / s + seed;
+	vec2 cell = floor(p);
+	float best = -1.0;
+	vec4 col = vec4(0.0);
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 c = cell + vec2(float(i), float(j));
+			vec2 h = ff_hash2(c);
+			vec2 h2 = ff_hash2(c + 17.31);
+			vec2 centre = c + 0.15 + 0.7 * h;
+			float ang = h.y * 6.2832;
+			vec2 dir = vec2(cos(ang), sin(ang));
+			vec2 q = p - centre;
+			float len = 0.55 + 0.4 * h2.x; // Half length, in cells.
+			float u = dot(q, dir) / len;
+			float v = dot(q, vec2(-dir.y, dir.x)) / (len * 0.6);
+			// Ovate, pointed at the tip, curled leaves read narrower.
+			float wdt = (1.0 - u * u) * (1.0 - 0.35 * u) * (0.7 + 0.3 * h2.y);
+			float inside = wdt - v * v;
+			if (inside > 0.0 && h2.y > best) {
+				best = h2.y;
+				// Beech and oak litter: orange-brown fresh, dark brown decaying, pale and grey-brown bleached.
+				float k = fract(h.x * 7.13 + h2.x * 3.7);
+				vec3 c0 = k < 0.55 ? vec3(0.24, 0.115, 0.045) : (k < 0.8 ? vec3(0.15, 0.08, 0.037) : (k < 0.92 ? vec3(0.3, 0.19, 0.1) : vec3(0.15, 0.12, 0.085)));
+				c0 *= 0.85 + 0.3 * ff_noise(q * 3.0 + c);
+				// Midrib and veins catch the light; the rim curls up and shades the leaf below.
+				float vein = 1.0 + 0.25 * (1.0 - smoothstep(0.0, 0.06, abs(v))) * step(-0.9, u);
+				float rim = 0.7 + 0.3 * smoothstep(0.0, 0.25, inside);
+				col = vec4(c0 * vein * rim, 1.0);
+			}
+		}
+	}
+	return col;
+}
+
+// Fallen needles, cell size s: two strokes per cell over the duff.
+vec4 ff_needle_layer(vec2 xz, float s, float seed) {
+	vec2 p = xz / s + seed;
+	vec2 cell = floor(p);
+	vec4 col = vec4(0.0);
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 c = cell + vec2(float(i), float(j));
+			for (int n = 0; n < 2; n++) {
+				vec2 h = ff_hash2(c + float(n) * 31.7);
+				vec2 h2 = ff_hash2(c + float(n) * 31.7 + 5.1);
+				vec2 q = p - (c + h);
+				float ang = h2.x * 6.2832;
+				vec2 dir = vec2(cos(ang), sin(ang));
+				float u = dot(q, dir);
+				float v = dot(q, vec2(-dir.y, dir.x));
+				float half_len = 0.8 + 0.6 * h2.y;
+				if (abs(u) < half_len && abs(v) < 0.08) {
+					float k = fract(h.x * 5.3 + h2.y * 2.1);
+					vec3 c0 = k < 0.5 ? vec3(0.27, 0.12, 0.04) : (k < 0.8 ? vec3(0.16, 0.09, 0.045) : vec3(0.34, 0.25, 0.14));
+					col = vec4(c0 * (0.8 + 0.2 * (1.0 - abs(v) / 0.08)), 1.0);
+				}
+			}
+		}
+	}
+	return col;
+}
+
+// A litter layer, faded to its mean where a pixel covers its detail (the layer's own mip).
+vec3 ff_layer_blend(vec3 under, vec4 layer, vec3 mean, float cover, float fine) {
+	return mix(mix(under, layer.rgb, layer.a), mix(under, mean, cover), fine);
+}
+
+// The floor colour at a point under the canopy: conifer 0 broadleaf, 1 needle.
+vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
+	vec2 xz = world_pos.xz;
+	// Humus showing through, dark and fibrous.
+	vec3 c = vec3(0.05, 0.034, 0.02) * (0.8 + 0.4 * ff_noise(xz * 2.3));
+	// Mixed stands are a patchwork of the two litters, not their average.
+	float needle = smoothstep(-0.12, 0.12, conifer - (0.25 + 0.5 * ff_noise(xz * 0.35 + 3.0)));
+	if (needle < 0.999) {
+		vec3 leaves = c;
+		vec3 mean = vec3(0.2, 0.1, 0.045);
+		float f0 = smoothstep(0.03, 0.1, footprint);
+		float f1 = smoothstep(0.022, 0.075, footprint);
+		leaves = ff_layer_blend(leaves, f0 < 1.0 ? ff_leaf_layer(xz, 0.06, 0.0) : vec4(0.0), mean, 0.85, f0);
+		leaves = ff_layer_blend(leaves, f1 < 1.0 ? ff_leaf_layer(xz, 0.045, 41.0) : vec4(0.0), mean, 0.6, f1);
+		// Patches of darker, wetter, older litter.
+		leaves *= 0.75 + 0.45 * ff_noise(xz * 0.8);
+		c = mix(c, leaves, 1.0 - needle);
+	}
+	if (needle > 0.001) {
+		// Older needles, half decayed, under the fresh ones.
+		vec3 duff = vec3(0.11, 0.06, 0.028) * (0.8 + 0.4 * ff_noise(xz * 5.0 + 2.0));
+		float f = smoothstep(0.01, 0.03, footprint);
+		duff = ff_layer_blend(duff, f < 1.0 ? ff_needle_layer(xz, 0.025, 7.0) : vec4(0.0), vec3(0.17, 0.085, 0.035), 0.75, f);
+		duff = ff_layer_blend(duff, f < 1.0 ? ff_needle_layer(xz, 0.019, 23.0) : vec4(0.0), vec3(0.17, 0.085, 0.035), 0.6, f);
+		duff *= 0.8 + 0.35 * ff_noise(xz * 1.1 + 9.0);
+		// Feather moss carpets under spruce and pine, in drifts.
+		float moss = smoothstep(0.38, 0.62, ff_noise(xz * 0.45 + 17.0) * 0.7 + ff_noise(xz * 2.7) * 0.3);
+		vec3 moss_c = vec3(0.13, 0.19, 0.035) * (0.7 + 0.5 * ff_noise(xz * 23.0)) * (0.85 + 0.3 * ff_noise(xz * 4.0 + 5.0));
+		duff = mix(duff, moss_c, moss * 0.85);
+		c = mix(c, duff, needle);
+	}
+	return c;
+}
+
+// Ground albedo with the forest floor over it, where the canopy closes.
+vec3 forest_floor(vec3 world_pos, vec3 albedo) {
+	vec2 f = forest_floor_at(world_pos);
+	// Litter blows a little past the crowns and thins out where light reaches the ground.
+	float cover = smoothstep(0.12, 0.5, f.x + 0.12 * (ff_noise(world_pos.xz * 0.6) - 0.5));
+	if (cover <= 0.0) {
+		return albedo;
+	}
+	vec2 fw = fwidth(world_pos.xz);
+	float footprint = max(fw.x, fw.y);
+	return mix(albedo, forest_litter(world_pos, f.y, footprint), cover);
+}
+)";
+}
+
 float VegetationField3D::get_shade_at(const Vector3 &p_global_position) const {
 	return _shade_at(Vector2(p_global_position.x, p_global_position.z));
 }
@@ -568,11 +764,15 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
+	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);
+	ClassDB::bind_method(D_METHOD("set_forest_floor_enabled", "enabled"), &VegetationField3D::set_forest_floor_enabled);
+	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("get_conifer_at", "global_position"), &VegetationField3D::get_conifer_at);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "forest_floor_enabled"), "set_forest_floor_enabled", "is_forest_floor_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,256,1,or_greater,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "populate_on_ready"), "set_populate_on_ready", "is_populate_on_ready");

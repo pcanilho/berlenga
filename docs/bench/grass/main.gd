@@ -17,6 +17,9 @@ extends Node3D
 #   --forest         a wood of stand-in trees: forest floor (litter, moss, bilberry, fern) in
 #                    their shade, meadow in the open (PlantSpecies.shade_range)
 #   --forest=in      the same, standing inside the wood
+#   --stand=S        the wood's trees: beech (default), spruce, pine or mixed (beech and spruce);
+#                    the floor follows them (needles, feather moss and bilberry under conifers,
+#                    leaf litter and wood sorrel under beech). With --forest=in.
 #   --swamp          wetland zonation round the pond: water lilies afloat, bulrush and reed in the
 #                    shallows, soft rush on the wet shore (docs/ideas/plant-generator.md)
 #   --swamp=close    the same, looking down on a water lily
@@ -43,6 +46,7 @@ var layers := true
 var close := false
 var forest := false
 var forest_in := false
+var stand := "beech"
 var swamp := false
 var swamp_close := false
 var ground_mat: ShaderMaterial
@@ -91,6 +95,7 @@ func _ready() -> void:
 			forest = true
 			forest_in = true
 		elif a == "--notex": notex = true
+		elif a.begins_with("--stand="): stand = a.substr(8)
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -203,23 +208,11 @@ func _ready() -> void:
 	var gs := Shader.new()
 	gs.code = "shader_type spatial;\n" + GrassField3D.get_ground_shader_code() + """
 varying vec3 wp;
-// Forest floor: canopy shade (VegetationField3D.get_shade_at, baked) turns the soil to humus
-// under a mottled leaf layer, so the litter reads beyond the near 3D leaves.
-uniform sampler2D shade_map : filter_linear, hint_default_black;
-uniform float map_size = 96.0;
-float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float vn(vec2 p) {
-	vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
-	return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y);
-}
+// Under the crowns grass_ground() lays the forest floor's litter (VegetationField3D's
+// forest_floor_* globals): leaves, needles and moss by the stand above.
 void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 void fragment() {
-	vec3 soil = grass_ground(wp, vec3(0.11, 0.12, 0.06));
-	float shade = texture(shade_map, wp.xz / map_size + 0.5).r;
-	float leaves = vn(wp.xz * 9.0) * 0.6 + vn(wp.xz * 31.0) * 0.4;
-	vec3 humus = mix(vec3(0.035, 0.025, 0.015), vec3(0.13, 0.08, 0.04), smoothstep(0.35, 0.75, leaves));
-	humus *= 0.8 + 0.4 * vn(wp.xz * 0.7);
-	ALBEDO = mix(soil, humus, smoothstep(0.25, 0.6, shade));
+	ALBEDO = grass_ground(wp, vec3(0.11, 0.12, 0.06));
 	ROUGHNESS = 0.95;
 }
 """
@@ -327,13 +320,6 @@ func _frame_forest() -> void:
 	var trees := cover.get_placements(0)
 	if trees.is_empty():
 		return
-	var res := 192
-	var img := Image.create(res, res, false, Image.FORMAT_L8)
-	for z in res:
-		for x in res:
-			var p := Vector3((x + 0.5) / res * SIZE - SIZE * 0.5, 0, (z + 0.5) / res * SIZE - SIZE * 0.5)
-			img.set_pixel(x, z, Color(cover.get_shade_at(p), 0, 0))
-	ground_mat.set_shader_parameter("shade_map", ImageTexture.create_from_image(img))
 	# The edge tree with the most edge plants (bramble, bracken, foxglove) around it, near the view.
 	var edge: Array = []
 	for k in [1, 2, 3]:
@@ -490,7 +476,7 @@ func _cover_biome() -> Biome:
 			(sp as PlantSpecies).set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
 		# Bigger plants first: the edge shrubs and bracken claim their space before the herbs.
 		var floor_sp := _floor_species()
-		b.species = [_tree_species()] + floor_sp.slice(0, 3) + b.species + floor_sp.slice(3)
+		b.species = _stand_trees() + floor_sp.slice(0, 3) + b.species + floor_sp.slice(3)
 	if swamp:
 		b.species = _wetland_species() + b.species
 	return b
@@ -590,7 +576,69 @@ func _tree_species() -> PlantSpecies:
 	tree.canopy_opacity = 0.9
 	return tree
 
-# Forest floor (docs/ideas/vegetation-placement.md, "Canopy shade rule"): litter everywhere in
+# The wood's stand-in trees by --stand. Conifers set canopy_conifer, which the floor reads.
+func _stand_trees() -> Array:
+	match stand:
+		"spruce": return [_conifer_species(false)]
+		"pine": return [_conifer_species(true)]
+		"mixed":
+			var b := _tree_species()
+			b.patch_seed = 5
+			var c := _conifer_species(false)
+			c.patch_seed = 3
+			return [b, c]
+	return [_tree_species()]
+
+# Spruce: a dark narrow cone to the ground's shade, dense; pine: a high, flat, open crown on a
+# long bare trunk, letting 10 to 30% of the light through.
+func _conifer_species(pine: bool) -> PlantSpecies:
+	var st := SurfaceTool.new()
+	var am := ArrayMesh.new()
+	var trunk := CylinderMesh.new()
+	trunk.top_radius = 0.12 if pine else 0.1
+	trunk.bottom_radius = 0.28
+	trunk.height = 14.0 if pine else 12.0
+	var bark := StandardMaterial3D.new()
+	bark.albedo_color = Color(0.3, 0.17, 0.09) if pine else Color(0.16, 0.12, 0.1)
+	bark.roughness = 0.9
+	st.append_from(trunk, 0, Transform3D(Basis(), Vector3(0, trunk.height * 0.5, 0)))
+	st.commit(am)
+	am.surface_set_material(0, bark)
+	var leaves := StandardMaterial3D.new()
+	leaves.albedo_color = Color(0.07, 0.12, 0.05) if pine else Color(0.04, 0.08, 0.04)
+	leaves.roughness = 0.8
+	st = SurfaceTool.new()
+	if pine:
+		var crown := SphereMesh.new()
+		crown.radius = 3.4
+		crown.height = 3.0
+		st.append_from(crown, 0, Transform3D(Basis(), Vector3(0, 14.5, 0)))
+	else:
+		var crown := CylinderMesh.new()
+		crown.top_radius = 0.0
+		crown.bottom_radius = 2.8
+		crown.height = 10.0
+		# Lower branches die off in a closed stand: the live crown starts a few metres up.
+		st.append_from(crown, 0, Transform3D(Basis(), Vector3(0, 9.0, 0)))
+	st.commit(am)
+	am.surface_set_material(1, leaves)
+	var tree := PlantSpecies.new()
+	tree.meshes = [am]
+	tree.spacing = 6.5 if pine else 5.0
+	tree.footprint = 1.0
+	tree.density = 0.9
+	tree.scale_range = Vector2(0.85, 1.15)
+	tree.patch_scale = 30.0
+	tree.patch_cover = 0.45
+	tree.patch_seed = 3
+	tree.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(6.0, 1000000.0))
+	tree.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 3.0)
+	tree.canopy_radius = 3.4 if pine else 2.8
+	tree.canopy_opacity = 0.55 if pine else 0.95
+	tree.canopy_conifer = true
+	return tree
+
+# Forest floor (docs/ideas/forest-floor.md; vegetation-placement.md, "Canopy shade rule"): litter everywhere in
 # shade, bilberry and fern in drifts, moss in the deepest shade.
 func _floor_species() -> Array:
 	var fern := PlantSpecies.new()
@@ -614,8 +662,11 @@ func _floor_species() -> Array:
 	bilberry.patch_cover = 0.6
 	bilberry.scale_range = Vector2(1.0, 1.4)
 	bilberry.patch_seed = 71
-	bilberry.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.45, 1.0))
+	bilberry.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.3, 1.0))
 	bilberry.set_rule_fade(PlantSpecies.RULE_SHADE, 0.15)
+	# Acid needle litter: bilberry carpets under pine and spruce, scarce under beech.
+	bilberry.set_rule_range(PlantSpecies.RULE_CONIFER, Vector2(0.4, 1.0))
+	bilberry.set_rule_fade(PlantSpecies.RULE_CONIFER, 0.3)
 	bilberry.visibility_range = 25.0
 	var moss := PlantSpecies.new()
 	moss.meshes = _variants(PlantGenerator.PRESET_MOSS, 3)
@@ -633,11 +684,72 @@ func _floor_species() -> Array:
 	litter.meshes = _variants(PlantGenerator.PRESET_LEAF_LITTER, 3)
 	litter.spacing = 0.2
 	litter.footprint = 0.0
-	litter.density = 1.0
+	litter.density = 0.6 # The ground's shader carries the leaf carpet; these give it relief.
 	litter.scale_range = Vector2(1.2, 1.8)
 	litter.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.3, 1.0))
 	litter.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
+	litter.set_rule_range(PlantSpecies.RULE_CONIFER, Vector2(0.0, 0.5))
+	litter.set_rule_fade(PlantSpecies.RULE_CONIFER, 0.15)
 	litter.visibility_range = 15.0
+	# Needles and cones over the duff under conifers. The feather moss carpet itself is the
+	# ground's (its drifts in forest_floor()); a 3D carpet with an outline read as dark holes.
+	var needles := PlantSpecies.new()
+	needles.meshes = _variants(PlantGenerator.PRESET_NEEDLE_LITTER, 3)
+	needles.spacing = 0.35
+	needles.footprint = 0.0
+	needles.density = 0.8
+	needles.scale_range = Vector2(0.8, 1.3)
+	needles.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.3, 1.0))
+	needles.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
+	needles.set_rule_range(PlantSpecies.RULE_CONIFER, Vector2(0.5, 1.0))
+	needles.set_rule_fade(PlantSpecies.RULE_CONIFER, 0.15)
+	needles.visibility_range = 15.0
+	var carpet := PlantSpecies.new()
+	carpet.meshes = _variants(PlantGenerator.PRESET_FEATHER_MOSS, 3)
+	carpet.spacing = 0.55
+	carpet.footprint = 0.0
+	carpet.density = 0.5
+	carpet.scale_range = Vector2(0.9, 1.5)
+	carpet.patch_scale = 5.0
+	carpet.patch_cover = 0.5
+	carpet.patch_seed = 83
+	carpet.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.5, 1.0))
+	carpet.set_rule_fade(PlantSpecies.RULE_SHADE, 0.15)
+	carpet.set_rule_range(PlantSpecies.RULE_CONIFER, Vector2(0.5, 1.0))
+	carpet.set_rule_fade(PlantSpecies.RULE_CONIFER, 0.2)
+	carpet.visibility_range = 20.0
+	# Fallen twigs in every stand.
+	var twigs := PlantSpecies.new()
+	twigs.meshes = _variants(PlantGenerator.PRESET_TWIGS, 3)
+	twigs.spacing = 0.9
+	twigs.footprint = 0.0
+	twigs.density = 0.5
+	twigs.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.3, 1.0))
+	twigs.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
+	twigs.visibility_range = 18.0
+	# Shade herbs: wood sorrel in patches, beech and spruce seedlings waiting for a gap.
+	var sorrel := PlantSpecies.new()
+	sorrel.meshes = _variants(PlantGenerator.PRESET_WOOD_SORREL, 3)
+	sorrel.spacing = 0.25
+	sorrel.footprint = 0.1
+	sorrel.density = 0.9
+	sorrel.patch_scale = 3.0
+	sorrel.patch_cover = 0.35
+	sorrel.patch_seed = 87
+	sorrel.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.55, 1.0))
+	sorrel.set_rule_fade(PlantSpecies.RULE_SHADE, 0.15)
+	sorrel.visibility_range = 18.0
+	var seedling := PlantSpecies.new()
+	seedling.meshes = _variants(PlantGenerator.PRESET_SEEDLING, 4)
+	seedling.spacing = 0.8
+	seedling.footprint = 0.15
+	seedling.density = 0.5
+	seedling.patch_scale = 5.0
+	seedling.patch_cover = 0.3
+	seedling.patch_seed = 89
+	seedling.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.4, 0.97))
+	seedling.set_rule_fade(PlantSpecies.RULE_SHADE, 0.1)
+	seedling.visibility_range = 30.0
 	# Woodland edge (fringe and mantle): bracken stands, bramble and foxglove where the light
 	# falls off under the outer crowns, between the meadow and the forest floor.
 	var bracken := PlantSpecies.new()
@@ -675,7 +787,7 @@ func _floor_species() -> Array:
 	foxglove.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.1, 0.7))
 	foxglove.set_rule_fade(PlantSpecies.RULE_SHADE, 0.1)
 	foxglove.visibility_range = 40.0
-	return [bramble, bracken, foxglove, fern, bilberry, moss, litter]
+	return [bramble, bracken, foxglove, fern, seedling, bilberry, sorrel, moss, twigs, litter, needles]
 
 func _ground_mesh() -> Mesh:
 	var st := SurfaceTool.new()

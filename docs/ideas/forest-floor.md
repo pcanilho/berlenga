@@ -61,6 +61,39 @@ light, (4) more of everything in gaps.
 Checks: the grass bench `--forest=in` in a beech, a spruce and a pine stand (stand-in trees with
 their litter type); no bare soil visible at 100% crop in raster and path traced; cost per stand.
 
+## Built: litter as the ground (step 2)
+
+`VegetationField3D` publishes, after each populate that places crowns, `forest_floor_map` (RG8 on
+half-metre cells: canopy closure from `get_shade_at()`, conifer share from `get_conifer_at()`) and
+`forest_floor_rect`. `get_floor_shader_code()` gives `forest_floor(world_pos, albedo)`, which
+`grass_ground()` calls first, so TerrainMaterial3D and any material on the grass ground code get
+the floor with no change of their own.
+
+- **Cover:** `smoothstep(0.12, 0.5, closure)` with noise on the edge, so litter blows a little past
+  the crowns and thins where light reaches the ground; the sward's shade rule hands over there.
+- **Leaves (broadleaf):** a stochastic sprite layer in the shader: jittered cells, one ovate,
+  pointed leaf per cell at a random turn and size, overlapping its 3x3 neighbours (topmost by hash),
+  two layers of 6 and 4.5 cm cells (leaves 7 to 11 cm, beech and oak size). Palette from beech
+  litter: orange-brown fresh, dark brown decaying, a few pale and grey-brown. Midrib catches light,
+  curled rims shade the leaf under them. Over dark humus.
+- **Needles (conifer):** two strokes per 2.5 and 1.9 cm cell, rusty, brown and grey, over
+  half-decayed duff; feather moss drifts (yellow-green, two noise scales) where spruce and pine
+  floors carry their moss carpets.
+- **Mixed stands** are a patchwork of the two litters (conifer share against a noise threshold), not
+  their average.
+- **Filtering:** each layer fades to its mean colour once a pixel's footprint (`fwidth` of the
+  world position) reaches a third of its cell, so it does not alias and costs nothing far off
+  (the branch skips the 3x3 search).
+- **3D layer near the camera:** leaf litter and needle litter presets give relief; needle litter
+  lost its mat (the ground now carries it) and keeps loose needles and cones. A 3D feather moss
+  carpet had a visible outline and read as dark holes on the floor, so in the bench the moss is the
+  ground's; the preset stays for cushions on logs and stones.
+
+Bench: `docs/bench/grass --forest=in --stand=beech|spruce|pine|mixed` (stand-in trees; spruce
+crowns start 4 m up, pine crowns open, opacity 0.55). Floor species by rules: leaf litter at
+conifer 0 to 0.5, needle litter 0.5 to 1, bilberry 0.4 to 1, wood sorrel in deep shade, seedlings
+at shade 0.4 to 0.97, twigs everywhere in shade.
+
 ## References
 
 - Ellenberg, *Vegetation Mitteleuropas mit den Alpen*, 5th ed., 1996; Ellenberg and Leuschner,

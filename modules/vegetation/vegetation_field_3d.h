@@ -67,6 +67,10 @@ class VegetationField3D : public Node3D {
 	};
 	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
 	void _publish_canopy(const Rect2 &p_rect);
+	// Canopy closure and conifer share for the ground's litter (forest_floor_* globals).
+	bool forest_floor_enabled = true;
+	Ref<Texture2D> floor_texture;
+	void _publish_floor(const Rect2 &p_rect);
 	static constexpr float CROWN_CELL = 8.0f;
 	LocalVector<Crown> crowns;
 	HashMap<Vector2i, LocalVector<int>> crown_grid;
@@ -96,6 +100,9 @@ protected:
 	static void _bind_methods();
 
 public:
+	static String get_floor_shader_code();
+	void set_forest_floor_enabled(bool p_enabled);
+	bool is_forest_floor_enabled() const { return forest_floor_enabled; }
 	void set_biome(const Ref<Biome> &p_biome);
 	Ref<Biome> get_biome() const { return biome; }
 	void set_data_map(const NodePath &p_path);

@@ -60,6 +60,8 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "grass_trample_map", "sampler2D" },
 		{ "grass_trample_rect", "vec4" },
 		{ "grass_wind", "vec4" },
+		{ "forest_floor_map", "sampler2D" },
+		{ "forest_floor_rect", "vec4" },
 	};
 	for (const auto &g : globals) {
 		Dictionary d;
