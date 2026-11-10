@@ -30,7 +30,10 @@
 
 #pragma once
 
+#include "weather_clouds.h"
+
 #include "core/io/image.h"
+#include "core/object/worker_thread_pool.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
@@ -94,6 +97,16 @@ private:
 	Rect2 painted_map_rect = Rect2(-2048, -2048, 4096, 4096);
 	bool publish_shader_globals = true;
 
+	// Cloud layer (docs/ideas/weather.md, step 3).
+	float cloud_base_height = 1500.0f; // m
+	float cloud_thickness = 1500.0f; // m, of cumulus
+	float cloud_density = 1.0f;
+	float cloud_shape_scale = 3000.0f; // m, one tile of the shape noise
+	NodePath sun_light;
+	float cloud_shadow_extent = 6144.0f; // m
+	int cloud_shadow_resolution = 256;
+	float cloud_shadow_interval = 1.0f; // real seconds between bakes
+
 	// The eased base state (what the cells see; the settings above are its targets).
 	float cur_wind_speed = 5.0f;
 	Vector2 cur_wind_direction = Vector2(1, 0);
@@ -147,6 +160,38 @@ private:
 	Ref<ImageTexture> gust_texture;
 	bool globals_added = false;
 
+	// The cloud shadow: the sun's transmittance through the base shape over a square in the light's plane,
+	// baked on the worker threads and handed to the sun as its projector.
+	struct ShadowBake {
+		WeatherClouds::State state;
+		Vector3 axis_u; // the light's +X
+		Vector3 axis_v; // the light's -Y
+		Vector3 to_sun; // the light's +Z
+		Vector2 corner; // m, in the light's plane
+		float texel = 32.0f;
+		int resolution = 256;
+		int steps = 12;
+		Vector<float> transmittance;
+		Vector<uint8_t> bytes;
+		float *transmittance_w = nullptr; // taken on the main thread, so the rows never copy on write
+		uint8_t *bytes_w = nullptr;
+		void row(uint32_t p_row, void *);
+	};
+	ShadowBake *shadow_bake = nullptr; // in flight
+	WorkerThreadPool::GroupID shadow_task = WorkerThreadPool::INVALID_TASK_ID;
+	double shadow_timer = 0.0;
+	// The last finished bake: its frame, the drift it saw, and what the CPU samples.
+	Vector3 shadow_axis_u;
+	Vector3 shadow_axis_v;
+	Vector2 shadow_corner;
+	Vector2 shadow_drift;
+	float shadow_size = 0.0f;
+	int shadow_res = 0;
+	Vector<float> shadow_values;
+	Ref<Image> shadow_image;
+	Ref<ImageTexture> shadow_texture;
+	ObjectID shadow_light; // the light we gave our projector to
+
 	static WeatherMap3D *active;
 
 	void _allocate();
@@ -167,6 +212,12 @@ private:
 	float _sample(const Vector<float> &p_field, Vector2 p_xz, int p_stride = 1, int p_offset = 0) const;
 	float _cloud_noise(Vector2 p_xz) const;
 	float _storm_weight(const Storm &p_storm) const;
+	WeatherClouds::State _cloud_state() const;
+	void _start_shadow_bake();
+	void _finish_shadow_bake(bool p_wait);
+	void _apply_shadow();
+	void _release_shadow_light();
+	void _push_sky();
 	Vector3 _gust_at(Vector3 p_position, Vector2 p_mean) const;
 
 protected:
@@ -227,6 +278,23 @@ public:
 	void set_publish_shader_globals(bool p_enabled);
 	bool get_publish_shader_globals() const { return publish_shader_globals; }
 
+	void set_cloud_base_height(float p_height);
+	float get_cloud_base_height() const { return cloud_base_height; }
+	void set_cloud_thickness(float p_thickness);
+	float get_cloud_thickness() const { return cloud_thickness; }
+	void set_cloud_density(float p_density);
+	float get_cloud_density() const { return cloud_density; }
+	void set_cloud_shape_scale(float p_scale);
+	float get_cloud_shape_scale() const { return cloud_shape_scale; }
+	void set_sun_light(const NodePath &p_path);
+	NodePath get_sun_light() const { return sun_light; }
+	void set_cloud_shadow_extent(float p_extent);
+	float get_cloud_shadow_extent() const { return cloud_shadow_extent; }
+	void set_cloud_shadow_resolution(int p_resolution);
+	int get_cloud_shadow_resolution() const { return cloud_shadow_resolution; }
+	void set_cloud_shadow_interval(float p_seconds);
+	float get_cloud_shadow_interval() const { return cloud_shadow_interval; }
+
 	// Jump the eased state to the settings (no transition), e.g. when a scene loads.
 	void snap_to_settings();
 	// Run the weather forward by p_seconds of weather time at once (wetting, drying, storms).
@@ -247,11 +315,16 @@ public:
 	float get_cloud_type_at(Vector3 p_position) const;
 	float get_wetness_at(Vector3 p_position) const; // 0..1
 	float get_puddle_at(Vector3 p_position) const; // mm
+	float get_cloud_density_at(Vector3 p_position) const; // extinction, 1/m
+	float get_sun_visibility_at(Vector3 p_position) const; // 0..1, from the last cloud shadow bake
+	// Bakes the cloud shadow now and waits for it (normally it runs in the background).
+	void update_cloud_shadow();
 	double get_weather_time() const { return weather_time; }
 
 	Ref<Texture2D> get_wind_texture() const { return wind_texture; }
 	Ref<Texture2D> get_state_texture() const { return state_texture; }
 	Ref<Texture2D> get_gust_texture() const { return gust_texture; }
+	Ref<Texture2D> get_cloud_shadow_texture() const { return shadow_texture; }
 	Rect2 get_map_rect() const;
 
 	WeatherMap3D();

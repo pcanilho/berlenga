@@ -6862,6 +6862,25 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, cons
 				Math::deg_to_rad(ls->light_get_param(base, RSE::LIGHT_PARAM_SIZE) * 0.5f), // Half-angle in radians.
 				ls->light_get_param(base, RSE::LIGHT_PARAM_SPECULAR), 0.0f,
 				ls->light_get_path_traced_shadow_opacity(base, 0.0f));
+		RT_LightData &dld = r_light_data[rt_light_count];
+		dld.projector_texture.index = _light_projector_texture(base);
+		if (dld.projector_texture.index != RT_LIGHT_NO_PROJECTOR) {
+			// Projected along the light over a rect in its plane, as the rasterizer (light_storage.cpp):
+			// the orientation gives the plane's axes, reserved[0..1] the rect's corner relative to
+			// rt_origin, reserved[2] its size (fp16).
+			const Quaternion rotation = xform.basis.get_rotation_quaternion();
+			dld.orientation_xy.x = rt_snorm16(rotation.x);
+			dld.orientation_xy.y = rt_snorm16(rotation.y);
+			dld.orientation_zw.z = rt_snorm16(rotation.z);
+			dld.orientation_zw.w = rt_snorm16(rotation.w);
+			const Rect2 prect = RendererRD::LightStorage::get_singleton()->light_directional_get_projector_rect(base);
+			const Vector3 origin = p_state ? p_state->rt_origin : Vector3();
+			const float corner_u = prect.position.x - origin.dot(xform.basis.get_column(0).normalized());
+			const float corner_v = prect.position.y + origin.dot(xform.basis.get_column(1).normalized());
+			memcpy(&dld.reserved[0], &corner_u, sizeof(float));
+			memcpy(&dld.reserved[1], &corner_v, sizeof(float));
+			dld.reserved[2] = uint32_t(rt_half(MAX(prect.size.x, 0.01f))) | (uint32_t(rt_half(MAX(prect.size.y, 0.01f))) << 16);
+		}
 		rt_light_count++;
 	}
 

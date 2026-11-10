@@ -34,7 +34,7 @@ struct RTLightPacked {
 	uint orientation_xy; // snorm16 quaternion x, y.
 	uint orientation_zw; // snorm16 quaternion z, w.
 	uint projector_texture; // index : 24, unused : 8.
-	uint reserved0; // Free for future fields, keeps the 64-byte stride.
+	uint reserved0; // Directional projector: float corner u, v (relative to rt_origin), fp16 size u, v.
 	uint reserved1;
 	uint reserved2;
 };
@@ -54,7 +54,9 @@ struct RTLightData {
 	float inv_spot_attenuation; // Spot cone softness.
 	uint light_masks; // Bits 0-19: light_cull_mask (lighting test). Bits 24-31: TLAS shadow-ray mask.
 	uint projector_texture; // Bindless sRGB index, RT_LIGHT_NO_PROJECTOR when unset.
-	vec4 orientation; // Unit rotation quaternion (omni/spot); the spot cone points along local -Z.
+	vec4 orientation; // Unit rotation quaternion; the spot cone points along local -Z. Directional: only with a projector.
+	vec2 projector_corner; // Directional projector rect in the light's plane (along +X and -Y), metres.
+	vec2 projector_size;
 };
 
 // Light buffer SSBO (binding provided by the including shader via RT_LIGHT_BUFFER_BINDING).
@@ -64,7 +66,7 @@ struct RTLightData {
 
 layout(set = 0, binding = RT_LIGHT_BUFFER_BINDING, std430) readonly buffer LightBuffer {
 	RTLightPacked rt_light_buffer[];
-};
+}
 
 layout(set = 0, binding = 40) uniform sampler rt_light_projector_sampler;
 
@@ -80,7 +82,7 @@ layout(set = 0, binding = 40) uniform sampler rt_light_projector_sampler;
 
 layout(set = 0, binding = RT_LIGHT_GRID_BINDING, std430) readonly buffer LightGridBuffer {
 	uint rt_light_grid[];
-};
+}
 
 // The lights that can reach p: the global ones at [r_global_start, + r_global_count)
 // and the cell's at [r_cell_start, + r_cell_count), indices into rt_light_buffer.
@@ -398,6 +400,8 @@ RTLightData lights_get(uint idx) {
 	light.projector_texture = bitfieldExtract(p.projector_texture, 0, 24);
 	vec4 q = vec4(unpackSnorm2x16(p.orientation_xy), unpackSnorm2x16(p.orientation_zw));
 	light.orientation = q * inversesqrt(max(dot(q, q), 1e-8));
+	light.projector_corner = vec2(uintBitsToFloat(p.reserved0), uintBitsToFloat(p.reserved1));
+	light.projector_size = max(unpackHalf2x16(p.reserved2), vec2(0.01));
 	return light;
 }
 
@@ -543,13 +547,29 @@ vec3 lights_projector_color(RTLightData light, vec3 p_dir) {
 	return projector.rgb * projector.a;
 }
 
+// A directional light's projector at p_pos, projected along the light over a rect in its plane
+// (the rasterizer's directional_projector_color()). White without one or outside the rect.
+vec3 lights_directional_projector_color(RTLightData light, vec3 p_pos) {
+	if (light.projector_texture == RT_LIGHT_NO_PROJECTOR) {
+		return vec3(1.0);
+	}
+	vec3 axis_u = lights_rotate(light.orientation, vec3(1.0, 0.0, 0.0));
+	vec3 axis_v = -lights_rotate(light.orientation, vec3(0.0, 1.0, 0.0));
+	vec2 uv = (vec2(dot(p_pos, axis_u), dot(p_pos, axis_v)) - light.projector_corner) / light.projector_size;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec3(1.0);
+	}
+	vec4 projector = textureLod(sampler2D(bindless_textures[nonuniformEXT(light.projector_texture)], rt_light_projector_sampler), uv, 0.0);
+	return projector.rgb * projector.a;
+}
+
 // Raygen (the transparent pass's light cache) has no geometry tables: it traces its shadow rays.
 #ifndef RT_LIGHTS_TRACE_SHADOWS_ONLY
 #include "raytracing_shadow_query_inc.glsl"
 #endif
 
-#include "raytracing_volume_inc.glsl"
 #include "raytracing_caustics_inc.glsl"
+#include "raytracing_volume_inc.glsl"
 
 // ============================================================================
 // Shadow Ray (traceRayEXT pipeline)
@@ -920,7 +940,12 @@ vec3 lights_evaluate_directional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V
 		return vec3(0.0);
 	}
 
-	vec3 shadow_transmittance = lights_shadow_transmittance(light, hit_pos, L, ls.max_distance, p_receiver_shadow_mask, rng_state);
+	vec3 projector_color = lights_directional_projector_color(light, hit_pos);
+	if (all(lessThanEqual(projector_color, vec3(0.0)))) {
+		return vec3(0.0);
+	}
+
+	vec3 shadow_transmittance = lights_shadow_transmittance(light, hit_pos, L, ls.max_distance, p_receiver_shadow_mask, rng_state) * projector_color;
 	r_visible = max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.5 ? 1.0 : 0.0;
 	if (max(shadow_transmittance.r, max(shadow_transmittance.g, shadow_transmittance.b)) > 0.0 && rt_caustics_enabled() && light.position == lights_get(0u).position) {
 		// Under water, the sun's light gathered into lines by the surface (raytracing_caustics_inc.glsl).

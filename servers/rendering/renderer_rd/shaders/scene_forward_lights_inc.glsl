@@ -98,6 +98,21 @@ hvec3 f0_Clear_Coat_To_Surface(hvec3 f0) {
 	return clamp(f0 * (f0 * (half(0.941892) - half(0.263008) * f0) + half(0.346479)) - half(0.0285998), half(0.0), half(1.0));
 }
 
+// A directional light's projector at the view-space point p_vertex: projected along the light
+// over a rect in its plane (light_storage.cpp), white outside it.
+vec3 directional_projector_color(uint p_index, vec3 p_vertex) {
+	vec4 rect = directional_lights.data[p_index].projector_rect;
+	if (rect == vec4(0.0)) {
+		return vec3(1.0);
+	}
+	vec2 uv = vec2(dot(vec4(p_vertex, 1.0), directional_lights.data[p_index].projector_u), dot(vec4(p_vertex, 1.0), directional_lights.data[p_index].projector_v));
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec3(1.0);
+	}
+	vec4 proj = textureLod(sampler2D(decal_atlas_srgb, light_projector_sampler), uv * rect.zw + rect.xy, 0.0);
+	return proj.rgb * proj.a;
+}
+
 void light_compute(hvec3 N, hvec3 L, hvec3 V, half A, hvec3 light_color, bool is_directional, half attenuation, hvec3 f0, half roughness, half metallic, half specular_amount, hvec3 albedo, inout half alpha, vec2 screen_uv, hvec3 energy_compensation,
 #ifdef LIGHT_BACKLIGHT_USED
 		hvec3 backlight,

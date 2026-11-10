@@ -31,6 +31,7 @@
 #include "register_types.h"
 
 #include "weather_map_3d.h"
+#include "weather_sky_material.h"
 
 #include "core/object/class_db.h"
 
@@ -39,7 +40,12 @@ void initialize_weather_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	GDREGISTER_CLASS(WeatherMap3D);
+	GDREGISTER_CLASS(WeatherSkyMaterial);
 }
 
 void uninitialize_weather_module(ModuleInitializationLevel p_level) {
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+		return;
+	}
+	WeatherSkyMaterial::cleanup();
 }

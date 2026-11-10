@@ -278,16 +278,17 @@ void LightStorage::light_set_projector(RID p_light, RID p_texture) {
 
 	ERR_FAIL_COND(p_texture.is_valid() && !texture_storage->owns_texture(p_texture));
 
-	if (light->type != RSE::LIGHT_DIRECTIONAL && light->projector.is_valid()) {
+	if (light->projector.is_valid()) {
 		texture_storage->texture_remove_from_decal_atlas(light->projector, light->type == RSE::LIGHT_OMNI);
 	}
 
 	light->projector = p_texture;
 
+	// Directional lights project theirs along the light, over directional_projector_rect.
+	if (light->projector.is_valid()) {
+		texture_storage->texture_add_to_decal_atlas(light->projector, light->type == RSE::LIGHT_OMNI);
+	}
 	if (light->type != RSE::LIGHT_DIRECTIONAL) {
-		if (light->projector.is_valid()) {
-			texture_storage->texture_add_to_decal_atlas(light->projector, light->type == RSE::LIGHT_OMNI);
-		}
 		light->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_LIGHT_SOFT_SHADOW_AND_PROJECTOR);
 	}
 }
@@ -429,6 +430,13 @@ void LightStorage::light_directional_set_sky_mode(RID p_light, RSE::LightDirecti
 	ERR_FAIL_NULL(light);
 
 	light->directional_sky_mode = p_mode;
+}
+
+void LightStorage::light_directional_set_projector_rect(RID p_light, const Rect2 &p_rect) {
+	Light *light = light_owner.get_or_null(p_light);
+	ERR_FAIL_NULL(light);
+
+	light->directional_projector_rect = p_rect;
 }
 
 RSE::LightDirectionalSkyMode LightStorage::light_directional_get_sky_mode(RID p_light) const {
@@ -870,6 +878,36 @@ void LightStorage::update_light_buffers(RenderDataRD *p_render_data, const Paged
 				}
 
 				light_data.bake_mode = light->bake_mode;
+
+				// Projector: an orthographic texture along the light, over a rect in the light's plane
+				// (x along the light's +X, y along its -Y, so a sun straight down maps world x, z like an image).
+				if (light->projector.is_valid()) {
+					const Rect2 atlas_rect = texture_storage->decal_atlas_get_texture_rect(light->projector);
+					const Rect2 prect = light->directional_projector_rect;
+					const Vector3 axis_x = light_transform.basis.get_column(0).normalized();
+					const Vector3 axis_y = -light_transform.basis.get_column(1).normalized();
+					const Vector3 cam = p_camera_transform.origin;
+					const Vector3 view_x = inverse_transform.basis.xform(axis_x) / MAX(prect.size.x, 1e-4);
+					const Vector3 view_y = inverse_transform.basis.xform(axis_y) / MAX(prect.size.y, 1e-4);
+					light_data.projector_rect[0] = atlas_rect.position.x;
+					light_data.projector_rect[1] = atlas_rect.position.y;
+					light_data.projector_rect[2] = atlas_rect.size.width;
+					light_data.projector_rect[3] = atlas_rect.size.height;
+					light_data.projector_u[0] = view_x.x;
+					light_data.projector_u[1] = view_x.y;
+					light_data.projector_u[2] = view_x.z;
+					light_data.projector_u[3] = (cam.dot(axis_x) - prect.position.x) / MAX(prect.size.x, 1e-4);
+					light_data.projector_v[0] = view_y.x;
+					light_data.projector_v[1] = view_y.y;
+					light_data.projector_v[2] = view_y.z;
+					light_data.projector_v[3] = (cam.dot(axis_y) - prect.position.y) / MAX(prect.size.y, 1e-4);
+				} else {
+					for (int k = 0; k < 4; k++) {
+						light_data.projector_rect[k] = 0.0;
+						light_data.projector_u[k] = 0.0;
+						light_data.projector_v[k] = 0.0;
+					}
+				}
 
 				if (light_data.shadow_opacity > 0.001) {
 					RSE::LightDirectionalShadowMode smode = light->directional_shadow_mode;

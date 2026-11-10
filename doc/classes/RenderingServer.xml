@@ -2209,6 +2209,14 @@
 				If [code]true[/code], this directional light will blend between shadow map splits resulting in a smoother transition between them. Equivalent to [member DirectionalLight3D.directional_shadow_blend_splits].
 			</description>
 		</method>
+		<method name="light_directional_set_projector_rect">
+			<return type="void" />
+			<param index="0" name="light" type="RID" />
+			<param index="1" name="rect" type="Rect2" />
+			<description>
+				Sets where a directional light's projector lies, in metres in the plane of the light: the position is the texture's corner and the size its width and height, measured along the light's local +X and -Y axes. See [member DirectionalLight3D.projector_size].
+			</description>
+		</method>
 		<method name="light_directional_set_shadow_mode">
 			<return type="void" />
 			<param index="0" name="light" type="RID" />

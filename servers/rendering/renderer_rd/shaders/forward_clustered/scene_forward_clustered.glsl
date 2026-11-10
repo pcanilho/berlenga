@@ -5,11 +5,9 @@
 #VERSION_DEFINES
 
 /* Include half precision types. */
-#include "../half_inc.glsl"
-
-#include "scene_forward_clustered_inc.glsl"
-
 #include "../billboard_inc.glsl"
+#include "../half_inc.glsl"
+#include "scene_forward_clustered_inc.glsl"
 
 #ifdef MODE_RT_CAPTURE
 #include "rt_capture_inc.glsl"
@@ -924,7 +922,6 @@ void main() {
 
 /* Include half precision types. */
 #include "../half_inc.glsl"
-
 #include "scene_forward_clustered_inc.glsl"
 
 /* Varyings */
@@ -1141,11 +1138,9 @@ layout(location = 2) out vec2 motion_vector;
 #define SPECULAR_SCHLICK_GGX
 #endif
 
-#include "../scene_forward_lights_inc.glsl"
-
-#include "../scene_forward_gi_inc.glsl"
-
 #include "../material_inputs_inc.glsl"
+#include "../scene_forward_gi_inc.glsl"
+#include "../scene_forward_lights_inc.glsl"
 
 #endif //!defined(MODE_RENDER_DEPTH) && !defined(MODE_UNSHADED)
 
@@ -2430,10 +2425,10 @@ void fragment_shader(in SceneData scene_data) {
 					vec3 light_dir = directional_lights.data[i].direction;
 					vec3 base_normal_bias = geo_normal * (1.0 - max(0.0, dot(light_dir, -geo_normal)));
 
-#define BIAS_FUNC(m_var, m_idx)                                                                 \
-	m_var.xyz += light_dir * directional_lights.data[i].shadow_bias[m_idx];                     \
+#define BIAS_FUNC(m_var, m_idx) \
+	m_var.xyz += light_dir * directional_lights.data[i].shadow_bias[m_idx]; \
 	vec3 normal_bias = base_normal_bias * directional_lights.data[i].shadow_normal_bias[m_idx]; \
-	normal_bias -= light_dir * dot(light_dir, normal_bias);                                     \
+	normal_bias -= light_dir * dot(light_dir, normal_bias); \
 	m_var.xyz += normal_bias;
 
 					//version with soft shadows, more expensive
@@ -2748,9 +2743,9 @@ void fragment_shader(in SceneData scene_data) {
 
 			light_compute(normal, directional_lights.data[i].direction, normalize(view), size_A,
 #ifndef DEBUG_DRAW_PSSM_SPLITS
-					directional_lights.data[i].color * directional_lights.data[i].energy,
+					directional_lights.data[i].color * directional_lights.data[i].energy * directional_projector_color(i, vertex),
 #else
-					directional_lights.data[i].color * directional_lights.data[i].energy * tint,
+					directional_lights.data[i].color * directional_lights.data[i].energy * tint * directional_projector_color(i, vertex),
 #endif
 					true, shadow, f0, roughness, metallic, directional_lights.data[i].specular, albedo, alpha, screen_uv, energy_compensation,
 #ifdef LIGHT_BACKLIGHT_USED
