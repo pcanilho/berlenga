@@ -6,6 +6,21 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-7c77cee2 (2026-11-10)
+
+### Fixed
+- Clouds no longer repeat in a grid: the shape noise is read twice at an irrational ratio of scales and turned against the world's axes, at 128³ instead of 64³. Cover still means share of sky.
+
+### Changed
+- README: coarse-to-fine erosion line and image.
+- README: footprints in ground line and image.
+- README: melt-freeze crusts line and image.
+- README: terrain ground material line; snow and wetness shader code for ShaderMaterials.
+
+### Added
+- `TerrainMaterial3D`: a ground material that writes its own shader: rock, scree, soil, alluvium and sand layers chosen by the terrain generator's geology (or by slope without it), height-blended, biplanar on cliffs, with the erosion detail normal, grass ground tint, wetness and snow.
+- `BaseMaterial3D.get_snow_shader_code()` and `get_wetness_shader_code()`: the engine's snow and wetness lines for any `ShaderMaterial`, the same text `BaseMaterial3D` uses.
+
 ## build-dabf251a (2026-11-10)
 
 ### Changed

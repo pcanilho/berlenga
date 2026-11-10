@@ -1,1 +1,0 @@
-- TerrainGenerator3D: coarse-to-fine erosion (`coarse_levels`, `refine_steps`), about 2 to 3.7 times faster generation with the same relief; river mouths in lakes sit on the water.

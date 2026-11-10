@@ -8,7 +8,7 @@
 		- Rain or snow: the logistic model of air temperature and humidity of Jennings et al. (2018), the air cooling with height by [member lapse_rate], so mountains get a snow line.
 		- New snow density by temperature (Hedstrom and Pomeroy 1998); settling toward a maximum density that grows with depth, and albedo ageing (CLASS, Verseghy 1991).
 		- Melt by temperature and by the sunlight each slope absorbs (Pellicciotti et al. 2005); rain and meltwater held up to [member liquid_capacity], the rest running off; refreezing in the cold, into crusts that harden with each melt-freeze cycle ([member crust_enabled]).
-		- Snow sliding off slopes steeper than [member slide_angle] (SnowSlide, Bernhardt and Schulz 2010) and wind drifting it into sheltered ground (Winstral, Elder and Davis 2002).
+		- Snow sliding off slopes steeper than [member slide_angle] (SnowSlide, Bernhardt and Schulz 2010) and wind drifting it into sheltered ground (Winstral, Elder and Davis 2002), and moving the snow already lying ([member wind_transport_enabled]).
 		Materials read it through the [code]snow_map[/code] and [code]snow_map_rect[/code] global shader parameters ([member BaseMaterial3D.snow_enabled]), in raster and under path tracing; scripts through the [code]get_*_at[/code] methods. Cells entering the map as it moves take the state of the nearest cell that was inside it. The last [SnowCover3D] to enter the tree publishes the map.
 	</description>
 	<tutorials>
@@ -135,6 +135,18 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the density of the snowpack at [param position], in kg/m³.
+			</description>
+		</method>
+		<method name="get_blown_flux_max" qualifiers="const">
+			<return type="float" />
+			<description>
+				The largest snow transport flux on the map in the last update, kg per metre of width per second ([member wind_transport_enabled]).
+			</description>
+		</method>
+		<method name="get_blown_mean" qualifiers="const">
+			<return type="float" />
+			<description>
+				The snow water the wind moved in the last update, mm per cell on average.
 			</description>
 		</method>
 		<method name="get_canopy_capacity_at" qualifiers="const">
@@ -303,6 +315,23 @@
 				Returns the ground height at [param position] straight from [member height_source] (or a ray down on [member ground_collision_mask]), finer than the cells. NaN where nothing answers.
 			</description>
 		</method>
+		<method name="transport_flux" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="wind10" type="float" />
+			<param index="1" name="celsius" type="float" />
+			<param index="2" name="density" type="float" />
+			<description>
+				The snow the wind carries over lying snow, kg per metre of width per second, at a 10 m wind of [param wind10] m/s over snow of [param density] kg/m³ at [param celsius]: saltation (Pomeroy and Gray 1990) plus suspension, the PBSM concentration profile (Pomeroy and Male 1992) times the log wind profile up to 5 m. 0 at or below [method transport_threshold] and in snow at or above 0 °C.
+			</description>
+		</method>
+		<method name="transport_threshold" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<param index="1" name="density" type="float" />
+			<description>
+				The 10 m wind, m/s, that starts snow of [param density] kg/m³ at [param celsius] moving: the higher of Li and Pomeroy (1997) by temperature and Liston et al. (2007) by density, u*t = 0.10 exp(0.003 ρ).
+			</description>
+		</method>
 		<method name="snowfall_fraction" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="celsius" type="float" />
@@ -397,6 +426,12 @@
 		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="2.0">
+		</member>
+		<member name="wind_curvature_length" type="float" setter="set_wind_curvature_length" getter="get_wind_curvature_length" default="20.0">
+			The distance, in metres, over which [member wind_transport_enabled] measures the ground's curvature (MicroMet's length scale; at least two cells).
+		</member>
+		<member name="wind_transport_enabled" type="bool" setter="set_wind_transport_enabled" getter="is_wind_transport_enabled" default="true">
+			When on, wind above the transport threshold moves the snow already lying (SnowTran-3D, Liston and Sturm 1998): each cell sends its flux ([method transport_flux]) downwind, so snow leaves where the wind speeds up (windward shoulders, crests) and settles where it slows (below crests, in hollows), laid down wind-packed at 300 kg/m³. The wind over the ground is weighted by its slope along the wind and its curvature (MicroMet, Liston and Elder 2006). Snow under a frozen crust, wet snow and snow under trees stay. Snow comes in at the upwind edge of the map as from a cell like the edge one and leaves at the downwind edge. [member drift_enabled] is separate: it places falling snow.
 		</member>
 		<member name="world_update_every" type="int" setter="set_world_update_every" getter="get_world_update_every" default="8">
 			How many updates of the near square pass between updates of the world tier.

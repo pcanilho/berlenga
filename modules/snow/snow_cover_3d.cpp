@@ -863,6 +863,12 @@ void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
 		slide_accum = 0.0;
 		_slide();
 	}
+	if (wind_transport_enabled) {
+		_blow(inputs.dt_h, last_wind);
+	} else {
+		last_blown = 0.0f;
+		last_blown_max = 0.0f;
+	}
 	if (cornices_enabled) {
 		_grow_cornices(inputs.dt_h, last_wind);
 	}
@@ -1010,6 +1016,8 @@ void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_reso
 	drift_distance = owner->drift_distance;
 	drift_strength = owner->drift_strength;
 	drift_threshold_wind = owner->drift_threshold_wind;
+	wind_transport_enabled = owner->wind_transport_enabled;
+	wind_curvature_length = owner->wind_curvature_length;
 	precipitation_gradient = owner->precipitation_gradient;
 	publish_shader_globals = false;
 	cornices_enabled = true;
@@ -1018,6 +1026,219 @@ void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_reso
 	origin_cell = Vector2i(int(Math::floor(p_rect.position.x / cs)), int(Math::floor(p_rect.position.y / cs)));
 	origin_valid = true;
 	_sample_heights(0, resolution);
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Wind moving lying snow (docs/ideas/snow.md, follow-up 4): SnowTran-3D (Liston and Sturm 1998).
+
+static constexpr float Z0_SNOW = 0.0005f; // m, aerodynamic roughness of snow
+static constexpr float RHO_AIR = 1.3f; // kg/m3
+static constexpr float WIND_SNOW_DENSITY = 300.0f; // kg/m3, snow the wind lays down (wind-packed)
+
+static float _ustar(float p_wind10) {
+	return 0.41f * MAX(p_wind10, 0.0f) / Math::log(10.0f / Z0_SNOW);
+}
+
+float SnowCover3D::transport_threshold(float p_celsius, float p_density) {
+	// Two limits, the higher wins: the 10 m threshold of dry snow by temperature (Li and Pomeroy 1997), and
+	// the friction velocity a pack of density rho needs, u*t = 0.10 exp(0.003 rho) (Liston et al. 2007).
+	const float by_temperature = SnowFall3D::blowing_threshold(p_celsius);
+	const float by_density = 0.10f * Math::exp(0.003f * p_density) * Math::log(10.0f / Z0_SNOW) / 0.41f;
+	return MAX(by_temperature, by_density);
+}
+
+// Suspended flux at a 10 m wind, kg/(m s): the PBSM concentration profile (Pomeroy and Male 1992) times
+// the log wind profile, from the top of the saltation layer to 5 m. Tabled once by wind speed.
+static float _suspension(float p_wind10) {
+	static float table[201];
+	static bool built = false;
+	if (!built) {
+		for (int k = 0; k <= 200; k++) {
+			const float u10 = k * 0.25f;
+			const float us = _ustar(u10);
+			float q = 0.0f;
+			if (us > 0.01f) {
+				const float zr = 0.05628f * Math::pow(us, 1.27f);
+				const int steps = 48;
+				const float lz0 = Math::log(zr), lz1 = Math::log(5.0f);
+				for (int j = 0; j < steps; j++) {
+					const float za = Math::exp(lz0 + (lz1 - lz0) * j / steps);
+					const float zb = Math::exp(lz0 + (lz1 - lz0) * (j + 1) / steps);
+					const float zm = 0.5f * (za + zb);
+					q += SnowFall3D::blowing_concentration(u10, zm) * us / 0.41f * Math::log(zm / Z0_SNOW) * (zb - za);
+				}
+			}
+			table[k] = q;
+		}
+		built = true;
+	}
+	const float f = CLAMP(p_wind10 / 0.25f, 0.0f, 199.999f);
+	const int k = int(f);
+	return Math::lerp(table[k], table[k + 1], f - k);
+}
+
+float SnowCover3D::transport_flux(float p_wind10, float p_celsius, float p_density) {
+	if (p_celsius >= 0.0f) {
+		return 0.0f; // wet snow does not blow
+	}
+	const float ut10 = transport_threshold(p_celsius, p_density);
+	if (p_wind10 <= ut10) {
+		return 0.0f;
+	}
+	const float us = _ustar(p_wind10);
+	const float ust = _ustar(ut10);
+	// Saltation (Pomeroy and Gray 1990): Qs = 0.68 rho_a u*t (u*^2 - u*t^2) / (g u*).
+	const float qs = 0.68f * RHO_AIR * ust * (us * us - ust * ust) / (9.81f * us);
+	// Suspension above it, faded in from the threshold so the flux has no step there (our smoothing).
+	const float qt = _suspension(p_wind10) * (1.0f - (ust * ust) / (us * us));
+	return qs + qt;
+}
+
+void SnowCover3D::_blow(float p_dt_h, Vector2 p_wind) {
+	// SnowTran-3D's mass balance, dS/dt = -div(Qs + Qt): each cell sends its flux downwind (a donor-cell
+	// scheme), so snow leaves where the wind speeds up and settles where it slows. The wind over the
+	// ground is weighted by slope along it and curvature (MicroMet, Liston and Elder 2006):
+	// W = 1 + 0.5 Os + 0.5 Oc, each scaled to +-0.5 over the map. Snow under a frozen crust, wet snow and
+	// snow under trees stays.
+	last_blown = 0.0f;
+	last_blown_max = 0.0f;
+	const float u = p_wind.length();
+	if (p_dt_h <= 0.0f || u < 1.0f) {
+		return;
+	}
+	const int n = resolution;
+	const int nn = n * n;
+	const float cs = _cell_size();
+	const Vector2 dir = p_wind / u;
+	auto cell = [n](int x, int z) { return CLAMP(z, 0, n - 1) * n + CLAMP(x, 0, n - 1); };
+	// Terrain weights.
+	LocalVector<float> slope, curve;
+	slope.resize(nn);
+	curve.resize(nn);
+	const int eta = MAX(int(Math::round(MAX(wind_curvature_length, 2.0f * cs) / cs)), 1);
+	// Floors keep flat ground flat (MicroMet scales by the map's own extremes; noise would be amplified).
+	float smax = 0.1f, cmax = 0.002f;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			const float gx = (cell_ground[cell(x + 1, z)] - cell_ground[cell(x - 1, z)]) / (2.0f * cs);
+			const float gz = (cell_ground[cell(x, z + 1)] - cell_ground[cell(x, z - 1)]) / (2.0f * cs);
+			slope[i] = Math::atan(gx * dir.x + gz * dir.y); // rising along the wind: speeds up
+			const float h = cell_ground[i];
+			const float d = eta * cs;
+			const float d2 = d * Math::SQRT2;
+			curve[i] = 0.25f * ((h - 0.5f * (cell_ground[cell(x, z - eta)] + cell_ground[cell(x, z + eta)])) / (2.0f * d) + (h - 0.5f * (cell_ground[cell(x - eta, z)] + cell_ground[cell(x + eta, z)])) / (2.0f * d) + (h - 0.5f * (cell_ground[cell(x - eta, z - eta)] + cell_ground[cell(x + eta, z + eta)])) / (2.0f * d2) + (h - 0.5f * (cell_ground[cell(x - eta, z + eta)] + cell_ground[cell(x + eta, z - eta)])) / (2.0f * d2));
+			smax = MAX(smax, Math::abs(slope[i]));
+			cmax = MAX(cmax, Math::abs(curve[i]));
+		}
+	}
+	// Flux and what each cell can give (the loose snow over a crust; none under a frozen surface crust).
+	LocalVector<float> flux, loose;
+	flux.resize(nn);
+	loose.resize(nn);
+	float qmax = 0.0f;
+	const Inputs &in = inputs;
+	for (int i = 0; i < nn; i++) {
+		flux[i] = 0.0f;
+		loose[i] = 0.0f;
+		const float swe = cell_swe[i];
+		if (swe <= SWE_MIN || cell_liquid[i] > 0.01f || (cell_canopy.size() == nn && cell_canopy[i] > 0.2f)) {
+			continue;
+		}
+		float give = swe;
+		if (crust_enabled && cell_crust[i] > 0.0f) {
+			give = MIN(cell_crust_burial[i] * cell_density[i], swe);
+		}
+		const float t = in.temperature - lapse_rate * 0.001f * (cell_ground[i] - in.ref_height);
+		const float w = 1.0f + 0.5f * (0.5f * slope[i] / smax) + 0.5f * (0.5f * curve[i] / cmax);
+		flux[i] = transport_flux(u * w, t, cell_density[i]);
+		loose[i] = give;
+		qmax = MAX(qmax, flux[i]);
+	}
+	last_blown_max = qmax;
+	if (qmax <= 0.0f) {
+		return;
+	}
+	// Substeps keep each one under 2 mm of snow water through a face.
+	const float dt = p_dt_h * 3600.0f;
+	const float ax = Math::abs(dir.x), az = Math::abs(dir.y);
+	const float faces = ax + az;
+	const int sub = CLAMP(int(Math::ceil(qmax * dt * faces / cs / 2.0f)), 1, 256);
+	const float dts = dt / sub;
+	const int sx = dir.x >= 0.0f ? 1 : -1;
+	const int sz = dir.y >= 0.0f ? 1 : -1;
+	float *swe = cell_swe.ptrw();
+	float *rho = cell_density.ptrw();
+	float *burial = cell_crust_burial.ptrw();
+	LocalVector<float> gain;
+	gain.resize(nn);
+	double moved = 0.0;
+	for (int k = 0; k < sub; k++) {
+		for (int i = 0; i < nn; i++) {
+			gain[i] = 0.0f;
+		}
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				if (flux[i] <= 0.0f) {
+					continue;
+				}
+				// mm of snow water (kg/m2) through the downwind faces, at most what the cell can give.
+				const float out = MIN(flux[i] * dts * faces / cs, loose[i]);
+				const float to_x = out * ax / faces;
+				const float to_z = out * az / faces;
+				gain[i] -= out;
+				const int xn = x + sx, zn = z + sz;
+				if (xn >= 0 && xn < n) {
+					gain[z * n + xn] += to_x;
+				}
+				if (zn >= 0 && zn < n) {
+					gain[zn * n + x] += to_z;
+				}
+				// The upwind edge: snow comes in from outside as from a cell like this one.
+				if (x - sx < 0 || x - sx >= n) {
+					gain[i] += to_x;
+				}
+				if (z - sz < 0 || z - sz >= n) {
+					gain[i] += to_z;
+				}
+				moved += out;
+			}
+		}
+		for (int i = 0; i < nn; i++) {
+			const float g = gain[i];
+			if (g == 0.0f) {
+				continue;
+			}
+			const float old = swe[i] > SWE_MIN ? swe[i] : 0.0f;
+			if (g > 0.0f) {
+				// Laid down wind-packed; it buries a crust.
+				const float depth_old = old > 0.0f ? old / rho[i] : 0.0f;
+				swe[i] = old + g;
+				rho[i] = swe[i] / MAX(depth_old + g / WIND_SNOW_DENSITY, 1e-6f);
+				if (cell_crust[i] > 0.0f) {
+					burial[i] += g / WIND_SNOW_DENSITY;
+				}
+				// A fresh deposit can blow on.
+				if (flux[i] > 0.0f || cell_crust[i] <= 0.0f) {
+					loose[i] += g;
+				}
+			} else {
+				// Taken from the top: the pack below keeps its density.
+				swe[i] = MAX(old + g, 0.0f);
+				loose[i] = MAX(loose[i] + g, 0.0f);
+				if (cell_crust[i] > 0.0f) {
+					burial[i] = MAX(burial[i] + g / MAX(rho[i], 30.0f), 0.0f);
+				}
+				if (swe[i] <= SWE_MIN) {
+					swe[i] = 0.0f;
+					cell_liquid.write[i] = 0.0f;
+					rho[i] = 100.0f;
+				}
+			}
+		}
+	}
+	last_blown = float(moved / nn);
 }
 
 void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
@@ -1653,6 +1874,14 @@ void SnowCover3D::set_drift_strength(float p_strength) {
 	drift_strength = MAX(p_strength, 0.0f);
 }
 
+void SnowCover3D::set_wind_transport_enabled(bool p_enabled) {
+	wind_transport_enabled = p_enabled;
+}
+
+void SnowCover3D::set_wind_curvature_length(float p_m) {
+	wind_curvature_length = MAX(p_m, 0.0f);
+}
+
 void SnowCover3D::set_drift_threshold_wind(float p_speed) {
 	drift_threshold_wind = MAX(p_speed, 0.0f);
 }
@@ -1740,6 +1969,14 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_drift_distance"), &SnowCover3D::get_drift_distance);
 	ClassDB::bind_method(D_METHOD("set_drift_strength", "strength"), &SnowCover3D::set_drift_strength);
 	ClassDB::bind_method(D_METHOD("get_drift_strength"), &SnowCover3D::get_drift_strength);
+	ClassDB::bind_method(D_METHOD("set_wind_transport_enabled", "enabled"), &SnowCover3D::set_wind_transport_enabled);
+	ClassDB::bind_method(D_METHOD("is_wind_transport_enabled"), &SnowCover3D::is_wind_transport_enabled);
+	ClassDB::bind_method(D_METHOD("set_wind_curvature_length", "length"), &SnowCover3D::set_wind_curvature_length);
+	ClassDB::bind_method(D_METHOD("get_wind_curvature_length"), &SnowCover3D::get_wind_curvature_length);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("transport_flux", "wind10", "celsius", "density"), &SnowCover3D::transport_flux);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("transport_threshold", "celsius", "density"), &SnowCover3D::transport_threshold);
+	ClassDB::bind_method(D_METHOD("get_blown_mean"), &SnowCover3D::get_blown_mean);
+	ClassDB::bind_method(D_METHOD("get_blown_flux_max"), &SnowCover3D::get_blown_flux_max);
 	ClassDB::bind_method(D_METHOD("set_drift_threshold_wind", "speed"), &SnowCover3D::set_drift_threshold_wind);
 	ClassDB::bind_method(D_METHOD("get_drift_threshold_wind"), &SnowCover3D::get_drift_threshold_wind);
 	ClassDB::bind_method(D_METHOD("set_publish_shader_globals", "enabled"), &SnowCover3D::set_publish_shader_globals);
@@ -1825,6 +2062,9 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_distance", PROPERTY_HINT_RANGE, "1,1000,1,suffix:m"), "set_drift_distance", "get_drift_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_strength", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_drift_strength", "get_drift_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_threshold_wind", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:m/s"), "set_drift_threshold_wind", "get_drift_threshold_wind");
+	ADD_GROUP("Wind Transport", "wind_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_transport_enabled"), "set_wind_transport_enabled", "is_wind_transport_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_curvature_length", PROPERTY_HINT_RANGE, "0,500,1,suffix:m"), "set_wind_curvature_length", "get_wind_curvature_length");
 	ADD_GROUP("World", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "climate", PROPERTY_HINT_RESOURCE_TYPE, "SnowClimate"), "set_climate", "get_climate");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "world_update_every", PROPERTY_HINT_RANGE, "1,120,1"), "set_world_update_every", "get_world_update_every");

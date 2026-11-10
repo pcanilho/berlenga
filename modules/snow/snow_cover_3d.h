@@ -90,6 +90,8 @@ class SnowCover3D : public Node3D {
 	float drift_distance = 100.0f; // m, dmax
 	float drift_strength = 0.6f;
 	float drift_threshold_wind = 7.0f; // m/s at 10 m
+	bool wind_transport_enabled = true; // the wind moves lying snow (SnowTran-3D)
+	float wind_curvature_length = 20.0f; // m, MicroMet's curvature length scale
 	bool publish_shader_globals = true;
 	float precipitation_gradient = 0.0f; // share more per 100 m above the reference height
 
@@ -200,6 +202,9 @@ class SnowCover3D : public Node3D {
 	Vector3 _cell_center(int p_x, int p_z) const;
 	void _setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_resolution);
 	void _grow_cornices(float p_dt_h, Vector2 p_wind);
+	void _blow(float p_dt_h, Vector2 p_wind);
+	float last_blown = 0.0f; // mm moved per cell (mean) by the last update's transport
+	float last_blown_max = 0.0f; // kg/(m s), largest transport flux in the last update
 	void _seed_from_world(const Vector<uint8_t> *p_only);
 	void _make_world();
 	void _free_world();
@@ -272,6 +277,17 @@ public:
 	float get_drift_strength() const { return drift_strength; }
 	void set_drift_threshold_wind(float p_speed);
 	float get_drift_threshold_wind() const { return drift_threshold_wind; }
+	void set_wind_transport_enabled(bool p_enabled);
+	bool is_wind_transport_enabled() const { return wind_transport_enabled; }
+	void set_wind_curvature_length(float p_m);
+	float get_wind_curvature_length() const { return wind_curvature_length; }
+	// Snow the wind carries over lying snow, kg per metre of width per second, at a 10 m wind of p_wind10
+	// m/s over snow of p_density kg/m3 at p_celsius: saltation (Pomeroy and Gray 1990) plus suspension
+	// (Pomeroy and Male 1992). 0 at or below the threshold.
+	static float transport_flux(float p_wind10, float p_celsius, float p_density);
+	static float transport_threshold(float p_celsius, float p_density); // m/s at 10 m
+	float get_blown_mean() const { return last_blown; }
+	float get_blown_flux_max() const { return last_blown_max; }
 	void set_publish_shader_globals(bool p_enabled);
 	bool get_publish_shader_globals() const { return publish_shader_globals; }
 	void set_precipitation_gradient(float p_share);

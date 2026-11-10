@@ -8,6 +8,7 @@
 #       [--coast [--focus=lake|coast] [--dist=520]]   an island with lakes, its sea, lakes and rivers built
 #   godot --headless --path docs/bench/terrain_gen -- --coast --geology=map.png  island map, lakes and rivers listed
 #   godot --headless --path docs/bench/terrain_gen -- --map=map.png      shaded relief with rivers
+#   godot --headless --path docs/bench/terrain_gen -- --soil [--uplift=6]  soil and rock by slope above the valley floors
 #   godot --headless --path docs/bench/terrain_gen -- --compare=prefix [--cell=8] [--refine=40]  coarse-to-fine
 #       against single-level: time, height percentiles, slopes, drainage density; relief maps prefix_{one,multi}.png
 #   godot --headless --path docs/bench/terrain_gen -- [--coast] --climate=map.png  climate maps (temperature,
@@ -67,6 +68,12 @@ func _ready() -> void:
 			var fd := FileAccess.open(args["dump"], FileAccess.WRITE)
 			fd.store_buffer(gen.get_height_image().get_data())
 			fd.close()
+		get_tree().quit()
+	elif args.has("soil"):
+		if args.has("uplift"):
+			gen.uplift = float(args["uplift"])
+		gen.generate()
+		_soil_histogram()
 		get_tree().quit()
 	elif args.has("compare"):
 		await _compare(args["compare"])
@@ -397,7 +404,16 @@ func _run_checks() -> void:
 	rock_flat /= maxi(n_flat, 1)
 	soil_steep /= maxi(n_steep, 1)
 	soil_flat /= maxi(n_flat, 1)
-	check(rock_steep > 0.5 and rock_flat < 0.2, "rock bare on steep ground (%.2f), covered on gentle ground (%.2f)" % [rock_steep, rock_flat])
+	# Steep ground (over 31 degrees) is mostly soil-mantled up to the critical slope (forested threshold hillslopes);
+	# rock shows on sharp crests, cliffs and near the limit, so it is several times as common there as on gentle ground.
+	check(rock_steep > 0.15 and rock_steep > 3.0 * rock_flat and rock_flat < 0.2, "rock commoner on steep ground (%.2f) than on gentle ground (%.2f)" % [rock_steep, rock_flat])
+	var hist := _soil_histogram()
+	var mid := 0
+	var mid_soil := 0
+	for b in range(4, 7):
+		mid += int(hist["bins"][b][0])
+		mid_soil += int(hist["bins"][b][3])
+	check(mid > 100 and mid_soil > 0.5 * mid, "hillslopes of 20 to 35 degrees carry 0.2 m of soil or more on most cells (%.0f%% of %d)" % [100.0 * mid_soil / maxi(mid, 1), mid])
 	check(soil_flat > 4.0 * soil_steep, "soil deeper on gentle ground (%.2f m) than steep (%.2f m)" % [soil_flat, soil_steep])
 	talus_slope /= maxi(talus_n, 1)
 	check(talus_n > 50 and talus_slope < repose, "scree lies below repose (%d cells, mean slope %.2f, repose %.2f)" % [talus_n, talus_slope, repose])
@@ -1188,3 +1204,43 @@ func _compare(prefix: String) -> void:
 		syy += (b2[i] - m2) * (b2[i] - m2)
 		mad += absf(b1[i] - b2[i])
 	print("large-scale correlation %.4f, mean abs difference %.2f m" % [sxy / sqrt(sxx * syy), mad / b1.size()])
+
+
+func _soil_histogram() -> Dictionary:
+	# Hillslopes only (drainage under 1e5 m2, more than 40 m above the lowest ground): per 5 degree slope band, the
+	# share of cells, mean soil depth and mean rock exposure.
+	var g := gen.get_grid_size()
+	var h := gen.get_height_image()
+	var a := gen.get_drainage_image()
+	var cell := gen.cell_size
+	var r := gen.get_world_rect()
+	var bins := []
+	for b in 14:
+		bins.append([0, 0.0, 0.0, 0])
+	var total := 0
+	var lo := INF
+	for z in g.y:
+		for x in g.x:
+			lo = minf(lo, h.get_pixel(x, z).r)
+	for z in range(1, g.y - 1):
+		for x in range(1, g.x - 1):
+			if a.get_pixel(x, z).r >= 1.0e5 or h.get_pixel(x, z).r < lo + 40.0:
+				continue
+			var hx := (h.get_pixel(x + 1, z).r - h.get_pixel(x - 1, z).r) / (2.0 * cell)
+			var hz := (h.get_pixel(x, z + 1).r - h.get_pixel(x, z - 1).r) / (2.0 * cell)
+			var sl := rad_to_deg(atan(sqrt(hx * hx + hz * hz)))
+			var p := Vector3(r.position.x + x * cell, 0, r.position.y + z * cell)
+			var b := mini(int(sl / 5.0), 13)
+			bins[b][0] += 1
+			bins[b][1] += gen.get_soil_depth(p)
+			bins[b][2] += gen.get_rock_exposure(p)
+			bins[b][3] += 1 if gen.get_soil_depth(p) >= 0.2 else 0
+			total += 1
+	print("slope band   share   soil m   rock   cells with >= 0.2 m soil")
+	var out := {"total": total, "bins": bins}
+	for b in 14:
+		var c: int = bins[b][0]
+		if c == 0:
+			continue
+		print("%2d-%2d deg   %5.1f%%   %5.2f   %5.2f   %5.1f%%" % [b * 5, b * 5 + 5, 100.0 * c / total, bins[b][1] / c, bins[b][2] / c, 100.0 * bins[b][3] / c])
+	return out

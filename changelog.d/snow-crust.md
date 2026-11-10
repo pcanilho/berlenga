@@ -1,1 +1,0 @@
-- Snow: melt-freeze crusts. A surface that thaws and freezes again becomes a crust that hardens with each cycle (Fierz et al. 2009 hand hardness): a boot breaks a first-cycle crust, cracking it into pieces that tip into the hole, and stands on a harder one, compacting only the snow over it. `SnowCover3D.crust_enabled`, `get_crust_strength_at()`, `add_crust()`.
