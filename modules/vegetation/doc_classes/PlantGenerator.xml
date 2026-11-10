@@ -62,6 +62,12 @@
 		<member name="stem_color" type="Color" setter="set_stem_color" getter="get_stem_color" default="Color(0.2, 0.36, 0.1, 1)">
 			Colour of the stems.
 		</member>
+		<member name="texture_size" type="int" setter="set_texture_size" getter="get_texture_size" default="256">
+			Size in pixels of the generated leaf and petal textures.
+		</member>
+		<member name="textures" type="bool" setter="set_textures" getter="get_textures" default="true">
+			If [code]true[/code], leaves and petals get generated textures: veins grown by open venation (Runions et al. 2005) with widths by Murray's law, colour drift, dry margins and spots in the albedo, a normal map that sinks the veins, and a translucency map in the back light texture where the veins block light. Textures are baked once per preset, surface and seed variant and shared between meshes.
+		</member>
 	</members>
 	<constants>
 		<constant name="PRESET_DANDELION" value="0" enum="Preset">
