@@ -507,6 +507,16 @@ func _lightning_tests() -> void:
 	for b in bright:
 		line += "%.2f " % b
 	print("lightning: brightness by frame: " + line)
+	print("lightning: after the flash faded (%d active): last channel still %d points" % [lt.get_active_flash_count(), lt.get_last_channel().size()])
+	# The cloud top a storm's flash rate uses: a calm map so the storm stays put while it grows.
+	m.clear_storms()
+	m.wind_speed = 0.0
+	m.cloud_thickness = 2500.0
+	m.snap_to_settings()
+	m.add_storm(Vector2(-5000, 0), 2000.0, 40.0, 10.0, 0.0)
+	m.advance(900.0)
+	var top: float = m.get_cloud_top_at(Vector3(-5000, 0, 0))
+	print("lightning: grown storm's cloud top %.0f m (base %.0f, thickness %.0f; base + 3 x thickness is %.0f), %.2f flashes a minute" % [top, m.cloud_base_height, m.cloud_thickness, m.cloud_base_height + 3.0 * m.cloud_thickness, lt.get_flash_rate(top)])
 
 	# Flashes 340 m and 2 km off with their thunder played: the sound starts at the distance over c.
 	# --thunder-out=dir saves each flash's thunder there.

@@ -687,6 +687,12 @@ int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_
 	f.directional = directional;
 	f.light = light;
 
+	if (p_cloud_to_ground) {
+		last_channel.resize(f.main_channel.size());
+		for (uint32_t i = 0; i < f.main_channel.size(); i++) {
+			last_channel.set(i, f.main_channel[i]);
+		}
+	}
 	flashes.push_back(f);
 	strike_count++;
 	if (p_cloud_to_ground) {
@@ -757,7 +763,6 @@ void WeatherLightning3D::_free_flash(Flash &r_flash) {
 }
 
 void WeatherLightning3D::_storm_strikes(WeatherMap3D *p_map, double p_delta, const Vector3 &p_listener) {
-	const WeatherClouds::State state = p_map->get_cloud_state();
 	const float ground = p_map->get_ground_height();
 	// The freezing level from the air temperature at the standard lapse rate (6.5 K/km).
 	const float freezing = MAX(p_map->get_air_temperature(), 0.0f) / 6.5f * 1000.0f;
@@ -767,8 +772,7 @@ void WeatherLightning3D::_storm_strikes(WeatherMap3D *p_map, double p_delta, con
 			continue;
 		}
 		// The cloud the sky draws over the storm's centre: its top above the ground.
-		const Vector2 ct = WeatherClouds::cover_type_at(state, s.position);
-		const float top = state.base_height + WeatherClouds::top_height(state, ct.y) - ground;
+		const float top = p_map->get_cloud_top_at(Vector3(s.position.x, 0.0f, s.position.y)) - ground;
 		const float per_minute = get_flash_rate(top) * strength * rate_scale;
 		const float p = 1.0f - Math::exp(-per_minute * float(p_delta) / 60.0f);
 		if (rng.randf() >= p) {
@@ -929,13 +933,7 @@ int WeatherLightning3D::strike(const Vector3 &p_position, bool p_cloud_to_ground
 }
 
 PackedVector3Array WeatherLightning3D::get_last_channel() const {
-	PackedVector3Array out;
-	if (!flashes.is_empty()) {
-		for (const Vector3 &v : flashes[flashes.size() - 1].main_channel) {
-			out.push_back(v);
-		}
-	}
-	return out;
+	return last_channel;
 }
 
 float WeatherLightning3D::get_flash_brightness() const {

@@ -385,6 +385,9 @@ public:
 	float get_storm_strength(const Storm &p_storm) const { return _storm_weight(p_storm); }
 	// The cloud layer as the sky draws it now.
 	WeatherClouds::State get_cloud_state() const { return _cloud_state(); }
+	// The top of the cloud the sky draws over a point (world y, m): the base plus the column's
+	// height for its cloud type, up to three times cloud_thickness in a storm's core.
+	float get_cloud_top_at(Vector3 p_position) const;
 
 	// Air velocity at a world position (m/s), mean wind on the log law plus gusts.
 	// p_height_above_ground < 0 takes it from ground_height.

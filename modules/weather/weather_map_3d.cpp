@@ -1142,6 +1142,11 @@ WeatherClouds::State WeatherMap3D::_cloud_state() const {
 	return st;
 }
 
+float WeatherMap3D::get_cloud_top_at(Vector3 p_position) const {
+	const WeatherClouds::State st = _cloud_state();
+	return st.base_height + WeatherClouds::top_height(st, WeatherClouds::cover_type_at(st, Vector2(p_position.x, p_position.z)).y);
+}
+
 float WeatherMap3D::get_cloud_density_at(Vector3 p_position) const {
 	return WeatherClouds::extinction_at(_cloud_state(), p_position);
 }
@@ -1479,6 +1484,7 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("remove_storm", "id"), &WeatherMap3D::remove_storm);
 	ClassDB::bind_method(D_METHOD("clear_storms"), &WeatherMap3D::clear_storms);
 	ClassDB::bind_method(D_METHOD("get_storm_count"), &WeatherMap3D::get_storm_count);
+	ClassDB::bind_method(D_METHOD("get_cloud_top_at", "position"), &WeatherMap3D::get_cloud_top_at);
 	ClassDB::bind_method(D_METHOD("get_wind_at", "position", "height_above_ground"), &WeatherMap3D::get_wind_at, DEFVAL(-1.0f));
 	ClassDB::bind_method(D_METHOD("set_shelter_enabled", "enabled"), &WeatherMap3D::set_shelter_enabled);
 	ClassDB::bind_method(D_METHOD("get_shelter_enabled"), &WeatherMap3D::get_shelter_enabled);
