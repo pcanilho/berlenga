@@ -1,0 +1,1844 @@
+/**************************************************************************/
+/*  tree_generator.cpp                                                    */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#include "tree_generator.h"
+
+#include "core/object/class_db.h"
+#include "core/os/os.h"
+
+static constexpr int MAX_NODES = 150000;
+
+static const char *preset_names[TreeGenerator::PRESET_MAX] = {
+	"Oak", "Beech", "Birch", "Scots Pine", "Norway Spruce", "Hazel", "Hawthorn", "Lime", "Sycamore Maple", "Ash",
+	"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder"
+};
+
+static const char *stand_names[TreeGenerator::STAND_MAX] = {
+	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow"
+};
+
+TreeGenerator::TreeGenerator() {
+	set_preset(PRESET_OAK);
+}
+
+// Species defaults. Shapes come from the growth model; these numbers are the botany: how strongly
+// the leader dominates and for how long (excurrent conifers versus decurrent broadleaves), how
+// much shade the species tolerates before it sheds (beech and spruce keep low branches, pine and
+// birch prune themselves), branching angles and phyllotaxis, and leaf size.
+void TreeGenerator::set_preset(Preset p_preset) {
+	ERR_FAIL_INDEX(int(p_preset), int(PRESET_MAX));
+	preset = p_preset;
+	float *p = params;
+	// Shared defaults.
+	p[PARAM_YEARS] = 40;
+	p[PARAM_INTERNODE_LENGTH] = 0.4f;
+	p[PARAM_INTERNODE_LENGTH_AGE] = 0.985f;
+	p[PARAM_MAX_SHOOT] = 2;
+	p[PARAM_VIGOR] = 2.0f;
+	p[PARAM_APICAL_DOMINANCE] = 0.58f;
+	p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+	p[PARAM_MATURITY] = 25;
+	p[PARAM_BRANCH_ANGLE] = 45;
+	p[PARAM_BRANCH_ANGLE_VARIANCE] = 10;
+	p[PARAM_DIVERGENCE] = 137.5f;
+	p[PARAM_WHORL_BUDS] = 5;
+	p[PARAM_DIRECTION_NOISE] = 8;
+	p[PARAM_PHOTOTROPISM] = 0.12f;
+	p[PARAM_GRAVITROPISM] = 0.08f;
+	p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
+	p[PARAM_SHADOW_STRENGTH] = 0.12f;
+	p[PARAM_SHADOW_FALLOFF] = 1.25f;
+	p[PARAM_SHADOW_DEPTH] = 6;
+	p[PARAM_BUD_LIGHT_MIN] = 0.05f;
+	p[PARAM_BUD_IDLE_YEARS] = 3;
+	p[PARAM_SHED_RATIO] = 0.15f;
+	p[PARAM_DEAD_BRANCH_KEEP] = 0.15f;
+	p[PARAM_TIP_RADIUS] = 0.004f;
+	p[PARAM_PIPE_EXPONENT] = 2.1f;
+	p[PARAM_GRAVITY_BENDING] = 0.0f;
+	p[PARAM_STEMS] = 1;
+	p[PARAM_STEM_SPREAD] = 0;
+	p[PARAM_BASAL_SPROUTS] = 0;
+	p[PARAM_ROOT_FLARE] = 0.5f;
+	p[PARAM_LEAF_SIZE] = 0.1f;
+	p[PARAM_LEAVES_PER_INTERNODE] = 32;
+	p[PARAM_LEAF_YEARS] = 1;
+	p[PARAM_NEEDLES] = 0;
+	p[PARAM_TWIG_DROOP] = 0;
+	p[PARAM_APICAL_CONTROL] = 1.0f;
+	p[PARAM_LEAF_WIDTH] = 0.32f;
+	phyllotaxis = PHYLLOTAXIS_ALTERNATE;
+	switch (p_preset) {
+		case PRESET_OAK: // Quercus robur: decurrent, wide, gnarled, light-demanding.
+			p[PARAM_YEARS] = 45;
+			p[PARAM_INTERNODE_LENGTH] = 0.45f;
+			p[PARAM_APICAL_DOMINANCE] = 0.57f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.49f;
+			p[PARAM_MATURITY] = 20;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_DIRECTION_NOISE] = 14;
+			p[PARAM_GRAVITROPISM] = 0.04f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.35f;
+			p[PARAM_SHED_RATIO] = 0.17f;
+			p[PARAM_ROOT_FLARE] = 0.7f;
+			p[PARAM_LEAF_SIZE] = 0.11f;
+			bark_color = Color(0.27f, 0.24f, 0.2f);
+			leaf_color = Color(0.13f, 0.25f, 0.06f);
+			break;
+		case PRESET_BEECH: // Fagus sylvatica: tall, smooth grey bark, very shade tolerant.
+			p[PARAM_YEARS] = 50;
+			p[PARAM_APICAL_DOMINANCE] = 0.57f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.51f;
+			p[PARAM_MATURITY] = 35;
+			p[PARAM_BRANCH_ANGLE] = 42;
+			p[PARAM_DIVERGENCE] = 180; // Distichous.
+			p[PARAM_DIRECTION_NOISE] = 6;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
+			p[PARAM_SHED_RATIO] = 0.08f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.05f;
+			p[PARAM_LEAF_SIZE] = 0.08f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 36;
+			bark_color = Color(0.45f, 0.45f, 0.42f);
+			leaf_color = Color(0.17f, 0.3f, 0.07f);
+			break;
+		case PRESET_BIRCH: // Betula pendula: narrow, pendulous twigs, white bark, pioneer.
+			p[PARAM_YEARS] = 28;
+			p[PARAM_APICAL_DOMINANCE] = 0.58f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.54f;
+			p[PARAM_BRANCH_ANGLE] = 38;
+			p[PARAM_DIRECTION_NOISE] = 6;
+			p[PARAM_GRAVITROPISM] = 0.12f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.75f;
+			p[PARAM_SHED_RATIO] = 0.18f;
+			p[PARAM_TWIG_DROOP] = 1.2f;
+			p[PARAM_LEAF_SIZE] = 0.05f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 40;
+			p[PARAM_ROOT_FLARE] = 0.3f;
+			bark_color = Color(0.74f, 0.72f, 0.68f);
+			leaf_color = Color(0.2f, 0.34f, 0.08f);
+			break;
+		case PRESET_SCOTS_PINE: // Pinus sylvestris: whorls, self-pruning, flat crown when old.
+			p[PARAM_YEARS] = 34;
+			p[PARAM_INTERNODE_LENGTH] = 0.4f;
+			phyllotaxis = PHYLLOTAXIS_WHORLED;
+			p[PARAM_WHORL_BUDS] = 5;
+			p[PARAM_APICAL_DOMINANCE] = 0.74f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.52f;
+			p[PARAM_MATURITY] = 30;
+			p[PARAM_BRANCH_ANGLE] = 65;
+			p[PARAM_DIRECTION_NOISE] = 9;
+			p[PARAM_GRAVITROPISM] = 0.0f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
+			p[PARAM_APICAL_CONTROL] = 0.7f;
+			p[PARAM_PHOTOTROPISM] = 0.08f;
+			p[PARAM_SHED_RATIO] = 0.3f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.1f;
+			p[PARAM_NEEDLES] = 1;
+			p[PARAM_LEAF_SIZE] = 0.065f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 120;
+			p[PARAM_LEAF_YEARS] = 3;
+			bark_color = Color(0.42f, 0.27f, 0.18f);
+			leaf_color = Color(0.12f, 0.22f, 0.1f);
+			break;
+		case PRESET_NORWAY_SPRUCE: // Picea abies: strong leader, drooping laterals, dead lower limbs.
+			p[PARAM_YEARS] = 50;
+			p[PARAM_INTERNODE_LENGTH] = 0.35f;
+			phyllotaxis = PHYLLOTAXIS_WHORLED;
+			p[PARAM_WHORL_BUDS] = 5;
+			p[PARAM_APICAL_DOMINANCE] = 0.8f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.76f;
+			p[PARAM_BRANCH_ANGLE] = 80;
+			p[PARAM_DIRECTION_NOISE] = 5;
+			p[PARAM_GRAVITROPISM] = -0.08f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 1.2f;
+			p[PARAM_APICAL_CONTROL] = 0.65f;
+			p[PARAM_PHOTOTROPISM] = 0.04f;
+			p[PARAM_SHED_RATIO] = 0.1f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.7f;
+			p[PARAM_TWIG_DROOP] = 0.8f;
+			p[PARAM_NEEDLES] = 1;
+			p[PARAM_LEAF_SIZE] = 0.03f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 160;
+			p[PARAM_LEAF_YEARS] = 6;
+			bark_color = Color(0.33f, 0.27f, 0.23f);
+			leaf_color = Color(0.07f, 0.17f, 0.08f);
+			break;
+		case PRESET_HAZEL: // Corylus avellana: multi-stemmed, basitonic, sprouts from the base.
+			p[PARAM_YEARS] = 15;
+			p[PARAM_INTERNODE_LENGTH] = 0.25f;
+			p[PARAM_APICAL_DOMINANCE] = 0.52f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.48f;
+			p[PARAM_MATURITY] = 10;
+			p[PARAM_BRANCH_ANGLE] = 40;
+			p[PARAM_DIVERGENCE] = 180;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.3f;
+			p[PARAM_STEMS] = 6;
+			p[PARAM_STEM_SPREAD] = 25;
+			p[PARAM_BASAL_SPROUTS] = 0.3f;
+			p[PARAM_ROOT_FLARE] = 0.2f;
+			p[PARAM_LEAF_SIZE] = 0.1f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 28;
+			bark_color = Color(0.36f, 0.27f, 0.2f);
+			leaf_color = Color(0.17f, 0.3f, 0.08f);
+			break;
+		case PRESET_HAWTHORN: // Crataegus monogyna: small, dense, twiggy, crooked.
+			p[PARAM_YEARS] = 28;
+			p[PARAM_INTERNODE_LENGTH] = 0.2f;
+			p[PARAM_APICAL_DOMINANCE] = 0.53f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.48f;
+			p[PARAM_MATURITY] = 12;
+			p[PARAM_BRANCH_ANGLE] = 55;
+			p[PARAM_DIRECTION_NOISE] = 18;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.3f;
+			p[PARAM_SHED_RATIO] = 0.1f;
+			p[PARAM_STEMS] = 2;
+			p[PARAM_STEM_SPREAD] = 15;
+			p[PARAM_LEAF_SIZE] = 0.045f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 20;
+			bark_color = Color(0.32f, 0.29f, 0.25f);
+			leaf_color = Color(0.13f, 0.27f, 0.07f);
+			break;
+		case PRESET_LIME: // Tilia cordata: dense ovate crown, distichous, shade tolerant.
+			p[PARAM_YEARS] = 45;
+			p[PARAM_APICAL_DOMINANCE] = 0.58f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.52f;
+			p[PARAM_DIVERGENCE] = 180;
+			p[PARAM_BRANCH_ANGLE] = 45;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.6f;
+			p[PARAM_SHED_RATIO] = 0.08f;
+			p[PARAM_LEAF_SIZE] = 0.075f;
+			p[PARAM_LEAF_WIDTH] = 0.42f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 28;
+			bark_color = Color(0.3f, 0.28f, 0.25f);
+			leaf_color = Color(0.17f, 0.31f, 0.08f);
+			break;
+		case PRESET_SYCAMORE_MAPLE: // Acer pseudoplatanus: opposite buds, broad dome, big leaves.
+			p[PARAM_YEARS] = 42;
+			phyllotaxis = PHYLLOTAXIS_OPPOSITE;
+			p[PARAM_APICAL_DOMINANCE] = 0.57f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_BRANCH_ANGLE] = 45;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
+			p[PARAM_SHED_RATIO] = 0.12f;
+			p[PARAM_LEAF_SIZE] = 0.13f;
+			p[PARAM_LEAF_WIDTH] = 0.5f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 16;
+			bark_color = Color(0.4f, 0.37f, 0.33f);
+			leaf_color = Color(0.13f, 0.27f, 0.07f);
+			break;
+		case PRESET_ASH: // Fraxinus excelsior: opposite, open light-demanding crown, upcurved limbs.
+			p[PARAM_YEARS] = 42;
+			phyllotaxis = PHYLLOTAXIS_OPPOSITE;
+			p[PARAM_APICAL_DOMINANCE] = 0.6f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.53f;
+			p[PARAM_BRANCH_ANGLE] = 40;
+			p[PARAM_GRAVITROPISM] = 0.16f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.7f;
+			p[PARAM_SHED_RATIO] = 0.2f;
+			p[PARAM_LEAF_SIZE] = 0.07f; // Leaflets of the pinnate leaf.
+			p[PARAM_LEAF_WIDTH] = 0.3f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 30;
+			bark_color = Color(0.45f, 0.44f, 0.4f);
+			leaf_color = Color(0.17f, 0.29f, 0.08f);
+			break;
+		case PRESET_HORSE_CHESTNUT: // Aesculus hippocastanum: opposite, dense dome, palmate leaves.
+			p[PARAM_YEARS] = 40;
+			phyllotaxis = PHYLLOTAXIS_OPPOSITE;
+			p[PARAM_APICAL_DOMINANCE] = 0.56f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
+			p[PARAM_SHED_RATIO] = 0.1f;
+			p[PARAM_TWIG_DROOP] = 0.4f;
+			p[PARAM_LEAF_SIZE] = 0.16f; // Leaflets of the palmate leaf.
+			p[PARAM_LEAF_WIDTH] = 0.36f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 20;
+			bark_color = Color(0.33f, 0.28f, 0.24f);
+			leaf_color = Color(0.12f, 0.25f, 0.06f);
+			break;
+		case PRESET_BLACK_ALDER: // Alnus glutinosa: conical broadleaf of wet ground.
+			p[PARAM_YEARS] = 27;
+			p[PARAM_APICAL_DOMINANCE] = 0.64f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.58f;
+			p[PARAM_APICAL_CONTROL] = 0.85f;
+			p[PARAM_BRANCH_ANGLE] = 55;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.8f;
+			p[PARAM_SHED_RATIO] = 0.22f;
+			p[PARAM_LEAF_SIZE] = 0.07f;
+			p[PARAM_LEAF_WIDTH] = 0.5f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 26;
+			bark_color = Color(0.25f, 0.23f, 0.21f);
+			leaf_color = Color(0.1f, 0.22f, 0.06f);
+			break;
+		case PRESET_WHITE_WILLOW: // Salix alba: forked upright limbs, hanging twigs, narrow leaves.
+			p[PARAM_YEARS] = 32;
+			p[PARAM_APICAL_DOMINANCE] = 0.53f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.49f;
+			p[PARAM_BRANCH_ANGLE] = 32;
+			p[PARAM_GRAVITROPISM] = 0.14f;
+			p[PARAM_DIRECTION_NOISE] = 10;
+			p[PARAM_TWIG_DROOP] = 1.2f;
+			p[PARAM_SHED_RATIO] = 0.18f;
+			p[PARAM_LEAF_SIZE] = 0.09f;
+			p[PARAM_LEAF_WIDTH] = 0.13f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 36;
+			bark_color = Color(0.36f, 0.33f, 0.28f);
+			leaf_color = Color(0.25f, 0.33f, 0.2f);
+			break;
+		case PRESET_LARCH: // Larix decidua: whorled conifer, deciduous needle tufts, hanging twigs.
+			p[PARAM_YEARS] = 38;
+			phyllotaxis = PHYLLOTAXIS_WHORLED;
+			p[PARAM_WHORL_BUDS] = 4;
+			p[PARAM_APICAL_DOMINANCE] = 0.74f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.62f;
+			p[PARAM_APICAL_CONTROL] = 0.72f;
+			p[PARAM_BRANCH_ANGLE] = 70;
+			p[PARAM_GRAVITROPISM] = 0.04f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 1.0f;
+			p[PARAM_PHOTOTROPISM] = 0.06f;
+			p[PARAM_TWIG_DROOP] = 0.9f;
+			p[PARAM_SHED_RATIO] = 0.3f;
+			p[PARAM_NEEDLES] = 1;
+			p[PARAM_LEAF_SIZE] = 0.03f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 110;
+			p[PARAM_LEAF_YEARS] = 1;
+			bark_color = Color(0.36f, 0.25f, 0.2f);
+			leaf_color = Color(0.25f, 0.4f, 0.12f);
+			break;
+		case PRESET_SILVER_FIR: // Abies alba: very shade tolerant, flat horizontal sprays.
+			p[PARAM_YEARS] = 50;
+			p[PARAM_INTERNODE_LENGTH] = 0.35f;
+			phyllotaxis = PHYLLOTAXIS_WHORLED;
+			p[PARAM_WHORL_BUDS] = 4;
+			p[PARAM_APICAL_DOMINANCE] = 0.8f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.74f;
+			p[PARAM_APICAL_CONTROL] = 0.62f;
+			p[PARAM_BRANCH_ANGLE] = 85;
+			p[PARAM_GRAVITROPISM] = 0.03f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 1.2f;
+			p[PARAM_PHOTOTROPISM] = 0.04f;
+			p[PARAM_SHED_RATIO] = 0.1f;
+			p[PARAM_DEAD_BRANCH_KEEP] = 0.5f;
+			p[PARAM_NEEDLES] = 1;
+			p[PARAM_LEAF_SIZE] = 0.028f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 150;
+			p[PARAM_LEAF_YEARS] = 8;
+			bark_color = Color(0.5f, 0.5f, 0.48f);
+			leaf_color = Color(0.06f, 0.16f, 0.07f);
+			break;
+		case PRESET_ROWAN: // Sorbus aucuparia: small tree, ascending branches, pinnate leaves.
+			p[PARAM_YEARS] = 22;
+			p[PARAM_INTERNODE_LENGTH] = 0.25f;
+			p[PARAM_APICAL_DOMINANCE] = 0.56f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_BRANCH_ANGLE] = 35;
+			p[PARAM_GRAVITROPISM] = 0.15f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
+			p[PARAM_SHED_RATIO] = 0.16f;
+			p[PARAM_LEAF_SIZE] = 0.05f; // Leaflets.
+			p[PARAM_LEAF_WIDTH] = 0.3f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 30;
+			bark_color = Color(0.42f, 0.4f, 0.37f);
+			leaf_color = Color(0.15f, 0.3f, 0.08f);
+			break;
+		case PRESET_ELDER: // Sambucus nigra: multi-stemmed shrub, opposite, arching.
+			p[PARAM_YEARS] = 14;
+			p[PARAM_INTERNODE_LENGTH] = 0.3f;
+			phyllotaxis = PHYLLOTAXIS_OPPOSITE;
+			p[PARAM_APICAL_DOMINANCE] = 0.5f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.48f;
+			p[PARAM_BRANCH_ANGLE] = 45;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.25f;
+			p[PARAM_TWIG_DROOP] = 0.5f;
+			p[PARAM_STEMS] = 5;
+			p[PARAM_STEM_SPREAD] = 30;
+			p[PARAM_BASAL_SPROUTS] = 0.35f;
+			p[PARAM_ROOT_FLARE] = 0.2f;
+			p[PARAM_LEAF_SIZE] = 0.08f;
+			p[PARAM_LEAF_WIDTH] = 0.35f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 24;
+			bark_color = Color(0.4f, 0.36f, 0.3f);
+			leaf_color = Color(0.13f, 0.27f, 0.07f);
+			break;
+		case PRESET_MAX:
+			break;
+	}
+	emit_changed();
+	notify_property_list_changed();
+}
+
+void TreeGenerator::set_param(Param p_param, float p_value) {
+	ERR_FAIL_INDEX(int(p_param), int(PARAM_MAX));
+	params[p_param] = p_value;
+	emit_changed();
+}
+
+float TreeGenerator::get_param(Param p_param) const {
+	ERR_FAIL_INDEX_V(int(p_param), int(PARAM_MAX), 0.0f);
+	return params[p_param];
+}
+
+Vector3 TreeGenerator::_random_unit() {
+	const float z = _rand(-1.0f, 1.0f);
+	const float a = _rand(0.0f, Math::TAU);
+	const float r = Math::sqrt(MAX(0.0f, 1.0f - z * z));
+	return Vector3(r * Math::cos(a), z, r * Math::sin(a));
+}
+
+// Apical control fades with age in decurrent trees (oak), stays in excurrent ones (spruce).
+float TreeGenerator::_lambda(int p_year) const {
+	const float t = CLAMP(float(p_year) / MAX(1.0f, params[PARAM_MATURITY]), 0.0f, 1.0f);
+	return Math::lerp(params[PARAM_APICAL_DOMINANCE], params[PARAM_APICAL_DOMINANCE_OLD], t);
+}
+
+float TreeGenerator::_internode_length(int p_year) const {
+	return params[PARAM_INTERNODE_LENGTH] * Math::pow(params[PARAM_INTERNODE_LENGTH_AGE], float(p_year));
+}
+
+int TreeGenerator::_add_node(int p_parent, const Vector3 &p_start, const Vector3 &p_dir, float p_length, int p_order, int p_year, bool p_main) {
+	Node n;
+	n.start = p_start;
+	n.dir = p_dir;
+	n.length = p_length;
+	n.parent = p_parent;
+	n.order = p_order;
+	n.born = p_year;
+	n.radius = params[PARAM_TIP_RADIUS];
+	n.leafy = true;
+	const int idx = int(nodes.size());
+	nodes.push_back(n);
+	if (p_parent >= 0) {
+		Node &par = nodes[p_parent];
+		if (p_main) {
+			par.main = idx;
+		} else {
+			nodes[idx].next_sibling = par.first_lateral;
+			par.first_lateral = idx;
+		}
+	}
+	return idx;
+}
+
+Vector3 TreeGenerator::_bud_direction(const Vector3 &p_axis, float p_roll) {
+	Vector3 ref = Math::abs(p_axis.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+	Vector3 side = p_axis.cross(ref).normalized().rotated(p_axis, p_roll);
+	const float angle = Math::deg_to_rad(params[PARAM_BRANCH_ANGLE] + _rand(-1.0f, 1.0f) * params[PARAM_BRANCH_ANGLE_VARIANCE]);
+	return p_axis.rotated(side.cross(p_axis).normalized(), angle).normalized();
+}
+
+void TreeGenerator::_add_lateral_buds(int p_node, float &r_roll, bool p_end_of_shoot) {
+	const Vector3 axis = nodes[p_node].dir;
+	int count = 0;
+	float step = 0.0f;
+	switch (phyllotaxis) {
+		case PHYLLOTAXIS_ALTERNATE:
+			count = 1;
+			break;
+		case PHYLLOTAXIS_OPPOSITE:
+			count = 2;
+			step = Math::PI;
+			break;
+		case PHYLLOTAXIS_WHORLED:
+			if (nodes[p_node].order == 0) {
+				// The leader: a whorl at the end of each year's shoot.
+				if (!p_end_of_shoot) {
+					return;
+				}
+				count = MAX(1, int(params[PARAM_WHORL_BUDS]));
+				step = Math::TAU / count;
+			} else if (p_end_of_shoot) {
+				// Branches of pines and spruces fork flat: a bud to each side at the shoot end.
+				count = 2;
+				step = Math::PI;
+				Vector3 side = axis.cross(Vector3(0, 1, 0));
+				if (side.length_squared() > 1e-6f) {
+					Vector3 ref = Math::abs(axis.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+					const Vector3 base_side = axis.cross(ref).normalized();
+					r_roll = base_side.signed_angle_to(side.normalized(), axis) + _rand(-0.3f, 0.3f);
+				}
+			} else {
+				// Interwhorl buds along branch shoots, alternating sides.
+				count = 1;
+				Vector3 side = axis.cross(Vector3(0, 1, 0));
+				if (side.length_squared() > 1e-6f) {
+					Vector3 ref = Math::abs(axis.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+					const Vector3 base_side = axis.cross(ref).normalized();
+					r_roll = base_side.signed_angle_to(side.normalized(), axis) + (rng.randf() < 0.5f ? 0.0f : Math::PI);
+				}
+			}
+			break;
+	}
+	for (int i = 0; i < count; i++) {
+		Bud b;
+		b.node = p_node;
+		const float jitter = (phyllotaxis == PHYLLOTAXIS_WHORLED && nodes[p_node].order == 0) ? _rand(-0.25f, 0.25f) * step : 0.0f;
+		b.dir = _bud_direction(axis, r_roll + step * i + jitter);
+		buds.push_back(b);
+	}
+	r_roll += Math::deg_to_rad(phyllotaxis == PHYLLOTAXIS_OPPOSITE ? 90.0f : params[PARAM_DIVERGENCE]);
+}
+
+Vector3i TreeGenerator::_cell_of(const Vector3 &p_pos) const {
+	const Vector3 c = (p_pos - grid_origin) / cell;
+	return Vector3i(int(Math::floor(c.x)), int(Math::floor(c.y)), int(Math::floor(c.z)));
+}
+
+float TreeGenerator::_shadow_at(const Vector3 &p_pos) const {
+	const Vector3i c = _cell_of(p_pos);
+	if (c.x < 0 || c.y < 0 || c.z < 0 || c.x >= grid_size.x || c.y >= grid_size.y || c.z >= grid_size.z) {
+		return 0.0f;
+	}
+	return shadow[_cell_index(c)];
+}
+
+// The direction of most light around a point (the shadow gradient over the 26 neighbours),
+// restricted to the half space ahead of the shoot (Palubicki's perception cone).
+Vector3 TreeGenerator::_best_lit_direction(const Vector3 &p_pos, const Vector3 &p_dir) const {
+	const float s0 = _shadow_at(p_pos);
+	Vector3 g;
+	for (int dy = -1; dy <= 1; dy++) {
+		for (int dz = -1; dz <= 1; dz++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				if (dx == 0 && dy == 0 && dz == 0) {
+					continue;
+				}
+				const Vector3 o = Vector3(dx, dy, dz).normalized();
+				if (o.dot(p_dir) < -0.1f) {
+					continue;
+				}
+				const float s = _shadow_at(p_pos + Vector3(dx, dy, dz) * cell);
+				g += o * (s0 - s);
+			}
+		}
+	}
+	return g.length_squared() > 1e-8f ? g.normalized() : Vector3();
+}
+
+// Palubicki 2009, shadow propagation: every leafy shoot end shades a pyramid of cells below it,
+// a * b^-q at depth q, spreading by one cell per level. A closed stand around the tree (forest
+// growth) adds side shade below the neighbours' crown top, which rises with the tree.
+void TreeGenerator::_build_shadow_grid(int p_year) {
+	cell = MAX(0.05f, params[PARAM_INTERNODE_LENGTH]);
+	const int depth = CLAMP(int(params[PARAM_SHADOW_DEPTH]), 1, 64);
+	AABB box(nodes[0].start, Vector3());
+	float top = 0.0f;
+	for (const Node &n : nodes) {
+		if (n.removed) {
+			continue;
+		}
+		box.expand_to(n.end());
+		top = MAX(top, n.end().y);
+	}
+	// Buds only look one cell around them; shade below the lowest leaves is never read.
+	const float margin = 2.0f * cell;
+	box.position -= Vector3(margin, margin, margin);
+	box.size += Vector3(margin * 2.0f, margin * 2.0f, margin * 2.0f);
+	grid_origin = box.position;
+	grid_size = Vector3i(int(Math::ceil(box.size.x / cell)) + 1, int(Math::ceil(box.size.y / cell)) + 1, int(Math::ceil(box.size.z / cell)) + 1);
+	shadow.resize(grid_size.x * grid_size.y * grid_size.z);
+	memset(shadow.ptr(), 0, shadow.size() * sizeof(float));
+
+	const float a = params[PARAM_SHADOW_STRENGTH];
+	const float b = MAX(1.01f, params[PARAM_SHADOW_FALLOFF]);
+	// The pyramid of every source at depth q below it covers a (2q+1)^2 square, so the shadow in
+	// a cell is sum over q of a b^-q times the sources in the square of radius q one level q up.
+	// Summed-area tables per layer make each square O(1): cost cells x depth, any source count.
+	const int sx = grid_size.x + 1;
+	const int sz = grid_size.z + 1;
+	LocalVector<float> sat;
+	sat.resize(size_t(grid_size.y) * sx * sz);
+	memset(sat.ptr(), 0, sat.size() * sizeof(float));
+	for (const Node &n : nodes) {
+		if (n.removed || n.dead || !n.leafy || n.length <= 0.0f) {
+			continue;
+		}
+		const Vector3i c = _cell_of(n.end());
+		if (c.x < 0 || c.y < 0 || c.z < 0 || c.x >= grid_size.x || c.y >= grid_size.y || c.z >= grid_size.z) {
+			continue;
+		}
+		sat[(size_t(c.y) * sz + c.z + 1) * sx + c.x + 1] += 1.0f;
+	}
+	for (int y = 0; y < grid_size.y; y++) {
+		float *l = sat.ptr() + size_t(y) * sx * sz;
+		for (int z = 1; z < sz; z++) {
+			for (int x = 1; x < sx; x++) {
+				l[z * sx + x] += l[(z - 1) * sx + x] + l[z * sx + x - 1] - l[(z - 1) * sx + x - 1];
+			}
+		}
+	}
+	float fall[65];
+	for (int q = 0; q <= depth; q++) {
+		fall[q] = a * Math::pow(b, -float(q));
+	}
+	for (int y = 0; y < grid_size.y; y++) {
+		for (int q = 0; q <= depth; q++) {
+			const int ly = y + q;
+			if (ly >= grid_size.y) {
+				break;
+			}
+			const float *l = sat.ptr() + size_t(ly) * sx * sz;
+			if (l[sz * sx - 1] <= 0.0f) {
+				continue; // An empty layer.
+			}
+			const float w = fall[q];
+			for (int z = 0; z < grid_size.z; z++) {
+				const int z0 = MAX(0, z - q);
+				const int z1 = MIN(grid_size.z, z + q + 1);
+				float *row = shadow.ptr() + (y * grid_size.z + z) * grid_size.x;
+				for (int x = 0; x < grid_size.x; x++) {
+					const int x0 = MAX(0, x - q);
+					const int x1 = MIN(grid_size.x, x + q + 1);
+					const float sum = l[z1 * sx + x1] - l[z0 * sx + x1] - l[z1 * sx + x0] + l[z0 * sx + x0];
+					row[x] += w * sum;
+				}
+			}
+		}
+	}
+	if (forest_shade > 0.0f && top > 0.0f) {
+		const float r0 = forest_spacing * 0.5f;
+		const float r1 = r0 + 2.0f * cell;
+		const Vector3 base = nodes[0].start;
+		for (int y = 0; y < grid_size.y; y++) {
+			const float wy = grid_origin.y + (y + 0.5f) * cell;
+			if (wy >= top + cell) {
+				continue;
+			}
+			// Past half the spacing the neighbours' crowns fill the space at every height up to
+			// their tops (in Palubicki 2009 trees grown in one grid meet at a shared boundary, the
+			// crown shyness of real stands), so the crown keeps to its own cell; below the canopy
+			// band their crowns and stems close the side light even more.
+			const float below = CLAMP((0.7f * top - wy) / MAX(0.2f * top, cell), 0.0f, 1.0f);
+			const float sy = forest_shade * (1.5f + 0.5f * below);
+			for (int z = 0; z < grid_size.z; z++) {
+				for (int x = 0; x < grid_size.x; x++) {
+					const float dx = grid_origin.x + (x + 0.5f) * cell - base.x;
+					const float dz = grid_origin.z + (z + 0.5f) * cell - base.z;
+					const float r = Math::sqrt(dx * dx + dz * dz);
+					if (r <= r0) {
+						continue;
+					}
+					const float t = CLAMP((r - r0) / (r1 - r0), 0.0f, 1.0f);
+					shadow[_cell_index(Vector3i(x, y, z))] += sy * t * t * (3.0f - 2.0f * t);
+				}
+			}
+		}
+	}
+	(void)p_year;
+}
+
+void TreeGenerator::_grow_year(int p_year) {
+	_build_shadow_grid(p_year);
+	const float a = params[PARAM_SHADOW_STRENGTH];
+	const int node_count = int(nodes.size());
+
+	// Light reaching each bud; buds in deep shade die (Stava's light-dependent bud fate).
+	for (Bud &b : buds) {
+		if (!b.alive) {
+			continue;
+		}
+		const Node &n = nodes[b.node];
+		if (n.removed || n.dead) {
+			b.alive = false;
+			continue;
+		}
+		const Vector3 p = n.end() + b.dir * (cell * 0.5f);
+		b.light = CLAMP(1.0f + a - _shadow_at(p), 0.0f, 1.0f);
+		if (b.light < params[PARAM_BUD_LIGHT_MIN]) {
+			b.alive = false;
+		}
+	}
+
+	// Basipetal pass: light gathered by each subtree, kept apart for the axis and its laterals.
+	for (Node &n : nodes) {
+		n.light_main = 0.0f;
+		n.light_lateral = 0.0f;
+		n.vigor = 0.0f;
+		n.count = 1;
+	}
+	LocalVector<int> bud_head;
+	LocalVector<int> bud_next;
+	bud_head.resize(node_count);
+	bud_next.resize(buds.size());
+	for (int i = 0; i < node_count; i++) {
+		bud_head[i] = -1;
+	}
+	for (int i = 0; i < int(buds.size()); i++) {
+		bud_next[i] = -1;
+		const Bud &b = buds[i];
+		if (!b.alive) {
+			continue;
+		}
+		bud_next[i] = bud_head[b.node];
+		bud_head[b.node] = i;
+		if (b.terminal) {
+			nodes[b.node].light_main += b.light;
+		} else {
+			nodes[b.node].light_lateral += b.light;
+		}
+	}
+	for (int i = node_count - 1; i > 0; i--) {
+		const Node &n = nodes[i];
+		if (n.removed || n.dead) {
+			continue;
+		}
+		Node &par = nodes[n.parent];
+		if (par.main == i) {
+			par.light_main += n.light_main + n.light_lateral;
+		} else {
+			par.light_lateral += n.light_main + n.light_lateral;
+		}
+		par.count += n.count;
+	}
+
+	// Acropetal pass: Borchert-Honda allocation of vigor between the axis and its laterals.
+	nodes[0].vigor = params[PARAM_VIGOR] * (nodes[0].light_main + nodes[0].light_lateral);
+	const float lambda = _lambda(p_year);
+	for (int i = 0; i < node_count; i++) {
+		Node &n = nodes[i];
+		if (n.removed || n.dead || n.vigor <= 0.0f) {
+			continue;
+		}
+		const float qm = n.light_main;
+		const float ql = n.light_lateral;
+		const float denom = lambda * qm + (1.0f - lambda) * ql;
+		if (denom <= 0.0f) {
+			continue;
+		}
+		const float vm = n.vigor * lambda * qm / denom;
+		const float vl = n.vigor - vm;
+		for (int bi = bud_head[i]; bi >= 0; bi = bud_next[bi]) {
+			Bud &b = buds[bi];
+			b.vigor = b.terminal ? vm : (ql > 0.0f ? vl * b.light / ql : 0.0f);
+		}
+		if (n.main >= 0 && !nodes[n.main].removed && !nodes[n.main].dead) {
+			nodes[n.main].vigor = vm;
+		}
+		for (int c = n.first_lateral; c >= 0; c = nodes[c].next_sibling) {
+			Node &ch = nodes[c];
+			if (ch.removed || ch.dead || ql <= 0.0f) {
+				continue;
+			}
+			ch.vigor = vl * (ch.light_main + ch.light_lateral) / ql;
+		}
+	}
+
+	// Shoot growth: a bud with vigor v grows floor(v) internodes, bending toward the light and
+	// away from (or toward) gravity, with lateral buds set by the phyllotaxis.
+	const int bud_count = int(buds.size());
+	const float base_len = _internode_length(p_year);
+	const float noise = Math::deg_to_rad(params[PARAM_DIRECTION_NOISE]);
+	for (int bi = 0; bi < bud_count; bi++) {
+		if (!buds[bi].alive) {
+			continue;
+		}
+		// Apical control (Stava 2014): shoots on branches grow less the further their order is from
+		// the leader, which keeps conifers excurrent.
+		{
+			const Node &on = nodes[buds[bi].node];
+			const int ord = (buds[bi].terminal || buds[bi].node == 0) ? on.order : on.order + 1;
+			buds[bi].vigor *= Math::pow(params[PARAM_APICAL_CONTROL], float(ord));
+		}
+		// Stochastic rounding: a bud with vigor 0.4 grows one internode four years in ten, so weak
+		// buds are slow rather than starved outright.
+		const int count = MIN(int(Math::floor(buds[bi].vigor + rng.randf())), int(params[PARAM_MAX_SHOOT]));
+		if (count < 1) {
+			buds[bi].idle++;
+			// Terminal buds that cannot extend stay alive as spurs (they die only of shade); dormant
+			// lateral buds die after a few years.
+			if (!buds[bi].terminal && buds[bi].idle > int(params[PARAM_BUD_IDLE_YEARS])) {
+				buds[bi].alive = false;
+			}
+			continue;
+		}
+		if (int(nodes.size()) + count >= MAX_NODES) {
+			break;
+		}
+		const Bud bud = buds[bi];
+		buds[bi].alive = false;
+		// Vigor beyond the internode count lengthens the internodes (Palubicki: l = v / n), so a
+		// dominant leader outgrows its laterals instead of being capped at the same shoot.
+		const Node &from = nodes[bud.node];
+		const bool from_root = bud.node == 0;
+		const int order = (bud.terminal || from_root) ? from.order : from.order + 1;
+		const float len = base_len * CLAMP(bud.vigor / float(count), 0.6f, 1.5f);
+		const float grav = order == 0 ? params[PARAM_TRUNK_GRAVITROPISM] : params[PARAM_GRAVITROPISM];
+		Vector3 pos = from_root ? from.start : from.end();
+		Vector3 dir = bud.dir;
+		int parent = bud.node;
+		float roll = _rand(0.0f, Math::TAU);
+		for (int k = 0; k < count; k++) {
+			if (k > 0 || !bud.terminal) {
+				Vector3 d = dir + _best_lit_direction(pos, dir) * params[PARAM_PHOTOTROPISM] + Vector3(0, grav, 0) * 0.5f;
+				d += _random_unit() * Math::sin(noise);
+				dir = d.length_squared() > 1e-8f ? d.normalized() : dir;
+			} else {
+				Vector3 d = dir + _best_lit_direction(pos, dir) * params[PARAM_PHOTOTROPISM] * 0.5f + Vector3(0, grav, 0) * 0.3f + _random_unit() * Math::sin(noise) * 0.5f;
+				dir = d.length_squared() > 1e-8f ? d.normalized() : dir;
+			}
+			const bool main = k > 0 || (bud.terminal && !from_root);
+			const int idx = _add_node(parent, pos, dir, len, order, p_year, main);
+			const bool last = k == count - 1;
+			_add_lateral_buds(idx, roll, last);
+			if (last) {
+				Bud t;
+				t.node = idx;
+				t.dir = dir;
+				t.terminal = true;
+				buds.push_back(t);
+			}
+			pos = nodes[idx].end();
+			parent = idx;
+		}
+	}
+
+	// Leaves stay on the shoots of the last leaf_years years.
+	const int leaf_years = MAX(1, int(params[PARAM_LEAF_YEARS]));
+	_compute_radii();
+	// Leaves on the last leaf_years of shoots, and wherever a terminal bud is alive: a bud with too
+	// little vigor to extend still opens a short shoot (spur) with its leaves (Palubicki: leaves at
+	// the buds).
+	for (Node &n : nodes) {
+		n.leafy = !n.dead && !n.removed && n.length > 0.0f && n.born > p_year - leaf_years;
+	}
+	for (const Bud &b : buds) {
+		if (b.alive && (b.terminal || phyllotaxis != PHYLLOTAXIS_WHORLED)) {
+			Node &n = nodes[b.node];
+			n.leafy = !n.dead && !n.removed;
+		}
+	}
+	if (p_year >= 2) {
+		_shed(p_year);
+	}
+}
+
+// Palubicki's shedding: a lateral branch whose light per internode stays below the threshold
+// costs more than it gains and is dropped. Some shed branches stay on as dead wood (spruces keep
+// their lower dead limbs for decades; pines and birches prune themselves clean).
+void TreeGenerator::_shed(int p_year) {
+	const float ratio = params[PARAM_SHED_RATIO];
+	LocalVector<int> stack;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		Node &n = nodes[i];
+		if (n.removed || n.dead || n.parent <= 0 || nodes[n.parent].main == i || n.born > p_year - 2) {
+			continue;
+		}
+		const float light = (n.light_main + n.light_lateral) / float(MAX(1, n.count));
+		if (light >= ratio) {
+			continue;
+		}
+		const bool keep = rng.randf() < params[PARAM_DEAD_BRANCH_KEEP];
+		shed_count++;
+		stack.clear();
+		stack.push_back(i);
+		while (!stack.is_empty()) {
+			const int j = stack[stack.size() - 1];
+			stack.resize(stack.size() - 1);
+			Node &m = nodes[j];
+			if (keep) {
+				m.dead = true;
+				m.leafy = false;
+			} else {
+				m.removed = true;
+			}
+			if (m.main >= 0) {
+				stack.push_back(m.main);
+			}
+			for (int c = m.first_lateral; c >= 0; c = nodes[c].next_sibling) {
+				stack.push_back(c);
+			}
+		}
+	}
+}
+
+// Pipe model: a branch carries the sum of its children's pipes, r^n = sum r_i^n.
+void TreeGenerator::_compute_radii() {
+	const float e = MAX(1.0f, params[PARAM_PIPE_EXPONENT]);
+	const float tip = params[PARAM_TIP_RADIUS];
+	LocalVector<float> acc;
+	acc.resize(nodes.size());
+	for (int i = 0; i < int(nodes.size()); i++) {
+		acc[i] = 0.0f;
+	}
+	for (int i = int(nodes.size()) - 1; i >= 0; i--) {
+		Node &n = nodes[i];
+		if (n.removed) {
+			continue;
+		}
+		if (!n.dead) {
+			float s = acc[i];
+			if (n.main < 0 || nodes[n.main].removed) {
+				s += Math::pow(tip, e); // The shoot tip.
+			}
+			n.radius = MAX(n.radius, MAX(tip, Math::pow(s, 1.0f / e)));
+		}
+		if (n.parent >= 0) {
+			acc[n.parent] += Math::pow(n.radius, e);
+		}
+	}
+}
+
+// Branches sag under their own weight and their leaves: Euler-Bernoulli bending per internode,
+// angle = moment * length / (E * I), I = pi r^4 / 4, with the moment of the whole subtree about
+// the internode's base. Thin shoots of pendulous species droop on top of that.
+void TreeGenerator::_bend_under_gravity() {
+	const int count = int(nodes.size());
+	LocalVector<float> mass;
+	LocalVector<Vector3> moment; // Mass-weighted centre, summed.
+	mass.resize(count);
+	moment.resize(count);
+	const float leaf_mass = params[PARAM_NEEDLES] > 0.5f ? 0.0004f : 0.6f * params[PARAM_LEAF_SIZE] * params[PARAM_LEAF_SIZE] * 0.15f;
+	for (int i = count - 1; i >= 0; i--) {
+		const Node &n = nodes[i];
+		mass[i] = 0.0f;
+		moment[i] = Vector3();
+		if (n.removed) {
+			continue;
+		}
+		const float wood = Math::PI * n.radius * n.radius * n.length * 700.0f;
+		const float leaves = n.leafy ? leaf_mass * params[PARAM_LEAVES_PER_INTERNODE] : 0.0f;
+		mass[i] += wood + leaves;
+		moment[i] += (n.start + n.dir * (n.length * 0.5f)) * (wood + leaves);
+	}
+	for (int i = count - 1; i > 0; i--) {
+		if (nodes[i].removed) {
+			continue;
+		}
+		mass[nodes[i].parent] += mass[i];
+		moment[nodes[i].parent] += moment[i];
+	}
+	const float k = params[PARAM_GRAVITY_BENDING] * 9.81f / 1.0e10f;
+	const float droop = params[PARAM_TWIG_DROOP];
+	LocalVector<Quaternion> acc;
+	acc.resize(count);
+	acc[0] = Quaternion();
+	const Vector3 down(0, -1, 0);
+	for (int i = 1; i < count; i++) {
+		Node &n = nodes[i];
+		if (n.removed) {
+			continue;
+		}
+		Quaternion q = acc[n.parent];
+		Vector3 axis = n.dir.cross(down);
+		if (axis.length_squared() > 1e-6f && n.order > 0) {
+			axis.normalize();
+			const Vector3 centre = moment[i] / MAX(mass[i], 1e-9f);
+			Vector3 lever = centre - n.start;
+			lever.y = 0.0f;
+			const float inertia = Math::PI * Math::pow(n.radius, 4.0f) * 0.25f;
+			float angle = MIN(0.2f, k * mass[i] * lever.length() * n.length / MAX(inertia, 1e-14f));
+			if (droop > 0.0f && n.radius < 0.012f) {
+				angle += droop * (1.0f - n.radius / 0.012f) * 0.3f;
+			}
+			// Never bend past hanging straight down.
+			angle = MIN(angle, Math::acos(CLAMP(n.dir.dot(down), -1.0f, 1.0f)) * 0.5f);
+			q = q * Quaternion(axis, angle);
+		}
+		acc[i] = q;
+	}
+	for (int i = 1; i < count; i++) {
+		Node &n = nodes[i];
+		if (n.removed) {
+			continue;
+		}
+		n.dir = acc[i].xform(n.dir).normalized();
+		const Node &par = nodes[n.parent];
+		n.start = n.parent == 0 ? par.start : par.end();
+		// Branches resting on the ground run along it instead of through it.
+		if (n.start.y + n.dir.y * n.length < 0.08f && n.dir.y < 0.0f) {
+			n.dir.y = 0.0f;
+			n.dir = n.dir.length_squared() > 1e-6f ? n.dir.normalized() : Vector3(1, 0, 0);
+		}
+	}
+}
+
+void TreeGenerator::_measure() {
+	height = 0.0f;
+	crown_radius = 0.0f;
+	LocalVector<float> leaf_heights;
+	LocalVector<float> leaf_reach;
+	for (const Node &n : nodes) {
+		if (n.removed) {
+			continue;
+		}
+		const Vector3 e = n.end();
+		height = MAX(height, e.y);
+		if (n.leafy) {
+			leaf_reach.push_back(Vector2(e.x, e.z).length());
+			leaf_heights.push_back(e.y);
+		}
+	}
+	crown_base = 0.0f;
+	if (!leaf_heights.is_empty()) {
+		leaf_heights.sort();
+		crown_base = leaf_heights[leaf_heights.size() / 50]; // 2nd percentile of foliage.
+		// Crown radius as foresters measure it (the drip line), not the one longest twig: the
+		// 95th percentile of foliage reach.
+		leaf_reach.sort();
+		crown_radius = leaf_reach[MIN(int(leaf_reach.size()) - 1, int(leaf_reach.size()) * 95 / 100)];
+	}
+}
+
+int TreeGenerator::get_internode_count() const {
+	int c = 0;
+	for (const Node &n : nodes) {
+		c += (!n.removed && n.length > 0.0f) ? 1 : 0;
+	}
+	return c;
+}
+
+int TreeGenerator::get_dead_branch_count() const {
+	int c = 0;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		c += (n.dead && !n.removed && !nodes[n.parent].dead) ? 1 : 0;
+	}
+	return c;
+}
+
+// A generalized cylinder along a polyline, framed by parallel transport (Bishop frames).
+void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color) {
+	const int rings = int(p_points.size());
+	if (rings < 2) {
+		return;
+	}
+	const int base = r_b.verts.size();
+	Vector3 t = (p_points[1] - p_points[0]).normalized();
+	Vector3 ref = Math::abs(t.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+	Vector3 nrm = t.cross(ref).normalized();
+	float v = p_v0;
+	const float circumference = Math::TAU * MAX(p_radii[0], 0.001f);
+	for (int r = 0; r < rings; r++) {
+		Vector3 t2;
+		if (r == 0) {
+			t2 = t;
+		} else if (r == rings - 1) {
+			t2 = (p_points[r] - p_points[r - 1]).normalized();
+		} else {
+			t2 = (p_points[r + 1] - p_points[r - 1]).normalized();
+		}
+		// Transport the normal from the previous tangent to this one.
+		const Vector3 axis = t.cross(t2);
+		if (axis.length_squared() > 1e-10f) {
+			nrm = nrm.rotated(axis.normalized(), Math::acos(CLAMP(t.dot(t2), -1.0f, 1.0f)));
+		}
+		nrm = (nrm - t2 * nrm.dot(t2)).normalized();
+		t = t2;
+		const Vector3 bin = t.cross(nrm);
+		if (r > 0) {
+			v += p_points[r].distance_to(p_points[r - 1]) / circumference;
+		}
+		for (int s = 0; s <= p_sides; s++) {
+			const float ang = Math::TAU * s / p_sides;
+			const Vector3 dir = nrm * Math::cos(ang) + bin * Math::sin(ang);
+			r_b.verts.push_back(p_points[r] + dir * p_radii[r]);
+			r_b.normals.push_back(dir);
+			r_b.uvs.push_back(Vector2(float(s) / p_sides, v));
+			r_b.colors.push_back(p_color);
+		}
+	}
+	for (int r = 0; r < rings - 1; r++) {
+		for (int s = 0; s < p_sides; s++) {
+			const int a = base + r * (p_sides + 1) + s;
+			const int b = a + p_sides + 1;
+			// Clockwise front faces (Godot).
+			r_b.indices.push_back(a);
+			r_b.indices.push_back(a + 1);
+			r_b.indices.push_back(b);
+			r_b.indices.push_back(a + 1);
+			r_b.indices.push_back(b + 1);
+			r_b.indices.push_back(b);
+		}
+	}
+}
+
+// A broad leaf: a short petiole, then an ovate blade folded along its midrib, turned to face
+// mostly upward (leaves orient to the light).
+void TreeGenerator::_add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, const Vector3 &p_up, float p_size, const Color &p_color) {
+	Vector3 n = p_up;
+	Vector3 along = (p_out - n * p_out.dot(n));
+	if (along.length_squared() < 1e-6f) {
+		along = n.cross(Vector3(1, 0, 0));
+	}
+	along.normalize();
+	const Vector3 side = n.cross(along).normalized();
+	const Vector3 start = p_base + p_out * (p_size * 0.15f);
+	const int steps = 3;
+	const int base = r_b.verts.size();
+	for (int i = 0; i <= steps; i++) {
+		const float t = float(i) / steps;
+		const float w = params[PARAM_LEAF_WIDTH] * p_size * Math::sin(Math::PI * Math::pow(t, 0.75f));
+		const float droop = -0.25f * p_size * t * t;
+		const Vector3 mid = start + along * (t * p_size) + n * droop;
+		const Vector3 fold = n * (0.12f * w);
+		r_b.verts.push_back(mid);
+		r_b.normals.push_back(n);
+		r_b.uvs.push_back(Vector2(0.5f, t));
+		r_b.colors.push_back(p_color);
+		r_b.verts.push_back(mid + side * w + fold);
+		r_b.normals.push_back((n - side * 0.2f).normalized());
+		r_b.uvs.push_back(Vector2(1.0f, t));
+		r_b.colors.push_back(p_color);
+		r_b.verts.push_back(mid - side * w + fold);
+		r_b.normals.push_back((n + side * 0.2f).normalized());
+		r_b.uvs.push_back(Vector2(0.0f, t));
+		r_b.colors.push_back(p_color);
+	}
+	for (int i = 0; i < steps; i++) {
+		const int m0 = base + i * 3, m1 = m0 + 3;
+		r_b.indices.push_back(m0);
+		r_b.indices.push_back(m1);
+		r_b.indices.push_back(m0 + 1);
+		r_b.indices.push_back(m0 + 1);
+		r_b.indices.push_back(m1);
+		r_b.indices.push_back(m1 + 1);
+		r_b.indices.push_back(m0);
+		r_b.indices.push_back(m0 + 2);
+		r_b.indices.push_back(m1);
+		r_b.indices.push_back(m0 + 2);
+		r_b.indices.push_back(m1 + 2);
+		r_b.indices.push_back(m1);
+	}
+}
+
+void TreeGenerator::_add_needle(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color) {
+	Vector3 side = p_out.cross(Vector3(0, 1, 0));
+	if (side.length_squared() < 1e-6f) {
+		side = p_out.cross(Vector3(1, 0, 0));
+	}
+	side = side.normalized() * 0.0018f;
+	const Vector3 n = side.cross(p_out).normalized();
+	const Vector3 tip = p_base + p_out * p_size;
+	const int base = r_b.verts.size();
+	r_b.verts.push_back(p_base - side);
+	r_b.verts.push_back(p_base + side);
+	r_b.verts.push_back(tip);
+	for (int i = 0; i < 3; i++) {
+		r_b.normals.push_back(n);
+		r_b.colors.push_back(p_color);
+	}
+	r_b.uvs.push_back(Vector2(0, 0));
+	r_b.uvs.push_back(Vector2(1, 0));
+	r_b.uvs.push_back(Vector2(0.5f, 1));
+	r_b.indices.push_back(base);
+	r_b.indices.push_back(base + 2);
+	r_b.indices.push_back(base + 1);
+}
+
+Ref<ArrayMesh> TreeGenerator::_build_mesh() {
+	Builder bark;
+	Builder leaves;
+	leaf_count = 0;
+	const float flare = params[PARAM_ROOT_FLARE];
+	const float trunk_r = nodes[0].main >= 0 ? nodes[nodes[0].main].radius : (nodes[0].first_lateral >= 0 ? nodes[nodes[0].first_lateral].radius : 0.1f);
+	LocalVector<Vector3> pts;
+	LocalVector<float> rad;
+	LocalVector<int> chain;
+	for (int s = 1; s < int(nodes.size()); s++) {
+		const Node &first = nodes[s];
+		if (first.removed || (first.parent > 0 && nodes[first.parent].main == s)) {
+			continue;
+		}
+		chain.clear();
+		for (int i = s; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
+			chain.push_back(i);
+		}
+		const float r0 = first.radius;
+		const bool smooth = r0 > 0.015f;
+		pts.clear();
+		rad.clear();
+		pts.push_back(first.start);
+		rad.push_back(r0);
+		for (int c = 0; c < int(chain.size()); c++) {
+			const Node &n = nodes[chain[c]];
+			const float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * 0.6f;
+			if (smooth) {
+				// Catmull-Rom midpoint between this internode's ends.
+				const Vector3 p0 = c > 0 ? nodes[chain[c - 1]].start : n.start - n.dir * n.length;
+				const Vector3 p3 = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].end() : n.end() + n.dir * n.length;
+				const Vector3 mid = Vector3(0.5f, 0.5f, 0.5f) * (n.start + n.end()) + (n.start - p0 + n.end() - p3) * 0.0625f;
+				pts.push_back(mid);
+				rad.push_back((n.radius + r_end) * 0.5f);
+			}
+			pts.push_back(n.end());
+			rad.push_back(r_end);
+		}
+		const bool stem = first.parent == 0;
+		if (stem && flare > 0.0f) {
+			for (int i = 0; i < int(pts.size()); i++) {
+				const float h = MAX(0.0f, pts[i].y - nodes[0].start.y);
+				rad[i] *= 1.0f + flare * Math::exp(-h / MAX(0.05f, trunk_r * 2.5f));
+			}
+			// Sink the base below the ground line.
+			pts[0] -= Vector3(0, 0.15f, 0);
+		}
+		int sides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.03f)), 3, 24);
+		if (stem) {
+			sides = MAX(sides, 10);
+		}
+		Color col = bark_color;
+		if (first.dead) {
+			col = col.lerp(Color(0.42f, 0.4f, 0.37f), 0.6f);
+		}
+		const float tint = 0.92f + 0.16f * float((uint32_t(s) * 2654435761u) >> 24) / 255.0f;
+		col = Color(col.r * tint, col.g * tint, col.b * tint);
+		_tube(bark, pts, rad, sides, 0.0f, col);
+	}
+
+	const bool needles = params[PARAM_NEEDLES] > 0.5f;
+	const int per = MAX(0, int(params[PARAM_LEAVES_PER_INTERNODE]));
+	const float size = params[PARAM_LEAF_SIZE];
+	RandomPCG lr;
+	lr.seed(uint64_t(seed) * 7919u + 13u);
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		if (!n.leafy || n.removed || n.dead) {
+			continue;
+		}
+		Vector3 ref = Math::abs(n.dir.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+		const Vector3 perp = n.dir.cross(ref).normalized();
+		float roll = lr.randf() * Math::TAU;
+		if (needles) {
+			// The internode stands for a whole year's spray: the shoot itself and short side shoots
+			// in the branch plane, each a bottle brush of needles pointing forward.
+			Vector3 plane_side = n.dir.cross(Vector3(0, 1, 0));
+			plane_side = plane_side.length_squared() > 1e-6f ? plane_side.normalized() : perp;
+			const int sides = n.order == 0 ? 0 : 4;
+			const int brushes = sides + 1;
+			const int per_brush = MAX(4, per / brushes);
+			for (int sh = 0; sh < brushes; sh++) {
+				Vector3 b0 = n.start;
+				Vector3 bdir = n.dir;
+				float blen = n.length;
+				float br = n.radius;
+				if (sh > 0) {
+					const float t = (sh - 0.5f) / sides;
+					b0 = n.start + n.dir * (n.length * t);
+					const float sgn = (sh & 1) ? 1.0f : -1.0f;
+					bdir = (plane_side * sgn * 0.8f + n.dir * 0.6f + Vector3(0, -0.15f, 0)).normalized();
+					blen = n.length * (0.35f + 0.2f * lr.randf()) * (1.0f - 0.4f * t);
+					br = params[PARAM_TIP_RADIUS] * 0.5f;
+					pts.clear();
+					rad.clear();
+					pts.push_back(b0);
+					rad.push_back(br);
+					pts.push_back(b0 + bdir * blen);
+					rad.push_back(br * 0.6f);
+					_tube(bark, pts, rad, 3, 0.0f, bark_color);
+				}
+				for (int k = 0; k < per_brush; k++) {
+					const float t = (k + 0.5f) / per_brush;
+					roll += 2.39996f;
+					const Vector3 around = perp.rotated(n.dir, roll);
+					const Vector3 ar = (around - bdir * around.dot(bdir)).normalized();
+					const Vector3 base = b0 + bdir * (blen * t) + ar * br;
+					const float jitter = 0.85f + 0.3f * lr.randf();
+					const Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
+					const Vector3 out = (ar * 0.75f + bdir * 0.66f).normalized();
+					_add_needle(leaves, base, out, size * (0.8f + 0.4f * lr.randf()), c);
+					leaf_count++;
+				}
+			}
+			continue;
+		}
+		// Broad leaves sit on short side twigs (the year's short shoots), a few leaves each, so a
+		// metre-scale internode carries the leaf mass of the real twig system it stands for.
+		const int twigs = MAX(1, per / 4);
+		const int per_twig = MAX(1, per / twigs);
+		const float twig_r = params[PARAM_TIP_RADIUS] * 0.6f;
+		for (int t_i = 0; t_i < twigs; t_i++) {
+			const float t = (t_i + 0.5f + 0.4f * (lr.randf() - 0.5f)) / twigs;
+			roll += 2.39996f;
+			const Vector3 around = perp.rotated(n.dir, roll);
+			const Vector3 base = n.start + n.dir * (n.length * t);
+			Vector3 tdir = (around * 0.8f + n.dir * 0.55f + Vector3(0, 0.15f, 0)).normalized();
+			const float tlen = n.length * (0.35f + 0.25f * lr.randf());
+			pts.clear();
+			rad.clear();
+			pts.push_back(base);
+			rad.push_back(twig_r);
+			const Vector3 mid = base + tdir * (tlen * 0.5f) + Vector3(0, -0.05f, 0) * tlen;
+			pts.push_back(mid);
+			rad.push_back(twig_r * 0.8f);
+			const Vector3 tip = mid + (tdir + Vector3(0, 0.1f, 0)).normalized() * (tlen * 0.5f);
+			pts.push_back(tip);
+			rad.push_back(twig_r * 0.5f);
+			_tube(bark, pts, rad, 3, 0.0f, bark_color);
+			for (int k = 0; k < per_twig; k++) {
+				const float u = (k + 1.0f) / per_twig;
+				const Vector3 at = u < 0.5f ? base.lerp(mid, u * 2.0f) : mid.lerp(tip, u * 2.0f - 1.0f);
+				const Vector3 side = tdir.cross(Vector3(0, 1, 0)).normalized() * ((k & 1) ? 1.0f : -1.0f);
+				const Vector3 out = (side * 0.8f + tdir * 0.6f + Vector3(0, 0.1f, 0)).normalized();
+				const Vector3 up = (Vector3(0, 1, 0) * 0.8f + side * 0.25f + Vector3(lr.randf() - 0.5f, 0, lr.randf() - 0.5f) * 0.35f).normalized();
+				const float jitter = 0.85f + 0.3f * lr.randf();
+				const Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
+				_add_leaf(leaves, at, k == per_twig - 1 ? tdir : out, up, size * (0.75f + 0.5f * lr.randf()), c);
+				leaf_count++;
+			}
+		}
+	}
+
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	Builder *builders[2] = { &bark, &leaves };
+	for (int s = 0; s < 2; s++) {
+		Builder &b = *builders[s];
+		if (b.indices.is_empty()) {
+			continue;
+		}
+		Array arrays;
+		arrays.resize(Mesh::ARRAY_MAX);
+		arrays[Mesh::ARRAY_VERTEX] = b.verts;
+		arrays[Mesh::ARRAY_NORMAL] = b.normals;
+		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
+		arrays[Mesh::ARRAY_COLOR] = b.colors;
+		arrays[Mesh::ARRAY_INDEX] = b.indices;
+		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+		Ref<StandardMaterial3D> m;
+		m.instantiate();
+		m->set_albedo(Color(1, 1, 1));
+		m->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+		m->set_feature(BaseMaterial3D::FEATURE_SNOW, true);
+		m->set_snow_from_weather(true);
+		if (s == 0) {
+			m->set_roughness(0.92f);
+			mesh->surface_set_name(s, "bark");
+		} else {
+			m->set_roughness(needles ? 0.5f : 0.6f);
+			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+			m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
+			m->set_backlight(leaf_color * 0.6f);
+			mesh->surface_set_name(mesh->get_surface_count() - 1, needles ? "needles" : "leaves");
+		}
+		mesh->surface_set_material(mesh->get_surface_count() - 1, m);
+	}
+	return mesh;
+}
+
+// Habitat of each preset: where the species grows wild in Europe, as climate envelopes from the
+// species range maps and climate profiles of the European Atlas of Forest Tree Species (San-Miguel-
+// Ayanz et al., 2016) and Ellenberg's indicator values (light L for the shade a shrub or an
+// open-grown tree tolerates). Temperatures are annual and January means in C, precipitation in
+// mm a year, aridity is precipitation over potential evapotranspiration.
+struct Habitat {
+	float t_min, t_max; // Annual mean.
+	float jan_min, jan_max; // January mean: frost hardiness, and the chill some need.
+	float p_min, p_max; // Precipitation; p_max is the range maps' wet end, kept for reference.
+	float aridity_min; // Drought limit.
+	float slope_max; // Degrees.
+	float soil_min; // Metres of soil (only with geology).
+	float water_max; // Water distance limit in metres (0: none): alder and willow stay by water.
+	float shade_max; // Canopy shade the open-grown form and the shrubs still grow under.
+	float opacity; // Share of light the crown stops (beech, spruce, fir and lime cast deep shade).
+	float stand_spacing; // Metres between stems in a mature stand.
+	float footprint; // Clearance other species keep from the stem.
+};
+
+static const Habitat HABITATS[TreeGenerator::PRESET_MAX] = {
+	// t       jan          precip       arid  slope soil  water shade  opac  space foot
+	{ 5, 14, -12, 8, 450, 1200, 0.5f, 40, 0.4f, 0, 0.3f, 0.70f, 9.0f, 1.2f }, // Oak
+	{ 5, 12, -8, 6, 650, 2000, 0.9f, 45, 0.3f, 0, 0.45f, 0.92f, 7.0f, 1.0f }, // Beech
+	{ -2, 12, -25, 6, 400, 1500, 0.5f, 40, 0.15f, 0, 0.25f, 0.50f, 5.0f, 0.8f }, // Birch
+	{ -3, 13, -30, 6, 300, 1500, 0.35f, 45, 0.1f, 0, 0.25f, 0.60f, 5.5f, 0.8f }, // Scots pine
+	{ -2, 9, -25, 2, 700, 2500, 0.9f, 45, 0.2f, 0, 0.4f, 0.90f, 4.5f, 0.8f }, // Norway spruce
+	{ 3, 13, -15, 7, 500, 1500, 0.6f, 40, 0.2f, 0, 0.75f, 0.80f, 3.0f, 0.6f }, // Hazel
+	{ 4, 14, -15, 8, 450, 1400, 0.5f, 40, 0.15f, 0, 0.55f, 0.70f, 3.0f, 0.6f }, // Hawthorn
+	{ 4, 12, -18, 5, 500, 1200, 0.6f, 40, 0.4f, 0, 0.45f, 0.85f, 7.0f, 1.0f }, // Lime
+	{ 4, 11, -12, 5, 700, 2000, 0.8f, 45, 0.4f, 0, 0.45f, 0.85f, 7.0f, 1.0f }, // Sycamore
+	{ 5, 13, -12, 7, 600, 1500, 0.7f, 35, 0.5f, 0, 0.3f, 0.60f, 7.0f, 1.0f }, // Ash
+	{ 6, 14, -10, 6, 600, 1300, 0.6f, 25, 0.5f, 0, 0.3f, 0.90f, 9.0f, 1.2f }, // Horse chestnut
+	{ 2, 13, -20, 7, 500, 1600, 0.7f, 15, 0.3f, 40, 0.3f, 0.75f, 5.0f, 0.8f }, // Black alder
+	{ 3, 15, -20, 8, 400, 1500, 0.5f, 15, 0.3f, 25, 0.25f, 0.65f, 7.0f, 1.0f }, // White willow
+	{ -3, 8, -18, 0, 600, 2000, 0.7f, 45, 0.15f, 0, 0.25f, 0.50f, 6.0f, 0.8f }, // Larch
+	{ 4, 10, -12, 2, 900, 2500, 1.0f, 45, 0.3f, 0, 0.5f, 0.90f, 5.0f, 0.8f }, // Silver fir
+	{ -2, 11, -25, 5, 500, 2000, 0.6f, 45, 0.1f, 0, 0.45f, 0.60f, 4.0f, 0.6f }, // Rowan
+	{ 5, 14, -12, 8, 500, 1400, 0.6f, 35, 0.3f, 0, 0.7f, 0.70f, 3.0f, 0.6f }, // Elder
+};
+
+static bool is_shrub(TreeGenerator::Preset p_preset) {
+	return p_preset == TreeGenerator::PRESET_HAZEL || p_preset == TreeGenerator::PRESET_HAWTHORN || p_preset == TreeGenerator::PRESET_ELDER;
+}
+
+void TreeGenerator::apply_habitat(const Ref<PlantSpecies> &p_species) const {
+	ERR_FAIL_COND(p_species.is_null());
+	const Habitat &h = HABITATS[preset];
+	// Soft edges: about 1.5 C of annual mean, 3 C of January mean and 150 mm of rain, so ranges
+	// thin out across a belt instead of stopping at a line.
+	p_species->set_rule_range(PlantSpecies::RULE_TEMPERATURE, Vector2(h.t_min, h.t_max));
+	p_species->set_rule_fade(PlantSpecies::RULE_TEMPERATURE, 1.5f);
+	p_species->set_rule_range(PlantSpecies::RULE_JANUARY_TEMPERATURE, Vector2(h.jan_min, h.jan_max));
+	p_species->set_rule_fade(PlantSpecies::RULE_JANUARY_TEMPERATURE, 3.0f);
+	// Only the dry end limits: the wet ends of the range maps follow where the climate is also cold
+	// or oceanic, which the temperature rules already cover; rain itself does not stop a tree.
+	p_species->set_rule_range(PlantSpecies::RULE_PRECIPITATION, Vector2(h.p_min, 100000.0f));
+	p_species->set_rule_fade(PlantSpecies::RULE_PRECIPITATION, 150.0f);
+	p_species->set_rule_range(PlantSpecies::RULE_ARIDITY, Vector2(h.aridity_min, 1000.0f));
+	p_species->set_rule_fade(PlantSpecies::RULE_ARIDITY, 0.15f);
+	p_species->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, h.slope_max));
+	p_species->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
+	p_species->set_rule_range(PlantSpecies::RULE_SOIL_DEPTH, Vector2(h.soil_min, 100000.0f));
+	p_species->set_rule_fade(PlantSpecies::RULE_SOIL_DEPTH, h.soil_min * 0.5f);
+	// Woody plants root on land: no trees standing in water.
+	p_species->set_rule_range(PlantSpecies::RULE_WATER_DEPTH, Vector2(0.0f, 0.0f));
+	p_species->set_rule_fade(PlantSpecies::RULE_WATER_DEPTH, 0.05f);
+	if (h.water_max > 0.0f) {
+		p_species->set_rule_range(PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, h.water_max));
+		p_species->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, h.water_max * 0.4f);
+	}
+}
+
+// One species of a stand. The stand-grown form (grown with neighbours: tall, narrow, high crown
+// base) fills the stand; the open-grown form is the same tree in a clearing or at an edge, kept
+// there by a shade rule, and shrubs get the shade their light value allows.
+Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_grown, int p_variants) {
+	const int key = int(p_preset) * 2 + (p_stand_grown ? 1 : 0);
+	const Habitat &h = HABITATS[p_preset];
+	if (!mesh_cache.has(key) || mesh_cache[key].size() < MAX(p_variants, 1)) {
+		// Generate with this generator's colours and seed, under the preset's own parameters.
+		const int saved_seed = seed;
+		const Preset saved_preset = preset;
+		float saved_params[PARAM_MAX];
+		memcpy(saved_params, params, sizeof(params));
+		const Phyllotaxis saved_phyllotaxis = phyllotaxis;
+		const float saved_shade = forest_shade;
+		const float saved_spacing = forest_spacing;
+		const Color saved_bark = bark_color;
+		const Color saved_leaf = leaf_color;
+
+		set_preset(p_preset);
+		forest_shade = p_stand_grown ? 0.6f : 0.0f;
+		// Neighbours in a Poisson-disk stand stand on average about 1.3 times the minimum spacing
+		// apart, so crowns grown to that boundary close the canopy as real stands do.
+		forest_spacing = (is_shrub(p_preset) ? 3.0f : h.stand_spacing) * 1.3f;
+		TypedArray<Mesh> meshes;
+		float crown = 0.0f;
+		const int n = MAX(p_variants, 1);
+		for (int v = 0; v < n; v++) {
+			seed = saved_seed * 31 + v;
+			Ref<ArrayMesh> mesh = generate();
+			crown += crown_radius;
+			if (p_variants > 0) {
+				meshes.push_back(mesh);
+			}
+		}
+		mesh_cache[key] = meshes;
+		crown_cache[key] = crown / n;
+
+		seed = saved_seed;
+		preset = saved_preset;
+		memcpy(params, saved_params, sizeof(params));
+		phyllotaxis = saved_phyllotaxis;
+		forest_shade = saved_shade;
+		forest_spacing = saved_spacing;
+		bark_color = saved_bark;
+		leaf_color = saved_leaf;
+	}
+
+	Ref<PlantSpecies> sp;
+	sp.instantiate();
+	sp->set_name(String(preset_names[p_preset]) + (p_stand_grown ? " (stand)" : " (open)"));
+	TypedArray<Mesh> meshes = mesh_cache[key];
+	if (p_variants < meshes.size()) {
+		meshes.resize(p_variants);
+	}
+	sp->set_meshes(meshes);
+	{
+		const Preset saved_preset = preset;
+		preset = p_preset;
+		apply_habitat(sp);
+		preset = saved_preset;
+	}
+	const float crown = crown_cache[key];
+	// Needle cover overhead for the forest floor (VegetationField3D.get_conifer_at on the
+	// vegetation branch); a no-op until PlantSpecies has the property.
+	const bool conifer = p_preset == PRESET_SCOTS_PINE || p_preset == PRESET_NORWAY_SPRUCE || p_preset == PRESET_SILVER_FIR || p_preset == PRESET_LARCH;
+	sp->set("canopy_conifer", conifer);
+	sp->set_canopy_radius(crown);
+	sp->set_canopy_opacity(h.opacity);
+	sp->set_footprint(h.footprint);
+	sp->set_scale_range(Vector2(0.85f, 1.15f));
+	sp->set_align_to_ground(0.0f); // Trunks grow plumb on slopes (gravitropism).
+	if (p_stand_grown || is_shrub(p_preset)) {
+		sp->set_spacing(h.stand_spacing);
+	} else {
+		// Open-grown trees stand apart: at least a crown across.
+		sp->set_spacing(MAX(h.stand_spacing * 1.6f, crown * 2.0f));
+		sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, h.shade_max));
+		sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+	}
+	if (is_shrub(p_preset)) {
+		sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, h.shade_max));
+		sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+	}
+	return sp;
+}
+
+Ref<PlantSpecies> TreeGenerator::make_species(bool p_stand_grown, int p_variants) {
+	return _stand_species(preset, p_stand_grown, p_variants);
+}
+
+void TreeGenerator::clear_cache() {
+	mesh_cache.clear();
+	crown_cache.clear();
+}
+
+// Stands, in placement order: the stand's canopy trees first (stand-grown form; a second species
+// splits the ground with the first through complementary patches, the way mixed stands form
+// clumps), then the open-grown forms in the gaps and at the edges, then the shrub layer. Each
+// canopy tree after the first takes a shade rule, so it fills only gaps the earlier crowns left:
+// in make_woodland() that also lets a later stand grow only where an earlier one did not.
+Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
+	ERR_FAIL_INDEX_V(int(p_stand), int(STAND_MAX), Ref<Biome>());
+	TypedArray<PlantSpecies> list;
+	const int patch_seed = 7919 * (int(p_stand) + 1) + seed;
+	auto canopy = [&](Preset p, float p_density, float p_patch_scale, float p_cover, bool p_invert, bool p_first) {
+		Ref<PlantSpecies> sp = _stand_species(p, true, p_variants);
+		sp->set_density(p_density);
+		if (p_patch_scale > 0.0f) {
+			sp->set_patch_scale(p_patch_scale);
+			sp->set_patch_cover(p_cover);
+			sp->set_patch_seed(patch_seed);
+			sp->set_patch_invert(p_invert);
+		}
+		if (!p_first) {
+			// Only where the crowns placed before leave light.
+			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
+			sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+		}
+		list.push_back(sp);
+		return sp;
+	};
+	auto open = [&](Preset p, float p_density) {
+		Ref<PlantSpecies> sp = _stand_species(p, false, p_variants);
+		sp->set_density(p_density);
+		list.push_back(sp);
+		return sp;
+	};
+	auto shrub = [&](Preset p, float p_density) {
+		Ref<PlantSpecies> sp = _stand_species(p, false, p_variants);
+		sp->set_density(p_density);
+		list.push_back(sp);
+		return sp;
+	};
+	auto clip = [](const Ref<PlantSpecies> &p_sp, PlantSpecies::Rule p_rule, const Vector2 &p_range, float p_fade) {
+		// Narrow a species' range to the stand's belt (never widen past its habitat).
+		const Vector2 r = p_sp->get_rule_range(p_rule);
+		p_sp->set_rule_range(p_rule, Vector2(MAX(r.x, p_range.x), MIN(r.y, p_range.y)));
+		p_sp->set_rule_fade(p_rule, p_fade);
+	};
+
+	switch (p_stand) {
+		case STAND_BEECH: {
+			// Closed beech canopy; sycamore and ash in clumps between, thinner, with gaps the open
+			// forms and shrubs take; little shrub layer survives the beech shade (Ellenberg 1988:
+			// Fagion).
+			canopy(PRESET_BEECH, 1.0f, 60.0f, 0.8f, false, true);
+			canopy(PRESET_SYCAMORE_MAPLE, 0.6f, 60.0f, 0.8f, true, false);
+			canopy(PRESET_ASH, 0.5f, 60.0f, 0.8f, true, false);
+			open(PRESET_BEECH, 0.3f);
+			shrub(PRESET_HAZEL, 0.25f);
+			shrub(PRESET_ELDER, 0.15f);
+		} break;
+		case STAND_OAK_MIXED: {
+			// Oak and small-leaved lime in clumps, ash in moist hollows, a hazel coppice layer,
+			// birch and hawthorn in the clearings.
+			Ref<PlantSpecies> ash = canopy(PRESET_ASH, 1.0f, 0.0f, 0.0f, false, true);
+			ash->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(7.0f, 1000.0f));
+			ash->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.5f);
+			canopy(PRESET_OAK, 1.0f, 70.0f, 0.55f, false, false);
+			canopy(PRESET_LIME, 1.0f, 70.0f, 0.55f, true, false);
+			open(PRESET_OAK, 0.3f);
+			open(PRESET_BIRCH, 0.4f);
+			shrub(PRESET_HAZEL, 0.7f);
+			shrub(PRESET_HAWTHORN, 0.35f);
+		} break;
+		case STAND_MONTANE_CONIFER: {
+			// Spruce-fir with beech of the montane belt, mixed in clumps.
+			// The montane belt: about 1.5 to 6 C annual mean (Ellenberg 1988; Ozenda 1985).
+			const Vector2 belt(1.5f, 6.0f);
+			clip(canopy(PRESET_NORWAY_SPRUCE, 1.0f, 60.0f, 0.55f, false, true), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			clip(canopy(PRESET_SILVER_FIR, 1.0f, 60.0f, 0.55f, true, false), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			clip(canopy(PRESET_BEECH, 0.4f, 0.0f, 0.0f, false, false), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			clip(open(PRESET_NORWAY_SPRUCE, 0.3f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			clip(shrub(PRESET_ROWAN, 0.3f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			clip(shrub(PRESET_ELDER, 0.1f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+		} break;
+		case STAND_SUBALPINE: {
+			// Larch and spruce thinning towards the tree line; rowan in the gaps.
+			// Subalpine up to the tree line (about the 10 C July isotherm; Korner 2012).
+			// Its cold end is the tree line, about -1.5 C annual mean in the Alps.
+			const Vector2 belt(-1.5f, 2.5f);
+			clip(canopy(PRESET_LARCH, 0.8f, 50.0f, 0.6f, false, true), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			clip(canopy(PRESET_NORWAY_SPRUCE, 0.8f, 50.0f, 0.6f, true, false), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			clip(open(PRESET_LARCH, 0.4f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+			clip(open(PRESET_ROWAN, 0.4f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
+		} break;
+		case STAND_PINE_HEATH: {
+			// Scots pine on dry ground, open enough for birch and rowan beneath.
+			const Vector2 dry(0.0f, 750.0f);
+			clip(canopy(PRESET_SCOTS_PINE, 0.9f, 80.0f, 0.85f, false, true), PlantSpecies::RULE_PRECIPITATION, dry, 100.0f);
+			clip(open(PRESET_SCOTS_PINE, 0.35f), PlantSpecies::RULE_PRECIPITATION, dry, 100.0f);
+			clip(open(PRESET_BIRCH, 0.4f), PlantSpecies::RULE_PRECIPITATION, dry, 100.0f);
+			clip(shrub(PRESET_ROWAN, 0.3f), PlantSpecies::RULE_PRECIPITATION, dry, 100.0f);
+		} break;
+		case STAND_RIPARIAN: {
+			// Alder carr on the banks, white willows at the water's edge, elder.
+			canopy(PRESET_BLACK_ALDER, 1.0f, 0.0f, 0.0f, false, true);
+			open(PRESET_WHITE_WILLOW, 0.6f);
+			open(PRESET_BLACK_ALDER, 0.4f);
+			clip(shrub(PRESET_ELDER, 0.4f), PlantSpecies::RULE_WATER_DISTANCE, Vector2(0.0f, 40.0f), 16.0f);
+		} break;
+		case STAND_HEDGEROW: {
+			// Field boundary scrub: a dense shrub mix with open-grown standards. Placed by the
+			// scene along its own lines (no woodland climate belt of its own).
+			open(PRESET_OAK, 0.25f);
+			open(PRESET_LIME, 0.15f);
+			open(PRESET_HORSE_CHESTNUT, 0.1f);
+			shrub(PRESET_HAWTHORN, 1.0f);
+			shrub(PRESET_HAZEL, 0.7f);
+			shrub(PRESET_ELDER, 0.4f);
+			open(PRESET_ROWAN, 0.3f);
+		} break;
+		case STAND_MAX:
+			break;
+	}
+	if (p_stand == STAND_HEDGEROW) {
+		// A hedge is a line of light: no shade rules within it.
+		for (int i = 0; i < list.size(); i++) {
+			Ref<PlantSpecies> sp = list[i];
+			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
+		}
+	}
+	for (int i = 0; i < list.size(); i++) {
+		Ref<PlantSpecies> sp = list[i];
+		sp->set_meta("stand", int(p_stand)); // Which stand a species of make_woodland() came from.
+	}
+	Ref<Biome> biome;
+	biome.instantiate();
+	biome->set_name(stand_names[p_stand]);
+	biome->set_species(list);
+	return biome;
+}
+
+// Every woodland stand in one Biome, in order of competitive strength on its own ground: water
+// edges, then the cold belts, then the shade casters (beech before oak), then pine on what the
+// broadleaves leave dry. Climate rules keep each stand to its belt; where belts overlap, the shade
+// rule of the later stand's trees leaves the ground to the earlier canopy.
+Ref<Biome> TreeGenerator::make_woodland(int p_variants) {
+	static const Stand order[] = { STAND_RIPARIAN, STAND_SUBALPINE, STAND_MONTANE_CONIFER, STAND_BEECH, STAND_OAK_MIXED, STAND_PINE_HEATH };
+	TypedArray<PlantSpecies> canopies, rest;
+	for (Stand st : order) {
+		Ref<Biome> b = make_stand(st, p_variants);
+		const TypedArray<PlantSpecies> sps = b->get_species();
+		for (int i = 0; i < sps.size(); i++) {
+			Ref<PlantSpecies> sp = sps[i];
+			// Each stand's first canopy tree would ignore the stands before it: give it the same
+			// gap rule. (The first stand's own first tree, alder, keeps the water edge.)
+			if (i == 0 && st != order[0]) {
+				sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 0.55f));
+				sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+			}
+			const bool tree_layer = sp->get_name().ends_with("(stand)");
+			(tree_layer ? canopies : rest).push_back(sp);
+		}
+	}
+	// All canopy trees before any gap filler or shrub, so shrubs see the whole canopy.
+	TypedArray<PlantSpecies> list = canopies;
+	list.append_array(rest);
+	Ref<Biome> biome;
+	biome.instantiate();
+	biome->set_name("Woodland");
+	biome->set_species(list);
+	return biome;
+}
+
+Ref<ArrayMesh> TreeGenerator::generate() {
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	nodes.clear();
+	buds.clear();
+	shed_count = 0;
+	rng.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(preset) * 1013904223ull + 1);
+
+	// Node 0 is the root collar: zero length, the stems are its laterals.
+	Node root;
+	root.dir = Vector3(0, 1, 0);
+	root.leafy = false;
+	nodes.push_back(root);
+	const int stems = MAX(1, int(params[PARAM_STEMS]));
+	const float spread = Math::deg_to_rad(params[PARAM_STEM_SPREAD]);
+	auto add_stem_bud = [&](float p_angle, float p_tilt) {
+		Bud b;
+		b.node = 0;
+		b.dir = Vector3(0, 1, 0).rotated(Vector3(Math::cos(p_angle), 0, Math::sin(p_angle)), p_tilt).normalized();
+		buds.push_back(b);
+	};
+	for (int s = 0; s < stems; s++) {
+		const float tilt = stems == 1 ? _rand(0.0f, 0.04f) : spread * _rand(0.4f, 1.0f);
+		add_stem_bud(Math::TAU * s / stems + _rand(-0.4f, 0.4f), tilt);
+	}
+	const int years = CLAMP(int(params[PARAM_YEARS]), 1, 300);
+	for (int y = 1; y <= years; y++) {
+		if (params[PARAM_BASAL_SPROUTS] > 0.0f && rng.randf() < params[PARAM_BASAL_SPROUTS]) {
+			add_stem_bud(_rand(0.0f, Math::TAU), spread * _rand(0.3f, 1.0f));
+		}
+		_grow_year(y);
+		if (int(nodes.size()) >= MAX_NODES - 64) {
+			break;
+		}
+	}
+	_compute_radii();
+	_bend_under_gravity();
+	_measure();
+	Ref<ArrayMesh> mesh = _build_mesh();
+	generation_usec = OS::get_singleton()->get_ticks_usec() - t0;
+	return mesh;
+}
+
+void TreeGenerator::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_preset", "preset"), &TreeGenerator::set_preset);
+	ClassDB::bind_method(D_METHOD("get_preset"), &TreeGenerator::get_preset);
+	ClassDB::bind_method(D_METHOD("set_seed", "seed"), &TreeGenerator::set_seed);
+	ClassDB::bind_method(D_METHOD("get_seed"), &TreeGenerator::get_seed);
+	ClassDB::bind_method(D_METHOD("set_param", "param", "value"), &TreeGenerator::set_param);
+	ClassDB::bind_method(D_METHOD("get_param", "param"), &TreeGenerator::get_param);
+	ClassDB::bind_method(D_METHOD("set_phyllotaxis", "phyllotaxis"), &TreeGenerator::set_phyllotaxis);
+	ClassDB::bind_method(D_METHOD("get_phyllotaxis"), &TreeGenerator::get_phyllotaxis);
+	ClassDB::bind_method(D_METHOD("set_forest_shade", "shade"), &TreeGenerator::set_forest_shade);
+	ClassDB::bind_method(D_METHOD("get_forest_shade"), &TreeGenerator::get_forest_shade);
+	ClassDB::bind_method(D_METHOD("set_forest_spacing", "spacing"), &TreeGenerator::set_forest_spacing);
+	ClassDB::bind_method(D_METHOD("get_forest_spacing"), &TreeGenerator::get_forest_spacing);
+	ClassDB::bind_method(D_METHOD("set_bark_color", "color"), &TreeGenerator::set_bark_color);
+	ClassDB::bind_method(D_METHOD("get_bark_color"), &TreeGenerator::get_bark_color);
+	ClassDB::bind_method(D_METHOD("set_leaf_color", "color"), &TreeGenerator::set_leaf_color);
+	ClassDB::bind_method(D_METHOD("get_leaf_color"), &TreeGenerator::get_leaf_color);
+	ClassDB::bind_method(D_METHOD("generate"), &TreeGenerator::generate);
+	ClassDB::bind_method(D_METHOD("apply_habitat", "species"), &TreeGenerator::apply_habitat);
+	ClassDB::bind_method(D_METHOD("make_species", "stand_grown", "variants"), &TreeGenerator::make_species, DEFVAL(3));
+	ClassDB::bind_method(D_METHOD("make_stand", "stand", "variants"), &TreeGenerator::make_stand, DEFVAL(3));
+	ClassDB::bind_method(D_METHOD("make_woodland", "variants"), &TreeGenerator::make_woodland, DEFVAL(3));
+	ClassDB::bind_method(D_METHOD("clear_cache"), &TreeGenerator::clear_cache);
+	ClassDB::bind_method(D_METHOD("get_height"), &TreeGenerator::get_height);
+	ClassDB::bind_method(D_METHOD("get_crown_radius"), &TreeGenerator::get_crown_radius);
+	ClassDB::bind_method(D_METHOD("get_crown_base"), &TreeGenerator::get_crown_base);
+	ClassDB::bind_method(D_METHOD("get_internode_count"), &TreeGenerator::get_internode_count);
+	ClassDB::bind_method(D_METHOD("get_dead_branch_count"), &TreeGenerator::get_dead_branch_count);
+	ClassDB::bind_method(D_METHOD("get_leaf_count"), &TreeGenerator::get_leaf_count);
+	ClassDB::bind_method(D_METHOD("get_shed_count"), &TreeGenerator::get_shed_count);
+	ClassDB::bind_method(D_METHOD("get_generation_usec"), &TreeGenerator::get_generation_usec);
+
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Oak,Beech,Birch,Scots Pine,Norway Spruce,Hazel,Hawthorn,Lime,Sycamore Maple,Ash,Horse Chestnut,Black Alder,White Willow,European Larch,Silver Fir,Rowan,Elder"), "set_preset", "get_preset");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "phyllotaxis", PROPERTY_HINT_ENUM, "Alternate,Opposite,Whorled"), "set_phyllotaxis", "get_phyllotaxis");
+	ADD_GROUP("Stand", "forest_");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_shade", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_forest_shade", "get_forest_shade");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_spacing", PROPERTY_HINT_RANGE, "1,20,0.1,suffix:m"), "set_forest_spacing", "get_forest_spacing");
+	ADD_GROUP("Colors", "");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "bark_color"), "set_bark_color", "get_bark_color");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "leaf_color"), "set_leaf_color", "get_leaf_color");
+	ADD_GROUP("Growth", "");
+	static const char *names[PARAM_MAX] = {
+		"years", "internode_length", "internode_length_age", "max_shoot", "vigor", "apical_dominance",
+		"apical_dominance_old", "maturity", "branch_angle", "branch_angle_variance", "divergence", "whorl_buds",
+		"direction_noise", "phototropism", "gravitropism", "trunk_gravitropism", "shadow_strength",
+		"shadow_falloff", "shadow_depth", "bud_light_min", "bud_idle_years", "shed_ratio", "dead_branch_keep",
+		"tip_radius", "pipe_exponent", "gravity_bending", "stems", "stem_spread", "basal_sprouts", "root_flare",
+		"leaf_size", "leaves_per_internode", "leaf_years", "needles", "twig_droop", "leaf_width", "apical_control"
+	};
+	for (int i = 0; i < PARAM_MAX; i++) {
+		ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, names[i]), "set_param", "get_param", i);
+	}
+
+	BIND_ENUM_CONSTANT(PRESET_OAK);
+	BIND_ENUM_CONSTANT(PRESET_BEECH);
+	BIND_ENUM_CONSTANT(PRESET_BIRCH);
+	BIND_ENUM_CONSTANT(PRESET_SCOTS_PINE);
+	BIND_ENUM_CONSTANT(PRESET_NORWAY_SPRUCE);
+	BIND_ENUM_CONSTANT(PRESET_HAZEL);
+	BIND_ENUM_CONSTANT(PRESET_HAWTHORN);
+	BIND_ENUM_CONSTANT(PRESET_LIME);
+	BIND_ENUM_CONSTANT(PRESET_SYCAMORE_MAPLE);
+	BIND_ENUM_CONSTANT(PRESET_ASH);
+	BIND_ENUM_CONSTANT(PRESET_HORSE_CHESTNUT);
+	BIND_ENUM_CONSTANT(PRESET_BLACK_ALDER);
+	BIND_ENUM_CONSTANT(PRESET_WHITE_WILLOW);
+	BIND_ENUM_CONSTANT(PRESET_LARCH);
+	BIND_ENUM_CONSTANT(PRESET_SILVER_FIR);
+	BIND_ENUM_CONSTANT(PRESET_ROWAN);
+	BIND_ENUM_CONSTANT(PRESET_ELDER);
+	BIND_ENUM_CONSTANT(PRESET_MAX);
+	BIND_ENUM_CONSTANT(STAND_BEECH);
+	BIND_ENUM_CONSTANT(STAND_OAK_MIXED);
+	BIND_ENUM_CONSTANT(STAND_MONTANE_CONIFER);
+	BIND_ENUM_CONSTANT(STAND_SUBALPINE);
+	BIND_ENUM_CONSTANT(STAND_PINE_HEATH);
+	BIND_ENUM_CONSTANT(STAND_RIPARIAN);
+	BIND_ENUM_CONSTANT(STAND_HEDGEROW);
+	BIND_ENUM_CONSTANT(STAND_MAX);
+	BIND_ENUM_CONSTANT(PHYLLOTAXIS_ALTERNATE);
+	BIND_ENUM_CONSTANT(PHYLLOTAXIS_OPPOSITE);
+	BIND_ENUM_CONSTANT(PHYLLOTAXIS_WHORLED);
+	BIND_ENUM_CONSTANT(PARAM_YEARS);
+	BIND_ENUM_CONSTANT(PARAM_INTERNODE_LENGTH);
+	BIND_ENUM_CONSTANT(PARAM_INTERNODE_LENGTH_AGE);
+	BIND_ENUM_CONSTANT(PARAM_MAX_SHOOT);
+	BIND_ENUM_CONSTANT(PARAM_VIGOR);
+	BIND_ENUM_CONSTANT(PARAM_APICAL_DOMINANCE);
+	BIND_ENUM_CONSTANT(PARAM_APICAL_DOMINANCE_OLD);
+	BIND_ENUM_CONSTANT(PARAM_MATURITY);
+	BIND_ENUM_CONSTANT(PARAM_BRANCH_ANGLE);
+	BIND_ENUM_CONSTANT(PARAM_BRANCH_ANGLE_VARIANCE);
+	BIND_ENUM_CONSTANT(PARAM_DIVERGENCE);
+	BIND_ENUM_CONSTANT(PARAM_WHORL_BUDS);
+	BIND_ENUM_CONSTANT(PARAM_DIRECTION_NOISE);
+	BIND_ENUM_CONSTANT(PARAM_PHOTOTROPISM);
+	BIND_ENUM_CONSTANT(PARAM_GRAVITROPISM);
+	BIND_ENUM_CONSTANT(PARAM_TRUNK_GRAVITROPISM);
+	BIND_ENUM_CONSTANT(PARAM_SHADOW_STRENGTH);
+	BIND_ENUM_CONSTANT(PARAM_SHADOW_FALLOFF);
+	BIND_ENUM_CONSTANT(PARAM_SHADOW_DEPTH);
+	BIND_ENUM_CONSTANT(PARAM_BUD_LIGHT_MIN);
+	BIND_ENUM_CONSTANT(PARAM_BUD_IDLE_YEARS);
+	BIND_ENUM_CONSTANT(PARAM_SHED_RATIO);
+	BIND_ENUM_CONSTANT(PARAM_DEAD_BRANCH_KEEP);
+	BIND_ENUM_CONSTANT(PARAM_TIP_RADIUS);
+	BIND_ENUM_CONSTANT(PARAM_PIPE_EXPONENT);
+	BIND_ENUM_CONSTANT(PARAM_GRAVITY_BENDING);
+	BIND_ENUM_CONSTANT(PARAM_STEMS);
+	BIND_ENUM_CONSTANT(PARAM_STEM_SPREAD);
+	BIND_ENUM_CONSTANT(PARAM_BASAL_SPROUTS);
+	BIND_ENUM_CONSTANT(PARAM_ROOT_FLARE);
+	BIND_ENUM_CONSTANT(PARAM_LEAF_SIZE);
+	BIND_ENUM_CONSTANT(PARAM_LEAVES_PER_INTERNODE);
+	BIND_ENUM_CONSTANT(PARAM_LEAF_YEARS);
+	BIND_ENUM_CONSTANT(PARAM_NEEDLES);
+	BIND_ENUM_CONSTANT(PARAM_TWIG_DROOP);
+	BIND_ENUM_CONSTANT(PARAM_LEAF_WIDTH);
+	BIND_ENUM_CONSTANT(PARAM_APICAL_CONTROL);
+	BIND_ENUM_CONSTANT(PARAM_MAX);
+}

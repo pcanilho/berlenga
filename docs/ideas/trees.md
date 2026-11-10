@@ -261,6 +261,43 @@ Our design follows the same split and reuses what the fork has:
 Needs the PC (no GPU or denoiser in the cloud): GPU timings of the wind pass and of leaf
 geometry versus OMM cards, denoised path traced crops at 100%, and the forest-scale bench.
 
+## 8a. Species, habitats and stands (as built)
+
+Seventeen presets: oak, beech, birch, Scots pine, Norway spruce, hazel, hawthorn, small-leaved
+lime, sycamore, ash, horse chestnut, black alder, white willow, larch, silver fir, rowan, elder.
+
+**Habitat.** Each preset has a climate envelope from the species range maps and climate profiles
+of the European Atlas of Forest Tree Species (San-Miguel-Ayanz et al. 2016): annual and January
+mean temperature, the dry end of precipitation and the aridity index, slope, soil depth, and for
+alder and willow the distance to water. `apply_habitat()` writes them as `PlantSpecies` rules
+with soft edges (1.5 C, 3 C, 150 mm). Only the dry end of rainfall limits: the wet ends of the
+range maps are cold or oceanic climates the temperature rules already cover (the first version
+capped rain and emptied a wet mountainside).
+
+**Stand-grown and open-grown.** The stand-grown form grows with `forest_shade` among neighbours
+at 1.3 times the stand spacing (the mean nearest-neighbour distance of a Poisson-disk pattern),
+with side shade past half that distance at every height up to the tree top: Palubicki's trees
+grown in one grid meet at a shared boundary, and the stand form now does too (crown radius about
+0.65 of the spacing, so the canopy closes). The open-grown form keeps to light gaps and edges
+through a shade rule (Ellenberg light value). Crown radius is the drip line, the 95th percentile
+of foliage reach, not the longest twig.
+
+**Stands** (Ellenberg 1988; EUNIS G1-G3 and FA): beech (with sycamore and ash in complementary
+patches); oak-lime with ash in moist hollows and a hazel coppice layer; montane spruce-fir-beech
+(1.5 to 6 C annual mean); subalpine larch-spruce up to the tree line (-1.5 C); pine heath
+(under about 750 mm); riparian alder, willow and elder; hedgerow (hawthorn, hazel, elder, rowan
+with oak, lime and horse chestnut standards, placed by the scene along its lines). In each:
+canopy trees, then open-grown trees in gaps, then shrubs under their shade limits.
+`make_woodland()` joins the woodland stands with every canopy tree first; later stands' trees
+take only gaps earlier crowns leave, so overlapping belts form ecotones instead of stacking.
+Bench: `docs/bench/trees -- --stands --test | --map= | --region= | --plot=N`.
+
+Known limits: open-grown conifers spread too wide at the base (spruce about 45 m across where a
+solitary one is 10 to 14 m); a lateral-extension factor (Wilson 2000) made crowns collapse in
+the shadow model, so this needs its own pass. Generated mountainsides from TerrainGenerator3D
+are bare rock at 40 to 50 degrees with no soil, so no tree grows on them; the region bench uses
+a smooth massif until that changes.
+
 ## References
 
 - Weber, Penn, SIGGRAPH 1995. Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*,
@@ -280,3 +317,8 @@ geometry versus OMM cards, denoised path traced crops at 100%, and the forest-sc
   Sanders, *Between Tech and Art: The Vegetation of Horizon Zero Dawn*, GDC 2018. Feeley,
   *Interactive Wind and Vegetation in God of War*, GDC 2019.
 - Code read: Cosmo Tree Gen, EZ-Tree, gdTree3D (MIT).
+- San-Miguel-Ayanz, de Rigo, Caudullo, Houston Durrant, Mauri (eds.), *European Atlas of Forest
+  Tree Species*, Publications Office of the EU, 2016. Ellenberg, *Vegetation Ecology of Central
+  Europe*, 1988. Ozenda, *La vegetation de la chaine alpine*, 1985. Korner, *Alpine Treelines*,
+  2012. Wilson, *Apical control of branch growth and angle in woody plants*, Am. J. Bot. 2000.
+  Kantola and Makela, *Crown development in Norway spruce*, Trees 2004.
