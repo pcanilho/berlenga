@@ -256,22 +256,32 @@ Each feature that changes the look or the cost can be turned off with the settin
 ### Vegetation
 - **Plant placement** (`VegetationField3D`, `Biome`, `PlantSpecies`): places species by spacing, footprint and rules on slope, wetness and distance to water over a `TerrainDataMap3D`; evenly spread, the same for a seed. 12,899 plants over 256 m place once in about 45 ms, then draw as ordinary MultiMeshes.
 - **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.
+- **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back.
+- **Ground cover** (`GrassField3D` undercoat fields, `view_facing`; `PlantSpecies` patches): edge-on blades widened, ground tinted under grass, clover and flower drifts.
 - **GPU-placed instances** (`RenderingServer.multimesh_mark_buffer_rd_changed()`): MultiMesh records written by a compute shader reach culling, motion vectors and path tracing.
 - **Instance bones** (`MultiMesh.bones_per_instance`): each instance is skinned from its own records, so thousands of plants bend in the wind without a Skeleton3D each; raster and path traced. 900 swaying stems: 0.30 ms render CPU, against 5.97 ms as 900 Skeleton3D.
 
-<details><summary>Images and clip: plant placement, grass, grass in wind, GPU-placed instances, instance bones</summary>
+<details><summary>Images and clip: plant placement, grass, ground cover, grass in wind, trampling, GPU-placed instances, instance bones</summary>
 
 ![A valley with trees, bushes and reeds placed by biome rules, raster and path traced](docs/media/vegetation-placement.jpg)
 
 *Plant placement: trees on dry ground, bushes between them, reeds along the banks (placeholder meshes).*
 
-![A grass field, raster and path traced](docs/media/grass-field.jpg)
+![A grass carpet with undercoat, clover and flowers, raster and path traced](docs/media/grass-field.jpg)
 
-*Grass: clumped blades, raster and path traced.*
+*Grass: a full carpet, raster and path traced.*
+
+![Sparse grass before, then with ground cover](docs/media/grass-carpet.jpg)
+
+*Ground cover: bare ground between blades is filled with undercoat, clover and flowers.*
 
 ![Grass bending as gusts travel downwind, raster](docs/media/grass-wind.gif)
 
 *Grass in wind: gusts sweep across the field downwind.*
+
+![A body walking through grass that lies down and springs back, raster](docs/media/grass-trample.gif)
+
+*Trampling: the grass lies down under the body and springs back behind it.*
 
 ![GPU-written MultiMesh records, path traced: before and after the call](docs/media/gpu-multimesh-records.jpg)
 
