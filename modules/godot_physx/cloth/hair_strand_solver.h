@@ -53,17 +53,19 @@ public:
 
 	RID shader, pipeline;
 	bool owns_shader = false;
-	RID buf_params, buf_rest, buf_strands, buf_pos, buf_prev, buf_follow, tex_out;
+	RID buf_params, buf_rest, buf_strands, buf_pos, buf_prev, buf_follow, buf_order, tex_out;
 	RID uniform_set;
 
 	int strand_count = 0;
 	int point_count = 0;
 	int tex_width = 0;
 	int tex_height = 0;
+	int slot_points = 0; // > 0: the output is in draw order, this many texels per strand
+	int sort_size = 1;
 	bool needs_reset = true;
 
 	void rt_compile(Ref<HairStrandSolverGPU> p_self);
-	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow);
+	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points);
 	void rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps);
 	void rt_reset(Ref<HairStrandSolverGPU> p_self);
 	void rt_free_buffers();
@@ -99,6 +101,7 @@ public:
 		float margin = 0.002f; // kept between strands and the collision spheres (m)
 		Vector<Vector4> spheres; // world centre, radius
 		Transform3D output_xform; // world -> the render copy's space
+		Transform3D view_xform; // world -> the camera, for the draw order
 	};
 
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }
@@ -106,7 +109,10 @@ public:
 	// p_rest: 4 floats per point (groom-space position, length of the segment from the previous
 	// point). p_strands: 2 ints per strand (first point, point count). p_follow: 8 floats per strand:
 	// up to three guide strands (x, y, z; w -1 for a guide, which simulates) and their weights.
-	void build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow);
+	// p_slot_points > 0: the output texture holds the strands sorted far to near from the camera
+	// (for blending), p_slot_points texels each (padded past a strand's end, w = -1; otherwise w is
+	// the share of the strand's points). 0: one texel per point, in groom order.
+	void build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow, int p_slot_points = 0);
 	// p_xform: groom space -> world this frame.
 	void step(const Transform3D &p_xform, double p_delta, int p_substeps, const Settings &p_settings);
 	void reset();

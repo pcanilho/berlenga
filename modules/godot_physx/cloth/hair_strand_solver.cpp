@@ -43,7 +43,7 @@
 
 namespace {
 // std140 Params in hair_strands.glsl: 5 vec4, 3 mat4, MAX_SPHERES vec4.
-constexpr int PARAMS_BYTES = 7 * 16 + 3 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16;
+constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16;
 constexpr uint32_t GROUP = 64; // local_size_x
 
 uint32_t groups_for(int p_count) {
@@ -55,6 +55,8 @@ enum Mode {
 	MODE_RESET = 1,
 	MODE_OUTPUT = 2,
 	MODE_FOLLOW = 3,
+	MODE_SORT_KEYS = 4,
+	MODE_SORT_STEP = 5,
 };
 
 struct PassConstants {
@@ -159,7 +161,7 @@ void HairStrandSolverGPU::rt_free_buffers() {
 		rd->free_rid(uniform_set);
 	}
 	uniform_set = RID();
-	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &tex_out };
+	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out };
 	for (RID *r : rids) {
 		if (r->is_valid()) {
 			rd->free_rid(*r);
@@ -186,7 +188,7 @@ void HairStrandSolverGPU::rt_free(Ref<HairStrandSolverGPU> p_self) {
 	shader = RID();
 }
 
-void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow) {
+void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points) {
 	if (rd == nullptr || shader.is_null()) {
 		return;
 	}
@@ -202,9 +204,16 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 	buf_pos = storage_from(rd, nullptr, point_count * 16);
 	buf_prev = storage_from(rd, nullptr, point_count * 16);
 	buf_follow = storage_from(rd, (const uint8_t *)p_follow.ptr(), p_follow.size() * 4);
+	slot_points = MAX(p_slot_points, 0);
+	sort_size = 1;
+	while (sort_size < strand_count) {
+		sort_size <<= 1;
+	}
+	buf_order = storage_from(rd, nullptr, sort_size * 8);
 
-	tex_width = MIN(point_count, 2048);
-	tex_height = (point_count + tex_width - 1) / tex_width;
+	const int texels = slot_points > 0 ? strand_count * slot_points : point_count;
+	tex_width = MIN(texels, 2048);
+	tex_height = (texels + tex_width - 1) / tex_width;
 	RD::TextureFormat tf;
 	tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
 	tf.width = tex_width;
@@ -247,6 +256,13 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 		u.append_id(buf_follow);
 		uniforms.push_back(u);
 	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 7;
+		u.append_id(buf_order);
+		uniforms.push_back(u);
+	}
 	uniform_set = rd->uniform_set_create(uniforms, shader, 0);
 	needs_reset = true;
 	built.set();
@@ -265,16 +281,20 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 	counts[0] = strand_count;
 	counts[1] = point_count;
 	counts[2] = tex_width;
+	float *fl = (float *)params.ptrw();
+	fl[26] = (float)slot_points;
+	fl[27] = (float)sort_size;
 	rd->buffer_update(buf_params, 0, PARAMS_BYTES, params.ptr());
 
 	PassConstants pc = { MODE_STEP, 0.0f, 0.0f, 0 };
 	RD::ComputeListID cl = rd->compute_list_begin();
 	rd->compute_list_bind_compute_pipeline(cl, pipeline);
 	rd->compute_list_bind_uniform_set(cl, uniform_set, 0);
-	auto run = [&](int p_mode, float p_frac, float p_frac_prev, int p_threads) {
+	auto run = [&](int p_mode, float p_frac, float p_frac_prev, int p_threads, int p_k = 0) {
 		pc.mode = p_mode;
 		pc.frac = p_frac;
 		pc.frac_prev = p_frac_prev;
+		pc.pad1 = p_k;
 		rd->compute_list_set_push_constant(cl, &pc, sizeof(pc));
 		rd->compute_list_dispatch(cl, groups_for(p_threads), 1, 1);
 		rd->compute_list_add_barrier(cl);
@@ -288,7 +308,18 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 		run(MODE_STEP, (float)(s + 1) / (float)substeps, (float)s / (float)substeps, strand_count);
 	}
 	run(MODE_FOLLOW, 1.0f, 1.0f, strand_count);
-	run(MODE_OUTPUT, 1.0f, 1.0f, point_count);
+	if (slot_points > 0) {
+		// Draw order, far to near: bitonic sort of the strands by depth.
+		run(MODE_SORT_KEYS, 1.0f, 1.0f, sort_size);
+		for (int k = 2; k <= sort_size; k <<= 1) {
+			for (int j = k >> 1; j > 0; j >>= 1) {
+				run(MODE_SORT_STEP, (float)j, 0.0f, sort_size, k);
+			}
+		}
+		run(MODE_OUTPUT, 1.0f, 1.0f, strand_count * slot_points);
+	} else {
+		run(MODE_OUTPUT, 1.0f, 1.0f, point_count);
+	}
 	rd->compute_list_end();
 	if (local) {
 		rd->submit();
@@ -348,12 +379,12 @@ void HairStrandSolver::_dispatch(const Callable &p_call) const {
 	}
 }
 
-void HairStrandSolver::build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow) {
+void HairStrandSolver::build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow, int p_slot_points) {
 	if (gpu.is_null()) {
 		return;
 	}
 	has_last = false;
-	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_build).bind(gpu, p_rest, p_strands, p_follow));
+	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_build).bind(gpu, p_rest, p_strands, p_follow, p_slot_points));
 	if (!gpu->local) {
 		// The texture RID must exist before the caller wraps it.
 		RenderingServer::get_singleton()->sync();
@@ -411,13 +442,14 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 	put_mat4(f + 28, has_last ? last_xform : p_xform);
 	put_mat4(f + 44, p_xform);
 	put_mat4(f + 60, p_settings.output_xform);
+	put_mat4(f + 76, p_settings.view_xform);
 	// spheres
 	for (int i = 0; i < ints[3]; i++) {
 		const Vector4 &s = p_settings.spheres[i];
-		f[76 + i * 4 + 0] = s.x;
-		f[76 + i * 4 + 1] = s.y;
-		f[76 + i * 4 + 2] = s.z;
-		f[76 + i * 4 + 3] = s.w;
+		f[92 + i * 4 + 0] = s.x;
+		f[92 + i * 4 + 1] = s.y;
+		f[92 + i * 4 + 2] = s.z;
+		f[92 + i * 4 + 3] = s.w;
 	}
 	last_xform = p_xform;
 	has_last = true;

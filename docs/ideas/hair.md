@@ -323,10 +323,17 @@ the pixel the real fibre covers. Ours, in the PhysXHair3D render shader, raster 
   width + 0.71 px, the pixel measured from the projection and `VIEWPORT_SIZE` at the point's depth.
 - Coverage: wider than a pixel, solid with a one-pixel soft edge; thinner, a tent across the
   ribbon whose area equals the strand's real width, so the hair's total opacity is physical.
-- `ALPHA` with `ALPHA_HASH_SCALE`: stochastic, so depth prepass and shadows keep working and
-  TAA or MSAA resolve it (no order-independent transparency needed, unlike TressFX's PPLL).
-- Shadow maps: the same ribbons and coverage, so the hair's shadow is partial and accumulates
-  through the volume, a stochastic stand-in for TressFX's and Unreal's deep opacity maps. The
+- Blended, as TressFX blends: `ALPHA` = coverage. First tried hashed alpha (`ALPHA_HASH_SCALE`,
+  #203): order-free, but dither that only TAA cleans up, so stills stayed grainy. Blending needs
+  order: unsorted, the far side of the head painted over the near side and the skull showed as a
+  dark disc. So the solver sorts the strands every frame (MODE_SORT_KEYS: each strand's middle
+  point's view depth; MODE_SORT_STEP: bitonic sort on the GPU, 120 passes for 32k strands) and
+  MODE_OUTPUT writes the positions in that order, fixed-size slots per strand (padded, w = -1),
+  so the static index buffer draws far to near. Per-strand order, not per-fragment (TressFX's
+  PPLL/ShortCut): a strand that wraps from back to front can still be slightly off, which thin
+  strands hide. Smooth with no AA; TAA or MSAA still help on edges.
+- Shadow maps: the same ribbons; coverage as the share of texels kept (interleaved gradient noise
+  discard, no blending there), so the hair's shadow is partial and accumulates through the volume, a stochastic stand-in for TressFX's and Unreal's deep opacity maps. The
   widening is capped at 2 mm there (a far cascade's texel would make every strand centimetres
   wide; that stalled lavapipe) and at 1 cm elsewhere.
 - Path tracing keeps the real-width crossed strips (`IN_PATH_TRACER`, a new spatial built-in:
