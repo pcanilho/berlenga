@@ -17,7 +17,8 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
 - **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
-- **Weather**: one weather map for wind, storms, clouds and their shadows, rain, wet surfaces and puddles, driving water, cloth and hair.
+- **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
+- **Clouds**: a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
 - **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
 - **Physics**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
@@ -253,12 +254,8 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Storms** (`add_storm`): drift with the wind, with a rain core and a downdraft.
 - **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.
 - **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).
-- **Clouds** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): a cloud layer shaped from the map's cover, type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
-- **Cloud reprojection** (`WeatherSkyMaterial.cloud_reprojection`, on by default): clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.
-- **Cloud shadows** (`sun_light`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.
-- **Sun projector**: `light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.
 
-<details><summary>Images: weather map, wet ground, clouds, cloud shadows</summary>
+<details><summary>Images: weather map, wet ground</summary>
 
 ![Weather map fields round a storm: cloud cover, rain, wind at 10 m, wetness](docs/media/weather-map.jpg)
 
@@ -267,6 +264,16 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A beach dry and after rain: darker sand, puddles and a sheen](docs/media/weather-wet.jpg)
 
 *Wet surfaces: the sand darkens, puddles form and catch the sky.*
+
+</details>
+
+### Clouds
+- **Cloud layer** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
+- **Cloud reprojection** (`WeatherSkyMaterial.cloud_reprojection`, on by default): clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.
+- **Cloud shadows** (`sun_light`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.
+- **Sun projector**: `light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.
+
+<details><summary>Images: clouds, cloud shadows</summary>
 
 ![A cloud layer over a field of blocks, path traced](docs/media/weather-clouds.jpg)
 
