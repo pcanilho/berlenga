@@ -181,9 +181,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Distance LOD** (`PhysXHair3D`: `lod_enabled`, `lod_start_distance`, `lod_end_distance`, `lod_strand_ratio`): far away, fewer and wider strands with the same look; simulation and path tracing keep every strand.
 - **Body collision** (`PhysXHair3D`: `collision_body`, `collision_cell_size`): strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.
 - **Hair volume** (`volume_enabled`, `volume_friction`, `volume_stiffness`): strands push and drag on each other through a density grid, so hair keeps its volume.
+- **Motion vectors for strands**: TAA, FSR 2 and DLSS follow moving hair instead of smearing it; shaders get `PREVIOUS_FRAME` and `render_mode alpha_motion_vectors`.
 - **Custom hair shaders**: `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.
 
-<details><summary>Images and clip: hair shading, strand hair, moving hair, raster strands, raster shading, distance LOD, body collision, hair volume</summary>
+<details><summary>Images and clip: hair shading, strand hair, moving hair, raster strands, raster shading, distance LOD, body collision, hair volume, motion vectors</summary>
 
 ![Hair-shaded spheres and cards: raster, path traced, sun behind, cards backlit](docs/media/hair.jpg)
 
@@ -216,6 +217,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Strand hair shaking and in wind, hair volume off and on](docs/media/hair-volume.jpg)
 
 *Hair volume: with it on, the hair stays full instead of collapsing into a flat sheet.*
+
+![Moving strand hair: motion vectors before and after, then TAA before and after](docs/media/hair-motion-vectors.jpg)
+
+*Motion vectors: before, only part of the hair reports its motion; after, every strand does.*
 
 </details>
 
