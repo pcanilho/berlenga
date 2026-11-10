@@ -550,7 +550,7 @@ channel and arrives late by its distance.
   projected area over r^2, in the direction of that sum. Ground flashes more than 400 m away use a
   directional light from that direction. Like the sun, a source that far is close to parallel across
   the scene, and its cascaded shadow maps stay sharp, where an omni light's cube map spread over
-  kilometres kept no shadow detail (11 Nov fix). Nearer flashes use an omni light. Either is off
+  kilometres kept no shadow detail (10 Nov fix). Nearer flashes use an omni light. Either is off
   under path tracing, where the channel itself lights the scene, so the light is never counted
   twice.
 - **Cloud glow.** WeatherSkyMaterial gets up to four flash points, drawn in the full resolution pass
