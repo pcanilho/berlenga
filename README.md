@@ -219,7 +219,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 </details>
 
 ### Terrain
-- **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
+- **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`, `detail_wavelength`, `detail_octaves`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
