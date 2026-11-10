@@ -97,6 +97,9 @@
 		<member name="vsp_coeff" type="float" setter="set_vsp_coeff" getter="get_vsp_coeff" default="0.8">
 			How much of the head's motion each substep carries the whole strand, and its velocity, along (TressFX's velocity shock propagation). [code]0[/code] leaves the hair to catch up by itself; higher keeps it with the head when the character turns or runs.
 		</member>
+		<member name="weather_wind" type="bool" setter="set_weather_wind" getter="get_weather_wind" default="true">
+			If [code]true[/code] and a [WeatherMap3D] is in the scene, its wind at this node (mean wind plus gusts) is added to [member wind].
+		</member>
 		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
 			The air's velocity in world space, in m/s. Strands take up its velocity at the rate set by [member damping]; a head moving through still air is slowed the same way.
 		</member>
