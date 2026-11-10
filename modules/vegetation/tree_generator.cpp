@@ -1275,38 +1275,63 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			continue;
 		}
 		// Broad leaves sit on short side twigs (the year's short shoots), a few leaves each, so a
-		// metre-scale internode carries the leaf mass of the real twig system it stands for.
+		// metre-scale internode carries the leaf mass of the real twig system it stands for. Twigs
+		// leave in every direction around the shoot, rising or hanging, and some fork once, so the
+		// foliage fills the crown volume instead of lying in flat plates; leaf blades are tilted by
+		// a spherical-like leaf angle distribution (Campbell 1986: most broadleaf canopies have a
+		// mean leaf inclination near 45-60 degrees, not horizontal).
 		const int twigs = MAX(1, per / 4);
 		const int per_twig = MAX(1, per / twigs);
 		const float twig_r = params[PARAM_TIP_RADIUS] * 0.6f;
+		const float droop = params[PARAM_TWIG_DROOP];
+		auto add_twig = [&](const Vector3 &p_base, const Vector3 &p_dir, float p_len, float p_r, int p_leaves) {
+			pts.clear();
+			rad.clear();
+			pts.push_back(p_base);
+			rad.push_back(p_r);
+			const Vector3 mid = p_base + p_dir * (p_len * 0.5f) + Vector3(0, -0.08f - 0.3f * droop, 0) * p_len;
+			pts.push_back(mid);
+			rad.push_back(p_r * 0.8f);
+			const Vector3 tip_dir = (p_dir + Vector3(0, 0.15f - 0.6f * droop, 0)).normalized();
+			const Vector3 tip = mid + tip_dir * (p_len * 0.5f);
+			pts.push_back(tip);
+			rad.push_back(p_r * 0.5f);
+			_tube(bark, pts, rad, 3, 0.0f, bark_color);
+			Vector3 side0 = p_dir.cross(Vector3(0, 1, 0));
+			side0 = side0.length_squared() > 1e-6f ? side0.normalized() : perp;
+			for (int k = 0; k < p_leaves; k++) {
+				const float u = (k + 1.0f) / p_leaves;
+				const Vector3 at = u < 0.5f ? p_base.lerp(mid, u * 2.0f) : mid.lerp(tip, u * 2.0f - 1.0f);
+				const Vector3 side = side0 * ((k & 1) ? 1.0f : -1.0f);
+				const Vector3 out = (side * 0.8f + tip_dir * 0.6f + Vector3(0, 0.1f, 0)).normalized();
+				// Leaf normal: azimuth random, inclination with cos uniform over 0-75 degrees.
+				const float inc = Math::acos(1.0f - lr.randf() * (1.0f - Math::cos(Math::deg_to_rad(75.0f))));
+				const float az = lr.randf() * Math::TAU;
+				const Vector3 up = Vector3(Math::sin(inc) * Math::cos(az), Math::cos(inc), Math::sin(inc) * Math::sin(az));
+				const float jitter = 0.85f + 0.3f * lr.randf();
+				const Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
+				_add_leaf(leaves, at, k == p_leaves - 1 ? tip_dir : out, up, size * (0.75f + 0.5f * lr.randf()), c);
+				leaf_count++;
+			}
+		};
 		for (int t_i = 0; t_i < twigs; t_i++) {
 			const float t = (t_i + 0.5f + 0.4f * (lr.randf() - 0.5f)) / twigs;
 			roll += 2.39996f;
 			const Vector3 around = perp.rotated(n.dir, roll);
 			const Vector3 base = n.start + n.dir * (n.length * t);
-			Vector3 tdir = (around * 0.8f + n.dir * 0.55f + Vector3(0, 0.15f, 0)).normalized();
-			const float tlen = n.length * (0.35f + 0.25f * lr.randf());
-			pts.clear();
-			rad.clear();
-			pts.push_back(base);
-			rad.push_back(twig_r);
-			const Vector3 mid = base + tdir * (tlen * 0.5f) + Vector3(0, -0.05f, 0) * tlen;
-			pts.push_back(mid);
-			rad.push_back(twig_r * 0.8f);
-			const Vector3 tip = mid + (tdir + Vector3(0, 0.1f, 0)).normalized() * (tlen * 0.5f);
-			pts.push_back(tip);
-			rad.push_back(twig_r * 0.5f);
-			_tube(bark, pts, rad, 3, 0.0f, bark_color);
-			for (int k = 0; k < per_twig; k++) {
-				const float u = (k + 1.0f) / per_twig;
-				const Vector3 at = u < 0.5f ? base.lerp(mid, u * 2.0f) : mid.lerp(tip, u * 2.0f - 1.0f);
-				const Vector3 side = tdir.cross(Vector3(0, 1, 0)).normalized() * ((k & 1) ? 1.0f : -1.0f);
-				const Vector3 out = (side * 0.8f + tdir * 0.6f + Vector3(0, 0.1f, 0)).normalized();
-				const Vector3 up = (Vector3(0, 1, 0) * 0.8f + side * 0.25f + Vector3(lr.randf() - 0.5f, 0, lr.randf() - 0.5f) * 0.35f).normalized();
-				const float jitter = 0.85f + 0.3f * lr.randf();
-				const Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
-				_add_leaf(leaves, at, k == per_twig - 1 ? tdir : out, up, size * (0.75f + 0.5f * lr.randf()), c);
-				leaf_count++;
+			// Elevation from -35 to +45 degrees off the shoot's side plane.
+			const float elev = Math::deg_to_rad(Math::lerp(-35.0f, 45.0f, lr.randf()));
+			const Vector3 tdir = (around * (0.8f * Math::cos(elev)) + n.dir * 0.5f + Vector3(0, Math::sin(elev), 0)).normalized();
+			const float tlen = n.length * (0.45f + 0.45f * lr.randf());
+			if (lr.randf() < 0.4f && per_twig >= 4) {
+				// A forked twig: two shorter shoots sharing the leaves.
+				const Vector3 fork = tdir.cross(n.dir).normalized();
+				const Vector3 d1 = (tdir + fork * 0.45f).normalized();
+				const Vector3 d2 = (tdir - fork * 0.45f + Vector3(0, 0.2f, 0)).normalized();
+				add_twig(base, d1, tlen * 0.8f, twig_r, per_twig / 2);
+				add_twig(base + tdir * (tlen * 0.2f), d2, tlen * 0.7f, twig_r * 0.8f, per_twig - per_twig / 2);
+			} else {
+				add_twig(base, tdir, tlen, twig_r, per_twig);
 			}
 		}
 	}
