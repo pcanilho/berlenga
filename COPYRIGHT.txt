@@ -378,7 +378,7 @@ Copyright: 2026, Wild Ox Studios
 License: Expat
 
 Files: modules/godot_physx/cloth/hair_strands.glsl
-Comment: AMD TressFX 4.1 hair simulation (ported from TressFXSimulation.hlsl)
+Comment: AMD TressFX 4.1 hair simulation (ported from TressFXSimulation.hlsl and TressFXSDFCollision.hlsl)
 Copyright: 2019, Advanced Micro Devices, Inc.
 License: Expat
 

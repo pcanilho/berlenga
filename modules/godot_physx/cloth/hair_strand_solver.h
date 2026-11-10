@@ -46,6 +46,7 @@ class HairStrandSolverGPU : public RefCounted {
 
 public:
 	static constexpr int MAX_SPHERES = 32;
+	static constexpr int MAX_SDF_CELLS = 64 * 64 * 64;
 
 	RenderingDevice *rd = nullptr;
 	bool local = false;
@@ -54,6 +55,8 @@ public:
 	RID shader, pipeline;
 	bool owns_shader = false;
 	RID buf_params, buf_rest, buf_strands, buf_pos, buf_prev, buf_follow, buf_order, tex_out;
+	RID buf_tris, buf_sdf; // the collision body's triangles and its distance field
+	int tris_capacity = 0; // triangles buf_tris holds
 	RID uniform_set;
 
 	int strand_count = 0;
@@ -66,7 +69,8 @@ public:
 
 	void rt_compile(Ref<HairStrandSolverGPU> p_self);
 	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points);
-	void rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps);
+	void rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps, PackedFloat32Array p_tris);
+	void rt_make_uniform_set();
 	void rt_reset(Ref<HairStrandSolverGPU> p_self);
 	void rt_free_buffers();
 	void rt_free(Ref<HairStrandSolverGPU> p_self);
@@ -103,6 +107,8 @@ public:
 		Vector<Vector4> spheres; // world centre, radius
 		Transform3D output_xform; // world -> the render copy's space
 		Transform3D view_xform; // world -> the camera, for the draw order
+		PackedVector3Array body_triangles; // the collision body, world: three points per triangle
+		float body_cell_size = 0.01f; // m, the body's distance field cell (grown to fit 64^3)
 	};
 
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }

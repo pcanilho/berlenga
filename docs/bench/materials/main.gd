@@ -44,7 +44,9 @@ extends Node3D
 #                     --hair=wind: the head held still in a 6 m/s gusty breeze; add "wavy" (--hair=wind_wavy,
 #                     --hair=wavy) for wavy hair; "blonde" for light hair, "back" for the sun low behind
 #                     the head, "plain" for Godot's standard lighting instead of hair_shading, "far" for the
-#                     camera 8 m away, "nolod" to draw every strand at any distance;
+#                     camera 8 m away, "nolod" to draw every strand at any distance; "box" for square
+#                     shoulders (spheres only on the skull), "body" to make them the collision body,
+#                     "skinned" to skin them to a tilted bone (the head stays still), "hidebox" to see the drape;
 #                     --hair=compare: held still, beside the same groom on a HairMesh with BaseMaterial3D
 #                     Hair; --hair=compare_shader: that HairMesh through a shader's HAIR outputs instead
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
@@ -194,6 +196,9 @@ func _ready() -> void:
 			env.pathtracing_max_bounces = maxi(bounces, 12)
 			if hair.begins_with("compare"):
 				cam.look_at_from_position(Vector3(0.15, 0.4, 1.7), Vector3(0.15, 0.22, 0))
+			elif hair.contains("box"):
+				# From the side, the hair against the shoulders' top and back.
+				cam.look_at_from_position(Vector3(1.5, 0.3, 0.2), Vector3(0, 0.12, -0.05))
 			elif hair.contains("far"):
 				# 8 m away: the distance LOD draws about half the strands.
 				cam.look_at_from_position(Vector3(3.0, 2.0, 7.2), Vector3(0, 0.2, 0))
@@ -702,6 +707,31 @@ func _strands_sim() -> void:
 	body.material_override = skin
 	body.position = Vector3(0, -0.27, 0)
 	sim_head.add_child(body)
+	if hair.contains("box"):
+		# Square shoulders, which spheres fit badly: "body" makes them the collision body (a
+		# distance field), "skinned" skins them to a bone tilted 25 degrees.
+		var shoulders := BoxMesh.new()
+		shoulders.size = Vector3(0.42, 0.16, 0.4)
+		body.mesh = shoulders
+		body.position = Vector3(0, -0.22, 0)
+		h.collision_spheres = PackedVector4Array([Vector4(0, 0, 0, 0.1)])
+		if hair.contains("skinned"):
+			body.mesh = _skinned_box(shoulders)
+			body.position = Vector3.ZERO
+			var skel := Skeleton3D.new()
+			skel.add_bone("spine")
+			skel.set_bone_rest(0, Transform3D(Basis(), Vector3(0, -0.22, 0)))
+			skel.set_bone_pose_position(0, Vector3(0, -0.22, 0))
+			skel.set_bone_pose_rotation(0, Quaternion(Vector3(0, 0, 1), deg_to_rad(25.0)))
+			sim_head.add_child(skel)
+			var sk := Skin.new()
+			sk.add_named_bind("spine", Transform3D(Basis(), Vector3(0, 0.22, 0)))
+			body.skin = sk
+			body.skeleton = body.get_path_to(skel)
+		if hair.contains("body"):
+			h.collision_body = h.get_path_to(body)
+		if hair.contains("hidebox"):
+			body.visible = false
 	if hair.begins_with("compare"):
 		# The same groom drawn still by HairMesh with BaseMaterial3D Hair, beside it.
 		h.simulating = false
@@ -734,9 +764,27 @@ func _strands_sim() -> void:
 		add_child(hi2)
 
 
+# The box's surface skinned wholly to bone 0, in the bone's bind space at rest.
+func _skinned_box(p_box: BoxMesh) -> ArrayMesh:
+	var a := p_box.get_mesh_arrays()
+	var verts: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
+	var bones := PackedInt32Array()
+	var weights := PackedFloat32Array()
+	for i in verts.size():
+		verts[i] += Vector3(0, -0.22, 0)
+		bones.append_array([0, 0, 0, 0])
+		weights.append_array([1.0, 0.0, 0.0, 0.0])
+	a[Mesh.ARRAY_VERTEX] = verts
+	a[Mesh.ARRAY_BONES] = bones
+	a[Mesh.ARRAY_WEIGHTS] = weights
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, a)
+	return m
+
+
 func _process(_delta: float) -> void:
 	n += 1
-	if sim_head and not hair.contains("wind"):
+	if sim_head and not hair.contains("wind") and not hair.contains("box"):
 		var t := n / 30.0
 		# Shake for three full periods (ends back at x = 0), then turn.
 		if t < 2.5:
