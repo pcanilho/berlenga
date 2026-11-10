@@ -194,6 +194,8 @@ private:
 	Ref<ShaderMaterial> _textured_material(const TextureSet &p_set, float p_roughness) const;
 	bool textures = true;
 	int texture_size = 256;
+	float leaf_wear = 0.5f;
+	uint32_t leaf_serial = 0; // Counts the leaves of a plant: their wear draws from it, not from rng.
 	HashMap<uint64_t, TextureSet> texture_cache;
 	LeafTexture _leaf_texture_spec(bool p_petal) const;
 	TextureSet _bake_leaf_texture(const LeafTexture &p_spec, uint32_t p_seed) const;
@@ -223,6 +225,8 @@ public:
 	void set_textures(bool p_textures) { textures = p_textures; }
 	bool get_textures() const { return textures; }
 	void set_texture_size(int p_size) { texture_size = CLAMP(p_size, 32, 2048); }
+	void set_leaf_wear(float p_wear) { leaf_wear = CLAMP(p_wear, 0.0f, 1.0f); }
+	float get_leaf_wear() const { return leaf_wear; }
 	int get_texture_size() const { return texture_size; }
 	Ref<ArrayMesh> generate();
 	TypedArray<ArrayMesh> generate_variants(int p_count);

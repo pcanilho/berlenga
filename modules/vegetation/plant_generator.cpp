@@ -117,26 +117,89 @@ void PlantGenerator::_tag_organ(Builder &p_builder) const {
 void PlantGenerator::_add_leaf(Surface p_surface, const Transform3D &p_base, const Leaf &p_leaf, float p_wind_base, float p_ao, const Color &p_tint) {
 	Builder &b = builders[p_surface];
 	_begin_organ(p_base.origin);
-	const int n = MAX(p_leaf.segments, 2);
+	// Wear (docs/ideas/plant-generator.md, "Aged and irregular leaves"): uneven halves, insect
+	// bites out of the margin, dead tips and the yellowing of the older, lower
+	// leaves. Drawn from the leaf's own hash, so the plant's shape does not change with it.
+	const bool worn = p_surface == SURFACE_LEAF && leaf_wear > 0.0f;
+	uint32_t wh = hash_murmur3_one_32(leaf_serial++, hash_murmur3_one_32(uint32_t(seed) * 31u + uint32_t(preset)));
+	auto wr = [&wh]() {
+		wh = hash_murmur3_one_32(wh);
+		return float(wh >> 8) / float(1 << 24);
+	};
+	const bool narrow = p_leaf.width < p_leaf.length * 0.15f; // Grass-like: tips die back, no bites.
+	float asym = 0.0f;
+	float age = 0.0f; // Senescence of the whole blade.
+	float dieback = 0.0f; // Fraction of the length dead from the tip.
+	struct Bite {
+		float t = 0.0f;
+		float r = 0.0f; // Radius over the leaf's length.
+		int side = 1;
+	} bites[2];
+	int bite_count = 0;
+	if (worn) {
+		asym = (wr() - 0.5f) * 0.24f * leaf_wear;
+		// Older leaves sit low on the shoot and yellow first (sequential senescence); a few anywhere
+		// are past their best.
+		const float low = 1.0f - CLAMP(p_wind_base, 0.0f, 1.0f);
+		age = wr() < leaf_wear * 0.3f * (0.3f + 0.7f * low) ? Math::lerp(0.2f, 0.9f, wr()) : 0.0f;
+		if (narrow) {
+			dieback = wr() < leaf_wear * 0.6f ? Math::lerp(0.05f, 0.35f, wr() * wr()) : 0.0f;
+		} else if (wr() < leaf_wear * 0.55f && p_leaf.length > 0.04f && p_leaf.width > 0.015f) {
+			// Only on leaves big enough to show a bite: the extra rows cost triangles.
+			// About 7% of the leaf area of temperate plants goes to insects (Kozlov et al. 2015),
+			// most of it as bites from the margin.
+			bite_count = wr() < 0.35f ? 2 : 1;
+			for (int k = 0; k < bite_count; k++) {
+				bites[k].t = Math::lerp(0.3f, 0.9f, wr());
+				bites[k].r = Math::lerp(0.05f, 0.12f, wr());
+				bites[k].side = wr() < 0.5f ? -1 : 1;
+			}
+		}
+	}
+	// Bites need rows close enough to draw the notch.
+	const int n = MAX(bite_count > 0 ? p_leaf.segments * 2 : p_leaf.segments, 2);
 	const int first = b.verts.size();
 	Basis f = p_base.basis.orthonormalized();
 	Vector3 p = p_base.origin;
 	const float step = p_leaf.length / n;
 	for (int i = 0; i <= n; i++) {
 		const float t = float(i) / n;
-		const float hw = 0.5f * p_leaf.width * _leaf_width(p_leaf, t);
+		const float lw = _leaf_width(p_leaf, t);
+		const float hw = 0.5f * p_leaf.width * lw;
+		float side_hw[2] = { hw * (1.0f - asym), hw * (1.0f + asym) }; // Left (c = 0), right (c = 2).
+		float bitten[2] = { 0.0f, 0.0f };
+		for (int k = 0; k < bite_count; k++) {
+			// A round bite whose centre sits a little outside the margin.
+			const float r = bites[k].r * p_leaf.length;
+			const float dt = (t - bites[k].t) * p_leaf.length;
+			if (Math::abs(dt) < r) {
+				const int si = bites[k].side < 0 ? 0 : 1;
+				const float cut = Math::sqrt(r * r - dt * dt) - r * 0.3f;
+				if (cut > 0.0f) {
+					side_hw[si] = MAX(side_hw[si] - cut, side_hw[si] * 0.15f);
+					bitten[si] = 1.0f;
+				}
+			}
+		}
 		const Vector3 x = f.get_column(0);
 		const Vector3 y = f.get_column(1);
 		const float wind = MIN(1.0f, p_wind_base + (1.0f - p_wind_base) * t);
 		const float ao = p_ao * (0.75f + 0.25f * t);
-		const Vector3 row[3] = { p - x * hw + y * (p_leaf.fold * hw), p, p + x * hw + y * (p_leaf.fold * hw) };
+		const Vector3 row[3] = { p - x * side_hw[0] + y * (p_leaf.fold * side_hw[0]), p, p + x * side_hw[1] + y * (p_leaf.fold * side_hw[1]) };
+		const float dead_tip = dieback > 0.0f ? Math::smoothstep(1.0f - dieback, 1.0f - dieback * 0.6f, t) : 0.0f;
 		for (int c = 0; c < 3; c++) {
 			b.verts.push_back(row[c]);
 			// Planar across the blade (u = 0.5 at the midrib, 0 and 1 at the widest point), so the
 			// texture's veins keep their true shape whatever the outline does.
-			b.uvs.push_back(Vector2(0.5f + (c - 1) * 0.5f * _leaf_width(p_leaf, t), t));
+			const float off = c == 1 ? 0.0f : (p_leaf.width > 0.0f ? side_hw[c / 2] / (0.5f * p_leaf.width) : lw);
+			b.uvs.push_back(Vector2(0.5f + (c - 1) * 0.5f * off, t));
 			b.uv2s.push_back(Vector2(wind, 0.0f));
-			b.colors.push_back(Color(ao * p_tint.r, ao * p_tint.g, ao * p_tint.b));
+			// Alpha carries the browning (0 none, 1 dead): the shader mixes the dead colour in.
+			float brown = MAX(age, dead_tip);
+			if (c != 1) {
+				brown = MAX(brown, bitten[c / 2] * 0.35f); // The bite's rim dries.
+			}
+			b.colors.push_back(Color(ao * p_tint.r, ao * p_tint.g, ao * p_tint.b, 1.0f - CLAMP(brown, 0.0f, 1.0f)));
 		}
 		if (i < n) {
 			// Curl down along the length, twist about the midrib (parallel transport otherwise).
@@ -1956,6 +2019,7 @@ global uniform vec4 grass_wind; // xy: fallback wind (m/s, x and z), z: the gras
 uniform vec3 base_color : source_color = vec3(1.0);
 uniform vec3 backlight_color : source_color = vec3(0.0);
 uniform float roughness = 0.7;
+uniform vec3 dead_color : source_color = vec3(0.36, 0.24, 0.11);
 uniform float stiffness = 1.0; // Over the grass: 1 bends as much, 2 half as much.
 uniform float height = 0.3; // The plant's height, for the wind profile and the flutter.
 #ifdef PLANT_TEXTURED
@@ -2063,6 +2127,16 @@ void fragment() {
 	back = texture(backlight_tex, UV).rgb;
 	NORMAL_MAP = texture(normal_tex, UV).rgb;
 #endif
+	// Wear (vertex alpha): the blade yellows, then browns; dead tissue keeps the veins' pattern
+	// (the texture's brightness), lets less light through and turns matte.
+	float dead = 1.0 - COLOR.a;
+	if (dead > 0.0) {
+		float luma = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+		vec3 yellow = vec3(0.30, 0.20, 0.025) * clamp(luma * 8.0, 0.6, 1.4);
+		vec3 brown = dead_color * clamp(luma * 6.0, 0.55, 1.5);
+		albedo = mix(albedo, mix(yellow, brown, smoothstep(0.35, 0.85, dead)), smoothstep(0.0, 0.5, dead));
+		back *= 1.0 - 0.7 * dead;
+	}
 	float rough = roughness;
 	float metallic = 0.0;
 	float specular = 0.35; // Leaf cuticle.
@@ -2219,6 +2293,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 	plant_height = 0.0f;
 	organ = 0;
 	organ_bases.clear();
+	leaf_serial = 0;
 	rng.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(preset) + 1);
 	switch (preset) {
 		case PRESET_DANDELION:
@@ -2414,6 +2489,8 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_stem_color"), &PlantGenerator::get_stem_color);
 	ClassDB::bind_method(D_METHOD("set_lods", "enabled"), &PlantGenerator::set_lods);
 	ClassDB::bind_method(D_METHOD("get_lods"), &PlantGenerator::get_lods);
+	ClassDB::bind_method(D_METHOD("set_leaf_wear", "wear"), &PlantGenerator::set_leaf_wear);
+	ClassDB::bind_method(D_METHOD("get_leaf_wear"), &PlantGenerator::get_leaf_wear);
 	ClassDB::bind_method(D_METHOD("set_textures", "enabled"), &PlantGenerator::set_textures);
 	ClassDB::bind_method(D_METHOD("get_textures"), &PlantGenerator::get_textures);
 	ClassDB::bind_method(D_METHOD("set_texture_size", "size"), &PlantGenerator::set_texture_size);
@@ -2426,6 +2503,7 @@ void PlantGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "size", PROPERTY_HINT_RANGE, "0.1,4,0.01"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leaf_wear", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_leaf_wear", "get_leaf_wear");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "textures"), "set_textures", "get_textures");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "texture_size", PROPERTY_HINT_RANGE, "32,2048,1"), "set_texture_size", "get_texture_size");
 	ADD_GROUP("Colors", "");

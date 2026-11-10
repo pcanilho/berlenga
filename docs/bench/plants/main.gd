@@ -10,6 +10,8 @@ extends Node3D
 #   --notex          without the generated leaf textures
 #   --push           with --close: a body stands on the middle plant (bent through the trample field)
 #   --still          with --push: the body stands there but the trample field is off (the before shot)
+#   --top            with --close: straight down on the middle plant (leaf outlines)
+#   --wear=W         leaf wear 0..1 (default the generator's 0.5)
 #   --wind=x,z       fallback wind for the plants (default none)
 #   --dump=dir       save the baked textures of the first seed as PNGs
 #   --out=path.png   save the frame
@@ -27,6 +29,8 @@ var notex := false
 var dump := ""
 var push := false
 var still := false
+var wear := -1.0
+var top := false
 var wind := Vector2.ZERO
 var n := 0
 var fails := 0
@@ -43,6 +47,8 @@ func _ready() -> void:
 		elif a.begins_with("--dump="): dump = a.substr(7)
 		elif a == "--push": push = true
 		elif a == "--still": still = true
+		elif a == "--top": top = true
+		elif a.begins_with("--wear="): wear = float(a.substr(7))
 		elif a.begins_with("--wind="):
 			var w := a.substr(7).split(",")
 			wind = Vector2(float(w[0]), float(w[1]))
@@ -52,6 +58,8 @@ func _ready() -> void:
 		return
 	var gen := PlantGenerator.new()
 	gen.textures = not notex
+	if wear >= 0.0:
+		gen.leaf_wear = wear
 	for p in NAMES.size():
 		if close >= 0 and p != close:
 			continue
@@ -137,6 +145,9 @@ func _ready() -> void:
 			var span: float = max(bb.size.y, max(bb.size.x, bb.size.z))
 			cam.position = c + Vector3(0, span * 0.35, span * 1.9)
 		cam.look_at(c)
+	elif close >= 0 and top:
+		cam.position = Vector3(0, 0.75, 0.001)
+		cam.look_at(Vector3(0, 0, 0))
 	elif close >= 0 and push:
 		# From above and further back: the pushed plant and its neighbours.
 		cam.position = Vector3(0, 1.5, 1.7)
@@ -161,6 +172,8 @@ func _tris(m: Mesh) -> int:
 
 func _checks() -> void:
 	var gen := PlantGenerator.new()
+	if wear >= 0.0:
+		gen.leaf_wear = wear
 	for p in NAMES.size():
 		gen.preset = p
 		gen.seed = 1

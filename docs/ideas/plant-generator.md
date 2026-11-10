@@ -146,8 +146,7 @@ about 5 MB for every preset with petals. Frame time in the meadow (`docs/bench/g
 cost of texture sampling in a software rasteriser; GPU timings wait for the PC. At meadow
 distance the plants are small, so the gain shows up close.
 
-Still to come in this pass: irregular outlines (wavy edges, curl, holes, asymmetry, ageing),
-then a litter layer and more species.
+Irregular outlines and ageing: see "Aged and irregular leaves" below.
 
 Next: wind on the generated plants (the UV2 weights, stage 4), billboard or impostor LODs for
 the far range, and shrubs and trees from the same parts (stage 3b).
@@ -226,6 +225,45 @@ Checks (plants bench, CPU renderer, 1280x720):
 Open: per-vertex sampling of the field costs two texture reads per vertex for every plant inside
 the field's rectangle; a far LOD can skip both.
 
+## Aged and irregular leaves (stage 3d)
+
+Generated leaves were all whole, symmetric and green; real ones in a meadow in summer are not.
+What a close look at any field shows, with the botany behind it:
+
+- **Insect bites** from the margin. Insects take about 7% of the leaf area of temperate plants
+  in a normal year (Kozlov et al. 2015, 1,100 species across 92 sites), most as round notches
+  eaten in from the edge by caterpillars and beetles, with a dried rim.
+- **Sequential senescence**: a shoot's oldest leaves are its lowest, and they yellow and brown
+  first as the plant moves their nitrogen to young leaves (Lim, Kim, Nam 2007).
+- **Tip dieback** on grass-like blades (plantain, sedges, grasses): the tip is the oldest tissue
+  of a blade that grows from its base, so it dies first.
+- **Uneven halves**: the two sides of a blade are never the same width.
+- **Holes** (shot-hole fungi, beetles) need alpha cut-out, which costs an any-hit shader per
+  ray under path tracing; left out.
+
+Games that paint this by hand put a few worn variants in each atlas. Here each leaf draws its
+wear from its own hash (`leaf_wear`, 0 to 1, default 0.5), so the plant's shape does not change
+and every leaf differs:
+
+- Asymmetry up to ±12% of the half-width at full wear.
+- Bites on leaves longer than 4 cm and wider than 1.5 cm (the rest would not show them): one or
+  two circles of 5 to 12% of the leaf's length whose centres sit just outside the margin; the
+  leaf gets twice the rows so the notch is drawn. The planar UVs follow the cut outline, so the
+  veins stay put. The rim browns a little.
+- Yellowing and browning by age: lower leaves are more likely to be old (chance
+  `0.3 * wear * (0.3 + 0.7 * lowness)`).
+- Dead tips on narrow blades: 5 to 35% of the length.
+- The browning travels in the vertex colour's alpha; the plant shader mixes the leaf towards a
+  chlorotic yellow, then towards `dead_color`, keeping the texture's brightness (veins stay
+  visible), and cuts the back light by up to 70% (dead tissue lets little light through).
+
+Checks (plants bench, `--top --close=10 --wear=1`, and `--test --wear=0` against 0.5):
+
+- Triangles at 0.5: unchanged for most presets; +8% dandelion, nettle +20%, fern +17%,
+  bracken +12%, bramble +15% (bites on bigger leaves).
+- Frame time of all 60 plants unchanged on the CPU renderer (111 to 125 ms).
+- Wear 0 is the previous look exactly.
+
 ## References
 
 - Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*, 1990.
@@ -236,6 +274,9 @@ the field's rectangle; a far LOD can skip both.
 - Murray, "The physiological principle of minimum work", PNAS 1926 (vein radii).
 - Vogel, "A better way to construct the sunflower head", Mathematical Biosciences 1979.
 - Sousa, "Vegetation procedural animation and shading in Crysis", GPU Gems 3, ch. 16, 2007.
+- Kozlov, Lanta, Zverev, Zvereva, "Global patterns in background losses of woody plant
+  foliage to insects", Global Ecology and Biogeography 24, 2015.
+- Lim, Kim, Nam, "Leaf senescence", Annual Review of Plant Biology 58, 2007.
 - Lindquist, "Pivot Painter 2", Unreal Engine documentation, 2017.
 - Jahrmann, Wimmer, "Responsive real-time grass rendering for general 3D scenes", I3D 2017.
 - Lintermann, Deussen, "Interactive modeling of plants", IEEE CG&A 1999.
