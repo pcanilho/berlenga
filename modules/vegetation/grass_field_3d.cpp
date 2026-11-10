@@ -139,6 +139,20 @@ vec3 grass_wind(vec3 wp, float h, float time) {
 varying float v_t;
 varying float v_dry;
 varying float v_wet;
+varying vec3 v_tint;
+
+uniform float color_variation;
+
+float grass_hash(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float grass_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(grass_hash(i), grass_hash(i + vec2(1.0, 0.0)), f.x), mix(grass_hash(i + vec2(0.0, 1.0)), grass_hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
 
 void vertex() {
 	float h = INSTANCE_CUSTOM.x;
@@ -177,7 +191,9 @@ void vertex() {
 	vec3 p = 2.0 * t * (1.0 - t) * mid + t * t * tip;
 	vec3 tangent = normalize(2.0 * (1.0 - t) * mid + 2.0 * t * (tip - mid) + vec3(0.0, 1e-4, 0.0));
 	vec3 across = vec3(1.0, 0.0, 0.0);
-	p += across * side * w * (1.0 - 0.85 * t);
+	// Nearly parallel edges, then a short taper to the tip, as a real leaf blade.
+	float taper = 1.0 - 0.9 * t * t;
+	p += across * side * w * taper;
 	// Seen edge-on a blade is a line: widen it across the view instead (Ghost of Tsushima's
 	// view-space thickening), so the field stays full from every side.
 	vec3 cam_l = to_local * (CAMERA_POSITION_WORLD - base_w);
@@ -186,7 +202,7 @@ void vertex() {
 	if (cam_d > 1e-3) {
 		to_cam /= cam_d;
 		float edge = 1.0 - abs(to_cam.y);
-		p.xz += vec2(-to_cam.y, to_cam.x) * sign(to_cam.x + 1e-6) * side * w * (1.0 - 0.85 * t) * edge * view_facing;
+		p.xz += vec2(-to_cam.y, to_cam.x) * sign(to_cam.x + 1e-6) * side * w * taper * edge * view_facing;
 	}
 	// Rounded across its width, as a real blade.
 	vec3 n = normalize(cross(across, tangent));
@@ -196,6 +212,16 @@ void vertex() {
 	v_t = t;
 	v_dry = rnd;
 	v_wet = 0.0;
+	// Colour variation at three scales (patches of soil and water, clumps, single blades), as in
+	// Ghost of Tsushima and Horizon: a field of one flat green reads as carpet, not grass.
+	float patches = grass_noise(base_w.xz * 0.11) * 0.65 + grass_noise(base_w.xz * 0.47 + 3.7) * 0.35;
+	float blade = fract(rnd * 7.31 + 0.13);
+	float hue = (patches - 0.5) * 1.6 + (blade - 0.5) * 0.7;
+	vec3 warm = vec3(1.18, 1.08, 0.62); // yellower, drier
+	vec3 cool = vec3(0.82, 0.96, 1.02); // bluer, lusher
+	vec3 tint = hue > 0.0 ? mix(vec3(1.0), warm, min(hue, 1.0)) : mix(vec3(1.0), cool, min(-hue, 1.0));
+	tint *= 0.82 + 0.36 * fract(rnd * 13.7 + 0.51);
+	v_tint = mix(vec3(1.0), tint, color_variation);
 	if (weather_map_rect.z > 0.0) {
 		vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
 		vec2 uv = clamp((base_w.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
@@ -208,7 +234,17 @@ uniform float dryness;
 void fragment() {
 	float t = smoothstep(0.0, 1.0, v_t);
 	vec3 tipc = mix(tip_color, dry_color, step(1.0 - dryness, v_dry) * smoothstep(0.3, 1.0, v_t));
-	vec3 c = mix(base_color, tipc, t);
+	vec3 c = mix(base_color, tipc, t) * v_tint;
+	// Some blades of the dry fraction are dead from the root (thatch), straw that greys with age.
+	float dead = step(1.0 - dryness * 0.3, v_dry);
+	c = mix(c, dry_color * mix(0.7, 1.0, t) * (0.75 + 0.5 * fract(v_dry * 31.0)), dead);
+	// Midrib and parallel veins (monocot leaves), faded out once a blade is under a few pixels wide.
+	float x = abs(UV.x - 0.5) * 2.0;
+	float fw = max(fwidth(UV.x), 1e-4);
+	float detail = 1.0 - smoothstep(0.08, 0.25, fw);
+	float rib = 1.0 - smoothstep(0.0, 0.12 + fw, x);
+	float veins = 0.5 + 0.5 * cos(x * 6.2832 * 3.5);
+	c *= 1.0 + detail * (0.18 * rib - 0.07 * veins * (1.0 - rib) - 0.12 * x * x);
 	// Darker towards the root, where the field shades itself.
 	c *= mix(0.6, 1.0, t);
 	// Wet blades (Lagarde 2013, low porosity): a little darker and glossier.
@@ -228,6 +264,7 @@ void fragment() {
 	material->set_shader_parameter("tip_color", tip_color);
 	material->set_shader_parameter("dry_color", dry_color);
 	material->set_shader_parameter("dryness", dryness);
+	material->set_shader_parameter("color_variation", color_variation);
 	material->set_shader_parameter("fallback_wind", fallback_wind);
 	material->set_shader_parameter("wind_response", wind_response);
 	material->set_shader_parameter("trample_rect", Vector4());
@@ -827,6 +864,13 @@ void GrassField3D::set_dry_color(const Color &p_color) {
 		material->set_shader_parameter("dry_color", dry_color);
 	}
 }
+void GrassField3D::set_color_variation(float p_amount) {
+	color_variation = CLAMP(p_amount, 0.0f, 1.0f);
+	if (material.is_valid()) {
+		material->set_shader_parameter("color_variation", color_variation);
+	}
+}
+
 void GrassField3D::set_dryness(float p_dryness) {
 	dryness = CLAMP(p_dryness, 0.0f, 1.0f);
 	if (material.is_valid()) {
@@ -861,6 +905,7 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_tip_color, get_tip_color, "color")
 	GRASS_BIND(set_dry_color, get_dry_color, "color")
 	GRASS_BIND(set_dryness, get_dryness, "dryness")
+	GRASS_BIND(set_color_variation, get_color_variation, "amount")
 	GRASS_BIND(set_radius, get_radius, "radius")
 	GRASS_BIND(set_tile_size, get_tile_size, "size")
 	GRASS_BIND(set_fallback_wind, get_fallback_wind, "wind")
@@ -903,6 +948,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "tip_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_tip_color", "get_tip_color");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "dry_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_dry_color", "get_dry_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dryness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_dryness", "get_dryness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "color_variation", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_color_variation", "get_color_variation");
 	ADD_GROUP("Ground", "ground_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_tint_enabled"), "set_ground_tint_enabled", "is_ground_tint_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "ground_tint"), "set_ground_tint", "get_ground_tint");

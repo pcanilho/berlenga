@@ -107,14 +107,14 @@ func _ready() -> void:
 		tall.patch_cover = TALL_COVER
 		tall.patch_seed = 5
 		grass.rules = tall
-		# Undercoat (the carpet): short, wide, single-segment blades, dense and near only.
+		# Undercoat (the carpet): short two-segment blades, dense and near only.
 		under = GrassField3D.new()
 		under.name = "Undercoat"
 		under.fallback_wind = wind
-		under.blade_segments = 1
-		under.blade_height = Vector2(0.06, 0.16)
-		under.blade_width = 0.045
-		under.density = 320.0
+		under.blade_segments = 2
+		under.blade_height = Vector2(0.06, 0.18)
+		under.blade_width = 0.02
+		under.density = 640.0
 		under.radius = 14.0
 		under.tile_size = 4.0
 		under.clump_size = 0.5
@@ -122,6 +122,8 @@ func _ready() -> void:
 		under.base_color = Color(0.1, 0.2, 0.05)
 		under.tip_color = Color(0.38, 0.52, 0.16)
 		under.dryness = 0.35
+		# Under a dense carpet the soil is thatch in the blades' shade: darker than the blades themselves.
+		under.ground_tint = Color(0.035, 0.045, 0.018, 1.0)
 		grass.ground_tint_enabled = false # The undercoat grows everywhere, so it owns the tint.
 		add_child(under)
 		under.data_map = under.get_path_to(dm)
@@ -283,8 +285,64 @@ func _cover_biome() -> Biome:
 	clover.patch_seed = 5
 	clover.patch_invert = true
 	clover.visibility_range = 10.0
+	# The rest of a real meadow (docs/ideas/plant-generator.md, "More species"): coarse grass
+	# tussocks, weeds in patches, last year's dead grass under everything.
+	var tussock := PlantSpecies.new()
+	tussock.meshes = _variants(PlantGenerator.PRESET_COCKSFOOT, 3) + _variants(PlantGenerator.PRESET_TIMOTHY, 3)
+	tussock.spacing = 0.7
+	tussock.footprint = 0.2
+	tussock.density = 0.45
+	tussock.scale_range = Vector2(0.8, 1.15)
+	tussock.patch_scale = TALL_PATCH
+	tussock.patch_cover = TALL_COVER
+	tussock.patch_seed = 5
+	tussock.visibility_range = 25.0
+	var nettle := PlantSpecies.new()
+	nettle.meshes = _variants(PlantGenerator.PRESET_NETTLE, 3)
+	nettle.spacing = 0.35
+	nettle.footprint = 0.15
+	nettle.density = 0.85
+	nettle.patch_scale = 5.0
+	nettle.patch_cover = 0.22
+	nettle.patch_seed = 31
+	nettle.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(1.0, 25.0)) # Moist, rich ground.
+	nettle.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 4.0)
+	nettle.visibility_range = 25.0
+	var dock := PlantSpecies.new()
+	dock.meshes = _variants(PlantGenerator.PRESET_DOCK, 3)
+	dock.spacing = 0.9
+	dock.footprint = 0.25
+	dock.density = 0.5
+	dock.patch_scale = 7.0
+	dock.patch_cover = 0.35
+	dock.patch_seed = 41
+	dock.visibility_range = 20.0
+	var thistle := PlantSpecies.new()
+	thistle.meshes = _variants(PlantGenerator.PRESET_THISTLE, 3)
+	thistle.spacing = 1.6
+	thistle.footprint = 0.25
+	thistle.density = 0.35
+	thistle.visibility_range = 20.0
+	var yarrow := PlantSpecies.new()
+	yarrow.meshes = _variants(PlantGenerator.PRESET_YARROW, 3)
+	yarrow.spacing = 0.5
+	yarrow.footprint = 0.1
+	yarrow.density = 0.6
+	yarrow.patch_scale = 5.0
+	yarrow.patch_cover = 0.3
+	yarrow.patch_seed = 51
+	yarrow.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(6.0, 1000000.0)) # Drier ground.
+	yarrow.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 3.0)
+	yarrow.visibility_range = 15.0
+	var dry := PlantSpecies.new()
+	dry.meshes = _variants(PlantGenerator.PRESET_DRY_GRASS, 3)
+	dry.spacing = 0.3
+	dry.footprint = 0.0
+	dry.density = 0.55
+	dry.scale_range = Vector2(0.7, 1.2)
+	dry.visibility_range = 12.0
 	var b := Biome.new()
-	b.species = [flowers, sedge, plantain, clover]
+	b.species = [flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry]
 	return b
 
 func _ground_mesh() -> Mesh:
@@ -361,7 +419,7 @@ func _checks() -> void:
 					var p := mm.get_instance_transform(i).origin
 					if Vector2(p.x, p.z).distance_to(c) < 3.0: un += 1
 					if dm.get_water_depth_at(p) > 0.06: uwet += 1
-		_check("undercoat about 320 /m2 near", un / (PI * 9.0) > 240.0 and un / (PI * 9.0) < 360.0, un / (PI * 9.0))
+		_check("undercoat about 640 /m2 near", un / (PI * 9.0) > 480.0 and un / (PI * 9.0) < 720.0, un / (PI * 9.0))
 		_check("no undercoat under water", uwet == 0, uwet)
 		# Clover grows between the tall patches: the complement.
 		var in_tall := 0
@@ -424,7 +482,10 @@ func _process(dt: float) -> void:
 		dm.bake()
 		if cover:
 			cover.populate()
-			print("GRASS_COVER flowers=%d sedge=%d plantain=%d clover=%d ms=%.1f" % [cover.get_placements(0).size(), cover.get_placements(1).size(), cover.get_placements(2).size(), cover.get_placements(3).size(), cover.get_populate_time_msec()])
+			var counts := []
+			for i in cover.biome.species.size():
+				counts.append(cover.get_placements(i).size())
+			print("GRASS_COVER flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry grass = %s ms=%.1f" % [str(counts), cover.get_populate_time_msec()])
 	if trample and n > 2:
 		_move(dt)
 	if n == frames - 30 and not test:

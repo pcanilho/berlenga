@@ -66,6 +66,7 @@ class GrassField3D : public Node3D {
 	Color tip_color = Color(0.45f, 0.6f, 0.22f);
 	Color dry_color = Color(0.55f, 0.48f, 0.28f);
 	float dryness = 0.2f;
+	float color_variation = 0.5f;
 	float radius = 40.0f;
 	float tile_size = 8.0f;
 	Vector2 fallback_wind = Vector2(2.0f, 0.5f);
@@ -139,6 +140,8 @@ public:
 	Color get_dry_color() const { return dry_color; }
 	void set_dryness(float p_dryness);
 	float get_dryness() const { return dryness; }
+	void set_color_variation(float p_amount);
+	float get_color_variation() const { return color_variation; }
 	void set_radius(float p_radius);
 	float get_radius() const { return radius; }
 	void set_tile_size(float p_size);

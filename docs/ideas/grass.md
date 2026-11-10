@@ -232,6 +232,29 @@ and flowers place in 72 ms once. Frame time on the cloud CPU rasteriser, close v
 against 217 ms for the single field (+10%), 123,078 blades against 79,992. GPU timings wait for
 the PC. Media: grass-carpet.jpg (before above, after below), grass-carpet-pt.jpg.
 
+## Blade detail (stage 2.4)
+
+The wide meadow shot showed the carpet, not the plants on it: one flat green, wide single-triangle
+blades and a pale soil between them. What the published grass does about that:
+
+- **Colour at several scales.** Ghost of Tsushima varies colour per clump and over the field; Horizon
+  Zero Dawn and CryEngine (Kingdom Come: Deliverance 2) tint vegetation from a large-scale colour map.
+  GrassField3D now drifts each blade towards a yellower or a bluer green by two octaves of world noise
+  (about 9 m and 2 m) plus a per-blade term, with a value jitter of about 20%. `color_variation`
+  (default 0.5) scales it; 0 gives the old single colour.
+- **Thatch.** Real swards carry dead blades from the root, not only dry tips. A third of the
+  `dryness` fraction is now straw from the root.
+- **Monocot leaf detail.** A lighter midrib and faint parallel veins across the blade, faded out by
+  `fwidth` once a blade is under a few pixels wide, so far blades do not shimmer.
+- **Blade outline.** Edges stay nearly parallel and taper near the tip (width `1 - 0.9 t^2`) instead of a
+  linear wedge.
+- **Bench carpet.** The undercoat in `docs/bench/grass` is now two-segment blades, 2 cm wide at
+  640 /m² (was one triangle 4.5 cm wide at 320 /m²), over a darker soil tint: under a dense sward the
+  soil sits in the blades' shade, so it should read darker than the blades, not lighter.
+
+Cost on the CPU rasteriser (lavapipe, 1280x720, meadow with all species): 517 ms before, 610 ms after;
+almost all of it is the doubled undercoat. The shader changes alone are a few ALU ops per fragment.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

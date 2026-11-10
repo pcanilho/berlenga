@@ -93,6 +93,9 @@
 		<member name="clump_size" type="float" setter="set_clump_size" getter="get_clump_size" default="1.2">
 			Size of a clump, in metres. Blades in a clump share height, facing, lean and dryness.
 		</member>
+		<member name="color_variation" type="float" setter="set_color_variation" getter="get_color_variation" default="0.5">
+			How much blade colour varies: large patches and single blades drift towards yellower or bluer greens and lighter or darker values. 0 gives every blade the same colours.
+		</member>
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			Path to a [TerrainDataMap3D] giving the ground height and the maps [member rules] read.
 		</member>
@@ -103,7 +106,7 @@
 			Tip colour of dry blades.
 		</member>
 		<member name="dryness" type="float" setter="set_dryness" getter="get_dryness" default="0.2">
-			Fraction of blades with dry tips.
+			Fraction of blades with dry tips. A third of those are dead from the root (thatch).
 		</member>
 		<member name="fallback_wind" type="Vector2" setter="set_fallback_wind" getter="get_fallback_wind" default="Vector2(2, 0.5)">
 			Wind velocity (x, z) in metres per second, used when no [WeatherMap3D] publishes wind.
