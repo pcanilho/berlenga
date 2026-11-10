@@ -279,7 +279,9 @@ void vertex_shader(vec3 vertex_input,
 		uint trail_size = (instances.data[instance_index].flags >> INSTANCE_FLAGS_PARTICLE_TRAIL_SHIFT) & INSTANCE_FLAGS_PARTICLE_TRAIL_MASK;
 		uint stride = 3 + 1 + 1; //particles always uses this format
 
-		uint offset = trail_size * stride * INSTANCE_INDEX;
+		// A MultiMesh with instance bones uses the same layout and reads its current motion-vector half.
+		uint record_offset = bool(instances.data[instance_index].flags & INSTANCE_FLAGS_PARTICLES) ? 0u : multimesh_offset;
+		uint offset = stride * (trail_size * INSTANCE_INDEX + record_offset);
 
 #ifdef COLOR_USED
 		vec4 pcolor;

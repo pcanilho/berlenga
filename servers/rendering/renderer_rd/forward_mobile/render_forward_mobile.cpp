@@ -3085,6 +3085,8 @@ void RenderForwardMobile::_geometry_instance_update(RenderGeometryInstance *p_ge
 
 				ginstance->instance_count = mesh_storage->multimesh_get_instances_to_draw(ginstance->data->base);
 			}
+			// Instance bones: a particle_trails material skins each instance against its consecutive records.
+			ginstance->trail_steps = mesh_storage->multimesh_bones_per_instance(ginstance->data->base);
 
 		} break;
 #if 0
@@ -3143,6 +3145,9 @@ void RenderForwardMobile::_geometry_instance_update(RenderGeometryInstance *p_ge
 		}
 		if (mesh_storage->multimesh_uses_indirect(ginstance->data->base)) {
 			ginstance->base_flags |= INSTANCE_DATA_FLAG_MULTIMESH_INDIRECT;
+		}
+		if (ginstance->trail_steps > 1) {
+			ginstance->base_flags |= (ginstance->trail_steps << INSTANCE_DATA_FLAGS_PARTICLE_TRAIL_SHIFT);
 		}
 
 		ginstance->transforms_uniform_set = mesh_storage->multimesh_get_3d_uniform_set(ginstance->data->base, scene_shader.default_shader_rd, TRANSFORMS_UNIFORM_SET);

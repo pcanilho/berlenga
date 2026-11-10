@@ -115,6 +115,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="bones_per_instance" type="int" setter="set_bones_per_instance" getter="get_bones_per_instance" default="1">
+			Number of consecutive transforms that make up one instance. With a value [code]K[/code] above [code]1[/code], every [code]K[/code] consecutive records are the bones of one instance, so [member instance_count] counts records ([code]K[/code] times the number of instances). The mesh must carry [constant Mesh.ARRAY_BONES] and [constant Mesh.ARRAY_WEIGHTS], each bone record is the instance placement multiplied by the bone pose and the inverse bind pose, and the material must enable [member BaseMaterial3D.use_particle_trails] (or the [code]particle_trails[/code] render mode in a shader). Requires [constant TRANSFORM_3D] with [member use_colors] and [member use_custom_data]. Used for wind and touch bending of many plants without one [Skeleton3D] each. Supported by the Forward+ and Mobile renderers and the path tracer, not by Compatibility.
+		</member>
 		<member name="buffer" type="PackedFloat32Array" setter="set_buffer" getter="get_buffer" default="PackedFloat32Array()">
 		</member>
 		<member name="color_array" type="PackedColorArray" setter="_set_color_array" getter="_get_color_array" deprecated="Accessing this property is very slow. Use [method set_instance_color] and [method get_instance_color] instead.">

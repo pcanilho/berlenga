@@ -308,6 +308,7 @@ static bool _rt_multimesh_source(RID p_multimesh, RTInstanceSource &r_source) {
 	r_source.color_offset = mesh_storage->multimesh_uses_colors(p_multimesh) ? mesh_storage->multimesh_get_color_offset(p_multimesh) : UINT32_MAX;
 	r_source.custom_offset = mesh_storage->multimesh_uses_custom_data(p_multimesh) ? mesh_storage->multimesh_get_custom_data_offset(p_multimesh) : UINT32_MAX;
 	r_source.last_change = mesh_storage->multimesh_get_last_change(p_multimesh);
+	r_source.trail_steps = mesh_storage->multimesh_bones_per_instance(p_multimesh); // Instance bones read like trail records.
 	return r_source.count > 0;
 }
 

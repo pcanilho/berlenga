@@ -57,6 +57,7 @@ private:
 	bool use_custom_data = false;
 	int instance_count = 0;
 	int visible_instance_count = -1;
+	int bones_per_instance = 1;
 	PhysicsInterpolationQuality _physics_interpolation_quality = INTERP_QUALITY_FAST;
 
 protected:
@@ -99,6 +100,9 @@ public:
 
 	void set_visible_instance_count(int p_count);
 	int get_visible_instance_count() const;
+
+	void set_bones_per_instance(int p_bones);
+	int get_bones_per_instance() const;
 
 	void set_physics_interpolation_quality(PhysicsInterpolationQuality p_quality);
 	PhysicsInterpolationQuality get_physics_interpolation_quality() const { return _physics_interpolation_quality; }

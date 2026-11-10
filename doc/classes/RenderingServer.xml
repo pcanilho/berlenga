@@ -2857,6 +2857,13 @@
 				Calculates and returns the axis-aligned bounding box that encloses all instances within the multimesh.
 			</description>
 		</method>
+		<method name="multimesh_get_bones_per_instance" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="multimesh" type="RID" />
+			<description>
+				Returns how many consecutive records make up one instance of the multimesh. See [member MultiMesh.bones_per_instance].
+			</description>
+		</method>
 		<method name="multimesh_get_buffer" qualifiers="const">
 			<return type="PackedFloat32Array" />
 			<param index="0" name="multimesh" type="RID" />
@@ -3017,6 +3024,14 @@
 				The engine then keeps everything that reads the records up to date: the path tracer rebakes a merged MultiMesh at once (it reads the GPU buffer), and an asynchronous copy of the records to the CPU, without a stall, updates the instance AABB (unless [method multimesh_set_custom_aabb] was used) and the path tracer's per-instance records of a large MultiMesh, usually one or two frames later. Calls made while a copy is in flight are merged into one more copy.
 				When motion vectors are in use, the written records are copied to the buffer's second half too, so they show no motion on the frame they change.
 				[b]Note:[/b] With [code]use_indirect[/code], the path tracer traces [method multimesh_get_visible_instances] records (all of them by default), not the count in the command buffer. Collapse unused records to zero scale.
+			</description>
+		</method>
+		<method name="multimesh_set_bones_per_instance">
+			<return type="void" />
+			<param index="0" name="multimesh" type="RID" />
+			<param index="1" name="bones" type="int" />
+			<description>
+				Sets how many consecutive records (bones) make up one instance of the multimesh, from 1 to 255. See [member MultiMesh.bones_per_instance].
 			</description>
 		</method>
 		<method name="multimesh_set_buffer">

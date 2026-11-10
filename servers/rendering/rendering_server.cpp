@@ -2496,6 +2496,8 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("multimesh_get_command_buffer_rd_rid", "multimesh"), &RenderingServer::multimesh_get_command_buffer_rd_rid);
 	ClassDB::bind_method(D_METHOD("multimesh_get_buffer_rd_rid", "multimesh"), &RenderingServer::multimesh_get_buffer_rd_rid);
 	ClassDB::bind_method(D_METHOD("multimesh_mark_buffer_rd_changed", "multimesh"), &RenderingServer::multimesh_mark_buffer_rd_changed);
+	ClassDB::bind_method(D_METHOD("multimesh_set_bones_per_instance", "multimesh", "bones"), &RenderingServer::multimesh_set_bones_per_instance);
+	ClassDB::bind_method(D_METHOD("multimesh_get_bones_per_instance", "multimesh"), &RenderingServer::multimesh_get_bones_per_instance);
 	ClassDB::bind_method(D_METHOD("multimesh_get_buffer", "multimesh"), &RenderingServer::multimesh_get_buffer);
 
 	ClassDB::bind_method(D_METHOD("multimesh_set_buffer_interpolated", "multimesh", "buffer", "buffer_previous"), &RenderingServer::multimesh_set_buffer_interpolated);
