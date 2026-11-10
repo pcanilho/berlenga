@@ -24,6 +24,8 @@ extends Node3D
 #   --view=cornice   a corniced ridge from below its lee face
 #   --view=sparkle    dry new snow at the feet against a low sun ahead: glinting grains; --melt=H hours of thaw
 #                     first wets it (the glints go); prints the share of glinting pixels
+#   --view=shelter    a shed and young spruces after a snowfall: bare ground under the roof, snow in the
+#                     crowns and less under them (--test=shelter for the checks)
 #   --view=props      close: bumpy ground, boxes, a sphere, a 45 degree board and a 70 degree wall after snow
 #   --snow=H          hours of 2 mm/h precipitation (default 24 mountain, 8 props)
 #   --sun=H           then hours of sun (mountain; default 48)
@@ -77,6 +79,8 @@ func _ready() -> void:
 	if test:
 		if only == "climate":
 			await _run_climate_tests()
+		elif only == "shelter":
+			await _run_shelter_tests()
 
 		else:
 			await _run_tests()
@@ -253,6 +257,7 @@ func _run_tests() -> void:
 
 	await _run_surface_tests()
 	await _run_fall_tests()
+	await _run_shelter_tests()
 	await _run_climate_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
@@ -459,6 +464,77 @@ func _run_fall_tests() -> void:
 	await get_tree().process_frame
 	_check("no flakes and no blowing at +6 C", fall.get_visible_flakes() == 0 and fall.get_blowing_amount() == 0.0, "%.3f mm/h of snow, %d flakes" % [fall.get_snowfall_rate(), fall.get_visible_flakes()])
 	fall.queue_free()
+
+
+func _shed(pos: Vector3, size: Vector3, height: float) -> StaticBody3D:
+	# A roof on four posts: its collider catches the snow over the ground below.
+	var body := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = size
+	shape.shape = box
+	body.add_child(shape)
+	body.position = pos + Vector3(0, height, 0)
+	add_child(body)
+	return body
+
+
+func _run_shelter_tests() -> void:
+	print("Snow under roofs and trees")
+	# A roof 3 m up over flat ground; snow cast down finds the roof where it covers the cell.
+	await _setup("flat", 32.0, 64, -6.0)
+	snow.height_source = NodePath("")
+	snow.drift_enabled = false
+	var floor_body := StaticBody3D.new()
+	var floor_shape := CollisionShape3D.new()
+	floor_shape.shape = WorldBoundaryShape3D.new()
+	floor_body.add_child(floor_shape)
+	add_child(floor_body)
+	_shed(Vector3(0, 0, 0), Vector3(6, 0.2, 4), 3.0)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	_precipitate(6.0, 2.0)
+	var roof_h := snow.get_ground_height_at(Vector3(0, 0, 0))
+	var open_h := snow.get_ground_height_at(Vector3(8, 0, 0))
+	_check("a roof catches the snow over the ground below", roof_h > 2.9 and absf(open_h) < 0.05 and snow.get_swe_at(Vector3(0, 0, 0)) > 5.0, "catch %.2f m under the roof, %.2f m in the open, %.1f mm on the roof" % [roof_h, open_h, snow.get_swe_at(Vector3(0, 0, 0))])
+	# With a height source the roof is only found on shelter_collision_mask.
+	ground.set("kind", "flat")
+	snow.height_source = NodePath("../Ground")
+	snow.shelter_collision_mask = 0
+	snow.refresh_heights()
+	var h_off := snow.get_ground_height_at(Vector3(0, 0, 0))
+	snow.shelter_collision_mask = 1
+	snow.refresh_heights()
+	var h_on := snow.get_ground_height_at(Vector3(0, 0, 0))
+	_check("height source plus shelter_collision_mask finds the roof", absf(h_off) < 0.05 and h_on > 2.9, "%.2f m without the mask, %.2f m with it" % [h_off, h_on])
+
+	# Trees (Hedstrom and Pomeroy 1998): a stand of closure about 0.85 takes much of a 20 mm fall, then
+	# unloads it onto the snow below in a mild wind as it warms toward thaw.
+	await _setup("flat", 64.0, 64, -6.0)
+	snow.drift_enabled = false
+	weather.add_canopy(Vector2(0, 0), 14.0, 15.0, 4.0)
+	weather.rebake_shelter()
+	snow.refresh_heights()
+	var closure := weather.get_canopy_closure_at(Vector3(0, 0, 0))
+	var w0 := snow.get_total_water()
+	_precipitate(10.0, 2.0)
+	var held := snow.get_canopy_load_at(Vector3(0, 0, 0))
+	var cap := snow.get_canopy_capacity_at(Vector3(0, 0, 0))
+	var under := snow.get_swe_at(Vector3(0, 0, 0))
+	var open := snow.get_swe_at(Vector3(26, 0, 26))
+	var w1 := snow.get_total_water()
+	print("  closure %.2f: canopy holds %.1f mm of %.1f mm capacity; %.1f mm under it, %.1f mm in the open" % [closure, held, cap, under, open])
+	_check("a canopy holds snow and shades the ground", closure > 0.5 and held > 3.0 and held <= cap + 0.01 and under < open * 0.8 and absf(under + held - open) < open * 0.1, "%.1f + %.1f mm against %.1f in the open" % [under, held, open])
+	_check("interception keeps the water", absf(w1 - w0 - (open * 64.0 * 64.0)) < open * 64.0 * 64.0 * 0.05, "%.0f kg on the map against %.0f fallen" % [w1 - w0, open * 64.0 * 64.0])
+	weather.temperature = -1.0
+	weather.wind_speed = 6.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(24.0 * 3600.0)
+	var held2 := snow.get_canopy_load_at(Vector3(0, 0, 0))
+	var under2 := snow.get_swe_at(Vector3(0, 0, 0))
+	_check("it unloads onto the snow below", held2 < held * 0.5 and under2 > under, "%.1f mm left in the canopy after a day at -1 C in 6 m/s wind; %.1f mm below (was %.1f)" % [held2, under2, under])
 
 
 func _climate(wind_speed: float) -> SnowClimate:
@@ -684,6 +760,8 @@ func _build_view() -> void:
 		await _setup("cornice", 512.0, 256, -6.0)
 	elif view == "sparkle":
 		await _setup("flat", 32.0, 128, -6.0)
+	elif view == "shelter":
+		await _setup("flat", 32.0, 128, -6.0)
 	else:
 		await _setup("flat", 32.0, 128, -4.0)
 	var env := Environment.new()
@@ -724,6 +802,9 @@ func _build_view() -> void:
 		return
 	elif view == "sparkle":
 		await _build_sparkle(cam)
+		return
+	elif view == "shelter":
+		await _build_shelter(cam)
 		return
 	else:
 		snow.drift_enabled = false
@@ -940,6 +1021,69 @@ func _build_climate(cam: Camera3D) -> void:
 		we.environment.pathtracing_enabled = true
 	await get_tree().physics_frame
 	await get_tree().process_frame
+	await _save_frame("")
+	get_tree().quit()
+
+
+func _build_shelter(cam: Camera3D) -> void:
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-35.0, -30.0, 0.0)
+	_add_terrain(32.0, 128, Color(0.36, 0.33, 0.28), 2.0)
+	snow.height_source = NodePath("")
+	var floor_body := StaticBody3D.new()
+	var floor_shape := CollisionShape3D.new()
+	floor_shape.shape = WorldBoundaryShape3D.new()
+	floor_body.add_child(floor_shape)
+	add_child(floor_body)
+	# A lean-to shed: a sloping roof on posts, open at the front.
+	var wood := _ground_material(Color(0.42, 0.28, 0.16), 1.0)
+	_prop(BoxMesh.new(), Vector3(5.0, 0.12, 3.4), Vector3(-2.5, 2.6, -1.5), Vector3(10, 0, 0), wood)
+	for p in [Vector3(-4.8, 1.25, -0.1), Vector3(-0.2, 1.25, -0.1), Vector3(-4.8, 1.25, -2.9), Vector3(-0.2, 1.25, -2.9)]:
+		var post := MeshInstance3D.new()
+		post.mesh = BoxMesh.new()
+		post.scale = Vector3(0.15, 2.5, 0.15)
+		post.position = p
+		post.material_override = wood
+		add_child(post)
+	# Young spruces: no colliders (the snow below is the ground's); their crowns stand in the weather map's
+	# canopy and their needles take what the canopy holds.
+	var needles := StandardMaterial3D.new()
+	needles.albedo_color = Color(0.09, 0.17, 0.1)
+	needles.roughness = 0.8
+	needles.snow_enabled = true
+	needles.snow_max_slope = 75.0
+	var bark := StandardMaterial3D.new()
+	bark.albedo_color = Color(0.25, 0.18, 0.12)
+	for t in [Vector3(3.0, 0, -2.5), Vector3(5.2, 0, -0.5), Vector3(2.4, 0, 0.8), Vector3(6.0, 0, -3.6)]:
+		weather.add_canopy(Vector2(t.x, t.z), 1.6, 7.0, 4.0)
+		var trunk := MeshInstance3D.new()
+		trunk.mesh = CylinderMesh.new()
+		trunk.scale = Vector3(0.25, 1.0, 0.25)
+		trunk.position = t + Vector3(0, 1.0, 0)
+		trunk.material_override = bark
+		add_child(trunk)
+		for k in 4:
+			var cone := MeshInstance3D.new()
+			var cm := CylinderMesh.new()
+			cm.top_radius = 0.0
+			cm.bottom_radius = 1.7 - 0.35 * k
+			cm.height = 2.2
+			cm.radial_segments = 24
+			cone.mesh = cm
+			cone.position = t + Vector3(0, 2.4 + 1.25 * k, 0)
+			cone.material_override = needles
+			add_child(cone)
+	weather.rebake_shelter()
+	cam.position = Vector3(0.5, 5.2, 10.0)
+	cam.look_at(Vector3(0.6, 1.4, -1.5))
+	cam.fov = 55.0
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	_precipitate(snow_hours if snow_hours >= 0.0 else 10.0, 2.0)
+	print("shelter: %.1f mm under the roof, %.1f mm open, canopy %.1f of %.1f mm, %.1f mm under a crown" % [snow.get_swe_at(Vector3(-2.5, 0, -1.5)), snow.get_swe_at(Vector3(0, 0, 4)), snow.get_canopy_load_at(Vector3(3, 0, -2.5)), snow.get_canopy_capacity_at(Vector3(3, 0, -2.5)), snow.get_swe_at(Vector3(3, 0, -2.5))])
 	await _save_frame("")
 	get_tree().quit()
 
