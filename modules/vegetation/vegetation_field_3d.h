@@ -63,6 +63,7 @@ class VegetationField3D : public Node3D {
 		float radius = 0.0f;
 		float opacity = 0.0f;
 		float top = 0.0f; // Crown top above the ground, metres.
+		float conifer = 0.0f; // 1 for a needle-leaved crown.
 	};
 	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
 	void _publish_canopy(const Rect2 &p_rect);
@@ -70,7 +71,7 @@ class VegetationField3D : public Node3D {
 	LocalVector<Crown> crowns;
 	HashMap<Vector2i, LocalVector<int>> crown_grid;
 	float max_crown_radius = 0.0f;
-	float _shade_at(const Vector2 &p_xz) const;
+	float _shade_at(const Vector2 &p_xz, float *r_conifer = nullptr) const;
 
 	Ref<Biome> biome;
 	NodePath data_map;
@@ -116,4 +117,5 @@ public:
 	PackedVector3Array get_placements(int p_species) const;
 	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
 	float get_shade_at(const Vector3 &p_global_position) const;
+	float get_conifer_at(const Vector3 &p_global_position) const;
 };

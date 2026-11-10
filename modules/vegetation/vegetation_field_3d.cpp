@@ -224,6 +224,7 @@ Error VegetationField3D::populate() {
 		const float align = sp->get_align_to_ground();
 		const int reach = int(Math::ceil((fp + max_footprint) / grid_cell));
 		const bool shade_rule = sp->uses_shade();
+		const bool conifer_rule = sp->uses_conifer();
 		const float canopy_r = sp->get_canopy_radius();
 		float canopy_top = 0.0f;
 		if (canopy_r > 0.0f && meshes.size() > 0) {
@@ -253,8 +254,15 @@ Error VegetationField3D::populate() {
 					}
 					const Vector3 p3(xz.x, 0.0f, xz.y);
 					float suit = sp->get_suitability(map, p3);
-					if (shade_rule && suit > 0.0f) {
-						suit *= sp->rule_weight(PlantSpecies::RULE_SHADE, _shade_at(xz));
+					if ((shade_rule || conifer_rule) && suit > 0.0f) {
+						float conifer = 0.0f;
+						const float shade = _shade_at(xz, &conifer);
+						if (shade_rule) {
+							suit *= sp->rule_weight(PlantSpecies::RULE_SHADE, shade);
+						}
+						if (conifer_rule) {
+							suit *= sp->rule_weight(PlantSpecies::RULE_CONIFER, conifer);
+						}
 					}
 					if (rank >= sp->get_density() * suit) {
 						continue;
@@ -309,7 +317,7 @@ Error VegetationField3D::populate() {
 					const Transform3D world(b, Vector3(xz.x, y, xz.y));
 					if (canopy_r > 0.0f) {
 						const float cr = canopy_r * scale;
-						crowns.push_back({ xz, cr, sp->get_canopy_opacity(), canopy_top * scale });
+						crowns.push_back({ xz, cr, sp->get_canopy_opacity(), canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f });
 						crown_grid[Vector2i(int(Math::floor(xz.x / CROWN_CELL)), int(Math::floor(xz.y / CROWN_CELL)))].push_back(crowns.size() - 1);
 						max_crown_radius = MAX(max_crown_radius, cr);
 					}
@@ -362,7 +370,10 @@ Error VegetationField3D::populate() {
 // rim, where diffuse sky light still reaches under the edge; overlapping crowns multiply their
 // transmission. Plants then take it as a shade rule, the way field botany ranks them by light
 // (Ellenberg's L values: bilberry, ferns and mosses in shade, meadow grasses in the open).
-float VegetationField3D::_shade_at(const Vector2 &p_xz) const {
+float VegetationField3D::_shade_at(const Vector2 &p_xz, float *r_conifer) const {
+	if (r_conifer) {
+		*r_conifer = 0.0f;
+	}
 	if (crowns.is_empty()) {
 		return 0.0f;
 	}
@@ -370,6 +381,8 @@ float VegetationField3D::_shade_at(const Vector2 &p_xz) const {
 	const int r = int(Math::ceil(reach_m / CROWN_CELL));
 	const Vector2i gc(int(Math::floor(p_xz.x / CROWN_CELL)), int(Math::floor(p_xz.y / CROWN_CELL)));
 	float transmit = 1.0f;
+	float needles = 0.0f;
+	float weight = 0.0f;
 	for (int dz = -r; dz <= r; dz++) {
 		for (int dx = -r; dx <= r; dx++) {
 			const LocalVector<int> *bucket = crown_grid.getptr(gc + Vector2i(dx, dz));
@@ -382,9 +395,16 @@ float VegetationField3D::_shade_at(const Vector2 &p_xz) const {
 				if (d >= 1.4f) {
 					continue;
 				}
-				transmit *= 1.0f - c.opacity * (1.0f - Math::smoothstep(0.6f, 1.4f, d));
+				const float block = c.opacity * (1.0f - Math::smoothstep(0.6f, 1.4f, d));
+				transmit *= 1.0f - block;
+				// The stand type: each crown's share of the cover overhead.
+				needles += block * c.conifer;
+				weight += block;
 			}
 		}
+	}
+	if (r_conifer && weight > 0.0f) {
+		*r_conifer = needles / weight;
 	}
 	return 1.0f - transmit;
 }
@@ -447,6 +467,12 @@ void VegetationField3D::_publish_canopy(const Rect2 &p_rect) {
 
 float VegetationField3D::get_shade_at(const Vector3 &p_global_position) const {
 	return _shade_at(Vector2(p_global_position.x, p_global_position.z));
+}
+
+float VegetationField3D::get_conifer_at(const Vector3 &p_global_position) const {
+	float conifer = 0.0f;
+	_shade_at(Vector2(p_global_position.x, p_global_position.z), &conifer);
+	return conifer;
 }
 
 PackedVector3Array VegetationField3D::get_placements(int p_species) const {
@@ -542,6 +568,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
+	ClassDB::bind_method(D_METHOD("get_conifer_at", "global_position"), &VegetationField3D::get_conifer_at);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");

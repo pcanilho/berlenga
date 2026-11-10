@@ -34,6 +34,13 @@
 				Time the last [method populate] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_conifer_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Share of the canopy over [param global_position] that is needle-leaved ([member PlantSpecies.canopy_conifer]), weighted by how much each crown covers it: [code]0.0[/code] under broadleaf trees or in the open, [code]1.0[/code] under conifers.
+			</description>
+		</method>
 		<method name="get_shade_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />

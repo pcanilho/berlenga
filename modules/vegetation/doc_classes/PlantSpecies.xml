@@ -73,11 +73,20 @@
 		<member name="aridity_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1000)">
 			Aridity index (annual precipitation over potential evapotranspiration, Thornthwaite) where the species grows: below 0.5 is dry steppe, above 1 humid. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
+		<member name="canopy_conifer" type="bool" setter="set_canopy_conifer" getter="is_canopy_conifer" default="false">
+			If [code]true[/code], this species' crown is needle-leaved (pine, spruce, fir, larch). [VegetationField3D] counts each crown's share of the cover overhead, so the floor under it can follow the stand type through [member conifer_range].
+		</member>
 		<member name="canopy_opacity" type="float" setter="set_canopy_opacity" getter="get_canopy_opacity" default="0.85">
 			Share of the light this species' crown stops under its core, for [member canopy_radius]. A broadleaf crown in summer stops about 0.85 to 0.95, a pine or birch less.
 		</member>
 		<member name="canopy_radius" type="float" setter="set_canopy_radius" getter="get_canopy_radius" default="0.0">
 			Crown radius in metres (times each plant's scale). Above 0 the species shades the ground under it, and later species in the [Biome] with a [member shade_range] are placed by that shade (see [method VegetationField3D.get_shade_at]).
+		</member>
+		<member name="conifer_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Fade width outside [member conifer_range].
+		</member>
+		<member name="conifer_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
+			Share of the canopy overhead that is needle-leaved where this species grows, from [code]0.0[/code] (broadleaf: beech, oak) to [code]1.0[/code] (conifer: spruce, pine), from crowns with [member canopy_conifer] placed earlier by the same [VegetationField3D]. Open ground counts as [code]0.0[/code].
 		</member>
 		<member name="curvature_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member curvature_range].
@@ -246,7 +255,10 @@
 		<constant name="RULE_SUNLIGHT" value="14" enum="Rule">
 			Annual mean shortwave at the ground, W/m² (climate).
 		</constant>
-		<constant name="RULE_MAX" value="15" enum="Rule">
+		<constant name="RULE_CONIFER" value="15" enum="Rule">
+			Share of the canopy overhead that is needle-leaved, [code]0[/code] to [code]1[/code].
+		</constant>
+		<constant name="RULE_MAX" value="16" enum="Rule">
 			Number of rules.
 		</constant>
 	</constants>

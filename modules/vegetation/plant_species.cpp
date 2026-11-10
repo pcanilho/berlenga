@@ -52,6 +52,7 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_PRECIPITATION] = Vector2(0.0f, 100000.0f);
 	ranges[RULE_ARIDITY] = Vector2(0.0f, 1000.0f);
 	ranges[RULE_SUNLIGHT] = Vector2(0.0f, 2000.0f);
+	ranges[RULE_CONIFER] = Vector2(0.0f, 1.0f);
 }
 
 void PlantSpecies::set_meshes(const TypedArray<Mesh> &p_meshes) {
@@ -86,6 +87,11 @@ void PlantSpecies::set_align_to_ground(float p_align) {
 
 void PlantSpecies::set_random_yaw(bool p_enable) {
 	random_yaw = p_enable;
+	emit_changed();
+}
+
+void PlantSpecies::set_canopy_conifer(bool p_conifer) {
+	canopy_conifer = p_conifer;
 	emit_changed();
 }
 
@@ -238,6 +244,8 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_canopy_radius"), &PlantSpecies::get_canopy_radius);
 	ClassDB::bind_method(D_METHOD("set_canopy_opacity", "opacity"), &PlantSpecies::set_canopy_opacity);
 	ClassDB::bind_method(D_METHOD("get_canopy_opacity"), &PlantSpecies::get_canopy_opacity);
+	ClassDB::bind_method(D_METHOD("set_canopy_conifer", "conifer"), &PlantSpecies::set_canopy_conifer);
+	ClassDB::bind_method(D_METHOD("is_canopy_conifer"), &PlantSpecies::is_canopy_conifer);
 	ClassDB::bind_method(D_METHOD("get_suitability_at", "data_map", "global_position"), &PlantSpecies::get_suitability_at);
 
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "meshes", PROPERTY_HINT_ARRAY_TYPE, MAKE_RESOURCE_TYPE_HINT("Mesh")), "set_meshes", "get_meshes");
@@ -252,6 +260,7 @@ void PlantSpecies::_bind_methods() {
 	ADD_GROUP("Canopy", "canopy_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_radius", PROPERTY_HINT_RANGE, "0,30,0.1,or_greater,suffix:m"), "set_canopy_radius", "get_canopy_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_opacity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_canopy_opacity", "get_canopy_opacity");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "canopy_conifer"), "set_canopy_conifer", "is_canopy_conifer");
 	ADD_GROUP("Patches", "patch_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_scale", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_patch_scale", "get_patch_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_patch_cover", "get_patch_cover");
@@ -289,6 +298,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "aridity_fade", PROPERTY_HINT_RANGE, "0,5,0.01"), "set_rule_fade", "get_rule_fade", RULE_ARIDITY);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "sunlight_range", PROPERTY_HINT_NONE, "suffix:W/m²"), "set_rule_range", "get_rule_range", RULE_SUNLIGHT);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "sunlight_fade", PROPERTY_HINT_RANGE, "0,200,1,suffix:W/m²"), "set_rule_fade", "get_rule_fade", RULE_SUNLIGHT);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "conifer_range"), "set_rule_range", "get_rule_range", RULE_CONIFER);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "conifer_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_CONIFER);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -305,6 +316,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_PRECIPITATION);
 	BIND_ENUM_CONSTANT(RULE_ARIDITY);
 	BIND_ENUM_CONSTANT(RULE_SUNLIGHT);
+	BIND_ENUM_CONSTANT(RULE_CONIFER);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 }
 
