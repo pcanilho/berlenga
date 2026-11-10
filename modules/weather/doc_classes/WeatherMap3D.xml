@@ -6,7 +6,7 @@
 	<description>
 		A square map of weather cells, [member extent] metres wide, that follows the camera (or [member follow_target]), after the weather map of Guerrilla's Nubis clouds. Each cell holds the mean wind at 10 m, cloud cover and type, the rain rate, and the water that rain has left on surfaces: a film up to [member surface_storage], then puddles. The film dries by evaporation (Penman's wind function, from [member temperature] and [member humidity]) and puddles also drain.
 		The weather comes from the base settings, which the map eases toward over [member transition_time]; cloud cover broken up by noise that drifts with the wind aloft; an optional [member painted_map]; and storms ([method add_storm]) that drift with the wind and bring a rain core and a downburst outflow.
-		Wind follows the log law with height over [member roughness_length], plus gusts from the Kaimal spectrum (IEC 61400-1) carried by the mean wind (Taylor's frozen turbulence), so every reader sees the same gust at the same place and time.
+		Wind follows the log law with height over [member roughness_length], plus gusts from the Kaimal spectrum (IEC 61400-1) carried by the mean wind (Taylor's frozen turbulence), so every reader sees the same gust at the same place and time. Near the ground it is sheltered by plant canopies and obstacles (see [member shelter_enabled]) and carried in gust patches of a few metres ([member gust_patch_size]).
 		Readers: [method get_wind_at] and the other [code]get_*_at[/code] methods; [PhysXWaterSurface3D] with [member PhysXWaterSurface3D.follow_weather]; [PhysXCloth3D] and [PhysXHair3D] (their [code]weather_wind[/code]); and any shader, raster or path traced, through these global uniforms (added at run time when the project does not declare them):
 		- [code]weather_wind_map[/code] ([code]sampler2D[/code]): mean wind at 10 m in m/s (RG, x and z), cloud cover (B), cloud type (A).
 		- [code]weather_state_map[/code] ([code]sampler2D[/code]): rain in mm/h (R), wetness 0 to 1 (G), puddle depth in mm (B), film in mm (A).
@@ -14,12 +14,32 @@
 		- [code]weather_gusts[/code] ([code]sampler2D[/code], [constant GUST_COUNT] by 1): per gust wave, its wavenumber along and across the base wind (rad/m), amplitude per unit sigma and phase. The first [constant GUSTS_PER_AXIS] are along the local wind, the next across it, the last vertical.
 		- [code]weather_wind_info[/code] ([code]vec4[/code]): base wind direction (x, z), sigma_u over the 10 m wind, and [member roughness_length].
 		- [code]weather_ground_height[/code] ([code]float[/code]): [member ground_height].
+		- [code]weather_shelter_map[/code] ([code]sampler2D[/code]) and [code]weather_shelter_rect[/code] ([code]vec4[/code]): per cell of the shelter square, canopy height (R), Cionco's coefficient (G), the lee factor (B) and the height of the obstacle setting it (A); the rect has zero size while [member shelter_enabled] is off.
+		- [code]weather_patch_info[/code] ([code]vec4[/code]): how far the gust patches have travelled (x, z), one over [member gust_patch_size], and their strength over the noise's spread.
+		[method get_wind_shader_code] returns shader code that reads all of these and gives the same wind as [method get_wind_at].
 		Clouds: a layer from [member cloud_base_height], shaped from the same cover and type by 3D noise (Nubis), drawn by [WeatherSkyMaterial] when the environment's sky uses it, and shadowing [member sun_light] through a baked cloud shadow. Under path tracing, enable [member Environment.pathtracing_sky_shader_enabled] so camera rays see the clouds at full detail.
 		The last [WeatherMap3D] to enter the tree is the one the other nodes read.
 	</description>
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_canopy">
+			<return type="int" />
+			<param index="0" name="center" type="Vector2" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="height" type="float" />
+			<param index="3" name="density" type="float" default="2.5" />
+			<description>
+				Adds a round stand of plants (world x, z centre, radius and canopy height in metres) and returns its id. [param density] is Cionco's attenuation coefficient: about 1 for open orchards, 2 to 3 for crops and most forests, 4 for dense stands (Cionco 1978). Under the canopy the wind falls off as [code]u(hc) exp(a (z / hc - 1))[/code]; above it the log law starts from a displaced ground at 0.7 hc with roughness 0.1 hc (Raupach 1994). Takes effect at the next shelter bake (see [method rebake_shelter]).
+			</description>
+		</method>
+		<method name="add_shelter_box">
+			<return type="int" />
+			<param index="0" name="box" type="AABB" />
+			<description>
+				Adds a solid obstacle (a building, a wall) as a world box and returns its id. Downwind of it the wind near the ground drops to 0.15 of the open wind in a cavity about 2 heights long (Hosker 1984), then recovers over about 6 heights: 0.8 at 10 heights, nearly all at 20 (Heisler and DeWalle 1988). The lee fades out above the obstacle's height. Visible [VisualInstance3D] nodes in the [code]weather_shelter[/code] group are added the same way, from their bounding boxes, at each bake.
+			</description>
+		</method>
 		<method name="add_storm">
 			<return type="int" />
 			<param index="0" name="position" type="Vector2" />
@@ -36,6 +56,12 @@
 			<param index="0" name="seconds" type="float" />
 			<description>
 				Runs the weather forward by [param seconds] of weather time at once (in steps of a minute): storms drift, the base state eases, surfaces wet and dry.
+			</description>
+		</method>
+		<method name="clear_shelter">
+			<return type="void" />
+			<description>
+				Removes every canopy and shelter box added from code.
 			</description>
 		</method>
 		<method name="clear_storms">
@@ -104,6 +130,32 @@
 				Rain rate at [param position], in mm/h.
 			</description>
 		</method>
+		<method name="get_shelter_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="height_above_ground" type="float" default="-1.0" />
+			<description>
+				The mean wind at [param position] and that height (below 0: from [member ground_height]) over the wind on open ground at the same height: canopies and the lee of obstacles, 0 to 1.
+			</description>
+		</method>
+		<method name="get_shelter_bake_time" qualifiers="const">
+			<return type="float" />
+			<description>
+				How long the last shelter bake took, in milliseconds.
+			</description>
+		</method>
+		<method name="get_shelter_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The shelter square's world rect (x and z of its corner, then its size), as published in [code]weather_shelter_rect[/code].
+			</description>
+		</method>
+		<method name="get_shelter_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The texture published as [code]weather_shelter_map[/code].
+			</description>
+		</method>
 		<method name="get_state_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
@@ -144,10 +196,36 @@
 				Air velocity at [param position] in m/s: the mean wind on the log law at [param height_above_ground] metres (when negative, the height above [member ground_height]), plus gusts.
 			</description>
 		</method>
+		<method name="get_wind_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Shader code that computes the same wind as [method get_wind_at]: the global uniform declarations, then [code]vec3 weather_wind(vec3 world_position, float height_above_ground)[/code]. Paste it into a spatial or canvas shader (or build it in) and leave out any global uniforms the shader already declares.
+			</description>
+		</method>
 		<method name="get_wind_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
 				The texture published as [code]weather_wind_map[/code].
+			</description>
+		</method>
+		<method name="rebake_shelter">
+			<return type="void" />
+			<description>
+				Bakes the shelter square now. It also bakes by itself when canopies or boxes change, when the camera has moved an eighth of [member shelter_extent], and when the wind has turned by about 3 degrees. Call it after moving nodes in the [code]weather_shelter[/code] group.
+			</description>
+		</method>
+		<method name="remove_canopy">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes a canopy added with [method add_canopy].
+			</description>
+		</method>
+		<method name="remove_shelter_box">
+			<return type="void" />
+			<param index="0" name="id" type="int" />
+			<description>
+				Removes a box added with [method add_shelter_box].
 			</description>
 		</method>
 		<method name="remove_storm">
@@ -171,6 +249,15 @@
 		</method>
 	</methods>
 	<members>
+		<member name="canopy_map" type="Texture2D" setter="set_canopy_map" getter="get_canopy_map">
+			A map of plant canopies over [member canopy_map_rect]: canopy height in red (metres in a float texture, else times [member canopy_map_max_height]) and Cionco's attenuation coefficient over 4 in green. For vegetation systems that place whole forests.
+		</member>
+		<member name="canopy_map_max_height" type="float" setter="set_canopy_map_max_height" getter="get_canopy_map_max_height" default="30.0">
+			The canopy height that red 1 stands for in an 8-bit [member canopy_map].
+		</member>
+		<member name="canopy_map_rect" type="Rect2" setter="set_canopy_map_rect" getter="get_canopy_map_rect" default="Rect2(-256, -256, 512, 512)">
+			The world rect [member canopy_map] covers (x and z of its corner, then its size).
+		</member>
 		<member name="cloud_base_height" type="float" setter="set_cloud_base_height" getter="get_cloud_base_height" default="1500.0">
 			Height of the cloud base, in metres above y = 0.
 		</member>
@@ -216,6 +303,12 @@
 		<member name="gust_intensity" type="float" setter="set_gust_intensity" getter="get_gust_intensity" default="1.0">
 			Scale on the turbulence. [code]1[/code] gives the measured turbulence intensity for [member roughness_length], 1 / ln(10 / z0) at 10 m.
 		</member>
+		<member name="gust_patch_size" type="float" setter="set_gust_patch_size" getter="get_gust_patch_size" default="6.0">
+			The size of the gust patches that sweep across fields and water (honami over crops, cat's paws on water), in metres. They travel at about 1.8 times the wind at the top of a crop (Raupach, Finnigan and Brunet 1996) and fade out above twice their size.
+		</member>
+		<member name="gust_patch_strength" type="float" setter="set_gust_patch_strength" getter="get_gust_patch_strength" default="0.35">
+			How much the gust patches vary the wind near the ground: the standard deviation of the speed over its mean (0.3 to 0.5 at the top of crops and forests, Finnigan 2000). [code]0[/code] turns them off.
+		</member>
 		<member name="humidity" type="float" setter="set_humidity" getter="get_humidity" default="0.7">
 			Relative humidity of the air, 0 to 1. Drier air dries surfaces faster. While it rains, the air is taken as at least 97%.
 		</member>
@@ -242,6 +335,15 @@
 		</member>
 		<member name="roughness_length" type="float" setter="set_roughness_length" getter="get_roughness_length" default="0.03">
 			Aerodynamic roughness length z0 of the ground, in metres: about 0.0002 over the sea, 0.03 over open land, 0.5 to 1 over a town. It sets how the wind slows near the ground and how gusty it is.
+		</member>
+		<member name="shelter_enabled" type="bool" setter="set_shelter_enabled" getter="get_shelter_enabled" default="true">
+			Wind near the ground drops inside plant canopies ([method add_canopy], [member canopy_map]) and in the lee of obstacles ([method add_shelter_box], the [code]weather_shelter[/code] group), on a square of [member shelter_extent] around the camera. Applies to [method get_wind_at] and, through [code]weather_shelter_map[/code], to shaders.
+		</member>
+		<member name="shelter_extent" type="float" setter="set_shelter_extent" getter="get_shelter_extent" default="512.0">
+			The width of the shelter square around the camera, in metres. Past it there is no shelter.
+		</member>
+		<member name="shelter_resolution" type="int" setter="set_shelter_resolution" getter="get_shelter_resolution" default="256">
+			Cells across the shelter square (2 m cells by default).
 		</member>
 		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
 			The [DirectionalLight3D] the clouds shadow. The map sets that light's [member Light3D.light_projector], [member DirectionalLight3D.projector_size] and [member DirectionalLight3D.projector_offset] to its cloud shadow, which darkens the ground in raster and path traced rendering alike, and clears the projector again when the map leaves the tree. Empty: no cloud shadows.
