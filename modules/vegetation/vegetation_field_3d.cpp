@@ -40,6 +40,8 @@
 #include "scene/resources/multimesh.h"
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
+#include "modules/weather/weather_map_3d.h"
+#include "scene/resources/image_texture.h"
 
 namespace {
 
@@ -223,6 +225,13 @@ Error VegetationField3D::populate() {
 		const int reach = int(Math::ceil((fp + max_footprint) / grid_cell));
 		const bool shade_rule = sp->uses_shade();
 		const float canopy_r = sp->get_canopy_radius();
+		float canopy_top = 0.0f;
+		if (canopy_r > 0.0f && meshes.size() > 0) {
+			const Ref<Mesh> m0 = meshes[0];
+			if (m0.is_valid()) {
+				canopy_top = m0->get_aabb().get_end().y;
+			}
+		}
 
 		for (int tz = tz0; tz < tz1; tz++) {
 			for (int tx = tx0; tx < tx1; tx++) {
@@ -298,7 +307,7 @@ Error VegetationField3D::populate() {
 					const Transform3D world(b, Vector3(xz.x, y, xz.y));
 					if (canopy_r > 0.0f) {
 						const float cr = canopy_r * scale;
-						crowns.push_back({ xz, cr, sp->get_canopy_opacity() });
+						crowns.push_back({ xz, cr, sp->get_canopy_opacity(), canopy_top * scale });
 						crown_grid[Vector2i(int(Math::floor(xz.x / CROWN_CELL)), int(Math::floor(xz.y / CROWN_CELL)))].push_back(crowns.size() - 1);
 						max_crown_radius = MAX(max_crown_radius, cr);
 					}
@@ -340,6 +349,7 @@ Error VegetationField3D::populate() {
 			}
 		}
 	}
+	_publish_canopy(rect);
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("populated"));
 	return OK;
@@ -375,6 +385,62 @@ float VegetationField3D::_shade_at(const Vector2 &p_xz) const {
 		}
 	}
 	return 1.0f - transmit;
+}
+
+// The placed crowns as WeatherMap3D's canopy_map (height in red, leaf area / 4 in green), so snow
+// interception, wind in the stand and anything else reading get_canopy_closure_at() sees the same
+// forest. A crown's opacity is Beer's law with the weather map's extinction of 0.5,
+// opacity = 1 - exp(-0.5 LAI), so LAI = -2 ln(1 - opacity) and overlapping crowns add their leaf
+// area exactly as get_shade_at() multiplies their transmission: closure there equals this shade.
+void VegetationField3D::_publish_canopy(const Rect2 &p_rect) {
+	if (weather_map.is_empty() || !is_inside_tree()) {
+		return;
+	}
+	WeatherMap3D *wm = Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map));
+	ERR_FAIL_NULL_MSG(wm, "VegetationField3D: weather_map must point to a WeatherMap3D.");
+	if (crowns.is_empty()) {
+		wm->set_canopy_map(Ref<Texture2D>());
+		return;
+	}
+	const int w = CLAMP(int(Math::ceil(p_rect.size.x)), 1, 1024); // About 1 m cells.
+	const int h = CLAMP(int(Math::ceil(p_rect.size.y)), 1, 1024);
+	Ref<Image> img = Image::create_empty(w, h, false, Image::FORMAT_RGF);
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			const Vector2 p = p_rect.position + Vector2((x + 0.5f) * p_rect.size.x / w, (y + 0.5f) * p_rect.size.y / h);
+			const Vector2i gc(int(Math::floor(p.x / CROWN_CELL)), int(Math::floor(p.y / CROWN_CELL)));
+			const int r = int(Math::ceil(max_crown_radius * 1.4f / CROWN_CELL));
+			float lai = 0.0f;
+			float top = 0.0f;
+			float best = 0.0f;
+			for (int dz = -r; dz <= r; dz++) {
+				for (int dx = -r; dx <= r; dx++) {
+					const LocalVector<int> *bucket = crown_grid.getptr(gc + Vector2i(dx, dz));
+					if (!bucket) {
+						continue;
+					}
+					for (int idx : *bucket) {
+						const Crown &c = crowns[idx];
+						const float d = c.xz.distance_to(p) / c.radius;
+						if (d >= 1.4f) {
+							continue;
+						}
+						// The same crown term as _shade_at(), as leaf area.
+						const float o = MIN(c.opacity * (1.0f - Math::smoothstep(0.6f, 1.4f, d)), 0.999f);
+						const float l = -2.0f * Math::log(1.0f - o);
+						lai += l;
+						if (l > best) {
+							best = l;
+							top = c.top;
+						}
+					}
+				}
+			}
+			img->set_pixel(x, y, Color(lai > 0.0f ? MAX(top, 0.1f) : 0.0f, lai * 0.25f, 0.0f));
+		}
+	}
+	wm->set_canopy_map_rect(p_rect);
+	wm->set_canopy_map(ImageTexture::create_from_image(img));
 }
 
 float VegetationField3D::get_shade_at(const Vector3 &p_global_position) const {
@@ -459,6 +525,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_biome"), &VegetationField3D::get_biome);
 	ClassDB::bind_method(D_METHOD("set_data_map", "path"), &VegetationField3D::set_data_map);
 	ClassDB::bind_method(D_METHOD("get_data_map"), &VegetationField3D::get_data_map);
+	ClassDB::bind_method(D_METHOD("set_weather_map", "path"), &VegetationField3D::set_weather_map);
+	ClassDB::bind_method(D_METHOD("get_weather_map"), &VegetationField3D::get_weather_map);
 	ClassDB::bind_method(D_METHOD("set_tile_size", "size"), &VegetationField3D::set_tile_size);
 	ClassDB::bind_method(D_METHOD("get_tile_size"), &VegetationField3D::get_tile_size);
 	ClassDB::bind_method(D_METHOD("set_seed", "seed"), &VegetationField3D::set_seed);
@@ -475,6 +543,7 @@ void VegetationField3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,256,1,or_greater,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "populate_on_ready"), "set_populate_on_ready", "is_populate_on_ready");
