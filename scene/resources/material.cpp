@@ -612,6 +612,9 @@ void BaseMaterial3D::init_shaders() {
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// And its world tier, the coarse pack over the whole terrain drawn outside the near square.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -1204,6 +1207,8 @@ uniform float snow_max_slope : hint_range(0.0, 90.0, 0.1);
 		if (snow_from_weather) {
 			code += R"(global uniform sampler2D snow_map;
 global uniform vec4 snow_map_rect;
+global uniform sampler2D snow_world_map;
+global uniform vec4 snow_world_rect;
 )";
 		}
 	}
@@ -2240,11 +2245,30 @@ void fragment() {)";
 		float snow_wet = 0.0;
 )";
 		if (snow_from_weather) {
-			code += R"(		if (snow_map_rect.z > 0.0) {
-			vec3 snow_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-			vec2 snow_half_texel = 0.5 / vec2(textureSize(snow_map, 0));
-			vec2 snow_uv = clamp((snow_pos.xz - snow_map_rect.xy) / snow_map_rect.zw, snow_half_texel, 1.0 - snow_half_texel);
-			vec4 snow_s = textureLod(snow_map, snow_uv, 0.0);
+			code += R"(		vec3 snow_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec4 snow_s = vec4(0.0);
+		bool snow_have = false;
+		// The world tier (the coarse pack over the whole terrain), then the near square over it, faded in
+		// across its outer tenth.
+		if (snow_world_rect.z > 0.0) {
+			vec2 snow_wuv = (snow_pos.xz - snow_world_rect.xy) / snow_world_rect.zw;
+			if (all(greaterThanEqual(snow_wuv, vec2(0.0))) && all(lessThanEqual(snow_wuv, vec2(1.0)))) {
+				vec2 snow_wh = 0.5 / vec2(textureSize(snow_world_map, 0));
+				snow_s = textureLod(snow_world_map, clamp(snow_wuv, snow_wh, 1.0 - snow_wh), 0.0);
+				snow_have = true;
+			}
+		}
+		if (snow_map_rect.z > 0.0) {
+			vec2 snow_nuv = (snow_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
+			vec2 snow_ne = min(snow_nuv, 1.0 - snow_nuv);
+			float snow_nw = snow_world_rect.z > 0.0 ? clamp(min(snow_ne.x, snow_ne.y) * 10.0, 0.0, 1.0) : 1.0;
+			if (snow_nw > 0.0) {
+				vec2 snow_half_texel = 0.5 / vec2(textureSize(snow_map, 0));
+				snow_s = mix(snow_s, textureLod(snow_map, clamp(snow_nuv, snow_half_texel, 1.0 - snow_half_texel), 0.0), snow_nw);
+				snow_have = true;
+			}
+		}
+		if (snow_have) {
 			// Snow-covered fraction from depth and density, Niu and Yang (2007):
 			// tanh(depth / (2.5 z0 (rho / rho_new)^m)), z0 0.01 m, rho_new 100 kg/m3, m 1.
 			snow_cover *= tanh(max(snow_s.r, 0.0) / (0.025 * max(snow_s.a * 10.0, 0.5)));

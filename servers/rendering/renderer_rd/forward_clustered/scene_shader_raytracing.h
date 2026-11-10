@@ -116,7 +116,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 52;
+	static constexpr int RT_PARAM_COUNT = 56;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -204,6 +204,12 @@ public:
 	static constexpr int RT_PARAM_SNOW_RECT_Y = 47;
 	static constexpr int RT_PARAM_SNOW_RECT_W = 48;
 	static constexpr int RT_PARAM_SNOW_RECT_H = 49;
+	// Its world tier (the coarse pack over the whole terrain): bindless index and rect (width 0 = none).
+	static constexpr int RT_PARAM_SNOW_WORLD_MAP = 50;
+	static constexpr int RT_PARAM_SNOW_WORLD_RECT_X = 51;
+	static constexpr int RT_PARAM_SNOW_WORLD_RECT_Y = 52;
+	static constexpr int RT_PARAM_SNOW_WORLD_RECT_W = 53;
+	static constexpr int RT_PARAM_SNOW_WORLD_RECT_H = 54;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

@@ -31,12 +31,16 @@
 
 #pragma once
 
+#include "snow_climate.h"
+
 #include "core/io/image.h"
 #include "core/object/worker_thread_pool.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
 class PhysicsDirectSpaceState3D;
+
+class SnowCornice3D;
 class TerrainDeformer3D;
 class TerrainDataMap3D;
 
@@ -52,6 +56,7 @@ class WeatherMap3D;
 // (BaseMaterial3D Snow), scripts through get_*_at().
 class SnowCover3D : public Node3D {
 	GDCLASS(SnowCover3D, Node3D);
+	friend class SnowCornice3D;
 
 	static SnowCover3D *active;
 
@@ -82,6 +87,31 @@ class SnowCover3D : public Node3D {
 	float drift_strength = 0.6f;
 	float drift_threshold_wind = 7.0f; // m/s at 10 m
 	bool publish_shader_globals = true;
+	float precipitation_gradient = 0.0f; // share more per 100 m above the reference height
+
+	// The world tier (docs/ideas/snow.md, stage 4): a coarse pack over the whole terrain, started from a baked
+	// climate and carried on by the weather at a lower rate. It seeds cells entering this square and draws the
+	// snow outside it (snow_world_map).
+	Ref<SnowClimate> climate;
+	int world_update_every = 8; // updates of this square per world update
+	SnowCover3D *world = nullptr;
+	int world_counter = 0;
+	double world_accum = 0.0;
+	bool world_globals_added = false;
+
+	// Internal covers (the world tier, a climate bake): a fixed square, ground from the owner.
+	SnowCover3D *owner = nullptr;
+	bool driven = false; // inputs set by a climate bake (no weather map)
+	Vector2 driven_wind; // m/s at 10 m, the direction it blows to
+	Vector3 driven_sun; // toward the sun; zero = night
+	float driven_direct = 0.0f; // W/m2 direct normal at the ground, clouds included
+	float driven_ref_height = 0.0f; // m, where the driven temperature holds
+	HashMap<int, Vector<float>> sx_cache; // driven: Sx per 22.5 degree wind direction
+	// Cornices (world tier and bake): the overhang's length along the wind that built it, per cell.
+	bool cornices_enabled = false;
+	Vector<float> cell_cornice_x;
+	Vector<float> cell_cornice_z;
+	Vector2 last_wind; // m/s at 10 m, last update
 
 	// Cells.
 	Vector2i origin_cell;
@@ -158,6 +188,12 @@ class SnowCover3D : public Node3D {
 	void _publish_globals();
 	float _sample(const Vector<float> &p_field, Vector2 p_xz) const;
 	Vector3 _cell_center(int p_x, int p_z) const;
+	void _setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_resolution);
+	void _grow_cornices(float p_dt_h, Vector2 p_wind);
+	void _seed_from_world(const Vector<uint8_t> *p_only);
+	void _make_world();
+	void _free_world();
+	void _publish_world_globals();
 
 protected:
 	void _notification(int p_what);
@@ -218,6 +254,23 @@ public:
 	float get_drift_threshold_wind() const { return drift_threshold_wind; }
 	void set_publish_shader_globals(bool p_enabled);
 	bool get_publish_shader_globals() const { return publish_shader_globals; }
+	void set_precipitation_gradient(float p_share);
+	float get_precipitation_gradient() const { return precipitation_gradient; }
+	void set_climate(const Ref<SnowClimate> &p_climate);
+	Ref<SnowClimate> get_climate() const { return climate; }
+	void set_world_update_every(int p_updates);
+	int get_world_update_every() const { return world_update_every; }
+
+	// Runs the climate's season over the square p_rect (p_resolution cells a side) on this cover's ground and
+	// settings and stores the result in the climate (docs/ideas/snow.md, stage 4).
+	Error bake_climate(Rect2 p_rect, int p_resolution);
+	bool has_world() const { return world != nullptr; }
+	Rect2 get_world_rect() const;
+	float get_world_depth_at(Vector3 p_position) const; // m, the world tier
+	float get_world_swe_at(Vector3 p_position) const; // mm, the world tier
+	Vector2 get_cornice_at(Vector3 p_position) const; // m, the overhang's length along its wind (world tier)
+	Ref<Texture2D> get_world_texture() const;
+	void advance_world(float p_seconds);
 
 	void advance(float p_seconds);
 	void clear();
@@ -249,6 +302,9 @@ public:
 	static float snowfall_fraction(float p_celsius, float p_humidity); // Jennings et al. 2018
 	static float new_snow_density(float p_celsius); // Hedstrom and Pomeroy 1998, kg/m3
 	static float holding_depth(float p_slope_degrees, float p_min_mm, float p_decay); // SnowSlide, mm SWE
+	// Cornice growth against the wind over the blowing threshold (Yu et al. 2023): 0 below 1 and above 2,
+	// most at 1.4.
+	static float cornice_growth_share(float p_wind_ratio);
 
 	SnowCover3D();
 	~SnowCover3D();

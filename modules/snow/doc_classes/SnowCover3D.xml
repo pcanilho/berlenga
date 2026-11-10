@@ -29,10 +29,32 @@
 				Advances the snowpack by [param seconds] of weather time at once, in steps of up to 10 minutes, then publishes the snow map. Wind-drift data is baked first if it is missing, so the result does not depend on frame timing.
 			</description>
 		</method>
+		<method name="advance_world">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<description>
+				Runs the world tier forward [param seconds] of weather time now (it otherwise advances every [member world_update_every] updates).
+			</description>
+		</method>
+		<method name="bake_climate">
+			<return type="int" enum="Error" />
+			<param index="0" name="rect" type="Rect2" />
+			<param index="1" name="resolution" type="int" />
+			<description>
+				Runs [member climate]'s season over the square [param rect] at [param resolution] cells a side, on this cover's ground and settings, and stores the snowpack it leaves in the climate. The world tier then starts from it and the near square is seeded from it. Blocking: a 182-day winter on 256 x 256 cells takes a few seconds.
+			</description>
+		</method>
 		<method name="clear">
 			<return type="void" />
 			<description>
 				Removes all snow from the map.
+			</description>
+		</method>
+		<method name="cornice_growth_share" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="wind_ratio" type="float" />
+			<description>
+				How fast a cornice grows at a wind of [param wind_ratio] times the threshold for moving snow, as a share of the fastest: 0 below 1 and from 2, 1 at 1.4 (Yu et al. 2023).
 			</description>
 		</method>
 		<method name="get_air_temperature_at" qualifiers="const">
@@ -47,6 +69,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the albedo of the snow at [param position]: 0.84 when fresh, ageing toward 0.70 when dry and 0.50 when melting.
+			</description>
+		</method>
+		<method name="get_cornice_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The world tier's cornice at a position: its overhang in metres along the wind that built it, as an XZ vector.
 			</description>
 		</method>
 		<method name="get_density_at" qualifiers="const">
@@ -141,6 +170,38 @@
 				Returns the liquid water in the snowpack at [param position] over what it can hold, 0 (dry) to 1 (saturated).
 			</description>
 		</method>
+		<method name="get_world_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The world tier's snow depth at a position, in metres.
+			</description>
+		</method>
+		<method name="get_world_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The world tier's square in world XZ; empty without a baked climate.
+			</description>
+		</method>
+		<method name="get_world_swe_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The world tier's snow water equivalent at a position, in mm.
+			</description>
+		</method>
+		<method name="get_world_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The world tier's snow map (same channels as the near one), published as the [code]snow_world_map[/code] shader global.
+			</description>
+		</method>
+		<method name="has_world" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] while a baked [member climate] gives the cover a world tier.
+			</description>
+		</method>
 		<method name="holding_depth" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="slope_degrees" type="float" />
@@ -180,6 +241,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="climate" type="SnowClimate" setter="set_climate" getter="get_climate">
+			A baked [SnowClimate]: the cover keeps a coarse world tier of snow over its square, carries it on with the weather at a lower rate, seeds cells entering the near square from it (then sheds what their finer slopes cannot hold) and publishes it as [code]snow_world_map[/code] and [code]snow_world_rect[/code], which [BaseMaterial3D] snow and the path tracer read beyond the near square.
+		</member>
 		<member name="drift_distance" type="float" setter="set_drift_distance" getter="get_drift_distance" default="100.0">
 			How far upwind the terrain is searched for shelter (Winstral's dmax), in metres.
 		</member>
@@ -220,6 +284,9 @@
 		<member name="melt_threshold" type="float" setter="set_melt_threshold" getter="get_melt_threshold" default="1.0">
 			Snow melts only above this air temperature, in °C.
 		</member>
+		<member name="precipitation_gradient" type="float" setter="set_precipitation_gradient" getter="get_precipitation_gradient" default="0.0">
+			How much more precipitation falls per 100 m above the reference height, as a share (orographic enhancement); 0 keeps it even.
+		</member>
 		<member name="precipitation_rate" type="float" setter="set_precipitation_rate" getter="get_precipitation_rate" default="0.0">
 			Precipitation in mm/h of water used when no [code]WeatherMap3D[/code] is in the scene. With one, the map's rain rate is used, split into rain and snow.
 		</member>
@@ -252,6 +319,9 @@
 		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
 		</member>
 		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="2.0">
+		</member>
+		<member name="world_update_every" type="int" setter="set_world_update_every" getter="get_world_update_every" default="8">
+			How many updates of the near square pass between updates of the world tier.
 		</member>
 	</members>
 </class>

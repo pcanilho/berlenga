@@ -7320,6 +7320,28 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_RECT_Y] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_RECT_W] = has_snow ? rect.z : 0.0f;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_RECT_H] = has_snow ? rect.w : 0.0f;
+			// The world tier, the same way.
+			static const StringName snow_world_map_name = "snow_world_map";
+			static const StringName snow_world_rect_name = "snow_world_rect";
+			const Variant wrect_var = ms->global_shader_parameter_get_internal(snow_world_rect_name);
+			const Vector4 wrect = wrect_var.get_type() == Variant::VECTOR4 ? Vector4(wrect_var) : Vector4();
+			RID world_tex;
+			const Variant wtex_var = ms->global_shader_parameter_get_internal(snow_world_map_name);
+			if (wtex_var.get_type() == Variant::RID) {
+				world_tex = wtex_var;
+			} else if (wtex_var.get_type() == Variant::OBJECT) {
+				Object *t = wtex_var;
+				if (t) {
+					world_tex = t->call(SNAME("get_rid"));
+				}
+			}
+			RID world_rd = world_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(world_tex) : RID();
+			const bool has_world = world_rd.is_valid() && wrect.z > 0.0f && wrect.w > 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_WORLD_MAP] = has_world ? float(bindless_block->add_texture(world_rd)) : 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_WORLD_RECT_X] = wrect.x;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_WORLD_RECT_Y] = wrect.y;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_WORLD_RECT_W] = has_world ? wrect.z : 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_WORLD_RECT_H] = has_world ? wrect.w : 0.0f;
 		}
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
 		// Water caustics (raytracing_caustics_inc.glsl): the slot written turns every frame; the

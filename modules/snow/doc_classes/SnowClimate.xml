@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SnowClimate" inherits="Resource" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A place's winter weather, and the snowpack a season of it leaves on the terrain.
+	</brief_description>
+	<description>
+		A recipe for the weather of a place and, once [method SnowCover3D.bake_climate] has run a season of it over the terrain, the snowpack that season left: snow water, density, liquid water and albedo per cell, and the cornices on lee crests. Assign it to [member SnowCover3D.climate] and the cover keeps a coarse world tier of snow over the whole baked square, carries it on with the weather, seeds the near square from it and draws it on materials beyond the near square.
+		The weather is a daily stochastic generator in the manner of WGEN (Richardson 1981): wet and dry days from a two-state Markov chain ([member wet_after_dry], [member wet_after_wet]), exponential amounts on wet days, the day's mean temperature a seasonal harmonic between [member january_temperature] and [member july_temperature] plus a persistent residual, a daily cycle on top, a Weibull wind speed around a prevailing direction, stormier on wet days. The sun follows [member latitude] and the date; clouds dim it (Kasten and Czeplak 1980). The bake steps the same snowpack model as [SnowCover3D]: rain or snow by temperature (Jennings et al. 2018), more precipitation higher up ([member precipitation_gradient]), settling, melt by temperature and sun on each slope, SnowSlide, and wind drift by Winstral's Sx, so a mountain gets a snow line, shaded faces that keep their snow, sunny faces that lose it and loaded lee slopes.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="clear_result">
+			<return type="void" />
+			<description>
+				Forgets the baked snowpack, keeping the recipe.
+			</description>
+		</method>
+		<method name="is_baked" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] once a bake has stored a snowpack.
+			</description>
+		</method>
+		<method name="sample_days">
+			<return type="PackedFloat32Array" />
+			<param index="0" name="days" type="int" />
+			<description>
+				Runs the weather generator from its seed for [param days] days and returns four floats a day: mean temperature at [member base_height] (C), water (mm), mean wind speed (m/s) and [code]1[/code] for a wet day. For checks and tuning.
+			</description>
+		</method>
+		<method name="seasonal_temperature" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="day_of_year" type="float" />
+			<description>
+				The seasonal mean temperature at [member base_height] on a day of the year, coldest in late January.
+			</description>
+		</method>
+		<method name="sun_direction" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="day_of_year" type="float" />
+			<param index="1" name="hour" type="float" />
+			<description>
+				The direction toward the sun at [member latitude] on a day of the year and a local solar hour: x east, y up, z south (north is -z). Below the horizon when y is negative.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="albedo" type="PackedFloat32Array" setter="set_albedo" getter="get_albedo" default="PackedFloat32Array()">
+			Baked: the pack's albedo per cell.
+		</member>
+		<member name="base_height" type="float" setter="set_base_height" getter="get_base_height" default="0.0">
+			The height the temperatures hold at, in metres; the air cools by [member SnowCover3D.lapse_rate] above it.
+		</member>
+		<member name="cornice_x" type="PackedFloat32Array" setter="set_cornice_x" getter="get_cornice_x" default="PackedFloat32Array()">
+			Baked: per cell, the cornice's overhang along x in metres (with [member cornice_z], its length along the wind that built it).
+		</member>
+		<member name="cornice_z" type="PackedFloat32Array" setter="set_cornice_z" getter="get_cornice_z" default="PackedFloat32Array()">
+			Baked: per cell, the cornice's overhang along z in metres.
+		</member>
+		<member name="daily_range" type="float" setter="set_daily_range" getter="get_daily_range" default="8.0">
+			The swing from the coldest to the warmest hour on a dry day, in degrees; wet days swing less.
+		</member>
+		<member name="days" type="int" setter="set_days" getter="get_days" default="182">
+			How many days the bake runs.
+		</member>
+		<member name="density" type="PackedFloat32Array" setter="set_density" getter="get_density" default="PackedFloat32Array()">
+			Baked: the pack's density per cell, kg/m3.
+		</member>
+		<member name="january_temperature" type="float" setter="set_january_temperature" getter="get_january_temperature" default="-1.0">
+			Mean temperature of the coldest month at [member base_height], in C.
+		</member>
+		<member name="july_temperature" type="float" setter="set_july_temperature" getter="get_july_temperature" default="17.0">
+			Mean temperature of the warmest month at [member base_height], in C.
+		</member>
+		<member name="latitude" type="float" setter="set_latitude" getter="get_latitude" default="46.0">
+			Latitude in degrees, north positive; sets the sun's path.
+		</member>
+		<member name="liquid" type="PackedFloat32Array" setter="set_liquid" getter="get_liquid" default="PackedFloat32Array()">
+			Baked: liquid water held in the pack per cell, mm.
+		</member>
+		<member name="precipitation_gradient" type="float" setter="set_precipitation_gradient" getter="get_precipitation_gradient" default="0.06">
+			How much more precipitation falls per 100 m above [member base_height], as a share (0.06: 6% more each 100 m).
+		</member>
+		<member name="prevailing_wind_from" type="float" setter="set_prevailing_wind_from" getter="get_prevailing_wind_from" default="270.0">
+			The bearing the prevailing wind comes from, degrees clockwise from north (north is -z): 270 is a westerly, blowing toward +x.
+		</member>
+		<member name="rect" type="Rect2" setter="set_rect" getter="get_rect" default="Rect2(0, 0, 0, 0)">
+			Baked: the square the snowpack covers, in world XZ.
+		</member>
+		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="0">
+			Baked: cells along each side of [member rect]; 0 when not baked.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="1">
+			The weather generator's seed; the same seed gives the same winter.
+		</member>
+		<member name="start_day" type="int" setter="set_start_day" getter="get_start_day" default="274">
+			The day of the year the bake starts (274: 1 October).
+		</member>
+		<member name="step_hours" type="int" setter="set_step_hours" getter="get_step_hours" default="3">
+			Hours per bake step.
+		</member>
+		<member name="storm_wind_factor" type="float" setter="set_storm_wind_factor" getter="get_storm_wind_factor" default="1.8">
+			Mean wind on wet days over dry days.
+		</member>
+		<member name="swe" type="PackedFloat32Array" setter="set_swe" getter="get_swe" default="PackedFloat32Array()">
+			Baked: snow water equivalent per cell, mm.
+		</member>
+		<member name="temperature_persistence" type="float" setter="set_temperature_persistence" getter="get_temperature_persistence" default="0.7">
+			Lag-one correlation of the daily temperature residual: how long cold and warm spells last.
+		</member>
+		<member name="temperature_variability" type="float" setter="set_temperature_variability" getter="get_temperature_variability" default="3.0">
+			Standard deviation of the daily temperature residual, in degrees.
+		</member>
+		<member name="wet_after_dry" type="float" setter="set_wet_after_dry" getter="get_wet_after_dry" default="0.3">
+			The chance a day is wet after a dry day.
+		</member>
+		<member name="wet_after_wet" type="float" setter="set_wet_after_wet" getter="get_wet_after_wet" default="0.65">
+			The chance a day is wet after a wet day.
+		</member>
+		<member name="wet_day_precipitation" type="float" setter="set_wet_day_precipitation" getter="get_wet_day_precipitation" default="9.0">
+			Mean water on a wet day, in mm (exponentially distributed).
+		</member>
+		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="5.0">
+			Mean daily wind at 10 m on dry days, in m/s.
+		</member>
+		<member name="wind_spread" type="float" setter="set_wind_spread" getter="get_wind_spread" default="30.0">
+			Standard deviation of the day's wind direction around the prevailing one, in degrees.
+		</member>
+	</members>
+</class>

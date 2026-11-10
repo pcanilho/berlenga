@@ -181,7 +181,8 @@ bool snow_erodible(vec2 p) {
 		return false;
 	}
 	vec4 s = textureLod(snow_tex, uv, 0.0);
-	return s.r > 0.02 && s.b < 0.05 && s.a < max_density;
+	// Loose: a light pack, or a fresh surface on a settled one (albedo above 0.78 is snow a couple of days old).
+	return s.r > 0.02 && s.b < 0.05 && (s.a < max_density || s.g > 0.78);
 }
 
 void snow_spawn(inout vec4 c, inout vec3 p, uint s) {

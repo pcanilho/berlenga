@@ -144,7 +144,7 @@
 		<member name="snowfall_rate_override" type="float" setter="set_snowfall_rate_override" getter="get_snowfall_rate_override" default="-1.0">
 			The snowfall in millimetres of water an hour; negative takes it from the snowpack and the weather.
 		</member>
-		<member name="streak_time" type="float" setter="set_streak_time" getter="get_streak_time" default="0.0167">
+		<member name="streak_time" type="float" setter="set_streak_time" getter="get_streak_time" default="0.016666668">
 			The exposure the streaks show, in seconds: each flake and grain is drawn stretched along the distance it moves in this time.
 		</member>
 		<member name="threshold_wind_override" type="float" setter="set_threshold_wind_override" getter="get_threshold_wind_override" default="-1.0">

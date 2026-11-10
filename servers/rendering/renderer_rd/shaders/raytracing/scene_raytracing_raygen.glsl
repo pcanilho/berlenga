@@ -1805,13 +1805,35 @@ void main() {
 		if (snow_p.w > 0.5) {
 			vec4 srect = vec4(get_rt_param(RT_PARAM_SNOW_RECT_X), get_rt_param(RT_PARAM_SNOW_RECT_Y),
 					get_rt_param(RT_PARAM_SNOW_RECT_W), get_rt_param(RT_PARAM_SNOW_RECT_H));
+			vec4 wrect = vec4(get_rt_param(RT_PARAM_SNOW_WORLD_RECT_X), get_rt_param(RT_PARAM_SNOW_WORLD_RECT_Y),
+					get_rt_param(RT_PARAM_SNOW_WORLD_RECT_W), get_rt_param(RT_PARAM_SNOW_WORLD_RECT_H));
+			vec3 spos = h.hit_pos + rt_origin.xyz;
+			vec4 s = vec4(0.0);
+			bool have = false;
+			// The world tier, then the near square faded in over its outer tenth (as the raster shader).
+			if (wrect.z > 0.0) {
+				vec2 wuv = (spos.xz - wrect.xy) / wrect.zw;
+				if (all(greaterThanEqual(wuv, vec2(0.0))) && all(lessThanEqual(wuv, vec2(1.0)))) {
+					uint wmap = uint(get_rt_param(RT_PARAM_SNOW_WORLD_MAP));
+					vec2 wsize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), 0));
+					vec2 wh = 0.5 / max(wsize, vec2(1.0));
+					s = textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), clamp(wuv, wh, 1.0 - wh), 0.0);
+					have = true;
+				}
+			}
 			if (srect.z > 0.0) {
-				uint smap = uint(get_rt_param(RT_PARAM_SNOW_MAP));
-				vec2 ssize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), 0));
-				vec2 half_texel = 0.5 / max(ssize, vec2(1.0));
-				vec3 spos = h.hit_pos + rt_origin.xyz;
-				vec2 suv = clamp((spos.xz - srect.xy) / srect.zw, half_texel, 1.0 - half_texel);
-				vec4 s = textureLod(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), suv, 0.0);
+				vec2 nuv = (spos.xz - srect.xy) / srect.zw;
+				vec2 ne = min(nuv, 1.0 - nuv);
+				float nw = wrect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : 1.0;
+				if (nw > 0.0) {
+					uint smap = uint(get_rt_param(RT_PARAM_SNOW_MAP));
+					vec2 ssize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), 0));
+					vec2 half_texel = 0.5 / max(ssize, vec2(1.0));
+					s = mix(s, textureLod(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
+					have = true;
+				}
+			}
+			if (have) {
 				// Niu and Yang (2007) snow-covered fraction.
 				snow_cover *= tanh(max(s.r, 0.0) / (0.025 * max(s.a * 10.0, 0.5)));
 				snow_albedo = s.g;

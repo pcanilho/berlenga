@@ -387,3 +387,70 @@ pack agree by construction but not flake by flake. Flakes stop at the shelter he
 sees roofs from above only. Under path tracing a flake's alpha is a stochastic hit, so the faintest
 streaks (flakes blurred by gusts) need the denoiser or more samples; at 16 samples without one
 the flakes are there but fewer read than in raster.
+
+## Stage 4: mountain climate, snow line, drifts and cornices (built 10 Nov 2026)
+
+`SnowClimate` (a resource), `SnowCover3D.bake_climate()` and the world tier, `SnowCornice3D`
+(modules/snow). A range should have a winter's snow on it when the game loads, laid by the same
+rules that carry it on: the snow line where the lapse rate puts it, shaded faces white and sunny
+ones bare, lee slopes loaded and cornices on the crests.
+
+- **A winter's weather, WGEN (Richardson 1981).** The generator behind every hydrology weather
+  generator since: wet and dry days from a two-state Markov chain (chance of a wet day after a dry
+  and after a wet one), exponential amounts on wet days, the day's mean temperature a seasonal
+  harmonic between the January and July means plus a lag-one autoregressive residual (cold and
+  warm spells), wet days a degree cooler and dry days warmer by as much again over the wet share,
+  a daily cycle on top. Wind: Weibull speed (shape 2) around a mean, stormier on wet days,
+  direction scattered around the prevailing one. Sun: declination (Cooper 1969) and hour angle at
+  the latitude, the beam through the air mass (Meinel) and the clouds (Kasten and Czeplak 1980).
+- **The bake.** An internal cover over the whole terrain (for example 4 km at 16 m) steps the
+  stage 1 model through the season in 3 hour steps, driven by the generator instead of the weather
+  map: rain or snow by Jennings, more precipitation higher up (orographic gradient, 6% per 100 m
+  by default, the order measured across the Alps), settling, melt by temperature and by the sun
+  on each slope, SnowSlide, and drift by Winstral's Sx, baked once per 22.5 degrees of wind
+  direction and reused. October to April over 256 x 256 cells takes 3 to 5 s.
+- **The world tier.** With a baked climate the cover keeps that coarse pack as a second square,
+  carried on by the live weather every eighth update (3.7 ms on 256 x 256 cells). Cells entering
+  the near square start from it, then SnowSlide on the finer slopes sheds what they cannot hold.
+  Beyond the near square materials read it: `snow_world_map` and `snow_world_rect` globals, the
+  near square faded in over its outer tenth, in the raster shader and the path tracer alike
+  (`rt_params` 50 to 54), so a range far off shows its snow line.
+- **Cornices, Yu et al. (2023); Hancock et al. (2020).** Wind-tunnel cornices only grow between
+  the threshold wind and twice it, fastest about 40% above it; below there is no transport,
+  above it erosion wins. Per crest cell (the crest not overtopped upwind, the ground falling at
+  30 degrees or more within two cells downwind) a cornice grows along the wind at up to 1.6 cm an
+  hour (the field rate) times that band, from loose dry snow upwind (light, or fresh on top), to
+  12 m at most; past twice the threshold it is scoured back, and in thaws it wastes back 4 mm an
+  hour per degree. `SnowCornice3D` sweeps a profile along each run of crest cells near the
+  camera: a slab out from the crest top, as thick as it is long at the root and thinning to a lip
+  that sags as it grows (field cornices; the wind-tunnel slab thickens more slowly than it
+  lengthens), its roots reaching through the crest's snow to the ground, with collision.
+- **Loose snow.** Stage 3's blowing snow and the cornices count a pack as loose when it is light
+  (under 350 kg/m3) or its surface is fresh (albedo above 0.78, about two days), since a settled
+  pack under new snow still blows.
+
+**Checks (`--test=climate`, all pass).** Ten years of the generator: January mean -1.4 C against
+-1.0, wet-day share 0.454 against the chain's 0.462, 9.0 mm on a wet day against 9.0; the noon
+sun at 46 N 20.6 deg at midwinter and 67.4 at midsummer. A winter on the 700 m mountain (0.5 C
+in January at its foot): nothing below 100 m by April, half covered from 400 m, all covered from
+600 m; north faces 272 mm against 4 on south faces at 250 to 500 m; the lee (east) 232 mm against
+82 windward at 300 to 600 m; the near square starts within 0.2% of the world tier. A cold ridge
+with westerlies: 3.9 to 4.2 m cornices along the lee crest pointing east, none windward, none
+with too little wind, none in gales; the mesh sweeps 125 pieces and a ray halfway out stops on
+the overhang above the face in 20 places of 20.
+
+**Cost.** The bake: seconds, once (at edit time or on first load). The world tier: 3.7 ms of
+worker-thread time every eighth update of the near square, so about 0.5 ms a second at the default
+rate. The cornice mesh: rebuilt every 64 m of camera travel. GPU: two more texture reads where a
+material has snow, both renderers; timed on the PC queue.
+
+**Known limits.** Drift redistributes falling snow (Winstral's Sx); snow already on the ground is
+not carried, so drift and cornices are as coarse as the world tier's cells. The near square's
+detail (prints, its own drift) does not feed back into the world tier. Cornices on a crest of
+like cells come out alike; they waste back but do not break off as slabs. The world tier's
+precipitation away from the weather map takes the map's edge.
+
+**Raster and path traced.** The mountain matches at 100%: the same snow line, patches and
+shaded faces, the path tracer's shadows crisper. Under the cornice the path tracer lights the
+undercut with light bounced off the snow face below, as real undercuts glow; raster, without
+bounce light, leaves it dark.
