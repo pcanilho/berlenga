@@ -30,6 +30,8 @@
 
 #include "grass_field_3d.h"
 
+#include "vegetation_field_3d.h"
+
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
@@ -294,6 +296,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	if (r.is_null()) {
 		r.instantiate(); // Defaults: dry land only.
 	}
+	const VegetationField3D *canopy = _get_canopy(r.ptr());
 	LocalVector<Transform3D> xforms;
 	LocalVector<Color> customs;
 	// Wider blades where fewer remain, so the field keeps its coverage at a distance.
@@ -312,7 +315,11 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			const Vector3 p(x, ground_y, z);
 			float y = ground_y;
 			if (p_map) {
-				if (rank >= keep * r->get_suitability(p_map, p)) {
+				float suit = r->get_suitability(p_map, p);
+				if (canopy && suit > 0.0f) {
+					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_shade_at(p));
+				}
+				if (rank >= keep * suit) {
 					continue;
 				}
 				y = p_map->get_height_at(p);
@@ -460,13 +467,18 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 		if (r.is_null()) {
 			r.instantiate();
 		}
+		const VegetationField3D *canopy = _get_canopy(r.ptr());
 		Vector<uint8_t> data;
 		data.resize(res * res);
 		uint8_t *w = data.ptrw();
 		for (int z = 0; z < res; z++) {
 			for (int x = 0; x < res; x++) {
 				const Vector3 p(rect.x + (x + 0.5f) * size / res, 0.0f, rect.y + (z + 0.5f) * size / res);
-				w[z * res + x] = uint8_t(CLAMP(r->get_suitability(p_map, p), 0.0f, 1.0f) * 255.0f + 0.5f);
+				float suit = r->get_suitability(p_map, p);
+				if (canopy && suit > 0.0f) {
+					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_shade_at(p));
+				}
+				w[z * res + x] = uint8_t(CLAMP(suit, 0.0f, 1.0f) * 255.0f + 0.5f);
 			}
 		}
 		img = Image::create_from_data(res, res, false, Image::FORMAT_L8, data);
@@ -818,6 +830,17 @@ GrassField3D::~GrassField3D() {
 	m_name = m_value; \
 	rebuild();
 
+void GrassField3D::set_canopy_field(const NodePath &p_path) {
+	GRASS_SET_REBUILD(canopy_field, p_path)
+}
+
+VegetationField3D *GrassField3D::_get_canopy(const PlantSpecies *p_rules) const {
+	if (!p_rules->uses_shade() || canopy_field.is_empty() || !is_inside_tree()) {
+		return nullptr;
+	}
+	return Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+}
+
 void GrassField3D::set_data_map(const NodePath &p_path) {
 	GRASS_SET_REBUILD(data_map, p_path)
 }
@@ -896,6 +919,7 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD(#m_get), &GrassField3D::m_get);
 	GRASS_BIND(set_data_map, get_data_map, "path")
 	GRASS_BIND(set_rules, get_rules, "rules")
+	GRASS_BIND(set_canopy_field, get_canopy_field, "path")
 	GRASS_BIND(set_density, get_density, "density")
 	GRASS_BIND(set_blade_height, get_blade_height, "height")
 	GRASS_BIND(set_blade_width, get_blade_width, "width")
@@ -936,6 +960,7 @@ void GrassField3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rules", PROPERTY_HINT_RESOURCE_TYPE, "PlantSpecies"), "set_rules", "get_rules");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "0.1,400,0.1,or_greater,suffix:/m²"), "set_density", "get_density");
 	ADD_GROUP("Blades", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "blade_height", PROPERTY_HINT_NONE, "suffix:m"), "set_blade_height", "get_blade_height");
