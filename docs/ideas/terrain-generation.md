@@ -431,17 +431,19 @@ Plan:
   the shores and the dam hold the surface. Under water (sea and lakes) both fade out, so beds stay smooth.
 - Rivers: routed again with the water (Kahn order): lake cells drain to their outlet, the sea ends everything.
   `get_rivers()` ends rivers at the first water cell, on the water (`ends_in` sea, lake, river or edge; `lake`;
-  `from_lake`), and an outflow river starts at each lake's outlet carrying its whole catchment.
+  `from_lake`), and an outflow river starts at each lake's outlet carrying its whole catchment. Where a lake spills over a col
+  rather than its dam, the outflow follows the flood's own path from the lake to the spill cell, so it never stalls
+  on flat ground or loops back.
 - Water: `build_water(parent)` makes PhysXWaterSurface3D by name: the sea at sea level over the generated
   rectangle (`seabed_from_floor`, `shore_waves`, `open_sea_beyond`, `follow_weather`, three `wave_cascades`, its open-sea `depth` the seabed's mean depth along the edge,
   `render_extent` out to 20 km or more), and one per lake at its level with `surface_mesh` set to the lake's outline
-  (grid quads with a corner under water and none on lower ground outside it). Without PhysX, plain mesh sheets. Call
+  (grid quads with a corner under water and none on lower ground outside it), `follow_weather` on. Without PhysX, plain mesh sheets. Call
   it before `build_river_paths()`, which then sets each river's `mouth_target` to the sea or lake it ends in.
 - Queries: `get_lake_results()` (level, bed, depth, area, catchment, endorheic, center, rect, dam, outlet),
   `get_water_level()`, `get_water_depth()`, `get_water_image()`, `has_sea_result()`.
 
 Cost (cloud CPU, one thread): coast, lakes (with up to 512 dams probed) and routing take 28 ms of a 3.9 s
-generate() at 257^2 cells and 199 ms of 19.4 s at 513^2. Bench: `--test` (52 checks, 14 for coast and lakes),
+generate() at 257^2 cells and 199 ms of 19.4 s at 513^2. Bench: `--test` (54 checks, 16 for coast and lakes),
 `--coast --geology=map.png` (island map, lakes listed), `--out=... --coast [--focus=lake|coast]`. Media in
 fork/terrain/coast/ (raster and path traced, same frames).
 

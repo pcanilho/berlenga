@@ -164,6 +164,7 @@ private:
 		real_t catchment = 0.0;
 		bool endorheic = false;
 		int cells = 0;
+		LocalVector<int32_t> outflow; // over a col: outlet down to where it drains away
 		Vector2i lo;
 		Vector2i hi;
 	};

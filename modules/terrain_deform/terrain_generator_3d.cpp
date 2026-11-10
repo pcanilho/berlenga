@@ -1117,6 +1117,9 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 		info.catchment = lake.catchment;
 		info.endorheic = lake.endorheic;
 		info.cells = int(lake.cells.size());
+		for (int32_t c : lake.outflow) {
+			info.outflow.push_back(c);
+		}
 		info.lo = Vector2i(nx, ny);
 		info.hi = Vector2i(-1, -1);
 		for (int32_t c : lake.cells) {
@@ -1235,27 +1238,11 @@ void TerrainGenerator3D::_route_rivers() {
 			rec2[i] = l.outlet >= 0 ? l.outlet : i;
 		}
 	}
+	// Over a col the water follows the flood's path out of the basin, not the old drainage (which led back in).
 	for (uint32_t k = 0; k < lake_info.size(); k++) {
-		const LakeInfo &l = lake_info[k];
-		if (l.outlet >= 0 && l.outlet != l.dam) {
-			// A col: the water goes down its far side, to the lowest neighbour.
-			int32_t best = l.outlet;
-			const int x = l.outlet % nx;
-			const int z = l.outlet / nx;
-			for (int oz = -1; oz <= 1; oz++) {
-				for (int ox = -1; ox <= 1; ox++) {
-					const int xx = x + ox;
-					const int zz = z + oz;
-					if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
-						continue;
-					}
-					const int j = zz * nx + xx;
-					if (water_body[j] != int32_t(2 + k) && heights[j] < heights[best]) {
-						best = j;
-					}
-				}
-			}
-			rec2[l.outlet] = best;
+		const LocalVector<int32_t> &path = lake_info[k].outflow;
+		for (uint32_t q = 0; q + 1 < path.size(); q++) {
+			rec2[path[q]] = path[q + 1];
 		}
 	}
 	river_area.resize(n);
@@ -1545,6 +1532,7 @@ Array TerrainGenerator3D::build_water(Node *p_parent) {
 			lake->set("render_extent", 0.0);
 			lake->set("wind_speed", 4.0);
 			lake->set("wave_amplitude", 0.2);
+			lake->set("follow_weather", true);
 		}
 		lake->set_meta("level", l.level);
 		attach(lake);

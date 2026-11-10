@@ -31,7 +31,7 @@
 			<return type="Array" />
 			<param index="0" name="parent" type="Node" />
 			<description>
-				Creates the water of the last [method generate] under [param parent] and returns the nodes: a [code]PhysXWaterSurface3D[/code] (by class name, when the PhysX module is in the build) for the sea, at sea level over the generated rectangle with [code]seabed_from_floor[/code], [code]shore_waves[/code], [code]open_sea_beyond[/code] and [code]follow_weather[/code] on and three [code]wave_cascades[/code], and one per lake at its level with [code]surface_mesh[/code] set to the lake's outline. Without the PhysX module, plain [MeshInstance3D] sheets. Call it after the ground is written (the water reads its seabed through physics) and before [method build_river_paths], which then sets each river's [code]mouth_target[/code] to the sea or lake it ends in.
+				Creates the water of the last [method generate] under [param parent] and returns the nodes: a [code]PhysXWaterSurface3D[/code] (by class name, when the PhysX module is in the build) for the sea, at sea level over the generated rectangle with [code]seabed_from_floor[/code], [code]shore_waves[/code], [code]open_sea_beyond[/code] and [code]follow_weather[/code] on and three [code]wave_cascades[/code], and one per lake at its level with [code]surface_mesh[/code] set to the lake's outline and [code]follow_weather[/code] on. Without the PhysX module, plain [MeshInstance3D] sheets. Call it after the ground is written (the water reads its seabed through physics) and before [method build_river_paths], which then sets each river's [code]mouth_target[/code] to the sea or lake it ends in.
 			</description>
 		</method>
 		<method name="clear_result">

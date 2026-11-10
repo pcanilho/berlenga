@@ -130,6 +130,9 @@ public:
 		int32_t dam = -1; // the dam's spillway cell
 		int32_t outlet = -1; // the dry cell the water leaves by (the spillway or a col); -1 when it has no outflow
 		int32_t spill_to = -1; // the cell below the outlet
+		// Over a col: the cells from the outlet down to the first cell that drains away (outlet first); the water
+		// takes this path, which the old drainage does not (it ran back into the basin).
+		std::vector<int32_t> outflow;
 		double catchment = 0.0; // m^2
 		bool endorheic = false;
 	};
@@ -281,6 +284,7 @@ public:
 		}
 		closed[seed] = 1;
 		heap.push(Item(p_h[seed], seed));
+		std::vector<int32_t> from(n, -1); // the popped cell that reached each cell
 		std::vector<int32_t> popped;
 		double level = -1e30;
 		int32_t rim = -1;
@@ -318,6 +322,7 @@ public:
 				const int j = zz * nx + xx;
 				if (!closed[j]) {
 					closed[j] = 1;
+					from[j] = c;
 					heap.push(Item(p_h[j], j));
 				}
 			}
@@ -369,10 +374,63 @@ public:
 		lake.level = lake_level;
 		lake.dam = p_site;
 		lake.bed = lake_level;
-		for (int32_t c : popped) {
-			if (double(p_h[c]) < lake_level - 0.01) {
+		// The lake: cells under the water joined to its deepest one through cells under the water (a hollow beyond
+		// the col, reached by the flood over it, is not part of it).
+		std::vector<uint8_t> wet(n, 0);
+		{
+			int32_t deepest = -1;
+			for (int32_t c : popped) {
+				if (double(p_h[c]) < lake_level - 0.01) {
+					wet[c] = 1;
+					if (deepest < 0 || p_h[c] < p_h[deepest]) {
+						deepest = c;
+					}
+				}
+			}
+			std::vector<uint8_t> in(n, 0);
+			std::vector<int32_t> todo;
+			if (deepest >= 0) {
+				todo.push_back(deepest);
+				in[deepest] = 1;
+			}
+			for (size_t q = 0; q < todo.size(); q++) {
+				const int32_t c = todo[q];
 				lake.cells.push_back(c);
 				lake.bed = std::min(lake.bed, double(p_h[c]));
+				const int x = c % nx;
+				const int z = c / nx;
+				for (int k = 0; k < 8; k++) {
+					const int xx = x + DX[k];
+					const int zz = z + DZ[k];
+					if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+						continue;
+					}
+					const int j = zz * nx + xx;
+					if (wet[j] && !in[j]) {
+						in[j] = 1;
+						todo.push_back(j);
+					}
+				}
+			}
+			wet.swap(in);
+		}
+		// Over a col: the flood's own path from the lake to where it spilled, from the last lake cell on it.
+		if (!lake.endorheic && !full && spill >= 0) {
+			std::vector<int32_t> path;
+			for (int32_t c = spill; c >= 0; c = from[c]) {
+				path.push_back(c);
+			}
+			std::reverse(path.begin(), path.end());
+			int last_wet = -1;
+			for (int k = 0; k < int(path.size()); k++) {
+				if (wet[path[k]]) {
+					last_wet = k;
+				}
+			}
+			if (last_wet >= 0 && last_wet + 1 < int(path.size())) {
+				lake.outflow.assign(path.begin() + last_wet + 1, path.end());
+				lake.outlet = lake.outflow.front();
+				lake.spill_to = spill;
 			}
 		}
 		if (double(lake.cells.size()) * p.dx * p.dx < p.min_area) {
