@@ -188,26 +188,36 @@ cloth and hair can carry a snow mask; the terrain generator's masks feed the cli
 2. Deep snow surface + deformation + collision (shares the grass contact splat).
 3. Falling and blowing snow particles.
 4. Mountain climate bake on the world tier (wind drift, cornices).
-5. Appearance: glints, SSS, wet melting snow.
+5. Appearance: glints, SSS, wet melting snow (built).
 
 ## Sources
 
-Barre-Brisebois, Deformable Snow Rendering in Batman: Arkham Origins, GDC 2014. Michels,
-Sikachev et al., Labs R&D: Rendering Techniques in Rise of the Tomb Raider, SIGGRAPH 2015.
-Surricchio, Reinventing the Wheel for Snow Rendering, GDC 2023 (God of War Ragnarok).
-Fearing, Computer Modelling of Fallen Snow, SIGGRAPH 2000. Festenberg and Gumhold,
-Diffusion-Based Snow Cover Generation, CGF 30(6) 2011. Jennings and Molotch, HESS 23, 2019;
-Jennings et al., Nature Communications 9, 2018. Hedstrom and Pomeroy, Hydrological Processes
-12, 1998. Verseghy, CLASS, Int. J. Climatology 11, 1991. Hock, J. Hydrology 282, 2003.
-Bernhardt and Schulz, SnowSlide, GRL 37, 2010. Winstral, Elder and Davis, J. Hydrometeorology
-3, 2002. Liston and Sturm, J. Glaciology 44, 1998. Li and Pomeroy, J. Applied Meteorology 36,
-1997. Stomakhin et al., A Material Point Method for Snow Simulation, SIGGRAPH 2013. Bekker,
-Introduction to Terrain-Vehicle Systems, 1969. Wiscombe and Warren, J. Atmos. Sci. 37, 1980.
-Locatelli and Hobbs, J. Geophys. Res. 79, 1974. Deliot and Belcour, EGSR 2023. Gunn and
-Marshall, J. Meteorology 15, 1958. Magono and Nakamura, J. Meteor. Soc. Japan 43, 1965. Nemes et
-al., Snowflakes in a turbulent flow, GRL 44, 2017. Pomeroy, J. Glaciology 35, 1989. Pomeroy and
-Gray, Water Resources Research 26, 1990. Rasmussen et al., J. Applied Meteorology 38, 1999.
-Garg and Nayar, Photorealistic Rendering of Rain Streaks, SIGGRAPH 2006.
+Barre-Brisebois, Deformable Snow Rendering in Batman: Arkham Origins, GDC 2014. Michels, Sikachev et
+al., Labs R&D: Rendering Techniques in Rise of the Tomb Raider, SIGGRAPH 2015. Surricchio,
+Reinventing the Wheel for Snow Rendering, GDC 2023 (God of War Ragnarok). Fearing, Computer
+Modelling of Fallen Snow, SIGGRAPH 2000. Festenberg and Gumhold, Diffusion-Based Snow Cover
+Generation, CGF 30(6) 2011. Jennings and Molotch, HESS 23, 2019; Jennings et al., Nature
+Communications 9, 2018. Hedstrom and Pomeroy, Hydrological Processes 12, 1998. Verseghy, CLASS, Int.
+J. Climatology 11, 1991. Hock, J. Hydrology 282, 2003. Bernhardt and Schulz, SnowSlide, GRL 37,
+2010. Winstral, Elder and Davis, J. Hydrometeorology 3, 2002. Liston and Sturm, J. Glaciology 44,
+1998. Li and Pomeroy, J. Applied Meteorology 36, 1997. Stomakhin et al., A Material Point Method for
+Snow Simulation, SIGGRAPH 2013. Bekker, Introduction to Terrain-Vehicle Systems, 1969. Wiscombe and
+Warren, J. Atmos. Sci. 37, 1980. Locatelli and Hobbs, J. Geophys. Res. 79, 1974. Deliot and Belcour,
+Real-Time Rendering of Glinty Appearances using Distributed Binomial Laws on Anisotropic Grids, HPG
+2023. Gunn and Marshall, J. Meteorology 15, 1958. Magono and Nakamura, J. Meteor. Soc. Japan 43,
+1965. Nemes et al., Snowflakes in the atmospheric surface layer, J. Fluid Mech. 814, 2017. Pomeroy,
+J. Glaciology 35, 1989. Pomeroy and Gray, Water Resources Research 26, 1990. Rasmussen et al., J.
+Applied Meteorology 38, 1999. Garg and Nayar, Photorealistic Rendering of Rain Streaks, SIGGRAPH
+2006. Richardson, Stochastic simulation of daily precipitation, temperature, and solar radiation,
+Water Resources Research 17, 1981. Cooper, The absorption of radiation in solar stills, Solar Energy
+12, 1969. Kasten and Czeplak, Solar and terrestrial radiation dependent on the amount and type of
+cloud, Solar Energy 24, 1980. Yu et al., Wind conditions for snow cornice formation in a wind
+tunnel, The Cryosphere 17, 2023. Hancock et al., Quantifying seasonal cornice dynamics using a
+terrestrial laser scanner in Svalbard, Norway, NHESS 20, 2020. Naito and Kobayashi, Experimental
+study on the occurrence of cornice, Low Temperature Science 44, 1986. Zirr and Kaplanyan, Real-time
+Rendering of Procedural Multiscale Materials, I3D 2016. Taylor and Lee, Simple guidelines for
+estimating wind speed variations due to small-scale topographic features, Climatological Bulletin
+18, 1984. Warren, Optical properties of snow, Reviews of Geophysics 20, 1982.
 
 ## Stage 1: the snowpack and snow on materials (built 10 Nov 2026)
 
@@ -420,8 +430,10 @@ ones bare, lee slopes loaded and cornices on the crests.
   above it erosion wins. Per crest cell (the crest not overtopped upwind, the ground falling at
   30 degrees or more within two cells downwind) a cornice grows along the wind at up to 1.6 cm an
   hour (the field rate) times that band, from loose dry snow upwind (light, or fresh on top), to
-  12 m at most; past twice the threshold it is scoured back, and in thaws it wastes back 4 mm an
-  hour per degree. `SnowCornice3D` sweeps a profile along each run of crest cells near the
+  12 m at most; past twice the threshold it is scoured back, and in thaws it wastes back 0.5 mm an
+  hour per degree (a snow degree-day factor over a dense slab). The wind at the crest is sped up by
+  1.6 H / L (Taylor and Lee 1984; H the crest above the ground 64 m around, at most 60%), so
+  milder, coarser ranges grow them too (stage 5 fix). `SnowCornice3D` sweeps a profile along each run of crest cells near the
   camera: a slab out from the crest top, as thick as it is long at the root and thinning to a lip
   that sags as it grows (field cornices; the wind-tunnel slab thickens more slowly than it
   lengthens), its roots reaching through the crest's snow to the ground, with collision.
@@ -454,3 +466,50 @@ precipitation away from the weather map takes the map's edge.
 shaded faces, the path tracer's shadows crisper. Under the cornice the path tracer lights the
 undercut with light bounced off the snow face below, as real undercuts glow; raster, without
 bounce light, leaves it dark.
+
+## Stage 5: sparkle, light through snow, wet snow (built 10 Nov 2026)
+
+In `BaseMaterial3D`'s snow pass, `SnowSurface3D` and the path tracer alike.
+
+- **Sparkle (glints).** Dry snow flashes where single ice grains are smooth facets turned to mirror
+  the sun. The established real-time technique counts facets in the pixel's footprint over a
+  multiscale grid (Zirr and Kaplanyan 2016; Deliot and Belcour 2023, which Unreal's Substrate
+  glints use). Ours is that idea at one facet per grid cell, so it runs the same with or without
+  derivatives (the path tracer's user shaders have none): the footprint is the pixel's angle times
+  the distance, the cell the grain size (2 mm) doubled until it covers the footprint, up to six
+  levels (about 13 cm cells). A quarter of the grains are facets; a cell holds one with the chance
+  of its grain count, its normal GGX-tilted (alpha 0.4) from the snow's, and its weight is the
+  share of the cell it covers, falling as one over the square root of the facets a cell would hold
+  (the contrast of a binomial count). The facet is drawn as a second, near-mirror lobe: the coat
+  lobe, which in raster takes `NORMAL` before the normal map as its normal, so the facet becomes
+  `NORMAL` and `NORMAL_MAP` is solved to land the snow's own shading back on its normal (an earlier
+  try that tilted the whole shading normal made the diffuse noisy at low sun). Ice F0 0.018 is 0.45
+  of the coat's 0.04, times the weight; coat roughness 0.5 (alpha 0.05). The path tracer does the
+  same on camera rays, with a new `coat_normal` on its material result (custom shaders' coats now
+  also lie on `NORMAL` before the normal map, as in raster).
+- **Ice specular.** Godot's F0 is 0.16 specular squared, so ice's 0.018 is specular 0.335; stages 1
+  to 4 had 0.22 (F0 0.008). Fixed on all snow surfaces, flakes and cornices.
+- **Wet snow.** A film of melt water (the pack's liquid, already smoothing the roughness from 0.7 to
+  0.35) puts the glints out: gone at 30% of the water the pack can hold. Trampled snow keeps 30%.
+- **Light through snow.** Snow scatters light millimetres to a few centimetres deep (Warren 1982).
+  Tried on the cornice as subsurface scattering at strength 0.5 (5 mm under the path tracer's
+  random walk): no visible change at the scale of a slab, and grain in the path traced undercut
+  at 16 samples, so it is off by default. The cornice mesh is now closed at the end of every run,
+  so a material that wants it can turn it on; the path tracer already lights the undercut by
+  bounce off the snow below.
+- **Showcase fixes (from the landscape bench).** Cornices: the thaw loss was ten times too strong
+  and crests saw the valley wind; with both fixed a ridge at -4.5 C in January on 16 m cells grows
+  3 m cornices. `get_depth_at`, `get_swe_at`, `get_density_at`, `get_albedo_at` and
+  `get_wetness_at` read the world tier outside the near square.
+
+**Checks.** `--view=sparkle` prints the share of pixels a fifth brighter than the ring around them:
+0.63% on dry new snow against a low sun in raster, 0.28% path traced at 16 samples (the path
+tracer averages the cells under a pixel, as TAA would), 0% after six hours of thaw. `--test=climate`
+adds a milder ridge on 16 m cells: 3.1 m cornices.
+
+**Cost.** One hash, a few lines of maths and a 3 x 3 inverse on snow pixels that glint, the coat
+lobe on those pixels; GPU time on the PC queue.
+
+**Known limits.** One facet per cell, not a binomial count per direction, so at a distance the
+glints thin out rather than turn into a smooth sheen (the rough lobe carries that). Bounce rays in
+the path tracer see plain snow. A material's own clearcoat is replaced on glinting pixels.

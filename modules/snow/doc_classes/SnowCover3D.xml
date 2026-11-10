@@ -89,7 +89,7 @@
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				Returns the depth of snow at [param position], in metres.
+				Returns the depth of snow at [param position], in metres. Outside the near square it reads the world tier when [member climate] has been baked (as do [method get_swe_at], [method get_density_at], [method get_albedo_at] and [method get_wetness_at]).
 			</description>
 		</method>
 		<method name="get_drift_factor" qualifiers="const">
@@ -174,7 +174,7 @@
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
 			<description>
-				The world tier's snow depth at a position, in metres.
+				The world tier's snow depth at a position, in metres, even inside the near square.
 			</description>
 		</method>
 		<method name="get_world_rect" qualifiers="const">

@@ -22,6 +22,8 @@ extends Node3D
 #                     at 10 m (default 4; 15 or more blows the snow off the ground)
 #   --view=climate   a winter baked over the mountain (SnowClimate): snow line, shaded north faces, loaded lee
 #   --view=cornice   a corniced ridge from below its lee face
+#   --view=sparkle    dry new snow at the feet against a low sun ahead: glinting grains; --melt=H hours of thaw
+#                     first wets it (the glints go); prints the share of glinting pixels
 #   --view=props      close: bumpy ground, boxes, a sphere, a 45 degree board and a 70 degree wall after snow
 #   --snow=H          hours of 2 mm/h precipitation (default 24 mountain, 8 props)
 #   --sun=H           then hours of sun (mountain; default 48)
@@ -54,6 +56,7 @@ var walk_t := 0.0
 var walking := false
 var wind := 4.0
 var only := ""
+var melt_hours := 0.0
 
 
 func _ready() -> void:
@@ -70,9 +73,11 @@ func _ready() -> void:
 		elif a.begins_with("--sun="): sun_hours = float(a.substr(6))
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
+		elif a.begins_with("--melt="): melt_hours = float(a.substr(7))
 	if test:
 		if only == "climate":
 			await _run_climate_tests()
+
 		else:
 			await _run_tests()
 		print("SNOW CHECKS: ", "PASS" if fails == 0 else "%d FAILED" % fails)
@@ -609,6 +614,19 @@ func _run_climate_tests() -> void:
 		print("  wind %.0f m/s mean: longest cornice %.2f m toward %s, windward %.2f m" % [ws, crest.length(), str(crest.normalized()), windward])
 	var good: Vector2 = lengths[0][0]
 	_check("cornices grow on the lee crest, out with the wind", good.length() > 1.0 and good.length() < 12.5 and good.normalized().x > 0.9 and lengths[0][1] < 0.01, "%.2f m toward +x, none windward" % good.length())
+	# A milder ridge on a coarse world tier (16 m cells): -4.5 C in January at the crest, 5 m/s mean. The
+	# crest's speed-up (Taylor and Lee 1984) carries the snow; thaws waste it back slowly.
+	await _setup("cornice", 256.0, 64, -2.0)
+	var mild := _climate(5.0)
+	mild.january_temperature = 1.0
+	mild.base_height = -700.0
+	snow.climate = mild
+	snow.bake_climate(Rect2(-2048, -2048, 4096, 4096), 256)
+	var mild_len := 0.0
+	for z in range(-300, 300, 8):
+		for x in range(-40, 24, 4):
+			mild_len = maxf(mild_len, snow.get_cornice_at(Vector3(x, 0, z)).length())
+	_check("cornices on a milder ridge at 16 m cells", mild_len > 1.0, "%.2f m" % mild_len)
 	_check("no cornices in light wind", lengths[1][0].length() < 0.3, "%.2f m" % lengths[1][0].length())
 	_check("gales keep them short", lengths[2][0].length() < good.length() * 0.5, "%.2f m against %.2f m" % [lengths[2][0].length(), good.length()])
 	# The mesh, with collision.
@@ -664,6 +682,8 @@ func _build_view() -> void:
 		await _setup("mountain", 512.0, 256, -2.0)
 	elif view == "cornice":
 		await _setup("cornice", 512.0, 256, -6.0)
+	elif view == "sparkle":
+		await _setup("flat", 32.0, 128, -6.0)
 	else:
 		await _setup("flat", 32.0, 128, -4.0)
 	var env := Environment.new()
@@ -701,6 +721,9 @@ func _build_view() -> void:
 		return
 	elif view == "climate" or view == "cornice":
 		await _build_climate(cam)
+		return
+	elif view == "sparkle":
+		await _build_sparkle(cam)
 		return
 	else:
 		snow.drift_enabled = false
@@ -918,6 +941,52 @@ func _build_climate(cam: Camera3D) -> void:
 	await get_tree().physics_frame
 	await get_tree().process_frame
 	await _save_frame("")
+	get_tree().quit()
+
+
+func _build_sparkle(cam: Camera3D) -> void:
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	# A low sun ahead, shining toward the camera: the grains tilted to mirror it flash.
+	sun.rotation_degrees = Vector3(-12.0, 172.0, 0.0)
+	_add_terrain(32.0, 128, Color(0.36, 0.33, 0.28), 2.0)
+	cam.position = Vector3(0.0, 1.5, 6.0)
+	cam.look_at(Vector3(0.0, 0.0, -3.0))
+	cam.fov = 50.0
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	_precipitate(8.0, 2.0)
+	if melt_hours > 0.0:
+		weather.temperature = 3.0
+		weather.snap_to_settings()
+		weather.advance(1.0)
+		snow.advance(melt_hours * 3600.0)
+	var p := Vector3(0, 0, 0)
+	print("sparkle: depth %.2f m, density %.0f, albedo %.2f" % [snow.get_depth_at(p), snow.get_density_at(p), snow.get_albedo_at(p)])
+	await _save_frame("")
+	# The share of glinting pixels: over the snow below the horizon, those a fifth brighter than the ring of
+	# pixels around them (a wide highlight is not a glint).
+	var img := get_viewport().get_texture().get_image()
+	var w := img.get_width()
+	var h := img.get_height()
+	var lum := PackedFloat32Array()
+	lum.resize(w * h)
+	for y in h:
+		for x in w:
+			var c := img.get_pixel(x, y)
+			lum[y * w + x] = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+	var count := 0
+	var total := 0
+	for y in range(h / 2, h - 2):
+		for x in range(2, w - 2):
+			var ring := 0.0
+			for d in [Vector2i(-2, 0), Vector2i(2, 0), Vector2i(0, -2), Vector2i(0, 2), Vector2i(-2, -2), Vector2i(2, 2), Vector2i(-2, 2), Vector2i(2, -2)]:
+				ring += lum[(y + d.y) * w + x + d.x]
+			total += 1
+			if lum[y * w + x] > ring / 8.0 * 1.2:
+				count += 1
+	print("sparkle: glinting %.3f%% of %d pixels" % [100.0 * count / total, total])
 	get_tree().quit()
 
 

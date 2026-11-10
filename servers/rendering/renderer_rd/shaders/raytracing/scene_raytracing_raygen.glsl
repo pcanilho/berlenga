@@ -1541,6 +1541,41 @@ vec2 rt_prefiltered_dfg(float p_roughness, float p_NdotV) {
 // ============================================================================
 // MAIN
 // ============================================================================
+// Snow sparkle (docs/ideas/snow.md, stage 5): the same function as BaseMaterial3D's raster shader, there
+// with its comments. Returns a facet normal and its weight (0: none) for a footprint in metres.
+vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
+	const float grain = 0.002;
+	const float share = 0.25;
+	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
+	if (level > 5.0) {
+		return vec4(p_n, 0.0);
+	}
+	float cell = grain * exp2(level);
+	ivec3 q = ivec3(floor(p_pos / cell));
+	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u) ^ (uint(level) * 2654435761u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	float r0 = float(h & 0x3ffu) / 1023.0;
+	float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
+	float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
+	float grains = exp2(2.0 * level);
+	float chance = min(share * grains, 1.0);
+	if (r0 >= chance) {
+		return vec4(p_n, 0.0);
+	}
+	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * r2;
+	vec3 f = normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
+	return vec4(f, share / chance / sqrt(max(share * grains, 1.0)));
+}
+
 void main() {
 	if ((payload.packed_bounces_flags & SSS_PROBE_FLAG) != 0u) {
 		rt_sss_probe_hit();
@@ -1597,6 +1632,8 @@ void main() {
 	// view space -> world space
 	mat3 view_to_world = mat3(inv_view_matrix);
 	m.normal = normalize(view_to_world * normal);
+	// The coat lies on NORMAL before the normal map, as raster's geo_normal (snow's glints write it).
+	m.coat_normal = m.normal;
 
 	// The vertex stage may have rewritten TANGENT/BINORMAL (triplanar mapping
 	// does), so the shading frame comes from the shader, not the mesh TBN.
@@ -1850,8 +1887,24 @@ void main() {
 		m.albedo = mix(m.albedo, vec3(snow_albedo), snow);
 		m.roughness = mix(m.roughness, mix(0.7, 0.35, snow_wet), snow);
 		m.metalness = mix(m.metalness, 0.0, snow);
-		m.specular = mix(m.specular, 0.22, snow);
+		m.specular = mix(m.specular, 0.335, snow);
 		m.normal = normalize(mix(m.normal, h.geometry_normal, snow));
+		// Sparkle on dry snow, seen by camera rays only: their footprint is the pixel's angle times the
+		// distance (shaders here have no derivatives). Bounces see the plain rough snow.
+		if (get_total_bounces(payload.packed_bounces_flags) == 0u && snow >= 0.5) {
+			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w,
+					scene_data_block.data.inv_view_matrix[2].w);
+			float pix = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * scene_data_block.data.viewport_size.y);
+			float fp = scene_data_block.data.projection_matrix[3][3] != 0.0 ? pix : distance(h.hit_pos, cam) * pix;
+			vec4 g = snow_glint(h.hit_pos + rt_origin.xyz, h.geometry_normal, fp);
+			float gw = g.w * (1.0 - smoothstep(0.05, 0.3, snow_wet));
+			if (gw > 0.0 && rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT)) {
+				// The facet is the coat lobe on its own normal, as in raster; the snow keeps its shading.
+				m.clearcoat = 0.45 * gw;
+				m.clearcoat_roughness = 0.5;
+				m.coat_normal = g.xyz;
+			}
+		}
 	}
 
 	// Proximity/distance fade (BaseMaterial3D feature, mirrors raster).

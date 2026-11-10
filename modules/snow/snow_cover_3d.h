@@ -186,6 +186,7 @@ class SnowCover3D : public Node3D {
 	void _upload();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	void _publish_globals();
+	bool _in_world_only(Vector3 p_position) const;
 	float _sample(const Vector<float> &p_field, Vector2 p_xz) const;
 	Vector3 _cell_center(int p_x, int p_z) const;
 	void _setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_resolution);

@@ -69,6 +69,7 @@ struct Crest {
 	Vector2 dir; // out over the lee
 	float length = 0.0f;
 	int links = 0;
+	Vector3 link_sum; // offsets to the linked neighbours
 };
 
 Vector3 profile_point(const Crest &p_c, float p_scale, int p_k) {
@@ -125,7 +126,14 @@ void SnowCornice3D::_ensure_children() {
 		default_material.instantiate();
 		default_material->set_albedo(Color(0.86f, 0.88f, 0.9f));
 		default_material->set_roughness(0.75f);
-		default_material->set_specular(0.22f);
+		default_material->set_specular(0.335f); // ice, F0 0.018
+		// The snow pass gives the sunlit top its sparkle. Light carries only millimetres into snow (Warren
+		// 1982), below what a slab this size shows, so no subsurface scattering by default: under the path
+		// tracer it only added noise. The mesh is closed, so a material with it works.
+		default_material->set_feature(BaseMaterial3D::FEATURE_SNOW, true);
+		default_material->set_snow_from_weather(false);
+		default_material->set_snow_amount(1.0f);
+		default_material->set_snow_max_slope(90.0f);
 	}
 }
 
@@ -265,18 +273,26 @@ void SnowCornice3D::rebuild() {
 			}
 			sweep(kv.value, 1.0f, *b, 1.0f);
 			kv.value.links++;
+			kv.value.link_sum += b->top - kv.value.top;
 			b->links++;
+			b->link_sum += kv.value.top - b->top;
 		}
 	}
-	// Ends: a run tapers to nothing over most of a cell past its last crest.
+	// Ends: a run tapers to nothing over most of a cell past its last crest, which also closes the slab (the
+	// path tracer's subsurface walk needs a closed mesh).
 	for (KeyValue<int, Crest> &kv : crests) {
 		const Crest &c = kv.value;
 		const Vector2 across(-c.dir.y, c.dir.x);
+		const Vector3 side = Vector3(across.x, 0, across.y) * cs * 0.45f;
 		Crest a = c, b = c;
 		if (c.links == 0) {
-			a.top -= Vector3(across.x, 0, across.y) * cs * 0.45f;
-			b.top += Vector3(across.x, 0, across.y) * cs * 0.45f;
+			a.top -= side;
+			b.top += side;
 			sweep(a, 0.0f, c, 1.0f);
+			sweep(c, 1.0f, b, 0.0f);
+		} else if (c.links == 1) {
+			// Away from the one neighbour.
+			b.top += c.link_sum.dot(side) > 0.0f ? -side : side;
 			sweep(c, 1.0f, b, 0.0f);
 		}
 	}

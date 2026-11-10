@@ -878,8 +878,8 @@ void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
 	// (Naito and Kobayashi 1986; Yu et al. 2023). Per cell on a lee edge: the crest is not overtopped upwind,
 	// the ground falls away at 30 degrees or more downwind, and the snow upwind is loose and dry. It grows
 	// along the wind at up to 1.6 cm an hour (field rates of Hancock et al. 2020), shrinks when the wind is
-	// past twice the threshold, and wastes back in thaws, 4 mm an hour per degree above the melt threshold
-	// (melt from all its faces and the slabs that break off).
+	// past twice the threshold, and wastes back in thaws, 0.5 mm an hour per degree above the melt threshold
+	// (a snow degree-day factor of 5 mm water a day per degree over a 450 kg/m3 slab).
 	const int n = resolution;
 	if (cell_cornice_x.size() != n * n) {
 		return;
@@ -906,14 +906,13 @@ void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
 			const float t = inputs.temperature - lapse_rate * 0.001f * (h - inputs.ref_height);
 			if (has && t > melt_threshold) {
 				const float len = Vector2(cx[i], cz[i]).length();
-				const float k = MAX(len - 0.004f * (t - melt_threshold) * p_dt_h, 0.0f) / MAX(len, 1e-6f);
+				const float k = MAX(len - 0.0005f * (t - melt_threshold) * p_dt_h, 0.0f) / MAX(len, 1e-6f);
 				cx[i] *= k;
 				cz[i] *= k;
 			}
 			if (u < 0.1f || t >= 0.0f) {
 				continue;
 			}
-			const float r = u / SnowFall3D::blowing_threshold(t);
 			const int iu = cell(x - int(Math::round(dir.x)), z - int(Math::round(dir.y)));
 			const int id1 = cell(x + int(Math::round(dir.x)), z + int(Math::round(dir.y)));
 			const int id2 = cell(x + int(Math::round(2.0f * dir.x)), z + int(Math::round(2.0f * dir.y)));
@@ -922,6 +921,17 @@ void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
 			if (!edge) {
 				continue;
 			}
+			// The wind speeds up over the crest: Taylor and Lee (1984), 1.6 H / L for a ridge of height H
+			// over its half-width L, here the crest above the ground around it at a ring of 64 m or 4 cells.
+			const int ring = MAX(4, int(Math::ceil(64.0f / cs)));
+			float around = 0.0f;
+			for (int k = 0; k < 8; k++) {
+				static const int RX[8] = { 1, 1, 0, -1, -1, -1, 0, 1 };
+				static const int RZ[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+				around += cell_ground[cell(x + RX[k] * ring, z + RZ[k] * ring)] / 8.0f;
+			}
+			const float speedup = 1.0f + CLAMP(1.6f * (h - around) / (ring * cs), 0.0f, 0.6f); // at most 60%: steeper ridges separate
+			const float r = u * speedup / SnowFall3D::blowing_threshold(t);
 			if (r >= 2.0f && has) {
 				// Scoured back.
 				const float len = Vector2(cx[i], cz[i]).length();
@@ -1164,24 +1174,44 @@ float SnowCover3D::_sample(const Vector<float> &p_field, Vector2 p_xz) const {
 	return Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), tx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
 }
 
+bool SnowCover3D::_in_world_only(Vector3 p_position) const {
+	// Outside the near square, the pack is the world tier's (when there is one).
+	return world && !get_map_rect().has_point(Vector2(p_position.x, p_position.z));
+}
+
 float SnowCover3D::get_depth_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_depth_at(p_position);
+	}
 	const float swe = get_swe_at(p_position);
 	return swe > SWE_MIN ? swe / MAX(get_density_at(p_position), 30.0f) : 0.0f;
 }
 
 float SnowCover3D::get_swe_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_swe_at(p_position);
+	}
 	return MAX(_sample(cell_swe, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
 float SnowCover3D::get_density_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_density_at(p_position);
+	}
 	return _sample(cell_density, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_albedo_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_albedo_at(p_position);
+	}
 	return _sample(cell_albedo, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_wetness_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_wetness_at(p_position);
+	}
 	const Vector2 p(p_position.x, p_position.z);
 	const float swe = _sample(cell_swe, p);
 	const float liq = _sample(cell_liquid, p);

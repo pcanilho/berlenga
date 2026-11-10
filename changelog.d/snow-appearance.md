@@ -1,0 +1,1 @@
+- Snow: dry snow sparkles (glinting ice grains drawn as their own mirror lobe, raster and path traced), wet snow loses it, ice specular corrected to F0 0.018. Cornices also grow on milder, coarser ranges (crest wind speed-up, gentler thaw loss), and `SnowCover3D` depth and water lookups read the world tier outside the near square.
