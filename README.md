@@ -228,12 +228,13 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ### Terrain
 - **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`, `detail_wavelength`, `detail_octaves`, `detail_crest`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; on crests gullies keep part of their depth and a ridged noise adds irregular pinnacles; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
+- **Tile erosion** (`tile_erosion_enabled`): droplet hydraulic and thermal erosion in seamless overlapping tiles.
 - **Geology maps** (`terrain_geology()` in shaders): soil, bare rock and scree from the erosion run.
 - **River network** (`build_river_paths()`): rivers with widths and discharges, made into joined `PhysXRiver3D` paths.
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: mountain generation, crests, geology, terrain data maps</summary>
+<details><summary>Images: mountain generation, crests, tile erosion, geology, terrain data maps</summary>
 
 ![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
 
@@ -250,6 +251,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Summit crests: a regular comb before, irregular crests now](docs/media/terrain-crest.jpg)
 
 *Crests: before, a thin regular comb along the summits; now, irregular crests and pinnacles.*
+
+![The same slopes without and with tile erosion](docs/media/terrain-tile-erosion.jpg)
+
+*Tile erosion: fine branching rills cut into every slope.*
 
 ![Geology map with soil, rock, scree and rivers, and the range path traced and coloured from it](docs/media/terrain-geology.jpg)
 
