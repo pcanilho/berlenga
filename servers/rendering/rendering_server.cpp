@@ -3895,6 +3895,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/pathtracing/subsurface_scattering", true);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/subsurface_scattering_scale", PROPERTY_HINT_RANGE, "0.0001,1,0.0001,or_greater,suffix:m"), 0.01);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/caustics_area", PROPERTY_HINT_RANGE, "4,512,0.1,or_greater,suffix:m"), 16.0);
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/caustics_cascades", PROPERTY_HINT_RANGE, "1,3,1"), 3);
 	GLOBAL_DEF("rendering/pathtracing/radiance_cache", true);
 	GLOBAL_DEF("rendering/pathtracing/simulated_gas", true);
 	GLOBAL_DEF("rendering/pathtracing/mesh_lod", false);

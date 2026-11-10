@@ -599,10 +599,13 @@ enum {
 	// Radiance cache (binding 45, raytracing_radiance_cache_inc.glsl): 16 uints an entry.
 	RT_RADIANCE_CACHE_ENTRIES = 1 << 18,
 	RT_RADIANCE_CACHE_UINTS = RT_RADIANCE_CACHE_ENTRIES * 16,
-	// Water caustics map (binding 46, raytracing_caustics_inc.glsl): three slots of RES x RES
-	// texels, 3 uints each, then 4 uints a slot of header. Must match the shader's. 9 MiB.
+	// Water caustics map (binding 46, raytracing_caustics_inc.glsl): three cascades of three slots,
+	// RES x RES texels for cascade 0 and RES_OUTER x RES_OUTER for the other two, 3 uints a texel,
+	// then 4 uints a slot of header. Must match the shader's. 13.5 MiB.
 	RT_CAUSTICS_RES = 512,
-	RT_CAUSTICS_UINTS = RT_CAUSTICS_RES * RT_CAUSTICS_RES * 3 * 3 + 12,
+	RT_CAUSTICS_RES_OUTER = 256,
+	RT_CAUSTICS_CASCADES = 3,
+	RT_CAUSTICS_UINTS = RT_CAUSTICS_RES * RT_CAUSTICS_RES * 3 * 3 + (RT_CAUSTICS_CASCADES - 1) * RT_CAUSTICS_RES_OUTER * RT_CAUSTICS_RES_OUTER * 3 * 3 + 12,
 	// Emissive surfaces sampled as lights (appended to the light grid buffer, header [9]): at
 	// most this many per frame, the strongest at the camera; the rest are found by bounce rays only.
 	RT_EMISSIVE_MAX = 1024,
