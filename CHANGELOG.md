@@ -6,6 +6,19 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-950721c5 (2026-11-10)
+
+### Added
+- Weather: wind near the ground. WeatherMap3D shelters the wind inside plant canopies (Cionco's profile; `add_canopy()`, `canopy_map`) and in the lee of obstacles (`add_shelter_box()`, the `weather_shelter` group), and carries gust patches of a few metres across fields (`gust_patch_size`, `gust_patch_strength`); `get_wind_shader_code()` gives shaders the same wind as `get_wind_at()` (#212)
+- `MultiMesh.bones_per_instance`: consecutive records skin one instance (instanced skinning with a `use_particle_trails` material), in Forward+, Mobile and the path tracer, for wind on many plants without a Skeleton3D each.
+
+### Fixed
+- Particle trails under path tracing: only the first trail was captured.
+
+### Changed
+- README: wind near the ground line; canopy and shelter wind papers in docs/REFERENCES.md.
+- README: Vegetation instance bones line and image.
+
 ## build-309945bb (2026-11-10)
 
 ### Added
