@@ -239,9 +239,9 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Motion vectors: before, only part of the hair reports its motion; after, every strand does.*
 
-![Strand hair with deep opacity shadows, raster](docs/media/hair-deep-shadows.jpg)
+![Strand hair with deep opacity shadows in raster, and path traced](docs/media/hair-deep-shadows.jpg)
 
-*Deep opacity shadows: the hair darkens gradually with depth from the light, raster.*
+*Deep opacity shadows: raster darkens the hair with depth like the path tracer; path tracing shows more fuzz at the edges.*
 
 </details>
 
@@ -504,6 +504,15 @@ Each feature that changes the look or the cost can be turned off with the settin
 ### DLSS Ray Reconstruction
 - DLSS 4.5 (`rendering/streamline/dlss_ray_reconstruction_preset`).
 - Continuous thin rain and correct blending over its output; frame generation fixes.
+- **Pixel antialiasing** when Ray Reconstruction is off: samples after the first spread over the pixel (R2 sequence), so sub-pixel detail antialiases instead of sparkling.
+
+<details><summary>Image: pixel antialiasing</summary>
+
+![Path traced strand hair: sparkling at 256 spp before, smooth at 64 spp with pixel antialiasing](docs/media/pixel-aa.jpg)
+
+*Pixel antialiasing: sub-pixel strands sparkled even at 256 samples; now 64 resolve smoothly.*
+
+</details>
 
 ### Physics (PhysX 5)
 ![PhysX: cloth flag in wind, a Blast wall broken by a ball, rigid crates, Flow smoke](docs/media/physx.gif)
