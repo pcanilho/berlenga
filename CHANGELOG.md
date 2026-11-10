@@ -6,6 +6,22 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-309945bb (2026-11-10)
+
+### Added
+- Water: plunging breakers throw a lip of water along a ballistic path off the crest (Thurey et al. 2007) and spray where it is thin and where it lands (Ihmsen et al. 2012); `shore_spray`, `shore_spray_amount`, `get_breaker_stats()`
+- `RenderingServer.multimesh_mark_buffer_rd_changed()`: MultiMesh records written by a compute shader now reach the AABB, motion vectors and the path tracer (merged at once, per-instance records after an asynchronous readback).
+
+### Fixed
+- Path tracing: a malformed format string in the material buffer warning
+- Path tracing: a MultiMesh under the merge cap kept its first records after `multimesh_set_buffer()` or `multimesh_instance_set_*()` when motion vectors were off.
+
+### Changed
+- README: hair body collision line and image.
+- README: fresh hair wind clip with sharp raster strands.
+- README: plunging breakers line and image; breaking-wave papers in docs/REFERENCES.md.
+- README: Vegetation section, GPU-placed instances.
+
 ## build-16937fed (2026-11-10)
 
 ### Added
