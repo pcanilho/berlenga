@@ -128,6 +128,27 @@ Checked against main at aab890e5.
 Already in place and checked: alpha scissor in the path tracer, volumetric fog under path
 tracing, buoyancy sampling of water surfaces (boats), skinned mesh refit, BLAS refit budget.
 
+## Reusing what the engine already has
+
+- **Hair solver for near grass and reeds.** `PhysXHair3D` (TressFX port) already simulates strands
+  on GPU compute: Verlet step, local and global shape constraints toward the rest pose,
+  follow-the-leader length, collision spheres, weather wind. A grass blade or reed is a short
+  strand, and the global shape constraint is Jahrmann and Wimmer's recovery force. Blades
+  within a few metres of the camera can run on it, so trampled grass is real per-blade physics
+  there; the trample field covers the rest. Hanging moss and vines in swamps are hair grooms.
+- **PhysX articulations** for hero bushes and saplings next to the player (CryEngine's touch
+  bending): a few joints per plant, only near the camera, otherwise bones driven by wind.
+- **PhysX rigid bodies and Blast** for fallen logs, snapped branches and felled trees.
+- **PhysX cloth** for large leaves and hanging fronds where they can tear.
+- **PhysX Flow** as local wind: its velocity grid around the camera (a passing train, a
+  helicopter, an explosion) adds to the weather wind that grass and trees read. This is God of
+  War's fluid wind, limited to where Flow already runs. Flow also gives swamp ground mist.
+- **PhysX buoyancy sampling** (boats) for lily pads and duckweed riding the water.
+- **TerrainDeformer3D brushes** for paths worn into grass and fields flattened for good.
+- **WeatherMap3D** for wind, rain, wetness, puddles and cloud shadows over fields.
+- **Materials**: back lighting and transmission for thin leaves and blades, random-walk SSS for
+  thick leaves and stems, opacity micromaps for leaf cards, path-traced mesh LOD for far trees.
+
 ## Proposed design (module `modules/vegetation`)
 
 1. **World maps per tile** (`VegetationMap3D`). Computed on the GPU when a tile streams in:
