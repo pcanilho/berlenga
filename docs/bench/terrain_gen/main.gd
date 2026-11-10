@@ -144,6 +144,12 @@ func _print_water() -> void:
 		if r["from_lake"] >= 0 or r["lake"] >= 0:
 			print("  river from lake %d to %s %d, %.2f m3/s, %d points" % [r["from_lake"], r["ends_in"], r["lake"], r["discharge"], r["points"].size()])
 	print("  rivers end in: ", ends)
+	if args.has("probe-x"):
+		var z := float(args["probe-z"])
+		for k in 60:
+			var x := float(args["probe-x"]) + k * 8.0
+			var q := Vector3(x, 0, z)
+			print("  x %.0f base %.2f ground %.2f water %s" % [x, gen.get_base_height(q), gen.get_height(q), str(gen.get_water_level(q))])
 
 
 func _build_height_map(res: int) -> void:
@@ -556,6 +562,26 @@ func _coast_checks() -> void:
 				monotone += 1
 	check(rays >= 6 and monotone == rays, "seabed deepens offshore on %d of %d rays" % [monotone, rays])
 	check(first_wet < 2.5, "water at the coastline is shallow (deepest %.2f m)" % first_wet)
+	# Inland from the waterline, along the same rays: the land is never at sea level and rises as a beach.
+	var lowest_near := 1.0e9
+	var lowest_back := 1.0e9
+	for e in 4:
+		for t in [-0.3, -0.1, 0.1, 0.3]:
+			var dir := [Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 0, -1)][e] as Vector3
+			var q: Vector3 = -dir * 2040.0 + Vector3(dir.z, 0, dir.x) * WORLD * float(t)
+			for k in 400:
+				if is_nan(gen.get_water_level(q)):
+					break
+				q += dir * 4.0
+			for k in range(1, 31):
+				var h := gen.get_height(q + dir * (k * 4.0)) - sea
+				if k * 4.0 >= 20.0 and k * 4.0 <= 40.0:
+					lowest_near = minf(lowest_near, h)
+				elif k * 4.0 >= 100.0:
+					if h < 1.0 and args.has("verbose"):
+						print("     low beach ", q + dir * (k * 4.0), " ", h, " wet ", gen.get_water_level(q + dir * (k * 4.0)))
+					lowest_back = minf(lowest_back, h)
+	check(lowest_near > 0.1 and lowest_back > 0.5, "land above the sea at the waterline (lowest %.2f m from 20 to 40 m) and rising inland (lowest %.2f m at 100 to 120 m)" % [lowest_near, lowest_back])
 	var bed_detail := 0.0
 	var dry_detail := 0.0
 	for i in 300:
@@ -580,12 +606,22 @@ func _coast_checks() -> void:
 		var dam: Vector3 = l["dam"]
 		held = held and float(l["depth"]) > 2.0 and float(l["area"]) >= gen.lake_min_area and gen.get_height(dam) >= float(l["level"]) - 0.01
 		if l.has("outlet"):
+			# At a small threshold and at half the lake's catchment (where a stream joining at the outlet may have more
+			# area than any other donor).
 			var o: Vector3 = l["outlet"]
-			for r in gen.get_rivers(1.0e5):
-				if int(r["from_lake"]) == k and (r["points"][0] as Vector3).distance_to(Vector3(o.x, (r["points"][0] as Vector3).y, o.z)) < gen.cell_size * 0.5:
-					outflows += 1
-					break
+			var found := 0
+			for min_area in [1.0e5, float(l["catchment"]) * 0.5]:
+				for r in gen.get_rivers(min_area):
+					if int(r["from_lake"]) == k and (r["points"][0] as Vector3).distance_to(Vector3(o.x, (r["points"][0] as Vector3).y, o.z)) < gen.cell_size * 0.5:
+						found += 1
+						break
+			if found == 2:
+				outflows += 1
 	check(held, "each lake is deeper than 2 m, at least lake_min_area, and its dam stands at its level")
+	var centred := true
+	for l in lakes:
+		centred = centred and absf(gen.get_water_level(l["center"]) - float(l["level"])) < 0.001 and gen.get_water_depth(l["center"]) > 1.0
+	check(centred, "each lake's center is on its water, over at least 1 m of it")
 	var with_outlet := 0
 	for l in lakes:
 		if l.has("outlet"):

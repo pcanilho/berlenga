@@ -486,10 +486,24 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 			off += w * amp * TerrainErosionFilter::crest_noise(ep.seed ^ 0x5bd1e995u, p_x, p_z, detail_wavelength * 2.0, MAX(detail_octaves, 1) + 2);
 		}
 	}
-	// Not under water (the seabed and lake beds stay smooth), and never below the outlets: the filter must not cut
-	// the coast.
+	// Not under water (the seabed and lake beds stay smooth), and never down to the outlets: land the filter cuts
+	// stays above the sea (by 0.15 m), so the coast keeps its shape and no hollow floods.
 	off *= _water_fade(p_x, p_z);
-	return float(MAX(double(base) + off, double(MIN(base, result_min))));
+	if (has_sea) {
+		// Beaches and the coastal strip stay smooth: the detail grows in over the first metres above the sea.
+		const double t = CLAMP((double(base) - double(result_min) - 0.5) / 5.5, 0.0, 1.0);
+		off *= t * t * (3.0 - 2.0 * t);
+	}
+	// With a sea, a cut deeper than a quarter of the ground's height above that floor is compressed smoothly (exponentially, same
+	// slope where it starts) to at most half of it, so gully floors near the coast keep sloping down to the sea
+	// instead of flattening on it; high ground keeps its full detail.
+	const double floor_h = double(result_min) + (has_sea ? 0.15 : 0.0);
+	const double room = double(base) - floor_h;
+	if (has_sea && off < -0.25 * room && room > 0.0) {
+		const double q = 0.25 * room;
+		off = -(q + q * (1.0 - Math::exp((off + q) / q)));
+	}
+	return float(MAX(double(base) + off, MIN(double(base), floor_h)));
 }
 
 float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
@@ -499,6 +513,9 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 	}
 	if (tile_erosion_enabled && !tile_delta.is_empty()) {
 		g += _tile_sample(tile_delta, p_x, p_z) * _water_fade(p_x, p_z);
+		if (has_sea) {
+			g = MAX(g, MIN(_sample(heights, p_x, p_z), result_min + 0.15f));
+		}
 	}
 	// Around a lake the detail and the tile erosion may not take ground that was above the water below it: the
 	// shore and the dam hold the lake, and its surface ends where they rise.
@@ -1031,8 +1048,15 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			double depth = seabed_profile * Math::pow(x, 2.0 / 3.0) + shelf_slope * MAX(x - surf, 0.0);
 			depth *= 1.0 + 0.2 * TerrainErosionFilter::fbm(s, px, pz, 400.0, 3);
 			heights[i] = float(water - CLAMP(depth, 0.1, double(max_sea_depth)));
-		} else if (to_sea[i] < 1e29 && beach_width > 0.0) {
+		} else if (to_sea[i] < 1e29) {
 			const double x = MAX(to_sea[i] - half, 0.0);
+			// Land never lies at sea level: a coastal plain the run graded flat to the sea (its outlets) is lifted to a
+			// beach rising at beach_slope over beach_width, then 2 m per km inland, so it stays dry above the swash.
+			const double floor_h = water + 0.15 + beach_slope * MIN(x, double(beach_width)) + 0.002 * MAX(x - double(beach_width), 0.0);
+			heights[i] = float(MAX(double(heights[i]), floor_h));
+			if (beach_width <= 0.0) {
+				continue;
+			}
 			// Beaches along some stretches of the coast and none along others (cliffs), from low noise: a beach
 			// face of beach_slope up to w from the waterline, then a backshore blending into the land over 60 m.
 			const double vary = CLAMP(0.5 + 0.5 * TerrainErosionFilter::fbm(s ^ 0x5bd1e995u, px, pz, MAX(double(coast_wavelength) * 0.5, 50.0), 3), 0.0, 1.0);
@@ -1357,6 +1381,34 @@ Ref<ArrayMesh> TerrainGenerator3D::_lake_outline(int p_lake, const Vector3 &p_or
 	return mesh;
 }
 
+// A point surely on a lake: its cell farthest from the shore (the pole of inaccessibility on the grid).
+Vector3 TerrainGenerator3D::_lake_center(int p_lake) const {
+	const LakeInfo &l = lake_info[p_lake];
+	const int32_t id = 2 + p_lake;
+	const int x0 = MAX(l.lo.x - 1, 0);
+	const int z0 = MAX(l.lo.y - 1, 0);
+	const int w = MIN(l.hi.x + 1, nx - 1) - x0 + 1;
+	const int h = MIN(l.hi.y + 1, ny - 1) - z0 + 1;
+	std::vector<uint8_t> dry(w * h);
+	for (int z = 0; z < h; z++) {
+		for (int x = 0; x < w; x++) {
+			dry[z * w + x] = water_body[(z0 + z) * nx + x0 + x] != id;
+		}
+	}
+	std::vector<double> dist;
+	TerrainCoast::distance(w, h, result_cell, dry.data(), dist);
+	int best = -1;
+	for (int i = 0; i < w * h; i++) {
+		if (!dry[i] && (best < 0 || dist[i] > dist[best])) {
+			best = i;
+		}
+	}
+	if (best < 0) {
+		return Vector3(Math::NaN, l.level, Math::NaN);
+	}
+	return Vector3(result_rect.position.x + (x0 + best % w) * result_cell, l.level, result_rect.position.y + (z0 + best / w) * result_cell);
+}
+
 // Each lake: level, bed, depth, area (m^2), catchment (m^2), endorheic, center (on the water), rect (world XZ),
 // dam (its spillway cell, on the ground), outlet (where the water leaves; absent with no outflow).
 Array TerrainGenerator3D::get_lake_results() const {
@@ -1372,7 +1424,7 @@ Array TerrainGenerator3D::get_lake_results() const {
 		d["endorheic"] = l.endorheic;
 		const Rect2 r(result_rect.position.x + l.lo.x * result_cell, result_rect.position.y + l.lo.y * result_cell, (l.hi.x - l.lo.x) * result_cell, (l.hi.y - l.lo.y) * result_cell);
 		d["rect"] = r;
-		d["center"] = Vector3(r.get_center().x, l.level, r.get_center().y);
+		d["center"] = _lake_center(int(k));
 		Vector3 dam = _cell_position(l.dam);
 		dam.y = heights[l.dam];
 		d["dam"] = dam;
@@ -1469,6 +1521,10 @@ Array TerrainGenerator3D::build_water(Node *p_parent) {
 			sea->set("seabed_from_floor", true);
 			sea->set("shore_waves", true);
 			sea->set("render_extent", MAX(extent * 8.0, real_t(20000.0)));
+			// Past the square it is open sea, its waves in three cascades, its wind from the weather when there is one.
+			sea->set("open_sea_beyond", true);
+			sea->set("wave_cascades", 3);
+			sea->set("follow_weather", true);
 		}
 		attach(sea);
 		sea_node = sea->get_instance_id();
@@ -1528,6 +1584,42 @@ Array TerrainGenerator3D::get_rivers(real_t p_min_area) const {
 			rv.joins = rv.joins >= 0 ? index[rv.joins] : -1;
 		}
 		rivers = std::move(kept);
+	}
+	// A lake's outflow starts at its outlet. Where a stem runs on up past an outlet (a stream joining right there has
+	// more area than any other donor once the lake cells end rivers), the part above becomes a tributary joining at
+	// the outlet, and so do the tributaries that joined that part.
+	if (!lake_info.is_empty()) {
+		std::vector<uint8_t> is_outlet(n, 0);
+		for (uint32_t k = 0; k < lake_info.size(); k++) {
+			if (lake_info[k].outlet >= 0) {
+				is_outlet[lake_info[k].outlet] = 1;
+			}
+		}
+		for (uint32_t r = 0; r < rivers.size(); r++) {
+			const std::vector<int32_t> cells = rivers[r].cells;
+			const size_t last = rivers[r].joins >= 0 ? cells.size() - 1 : cells.size(); // a junction is not its own
+			for (size_t k = 1; k < last; k++) {
+				if (!is_outlet[cells[k]]) {
+					continue;
+				}
+				TerrainGeology::River upper;
+				upper.cells.assign(cells.begin(), cells.begin() + k + 1);
+				upper.joins = int(r);
+				rivers[r].cells.assign(cells.begin() + k, cells.end());
+				const int ui = int(rivers.size());
+				std::vector<uint8_t> in_upper(n, 0);
+				for (size_t q = 0; q < k; q++) {
+					in_upper[cells[q]] = 1;
+				}
+				for (TerrainGeology::River &t : rivers) {
+					if (t.joins == int(r) && in_upper[t.cells.back()]) {
+						t.joins = ui;
+					}
+				}
+				rivers.push_back(std::move(upper));
+				break;
+			}
+		}
 	}
 	LocalVector<double> own;
 	own.resize(rivers.size());

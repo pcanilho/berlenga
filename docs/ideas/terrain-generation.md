@@ -412,7 +412,10 @@ Plan:
   the coast and rises from it. After the run a chamfer distance transform (Borgefors 1986) gives the distance
   offshore and inland. Below the sea: Dean's profile `seabed_profile * x^(2/3)`, plus `shelf_slope` past 300 m, with
   20% fBm relief, down to `max_sea_depth`. Above it: beaches along some stretches (`beach_width`, varying with
-  noise from none, a cliff, to twice it) at `beach_slope`, blended into the land over 60 m behind.
+  noise from none, a cliff, to twice it) at `beach_slope`, blended into the land over 60 m behind. Land never
+  lies at sea level: a coastal plain the run graded flat to its outlets is lifted to a beach floor (0.15 m plus
+  `beach_slope` over `beach_width`, then 2 m per km), the detail fades in over the first 6 m above the sea, and a
+  gully cut deeper than a quarter of the ground's height above the sea is compressed to at most half of it.
 - Lakes: the plan was to keep the run's filled basins as lakes. In the bench they turned out to be sloping valley
   fills (20 to 100 m of relief in one fill), not basins: a stream power landscape drains completely. So lakes come
   from what holds most mountain lakes, a dam across a valley (moraine, landslide or rock bar; Costa and Schuster
@@ -430,7 +433,7 @@ Plan:
   `get_rivers()` ends rivers at the first water cell, on the water (`ends_in` sea, lake, river or edge; `lake`;
   `from_lake`), and an outflow river starts at each lake's outlet carrying its whole catchment.
 - Water: `build_water(parent)` makes PhysXWaterSurface3D by name: the sea at sea level over the generated
-  rectangle (`seabed_from_floor`, `shore_waves`, its open-sea `depth` the seabed's mean depth along the edge,
+  rectangle (`seabed_from_floor`, `shore_waves`, `open_sea_beyond`, `follow_weather`, three `wave_cascades`, its open-sea `depth` the seabed's mean depth along the edge,
   `render_extent` out to 20 km or more), and one per lake at its level with `surface_mesh` set to the lake's outline
   (grid quads with a corner under water and none on lower ground outside it). Without PhysX, plain mesh sheets. Call
   it before `build_river_paths()`, which then sets each river's `mouth_target` to the sea or lake it ends in.
