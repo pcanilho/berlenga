@@ -473,3 +473,10 @@ Results (lavapipe, `--view=clouds`, 960x540, 100% crops in the PR):
 - Py, de Langre and Moulia, A frequency lock-in mechanism in the interaction between wind and crop canopies, J. Fluid Mech. 568 (2006).
 - Hosker, Flow and diffusion near obstacles, in Atmospheric Science and Power Production (1984).
 - Heisler and DeWalle, Effects of windbreak structure on wind flow, Agric. Ecosyst. Environ. 22/23 (1988).
+
+## Snow and the water film (10 Nov)
+
+- Falling snow no longer adds to the rain film. Only the rain share of the precipitation fills it. That share is `rain_fraction()`, the complement of the Jennings et al. (2018) snowfall fraction that `SnowCover3D` also uses, at the eased air temperature and humidity.
+- Where a snowpack lies, the film is fed by what leaves the pack instead: rain through it plus its melt. `SnowCover3D` passes its runoff grid with `set_surface_water_source()` after each update. The map resamples it onto its own cells on the main thread before the parallel cell pass, so the workers never read the pack.
+- The snow thread can read `get_air_temperature()` and `get_air_humidity()`, which give the eased state the cells use.
+- It can also read `get_canopy_closure_at()` for interception. This takes the shelter canopy's Cionco coefficient as a leaf area index and passes it through Beer's law, with an extinction of 0.5 (Monsi and Saeki 1953).

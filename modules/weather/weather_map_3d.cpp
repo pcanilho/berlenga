@@ -191,6 +191,8 @@ void WeatherMap3D::_allocate() {
 	cell_rain.resize(n * n);
 	cell_film.resize(n * n);
 	cell_puddle.resize(n * n);
+	cell_inflow.resize(n * n);
+	cell_inflow.fill(-1.0f);
 	cell_wind.fill(0.0f);
 	cell_cover.fill(0.0f);
 	cell_type.fill(0.0f);
@@ -322,9 +324,98 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	c.rain = cell_rain.ptrw();
 	c.film = cell_film.ptrw();
 	c.puddle = cell_puddle.ptrw();
+	// Snow does not wet surfaces as it falls: only the rain share reaches the film.
+	c.rain_fraction = rain_fraction(cur_temperature, cur_humidity);
+	_gather_water_sources();
+	c.inflow = cell_inflow.ptr();
 	// Rows in parallel: each cell depends only on the weather and its own history.
 	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &WeatherMap3D::_update_row, &cell_pass, resolution, -1, true, String("WeatherMap3D cells"));
 	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
+}
+
+float WeatherMap3D::rain_fraction(float p_celsius, float p_humidity) {
+	// Jennings et al. (2018), coefficients from Jennings and Molotch (2019): the snowfall share is
+	// 1 / (1 + exp(-10.04 + 1.41 T + 0.09 RH)), RH in percent.
+	const float e = -10.04f + 1.41f * p_celsius + 0.09f * CLAMP(p_humidity, 0.0f, 1.0f) * 100.0f;
+	return 1.0f - 1.0f / (1.0f + Math::exp(CLAMP(e, -60.0f, 60.0f)));
+}
+
+void WeatherMap3D::_gather_water_sources() {
+	const int n = resolution;
+	if (cell_inflow.size() != n * n) {
+		cell_inflow.resize(n * n);
+	}
+	cell_inflow.fill(-1.0f);
+	if (water_sources.is_empty() || !origin_valid) {
+		return;
+	}
+	const float cs = _cell_size();
+	float *w = cell_inflow.ptrw();
+	for (uint32_t s = 0; s < water_sources.size();) {
+		const WaterSource &src = water_sources[s];
+		if (ObjectDB::get_instance(src.owner) == nullptr) {
+			water_sources.remove_at_unordered(s);
+			continue;
+		}
+		s++;
+		const int m = src.resolution;
+		if (m < 2 || src.rates.size() != m * m || src.rect.size.x <= 0.0f || src.rect.size.y <= 0.0f) {
+			continue;
+		}
+		const float *r = src.rates.ptr();
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const Vector2 p((origin_cell.x + x + 0.5f) * cs, (origin_cell.y + z + 0.5f) * cs);
+				const Vector2 uv = (p - src.rect.position) / src.rect.size;
+				if (uv.x < 0.0f || uv.y < 0.0f || uv.x >= 1.0f || uv.y >= 1.0f) {
+					continue;
+				}
+				const float fx = CLAMP(uv.x * m - 0.5f, 0.0f, float(m - 1));
+				const float fz = CLAMP(uv.y * m - 0.5f, 0.0f, float(m - 1));
+				const int x0 = MIN(int(fx), m - 2);
+				const int z0 = MIN(int(fz), m - 2);
+				const float tx = fx - x0;
+				const float tz = fz - z0;
+				const float a = Math::lerp(r[z0 * m + x0], r[z0 * m + x0 + 1], tx);
+				const float b = Math::lerp(r[(z0 + 1) * m + x0], r[(z0 + 1) * m + x0 + 1], tx);
+				const int i = z * n + x;
+				w[i] = MAX(w[i], 0.0f) + MAX(Math::lerp(a, b, tz), 0.0f);
+			}
+		}
+	}
+}
+
+void WeatherMap3D::set_surface_water_source_cells(ObjectID p_owner, const Vector<float> &p_rates, int p_resolution, Rect2 p_rect) {
+	for (WaterSource &src : water_sources) {
+		if (src.owner == p_owner) {
+			src.rates = p_rates;
+			src.resolution = p_resolution;
+			src.rect = p_rect;
+			return;
+		}
+	}
+	WaterSource src;
+	src.owner = p_owner;
+	src.rates = p_rates;
+	src.resolution = p_resolution;
+	src.rect = p_rect;
+	water_sources.push_back(src);
+}
+
+void WeatherMap3D::set_surface_water_source(Object *p_owner, const PackedFloat32Array &p_rates, int p_resolution, Rect2 p_rect) {
+	ERR_FAIL_NULL(p_owner);
+	ERR_FAIL_COND_MSG(p_rates.size() != p_resolution * p_resolution, "rates must hold resolution * resolution values.");
+	set_surface_water_source_cells(p_owner->get_instance_id(), p_rates, p_resolution, p_rect);
+}
+
+void WeatherMap3D::clear_surface_water_source(Object *p_owner) {
+	ERR_FAIL_NULL(p_owner);
+	for (uint32_t s = 0; s < water_sources.size(); s++) {
+		if (water_sources[s].owner == p_owner->get_instance_id()) {
+			water_sources.remove_at_unordered(s);
+			return;
+		}
+	}
 }
 
 void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
@@ -391,7 +482,9 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 		if (c.dt_h > 0.0f) {
 			const float rh = r > 0.1f ? MAX(cur_humidity, 0.97f) : cur_humidity;
 			const float evap = evaporation_rate(w.length() * c.to_2m, cur_temperature, rh) * c.dt_h;
-			float f = c.film[i] + r * c.dt_h;
+			// Where a snowpack lies, what reaches the surface is its runoff (rain through it and melt).
+			const float in = c.inflow[i] >= 0.0f ? c.inflow[i] : r * c.rain_fraction;
+			float f = c.film[i] + in * c.dt_h;
 			float pd = c.puddle[i];
 			if (f > surface_storage) {
 				pd += f - surface_storage;
@@ -674,6 +767,24 @@ float WeatherMap3D::get_shelter_at(Vector3 p_position, float p_height_above_grou
 	float cell[4];
 	shelter.sample(Vector2(p_position.x, p_position.z), cell);
 	return WeatherShelter::factor(MAX(h, 0.0f), roughness_length, cell);
+}
+
+float WeatherMap3D::get_canopy_height_at(Vector3 p_position) const {
+	float cell[4];
+	shelter.sample(Vector2(p_position.x, p_position.z), cell);
+	return MAX(cell[0], 0.0f);
+}
+
+float WeatherMap3D::get_canopy_closure_at(Vector3 p_position) const {
+	// Sky closed by the canopy, from Cionco's attenuation coefficient taken as a leaf area index (both run
+	// about 1 for open orchards to 4 for dense stands) through Beer's law with an extinction of 0.5
+	// (spherical leaf angles, Monsi and Saeki 1953): about 0.4 for an orchard, 0.7 for a forest.
+	float cell[4];
+	shelter.sample(Vector2(p_position.x, p_position.z), cell);
+	if (cell[0] <= 0.0f) {
+		return 0.0f;
+	}
+	return CLAMP(1.0f - Math::exp(-0.5f * MAX(cell[1], 0.0f)), 0.0f, 1.0f);
 }
 
 float WeatherMap3D::get_rain_at(Vector3 p_position) const {
@@ -1326,6 +1437,13 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rain_rate"), &WeatherMap3D::get_rain_rate);
 	ClassDB::bind_method(D_METHOD("set_temperature", "celsius"), &WeatherMap3D::set_temperature);
 	ClassDB::bind_method(D_METHOD("get_temperature"), &WeatherMap3D::get_temperature);
+	ClassDB::bind_method(D_METHOD("get_air_temperature"), &WeatherMap3D::get_air_temperature);
+	ClassDB::bind_method(D_METHOD("get_air_humidity"), &WeatherMap3D::get_air_humidity);
+	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("rain_fraction", "celsius", "humidity"), &WeatherMap3D::rain_fraction);
+	ClassDB::bind_method(D_METHOD("get_canopy_height_at", "position"), &WeatherMap3D::get_canopy_height_at);
+	ClassDB::bind_method(D_METHOD("get_canopy_closure_at", "position"), &WeatherMap3D::get_canopy_closure_at);
+	ClassDB::bind_method(D_METHOD("set_surface_water_source", "owner", "rates", "resolution", "rect"), &WeatherMap3D::set_surface_water_source);
+	ClassDB::bind_method(D_METHOD("clear_surface_water_source", "owner"), &WeatherMap3D::clear_surface_water_source);
 	ClassDB::bind_method(D_METHOD("set_humidity", "humidity"), &WeatherMap3D::set_humidity);
 	ClassDB::bind_method(D_METHOD("get_humidity"), &WeatherMap3D::get_humidity);
 	ClassDB::bind_method(D_METHOD("set_surface_storage", "mm"), &WeatherMap3D::set_surface_storage);

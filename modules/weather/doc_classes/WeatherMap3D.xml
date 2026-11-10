@@ -70,6 +70,39 @@
 				Removes every storm.
 			</description>
 		</method>
+		<method name="clear_surface_water_source">
+			<return type="void" />
+			<param index="0" name="owner" type="Object" />
+			<description>
+				Stops the water delivered by [param owner] (see [method set_surface_water_source]); the precipitation reaches the ground there again. Sources whose owner is freed are dropped on their own.
+			</description>
+		</method>
+		<method name="get_air_humidity" qualifiers="const">
+			<return type="float" />
+			<description>
+				The relative humidity the cells use now (0..1): [member humidity] eased over [member transition_time].
+			</description>
+		</method>
+		<method name="get_air_temperature" qualifiers="const">
+			<return type="float" />
+			<description>
+				The air temperature the cells use now (C): [member temperature] eased over [member transition_time].
+			</description>
+		</method>
+		<method name="get_canopy_closure_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The share of the sky the canopy closes over [param position] (0..1), from the shelter canopy there (see [method add_canopy] and [member canopy_map]): its attenuation coefficient taken as a leaf area index through Beer's law with an extinction of 0.5 (Monsi and Saeki 1953), about 0.4 for an open orchard and 0.7 for a forest. [code]0[/code] where there is no canopy. Snow interception and the light under the trees can follow it.
+			</description>
+		</method>
+		<method name="get_canopy_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The height (m) of the shelter canopy over [param position], [code]0[/code] where there is none.
+			</description>
+		</method>
 		<method name="get_cloud_cover_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -208,6 +241,14 @@
 				The texture published as [code]weather_wind_map[/code].
 			</description>
 		</method>
+		<method name="rain_fraction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<param index="1" name="humidity" type="float" />
+			<description>
+				The share of precipitation that falls as rain at [param celsius] and relative [param humidity] (0..1): the complement of the snowfall fraction of Jennings et al. (2018). Only this share wets surfaces as it falls; the rest is snow.
+			</description>
+		</method>
 		<method name="rebake_shelter">
 			<return type="void" />
 			<description>
@@ -233,6 +274,16 @@
 			<param index="0" name="id" type="int" />
 			<description>
 				Removes the storm with this [param id].
+			</description>
+		</method>
+		<method name="set_surface_water_source">
+			<return type="void" />
+			<param index="0" name="owner" type="Object" />
+			<param index="1" name="rates" type="PackedFloat32Array" />
+			<param index="2" name="resolution" type="int" />
+			<param index="3" name="rect" type="Rect2" />
+			<description>
+				Water that [param owner] delivers to the ground over [param rect] (world X, Z), in mm/h on a [param resolution] square of [param rates] (row-major in Z then X), in place of the precipitation the map would put there: a [SnowCover3D] passes its runoff (the rain through the pack and its melt), so snow wets surfaces when it melts, not when it falls. The values are copied; call again with new ones. Several sources add up.
 			</description>
 		</method>
 		<method name="snap_to_settings">
