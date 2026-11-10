@@ -6,6 +6,12 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-573849e9 (2026-11-10)
+
+### Changed
+- Raster strand hair is alpha blended (TressFX coverage) and sorted far to near on the GPU every frame, so it is smooth without TAA or MSAA; shadow maps keep the coverage as a share of texels
+- README: raster strands, IN_PATH_TRACER
+
 ## build-56f1940b (2026-11-10)
 
 ### Added
