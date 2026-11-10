@@ -391,6 +391,40 @@ Two choices made while checking:
   shadows on the fields; path tracing adds the box shadows past the raster
   shadow distance. GPU cost waits for the PC.
 
+## Step 3b: clouds drawn a sixteenth at a time (10 Nov 2026)
+
+**Technique**: temporal reprojection of the cloud pass, as Guerrilla ships it (Schneider, "The
+Real-time Volumetric Cloudscapes of Horizon Zero Dawn", Advances 2015; "Nubis: Authoring
+Real-Time Volumetric Cloudscapes", Advances 2017). Each frame the clouds are marched for one
+pixel of every 4x4 block, in a Bayer order that visits all 16 in 16 frames. A resolve keeps
+the other 15 from last frame, found by turning each pixel's view direction into last frame's
+camera (the sky is at infinity, so the rotation is enough), and fills what last frame didn't
+see from this frame's samples. Before it, every half resolution pixel was marched every frame.
+
+As built:
+- A sky shader render mode, `half_res_reprojection` (with `use_half_res_pass`): the half
+  resolution pass is drawn at a quarter of each axis with the projection shifted to the frame's
+  pixel, and `sky_reproject.glsl` (compute) resolves it into a full resolution image that
+  `HALF_RES_COLOR` reads. Multiview (XR) keeps the plain half resolution pass.
+- History through a Catmull-Rom filter from 9 bilinear taps (Jimenez, Filmic SMAA, 2016), as
+  TAA does, so turning the camera doesn't blur the clouds a little more each frame.
+- A drawn pixel is averaged with what it held (half and half). The march's jitter changes every
+  frame (a golden-ratio step), so the stipple a fixed jitter left in the half resolution clouds
+  settles into a smooth image.
+- `WeatherSkyMaterial.cloud_reprojection`, on by default.
+
+Results (lavapipe, `--view=clouds`, 960x540, 100% crops in the PR):
+- Quality: full resolution clouds with their edges sharper, and no stipple. Turning the camera at
+  20 degrees a second, they stay as sharp as without reprojection.
+- Work: the march runs for 1/16 of the screen's pixels a frame instead of 1/4, so the march
+  costs 4x less. It is 64 steps, each with 6 light steps and 3D noise reads, against a
+  resolve of 9 reads per pixel.
+- Lavapipe runs compute shaders on the CPU, where the full resolution resolve costs more than
+  the march it saves (153 against 101 ms a frame). That tells us nothing about a GPU, so the
+  GPU time is on the PC queue. If it costs more there, the default flips to off.
+- Path traced, camera rays that miss show the same clouds as before (mean difference 1.5/255,
+  sample noise).
+
 ## Sources
 
 - Schneider, The Real-time Volumetric Cloudscapes of Horizon Zero Dawn,

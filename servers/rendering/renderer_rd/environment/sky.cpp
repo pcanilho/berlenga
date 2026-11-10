@@ -49,6 +49,12 @@ using namespace RendererRD;
 #define RB_SCOPE_SKY SNAME("sky_buffers")
 #define RB_HALF_TEXTURE SNAME("half_texture")
 #define RB_QUARTER_TEXTURE SNAME("quarter_texture")
+// render_mode half_res_reprojection: the pass drawn at a quarter of each axis, the full
+// resolution resolve that HALF_RES_COLOR then reads, and last frame's resolve.
+#define RB_REPROJECT_NEW SNAME("reproject_new")
+#define RB_REPROJECT_OUT SNAME("reproject_out")
+#define RB_REPROJECT_HISTORY SNAME("reproject_history")
+#define RB_REPROJECT_STATE SNAME("sky_reproject")
 
 ////////////////////////////////////////////////////////////////////////////////
 // SKY SHADER
@@ -71,11 +77,13 @@ void SkyRD::SkyShaderData::set_code(const String &p_code) {
 
 	uses_time = false;
 	uses_half_res = false;
+	uses_half_res_reprojection = false;
 	uses_quarter_res = false;
 	uses_position = false;
 	uses_light = false;
 
 	actions.render_mode_flags["use_half_res_pass"] = &uses_half_res;
+	actions.render_mode_flags["half_res_reprojection"] = &uses_half_res_reprojection;
 	actions.render_mode_flags["use_quarter_res_pass"] = &uses_quarter_res;
 
 	actions.usage_flag_pointers["TIME"] = &uses_time;
@@ -564,7 +572,7 @@ RID SkyRD::Sky::get_textures(SkyTextureSetVersion p_version, RID p_default_shade
 				u.append_id(texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK));
 			}
 		} else {
-			RID half_texture = p_render_buffers->has_texture(RB_SCOPE_SKY, RB_HALF_TEXTURE) ? p_render_buffers->get_texture(RB_SCOPE_SKY, RB_HALF_TEXTURE) : RID();
+			RID half_texture = p_render_buffers->has_texture(RB_SCOPE_SKY, RB_REPROJECT_OUT) ? p_render_buffers->get_texture(RB_SCOPE_SKY, RB_REPROJECT_OUT) : (p_render_buffers->has_texture(RB_SCOPE_SKY, RB_HALF_TEXTURE) ? p_render_buffers->get_texture(RB_SCOPE_SKY, RB_HALF_TEXTURE) : RID());
 			if (half_texture.is_valid() && p_version != SKY_TEXTURE_SET_HALF_RES) {
 				u.append_id(half_texture);
 			} else {
@@ -738,6 +746,17 @@ void SkyRD::init() {
 		sky_modes.push_back("\n#define USE_QUARTER_RES_PASS\n#define USE_MULTIVIEW\n"); // Quarter res multiview
 
 		sky_shader.shader.initialize(sky_modes, defines);
+
+		{
+			Vector<String> reproject_modes;
+			reproject_modes.push_back("");
+			sky_reproject.shader.initialize(reproject_modes);
+			sky_reproject.version = sky_reproject.shader.version_create();
+			sky_reproject.shader_rd = sky_reproject.shader.version_get_shader(sky_reproject.version, 0);
+			if (sky_reproject.shader_rd.is_valid()) {
+				sky_reproject.pipeline = RD::get_singleton()->compute_pipeline_create(sky_reproject.shader_rd);
+			}
+		}
 
 		if (!RendererCompositorRD::get_singleton()->is_xr_enabled()) {
 			sky_shader.shader.set_variant_enabled(SKY_VERSION_BACKGROUND_MULTIVIEW, false);
@@ -945,6 +964,10 @@ SkyRD::~SkyRD() {
 
 	SkyMaterialData *md = static_cast<SkyMaterialData *>(material_storage->material_get_data(sky_shader.default_material, RendererRD::MaterialStorage::SHADER_TYPE_SKY));
 	sky_shader.shader.version_free(md->shader_data->version);
+	if (sky_reproject.version.is_valid()) {
+		// The pipeline goes with its shader.
+		sky_reproject.shader.version_free(sky_reproject.version);
+	}
 	RD::get_singleton()->free_rid(sky_scene_state.directional_light_buffer);
 	RD::get_singleton()->free_rid(sky_scene_state.uniform_buffer);
 	memdelete_arr(sky_scene_state.directional_lights);
@@ -1385,6 +1408,121 @@ void SkyRD::update_radiance_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, 
 	}
 }
 
+void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky *p_sky, SkyShaderData *p_shader_data, SkyMaterialData *p_material, double p_time, const Projection &p_projection, const Basis &p_orientation, float p_luminance_multiplier, float p_brightness_multiplier) {
+	// Nubis (Schneider, SIGGRAPH 2015 and 2017): one pixel of each 4x4 block is drawn a frame, in
+	// a Bayer order, and sky_reproject.glsl keeps the rest from last frame at full resolution.
+	static const uint8_t bayer[16] = { 0, 10, 2, 8, 5, 15, 7, 13, 1, 11, 3, 9, 4, 14, 6, 12 };
+
+	const Size2i size = p_sky->screen_size;
+	if (size.x < 4 || size.y < 4) {
+		return;
+	}
+	const Size2i low_size((size.x + 3) / 4, (size.y + 3) / 4);
+
+	Ref<SkyReprojectState> state;
+	if (p_render_buffers->has_custom_data(RB_REPROJECT_STATE)) {
+		state = p_render_buffers->get_custom_data(RB_REPROJECT_STATE);
+	} else {
+		state.instantiate();
+		p_render_buffers->set_custom_data(RB_REPROJECT_STATE, state);
+	}
+	if (state->size != size) {
+		state->valid = false;
+		state->size = size;
+	}
+
+	RID new_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_NEW, texture_format, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT, RD::TEXTURE_SAMPLES_1, low_size);
+	RID out_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_OUT, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT, RD::TEXTURE_SAMPLES_1, size);
+	RID history_tex = p_render_buffers->create_texture(RB_SCOPE_SKY, RB_REPROJECT_HISTORY, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT, RD::TEXTURE_SAMPLES_1, size);
+
+	const uint32_t step = bayer[state->frame & 15];
+	state->frame++;
+	const Vector2i offset(step & 3, step >> 2);
+
+	// The pass's pixel (i, j) draws full resolution pixel (4i + offset.x, 4j + offset.y): its
+	// direction comes from the projection, so the projection takes the scale and shift.
+	// sky.glsl: view.x = (ndc.x + P[2][0]) / P[0][0], same in y.
+	Projection jittered = p_projection;
+	{
+		const float sx = 4.0f * low_size.x / size.x;
+		const float tx = -1.0f + sx + (2.0f * offset.x - 3.0f) / size.x;
+		const float sy = 4.0f * low_size.y / size.y;
+		const float ty = -1.0f + sy + (2.0f * offset.y - 3.0f) / size.y;
+		jittered.columns[2][0] = (tx + p_projection.columns[2][0]) / sx;
+		jittered.columns[0][0] = p_projection.columns[0][0] / sx;
+		jittered.columns[2][1] = (ty + p_projection.columns[2][1]) / sy;
+		jittered.columns[1][1] = p_projection.columns[1][1] / sy;
+	}
+
+	{
+		PipelineCacheRD *pipeline = &p_shader_data->pipelines[SKY_VERSION_HALF_RES];
+		RID framebuffer = FramebufferCacheRD::get_singleton()->get_cache_multiview(1, new_tex);
+		RID texture_uniform_set = p_sky->get_textures(SKY_TEXTURE_SET_HALF_RES, sky_shader.default_shader_rd, p_render_buffers);
+		RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(framebuffer, RD::DRAW_IGNORE_COLOR_ALL);
+		_render_sky(draw_list, p_time, framebuffer, pipeline, p_material->uniform_set, texture_uniform_set, jittered, p_orientation, sky_scene_state.cam_transform.origin, p_luminance_multiplier, p_brightness_multiplier, p_sky->uv_border_size);
+		RD::get_singleton()->draw_list_end();
+	}
+
+	struct PushConstant {
+		float to_prev_view[12];
+		float projection[4];
+		float prev_projection[4];
+		int32_t size[2];
+		int32_t offset[2];
+		int32_t low_size[2];
+		uint32_t history_valid;
+		uint32_t pad;
+	} pc;
+	static_assert(sizeof(PushConstant) == 112);
+	auto store_columns = [](const Basis &p_basis, float *r_dst) {
+		for (int c = 0; c < 3; c++) {
+			const Vector3 col = p_basis.get_column(c);
+			r_dst[c * 4 + 0] = col.x;
+			r_dst[c * 4 + 1] = col.y;
+			r_dst[c * 4 + 2] = col.z;
+			r_dst[c * 4 + 3] = 0.0f;
+		}
+	};
+	auto store_projection = [](const Projection &p_projection, float *r_dst) {
+		r_dst[0] = p_projection.columns[2][0];
+		r_dst[1] = p_projection.columns[0][0];
+		r_dst[2] = p_projection.columns[2][1];
+		r_dst[3] = p_projection.columns[1][1];
+	};
+	// The sky is at infinity: last frame's view of a direction is its rotation alone.
+	store_columns(state->valid ? state->prev_orientation.inverse() * p_orientation : Basis(), pc.to_prev_view);
+	store_projection(p_projection, pc.projection);
+	store_projection(state->valid ? state->prev_projection : p_projection, pc.prev_projection);
+	pc.size[0] = size.x;
+	pc.size[1] = size.y;
+	pc.offset[0] = offset.x;
+	pc.offset[1] = offset.y;
+	pc.low_size[0] = low_size.x;
+	pc.low_size[1] = low_size.y;
+	pc.history_valid = state->valid ? 1u : 0u;
+	pc.pad = 0;
+
+	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
+	RID sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+	RD::Uniform u_new(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ sampler, new_tex }));
+	RD::Uniform u_history(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ sampler, history_tex }));
+	RD::Uniform u_dest(RD::UNIFORM_TYPE_IMAGE, 2, out_tex);
+	RID uniform_set = UniformSetCacheRD::get_singleton()->get_cache(sky_reproject.shader_rd, 0, u_new, u_history, u_dest);
+
+	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
+	RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, sky_reproject.pipeline);
+	RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set, 0);
+	RD::get_singleton()->compute_list_set_push_constant(compute_list, &pc, sizeof(PushConstant));
+	RD::get_singleton()->compute_list_dispatch_threads(compute_list, size.x, size.y, 1);
+	RD::get_singleton()->compute_list_end();
+
+	RD::get_singleton()->texture_copy(out_tex, history_tex, Vector3(), Vector3(), Vector3(size.x, size.y, 1), 0, 0, 0, 0);
+
+	state->prev_orientation = p_orientation;
+	state->prev_projection = p_projection;
+	state->valid = true;
+}
+
 void SkyRD::update_res_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, RID p_env, double p_time, float p_luminance_multiplier, float p_brightness_multiplier) {
 	ERR_FAIL_COND(p_render_buffers.is_null());
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
@@ -1430,6 +1568,13 @@ void SkyRD::update_res_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, RID p
 
 	material->set_as_used();
 
+	const bool reproject = shader_data->uses_half_res && shader_data->uses_half_res_reprojection && sky_scene_state.view_count == 1 && sky_reproject.pipeline.is_valid();
+	if (p_render_buffers->has_texture(RB_SCOPE_SKY, RB_REPROJECT_OUT) != reproject && (reproject || shader_data->uses_half_res)) {
+		// Switching between plain and reprojected half resolution: HALF_RES_COLOR reads a
+		// different texture in each, so the sky's textures start again.
+		p_render_buffers->clear_context(RB_SCOPE_SKY);
+	}
+
 	RENDER_TIMESTAMP("Setup Sky Resolution Buffers");
 	RD::get_singleton()->draw_command_begin_label("Setup Sky Resolution Buffers");
 
@@ -1457,7 +1602,9 @@ void SkyRD::update_res_buffers(Ref<RenderSceneBuffersRD> p_render_buffers, RID p
 		RD::get_singleton()->draw_list_end();
 	}
 
-	if (shader_data->uses_half_res) {
+	if (reproject) {
+		_reproject_half_res(p_render_buffers, sky, shader_data, material, p_time, projection, sky_transform, p_luminance_multiplier, p_brightness_multiplier);
+	} else if (shader_data->uses_half_res) {
 		PipelineCacheRD *pipeline = &shader_data->pipelines[sky_scene_state.view_count > 1 ? SKY_VERSION_HALF_RES_MULTIVIEW : SKY_VERSION_HALF_RES];
 
 		// Grab texture and framebuffer from cache, create if needed...

@@ -28,6 +28,8 @@ extends Node3D
 #   --out=path.png    save the last frame and quit
 #   --map-out=path.png  save the map (wind speed red, cloud cover green, wetness blue) and quit
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
+#   --no-reprojection  clouds view: every half resolution pixel every frame (WeatherSkyMaterial.cloud_reprojection off)
+#   --pan=D           clouds view: the camera turns D degrees a second (reprojection under motion)
 #
 # Run with --fixed-fps 30 so raster and path traced frames match.
 
@@ -43,6 +45,9 @@ var rain_hours := 1.0
 var dry_hours := 0.0
 var test := false
 var only_shelter := false
+var reprojection := true
+var pan := 0.0
+var pan_cam: Camera3D
 var n := 0
 var env: Environment
 var weather: Node3D
@@ -52,6 +57,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--view="): view = a.substr(7)
 		elif a == "--raster": raster = true
+		elif a == "--no-reprojection": reprojection = false
+		elif a.begins_with("--pan="): pan = float(a.substr(6))
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
@@ -616,6 +623,7 @@ func _build_street() -> void:
 # The cloud layer over open ground: a WeatherSkyMaterial sky, cloud shadows on the sun.
 func _build_clouds() -> void:
 	var sky_mat = ClassDB.instantiate("WeatherSkyMaterial")
+	sky_mat.cloud_reprojection = reprojection
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.process_mode = Sky.PROCESS_MODE_REALTIME
@@ -652,6 +660,7 @@ func _build_clouds() -> void:
 		cam.position = Vector3(0, 60, 0)
 		cam.look_at_from_position(cam.position, Vector3(0, 160, -1000), Vector3.UP)
 	add_child(cam)
+	pan_cam = cam
 	cam.make_current()
 
 	weather = ClassDB.instantiate("WeatherMap3D")
@@ -803,6 +812,8 @@ func _process(_delta: float) -> void:
 	if test or env == null:
 		return
 	n += 1
+	if pan != 0.0 and pan_cam:
+		pan_cam.rotate_y(deg_to_rad(pan) * _delta)
 	if pt_from > 0 and n == pt_from:
 		env.pathtracing_enabled = not raster
 	if out != "" and n >= frames:
