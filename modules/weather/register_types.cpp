@@ -30,6 +30,7 @@
 
 #include "register_types.h"
 
+#include "weather_lightning_3d.h"
 #include "weather_map_3d.h"
 #include "weather_sky_material.h"
 
@@ -42,6 +43,7 @@ void initialize_weather_module(ModuleInitializationLevel p_level) {
 	}
 	GDREGISTER_CLASS(WeatherMap3D);
 	GDREGISTER_CLASS(WeatherSkyMaterial);
+	GDREGISTER_CLASS(WeatherLightning3D);
 
 	// A shader that names a global uniform only compiles once the global exists, so the ones
 	// WeatherMap3D.get_wind_shader_code() reads are declared here with no data, as BaseMaterial3D

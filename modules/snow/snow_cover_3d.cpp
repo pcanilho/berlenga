@@ -31,6 +31,9 @@
 
 #include "snow_cover_3d.h"
 
+#include "snow_climate.h"
+#include "snow_fall_3d.h"
+
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/terrain_deform/terrain_deformer_3d.h"
 #include "modules/weather/weather_map_3d.h"
@@ -103,6 +106,9 @@ float SnowCover3D::holding_depth(float p_slope_degrees, float p_min_mm, float p_
 // Cells
 
 Vector3 SnowCover3D::_follow_position() const {
+	if (owner) {
+		return owner->_follow_position();
+	}
 	if (!follow_target.is_empty()) {
 		const Node3D *n = Object::cast_to<Node3D>(get_node_or_null(follow_target));
 		if (n && n->is_inside_tree()) {
@@ -142,6 +148,11 @@ void SnowCover3D::_allocate() {
 	cell_steep.resize(nn);
 	cell_steep.fill(0);
 	steep_dirty = true;
+	cell_cornice_x.resize(cornices_enabled ? nn : 0);
+	cell_cornice_z.resize(cornices_enabled ? nn : 0);
+	cell_cornice_x.fill(0.0f);
+	cell_cornice_z.fill(0.0f);
+	sx_cache.clear();
 	snow_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAH);
 	snow_texture.unref();
 	globals_added = false;
@@ -157,6 +168,9 @@ Vector3 SnowCover3D::_cell_center(int p_x, int p_z) const {
 }
 
 SnowCover3D::GroundQuery SnowCover3D::_ground_query() const {
+	if (owner) {
+		return owner->_ground_query();
+	}
 	GroundQuery q;
 	Node *src = height_source.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(height_source);
 	q.deformer = Object::cast_to<TerrainDeformer3D>(src);
@@ -238,6 +252,9 @@ void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uin
 }
 
 void SnowCover3D::_follow(Vector3 p_center) {
+	if (owner) {
+		return; // a fixed square
+	}
 	const float cs = _cell_size();
 	const Vector2i want(int(Math::floor(p_center.x / cs)) - resolution / 2, int(Math::floor(p_center.z / cs)) - resolution / 2);
 	if (!origin_valid) {
@@ -246,6 +263,7 @@ void SnowCover3D::_follow(Vector3 p_center) {
 		_finish_sx(true);
 		_sample_heights(0, resolution);
 		sx_valid = false;
+		_seed_from_world(nullptr);
 		return;
 	}
 	if (want != origin_cell) {
@@ -258,8 +276,8 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	_finish_sx(true);
 	const int n = resolution;
 	const Vector2i d = p_new_origin - origin_cell;
-	// The pack is history: cells that stay keep theirs. Cells entering the square take the state of the
-	// nearest cell that was inside it (the snowpack of the world tier replaces this, docs/ideas/snow.md).
+	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
+	// where there is one, else the state of the nearest cell that was inside it.
 	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
@@ -279,6 +297,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	origin_cell = p_new_origin;
 	// New cells need their own ground; Sx is rebaked in the background, the shifted one serves meanwhile.
 	_sample_heights(0, n, &fresh);
+	_seed_from_world(&fresh);
 	sx_dirty = sx_valid;
 }
 
@@ -378,9 +397,14 @@ void SnowCover3D::_update_steep() {
 void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 	Inputs &in = inputs;
 	in.dt_h = float(p_weather_dt) / 3600.0f;
-	in.weather = WeatherMap3D::get_active();
+	// A climate bake drives its own weather.
+	in.weather = driven ? nullptr : WeatherMap3D::get_active();
 	const Vector3 center = _follow_position();
-	if (in.weather) {
+	if (driven) {
+		in.ref_height = driven_ref_height;
+		in.temperature = temperature;
+		in.humidity = humidity;
+	} else if (in.weather) {
 		in.ref_height = in.weather->get_ground_height();
 		in.temperature = in.weather->get_temperature();
 		in.humidity = in.weather->get_humidity();
@@ -391,11 +415,17 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 	}
 	in.base_precip = precipitation_rate;
 
-	// The sun: this node's light, else the weather map's.
+	// The sun: this node's light, else the weather map's (the world tier: its owner's; a bake: the date's).
 	in.sun_dir = Vector3();
 	in.direct_normal = 0.0f;
 	const DirectionalLight3D *sun = nullptr;
-	if (is_inside_tree()) {
+	if (driven) {
+		in.sun_dir = driven_sun;
+		in.direct_normal = driven_sun.y > 0.01f ? driven_direct : 0.0f;
+	} else if (owner) {
+		in.sun_dir = owner->inputs.sun_dir;
+		in.direct_normal = owner->inputs.direct_normal;
+	} else if (is_inside_tree()) {
 		if (!sun_light.is_empty()) {
 			sun = Object::cast_to<DirectionalLight3D>(get_node_or_null(sun_light));
 		} else if (in.weather && !in.weather->get_sun_light().is_empty()) {
@@ -415,13 +445,25 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 	// at twice that.
 	in.wind_factor = 0.0f;
 	in.drift_norm = 1.0f;
-	if (drift_enabled && in.weather) {
-		const Vector2 wind = in.weather->get_mean_wind_at(center);
+	last_wind = driven ? driven_wind : (in.weather ? in.weather->get_mean_wind_at(center) : Vector2());
+	if (drift_enabled && (in.weather || driven)) {
+		const Vector2 wind = last_wind;
 		const float u = wind.length();
 		const float ut = MAX(drift_threshold_wind, 0.1f);
 		in.wind_factor = CLAMP((u - ut) / ut, 0.0f, 1.0f);
 		_finish_sx(p_blocking);
-		if (in.wind_factor > 0.0f) {
+		if (in.wind_factor > 0.0f && driven) {
+			// A bake turns the wind every day: Sx per 22.5 degrees, each baked once.
+			const int bin = int(Math::round(Math::atan2(wind.y, wind.x) / Math::deg_to_rad(22.5f))) & 15;
+			if (!sx_cache.has(bin)) {
+				const float a = bin * Math::deg_to_rad(22.5f);
+				_start_sx(Vector2(Math::cos(a), Math::sin(a)));
+				_finish_sx(true);
+				sx_cache.insert(bin, cell_sx);
+			}
+			cell_sx = sx_cache[bin];
+			sx_valid = true;
+		} else if (in.wind_factor > 0.0f) {
 			const Vector2 dir = wind / u;
 			const bool turned = !sx_valid || sx_direction.dot(dir) < Math::cos(Math::deg_to_rad(10.0f));
 			const bool baking = sx_task != WorkerThreadPool::INVALID_TASK_ID;
@@ -459,7 +501,9 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 
 		// Precipitation, split into snow and rain.
 		const float rate = in.weather ? in.weather->get_rain_at(pos) : in.base_precip;
-		const float p = MAX(rate, 0.0f) * in.dt_h;
+		// More falls higher up (orographic enhancement), by precipitation_gradient per 100 m.
+		const float oro = MAX(1.0f + precipitation_gradient * (h - in.ref_height) * 0.01f, 0.0f);
+		const float p = MAX(rate, 0.0f) * oro * in.dt_h;
 		const float share = snowfall_fraction(t, in.humidity);
 		float snow = p * share;
 		const float rain = p - snow;
@@ -697,9 +741,12 @@ void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
 		slide_accum = 0.0;
 		_slide();
 	}
+	if (cornices_enabled) {
+		_grow_cornices(inputs.dt_h, last_wind);
+	}
 	// What reaches the ground under the pack (rain through it and melt) wets surfaces in place of the
-	// precipitation the weather map would put there.
-	if (WeatherMap3D *weather = WeatherMap3D::get_active()) {
+	// precipitation the weather map would put there. (Not the world tier's: the near square stands for it.)
+	if (WeatherMap3D *weather = owner ? nullptr : WeatherMap3D::get_active()) {
 		weather->set_surface_water_source_cells(get_instance_id(), cell_runoff, resolution, get_map_rect());
 	}
 	update_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
@@ -713,9 +760,9 @@ void SnowCover3D::_upload() {
 	if (snow_image.is_null() || snow_image->get_width() != n) {
 		return;
 	}
-	Vector<uint8_t> data;
-	data.resize(n * n * 8);
-	uint16_t *w = reinterpret_cast<uint16_t *>(data.ptrw());
+	Vector<uint8_t> bytes;
+	bytes.resize(n * n * 8);
+	uint16_t *w = reinterpret_cast<uint16_t *>(bytes.ptrw());
 	for (int i = 0; i < n * n; i++) {
 		const float swe = cell_swe[i];
 		const float depth = swe > SWE_MIN ? swe / cell_density[i] : 0.0f;
@@ -726,7 +773,7 @@ void SnowCover3D::_upload() {
 		w[i * 4 + 2] = Math::make_half_float(wet);
 		w[i * 4 + 3] = Math::make_half_float(cell_density[i] / 1000.0f);
 	}
-	snow_image->set_data(n, n, false, Image::FORMAT_RGBAH, data);
+	snow_image->set_data(n, n, false, Image::FORMAT_RGBAH, bytes);
 	if (snow_texture.is_null()) {
 		snow_texture = ImageTexture::create_from_image(snow_image);
 	} else {
@@ -770,6 +817,299 @@ void SnowCover3D::advance(float p_seconds) {
 		left -= step;
 	}
 	_upload();
+}
+
+void SnowCover3D::advance_world(float p_seconds) {
+	if (!world) {
+		return;
+	}
+	double left = MAX(p_seconds, 0.0f);
+	while (left > 0.0) {
+		const double step = MIN(left, 3600.0);
+		world->_update(step, true);
+		left -= step;
+	}
+	world->_upload();
+	_publish_world_globals();
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// The world tier and the climate bake (stage 4)
+
+float SnowCover3D::cornice_growth_share(float p_wind_ratio) {
+	// Yu et al. (2023): cornices grow between the threshold wind and twice it, fastest about 40% above it;
+	// below there is no transport, above it erosion wins.
+	const float r = p_wind_ratio;
+	if (r <= 1.0f || r >= 2.0f) {
+		return 0.0f;
+	}
+	return r < 1.4f ? (r - 1.0f) / 0.4f : (2.0f - r) / 0.6f;
+}
+
+void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_resolution) {
+	owner = p_owner;
+	extent = MAX(p_rect.size.x, p_rect.size.y);
+	resolution = MAX(p_resolution, 4);
+	lapse_rate = owner->lapse_rate;
+	melt_threshold = owner->melt_threshold;
+	melt_temperature_factor = owner->melt_temperature_factor;
+	melt_shortwave_factor = owner->melt_shortwave_factor;
+	liquid_capacity = owner->liquid_capacity;
+	slide_enabled = owner->slide_enabled;
+	slide_angle = owner->slide_angle;
+	slide_min_holding = owner->slide_min_holding;
+	slide_holding_decay = owner->slide_holding_decay;
+	drift_enabled = owner->drift_enabled;
+	drift_distance = owner->drift_distance;
+	drift_strength = owner->drift_strength;
+	drift_threshold_wind = owner->drift_threshold_wind;
+	precipitation_gradient = owner->precipitation_gradient;
+	publish_shader_globals = false;
+	cornices_enabled = true;
+	_allocate();
+	const float cs = _cell_size();
+	origin_cell = Vector2i(int(Math::floor(p_rect.position.x / cs)), int(Math::floor(p_rect.position.y / cs)));
+	origin_valid = true;
+	_sample_heights(0, resolution);
+}
+
+void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
+	// A cornice builds where snow blown over a crest settles in the lee eddy and creeps out as a slab
+	// (Naito and Kobayashi 1986; Yu et al. 2023). Per cell on a lee edge: the crest is not overtopped upwind,
+	// the ground falls away at 30 degrees or more downwind, and the snow upwind is loose and dry. It grows
+	// along the wind at up to 1.6 cm an hour (field rates of Hancock et al. 2020), shrinks when the wind is
+	// past twice the threshold, and wastes back in thaws, 0.5 mm an hour per degree above the melt threshold
+	// (a snow degree-day factor of 5 mm water a day per degree over a 450 kg/m3 slab).
+	const int n = resolution;
+	if (cell_cornice_x.size() != n * n) {
+		return;
+	}
+	constexpr float RATE = 0.016f; // m/h at the best wind
+	constexpr float MAX_LENGTH = 12.0f; // m
+	const float cs = _cell_size();
+	const float tan_lee = Math::tan(Math::deg_to_rad(30.0f));
+	const float u = p_wind.length();
+	const Vector2 dir = u > 0.1f ? p_wind / u : Vector2();
+	float *cx = cell_cornice_x.ptrw();
+	float *cz = cell_cornice_z.ptrw();
+	auto cell = [&](int p_x, int p_z) { return CLAMP(p_z, 0, n - 1) * n + CLAMP(p_x, 0, n - 1); };
+	for (int z = 1; z < n - 1; z++) {
+		for (int x = 1; x < n - 1; x++) {
+			const int i = z * n + x;
+			if (cell_swe[i] <= SWE_MIN) {
+				cx[i] = 0.0f;
+				cz[i] = 0.0f;
+				continue;
+			}
+			const bool has = cx[i] != 0.0f || cz[i] != 0.0f;
+			const float h = cell_ground[i];
+			const float t = inputs.temperature - lapse_rate * 0.001f * (h - inputs.ref_height);
+			if (has && t > melt_threshold) {
+				const float len = Vector2(cx[i], cz[i]).length();
+				const float k = MAX(len - 0.0005f * (t - melt_threshold) * p_dt_h, 0.0f) / MAX(len, 1e-6f);
+				cx[i] *= k;
+				cz[i] *= k;
+			}
+			if (u < 0.1f || t >= 0.0f) {
+				continue;
+			}
+			const int iu = cell(x - int(Math::round(dir.x)), z - int(Math::round(dir.y)));
+			const int id1 = cell(x + int(Math::round(dir.x)), z + int(Math::round(dir.y)));
+			const int id2 = cell(x + int(Math::round(2.0f * dir.x)), z + int(Math::round(2.0f * dir.y)));
+			const float step = cs * Vector2(Math::round(dir.x), Math::round(dir.y)).length();
+			const bool edge = cell_ground[iu] <= h + 0.25f * step && cell_ground[id1] <= h && (h - cell_ground[id2]) >= tan_lee * 2.0f * step;
+			if (!edge) {
+				continue;
+			}
+			// The wind speeds up over the crest: Taylor and Lee (1984), 1.6 H / L for a ridge of height H
+			// over its half-width L, here the crest above the ground around it at a ring of 64 m or 4 cells.
+			const int ring = MAX(4, int(Math::ceil(64.0f / cs)));
+			float around = 0.0f;
+			for (int k = 0; k < 8; k++) {
+				static const int RX[8] = { 1, 1, 0, -1, -1, -1, 0, 1 };
+				static const int RZ[8] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+				around += cell_ground[cell(x + RX[k] * ring, z + RZ[k] * ring)] / 8.0f;
+			}
+			const float speedup = 1.0f + CLAMP(1.6f * (h - around) / (ring * cs), 0.0f, 0.6f); // at most 60%: steeper ridges separate
+			const float r = u * speedup / SnowFall3D::blowing_threshold(t);
+			if (r >= 2.0f && has) {
+				// Scoured back.
+				const float len = Vector2(cx[i], cz[i]).length();
+				const float k = MAX(len - RATE * p_dt_h * MIN(r - 2.0f, 1.0f), 0.0f) / MAX(len, 1e-6f);
+				cx[i] *= k;
+				cz[i] *= k;
+				continue;
+			}
+			const float g = cornice_growth_share(r);
+			// Snow to carry: dry upwind, and loose (a light pack, or a fresh surface on a settled one).
+			const bool loose = cell_density[iu] < 350.0f || cell_albedo[iu] > 0.78f;
+			if (g <= 0.0f || cell_swe[iu] < 5.0f || !loose || cell_liquid[iu] > 0.05f * cell_swe[iu]) {
+				continue;
+			}
+			Vector2 c = Vector2(cx[i], cz[i]) + dir * (g * RATE * p_dt_h);
+			if (c.length() > MAX_LENGTH) {
+				c = c.normalized() * MAX_LENGTH;
+			}
+			cx[i] = c.x;
+			cz[i] = c.y;
+		}
+	}
+}
+
+void SnowCover3D::_seed_from_world(const Vector<uint8_t> *p_only) {
+	// Cells arriving in the square start from the world tier's pack; the slide then sheds what the finer
+	// slopes cannot hold (SnowSlide on the near cells), so cliffs come out bare and their feet loaded.
+	if (!world || owner || !origin_valid) {
+		return;
+	}
+	const Rect2 wr = world->get_map_rect();
+	const int n = resolution;
+	bool any = false;
+	float *swe = cell_swe.ptrw();
+	float *liq = cell_liquid.ptrw();
+	float *rho = cell_density.ptrw();
+	float *alb = cell_albedo.ptrw();
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			if (p_only && !(*p_only)[i]) {
+				continue;
+			}
+			const Vector3 c = _cell_center(x, z);
+			const Vector2 xz(c.x, c.z);
+			if (!wr.has_point(xz)) {
+				continue;
+			}
+			const float w = world->_sample(world->cell_swe, xz);
+			if (w <= SWE_MIN) {
+				swe[i] = 0.0f;
+				liq[i] = 0.0f;
+				rho[i] = 100.0f;
+				alb[i] = ALBEDO_FRESH;
+				continue;
+			}
+			swe[i] = w;
+			liq[i] = MIN(world->_sample(world->cell_liquid, xz), w);
+			rho[i] = CLAMP(world->_sample(world->cell_density, xz), 30.0f, 917.0f);
+			alb[i] = world->_sample(world->cell_albedo, xz);
+			any = true;
+		}
+	}
+	if (any && slide_enabled) {
+		_slide();
+	}
+}
+
+void SnowCover3D::_make_world() {
+	_free_world();
+	if (climate.is_null() || !climate->is_baked()) {
+		return;
+	}
+	world = memnew(SnowCover3D);
+	world->_setup_internal(this, climate->get_rect(), climate->get_resolution());
+	const int nn = world->resolution * world->resolution;
+	if (climate->get_swe().size() == nn) {
+		world->cell_swe = climate->get_swe();
+		world->cell_liquid = climate->get_liquid();
+		world->cell_density = climate->get_density();
+		world->cell_albedo = climate->get_albedo();
+		if (climate->get_cornice_x().size() == nn) {
+			world->cell_cornice_x = climate->get_cornice_x();
+			world->cell_cornice_z = climate->get_cornice_z();
+		}
+	}
+	world->_upload();
+	_publish_world_globals();
+}
+
+void SnowCover3D::_free_world() {
+	if (!world) {
+		return;
+	}
+	world->_finish_sx(true);
+	memdelete(world);
+	world = nullptr;
+	if (world_globals_added && active == this) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("snow_world_rect", Vector4());
+	}
+}
+
+void SnowCover3D::_publish_world_globals() {
+	if (!publish_shader_globals || active != this || !world || world->snow_texture.is_null()) {
+		return;
+	}
+	if (!world_globals_added) {
+		_set_global("snow_world_map", world->snow_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		world_globals_added = true;
+	}
+	const Rect2 r = world->get_map_rect();
+	_set_global("snow_world_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
+}
+
+Error SnowCover3D::bake_climate(Rect2 p_rect, int p_resolution) {
+	ERR_FAIL_COND_V_MSG(climate.is_null(), ERR_UNCONFIGURED, "SnowCover3D: set a climate to bake.");
+	ERR_FAIL_COND_V(p_rect.size.x <= 0.0f || p_rect.size.y <= 0.0f || p_resolution < 4, ERR_INVALID_PARAMETER);
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	SnowCover3D *b = memnew(SnowCover3D);
+	b->_setup_internal(this, p_rect, p_resolution);
+	b->driven = true;
+	b->driven_ref_height = climate->get_base_height();
+	b->precipitation_gradient = climate->get_precipitation_gradient();
+	b->slide_interval = 0.0f;
+	climate->start_weather();
+	const int step = CLAMP(climate->get_step_hours(), 1, 24);
+	for (int d = 0; d < climate->get_days(); d++) {
+		for (int hr = 0; hr < 24; hr += step) {
+			const SnowClimate::Hour w = climate->weather_at(d, hr + 0.5f * step);
+			b->temperature = w.temperature;
+			b->humidity = w.humidity;
+			b->precipitation_rate = w.precipitation;
+			b->driven_wind = w.wind;
+			b->driven_sun = w.to_sun;
+			b->driven_direct = w.direct_normal;
+			b->_update(step * 3600.0, true);
+		}
+	}
+	climate->set_result(b->get_map_rect(), b->resolution, b->cell_swe, b->cell_liquid, b->cell_density, b->cell_albedo, b->cell_cornice_x, b->cell_cornice_z);
+	memdelete(b);
+	print_verbose(vformat("SnowCover3D: baked %d days of climate on %d x %d cells in %.1f s.", climate->get_days(), p_resolution, p_resolution, (OS::get_singleton()->get_ticks_usec() - t0) / 1e6));
+	if (is_inside_tree()) {
+		_make_world();
+		_seed_from_world(nullptr);
+		_upload();
+	}
+	return OK;
+}
+
+Rect2 SnowCover3D::get_world_rect() const {
+	return world ? world->get_map_rect() : Rect2();
+}
+
+float SnowCover3D::get_world_swe_at(Vector3 p_position) const {
+	return world ? world->get_swe_at(p_position) : 0.0f;
+}
+
+float SnowCover3D::get_world_depth_at(Vector3 p_position) const {
+	return world ? world->get_depth_at(p_position) : 0.0f;
+}
+
+Vector2 SnowCover3D::get_cornice_at(Vector3 p_position) const {
+	const SnowCover3D *c = world ? world : (cornices_enabled ? this : nullptr);
+	if (!c || c->cell_cornice_x.size() != c->resolution * c->resolution) {
+		return Vector2();
+	}
+	const float cs = c->_cell_size();
+	const int x = int(Math::floor(p_position.x / cs)) - c->origin_cell.x;
+	const int z = int(Math::floor(p_position.z / cs)) - c->origin_cell.y;
+	if (x < 0 || z < 0 || x >= c->resolution || z >= c->resolution) {
+		return Vector2();
+	}
+	const int i = z * c->resolution + x;
+	return Vector2(c->cell_cornice_x[i], c->cell_cornice_z[i]);
+}
+
+Ref<Texture2D> SnowCover3D::get_world_texture() const {
+	return world ? Ref<Texture2D>(world->snow_texture) : Ref<Texture2D>();
 }
 
 void SnowCover3D::clear() {
@@ -834,24 +1174,44 @@ float SnowCover3D::_sample(const Vector<float> &p_field, Vector2 p_xz) const {
 	return Math::lerp(Math::lerp(at(x0, z0), at(x0 + 1, z0), tx), Math::lerp(at(x0, z0 + 1), at(x0 + 1, z0 + 1), tx), tz);
 }
 
+bool SnowCover3D::_in_world_only(Vector3 p_position) const {
+	// Outside the near square, the pack is the world tier's (when there is one).
+	return world && !get_map_rect().has_point(Vector2(p_position.x, p_position.z));
+}
+
 float SnowCover3D::get_depth_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_depth_at(p_position);
+	}
 	const float swe = get_swe_at(p_position);
 	return swe > SWE_MIN ? swe / MAX(get_density_at(p_position), 30.0f) : 0.0f;
 }
 
 float SnowCover3D::get_swe_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_swe_at(p_position);
+	}
 	return MAX(_sample(cell_swe, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
 float SnowCover3D::get_density_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_density_at(p_position);
+	}
 	return _sample(cell_density, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_albedo_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_albedo_at(p_position);
+	}
 	return _sample(cell_albedo, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_wetness_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_wetness_at(p_position);
+	}
 	const Vector2 p(p_position.x, p_position.z);
 	const float swe = _sample(cell_swe, p);
 	const float liq = _sample(cell_liquid, p);
@@ -904,6 +1264,9 @@ void SnowCover3D::_notification(int p_what) {
 			if (cell_swe.size() != resolution * resolution) {
 				_allocate();
 			}
+			if (!world && climate.is_valid() && climate->is_baked()) {
+				_make_world();
+			}
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_physics_process_internal(true);
 			}
@@ -919,6 +1282,7 @@ void SnowCover3D::_notification(int p_what) {
 				weather->clear_surface_water_source(this);
 			}
 			_finish_sx(true);
+			_free_world();
 			if (active == this) {
 				active = nullptr;
 			}
@@ -931,6 +1295,16 @@ void SnowCover3D::_notification(int p_what) {
 			_follow(_follow_position());
 			if (update_accum >= 1.0 / MAX(update_rate, 0.01f)) {
 				_update(update_accum * scale, false);
+				if (world) {
+					world_accum += update_accum * scale;
+					if (++world_counter >= MAX(world_update_every, 1)) {
+						world_counter = 0;
+						world->_update(world_accum, false);
+						world_accum = 0.0;
+						world->_upload();
+						_publish_world_globals();
+					}
+				}
 				update_accum = 0.0;
 				_upload();
 			}
@@ -1046,6 +1420,25 @@ void SnowCover3D::set_drift_threshold_wind(float p_speed) {
 	drift_threshold_wind = MAX(p_speed, 0.0f);
 }
 
+void SnowCover3D::set_precipitation_gradient(float p_share) {
+	precipitation_gradient = MAX(p_share, 0.0f);
+}
+
+void SnowCover3D::set_climate(const Ref<SnowClimate> &p_climate) {
+	climate = p_climate;
+	if (is_inside_tree()) {
+		_make_world();
+		if (world) {
+			_seed_from_world(nullptr);
+			_upload();
+		}
+	}
+}
+
+void SnowCover3D::set_world_update_every(int p_updates) {
+	world_update_every = MAX(p_updates, 1);
+}
+
 void SnowCover3D::set_publish_shader_globals(bool p_enabled) {
 	publish_shader_globals = p_enabled;
 	if (p_enabled) {
@@ -1128,6 +1521,21 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_total_water"), &SnowCover3D::get_total_water);
 	ClassDB::bind_method(D_METHOD("get_update_time_msec"), &SnowCover3D::get_update_time_msec);
 	ClassDB::bind_method(D_METHOD("get_snow_texture"), &SnowCover3D::get_snow_texture);
+	ClassDB::bind_method(D_METHOD("set_precipitation_gradient", "share"), &SnowCover3D::set_precipitation_gradient);
+	ClassDB::bind_method(D_METHOD("get_precipitation_gradient"), &SnowCover3D::get_precipitation_gradient);
+	ClassDB::bind_method(D_METHOD("set_climate", "climate"), &SnowCover3D::set_climate);
+	ClassDB::bind_method(D_METHOD("get_climate"), &SnowCover3D::get_climate);
+	ClassDB::bind_method(D_METHOD("set_world_update_every", "updates"), &SnowCover3D::set_world_update_every);
+	ClassDB::bind_method(D_METHOD("get_world_update_every"), &SnowCover3D::get_world_update_every);
+	ClassDB::bind_method(D_METHOD("bake_climate", "rect", "resolution"), &SnowCover3D::bake_climate);
+	ClassDB::bind_method(D_METHOD("has_world"), &SnowCover3D::has_world);
+	ClassDB::bind_method(D_METHOD("get_world_rect"), &SnowCover3D::get_world_rect);
+	ClassDB::bind_method(D_METHOD("get_world_depth_at", "position"), &SnowCover3D::get_world_depth_at);
+	ClassDB::bind_method(D_METHOD("get_world_swe_at", "position"), &SnowCover3D::get_world_swe_at);
+	ClassDB::bind_method(D_METHOD("get_cornice_at", "position"), &SnowCover3D::get_cornice_at);
+	ClassDB::bind_method(D_METHOD("get_world_texture"), &SnowCover3D::get_world_texture);
+	ClassDB::bind_method(D_METHOD("advance_world", "seconds"), &SnowCover3D::advance_world);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("cornice_growth_share", "wind_ratio"), &SnowCover3D::cornice_growth_share);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("snowfall_fraction", "celsius", "humidity"), &SnowCover3D::snowfall_fraction);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("new_snow_density", "celsius"), &SnowCover3D::new_snow_density);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("holding_depth", "slope_degrees", "min_mm", "decay"), &SnowCover3D::holding_depth);
@@ -1161,6 +1569,10 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_distance", PROPERTY_HINT_RANGE, "1,1000,1,suffix:m"), "set_drift_distance", "get_drift_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_strength", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_drift_strength", "get_drift_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drift_threshold_wind", PROPERTY_HINT_RANGE, "0,40,0.1,suffix:m/s"), "set_drift_threshold_wind", "get_drift_threshold_wind");
+	ADD_GROUP("World", "");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "climate", PROPERTY_HINT_RESOURCE_TYPE, "SnowClimate"), "set_climate", "get_climate");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "world_update_every", PROPERTY_HINT_RANGE, "1,120,1"), "set_world_update_every", "get_world_update_every");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "precipitation_gradient", PROPERTY_HINT_RANGE, "0,0.5,0.005"), "set_precipitation_gradient", "get_precipitation_gradient");
 	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "publish_shader_globals"), "set_publish_shader_globals", "get_publish_shader_globals");
 }
@@ -1171,6 +1583,7 @@ SnowCover3D::SnowCover3D() {
 
 SnowCover3D::~SnowCover3D() {
 	_finish_sx(true);
+	_free_world();
 	if (active == this) {
 		active = nullptr;
 	}

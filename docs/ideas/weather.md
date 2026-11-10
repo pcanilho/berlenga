@@ -480,3 +480,94 @@ Results (lavapipe, `--view=clouds`, 960x540, 100% crops in the PR):
 - Where a snowpack lies, the film is fed by what leaves the pack instead: rain through it plus its melt. `SnowCover3D` passes its runoff grid with `set_surface_water_source()` after each update. The map resamples it onto its own cells on the main thread before the parallel cell pass, so the workers never read the pack.
 - The snow thread can read `get_air_temperature()` and `get_air_humidity()`, which give the eased state the cells use.
 - It can also read `get_canopy_closure_at()` for interception. This takes the shelter canopy's Cionco coefficient as a leaf area index and passes it through Beer's law, with an extinction of 0.5 (Monsi and Saeki 1953).
+
+## Lightning and thunder (10 Nov)
+
+A storm on the weather map makes lightning at a rate set by how tall its cloud is. Each strike is a
+lit channel, so path tracing gets its light from the channel. Its thunder is built from the same
+channel and arrives late by its distance.
+
+### Published methods
+
+- **Flash rate.** Price and Rind (1992) fitted flashes per minute to cloud top height H (km). Over
+  land the rate is 3.44e-5 H^4.9, and over sea it is 6.57e-6 H^4.9. Global and regional climate
+  models still use this fit, for example WRF's lightning option and NOAA's HWRF code
+  (`module_ltng_cpmpr92z.F`). A 9 km cumulonimbus gives about 1.6 flashes a minute, and a 12 km one
+  about 7.
+- **Cloud-to-ground share.** Price and Rind (1993) give the ratio of in-cloud to ground flashes from
+  the cold cloud depth d (km, from the freezing level to the top):
+  Z = 0.021 d^4 - 0.648 d^3 + 7.493 d^2 - 36.54 d + 63.09. The ground share is 1/(1+Z), which is
+  about 15% for a 9 km top on a 15 C day.
+- **Channel shape.** Reed and Wyvill (1994) built the channel as a random walk whose segments turn
+  from their parent by about 16 degrees, normally distributed, with branches that split off and die
+  out. Games still use this method. Kim and Lin (2004) grow the channel with the dielectric breakdown
+  model (Niemeyer, Pietronero and Wiesmann 1984), which is more faithful but solves a Laplace field
+  on a grid. That is too slow for strikes kilometres long. We take the random walk at two scales: a
+  coarse walk steered to the strike point, then midpoint jitter for the fine kinks, the
+  multi-scale tortuosity Few describes.
+- **Timing.** The stepped leader takes about 20 ms to come down and is faint. Then 3 to 5 return
+  strokes, a geometric mean of about 60 ms apart, run up the same channel (Rakov and Uman 2003). Only
+  the first stroke lights the branches, because later strokes follow the dart leader down the main
+  channel. Light rises in about 15 microseconds (Guo and Krider 1982), far shorter than a frame. So we
+  integrate each stroke's light over the frame, the way a camera exposure would, instead of
+  sampling it. About a third of flashes carry a continuing current that keeps the channel glowing for
+  tens to hundreds of milliseconds.
+- **In-cloud flashes** light the cloud from inside. We use the same two-stream diffusion as the
+  sunlight in the clouds: flux falls as 1/(1 + 3/4 (1-g) tau) through the cloud, over 4 pi r^2.
+- **Thunder.** Few (1969) explained the thunder signature: each straight piece of a tortuous channel
+  sends out an N-wave. Its period is set by the relaxation radius R0 = (E/(pi p0))^1/2, where E is
+  the energy per metre and p0 the air pressure, and the loudest frequency is about 0.63 c/R0.
+  Ribner and Roy (1982), and later Blanco et al. (2009, "Modelling digital thunder"), add up those
+  N-waves along a generated channel, each delayed by its distance at the speed of sound. A piece seen
+  broadside gives a short loud clap. A piece seen end-on spreads its sound over its own length,
+  which gives the rumble. Air absorbs the high frequencies (ISO 9613-1), so far thunder is a low
+  growl.
+
+### Other engines
+
+- From their documentation and talks, the common game approach (Unreal sky plugins, Unity weather
+  assets) is a flashing directional light, a bolt mesh or ribbon, and a recorded thunder sample
+  played after a distance delay. We have not read their code. Flight simulators and recent open
+  world games also glow the clouds from inside, which is the in-cloud glow above.
+- We found none that ties the flash rate to cloud height, builds the thunder from the channel, or
+  lights the scene from the channel itself under path tracing. Under path tracing a sky-wide
+  directional flash is light with no source, so we do not use one.
+
+### Plan
+
+- **`WeatherLightning3D`**, a node in the weather module. It reads the active WeatherMap3D's
+  storms. For each storm it takes H as the cloud base plus the cumulonimbus top that the cloud model
+  already draws, and draws Poisson strikes at the Price and Rind rate times the storm's growth
+  envelope and `rate_scale`. The rate is per real second, so `advance()` does not spray strikes.
+  The freezing level comes from the map's air temperature at 6.5 K/km, which sets the ground share.
+- **A ground strike** lands near the storm core, and a physics ray finds what it hits, so tall things
+  are hit. The channel is built as tubes with an opaque emissive StandardMaterial3D, which the fork's
+  path tracer samples as a light (emissive next event estimation). The main channel and the branches
+  get separate materials, so later strokes light only the main channel. The tube width holds at least
+  about one and a half pixels.
+- **Raster lighting.** The raster has no emissive lights, so a light stands in for the channel. It
+  gives the channel's irradiance at the camera: the sum over the channel's pieces of radiance times
+  projected area over r^2, in the direction of that sum. Ground flashes more than 400 m away use a
+  directional light from that direction. Like the sun, a source that far is close to parallel across
+  the scene, and its cascaded shadow maps stay sharp, where an omni light's cube map spread over
+  kilometres kept no shadow detail (10 Nov fix). Nearer flashes use an omni light. Either is off
+  under path tracing, where the channel itself lights the scene, so the light is never counted
+  twice.
+- **Cloud glow.** WeatherSkyMaterial gets up to four flash points, drawn in the full resolution pass
+  so cloud reprojection does not smear them. They are kept out of the radiance map, so they do not
+  light the scene twice.
+- **Thunder** is synthesized on a worker thread from the channel the player saw. The samples are
+  Ribner and Roy N-waves with Few's period, delayed at c = 331.3 + 0.606 T m/s for the map's air
+  temperature, and grouped in distance bands with a low-pass filter for air absorption. It plays
+  through an AudioStreamPlayer3D at the nearest channel point, starting when the first sound
+  arrives. No recorded audio is bundled.
+- **Script API.** `strike(position, cloud_to_ground)` for scripted strikes, and a `struck` signal
+  for gameplay and the showcase scene.
+
+### Costs
+
+- **CPU.** A strike is a few thousand points and a mesh of about 20k triangles, made once. Thunder
+  for a strike 5 km away is about 15 s of 22 kHz mono, synthesized on a worker thread in a few ms.
+- **GPU.** The raster pays for one omni light while a flash lasts. Path tracing pays for one more
+  emissive mesh in the light list, and a new bottom-level structure per strike. The PC queue should
+  time both.

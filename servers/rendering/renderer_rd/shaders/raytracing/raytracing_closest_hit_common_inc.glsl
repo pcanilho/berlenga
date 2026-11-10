@@ -410,7 +410,8 @@ MaterialProperties material_properties(vec3 p_albedo, float p_metallic, float p_
 
 MaterialProperties material_properties_from_result(HitData h, MaterialResult m, vec3 N, vec3 V) {
 	MaterialProperties material = material_properties_coated(m.albedo, m.metalness, m.roughness, m.specular, m.backlight,
-			rt_entry_material_flags(h.geometry_idx), dot(N, V), m.clearcoat, m.clearcoat_roughness, h.geometry_normal);
+			rt_entry_material_flags(h.geometry_idx), dot(N, V), m.clearcoat, m.clearcoat_roughness,
+			dot(m.coat_normal, m.coat_normal) > 0.5 ? m.coat_normal : h.geometry_normal);
 	material.emissive = m.emissive;
 	material.transmissivness = m.transmission;
 	material.subsurface = m.subsurface > 0.0 ? 1.0 : 0.0;

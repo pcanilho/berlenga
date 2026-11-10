@@ -612,6 +612,9 @@ void BaseMaterial3D::init_shaders() {
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// And its world tier, the coarse pack over the whole terrain drawn outside the near square.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -1204,8 +1207,50 @@ uniform float snow_max_slope : hint_range(0.0, 90.0, 0.1);
 		if (snow_from_weather) {
 			code += R"(global uniform sampler2D snow_map;
 global uniform vec4 snow_map_rect;
+global uniform sampler2D snow_world_map;
+global uniform vec4 snow_world_rect;
 )";
 		}
+		code += R"(
+// Snow sparkle (docs/ideas/snow.md, stage 5; the same function is in scene_raytracing_raygen.glsl and
+// SnowSurface3D's shader). A share of the ice grains are smooth facets tilted at random (GGX, alpha 0.4)
+// that flash where they mirror a light. Counted per cell of the pixel's footprint (Zirr and Kaplanyan 2016;
+// Deliot and Belcour 2023, reduced to one facet per cell): a cell holding n grains has a facet with chance
+// min(share n, 1) covering share / chance of it, fading as more facets share the cell. Returns the facet's
+// normal and its weight (0: none).
+vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
+	const float grain = 0.002;
+	const float share = 0.25;
+	float level = floor(max(log2(max(p_footprint, grain) / grain), 0.0));
+	if (level > 5.0) {
+		return vec4(p_n, 0.0);
+	}
+	float cell = grain * exp2(level);
+	ivec3 q = ivec3(floor(p_pos / cell));
+	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u) ^ (uint(level) * 2654435761u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	float r0 = float(h & 0x3ffu) / 1023.0;
+	float r1 = float((h >> 10u) & 0x3ffu) / 1024.0;
+	float r2 = float((h >> 20u) & 0x3ffu) / 1023.0;
+	float grains = exp2(2.0 * level);
+	float chance = min(share * grains, 1.0);
+	if (r0 >= chance) {
+		return vec4(p_n, 0.0);
+	}
+	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-3);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * r2;
+	vec3 f = normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
+	return vec4(f, share / chance / sqrt(max(share * grains, 1.0)));
+}
+)";
 	}
 
 	if (features[FEATURE_REFRACTION] || features[FEATURE_TRANSMISSION]) {
@@ -2240,11 +2285,30 @@ void fragment() {)";
 		float snow_wet = 0.0;
 )";
 		if (snow_from_weather) {
-			code += R"(		if (snow_map_rect.z > 0.0) {
-			vec3 snow_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-			vec2 snow_half_texel = 0.5 / vec2(textureSize(snow_map, 0));
-			vec2 snow_uv = clamp((snow_pos.xz - snow_map_rect.xy) / snow_map_rect.zw, snow_half_texel, 1.0 - snow_half_texel);
-			vec4 snow_s = textureLod(snow_map, snow_uv, 0.0);
+			code += R"(		vec3 snow_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec4 snow_s = vec4(0.0);
+		bool snow_have = false;
+		// The world tier (the coarse pack over the whole terrain), then the near square over it, faded in
+		// across its outer tenth.
+		if (snow_world_rect.z > 0.0) {
+			vec2 snow_wuv = (snow_pos.xz - snow_world_rect.xy) / snow_world_rect.zw;
+			if (all(greaterThanEqual(snow_wuv, vec2(0.0))) && all(lessThanEqual(snow_wuv, vec2(1.0)))) {
+				vec2 snow_wh = 0.5 / vec2(textureSize(snow_world_map, 0));
+				snow_s = textureLod(snow_world_map, clamp(snow_wuv, snow_wh, 1.0 - snow_wh), 0.0);
+				snow_have = true;
+			}
+		}
+		if (snow_map_rect.z > 0.0) {
+			vec2 snow_nuv = (snow_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
+			vec2 snow_ne = min(snow_nuv, 1.0 - snow_nuv);
+			float snow_nw = snow_world_rect.z > 0.0 ? clamp(min(snow_ne.x, snow_ne.y) * 10.0, 0.0, 1.0) : 1.0;
+			if (snow_nw > 0.0) {
+				vec2 snow_half_texel = 0.5 / vec2(textureSize(snow_map, 0));
+				snow_s = mix(snow_s, textureLod(snow_map, clamp(snow_nuv, snow_half_texel, 1.0 - snow_half_texel), 0.0), snow_nw);
+				snow_have = true;
+			}
+		}
+		if (snow_have) {
 			// Snow-covered fraction from depth and density, Niu and Yang (2007):
 			// tanh(depth / (2.5 z0 (rho / rho_new)^m)), z0 0.01 m, rho_new 100 kg/m3, m 1.
 			snow_cover *= tanh(max(snow_s.r, 0.0) / (0.025 * max(snow_s.a * 10.0, 0.5)));
@@ -2264,17 +2328,47 @@ void fragment() {)";
 		snow_cover = clamp(snow_cover, 0.0, 1.0);
 		float snow_flat = clamp(1.0 - (1.0 - snow_n.y) / 0.3, 0.0, 1.0);
 		float snow = snow_hold * max(smoothstep(1.0 - 1.2 * snow_cover, 1.2 - 1.2 * snow_cover, snow_flat), smoothstep(0.9, 1.0, snow_cover));
-		// Snow: albedo from the pack's age, ice F0 0.018 (specular 0.22), rough when dry and smoother wet,
-		// its own smooth top over the surface's bumps.
+		// Snow: albedo from the pack's age, ice F0 0.018 (specular 0.335, as F0 = 0.16 specular squared),
+		// rough when dry and smoother wet, its own smooth top over the surface's bumps.
 		ALBEDO = mix(ALBEDO, vec3(snow_albedo), snow);
 		ROUGHNESS = mix(ROUGHNESS, mix(0.7, 0.35, snow_wet), snow);
 		METALLIC = mix(METALLIC, 0.0, snow);
-		SPECULAR = mix(SPECULAR, 0.22, snow);
+		SPECULAR = mix(SPECULAR, 0.335, snow);
 )";
 		if (features[FEATURE_NORMAL_MAPPING]) {
 			code += "\t\tNORMAL_MAP = mix(NORMAL_MAP, vec3(0.5, 0.5, 1.0), snow);\n";
 		}
-		code += "\t}\n";
+		code += R"(		// Sparkle on dry snow: the facet is a second, near-mirror lobe (the coat's, which takes NORMAL before
+		// NORMAL_MAP as its normal) weighted by the share of the pixel it covers, so the snow's own shading
+		// keeps its normal: NORMAL becomes the facet and NORMAL_MAP is solved to land back on the snow's
+		// normal. Ice F0 0.018 is 0.45 of the coat's 0.04. A film of melt water smooths the grains away.
+		{
+			vec3 snow_wpos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+			float snow_pix = 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+			float snow_fp = PROJECTION_MATRIX[3][3] != 0.0 ? snow_pix : length(VERTEX) * snow_pix;
+			vec4 snow_g = snow_glint(snow_wpos, snow_n_geo, snow_fp);
+			float snow_gw = snow_g.w * step(0.5, snow) * (1.0 - smoothstep(0.05, 0.3, snow_wet));
+			if (snow_gw > 0.0) {
+				vec2 snow_nm = NORMAL_MAP.xy * 2.0 - 1.0;
+				vec3 snow_base = normalize(mix(NORMAL, TANGENT * snow_nm.x + BINORMAL * snow_nm.y + NORMAL * sqrt(max(0.0, 1.0 - dot(snow_nm, snow_nm))), NORMAL_MAP_DEPTH));
+				vec3 snow_f = normalize((VIEW_MATRIX * vec4(snow_g.xyz, 0.0)).xyz);
+				mat3 snow_tbf = mat3(TANGENT, BINORMAL, snow_f);
+				float snow_det = determinant(snow_tbf);
+				if (abs(snow_det) > 1e-3) {
+					vec3 snow_k = inverse(snow_tbf) * snow_base;
+					if (snow_k.z > 0.0) {
+						snow_k /= length(snow_k);
+						NORMAL = snow_f;
+						NORMAL_MAP = vec3(snow_k.xy * 0.5 + 0.5, 1.0);
+						NORMAL_MAP_DEPTH = 1.0;
+						CLEARCOAT = 0.45 * snow_gw;
+						CLEARCOAT_ROUGHNESS = 0.5;
+					}
+				}
+			}
+		}
+	}
+)";
 	}
 
 	code += "}\n";

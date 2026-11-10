@@ -16,6 +16,7 @@ struct MaterialResult {
 	vec3 backlight; // Light "leaking through" thin/translucent surfaces (BACKLIGHT).
 	float clearcoat; // CLEARCOAT, 0 = no coat (or rendering/pathtracing/clearcoat off).
 	float clearcoat_roughness; // CLEARCOAT_ROUGHNESS.
+	vec3 coat_normal; // The coat's normal, world space; zero: the geometry normal (snow's glints set it).
 	float transmission; // BaseMaterial3D transmission times (1 - metallic): light let straight through, tinted by albedo.
 	float ior; // With transmission: the IOR of the medium the surface bounds; 0 for a thin surface.
 	uint medium; // With ior: the medium's payload code (MEDIUM_CHANGE_FLAG, RT_MEDIUM_CODE_GEOMETRY).
@@ -31,6 +32,7 @@ struct MaterialResult {
 };
 
 void material_result_no_hair(inout MaterialResult r) {
+	r.coat_normal = vec3(0.0);
 	r.hair = 0.0;
 	r.hair_sigma_a = vec3(0.0);
 	r.hair_tangent = vec3(1.0, 0.0, 0.0);

@@ -5,6 +5,8 @@
 #   godot --headless --path docs/bench/terrain_gen -- --time             generation time at 256, 512, 1024 cells
 #   godot --path docs/bench/terrain_gen --rendering-driver vulkan -- --out=view.png [--raster] [--spp=16] [--close]
 #       [--cell=8 --res=513] [--view-res=1024] [--no-detail] [--crest=1] [--tiles[=2]] [--mdetail=4]
+#       [--coast [--focus=lake|coast] [--dist=520]]   an island with lakes, its sea, lakes and rivers built
+#   godot --headless --path docs/bench/terrain_gen -- --coast --geology=map.png  island map, lakes and rivers listed
 #   godot --headless --path docs/bench/terrain_gen -- --map=map.png      shaded relief with rivers
 extends Node3D
 
@@ -39,6 +41,8 @@ func _ready() -> void:
 		get_tree().quit(0)
 		return
 	_build_generator(float(args.get("cell", "16")))
+	if args.has("coast"):
+		_coast_setup()
 	if args.has("terrain3d"):
 		_build_terrain3d()
 	else:
@@ -54,6 +58,7 @@ func _ready() -> void:
 			gen.range_width = 1300.0
 		gen.generate()
 		_save_geology(args["geology"])
+		_print_water()
 		if args.has("dump"):
 			var fd := FileAccess.open(args["dump"], FileAccess.WRITE)
 			fd.store_buffer(gen.get_height_image().get_data())
@@ -64,9 +69,11 @@ func _ready() -> void:
 		_save_map(args["map"])
 		get_tree().quit()
 	elif args.has("out"):
-		# A wider, faster-rising range than the checks use, for a mountain view.
-		gen.uplift = 6.0
-		gen.range_width = 1300.0
+		# A wider, faster-rising range than the checks use, for a mountain view (the island keeps the checks' gentler
+		# land, where valleys hold larger lakes).
+		if not args.has("coast"):
+			gen.uplift = 6.0
+			gen.range_width = 1300.0
 		gen.detail_enabled = not args.has("no-detail")
 		if args.has("crest"):
 			gen.detail_crest = float(args["crest"])
@@ -114,6 +121,35 @@ func _build_generator(cell: float) -> void:
 	gen.uplift_noise = noise
 	add_child(gen)
 	gen.ranges = [gen.get_path_to(path), gen.get_path_to(spur)]
+
+
+func _coast_setup() -> void:
+	# An island: sea on every edge, the land draining only to it, and three lakes behind natural dams.
+	gen.ocean_edges = 15
+	gen.outlet_edges = 0
+	gen.lake_count = int(args.get("lakes", "3"))
+	gen.lake_depth = 25.0
+	for a in args:
+		if a.begins_with("gen."):
+			gen.set(a.substr(4), str_to_var(args[a]))
+
+
+func _print_water() -> void:
+	print("generate %.0f ms (coast, lakes and routing %.1f ms), sea %s, %d lakes" % [gen.get_last_generate_msec(), gen.get_last_water_msec(), gen.has_sea_result(), gen.get_lake_result_count()])
+	for l in gen.get_lake_results():
+		print("  lake level %.1f depth %.1f area %.0f m2 catchment %.2f km2 %s" % [l["level"], l["depth"], l["area"], l["catchment"] / 1.0e6, "endorheic" if l["endorheic"] else "outflow"])
+	var ends := {}
+	for r in gen.get_rivers(5.0e5):
+		ends[r["ends_in"]] = ends.get(r["ends_in"], 0) + 1
+		if r["from_lake"] >= 0 or r["lake"] >= 0:
+			print("  river from lake %d to %s %d, %.2f m3/s, %d points" % [r["from_lake"], r["ends_in"], r["lake"], r["discharge"], r["points"].size()])
+	print("  rivers end in: ", ends)
+	if args.has("probe-x"):
+		var z := float(args["probe-z"])
+		for k in 60:
+			var x := float(args["probe-x"]) + k * 8.0
+			var q := Vector3(x, 0, z)
+			print("  x %.0f base %.2f ground %.2f water %s" % [x, gen.get_base_height(q), gen.get_height(q), str(gen.get_water_level(q))])
 
 
 func _build_height_map(res: int) -> void:
@@ -449,6 +485,8 @@ func _run_checks() -> void:
 	gen.tile_erosion_enabled = false
 	gen.generate()
 
+	await _coast_checks()
+
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
 	var plot := TerrainBrush3D.new()
 	plot.shape = TerrainBrush3D.SHAPE_RECTANGLE
@@ -487,6 +525,169 @@ func _run_checks() -> void:
 			var right := deformer.get_height(Vector3(0, 0, z))
 			seam = maxf(seam, absf(right - left - (gen.get_height(Vector3(0, 0, z)) - gen.get_height(Vector3(-4, 0, z)))))
 		check(seam < 0.01, "Terrain3D region border continuous (worst %.4f m)" % seam)
+	await get_tree().process_frame
+
+
+func _coast_checks() -> void:
+	# Coast and lakes: an island (sea on every edge, no other outlet) with lakes behind natural dams.
+	gen.ocean_edges = 15
+	gen.outlet_edges = 0
+	gen.lake_count = 4
+	gen.lake_depth = 25.0
+	gen.generate()
+	print("     coast and lakes: generate %.0f ms (coast, lakes and routing %.1f ms), %d lakes" % [gen.get_last_generate_msec(), gen.get_last_water_msec(), gen.get_lake_result_count()])
+	var sea := gen.sea_level + gen.height_offset
+	check(gen.has_sea_result() and absf(gen.get_water_level(Vector3(-2040, 0, -2040)) - sea) < 0.001 and is_nan(gen.get_water_level(Vector3.ZERO)), "sea along the edges, at sea level; the middle is dry land")
+	# Offshore the seabed deepens (Dean profile plus shelf): along rays in from each edge, the depth falls towards the
+	# coast, and the first wet cell is shallow.
+	var monotone := 0
+	var rays := 0
+	var first_wet := 0.0
+	for e in 4:
+		for t in [-0.25, 0.25]:
+			var dir := [Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 0, -1)][e] as Vector3
+			var start: Vector3 = -dir * 2040.0 + Vector3(dir.z, 0, dir.x) * WORLD * float(t)
+			var depths := []
+			for k in 200:
+				var q: Vector3 = start + dir * (k * 8.0)
+				if is_nan(gen.get_water_level(q)):
+					break
+				depths.append(gen.get_water_depth(q))
+			if depths.size() < 10:
+				continue
+			rays += 1
+			first_wet = maxf(first_wet, depths[depths.size() - 1])
+			var n := depths.size()
+			if depths[0] > depths[n / 2] and depths[n / 2] > depths[n - 1]:
+				monotone += 1
+	check(rays >= 6 and monotone == rays, "seabed deepens offshore on %d of %d rays" % [monotone, rays])
+	check(first_wet < 2.5, "water at the coastline is shallow (deepest %.2f m)" % first_wet)
+	# Inland from the waterline, along the same rays: the land is never at sea level and rises as a beach.
+	var lowest_near := 1.0e9
+	var lowest_back := 1.0e9
+	for e in 4:
+		for t in [-0.3, -0.1, 0.1, 0.3]:
+			var dir := [Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1), Vector3(0, 0, -1)][e] as Vector3
+			var q: Vector3 = -dir * 2040.0 + Vector3(dir.z, 0, dir.x) * WORLD * float(t)
+			for k in 400:
+				if is_nan(gen.get_water_level(q)):
+					break
+				q += dir * 4.0
+			for k in range(1, 31):
+				var h := gen.get_height(q + dir * (k * 4.0)) - sea
+				if k * 4.0 >= 20.0 and k * 4.0 <= 40.0:
+					lowest_near = minf(lowest_near, h)
+				elif k * 4.0 >= 100.0:
+					if h < 1.0 and args.has("verbose"):
+						print("     low beach ", q + dir * (k * 4.0), " ", h, " wet ", gen.get_water_level(q + dir * (k * 4.0)))
+					lowest_back = minf(lowest_back, h)
+	check(lowest_near > 0.1 and lowest_back > 0.5, "land above the sea at the waterline (lowest %.2f m from 20 to 40 m) and rising inland (lowest %.2f m at 100 to 120 m)" % [lowest_near, lowest_back])
+	var bed_detail := 0.0
+	var dry_detail := 0.0
+	for i in 300:
+		var q := Vector3(-2000.0 + 4000.0 * fposmod(i * 0.618034, 1.0), 0, -2000.0 + 4000.0 * fposmod(i * 0.414214, 1.0))
+		var diff := absf(gen.get_height(q) - gen.get_base_height(q))
+		if gen.get_water_depth(q) > 5.0:
+			bed_detail = maxf(bed_detail, diff)
+		elif is_nan(gen.get_water_level(q)):
+			dry_detail = maxf(dry_detail, diff)
+	check(bed_detail < 0.01 and dry_detail > 1.0, "erosion detail stays off the seabed (%.3f m under water, %.1f m on land)" % [bed_detail, dry_detail])
+	var rivers := gen.get_rivers(2.0e5)
+	var ends := {}
+	for r in rivers:
+		ends[r["ends_in"]] = ends.get(r["ends_in"], 0) + 1
+	check(not ends.has("edge") and ends.get("sea", 0) >= 3, "every river reaches the sea, a lake or another river %s" % str(ends))
+	var lakes := gen.get_lake_results()
+	check(lakes.size() >= 1, "lakes form behind natural dams (%d)" % lakes.size())
+	var held := true
+	var outflows := 0
+	for k in lakes.size():
+		var l: Dictionary = lakes[k]
+		var dam: Vector3 = l["dam"]
+		held = held and float(l["depth"]) > 2.0 and float(l["area"]) >= gen.lake_min_area and gen.get_height(dam) >= float(l["level"]) - 0.01
+		if l.has("outlet"):
+			# At a small threshold and at half the lake's catchment (where a stream joining at the outlet may have more
+			# area than any other donor).
+			var o: Vector3 = l["outlet"]
+			var found := 0
+			for min_area in [1.0e5, float(l["catchment"]) * 0.5]:
+				for r in gen.get_rivers(min_area):
+					if int(r["from_lake"]) == k and (r["points"][0] as Vector3).distance_to(Vector3(o.x, (r["points"][0] as Vector3).y, o.z)) < gen.cell_size * 0.5:
+						found += 1
+						break
+			if found == 2:
+				outflows += 1
+	check(held, "each lake is deeper than 2 m, at least lake_min_area, and its dam stands at its level")
+	var centred := true
+	for l in lakes:
+		centred = centred and absf(gen.get_water_level(l["center"]) - float(l["level"])) < 0.001 and gen.get_water_depth(l["center"]) > 1.0
+	check(centred, "each lake's center is on its water, over at least 1 m of it")
+	var with_outlet := 0
+	for l in lakes:
+		if l.has("outlet"):
+			with_outlet += 1
+	check(outflows == with_outlet, "an outflow river starts at each lake's outlet (%d of %d)" % [outflows, with_outlet])
+	var mouths_on_water := true
+	var into_lakes := 0
+	for r in gen.get_rivers(1.0e5):
+		if r["ends_in"] == "lake":
+			into_lakes += 1
+			var pts: PackedVector3Array = r["points"]
+			mouths_on_water = mouths_on_water and absf(pts[pts.size() - 1].y - float(lakes[int(r["lake"])]["level"])) < 0.01
+	check(mouths_on_water, "rivers into lakes end on the water (%d)" % into_lakes)
+	# Water balance: the first lake again, from a marker, with evaporation three times what its catchment can make up.
+	if lakes.size() > 0:
+		var l0: Dictionary = lakes[0]
+		var marker := Marker3D.new()
+		add_child(marker)
+		marker.global_position = l0["dam"]
+		gen.lake_count = 0
+		gen.lakes = [gen.get_path_to(marker)]
+		gen.generate()
+		var again := gen.get_lake_results()
+		check(again.size() == 1 and absf(float(again[0]["level"]) - float(l0["level"])) < 0.01, "a lake marker builds the same lake")
+		gen.lake_evaporation = 3.0 * gen.river_runoff * float(l0["catchment"]) / float(l0["area"])
+		gen.generate()
+		again = gen.get_lake_results()
+		check(again.size() == 0 or (again[0]["endorheic"] and not again[0].has("outlet") and float(again[0]["level"]) < float(l0["level"]) - 0.1), "a lake whose catchment cannot make up its evaporation stands lower with no outflow")
+		gen.lake_evaporation = 1000.0
+		gen.lakes = []
+		marker.queue_free()
+		gen.lake_count = 4
+		gen.generate()
+	var img_a := gen.get_water_image()
+	gen.generate()
+	check(_hash(img_a) == _hash(gen.get_water_image()), "coast and lakes deterministic")
+	# The water nodes and the rivers into them.
+	var holder := Node3D.new()
+	add_child(holder)
+	var nodes := gen.build_water(holder)
+	var ok_nodes: bool = nodes.size() == 1 + lakes.size() and absf((nodes[0] as Node3D).global_position.y - sea) < 0.001
+	if ClassDB.class_exists("PhysXWaterSurface3D"):
+		ok_nodes = ok_nodes and (nodes[0] as Node).get_class() == "PhysXWaterSurface3D"
+	for k in lakes.size():
+		var lake_node := nodes[1 + k] as Node3D
+		ok_nodes = ok_nodes and absf(lake_node.global_position.y - float(lakes[k]["level"])) < 0.001
+		if ClassDB.class_exists("PhysXWaterSurface3D"):
+			var outline: Mesh = lake_node.get("surface_mesh")
+			ok_nodes = ok_nodes and outline != null and outline.get_surface_count() == 1
+	check(ok_nodes, "build_water(): the sea at sea level and one surface per lake at its level, cut to its outline")
+	var paths := gen.build_river_paths(holder, 2.0e5)
+	var targeted := 0
+	var to_water := 0
+	var info := gen.get_rivers(2.0e5)
+	for r in paths.size():
+		if info[r]["ends_in"] == "sea" or info[r]["ends_in"] == "lake":
+			to_water += 1
+			if ClassDB.class_exists("PhysXRiver3D") and not (paths[r].get("mouth_target") as NodePath).is_empty():
+				targeted += 1
+	check(not ClassDB.class_exists("PhysXRiver3D") or targeted == to_water, "rivers ending in the sea or a lake get it as mouth_target (%d of %d)" % [targeted, to_water])
+	holder.queue_free()
+	gen.ocean_edges = 0
+	gen.outlet_edges = 15
+	gen.lake_count = 0
+	gen.lake_depth = 20.0
+	gen.generate()
 	await get_tree().process_frame
 
 
@@ -537,6 +738,7 @@ shader_type spatial;
 // as shader globals), the world normal and height.
 uniform float hmax = 1000.0;
 uniform int detail_octaves = 0;
+uniform float sea_level = -100000.0;
 %s
 %s
 void fragment() {
@@ -552,6 +754,9 @@ void fragment() {
 	vec3 col = mix(vec3(0.2, 0.3, 0.12), vec3(0.36, 0.33, 0.29), max(geo.y, smoothstep(0.85, 0.7, wn.y)));
 	col = mix(col, vec3(0.5, 0.45, 0.38), geo.z);
 	col = mix(col, vec3(0.9, 0.9, 0.92), smoothstep(0.8, 0.92, wp.y / hmax) * smoothstep(0.6, 0.8, wn.y));
+	// Sand on beaches, darker and greener sediment on the seabed.
+	float shore = smoothstep(sea_level + 3.0, sea_level + 1.0, wp.y);
+	col = mix(col, mix(vec3(0.72, 0.65, 0.5), vec3(0.2, 0.22, 0.17), smoothstep(sea_level - 0.5, sea_level - 4.0, wp.y)), shore * smoothstep(0.7, 0.9, wn.y));
 	ALBEDO = pow(col, vec3(2.2));
 	ROUGHNESS = 0.95;
 }
@@ -563,6 +768,7 @@ func _save_geology(path: String) -> void:
 	# over 0.5 km2 drawn from get_rivers() at their widths times 20.
 	var h := gen.get_height_image()
 	var geo := gen.get_geology_image()
+	var water := gen.get_water_image()
 	var g := gen.get_grid_size()
 	var cell := gen.cell_size
 	var img := Image.create(g.x, g.y, false, Image.FORMAT_RGB8)
@@ -576,7 +782,11 @@ func _save_geology(path: String) -> void:
 			var col := Color(0.55, 0.62, 0.35).lerp(Color(0.3, 0.38, 0.18), clampf(c.r / 4.0, 0.0, 1.0))
 			col = col.lerp(Color(0.62, 0.6, 0.58), c.g)
 			col = col.lerp(Color(0.78, 0.6, 0.32), c.b)
-			img.set_pixel(x, z, col * (0.35 + 0.8 * maxf(n.dot(sun), 0.0)))
+			col = col * (0.35 + 0.8 * maxf(n.dot(sun), 0.0))
+			var wd := water.get_pixel(x, z).r if water else 0.0
+			if wd > 0.0:
+				col = Color(0.55, 0.75, 0.85).lerp(Color(0.05, 0.15, 0.35), clampf(wd / 30.0, 0.0, 1.0))
+			img.set_pixel(x, z, col)
 	var half := Vector2(gen.size.x, gen.size.y) * 0.5
 	for r in gen.get_rivers(5.0e5):
 		var pts: PackedVector3Array = r["points"]
@@ -651,20 +861,28 @@ func _build_view() -> void:
 	mat.shader = shader
 	mat.set_shader_parameter("hmax", hmax)
 	mat.set_shader_parameter("detail_octaves", int(args.get("mdetail", "0")))
+	if gen.has_sea_result():
+		mat.set_shader_parameter("sea_level", gen.sea_level + gen.height_offset)
 	mi.material_override = mat
 	add_child(mi)
 	if ground_mesh:
 		ground_mesh.visible = false
-	var water := MeshInstance3D.new()
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(WORLD, WORLD)
-	water.mesh = plane
-	var wm := StandardMaterial3D.new()
-	wm.albedo_color = Color(0.1, 0.2, 0.28)
-	wm.roughness = 0.1
-	water.material_override = wm
-	water.position.y = 2.0
-	add_child(water)
+	if args.has("coast"):
+		# The generator's own water: the sea and the lakes as water surfaces, rivers ending in them.
+		var nodes := gen.build_water(self)
+		var rivers := gen.build_river_paths(self, float(args.get("river-area", "3e5")))
+		print("water nodes %d, rivers %d" % [nodes.size(), rivers.size()])
+	else:
+		var water := MeshInstance3D.new()
+		var plane := PlaneMesh.new()
+		plane.size = Vector2(WORLD, WORLD)
+		water.mesh = plane
+		var wm := StandardMaterial3D.new()
+		wm.albedo_color = Color(0.1, 0.2, 0.28)
+		wm.roughness = 0.1
+		water.material_override = wm
+		water.position.y = 2.0
+		add_child(water)
 	var env := Environment.new()
 	# A procedural sky lights both renderers: skylight fills the shadowed slopes, raster through ambient, the path
 	# tracer by sampling the sky shader.
@@ -690,9 +908,25 @@ func _build_view() -> void:
 	add_child(sun)
 	sun.look_at_from_position(Vector3(3000, 900, -2000), Vector3.ZERO)
 	var cam := Camera3D.new()
-	cam.far = 20000.0
+	cam.far = 60000.0 if args.has("coast") else 20000.0
 	cam.fov = 50.0
-	if args.has("close"):
+	if args.get("focus", "") == "lake" and gen.get_lake_result_count() > 0:
+		# A lake, its dam and outflow, from above the valley below it.
+		var l: Dictionary = gen.get_lake_results()[int(args.get("lake", "0"))]
+		var c: Vector3 = l["center"]
+		var dam: Vector3 = l["dam"]
+		var away := Vector3(dam.x - c.x, 0.0, dam.z - c.z).normalized()
+		cam.fov = 45.0
+		cam.position = c + away * float(args.get("dist", "520")) + Vector3(0, float(args.get("dist", "520")) * 0.5, 0)
+		add_child(cam)
+		cam.look_at(c)
+	elif args.get("focus", "") == "coast":
+		# Low over the sea, looking along the coast at a beach and the shore waves.
+		cam.fov = 45.0
+		cam.position = Vector3(400, 120, 2350)
+		add_child(cam)
+		cam.look_at(Vector3(-300, 10, 1500))
+	elif args.has("close"):
 		# Close view of one flank, for raster and path traced crops at 100%.
 		cam.fov = 40.0
 		cam.position = Vector3(700, 900, 1100)

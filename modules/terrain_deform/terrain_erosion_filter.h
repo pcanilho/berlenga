@@ -297,6 +297,21 @@ public:
 		return norm > 0.0 ? sum / norm : 0.0;
 	}
 
+	// Plain gradient-noise fBm, about -1..1: coastlines, beach widths, seabed relief.
+	static double fbm(uint32_t p_seed, double x, double z, double p_wavelength, int p_octaves) {
+		double sum = 0.0;
+		double amp = 1.0;
+		double norm = 0.0;
+		double f = 1.0 / p_wavelength;
+		for (int o = 0; o < p_octaves; o++) {
+			sum += amp * _gradient_noise(p_seed + uint32_t(o) * 0x632BE5ABu, x * f, z * f);
+			norm += amp;
+			amp *= 0.5;
+			f *= 2.0;
+		}
+		return norm > 0.0 ? 1.6 * sum / norm : 0.0;
+	}
+
 private:
 	// Perlin gradient noise, about -0.7..0.7.
 	static double _gradient_noise(uint32_t p_seed, double x, double z) {

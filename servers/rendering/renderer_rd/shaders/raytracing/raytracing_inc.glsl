@@ -87,6 +87,11 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_SNOW_RECT_Y 47
 #define RT_PARAM_SNOW_RECT_W 48
 #define RT_PARAM_SNOW_RECT_H 49
+#define RT_PARAM_SNOW_WORLD_MAP 50 // SnowCover3D world tier map, same channels; drawn outside the near square
+#define RT_PARAM_SNOW_WORLD_RECT_X 51 // its world XZ rect; width 0 = none
+#define RT_PARAM_SNOW_WORLD_RECT_Y 52
+#define RT_PARAM_SNOW_WORLD_RECT_W 53
+#define RT_PARAM_SNOW_WORLD_RECT_H 54
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

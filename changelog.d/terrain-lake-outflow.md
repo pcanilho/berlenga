@@ -1,0 +1,1 @@
+- TerrainGenerator3D: a lake that spills over a col now gets an outflow river along the flood path; generated lake surfaces follow the weather.

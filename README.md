@@ -16,8 +16,8 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
-- **Terrain**: mountain ranges raised and eroded per seed, with geology and river networks; non-destructive height brushes; terrain data maps.
-- **Snow**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced; deep snow with tracks; falling and blowing snow.
+- **Terrain**: mountain ranges raised and eroded per seed, with geology, river networks, coasts and lakes; non-destructive height brushes; terrain data maps.
+- **Snow**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced; deep snow with tracks; falling and blowing snow; baked winters and cornices.
 - **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Clouds**: a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
@@ -232,10 +232,11 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Material detail** (`get_detail_shader_code()`): erosion detail below the vertex spacing in the terrain material; path tracing keeps it.
 - **Geology maps** (`terrain_geology()` in shaders): soil, bare rock and scree from the erosion run.
 - **River network** (`build_river_paths()`): rivers with widths and discharges, made into joined `PhysXRiver3D` paths.
+- **Coast and lakes** (`ocean_edges` or `sea_map`; `lake_count`, `lakes`; `build_water()`): sea with a Dean-profile seabed and beaches; lakes behind natural dams; builds the sea and lake surfaces, and rivers end in them.
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: mountain generation, crests, tile erosion, material detail, geology, terrain data maps</summary>
+<details><summary>Images: mountain generation, crests, tile erosion, material detail, geology, coast, terrain data maps</summary>
 
 ![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
 
@@ -265,6 +266,12 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Geology: soil green, bare rock grey, scree ochre, rivers blue; the shader colours the range from the map.*
 
+![A generated island map: sea, beaches, rivers and two dammed lakes](docs/media/terrain-coast-map.jpg)
+
+![The island, raster and path traced](docs/media/terrain-coast.jpg)
+
+*Coast and lakes: beaches, a shelving seabed and lakes behind dams, from one seed.*
+
 ![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
 
 *Terrain data maps: the stream bed, wet ground and banks come from the maps alone.*
@@ -273,6 +280,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ### Vegetation
 - **Plant placement** (`VegetationField3D`, `Biome`, `PlantSpecies`): places species by spacing, footprint and rules on slope, wetness and distance to water over a `TerrainDataMap3D`; evenly spread, the same for a seed. 12,899 plants over 256 m place once in about 45 ms, then draw as ordinary MultiMeshes.
+- **Placement by geology** (`TerrainDataMap3D.geology_source`; `PlantSpecies` `soil_depth_range`, `rock_range`, `talus_range`): plants follow the generated soil, rock and scree; trees stay off bare rock and thin soil, grass thins on rock.
 - **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.
 - **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back.
 - **Ground cover** (`GrassField3D` undercoat fields, `view_facing`; `PlantSpecies` patches): edge-on blades widened, ground tinted under grass, clover and flower drifts.
@@ -316,10 +324,11 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Wind**: slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.
 - **Wind near the ground** (`add_canopy`, `add_shelter_box`, `gust_patch_size`): shelter inside plant canopies and behind buildings; gust patches sweep across fields.
 - **Storms** (`add_storm`): drift with the wind, with a rain core and a downdraft.
+- **Lightning and thunder** (`WeatherLightning3D`): strikes from storm cells at a rate set by cloud-top height, lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.
 - **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.
 - **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).
 
-<details><summary>Images: weather map, wet ground</summary>
+<details><summary>Images: weather map, wet ground, lightning</summary>
 
 ![Weather map fields round a storm: cloud cover, rain, wind at 10 m, wetness](docs/media/weather-map.jpg)
 
@@ -328,6 +337,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A beach dry and after rain: darker sand, puddles and a sheen](docs/media/weather-wet.jpg)
 
 *Wet surfaces: the sand darkens, puddles form and catch the sky.*
+
+![A lightning strike among blocks, raster and path traced](docs/media/weather-lightning.jpg)
+
+*Lightning: the channel lights the ground and casts sharp shadows from the blocks, raster and path traced.*
 
 </details>
 
@@ -353,9 +366,12 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Snow cover** (`SnowCover3D`): a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift.
 - **Deep snow** (`SnowSurface3D`, `snow_deform` group): deep snow as geometry with prints and tracks; bodies sink by weight (Bekker) and rest in their own tracks; tracks refill with new snow and wind.
 - **Falling snow** (`SnowFall3D`): falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.
+- **Snow climate** (`SnowClimate`): bakes a winter over the whole terrain, with snow lines, shaded faces that keep their snow and loaded lee slopes; the cover carries it on with the weather and draws it far away.
+- **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
+- **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced.
 
-<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow</summary>
+<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle</summary>
 
 ![Snow on a mountain, raster and path traced](docs/media/snow-mountain.jpg)
 
@@ -388,6 +404,18 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Snow falling and blowing round a shelter](docs/media/snowfall.gif)
 
 *Falling snow in wind.*
+
+![A peak after a baked winter, raster and path traced](docs/media/snow-climate.jpg)
+
+*Snow climate: snow holds on the shaded and lee faces below the snow line.*
+
+![A snow cornice overhanging a lee crest, raster and path traced](docs/media/snow-cornice.jpg)
+
+*Cornice: a lip of snow over the lee side of a crest.*
+
+![Snow surface close up: dry in raster, dry path traced, and wet](docs/media/snow-sparkle.jpg)
+
+*Sparkle: dry snow glints in raster and path tracing; wet snow loses it.*
 
 </details>
 

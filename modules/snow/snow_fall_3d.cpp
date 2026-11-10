@@ -181,7 +181,8 @@ bool snow_erodible(vec2 p) {
 		return false;
 	}
 	vec4 s = textureLod(snow_tex, uv, 0.0);
-	return s.r > 0.02 && s.b < 0.05 && s.a < max_density;
+	// Loose: a light pack, or a fresh surface on a settled one (albedo above 0.78 is snow a couple of days old).
+	return s.r > 0.02 && s.b < 0.05 && (s.a < max_density || s.g > 0.78);
 }
 
 void snow_spawn(inout vec4 c, inout vec3 p, uint s) {
@@ -335,7 +336,7 @@ static Ref<StandardMaterial3D> snow_particle_material(float p_softness) {
 	// A flake is a loose clump of ice, lit from all sides, not a flat card: wrapped diffuse plus light
 	// passing through from behind.
 	m->set_diffuse_mode(BaseMaterial3D::DIFFUSE_LAMBERT_WRAP);
-	m->set_specular(0.22f);
+	m->set_specular(0.335f); // ice, F0 0.018
 	m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
 	m->set_backlight(Color(0.85, 0.87, 0.9));
 	Ref<Gradient> g;

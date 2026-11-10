@@ -32,6 +32,7 @@
 
 #include "weather_clouds.h"
 
+#include "scene/resources/environment.h"
 #include "scene/resources/material.h"
 
 // Godot's physical sky with the weather map's clouds raymarched through it (Nubis, Frostbite; see
@@ -60,6 +61,13 @@ public:
 	// (render_mode half_res_reprojection); off: every half resolution pixel every frame.
 	void set_cloud_reprojection(bool p_enabled);
 	bool is_cloud_reprojection_enabled() const;
+
+	// Lightning glowing in the clouds: up to four flashes, each a world position and its energy now.
+	void set_lightning(const Vector4 *p_flashes, int p_count, const Color &p_color);
+
+	// The sky material and environment a node's camera (or its world) draws with.
+	static Ref<WeatherSkyMaterial> find_for(Node *p_node);
+	static Ref<Environment> find_environment(Node *p_node);
 
 	static void cleanup();
 

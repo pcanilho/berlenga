@@ -1,6 +1,6 @@
 extends Node3D
 # A height source for SnowCover3D (any node with get_height(position)): a mountain with a cliff band
-# and a valley, or a plain with a 60 degree wall for the slide checks.
+# and a valley, a plain with a 60 degree wall for the slide checks, or a corniced ridge.
 
 var kind := "mountain"
 var noise := FastNoiseLite.new()
@@ -22,6 +22,13 @@ func get_height(p: Vector3) -> float:
 		"meadow":
 			# Gentle ground with knee-high hummocks, for the trail view.
 			return 0.25 * noise.get_noise_2d(p.x * 30.0, p.z * 30.0) + 0.03 * p.x
+		"cornice":
+			# A ridge along z: a 15 degree windward slope from the west up to a crest at x = 0, a 50 degree
+			# lee face to the east; the crest 150 m up, rising and falling a little along its length.
+			var top := 150.0 + 6.0 * sin(p.z / 90.0)
+			if p.x < 0.0:
+				return maxf(0.0, top + p.x * tan(deg_to_rad(15.0)))
+			return maxf(0.0, top - p.x * tan(deg_to_rad(50.0)))
 		"ridge":
 			# A 100 m ridge along z, 25 degree flanks.
 			return maxf(0.0, 100.0 - absf(p.x) * tan(deg_to_rad(25.0)))
