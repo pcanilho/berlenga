@@ -128,6 +128,12 @@
 				Steps the last [method generate] ran.
 			</description>
 		</method>
+		<method name="get_last_tile_erosion_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Time the last tile erosion took, in milliseconds (part of [method get_last_generate_msec]).
+			</description>
+		</method>
 		<method name="get_last_write_msec" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -173,6 +179,20 @@
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
 				Scree at a world position, 0..1: shed by bare rock steeper than [member talus_angle], carried down the receivers and laid where the slope eases below it, thinning over [member talus_reach]; none on channels.
+			</description>
+		</method>
+		<method name="get_tile_deposit" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Sediment laid down at a world position by tile erosion, in metres (alluvial fans, valley fills, scree aprons). 0 when [member tile_erosion_enabled] is off.
+			</description>
+		</method>
+		<method name="get_tile_flow" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Water that passed a world position during tile erosion (droplet water per droplet started, time-averaged): high in streams and gullies, for wetness and stream textures. 0 when [member tile_erosion_enabled] is off or before [method generate].
 			</description>
 		</method>
 		<method name="get_uplift_image" qualifiers="const">
@@ -320,6 +340,27 @@
 		</member>
 		<member name="terrain" type="NodePath" setter="set_terrain" getter="get_terrain" default="NodePath(&quot;&quot;)">
 			The ground to write: a [code]Terrain3D[/code] node or a [CollisionShape3D] with a [HeightMapShape3D].
+		</member>
+		<member name="tile_erosion_apron" type="float" setter="set_tile_erosion_apron" getter="get_tile_erosion_apron" default="128.0">
+			Extra ground eroded around each tile's core and cross-faded with its neighbours over its inner half, so droplets cut short at a tile's edge never show. About a quarter of the tile size.
+		</member>
+		<member name="tile_erosion_droplets" type="float" setter="set_tile_erosion_droplets" getter="get_tile_erosion_droplets" default="1.0">
+			Droplets per grid cell. More gives deeper, more connected rills.
+		</member>
+		<member name="tile_erosion_enabled" type="bool" setter="set_tile_erosion_enabled" getter="is_tile_erosion_enabled" default="false">
+			Runs hydraulic and thermal erosion on a fine grid at the end of [method generate] (stage 4): droplet erosion (Beyer 2015, after Mei et al. 2007's capacity law) cutting rills and gullies and laying fans and valley fills, two layers (loose cover erodes first, bedrock at [member tile_erosion_rock_hardness]; Stava et al. 2008), and thermal slides of loose material steeper than [member talus_angle]. Overlapping tiles are eroded on their own, each seeded by its index, and cross-faded, so the result does not depend on threads. [method get_height] includes it; turning it off shows the ground without it.
+		</member>
+		<member name="tile_erosion_max_depth" type="float" setter="set_tile_erosion_max_depth" getter="get_tile_erosion_max_depth" default="15.0">
+			Deepest cut and highest fill against the ground before tile erosion; erosion slows to nothing as a cut nears it, so channels cannot run away.
+		</member>
+		<member name="tile_erosion_rock_hardness" type="float" setter="set_tile_erosion_rock_hardness" getter="get_tile_erosion_rock_hardness" default="0.25">
+			How fast bedrock erodes against loose cover (soil and scree from the geology maps, and settled sediment).
+		</member>
+		<member name="tile_erosion_spacing" type="float" setter="set_tile_erosion_spacing" getter="get_tile_erosion_spacing" default="2.0">
+			Grid spacing of the tile erosion. Around the terrain's vertex spacing; finer costs four times as much per halving.
+		</member>
+		<member name="tile_erosion_tile_size" type="float" setter="set_tile_erosion_tile_size" getter="get_tile_erosion_tile_size" default="512.0">
+			Core size of each tile. Tiles are eroded in parallel.
 		</member>
 		<member name="time_step" type="float" setter="set_time_step" getter="get_time_step" default="20000.0">
 			Years per step. The solver is stable at any step; larger steps reach equilibrium sooner with less detail in the transient.

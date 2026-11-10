@@ -331,12 +331,44 @@ it is: its `height_source` can point at the generator, and placement can read th
 checks, including rock on steep ground against cover on gentle ground, scree below repose, rivers downhill, widening,
 joined, and discharges adding up. Cost: one pass over the grid, about 100 ms at 1025 squared on one core (the erosion run takes minutes), so generation time is unchanged within noise (257 squared: 5.1 s).
 
+## Stage 4: what was built
+
+`terrain_hydraulic.h` (plain C++, single thread per tile, fixed order), run at the end of `generate()` when
+`tile_erosion_enabled` is on, over a fine grid (`tile_erosion_spacing`, 2 m) of the final ground (simulated plus
+detail):
+
+- Water: droplet erosion as Beyer describes it (2015, after Mei et al. 2007's capacity law): each droplet runs
+  downhill with inertia over the bilinear surface, carries up to max(drop, min slope) x speed x water x Kc, erodes
+  over a small disc below capacity and deposits above it, and evaporates. The virtual pipe model (O'Brien and Hodgins
+  1995; Mei, Decaudin and Hu 2007) was tried first: on mountain slopes near 1 it cut grooves along the grid axes, and
+  its sheet flow wore whole facets down evenly instead of cutting rills. Droplets gave branching rills and valley fills.
+- Layers (Stava et al. 2008, two of them): loose cover (soil and scree from stage 5, plus what settles) erodes first,
+  bedrock at `tile_erosion_rock_hardness`. Erosion slows to nothing as a cut nears `tile_erosion_max_depth`; without
+  that, channels running out of a tile deepened by hundreds of metres.
+- Thermal: loose material steeper than the repose angle slides to its lower neighbours in proportion to the excess
+  (Musgrave, Kolb and Mace 1989; eight neighbours as Olsen 2004), eight passes.
+- Tiles: cores of `tile_erosion_tile_size` with an apron of `tile_erosion_apron` on every side, each seeded by its
+  index and eroded on its own on the worker threads, then blended with weights 1 over the core falling to 0 halfway
+  out into the apron (the Wildlands approach: overlap and cross-fade, so droplets cut short at a tile's edge never
+  show). The result does not depend on the thread count. Outputs: the height change (added in `get_height()`), droplet
+  flow (`get_tile_flow()`, a stream and wetness measure) and deposits (`get_tile_deposit()`).
+
+Bench (4 checks added, 38 in all): deterministic, bounded change (mean 4.8 m at 4 m spacing), no step at tile
+borders larger than inside tiles, droplet flow over 5 times higher in valleys than on ridges. Cost: 4096 m square at
+4 m spacing 2.2 s, at 2 m about 14 s (cloud, 4 threads); bake only, no frame cost. Look: rills branching down every
+flank and flat alluvial floors in the valleys, raster and path traced alike.
+
 ## Sources
 
 - Galin, Guérin, Peytavie et al., A Review of Digital Terrain Modeling, CGF 38(2), 2019.
 - Musgrave, Kolb, Mace, The synthesis and rendering of eroded fractal terrains, SIGGRAPH 1989.
 - Ebert, Musgrave, Peachey, Perlin, Worley, Texturing and Modeling: A Procedural Approach.
 - Quilez, noise derivatives and domain warping: https://iquilezles.org/articles/
+- Beyer, Implementation of a method for hydraulic erosion, bachelor's thesis, TU Munich, 2015.
+- Mei, Decaudin, Hu, Fast hydraulic erosion simulation and visualization on GPU, Pacific Graphics 2007.
+- O'Brien and Hodgins, Dynamic simulation of splashing fluids, Computer Animation 1995 (virtual pipes).
+- Stava, Benes, Brisbin, Krivanek, Interactive terrain modeling using hydraulic erosion, SCA 2008.
+- Olsen, Realtime procedural terrain generation, 2004.
 - Heimsath, Dietrich, Nishiizumi, Finkel, The soil production function and landscape equilibrium, Nature 388, 1997.
 - Wobus, Whipple, Kirby et al., Tectonics from topography: procedures, promise, and pitfalls, GSA Special Paper 398, 2006.
 - Montgomery, Abbe, Buffington et al., Distribution of bedrock and alluvial channels in forested mountain drainage

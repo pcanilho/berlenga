@@ -4,7 +4,7 @@
 #   godot --headless --path docs/bench/terrain_gen -- --test --terrain3d same on Terrain3D (addon installed)
 #   godot --headless --path docs/bench/terrain_gen -- --time             generation time at 256, 512, 1024 cells
 #   godot --path docs/bench/terrain_gen --rendering-driver vulkan -- --out=view.png [--raster] [--spp=16] [--close]
-#       [--cell=8 --res=513] [--view-res=1024] [--no-detail]
+#       [--cell=8 --res=513] [--view-res=1024] [--no-detail] [--crest=1] [--tiles[=2]]
 #   godot --headless --path docs/bench/terrain_gen -- --map=map.png      shaded relief with rivers
 extends Node3D
 
@@ -70,6 +70,9 @@ func _ready() -> void:
 		gen.detail_enabled = not args.has("no-detail")
 		if args.has("crest"):
 			gen.detail_crest = float(args["crest"])
+		if args.has("tiles"):
+			gen.tile_erosion_enabled = true
+			gen.tile_erosion_spacing = float(args["tiles"]) if args["tiles"] != "1" else 2.0
 		gen.bake()
 		_build_view()
 		var raster := args.has("raster")
@@ -391,6 +394,60 @@ func _run_checks() -> void:
 	var n_big := gen.get_rivers(2.0e6).size()
 	check(paths.size() == n_big and holder.get_child_count() == n_big and (paths[0] as Path3D).curve.point_count > 2, "build_river_paths makes one %s per river (%d)" % [(paths[0] as Node).get_class(), n_big])
 	holder.queue_free()
+
+	# Tile erosion (stage 4): droplet hydraulic and thermal erosion in overlapping tiles, cross-faded.
+	gen.tile_erosion_enabled = true
+	gen.tile_erosion_spacing = 4.0
+	gen.tile_erosion_tile_size = 1024.0
+	gen.tile_erosion_apron = 128.0
+	gen.generate()
+	print("     tile erosion %.0f ms" % gen.get_last_tile_erosion_msec())
+	var t1 := gen.sample_heights(Vector2(-1500, -1500), 7.0, Vector2i(400, 400))
+	gen.generate()
+	var t2 := gen.sample_heights(Vector2(-1500, -1500), 7.0, Vector2i(400, 400))
+	check(t1.get_data() == t2.get_data(), "tile erosion is deterministic")
+	var tmax := 0.0
+	var tsum := 0.0
+	var tcount := 0
+	for z in 80:
+		for x in 80:
+			var q := Vector3(-1900 + x * 47.5, 0, -1900 + z * 47.5)
+			var d := gen.get_height(q)
+			gen.tile_erosion_enabled = false
+			d -= gen.get_height(q)
+			gen.tile_erosion_enabled = true
+			tmax = maxf(tmax, absf(d))
+			tsum += absf(d)
+			tcount += 1
+	check(tmax > 0.5 and tmax <= gen.tile_erosion_max_depth * 1.5, "tile erosion changes the ground, bounded (mean %.2f m, max %.1f m)" % [tsum / tcount, tmax])
+	# Tile borders (x = -1024, 0, 1024 from the corner at -2048): steps across them no larger than elsewhere.
+	var at_border := 0.0
+	var off_border := 0.0
+	for i in 200:
+		var z := -1900.0 + i * 19.0
+		for bxw in [-1024.0, 0.0, 1024.0]:
+			at_border = maxf(at_border, absf(gen.get_height(Vector3(bxw + 1.0, 0, z)) - gen.get_height(Vector3(bxw - 1.0, 0, z))))
+			off_border = maxf(off_border, absf(gen.get_height(Vector3(bxw + 513.0, 0, z)) - gen.get_height(Vector3(bxw + 511.0, 0, z))))
+	check(at_border <= off_border * 1.5, "no seam at tile borders (largest 2 m step %.2f m across borders, %.2f m inside tiles)" % [at_border, off_border])
+	var wet_valley := 0.0
+	var wet_ridge := 0.0
+	var nv := 0
+	var nr := 0
+	for z in range(4, gs.y - 4, 2):
+		for x in range(4, gs.x - 4, 2):
+			var q := Vector3(-WORLD * 0.5 + x * cs, 0, -WORLD * 0.5 + z * cs)
+			var a := gen.get_drainage_area(q)
+			if a > 2.0e5:
+				wet_valley += gen.get_tile_flow(q)
+				nv += 1
+			elif a < 2.0 * cs * cs:
+				wet_ridge += gen.get_tile_flow(q)
+				nr += 1
+	wet_valley /= maxi(nv, 1)
+	wet_ridge /= maxi(nr, 1)
+	check(wet_valley > 3.0 * wet_ridge, "droplet flow gathers in valleys (%.2f against %.2f on ridges)" % [wet_valley, wet_ridge])
+	gen.tile_erosion_enabled = false
+	gen.generate()
 
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
 	var plot := TerrainBrush3D.new()

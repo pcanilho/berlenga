@@ -91,6 +91,15 @@ private:
 	real_t detail_assumed_slope = 0.6;
 	real_t detail_crest = 1.0; // ridged noise on crests, times the gully amplitude
 
+	// Tile erosion (stage 4): droplet hydraulic plus thermal erosion on a fine grid, in overlapping tiles.
+	bool tile_erosion_enabled = false;
+	real_t tile_erosion_spacing = 2.0; // m
+	real_t tile_erosion_tile_size = 512.0; // m
+	real_t tile_erosion_apron = 128.0; // m
+	real_t tile_erosion_droplets = 1.0; // per cell
+	real_t tile_erosion_max_depth = 15.0; // m
+	real_t tile_erosion_rock_hardness = 0.25;
+
 	// Geology and rivers (stage 5).
 	real_t soil_production = 0.5; // mm/yr on bare rock
 	real_t soil_depth_scale = 0.5; // m
@@ -119,6 +128,25 @@ private:
 	LocalVector<int32_t> receivers;
 	LocalVector<float> channel_area; // D8 drainage area along the receivers, for the rivers
 	Ref<ImageTexture> geology_texture;
+	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).
+	int tile_nx = 0;
+	int tile_nz = 0;
+	real_t tile_cell = 1.0;
+	LocalVector<float> tile_delta; // eroded minus input ground
+	LocalVector<float> tile_flow;
+	LocalVector<float> tile_deposit;
+	double last_tile_erosion_msec = 0.0;
+	struct TileJob {
+		TerrainGenerator3D *gen;
+		int tiles_x;
+		int core; // cells
+		int apron; // cells
+		LocalVector<LocalVector<float>> *results; // per tile: delta, flow, deposit, interleaved by 3
+	};
+	static void _erode_tile(void *p_job, uint32_t p_tile);
+	void _erode_tiles();
+	float _tile_sample(const LocalVector<float> &p_grid, real_t p_x, real_t p_z) const;
+	float _ground_detail(real_t p_x, real_t p_z) const;
 	Rect2 result_rect; // where the last generate() ran; the result stays there if the node moves
 	real_t result_cell = 1.0;
 	float result_min = 0.0f;
@@ -215,6 +243,22 @@ public:
 	void set_detail_assumed_slope(real_t p_value) { detail_assumed_slope = MAX(p_value, real_t(0.01)); }
 	real_t get_detail_assumed_slope() const { return detail_assumed_slope; }
 
+	// Tile erosion.
+	void set_tile_erosion_enabled(bool p_enable) { tile_erosion_enabled = p_enable; }
+	bool is_tile_erosion_enabled() const { return tile_erosion_enabled; }
+	void set_tile_erosion_spacing(real_t p_value) { tile_erosion_spacing = MAX(p_value, real_t(0.25)); }
+	real_t get_tile_erosion_spacing() const { return tile_erosion_spacing; }
+	void set_tile_erosion_tile_size(real_t p_value) { tile_erosion_tile_size = MAX(p_value, real_t(16.0)); }
+	real_t get_tile_erosion_tile_size() const { return tile_erosion_tile_size; }
+	void set_tile_erosion_apron(real_t p_value) { tile_erosion_apron = MAX(p_value, real_t(0.0)); }
+	real_t get_tile_erosion_apron() const { return tile_erosion_apron; }
+	void set_tile_erosion_droplets(real_t p_value) { tile_erosion_droplets = MAX(p_value, real_t(0.0)); }
+	real_t get_tile_erosion_droplets() const { return tile_erosion_droplets; }
+	void set_tile_erosion_max_depth(real_t p_value) { tile_erosion_max_depth = MAX(p_value, real_t(0.1)); }
+	real_t get_tile_erosion_max_depth() const { return tile_erosion_max_depth; }
+	void set_tile_erosion_rock_hardness(real_t p_value) { tile_erosion_rock_hardness = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
+	real_t get_tile_erosion_rock_hardness() const { return tile_erosion_rock_hardness; }
+
 	// Geology and rivers.
 	void set_soil_production(real_t p_value) { soil_production = MAX(p_value, real_t(1e-6)); }
 	real_t get_soil_production() const { return soil_production; }
@@ -265,6 +309,11 @@ public:
 	Ref<Image> get_drainage_image() const;
 	Ref<Image> get_sediment_image() const;
 	Ref<Image> get_uplift_image() const;
+
+	// Tile erosion.
+	real_t get_tile_flow(const Vector3 &p_global_position) const;
+	real_t get_tile_deposit(const Vector3 &p_global_position) const;
+	double get_last_tile_erosion_msec() const { return last_tile_erosion_msec; }
 
 	// Geology (soil, rock, talus) and rivers.
 	real_t get_soil_depth(const Vector3 &p_global_position) const;

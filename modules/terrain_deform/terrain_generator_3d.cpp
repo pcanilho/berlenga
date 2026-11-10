@@ -33,6 +33,7 @@
 #include "terrain_deformer_3d.h"
 #include "terrain_erosion_filter.h"
 #include "terrain_geology.h"
+#include "terrain_hydraulic.h"
 #include "terrain_stream_power.h"
 
 #include "core/config/engine.h"
@@ -332,6 +333,7 @@ bool TerrainGenerator3D::generate() {
 		geology_texture = ImageTexture::create_from_image(geo);
 	}
 	_publish_globals();
+	_erode_tiles();
 	last_generate_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("generated"));
 	return true;
@@ -349,6 +351,9 @@ void TerrainGenerator3D::clear_result() {
 	talus.clear();
 	receivers.clear();
 	channel_area.clear();
+	tile_delta.clear();
+	tile_flow.clear();
+	tile_deposit.clear();
 }
 
 // Catmull-Rom bicubic between grid nodes (interpolating, so every node keeps its eroded height), clamped at the
@@ -382,7 +387,7 @@ float TerrainGenerator3D::_sample(const LocalVector<float> &p_grid, real_t p_x, 
 	return float(cr(rows[0], rows[1], rows[2], rows[3], fz));
 }
 
-float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
+float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	const float base = _sample(heights, p_x, p_z);
 	if (!detail_enabled || detail_octaves <= 0 || detail_depth <= 0.0 || Math::is_nan(base)) {
 		return base;
@@ -443,6 +448,161 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 	}
 	// Never below the outlets: the filter must not cut the coast or the sea floor.
 	return float(MAX(double(base) + off, double(MIN(base, result_min))));
+}
+
+float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
+	const float g = _ground_detail(p_x, p_z);
+	if (!tile_erosion_enabled || tile_delta.is_empty() || Math::is_nan(g)) {
+		return g;
+	}
+	return g + _tile_sample(tile_delta, p_x, p_z);
+}
+
+// Bilinear on the tile erosion grid (its cells are fine: a few metres).
+float TerrainGenerator3D::_tile_sample(const LocalVector<float> &p_grid, real_t p_x, real_t p_z) const {
+	if (p_grid.size() != uint32_t(tile_nx * tile_nz)) {
+		return 0.0f;
+	}
+	const real_t gx = CLAMP((p_x - result_rect.position.x) / tile_cell, real_t(0.0), real_t(tile_nx - 1));
+	const real_t gz = CLAMP((p_z - result_rect.position.y) / tile_cell, real_t(0.0), real_t(tile_nz - 1));
+	const int x0 = MIN(int(gx), tile_nx - 2);
+	const int z0 = MIN(int(gz), tile_nz - 2);
+	const real_t fx = gx - x0;
+	const real_t fz = gz - z0;
+	const float *g = p_grid.ptr();
+	const real_t a = Math::lerp(real_t(g[z0 * tile_nx + x0]), real_t(g[z0 * tile_nx + x0 + 1]), fx);
+	const real_t b = Math::lerp(real_t(g[(z0 + 1) * tile_nx + x0]), real_t(g[(z0 + 1) * tile_nx + x0 + 1]), fx);
+	return float(Math::lerp(a, b, fz));
+}
+
+// One tile: its core plus an apron on every side, eroded on its own (seeded by its index) so the result does not
+// depend on threads or on the other tiles.
+void TerrainGenerator3D::_erode_tile(void *p_job, uint32_t p_tile) {
+	TileJob *job = static_cast<TileJob *>(p_job);
+	const TerrainGenerator3D *gen = job->gen;
+	const int tx = int(p_tile) % job->tiles_x;
+	const int tz = int(p_tile) / job->tiles_x;
+	const int x0 = MAX(tx * job->core - job->apron, 0);
+	const int z0 = MAX(tz * job->core - job->apron, 0);
+	const int x1 = MIN((tx + 1) * job->core + job->apron, gen->tile_nx - 1);
+	const int z1 = MIN((tz + 1) * job->core + job->apron, gen->tile_nz - 1);
+	TerrainHydraulic::Params hp;
+	hp.nx = x1 - x0 + 1;
+	hp.ny = z1 - z0 + 1;
+	hp.dx = gen->tile_cell;
+	hp.seed = TerrainHydraulic::hash(uint32_t(gen->seed) * 0x9E3779B9u ^ (uint32_t(tx) * 0x85EBCA6Bu + uint32_t(tz) * 0xC2B2AE35u));
+	hp.droplets_per_cell = gen->tile_erosion_droplets;
+	hp.max_depth = gen->tile_erosion_max_depth;
+	hp.rock_hardness = gen->tile_erosion_rock_hardness;
+	hp.repose = Math::tan(Math::deg_to_rad(double(gen->talus_angle)));
+	const int n = hp.nx * hp.ny;
+	std::vector<float> in(n), cover(n), out(n), flow(n), dep(n);
+	for (int z = 0; z < hp.ny; z++) {
+		for (int x = 0; x < hp.nx; x++) {
+			const real_t wx = gen->result_rect.position.x + (x0 + x) * gen->tile_cell;
+			const real_t wz = gen->result_rect.position.y + (z0 + z) * gen->tile_cell;
+			in[z * hp.nx + x] = gen->_ground_detail(wx, wz);
+			cover[z * hp.nx + x] = MAX(gen->_sample(gen->soil, wx, wz), 0.0f) + MAX(gen->_sample(gen->talus, wx, wz), 0.0f);
+		}
+	}
+	TerrainHydraulic::run(hp, in.data(), cover.data(), out.data(), flow.data(), dep.data());
+	LocalVector<float> &r = (*job->results)[p_tile];
+	r.resize(n * 3);
+	for (int i = 0; i < n; i++) {
+		r[i * 3 + 0] = out[i] - in[i];
+		r[i * 3 + 1] = flow[i];
+		r[i * 3 + 2] = dep[i];
+	}
+}
+
+// Stage 4: overlapping tiles (core plus apron), each eroded on its own, blended with weights that are 1 over the
+// core and fall smoothly to 0 halfway out into the apron, so neighbours cross-fade and droplets leaving a tile's
+// edge (which cut it short) never show.
+void TerrainGenerator3D::_erode_tiles() {
+	tile_delta.clear();
+	tile_flow.clear();
+	tile_deposit.clear();
+	if (!tile_erosion_enabled || nx < 2) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	tile_cell = tile_erosion_spacing;
+	tile_nx = int(Math::floor((nx - 1) * result_cell / tile_cell)) + 1;
+	tile_nz = int(Math::floor((ny - 1) * result_cell / tile_cell)) + 1;
+	const int core = MAX(int(Math::round(tile_erosion_tile_size / tile_cell)), 8);
+	const int apron = MAX(int(Math::round(tile_erosion_apron / tile_cell)), 2);
+	const int tiles_x = (tile_nx - 1 + core - 1) / core;
+	const int tiles_z = (tile_nz - 1 + core - 1) / core;
+	LocalVector<LocalVector<float>> results;
+	results.resize(tiles_x * tiles_z);
+	TileJob job{ this, tiles_x, core, apron, &results };
+	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_erode_tile, &job, tiles_x * tiles_z, -1, true, SNAME("TerrainGenerator3D tiles"));
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	const int n = tile_nx * tile_nz;
+	LocalVector<double> acc;
+	LocalVector<double> wsum;
+	acc.resize(n * 3);
+	wsum.resize(n);
+	memset(acc.ptr(), 0, sizeof(double) * n * 3);
+	memset(wsum.ptr(), 0, sizeof(double) * n);
+	const double fade = MAX(apron * 0.5, 1.0);
+	auto ramp = [&](int c, int lo, int hi) -> double {
+		// 1 inside [lo, hi], falling to 0 at fade cells outside it.
+		const double d = c < lo ? lo - c : (c > hi ? c - hi : 0);
+		const double t = CLAMP(1.0 - d / fade, 0.0, 1.0);
+		return t * t * (3.0 - 2.0 * t);
+	};
+	for (int tz = 0; tz < tiles_z; tz++) {
+		for (int tx = 0; tx < tiles_x; tx++) {
+			const LocalVector<float> &r = results[tz * tiles_x + tx];
+			const int x0 = MAX(tx * core - apron, 0);
+			const int z0 = MAX(tz * core - apron, 0);
+			const int x1 = MIN((tx + 1) * core + apron, tile_nx - 1);
+			const int z1 = MIN((tz + 1) * core + apron, tile_nz - 1);
+			const int w = x1 - x0 + 1;
+			// Edges of the world are no tile border: full weight there.
+			const int lo_x = tx == 0 ? 0 : tx * core;
+			const int hi_x = tx == tiles_x - 1 ? tile_nx - 1 : (tx + 1) * core;
+			const int lo_z = tz == 0 ? 0 : tz * core;
+			const int hi_z = tz == tiles_z - 1 ? tile_nz - 1 : (tz + 1) * core;
+			for (int z = z0; z <= z1; z++) {
+				const double wz = ramp(z, lo_z, hi_z);
+				if (wz <= 0.0) {
+					continue;
+				}
+				for (int x = x0; x <= x1; x++) {
+					const double wt = wz * ramp(x, lo_x, hi_x);
+					if (wt <= 0.0) {
+						continue;
+					}
+					const int li = ((z - z0) * w + (x - x0)) * 3;
+					const int gi = z * tile_nx + x;
+					acc[gi * 3 + 0] += wt * r[li + 0];
+					acc[gi * 3 + 1] += wt * r[li + 1];
+					acc[gi * 3 + 2] += wt * r[li + 2];
+					wsum[gi] += wt;
+				}
+			}
+		}
+	}
+	tile_delta.resize(n);
+	tile_flow.resize(n);
+	tile_deposit.resize(n);
+	for (int i = 0; i < n; i++) {
+		const double inv = wsum[i] > 0.0 ? 1.0 / wsum[i] : 0.0;
+		tile_delta[i] = float(acc[i * 3 + 0] * inv);
+		tile_flow[i] = float(acc[i * 3 + 1] * inv);
+		tile_deposit[i] = float(acc[i * 3 + 2] * inv);
+	}
+	last_tile_erosion_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+}
+
+real_t TerrainGenerator3D::get_tile_flow(const Vector3 &p_global_position) const {
+	return _tile_sample(tile_flow, p_global_position.x, p_global_position.z);
+}
+
+real_t TerrainGenerator3D::get_tile_deposit(const Vector3 &p_global_position) const {
+	return _tile_sample(tile_deposit, p_global_position.x, p_global_position.z);
 }
 
 void TerrainGenerator3D::_fill_row(void *p_job, uint32_t p_row) {
@@ -925,6 +1085,23 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_height", "global_position"), &TerrainGenerator3D::get_height);
 	ClassDB::bind_method(D_METHOD("get_base_height", "global_position"), &TerrainGenerator3D::get_base_height);
 	ClassDB::bind_method(D_METHOD("sample_heights", "origin", "spacing", "size"), &TerrainGenerator3D::sample_heights);
+	ClassDB::bind_method(D_METHOD("get_tile_flow", "global_position"), &TerrainGenerator3D::get_tile_flow);
+	ClassDB::bind_method(D_METHOD("get_tile_deposit", "global_position"), &TerrainGenerator3D::get_tile_deposit);
+	ClassDB::bind_method(D_METHOD("get_last_tile_erosion_msec"), &TerrainGenerator3D::get_last_tile_erosion_msec);
+	ClassDB::bind_method(D_METHOD("set_tile_erosion_enabled", "enable"), &TerrainGenerator3D::set_tile_erosion_enabled);
+	ClassDB::bind_method(D_METHOD("is_tile_erosion_enabled"), &TerrainGenerator3D::is_tile_erosion_enabled);
+	ClassDB::bind_method(D_METHOD("set_tile_erosion_spacing", "spacing"), &TerrainGenerator3D::set_tile_erosion_spacing);
+	ClassDB::bind_method(D_METHOD("get_tile_erosion_spacing"), &TerrainGenerator3D::get_tile_erosion_spacing);
+	ClassDB::bind_method(D_METHOD("set_tile_erosion_tile_size", "size"), &TerrainGenerator3D::set_tile_erosion_tile_size);
+	ClassDB::bind_method(D_METHOD("get_tile_erosion_tile_size"), &TerrainGenerator3D::get_tile_erosion_tile_size);
+	ClassDB::bind_method(D_METHOD("set_tile_erosion_apron", "apron"), &TerrainGenerator3D::set_tile_erosion_apron);
+	ClassDB::bind_method(D_METHOD("get_tile_erosion_apron"), &TerrainGenerator3D::get_tile_erosion_apron);
+	ClassDB::bind_method(D_METHOD("set_tile_erosion_droplets", "droplets"), &TerrainGenerator3D::set_tile_erosion_droplets);
+	ClassDB::bind_method(D_METHOD("get_tile_erosion_droplets"), &TerrainGenerator3D::get_tile_erosion_droplets);
+	ClassDB::bind_method(D_METHOD("set_tile_erosion_max_depth", "depth"), &TerrainGenerator3D::set_tile_erosion_max_depth);
+	ClassDB::bind_method(D_METHOD("get_tile_erosion_max_depth"), &TerrainGenerator3D::get_tile_erosion_max_depth);
+	ClassDB::bind_method(D_METHOD("set_tile_erosion_rock_hardness", "hardness"), &TerrainGenerator3D::set_tile_erosion_rock_hardness);
+	ClassDB::bind_method(D_METHOD("get_tile_erosion_rock_hardness"), &TerrainGenerator3D::get_tile_erosion_rock_hardness);
 	ClassDB::bind_method(D_METHOD("get_soil_depth", "global_position"), &TerrainGenerator3D::get_soil_depth);
 	ClassDB::bind_method(D_METHOD("get_rock_exposure", "global_position"), &TerrainGenerator3D::get_rock_exposure);
 	ClassDB::bind_method(D_METHOD("get_talus", "global_position"), &TerrainGenerator3D::get_talus);
@@ -1000,6 +1177,15 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_gully_weight", PROPERTY_HINT_RANGE, "0.05,1,0.01"), "set_detail_gully_weight", "get_detail_gully_weight");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_crest", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_detail_crest", "get_detail_crest");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_assumed_slope", PROPERTY_HINT_RANGE, "0.01,3,0.01"), "set_detail_assumed_slope", "get_detail_assumed_slope");
+
+	ADD_GROUP("Tile Erosion", "tile_erosion_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "tile_erosion_enabled"), "set_tile_erosion_enabled", "is_tile_erosion_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_erosion_spacing", PROPERTY_HINT_RANGE, "0.25,16,0.25,or_greater,suffix:m"), "set_tile_erosion_spacing", "get_tile_erosion_spacing");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_erosion_tile_size", PROPERTY_HINT_RANGE, "16,4096,1,or_greater,suffix:m"), "set_tile_erosion_tile_size", "get_tile_erosion_tile_size");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_erosion_apron", PROPERTY_HINT_RANGE, "0,1024,1,or_greater,suffix:m"), "set_tile_erosion_apron", "get_tile_erosion_apron");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_erosion_droplets", PROPERTY_HINT_RANGE, "0,8,0.05,or_greater"), "set_tile_erosion_droplets", "get_tile_erosion_droplets");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_erosion_max_depth", PROPERTY_HINT_RANGE, "0.1,100,0.1,or_greater,suffix:m"), "set_tile_erosion_max_depth", "get_tile_erosion_max_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_erosion_rock_hardness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_tile_erosion_rock_hardness", "get_tile_erosion_rock_hardness");
 
 	ADD_GROUP("Geology", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "soil_production", PROPERTY_HINT_RANGE, "0.001,10,0.001,or_greater,suffix:mm/yr"), "set_soil_production", "get_soil_production");
