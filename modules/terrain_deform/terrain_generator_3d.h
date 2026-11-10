@@ -33,6 +33,7 @@
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
+#include "scene/resources/mesh.h"
 
 #include "modules/noise/noise.h"
 
@@ -110,6 +111,27 @@ private:
 	real_t river_width_coefficient = 7.0; // width = coefficient * discharge^0.5
 	bool publish_shader_globals = true;
 
+	// Coast: sea along the chosen edges (or where sea_map is white), a seabed below it and beaches above it.
+	int ocean_edges = 0;
+	real_t coast_distance = 600.0; // m from the edge to the mean coastline
+	real_t coast_roughness = 400.0; // m the coastline wanders either way
+	real_t coast_wavelength = 1200.0; // m, of its largest bays and headlands
+	Ref<Texture2D> sea_map;
+	real_t seabed_profile = 0.1; // A in the Dean profile depth = A x^(2/3) (m^(1/3)); fine sand ~0.1
+	real_t shelf_slope = 0.03; // added past the surf zone (300 m)
+	real_t max_sea_depth = 60.0; // m
+	real_t beach_width = 80.0; // m, mean; it varies along the coast
+	real_t beach_slope = 0.03;
+
+	// Lakes: natural dams across valleys, the water behind them.
+	int lake_count = 0;
+	TypedArray<NodePath> lakes; // markers: a dam where each one stands (metadata "depth" overrides lake_depth)
+	real_t lake_depth = 20.0; // m of dam above the valley floor
+	real_t lake_catchment = 2.0e5; // m^2, least drainage area at an automatic dam
+	real_t lake_min_area = 10000.0; // m^2
+	real_t lake_spacing = 1200.0; // m between automatic dams
+	real_t lake_evaporation = 1000.0; // mm/yr off the water
+
 	// Output.
 	NodePath terrain_path;
 	NodePath deformer_path;
@@ -127,6 +149,35 @@ private:
 	LocalVector<float> talus;
 	LocalVector<int32_t> receivers;
 	LocalVector<float> channel_area; // D8 drainage area along the receivers, for the rivers
+	// Water: per cell 0 dry, 1 sea, 2 + k lake k; the depth of water over the ground; the rivers' routing (lakes and
+	// the sea end them; a lake's outflow starts at its outlet carrying its whole catchment).
+	LocalVector<int32_t> water_body;
+	LocalVector<float> water_depth;
+	LocalVector<float> lake_rim; // the level of a lake within three cells, NaN elsewhere
+	LocalVector<int32_t> river_receivers;
+	LocalVector<float> river_area;
+	struct LakeInfo {
+		real_t level = 0.0;
+		real_t bed = 0.0;
+		int32_t outlet = -1;
+		int32_t dam = -1;
+		real_t catchment = 0.0;
+		bool endorheic = false;
+		int cells = 0;
+		Vector2i lo;
+		Vector2i hi;
+	};
+	LocalVector<LakeInfo> lake_info;
+	bool has_sea = false;
+	float sea_bottom = 0.0f;
+	ObjectID sea_node;
+	LocalVector<ObjectID> lake_nodes;
+	void _build_sea_mask(LocalVector<uint8_t> &r_sea) const;
+	void _shape_coast(const LocalVector<uint8_t> &p_sea);
+	void _make_lakes(const LocalVector<uint8_t> &p_sea);
+	void _route_rivers();
+	float _water_fade(real_t p_x, real_t p_z) const;
+	Ref<ArrayMesh> _lake_outline(int p_lake, const Vector3 &p_origin) const;
 	Ref<ImageTexture> geology_texture;
 	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).
 	int tile_nx = 0;
@@ -136,6 +187,7 @@ private:
 	LocalVector<float> tile_flow;
 	LocalVector<float> tile_deposit;
 	double last_tile_erosion_msec = 0.0;
+	double last_water_msec = 0.0;
 	struct TileJob {
 		TerrainGenerator3D *gen;
 		int tiles_x;
@@ -277,6 +329,42 @@ public:
 	void set_publish_shader_globals(bool p_enable) { publish_shader_globals = p_enable; }
 	bool is_publishing_shader_globals() const { return publish_shader_globals; }
 
+	// Coast and lakes.
+	void set_ocean_edges(int p_edges) { ocean_edges = p_edges & 15; }
+	int get_ocean_edges() const { return ocean_edges; }
+	void set_coast_distance(real_t p_value) { coast_distance = MAX(p_value, real_t(0.0)); }
+	real_t get_coast_distance() const { return coast_distance; }
+	void set_coast_roughness(real_t p_value) { coast_roughness = MAX(p_value, real_t(0.0)); }
+	real_t get_coast_roughness() const { return coast_roughness; }
+	void set_coast_wavelength(real_t p_value) { coast_wavelength = MAX(p_value, real_t(10.0)); }
+	real_t get_coast_wavelength() const { return coast_wavelength; }
+	void set_sea_map(const Ref<Texture2D> &p_map) { sea_map = p_map; }
+	Ref<Texture2D> get_sea_map() const { return sea_map; }
+	void set_seabed_profile(real_t p_value) { seabed_profile = MAX(p_value, real_t(0.0)); }
+	real_t get_seabed_profile() const { return seabed_profile; }
+	void set_shelf_slope(real_t p_value) { shelf_slope = MAX(p_value, real_t(0.0)); }
+	real_t get_shelf_slope() const { return shelf_slope; }
+	void set_max_sea_depth(real_t p_value) { max_sea_depth = MAX(p_value, real_t(0.1)); }
+	real_t get_max_sea_depth() const { return max_sea_depth; }
+	void set_beach_width(real_t p_value) { beach_width = MAX(p_value, real_t(0.0)); }
+	real_t get_beach_width() const { return beach_width; }
+	void set_beach_slope(real_t p_value) { beach_slope = CLAMP(p_value, real_t(0.001), real_t(1.0)); }
+	real_t get_beach_slope() const { return beach_slope; }
+	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
+	int get_lake_count() const { return lake_count; }
+	void set_lakes(const TypedArray<NodePath> &p_lakes) { lakes = p_lakes; }
+	TypedArray<NodePath> get_lakes() const { return lakes; }
+	void set_lake_depth(real_t p_value) { lake_depth = MAX(p_value, real_t(1.0)); }
+	real_t get_lake_depth() const { return lake_depth; }
+	void set_lake_catchment(real_t p_value) { lake_catchment = MAX(p_value, real_t(0.0)); }
+	real_t get_lake_catchment() const { return lake_catchment; }
+	void set_lake_min_area(real_t p_value) { lake_min_area = MAX(p_value, real_t(0.0)); }
+	real_t get_lake_min_area() const { return lake_min_area; }
+	void set_lake_spacing(real_t p_value) { lake_spacing = MAX(p_value, real_t(0.0)); }
+	real_t get_lake_spacing() const { return lake_spacing; }
+	void set_lake_evaporation(real_t p_value) { lake_evaporation = MAX(p_value, real_t(0.0)); }
+	real_t get_lake_evaporation() const { return lake_evaporation; }
+
 	void set_terrain(const NodePath &p_path) { terrain_path = p_path; }
 	NodePath get_terrain() const { return terrain_path; }
 	void set_deformer(const NodePath &p_path) { deformer_path = p_path; }
@@ -327,6 +415,17 @@ public:
 	real_t get_discharge(real_t p_area) const;
 	Array get_rivers(real_t p_min_area) const;
 	Array build_river_paths(Node *p_parent, real_t p_min_area);
+
+	// Coast and lakes.
+	bool has_sea_result() const { return has_sea; }
+	// Time the coast, lakes and their routing took in the last generate() (part of get_last_generate_msec()).
+	double get_last_water_msec() const { return last_water_msec; }
+	int get_lake_result_count() const { return int(lake_info.size()); }
+	Array get_lake_results() const;
+	real_t get_water_level(const Vector3 &p_global_position) const;
+	real_t get_water_depth(const Vector3 &p_global_position) const;
+	Ref<Image> get_water_image() const;
+	Array build_water(Node *p_parent);
 
 	double get_last_generate_msec() const { return last_generate_msec; }
 	double get_last_write_msec() const { return last_write_msec; }

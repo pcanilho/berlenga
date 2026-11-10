@@ -371,13 +371,98 @@ distance. The bench view uses it with `--mdetail=4` (8, 4, 2 and 1 m over a 4 m 
 and the path traced frame keeps all of it (skylight shows it in the shadowed slopes the raster leaves dark). Cost:
 25 cells and one sine and cosine each per octave per pixel; GPU timing is queued for the PC (cloud has no GPU).
 
+## Coast and lakes: research
+
+Asked for by the showcase scene, which had to cut its coast and lakes by hand.
+
+How others do it:
+- Landscape evolution models put the sea in as base level: every node at or below sea level is an outlet, so rivers
+  end at the coast and the land behind grades to it (Braun and Willett 2013; Cordonnier et al. 2016 keep the coast
+  fixed and let uplift raise the land from it; Yuan et al. 2019 add marine deposition offshore).
+- Sub-sea shape: the equilibrium beach profile h = A x^(2/3) (Bruun 1954, Dean 1991; A about 0.1 m^(1/3) for fine
+  sand, 0.2 for coarse) for the shoreface, then a gentle shelf. World Machine's and Gaea's coast tools and Houdini's
+  heightfield erode all lower land below a sea level and smooth a beach band; none model waves.
+- Lakes: closed basins either fill to their spill point and overflow, or stop where evaporation over the lake
+  matches the water coming in (endorheic lakes). Fill-Spill-Merge (Barnes, Callaghan and Wickert 2021) solves this
+  over a depression hierarchy; Priority-Flood (Barnes 2014) gives the spill levels. Lake floors are flat sediment
+  with steeper margins; a depth growing as the square root of distance from shore is a common stand-in.
+- Games: Horizon and Far Cry place lakes and the sea as authored water bodies over the terrain; Star Citizen's
+  Planet Tech v5 fills its ocean to a planet-wide level and reads depth for its shore. Our ocean surface already
+  reads the seabed through physics and needs a real depth for shore waves (water.md Step 5b).
+
+Plan:
+1. Sea: an `ocean_edges` mask (like `outlet_edges`) and an optional `sea_map` texture sink the land there below
+   `sea_level` (negative uplift ramping in over `coast_width`). In the run, every node at or below sea level is an
+   outlet. After it, the shoreface follows Dean's profile out to `shelf_depth`, and a beach band blends the land
+   down to it.
+2. Lakes: the run's basin fill marks closed basins. Each keeps water instead of sediment down to `lake_depth`
+   (deepest at the centre, square root of distance from shore), with its level at the spill point, lowered when
+   evaporation over the lake exceeds runoff from its catchment (the Fill-Spill-Merge balance for one basin).
+3. Water: `get_lakes()` gives level, extent and outflow point; `build_water(parent)` makes a PhysXWaterSurface3D
+   (by name) for the sea at sea level with shore waves, and one per lake at its level. Rivers stop at a lake or the
+   sea (mouth_target set) and outflow rivers start at the spill point.
+
+## Coast and lakes: what was built
+
+`terrain_coast.h` (plain C++) and TerrainGenerator3D's Coast and Lakes groups.
+
+- Sea: `ocean_edges` (like `outlet_edges`) puts sea within `coast_distance` of those edges, the coastline wandering
+  by `coast_roughness` (fBm of `coast_wavelength`), corners rounded by a soft minimum of the edge distances;
+  `sea_map` adds sea where it is white. Sea cells are the run's outlets, held at `sea_level`, so the land drains to
+  the coast and rises from it. After the run a chamfer distance transform (Borgefors 1986) gives the distance
+  offshore and inland. Below the sea: Dean's profile `seabed_profile * x^(2/3)`, plus `shelf_slope` past 300 m, with
+  20% fBm relief, down to `max_sea_depth`. Above it: beaches along some stretches (`beach_width`, varying with
+  noise from none, a cliff, to twice it) at `beach_slope`, blended into the land over 60 m behind.
+- Lakes: the plan was to keep the run's filled basins as lakes. In the bench they turned out to be sloping valley
+  fills (20 to 100 m of relief in one fill), not basins: a stream power landscape drains completely. So lakes come
+  from what holds most mountain lakes, a dam across a valley (moraine, landslide or rock bar; Costa and Schuster
+  1988, Korup 2002). At a dam site the generator raises a dam `lake_depth` high across the valley (crest 3 m above
+  the spillway, faces 0.35 and 0.2, half width ten times its height), cuts a spillway down the old channel, and
+  floods the valley above in height order (Priority-Flood) up to the crest or the lowest col of the basin's rim,
+  whichever is lower (then the col is the outlet). If runoff over the catchment (`river_runoff`) is less than
+  `lake_evaporation` over the lake, the level drops to where they match and the lake has no outflow (the
+  Fill-Spill-Merge balance for one basin). Sites: `lakes` markers first, then `lake_count` automatic ones: valley
+  cells with at least `lake_catchment` above them, `lake_depth / 2` above the sea and away from it, each probed
+  (built and taken back) and the largest lakes built first, `lake_spacing` apart.
+- Around a lake (three cells) the detail and tile erosion cannot take ground that was above the water below it, so
+  the shores and the dam hold the surface. Under water (sea and lakes) both fade out, so beds stay smooth.
+- Rivers: routed again with the water (Kahn order): lake cells drain to their outlet, the sea ends everything.
+  `get_rivers()` ends rivers at the first water cell, on the water (`ends_in` sea, lake, river or edge; `lake`;
+  `from_lake`), and an outflow river starts at each lake's outlet carrying its whole catchment.
+- Water: `build_water(parent)` makes PhysXWaterSurface3D by name: the sea at sea level over the generated
+  rectangle (`seabed_from_floor`, `shore_waves`, its open-sea `depth` the seabed's mean depth along the edge,
+  `render_extent` out to 20 km or more), and one per lake at its level with `surface_mesh` set to the lake's outline
+  (grid quads with a corner under water and none on lower ground outside it). Without PhysX, plain mesh sheets. Call
+  it before `build_river_paths()`, which then sets each river's `mouth_target` to the sea or lake it ends in.
+- Queries: `get_lake_results()` (level, bed, depth, area, catchment, endorheic, center, rect, dam, outlet),
+  `get_water_level()`, `get_water_depth()`, `get_water_image()`, `has_sea_result()`.
+
+Cost (cloud CPU, one thread): coast, lakes (with up to 512 dams probed) and routing take 28 ms of a 3.9 s
+generate() at 257^2 cells and 199 ms of 19.4 s at 513^2. Bench: `--test` (52 checks, 14 for coast and lakes),
+`--coast --geology=map.png` (island map, lakes listed), `--out=... --coast [--focus=lake|coast]`. Media in
+fork/terrain/coast/ (raster and path traced, same frames).
+
+Limits: lakes in steep fluvial valleys are small (1 to 2 ha with 20 to 35 m dams in the bench); larger ones want a
+marker on a flatter reach or a deeper dam. No glacial overdeepening, lagoons or deltas yet. The sea surface covers
+the generated rectangle; its shore waves are baked on that grid (16 m cells for a 4 km world).
+
 ## Sources
 
+- Borgefors, Distance transformations in digital images, Computer Vision, Graphics and Image Processing 1986.
+- Costa, Schuster, The formation and failure of natural dams, GSA Bulletin 1988.
+- Korup, Recent research on landslide dams: a literature review with special attention to New Zealand, Progress in
+  Physical Geography 2002.
 - Galin, Guérin, Peytavie et al., A Review of Digital Terrain Modeling, CGF 38(2), 2019.
 - Musgrave, Kolb, Mace, The synthesis and rendering of eroded fractal terrains, SIGGRAPH 1989.
 - Ebert, Musgrave, Peachey, Perlin, Worley, Texturing and Modeling: A Procedural Approach.
 - Quilez, noise derivatives and domain warping: https://iquilezles.org/articles/
 - Bigun and Granlund, Optimal orientation detection of linear symmetry, ICCV 1987.
+- Bruun, Coast erosion and the development of beach profiles, Beach Erosion Board TM 44, 1954.
+- Dean, Equilibrium beach profiles: characteristics and applications, Journal of Coastal Research 7(1), 1991.
+- Barnes, Callaghan, Wickert, Computing water flow through complex landscapes, part 3: Fill-Spill-Merge, Earth
+  Surface Dynamics 9, 2021.
+- Yuan, Braun, Guerit et al., A new efficient method to solve the stream power law model taking into account
+  sediment deposition, JGR Earth Surface 124, 2019.
 - Beyer, Implementation of a method for hydraulic erosion, bachelor's thesis, TU Munich, 2015.
 - Mei, Decaudin, Hu, Fast hydraulic erosion simulation and visualization on GPU, Pacific Graphics 2007.
 - O'Brien and Hodgins, Dynamic simulation of splashing fluids, Computer Animation 1995 (virtual pipes).

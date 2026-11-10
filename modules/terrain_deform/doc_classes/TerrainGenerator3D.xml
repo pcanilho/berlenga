@@ -24,7 +24,14 @@
 			<param index="0" name="parent" type="Node" />
 			<param index="1" name="min_area" type="float" />
 			<description>
-				Adds one path per river from [method get_rivers] under [param parent]: a [code]PhysXRiver3D[/code] when that class exists (curve, [code]widths[/code], its own discharge, and [code]mouth_target[/code] set to the river it joins), otherwise a [Path3D] with the widths, discharge and joined river as metadata. Points are converted into [param parent]'s space. In the editor the paths are owned by the edited scene. Returns the new nodes, trunk rivers first.
+				Adds one path per river from [method get_rivers] under [param parent]: a [code]PhysXRiver3D[/code] when that class exists (curve, [code]widths[/code], its own discharge, and [code]mouth_target[/code] set to the river it joins, or to the sea or lake it ends in when [method build_water] made them), otherwise a [Path3D] with the widths, discharge and joined river as metadata. Points are converted into [param parent]'s space. In the editor the paths are owned by the edited scene. Returns the new nodes, trunk rivers first.
+			</description>
+		</method>
+		<method name="build_water">
+			<return type="Array" />
+			<param index="0" name="parent" type="Node" />
+			<description>
+				Creates the water of the last [method generate] under [param parent] and returns the nodes: a [code]PhysXWaterSurface3D[/code] (by class name, when the PhysX module is in the build) for the sea, at sea level over the generated rectangle with [code]seabed_from_floor[/code] and [code]shore_waves[/code] on, and one per lake at its level with [code]surface_mesh[/code] set to the lake's outline. Without the PhysX module, plain [MeshInstance3D] sheets. Call it after the ground is written (the water reads its seabed through physics) and before [method build_river_paths], which then sets each river's [code]mouth_target[/code] to the sea or lake it ends in.
 			</description>
 		</method>
 		<method name="clear_result">
@@ -121,6 +128,18 @@
 				Generated heights per grid node, [constant Image.FORMAT_RF], metres.
 			</description>
 		</method>
+		<method name="get_lake_result_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Number of lakes the last [method generate] made.
+			</description>
+		</method>
+		<method name="get_lake_results" qualifiers="const">
+			<return type="Array" />
+			<description>
+				The lakes of the last [method generate], one [Dictionary] each: [code]level[/code], [code]bed[/code] and [code]depth[/code] (m), [code]area[/code] and [code]catchment[/code] (m²), [code]endorheic[/code] (no outflow: evaporation takes all its water), [code]center[/code] (on the water), [code]rect[/code] (world XZ), [code]dam[/code] (the dam's spillway, on the ground) and [code]outlet[/code] (where the water leaves; absent when it has none).
+			</description>
+		</method>
 		<method name="get_last_change" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -145,6 +164,12 @@
 				Time the last tile erosion took, in milliseconds (part of [method get_last_generate_msec]).
 			</description>
 		</method>
+		<method name="get_last_water_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Time the coast, the lakes and the rivers' routing through them took in the last [method generate], in milliseconds (part of [method get_last_generate_msec]).
+			</description>
+		</method>
 		<method name="get_last_write_msec" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -155,7 +180,7 @@
 			<return type="Array" />
 			<param index="0" name="min_area" type="float" />
 			<description>
-				Rivers draining at least [param min_area] m², trunk rivers first. Channels follow the receivers of the erosion run (D8 area, so it grows downstream); each river runs upstream from an outlet or junction along the donor with the largest area (Hack's main stem), and the other donors start tributaries. Each river is a [Dictionary]: [code]points[/code] ([PackedVector3Array], world, head to mouth, on the ground, smoothed), [code]widths[/code] (m, from the discharge: [code]width = river_width_coefficient * discharge^0.5[/code], Leopold and Maddock 1953), [code]areas[/code], [code]discharge[/code] (m³/s at the mouth), [code]own_discharge[/code] (that minus its tributaries'), [code]joins[/code] (index of the river it joins, -1 at an outlet). A tributary's last point is the junction on the river it joins.
+				Rivers draining at least [param min_area] m², trunk rivers first. Channels follow the receivers of the erosion run (D8 area, so it grows downstream); each river runs upstream from an outlet or junction along the donor with the largest area (Hack's main stem), and the other donors start tributaries. Each river is a [Dictionary]: [code]points[/code] ([PackedVector3Array], world, head to mouth, on the ground, smoothed), [code]widths[/code] (m, from the discharge: [code]width = river_width_coefficient * discharge^0.5[/code], Leopold and Maddock 1953), [code]areas[/code], [code]discharge[/code] (m³/s at the mouth), [code]own_discharge[/code] (that minus its tributaries'), [code]joins[/code] (index of the river it joins, -1 at an outlet), [code]ends_in[/code] ([code]"sea"[/code], [code]"lake"[/code], [code]"river"[/code] or [code]"edge"[/code]), [code]lake[/code] (the lake it ends in, else -1) and [code]from_lake[/code] (the lake whose outflow it is, else -1). A tributary's last point is the junction on the river it joins. Rivers end at the first cell of the sea or a lake, on the water; a lake's outflow starts at its outlet and carries its whole catchment.
 			</description>
 		</method>
 		<method name="get_rock_exposure" qualifiers="const">
@@ -212,6 +237,26 @@
 				The uplift rate used per grid node, [constant Image.FORMAT_RF], millimetres per year.
 			</description>
 		</method>
+		<method name="get_water_depth" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Depth of the sea or a lake over the ground at a point; 0 on dry ground.
+			</description>
+		</method>
+		<method name="get_water_image" qualifiers="const">
+			<return type="Image" />
+			<description>
+				Water depth over the grid (m, 0 on dry ground), FORMAT_RF.
+			</description>
+		</method>
+		<method name="get_water_level" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Height of the water surface (the sea's or a lake's) over a point; NaN on dry ground or outside.
+			</description>
+		</method>
 		<method name="get_world_rect" qualifiers="const">
 			<return type="Rect2" />
 			<description>
@@ -222,6 +267,12 @@
 			<return type="bool" />
 			<description>
 				Whether [method generate] has run since the node was created or [method clear_result].
+			</description>
+		</method>
+		<method name="has_sea_result" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether the last [method generate] made any sea.
 			</description>
 		</method>
 		<method name="sample_heights" qualifiers="const">
@@ -247,8 +298,23 @@
 		<member name="base_uplift" type="float" setter="set_base_uplift" getter="get_base_uplift" default="0.1">
 			Uplift strength everywhere, 0 to 1, under the map and ranges. Low values give foothills between ranges.
 		</member>
+		<member name="beach_slope" type="float" setter="set_beach_slope" getter="get_beach_slope" default="0.03">
+			Slope of the beach face.
+		</member>
+		<member name="beach_width" type="float" setter="set_beach_width" getter="get_beach_width" default="80.0">
+			Mean beach width (m). It varies along the coast with noise, from none (cliffs) to twice this; the land behind blends down to it over 60 m.
+		</member>
 		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="16.0">
 			Metres between grid nodes. Coarse on purpose: this stage shapes ranges and valleys, finer detail is added on top.
+		</member>
+		<member name="coast_distance" type="float" setter="set_coast_distance" getter="get_coast_distance" default="600.0">
+			Distance (m) from each of [member ocean_edges] to the mean coastline.
+		</member>
+		<member name="coast_roughness" type="float" setter="set_coast_roughness" getter="get_coast_roughness" default="400.0">
+			How far (m) the coastline wanders either side of [member coast_distance], as bays and headlands.
+		</member>
+		<member name="coast_wavelength" type="float" setter="set_coast_wavelength" getter="get_coast_wavelength" default="1200.0">
+			Size (m) of the largest bays and headlands.
 		</member>
 		<member name="critical_slope" type="float" setter="set_critical_slope" getter="get_critical_slope" default="40.0">
 			Steepest slope, in degrees, the rock holds along the flow direction; steeper ground collapses to it. 0 disables.
@@ -301,11 +367,38 @@
 		<member name="initial_roughness" type="float" setter="set_initial_roughness" getter="get_initial_roughness" default="1.0">
 			Height of the seeded random roughness the simulation starts from, in metres.
 		</member>
+		<member name="lake_catchment" type="float" setter="set_lake_catchment" getter="get_lake_catchment" default="200000.0">
+			Least drainage area (m²) above an automatic dam.
+		</member>
+		<member name="lake_count" type="int" setter="set_lake_count" getter="get_lake_count" default="0">
+			Number of automatic lakes. Valley cells with at least [member lake_catchment] draining through them, high enough above the sea and away from it, are tried in a seeded order; the largest lakes are built first, [member lake_spacing] apart.
+		</member>
+		<member name="lake_depth" type="float" setter="set_lake_depth" getter="get_lake_depth" default="20.0">
+			Height (m) of a lake's dam above the valley floor: the deepest the lake can be at the dam. Lakes form behind natural dams (a moraine, landslide or rock bar) across a valley; the water stands at the dam's spillway, or at a lower col on the basin's rim, which then is the outlet.
+		</member>
+		<member name="lake_evaporation" type="float" setter="set_lake_evaporation" getter="get_lake_evaporation" default="1000.0">
+			Evaporation from a lake (mm/yr). A lake whose catchment's runoff ([member river_runoff]) is less than this over its area stands lower, where the two match, and has no outflow.
+		</member>
+		<member name="lake_min_area" type="float" setter="set_lake_min_area" getter="get_lake_min_area" default="10000.0">
+			Smallest lake kept (m²).
+		</member>
+		<member name="lake_spacing" type="float" setter="set_lake_spacing" getter="get_lake_spacing" default="1200.0">
+			Least distance (m) between automatic dams.
+		</member>
+		<member name="lakes" type="NodePath[]" setter="set_lakes" getter="get_lakes" default="[]">
+			Lake markers (any [Node3D]): a dam at each, on the valley floor nearest to it, before the automatic ones. A [code]"depth"[/code] metadata overrides [member lake_depth].
+		</member>
 		<member name="max_height" type="float" setter="set_max_height" getter="get_max_height" default="0.0">
 			When above 0, the relief is scaled so the highest point is this far above [member sea_level]. 0 keeps the simulated heights.
 		</member>
+		<member name="max_sea_depth" type="float" setter="set_max_sea_depth" getter="get_max_sea_depth" default="60.0">
+			Deepest the seabed goes (m below sea level).
+		</member>
 		<member name="max_soil_depth" type="float" setter="set_max_soil_depth" getter="get_max_soil_depth" default="2.0">
 			Deepest soil and alluvium (basin fill comes on top).
+		</member>
+		<member name="ocean_edges" type="int" setter="set_ocean_edges" getter="get_ocean_edges" default="0">
+			Edges of the rectangle that are open sea (bits as in [member outlet_edges]). The sea cells are the run's outlets, held at sea level, so the land drains to the coast; set [member outlet_edges] to 0 to make the sea the only outlet.
 		</member>
 		<member name="outlet_edges" type="int" setter="set_outlet_edges" getter="get_outlet_edges" default="15">
 			Edges of the rectangle held at [member sea_level] where water leaves: bits [constant OUTLET_NEGATIVE_X], [constant OUTLET_POSITIVE_X], [constant OUTLET_NEGATIVE_Z], [constant OUTLET_POSITIVE_Z].
@@ -328,8 +421,17 @@
 		<member name="sea_level" type="float" setter="set_sea_level" getter="get_sea_level" default="0.0">
 			Height of the outlets and of the flat start.
 		</member>
+		<member name="sea_map" type="Texture2D" setter="set_sea_map" getter="get_sea_map">
+			Optional map over the rectangle: sea where it is white (red above 0.5), added to [member ocean_edges].
+		</member>
+		<member name="seabed_profile" type="float" setter="set_seabed_profile" getter="get_seabed_profile" default="0.1">
+			A in the equilibrium beach profile depth = A x^(2/3) at x metres offshore (Bruun 1954, Dean 1991); about 0.1 for fine sand, 0.2 for coarse.
+		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Seed of the starting roughness. Different seeds give different drainage networks on the same uplift.
+		</member>
+		<member name="shelf_slope" type="float" setter="set_shelf_slope" getter="get_shelf_slope" default="0.03">
+			Slope added to the seabed past the surf zone (300 m offshore).
 		</member>
 		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(4096, 4096)">
 			Width (X) and depth (Z) in metres of the rectangle generated, centred on the node.
