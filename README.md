@@ -250,6 +250,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Coarse-to-fine erosion** (`coarse_levels`, `refine_steps`): about 3.7 times faster at 4 m cells, with the same relief.
 - **Tile erosion** (`tile_erosion_enabled`): droplet hydraulic and thermal erosion in seamless overlapping tiles.
 - **Material detail** (`get_detail_shader_code()`): erosion detail below the vertex spacing in the terrain material; path tracing keeps it.
+- **Rock layers and waterfalls** (`strata_enabled`, `get_waterfalls()`): hard and soft bands that rivers cut into caprock waterfalls.
 - **Geology maps** (`terrain_geology()` in shaders): soil, bare rock and scree from the erosion run.
 - **River network** (`build_river_paths()`): rivers with widths and discharges, made into joined `PhysXRiver3D` paths.
 - **Coast and lakes** (`ocean_edges` or `sea_map`; `lake_count`, `lakes`; `build_water()`): sea with a Dean-profile seabed and beaches; lakes behind natural dams; builds the sea and lake surfaces, and rivers end in them.
@@ -259,7 +260,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: mountain generation, coarse to fine, crests, tile erosion, material detail, geology, coast, climate, ground material, footprints, terrain data maps</summary>
+<details><summary>Images: mountain generation, coarse to fine, crests, tile erosion, material detail, waterfalls, geology, coast, climate, ground material, footprints, terrain data maps</summary>
 
 ![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
 
@@ -288,6 +289,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A 4 m terrain mesh alone, then with erosion detail in its material](docs/media/terrain-material-detail.jpg)
 
 *Material detail: rills finer than the 4 m mesh, drawn by the material.*
+
+![Rivers and waterfalls on a layered range, and river long profiles before and after](docs/media/terrain-waterfalls.jpg)
+
+*Rock layers: rivers step down over the hard bands, leaving waterfalls up to 30 m.*
 
 ![Geology map with soil, rock, scree and rivers, and the range path traced and coloured from it](docs/media/terrain-geology.jpg)
 
