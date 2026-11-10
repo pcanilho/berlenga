@@ -159,6 +159,8 @@ public:
 	// steepen and spill). Whether a beach plunges at all comes from its slope.
 	void set_shore_wave_curl(float p_curl);
 	float get_shore_wave_curl() const { return shore_wave_curl; }
+	void set_shore_wave_groups(float p_groups);
+	float get_shore_wave_groups() const { return shore_wave_groups; }
 	// Spray thrown from plunging lips (Ihmsen et al. 2012 potentials): droplets
 	// leave the lip's edge and splash up where it lands on the water ahead.
 	void set_shore_spray(bool p_enabled);
@@ -400,6 +402,7 @@ private:
 	float shore_wave_height = 0.8f; // m, offshore
 	float shore_wave_period = 8.0f; // s
 	float shore_wave_curl = 1.0f;
+	float shore_wave_groups = 1.0f;
 	Vector2 shore_wave_direction; // (0, 0) = wind_direction
 	static constexpr int SHORE_TRAINS = 2;
 	static constexpr float BREAKER_INDEX = 0.78f; // H / h at breaking (McCowan)
@@ -448,6 +451,7 @@ private:
 	void _update_shore_material();
 	// The shore waves' height at (p_x, p_z) relative to the grid centre, and its rate of change.
 	float _shore_eta_at(float p_x, float p_z, float *r_rate = nullptr) const;
+	float _shore_wave_set(float p_theta, int p_train) const;
 	// Cascades 1.. (cascade 0 is the main solver's own ocean): an ocean-only
 	// WaterSolver each (a tiny resting ripple grid), its textures and readbacks.
 	struct WaveCascade {

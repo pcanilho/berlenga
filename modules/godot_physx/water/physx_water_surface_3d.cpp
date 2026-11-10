@@ -161,6 +161,7 @@ uniform sampler2D shore_wave_tex_b : hint_default_black, filter_linear, repeat_d
 uniform sampler2D shore_wave_tex_c : hint_default_black, filter_linear, repeat_disable;
 uniform vec2 shore_wave_omega = vec2(0.785, 0.695);
 uniform float shore_curl = 1.0;
+uniform float shore_groups = 1.0;
 const float BREAKER = 0.78;
 // World XZ both height fields are centered on (set by PhysXWaterSurface3D).
 uniform vec2 grid_center = vec2(0.0);
@@ -495,6 +496,33 @@ float shore_front_warp(float u, float b, out float r_dps) {
 	return (uw - uc) * r_dps;
 }
 
+// Each wave's own height (docs/ideas/water.md "Each wave breaks at its own place"): the envelope of a
+// narrow-band sea, five close frequencies around the train's (Longuet-Higgins 1952, 1984), as a function of the
+// wave count th / 2 pi, which travels with the crests. Its mean square is 1, so the individual heights are
+// Rayleigh distributed with the train's height as their rms (the energy is unchanged), and they come in
+// sets of about five bigger waves every twelve or so. Train i takes its own phases.
+float shore_wave_set(float th, float train) {
+	float x = th * 0.159154943;
+	vec2 s = vec2(0.0);
+	s += vec2(cos(-0.446 * x + 0.0 + 1.7 * train), sin(-0.446 * x + 0.0 + 1.7 * train));
+	s += vec2(cos(-0.207 * x + 2.1 + 3.1 * train), sin(-0.207 * x + 2.1 + 3.1 * train));
+	s += vec2(cos(0.025 * x + 4.4 + 0.7 * train), sin(0.025 * x + 4.4 + 0.7 * train));
+	s += vec2(cos(0.295 * x + 1.3 + 2.3 * train), sin(0.295 * x + 1.3 + 2.3 * train));
+	s += vec2(cos(0.490 * x + 5.6 + 4.9 * train), sin(0.490 * x + 5.6 + 4.9 * train));
+	return mix(1.0, length(s) * 0.4472136, shore_groups);
+}
+
+// The baked height and stage are the train's (rms) wave; one of r times its height shoals to r times the
+// unbroken height, breaks where that reaches the breaker index (stage r times the baked one) and is then held
+// at the breaker height. Dry cells (stage 3) stay dry.
+void shore_per_wave(float r, inout float height, inout float stage) {
+	float sb = stage;
+	if (sb < 2.99) {
+		height *= min(r * sb, 1.0) / max(min(sb, 1.0), 1e-3);
+		stage = r * sb;
+	}
+}
+
 vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 	r_slope = vec2(0.0);
 	r_white = 0.0;
@@ -515,7 +543,6 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 	float vary = 0.55 + 0.45 * flow_value_noise(world_xz * 0.04 + vec2(water_time * 0.03, 0.0));
 	// Plunging or spilling, from the surf similarity number (Battjes 1974):
 	// spilling below about 0.5, plunging up to about 3.3, surging beyond.
-	float plunging = smoothstep(0.35, 0.6, c.z) * (1.0 - smoothstep(2.6, 3.3, c.z)) * shore_curl;
 	vec3 off = vec3(0.0);
 	for (int i = 0; i < 2; i++) {
 		float phi = i == 0 ? a.x : a.z;
@@ -527,14 +554,21 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 			continue;
 		}
 		vec2 dir = g / k;
+		float th = phi - om * water_time;
+		// This wave's height: bigger ones break further out, smaller ones later.
+		float r = shore_wave_set(th, float(i));
+		float stage_raw = i == 0 ? c.x : c.y;
+		shore_per_wave(r, height, stage_raw);
+		// A bigger wave is steeper offshore, so it plunges less (xi goes as 1 / sqrt(H0)).
+		float xi = c.z * inversesqrt(max(r, 0.05));
+		float plunging = smoothstep(0.35, 0.6, xi) * (1.0 - smoothstep(2.6, 3.3, xi)) * shore_curl;
 		float brk = smoothstep(0.8, 0.98, height / max(BREAKER * depth, 1e-3));
 		float amp = 0.5 * height * vary * inside;
-		float th = phi - om * water_time;
 		// The plunging breaker through the surf zone (the stage is how far the
 		// wave is past its break point): the face steepens while the lip is
 		// thrown (a separate sheet, built on the CPU along the crests), the
 		// water ahead drops where it lands, and the wave runs on as a bore.
-		float stage = clamp(((i == 0 ? c.x : c.y) - 0.95) / 1.0, 0.0, 1.0);
+		float stage = clamp((stage_raw - 0.95) / 1.0, 0.0, 1.0);
 		float throw_w = plunging * vary * smoothstep(0.0, 0.45, stage) * (1.0 - smoothstep(0.7, 1.0, stage));
 		float drop_w = plunging * vary * smoothstep(0.3, 0.75, stage) * (1.0 - smoothstep(0.8, 1.0, stage));
 		float skew = min(0.6 * brk + 0.3 * throw_w, 0.92);
@@ -1250,6 +1284,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mesh_detail"), &PhysXWaterSurface3D::get_mesh_detail);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_curl", "curl"), &PhysXWaterSurface3D::set_shore_wave_curl);
 	ClassDB::bind_method(D_METHOD("get_shore_wave_curl"), &PhysXWaterSurface3D::get_shore_wave_curl);
+	ClassDB::bind_method(D_METHOD("set_shore_wave_groups", "groups"), &PhysXWaterSurface3D::set_shore_wave_groups);
+	ClassDB::bind_method(D_METHOD("get_shore_wave_groups"), &PhysXWaterSurface3D::get_shore_wave_groups);
 	ClassDB::bind_method(D_METHOD("set_shore_spray", "enabled"), &PhysXWaterSurface3D::set_shore_spray);
 	ClassDB::bind_method(D_METHOD("get_shore_spray"), &PhysXWaterSurface3D::get_shore_spray);
 	ClassDB::bind_method(D_METHOD("set_shore_spray_amount", "amount"), &PhysXWaterSurface3D::set_shore_spray_amount);
@@ -1382,6 +1418,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_height", PROPERTY_HINT_RANGE, "0,5,0.01,or_greater,suffix:m"), "set_shore_wave_height", "get_shore_wave_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_period", PROPERTY_HINT_RANGE, "1,30,0.1,suffix:s"), "set_shore_wave_period", "get_shore_wave_period");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_curl", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_shore_wave_curl", "get_shore_wave_curl");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_groups", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_shore_wave_groups", "get_shore_wave_groups");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shore_spray"), "set_shore_spray", "get_shore_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shore_spray_amount", PROPERTY_HINT_RANGE, "16,65536,1"), "set_shore_spray_amount", "get_shore_spray_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "shore_wave_direction"), "set_shore_wave_direction", "get_shore_wave_direction");
@@ -1587,6 +1624,13 @@ void PhysXWaterSurface3D::set_shore_wave_curl(float p_curl) {
 	shore_wave_curl = CLAMP(p_curl, 0.0f, 1.5f);
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("shore_curl", shore_wave_curl);
+	}
+}
+
+void PhysXWaterSurface3D::set_shore_wave_groups(float p_groups) {
+	shore_wave_groups = CLAMP(p_groups, 0.0f, 1.0f);
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("shore_groups", shore_wave_groups);
 	}
 }
 
@@ -1868,6 +1912,7 @@ void PhysXWaterSurface3D::_update_shore_material() {
 	water_material->set_shader_parameter("shore_wave_tex_b", shore_wave_tex_b);
 	water_material->set_shader_parameter("shore_wave_tex_c", shore_wave_tex_c);
 	water_material->set_shader_parameter("shore_curl", shore_wave_curl);
+	water_material->set_shader_parameter("shore_groups", shore_wave_groups);
 	water_material->set_shader_parameter("shore_wave_omega", Vector2(shore_omega[0], shore_omega[1]));
 	// The swash runs the breaking waves up the sand: it reads the same
 	// phases and heights, on the render thread.
@@ -1890,6 +1935,30 @@ static float _shore_front_warp(float p_u, float p_back, float &r_dps) {
 	return (uw - uc) * r_dps;
 }
 
+// The material's shore_wave_set(): this wave's height over the train's (rms) height.
+float PhysXWaterSurface3D::_shore_wave_set(float p_theta, int p_train) const {
+	static const float freq[5] = { -0.446f, -0.207f, 0.025f, 0.295f, 0.490f };
+	static const float phase[5] = { 0.0f, 2.1f, 4.4f, 1.3f, 5.6f };
+	static const float seed[5] = { 1.7f, 3.1f, 0.7f, 2.3f, 4.9f };
+	const float x = p_theta * 0.159154943f;
+	float re = 0.0f, im = 0.0f;
+	for (int j = 0; j < 5; j++) {
+		const float a = freq[j] * x + phase[j] + seed[j] * p_train;
+		re += Math::cos(a);
+		im += Math::sin(a);
+	}
+	return Math::lerp(1.0f, Math::sqrt(re * re + im * im) * 0.4472136f, shore_wave_groups);
+}
+
+// The material's shore_per_wave().
+static void _shore_per_wave(float p_r, float &r_height, float &r_stage) {
+	const float sb = r_stage;
+	if (sb < 2.99f) {
+		r_height *= MIN(p_r * sb, 1.0f) / MAX(MIN(sb, 1.0f), 1e-3f);
+		r_stage = p_r * sb;
+	}
+}
+
 float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) const {
 	if (r_rate != nullptr) {
 		*r_rate = 0.0f;
@@ -1909,21 +1978,25 @@ float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) co
 	float eta = 0.0f;
 	float rate = 0.0f;
 	for (int t = 0; t < SHORE_TRAINS; t++) {
-		const float height = _bilinear_sample(shore_height[t], n, active_domain_size, p_x, p_z);
+		float height = _bilinear_sample(shore_height[t], n, active_domain_size, p_x, p_z);
 		if (height <= 1e-4f) {
 			continue;
 		}
 		const float phi = _bilinear_sample(shore_phase[t], n, active_domain_size, p_x, p_z);
+		const float th = phi - shore_omega[t] * time;
+		const float r = _shore_wave_set(th, t);
+		const bool staged = shore_stage[t].size() == n * n && shore_iribarren.size() == n * n;
+		float stage_raw = staged ? _bilinear_sample(shore_stage[t], n, active_domain_size, p_x, p_z) : 0.0f;
+		_shore_per_wave(r, height, stage_raw);
 		const float brk = Math::smoothstep(0.8f, 0.98f, height / MAX(BREAKER_INDEX * depth, 1e-3f));
 		const float amp = 0.5f * height * vary * inside;
-		const float th = phi - shore_omega[t] * time;
 		float skew = 0.6f * brk;
 		float drop_w = 0.0f;
 		float front = 0.5f;
-		if (shore_stage[t].size() == n * n && shore_iribarren.size() == n * n) {
-			const float xi = _bilinear_sample(shore_iribarren, n, active_domain_size, p_x, p_z);
+		if (staged) {
+			const float xi = _bilinear_sample(shore_iribarren, n, active_domain_size, p_x, p_z) / Math::sqrt(MAX(r, 0.05f));
 			const float plunging = Math::smoothstep(0.35f, 0.6f, xi) * (1.0f - Math::smoothstep(2.6f, 3.3f, xi)) * shore_wave_curl;
-			const float stage = CLAMP((_bilinear_sample(shore_stage[t], n, active_domain_size, p_x, p_z) - 0.95f) / 1.0f, 0.0f, 1.0f);
+			const float stage = CLAMP((stage_raw - 0.95f) / 1.0f, 0.0f, 1.0f);
 			const float throw_w = plunging * vary * Math::smoothstep(0.0f, 0.45f, stage) * (1.0f - Math::smoothstep(0.7f, 1.0f, stage));
 			drop_w = plunging * vary * Math::smoothstep(0.3f, 0.75f, stage) * (1.0f - Math::smoothstep(0.8f, 1.0f, stage));
 			skew = MIN(skew + 0.3f * throw_w, 0.92f);
@@ -2107,11 +2180,22 @@ void PhysXWaterSurface3D::_update_breakers() {
 	// Read once here: the node's transform is not read from worker threads.
 	const float origin_y = get_global_position().y;
 
+	// This wave's height, stage and surf similarity at grid-relative p for train t (the material's
+	// shore_per_wave()): each wave breaks at its own place.
+	auto wave_at = [&](int p_t, const Vector2 &p_rel, float &r_height, float &r_stage, float &r_xi) {
+		const float r = _shore_wave_set(sample(shore_phase[p_t], p_rel) - shore_omega[p_t] * time, p_t);
+		r_height = sample(shore_height[p_t], p_rel);
+		r_stage = sample(shore_stage[p_t], p_rel);
+		_shore_per_wave(r, r_height, r_stage);
+		r_xi = sample(shore_iribarren, p_rel) / Math::sqrt(MAX(r, 0.05f));
+	};
 	// How much lip there is at grid-relative p for train t (add_ring's own measure), without the surface.
 	auto alive_at = [&](int p_t, const Vector2 &p_rel) {
 		const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_rel.x / dom.x), Math::abs(p_rel.y / dom.y)));
-		const float s = CLAMP(sample(shore_stage[p_t], p_rel) - 0.95f, 0.0f, 1.0f);
-		const float w = plunge_of(sample(shore_iribarren, p_rel)) * vary_at(p_rel.x + grid_center.x, p_rel.y + grid_center.y) * inside;
+		float height, stage, xi_w;
+		wave_at(p_t, p_rel, height, stage, xi_w);
+		const float s = CLAMP(stage - 0.95f, 0.0f, 1.0f);
+		const float w = plunge_of(xi_w) * vary_at(p_rel.x + grid_center.x, p_rel.y + grid_center.y) * inside;
 		return w * Math::smoothstep(0.0f, 0.45f, s) * (1.0f - Math::smoothstep(0.75f, 1.0f, s));
 	};
 	// One cross-section at grid-relative p for train t, appended as a ring of RING vertices. Returns the outer
@@ -2119,11 +2203,12 @@ void PhysXWaterSurface3D::_update_breakers() {
 	auto add_ring = [&](LipOut &o, int p_t, const Vector2 &p_rel, float p_piece, Vector3 &r_dir, Vector3 &r_tangent) {
 		const float wx = p_rel.x + grid_center.x;
 		const float wz = p_rel.y + grid_center.y;
-		const float height = sample(shore_height[p_t], p_rel);
+		float height, stage, xi_w;
+		wave_at(p_t, p_rel, height, stage, xi_w);
 		const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_rel.x / dom.x), Math::abs(p_rel.y / dom.y)));
 		const float vary = vary_at(wx, wz);
-		const float s = CLAMP(sample(shore_stage[p_t], p_rel) - 0.95f, 0.0f, 1.0f);
-		const float w = plunge_of(sample(shore_iribarren, p_rel)) * vary * inside;
+		const float s = CLAMP(stage - 0.95f, 0.0f, 1.0f);
+		const float w = plunge_of(xi_w) * vary * inside;
 		const float grow = Math::smoothstep(0.0f, 0.45f, s);
 		const float sink = Math::smoothstep(0.5f, 0.85f, s);
 		const float alive = w * grow * (1.0f - Math::smoothstep(0.75f, 1.0f, s));
@@ -2257,6 +2342,12 @@ void PhysXWaterSurface3D::_update_breakers() {
 	LocalVector<float> level;
 	LocalVector<uint8_t> active;
 	LocalVector<uint8_t> known;
+	LocalVector<float> node_height;
+	LocalVector<float> node_stage;
+	LocalVector<float> node_xi;
+	node_height.resize(n * n);
+	node_stage.resize(n * n);
+	node_xi.resize(n * n);
 	level.resize(n * n);
 	active.resize(n * n);
 	known.resize(n * n);
@@ -2274,9 +2365,17 @@ void PhysXWaterSurface3D::_update_breakers() {
 		for (int z = 0; z < n; z++) {
 			for (int x = 0; x < n; x++) {
 				const int i = z * n + x;
-				const float s = CLAMP(st[i] - 0.95f, 0.0f, 1.0f);
-				const float w = plunge_of(xi[i]);
-				active[i] = (hh[i] > 1e-3f && s > 0.0f && s < 1.0f && w > 0.01f) ? 1 : 0;
+				// This wave's height and stage at the node (each wave breaks at its own place).
+				const float r = hh[i] > 1e-3f ? _shore_wave_set(ph[i] - om * time, t) : 1.0f;
+				float h_w = hh[i];
+				float st_w = st[i];
+				_shore_per_wave(r, h_w, st_w);
+				node_height[i] = h_w;
+				node_stage[i] = st_w;
+				node_xi[i] = xi[i] / Math::sqrt(MAX(r, 0.05f));
+				const float s = CLAMP(st_w - 0.95f, 0.0f, 1.0f);
+				const float w = plunge_of(node_xi[i]);
+				active[i] = (h_w > 1e-3f && s > 0.0f && s < 1.0f && w > 0.01f) ? 1 : 0;
 				any = any || active[i];
 				known[i] = 0;
 			}
@@ -2294,19 +2393,19 @@ void PhysXWaterSurface3D::_update_breakers() {
 			{
 				const int x = i % n;
 				const int z = i / n;
-				const float s = CLAMP(st[i] - 0.95f, 0.0f, 1.0f);
-				const float w = plunge_of(xi[i]);
+				const float s = CLAMP(node_stage[i] - 0.95f, 0.0f, 1.0f);
+				const float w = plunge_of(node_xi[i]);
 				const float wx = ((x + 0.5f) / n - 0.5f) * dom.x + grid_center.x;
 				const float wz = ((z + 0.5f) / n - 0.5f) * dom.y + grid_center.y;
 				const float vary = vary_at(wx, wz);
-				const float brk = Math::smoothstep(0.8f, 0.98f, hh[i] / MAX(BREAKER_INDEX * MAX(dp[i], 0.0f), 1e-3f));
+				const float brk = Math::smoothstep(0.8f, 0.98f, node_height[i] / MAX(BREAKER_INDEX * MAX(dp[i], 0.0f), 1e-3f));
 				const float throw_w = w * vary * Math::smoothstep(0.0f, 0.45f, s) * (1.0f - Math::smoothstep(0.7f, 1.0f, s));
 				const float skew = MIN(0.6f * brk + 0.3f * throw_w, 0.92f);
 				const float theta = ph[i] - om * time;
 				// The front warp puts the crest at u = pi (2 b - 1), b the back fraction.
 				const float steep = w * vary * Math::smoothstep(0.0f, 0.3f, s) * (1.0f - 0.5f * Math::smoothstep(0.8f, 1.0f, s));
 				const float kk = Vector2(shore_grad_x[t][i], shore_grad_z[t][i]).length();
-				const float amp = 0.5f * hh[i] * vary;
+				const float amp = 0.5f * node_height[i] * vary;
 				const float front = Math::lerp(0.5f, CLAMP(kk * 3.0f * amp / (float)Math::TAU, 0.02f, 0.5f), CLAMP(steep, 0.0f, 1.0f));
 				level[i] = theta - skew * Math::cos(theta) - (float)Math::PI * (1.0f - 2.0f * front);
 			}

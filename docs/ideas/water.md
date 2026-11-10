@@ -1323,6 +1323,53 @@ The ring build alone goes from about 2.4 ms to 0.6 to 1.2 ms on 4 cores
 that lavapipe also uses; a desktop CPU with more free cores gains more.
 What is left is the marching squares and the mesh upload.
 
+### Each wave breaks at its own place (10 Nov)
+
+**Before.** Each shore train was one regular wave: every crest had the same
+height, so it shoaled the same way and broke where it reached 0.78 of the
+depth. Along any line toward the beach every crest plunged at the same spot.
+Only the beat between the two trains varied the surf.
+
+**Published methods.** A real sea's individual wave heights follow a Rayleigh
+distribution (Longuet-Higgins 1952), and they come in groups, because a narrow
+spectrum is a carrier wave under a slowly varying envelope (Longuet-Higgins
+1984). The random-wave surf models are built on that:
+
+- Battjes and Janssen (1978) take the fraction of waves already broken at
+  each depth from a Rayleigh distribution clipped at the breaker height.
+- Thornton and Guza (1983) weight the Rayleigh distribution by the chance
+  that each wave breaks, which matches field data.
+- Wave-by-wave models (Mase and Iwagaki 1982) carry each wave on its own and
+  break it where its own height reaches the breaker index.
+
+That last approach is the one that fits here, because the surface is drawn
+crest by crest.
+
+**What the fork does now.**
+
+- Each train's crests carry a height factor *r* from the envelope of five
+  close frequencies around the carrier (spread 0.15 cycles per wave), taken
+  as a function of the wave count `theta / 2 pi`. That count travels with the
+  crests, so a wave keeps its own height all the way in.
+- The envelope's mean square is 1. The individual heights are therefore
+  Rayleigh, with `shore_wave_height` as their rms, so the wave energy is the
+  same as before. They come in sets: about five bigger-than-rms waves every twelve or so (checked over 20,000 waves: mean r 0.90, 90th percentile 1.51, both as Rayleigh).
+- The bake is unchanged. A wave of *r* times the baked height shoals to *r*
+  times its unbroken height, so its stage (how far past breaking it is) is
+  *r* times the baked stage. Once broken, it is held at the breaker height,
+  as Thornton and Guza's saturated surf zone does.
+- A bigger wave is steeper offshore, so its surf similarity number is
+  divided by sqrt(*r*): big sets spill on the outer bars, and small waves run
+  in and plunge closer to the sand.
+- The material, `sample_height` (so buoyancy follows) and the lips all
+  apply the same function.
+- `shore_wave_groups` blends to regular waves. At 0 the surf is the same as
+  before.
+
+The run-up is left as it was. At the waterline every wave is already held at
+the breaker height, and the swash already runs the crests above the usual
+ones further up.
+
 ## The camera under water: research (9 Nov)
 
 ### What the fork has today
