@@ -515,7 +515,7 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 		// troughs (as cnoidal waves): ((1 + cos) / 2)^q, kept zero-mean
 		// (1 / sqrt(pi (q + 1/4)) is the mean to within half a percent).
 		float q = 1.0 + 1.5 * brk;
-		float base = 0.5 + 0.5 * cos(ps);
+		float base = max(0.5 + 0.5 * cos(ps), 0.0);
 		off.y += amp * 2.0 * (pow(base, q) - inversesqrt(3.14159265359 * (q + 0.25)));
 		r_slope += -amp * q * pow(max(base, 1e-4), q - 1.0) * sin(ps) * (1.0 + skew * sin(th)) * g;
 		float hor = min(amp, 0.8 / k) * 0.8;
@@ -1859,7 +1859,7 @@ float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) co
 		}
 		const float ps = th - skew * Math::cos(th);
 		const float sharp = 1.0f + 1.5f * brk;
-		const float base = 0.5f + 0.5f * Math::cos(ps);
+		const float base = MAX(0.5f + 0.5f * Math::cos(ps), 0.0f);
 		eta += amp * 2.0f * (Math::pow(base, sharp) - 1.0f / Math::sqrt(Math::PI * (sharp + 0.25f)));
 		{
 			const float pc = ps - Math::TAU * Math::floor((ps + Math::PI) / Math::TAU);

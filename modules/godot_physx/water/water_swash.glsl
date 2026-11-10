@@ -86,7 +86,7 @@ float shore_eta(ivec2 c, vec2 rel, float depth, int n) {
 		float brk = smoothstep(0.8, 0.98, height / max(BREAKER * max(depth, 0.0), 1e-3));
 		float th = phi - (i == 0 ? shore.x : shore.y) * t;
 		float qs = 1.0 + 1.5 * brk;
-		float base = 0.5 + 0.5 * cos(th - 0.6 * brk * cos(th));
+		float base = max(0.5 + 0.5 * cos(th - 0.6 * brk * cos(th)), 0.0);
 		eta += height * vary * (pow(base, qs) - inversesqrt(3.14159265359 * (qs + 0.25)));
 	}
 	return eta;
