@@ -174,7 +174,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ![Raster strand hair: plain strands, then with TressFX coverage and self-shadowing](docs/media/hair-raster.jpg)
 
-*Raster strands: plain strands top left; with coverage and self-shadowing in the other three.*
+*Raster strands: before, then TressFX coverage with no AA, TAA and MSAA 4x; the hair now shadows itself.*
 
 </details>
 
