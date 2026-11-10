@@ -16,7 +16,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
-- **Vegetation**: biome plant placement from terrain maps; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
+- **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, clouds and their shadows, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
@@ -213,15 +213,24 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ### Vegetation
 - **Plant placement** (`VegetationField3D`, `Biome`, `PlantSpecies`): places species by spacing, footprint and rules on slope, wetness and distance to water over a `TerrainDataMap3D`; evenly spread, the same for a seed. 12,899 plants over 256 m place once in about 45 ms, then draw as ordinary MultiMeshes.
+- **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.
 - **GPU-placed instances** (`RenderingServer.multimesh_mark_buffer_rd_changed()`): MultiMesh records written by a compute shader reach culling, motion vectors and path tracing.
 - **Instance bones** (`MultiMesh.bones_per_instance`): each instance is skinned from its own records, so thousands of plants bend in the wind without a Skeleton3D each; raster and path traced. 900 swaying stems: 0.30 ms render CPU, against 5.97 ms as 900 Skeleton3D.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: plant placement, GPU-placed instances, instance bones, terrain data maps</summary>
+<details><summary>Images and clip: plant placement, grass, grass in wind, GPU-placed instances, instance bones, terrain data maps</summary>
 
 ![A valley with trees, bushes and reeds placed by biome rules, raster and path traced](docs/media/vegetation-placement.jpg)
 
 *Plant placement: trees on dry ground, bushes between them, reeds along the banks (placeholder meshes).*
+
+![A grass field, raster and path traced](docs/media/grass-field.jpg)
+
+*Grass: clumped blades, raster and path traced.*
+
+![Grass bending as gusts travel downwind, raster](docs/media/grass-wind.gif)
+
+*Grass in wind: gusts sweep across the field downwind.*
 
 ![GPU-written MultiMesh records, path traced: before and after the call](docs/media/gpu-multimesh-records.jpg)
 
