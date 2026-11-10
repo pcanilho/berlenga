@@ -557,6 +557,18 @@
 		<member name="vertex_color_use_as_albedo" type="bool" setter="set_flag" getter="get_flag" default="false">
 			If [code]true[/code], the vertex color is used as albedo color.
 		</member>
+		<member name="wetness_amount" type="float" setter="set_wetness_amount" getter="get_wetness_amount" default="1.0">
+			How wet the surface is, from 0 to 1. With [member wetness_from_weather], it scales the wetness of the weather map; without, it is the wetness, for a script to set (a prop pulled out of water, a sprinkled lawn).
+		</member>
+		<member name="wetness_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
+			If [code]true[/code], the surface darkens and turns glossier when wet, following Lagarde's physically based wet surfaces (2013): water in the pores of porous surfaces (soil, bark, stone, fabric) darkens them down to 20% of their albedo and smooths them; non-porous surfaces barely change. The wetness comes from the [code]WeatherMap3D[/code] (its rain film and puddles drying over time) or from [member wetness_amount]. Surfaces facing down catch less rain. The path tracer applies the same model. Puddles are separate.
+		</member>
+		<member name="wetness_from_weather" type="bool" setter="set_wetness_from_weather" getter="is_wetness_from_weather" default="true">
+			If [code]true[/code], the wetness is the weather map's at this point (the [code]weather_state_map[/code] and [code]weather_map_rect[/code] global shader parameters a [code]WeatherMap3D[/code] publishes) times [member wetness_amount]; without a weather map nothing is wet. If [code]false[/code], [member wetness_amount] alone is the wetness.
+		</member>
+		<member name="wetness_porosity" type="float" setter="set_wetness_porosity" getter="get_wetness_porosity" default="0.5">
+			How porous the surface is, from 0 (glass, metal, glazed tiles, waxy leaves: only a little smoother when wet) to 1 (dry soil, bark, raw concrete, cloth: much darker when wet). Metals are treated as non-porous whatever this value.
+		</member>
 		<member name="z_clip_scale" type="float" setter="set_z_clip_scale" getter="get_z_clip_scale" default="1.0">
 			Scales the object being rendered towards the camera to avoid clipping into things like walls. This is intended to be used for objects that are fixed with respect to the camera like player arms, tools, etc. Lighting and shadows will continue to work correctly when this setting is adjusted, but screen-space effects like SSAO and SSR may break with lower scales. Therefore, try to keep this setting as close to [code]1.0[/code] as possible.
 		</member>
@@ -582,6 +594,9 @@
 		</constant>
 		<constant name="TEXTURE_TRANSMISSION" value="19" enum="TextureParam">
 			Texture specifying per-pixel transmission.
+		</constant>
+		<constant name="TEXTURE_HAIR_MASK" value="20" enum="TextureParam">
+			Texture specifying where the surface is hair, see [member hair_mask_texture].
 		</constant>
 		<constant name="TEXTURE_RIM" value="5" enum="TextureParam">
 			Texture specifying per-pixel rim value.
@@ -621,9 +636,6 @@
 		</constant>
 		<constant name="TEXTURE_ORM" value="17" enum="TextureParam">
 			Texture holding ambient occlusion, roughness, and metallic.
-		</constant>
-		<constant name="TEXTURE_HAIR_MASK" value="20" enum="TextureParam">
-			Texture specifying where the surface is hair, see [member hair_mask_texture].
 		</constant>
 		<constant name="TEXTURE_MAX" value="21" enum="TextureParam">
 			Represents the size of the [enum TextureParam] enum.
@@ -730,7 +742,10 @@
 		<constant name="FEATURE_HAIR" value="14" enum="Feature">
 			Constant for setting [member hair_enabled].
 		</constant>
-		<constant name="FEATURE_MAX" value="15" enum="Feature">
+		<constant name="FEATURE_WETNESS" value="15" enum="Feature">
+			Constant for setting [member wetness_enabled].
+		</constant>
+		<constant name="FEATURE_MAX" value="16" enum="Feature">
 			Represents the size of the [enum Feature] enum.
 		</constant>
 		<constant name="BLEND_MODE_MIX" value="0" enum="BlendMode">

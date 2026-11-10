@@ -115,7 +115,7 @@ Checked against main at aab890e5.
    sharply inside a canopy, Cionco 1965 and Raupach's canopy profile, and in the lee of
    buildings) and small gust patches of a few metres that sweep across a field. Weather files:
    for the thread that owns water and weather.
-4. **World data maps.** Slope, curvature, flow accumulation, distance to water and water depth
+4. **World data maps** (done: `TerrainDataMap3D`, terrain-data-maps.md). Slope, curvature, flow accumulation, distance to water and water depth
    are not available as maps. The terrain deformer knows heights and carves; rivers and water
    surfaces know their own extent. A small GPU pass per tile can bake them. Water files: water
    depth and distance queries only, no changes to the water solvers.

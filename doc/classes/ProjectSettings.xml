@@ -3327,6 +3327,9 @@
 		<member name="rendering/pathtracing/hair" type="bool" setter="" getter="" default="true">
 			If [code]true[/code], the path tracer scatters light off surfaces with [member BaseMaterial3D.hair_enabled] as hair fibres do (Chiang, Bitterli, Tappan and Burley, "A Practical and Controllable Hair and Fur Model for Production Path Tracing", 2016): a white highlight shifted towards the roots, light passing through the fibres, a coloured second highlight and all longer paths, with lights, bounce rays and emissive surfaces all sampled through it. Shells fold the light that would enter them back out; cards ([member BaseMaterial3D.hair_cards]) let it through. Shaders shade as hair by writing [code]HAIR[/code] ([code]1[/code] on), with [code]HAIR_ABSORPTION[/code] (the fibre's absorption coefficient, as in the model; left negative, it is derived from [code]ALBEDO[/code]) and [code]HAIR_ROUGHNESS[/code] (along and around the fibre), and take the strand direction from [code]BINORMAL[/code]; [code]render_mode hair_strands[/code] reads the position across the fibre from [code]UV.x[/code] (strand geometry such as [HairMesh]), [code]hair_cards[/code] traces them as cards, otherwise as shells. When disabled, hair is traced as the rest of its material.
 		</member>
+		<member name="rendering/pathtracing/light_reuse" type="bool" setter="" getter="" default="false">
+			Where a camera ray first hits a surface, the positional light it picks is kept per pixel (ReSTIR DI: spatiotemporal reservoir resampling, Bitterli et al. 2020) and resampled the next frame together with the pixel's own pick from the frame before and two neighbours' picks, each weighted by the balance heuristic over the surfaces' unshadowed contributions. A light one pixel found lights the pixels around it and stays found, so scenes with many lights in range are less noisy at the same samples per pixel. Shadows are not reused, so soft shadow edges keep their shape and the image stays unbiased. Uses 48 bytes of video memory per internal-resolution pixel (100 MB at 1920x1080).
+		</member>
 		<member name="rendering/pathtracing/light_visibility_memory" type="bool" setter="" getter="" default="true">
 			The path tracer remembers, for each small region of the scene, which lights recently lit it and how often each light's samples were blocked or fell on the surface's unlit side. Light selection draws half its candidates from the lights that lit the region and weights each candidate by that memory, so lamps behind walls, lamps inside a building seen from its walls, and a sun under a roof waste fewer samples. Lights that looked hidden keep a small share, so the image stays unbiased and a light that comes into view is found again; only noise changes. Uses 4.25 MiB of video memory.
 		</member>
@@ -3786,6 +3789,12 @@
 			- 8×4 = rgb(255, 170, 0) - #ffaa00 - Not supported on most hardware
 			- 8×8 = rgb(255, 255, 0) - #ffff00 - Not supported on most hardware
 			[/codeblock]
+		</member>
+		<member name="shader_globals/weather_map_rect" type="Dictionary" setter="" getter="" default="{ &quot;type&quot;: &quot;vec4&quot;, &quot;value&quot;: Vector4(0, 0, 0, 0) }">
+			Global shader parameter: the world XZ rectangle (x, z, width, depth) a [code]WeatherMap3D[/code] covers. Declared by the engine so materials that read the weather ([member BaseMaterial3D.wetness_from_weather]) compile without one; a width of 0 means no weather. A project's own declaration replaces it.
+		</member>
+		<member name="shader_globals/weather_state_map" type="Dictionary" setter="" getter="" default="{ &quot;type&quot;: &quot;sampler2D&quot;, &quot;value&quot;: &quot;&quot; }">
+			Global shader parameter: the [code]WeatherMap3D[/code] state map (red: rain rate, green: wetness, blue: puddle depth, alpha: water film). Declared by the engine so materials that read the weather compile without one; a [code]WeatherMap3D[/code] fills it. A project's own declaration replaces it.
 		</member>
 		<member name="threading/worker_pool/low_priority_thread_ratio" type="float" setter="" getter="" default="0.3">
 			The ratio of [WorkerThreadPool]'s threads that will be reserved for low-priority tasks. For example, if 10 threads are available and this value is set to [code]0.3[/code], 3 of the worker threads will be reserved for low-priority tasks. The actual value won't exceed the number of CPU cores minus one, and if possible, at least one worker thread will be dedicated to low-priority tasks.

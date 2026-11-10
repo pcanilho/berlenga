@@ -592,6 +592,22 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->hair_cuticle_tilt = "hair_cuticle_tilt";
 	shader_names->hair_crown = "hair_crown";
 	shader_names->hair_mask_texture_channel = "hair_mask_texture_channel";
+	shader_names->wetness_porosity = "wetness_porosity";
+	shader_names->wetness_amount = "wetness_amount";
+
+	// Wetness reads WeatherMap3D's globals. A shader that names a global uniform only compiles
+	// once the global exists, so they are declared here with no data (rect width 0 = no
+	// weather, nothing wet); WeatherMap3D fills them. A project's own declaration wins.
+	{
+		Dictionary state_map;
+		state_map["type"] = "sampler2D";
+		state_map["value"] = "";
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_state_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		Dictionary map_rect;
+		map_rect["type"] = "vec4";
+		map_rect["value"] = Vector4();
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
 	shader_names->uv1_offset = "uv1_offset";
@@ -711,6 +727,8 @@ void BaseMaterial3D::_update_shader() {
 		rt.hair_melanin = hair_color_mode == HAIR_COLOR_MELANIN;
 		rt.hair_direction = hair_direction;
 		rt.hair_cards = hair_cards;
+		rt.wetness = features[FEATURE_WETNESS];
+		rt.wetness_from_weather = wetness_from_weather;
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -1157,6 +1175,18 @@ uniform vec4 hair_mask_texture_channel;
 varying vec2 hair_flow;
 )",
 				texfilter_str);
+	}
+
+	if (features[FEATURE_WETNESS]) {
+		code += R"(
+uniform float wetness_porosity : hint_range(0.0, 1.0, 0.01);
+uniform float wetness_amount : hint_range(0.0, 1.0, 0.01);
+)";
+		if (wetness_from_weather) {
+			code += R"(global uniform sampler2D weather_state_map;
+global uniform vec4 weather_map_rect;
+)";
+		}
 	}
 
 	if (features[FEATURE_REFRACTION] || features[FEATURE_TRANSMISSION]) {
@@ -2141,6 +2171,33 @@ void fragment() {)";
 		code += R"(	vec3 detail_norm = mix(NORMAL_MAP, detail_norm_tex.rgb, detail_tex.a);
 	NORMAL_MAP = mix(NORMAL_MAP, detail_norm, detail_mask_tex.r);
 	ALBEDO.rgb = mix(ALBEDO.rgb, detail, detail_mask_tex.r);
+)";
+	}
+
+	if (features[FEATURE_WETNESS]) {
+		// Wet surfaces, Lagarde 2013 ("Water drop 3b"): water in the pores darkens porous
+		// surfaces and smooths them. The path tracer applies the same lines
+		// (scene_raytracing_raygen.glsl), from the same inputs.
+		code += R"(
+	// Wetness: Enabled
+	float wet = wetness_amount;
+)";
+		if (wetness_from_weather) {
+			code += R"(	if (weather_map_rect.z > 0.0) {
+		vec3 wet_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		vec2 wet_half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
+		vec2 wet_uv = clamp((wet_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, wet_half_texel, 1.0 - wet_half_texel);
+		wet *= textureLod(weather_state_map, wet_uv, 0.0).g;
+	} else {
+		wet = 0.0;
+	}
+)";
+		}
+		code += R"(	// Undersides catch less rain.
+	wet = clamp(wet, 0.0, 1.0) * smoothstep(-0.6, 0.2, (INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).y);
+	float wet_factor = mix(1.0, 0.2, (1.0 - METALLIC) * wetness_porosity);
+	ALBEDO *= mix(1.0, wet_factor, wet);
+	ROUGHNESS *= mix(1.0, wet_factor, 0.5 * wet);
 )";
 	}
 
@@ -3266,6 +3323,36 @@ BaseMaterial3D::TextureChannel BaseMaterial3D::get_hair_mask_texture_channel() c
 	return hair_mask_texture_channel;
 }
 
+void BaseMaterial3D::set_wetness_porosity(float p_porosity) {
+	wetness_porosity = CLAMP(p_porosity, 0.0f, 1.0f);
+	_material_set_param(shader_names->wetness_porosity, wetness_porosity);
+}
+
+float BaseMaterial3D::get_wetness_porosity() const {
+	return wetness_porosity;
+}
+
+void BaseMaterial3D::set_wetness_amount(float p_amount) {
+	wetness_amount = CLAMP(p_amount, 0.0f, 1.0f);
+	_material_set_param(shader_names->wetness_amount, wetness_amount);
+}
+
+float BaseMaterial3D::get_wetness_amount() const {
+	return wetness_amount;
+}
+
+void BaseMaterial3D::set_wetness_from_weather(bool p_enable) {
+	if (wetness_from_weather == p_enable) {
+		return;
+	}
+	wetness_from_weather = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_wetness_from_weather() const {
+	return wetness_from_weather;
+}
+
 void BaseMaterial3D::set_refraction_texture_channel(TextureChannel p_channel) {
 	ERR_FAIL_INDEX(p_channel, 5);
 	refraction_texture_channel = p_channel;
@@ -3749,6 +3836,13 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_hair_mask_texture_channel", "channel"), &BaseMaterial3D::set_hair_mask_texture_channel);
 	ClassDB::bind_method(D_METHOD("get_hair_mask_texture_channel"), &BaseMaterial3D::get_hair_mask_texture_channel);
 
+	ClassDB::bind_method(D_METHOD("set_wetness_porosity", "porosity"), &BaseMaterial3D::set_wetness_porosity);
+	ClassDB::bind_method(D_METHOD("get_wetness_porosity"), &BaseMaterial3D::get_wetness_porosity);
+	ClassDB::bind_method(D_METHOD("set_wetness_amount", "amount"), &BaseMaterial3D::set_wetness_amount);
+	ClassDB::bind_method(D_METHOD("get_wetness_amount"), &BaseMaterial3D::get_wetness_amount);
+	ClassDB::bind_method(D_METHOD("set_wetness_from_weather", "enable"), &BaseMaterial3D::set_wetness_from_weather);
+	ClassDB::bind_method(D_METHOD("is_wetness_from_weather"), &BaseMaterial3D::is_wetness_from_weather);
+
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
 	ClassDB::bind_method(D_METHOD("get_point_size"), &BaseMaterial3D::get_point_size);
 
@@ -4057,6 +4151,12 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "hair_mask_texture", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_HAIR_MASK);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "hair_mask_texture_channel", PROPERTY_HINT_ENUM, "Red,Green,Blue,Alpha,Gray"), "set_hair_mask_texture_channel", "get_hair_mask_texture_channel");
 
+	ADD_GROUP("Wetness", "wetness_");
+	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "wetness_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_WETNESS);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_porosity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_porosity", "get_wetness_porosity");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_amount", "get_wetness_amount");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_from_weather"), "set_wetness_from_weather", "is_wetness_from_weather");
+
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "detail_mask", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_DETAIL_MASK);
@@ -4193,6 +4293,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FEATURE_BENT_NORMAL_MAPPING);
 	BIND_ENUM_CONSTANT(FEATURE_TRANSMISSION);
 	BIND_ENUM_CONSTANT(FEATURE_HAIR);
+	BIND_ENUM_CONSTANT(FEATURE_WETNESS);
 	BIND_ENUM_CONSTANT(FEATURE_MAX);
 
 	BIND_ENUM_CONSTANT(BLEND_MODE_MIX);
@@ -4338,6 +4439,8 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_hair_cuticle_tilt(2.0);
 	set_hair_crown(Vector3(0, 1.7, 0));
 	set_hair_mask_texture_channel(TEXTURE_CHANNEL_RED);
+	set_wetness_porosity(0.5);
+	set_wetness_amount(1.0);
 	set_point_size(1);
 	set_uv1_offset(Vector3(0, 0, 0));
 	set_uv1_scale(Vector3(1, 1, 1));

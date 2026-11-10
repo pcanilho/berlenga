@@ -856,6 +856,255 @@ bool lights_select_positional(vec3 hit_pos, vec3 N, bool is_indirect_bounce, uin
 	return true;
 }
 
+// ============================================================================
+// Light reuse across pixels and frames: ReSTIR DI (Bitterli et al. 2020), as RTXDI
+// (Wyman and Panteleev 2021), with generalized RIS weights (Lin et al. 2022). See
+// docs/ideas/light-reuse.md.
+//
+// At a camera ray's first hit, the positional light chosen is kept per pixel as a
+// reservoir: the light, its contribution weight W and its confidence M, with the surface
+// it was chosen for. The next frame the pixel resamples its fresh choice together with its
+// own reservoir (found through the motion vector) and two neighbours', each weighted by the
+// balance heuristic over the surfaces' targets, so a light one pixel found lights the
+// pixels around it. Visibility is not folded in: the image stays unbiased.
+//
+// Binding 51: header (flags, last frame's light count, width, height), the light remap
+// (last frame's index -> this frame's + 1, 0 when gone), then two frames of reservoirs of
+// RT_LIGHT_REUSE_STRIDE uints: light + 1 (bits 0-15) and M (16-23), W, position (relative
+// to the anchor), packed normal.
+// ============================================================================
+
+#define RT_LIGHT_REUSE_BINDING 51
+layout(set = 0, binding = RT_LIGHT_REUSE_BINDING, std430) restrict buffer LightReuseBuffer {
+	uint data[];
+}
+rt_light_reuse;
+
+#define RT_LIGHT_REUSE_REMAP 4096u // must match RT_LIGHTS_MAX (render_raytracing.h)
+#define RT_LIGHT_REUSE_HEADER (4u + RT_LIGHT_REUSE_REMAP)
+#define RT_LIGHT_REUSE_STRIDE 6u
+#define RT_LIGHT_REUSE_M_CAP 20u // frames of history (RTXDI's default)
+#define RT_LIGHT_REUSE_NEIGHBOURS 2u
+#define RT_LIGHT_REUSE_RADIUS 16.0 // pixels
+#define RT_LIGHT_REUSE_NORMAL 0.9 // cosine a neighbour's normal must reach
+#define RT_LIGHT_REUSE_PLANE 0.05 // distance off this surface's plane, over the distance to the camera
+
+// Set by the closest hit before shading a camera ray's first hit (raytracing_closest_hit_common_inc.glsl).
+bool light_reuse_here = false;
+bool light_reuse_first_sample = false;
+vec3 light_reuse_prev_pos = vec3(0.0); // where the surface was last frame
+vec2 light_reuse_motion = vec2(0.0); // its motion vector (rt_motion_vector)
+vec3 light_reuse_eye = vec3(0.0); // the camera ray's origin
+
+struct LightReservoir {
+	uint light; // ~0u: none
+	float W;
+	uint M;
+	vec3 pos;
+	vec3 N;
+};
+
+bool light_reuse_enabled() {
+	if (get_rt_param(RT_PARAM_LIGHT_REUSE) < 0.5) {
+		return false;
+	}
+	uint pixels = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
+	return rt_light_reuse.data[2] == gl_LaunchSizeEXT.x && rt_light_reuse.data[3] == gl_LaunchSizeEXT.y &&
+			uint(rt_light_reuse.data.length()) >= RT_LIGHT_REUSE_HEADER + 2u * pixels * RT_LIGHT_REUSE_STRIDE;
+}
+
+uint light_reuse_state() {
+	return uint(get_rt_param(RT_PARAM_LIGHT_REUSE)) - 1u; // bit 0: slot written, bit 1: last frame's valid
+}
+
+uint light_reuse_base(uint p_slot, ivec2 p_pixel) {
+	uint pixels = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
+	return RT_LIGHT_REUSE_HEADER + (p_slot * pixels + uint(p_pixel.y) * gl_LaunchSizeEXT.x + uint(p_pixel.x)) * RT_LIGHT_REUSE_STRIDE;
+}
+
+LightReservoir light_reuse_load(uint p_slot, ivec2 p_pixel) {
+	uint b = light_reuse_base(p_slot, p_pixel);
+	uint head = rt_light_reuse.data[b];
+	LightReservoir r;
+	r.light = (head & 0xFFFFu) == 0u ? ~0u : (head & 0xFFFFu) - 1u;
+	r.M = (head >> 16u) & 0xFFu;
+	r.W = uintBitsToFloat(rt_light_reuse.data[b + 1u]);
+	r.pos = uintBitsToFloat(uvec3(rt_light_reuse.data[b + 2u], rt_light_reuse.data[b + 3u], rt_light_reuse.data[b + 4u]));
+	r.N = oct_to_vec3(unpackUnorm2x16(rt_light_reuse.data[b + 5u]) * 2.0 - 1.0);
+	return r;
+}
+
+void light_reuse_store(uint p_slot, ivec2 p_pixel, LightReservoir r) {
+	uint b = light_reuse_base(p_slot, p_pixel);
+	bool has = r.light != ~0u && r.W > 0.0 && !isinf(r.W) && !isnan(r.W);
+	rt_light_reuse.data[b] = (has ? r.light + 1u : 0u) | (min(r.M, 255u) << 16u);
+	rt_light_reuse.data[b + 1u] = floatBitsToUint(has ? r.W : 0.0);
+	rt_light_reuse.data[b + 2u] = floatBitsToUint(r.pos.x);
+	rt_light_reuse.data[b + 3u] = floatBitsToUint(r.pos.y);
+	rt_light_reuse.data[b + 4u] = floatBitsToUint(r.pos.z);
+	rt_light_reuse.data[b + 5u] = packUnorm2x16(vec3_to_oct(r.N));
+}
+
+// Last frame's reservoir at p_pixel, if its surface matches this one (seen where it was last
+// frame), with its light renumbered for this frame.
+bool light_reuse_load_prev(ivec2 p_pixel, vec3 p_pos, vec3 N, float p_eye_dist, out LightReservoir r) {
+	if (any(lessThan(p_pixel, ivec2(0))) || any(greaterThanEqual(p_pixel, ivec2(gl_LaunchSizeEXT.xy)))) {
+		return false;
+	}
+	r = light_reuse_load(1u - (light_reuse_state() & 1u), p_pixel);
+	if (r.M == 0u || dot(r.N, N) < RT_LIGHT_REUSE_NORMAL || abs(dot(N, r.pos - p_pos)) > RT_LIGHT_REUSE_PLANE * p_eye_dist) {
+		return false;
+	}
+	if (r.light != ~0u) {
+		uint mapped = r.light < min(rt_light_reuse.data[1], RT_LIGHT_REUSE_REMAP) ? rt_light_reuse.data[4u + r.light] : 0u;
+		r.light = mapped == 0u ? ~0u : mapped - 1u;
+	}
+	return true;
+}
+
+// The positional light for a camera ray's first hit, through the reservoirs. r_W: the
+// contribution weight (the light's contribution times r_W estimates the group's). False
+// when no light is chosen.
+bool lights_select_reused(vec3 hit_pos, vec3 N, uint instance_layers, uint p_region, inout uint rng_state,
+		out uint r_idx, out float r_W) {
+	r_idx = 0u;
+	r_W = 0.0;
+	uint state = light_reuse_state();
+	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+
+	LightReservoir res[1u + 1u + RT_LIGHT_REUSE_NEIGHBOURS];
+	uint count = 0u;
+
+	// This frame's candidates.
+	uint fresh_idx;
+	float fresh_pdf;
+	res[0].light = lights_select_positional(hit_pos, N, false, instance_layers, p_region, rng_state, fresh_idx, fresh_pdf) ? fresh_idx : ~0u;
+	res[0].W = res[0].light != ~0u ? 1.0 / max(fresh_pdf, 1e-20) : 0.0;
+	res[0].M = 1u;
+	res[0].pos = hit_pos;
+	res[0].N = N;
+	count = 1u;
+
+	// Last frame's: this surface's own reservoir, then neighbours'.
+	if ((state & 2u) != 0u) {
+		float eye_dist = max(distance(light_reuse_eye, hit_pos), 0.01);
+		vec2 prev_px = vec2(pixel) + 0.5 + light_reuse_motion * vec2(gl_LaunchSizeEXT.xy);
+		LightReservoir r;
+		if (light_reuse_load_prev(ivec2(floor(prev_px)), light_reuse_prev_pos, N, eye_dist, r)) {
+			r.M = min(r.M, RT_LIGHT_REUSE_M_CAP);
+			res[count++] = r;
+		}
+		for (uint k = 0u; k < RT_LIGHT_REUSE_NEIGHBOURS; k++) {
+			vec2 u = rand2(rng_state);
+			float rad = RT_LIGHT_REUSE_RADIUS * sqrt(u.x);
+			vec2 off = rad * vec2(cos(6.2831853 * u.y), sin(6.2831853 * u.y));
+			if (dot(off, off) < 1.0) {
+				continue;
+			}
+			if (light_reuse_load_prev(ivec2(floor(prev_px + off)), light_reuse_prev_pos, N, eye_dist, r)) {
+				r.M = min(r.M, RT_LIGHT_REUSE_M_CAP);
+				res[count++] = r;
+			}
+		}
+	}
+
+	// Resample: each reservoir's light weighted by its target here, times its W, times the
+	// balance heuristic over the surfaces' unshadowed targets (generalized RIS).
+	float w_sum = 0.0;
+	float chosen_p_hat = 0.0;
+	uint chosen = ~0u;
+	uint m_sum = 0u;
+	for (uint i = 0u; i < count; i++) {
+		m_sum += res[i].M;
+		if (res[i].light == ~0u || res[i].W <= 0.0) {
+			continue;
+		}
+		RTLightData light = lights_get(res[i].light);
+		float t_here = lights_target(light, hit_pos, N, false, instance_layers);
+		if (t_here <= 0.0) {
+			continue;
+		}
+		float p_hat = t_here * lights_vis_weight(p_region, res[i].light);
+		float own = 0.0;
+		float total = 0.0;
+		for (uint j = 0u; j < count; j++) {
+			float t = j == 0u ? t_here : lights_target(light, res[j].pos, res[j].N, false, instance_layers);
+			total += float(res[j].M) * t;
+			if (j == i) {
+				own = float(res[j].M) * t;
+			}
+		}
+		float w = total > 0.0 ? own / total * p_hat * res[i].W : 0.0;
+		w_sum += w;
+		if (rand(rng_state) * w_sum < w) {
+			chosen = res[i].light;
+			chosen_p_hat = p_hat;
+		}
+	}
+
+	LightReservoir out_r;
+	out_r.light = chosen;
+	out_r.W = chosen != ~0u ? w_sum / chosen_p_hat : 0.0;
+	out_r.M = min(m_sum, RT_LIGHT_REUSE_M_CAP);
+	out_r.pos = hit_pos;
+	out_r.N = N;
+
+	uint slot = state & 1u;
+	if (!light_reuse_first_sample) {
+		// Later samples of the pixel merge into what the earlier ones stored (same surface).
+		LightReservoir prev = light_reuse_load(slot, pixel);
+		float w_a = out_r.light != ~0u ? chosen_p_hat * out_r.W * float(out_r.M) : 0.0;
+		float p_b = 0.0;
+		if (prev.light != ~0u && prev.W > 0.0) {
+			p_b = lights_target(lights_get(prev.light), hit_pos, N, false, instance_layers) * lights_vis_weight(p_region, prev.light);
+		}
+		float w_b = p_b * prev.W * float(prev.M);
+		LightReservoir merged = out_r;
+		merged.M = min(out_r.M + prev.M, RT_LIGHT_REUSE_M_CAP);
+		if (w_a + w_b > 0.0 && float(out_r.M + prev.M) > 0.0) {
+			bool take_b = rand(rng_state) * (w_a + w_b) < w_b;
+			merged.light = take_b ? prev.light : out_r.light;
+			merged.W = (w_a + w_b) / ((take_b ? p_b : chosen_p_hat) * float(out_r.M + prev.M));
+		}
+		light_reuse_store(slot, pixel, merged);
+	} else {
+		light_reuse_store(slot, pixel, out_r);
+	}
+
+	if (chosen == ~0u || w_sum <= 0.0) {
+		return false;
+	}
+	r_idx = chosen;
+	r_W = out_r.W;
+	return true;
+}
+
+// Where a camera ray's first hit samples the directional group instead, its reservoir is
+// carried over from last frame so the history survives.
+void lights_reuse_carry(vec3 hit_pos, vec3 N) {
+	if (!light_reuse_first_sample) {
+		return;
+	}
+	uint state = light_reuse_state();
+	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	LightReservoir r;
+	r.light = ~0u;
+	r.W = 0.0;
+	r.M = 0u;
+	if ((state & 2u) != 0u) {
+		float eye_dist = max(distance(light_reuse_eye, hit_pos), 0.01);
+		vec2 prev_px = vec2(pixel) + 0.5 + light_reuse_motion * vec2(gl_LaunchSizeEXT.xy);
+		if (!light_reuse_load_prev(ivec2(floor(prev_px)), light_reuse_prev_pos, N, eye_dist, r)) {
+			r.light = ~0u;
+			r.W = 0.0;
+			r.M = 0u;
+		}
+	}
+	r.pos = hit_pos;
+	r.N = N;
+	light_reuse_store(state & 1u, pixel, r);
+}
+
 // Unweighted contribution of one omni or spot light, one shadow ray. r_visible: the
 // shadow ray's outcome (1 through, 0 blocked), -1 when none was traced.
 vec3 lights_evaluate_positional(RTLightData light, vec3 hit_pos, vec3 N, vec3 V, MaterialProperties material,
@@ -989,6 +1238,7 @@ vec3 lights_evaluate_direct_lighting(
 		p_directional = 0.0;
 	}
 	bool pick_directional = directional_count > 0u && (!has_positional || rand(rng_state) < p_directional);
+	bool reuse = light_reuse_here && !is_indirect_bounce && light_reuse_enabled();
 	float group_pdf = pick_directional ? p_directional : 1.0 - p_directional;
 
 	uint idx;
@@ -1003,9 +1253,18 @@ vec3 lights_evaluate_direct_lighting(
 		if (visible >= 0.0 && has_positional) {
 			lights_vis_record(region, RT_LIGHT_VIS_DIRECTIONAL, visible > 0.5 && any(notEqual(contribution, vec3(0.0))));
 		}
+		if (reuse && has_positional) {
+			lights_reuse_carry(hit_pos, N);
+		}
 		return contribution / max(select_pdf * group_pdf, 1e-10);
 	}
-	if (!lights_select_positional(hit_pos, N, is_indirect_bounce, instance_layers, region, rng_state, idx, select_pdf)) {
+	if (reuse) {
+		float W;
+		if (!lights_select_reused(hit_pos, N, instance_layers, region, rng_state, idx, W)) {
+			return vec3(0.0);
+		}
+		select_pdf = 1.0 / W;
+	} else if (!lights_select_positional(hit_pos, N, is_indirect_bounce, instance_layers, region, rng_state, idx, select_pdf)) {
 		return vec3(0.0);
 	}
 	vec3 contribution = lights_evaluate_positional(lights_get(idx), hit_pos, N, V, material,
@@ -1040,7 +1299,12 @@ vec3 lights_evaluate_direct_lighting_per_group(
 				rng_state, is_indirect_bounce, p_receiver_shadow_mask, visible);
 		result += contribution / max(select_pdf, 1e-10);
 	}
-	if (light_count > directional_count && lights_select_positional(hit_pos, N, is_indirect_bounce, instance_layers, region, rng_state, idx, select_pdf)) {
+	bool reuse = light_reuse_here && !is_indirect_bounce && light_reuse_enabled();
+	float reuse_W = 0.0;
+	if (light_count > directional_count && (reuse ? lights_select_reused(hit_pos, N, instance_layers, region, rng_state, idx, reuse_W) : lights_select_positional(hit_pos, N, is_indirect_bounce, instance_layers, region, rng_state, idx, select_pdf))) {
+		if (reuse) {
+			select_pdf = 1.0 / reuse_W;
+		}
 		vec3 contribution = lights_evaluate_positional(lights_get(idx), hit_pos, N, V, material,
 				rng_state, is_indirect_bounce, p_receiver_shadow_mask, visible);
 		if (visible >= 0.0) {

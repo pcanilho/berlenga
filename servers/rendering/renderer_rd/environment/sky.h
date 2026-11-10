@@ -33,6 +33,8 @@
 #include "core/templates/rid_owner.h"
 #include "servers/rendering/renderer_rd/pipeline_cache_rd.h"
 #include "servers/rendering/renderer_rd/shaders/environment/sky.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/environment/sky_reproject.glsl.gen.h"
+#include "servers/rendering/renderer_rd/storage_rd/render_buffer_custom_data_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
 #include "servers/rendering/renderer_scene_render.h"
 #include "servers/rendering/rendering_device.h"
@@ -121,6 +123,7 @@ private:
 		bool uses_time = false;
 		bool uses_position = false;
 		bool uses_half_res = false;
+		bool uses_half_res_reprojection = false;
 		bool uses_quarter_res = false;
 		bool uses_light = false;
 
@@ -225,6 +228,30 @@ public:
 		void update_reflection_mipmaps(int p_start, int p_end);
 	};
 
+	/* Half resolution pass reprojection (render_mode half_res_reprojection) */
+
+	struct SkyReproject {
+		SkyReprojectShaderRD shader;
+		RID version;
+		RID shader_rd;
+		RID pipeline;
+	} sky_reproject;
+
+	// Last frame's camera and the Bayer step, per render buffers.
+	class SkyReprojectState : public RenderBufferCustomDataRD {
+		GDSOFTCLASS(SkyReprojectState, RenderBufferCustomDataRD);
+
+	public:
+		Basis prev_orientation;
+		Projection prev_projection;
+		Size2i size;
+		uint32_t frame = 0;
+		bool valid = false;
+
+		virtual void configure(RenderSceneBuffersRD *p_render_buffers) override { valid = false; }
+		virtual void free_data() override {}
+	};
+
 	/* Sky shader */
 
 	struct SkyShader {
@@ -291,6 +318,8 @@ public:
 		bool set_material(RID p_material);
 		Ref<Image> bake_panorama(float p_energy, int p_roughness_layers, const Size2i &p_size);
 	};
+
+	void _reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky *p_sky, SkyShaderData *p_shader_data, SkyMaterialData *p_material, double p_time, const Projection &p_projection, const Basis &p_orientation, float p_luminance_multiplier, float p_brightness_multiplier);
 
 	uint32_t sky_ggx_samples_quality;
 	bool sky_use_octmap_array;

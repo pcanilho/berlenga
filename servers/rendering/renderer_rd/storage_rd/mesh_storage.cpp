@@ -31,6 +31,7 @@
 #include "mesh_storage.h"
 
 #include "core/config/project_settings.h"
+#include "core/object/callable_mp.h"
 #include "servers/rendering/renderer_viewport.h"
 #include "servers/rendering/rendering_server.h"
 #include "servers/rendering/rendering_server_types.h"
@@ -1611,6 +1612,10 @@ void MeshStorage::_multimesh_allocate_data(RID p_multimesh, int p_instances, RSE
 		return;
 	}
 
+	multimesh->rd_readback_ticket++; // A readback still in flight describes the old records.
+	multimesh->rd_readback_in_flight = false;
+	multimesh->rd_readback_again = false;
+
 	if (multimesh->buffer.is_valid()) {
 		RD::get_singleton()->free_rid(multimesh->buffer);
 		multimesh->buffer = RID();
@@ -2240,6 +2245,7 @@ void MeshStorage::_multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_
 			multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_AABB);
 		}
 	}
+	multimesh->records_version++;
 	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH_DATA);
 }
 
@@ -2253,6 +2259,118 @@ RID MeshStorage::_multimesh_get_buffer_rd_rid(RID p_multimesh) const {
 	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
 	ERR_FAIL_NULL_V(multimesh, RID());
 	return multimesh->buffer;
+}
+
+// Records written on the GPU (through multimesh_get_buffer_rd_rid) are invisible to everything that
+// reads the CPU side: the AABB, the path tracer's TLAS records of an expanded MultiMesh and its
+// change tracking. This call tells the engine the first instance block was rewritten.
+// - The block is copied over the second half when motion vectors keep two, so raster reads the new
+//   records whichever half is current, with no motion.
+// - The change stamp and MULTIMESH_DATA dependency move now, so a merged path tracer BLAS, which
+//   reads the GPU buffer itself, is rebaked this frame.
+// - One asynchronous readback refreshes the CPU mirror (no stall). When it lands, the AABB is
+//   rebuilt (unless a custom AABB is set) and the change is signalled again, so expanded TLAS
+//   records follow, a frame or two later. Calls while a readback is in flight coalesce into one more.
+void MeshStorage::_multimesh_mark_buffer_rd_changed(RID p_multimesh) {
+	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
+	ERR_FAIL_NULL(multimesh);
+	if (multimesh->instances == 0 || multimesh->buffer.is_null()) {
+		return;
+	}
+	multimesh->buffer_set = true;
+
+	const uint32_t block_bytes = multimesh->instances * multimesh->stride_cache * sizeof(float);
+	if (multimesh->motion_vectors_enabled) {
+		RD::get_singleton()->buffer_copy(multimesh->buffer, multimesh->buffer, 0, block_bytes, block_bytes);
+		multimesh->motion_vectors_current_offset = 0;
+		multimesh->motion_vectors_previous_offset = 0;
+	}
+	multimesh->records_version++;
+	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH_DATA);
+
+	const bool needs_cpu_copy = !multimesh->data_cache.is_empty() || multimesh->custom_aabb == AABB() ||
+			RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_PIPELINE) || RD::get_singleton()->has_feature(RD::SUPPORTS_RAY_QUERY);
+	if (!needs_cpu_copy) {
+		return;
+	}
+	if (multimesh->rd_readback_in_flight) {
+		multimesh->rd_readback_again = true;
+		return;
+	}
+	_multimesh_request_rd_readback(multimesh, p_multimesh);
+}
+
+void MeshStorage::_multimesh_set_bones_per_instance(RID p_multimesh, int p_bones) {
+	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
+	ERR_FAIL_NULL(multimesh);
+	ERR_FAIL_COND_MSG(p_bones < 1 || p_bones > 255, "A MultiMesh instance takes 1 to 255 bones.");
+	if (multimesh->bones_per_instance == uint32_t(p_bones)) {
+		return;
+	}
+	multimesh->bones_per_instance = p_bones;
+	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH);
+}
+
+int MeshStorage::_multimesh_get_bones_per_instance(RID p_multimesh) const {
+	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
+	ERR_FAIL_NULL_V(multimesh, 1);
+	return multimesh->bones_per_instance;
+}
+
+void MeshStorage::_multimesh_request_rd_readback(MultiMesh *multimesh, RID p_multimesh) {
+	const uint32_t block_bytes = multimesh->instances * multimesh->stride_cache * sizeof(float);
+	multimesh->rd_readback_ticket++;
+	multimesh->rd_readback_in_flight = true;
+	multimesh->rd_readback_again = false;
+	const Error err = RD::get_singleton()->buffer_get_data_async(multimesh->buffer,
+			callable_mp_static(&MeshStorage::_multimesh_on_rd_readback).bind(p_multimesh, multimesh->rd_readback_ticket), 0, block_bytes);
+	if (err != OK) {
+		multimesh->rd_readback_in_flight = false;
+	}
+}
+
+void MeshStorage::_multimesh_on_rd_readback(const Vector<uint8_t> &p_data, RID p_multimesh, uint32_t p_ticket) {
+	MeshStorage *storage = MeshStorage::get_singleton();
+	MultiMesh *multimesh = storage ? storage->multimesh_owner.get_or_null(p_multimesh) : nullptr;
+	if (!multimesh || multimesh->rd_readback_ticket != p_ticket) {
+		return; // Freed or reallocated since: the data no longer describes it.
+	}
+	multimesh->rd_readback_in_flight = false;
+	const uint32_t block_floats = multimesh->instances * multimesh->stride_cache;
+	if (uint32_t(p_data.size()) != block_floats * sizeof(float)) {
+		return;
+	}
+
+	// The CPU mirror: both halves when motion vectors keep two, so the records read as unmoved.
+	const uint32_t halves = multimesh->motion_vectors_enabled ? 2 : 1;
+	if (multimesh->data_cache.is_empty()) {
+		multimesh->data_cache.resize(block_floats * halves);
+		const uint32_t region_count = Math::division_round_up((uint32_t)multimesh->instances, (uint32_t)MULTIMESH_DIRTY_REGION_SIZE);
+		multimesh->data_cache_dirty_regions = memnew_arr(bool, region_count);
+		memset(multimesh->data_cache_dirty_regions, 0, region_count * sizeof(bool));
+		multimesh->data_cache_dirty_region_count = 0;
+		multimesh->previous_data_cache_dirty_regions = memnew_arr(bool, region_count);
+		memset(multimesh->previous_data_cache_dirty_regions, 0, region_count * sizeof(bool));
+		multimesh->previous_data_cache_dirty_region_count = 0;
+	}
+	if (uint32_t(multimesh->data_cache.size()) != block_floats * halves) {
+		return;
+	}
+	float *w = multimesh->data_cache.ptrw();
+	for (uint32_t h = 0; h < halves; h++) {
+		memcpy(w + h * block_floats, p_data.ptr(), block_floats * sizeof(float));
+	}
+
+	if (multimesh->mesh.is_valid() && multimesh->custom_aabb == AABB() && multimesh->xform_format == RSE::MULTIMESH_TRANSFORM_3D) {
+		storage->_multimesh_re_create_aabb(multimesh, w, multimesh->instances);
+		multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_AABB);
+	}
+	multimesh->records_version++;
+	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH_DATA);
+
+	if (multimesh->rd_readback_again) {
+		storage->_multimesh_request_rd_readback(multimesh, p_multimesh);
+	}
 }
 
 Vector<float> MeshStorage::_multimesh_get_buffer(RID p_multimesh) const {
@@ -2383,6 +2501,7 @@ void MeshStorage::_update_dirty_multimeshes() {
 
 				multimesh->previous_data_cache_dirty_region_count = multimesh->data_cache_dirty_region_count;
 				multimesh->data_cache_dirty_region_count = 0;
+				multimesh->records_version++;
 				multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH_DATA);
 			}
 

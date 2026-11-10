@@ -4,7 +4,7 @@
 		A physical sky with volumetric clouds from the weather map.
 	</brief_description>
 	<description>
-		Godot's [PhysicalSkyMaterial] atmosphere with clouds raymarched through it, after Guerrilla's Nubis and Frostbite: a layer on a round planet, Beer-Lambert steps that conserve energy, a forward and a back Henyey-Greenstein lobe, Wrenninge's multiple scattering octaves and a two-stream diffuse term, and six steps towards the sun from each sample. The clouds are drawn in the half resolution pass, with fewer steps for the radiance map that lights the scene.
+		Godot's [PhysicalSkyMaterial] atmosphere with clouds raymarched through it, after Guerrilla's Nubis and Frostbite: a layer on a round planet, Beer-Lambert steps that conserve energy, a forward and a back Henyey-Greenstein lobe, Wrenninge's multiple scattering octaves and a two-stream diffuse term, and six steps towards the sun from each sample. The clouds are drawn in the half resolution pass, with fewer steps for the radiance map that lights the scene. With [member cloud_reprojection], a sixteenth of the screen's pixels are marched a frame and the rest are kept from the frames before.
 		A [WeatherMap3D] in the scene sends it the cloud cover, type, storms and drift at its [member WeatherMap3D.update_rate]; without one, the sky shows the defaults. Set the [Sky]'s [member Sky.process_mode] to [constant Sky.PROCESS_MODE_INCREMENTAL] or [constant Sky.PROCESS_MODE_REALTIME] so the lighting follows the moving clouds.
 		Its uniforms are under [b]Shader Parameters[/b]: the atmosphere's (as [PhysicalSkyMaterial]), and [code]cloud_steps[/code], [code]cloud_radiance_steps[/code], [code]cloud_light_steps[/code], [code]cloud_far[/code] and [code]cloud_brightness[/code]. The [code]weather_map[/code] group is set by the map.
 		Under path tracing, bounce rays see the clouds through the radiance map. Enable [member Environment.pathtracing_sky_shader_enabled] for camera rays to see them at full detail.
@@ -12,4 +12,9 @@
 	</description>
 	<tutorials>
 	</tutorials>
+	<members>
+		<member name="cloud_reprojection" type="bool" setter="set_cloud_reprojection" getter="is_cloud_reprojection_enabled" default="true">
+			Temporal reprojection of the clouds, as Guerrilla's Nubis does: each frame one pixel of every 4x4 block is marched, in an order that covers all of them in 16 frames, and the rest are carried over from the frames before through the camera's turn (the sky shader's [code]half_res_reprojection[/code] render mode). The clouds come out at full resolution for a quarter of the half resolution pass's marching. Off, every half resolution pixel is marched every frame. Clouds that change fast trail by up to 16 frames.
+		</member>
+	</members>
 </class>

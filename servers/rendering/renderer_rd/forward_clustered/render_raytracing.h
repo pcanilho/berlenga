@@ -250,7 +250,12 @@ struct alignas(16) RT_MaterialData {
 	struct { // BaseMaterial3D subsurface scattering (GLSL rt_material_subsurface()), 0 strength = none.
 		uint32_t strength : 8; // unorm8 subsurface_scattering_strength.
 		uint32_t skin : 1; // Skin Mode: measured skin's per-channel radii.
-		uint32_t unused : 23;
+		// BaseMaterial3D Wetness (GLSL rt_material_wetness()), see material-wetness.md.
+		uint32_t wetness_porosity : 8; // unorm8 wetness_porosity.
+		uint32_t wetness_amount : 8; // unorm8 wetness_amount.
+		uint32_t wetness : 1; // The feature is on.
+		uint32_t wetness_from_weather : 1; // Wetness = amount times the weather map's (RT_PARAM_WETNESS_*).
+		uint32_t unused : 5;
 	} subsurface;
 	struct { // texture_subsurface_scattering: red scales the strength.
 		uint32_t index : TEXTURE_INDEX_BITS;
@@ -569,6 +574,10 @@ enum {
 	// through a world grid of per-cell light lists with resampled importance sampling
 	// (raytracing_lights_inc.glsl), so a pixel's cost doesn't grow with the count.
 	RT_LIGHTS_MAX = 4096,
+	// Light reuse (binding 51): a header of 4 uints and a remap of RT_LIGHTS_MAX, then per pixel
+	// and frame a reservoir of RT_LIGHT_REUSE_STRIDE uints. Must match raytracing_lights_inc.glsl.
+	RT_LIGHT_REUSE_HEADER = 4 + RT_LIGHTS_MAX,
+	RT_LIGHT_REUSE_STRIDE = 6,
 	// The light grid (binding 42): cells at most, and list entries at most (the cell
 	// size grows until the lists fit).
 	RT_LIGHT_GRID_MAX_CELLS = 32768,
@@ -1390,6 +1399,14 @@ struct RTViewportState {
 	RID caustics_buffer;
 	uint32_t caustics_slot = 0; // written this frame
 	bool caustics_history = false; // last frame wrote a slot
+	// Light reuse (binding 51, ReSTIR DI; raytracing_lights_inc.glsl): per-pixel reservoirs for two
+	// frames, made at the internal size while enabled.
+	RID light_reuse_buffer;
+	Size2i light_reuse_size;
+	uint32_t light_reuse_slot = 0; // written this frame
+	bool light_reuse_history = false; // last frame wrote a slot at this size and anchor
+	Vector3 light_reuse_origin; // the anchor last frame's reservoirs are relative to
+	LocalVector<RID> light_reuse_lights; // light instances by index, last frame
 	uint32_t light_grid_buffer_capacity = 0; // uints.
 	RID volume_params_buffer; // RTVolumeParams (raytracing_volume_inc.glsl), binding 49.
 	RID params_buffer;
@@ -1958,12 +1975,14 @@ public:
 	// the ones traced this view are marked committed.
 	RTViewportState *build_tlas(const RenderDataRD *p_render_data, uint32_t p_rt_flags, LocalVector<RTCaptureRequest> &r_captures);
 	void build_decal_volumes(RTViewportState *p_state, const RenderDataRD *p_render_data);
-	uint32_t gather_lights(const RenderDataRD *p_render_data, const RTViewportState *p_state, RT_LightData *r_light_data, uint32_t p_max_lights);
+	uint32_t gather_lights(const RenderDataRD *p_render_data, const RTViewportState *p_state, RT_LightData *r_light_data, uint32_t p_max_lights, LocalVector<RID> *r_instances = nullptr);
 	// The world grid of positional light lists the shaders pick lights from (layout in
 	// render_raytracing.cpp).
 	static void build_light_grid(const RT_LightData *p_lights, uint32_t p_count, const Vector3 &p_camera, LocalVector<uint32_t> &r_grid);
 	LocalVector<RT_LightData> rt_light_scratch;
 	LocalVector<uint32_t> rt_light_grid_scratch;
+	LocalVector<RID> rt_light_instances_scratch; // light instances by index (light reuse)
+	LocalVector<uint32_t> rt_light_reuse_header_scratch;
 	// Appends the emissive surfaces' section to the light grid array (layout in render_raytracing.cpp).
 	void append_emissive_lights(const Vector3 &p_camera, const Vector3 &p_origin, LocalVector<uint32_t> &r_grid) const;
 	void update_scene_ubo(RTViewportState *p_state, const RenderDataRD *p_render_data, const Size2i &p_screen_size, const Color &p_default_bg_color);

@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TerrainDataMap3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Terrain analysis maps for placing vegetation: slope, curvature, flow, wetness, water depth and distance to water.
+	</brief_description>
+	<description>
+		Bakes terrain analysis maps over a square of [member size] metres centred on the node, [member resolution] cells a side, for placement rules (grass on gentle slopes, reeds where the ground is wet, trees away from water) and materials.
+		Heights come from [member height_source] or from rays down against [member ground_collision_mask]. Water comes from [member water_sources]. The maps are:
+		- slope and aspect (Horn 1981),
+		- curvature (Zevenbergen and Thorne 1987, positive in hollows),
+		- flow accumulation (multiple flow direction over a depression-filled surface, Priority-Flood),
+		- topographic wetness index [code]ln(a / tan(slope))[/code] (Beven and Kirkby 1979),
+		- water depth and signed distance to water.
+		Query them on the CPU with the [code]get_*_at[/code] methods, or in shaders through the global uniforms described in [method get_shader_code]. Baking runs on the CPU once; it has no per-frame cost.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="bake">
+			<return type="int" enum="Error" />
+			<description>
+				Samples heights and water and computes every map. Returns [constant ERR_UNCONFIGURED] when no height could be found. Emits [signal baked].
+			</description>
+		</method>
+		<method name="get_aspect_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Direction the ground faces (downhill), in radians from +Z clockwise towards +X, at the nearest cell.
+			</description>
+		</method>
+		<method name="get_bake_time_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Time the last [method bake] took, in milliseconds.
+			</description>
+		</method>
+		<method name="get_channel_image" qualifiers="const">
+			<return type="Image" />
+			<param index="0" name="channel" type="int" enum="TerrainDataMap3D.Channel" />
+			<description>
+				Returns one map as a single-channel float [Image] ([constant Image.FORMAT_RF]), row 0 at the map's lowest Z.
+			</description>
+		</method>
+		<method name="get_curvature_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Zevenbergen-Thorne general curvature in 1/m: positive in hollows and valley floors where water collects, negative on ridges.
+			</description>
+		</method>
+		<method name="get_data_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				RGBA float texture: height, slope (radians), aspect (radians), curvature (1/m).
+			</description>
+		</method>
+		<method name="get_flow_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Flow accumulation: log10 of the upslope area in square metres that drains through this point. Flow ends in water, so ground beside a river only collects its own slope.
+			</description>
+		</method>
+		<method name="get_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Ground height sampled during the bake.
+			</description>
+		</method>
+		<method name="get_map_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The baked area in world XZ (position is the corner at the lowest X and Z).
+			</description>
+		</method>
+		<method name="get_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Shader code that declares the global uniforms [code]terrain_data_map[/code], [code]terrain_water_map[/code] and [code]terrain_data_rect[/code] and the functions [code]terrain_data(world_pos)[/code] (height, slope, aspect, curvature) and [code]terrain_water(world_pos)[/code] (flow, wetness, water depth, signed distance to water). Paste it into a spatial or compute shader. The uniforms are set when [member publish_shader_globals] is on.
+			</description>
+		</method>
+		<method name="get_slope_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Slope in radians (0 is flat).
+			</description>
+		</method>
+		<method name="get_water_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Water depth in metres, 0 on land.
+			</description>
+		</method>
+		<method name="get_water_distance_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Signed distance to the shoreline in metres: positive on land, negative under water. [code]1000000[/code] when the map has no water.
+			</description>
+		</method>
+		<method name="get_water_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				RGBA float texture: flow (log10 m²), wetness index, water depth (m), signed distance to water (m).
+			</description>
+		</method>
+		<method name="get_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Topographic wetness index [code]ln(a / tan(slope))[/code], a = upslope area per metre of contour. Higher is wetter: about 4 to 7 on hillsides, 10 and above on flat ground where water collects (meadows, swamps).
+			</description>
+		</method>
+		<method name="is_baked" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] after a successful [method bake].
+			</description>
+		</method>
+		<method name="queue_bake">
+			<return type="void" />
+			<description>
+				Bakes at the end of the frame, once, however many times it is called.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="bake_on_ready" type="bool" setter="set_bake_on_ready" getter="is_bake_on_ready" default="true">
+			Bake one frame after the node is ready (not in the editor), once terrain deformers and colliders are in place.
+		</member>
+		<member name="flow_exponent" type="float" setter="set_flow_exponent" getter="get_flow_exponent" default="1.1">
+			Exponent of the slope weight in multiple flow direction routing (Holmgren 1994). Around 1.1 spreads flow over hillsides like real overland flow; higher values concentrate it into channels.
+		</member>
+		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
+			Physics layers hit by the rays used where [member height_source] gives no height.
+		</member>
+		<member name="height_source" type="NodePath" setter="set_height_source" getter="get_height_source" default="NodePath(&quot;&quot;)">
+			Node that gives ground heights: a [TerrainDeformer3D], any node with [code]get_height(Vector3)[/code], or a Terrain3D node (its [code]get_data().get_height()[/code]). Empty: rays against [member ground_collision_mask].
+		</member>
+		<member name="publish_shader_globals" type="bool" setter="set_publish_shader_globals" getter="is_publishing_shader_globals" default="true">
+			Set the global shader uniforms from [method get_shader_code] after each bake.
+		</member>
+		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="256">
+			Cells per side. The cell size is [member size] / [member resolution].
+		</member>
+		<member name="size" type="float" setter="set_size" getter="get_size" default="256.0">
+			Width of the square map in metres, centred on the node.
+		</member>
+		<member name="water_sources" type="NodePath[]" setter="set_water_sources" getter="get_water_sources" default="[]">
+			Water nodes. A node with [code]sample_height(Vector3)[/code] (such as a river) gives its surface height, -INF outside it. A node with only [code]get_water_level()[/code] (a water surface) is a level plane at its height plus that level, covering all lower ground in the map.
+		</member>
+	</members>
+	<signals>
+		<signal name="baked">
+			<description>
+				Emitted after each successful [method bake].
+			</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="CHANNEL_HEIGHT" value="0" enum="Channel">
+			Ground height.
+		</constant>
+		<constant name="CHANNEL_SLOPE" value="1" enum="Channel">
+			Slope in radians.
+		</constant>
+		<constant name="CHANNEL_ASPECT" value="2" enum="Channel">
+			Aspect in radians.
+		</constant>
+		<constant name="CHANNEL_CURVATURE" value="3" enum="Channel">
+			Curvature in 1/m.
+		</constant>
+		<constant name="CHANNEL_FLOW" value="4" enum="Channel">
+			log10 upslope area in m².
+		</constant>
+		<constant name="CHANNEL_WETNESS" value="5" enum="Channel">
+			Topographic wetness index.
+		</constant>
+		<constant name="CHANNEL_WATER_DEPTH" value="6" enum="Channel">
+			Water depth in metres.
+		</constant>
+		<constant name="CHANNEL_WATER_DISTANCE" value="7" enum="Channel">
+			Signed distance to water in metres.
+		</constant>
+		<constant name="CHANNEL_MAX" value="8" enum="Channel">
+			Number of channels.
+		</constant>
+	</constants>
+</class>

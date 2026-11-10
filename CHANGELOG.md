@@ -6,6 +6,43 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-950721c5 (2026-11-10)
+
+### Added
+- Weather: wind near the ground. WeatherMap3D shelters the wind inside plant canopies (Cionco's profile; `add_canopy()`, `canopy_map`) and in the lee of obstacles (`add_shelter_box()`, the `weather_shelter` group), and carries gust patches of a few metres across fields (`gust_patch_size`, `gust_patch_strength`); `get_wind_shader_code()` gives shaders the same wind as `get_wind_at()` (#212)
+- `MultiMesh.bones_per_instance`: consecutive records skin one instance (instanced skinning with a `use_particle_trails` material), in Forward+, Mobile and the path tracer, for wind on many plants without a Skeleton3D each.
+
+### Fixed
+- Particle trails under path tracing: only the first trail was captured.
+
+### Changed
+- README: wind near the ground line; canopy and shelter wind papers in docs/REFERENCES.md.
+- README: Vegetation instance bones line and image.
+
+## build-309945bb (2026-11-10)
+
+### Added
+- Water: plunging breakers throw a lip of water along a ballistic path off the crest (Thurey et al. 2007) and spray where it is thin and where it lands (Ihmsen et al. 2012); `shore_spray`, `shore_spray_amount`, `get_breaker_stats()`
+- `RenderingServer.multimesh_mark_buffer_rd_changed()`: MultiMesh records written by a compute shader now reach the AABB, motion vectors and the path tracer (merged at once, per-instance records after an asynchronous readback).
+
+### Fixed
+- Path tracing: a malformed format string in the material buffer warning
+- Path tracing: a MultiMesh under the merge cap kept its first records after `multimesh_set_buffer()` or `multimesh_instance_set_*()` when motion vectors were off.
+
+### Changed
+- README: hair body collision line and image.
+- README: fresh hair wind clip with sharp raster strands.
+- README: plunging breakers line and image; breaking-wave papers in docs/REFERENCES.md.
+- README: Vegetation section, GPU-placed instances.
+
+## build-16937fed (2026-11-10)
+
+### Added
+- PhysXHair3D `collision_body`: strands collide with a body mesh (skinned or not) through a signed distance field built on the GPU every frame, as AMD TressFX; `collision_cell_size` sets its resolution
+
+### Changed
+- README: hair distance LOD line; raster hair images replaced with sharp strands.
+
 ## build-b95bf5f6 (2026-11-10)
 
 ### Added

@@ -162,7 +162,7 @@ struct MaterialData {
 	uint transmission_texture; // Red scales transmission.
 	uint medium; // With RT_MAT_FLAG_VOLUME: the extinction code of the volume it bounds, see rt_medium_absorption().
 	uint scatter; // unorm8x4: single-scatter albedo of that volume (rgb) and (g + 1) / 2 of its phase. See rt_material_scatter().
-	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode. See rt_material_subsurface().
+	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode; wetness in 9-26, see rt_material_wetness().
 	uint subsurface_texture; // texture_subsurface_scattering: red scales the strength.
 	uint hair; // unorm8 beta_m, beta_n, (tilt + 10) / 20; bits 24-25 direction, 26 melanin, 27 cards. See rt_material_hair().
 	uint hair_absorption; // Melanin absorption per fibre diameter (rt_medium_absorption() code).
@@ -236,6 +236,12 @@ uint rt_material_medium(MaterialData p_mat) {
 // BaseMaterial3D subsurface scattering strength (x, 0: none) and Skin Mode (y, 0 or 1).
 vec2 rt_material_subsurface(MaterialData p_mat) {
 	return vec2(float(p_mat.subsurface & 0xFFu) / 255.0, float((p_mat.subsurface >> 8u) & 1u));
+}
+
+// BaseMaterial3D Wetness: porosity (x), amount (y), on (z), amount times the weather map (w).
+vec4 rt_material_wetness(MaterialData p_mat) {
+	return vec4(float((p_mat.subsurface >> 9u) & 0xFFu) / 255.0, float((p_mat.subsurface >> 17u) & 0xFFu) / 255.0,
+			float((p_mat.subsurface >> 25u) & 1u), float((p_mat.subsurface >> 26u) & 1u));
 }
 
 vec2 rt_material_clearcoat(MaterialData p_mat) {

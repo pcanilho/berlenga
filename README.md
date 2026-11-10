@@ -15,7 +15,8 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Lights**: 4096 path-traced lights (upstream 64); emissive surfaces count as lights.
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
-- **Hair**: fibre shading, strand grooms, TressFX strand simulation.
+- **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
+- **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, clouds and their shadows, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
@@ -31,6 +32,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Emissive surfaces as lights** (`rendering/pathtracing/emissive_lights`).
 - **Light visibility memory** (`rendering/pathtracing/light_visibility_memory`): hidden lights stop taking samples.
 - **Radiance cache** (`rendering/pathtracing/radiance_cache`): bounces end on cached light.
+- **Light reuse** (`rendering/pathtracing/light_reuse`, off by default): ReSTIR DI reuses light samples across pixels and frames.
 - Shadow-only casters bounce light.
 - Lit raster transparents and rain (`rendering/pathtracing/max_transparency_layers` 0), still traced in reflections.
 
@@ -39,12 +41,13 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Transmission** (BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): matches raster, with traced coat reflections; coat texture.
 - **Subsurface scattering** (`rendering/pathtracing/subsurface_scattering`, radius `subsurface_scattering_scale`): random walk inside closed meshes; skin, wax and marble soften and thin parts glow when backlit.
+- **Wet surfaces** (BaseMaterial3D Wetness: `wetness_enabled`, `wetness_porosity`): porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced.
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
 
-<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering</summary>
+<details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering, wet surfaces</summary>
 
 ![Glass panes before coloured spheres: raster, path traced with transmission on, and off](docs/media/transmission.jpg)
 
@@ -66,6 +69,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Subsurface scattering: thin slabs glow, thick ones stay dark.*
 
+![Spheres of rising porosity, dry and wet, raster and path traced](docs/media/wet-materials.jpg)
+
+*Wet surfaces: the more porous, the darker and glossier when wet; raster and path traced match.*
+
 </details>
 
 ### Water
@@ -79,7 +86,8 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 - **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
 - **Finer water mesh up close** (`mesh_detail`).
-- **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); on steep beaches the crest curls over (`shore_wave_curl`).
+- **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).
+- **Plunging breakers** (`shore_wave_curl`, `shore_spray`, `shore_spray_amount`): the crest throws a sheet of water that lands ahead and sinks into the bore, with spray where it is thin and where it lands.
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
 - **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
@@ -117,9 +125,9 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Run-up: the wash climbs the sand and drains back.*
 
-![A curling breaker on a steep beach, raster vs path traced](docs/media/shore-curl.jpg)
+![A plunging breaker throwing a sheet of water with spray, raster](docs/media/shore-curl.jpg)
 
-*Curling breakers: the crest throws forward and falls.*
+*Plunging breakers: the sheet thrown off the crest, with spray along its thin edge.*
 
 ![Floating boxes drift on a current past a rock](docs/media/currents.gif)
 
@@ -168,9 +176,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Raster strands** (TressFX coverage): blended and sorted far to near on the GPU each frame; smooth without TAA or MSAA, and the hair shadows itself.
 - **Raster hair shading** (`PhysXHair3D.hair_shading`): Marschner model as Unreal evaluates it, with multiple scattering and light through the strands in shadow maps, so backlit hair glows.
 - **Distance LOD** (`PhysXHair3D`: `lod_enabled`, `lod_start_distance`, `lod_end_distance`, `lod_strand_ratio`): far away, fewer and wider strands with the same look; simulation and path tracing keep every strand.
+- **Body collision** (`PhysXHair3D`: `collision_body`, `collision_cell_size`): strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.
 - **Custom hair shaders**: `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.
 
-<details><summary>Images and clip: hair shading, strand hair, moving hair, raster strands, raster shading, distance LOD</summary>
+<details><summary>Images and clip: hair shading, strand hair, moving hair, raster strands, raster shading, distance LOD, body collision</summary>
 
 ![Hair-shaded spheres and cards: raster, path traced, sun behind, cards backlit](docs/media/hair.jpg)
 
@@ -196,15 +205,56 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Distance LOD: fewer, wider strands far away, with the same look.*
 
+![Strand hair over a box body: no collision, body collision, body skinned to a tilted bone](docs/media/hair-body-collision.jpg)
+
+*Body collision: without it the hair falls through the shoulders; with it the hair drapes over them, also when the body is skinned and tilted.*
+
+</details>
+
+### Vegetation
+- **Plant placement** (`VegetationField3D`, `Biome`, `PlantSpecies`): places species by spacing, footprint and rules on slope, wetness and distance to water over a `TerrainDataMap3D`; evenly spread, the same for a seed. 12,899 plants over 256 m place once in about 45 ms, then draw as ordinary MultiMeshes.
+- **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.
+- **GPU-placed instances** (`RenderingServer.multimesh_mark_buffer_rd_changed()`): MultiMesh records written by a compute shader reach culling, motion vectors and path tracing.
+- **Instance bones** (`MultiMesh.bones_per_instance`): each instance is skinned from its own records, so thousands of plants bend in the wind without a Skeleton3D each; raster and path traced. 900 swaying stems: 0.30 ms render CPU, against 5.97 ms as 900 Skeleton3D.
+- **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
+
+<details><summary>Images and clip: plant placement, grass, grass in wind, GPU-placed instances, instance bones, terrain data maps</summary>
+
+![A valley with trees, bushes and reeds placed by biome rules, raster and path traced](docs/media/vegetation-placement.jpg)
+
+*Plant placement: trees on dry ground, bushes between them, reeds along the banks (placeholder meshes).*
+
+![A grass field, raster and path traced](docs/media/grass-field.jpg)
+
+*Grass: clumped blades, raster and path traced.*
+
+![Grass bending as gusts travel downwind, raster](docs/media/grass-wind.gif)
+
+*Grass in wind: gusts sweep across the field downwind.*
+
+![GPU-written MultiMesh records, path traced: before and after the call](docs/media/gpu-multimesh-records.jpg)
+
+*GPU-placed instances: without the call the GPU-written instances never appear.*
+
+![Stems in rest pose, then bent by instance bones in one MultiMesh, path traced](docs/media/instance-bones.jpg)
+
+*Instance bones: one MultiMesh, every stem bent by its own bones.*
+
+![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
+
+*Terrain data maps: the stream bed, wet ground and banks come from the maps alone.*
+
 </details>
 
 ### Weather
 - **Weather map** (`WeatherMap3D`): one weather state round the camera (wind, cloud cover, rain, wetness, puddles), read by every shader through global uniforms, raster and path traced.
 - **Wind**: slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.
+- **Wind near the ground** (`add_canopy`, `add_shelter_box`, `gust_patch_size`): shelter inside plant canopies and behind buildings; gust patches sweep across fields.
 - **Storms** (`add_storm`): drift with the wind, with a rain core and a downdraft.
-- **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation.
+- **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.
 - **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).
 - **Clouds** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): a cloud layer shaped from the map's cover, type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
+- **Cloud reprojection** (`WeatherSkyMaterial.cloud_reprojection`, on by default): clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.
 - **Cloud shadows** (`sun_light`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.
 - **Sun projector**: `light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.
 

@@ -1,7 +1,7 @@
 extends Node3D
 # WeatherMap3D bench: checks the numbers, and renders a wet street with a flag, raster or path traced.
 #
-#   --test            print the checks and quit:
+#   --test            print the checks and quit (--test=shelter: only the wind near the ground):
 #                       mean wind on the log law at 2, 10 and 40 m against u10 ln(z / z0) / ln(10 / z0)
 #                       gust spread at 10 m over a minute against the IEC turbulence intensity 0.96 / ln(10 / z0)
 #                       a storm's downburst outflow against distance
@@ -11,6 +11,9 @@ extends Node3D
 #                       clouds: the ground share in cloud shadow against cover, the optical depth of the
 #                       thickest column, the baked shadow against a direct march, the bake's cost, and the
 #                       shadow following the clouds as they drift
+#                       wind near the ground: a forest's profile against Cionco's, the lee of a wall against
+#                       distance, gust patches (spread and size), the shader code against get_wind_at(), and
+#                       the shelter bake's cost
 #   --view=map        an 8 km map with broken cloud, light rain and a storm drifting through, after an hour;
 #                     saved with --map-out
 #   --view=street     a street that the rain has wetted, with puddles, and a flag in the weather's wind
@@ -25,6 +28,8 @@ extends Node3D
 #   --out=path.png    save the last frame and quit
 #   --map-out=path.png  save the map (wind speed red, cloud cover green, wetness blue) and quit
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
+#   --no-reprojection  clouds view: every half resolution pixel every frame (WeatherSkyMaterial.cloud_reprojection off)
+#   --pan=D           clouds view: the camera turns D degrees a second (reprojection under motion)
 #
 # Run with --fixed-fps 30 so raster and path traced frames match.
 
@@ -39,6 +44,10 @@ var bounces := 3
 var rain_hours := 1.0
 var dry_hours := 0.0
 var test := false
+var only_shelter := false
+var reprojection := true
+var pan := 0.0
+var pan_cam: Camera3D
 var n := 0
 var env: Environment
 var weather: Node3D
@@ -48,7 +57,10 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--view="): view = a.substr(7)
 		elif a == "--raster": raster = true
+		elif a == "--no-reprojection": reprojection = false
+		elif a.begins_with("--pan="): pan = float(a.substr(6))
 		elif a == "--test": test = true
+		elif a == "--test=shelter": test = true; only_shelter = true
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -63,7 +75,10 @@ func _ready() -> void:
 		get_tree().quit(1)
 		return
 	if test:
-		await _run_tests()
+		if only_shelter:
+			await _shelter_tests()
+		else:
+			await _run_tests()
 		get_tree().quit()
 		return
 	if view == "map":
@@ -205,6 +220,7 @@ func _run_tests() -> void:
 		await get_tree().physics_frame
 
 	await _cloud_tests()
+	await _shelter_tests()
 
 
 func _cloud_tests() -> void:
@@ -292,6 +308,122 @@ func _cloud_tests() -> void:
 	print("shadow after %.0f s of drift, followed downwind %.0f m: %.3f (was %.3f)" % [drift_s, steer * drift_s, moved, before])
 	c.queue_free()
 	sun.queue_free()
+
+
+func _shelter_tests() -> void:
+	var m := _new_map()
+	m.gust_intensity = 0.0
+	m.gust_patch_strength = 0.0
+	await get_tree().physics_frame
+	var z0: float = m.roughness_length
+	# A forest 20 m tall (Cionco a = 2.5) round the origin.
+	m.add_canopy(Vector2(0, 0), 100.0, 20.0, 2.5)
+	m.rebake_shelter()
+	var line := "forest (h 20 m, a 2.5), wind against open ground at height:"
+	for h in [2.0, 5.0, 10.0, 15.0, 20.0, 30.0, 50.0, 80.0]:
+		var w: Vector3 = m.get_wind_at(Vector3(0, 0, 0), h)
+		line += " %.0f m %.2f (open %.2f)," % [h, Vector2(w.x, w.z).length(), 8.0 * log(h / z0) / log(10.0 / z0)]
+	print(line)
+	# Inside the canopy the profile should be exponential: u(z) / u(h) = exp(a (z / h - 1)).
+	var top: float = m.get_shelter_at(Vector3(0, 0, 0), 20.0) * log(20.0 / z0)
+	var l2 := "  inside, u / u(top) against exp(2.5 (z / 20 - 1)):"
+	for h in [2.0, 10.0, 15.0]:
+		var r: float = m.get_shelter_at(Vector3(0, 0, 0), h) * log(h / z0) / top
+		l2 += " %.0f m %.3f (%.3f)," % [h, r, exp(2.5 * (h / 20.0 - 1.0))]
+	print(l2)
+	m.clear_shelter()
+
+	# A wall 10 m high across the wind at x = 0: the wind at 2 m behind it.
+	m.add_shelter_box(AABB(Vector3(-2, 0, -60), Vector3(4, 10, 120)))
+	m.rebake_shelter()
+	var l3 := "lee of a 10 m wall, wind at 2 m over open ground at x / H ="
+	for xh in [-2.0, 1.0, 2.0, 5.0, 10.0, 15.0, 20.0, 30.0]:
+		l3 += " %.0f: %.2f," % [xh, m.get_shelter_at(Vector3(xh * 10.0 + 2.0, 0, 0), 2.0)]
+	print(l3)
+	print("  bake of the 256 x 256 shelter square (2 m cells) with one wall: %.1f ms" % m.get_shelter_bake_time())
+	m.clear_shelter()
+	m.rebake_shelter()
+
+	# Gust patches: the speed's spread at 2 m and how fast it decorrelates along a line.
+	m.gust_patch_strength = 0.35
+	var speeds := PackedFloat32Array()
+	for i in 20000:
+		var w: Vector3 = m.get_wind_at(Vector3(i * 0.5, 0, 1000.0 + float(i % 7) * 31.0), 2.0)
+		speeds.append(Vector2(w.x, w.z).length())
+	var mean := _mean(speeds)
+	var l4 := "gust patches (size %.0f m, strength 0.35): speed at 2 m mean %.2f, spread %.2f of the mean; correlation at" % [m.gust_patch_size, mean, _std(speeds) / mean]
+	for lag in [1, 4, 8, 12, 24]:
+		var a := PackedFloat32Array()
+		var b := PackedFloat32Array()
+		for i in 5000:
+			var p := Vector3(i * 3.1, 0, 2000.0)
+			var w1: Vector3 = m.get_wind_at(p, 2.0)
+			var w2: Vector3 = m.get_wind_at(p + Vector3(lag, 0, 0), 2.0)
+			a.append(Vector2(w1.x, w1.z).length())
+			b.append(Vector2(w2.x, w2.z).length())
+		l4 += " %d m %.2f," % [lag, _corr(a, b)]
+	print(l4)
+
+	# The shader code against get_wind_at(), with gusts, patches and a wall.
+	m.gust_intensity = 1.0
+	m.add_shelter_box(AABB(Vector3(-2, 0, -60), Vector3(4, 10, 120)))
+	m.rebake_shelter()
+	await get_tree().physics_frame
+	var vp := SubViewport.new()
+	vp.size = Vector2i(32, 32)
+	vp.use_hdr_2d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	vp.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(vp)
+	var rect := ColorRect.new()
+	rect.size = Vector2(32, 32)
+	var sm := ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = "shader_type canvas_item;\n" + m.get_wind_shader_code() + """
+void fragment() {
+	vec3 wp = vec3(mix(-40.0, 280.0, UV.x), 0.0, mix(-40.0, 40.0, UV.y));
+	COLOR = vec4(weather_wind(wp, 2.0) * 0.05 + 0.5, 1.0);
+}
+"""
+	sm.shader = sh
+	rect.material = sm
+	vp.add_child(rect)
+	get_tree().paused = true
+	for i in 3:
+		await RenderingServer.frame_post_draw
+	var img := vp.get_texture().get_image()
+	var worst := 0.0
+	var mean_err := 0.0
+	var cnt := 0
+	for y in range(2, 32, 6):
+		for x in range(2, 32, 6):
+			var u := (x + 0.5) / 32.0
+			var v := (y + 0.5) / 32.0
+			var wp := Vector3(lerp(-40.0, 280.0, u), 0.0, lerp(-40.0, 40.0, v))
+			var cpu: Vector3 = m.get_wind_at(wp, 2.0)
+			var c := img.get_pixel(x, y)
+			var e := ((Vector3(c.r, c.g, c.b) - Vector3(0.5, 0.5, 0.5)) / 0.05).distance_to(cpu)
+			worst = max(worst, e)
+			mean_err += e
+			cnt += 1
+	get_tree().paused = false
+	print("shader code against get_wind_at() at %d points (2 m, gusts, patches, a wall): mean difference %.3f m/s, worst %.3f m/s" % [cnt, mean_err / cnt, worst])
+	vp.queue_free()
+	m.queue_free()
+	await get_tree().physics_frame
+
+
+func _corr(a: PackedFloat32Array, b: PackedFloat32Array) -> float:
+	var ma := _mean(a)
+	var mb := _mean(b)
+	var sab := 0.0
+	var saa := 0.0
+	var sbb := 0.0
+	for i in a.size():
+		sab += (a[i] - ma) * (b[i] - mb)
+		saa += (a[i] - ma) * (a[i] - ma)
+		sbb += (b[i] - mb) * (b[i] - mb)
+	return sab / sqrt(max(saa * sbb, 1e-12))
 
 
 func _mean(a: PackedFloat32Array) -> float:
@@ -491,6 +623,7 @@ func _build_street() -> void:
 # The cloud layer over open ground: a WeatherSkyMaterial sky, cloud shadows on the sun.
 func _build_clouds() -> void:
 	var sky_mat = ClassDB.instantiate("WeatherSkyMaterial")
+	sky_mat.cloud_reprojection = reprojection
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.process_mode = Sky.PROCESS_MODE_REALTIME
@@ -527,6 +660,7 @@ func _build_clouds() -> void:
 		cam.position = Vector3(0, 60, 0)
 		cam.look_at_from_position(cam.position, Vector3(0, 160, -1000), Vector3.UP)
 	add_child(cam)
+	pan_cam = cam
 	cam.make_current()
 
 	weather = ClassDB.instantiate("WeatherMap3D")
@@ -678,6 +812,8 @@ func _process(_delta: float) -> void:
 	if test or env == null:
 		return
 	n += 1
+	if pan != 0.0 and pan_cam:
+		pan_cam.rotate_y(deg_to_rad(pan) * _delta)
 	if pt_from > 0 and n == pt_from:
 		env.pathtracing_enabled = not raster
 	if out != "" and n >= frames:

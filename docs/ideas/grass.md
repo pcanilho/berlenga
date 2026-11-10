@@ -119,6 +119,53 @@ Stages, one PR each: (1) generation, blades, LOD, wind, raster; (2) trample fiel
 (3) path tracing tuning plus a bench scene (`--grass`); (4) Mega Geometry when the PC is back.
 GPU timings and the PT/raster crops need the PC; the cloud can build and run Lavapipe checks.
 
+## What we built (stage 2.1)
+
+`GrassField3D` in `modules/vegetation` (next to placement, which shares the rules), not a new
+module. Two changes from the plan above, both measured:
+
+- **Blades are generated on the CPU, per tile.** A tile of 8 m at 60 blades/m2 builds in about
+  0.25 ms, and tiles are rebuilt only when the camera crosses into new ones (12 a frame at
+  most), so a GPU pass buys nothing yet and the CPU path keeps every blade visible to the path
+  tracer through the normal MultiMesh capture. The GPU fill (gap 1 made it visible to the path
+  tracer) is the route if far denser fields need it.
+- **Quadratic, not cubic, Bezier**: with four segments a quadratic already bends smoothly, and
+  its length can be kept exactly by Jahrmann and Wimmer's correction, so blades do not stretch
+  in strong wind.
+
+What it does:
+
+- Blades on a jittered world grid seeded by position hash, grouped into clumps
+  (`clump_size`) that share height, facing, lean and dryness, as in Ghost of Tsushima. The same
+  ground always grows the same blades.
+- Rules from a `PlantSpecies` over a `TerrainDataMap3D` (slope, wetness, water depth, distance
+  to water), the same rules as placement. No blades under water by default.
+- LOD by rank: at 25, 50 and 75% of `radius` a tile keeps 1/2, 1/4 and 1/8 of its blades (the
+  blades with the lowest rank, so thinning never reshuffles) and widens the kept ones by
+  1/sqrt(keep) so coverage holds.
+- Wind from `WeatherMap3D` (`weather_wind`) when a weather map is present, else
+  `fallback_wind` with travelling gusts; a per-blade flutter on top. One wind for grass, cloth,
+  hair and water.
+- Shading: base to tip gradient, some dry tips (`dryness`), darker roots, back lighting, and the
+  Lagarde wetness of gap 5 from the weather map (porosity 0.25: blades are waxy).
+
+## Results (stage 2.1)
+
+Bench `docs/bench/grass --test` (rolling hills, a pond, radius 40 m, tiles 8 m): 83,408 blades
+in 97 tiles; near density 60/m2 within range, the far ring thinned by LOD, no blade under
+water, the same field on a second build, and a camera move of one tile rebuilt 58 tiles in
+14 ms (spread over frames by `max_tiles_per_frame`).
+
+Raster and path traced frames of the field match at 100% crop (mean difference 10 of 255,
+mostly the path traced soft shadows under the blades and the wind pose at capture); path
+tracing keeps every blade, the dry tips and the clumps. Media: grass-field.jpg (raster and path
+traced), grass-wind.gif (raster, gusts travelling downwind).
+
+Cost: CPU build as above, nothing per frame on the CPU except the tile check; one MultiMesh
+draw per tile. GPU timings and the path traced cost on hardware wait for the PC.
+
+Next: trample field (2.2), then path tracing tuning (2.3).
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

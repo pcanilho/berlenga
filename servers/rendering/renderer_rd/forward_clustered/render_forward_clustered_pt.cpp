@@ -875,8 +875,16 @@ void RenderForwardClusteredPT::_record_rt_captures(const RenderDataRD *p_render_
 	// The instance data index of request i is i: it selects the request's draw parameters in the capture shader.
 	RenderList &capture_list = render_list[RENDER_LIST_SECONDARY];
 	capture_list.clear();
+	// _fill_instance_data copies flags_cache, which only the raster list fill refreshes. With path tracing the
+	// opaque raster list skips most instances, so the flags a capture's vertex() reads are taken from base_flags:
+	// trail records per instance (particle trails, MultiMesh instance bones), particles, non-uniform scale.
+	const uint32_t capture_flag_bits = (uint32_t(INSTANCE_DATA_FLAGS_PARTICLE_TRAIL_MASK) << INSTANCE_DATA_FLAGS_PARTICLE_TRAIL_SHIFT) | INSTANCE_DATA_FLAG_PARTICLES | INSTANCE_DATA_FLAGS_NON_UNIFORM_SCALE;
 	for (const RTCaptureRequest &request : rt_capture_requests) {
-		capture_list.add_element(const_cast<GeometryInstanceSurfaceDataCache *>(static_cast<const GeometryInstanceSurfaceDataCache *>(request.surf)));
+		GeometryInstanceSurfaceDataCache *surf = const_cast<GeometryInstanceSurfaceDataCache *>(static_cast<const GeometryInstanceSurfaceDataCache *>(request.surf));
+		GeometryInstanceForwardClustered *owner = surf->owner;
+		const uint32_t wanted = (owner->base_flags & capture_flag_bits) | (owner->non_uniform_scale ? uint32_t(INSTANCE_DATA_FLAGS_NON_UNIFORM_SCALE) : 0u);
+		owner->flags_cache = (owner->flags_cache & ~capture_flag_bits) | wanted;
+		capture_list.add_element(surf);
 	}
 	_fill_instance_data(RENDER_LIST_SECONDARY);
 	RID render_pass_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_SECONDARY, p_render_data, RID(), p_samplers, p_uniform_buffer_index);

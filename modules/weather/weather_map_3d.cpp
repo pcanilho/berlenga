@@ -40,6 +40,8 @@
 #include "core/templates/hash_set.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
+#include "scene/3d/visual_instance_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/sky_material.h"
 #include "scene/resources/3d/world_3d.h"
@@ -131,6 +133,51 @@ Vector3 WeatherMap3D::_gust_at(Vector3 p_position, Vector2 p_mean) const {
 	const Vector2 across(-along.y, along.x);
 	const Vector2 h = (along * g[0] + across * g[1]) * sigma;
 	return Vector3(h.x, g[2] * sigma, h.y);
+}
+
+// Gust patches: faster and slower blobs of air of about gust_patch_size carried across the ground, as the
+// coherent sweeps that make honami over crops (Inoue 1955; Finnigan 2000) and cat's paws on water. They
+// travel at about 1.8 times the wind at the top of a crop (Raupach, Finnigan and Brunet 1996).
+// They belong to the air near the ground and fade out above twice their size, where the Kaimal gusts carry
+// the turbulence alone.
+float WeatherMap3D::_patch_at(Vector2 p_xz, float p_height) const {
+	const float fade = 1.0f - Math::smoothstep(0.5f * gust_patch_size, 2.0f * gust_patch_size, p_height);
+	if (gust_patch_strength <= 0.0f || fade <= 0.0f) {
+		return 1.0f;
+	}
+	const float n = WeatherPatches::noise((p_xz - patch_drift) / gust_patch_size);
+	return MAX(1.0f + fade * gust_patch_strength * (n - 0.5f) / WeatherPatches::NOISE_STD, 0.05f);
+}
+
+void WeatherMap3D::_bake_shelter() {
+	shelter.ground_height = ground_height;
+	LocalVector<AABB> extra;
+	if (shelter_enabled && is_inside_tree()) {
+		const Vector<Node *> nodes = get_tree()->get_nodes_in_group(SNAME("weather_shelter"));
+		for (Node *node : nodes) {
+			VisualInstance3D *vi = Object::cast_to<VisualInstance3D>(node);
+			if (vi != nullptr && vi->is_visible_in_tree()) {
+				extra.push_back(vi->get_global_transform().xform(vi->get_aabb()));
+			}
+		}
+	}
+	const Vector3 c = _follow_position();
+	if (shelter_enabled) {
+		shelter.bake(Vector2(c.x, c.z), cur_wind_direction, extra);
+	} else {
+		// No shelter: an empty square, so shaders still find the texture.
+		Vector<WeatherShelter::Canopy> keep_c = shelter.canopies;
+		Vector<WeatherShelter::Obstacle> keep_o = shelter.obstacles;
+		Ref<Image> keep_i = shelter.canopy_image;
+		shelter.canopies.clear();
+		shelter.obstacles.clear();
+		shelter.canopy_image.unref();
+		shelter.bake(Vector2(c.x, c.z), cur_wind_direction, LocalVector<AABB>());
+		shelter.canopies = keep_c;
+		shelter.obstacles = keep_o;
+		shelter.canopy_image = keep_i;
+	}
+	_publish_globals();
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -398,6 +445,14 @@ void WeatherMap3D::_advance(double p_weather_dt, double p_real_dt) {
 		}
 	}
 
+	// Gust patches ride the wind near the ground (1 m), wrapped to their noise's period.
+	{
+		const float uc = 1.8f * WeatherShelter::open_profile(1.0f, roughness_length) * cur_wind_speed;
+		patch_drift += cur_wind_direction * uc * float(p_real_dt);
+		const float period = WeatherPatches::PERIOD * gust_patch_size;
+		patch_drift = Vector2(Math::fposmod(patch_drift.x, period), Math::fposmod(patch_drift.y, period));
+	}
+
 	// Gust phases advance in real time: turbulence is not sped up with the weather. The pattern moves with
 	// the base wind (frozen turbulence), each wave at k_along U.
 	for (int i = 0; i < GUST_COUNT; i++) {
@@ -503,6 +558,15 @@ void WeatherMap3D::_publish_globals() {
 	_set_global("weather_map_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("weather_wind_info", Vector4(cur_wind_direction.x, cur_wind_direction.y, gust_sigma_scale, z0), RSE::GLOBAL_VAR_TYPE_VEC4);
 	_set_global("weather_ground_height", ground_height, RSE::GLOBAL_VAR_TYPE_FLOAT);
+	if (shelter.texture.is_valid()) {
+		if (!shelter_global_added) {
+			_set_global("weather_shelter_map", shelter.texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+			shelter_global_added = true;
+		}
+		const Rect2 sr = shelter_enabled ? shelter.rect() : Rect2();
+		_set_global("weather_shelter_rect", Vector4(sr.position.x, sr.position.y, sr.size.x, sr.size.y), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
+	_set_global("weather_patch_info", Vector4(patch_drift.x, patch_drift.y, 1.0f / gust_patch_size, gust_patch_strength / WeatherPatches::NOISE_STD), RSE::GLOBAL_VAR_TYPE_VEC4);
 	globals_added = true;
 }
 
@@ -522,6 +586,7 @@ void WeatherMap3D::_notification(int p_what) {
 				_follow(_follow_position());
 				_ease_base(0.0);
 				_update_cells(0.0);
+				_bake_shelter();
 				_upload();
 				_push_sky();
 				update_cloud_shadow();
@@ -542,6 +607,12 @@ void WeatherMap3D::_notification(int p_what) {
 			update_accum += wdt;
 			const double period = time_scale / MAX(update_rate, 0.01f);
 			_follow(_follow_position());
+			{
+				const Vector3 c = _follow_position();
+				if (shelter.needs_bake(Vector2(c.x, c.z), cur_wind_direction)) {
+					_bake_shelter();
+				}
+			}
 			// Cloud shadows bake in the background; between bakes they slide with the clouds.
 			shadow_timer += dt;
 			if (shadow_task != WorkerThreadPool::INVALID_TASK_ID && WorkerThreadPool::get_singleton()->is_group_task_completed(shadow_task)) {
@@ -580,11 +651,29 @@ Vector3 WeatherMap3D::get_wind_at(Vector3 p_position, float p_height_above_groun
 	const float z0 = MAX(roughness_length, 1e-5f);
 	float h = p_height_above_ground >= 0.0f ? p_height_above_ground : p_position.y - ground_height;
 	h = MAX(h, z0 * 1.5f);
-	// Mean wind on the log law, u(z) = u10 ln(z / z0) / ln(10 / z0).
+	// Mean wind on the log law, u(z) = u10 ln(z / z0) / ln(10 / z0), sheltered by canopies and obstacles and
+	// carried in gust patches. The turbulence under shelter drops more slowly than the mean (Finnigan 2000).
 	const Vector2 m10 = get_mean_wind_at(p_position);
-	const Vector2 m = m10 * (Math::log(h / z0) / Math::log(10.0f / z0));
-	const Vector3 gust = _gust_at(p_position, m10);
+	const Vector2 xz(p_position.x, p_position.z);
+	float f = 1.0f;
+	if (shelter_enabled) {
+		float cell[4];
+		shelter.sample(xz, cell);
+		f = WeatherShelter::factor(h, z0, cell);
+	}
+	const Vector2 m = m10 * (WeatherShelter::open_profile(h, z0) * f * _patch_at(xz, h));
+	const Vector3 gust = _gust_at(p_position, m10) * Math::sqrt(f);
 	return Vector3(m.x, 0.0f, m.y) + gust;
+}
+
+float WeatherMap3D::get_shelter_at(Vector3 p_position, float p_height_above_ground) const {
+	if (!shelter_enabled) {
+		return 1.0f;
+	}
+	const float h = p_height_above_ground >= 0.0f ? p_height_above_ground : p_position.y - ground_height;
+	float cell[4];
+	shelter.sample(Vector2(p_position.x, p_position.z), cell);
+	return WeatherShelter::factor(MAX(h, 0.0f), roughness_length, cell);
 }
 
 float WeatherMap3D::get_rain_at(Vector3 p_position) const {
@@ -686,6 +775,100 @@ void WeatherMap3D::set_roughness_length(float p_z0) {
 
 void WeatherMap3D::set_gust_intensity(float p_scale) {
 	gust_intensity = MAX(p_scale, 0.0f);
+}
+
+void WeatherMap3D::set_shelter_enabled(bool p_enabled) {
+	shelter_enabled = p_enabled;
+	shelter.dirty = true;
+}
+
+void WeatherMap3D::set_shelter_extent(float p_extent) {
+	shelter.extent = MAX(p_extent, 16.0f);
+	shelter.dirty = true;
+}
+
+void WeatherMap3D::set_shelter_resolution(int p_resolution) {
+	shelter.resolution = CLAMP(p_resolution, 16, 2048);
+	shelter.dirty = true;
+}
+
+void WeatherMap3D::set_canopy_map(const Ref<Texture2D> &p_map) {
+	canopy_map = p_map;
+	shelter.canopy_image = p_map.is_valid() ? p_map->get_image() : Ref<Image>();
+	if (shelter.canopy_image.is_valid() && shelter.canopy_image->is_compressed()) {
+		shelter.canopy_image = shelter.canopy_image->duplicate();
+		shelter.canopy_image->decompress();
+	}
+	shelter.dirty = true;
+}
+
+void WeatherMap3D::set_canopy_map_rect(Rect2 p_rect) {
+	shelter.canopy_rect = p_rect;
+	shelter.dirty = true;
+}
+
+void WeatherMap3D::set_canopy_map_max_height(float p_height) {
+	shelter.canopy_max_height = MAX(p_height, 0.0f);
+	shelter.dirty = true;
+}
+
+void WeatherMap3D::set_gust_patch_size(float p_size) {
+	gust_patch_size = MAX(p_size, 0.5f);
+}
+
+void WeatherMap3D::set_gust_patch_strength(float p_strength) {
+	gust_patch_strength = CLAMP(p_strength, 0.0f, 2.0f);
+}
+
+int WeatherMap3D::add_canopy(Vector2 p_center, float p_radius, float p_height, float p_density) {
+	WeatherShelter::Canopy c;
+	c.id = shelter.next_id++;
+	c.center = p_center;
+	c.radius = MAX(p_radius, 0.1f);
+	c.height = MAX(p_height, 0.0f);
+	c.density = MAX(p_density, 0.0f);
+	shelter.canopies.push_back(c);
+	shelter.dirty = true;
+	return c.id;
+}
+
+void WeatherMap3D::remove_canopy(int p_id) {
+	for (int i = 0; i < shelter.canopies.size(); i++) {
+		if (shelter.canopies[i].id == p_id) {
+			shelter.canopies.remove_at(i);
+			shelter.dirty = true;
+			return;
+		}
+	}
+}
+
+int WeatherMap3D::add_shelter_box(const AABB &p_box) {
+	WeatherShelter::Obstacle o;
+	o.id = shelter.next_id++;
+	o.box = p_box.abs();
+	shelter.obstacles.push_back(o);
+	shelter.dirty = true;
+	return o.id;
+}
+
+void WeatherMap3D::remove_shelter_box(int p_id) {
+	for (int i = 0; i < shelter.obstacles.size(); i++) {
+		if (shelter.obstacles[i].id == p_id) {
+			shelter.obstacles.remove_at(i);
+			shelter.dirty = true;
+			return;
+		}
+	}
+}
+
+void WeatherMap3D::clear_shelter() {
+	shelter.canopies.clear();
+	shelter.obstacles.clear();
+	shelter.dirty = true;
+}
+
+void WeatherMap3D::rebake_shelter() {
+	_bake_shelter();
 }
 
 void WeatherMap3D::set_cloud_cover(float p_cover) {
@@ -994,6 +1177,120 @@ void WeatherMap3D::_push_sky() {
 	}
 }
 
+// The wind as get_wind_at() computes it, for shaders: the global uniforms, then weather_wind(world position,
+// height above ground). Same numbers, same noise bits.
+String WeatherMap3D::get_wind_shader_code() {
+	String c;
+	c += "// Wind from WeatherMap3D (WeatherMap3D.get_wind_shader_code()): weather_wind(world_pos, height_above_ground).\n";
+	c += "global uniform sampler2D weather_wind_map;\n";
+	c += "global uniform sampler2D weather_gusts;\n";
+	c += "global uniform sampler2D weather_shelter_map;\n";
+	c += "global uniform vec4 weather_map_rect;\n";
+	c += "global uniform vec4 weather_wind_info;\n";
+	c += "global uniform vec4 weather_shelter_rect;\n";
+	c += "global uniform vec4 weather_patch_info;\n";
+	c += "\n";
+	c += "float weather_open_profile(float z, float z0) {\n";
+	c += "	return log(max(z, 1.5 * z0) / z0) / log(10.0 / z0);\n";
+	c += "}\n\n";
+	c += "float weather_shelter_factor(float z, float z0, vec4 c) {\n";
+	c += "	z = max(z, 0.01);\n";
+	c += "	float f = 1.0;\n";
+	c += "	if (c.x > 0.05 && c.y > 0.01) {\n";
+	c += "		float zb = max(60.0, 4.0 * c.x);\n";
+	c += "		if (z < zb) {\n";
+	c += "			float d = 0.7 * c.x;\n";
+	c += "			float z0c = 0.1 * c.x;\n";
+	c += "			float ub = weather_open_profile(zb, z0);\n";
+	c += "			float span = log((zb - d) / z0c);\n";
+	c += "			float u = z >= c.x ? ub * log((z - d) / z0c) / span : ub * log((c.x - d) / z0c) / span * exp(c.y * (z / c.x - 1.0));\n";
+	c += "			f = clamp(u / max(weather_open_profile(z, z0), 1e-4), 0.0, 1.0);\n";
+	c += "		}\n";
+	c += "	}\n";
+	c += "	if (c.z < 1.0 && c.w > 0.05) {\n";
+	c += "		f *= mix(c.z, 1.0, smoothstep(c.w, 2.0 * c.w, z));\n";
+	c += "	}\n";
+	c += "	return clamp(f, 0.0, 1.0);\n";
+	c += "}\n\n";
+	c += "float weather_patch_hash(int x, int y) {\n";
+	c += vformat("	uint h = uint(x & %d) * 1597334677u ^ uint(y & %d) * 3812015801u;\n", WeatherPatches::PERIOD - 1, WeatherPatches::PERIOD - 1);
+	c += "	h ^= h >> 16u;\n";
+	c += "	h *= 2146121005u;\n";
+	c += "	h ^= h >> 15u;\n";
+	c += "	h *= 2221713035u;\n";
+	c += "	h ^= h >> 16u;\n";
+	c += "	return float(h >> 8u) * (1.0 / 16777216.0);\n";
+	c += "}\n\n";
+	c += "float weather_patch_value(vec2 p) {\n";
+	c += "	vec2 f = floor(p);\n";
+	c += "	ivec2 i = ivec2(f);\n";
+	c += "	vec2 t = p - f;\n";
+	c += "	vec2 u = t * t * (3.0 - 2.0 * t);\n";
+	c += "	float a = weather_patch_hash(i.x, i.y);\n";
+	c += "	float b = weather_patch_hash(i.x + 1, i.y);\n";
+	c += "	float cc = weather_patch_hash(i.x, i.y + 1);\n";
+	c += "	float d = weather_patch_hash(i.x + 1, i.y + 1);\n";
+	c += "	return mix(mix(a, b, u.x), mix(cc, d, u.x), u.y);\n";
+	c += "}\n\n";
+	c += "// Gust patches: 1 is the mean wind.\n";
+	c += "float weather_patch(vec2 xz, float z) {\n";
+	c += "	float fade = 1.0 - smoothstep(0.5 / weather_patch_info.z, 2.0 / weather_patch_info.z, z);\n";
+	c += "	if (weather_patch_info.w <= 0.0 || fade <= 0.0) {\n";
+	c += "		return 1.0;\n";
+	c += "	}\n";
+	c += "	vec2 q = (xz - weather_patch_info.xy) * weather_patch_info.z;\n";
+	c += "	float n = 0.65 * weather_patch_value(q) + 0.35 * weather_patch_value(q * 2.0 + vec2(17.0));\n";
+	c += "	return max(1.0 + fade * weather_patch_info.w * (n - 0.5), 0.05);\n";
+	c += "}\n\n";
+	c += "vec3 weather_gust(vec3 wp, vec2 mean10) {\n";
+	c += "	float speed = length(mean10);\n";
+	c += "	if (speed < 1e-3 || weather_wind_info.z <= 0.0) {\n";
+	c += "		return vec3(0.0);\n";
+	c += "	}\n";
+	c += "	float sigma = weather_wind_info.z * speed;\n";
+	c += "	vec2 ea = weather_wind_info.xy;\n";
+	c += "	vec2 ec = vec2(-ea.y, ea.x);\n";
+	c += "	float a = dot(wp.xz, ea);\n";
+	c += "	float cr = dot(wp.xz, ec);\n";
+	c += "	vec3 g = vec3(0.0);\n";
+	c += vformat("	for (int i = 0; i < %d; i++) {\n", GUST_COUNT);
+	c += "		vec4 w = texelFetch(weather_gusts, ivec2(i, 0), 0);\n";
+	c += "		float v = w.z * cos(w.x * a + w.y * cr + w.w);\n";
+	c += vformat("		if (i < %d) {\n", GUSTS_PER_AXIS);
+	c += "			g.x += v;\n";
+	c += vformat("		} else if (i < %d) {\n", 2 * GUSTS_PER_AXIS);
+	c += "			g.y += v;\n";
+	c += "		} else {\n";
+	c += "			g.z += v;\n";
+	c += "		}\n";
+	c += "	}\n";
+	c += "	vec2 along = mean10 / speed;\n";
+	c += "	vec2 across = vec2(-along.y, along.x);\n";
+	c += "	vec2 hz = (along * g.x + across * g.y) * sigma;\n";
+	c += "	return vec3(hz.x, g.z * sigma, hz.y);\n";
+	c += "}\n\n";
+	c += "// Air velocity (m/s) at a world position and a height above the ground.\n";
+	c += "vec3 weather_wind(vec3 wp, float height) {\n";
+	c += "	if (weather_map_rect.z <= 0.0 || weather_map_rect.w <= 0.0) {\n";
+	c += "		return vec3(0.0); // no WeatherMap3D: no wind\n";
+	c += "	}\n";
+	c += "	float z0 = max(weather_wind_info.w, 1e-5);\n";
+	c += "	vec2 m10 = textureLod(weather_wind_map, (wp.xz - weather_map_rect.xy) / weather_map_rect.zw, 0.0).rg;\n";
+	c += "	vec4 sh = vec4(0.0, 0.0, 1.0, 0.0);\n";
+	c += "	if (weather_shelter_rect.z > 0.0) {\n";
+	c += "		vec2 su = (wp.xz - weather_shelter_rect.xy) / weather_shelter_rect.zw;\n";
+	c += "		if (su.x >= 0.0 && su.y >= 0.0 && su.x <= 1.0 && su.y <= 1.0) {\n";
+	c += "			sh = textureLod(weather_shelter_map, su, 0.0);\n";
+	c += "		}\n";
+	c += "	}\n";
+	c += "	float z = max(height, 1.5 * z0);\n";
+	c += "	float f = weather_shelter_factor(z, z0, sh);\n";
+	c += "	vec2 m = m10 * (weather_open_profile(z, z0) * f * weather_patch(wp.xz, z));\n";
+	c += "	return vec3(m.x, 0.0, m.y) + weather_gust(wp, m10) * sqrt(f);\n";
+	c += "}\n";
+	return c;
+}
+
 void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_extent", "extent"), &WeatherMap3D::set_extent);
 	ClassDB::bind_method(D_METHOD("get_extent"), &WeatherMap3D::get_extent);
@@ -1051,6 +1348,33 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear_storms"), &WeatherMap3D::clear_storms);
 	ClassDB::bind_method(D_METHOD("get_storm_count"), &WeatherMap3D::get_storm_count);
 	ClassDB::bind_method(D_METHOD("get_wind_at", "position", "height_above_ground"), &WeatherMap3D::get_wind_at, DEFVAL(-1.0f));
+	ClassDB::bind_method(D_METHOD("set_shelter_enabled", "enabled"), &WeatherMap3D::set_shelter_enabled);
+	ClassDB::bind_method(D_METHOD("get_shelter_enabled"), &WeatherMap3D::get_shelter_enabled);
+	ClassDB::bind_method(D_METHOD("set_shelter_extent", "extent"), &WeatherMap3D::set_shelter_extent);
+	ClassDB::bind_method(D_METHOD("get_shelter_extent"), &WeatherMap3D::get_shelter_extent);
+	ClassDB::bind_method(D_METHOD("set_shelter_resolution", "resolution"), &WeatherMap3D::set_shelter_resolution);
+	ClassDB::bind_method(D_METHOD("get_shelter_resolution"), &WeatherMap3D::get_shelter_resolution);
+	ClassDB::bind_method(D_METHOD("set_canopy_map", "map"), &WeatherMap3D::set_canopy_map);
+	ClassDB::bind_method(D_METHOD("get_canopy_map"), &WeatherMap3D::get_canopy_map);
+	ClassDB::bind_method(D_METHOD("set_canopy_map_rect", "rect"), &WeatherMap3D::set_canopy_map_rect);
+	ClassDB::bind_method(D_METHOD("get_canopy_map_rect"), &WeatherMap3D::get_canopy_map_rect);
+	ClassDB::bind_method(D_METHOD("set_canopy_map_max_height", "height"), &WeatherMap3D::set_canopy_map_max_height);
+	ClassDB::bind_method(D_METHOD("get_canopy_map_max_height"), &WeatherMap3D::get_canopy_map_max_height);
+	ClassDB::bind_method(D_METHOD("set_gust_patch_size", "size"), &WeatherMap3D::set_gust_patch_size);
+	ClassDB::bind_method(D_METHOD("get_gust_patch_size"), &WeatherMap3D::get_gust_patch_size);
+	ClassDB::bind_method(D_METHOD("set_gust_patch_strength", "strength"), &WeatherMap3D::set_gust_patch_strength);
+	ClassDB::bind_method(D_METHOD("get_gust_patch_strength"), &WeatherMap3D::get_gust_patch_strength);
+	ClassDB::bind_method(D_METHOD("add_canopy", "center", "radius", "height", "density"), &WeatherMap3D::add_canopy, DEFVAL(2.5f));
+	ClassDB::bind_method(D_METHOD("remove_canopy", "id"), &WeatherMap3D::remove_canopy);
+	ClassDB::bind_method(D_METHOD("add_shelter_box", "box"), &WeatherMap3D::add_shelter_box);
+	ClassDB::bind_method(D_METHOD("remove_shelter_box", "id"), &WeatherMap3D::remove_shelter_box);
+	ClassDB::bind_method(D_METHOD("clear_shelter"), &WeatherMap3D::clear_shelter);
+	ClassDB::bind_method(D_METHOD("rebake_shelter"), &WeatherMap3D::rebake_shelter);
+	ClassDB::bind_method(D_METHOD("get_shelter_bake_time"), &WeatherMap3D::get_shelter_bake_time);
+	ClassDB::bind_method(D_METHOD("get_shelter_at", "position", "height_above_ground"), &WeatherMap3D::get_shelter_at, DEFVAL(-1.0f));
+	ClassDB::bind_method(D_METHOD("get_shelter_texture"), &WeatherMap3D::get_shelter_texture);
+	ClassDB::bind_method(D_METHOD("get_shelter_rect"), &WeatherMap3D::get_shelter_rect);
+	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("get_wind_shader_code"), &WeatherMap3D::get_wind_shader_code);
 	ClassDB::bind_method(D_METHOD("get_mean_wind_at", "position"), &WeatherMap3D::get_mean_wind_at);
 	ClassDB::bind_method(D_METHOD("get_rain_at", "position"), &WeatherMap3D::get_rain_at);
 	ClassDB::bind_method(D_METHOD("get_cloud_cover_at", "position"), &WeatherMap3D::get_cloud_cover_at);
@@ -1097,6 +1421,15 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_direction"), "set_wind_direction", "get_wind_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness_length", PROPERTY_HINT_RANGE, "0.00001,3,0.00001,exp,suffix:m"), "set_roughness_length", "get_roughness_length");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gust_intensity", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_gust_intensity", "get_gust_intensity");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gust_patch_size", PROPERTY_HINT_RANGE, "0.5,50,0.1,or_greater,suffix:m"), "set_gust_patch_size", "get_gust_patch_size");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gust_patch_strength", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_gust_patch_strength", "get_gust_patch_strength");
+	ADD_GROUP("Shelter", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shelter_enabled"), "set_shelter_enabled", "get_shelter_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shelter_extent", PROPERTY_HINT_RANGE, "16,4096,1,or_greater,suffix:m"), "set_shelter_extent", "get_shelter_extent");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "shelter_resolution", PROPERTY_HINT_RANGE, "16,2048,1"), "set_shelter_resolution", "get_shelter_resolution");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "canopy_map", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_canopy_map", "get_canopy_map");
+	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "canopy_map_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_canopy_map_rect", "get_canopy_map_rect");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_map_max_height", PROPERTY_HINT_RANGE, "0,120,0.1,or_greater,suffix:m"), "set_canopy_map_max_height", "get_canopy_map_max_height");
 	ADD_GROUP("Clouds and Rain", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_cloud_cover", "get_cloud_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_type", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_cloud_type", "get_cloud_type");

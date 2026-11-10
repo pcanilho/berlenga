@@ -10,6 +10,7 @@ extends Node3D
 #   --view=up       from 2.5 m down, looking up at the surface: Snell's window and the mirror past it
 #   --view=river    from above, the rock standing out of the water (with --current)
 #   --view=surf     low along the beach, the shore waves rolling in and breaking (--node=shore_waves:true)
+#   --view=lip      low in the shallows, looking back at the plunging lips (--node=shore_waves:true)
 #   --view=sea      out to sea from 6 m up (with --node=wave_cascades:3 for swell under the chop)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
@@ -30,6 +31,8 @@ extends Node3D
 #   --dump-shader=path  write the water material's shader code to a file
 #   --shader-file=path  replace the water material's shader with this file (try a shader change without a rebuild)
 #   --perf          print the mean process and physics time per frame (after frame 60) and the cost of sample_height()
+#   --lip-debug     draw the breaking lips opaque red (to see their shape)
+#   --breakers      print the breaking lips' size and cost each frame (crest points, vertices, spray rate, CPU ms)
 #   --profile       print the surface height along x = 0, out to sea and up the beach, at the last frame
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
 #
@@ -62,6 +65,11 @@ var water: Node3D
 var sea_series := PackedFloat32Array()
 var profile := false
 var perf := false
+var breakers := false
+var lip_debug := false
+var hide_lips := false
+var breaker_ms := 0.0
+var breaker_peak := {}
 var perf_proc := 0.0
 var perf_phys := 0.0
 var perf_n := 0
@@ -86,6 +94,9 @@ func _ready() -> void:
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
 		elif a == "--profile": profile = true
 		elif a == "--perf": perf = true
+		elif a == "--breakers": breakers = true
+		elif a == "--lip-debug": lip_debug = true
+		elif a == "--hide-lips": hide_lips = true
 		elif a.begins_with("--cam-dy="): cam_dy = float(a.substr(9))
 		elif a.begins_with("--dive="): dive = float(a.substr(7))
 		elif a.begins_with("--water="):
@@ -211,6 +222,9 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(1.0, 16.0, -9.0), Vector3(1.0, 0.0, -9.01))
 		"surf":
 			cam.look_at_from_position(Vector3(10.0, 2.2, 9.0), Vector3(-2.0, -0.6, -6.0))
+		"lip":
+			# From the shallows, low, looking back at the breakers as they curl toward the camera.
+			cam.look_at_from_position(Vector3(-15.0, 0.6, 5.0), Vector3(-19.0, 0.0, 0.5))
 		"curl":
 			# Side on to the breakers, along their crests, where they plunge.
 			cam.look_at_from_position(Vector3(-10.0, 1.8, -1.0), Vector3(2.0, -0.2, -2.0))
@@ -296,6 +310,47 @@ func _process(_delta: float) -> void:
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
 	_tracers_step(1.0 / 30.0)
+	if hide_lips:
+		for c in water.get_children(true):
+			if c.name == "BreakerLips":
+				c.visible = false
+	if lip_debug:
+		for c in water.get_children(true):
+			if c.name == "BreakerLips":
+				var dm := StandardMaterial3D.new()
+				dm.albedo_color = Color(0.9, 0.15, 0.1)
+				dm.cull_mode = BaseMaterial3D.CULL_DISABLED
+				c.material_override = dm
+				if n == frames and c.mesh and c.mesh.get_surface_count() > 0:
+					var arr: Array = c.mesh.surface_get_arrays(0)
+					var vs: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+					var cols: PackedColorArray = arr[Mesh.ARRAY_COLOR]
+					# The ring (18 vertices) with the longest lip: outer sheet, then each point against the surface under it.
+					var best := 0
+					var best_len := 0.0
+					for r in range(0, vs.size() / 18):
+						var l := vs[r * 18].distance_to(vs[r * 18 + 8])
+						if l > best_len:
+							best_len = l
+							best = r
+					for j in 18:
+						var v: Vector3 = water.to_global(vs[best * 18 + j])
+						print("RING %d x=%.2f y=%.3f z=%.2f surf=%.3f white=%.2f" % [j, v.x, v.y, v.z, float(water.call("sample_height", v)), cols[best * 18 + j].r])
+					var v0: Vector3 = water.to_global(vs[best * 18])
+					var v8: Vector3 = water.to_global(vs[best * 18 + 8])
+					var d := Vector3(v8.x - v0.x, 0, v8.z - v0.z).normalized()
+					var line := "PROFILE"
+					for i in 25:
+						var q := v0 + d * (-1.2 + 0.1 * i)
+						line += " %.1f:%.3f" % [-1.2 + 0.1 * i, float(water.call("sample_height", q))]
+					print(line)
+	if breakers and water.has_method("get_breaker_stats"):
+		var bs: Dictionary = water.call("get_breaker_stats")
+		breaker_ms += float(bs["cpu_ms"])
+		if breaker_peak.is_empty() or int(bs["vertices"]) > int(breaker_peak["vertices"]):
+			breaker_peak = bs
+		if n == frames - 1:
+			print("BREAKERS mean cpu %.3f ms per tick; peak %s" % [breaker_ms / maxi(n, 1), str(breaker_peak)])
 	if perf and n > 60 and n < frames - 1:
 		perf_proc += Performance.get_monitor(Performance.TIME_PROCESS)
 		perf_phys += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)

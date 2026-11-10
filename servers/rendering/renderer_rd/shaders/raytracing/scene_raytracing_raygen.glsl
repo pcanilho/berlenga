@@ -1756,6 +1756,30 @@ void main() {
 		m.hair_tangent = dot(t, t) > 1e-12 ? normalize(t) : vec3(1.0, 0.0, 0.0);
 	}
 
+	// Wetness (BaseMaterial3D): Lagarde 2013, the same lines and inputs as the raster shader.
+	vec4 wetness = rt_material_wetness(mat);
+	if (wetness.z > 0.5) {
+		float wet = wetness.y;
+		if (wetness.w > 0.5) {
+			vec4 wrect = vec4(get_rt_param(RT_PARAM_WETNESS_RECT_X), get_rt_param(RT_PARAM_WETNESS_RECT_Y),
+					get_rt_param(RT_PARAM_WETNESS_RECT_W), get_rt_param(RT_PARAM_WETNESS_RECT_H));
+			if (wrect.z > 0.0) {
+				uint wmap = uint(get_rt_param(RT_PARAM_WETNESS_MAP));
+				vec2 wsize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), 0));
+				vec2 half_texel = 0.5 / max(wsize, vec2(1.0));
+				vec3 wpos = h.hit_pos + rt_origin.xyz;
+				vec2 wuv = clamp((wpos.xz - wrect.xy) / wrect.zw, half_texel, 1.0 - half_texel);
+				wet *= textureLod(sampler2D(bindless_textures[nonuniformEXT(wmap)], SAMPLER_LINEAR_CLAMP), wuv, 0.0).g;
+			} else {
+				wet = 0.0;
+			}
+		}
+		wet = clamp(wet, 0.0, 1.0) * smoothstep(-0.6, 0.2, h.geometry_normal.y);
+		float wet_factor = mix(1.0, 0.2, (1.0 - m.metalness) * wetness.x);
+		m.albedo *= mix(1.0, wet_factor, wet);
+		m.roughness *= mix(1.0, wet_factor, 0.5 * wet);
+	}
+
 	// Proximity/distance fade (BaseMaterial3D feature, mirrors raster).
 	if ((mat.flags & (RT_MAT_FLAG_PROXIMITY_FADE | RT_MAT_FLAG_DISTANCE_FADE)) != 0u) {
 		mat4 fade_view_mat = transpose(mat4(scene_data_block.data.view_matrix[0],

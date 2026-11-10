@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="Biome" inherits="Resource" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A list of [PlantSpecies] in priority order, placed by a [VegetationField3D].
+	</brief_description>
+	<description>
+		The species of one kind of landscape (a meadow, a conifer forest, a swamp). [VegetationField3D] places them in order: earlier species first, later ones keeping clear of their [member PlantSpecies.footprint], so list trees before bushes and bushes before ground cover.
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="species" type="PlantSpecies[]" setter="set_species" getter="get_species" default="[]">
+			The species, in the order they are placed.
+		</member>
+	</members>
+</class>

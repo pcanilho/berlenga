@@ -1928,6 +1928,14 @@ Variant MaterialStorage::global_shader_parameter_get(const StringName &p_name) c
 	return global_shader_uniforms.variables[p_name].value;
 }
 
+Variant MaterialStorage::global_shader_parameter_get_internal(const StringName &p_name) const {
+	const GlobalShaderUniforms::Variable *v = global_shader_uniforms.variables.getptr(p_name);
+	if (!v) {
+		return Variant();
+	}
+	return v->override.get_type() != Variant::NIL ? v->override : v->value;
+}
+
 RSE::GlobalShaderParameterType MaterialStorage::global_shader_parameter_get_type_internal(const StringName &p_name) const {
 	if (!global_shader_uniforms.variables.has(p_name)) {
 		return RSE::GLOBAL_VAR_TYPE_MAX;

@@ -198,6 +198,9 @@ public:
 	virtual void _multimesh_set_buffer(RID p_multimesh, const Vector<float> &p_buffer) override;
 	virtual RID _multimesh_get_command_buffer_rd_rid(RID p_multimesh) const override { return RID(); }
 	virtual RID _multimesh_get_buffer_rd_rid(RID p_multimesh) const override { return RID(); }
+	virtual void _multimesh_mark_buffer_rd_changed(RID p_multimesh) override {}
+	virtual void _multimesh_set_bones_per_instance(RID p_multimesh, int p_bones) override {}
+	virtual int _multimesh_get_bones_per_instance(RID p_multimesh) const override { return 1; }
 	virtual Vector<float> _multimesh_get_buffer(RID p_multimesh) const override;
 
 	virtual void _multimesh_set_visible_instances(RID p_multimesh, int p_visible) override {}

@@ -63,22 +63,25 @@ struct RTBaseMaterialState {
 	uint32_t hair_melanin : 1; // BaseMaterial3D::HAIR_COLOR_MELANIN.
 	uint32_t hair_direction : 2; // BaseMaterial3D::HairDirection.
 	uint32_t hair_cards : 1;
-	uint32_t unused : 1;
+	uint32_t wetness : 1;
+	// Second word.
+	uint32_t wetness_from_weather : 1; // BaseMaterial3D wetness_from_weather: wetness times the weather map's.
+	uint32_t unused : 31;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 
 	int64_t encode() const {
-		uint32_t packed;
+		uint64_t packed;
 		std::memcpy(&packed, this, sizeof(packed));
-		return packed;
+		return int64_t(packed);
 	}
 
 	static RTBaseMaterialState decode(int64_t p_packed) {
 		RTBaseMaterialState state;
-		const uint32_t packed = uint32_t(p_packed);
+		const uint64_t packed = uint64_t(p_packed);
 		std::memcpy(static_cast<void *>(&state), &packed, sizeof(packed));
 		return state;
 	}
 };
 
-static_assert(sizeof(RTBaseMaterialState) == sizeof(uint32_t), "RTBaseMaterialState must pack into 32 bits.");
+static_assert(sizeof(RTBaseMaterialState) == sizeof(uint64_t), "RTBaseMaterialState must pack into 64 bits.");

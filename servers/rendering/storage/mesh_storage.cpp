@@ -259,6 +259,18 @@ RID RendererMeshStorage::multimesh_get_buffer_rd_rid(RID p_multimesh) const {
 	return _multimesh_get_buffer_rd_rid(p_multimesh);
 }
 
+void RendererMeshStorage::multimesh_mark_buffer_rd_changed(RID p_multimesh) {
+	_multimesh_mark_buffer_rd_changed(p_multimesh);
+}
+
+void RendererMeshStorage::multimesh_set_bones_per_instance(RID p_multimesh, int p_bones) {
+	_multimesh_set_bones_per_instance(p_multimesh, p_bones);
+}
+
+int RendererMeshStorage::multimesh_get_bones_per_instance(RID p_multimesh) const {
+	return _multimesh_get_bones_per_instance(p_multimesh);
+}
+
 Vector<float> RendererMeshStorage::multimesh_get_buffer(RID p_multimesh) const {
 	return _multimesh_get_buffer(p_multimesh);
 }
