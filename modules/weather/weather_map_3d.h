@@ -53,7 +53,6 @@ public:
 	static constexpr int GUSTS_PER_AXIS = 8;
 	static constexpr int GUST_COUNT = GUSTS_PER_AXIS * 3;
 
-private:
 	struct Storm {
 		int id = 0;
 		Vector2 position; // world x, z (m)
@@ -65,6 +64,7 @@ private:
 		float age = 0.0f;
 	};
 
+private:
 	struct Gust {
 		Vector2 k; // wave vector in the wind frame (along, across), rad/m
 		float amplitude = 0.0f; // per unit sigma
@@ -380,6 +380,11 @@ public:
 	void remove_storm(int p_id);
 	void clear_storms();
 	int get_storm_count() const { return storms.size(); }
+	// The storm cells, and how far each has grown (0..1, its rise and decay over its lifetime).
+	const Vector<Storm> &get_storms() const { return storms; }
+	float get_storm_strength(const Storm &p_storm) const { return _storm_weight(p_storm); }
+	// The cloud layer as the sky draws it now.
+	WeatherClouds::State get_cloud_state() const { return _cloud_state(); }
 
 	// Air velocity at a world position (m/s), mean wind on the log law plus gusts.
 	// p_height_above_ground < 0 takes it from ground_height.
