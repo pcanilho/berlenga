@@ -3605,6 +3605,12 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.skin = rt_state.subsurface_skin;
 		mat.subsurface_texture.index = get_texture_idx("texture_subsurface_scattering");
 	}
+	if (rt_state.wetness) {
+		mat.subsurface.wetness = 1;
+		mat.subsurface.wetness_porosity = rt_unorm8(get_float("wetness_porosity", 0.5f));
+		mat.subsurface.wetness_amount = rt_unorm8(get_float("wetness_amount", 1.0f));
+		mat.subsurface.wetness_from_weather = rt_state.wetness_from_weather;
+	}
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
 	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
 	if (rt_state.transmission) {
@@ -7189,6 +7195,33 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/subsurface_scattering") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_SUBSURFACE : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/hair") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_HAIR : 0u));
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SSS_SCALE] = MAX(0.0f, (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/subsurface_scattering_scale"));
+		// Weather wetness for BaseMaterial3D Wetness: WeatherMap3D's global state map (green =
+		// wetness) and its rect, the same globals the raster shader reads. Width 0 = none.
+		{
+			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
+			static const StringName weather_state_map_name = "weather_state_map";
+			static const StringName weather_map_rect_name = "weather_map_rect";
+			const Variant rect_var = ms->global_shader_parameter_get_internal(weather_map_rect_name);
+			const Vector4 rect = rect_var.get_type() == Variant::VECTOR4 ? Vector4(rect_var) : Vector4();
+			RID state_tex;
+			const Variant tex_var = ms->global_shader_parameter_get_internal(weather_state_map_name);
+			if (tex_var.get_type() == Variant::RID) {
+				state_tex = tex_var;
+			} else if (tex_var.get_type() == Variant::OBJECT) {
+				// A Texture resource (servers do not see scene types).
+				Object *t = tex_var;
+				if (t) {
+					state_tex = t->call(SNAME("get_rid"));
+				}
+			}
+			RID state_rd = state_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(state_tex) : RID();
+			const bool has_weather = state_rd.is_valid() && rect.z > 0.0f && rect.w > 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_MAP] = has_weather ? float(bindless_block->add_texture(state_rd)) : 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_X] = rect.x;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_Y] = rect.y;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_W] = has_weather ? rect.z : 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_H] = has_weather ? rect.w : 0.0f;
+		}
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
 		// Water caustics (raytracing_caustics_inc.glsl): the slot written turns every frame; the
 		// shader centres the map's square on what the camera looked at.
