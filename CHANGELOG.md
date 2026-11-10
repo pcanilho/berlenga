@@ -6,6 +6,16 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-13a222ec (2026-11-10)
+
+### Added
+- PhysXHair3D `volume_enabled` (on), `volume_friction`, `volume_stiffness`: strands push and drag on each other through a density and velocity grid (Petrovic et al. 2005), so hair keeps its volume and moves as a mass instead of packing flat
+
+### Changed
+- README: cloud reprojection line.
+- README: Clouds section split out of Weather.
+- README: hair volume line and image.
+
 ## build-7eb6a91b (2026-11-10)
 
 ### Added
