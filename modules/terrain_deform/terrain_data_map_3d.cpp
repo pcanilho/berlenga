@@ -40,6 +40,7 @@
 #include "core/templates/hash_set.h"
 #include "core/templates/sort_array.h"
 #include "scene/resources/3d/world_3d.h"
+#include "scene/resources/mesh.h"
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -264,14 +265,38 @@ void TerrainDataMap3D::_sample_water(const LocalVector<float> &p_h, LocalVector<
 		}
 		if (w->has_method("get_water_level")) {
 			// Water surfaces (sea, lakes): a level plane at the node height plus water_level. Their
-			// waves (sample_height) are left out: a bake should not depend on the wave phase.
+			// waves (sample_height) are left out: a bake should not depend on the wave phase. A
+			// surface with an outline (PhysXWaterSurface3D.surface_mesh, a lake) is water only
+			// inside it: the cells in the outline's bounds ask is_wet (or sample_height); without
+			// one (the open sea) the plane covers the whole map.
 			float level = w->call("get_water_level");
 			Node3D *w3 = Object::cast_to<Node3D>(w);
-			if (w3 && w3->is_inside_tree()) {
-				level += w3->get_global_position().y;
+			const Transform3D xf = (w3 && w3->is_inside_tree()) ? w3->get_global_transform() : Transform3D();
+			level += xf.origin.y;
+			bool has_outline_property = false;
+			const Variant om = w->get("surface_mesh", &has_outline_property);
+			const Ref<Mesh> outline = has_outline_property ? Ref<Mesh>(om) : Ref<Mesh>();
+			if (outline.is_null()) {
+				for (int i = 0; i < n * n; i++) {
+					r_surface[i] = MAX(r_surface[i], level);
+				}
+				continue;
 			}
-			for (int i = 0; i < n * n; i++) {
-				r_surface[i] = MAX(r_surface[i], level);
+			const AABB box = xf.xform(outline->get_aabb());
+			const int x0 = MAX(int(Math::floor((box.position.x - rect.position.x) / cell)) - 1, 0);
+			const int x1 = MIN(int(Math::floor((box.position.x + box.size.x - rect.position.x) / cell)) + 1, n - 1);
+			const int z0 = MAX(int(Math::floor((box.position.z - rect.position.y) / cell)) - 1, 0);
+			const int z1 = MIN(int(Math::floor((box.position.z + box.size.z - rect.position.y) / cell)) + 1, n - 1);
+			const bool wet_query = w->has_method("is_wet");
+			for (int z = z0; z <= z1; z++) {
+				for (int x = x0; x <= x1; x++) {
+					const int i = z * n + x;
+					const Vector3 p(rect.position.x + (x + 0.5f) * cell, p_h[i], rect.position.y + (z + 0.5f) * cell);
+					const bool wet = wet_query ? bool(w->call("is_wet", p)) : Math::is_finite(float(w->call("sample_height", p)));
+					if (wet) {
+						r_surface[i] = MAX(r_surface[i], level);
+					}
+				}
 			}
 		} else if (w->has_method("sample_height")) {
 			// Rivers: surface height per point, -inf outside the channel. A river that lists its
