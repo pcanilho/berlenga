@@ -98,6 +98,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Caustic cascades** (`rendering/pathtracing/caustics_cascades`): sun caustics out to 256 m, near lines unchanged.
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 - **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
+- **Measured wave spreading** (`wave_spreading`, `swell`): Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.
 - **Finer water mesh up close** (`mesh_detail`).
 - **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).
 - **Wave groups** (`shore_wave_groups`): shore waves arrive in sets with their own Rayleigh heights, so each breaks at its own place.
@@ -113,7 +114,7 @@ Each feature that changes the look or the cost can be turned off with the settin
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
 - **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
-<details><summary>Images and clips: murky water, caustics, ocean, currents, live flow, white water, rivers, under water</summary>
+<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, currents, live flow, white water, rivers, under water</summary>
 
 ![The pool with clear and with murky water](docs/media/murky-water.jpg)
 
@@ -130,6 +131,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Open sea with one wave layer and with three](docs/media/ocean-swell.jpg)
 
 *Ocean swell: one layer repeats the same foam patches; three layers add long swell.*
+
+![Sea surface height from above, 160 m at 14 m/s, four spreading models](docs/media/ocean-spreading.jpg)
+
+*Wave spreading: cos² gave long parallel crests; the measured spreading breaks them up, and swell adds long crests back.*
 
 ![Waves breaking on a beach, raster](docs/media/shore-waves.gif)
 
@@ -245,6 +250,8 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Coarse-to-fine erosion** (`coarse_levels`, `refine_steps`): about 3.7 times faster at 4 m cells, with the same relief.
 - **Tile erosion** (`tile_erosion_enabled`): droplet hydraulic and thermal erosion in seamless overlapping tiles.
 - **Material detail** (`get_detail_shader_code()`): erosion detail below the vertex spacing in the terrain material; path tracing keeps it.
+- **Rock layers and waterfalls** (`strata_enabled`, `get_waterfalls()`): hard and soft bands that rivers cut into caprock waterfalls.
+- **Rivers fed by rain and snowmelt** (`climate_recipe`, `river_month`): a monthly water balance from the climate sets each river's flow, month by month.
 - **Geology maps** (`terrain_geology()` in shaders): soil, bare rock and scree from the erosion run.
 - **River network** (`build_river_paths()`): rivers with widths and discharges, made into joined `PhysXRiver3D` paths.
 - **Coast and lakes** (`ocean_edges` or `sea_map`; `lake_count`, `lakes`; `build_water()`): sea with a Dean-profile seabed and beaches; lakes behind natural dams; builds the sea and lake surfaces, and rivers end in them.
@@ -254,7 +261,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: mountain generation, coarse to fine, crests, tile erosion, material detail, geology, coast, climate, ground material, footprints, terrain data maps</summary>
+<details><summary>Images: mountain generation, coarse to fine, crests, tile erosion, material detail, waterfalls, river flow by month, geology, coast, climate, ground material, footprints, terrain data maps</summary>
 
 ![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
 
@@ -284,6 +291,14 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Material detail: rills finer than the 4 m mesh, drawn by the material.*
 
+![Rivers and waterfalls on a layered range, and river long profiles before and after](docs/media/terrain-waterfalls.jpg)
+
+*Rock layers: rivers step down over the hard bands, leaving waterfalls up to 30 m.*
+
+![River flow by month in three climates, and snow lying by height](docs/media/terrain-runoff.jpg)
+
+*Rivers by month: a spring snowmelt flood in cold mountains, winter or summer high water in mild climates.*
+
 ![Geology map with soil, rock, scree and rivers, and the range path traced and coloured from it](docs/media/terrain-geology.jpg)
 
 *Geology: soil green, bare rock grey, scree ochre, rivers blue; the shader colours the range from the map.*
@@ -300,7 +315,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ![A generated range with its ground material: rock, scree, soil and a sand beach](docs/media/terrain-ground.jpg)
 
-*Ground material: bare rock on the ridges, soil and green in the valleys, a sand beach at the coast, all from the generator's geology.*
+*Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
 ![Footprints and tracks in dry sand, damp sand, soil, mud and leaf litter, raster and path traced](docs/media/ground-footprints.jpg)
 
@@ -416,11 +431,12 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
 - **Snowstorms** (`SnowFall3D.haze_enabled`, `turbulence`): falling and blowing snow haze the air through the weather map (Pomeroy-Male suspension, 118 m visibility at 20 m/s); flakes ride turbulent eddies.
 - **Shelter** (`SnowCover3D.canopy_enabled`, `shelter_collision_mask`): ground under roofs and overhangs stays bare; tree crowns hold snow and unload it later.
+- **Wind moves lying snow** (`SnowCover3D.wind_transport_enabled`): windward shoulders and crests are scoured and the lee fills with wind-packed snow.
 - **Melt-freeze crusts** (`SnowCover3D.crust_enabled`): a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.
 - **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.
 
-<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle, shelter, crust</summary>
+<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle, shelter, crust, wind transport</summary>
 
 ![Snow on a mountain, raster and path traced](docs/media/snow-mountain.jpg)
 
@@ -473,6 +489,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Footprints in snow without a crust, then through a broken crust, raster and path traced](docs/media/snow-crust.jpg)
 
 *Melt-freeze crust: boots break it into tipped plates instead of soft prints.*
+
+![A ridge after a day of 15 m/s wind: snow transport off, then on in raster and path traced](docs/media/snow-wind.jpg)
+
+*Wind transport: after a day of 15 m/s wind the windward side is scoured bare and the lee is loaded.*
 
 </details>
 

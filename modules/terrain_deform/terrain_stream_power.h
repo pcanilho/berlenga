@@ -95,6 +95,16 @@ public:
 		uint64_t *sort_keys = nullptr; // 2 * nx * ny
 		uint32_t *radix_count = nullptr; // 65536
 		uint8_t *flags = nullptr; // nx * ny
+		// Optional rock strength per cell (layered rock): K multiplier and tan(critical slope). Null: uniform.
+		const double *erodibility_scale = nullptr;
+		const double *talus_cell = nullptr;
+		// Optional: how far below the surface the hard rock ends (0 where the surface is soft). A hard cell whose
+		// receiver lies below that depth stands on soft rock exposed in the face under it: undercut, its block of hard
+		// rock collapses and it erodes on as the soft rock does, so the face retreats as a cliff (the caprock
+		// waterfall, Gilbert 1907; Haviv et al. 2010).
+		const double *hard_depth = nullptr;
+		// Optional diffusion factor per cell (0..1): bare hard rock does not creep, so its cliffs stay sharp.
+		const double *diffusion_scale = nullptr;
 	};
 
 	Params p;
@@ -172,10 +182,19 @@ public:
 			}
 			const double d = b.receiver_dist[i];
 			const double am = half_m ? std::sqrt(b.area[i]) : std::pow(b.area[i], p.area_exponent);
-			const double f = p.erodibility * p.dt * am / d;
-			double hi = (h[i] + f * h[r]) / (1.0 + f);
+			double kk = b.erodibility_scale ? p.erodibility * b.erodibility_scale[i] : p.erodibility;
+			double top = h[i];
+			if (b.hard_depth && b.hard_depth[i] > 0.0 && h[r] < h[i] - b.hard_depth[i] - p.talus * d) {
+				// Undercut: the soft rock under the block has worn back past it (its foot lower than the band's base by
+				// a soft slope at its critical gradient), so the block of hard rock breaks off whole and the soft rock
+				// under it erodes on. The face retreats a cell per such undercutting, at the pace the foot incises.
+				top = h[i] - b.hard_depth[i];
+				kk = p.erodibility;
+			}
+			const double f = kk * p.dt * am / d;
+			double hi = (top + f * h[r]) / (1.0 + f);
 			if (p.talus > 0.0) {
-				hi = std::fmin(hi, h[r] + p.talus * d);
+				hi = std::fmin(hi, h[r] + (b.talus_cell ? b.talus_cell[i] : p.talus) * d);
 			}
 			h[i] = hi;
 		}
@@ -509,6 +528,17 @@ private:
 					const double r = x < nx - 1 ? b.temp[i + 1] : c;
 					const double u = z > 0 ? b.temp[i - nx] : c;
 					const double d = z < ny - 1 ? b.temp[i + nx] : c;
+					if (b.diffusion_scale) {
+						// Conservative fluxes, each across a face at the smaller factor of its two cells.
+						const double *k = b.diffusion_scale;
+						const double ki = k[i];
+						const double kl = x > 0 ? std::fmin(ki, k[i - 1]) : 0.0;
+						const double kr = x < nx - 1 ? std::fmin(ki, k[i + 1]) : 0.0;
+						const double ku = z > 0 ? std::fmin(ki, k[i - nx]) : 0.0;
+						const double kd = z < ny - 1 ? std::fmin(ki, k[i + nx]) : 0.0;
+						h[i] = c + a * (kl * (l - c) + kr * (r - c) + ku * (u - c) + kd * (d - c));
+						continue;
+					}
 					h[i] = c + a * (l + r + u + d - 4.0 * c);
 				}
 			}

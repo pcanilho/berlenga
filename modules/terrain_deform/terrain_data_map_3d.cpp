@@ -785,26 +785,6 @@ Error TerrainDataMap3D::bake_climate() {
 		}
 	}
 
-	// Precipitation on the coarse grid (box means of the fine one), upsampled bilinearly.
-	const int f = MAX(1, int(Math::round(climate_recipe->get_precipitation_cell() / cell)));
-	const int nc = (n + f - 1) / f;
-	std::vector<float> coarse(nc * nc, 0.0f);
-	for (int cz = 0; cz < nc; cz++) {
-		for (int cx = 0; cx < nc; cx++) {
-			double sum = 0.0;
-			int count = 0;
-			for (int z = cz * f; z < MIN((cz + 1) * f, n); z++) {
-				for (int x = cx * f; x < MIN((cx + 1) * f, n); x++) {
-					sum += surf[z * n + x];
-					count++;
-				}
-			}
-			coarse[cz * nc + cx] = float(sum / MAX(count, 1));
-		}
-	}
-	std::vector<float> coarse_p;
-	TerrainClimate::precipitation(cp, coarse.data(), nc, cell * f, coarse_p);
-
 	for (int k = 0; k < CLIMATE_MAX; k++) {
 		climate[k].resize(nn);
 	}
@@ -814,17 +794,12 @@ Error TerrainDataMap3D::bake_climate() {
 	float *precip = climate[CLIMATE_PRECIPITATION].ptr();
 	float *snow = climate[CLIMATE_SNOW_FRACTION].ptr();
 	float *arid = climate[CLIMATE_ARIDITY].ptr();
+	// Precipitation on the coarse grid (box means of the fine one), upsampled bilinearly.
+	TerrainClimate::precipitation_on(cp, surf.data(), n, cell, climate_recipe->get_precipitation_cell(), precip);
 	TerrainClimate::parallel_for(n, [&](int z) {
-		const float gz = CLAMP((z + 0.5f) / f - 0.5f, 0.0f, float(nc - 1));
-		const int z0 = MIN(int(gz), nc - 1), z1 = MIN(z0 + 1, nc - 1);
 		for (int x = 0; x < n; x++) {
-			const float gx = CLAMP((x + 0.5f) / f - 0.5f, 0.0f, float(nc - 1));
-			const int x0 = MIN(int(gx), nc - 1), x1 = MIN(x0 + 1, nc - 1);
-			const float fx = gx - x0, fz = gz - z0;
-			const float p = Math::lerp(Math::lerp(coarse_p[z0 * nc + x0], coarse_p[z0 * nc + x1], fx), Math::lerp(coarse_p[z1 * nc + x0], coarse_p[z1 * nc + x1], fx), fz);
 			const int i = z * n + x;
-			precip[i] = p;
-			TerrainClimate::temperature_fields(cp, surf[i], p, &t_mean[i], &t_jan[i], &t_jul[i], &snow[i], &arid[i]);
+			TerrainClimate::temperature_fields(cp, surf[i], precip[i], &t_mean[i], &t_jan[i], &t_jul[i], &snow[i], &arid[i]);
 		}
 	});
 

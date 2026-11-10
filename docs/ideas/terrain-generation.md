@@ -606,8 +606,187 @@ Found on the way: with a sea, the finest level kept the coarse outlet mask (a bu
 run-to-run difference; fixed before merging). Rivers ending in a lake could stop 0.35 m above its water where the shore's detail lifts the
 ground in the shallowest margin; a mouth now sits on the water.
 
+## Soil on mountainsides (fix, 10 Nov)
+
+The trees thread found every mountainside of the bench range bare: soil 0 and rock 0.9 to 1 on all slopes over
+about 30 degrees. Two defects in the stage 5 soil: the erosion rate fed to the soil production function counted
+stream incision K A^m S on every cell, so hillslope cells read their own small area as a stream (0.3 to 0.5 mm a
+year against 0.5 mm of production); and soil faded out from 60% of the critical gradient (27 degrees). Against
+the literature: soil-mantled hillslopes hold up to near the critical gradient (Roering, Kirchner and Dietrich
+1999), and threshold hillslopes of fast-eroding ranges keep thin forested soils (Heimsath et al. 2012; Larsen et
+al. 2014), with rock on sharp crests and cliffs. Now:
+
+- incision counts on channels only (20 to 200 cells of drainage, above the channel heads of Montgomery and
+  Dietrich 1988 hillslopes lower by creep and landslides);
+- creep is nonlinear (Roering et al. 1999, transport over 1 - (S/Sc)^2), so steep sharp crests lower fast and
+  go bare while rounded hilltops keep soil; curvature over a 3x3 window (the one-cell zigzag of threshold slopes
+  checkered the soil);
+- soil thins from 85% of the critical gradient, a third left at it, none past 110% (cliffs).
+
+Hillslope cells of the bench range (`--soil [--uplift=6]`; drainage under 1e5 m2, 40 m above the lowest ground):
+
+| slope | before: soil / rock / share with 0.2 m | after |
+| --- | --- | --- |
+| 20-25 | 0.13 m / 0.46 / 41% | 0.94 m / 0.17 / 77% |
+| 25-30 | 0.07 / 0.63 / 7% | 0.86 / 0.19 / 71% |
+| 30-35 | 0.02 / 0.67 / 0% | 0.75 / 0.30 / 56% |
+| 35-40 | 0.00 / 0.72 / 0% | 0.68 / 0.36 / 54% |
+| 40-45 | 0.00 / 0.96 / 0% | 0.59 / 0.20 / 77% |
+
+(uplift 2; with uplift 6, 30-35 degrees goes from 9% to 87% of cells with soil, 40-45 from 0% to 65%). The relief
+is unchanged; only the geology maps move. Map fork/terrain/soil_before_after.png. The slope distribution itself
+(40% of hillslope cells at 35 to 45 degrees, piled at the 40 degree `critical_slope`) is a threshold landscape;
+real ones sit nearer 30 to 35 degrees (Montgomery and Brandon 2002), which `critical_slope = 35` gives.
+
+## Waterfalls from rock layers (Paulo picked 10 Nov 21:47)
+
+The showcase scene cuts its waterfall by hand. Real falls in uplifting ranges sit where a river crosses a band of
+hard rock over soft (Niagara, the Yorkshire Dales forces, the Tatra and Alpine trough steps): the river cannot
+grade the hard band as fast as the soft rock below, and where the soft rock under the band is exposed in the face
+it is undercut, the band breaks off in blocks and the face stays vertical as it retreats upstream (Gilbert 1907).
+
+Research:
+
+- Forte, Yanites and Whipple 2016 run stream power over horizontal hard and soft layers: knickpoints form at every
+  contact, channel steepness switches with the rock, and divides migrate. Plain stream power makes steep hard
+  reaches, not vertical steps: with n = 1 a band of K/6 only grades six times steeper (for a big river, 0.02 to
+  0.12), a rapid hundreds of metres long.
+- Haviv et al. 2010 model vertical knickpoints with a resistant caprock: the face retreats by collapse of the
+  caprock once the weak rock under it is eroded, at a rate set by the discharge, not the slope; the fall keeps its
+  height (the caprock thickness plus the weak rock under it) as it retreats.
+- Lamb and Dietrich 2009: falls persist where the rock fails by toppling of blocks once undercut; Scheingross and
+  Lamb 2017: plunge pool erosion at the foot drives the undercutting.
+- Perne et al. 2017: in steady state over dipping layers the channel steepness matches each layer's erodibility,
+  with transient steps where contacts cross the channel.
+- Whipple and Tucker 1999: with n = 1 a knickpoint travels upstream at K A^m, independent of its height. So a face
+  that erodes as soft rock retreats at the soft rock's celerity and keeps its form.
+
+What is built (stream power, terrain_stream_power.h, per cell; `strata_enabled`, off by default):
+
+- strata: bands `strata_spacing` (90 m) apart, `strata_hard_fraction` (0.35) of each hard. The rock at a node is the
+  band at its stratigraphic height q = h - U t + tan(dip) (p . dip direction) + wobble fbm (the rock rose with the
+  uplift); contacts about 2 m thick.
+- hard rock erodes `strata_hardness` (100) times slower everywhere. Erosion goes as tensile strength^-2 (Sklar and
+  Dietrich 2001), so 100 is a 10x strength contrast, mudstone against sandstone or quartzite. Below about 20 the
+  rivers grade every band into a rapid hundreds of metres long (plain stream power, as Forte 2016 found).
+- undercutting: a hard node whose receiver lies below the bottom of its band by more than a soft slope at the
+  critical gradient stands on worn-back soft rock. Its block breaks off whole (the node drops to the band's base)
+  and it erodes on as soft rock. The face retreats a cell per undercutting, at the pace the foot incises (Haviv
+  2010), and keeps the band's height as a fall.
+- only channels (drainage over `strata_channel_area`, 2e4 m2, about where channels begin) stand at
+  `strata_cliff_angle` (75 degrees) in hard rock and stop creeping; the soft cell right under a hard lip stands as
+  steep (the plunge pool's undercut, Scheingross and Lamb 2017). A first version gave every hard cell cliffs and no
+  creep: hillslopes became fields of rock pinnacles. Hillslopes in hard rock now erode slowly but fail at
+  `critical_slope` like soft ones.
+- `strata_dip` 1 degree by default: at 3 degrees (near the rivers' own gradient) rivers run along one band for
+  hundreds of metres and grade it.
+- `get_rock_hardness(pos)` (the rock as it crops out, hillslopes too) and `get_waterfalls(min_area, min_height)`:
+  runs of a river's cells steeper than 45 degrees in the eroded heights (not the smoothed river points, whose
+  bilinear samples cut corners). Soft rock never stands past `critical_slope`, so only hard bands make them.
+
+Bench (4 km range, 16 m cells, `--strata`): 6 falls of 8 to 30 m on the rivers draining over 1e5 m2, four over 15
+m, every one in a hard band; long profiles step down between flat reaches (fork/terrain/waterfalls/
+waterfalls_before_after.png). Ground over 60 degrees stays under 0.5% of the land (no pinnacles). The range
+stands higher than in one rock: the hard bands hold the rivers up (relief rises with the mean rock strength, Forte
+2016); lower the uplift or raise `erodibility` to keep a height. Cost: generation 2.51 s to 2.98 s (+19%; the
+receivers pass and per-face creep). Off, the output is byte-identical (bench check). Not done: the falls' water
+(the showcase scene builds it from get_waterfalls), overhangs (a height field has none), plunge pools.
+
+## Rain and snowmelt feed the rivers (Paulo picked 10 Nov 22:49)
+
+Today every river carries `river_runoff` (1000 mm a year) times its drainage area: the same depth of water off a
+glacier, a dry lee slope and a lake, all year. The climate maps already know temperature by month, precipitation
+(with the rain shadow), snow share and sunshine per cell, so the flow can come from them.
+
+Research (what hydrology models do at this scale):
+
+- Monthly water balance models: Thornthwaite and Mather 1957 (soil water bucket, withdrawal ST = ST0
+  exp(-deficit/STC)) and the USGS monthly water balance model of McCabe and Markstrom 2007 (OFR 2007-1088): rain
+  and snow split by temperature, a snowpack store, direct runoff 5% of rain, soil capacity about 150 mm, and half
+  the surplus running off each month (the rest carried over: a linear groundwater reservoir). Used for continental
+  runoff maps; works on monthly means only, which is what the climate maps give.
+- Snowmelt by temperature index (Hock 2003): melt = DDF x positive degree days, DDF 2.5 to 6 mm/day/K for snow;
+  Hock 1999 adds the sun (melt = (MF + a I) T), so south slopes melt out first. Positive degree days of a month
+  from its mean and the daily spread, analytically (Calov and Greve 2005), the same normal spread the climate maps
+  already use for the snow share.
+- Rain or snow per day below the rain-snow threshold (Jennings et al. 2018, 1 C), as the climate maps do.
+- Open water: a lake loses its evaporation (`lake_evaporation`, spread over the months by PET).
+- Routing: flow accumulation weighted by runoff along the river receivers (as TopoToolbox and global models like
+  WBM do). A month is longer than travel times on a few tens of kilometres, so no channel lag; the groundwater
+  reservoir gives the delay (a single linear reservoir, the first stage of a Nash 1957 cascade).
+- Engines: UE5 Water, HDRP and Houdini Terrain take river flow as an artist input or a uniform rain; World Machine
+  and Gaea's erosion use uniform rain; none of their docs tie river flow to a climate.
+
+Plan:
+
+1. `TerrainClimate::thornthwaite_pet` returns the months too; a new terrain_runoff.h runs the monthly balance per
+   climate cell: rain and snow split, Hock 1999 melt with that month's sunshine, Thornthwaite-Mather soil bucket,
+   direct runoff and the groundwater reservoir, three years of spin-up. Out: twelve months of runoff and snowpack
+   (snow water equivalent) per cell. Precipitation by month: the year's total on a harmonic with new
+   ClimateRecipe settings `precipitation_seasonality` (0 = even) and `precipitation_peak_month`.
+2. TerrainGenerator3D gets `climate_recipe`. With one, generate() bakes the climate on its own heights (sun cell,
+   lakes and sea as water) and accumulates each month's runoff along the river routing, storing monthly
+   discharge for channel cells only (a compact index, not twelve full grids). Without, nothing changes.
+3. Rivers, waterfalls and lakes use it: `get_rivers` gives `discharge` (annual mean) and `monthly_discharge`;
+   `river_month` (-1 the annual mean) picks the month build_river_paths uses, so a spring flood can be shown;
+   the lake balance uses the map's mean climate runoff. New: `get_runoff_at(pos, month)`,
+   `get_discharge_at(pos, month)`, `get_snow_water_at(pos, month)` (the snow thread can start its cover from it).
+4. Bench: water balance closes (runoff + evapotranspiration + change in storage = precipitation), snowmelt peak
+   later with height, wet windward rivers carry more per km2, lake-less river flow equals summed runoff, cost.
+
+### Rain and snowmelt: what was built (10 Nov)
+
+As planned, in terrain_runoff.h (`TerrainRunoff::balance`) and TerrainGenerator3D (`climate_recipe`,
+`river_month`, `get_runoff_at`, `get_snow_water_at`, `get_discharge_at`, `get_mean_runoff`). The climate is baked
+on the generator's own result at the recipe's `sun_cell` (TerrainDataMap3D and the generator now share
+`TerrainClimate::precipitation_on`). Channel cells (8 cells of drainage or more) keep 12 monthly discharges.
+New ClimateRecipe settings: `precipitation_seasonality`, `precipitation_peak_month`, `melt_factor` 1.8,
+`radiation_melt_factor` 0.015, `soil_capacity` 150, `direct_runoff` 0.05, `groundwater_release` 0.5.
+
+Bench (`--runoff[=csv]`, 4 km range, cold climate -4 / 15 C, 1100 mm): mean runoff 711 mm a year; the trunk river
+peaks in April at 0.23 m3/s (snowmelt), 9x its August low; snow lies to the end of March on the crest, February at
+the foot. A mild climate with even rain runs high in winter (February); summer rain (seasonality 0.9, peak July)
+moves the high water to September, after the soils refill. Lakes balance on the map's mean runoff and lose their
+open-water evaporation month by month. Cost: 230 ms of 2.7 s generation at 16 m cells (8%); none without a
+recipe, and the output is then unchanged. Media fork/terrain/runoff/. Not done: glaciers (cells that never melt
+out keep their snow; no ice flow), channel travel time within a month, rain shadow on maps smaller than the
+rain's drift (about 20 km, see Climate maps).
+
+Found on the lake shots: the ring that keeps detail from cutting below a lake's level (3 cells, nearest node) left
+flat terraces with walls stepping along the cell lines on the dam flanks. The hold is now full within one cell of
+the water and fades out over the next two (bilinear weight), so the detail runs on beside the lake
+(fork/terrain/runoff/lake_rim_before_after.png).
+
 ## Sources
 
+- McCabe, Markstrom, A monthly water-balance model driven by a graphical user interface, USGS Open-File Report
+  2007-1088, 2007.
+- Thornthwaite, Mather, Instructions and tables for computing potential evapotranspiration and the water balance,
+  Publications in Climatology 10(3), 1957.
+- Hock, Temperature index melt modelling in mountain areas, Journal of Hydrology 282, 2003.
+- Hock, A distributed temperature-index ice- and snowmelt model including potential direct solar radiation, Journal
+  of Glaciology 45, 1999.
+- Calov, Greve, A semi-analytical solution for the positive degree-day model with stochastic temperature
+  variations, Journal of Glaciology 51, 2005.
+- Nash, The form of the instantaneous unit hydrograph, IAHS Publication 45, 1957.
+- Gilbert, Rate of recession of Niagara Falls, USGS Bulletin 306, 1907.
+- Haviv, Enzel, Whipple et al., Evolution of vertical knickpoints (waterfalls) with resistant caprock: insights from
+  numerical modeling, JGR 115, F03028, 2010.
+- Forte, Yanites, Whipple, Complexities of landscape evolution during incision through layered stratigraphy with
+  contrasts in rock strength, ESPL 41, 2016.
+- Lamb, Dietrich, The persistence of waterfalls in fractured rock, GSA Bulletin 121, 2009.
+- Scheingross, Lamb, A mechanistic model of waterfall plunge pool erosion into bedrock, JGR Earth Surface 122, 2017.
+- Perne, Covington, Thaler, Myre, Steady state, erosional continuity, and the topography of landscapes developed in
+  layered rocks, Earth Surface Dynamics 5, 2017.
+- Whipple, Tucker, Dynamics of the stream-power river incision model, JGR 104, 1999.
+- Sklar, Dietrich, Sediment and rock strength controls on river incision into bedrock, Geology 29, 2001.
+- Roering, Kirchner, Dietrich, Evidence for nonlinear, diffusive sediment transport on hillslopes, Water Resources
+  Research 35, 1999.
+- Heimsath, DiBiase, Whipple, Soil production limits and the transition to bedrock-dominated landscapes, Nature
+  Geoscience 5, 2012.
+- Larsen, Almond, Eger et al., Rapid soil production and weathering in the Southern Alps, Science 343, 2014.
+- Montgomery, Dietrich, Where do channels begin?, Nature 336, 1988.
+- Montgomery, Brandon, Topographic controls on erosion rates in tectonically active mountain ranges, EPSL 201, 2002.
 - Tzathas, Gailleton, Steer, Cordonnier, Physically-based analytical erosion for fast terrain generation, Computer
   Graphics Forum 43(2), 2024.
 - Smith, Barstad, A linear theory of orographic precipitation, Journal of the Atmospheric Sciences 61, 2004.

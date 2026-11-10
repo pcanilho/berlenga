@@ -647,3 +647,54 @@ Johnston, In-situ tensile tests of snowpack layers, J. Glaciology 36, 1990. Abe,
 angle of repose of snow layers including graupel, Annals of Glaciology 38, 2004. Hertz, Ueber das
 Gleichgewicht schwimmender elastischer Platten, Annalen der Physik 258, 1884. Hetenyi, Beams on
 Elastic Foundation, University of Michigan Press 1946.
+
+## Follow-up 4: the wind moves lying snow (built 10 Nov 2026)
+
+**What is known.** SnowTran-3D (Liston and Sturm 1998; in SnowModel, Liston and Elder 2006) is the
+standard: a mass balance dS/dt = -div(Qs + Qt) - sublimation on the snow grid, with saltation Qs
+(Pomeroy and Gray 1990) and turbulent suspension Qt (Pomeroy and Male 1992's PBSM profile), driven by a
+wind that MicroMet (Liston and Elder 2006) weights over the terrain by its slope along the wind and its
+curvature, W = 1 + gs Os + gc Oc. The threshold rises with density: u*t = 0.10 exp(0.003 rho) (Liston
+et al. 2007). Tabler (1991) measured total transport in the lowest 5 m in Wyoming as
+Q = U10^3.8 / 233847 kg/(m s). Winstral's Sx (already used for falling snow) classifies shelter but moves
+nothing that is already down.
+
+**What we built** (`SnowCover3D.wind_transport_enabled`, on by default, near square and world tier):
+- Flux per cell from the 10 m wind times MicroMet's weight (slope and curvature each scaled to +-0.5
+  over the map, gs = gc = 0.5, curvature over `wind_curvature_length`, 20 m): saltation by Pomeroy and
+  Gray plus PBSM suspension integrated to 5 m (tabled by wind speed), faded in from the threshold so the
+  flux has no step there (our smoothing). Threshold: the higher of Li and Pomeroy by temperature and
+  Liston's by density.
+- Donor-cell transport: each cell sends its flux through its downwind faces, at most the snow it can
+  give, in substeps of at most 2 mm through a face. Snow comes in at the upwind edge of the map as from a
+  cell like the edge one and leaves at the downwind edge (an open map, so a map-wide total is kept only
+  when the edges match).
+- Laid down wind-packed at 300 kg/m3 (our pick within the 250-400 of wind slabs), burying a crust; taken
+  from the top. Nothing moves under a frozen crust, in wet or thawing snow, or under trees (closure over
+  0.2).
+
+**Checks** (`--test=transport`, also in `--test`): the flux is 0.048 kg/(m s) at 15 m/s and 0.162 at
+20 m/s against Tabler's 0.126 and 0.376 (within a factor of 3; at 10 m/s, 0.008 against 0.027, nearer
+the threshold his fit, which has none, stays higher); no transport at the threshold, in snow at +0.5 C,
+or in 450 kg/m3 snow at 9 m/s; six hours of 15 m/s across a 100 m ridge with 40 mm of new snow scour
+the windward shoulder from 40 to 11 mm and load the lee below the crest from 40 to 135 mm (157 kg/m3),
+the even flank between passing it on unchanged; water kept to 0.000% on the symmetric map; a frozen
+crust holds everything. One update of 128 x 128 cells in that gale, transport included: 2.7 ms (CPU).
+The Sx drift check now runs with transport off (it checks the falling snow alone, on an open map).
+
+**Shot.** `--view=windblown` (`--transport=0` for the same day without): a day of 15 m/s over the ridge
+leaves the windward flank bare and the lee white, raster and path traced alike.
+
+**Not built.** Sublimation of blowing snow (PBSM's largest loss in open terrain); MicroMet's turning of
+the wind around hills; drifts reshaping the ground the wind sees (snow surface instead of ground);
+sastrugi and ripples (under a cell).
+
+Sources: Liston and Sturm, A snow-transport model for complex terrain, J. Glaciology 44(148), 1998.
+Liston and Elder, A meteorological distribution system for high-resolution terrestrial modeling
+(MicroMet), J. Hydrometeorology 7, 2006; A distributed snow-evolution modeling system (SnowModel), J.
+Hydrometeorology 7, 2006. Liston, Haehnel, Sturm, Hiemstra, Berezovskaya and Tabler, Simulating complex
+snow distributions in windy environments using SnowTran-3D, J. Glaciology 53(181), 2007. Pomeroy and
+Gray, Saltation of snow, Water Resources Research 26(7), 1990. Pomeroy and Male, Steady-state suspension
+of snow, J. Hydrology 136, 1992. Li and Pomeroy, Estimates of threshold wind speeds for snow transport
+using meteorological data, J. Applied Meteorology 36, 1997. Tabler, Snow transport as a function of wind
+speed and height, Cold Regions Engineering, ASCE 1991.

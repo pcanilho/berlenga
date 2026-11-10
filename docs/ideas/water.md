@@ -1509,6 +1509,57 @@ ones further up.
 - **Not built:** raster light shafts, raster caustics, fog on transparent objects under water in
   raster, bubbles. With several cameras the node follows the active one.
 
+## Step 5f: directional spreading and a shared-memory FFT (10 Nov, audit item 5)
+
+### Problem
+
+- The spectrum spread its energy about the wind as `cos^2 theta` (and a 4% back lobe), the same at every
+  wavelength. Measured seas are narrowest at the spectrum's peak and wider above and below it, so the
+  dominant waves run with the wind while short waves cross at wide angles. At 14 m/s our sea's slopes were
+  2.7 times steeper along the wind than across it; Cox and Munk (1954, sun glitter) measured about 1.5.
+- No way to ask for swell: long, nearly parallel crests from a storm far away.
+- Each cascade's FFT ran one dispatch per butterfly stage for each of its four transforms: 8 log2(N)
+  dispatches a step, through global memory each time (48 at N = 64, 64 at N = 256), times the cascades.
+
+### Published methods
+
+- **Horvath, "Empirical directional wave spectra for computer graphics" (DigiPro 2015), section 6.**
+  Compares cos^2, Mitsuyasu, Hasselmann (both `Q(s) |cos(theta/2)|^2s` with a measured `s(w)`) and
+  Donelan-Banner (`b / (2 tanh(b pi)) sech^2(b theta)`, `b(w / wp)` piecewise; he uses the first branch
+  below 0.56 wp too). His default: TMA spectrum and Donelan-Banner spreading. Swell (section 6.1): the
+  spreading times `Q(s) |cos(theta/2)|^2s` with `s = 16 tanh(wp / w) swell^2`, normalised again (a
+  quadrature for Donelan-Banner; for Hasselmann the exponents add, closed form).
+- **FFT on the GPU:** a line's whole radix-2 Stockham FFT in one workgroup's shared memory, log2(N)
+  stages with barriers, several transforms batched in one dispatch (Flügge 2017, "Realtime GPGPU FFT ocean
+  water simulation"; GodotOceanWaves; Crest and Atlas batch all cascades in a texture array).
+
+### As built
+
+- `PhysXWaterSurface3D.wave_spreading`: Donelan-Banner (default), Hasselmann, or Cos2 (the old one,
+  kept as the opt-out). `swell` 0..1 for the first two. The spectrum init evaluates them per mode, the
+  swell product normalised by a 64-point quadrature; regenerated in place like a wind change.
+- `water_fft_rows.glsl`: rows then columns, all four transforms of a step along z: 2 dispatches a step
+  per cascade. Same butterflies as `water_fft.glsl`, so the field is the same: the height map and the
+  rendered frame are bit-identical to the per-stage passes. Up to N = 1024 (shared memory); larger grids,
+  and the project setting `physics/physx_3d/water/shared_memory_fft` off (the default until a GPU timing), take the per-stage passes.
+
+### Results (lavapipe, `docs/bench/water_surface --view=sea_top --height-out`, 3 cascades, 14 m/s)
+
+| Spreading | Hs | slope variance z / x (wind mostly along z) |
+|---|---|---|
+| Cos2 (before) | 1.13 m | 2.72 |
+| Donelan-Banner | 1.09 m | 1.41 |
+| Hasselmann | 1.12 m | 1.17 |
+| Donelan-Banner, swell 0.8 | 1.09 m | 2.55 |
+
+Cox and Munk's upwind / crosswind slope variance at 14 m/s is 1.48: Donelan-Banner matches it. The
+wave height is unchanged (the spreading only moves energy between directions).
+
+FFT cost: lavapipe runs workgroups on CPU threads, where 256-thread barriers are costly: 247 against
+210 ms a frame at N = 256 with 3 cascades. That says nothing about a GPU, where this layout is the
+standard fast one (64 dispatches a step become 2). So the setting ships OFF, and goes on by default once
+the PC times it faster (PC queue).
+
 ## Sources
 
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).
@@ -1634,6 +1685,10 @@ ones further up.
   https://www.cg.tuwien.ac.at/research/publications/2010/bagar2010/bagar2010-draft.pdf
 - Malan, Real-time water in Horizon Forbidden West, SIGGRAPH 2022 Advances:
   https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Water-Malan.pdf
+- Cox and Munk, Measurement of the roughness of the sea surface from photographs of the sun's glitter, JOSA 44, 1954.
+- Flügge, Realtime GPGPU FFT ocean water simulation, TU Hamburg-Harburg, 2017.
+- Donelan, Hamilton and Hui, Directional spectra of wind-generated waves, Phil. Trans. R. Soc. A 315, 1985.
+- Hasselmann, Dunckel and Ewing, Directional wave spectra observed during JONSWAP 1973, J. Phys. Oceanogr. 10, 1980.
 - Horvath, Empirical directional wave spectra for computer graphics, DigiPro 2015:
   https://dl.acm.org/doi/10.1145/2791261.2791267
 - Bouws, Guenther, Rosenthal and Vincent, Similarity of the wind wave spectrum in finite depth water (TMA),

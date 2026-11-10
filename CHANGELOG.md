@@ -6,6 +6,42 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-250256ab (2026-11-10)
+
+### Added
+- PhysXWaterSurface3D `wave_spreading` (Donelan-Banner by default, Hasselmann, or the old Cos2) and `swell`, after Horvath 2015: the dominant waves run with the wind and short waves cross, matching Cox and Munk's measured slopes (1.41 against 1.48 along/across at 14 m/s; Cos2 gave 2.72).
+- `physics/physx_3d/water/shared_memory_fft` (off until timed on a GPU): the ocean FFT runs each line's whole transform in shared memory, all four transforms of a step in two dispatches per cascade instead of 8 log2(N); the same field.
+- `TerrainMaterial3D.ground_deform_enabled`: the terrain takes `GroundSurface3D` prints (sand, mud, leaf litter) with its own material.
+
+### Changed
+- README: wind moves lying snow line and image.
+
+## build-939acbda (2026-11-10)
+
+### Added
+- PhysXHair3D `deep_shadows` (on, with `hair_shading`) and `deep_shadow_light`: the raster strands shade themselves from a directional light with a deep opacity map (Yuksel and Keyser 2008), smooth instead of grainy
+- Spatial shader fragment output `DIRECTIONAL_SHADOW_OFFSET`: moves the fragment's directional shadow lookups toward each light by that many metres
+
+### Changed
+- PhysXHair3D strands cast into shadow maps with their own noise threshold each (stochastic transparency), so the shadow behind several strands builds up as their product
+- README: clouds that never repeat line.
+- README: hair deep opacity shadows line and image.
+
+## build-7c77cee2 (2026-11-10)
+
+### Fixed
+- Clouds no longer repeat in a grid: the shape noise is read twice at an irrational ratio of scales and turned against the world's axes, at 128³ instead of 64³. Cover still means share of sky.
+
+### Changed
+- README: coarse-to-fine erosion line and image.
+- README: footprints in ground line and image.
+- README: melt-freeze crusts line and image.
+- README: terrain ground material line; snow and wetness shader code for ShaderMaterials.
+
+### Added
+- `TerrainMaterial3D`: a ground material that writes its own shader: rock, scree, soil, alluvium and sand layers chosen by the terrain generator's geology (or by slope without it), height-blended, biplanar on cliffs, with the erosion detail normal, grass ground tint, wetness and snow.
+- `BaseMaterial3D.get_snow_shader_code()` and `get_wetness_shader_code()`: the engine's snow and wetness lines for any `ShaderMaterial`, the same text `BaseMaterial3D` uses.
+
 ## build-dabf251a (2026-11-10)
 
 ### Changed

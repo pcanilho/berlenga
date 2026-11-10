@@ -1394,6 +1394,13 @@ void PhysXWaterSurface3D::_bind_methods() {
 
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_VERTEX);
+	BIND_ENUM_CONSTANT(WAVE_SPREADING_COS2);
+	BIND_ENUM_CONSTANT(WAVE_SPREADING_DONELAN_BANNER);
+	BIND_ENUM_CONSTANT(WAVE_SPREADING_HASSELMANN);
+	ClassDB::bind_method(D_METHOD("set_wave_spreading", "spreading"), &PhysXWaterSurface3D::set_wave_spreading);
+	ClassDB::bind_method(D_METHOD("get_wave_spreading"), &PhysXWaterSurface3D::get_wave_spreading);
+	ClassDB::bind_method(D_METHOD("set_swell", "swell"), &PhysXWaterSurface3D::set_swell);
+	ClassDB::bind_method(D_METHOD("get_swell"), &PhysXWaterSurface3D::get_swell);
 
 	ClassDB::bind_method(D_METHOD("set_step_mode", "mode"), &PhysXWaterSurface3D::set_step_mode);
 	ClassDB::bind_method(D_METHOD("get_step_mode"), &PhysXWaterSurface3D::get_step_mode);
@@ -1438,6 +1445,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_cascades", PROPERTY_HINT_RANGE, "1,4,1"), "set_wave_cascades", "get_wave_cascades");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_cascade_ratio", PROPERTY_HINT_RANGE, "2,16,0.1"), "set_wave_cascade_ratio", "get_wave_cascade_ratio");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fetch", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), "set_fetch", "get_fetch");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_spreading", PROPERTY_HINT_ENUM, "Cos2,Donelan-Banner,Hasselmann"), "set_wave_spreading", "get_wave_spreading");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swell", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_swell", "get_swell");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "choppiness", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_choppiness", "get_choppiness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "foam_enabled"), "set_foam_enabled", "get_foam_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_threshold", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_foam_threshold", "get_foam_threshold");
@@ -3531,6 +3540,27 @@ void PhysXWaterSurface3D::set_normal_mode(NormalMode p_mode) {
 	}
 }
 
+void PhysXWaterSurface3D::set_wave_spreading(WaveSpreading p_spreading) {
+	wave_spreading = p_spreading;
+	_set_spreading();
+}
+
+void PhysXWaterSurface3D::set_swell(float p_swell) {
+	swell = CLAMP(p_swell, 0.0f, 1.0f);
+	_set_spreading();
+}
+
+void PhysXWaterSurface3D::_set_spreading() {
+	if (solver.is_available() && !Engine::get_singleton()->is_editor_hint()) {
+		solver.set_spreading(int(wave_spreading), swell);
+		for (WaveCascade *c : extra_cascades) {
+			c->solver.set_spreading(int(wave_spreading), swell);
+		}
+		return;
+	}
+	_rebuild();
+}
+
 void PhysXWaterSurface3D::set_fetch(float p_fetch) {
 	fetch = MAX(p_fetch, 0.0f);
 	_reinit_spectrum();
@@ -4013,6 +4043,8 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.caustics_enabled = caustics_enabled;
 	s.ocean_k_min = wave_cascades > 1 ? _cascade_split(0) : 0.0f;
 	s.ocean_k_max = 0.0f;
+	s.wave_spreading = int(wave_spreading);
+	s.swell = swell;
 	// configure() frees the solver's textures and makes new ones: let go of
 	// the old ones first (a runtime change -- wave_amplitude, say -- drew with
 	// freed textures until the new ones were bound).

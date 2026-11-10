@@ -8,6 +8,11 @@
 #       [--coast [--focus=lake|coast] [--dist=520]]   an island with lakes, its sea, lakes and rivers built
 #   godot --headless --path docs/bench/terrain_gen -- --coast --geology=map.png  island map, lakes and rivers listed
 #   godot --headless --path docs/bench/terrain_gen -- --map=map.png      shaded relief with rivers
+#   godot --headless --path docs/bench/terrain_gen -- --soil [--uplift=6]  soil and rock by slope above the valley floors
+#   godot --headless --path docs/bench/terrain_gen -- [--coast] --runoff[=out.csv] [--jan=-4 --jul=15 --precip=1100
+#       --season=0 --peak=0]  rivers fed by rain and snowmelt: monthly discharge, snow by height, cost
+#   godot --headless --path docs/bench/terrain_gen -- --strata --geology=map.png [--profiles=rivers.csv]  layered rock:
+#       waterfalls listed, river long profiles (x, z, height, hardness, log area); view: --strata --focus=fall --close
 #   godot --headless --path docs/bench/terrain_gen -- --compare=prefix [--cell=8] [--refine=40]  coarse-to-fine
 #       against single-level: time, height percentiles, slopes, drainage density; relief maps prefix_{one,multi}.png
 #   godot --headless --path docs/bench/terrain_gen -- [--coast] --climate=map.png  climate maps (temperature,
@@ -56,6 +61,9 @@ func _ready() -> void:
 		print("%d checks, %d failed" % [checks, failures])
 		print("PASS" if failures == 0 else "FAIL")
 		get_tree().quit(1 if failures else 0)
+	elif args.has("runoff"):
+		_runoff_report()
+		get_tree().quit()
 	elif args.has("geology"):
 		if args.has("view"):
 			gen.uplift = 6.0
@@ -63,10 +71,18 @@ func _ready() -> void:
 		gen.generate()
 		_save_geology(args["geology"])
 		_print_water()
+		if gen.strata_enabled or args.has("profiles"):
+			_print_waterfalls()
 		if args.has("dump"):
 			var fd := FileAccess.open(args["dump"], FileAccess.WRITE)
 			fd.store_buffer(gen.get_height_image().get_data())
 			fd.close()
+		get_tree().quit()
+	elif args.has("soil"):
+		if args.has("uplift"):
+			gen.uplift = float(args["uplift"])
+		gen.generate()
+		_soil_histogram()
 		get_tree().quit()
 	elif args.has("compare"):
 		await _compare(args["compare"])
@@ -137,6 +153,14 @@ func _build_generator(cell: float) -> void:
 		gen.coarse_levels = int(args["levels"])
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
+	if args.has("climate-rivers"):
+		gen.climate_recipe = _runoff_recipe()
+		gen.river_month = int(args.get("month", "-1"))
+	if args.has("strata"):
+		gen.strata_enabled = true
+	for a in args:
+		if a.begins_with("strata_"):
+			gen.set(a, str_to_var(args[a]))
 	add_child(gen)
 	gen.ranges = [gen.get_path_to(path), gen.get_path_to(spur)]
 
@@ -397,7 +421,16 @@ func _run_checks() -> void:
 	rock_flat /= maxi(n_flat, 1)
 	soil_steep /= maxi(n_steep, 1)
 	soil_flat /= maxi(n_flat, 1)
-	check(rock_steep > 0.5 and rock_flat < 0.2, "rock bare on steep ground (%.2f), covered on gentle ground (%.2f)" % [rock_steep, rock_flat])
+	# Steep ground (over 31 degrees) is mostly soil-mantled up to the critical slope (forested threshold hillslopes);
+	# rock shows on sharp crests, cliffs and near the limit, so it is several times as common there as on gentle ground.
+	check(rock_steep > 0.15 and rock_steep > 3.0 * rock_flat and rock_flat < 0.2, "rock commoner on steep ground (%.2f) than on gentle ground (%.2f)" % [rock_steep, rock_flat])
+	var hist := _soil_histogram()
+	var mid := 0
+	var mid_soil := 0
+	for b in range(4, 7):
+		mid += int(hist["bins"][b][0])
+		mid_soil += int(hist["bins"][b][3])
+	check(mid > 100 and mid_soil > 0.5 * mid, "hillslopes of 20 to 35 degrees carry 0.2 m of soil or more on most cells (%.0f%% of %d)" % [100.0 * mid_soil / maxi(mid, 1), mid])
 	check(soil_flat > 4.0 * soil_steep, "soil deeper on gentle ground (%.2f m) than steep (%.2f m)" % [soil_flat, soil_steep])
 	talus_slope /= maxi(talus_n, 1)
 	check(talus_n > 50 and talus_slope < repose, "scree lies below repose (%d cells, mean slope %.2f, repose %.2f)" % [talus_n, talus_slope, repose])
@@ -505,6 +538,8 @@ func _run_checks() -> void:
 
 	await _coast_checks()
 	await _climate_checks()
+	_strata_checks()
+	_runoff_checks()
 
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
 	var plot := TerrainBrush3D.new()
@@ -945,6 +980,26 @@ func _build_view() -> void:
 		cam.position = c + away * float(args.get("dist", "520")) + Vector3(0, float(args.get("dist", "520")) * 0.5, 0)
 		add_child(cam)
 		cam.look_at(c)
+	elif args.get("focus", "") == "fall":
+		# The tallest waterfall the layered rock made, from downstream, its river drawn.
+		var falls := gen.get_waterfalls(float(args.get("river-area", "1e5")), 8.0)
+		var best: Dictionary = {}
+		for f in falls:
+			if best.is_empty() or f["height"] * sqrt(f["discharge"]) > best["height"] * sqrt(best["discharge"]):
+				best = f
+		gen.build_river_paths(self, float(args.get("river-area", "1e5")))
+		var top: Vector3 = best["top"]
+		var foot: Vector3 = best["bottom"]
+		var down := Vector3(foot.x - top.x, 0.0, foot.z - top.z).normalized()
+		var d := float(args.get("dist", "160"))
+		print("fall %.0f m at %s, %.2f m3/s" % [best["height"], top, best["discharge"]])
+		cam.fov = 45.0
+		cam.position = foot + down * d + Vector3(0, d * float(args.get("rise", "0.35")), 0)
+		add_child(cam)
+		cam.look_at((top + foot) * 0.5)
+		# Low sun from behind the camera's left shoulder, so the face is lit.
+		var back := (cam.position - (top + foot) * 0.5).normalized().rotated(Vector3.UP, 0.6)
+		sun.look_at_from_position(foot + Vector3(back.x, 0.0, back.z).normalized() * 3000.0 + Vector3(0, 1600, 0), foot)
 	elif args.get("focus", "") == "coast":
 		# Low over the sea, looking along the coast at a beach and the shore waves.
 		cam.fov = 45.0
@@ -973,6 +1028,127 @@ func _hill_source(height: float, sigma: float) -> Node3D:
 	n.set("height", height)
 	n.set("sigma", sigma)
 	return n
+
+
+func _strata_checks() -> void:
+	# Layered rock: rivers step down over hard bands as waterfalls; off, the strata settings change nothing.
+	gen.generate()
+	var base := gen.get_height_image().get_data()
+	gen.strata_hardness = 50.0
+	gen.generate()
+	check(gen.get_height_image().get_data() == base and gen.get_waterfalls().is_empty(), "strata off: its settings leave the ground as it was, no waterfalls")
+	gen.strata_hardness = 100.0
+	gen.strata_enabled = true
+	gen.generate()
+	var t := gen.get_last_generate_msec()
+	var falls := gen.get_waterfalls(1.0e5, 8.0)
+	var tall := 0
+	var in_band := 0
+	for f in falls:
+		if f["height"] >= 15.0:
+			tall += 1
+		# The face cuts a hard band: hard rock within the face or just above the lip (a lip that has just broken
+		# off stands on the soft rock under it for a while).
+		var hard := 0.0
+		for k in 13:
+			hard = maxf(hard, gen.get_rock_hardness(f["top"].lerp(f["bottom"], -2.0 + k / 4.0)))
+		if hard > 0.5:
+			in_band += 1
+	check(tall >= 3, "strata: rivers step down over waterfalls (%d of 8 m or more, %d of 15 m or more)" % [falls.size(), tall])
+	check(falls.size() > 0 and in_band == falls.size(), "strata: every waterfall cuts a hard band (%d of %d)" % [in_band, falls.size()])
+	# No hard pinnacles: ground steeper than 60 degrees stays rare (the river faces), as without the bands.
+	var cs := 16.0
+	var steep := 0
+	var total := 0
+	for z in range(4, 252, 2):
+		for x in range(4, 252, 2):
+			var q := Vector3(-WORLD * 0.5 + x * cs, 0, -WORLD * 0.5 + z * cs)
+			var h0 := gen.get_base_height(q)
+			var gx := (gen.get_base_height(q + Vector3(cs, 0, 0)) - gen.get_base_height(q - Vector3(cs, 0, 0))) / (2.0 * cs)
+			var gz := (gen.get_base_height(q + Vector3(0, 0, cs)) - gen.get_base_height(q - Vector3(0, 0, cs))) / (2.0 * cs)
+			if h0 > 5.0:
+				total += 1
+				if sqrt(gx * gx + gz * gz) > tan(deg_to_rad(60.0)):
+					steep += 1
+	check(steep < total / 200, "strata: no rock pinnacles (%.2f%% of the ground over 60 degrees)" % [100.0 * steep / maxi(total, 1)])
+	var first := gen.get_height_image().get_data()
+	gen.generate()
+	check(gen.get_height_image().get_data() == first and gen.get_waterfalls(1.0e5, 8.0).size() == falls.size(), "strata: deterministic")
+	print("     strata generate %.0f ms" % t)
+	gen.strata_enabled = false
+	gen.generate()
+	check(gen.get_height_image().get_data() == base and gen.get_rock_hardness(Vector3.ZERO) == 0.0, "strata off again: the same ground, no hardness map")
+
+
+func _peak_month(m: PackedFloat32Array) -> int:
+	var best := 0
+	for k in 12:
+		if m[k] > m[best]:
+			best = k
+	return best
+
+
+func _runoff_checks() -> void:
+	# Rivers fed by rain and snowmelt from the climate (McCabe and Markstrom 2007 balance, Hock 1999 melt).
+	gen.climate_recipe = null
+	gen.generate()
+	check(not gen.has_runoff() and is_equal_approx(gen.get_runoff_at(Vector3.ZERO), gen.river_runoff), "runoff: without a climate, rivers keep river_runoff")
+	var cold := ClimateRecipe.new()
+	cold.temperature_january = -4.0
+	cold.temperature_july = 15.0
+	cold.precipitation = 1100.0
+	gen.climate_recipe = cold
+	gen.generate()
+	var rivers := gen.get_rivers(1.0e5)
+	var trunk: Dictionary = rivers[0]
+	var m: PackedFloat32Array = trunk["monthly_discharge"]
+	var mean := 0.0
+	var days := [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+	for k in 12:
+		mean += m[k] * days[k] / 365.0
+	check(gen.has_runoff() and absf(mean - trunk["discharge"]) < 0.01 * trunk["discharge"], "runoff: annual discharge is the mean of the months (%.3f, %.3f m3/s)" % [trunk["discharge"], mean])
+	var peak := _peak_month(m)
+	check(peak >= 2 and peak <= 5 and m[peak] > 2.0 * m[7], "runoff: cold climate, the snowmelt flood in spring (peak month %d, %.3f against %.3f in August)" % [peak + 1, m[peak], m[7]])
+	# Snow lies longer and deeper up the range.
+	var low := Vector3.ZERO
+	var high := Vector3.ZERO
+	for z in range(-1900, 1900, 64):
+		for x in range(-1900, 1900, 64):
+			var q := Vector3(x, 0, z)
+			q.y = gen.get_base_height(q)
+			if low == Vector3.ZERO or q.y < low.y:
+				low = q
+			if q.y > high.y:
+				high = q
+	var months_low := 0
+	var months_high := 0
+	for k in 12:
+		months_low += 1 if gen.get_snow_water_at(low, k) > 1.0 else 0
+		months_high += 1 if gen.get_snow_water_at(high, k) > 1.0 else 0
+	check(gen.get_snow_water_at(high, 2) > gen.get_snow_water_at(low, 2) and months_high >= months_low, "runoff: snow lies deeper and longer up the range (March %.0f mm at %.0f m, %.0f mm at %.0f m)" % [gen.get_snow_water_at(high, 2), high.y, gen.get_snow_water_at(low, 2), low.y])
+	check(gen.get_mean_runoff() > 0.2 * cold.precipitation and gen.get_mean_runoff() < 1.5 * cold.precipitation, "runoff: mean runoff %.0f mm a year of %.0f mm of precipitation (more on the range)" % [gen.get_mean_runoff(), cold.precipitation])
+	check(gen.get_last_runoff_msec() < 0.2 * gen.get_last_generate_msec(), "runoff: %.0f ms of %.0f ms generation" % [gen.get_last_runoff_msec(), gen.get_last_generate_msec()])
+	gen.river_month = 3
+	var april: Dictionary = gen.get_rivers(1.0e5)[0]
+	check(is_equal_approx(april["discharge"], m[3]) and april["widths"][-2] > trunk["widths"][-2], "runoff: river_month picks April's flood for the rivers (%.3f m3/s, wider)" % april["discharge"])
+	gen.river_month = -1
+	# A mild winter with even precipitation: the high flows come in winter, when little evaporates.
+	var mild := ClimateRecipe.new()
+	mild.temperature_january = 8.0
+	mild.temperature_july = 24.0
+	gen.climate_recipe = mild
+	gen.generate()
+	var wm: PackedFloat32Array = gen.get_rivers(1.0e5)[0]["monthly_discharge"]
+	var wp := _peak_month(wm)
+	check(wp >= 10 or wp <= 2, "runoff: mild climate, high water in winter (peak month %d)" % (wp + 1))
+	# Summer rain (a monsoon): precipitation_seasonality moves the high water to summer.
+	mild.precipitation_seasonality = 0.9
+	mild.precipitation_peak_month = 6
+	gen.generate()
+	var sp := _peak_month(gen.get_rivers(1.0e5)[0]["monthly_discharge"])
+	check(sp >= 5 and sp <= 9, "runoff: summer rain brings the high water to summer (peak month %d)" % (sp + 1))
+	gen.climate_recipe = null
+	gen.generate()
 
 
 func _climate_checks() -> void:
@@ -1188,3 +1364,114 @@ func _compare(prefix: String) -> void:
 		syy += (b2[i] - m2) * (b2[i] - m2)
 		mad += absf(b1[i] - b2[i])
 	print("large-scale correlation %.4f, mean abs difference %.2f m" % [sxy / sqrt(sxx * syy), mad / b1.size()])
+
+
+func _soil_histogram() -> Dictionary:
+	# Hillslopes only (drainage under 1e5 m2, more than 40 m above the lowest ground): per 5 degree slope band, the
+	# share of cells, mean soil depth and mean rock exposure.
+	var g := gen.get_grid_size()
+	var h := gen.get_height_image()
+	var a := gen.get_drainage_image()
+	var cell := gen.cell_size
+	var r := gen.get_world_rect()
+	var bins := []
+	for b in 14:
+		bins.append([0, 0.0, 0.0, 0])
+	var total := 0
+	var lo := INF
+	for z in g.y:
+		for x in g.x:
+			lo = minf(lo, h.get_pixel(x, z).r)
+	for z in range(1, g.y - 1):
+		for x in range(1, g.x - 1):
+			if a.get_pixel(x, z).r >= 1.0e5 or h.get_pixel(x, z).r < lo + 40.0:
+				continue
+			var hx := (h.get_pixel(x + 1, z).r - h.get_pixel(x - 1, z).r) / (2.0 * cell)
+			var hz := (h.get_pixel(x, z + 1).r - h.get_pixel(x, z - 1).r) / (2.0 * cell)
+			var sl := rad_to_deg(atan(sqrt(hx * hx + hz * hz)))
+			var p := Vector3(r.position.x + x * cell, 0, r.position.y + z * cell)
+			var b := mini(int(sl / 5.0), 13)
+			bins[b][0] += 1
+			bins[b][1] += gen.get_soil_depth(p)
+			bins[b][2] += gen.get_rock_exposure(p)
+			bins[b][3] += 1 if gen.get_soil_depth(p) >= 0.2 else 0
+			total += 1
+	print("slope band   share   soil m   rock   cells with >= 0.2 m soil")
+	var out := {"total": total, "bins": bins}
+	for b in 14:
+		var c: int = bins[b][0]
+		if c == 0:
+			continue
+		print("%2d-%2d deg   %5.1f%%   %5.2f   %5.2f   %5.1f%%" % [b * 5, b * 5 + 5, 100.0 * c / total, bins[b][1] / c, bins[b][2] / c, 100.0 * bins[b][3] / c])
+	return out
+
+
+func _print_waterfalls() -> void:
+	var falls := gen.get_waterfalls(float(args.get("river-area", "1e5")), 5.0)
+	print("waterfalls: %d" % falls.size())
+	for f in falls:
+		print("  %.0f m high at %s, %.1f m wide, %.2f m3/s, hardness %.2f" % [f["height"], f["top"], f["width"], f["discharge"], f["hardness"]])
+	if args.has("profiles"):
+		# Long profiles of every river: x, z, height, hardness, drainage area per point (CSV).
+		var fd := FileAccess.open(args["profiles"], FileAccess.WRITE)
+		var rivers := gen.get_rivers(float(args.get("river-area", "1e5")))
+		for r in rivers.size():
+			for p0 in rivers[r]["points"]:
+				# On the grid node the river cell is at (the points are smoothed between them).
+				var c := gen.cell_size
+				var p := Vector3(snappedf(p0.x + WORLD * 0.5, c) - WORLD * 0.5, 0.0, snappedf(p0.z + WORLD * 0.5, c) - WORLD * 0.5)
+				var g: Color = gen.get_geology_at(p)
+				fd.store_line("%d,%.1f,%.1f,%.2f,%.2f,%.2f" % [r, p.x, p.z, gen.get_base_height(p), gen.get_rock_hardness(p), g.a])
+		print("profiles ", args["profiles"])
+
+
+func _runoff_recipe() -> ClimateRecipe:
+	# A cool mountain climate: snow on the range in winter, melt in spring.
+	var r := ClimateRecipe.new()
+	r.temperature_january = float(args.get("jan", "-4"))
+	r.temperature_july = float(args.get("jul", "15"))
+	r.precipitation = float(args.get("precip", "1100"))
+	r.precipitation_seasonality = float(args.get("season", "0"))
+	r.precipitation_peak_month = float(args.get("peak", "0"))
+	return r
+
+
+func _runoff_report() -> void:
+	gen.generate()
+	var plain := gen.get_rivers(1.0e5)
+	var t_plain := gen.get_last_generate_msec()
+	gen.climate_recipe = _runoff_recipe()
+	gen.generate()
+	print("generate %.0f ms without climate, %.0f ms with (runoff %.0f ms); mean runoff %.0f mm a year" % [t_plain, gen.get_last_generate_msec(), gen.get_last_runoff_msec(), gen.get_mean_runoff()])
+	var rivers := gen.get_rivers(1.0e5)
+	var out: FileAccess = FileAccess.open(args["runoff"], FileAccess.WRITE) if args["runoff"] != "1" else null
+	const MONTHS := ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"]
+	for r in mini(rivers.size(), 6):
+		var d: Dictionary = rivers[r]
+		var pts: PackedVector3Array = d["points"]
+		var m: PackedFloat32Array = d["monthly_discharge"]
+		var line := ""
+		for k in 12:
+			line += "%s %.3f  " % [MONTHS[k], m[k]]
+		print("river %d (head %.0f m): %.3f m3/s (was %.3f)  %s" % [r, pts[0].y, d["discharge"], plain[r]["discharge"] if r < plain.size() else 0.0, line])
+		if out:
+			out.store_line("river,%d,%s" % [r, ",".join(Array(m).map(func(v): return "%.4f" % v))])
+	for h in [0.0, 150.0, 300.0, 450.0]:
+		var best := Vector3.ZERO
+		var bd := 1e9
+		for z in range(-1900, 1900, 64):
+			for x in range(-1900, 1900, 64):
+				var q := Vector3(x, 0, z)
+				var dh := absf(gen.get_base_height(q) - h)
+				if dh < bd:
+					bd = dh
+					best = Vector3(x, gen.get_base_height(q), z)
+		var sw := ""
+		for k in 12:
+			sw += "%.0f " % gen.get_snow_water_at(best, k)
+		print("at %4.0f m: runoff %.0f mm a year; snow water by month end: %s" % [best.y, gen.get_runoff_at(best), sw])
+		if out:
+			var snow := []
+			for k in 12:
+				snow.append("%.1f" % gen.get_snow_water_at(best, k))
+			out.store_line("snow,%.0f,%s" % [best.y, ",".join(snow)])

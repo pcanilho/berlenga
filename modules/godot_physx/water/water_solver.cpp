@@ -30,10 +30,13 @@
 
 #include "water_solver.h"
 
+#include "core/config/project_settings.h"
+
 #include "water_blit_ocean.glsl.gen.h"
 #include "water_blit_ripple.glsl.gen.h"
 #include "water_caustics_map.glsl.gen.h"
 #include "water_fft.glsl.gen.h"
+#include "water_fft_rows.glsl.gen.h"
 #include "water_foam.glsl.gen.h"
 #include "water_ripple.glsl.gen.h"
 #include "water_shore_foam.glsl.gen.h"
@@ -54,6 +57,7 @@ constexpr int PARAMS_BYTES = 64; // 4 * vec4, std140 -- see water_inc.glsl's Par
 constexpr int OCEAN_INIT_PARAMS_BYTES = 64; // 4 * vec4 -- see water_spectrum_init.glsl's Params
 constexpr int OCEAN_EVOLVE_PARAMS_BYTES = 32; // 2 * vec4 -- see water_spectrum_evolve.glsl's Params
 constexpr int FFT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_fft.glsl's Params
+constexpr int FFT_ROWS_MAX_N = 1024; // water_fft_rows.glsl's MAX_N (shared memory); larger grids take the per-stage passes
 constexpr int BLIT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_blit_*.glsl's Params
 constexpr int FOAM_PARAMS_BYTES = 32; // vec4 + ivec4 -- see water_foam.glsl's Params
 constexpr int SHORE_FOAM_PARAMS_BYTES = 64; // 3 * vec4 + ivec4 -- see water_shore_foam.glsl's Params
@@ -102,6 +106,7 @@ void WaterSolverGPU::rt_compile(Ref<WaterSolverGPU> p_self) {
 		{ water_spectrum_init_shader_glsl, &shader_spectrum_init, &pipeline_spectrum_init },
 		{ water_spectrum_evolve_shader_glsl, &shader_spectrum_evolve, &pipeline_spectrum_evolve },
 		{ water_fft_shader_glsl, &shader_fft, &pipeline_fft },
+		{ water_fft_rows_shader_glsl, &shader_fft_rows, &pipeline_fft_rows },
 		{ water_blit_ripple_shader_glsl, &shader_blit_ripple, &pipeline_blit_ripple },
 		{ water_blit_ocean_shader_glsl, &shader_blit_ocean, &pipeline_blit_ocean },
 		{ water_foam_shader_glsl, &shader_foam, &pipeline_foam },
@@ -182,7 +187,7 @@ void WaterSolverGPU::rt_compile(Ref<WaterSolverGPU> p_self) {
 void WaterSolverGPU::_rt_free_buffers() {
 	RID *usets[] = { &uset_atob, &uset_btoa, &uset_spectrum_init, &uset_spectrum_evolve,
 		&uset_fft_spec_to_a, &uset_fft_atob, &uset_fft_btoa, &uset_fft_dz_to_c, &uset_fft_ctod, &uset_fft_dtoc,
-		&uset_fft_c_to_e, &uset_fft_etof, &uset_fft_ftoe, &uset_fft_d_to_g, &uset_fft_gtoh, &uset_fft_htog,
+		&uset_fft_c_to_e, &uset_fft_etof, &uset_fft_ftoe, &uset_fft_d_to_g, &uset_fft_gtoh, &uset_fft_htog, &uset_fft_rows, &uset_fft_cols,
 		&uset_blit_ripple, &uset_blit_ocean, &uset_caustics, &uset_foam, &uset_shore_foam, &uset_shore_foam_copy, &uset_swash, &uset_swash_copy };
 	for (RID *u : usets) {
 		// A set is freed with any texture it uses: the swash's goes with the
@@ -214,7 +219,7 @@ void WaterSolverGPU::_rt_free_buffers() {
 		}
 	}
 	RID *bufs[] = { &buf_params, &buf_state_a, &buf_state_b, &buf_height, &buf_spheres, &buf_impulses,
-		&buf_ocean_init_params, &buf_ocean_evolve_params, &buf_fft_params, &buf_h0, &buf_ocean_spec, &buf_fft_a, &buf_fft_b,
+		&buf_ocean_init_params, &buf_ocean_evolve_params, &buf_fft_params, &buf_fft_rows_params, &buf_fft_cols_params, &buf_h0, &buf_ocean_spec, &buf_fft_a, &buf_fft_b,
 		&buf_ocean_spec_dz, &buf_fft_c, &buf_fft_d, &buf_ocean_spec_c, &buf_fft_e, &buf_fft_f, &buf_ocean_spec_d, &buf_fft_g, &buf_fft_h,
 		&buf_blit_ripple_params, &buf_blit_ocean_params, &buf_caustics_params, &buf_foam_params, &buf_shore_foam_params, &buf_shore_foam_copy_params, &buf_swash_params, &buf_swash_copy_params };
 	for (RID *b : bufs) {
@@ -410,6 +415,36 @@ void WaterSolverGPU::_rt_build_buffers() {
 	uset_fft_d_to_g = make_uset3(shader_fft, buf_fft_params, buf_ocean_spec_d, buf_fft_g);
 	uset_fft_gtoh = make_uset3(shader_fft, buf_fft_params, buf_fft_g, buf_fft_h);
 	uset_fft_htog = make_uset3(shader_fft, buf_fft_params, buf_fft_h, buf_fft_g);
+	// The shared-memory FFT (water_fft_rows.glsl): all four transforms of a step in two dispatches, rows from the
+	// spectra into a/c/e/g, then columns into b/d/f/h -- where the per-stage chain also lands.
+	if (on <= FFT_ROWS_MAX_N && bool(GLOBAL_GET("physics/physx_3d/water/shared_memory_fft"))) {
+		auto make_rows = [&](RID p_params, const RID *p_in, const RID *p_out) {
+			Vector<RD::Uniform> uniforms;
+			for (int bnd = 0; bnd < 9; bnd++) {
+				RD::Uniform u;
+				u.uniform_type = bnd == 0 ? RD::UNIFORM_TYPE_UNIFORM_BUFFER : RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				u.binding = bnd;
+				u.append_id(bnd == 0 ? p_params : (bnd <= 4 ? p_in[bnd - 1] : p_out[bnd - 5]));
+				uniforms.push_back(u);
+			}
+			return rd->uniform_set_create(uniforms, shader_fft_rows, 0);
+		};
+		const int32_t rows_vals[4] = { on, ocean_log2n, 1, 0 };
+		const int32_t cols_vals[4] = { on, ocean_log2n, 0, 0 };
+		Vector<uint8_t> pb;
+		pb.resize(FFT_PARAMS_BYTES);
+		buf_fft_rows_params = rd->uniform_buffer_create(FFT_PARAMS_BYTES);
+		buf_fft_cols_params = rd->uniform_buffer_create(FFT_PARAMS_BYTES);
+		memcpy(pb.ptrw(), rows_vals, sizeof(rows_vals));
+		rd->buffer_update(buf_fft_rows_params, 0, FFT_PARAMS_BYTES, pb.ptr());
+		memcpy(pb.ptrw(), cols_vals, sizeof(cols_vals));
+		rd->buffer_update(buf_fft_cols_params, 0, FFT_PARAMS_BYTES, pb.ptr());
+		const RID spectra[4] = { buf_ocean_spec, buf_ocean_spec_dz, buf_ocean_spec_c, buf_ocean_spec_d };
+		const RID mid[4] = { buf_fft_a, buf_fft_c, buf_fft_e, buf_fft_g };
+		const RID out[4] = { buf_fft_b, buf_fft_d, buf_fft_f, buf_fft_h };
+		uset_fft_rows = make_rows(buf_fft_rows_params, spectra, mid);
+		uset_fft_cols = make_rows(buf_fft_cols_params, mid, out);
+	}
 
 	// Blit-to-texture: real RD textures, sampled directly by the scene
 	// renderer via a caller-side Texture2DRD -- see the header for why.
@@ -609,9 +644,9 @@ void WaterSolverGPU::_rt_spectrum_init() {
 		put_f(16, _init_wind_direction.y);
 		put_f(20, _init_gravity);
 		put_f(24, _init_wave_amplitude * _init_wave_amplitude);
-		put_f(28, 0.0f);
+		put_f(28, _init_swell);
 		put_i(32, on);
-		put_i(36, 0);
+		put_i(36, _init_spreading);
 		put_i(40, 0);
 		put_i(44, 0);
 		put_f(48, _init_fetch);
@@ -637,9 +672,11 @@ void WaterSolverGPU::_rt_spectrum_init() {
 	}
 }
 
-void WaterSolverGPU::rt_set_band(Ref<WaterSolverGPU> p_self, float p_k_min, float p_k_max) {
+void WaterSolverGPU::rt_set_band(Ref<WaterSolverGPU> p_self, float p_k_min, float p_k_max, int p_spreading, float p_swell) {
 	_init_k_min = MAX(p_k_min, 0.0f);
 	_init_k_max = MAX(p_k_max, 0.0f);
+	_init_spreading = p_spreading;
+	_init_swell = CLAMP(p_swell, 0.0f, 1.0f);
 }
 
 // A new sea state (wind / direction / height / fetch) WITHOUT a rebuild: only h0 is regenerated, in place. The
@@ -966,9 +1003,19 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		rd->compute_list_end();
 	}
 
+	if (uset_fft_rows.is_valid()) {
+		RD::ComputeListID cl = rd->compute_list_begin();
+		rd->compute_list_bind_compute_pipeline(cl, pipeline_fft_rows);
+		rd->compute_list_bind_uniform_set(cl, uset_fft_rows, 0);
+		rd->compute_list_dispatch(cl, 1, on, 4);
+		rd->compute_list_add_barrier(cl);
+		rd->compute_list_bind_uniform_set(cl, uset_fft_cols, 0);
+		rd->compute_list_dispatch(cl, 1, on, 4);
+		rd->compute_list_end();
+	}
 	bool first = true;
 	bool cur_is_a = false;
-	for (int dir = 0; dir < 2; dir++) {
+	for (int dir = 0; dir < 2 && !uset_fft_rows.is_valid(); dir++) {
 		for (int p = 0; p < ocean_log2n; p++) {
 			const int ns = 1 << (p + 1);
 			Vector<uint8_t> fb;
@@ -1376,14 +1423,14 @@ void WaterSolverGPU::rt_free(Ref<WaterSolverGPU> p_self) {
 		rd->sync();
 	}
 	_rt_free_buffers();
-	RID *pipelines[] = { &pipeline_ripple, &pipeline_spectrum_init, &pipeline_spectrum_evolve, &pipeline_fft, &pipeline_blit_ripple, &pipeline_blit_ocean, &pipeline_foam, &pipeline_shore_foam, &pipeline_swash, &pipeline_caustics };
+	RID *pipelines[] = { &pipeline_ripple, &pipeline_spectrum_init, &pipeline_spectrum_evolve, &pipeline_fft, &pipeline_fft_rows, &pipeline_blit_ripple, &pipeline_blit_ocean, &pipeline_foam, &pipeline_shore_foam, &pipeline_swash, &pipeline_caustics };
 	for (RID *pipeline : pipelines) {
 		if (pipeline->is_valid()) {
 			rd->free_rid(*pipeline);
 			*pipeline = RID();
 		}
 	}
-	RID *shaders[] = { &shader_ripple, &shader_spectrum_init, &shader_spectrum_evolve, &shader_fft, &shader_blit_ripple, &shader_blit_ocean, &shader_foam, &shader_shore_foam, &shader_swash, &shader_caustics };
+	RID *shaders[] = { &shader_ripple, &shader_spectrum_init, &shader_spectrum_evolve, &shader_fft, &shader_fft_rows, &shader_blit_ripple, &shader_blit_ocean, &shader_foam, &shader_shore_foam, &shader_swash, &shader_caustics };
 	for (RID *s : shaders) {
 		if (s->is_valid()) {
 			rd->free_rid(*s);
@@ -1466,6 +1513,16 @@ void WaterSolver::reinit_spectrum(float p_wind_speed, Vector2 p_wind_direction, 
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_reinit_spectrum).bind(gpu, p_wind_speed, p_wind_direction, p_wave_amplitude, p_fetch));
 }
 
+void WaterSolver::set_spreading(int p_spreading, float p_swell) {
+	settings.wave_spreading = p_spreading;
+	settings.swell = p_swell;
+	if (gpu.is_null()) {
+		return;
+	}
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_band).bind(gpu, settings.ocean_k_min, settings.ocean_k_max, settings.wave_spreading, settings.swell));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_reinit_spectrum).bind(gpu, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.fetch));
+}
+
 void WaterSolver::recenter(Vector2 p_grid_center) {
 	flush_ticks(); // ticks recorded so far ran on the old centre (their bodies are relative to it)
 	settings.grid_center = p_grid_center;
@@ -1544,7 +1601,7 @@ void WaterSolver::configure(const Settings &p_settings) {
 	}
 	// Before the build, so it uploads the flow (an empty one clears it).
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_base_flux).bind(gpu, base_flux, wall_friction));
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_band).bind(gpu, settings.ocean_k_min, settings.ocean_k_max));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_band).bind(gpu, settings.ocean_k_min, settings.ocean_k_max, settings.wave_spreading, settings.swell));
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled, settings.cell_depth, settings.depth, settings.shallow_fade_depth, settings.fetch));
 }
 
