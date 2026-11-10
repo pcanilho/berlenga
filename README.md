@@ -275,7 +275,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ![Climate maps of a range: temperature, precipitation, winter sun, snow share](docs/media/terrain-climate.jpg)
 
-*Climate maps: cold ridges, wetter windward ground, shaded north faces, snow on the high crest.*
+*Climate maps: cold high ridges, rain over the range, shaded faces in winter, snow on the high crest.*
 
 ![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
 
