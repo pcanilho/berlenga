@@ -79,7 +79,8 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 - **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
 - **Finer water mesh up close** (`mesh_detail`).
-- **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); on steep beaches the crest curls over (`shore_wave_curl`).
+- **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).
+- **Plunging breakers** (`shore_wave_curl`, `shore_spray`, `shore_spray_amount`): the crest throws a sheet of water that lands ahead and sinks into the bore, with spray where it is thin and where it lands.
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
 - **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
@@ -117,9 +118,9 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Run-up: the wash climbs the sand and drains back.*
 
-![A curling breaker on a steep beach, raster vs path traced](docs/media/shore-curl.jpg)
+![A plunging breaker throwing a sheet of water with spray, raster](docs/media/shore-curl.jpg)
 
-*Curling breakers: the crest throws forward and falls.*
+*Plunging breakers: the sheet thrown off the crest, with spray along its thin edge.*
 
 ![Floating boxes drift on a current past a rock](docs/media/currents.gif)
 
