@@ -38,7 +38,9 @@
 #include "core/templates/local_vector.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/3d/skeleton_3d.h"
 #include "scene/main/viewport.h"
+#include "scene/resources/3d/skin.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
@@ -680,6 +682,8 @@ void PhysXHair3D::_step(double p_delta) {
 		const float scale = xform.basis.get_scale().x;
 		s.spheres.push_back(Vector4(c.x, c.y, c.z, sp.w * scale));
 	}
+	_body_triangles(s.body_triangles);
+	s.body_cell_size = collision_cell_size;
 	s.output_xform = render_instance ? render_instance->get_global_transform().affine_inverse() : xform.affine_inverse();
 	// The draw order is sorted from the viewport's camera.
 	const Camera3D *camera = is_inside_tree() ? get_viewport()->get_camera_3d() : nullptr;
@@ -1024,6 +1028,121 @@ float PhysXHair3D::get_turbulence_size() const {
 	return turbulence_size;
 }
 
+// The collision body's triangles in world space this frame: a MeshInstance3D's surfaces, skinned on
+// the CPU as the GPU skins them (skeleton * bone pose * bind pose, weighted) when it has a skin, else
+// with its transform. Meant for a low-poly collision proxy of the body (a few thousand triangles).
+void PhysXHair3D::_body_triangles(PackedVector3Array &r_tris) {
+	r_tris.clear();
+	MeshInstance3D *mi = collision_body.is_empty() || !is_inside_tree() ? nullptr : Object::cast_to<MeshInstance3D>(get_node_or_null(collision_body));
+	if (mi == nullptr || mi->get_mesh().is_null()) {
+		return;
+	}
+	Ref<Mesh> mesh = mi->get_mesh();
+	BodyCache &c = body_cache;
+	if (c.mesh_instance != mi->get_instance_id() || c.mesh != mesh->get_rid()) {
+		c = BodyCache();
+		c.mesh_instance = mi->get_instance_id();
+		c.mesh = mesh->get_rid();
+		for (int s = 0; s < mesh->get_surface_count(); s++) {
+			if (mesh->surface_get_primitive_type(s) != Mesh::PRIMITIVE_TRIANGLES) {
+				continue;
+			}
+			const Array arrays = mesh->surface_get_arrays(s);
+			const PackedVector3Array v = arrays[Mesh::ARRAY_VERTEX];
+			const PackedInt32Array idx = arrays[Mesh::ARRAY_INDEX];
+			const PackedInt32Array b = arrays[Mesh::ARRAY_BONES];
+			const PackedFloat32Array w = arrays[Mesh::ARRAY_WEIGHTS];
+			const int base = c.verts.size();
+			const int per = v.is_empty() ? 0 : b.size() / v.size();
+			if (s == 0 || c.per_vertex == 0) {
+				c.per_vertex = per;
+			}
+			c.verts.append_array(v);
+			if (idx.is_empty()) {
+				for (int i = 0; i + 2 < v.size(); i += 3) {
+					c.indices.push_back(base + i);
+					c.indices.push_back(base + i + 2);
+					c.indices.push_back(base + i + 1);
+				}
+			} else {
+				for (int i = 0; i + 2 < idx.size(); i += 3) {
+					// Godot winds triangles clockwise: swapped, so the cross product points out.
+					c.indices.push_back(base + idx[i]);
+					c.indices.push_back(base + idx[i + 2]);
+					c.indices.push_back(base + idx[i + 1]);
+				}
+			}
+			if (per > 0 && per == c.per_vertex && w.size() == b.size()) {
+				c.bones.append_array(b);
+				c.weights.append_array(w);
+			}
+		}
+		if (c.bones.size() != c.verts.size() * c.per_vertex) {
+			c.bones.clear();
+			c.weights.clear();
+			c.per_vertex = 0;
+		}
+	}
+	const int vc = c.verts.size();
+	skinned.resize(vc);
+	Vector3 *out = skinned.ptrw();
+	Skeleton3D *skeleton = Object::cast_to<Skeleton3D>(mi->get_node_or_null(mi->get_skeleton_path()));
+	Ref<Skin> skin = mi->get_skin();
+	if (skeleton != nullptr && skin.is_valid() && c.per_vertex > 0) {
+		const Transform3D sk = skeleton->get_global_transform();
+		LocalVector<Transform3D> bind;
+		bind.resize(skin->get_bind_count());
+		for (int j = 0; j < skin->get_bind_count(); j++) {
+			int bone = skin->get_bind_bone(j);
+			if (bone < 0) {
+				bone = skeleton->find_bone(skin->get_bind_name(j));
+			}
+			bind[j] = bone < 0 ? sk : sk * skeleton->get_bone_global_pose(bone) * skin->get_bind_pose(j);
+		}
+		const int per = c.per_vertex;
+		for (int i = 0; i < vc; i++) {
+			Vector3 p;
+			float wsum = 0.0f;
+			for (int k = 0; k < per; k++) {
+				const float w = c.weights[i * per + k];
+				const int j = c.bones[i * per + k];
+				if (w > 0.0f && j >= 0 && j < (int)bind.size()) {
+					p += bind[j].xform(c.verts[i]) * w;
+					wsum += w;
+				}
+			}
+			out[i] = wsum > 0.0f ? p / wsum : sk.xform(c.verts[i]);
+		}
+	} else {
+		const Transform3D x = mi->get_global_transform();
+		for (int i = 0; i < vc; i++) {
+			out[i] = x.xform(c.verts[i]);
+		}
+	}
+	r_tris.resize(c.indices.size());
+	Vector3 *t = r_tris.ptrw();
+	for (int i = 0; i < c.indices.size(); i++) {
+		t[i] = out[c.indices[i]];
+	}
+}
+
+void PhysXHair3D::set_collision_body(const NodePath &p_path) {
+	collision_body = p_path;
+	body_cache = BodyCache();
+}
+
+NodePath PhysXHair3D::get_collision_body() const {
+	return collision_body;
+}
+
+void PhysXHair3D::set_collision_cell_size(float p_size) {
+	collision_cell_size = MAX(p_size, 0.001f);
+}
+
+float PhysXHair3D::get_collision_cell_size() const {
+	return collision_cell_size;
+}
+
 void PhysXHair3D::set_collision_spheres(const PackedVector4Array &p_spheres) {
 	collision_spheres = p_spheres;
 }
@@ -1097,6 +1216,10 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_turbulence"), &PhysXHair3D::get_turbulence);
 	ClassDB::bind_method(D_METHOD("set_turbulence_size", "size"), &PhysXHair3D::set_turbulence_size);
 	ClassDB::bind_method(D_METHOD("get_turbulence_size"), &PhysXHair3D::get_turbulence_size);
+	ClassDB::bind_method(D_METHOD("set_collision_body", "path"), &PhysXHair3D::set_collision_body);
+	ClassDB::bind_method(D_METHOD("get_collision_body"), &PhysXHair3D::get_collision_body);
+	ClassDB::bind_method(D_METHOD("set_collision_cell_size", "size"), &PhysXHair3D::set_collision_cell_size);
+	ClassDB::bind_method(D_METHOD("get_collision_cell_size"), &PhysXHair3D::get_collision_cell_size);
 	ClassDB::bind_method(D_METHOD("set_collision_spheres", "spheres"), &PhysXHair3D::set_collision_spheres);
 	ClassDB::bind_method(D_METHOD("get_collision_spheres"), &PhysXHair3D::get_collision_spheres);
 	ClassDB::bind_method(D_METHOD("reset_simulation"), &PhysXHair3D::reset_simulation);
@@ -1137,4 +1260,6 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_turbulence", "get_turbulence");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater,suffix:m"), "set_turbulence_size", "get_turbulence_size");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "collision_spheres"), "set_collision_spheres", "get_collision_spheres");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "collision_body", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_collision_body", "get_collision_body");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_cell_size", PROPERTY_HINT_RANGE, "0.001,0.1,0.001,suffix:m"), "set_collision_cell_size", "get_collision_cell_size");
 }

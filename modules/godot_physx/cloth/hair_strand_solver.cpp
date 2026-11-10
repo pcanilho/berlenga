@@ -42,8 +42,9 @@
 #include "servers/rendering/rendering_server.h"
 
 namespace {
-// std140 Params in hair_strands.glsl: 5 vec4, 3 mat4, MAX_SPHERES vec4.
-constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16;
+// std140 Params in hair_strands.glsl: 7 vec4, 4 mat4, MAX_SPHERES vec4, 3 vec4 (SDF).
+constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16 + 3 * 16;
+constexpr int SDF_PARAMS = (7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16) / 4; // float index
 constexpr uint32_t GROUP = 64; // local_size_x
 
 uint32_t groups_for(int p_count) {
@@ -57,6 +58,12 @@ enum Mode {
 	MODE_FOLLOW = 3,
 	MODE_SORT_KEYS = 4,
 	MODE_SORT_STEP = 5,
+	MODE_SDF_CLEAR = 6,
+	MODE_SDF_BUILD = 7,
+	MODE_SDF_COLLIDE = 8,
+	MODE_SDF_SEED = 9,
+	MODE_SDF_JUMP = 10,
+	MODE_SDF_FINAL = 11,
 };
 
 struct PassConstants {
@@ -161,7 +168,8 @@ void HairStrandSolverGPU::rt_free_buffers() {
 		rd->free_rid(uniform_set);
 	}
 	uniform_set = RID();
-	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out };
+	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &buf_tris, &buf_sdf };
+	tris_capacity = 0;
 	for (RID *r : rids) {
 		if (r->is_valid()) {
 			rd->free_rid(*r);
@@ -226,6 +234,18 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 	data.push_back(zeros);
 	tex_out = rd->texture_create(tf, RD::TextureView(), data);
 
+	// No collision body yet: placeholders, grown on the first step that has one.
+	buf_tris = storage_from(rd, nullptr, 16);
+	buf_sdf = storage_from(rd, nullptr, 16);
+	rt_make_uniform_set();
+	needs_reset = true;
+	built.set();
+}
+
+void HairStrandSolverGPU::rt_make_uniform_set() {
+	if (uniform_set.is_valid() && rd->uniform_set_is_valid(uniform_set)) {
+		rd->free_rid(uniform_set);
+	}
 	Vector<RD::Uniform> uniforms;
 	{
 		RD::Uniform u;
@@ -263,18 +283,43 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 		u.append_id(buf_order);
 		uniforms.push_back(u);
 	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 8;
+		u.append_id(buf_tris);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 9;
+		u.append_id(buf_sdf);
+		uniforms.push_back(u);
+	}
 	uniform_set = rd->uniform_set_create(uniforms, shader, 0);
-	needs_reset = true;
-	built.set();
 }
 
 void HairStrandSolverGPU::rt_reset(Ref<HairStrandSolverGPU> p_self) {
 	needs_reset = true;
 }
 
-void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps) {
+void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps, PackedFloat32Array p_tris) {
 	if (rd == nullptr || !built.is_set() || uniform_set.is_null() || p_params.size() != PARAMS_BYTES) {
 		return;
+	}
+	const int tri_count = p_tris.size() / 12;
+	if (tri_count > 0) {
+		if (tri_count > tris_capacity) {
+			// Grown (with headroom) only when the body has more triangles than before.
+			rd->free_rid(buf_tris);
+			rd->free_rid(buf_sdf);
+			tris_capacity = tri_count + tri_count / 4;
+			buf_tris = storage_from(rd, nullptr, tris_capacity * 48);
+			buf_sdf = storage_from(rd, nullptr, MAX_SDF_CELLS * 8);
+			rt_make_uniform_set();
+		}
+		rd->buffer_update(buf_tris, 0, tri_count * 48, p_tris.ptr());
 	}
 	PackedByteArray params = p_params;
 	int32_t *counts = (int32_t *)params.ptrw();
@@ -308,6 +353,23 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 		run(MODE_STEP, (float)(s + 1) / (float)substeps, (float)s / (float)substeps, strand_count);
 	}
 	run(MODE_FOLLOW, 1.0f, 1.0f, strand_count);
+	if (tri_count > 0) {
+		const int32_t *sd = (const int32_t *)params.ptr() + SDF_PARAMS + 4;
+		const int cells = sd[0] * sd[1] * sd[2];
+		run(MODE_SDF_CLEAR, 1.0f, 1.0f, cells);
+		run(MODE_SDF_BUILD, 1.0f, 1.0f, tri_count);
+		run(MODE_SDF_SEED, 1.0f, 1.0f, tri_count);
+		int k = 1;
+		while (k * 2 < MAX(sd[0], MAX(sd[1], sd[2]))) {
+			k *= 2;
+		}
+		for (; k >= 1; k /= 2) {
+			run(MODE_SDF_JUMP, 1.0f, 1.0f, cells, k);
+		}
+		run(MODE_SDF_JUMP, 1.0f, 1.0f, cells, 1); // JFA+1: fixes most of its misses
+		run(MODE_SDF_FINAL, 1.0f, 1.0f, cells);
+		run(MODE_SDF_COLLIDE, 1.0f, 1.0f, strand_count);
+	}
 	if (slot_points > 0) {
 		// Draw order, far to near: bitonic sort of the strands by depth.
 		run(MODE_SORT_KEYS, 1.0f, 1.0f, sort_size);
@@ -452,9 +514,46 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 		f[92 + i * 4 + 2] = s.z;
 		f[92 + i * 4 + 3] = s.w;
 	}
+	// The collision body: its triangles, padded to vec4, and a grid around them (TressFX's SDF),
+	// cells grown so the grid fits in 64^3.
+	PackedFloat32Array tris;
+	const int tri_count = p_settings.body_triangles.size() / 3;
+	if (tri_count > 0) {
+		tris.resize(tri_count * 12);
+		float *t = tris.ptrw();
+		AABB box(p_settings.body_triangles[0], Vector3());
+		for (int i = 0; i < tri_count * 3; i++) {
+			const Vector3 &v = p_settings.body_triangles[i];
+			box.expand_to(v);
+			t[i * 4 + 0] = v.x;
+			t[i * 4 + 1] = v.y;
+			t[i * 4 + 2] = v.z;
+			t[i * 4 + 3] = 1.0f;
+		}
+		// The grid reaches 5 cm (or 3 cells) past the body, for strands moving in.
+		float cell = MAX(p_settings.body_cell_size, 0.001f);
+		float band = MAX(0.05f, 3.0f * cell);
+		for (int pass = 0; pass < 2; pass++) {
+			const Vector3 size = box.size + Vector3(2, 2, 2) * band;
+			cell = MAX(cell, MAX(size.x, MAX(size.y, size.z)) / 62.0f);
+			band = MAX(0.05f, 3.0f * cell);
+		}
+		const Vector3 origin = box.position - Vector3(band, band, band);
+		const Vector3 size = box.size + Vector3(2, 2, 2) * band;
+		f[SDF_PARAMS + 0] = origin.x;
+		f[SDF_PARAMS + 1] = origin.y;
+		f[SDF_PARAMS + 2] = origin.z;
+		f[SDF_PARAMS + 3] = cell;
+		ints[SDF_PARAMS + 4] = CLAMP((int)Math::ceil(size.x / cell), 1, 64);
+		ints[SDF_PARAMS + 5] = CLAMP((int)Math::ceil(size.y / cell), 1, 64);
+		ints[SDF_PARAMS + 6] = CLAMP((int)Math::ceil(size.z / cell), 1, 64);
+		ints[SDF_PARAMS + 7] = tri_count;
+		f[SDF_PARAMS + 8] = band;
+		f[SDF_PARAMS + 9] = MAX(p_settings.margin, 0.0f);
+	}
 	last_xform = p_xform;
 	has_last = true;
-	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_step).bind(gpu, bytes, substeps));
+	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_step).bind(gpu, bytes, substeps, tris));
 }
 
 void HairStrandSolver::reset() {

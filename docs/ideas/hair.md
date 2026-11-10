@@ -412,6 +412,32 @@ over the sorted slots could do it), screen-size rather than distance, and cards 
 
 Bench: `--scene=strands_sim --raster --hair=wind_wavy_far[_nolod]`.
 
+## Stage 2g: body collision (signed distance field)
+
+Spheres fit a skull well and shoulders, collars and backs badly. What engines do:
+
+- TressFX 4.1 (`TressFXSDFCollision.hlsl`): every frame the skinned collision mesh writes a
+  signed distance field on the GPU (per triangle, the cells in its padded box take the smaller
+  distance with an atomic min, signed by the face), then each hair vertex inside the margin moves
+  out along the field's gradient (central differences of trilinear samples).
+- Unreal groom: physics asset capsules and spheres (Niagara), optionally a skinned mesh SDF.
+- HairWorks: collision spheres and capsules.
+
+Ours (PhysXHair3D `collision_body`, `collision_cell_size` 1 cm): the TressFX scheme, with the
+field filled everywhere. The body's triangles are skinned on the CPU (skeleton x bone pose x bind
+pose, weighted, as the GPU skins; rigid meshes take their transform) and uploaded. In a grid of at
+most 64^3 reaching 5 cm past the body: MODE_SDF_BUILD gives each cell a triangle crosses its
+smallest distance (`atomicMin` on the float's bits), MODE_SDF_SEED marks which triangle that is,
+jump flooding (Rong and Tan 2006, steps 32..1 plus one extra step 1) carries the nearest triangle
+to every cell, and MODE_SDF_FINAL stores the distance to it, signed by its face. TressFX keeps only
+a narrow band, so a strand more than a few cells inside stayed there; tried first, and a groom
+whose rest pose crossed the shoulders hung straight through them. MODE_SDF_COLLIDE runs after the
+followers are placed, per strand past the two pinned points, and like the spheres it stops a
+pushed point (prev = pos). Limits: a closed mesh is assumed; the sign comes from the nearest face,
+right past convex edges and approximate in concave ones.
+
+Bench: `--scene=strands_sim --raster --hair=wavy_box[_body][_skinned]`.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.

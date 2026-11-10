@@ -13,6 +13,11 @@
 //   the speed is clamped.
 // MODE_FOLLOW then places the follow strands on their guides (HairWorks / TressFX follow hairs).
 // Per frame:
+//   MODE_SDF_* (a collision body is set): TressFX's SDF collision (TressFXSDFCollision.hlsl): the
+//                body's triangles (skinned on the CPU) seed the cells they cross with their
+//                distance, jump flooding (Rong and Tan 2006) carries the nearest triangle to every
+//                cell of the grid, each cell takes its signed distance to it, and every point past
+//                the two pinned ones inside the margin is pushed out along the field's gradient.
 //   MODE_RESET   (first frame / teleport) every point placed on the groomed pose.
 //   MODE_OUTPUT  positions written, in the render copy's space, to an RGBA32F image the hair
 //                material reads (no CPU readback).
@@ -25,6 +30,12 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 #define MODE_FOLLOW 3
 #define MODE_SORT_KEYS 4
 #define MODE_SORT_STEP 5
+#define MODE_SDF_CLEAR 6
+#define MODE_SDF_BUILD 7
+#define MODE_SDF_COLLIDE 8
+#define MODE_SDF_SEED 9
+#define MODE_SDF_JUMP 10
+#define MODE_SDF_FINAL 11
 
 #define MAX_SPHERES 32
 
@@ -41,6 +52,9 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	mat4 world_to_out; // world -> the render copy's space
 	mat4 world_to_view; // world -> the camera, for the draw order
 	vec4 spheres[MAX_SPHERES]; // world centre, radius
+	vec4 sdf_origin; // xyz the grid's corner (world), w the cell size (m)
+	ivec4 sdf_dims; // xyz cells, w triangles (0: no collision body)
+	vec4 sdf_misc; // x unused, y collision margin (m)
 };
 
 layout(push_constant, std430) uniform Pass {
@@ -71,6 +85,14 @@ layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2D out_ima
 
 layout(set = 0, binding = 7, std430) restrict buffer Order {
 	vec2 order[]; // draw order, far to near: x the strand's depth key, y the strand
+};
+
+layout(set = 0, binding = 8, std430) restrict readonly buffer Tris {
+	vec4 tris[]; // the collision body's triangles, world: three points each
+};
+
+layout(set = 0, binding = 9, std430) restrict buffer Sdf {
+	uint sdf[]; // cells: the distance (atomicMin of its bits while seeding, then the signed float); then cells more: the nearest triangle, or -1
 };
 
 layout(set = 0, binding = 6, std430) restrict readonly buffer Follow {
@@ -111,10 +133,205 @@ vec3 eddies(vec3 q) {
 	return (a + 0.5 * b) / 1.5;
 }
 
+// Closest point on triangle abc to p (Ericson, Real-Time Collision Detection 5.1.5).
+vec3 closest_on_triangle(vec3 p, vec3 a, vec3 b, vec3 c) {
+	vec3 ab = b - a;
+	vec3 ac = c - a;
+	vec3 ap = p - a;
+	float d1 = dot(ab, ap);
+	float d2 = dot(ac, ap);
+	if (d1 <= 0.0 && d2 <= 0.0) {
+		return a;
+	}
+	vec3 bp = p - b;
+	float d3 = dot(ab, bp);
+	float d4 = dot(ac, bp);
+	if (d3 >= 0.0 && d4 <= d3) {
+		return b;
+	}
+	float vc = d1 * d4 - d3 * d2;
+	if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) {
+		return a + ab * (d1 / (d1 - d3));
+	}
+	vec3 cp = p - c;
+	float d5 = dot(ab, cp);
+	float d6 = dot(ac, cp);
+	if (d6 >= 0.0 && d5 <= d6) {
+		return c;
+	}
+	float vb = d5 * d2 - d1 * d6;
+	if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) {
+		return a + ac * (d2 / (d2 - d6));
+	}
+	float va = d3 * d6 - d5 * d4;
+	if (va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0) {
+		return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+	}
+	float denom = 1.0 / (va + vb + vc);
+	return a + ab * (vb * denom) + ac * (vc * denom);
+}
+
+const uint SDF_FAR = 0x7f000000u; // a huge positive distance
+
+float sdf_cell(ivec3 c) {
+	c = clamp(c, ivec3(0), sdf_dims.xyz - 1);
+	return uintBitsToFloat(sdf[(c.z * sdf_dims.y + c.y) * sdf_dims.x + c.x]);
+}
+
+int sdf_cells() {
+	return sdf_dims.x * sdf_dims.y * sdf_dims.z;
+}
+
+vec3 sdf_centre(ivec3 c) {
+	return sdf_origin.xyz + (vec3(c) + 0.5) * sdf_origin.w;
+}
+
+ivec3 sdf_coord(int i) {
+	return ivec3(i % sdf_dims.x, (i / sdf_dims.x) % sdf_dims.y, i / (sdf_dims.x * sdf_dims.y));
+}
+
+float tri_distance(vec3 p, int t) {
+	return length(p - closest_on_triangle(p, tris[t * 3].xyz, tris[t * 3 + 1].xyz, tris[t * 3 + 2].xyz));
+}
+
+// Trilinear signed distance at world point p.
+float sdf_at(vec3 p) {
+	vec3 g = (p - sdf_origin.xyz) / sdf_origin.w - 0.5; // cell centres at +0.5
+	ivec3 c = ivec3(floor(g));
+	vec3 f = g - vec3(c);
+	float x00 = mix(sdf_cell(c), sdf_cell(c + ivec3(1, 0, 0)), f.x);
+	float x10 = mix(sdf_cell(c + ivec3(0, 1, 0)), sdf_cell(c + ivec3(1, 1, 0)), f.x);
+	float x01 = mix(sdf_cell(c + ivec3(0, 0, 1)), sdf_cell(c + ivec3(1, 0, 1)), f.x);
+	float x11 = mix(sdf_cell(c + ivec3(0, 1, 1)), sdf_cell(c + ivec3(1, 1, 1)), f.x);
+	return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
+}
+
 void main() {
 	int id = int(gl_GlobalInvocationID.x);
 
 	int slot_points = int(inertia.z + 0.5);
+	if (pass.mode == MODE_SDF_CLEAR) {
+		if (id < sdf_cells()) {
+			sdf[id] = SDF_FAR;
+			sdf[sdf_cells() + id] = 0xffffffffu; // no triangle
+		}
+		return;
+	}
+	if (pass.mode == MODE_SDF_BUILD || pass.mode == MODE_SDF_SEED) {
+		// One thread per triangle, over the cells around it (TressFX ConstructSignedDistanceField):
+		// BUILD keeps each cell's smallest distance (atomicMin of the float's bits, positive
+		// floats order as their bits), SEED then marks the triangle that has it.
+		if (id >= sdf_dims.w) {
+			return;
+		}
+		vec3 a = tris[id * 3].xyz;
+		vec3 b = tris[id * 3 + 1].xyz;
+		vec3 c = tris[id * 3 + 2].xyz;
+		float cell = sdf_origin.w;
+		ivec3 lo = max(ivec3(floor((min(a, min(b, c)) - cell - sdf_origin.xyz) / cell)), ivec3(0));
+		ivec3 hi = min(ivec3(floor((max(a, max(b, c)) + cell - sdf_origin.xyz) / cell)), sdf_dims.xyz - 1);
+		for (int z = lo.z; z <= hi.z; z++) {
+			for (int y = lo.y; y <= hi.y; y++) {
+				for (int x = lo.x; x <= hi.x; x++) {
+					vec3 p = sdf_centre(ivec3(x, y, z));
+					uint key = floatBitsToUint(length(p - closest_on_triangle(p, a, b, c)));
+					int ci = (z * sdf_dims.y + y) * sdf_dims.x + x;
+					if (pass.mode == MODE_SDF_BUILD) {
+						atomicMin(sdf[ci], key);
+					} else if (sdf[ci] == key) {
+						sdf[sdf_cells() + ci] = uint(id);
+					}
+				}
+			}
+		}
+		return;
+	}
+	if (pass.mode == MODE_SDF_JUMP) {
+		// Jump flooding, step pad1 cells: a cell takes a neighbour's triangle when it is nearer.
+		if (id >= sdf_cells()) {
+			return;
+		}
+		ivec3 c = sdf_coord(id);
+		vec3 p = sdf_centre(c);
+		uint best = sdf[sdf_cells() + id];
+		float best_d = best == 0xffffffffu ? 3.0e38 : tri_distance(p, int(best));
+		int k = pass.pad1;
+		for (int z = -1; z <= 1; z++) {
+			for (int y = -1; y <= 1; y++) {
+				for (int x = -1; x <= 1; x++) {
+					ivec3 n = c + ivec3(x, y, z) * k;
+					if (any(lessThan(n, ivec3(0))) || any(greaterThanEqual(n, sdf_dims.xyz))) {
+						continue;
+					}
+					uint t = sdf[sdf_cells() + (n.z * sdf_dims.y + n.y) * sdf_dims.x + n.x];
+					if (t == 0xffffffffu || t == best) {
+						continue;
+					}
+					float d = tri_distance(p, int(t));
+					if (d < best_d) {
+						best_d = d;
+						best = t;
+					}
+				}
+			}
+		}
+		sdf[sdf_cells() + id] = best;
+		return;
+	}
+	if (pass.mode == MODE_SDF_FINAL) {
+		// The signed distance to the nearest triangle, signed by its face (TressFX's choice; right
+		// past convex edges, approximate in concave ones). A closed body is assumed.
+		if (id >= sdf_cells()) {
+			return;
+		}
+		uint t = sdf[sdf_cells() + id];
+		if (t == 0xffffffffu) {
+			sdf[id] = SDF_FAR;
+			return;
+		}
+		vec3 p = sdf_centre(sdf_coord(id));
+		vec3 a = tris[t * 3].xyz;
+		vec3 b = tris[t * 3 + 1].xyz;
+		vec3 c = tris[t * 3 + 2].xyz;
+		vec3 q = closest_on_triangle(p, a, b, c);
+		float d = length(p - q);
+		vec3 n = cross(b - a, c - a);
+		sdf[id] = floatBitsToUint(dot(p - q, n) < 0.0 ? -d : d);
+		return;
+	}
+	if (pass.mode == MODE_SDF_COLLIDE) {
+		// One thread per strand (followers too, after MODE_FOLLOW), past the two pinned points:
+		// a point closer than the margin is pushed out along the gradient and stops there, as on
+		// the collision spheres (TressFX CollideHairVerticesWithSdf).
+		if (id >= counts.x) {
+			return;
+		}
+		int first = strands[id].x;
+		int n = strands[id].y;
+		vec3 lo = sdf_origin.xyz;
+		vec3 hi = sdf_origin.xyz + vec3(sdf_dims.xyz) * sdf_origin.w;
+		float h = 0.5 * sdf_origin.w;
+		for (int i = 2; i < n; i++) {
+			vec3 p = pos[first + i].xyz;
+			if (any(lessThan(p, lo)) || any(greaterThan(p, hi))) {
+				continue;
+			}
+			float d = sdf_at(p);
+			if (d >= sdf_misc.y) {
+				continue;
+			}
+			vec3 g = vec3(sdf_at(p + vec3(h, 0, 0)) - sdf_at(p - vec3(h, 0, 0)),
+					sdf_at(p + vec3(0, h, 0)) - sdf_at(p - vec3(0, h, 0)),
+					sdf_at(p + vec3(0, 0, h)) - sdf_at(p - vec3(0, 0, h)));
+			if (dot(g, g) < 1e-12) {
+				continue;
+			}
+			p += normalize(g) * (sdf_misc.y - d);
+			pos[first + i] = vec4(p, 1.0);
+			prev[first + i] = vec4(p, 1.0);
+		}
+		return;
+	}
 	if (pass.mode == MODE_SORT_KEYS) {
 		// Blended strands must be drawn far to near (TressFX sorts its fragments per pixel; here
 		// whole strands are sorted by their middle point's depth, a bitonic sort on the GPU).

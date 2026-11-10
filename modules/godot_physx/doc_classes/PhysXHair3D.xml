@@ -19,8 +19,14 @@
 		</method>
 	</methods>
 	<members>
+		<member name="collision_body" type="NodePath" setter="set_collision_body" getter="get_collision_body" default="NodePath(&quot;&quot;)">
+			A [MeshInstance3D] the strands stay out of, as AMD TressFX's SDF collision: every frame its triangles (skinned on the CPU when it has a [Skin], else placed by its transform) build a signed distance field around them on the GPU (seeded by the triangles, filled by jump flooding), and points inside the body or closer than the margin are pushed out along it and stop. Use a closed, low-poly proxy of the body (shoulders, neck, back; a few thousand triangles). Empty: only [member collision_spheres].
+		</member>
+		<member name="collision_cell_size" type="float" setter="set_collision_cell_size" getter="get_collision_cell_size" default="0.01">
+			The cell of [member collision_body]'s distance field, in metres. Grown when the body is too large for 64 cells a side.
+		</member>
 		<member name="collision_spheres" type="PackedVector4Array" setter="set_collision_spheres" getter="get_collision_spheres" default="PackedVector4Array()">
-			Spheres the strands stay out of, in this node's space: [code]x, y, z[/code] the centre and [code]w[/code] the radius. Usually the skull, the neck and the shoulders. Up to 32.
+			Spheres the strands stay out of, in this node's space: [code]x, y, z[/code] the centre and [code]w[/code] the radius. Usually the skull, the neck and the shoulders. Up to 32. For a body shape spheres fit badly, see [member collision_body].
 		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.08">
 			How fast a point's velocity relaxes toward the air's: each substep it keeps [code]exp(-damping * 60 * dt)[/code] of the difference (TressFX's damping). In still air this slows the hair; in [member wind] it is how quickly the hair takes up the wind. Hair is light enough that air, not its weight, sets how it moves: higher is floatier, lower is heavier and swings longer.

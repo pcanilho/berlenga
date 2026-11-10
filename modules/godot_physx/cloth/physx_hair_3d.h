@@ -83,6 +83,19 @@ class PhysXHair3D : public Node3D {
 	float turbulence_size = 0.08f;
 	float guide_ratio = 0.1f;
 	PackedVector4Array collision_spheres; // this node's space: centre, radius
+	NodePath collision_body;
+	float collision_cell_size = 0.01f;
+	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
+	struct BodyCache {
+		ObjectID mesh_instance;
+		RID mesh;
+		PackedVector3Array verts;
+		PackedInt32Array indices;
+		PackedInt32Array bones;
+		PackedFloat32Array weights;
+		int per_vertex = 0;
+	} body_cache;
+	PackedVector3Array skinned;
 
 	HairStrandSolver *solver = nullptr;
 	MeshInstance3D *render_instance = nullptr;
@@ -102,6 +115,7 @@ class PhysXHair3D : public Node3D {
 	Vector3 _fibre_absorption() const;
 	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) const;
 	Color _mass_color() const;
+	void _body_triangles(PackedVector3Array &r_tris);
 
 protected:
 	void _notification(int p_what);
@@ -175,6 +189,10 @@ public:
 	float get_turbulence() const;
 	void set_turbulence_size(float p_size);
 	float get_turbulence_size() const;
+	void set_collision_body(const NodePath &p_path);
+	NodePath get_collision_body() const;
+	void set_collision_cell_size(float p_size);
+	float get_collision_cell_size() const;
 	void set_collision_spheres(const PackedVector4Array &p_spheres);
 	PackedVector4Array get_collision_spheres() const;
 
