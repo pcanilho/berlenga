@@ -37,8 +37,11 @@
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/light_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/skeleton_3d.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/window.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/skin.h"
 #include "scene/resources/3d/world_3d.h"
@@ -80,6 +83,20 @@ uniform vec2 fibre_roughness = vec2(0.3, 0.3);
 uniform float root_width = 0.0004;
 uniform float tip_width = 0.0001;
 uniform float lod_width_scale = 1.0; // raster: 1 / the share of strands drawn (distance LOD)
+uniform int slot_points = 1; // texels per strand
+
+// The deep opacity map (Yuksel and Keyser 2008, as Unreal's hair), built by the solver toward one
+// directional light: per cell the first hair's depth, the strands' coverage summed to the end of
+// three layers past it, and (beside it) the first opaque depth.
+uniform bool deep_shadow = false;
+uniform sampler2D hair_deep_shadow : filter_nearest, repeat_disable;
+uniform vec4 dom_center; // xyz world, w radius
+uniform vec3 dom_u;
+uniform vec3 dom_v;
+uniform vec3 dom_l; // toward the light, world
+uniform vec3 dom_layers = vec3(0.01, 0.04, 0.15);
+uniform int dom_cells = 256;
+uniform float dom_density = 0.3; // calibrated to the path tracer: fibres pass much of the light on (TT)
 
 // xyz the point, w its share along the strand (by point), or -1 past the strand's end; w + 2 on a
 // strand the distance LOD leaves out of the raster draw.
@@ -95,8 +112,27 @@ varying float strand_across; // -1..1 across the drawn ribbon (raster)
 varying float strand_half_px; // the strand's real half width, in pixels (raster)
 varying float strand_drawn_px; // the drawn half width, in pixels (raster)
 varying vec3 strand_tangent; // along the strand, view space (raster lighting)
+varying flat float strand_seed; // 0..1 per strand: its own shadow-map noise
+varying float dom_transmittance; // fragment to light(): the light the deep opacity map lets through
+varying vec3 dom_light_view; // its light, view space (zero: none)
+varying vec2 dom_vertex; // vertex to fragment: x the light the map lets through, y metres past the first hair (-1: none)
+
+// Coverage summed up to depth p_rel past the first hair, from a cell's layers.
+float dom_coverage(vec4 p_cell, float p_rel) {
+	if (p_rel <= 0.0) {
+		return 0.0;
+	} else if (p_rel < dom_layers.x) {
+		return p_cell.y * p_rel / dom_layers.x;
+	} else if (p_rel < dom_layers.y) {
+		return mix(p_cell.y, p_cell.z, (p_rel - dom_layers.x) / (dom_layers.y - dom_layers.x));
+	} else if (p_rel < dom_layers.z) {
+		return mix(p_cell.z, p_cell.w, (p_rel - dom_layers.y) / (dom_layers.z - dom_layers.y));
+	}
+	return p_cell.w;
+}
 
 void vertex() {
+	strand_seed = fract(sin(floor((CUSTOM0.x + 0.5) / float(max(slot_points, 1))) * 12.9898) * 43758.5453);
 	vec4 here = hair_point(CUSTOM0.x);
 	vec4 before = hair_point(CUSTOM0.y);
 	vec4 after = hair_point(CUSTOM0.z);
@@ -118,6 +154,40 @@ void vertex() {
 	strand_half_px = 1.0;
 	strand_drawn_px = 1.0;
 	strand_tangent = normalize(mat3(MODELVIEW_MATRIX) * t);
+	dom_vertex = vec2(1.0, -1.0);
+	if (deep_shadow && !IN_PATH_TRACER && !IN_SHADOW_PASS && !PREVIOUS_FRAME) {
+		// The deep opacity map: how much hair (and whether the head or body) lies between this
+		// strand point and the light, smooth across the layers and filtered across 4 cells.
+		// Per point, not per fragment: a strand is far thinner than a cell, and the segments
+		// are about as long as one.
+		vec3 world = (MODEL_MATRIX * vec4(p, 1.0)).xyz;
+		vec3 d = world - dom_center.xyz;
+		float size = 2.0 * dom_center.w;
+		vec2 m = (vec2(dot(d, dom_u), dot(d, dom_v)) / size + 0.5) * float(dom_cells) - 0.5;
+		float tl = dom_center.w - dot(d, dom_l);
+		ivec2 c = ivec2(floor(m));
+		vec2 f = m - vec2(c);
+		float absorb = 1.0;
+#ifdef HAIR_SCATTERING
+		absorb = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+#endif
+		float trans = 0.0;
+		float front = 1e9;
+		for (int j = 0; j < 4; j++) {
+			ivec2 o = ivec2(j & 1, j >> 1);
+			ivec2 cc = clamp(c + o, ivec2(0), ivec2(dom_cells - 1));
+			vec4 cell = texelFetch(hair_deep_shadow, cc, 0);
+			float opaque = texelFetch(hair_deep_shadow, cc + ivec2(dom_cells, 0), 0).x;
+			float covered = 0.0;
+			if (cell.x < 1e8) {
+				covered = dom_coverage(cell, tl - cell.x);
+				front = min(front, cell.x);
+			}
+			vec2 w = mix(1.0 - f, f, vec2(o));
+			trans += w.x * w.y * exp(-absorb * dom_density * covered) * (tl > opaque + 0.01 ? 0.0 : 1.0);
+		}
+		dom_vertex = vec2(trans, front < 1e8 ? max(tl - front, 0.0) : -1.0);
+	}
 	if (!IN_PATH_TRACER) {
 		// Raster (and its shadow maps): AMD TressFX's strand rendering. One ribbon facing the camera,
 		// widened by 0.71 px a side so no strand falls between pixels, with its opacity cut to the
@@ -185,11 +255,25 @@ void fragment() {
 	if (IN_SHADOW_PASS) {
 		// Shadow maps take no blending: the coverage becomes the share of texels kept (interleaved
 		// gradient noise), so the hair's shadow is partial and builds up through the volume.
-		float noise = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+		// Each strand draws its own threshold (stochastic transparency, Enderton et al. 2010), so a
+		// texel behind several strands keeps 1 - (1 - c1)(1 - c2)... of them, not the largest c.
+		float noise = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))) + strand_seed);
 		if (coverage <= noise) {
 			discard;
 		}
 		coverage = 1.0;
+	}
+	dom_transmittance = dom_vertex.x;
+	dom_light_view = vec3(0.0);
+	if (deep_shadow && !IN_PATH_TRACER && !IN_SHADOW_PASS) {
+		// The deep opacity map, read per strand point (vertex function) and interpolated: the
+		// light it lets through, and how far past the first hair this point lies. The hair then
+		// skips its own layers in the shadow map (DIRECTIONAL_SHADOW_OFFSET moves the lookup to
+		// just in front of the first hair), which keeps what lies beyond the groom.
+		dom_light_view = normalize(mat3(VIEW_MATRIX) * dom_l);
+		if (dom_vertex.y >= 0.0) {
+			DIRECTIONAL_SHADOW_OFFSET = dom_vertex.y + 0.005;
+		}
 	}
 	// rt_force_opaque: the path tracer traces the strands as solid fibres (ALPHA is 1 there).
 	// Blended, as TressFX blends its strands: each fades over what lies behind it by the share of
@@ -254,9 +338,15 @@ void light() {
 	float wrap = clamp((dot(vn, LIGHT) + 1.0) * 0.25, 0.0, 1.0);
 	float scatter = (1.0 / PI) * mix(wrap, 1.0 - abs(sin_l), 0.33);
 	float luma = max(dot(base, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
-	float shadow = LIGHT_IS_DIRECTIONAL ? clamp(ATTENUATION, 0.0, 1.0) : 1.0;
+	// The deep opacity map's light: its shadow is the map's (the shadow map lookup skipped the
+	// hair's own layers).
+	float attenuation = ATTENUATION;
+	if (LIGHT_IS_DIRECTIONAL && dot(dom_light_view, dom_light_view) > 0.5 && dot(LIGHT, dom_light_view) > 0.999) {
+		attenuation *= dom_transmittance;
+	}
+	float shadow = LIGHT_IS_DIRECTIONAL ? clamp(attenuation, 0.0, 1.0) : 1.0;
 	s += sqrt(base) * scatter * pow(base / luma, vec3(1.0 - shadow));
-	SPECULAR_LIGHT += max(s, vec3(0.0)) * LIGHT_COLOR * ATTENUATION;
+	SPECULAR_LIGHT += max(s, vec3(0.0)) * LIGHT_COLOR * attenuation;
 }
 #endif
 )";
@@ -403,6 +493,7 @@ void PhysXHair3D::_make_material() {
 	if (copy_material.is_valid()) {
 		copy_material->set_shader_parameter("hair_positions", Variant());
 		copy_material->set_shader_parameter("hair_previous_positions", Variant());
+		copy_material->set_shader_parameter("hair_deep_shadow", Variant());
 	}
 	if (render_material.is_valid() && render_material->get_shader().is_valid()) {
 		copy_material = render_material->duplicate();
@@ -420,6 +511,12 @@ void PhysXHair3D::_make_material() {
 	copy_material->set_shader_parameter("fibre_roughness", Vector2(roughness, radial_roughness));
 	copy_material->set_shader_parameter("hair_positions", pos_texture);
 	copy_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
+	copy_material->set_shader_parameter("hair_deep_shadow", deep_shadow_texture);
+	copy_material->set_shader_parameter("slot_points", draw_slot_points);
+	copy_material->set_shader_parameter("dom_cells", HairStrandSolverGPU::DOM_CELLS);
+	copy_material->set_shader_parameter("dom_layers", HairStrandSolver::deep_shadow_layers());
+	deep_shadow_on = false;
+	copy_material->set_shader_parameter("deep_shadow", false);
 	copy_material->set_shader_parameter("texture_width", solver ? solver->get_texture_width() : 1);
 	copy_material->set_shader_parameter("root_width", root_width);
 	copy_material->set_shader_parameter("tip_width", tip_width);
@@ -447,6 +544,7 @@ void PhysXHair3D::_clear() {
 	if (copy_material.is_valid()) {
 		copy_material->set_shader_parameter("hair_positions", Variant());
 		copy_material->set_shader_parameter("hair_previous_positions", Variant());
+		copy_material->set_shader_parameter("hair_deep_shadow", Variant());
 		copy_material.unref();
 	}
 	if (pos_texture.is_valid()) {
@@ -456,6 +554,10 @@ void PhysXHair3D::_clear() {
 	if (prev_pos_texture.is_valid()) {
 		prev_pos_texture->set_texture_rd_rid(RID());
 		prev_pos_texture.unref();
+	}
+	if (deep_shadow_texture.is_valid()) {
+		deep_shadow_texture->set_texture_rd_rid(RID());
+		deep_shadow_texture.unref();
 	}
 	if (solver != nullptr) {
 		memdelete(solver);
@@ -650,6 +752,9 @@ void PhysXHair3D::_build() {
 	pos_texture->set_texture_rd_rid(solver->get_position_texture_rd_rid());
 	prev_pos_texture.instantiate();
 	prev_pos_texture->set_texture_rd_rid(solver->get_previous_position_texture_rd_rid());
+	deep_shadow_texture.instantiate();
+	deep_shadow_texture->set_texture_rd_rid(solver->get_deep_shadow_texture_rd_rid());
+	draw_slot_points = MAX(slot_points, 1);
 	_make_material();
 	built = true;
 	_step(0.0);
@@ -719,7 +824,74 @@ void PhysXHair3D::_step(double p_delta) {
 		lod_width_scale = 1.0f / s.lod_keep;
 		copy_material->set_shader_parameter("lod_width_scale", lod_width_scale);
 	}
+	// Deep opacity map toward one directional light (hair_shading's light() applies it).
+	bool dom = false;
+	if (deep_shadows && hair_shading && render_instance && (render_material.is_null() || render_material->get_shader().is_null())) {
+		if (DirectionalLight3D *light = _deep_shadow_light()) {
+			const AABB box = render_instance->get_global_transform().xform(render_instance->get_aabb());
+			s.dom_center = box.get_center();
+			s.dom_radius = 0.5f * box.size.length();
+			s.dom_light = light->get_global_transform().basis.get_column(2).normalized();
+			s.root_width = root_width;
+			s.tip_width = tip_width;
+			dom = s.dom_radius > 0.0f;
+		}
+	}
+	if (copy_material.is_valid()) {
+		if (dom) {
+			Vector3 u, v;
+			HairStrandSolver::deep_shadow_axes(s.dom_light, u, v);
+			copy_material->set_shader_parameter("dom_center", Plane(s.dom_center, s.dom_radius));
+			copy_material->set_shader_parameter("dom_u", u);
+			copy_material->set_shader_parameter("dom_v", v);
+			copy_material->set_shader_parameter("dom_l", s.dom_light);
+		}
+		if (dom != deep_shadow_on) {
+			deep_shadow_on = dom;
+			copy_material->set_shader_parameter("deep_shadow", dom);
+		}
+	}
 	solver->step(xform, p_delta, substeps, s);
+}
+
+DirectionalLight3D *PhysXHair3D::_deep_shadow_light() {
+	if (!deep_shadow_light.is_empty()) {
+		return Object::cast_to<DirectionalLight3D>(get_node_or_null(deep_shadow_light));
+	}
+	DirectionalLight3D *light = ObjectDB::get_instance<DirectionalLight3D>(deep_shadow_light_cache);
+	if (light && light->is_inside_tree() && light->is_visible_in_tree() && light->has_shadow()) {
+		return light;
+	}
+	// The first shadowed DirectionalLight3D in the scene, searched about once a second.
+	const uint64_t frame = Engine::get_singleton()->get_process_frames();
+	if (deep_shadow_light_cache.is_valid() || frame >= deep_shadow_search_frame) {
+		deep_shadow_light_cache = ObjectID();
+		deep_shadow_search_frame = frame + 60;
+		Node *root = is_inside_tree() ? get_tree()->get_current_scene() : nullptr;
+		if (root == nullptr && is_inside_tree()) {
+			root = get_tree()->get_root();
+		}
+		LocalVector<Node *> stack;
+		if (root) {
+			stack.push_back(root);
+		}
+		float best = -1.0f;
+		while (!stack.is_empty()) {
+			Node *n = stack[stack.size() - 1];
+			stack.remove_at(stack.size() - 1);
+			if (DirectionalLight3D *dl = Object::cast_to<DirectionalLight3D>(n)) {
+				const float energy = dl->get_param(Light3D::PARAM_ENERGY);
+				if (dl->is_visible_in_tree() && dl->has_shadow() && energy > best) {
+					best = energy;
+					deep_shadow_light_cache = dl->get_instance_id();
+				}
+			}
+			for (int i = 0; i < n->get_child_count(); i++) {
+				stack.push_back(n->get_child(i));
+			}
+		}
+	}
+	return ObjectDB::get_instance<DirectionalLight3D>(deep_shadow_light_cache);
 }
 
 void PhysXHair3D::_notification(int p_what) {
@@ -1163,6 +1335,24 @@ float PhysXHair3D::get_collision_cell_size() const {
 	return collision_cell_size;
 }
 
+void PhysXHair3D::set_deep_shadows(bool p_enabled) {
+	deep_shadows = p_enabled;
+}
+
+bool PhysXHair3D::is_deep_shadows() const {
+	return deep_shadows;
+}
+
+void PhysXHair3D::set_deep_shadow_light(const NodePath &p_path) {
+	deep_shadow_light = p_path;
+	deep_shadow_light_cache = ObjectID();
+	deep_shadow_search_frame = 0;
+}
+
+NodePath PhysXHair3D::get_deep_shadow_light() const {
+	return deep_shadow_light;
+}
+
 void PhysXHair3D::set_volume_enabled(bool p_enabled) {
 	volume_enabled = p_enabled;
 }
@@ -1264,6 +1454,10 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_collision_body"), &PhysXHair3D::get_collision_body);
 	ClassDB::bind_method(D_METHOD("set_collision_cell_size", "size"), &PhysXHair3D::set_collision_cell_size);
 	ClassDB::bind_method(D_METHOD("get_collision_cell_size"), &PhysXHair3D::get_collision_cell_size);
+	ClassDB::bind_method(D_METHOD("set_deep_shadows", "enabled"), &PhysXHair3D::set_deep_shadows);
+	ClassDB::bind_method(D_METHOD("is_deep_shadows"), &PhysXHair3D::is_deep_shadows);
+	ClassDB::bind_method(D_METHOD("set_deep_shadow_light", "path"), &PhysXHair3D::set_deep_shadow_light);
+	ClassDB::bind_method(D_METHOD("get_deep_shadow_light"), &PhysXHair3D::get_deep_shadow_light);
 	ClassDB::bind_method(D_METHOD("set_volume_enabled", "enabled"), &PhysXHair3D::set_volume_enabled);
 	ClassDB::bind_method(D_METHOD("is_volume_enabled"), &PhysXHair3D::is_volume_enabled);
 	ClassDB::bind_method(D_METHOD("set_volume_friction", "friction"), &PhysXHair3D::set_volume_friction);
@@ -1283,6 +1477,8 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radial_roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_radial_roughness", "get_radial_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hair_shading"), "set_hair_shading", "is_hair_shading");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deep_shadows"), "set_deep_shadows", "is_deep_shadows");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "deep_shadow_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_deep_shadow_light", "get_deep_shadow_light");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "render_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_render_material", "get_render_material");
 	ADD_GROUP("LOD", "lod_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lod_enabled"), "set_lod_enabled", "is_lod_enabled");
