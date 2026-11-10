@@ -76,6 +76,8 @@ private:
 	real_t flow_exponent = 1.0;
 	real_t time_step = 20000.0; // years
 	int steps = 300;
+	int coarse_levels = -1; // -1: automatic
+	int refine_steps = 60;
 	real_t initial_roughness = 1.0; // metres
 	int outlet_edges = 15;
 	real_t sea_level = 0.0;
@@ -208,6 +210,7 @@ private:
 	double last_generate_msec = 0.0;
 	double last_write_msec = 0.0;
 	int last_steps = 0;
+	int last_coarse_levels = 0;
 	real_t last_change = 0.0;
 
 	void _build_uplift(LocalVector<double> &r_uplift) const;
@@ -269,6 +272,11 @@ public:
 	real_t get_time_step() const { return time_step; }
 	void set_steps(int p_steps) { steps = MAX(p_steps, 0); }
 	int get_steps() const { return steps; }
+	void set_coarse_levels(int p_levels) { coarse_levels = CLAMP(p_levels, -1, 8); }
+	int get_coarse_levels() const { return coarse_levels; }
+	void set_refine_steps(int p_steps) { refine_steps = MAX(p_steps, 0); }
+	int get_refine_steps() const { return refine_steps; }
+	int get_last_coarse_levels() const { return last_coarse_levels; }
 	void set_initial_roughness(real_t p_value) { initial_roughness = MAX(p_value, real_t(0.0)); }
 	real_t get_initial_roughness() const { return initial_roughness; }
 	void set_outlet_edges(int p_edges) { outlet_edges = p_edges & 15; }

@@ -43,7 +43,7 @@
 namespace WeatherClouds {
 
 constexpr int MAX_STORMS = 8;
-constexpr int SHAPE_SIZE = 64; // texels across the base shape noise (tiles)
+constexpr int SHAPE_SIZE = 128; // texels across the base shape noise (tiles)
 constexpr int DETAIL_SIZE = 32; // texels across the detail noise (tiles)
 
 // Everything the density needs, as WeatherMap3D last eased it.
@@ -72,8 +72,10 @@ float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale);
 // Cover and type at world x, z: the weather map's drifting noise plus storms.
 Vector2 cover_type_at(const State &p_state, Vector2 p_xz);
 // Extinction (1/m) at a world point, base shape only (the sky adds detail erosion at the edges).
-// Where a world point reads the shape noise (stretched twice vertically).
+// Where a world point reads the shape noise first (turned, stretched twice vertically), and the
+// shape there: two reads of the tile at an irrational ratio of scales, evened out (0..1).
 Vector3 shape_coord(const State &p_state, const Vector3 &p_pos);
+float shape_at(const State &p_state, const Vector3 &p_pos);
 float extinction_at(const State &p_state, const Vector3 &p_pos);
 
 // The tiling shape noises (Perlin-Worley base, Worley detail), made once.

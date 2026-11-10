@@ -425,6 +425,35 @@ Results (lavapipe, `--view=clouds`, 960x540, 100% crops in the PR):
 - Path traced, camera rays that miss show the same clouds as before (mean difference 1.5/255,
   sample noise).
 
+## Step 3c: clouds that do not repeat (10 Nov 2026)
+
+Paulo saw the clouds repeat in a grid. Cause: the shape noise is one tile, 3 km wide (64^3), read
+once, so the same clouds came back every 3 km to the horizon (`--view=cloud_map`: an 8 x 8 lattice
+over 24 km). The cover noise could not hide it (it only moves the threshold, by 0.35 at most), and
+its value-noise lattice sat on the world's axes. The weather map's cells play no part: the sky
+reads the cover noise directly, at any distance.
+
+Published fixes compared:
+- **A bigger weather map deciding where clouds are** (Nubis: a 2D map over the play area, the 3D
+  noise only shapes them). Right for authored weather, but the map is finite and the sky reaches
+  40 km; we have that already as cover noise plus storms.
+- **Domain warping** (Perlin 1985; Quilez, "Warping") the tile's lookup by a noise that never
+  repeats. Tried: the lattice still showed, and enough warp to hide it sheared the clouds.
+- **Two reads at an irrational ratio of scales** (the idea behind Quilez's "texture repetition"
+  and Wang-tile style aperiodic tiling): the sum of two tiles whose periods are 1 and 1.618 never
+  repeats. Chosen. One more 3D texture read a step.
+
+As built (`weather_clouds.cpp`, CPU and sky GLSL in step):
+- The shape is read twice: turned 36.87 degrees, and turned 73.74 degrees at 1.618x the size. The
+  sum of two even values is triangular, so its CDF (s^2/2 below 1, 1 - (2-s)^2/2 above) makes it
+  even again: cover still means share of sky (shadow share at cover 0.2/0.4/0.6/0.8/1.0: 16, 33,
+  52, 73, 95%, before 16, 31, 49, 69, 96%).
+- Shape noise 128^3 (Nubis's size) instead of 64^3: 23 m texels instead of 47, so near clouds
+  lose the blocky facets. 2 MB, made once.
+- The cover noise's octaves are turned against each other and the axes (Quilez's fbm rotation).
+- Cost: shadow bake 26 to 44 ms in the background once a second (two reads, a bigger texture);
+  the sky march reads the shape twice per step. GPU time on the PC queue.
+
 ## Sources
 
 - Schneider, The Real-time Volumetric Cloudscapes of Horizon Zero Dawn,

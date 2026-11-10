@@ -24,6 +24,12 @@
 				Returns [code]true[/code] if the specified [param flag] is enabled.
 			</description>
 		</method>
+		<method name="get_ground_deform_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Returns the shader code [member ground_deform_enabled] adds, for a [ShaderMaterial] or a terrain's own shader: the [code]ground_deform_*[/code] global uniforms a [code]GroundSurface3D[/code] publishes, a [code]ground_deform_patch[/code] uniform (the node sets it on its copy), [code]ground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL)[/code] to call first in [code]vertex()[/code], and [code]ground_deform_tint(world_position)[/code], which returns the albedo and roughness factors of freshly turned ground for [code]fragment()[/code].
+			</description>
+		</method>
 		<method name="get_snow_shader_code" qualifiers="static">
 			<return type="String" />
 			<description>
@@ -251,6 +257,12 @@
 		<member name="fov_override" type="float" setter="set_fov_override" getter="get_fov_override" default="75.0">
 			Overrides the [Camera3D]'s field of view angle (in degrees).
 			[b]Note:[/b] This behaves as if the field of view is set on a [Camera3D] with [member Camera3D.keep_aspect] set to [constant Camera3D.KEEP_HEIGHT]. Additionally, it may not look correct on a non-perspective camera where the field of view setting is ignored.
+		</member>
+		<member name="ground_deform_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
+			If [code]true[/code], footprints and ruts from a [code]GroundSurface3D[/code] show on ground drawn with this material: on the terrain, vertices inside the node's field are lowered by its skirt so the deformed patch it draws over them shows, and on that patch (the node's copy of this material, with [member ground_deform_patch]) vertices move to the deformed surface and freshly turned ground is darker and, wet, smoother. Both are geometry, so the path tracer traces the same prints; it applies the same tint. Map the material by world position (triplanar) so the patch and the terrain line up.
+		</member>
+		<member name="ground_deform_patch" type="bool" setter="set_ground_deform_patch" getter="is_ground_deform_patch" default="false">
+			Set by [code]GroundSurface3D[/code] on its copy of the ground material: the surface is the deformed patch rather than the terrain under it.
 		</member>
 		<member name="grow" type="bool" setter="set_grow_enabled" getter="is_grow_enabled" default="false">
 			If [code]true[/code], enables the vertex grow setting. This can be used to create mesh-based outlines using a second material pass and its [member cull_mode] set to [constant CULL_FRONT]. See also [member grow_amount].
@@ -772,7 +784,10 @@
 		<constant name="FEATURE_SNOW" value="16" enum="Feature">
 			Constant for setting [member snow_enabled].
 		</constant>
-		<constant name="FEATURE_MAX" value="17" enum="Feature">
+		<constant name="FEATURE_GROUND_DEFORM" value="17" enum="Feature">
+			Constant for setting [member ground_deform_enabled].
+		</constant>
+		<constant name="FEATURE_MAX" value="18" enum="Feature">
 			Represents the size of the [enum Feature] enum.
 		</constant>
 		<constant name="BLEND_MODE_MIX" value="0" enum="BlendMode">

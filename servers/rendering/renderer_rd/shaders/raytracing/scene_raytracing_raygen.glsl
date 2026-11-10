@@ -1894,6 +1894,20 @@ void main() {
 		m.hair_tangent = dot(t, t) > 1e-12 ? normalize(t) : vec3(1.0, 0.0, 0.0);
 	}
 
+	// Turned ground on GroundSurface3D's patch (docs/ideas/ground-deform.md): the raster shader's factors.
+	if (rt_material_ground_deform(mat)) {
+		uint gmap = uint(get_rt_param(RT_PARAM_GROUND_DEFORM_MAP));
+		if (gmap != 0u) {
+			vec3 gpos = h.hit_pos + rt_origin.xyz;
+			vec2 guv = (gpos.xz - vec2(get_rt_param(RT_PARAM_GROUND_DEFORM_X), get_rt_param(RT_PARAM_GROUND_DEFORM_Z))) / max(get_rt_param(RT_PARAM_GROUND_DEFORM_SIZE), 1e-3);
+			if (all(greaterThanEqual(guv, vec2(0.0))) && all(lessThanEqual(guv, vec2(1.0)))) {
+				vec4 g = textureLod(sampler2D(bindless_textures[nonuniformEXT(gmap)], SAMPLER_LINEAR_CLAMP), guv, 0.0);
+				m.albedo *= g.b;
+				m.roughness = clamp(m.roughness * g.a, 0.0, 1.0);
+			}
+		}
+	}
+
 	// Wetness (BaseMaterial3D): Lagarde 2013, the same lines and inputs as the raster shader.
 	vec4 wetness = rt_material_wetness(mat);
 	if (wetness.z > 0.5) {

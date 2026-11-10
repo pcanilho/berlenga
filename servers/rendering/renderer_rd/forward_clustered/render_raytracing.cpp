@@ -3623,6 +3623,9 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.hair_crown_z.snow_amount = rt_unorm8(get_float("snow_amount", 1.0f));
 		mat.hair_crown_z.snow_max_slope = rt_unorm8(get_float("snow_max_slope", 60.0f) / 90.0f);
 	}
+	if (rt_state.ground_deform_patch) {
+		mat.subsurface.ground_deform = 1;
+	}
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
 	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
 	if (rt_state.transmission) {
@@ -7334,6 +7337,29 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_Y] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_W] = has_weather ? rect.z : 0.0f;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_H] = has_weather ? rect.w : 0.0f;
+		}
+		// GroundSurface3D's deform map for its BaseMaterial3D patch (turned-ground tint).
+		{
+			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
+			static const StringName ground_map_name = "ground_deform_map";
+			static const StringName ground_rect_name = "ground_deform_rect";
+			const Variant rect_var = ms->global_shader_parameter_get_internal(ground_rect_name);
+			const Vector4 rect = rect_var.get_type() == Variant::VECTOR4 ? Vector4(rect_var) : Vector4();
+			RID ground_tex;
+			const Variant tex_var = ms->global_shader_parameter_get_internal(ground_map_name);
+			if (tex_var.get_type() == Variant::RID) {
+				ground_tex = tex_var;
+			} else if (tex_var.get_type() == Variant::OBJECT) {
+				Object *t = tex_var;
+				if (t) {
+					ground_tex = t->call(SNAME("get_rid"));
+				}
+			}
+			RID ground_rd = ground_tex.is_valid() && rect.z > 0.0f ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(ground_tex) : RID();
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_MAP] = ground_rd.is_valid() ? float(bindless_block->add_texture(ground_rd)) : 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_X] = rect.x;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_Z] = rect.y;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_GROUND_DEFORM_SIZE] = rect.z;
 		}
 		// Snow for BaseMaterial3D Snow: SnowCover3D's global snow map (depth, albedo, wetness,
 		// density) and its rect, as the raster shader reads them. Width 0 = no snowpack.

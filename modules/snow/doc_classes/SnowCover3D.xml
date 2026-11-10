@@ -7,7 +7,7 @@
 		A square map of snowpack cells, [member extent] metres wide, that follows the camera (or [member follow_target]). Each cell holds its snow water equivalent, density, liquid water and albedo, and advances them from the active [code]WeatherMap3D[/code] (its precipitation, temperature, humidity, wind, cloud and sun) or, without one, from this node's own weather settings.
 		- Rain or snow: the logistic model of air temperature and humidity of Jennings et al. (2018), the air cooling with height by [member lapse_rate], so mountains get a snow line.
 		- New snow density by temperature (Hedstrom and Pomeroy 1998); settling toward a maximum density that grows with depth, and albedo ageing (CLASS, Verseghy 1991).
-		- Melt by temperature and by the sunlight each slope absorbs (Pellicciotti et al. 2005); rain and meltwater held up to [member liquid_capacity], the rest running off; refreezing in the cold.
+		- Melt by temperature and by the sunlight each slope absorbs (Pellicciotti et al. 2005); rain and meltwater held up to [member liquid_capacity], the rest running off; refreezing in the cold, into crusts that harden with each melt-freeze cycle ([member crust_enabled]).
 		- Snow sliding off slopes steeper than [member slide_angle] (SnowSlide, Bernhardt and Schulz 2010) and wind drifting it into sheltered ground (Winstral, Elder and Davis 2002).
 		Materials read it through the [code]snow_map[/code] and [code]snow_map_rect[/code] global shader parameters ([member BaseMaterial3D.snow_enabled]), in raster and under path tracing; scripts through the [code]get_*_at[/code] methods. Cells entering the map as it moves take the state of the nearest cell that was inside it. The last [SnowCover3D] to enter the tree publishes the map.
 	</description>
@@ -20,6 +20,14 @@
 			<param index="1" name="snow_density" type="float" />
 			<description>
 				The most snow water a canopy of [param closure] holds, in mm (kg/m²), for new snow of [param snow_density] kg/m³ (Hedstrom and Pomeroy 1998).
+			</description>
+		</method>
+		<method name="add_crust">
+			<return type="void" />
+			<param index="0" name="thickness" type="float" />
+			<param index="1" name="cycles" type="float" />
+			<description>
+				Lays a frozen crust [param thickness] m thick (at most 0.05) on top of the snow everywhere on the map, as if it had been through [param cycles] melt-freeze cycles. For scenes that start on crusted snow. See [method crust_strength].
 			</description>
 		</method>
 		<method name="add_snow">
@@ -58,6 +66,14 @@
 				Removes all snow from the map.
 			</description>
 		</method>
+		<method name="crust_strength" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="cycles" type="float" />
+			<param index="1" name="thickness" type="float" />
+			<description>
+				The pressure, in kPa, a frozen crust of [param thickness] m bears after [param cycles] melt-freeze cycles before it breaks. From the hand hardness of Fierz et al. (2009): a first-cycle crust is one-finger hard (about 19 kPa, so an adult's boot at about 21 kPa breaks it), each further cycle half a step harder (48 kPa after two, pencil hard, 120 kPa, after three). A crust thinner than 2 cm bears in proportion to its thickness.
+			</description>
+		</method>
 		<method name="cornice_growth_share" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="wind_ratio" type="float" />
@@ -84,6 +100,34 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The world tier's cornice at a position: its overhang in metres along the wind that built it, as an XZ vector.
+			</description>
+		</method>
+		<method name="get_crust_cycles_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The melt-freeze cycles of the top crust at [param position] (0: no crust).
+			</description>
+		</method>
+		<method name="get_crust_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The snow over the top crust at [param position], in metres. New snow and snow sliding down bury it, melt uncovers it.
+			</description>
+		</method>
+		<method name="get_crust_strength_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The pressure the top crust at [param position] bears before it breaks, in kPa (see [method crust_strength]); 0 where there is no crust or it is wet. [SnowSurface3D] holds a body whose pressure is lower on the crust, so only the snow over it compacts.
+			</description>
+		</method>
+		<method name="get_crust_thickness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The thickness of the top crust at [param position], in metres.
 			</description>
 		</method>
 		<method name="get_density_at" qualifiers="const">
@@ -274,6 +318,9 @@
 		</member>
 		<member name="climate" type="SnowClimate" setter="set_climate" getter="get_climate">
 			A baked [SnowClimate]: the cover keeps a coarse world tier of snow over its square, carries it on with the weather at a lower rate, seeds cells entering the near square from it (then sheds what their finer slopes cannot hold) and publishes it as [code]snow_world_map[/code] and [code]snow_world_rect[/code], which [BaseMaterial3D] snow and the path tracer read beyond the near square.
+		</member>
+		<member name="crust_enabled" type="bool" setter="set_crust_enabled" getter="is_crust_enabled" default="true">
+			When on, a surface that was wet (meltwater or rain) and freezes again turns into a crust: "at most a few centimetres thick", harder with each melt-freeze cycle (melt-freeze crust, MFcr, in Fierz et al. 2009). The refrozen water makes it thicker, new snow buries it, melt uncovers it, and a crust wet again bears nothing until it freezes. Only the top crust is kept: when the snow over a buried crust gets wet, a new one starts there.
 		</member>
 		<member name="drift_distance" type="float" setter="set_drift_distance" getter="get_drift_distance" default="100.0">
 			How far upwind the terrain is searched for shelter (Winstral's dmax), in metres.

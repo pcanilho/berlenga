@@ -237,6 +237,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ### Terrain
 - **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`, `detail_wavelength`, `detail_octaves`, `detail_crest`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; on crests gullies keep part of their depth and a ridged noise adds irregular pinnacles; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
+- **Coarse-to-fine erosion** (`coarse_levels`, `refine_steps`): about 3.7 times faster at 4 m cells, with the same relief.
 - **Tile erosion** (`tile_erosion_enabled`): droplet hydraulic and thermal erosion in seamless overlapping tiles.
 - **Material detail** (`get_detail_shader_code()`): erosion detail below the vertex spacing in the terrain material; path tracing keeps it.
 - **Geology maps** (`terrain_geology()` in shaders): soil, bare rock and scree from the erosion run.
@@ -244,14 +245,19 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Coast and lakes** (`ocean_edges` or `sea_map`; `lake_count`, `lakes`; `build_water()`): sea with a Dean-profile seabed and beaches; lakes behind natural dams; builds the sea and lake surfaces, and rivers end in them.
 - **Climate maps** (`TerrainDataMap3D.bake_climate()`, `ClimateRecipe`): temperature, orographic rain and rain shadows, snow share, aridity, winter and annual sunlight with terrain shadows, and wind exposure.
 - **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow.
+- **Footprints in ground** (`GroundSurface3D`, `BaseMaterial3D.ground_deform_enabled`): prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose.
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: mountain generation, crests, tile erosion, material detail, geology, coast, climate, terrain data maps</summary>
+<details><summary>Images: mountain generation, coarse to fine, crests, tile erosion, material detail, geology, coast, climate, ground material, footprints, terrain data maps</summary>
 
 ![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
 
 *Mountain generation: ridges, valleys and the rivers that carved them, from one seed.*
+
+![The same range eroded directly and coarse to fine, 8 m cells](docs/media/terrain-coarse-to-fine.jpg)
+
+*Coarse to fine: the same relief at 8 m cells in a third of the time.*
 
 ![The generated range with erosion detail, raster](docs/media/terrain-detail-wide.jpg)
 
@@ -286,6 +292,14 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Climate maps of a range: temperature, precipitation, winter sun, snow share](docs/media/terrain-climate.jpg)
 
 *Climate maps: cold high ridges, rain over the range, shaded faces in winter, snow on the high crest.*
+
+![A generated range with its ground material: rock, scree, soil and a sand beach](docs/media/terrain-ground.jpg)
+
+*Ground material: bare rock on the ridges, soil and green in the valleys, a sand beach at the coast, all from the generator's geology.*
+
+![Footprints and tracks in dry sand, damp sand, soil, mud and leaf litter, raster and path traced](docs/media/ground-footprints.jpg)
+
+*Footprints: deepest in mud, shallow in dry sand where the walls slump.*
 
 ![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
 
@@ -368,15 +382,20 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ### Clouds
 - **Cloud layer** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
+- **Clouds that never repeat** (always on): shape noise read at two scales with an irrational ratio.
 - **Cloud reprojection** (`WeatherSkyMaterial.cloud_reprojection`, on by default): clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.
 - **Cloud shadows** (`sun_light`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.
 - **Sun projector**: `light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.
 
-<details><summary>Images: clouds, cloud shadows</summary>
+<details><summary>Images: clouds, no repeat, cloud shadows</summary>
 
-![A cloud layer over a field of blocks, path traced](docs/media/weather-clouds.jpg)
+![A cloud layer over a field of blocks, raster and path traced](docs/media/weather-clouds.jpg)
 
-*Clouds: the layer seen from the ground, with its shadows on the field.*
+*Clouds: the layer seen from the ground, with its shadows on the field, raster and path traced.*
+
+![Cloud cover from above over 24 km, before and after the fix](docs/media/clouds-repeat.jpg)
+
+*Clouds that never repeat: seen from above over 24 km, the 3 km grid is gone.*
 
 ![Cloud shadows moving across a field, seen from above, path traced](docs/media/weather-cloud-shadows.jpg)
 
@@ -392,10 +411,11 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
 - **Snowstorms** (`SnowFall3D.haze_enabled`, `turbulence`): falling and blowing snow haze the air through the weather map (Pomeroy-Male suspension, 118 m visibility at 20 m/s); flakes ride turbulent eddies.
 - **Shelter** (`SnowCover3D.canopy_enabled`, `shelter_collision_mask`): ground under roofs and overhangs stays bare; tree crowns hold snow and unload it later.
+- **Melt-freeze crusts** (`SnowCover3D.crust_enabled`): a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.
 - **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.
 
-<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle, shelter</summary>
+<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle, shelter, crust</summary>
 
 ![Snow on a mountain, raster and path traced](docs/media/snow-mountain.jpg)
 
@@ -444,6 +464,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A shelter and snow-laden trees, raster and path traced](docs/media/snow-shelter.jpg)
 
 *Shelter: bare ground under the roof; tree crowns hold their snow.*
+
+![Footprints in snow without a crust, then through a broken crust, raster and path traced](docs/media/snow-crust.jpg)
+
+*Melt-freeze crust: boots break it into tipped plates instead of soft prints.*
 
 </details>
 

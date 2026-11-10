@@ -1,5 +1,5 @@
 def can_build(env, platform):
-    env.module_add_dependencies("snow", ["terrain_deform", "weather"])
+    env.module_add_dependencies("snow", ["ground", "terrain_deform", "weather"])
     return True
 
 
