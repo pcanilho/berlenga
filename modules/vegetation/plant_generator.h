@@ -180,6 +180,7 @@ private:
 	HashMap<uint64_t, TextureSet> texture_cache;
 	LeafTexture _leaf_texture_spec(bool p_petal) const;
 	TextureSet _bake_leaf_texture(const LeafTexture &p_spec, uint32_t p_seed) const;
+	TextureSet _bake_moss_texture(uint32_t p_seed) const;
 
 protected:
 	static void _bind_methods();

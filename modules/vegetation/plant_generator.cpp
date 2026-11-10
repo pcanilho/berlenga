@@ -925,31 +925,72 @@ void PlantGenerator::_build_leaf_litter() {
 // Moss cushion (Polytrichum-like hair moss): a low dark mound packed with upright shoots, each a
 // star of narrow leaves; densest and tallest in the middle.
 void PlantGenerator::_build_moss() {
+	// The cushion's surface is the packed shoot tips; at this size geometry per shoot would cost
+	// thousands of triangles, so the mound is a lumpy dome carrying a generated shoot-tip texture
+	// (albedo, normal, translucency; _bake_moss_texture), with loose shoots only along the rim
+	// and a few standing proud, where the silhouette shows them.
 	const float radius = _rand(0.06f, 0.12f);
-	const float height = radius * _rand(0.18f, 0.3f);
-	_add_head(SURFACE_CENTRE, Transform3D(organ_frame(Vector3(0, 1, 0), Vector3(1, 0, 0)), Vector3(0, -height * 0.3f, 0)), radius, height);
+	const float height = radius * _rand(0.22f, 0.35f);
+	Builder &b = builders[SURFACE_CENTRE];
+	const int rings = 8;
+	const int sectors = 28;
+	const int first = b.verts.size();
+	float ph[6];
+	for (float &p : ph) {
+		p = _rand(0.0f, Math::TAU);
+	}
+	auto rim = [&](float p_a) {
+		// An irregular outline: a few lobes.
+		return radius * (1.0f + 0.12f * Math::sin(3.0f * p_a + ph[0]) + 0.07f * Math::sin(5.0f * p_a + ph[1]));
+	};
+	for (int r = 0; r <= rings; r++) {
+		const float u = float(r) / rings; // 0 at the centre, 1 at the rim.
+		for (int k = 0; k < sectors; k++) {
+			const float a = k * Math::TAU / sectors;
+			const float rr = rim(a) * u;
+			const float x = Math::cos(a) * rr;
+			const float z = Math::sin(a) * rr;
+			const float lump = 1.0f + 0.18f * Math::sin(x * 70.0f + ph[2]) * Math::sin(z * 63.0f + ph[3]) + 0.1f * Math::sin(x * 150.0f + ph[4] + z * 90.0f);
+			const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), 0.9f) * lump - 0.004f;
+			b.verts.push_back(Vector3(x, y, z));
+			b.uvs.push_back(Vector2(x, z) / 0.05f);
+			b.uv2s.push_back(Vector2(0.05f, 0.0f));
+			const float ao = Math::lerp(1.0f, 0.75f, u * u);
+			b.colors.push_back(Color(ao, ao, ao));
+		}
+	}
+	for (int r = 0; r < rings; r++) {
+		for (int k = 0; k < sectors; k++) {
+			const int a = first + r * sectors + k;
+			const int c = first + r * sectors + (k + 1) % sectors;
+			// The centre ring is degenerate (all at the middle): its triangles collapse harmlessly.
+			b.indices.append_array(PackedInt32Array({ a, a + sectors, c, c, a + sectors, c + sectors }));
+		}
+	}
+	plant_height = MAX(plant_height, height * 1.3f);
 	Leaf l;
 	l.shape = LEAF_LINEAR;
-	l.width = 0.0024f;
+	l.width = 0.002f;
 	l.fold = 0.3f;
 	l.segments = 2;
-	const int shoots = int(_rand(150.0f, 190.0f));
+	const int shoots = int(_rand(40.0f, 60.0f));
 	for (int s = 0; s < shoots; s++) {
-		const float u = Math::sqrt((s + 0.5f) / shoots);
-		const float a = s * GOLDEN_ANGLE;
-		const float dome = Math::sqrt(MAX(0.0f, 1.0f - u * u));
-		const Vector3 at(Math::cos(a) * radius * u, height * dome - height * 0.3f, Math::sin(a) * radius * u);
-		const Vector3 normal = Vector3(at.x / radius, 1.0f, at.z / radius).normalized();
-		const float k = _rand(0.85f, 1.15f);
-		const Color tint(k * (u > 0.8f ? 1.15f : 1.0f), k, k * 0.9f);
-		l.length = _rand(0.006f, 0.01f);
+		const bool edge = s < shoots * 3 / 4;
+		const float a = _rand(0.0f, Math::TAU);
+		const float u = edge ? _rand(0.85f, 1.0f) : _rand(0.0f, 0.7f);
+		const float rr = rim(a) * u;
+		const float y = height * Math::pow(MAX(0.0f, 1.0f - u * u), 0.9f) - 0.004f;
+		const Vector3 at(Math::cos(a) * rr, y, Math::sin(a) * rr);
+		const Vector3 normal = Vector3(Math::cos(a) * u, 1.2f, Math::sin(a) * u).normalized();
+		const float k = _rand(0.85f, 1.2f);
+		l.length = _rand(0.004f, 0.007f);
 		l.bend = 0.5f;
 		const float sp = _rand(0.0f, Math::TAU);
+		const Basis nb = organ_frame(normal, Vector3(1, 0, 0));
 		for (int j = 0; j < 3; j++) {
-			const Basis nb = organ_frame(normal, Vector3(1, 0, 0));
-			const float b = sp + j * Math::TAU / 3.0f;
-			const Vector3 d = (nb.get_column(2) * 1.4f + (nb.get_column(0) * Math::cos(b) + nb.get_column(1) * Math::sin(b))).normalized();
-			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, normal), at), l, 0.1f, Math::lerp(0.75f, 1.0f, dome), tint);
+			const float bb = sp + j * Math::TAU / 3.0f;
+			const Vector3 d = (nb.get_column(2) * 1.4f + (nb.get_column(0) * Math::cos(bb) + nb.get_column(1) * Math::sin(bb))).normalized();
+			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, normal), at), l, 0.1f, 1.0f, Color(1.5f * k, 1.45f * k, 1.1f * k));
 		}
 	}
 }
@@ -1516,6 +1557,96 @@ PlantGenerator::TextureSet PlantGenerator::_bake_leaf_texture(const LeafTexture 
 	return set;
 }
 
+// Moss cushion surface: packed shoot tips seen from above, each a small star of leaves, bright
+// at the tips and dark in the gaps between shoots. Tiles seamlessly (all drawing wraps).
+PlantGenerator::TextureSet PlantGenerator::_bake_moss_texture(uint32_t p_seed) const {
+	const int res = texture_size;
+	RandomPCG r;
+	r.seed(p_seed * 0x9E3779B97F4A7C15ull + 101);
+	LocalVector<float> hgt;
+	hgt.resize(res * res);
+	for (float &v : hgt) {
+		v = 0.0f;
+	}
+	LocalVector<float> tone;
+	tone.resize(res * res);
+	for (float &v : tone) {
+		v = 0.5f;
+	}
+	const int shoots = res * res / 90;
+	for (int i = 0; i < shoots; i++) {
+		const float cx = r.randf() * res;
+		const float cy = r.randf() * res;
+		const float tip = 0.6f + 0.4f * r.randf();
+		const float tn = r.randf();
+		const int arms = 5 + int(r.randf() * 3.0f);
+		const float a0 = r.randf() * Math::TAU;
+		const float len = res / 64.0f * (1.4f + r.randf());
+		for (int k = 0; k < arms; k++) {
+			const float a = a0 + k * Math::TAU / arms + (r.randf() - 0.5f) * 0.4f;
+			const int steps = int(len * 2.0f) + 1;
+			for (int st = 0; st <= steps; st++) {
+				const float t = float(st) / steps;
+				const int x = int(Math::floor(cx + Math::cos(a) * len * t));
+				const int y = int(Math::floor(cy + Math::sin(a) * len * t));
+				const int ix = ((x % res) + res) % res;
+				const int iy = ((y % res) + res) % res;
+				const float hv = tip * (1.0f - 0.6f * t);
+				if (hv > hgt[iy * res + ix]) {
+					hgt[iy * res + ix] = hv;
+					tone[iy * res + ix] = tn;
+				}
+			}
+		}
+	}
+	Vector<uint8_t> alb, nor, bl;
+	alb.resize(res * res * 3);
+	nor.resize(res * res * 3);
+	bl.resize(res * res * 3);
+	uint8_t *aw = alb.ptrw();
+	uint8_t *nw = nor.ptrw();
+	uint8_t *bw = bl.ptrw();
+	const Color base = leaf_color;
+	for (int i = 0; i < res * res; i++) {
+		const float h = hgt[i];
+		const float t = tone[i];
+		Color c = base * (0.25f + 0.95f * h);
+		c = c.lerp(Color(base.r * 1.6f + 0.04f, base.g * 1.3f + 0.03f, base.b * 0.8f), h * t * 0.6f); // Fresh, yellower tips.
+		aw[i * 3 + 0] = uint8_t(CLAMP(c.get_r8(), 0, 255));
+		aw[i * 3 + 1] = uint8_t(CLAMP(c.get_g8(), 0, 255));
+		aw[i * 3 + 2] = uint8_t(CLAMP(c.get_b8(), 0, 255));
+		const Color tb = c * h * 0.8f;
+		bw[i * 3 + 0] = uint8_t(CLAMP(tb.get_r8(), 0, 255));
+		bw[i * 3 + 1] = uint8_t(CLAMP(tb.get_g8(), 0, 255));
+		bw[i * 3 + 2] = uint8_t(CLAMP(tb.get_b8(), 0, 255));
+	}
+	const float strength = 3.0f;
+	for (int y = 0; y < res; y++) {
+		for (int x = 0; x < res; x++) {
+			const float hl = hgt[y * res + (x + res - 1) % res];
+			const float hr = hgt[y * res + (x + 1) % res];
+			const float hd = hgt[((y + res - 1) % res) * res + x];
+			const float hu = hgt[((y + 1) % res) * res + x];
+			const Vector3 n = Vector3((hl - hr) * strength, (hd - hu) * strength, 1.0f).normalized();
+			const int i = y * res + x;
+			nw[i * 3 + 0] = uint8_t(CLAMP(int((n.x * 0.5f + 0.5f) * 255.0f), 0, 255));
+			nw[i * 3 + 1] = uint8_t(CLAMP(int((n.y * 0.5f + 0.5f) * 255.0f), 0, 255));
+			nw[i * 3 + 2] = uint8_t(CLAMP(int((n.z * 0.5f + 0.5f) * 255.0f), 0, 255));
+		}
+	}
+	TextureSet set;
+	Ref<Image> ai = Image::create_from_data(res, res, false, Image::FORMAT_RGB8, alb);
+	Ref<Image> ni = Image::create_from_data(res, res, false, Image::FORMAT_RGB8, nor);
+	Ref<Image> bi = Image::create_from_data(res, res, false, Image::FORMAT_RGB8, bl);
+	ai->generate_mipmaps();
+	ni->generate_mipmaps(true);
+	bi->generate_mipmaps();
+	set.albedo = ImageTexture::create_from_image(ai);
+	set.normal = ImageTexture::create_from_image(ni);
+	set.backlight = ImageTexture::create_from_image(bi);
+	return set;
+}
+
 Ref<StandardMaterial3D> PlantGenerator::_textured_material(const TextureSet &p_set, float p_roughness) const {
 	Ref<StandardMaterial3D> m;
 	m.instantiate();
@@ -1743,7 +1874,15 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		arrays[Mesh::ARRAY_INDEX] = b.indices;
 		static const char *names[SURFACE_MAX] = { "leaf", "stem", "petal", "centre" };
 		Ref<StandardMaterial3D> mat;
-		if (textures && (s == SURFACE_LEAF || s == SURFACE_PETAL)) {
+		if (textures && preset == PRESET_MOSS && s == SURFACE_CENTRE) {
+			const uint64_t key = (uint64_t(preset) << 40) ^ (uint64_t(s) << 36) ^ (uint64_t(uint32_t(seed % 3)) << 32) ^ uint64_t(Math::abs(int(leaf_color.to_rgba32()) % 1000003)) ^ (uint64_t(texture_size) << 44);
+			TextureSet *ts = texture_cache.getptr(key);
+			if (!ts) {
+				texture_cache.insert(key, _bake_moss_texture(uint32_t(seed % 3)));
+				ts = texture_cache.getptr(key);
+			}
+			mat = _textured_material(*ts, 0.9f);
+		} else if (textures && (s == SURFACE_LEAF || s == SURFACE_PETAL)) {
 			// One texture set per preset, colour and variant (three per preset): shared by the
 			// plants of a meadow, so a thousand dandelions cost three textures.
 			const uint64_t key = (uint64_t(preset) << 40) ^ (uint64_t(s) << 36) ^ (uint64_t(uint32_t(seed % 3)) << 32) ^ uint64_t(Math::abs(int((s == SURFACE_LEAF ? leaf_color : petal_color).to_rgba32()) % 1000003)) ^ (uint64_t(texture_size) << 44);
