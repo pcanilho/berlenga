@@ -56,6 +56,8 @@ public:
 	bool owns_shader = false;
 	RID buf_params, buf_rest, buf_strands, buf_pos, buf_prev, buf_follow, buf_order, tex_out;
 	RID buf_tris, buf_sdf; // the collision body's triangles and its distance field
+	RID buf_vol, buf_vol_rest; // the hair volume grid (density, momentum) and the groom's own density
+	int vol_cells = 0; // a side, 0: no volume grid
 	int tris_capacity = 0; // triangles buf_tris holds
 	RID uniform_set;
 
@@ -68,7 +70,7 @@ public:
 	bool needs_reset = true;
 
 	void rt_compile(Ref<HairStrandSolverGPU> p_self);
-	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points);
+	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points, PackedFloat32Array p_vol_rest, int p_vol_cells);
 	void rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps, PackedFloat32Array p_tris);
 	void rt_make_uniform_set();
 	void rt_reset(Ref<HairStrandSolverGPU> p_self);
@@ -84,6 +86,11 @@ class HairStrandSolver {
 	Transform3D last_xform;
 	bool has_last = false;
 	double time = 0.0;
+	// The hair volume grid, groom space: its corner, cell and the groom's mean density.
+	Vector3 vol_origin;
+	float vol_cell = 0.0f;
+	float vol_mean = 0.0f;
+	int vol_cells = 0;
 
 public:
 	struct Settings {
@@ -109,6 +116,9 @@ public:
 		Transform3D view_xform; // world -> the camera, for the draw order
 		PackedVector3Array body_triangles; // the collision body, world: three points per triangle
 		float body_cell_size = 0.01f; // m, the body's distance field cell (grown to fit 64^3)
+		bool volume_enabled = true; // hair-hair interaction through a density grid (Petrovic 2005)
+		float volume_friction = 0.2f; // pull toward the neighbours' mean velocity, per 1/60 s
+		float volume_stiffness = 1.0f; // push out of hair packed denser than the groom
 	};
 
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }

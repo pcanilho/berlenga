@@ -438,6 +438,33 @@ right past convex edges and approximate in concave ones.
 
 Bench: `--scene=strands_sim --raster --hair=wavy_box[_body][_skinned]`.
 
+## Stage 2h: hair volume (strand interaction)
+
+Without it, strands pass through each other: hair falling on the shoulders or blown flat packs
+into a thin sheet, and every strand swings on its own. Simulating strand-strand contacts directly
+costs O(n^2) and is noisy; production and engines use a grid instead:
+
+- Petrovic, Henne, Anderson 2005 (Pixar, "Volumetric Methods for Simulation and Rendering of
+  Hair"): splat the hair's density and velocity into a coarse grid; filter each point's velocity
+  toward the grid's (friction), and push hair out of cells denser than a target (pressure).
+- McAdams, Selle, Ward, Sifakis, Teran 2009 ("Detail Preserving Continuum Simulation of Straight
+  Hair"): the same continuum view with an incompressible-style pressure solve, plus point
+  contacts where detail matters (film, offline).
+- Unreal's groom solver (Niagara): a velocity and density grid built from the strands each step,
+  used for friction and a pressure push between strands, as Petrovic.
+- TressFX 4.1 and HairWorks: none (strands pass through each other).
+
+Ours (PhysXHair3D `volume_enabled`, on; `volume_friction` 0.2, `volume_stiffness` 1.0):
+Petrovic's scheme. The grid is 32 cells a side in groom space (it moves with the head), covering
+the groom grown by half its longest strand. At build the CPU splats the groom's own guide points
+into it (the rest density); each frame MODE_VOL_SPLAT splats the guide points' density and
+velocity (trilinear, fixed point atomics) and in MODE_STEP every point takes `volume_friction` of
+the gap to its neighbours' mean velocity and is pushed down the gradient of the density above
+the rest one (never below half the groom's mean, so blown hair can gather a little before it
+pushes). Only guides take part (follow strands ride them). Off: as before.
+
+Bench: `--scene=strands_sim --raster --hair=wavy` against `--hair=wavy_novolume`.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.
@@ -458,6 +485,8 @@ groom to test with.
 - Huang, Hullin, Hanika. A Microfacet-based Hair Scattering Model. CGF (EGSR) 2022.
 - Zinke, Yuksel, Weber, Keyser. Dual Scattering Approximation for Fast Multiple Scattering in Hair. SIGGRAPH 2008.
 - Karis. Physically Based Hair Shading in Unreal. SIGGRAPH 2016 course.
+- Petrovic, Henne, Anderson. Volumetric Methods for Simulation and Rendering of Hair. Pixar Technical Memo 06-08, 2005.
+- McAdams, Selle, Ward, Sifakis, Teran. Detail Preserving Continuum Simulation of Straight Hair. SIGGRAPH 2009.
 - Muller, Kim, Chentanez. Fast Simulation of Inextensible Hair and Fur. VRIPHYS 2012.
 - AMD. TressFX 4.1, `TressFXSimulation.hlsl` and `TressFXSettings.h` (GPUOpen, MIT, 2019). Han, Harada. Real-time Hair Simulation with Efficient Hair Style Preservation. VRIPHYS 2012.
 - Kugelstadt, Schomer. Position and Orientation Based Cosserat Rods. SCA 2016.
