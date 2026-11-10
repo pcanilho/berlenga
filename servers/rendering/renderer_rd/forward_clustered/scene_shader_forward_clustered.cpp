@@ -1011,6 +1011,8 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["OUTPUT_IS_SRGB"] = "SHADER_IS_SRGB";
 		actions.renames["CLIP_SPACE_FAR"] = "SHADER_SPACE_FAR";
 		actions.renames["IN_SHADOW_PASS"] = "bool(scene_data_block.data.flags & SCENE_DATA_FLAGS_IN_SHADOW_PASS)";
+		// True while the path tracer captures the geometry (vertex() run for its BLAS).
+		actions.renames["IN_PATH_TRACER"] = "SHADER_IN_PATH_TRACER";
 		actions.renames["VIEWPORT_SIZE"] = "read_viewport_size";
 
 		actions.renames["FRAGCOORD"] = "gl_FragCoord";

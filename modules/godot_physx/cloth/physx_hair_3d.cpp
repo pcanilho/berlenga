@@ -65,6 +65,10 @@ vec3 hair_point(float p_index) {
 	return texelFetch(hair_positions, ivec2(i % texture_width, i / texture_width), 0).xyz;
 }
 
+varying float strand_across; // -1..1 across the drawn ribbon (raster)
+varying float strand_half_px; // the strand's real half width, in pixels (raster)
+varying float strand_drawn_px; // the drawn half width, in pixels (raster)
+
 void vertex() {
 	vec3 p = hair_point(CUSTOM0.x);
 	vec3 t = hair_point(CUSTOM0.z) - hair_point(CUSTOM0.y);
@@ -79,6 +83,37 @@ void vertex() {
 	NORMAL = cross(across, t);
 	TANGENT = across;
 	BINORMAL = t;
+	strand_across = sign(CUSTOM0.w);
+	strand_half_px = 1.0;
+	strand_drawn_px = 1.0;
+	if (!IN_PATH_TRACER) {
+		// Raster (and its shadow maps): AMD TressFX's strand rendering. One ribbon facing the camera,
+		// widened by 0.71 px a side so no strand falls between pixels, with its opacity cut to the
+		// share of the pixel the real strand covers (TressFX's coverage). The opacity is hashed, so
+		// TAA or MSAA resolves it to a smooth blend, and shadow maps get the hair's partial opacity
+		// (it shades itself, like an opacity map). The path tracer keeps the real-width crossed strips.
+		vec3 pv = (MODELVIEW_MATRIX * vec4(p, 1.0)).xyz;
+		vec3 tv = normalize(mat3(MODELVIEW_MATRIX) * t);
+		vec3 eye = PROJECTION_MATRIX[3][3] > 0.5 ? vec3(0.0, 0.0, -1.0) : normalize(pv);
+		vec3 right = cross(tv, eye);
+		right = dot(right, right) > 1e-12 ? normalize(right) : normalize(cross(tv, vec3(0.0, 1.0, 0.0)));
+		vec4 clip = PROJECTION_MATRIX * vec4(pv, 1.0);
+		float px = 2.0 * clip.w / max(PROJECTION_MATRIX[1][1] * VIEWPORT_SIZE.y, 1e-6); // one pixel, in metres
+		float half_width = abs(CUSTOM0.w);
+		// The widening is capped (2 mm in shadow maps, about a texel of a close cascade, and 1 cm
+		// otherwise): a far cascade's texel, or a pass with a tiny viewport, would otherwise widen
+		// every strand to centimetres and flood the pass with fragments. Coverage keeps the total
+		// opacity right at any drawn width.
+		float grow = min(0.71 * px, IN_SHADOW_PASS ? 0.002 : 0.01);
+		float drawn = half_width + grow;
+		strand_half_px = half_width / px;
+		strand_drawn_px = drawn / px;
+		// The second strip is not needed facing the camera: collapsed to a line, it draws nothing.
+		float side = CUSTOM1.w > 0.5 ? 0.0 : strand_across;
+		POSITION = PROJECTION_MATRIX * vec4(pv + right * (drawn * side), 1.0);
+		NORMAL = normalize(transpose(mat3(MODELVIEW_MATRIX)) * cross(right, tv));
+		TANGENT = normalize(transpose(mat3(MODELVIEW_MATRIX)) * right);
+	}
 }
 
 void fragment() {
@@ -89,6 +124,20 @@ void fragment() {
 	HAIR = 1.0;
 	HAIR_ABSORPTION = fibre_absorption;
 	HAIR_ROUGHNESS = fibre_roughness;
+	float coverage = 1.0;
+	if (!IN_PATH_TRACER) {
+		// TressFX coverage: the share of this pixel the strand covers. A strand wider than a pixel
+		// is solid with a one-pixel soft edge; a thinner one spreads its width over a tent across
+		// the drawn ribbon, so the hair's total opacity matches its real width.
+		float d = abs(strand_across) * strand_drawn_px; // pixels from the strand's centre
+		if (strand_half_px >= 0.5) {
+			coverage = clamp(strand_half_px - d + 0.5, 0.0, 1.0);
+		} else {
+			coverage = clamp(2.0 * strand_half_px / strand_drawn_px * (1.0 - d / strand_drawn_px), 0.0, 1.0);
+		}
+	}
+	ALPHA = coverage;
+	ALPHA_HASH_SCALE = 1.0;
 }
 )";
 
