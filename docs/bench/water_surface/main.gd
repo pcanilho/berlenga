@@ -27,6 +27,9 @@ extends Node3D
 #   --seq=N         also save the N frames after --frames, as path_0000.png ... (for a GIF)
 #   --dive=M        over the --seq frames, lower the camera by M metres (through the surface at --view=waterline)
 #   --cam-dy=M      raise (or lower) the camera by M metres
+#   --dump-shader=path  write the water material's shader code to a file
+#   --shader-file=path  replace the water material's shader with this file (try a shader change without a rebuild)
+#   --perf          print the mean process and physics time per frame (after frame 60) and the cost of sample_height()
 #   --profile       print the surface height along x = 0, out to sea and up the beach, at the last frame
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
 #
@@ -58,6 +61,10 @@ var n := 0
 var water: Node3D
 var sea_series := PackedFloat32Array()
 var profile := false
+var perf := false
+var perf_proc := 0.0
+var perf_phys := 0.0
+var perf_n := 0
 
 
 func _ready() -> void:
@@ -78,6 +85,7 @@ func _ready() -> void:
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
 		elif a == "--profile": profile = true
+		elif a == "--perf": perf = true
 		elif a.begins_with("--cam-dy="): cam_dy = float(a.substr(9))
 		elif a.begins_with("--dive="): dive = float(a.substr(7))
 		elif a.begins_with("--water="):
@@ -152,6 +160,15 @@ func _ready() -> void:
 	var wm: ShaderMaterial = water.call("get_water_material")
 	for k in water_params:
 		if wm: wm.set_shader_parameter(k, water_params[k])
+	for a in OS.get_cmdline_user_args():
+		if wm and a.begins_with("--dump-shader="):
+			var f := FileAccess.open(a.substr(14), FileAccess.WRITE)
+			f.store_string(wm.shader.code)
+			f.close()
+		elif wm and a.begins_with("--shader-file="):
+			var sh := Shader.new()
+			sh.code = FileAccess.get_file_as_string(a.substr(14))
+			wm.shader = sh
 
 	# Floating boxes.
 	for i in 3:
@@ -194,6 +211,9 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(1.0, 16.0, -9.0), Vector3(1.0, 0.0, -9.01))
 		"surf":
 			cam.look_at_from_position(Vector3(10.0, 2.2, 9.0), Vector3(-2.0, -0.6, -6.0))
+		"curl":
+			# Side on to the breakers, along their crests, where they plunge.
+			cam.look_at_from_position(Vector3(-10.0, 1.8, -1.0), Vector3(2.0, -0.2, -2.0))
 		"sea":
 			cam.look_at_from_position(Vector3(0, 4.0, -40.0), Vector3(0, -1.0, -110.0))
 		_:
@@ -276,6 +296,16 @@ func _process(_delta: float) -> void:
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
 	_tracers_step(1.0 / 30.0)
+	if perf and n > 60 and n < frames - 1:
+		perf_proc += Performance.get_monitor(Performance.TIME_PROCESS)
+		perf_phys += Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS)
+		perf_n += 1
+	if perf and n == frames - 1:
+		var t0 := Time.get_ticks_usec()
+		for i in 2000:
+			water.call("sample_height", Vector3(-10.0 + 0.01 * i, 0.0, -5.0 + 0.005 * i))
+		var per_call := float(Time.get_ticks_usec() - t0) / 2000.0
+		print("PERF process %.3f ms, physics %.3f ms per frame, sample_height %.2f us per call" % [1000.0 * perf_proc / maxi(perf_n, 1), 1000.0 * perf_phys / maxi(perf_n, 1), per_call])
 	if profile and n == frames - 1:
 		# Depth and surface along x = 0 toward the beach (sample_height includes the shore waves).
 		var line := ""

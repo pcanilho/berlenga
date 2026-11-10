@@ -120,6 +120,17 @@ public:
 	RID tex_swash; // RGBA32F (run-up m, wetness 0..1, mean-square rise, 0) on the ripple grid
 	RID tex_swash_tmp; // scratch: the run-up climbs from neighbors (see water_swash.glsl)
 	RID buf_swash_params, buf_swash_copy_params, uset_swash, uset_swash_copy;
+	// The surface's shore waves, read by the swash so breaking waves run up
+	// the sand (see water_swash.glsl). shore_wave_tex is the RD texture of
+	// the surface's ImageTexture (not owned here).
+	RID shore_wave_tex;
+	bool shore_on = false;
+	float shore_omega[2] = { 0.0f, 0.0f };
+	float shore_h0 = 0.0f;
+	float shore_l0 = 0.0f;
+	double shore_time = 0.0;
+	Vector2 shore_center;
+	void _make_swash_usets();
 	// Still-water depth per ripple cell (R16F meters, <= 0 dry -- see
 	// water_inc.glsl), bound to the ripple pass and the caustics pass, and
 	// the ocean chop's shallow-water fade derived from it (R8, sampled by the
@@ -243,6 +254,8 @@ public:
 	void rt_free(Ref<WaterSolverGPU> p_self);
 	void rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow);
 	void rt_set_swash(Ref<WaterSolverGPU> p_self, float p_run_up, float p_drain_speed, float p_dry_time);
+	void rt_set_shore_waves(Ref<WaterSolverGPU> p_self, RID p_texture, bool p_on, Vector2 p_omega, float p_h0, float p_l0);
+	void rt_set_shore_clock(Ref<WaterSolverGPU> p_self, double p_time, Vector2 p_center);
 	void rt_set_band(Ref<WaterSolverGPU> p_self, float p_k_min, float p_k_max);
 	void rt_reinit_spectrum(Ref<WaterSolverGPU> p_self, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
 	// The ripple layer moved (a re-centre): its state + composed height zeroed in place -- the ocean, its textures and
@@ -462,6 +475,14 @@ public:
 	// the vertical speed (m/s) the backwash drains back down at, and how
 	// long (s) uncovered sand takes to dry. Applies live.
 	void set_swash_settings(float p_run_up, float p_drain_speed, float p_dry_time);
+	// Breaking shore waves for the swash to run up: the RD texture of the
+	// surface's shore wave texture A (phase, height per train), the trains'
+	// angular frequencies, and the deep-water height and wavelength (for the
+	// Stockdon run-up). p_on false turns it off.
+	void set_shore_waves(RID p_rd_texture, bool p_on, Vector2 p_omega, float p_h0, float p_l0);
+	// The surface's clock and grid centre, once a frame, so the swash sees
+	// the same wave phases as the material.
+	void set_shore_clock(double p_time, Vector2 p_center);
 	// RGBA32F on the ripple grid: r run-up level (m above still water), g sand
 	// wetness 0..1 (see water_swash.glsl); valid once is_available().
 	RID get_swash_texture_rd_rid() const;

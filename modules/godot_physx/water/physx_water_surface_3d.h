@@ -150,6 +150,10 @@ public:
 	float get_shore_wave_period() const { return shore_wave_period; }
 	void set_shore_wave_direction(Vector2 p_direction);
 	Vector2 get_shore_wave_direction() const { return shore_wave_direction; }
+	// How strongly plunging breakers curl over (0 = none, the crests only
+	// steepen and spill). Whether a beach plunges at all comes from its slope.
+	void set_shore_wave_curl(float p_curl);
+	float get_shore_wave_curl() const { return shore_wave_curl; }
 	// Extra room around the surface before it is culled, for a material displacing it further than the waves.
 	void set_cull_margin(float p_margin);
 	float get_cull_margin() const { return cull_margin; }
@@ -239,6 +243,11 @@ public:
 	// simulated square. Ignored with a surface_mesh.
 	void set_render_extent(float p_extent);
 	float get_render_extent() const { return render_extent; }
+	// Mesh cells per ocean grid cell (1-4). Finer meshes resolve the shape
+	// of breaking and plunging waves (about 0.1 m cells for a 1 m breaker);
+	// the vertex and path tracing costs grow with the square.
+	void set_mesh_detail(int p_detail);
+	int get_mesh_detail() const { return mesh_detail; }
 
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
@@ -372,6 +381,7 @@ private:
 	bool shore_waves = false;
 	float shore_wave_height = 0.8f; // m, offshore
 	float shore_wave_period = 8.0f; // s
+	float shore_wave_curl = 1.0f;
 	Vector2 shore_wave_direction; // (0, 0) = wind_direction
 	static constexpr int SHORE_TRAINS = 2;
 	static constexpr float BREAKER_INDEX = 0.78f; // H / h at breaking (McCowan)
@@ -384,6 +394,13 @@ private:
 	float shore_omega[SHORE_TRAINS] = {};
 	Ref<ImageTexture> shore_wave_tex_a;
 	Ref<ImageTexture> shore_wave_tex_b;
+	// Per ripple cell: how far each train is through breaking (its unbroken
+	// shoaled height over the breaker height 0.78 h: 1 at the break point,
+	// rising through the surf zone) and the surf similarity (Iribarren)
+	// number from the local beach slope, which sets plunging or spilling.
+	Vector<float> shore_stage[SHORE_TRAINS];
+	Vector<float> shore_iribarren;
+	Ref<ImageTexture> shore_wave_tex_c;
 	void _bake_shore_waves();
 	void _update_shore_material();
 	// The shore waves' height at (p_x, p_z) relative to the grid centre, and its rate of change.
@@ -416,6 +433,7 @@ private:
 	float cull_margin = 0.0f;
 	float fetch = 0.0f;
 	float render_extent = 0.0f;
+	int mesh_detail = 1;
 	double water_time = 0.0; // shader clock (water_time), advanced only in a running game
 	float choppiness = 1.0f;
 	NormalMode normal_mode = NORMAL_MODE_PER_PIXEL;
