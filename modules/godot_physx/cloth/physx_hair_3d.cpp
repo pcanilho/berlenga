@@ -36,7 +36,9 @@
 #include "core/object/class_db.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/main/viewport.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
@@ -45,24 +47,28 @@
 
 namespace {
 
-// Drawn from PhysXHair3D's simulated points. Every vertex is one side of one of the two crossed strips
-// around a strand point: CUSTOM0 = (point, previous point, next point, signed half width), CUSTOM1 =
-// (the groomed strip axis, which strip). The strips are rebuilt around the simulated strand, as
-// HairMesh lays them out (UV.x across, UV.y along), so the path tracer's hair_strands shading reads
-// the fibre offset the same way. rt_vertex_dynamic: the path tracer recaptures it every frame.
+// Drawn from PhysXHair3D's simulated points, which the solver writes to hair_positions sorted far to
+// near from the camera (fixed-size slots per strand). Every vertex is one side of one of the two
+// crossed strips around a slot point: CUSTOM0 = (texel, previous texel, next texel, side -1 or 1),
+// CUSTOM1.w = which strip. The strips are rebuilt around the simulated strand, as HairMesh lays them
+// out (UV.x across, UV.y along), so the path tracer's hair_strands shading reads the fibre offset the
+// same way. rt_vertex_dynamic: the path tracer recaptures it every frame.
 const char *HAIR_RENDER_SHADER = R"(
 shader_type spatial;
-render_mode cull_disabled, rt_vertex_dynamic, hair_strands;
+render_mode cull_disabled, rt_vertex_dynamic, rt_force_opaque, hair_strands;
 
 uniform sampler2D hair_positions : filter_nearest, repeat_disable;
 uniform int texture_width = 1;
 uniform vec4 hair_color : source_color = vec4(0.3, 0.2, 0.1, 1.0);
 uniform vec3 fibre_absorption = vec3(0.4, 0.7, 1.4);
 uniform vec2 fibre_roughness = vec2(0.3, 0.3);
+uniform float root_width = 0.0004;
+uniform float tip_width = 0.0001;
 
-vec3 hair_point(float p_index) {
+// xyz the point, w its share along the strand (by point), or -1 past the strand's end.
+vec4 hair_point(float p_index) {
 	int i = int(p_index + 0.5);
-	return texelFetch(hair_positions, ivec2(i % texture_width, i / texture_width), 0).xyz;
+	return texelFetch(hair_positions, ivec2(i % texture_width, i / texture_width), 0);
 }
 
 varying float strand_across; // -1..1 across the drawn ribbon (raster)
@@ -70,16 +76,18 @@ varying float strand_half_px; // the strand's real half width, in pixels (raster
 varying float strand_drawn_px; // the drawn half width, in pixels (raster)
 
 void vertex() {
-	vec3 p = hair_point(CUSTOM0.x);
-	vec3 t = hair_point(CUSTOM0.z) - hair_point(CUSTOM0.y);
+	vec4 here = hair_point(CUSTOM0.x);
+	vec4 before = hair_point(CUSTOM0.y);
+	vec4 after = hair_point(CUSTOM0.z);
+	vec3 p = here.xyz;
+	vec3 t = (after.w < 0.0 ? p : after.xyz) - (before.w < 0.0 ? p : before.xyz);
 	t = dot(t, t) > 1e-14 ? normalize(t) : vec3(0.0, 1.0, 0.0);
-	vec3 a = CUSTOM1.xyz - t * dot(CUSTOM1.xyz, t);
-	if (dot(a, a) < 1e-8) {
-		a = cross(t, abs(t.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0));
-	}
-	a = normalize(a);
+	vec3 a = normalize(cross(t, abs(t.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 across = CUSTOM1.w > 0.5 ? cross(t, a) : a;
-	VERTEX = p + across * CUSTOM0.w;
+	// Past the strand's end (a shorter strand padded to the slot) the width is zero: nothing drawn.
+	float half_width = here.w < 0.0 ? 0.0 : 0.5 * mix(root_width, tip_width, here.w);
+	UV = vec2(CUSTOM0.w > 0.0 ? 1.0 : 0.0, max(here.w, 0.0));
+	VERTEX = p + across * (half_width * CUSTOM0.w);
 	NORMAL = cross(across, t);
 	TANGENT = across;
 	BINORMAL = t;
@@ -89,9 +97,9 @@ void vertex() {
 	if (!IN_PATH_TRACER) {
 		// Raster (and its shadow maps): AMD TressFX's strand rendering. One ribbon facing the camera,
 		// widened by 0.71 px a side so no strand falls between pixels, with its opacity cut to the
-		// share of the pixel the real strand covers (TressFX's coverage). The opacity is hashed, so
-		// TAA or MSAA resolves it to a smooth blend, and shadow maps get the hair's partial opacity
-		// (it shades itself, like an opacity map). The path tracer keeps the real-width crossed strips.
+		// share of the pixel the real strand covers (TressFX's coverage), alpha blended; shadow maps
+		// keep that share of their texels, so the hair shades itself like an opacity map. The path
+		// tracer keeps the real-width crossed strips.
 		vec3 pv = (MODELVIEW_MATRIX * vec4(p, 1.0)).xyz;
 		vec3 tv = normalize(mat3(MODELVIEW_MATRIX) * t);
 		vec3 eye = PROJECTION_MATRIX[3][3] > 0.5 ? vec3(0.0, 0.0, -1.0) : normalize(pv);
@@ -99,7 +107,6 @@ void vertex() {
 		right = dot(right, right) > 1e-12 ? normalize(right) : normalize(cross(tv, vec3(0.0, 1.0, 0.0)));
 		vec4 clip = PROJECTION_MATRIX * vec4(pv, 1.0);
 		float px = 2.0 * clip.w / max(PROJECTION_MATRIX[1][1] * VIEWPORT_SIZE.y, 1e-6); // one pixel, in metres
-		float half_width = abs(CUSTOM0.w);
 		// The widening is capped (2 mm in shadow maps, about a texel of a close cascade, and 1 cm
 		// otherwise): a far cascade's texel, or a pass with a tiny viewport, would otherwise widen
 		// every strand to centimetres and flood the pass with fragments. Coverage keeps the total
@@ -136,8 +143,19 @@ void fragment() {
 			coverage = clamp(2.0 * strand_half_px / strand_drawn_px * (1.0 - d / strand_drawn_px), 0.0, 1.0);
 		}
 	}
+	if (IN_SHADOW_PASS) {
+		// Shadow maps take no blending: the coverage becomes the share of texels kept (interleaved
+		// gradient noise), so the hair's shadow is partial and builds up through the volume.
+		float noise = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+		if (coverage <= noise) {
+			discard;
+		}
+		coverage = 1.0;
+	}
+	// rt_force_opaque: the path tracer traces the strands as solid fibres (ALPHA is 1 there).
+	// Blended, as TressFX blends its strands: each fades over what lies behind it by the share of
+	// the pixel it covers. Thin strands are faint, so the blend barely depends on draw order.
 	ALPHA = coverage;
-	ALPHA_HASH_SCALE = 1.0;
 }
 )";
 
@@ -297,6 +315,8 @@ void PhysXHair3D::_make_material() {
 	copy_material->set_shader_parameter("fibre_roughness", Vector2(roughness, radial_roughness));
 	copy_material->set_shader_parameter("hair_positions", pos_texture);
 	copy_material->set_shader_parameter("texture_width", solver ? solver->get_texture_width() : 1);
+	copy_material->set_shader_parameter("root_width", root_width);
+	copy_material->set_shader_parameter("tip_width", tip_width);
 	if (render_instance) {
 		render_instance->set_material_override(copy_material);
 	}
@@ -393,7 +413,13 @@ void PhysXHair3D::_build() {
 		}
 	}
 
-	// Render mesh: two crossed strips per point, as HairMesh, the positions rebuilt in vertex().
+	// Render mesh: two crossed strips per point, as HairMesh, the positions rebuilt in vertex() from
+	// the solver's output, which holds the strands sorted far to near from the camera (for
+	// blending): slot_points texels per strand, padded past a short strand's end.
+	int slot_points = 0;
+	for (int c = 0; c < counts.size(); c++) {
+		slot_points = MAX(slot_points, counts[c]);
+	}
 	PackedVector3Array verts;
 	PackedVector3Array normals;
 	PackedFloat32Array tangents;
@@ -403,73 +429,77 @@ void PhysXHair3D::_build() {
 	PackedInt32Array indices;
 	AABB bounds(pts[0], Vector3());
 	float longest = 0.0f;
-	int start = 0;
-	for (int c = 0; c < counts.size(); c++) {
-		const int n = counts[c];
-		if (n < 2) {
-			start += MAX(n, 0);
-			continue;
-		}
-		float length = 0.0f;
-		for (int k = 1; k < n; k++) {
-			length += pts[start + k].distance_to(pts[start + k - 1]);
-		}
-		longest = MAX(longest, length);
-		Vector3 prev_t = (pts[start + 1] - pts[start]).normalized();
-		Vector3 a = prev_t.cross(Math::abs(prev_t.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0)).normalized();
-		const int base = verts.size();
-		float along = 0.0f;
-		for (int k = 0; k < n; k++) {
-			const int ip = start + MAX(k - 1, 0);
-			const int in = start + MIN(k + 1, n - 1);
-			Vector3 t = pts[in] - pts[ip];
-			t = t.length_squared() > 1e-16f ? t.normalized() : prev_t;
-			const Vector3 axis = prev_t.cross(t);
-			if (axis.length_squared() > 1e-12f) {
-				a = a.rotated(axis.normalized(), prev_t.angle_to(t));
-			}
-			a = (a - t * a.dot(t)).normalized();
-			prev_t = t;
-			if (k > 0) {
-				along += pts[start + k].distance_to(pts[start + k - 1]);
-			}
-			const float s = along / MAX(length, 1e-6f);
-			const float half = 0.5f * Math::lerp(root_width, tip_width, s);
-			bounds.expand_to(pts[start + k]);
-			for (int strip = 0; strip < 2; strip++) {
-				const Vector3 across = strip == 0 ? a : t.cross(a);
-				for (int side = 0; side < 2; side++) {
-					verts.push_back(pts[start + k] + across * (side == 0 ? -half : half));
-					normals.push_back(across.cross(t));
-					tangents.push_back(across.x);
-					tangents.push_back(across.y);
-					tangents.push_back(across.z);
-					tangents.push_back(1.0f);
-					uvs.push_back(Vector2(float(side), s));
-					custom0.push_back(float(start + k));
-					custom0.push_back(float(ip));
-					custom0.push_back(float(in));
-					custom0.push_back(side == 0 ? -half : half);
-					custom1.push_back(a.x);
-					custom1.push_back(a.y);
-					custom1.push_back(a.z);
-					custom1.push_back(float(strip));
+	{
+		int start = 0;
+		for (int c = 0; c < counts.size(); c++) {
+			const int n = counts[c];
+			float length = 0.0f;
+			for (int k = 0; k < n; k++) {
+				bounds.expand_to(pts[start + k]);
+				if (k > 0) {
+					length += pts[start + k].distance_to(pts[start + k - 1]);
 				}
 			}
+			longest = MAX(longest, length);
+			start += MAX(n, 0);
 		}
-		for (int k = 0; k + 1 < n; k++) {
-			for (int strip = 0; strip < 2; strip++) {
-				const int v0 = base + k * 4 + strip * 2;
-				const int v2 = v0 + 4;
-				indices.push_back(v0);
-				indices.push_back(v0 + 1);
-				indices.push_back(v2);
-				indices.push_back(v0 + 1);
-				indices.push_back(v2 + 1);
-				indices.push_back(v2);
+	}
+	const int strand_count = counts.size();
+	if (slot_points >= 2) {
+		verts.resize(strand_count * slot_points * 4);
+		uvs.resize(verts.size());
+		normals.resize(verts.size());
+		tangents.resize(verts.size() * 4);
+		Vector3 *nr = normals.ptrw();
+		float *tg = tangents.ptrw();
+		custom0.resize(verts.size() * 4);
+		custom1.resize(verts.size() * 4);
+		Vector3 *v = verts.ptrw();
+		Vector2 *uv = uvs.ptrw();
+		float *c0 = custom0.ptrw();
+		float *c1 = custom1.ptrw();
+		int start = 0;
+		for (int slot = 0; slot < strand_count; slot++) {
+			const int n = MAX(counts[slot], 1);
+			for (int k = 0; k < slot_points; k++) {
+				const int t = slot * slot_points + k;
+				// Rest position: the groom in groom order (vertex() replaces it).
+				const Vector3 p = pts[MIN(start + MIN(k, n - 1), pts.size() - 1)];
+				for (int strip = 0; strip < 2; strip++) {
+					for (int side = 0; side < 2; side++) {
+						const int vi = t * 4 + strip * 2 + side;
+						v[vi] = p;
+						nr[vi] = Vector3(0, 0, 1);
+						tg[vi * 4 + 0] = 1.0f;
+						tg[vi * 4 + 1] = 0.0f;
+						tg[vi * 4 + 2] = 0.0f;
+						tg[vi * 4 + 3] = 1.0f;
+						uv[vi] = Vector2(float(side), float(k) / float(MAX(slot_points - 1, 1)));
+						c0[vi * 4 + 0] = float(t);
+						c0[vi * 4 + 1] = float(slot * slot_points + MAX(k - 1, 0));
+						c0[vi * 4 + 2] = float(slot * slot_points + MIN(k + 1, slot_points - 1));
+						c0[vi * 4 + 3] = side == 0 ? -1.0f : 1.0f;
+						c1[vi * 4 + 0] = 0.0f;
+						c1[vi * 4 + 1] = 0.0f;
+						c1[vi * 4 + 2] = 0.0f;
+						c1[vi * 4 + 3] = float(strip);
+					}
+				}
 			}
+			for (int k = 0; k + 1 < slot_points; k++) {
+				for (int strip = 0; strip < 2; strip++) {
+					const int v0 = (slot * slot_points + k) * 4 + strip * 2;
+					const int v2 = v0 + 4;
+					indices.push_back(v0);
+					indices.push_back(v0 + 1);
+					indices.push_back(v2);
+					indices.push_back(v0 + 1);
+					indices.push_back(v2 + 1);
+					indices.push_back(v2);
+				}
+			}
+			start += MAX(counts[slot], 0);
 		}
-		start += n;
 	}
 	if (verts.is_empty()) {
 		render_instance->queue_free();
@@ -503,7 +533,7 @@ void PhysXHair3D::_build() {
 		render_instance = nullptr;
 		ERR_FAIL_MSG("PhysXHair3D: no RenderingDevice, the hair can't be simulated.");
 	}
-	solver->build(rest, strands, _follow_data(pts, counts));
+	solver->build(rest, strands, _follow_data(pts, counts), slot_points);
 	pos_texture.instantiate();
 	pos_texture->set_texture_rd_rid(solver->get_position_texture_rd_rid());
 	_make_material();
@@ -546,6 +576,9 @@ void PhysXHair3D::_step(double p_delta) {
 		s.spheres.push_back(Vector4(c.x, c.y, c.z, sp.w * scale));
 	}
 	s.output_xform = render_instance ? render_instance->get_global_transform().affine_inverse() : xform.affine_inverse();
+	// The draw order is sorted from the viewport's camera.
+	const Camera3D *camera = is_inside_tree() ? get_viewport()->get_camera_3d() : nullptr;
+	s.view_xform = camera ? camera->get_global_transform().affine_inverse() : Transform3D();
 	solver->step(xform, p_delta, substeps, s);
 }
 

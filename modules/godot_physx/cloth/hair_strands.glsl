@@ -23,6 +23,8 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 #define MODE_RESET 1
 #define MODE_OUTPUT 2
 #define MODE_FOLLOW 3
+#define MODE_SORT_KEYS 4
+#define MODE_SORT_STEP 5
 
 #define MAX_SPHERES 32
 
@@ -33,10 +35,11 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 wind; // xyz air velocity (m/s), w gust strength (0..1)
 	vec4 misc; // x VSP coefficient, y collision margin (m), z time (s), w VSP acceleration threshold (m/s^2)
 	vec4 air; // x speed clamp (m/s), y turbulence (0..1), z turbulence eddy size (m), w unused
-	vec4 inertia; // x local shape iterations, y length iterations
+	vec4 inertia; // x local shape iterations, y length iterations, z points per output slot (0: no sorting), w sort size (a power of two)
 	mat4 xform_prev; // groom space -> world, last frame
 	mat4 xform_cur; // groom space -> world, this frame
 	mat4 world_to_out; // world -> the render copy's space
+	mat4 world_to_view; // world -> the camera, for the draw order
 	vec4 spheres[MAX_SPHERES]; // world centre, radius
 };
 
@@ -44,7 +47,7 @@ layout(push_constant, std430) uniform Pass {
 	int mode;
 	float frac; // substep fraction, for blending the head's transform
 	float frac_prev; // the previous substep's
-	int pad1;
+	int pad1; // MODE_SORT_STEP: the bitonic block size k (frac holds the stride j)
 }
 pass;
 
@@ -65,6 +68,10 @@ layout(set = 0, binding = 4, std430) restrict buffer Prev {
 };
 
 layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2D out_image;
+
+layout(set = 0, binding = 7, std430) restrict buffer Order {
+	vec2 order[]; // draw order, far to near: x the strand's depth key, y the strand
+};
 
 layout(set = 0, binding = 6, std430) restrict readonly buffer Follow {
 	vec4 follow[]; // per strand, two: guide strands (x, y, z; w < 0 for a guide itself), then their weights
@@ -99,12 +106,56 @@ vec3 eddies(vec3 q) {
 void main() {
 	int id = int(gl_GlobalInvocationID.x);
 
-	if (pass.mode == MODE_OUTPUT) {
-		if (id >= counts.y) {
+	int slot_points = int(inertia.z + 0.5);
+	if (pass.mode == MODE_SORT_KEYS) {
+		// Blended strands must be drawn far to near (TressFX sorts its fragments per pixel; here
+		// whole strands are sorted by their middle point's depth, a bitonic sort on the GPU).
+		if (id >= int(inertia.w + 0.5)) {
 			return;
 		}
+		float key = 3.0e38; // padding sorts last
+		if (id < counts.x && strands[id].y > 0) {
+			vec3 mid = pos[strands[id].x + strands[id].y / 2].xyz;
+			key = (world_to_view * vec4(mid, 1.0)).z; // more negative is farther
+		}
+		order[id] = vec2(key, float(id));
+		return;
+	}
+	if (pass.mode == MODE_SORT_STEP) {
+		int j = int(pass.frac + 0.5);
+		int partner = id ^ j;
+		if (id >= int(inertia.w + 0.5) || partner <= id) {
+			return;
+		}
+		bool ascending = (id & pass.pad1) == 0;
+		vec2 a = order[id];
+		vec2 b = order[partner];
+		if ((a.x > b.x) == ascending) {
+			order[id] = b;
+			order[partner] = a;
+		}
+		return;
+	}
+	if (pass.mode == MODE_OUTPUT) {
 		int w = max(counts.z, 1);
-		imageStore(out_image, ivec2(id % w, id / w), vec4(to_world(world_to_out, pos[id].xyz), 1.0));
+		if (slot_points <= 0) {
+			if (id >= counts.y) {
+				return;
+			}
+			imageStore(out_image, ivec2(id % w, id / w), vec4(to_world(world_to_out, pos[id].xyz), 1.0));
+			return;
+		}
+		// Sorted: slot s holds the s-th strand from the back, slot_points texels each; w is the
+		// share of the strand's length (by point), or -1 past its last point.
+		if (id >= counts.x * slot_points) {
+			return;
+		}
+		int strand = int(order[id / slot_points].y + 0.5);
+		int k = id % slot_points;
+		int sn = strands[strand].y;
+		int sp = strands[strand].x + clamp(k, 0, max(sn - 1, 0));
+		float along = k < sn ? float(k) / float(max(sn - 1, 1)) : -1.0;
+		imageStore(out_image, ivec2(id % w, id / w), vec4(to_world(world_to_out, pos[sp].xyz), along));
 		return;
 	}
 
