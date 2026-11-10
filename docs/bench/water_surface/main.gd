@@ -27,6 +27,8 @@ extends Node3D
 #   --seq=N         also save the N frames after --frames, as path_0000.png ... (for a GIF)
 #   --dive=M        over the --seq frames, lower the camera by M metres (through the surface at --view=waterline)
 #   --cam-dy=M      raise (or lower) the camera by M metres
+#   --dump-shader=path  write the water material's shader code to a file
+#   --shader-file=path  replace the water material's shader with this file (try a shader change without a rebuild)
 #   --perf          print the mean process and physics time per frame (after frame 60) and the cost of sample_height()
 #   --profile       print the surface height along x = 0, out to sea and up the beach, at the last frame
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
@@ -158,6 +160,15 @@ func _ready() -> void:
 	var wm: ShaderMaterial = water.call("get_water_material")
 	for k in water_params:
 		if wm: wm.set_shader_parameter(k, water_params[k])
+	for a in OS.get_cmdline_user_args():
+		if wm and a.begins_with("--dump-shader="):
+			var f := FileAccess.open(a.substr(14), FileAccess.WRITE)
+			f.store_string(wm.shader.code)
+			f.close()
+		elif wm and a.begins_with("--shader-file="):
+			var sh := Shader.new()
+			sh.code = FileAccess.get_file_as_string(a.substr(14))
+			wm.shader = sh
 
 	# Floating boxes.
 	for i in 3:

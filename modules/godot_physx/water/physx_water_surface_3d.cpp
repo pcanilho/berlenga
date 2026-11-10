@@ -524,9 +524,13 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 		float pc = ps - 6.28318530718 * floor((ps + 3.14159265359) / 6.28318530718);
 		// The throw is a fraction of the wavelength: the crest overtakes its
 		// own front face (the surface folds over), and the lip falls.
-		float lip = exp(-pow((pc - 0.2) / 0.45, 2.0));
+		// x * x, not pow(x, 2.0): GLSL leaves pow undefined for a negative base
+		// (NaN on some drivers, which the BLAS turns into fans of long triangles).
+		float lip_x = (pc - 0.2) / 0.45;
+		float lip = exp(-lip_x * lip_x);
 		off.xz += dir * (0.7 / k * throw_w * lip);
-		off.y -= 1.6 * amp * drop_w * exp(-pow((pc - 0.35) / 0.35, 2.0));
+		float drop_x = (pc - 0.35) / 0.35;
+		off.y -= 1.6 * amp * drop_w * exp(-drop_x * drop_x);
 		// White water: the breaking crest, and the bore's foam trailing behind it.
 		float behind = fract(-th / 6.28318530718);
 		r_white = max(r_white, brk * vary * max(smoothstep(0.35, 0.95, cos(ps)), 0.7 * exp(-behind * 5.0)));

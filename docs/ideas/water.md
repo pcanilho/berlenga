@@ -1161,6 +1161,14 @@ depth, so the lip and face blend), no spray sheet from the lip (Thurey's
 particles would be the next step, with PhysXWaterSpray3D), and the stage is a
 function of depth, so every crest plunges at the same place along a ray.
 
+Path tracing check: the first build drew fans of long triangles over the surf
+under path tracing only. The lip and drop weights were written as
+`exp(-pow(x, 2.0))`, and GLSL leaves `pow` undefined for a negative base: on
+lavapipe it gives NaN for half of every period, which raster drops silently
+and the BLAS built from the captured vertices turns into fans. They are now
+`exp(-x * x)`. Raster and path traced frames of the curl view then match (100%
+crop), and the whitecaps at sea land in the same places under both.
+
 ## Step 5d: whitecaps across cascades, and a performance pass (9 Nov)
 
 ### Whitecaps where the cascades add up
