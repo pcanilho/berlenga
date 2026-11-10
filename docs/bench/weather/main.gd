@@ -21,6 +21,8 @@ extends Node3D
 #   --view=clouds_low the same from 220 m, looking down on the cloud shadows
 #   --view=lightning  a storm at night over fields; a ground flash 1.4 km off on the last frame
 #                     (--strike-frames=K: K frames after the flash)
+#   --haze=uniform|layer|both  clouds view: precipitation haze pushed into the map (uniform 2 km
+#                     visibility; a blowing layer 200 m visibility at the ground, 10 m height scale)
 #   --view=projector  a checker projected by the sun (DirectionalLight3D projector), raster against path traced
 #   --rain=H          hours of 5 mm/h rain before the shot (street view; 0 = dry)
 #   --dry=H           then this many hours without rain
@@ -48,6 +50,8 @@ var dry_hours := 0.0
 var test := false
 var only_shelter := false
 var only_lightning := false
+var only_haze := false
+var haze := ""
 var strike_frames := 1
 var light_scale := 1.0
 var thunder_out := ""
@@ -70,6 +74,8 @@ func _ready() -> void:
 		elif a == "--test": test = true
 		elif a == "--test=shelter": test = true; only_shelter = true
 		elif a == "--test=lightning": test = true; only_lightning = true
+		elif a == "--test=haze": test = true; only_haze = true
+		elif a.begins_with("--haze="): haze = a.substr(7)
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -91,6 +97,8 @@ func _ready() -> void:
 			await _shelter_tests()
 		elif only_lightning:
 			await _lightning_tests()
+		elif only_haze:
+			await _haze_tests()
 		else:
 			await _run_tests()
 		get_tree().quit()
@@ -428,6 +436,52 @@ void fragment() {
 	vp.queue_free()
 	m.queue_free()
 	await get_tree().physics_frame
+
+
+# Precipitation haze: sources add up, a layer falls off with height, and the environment's fog
+# comes back as it was when the sources clear.
+func _haze_tests() -> void:
+	var we := WorldEnvironment.new()
+	var e := Environment.new()
+	e.fog_density = 0.0005
+	we.environment = e
+	add_child(we)
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.make_current()
+	var m := _new_map()
+	await get_tree().physics_frame
+	var a := Node.new()
+	var b := Node.new()
+	add_child(a)
+	add_child(b)
+	m.set_precipitation_extinction(a, 0.002, 0.0)
+	m.set_precipitation_extinction(b, 0.02, 10.0, 0.95)
+	await get_tree().physics_frame
+	print("haze: extinction at 0, 10, 30 m: %.4f %.4f %.4f /m (want 0.0220 %.4f %.4f)" % [m.get_precipitation_extinction_at(Vector3(0, 0, 0)), m.get_precipitation_extinction_at(Vector3(0, 10, 0)), m.get_precipitation_extinction_at(Vector3(0, 30, 0)), 0.002 + 0.02 * exp(-1.0), 0.002 + 0.02 * exp(-3.0)])
+	var vols := 0
+	for c in m.get_children(true):
+		if c is FogVolume:
+			vols += 1
+	print("haze: fog %s density %.4f (want 0.0020: the base 0.0005 is off), aerial %.2f, volumetric %s, %d fog volume, ambient inject %.2f (want 1)" % [e.fog_enabled, e.fog_density, e.fog_aerial_perspective, e.volumetric_fog_enabled, vols, e.volumetric_fog_ambient_inject])
+	# A layer over an area takes its ground from the centre's height (snow on a mountain).
+	m.set_precipitation_extinction(b, 0.02, 10.0, 0.95, Vector3(0, 1200, 0), 150.0)
+	await get_tree().physics_frame
+	var base_y := 0.0
+	for c in m.get_children(true):
+		if c is FogVolume:
+			base_y = c.global_position.y
+	print("haze: raised layer: volume base %.0f m (want 1200), extinction at 1200, 1210 m: %.4f %.4f (want 0.0220 %.4f)" % [base_y, m.get_precipitation_extinction_at(Vector3(0, 1200, 0)), m.get_precipitation_extinction_at(Vector3(0, 1210, 0)), 0.002 + 0.02 * exp(-1.0)])
+	m.set_precipitation_extinction(b, 0.0, 10.0)
+	m.clear_precipitation_extinction(a)
+	m.clear_precipitation_extinction(b)
+	await get_tree().physics_frame
+	await get_tree().process_frame
+	vols = 0
+	for c in m.get_children(true):
+		if c is FogVolume and not c.is_queued_for_deletion():
+			vols += 1
+	print("haze: cleared: fog %s density %.4f aerial %.2f volumetric %s, %d fog volumes, ambient inject %.2f (want 0)" % [e.fog_enabled, e.fog_density, e.fog_aerial_perspective, e.volumetric_fog_enabled, vols, e.volumetric_fog_ambient_inject])
 
 
 # Lightning: Price and Rind's rate and ground share, a storm's flashes against that rate, a ground
@@ -865,6 +919,10 @@ func _build_clouds() -> void:
 	await get_tree().physics_frame
 	weather.snap_to_settings()
 	weather.update_cloud_shadow()
+	if haze == "uniform" or haze == "both":
+		weather.set_precipitation_extinction(sun, 3.912 / 2000.0, 0.0)
+	if haze == "layer" or haze == "both":
+		weather.set_precipitation_extinction(cam, 3.912 / 200.0, 10.0, 0.95)
 	print("clouds: sun visibility under the camera %.2f" % weather.get_sun_visibility_at(cam.position))
 
 

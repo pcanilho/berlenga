@@ -67,6 +67,8 @@ class SnowCover3D : public Node3D {
 	float update_rate = 2.0f; // updates per real second
 	NodePath height_source;
 	uint32_t ground_collision_mask = 1;
+	uint32_t shelter_collision_mask = 0; // with a height source: colliders whose tops catch the snow (roofs)
+	bool canopy_enabled = true; // trees in the weather map's canopy hold snow (Hedstrom and Pomeroy 1998)
 	NodePath sun_light;
 	float lapse_rate = 6.5f; // C per km
 	float temperature = -2.0f; // C, without a WeatherMap3D
@@ -123,6 +125,10 @@ class SnowCover3D : public Node3D {
 	Vector<float> cell_albedo;
 	Vector<float> cell_runoff; // mm/h leaving the pack, last update
 	Vector<float> cell_sx; // degrees, Winstral's maximum upwind slope
+	Vector<float> cell_canopy; // canopy closure over the cell, 0..1 (WeatherMap3D's canopy)
+	Vector<float> cell_canopy_load; // mm of snow water held in the canopy
+	Ref<Image> catch_image;
+	Ref<ImageTexture> catch_texture;
 	Vector<float> cell_new_depth; // m of new snow laid by the last update (SnowSurface3D refills trails with it)
 	Vector<uint8_t> cell_height_valid;
 	Vector2 sx_direction;
@@ -187,6 +193,7 @@ class SnowCover3D : public Node3D {
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	void _publish_globals();
 	bool _in_world_only(Vector3 p_position) const;
+	void _sample_canopy();
 	float _sample(const Vector<float> &p_field, Vector2 p_xz) const;
 	Vector3 _cell_center(int p_x, int p_z) const;
 	void _setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_resolution);
@@ -213,6 +220,14 @@ public:
 	float get_update_rate() const { return update_rate; }
 	void set_height_source(const NodePath &p_path);
 	NodePath get_height_source() const { return height_source; }
+	void set_shelter_collision_mask(uint32_t p_mask) { shelter_collision_mask = p_mask; }
+	uint32_t get_shelter_collision_mask() const { return shelter_collision_mask; }
+	void set_canopy_enabled(bool p_enabled) { canopy_enabled = p_enabled; }
+	bool is_canopy_enabled() const { return canopy_enabled; }
+	float get_canopy_load_at(Vector3 p_position) const;
+	float get_canopy_capacity_at(Vector3 p_position) const;
+	static float canopy_capacity(float p_closure, float p_snow_density);
+	Ref<Texture2D> get_catch_texture() const { return catch_texture; }
 	void set_ground_collision_mask(uint32_t p_mask);
 	uint32_t get_ground_collision_mask() const { return ground_collision_mask; }
 	void set_sun_light(const NodePath &p_path);
