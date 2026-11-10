@@ -81,6 +81,15 @@ private:
 	real_t height_offset = 0.0;
 	real_t max_height = 0.0; // 0 = as eroded; otherwise relief scaled so the highest point is this
 
+	// Detail: erosion filter over the simulated ground (stage 3).
+	bool detail_enabled = true;
+	real_t detail_wavelength = 128.0;
+	int detail_octaves = 4;
+	real_t detail_depth = 0.08;
+	real_t detail_reach = 1.0;
+	real_t detail_gully_weight = 0.5;
+	real_t detail_assumed_slope = 0.6;
+
 	// Output.
 	NodePath terrain_path;
 	NodePath deformer_path;
@@ -93,6 +102,10 @@ private:
 	LocalVector<float> drainage;
 	LocalVector<float> sediment;
 	LocalVector<float> uplift_field;
+	Rect2 result_rect; // where the last generate() ran; the result stays there if the node moves
+	real_t result_cell = 1.0;
+	float result_min = 0.0f;
+	float result_max = 0.0f;
 	double last_generate_msec = 0.0;
 	double last_write_msec = 0.0;
 	int last_steps = 0;
@@ -102,6 +115,18 @@ private:
 	float _sample(const LocalVector<float> &p_grid, real_t p_x, real_t p_z) const;
 	Ref<Image> _grid_image(const LocalVector<float> &p_grid) const;
 	Node *_get_terrain_node() const;
+	// The final ground at a world point: simulated (bicubic) plus the detail filter.
+	float _ground(real_t p_x, real_t p_z) const;
+	struct FillJob {
+		const TerrainGenerator3D *gen;
+		real_t x0;
+		real_t z0;
+		real_t spacing;
+		int width;
+		float *out; // width * rows, NaN outside
+	};
+	static void _fill_row(void *p_job, uint32_t p_row);
+	void _fill(real_t p_x0, real_t p_z0, real_t p_spacing, int p_width, int p_rows, float *r_out) const;
 
 protected:
 	static void _bind_methods();
@@ -154,6 +179,21 @@ public:
 	void set_max_height(real_t p_value) { max_height = MAX(p_value, real_t(0.0)); }
 	real_t get_max_height() const { return max_height; }
 
+	void set_detail_enabled(bool p_enable) { detail_enabled = p_enable; }
+	bool is_detail_enabled() const { return detail_enabled; }
+	void set_detail_wavelength(real_t p_value) { detail_wavelength = MAX(p_value, real_t(1.0)); }
+	real_t get_detail_wavelength() const { return detail_wavelength; }
+	void set_detail_octaves(int p_value) { detail_octaves = CLAMP(p_value, 0, 12); }
+	int get_detail_octaves() const { return detail_octaves; }
+	void set_detail_depth(real_t p_value) { detail_depth = MAX(p_value, real_t(0.0)); }
+	real_t get_detail_depth() const { return detail_depth; }
+	void set_detail_reach(real_t p_value) { detail_reach = MAX(p_value, real_t(0.01)); }
+	real_t get_detail_reach() const { return detail_reach; }
+	void set_detail_gully_weight(real_t p_value) { detail_gully_weight = CLAMP(p_value, real_t(0.05), real_t(1.0)); }
+	real_t get_detail_gully_weight() const { return detail_gully_weight; }
+	void set_detail_assumed_slope(real_t p_value) { detail_assumed_slope = MAX(p_value, real_t(0.01)); }
+	real_t get_detail_assumed_slope() const { return detail_assumed_slope; }
+
 	void set_terrain(const NodePath &p_path) { terrain_path = p_path; }
 	NodePath get_terrain() const { return terrain_path; }
 	void set_deformer(const NodePath &p_path) { deformer_path = p_path; }
@@ -174,8 +214,11 @@ public:
 	bool has_result() const { return nx > 0; }
 	void clear_result();
 
-	// Generated ground (bicubic between grid nodes, plus height_offset); NaN outside or before generate().
+	// Generated ground (bicubic between grid nodes, plus height_offset, plus the detail filter); NaN outside or
+	// before generate().
 	real_t get_height(const Vector3 &p_global_position) const;
+	// The simulated ground without the detail filter.
+	real_t get_base_height(const Vector3 &p_global_position) const;
 	real_t get_drainage_area(const Vector3 &p_global_position) const;
 	real_t get_sediment_depth(const Vector3 &p_global_position) const;
 	Ref<Image> get_height_image() const;

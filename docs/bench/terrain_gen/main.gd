@@ -3,7 +3,8 @@
 #   godot --headless --path docs/bench/terrain_gen -- --test             checks (HeightMapShape3D ground)
 #   godot --headless --path docs/bench/terrain_gen -- --test --terrain3d same on Terrain3D (addon installed)
 #   godot --headless --path docs/bench/terrain_gen -- --time             generation time at 256, 512, 1024 cells
-#   godot --path docs/bench/terrain_gen --rendering-driver vulkan -- --out=view.png [--raster] [--spp=16]
+#   godot --path docs/bench/terrain_gen --rendering-driver vulkan -- --out=view.png [--raster] [--spp=16] [--close]
+#       [--cell=8 --res=513] [--view-res=1024] [--no-detail]
 #   godot --headless --path docs/bench/terrain_gen -- --map=map.png      shaded relief with rivers
 extends Node3D
 
@@ -55,6 +56,7 @@ func _ready() -> void:
 		# A wider, faster-rising range than the checks use, for a mountain view.
 		gen.uplift = 6.0
 		gen.range_width = 1300.0
+		gen.detail_enabled = not args.has("no-detail")
 		gen.bake()
 		_build_view()
 		var raster := args.has("raster")
@@ -215,6 +217,26 @@ func _run_checks() -> void:
 	gen.max_height = 0.0
 	gen.generate()
 
+	# Detail filter: carves gullies of metres to tens of metres, bounded, deterministic, off when disabled.
+	var dmax := 0.0
+	var dsum := 0.0
+	var fp := PackedFloat32Array()
+	for i in 2000:
+		var p := Vector3(-2000.0 + 4000.0 * fposmod(i * 0.618034, 1.0), 0, -2000.0 + 4000.0 * fposmod(i * 0.414214, 1.0))
+		var d := gen.get_height(p) - gen.get_base_height(p)
+		dmax = maxf(dmax, absf(d))
+		dsum += absf(d)
+		fp.append(gen.get_height(p))
+	var bound := gen.detail_depth / gen.detail_gully_weight * gen.detail_wavelength * 2.0
+	check(dmax > 1.0 and dmax < bound, "detail carves the ground (mean %.2f m, max %.1f m, bound %.1f m)" % [dsum / 2000.0, dmax, bound])
+	var fp2 := PackedFloat32Array()
+	for i in 2000:
+		fp2.append(gen.get_height(Vector3(-2000.0 + 4000.0 * fposmod(i * 0.618034, 1.0), 0, -2000.0 + 4000.0 * fposmod(i * 0.414214, 1.0))))
+	check(fp == fp2, "detail is a pure function of position")
+	gen.detail_enabled = false
+	check(gen.get_height(Vector3(100, 0, 100)) == gen.get_base_height(Vector3(100, 0, 100)), "detail_enabled off gives the simulated ground")
+	gen.detail_enabled = true
+
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
 	var plot := TerrainBrush3D.new()
 	plot.shape = TerrainBrush3D.SHAPE_RECTANGLE
@@ -238,7 +260,7 @@ func _run_checks() -> void:
 		var want_s := gen.get_height(_snap(p))
 		worst = maxf(worst, absf(got - want_s))
 		samples += 1
-	check(worst < 0.01, "ground matches the generator at %d vertices (worst %.4f m)" % [samples, worst])
+	check(worst < 0.001, "ground written in parallel rows matches get_height() at %d vertices (worst %.4f m)" % [samples, worst])
 	var plot_h := deformer.get_height(Vector3(600, 0, -400))
 	check(absf(plot_h - 120.0) < 0.05, "deformer brush re-applied on the new ground (%.2f m)" % plot_h)
 	var base_h := deformer.get_base_height(_snap(Vector3(600, 0, -400)))
@@ -299,7 +321,7 @@ func _save_map(path: String) -> void:
 
 func _build_view() -> void:
 	# A display mesh of the generated ground with slope and height colours (grass, rock, snow).
-	var res := 512
+	var res := int(args.get("view-res", "1024"))
 	var step := WORLD / res
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -378,6 +400,13 @@ func _build_view() -> void:
 	var cam := Camera3D.new()
 	cam.far = 20000.0
 	cam.fov = 50.0
-	cam.position = Vector3(1900, 1100, 2900)
-	add_child(cam)
-	cam.look_at(Vector3(-400, 250, -300))
+	if args.has("close"):
+		# Close view of one flank, for raster and path traced crops at 100%.
+		cam.fov = 40.0
+		cam.position = Vector3(700, 900, 1100)
+		add_child(cam)
+		cam.look_at(Vector3(-200, 450, 200))
+	else:
+		cam.position = Vector3(1900, 1100, 2900)
+		add_child(cam)
+		cam.look_at(Vector3(-400, 250, -300))

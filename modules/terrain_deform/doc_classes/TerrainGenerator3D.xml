@@ -31,6 +31,13 @@
 				Runs [member steps] steps of uplift and erosion from a flat, slightly rough start. Returns [code]false[/code] if [member size] is empty.
 			</description>
 		</method>
+		<method name="get_base_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The simulated ground at a world position, without the detail filter. NaN outside the rectangle or before [method generate].
+			</description>
+		</method>
 		<method name="get_drainage_area" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -54,7 +61,7 @@
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
-				Generated ground height at a world position (bicubic between grid nodes, including [member height_offset]). NaN outside the rectangle or before [method generate].
+				Generated ground height at a world position: the simulation (bicubic between grid nodes, including [member height_offset]) plus the detail filter. This is exactly what [method write_to_terrain] writes at a vertex. NaN outside the rectangle or before [method generate].
 			</description>
 		</method>
 		<method name="get_height_image" qualifiers="const">
@@ -140,6 +147,27 @@
 		</member>
 		<member name="deformer" type="NodePath" setter="set_deformer" getter="get_deformer" default="NodePath(&quot;&quot;)">
 			Optional [TerrainDeformer3D]. Its brushes are lifted before the write and applied again after it, and its terrain is used when [member terrain] is empty.
+		</member>
+		<member name="detail_assumed_slope" type="float" setter="set_detail_assumed_slope" getter="get_detail_assumed_slope" default="0.6">
+			Slope the simulated ground is treated as having when steering the first gullies. Near the typical slope of the result.
+		</member>
+		<member name="detail_depth" type="float" setter="set_detail_depth" getter="get_detail_depth" default="0.08">
+			Gully depth as a fraction of its wavelength.
+		</member>
+		<member name="detail_enabled" type="bool" setter="set_detail_enabled" getter="is_detail_enabled" default="true">
+			Carves gullies and spurs into the simulated ground with an erosion filter (Clay John 2018, Fewes 2023, Johansen 2026): stripes laid down the slope, octave by octave, each steered by the one before, faded towards peaks and valleys where the slope vanishes. Every point is computed on its own, so tiles join exactly and the result does not depend on threads.
+		</member>
+		<member name="detail_gully_weight" type="float" setter="set_detail_gully_weight" getter="get_detail_gully_weight" default="0.5">
+			Below 1, gullies are scaled down and the overall offset up by the inverse, which keeps peaks pointed.
+		</member>
+		<member name="detail_octaves" type="int" setter="set_detail_octaves" getter="get_detail_octaves" default="4">
+			Gully octaves, each half the wavelength of the one before. Keep the smallest ([member detail_wavelength] / 2^(octaves - 1)) at four terrain vertices or more, or it aliases into spikes; a configuration warning says when it does not.
+		</member>
+		<member name="detail_reach" type="float" setter="set_detail_reach" getter="get_detail_reach" default="1.0">
+			How far smaller gullies reach from steep slopes onto gentler ground. Higher gives more detail.
+		</member>
+		<member name="detail_wavelength" type="float" setter="set_detail_wavelength" getter="get_detail_wavelength" default="128.0">
+			Width of the largest gullies, in metres.
 		</member>
 		<member name="erodibility" type="float" setter="set_erodibility" getter="get_erodibility" default="2e-05">
 			Stream power coefficient [code]K[/code]. Relief at equilibrium grows with [member uplift] / [member erodibility].

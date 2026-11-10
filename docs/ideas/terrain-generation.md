@@ -267,8 +267,28 @@ height is the new ground). Generation time on the cloud CPU, 300 steps: 257² 5.
 of it is bake time; nothing runs per frame. The Terrain3D path is code-reviewed against Terrain3D 1.1 but not run
 in the cloud (`--test --terrain3d` once the addon is in the bench project, on the PC).
 
-Next: stage 3 (local amplification: erosion filter and damped fBm, in the bake and optionally in the material),
-then stage 5 maps, then stage 4. Speed-ups when worlds grow: threading the per-cell passes, and FastFlow-style GPU
+Next after stages 1 and 2: stage 3, then stage 5 maps, then stage 4.
+
+## Stage 3: what was built
+
+`terrain_erosion_filter.h`, written from Johansen's description (not his MPL code): per octave a jittered grid one
+wavelength wide; stripes through each pivot run down the steering slope (cos height, sin slope), blended over the
+5x5 cells around the point with a compact weight (radius 1.5 cells, so no pivot enters or leaves at a cell border;
+the first 4x4 version left straight seams at 0.5 m crops); partial normalization (lengths over 1/2 to 1); fade
+approach with an altitude fade target; stacked fading (each octave's result is the next fade target, its creases and
+ridges multiply into the mask with the `detail_reach` power); straight gullies (the next octave steers by the sign of
+this one's slope); gully weight. The input gradient is a central difference one coarse cell either side, so it falls
+to zero across sharp crests and valley floors where the filter fades out.
+
+`TerrainGenerator3D` applies it in `get_height()`, and the terrain write fills rows in parallel through
+`WorkerThreadPool` from the same function, so written ground equals `get_height()` at every vertex and tiles join
+exactly. Defaults: 128 m, 4 octaves, depth 0.08, gully weight 0.5. Cost: about 1.8 microseconds a vertex on one
+cloud core (66k vertices written in 47 ms on 4 threads). Bake only; no frame cost.
+
+Look: raster and path traced close views at 100% crop show the same gullies and ridges; the path tracer keeps all
+the detail (the frame is noisier at 16 samples on the CPU, nothing missing). A thin comb a few metres tall remains on
+some summit silhouettes; to tune. Still open: the same function in the terrain material for detail under the vertex
+spacing (needs a GPU timing), and a ridge map output for texturing. Speed-ups when worlds grow: threading the per-cell passes, and FastFlow-style GPU
 routing (Jain et al. 2024).
 
 ## Sources

@@ -31,11 +31,13 @@
 #include "terrain_generator_3d.h"
 
 #include "terrain_deformer_3d.h"
+#include "terrain_erosion_filter.h"
 #include "terrain_stream_power.h"
 
 #include "core/io/image.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/path_3d.h"
@@ -192,6 +194,8 @@ bool TerrainGenerator3D::generate() {
 		return false;
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	result_rect = get_world_rect();
+	result_cell = cell_size;
 	nx = int(Math::ceil(size.x / cell_size)) + 1;
 	ny = int(Math::ceil(size.y / cell_size)) + 1;
 	const int n = nx * ny;
@@ -277,6 +281,8 @@ bool TerrainGenerator3D::generate() {
 	}
 	const double scale = (max_height > 0.0 && hmax > sea_level) ? (double(max_height) - sea_level) / (hmax - sea_level) : 1.0;
 
+	result_min = float(sea_level + height_offset);
+	result_max = float(sea_level + (hmax - sea_level) * scale + height_offset);
 	heights.resize(n);
 	drainage.resize(n);
 	sediment.resize(n);
@@ -307,9 +313,9 @@ float TerrainGenerator3D::_sample(const LocalVector<float> &p_grid, real_t p_x, 
 	if (nx < 2 || ny < 2 || p_grid.size() != uint32_t(nx * ny)) {
 		return Math::NaN;
 	}
-	const Rect2 rect = get_world_rect();
-	const real_t gx = (p_x - rect.position.x) / cell_size;
-	const real_t gz = (p_z - rect.position.y) / cell_size;
+	const Rect2 &rect = result_rect;
+	const real_t gx = (p_x - rect.position.x) / result_cell;
+	const real_t gz = (p_z - rect.position.y) / result_cell;
 	const real_t eps = 1.0e-4;
 	if (gx < -eps || gz < -eps || gx > nx - 1 + eps || gz > ny - 1 + eps) {
 		return Math::NaN;
@@ -332,7 +338,60 @@ float TerrainGenerator3D::_sample(const LocalVector<float> &p_grid, real_t p_x, 
 	return float(cr(rows[0], rows[1], rows[2], rows[3], fz));
 }
 
+float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
+	const float base = _sample(heights, p_x, p_z);
+	if (!detail_enabled || detail_octaves <= 0 || detail_depth <= 0.0 || Math::is_nan(base)) {
+		return base;
+	}
+	// Gradient of the simulated surface by central differences over a grid cell either side, clamped inside the
+	// rectangle so border vertices still get one. The wide stencil makes the gradient fall to zero across sharp
+	// ridge crests and valley floors (opposite slopes average out), which is where the filter fades to the fade
+	// target; a point gradient flips at a crest and leaves a seam of teeth along it.
+	const Rect2 &rect = result_rect;
+	const real_t e = result_cell;
+	const real_t xa = MAX(p_x - e, rect.position.x);
+	const real_t xb = MIN(p_x + e, rect.position.x + rect.size.x);
+	const real_t za = MAX(p_z - e, rect.position.y);
+	const real_t zb = MIN(p_z + e, rect.position.y + rect.size.y);
+	const double gx = (double(_sample(heights, xb, p_z)) - _sample(heights, xa, p_z)) / MAX(double(xb - xa), 1e-6);
+	const double gz = (double(_sample(heights, p_x, zb)) - _sample(heights, p_x, za)) / MAX(double(zb - za), 1e-6);
+	TerrainErosionFilter::Params ep;
+	ep.seed = uint32_t(seed) * 0x2545F491u + 1u;
+	ep.wavelength = detail_wavelength;
+	ep.octaves = detail_octaves;
+	ep.depth = detail_depth;
+	ep.detail = detail_reach;
+	ep.gully_weight = detail_gully_weight;
+	ep.assumed_slope = detail_assumed_slope;
+	ep.valley_height = result_min;
+	ep.peak_height = MAX(result_max, result_min + 1.0f);
+	const double off = TerrainErosionFilter::offset(ep, p_x, p_z, base, gx, gz);
+	// Never below the outlets: the filter must not cut the coast or the sea floor.
+	return float(MAX(double(base) + off, double(MIN(base, result_min))));
+}
+
+void TerrainGenerator3D::_fill_row(void *p_job, uint32_t p_row) {
+	const FillJob *job = static_cast<const FillJob *>(p_job);
+	float *row = job->out + size_t(p_row) * job->width;
+	const real_t z = job->z0 + p_row * job->spacing;
+	for (int x = 0; x < job->width; x++) {
+		row[x] = job->gen->_ground(job->x0 + x * job->spacing, z);
+	}
+}
+
+// Heights of a regular grid of world points, rows in parallel. Each point is computed on its own, so the result
+// does not depend on the thread count.
+void TerrainGenerator3D::_fill(real_t p_x0, real_t p_z0, real_t p_spacing, int p_width, int p_rows, float *r_out) const {
+	FillJob job{ this, p_x0, p_z0, p_spacing, p_width, r_out };
+	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_fill_row, &job, p_rows, -1, true, SNAME("TerrainGenerator3D"));
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+}
+
 real_t TerrainGenerator3D::get_height(const Vector3 &p_global_position) const {
+	return _ground(p_global_position.x, p_global_position.z);
+}
+
+real_t TerrainGenerator3D::get_base_height(const Vector3 &p_global_position) const {
 	return _sample(heights, p_global_position.x, p_global_position.z);
 }
 
@@ -386,7 +445,7 @@ int TerrainGenerator3D::write_to_terrain() {
 	}
 	TerrainDeformer3D::Grid grid;
 	ERR_FAIL_COND_V_MSG(!TerrainDeformer3D::open_grid(terrain, grid), 0, "TerrainGenerator3D: terrain must be a Terrain3D or a CollisionShape3D with a HeightMapShape3D.");
-	const Rect2 rect = get_world_rect();
+	const Rect2 &rect = result_rect;
 	const real_t sp = grid.spacing;
 	const real_t tol = sp * 1.0e-3;
 	int written = 0;
@@ -413,13 +472,19 @@ int TerrainGenerator3D::write_to_terrain() {
 				const int x_hi = MIN(c1.x - rx * rs, rs - 1);
 				const int z_lo = MAX(c0.y - rz * rs, 0);
 				const int z_hi = MIN(c1.y - rz * rs, rs - 1);
-				for (int z = z_lo; z <= z_hi; z++) {
-					for (int x = x_lo; x <= x_hi; x++) {
-						const real_t wx = (rx * rs + x) * sp;
-						const real_t wz = (rz * rs + z) * sp;
-						const float hgt = _sample(heights, CLAMP(wx, rect.position.x, rect.position.x + rect.size.x), CLAMP(wz, rect.position.y, rect.position.y + rect.size.y));
+				if (x_hi < x_lo || z_hi < z_lo) {
+					continue;
+				}
+				const int w = x_hi - x_lo + 1;
+				const int d = z_hi - z_lo + 1;
+				LocalVector<float> block;
+				block.resize(w * d);
+				_fill((rx * rs + x_lo) * sp, (rz * rs + z_lo) * sp, sp, w, d, block.ptr());
+				for (int z = 0; z < d; z++) {
+					for (int x = 0; x < w; x++) {
+						const float hgt = block[z * w + x];
 						if (!Math::is_nan(hgt)) {
-							px[z * rs + x] = hgt;
+							px[(z_lo + z) * rs + x_lo + x] = hgt;
 							written++;
 						}
 					}
@@ -433,6 +498,9 @@ int TerrainGenerator3D::write_to_terrain() {
 			grid.data->call("update_maps", 3 /* TYPE_MAX */, true, false);
 		}
 	} else if (grid.backend == TerrainDeformer3D::BACKEND_HEIGHT_MAP) {
+		LocalVector<float> block;
+		block.resize(grid.width * grid.depth);
+		_fill(grid.origin.x, grid.origin.y, sp, grid.width, grid.depth, block.ptr());
 		for (int z = 0; z < grid.depth; z++) {
 			for (int x = 0; x < grid.width; x++) {
 				const real_t wx = grid.origin.x + x * sp;
@@ -440,7 +508,7 @@ int TerrainGenerator3D::write_to_terrain() {
 				if (wx < rect.position.x - tol || wz < rect.position.y - tol || wx > rect.position.x + rect.size.x + tol || wz > rect.position.y + rect.size.y + tol) {
 					continue;
 				}
-				const float hgt = _sample(heights, CLAMP(wx, rect.position.x, rect.position.x + rect.size.x), CLAMP(wz, rect.position.y, rect.position.y + rect.size.y));
+				const float hgt = block[z * grid.width + x];
 				if (!Math::is_nan(hgt)) {
 					TerrainDeformer3D::grid_set(grid, Vector2i(x, z), hgt);
 					written++;
@@ -475,6 +543,13 @@ PackedStringArray TerrainGenerator3D::get_configuration_warnings() const {
 	PackedStringArray warnings = Node3D::get_configuration_warnings();
 	if (is_inside_tree() && !_get_terrain_node()) {
 		warnings.push_back(RTR("Set terrain to a Terrain3D or a CollisionShape3D with a HeightMapShape3D (or set a deformer that has one)."));
+	}
+	if (detail_enabled && detail_octaves > 0 && is_inside_tree()) {
+		TerrainDeformer3D::Grid grid;
+		const real_t smallest = detail_wavelength / Math::pow(real_t(2.0), real_t(detail_octaves - 1));
+		if (TerrainDeformer3D::open_grid(_get_terrain_node(), grid) && smallest < grid.spacing * 4.0) {
+			warnings.push_back(vformat(RTR("The smallest detail wavelength (%.1f m) is under 4 terrain vertices (%.1f m): it will alias into spikes. Use fewer detail octaves or a longer wavelength."), smallest, grid.spacing * 4.0));
+		}
 	}
 	if (size.x > 0.0 && size.y > 0.0 && (size.x / cell_size) * (size.y / cell_size) > 4.2e6) {
 		warnings.push_back(RTR("More than 2048 x 2048 cells: generation takes minutes. Raise cell_size; finer detail is a later stage."));
@@ -530,6 +605,21 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_max_height", "height"), &TerrainGenerator3D::set_max_height);
 	ClassDB::bind_method(D_METHOD("get_max_height"), &TerrainGenerator3D::get_max_height);
 
+	ClassDB::bind_method(D_METHOD("set_detail_enabled", "enabled"), &TerrainGenerator3D::set_detail_enabled);
+	ClassDB::bind_method(D_METHOD("is_detail_enabled"), &TerrainGenerator3D::is_detail_enabled);
+	ClassDB::bind_method(D_METHOD("set_detail_wavelength", "metres"), &TerrainGenerator3D::set_detail_wavelength);
+	ClassDB::bind_method(D_METHOD("get_detail_wavelength"), &TerrainGenerator3D::get_detail_wavelength);
+	ClassDB::bind_method(D_METHOD("set_detail_octaves", "octaves"), &TerrainGenerator3D::set_detail_octaves);
+	ClassDB::bind_method(D_METHOD("get_detail_octaves"), &TerrainGenerator3D::get_detail_octaves);
+	ClassDB::bind_method(D_METHOD("set_detail_depth", "depth"), &TerrainGenerator3D::set_detail_depth);
+	ClassDB::bind_method(D_METHOD("get_detail_depth"), &TerrainGenerator3D::get_detail_depth);
+	ClassDB::bind_method(D_METHOD("set_detail_reach", "reach"), &TerrainGenerator3D::set_detail_reach);
+	ClassDB::bind_method(D_METHOD("get_detail_reach"), &TerrainGenerator3D::get_detail_reach);
+	ClassDB::bind_method(D_METHOD("set_detail_gully_weight", "weight"), &TerrainGenerator3D::set_detail_gully_weight);
+	ClassDB::bind_method(D_METHOD("get_detail_gully_weight"), &TerrainGenerator3D::get_detail_gully_weight);
+	ClassDB::bind_method(D_METHOD("set_detail_assumed_slope", "slope"), &TerrainGenerator3D::set_detail_assumed_slope);
+	ClassDB::bind_method(D_METHOD("get_detail_assumed_slope"), &TerrainGenerator3D::get_detail_assumed_slope);
+
 	ClassDB::bind_method(D_METHOD("set_terrain", "path"), &TerrainGenerator3D::set_terrain);
 	ClassDB::bind_method(D_METHOD("get_terrain"), &TerrainGenerator3D::get_terrain);
 	ClassDB::bind_method(D_METHOD("set_deformer", "path"), &TerrainGenerator3D::set_deformer);
@@ -545,6 +635,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_result"), &TerrainGenerator3D::has_result);
 	ClassDB::bind_method(D_METHOD("clear_result"), &TerrainGenerator3D::clear_result);
 	ClassDB::bind_method(D_METHOD("get_height", "global_position"), &TerrainGenerator3D::get_height);
+	ClassDB::bind_method(D_METHOD("get_base_height", "global_position"), &TerrainGenerator3D::get_base_height);
 	ClassDB::bind_method(D_METHOD("get_drainage_area", "global_position"), &TerrainGenerator3D::get_drainage_area);
 	ClassDB::bind_method(D_METHOD("get_sediment_depth", "global_position"), &TerrainGenerator3D::get_sediment_depth);
 	ClassDB::bind_method(D_METHOD("get_height_image"), &TerrainGenerator3D::get_height_image);
@@ -584,6 +675,15 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sea_level", PROPERTY_HINT_NONE, "suffix:m"), "set_sea_level", "get_sea_level");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "height_offset", PROPERTY_HINT_NONE, "suffix:m"), "set_height_offset", "get_height_offset");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_height", PROPERTY_HINT_RANGE, "0,10000,1,or_greater,suffix:m"), "set_max_height", "get_max_height");
+
+	ADD_GROUP("Detail", "detail_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_enabled"), "set_detail_enabled", "is_detail_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_wavelength", PROPERTY_HINT_RANGE, "1,2000,1,or_greater,suffix:m"), "set_detail_wavelength", "get_detail_wavelength");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "detail_octaves", PROPERTY_HINT_RANGE, "0,12,1"), "set_detail_octaves", "get_detail_octaves");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_depth", PROPERTY_HINT_RANGE, "0,0.5,0.001"), "set_detail_depth", "get_detail_depth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_reach", PROPERTY_HINT_RANGE, "0.1,5,0.01"), "set_detail_reach", "get_detail_reach");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_gully_weight", PROPERTY_HINT_RANGE, "0.05,1,0.01"), "set_detail_gully_weight", "get_detail_gully_weight");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_assumed_slope", PROPERTY_HINT_RANGE, "0.01,3,0.01"), "set_detail_assumed_slope", "get_detail_assumed_slope");
 
 	ADD_GROUP("Output", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain"), "set_terrain", "get_terrain");
