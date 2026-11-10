@@ -382,6 +382,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 ### Clouds
 - **Cloud layer** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
+- **Clouds that never repeat** (always on): shape noise read at two scales with an irrational ratio.
 - **Cloud reprojection** (`WeatherSkyMaterial.cloud_reprojection`, on by default): clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.
 - **Cloud shadows** (`sun_light`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.
 - **Sun projector**: `light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.
