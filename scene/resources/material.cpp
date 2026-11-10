@@ -612,6 +612,8 @@ void BaseMaterial3D::init_shaders() {
 		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Its catch map (same rect): the height the pack lies at, the canopy's load share and closure.
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_catch_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		// And its world tier, the coarse pack over the whole terrain drawn outside the near square.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
@@ -1206,6 +1208,7 @@ uniform float snow_max_slope : hint_range(0.0, 90.0, 0.1);
 )";
 		if (snow_from_weather) {
 			code += R"(global uniform sampler2D snow_map;
+global uniform sampler2D snow_catch_map;
 global uniform vec4 snow_map_rect;
 global uniform sampler2D snow_world_map;
 global uniform vec4 snow_world_rect;
@@ -2288,6 +2291,9 @@ void fragment() {)";
 			code += R"(		vec3 snow_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 		vec4 snow_s = vec4(0.0);
 		bool snow_have = false;
+		float snow_under = 0.0;
+		float snow_crown = 0.0;
+		float snow_crown_load = 0.0;
 		// The world tier (the coarse pack over the whole terrain), then the near square over it, faded in
 		// across its outer tenth.
 		if (snow_world_rect.z > 0.0) {
@@ -2306,12 +2312,24 @@ void fragment() {)";
 				vec2 snow_half_texel = 0.5 / vec2(textureSize(snow_map, 0));
 				snow_s = mix(snow_s, textureLod(snow_map, clamp(snow_nuv, snow_half_texel, 1.0 - snow_half_texel), 0.0), snow_nw);
 				snow_have = true;
+				// Shelter: well under the surface the pack lies on (a roof, an overhang) stays bare; well above
+				// it, in a tree crown, the snow is what the canopy holds (docs/ideas/snow.md, follow-ups).
+				vec4 snow_c = textureLod(snow_catch_map, clamp(snow_nuv, snow_half_texel, 1.0 - snow_half_texel), 0.0);
+				if (snow_c.a > 0.5) {
+					float snow_dy = snow_pos.y - snow_c.r;
+					snow_under = (1.0 - smoothstep(-0.8, -0.4, snow_dy)) * snow_nw;
+					snow_crown = smoothstep(1.5, 3.0, snow_dy) * step(0.05, snow_c.b) * snow_nw;
+					snow_crown_load = snow_c.g;
+				}
 			}
 		}
 		if (snow_have) {
 			// Snow-covered fraction from depth and density, Niu and Yang (2007):
 			// tanh(depth / (2.5 z0 (rho / rho_new)^m)), z0 0.01 m, rho_new 100 kg/m3, m 1.
-			snow_cover *= tanh(max(snow_s.r, 0.0) / (0.025 * max(snow_s.a * 10.0, 0.5)));
+			float snow_amt = snow_cover;
+			snow_cover *= tanh(max(snow_s.r, 0.0) / (0.025 * max(snow_s.a * 10.0, 0.5))) * (1.0 - snow_under);
+			// A crown shows its load: half its capacity whitens the upward needles.
+			snow_cover = mix(snow_cover, snow_amt * min(snow_crown_load * 2.0, 1.0), snow_crown);
 			snow_albedo = snow_s.g;
 			snow_wet = clamp(snow_s.b, 0.0, 1.0);
 		} else {

@@ -14,6 +14,14 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="canopy_capacity" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="closure" type="float" />
+			<param index="1" name="snow_density" type="float" />
+			<description>
+				The most snow water a canopy of [param closure] holds, in mm (kg/m²), for new snow of [param snow_density] kg/m³ (Hedstrom and Pomeroy 1998).
+			</description>
+		</method>
 		<method name="add_snow">
 			<return type="void" />
 			<param index="0" name="swe_mm" type="float" />
@@ -83,6 +91,26 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the density of the snowpack at [param position], in kg/m³.
+			</description>
+		</method>
+		<method name="get_canopy_capacity_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The canopy's capacity over [param position] for fresh snow, in mm.
+			</description>
+		</method>
+		<method name="get_canopy_load_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Snow water held in the tree crowns over [param position], in mm.
+			</description>
+		</method>
+		<method name="get_catch_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The catch map over the near square (the [code]snow_catch_map[/code] shader global): the height the pack lies at, the canopy's load over its capacity, the canopy closure, and 1 in alpha. Surfaces well under that height (under a roof) stay bare; surfaces well above it under a canopy (tree crowns) show the canopy's load.
 			</description>
 		</method>
 		<method name="get_depth_at" qualifiers="const">
@@ -241,6 +269,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="canopy_enabled" type="bool" setter="set_canopy_enabled" getter="is_canopy_enabled" default="true">
+			Trees in the [WeatherMap3D]'s canopy hold falling snow in their crowns and unload it later in wind and warmth (Hedstrom and Pomeroy 1998; Roesch et al. 2001).
+		</member>
 		<member name="climate" type="SnowClimate" setter="set_climate" getter="get_climate">
 			A baked [SnowClimate]: the cover keeps a coarse world tier of snow over its square, carries it on with the weather at a lower rate, seeds cells entering the near square from it (then sheds what their finer slopes cannot hold) and publishes it as [code]snow_world_map[/code] and [code]snow_world_rect[/code], which [BaseMaterial3D] snow and the path tracer read beyond the near square.
 		</member>
@@ -323,5 +354,8 @@
 		<member name="world_update_every" type="int" setter="set_world_update_every" getter="get_world_update_every" default="8">
 			How many updates of the near square pass between updates of the world tier.
 		</member>
-	</members>
+			<member name="shelter_collision_mask" type="int" setter="set_shelter_collision_mask" getter="get_shelter_collision_mask" default="0">
+			With a [member height_source], colliders on these layers (roofs, overhangs) found above the terrain catch the snow, and the ground under them stays bare. Without a height source the cast on [member ground_collision_mask] finds them already.
+		</member>
+</members>
 </class>

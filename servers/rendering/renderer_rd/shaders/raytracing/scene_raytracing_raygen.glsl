@@ -1847,6 +1847,9 @@ void main() {
 			vec3 spos = h.hit_pos + rt_origin.xyz;
 			vec4 s = vec4(0.0);
 			bool have = false;
+			float snow_under = 0.0;
+			float snow_crown = 0.0;
+			float snow_crown_load = 0.0;
 			// The world tier, then the near square faded in over its outer tenth (as the raster shader).
 			if (wrect.z > 0.0) {
 				vec2 wuv = (spos.xz - wrect.xy) / wrect.zw;
@@ -1868,11 +1871,24 @@ void main() {
 					vec2 half_texel = 0.5 / max(ssize, vec2(1.0));
 					s = mix(s, textureLod(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
 					have = true;
+					// Shelter and tree crowns from the catch map, as the raster shader.
+					uint cmap = uint(get_rt_param(RT_PARAM_SNOW_CATCH_MAP));
+					if (cmap != 0u) {
+						vec4 c = textureLod(sampler2D(bindless_textures[nonuniformEXT(cmap)], SAMPLER_LINEAR_CLAMP), clamp(nuv, half_texel, 1.0 - half_texel), 0.0);
+						if (c.a > 0.5) {
+							float dy = spos.y - c.r;
+							snow_under = (1.0 - smoothstep(-0.8, -0.4, dy)) * nw;
+							snow_crown = smoothstep(1.5, 3.0, dy) * step(0.05, c.b) * nw;
+							snow_crown_load = c.g;
+						}
+					}
 				}
 			}
 			if (have) {
 				// Niu and Yang (2007) snow-covered fraction.
-				snow_cover *= tanh(max(s.r, 0.0) / (0.025 * max(s.a * 10.0, 0.5)));
+				float snow_amt = snow_cover;
+				snow_cover *= tanh(max(s.r, 0.0) / (0.025 * max(s.a * 10.0, 0.5))) * (1.0 - snow_under);
+				snow_cover = mix(snow_cover, snow_amt * min(snow_crown_load * 2.0, 1.0), snow_crown);
 				snow_albedo = s.g;
 				snow_wet = clamp(s.b, 0.0, 1.0);
 			} else {
