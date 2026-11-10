@@ -1157,8 +1157,8 @@ of authored curves:
   about a second before the bore.
 
 Limits: no air tube is resolved in the raster pass (the water is drawn without
-depth, so the lip and face blend), no spray sheet from the lip (Thurey's
-particles would be the next step, with PhysXWaterSpray3D), and the stage is a
+depth, so the lip and face blend), no spray sheet from the lip (both added in
+Step 5e, which replaced this fold with separate lip geometry), and the stage is a
 function of depth, so every crest plunges at the same place along a ray.
 
 Path tracing check: the first build drew fans of long triangles over the surf
@@ -1215,6 +1215,84 @@ labelled: Water ripples, FFT ocean, blits, foam, shore foam, swash, caustics).
 - For the PC: `--gpu-profile` on the RTX 4090 for real timings, with
   `mesh_detail` 1 and 3, raster and path traced (the BLAS refit grows with the
   mesh).
+
+## Step 5e: plunging lips and spray (10 Nov)
+
+### Why a rebuild
+
+Step 5c folded the surface itself: the crest was pushed shoreward over the
+face. A heightfield mesh can only fold as finely as its cells, so the lip was
+a smear at `mesh_detail` 1 and needed 0.1 m cells (detail 3 to 4) to read,
+with no air tube and no spray.
+
+### How others do it
+
+- **Thurey, Muller-Fischer, Schirm and Gross (2007)**: find the steep fronts of
+  the heightfield as lines, and at each point along them emit a thin sheet
+  (cross-sections joined into a ribbon) that follows a ballistic path off the
+  crest and lands on the water ahead. The surface stays a heightfield; the lip
+  is separate geometry.
+- **Ihmsen, Akinci, Akinci and Teschner (2012)**: spray is born where three
+  potentials meet: kinetic energy, wave-crest curvature (thin, fast edges)
+  and trapped air (impacts). Each is clamped to a range,
+  `phi(I) = (min(I, max) - min(I, min)) / (max - min)`, and the product
+  sets the droplet rate.
+- **Mead and Black (2001)**: the tubes measured at surf breaks are about twice
+  as long as they are high when fully curled. That bounds the throw.
+- Houdini's FLIP whitewater and Unreal's Water plugin both split it the same
+  way: a surface, plus particles where the surface would have to break.
+
+### As built
+
+- Crest lines: marching squares over the ripple grid at the phase where each
+  train's crest sits. Each piece runs the same way along its crest.
+- Every 0.2 m along a crest line, a cross-section ring of 18 vertices: an outer
+  sheet and an inner sheet 9 points along a ballistic path, closed into a tube
+  of water. The throw is `w min(0.5 / k, 2 Hc)`, the drop the water height at
+  the landing point, so the flight time is `sqrt(2 drop / g)` and the jet
+  speed the throw over it. The lip grows over the first 45% of breaking and
+  sinks into the bore it lands in.
+- The material's face is warped into a bore-like front (the crest at the front
+  of the period, the front width `3 amp k / 2 pi` of it), so the lip leaves a
+  steep face, and the lip rides 3 cm clear of that face so the two water
+  surfaces never cross.
+- Spray: the kinetic, crest and trapped-air potentials from Ihmsen, 60 and 220
+  droplets per second per metre at the lip edge and the landing, drawn by one
+  GPUParticles3D with up to 512 emission points (systematic resampling by
+  rate). `shore_spray` and `shore_spray_amount` control it.
+- The lip is the built-in water shader compiled with `BREAKER_LIP`: the same
+  colours, foam and path traced water medium, white toward the edge.
+  `get_breaker_stats()` returns crest points, vertices, triangles, spray rate
+  and CPU time.
+
+### Cost
+
+Cloud CPU, lavapipe, the `--view=lip` bench:
+
+| Setting | Frame | Lips CPU |
+| --- | --- | --- |
+| `mesh_detail` 1 | 175 ms | none |
+| `mesh_detail` 1 + lips | 191 ms | 2.4 to 3.9 ms (about 1,100 crest points, 20k vertices) |
+| `mesh_detail` 2 | 201 ms | none |
+| `mesh_detail` 3 | 230 ms | none |
+
+Lips with the coarse mesh cost less than either finer mesh and show the tube,
+which the finer meshes never did. GPU numbers wait for the desktop.
+
+### Path tracing check
+
+The first lips drew dark squares under path tracing only. A front/back face
+debug view showed them as back-face hits: where the lip thinned towards
+nothing at its ends, the inner sheet met the outer one and a ray picked either.
+The sheet now keeps at least 2 cm, which removed them. While chasing it the lip
+also lost its alpha test (an alpha-tested material is cut again in the
+any-hit pass, which does not see the lip's varyings), got tangents, a
+rebuilt (not refitted) BLAS since its topology changes every tick, and
+per-triangle winding checked against its normals.
+
+Limits: the lip is one sheet per crest line (no splash-up jet after it
+lands), spray droplets are lit spheres without motion blur, and the CPU builds
+the rings (a compute pass would move it to the GPU).
 
 ## The camera under water: research (9 Nov)
 
@@ -1335,6 +1413,7 @@ labelled: Water ripples, FFT ocean, blits, foam, shore foam, swash, caustics).
 - Fournier and Reeves, A simple model of ocean waves, SIGGRAPH 1986.
 - Malan, Water in Horizon Forbidden West, SIGGRAPH Advances 2022.
 - Thurey, Muller-Fischer, Schirm and Gross, Real-time breaking waves for shallow water simulations, Pacific Graphics 2007.
+- Mead and Black, Predicting the breaking intensity of surfing waves, Journal of Coastal Research SI 29 (2001).
 
 - Chentanez and Müller, Real-time Simulation of Large Bodies of Water with Small Scale Details, SCA
   2010: https://matthias-research.github.io/pages/publications/hfFluid.pdf

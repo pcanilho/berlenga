@@ -34,10 +34,12 @@
 
 #include "core/config/engine.h"
 #include "core/math/face3.h"
+#include "core/os/os.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/gpu_particles_3d.h"
 #include "scene/3d/light_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/main/scene_tree.h"
@@ -54,6 +56,7 @@
 #include "scene/resources/environment.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
+#include "scene/resources/particle_process_material.h"
 #include "scene/resources/shader.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/texture_rd.h"
@@ -89,13 +92,16 @@ namespace {
 // this material caused a genuine overexposure bug.
 const char *WATER_SHADER_SRC = R"(
 shader_type spatial;
-// The same source builds three materials. Plain: the surface. UNDERWATER_SURFACE: its next pass while
+// The same source builds four materials. Plain: the surface. BREAKER_LIP: the plunging lips' sheet, whose
+// vertices are already in place (so the path tracer reads its mesh as it is). UNDERWATER_SURFACE: its next pass while
 // the camera is under water, the surface seen from below. UNDERWATER_FOG: a full screen pass that fogs
 // what lies under the water and splits the image at the water line (see "The camera under water").
 #if defined(UNDERWATER_FOG)
 render_mode blend_mix, cull_disabled, unshaded, fog_disabled, depth_test_disabled, depth_draw_never, shadows_disabled, rt_vertex_static;
 #elif defined(UNDERWATER_SURFACE)
 render_mode blend_mix, cull_disabled, unshaded, fog_disabled, depth_draw_never, shadows_disabled;
+#elif defined(BREAKER_LIP) && defined(RT)
+render_mode cull_disabled, rt_blas_rebuild;
 #elif defined(RT)
 // The path tracer's copy (the shader is compiled again with RT defined) is a
 // real water surface instead: a medium boundary with IOR and absorption, so it
@@ -254,6 +260,8 @@ uniform float shore_rim_strength : hint_range(0.0, 1.0) = 0.8;
 varying vec3 v_world_normal;
 varying float v_foam;
 varying vec2 v_rest_xz;
+// 1 on the breaking lips' sheet (vertex colour alpha 0), whose vertices are already in place.
+varying float v_lip;
 
 // The camera under water (raster; the path tracer starts its camera rays in the water instead). Set by
 // PhysXWaterSurface3D while the camera is near the water: whether it is under the surface, and the light
@@ -471,6 +479,21 @@ float wake_foam(vec2 world_xz) {
 // breaker limit (0.78 of the depth) the front steepens (the profile is skewed
 // shoreward) and the crest and the water behind it turn white. Heights vary
 // slowly along the crests, so the waves come in sets with calmer gaps.
+// A breaking wave's front: the phase u (crest at the back fraction b of the
+// period) remapped so the back takes 2 pi b of phase and the front face the
+// rest; b near 1 gives a bore-like face about as wide as the wave is high,
+// steep enough for the lip to overhang it. r_dps = d(ps)/du.
+float shore_front_warp(float u, float b, out float r_dps) {
+	float uw = u - 6.28318530718 * floor((u + 3.14159265359) / 6.28318530718);
+	float uc = 3.14159265359 * (2.0 * b - 1.0);
+	if (uw < uc) {
+		r_dps = 0.5 / b;
+		return -3.14159265359 + (uw + 3.14159265359) * r_dps;
+	}
+	r_dps = 0.5 / (1.0 - b);
+	return (uw - uc) * r_dps;
+}
+
 vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 	r_slope = vec2(0.0);
 	r_white = 0.0;
@@ -506,34 +529,35 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 		float brk = smoothstep(0.8, 0.98, height / max(BREAKER * depth, 1e-3));
 		float amp = 0.5 * height * vary * inside;
 		float th = phi - om * water_time;
-		// The plunging lip, as a cross-section played through the surf zone
-		// (after Malan 2022, with the stage from how far the wave is past its
-		// break point instead of an authored curve): the crest is thrown
-		// shoreward over the steepening face, then falls onto the water ahead
-		// and collapses into the bore.
+		// The plunging breaker through the surf zone (the stage is how far the
+		// wave is past its break point): the face steepens while the lip is
+		// thrown (a separate sheet, built on the CPU along the crests), the
+		// water ahead drops where it lands, and the wave runs on as a bore.
 		float stage = clamp(((i == 0 ? c.x : c.y) - 0.95) / 1.0, 0.0, 1.0);
 		float throw_w = plunging * vary * smoothstep(0.0, 0.45, stage) * (1.0 - smoothstep(0.7, 1.0, stage));
 		float drop_w = plunging * vary * smoothstep(0.3, 0.75, stage) * (1.0 - smoothstep(0.8, 1.0, stage));
 		float skew = min(0.6 * brk + 0.3 * throw_w, 0.92);
-		float ps = th - skew * cos(th);
+		// Plunging: the face steepens to about 1.5 wave heights wide (half
+		// that steep again as a bore), so the lip has room to curl over it.
+		float steep = plunging * vary * smoothstep(0.0, 0.3, stage) * (1.0 - 0.5 * smoothstep(0.8, 1.0, stage));
+		float front = mix(0.5, clamp(k * 3.0 * amp / 6.28318530718, 0.02, 0.5), clamp(steep, 0.0, 1.0));
+		float dps;
+		float ps = shore_front_warp(th - skew * cos(th), 1.0 - front, dps);
 		// Breaking waves in shallow water have sharp crests and long, flat
 		// troughs (as cnoidal waves): ((1 + cos) / 2)^q, kept zero-mean
 		// (1 / sqrt(pi (q + 1/4)) is the mean to within half a percent).
 		float q = 1.0 + 1.5 * brk;
 		float base = max(0.5 + 0.5 * cos(ps), 0.0);
 		off.y += amp * 2.0 * (pow(base, q) - inversesqrt(3.14159265359 * (q + 0.25)));
-		r_slope += -amp * q * pow(max(base, 1e-4), q - 1.0) * sin(ps) * (1.0 + skew * sin(th)) * g;
+		r_slope += -amp * q * pow(max(base, 1e-4), q - 1.0) * sin(ps) * dps * (1.0 + skew * sin(th)) * g;
 		float hor = min(amp, 0.8 / k) * 0.8;
 		off.xz += -dir * hor * sin(ps);
 		// Phase from the crest, -pi..pi, positive on the shoreward face.
 		float pc = ps - 6.28318530718 * floor((ps + 3.14159265359) / 6.28318530718);
-		// The throw is a fraction of the wavelength: the crest overtakes its
-		// own front face (the surface folds over), and the lip falls.
 		// x * x, not pow(x, 2.0): GLSL leaves pow undefined for a negative base
 		// (NaN on some drivers, which the BLAS turns into fans of long triangles).
 		float lip_x = (pc - 0.2) / 0.45;
 		float lip = exp(-lip_x * lip_x);
-		off.xz += dir * (0.7 / k * throw_w * lip);
 		float drop_x = (pc - 0.35) / 0.35;
 		off.y -= 1.6 * amp * drop_w * exp(-drop_x * drop_x);
 		// White water: the breaking crest, and the bore's foam trailing behind it.
@@ -543,20 +567,6 @@ vec3 shore_wave(vec2 world_xz, out vec2 r_slope, out float r_white) {
 		r_white = max(r_white, drop_w * lip);
 	}
 	return off;
-}
-
-// How much of a plunging lip there is at world_xz (0 none), so the folded
-// part of the surface is drawn from both sides.
-float shore_curl_at(vec2 world_xz) {
-	if (!shore_waves_enabled || shore_curl <= 0.0) {
-		return 0.0;
-	}
-	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	vec4 c = texture(shore_wave_tex_c, cuv_r);
-	float plunging = smoothstep(0.35, 0.6, c.z) * (1.0 - smoothstep(2.6, 3.3, c.z));
-	// The whole plunge, a little either side, so no part of the fold is lost.
-	float st = max(c.x, c.y);
-	return plunging * smoothstep(0.85, 0.95, st) * (1.0 - smoothstep(2.0, 2.2, st));
 }
 
 vec3 surface_offset(vec2 world_xz) {
@@ -890,6 +900,22 @@ void fragment() {
 #else
 
 void vertex() {
+#if defined(BREAKER_LIP)
+	// UV.x is the lip's white water (UV.y unused); the vertex is where it is drawn.
+	v_lip = 1.0;
+	v_rest_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
+	v_world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	v_foam = UV.x;
+#else
+	v_lip = 0.0;
+	if (COLOR.a < 0.5) {
+		// A breaking lip (PhysXWaterSurface3D builds it in place), drawn with a
+		// custom copy of this shader: COLOR.r is its white water.
+		v_lip = 1.0;
+		v_rest_xz = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
+		v_world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		v_foam = COLOR.r;
+	} else {
 	// Under path tracing too: a hit re-runs this on the captured rest pose.
 	VERTEX += (inverse(MODEL_MATRIX) * vec4(mesh_offset.x, 0.0, mesh_offset.y, 0.0)).xyz;
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -912,6 +938,8 @@ void vertex() {
 		v_world_normal = normalize(cross(tz, tx));
 		v_foam = foam_at(world_pos.xz);
 	}
+	}
+#endif
 }
 
 void fragment() {
@@ -929,17 +957,22 @@ void fragment() {
 		discard;
 	}
 #else
-	// With the camera under water the underside pass draws it. A plunging
-	// lip folds the surface over itself: its underside faces the other way
-	// and is drawn too.
-	if ((FRONT_FACING != camera_above && shore_curl_at(v_rest_xz) < 0.02) || (underwater_active && !camera_above)) {
+	// With the camera under water the underside pass draws it. A breaking
+	// lip is a closed sheet: both its sides are drawn.
+	if ((FRONT_FACING != camera_above && v_lip < 0.5) || (underwater_active && !camera_above)) {
 		discard;
 	}
 #endif
 #endif
+	// Across a lip's edges the vertex normals of its two sheets point apart and cancel: no direction there
+	// (a NaN that the path tracer's filters would spread into squares), so those take the sheet's up.
 	vec3 world_normal = v_world_normal;
+	if (v_lip > 0.5) {
+		float nl = length(v_world_normal);
+		world_normal = nl > 1e-3 ? v_world_normal / nl : vec3(0.0, 1.0, 0.0);
+	}
 	float foam = v_foam;
-	if (per_pixel_normals) {
+	if (per_pixel_normals && v_lip < 0.5) {
 		vec4 der = ocean_deriv_all(v_rest_xz);
 		vec3 disp = ocean_disp_all(v_rest_xz).rgb;
 		world_normal = surface_normal_pixel(v_rest_xz, der, disp);
@@ -1042,7 +1075,8 @@ void fragment() {
 	// session in the first place), capped to a small multiplier so it can
 	// never itself become a source of overexposure.
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
-	float shore = shore_signal(v_rest_xz, water_time);
+	// A breaking lip stands clear of the shore's film: none of the waterline's foam, rim or cut-out.
+	float shore = v_lip > 0.5 ? 1.0 : shore_signal(v_rest_xz, water_time);
 	// Shore foam belongs to the moving edge: full at it, thinning over the
 	// next ~0.6 m of depth, so the white sheet scallops with the edge instead
 	// of filling the band. (Whitecaps are left alone.)
@@ -1055,7 +1089,7 @@ void fragment() {
 	float soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, depth_r(v_rest_xz, cuv_here)));
 	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
 	rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale));
-	foam = max(foam, rim);
+	foam = max(foam, rim * (1.0 - v_lip));
 	vec2 cuv_fade = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float shallow = (1.0 - fade_r(v_rest_xz, cuv_fade)) * shallow_tint;
 	vec3 base_rgb = mix(water_color.rgb, shallow_color.rgb, shallow) * mix(0.75, 1.15, ndotl);
@@ -1076,7 +1110,7 @@ void fragment() {
 	// is meaningless, and blending it there tinted and roughened all deep
 	// water -- which showed as a seam past the simulated square, where the
 	// mirrored patterns bring dry beach (not wet) out over the open sea.
-	wet *= 1.0 - smoothstep(0.05, 0.35, depth_r(v_rest_xz, cuv_fade));
+	wet *= (1.0 - smoothstep(0.05, 0.35, depth_r(v_rest_xz, cuv_fade))) * (1.0 - v_lip);
 	float wet_a = wet * wet * (3.0 - 2.0 * wet) * wet_sand_color.a * (1.0 - water_a);
 #if defined(RT)
 	// Both faces bound the water: the top enters it, the underside leaves it
@@ -1092,8 +1126,12 @@ void fragment() {
 	ABSORPTION = pathtraced_absorption;
 	SCATTERING = pathtraced_scattering;
 	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
+#if !defined(BREAKER_LIP)
+	// A lip is water wherever it is (the shore cut-out belongs to the swash film). It writes no alpha at
+	// all: an alpha-tested material is also cut by the any-hit pass, which does not see the lip's varyings.
 	ALPHA = smoothstep(0.0, soft, shore);
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
+#endif
 #else
 	ALPHA = water_a + wet_a;
 	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);
@@ -1211,6 +1249,11 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mesh_detail"), &PhysXWaterSurface3D::get_mesh_detail);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_curl", "curl"), &PhysXWaterSurface3D::set_shore_wave_curl);
 	ClassDB::bind_method(D_METHOD("get_shore_wave_curl"), &PhysXWaterSurface3D::get_shore_wave_curl);
+	ClassDB::bind_method(D_METHOD("set_shore_spray", "enabled"), &PhysXWaterSurface3D::set_shore_spray);
+	ClassDB::bind_method(D_METHOD("get_shore_spray"), &PhysXWaterSurface3D::get_shore_spray);
+	ClassDB::bind_method(D_METHOD("set_shore_spray_amount", "amount"), &PhysXWaterSurface3D::set_shore_spray_amount);
+	ClassDB::bind_method(D_METHOD("get_shore_spray_amount"), &PhysXWaterSurface3D::get_shore_spray_amount);
+	ClassDB::bind_method(D_METHOD("get_breaker_stats"), &PhysXWaterSurface3D::get_breaker_stats);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_period", "period"), &PhysXWaterSurface3D::set_shore_wave_period);
 	ClassDB::bind_method(D_METHOD("get_shore_wave_period"), &PhysXWaterSurface3D::get_shore_wave_period);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_direction", "direction"), &PhysXWaterSurface3D::set_shore_wave_direction);
@@ -1338,6 +1381,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_height", PROPERTY_HINT_RANGE, "0,5,0.01,or_greater,suffix:m"), "set_shore_wave_height", "get_shore_wave_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_period", PROPERTY_HINT_RANGE, "1,30,0.1,suffix:s"), "set_shore_wave_period", "get_shore_wave_period");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_wave_curl", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_shore_wave_curl", "get_shore_wave_curl");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shore_spray"), "set_shore_spray", "get_shore_spray");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "shore_spray_amount", PROPERTY_HINT_RANGE, "16,65536,1"), "set_shore_spray_amount", "get_shore_spray_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "shore_wave_direction"), "set_shore_wave_direction", "get_shore_wave_direction");
 	ADD_GROUP("Seabed", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "seabed_from_floor"), "set_seabed_from_floor", "get_seabed_from_floor");
@@ -1832,6 +1877,18 @@ void PhysXWaterSurface3D::_update_shore_material() {
 
 // As the shader's shore_wave() (height only, at the resting point: the shore
 // waves' horizontal sway is left out here).
+// The material's shore_front_warp().
+static float _shore_front_warp(float p_u, float p_back, float &r_dps) {
+	const float uw = p_u - (float)Math::TAU * Math::floor((p_u + (float)Math::PI) / (float)Math::TAU);
+	const float uc = (float)Math::PI * (2.0f * p_back - 1.0f);
+	if (uw < uc) {
+		r_dps = 0.5f / p_back;
+		return -(float)Math::PI + (uw + (float)Math::PI) * r_dps;
+	}
+	r_dps = 0.5f / (1.0f - p_back);
+	return (uw - uc) * r_dps;
+}
+
 float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) const {
 	if (r_rate != nullptr) {
 		*r_rate = 0.0f;
@@ -1861,6 +1918,7 @@ float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) co
 		const float th = phi - shore_omega[t] * time;
 		float skew = 0.6f * brk;
 		float drop_w = 0.0f;
+		float front = 0.5f;
 		if (shore_stage[t].size() == n * n && shore_iribarren.size() == n * n) {
 			const float xi = _bilinear_sample(shore_iribarren, n, active_domain_size, p_x, p_z);
 			const float plunging = Math::smoothstep(0.35f, 0.6f, xi) * (1.0f - Math::smoothstep(2.6f, 3.3f, xi)) * shore_wave_curl;
@@ -1868,8 +1926,11 @@ float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) co
 			const float throw_w = plunging * vary * Math::smoothstep(0.0f, 0.45f, stage) * (1.0f - Math::smoothstep(0.7f, 1.0f, stage));
 			drop_w = plunging * vary * Math::smoothstep(0.3f, 0.75f, stage) * (1.0f - Math::smoothstep(0.8f, 1.0f, stage));
 			skew = MIN(skew + 0.3f * throw_w, 0.92f);
+			const float steep = plunging * vary * Math::smoothstep(0.0f, 0.3f, stage) * (1.0f - 0.5f * Math::smoothstep(0.8f, 1.0f, stage));
+			front = Math::lerp(0.5f, CLAMP(Vector2(_bilinear_sample(shore_grad_x[t], n, active_domain_size, p_x, p_z), _bilinear_sample(shore_grad_z[t], n, active_domain_size, p_x, p_z)).length() * 3.0f * amp / (float)Math::TAU, 0.02f, 0.5f), CLAMP(steep, 0.0f, 1.0f));
 		}
-		const float ps = th - skew * Math::cos(th);
+		float dps;
+		const float ps = _shore_front_warp(th - skew * Math::cos(th), 1.0f - front, dps);
 		const float sharp = 1.0f + 1.5f * brk;
 		const float base = MAX(0.5f + 0.5f * Math::cos(ps), 0.0f);
 		eta += amp * 2.0f * (Math::pow(base, sharp) - 1.0f / Math::sqrt(Math::PI * (sharp + 0.25f)));
@@ -1879,12 +1940,584 @@ float PhysXWaterSurface3D::_shore_eta_at(float p_x, float p_z, float *r_rate) co
 			eta -= 1.6f * amp * drop_w * Math::exp(-q * q);
 		}
 		// d/dt of amp cos(th - skew cos th), th' = -omega.
-		rate += amp * sharp * Math::pow(MAX(base, 1e-4f), sharp - 1.0f) * Math::sin(ps) * (1.0f + skew * Math::sin(th)) * shore_omega[t];
+		rate += amp * sharp * Math::pow(MAX(base, 1e-4f), sharp - 1.0f) * Math::sin(ps) * dps * (1.0f + skew * Math::sin(th)) * shore_omega[t];
 	}
 	if (r_rate != nullptr) {
 		*r_rate = rate;
 	}
 	return eta;
+}
+
+// Plunging lips (docs/ideas/water.md "Step 5e"), after Thurey, Muller-Fischer, Schirm and Gross, Real-time
+// Breaking Waves for Shallow Water Simulations (2007): the steep fronts are found as lines, and the lip is a sheet
+// of particles launched from each line point, joined into a closed mesh of two offset layers. Here the fronts are
+// the crests of the shore waves (where a train's phase, skewed as the material skews it, is a multiple of 2 pi)
+// inside the plunging part of the surf zone, found by marching squares over the ripple grid every tick. A lip
+// point launched tau seconds ago, seen from the crest, is ballistic: forward at the jet speed u relative to the
+// crest, down by g tau^2 / 2, so each crest point carries the sheet's cross-section as a parabola out to where it
+// lands on the water ahead. Spray follows Ihmsen, Akinci, Akinci and Teschner, Unified Spray, Foam and Bubbles
+// for Particle-Based Fluids (2012): each piece of lip emits droplets in proportion to its kinetic energy times
+// its wave-crest potential (the lip's edge, curvature times speed) and trapped-air potential (the impact), each
+// mapped to 0..1 by their clamp Phi.
+
+// Ihmsen et al. (2012), eq. 1.
+static float _ihmsen_phi(float p_value, float p_min, float p_max) {
+	return (MIN(p_value, p_max) - MIN(p_value, p_min)) / (p_max - p_min);
+}
+
+// +1 when a triangle (a, b, c) with (b - a) x (c - a) along its normal is front facing, as PlaneMesh's up faces.
+static float _front_winding() {
+	static float sign = 0.0f;
+	if (sign == 0.0f) {
+		Ref<PlaneMesh> ref_plane;
+		ref_plane.instantiate();
+		const Vector<Face3> faces = ref_plane->get_faces();
+		sign = 1.0f;
+		if (!faces.is_empty()) {
+			const Face3 &f = faces[0];
+			sign = (f.vertex[1] - f.vertex[0]).cross(f.vertex[2] - f.vertex[0]).y >= 0.0f ? 1.0f : -1.0f;
+		}
+	}
+	return sign;
+}
+
+// The lips' material: the built-in water shader compiled with BREAKER_LIP and the surface material's
+// parameters, so it shades like the water but never moves its vertices (the path tracer then reads the mesh
+// directly instead of capturing it). A custom water_material draws the lips itself (vertex colour alpha 0).
+Ref<Material> PhysXWaterSurface3D::_breaker_material() {
+	if (water_material.is_null() || water_material->get_shader().is_null() || water_material->get_shader()->get_code() != String(WATER_SHADER_SRC)) {
+		return water_material;
+	}
+	if (breaker_material.is_null()) {
+		Ref<Shader> shader;
+		shader.instantiate();
+		shader->set_code(String("#define BREAKER_LIP\n") + WATER_SHADER_SRC);
+		breaker_material.instantiate();
+		breaker_material->set_shader(shader);
+		List<PropertyInfo> uniforms;
+		water_material->get_shader()->get_shader_uniform_list(&uniforms);
+		breaker_params.clear();
+		for (const PropertyInfo &pi : uniforms) {
+			breaker_params.push_back(pi.name);
+		}
+	}
+	for (const StringName &name : breaker_params) {
+		const Variant v = water_material->get_shader_parameter(name);
+		if (v.get_type() != Variant::NIL && v != breaker_material->get_shader_parameter(name)) {
+			breaker_material->set_shader_parameter(name, v);
+		}
+	}
+	return breaker_material;
+}
+
+void PhysXWaterSurface3D::_hide_breakers() {
+	if (breaker_instance != nullptr) {
+		breaker_instance->set_visible(false);
+	}
+	if (breaker_spray != nullptr) {
+		breaker_spray->set_emitting(false);
+	}
+	breaker_stat_points = 0;
+	breaker_stat_vertices = 0;
+	breaker_stat_triangles = 0;
+	breaker_stat_spray_rate = 0.0f;
+}
+
+void PhysXWaterSurface3D::_update_breakers() {
+	const uint64_t start_usec = OS::get_singleton()->get_ticks_usec();
+	const int n = grid_resolution;
+	bool ready = shore_waves && shore_wave_curl > 0.0f && is_inside_tree() && !Engine::get_singleton()->is_editor_hint() && cell_depth.size() == n * n && shore_iribarren.size() == n * n;
+	for (int t = 0; ready && t < SHORE_TRAINS; t++) {
+		ready = shore_phase[t].size() == n * n && shore_height[t].size() == n * n && shore_stage[t].size() == n * n && shore_grad_x[t].size() == n * n && shore_grad_z[t].size() == n * n;
+	}
+	if (!ready) {
+		_hide_breakers();
+		return;
+	}
+	const float g = 9.81f;
+	const float time = (float)Math::fmod(water_time, 3600.0);
+	const Vector2 dom = active_domain_size;
+	const Transform3D to_local = get_global_transform().affine_inverse();
+	const Vector3 up(0, 1, 0);
+	// Cross-section samples from the crest to the lip's edge; the ring runs out along the top and back underneath.
+	constexpr int K = 8;
+	constexpr int RING = 2 * (K + 1);
+	// Crest spacing along the lip (m).
+	const float spacing = 0.2f;
+	// Droplets per second per metre of lip at full potential (Ihmsen's k_wc and k_ta).
+	const float k_wave_crest = 60.0f;
+	const float k_trapped_air = 220.0f;
+
+	auto plunge_of = [&](float p_xi) {
+		return Math::smoothstep(0.35f, 0.6f, p_xi) * (1.0f - Math::smoothstep(2.6f, 3.3f, p_xi)) * shore_wave_curl;
+	};
+	auto vary_at = [&](float p_wx, float p_wz) {
+		return 0.55f + 0.45f * _flow_value_noise(p_wx * 0.04f + time * 0.03f, p_wz * 0.04f);
+	};
+	auto sample = [&](const Vector<float> &p_grid, const Vector2 &p_rel) {
+		return _bilinear_sample(p_grid, n, dom, p_rel.x, p_rel.y);
+	};
+
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedFloat32Array tangents;
+	PackedColorArray colors;
+	PackedVector2Array uvs;
+	PackedInt32Array indices;
+	LocalVector<Vector3> spray_points;
+	LocalVector<Vector3> spray_dirs;
+	LocalVector<float> spray_weights;
+	float spray_rate = 0.0f;
+	float spray_speed_sum = 0.0f;
+	int crest_points = 0;
+	const float winding = _front_winding();
+
+	// How much lip there is at grid-relative p for train t (add_ring's own measure), without the surface.
+	auto alive_at = [&](int p_t, const Vector2 &p_rel) {
+		const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_rel.x / dom.x), Math::abs(p_rel.y / dom.y)));
+		const float s = CLAMP(sample(shore_stage[p_t], p_rel) - 0.95f, 0.0f, 1.0f);
+		const float w = plunge_of(sample(shore_iribarren, p_rel)) * vary_at(p_rel.x + grid_center.x, p_rel.y + grid_center.y) * inside;
+		return w * Math::smoothstep(0.0f, 0.45f, s) * (1.0f - Math::smoothstep(0.75f, 1.0f, s));
+	};
+	// One cross-section at grid-relative p for train t, appended as a ring of RING vertices. Returns the outer
+	// sheet's direction of travel at the crest (for the winding) in r_dir and its tangent there in r_tangent.
+	auto add_ring = [&](int p_t, const Vector2 &p_rel, float p_piece, Vector3 &r_dir, Vector3 &r_tangent) {
+		const float wx = p_rel.x + grid_center.x;
+		const float wz = p_rel.y + grid_center.y;
+		const float height = sample(shore_height[p_t], p_rel);
+		const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, MAX(Math::abs(p_rel.x / dom.x), Math::abs(p_rel.y / dom.y)));
+		const float vary = vary_at(wx, wz);
+		const float s = CLAMP(sample(shore_stage[p_t], p_rel) - 0.95f, 0.0f, 1.0f);
+		const float w = plunge_of(sample(shore_iribarren, p_rel)) * vary * inside;
+		const float grow = Math::smoothstep(0.0f, 0.45f, s);
+		const float sink = Math::smoothstep(0.5f, 0.85f, s);
+		const float alive = w * grow * (1.0f - Math::smoothstep(0.75f, 1.0f, s));
+		Vector2 gv(sample(shore_grad_x[p_t], p_rel), sample(shore_grad_z[p_t], p_rel));
+		const float k = gv.length();
+		const Vector3 dir = k > 1e-5f ? Vector3(gv.x / k, 0, gv.y / k) : Vector3(1, 0, 0);
+		r_dir = dir;
+		r_tangent = dir;
+		const float crest_y = sample_height(Vector3(wx, 0.0f, wz));
+		const Vector3 crest(wx, Math::is_finite(crest_y) ? crest_y : get_global_position().y + water_level, wz);
+		const Vector3 crest_local = to_local.xform(crest);
+		const Vector3 up_local = to_local.basis.xform(up).normalized();
+		// Tangents along the crest: the path tracer's hit rebuilds the vertex frame from normal and tangent.
+		const Vector3 along_local = to_local.basis.xform(up.cross(dir)).normalized();
+		auto push_normal = [&](const Vector3 &p_n) {
+			normals.push_back(p_n);
+			Vector3 t = along_local - p_n * p_n.dot(along_local);
+			t = t.length_squared() > 1e-8f ? t.normalized() : p_n.get_any_perpendicular();
+			tangents.push_back(t.x);
+			tangents.push_back(t.y);
+			tangents.push_back(t.z);
+			tangents.push_back(1.0f);
+		};
+		const Color white_none(0, 0, 0, 0);
+		const float hc = height * vary * inside; // crest to trough
+		if (alive < 0.02f || hc < 0.05f || k <= 1e-5f || !Math::is_finite(crest_y)) {
+			// Nothing thrown here: the ring shrinks to the crest, so the sheet tapers off.
+			for (int r = 0; r < RING; r++) {
+				verts.push_back(crest_local);
+				push_normal(up_local);
+				colors.push_back(white_none);
+				uvs.push_back(Vector2());
+			}
+			return;
+		}
+		crest_points++;
+		// The throw: a tube up to about twice as long as it is high at full curl (the vortex shapes surveyed at
+		// surf breaks, Mead and Black 2001), and at most half a radian of phase. The lip lands on the water that
+		// far ahead: its drop sets the flight time, and the throw the jet speed relative to the crest.
+		const float throw_len = w * MIN(0.5f / k, 2.0f * hc);
+		const Vector3 land_guess = crest + dir * throw_len;
+		float land_y = sample_height(land_guess);
+		if (!Math::is_finite(land_y)) {
+			land_y = crest.y - hc;
+		}
+		const float drop = CLAMP(crest.y - land_y, 0.25f * hc, 1.5f * hc);
+		const float tau_hit = Math::sqrt(2.0f * drop / g);
+		const float u = throw_len / tau_hit; // jet speed relative to the crest
+		const float tau_max = tau_hit * grow;
+		const bool landed = grow > 0.98f;
+		const Vector3 land_point = crest + dir * throw_len - up * drop;
+		const float land_tau = tau_hit;
+		const float thick = 0.15f * hc * (1.0f - sink) * MIN(2.0f * alive, 1.0f);
+		const float c_phase = shore_omega[p_t] / k;
+		// The material's face: its front takes 3 amp k / 2 pi of the period (shore_wave), sharpened by q.
+		const float face_w = MAX((float)Math::TAU * CLAMP(k * 1.5f * hc / (float)Math::TAU, 0.02f, 0.5f) / k, 0.05f);
+		const float face_q = 1.0f + 1.5f * Math::smoothstep(0.8f, 0.98f, height / MAX(BREAKER_INDEX * MAX(sample(cell_depth, p_rel), 0.0f), 1e-3f));
+		Vector3 outer[K + 1];
+		Vector3 nrm[K + 1];
+		float th[K + 1];
+		float white[K + 1];
+		float face_at[K + 1];
+		for (int j = 0; j <= K; j++) {
+			const float f = float(j) / K;
+			const float tau = tau_max * f;
+			// At least 2 cm: thinner, the underside meets the outside and a ray picks either (the coplanar
+			// back faces showed as dark quads under path tracing).
+			th[j] = MAX(thick * (1.0f - 0.75f * f), 0.02f);
+			// Clear green water at the root, aerated white toward the edge and once it has landed.
+			white[j] = CLAMP(0.05f + 0.75f * f * f * f * grow + sink, 0.0f, 1.0f);
+			nrm[j] = (dir * (g * tau) + up * u).normalized();
+			// After landing the sheet sinks into the bore it has become.
+			outer[j] = crest + dir * (u * tau) - up * (0.5f * g * tau * tau + sink * 0.8f * hc * f);
+			// The sheet never cuts into the face below it: where the face (the warped profile the material
+			// draws, crest_y - hc (1 - ((1 + cos(pi x / w)) / 2)^q) over the front width w) is still higher,
+			// the lip rides it, a little clear, and peels off where the face falls away. Two crossing water
+			// surfaces would show through each other in triangle-sized patches.
+			{
+				const float x = u * tau;
+				const float ph = MIN(x / face_w, 1.0f) * (float)Math::PI;
+				const float face_y = crest.y - hc * (1.0f - Math::pow(0.5f + 0.5f * Math::cos(ph), face_q));
+				outer[j].y = MAX(outer[j].y, face_y + th[j] + 0.03f);
+				face_at[j] = face_y;
+			}
+		}
+		for (int j = 0; j <= K; j++) {
+			verts.push_back(to_local.xform(outer[j]));
+			push_normal(to_local.basis.xform(nrm[j]).normalized());
+			colors.push_back(Color(white[j], 0, 0, 0));
+			uvs.push_back(Vector2(white[j], 0.0f));
+		}
+		for (int j = K; j >= 0; j--) {
+			Vector3 inner = outer[j] - nrm[j] * th[j];
+			inner.y = MAX(inner.y, face_at[j] + 0.01f); // the underside stays clear of the face too
+			verts.push_back(to_local.xform(inner));
+			push_normal(to_local.basis.xform(-nrm[j]).normalized());
+			colors.push_back(Color(white[j], 0, 0, 0));
+			uvs.push_back(Vector2(white[j], 0.0f));
+		}
+		// Spray (Ihmsen et al. 2012): kinetic energy per unit mass of the lip, times the wave-crest potential at
+		// its edge (curvature 1 / thickness times its speed) and the trapped-air potential where it lands.
+		if (!shore_spray || sink > 0.6f) {
+			return;
+		}
+		const float v_abs = c_phase + u;
+		const float i_k = _ihmsen_phi(0.5f * v_abs * v_abs, 2.0f, 30.0f);
+		const float tip_thick = MAX(th[K], 0.02f);
+		const float i_wc = _ihmsen_phi(u / tip_thick, 5.0f, 60.0f) * (landed ? 0.0f : 1.0f);
+		const float v_impact = landed ? Math::sqrt(u * u + g * land_tau * g * land_tau) : 0.0f;
+		const float i_ta = _ihmsen_phi(v_impact, 1.0f, 6.0f);
+		const float edge_rate = i_k * k_wave_crest * i_wc * alive * p_piece;
+		const float land_rate = i_k * k_trapped_air * i_ta * alive * p_piece;
+		if (edge_rate > 1e-3f) {
+			// Off the lip's edge, along its jet (absolute: the crest's own speed plus the throw).
+			const Vector3 v = dir * v_abs - up * (g * tau_max);
+			spray_points.push_back(to_local.xform(outer[K]));
+			spray_dirs.push_back(to_local.basis.xform(v.normalized()));
+			spray_weights.push_back(edge_rate);
+			spray_rate += edge_rate;
+			spray_speed_sum += edge_rate * 0.35f * v.length();
+		}
+		if (land_rate > 1e-3f) {
+			// Thrown up and forward where it lands.
+			const Vector3 v = (dir * 0.6f + up).normalized();
+			spray_points.push_back(to_local.xform(land_point));
+			spray_dirs.push_back(to_local.basis.xform(v));
+			spray_weights.push_back(land_rate);
+			spray_rate += land_rate;
+			spray_speed_sum += land_rate * 0.6f * v_impact;
+		}
+	};
+
+	LocalVector<float> level;
+	LocalVector<uint8_t> active;
+	LocalVector<uint8_t> known;
+	level.resize(n * n);
+	active.resize(n * n);
+	known.resize(n * n);
+	for (int t = 0; t < SHORE_TRAINS; t++) {
+		const float om = shore_omega[t];
+		if (om <= 0.0f) {
+			continue;
+		}
+		const float *ph = shore_phase[t].ptr();
+		const float *hh = shore_height[t].ptr();
+		const float *st = shore_stage[t].ptr();
+		const float *xi = shore_iribarren.ptr();
+		const float *dp = cell_depth.ptr();
+		bool any = false;
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				const float s = CLAMP(st[i] - 0.95f, 0.0f, 1.0f);
+				const float w = plunge_of(xi[i]);
+				active[i] = (hh[i] > 1e-3f && s > 0.0f && s < 1.0f && w > 0.01f) ? 1 : 0;
+				any = any || active[i];
+				known[i] = 0;
+			}
+		}
+		if (!any) {
+			continue;
+		}
+		// The crest as the material places it (th - skew cos(th) at the warp's crest), only at the nodes of
+		// cells that hold a breaking crest.
+		auto level_at = [&](int i) {
+			if (known[i]) {
+				return level[i];
+			}
+			known[i] = 1;
+			{
+				const int x = i % n;
+				const int z = i / n;
+				const float s = CLAMP(st[i] - 0.95f, 0.0f, 1.0f);
+				const float w = plunge_of(xi[i]);
+				const float wx = ((x + 0.5f) / n - 0.5f) * dom.x + grid_center.x;
+				const float wz = ((z + 0.5f) / n - 0.5f) * dom.y + grid_center.y;
+				const float vary = vary_at(wx, wz);
+				const float brk = Math::smoothstep(0.8f, 0.98f, hh[i] / MAX(BREAKER_INDEX * MAX(dp[i], 0.0f), 1e-3f));
+				const float throw_w = w * vary * Math::smoothstep(0.0f, 0.45f, s) * (1.0f - Math::smoothstep(0.7f, 1.0f, s));
+				const float skew = MIN(0.6f * brk + 0.3f * throw_w, 0.92f);
+				const float theta = ph[i] - om * time;
+				// The front warp puts the crest at u = pi (2 b - 1), b the back fraction.
+				const float steep = w * vary * Math::smoothstep(0.0f, 0.3f, s) * (1.0f - 0.5f * Math::smoothstep(0.8f, 1.0f, s));
+				const float kk = Vector2(shore_grad_x[t][i], shore_grad_z[t][i]).length();
+				const float amp = 0.5f * hh[i] * vary;
+				const float front = Math::lerp(0.5f, CLAMP(kk * 3.0f * amp / (float)Math::TAU, 0.02f, 0.5f), CLAMP(steep, 0.0f, 1.0f));
+				level[i] = theta - skew * Math::cos(theta) - (float)Math::PI * (1.0f - 2.0f * front);
+			}
+			return level[i];
+		};
+		for (int z = 0; z + 1 < n; z++) {
+			for (int x = 0; x + 1 < n; x++) {
+				const int c[4] = { z * n + x, z * n + x + 1, (z + 1) * n + x + 1, (z + 1) * n + x };
+				if (!(active[c[0]] || active[c[1]] || active[c[2]] || active[c[3]])) {
+					continue;
+				}
+				if (hh[c[0]] <= 1e-4f || hh[c[1]] <= 1e-4f || hh[c[2]] <= 1e-4f || hh[c[3]] <= 1e-4f) {
+					continue; // the waterline: no phase across it
+				}
+				const Vector2 corner[4] = {
+					Vector2(((x + 0.5f) / n - 0.5f) * dom.x, ((z + 0.5f) / n - 0.5f) * dom.y),
+					Vector2(((x + 1.5f) / n - 0.5f) * dom.x, ((z + 0.5f) / n - 0.5f) * dom.y),
+					Vector2(((x + 1.5f) / n - 0.5f) * dom.x, ((z + 1.5f) / n - 0.5f) * dom.y),
+					Vector2(((x + 0.5f) / n - 0.5f) * dom.x, ((z + 1.5f) / n - 0.5f) * dom.y),
+				};
+				const float lv[4] = { level_at(c[0]), level_at(c[1]), level_at(c[2]), level_at(c[3]) };
+				float lo = lv[0], hi = lv[0];
+				for (int q = 1; q < 4; q++) {
+					lo = MIN(lo, lv[q]);
+					hi = MAX(hi, lv[q]);
+				}
+				const int m0 = (int)Math::ceil(lo / Math::TAU);
+				const int m1 = (int)Math::floor(hi / Math::TAU);
+				for (int m = m0; m <= m1; m++) {
+					const float target = Math::TAU * m;
+					Vector2 cross_pts[4];
+					int count = 0;
+					for (int e = 0; e < 4; e++) {
+						const float fa = lv[e] - target;
+						const float fb = lv[(e + 1) & 3] - target;
+						if ((fa < 0.0f) != (fb < 0.0f)) {
+							const float a = fa / (fa - fb);
+							cross_pts[count++] = corner[e].lerp(corner[(e + 1) & 3], a);
+						}
+					}
+					for (int pair = 0; pair + 1 < count; pair += 2) {
+						// Every piece runs the same way along its crest (crest x travel direction points up),
+						// so one winding makes the outside of the sheet face out everywhere.
+						Vector2 a = cross_pts[pair];
+						Vector2 b = cross_pts[pair + 1];
+						{
+							const Vector2 mid = (a + b) * 0.5f;
+							const Vector2 gm(sample(shore_grad_x[t], mid), sample(shore_grad_z[t], mid));
+							if ((b - a).cross(gm) > 0.0f) {
+								SWAP(a, b);
+							}
+						}
+						const float len = a.distance_to(b);
+						if (len < 1e-4f) {
+							continue;
+						}
+						const int pieces = MAX(1, (int)Math::ceil(len / spacing));
+						const float piece = len / pieces;
+						bool alive_any = false;
+						for (int sidx = 0; sidx <= pieces && !alive_any; sidx++) {
+							alive_any = alive_at(t, a.lerp(b, float(sidx) / pieces)) >= 0.02f;
+						}
+						if (!alive_any) {
+							continue;
+						}
+						const int first = verts.size();
+						Vector3 dir, tangent;
+						for (int sidx = 0; sidx <= pieces; sidx++) {
+							add_ring(t, a.lerp(b, float(sidx) / pieces), piece, dir, tangent);
+						}
+						// Each triangle is wound so its face agrees with the sheet's normals: the outside of the
+						// closed sheet faces out (the path tracer enters the water through front faces, and turns a
+						// shading normal that disagrees with its face around, which showed as dark quads). Where a
+						// sheet folds over the face below, a fixed winding per piece is not enough.
+						auto tri = [&](int p_a, int p_b, int p_c) {
+							const Vector3 fn = (verts[p_b] - verts[p_a]).cross(verts[p_c] - verts[p_a]);
+							const Vector3 vn = normals[p_a] + normals[p_b] + normals[p_c];
+							const bool flip = (fn.dot(vn) < 0.0f) == (winding > 0.0f);
+							indices.push_back(p_a);
+							indices.push_back(flip ? p_c : p_b);
+							indices.push_back(flip ? p_b : p_c);
+						};
+						for (int sidx = 0; sidx < pieces; sidx++) {
+							const int r0 = first + sidx * RING;
+							const int r1 = r0 + RING;
+							for (int r = 0; r < RING; r++) {
+								const int rn = (r + 1) % RING;
+								const int qa = r0 + r, qb = r1 + r, qc = r1 + rn, qd = r0 + rn;
+								tri(qa, qb, qc);
+								tri(qa, qc, qd);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (breaker_instance == nullptr) {
+		breaker_instance = memnew(MeshInstance3D);
+		breaker_instance->set_name("BreakerLips");
+		breaker_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+		add_child(breaker_instance, false, INTERNAL_MODE_BACK);
+		breaker_mesh.instantiate();
+		breaker_instance->set_mesh(breaker_mesh);
+	}
+	breaker_mesh->clear_surfaces();
+	if (!indices.is_empty() && crest_points > 0) {
+		Array arrays;
+		arrays.resize(Mesh::ARRAY_MAX);
+		arrays[Mesh::ARRAY_VERTEX] = verts;
+		arrays[Mesh::ARRAY_NORMAL] = normals;
+		arrays[Mesh::ARRAY_TANGENT] = tangents;
+		arrays[Mesh::ARRAY_COLOR] = colors;
+		arrays[Mesh::ARRAY_TEX_UV] = uvs;
+		arrays[Mesh::ARRAY_INDEX] = indices;
+		breaker_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+		breaker_instance->set_material_override(_breaker_material());
+		breaker_instance->set_visible(true);
+	} else {
+		breaker_instance->set_visible(false);
+	}
+	breaker_stat_points = crest_points;
+	breaker_stat_vertices = crest_points > 0 ? verts.size() : 0;
+	breaker_stat_triangles = crest_points > 0 ? indices.size() / 3 : 0;
+	breaker_stat_spray_rate = spray_rate;
+	_update_breaker_spray(spray_points, spray_dirs, spray_weights, spray_rate, spray_rate > 0.0f ? spray_speed_sum / spray_rate : 0.0f);
+	breaker_stat_ms = (OS::get_singleton()->get_ticks_usec() - start_usec) / 1000.0f;
+}
+
+// The spray: one GPUParticles3D emitting from up to 512 points a tick, drawn from the lip's emitters in
+// proportion to their rates (systematic resampling), at a total rate that follows theirs.
+void PhysXWaterSurface3D::_update_breaker_spray(const LocalVector<Vector3> &p_points, const LocalVector<Vector3> &p_dirs, const LocalVector<float> &p_weights, float p_rate, float p_speed) {
+	if (!shore_spray || p_points.is_empty()) {
+		if (breaker_spray != nullptr) {
+			breaker_spray->set_emitting(false);
+		}
+		return;
+	}
+	constexpr int POINTS = 512;
+	const float lifetime = 0.9f;
+	if (breaker_spray == nullptr) {
+		breaker_spray = memnew(GPUParticles3D);
+		breaker_spray->set_name("BreakerSpray");
+		breaker_spray->set_use_local_coordinates(false);
+		breaker_spray->set_lifetime(lifetime);
+		breaker_spray_material.instantiate();
+		breaker_spray_material->set_emission_shape(ParticleProcessMaterial::EMISSION_SHAPE_DIRECTED_POINTS);
+		breaker_spray_material->set_direction(Vector3(0, 0, 1)); // turned onto each point's direction
+		breaker_spray_material->set_spread(18.0f);
+		breaker_spray_material->set_gravity(Vector3(0, -9.81f, 0));
+		breaker_spray_material->set_param_min(ParticleProcessMaterial::PARAM_DAMPING, 0.2f);
+		breaker_spray_material->set_param_max(ParticleProcessMaterial::PARAM_DAMPING, 0.8f);
+		breaker_spray_material->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.015f);
+		breaker_spray_material->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 0.045f);
+		breaker_spray->set_process_material(breaker_spray_material);
+		Ref<SphereMesh> drop;
+		drop.instantiate();
+		drop->set_radius(0.5f);
+		drop->set_height(1.0f);
+		drop->set_radial_segments(6);
+		drop->set_rings(3);
+		Ref<StandardMaterial3D> dm;
+		dm.instantiate();
+		dm->set_albedo(Color(0.95f, 0.97f, 1.0f));
+		dm->set_roughness(0.5f);
+		// Droplets pass most light on (back lighting, also under path tracing), so spray against the sun glows.
+		dm->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
+		dm->set_backlight(Color(0.8f, 0.85f, 0.85f));
+		drop->set_material(dm);
+		breaker_spray->set_draw_pass_mesh(0, drop);
+		add_child(breaker_spray, false, INTERNAL_MODE_BACK);
+	}
+	if (breaker_spray->get_amount() != shore_spray_amount) {
+		breaker_spray->set_amount(shore_spray_amount);
+	}
+	Ref<Image> pts = Image::create_empty(POINTS, 1, false, Image::FORMAT_RGBF);
+	Ref<Image> dirs = Image::create_empty(POINTS, 1, false, Image::FORMAT_RGBF);
+	float total = 0.0f;
+	for (float w : p_weights) {
+		total += w;
+	}
+	const float step = total / POINTS;
+	float next = step * breaker_rng.randf();
+	float acc = 0.0f;
+	int used = 0;
+	AABB box(p_points[0], Vector3());
+	for (uint32_t i = 0; i < p_points.size() && used < POINTS; i++) {
+		acc += p_weights[i];
+		box.expand_to(p_points[i]);
+		while (next < acc && used < POINTS) {
+			// Ihmsen et al. sample a cylinder around the emitter; a jitter of a few cm does it here.
+			const Vector3 j(breaker_rng.random(-0.08f, 0.08f), breaker_rng.random(0.0f, 0.06f), breaker_rng.random(-0.08f, 0.08f));
+			const Vector3 p = p_points[i] + j;
+			pts->set_pixel(used, 0, Color(p.x, p.y, p.z));
+			dirs->set_pixel(used, 0, Color(p_dirs[i].x, p_dirs[i].y, p_dirs[i].z));
+			used++;
+			next += step;
+		}
+	}
+	for (uint32_t i = 0; i < p_points.size(); i++) {
+		box.expand_to(p_points[i]);
+	}
+	if (used == 0) {
+		breaker_spray->set_emitting(false);
+		return;
+	}
+	if (breaker_spray_points_tex.is_null()) {
+		breaker_spray_points_tex = ImageTexture::create_from_image(pts);
+		breaker_spray_dirs_tex = ImageTexture::create_from_image(dirs);
+		breaker_spray_material->set_emission_point_texture(breaker_spray_points_tex);
+		breaker_spray_material->set_emission_normal_texture(breaker_spray_dirs_tex);
+	} else {
+		breaker_spray_points_tex->update(pts);
+		breaker_spray_dirs_tex->update(dirs);
+	}
+	breaker_spray_material->set_emission_point_count(used);
+	breaker_spray_material->set_param_min(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.6f * p_speed);
+	breaker_spray_material->set_param_max(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 1.3f * p_speed);
+	// At full ratio the node emits amount / lifetime droplets a second.
+	breaker_spray->set_amount_ratio(CLAMP(p_rate * lifetime / shore_spray_amount, 0.0f, 1.0f));
+	breaker_spray->set_visibility_aabb(box.grow(4.0f));
+	breaker_spray->set_emitting(true);
+}
+
+void PhysXWaterSurface3D::set_shore_spray(bool p_enabled) {
+	shore_spray = p_enabled;
+	if (!shore_spray && breaker_spray != nullptr) {
+		breaker_spray->set_emitting(false);
+	}
+}
+
+void PhysXWaterSurface3D::set_shore_spray_amount(int p_amount) {
+	shore_spray_amount = CLAMP(p_amount, 16, 65536);
+}
+
+Dictionary PhysXWaterSurface3D::get_breaker_stats() const {
+	Dictionary d;
+	d["crest_points"] = breaker_stat_points;
+	d["vertices"] = breaker_stat_vertices;
+	d["triangles"] = breaker_stat_triangles;
+	d["spray_rate"] = breaker_stat_spray_rate;
+	d["cpu_ms"] = breaker_stat_ms;
+	return d;
 }
 
 void PhysXWaterSurface3D::set_cull_margin(float p_margin) {
@@ -2963,6 +3596,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			_follow_weather(get_physics_process_delta_time());
 			_update(get_physics_process_delta_time());
+			_update_breakers();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (!Engine::get_singleton()->is_editor_hint()) {

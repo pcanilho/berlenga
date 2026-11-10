@@ -32,16 +32,21 @@
 
 #include "water_solver.h"
 
+#include "core/math/random_pcg.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 
 class Mesh;
 class MeshInstance3D;
+class Material;
 class ShaderMaterial;
 class Texture2DRD;
 class Texture2D;
 class Image;
 class ImageTexture;
+class ArrayMesh;
+class GPUParticles3D;
+class ParticleProcessMaterial;
 
 // The real water surface node: owns a WaterSolver (ripple + FFT ocean
 // layers), renders it via a plain child MeshInstance3D (a subdivided
@@ -154,6 +159,16 @@ public:
 	// steepen and spill). Whether a beach plunges at all comes from its slope.
 	void set_shore_wave_curl(float p_curl);
 	float get_shore_wave_curl() const { return shore_wave_curl; }
+	// Spray thrown from plunging lips (Ihmsen et al. 2012 potentials): droplets
+	// leave the lip's edge and splash up where it lands on the water ahead.
+	void set_shore_spray(bool p_enabled);
+	bool get_shore_spray() const { return shore_spray; }
+	// Most spray droplets alive at once.
+	void set_shore_spray_amount(int p_amount);
+	int get_shore_spray_amount() const { return shore_spray_amount; }
+	// The last breaker build: crest points, lip vertices and triangles, the
+	// spray rate (droplets/s) and the CPU time it took (ms).
+	Dictionary get_breaker_stats() const;
 	// Extra room around the surface before it is culled, for a material displacing it further than the waves.
 	void set_cull_margin(float p_margin);
 	float get_cull_margin() const { return cull_margin; }
@@ -404,6 +419,30 @@ private:
 	Vector<float> shore_stage[SHORE_TRAINS];
 	Vector<float> shore_iribarren;
 	Ref<ImageTexture> shore_wave_tex_c;
+	// Plunging lips (docs/ideas/water.md "Step 5e", after Thurey et al. 2007):
+	// a closed sheet swept along each breaking crest, rebuilt every tick from
+	// the shore waves' phase field, drawn with the water material (its vertex
+	// colour alpha 0 marks it), plus the spray it throws.
+	MeshInstance3D *breaker_instance = nullptr;
+	Ref<ArrayMesh> breaker_mesh;
+	GPUParticles3D *breaker_spray = nullptr;
+	Ref<ParticleProcessMaterial> breaker_spray_material;
+	Ref<ImageTexture> breaker_spray_points_tex;
+	Ref<ImageTexture> breaker_spray_dirs_tex;
+	bool shore_spray = true;
+	int shore_spray_amount = 3000;
+	int breaker_stat_points = 0;
+	int breaker_stat_vertices = 0;
+	int breaker_stat_triangles = 0;
+	float breaker_stat_spray_rate = 0.0f;
+	float breaker_stat_ms = 0.0f;
+	RandomPCG breaker_rng;
+	Ref<ShaderMaterial> breaker_material;
+	LocalVector<StringName> breaker_params;
+	Ref<Material> _breaker_material();
+	void _update_breakers();
+	void _hide_breakers();
+	void _update_breaker_spray(const LocalVector<Vector3> &p_points, const LocalVector<Vector3> &p_dirs, const LocalVector<float> &p_weights, float p_rate, float p_speed);
 	void _bake_shore_waves();
 	void _update_shore_material();
 	// The shore waves' height at (p_x, p_z) relative to the grid centre, and its rate of change.

@@ -30,6 +30,12 @@
 				Removes a previously-submitted sphere proxy (see [method submit_sphere]) by its owner id. Call this when a floating body leaves the water or is freed; a proxy left in place otherwise keeps disturbing the ripple layer at its last submitted position.
 			</description>
 		</method>
+		<method name="get_breaker_stats" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				The plunging lips of the last tick: [code]crest_points[/code], [code]vertices[/code], [code]triangles[/code], [code]spray_rate[/code] (droplets per second) and [code]cpu_ms[/code] (time to build them).
+			</description>
+		</method>
 		<method name="get_caustics_half_extent" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -259,8 +265,14 @@
 		<member name="shore_undertow" type="float" setter="set_shore_undertow" getter="get_shore_undertow" default="0.3">
 			Steady seaward drift (m/s) of the shore foam. The foam moves with the water along the seabed slope at the shallow-water particle velocity -- pushed up the beach under each arriving crest, drawn back between crests (with the local wave height capped by depth-limited breaking) -- and this undertow drags it back out into the water on top of that, so the sheet surges in and slides back out in streaks. [code]0[/code] leaves it rocking in place.
 		</member>
+		<member name="shore_spray" type="bool" setter="set_shore_spray" getter="get_shore_spray" default="true">
+			Spray from plunging lips: droplets where the lip's edge is thin and fast and where it lands, at rates from the kinetic, wave-crest and trapped-air potentials of Ihmsen et al. (2012). Drawn by one [GPUParticles3D].
+		</member>
+		<member name="shore_spray_amount" type="int" setter="set_shore_spray_amount" getter="get_shore_spray_amount" default="3000">
+			The most spray droplets alive at once.
+		</member>
 		<member name="shore_wave_curl" type="float" setter="set_shore_wave_curl" getter="get_shore_wave_curl" default="1.0">
-			How far plunging breakers curl over: the crest is thrown shoreward over its own steepening face, the surface folds over, and the lip falls onto the water ahead and collapses into the bore. Whether a beach plunges is set by its slope and the swell's steepness (the surf similarity number, Battjes 1974): gentle beaches spill, moderate ones plunge, steep ones surge, so the curl comes and goes along a varied coast. [code]0[/code] leaves only spilling crests. The fold needs a fine mesh: see [member mesh_detail].
+			How far plunging breakers curl over: a sheet of water (the lip) is thrown off the crest along a ballistic path over the steep face and lands on the water ahead, then sinks into the bore (Thurey et al. 2007). The lip is separate geometry along the crest lines, so it does not need a fine mesh, and it throws spray (see [member shore_spray]). Whether a beach plunges is set by its slope and the swell's steepness (the surf similarity number, Battjes 1974): gentle beaches spill, moderate ones plunge, steep ones surge, so the curl comes and goes along a varied coast. [code]0[/code] leaves only spilling crests.
 		</member>
 		<member name="shore_wave_direction" type="Vector2" setter="set_shore_wave_direction" getter="get_shore_wave_direction" default="Vector2(0, 0)">
 			The direction (X, Z) the shore waves travel in from the open sea before the seabed turns them. [code]Vector2(0, 0)[/code] uses [member wind_direction].
