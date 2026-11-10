@@ -569,6 +569,28 @@ DirectionalLight3D::SkyMode DirectionalLight3D::get_sky_mode() const {
 	return sky_mode;
 }
 
+void DirectionalLight3D::_update_projector_rect() {
+	RS::get_singleton()->light_directional_set_projector_rect(light, Rect2(projector_offset, projector_size));
+}
+
+void DirectionalLight3D::set_projector_size(const Vector2 &p_size) {
+	projector_size = Vector2(MAX(p_size.x, 0.01), MAX(p_size.y, 0.01));
+	_update_projector_rect();
+}
+
+Vector2 DirectionalLight3D::get_projector_size() const {
+	return projector_size;
+}
+
+void DirectionalLight3D::set_projector_offset(const Vector2 &p_offset) {
+	projector_offset = p_offset;
+	_update_projector_rect();
+}
+
+Vector2 DirectionalLight3D::get_projector_offset() const {
+	return projector_offset;
+}
+
 void DirectionalLight3D::_validate_property(PropertyInfo &p_property) const {
 	if (Engine::get_singleton()->is_editor_hint()) {
 		if (shadow_mode == SHADOW_ORTHOGONAL && (p_property.name == "directional_shadow_split_1" || p_property.name == "directional_shadow_blend_splits")) {
@@ -581,7 +603,7 @@ void DirectionalLight3D::_validate_property(PropertyInfo &p_property) const {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 	}
-	if (p_property.name == "light_size" || p_property.name == "light_projector") {
+	if (p_property.name == "light_size") {
 		// Not implemented in DirectionalLight3D (`light_size` is replaced by `light_angular_distance`).
 		p_property.usage = PROPERTY_USAGE_NONE;
 	} else if (p_property.name == "distance_fade_enabled" || p_property.name == "distance_fade_begin" || p_property.name == "distance_fade_shadow" || p_property.name == "distance_fade_length") {
@@ -600,6 +622,15 @@ void DirectionalLight3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_sky_mode", "mode"), &DirectionalLight3D::set_sky_mode);
 	ClassDB::bind_method(D_METHOD("get_sky_mode"), &DirectionalLight3D::get_sky_mode);
+
+	ClassDB::bind_method(D_METHOD("set_projector_size", "size"), &DirectionalLight3D::set_projector_size);
+	ClassDB::bind_method(D_METHOD("get_projector_size"), &DirectionalLight3D::get_projector_size);
+	ClassDB::bind_method(D_METHOD("set_projector_offset", "offset"), &DirectionalLight3D::set_projector_offset);
+	ClassDB::bind_method(D_METHOD("get_projector_offset"), &DirectionalLight3D::get_projector_offset);
+
+	ADD_GROUP("Projector", "projector_");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "projector_size", PROPERTY_HINT_LINK, "suffix:m"), "set_projector_size", "get_projector_size");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "projector_offset", PROPERTY_HINT_NONE, "suffix:m"), "set_projector_offset", "get_projector_offset");
 
 	ADD_GROUP("Directional Shadow", "directional_shadow_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "directional_shadow_mode", PROPERTY_HINT_ENUM, "Orthogonal (Fast),PSSM 2 Splits (Average),PSSM 4 Splits (Slow)"), "set_shadow_mode", "get_shadow_mode");
@@ -633,6 +664,7 @@ DirectionalLight3D::DirectionalLight3D() :
 	set_shadow_mode(SHADOW_PARALLEL_4_SPLITS);
 	blend_splits = false;
 	set_sky_mode(SKY_MODE_LIGHT_AND_SKY);
+	_update_projector_rect();
 }
 
 void OmniLight3D::set_shadow_mode(ShadowMode p_mode) {

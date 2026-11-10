@@ -79,6 +79,7 @@ private:
 		RSE::LightDirectionalShadowMode directional_shadow_mode = RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL;
 		bool directional_blend_splits = false;
 		RSE::LightDirectionalSkyMode directional_sky_mode = RSE::LIGHT_DIRECTIONAL_SKY_MODE_LIGHT_AND_SKY;
+		Rect2 directional_projector_rect = Rect2(0, 0, 100, 100); // Projector corner and size, metres in the light's plane (x along +X, y along -Y).
 		Vector2 area_size = Vector2(1, 1);
 		bool area_normalize_energy = true;
 		RID area_texture;
@@ -233,6 +234,9 @@ private:
 		float uv_scale2[2];
 		float uv_scale3[2];
 		float uv_scale4[2];
+		float projector_rect[4]; // In the sRGB decal atlas; zero without a projector.
+		float projector_u[4]; // View-space position to projector u: dot(vec4(vertex, 1.0), projector_u).
+		float projector_v[4];
 	};
 
 	uint32_t max_directional_lights;
@@ -533,6 +537,12 @@ public:
 	virtual bool light_directional_get_blend_splits(RID p_light) const override;
 	virtual void light_directional_set_sky_mode(RID p_light, RSE::LightDirectionalSkyMode p_mode) override;
 	virtual RSE::LightDirectionalSkyMode light_directional_get_sky_mode(RID p_light) const override;
+	virtual void light_directional_set_projector_rect(RID p_light, const Rect2 &p_rect) override;
+	_FORCE_INLINE_ Rect2 light_directional_get_projector_rect(RID p_light) const {
+		const Light *light = light_owner.get_or_null(p_light);
+		ERR_FAIL_NULL_V(light, Rect2());
+		return light->directional_projector_rect;
+	}
 
 	virtual RSE::LightDirectionalShadowMode light_directional_get_shadow_mode(RID p_light) override;
 	virtual RSE::LightOmniShadowMode light_omni_get_shadow_mode(RID p_light) override;

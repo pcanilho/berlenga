@@ -14,6 +14,7 @@
 		- [code]weather_gusts[/code] ([code]sampler2D[/code], [constant GUST_COUNT] by 1): per gust wave, its wavenumber along and across the base wind (rad/m), amplitude per unit sigma and phase. The first [constant GUSTS_PER_AXIS] are along the local wind, the next across it, the last vertical.
 		- [code]weather_wind_info[/code] ([code]vec4[/code]): base wind direction (x, z), sigma_u over the 10 m wind, and [member roughness_length].
 		- [code]weather_ground_height[/code] ([code]float[/code]): [member ground_height].
+		Clouds: a layer from [member cloud_base_height], shaped from the same cover and type by 3D noise (Nubis), drawn by [WeatherSkyMaterial] when the environment's sky uses it, and shadowing [member sun_light] through a baked cloud shadow. Under path tracing, enable [member Environment.pathtracing_sky_shader_enabled] so camera rays see the clouds at full detail.
 		The last [WeatherMap3D] to enter the tree is the one the other nodes read.
 	</description>
 	<tutorials>
@@ -48,6 +49,19 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Cloud cover at [param position], 0 (clear) to 1 (overcast).
+			</description>
+		</method>
+		<method name="get_cloud_density_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Extinction of the cloud layer at [param position], per metre (0 in clear air). The base shape only: the sky erodes edges a little further with detail noise.
+			</description>
+		</method>
+		<method name="get_cloud_shadow_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The last cloud shadow bake: the sun's transmittance over [member cloud_shadow_extent], in the plane of [member sun_light], sRGB encoded. The map gives it to that light as its projector.
 			</description>
 		</method>
 		<method name="get_cloud_type_at" qualifiers="const">
@@ -102,6 +116,13 @@
 				The number of storms.
 			</description>
 		</method>
+		<method name="get_sun_visibility_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How much of the sun reaches [param position] through the clouds, 0 to 1, from the last cloud shadow bake. 1 outside the baked square or without [member sun_light].
+			</description>
+		</method>
 		<method name="get_weather_time" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -142,13 +163,40 @@
 				Jumps the eased weather to the settings at once, without a transition (for example when a scene loads).
 			</description>
 		</method>
+		<method name="update_cloud_shadow">
+			<return type="void" />
+			<description>
+				Bakes the cloud shadow now and waits for it. The map otherwise bakes it on the worker threads every [member cloud_shadow_interval] seconds.
+			</description>
+		</method>
 	</methods>
 	<members>
+		<member name="cloud_base_height" type="float" setter="set_cloud_base_height" getter="get_cloud_base_height" default="1500.0">
+			Height of the cloud base, in metres above y = 0.
+		</member>
 		<member name="cloud_cover" type="float" setter="set_cloud_cover" getter="get_cloud_cover" default="0.4">
 			Cloud cover, 0 (clear) to 1 (overcast). With [member cloud_variation], it is how much of the sky is cloud, in patches.
 		</member>
+		<member name="cloud_density" type="float" setter="set_cloud_density" getter="get_cloud_density" default="1.0">
+			Scale on the clouds' extinction. At [code]1[/code], the measured values: about 0.04 per metre in stratus, up to 0.1 in cumulus (Frostbite, 2016).
+		</member>
 		<member name="cloud_scale" type="float" setter="set_cloud_scale" getter="get_cloud_scale" default="6000.0">
 			Size of the cloud cover patches, in metres.
+		</member>
+		<member name="cloud_shadow_extent" type="float" setter="set_cloud_shadow_extent" getter="get_cloud_shadow_extent" default="6144.0">
+			Width of the square of ground the cloud shadow covers around the camera (or [member follow_target]), in metres. Beyond it, the sun is not shadowed by clouds.
+		</member>
+		<member name="cloud_shadow_interval" type="float" setter="set_cloud_shadow_interval" getter="get_cloud_shadow_interval" default="1.0">
+			Real seconds between cloud shadow bakes. Between bakes, the shadow slides with the clouds.
+		</member>
+		<member name="cloud_shadow_resolution" type="int" setter="set_cloud_shadow_resolution" getter="get_cloud_shadow_resolution" default="256">
+			Texels along each side of the cloud shadow. Each bake marches 12 steps through the layer per texel, on the worker threads (about 26 ms of CPU at 256 on four cores).
+		</member>
+		<member name="cloud_shape_scale" type="float" setter="set_cloud_shape_scale" getter="get_cloud_shape_scale" default="3000.0">
+			Size of one tile of the 3D shape noise, in metres. Single clouds are about a quarter of it across.
+		</member>
+		<member name="cloud_thickness" type="float" setter="set_cloud_thickness" getter="get_cloud_thickness" default="1500.0">
+			Depth of the cloud layer for cumulus ([member cloud_type] 0.7), in metres. Stratus is a quarter of it; cumulonimbus (type above 0.8, as storms make) towers up to five times it.
 		</member>
 		<member name="cloud_type" type="float" setter="set_cloud_type" getter="get_cloud_type" default="0.3">
 			Cloud type, 0 (stratus) to 1 (cumulonimbus).
@@ -194,6 +242,9 @@
 		</member>
 		<member name="roughness_length" type="float" setter="set_roughness_length" getter="get_roughness_length" default="0.03">
 			Aerodynamic roughness length z0 of the ground, in metres: about 0.0002 over the sea, 0.03 over open land, 0.5 to 1 over a town. It sets how the wind slows near the ground and how gusty it is.
+		</member>
+		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
+			The [DirectionalLight3D] the clouds shadow. The map sets that light's [member Light3D.light_projector], [member DirectionalLight3D.projector_size] and [member DirectionalLight3D.projector_offset] to its cloud shadow, which darkens the ground in raster and path traced rendering alike, and clears the projector again when the map leaves the tree. Empty: no cloud shadows.
 		</member>
 		<member name="surface_storage" type="float" setter="set_surface_storage" getter="get_surface_storage" default="0.5">
 			Water a surface holds as a film before it collects in puddles, in millimetres.

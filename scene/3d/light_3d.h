@@ -182,6 +182,10 @@ private:
 	bool blend_splits;
 	ShadowMode shadow_mode;
 	SkyMode sky_mode = SKY_MODE_LIGHT_AND_SKY;
+	Vector2 projector_size = Vector2(100, 100);
+	Vector2 projector_offset;
+
+	void _update_projector_rect();
 
 protected:
 	static void _bind_methods();
@@ -196,6 +200,12 @@ public:
 
 	void set_sky_mode(SkyMode p_mode);
 	SkyMode get_sky_mode() const;
+
+	void set_projector_size(const Vector2 &p_size);
+	Vector2 get_projector_size() const;
+
+	void set_projector_offset(const Vector2 &p_offset);
+	Vector2 get_projector_offset() const;
 
 	DirectionalLight3D();
 };

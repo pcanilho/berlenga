@@ -93,6 +93,7 @@ public:
 	virtual bool light_directional_get_blend_splits(RID p_light) const override { return false; }
 	virtual void light_directional_set_sky_mode(RID p_light, RSE::LightDirectionalSkyMode p_mode) override {}
 	virtual RSE::LightDirectionalSkyMode light_directional_get_sky_mode(RID p_light) const override { return RSE::LIGHT_DIRECTIONAL_SKY_MODE_LIGHT_AND_SKY; }
+	virtual void light_directional_set_projector_rect(RID p_light, const Rect2 &p_rect) override {}
 
 	virtual RSE::LightDirectionalShadowMode light_directional_get_shadow_mode(RID p_light) override { return RSE::LIGHT_DIRECTIONAL_SHADOW_ORTHOGONAL; }
 	virtual RSE::LightOmniShadowMode light_omni_get_shadow_mode(RID p_light) override { return RSE::LIGHT_OMNI_SHADOW_DUAL_PARABOLOID; }

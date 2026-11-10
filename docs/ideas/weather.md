@@ -192,6 +192,119 @@ snow, lightning.
 - The wet street (bench `--view=street`): raster and path traced frames
   match at 100% crop; path tracing adds the reflections in the puddles.
 
+## Step 3: clouds and cloud shadows (10 Nov 2026)
+
+Research for this step. The Frostbite and Nubis 2022/2023 slides were read in
+full this time; Unreal and HDRP are from their documentation as remembered.
+
+- **Frostbite** (Hillaire, Physically Based Sky, Atmosphere and Cloud
+  Rendering, SIGGRAPH 2016 course). Measured extinction: stratus 0.04 to
+  0.06 per metre, cumulus 0.05 to 0.12, albedo near 1. A 2D weather texture
+  (R density, G type) and a type texture (x type, y height) give the
+  vertical profile. Energy-conserving step:
+  (S - S exp(-sigma_t d)) / sigma_t instead of S d. Phase: a mix of two
+  Henyey-Greenstein lobes (forward and back). Multiple scattering by
+  Wrenninge's octaves: scattering times a^n, extinction times b^n, phase
+  eccentricity times c^n, with a <= b. Sun visibility from four samples
+  towards the sun at growing distance. Ambient from a top and bottom sky
+  colour. Cloud shadows: a 2D transmittance texture seen from the sun,
+  projected on the world and used for opaque, transparent, particles and GI.
+  0.91 ms at 720p, half resolution, 16 samples, with temporal reprojection.
+- **Nubis 2017** (Schneider, Nubis: Authoring Real-Time Volumetric
+  Cloudscapes): weather map with coverage, type (0 stratus, 0.5
+  stratocumulus, 1 cumulus) and precipitation; a height gradient per type;
+  density = a Perlin-Worley base remapped by coverage, then eroded by Worley
+  detail at the edges; Beer's law, a silver-lining second lobe, "powder" dark
+  edges. 54 to 96 steps with early out, about 2 ms on PS4.
+- **Nubis Evolved 2022 / Nubis Cubed 2023**: step length grows with distance
+  (3 m near plus 60 m per 16 km); light = direct (transmittance times
+  phase) + multiple scattering (a second, wider phase) + ambient
+  (pow(1 - profile, 0.5) times exp(-ambient density)). 2023 moves to authored
+  voxel clouds with signed distance fields for empty-space skipping (2.2 to
+  4 ms); voxels are authored per scene, so we keep the procedural map and use
+  its idea in a cheap form: steps stay long until cloud is reached.
+- **Unreal 5** (VolumetricCloud component): a layer between two altitudes on
+  a round planet, a material for density, and cloud shadows from a "beer
+  shadow map" (front depth, mean extinction, maximum optical depth) applied
+  to the sun on surfaces and in the atmosphere.
+- **Unity HDRP** (Volumetric Clouds): the cloud shadow is rendered into the
+  sun's cookie, a texture projected along the sun with a size and offset in
+  metres. Any surface lit by the sun gets it for free.
+- **Godot addons** (code read): SunshineClouds2 (MIT) is a CompositorEffect
+  that raymarches at reduced resolution with a temporal ping-pong, Beer and
+  Henyey-Greenstein; no shadows on the scene and nothing the path tracer can
+  see, since it draws over the finished frame.
+- **Under path tracing.** Our tracer already gets the sky shader for camera
+  rays that miss (the screen sky texture) and the radiance map for bounce rays,
+  so clouds written in a sky shader appear in both. What it lacks is the
+  sun's shadow from the clouds.
+
+### What we build
+
+1. **Directional light projector** (core). `DirectionalLight3D` gains a
+   projector, as HDRP's cookie: `light_projector` (already on Light3D, until
+   now hidden for directional lights), `projector_size` and
+   `projector_offset` in metres in the light's plane. The texture is
+   projected along the light; outside it the light is untouched. Raster
+   (Forward+ and Mobile) multiplies the sun's colour by it, and the path
+   tracer multiplies its sun sample by the same texture, so both match. This is
+   a general feature: cloud shadows, canopy dapples, a stained-glass sun.
+2. **Cloud layer in WeatherMap3D**: `cloud_base_height`,
+   `cloud_thickness` (cumulonimbus tops grow from it), `cloud_density`.
+   One density function, Nubis style, used in three places: the CPU
+   (`get_cloud_density_at`, `get_sun_visibility_at`), the shadow bake and the
+   sky shader. Cover and type come from the same drifting noise and storms
+   the map already has, evaluated at any distance (the map only covers a few
+   km; clouds reach the horizon). Shape noise is a tiling 3D Perlin-Worley
+   (base) and Worley (detail) texture made once on the CPU.
+3. **Cloud shadow**: `sun_light` names a DirectionalLight3D. The map marches
+   the base shape along the sun ray through the layer for each texel of a
+   square around the camera (Frostbite's transmittance texture), on the
+   worker threads, about once a second. Between bakes the projector offset
+   slides with the cloud drift, so shadows move smoothly. The result goes in
+   that light's projector.
+4. **`WeatherSkyMaterial`**: Godot's physical sky plus raymarched clouds,
+   rendered at half resolution (fewer steps for the radiance map).
+   Energy-conserving steps, two-lobe phase, three Wrenninge octaves,
+   six-sample sun march, Nubis ambient. The map pushes the cloud state to it
+   each frame.
+
+Off by default: a light without a projector and a sky without this
+material are upstream Godot.
+
+Two choices made while checking:
+- **Cover means share of sky.** The shape noise is equalised (each value
+  equally common) and stretched twice vertically, so a column sees about one
+  value of it; cover 0.4 then clouds about half the ground at the sun's
+  zenith (shadows at their edges included) instead of nearly all of it.
+- **Light under and inside clouds** is not exp(-tau): clouds barely absorb,
+  so what they scatter mostly goes on. The shadow uses the two-stream
+  diffuse transmission 1 / (1 + 3/4 (1 - g) tau), g = 0.85 (Bohren 1987,
+  Multiple scattering of light and some of its observable consequences, Am.
+  J. Phys. 55), which leaves about an eighth of the sun under a thick
+  cumulus, as measured under broken cloud. In the sky the same term lights
+  the cloud's shaded side, with the Wrenninge octaves and the sky's ambient.
+
+### Checks (docs/bench/weather)
+
+- Projector (`--view=projector`): an 8 x 8 checker with a red corner on a
+  sun at 60 degrees lands on the same ground in raster and path traced
+  frames, the same way round.
+- Share of the ground below half sun, sun overhead, type 0.6: cover 0.2,
+  0.4, 0.6, 0.8 and 1.0 give 16, 31, 50, 71 and 97% (mean sun 0.86, 0.71,
+  0.57, 0.40, 0.24).
+- Thickest column at cover 0.6: optical depth 65, peak extinction
+  0.076 per metre (Frostbite cumulus 0.05 to 0.12).
+- Baked shadow against a 10 m march at 200 points: mean difference 0.014.
+- One bake, 256 x 256 texels, 12 steps, on the worker threads: 26 ms of
+  the 4 cloud cores, in the background once a second.
+- After a minute of drift, a point at a shadow's edge followed 861 m
+  downwind reads the same sun (0.398 and 0.398).
+- `--view=clouds` and `--view=clouds_low`: raster and path traced frames show
+  the same clouds (with `pathtracing_sky_shader_enabled`) and the same cloud
+  shadows on the fields; path tracing adds the box shadows past the raster
+  shadow distance. GPU cost waits for the PC.
+
 ## Sources
 
 - Schneider, The Real-time Volumetric Cloudscapes of Horizon Zero Dawn,
@@ -223,3 +336,13 @@ snow, lightning.
   Soc. A 193 (1948).
 - US Army CERC, Shore Protection Manual (1984), wave growth.
 - TCA_Weather_System (MIT): https://github.com/kS222138/TCA_Weather_System
+- Hillaire, Physically Based Sky, Atmosphere and Cloud Rendering in
+  Frostbite, SIGGRAPH 2016 Physically Based Shading course.
+- Schneider, Nubis: Authoring Real-Time Volumetric Cloudscapes with the
+  Decima Engine, SIGGRAPH Advances 2017.
+- Schneider, Nubis Evolved (2022) and Nubis Cubed (2023), SIGGRAPH Advances:
+  https://advances.realtimerendering.com/
+- Wrenninge, Kulla and Lundqvist, Oz: The Great and Volumetric, SIGGRAPH 2013
+  talk (multiple scattering octaves).
+- Unity HDRP, Volumetric Clouds (cloud shadows through the sun's cookie).
+- SunshineClouds2 (MIT): https://github.com/Bonkahe/SunshineClouds2

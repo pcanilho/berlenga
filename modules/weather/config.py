@@ -9,6 +9,7 @@ def configure(env):
 def get_doc_classes():
     return [
         "WeatherMap3D",
+        "WeatherSkyMaterial",
     ]
 
 

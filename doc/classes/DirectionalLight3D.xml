@@ -36,6 +36,12 @@
 		<member name="directional_shadow_split_3" type="float" setter="set_param" getter="get_param" default="0.5">
 			The distance from shadow split 2 to split 3. Relative to [member directional_shadow_max_distance]. Only used when [member directional_shadow_mode] is [constant SHADOW_PARALLEL_4_SPLITS].
 		</member>
+		<member name="projector_offset" type="Vector2" setter="set_projector_offset" getter="get_projector_offset" default="Vector2(0, 0)">
+			Where the corner of [member Light3D.light_projector] lies, in metres in the plane of the light: x along the light's local +X axis, y along its local -Y axis. For a sun pointing straight down, this is world x and z, and the texture lies as an image of the ground seen from above. A world point [code]p[/code] reads the texture at [code](Vector2(p.dot(basis.x), -p.dot(basis.y)) - projector_offset) / projector_size[/code].
+		</member>
+		<member name="projector_size" type="Vector2" setter="set_projector_size" getter="get_projector_size" default="Vector2(100, 100)">
+			Width and height of [member Light3D.light_projector] in metres, in the plane of the light. Outside it, the light is not changed.
+		</member>
 		<member name="sky_mode" type="int" setter="set_sky_mode" getter="get_sky_mode" enum="DirectionalLight3D.SkyMode" default="0">
 			Whether this [DirectionalLight3D] is visible in the sky, in the scene, or both in the sky and in the scene.
 		</member>

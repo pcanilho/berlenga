@@ -89,4 +89,7 @@ struct DirectionalLightData {
 	vec2 uv_scale2;
 	vec2 uv_scale3;
 	vec2 uv_scale4;
+	vec4 projector_rect; // In the sRGB decal atlas; zero without a projector.
+	vec4 projector_u; // dot(vec4(view-space vertex, 1.0), projector_u) is the projector's u.
+	vec4 projector_v;
 };

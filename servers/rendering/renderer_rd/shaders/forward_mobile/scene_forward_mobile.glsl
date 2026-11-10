@@ -8,9 +8,8 @@
 #include "../half_inc.glsl"
 
 /* Include our forward mobile UBOs definitions etc. */
-#include "scene_forward_mobile_inc.glsl"
-
 #include "../billboard_inc.glsl"
+#include "scene_forward_mobile_inc.glsl"
 
 #define SHADER_IS_SRGB false
 #define SHADER_SPACE_FAR 0.0
@@ -2005,10 +2004,10 @@ void main() {
 					hvec3 light_dir = hvec3(directional_lights.data[i].direction);
 					hvec3 base_normal_bias = geo_normal * (half(1.0) - max(half(0.0), dot(light_dir, -geo_normal)));
 
-#define BIAS_FUNC(m_var, m_idx)                                                                        \
+#define BIAS_FUNC(m_var, m_idx) \
 	hvec3 normal_bias = base_normal_bias * half(directional_lights.data[i].shadow_normal_bias[m_idx]); \
-	normal_bias -= light_dir * dot(light_dir, normal_bias);                                            \
-	normal_bias += light_dir * half(directional_lights.data[i].shadow_bias[m_idx]);                    \
+	normal_bias -= light_dir * dot(light_dir, normal_bias); \
+	normal_bias += light_dir * half(directional_lights.data[i].shadow_bias[m_idx]); \
 	m_var.xyz += vec3(normal_bias);
 
 					if (depth_z < directional_lights.data[i].shadow_split_offsets.x) {
@@ -2159,7 +2158,7 @@ void main() {
 			float size_A = sc_use_light_soft_shadows() ? directional_lights.data[i].size : 0.0;
 
 			light_compute(normal, hvec3(directional_lights.data[i].direction), view, saturateHalf(size_A),
-					hvec3(directional_lights.data[i].color * directional_lights.data[i].energy * tint),
+					hvec3(directional_lights.data[i].color * directional_lights.data[i].energy * tint * directional_projector_color(i, vec3(vertex))),
 					true, shadow, f0, roughness, metallic, half(directional_lights.data[i].specular), albedo, alpha,
 					screen_uv, hvec3(1.0),
 #ifdef LIGHT_BACKLIGHT_USED

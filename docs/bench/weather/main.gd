@@ -8,9 +8,15 @@ extends Node3D
 #                       an hour of 5 mm/h rain, then the hours it takes to dry, against Penman
 #                       a sea that follows the weather: its wind over time after the weather turns
 #                       the cost of one map update
+#                       clouds: the ground share in cloud shadow against cover, the optical depth of the
+#                       thickest column, the baked shadow against a direct march, the bake's cost, and the
+#                       shadow following the clouds as they drift
 #   --view=map        an 8 km map with broken cloud, light rain and a storm drifting through, after an hour;
 #                     saved with --map-out
 #   --view=street     a street that the rain has wetted, with puddles, and a flag in the weather's wind
+#   --view=clouds     broken cumulus over fields from a rise, WeatherSkyMaterial sky, cloud shadows on the sun
+#   --view=clouds_low the same from 220 m, looking down on the cloud shadows
+#   --view=projector  a checker projected by the sun (DirectionalLight3D projector), raster against path traced
 #   --rain=H          hours of 5 mm/h rain before the shot (street view; 0 = dry)
 #   --dry=H           then this many hours without rain
 #   --raster          raster only (default path traced)
@@ -63,6 +69,12 @@ func _ready() -> void:
 	if view == "map":
 		await _map_view()
 		get_tree().quit()
+		return
+	if view == "clouds" or view == "clouds_low":
+		await _build_clouds()
+		return
+	if view == "projector":
+		_build_projector()
 		return
 	_build_street()
 
@@ -190,6 +202,96 @@ func _run_tests() -> void:
 		print(l2)
 		sea.queue_free()
 		s.queue_free()
+		await get_tree().physics_frame
+
+	await _cloud_tests()
+
+
+func _cloud_tests() -> void:
+	# Sun straight down: the share of the ground in cloud shadow against the cover setting.
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-90, 0, 0)
+	add_child(sun)
+	var c := _new_map()
+	c.cloud_variation = 0.0
+	c.cloud_type = 0.6
+	c.sun_light = c.get_path_to(sun)
+	c.cloud_shadow_extent = 8192.0
+	c.cloud_shadow_resolution = 256
+	await get_tree().physics_frame
+	var line := "cloud shadow share of the ground (type 0.6, sun overhead), cover:"
+	for cover in [0.2, 0.4, 0.6, 0.8, 1.0]:
+		c.cloud_cover = cover
+		c.snap_to_settings()
+		c.update_cloud_shadow()
+		var shaded := 0
+		var mean_t := 0.0
+		for i in 64:
+			for j in 64:
+				var v: float = c.get_sun_visibility_at(Vector3(-3000 + i * 95.0, 0, -3000 + j * 95.0))
+				mean_t += v
+				if v < 0.5:
+					shaded += 1
+		line += " %.1f: %.0f%% (mean sun %.2f)," % [cover, shaded / 40.96, mean_t / 4096.0]
+	print(line)
+	# Optical depth through the thickest column the bake saw, against Frostbite's range.
+	c.cloud_cover = 0.6
+	c.snap_to_settings()
+	var best := 0.0
+	var at := Vector3.ZERO
+	for i in 40:
+		for j in 40:
+			var p := Vector3(-2000 + i * 100.0, 0, -2000 + j * 100.0)
+			var tau := 0.0
+			var y := 1500.0
+			while y < 1500.0 + 1500.0:
+				tau += c.get_cloud_density_at(Vector3(p.x, y + 5.0, p.z)) * 10.0
+				y += 10.0
+			if tau > best:
+				best = tau
+				at = p
+	var sigma_max := 0.0
+	var y2 := 1500.0
+	while y2 < 3000.0:
+		sigma_max = max(sigma_max, c.get_cloud_density_at(Vector3(at.x, y2, at.z)))
+		y2 += 10.0
+	print("thickest column (cover 0.6, type 0.6): optical depth %.0f, peak extinction %.3f /m (Frostbite cumulus 0.05 to 0.12)" % [best, sigma_max])
+	# The baked shadow against a direct march for the same points.
+	c.update_cloud_shadow()
+	var err := 0.0
+	for k in 200:
+		var q := Vector3(randf_range(-3000, 3000), 0, randf_range(-3000, 3000))
+		var tau2 := 0.0
+		var y3 := 1500.0
+		while y3 < 3000.0:
+			tau2 += c.get_cloud_density_at(Vector3(q.x, y3 + 5.0, q.z)) * 10.0
+			y3 += 10.0
+		err += abs(1.0 / (1.0 + 0.75 * 0.15 * tau2) - c.get_sun_visibility_at(q))
+	print("baked shadow vs a 10 m march (200 points, two-stream transmission): mean |difference| %.3f" % (err / 200.0))
+	var t0 := Time.get_ticks_usec()
+	for k in 5:
+		c.update_cloud_shadow()
+	print("one cloud shadow bake (256 x 256, 12 steps, worker threads): %.1f ms" % ((Time.get_ticks_usec() - t0) / 5000.0))
+	# The shadow slides with the clouds between bakes: a point at a shadow's edge, followed downwind.
+	c.cloud_cover = 0.4
+	c.cloud_variation = 0.3
+	c.snap_to_settings()
+	c.update_cloud_shadow()
+	var probe := Vector3.ZERO
+	for k in 400:
+		probe = Vector3(-1500 + (k % 20) * 150.0, 0, -1500 + (k / 20) * 150.0)
+		var v0: float = c.get_sun_visibility_at(probe)
+		if v0 > 0.3 and v0 < 0.7:
+			break
+	var before: float = c.get_sun_visibility_at(probe)
+	var drift_s := 60.0
+	c.advance(drift_s)
+	var z0: float = c.roughness_length
+	var steer: float = 8.0 * log(1000.0 / z0) / log(10.0 / z0)
+	var moved: float = c.get_sun_visibility_at(probe + Vector3(steer * drift_s, 0, 0))
+	print("shadow after %.0f s of drift, followed downwind %.0f m: %.3f (was %.3f)" % [drift_s, steer * drift_s, moved, before])
+	c.queue_free()
+	sun.queue_free()
 
 
 func _mean(a: PackedFloat32Array) -> float:
@@ -384,6 +486,153 @@ func _build_street() -> void:
 	if map_out != "":
 		_save_map(map_out)
 		get_tree().quit()
+
+
+# The cloud layer over open ground: a WeatherSkyMaterial sky, cloud shadows on the sun.
+func _build_clouds() -> void:
+	var sky_mat = ClassDB.instantiate("WeatherSkyMaterial")
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+	sky.process_mode = Sky.PROCESS_MODE_REALTIME
+	env = Environment.new()
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = not raster and pt_from <= 0
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	env.pathtracing_sky_shader_enabled = true # camera rays that miss run the sky shader, as raster does
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+
+	var sun := DirectionalLight3D.new()
+	sun.name = "Sun"
+	sun.rotation_degrees = Vector3(-35, 40, 0)
+	sun.light_energy = 1.0
+	sun.shadow_enabled = true
+	sun.directional_shadow_max_distance = 400.0
+	add_child(sun)
+
+	var cam := Camera3D.new()
+	cam.far = 60000.0
+	cam.fov = 60
+	if view == "clouds_low":
+		# Looking down on the fields: the shadows.
+		cam.position = Vector3(0, 220, 0)
+		cam.look_at_from_position(cam.position, Vector3(0, 0, -600), Vector3.UP)
+	else:
+		# From a rise: sky and shadowed land.
+		cam.position = Vector3(0, 60, 0)
+		cam.look_at_from_position(cam.position, Vector3(0, 160, -1000), Vector3.UP)
+	add_child(cam)
+	cam.make_current()
+
+	weather = ClassDB.instantiate("WeatherMap3D")
+	weather.extent = 4096.0
+	weather.resolution = 64
+	weather.wind_speed = 6.0
+	weather.wind_direction = Vector2(0.6, -0.8)
+	weather.cloud_cover = 0.45
+	weather.cloud_type = 0.6
+	weather.cloud_variation = 0.3
+	weather.transition_time = 0.0
+	weather.cloud_shadow_extent = 8192.0
+	weather.cloud_shadow_resolution = 256
+	add_child(weather)
+	weather.sun_light = weather.get_path_to(sun)
+
+	# Fields: a large plane with a little colour noise, and some blocks for scale.
+	var cnoise := FastNoiseLite.new()
+	cnoise.frequency = 0.004
+	var albedo := NoiseTexture2D.new()
+	albedo.noise = cnoise
+	albedo.width = 512
+	albedo.height = 512
+	albedo.seamless = true
+	albedo.color_ramp = Gradient.new()
+	albedo.color_ramp.set_color(0, Color(0.22, 0.3, 0.12))
+	albedo.color_ramp.set_color(1, Color(0.42, 0.42, 0.22))
+	await albedo.changed
+	var gm := StandardMaterial3D.new()
+	gm.albedo_texture = albedo
+	gm.uv1_scale = Vector3(30, 30, 1)
+	gm.roughness = 0.95
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(12000, 12000)
+	ground.mesh = pm
+	ground.material_override = gm
+	add_child(ground)
+	var bm := StandardMaterial3D.new()
+	bm.albedo_color = Color(0.6, 0.57, 0.52)
+	bm.roughness = 0.8
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	for i in 60:
+		var b := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(rng.randf_range(8, 20), rng.randf_range(6, 30), rng.randf_range(8, 20))
+		b.mesh = box
+		b.material_override = bm
+		b.position = Vector3(rng.randf_range(-700, 700), box.size.y * 0.5, rng.randf_range(-1600, -150))
+		add_child(b)
+
+	await get_tree().physics_frame
+	weather.snap_to_settings()
+	weather.update_cloud_shadow()
+	print("clouds: sun visibility under the camera %.2f" % weather.get_sun_visibility_at(cam.position))
+
+
+# A checker projected by the sun, to check that the rasterizer and the path tracer place it alike.
+func _build_projector() -> void:
+	env = Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.2, 0.22, 0.25)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.15, 0.15, 0.17)
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.pathtracing_enabled = not raster and pt_from <= 0
+	env.pathtracing_samples_per_pixel = spp
+	env.pathtracing_max_bounces = bounces
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	for y in 8:
+		for x in 8:
+			var on := (x + y) % 2 == 0
+			img.set_pixel(x, y, Color(1, 1, 1) if on else Color(0.1, 0.1, 0.1))
+	img.set_pixel(0, 0, Color(1, 0.1, 0.1)) # the corner, to see the orientation
+	var sun := DirectionalLight3D.new()
+	sun.rotation_degrees = Vector3(-60, 25, 0)
+	sun.light_energy = 1.2
+	sun.shadow_enabled = true
+	sun.light_projector = ImageTexture.create_from_image(img)
+	sun.projector_size = Vector2(4, 4)
+	sun.projector_offset = Vector2(-2, -2)
+	add_child(sun)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 4.5, 5.5)
+	cam.look_at_from_position(cam.position, Vector3(0, 0, 0), Vector3.UP)
+	add_child(cam)
+	cam.make_current()
+	var gm := StandardMaterial3D.new()
+	gm.albedo_color = Color(0.7, 0.7, 0.7)
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(12, 12)
+	ground.mesh = pm
+	ground.material_override = gm
+	add_child(ground)
+	var box := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.8, 1.2, 0.8)
+	box.mesh = bm
+	box.material_override = gm
+	box.position = Vector3(1.2, 0.6, 0.5)
+	add_child(box)
 
 
 func _map_view() -> void:
