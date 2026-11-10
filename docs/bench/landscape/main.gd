@@ -43,6 +43,7 @@ var weather: WeatherMap3D
 var sky_mat: WeatherSkyMaterial
 var snow: SnowCover3D
 var snowfall: SnowFall3D
+var cornices: SnowCornice3D
 var probe: Node3D
 var data_map: TerrainDataMap3D
 var veg: VegetationField3D
@@ -447,14 +448,40 @@ func _build_weather() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+	# Snow: a winter baked over the whole world (SnowClimate: snow line, shaded faces, loaded lee slopes, cornices),
+	# carried on by the weather; a finer near square follows the camera.
 	snow = SnowCover3D.new()
 	snow.name = "Snow"
-	snow.extent = 4096.0
+	snow.extent = float(args.get("snow-extent", "1024"))
 	snow.resolution = 256
 	add_child(snow)
 	snow.height_source = snow.get_path_to(get_node("GroundHeight"))
 	snow.sun_light = snow.get_path_to(sun)
-	snow.follow_target = snow.get_path_to(get_node("WorldAnchor"))
+	if args.get("snow", "climate") == "climate":
+		var climate := SnowClimate.new()
+		climate.base_height = 0.0
+		climate.january_temperature = 1.0 # mild coast, cold peaks
+		climate.prevailing_wind_from = 190.0 # from the sea
+		climate.wind_speed = float(args.get("climate-wind", "5"))
+		snow.climate = climate
+		var t := Time.get_ticks_msec()
+		snow.bake_climate(Rect2(-2048, -2048, 4096, 4096), int(args.get("climate-res", "256")))
+		_log("snow climate baked in %d ms" % (Time.get_ticks_msec() - t))
+		var sw: PackedFloat32Array = climate.swe
+		var mx := 0.0
+		var nz := 0
+		for v in sw:
+			mx = maxf(mx, v)
+			if v > 1.0: nz += 1
+		var cx := 0.0
+		for v in climate.cornice_x: cx = maxf(cx, absf(v))
+		_log("climate swe max %.1f mm, %d of %d cells with snow, cornice max %.2f m, has_world %s" % [mx, nz, sw.size(), cx, snow.has_world()])
+	else:
+		snow.extent = 4096.0
+		snow.follow_target = snow.get_path_to(get_node("WorldAnchor"))
+	cornices = SnowCornice3D.new()
+	cornices.name = "Cornices"
+	add_child(cornices)
 	# Falling and blowing snow around the camera, from the same snowpack and weather.
 	snowfall = SnowFall3D.new()
 	snowfall.name = "Snowfall"
@@ -760,9 +787,37 @@ func _checks() -> void:
 	check(wet > 0.05, "rain wets the lowlands (wetness %.2f)" % wet)
 	var rain := weather.get_rain_at(Vector3(-300, 0, -400))
 	check(rain > 1.0, "storm rains over the hills (%.1f mm/h)" % rain)
-	var snow_peak := snow.get_depth_at(peak)
-	var snow_coast := snow.get_depth_at(Vector3(0, 0, 1200))
+	var snow_peak := _snow_depth(peak)
+	var snow_coast := _snow_depth(Vector3(0, 0, 1200))
 	check(snow_peak > 0.02 and snow_coast < 0.005, "snow lies on the peaks (%.2f m at %.0f m) and not on the coast (%.3f m)" % [snow_peak, peak.y, snow_coast])
+	# Snow line from the baked winter: mean depth by height band over the world tier.
+	if snow.has_world():
+		var bands := [0.0, 0.0, 0.0, 0.0]
+		var counts := [0, 0, 0, 0]
+		for k in 4000:
+			var x := -2000.0 + (k % 80) * 50.0
+			var z := -2000.0 + (k / 80) * 70.0
+			var h := height_at(x, z)
+			if h < 1.0:
+				continue
+			var b := clampi(int(h / 250.0), 0, 3)
+			bands[b] += _snow_depth(Vector3(x, h, z))
+			counts[b] += 1
+		var txt := ""
+		for b in 4:
+			txt += "%d-%d m: %.2f m  " % [b * 250, b * 250 + 250, bands[b] / maxf(counts[b], 1)]
+		_log("snow by height: " + txt)
+		check(bands[3] / maxf(counts[3], 1) > bands[0] / maxf(counts[0], 1) + 0.1, "the baked winter gives a snow line: deeper with height (" + txt.strip_edges() + ")")
+	else:
+		check(false, "SnowCover3D world tier from bake_climate", false)
+	# Cornices on the lee crests near the peak.
+	var cprobe := Node3D.new()
+	add_child(cprobe)
+	cprobe.global_position = peak
+	cornices.follow_target = cornices.get_path_to(cprobe)
+	cornices.rebuild()
+	check(cornices.get_segment_count() > 0, "cornices grow on the lee crests around the peak (%d pieces)" % cornices.get_segment_count())
+	cornices.follow_target = NodePath("")
 	check(ocean.follow_weather and absf(ocean.wind_speed - weather.get_mean_wind_at(ocean.global_position).length()) < 3.0, "sea state follows the weather wind (%.1f m/s vs %.1f)" % [ocean.wind_speed, weather.get_mean_wind_at(ocean.global_position).length()])
 	# Grass on a meadow by the lake (the wide camera hangs over the sea, where none grows).
 	var meadow_pt := lake_center + Vector3(-lake_dir.y, 0, lake_dir.x) * (lake_axes.y + 80.0)
@@ -822,6 +877,14 @@ func _checks() -> void:
 		elif r[0] == "FAIL": fails += 1
 		else: gaps += 1
 	print("[landscape] links: %d pass, %d fail, %d gaps" % [passes, fails, gaps])
+
+
+func _snow_depth(p: Vector3) -> float:
+	# The near square where it covers the point, else the world tier the climate bake left.
+	var r: Rect2 = snow.get_map_rect()
+	if r.has_point(Vector2(p.x, p.z)) or not snow.has_world():
+		return snow.get_depth_at(p)
+	return snow.get_world_depth_at(p)
 
 
 func _coast_z(x: float) -> float:
