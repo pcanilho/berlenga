@@ -14,6 +14,7 @@ extends Node3D
 #   --wear=W         leaf wear 0..1 (default the generator's 0.5)
 #   --wind=x,z       fallback wind for the plants (default none)
 #   --dump=dir       save the baked textures of the first seed as PNGs
+#   --seq=N          save N frames in a row as path_000.png... (run with --fixed-fps 30 for a clip)
 #   --out=path.png   save the frame
 
 const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove"]
@@ -31,6 +32,7 @@ var push := false
 var still := false
 var wear := -1.0
 var top := false
+var seq := 0
 var wind := Vector2.ZERO
 var n := 0
 var fails := 0
@@ -48,6 +50,7 @@ func _ready() -> void:
 		elif a == "--push": push = true
 		elif a == "--still": still = true
 		elif a == "--top": top = true
+		elif a.begins_with("--seq="): seq = int(a.substr(6))
 		elif a.begins_with("--wear="): wear = float(a.substr(7))
 		elif a.begins_with("--wind="):
 			var w := a.substr(7).split(",")
@@ -195,7 +198,12 @@ func _checks() -> void:
 func _process(_d: float) -> void:
 	n += 1
 	# Raster waits for the wind and the trample field to settle; a traced frame costs minutes here.
-	if n < (90 if (push or wind != Vector2.ZERO) and raster else 8):
+	var settle := 90 if (push or wind != Vector2.ZERO) and raster else 8
+	if n < settle:
+		return
+	if seq > 0 and n < settle + seq:
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(out.get_basename() + "_%03d.png" % (n - settle))
 		return
 	set_process(false)
 	await RenderingServer.frame_post_draw

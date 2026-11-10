@@ -2088,6 +2088,18 @@ void vertex() {
 				push = normalize((to_local * vec3(b.x, 0.0, b.y)).xz) * 1.2 / max(sqrt(stiffness), 0.3);
 			}
 		}
+		// Sway: on top of the mean lean, each organ rocks at its own natural frequency, driven by
+		// the turbulence (de Langre 2008: herbs and grasses 0.5 to 4 Hz, lower for taller and
+		// softer stems). An ellipse, wider along the wind than across it; the phase is the organ's.
+		if (ws > 1e-4) {
+			vec2 wd = wl / ws;
+			vec2 org = (MODEL_MATRIX * vec4(pivot, 1.0)).xz;
+			float ph = fract(sin(dot(org, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+			float f = clamp(0.9 * sqrt(stiffness) / pow(max(height, 0.05), 0.6), 0.5, 4.0);
+			float amp = min(ws * resp, 1.1) * 0.22 * clamp(ws * 0.25, 0.3, 1.0);
+			float t = TIME * 6.2831853 * f + ph;
+			off += (wd * sin(t) + vec2(-wd.y, wd.x) * 0.4 * sin(t * 0.83 + 1.7)) * amp;
+		}
 		// Upright parts lean about their base along the push (or the wind). Parts that spread out
 		// (fronds, arching canes, rosette leaves) cannot be leaned sideways without rolling them
 		// over: they are laid down by the push's outward share and swung about their base by its

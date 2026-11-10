@@ -264,6 +264,28 @@ Checks (plants bench, `--top --close=10 --wear=1`, and `--test --wear=0` against
 - Frame time of all 60 plants unchanged on the CPU renderer (111 to 125 ms).
 - Wear 0 is the previous look exactly.
 
+## Wind sway (stage 4)
+
+The bend shader above already leans every organ about its base with the mean wind (WeatherMap3D
+with its gusts and canopy shelter, else the grass's fallback wind). A mean lean alone reads as
+plants tilted by a fan. What moves real herbs is turbulence exciting each stem near its own
+natural frequency: de Langre (2008) collects measurements from 0.5 Hz for tall soft stems to a
+few hertz for short stiff ones, and the motion is an ellipse, larger along the wind than across
+it. Games do the same with a per-branch phase (Sousa, GPU Gems 3 ch. 16: main bending plus a
+branch oscillation keyed by vertex colour; Unreal's Pivot Painter keys it by branch pivot).
+
+Built (same shader, no new data):
+
+- Each organ rocks about its base on top of the lean: amplitude 22% of the lean, frequency
+  `0.9 * sqrt(stiffness) / height^0.6` Hz clamped to 0.5 to 4 Hz, phase hashed from the organ's
+  pivot in world space, so neighbouring fronds of one bracken do not move together.
+- An ellipse: the across-wind share is 40% of the along-wind one, at a different rate.
+- Calm (no wind) costs nothing: the sway is skipped.
+
+Check: plants bench `--wind=5,1.5 --seq=90` at `--fixed-fps 30` (plants-wind.mp4). Frame time
+with wind 111 to 143 ms against 125 ms calm on the CPU renderer (noise; the shadow maps redraw
+every frame in wind). GPU timing waits for the desktop.
+
 ## References
 
 - Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*, 1990.
@@ -276,6 +298,7 @@ Checks (plants bench, `--top --close=10 --wear=1`, and `--test --wear=0` against
 - Sousa, "Vegetation procedural animation and shading in Crysis", GPU Gems 3, ch. 16, 2007.
 - Kozlov, Lanta, Zverev, Zvereva, "Global patterns in background losses of woody plant
   foliage to insects", Global Ecology and Biogeography 24, 2015.
+- de Langre, "Effects of wind on plants", Annual Review of Fluid Mechanics 40, 2008.
 - Lim, Kim, Nam, "Leaf senescence", Annual Review of Plant Biology 58, 2007.
 - Lindquist, "Pivot Painter 2", Unreal Engine documentation, 2017.
 - Jahrmann, Wimmer, "Responsive real-time grass rendering for general 3D scenes", I3D 2017.
