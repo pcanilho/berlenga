@@ -110,6 +110,13 @@
 				Cloud cover at [param position], 0 (clear) to 1 (overcast).
 			</description>
 		</method>
+		<method name="get_cloud_top_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The top of the cloud the sky draws over [param position]'s x and z (world y, metres). It is the base plus the column's height for its cloud type: a quarter of [member cloud_thickness] for stratus, all of it for cumulus, and up to three times it in a storm's core, where the type reaches 0.9. [WeatherLightning3D] takes its flash rate from this height.
+			</description>
+		</method>
 		<method name="get_cloud_density_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
