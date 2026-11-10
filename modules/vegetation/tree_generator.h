@@ -184,6 +184,7 @@ private:
 	HashMap<int, float> crown_cache;
 
 	LocalVector<Node> nodes;
+	LocalVector<uint8_t> spurs; // Per node: carries short-shoot leaves in the mesh (not in growth).
 	LocalVector<Bud> buds;
 	RandomPCG rng;
 
@@ -223,6 +224,7 @@ private:
 	static void _tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color);
 	void _add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, const Vector3 &p_up, float p_size, const Color &p_color);
 	void _add_needle(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color);
+	void _mark_spurs(int p_year);
 	Ref<ArrayMesh> _build_mesh();
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants);
 

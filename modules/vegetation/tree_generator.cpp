@@ -1158,6 +1158,34 @@ void TreeGenerator::_add_needle(Builder &r_b, const Vector3 &p_base, const Vecto
 	r_b.indices.push_back(base + 1);
 }
 
+// Short shoots. Broadleaves carry much of their foliage on spurs along the branches of the last
+// years, not only at the shoot tips: oak, beech and lime short shoots live 5 to 10 years and new
+// ones break from older wood up to limb size
+// (Kozlowski and Pallardy, "Growth Control in Woody Plants", 1997). The growth model counts only
+// the shoot tips as light-gathering foliage; letting spurs shade during growth thinned the crowns
+// (each layer of leaves darkened the next), so they are added to the mesh after growth, where the
+// final light still reaches them.
+void TreeGenerator::_mark_spurs(int p_year) {
+	spurs.resize(nodes.size());
+	memset(spurs.ptr(), 0, spurs.size());
+	if (phyllotaxis == PHYLLOTAXIS_WHORLED || params[PARAM_NEEDLES] > 0.5f) {
+		return;
+	}
+	_build_shadow_grid(p_year);
+	// The growth model's light (1 + a - shadow) reaches zero a few leaf layers in, where buds
+	// stop extending; spurs live on much less. Read the shadow as optical depth instead (Beer-
+	// Lambert, transmittance exp(-shadow)) and keep spurs down to about 10% of open light, the
+	// low end of what shade leaves of beech and lime live on (Larcher, "Physiological Plant
+	// Ecology", 2003).
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		if (n.leafy || n.dead || n.removed || n.length <= 0.0f || n.order == 0 || n.born <= p_year - 30 || n.radius > 0.12f) {
+			continue;
+		}
+		spurs[i] = Math::exp(-_shadow_at(n.end())) > 0.05f ? 1 : 0;
+	}
+}
+
 Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	Builder bark;
 	Builder leaves;
@@ -1225,7 +1253,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	lr.seed(uint64_t(seed) * 7919u + 13u);
 	for (int i = 1; i < int(nodes.size()); i++) {
 		const Node &n = nodes[i];
-		if (!n.leafy || n.removed || n.dead) {
+		if ((!n.leafy && !spurs[i]) || n.removed || n.dead) {
 			continue;
 		}
 		Vector3 ref = Math::abs(n.dir.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
@@ -1747,6 +1775,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	_compute_radii();
 	_bend_under_gravity();
 	_measure();
+	_mark_spurs(years);
 	Ref<ArrayMesh> mesh = _build_mesh();
 	generation_usec = OS::get_singleton()->get_ticks_usec() - t0;
 	return mesh;
