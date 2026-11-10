@@ -6,6 +6,14 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-eb40e5d1 (2026-11-10)
+
+### Fixed
+- Path tracing works again: the light buffer declarations lost their semicolons in the cloud shadow change, so the path tracer's shaders failed to compile and every view fell back to raster.
+
+### Changed
+- README: raster hair shading
+
 ## build-62ff210c (2026-11-10)
 
 ### Added
