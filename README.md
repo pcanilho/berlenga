@@ -53,7 +53,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Transmission** (BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.
 - **Clearcoat** (`rendering/pathtracing/clearcoat`): matches raster, with traced coat reflections; coat texture.
 - **Subsurface scattering** (`rendering/pathtracing/subsurface_scattering`, radius `subsurface_scattering_scale`): random walk inside closed meshes; skin, wax and marble soften and thin parts glow when backlit.
-- **Wet surfaces** (BaseMaterial3D Wetness: `wetness_enabled`, `wetness_porosity`): porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced.
+- **Wet surfaces** (BaseMaterial3D Wetness: `wetness_enabled`, `wetness_porosity`): porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced; `get_wetness_shader_code()` for ShaderMaterials.
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
@@ -243,6 +243,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **River network** (`build_river_paths()`): rivers with widths and discharges, made into joined `PhysXRiver3D` paths.
 - **Coast and lakes** (`ocean_edges` or `sea_map`; `lake_count`, `lakes`; `build_water()`): sea with a Dean-profile seabed and beaches; lakes behind natural dams; builds the sea and lake surfaces, and rivers end in them.
 - **Climate maps** (`TerrainDataMap3D.bake_climate()`, `ClimateRecipe`): temperature, orographic rain and rain shadows, snow share, aridity, winter and annual sunlight with terrain shadows, and wind exposure.
+- **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow.
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
@@ -392,7 +393,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Snowstorms** (`SnowFall3D.haze_enabled`, `turbulence`): falling and blowing snow haze the air through the weather map (Pomeroy-Male suspension, 118 m visibility at 20 m/s); flakes ride turbulent eddies.
 - **Shelter** (`SnowCover3D.canopy_enabled`, `shelter_collision_mask`): ground under roofs and overhangs stays bare; tree crowns hold snow and unload it later.
 - **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
-- **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced.
+- **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.
 
 <details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle, shelter</summary>
 
