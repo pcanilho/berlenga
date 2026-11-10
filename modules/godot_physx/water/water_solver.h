@@ -107,6 +107,8 @@ public:
 	RID tex_ocean_deriv; // RGBA32F (dh/dx, dh/dz, dDx/dx, dDz/dz)
 	RID tex_ocean_foam; // R32F foam amount 0..1, rest coordinates, persists across steps
 	RID buf_foam_params, uset_foam;
+	RID buf_foam_cover; // one uint: the foam pass's sum over the grid, read back each step
+	SafeNumeric<uint32_t> foam_cover_bits{ 0xFFFFFFFFu }; // float bits of the mean foam, all ones = unknown
 	float foam_choppiness = 1.0f;
 	float foam_threshold = 0.7f;
 	float foam_persistence = 2.5f;
@@ -280,6 +282,8 @@ public:
 	void rt_on_ripple_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self, int64_t p_serial);
 	void rt_on_ocean_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self);
 	void rt_on_ocean_dz(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
+	void rt_on_foam_cover(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
+	void _rt_store_foam_cover(const PackedByteArray &p_data);
 	void rt_on_ripple_state(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
 
 	~WaterSolverGPU();
@@ -541,6 +545,9 @@ public:
 	// water_spectrum_evolve.glsl); get_ocean_dz_grid() the z displacement.
 	void get_ocean_height_grid(Vector<float> &r_height, Vector<float> &r_imag, int &r_n, Vector2 &r_domain_size, double *r_time = nullptr) const;
 	void get_ocean_dz_grid(Vector<float> &r_dz) const;
+	// Mean whitecap foam (0..1) over the ocean grid at the last readback,
+	// -1 before the first one or with foam off.
+	float get_foam_cover() const;
 	// dh/dx of the ocean layer from the FFT (readback, for tests).
 	void get_ocean_slope_x_grid(Vector<float> &r_slope_x) const;
 
