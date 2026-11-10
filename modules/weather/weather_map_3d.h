@@ -117,6 +117,12 @@ private:
 	float cur_temperature = 15.0f;
 	float cur_humidity = 0.7f;
 	bool eased_once = false;
+	// Followers (the sea's lag) watch these: cells refreshed, the base snapped, and weather time skipped
+	// by advance().
+	uint64_t cells_serial = 0;
+	uint64_t snap_cells_serial = 0;
+	uint64_t snap_serial = 0;
+	double advanced_time = 0.0;
 
 	// Cells, row-major in z then x; the map's corner sits on a whole cell.
 	Vector2i origin_cell; // world cell index of cell (0, 0)
@@ -225,6 +231,8 @@ private:
 	void _update_cells(double p_weather_dt);
 	void _update_row(uint32_t p_row, CellPass *p_pass);
 	void _gather_water_sources();
+	void _set_base_to_settings();
+	void _snap();
 	void _fill_gust_image();
 	void _upload();
 	void _publish_globals();
@@ -388,6 +396,11 @@ public:
 	// Bakes the cloud shadow now and waits for it (normally it runs in the background).
 	void update_cloud_shadow();
 	double get_weather_time() const { return weather_time; }
+	// For followers: how many times the base was snapped, whether the cells have been refreshed since
+	// (a sample taken before reads the old state), and the weather seconds advance() has skipped.
+	uint64_t get_snap_serial() const { return snap_serial; }
+	bool are_cells_fresh_since_snap() const { return cells_serial > snap_cells_serial; }
+	double get_advanced_time() const { return advanced_time; }
 
 	Ref<Texture2D> get_wind_texture() const { return wind_texture; }
 	Ref<Texture2D> get_state_texture() const { return state_texture; }
