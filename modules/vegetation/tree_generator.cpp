@@ -670,6 +670,12 @@ void TreeGenerator::_grow_year(int p_year) {
 		}
 		const Vector3 p = n.end() + b.dir * (cell * 0.5f);
 		b.light = CLAMP(1.0f + a - _shadow_at(p), 0.0f, 1.0f);
+		// Branch buds lying on the ground die (contact, snow press, browsing), so lower limbs do not
+		// keep spreading along the ground; stems and basal sprouts are exempt.
+		if (b.node != 0 && n.order > 0 && p.y < 0.3f) {
+			b.alive = false;
+			continue;
+		}
 		if (b.light < params[PARAM_BUD_LIGHT_MIN]) {
 			b.alive = false;
 		}
@@ -782,12 +788,13 @@ void TreeGenerator::_grow_year(int p_year) {
 		}
 		const Bud bud = buds[bi];
 		buds[bi].alive = false;
-		// Vigor beyond the internode count lengthens the internodes (Palubicki: l = v / n), so a
-		// dominant leader outgrows its laterals instead of being capped at the same shoot.
+		// Vigor beyond the internode count lengthens the internodes and a weak bud makes a short
+		// shoot (Palubicki: l = v / n), so a dominant leader outgrows its laterals and shaded
+		// shoots stay short inside the crown instead of reaching out at full length.
 		const Node &from = nodes[bud.node];
 		const bool from_root = bud.node == 0;
 		const int order = (bud.terminal || from_root) ? from.order : from.order + 1;
-		const float len = base_len * CLAMP(bud.vigor / float(count), 0.6f, 1.5f);
+		const float len = base_len * CLAMP(bud.vigor / float(count), 0.25f, 1.5f);
 		const float grav = order == 0 ? params[PARAM_TRUNK_GRAVITROPISM] : params[PARAM_GRAVITROPISM];
 		Vector3 pos = from_root ? from.start : from.end();
 		Vector3 dir = bud.dir;
