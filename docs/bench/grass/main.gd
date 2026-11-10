@@ -18,6 +18,7 @@ extends Node3D
 #                    their shade, meadow in the open (PlantSpecies.shade_range)
 #   --forest=in      the same, standing inside the wood
 #   --turf=0         without the near turf layer
+#   --terrain-material  the ground drawn with TerrainMaterial3D (its grass tint calls grass_ground())
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
 const SIZE := 96.0
@@ -42,6 +43,7 @@ var forest_in := false
 var ground_mat: ShaderMaterial
 var turf: GrassField3D
 var no_turf := false
+var terrain_mat := false
 var notex := false
 var t_frames := 0
 var under: GrassField3D
@@ -75,6 +77,7 @@ func _ready() -> void:
 		elif a == "--close": close = true
 		elif a == "--forest": forest = true
 		elif a == "--turf=0": no_turf = true
+		elif a == "--terrain-material": terrain_mat = true
 		elif a == "--forest=in":
 			forest = true
 			forest_in = true
@@ -216,6 +219,8 @@ void fragment() {
 	var ground := MeshInstance3D.new()
 	ground.mesh = _ground_mesh()
 	ground.material_override = gm
+	if terrain_mat:
+		ground.material_override = TerrainMaterial3D.new()
 	add_child(ground)
 	var water := MeshInstance3D.new()
 	var wp := PlaneMesh.new()
