@@ -1,13 +1,14 @@
 // Indirect light reuse across pixels and frames: ReSTIR GI (Ouyang et al. 2021), with
 // generalized RIS weights (Lin et al. 2022). See docs/ideas/indirect-reuse.md.
 //
-// A pixel's first sample, where its camera ray's first hit takes the diffuse lobe, keeps its
-// first bounce as a sample: the point it reached (x2), that point's normal and the radiance
-// that came back. Raygen resamples it with last frame's reservoir for the same surface and
-// two neighbours', reconnecting this surface to their x2, and shades the diffuse lobe with
-// the sample chosen. Weights are taken in area measure at x2, where the reconnection shift
-// needs no Jacobian, with the balance heuristic over the surfaces' targets. A sample that
-// reached nothing (the sky) is a direction, in solid angle.
+// Where a pixel's camera ray first hits a surface and takes the diffuse lobe, the first bounce
+// is kept as a sample: the point it reached (x2), that point's normal and the radiance that
+// came back. Raygen resamples the pixel's samples' first bounces with last frame's reservoir
+// for the same surface and two neighbours', reconnecting this surface to their x2, and shades
+// the diffuse lobe of every sample that took it with the sample chosen. Weights are taken in
+// area measure at x2, where the reconnection shift needs no Jacobian, with the balance heuristic
+// over the surfaces' targets. A sample that reached nothing (the sky) is a direction, in solid
+// angle.
 //
 // Binding 52: header (flags, unused, width, height), two frames of reservoirs of
 // RT_IR_STRIDE uints, then this frame's surface records of RT_IR_RECORD uints.
@@ -31,7 +32,7 @@ rt_ir;
 #define RT_IR_RADIUS 16.0 // pixels
 #define RT_IR_NORMAL 0.9 // cosine a neighbour's normal must reach
 #define RT_IR_PLANE 0.05 // distance off this surface's plane, over the distance to the camera
-#define RT_IR_MIN_ROUGHNESS 0.25 // an x2 shinier than this is reused only by its own surface
+#define RT_IR_MIN_ROUGHNESS 0.4 // an x2 shinier than this is reused only by its own surface
 
 // Hit outputs on the main path (bits 22-23 are free outside peel rays).
 #define RT_IR_SURFACE_FLAG (1u << 22) // bounce 0: the surface record was written
@@ -58,7 +59,7 @@ uint rt_ir_record_base(ivec2 p_pixel) {
 }
 
 uint rt_ir_pack_dir(vec3 v) {
-	return packUnorm2x16(vec3_to_oct(normalize(v)) * 0.5 + 0.5);
+	return packUnorm2x16(vec3_to_oct(normalize(v))); // vec3_to_oct() gives 0..1
 }
 
 vec3 rt_ir_unpack_dir(uint p) {
@@ -95,7 +96,7 @@ float rt_ir_burley(vec3 N, vec3 V, vec3 L, float p_roughness) {
 bool rt_ir_diffuse_taken = false;
 vec3 rt_ir_weight = vec3(0.0); // the throughput before the diffuse weight, times the diffuse reflectance
 
-// The camera ray's first hit, sample 0: the surface record raygen reuses with.
+// The camera ray's first hit (the same for every sample): the surface record raygen reuses with.
 void rt_ir_write_record(vec3 p_hit_pos, vec3 p_prev_pos, vec3 N, vec3 Ng, float p_roughness, bool p_burley) {
 	uint b = rt_ir_record_base(ivec2(gl_LaunchIDEXT.xy));
 	vec3 w = rt_ir_diffuse_taken ? rt_ir_weight : vec3(0.0);
@@ -188,5 +189,229 @@ float rt_ir_target(IRReservoir r, vec3 x, vec3 n, vec3 ng, out vec3 r_dir, out f
 	r_dist = sqrt(d2);
 	r_dir = d / r_dist;
 	return lum * rt_ir_cosine(n, ng, r_dir) * abs(dot(r.n2, r_dir)) / d2;
+}
+
+// The first bounce of each sample whose camera ray's first hit took the diffuse lobe, as
+// candidates for this frame's reservoir (resampled importance sampling, Talbot et al. 2005).
+struct IRFresh {
+	IRReservoir r; // the candidate chosen
+	float w_sum;
+	float t; // its target
+	uint k; // candidates
+};
+
+IRFresh rt_ir_fresh_init() {
+	IRFresh f;
+	f.r.x1 = vec3(0.0);
+	f.r.n1 = vec3(0.0, 0.0, 1.0);
+	f.r.dir = vec3(0.0, 0.0, 1.0);
+	f.r.dist = 0.0;
+	f.r.n2 = vec3(0.0, 0.0, 1.0);
+	f.r.L = vec3(0.0);
+	f.r.M = 1u;
+	f.r.rough = false;
+	f.r.W = 0.0;
+	f.w_sum = 0.0;
+	f.t = 0.0;
+	f.k = 0u;
+	return f;
+}
+
+// One candidate: the bounce along p_dir from x1, which reached x2 (p_has_x2) or the sky, and the
+// radiance p_L that came back. p_traced false: the path ended before the bounce (L = 0).
+void rt_ir_fresh_add(inout IRFresh f, vec3 x1, bool p_traced, vec3 p_dir, bool p_has_x2, vec3 x2, vec3 n2, bool p_rough, vec3 p_L, inout uint rng) {
+	f.k++;
+	if (!p_traced || luminance(p_L) <= 0.0) {
+		return;
+	}
+	uint b = rt_ir_record_base(ivec2(gl_LaunchIDEXT.xy));
+	vec3 N = rt_ir_unpack_dir(rt_ir.data[b + 2u]);
+	vec3 Ng = rt_ir_unpack_dir(rt_ir.data[b + 3u]);
+	IRReservoir c;
+	c.x1 = x1;
+	c.n1 = N;
+	c.M = 1u;
+	c.rough = p_rough;
+	c.L = p_L;
+	c.n2 = p_has_x2 ? n2 : N;
+	c.dir = p_dir;
+	c.dist = 0.0;
+	c.W = 0.0;
+	// The path's density for the direction, in area measure at x2 when it reached a surface.
+	float pdf = rt_ir_cosine(N, Ng, p_dir) / PI;
+	if (!(pdf > 0.0)) {
+		return;
+	}
+	float inv_pdf = 1.0 / pdf;
+	if (p_has_x2) {
+		vec3 d = x2 - x1;
+		float d2 = dot(d, d);
+		if (d2 <= 1e-8) {
+			return;
+		}
+		c.dist = sqrt(d2);
+		c.dir = d / c.dist;
+		float c2 = abs(dot(n2, c.dir));
+		if (c2 <= 1e-4) {
+			return;
+		}
+		inv_pdf = d2 / (pdf * c2);
+	}
+	vec3 dir_q;
+	float dist_q;
+	float t = rt_ir_target(c, x1, N, Ng, dir_q, dist_q);
+	float w = t * inv_pdf;
+	if (!(w > 0.0) || isinf(w)) {
+		return;
+	}
+	f.w_sum += w;
+	if (rand(rng) * f.w_sum < w) {
+		f.r = c;
+		f.t = t;
+	}
+}
+
+// After the pixel's samples: resample this frame's candidates with last frame's reservoirs, store
+// this frame's, and return the diffuse lobe's light to use in place of each diffuse sample's own.
+// p_active: some sample took the diffuse lobe (else only the history is carried).
+vec3 rt_ir_resolve(bool p_active, vec3 x1, vec3 V, float p_eye_dist, IRFresh p_fresh, inout uint rng) {
+	ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+	uint state = rt_ir_state();
+	uint b = rt_ir_record_base(pixel);
+	vec2 w_rg = unpackHalf2x16(rt_ir.data[b]);
+	vec2 w_b_rough = unpackHalf2x16(rt_ir.data[b + 1u]);
+	vec3 weight = vec3(w_rg, w_b_rough.x);
+	float roughness = w_b_rough.y;
+	vec3 N = rt_ir_unpack_dir(rt_ir.data[b + 2u]);
+	vec3 Ng = rt_ir_unpack_dir(rt_ir.data[b + 3u]);
+	vec2 d_xy = unpackHalf2x16(rt_ir.data[b + 4u]);
+	vec2 d_z_burley = unpackHalf2x16(rt_ir.data[b + 5u]);
+	vec3 prev_pos = x1 + vec3(d_xy, d_z_burley.x);
+	bool burley = d_z_burley.y > 0.5;
+	vec2 prev_px = vec2(pixel) + 0.5 + rt_motion_vector(x1, prev_pos) * vec2(gl_LaunchSizeEXT.xy);
+	bool history = (state & 2u) != 0u;
+
+	if (!p_active) {
+		// Not shaded through the reservoirs this frame: carry last frame's forward unchanged.
+		IRReservoir r;
+		if (!history || !rt_ir_load_prev(ivec2(floor(prev_px)), prev_pos, N, p_eye_dist, r)) {
+			r.x1 = x1;
+			r.n1 = N;
+			r.dir = N;
+			r.dist = 0.0;
+			r.n2 = N;
+			r.L = vec3(0.0);
+			r.M = 0u;
+			r.rough = false;
+			r.W = 0.0;
+		}
+		rt_ir_store(state & 1u, pixel, r);
+		return vec3(0.0);
+	}
+
+	IRReservoir res[2u + RT_IR_NEIGHBOURS];
+	uint count = 0u;
+
+	// This frame's sample: the path's own first bounce, one candidate drawn with the path's density.
+	IRReservoir fresh = p_fresh.r;
+	fresh.x1 = x1;
+	fresh.n1 = N;
+	fresh.M = 1u; // however many candidates built it (RTXDI)
+	fresh.W = p_fresh.w_sum > 0.0 ? p_fresh.w_sum / (float(p_fresh.k) * p_fresh.t) : 0.0;
+	res[count++] = fresh;
+
+	// Last frame's: this surface's own reservoir, then neighbours' whose x2 is rough.
+	if (history) {
+		IRReservoir r;
+		if (rt_ir_load_prev(ivec2(floor(prev_px)), prev_pos, N, p_eye_dist, r)) {
+			r.M = min(r.M, RT_IR_M_CAP);
+			res[count++] = r;
+		}
+		for (uint k = 0u; k < RT_IR_NEIGHBOURS; k++) {
+			vec2 u = vec2(rand(rng), rand(rng));
+			float rad = RT_IR_RADIUS * sqrt(u.x);
+			vec2 off = rad * vec2(cos(6.2831853 * u.y), sin(6.2831853 * u.y));
+			if (dot(off, off) < 1.0) {
+				continue;
+			}
+			if (rt_ir_load_prev(ivec2(floor(prev_px + off)), prev_pos, N, p_eye_dist, r) && (r.rough || r.dist <= 0.0)) {
+				r.M = min(r.M, RT_IR_M_CAP);
+				res[count++] = r;
+			}
+		}
+	}
+
+	// Resample: each sample weighted by its target here times its W, times the balance heuristic
+	// over every surface's target for it (generalized RIS), all in area measure at x2.
+	float w_sum = 0.0;
+	uint m_sum = 0u;
+	uint chosen = ~0u;
+	float chosen_target = 0.0;
+	vec3 chosen_dir = vec3(0.0);
+	float chosen_dist = 0.0;
+	for (uint i = 0u; i < count; i++) {
+		m_sum += res[i].M;
+		if (!(res[i].W > 0.0) || luminance(res[i].L) <= 0.0) {
+			continue;
+		}
+		vec3 dir_q;
+		float dist_q;
+		float t_here = rt_ir_target(res[i], x1, N, Ng, dir_q, dist_q);
+		if (!(t_here > 0.0)) {
+			continue;
+		}
+		float own = 0.0;
+		float total = 0.0;
+		for (uint j = 0u; j < count; j++) {
+			vec3 dj;
+			float sj;
+			float t = j == 0u ? t_here : rt_ir_target(res[i], res[j].x1, res[j].n1, res[j].n1, dj, sj);
+			total += float(res[j].M) * t;
+			if (j == i) {
+				own = float(res[j].M) * t;
+			}
+		}
+		float w = total > 0.0 ? own / total * t_here * res[i].W : 0.0;
+		w_sum += w;
+		if (rand(rng) * w_sum < w) {
+			chosen = i;
+			chosen_target = t_here;
+			chosen_dir = dir_q;
+			chosen_dist = dist_q;
+		}
+	}
+
+	IRReservoir out_r = fresh;
+	out_r.M = min(m_sum, RT_IR_M_CAP);
+	out_r.W = 0.0;
+	vec3 result = vec3(0.0);
+	if (chosen != ~0u && w_sum > 0.0) {
+		IRReservoir c = res[chosen];
+		float W = w_sum / chosen_target;
+		vec3 visible = vec3(1.0);
+		if (chosen != 0u) {
+			// Another surface's sample: check that this one sees its point.
+			vec3 o = offset_ray_origin(x1, Ng, p_eye_dist);
+			float reach = c.dist > 0.0 ? max(chosen_dist * 0.999 - 0.01, 0.001) : 10000.0;
+			visible = lights_trace_shadow_ray(o, chosen_dir, reach, RT_BOUNCE_MASK, rng);
+		}
+		float lum_vis = luminance(visible);
+		// The stored sample keeps x2 and its light; x1 becomes this surface.
+		out_r.L = c.L;
+		out_r.n2 = c.n2;
+		out_r.rough = c.rough;
+		out_r.dir = chosen_dir;
+		out_r.dist = c.dist > 0.0 ? chosen_dist : 0.0;
+		out_r.W = lum_vis > 0.0 ? W : 0.0; // a blocked sample is dropped (RTXDI's visibility bias correction)
+		if (lum_vis > 0.0) {
+			float g = burley ? rt_ir_burley(N, V, chosen_dir, roughness) : 1.0;
+			float geo = c.dist > 0.0 ? abs(dot(c.n2, chosen_dir)) / (chosen_dist * chosen_dist) : 1.0;
+			result = weight * (g / PI) * rt_ir_cosine(N, Ng, chosen_dir) * geo * c.L * W * visible;
+		}
+	}
+	out_r.x1 = x1;
+	out_r.n1 = N;
+	rt_ir_store(state & 1u, pixel, out_r);
+	return result;
 }
 #endif

@@ -656,6 +656,9 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (p_state->light_reuse_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->light_reuse_buffer);
 	}
+	if (p_state->indirect_reuse_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(p_state->indirect_reuse_buffer);
+	}
 	if (p_state->params_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->params_buffer);
 	}
@@ -7267,6 +7270,43 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				p_state->light_reuse_buffer = RID();
 			}
 		}
+		// Indirect light reuse (ReSTIR GI, raytracing_indirect_reuse_inc.glsl): two frames of
+		// per-pixel reservoirs, the slot written turning every frame, and this frame's surface
+		// records. Off where the first bounce segment can scatter (environment fog; the shader
+		// also checks gas volumes and a camera in a medium).
+		const bool indirect_reuse = p_state && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/indirect_reuse");
+		if (indirect_reuse) {
+			const Size2i size = rb->get_internal_size();
+			const uint64_t uints = RT_INDIRECT_REUSE_HEADER + uint64_t(size.width) * uint64_t(size.height) * (2 * RT_INDIRECT_REUSE_STRIDE + RT_INDIRECT_REUSE_RECORD);
+			if (!p_state->indirect_reuse_buffer.is_valid() || p_state->indirect_reuse_size != size) {
+				if (p_state->indirect_reuse_buffer.is_valid()) {
+					RD::get_singleton()->free_rid(p_state->indirect_reuse_buffer);
+				}
+				Vector<uint8_t> zeros;
+				zeros.resize(uints * sizeof(uint32_t));
+				zeros.fill(0);
+				p_state->indirect_reuse_buffer = RD::get_singleton()->storage_buffer_create(zeros.size(), zeros);
+				RD::get_singleton()->set_resource_name(p_state->indirect_reuse_buffer, "RT Indirect Reuse");
+				p_state->indirect_reuse_size = size;
+				p_state->indirect_reuse_history = false;
+			}
+			if (p_state->indirect_reuse_origin != p_state->rt_origin) {
+				// Stored positions are relative to the old anchor.
+				p_state->indirect_reuse_history = false;
+			}
+			p_state->indirect_reuse_origin = p_state->rt_origin;
+			p_state->indirect_reuse_slot ^= 1u;
+			const uint32_t header[4] = { 0u, 0u, uint32_t(size.width), uint32_t(size.height) };
+			RD::get_singleton()->buffer_update(p_state->indirect_reuse_buffer, 0, sizeof(header), header);
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_INDIRECT_REUSE] = float(1u + p_state->indirect_reuse_slot + (p_state->indirect_reuse_history ? 2u : 0u));
+			p_state->indirect_reuse_history = true;
+		} else if (p_state) {
+			p_state->indirect_reuse_history = false;
+			if (p_state->indirect_reuse_buffer.is_valid()) {
+				RD::get_singleton()->free_rid(p_state->indirect_reuse_buffer);
+				p_state->indirect_reuse_buffer = RID();
+			}
+		}
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SSS_SCALE] = MAX(0.0f, (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/subsurface_scattering_scale"));
 		// Weather wetness for BaseMaterial3D Wetness: WeatherMap3D's global state map (green =
 		// wetness) and its rect, the same globals the raster shader reads. Width 0 = none.
@@ -7578,6 +7618,16 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		u.binding = 51;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		u.append_id(p_state->light_reuse_buffer.is_valid() ? p_state->light_reuse_buffer : RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
+		uniforms.push_back(u);
+	}
+
+	// Binding 52: indirect light reuse reservoirs (SSBO; raytracing_indirect_reuse_inc.glsl). A
+	// small stand-in while off, which the shader never reads (RT_PARAM_INDIRECT_REUSE is 0).
+	{
+		RD::Uniform u;
+		u.binding = 52;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(p_state->indirect_reuse_buffer.is_valid() ? p_state->indirect_reuse_buffer : RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		uniforms.push_back(u);
 	}
 

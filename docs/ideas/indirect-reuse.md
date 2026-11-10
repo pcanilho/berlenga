@@ -1,6 +1,6 @@
 # Indirect light reuse across pixels and frames (ReSTIR GI)
 
-Status: building, off by default (`rendering/pathtracing/indirect_reuse`).
+Status: built, off by default (`rendering/pathtracing/indirect_reuse`); GPU cost to measure.
 
 ## Where we start
 
@@ -67,11 +67,13 @@ the other: the cache alone leaves direction noise, ReSTIR GI alone resamples noi
 ## Design here
 
 One pass inside the existing trace, as light reuse: no new dispatch.
-- Only a pixel's first sample, only at its camera ray's first hit, only when that hit took the
-  diffuse lobe (the coat, specular, transmission, back light and hair lobes keep their own
-  paths, as RTXDI's MIS keeps shiny first surfaces). The lobe is chosen at random with its
-  probability, so replacing the diffuse lobe's estimate with another unbiased estimate of the
-  same integral keeps the image unbiased.
+- Only at a camera ray's first hit, only for the samples that took the diffuse lobe there (the
+  coat, specular, transmission, back light and hair lobes keep their own paths, as RTXDI's MIS
+  keeps shiny first surfaces). The lobe is chosen at random with its probability, so replacing
+  the diffuse lobe's estimate with another unbiased estimate of the same integral keeps the
+  image unbiased. Every sample of a pixel hits the same first surface, so all the diffuse
+  samples' first bounces are candidates for one reservoir (resampled importance sampling), and
+  all of them are shaded with its result.
 - The closest hit records the surface for raygen in a per-pixel slot: the throughput before
   the diffuse weight times the diffuse reflectance, its normals, roughness (for Burley's
   factor) and where it was last frame. Raygen keeps the first bounce's x2 and, at the path's
@@ -83,13 +85,13 @@ One pass inside the existing trace, as light reuse: no new dispatch.
   spatial from two neighbours within 16 pixels of last frame, each validated by normal and
   plane distance. History capped at 20 frames (as our light reuse). Weights: generalized RIS
   balance heuristic with reconnection Jacobians.
-- Neighbours' samples are reconnected only when their x2 is rough (roughness at least 0.25,
+- Neighbours' samples are reconnected only when their x2 is rough (roughness at least 0.4, as the radiance cache,
   no transmission or hair); others serve only their own surface's temporal reuse.
 - One visibility ray for a chosen sample that is not the pixel's own new one.
 - Off by default under environment fog, gas volumes and a camera in water (their scattering
   lies on the first bounce segment, which a reconnection would skip).
-- Memory: two frames of 10-uint reservoirs plus an 8-uint surface record: 112 bytes a pixel,
-  about 100 MB at 1280x720 internal. Allocated only when on.
+- Memory: two frames of 10-uint reservoirs plus a 6-uint surface record: 104 bytes a pixel,
+  96 MB at 1280x720 internal, 215 MB at 1920x1080. Allocated only when on.
 
 ## Acceptance
 
@@ -97,6 +99,26 @@ Floor rule: ship only if quality improves at small cost. Measured on a sunlit ro
 mostly by indirect light, 480x270 at 1 and 4 spp after 16 frames, PSNR against 1024 spp
 with reuse off; mean luminance to show any darkening; and on the showcase city and plaza to
 show nothing else changes. GPU cost goes on the PC queue.
+
+## Results (lavapipe, 480x270, 16 frames of history, PSNR against 1024 spp, reuse off)
+
+| Scene | spp | Off | On |
+|---|---|---|---|
+| Room lit through one window (`--shot=room`) | 1 | 21.98 dB | 28.04 dB |
+| Room | 4 | 22.82 dB | 29.96 dB |
+| Room | 64 | 29.58 dB | 33.95 dB |
+| City street (`--shot=city`) | 4 | 26.99 dB | 27.05 dB |
+| Plaza, 400 lights (`--shot=plaza`) | 4 | 17.13 dB | 17.12 dB |
+
+In the room, 4 spp with reuse beats 64 spp without it. At 64 spp the mean brightness is the same
+on and off (0.0596 and 0.0595 of full scale), so no darkening from the visibility check shows.
+Lower spp images are darker than the reference in both modes because their bright specks clip
+at 8 bits. Outdoors, where direct light dominates, nothing changes. Frame time on the CPU
+rasteriser is within run-to-run noise (25 s against 27 s for the 16-frame room run). The GPU
+cost goes on the PC queue. Turn it on by default only if that cost is small.
+
+Done along the way: all of a pixel's diffuse samples feed one reservoir. With only sample 0
+reusing, 4 spp gained just 1.3 dB, because the other three samples' noise dominated.
 
 ## Sources
 
