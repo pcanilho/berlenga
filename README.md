@@ -336,7 +336,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.
 - **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).
 
-<details><summary>Images: weather map, wet ground, lightning</summary>
+<details><summary>Images: weather map, wet ground, lightning, blizzard</summary>
 
 ![Weather map fields round a storm: cloud cover, rain, wind at 10 m, wetness](docs/media/weather-map.jpg)
 
@@ -349,6 +349,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A lightning strike among blocks, raster and path traced](docs/media/weather-lightning.jpg)
 
 *Lightning: the channel lights the ground and casts sharp shadows from the blocks, raster and path traced.*
+
+![A shelter in calm weather, then in a blizzard, raster and path traced](docs/media/weather-blizzard.jpg)
+
+*Precipitation haze: in a blizzard the blowing snow hides the distance.*
 
 </details>
 
@@ -376,6 +380,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Falling snow** (`SnowFall3D`): falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.
 - **Snow climate** (`SnowClimate`): bakes a winter over the whole terrain, with snow lines, shaded faces that keep their snow and loaded lee slopes; the cover carries it on with the weather and draws it far away.
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
+- **Snowstorms** (`SnowFall3D.haze_enabled`, `turbulence`): falling and blowing snow haze the air through the weather map (Pomeroy-Male suspension, 118 m visibility at 20 m/s); flakes ride turbulent eddies.
 - **Shelter** (`SnowCover3D.canopy_enabled`, `shelter_collision_mask`): ground under roofs and overhangs stays bare; tree crowns hold snow and unload it later.
 - **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced.
