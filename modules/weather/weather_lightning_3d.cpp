@@ -282,7 +282,7 @@ void WeatherLightning3D::Thunder::build() {
 	const float hp = Math::exp(-Math::TAU * 15.0f / mix_rate);
 	float x_prev = 0.0f;
 	float y_prev = 0.0f;
-	constexpr float GAIN = 8.0f; // a 10 m piece seen broadside from 1 km peaks near -30 dBFS
+	constexpr float GAIN = 24.0f; // a flash 340 m off peaks near -4 dBFS before the soft clip
 	peak = 0.0f;
 	pcm.resize(samples * 2);
 	uint8_t *w = pcm.ptrw();
