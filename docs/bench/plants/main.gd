@@ -11,7 +11,7 @@ extends Node3D
 #   --dump=dir       save the baked textures of the first seed as PNGs
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -60,17 +60,17 @@ func _ready() -> void:
 			if macro and s != 0:
 				mi.free()
 				continue
-			mi.position = Vector3(p * STEP, 0, s * STEP) if close < 0 else Vector3((s - 1) * 0.36, 0, 0)
+			mi.position = Vector3((p % 9) * STEP, 0, (s + (p / 9) * 3.4) * STEP) if close < 0 else Vector3((s - 1) * 0.36, 0, 0)
 			add_child(mi)
 	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(12, 8)
+	pm.size = Vector2(14, 12)
 	var gm := StandardMaterial3D.new()
 	gm.albedo_color = Color(0.3, 0.25, 0.18)
 	gm.roughness = 0.95
 	pm.material = gm
 	ground.mesh = pm
-	ground.position = Vector3(1.6, 0, 0.6)
+	ground.position = Vector3(2.2, 0, 1.9)
 	add_child(ground)
 	var env := Environment.new()
 	var sky := Sky.new()
@@ -105,8 +105,8 @@ func _ready() -> void:
 		cam.position = Vector3(0, 0.42, 0.85)
 		cam.look_at(Vector3(0, 0.1, 0))
 	else:
-		cam.position = Vector3(1.65, 1.15, 2.9)
-		cam.look_at(Vector3(1.65, 0.08, 0.55))
+		cam.position = Vector3(2.2, 2.3, 5.9)
+		cam.look_at(Vector3(2.2, 0.1, 1.8))
 
 func _check(label: String, ok: bool, value) -> void:
 	print("%s %s: %s" % ["PASS" if ok else "FAIL", label, str(value)])
@@ -133,7 +133,7 @@ func _checks() -> void:
 		var other := gen.generate()
 		print("PLANT %s tris=%d height=%.2f width=%.2f ms=%.2f surfaces=%d" % [NAMES[p], _tris(m), aabb.end.y, max(aabb.size.x, aabb.size.z), ms, m.get_surface_count()])
 		_check(NAMES[p] + " has geometry", _tris(m) > 50, _tris(m))
-		_check(NAMES[p] + " plausible size", aabb.end.y > 0.03 and aabb.end.y < 0.8 and aabb.size.x < 1.2, aabb)
+		_check(NAMES[p] + " plausible size", aabb.end.y > 0.005 and aabb.end.y < 1.2 and aabb.size.x < 1.2, aabb)
 		_check(NAMES[p] + " grows from the ground", aabb.position.y > -0.08, aabb.position.y)
 		_check(NAMES[p] + " same seed, same plant", _tris(again) == _tris(m) and again.get_aabb() == aabb, _tris(again))
 		_check(NAMES[p] + " other seed, other plant", other.get_aabb() != aabb, other.get_aabb())

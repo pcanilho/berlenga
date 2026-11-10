@@ -53,6 +53,16 @@ public:
 		PRESET_SEDGE,
 		PRESET_DAISY,
 		PRESET_BUTTERCUP,
+		PRESET_NETTLE,
+		PRESET_THISTLE,
+		PRESET_YARROW,
+		PRESET_DOCK,
+		PRESET_COCKSFOOT,
+		PRESET_TIMOTHY,
+		PRESET_DRY_GRASS,
+		PRESET_LEAF_LITTER,
+		PRESET_MOSS,
+		PRESET_BILBERRY,
 		PRESET_MAX,
 	};
 
@@ -135,7 +145,10 @@ private:
 
 	float _rand(float p_from, float p_to) { return Math::lerp(p_from, p_to, rng.randf()); }
 	static float _leaf_width(const Leaf &p_leaf, float p_t);
-	void _add_leaf(Surface p_surface, const Transform3D &p_base, const Leaf &p_leaf, float p_wind_base, float p_ao = 1.0f);
+	void _add_leaf(Surface p_surface, const Transform3D &p_base, const Leaf &p_leaf, float p_wind_base, float p_ao = 1.0f, const Color &p_tint = Color(1, 1, 1));
+	LocalVector<Transform3D> _stem_frames(const Transform3D &p_base, float p_length, float p_bend, int p_segments) const;
+	Transform3D _frame_at(const LocalVector<Transform3D> &p_frames, float p_s) const;
+	void _add_grass_tuft(int p_blades, float p_length_min, float p_length_max, float p_width_min, float p_width_max, float p_spread);
 	Transform3D _add_stem(const Transform3D &p_base, float p_length, float p_r0, float p_r1, float p_bend, int p_segments, float p_wind_base, Surface p_surface = SURFACE_STEM);
 	void _add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height);
 	void _add_ray_flower(const Transform3D &p_top, float p_radius, int p_rays, const Leaf &p_petal);
@@ -149,6 +162,16 @@ private:
 	void _build_sedge();
 	void _build_daisy();
 	void _build_buttercup();
+	void _build_nettle();
+	void _build_thistle();
+	void _build_yarrow();
+	void _build_dock();
+	void _build_cocksfoot();
+	void _build_timothy();
+	void _build_dry_grass();
+	void _build_leaf_litter();
+	void _build_moss();
+	void _build_bilberry();
 
 	Ref<StandardMaterial3D> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
 	Ref<StandardMaterial3D> _textured_material(const TextureSet &p_set, float p_roughness) const;

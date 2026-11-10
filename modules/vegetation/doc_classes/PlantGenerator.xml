@@ -91,7 +91,37 @@
 		<constant name="PRESET_BUTTERCUP" value="6" enum="Preset">
 			Meadow buttercup: lobed basal leaves, branching stems with glossy yellow cup flowers.
 		</constant>
-		<constant name="PRESET_MAX" value="7" enum="Preset">
+		<constant name="PRESET_NETTLE" value="7" enum="Preset">
+			Stinging nettle: a patch of erect stems with opposite, toothed, heart-shaped leaves and hanging flower strings.
+		</constant>
+		<constant name="PRESET_THISTLE" value="8" enum="Preset">
+			Spear thistle: a rosette of deeply lobed spiny leaves and a branched stem with purple flower heads (first-year plants are rosettes only).
+		</constant>
+		<constant name="PRESET_YARROW" value="9" enum="Preset">
+			Yarrow: feathery, finely divided leaves and a flat-topped cluster of small white flower heads.
+		</constant>
+		<constant name="PRESET_DOCK" value="10" enum="Preset">
+			Broad-leaved dock: big wavy-edged basal leaves with red veins and a tall rust-brown seed stem.
+		</constant>
+		<constant name="PRESET_COCKSFOOT" value="11" enum="Preset">
+			Cock's-foot grass: a coarse tussock of broad blades with clustered, one-sided flower heads.
+		</constant>
+		<constant name="PRESET_TIMOTHY" value="12" enum="Preset">
+			Timothy grass: a tuft of narrow blades with tall stems ending in a dense cylindrical spike.
+		</constant>
+		<constant name="PRESET_DRY_GRASS" value="13" enum="Preset">
+			Last year's dead grass: straw blades, bent, broken and lying flat.
+		</constant>
+		<constant name="PRESET_LEAF_LITTER" value="14" enum="Preset">
+			Fallen leaves of several shapes and colours with a few twigs, lying on the ground.
+		</constant>
+		<constant name="PRESET_MOSS" value="15" enum="Preset">
+			A moss cushion: a low mound packed with upright shoots.
+		</constant>
+		<constant name="PRESET_BILBERRY" value="16" enum="Preset">
+			Bilberry: a dwarf shrub of branched green stems with small oval leaves and a few dark berries.
+		</constant>
+		<constant name="PRESET_MAX" value="17" enum="Preset">
 			Number of presets.
 		</constant>
 	</constants>
