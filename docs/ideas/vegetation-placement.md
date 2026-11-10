@@ -120,6 +120,14 @@ What we built:
 - `VegetationField3D.get_shade_at()`: the same shade for other systems (ground tint, grass density,
   snow under trees later).
 - Order matters as for footprints: canopy species first in the `Biome`, the understorey after.
+- `VegetationField3D.weather_map`: after each populate the crowns are written to that
+  `WeatherMap3D.canopy_map` (1 m cells, crown top height in red, leaf area index / 4 in green), so
+  snow interception, wind in the stand and `get_canopy_closure_at()` see the same forest. Opacity
+  and leaf area are the same Beer's law the weather map uses (extinction 0.5):
+  `opacity = 1 - exp(-0.5 LAI)`, so 0.85 is LAI 3.8 and overlapping crowns add leaf area exactly as
+  shade multiplies transmission. Closure there matches `get_shade_at()` to within the map's cells
+  (bench check: 0.02 at 0.5 m shelter cells).
+- `GrassField3D.canopy_field` (branch, with the blade work): the sward follows the same shade.
 - Shade is canopy only. Sun-facing slopes and terrain shadow come from the terrain thread's climate
   channels (insolation) when those land, and combine with this.
 

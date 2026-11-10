@@ -62,7 +62,10 @@ class VegetationField3D : public Node3D {
 		Vector2 xz;
 		float radius = 0.0f;
 		float opacity = 0.0f;
+		float top = 0.0f; // Crown top above the ground, metres.
 	};
+	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
+	void _publish_canopy(const Rect2 &p_rect);
 	static constexpr float CROWN_CELL = 8.0f;
 	LocalVector<Crown> crowns;
 	HashMap<Vector2i, LocalVector<int>> crown_grid;
@@ -96,6 +99,8 @@ public:
 	Ref<Biome> get_biome() const { return biome; }
 	void set_data_map(const NodePath &p_path);
 	NodePath get_data_map() const { return data_map; }
+	void set_weather_map(const NodePath &p_path) { weather_map = p_path; }
+	NodePath get_weather_map() const { return weather_map; }
 	void set_tile_size(float p_size);
 	float get_tile_size() const { return tile_size; }
 	void set_seed(int p_seed);
