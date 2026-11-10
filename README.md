@@ -36,6 +36,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Light visibility memory** (`rendering/pathtracing/light_visibility_memory`): hidden lights stop taking samples.
 - **Radiance cache** (`rendering/pathtracing/radiance_cache`): bounces end on cached light.
 - **Light reuse** (`rendering/pathtracing/light_reuse`, off by default): ReSTIR DI reuses light samples across pixels and frames.
+- **Indirect light reuse** (`rendering/pathtracing/indirect_reuse`, off by default): ReSTIR GI; rooms and shade lit by bounced light are far less noisy at the same samples.
 - Shadow-only casters bounce light.
 - Lit raster transparents and rain (`rendering/pathtracing/max_transparency_layers` 0), still traced in reflections.
 
