@@ -1,0 +1,490 @@
+/**************************************************************************/
+/*  terrain_stream_power.h                                                */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#pragma once
+
+// Uplift plus fluvial erosion by the stream power law, the large-scale landscape model of
+//   Cordonnier, Braun, Cani, Benes, Galin, Peytavie, Guerin, "Large Scale Terrain Generation from Tectonic Uplift
+//   and Fluvial Erosion", Eurographics 2016,
+// solved with the implicit O(n) scheme of
+//   Braun, Willett, "A very efficient O(n), implicit and parallel method to solve the stream power equation",
+//   Geomorphology 2013:
+//   dh/dt = U - K A^m S   (n = 1), steepest-descent (D8) receivers, a stack ordered from the outlets upstream,
+//   drainage area accumulated down the stack, then h_i = (h_i + dt U_i + F h_r) / (1 + F), F = K dt A^m / d_ir,
+//   which is unconditionally stable for any time step.
+// Additions:
+//   - Depressions: Priority-Flood with epsilon (Barnes, Lehman, Mulla 2014) fills closed basins only when a step
+//     leaves any, so every cell drains to an outlet; the fill is kept as deposited sediment (lakes filled by
+//     sediment, the flat valley floors of an alluvial plain).
+//   - Critical slope (threshold hillslopes, landsliding): h_i <= h_r + tan(theta) d_ir along the receiver tree, as
+//     the rock-strength limit of Cordonnier 2016 and the debris slope of Schott et al. 2023.
+//   - Hillslope diffusion dh/dt = k_d Laplacian(h) (Schott et al. 2023's "hillslope" term), explicit with stable
+//     sub-steps, for rounded soil-mantled hilltops.
+// Plain C++ on caller-owned buffers, single-threaded and in a fixed order, so a seed gives the same terrain on
+// every machine.
+
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+
+class TerrainStreamPower {
+public:
+	struct Params {
+		int nx = 0;
+		int ny = 0;
+		double dx = 16.0; // metres between grid nodes
+		double dt = 20000.0; // years per step
+		double erodibility = 2.0e-5; // K, 1/yr for m = 0.5
+		double area_exponent = 0.5; // m (n = 1)
+		double diffusion = 0.0; // k_d, m^2/yr
+		double talus = 0.85; // tan(critical slope angle); <= 0 disables
+		double base_level = 0.0; // outlet height
+		int outlet_edges = 15; // bit 0 -x, 1 +x, 2 -z, 3 +z
+		double fill_epsilon = 1.0e-3; // metres per cell drop forced across filled flats
+		// Drainage area by multiple flow directions, each lower neighbour receiving slope^p of the flow
+		// (Freeman 1991; Holmgren 1994; the "p_flow" of Schott et al. 2023). Removes the straight 45 degree valleys
+		// single-direction (D8) routing leaves on a grid. 0 = D8.
+		double flow_exponent = 1.1;
+	};
+
+	// Buffers: all nx * ny, row-major (z rows of x). The caller allocates them; outlet cells are fixed.
+	struct Buffers {
+		double *height = nullptr; // in/out, metres
+		const double *uplift = nullptr; // m/yr
+		const uint8_t *outlet = nullptr; // optional extra outlet mask (sea), 1 = outlet; may be null
+		double *area = nullptr; // out, drainage area m^2
+		double *sediment = nullptr; // in/out, accumulated basin fill, metres
+		int32_t *receiver = nullptr;
+		double *receiver_dist = nullptr;
+		int32_t *stack = nullptr;
+		int32_t *donor_count = nullptr;
+		int32_t *donor_offset = nullptr; // nx * ny + 1
+		int32_t *donors = nullptr;
+		int32_t *work = nullptr; // DFS / heap scratch, nx * ny
+		double *scratch = nullptr; // nx * ny
+		double *temp = nullptr; // nx * ny
+		int32_t *order = nullptr; // nx * ny, cells from highest to lowest
+		uint64_t *sort_keys = nullptr; // 2 * nx * ny
+		uint32_t *radix_count = nullptr; // 65536
+		uint8_t *flags = nullptr; // nx * ny
+	};
+
+	Params p;
+	Buffers b;
+	int pits_filled = 0; // cells raised by the last fill
+
+	bool is_outlet(int i) const {
+		const int x = i % p.nx;
+		const int z = i / p.nx;
+		if (b.outlet && b.outlet[i]) {
+			return true;
+		}
+		return ((p.outlet_edges & 1) && x == 0) || ((p.outlet_edges & 2) && x == p.nx - 1) ||
+				((p.outlet_edges & 4) && z == 0) || ((p.outlet_edges & 8) && z == p.ny - 1);
+	}
+
+	// One time step; returns the largest height change in metres.
+	double step() {
+		const int n = p.nx * p.ny;
+		double *h = b.height;
+		memcpy(b.scratch, h, sizeof(double) * n);
+
+		// Uplift.
+		for (int i = 0; i < n; i++) {
+			if (is_outlet(i)) {
+				h[i] = p.base_level;
+			} else {
+				h[i] += p.dt * b.uplift[i];
+			}
+		}
+
+		_compute_receivers();
+		if (_count_pits() > 0) {
+			_priority_flood_fill();
+			_compute_receivers();
+		} else {
+			pits_filled = 0;
+		}
+		_build_stack();
+
+		_accumulate_area();
+
+		const bool half_m = p.area_exponent == 0.5;
+		// Implicit stream power and critical slope, from the outlets up: every receiver is final before its donors.
+		for (int k = 0; k < n; k++) {
+			const int i = b.stack[k];
+			const int r = b.receiver[i];
+			if (r == i) {
+				continue;
+			}
+			const double d = b.receiver_dist[i];
+			const double am = half_m ? std::sqrt(b.area[i]) : std::pow(b.area[i], p.area_exponent);
+			const double f = p.erodibility * p.dt * am / d;
+			double hi = (h[i] + f * h[r]) / (1.0 + f);
+			if (p.talus > 0.0) {
+				hi = std::fmin(hi, h[r] + p.talus * d);
+			}
+			h[i] = hi;
+		}
+
+		if (p.diffusion > 0.0) {
+			_diffuse();
+		}
+
+		double max_dh = 0.0;
+		for (int i = 0; i < n; i++) {
+			max_dh = std::fmax(max_dh, std::fabs(h[i] - b.scratch[i]));
+		}
+		return max_dh;
+	}
+
+	// Routing only (receivers, stack, area) on the current heights, after filling any basin the last step left (so
+	// the result drains everywhere); no erosion. For the final heights and maps.
+	void route() {
+		_compute_receivers();
+		if (_count_pits() > 0) {
+			_priority_flood_fill();
+			_compute_receivers();
+		}
+		_build_stack();
+		_accumulate_area();
+	}
+
+private:
+	// D8 neighbour order, fixed so ties resolve the same way everywhere.
+	static constexpr int DX[8] = { 1, -1, 0, 0, 1, -1, 1, -1 };
+	static constexpr int DZ[8] = { 0, 0, 1, -1, 1, 1, -1, -1 };
+
+	void _compute_receivers() {
+		const int nx = p.nx;
+		const int ny = p.ny;
+		const double diag = p.dx * std::sqrt(2.0);
+		const double *h = b.height;
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				const int i = z * nx + x;
+				b.receiver[i] = i;
+				b.receiver_dist[i] = p.dx;
+				if (is_outlet(i)) {
+					continue;
+				}
+				double best = 0.0;
+				for (int k = 0; k < 8; k++) {
+					const int xx = x + DX[k];
+					const int zz = z + DZ[k];
+					if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+						continue;
+					}
+					const int j = zz * nx + xx;
+					const double d = k < 4 ? p.dx : diag;
+					const double s = (h[i] - h[j]) / d;
+					if (s > best) {
+						best = s;
+						b.receiver[i] = j;
+						b.receiver_dist[i] = d;
+					}
+				}
+			}
+		}
+	}
+
+	int _count_pits() const {
+		const int n = p.nx * p.ny;
+		int pits = 0;
+		for (int i = 0; i < n; i++) {
+			if (b.receiver[i] == i && !is_outlet(i)) {
+				pits++;
+			}
+		}
+		return pits;
+	}
+
+	// Binary min-heap on (height, index) in b.work, keyed by b.scratch2 = filled heights in b.height.
+	struct Heap {
+		int32_t *data;
+		int size = 0;
+		const double *key;
+		bool less(int a, int c) const { return key[a] < key[c] || (key[a] == key[c] && a < c); }
+		void push(int v) {
+			int i = size++;
+			data[i] = v;
+			while (i > 0) {
+				const int parent = (i - 1) >> 1;
+				if (!less(data[i], data[parent])) {
+					break;
+				}
+				const int t = data[i];
+				data[i] = data[parent];
+				data[parent] = t;
+				i = parent;
+			}
+		}
+		int pop() {
+			const int top = data[0];
+			data[0] = data[--size];
+			int i = 0;
+			for (;;) {
+				const int l = 2 * i + 1;
+				const int r = l + 1;
+				int m = i;
+				if (l < size && less(data[l], data[m])) {
+					m = l;
+				}
+				if (r < size && less(data[r], data[m])) {
+					m = r;
+				}
+				if (m == i) {
+					break;
+				}
+				const int t = data[i];
+				data[i] = data[m];
+				data[m] = t;
+				i = m;
+			}
+			return top;
+		}
+	};
+
+	// Priority-Flood + epsilon (Barnes et al. 2014, algorithm 3): flood from the outlets in height order; a cell
+	// reached from a higher one is raised to just above it, so every cell has a strictly downhill path out.
+	void _priority_flood_fill() {
+		const int nx = p.nx;
+		const int ny = p.ny;
+		const int n = nx * ny;
+		double *h = b.height;
+		uint8_t *closed = b.flags;
+		memset(closed, 0, n);
+		Heap heap{ b.work, 0, h };
+		for (int i = 0; i < n; i++) {
+			if (is_outlet(i)) {
+				closed[i] = 1;
+				heap.push(i);
+			}
+		}
+		int raised = 0;
+		while (heap.size > 0) {
+			const int c = heap.pop();
+			const int x = c % nx;
+			const int z = c / nx;
+			for (int k = 0; k < 8; k++) {
+				const int xx = x + DX[k];
+				const int zz = z + DZ[k];
+				if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+					continue;
+				}
+				const int j = zz * nx + xx;
+				if (closed[j]) {
+					continue;
+				}
+				closed[j] = 1;
+				const double floor_h = h[c] + p.fill_epsilon;
+				if (h[j] < floor_h) {
+					if (b.sediment) {
+						b.sediment[j] += floor_h - h[j];
+					}
+					h[j] = floor_h;
+					raised++;
+				}
+				heap.push(j);
+			}
+		}
+		pits_filled = raised;
+	}
+
+	// The stack of Braun and Willett: each outlet, then its donors depth first.
+	void _build_stack() {
+		const int n = p.nx * p.ny;
+		memset(b.donor_count, 0, sizeof(int32_t) * n);
+		for (int i = 0; i < n; i++) {
+			if (b.receiver[i] != i) {
+				b.donor_count[b.receiver[i]]++;
+			}
+		}
+		b.donor_offset[0] = 0;
+		for (int i = 0; i < n; i++) {
+			b.donor_offset[i + 1] = b.donor_offset[i] + b.donor_count[i];
+		}
+		memset(b.donor_count, 0, sizeof(int32_t) * n);
+		for (int i = 0; i < n; i++) {
+			const int r = b.receiver[i];
+			if (r != i) {
+				b.donors[b.donor_offset[r] + b.donor_count[r]++] = i;
+			}
+		}
+		int top = 0;
+		int count = 0;
+		for (int i = 0; i < n; i++) {
+			if (b.receiver[i] != i) {
+				continue;
+			}
+			b.work[top++] = i;
+			while (top > 0) {
+				const int c = b.work[--top];
+				b.stack[count++] = c;
+				for (int d = b.donor_offset[c + 1] - 1; d >= b.donor_offset[c]; d--) {
+					b.work[top++] = b.donors[d];
+				}
+			}
+		}
+	}
+
+	// LSD radix sort of the cells by height, highest first, four 16-bit passes over an order-preserving key;
+	// stable, so equal heights stay in index order. O(n), the same on every machine.
+	void _sort_by_height() {
+		const int n = p.nx * p.ny;
+		uint64_t *ka = b.sort_keys;
+		uint64_t *kb = b.sort_keys + n;
+		int32_t *ia = b.order;
+		int32_t *ib = b.work;
+		for (int i = 0; i < n; i++) {
+			uint64_t u;
+			memcpy(&u, &b.height[i], sizeof(u));
+			// Doubles to unsigned order (flip all bits of negatives, the sign bit of positives), then invert
+			// for descending.
+			u = (u & 0x8000000000000000ull) ? ~u : (u | 0x8000000000000000ull);
+			ka[i] = ~u;
+			ia[i] = i;
+		}
+		uint32_t *count = b.radix_count;
+		for (int pass = 0; pass < 4; pass++) {
+			const int shift = pass * 16;
+			memset(count, 0, sizeof(uint32_t) * 65536);
+			for (int i = 0; i < n; i++) {
+				count[(ka[i] >> shift) & 0xffff]++;
+			}
+			uint32_t sum = 0;
+			for (int d = 0; d < 65536; d++) {
+				const uint32_t c = count[d];
+				count[d] = sum;
+				sum += c;
+			}
+			for (int i = 0; i < n; i++) {
+				const uint32_t dst = count[(ka[i] >> shift) & 0xffff]++;
+				kb[dst] = ka[i];
+				ib[dst] = ia[i];
+			}
+			uint64_t *tk = ka;
+			ka = kb;
+			kb = tk;
+			int32_t *ti = ia;
+			ia = ib;
+			ib = ti;
+		}
+		// Four passes: the result is back in b.order.
+	}
+
+	void _accumulate_area() {
+		const int n = p.nx * p.ny;
+		const double cell_area = p.dx * p.dx;
+		for (int i = 0; i < n; i++) {
+			b.area[i] = cell_area;
+		}
+		if (p.flow_exponent <= 0.0) {
+			// D8: down the receiver tree, from the top of the stack.
+			for (int k = n - 1; k >= 0; k--) {
+				const int i = b.stack[k];
+				const int r = b.receiver[i];
+				if (r != i) {
+					b.area[r] += b.area[i];
+				}
+			}
+			return;
+		}
+		// MFD: visit cells from the highest down (ties by index), passing each cell's area to
+		// every lower neighbour in proportion to slope^p. After the fill every non-outlet cell has one.
+		const int nx = p.nx;
+		const int ny = p.ny;
+		const double diag = p.dx * std::sqrt(2.0);
+		const double *h = b.height;
+		_sort_by_height();
+		const bool unit_flow = p.flow_exponent == 1.0;
+		double w[8];
+		for (int o = 0; o < n; o++) {
+			const int i = b.order[o];
+			if (is_outlet(i)) {
+				continue;
+			}
+			const int x = i % nx;
+			const int z = i / nx;
+			double sum = 0.0;
+			for (int k = 0; k < 8; k++) {
+				w[k] = 0.0;
+				const int xx = x + DX[k];
+				const int zz = z + DZ[k];
+				if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+					continue;
+				}
+				const int j = zz * nx + xx;
+				const double s = (h[i] - h[j]) / (k < 4 ? p.dx : diag);
+				if (s > 0.0) {
+					// Neighbour weight also scales with the contour length it faces (Freeman 1991: 1 vs 1/sqrt 2).
+					w[k] = (unit_flow ? s : std::pow(s, p.flow_exponent)) * (k < 4 ? 1.0 : 0.70710678118654752);
+					sum += w[k];
+				}
+			}
+			if (sum <= 0.0) {
+				continue;
+			}
+			for (int k = 0; k < 8; k++) {
+				if (w[k] > 0.0) {
+					b.area[(z + DZ[k]) * nx + x + DX[k]] += b.area[i] * w[k] / sum;
+				}
+			}
+		}
+	}
+
+	void _diffuse() {
+		const int nx = p.nx;
+		const int ny = p.ny;
+		const int n = nx * ny;
+		double *h = b.height;
+		// Explicit FTCS is stable for k_d dt / dx^2 <= 1/4; split the step to stay under 0.2.
+		const double a_total = p.diffusion * p.dt / (p.dx * p.dx);
+		const int sub = (int)std::fmin(64.0, std::ceil(a_total / 0.2));
+		const double a = a_total / sub;
+		for (int s = 0; s < sub; s++) {
+			memcpy(b.temp, h, sizeof(double) * n);
+			for (int z = 0; z < ny; z++) {
+				for (int x = 0; x < nx; x++) {
+					const int i = z * nx + x;
+					if (is_outlet(i)) {
+						continue;
+					}
+					const double c = b.temp[i];
+					const double l = x > 0 ? b.temp[i - 1] : c;
+					const double r = x < nx - 1 ? b.temp[i + 1] : c;
+					const double u = z > 0 ? b.temp[i - nx] : c;
+					const double d = z < ny - 1 ? b.temp[i + nx] : c;
+					h[i] = c + a * (l + r + u + d - 4.0 * c);
+				}
+			}
+		}
+	}
+};

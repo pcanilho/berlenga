@@ -33,6 +33,7 @@
 #include "terrain_brush_3d.h"
 #include "terrain_data_map_3d.h"
 #include "terrain_deformer_3d.h"
+#include "terrain_generator_3d.h"
 
 #include "core/object/class_db.h"
 
@@ -43,6 +44,7 @@ void initialize_terrain_deform_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(TerrainBrush3D);
 	GDREGISTER_CLASS(TerrainDeformer3D);
 	GDREGISTER_CLASS(TerrainDataMap3D);
+	GDREGISTER_CLASS(TerrainGenerator3D);
 }
 
 void uninitialize_terrain_deform_module(ModuleInitializationLevel p_level) {

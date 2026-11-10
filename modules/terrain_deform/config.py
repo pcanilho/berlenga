@@ -1,4 +1,5 @@
 def can_build(env, platform):
+    env.module_add_dependencies("terrain_deform", ["noise"])
     return True
 
 
@@ -11,6 +12,7 @@ def get_doc_classes():
         "TerrainBrush3D",
         "TerrainDataMap3D",
         "TerrainDeformer3D",
+        "TerrainGenerator3D",
     ]
 
 

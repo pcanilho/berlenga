@@ -172,8 +172,12 @@ bool TerrainDeformer3D::_open_grid(Grid &r_grid) const {
 	if (!is_inside_tree()) {
 		return false;
 	}
-	Node *node = get_node_or_null(terrain_path);
-	if (!node) {
+	return open_grid(get_node_or_null(terrain_path), r_grid);
+}
+
+bool TerrainDeformer3D::open_grid(Node *node, Grid &r_grid) {
+	r_grid = Grid();
+	if (!node || !node->is_inside_tree()) {
 		return false;
 	}
 	if (node->is_class("Terrain3D")) {
@@ -213,7 +217,7 @@ bool TerrainDeformer3D::_open_grid(Grid &r_grid) const {
 	return false;
 }
 
-bool TerrainDeformer3D::_grid_get(Grid &r_grid, const Vector2i &p_cell, float &r_height) const {
+bool TerrainDeformer3D::grid_get(Grid &r_grid, const Vector2i &p_cell, float &r_height) {
 	if (r_grid.backend == BACKEND_TERRAIN3D) {
 		const Vector2i region(_floor_div(p_cell.x, r_grid.region_size), _floor_div(p_cell.y, r_grid.region_size));
 		Ref<Image> *cached = r_grid.region_maps.getptr(region);
@@ -245,7 +249,7 @@ bool TerrainDeformer3D::_grid_get(Grid &r_grid, const Vector2i &p_cell, float &r
 	return false;
 }
 
-void TerrainDeformer3D::_grid_set(Grid &r_grid, const Vector2i &p_cell, float p_height) const {
+void TerrainDeformer3D::grid_set(Grid &r_grid, const Vector2i &p_cell, float p_height) {
 	if (r_grid.backend == BACKEND_TERRAIN3D) {
 		const Vector2i region(_floor_div(p_cell.x, r_grid.region_size), _floor_div(p_cell.y, r_grid.region_size));
 		const Ref<Image> *map = r_grid.region_maps.getptr(region);
@@ -265,6 +269,10 @@ void TerrainDeformer3D::_grid_set(Grid &r_grid, const Vector2i &p_cell, float p_
 }
 
 void TerrainDeformer3D::_commit_grid(Grid &r_grid) {
+	commit_grid(r_grid, Object::cast_to<MeshInstance3D>(get_node_or_null(ground_mesh_path)));
+}
+
+void TerrainDeformer3D::commit_grid(Grid &r_grid, MeshInstance3D *p_ground_mesh) {
 	if (r_grid.backend == BACKEND_TERRAIN3D && !r_grid.touched_regions.is_empty()) {
 		// Terrain3D's own editor flags a region "edited" so update_maps() re-uploads only that layer of the
 		// height texture array, then clears the flag; "modified" makes it save with the terrain.
@@ -289,12 +297,11 @@ void TerrainDeformer3D::_commit_grid(Grid &r_grid) {
 		}
 	} else if (r_grid.backend == BACKEND_HEIGHT_MAP && r_grid.map_changed) {
 		r_grid.shape->set_map_data(r_grid.map);
-		_rebuild_ground_mesh(r_grid);
+		rebuild_ground_mesh(r_grid, p_ground_mesh);
 	}
 }
 
-void TerrainDeformer3D::_rebuild_ground_mesh(const Grid &p_grid) {
-	MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(get_node_or_null(ground_mesh_path));
+void TerrainDeformer3D::rebuild_ground_mesh(const Grid &p_grid, MeshInstance3D *mi) {
 	if (!mi || p_grid.backend != BACKEND_HEIGHT_MAP) {
 		return;
 	}
@@ -515,7 +522,7 @@ int TerrainDeformer3D::apply() {
 					result.insert(key, *base);
 				} else {
 					float h;
-					if (_grid_get(grid, cell, h)) {
+					if (grid_get(grid, cell, h)) {
 						base_heights.insert(key, h);
 						result.insert(key, h);
 					}
@@ -556,8 +563,8 @@ int TerrainDeformer3D::apply() {
 		const Vector2i cell = unpack_cell(key);
 		float now;
 		const float base = base_heights[key];
-		if (_grid_get(grid, cell, now) && now != base) {
-			_grid_set(grid, cell, base);
+		if (grid_get(grid, cell, now) && now != base) {
+			grid_set(grid, cell, base);
 			written++;
 		}
 		base_heights.erase(key);
@@ -565,8 +572,8 @@ int TerrainDeformer3D::apply() {
 	for (const KeyValue<int64_t, float> &kv : result) {
 		const Vector2i cell = unpack_cell(kv.key);
 		float now;
-		if (_grid_get(grid, cell, now) && now != kv.value) {
-			_grid_set(grid, cell, kv.value);
+		if (grid_get(grid, cell, now) && now != kv.value) {
+			grid_set(grid, cell, kv.value);
 			written++;
 		}
 	}
@@ -586,8 +593,8 @@ void TerrainDeformer3D::clear() {
 	for (const KeyValue<int64_t, float> &kv : base_heights) {
 		float now;
 		const Vector2i cell = unpack_cell(kv.key);
-		if (_grid_get(grid, cell, now) && now != kv.value) {
-			_grid_set(grid, cell, kv.value);
+		if (grid_get(grid, cell, now) && now != kv.value) {
+			grid_set(grid, cell, kv.value);
 		}
 	}
 	base_heights.clear();
@@ -612,7 +619,7 @@ real_t TerrainDeformer3D::get_base_height(const Vector3 &p_global_position) cons
 		float v;
 		if (base) {
 			v = *base;
-		} else if (!_grid_get(grid, cells[i], v)) {
+		} else if (!grid_get(grid, cells[i], v)) {
 			return Math::NaN;
 		}
 		h[i] = v;
@@ -642,7 +649,7 @@ real_t TerrainDeformer3D::get_height(const Vector3 &p_global_position) const {
 	float h[4];
 	const Vector2i cells[4] = { Vector2i(x0, z0), Vector2i(x0 + 1, z0), Vector2i(x0, z0 + 1), Vector2i(x0 + 1, z0 + 1) };
 	for (int i = 0; i < 4; i++) {
-		if (!_grid_get(grid, cells[i], h[i])) {
+		if (!grid_get(grid, cells[i], h[i])) {
 			return Math::NaN;
 		}
 	}
