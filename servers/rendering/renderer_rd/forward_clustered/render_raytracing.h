@@ -250,7 +250,12 @@ struct alignas(16) RT_MaterialData {
 	struct { // BaseMaterial3D subsurface scattering (GLSL rt_material_subsurface()), 0 strength = none.
 		uint32_t strength : 8; // unorm8 subsurface_scattering_strength.
 		uint32_t skin : 1; // Skin Mode: measured skin's per-channel radii.
-		uint32_t unused : 23;
+		// BaseMaterial3D Wetness (GLSL rt_material_wetness()), see material-wetness.md.
+		uint32_t wetness_porosity : 8; // unorm8 wetness_porosity.
+		uint32_t wetness_amount : 8; // unorm8 wetness_amount.
+		uint32_t wetness : 1; // The feature is on.
+		uint32_t wetness_from_weather : 1; // Wetness = amount times the weather map's (RT_PARAM_WETNESS_*).
+		uint32_t unused : 5;
 	} subsurface;
 	struct { // texture_subsurface_scattering: red scales the strength.
 		uint32_t index : TEXTURE_INDEX_BITS;

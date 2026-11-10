@@ -76,7 +76,12 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_CAUSTICS_STATE 36 // 0 off, else 1 + the slot written + 4 when last frame's is valid
 #define RT_PARAM_CAUSTICS_SIZE 37 // the area's width, metres
 #define RT_PARAM_SSS_SCALE 38 // subsurface scattering radius at strength 1, metres
-#define RT_PARAM_LIGHT_REUSE 39 // 0 off, else 1 + the reservoir slot written + 2 when last frame's is valid (raytracing_lights_inc.glsl)
+#define RT_PARAM_WETNESS_MAP 39 // WeatherMap3D state map, bindless index (green = wetness)
+#define RT_PARAM_WETNESS_RECT_X 40 // its world XZ rect; width 0 = no weather map
+#define RT_PARAM_WETNESS_RECT_Y 41
+#define RT_PARAM_WETNESS_RECT_W 42
+#define RT_PARAM_WETNESS_RECT_H 43
+#define RT_PARAM_LIGHT_REUSE 44 // 0 off, else 1 + the reservoir slot written + 2 when last frame's is valid (raytracing_lights_inc.glsl)
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

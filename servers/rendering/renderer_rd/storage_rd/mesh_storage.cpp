@@ -2300,6 +2300,23 @@ void MeshStorage::_multimesh_mark_buffer_rd_changed(RID p_multimesh) {
 	_multimesh_request_rd_readback(multimesh, p_multimesh);
 }
 
+void MeshStorage::_multimesh_set_bones_per_instance(RID p_multimesh, int p_bones) {
+	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
+	ERR_FAIL_NULL(multimesh);
+	ERR_FAIL_COND_MSG(p_bones < 1 || p_bones > 255, "A MultiMesh instance takes 1 to 255 bones.");
+	if (multimesh->bones_per_instance == uint32_t(p_bones)) {
+		return;
+	}
+	multimesh->bones_per_instance = p_bones;
+	multimesh->dependency.changed_notify(Dependency::DEPENDENCY_CHANGED_MULTIMESH);
+}
+
+int MeshStorage::_multimesh_get_bones_per_instance(RID p_multimesh) const {
+	MultiMesh *multimesh = multimesh_owner.get_or_null(p_multimesh);
+	ERR_FAIL_NULL_V(multimesh, 1);
+	return multimesh->bones_per_instance;
+}
+
 void MeshStorage::_multimesh_request_rd_readback(MultiMesh *multimesh, RID p_multimesh) {
 	const uint32_t block_bytes = multimesh->instances * multimesh->stride_cache * sizeof(float);
 	multimesh->rd_readback_ticket++;

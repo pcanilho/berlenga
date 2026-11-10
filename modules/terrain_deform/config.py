@@ -9,6 +9,7 @@ def configure(env):
 def get_doc_classes():
     return [
         "TerrainBrush3D",
+        "TerrainDataMap3D",
         "TerrainDeformer3D",
     ]
 
