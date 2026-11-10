@@ -34,6 +34,13 @@
 				Time the last [method populate] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_shade_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Canopy shade at [param global_position], from 0 (open sky) to 1 (dense crown), from the plants of species with [member PlantSpecies.canopy_radius] placed by the last [method populate]. Each crown stops [member PlantSpecies.canopy_opacity] of the light under its core, fading out a little past its rim; overlapping crowns multiply their transmission. Species with a [member PlantSpecies.shade_range] are placed by it, so list canopy species first in the [Biome].
+			</description>
+		</method>
 		<method name="populate">
 			<return type="int" enum="Error" />
 			<description>

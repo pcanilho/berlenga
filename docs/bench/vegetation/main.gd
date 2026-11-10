@@ -247,6 +247,27 @@ func _checks() -> void:
 	dm.bake()
 	field.populate()
 	_check("geology: rules ignored without a source", field.get_placements(0) == first, field.get_placements(0).size())
+	# Canopy shade: trees cast it, bushes that want shade grow only under crowns.
+	var bush_sp: PlantSpecies = field.biome.species[1]
+	var bushes_open := field.get_placements(1).size()
+	tree_sp.canopy_radius = 3.0
+	tree_sp.canopy_opacity = 0.9
+	bush_sp.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.5, 1.0))
+	field.populate()
+	var t0: Vector3 = field.get_placements(0)[0]
+	var sunny := 0
+	for p in field.get_placements(1):
+		if field.get_shade_at(p) < 0.5:
+			sunny += 1
+	var under_t: float = field.get_shade_at(t0)
+	var open_t: float = field.get_shade_at(Vector3(t0.x, 0, t0.z) + Vector3(40, 0, 40))
+	_check("shade: core of a crown", under_t >= 0.89, under_t)
+	_check("shade: bushes only under crowns", sunny == 0 and field.get_placements(1).size() > 20 and field.get_placements(1).size() < bushes_open, [sunny, field.get_placements(1).size(), bushes_open])
+	_check("shade: trees unchanged", field.get_placements(0) == first, field.get_placements(0).size())
+	tree_sp.canopy_radius = 0.0
+	bush_sp.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 1.0))
+	field.populate()
+	_check("shade: no canopy, no shade", field.get_placements(1).size() == bushes_open and field.get_shade_at(t0) == 0.0, field.get_placements(1).size())
 	print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
 func _build_view() -> void:

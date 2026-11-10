@@ -57,6 +57,17 @@ class VegetationField3D : public Node3D {
 		float footprint = 0.0f;
 		int species = 0;
 	};
+	// A placed crown that shades the ground under it.
+	struct Crown {
+		Vector2 xz;
+		float radius = 0.0f;
+		float opacity = 0.0f;
+	};
+	static constexpr float CROWN_CELL = 8.0f;
+	LocalVector<Crown> crowns;
+	HashMap<Vector2i, LocalVector<int>> crown_grid;
+	float max_crown_radius = 0.0f;
+	float _shade_at(const Vector2 &p_xz) const;
 
 	Ref<Biome> biome;
 	NodePath data_map;
@@ -98,4 +109,6 @@ public:
 	int get_plant_count() const { return plant_count; }
 	double get_populate_time_msec() const { return populate_msec; }
 	PackedVector3Array get_placements(int p_species) const;
+	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
+	float get_shade_at(const Vector3 &p_global_position) const;
 };

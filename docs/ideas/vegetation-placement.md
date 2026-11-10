@@ -100,3 +100,29 @@ Check (bench `docs/bench/vegetation --test`): a geology node with bare rock east
 thin soil from 40 to 60 m; trees set to need 0.5 m of soil and under 0.3 rock place none past
 40 m and still fill the rest; without a geology source the field is identical to before.
 Cost: one generator lookup per map cell at bake time.
+
+## Canopy shade rule
+
+The forest floor is set by light more than by soil: bilberry, ferns, wood sorrel and mosses take the
+shade under crowns, meadow grasses and flowers give up there. Field botany ranks species by it
+(Ellenberg's light indicator values, L 1 to 9), and growth models compute it as the light a crown
+lets through, which falls off exponentially with the foliage it crosses (Beer-Lambert in canopies,
+Monsi and Saeki 1953). SpeedTree and Houdini forest set-ups do the same thing with a "shade mask"
+painted from the placed trees before the understorey is scattered.
+
+What we built:
+
+- `PlantSpecies.canopy_radius` and `canopy_opacity`: a species with a crown casts shade. Each crown
+  stops `canopy_opacity` of the light under its core, fading to nothing at 1.4 crown radii (sky light
+  still reaches in under the edge); overlapping crowns multiply their transmission.
+- `PlantSpecies.shade_range` / `shade_fade` (rule `RULE_SHADE`): where a species grows, from 0 (open
+  sky) to 1. The default (0, 1) costs nothing: shade is only computed for species that narrow it.
+- `VegetationField3D.get_shade_at()`: the same shade for other systems (ground tint, grass density,
+  snow under trees later).
+- Order matters as for footprints: canopy species first in the `Biome`, the understorey after.
+- Shade is canopy only. Sun-facing slopes and terrain shadow come from the terrain thread's climate
+  channels (insolation) when those land, and combine with this.
+
+Checks (bench `docs/bench/vegetation`): a crown core gives the crown's opacity, shade-loving bushes
+land only where shade >= 0.5 (639 of 6183 open-ground bushes), trees are unchanged, and with no
+canopy the field is exactly the old one.

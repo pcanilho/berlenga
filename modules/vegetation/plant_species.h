@@ -53,6 +53,7 @@ public:
 		RULE_SOIL_DEPTH, // Metres of soil over bedrock (needs the map's geology_source).
 		RULE_ROCK, // Bare rock exposure, 0 to 1 (geology).
 		RULE_TALUS, // Scree cover, 0 to 1 (geology).
+		RULE_SHADE, // Canopy shade, 0 open sky to 1 dense crown (VegetationField3D, from placed canopy).
 		RULE_MAX,
 	};
 
@@ -71,6 +72,10 @@ private:
 	int patch_seed = 0;
 	bool patch_invert = false; // Grow between the patches instead (same scale, cover and seed: the exact complement).
 	float visibility_range = 0.0f; // 0: always drawn.
+	// A canopy species shades what grows under it: crown radius (times the plant's scale) and
+	// the share of light its crown stops.
+	float canopy_radius = 0.0f; // 0: casts no shade.
+	float canopy_opacity = 0.85f;
 	Vector2 ranges[RULE_MAX];
 	float fades[RULE_MAX] = {};
 
@@ -91,6 +96,12 @@ public:
 	float get_patch_weight(const Vector3 &p_pos) const;
 	void set_visibility_range(float p_range) { visibility_range = MAX(p_range, 0.0f); }
 	float get_visibility_range() const { return visibility_range; }
+	void set_canopy_radius(float p_radius) { canopy_radius = MAX(p_radius, 0.0f); }
+	float get_canopy_radius() const { return canopy_radius; }
+	void set_canopy_opacity(float p_opacity) { canopy_opacity = CLAMP(p_opacity, 0.0f, 1.0f); }
+	float get_canopy_opacity() const { return canopy_opacity; }
+	// True when the shade rule is narrower than "anywhere", so placement must compute shade.
+	bool uses_shade() const { return ranges[RULE_SHADE].x > 0.0f || ranges[RULE_SHADE].y < 1.0f; }
 	void set_spacing(float p_spacing);
 	float get_spacing() const { return spacing; }
 	void set_footprint(float p_footprint);

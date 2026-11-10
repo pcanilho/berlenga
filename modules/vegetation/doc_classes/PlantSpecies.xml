@@ -73,6 +73,12 @@
 		<member name="curvature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1000, 1000)">
 			Ground curvature range in 1/m: positive in hollows and valley floors, negative on ridges.
 		</member>
+		<member name="canopy_opacity" type="float" setter="set_canopy_opacity" getter="get_canopy_opacity" default="0.85">
+			Share of the light this species' crown stops under its core, for [member canopy_radius]. A broadleaf crown in summer stops about 0.85 to 0.95, a pine or birch less.
+		</member>
+		<member name="canopy_radius" type="float" setter="set_canopy_radius" getter="get_canopy_radius" default="0.0">
+			Crown radius in metres (times each plant's scale). Above 0 the species shades the ground under it, and later species in the [Biome] with a [member shade_range] are placed by that shade (see [method VegetationField3D.get_shade_at]).
+		</member>
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1.0">
 			Fraction of the Poisson-disk points kept where every rule is fully met, from 0 to 1.
 		</member>
@@ -111,6 +117,12 @@
 		</member>
 		<member name="scale_range" type="Vector2" setter="set_scale_range" getter="get_scale_range" default="Vector2(0.8, 1.2)">
 			Each plant's uniform scale is picked between [code]x[/code] and [code]y[/code].
+		</member>
+		<member name="shade_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member shade_range].
+		</member>
+		<member name="shade_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
+			Canopy shade (0 open sky, 1 dense crown) where the species grows, from the canopy species placed before it by a [VegetationField3D]: for example [code]Vector2(0.4, 1)[/code] for bilberry, ferns and mosses, [code]Vector2(0, 0.3)[/code] for meadow plants. Ignored outside a [VegetationField3D] (a [GrassField3D] has no canopy).
 		</member>
 		<member name="slope_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member slope_range], in degrees.
@@ -183,7 +195,10 @@
 		<constant name="RULE_TALUS" value="8" enum="Rule">
 			Scree cover, 0 to 1 (needs the map's geology).
 		</constant>
-		<constant name="RULE_MAX" value="9" enum="Rule">
+		<constant name="RULE_SHADE" value="9" enum="Rule">
+			Canopy shade, 0 to 1 (see [member shade_range]).
+		</constant>
+		<constant name="RULE_MAX" value="10" enum="Rule">
 			Number of rules.
 		</constant>
 	</constants>
