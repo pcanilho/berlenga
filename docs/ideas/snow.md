@@ -575,3 +575,11 @@ weather map at 1 m over the snow (snowfall 0.009, blowing 0.013) and the snowfal
 **Cost.** Six cosines per particle per frame for the eddies; the haze is the weather map's (an
 environment fog density and one fog volume). **Limits.** Beyond the fog volume's 300 m only the
 falling part hazes the distance; the layer is flat over the 150 m around the camera.
+
+## Follow-up 3: the deform field moves to the ground module (built 10 Nov 2026)
+
+Footprints in bare ground (docs/ideas/ground-deform.md) need the same field, so the field (dent and rim
+arrays, the tile cache, pressing with mass conservation, the body scan) moved to `modules/ground`
+(`GroundDeformField`), with the ground query `SnowCover3D` used (`GroundHeightQuery`). `SnowSurface3D`
+keeps its own rules (snow depth and density decide the deepest print, snowfall and wind refill it) and
+behaves as before; its checks pass unchanged.

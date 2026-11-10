@@ -116,7 +116,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 60;
+	static constexpr int RT_PARAM_COUNT = 64;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -214,6 +214,12 @@ public:
 	static constexpr int RT_PARAM_SNOW_CATCH_MAP = 55;
 	// Indirect light reuse (binding 52, ReSTIR GI): 0 off, else 1 + the slot written + 2 when last frame's is valid.
 	static constexpr int RT_PARAM_INDIRECT_REUSE = 56;
+	// GroundSurface3D's deform map (ground_deform_map: dent, rim, albedo and roughness factors) for its
+	// BaseMaterial3D patch: bindless index (0 = none) and the field's world XZ origin and size.
+	static constexpr int RT_PARAM_GROUND_DEFORM_MAP = 60;
+	static constexpr int RT_PARAM_GROUND_DEFORM_X = 61;
+	static constexpr int RT_PARAM_GROUND_DEFORM_Z = 62;
+	static constexpr int RT_PARAM_GROUND_DEFORM_SIZE = 63;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

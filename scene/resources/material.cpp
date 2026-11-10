@@ -617,6 +617,12 @@ void BaseMaterial3D::init_shaders() {
 		// And its world tier, the coarse pack over the whole terrain drawn outside the near square.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Ground deformation reads GroundSurface3D's (rect width 0 = none: nothing lowered, nothing moved).
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_height", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_height_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_skirt", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -934,6 +940,7 @@ void BaseMaterial3D::_update_shader() {
 		rt.wetness_from_weather = wetness_from_weather;
 		rt.snow = features[FEATURE_SNOW];
 		rt.snow_from_weather = snow_from_weather;
+		rt.ground_deform_patch = features[FEATURE_GROUND_DEFORM] && ground_deform_patch;
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -1526,6 +1533,10 @@ uniform vec3 uv2_offset;
 		code += "uniform float z_clip_scale : hint_range(0.01, 1.0, 0.01);\n";
 	}
 
+	if (features[FEATURE_GROUND_DEFORM]) {
+		code += _ground_deform_code(false, ground_deform_patch);
+	}
+
 	if (flags[FLAG_USE_FOV_OVERRIDE]) {
 		code += "uniform float fov_override : hint_range(1.0, 179.0, 0.1);\n";
 	}
@@ -1533,6 +1544,11 @@ uniform vec3 uv2_offset;
 	// Generate vertex shader.
 	code += R"(
 void vertex() {)";
+
+	if (features[FEATURE_GROUND_DEFORM]) {
+		// First, so everything below (triplanar positions, world normals) sees the moved vertex.
+		code += "\n	ground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n";
+	}
 
 	if (flags[FLAG_SRGB_VERTEX_COLOR]) {
 		code += R"(
@@ -2380,6 +2396,17 @@ void fragment() {)";
 		code += R"(	vec3 detail_norm = mix(NORMAL_MAP, detail_norm_tex.rgb, detail_tex.a);
 	NORMAL_MAP = mix(NORMAL_MAP, detail_norm, detail_mask_tex.r);
 	ALBEDO.rgb = mix(ALBEDO.rgb, detail, detail_mask_tex.r);
+)";
+	}
+
+	if (features[FEATURE_GROUND_DEFORM] && ground_deform_patch) {
+		// Turned ground (docs/ideas/ground-deform.md): darker and, wet, smoother where freshly dug; the path
+		// tracer applies the same factors (scene_raytracing_raygen.glsl).
+		code += R"(	{
+		vec2 gd_tint = ground_deform_tint((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
+		ALBEDO *= gd_tint.x;
+		ROUGHNESS = clamp(ROUGHNESS * gd_tint.y, 0.0, 1.0);
+	}
 )";
 	}
 
@@ -3619,6 +3646,88 @@ bool BaseMaterial3D::is_snow_from_weather() const {
 	return snow_from_weather;
 }
 
+void BaseMaterial3D::set_ground_deform_patch(bool p_enable) {
+	if (ground_deform_patch == p_enable) {
+		return;
+	}
+	ground_deform_patch = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_ground_deform_patch() const {
+	return ground_deform_patch;
+}
+
+String BaseMaterial3D::_ground_deform_code(bool p_patch_uniform, bool p_patch) {
+	String code = R"(
+// Ground deformation (docs/ideas/ground-deform.md): GroundSurface3D's field of dents and rims over its
+// ground lattice. On the patch (GroundSurface3D's copy of this material) a vertex moves to the deformed
+// surface; on the terrain it is lowered under the patch, so prints below the ground show in both renderers.
+global uniform sampler2D ground_deform_map; // dent, rim (m), albedo and roughness factors
+global uniform vec4 ground_deform_rect; // x, z, size, texel (m); size 0 = none
+global uniform sampler2D ground_deform_height; // the ground, m
+global uniform vec4 ground_deform_height_rect;
+global uniform vec4 ground_deform_skirt; // depth, margin, fade (m)
+)";
+	if (p_patch_uniform) {
+		code += "uniform bool ground_deform_patch = false;\n";
+	} else {
+		code += vformat("const bool ground_deform_patch = %s;\n", p_patch ? "true" : "false");
+	}
+	code += R"(
+vec4 ground_deform_sample(vec2 p_xz) {
+	vec2 uv = (p_xz - ground_deform_rect.xy) / ground_deform_rect.z;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return vec4(0.0, 0.0, 1.0, 1.0);
+	}
+	return textureLod(ground_deform_map, uv, 0.0);
+}
+float ground_deform_surface(vec2 p_xz) {
+	vec4 d = ground_deform_sample(p_xz);
+	return textureLod(ground_deform_height, (p_xz - ground_deform_height_rect.xy) / ground_deform_height_rect.zw, 0.0).r + d.g - d.r;
+}
+// The share of the skirt the terrain is lowered by at p_xz: none at the field's edge, all past margin + fade.
+float ground_deform_lowered(vec2 p_xz) {
+	vec2 e = min(p_xz - ground_deform_rect.xy, ground_deform_rect.xy + ground_deform_rect.z - p_xz);
+	return smoothstep(ground_deform_skirt.y, ground_deform_skirt.y + ground_deform_skirt.z, min(e.x, e.y));
+}
+void ground_deform_vertex(mat4 p_model, inout vec3 r_vertex, inout vec3 r_normal, inout vec3 r_tangent, inout vec3 r_binormal) {
+	if (ground_deform_rect.z <= 0.0) {
+		return;
+	}
+	vec3 w = (p_model * vec4(r_vertex, 1.0)).xyz;
+	mat4 to_model = inverse(p_model);
+	if (ground_deform_patch) {
+		// The deformed surface, its normal and tangents by central differences over one field texel. Where
+		// the terrain is not lowered (the field's outer margin) the patch tucks 5 cm under it.
+		float e = max(ground_deform_rect.w, 1e-3);
+		float hx = ground_deform_surface(w.xz + vec2(e, 0.0)) - ground_deform_surface(w.xz - vec2(e, 0.0));
+		float hz = ground_deform_surface(w.xz + vec2(0.0, e)) - ground_deform_surface(w.xz - vec2(0.0, e));
+		w.y = ground_deform_surface(w.xz) - 0.05 * (1.0 - ground_deform_lowered(w.xz));
+		mat3 n_to_model = transpose(mat3(p_model));
+		r_normal = normalize(n_to_model * normalize(vec3(-hx, 2.0 * e, -hz)));
+		r_tangent = normalize(n_to_model * normalize(vec3(2.0 * e, hx, 0.0)));
+		r_binormal = normalize(n_to_model * normalize(vec3(0.0, hz, 2.0 * e)));
+	} else {
+		w.y -= ground_deform_skirt.x * ground_deform_lowered(w.xz);
+	}
+	r_vertex = (to_model * vec4(w, 1.0)).xyz;
+}
+// Albedo and roughness factors of turned ground at a world position (1, 1 off the patch).
+vec2 ground_deform_tint(vec3 p_world) {
+	if (!ground_deform_patch || ground_deform_rect.z <= 0.0) {
+		return vec2(1.0);
+	}
+	return ground_deform_sample(p_world.xz).ba;
+}
+)";
+	return code;
+}
+
+String BaseMaterial3D::get_ground_deform_shader_code() {
+	return _ground_deform_code(true, false);
+}
+
 void BaseMaterial3D::set_refraction_texture_channel(TextureChannel p_channel) {
 	ERR_FAIL_INDEX(p_channel, 5);
 	refraction_texture_channel = p_channel;
@@ -4115,6 +4224,9 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_snow_max_slope", "degrees"), &BaseMaterial3D::set_snow_max_slope);
 	ClassDB::bind_method(D_METHOD("get_snow_max_slope"), &BaseMaterial3D::get_snow_max_slope);
 	ClassDB::bind_method(D_METHOD("set_snow_from_weather", "enable"), &BaseMaterial3D::set_snow_from_weather);
+	ClassDB::bind_method(D_METHOD("set_ground_deform_patch", "enable"), &BaseMaterial3D::set_ground_deform_patch);
+	ClassDB::bind_method(D_METHOD("is_ground_deform_patch"), &BaseMaterial3D::is_ground_deform_patch);
+	ClassDB::bind_static_method("BaseMaterial3D", D_METHOD("get_ground_deform_shader_code"), &BaseMaterial3D::get_ground_deform_shader_code);
 	ClassDB::bind_method(D_METHOD("is_snow_from_weather"), &BaseMaterial3D::is_snow_from_weather);
 
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
@@ -4437,6 +4549,10 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_max_slope", PROPERTY_HINT_RANGE, "0,90,0.1,degrees"), "set_snow_max_slope", "get_snow_max_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_from_weather"), "set_snow_from_weather", "is_snow_from_weather");
 
+	ADD_GROUP("Ground Deform", "ground_deform_");
+	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "ground_deform_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_GROUND_DEFORM);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_deform_patch"), "set_ground_deform_patch", "is_ground_deform_patch");
+
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "detail_mask", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_DETAIL_MASK);
@@ -4575,6 +4691,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FEATURE_HAIR);
 	BIND_ENUM_CONSTANT(FEATURE_WETNESS);
 	BIND_ENUM_CONSTANT(FEATURE_SNOW);
+	BIND_ENUM_CONSTANT(FEATURE_GROUND_DEFORM);
 	BIND_ENUM_CONSTANT(FEATURE_MAX);
 
 	BIND_ENUM_CONSTANT(BLEND_MODE_MIX);

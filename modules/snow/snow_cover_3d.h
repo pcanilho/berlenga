@@ -35,6 +35,7 @@
 
 #include "core/io/image.h"
 #include "core/object/worker_thread_pool.h"
+#include "modules/ground/ground_height_query.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
@@ -169,14 +170,7 @@ class SnowCover3D : public Node3D {
 	void _allocate();
 	void _follow(Vector3 p_center);
 	void _shift(Vector2i p_new_origin);
-	struct GroundQuery {
-		TerrainDeformer3D *deformer = nullptr;
-		TerrainDataMap3D *data_map = nullptr;
-		Object *getter = nullptr;
-		PhysicsDirectSpaceState3D *space = nullptr;
-		uint32_t mask = 1;
-		float y0 = 0.0f;
-	};
+	using GroundQuery = GroundHeightQuery;
 	GroundQuery _ground_query() const;
 	static float _query_ground(const GroundQuery &p_q, Vector3 p_position);
 	void _sample_heights(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only = nullptr);

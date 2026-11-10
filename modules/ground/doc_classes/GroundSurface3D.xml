@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="GroundSurface3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Footprints, ruts and dents in sand, soil, mud and leaf litter.
+	</brief_description>
+	<description>
+		A field of dents and rims around the camera over bare ground. Nodes in [member deform_groups] press it: loaded bodies sink by Bekker's pressure-sinkage relation with Wong's soil values ([i]Theory of Ground Vehicles[/i]), the pressed material is partly compacted and partly pushed into a rim so volume is kept, and walls steeper than the material's angle of repose slump down (Sumner, O'Brien and Hodgins 1999, "Animating Sand, Mud, and Snow").
+		What the ground is made of follows rules per place: [member ground_type] (or [member type_map]) gives sand or soil; the moisture ([member moisture], or the [code]WeatherMap3D[/code] wetness) turns soil to mud and dry sand to damp sand, so a boot sinks 2 cm in dry sand, under 1 cm in damp sand and about 8 cm in mud, dry sand prints cave in to dishes, damp ones keep sharp walls and mud creeps back over minutes; tree crowns (the weather map's canopy closure) drop [member litter_depth] of leaf litter; bare rock from a [code]TerrainGenerator3D[/code] height source does not print, nor does ground under a [code]SnowCover3D[/code] pack. Freshly turned ground is darker until it dries ([member drying_time]); wind fills dry sand prints and rain softens them.
+		The node draws the field as a patch with [member material], the terrain's own material, and the terrain drawn with that material (with [member BaseMaterial3D.ground_deform_enabled], or [method BaseMaterial3D.get_ground_deform_shader_code] in a shader) is lowered under the patch by [member skirt], so the prints are geometry in raster and under path tracing. Bodies keep standing on the terrain's own collider; [method get_surface_height_at] gives the printed surface for foot placement.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="clear_deformation">
+			<return type="void" />
+			<description>
+				Removes every print, including the cached tiles.
+			</description>
+		</method>
+		<method name="get_cached_tile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of tiles of prints kept for when the field comes back over them.
+			</description>
+		</method>
+		<method name="get_deform_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The field's world XZ rectangle.
+			</description>
+		</method>
+		<method name="get_dent_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far the ground at [param position] is pressed below its undisturbed height, in metres.
+			</description>
+		</method>
+		<method name="get_fresh_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How freshly turned the ground at [param position] is, from 1 (just dug) to 0 (dried).
+			</description>
+		</method>
+		<method name="get_ground_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The undisturbed ground height at [param position], from the height source.
+			</description>
+		</method>
+		<method name="get_material_at" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The rules at [param position]: [code]n[/code], [code]kc[/code], [code]kphi[/code] (Bekker), [code]rim_share[/code], [code]repose[/code] (degrees), [code]rate[/code] (slumping share per second), [code]max_dent[/code], [code]litter[/code] (m), [code]sand[/code] (share) and [code]deformable[/code].
+			</description>
+		</method>
+		<method name="get_moved_volume" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				The volume pressed down (x) and piled into rims (y) over the live field, in m³. Their difference is what was compacted.
+			</description>
+		</method>
+		<method name="get_patch_material" qualifiers="const">
+			<return type="Material" />
+			<description>
+				The copy of [member material] the patch is drawn with.
+			</description>
+		</method>
+		<method name="get_rim_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How much material is piled on the ground at [param position], in metres.
+			</description>
+		</method>
+		<method name="get_sinkage_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="mass" type="float" />
+			<param index="2" name="area" type="float" />
+			<param index="3" name="width" type="float" default="0.0" />
+			<description>
+				How far a body of [param mass] kg on [param area] m² ([param width] m wide, 0: from the area) sinks into the ground at [param position], in metres.
+			</description>
+		</method>
+		<method name="get_step_time_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				The time the last physics step took (pressing, slumping, ageing, upload), in milliseconds.
+			</description>
+		</method>
+		<method name="get_surface_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The printed ground height at [param position]: the undisturbed ground plus the rim minus the dent.
+			</description>
+		</method>
+		<method name="press">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="bottom" type="float" />
+			<param index="3" name="sink" type="float" default="0.0" />
+			<param index="4" name="round" type="bool" default="true" />
+			<description>
+				Presses the ground down to [param bottom] (world height) under a sphere of [param radius] at [param position] ([param round]) or a flat disc, plus [param sink] below the undisturbed surface. Returns the volume moved, in m³.
+			</description>
+		</method>
+		<method name="press_box">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="size" type="Vector2" />
+			<param index="2" name="yaw" type="float" />
+			<param index="3" name="bottom" type="float" />
+			<param index="4" name="sink" type="float" default="0.0" />
+			<description>
+				Presses a flat print [param size] wide (x) and long (z), turned by [param yaw] about up: a boot, a crate. Returns the volume moved, in m³.
+			</description>
+		</method>
+		<method name="refresh_ground">
+			<return type="void" />
+			<description>
+				Samples the height source again (after the terrain changed).
+			</description>
+		</method>
+		<method name="settle">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<param index="1" name="step" type="float" default="0.016666668" />
+			<description>
+				Runs slumping and ageing for [param seconds] at once, in steps of [param step].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="character_contact_area" type="float" setter="set_character_contact_area" getter="get_character_contact_area" default="0.035">
+			The contact area of a [CharacterBody3D] in [member deform_groups] without a [code]ground_contact_area[/code] meta, in m² (one boot by default).
+		</member>
+		<member name="character_mass" type="float" setter="set_character_mass" getter="get_character_mass" default="75.0">
+			The mass of a [CharacterBody3D] in [member deform_groups] without a [code]ground_mass[/code] meta, in kg.
+		</member>
+		<member name="contact_tolerance" type="float" setter="set_contact_tolerance" getter="get_contact_tolerance" default="0.03">
+			How close a body's underside must come to the surface to press it, in metres.
+		</member>
+		<member name="deform_extent" type="float" setter="set_deform_extent" getter="get_deform_extent" default="32.0">
+			The width of the field, in metres. Prints are made only where the terrain is fully lowered: [member terrain_margin] plus [member skirt_fade] inside its edge.
+		</member>
+		<member name="deform_groups" type="PackedStringArray" setter="set_deform_groups" getter="get_deform_groups" default="PackedStringArray(&quot;ground_deform&quot;, &quot;snow_deform&quot;, &quot;grass_trample&quot;)">
+			Groups whose nodes press the ground. A node's first collision shape gives its footprint; rigid bodies press by their mass, characters by [member character_mass], others only to their underside. The metas [code]ground_mass[/code], [code]ground_contact_area[/code] and [code]ground_radius[/code] (or the snow ones) override.
+		</member>
+		<member name="deform_resolution" type="int" setter="set_deform_resolution" getter="get_deform_resolution" default="512">
+			Texels across the field (a multiple of 64).
+		</member>
+		<member name="detail_spacing" type="float" setter="set_detail_spacing" getter="get_detail_spacing" default="0.0625">
+			The patch's vertex spacing over the middle half of the field, in metres.
+		</member>
+		<member name="drying_time" type="float" setter="set_drying_time" getter="get_drying_time" default="900.0">
+			How long freshly turned ground takes to dry to a third of its darkening, in seconds.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			The node the field follows; the camera when empty.
+		</member>
+		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
+			The physics layers a downward ray finds the ground on when [member height_source] gives no height.
+		</member>
+		<member name="ground_spacing" type="float" setter="set_ground_spacing" getter="get_ground_spacing" default="0.25">
+			The spacing of the ground lattice sampled from the height source, in metres.
+		</member>
+		<member name="ground_type" type="int" setter="set_ground_type" getter="get_ground_type" enum="GroundSurface3D.GroundType" default="1">
+			The ground where [member type_map] says nothing: sand or soil.
+		</member>
+		<member name="height_source" type="NodePath" setter="set_height_source" getter="get_height_source" default="NodePath(&quot;&quot;)">
+			The terrain: a [code]TerrainDeformer3D[/code], a baked [code]TerrainDataMap3D[/code], a [code]TerrainGenerator3D[/code], anything with [code]get_height(position)[/code] or Terrain3D. Empty: a downward ray on [member ground_collision_mask].
+		</member>
+		<member name="litter_cover" type="float" setter="set_litter_cover" getter="get_litter_cover" default="0.0">
+			The canopy closure that drops leaf litter when there is no weather map, from 0 to 1.
+		</member>
+		<member name="litter_depth" type="float" setter="set_litter_depth" getter="get_litter_depth" default="0.04">
+			The leaf litter under a closed canopy, in metres; less under a thinner one.
+		</member>
+		<member name="material" type="Material" setter="set_material" getter="get_material">
+			The terrain's material. The patch is drawn with a copy of it; turn on [member BaseMaterial3D.ground_deform_enabled] on the original (or call the shader code from a [ShaderMaterial]) so the terrain is lowered under the patch. Map it by world position so the two line up.
+		</member>
+		<member name="max_cached_tiles" type="int" setter="set_max_cached_tiles" getter="get_max_cached_tiles" default="1024">
+			How many tiles of prints are kept after the field leaves them.
+		</member>
+		<member name="moisture" type="float" setter="set_moisture" getter="get_moisture" default="-1.0">
+			The ground's moisture from 0 (dry) to 1 (soaked); -1 takes the [code]WeatherMap3D[/code] wetness.
+		</member>
+		<member name="outer_spacing" type="float" setter="set_outer_spacing" getter="get_outer_spacing" default="0.125">
+			The patch's vertex spacing over the outer half of the field, in metres.
+		</member>
+		<member name="rain_smoothing" type="float" setter="set_rain_smoothing" getter="get_rain_smoothing" default="0.02">
+			How fast rain softens prints: the share lost per hour per mm/h of rain.
+		</member>
+		<member name="rock_from_geology" type="bool" setter="set_rock_from_geology" getter="is_rock_from_geology" default="true">
+			If [code]true[/code] and the height source is a [code]TerrainGenerator3D[/code], bare rock (exposure over one half) does not print.
+		</member>
+		<member name="sand_drift_rate" type="float" setter="set_sand_drift_rate" getter="get_sand_drift_rate" default="2.0">
+			How fast wind fills dry sand prints: the share lost per hour at 10 m/s, from nothing at 5 m/s (Bagnold's threshold).
+		</member>
+		<member name="skirt" type="float" setter="set_skirt" getter="get_skirt" default="0.5">
+			How far the terrain is lowered under the patch, in metres.
+		</member>
+		<member name="skirt_fade" type="float" setter="set_skirt_fade" getter="get_skirt_fade" default="2.0">
+			Over how many metres the lowering reaches its full depth, past [member terrain_margin].
+		</member>
+		<member name="snow_cover" type="NodePath" setter="set_snow_cover" getter="get_snow_cover" default="NodePath(&quot;&quot;)">
+			A [code]SnowCover3D[/code]: where it has more than 3 cm of snow, the snow surface takes the print instead.
+		</member>
+		<member name="terrain_margin" type="float" setter="set_terrain_margin" getter="get_terrain_margin" default="2.0">
+			How far inside the field's edge the terrain starts to be lowered, in metres; at least the terrain's vertex spacing, so no lowered triangle reaches past the patch.
+		</member>
+		<member name="type_map" type="Image" setter="set_type_map" getter="get_type_map">
+			A map of the ground over [member type_map_rect]: red is the share of sand, green over one half is bare rock.
+		</member>
+		<member name="type_map_rect" type="Rect2" setter="set_type_map_rect" getter="get_type_map_rect" default="Rect2(0, 0, 0, 0)">
+			The world XZ rectangle [member type_map] covers.
+		</member>
+	</members>
+	<constants>
+		<constant name="GROUND_SAND" value="0" enum="GroundType">
+			Sand: dry it caves in to dishes, damp it keeps sharp walls.
+		</constant>
+		<constant name="GROUND_SOIL" value="1" enum="GroundType">
+			Soil: firm when dry, mud when wet.
+		</constant>
+	</constants>
+</class>

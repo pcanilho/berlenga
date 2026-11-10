@@ -177,53 +177,11 @@ SnowCover3D::GroundQuery SnowCover3D::_ground_query() const {
 	if (owner) {
 		return owner->_ground_query();
 	}
-	GroundQuery q;
-	Node *src = height_source.is_empty() || !is_inside_tree() ? nullptr : get_node_or_null(height_source);
-	q.deformer = Object::cast_to<TerrainDeformer3D>(src);
-	q.data_map = Object::cast_to<TerrainDataMap3D>(src);
-	if (q.data_map && !q.data_map->is_baked()) {
-		q.data_map = nullptr;
-	}
-	if (src && !q.deformer && !Object::cast_to<TerrainDataMap3D>(src)) {
-		if (src->has_method("get_height")) {
-			q.getter = src;
-		} else if (src->has_method("get_data")) {
-			// Terrain3D, by name: Terrain3D.get_data().get_height(position).
-			Object *terrain_data = src->call("get_data");
-			if (terrain_data && terrain_data->has_method("get_height")) {
-				q.getter = terrain_data;
-			}
-		}
-	}
-	if (is_inside_tree() && get_world_3d().is_valid()) {
-		q.space = get_world_3d()->get_direct_space_state();
-	}
-	q.mask = ground_collision_mask;
-	q.y0 = is_inside_tree() ? get_global_position().y : 0.0f;
-	return q;
+	return GroundHeightQuery::make(this, height_source, ground_collision_mask);
 }
 
 float SnowCover3D::_query_ground(const GroundQuery &p_q, Vector3 p_position) {
-	const Vector3 p(p_position.x, p_q.y0, p_position.z);
-	float h = Math::NaN;
-	if (p_q.deformer) {
-		h = p_q.deformer->get_height(p);
-	} else if (p_q.data_map && p_q.data_map->get_map_rect().has_point(Vector2(p.x, p.z))) {
-		h = p_q.data_map->get_height_at(p);
-	} else if (p_q.getter) {
-		h = p_q.getter->call("get_height", p);
-	}
-	if (!Math::is_finite(h) && p_q.space) {
-		PhysicsDirectSpaceState3D::RayParameters rp;
-		rp.from = Vector3(p.x, p_q.y0 + 10000.0f, p.z);
-		rp.to = Vector3(p.x, p_q.y0 - 10000.0f, p.z);
-		rp.collision_mask = p_q.mask;
-		PhysicsDirectSpaceState3D::RayResult rr;
-		if (p_q.space->intersect_ray(rp, rr)) {
-			h = rr.position.y;
-		}
-	}
-	return h;
+	return p_q.height(p_position);
 }
 
 float SnowCover3D::sample_ground_height(Vector3 p_position) const {
@@ -253,7 +211,7 @@ void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uin
 			float h = _query_ground(q, at);
 			// With a height source, roofs and other overhead colliders on shelter_collision_mask catch the snow
 			// over the ground below them (the pack lies on top; materials under them stay bare).
-			if (shelter_collision_mask && q.space && (q.deformer || q.data_map || q.getter)) {
+			if (shelter_collision_mask && q.space && q.has_source()) {
 				PhysicsDirectSpaceState3D::RayParameters rp;
 				rp.from = Vector3(at.x, q.y0 + 10000.0f, at.z);
 				rp.to = Vector3(at.x, q.y0 - 10000.0f, at.z);
