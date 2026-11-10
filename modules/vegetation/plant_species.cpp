@@ -46,6 +46,7 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_SOIL_DEPTH] = Vector2(0.0f, 100000.0f);
 	ranges[RULE_ROCK] = Vector2(0.0f, 1.0f);
 	ranges[RULE_TALUS] = Vector2(0.0f, 1.0f);
+	ranges[RULE_SHADE] = Vector2(0.0f, 1.0f);
 }
 
 void PlantSpecies::set_meshes(const TypedArray<Mesh> &p_meshes) {
@@ -212,6 +213,10 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_patch_weight", "global_position"), &PlantSpecies::get_patch_weight);
 	ClassDB::bind_method(D_METHOD("set_visibility_range", "range"), &PlantSpecies::set_visibility_range);
 	ClassDB::bind_method(D_METHOD("get_visibility_range"), &PlantSpecies::get_visibility_range);
+	ClassDB::bind_method(D_METHOD("set_canopy_radius", "radius"), &PlantSpecies::set_canopy_radius);
+	ClassDB::bind_method(D_METHOD("get_canopy_radius"), &PlantSpecies::get_canopy_radius);
+	ClassDB::bind_method(D_METHOD("set_canopy_opacity", "opacity"), &PlantSpecies::set_canopy_opacity);
+	ClassDB::bind_method(D_METHOD("get_canopy_opacity"), &PlantSpecies::get_canopy_opacity);
 	ClassDB::bind_method(D_METHOD("get_suitability_at", "data_map", "global_position"), &PlantSpecies::get_suitability_at);
 
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "meshes", PROPERTY_HINT_ARRAY_TYPE, MAKE_RESOURCE_TYPE_HINT("Mesh")), "set_meshes", "get_meshes");
@@ -222,6 +227,9 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "align_to_ground", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_align_to_ground", "get_align_to_ground");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "random_yaw"), "set_random_yaw", "is_random_yaw");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "visibility_range", PROPERTY_HINT_RANGE, "0,1000,0.5,or_greater,suffix:m"), "set_visibility_range", "get_visibility_range");
+	ADD_GROUP("Canopy", "canopy_");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_radius", PROPERTY_HINT_RANGE, "0,30,0.1,or_greater,suffix:m"), "set_canopy_radius", "get_canopy_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_opacity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_canopy_opacity", "get_canopy_opacity");
 	ADD_GROUP("Patches", "patch_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_scale", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_patch_scale", "get_patch_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_patch_cover", "get_patch_cover");
@@ -247,6 +255,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "rock_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_ROCK);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "talus_range"), "set_rule_range", "get_rule_range", RULE_TALUS);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "talus_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_TALUS);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "shade_range"), "set_rule_range", "get_rule_range", RULE_SHADE);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "shade_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SHADE);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -257,6 +267,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_SOIL_DEPTH);
 	BIND_ENUM_CONSTANT(RULE_ROCK);
 	BIND_ENUM_CONSTANT(RULE_TALUS);
+	BIND_ENUM_CONSTANT(RULE_SHADE);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 }
 
