@@ -58,6 +58,7 @@ public:
 		float surface = 0.0f; // undisturbed surface height (ground, or ground plus snow)
 		float max_dent = 0.0f; // deepest the column can be pressed below it
 		float rim_share = 0.3f; // of what is pressed out of it, the share pushed sideways
+		float crust = 0.0f; // m: a crust that breaks under this press (plates tilt into the hole, the rim heaps)
 		bool deformable = false;
 	};
 	// A body over the field, read from its first collision shape.
@@ -126,6 +127,8 @@ public:
 	static float bekker_sinkage(float p_pressure_kpa, float p_width, float p_n, float p_kc, float p_kphi); // m
 	// Bekker sinkage of a body, with the patch growing with sinkage for round bodies and wheels.
 	static float body_sinkage(const Body &p_body, float p_n, float p_kc, float p_kphi);
+	// The pressure a body puts on the ground at a sinkage, kPa (its contact patch at that sinkage).
+	static float body_pressure(const Body &p_body, float p_sinkage);
 
 	// Sumner's erosion step on tiles that owe slumping: where the surface step between neighbours
 	// is more than the undisturbed one and more than tan(repose) times their distance, a share of the

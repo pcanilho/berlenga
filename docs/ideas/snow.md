@@ -583,3 +583,67 @@ arrays, the tile cache, pressing with mass conservation, the body scan) moved to
 (`GroundDeformField`), with the ground query `SnowCover3D` used (`GroundHeightQuery`). `SnowSurface3D`
 keeps its own rules (snow depth and density decide the deepest print, snowfall and wind refill it) and
 behaves as before; its checks pass unchanged.
+
+## Follow-up 3d: crusts that boots break through (built 10 Nov 2026)
+
+**What is known.** The snow classification (Fierz et al. 2009) names the crusts a walker meets: the
+melt-freeze crust (MFcr), "at most a few centimetres thick", whose "strength increases with number of
+melt-freeze cycles"; rain and sun crusts (IFrc, IFsc), thin glazes of ice; wind crusts, "hard but
+usually breakable". Layered snowpack models (SNOWPACK, Lehning et al. 2002; Crocus, Vionnet et al.
+2012) follow every layer's grains, liquid water and refreezing; a crust is a layer whose wet grains
+froze into polycrystals. Hardness in the field is the hand test (Fierz et al. 2009, Table 1.4): the
+object that goes in at 10-15 N, fist (F), four fingers (4F), one finger (1F), pencil (P), knife (K),
+or ice (I), with ram resistances of 0-50, 50-175, 175-390, 390-715, 715-1200 and over 1200 N. Shear and
+tension tests (Jamieson and Johnston 1990; Abe 2004) give strength by density, but for layers in the
+pack, not for a crust loaded through.
+
+**What we built.** Only the top crust is kept, per snow cell: its thickness, melt-freeze cycles, the
+snow over it, and whether it is wet.
+- A surface wetted by melt or rain that refreezes becomes a crust. The refrozen water thickens it, at
+  250 kg/m3 of density gained in the layer it freezes in (our estimate), up to 5 cm. Frozen through, it
+  counts one more cycle. While wet again it bears nothing.
+- New snow and snow sliding down bury it; melt takes the snow over it first; the snow over it settles
+  with the pack. When the snow over a buried crust gets wet, a new top crust starts there.
+- Bearing pressure from the hand test: 12 N over each object's face (fist 100, four fingers 20, one
+  finger 2, pencil 0.5, knife 0.1 cm2, our estimates) bounds each hardness; the geometric centres of
+  the bands are F 0.5, 4F 2.7, 1F 19, P 120, K 540 kPa, ice 1.2 MPa. A first-cycle crust is 1F, each
+  further cycle half a step harder (48 kPa after two, 120 after three). Thinner than 2 cm, it bears in
+  proportion to its thickness (punching shear grows with it).
+- `SnowSurface3D`: a body's pressure on its contact patch against the crust. Under it, the body stands
+  on the crust and only the snow over the crust compacts. Over it, or driven through at a set depth, it
+  breaks: a crust on soft snow is a plate on an elastic foundation, which cracks radially from the load
+  and around it near its characteristic length l = (E h^3 / (12 (1 - nu^2) k))^(1/4) (Hertz 1884;
+  Hetenyi 1946). With E ~ 50 MPa and k ~ 1e5 N/m3 (our estimates) a 2 cm crust has l ~ 0.13 m, growing
+  as h^(3/4). The pieces out to a jagged crack line (seven radial sectors, each its own reach) tip into
+  the hole, their inner edges down by up to half its depth, and the rim heaps in 12 cm plates.
+  Everything goes through the shared deform field, so both renderers trace it.
+- An adult's boot (75 kg on 0.035 m2, 21 kPa) breaks a first-cycle crust and stands on a second-cycle
+  one: the classic spring morning, where the walker on the hard crust at dawn starts breaking through
+  once it thaws (wet crust bears nothing).
+
+**Checks** (`docs/bench/snow --test=crust`, also in `--test`, 8 of 8): the bands give 19, 48 and
+120 kPa; new snow has no crust; ten hours at +8 C then fourteen at -8 C make a 1.5 cm first-cycle crust
+(wet in the thaw, bearing 0) bearing 14 kPa; a walker breaks it (0.18 m deep), and 25 cm from the
+trail's middle the surface is 1.2 cm down, varying 40% along it (cracked pieces tipped in; 0 without a
+crust), the rim holding no more than the pushed share; a second thaw and frost give 3 cm, two
+cycles and 48 kPa, and the walker leaves no print; 10 cm of new snow over it: the walker compacts that
+(0.055 m, the limit to the crust 0.057 m) and stops; with `crust_enabled` off the same walker sinks
+0.21 m. The other snow checks (`--test`, `climate`, `shelter`) and the ground checks pass unchanged.
+
+**Shots.** `--view=trail --close --crust=1` against `--crust=0` (boots and balls through a 2 cm crust:
+wider holes with tipped pieces and lumpy rims) and `--crust=2` (no boot prints), raster and path traced.
+
+**Not built.** Deeper crusts (only the top one is kept); wind crusts (wind packing, follow-up 4 moves
+lying snow); the glaze's look (a shinier surface on a sun or rain crust); crust sound. A wet crust
+bearing a little would need wet-snow strength (not found).
+
+Sources: Fierz, Armstrong, Durand, Etchevers, Greene, McClung, Nishimura, Satyawali and Sokratov, The
+International Classification for Seasonal Snow on the Ground, IHP-VII Technical Documents in Hydrology
+83, UNESCO-IHP 2009. Lehning, Bartelt, Brown, Fierz and Satyawali, A physical SNOWPACK model for the
+Swiss avalanche warning, Part II: Snow microstructure, Cold Regions Science and Technology 35, 2002.
+Vionnet, Brun, Morin, Boone, Faroux, Le Moigne, Martin and Willemet, The detailed snowpack scheme
+Crocus and its implementation in SURFEX v7.2, Geoscientific Model Development 5, 2012. Jamieson and
+Johnston, In-situ tensile tests of snowpack layers, J. Glaciology 36, 1990. Abe, Shear strength and
+angle of repose of snow layers including graupel, Annals of Glaciology 38, 2004. Hertz, Ueber das
+Gleichgewicht schwimmender elastischer Platten, Annalen der Physik 258, 1884. Hetenyi, Beams on
+Elastic Foundation, University of Michigan Press 1946.

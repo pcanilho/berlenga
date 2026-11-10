@@ -532,13 +532,54 @@ GroundDeformField::Column SnowSurface3D::SnowColumns::column(float p_x, float p_
 	}
 	c.deformable = true;
 	c.surface = surface->_ground_at(p_x, p_z) + depth;
-	c.max_dent = surface->_dent_max(depth, cover->get_density_at(wp));
+	const float density = cover->get_density_at(wp);
+	c.max_dent = surface->_dent_max(depth, density);
 	c.rim_share = surface->rim_share;
+	if (held || broke) {
+		const float thickness = cover->get_crust_thickness_at(wp);
+		const float over = cover->get_crust_depth_at(wp);
+		if (thickness > 0.0f && over < depth) {
+			if (held) {
+				// Standing on the crust: only the snow over it compacts.
+				c.max_dent = MIN(c.max_dent, surface->_dent_max(over, density));
+			} else if (over < 0.05f) {
+				c.crust = thickness;
+			}
+		}
+	}
 	return c;
 }
 
 float SnowSurface3D::SnowColumns::sinkage(const GroundDeformField::Body &p_body) const {
-	return GroundDeformField::body_sinkage(p_body, surface->bekker_n, surface->bekker_kc, surface->bekker_kphi);
+	held = false;
+	broke = false;
+	const float z = GroundDeformField::body_sinkage(p_body, surface->bekker_n, surface->bekker_kc, surface->bekker_kphi);
+	const Vector3 wp(p_body.center.x, 0, p_body.center.z);
+	const float strength = cover->get_crust_strength_at(wp);
+	if (strength <= 0.0f) {
+		return z;
+	}
+	if (p_body.mass <= 0.0f) {
+		broke = true; // driven through at a set depth: it breaks whatever is there
+		return z;
+	}
+	const float over = cover->get_crust_depth_at(wp);
+	const float depth = cover->get_depth_at(wp);
+	if (over >= depth) {
+		return z;
+	}
+	// Already broken here (the hole goes past the crust): it goes on breaking at the hole's edge.
+	const float above = surface->_dent_max(over, cover->get_density_at(wp));
+	if (surface->field.dent_at(wp.x, wp.z) > above + 0.5f * cover->get_crust_thickness_at(wp) + 0.005f) {
+		broke = true;
+		return z;
+	}
+	if (GroundDeformField::body_pressure(p_body, MIN(z, MAX(above, 0.005f))) < strength) {
+		held = true;
+		return MIN(z, above);
+	}
+	broke = true;
+	return z;
 }
 
 float SnowSurface3D::_press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round) {

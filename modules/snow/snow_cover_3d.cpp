@@ -140,6 +140,10 @@ void SnowCover3D::_allocate() {
 	cell_canopy.fill(0.0f);
 	cell_canopy_load.resize(nn);
 	cell_canopy_load.fill(0.0f);
+	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet }) {
+		f->resize(nn);
+		f->fill(0.0f);
+	}
 	catch_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAF);
 	catch_texture.unref();
 	cell_height_valid.resize(nn);
@@ -272,7 +276,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
@@ -543,6 +547,14 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		float alb = cell_albedo[i];
 		float runoff = 0.0f;
 
+		float crust = cell_crust[i];
+		float cycles = cell_crust_cycles[i];
+		float burial = cell_crust_burial[i];
+		float crust_wet = cell_crust_wet[i];
+		if (snow > 0.0f && crust > 0.0f) {
+			burial += snow / new_snow_density(t); // new snow buries the crust
+		}
+
 		cell_new_depth.write[i] = 0.0f;
 		if (snow > 0.0f) {
 			const float rho_new = new_snow_density(t);
@@ -561,8 +573,16 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			cell_density.write[i] = 100.0f;
 			cell_albedo.write[i] = ALBEDO_FRESH;
 			cell_runoff.write[i] = in.dt_h > 0.0f ? (rain + swe) / in.dt_h : 0.0f;
+			cell_crust.write[i] = 0.0f;
+			cell_crust_cycles.write[i] = 0.0f;
+			cell_crust_burial.write[i] = 0.0f;
+			cell_crust_wet.write[i] = 0.0f;
 			continue;
 		}
+		const float liq_before = liq;
+		const float rho_before = rho;
+		float refrozen = 0.0f;
+		float surface_melt = 0.0f;
 
 		// Rain soaks into the pack (and drains out below what it holds).
 		liq += rain;
@@ -592,10 +612,15 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				g = in.direct_normal * (MAX(normal.dot(in.sun_dir), 0.0f) * vis + DIFFUSE_SHARE * in.sun_dir.y);
 			}
 			const float m = (melt_temperature_factor * t + melt_shortwave_factor * (1.0f - alb) * g) * in.dt_h;
-			liq += CLAMP(m, 0.0f, MAX(swe - liq, 0.0f));
+			surface_melt = CLAMP(m, 0.0f, MAX(swe - liq, 0.0f));
+			liq += surface_melt;
 		} else if (t < 0.0f && liq > 0.0f) {
 			// Meltwater and rain refreeze in a cold pack, at the temperature factor's rate.
-			liq -= MIN(liq, melt_temperature_factor * -t * in.dt_h);
+			refrozen = MIN(liq, melt_temperature_factor * -t * in.dt_h);
+			liq -= refrozen;
+		}
+		if (crust_enabled) {
+			_update_crust(crust, cycles, burial, crust_wet, rain, surface_melt / MAX(rho, 30.0f), refrozen, liq_before, liq);
 		}
 		swe = MAX(swe, liq);
 
@@ -630,12 +655,70 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			rho = 100.0f;
 			alb = ALBEDO_FRESH;
 		}
+		if (swe <= SWE_MIN || !crust_enabled) {
+			crust = cycles = burial = crust_wet = 0.0f;
+		}
+		cell_crust.write[i] = crust;
+		cell_crust_cycles.write[i] = cycles;
+		// The snow over the crust settles with the pack.
+		cell_crust_burial.write[i] = swe > SWE_MIN ? MIN(burial * rho_before / MAX(rho, 30.0f), swe / MAX(rho, 30.0f)) : 0.0f;
+		cell_crust_wet.write[i] = crust_wet;
 		cell_swe.write[i] = swe;
 		cell_liquid.write[i] = liq;
 		cell_density.write[i] = CLAMP(rho, 30.0f, 917.0f);
 		cell_albedo.write[i] = alb;
 		cell_runoff.write[i] = in.dt_h > 0.0f ? runoff / in.dt_h : 0.0f;
 	}
+}
+
+// Crusts (docs/ideas/snow.md, follow-up 3d). A melt-freeze crust is the surface layer that was wet and
+// froze again: "at most a few centimetres thick", its "strength increases with number of melt-freeze
+// cycles" (Fierz et al. 2009, MFcr); rain on snow freezes to a thin glaze the same way (IFrc). Only the
+// top crust is kept: when the surface over a buried one gets wet, a new crust starts there.
+static constexpr float CRUST_MAX = 0.05f; // m
+static constexpr float CRUST_GAIN = 250.0f; // kg/m3: the density refrozen water adds to the layer it freezes in
+static constexpr float CRUST_SURFACE = 0.01f; // m of snow over a crust that still counts as its surface
+
+void SnowCover3D::_update_crust(float &r_crust, float &r_cycles, float &r_burial, float &r_wet, float p_rain, float p_melt_depth, float p_refrozen, float p_liquid_before, float p_liquid) const {
+	// Melt takes the snow over the crust first.
+	if (r_crust > 0.0f && p_melt_depth > 0.0f) {
+		r_burial = MAX(r_burial - p_melt_depth, 0.0f);
+	}
+	if (p_melt_depth > 0.0f || p_rain > 0.0f) {
+		if (r_crust > 0.0f && r_burial > CRUST_SURFACE) {
+			// The wet layer is above the old crust: it starts the new top crust.
+			r_crust = 0.0f;
+			r_cycles = 0.0f;
+			r_burial = 0.0f;
+		}
+		r_wet = 1.0f;
+	}
+	if (r_wet > 0.0f && p_refrozen > 0.0f) {
+		r_crust = MIN(r_crust + p_refrozen / CRUST_GAIN, CRUST_MAX);
+		if (p_liquid <= 1e-4f && p_liquid_before > 0.0f) {
+			// Frozen through: one more melt-freeze cycle.
+			r_cycles += 1.0f;
+			r_wet = 0.0f;
+		}
+	}
+}
+
+float SnowCover3D::crust_strength(float p_cycles, float p_thickness) {
+	// The bearing pressure of a crust by its hand hardness (Fierz et al. 2009, Table 1.4): a layer of
+	// hardness h lets the h-th test object in at the 10-15 N of the hand test but not the one before.
+	// Taking 12 N over each object's face (fist 100, four fingers 20, one finger 2, pencil 0.5,
+	// knife 0.1 cm2) gives bands whose geometric centres are F 0.5, 4F 2.7, 1F 19, P 120, K 540 kPa;
+	// ice (I) is held at 1.2 MPa. A first-cycle crust is 1F, each further cycle half a step harder.
+	// A crust thinner than 2 cm bears in proportion to its thickness (punching shear grows with it).
+	if (p_cycles <= 0.0f || p_thickness <= 0.0f) {
+		return 0.0f;
+	}
+	static const float BAND[6] = { 0.5f, 2.7f, 19.0f, 120.0f, 540.0f, 1200.0f };
+	const float h = CLAMP(2.5f + 0.5f * p_cycles, 1.0f, 6.0f) - 1.0f;
+	const int k = MIN(int(h), 4);
+	const float f = h - k;
+	const float sigma = Math::exp(Math::log(BAND[k]) * (1.0f - f) + Math::log(BAND[k + 1]) * f);
+	return sigma * MIN(p_thickness / 0.02f, 1.0f);
 }
 
 void SnowCover3D::_slide() {
@@ -741,9 +824,13 @@ void SnowCover3D::_slide() {
 			rho[j] = swe[j] / MAX(depth_j + part / r, 1e-6f);
 			surface[j] += part / r;
 			cell_albedo.write[j] = MIN(cell_albedo[j], cell_albedo[i]);
+			if (cell_crust[j] > 0.0f) {
+				cell_crust_burial.write[j] += part / r;
+			}
 		}
 		swe[i] = keep;
 		liq[i] *= keep / (keep + out);
+		cell_crust_burial.write[i] = MIN(cell_crust_burial[i], keep / r);
 		surface[i] = cell_ground[i] + keep / r;
 	}
 }
@@ -758,6 +845,10 @@ void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
 	cell_density.ptrw();
 	cell_albedo.ptrw();
 	cell_runoff.ptrw();
+	cell_crust.ptrw();
+	cell_crust_cycles.ptrw();
+	cell_crust_burial.ptrw();
+	cell_crust_wet.ptrw();
 	cell_new_depth.ptrw();
 	cell_canopy_load.ptrw();
 	// The canopy can change under the square (a forest populated later): read it again now and then.
@@ -910,6 +1001,7 @@ void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_reso
 	melt_temperature_factor = owner->melt_temperature_factor;
 	melt_shortwave_factor = owner->melt_shortwave_factor;
 	liquid_capacity = owner->liquid_capacity;
+	crust_enabled = owner->crust_enabled;
 	slide_enabled = owner->slide_enabled;
 	slide_angle = owner->slide_angle;
 	slide_min_holding = owner->slide_min_holding;
@@ -1041,9 +1133,19 @@ void SnowCover3D::_seed_from_world(const Vector<uint8_t> *p_only) {
 				liq[i] = 0.0f;
 				rho[i] = 100.0f;
 				alb[i] = ALBEDO_FRESH;
+				cell_crust.write[i] = 0.0f;
+				cell_crust_cycles.write[i] = 0.0f;
+				cell_crust_burial.write[i] = 0.0f;
+				cell_crust_wet.write[i] = 0.0f;
 				continue;
 			}
 			swe[i] = w;
+			if (world->cell_crust.size() == world->cell_swe.size()) {
+				cell_crust.write[i] = world->_sample(world->cell_crust, xz);
+				cell_crust_cycles.write[i] = Math::round(world->_sample(world->cell_crust_cycles, xz));
+				cell_crust_burial.write[i] = MIN(world->_sample(world->cell_crust_burial, xz), w / rho[i]);
+				cell_crust_wet.write[i] = world->_sample(world->cell_crust_wet, xz) > 0.5f ? 1.0f : 0.0f;
+			}
 			liq[i] = MIN(world->_sample(world->cell_liquid, xz), w);
 			rho[i] = CLAMP(world->_sample(world->cell_density, xz), 30.0f, 917.0f);
 			alb[i] = world->_sample(world->cell_albedo, xz);
@@ -1188,6 +1290,9 @@ void SnowCover3D::clear() {
 	cell_density.fill(100.0f);
 	cell_albedo.fill(ALBEDO_FRESH);
 	cell_runoff.fill(0.0f);
+	for (Vector<float> *f : { &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet }) {
+		f->fill(0.0f);
+	}
 	_upload();
 }
 
@@ -1204,6 +1309,9 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density) {
 		cell_density.write[i] = swe / MAX(depth_old + MAX(p_swe_mm, 0.0f) / rho_new, 1e-6f);
 		cell_albedo.write[i] = ALBEDO_FRESH;
 		cell_new_depth.write[i] = MAX(p_swe_mm, 0.0f) / rho_new;
+		if (cell_crust.size() == cell_swe.size() && cell_crust[i] > 0.0f) {
+			cell_crust_burial.write[i] += MAX(p_swe_mm, 0.0f) / rho_new;
+		}
 	}
 	last_step_hours = 0.0f;
 	last_drift = 0.0f;
@@ -1269,6 +1377,58 @@ float SnowCover3D::get_density_at(Vector3 p_position) const {
 		return world->get_density_at(p_position);
 	}
 	return _sample(cell_density, Vector2(p_position.x, p_position.z));
+}
+
+void SnowCover3D::add_crust(float p_thickness, float p_cycles) {
+	if (cell_crust.size() != cell_swe.size()) {
+		return;
+	}
+	for (int i = 0; i < cell_swe.size(); i++) {
+		const bool on = cell_swe[i] > SWE_MIN && p_thickness > 0.0f && p_cycles > 0.0f;
+		cell_crust.write[i] = on ? MIN(p_thickness, CRUST_MAX) : 0.0f;
+		cell_crust_cycles.write[i] = on ? p_cycles : 0.0f;
+		cell_crust_burial.write[i] = 0.0f;
+		cell_crust_wet.write[i] = 0.0f;
+	}
+	update_count++;
+}
+
+float SnowCover3D::get_crust_thickness_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_crust_thickness_at(p_position);
+	}
+	return cell_crust.is_empty() ? 0.0f : _sample(cell_crust, Vector2(p_position.x, p_position.z));
+}
+
+float SnowCover3D::get_crust_depth_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_crust_depth_at(p_position);
+	}
+	if (cell_crust.is_empty()) {
+		return 0.0f;
+	}
+	return _sample(cell_crust_burial, Vector2(p_position.x, p_position.z));
+}
+
+float SnowCover3D::get_crust_cycles_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_crust_cycles_at(p_position);
+	}
+	return cell_crust.is_empty() ? 0.0f : _sample(cell_crust_cycles, Vector2(p_position.x, p_position.z));
+}
+
+float SnowCover3D::get_crust_strength_at(Vector3 p_position) const {
+	if (_in_world_only(p_position)) {
+		return world->get_crust_strength_at(p_position);
+	}
+	if (cell_crust.is_empty()) {
+		return 0.0f;
+	}
+	const Vector2 p(p_position.x, p_position.z);
+	if (_sample(cell_crust_wet, p) > 0.5f) {
+		return 0.0f; // wet: it is slush until it freezes again
+	}
+	return crust_strength(_sample(cell_crust_cycles, p), _sample(cell_crust, p));
 }
 
 float SnowCover3D::get_albedo_at(Vector3 p_position) const {
@@ -1455,6 +1615,10 @@ void SnowCover3D::set_liquid_capacity(float p_share) {
 	liquid_capacity = CLAMP(p_share, 0.0f, 0.5f);
 }
 
+void SnowCover3D::set_crust_enabled(bool p_enabled) {
+	crust_enabled = p_enabled;
+}
+
 void SnowCover3D::set_slide_enabled(bool p_enabled) {
 	slide_enabled = p_enabled;
 }
@@ -1594,6 +1758,14 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_runoff_at", "position"), &SnowCover3D::get_runoff_at);
 	ClassDB::bind_method(D_METHOD("get_ground_height_at", "position"), &SnowCover3D::get_ground_height_at);
 	ClassDB::bind_method(D_METHOD("get_new_snow_at", "position"), &SnowCover3D::get_new_snow_at);
+	ClassDB::bind_method(D_METHOD("get_crust_thickness_at", "position"), &SnowCover3D::get_crust_thickness_at);
+	ClassDB::bind_method(D_METHOD("get_crust_depth_at", "position"), &SnowCover3D::get_crust_depth_at);
+	ClassDB::bind_method(D_METHOD("get_crust_cycles_at", "position"), &SnowCover3D::get_crust_cycles_at);
+	ClassDB::bind_method(D_METHOD("get_crust_strength_at", "position"), &SnowCover3D::get_crust_strength_at);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("crust_strength", "cycles", "thickness"), &SnowCover3D::crust_strength);
+	ClassDB::bind_method(D_METHOD("add_crust", "thickness", "cycles"), &SnowCover3D::add_crust);
+	ClassDB::bind_method(D_METHOD("set_crust_enabled", "enabled"), &SnowCover3D::set_crust_enabled);
+	ClassDB::bind_method(D_METHOD("is_crust_enabled"), &SnowCover3D::is_crust_enabled);
 	ClassDB::bind_method(D_METHOD("get_air_temperature_at", "position"), &SnowCover3D::get_air_temperature_at);
 	ClassDB::bind_method(D_METHOD("get_snowfall_rate_at", "position"), &SnowCover3D::get_snowfall_rate_at);
 	ClassDB::bind_method(D_METHOD("sample_ground_height", "position"), &SnowCover3D::sample_ground_height);
@@ -1641,6 +1813,7 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melt_temperature_factor", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_melt_temperature_factor", "get_melt_temperature_factor");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melt_shortwave_factor", PROPERTY_HINT_RANGE, "0,0.1,0.0001"), "set_melt_shortwave_factor", "get_melt_shortwave_factor");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "liquid_capacity", PROPERTY_HINT_RANGE, "0,0.5,0.01"), "set_liquid_capacity", "get_liquid_capacity");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crust_enabled"), "set_crust_enabled", "is_crust_enabled");
 	ADD_GROUP("Slide", "slide_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "slide_enabled"), "set_slide_enabled", "is_slide_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slide_interval", PROPERTY_HINT_RANGE, "0,86400,1,suffix:s"), "set_slide_interval", "get_slide_interval");

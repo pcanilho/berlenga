@@ -117,6 +117,10 @@ class SnowSurface3D : public Node3D {
 	struct SnowColumns : public GroundDeformField::Columns {
 		const SnowSurface3D *surface = nullptr;
 		const SnowCover3D *cover = nullptr;
+		// Set by sinkage() for the body about to press: held by the crust (only the snow over it
+		// compacts), or through it (the rim heaps in plates).
+		mutable bool held = false;
+		mutable bool broke = false;
 		GroundDeformField::Column column(float p_x, float p_z) const override;
 		float sinkage(const GroundDeformField::Body &p_body) const override;
 	};

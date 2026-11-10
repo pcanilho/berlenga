@@ -80,6 +80,7 @@ class SnowCover3D : public Node3D {
 	float melt_temperature_factor = 0.05f; // mm / (h C)
 	float melt_shortwave_factor = 0.0094f; // mm m2 / (h W)
 	float liquid_capacity = 0.05f; // share of the pack's water it holds as liquid
+	bool crust_enabled = true;
 	bool slide_enabled = true;
 	float slide_interval = 600.0f; // weather seconds between slide passes
 	float slide_angle = 25.0f; // degrees
@@ -131,6 +132,12 @@ class SnowCover3D : public Node3D {
 	Ref<Image> catch_image;
 	Ref<ImageTexture> catch_texture;
 	Vector<float> cell_new_depth; // m of new snow laid by the last update (SnowSurface3D refills trails with it)
+	// The top crust: thickness (m), melt-freeze cycles, snow over it (m), and 1 while its layer is
+	// wet since it last froze (a crust in the making, or one melting again).
+	Vector<float> cell_crust;
+	Vector<float> cell_crust_cycles;
+	Vector<float> cell_crust_burial;
+	Vector<float> cell_crust_wet;
 	Vector<uint8_t> cell_height_valid;
 	Vector2 sx_direction;
 	bool sx_valid = false;
@@ -182,6 +189,7 @@ class SnowCover3D : public Node3D {
 	void _prepare_inputs(double p_weather_dt, bool p_blocking);
 	void _update_row(uint32_t p_row, void *p_unused);
 	void _slide();
+	void _update_crust(float &r_crust, float &r_cycles, float &r_burial, float &r_wet, float p_rain, float p_melt_depth, float p_refrozen, float p_liquid_before, float p_liquid) const;
 	void _update(double p_weather_dt, bool p_blocking);
 	void _upload();
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
@@ -244,6 +252,8 @@ public:
 	float get_melt_shortwave_factor() const { return melt_shortwave_factor; }
 	void set_liquid_capacity(float p_share);
 	float get_liquid_capacity() const { return liquid_capacity; }
+	void set_crust_enabled(bool p_enabled);
+	bool is_crust_enabled() const { return crust_enabled; }
 	void set_slide_enabled(bool p_enabled);
 	bool is_slide_enabled() const { return slide_enabled; }
 	void set_slide_interval(float p_seconds);
@@ -296,6 +306,14 @@ public:
 	float get_runoff_at(Vector3 p_position) const; // mm/h
 	float get_ground_height_at(Vector3 p_position) const;
 	float get_new_snow_at(Vector3 p_position) const; // m laid by the last update
+	// The top crust (docs/ideas/snow.md, follow-up 3d): its thickness, the snow over it, its melt-freeze
+	// cycles and the pressure it bears before breaking (0 while it is wet).
+	float get_crust_thickness_at(Vector3 p_position) const; // m
+	float get_crust_depth_at(Vector3 p_position) const; // m of snow over it
+	float get_crust_cycles_at(Vector3 p_position) const;
+	float get_crust_strength_at(Vector3 p_position) const; // kPa
+	static float crust_strength(float p_cycles, float p_thickness); // kPa, frozen
+	void add_crust(float p_thickness, float p_cycles);
 	// The ground straight from the height source (finer than the cells), NaN where nothing answers.
 	float sample_ground_height(Vector3 p_position) const;
 	void sample_ground_heights(Vector2 p_origin, float p_spacing, int p_width, int p_height, float *r_heights) const;

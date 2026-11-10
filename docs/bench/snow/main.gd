@@ -26,6 +26,10 @@ extends Node3D
 #                     first wets it (the glints go); prints the share of glinting pixels
 #   --view=shelter    a shed and young spruces after a snowfall: bare ground under the roof, snow in the
 #                     crowns and less under them (--test=shelter for the checks)
+#   --test=crust      melt-freeze crusts: formed by a thaw and a frost, harder each cycle, a boot breaks a
+#                     first-cycle crust and stands on a second-cycle one, new snow over it
+#   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
+#                     under the boots, balls and wheel; 2 holds the boots (--close: down on the boot prints)
 #   --view=props      close: bumpy ground, boxes, a sphere, a 45 degree board and a 70 degree wall after snow
 #   --snow=H          hours of 2 mm/h precipitation (default 24 mountain, 8 props)
 #   --sun=H           then hours of sun (mountain; default 48)
@@ -59,6 +63,7 @@ var walking := false
 var wind := 4.0
 var only := ""
 var melt_hours := 0.0
+var crust_cycles := 0.0
 
 
 func _ready() -> void:
@@ -76,11 +81,14 @@ func _ready() -> void:
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
 		elif a.begins_with("--wind="): wind = float(a.substr(7))
 		elif a.begins_with("--melt="): melt_hours = float(a.substr(7))
+		elif a.begins_with("--crust="): crust_cycles = float(a.substr(8))
 	if test:
 		if only == "climate":
 			await _run_climate_tests()
 		elif only == "shelter":
 			await _run_shelter_tests()
+		elif only == "crust":
+			await _run_crust_tests()
 
 		else:
 			await _run_tests()
@@ -256,6 +264,7 @@ func _run_tests() -> void:
 	_check("drift keeps the water", absf(mean - 20.0) < 0.5, "%.2f mm of 20 mm" % mean)
 
 	await _run_surface_tests()
+	await _run_crust_tests()
 	await _run_fall_tests()
 	await _run_shelter_tests()
 	await _run_climate_tests()
@@ -277,6 +286,106 @@ func _run_tests() -> void:
 			snow.advance(60.0)
 			total += snow.get_update_time_msec()
 		print("  one update, 256 x 256 cells, %s: %.2f ms" % [mode, total / 10.0])
+
+
+func _weather_to(t: float, hours: float) -> void:
+	weather.temperature = t
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	snow.advance(hours * 3600.0)
+	await get_tree().physics_frame
+
+
+func _walk(z: float, from_x: float = -3.0, to_x: float = 3.0) -> void:
+	var wk := CharacterBody3D.new()
+	var ws := CollisionShape3D.new()
+	ws.shape = CapsuleShape3D.new()
+	(ws.shape as CapsuleShape3D).radius = 0.15
+	(ws.shape as CapsuleShape3D).height = 1.8
+	wk.add_child(ws)
+	wk.add_to_group("snow_deform")
+	add_child(wk)
+	var steps_n := int((to_x - from_x) / 0.1)
+	for i in steps_n + 1:
+		var x := from_x + i * 0.1
+		var top := surface.get_surface_height_at(Vector3(x, 0, z))
+		wk.global_position = Vector3(x, top + 0.9, z)
+		await get_tree().physics_frame
+	wk.queue_free()
+	await get_tree().physics_frame
+
+
+func _trail_stats(z: float) -> Dictionary:
+	# Mean dent along the trail's middle, and the rim beside it: mean and coefficient of variation.
+	# Beside it (0.25 m from the middle, past the boot and its rim ring): how far the surface is down.
+	var dsum := 0.0
+	var edges: Array[float] = []
+	for i in 40:
+		var x := -2.0 + i * 0.1
+		dsum += surface.get_dent_at(Vector3(x, 0, z))
+		for side in [-1.0, 1.0]:
+			var q := Vector3(x, 0, z + side * 0.25)
+			edges.append(surface.get_dent_at(q) - surface.get_rim_at(q))
+	var esum := 0.0
+	for e in edges:
+		esum += e
+	var emean := esum / edges.size()
+	var var_sum := 0.0
+	for e in edges:
+		var_sum += (e - emean) * (e - emean)
+	return {"dent": dsum / 40.0, "edge": emean, "cv": sqrt(var_sum / edges.size()) / maxf(absf(emean), 1e-6)}
+
+
+func _run_crust_tests() -> void:
+	print("Crusts:")
+	var s1 := SnowCover3D.crust_strength(1.0, 0.02)
+	var s2 := SnowCover3D.crust_strength(2.0, 0.02)
+	var s3 := SnowCover3D.crust_strength(3.0, 0.02)
+	_check("hand hardness to bearing pressure (Fierz et al. 2009)", absf(s1 - 19.0) < 0.1 and absf(s3 - 120.0) < 0.5 and s2 > s1 and s2 < s3 and absf(SnowCover3D.crust_strength(1.0, 0.01) - 9.5) < 0.1, "1F %.0f kPa (one cycle), %.0f (two), P %.0f (three); half as thick bears half" % [s1, s2, s3])
+	# 0.4 m of settled snow, a cold night, then thaws and frosts.
+	await _surface_setup(80.0, 200.0)
+	var p := Vector3(0.5, 0, 0.5)
+	_check("new snow has no crust", snow.get_crust_cycles_at(p) == 0.0 and snow.get_crust_strength_at(p) == 0.0, "%.0f cycles" % snow.get_crust_cycles_at(p))
+	await _weather_to(8.0, 10.0)
+	var wet_strength := snow.get_crust_strength_at(p)
+	var wetness := snow.get_wetness_at(p)
+	await _weather_to(-8.0, 14.0)
+	var c1 := snow.get_crust_cycles_at(p)
+	var t1 := snow.get_crust_thickness_at(p)
+	var st1 := snow.get_crust_strength_at(p)
+	_check("a thaw and a frost make a melt-freeze crust", wet_strength == 0.0 and wetness > 0.5 and c1 == 1.0 and t1 > 0.005 and t1 <= 0.05, "wet %.2f in the thaw (bears %.0f kPa), then %.0f cycle, %.1f cm, %.1f kPa" % [wetness, wet_strength, c1, t1 * 100.0, st1])
+	var boot := 75.0 * 9.81 / 1000.0 / 0.035
+	surface.clear_deformation()
+	var v0 := surface.get_moved_volume()
+	await _walk(3.0)
+	var broken := _trail_stats(3.0)
+	var vol := surface.get_moved_volume() - v0
+	_check("a boot (%.0f kPa) breaks a first-cycle crust" % boot, st1 < boot and broken.dent > 0.05, "%.3f m deep" % broken.dent)
+	_check("the crust cracks around the hole and the pieces tip in", broken.edge > 0.01 and broken.cv > 0.3 and vol.y <= 0.3 * vol.x + 1e-4, "%.3f m down 25 cm from the middle, varying %.0f%% along it (jagged); rim %.4f of %.4f m3 pressed" % [broken.edge, broken.cv * 100.0, vol.y, vol.x])
+	await _weather_to(8.0, 10.0)
+	await _weather_to(-8.0, 14.0)
+	var c2 := snow.get_crust_cycles_at(p)
+	var st2 := snow.get_crust_strength_at(p)
+	await _walk(-3.0)
+	var held := _trail_stats(-3.0)
+	_check("a second frost hardens it: the boot stands on it", c2 == 2.0 and st2 > boot and held.dent < 0.01, "%.0f cycles, %.1f cm, %.0f kPa; %.3f m deep" % [c2, snow.get_crust_thickness_at(p) * 100.0, st2, held.dent])
+	# 10 cm of new snow over it: the boot compacts that and stops on the crust.
+	snow.add_snow(10.0, 100.0)
+	await get_tree().physics_frame
+	var over := snow.get_crust_depth_at(p)
+	await _walk(-6.0)
+	var buried := _trail_stats(-6.0)
+	var rho := snow.get_density_at(p)
+	var cap := over * (1.0 - rho / 450.0) / (1.0 - 0.3 * rho / 450.0)
+	_check("new snow over a crust: the boot compacts it and stops", absf(over - 0.1) < 0.02 and buried.dent > 0.02 and buried.dent <= cap + 0.01, "%.2f m over the crust, %.3f m deep (to the crust %.3f)" % [over, buried.dent, cap])
+	# The same pack without crusts: the boot goes in.
+	snow.crust_enabled = false
+	snow.advance(60.0)
+	await get_tree().physics_frame
+	await _walk(-9.0)
+	var none := _trail_stats(-9.0)
+	print("  beside an unbroken trail (crusts off): %.3f m" % none.edge)
+	_check("crust_enabled off: the boot sinks as before", snow.get_crust_strength_at(p) == 0.0 and none.dent > buried.dent + 0.02, "%.3f m deep" % none.dent)
 
 
 func _surface_setup(swe: float, density: float) -> void:
@@ -894,6 +1003,11 @@ func _build_trail(cam: Camera3D) -> void:
 	cam.position = Vector3(2.6, 1.35, 5.4)
 	cam.look_at(Vector3(-0.6, 0.15, 0.6))
 	cam.fov = 55.0
+	if OS.get_cmdline_user_args().has("--close"):
+		# Down on the boot prints, the sun behind them.
+		cam.position = Vector3(-1.2, 1.1, 2.6)
+		cam.look_at(Vector3(-2.9, 0.3, 1.0))
+		cam.fov = 50.0
 	var target := Marker3D.new()
 	target.name = "Probe"
 	add_child(target)
@@ -904,9 +1018,15 @@ func _build_trail(cam: Camera3D) -> void:
 		_precipitate(hours, 2.0)
 	else:
 		snow.add_snow(45.0, 110.0) # 0.41 m of fresh snow
+	if crust_cycles > 0.0:
+		# A 2 cm melt-freeze crust on top: one cycle breaks under a boot, two hold it.
+		snow.add_crust(0.02, crust_cycles)
 	surface = SnowSurface3D.new()
 	surface.snow_cover = NodePath("../SnowCover3D")
 	surface.follow_target = NodePath("../Probe")
+	if OS.get_cmdline_user_args().has("--close"):
+		# Triangles as fine as the deformation texels (6 cm), for the pieces of a broken crust.
+		surface.detail_spacing = 0.0625
 	add_child(surface)
 	# Movers, driven on set paths so the shot is the same each run: a walker whose two boots print the
 	# snow (boot boxes in the snow_deform group, 80 kg on 0.035 m2: Bekker), a cart wheel and two balls

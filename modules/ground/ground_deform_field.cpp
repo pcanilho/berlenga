@@ -32,6 +32,7 @@
 
 #include "core/io/image.h"
 #include "core/math/math_funcs.h"
+#include "core/templates/hashfuncs.h"
 #include "scene/3d/physics/character_body_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
@@ -326,6 +327,32 @@ float GroundDeformField::body_sinkage(const Body &p_body, float p_n, float p_kc,
 	return z;
 }
 
+// A broken crust (docs/ideas/snow.md, follow-up 3d). A crust on soft snow is a plate on an elastic
+// foundation: loaded through, it cracks radially from the load and around it near its characteristic
+// length l = (E h^3 / (12 (1 - nu^2) k))^(1/4) (Hertz 1884; Hetenyi 1946), and the pieces tip into the
+// hole. With E ~ 50 MPa and k ~ 1e5 N/m3 (our estimates for a crust over soft snow) a 2 cm crust has
+// l ~ 0.13 m, growing as h^(3/4).
+static constexpr float CRACK_LENGTH = 0.13f; // m at 2 cm
+static constexpr float PLATE = 0.12f; // m, the pieces heaped in the rim
+static constexpr int CRACK_SECTORS = 7; // radial cracks around a break
+
+float GroundDeformField::body_pressure(const Body &p_body, float p_sinkage) {
+	if (p_body.mass <= 0.0f) {
+		return 0.0f;
+	}
+	const float load = p_body.mass * 9.81f / 1000.0f; // kN
+	if (p_body.area > 0.0f) {
+		return load / p_body.area;
+	}
+	if (p_body.flat_area > 0.0f) {
+		return load / p_body.flat_area;
+	}
+	const float rr = p_body.wheel ? p_body.half_height : p_body.radius;
+	const float z = CLAMP(p_sinkage, 0.005f, rr);
+	const float l = 2.0f * Math::sqrt(MAX(2.0f * rr * z - z * z, 1e-4f));
+	return load / (p_body.wheel ? l * MAX(p_body.width, 0.01f) : Math::PI * 0.25f * l * l);
+}
+
 float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance) {
 	if (!valid || p_radius <= 0.0f || (p_box && (p_half.x <= 0.0f || p_half.y <= 0.0f))) {
 		return 0.0f;
@@ -335,7 +362,9 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 	const float area = t * t;
 	// The rim ring: half the footprint's equivalent radius wide.
 	const float ring = 0.5f * (p_box ? Math::sqrt(p_half.x * p_half.y) : p_radius);
-	const float span = (p_box ? p_half.length() : p_radius) + ring;
+	const float crust = p_columns.column(p_position.x, p_position.z).crust;
+	const float crack = crust > 0.0f ? CRACK_LENGTH * Math::pow(crust / 0.02f, 0.75f) : 0.0f;
+	const float span = (p_box ? p_half.length() : p_radius) + MAX(ring, 1.6f * crack);
 	const int x0 = MAX(int(Math::floor((p_position.x - span) / t)) - origin.x, 0);
 	const int x1 = MIN(int(Math::ceil((p_position.x + span) / t)) - origin.x, n - 1);
 	const int z0 = MAX(int(Math::floor((p_position.z - span) / t)) - origin.y, 0);
@@ -394,6 +423,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 	}
 	float moved = 0.0f;
 	float pushed = 0.0f;
+	float deepest = 0.0f;
 	for (int z = z0; z <= z1; z++) {
 		for (int x = x0; x <= x1; x++) {
 			const float wx = (origin.x + x + 0.5f) * t;
@@ -418,6 +448,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 				continue;
 			}
 			const float delta = s - target;
+			deepest = MAX(deepest, c.surface - target);
 			const float take = MIN(rim[i], delta);
 			rim[i] -= take;
 			dent[i] += delta - take;
@@ -432,6 +463,48 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 	if (moved <= 0.0f) {
 		return 0.0f;
 	}
+	if (crack > 0.0f && deepest > 0.0f) {
+		// The broken crust: pieces out to a jagged crack line, one length per radial sector, tip into the
+		// hole, their inner edges down by up to half its depth. The snow under them compacts (no rim).
+		const uint32_t seed = hash_murmur3_one_32(uint32_t(int(Math::floor(p_position.x / 0.25f))) * 73856093u ^ uint32_t(int(Math::floor(p_position.z / 0.25f))) * 19349663u);
+		const float drop_edge = MIN(0.5f * deepest, 0.5f * crack);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const float wx = (origin.x + x + 0.5f) * t;
+				const float wz = (origin.y + z + 0.5f) * t;
+				float d2;
+				const float o = outside(wx, wz, d2);
+				if (o <= 0.0f) {
+					continue;
+				}
+				const float a = Math::atan2(wz - p_position.z, wx - p_position.x) + Math::PI;
+				const int sector = int(a / float(Math::TAU) * CRACK_SECTORS) % CRACK_SECTORS;
+				const uint32_t hs = hash_murmur3_one_32(uint32_t(sector), seed);
+				const float reach = crack * (0.5f + 1.1f * (hs & 0xffff) / 65535.0f);
+				if (o >= reach) {
+					continue;
+				}
+				const Column c = p_columns.column(wx, wz);
+				if (!c.deformable || c.crust <= 0.0f) {
+					continue;
+				}
+				const int i = z * n + x;
+				const float target = MAX(c.surface - drop_edge * (1.0f - o / reach), c.surface - c.max_dent);
+				const float s = c.surface - dent[i] + rim[i];
+				if (target >= s) {
+					continue;
+				}
+				const float delta = s - target;
+				const float take = MIN(rim[i], delta);
+				rim[i] -= take;
+				dent[i] += delta - take;
+				if (track_fresh) {
+					fresh[i] = 1.0f;
+				}
+				_mark(x, z, press_settle);
+			}
+		}
+	}
 	// The rim: the pushed share of the moved material, spread over the ring, thickest at the edge.
 	float wsum = 0.0f;
 	for (int pass = 0; pass < 2 && pushed > 0.0f; pass++) {
@@ -444,10 +517,22 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 				if (o <= 0.0f || o >= ring) {
 					continue;
 				}
-				if (!p_columns.column(wx, wz).deformable) {
+				const Column c = p_columns.column(wx, wz);
+				if (!c.deformable) {
 					continue;
 				}
-				const float w = 1.0f - o / ring;
+				float w = 1.0f - o / ring;
+				if (c.crust > 0.0f) {
+					// A broken crust: the rim is heaped in plates, each a tilted slab of its own height.
+					const int px = int(Math::floor(wx / PLATE));
+					const int pz = int(Math::floor(wz / PLATE));
+					const uint32_t hsh = hash_murmur3_one_32(uint32_t(px) * 73856093u ^ uint32_t(pz) * 19349663u);
+					const float hgt = (hsh & 0xffff) / 65535.0f;
+					const float tilt = ((hsh >> 16) & 0xff) / 127.5f - 1.0f;
+					const float along = (wx - (px + 0.5f) * PLATE) * (((hsh >> 24) & 1) ? 1.0f : 0.0f) + (wz - (pz + 0.5f) * PLATE) * (((hsh >> 24) & 1) ? 0.0f : 1.0f);
+					const float plate = MAX(0.1f + 1.8f * hgt + tilt * along / PLATE, 0.0f);
+					w *= 1.0f + MIN(c.crust / 0.02f, 1.0f) * (plate - 1.0f);
+				}
 				if (pass == 0) {
 					wsum += w;
 				} else {
