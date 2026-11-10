@@ -16,7 +16,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
-- **Vegetation**: biome plant placement from terrain maps; GPU-placed instances seen by culling, motion vectors and path tracing; per-instance bones for plants in the wind; terrain maps for placing plants.
+- **Vegetation**: biome plant placement from terrain maps; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, clouds and their shadows, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
