@@ -121,7 +121,16 @@
 		<constant name="PRESET_BILBERRY" value="16" enum="Preset">
 			Bilberry: a dwarf shrub of branched green stems with small oval leaves and a few dark berries.
 		</constant>
-		<constant name="PRESET_MAX" value="17" enum="Preset">
+		<constant name="PRESET_BRACKEN" value="17" enum="Preset">
+			Bracken: a few tall fronds whose triangular, finely divided blades turn nearly flat, for woodland edges and clearings.
+		</constant>
+		<constant name="PRESET_BRAMBLE" value="18" enum="Preset">
+			Bramble: arching red canes with leaves of three or five toothed leaflets and clusters of dark berries.
+		</constant>
+		<constant name="PRESET_FOXGLOVE" value="19" enum="Preset">
+			Foxglove: a rosette of soft toothed leaves and a tall spike of purple bells hanging to one side.
+		</constant>
+		<constant name="PRESET_MAX" value="20" enum="Preset">
 			Number of presets.
 		</constant>
 	</constants>

@@ -152,6 +152,24 @@ then a litter layer and more species.
 Next: wind on the generated plants (the UV2 weights, stage 4), billboard or impostor LODs for
 the far range, and shrubs and trees from the same parts (stage 3b).
 
+## Woodland edge species
+
+Real woods do not stop at a line: a mantle of shrubs and brambles and a fringe of tall herbs and
+bracken run along the edge where the light falls off (phytosociology's Saum and Mantel; Dierschke
+1974). Three new presets for that band:
+
+- `PRESET_BRACKEN` (Pteridium aquilinum): a few fronds from the rhizome, a bare stipe with a knee,
+  then a flat, triangular blade of pinnae longest at the base, each with crowded lobed pinnules
+  (Page 1976). 6 to 10k triangles.
+- `PRESET_BRAMBLE` (Rubus fruticosus agg.): arching canes that end where the tip comes back to the
+  ground (where it roots), compound leaves of three or five toothed leaflets, flowering laterals
+  and berry clusters. Up to 27k triangles: the heaviest preset, kept to near views.
+- `PRESET_FOXGLOVE` (Digitalis purpurea): a rosette of soft toothed leaves and a secund spike of
+  hanging purple bells, buds at the top.
+
+Placement (grass bench `--forest`): canopy shade bands, bramble 0.05 to 0.7, bracken 0.1 to 0.8,
+foxglove 0.1 to 0.7, placed right after the trees so the large plants claim their space first.
+
 ## References
 
 - Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*, 1990.
