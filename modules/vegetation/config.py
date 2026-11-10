@@ -11,6 +11,7 @@ def get_doc_classes():
     return [
         "Biome",
         "GrassField3D",
+        "PlantGenerator",
         "PlantSpecies",
         "VegetationField3D",
     ]

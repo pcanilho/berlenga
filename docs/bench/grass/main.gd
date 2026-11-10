@@ -116,8 +116,8 @@ func _ready() -> void:
 		under.tile_size = 4.0
 		under.clump_size = 0.5
 		under.lean = 0.5
-		under.base_color = Color(0.08, 0.15, 0.04)
-		under.tip_color = Color(0.32, 0.46, 0.13)
+		under.base_color = Color(0.1, 0.2, 0.05)
+		under.tip_color = Color(0.38, 0.52, 0.16)
 		under.dryness = 0.35
 		grass.ground_tint_enabled = false # The undercoat grows everywhere, so it owns the tint.
 		add_child(under)
@@ -125,7 +125,7 @@ func _ready() -> void:
 		cover = VegetationField3D.new()
 		cover.name = "Cover"
 		cover.populate_on_ready = false
-		cover.tile_size = 8.0
+		cover.tile_size = 4.0
 		cover.biome = _cover_biome()
 		add_child(cover)
 		cover.data_map = cover.get_path_to(dm)
@@ -230,87 +230,58 @@ void fragment() {
 		cam.position = Vector3(1.5, height(1.5, 17.0) + 1.6, 17.0)
 		cam.look_at(Vector3(0.5, height(0.5, 10.0), 10.0))
 
-# Clover beds and flower drifts, in patches (PlantSpecies.patch_scale), drawn near only.
+# Ground plants from PlantGenerator (three variants each), in patches (PlantSpecies.patch_*),
+# drawn near only: wildflower drifts, plantain, clover between the tall grass, sedge by the water.
+func _variants(preset: int, count: int, size := 1.0) -> Array:
+	var gen := PlantGenerator.new()
+	gen.preset = preset
+	gen.size = size
+	gen.apply_preset_colors()
+	return gen.generate_variants(count)
+
 func _cover_biome() -> Biome:
-	var clover := PlantSpecies.new()
-	clover.meshes = [_clover_mesh()]
-	clover.spacing = 0.14
-	clover.footprint = 0.0
-	clover.scale_range = Vector2(0.7, 1.3)
-	clover.align_to_ground = 1.0
+	var flowers := PlantSpecies.new()
+	flowers.meshes = _variants(PlantGenerator.PRESET_DAISY, 3) + _variants(PlantGenerator.PRESET_BUTTERCUP, 3) + _variants(PlantGenerator.PRESET_DANDELION, 3)
+	flowers.spacing = 0.25
+	flowers.footprint = 0.12
+	flowers.density = 0.9
+	flowers.scale_range = Vector2(1.1, 1.5)
+	flowers.patch_scale = 6.0
+	flowers.patch_cover = 0.35
+	flowers.patch_seed = 11
+	flowers.visibility_range = 15.0
+	var sedge := PlantSpecies.new()
+	sedge.meshes = _variants(PlantGenerator.PRESET_SEDGE, 3)
+	sedge.spacing = 0.45
+	sedge.footprint = 0.2
+	sedge.density = 0.8
+	sedge.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(0.0, 3.0))
+	sedge.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 1.5)
+	sedge.visibility_range = 30.0
+	var plantain := PlantSpecies.new()
+	plantain.meshes = _variants(PlantGenerator.PRESET_PLANTAIN, 3)
+	plantain.spacing = 0.5
+	plantain.footprint = 0.15
+	plantain.density = 0.5
+	plantain.patch_scale = 4.0
+	plantain.patch_cover = 0.35
+	plantain.patch_seed = 21
+	plantain.visibility_range = 12.0
 	# Clover where the tall grass is not: the complement of its patches.
+	var clover := PlantSpecies.new()
+	clover.meshes = _variants(PlantGenerator.PRESET_CLOVER, 3)
+	clover.spacing = 0.22
+	clover.footprint = 0.0
+	clover.density = 0.8
+	clover.scale_range = Vector2(0.8, 1.2)
 	clover.patch_scale = TALL_PATCH
 	clover.patch_cover = TALL_COVER
 	clover.patch_seed = 5
 	clover.patch_invert = true
-	clover.visibility_range = 18.0
-	var flower := PlantSpecies.new()
-	flower.meshes = [_flower_mesh(Color(0.95, 0.93, 0.85)), _flower_mesh(Color(0.95, 0.8, 0.2))]
-	flower.spacing = 0.3
-	flower.footprint = 0.0
-	flower.density = 1.0
-	flower.scale_range = Vector2(1.0, 1.5)
-	flower.patch_scale = 6.0
-	flower.patch_cover = 0.3
-	flower.patch_seed = 11
-	flower.visibility_range = 24.0
+	clover.visibility_range = 10.0
 	var b := Biome.new()
-	b.species = [flower, clover]
+	b.species = [flowers, sedge, plantain, clover]
 	return b
-
-func _leaf_material(col: Color) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.albedo_color = col
-	m.roughness = 0.85
-	m.metallic_specular = 0.3
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	m.backlight_enabled = true
-	m.backlight = col * 0.4
-	return m
-
-func _clover_mesh() -> Mesh:
-	# Three round leaflets on a short stalk, tilted up, about 8 cm across.
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_leaf_material(Color(0.12, 0.26, 0.06)))
-	for k in 3:
-		var a := k * TAU / 3.0
-		var dir := Vector3(cos(a), 0, sin(a))
-		var c := dir * 0.022 + Vector3(0, 0.05, 0)
-		var side := Vector3(-dir.z, 0, dir.x)
-		for i in 7:
-			var a0 := i * TAU / 7.0
-			var a1 := (i + 1) * TAU / 7.0
-			for v in [c, c + (dir * cos(a0) + side * sin(a0)) * 0.02 + Vector3(0, cos(a0) * 0.006, 0), c + (dir * cos(a1) + side * sin(a1)) * 0.02 + Vector3(0, cos(a1) * 0.006, 0)]:
-				st.set_normal(Vector3(0, 1, 0))
-				st.add_vertex(v)
-	# Stalk.
-	for v in [Vector3(-0.002, 0, 0), Vector3(0.002, 0, 0), Vector3(0, 0.05, 0)]:
-		st.set_normal(Vector3(0, 0, 1))
-		st.add_vertex(v)
-	return st.commit()
-
-func _flower_mesh(petal: Color) -> Mesh:
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_leaf_material(Color(0.15, 0.3, 0.08)))
-	var h := 0.42
-	for v in [Vector3(-0.003, 0, 0), Vector3(0.003, 0, 0), Vector3(0.002, h, 0), Vector3(-0.003, 0, 0), Vector3(0.002, h, 0), Vector3(-0.002, h, 0)]:
-		st.set_normal(Vector3(0, 0, 1))
-		st.add_vertex(v)
-	var stem := st.commit()
-	st = SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_material(_leaf_material(petal))
-	var c := Vector3(0, h, 0)
-	for i in 10:
-		var a0 := i * TAU / 10.0
-		var a1 := (i + 1) * TAU / 10.0
-		var r := 0.035 if i % 2 == 0 else 0.026
-		for v in [c, c + Vector3(cos(a0), 0.15, sin(a0)) * r, c + Vector3(cos(a1), 0.15, sin(a1)) * r]:
-			st.set_normal(Vector3(0, 1, 0))
-			st.add_vertex(v)
-	return st.commit(stem)
 
 func _ground_mesh() -> Mesh:
 	var st := SurfaceTool.new()
@@ -390,7 +361,7 @@ func _checks() -> void:
 		_check("no undercoat under water", uwet == 0, uwet)
 		# Clover grows between the tall patches: the complement.
 		var in_tall := 0
-		var clover := cover.get_placements(1)
+		var clover := cover.get_placements(3)
 		for q in clover:
 			if tall.get_patch_weight(q) > 0.9: in_tall += 1
 		_check("clover between the tall patches", clover.size() > 1000 and in_tall < clover.size() * 0.02, "%d of %d" % [in_tall, clover.size()])
@@ -449,7 +420,7 @@ func _process(dt: float) -> void:
 		dm.bake()
 		if cover:
 			cover.populate()
-			print("GRASS_COVER flowers=%d clover=%d ms=%.1f" % [cover.get_placements(0).size(), cover.get_placements(1).size(), cover.get_populate_time_msec()])
+			print("GRASS_COVER flowers=%d sedge=%d plantain=%d clover=%d ms=%.1f" % [cover.get_placements(0).size(), cover.get_placements(1).size(), cover.get_placements(2).size(), cover.get_placements(3).size(), cover.get_populate_time_msec()])
 	if trample and n > 2:
 		_move(dt)
 	if n == frames - 30 and not test:

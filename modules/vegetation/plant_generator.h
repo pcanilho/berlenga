@@ -1,0 +1,154 @@
+/**************************************************************************/
+/*  plant_generator.h                                                     */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#pragma once
+
+#include "core/io/resource.h"
+#include "core/math/random_pcg.h"
+#include "scene/resources/material.h"
+#include "scene/resources/mesh.h"
+
+// Small plants for ground cover (docs/ideas/plant-generator.md), after Prusinkiewicz et al.,
+// "The use of positional information in the modeling of plants" (2001): organs placed along
+// axes by phyllotaxis, their size, angle and bend functions of their position; leaves, petals
+// and stems are generalized cylinders swept along a turtle path with a parallel-transport frame.
+class PlantGenerator : public Resource {
+	GDCLASS(PlantGenerator, Resource);
+
+public:
+	enum Preset {
+		PRESET_DANDELION,
+		PRESET_PLANTAIN,
+		PRESET_CLOVER,
+		PRESET_FERN,
+		PRESET_SEDGE,
+		PRESET_DAISY,
+		PRESET_BUTTERCUP,
+		PRESET_MAX,
+	};
+
+	enum LeafShape {
+		LEAF_LANCEOLATE, // Narrow, widest below the middle.
+		LEAF_OVATE, // Egg-shaped.
+		LEAF_ROUND, // Clover leaflet, buttercup petal.
+		LEAF_LINEAR, // Grass and sedge blades.
+		LEAF_SPATULATE, // Widest near the tip (daisy basal leaves, petals).
+		LEAF_PALMATE, // Round with deep lobes (buttercup).
+	};
+
+	struct Leaf {
+		LeafShape shape = LEAF_LANCEOLATE;
+		float length = 0.1f;
+		float width = 0.03f;
+		float petiole = 0.0f; // Fraction of the length that is stalk.
+		float fold = 0.2f; // Rise of the edges against the midrib, as a fraction of the width.
+		float bend = 0.5f; // Downward curl along the length, radians over the whole leaf.
+		float twist = 0.0f; // Radians over the whole leaf.
+		int lobes = 0; // Lobes on each side (dandelion teeth, buttercup lobes).
+		float lobe_depth = 0.0f;
+		int segments = 10;
+	};
+
+private:
+	struct Builder {
+		PackedVector3Array verts;
+		PackedVector3Array normals;
+		PackedVector2Array uvs;
+		PackedVector2Array uv2s; // x: wind weight (0 at the root, 1 at the tips), y: unused.
+		PackedColorArray colors; // Ambient occlusion guess, multiplies the albedo.
+		PackedInt32Array indices;
+	};
+	enum Surface {
+		SURFACE_LEAF,
+		SURFACE_STEM,
+		SURFACE_PETAL,
+		SURFACE_CENTRE,
+		SURFACE_MAX,
+	};
+
+	Preset preset = PRESET_DANDELION;
+	int seed = 0;
+	float size = 1.0f;
+	bool lods = true;
+	Color leaf_color = Color(0.12f, 0.3f, 0.07f);
+	Color petal_color = Color(1.0f, 0.78f, 0.05f);
+	Color centre_color = Color(0.95f, 0.65f, 0.05f);
+	Color stem_color = Color(0.2f, 0.36f, 0.1f);
+
+	Builder builders[SURFACE_MAX];
+	RandomPCG rng;
+	float plant_height = 0.0f;
+
+	float _rand(float p_from, float p_to) { return Math::lerp(p_from, p_to, rng.randf()); }
+	static float _leaf_width(const Leaf &p_leaf, float p_t);
+	void _add_leaf(Surface p_surface, const Transform3D &p_base, const Leaf &p_leaf, float p_wind_base, float p_ao = 1.0f);
+	Transform3D _add_stem(const Transform3D &p_base, float p_length, float p_r0, float p_r1, float p_bend, int p_segments, float p_wind_base, Surface p_surface = SURFACE_STEM);
+	void _add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height);
+	void _add_ray_flower(const Transform3D &p_top, float p_radius, int p_rays, const Leaf &p_petal);
+	void _add_vogel_head(const Transform3D &p_top, float p_radius, int p_florets, const Leaf &p_floret);
+	void _add_cup_flower(const Transform3D &p_top, float p_radius);
+
+	void _build_dandelion();
+	void _build_plantain();
+	void _build_clover();
+	void _build_fern();
+	void _build_sedge();
+	void _build_daisy();
+	void _build_buttercup();
+
+	Ref<StandardMaterial3D> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
+
+protected:
+	static void _bind_methods();
+
+public:
+	void set_preset(Preset p_preset) { preset = p_preset; }
+	Preset get_preset() const { return preset; }
+	void set_seed(int p_seed) { seed = p_seed; }
+	int get_seed() const { return seed; }
+	void set_size(float p_size) { size = MAX(p_size, 0.01f); }
+	float get_size() const { return size; }
+	void set_leaf_color(const Color &p_color) { leaf_color = p_color; }
+	Color get_leaf_color() const { return leaf_color; }
+	void set_petal_color(const Color &p_color) { petal_color = p_color; }
+	Color get_petal_color() const { return petal_color; }
+	void set_centre_color(const Color &p_color) { centre_color = p_color; }
+	Color get_centre_color() const { return centre_color; }
+	void set_stem_color(const Color &p_color) { stem_color = p_color; }
+	Color get_stem_color() const { return stem_color; }
+
+	void set_lods(bool p_lods) { lods = p_lods; }
+	bool get_lods() const { return lods; }
+	Ref<ArrayMesh> generate();
+	TypedArray<ArrayMesh> generate_variants(int p_count);
+	void apply_preset_colors();
+};
+
+VARIANT_ENUM_CAST(PlantGenerator::Preset);
