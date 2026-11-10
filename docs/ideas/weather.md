@@ -571,3 +571,39 @@ channel and arrives late by its distance.
 - **GPU.** The raster pays for one omni light while a flash lasts. Path tracing pays for one more
   emissive mesh in the light list, and a new bottom-level structure per strike. The PC queue should
   time both.
+
+## Precipitation haze (10 Nov)
+
+The snowstorm needs falling and blowing snow to thin the air. Rain can do the same later. This
+section adds a hook, not a fog system: precipitation nodes push an extinction, and the map passes it
+to the fog both renderers already read.
+
+### Published methods
+
+- **Unreal.** Exponential Height Fog takes a density and a height fall-off and lights the distance
+  with the sky cubemap. Volumetric Fog uses froxels (Wronski 2014, Hillaire 2015) for the lit,
+  shadowed fog near the camera. Weather plugins drive both from their precipitation.
+- **Unity HDRP.** Volumetric fog sets an attenuation distance (the visibility) and a base height
+  with a fall-off. Local Volumetric Fog boxes add patches.
+- **Koschmieder.** Visibility V = 3.912 / sigma, at a 2% contrast threshold. The snow thread gives
+  sigma for falling and blowing snow from its own research.
+
+### Design
+
+- **API.** `WeatherMap3D.set_precipitation_extinction(source, sigma, height_scale, albedo, centre,
+  radius)` and `clear_precipitation_extinction(source)`. Sources add up, so rain and snow both count.
+  `get_precipitation_extinction_at(position)` reads the sum back.
+- **The uniform part** (`height_scale <= 0`) goes into the environment's exponential fog, at its
+  value at the camera. The fog takes the sky's colour for its share of the extinction (aerial
+  perspective): precipitation scatters back the sky's light, with an albedo near 1. The path tracer
+  applies this fog on every segment, as the raster does.
+- **Each layer** (`height_scale > 0`) becomes a lit FogVolume, with density sigma exp(-(y - ground) / H)
+  (FogMaterial's fall-off is exp2, so falloff = 1 / (H ln 2)). The froxel fog lights it with the
+  sun, its shadows and the ambient light. The path tracer reads the froxels on camera segments.
+- **The environment is put back as it was** when the last source clears. Its own fog density counts
+  only if its fog was on. If volumetric fog was off, it is turned on just for the layers, with its own
+  density at 0 and its reach raised from 64 to 300 m.
+- **Limit.** A layer reaches only as far as the froxel fog: 300 m, or the environment's own reach if
+  that is more. Beyond it, only the uniform part hazes the distance. An analytic height-fog integral
+  in `fog_inc.glsl` (Unreal's) would carry the layer to any distance. It is the next step if a
+  far-off ground blizzard is needed.

@@ -719,6 +719,7 @@ void WeatherMap3D::_notification(int p_what) {
 			set_physics_process_internal(false);
 			_finish_shadow_bake(true);
 			_release_shadow_light();
+			_restore_fog();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			const double dt = get_physics_process_delta_time();
@@ -741,6 +742,7 @@ void WeatherMap3D::_notification(int p_what) {
 				_start_shadow_bake();
 			}
 			_apply_shadow();
+			_apply_haze();
 			if (update_accum >= period) {
 				_update_cells(update_accum);
 				update_accum = 0.0;
@@ -1485,6 +1487,11 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear_storms"), &WeatherMap3D::clear_storms);
 	ClassDB::bind_method(D_METHOD("get_storm_count"), &WeatherMap3D::get_storm_count);
 	ClassDB::bind_method(D_METHOD("get_cloud_top_at", "position"), &WeatherMap3D::get_cloud_top_at);
+	ClassDB::bind_method(D_METHOD("set_precipitation_extinction", "source", "sigma", "height_scale", "albedo", "centre", "radius"), &WeatherMap3D::set_precipitation_extinction, DEFVAL(0.95f), DEFVAL(Vector3()), DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("clear_precipitation_extinction", "source"), &WeatherMap3D::clear_precipitation_extinction);
+	ClassDB::bind_method(D_METHOD("get_precipitation_extinction_at", "position"), &WeatherMap3D::get_precipitation_extinction_at);
+	ClassDB::bind_method(D_METHOD("set_drive_environment_fog", "enabled"), &WeatherMap3D::set_drive_environment_fog);
+	ClassDB::bind_method(D_METHOD("get_drive_environment_fog"), &WeatherMap3D::get_drive_environment_fog);
 	ClassDB::bind_method(D_METHOD("get_wind_at", "position", "height_above_ground"), &WeatherMap3D::get_wind_at, DEFVAL(-1.0f));
 	ClassDB::bind_method(D_METHOD("set_shelter_enabled", "enabled"), &WeatherMap3D::set_shelter_enabled);
 	ClassDB::bind_method(D_METHOD("get_shelter_enabled"), &WeatherMap3D::get_shelter_enabled);
@@ -1554,6 +1561,7 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transition_time", PROPERTY_HINT_RANGE, "0,86400,1,or_greater,suffix:s"), "set_transition_time", "get_transition_time");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_height", PROPERTY_HINT_NONE, "suffix:m"), "set_ground_height", "get_ground_height");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "publish_shader_globals"), "set_publish_shader_globals", "get_publish_shader_globals");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drive_environment_fog"), "set_drive_environment_fog", "get_drive_environment_fog");
 	ADD_GROUP("Wind", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_speed", PROPERTY_HINT_RANGE, "0,60,0.1,or_greater,suffix:m/s"), "set_wind_speed", "get_wind_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_direction"), "set_wind_direction", "get_wind_direction");

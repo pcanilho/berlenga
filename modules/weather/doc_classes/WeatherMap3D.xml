@@ -58,6 +58,13 @@
 				Runs the weather forward by [param seconds] of weather time at once (in steps of a minute): storms drift, the base state eases, surfaces wet and dry.
 			</description>
 		</method>
+		<method name="clear_precipitation_extinction">
+			<return type="void" />
+			<param index="0" name="source" type="Object" />
+			<description>
+				Removes [param source]'s haze. When the last source clears, the environment's fog is put back as it was.
+			</description>
+		</method>
 		<method name="clear_shelter">
 			<return type="void" />
 			<description>
@@ -110,13 +117,6 @@
 				Cloud cover at [param position], 0 (clear) to 1 (overcast).
 			</description>
 		</method>
-		<method name="get_cloud_top_at" qualifiers="const">
-			<return type="float" />
-			<param index="0" name="position" type="Vector3" />
-			<description>
-				The top of the cloud the sky draws over [param position]'s x and z (world y, metres). It is the base plus the column's height for its cloud type: a quarter of [member cloud_thickness] for stratus, all of it for cumulus, and up to three times it in a storm's core, where the type reaches 0.9. [WeatherLightning3D] takes its flash rate from this height.
-			</description>
-		</method>
 		<method name="get_cloud_density_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -128,6 +128,13 @@
 			<return type="Texture2D" />
 			<description>
 				The last cloud shadow bake: the sun's transmittance over [member cloud_shadow_extent], in the plane of [member sun_light], sRGB encoded. The map gives it to that light as its projector.
+			</description>
+		</method>
+		<method name="get_cloud_top_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The top of the cloud the sky draws over [param position]'s x and z (world y, metres). It is the base plus the column's height for its cloud type: a quarter of [member cloud_thickness] for stratus, all of it for cumulus, and up to three times it in a storm's core, where the type reaches 0.9. [WeatherLightning3D] takes its flash rate from this height.
 			</description>
 		</method>
 		<method name="get_cloud_type_at" qualifiers="const">
@@ -154,6 +161,13 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				The mean wind at 10 m at [param position] (x, z, m/s), without gusts.
+			</description>
+		</method>
+		<method name="get_precipitation_extinction_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The sum of every source's extinction at [param position] (1/m), with each layer's fall-off with height and each local source's edge.
 			</description>
 		</method>
 		<method name="get_puddle_at" qualifiers="const">
@@ -283,6 +297,19 @@
 				Removes the storm with this [param id].
 			</description>
 		</method>
+		<method name="set_precipitation_extinction">
+			<return type="void" />
+			<param index="0" name="source" type="Object" />
+			<param index="1" name="sigma" type="float" />
+			<param index="2" name="height_scale" type="float" />
+			<param index="3" name="albedo" type="float" default="0.95" />
+			<param index="4" name="centre" type="Vector3" default="Vector3(0, 0, 0)" />
+			<param index="5" name="radius" type="float" default="0.0" />
+			<description>
+				Haze from falling or blowing precipitation, pushed by [param source] (a snowfall or rain node). Calling it again for the same source replaces that source's haze. [param sigma] is the extinction in 1/m; the visibility is about 3.912 / sigma. With [param height_scale] above 0, it is a layer over the ground whose density falls as exp(-(y - ground) / height_scale), as blowing snow does; otherwise it is the same at every height. [param albedo] is the share of light scattered rather than absorbed. With [param radius] above 0, it covers a circle around [param centre]; otherwise it covers the whole map. Sources add up.
+				With [member drive_environment_fog], the uniform part goes into the environment's exponential fog, coloured by the sky, and each layer into a lit [FogVolume] that the volumetric fog draws within 300 m of the camera. The path tracer reads both. See [code]docs/ideas/weather.md[/code], "Precipitation haze".
+			</description>
+		</method>
 		<method name="set_surface_water_source">
 			<return type="void" />
 			<param index="0" name="owner" type="Object" />
@@ -348,6 +375,9 @@
 		</member>
 		<member name="cloud_variation" type="float" setter="set_cloud_variation" getter="get_cloud_variation" default="0.35">
 			How far the drifting noise moves the cloud cover up or down from [member cloud_cover]. [code]0[/code] gives an even sky.
+		</member>
+		<member name="drive_environment_fog" type="bool" setter="set_drive_environment_fog" getter="get_drive_environment_fog" default="true">
+			The haze from [method set_precipitation_extinction] drives the environment's fog and volumetric fog, while the game runs. Off, the sources only answer [method get_precipitation_extinction_at].
 		</member>
 		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="4096.0">
 			Width of the map, in metres.
