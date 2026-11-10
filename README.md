@@ -220,7 +220,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 </details>
 
 ### Terrain
-- **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`, `detail_wavelength`, `detail_octaves`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
+- **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`, `detail_wavelength`, `detail_octaves`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly, and fade on crests so silhouettes stay clean; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
@@ -230,9 +230,17 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Mountain generation: ridges, valleys and the rivers that carved them, from one seed.*
 
-![The generated range, raster and path traced](docs/media/terrain-generator.jpg)
+![The generated range with erosion detail, raster](docs/media/terrain-detail-wide.jpg)
 
-*Mountain generation: the same range in 3D, raster and path traced.*
+*Mountain generation: branching gullies down every slope.*
+
+![Close view of the generated peaks, raster and path traced](docs/media/terrain-generator.jpg)
+
+*Mountain generation up close, raster and path traced.*
+
+![Summit crests before and after detail fades on crests](docs/media/terrain-crest.jpg)
+
+*Crests: before, a thin comb along the summits; after, clean silhouettes.*
 
 ![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
 
