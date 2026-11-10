@@ -1023,8 +1023,10 @@ void PlantGenerator::_build_moss() {
 	// thousands of triangles, so the mound is a lumpy dome carrying a generated shoot-tip texture
 	// (albedo, normal, translucency; _bake_moss_texture), with loose shoots only along the rim
 	// and a few standing proud, where the silhouette shows them.
-	const float radius = _rand(0.06f, 0.12f);
-	const float height = radius * _rand(0.22f, 0.35f);
+	// Feather mosses (Hylocomium, Pleurozium) under conifers: wide, flat, loose carpets.
+	const bool carpet = preset == PRESET_FEATHER_MOSS;
+	const float radius = carpet ? _rand(0.18f, 0.32f) : _rand(0.06f, 0.12f);
+	const float height = radius * (carpet ? _rand(0.08f, 0.13f) : _rand(0.22f, 0.35f));
 	Builder &b = builders[SURFACE_CENTRE];
 	const int rings = 8;
 	const int sectors = 28;
@@ -1383,6 +1385,158 @@ static float tex_fbm(float p_x, float p_y, uint32_t p_seed) {
 	return 0.5f * tex_noise(p_x, p_y, p_seed) + 0.3f * tex_noise(p_x * 2.3f, p_y * 2.3f, p_seed + 7) + 0.2f * tex_noise(p_x * 5.1f, p_y * 5.1f, p_seed + 13);
 }
 
+
+
+// Forest floor (docs/ideas/forest-floor.md).
+
+// Needle litter under pines and spruces: a low, rusty mat with loose needles lying on it, a few
+// cones, a twig.
+void PlantGenerator::_build_needle_litter() {
+	Builder &b = builders[SURFACE_CENTRE];
+	const float radius = _rand(0.12f, 0.2f);
+	const int rings = 4;
+	const int sectors = 16;
+	const int first = b.verts.size();
+	const float ph = _rand(0.0f, Math::TAU);
+	for (int r = 0; r <= rings; r++) {
+		const float u = float(r) / rings;
+		for (int k = 0; k < sectors; k++) {
+			const float a = k * Math::TAU / sectors;
+			const float rr = radius * u * (1.0f + 0.15f * Math::sin(3.0f * a + ph));
+			const float x = Math::cos(a) * rr;
+			const float z = Math::sin(a) * rr;
+			b.verts.push_back(Vector3(x, 0.012f * (1.0f - u * u) * (1.0f + 0.4f * Math::sin(x * 60.0f + z * 45.0f + ph)) - 0.002f, z));
+			b.uvs.push_back(Vector2(x, z) / 0.05f);
+			b.uv2s.push_back(Vector2(0.0f, 0.0f));
+			const float ao = Math::lerp(1.0f, 0.8f, u);
+			b.colors.push_back(Color(ao, ao, ao));
+		}
+	}
+	for (int r = 0; r < rings; r++) {
+		for (int k = 0; k < sectors; k++) {
+			const int a = first + r * sectors + k;
+			const int c = first + r * sectors + (k + 1) % sectors;
+			b.indices.append_array(PackedInt32Array({ a, c, a + sectors, c, c + sectors, a + sectors }));
+		}
+	}
+	// Loose needles on top, crossing every way.
+	Leaf n;
+	n.shape = LEAF_LINEAR;
+	n.width = 0.0012f;
+	n.fold = 0.0f;
+	n.segments = 2;
+	const int needles = int(_rand(90.0f, 160.0f));
+	for (int i = 0; i < needles; i++) {
+		n.length = _rand(0.012f, 0.045f); // Spruce short, pine long.
+		n.bend = _rand(-0.3f, 0.3f);
+		const float r = radius * 1.1f * Math::sqrt(rng.randf());
+		const float a = _rand(0.0f, Math::TAU);
+		const float lift = 0.012f * (1.0f - MIN(r / radius, 1.0f) * MIN(r / radius, 1.0f));
+		const Vector3 at(Math::cos(a) * r, lift + 0.001f + 0.003f * rng.randf(), Math::sin(a) * r);
+		const float k = _rand(0.7f, 1.3f);
+		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.15f, 0.15f)), Vector3(0, 1, 0)), at), n, 0.0f, 0.9f, Color(k, k * 0.9f, k * 0.8f));
+	}
+	const int cones = int(_rand(0.0f, 3.0f));
+	for (int i = 0; i < cones; i++) {
+		const float len = _rand(0.04f, 0.12f);
+		Transform3D cb(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.1f, 0.1f)), Vector3(0, 1, 0)), Vector3(_rand(-radius, radius) * 0.7f, len * 0.16f, _rand(-radius, radius) * 0.7f));
+		const Transform3D mid = _add_stem(cb, len * 0.6f, len * 0.12f, len * 0.16f, 0.0f, 3, 0.0f, SURFACE_PETAL);
+		_add_stem(mid, len * 0.4f, len * 0.16f, len * 0.03f, 0.0f, 3, 0.0f, SURFACE_PETAL);
+	}
+}
+
+// Fallen twigs and small branches: grey-brown sticks lying on the litter, forked, a few side
+// shoots, the thicker ones cracked short.
+void PlantGenerator::_build_twigs() {
+	const int sticks = int(_rand(1.0f, 4.0f));
+	for (int i = 0; i < sticks; i++) {
+		const float len = _rand(0.15f, 0.7f);
+		const float r0 = len * _rand(0.012f, 0.025f);
+		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.03f, 0.06f)), Vector3(0, 1, 0)), Vector3(_rand(-0.15f, 0.15f), r0, _rand(-0.15f, 0.15f)));
+		const LocalVector<Transform3D> fr = _stem_frames(b, len, _rand(-0.4f, 0.4f), 5);
+		_add_stem(b, len, r0, r0 * 0.4f, _rand(-0.4f, 0.4f), 5, 0.0f);
+		const int sides = int(_rand(1.0f, 5.0f));
+		for (int k = 0; k < sides; k++) {
+			const Transform3D at = _frame_at(fr, _rand(0.2f, 0.85f));
+			const float sgn = rng.randf() < 0.5f ? -1.0f : 1.0f;
+			const Vector3 d = (at.basis.get_column(2) + at.basis.get_column(0) * sgn * _rand(0.6f, 1.2f) + Vector3(0, _rand(-0.1f, 0.25f), 0)).normalized();
+			const float sl = len * _rand(0.15f, 0.4f);
+			_add_stem(Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), sl, r0 * 0.45f, r0 * 0.15f, _rand(-0.4f, 0.4f), 3, 0.0f);
+		}
+	}
+}
+
+// Wood sorrel (Oxalis acetosella): carpets of three folded, heart-shaped leaflets on slender
+// reddish stalks; a few white flowers veined with lilac.
+void PlantGenerator::_build_wood_sorrel() {
+	const int leaves = int(_rand(6.0f, 14.0f));
+	for (int i = 0; i < leaves; i++) {
+		Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.2f, 1.5f));
+		base.origin = Vector3(_rand(-0.05f, 0.05f), 0.0f, _rand(-0.05f, 0.05f));
+		const Transform3D top = _add_stem(base, _rand(0.05f, 0.11f), 0.0009f, 0.0007f, _rand(0.2f, 0.6f), 4, 0.0f);
+		const float spin = _rand(0.0f, Math::TAU);
+		Leaf l;
+		l.shape = LEAF_SPATULATE; // Obcordate: widest at the notched tip.
+		l.lobes = 1;
+		l.lobe_depth = 0.25f;
+		l.width = _rand(0.014f, 0.022f);
+		l.length = l.width * 0.9f;
+		l.fold = _rand(0.3f, 0.7f); // Folded along the midrib, more in strong light.
+		l.bend = 0.3f;
+		l.segments = 5;
+		for (int k = 0; k < 3; k++) {
+			const Vector3 radial = polar_dir(spin + k * Math::TAU / 3.0f, _rand(-0.25f, 0.1f));
+			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(radial, Vector3(0, 1, 0)), top.origin), l, 1.0f);
+		}
+	}
+	const int flowers = int(_rand(0.0f, 4.0f));
+	for (int f = 0; f < flowers; f++) {
+		const Transform3D top = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.3f, 1.5f)), _rand(0.06f, 0.1f), 0.0008f, 0.0006f, _rand(0.3f, 0.8f), 4, 0.0f);
+		Leaf p;
+		p.shape = LEAF_SPATULATE;
+		p.length = 0.009f;
+		p.width = 0.006f;
+		p.fold = 0.2f;
+		p.bend = -0.3f;
+		p.segments = 3;
+		for (int k = 0; k < 5; k++) {
+			const Vector3 d = (top.basis.get_column(2) * 0.8f + top.basis.get_column(0) * Math::cos(k * Math::TAU / 5.0f) + top.basis.get_column(1) * Math::sin(k * Math::TAU / 5.0f)).normalized();
+			_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, Vector3(0, 1, 0)), top.origin), p, 1.0f);
+		}
+	}
+}
+
+// Tree seedling (beech-like): a thin woody stem, zigzag at the buds, carrying flat sprays of
+// oval leaves with wavy margins; under a closed canopy they wait for a gap, 10 to 60 cm tall.
+void PlantGenerator::_build_seedling() {
+	const float len = _rand(0.12f, 0.6f);
+	Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.4f, 1.55f));
+	const int nodes = MAX(3, int(len * 14.0f));
+	Transform3D at = base;
+	float az = _rand(0.0f, Math::TAU);
+	for (int k = 0; k < nodes; k++) {
+		const float seg = len / nodes;
+		// Zigzag: the stem turns a little at every bud.
+		const Vector3 d = (at.basis.get_column(2) + Vector3(Math::cos(az), 0.0f, Math::sin(az)) * 0.18f).normalized();
+		at = _add_stem(Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), seg, 0.0028f * (1.0f - 0.6f * k / nodes), 0.0028f * (1.0f - 0.6f * (k + 1) / nodes), 0.0f, 1, float(k) / nodes);
+		az += Math::PI;
+		if (k > 0 || nodes <= 3) {
+			// Two-ranked leaves held flat to catch the little light.
+			Leaf l;
+			l.shape = LEAF_OVATE;
+			l.lobes = 6;
+			l.lobe_depth = 0.04f;
+			l.length = _rand(0.035f, 0.07f);
+			l.width = l.length * 0.6f;
+			l.petiole = 0.08f;
+			l.fold = 0.15f;
+			l.bend = 0.1f;
+			l.segments = 6;
+			const Vector3 side(Math::cos(az), 0.0f, Math::sin(az));
+			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((side + Vector3(0, 0.15f, 0)).normalized(), Vector3(0, 1, 0)), at.origin), l, float(k + 1) / nodes);
+		}
+	}
+}
 
 // Wetland species (docs/ideas/plant-generator.md, "Wetland species").
 
@@ -1783,6 +1937,30 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			l.shape = LEAF_LINEAR;
 			t.aspect = 0.04f;
 			t.venation = VENATION_PARALLEL;
+			break;
+		case PRESET_NEEDLE_LITTER:
+			l.shape = LEAF_LINEAR;
+			t.aspect = 0.05f;
+			t.venation = VENATION_PARALLEL;
+			t.parallel_veins = 2;
+			t.yellowing = 0.0f;
+			break;
+		case PRESET_WOOD_SORREL:
+			l.shape = LEAF_SPATULATE;
+			l.lobes = 1;
+			l.lobe_depth = 0.25f;
+			t.aspect = 1.0f;
+			t.yellowing = 0.1f;
+			break;
+		case PRESET_SEEDLING:
+			l.shape = LEAF_OVATE;
+			l.lobes = 6;
+			l.lobe_depth = 0.04f;
+			t.aspect = 0.6f;
+			t.spots = 0.3f;
+			break;
+		case PRESET_TWIGS:
+		case PRESET_FEATHER_MOSS:
 			break;
 		case PRESET_WATER_LILY:
 			l.shape = LEAF_ROUND;
@@ -2548,6 +2726,28 @@ void PlantGenerator::apply_preset_colors() {
 			petal_color = Color(0.92f, 0.92f, 0.88f);
 			centre_color = Color(0.95f, 0.75f, 0.1f);
 			break;
+		case PRESET_NEEDLE_LITTER:
+			leaf_color = Color(0.42f, 0.24f, 0.1f); // Rusty dead needles.
+			centre_color = Color(0.3f, 0.19f, 0.09f);
+			petal_color = Color(0.36f, 0.23f, 0.12f); // Cones.
+			stem_color = Color(0.3f, 0.24f, 0.17f);
+			break;
+		case PRESET_TWIGS:
+			stem_color = Color(0.33f, 0.28f, 0.22f); // Weathered grey-brown bark.
+			break;
+		case PRESET_WOOD_SORREL:
+			leaf_color = Color(0.2f, 0.42f, 0.1f); // Bright, thin, shade leaves.
+			stem_color = Color(0.4f, 0.22f, 0.15f);
+			petal_color = Color(0.95f, 0.92f, 0.95f);
+			break;
+		case PRESET_SEEDLING:
+			leaf_color = Color(0.2f, 0.38f, 0.1f);
+			stem_color = Color(0.32f, 0.25f, 0.18f);
+			break;
+		case PRESET_FEATHER_MOSS:
+			leaf_color = Color(0.32f, 0.4f, 0.1f); // Yellow-green.
+			centre_color = Color(0.3f, 0.38f, 0.1f);
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -2636,6 +2836,21 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_WATER_LILY:
 			_build_water_lily();
 			break;
+		case PRESET_NEEDLE_LITTER:
+			_build_needle_litter();
+			break;
+		case PRESET_TWIGS:
+			_build_twigs();
+			break;
+		case PRESET_WOOD_SORREL:
+			_build_wood_sorrel();
+			break;
+		case PRESET_SEEDLING:
+			_build_seedling();
+			break;
+		case PRESET_FEATHER_MOSS:
+			_build_moss();
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -2703,7 +2918,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		arrays[Mesh::ARRAY_INDEX] = b.indices;
 		static const char *names[SURFACE_MAX] = { "leaf", "stem", "petal", "centre" };
 		Ref<ShaderMaterial> mat;
-		if (textures && preset == PRESET_MOSS && s == SURFACE_CENTRE) {
+		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS) && s == SURFACE_CENTRE) {
 			const uint64_t key = (uint64_t(preset) << 40) ^ (uint64_t(s) << 36) ^ (uint64_t(uint32_t(seed % 3)) << 32) ^ uint64_t(Math::abs(int(leaf_color.to_rgba32()) % 1000003)) ^ (uint64_t(texture_size) << 44);
 			TextureSet *ts = texture_cache.getptr(key);
 			if (!ts) {
@@ -2726,7 +2941,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		}
 		mat->set_shader_parameter("height", MAX(plant_height * size, 0.05f));
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_WATER_LILY ? 50.0f : 1.5f)));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -2779,7 +2994,7 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("generate_variants", "count"), &PlantGenerator::generate_variants);
 	ClassDB::bind_method(D_METHOD("apply_preset_colors"), &PlantGenerator::apply_preset_colors);
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Dandelion,Plantain,Clover,Fern,Sedge,Daisy,Buttercup,Nettle,Thistle,Yarrow,Dock,Cocksfoot,Timothy,Dry Grass,Leaf Litter,Moss,Bilberry,Bracken,Bramble,Foxglove,Reed,Cattail,Rush,Water Lily"), "set_preset", "get_preset");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Dandelion,Plantain,Clover,Fern,Sedge,Daisy,Buttercup,Nettle,Thistle,Yarrow,Dock,Cocksfoot,Timothy,Dry Grass,Leaf Litter,Moss,Bilberry,Bracken,Bramble,Foxglove,Reed,Cattail,Rush,Water Lily,Needle Litter,Twigs,Wood Sorrel,Seedling,Feather Moss"), "set_preset", "get_preset");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "size", PROPERTY_HINT_RANGE, "0.1,4,0.01"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");
@@ -2816,5 +3031,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_CATTAIL);
 	BIND_ENUM_CONSTANT(PRESET_RUSH);
 	BIND_ENUM_CONSTANT(PRESET_WATER_LILY);
+	BIND_ENUM_CONSTANT(PRESET_NEEDLE_LITTER);
+	BIND_ENUM_CONSTANT(PRESET_TWIGS);
+	BIND_ENUM_CONSTANT(PRESET_WOOD_SORREL);
+	BIND_ENUM_CONSTANT(PRESET_SEEDLING);
+	BIND_ENUM_CONSTANT(PRESET_FEATHER_MOSS);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }
