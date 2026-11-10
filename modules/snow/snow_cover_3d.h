@@ -236,6 +236,8 @@ public:
 	// The ground straight from the height source (finer than the cells), NaN where nothing answers.
 	float sample_ground_height(Vector3 p_position) const;
 	void sample_ground_heights(Vector2 p_origin, float p_spacing, int p_width, int p_height, float *r_heights) const;
+	float get_air_temperature_at(Vector3 p_position) const; // C, by the lapse rate
+	float get_snowfall_rate_at(Vector3 p_position) const; // mm/h of water falling as snow
 	uint64_t get_update_count() const { return update_count; }
 	float get_last_step_hours() const { return last_step_hours; }
 	float get_drift_factor() const { return last_drift; } // 0..1, wind above the blowing threshold

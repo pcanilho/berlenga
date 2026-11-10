@@ -203,7 +203,11 @@ Bernhardt and Schulz, SnowSlide, GRL 37, 2010. Winstral, Elder and Davis, J. Hyd
 3, 2002. Liston and Sturm, J. Glaciology 44, 1998. Li and Pomeroy, J. Applied Meteorology 36,
 1997. Stomakhin et al., A Material Point Method for Snow Simulation, SIGGRAPH 2013. Bekker,
 Introduction to Terrain-Vehicle Systems, 1969. Wiscombe and Warren, J. Atmos. Sci. 37, 1980.
-Locatelli and Hobbs, J. Geophys. Res. 79, 1974. Deliot and Belcour, EGSR 2023.
+Locatelli and Hobbs, J. Geophys. Res. 79, 1974. Deliot and Belcour, EGSR 2023. Gunn and
+Marshall, J. Meteorology 15, 1958. Magono and Nakamura, J. Meteor. Soc. Japan 43, 1965. Nemes et
+al., Snowflakes in a turbulent flow, GRL 44, 2017. Pomeroy, J. Glaciology 35, 1989. Pomeroy and
+Gray, Water Resources Research 26, 1990. Rasmussen et al., J. Applied Meteorology 38, 1999.
+Garg and Nayar, Photorealistic Rendering of Rain Streaks, SIGGRAPH 2006.
 
 ## Stage 1: the snowpack and snow on materials (built 10 Nov 2026)
 
@@ -330,3 +334,56 @@ follows the pack's ground, not overhangs: snow under a roof or a bridge reads th
 (same as stage 1). Thin snow on the ground is the material's, deep snow the mesh's; the switch
 at 3 cm is hidden by the taper but a terrain mesh much coarser than 0.25 m can poke through
 thin snow.
+
+## Stage 3: falling and blowing snow (built 10 Nov 2026)
+
+`SnowFall3D` (modules/snow). Two GPU particle systems in a box that follows the camera, driven by
+the snowfall rate and temperature of `SnowCover3D` and the wind of the weather map.
+
+- **How many flakes, Gunn and Marshall (1958).** Snowflake size spectra are exponential in the
+  melted diameter, `N(D) = 3.8e3 R^-0.87 exp(-2.55 R^-0.48 D)` per m3 per mm, R in mm/h of water.
+  The count above the smallest visible flake times the box volume sets how many of `max_flakes`
+  are alive: 26 flakes per m3 at 1 mm/h, rising with the rate.
+- **How big, Magono and Nakamura (1965).** A flake's diameter from its melted size, `D = max(Dm,
+  Dm^3 / 2)` mm, so heavy snow brings large aggregates; the spectrum is cut at 3.2 mm melted.
+- **How fast, Locatelli and Hobbs (1974).** Aggregates fall at `0.8 D^0.16` m/s (0.8 to 1.2 m/s),
+  and flutter sideways a few tens of cm/s (Nemes et al. 2017) instead of falling straight.
+- **Wind.** The particle shader calls the weather map's own `weather_wind(p, h)`, so flakes follow
+  the same gusts as grass, trees and rain, and slow under canopy and in the lee of shelters.
+- **Shelter.** A heightfield collider follows the camera and catches flakes on roofs and under
+  eaves; the box's floor is the snow top sampled from the pack, so flakes end on the snow.
+- **Streaks, not sprites.** Each flake is a quad built in the particle shader: it faces the eye
+  and is stretched along its screen motion over `streak_time` (1/60 s), with its brightness
+  divided by the stretch so energy is kept, and a size floor of one pixel with alpha taking the
+  rest. Rain renderers do the same (Tatarchuk, ToyShop 2006; Garg and Nayar 2006). No billboard
+  flag, so the path tracer traces exactly the quad the raster draws. Flakes fade in from 0.4 to
+  1.2 m so none fills the lens. The material is lit with a wrapped diffuse and a strong back
+  term, since a flake is a loose ice lattice that lets light through.
+- **Blowing snow, Li and Pomeroy (1997); Pomeroy (1989); Pomeroy and Gray (1990).** Dry snow
+  starts to move above `u_t = 9.43 + 0.18 T + 0.0033 T^2` m/s at 10 m (8 m/s at -10 C). The
+  amount follows the saltation flux, `u^3 (1 - u_t^2 / u^2)`, normalised at 1.5 u_t. Grains hop
+  in a saltation layer `0.08436 u*^1.27` m deep (u* from the 10 m wind over z0 0.5 mm); a share
+  lifts into suspension and drifts higher in stronger wind. Snow only moves where the pack is
+  erodible: deeper than 2 cm, dry and lighter than 350 kg/m3. Stage 2 already fills prints with
+  wind above the same threshold.
+- **Visibility, Rasmussen et al. (1999).** `get_extinction()` integrates the flakes' cross
+  sections over the size spectrum (extinction 2 x area for large particles), and
+  `get_visibility()` is Koschmieder's 3.912 / sigma: about 2 km at 1 mm/h and 170 m at 3 mm/h,
+  in the range Rasmussen measured. The bench feeds it to fog; a game sets its fog from it.
+
+**Checks (`--test`, all pass).** 26.0 flakes per m3 at 1 mm/h; visibility falls with rate and
+lands in Rasmussen's band; fall speeds 0.80 and 1.16 m/s for 1 and 10 mm flakes; blowing
+threshold 7.96 m/s at -10 C and 9.43 m/s at 0 C; flux ratio 0 below threshold and 1 at 1.5 u_t;
+a scene at -6 C snows; no blowing in light wind; a gale gives full blowing; nothing falls or
+blows at +6 C.
+
+**Cost.** CPU: setting shader parameters each frame and a 64 x 64 sample of the snow top every
+4 m of travel or 2 s. GPU: up to 120k falling and 30k blowing alpha-blended quads, and under path
+tracing their capture each frame. Both timed on the PC queue.
+
+**Known limits.** Blowing snow does not yet add to the extinction (fog stays the snowfall's).
+Falling snow does not add depth itself; `SnowCover3D` keeps the mass budget, so the flakes and the
+pack agree by construction but not flake by flake. Flakes stop at the shelter heightfield, which
+sees roofs from above only. Under path tracing a flake's alpha is a stochastic hit, so the faintest
+streaks (flakes blurred by gusts) need the denoiser or more samples; at 16 samples without one
+the flakes are there but fewer read than in raster.

@@ -35,6 +35,13 @@
 				Removes all snow from the map.
 			</description>
 		</method>
+		<method name="get_air_temperature_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the air temperature at [param position] in degrees Celsius: the weather temperature cooled by [member lapse_rate] above the weather's ground height.
+			</description>
+		</method>
 		<method name="get_albedo_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -93,6 +100,13 @@
 			<return type="Texture2D" />
 			<description>
 				Returns the snow map texture: depth in metres (R), albedo (G), wetness (B) and density in tonnes per cubic metre (A).
+			</description>
+		</method>
+		<method name="get_snowfall_rate_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the precipitation falling as snow at [param position], in millimetres of water an hour (the snow share of Jennings et al. 2018 at that height). [SnowFall3D] reads it.
 			</description>
 		</method>
 		<method name="get_swe_at" qualifiers="const">

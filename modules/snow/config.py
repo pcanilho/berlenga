@@ -10,6 +10,7 @@ def configure(env):
 def get_doc_classes():
     return [
         "SnowCover3D",
+        "SnowFall3D",
         "SnowSurface3D",
     ]
 

@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SnowFall3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Falling and blowing snow around the camera, from the weather and the snowpack.
+	</brief_description>
+	<description>
+		GPU particles in a box around the camera, drawn in raster and traced under path tracing. The snowfall comes from the [SnowCover3D] (the weather's precipitation, as snow where it is cold enough at that height). Flakes follow the measured size distribution of snowfall (Gunn and Marshall 1958) and fall at the measured speed of snowflake aggregates (Locatelli and Hobbs 1974), carried by the [code]WeatherMap3D[/code] wind at their height, with its gusts and shelter, and flutter on small zigzag and spiral paths. A heightfield collider keeps them off the ground under roofs and trees. Each flake is drawn as a quad stretched along its motion during [member streak_time], keeping its light when it is smaller than a pixel.
+		Above the threshold wind of dry snow (Li and Pomeroy 1997), snow blows off the pack: grains hop in a shallow saltation layer and finer snow drifts higher, moving with the wind profile, in an amount that follows the saltation flux (Pomeroy 1989), only over loose dry snow.
+		The snowfall beyond the box is left to fog: [method get_extinction] gives the extinction of the current snowfall.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="blowing_threshold" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<description>
+				Returns the 10 m wind speed in m/s above which dry snow starts to blow, [code]9.43 + 0.18 T + 0.0033 T^2[/code] (Li and Pomeroy 1997).
+			</description>
+		</method>
+		<method name="fall_speed" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="size" type="float" />
+			<description>
+				Returns the fall speed in m/s of a snowflake [param size] millimetres across, [code]0.8 D^0.16[/code] (Locatelli and Hobbs 1974, aggregates of dendrites).
+			</description>
+		</method>
+		<method name="flake_number_density" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="rate" type="float" />
+			<param index="1" name="min_size" type="float" />
+			<description>
+				Returns the number of flakes per cubic metre larger than [param min_size] millimetres in snowfall of [param rate] millimetres of water an hour (Gunn and Marshall 1958, flake size from melted size by Magono and Nakamura 1965).
+			</description>
+		</method>
+		<method name="flake_size_slope" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="rate" type="float" />
+			<description>
+				Returns the slope of the Gunn and Marshall size distribution, [code]2.55 R^-0.48[/code] per millimetre of melted diameter.
+			</description>
+		</method>
+		<method name="get_blowing_amount" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the share of [member max_blowing] shown, from the saltation flux.
+			</description>
+		</method>
+		<method name="get_extinction" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the extinction of light by the current snowfall, per metre. Feed it to the fog density so the snowfall beyond the particle box reads as haze.
+			</description>
+		</method>
+		<method name="get_snowfall_rate" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the snowfall at the box centre, in millimetres of water an hour.
+			</description>
+		</method>
+		<method name="get_threshold_wind" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the threshold wind for blowing snow in use, in m/s at 10 m.
+			</description>
+		</method>
+		<method name="get_visibility" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the visibility through the current snowfall in metres, [code]3.912 / extinction[/code] (Koschmieder).
+			</description>
+		</method>
+		<method name="get_visible_flakes" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of flakes shown.
+			</description>
+		</method>
+		<method name="get_wind_speed_10m" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the wind speed at 10 m over the ground under the box, in m/s.
+			</description>
+		</method>
+		<method name="saltation_flux_ratio" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="wind10" type="float" />
+			<param index="1" name="threshold" type="float" />
+			<description>
+				Returns the saltation flux at [param wind10] relative to the flux at 1.5 times [param threshold]: [code]u^3 (1 - ut^2 / u^2)[/code] (Pomeroy 1989), 0 below the threshold.
+			</description>
+		</method>
+		<method name="snowfall_extinction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="rate" type="float" />
+			<description>
+				Returns the extinction per metre of snowfall at [param rate] millimetres of water an hour, from the flake size distribution with an extinction efficiency of 2: about 2 km of visibility at 1 mm/h and 200 m at 3 mm/h.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="blow_extent" type="float" setter="set_blow_extent" getter="get_blow_extent" default="40.0">
+			The width of the blowing snow area around the box centre, in metres.
+		</member>
+		<member name="blowing_enabled" type="bool" setter="set_blowing_enabled" getter="is_blowing_enabled" default="true">
+			If [code]true[/code], snow blows off loose dry snow when the wind is above [method get_threshold_wind].
+		</member>
+		<member name="blowing_strength" type="float" setter="set_blowing_strength" getter="get_blowing_strength" default="1.0">
+			Scales the amount of blowing snow.
+		</member>
+		<member name="density_scale" type="float" setter="set_density_scale" getter="get_density_scale" default="1.0">
+			Scales the number of flakes from the measured number density.
+		</member>
+		<member name="fall_extent" type="Vector3" setter="set_fall_extent" getter="get_fall_extent" default="Vector3(16, 10, 16)">
+			The box of falling flakes around the camera (or [member follow_target]), in metres. Beyond it, use [method get_extinction] for fog.
+		</member>
+		<member name="falling_enabled" type="bool" setter="set_falling_enabled" getter="is_falling_enabled" default="true">
+			If [code]true[/code], flakes fall from the snowfall at the camera.
+		</member>
+		<member name="flake_size_scale" type="float" setter="set_flake_size_scale" getter="get_flake_size_scale" default="1.0">
+			Scales the drawn size of the flakes.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			The node the boxes follow. Empty: the current camera.
+		</member>
+		<member name="max_blowing" type="int" setter="set_max_blowing" getter="get_max_blowing" default="30000">
+			The number of blowing snow particles at full strength.
+		</member>
+		<member name="max_flakes" type="int" setter="set_max_flakes" getter="get_max_flakes" default="120000">
+			The number of flake particles; heavy snowfall is capped at it.
+		</member>
+		<member name="min_flake_size" type="float" setter="set_min_flake_size" getter="get_min_flake_size" default="1.5">
+			The smallest flake drawn, in millimetres; smaller flakes are left to the fog.
+		</member>
+		<member name="shelter_enabled" type="bool" setter="set_shelter_enabled" getter="is_shelter_enabled" default="true">
+			If [code]true[/code], a heightfield collider following the camera stops flakes under roofs, trees and overhangs.
+		</member>
+		<member name="shelter_mask" type="int" setter="set_shelter_mask" getter="get_shelter_mask" default="4294967295">
+			The render layers the shelter heightfield sees.
+		</member>
+		<member name="snow_cover" type="NodePath" setter="set_snow_cover" getter="get_snow_cover" default="NodePath(&quot;&quot;)">
+			The [SnowCover3D] giving the snowfall, the temperature and the snow on the ground. Empty: the active one.
+		</member>
+		<member name="snowfall_rate_override" type="float" setter="set_snowfall_rate_override" getter="get_snowfall_rate_override" default="-1.0">
+			The snowfall in millimetres of water an hour; negative takes it from the snowpack and the weather.
+		</member>
+		<member name="streak_time" type="float" setter="set_streak_time" getter="get_streak_time" default="0.0167">
+			The exposure the streaks show, in seconds: each flake and grain is drawn stretched along the distance it moves in this time.
+		</member>
+		<member name="threshold_wind_override" type="float" setter="set_threshold_wind_override" getter="get_threshold_wind_override" default="-1.0">
+			The threshold wind for blowing snow in m/s at 10 m; negative uses Li and Pomeroy's relation to the air temperature.
+		</member>
+	</members>
+</class>

@@ -14,6 +14,8 @@ extends Node3D
 #                       the cost of one update
 #   --view=mountain   a 700 m mountain after a day of snow and two days of sun (snow line, south faces melted)
 #   --view=trail      deep snow as geometry: a walker, rolling balls and a wheel leave tracks (SnowSurface3D)
+#   --view=snowfall   falling snow over deep snow and a shed (flakes stop under the roof); --wind=M m/s
+#                     at 10 m (default 4; 15 or more blows the snow off the ground)
 #   --view=props      close: bumpy ground, boxes, a sphere, a 45 degree board and a 70 degree wall after snow
 #   --snow=H          hours of 2 mm/h precipitation (default 24 mountain, 8 props)
 #   --sun=H           then hours of sun (mountain; default 48)
@@ -44,6 +46,7 @@ var surface: SnowSurface3D
 var walker: CharacterBody3D
 var walk_t := 0.0
 var walking := false
+var wind := 4.0
 
 
 func _ready() -> void:
@@ -57,6 +60,7 @@ func _ready() -> void:
 		elif a.begins_with("--snow="): snow_hours = float(a.substr(7))
 		elif a.begins_with("--sun="): sun_hours = float(a.substr(6))
 		elif a.begins_with("--steps="): steps = int(a.substr(8))
+		elif a.begins_with("--wind="): wind = float(a.substr(7))
 	if test:
 		await _run_tests()
 		print("SNOW CHECKS: ", "PASS" if fails == 0 else "%d FAILED" % fails)
@@ -231,6 +235,7 @@ func _run_tests() -> void:
 	_check("drift keeps the water", absf(mean - 20.0) < 0.5, "%.2f mm of 20 mm" % mean)
 
 	await _run_surface_tests()
+	await _run_fall_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -394,6 +399,50 @@ func _run_surface_tests() -> void:
 	print("  SnowSurface3D step with 4 rolling bodies (press, relax, collision at 15 Hz, upload): %.2f ms" % (tot / 60.0))
 
 
+func _run_fall_tests() -> void:
+	print("Falling and blowing snow (SnowFall3D):")
+	var n1 := SnowFall3D.flake_number_density(1.0, 2.0)
+	var lam := 2.55
+	var want := 3.8e3 / lam * exp(-lam * pow(4.0, 1.0 / 3.0))
+	_check("Gunn-Marshall flakes over 2 mm at 1 mm/h", absf(n1 - want) < 0.01 * want, "%.1f per m3 (formula %.1f)" % [n1, want])
+	var n02 := SnowFall3D.flake_number_density(0.2, 2.0)
+	var n5 := SnowFall3D.flake_number_density(5.0, 2.0)
+	_check("more and bigger flakes in heavier snow", n02 < n1 and n1 < n5, "%.2f, %.1f, %.0f per m3 at 0.2, 1, 5 mm/h" % [n02, n1, n5])
+	_check("Locatelli-Hobbs fall speed", absf(SnowFall3D.fall_speed(1.0) - 0.8) < 1e-4 and absf(SnowFall3D.fall_speed(10.0) - 0.8 * pow(10.0, 0.16)) < 1e-4, "%.2f m/s at 1 mm, %.2f m/s at 10 mm" % [SnowFall3D.fall_speed(1.0), SnowFall3D.fall_speed(10.0)])
+	var vis1 := 3.912 / SnowFall3D.snowfall_extinction(1.0)
+	var vis3 := 3.912 / SnowFall3D.snowfall_extinction(3.0)
+	_check("visibility in snowfall (Rasmussen et al. 1999: km at 1 mm/h, a few hundred m in heavy snow)", vis1 > 1000.0 and vis1 < 4000.0 and vis3 > 100.0 and vis3 < 500.0, "%.0f m at 1 mm/h, %.0f m at 3 mm/h" % [vis1, vis3])
+	_check("Li-Pomeroy threshold wind", absf(SnowFall3D.blowing_threshold(-10.0) - (9.43 - 1.8 + 0.33)) < 1e-3 and absf(SnowFall3D.blowing_threshold(0.0) - 9.43) < 1e-3, "%.2f m/s at -10 C, %.2f at 0 C" % [SnowFall3D.blowing_threshold(-10.0), SnowFall3D.blowing_threshold(0.0)])
+	var ut := SnowFall3D.blowing_threshold(-6.0)
+	_check("saltation flux", SnowFall3D.saltation_flux_ratio(ut * 0.9, ut) == 0.0 and absf(SnowFall3D.saltation_flux_ratio(ut * 1.5, ut) - 1.0) < 1e-4 and SnowFall3D.saltation_flux_ratio(ut * 2.0, ut) > 2.0, "0 below the threshold, 1 at 1.5x, %.2f at 2x" % SnowFall3D.saltation_flux_ratio(ut * 2.0, ut))
+	# In a scene: snowfall from the weather at -6 C, then rain at +6 C; calm, then a gale.
+	await _setup("flat", 64.0, 64, -6.0)
+	snow.add_snow(30.0, 120.0)
+	weather.rain_rate = 2.0
+	weather.cloud_cover = 1.0
+	weather.wind_speed = 3.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var fall := SnowFall3D.new()
+	fall.follow_target = NodePath("../Ground")
+	add_child(fall)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check("snowfall at -6 C fills the box", fall.get_snowfall_rate() > 1.5 and fall.get_visible_flakes() > 1000, "%.2f mm/h of snow, %d flakes shown" % [fall.get_snowfall_rate(), fall.get_visible_flakes()])
+	_check("no blowing in a light wind", fall.get_blowing_amount() == 0.0, "%.1f m/s against %.1f m/s" % [fall.get_wind_speed_10m(), fall.get_threshold_wind()])
+	weather.wind_speed = 15.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	await get_tree().process_frame
+	_check("a gale lifts the snow", fall.get_blowing_amount() > 0.5, "%.0f%% of the grains at %.1f m/s" % [fall.get_blowing_amount() * 100.0, fall.get_wind_speed_10m()])
+	weather.temperature = 6.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	await get_tree().process_frame
+	_check("no flakes and no blowing at +6 C", fall.get_visible_flakes() == 0 and fall.get_blowing_amount() == 0.0, "%.3f mm/h of snow, %d flakes" % [fall.get_snowfall_rate(), fall.get_visible_flakes()])
+	fall.queue_free()
+
+
 func _snow_line() -> float:
 	# The lowest ground where at least half the day's precipitation (48 mm) stayed as snow.
 	var lowest := INF
@@ -413,6 +462,8 @@ func _build_view() -> void:
 		await _setup("mountain", 2048.0, 256, 4.0)
 	elif view == "trail":
 		await _setup("meadow", 64.0, 64, -4.0)
+	elif view == "snowfall":
+		await _setup("meadow", 64.0, 64, -6.0)
 	else:
 		await _setup("flat", 32.0, 128, -4.0)
 	var env := Environment.new()
@@ -444,6 +495,9 @@ func _build_view() -> void:
 		cam.fov = 45.0
 	elif view == "trail":
 		await _build_trail(cam)
+		return
+	elif view == "snowfall":
+		await _build_snowfall(cam)
 		return
 	else:
 		snow.drift_enabled = false
@@ -617,6 +671,86 @@ func _build_trail(cam: Camera3D) -> void:
 
 func _undisturbed(p: Vector3) -> float:
 	return surface.get_surface_height_at(p) + surface.get_dent_at(p) - surface.get_rim_at(p)
+
+
+func _build_snowfall(cam: Camera3D) -> void:
+	sun.visible = true
+	sun.shadow_enabled = true
+	sun.light_energy = 0.6
+	sun.rotation_degrees = Vector3(-30.0, 150.0, 0.0)
+	_add_terrain(64.0, 256, Color(0.36, 0.33, 0.28), 6.0)
+	var target := Marker3D.new()
+	target.name = "Probe"
+	add_child(target)
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	snow.add_snow(30.0, 120.0)
+	weather.rain_rate = 3.0
+	weather.cloud_cover = 1.0
+	weather.wind_speed = wind
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	var deep := SnowSurface3D.new()
+	deep.snow_cover = NodePath("../SnowCover3D")
+	deep.follow_target = NodePath("../Probe")
+	add_child(deep)
+	# A dark timber shed: the roof keeps the snow off the ground under it.
+	var wood := _ground_material(Color(0.2, 0.13, 0.08), 1.0)
+	wood.snow_enabled = false
+	for c in [Vector2(-1.5, -1.5), Vector2(1.5, -1.5), Vector2(-1.5, 1.5), Vector2(1.5, 1.5)]:
+		var post := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.15, 2.6, 0.15)
+		post.mesh = bm
+		post.material_override = wood
+		post.position = Vector3(c.x - 1.0, 1.1, c.y - 3.0)
+		add_child(post)
+	var roof := MeshInstance3D.new()
+	var rm := BoxMesh.new()
+	rm.size = Vector3(3.6, 0.12, 3.6)
+	roof.mesh = rm
+	roof.material_override = wood
+	roof.position = Vector3(-1.0, 2.45, -3.0)
+	add_child(roof)
+	var back := MeshInstance3D.new()
+	var wm := BoxMesh.new()
+	wm.size = Vector3(3.3, 2.4, 0.1)
+	back.mesh = wm
+	back.material_override = wood
+	back.position = Vector3(-1.0, 1.1, -4.6)
+	add_child(back)
+	var fall := SnowFall3D.new()
+	fall.snow_cover = NodePath("../SnowCover3D")
+	fall.follow_target = NodePath("../Probe")
+	add_child(fall)
+	cam.position = Vector3(1.6, 1.4, 3.2)
+	cam.look_at(Vector3(-1.0, 1.0, -3.0))
+	cam.fov = 55.0
+	var we: WorldEnvironment = null
+	for c in get_children():
+		if c is WorldEnvironment:
+			we = c
+	if we and not raster:
+		we.environment.pathtracing_enabled = false
+	# The snowfall past the particle box as fog, from its extinction.
+	await get_tree().process_frame
+	if we:
+		we.environment.fog_enabled = true
+		we.environment.fog_light_color = Color(0.78, 0.8, 0.84)
+		we.environment.fog_density = fall.get_extinction()
+		we.environment.fog_sky_affect = 0.3
+	var frames := steps if steps > 0 else 1
+	for s in frames:
+		for i in 150 / frames + 1:
+			await get_tree().process_frame
+		if steps > 0:
+			await _save_frame("_%03d" % s)
+	print("visibility %.0f m" % fall.get_visibility())
+	print("snowfall %.2f mm/h, %d flakes, blowing %.0f%% at %.1f m/s (threshold %.1f)" % [fall.get_snowfall_rate(), fall.get_visible_flakes(), fall.get_blowing_amount() * 100.0, fall.get_wind_speed_10m(), fall.get_threshold_wind()])
+	if we and not raster:
+		we.environment.pathtracing_enabled = true
+	await _save_frame("")
+	get_tree().quit()
 
 
 func _physics_process(delta: float) -> void:

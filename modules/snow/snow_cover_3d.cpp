@@ -863,6 +863,20 @@ float SnowCover3D::get_runoff_at(Vector3 p_position) const {
 	return MAX(_sample(cell_runoff, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
+float SnowCover3D::get_air_temperature_at(Vector3 p_position) const {
+	const WeatherMap3D *w = WeatherMap3D::get_active();
+	const float ref = w ? w->get_ground_height() : (is_inside_tree() ? get_global_position().y : 0.0f);
+	const float t = w ? w->get_temperature() : temperature;
+	return t - lapse_rate * 0.001f * (p_position.y - ref);
+}
+
+float SnowCover3D::get_snowfall_rate_at(Vector3 p_position) const {
+	const WeatherMap3D *w = WeatherMap3D::get_active();
+	const float rate = w ? w->get_rain_at(p_position) : precipitation_rate;
+	const float rh = w ? w->get_humidity() : humidity;
+	return MAX(rate, 0.0f) * snowfall_fraction(get_air_temperature_at(p_position), rh);
+}
+
 float SnowCover3D::get_new_snow_at(Vector3 p_position) const {
 	return _sample(cell_new_depth, Vector2(p_position.x, p_position.z));
 }
@@ -1106,6 +1120,8 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_runoff_at", "position"), &SnowCover3D::get_runoff_at);
 	ClassDB::bind_method(D_METHOD("get_ground_height_at", "position"), &SnowCover3D::get_ground_height_at);
 	ClassDB::bind_method(D_METHOD("get_new_snow_at", "position"), &SnowCover3D::get_new_snow_at);
+	ClassDB::bind_method(D_METHOD("get_air_temperature_at", "position"), &SnowCover3D::get_air_temperature_at);
+	ClassDB::bind_method(D_METHOD("get_snowfall_rate_at", "position"), &SnowCover3D::get_snowfall_rate_at);
 	ClassDB::bind_method(D_METHOD("sample_ground_height", "position"), &SnowCover3D::sample_ground_height);
 	ClassDB::bind_method(D_METHOD("get_update_count"), &SnowCover3D::get_update_count);
 	ClassDB::bind_method(D_METHOD("get_drift_factor"), &SnowCover3D::get_drift_factor);

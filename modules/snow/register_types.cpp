@@ -32,6 +32,7 @@
 #include "register_types.h"
 
 #include "snow_cover_3d.h"
+#include "snow_fall_3d.h"
 #include "snow_surface_3d.h"
 
 #include "core/object/class_db.h"
@@ -43,6 +44,7 @@ void initialize_snow_module(ModuleInitializationLevel p_level) {
 	// The snow_map and snow_map_rect shader globals are declared with BaseMaterial3D's (material.cpp).
 	GDREGISTER_CLASS(SnowCover3D);
 	GDREGISTER_CLASS(SnowSurface3D);
+	GDREGISTER_CLASS(SnowFall3D);
 }
 
 void uninitialize_snow_module(ModuleInitializationLevel p_level) {
