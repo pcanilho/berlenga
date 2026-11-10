@@ -1541,7 +1541,7 @@ ones further up.
 - `water_fft_rows.glsl`: rows then columns, all four transforms of a step along z: 2 dispatches a step
   per cascade. Same butterflies as `water_fft.glsl`, so the field is the same: the height map and the
   rendered frame are bit-identical to the per-stage passes. Up to N = 1024 (shared memory); larger grids,
-  and the project setting `physics/physx_3d/water/shared_memory_fft` off, take the per-stage passes.
+  and the project setting `physics/physx_3d/water/shared_memory_fft` off (the default until a GPU timing), take the per-stage passes.
 
 ### Results (lavapipe, `docs/bench/water_surface --view=sea_top --height-out`, 3 cascades, 14 m/s)
 
@@ -1557,8 +1557,8 @@ wave height is unchanged (the spreading only moves energy between directions).
 
 FFT cost: lavapipe runs workgroups on CPU threads, where 256-thread barriers are costly: 247 against
 210 ms a frame at N = 256 with 3 cascades. That says nothing about a GPU, where this layout is the
-standard fast one (64 dispatches a step become 2); GPU timing is on the PC queue, and the setting turns it
-off if it ever loses there.
+standard fast one (64 dispatches a step become 2). So the setting ships OFF, and goes on by default once
+the PC times it faster (PC queue).
 
 ## Sources
 
