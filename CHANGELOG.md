@@ -6,6 +6,16 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-250256ab (2026-11-10)
+
+### Added
+- PhysXWaterSurface3D `wave_spreading` (Donelan-Banner by default, Hasselmann, or the old Cos2) and `swell`, after Horvath 2015: the dominant waves run with the wind and short waves cross, matching Cox and Munk's measured slopes (1.41 against 1.48 along/across at 14 m/s; Cos2 gave 2.72).
+- `physics/physx_3d/water/shared_memory_fft` (off until timed on a GPU): the ocean FFT runs each line's whole transform in shared memory, all four transforms of a step in two dispatches per cascade instead of 8 log2(N); the same field.
+- `TerrainMaterial3D.ground_deform_enabled`: the terrain takes `GroundSurface3D` prints (sand, mud, leaf litter) with its own material.
+
+### Changed
+- README: wind moves lying snow line and image.
+
 ## build-939acbda (2026-11-10)
 
 ### Added
