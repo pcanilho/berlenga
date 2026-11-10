@@ -17,6 +17,7 @@ extends Node3D
 #   --view=map        an 8 km map with broken cloud, light rain and a storm drifting through, after an hour;
 #                     saved with --map-out
 #   --view=street     a street that the rain has wetted, with puddles, and a flag in the weather's wind
+#   --view=cloud_map  the clouds from straight above over 24 km (column optical depth), saved with --out
 #   --view=clouds     broken cumulus over fields from a rise, WeatherSkyMaterial sky, cloud shadows on the sun
 #   --view=clouds_low the same from 220 m, looking down on the cloud shadows
 #   --view=lightning  a storm at night over fields; a ground flash 1.4 km off on the last frame
@@ -107,6 +108,10 @@ func _ready() -> void:
 		await _map_view()
 		get_tree().quit()
 		return
+	if view == "cloud_map":
+		await _cloud_map()
+		get_tree().quit()
+		return
 	if view == "clouds" or view == "clouds_low":
 		await _build_clouds()
 		return
@@ -117,6 +122,28 @@ func _ready() -> void:
 		await _build_lightning()
 		return
 	_build_street()
+
+
+# The clouds from straight above over 24 km: each pixel the optical depth of its column (get_cloud_density_at
+# at 16 heights), white where thick. Shows whether the clouds repeat in a grid.
+func _cloud_map() -> void:
+	var m := _new_map()
+	m.cloud_cover = 0.4
+	await get_tree().physics_frame
+	var px := 256
+	var span := 24000.0
+	var img := Image.create(px, px, false, Image.FORMAT_L8)
+	var base: float = m.cloud_base_height
+	var top: float = base + m.cloud_thickness
+	var dh := (top - base) / 16.0
+	for y in px:
+		for x in px:
+			var tau := 0.0
+			for k in 16:
+				tau += m.get_cloud_density_at(Vector3((x + 0.5) / px * span - span * 0.5, base + (k + 0.5) * dh, (y + 0.5) / px * span - span * 0.5)) * dh
+			img.set_pixel(x, y, Color.from_hsv(0, 0, 1.0 - exp(-tau * 0.1)))
+	img.save_png(out if out != "" else "user://cloud_map.png")
+	print("cloud map: %d px over %.0f m saved" % [px, span])
 
 
 # ---------------------------------------------------------------------------------------------------
