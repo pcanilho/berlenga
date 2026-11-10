@@ -582,6 +582,11 @@ enum {
 	// and frame a reservoir of RT_LIGHT_REUSE_STRIDE uints. Must match raytracing_lights_inc.glsl.
 	RT_LIGHT_REUSE_HEADER = 4 + RT_LIGHTS_MAX,
 	RT_LIGHT_REUSE_STRIDE = 6,
+	// Indirect light reuse (binding 52): a header of 4 uints, then per pixel two frames of
+	// reservoirs and one surface record. Must match raytracing_indirect_reuse_inc.glsl.
+	RT_INDIRECT_REUSE_HEADER = 4,
+	RT_INDIRECT_REUSE_STRIDE = 10,
+	RT_INDIRECT_REUSE_RECORD = 6,
 	// The light grid (binding 42): cells at most, and list entries at most (the cell
 	// size grows until the lists fit).
 	RT_LIGHT_GRID_MAX_CELLS = 32768,
@@ -1414,6 +1419,13 @@ struct RTViewportState {
 	bool light_reuse_history = false; // last frame wrote a slot at this size and anchor
 	Vector3 light_reuse_origin; // the anchor last frame's reservoirs are relative to
 	LocalVector<RID> light_reuse_lights; // light instances by index, last frame
+	// Indirect light reuse (binding 52, ReSTIR GI; raytracing_indirect_reuse_inc.glsl): per-pixel
+	// reservoirs for two frames and surface records, made at the internal size while enabled.
+	RID indirect_reuse_buffer;
+	Size2i indirect_reuse_size;
+	uint32_t indirect_reuse_slot = 0; // written this frame
+	bool indirect_reuse_history = false; // last frame wrote a slot at this size and anchor
+	Vector3 indirect_reuse_origin;
 	uint32_t light_grid_buffer_capacity = 0; // uints.
 	RID volume_params_buffer; // RTVolumeParams (raytracing_volume_inc.glsl), binding 49.
 	RID params_buffer;
