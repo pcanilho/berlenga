@@ -32,6 +32,8 @@
 
 #include "core/io/resource.h"
 #include "core/math/random_pcg.h"
+#include "core/templates/hash_map.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 
@@ -74,6 +76,31 @@ public:
 		int lobes = 0; // Lobes on each side (dandelion teeth, buttercup lobes).
 		float lobe_depth = 0.0f;
 		int segments = 10;
+	};
+
+	enum Venation {
+		VENATION_PINNATE, // A midrib with secondaries (dandelion, daisy, fern pinnae).
+		VENATION_PALMATE, // Several primaries from the base (buttercup).
+		VENATION_PARALLEL, // Veins along the length (plantain, sedge, petals).
+	};
+
+	// What the leaf texture is baked from: the main leaf's outline and venation, its colours.
+	struct LeafTexture {
+		Leaf leaf;
+		float aspect = 0.25f; // Width over length of that leaf.
+		Venation venation = VENATION_PINNATE;
+		int parallel_veins = 5;
+		Color lamina = Color(0.12f, 0.3f, 0.07f);
+		Color vein = Color(0.3f, 0.42f, 0.15f);
+		float yellowing = 0.3f; // Dry, yellowed margins.
+		float spots = 0.3f; // Small blemishes.
+		float chevron = 0.0f; // Clover's pale V mark.
+		Color base_tint = Color(0, 0, 0, 0); // Petals: a different colour towards the base (alpha: amount).
+	};
+	struct TextureSet {
+		Ref<ImageTexture> albedo;
+		Ref<ImageTexture> normal;
+		Ref<ImageTexture> backlight;
 	};
 
 private:
@@ -124,6 +151,12 @@ private:
 	void _build_buttercup();
 
 	Ref<StandardMaterial3D> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
+	Ref<StandardMaterial3D> _textured_material(const TextureSet &p_set, float p_roughness) const;
+	bool textures = true;
+	int texture_size = 256;
+	HashMap<uint64_t, TextureSet> texture_cache;
+	LeafTexture _leaf_texture_spec(bool p_petal) const;
+	TextureSet _bake_leaf_texture(const LeafTexture &p_spec, uint32_t p_seed) const;
 
 protected:
 	static void _bind_methods();
@@ -146,6 +179,10 @@ public:
 
 	void set_lods(bool p_lods) { lods = p_lods; }
 	bool get_lods() const { return lods; }
+	void set_textures(bool p_textures) { textures = p_textures; }
+	bool get_textures() const { return textures; }
+	void set_texture_size(int p_size) { texture_size = CLAMP(p_size, 32, 2048); }
+	int get_texture_size() const { return texture_size; }
 	Ref<ArrayMesh> generate();
 	TypedArray<ArrayMesh> generate_variants(int p_count);
 	void apply_preset_colors();

@@ -13,6 +13,7 @@ extends Node3D
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
 #   --close          the closer view used by --trample
+#   --notex          plants without their generated leaf textures
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
 const SIZE := 96.0
@@ -32,6 +33,7 @@ var fails := 0
 var trample := false
 var layers := true
 var close := false
+var notex := false
 var t_frames := 0
 var under: GrassField3D
 var cover: VegetationField3D
@@ -62,6 +64,7 @@ func _ready() -> void:
 		elif a == "--trample": trample = true
 		elif a == "--layers=0": layers = false
 		elif a == "--close": close = true
+		elif a == "--notex": notex = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -234,6 +237,7 @@ void fragment() {
 # drawn near only: wildflower drifts, plantain, clover between the tall grass, sedge by the water.
 func _variants(preset: int, count: int, size := 1.0) -> Array:
 	var gen := PlantGenerator.new()
+	gen.textures = not notex
 	gen.preset = preset
 	gen.size = size
 	gen.apply_preset_colors()

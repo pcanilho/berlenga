@@ -6,6 +6,9 @@ extends Node3D
 #   --raster         raster only (default path traced)
 #   --spp=N          path tracing samples (default 16)
 #   --close=P        close view of preset P (0..6)
+#   --macro          with --close, one plant from a hand span away
+#   --notex          without the generated leaf textures
+#   --dump=dir       save the baked textures of the first seed as PNGs
 #   --out=path.png   save the frame
 
 const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup"]
@@ -16,6 +19,9 @@ var raster := false
 var spp := 16
 var close := -1
 var out := ""
+var macro := false
+var notex := false
+var dump := ""
 var n := 0
 var fails := 0
 
@@ -26,11 +32,15 @@ func _ready() -> void:
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--close="): close = int(a.substr(8))
 		elif a.begins_with("--out="): out = a.substr(6)
+		elif a == "--macro": macro = true
+		elif a == "--notex": notex = true
+		elif a.begins_with("--dump="): dump = a.substr(7)
 	if test:
 		_checks()
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	var gen := PlantGenerator.new()
+	gen.textures = not notex
 	for p in NAMES.size():
 		if close >= 0 and p != close:
 			continue
@@ -40,6 +50,16 @@ func _ready() -> void:
 			gen.seed = s
 			var mi := MeshInstance3D.new()
 			mi.mesh = gen.generate()
+			if dump != "" and s == 0:
+				for si in mi.mesh.get_surface_count():
+					var mat := mi.mesh.surface_get_material(si) as BaseMaterial3D
+					if mat and mat.albedo_texture:
+						mat.albedo_texture.get_image().save_png("%s/%s_%d_albedo.png" % [dump, NAMES[p], si])
+						mat.normal_texture.get_image().save_png("%s/%s_%d_normal.png" % [dump, NAMES[p], si])
+						mat.backlight_texture.get_image().save_png("%s/%s_%d_back.png" % [dump, NAMES[p], si])
+			if macro and s != 0:
+				mi.free()
+				continue
 			mi.position = Vector3(p * STEP, 0, s * STEP) if close < 0 else Vector3((s - 1) * 0.36, 0, 0)
 			add_child(mi)
 	var ground := MeshInstance3D.new()
@@ -74,7 +94,14 @@ func _ready() -> void:
 	var cam := Camera3D.new()
 	cam.fov = 40
 	add_child(cam)
-	if close >= 0:
+	if close >= 0 and macro:
+		var bb: AABB = (get_child(0) as MeshInstance3D).get_aabb()
+		var c: Vector3 = (get_child(0) as Node3D).position + bb.get_center()
+		c.y = min(c.y, 0.06)
+		cam.fov = 30
+		cam.position = c + Vector3(0, max(0.12, bb.size.y * 0.5), max(0.22, max(bb.size.x, bb.size.z) * 0.9))
+		cam.look_at(c)
+	elif close >= 0:
 		cam.position = Vector3(0, 0.42, 0.85)
 		cam.look_at(Vector3(0, 0.1, 0))
 	else:

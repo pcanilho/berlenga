@@ -102,5 +102,65 @@ drifts, plantain patches, clover between the tall grass, sedge within 3 m of the
 is bound by triangles, so this overstates a GPU's cost; GPU timings wait for the PC. The cost
 is only paid where plants are placed: the generator adds nothing to scenes that do not use it.
 
+## Leaf textures (stage 3a, detail pass)
+
+Flat-coloured blades read as plastic at close range. Ground vegetation that holds up close in
+current games (a medieval open world on CryEngine is the reference most cited for meadows,
+along with the earlier Crysis titles, Red Dead Redemption 2, Ghost of Tsushima and Horizon
+Forbidden West) shares the same ingredients: a leaf albedo with veins and colour drift, a
+normal map that sinks the veins and puckers the blade between them, a translucency map so
+light through the leaf shows the veins dark against a glowing blade, and per-plant variation
+in colour and wear. Those games paint or scan these; here they are generated per plant from
+the same seed, so nothing is authored and every variant differs.
+
+How the generator builds them (`textures`, `texture_size`, default 256):
+
+- **Veins** grow by Runions et al. 2005 open venation: auxin sources scattered over the blade
+  pull their nearest vein node, nodes step towards them, sources die when a vein reaches them
+  (kill distance 3% of the blade length). Growth leans towards the tip, standing in for the
+  marginal growth of the paper, so secondaries leave the midrib at a forward angle. Palmate
+  leaves (buttercup) start from five primaries; monocots and petals (plantain, sedge, petals)
+  use parallel veins converging at the tip.
+- **Vein widths** follow Murray's law (r³ of a vein is the sum of its branches' r³), so the
+  midrib tapers and every branch thins towards its tip.
+- **Albedo**: the blade colour with drift noise, areoles a touch darker than the veins, paler
+  veins (reddish for dandelion), dry yellowed margins that vary along the edge, a few spots,
+  white clover's pale chevron, and a warmer base on petals.
+- **Normal map** from a height field: veins sunk, the blade raised between them.
+- **Translucency** into the material's back light texture: the blade glows and the veins block
+  it (Sousa, "Vegetation procedural animation and shading in Crysis", GPU Gems 3 ch. 16). The
+  path tracer reads the same texture.
+- **UVs** are planar across the blade (0.5 at the midrib, 0 and 1 at the widest point), so the
+  veins keep their shape when the outline is toothed or lobed; veins fill the outline without
+  its teeth and run on into every lobe.
+
+Textures are baked once per preset, surface and seed variant (three per preset) and shared by
+every mesh that uses them.
+
+Results: veins, colour drift, margins and clover chevrons are visible at 100% crop in raster and
+under path tracing (plant-textures.jpg; mean difference 5 to 9 of 255, the path tracer's
+shadows). Cost: about 10 to 30 ms per preset on the first build on the cloud CPU (the bake),
+then nothing; memory 0.8 MB per texture set (three 256² RGB maps with mipmaps), so at most
+about 5 MB for every preset with petals. Frame time in the meadow (`docs/bench/grass --close`,
+`--notex` for the untextured plants) on the cloud CPU rasteriser: 404 ms against 378 ms, the
+cost of texture sampling in a software rasteriser; GPU timings wait for the PC. At meadow
+distance the plants are small, so the gain shows up close.
+
+Still to come in this pass: irregular outlines (wavy edges, curl, holes, asymmetry, ageing),
+then a litter layer and more species.
+
 Next: wind on the generated plants (the UV2 weights, stage 4), billboard or impostor LODs for
 the far range, and shrubs and trees from the same parts (stage 3b).
+
+## References
+
+- Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*, 1990.
+- Prusinkiewicz, Mündermann, Karwowski, Lane, "The use of positional information in the
+  modeling of plants", SIGGRAPH 2001.
+- Runions, Fuhrer, Lane, Federl, Rolland-Lagan, Prusinkiewicz, "Modeling and visualization of
+  leaf venation patterns", SIGGRAPH 2005.
+- Murray, "The physiological principle of minimum work", PNAS 1926 (vein radii).
+- Vogel, "A better way to construct the sunflower head", Mathematical Biosciences 1979.
+- Sousa, "Vegetation procedural animation and shading in Crysis", GPU Gems 3, ch. 16, 2007.
+- Lintermann, Deussen, "Interactive modeling of plants", IEEE CG&A 1999.
+- Weber, Penn, "Creation and rendering of realistic trees", SIGGRAPH 1995.
