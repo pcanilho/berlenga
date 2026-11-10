@@ -76,8 +76,9 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Murky water** (same setting): scattering media; `IOR`, `ABSORPTION` and `SCATTERING` in shaders; glTF `KHR_materials_scatter` draft.
 - **Caustics** (`rendering/pathtracing/caustics`): sunlight lines under rippled water.
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
-- **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
-- **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows and breaks on the beach.
+- **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
+- **Finer water mesh up close** (`mesh_detail`).
+- **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up); on steep beaches the crest curls over (`shore_wave_curl`).
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
 - **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
@@ -110,6 +111,14 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Waves breaking on a beach, raster](docs/media/shore-waves.gif)
 
 *Shore waves: swell breaks into foam on the beach.*
+
+![Waves run up a sloping beach and draw back](docs/media/shore-runup.gif)
+
+*Run-up: the wash climbs the sand and drains back.*
+
+![A curling breaker on a steep beach, raster vs path traced](docs/media/shore-curl.jpg)
+
+*Curling breakers: the crest throws forward and falls.*
 
 ![Floating boxes drift on a current past a rock](docs/media/currents.gif)
 
