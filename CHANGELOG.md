@@ -6,6 +6,19 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-bc9b8f27 (2026-11-10)
+
+### Changed
+- Weather: precipitation haze layers are lit by the sky as well as the sun, so blowing snow reads white. A source given a radius now sets the layer's ground at its centre's height, so the layer follows the terrain instead of sitting at `ground_height`.
+- README: terrain climate maps line and image.
+- README: indirect light reuse (ReSTIR GI) line.
+- README: snowstorms line and blizzard image.
+- README: vegetation climate placement and canopy shade lines.
+
+### Added
+- Path tracing: indirect light reuse (ReSTIR GI), `rendering/pathtracing/indirect_reuse`, off by default. The first bounce of each pixel's diffuse samples is resampled across frames and neighbouring pixels. A room lit through one window goes from 22.8 to 30.0 dB at 4 spp, better than 64 spp without it. Uses 104 bytes per internal pixel.
+- `PlantSpecies` climate rules: `temperature_range`, `january_temperature_range`, `precipitation_range`, `aridity_range` and `sunlight_range`, read from `TerrainDataMap3D.bake_climate()`.
+
 ## build-943d6ac9 (2026-11-10)
 
 ### Fixed
