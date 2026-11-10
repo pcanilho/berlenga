@@ -14,15 +14,25 @@
 // water is multiplied by that ratio (lights_evaluate_directional). Points whose texel saw no
 // straight photon, or one landing at another depth, keep the plain sun.
 //
-// The map is three slots: the frame adds to one, reads the one the last frame wrote, and clears
+// Cascades, as shadow cascades and as the chapter extends it to oceans: square c is 4^c times the
+// area's width around the same centre. Cascade 0 (512 texels) takes one photon from every pixel, as
+// before; the outer two (256 texels each) take one more from a quarter of the pixels each, which
+// keeps about eight photons a texel in all three. A point reads the finest cascade that covers it,
+// blended into the next one out over the finer one's border.
+//
+// Each cascade is three slots: the frame adds to one, reads the one the last frame wrote, and clears
 // the one it read last frame (each pixel's thread clears its share), so no separate pass runs.
-// After the slots, a header per slot: the distance the camera looked to when it was written,
-// and the square's centre it used.
+// After all the slots, a header per slot: the distance the camera looked to when it was written,
+// and the squares' centre it used.
 
 #define RT_CAUSTICS_BINDING 46
-#define RT_CAUSTICS_RES 512u // texels across, must match RT_CAUSTICS_RES (render_raytracing.h)
+#define RT_CAUSTICS_RES 512u // cascade 0 texels across, must match RT_CAUSTICS_RES (render_raytracing.h)
+#define RT_CAUSTICS_RES_OUTER 256u // the outer cascades, must match RT_CAUSTICS_RES_OUTER
+#define RT_CAUSTICS_CASCADES 3u
+#define RT_CAUSTICS_CASCADE_SCALE 4.0
 #define RT_CAUSTICS_SLOT_UINTS (RT_CAUSTICS_RES * RT_CAUSTICS_RES * 3u)
-#define RT_CAUSTICS_HEADER (3u * RT_CAUSTICS_SLOT_UINTS) // 4 uints a slot: look distance, centre xyz
+#define RT_CAUSTICS_SLOT_UINTS_OUTER (RT_CAUSTICS_RES_OUTER * RT_CAUSTICS_RES_OUTER * 3u)
+#define RT_CAUSTICS_HEADER (3u * RT_CAUSTICS_SLOT_UINTS + 3u * (RT_CAUSTICS_CASCADES - 1u) * RT_CAUSTICS_SLOT_UINTS_OUTER) // 4 uints a slot: look distance, centre xyz
 #define RT_CAUSTICS_UINTS (RT_CAUSTICS_HEADER + 12u) // must match RT_CAUSTICS_UINTS (render_raytracing.h)
 #define RT_CAUSTICS_WEIGHT 64.0 // fixed-point steps of one photon
 #define RT_CAUSTICS_DEPTH_SCALE 100.0 // depth sum steps per metre
@@ -42,7 +52,8 @@ layout(set = 0, binding = RT_CAUSTICS_BINDING, std430) coherent buffer CausticsB
 }
 rt_caustics;
 
-// RT_PARAM_CAUSTICS_STATE: 0 off, else 1 + the slot written this frame + 4 when last frame's is valid.
+// RT_PARAM_CAUSTICS_STATE: 0 off, else 1 + the slot written this frame + 4 when last frame's is valid
+// + 8 times (the cascades in use - 1).
 bool rt_caustics_enabled() {
 	return get_rt_param(RT_PARAM_CAUSTICS_STATE) > 0.5 && uint(rt_caustics.data.length()) >= RT_CAUSTICS_UINTS;
 }
@@ -55,6 +66,18 @@ bool rt_caustics_history() {
 	return ((uint(get_rt_param(RT_PARAM_CAUSTICS_STATE)) - 1u) & 4u) != 0u;
 }
 
+uint rt_caustics_cascades() {
+	return min(((uint(get_rt_param(RT_PARAM_CAUSTICS_STATE)) - 1u) >> 3u) + 1u, RT_CAUSTICS_CASCADES);
+}
+
+// Where slot p_slot of cascade p_cascade starts.
+uint rt_caustics_slot_base(uint p_cascade, uint p_slot) {
+	if (p_cascade == 0u) {
+		return p_slot * RT_CAUSTICS_SLOT_UINTS;
+	}
+	return 3u * RT_CAUSTICS_SLOT_UINTS + (3u * (p_cascade - 1u) + p_slot) * RT_CAUSTICS_SLOT_UINTS_OUTER;
+}
+
 struct CausticsFrame {
 	vec3 L; // towards the light
 	vec3 r;
@@ -62,11 +85,15 @@ struct CausticsFrame {
 	vec2 origin; // the area's corner along r and u, snapped to texels so the map holds still
 	float size;
 	float ref_depth; // the area's centre along L
+	uint res; // texels across
+	uint cascade;
 };
 
-// The first light, when it is directional (gather_lights() packs those first), over a square
-// centred on p_center.
-bool rt_caustics_frame(vec3 p_center, out CausticsFrame f) {
+// The first light, when it is directional (gather_lights() packs those first), over cascade
+// p_cascade's square centred on p_center.
+bool rt_caustics_frame(vec3 p_center, uint p_cascade, out CausticsFrame f) {
+	f.res = p_cascade == 0u ? RT_CAUSTICS_RES : RT_CAUSTICS_RES_OUTER;
+	f.cascade = p_cascade;
 	f.L = vec3(0.0, 1.0, 0.0);
 	f.r = vec3(1.0, 0.0, 0.0);
 	f.u = vec3(0.0, 0.0, 1.0);
@@ -80,9 +107,9 @@ bool rt_caustics_frame(vec3 p_center, out CausticsFrame f) {
 	vec3 a = abs(f.L.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
 	f.r = normalize(cross(a, f.L));
 	f.u = cross(f.L, f.r);
-	f.size = max(get_rt_param(RT_PARAM_CAUSTICS_SIZE), 0.01);
+	f.size = max(get_rt_param(RT_PARAM_CAUSTICS_SIZE), 0.01) * pow(RT_CAUSTICS_CASCADE_SCALE, float(p_cascade));
 	vec3 c = p_center;
-	float texel = f.size / float(RT_CAUSTICS_RES);
+	float texel = f.size / float(f.res);
 	f.origin = floor(vec2(dot(c, f.r), dot(c, f.u)) / texel) * texel - 0.5 * f.size;
 	f.ref_depth = dot(c, f.L);
 	return true;
@@ -95,7 +122,7 @@ vec3 rt_caustics_slot_center(uint p_slot) {
 
 // The map position of p in texels (centres at .5) and its stored depth.
 vec2 rt_caustics_texel(CausticsFrame f, vec3 p) {
-	return (vec2(dot(p, f.r), dot(p, f.u)) - f.origin) / f.size * float(RT_CAUSTICS_RES);
+	return (vec2(dot(p, f.r), dot(p, f.u)) - f.origin) / f.size * float(f.res);
 }
 
 float rt_caustics_depth(CausticsFrame f, vec3 p) {
@@ -111,7 +138,7 @@ void rt_caustics_deposit(CausticsFrame f, uint p_slot, vec3 p, uint p_channel) {
 	for (int k = 0; k < 4; k++) {
 		ivec2 o = ivec2(k & 1, k >> 1);
 		ivec2 t = i0 + o;
-		if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, ivec2(RT_CAUSTICS_RES)))) {
+		if (any(lessThan(t, ivec2(0))) || any(greaterThanEqual(t, ivec2(f.res)))) {
 			continue;
 		}
 		vec2 w2 = mix(1.0 - fr, fr, vec2(o));
@@ -119,12 +146,55 @@ void rt_caustics_deposit(CausticsFrame f, uint p_slot, vec3 p, uint p_channel) {
 		if (w == 0u) {
 			continue;
 		}
-		uint idx = p_slot * RT_CAUSTICS_SLOT_UINTS + (uint(t.y) * RT_CAUSTICS_RES + uint(t.x)) * 3u;
+		uint idx = rt_caustics_slot_base(f.cascade, p_slot) + (uint(t.y) * f.res + uint(t.x)) * 3u;
 		atomicAdd(rt_caustics.data[idx + p_channel], w);
 		if (p_channel == 1u) {
 			atomicAdd(rt_caustics.data[idx + 2u], w * depth);
 		}
 	}
+}
+
+// How much the water above p focuses the sun there in one cascade, or -1 where it holds nothing for
+// p; r_fade is 1 inside the square and falls to 0 over its border.
+float rt_caustics_lookup_cascade(vec3 p_center, uint p_cascade, uint p_slot, vec3 p, out float r_fade) {
+	r_fade = 0.0;
+	CausticsFrame f;
+	if (!rt_caustics_frame(p_center, p_cascade, f)) {
+		return -1.0;
+	}
+	vec2 st = rt_caustics_texel(f, p) - 0.5;
+	float res = float(f.res);
+	if (any(lessThan(st, vec2(-0.5))) || any(greaterThan(st, vec2(res - 0.5)))) {
+		return -1.0;
+	}
+	ivec2 i0 = ivec2(floor(st));
+	vec2 fr = st - vec2(i0);
+	float bent = 0.0;
+	float straight = 0.0;
+	float depth_sum = 0.0;
+	uint base = rt_caustics_slot_base(p_cascade, p_slot);
+	for (int k = 0; k < 4; k++) {
+		ivec2 o = ivec2(k & 1, k >> 1);
+		ivec2 t = clamp(i0 + o, ivec2(0), ivec2(f.res - 1u));
+		vec2 w2 = mix(1.0 - fr, fr, vec2(o));
+		float w = w2.x * w2.y;
+		uint idx = base + (uint(t.y) * f.res + uint(t.x)) * 3u;
+		bent += w * float(rt_caustics.data[idx]);
+		straight += w * float(rt_caustics.data[idx + 1u]);
+		depth_sum += w * float(rt_caustics.data[idx + 2u]);
+	}
+	if (straight < 0.5 * RT_CAUSTICS_WEIGHT) {
+		return -1.0;
+	}
+	float tolerance = max(RT_CAUSTICS_DEPTH_TOLERANCE, 2.0 * f.size / res) * RT_CAUSTICS_DEPTH_SCALE;
+	if (abs(depth_sum / straight - rt_caustics_depth(f, p)) > tolerance) {
+		return -1.0;
+	}
+	// Near the border photons bent out of the square are lost while none bend in from past it, so
+	// the ratio dips into a dark line: hand over to the next cascade (or the plain sun) there.
+	vec2 edge = min(st + 0.5, vec2(res - 0.5) - st);
+	r_fade = smoothstep(0.0, RT_CAUSTICS_EDGE_FADE * res, min(edge.x, edge.y));
+	return min(bent / straight, RT_CAUSTICS_MAX_RATIO);
 }
 
 // How much the water above p focuses the sun there, or -1 where the map holds nothing for p.
@@ -133,38 +203,29 @@ float rt_caustics_lookup(vec3 p) {
 		return -1.0;
 	}
 	uint slot = (rt_caustics_write_slot() + 2u) % 3u;
-	CausticsFrame f;
-	if (!rt_caustics_frame(rt_caustics_slot_center(slot), f)) {
-		return -1.0;
+	vec3 center = rt_caustics_slot_center(slot);
+	uint cascades = rt_caustics_cascades();
+	// Finest first; a cascade fully inside its square settles it, otherwise its border blends over
+	// what the coarser ones give.
+	float ratio[RT_CAUSTICS_CASCADES];
+	float fade[RT_CAUSTICS_CASCADES];
+	uint n = 0u;
+	for (uint c = 0u; c < cascades; c++) {
+		ratio[n] = rt_caustics_lookup_cascade(center, c, slot, p, fade[n]);
+		n++;
+		if (ratio[n - 1u] >= 0.0 && fade[n - 1u] >= 1.0) {
+			break;
+		}
 	}
-	vec2 st = rt_caustics_texel(f, p) - 0.5;
-	ivec2 i0 = ivec2(floor(st));
-	vec2 fr = st - vec2(i0);
-	float bent = 0.0;
-	float straight = 0.0;
-	float depth_sum = 0.0;
-	for (int k = 0; k < 4; k++) {
-		ivec2 o = ivec2(k & 1, k >> 1);
-		ivec2 t = clamp(i0 + o, ivec2(0), ivec2(RT_CAUSTICS_RES - 1u));
-		vec2 w2 = mix(1.0 - fr, fr, vec2(o));
-		float w = w2.x * w2.y;
-		uint idx = slot * RT_CAUSTICS_SLOT_UINTS + (uint(t.y) * RT_CAUSTICS_RES + uint(t.x)) * 3u;
-		bent += w * float(rt_caustics.data[idx]);
-		straight += w * float(rt_caustics.data[idx + 1u]);
-		depth_sum += w * float(rt_caustics.data[idx + 2u]);
+	float result = -1.0;
+	for (uint k = n; k > 0u; k--) {
+		float r = ratio[k - 1u];
+		if (r < 0.0) {
+			continue;
+		}
+		result = mix(result < 0.0 ? 1.0 : result, r, fade[k - 1u]);
 	}
-	if (any(lessThan(st, vec2(-0.5))) || any(greaterThan(st, vec2(float(RT_CAUSTICS_RES) - 0.5))) || straight < 0.5 * RT_CAUSTICS_WEIGHT) {
-		return -1.0;
-	}
-	float tolerance = max(RT_CAUSTICS_DEPTH_TOLERANCE, 2.0 * f.size / float(RT_CAUSTICS_RES)) * RT_CAUSTICS_DEPTH_SCALE;
-	if (abs(depth_sum / straight - rt_caustics_depth(f, p)) > tolerance) {
-		return -1.0;
-	}
-	// Near the border photons bent out of the square are lost while none bend in from past it, so
-	// the ratio dips into a dark line: fade to the plain sun over the outer texels.
-	vec2 edge = min(st + 0.5, vec2(float(RT_CAUSTICS_RES) - 0.5) - st);
-	float fade = smoothstep(0.0, RT_CAUSTICS_EDGE_FADE * float(RT_CAUSTICS_RES), min(edge.x, edge.y));
-	return mix(1.0, min(bent / straight, RT_CAUSTICS_MAX_RATIO), fade);
+	return result;
 }
 
 // The sun's multiplier at p (1: as the straight shadow ray has it).

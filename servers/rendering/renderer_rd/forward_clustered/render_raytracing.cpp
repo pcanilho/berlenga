@@ -7334,7 +7334,8 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				p_state->caustics_history = false;
 			}
 			p_state->caustics_slot = (p_state->caustics_slot + 1) % 3;
-			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CAUSTICS_STATE] = float(1u + p_state->caustics_slot + (p_state->caustics_history ? 4u : 0u));
+			const uint32_t cascades = (uint32_t)CLAMP((int)GLOBAL_GET_CACHED(int, "rendering/pathtracing/caustics_cascades"), 1, (int)RT_CAUSTICS_CASCADES);
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CAUSTICS_STATE] = float(1u + p_state->caustics_slot + (p_state->caustics_history ? 4u : 0u) + 8u * (cascades - 1u));
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_CAUSTICS_SIZE] = MAX(1.0f, (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/caustics_area"));
 			p_state->caustics_history = true;
 		} else if (p_state) {

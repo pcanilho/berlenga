@@ -284,6 +284,33 @@ The ray-guided caustics map, but feeding the path tracer's sun light instead of 
   accumulation smooth the rest.
 - Caustics stop at the square's edge (cascades, as the chapter does, would extend it).
 
+### Caustic cascades (10 Nov)
+
+The caustics map now uses cascades, as shadow maps do, and as Yang and Ouyang (Ray Tracing Gems II
+ch. 30) extend it to oceans. The setting is `rendering/pathtracing/caustics_cascades`, default 3.
+
+- **Coverage.** There are three squares around the same centre: `caustics_area`, then 4 and 16
+  times it. With the default area that is 16, 64 and 256 m.
+- **Cascade 0 is unchanged.** It is 512 texels and takes one photon from every pixel, so the near
+  lines are exactly as sharp and as noisy as before.
+- **The outer two cascades** are 256 texels each (25 cm and 1 m texels). Each takes one extra photon
+  from a quarter of the pixels; which quarter rotates every frame on a 2 x 2 pattern. That keeps
+  about eight photons a texel in every cascade.
+  - Cost: half again the photon rays, which is a small share of a frame. The GPU timing goes on the
+    PC queue.
+  - Memory: 9 MiB becomes 13.5 MiB.
+- **Lookup.** A point reads the finest cascade that covers it. Across a cascade's outer 8% it blends
+  into the next one out instead of into the plain sun. The outermost still fades to the plain sun.
+  - A texel with no straight photon, or with photons landing at another depth, falls through to the
+    coarser cascade.
+  - The coarse texels cannot hold small ripples, so far out the caustics are the swell's broad
+    bands. That matches what the eye resolves at that distance.
+- **Packing.** The cascade count rides in the existing caustics state parameter (bits 3 and 4), so
+  no new `rt_params` slot is used.
+- **Check.** On the cloud bench's default view (lavapipe, PT), 1 cascade against 3 differ only past
+  the 16 m square, where the swell's bands now show on the sand. Inside it the image differs only
+  by noise.
+
 ## Step 3 research: flow, rivers and buoyancy (9 Nov)
 
 ### What the fork already has (PhysX module, #113)

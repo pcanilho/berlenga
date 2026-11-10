@@ -665,6 +665,33 @@ uint rt_camera_medium(vec3 p_origin) {
 	return 0u;
 }
 
+// One photon from the sun into cascade p_cascade's square, and its straight twin.
+void rt_caustics_photon_cascade(vec3 p_center, uint p_cascade, uint p_write, uvec2 p_pixel, inout uint rng) {
+	CausticsFrame f;
+	if (!rt_caustics_frame(p_center, p_cascade, f)) {
+		return;
+	}
+	vec2 uv = (vec2(p_pixel) + rand2(rng)) / vec2(gl_LaunchSizeEXT.xy);
+	vec2 q = f.origin + uv * f.size;
+	vec3 start = q.x * f.r + q.y * f.u + (f.ref_depth + RT_CAUSTICS_SUN_HEIGHT) * f.L;
+	vec3 dir = -f.L;
+	float width = f.size / float(f.res);
+	PathState ps;
+	// Only photons entering a medium through its front face count.
+	if (!rt_caustics_trace(start, dir, width, rng, ps) || (ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u || ps.bsdf_pdf < 0.5) {
+		return;
+	}
+	vec3 entry = start + dir * ps.hit_t;
+	vec3 o = offset_ray_origin(entry, ps.offset_normal, ps.hit_t);
+	vec3 p;
+	if (rt_caustics_land(o, ps.next_ray_dir, width, rng, p)) {
+		rt_caustics_deposit(f, p_write, p, 0u);
+	}
+	if (rt_caustics_land(o, dir, width, rng, p)) {
+		rt_caustics_deposit(f, p_write, p, 1u);
+	}
+}
+
 // This pixel's share of the caustics map (raytracing_caustics_inc.glsl): clear part of the slot
 // the next frame writes, then trace one photon from the sun. The square is centred where the
 // camera looked last frame, at least half its width ahead; the centre pixel measures that
@@ -674,11 +701,16 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 	uint clear = (write + 1u) % 3u;
 	uint threads = gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y;
 	uint tid = p_pixel.y * gl_LaunchSizeEXT.x + p_pixel.x;
-	uint share = (RT_CAUSTICS_SLOT_UINTS + threads - 1u) / threads;
-	for (uint k = 0u; k < share; k++) {
-		uint i = tid * share + k;
-		if (i < RT_CAUSTICS_SLOT_UINTS) {
-			rt_caustics.data[clear * RT_CAUSTICS_SLOT_UINTS + i] = 0u;
+	uint cascades = rt_caustics_cascades();
+	for (uint c = 0u; c < cascades; c++) {
+		uint slot_uints = c == 0u ? RT_CAUSTICS_SLOT_UINTS : RT_CAUSTICS_SLOT_UINTS_OUTER;
+		uint base = rt_caustics_slot_base(c, clear);
+		uint share = (slot_uints + threads - 1u) / threads;
+		for (uint k = 0u; k < share; k++) {
+			uint i = tid * share + k;
+			if (i < slot_uints) {
+				rt_caustics.data[base + i] = 0u;
+			}
 		}
 	}
 
@@ -698,29 +730,13 @@ void rt_caustics_photon(uvec2 p_pixel, uint p_frame, vec3 p_cam_pos, vec3 p_cam_
 		rt_caustics.data[h + 3u] = floatBitsToUint(center.z);
 	}
 
-	CausticsFrame f;
-	if (!rt_caustics_frame(center, f)) {
-		return;
-	}
 	uint rng = init_rng(p_pixel, p_frame, 7919u);
-	vec2 uv = (vec2(p_pixel) + rand2(rng)) / vec2(gl_LaunchSizeEXT.xy);
-	vec2 q = f.origin + uv * f.size;
-	vec3 start = q.x * f.r + q.y * f.u + (f.ref_depth + RT_CAUSTICS_SUN_HEIGHT) * f.L;
-	vec3 dir = -f.L;
-	float width = f.size / float(RT_CAUSTICS_RES);
-	PathState ps;
-	// Only photons entering a medium through its front face count.
-	if (!rt_caustics_trace(start, dir, width, rng, ps) || (ps.packed_bounces_flags & MEDIUM_CHANGE_FLAG) == 0u || ps.bsdf_pdf < 0.5) {
-		return;
-	}
-	vec3 entry = start + dir * ps.hit_t;
-	vec3 o = offset_ray_origin(entry, ps.offset_normal, ps.hit_t);
-	vec3 p;
-	if (rt_caustics_land(o, ps.next_ray_dir, width, rng, p)) {
-		rt_caustics_deposit(f, write, p, 0u);
-	}
-	if (rt_caustics_land(o, dir, width, rng, p)) {
-		rt_caustics_deposit(f, write, p, 1u);
+	// Every pixel's photon goes to cascade 0; a quarter of the pixels (turning every frame) also send
+	// one to cascade 1, and another quarter to cascade 2.
+	rt_caustics_photon_cascade(center, 0u, write, p_pixel, rng);
+	uint quarter = ((p_pixel.x & 1u) | ((p_pixel.y & 1u) << 1u)) ^ (p_frame & 3u);
+	if (quarter >= 1u && quarter < cascades) {
+		rt_caustics_photon_cascade(center, quarter, write, p_pixel, rng);
 	}
 }
 
