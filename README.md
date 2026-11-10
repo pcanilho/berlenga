@@ -207,9 +207,9 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Distance LOD: fewer, wider strands far away, with the same look.*
 
-![Strand hair over a box body: no collision, body collision, body skinned to a tilted bone](docs/media/hair-body-collision.jpg)
+![Strand hair over rounded shoulders: spheres only, shoulders as the collision body, skinned to a tilted bone](docs/media/hair-body-collision.jpg)
 
-*Body collision: without it the hair falls through the shoulders; with it the hair drapes over them, also when the body is skinned and tilted.*
+*Body collision: with spheres only the hair sinks into the shoulders; with the shoulders as the body it drapes over them, also when skinned and tilted.*
 
 ![Strand hair shaking and in wind, hair volume off and on](docs/media/hair-volume.jpg)
 
