@@ -638,8 +638,73 @@ is unchanged; only the geology maps move. Map fork/terrain/soil_before_after.png
 (40% of hillslope cells at 35 to 45 degrees, piled at the 40 degree `critical_slope`) is a threshold landscape;
 real ones sit nearer 30 to 35 degrees (Montgomery and Brandon 2002), which `critical_slope = 35` gives.
 
+## Waterfalls from rock layers (Paulo picked 10 Nov 21:47)
+
+The showcase scene cuts its waterfall by hand. Real falls in uplifting ranges sit where a river crosses a band of
+hard rock over soft (Niagara, the Yorkshire Dales forces, the Tatra and Alpine trough steps): the river cannot
+grade the hard band as fast as the soft rock below, and where the soft rock under the band is exposed in the face
+it is undercut, the band breaks off in blocks and the face stays vertical as it retreats upstream (Gilbert 1907).
+
+Research:
+
+- Forte, Yanites and Whipple 2016 run stream power over horizontal hard and soft layers: knickpoints form at every
+  contact, channel steepness switches with the rock, and divides migrate. Plain stream power makes steep hard
+  reaches, not vertical steps: with n = 1 a band of K/6 only grades six times steeper (for a big river, 0.02 to
+  0.12), a rapid hundreds of metres long.
+- Haviv et al. 2010 model vertical knickpoints with a resistant caprock: the face retreats by collapse of the
+  caprock once the weak rock under it is eroded, at a rate set by the discharge, not the slope; the fall keeps its
+  height (the caprock thickness plus the weak rock under it) as it retreats.
+- Lamb and Dietrich 2009: falls persist where the rock fails by toppling of blocks once undercut; Scheingross and
+  Lamb 2017: plunge pool erosion at the foot drives the undercutting.
+- Perne et al. 2017: in steady state over dipping layers the channel steepness matches each layer's erodibility,
+  with transient steps where contacts cross the channel.
+- Whipple and Tucker 1999: with n = 1 a knickpoint travels upstream at K A^m, independent of its height. So a face
+  that erodes as soft rock retreats at the soft rock's celerity and keeps its form.
+
+What is built (stream power, terrain_stream_power.h, per cell; `strata_enabled`, off by default):
+
+- strata: bands `strata_spacing` (90 m) apart, `strata_hard_fraction` (0.35) of each hard. The rock at a node is the
+  band at its stratigraphic height q = h - U t + tan(dip) (p . dip direction) + wobble fbm (the rock rose with the
+  uplift); contacts about 2 m thick.
+- hard rock erodes `strata_hardness` (100) times slower everywhere. Erosion goes as tensile strength^-2 (Sklar and
+  Dietrich 2001), so 100 is a 10x strength contrast, mudstone against sandstone or quartzite. Below about 20 the
+  rivers grade every band into a rapid hundreds of metres long (plain stream power, as Forte 2016 found).
+- undercutting: a hard node whose receiver lies below the bottom of its band by more than a soft slope at the
+  critical gradient stands on worn-back soft rock. Its block breaks off whole (the node drops to the band's base)
+  and it erodes on as soft rock. The face retreats a cell per undercutting, at the pace the foot incises (Haviv
+  2010), and keeps the band's height as a fall.
+- only channels (drainage over `strata_channel_area`, 2e4 m2, about where channels begin) stand at
+  `strata_cliff_angle` (75 degrees) in hard rock and stop creeping; the soft cell right under a hard lip stands as
+  steep (the plunge pool's undercut, Scheingross and Lamb 2017). A first version gave every hard cell cliffs and no
+  creep: hillslopes became fields of rock pinnacles. Hillslopes in hard rock now erode slowly but fail at
+  `critical_slope` like soft ones.
+- `strata_dip` 1 degree by default: at 3 degrees (near the rivers' own gradient) rivers run along one band for
+  hundreds of metres and grade it.
+- `get_rock_hardness(pos)` (the rock as it crops out, hillslopes too) and `get_waterfalls(min_area, min_height)`:
+  runs of a river's cells steeper than 45 degrees in the eroded heights (not the smoothed river points, whose
+  bilinear samples cut corners). Soft rock never stands past `critical_slope`, so only hard bands make them.
+
+Bench (4 km range, 16 m cells, `--strata`): 6 falls of 8 to 30 m on the rivers draining over 1e5 m2, four over 15
+m, every one in a hard band; long profiles step down between flat reaches (fork/terrain/waterfalls/
+waterfalls_before_after.png). Ground over 60 degrees stays under 0.5% of the land (no pinnacles). The range
+stands higher than in one rock: the hard bands hold the rivers up (relief rises with the mean rock strength, Forte
+2016); lower the uplift or raise `erodibility` to keep a height. Cost: generation 2.51 s to 2.98 s (+19%; the
+receivers pass and per-face creep). Off, the output is byte-identical (bench check). Not done: the falls' water
+(the showcase scene builds it from get_waterfalls), overhangs (a height field has none), plunge pools.
+
 ## Sources
 
+- Gilbert, Rate of recession of Niagara Falls, USGS Bulletin 306, 1907.
+- Haviv, Enzel, Whipple et al., Evolution of vertical knickpoints (waterfalls) with resistant caprock: insights from
+  numerical modeling, JGR 115, F03028, 2010.
+- Forte, Yanites, Whipple, Complexities of landscape evolution during incision through layered stratigraphy with
+  contrasts in rock strength, ESPL 41, 2016.
+- Lamb, Dietrich, The persistence of waterfalls in fractured rock, GSA Bulletin 121, 2009.
+- Scheingross, Lamb, A mechanistic model of waterfall plunge pool erosion into bedrock, JGR Earth Surface 122, 2017.
+- Perne, Covington, Thaler, Myre, Steady state, erosional continuity, and the topography of landscapes developed in
+  layered rocks, Earth Surface Dynamics 5, 2017.
+- Whipple, Tucker, Dynamics of the stream-power river incision model, JGR 104, 1999.
+- Sklar, Dietrich, Sediment and rock strength controls on river incision into bedrock, Geology 29, 2001.
 - Roering, Kirchner, Dietrich, Evidence for nonlinear, diffusive sediment transport on hillslopes, Water Resources
   Research 35, 1999.
 - Heimsath, DiBiase, Whipple, Soil production limits and the transition to bedrock-dominated landscapes, Nature

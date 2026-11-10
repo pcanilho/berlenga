@@ -215,11 +215,15 @@ bool TerrainGenerator3D::generate() {
 	LocalVector<uint8_t> flags;
 	h.resize(n);
 	area.resize(n);
+	memset(area.ptr(), 0, sizeof(double) * n); // the layered rock reads the last step's area before the first
 	sed.resize(n);
 	rd.resize(n);
 	scratch.resize(n);
 	temp.resize(n);
 	rec.resize(n);
+	for (int i = 0; i < n; i++) {
+		rec[i] = i;
+	}
 	stack.resize(n);
 	donor_count.resize(n);
 	donor_offset.resize(n + 1);
@@ -288,6 +292,85 @@ bool TerrainGenerator3D::generate() {
 		sp.b.outlet = outlet_mask.ptr();
 	}
 
+	// Layered rock (Forte, Yanites and Whipple 2016; Haviv et al. 2010): bands of hard rock in a sequence that rises
+	// with the uplift. A node's rock is the layer at its stratigraphic height: the ground height minus the uplift
+	// since the start (the rock under it has risen that far), plus the dip along its direction and a slow wobble.
+	// Hard rock erodes strata_hardness times slower and stands at strata_cliff_angle, so where a river cuts down
+	// through a hard band it steps down over a cliff: a knickpoint, a waterfall where the band is thick enough.
+	LocalVector<double> strata_k, strata_talus, strata_offset, strata_depth, strata_creep;
+	double strata_time = 0.0;
+	const double soft_talus = critical_slope > 0.0 ? Math::tan(Math::deg_to_rad(double(critical_slope))) : 0.0;
+	const double hard_talus = Math::tan(Math::deg_to_rad(double(strata_cliff_angle)));
+	auto strata_weight = [&](double q) -> double {
+		const double period = double(strata_spacing);
+		const double phase = Math::fposmod(q, period) / period;
+		const double f = double(strata_hard_fraction);
+		const double inside = phase < f ? MIN(phase, f - phase) : -MIN(phase - f, 1.0 - phase);
+		const double edge = MIN(2.0, 0.1 * period) / period; // a soft contact a couple of metres thick
+		const double t = CLAMP((inside + edge) / (2.0 * edge), 0.0, 1.0);
+		return t * t * (3.0 - 2.0 * t);
+	};
+	auto strata_prepare = [&](int p_nx, int p_ny, double p_dx) {
+		if (!strata_enabled) {
+			return;
+		}
+		const int nn = p_nx * p_ny;
+		strata_k.resize(nn);
+		strata_talus.resize(nn);
+		strata_offset.resize(nn);
+		strata_depth.resize(nn);
+		strata_creep.resize(nn);
+		const double dip = Math::tan(Math::deg_to_rad(double(strata_dip)));
+		const double dir = Math::deg_to_rad(double(strata_dip_direction));
+		const double ddx = Math::sin(dir), ddz = -Math::cos(dir);
+		for (int z = 0; z < p_ny; z++) {
+			for (int x = 0; x < p_nx; x++) {
+				const double px = result_rect.position.x + x * p_dx;
+				const double pz = result_rect.position.y + z * p_dx;
+				strata_offset[z * p_nx + x] = dip * (px * ddx + pz * ddz) + double(strata_wobble) * TerrainErosionFilter::fbm(uint32_t(seed) * 2654435761u + 17u, px, pz, 700.0, 3);
+			}
+		}
+		sp.b.erodibility_scale = strata_k.ptr();
+		sp.b.talus_cell = strata_talus.ptr();
+		sp.b.hard_depth = strata_depth.ptr();
+		sp.b.diffusion_scale = strata_creep.ptr();
+	};
+	auto strata_update = [&](int p_n, const double *p_h, const double *p_up) {
+		if (!strata_enabled) {
+			return;
+		}
+		// Hard rock erodes slowly everywhere, but only channels stand as cliffs and stop creeping: the river's bed holds
+		// the step, while hillslopes in hard rock still fail along joints at the soft rock's critical slope (cliffs on
+		// every hard hillslope cell would leave pinnacles on the grid).
+		const double ac = double(strata_channel_area);
+		for (int i = 0; i < p_n; i++) {
+			const double q = p_h[i] - p_up[i] * strata_time + strata_offset[i];
+			const double a = sp.b.area[i];
+			const double g = ac <= 0.0 ? 1.0 : CLAMP((a - 0.5 * ac) / ac, 0.0, 1.0);
+			const double wr = strata_weight(q);
+			const double w = wr * g * g * (3.0 - 2.0 * g);
+			const double depth = Math::fposmod(q, double(strata_spacing));
+			strata_depth[i] = w > 0.5 && depth < double(strata_hard_fraction) * double(strata_spacing) ? depth : 0.0;
+			strata_k[i] = 1.0 + (1.0 / double(strata_hardness) - 1.0) * wr;
+			strata_talus[i] = soft_talus + (hard_talus - soft_talus) * w;
+			strata_creep[i] = 1.0 - w;
+		}
+		// The soft rock right under a hard lip is the lower part of its face, worn back by the plunge pool and kept
+		// as steep as the hard rock above it stands (Scheingross and Lamb 2017).
+		for (int i = 0; i < p_n; i++) {
+			const int r = sp.b.receiver[i];
+			if (r != i && r >= 0 && r < p_n && strata_depth[i] > 0.0) {
+				strata_talus[r] = MAX(strata_talus[r], strata_talus[i]);
+			}
+		}
+	};
+	auto strata_step = [&](int p_n, const double *p_h, const double *p_up) -> double {
+		strata_update(p_n, p_h, p_up);
+		const double c = sp.step();
+		strata_time += double(time_step);
+		return c;
+	};
+
 	// Coarse to fine (the V-cycle of Tzathas et al. 2024, with our time-stepping solver at every level): the
 	// steps run on grids halved 2x2 at a time, where the large-scale relief and drainage form for a sixteenth of
 	// the cost per halving, then each finer level starts from the bilinear upsample of the one below (plus the
@@ -305,8 +388,9 @@ bool TerrainGenerator3D::generate() {
 	}
 	double change = 0.0;
 	if (levels == 0) {
+		strata_prepare(nx, ny, cell_size);
 		for (int s = 0; s < steps; s++) {
-			change = sp.step();
+			change = strata_step(n, h.ptr(), up.ptr());
 		}
 	} else {
 		struct Level {
@@ -361,8 +445,9 @@ bool TerrainGenerator3D::generate() {
 			sp.b.uplift = l == 0 ? up.ptr() : L.up.ptr();
 			sp.b.outlet = l == 0 ? fine_outlet : (L.outlet.is_empty() ? nullptr : L.outlet.ptr());
 			sp.invalidate_outlets();
+			strata_prepare(L.nx, L.ny, sp.p.dx);
 			for (int s = 0; s < p_steps; s++) {
-				change = sp.step();
+				change = strata_step(L.nx * L.ny, p_h, sp.b.uplift);
 			}
 		};
 		// Coarsest level: the full run from the initial roughness.
@@ -422,7 +507,22 @@ bool TerrainGenerator3D::generate() {
 		sp.b.outlet = fine_outlet;
 		sp.invalidate_outlets();
 	}
+	hardness.clear();
+	if (strata_enabled) {
+		if (levels > 0) {
+			strata_prepare(nx, ny, cell_size);
+		}
+		// The rock at the surface everywhere (the bands as they crop out, on hillslopes too).
+		hardness.resize(n);
+		for (int i = 0; i < n; i++) {
+			hardness[i] = float(strata_weight(h[i] - up[i] * strata_time + strata_offset[i]));
+		}
+	}
 	sp.route();
+	sp.b.erodibility_scale = nullptr;
+	sp.b.talus_cell = nullptr;
+	sp.b.hard_depth = nullptr;
+	sp.b.diffusion_scale = nullptr;
 	last_steps = levels > 0 ? steps + levels * refine_steps : steps;
 	last_coarse_levels = levels;
 	last_change = real_t(change);
@@ -891,6 +991,65 @@ real_t TerrainGenerator3D::get_rock_exposure(const Vector3 &p_global_position) c
 
 real_t TerrainGenerator3D::get_talus(const Vector3 &p_global_position) const {
 	return CLAMP(_sample(talus, p_global_position.x, p_global_position.z), 0.0f, 1.0f);
+}
+
+real_t TerrainGenerator3D::get_rock_hardness(const Vector3 &p_global_position) const {
+	if (hardness.size() != uint32_t(nx * ny) || nx <= 0) {
+		return 0.0;
+	}
+	return CLAMP(_sample(hardness, p_global_position.x, p_global_position.z), 0.0f, 1.0f);
+}
+
+// Waterfalls along the rivers: runs of the channel steeper than 45 degrees in the eroded heights (soft rock stands at
+// critical_slope at most, so only hard rock makes them) that drop at least p_min_height. Each is a Dictionary: top
+// and bottom (the lip and the foot, on the ground), height, width and discharge (of the river at the lip), river
+// (index in get_rivers(p_min_area)), index (of the lip in that river's points) and hardness (of the rock at the lip).
+Array TerrainGenerator3D::get_waterfalls(real_t p_min_area, real_t p_min_height) const {
+	Array out;
+	if (heights.size() != uint32_t(nx * ny)) {
+		return out;
+	}
+	const Array rivers = _rivers(p_min_area, true);
+	for (int r = 0; r < rivers.size(); r++) {
+		const Dictionary d = rivers[r];
+		const PackedInt32Array cells = d["cells"];
+		const PackedVector3Array pts = d["points"];
+		const PackedFloat32Array widths = d["widths"];
+		const PackedFloat32Array areas = d["areas"];
+		auto steep = [&](int a) {
+			const int u = cells[a], v = cells[a + 1];
+			const real_t run = result_cell * Math::sqrt(real_t((u % nx - v % nx) * (u % nx - v % nx) + (u / nx - v / nx) * (u / nx - v / nx)));
+			return heights[u] - heights[v] > run;
+		};
+		int k = 0;
+		while (k + 1 < cells.size()) {
+			if (!steep(k)) {
+				k++;
+				continue;
+			}
+			int e = k;
+			while (e + 1 < cells.size() && steep(e)) {
+				e++;
+			}
+			const Vector3 top = Vector3(_cell_position(cells[k]).x, _ground(_cell_position(cells[k]).x, _cell_position(cells[k]).z), _cell_position(cells[k]).z);
+			const Vector3 bottom = Vector3(_cell_position(cells[e]).x, _ground(_cell_position(cells[e]).x, _cell_position(cells[e]).z), _cell_position(cells[e]).z);
+			const real_t drop = heights[cells[k]] - heights[cells[e]];
+			if (drop >= p_min_height) {
+				Dictionary w;
+				w["top"] = top;
+				w["bottom"] = bottom;
+				w["height"] = top.y - bottom.y;
+				w["width"] = widths[k];
+				w["discharge"] = get_discharge(areas[k]);
+				w["river"] = r;
+				w["index"] = k;
+				w["hardness"] = get_rock_hardness(top);
+				out.push_back(w);
+			}
+			k = e;
+		}
+	}
+	return out;
 }
 
 Color TerrainGenerator3D::get_geology_at(const Vector3 &p_global_position) const {
@@ -1681,6 +1840,10 @@ real_t TerrainGenerator3D::get_discharge(real_t p_area) const {
 // on the ground), widths (m, hydraulic geometry w = a Q^0.5, Leopold and Maddock 1953), areas, discharge (m^3/s at
 // the mouth), own_discharge (that minus its tributaries'), joins (index of the river it joins, -1 at an outlet).
 Array TerrainGenerator3D::get_rivers(real_t p_min_area) const {
+	return _rivers(p_min_area, false);
+}
+
+Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells) const {
 	Array out;
 	const int n = nx * ny;
 	if (nx <= 0 || river_receivers.size() != uint32_t(n) || river_area.size() != uint32_t(n)) {
@@ -1811,6 +1974,14 @@ Array TerrainGenerator3D::get_rivers(real_t p_min_area) const {
 			}
 		}
 		d["from_lake"] = from_lake;
+		if (p_cells) {
+			PackedInt32Array cells;
+			cells.resize(m);
+			for (int k = 0; k < m; k++) {
+				cells.set(k, rv.cells[k]);
+			}
+			d["cells"] = cells;
+		}
 		out.push_back(d);
 	}
 	return out;
@@ -2109,6 +2280,26 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rock_exposure", "global_position"), &TerrainGenerator3D::get_rock_exposure);
 	ClassDB::bind_method(D_METHOD("get_talus", "global_position"), &TerrainGenerator3D::get_talus);
 	ClassDB::bind_method(D_METHOD("get_geology_at", "global_position"), &TerrainGenerator3D::get_geology_at);
+	ClassDB::bind_method(D_METHOD("set_strata_enabled", "value"), &TerrainGenerator3D::set_strata_enabled);
+	ClassDB::bind_method(D_METHOD("is_strata_enabled"), &TerrainGenerator3D::is_strata_enabled);
+	ClassDB::bind_method(D_METHOD("set_strata_spacing", "value"), &TerrainGenerator3D::set_strata_spacing);
+	ClassDB::bind_method(D_METHOD("get_strata_spacing"), &TerrainGenerator3D::get_strata_spacing);
+	ClassDB::bind_method(D_METHOD("set_strata_hard_fraction", "value"), &TerrainGenerator3D::set_strata_hard_fraction);
+	ClassDB::bind_method(D_METHOD("get_strata_hard_fraction"), &TerrainGenerator3D::get_strata_hard_fraction);
+	ClassDB::bind_method(D_METHOD("set_strata_hardness", "value"), &TerrainGenerator3D::set_strata_hardness);
+	ClassDB::bind_method(D_METHOD("get_strata_hardness"), &TerrainGenerator3D::get_strata_hardness);
+	ClassDB::bind_method(D_METHOD("set_strata_cliff_angle", "value"), &TerrainGenerator3D::set_strata_cliff_angle);
+	ClassDB::bind_method(D_METHOD("get_strata_cliff_angle"), &TerrainGenerator3D::get_strata_cliff_angle);
+	ClassDB::bind_method(D_METHOD("set_strata_dip", "value"), &TerrainGenerator3D::set_strata_dip);
+	ClassDB::bind_method(D_METHOD("get_strata_dip"), &TerrainGenerator3D::get_strata_dip);
+	ClassDB::bind_method(D_METHOD("set_strata_dip_direction", "value"), &TerrainGenerator3D::set_strata_dip_direction);
+	ClassDB::bind_method(D_METHOD("get_strata_dip_direction"), &TerrainGenerator3D::get_strata_dip_direction);
+	ClassDB::bind_method(D_METHOD("set_strata_wobble", "value"), &TerrainGenerator3D::set_strata_wobble);
+	ClassDB::bind_method(D_METHOD("get_strata_wobble"), &TerrainGenerator3D::get_strata_wobble);
+	ClassDB::bind_method(D_METHOD("set_strata_channel_area", "area"), &TerrainGenerator3D::set_strata_channel_area);
+	ClassDB::bind_method(D_METHOD("get_strata_channel_area"), &TerrainGenerator3D::get_strata_channel_area);
+	ClassDB::bind_method(D_METHOD("get_rock_hardness", "global_position"), &TerrainGenerator3D::get_rock_hardness);
+	ClassDB::bind_method(D_METHOD("get_waterfalls", "min_area", "min_height"), &TerrainGenerator3D::get_waterfalls, DEFVAL(1.0e5), DEFVAL(5.0));
 	ClassDB::bind_method(D_METHOD("get_geology_image"), &TerrainGenerator3D::get_geology_image);
 	ClassDB::bind_method(D_METHOD("get_geology_texture"), &TerrainGenerator3D::get_geology_texture);
 	ClassDB::bind_static_method("TerrainGenerator3D", D_METHOD("get_geology_shader_code"), &TerrainGenerator3D::get_geology_shader_code);
@@ -2244,6 +2435,17 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_runoff", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:mm/yr"), "set_river_runoff", "get_river_runoff");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "river_width_coefficient", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater"), "set_river_width_coefficient", "get_river_width_coefficient");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "publish_shader_globals"), "set_publish_shader_globals", "is_publishing_shader_globals");
+
+	ADD_GROUP("Strata", "strata_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "strata_enabled"), "set_strata_enabled", "is_strata_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_spacing", PROPERTY_HINT_RANGE, "1,1000,0.1,or_greater,suffix:m"), "set_strata_spacing", "get_strata_spacing");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_hard_fraction", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_strata_hard_fraction", "get_strata_hard_fraction");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_hardness", PROPERTY_HINT_RANGE, "1,1000,0.1,or_greater,exp"), "set_strata_hardness", "get_strata_hardness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_cliff_angle", PROPERTY_HINT_RANGE, "10,85,0.1,degrees"), "set_strata_cliff_angle", "get_strata_cliff_angle");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_dip", PROPERTY_HINT_RANGE, "0,80,0.1,degrees"), "set_strata_dip", "get_strata_dip");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_dip_direction", PROPERTY_HINT_RANGE, "0,360,0.1,degrees"), "set_strata_dip_direction", "get_strata_dip_direction");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_channel_area", PROPERTY_HINT_RANGE, "0,1000000,1,or_greater,exp,suffix:m²"), "set_strata_channel_area", "get_strata_channel_area");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_wobble", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m"), "set_strata_wobble", "get_strata_wobble");
 
 	ADD_GROUP("Coast", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_edges", PROPERTY_HINT_FLAGS, "-X,+X,-Z,+Z"), "set_ocean_edges", "get_ocean_edges");

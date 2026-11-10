@@ -9,6 +9,8 @@
 #   godot --headless --path docs/bench/terrain_gen -- --coast --geology=map.png  island map, lakes and rivers listed
 #   godot --headless --path docs/bench/terrain_gen -- --map=map.png      shaded relief with rivers
 #   godot --headless --path docs/bench/terrain_gen -- --soil [--uplift=6]  soil and rock by slope above the valley floors
+#   godot --headless --path docs/bench/terrain_gen -- --strata --geology=map.png [--profiles=rivers.csv]  layered rock:
+#       waterfalls listed, river long profiles (x, z, height, hardness, log area); view: --strata --focus=fall --close
 #   godot --headless --path docs/bench/terrain_gen -- --compare=prefix [--cell=8] [--refine=40]  coarse-to-fine
 #       against single-level: time, height percentiles, slopes, drainage density; relief maps prefix_{one,multi}.png
 #   godot --headless --path docs/bench/terrain_gen -- [--coast] --climate=map.png  climate maps (temperature,
@@ -64,6 +66,8 @@ func _ready() -> void:
 		gen.generate()
 		_save_geology(args["geology"])
 		_print_water()
+		if gen.strata_enabled or args.has("profiles"):
+			_print_waterfalls()
 		if args.has("dump"):
 			var fd := FileAccess.open(args["dump"], FileAccess.WRITE)
 			fd.store_buffer(gen.get_height_image().get_data())
@@ -144,6 +148,11 @@ func _build_generator(cell: float) -> void:
 		gen.coarse_levels = int(args["levels"])
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
+	if args.has("strata"):
+		gen.strata_enabled = true
+	for a in args:
+		if a.begins_with("strata_"):
+			gen.set(a, str_to_var(args[a]))
 	add_child(gen)
 	gen.ranges = [gen.get_path_to(path), gen.get_path_to(spur)]
 
@@ -521,6 +530,7 @@ func _run_checks() -> void:
 
 	await _coast_checks()
 	await _climate_checks()
+	_strata_checks()
 
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
 	var plot := TerrainBrush3D.new()
@@ -961,6 +971,26 @@ func _build_view() -> void:
 		cam.position = c + away * float(args.get("dist", "520")) + Vector3(0, float(args.get("dist", "520")) * 0.5, 0)
 		add_child(cam)
 		cam.look_at(c)
+	elif args.get("focus", "") == "fall":
+		# The tallest waterfall the layered rock made, from downstream, its river drawn.
+		var falls := gen.get_waterfalls(float(args.get("river-area", "1e5")), 8.0)
+		var best: Dictionary = {}
+		for f in falls:
+			if best.is_empty() or f["height"] * sqrt(f["discharge"]) > best["height"] * sqrt(best["discharge"]):
+				best = f
+		gen.build_river_paths(self, float(args.get("river-area", "1e5")))
+		var top: Vector3 = best["top"]
+		var foot: Vector3 = best["bottom"]
+		var down := Vector3(foot.x - top.x, 0.0, foot.z - top.z).normalized()
+		var d := float(args.get("dist", "160"))
+		print("fall %.0f m at %s, %.2f m3/s" % [best["height"], top, best["discharge"]])
+		cam.fov = 45.0
+		cam.position = foot + down * d + Vector3(0, d * float(args.get("rise", "0.35")), 0)
+		add_child(cam)
+		cam.look_at((top + foot) * 0.5)
+		# Low sun from behind the camera's left shoulder, so the face is lit.
+		var back := (cam.position - (top + foot) * 0.5).normalized().rotated(Vector3.UP, 0.6)
+		sun.look_at_from_position(foot + Vector3(back.x, 0.0, back.z).normalized() * 3000.0 + Vector3(0, 1600, 0), foot)
 	elif args.get("focus", "") == "coast":
 		# Low over the sea, looking along the coast at a beach and the shore waves.
 		cam.fov = 45.0
@@ -989,6 +1019,56 @@ func _hill_source(height: float, sigma: float) -> Node3D:
 	n.set("height", height)
 	n.set("sigma", sigma)
 	return n
+
+
+func _strata_checks() -> void:
+	# Layered rock: rivers step down over hard bands as waterfalls; off, the strata settings change nothing.
+	gen.generate()
+	var base := gen.get_height_image().get_data()
+	gen.strata_hardness = 50.0
+	gen.generate()
+	check(gen.get_height_image().get_data() == base and gen.get_waterfalls().is_empty(), "strata off: its settings leave the ground as it was, no waterfalls")
+	gen.strata_hardness = 100.0
+	gen.strata_enabled = true
+	gen.generate()
+	var t := gen.get_last_generate_msec()
+	var falls := gen.get_waterfalls(1.0e5, 8.0)
+	var tall := 0
+	var in_band := 0
+	for f in falls:
+		if f["height"] >= 15.0:
+			tall += 1
+		# The face cuts a hard band: hard rock within the face or just above the lip (a lip that has just broken
+		# off stands on the soft rock under it for a while).
+		var hard := 0.0
+		for k in 13:
+			hard = maxf(hard, gen.get_rock_hardness(f["top"].lerp(f["bottom"], -2.0 + k / 4.0)))
+		if hard > 0.5:
+			in_band += 1
+	check(tall >= 3, "strata: rivers step down over waterfalls (%d of 8 m or more, %d of 15 m or more)" % [falls.size(), tall])
+	check(falls.size() > 0 and in_band == falls.size(), "strata: every waterfall cuts a hard band (%d of %d)" % [in_band, falls.size()])
+	# No hard pinnacles: ground steeper than 60 degrees stays rare (the river faces), as without the bands.
+	var cs := 16.0
+	var steep := 0
+	var total := 0
+	for z in range(4, 252, 2):
+		for x in range(4, 252, 2):
+			var q := Vector3(-WORLD * 0.5 + x * cs, 0, -WORLD * 0.5 + z * cs)
+			var h0 := gen.get_base_height(q)
+			var gx := (gen.get_base_height(q + Vector3(cs, 0, 0)) - gen.get_base_height(q - Vector3(cs, 0, 0))) / (2.0 * cs)
+			var gz := (gen.get_base_height(q + Vector3(0, 0, cs)) - gen.get_base_height(q - Vector3(0, 0, cs))) / (2.0 * cs)
+			if h0 > 5.0:
+				total += 1
+				if sqrt(gx * gx + gz * gz) > tan(deg_to_rad(60.0)):
+					steep += 1
+	check(steep < total / 200, "strata: no rock pinnacles (%.2f%% of the ground over 60 degrees)" % [100.0 * steep / maxi(total, 1)])
+	var first := gen.get_height_image().get_data()
+	gen.generate()
+	check(gen.get_height_image().get_data() == first and gen.get_waterfalls(1.0e5, 8.0).size() == falls.size(), "strata: deterministic")
+	print("     strata generate %.0f ms" % t)
+	gen.strata_enabled = false
+	gen.generate()
+	check(gen.get_height_image().get_data() == base and gen.get_rock_hardness(Vector3.ZERO) == 0.0, "strata off again: the same ground, no hardness map")
 
 
 func _climate_checks() -> void:
@@ -1244,3 +1324,22 @@ func _soil_histogram() -> Dictionary:
 			continue
 		print("%2d-%2d deg   %5.1f%%   %5.2f   %5.2f   %5.1f%%" % [b * 5, b * 5 + 5, 100.0 * c / total, bins[b][1] / c, bins[b][2] / c, 100.0 * bins[b][3] / c])
 	return out
+
+
+func _print_waterfalls() -> void:
+	var falls := gen.get_waterfalls(float(args.get("river-area", "1e5")), 5.0)
+	print("waterfalls: %d" % falls.size())
+	for f in falls:
+		print("  %.0f m high at %s, %.1f m wide, %.2f m3/s, hardness %.2f" % [f["height"], f["top"], f["width"], f["discharge"], f["hardness"]])
+	if args.has("profiles"):
+		# Long profiles of every river: x, z, height, hardness, drainage area per point (CSV).
+		var fd := FileAccess.open(args["profiles"], FileAccess.WRITE)
+		var rivers := gen.get_rivers(float(args.get("river-area", "1e5")))
+		for r in rivers.size():
+			for p0 in rivers[r]["points"]:
+				# On the grid node the river cell is at (the points are smoothed between them).
+				var c := gen.cell_size
+				var p := Vector3(snappedf(p0.x + WORLD * 0.5, c) - WORLD * 0.5, 0.0, snappedf(p0.z + WORLD * 0.5, c) - WORLD * 0.5)
+				var g: Color = gen.get_geology_at(p)
+				fd.store_line("%d,%.1f,%.1f,%.2f,%.2f,%.2f" % [r, p.x, p.z, gen.get_base_height(p), gen.get_rock_hardness(p), g.a])
+		print("profiles ", args["profiles"])

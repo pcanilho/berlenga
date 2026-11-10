@@ -109,6 +109,18 @@ private:
 	real_t max_soil_depth = 2.0; // m
 	real_t talus_angle = 35.0; // degrees
 	real_t talus_reach = 120.0; // m
+
+	// Layered rock (strata): hard bands erode slower and stand in cliffs, so rivers crossing them step down in
+	// knickpoints and waterfalls (docs/ideas/terrain-generation.md, "Waterfalls from rock layers").
+	bool strata_enabled = false;
+	real_t strata_spacing = 90.0; // m, one hard and one soft layer
+	real_t strata_hard_fraction = 0.35; // share of the spacing that is hard rock
+	real_t strata_hardness = 100.0; // erodibility of soft rock over hard (rock strength squared, Sklar and Dietrich 2001)
+	real_t strata_cliff_angle = 75.0; // degrees, critical slope in hard rock
+	real_t strata_dip = 1.0; // degrees
+	real_t strata_dip_direction = 0.0; // degrees clockwise from north, the way the layers go down
+	real_t strata_wobble = 12.0; // m, layer heights wander by this much
+	real_t strata_channel_area = 20000.0; // m^2, drainage from which the bed's rock counts (channel heads)
 	real_t river_runoff = 1000.0; // mm/yr
 	real_t river_width_coefficient = 7.0; // width = coefficient * discharge^0.5
 	bool publish_shader_globals = true;
@@ -149,6 +161,7 @@ private:
 	LocalVector<float> soil;
 	LocalVector<float> rock;
 	LocalVector<float> talus;
+	LocalVector<float> hardness; // 0 soft .. 1 hard rock at the surface (strata)
 	LocalVector<int32_t> receivers;
 	LocalVector<float> channel_area; // D8 drainage area along the receivers, for the rivers
 	// Water: per cell 0 dry, 1 sea, 2 + k lake k; the depth of water over the ground; the rivers' routing (lakes and
@@ -230,6 +243,7 @@ private:
 	static void _fill_row(void *p_job, uint32_t p_row);
 	void _publish_globals();
 	Vector3 _cell_position(int p_cell) const;
+	Array _rivers(real_t p_min_area, bool p_cells) const;
 	void _fill(real_t p_x0, real_t p_z0, real_t p_spacing, int p_width, int p_rows, float *r_out) const;
 
 protected:
@@ -332,6 +346,24 @@ public:
 	real_t get_talus_angle() const { return talus_angle; }
 	void set_talus_reach(real_t p_value) { talus_reach = MAX(p_value, real_t(1.0)); }
 	real_t get_talus_reach() const { return talus_reach; }
+	void set_strata_enabled(bool p_enable) { strata_enabled = p_enable; }
+	bool is_strata_enabled() const { return strata_enabled; }
+	void set_strata_channel_area(real_t p_value) { strata_channel_area = MAX(p_value, real_t(0.0)); }
+	real_t get_strata_channel_area() const { return strata_channel_area; }
+	void set_strata_spacing(real_t p_value) { strata_spacing = MAX(p_value, real_t(1.0)); }
+	real_t get_strata_spacing() const { return strata_spacing; }
+	void set_strata_hard_fraction(real_t p_value) { strata_hard_fraction = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
+	real_t get_strata_hard_fraction() const { return strata_hard_fraction; }
+	void set_strata_hardness(real_t p_value) { strata_hardness = MAX(p_value, real_t(1.0)); }
+	real_t get_strata_hardness() const { return strata_hardness; }
+	void set_strata_cliff_angle(real_t p_value) { strata_cliff_angle = CLAMP(p_value, real_t(10.0), real_t(85.0)); }
+	real_t get_strata_cliff_angle() const { return strata_cliff_angle; }
+	void set_strata_dip(real_t p_value) { strata_dip = CLAMP(p_value, real_t(0.0), real_t(80.0)); }
+	real_t get_strata_dip() const { return strata_dip; }
+	void set_strata_dip_direction(real_t p_value) { strata_dip_direction = p_value; }
+	real_t get_strata_dip_direction() const { return strata_dip_direction; }
+	void set_strata_wobble(real_t p_value) { strata_wobble = MAX(p_value, real_t(0.0)); }
+	real_t get_strata_wobble() const { return strata_wobble; }
 	void set_river_runoff(real_t p_value) { river_runoff = MAX(p_value, real_t(0.0)); }
 	real_t get_river_runoff() const { return river_runoff; }
 	void set_river_width_coefficient(real_t p_value) { river_width_coefficient = MAX(p_value, real_t(0.0)); }
@@ -417,6 +449,8 @@ public:
 	real_t get_soil_depth(const Vector3 &p_global_position) const;
 	real_t get_rock_exposure(const Vector3 &p_global_position) const;
 	real_t get_talus(const Vector3 &p_global_position) const;
+	real_t get_rock_hardness(const Vector3 &p_global_position) const;
+	Array get_waterfalls(real_t p_min_area = 1.0e5, real_t p_min_height = 5.0) const;
 	Color get_geology_at(const Vector3 &p_global_position) const;
 	Ref<Image> get_geology_image() const;
 	Ref<Texture2D> get_geology_texture() const { return geology_texture; }

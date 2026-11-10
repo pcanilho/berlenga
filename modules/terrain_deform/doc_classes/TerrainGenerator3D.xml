@@ -196,6 +196,13 @@
 				How bare the rock is at a world position, 0 (covered) to 1 (bare): where the loose cover (soil, basin fill, alluvium) is thinner than about 0.3 m, less any talus. 0 before [method generate].
 			</description>
 		</method>
+		<method name="get_rock_hardness" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The rock at the surface with [member strata_enabled]: 1 in a hard band, 0 in soft rock, the contacts blended over about 2 m. 0 with the strata off or before [method generate].
+			</description>
+		</method>
 		<method name="get_sediment_depth" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -273,6 +280,14 @@
 			<return type="bool" />
 			<description>
 				Whether [method generate] has run since the node was created or [method clear_result].
+			</description>
+		</method>
+		<method name="get_waterfalls" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="min_area" type="float" default="100000.0" />
+			<param index="1" name="min_height" type="float" default="5.0" />
+			<description>
+				Waterfalls along the rivers of [method get_rivers] ([param min_area]): runs of the channel steeper than 45 degrees in the eroded ground that drop at least [param min_height] m. Soft rock never stands steeper than [member critical_slope], so they form where rivers cut the hard bands of [member strata_enabled]. Each is a [Dictionary]: [code]top[/code] and [code]bottom[/code] (the lip and the foot, on the ground), [code]height[/code], [code]width[/code] and [code]discharge[/code] (of the river at the lip), [code]river[/code] (index in [method get_rivers]), [code]index[/code] (the lip's point in that river) and [code]hardness[/code] (of the rock at the lip; a lip that has just broken off stands on soft rock for a while).
 			</description>
 		</method>
 		<method name="has_sea_result" qualifiers="const">
@@ -456,6 +471,33 @@
 		</member>
 		<member name="steps" type="int" setter="set_steps" getter="get_steps" default="300">
 			Time steps to simulate (on the coarsest grid when [member coarse_levels] coarsens).
+		</member>
+		<member name="strata_channel_area" type="float" setter="set_strata_channel_area" getter="get_strata_channel_area" default="20000.0">
+			Drainage area (m²) from which the bed stands as a cliff in hard rock and does not creep. Hard rock erodes slowly everywhere, but hillslopes in it still fail at [member critical_slope] (cliffs on every hillslope cell would leave pinnacles); 0 makes every cell a channel.
+		</member>
+		<member name="strata_cliff_angle" type="float" setter="set_strata_cliff_angle" getter="get_strata_cliff_angle" default="75.0">
+			Steepest slope (degrees) hard rock stands at in a channel, and the soft rock right under a hard lip (worn back by the plunge pool, Scheingross and Lamb 2017).
+		</member>
+		<member name="strata_dip" type="float" setter="set_strata_dip" getter="get_strata_dip" default="1.0">
+			Tilt of the layers (degrees). Near the slope of the rivers, a river runs along one band for long reaches and grades it into rapids instead of a fall.
+		</member>
+		<member name="strata_dip_direction" type="float" setter="set_strata_dip_direction" getter="get_strata_dip_direction" default="0.0">
+			The way the layers go down, degrees clockwise from north (-Z).
+		</member>
+		<member name="strata_enabled" type="bool" setter="set_strata_enabled" getter="is_strata_enabled" default="false">
+			Layered rock: bands of hard rock in a sequence of soft rock, rising with the uplift (Forte, Yanites and Whipple 2016). Hard rock erodes [member strata_hardness] times slower; where a river has cut through a band into the soft rock under it, the undercut block breaks off and the face retreats upstream as a cliff (the caprock waterfall, Gilbert 1907; Haviv et al. 2010). Rivers step down over waterfalls ([method get_waterfalls]) between flatter reaches, and the range stands higher than in one rock. Off, the ground is the same as without these settings.
+		</member>
+		<member name="strata_hard_fraction" type="float" setter="set_strata_hard_fraction" getter="get_strata_hard_fraction" default="0.35">
+			Share of each [member strata_spacing] that is hard rock: the thickness of the bands, and so the height of the falls.
+		</member>
+		<member name="strata_hardness" type="float" setter="set_strata_hardness" getter="get_strata_hardness" default="100.0">
+			How many times slower hard rock erodes than soft. Bedrock erosion goes as the inverse square of tensile strength (Sklar and Dietrich 2001), which spans more than ten times between mudstone and quartzite; below about 20, rivers grade the bands into steep rapids and few falls form.
+		</member>
+		<member name="strata_spacing" type="float" setter="set_strata_spacing" getter="get_strata_spacing" default="90.0">
+			Thickness (m) of one hard and one soft layer.
+		</member>
+		<member name="strata_wobble" type="float" setter="set_strata_wobble" getter="get_strata_wobble" default="12.0">
+			Metres the layer heights wander by (fbm noise of 700 m), so the bands do not follow contour lines exactly.
 		</member>
 		<member name="talus_angle" type="float" setter="set_talus_angle" getter="get_talus_angle" default="35.0">
 			Angle of repose for scree: rock steeper than this sheds talus, which settles on slopes below it.
