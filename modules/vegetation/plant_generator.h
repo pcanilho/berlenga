@@ -67,6 +67,10 @@ public:
 		PRESET_BRACKEN,
 		PRESET_BRAMBLE,
 		PRESET_FOXGLOVE,
+		PRESET_REED,
+		PRESET_CATTAIL,
+		PRESET_RUSH,
+		PRESET_WATER_LILY,
 		PRESET_MAX,
 	};
 
@@ -187,6 +191,11 @@ private:
 	void _build_bracken();
 	void _build_bramble();
 	void _build_foxglove();
+	void _build_reed();
+	void _build_cattail();
+	void _build_rush();
+	void _build_water_lily();
+	void _add_pad(const Vector3 &p_centre, float p_radius, float p_heading);
 
 	static Ref<Shader> shaders[2]; // Plain and textured, shared by every generated plant.
 	static Ref<Shader> _plant_shader(bool p_textured);

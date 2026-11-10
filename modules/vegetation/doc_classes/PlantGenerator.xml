@@ -133,7 +133,19 @@
 		<constant name="PRESET_FOXGLOVE" value="19" enum="Preset">
 			Foxglove: a rosette of soft toothed leaves and a tall spike of purple bells hanging to one side.
 		</constant>
-		<constant name="PRESET_MAX" value="20" enum="Preset">
+		<constant name="PRESET_REED" value="20" enum="Preset">
+			Common reed: a stand of tall culms with two ranks of drooping grey-green leaves and nodding purplish plumes, for shallow water and wet ground.
+		</constant>
+		<constant name="PRESET_CATTAIL" value="21" enum="Preset">
+			Bulrush or cattail: fans of long, twisting strap leaves and stiff stems carrying the dark brown cigar of female flowers with the male spike above, for shallow water.
+		</constant>
+		<constant name="PRESET_RUSH" value="22" enum="Preset">
+			Soft rush: a dense tussock of glossy leafless stems with pale brown flower clusters bursting from their sides, for wet pasture and marsh.
+		</constant>
+		<constant name="PRESET_WATER_LILY" value="23" enum="Preset">
+			White water lily: round floating pads with a cleft to the stalk and a few white flowers on the surface. Its origin is the water surface (see [member PlantSpecies.floating]).
+		</constant>
+		<constant name="PRESET_MAX" value="24" enum="Preset">
 			Number of presets.
 		</constant>
 	</constants>

@@ -89,6 +89,11 @@ void PlantSpecies::set_random_yaw(bool p_enable) {
 	emit_changed();
 }
 
+void PlantSpecies::set_floating(bool p_floating) {
+	floating = p_floating;
+	emit_changed();
+}
+
 void PlantSpecies::set_rule_range(Rule p_rule, const Vector2 &p_range) {
 	ERR_FAIL_INDEX(p_rule, RULE_MAX);
 	ranges[p_rule] = p_range;
@@ -211,6 +216,8 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_align_to_ground"), &PlantSpecies::get_align_to_ground);
 	ClassDB::bind_method(D_METHOD("set_random_yaw", "enable"), &PlantSpecies::set_random_yaw);
 	ClassDB::bind_method(D_METHOD("is_random_yaw"), &PlantSpecies::is_random_yaw);
+	ClassDB::bind_method(D_METHOD("set_floating", "floating"), &PlantSpecies::set_floating);
+	ClassDB::bind_method(D_METHOD("is_floating"), &PlantSpecies::is_floating);
 	ClassDB::bind_method(D_METHOD("set_rule_range", "rule", "range"), &PlantSpecies::set_rule_range);
 	ClassDB::bind_method(D_METHOD("get_rule_range", "rule"), &PlantSpecies::get_rule_range);
 	ClassDB::bind_method(D_METHOD("set_rule_fade", "rule", "fade"), &PlantSpecies::set_rule_fade);
@@ -240,6 +247,7 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "scale_range"), "set_scale_range", "get_scale_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "align_to_ground", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_align_to_ground", "get_align_to_ground");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "random_yaw"), "set_random_yaw", "is_random_yaw");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "floating"), "set_floating", "is_floating");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "visibility_range", PROPERTY_HINT_RANGE, "0,1000,0.5,or_greater,suffix:m"), "set_visibility_range", "get_visibility_range");
 	ADD_GROUP("Canopy", "canopy_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_radius", PROPERTY_HINT_RANGE, "0,30,0.1,or_greater,suffix:m"), "set_canopy_radius", "get_canopy_radius");

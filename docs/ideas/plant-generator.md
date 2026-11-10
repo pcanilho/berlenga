@@ -286,6 +286,43 @@ Check: plants bench `--wind=5,1.5 --seq=90` at `--fixed-fps 30` (plants-wind.mp4
 with wind 111 to 143 ms against 125 ms calm on the CPU renderer (noise; the shadow maps redraw
 every frame in wind). GPU timing waits for the desktop.
 
+## Wetland species (stage 5)
+
+A pond or a slow river in temperate Europe is ringed by bands set by water depth, the hydrosere
+(Spence 1982 for lakes; Keddy 2010): floating-leaved plants in the deeper water, tall emergents
+in the shallows, rushes and sedges on the wet shore, then wet meadow or alder carr. The same
+bands appear in every open-world swamp worth looking at, and each band is a placement rule on
+`water_depth_range` and `water_distance_range`, which the data map already provides.
+
+Four plants carry most of a European wetland edge (sizes from Stace, *New Flora of the British
+Isles*; depths from Spence 1982, Grace and Wetzel 1981, Coops and van der Velde 1995):
+
+- **Common reed** (*Phragmites australis*, `PRESET_REED`): culms 1.3 to 2.2 m from a creeping
+  rhizome; flat grey-green leaves in two ranks, leaning out and drooping at the tip; a soft
+  purplish plume nodding to one side. Water 0 to 1 m (to 2 m in sheltered lakes) and a few
+  metres onto wet land.
+- **Bulrush, cattail** (*Typha latifolia*, `PRESET_CATTAIL`): fans of strap leaves 1 to 1.8 m
+  that twist; a stiff stem with the brown female "cigar" and the male spike right above it (no
+  gap, unlike *T. angustifolia*). Water 0.1 to 0.7 m; it gives way to reed deeper.
+- **Soft rush** (*Juncus effusus*, `PRESET_RUSH`): a tussock of 45 to 90 glossy leafless stems
+  with a pale brown flower cluster bursting from the side about two thirds up. Wet ground, not
+  standing water.
+- **White water lily** (*Nymphaea alba*, `PRESET_WATER_LILY`): round pads 18 to 30 cm with a
+  cleft to the stalk, flat on the water, waxy (roughness 0.35, faint veins), and a few white
+  many-petalled flowers with a yellow heart. Water 0.4 to 2.5 m. Lilies are rooted in the mud,
+  so they stay put; they do not drift with the current.
+
+Floating: `PlantSpecies.floating` sets the plant on the water surface (ground height plus
+`get_water_depth_at`), level. The lily's mesh has its origin at the surface; its pads read the
+same trample field and wind as everything else (stiffness 50: they barely move).
+
+Bench: grass bench `--swamp` and `--swamp=close`. The bench pond is only 0.75 m deep, so the
+bands are squeezed there (reed to 0.45 m) to show every zone; a real lake uses the depths above.
+
+Not built here: the mud of the shore belongs to the granular ground (GroundSurface3D); dead
+snags and fallen logs to the trees' deadwood; duckweed and drifting leaves to the water
+material; reeds turning straw-coloured in winter waits for a season input.
+
 ## References
 
 - Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*, 1990.
@@ -298,6 +335,13 @@ every frame in wind). GPU timing waits for the desktop.
 - Sousa, "Vegetation procedural animation and shading in Crysis", GPU Gems 3, ch. 16, 2007.
 - Kozlov, Lanta, Zverev, Zvereva, "Global patterns in background losses of woody plant
   foliage to insects", Global Ecology and Biogeography 24, 2015.
+- Spence, "The zonation of plants in freshwater lakes", Advances in Ecological Research 12, 1982.
+- Keddy, *Wetland Ecology: Principles and Conservation*, 2nd ed., 2010.
+- Grace, Wetzel, "Habitat partitioning and competitive displacement in cattails (Typha)",
+  American Naturalist 118, 1981.
+- Coops, van der Velde, "Seed dispersal, germination and seedling growth of six helophyte
+  species in relation to water-level zonation", Freshwater Biology 34, 1995.
+- Stace, *New Flora of the British Isles*, 4th ed., 2019.
 - de Langre, "Effects of wind on plants", Annual Review of Fluid Mechanics 40, 2008.
 - Lim, Kim, Nam, "Leaf senescence", Annual Review of Plant Biology 58, 2007.
 - Lindquist, "Pivot Painter 2", Unreal Engine documentation, 2017.

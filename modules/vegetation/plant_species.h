@@ -70,6 +70,7 @@ private:
 	Vector2 scale_range = Vector2(0.8f, 1.2f);
 	float align_to_ground = 0.0f;
 	bool random_yaw = true;
+	bool floating = false; // Rides the water surface (water lilies), not the ground under it.
 	// Patches: clover beds, flower drifts. Value noise over the ground keeps the species to
 	// patches about patch_scale metres across, covering patch_cover of the ground.
 	float patch_scale = 0.0f; // 0: no patches.
@@ -119,6 +120,8 @@ public:
 	float get_align_to_ground() const { return align_to_ground; }
 	void set_random_yaw(bool p_enable);
 	bool is_random_yaw() const { return random_yaw; }
+	void set_floating(bool p_floating);
+	bool is_floating() const { return floating; }
 
 	void set_rule_range(Rule p_rule, const Vector2 &p_range);
 	Vector2 get_rule_range(Rule p_rule) const;

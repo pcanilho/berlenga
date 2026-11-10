@@ -17,7 +17,7 @@ extends Node3D
 #   --seq=N          save N frames in a row as path_000.png... (run with --fixed-fps 30 for a clip)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -189,7 +189,7 @@ func _checks() -> void:
 		var other := gen.generate()
 		print("PLANT %s tris=%d height=%.2f width=%.2f ms=%.2f surfaces=%d" % [NAMES[p], _tris(m), aabb.end.y, max(aabb.size.x, aabb.size.z), ms, m.get_surface_count()])
 		_check(NAMES[p] + " has geometry", _tris(m) > 50, _tris(m))
-		_check(NAMES[p] + " plausible size", aabb.end.y > 0.005 and aabb.end.y < 2.0 and aabb.size.x < 3.0, aabb)
+		_check(NAMES[p] + " plausible size", aabb.end.y > 0.005 and aabb.end.y < 3.0 and aabb.size.x < 3.0, aabb)
 		_check(NAMES[p] + " grows from the ground", aabb.position.y > -0.08, aabb.position.y)
 		_check(NAMES[p] + " same seed, same plant", _tris(again) == _tris(m) and again.get_aabb() == aabb, _tris(again))
 		_check(NAMES[p] + " other seed, other plant", other.get_aabb() != aabb, other.get_aabb())

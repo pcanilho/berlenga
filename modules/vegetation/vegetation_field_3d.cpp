@@ -289,8 +289,10 @@ Error VegetationField3D::populate() {
 
 					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
 					const float r = pat.randoms[i];
-					const float y = map->get_height_at(p3);
-					const float slope = map->get_slope_at(p3);
+					// Floating plants sit on the water surface, level, over the ground below it.
+					const bool floats = sp->is_floating();
+					const float y = map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : 0.0f);
+					const float slope = floats ? 0.0f : map->get_slope_at(p3);
 					const float aspect = map->get_aspect_at(p3);
 					const Vector3 normal(Math::sin(aspect) * Math::sin(slope), Math::cos(slope), Math::cos(aspect) * Math::sin(slope));
 					const Vector3 up = Vector3(0, 1, 0).lerp(normal, align).normalized();

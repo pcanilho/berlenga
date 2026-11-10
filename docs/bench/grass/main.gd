@@ -17,6 +17,9 @@ extends Node3D
 #   --forest         a wood of stand-in trees: forest floor (litter, moss, bilberry, fern) in
 #                    their shade, meadow in the open (PlantSpecies.shade_range)
 #   --forest=in      the same, standing inside the wood
+#   --swamp          wetland zonation round the pond: water lilies afloat, bulrush and reed in the
+#                    shallows, soft rush on the wet shore (docs/ideas/plant-generator.md)
+#   --swamp=close    the same, looking down on a water lily
 #   --turf=0         without the near turf layer
 #   --terrain-material  the ground drawn with TerrainMaterial3D (its grass tint calls grass_ground())
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
@@ -40,6 +43,8 @@ var layers := true
 var close := false
 var forest := false
 var forest_in := false
+var swamp := false
+var swamp_close := false
 var ground_mat: ShaderMaterial
 var turf: GrassField3D
 var no_turf := false
@@ -76,6 +81,10 @@ func _ready() -> void:
 		elif a == "--layers=0": layers = false
 		elif a == "--close": close = true
 		elif a == "--forest": forest = true
+		elif a == "--swamp": swamp = true
+		elif a == "--swamp=close":
+			swamp = true
+			swamp_close = true
 		elif a == "--turf=0": no_turf = true
 		elif a == "--terrain-material": terrain_mat = true
 		elif a == "--forest=in":
@@ -298,6 +307,20 @@ void fragment() {
 		# Closer, looking down on the trails.
 		cam.position = Vector3(1.5, height(1.5, 17.0) + 1.6, 17.0)
 		cam.look_at(Vector3(0.5, height(0.5, 10.0), 10.0))
+	if swamp and not test:
+		# Walk from the usual view towards the deepest water until the shore, stand back from it.
+		var from := Vector2(6, 20)
+		var to := Vector2(-17, -6)
+		var shore := to
+		for k in 200:
+			var q := from.lerp(to, k / 200.0)
+			if height(q.x, q.y) < -0.6:
+				shore = q
+				break
+		var dir := (to - from).normalized()
+		var eye := shore - dir * 9.0 + Vector2(dir.y, -dir.x) * 1.5
+		cam.position = Vector3(eye.x, height(eye.x, eye.y) + 2.6, eye.y)
+		cam.look_at(Vector3(shore.x + dir.x * 6.0, -0.6, shore.y + dir.y * 6.0))
 
 # Stand at a wood's edge: the tree nearest the usual view, seen from the open side.
 func _frame_forest() -> void:
@@ -468,7 +491,65 @@ func _cover_biome() -> Biome:
 		# Bigger plants first: the edge shrubs and bracken claim their space before the herbs.
 		var floor_sp := _floor_species()
 		b.species = [_tree_species()] + floor_sp.slice(0, 3) + b.species + floor_sp.slice(3)
+	if swamp:
+		b.species = _wetland_species() + b.species
 	return b
+
+# Hydrosere zonation (Spence 1982; Keddy 2010): floating-leaved plants in deeper water,
+# bulrush and reed in the shallows and a few metres onto wet land, soft rush on the
+# wet shore. Water depth and distance come from the TerrainDataMap3D.
+# Standing at the shore of the bench pond, as a person would, from a rise behind it.
+func _wetland_species() -> Array:
+	var lily := PlantSpecies.new()
+	lily.meshes = _variants(PlantGenerator.PRESET_WATER_LILY, 3)
+	lily.floating = true
+	lily.spacing = 1.1
+	lily.footprint = 0.5
+	lily.density = 0.9
+	lily.patch_scale = 6.0
+	lily.patch_cover = 0.7
+	lily.patch_seed = 81
+	lily.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.35, 2.5))
+	lily.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.2)
+	lily.visibility_range = 50.0
+	var cattail := PlantSpecies.new()
+	cattail.meshes = _variants(PlantGenerator.PRESET_CATTAIL, 3)
+	cattail.spacing = 0.7
+	cattail.footprint = 0.35
+	cattail.density = 0.9
+	cattail.patch_scale = 5.0
+	cattail.patch_cover = 0.5
+	cattail.patch_seed = 83
+	cattail.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.1, 0.5))
+	cattail.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.05)
+	cattail.visibility_range = 60.0
+	var reed := PlantSpecies.new()
+	reed.meshes = _variants(PlantGenerator.PRESET_REED, 3)
+	reed.spacing = 0.6
+	reed.footprint = 0.3
+	reed.density = 0.95
+	reed.patch_scale = 8.0
+	reed.patch_cover = 0.6
+	reed.patch_seed = 85
+	# The bench pond is only 0.75 m deep: the bands are squeezed (reed to 0.45 m, not 1 to 2 m)
+	# so every zone shows; the note lists the real depths.
+	reed.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.0, 0.45))
+	reed.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.15)
+	reed.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(-100.0, 3.0))
+	reed.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 1.5)
+	reed.visibility_range = 60.0
+	var rush := PlantSpecies.new()
+	rush.meshes = _variants(PlantGenerator.PRESET_RUSH, 3)
+	rush.spacing = 0.8
+	rush.footprint = 0.3
+	rush.density = 0.8
+	rush.patch_scale = 4.0
+	rush.patch_cover = 0.5
+	rush.patch_seed = 87
+	rush.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(0.3, 9.0))
+	rush.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 2.0)
+	rush.visibility_range = 40.0
+	return [lily, cattail, reed, rush]
 
 # Stand-in trees (trunk and a crown blob) until stage 3b grows real ones: they only cast the shade.
 func _tree_species() -> PlantSpecies:
@@ -742,6 +823,16 @@ func _process(dt: float) -> void:
 				under.rebuild()
 				turf.rebuild()
 				_frame_forest()
+			if swamp:
+				var lilies := cover.get_placements(0)
+				var floating := 0
+				for q in lilies:
+					if absf(q.y + 0.6) < 0.02: floating += 1
+				print("GRASS_SWAMP lilies=%d on_the_surface=%d" % [lilies.size(), floating])
+				if lilies.size() > 0 and swamp_close:
+					var l: Vector3 = lilies[0]
+					cam.position = l + Vector3(2.5, 1.6, 2.5)
+					cam.look_at(l)
 	if trample and n > 2:
 		_move(dt)
 	if n == frames - 30 and not test:
