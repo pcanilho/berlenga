@@ -6,6 +6,16 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-dabf251a (2026-11-10)
+
+### Changed
+- Weather: precipitation haze layers are lit by the sky as well as the sun, so blowing snow reads white. A source given a radius now sets the layer's ground at its centre's height, so the layer follows the terrain instead of sitting at `ground_height`.
+- README: terrain climate maps line and image.
+- README: vegetation climate placement and canopy shade lines.
+
+### Added
+- `PlantSpecies` climate rules: `temperature_range`, `january_temperature_range`, `precipitation_range`, `aridity_range` and `sunlight_range`, read from `TerrainDataMap3D.bake_climate()`.
+
 ## build-bc9b8f27 (2026-11-10)
 
 ### Changed
