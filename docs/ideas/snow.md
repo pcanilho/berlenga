@@ -217,7 +217,7 @@ terrestrial laser scanner in Svalbard, Norway, NHESS 20, 2020. Naito and Kobayas
 study on the occurrence of cornice, Low Temperature Science 44, 1986. Zirr and Kaplanyan, Real-time
 Rendering of Procedural Multiscale Materials, I3D 2016. Hedstrom and Pomeroy, Measurements and modelling of snow interception in the boreal forest, Hydrological Processes 12, 1998 (cited above for density). Roesch, Wild, Gilgen and Ohmura, A new snow cover fraction parametrization for the ECHAM4 GCM, Climate Dynamics 17, 2001. Taylor and Lee, Simple guidelines for
 estimating wind speed variations due to small-scale topographic features, Climatological Bulletin
-18, 1984. Warren, Optical properties of snow, Reviews of Geophysics 20, 1982.
+18, 1984. Warren, Optical properties of snow, Reviews of Geophysics 20, 1982. Pomeroy and Male, Optical properties of blowing snow, J. Glaciology 34, 1988. Pomeroy and Male, Steady-state suspension of snow, J. Hydrology 136, 1992. Schmidt, Vertical profiles of wind speed, snow concentration, and humidity in blowing snow, Boundary-Layer Meteorology 23, 1982. Kraichnan, Diffusion by a random velocity field, Physics of Fluids 13, 1970. Panofsky and Dutton, Atmospheric Turbulence, Wiley 1984. Schneider, The Real-Time Volumetric Superstorms of Horizon Forbidden West, GDC 2023. Hillaire, Physically Based and Unified Volumetric Rendering in Frostbite, SIGGRAPH 2015. Wang and Wade, Rendering Falling Rain and Snow, SIGGRAPH 2004 sketch. Langer, Zhang, Klein, Bhatia, Pereira and Rekhi, A Spectral-Particle Hybrid Method for Rendering Falling Snow, EGSR 2004.
 
 ## Stage 1: the snowpack and snow on materials (built 10 Nov 2026)
 
@@ -542,3 +542,36 @@ and spruces, raster and path traced alike.
 **Cost.** One more RGBA float texture read where a material has snow; the canopy is read again every
 sixteenth update (one lookup per cell). **Limits.** No sublimation of held snow (Pomeroy et al. 1998:
 up to a third in sunny cold climates); one canopy layer; drip-line build-up off roofs not modelled.
+
+## Follow-up 2: snowstorms (built 10 Nov 2026)
+
+How others do it: Horizon Forbidden West's superstorms (Schneider, "The Real-Time Volumetric
+Superstorms", GDC 2023) and Frostbite's unified volumetrics (Hillaire, SIGGRAPH 2015) carry a storm's
+depth in a lit participating medium, with particles only near the camera. Wang and Wade ("Rendering
+Falling Rain and Snow", SIGGRAPH 2004) and Langer et al. ("A Spectral-Particle Hybrid Method for
+Rendering Falling Snow", EGSR 2004) fill the distance with textures or spectra instead, which the path
+tracer cannot see, so here the medium carries it.
+
+- **Haze, through the weather map's hook (#225, #226).** SnowFall3D pushes the falling snow's
+  extinction (stage 3: Gunn-Marshall flakes, geometric optics) as uniform haze, and the blowing
+  snow's as a layer over the snow under the camera, 150 m around, re-pushed as the camera moves.
+  The layer is Pomeroy and Male's suspended-snow profile (PBSM, 1992): eta(z) = 0.8 exp(-1.55
+  (z_r^-0.544 - z^-0.544)) kg/m3 over the saltation top z_r = 0.05628 u*^1.27, extinction by
+  geometric optics over 40 um grains (Pomeroy and Male 1988; Schmidt 1982), as an exponential
+  layer fitted between 0.2 and 2 m (0.68 m deep). Single-scatter albedo 0.97, lit by the sky. Both
+  renderers draw both parts. `haze_enabled` (on).
+- **Gusts and eddies.** Flakes and lifted snow ride the weather wind plus turbulence: six of
+  Kraichnan's random Fourier modes (Kraichnan 1970, divergence-free), 2 to 14 m, frozen in the mean
+  wind (Taylor) and slowly turning over, sigma_u = 2.5 u* (Panofsky and Dutton 1984), weaker within
+  half a metre of the snow. `turbulence` (1).
+- **Deeper drifting.** The lifted wisps spread through the layer's depth; the blowing box grows with it.
+
+**Checks (`--test`).** Visibility at 1 m in blowing snow: 21 km at 10 m/s (drifting below eye
+level), 760 m at 15, 118 m at 20 (a blizzard: under 400 m in 15.6 m/s or more), 35 m at 25; the
+layer holds 14 times as much snow at 0.2 m as at 2 m; a storm at 18 m/s puts 0.019 /m on the
+weather map at 1 m over the snow (snowfall 0.009, blowing 0.013) and the snowfall's alone at 20 m.
+`--view=snowfall --wind=20` renders it, raster and path traced.
+
+**Cost.** Six cosines per particle per frame for the eddies; the haze is the weather map's (an
+environment fog density and one fog volume). **Limits.** Beyond the fog volume's 300 m only the
+falling part hazes the distance; the layer is flat over the 150 m around the camera.

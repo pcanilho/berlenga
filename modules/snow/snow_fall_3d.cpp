@@ -72,8 +72,34 @@ float snow_ground(vec2 p) {
 	}
 	return textureLod(ground_tex, uv, 0.0).r;
 }
+uniform float turb_sigma = 0.0; // m/s, standard deviation of each component near the ground
+uniform float turb_time = 0.0;
+// Turbulent eddies on top of the weather wind: Kraichnan's random Fourier modes (Kraichnan 1970), each
+// a divergence-free wave (its amplitude across its wavenumber) of 2 to 14 m, frozen in the mean wind
+// (Taylor's hypothesis) and slowly turning over. sigma_u is about 2.5 u* near the surface (Panofsky
+// and Dutton 1984).
+vec3 snow_eddies(vec3 p, vec3 mean) {
+	if (turb_sigma <= 0.0) {
+		return vec3(0.0);
+	}
+	vec3 q = p - mean * turb_time;
+	vec3 u = vec3(0.0);
+	for (int n = 0; n < 6; n++) {
+		uint s = snow_hash(uint(n) * 7919u + 101u);
+		float ct = 2.0 * snow_rand(s) - 1.0;
+		float ph = 6.2831853 * snow_rand(s + 1u);
+		vec3 dir = vec3(sqrt(1.0 - ct * ct) * cos(ph), ct * 0.5, sqrt(1.0 - ct * ct) * sin(ph));
+		dir = normalize(dir);
+		float len = mix(2.0, 14.0, float(n) / 5.0);
+		vec3 k = dir * (6.2831853 / len);
+		vec3 a = normalize(cross(dir, vec3(snow_rand(s + 2u) - 0.5, snow_rand(s + 3u) - 0.5, snow_rand(s + 4u) - 0.5)));
+		u += a * cos(dot(k, q) + 6.2831853 * snow_rand(s + 5u) + turb_time * 0.4 * length(k));
+	}
+	return u * turb_sigma * 0.7071 * sqrt(3.0 / 6.0);
+}
 vec3 snow_air(vec3 p, float h) {
-	return weather_map_rect.z > 0.0 ? weather_wind(p, h) : still_wind;
+	vec3 w = weather_map_rect.z > 0.0 ? weather_wind(p, h) : still_wind;
+	return w + snow_eddies(p, w) * clamp(h / 0.5, 0.2, 1.0);
 }
 uniform float streak_time = 0.0167;
 
@@ -283,6 +309,24 @@ float SnowFall3D::fall_speed(float p_size_mm) {
 float SnowFall3D::blowing_threshold(float p_celsius) {
 	const float t = MIN(p_celsius, 0.0f);
 	return 9.43f + 0.18f * t + 0.0033f * t * t;
+}
+
+float SnowFall3D::blowing_concentration(float p_wind10, float p_height) {
+	// Pomeroy and Male (1992), PBSM: eta(z) = eta_r exp(-1.55 (z_r^-0.544 - z^-0.544)), eta_r 0.8 kg/m3 at the
+	// top of the saltation layer z_r = 0.05628 u*^1.27, u* from the 10 m wind over snow (z0 0.5 mm).
+	const float ustar = 0.41f * MAX(p_wind10, 0.0f) / Math::log(10.0f / 0.0005f);
+	if (ustar <= 0.01f) {
+		return 0.0f;
+	}
+	const float zr = 0.05628f * Math::pow(ustar, 1.27f);
+	const float z = MAX(p_height, zr);
+	return 0.8f * Math::exp(-1.55f * (Math::pow(zr, -0.544f) - Math::pow(z, -0.544f)));
+}
+
+float SnowFall3D::blowing_extinction(float p_concentration) {
+	// Geometric optics, extinction efficiency 2: sigma = 3 Q c / (4 rho_ice r) (Pomeroy and Male 1988),
+	// suspended grains about 40 um in radius at a metre (Schmidt 1982).
+	return 1.5f * MAX(p_concentration, 0.0f) / (917.0f * 40e-6f);
 }
 
 float SnowFall3D::saltation_flux_ratio(float p_wind10, float p_threshold) {
@@ -504,7 +548,6 @@ void SnowFall3D::_update(double p_delta) {
 	cur_blow = blowing_enabled && temp < 0.0f ? CLAMP(saltation_flux_ratio(cur_wind10, cur_threshold) * blowing_strength, 0.0f, 1.0f) : 0.0f;
 	blow->set_global_transform(Transform3D(Basis(), base));
 	blow_process->set_shader_parameter("box_center", base);
-	blow_process->set_shader_parameter("box_size", Vector3(blow_extent, 4.0f, blow_extent));
 	blow_process->set_shader_parameter("eye", eye);
 	blow_process->set_shader_parameter("pixel_angle", pixel_angle);
 	blow_process->set_shader_parameter("ratio", cur_blow);
@@ -512,13 +555,85 @@ void SnowFall3D::_update(double p_delta) {
 	// u* from the 10 m wind over snow (z0 0.5 mm); lifted snow climbs higher in stronger wind.
 	const float ustar = 0.41f * cur_wind10 / Math::log(10.0f / 0.0005f);
 	blow_process->set_shader_parameter("salt_height", MAX(0.08436f * Math::pow(MAX(ustar, 0.01f), 1.27f), 0.01f));
-	blow_process->set_shader_parameter("lift_height", 0.3f + 0.08f * MAX(cur_wind10 - cur_threshold, 0.0f));
+	// The suspended snow: PBSM's profile over loose snow, as a haze an e-folding height deep (fitted between
+	// 0.2 and 2 m), and the lifted wisps spread through it.
+	if (cur_blow > 0.0f) {
+		const float c02 = blowing_concentration(cur_wind10, 0.2f);
+		const float c2 = blowing_concentration(cur_wind10, 2.0f);
+		cur_blow_scale = c2 > 0.0f && c02 > c2 ? CLAMP(1.8f / Math::log(c02 / c2), 0.1f, 20.0f) : 0.5f;
+		cur_blow_sigma = blowing_extinction(blowing_concentration(cur_wind10, 1.0f)) * MIN(cur_blow * 2.0f, 1.0f);
+	} else {
+		cur_blow_scale = 0.0f;
+		cur_blow_sigma = 0.0f;
+	}
+	const float lift = MAX(0.3f + 0.08f * MAX(cur_wind10 - cur_threshold, 0.0f), MIN(cur_blow_scale, 6.0f));
+	blow_process->set_shader_parameter("lift_height", lift);
+	blow_process->set_shader_parameter("box_size", Vector3(blow_extent, MAX(4.0f, 4.0f * lift), blow_extent));
+	// Gusts and eddies: sigma_u = 2.5 u* (Panofsky and Dutton 1984).
+	const float turb = turbulence * 2.5f * ustar;
+	fall_process->set_shader_parameter("turb_sigma", turb);
+	blow_process->set_shader_parameter("turb_sigma", turb);
+	turb_clock += p_delta;
+	fall_process->set_shader_parameter("turb_time", float(Math::fmod(turb_clock, 3600.0)));
+	blow_process->set_shader_parameter("turb_time", float(Math::fmod(turb_clock, 3600.0)));
+	_push_haze(WeatherMap3D::get_active());
 	if (cover && cover->get_snow_texture().is_valid()) {
 		const Rect2 r = cover->get_map_rect();
 		blow_process->set_shader_parameter("snow_tex", cover->get_snow_texture());
 		blow_process->set_shader_parameter("snow_rect", Vector4(r.position.x, r.position.y, r.size.x, r.size.y));
 	} else {
 		blow_process->set_shader_parameter("snow_rect", Vector4());
+	}
+}
+
+void SnowFall3D::_push_haze(WeatherMap3D *p_weather) {
+	// The snow beyond the particles: the falling snow's extinction everywhere (the weather map's height
+	// fog), the blowing snow's in a layer over the ground (a lit fog volume near the camera).
+	if (!p_weather || !haze_enabled || !is_inside_tree()) {
+		return;
+	}
+	const float fall_sigma = falling_enabled ? get_extinction() : 0.0f;
+	auto changed = [](float a, float b) { return Math::abs(a - b) > 0.02f * MAX(Math::abs(b), 1e-4f); };
+	if (changed(fall_sigma, pushed_fall)) {
+		if (fall_sigma > 1e-5f) {
+			p_weather->set_precipitation_extinction(this, fall_sigma, 0.0f, 0.97f);
+		} else {
+			p_weather->clear_precipitation_extinction(this);
+		}
+		pushed_fall = fall_sigma;
+	}
+	const Vector3 base = blow ? blow->get_global_position() : Vector3();
+	const bool moved = blow && base.distance_to(pushed_base) > 20.0f;
+	if (blow && (changed(cur_blow_sigma, pushed_blow) || changed(cur_blow_scale, pushed_scale) || (moved && cur_blow_sigma > 1e-5f))) {
+		pushed_base = base;
+		if (cur_blow_sigma > 1e-5f) {
+			// set at the ground: the layer is sigma exp(-z / H); ours is the value at 1 m.
+			// Around the camera, on the snow under it (the layer follows the terrain as the camera moves).
+			p_weather->set_precipitation_extinction(blow, cur_blow_sigma * Math::exp(1.0f / MAX(cur_blow_scale, 0.1f)), cur_blow_scale, 0.97f, blow->get_global_position(), MAX(blow_extent * 4.0f, 150.0f));
+		} else {
+			p_weather->clear_precipitation_extinction(blow);
+		}
+		pushed_blow = cur_blow_sigma;
+		pushed_scale = cur_blow_scale;
+	}
+}
+
+void SnowFall3D::_clear_haze() {
+	if (WeatherMap3D *w = WeatherMap3D::get_active()) {
+		w->clear_precipitation_extinction(this);
+		if (blow) {
+			w->clear_precipitation_extinction(blow);
+		}
+	}
+	pushed_fall = -1.0f;
+	pushed_blow = -1.0f;
+	pushed_scale = -1.0f;
+}
+
+void SnowFall3D::set_haze_enabled(bool p_enabled) {
+	haze_enabled = p_enabled;
+	if (!p_enabled) {
+		_clear_haze();
 	}
 }
 
@@ -534,6 +649,7 @@ void SnowFall3D::_notification(int p_what) {
 			_update(0.0);
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			_clear_haze();
 			set_process_internal(false);
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
@@ -639,6 +755,14 @@ void SnowFall3D::_bind_methods() {
 	ClassDB::bind_static_method("SnowFall3D", D_METHOD("fall_speed", "size"), &SnowFall3D::fall_speed);
 	ClassDB::bind_static_method("SnowFall3D", D_METHOD("snowfall_extinction", "rate"), &SnowFall3D::snowfall_extinction);
 	ClassDB::bind_method(D_METHOD("get_extinction"), &SnowFall3D::get_extinction);
+	ClassDB::bind_method(D_METHOD("get_blowing_extinction"), &SnowFall3D::get_blowing_extinction);
+	ClassDB::bind_method(D_METHOD("get_blowing_height_scale"), &SnowFall3D::get_blowing_height_scale);
+	ClassDB::bind_method(D_METHOD("set_haze_enabled", "enabled"), &SnowFall3D::set_haze_enabled);
+	ClassDB::bind_method(D_METHOD("is_haze_enabled"), &SnowFall3D::is_haze_enabled);
+	ClassDB::bind_method(D_METHOD("set_turbulence", "scale"), &SnowFall3D::set_turbulence);
+	ClassDB::bind_method(D_METHOD("get_turbulence"), &SnowFall3D::get_turbulence);
+	ClassDB::bind_static_method("SnowFall3D", D_METHOD("blowing_concentration", "wind10", "height"), &SnowFall3D::blowing_concentration);
+	ClassDB::bind_static_method("SnowFall3D", D_METHOD("blowing_extinction", "concentration"), &SnowFall3D::blowing_extinction);
 	ClassDB::bind_method(D_METHOD("get_visibility"), &SnowFall3D::get_visibility);
 	ClassDB::bind_static_method("SnowFall3D", D_METHOD("blowing_threshold", "celsius"), &SnowFall3D::blowing_threshold);
 	ClassDB::bind_static_method("SnowFall3D", D_METHOD("saltation_flux_ratio", "wind10", "threshold"), &SnowFall3D::saltation_flux_ratio);
@@ -658,6 +782,8 @@ void SnowFall3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shelter_mask", PROPERTY_HINT_LAYERS_3D_RENDER), "set_shelter_mask", "get_shelter_mask");
 	ADD_GROUP("Blowing", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "blowing_enabled"), "set_blowing_enabled", "is_blowing_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "haze_enabled"), "set_haze_enabled", "is_haze_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_turbulence", "get_turbulence");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "blow_extent", PROPERTY_HINT_RANGE, "2,1024,1,suffix:m"), "set_blow_extent", "get_blow_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_blowing", PROPERTY_HINT_RANGE, "1,2000000,1"), "set_max_blowing", "get_max_blowing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "blowing_strength", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_blowing_strength", "get_blowing_strength");
