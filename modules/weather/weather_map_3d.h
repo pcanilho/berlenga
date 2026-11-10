@@ -31,6 +31,7 @@
 #pragma once
 
 #include "weather_clouds.h"
+#include "weather_shelter.h"
 
 #include "core/io/image.h"
 #include "core/object/worker_thread_pool.h"
@@ -192,6 +193,15 @@ private:
 	Ref<ImageTexture> shadow_texture;
 	ObjectID shadow_light; // the light we gave our projector to
 
+	// Wind near the ground: canopy and obstacle shelter on a fine square, and gust patches.
+	WeatherShelter shelter;
+	bool shelter_enabled = true;
+	Ref<Texture2D> canopy_map;
+	float gust_patch_size = 6.0f; // m
+	float gust_patch_strength = 0.35f; // standard deviation of the patches over the mean wind
+	Vector2 patch_drift; // m, how far the patches have travelled (wrapped to their period)
+	bool shelter_global_added = false;
+
 	static WeatherMap3D *active;
 
 	void _allocate();
@@ -219,6 +229,8 @@ private:
 	void _release_shadow_light();
 	void _push_sky();
 	Vector3 _gust_at(Vector3 p_position, Vector2 p_mean) const;
+	float _patch_at(Vector2 p_xz, float p_height) const;
+	void _bake_shelter();
 
 protected:
 	void _notification(int p_what);
@@ -294,6 +306,35 @@ public:
 	int get_cloud_shadow_resolution() const { return cloud_shadow_resolution; }
 	void set_cloud_shadow_interval(float p_seconds);
 	float get_cloud_shadow_interval() const { return cloud_shadow_interval; }
+
+	void set_shelter_enabled(bool p_enabled);
+	bool get_shelter_enabled() const { return shelter_enabled; }
+	void set_shelter_extent(float p_extent);
+	float get_shelter_extent() const { return shelter.extent; }
+	void set_shelter_resolution(int p_resolution);
+	int get_shelter_resolution() const { return shelter.resolution; }
+	void set_canopy_map(const Ref<Texture2D> &p_map);
+	Ref<Texture2D> get_canopy_map() const { return canopy_map; }
+	void set_canopy_map_rect(Rect2 p_rect);
+	Rect2 get_canopy_map_rect() const { return shelter.canopy_rect; }
+	void set_canopy_map_max_height(float p_height);
+	float get_canopy_map_max_height() const { return shelter.canopy_max_height; }
+	void set_gust_patch_size(float p_size);
+	float get_gust_patch_size() const { return gust_patch_size; }
+	void set_gust_patch_strength(float p_strength);
+	float get_gust_patch_strength() const { return gust_patch_strength; }
+	int add_canopy(Vector2 p_center, float p_radius, float p_height, float p_density = 2.5f);
+	void remove_canopy(int p_id);
+	int add_shelter_box(const AABB &p_box);
+	void remove_shelter_box(int p_id);
+	void clear_shelter();
+	void rebake_shelter();
+	float get_shelter_bake_time() const { return shelter.bake_ms; }
+	// Mean wind at a height over the open-ground wind there: canopy and lee, 0..1.
+	float get_shelter_at(Vector3 p_position, float p_height_above_ground = -1.0f) const;
+	Ref<Texture2D> get_shelter_texture() const { return shelter.texture; }
+	Rect2 get_shelter_rect() const { return shelter.rect(); }
+	static String get_wind_shader_code();
 
 	// Jump the eased state to the settings (no transition), e.g. when a scene loads.
 	void snap_to_settings();
