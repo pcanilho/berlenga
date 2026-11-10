@@ -53,6 +53,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 class TerrainStreamPower {
 public:
@@ -100,7 +101,31 @@ public:
 	Buffers b;
 	int pits_filled = 0; // cells raised by the last fill
 
-	bool is_outlet(int i) const {
+	// Outlets cached per cell (the edge test and the mask were most of the profile); rebuilt when the grid or the
+	// mask changes.
+	std::vector<uint8_t> outlet_cache;
+	int cache_nx = -1, cache_ny = -1, cache_edges = -1;
+	const uint8_t *cache_mask = nullptr;
+
+	void _update_outlets() {
+		if (cache_nx == p.nx && cache_ny == p.ny && cache_edges == p.outlet_edges && cache_mask == b.outlet && int(outlet_cache.size()) == p.nx * p.ny) {
+			return;
+		}
+		const int n = p.nx * p.ny;
+		outlet_cache.assign(n, 0);
+		for (int i = 0; i < n; i++) {
+			outlet_cache[i] = _outlet_test(i) ? 1 : 0;
+		}
+		cache_nx = p.nx;
+		cache_ny = p.ny;
+		cache_edges = p.outlet_edges;
+		cache_mask = b.outlet;
+	}
+
+	bool is_outlet(int i) const { return outlet_cache[i] != 0; }
+	void invalidate_outlets() { cache_nx = -1; }
+
+	bool _outlet_test(int i) const {
 		const int x = i % p.nx;
 		const int z = i / p.nx;
 		if (b.outlet && b.outlet[i]) {
@@ -112,6 +137,7 @@ public:
 
 	// One time step; returns the largest height change in metres.
 	double step() {
+		_update_outlets();
 		const int n = p.nx * p.ny;
 		double *h = b.height;
 		memcpy(b.scratch, h, sizeof(double) * n);
@@ -168,6 +194,7 @@ public:
 	// Routing only (receivers, stack, area) on the current heights, after filling any basin the last step left (so
 	// the result drains everywhere); no erosion. For the final heights and maps.
 	void route() {
+		_update_outlets();
 		_compute_receivers();
 		if (_count_pits() > 0) {
 			_priority_flood_fill();

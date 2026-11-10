@@ -8,6 +8,8 @@
 #       [--coast [--focus=lake|coast] [--dist=520]]   an island with lakes, its sea, lakes and rivers built
 #   godot --headless --path docs/bench/terrain_gen -- --coast --geology=map.png  island map, lakes and rivers listed
 #   godot --headless --path docs/bench/terrain_gen -- --map=map.png      shaded relief with rivers
+#   godot --headless --path docs/bench/terrain_gen -- --compare=prefix [--cell=8] [--refine=40]  coarse-to-fine
+#       against single-level: time, height percentiles, slopes, drainage density; relief maps prefix_{one,multi}.png
 #   godot --headless --path docs/bench/terrain_gen -- [--coast] --climate=map.png  climate maps (temperature,
 #       precipitation, winter sun, snow share) of the generated world [--wind=270] [--view: taller range]
 extends Node3D
@@ -65,6 +67,9 @@ func _ready() -> void:
 			var fd := FileAccess.open(args["dump"], FileAccess.WRITE)
 			fd.store_buffer(gen.get_height_image().get_data())
 			fd.close()
+		get_tree().quit()
+	elif args.has("compare"):
+		await _compare(args["compare"])
 		get_tree().quit()
 	elif args.has("climate"):
 		if args.has("view"):
@@ -126,8 +131,12 @@ func _build_generator(cell: float) -> void:
 	gen.name = "Generator"
 	gen.size = Vector2(WORLD, WORLD)
 	gen.cell_size = cell
-	gen.seed = 1
+	gen.seed = int(args.get("seed", "1"))
 	gen.uplift_noise = noise
+	if args.has("levels"):
+		gen.coarse_levels = int(args["levels"])
+	if args.has("refine"):
+		gen.refine_steps = int(args["refine"])
 	add_child(gen)
 	gen.ranges = [gen.get_path_to(path), gen.get_path_to(spur)]
 
@@ -211,7 +220,7 @@ func _run_checks() -> void:
 	gen.seed = 2
 	gen.generate()
 	check(_hash(gen.get_height_image()) != first, "another seed gives another terrain")
-	gen.seed = 1
+	gen.seed = int(args.get("seed", "1"))
 	gen.generate()
 
 	# Shape: mountains along the range, low ground away from it, outlets at sea level.
@@ -627,6 +636,9 @@ func _coast_checks() -> void:
 						break
 			if found == 2:
 				outflows += 1
+	if not held or args.has("verbose"):
+		for l in lakes:
+			print("     lake depth %.1f area %.0f level %.2f dam %.2f center depth %.2f" % [l["depth"], l["area"], l["level"], gen.get_height(l["dam"]), gen.get_water_depth(l["center"])])
 	check(held, "each lake is deeper than 2 m, at least lake_min_area, and its dam stands at its level")
 	var centred := true
 	for l in lakes:
@@ -643,7 +655,10 @@ func _coast_checks() -> void:
 		if r["ends_in"] == "lake":
 			into_lakes += 1
 			var pts: PackedVector3Array = r["points"]
-			mouths_on_water = mouths_on_water and absf(pts[pts.size() - 1].y - float(lakes[int(r["lake"])]["level"])) < 0.01
+			var off := absf(pts[pts.size() - 1].y - float(lakes[int(r["lake"])]["level"]))
+			if off >= 0.01:
+				print("     river into lake %d ends %.2f m off its level at %s (water depth there %.2f, level %.2f)" % [int(r["lake"]), off, pts[pts.size() - 1], gen.get_water_depth(pts[pts.size() - 1]), gen.get_water_level(pts[pts.size() - 1])])
+			mouths_on_water = mouths_on_water and off < 0.01
 	check(mouths_on_water, "rivers into lakes end on the water (%d)" % into_lakes)
 	# Water balance: the first lake again, from a marker, with evaporation three times what its catchment can make up.
 	if lakes.size() > 0:
@@ -1087,3 +1102,89 @@ func _save_climate(path: String) -> void:
 	for k in 4:
 		print("%s: %.2f to %.2f" % [names[k], ranges[k][0], ranges[k][1]])
 	print("saved ", path)
+
+
+func _stats() -> Dictionary:
+	var g := gen.get_grid_size()
+	var h := gen.get_height_image()
+	var a := gen.get_drainage_image()
+	var cell := gen.cell_size
+	var hs: Array[float] = []
+	var slope_sum := 0.0
+	var steep := 0
+	var channels := 0
+	var crests := 0
+	for z in range(1, g.y - 1):
+		for x in range(1, g.x - 1):
+			var v := h.get_pixel(x, z).r
+			hs.append(v)
+			var hx := (h.get_pixel(x + 1, z).r - h.get_pixel(x - 1, z).r) / (2.0 * cell)
+			var hz := (h.get_pixel(x, z + 1).r - h.get_pixel(x, z - 1).r) / (2.0 * cell)
+			var sl := rad_to_deg(atan(sqrt(hx * hx + hz * hz)))
+			slope_sum += sl
+			steep += 1 if sl > 35.0 else 0
+			channels += 1 if a.get_pixel(x, z).r >= 1.0e5 else 0
+			var dl := v - h.get_pixel(x - 1, z).r
+			var dr := v - h.get_pixel(x + 1, z).r
+			var du := v - h.get_pixel(x, z - 1).r
+			var dd := v - h.get_pixel(x, z + 1).r
+			crests += 1 if (dl > 0.1 * cell and dr > 0.1 * cell) or (du > 0.1 * cell and dd > 0.1 * cell) else 0
+	hs.sort()
+	var n := hs.size()
+	return {
+		"p10": hs[n / 10], "p50": hs[n / 2], "p90": hs[n * 9 / 10], "p99": hs[n * 99 / 100], "max": hs[n - 1],
+		"slope": slope_sum / n, "steep": float(steep) / n, "channels": float(channels) / n, "crests": float(crests) / n,
+		"img": h, "msec": gen.get_last_generate_msec(),
+	}
+
+
+func _blurred(img: Image, r: int) -> PackedFloat32Array:
+	var w := img.get_width()
+	var out := PackedFloat32Array()
+	out.resize(w * w)
+	for z in w:
+		for x in w:
+			var s := 0.0
+			var c := 0
+			for dz in range(-r, r + 1, maxi(r / 2, 1)):
+				for dx in range(-r, r + 1, maxi(r / 2, 1)):
+					s += img.get_pixel(clampi(x + dx, 0, w - 1), clampi(z + dz, 0, w - 1)).r
+					c += 1
+			out[z * w + x] = s / c
+	return out
+
+
+func _compare(prefix: String) -> void:
+	gen.refine_steps = int(args.get("refine", "60"))
+	gen.coarse_levels = 0
+	gen.generate()
+	var one := _stats()
+	_save_map(prefix + "_one.png")
+	gen.coarse_levels = int(args.get("levels", "-1"))
+	gen.generate()
+	var multi := _stats()
+	_save_map(prefix + "_multi.png")
+	print("levels %d, refine %d" % [gen.get_last_coarse_levels(), gen.refine_steps])
+	for k in ["msec", "p10", "p50", "p90", "p99", "max", "slope", "steep", "channels", "crests"]:
+		print("%-9s one %10.3f  multi %10.3f  ratio %.3f" % [k, one[k], multi[k], float(multi[k]) / maxf(absf(float(one[k])), 1e-9)])
+	# Large-scale agreement: heights blurred over ~250 m.
+	var r := int(round(128.0 / gen.cell_size))
+	var b1 := _blurred(one["img"], r)
+	var b2 := _blurred(multi["img"], r)
+	var m1 := 0.0
+	var m2 := 0.0
+	for i in b1.size():
+		m1 += b1[i]
+		m2 += b2[i]
+	m1 /= b1.size()
+	m2 /= b2.size()
+	var sxy := 0.0
+	var sxx := 0.0
+	var syy := 0.0
+	var mad := 0.0
+	for i in b1.size():
+		sxy += (b1[i] - m1) * (b2[i] - m2)
+		sxx += (b1[i] - m1) * (b1[i] - m1)
+		syy += (b2[i] - m2) * (b2[i] - m2)
+		mad += absf(b1[i] - b2[i])
+	print("large-scale correlation %.4f, mean abs difference %.2f m" % [sxy / sqrt(sxx * syy), mad / b1.size()])

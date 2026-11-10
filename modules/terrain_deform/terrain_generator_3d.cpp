@@ -288,12 +288,143 @@ bool TerrainGenerator3D::generate() {
 		sp.b.outlet = outlet_mask.ptr();
 	}
 
+	// Coarse to fine (the V-cycle of Tzathas et al. 2024, with our time-stepping solver at every level): the
+	// steps run on grids halved 2x2 at a time, where the large-scale relief and drainage form for a sixteenth of
+	// the cost per halving, then each finer level starts from the bilinear upsample of the one below (plus the
+	// initial roughness, so flats break the same way) and runs refine_steps to grow its own small valleys,
+	// hillslopes and talus. Uplift is restricted by full weighting, outlets and the sea by injection.
+	int levels = 0;
+	{
+		int cx = nx, cz = ny;
+		const int max_levels = coarse_levels < 0 ? 8 : coarse_levels;
+		while (levels < max_levels && (cx - 1) % 2 == 0 && (cz - 1) % 2 == 0 && (cx - 1) / 2 + 1 >= (coarse_levels < 0 ? 129 : 9) && (cz - 1) / 2 + 1 >= (coarse_levels < 0 ? 129 : 9)) {
+			cx = (cx - 1) / 2 + 1;
+			cz = (cz - 1) / 2 + 1;
+			levels++;
+		}
+	}
 	double change = 0.0;
-	for (int s = 0; s < steps; s++) {
-		change = sp.step();
+	if (levels == 0) {
+		for (int s = 0; s < steps; s++) {
+			change = sp.step();
+		}
+	} else {
+		struct Level {
+			int nx = 0, ny = 0;
+			LocalVector<double> up, h, sed;
+			LocalVector<uint8_t> outlet;
+		};
+		LocalVector<Level> lv;
+		lv.resize(levels + 1);
+		lv[0].nx = nx;
+		lv[0].ny = ny;
+		for (int l = 1; l <= levels; l++) {
+			const Level &f = lv[l - 1];
+			Level &c = lv[l];
+			c.nx = (f.nx - 1) / 2 + 1;
+			c.ny = (f.ny - 1) / 2 + 1;
+			const double *fu = l == 1 ? up.ptr() : f.up.ptr();
+			const uint8_t *fo = l == 1 ? sp.b.outlet : (f.outlet.is_empty() ? nullptr : f.outlet.ptr());
+			c.up.resize(c.nx * c.ny);
+			if (fo) {
+				c.outlet.resize(c.nx * c.ny);
+			}
+			for (int z = 0; z < c.ny; z++) {
+				for (int x = 0; x < c.nx; x++) {
+					double sum = 0.0, wsum = 0.0;
+					for (int dz = -1; dz <= 1; dz++) {
+						for (int dx = -1; dx <= 1; dx++) {
+							const int fx = 2 * x + dx, fz = 2 * z + dz;
+							if (fx < 0 || fz < 0 || fx >= f.nx || fz >= f.ny) {
+								continue;
+							}
+							const double w = (dx == 0 ? 2.0 : 1.0) * (dz == 0 ? 2.0 : 1.0);
+							sum += w * fu[fz * f.nx + fx];
+							wsum += w;
+						}
+					}
+					c.up[z * c.nx + x] = sum / wsum;
+					if (fo) {
+						c.outlet[z * c.nx + x] = fo[(2 * z) * f.nx + 2 * x];
+					}
+				}
+			}
+		}
+		const uint8_t *fine_outlet = sp.b.outlet;
+		auto run = [&](int l, double *p_h, double *p_sed, int p_steps) {
+			Level &L = lv[l];
+			sp.p.nx = L.nx;
+			sp.p.ny = L.ny;
+			sp.p.dx = double(cell_size) * double(1 << l);
+			sp.b.height = p_h;
+			sp.b.sediment = p_sed;
+			sp.b.uplift = l == 0 ? up.ptr() : L.up.ptr();
+			sp.b.outlet = l == 0 ? fine_outlet : (L.outlet.is_empty() ? nullptr : L.outlet.ptr());
+			sp.invalidate_outlets();
+			for (int s = 0; s < p_steps; s++) {
+				change = sp.step();
+			}
+		};
+		// Coarsest level: the full run from the initial roughness.
+		{
+			Level &L = lv[levels];
+			L.h.resize(L.nx * L.ny);
+			L.sed.resize(L.nx * L.ny);
+			for (int i = 0; i < L.nx * L.ny; i++) {
+				const bool o = !L.outlet.is_empty() && L.outlet[i];
+				L.h[i] = o ? double(sea_level) : double(sea_level) + double(initial_roughness) * _gen_hash01(uint32_t(seed), uint32_t(i));
+				L.sed[i] = 0.0;
+			}
+			run(levels, L.h.ptr(), L.sed.ptr(), steps);
+		}
+		for (int l = levels - 1; l >= 0; l--) {
+			Level &c = lv[l + 1];
+			Level &f = lv[l];
+			double *fh = h.ptr();
+			double *fs = sed.ptr();
+			if (l > 0) {
+				f.h.resize(f.nx * f.ny);
+				f.sed.resize(f.nx * f.ny);
+				fh = f.h.ptr();
+				fs = f.sed.ptr();
+			}
+			const uint8_t *fo = l == 0 ? fine_outlet : (f.outlet.is_empty() ? nullptr : f.outlet.ptr());
+			for (int z = 0; z < f.ny; z++) {
+				const int z0 = MIN(z / 2, c.ny - 1), z1 = MIN(z0 + 1, c.ny - 1);
+				const double tz = (z & 1) ? 0.5 : 0.0;
+				for (int x = 0; x < f.nx; x++) {
+					const int x0 = MIN(x / 2, c.nx - 1), x1 = MIN(x0 + 1, c.nx - 1);
+					const double tx = (x & 1) ? 0.5 : 0.0;
+					auto bil = [&](const LocalVector<double> &a) {
+						const double a0 = a[z0 * c.nx + x0] * (1.0 - tx) + a[z0 * c.nx + x1] * tx;
+						const double a1 = a[z1 * c.nx + x0] * (1.0 - tx) + a[z1 * c.nx + x1] * tx;
+						return a0 * (1.0 - tz) + a1 * tz;
+					};
+					const int i = z * f.nx + x;
+					if (fo && fo[i]) {
+						fh[i] = double(sea_level);
+					} else {
+						fh[i] = bil(c.h) + double(initial_roughness) * _gen_hash01(uint32_t(seed) + 7919u * uint32_t(l + 1), uint32_t(i));
+					}
+					fs[i] = bil(c.sed);
+				}
+			}
+			run(l, fh, fs, refine_steps);
+			c.h.clear();
+			c.sed.clear();
+		}
+		sp.p.nx = nx;
+		sp.p.ny = ny;
+		sp.p.dx = cell_size;
+		sp.b.height = h.ptr();
+		sp.b.sediment = sed.ptr();
+		sp.b.uplift = up.ptr();
+		sp.b.outlet = fine_outlet;
+		sp.invalidate_outlets();
 	}
 	sp.route();
-	last_steps = steps;
+	last_steps = levels > 0 ? steps + levels * refine_steps : steps;
+	last_coarse_levels = levels;
 	last_change = real_t(change);
 
 	double hmax = sea_level;
@@ -1649,12 +1780,12 @@ Array TerrainGenerator3D::get_rivers(real_t p_min_area) const {
 			const real_t a = river_area[rv.cells[k]];
 			Vector3 p = pts[k];
 			p.y = _ground(p.x, p.z);
-			// At a mouth in the sea or a lake, on the water rather than its bed.
+			// At a mouth in the sea or a lake, on the water rather than its bed. The last point sits on the water even
+			// where the shore's erosion detail (full strength in the shallowest margin) lifts the ground above it.
 			const int32_t b = water_body.size() == uint32_t(n) ? water_body[rv.cells[k]] : 0;
-			if (b == 1) {
-				p.y = MAX(p.y, real_t(result_min));
-			} else if (b >= 2) {
-				p.y = MAX(p.y, lake_info[b - 2].level);
+			if (b >= 1) {
+				const real_t level = b == 1 ? real_t(result_min) : lake_info[b - 2].level;
+				p.y = k == m - 1 ? level : MAX(p.y, level);
 			}
 			points.set(k, p);
 			areas.set(k, a);
@@ -1907,6 +2038,11 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_time_step"), &TerrainGenerator3D::get_time_step);
 	ClassDB::bind_method(D_METHOD("set_steps", "steps"), &TerrainGenerator3D::set_steps);
 	ClassDB::bind_method(D_METHOD("get_steps"), &TerrainGenerator3D::get_steps);
+	ClassDB::bind_method(D_METHOD("set_coarse_levels", "levels"), &TerrainGenerator3D::set_coarse_levels);
+	ClassDB::bind_method(D_METHOD("get_coarse_levels"), &TerrainGenerator3D::get_coarse_levels);
+	ClassDB::bind_method(D_METHOD("set_refine_steps", "steps"), &TerrainGenerator3D::set_refine_steps);
+	ClassDB::bind_method(D_METHOD("get_refine_steps"), &TerrainGenerator3D::get_refine_steps);
+	ClassDB::bind_method(D_METHOD("get_last_coarse_levels"), &TerrainGenerator3D::get_last_coarse_levels);
 	ClassDB::bind_method(D_METHOD("set_initial_roughness", "metres"), &TerrainGenerator3D::set_initial_roughness);
 	ClassDB::bind_method(D_METHOD("get_initial_roughness"), &TerrainGenerator3D::get_initial_roughness);
 	ClassDB::bind_method(D_METHOD("set_outlet_edges", "edges"), &TerrainGenerator3D::set_outlet_edges);
@@ -2072,6 +2208,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_exponent", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_flow_exponent", "get_flow_exponent");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "time_step", PROPERTY_HINT_RANGE, "1,1000000,1,or_greater,suffix:yr"), "set_time_step", "get_time_step");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "steps", PROPERTY_HINT_RANGE, "0,5000,1,or_greater"), "set_steps", "get_steps");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "coarse_levels", PROPERTY_HINT_RANGE, "-1,8,1"), "set_coarse_levels", "get_coarse_levels");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "refine_steps", PROPERTY_HINT_RANGE, "0,1000,1,or_greater"), "set_refine_steps", "get_refine_steps");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "initial_roughness", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m"), "set_initial_roughness", "get_initial_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "outlet_edges", PROPERTY_HINT_FLAGS, "-X,+X,-Z,+Z"), "set_outlet_edges", "get_outlet_edges");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sea_level", PROPERTY_HINT_NONE, "suffix:m"), "set_sea_level", "get_sea_level");

@@ -564,8 +564,52 @@ ground; Sx +17 degrees in the lee, -16 windward; snow share 0.35 on top against 
 `bake()` keeps the climate; the generated world bakes. Maps: `--climate=map.png [--view] [--wind=270]`
 (temperature, precipitation, winter sun, snow share). Media fork/terrain/climate/.
 
+## Faster generation: coarse to fine (Paulo picked 10 Nov 20:11)
+
+Profile first (cloud CPU, one thread): a step costs 11 ms at 257^2 and 84 ms at 513^2, spread over receivers, the
+height sort for multiple-flow drainage, the area pass, diffusion and the occasional Priority-Flood; no one part
+dominates, so a faster step alone would gain little. The outlet test was cached per cell (it ran hundreds of
+millions of times; about 4%).
+
+What others do: Tzathas, Gailleton, Steer and Cordonnier (Physically-based analytical erosion for fast terrain
+generation, CGF 43(2) 2024) solve the steady state of the same stream power law along the flow tree, and to make
+it converge fast they cycle through resolutions: inputs averaged 2x2 down to a small grid, a few iterations
+there, bilinear upsampling (nodes jittered by up to a quarter cell) and more iterations at each finer level, "the
+simplest V-cycle". Their table: 512^2 in 1.8 s against 7.9 s for the fixed point and 56 s for a time-stepping
+simulation; 2048^2 in 34 s against 4800 s. We keep our time-stepping solver (it carries the critical slope,
+hillslope diffusion, multiple flow directions and the sediment fill the analytical form approximates) and borrow
+the cycle:
+
+- `coarse_levels` (-1 auto: halve while the coarse grid keeps 129 nodes a side): `steps` run on the coarsest grid,
+  where relief and drainage form; uplift restricted by full weighting, sea and outlets by injection (node grids,
+  so coarse node j is fine node 2j).
+- Each finer level starts from the bilinear upsample of heights and sediment plus the initial roughness again (in
+  place of Tzathas's jitter, so flats break) and runs `refine_steps` (60) to grow the valleys, hillslopes and sharp
+  crests that resolution allows. Deterministic as before.
+
+Result against single-level runs of the bench range (same seed, compare with
+`--compare=prefix [--cell=..] [--refine=..]`):
+
+| grid | single | coarse to fine | heights p50 / p99 / max | mean slope | crest cells | drainage cells |
+| --- | --- | --- | --- | --- | --- | --- |
+| 257^2 (16 m) | 5.2 s | 2.5 s | within 0.4% | 1.000 | 0.98 | 0.98 |
+| 513^2 (8 m) | 26 s | 8.4 s | within 1.2% | 1.001 | | 1.00 |
+| 1025^2 (4 m) | 155 s | 42 s | within 1.4% | 0.997 | | 0.98 |
+
+(2.1, 3.1 and 3.7 times faster; times include the detail, geology, coast and lake passes, which do not change, so
+the erosion alone speeds up more. Crest cells are only counted reliably at 16 m.)
+Heights blurred over 250 m correlate 0.993 to 0.997 with the single-level result. With 40 refine steps it is 2.4,
+3.9 and 5 times faster, but crests come out about 8% rounder at 16 m, so 60 is the default (the floor rule).
+`coarse_levels = 0` gives the old result exactly.
+
+Found on the way: with a sea, the finest level kept the coarse outlet mask (a bug the checks caught as a
+run-to-run difference; fixed before merging). Rivers ending in a lake could stop 0.35 m above its water where the shore's detail lifts the
+ground in the shallowest margin; a mouth now sits on the water.
+
 ## Sources
 
+- Tzathas, Gailleton, Steer, Cordonnier, Physically-based analytical erosion for fast terrain generation, Computer
+  Graphics Forum 43(2), 2024.
 - Smith, Barstad, A linear theory of orographic precipitation, Journal of the Atmospheric Sciences 61, 2004.
 - Rolland, Spatial and seasonal variations of air temperature lapse rates in Alpine regions, Journal of Climate 16, 2003.
 - Jennings, Winchell, Livneh, Molotch, Spatial variation of the rain-snow temperature threshold across the Northern
