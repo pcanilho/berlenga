@@ -95,12 +95,18 @@ void WeatherMap3D::clear_precipitation_extinction(Object *p_source) {
 	}
 }
 
+// Where a layer's density starts to fall off: a source with an area (radius > 0) sets it with
+// its centre's height (the ground under it, which follows the terrain), otherwise ground_height.
+float WeatherMap3D::_haze_base(const HazeSource &p_source) const {
+	return p_source.radius > 0.0f ? p_source.centre.y : ground_height;
+}
+
 float WeatherMap3D::get_precipitation_extinction_at(Vector3 p_position) const {
 	float sigma = 0.0f;
 	for (const HazeSource &h : haze_sources) {
 		float s = h.sigma * _haze_weight(h, p_position);
 		if (h.height_scale > 0.0f) {
-			s *= Math::exp(-MAX(p_position.y - ground_height, 0.0f) / h.height_scale);
+			s *= Math::exp(-MAX(p_position.y - _haze_base(h), 0.0f) / h.height_scale);
 		}
 		sigma += s;
 	}
@@ -132,6 +138,7 @@ void WeatherMap3D::_restore_fog() {
 		fog_environment->set_volumetric_fog_enabled(fog_base.volumetric_enabled);
 		fog_environment->set_volumetric_fog_density(fog_base.volumetric_density);
 		fog_environment->set_volumetric_fog_length(fog_base.volumetric_length);
+		fog_environment->set_volumetric_fog_ambient_inject(fog_base.volumetric_ambient_inject);
 	}
 	fog_base.saved = false;
 	fog_environment.unref();
@@ -173,6 +180,7 @@ void WeatherMap3D::_apply_haze() {
 		fog_base.volumetric_enabled = env->is_volumetric_fog_enabled();
 		fog_base.volumetric_density = env->get_volumetric_fog_density();
 		fog_base.volumetric_length = env->get_volumetric_fog_length();
+		fog_base.volumetric_ambient_inject = env->get_volumetric_fog_ambient_inject();
 		fog_base.saved = true;
 	}
 
@@ -209,6 +217,11 @@ void WeatherMap3D::_apply_haze() {
 		env->set_volumetric_fog_density(0.0f);
 		env->set_volumetric_fog_length(MAX(fog_base.volumetric_length, 300.0f));
 	}
+	// Falling and blowing snow is lit mostly by the sky (single-scatter albedo about 0.97), so the
+	// layers take the ambient light in full unless the project set its own share.
+	if (fog_base.volumetric_ambient_inject <= 0.0f) {
+		env->set_volumetric_fog_ambient_inject(layers ? 1.0f : 0.0f);
+	}
 
 	// Each layer near the ground: a FogVolume over its area (or the map), density falling as
 	// exp(-(y - ground) / H). FogMaterial falls as exp2(-falloff y), so falloff = 1 / (H ln 2).
@@ -233,11 +246,11 @@ void WeatherMap3D::_apply_haze() {
 		h.material->set_height_falloff(1.0f / (h.height_scale * Math::LN2));
 		h.material->set_edge_fade(0.25f);
 		const float width = h.radius > 0.0f ? 2.0f * h.radius : extent;
-		// The box is centred on its origin, which sets the fall-off's base, so it reaches 8 H above the
-		// ground and as far below, where nothing is seen.
+		// The box is centred on its origin, which sets the fall-off's base (_haze_base()), so it
+		// reaches 8 H above the ground and as far below, where nothing is seen.
 		const float height = 16.0f * h.height_scale;
 		const Vector3 centre = h.radius > 0.0f ? h.centre : at;
 		h.volume->set_size(Vector3(width, height, width));
-		h.volume->set_global_position(Vector3(centre.x, ground_height, centre.z));
+		h.volume->set_global_position(Vector3(centre.x, _haze_base(h), centre.z));
 	}
 }

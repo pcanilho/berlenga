@@ -463,7 +463,15 @@ func _haze_tests() -> void:
 	for c in m.get_children(true):
 		if c is FogVolume:
 			vols += 1
-	print("haze: fog %s density %.4f (want 0.0020: the base 0.0005 is off), aerial %.2f, volumetric %s, %d fog volume" % [e.fog_enabled, e.fog_density, e.fog_aerial_perspective, e.volumetric_fog_enabled, vols])
+	print("haze: fog %s density %.4f (want 0.0020: the base 0.0005 is off), aerial %.2f, volumetric %s, %d fog volume, ambient inject %.2f (want 1)" % [e.fog_enabled, e.fog_density, e.fog_aerial_perspective, e.volumetric_fog_enabled, vols, e.volumetric_fog_ambient_inject])
+	# A layer over an area takes its ground from the centre's height (snow on a mountain).
+	m.set_precipitation_extinction(b, 0.02, 10.0, 0.95, Vector3(0, 1200, 0), 150.0)
+	await get_tree().physics_frame
+	var base_y := 0.0
+	for c in m.get_children(true):
+		if c is FogVolume:
+			base_y = c.global_position.y
+	print("haze: raised layer: volume base %.0f m (want 1200), extinction at 1200, 1210 m: %.4f %.4f (want 0.0220 %.4f)" % [base_y, m.get_precipitation_extinction_at(Vector3(0, 1200, 0)), m.get_precipitation_extinction_at(Vector3(0, 1210, 0)), 0.002 + 0.02 * exp(-1.0)])
 	m.set_precipitation_extinction(b, 0.0, 10.0)
 	m.clear_precipitation_extinction(a)
 	m.clear_precipitation_extinction(b)
@@ -473,7 +481,7 @@ func _haze_tests() -> void:
 	for c in m.get_children(true):
 		if c is FogVolume and not c.is_queued_for_deletion():
 			vols += 1
-	print("haze: cleared: fog %s density %.4f aerial %.2f volumetric %s, %d fog volumes" % [e.fog_enabled, e.fog_density, e.fog_aerial_perspective, e.volumetric_fog_enabled, vols])
+	print("haze: cleared: fog %s density %.4f aerial %.2f volumetric %s, %d fog volumes, ambient inject %.2f (want 0)" % [e.fog_enabled, e.fog_density, e.fog_aerial_perspective, e.volumetric_fog_enabled, vols, e.volumetric_fog_ambient_inject])
 
 
 # Lightning: Price and Rind's rate and ground share, a storm's flashes against that rate, a ground
