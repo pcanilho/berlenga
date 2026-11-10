@@ -66,7 +66,7 @@ struct RTLightData {
 
 layout(set = 0, binding = RT_LIGHT_BUFFER_BINDING, std430) readonly buffer LightBuffer {
 	RTLightPacked rt_light_buffer[];
-}
+};
 
 layout(set = 0, binding = 40) uniform sampler rt_light_projector_sampler;
 
@@ -82,7 +82,7 @@ layout(set = 0, binding = 40) uniform sampler rt_light_projector_sampler;
 
 layout(set = 0, binding = RT_LIGHT_GRID_BINDING, std430) readonly buffer LightGridBuffer {
 	uint rt_light_grid[];
-}
+};
 
 // The lights that can reach p: the global ones at [r_global_start, + r_global_count)
 // and the cell's at [r_cell_start, + r_cell_count), indices into rt_light_buffer.
