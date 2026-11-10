@@ -1362,6 +1362,7 @@ void fragment_shader(in SceneData scene_data) {
 #ifdef LIGHT_VERTEX_USED
 	vec3 light_vertex = vertex;
 #endif //LIGHT_VERTEX_USED
+	float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET
 
 	mat3 model_normal_matrix;
 	if (bool(instances.data[instance_index].flags & INSTANCE_FLAGS_NON_UNIFORM_SCALE)) {
@@ -2433,7 +2434,7 @@ void fragment_shader(in SceneData scene_data) {
 					vec3 base_normal_bias = geo_normal * (1.0 - max(0.0, dot(light_dir, -geo_normal)));
 
 #define BIAS_FUNC(m_var, m_idx) \
-	m_var.xyz += light_dir * directional_lights.data[i].shadow_bias[m_idx]; \
+	m_var.xyz += light_dir * (directional_lights.data[i].shadow_bias[m_idx] + directional_shadow_offset); \
 	vec3 normal_bias = base_normal_bias * directional_lights.data[i].shadow_normal_bias[m_idx]; \
 	normal_bias -= light_dir * dot(light_dir, normal_bias); \
 	m_var.xyz += normal_bias;
