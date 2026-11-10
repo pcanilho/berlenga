@@ -55,6 +55,8 @@ public:
 	RID shader, pipeline;
 	bool owns_shader = false;
 	RID buf_params, buf_rest, buf_strands, buf_pos, buf_prev, buf_follow, buf_order, tex_out;
+	RID tex_out_prev, buf_last; // last frame's output (motion vectors) and where each point was
+	bool history = false; // buf_last holds last frame's output
 	RID buf_tris, buf_sdf; // the collision body's triangles and its distance field
 	RID buf_vol, buf_vol_rest; // the hair volume grid (density, momentum) and the groom's own density
 	int vol_cells = 0; // a side, 0: no volume grid
@@ -74,6 +76,7 @@ public:
 	void rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps, PackedFloat32Array p_tris);
 	void rt_make_uniform_set();
 	void rt_reset(Ref<HairStrandSolverGPU> p_self);
+	void rt_hold(Ref<HairStrandSolverGPU> p_self);
 	void rt_free_buffers();
 	void rt_free(Ref<HairStrandSolverGPU> p_self);
 
@@ -133,8 +136,12 @@ public:
 	// p_xform: groom space -> world this frame.
 	void step(const Transform3D &p_xform, double p_delta, int p_substeps, const Settings &p_settings);
 	void reset();
+	// The hair stops moving (the simulation is paused): last frame's positions become this
+	// frame's, so the motion vectors fall to zero.
+	void hold();
 
 	RID get_position_texture_rd_rid() const;
+	RID get_previous_position_texture_rd_rid() const;
 	int get_texture_width() const;
 
 	HairStrandSolver();

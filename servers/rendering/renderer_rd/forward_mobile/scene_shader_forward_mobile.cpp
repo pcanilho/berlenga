@@ -689,6 +689,7 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.renames["OUTPUT_IS_SRGB"] = "SHADER_IS_SRGB";
 		actions.renames["CLIP_SPACE_FAR"] = "SHADER_SPACE_FAR";
 		actions.renames["IN_SHADOW_PASS"] = "IN_SHADOW_PASS";
+		actions.renames["PREVIOUS_FRAME"] = "false";
 		actions.renames["IN_PATH_TRACER"] = "false";
 		actions.renames["VIEWPORT_SIZE"] = "read_viewport_size";
 

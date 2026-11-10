@@ -279,6 +279,9 @@ public:
 		bool uses_alpha_clip = false;
 		bool uses_alpha_antialiasing = false;
 		bool uses_depth_prepass_alpha = false;
+		// render_mode alpha_motion_vectors: drawn in the alpha pass, it still writes its motion
+		// vectors, blended by its alpha (Unreal's translucent "Output Velocity").
+		bool uses_alpha_motion_vectors = false;
 		// render_mode rt_force_opaque / rt_force_transparent of the shader itself, for shaders without an RT variant.
 		bool rt_force_opaque = false;
 		bool rt_force_transparent = false;

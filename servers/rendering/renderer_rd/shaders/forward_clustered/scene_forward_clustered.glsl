@@ -136,6 +136,7 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 
 float global_time;
 float global_prev_time;
+bool global_previous_frame = false; // PREVIOUS_FRAME: the vertex function runs for last frame (motion vectors)
 
 #ifdef MODE_DUAL_PARABOLOID
 
@@ -842,6 +843,7 @@ void main() {
 			prev_vertex);
 
 	global_time = scene_data_block.prev_data.time;
+	global_previous_frame = true;
 	vertex_shader(prev_vertex,
 #ifdef NORMAL_USED
 			prev_normal,
@@ -886,6 +888,7 @@ void main() {
 	// Current vertex.
 	global_time = scene_data_block.data.time;
 	global_prev_time = scene_data_block.prev_data.time;
+	global_previous_frame = false;
 	vertex_shader(vertex,
 #ifdef NORMAL_USED
 			normal,
@@ -1065,6 +1068,7 @@ layout(location = 14) in vec2 point_coord_interp;
 
 #define global_time scene_data_block.data.time
 #define global_prev_time scene_data_block.prev_data.time
+#define global_previous_frame false
 
 // SCENE_DEPTH: opaque scene depth at this fragment (pre-transparent depth copy).
 float scene_depth_fetch() {
@@ -1128,7 +1132,8 @@ layout(location = 0) out vec4 frag_color;
 #endif // RENDER DEPTH
 
 #ifdef MOTION_VECTORS
-layout(location = 2) out vec2 motion_vector;
+// w: the alpha that alpha_motion_vectors surfaces blend their motion by (ignored by opaque ones).
+layout(location = 2) out vec4 motion_vector;
 #endif
 
 #include "../scene_forward_aa_inc.glsl"
@@ -3252,7 +3257,7 @@ void fragment_shader(in SceneData scene_data) {
 	vec2 position_uv = position_clip * vec2(0.5, 0.5);
 	vec2 prev_position_uv = prev_position_clip * vec2(0.5, 0.5);
 
-	motion_vector = prev_position_uv - position_uv;
+	motion_vector = vec4(prev_position_uv - position_uv, 0.0, clamp(alpha, 0.0, 1.0));
 #endif
 }
 

@@ -573,6 +573,7 @@ protected:
 			FLAG_USES_MOTION_VECTOR = 131072,
 			FLAG_USES_STENCIL = 262144,
 			FLAG_USES_OIT = 524288,
+			FLAG_ALPHA_MOTION_VECTORS = 1048576, // render_mode alpha_motion_vectors
 		};
 
 		union {

@@ -92,6 +92,8 @@ ShaderTypes::ShaderTypes() {
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["PREV_TIME"] = constt(ShaderLanguage::TYPE_FLOAT);
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["EXPOSURE"] = constt(ShaderLanguage::TYPE_FLOAT);
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["IN_SHADOW_PASS"] = constt(ShaderLanguage::TYPE_BOOL);
+	// True while the vertex function runs a second time for last frame's position (motion vectors).
+	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["PREVIOUS_FRAME"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["global"].built_ins["IN_PATH_TRACER"] = constt(ShaderLanguage::TYPE_BOOL);
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["PI"] = constvt(ShaderLanguage::TYPE_FLOAT, { pi_scalar });
 	shader_modes[RSE::SHADER_SPATIAL].functions["constants"].built_ins["TAU"] = constvt(ShaderLanguage::TYPE_FLOAT, { tau_scalar });
@@ -304,6 +306,7 @@ ShaderTypes::ShaderTypes() {
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("depth_draw"), "opaque", "always", "never" });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("depth_prepass_alpha") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("rt_force_opaque") });
+		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("alpha_motion_vectors") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("rt_force_transparent") });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("depth_test"), { "default", "disabled", "inverted" } });
 		shader_modes[RSE::SHADER_SPATIAL].modes.push_back({ PNAME("sss_mode_skin") });

@@ -59,18 +59,20 @@ namespace {
 // crossed strips around a slot point: CUSTOM0 = (texel, previous texel, next texel, side -1 or 1),
 // CUSTOM1.w = which strip. The strips are rebuilt around the simulated strand, as HairMesh lays them
 // out (UV.x across, UV.y along), so the path tracer's hair_strands shading reads the fibre offset the
-// same way. rt_vertex_dynamic: the path tracer recaptures it every frame.
+// same way. rt_vertex_dynamic: the path tracer recaptures it every frame. alpha_motion_vectors: the
+// blended strands write their motion (from last frame's positions) for TAA, FSR 2 and DLSS.
 //
 // HAIR_SCATTERING (hair_shading on) lights the raster strands with the Marschner hair model as
 // Unreal Engine evaluates it (Karis 2016), see light(). Off, Godot's standard anisotropic lighting.
 const char *HAIR_RENDER_HEAD = R"(
 shader_type spatial;
-render_mode cull_disabled, rt_vertex_dynamic, rt_force_opaque, hair_strands;
+render_mode cull_disabled, rt_vertex_dynamic, rt_force_opaque, hair_strands, alpha_motion_vectors;
 )";
 
 const char *HAIR_RENDER_SHADER = R"(
 
 uniform sampler2D hair_positions : filter_nearest, repeat_disable;
+uniform sampler2D hair_previous_positions : filter_nearest, repeat_disable; // last frame's
 uniform int texture_width = 1;
 uniform vec4 hair_color : source_color = vec4(0.3, 0.2, 0.1, 1.0);
 uniform vec3 fibre_absorption = vec3(0.4, 0.7, 1.4);
@@ -83,7 +85,10 @@ uniform float lod_width_scale = 1.0; // raster: 1 / the share of strands drawn (
 // strand the distance LOD leaves out of the raster draw.
 vec4 hair_point(float p_index) {
 	int i = int(p_index + 0.5);
-	return texelFetch(hair_positions, ivec2(i % texture_width, i / texture_width), 0);
+	ivec2 texel = ivec2(i % texture_width, i / texture_width);
+	// PREVIOUS_FRAME: the vertex function runs again for last frame's position (motion vectors),
+	// so the ribbon is rebuilt where the strands were then and TAA, FSR 2 and DLSS follow them.
+	return PREVIOUS_FRAME ? texelFetch(hair_previous_positions, texel, 0) : texelFetch(hair_positions, texel, 0);
 }
 
 varying float strand_across; // -1..1 across the drawn ribbon (raster)
@@ -397,6 +402,7 @@ PackedFloat32Array PhysXHair3D::_follow_data(const PackedVector3Array &p_points,
 void PhysXHair3D::_make_material() {
 	if (copy_material.is_valid()) {
 		copy_material->set_shader_parameter("hair_positions", Variant());
+		copy_material->set_shader_parameter("hair_previous_positions", Variant());
 	}
 	if (render_material.is_valid() && render_material->get_shader().is_valid()) {
 		copy_material = render_material->duplicate();
@@ -413,6 +419,7 @@ void PhysXHair3D::_make_material() {
 	copy_material->set_shader_parameter("fibre_absorption", _fibre_absorption());
 	copy_material->set_shader_parameter("fibre_roughness", Vector2(roughness, radial_roughness));
 	copy_material->set_shader_parameter("hair_positions", pos_texture);
+	copy_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
 	copy_material->set_shader_parameter("texture_width", solver ? solver->get_texture_width() : 1);
 	copy_material->set_shader_parameter("root_width", root_width);
 	copy_material->set_shader_parameter("tip_width", tip_width);
@@ -439,11 +446,16 @@ void PhysXHair3D::_clear() {
 	}
 	if (copy_material.is_valid()) {
 		copy_material->set_shader_parameter("hair_positions", Variant());
+		copy_material->set_shader_parameter("hair_previous_positions", Variant());
 		copy_material.unref();
 	}
 	if (pos_texture.is_valid()) {
 		pos_texture->set_texture_rd_rid(RID());
 		pos_texture.unref();
+	}
+	if (prev_pos_texture.is_valid()) {
+		prev_pos_texture->set_texture_rd_rid(RID());
+		prev_pos_texture.unref();
 	}
 	if (solver != nullptr) {
 		memdelete(solver);
@@ -636,6 +648,8 @@ void PhysXHair3D::_build() {
 	solver->build(rest, strands, _follow_data(pts, counts), slot_points);
 	pos_texture.instantiate();
 	pos_texture->set_texture_rd_rid(solver->get_position_texture_rd_rid());
+	prev_pos_texture.instantiate();
+	prev_pos_texture->set_texture_rd_rid(solver->get_previous_position_texture_rd_rid());
 	_make_material();
 	built = true;
 	_step(0.0);
@@ -879,6 +893,9 @@ Ref<ShaderMaterial> PhysXHair3D::get_render_material() const {
 }
 
 void PhysXHair3D::set_simulating(bool p_simulating) {
+	if (simulating && !p_simulating && solver != nullptr && built) {
+		solver->hold(); // the hair stops: no motion vectors from the last step
+	}
 	simulating = p_simulating;
 }
 

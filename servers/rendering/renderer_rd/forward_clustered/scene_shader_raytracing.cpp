@@ -2111,6 +2111,7 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		// shader hides from the camera with it (discard or ALPHA unless IN_SHADOW_PASS) still shadows and
 		// bounces light, as it still casts into the shadow maps in raster.
 		actions.renames["IN_SHADOW_PASS"] = "rt_in_shadow_pass";
+		actions.renames["PREVIOUS_FRAME"] = "false";
 		actions.renames["IN_PATH_TRACER"] = "true";
 		actions.renames["FRONT_FACING"] = "rt_front_facing";
 		actions.renames["RAY_IS_PRIMARY"] = "rt_ray_is_primary(payload.packed_bounces_flags)";
