@@ -82,6 +82,11 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_WETNESS_RECT_W 42
 #define RT_PARAM_WETNESS_RECT_H 43
 #define RT_PARAM_LIGHT_REUSE 44 // 0 off, else 1 + the reservoir slot written + 2 when last frame's is valid (raytracing_lights_inc.glsl)
+#define RT_PARAM_SNOW_MAP 45 // SnowCover3D snow map, bindless index (depth m, albedo, wetness, density / 1000)
+#define RT_PARAM_SNOW_RECT_X 46 // its world XZ rect; width 0 = no snowpack
+#define RT_PARAM_SNOW_RECT_Y 47
+#define RT_PARAM_SNOW_RECT_W 48
+#define RT_PARAM_SNOW_RECT_H 49
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

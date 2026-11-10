@@ -594,6 +594,8 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->hair_mask_texture_channel = "hair_mask_texture_channel";
 	shader_names->wetness_porosity = "wetness_porosity";
 	shader_names->wetness_amount = "wetness_amount";
+	shader_names->snow_amount = "snow_amount";
+	shader_names->snow_max_slope = "snow_max_slope";
 
 	// Wetness reads WeatherMap3D's globals. A shader that names a global uniform only compiles
 	// once the global exists, so they are declared here with no data (rect width 0 = no
@@ -607,6 +609,9 @@ void BaseMaterial3D::init_shaders() {
 		map_rect["type"] = "vec4";
 		map_rect["value"] = Vector4();
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/weather_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Snow reads SnowCover3D's globals the same way (rect width 0 = no snowpack, no snow).
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_map_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
 	}
 	shader_names->point_size = "point_size";
 	shader_names->uv1_scale = "uv1_scale";
@@ -729,6 +734,8 @@ void BaseMaterial3D::_update_shader() {
 		rt.hair_cards = hair_cards;
 		rt.wetness = features[FEATURE_WETNESS];
 		rt.wetness_from_weather = wetness_from_weather;
+		rt.snow = features[FEATURE_SNOW];
+		rt.snow_from_weather = snow_from_weather;
 		_material_set_param(shader_names->rt_base_material_state, rt.encode());
 	}
 
@@ -1185,6 +1192,18 @@ uniform float wetness_amount : hint_range(0.0, 1.0, 0.01);
 		if (wetness_from_weather) {
 			code += R"(global uniform sampler2D weather_state_map;
 global uniform vec4 weather_map_rect;
+)";
+		}
+	}
+
+	if (features[FEATURE_SNOW]) {
+		code += R"(
+uniform float snow_amount : hint_range(0.0, 1.0, 0.01);
+uniform float snow_max_slope : hint_range(0.0, 90.0, 0.1);
+)";
+		if (snow_from_weather) {
+			code += R"(global uniform sampler2D snow_map;
+global uniform vec4 snow_map_rect;
 )";
 		}
 	}
@@ -2199,6 +2218,63 @@ void fragment() {)";
 	ALBEDO *= mix(1.0, wet_factor, wet);
 	ROUGHNESS *= mix(1.0, wet_factor, 0.5 * wet);
 )";
+	}
+
+	if (features[FEATURE_SNOW]) {
+		// Snow cover (docs/ideas/snow.md). The path tracer applies the same lines from the same
+		// inputs (scene_raytracing_raygen.glsl), so both renderers show the same snow.
+		code += R"(
+	// Snow: Enabled
+	{
+		vec3 snow_n_geo = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		vec3 snow_n = snow_n_geo;
+)";
+		if (features[FEATURE_NORMAL_MAPPING]) {
+			code += R"(		vec3 snow_nm = vec3(NORMAL_MAP.xy * 2.0 - 1.0, 0.0);
+		snow_nm.z = sqrt(max(0.0, 1.0 - dot(snow_nm.xy, snow_nm.xy)));
+		snow_n = normalize((INV_VIEW_MATRIX * vec4(normalize(mix(NORMAL, TANGENT * snow_nm.x + BINORMAL * snow_nm.y + NORMAL * snow_nm.z, NORMAL_MAP_DEPTH)), 0.0)).xyz);
+)";
+		}
+		code += R"(		float snow_cover = snow_amount;
+		float snow_albedo = 0.85;
+		float snow_wet = 0.0;
+)";
+		if (snow_from_weather) {
+			code += R"(		if (snow_map_rect.z > 0.0) {
+			vec3 snow_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+			vec2 snow_half_texel = 0.5 / vec2(textureSize(snow_map, 0));
+			vec2 snow_uv = clamp((snow_pos.xz - snow_map_rect.xy) / snow_map_rect.zw, snow_half_texel, 1.0 - snow_half_texel);
+			vec4 snow_s = textureLod(snow_map, snow_uv, 0.0);
+			// Snow-covered fraction from depth and density, Niu and Yang (2007):
+			// tanh(depth / (2.5 z0 (rho / rho_new)^m)), z0 0.01 m, rho_new 100 kg/m3, m 1.
+			snow_cover *= tanh(max(snow_s.r, 0.0) / (0.025 * max(snow_s.a * 10.0, 0.5)));
+			snow_albedo = snow_s.g;
+			snow_wet = clamp(snow_s.b, 0.0, 1.0);
+		} else {
+			snow_cover = 0.0;
+		}
+)";
+		}
+		code += R"(		// Snow slides off past snow_max_slope (its angle of repose) and holds fully 20 degrees below.
+		float snow_cos_max = min(cos(radians(snow_max_slope)), 0.999);
+		float snow_hold = smoothstep(snow_cos_max, cos(radians(max(snow_max_slope - 20.0, 0.0))), snow_n_geo.y);
+		// Thin snow settles first on the flattest facets of the normal map and leaves the steeper ones bare (the
+		// local stability test of Fearing 2000, per facet): the covered share snow_cover goes to the facets that
+		// face up the most, so the surface's detail shows through in patches; near full cover it buries them.
+		snow_cover = clamp(snow_cover, 0.0, 1.0);
+		float snow_flat = clamp(1.0 - (1.0 - snow_n.y) / 0.3, 0.0, 1.0);
+		float snow = snow_hold * max(smoothstep(1.0 - 1.2 * snow_cover, 1.2 - 1.2 * snow_cover, snow_flat), smoothstep(0.9, 1.0, snow_cover));
+		// Snow: albedo from the pack's age, ice F0 0.018 (specular 0.22), rough when dry and smoother wet,
+		// its own smooth top over the surface's bumps.
+		ALBEDO = mix(ALBEDO, vec3(snow_albedo), snow);
+		ROUGHNESS = mix(ROUGHNESS, mix(0.7, 0.35, snow_wet), snow);
+		METALLIC = mix(METALLIC, 0.0, snow);
+		SPECULAR = mix(SPECULAR, 0.22, snow);
+)";
+		if (features[FEATURE_NORMAL_MAPPING]) {
+			code += "\t\tNORMAL_MAP = mix(NORMAL_MAP, vec3(0.5, 0.5, 1.0), snow);\n";
+		}
+		code += "\t}\n";
 	}
 
 	code += "}\n";
@@ -3353,6 +3429,36 @@ bool BaseMaterial3D::is_wetness_from_weather() const {
 	return wetness_from_weather;
 }
 
+void BaseMaterial3D::set_snow_amount(float p_amount) {
+	snow_amount = CLAMP(p_amount, 0.0f, 1.0f);
+	_material_set_param(shader_names->snow_amount, snow_amount);
+}
+
+float BaseMaterial3D::get_snow_amount() const {
+	return snow_amount;
+}
+
+void BaseMaterial3D::set_snow_max_slope(float p_degrees) {
+	snow_max_slope = CLAMP(p_degrees, 0.0f, 90.0f);
+	_material_set_param(shader_names->snow_max_slope, snow_max_slope);
+}
+
+float BaseMaterial3D::get_snow_max_slope() const {
+	return snow_max_slope;
+}
+
+void BaseMaterial3D::set_snow_from_weather(bool p_enable) {
+	if (snow_from_weather == p_enable) {
+		return;
+	}
+	snow_from_weather = p_enable;
+	_queue_shader_change();
+}
+
+bool BaseMaterial3D::is_snow_from_weather() const {
+	return snow_from_weather;
+}
+
 void BaseMaterial3D::set_refraction_texture_channel(TextureChannel p_channel) {
 	ERR_FAIL_INDEX(p_channel, 5);
 	refraction_texture_channel = p_channel;
@@ -3842,6 +3948,12 @@ void BaseMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wetness_amount"), &BaseMaterial3D::get_wetness_amount);
 	ClassDB::bind_method(D_METHOD("set_wetness_from_weather", "enable"), &BaseMaterial3D::set_wetness_from_weather);
 	ClassDB::bind_method(D_METHOD("is_wetness_from_weather"), &BaseMaterial3D::is_wetness_from_weather);
+	ClassDB::bind_method(D_METHOD("set_snow_amount", "amount"), &BaseMaterial3D::set_snow_amount);
+	ClassDB::bind_method(D_METHOD("get_snow_amount"), &BaseMaterial3D::get_snow_amount);
+	ClassDB::bind_method(D_METHOD("set_snow_max_slope", "degrees"), &BaseMaterial3D::set_snow_max_slope);
+	ClassDB::bind_method(D_METHOD("get_snow_max_slope"), &BaseMaterial3D::get_snow_max_slope);
+	ClassDB::bind_method(D_METHOD("set_snow_from_weather", "enable"), &BaseMaterial3D::set_snow_from_weather);
+	ClassDB::bind_method(D_METHOD("is_snow_from_weather"), &BaseMaterial3D::is_snow_from_weather);
 
 	ClassDB::bind_method(D_METHOD("set_point_size", "point_size"), &BaseMaterial3D::set_point_size);
 	ClassDB::bind_method(D_METHOD("get_point_size"), &BaseMaterial3D::get_point_size);
@@ -4157,6 +4269,12 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness_amount", "get_wetness_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wetness_from_weather"), "set_wetness_from_weather", "is_wetness_from_weather");
 
+	ADD_GROUP("Snow", "snow_");
+	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "snow_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_SNOW);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_amount", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_snow_amount", "get_snow_amount");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_max_slope", PROPERTY_HINT_RANGE, "0,90,0.1,degrees"), "set_snow_max_slope", "get_snow_max_slope");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "snow_from_weather"), "set_snow_from_weather", "is_snow_from_weather");
+
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTYI(PropertyInfo(Variant::BOOL, "detail_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_feature", "get_feature", FEATURE_DETAIL);
 	ADD_PROPERTYI(PropertyInfo(Variant::OBJECT, "detail_mask", PROPERTY_HINT_RESOURCE_TYPE, Texture2D::get_class_static()), "set_texture", "get_texture", TEXTURE_DETAIL_MASK);
@@ -4294,6 +4412,7 @@ void BaseMaterial3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(FEATURE_TRANSMISSION);
 	BIND_ENUM_CONSTANT(FEATURE_HAIR);
 	BIND_ENUM_CONSTANT(FEATURE_WETNESS);
+	BIND_ENUM_CONSTANT(FEATURE_SNOW);
 	BIND_ENUM_CONSTANT(FEATURE_MAX);
 
 	BIND_ENUM_CONSTANT(BLEND_MODE_MIX);
@@ -4441,6 +4560,8 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_hair_mask_texture_channel(TEXTURE_CHANNEL_RED);
 	set_wetness_porosity(0.5);
 	set_wetness_amount(1.0);
+	set_snow_amount(1.0);
+	set_snow_max_slope(60.0);
 	set_point_size(1);
 	set_uv1_offset(Vector3(0, 0, 0));
 	set_uv1_scale(Vector3(1, 1, 1));

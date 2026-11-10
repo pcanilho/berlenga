@@ -1780,6 +1780,42 @@ void main() {
 		m.roughness *= mix(1.0, wet_factor, 0.5 * wet);
 	}
 
+	// Snow (BaseMaterial3D, docs/ideas/snow.md): the same lines and inputs as the raster shader.
+	vec4 snow_p = rt_material_snow(mat);
+	if (snow_p.z > 0.5) {
+		float snow_cover = snow_p.x;
+		float snow_albedo = 0.85;
+		float snow_wet = 0.0;
+		if (snow_p.w > 0.5) {
+			vec4 srect = vec4(get_rt_param(RT_PARAM_SNOW_RECT_X), get_rt_param(RT_PARAM_SNOW_RECT_Y),
+					get_rt_param(RT_PARAM_SNOW_RECT_W), get_rt_param(RT_PARAM_SNOW_RECT_H));
+			if (srect.z > 0.0) {
+				uint smap = uint(get_rt_param(RT_PARAM_SNOW_MAP));
+				vec2 ssize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), 0));
+				vec2 half_texel = 0.5 / max(ssize, vec2(1.0));
+				vec3 spos = h.hit_pos + rt_origin.xyz;
+				vec2 suv = clamp((spos.xz - srect.xy) / srect.zw, half_texel, 1.0 - half_texel);
+				vec4 s = textureLod(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), suv, 0.0);
+				// Niu and Yang (2007) snow-covered fraction.
+				snow_cover *= tanh(max(s.r, 0.0) / (0.025 * max(s.a * 10.0, 0.5)));
+				snow_albedo = s.g;
+				snow_wet = clamp(s.b, 0.0, 1.0);
+			} else {
+				snow_cover = 0.0;
+			}
+		}
+		float snow_cos_max = min(cos(radians(snow_p.y)), 0.999);
+		float snow_hold = smoothstep(snow_cos_max, cos(radians(max(snow_p.y - 20.0, 0.0))), h.geometry_normal.y);
+		snow_cover = clamp(snow_cover, 0.0, 1.0);
+		float snow_flat = clamp(1.0 - (1.0 - m.normal.y) / 0.3, 0.0, 1.0);
+		float snow = snow_hold * max(smoothstep(1.0 - 1.2 * snow_cover, 1.2 - 1.2 * snow_cover, snow_flat), smoothstep(0.9, 1.0, snow_cover));
+		m.albedo = mix(m.albedo, vec3(snow_albedo), snow);
+		m.roughness = mix(m.roughness, mix(0.7, 0.35, snow_wet), snow);
+		m.metalness = mix(m.metalness, 0.0, snow);
+		m.specular = mix(m.specular, 0.22, snow);
+		m.normal = normalize(mix(m.normal, h.geometry_normal, snow));
+	}
+
 	// Proximity/distance fade (BaseMaterial3D feature, mirrors raster).
 	if ((mat.flags & (RT_MAT_FLAG_PROXIMITY_FADE | RT_MAT_FLAG_DISTANCE_FADE)) != 0u) {
 		mat4 fade_view_mat = transpose(mat4(scene_data_block.data.view_matrix[0],

@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SnowCover3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A snowpack that follows the camera: snow falls, settles, ages, melts, slides and drifts by the weather.
+	</brief_description>
+	<description>
+		A square map of snowpack cells, [member extent] metres wide, that follows the camera (or [member follow_target]). Each cell holds its snow water equivalent, density, liquid water and albedo, and advances them from the active [code]WeatherMap3D[/code] (its precipitation, temperature, humidity, wind, cloud and sun) or, without one, from this node's own weather settings.
+		- Rain or snow: the logistic model of air temperature and humidity of Jennings et al. (2018), the air cooling with height by [member lapse_rate], so mountains get a snow line.
+		- New snow density by temperature (Hedstrom and Pomeroy 1998); settling toward a maximum density that grows with depth, and albedo ageing (CLASS, Verseghy 1991).
+		- Melt by temperature and by the sunlight each slope absorbs (Pellicciotti et al. 2005); rain and meltwater held up to [member liquid_capacity], the rest running off; refreezing in the cold.
+		- Snow sliding off slopes steeper than [member slide_angle] (SnowSlide, Bernhardt and Schulz 2010) and wind drifting it into sheltered ground (Winstral, Elder and Davis 2002).
+		Materials read it through the [code]snow_map[/code] and [code]snow_map_rect[/code] global shader parameters ([member BaseMaterial3D.snow_enabled]), in raster and under path tracing; scripts through the [code]get_*_at[/code] methods. Cells entering the map as it moves take the state of the nearest cell that was inside it. The last [SnowCover3D] to enter the tree publishes the map.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="add_snow">
+			<return type="void" />
+			<param index="0" name="swe_mm" type="float" />
+			<param index="1" name="density" type="float" default="100.0" />
+			<description>
+				Adds [param swe_mm] of snow water equivalent everywhere on the map at [param density] (kg/m³), as fresh snow. For scenes that start under snow.
+			</description>
+		</method>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<description>
+				Advances the snowpack by [param seconds] of weather time at once, in steps of up to 10 minutes, then publishes the snow map. Wind-drift data is baked first if it is missing, so the result does not depend on frame timing.
+			</description>
+		</method>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Removes all snow from the map.
+			</description>
+		</method>
+		<method name="get_albedo_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the albedo of the snow at [param position]: 0.84 when fresh, ageing toward 0.70 when dry and 0.50 when melting.
+			</description>
+		</method>
+		<method name="get_density_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the density of the snowpack at [param position], in kg/m³.
+			</description>
+		</method>
+		<method name="get_depth_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the depth of snow at [param position], in metres.
+			</description>
+		</method>
+		<method name="get_ground_height_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the ground height the snowpack uses at [param position].
+			</description>
+		</method>
+		<method name="get_map_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				Returns the world XZ rectangle the map covers.
+			</description>
+		</method>
+		<method name="get_runoff_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the water leaving the snowpack at [param position] during the last update, in mm/h: meltwater and rain beyond what the pack holds, or the rain itself on bare ground.
+			</description>
+		</method>
+		<method name="get_snow_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				Returns the snow map texture: depth in metres (R), albedo (G), wetness (B) and density in tonnes per cubic metre (A).
+			</description>
+		</method>
+		<method name="get_swe_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the snow water equivalent at [param position], in mm (kg/m²), liquid included.
+			</description>
+		</method>
+		<method name="get_total_water" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the water held in snow on the whole map, in kg.
+			</description>
+		</method>
+		<method name="get_update_time_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns how long the last update took on the calling thread, in milliseconds.
+			</description>
+		</method>
+		<method name="get_wetness_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the liquid water in the snowpack at [param position] over what it can hold, 0 (dry) to 1 (saturated).
+			</description>
+		</method>
+		<method name="holding_depth" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="slope_degrees" type="float" />
+			<param index="1" name="min_mm" type="float" />
+			<param index="2" name="decay" type="float" />
+			<description>
+				Returns the snow water equivalent (mm) a slope of [param slope_degrees] holds before it slides (SnowSlide, Bernhardt and Schulz 2010): [param min_mm] at 75 degrees and steeper, growing by a factor of e every 1 / [param decay] degrees flatter.
+			</description>
+		</method>
+		<method name="new_snow_density" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<description>
+				Returns the density of new snow falling at [param celsius] (Hedstrom and Pomeroy 1998): 67.92 + 51.25 exp(T / 2.59) kg/m³.
+			</description>
+		</method>
+		<method name="refresh_heights">
+			<return type="void" />
+			<description>
+				Samples the ground again for every cell, after the terrain under the map changed.
+			</description>
+		</method>
+		<method name="snowfall_fraction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<param index="1" name="humidity" type="float" />
+			<description>
+				Returns the share of precipitation that falls as snow at air temperature [param celsius] and relative humidity [param humidity] (0 to 1), from the logistic model of Jennings et al. (2018): 1 / (1 + exp(-10.04 + 1.41 T + 0.09 RH)), RH in percent. Half falls as snow at 3.9 °C in dry air (50%) and at 1.4 °C in humid air (90%).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="drift_distance" type="float" setter="set_drift_distance" getter="get_drift_distance" default="100.0">
+			How far upwind the terrain is searched for shelter (Winstral's dmax), in metres.
+		</member>
+		<member name="drift_enabled" type="bool" setter="set_drift_enabled" getter="is_drift_enabled" default="true">
+			If [code]true[/code], wind above [member drift_threshold_wind] moves falling snow into sheltered ground and off exposed ground, by the maximum upwind slope Sx (Winstral, Elder and Davis 2002) over a 30 degree window. The map keeps the snow that fell. Sx is baked on worker threads when the wind turns by more than 10 degrees.
+		</member>
+		<member name="drift_strength" type="float" setter="set_drift_strength" getter="get_drift_strength" default="0.6">
+			How strongly drift redistributes falling snow: at full wind, a fully sheltered cell gets [code]1 + drift_strength[/code] times the snowfall and a fully exposed cell [code]1 - drift_strength[/code] times.
+		</member>
+		<member name="drift_threshold_wind" type="float" setter="set_drift_threshold_wind" getter="get_drift_threshold_wind" default="7.0">
+			The 10 m wind speed above which snow drifts, about 7 m/s for dry snow (Li and Pomeroy 1997). Drift is full at twice this speed.
+		</member>
+		<member name="extent" type="float" setter="set_extent" getter="get_extent" default="512.0">
+			The width of the square map, in metres.
+		</member>
+		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
+			The physics layers cast against for ground heights where [member height_source] gives none.
+		</member>
+		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
+		</member>
+		<member name="height_source" type="NodePath" setter="set_height_source" getter="get_height_source" default="NodePath(&quot;&quot;)">
+			Relative humidity (0 to 1) used when no [code]WeatherMap3D[/code] is in the scene.
+		</member>
+		<member name="humidity" type="float" setter="set_humidity" getter="get_humidity" default="0.85">
+		</member>
+		<member name="lapse_rate" type="float" setter="set_lapse_rate" getter="get_lapse_rate" default="6.5">
+			How fast the air cools with height above the weather map's ground height, in °C per km (6.5, the standard atmosphere). Sets where rain turns to snow on a mountain and where snow stays.
+		</member>
+		<member name="liquid_capacity" type="float" setter="set_liquid_capacity" getter="get_liquid_capacity" default="0.05">
+			The share of its ice the snowpack holds as liquid water before meltwater and rain drain out.
+		</member>
+		<member name="melt_shortwave_factor" type="float" setter="set_melt_shortwave_factor" getter="get_melt_shortwave_factor" default="0.0094">
+			Melt per watt of absorbed sunlight (mm m² h⁻¹ W⁻¹), the SRF of Pellicciotti et al. (2005). The sunlight is the clear-sky beam from [member sun_light] (Meinel and Meinel 1976) on each cell's slope, through the cloud shadow or cover of the weather map, times one minus the snow's albedo.
+		</member>
+		<member name="melt_temperature_factor" type="float" setter="set_melt_temperature_factor" getter="get_melt_temperature_factor" default="0.05">
+			Melt per degree above zero (mm h⁻¹ °C⁻¹), the TF of Pellicciotti et al. (2005). Meltwater also refreezes at this rate below 0 °C.
+		</member>
+		<member name="melt_threshold" type="float" setter="set_melt_threshold" getter="get_melt_threshold" default="1.0">
+			Snow melts only above this air temperature, in °C.
+		</member>
+		<member name="precipitation_rate" type="float" setter="set_precipitation_rate" getter="get_precipitation_rate" default="0.0">
+			Precipitation in mm/h of water used when no [code]WeatherMap3D[/code] is in the scene. With one, the map's rain rate is used, split into rain and snow.
+		</member>
+		<member name="publish_shader_globals" type="bool" setter="set_publish_shader_globals" getter="get_publish_shader_globals" default="true">
+			If [code]true[/code], the map is published as the [code]snow_map[/code] and [code]snow_map_rect[/code] global shader parameters that [member BaseMaterial3D.snow_enabled] reads, in raster and under path tracing.
+		</member>
+		<member name="resolution" type="int" setter="set_resolution" getter="get_resolution" default="256">
+			The number of cells along each side of the map.
+		</member>
+		<member name="slide_angle" type="float" setter="set_slide_angle" getter="get_slide_angle" default="25.0">
+			Ground steeper than this, in degrees, sheds snow beyond what it holds (SnowSlide: 25 degrees).
+		</member>
+		<member name="slide_enabled" type="bool" setter="set_slide_enabled" getter="is_slide_enabled" default="true">
+			If [code]true[/code], snow slides off steep ground to lower cells (SnowSlide, Bernhardt and Schulz 2010): from the highest snow surface down, a cell holding more than [method holding_depth] passes the excess downhill, in proportion to the drop to each lower neighbour. Mass is conserved.
+		</member>
+		<member name="slide_holding_decay" type="float" setter="set_slide_holding_decay" getter="get_slide_holding_decay" default="0.074">
+			How fast the snow a slope holds grows as it gets flatter, per degree below 75. See [method holding_depth].
+		</member>
+		<member name="slide_interval" type="float" setter="set_slide_interval" getter="get_slide_interval" default="600.0">
+			Weather seconds between slide passes.
+		</member>
+		<member name="slide_min_holding" type="float" setter="set_slide_min_holding" getter="get_slide_min_holding" default="50.0">
+			The snow water equivalent (mm) slopes of 75 degrees and steeper still hold.
+		</member>
+		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
+			Updates per real second.
+		</member>
+		<member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="-2.0">
+		</member>
+		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="1.0">
+		</member>
+		<member name="update_rate" type="float" setter="set_update_rate" getter="get_update_rate" default="2.0">
+		</member>
+	</members>
+</class>

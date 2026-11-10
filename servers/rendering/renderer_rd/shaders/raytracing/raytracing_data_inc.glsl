@@ -168,7 +168,7 @@ struct MaterialData {
 	uint hair_absorption; // Melanin absorption per fibre diameter (rt_medium_absorption() code).
 	uint hair_mask_texture; // Where the surface is hair; 0 (white) = everywhere.
 	uint hair_crown_xy; // fp16x2 hair_crown, object space.
-	uint hair_crown_z; // fp16 in bits 0-15.
+	uint hair_crown_z; // fp16 in bits 0-15; BaseMaterial3D snow_amount (16-23) and snow_max_slope / 90 (24-31), see rt_material_snow().
 };
 
 // Bindless index of a MaterialData *_texture.
@@ -242,6 +242,12 @@ vec2 rt_material_subsurface(MaterialData p_mat) {
 vec4 rt_material_wetness(MaterialData p_mat) {
 	return vec4(float((p_mat.subsurface >> 9u) & 0xFFu) / 255.0, float((p_mat.subsurface >> 17u) & 0xFFu) / 255.0,
 			float((p_mat.subsurface >> 25u) & 1u), float((p_mat.subsurface >> 26u) & 1u));
+}
+
+// BaseMaterial3D Snow: amount (x), snow_max_slope in degrees (y), on (z), cover from the snow map (w).
+vec4 rt_material_snow(MaterialData p_mat) {
+	return vec4(float((p_mat.hair_crown_z >> 16u) & 0xFFu) / 255.0, float(p_mat.hair_crown_z >> 24u) / 255.0 * 90.0,
+			float((p_mat.subsurface >> 27u) & 1u), float((p_mat.subsurface >> 28u) & 1u));
 }
 
 vec2 rt_material_clearcoat(MaterialData p_mat) {

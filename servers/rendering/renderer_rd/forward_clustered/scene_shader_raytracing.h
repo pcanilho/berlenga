@@ -116,7 +116,7 @@ public:
 	constexpr static uint32_t RT_MAX_RECURSION_DEPTH = 2;
 
 	// Size of the float params buffer, injected into the RT shaders as RT_PARAM_COUNT.
-	static constexpr int RT_PARAM_COUNT = 48;
+	static constexpr int RT_PARAM_COUNT = 52;
 	static_assert(RT_PARAM_COUNT % 4 == 0, "rt_params is a std140 vec4 array.");
 
 	// Pathtracing parameter indices for the params buffer.
@@ -198,6 +198,12 @@ public:
 	static constexpr int RT_PARAM_WETNESS_RECT_H = 43;
 	// Light reuse across pixels and frames (binding 51, ReSTIR DI): 0 off, else 1 + the slot written + 2 when last frame's is valid.
 	static constexpr int RT_PARAM_LIGHT_REUSE = 44;
+	// SnowCover3D snow map for BaseMaterial3D Snow: bindless index and world XZ rect (width 0 = none).
+	static constexpr int RT_PARAM_SNOW_MAP = 45;
+	static constexpr int RT_PARAM_SNOW_RECT_X = 46;
+	static constexpr int RT_PARAM_SNOW_RECT_Y = 47;
+	static constexpr int RT_PARAM_SNOW_RECT_W = 48;
+	static constexpr int RT_PARAM_SNOW_RECT_H = 49;
 
 	static inline uint32_t rt_flags_pack(uint32_t p_flags, uint32_t p_sample_count, uint32_t p_max_bounces) {
 		uint32_t result = p_flags;

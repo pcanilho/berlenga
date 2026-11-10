@@ -3614,6 +3614,12 @@ RTMaterialData *RenderRaytracing::process_material(RID p_material_rid, uint16_t 
 		mat.subsurface.wetness_amount = rt_unorm8(get_float("wetness_amount", 1.0f));
 		mat.subsurface.wetness_from_weather = rt_state.wetness_from_weather;
 	}
+	if (rt_state.snow) {
+		mat.subsurface.snow = 1;
+		mat.subsurface.snow_from_weather = rt_state.snow_from_weather;
+		mat.hair_crown_z.snow_amount = rt_unorm8(get_float("snow_amount", 1.0f));
+		mat.hair_crown_z.snow_max_slope = rt_unorm8(get_float("snow_max_slope", 60.0f) / 90.0f);
+	}
 	// Also weights unshaded albedo, so it is read with the emission feature disabled.
 	mat.emission_indirect_transmission.emission_indirect = Math::make_half_float(get_float("emission_indirect_energy", 1.0f));
 	if (rt_state.transmission) {
@@ -7288,6 +7294,32 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_Y] = rect.y;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_W] = has_weather ? rect.z : 0.0f;
 			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_WETNESS_RECT_H] = has_weather ? rect.w : 0.0f;
+		}
+		// Snow for BaseMaterial3D Snow: SnowCover3D's global snow map (depth, albedo, wetness,
+		// density) and its rect, as the raster shader reads them. Width 0 = no snowpack.
+		{
+			RendererRD::MaterialStorage *ms = RendererRD::MaterialStorage::get_singleton();
+			static const StringName snow_map_name = "snow_map";
+			static const StringName snow_map_rect_name = "snow_map_rect";
+			const Variant rect_var = ms->global_shader_parameter_get_internal(snow_map_rect_name);
+			const Vector4 rect = rect_var.get_type() == Variant::VECTOR4 ? Vector4(rect_var) : Vector4();
+			RID snow_tex;
+			const Variant tex_var = ms->global_shader_parameter_get_internal(snow_map_name);
+			if (tex_var.get_type() == Variant::RID) {
+				snow_tex = tex_var;
+			} else if (tex_var.get_type() == Variant::OBJECT) {
+				Object *t = tex_var;
+				if (t) {
+					snow_tex = t->call(SNAME("get_rid"));
+				}
+			}
+			RID snow_rd = snow_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(snow_tex) : RID();
+			const bool has_snow = snow_rd.is_valid() && rect.z > 0.0f && rect.w > 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_MAP] = has_snow ? float(bindless_block->add_texture(snow_rd)) : 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_RECT_X] = rect.x;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_RECT_Y] = rect.y;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_RECT_W] = has_snow ? rect.z : 0.0f;
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_RECT_H] = has_snow ? rect.w : 0.0f;
 		}
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_RADIANCE_CACHE] = (p_state && p_state->radiance_cache_buffer.is_valid() && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/radiance_cache")) ? 1.0f : 0.0f;
 		// Water caustics (raytracing_caustics_inc.glsl): the slot written turns every frame; the

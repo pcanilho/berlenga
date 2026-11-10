@@ -255,7 +255,10 @@ struct alignas(16) RT_MaterialData {
 		uint32_t wetness_amount : 8; // unorm8 wetness_amount.
 		uint32_t wetness : 1; // The feature is on.
 		uint32_t wetness_from_weather : 1; // Wetness = amount times the weather map's (RT_PARAM_WETNESS_*).
-		uint32_t unused : 5;
+		// BaseMaterial3D Snow (GLSL rt_material_snow()), see docs/ideas/snow.md; amount and slope in hair_crown_z.
+		uint32_t snow : 1; // The feature is on.
+		uint32_t snow_from_weather : 1; // Cover = amount times the snow map's (RT_PARAM_SNOW_*).
+		uint32_t unused : 3;
 	} subsurface;
 	struct { // texture_subsurface_scattering: red scales the strength.
 		uint32_t index : TEXTURE_INDEX_BITS;
@@ -282,7 +285,8 @@ struct alignas(16) RT_MaterialData {
 	} hair_crown_xy;
 	struct {
 		uint32_t z : 16;
-		uint32_t unused : 16;
+		uint32_t snow_amount : 8; // unorm8 BaseMaterial3D snow_amount.
+		uint32_t snow_max_slope : 8; // unorm8 of snow_max_slope / 90 degrees.
 	} hair_crown_z;
 };
 static_assert(sizeof(RT_MaterialData) == 176, "RT_MaterialData must be 176 bytes for std430, with every bitfield struct in one uint");

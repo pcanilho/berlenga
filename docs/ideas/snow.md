@@ -204,3 +204,70 @@ Bernhardt and Schulz, SnowSlide, GRL 37, 2010. Winstral, Elder and Davis, J. Hyd
 1997. Stomakhin et al., A Material Point Method for Snow Simulation, SIGGRAPH 2013. Bekker,
 Introduction to Terrain-Vehicle Systems, 1969. Wiscombe and Warren, J. Atmos. Sci. 37, 1980.
 Locatelli and Hobbs, J. Geophys. Res. 79, 1974. Deliot and Belcour, EGSR 2023.
+
+## Stage 1: the snowpack and snow on materials (built 10 Nov 2026)
+
+`modules/snow`: `SnowCover3D`, plus a Snow section on BaseMaterial3D. Bench `docs/bench/snow`
+(`--test`, `--view=mountain|props`).
+
+**The snowpack.** A square of cells that follows the camera (512 m at 2 m by default), each with
+snow water equivalent (SWE), density, liquid water and albedo. Per update, for each cell:
+
+- Air temperature from the weather map's, minus 6.5 C per km above its ground height.
+- Precipitation (the weather map's rain rate) split by the Jennings logistic model; the
+  probability is used as the snow share, so sleet is a mix and the change is gradual.
+- New snow at the Hedstrom-Pomeroy density, mixed into the pack by depth.
+- Settling toward the CLASS maximum density (450 dry, 700 wet, less for shallow snow), albedo
+  ageing toward 0.70 dry or 0.50 wet, both e-folding in 100 h; 10 mm of new snow restores 0.84.
+- Melt above 1 C by Pellicciotti et al. (2005), `M = TF T + SRF (1 - albedo) G`, TF 0.05
+  mm/h/C, SRF 0.0094 mm m2/h/W. G is the clear-sky beam from the sun light (Meinel and Meinel
+  1976) on the cell's own slope plus 10% diffuse, through the weather map's cloud shadow, or the
+  Kasten-Czeplak (1980) cover factor when the map bakes no shadow. That is what keeps north faces
+  white and clears south faces.
+- Rain and meltwater held up to 5% of the ice, the rest leaving as runoff (`get_runoff_at()`, for
+  wetness and rivers later); refreezing below 0 C at TF.
+- SnowSlide every `slide_interval` (10 min of weather time): from the highest snow surface down,
+  ground steeper than 25 deg keeps `50 mm x exp(0.074 (75 - slope))` of SWE and passes the rest to
+  lower neighbours by their drop. Two departures from the paper, both for metre cells: what a cell
+  holds follows the ground's slope (a deposit can be as deep as the cell is wide and would hide
+  it), and snow never routes back up onto higher ground, which made terraces on a 60 deg face.
+- Winstral Sx (dmax 100 m, a 30 deg window in 5 deg steps), baked on worker threads when the wind
+  turns more than 10 deg. Above 7 m/s (Li and Pomeroy 1997), falling snow is weighted by
+  `1 + 0.6 clamp(Sx / 15 deg, -1, 1)`, normalised over the map so drift moves snow without making
+  any.
+
+Out: `snow_map` (RGBA half: depth m, albedo, wetness, density / 1000) and `snow_map_rect`, and
+`get_depth_at()`, `get_swe_at()`, `get_density_at()`, `get_albedo_at()`, `get_wetness_at()`,
+`get_runoff_at()`.
+
+**Snow on materials.** `snow_enabled`, `snow_amount`, `snow_max_slope` (60 deg),
+`snow_from_weather`; the same lines in the raster shader and in the path tracer's material
+evaluation (rt_params 45 to 49 carry the map, like wetness's 39 to 43):
+
+- Covered share from depth and density, Niu and Yang (2007):
+  `tanh(depth / (2.5 z0 (rho / 100)))`, z0 = 0.01 m.
+- No snow past `snow_max_slope` on the mesh normal, full 20 deg below it.
+- While the cover is partial it goes to the flattest facets of the normal map first (Fearing's
+  local stability test, per facet), so thin snow lies in patches that follow the surface's own
+  detail, the same in both renderers; near full cover it buries them.
+- Snow albedo from the pack, ice reflectance (F0 0.018), roughness 0.7 dry to 0.35 wet, normal
+  map flattened under the snow.
+
+**Checks (`--test`, all pass).** Jennings 50% temperatures 3.93, 2.65, 1.38 C at 50, 70, 90%
+humidity (formula exact); Hedstrom-Pomeroy densities exact; 20 mm of snowfall kept to 0.01 mm
+through settling; temperature melt 6.0 mm a day at 5 C with 4.7 mm held as liquid; low sun from
+the east melts the east flank (5.9 mm) more than flat ground (0.8) and the west flank (0);
+snow line 408 m against 404 m from the lapse rate; a 60 deg face holds 152 mm (SnowSlide's
+value), the foot gains, mass kept exactly; drift over a ridge at 14 m/s puts 4x more on the lee
+flank, map mean kept at 20.00 mm.
+
+**Cost (cloud CPU, 4 cores).** One update of 256 x 256 cells: 1.1 ms, 1.2 ms with drift, 2.1 ms
+when a slide pass runs. At the default 2 updates a second that is under 0.5% of a 60 Hz frame
+budget on average. The Sx bake (about 240 ms of work) runs on worker threads and the previous Sx
+serves meanwhile. Material cost: one texture read and a few ALU per pixel where snow is enabled;
+GPU timing queued for the PC.
+
+**Known limits, for later stages.** Snow on a material reads the ground's map, so a surface
+under an overhang shows the snow of the cell above (a top-down occlusion map fixes this, as for
+rain). Cells entering the moving map take the nearest edge state until the world tier exists.
+Weather still counts snowfall as rain for its water film (asked of the weather owners).

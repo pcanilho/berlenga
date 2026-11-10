@@ -3790,6 +3790,12 @@
 			- 8×8 = rgb(255, 255, 0) - #ffff00 - Not supported on most hardware
 			[/codeblock]
 		</member>
+		<member name="shader_globals/snow_map" type="Dictionary" setter="" getter="" default="{ &quot;type&quot;: &quot;sampler2D&quot;, &quot;value&quot;: &quot;&quot; }">
+			Global shader parameter: the [code]SnowCover3D[/code] snow map (red: snow depth in metres, green: albedo, blue: wetness, alpha: density in tonnes per cubic metre). Declared by the engine so materials that read the snow compile without one; a [code]SnowCover3D[/code] fills it. A project's own declaration replaces it.
+		</member>
+		<member name="shader_globals/snow_map_rect" type="Dictionary" setter="" getter="" default="{ &quot;type&quot;: &quot;vec4&quot;, &quot;value&quot;: Vector4(0, 0, 0, 0) }">
+			Global shader parameter: the world XZ rectangle (x, z, width, depth) a [code]SnowCover3D[/code] covers. Declared by the engine so materials that read the snow ([member BaseMaterial3D.snow_from_weather]) compile without one; a width of 0 means no snowpack. A project's own declaration replaces it.
+		</member>
 		<member name="shader_globals/weather_map_rect" type="Dictionary" setter="" getter="" default="{ &quot;type&quot;: &quot;vec4&quot;, &quot;value&quot;: Vector4(0, 0, 0, 0) }">
 			Global shader parameter: the world XZ rectangle (x, z, width, depth) a [code]WeatherMap3D[/code] covers. Declared by the engine so materials that read the weather ([member BaseMaterial3D.wetness_from_weather]) compile without one; a width of 0 means no weather. A project's own declaration replaces it.
 		</member>

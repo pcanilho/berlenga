@@ -225,6 +225,7 @@ public:
 		FEATURE_TRANSMISSION,
 		FEATURE_HAIR,
 		FEATURE_WETNESS,
+		FEATURE_SNOW,
 		FEATURE_MAX
 	};
 
@@ -411,6 +412,7 @@ private:
 		uint64_t hair_direction : 2;
 		uint64_t hair_cards : 1;
 		uint64_t wetness_from_weather : 1;
+		uint64_t snow_from_weather : 1;
 
 		// flag bitfield
 		uint32_t feature_mask;
@@ -470,6 +472,7 @@ private:
 		mk.hair_direction = hair_direction;
 		mk.hair_cards = hair_cards;
 		mk.wetness_from_weather = wetness_from_weather;
+		mk.snow_from_weather = snow_from_weather;
 
 		mk.stencil_mode = stencil_mode;
 		mk.stencil_flags = stencil_flags;
@@ -528,6 +531,8 @@ private:
 		StringName hair_mask_texture_channel;
 		StringName wetness_porosity;
 		StringName wetness_amount;
+		StringName snow_amount;
+		StringName snow_max_slope;
 		StringName point_size;
 		StringName uv1_scale;
 		StringName uv1_offset;
@@ -628,6 +633,9 @@ private:
 	float wetness_porosity = 0.5f;
 	float wetness_amount = 1.0f;
 	bool wetness_from_weather = true;
+	float snow_amount = 1.0f;
+	float snow_max_slope = 60.0f;
+	bool snow_from_weather = true;
 	float point_size = 0.0f;
 	float alpha_scissor_threshold = 0.0f;
 	float alpha_hash_scale = 0.0f;
@@ -857,6 +865,15 @@ public:
 
 	void set_wetness_from_weather(bool p_enable);
 	bool is_wetness_from_weather() const;
+
+	void set_snow_amount(float p_amount);
+	float get_snow_amount() const;
+
+	void set_snow_max_slope(float p_degrees);
+	float get_snow_max_slope() const;
+
+	void set_snow_from_weather(bool p_enable);
+	bool is_snow_from_weather() const;
 
 	void set_point_size(float p_point_size);
 	float get_point_size() const;

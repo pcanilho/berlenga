@@ -413,6 +413,18 @@
 		<member name="shadow_to_opacity" type="bool" setter="set_flag" getter="get_flag" default="false">
 			If [code]true[/code], enables the "shadow to opacity" render mode where lighting modifies the alpha so shadowed areas are opaque and non-shadowed areas are transparent. Useful for overlaying shadows onto a camera feed in AR.
 		</member>
+		<member name="snow_amount" type="float" setter="set_snow_amount" getter="get_snow_amount" default="1.0">
+			How much of the snow settles on this surface, from 0 to 1. With [member snow_from_weather], it scales the snow cover the snowpack gives; without, it is the snow cover, for a script to set.
+		</member>
+		<member name="snow_enabled" type="bool" setter="set_feature" getter="get_feature" default="false">
+			If [code]true[/code], snow settles on the surface: from the [code]SnowCover3D[/code] snowpack (its depth, density, age and meltwater) or from [member snow_amount]. The snow-covered share follows the depth and density of the pack (Niu and Yang 2007); snow holds on surfaces flatter than [member snow_max_slope] and, while thin, on the facets of the normal map that face up, so the surface's detail shows through until the snow buries it. Snow takes its albedo from the pack's age (fresh 0.84, old dry 0.70, melting 0.50), the reflectance of ice, a rough top that turns smoother when wet, and smooths over the normal map. The path tracer applies the same model.
+		</member>
+		<member name="snow_from_weather" type="bool" setter="set_snow_from_weather" getter="is_snow_from_weather" default="true">
+			If [code]true[/code], the snow cover comes from the snowpack at this point (the [code]snow_map[/code] and [code]snow_map_rect[/code] global shader parameters a [code]SnowCover3D[/code] publishes) times [member snow_amount]; without a snowpack there is no snow. If [code]false[/code], [member snow_amount] alone is the snow cover.
+		</member>
+		<member name="snow_max_slope" type="float" setter="set_snow_max_slope" getter="get_snow_max_slope" default="60.0">
+			The steepest slope snow holds on, in degrees (its angle of repose). Snow holds fully on slopes 20 degrees flatter and thins out up to this angle.
+		</member>
 		<member name="specular_mode" type="int" setter="set_specular_mode" getter="get_specular_mode" enum="BaseMaterial3D.SpecularMode" default="0">
 			The method for rendering the specular blob.
 			[b]Note:[/b] [member specular_mode] only applies to the specular blob. It does not affect specular reflections from the sky, screen-space reflections, [VoxelGI], SDFGI or [ReflectionProbe]s. To disable reflections from these sources as well, set [member metallic_specular] to [code]0.0[/code] instead.
@@ -745,7 +757,10 @@
 		<constant name="FEATURE_WETNESS" value="15" enum="Feature">
 			Constant for setting [member wetness_enabled].
 		</constant>
-		<constant name="FEATURE_MAX" value="16" enum="Feature">
+		<constant name="FEATURE_SNOW" value="16" enum="Feature">
+			Constant for setting [member snow_enabled].
+		</constant>
+		<constant name="FEATURE_MAX" value="17" enum="Feature">
 			Represents the size of the [enum Feature] enum.
 		</constant>
 		<constant name="BLEND_MODE_MIX" value="0" enum="BlendMode">

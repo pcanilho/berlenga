@@ -66,7 +66,9 @@ struct RTBaseMaterialState {
 	uint32_t wetness : 1;
 	// Second word.
 	uint32_t wetness_from_weather : 1; // BaseMaterial3D wetness_from_weather: wetness times the weather map's.
-	uint32_t unused : 31;
+	uint32_t snow : 1; // BaseMaterial3D Snow.
+	uint32_t snow_from_weather : 1; // BaseMaterial3D snow_from_weather: cover from SnowCover3D's snow map.
+	uint32_t unused : 29;
 
 	RTBaseMaterialState() { std::memset(this, 0, sizeof(*this)); }
 
