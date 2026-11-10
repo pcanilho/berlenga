@@ -16,6 +16,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Hair**: fibre shading, strand grooms, TressFX strand simulation.
+- **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
 - **Physics**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
@@ -184,6 +185,25 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Raster strand hair: older strands with MSAA and TAA, new sorted blending with no AA](docs/media/hair-raster.jpg)
 
 *Raster strands: before with MSAA and TAA, then sorted blending with no AA.*
+
+</details>
+
+### Weather
+- **Weather map** (`WeatherMap3D`): one weather state round the camera (wind, cloud cover, rain, wetness, puddles), read by every shader through global uniforms, raster and path traced.
+- **Wind**: slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.
+- **Storms** (`add_storm`): drift with the wind, with a rain core and a downdraft.
+- **Wet surfaces and puddles** (`surface_storage`, `puddle_drain_rate`, `temperature`, `humidity`): fill with rain and dry by evaporation.
+- **Followers**: water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).
+
+<details><summary>Images: weather map, wet ground</summary>
+
+![Weather map fields round a storm: cloud cover, rain, wind at 10 m, wetness](docs/media/weather-map.jpg)
+
+*Weather map: a storm's cloud, rain core, wind and the wet ground it leaves.*
+
+![A beach dry and after rain: darker sand, puddles and a sheen](docs/media/weather-wet.jpg)
+
+*Wet surfaces: the sand darkens, puddles form and catch the sky.*
 
 </details>
 
