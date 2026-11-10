@@ -81,6 +81,7 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_WETNESS_RECT_Y 41
 #define RT_PARAM_WETNESS_RECT_W 42
 #define RT_PARAM_WETNESS_RECT_H 43
+#define RT_PARAM_LIGHT_REUSE 44 // 0 off, else 1 + the reservoir slot written + 2 when last frame's is valid (raytracing_lights_inc.glsl)
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

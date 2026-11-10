@@ -653,6 +653,9 @@ void RenderRaytracing::_free_viewport_state_internal(RTViewportState *p_state) {
 	if (p_state->caustics_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->caustics_buffer);
 	}
+	if (p_state->light_reuse_buffer.is_valid()) {
+		RD::get_singleton()->free_rid(p_state->light_reuse_buffer);
+	}
 	if (p_state->params_buffer.is_valid()) {
 		RD::get_singleton()->free_rid(p_state->params_buffer);
 	}
@@ -6754,8 +6757,11 @@ void RenderRaytracing::append_emissive_lights(const Vector3 &p_camera, const Vec
 	}
 }
 
-uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, const RTViewportState *p_state, RT_LightData *r_light_data, uint32_t p_max_lights) {
+uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, const RTViewportState *p_state, RT_LightData *r_light_data, uint32_t p_max_lights, LocalVector<RID> *r_instances) {
 	uint32_t rt_light_count = 0;
+	if (r_instances) {
+		r_instances->clear();
+	}
 
 	if (!p_render_data || !p_render_data->lights) {
 		return rt_light_count;
@@ -6888,6 +6894,9 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, cons
 			memcpy(&dld.reserved[1], &corner_v, sizeof(float));
 			dld.reserved[2] = uint32_t(rt_half(MAX(prect.size.x, 0.01f))) | (uint32_t(rt_half(MAX(prect.size.y, 0.01f))) << 16);
 		}
+		if (r_instances) {
+			r_instances->push_back(light_instance);
+		}
 		rt_light_count++;
 	}
 
@@ -6935,6 +6944,9 @@ uint32_t RenderRaytracing::gather_lights(const RenderDataRD *p_render_data, cons
 			ld.spot.inv_attenuation = rt_half(1.0f / MAX(0.001f, ls->light_get_param(base, RSE::LIGHT_PARAM_SPOT_ATTENUATION)));
 		}
 		ld.projector_texture.index = _light_projector_texture(base);
+		if (r_instances) {
+			r_instances->push_back(light_instance);
+		}
 		rt_light_count++;
 	}
 
@@ -7179,7 +7191,8 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		}
 		memset((void *)rt_light_scratch.ptr(), 0, RT_LIGHTS_MAX * sizeof(RT_LightData));
 		RT_LightData *rt_light_data = rt_light_scratch.ptr();
-		const uint32_t rt_light_count = gather_lights(p_render_data, p_state, rt_light_data, RT_LIGHTS_MAX);
+		const bool light_reuse = p_state && GLOBAL_GET_CACHED(bool, "rendering/pathtracing/light_reuse");
+		const uint32_t rt_light_count = gather_lights(p_render_data, p_state, rt_light_data, RT_LIGHTS_MAX, light_reuse ? &rt_light_instances_scratch : nullptr);
 		// Light positions are relative to the anchor (gather_lights), so is the grid.
 		build_light_grid(rt_light_data, rt_light_count, p_render_data->scene_data->cam_transform.origin - p_state->rt_origin, rt_light_grid_scratch);
 		append_emissive_lights(p_render_data->scene_data->cam_transform.origin, p_state->rt_origin, rt_light_grid_scratch);
@@ -7194,6 +7207,60 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/refraction") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_REFRACTION : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/subsurface_scattering") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_SUBSURFACE : 0u) |
 				(GLOBAL_GET_CACHED(bool, "rendering/pathtracing/hair") ? SceneShaderRaytracing::RT_MATERIAL_FEATURE_HAIR : 0u));
+		// Light reuse (ReSTIR DI, raytracing_lights_inc.glsl): two frames of per-pixel reservoirs,
+		// the slot written turning every frame, and a table renumbering last frame's lights.
+		if (light_reuse) {
+			const Size2i size = rb->get_internal_size();
+			const uint64_t uints = RT_LIGHT_REUSE_HEADER + 2ull * uint64_t(size.width) * uint64_t(size.height) * RT_LIGHT_REUSE_STRIDE;
+			if (!p_state->light_reuse_buffer.is_valid() || p_state->light_reuse_size != size) {
+				if (p_state->light_reuse_buffer.is_valid()) {
+					RD::get_singleton()->free_rid(p_state->light_reuse_buffer);
+				}
+				Vector<uint8_t> zeros;
+				zeros.resize(uints * sizeof(uint32_t));
+				zeros.fill(0);
+				p_state->light_reuse_buffer = RD::get_singleton()->storage_buffer_create(zeros.size(), zeros);
+				RD::get_singleton()->set_resource_name(p_state->light_reuse_buffer, "RT Light Reuse");
+				p_state->light_reuse_size = size;
+				p_state->light_reuse_history = false;
+				p_state->light_reuse_lights.clear();
+			}
+			if (p_state->light_reuse_origin != p_state->rt_origin) {
+				// Stored positions are relative to the old anchor.
+				p_state->light_reuse_history = false;
+			}
+			p_state->light_reuse_origin = p_state->rt_origin;
+			p_state->light_reuse_slot ^= 1u;
+
+			const uint32_t prev_count = MIN(p_state->light_reuse_lights.size(), (uint32_t)RT_LIGHTS_MAX);
+			LocalVector<uint32_t> &header = rt_light_reuse_header_scratch;
+			header.resize(4 + prev_count);
+			header[0] = 0;
+			header[1] = prev_count;
+			header[2] = size.width;
+			header[3] = size.height;
+			if (prev_count > 0) {
+				HashMap<RID, uint32_t> now;
+				for (uint32_t i = 0; i < rt_light_instances_scratch.size(); i++) {
+					now.insert(rt_light_instances_scratch[i], i + 1);
+				}
+				for (uint32_t i = 0; i < prev_count; i++) {
+					HashMap<RID, uint32_t>::ConstIterator it = now.find(p_state->light_reuse_lights[i]);
+					header[4 + i] = it ? it->value : 0u;
+				}
+			}
+			RD::get_singleton()->buffer_update(p_state->light_reuse_buffer, 0, header.size() * sizeof(uint32_t), header.ptr());
+			rt_ubo.params[SceneShaderRaytracing::RT_PARAM_LIGHT_REUSE] = float(1u + p_state->light_reuse_slot + (p_state->light_reuse_history ? 2u : 0u));
+			p_state->light_reuse_history = true;
+			p_state->light_reuse_lights = rt_light_instances_scratch;
+		} else if (p_state) {
+			p_state->light_reuse_history = false;
+			p_state->light_reuse_lights.clear();
+			if (p_state->light_reuse_buffer.is_valid()) {
+				RD::get_singleton()->free_rid(p_state->light_reuse_buffer);
+				p_state->light_reuse_buffer = RID();
+			}
+		}
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SSS_SCALE] = MAX(0.0f, (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/subsurface_scattering_scale"));
 		// Weather wetness for BaseMaterial3D Wetness: WeatherMap3D's global state map (green =
 		// wetness) and its rect, the same globals the raster shader reads. Width 0 = none.
@@ -7430,6 +7497,16 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		u.binding = 45;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		u.append_id(p_state->radiance_cache_buffer);
+		uniforms.push_back(u);
+	}
+
+	// Binding 51: light reuse reservoirs (SSBO; raytracing_lights_inc.glsl). A small stand-in
+	// while off, which the shader never reads (RT_PARAM_LIGHT_REUSE is 0).
+	{
+		RD::Uniform u;
+		u.binding = 51;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.append_id(p_state->light_reuse_buffer.is_valid() ? p_state->light_reuse_buffer : RendererRD::MeshStorage::get_singleton()->get_default_rd_storage_buffer());
 		uniforms.push_back(u);
 	}
 

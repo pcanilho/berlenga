@@ -1595,7 +1595,18 @@ void shade_and_bounce(HitData h, MaterialResult m) {
 	}
 
 	path_pack(payload, ps);
+	// A camera ray's first hit reuses lights other pixels and frames found (raytracing_lights_inc.glsl).
+	// Only a pixel's first sample: its later ones would mostly resample the same stored light, so
+	// they keep their own independent choice.
+	light_reuse_here = total_bounces == 0u && is_sample_zero(ps.packed_bounces_flags);
+	if (light_reuse_here) {
+		light_reuse_first_sample = true;
+		light_reuse_prev_pos = rt_hit_prev_world_pos(h.hit_pos);
+		light_reuse_motion = rt_motion_vector(h.hit_pos, light_reuse_prev_pos);
+		light_reuse_eye = gl_WorldRayOriginEXT;
+	}
 	ps.radiance += ps.throughput * shade_local_surface(h, m, N, V, diffuse_bounces > 0u, ps.bsdf_pdf, ps.rng_state);
+	light_reuse_here = false;
 
 	// =================================================================
 	// DLSS Ray Reconstruction output (primary ray, sample 0 only)
