@@ -9,6 +9,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_patch_weight" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Returns the patch weight at [param global_position], from 0 (between patches) to 1 (inside one). Always 1 when [member patch_scale] is 0.
+			</description>
+		</method>
 		<method name="get_rule_fade" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="rule" type="int" enum="PlantSpecies.Rule" />
@@ -81,6 +88,18 @@
 		<member name="meshes" type="Mesh[]" setter="set_meshes" getter="get_meshes" default="[]">
 			Mesh variants; each plant picks one at random. Plants carry ([code]variant, scale, random, species[/code]) in [code]INSTANCE_CUSTOM[/code] for their materials.
 		</member>
+		<member name="patch_cover" type="float" setter="set_patch_cover" getter="get_patch_cover" default="0.5">
+			Fraction of the ground inside patches.
+		</member>
+		<member name="patch_invert" type="bool" setter="set_patch_invert" getter="is_patch_invert" default="false">
+			If [code]true[/code], the species grows between the patches instead. Two species with the same [member patch_scale], [member patch_cover] and [member patch_seed], one inverted, share the ground exactly (for example tall grass in patches and clover between them).
+		</member>
+		<member name="patch_scale" type="float" setter="set_patch_scale" getter="get_patch_scale" default="0.0">
+			Size of the patches, in metres. The species then grows only in patches (clover beds, flower drifts, stands of tall grass), from value noise over the ground. 0 turns patches off.
+		</member>
+		<member name="patch_seed" type="int" setter="set_patch_seed" getter="get_patch_seed" default="0">
+			Seed of the patch noise.
+		</member>
 		<member name="random_yaw" type="bool" setter="set_random_yaw" getter="is_random_yaw" default="true">
 			If [code]true[/code], each plant turns to a random angle around its up axis.
 		</member>
@@ -95,6 +114,9 @@
 		</member>
 		<member name="spacing" type="float" setter="set_spacing" getter="get_spacing" default="2.0">
 			Minimum distance in metres between two plants of this species (Poisson-disk radius).
+		</member>
+		<member name="visibility_range" type="float" setter="set_visibility_range" getter="get_visibility_range" default="0.0">
+			Distance, in metres, beyond which the species is not drawn (it fades out over the last 15%). For ground cover too small to see far away. 0 draws it at any distance.
 		</member>
 		<member name="water_depth_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.05">
 			Soft edge of [member water_depth_range], in metres.

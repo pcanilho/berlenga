@@ -164,7 +164,73 @@ traced), grass-wind.gif (raster, gusts travelling downwind).
 Cost: CPU build as above, nothing per frame on the CPU except the tile check; one MultiMesh
 draw per tile. GPU timings and the path traced cost on hardware wait for the PC.
 
-Next: trample field (2.2), then path tracing tuning (2.3).
+## Trample field (stage 2.2)
+
+As planned in point 4 above: a bend field around the camera (`trample_size` 32 m,
+`trample_resolution` 128, so 25 cm texels), world aligned so it scrolls with the camera without
+smearing. Each texel holds a bend vector (direction and amount, 0 to 1) in world xz.
+
+- **Movers**: every `Node3D` in the group `trample_group` (default `grass_trample`) whose
+  underside is within the grass. Its radius and half height come from the meta
+  `trample_radius`, else its first `CollisionShape3D` (sphere, capsule, cylinder or box), else
+  `trample_radius`. So PhysX bodies, characters and props join by being in the group, with no
+  extra setup. Scripts can also press it with `add_trample()` (footsteps, a landing).
+- **Pressing**: full bend under the mover, fading over its rim; blades fall away from the
+  mover and forward along its motion (Jahrmann and Wimmer 2017). A texel keeps the stronger of
+  its current bend and the new one, so passing twice does not over-bend.
+- **Recovery**: the bend relaxes with a half-life (`trample_recovery`, 6 s), Jahrmann and
+  Wimmer's recovery applied per texel, so trails persist for a while and stand back up.
+- **Blades** read the field at their root and lay down along it in place of the wind; the
+  length-preserving bend keeps them from stretching. No per-blade state, so tiles can still be
+  rebuilt at any time.
+
+CPU, not compute: 16,384 texels relax and upload (half floats, 64 KB) in 0.13 ms a frame on the
+cloud CPU, and only the group scan once every texel is upright. A compute pass is only worth it for
+much larger or finer fields.
+
+Bench `docs/bench/grass --test`: flat (bend 1.0) under a parked ball, bent away from it at its
+rim, untouched 3 m away, back to 5% after 2 s at a 0.5 s half-life, and nothing pressed by a
+ball held above the grass. `--trample` rolls a ball and walks a capsule through the field
+(grass-trample.gif). The path traced frame keeps the trails: the bend is the same vertex
+shader the path tracer captures.
+
+## A full carpet (stage 2.3)
+
+Paulo, after the first shots: too sparse, the blades too thin and tall to act as a carpet.
+A real meadow holds hundreds to thousands of shoots a square metre; no game draws that. How
+the published fields read as full:
+
+- **Ghost of Tsushima** (Wohllaib, GDC 2021): blades seen edge-on are shifted in view space so
+  they never thin to a line, and their normals are tilted outward so a flat blade shades as a
+  rounded one; height and type vary per tile from textures; flowers and pampas grass are
+  separate instanced meshes placed in the same tiles; far tiles fall back to a texture on the
+  ground.
+- **Horizon Zero Dawn** (van Muijden, GDC 2017) and **Far Cry 5** (Carrier, GDC 2018): ground
+  cover is several layers placed in order, short dense plants under taller ones, each with its
+  own density graph.
+- **Unreal Landscape Grass Types** and the **Witcher 3** / **Red Dead Redemption 2** fields: the
+  terrain's own layer under grass is painted the grass's colour, so the gaps read as thatch.
+
+What we added:
+
+- `GrassField3D.view_facing` (0.6): edge-on blades widen across the view.
+- `GrassField3D.blade_segments`: a second field with one-segment blades, short and wide, at
+  about 300 a square metre out to 14 m, is the undercoat (a quarter of the vertices per blade).
+- Ground tint: the field publishes its coverage (the rules over the data map) and
+  `ground_tint` as `grass_ground_*` globals; `GrassField3D.get_ground_shader_code()` gives the
+  terrain shader `grass_ground(world_pos, albedo)`. Past the blades' range the ground keeps the
+  grass colour, as in Ghost of Tsushima's far tiles.
+- `PlantSpecies` patches (`patch_scale`, `patch_cover`, `patch_seed`, `patch_invert`): value
+  noise keeps a species to patches. Tall grass grows in patches, clover in the exact complement,
+  flowers in drifts, all through the existing placement. `PlantSpecies.visibility_range` drops
+  small ground cover by distance.
+
+Bench `docs/bench/grass` (layers on by default, `--layers=0` for the single field): tall grass
+55 blades/m2 inside its patches, undercoat 286/m2 near, nothing under water, clover only
+between the tall patches (347 of 55,163 inside one, on its soft edge), 7,499 flowers. Clover
+and flowers place in 72 ms once. Frame time on the cloud CPU rasteriser, close view: 238 ms
+against 217 ms for the single field (+10%), 123,078 blades against 79,992. GPU timings wait for
+the PC. Media: grass-carpet.jpg (before above, after below), grass-carpet-pt.jpg.
 
 ## References
 
@@ -172,6 +238,7 @@ Next: trample field (2.2), then path tracing tuning (2.3).
 - Rockenbeck, Blowing from the West: Simulating Wind in Ghost of Tsushima, GDC 2021.
 - Jahrmann, Wimmer, Responsive Real-Time Grass Rendering for General 3D Scenes, I3D 2017.
 - van Muijden, GPU-Based Procedural Placement in Horizon Zero Dawn, GDC 2017.
+- Carrier, Procedural World Generation of Far Cry 5, GDC 2018.
 - Sousa, Vegetation Procedural Animation and Shading in Crysis, GPU Gems 3, ch. 16 (2007).
 - SimpleGrassTextured, https://github.com/IcterusGames/SimpleGrassTextured (MIT), code read.
 - GodotGrass, https://github.com/2Retr0/GodotGrass (MIT), code read.

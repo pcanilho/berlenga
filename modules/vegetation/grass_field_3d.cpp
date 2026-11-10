@@ -37,15 +37,20 @@
 #include "core/templates/hashfuncs.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/multimesh_instance_3d.h"
+#include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
+#include "scene/resources/3d/box_shape_3d.h"
+#include "scene/resources/3d/capsule_shape_3d.h"
+#include "scene/resources/3d/cylinder_shape_3d.h"
+#include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/resources/multimesh.h"
+#include "servers/rendering/rendering_server.h"
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/weather/weather_map_3d.h"
 
 namespace {
-
-const int BLADE_SEGMENTS = 4;
 
 uint32_t cell_hash(int p_x, int p_z, uint32_t p_salt) {
 	uint32_t h = hash_murmur3_one_32(uint32_t(p_x), p_salt);
@@ -65,13 +70,13 @@ float unit16(uint32_t p_h) {
 
 void GrassField3D::_ensure_resources() {
 	if (blade_mesh.is_null()) {
-		// A strip of BLADE_SEGMENTS quads and a tip: VERTEX.x is the side (-0.5..0.5), VERTEX.y
+		// A strip of blade_segments quads and a tip: VERTEX.x is the side (-0.5..0.5), VERTEX.y
 		// the parameter along the blade; the vertex shader builds the real blade from them.
 		PackedVector3Array verts;
 		PackedVector2Array uvs;
 		PackedInt32Array idx;
-		for (int i = 0; i < BLADE_SEGMENTS; i++) {
-			const float t = float(i) / BLADE_SEGMENTS;
+		for (int i = 0; i < blade_segments; i++) {
+			const float t = float(i) / blade_segments;
 			verts.push_back(Vector3(-0.5f, t, 0.0f));
 			verts.push_back(Vector3(0.5f, t, 0.0f));
 			uvs.push_back(Vector2(0.0f, t));
@@ -79,11 +84,11 @@ void GrassField3D::_ensure_resources() {
 		}
 		verts.push_back(Vector3(0.0f, 1.0f, 0.0f));
 		uvs.push_back(Vector2(0.5f, 1.0f));
-		for (int i = 0; i < BLADE_SEGMENTS - 1; i++) {
+		for (int i = 0; i < blade_segments - 1; i++) {
 			const int a = i * 2;
 			idx.append_array(PackedInt32Array({ a, a + 2, a + 1, a + 1, a + 2, a + 3 }));
 		}
-		const int last = (BLADE_SEGMENTS - 1) * 2;
+		const int last = (blade_segments - 1) * 2;
 		idx.append_array(PackedInt32Array({ last, last + 2, last + 1 }));
 		PackedVector3Array normals;
 		normals.resize(verts.size());
@@ -109,7 +114,8 @@ void GrassField3D::_build_material() {
 	String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
 	code += "// GrassField3D blades (docs/ideas/grass.md): quadratic Bezier bent by the wind, after Ghost of Tsushima.\n";
 	code += "uniform vec3 base_color : source_color;\nuniform vec3 tip_color : source_color;\nuniform vec3 dry_color : source_color;\n";
-	code += "uniform vec2 fallback_wind;\nuniform float wind_response;\n";
+	code += "uniform vec2 fallback_wind;\nuniform float wind_response;\nuniform float view_facing;\n";
+	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	code += "global uniform sampler2D weather_state_map;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	code += WeatherMap3D::get_wind_shader_code();
@@ -150,6 +156,18 @@ void vertex() {
 	float ws = length(wl);
 	float flutter = sin(TIME * (2.5 + 2.0 * rnd) + rnd * 6.2832 + dot(base_w.xz, vec2(0.7, 0.5))) * 0.25 * clamp(ws * 0.15, 0.0, 1.0);
 	vec2 off = vec2(0.0, rest_lean) + (ws > 1e-4 ? wl / ws : vec2(0.0)) * clamp(ws * wind_response, 0.0, 1.3) * (1.0 + flutter);
+	// Trampled: the trample field's bend replaces the wind, laying the blade down along it.
+	if (trample_rect.z > 0.0) {
+		vec2 tuv = (base_w.xz - trample_rect.xy) / trample_rect.zw;
+		if (all(greaterThan(tuv, vec2(0.0))) && all(lessThan(tuv, vec2(1.0)))) {
+			vec2 b = textureLod(trample_map, tuv, 0.0).rg;
+			float bl = length(b);
+			if (bl > 1e-3) {
+				vec2 bd = (to_local * vec3(b.x, 0.0, b.y)).xz;
+				off = mix(off, normalize(bd) * 1.4, smoothstep(0.0, 1.0, min(bl, 1.0)));
+			}
+		}
+	}
 
 	// Length-preserving bend (Jahrmann and Wimmer 2017): the tip turns by the bend angle.
 	float ang = min(length(off), 1.45);
@@ -160,6 +178,16 @@ void vertex() {
 	vec3 tangent = normalize(2.0 * (1.0 - t) * mid + 2.0 * t * (tip - mid) + vec3(0.0, 1e-4, 0.0));
 	vec3 across = vec3(1.0, 0.0, 0.0);
 	p += across * side * w * (1.0 - 0.85 * t);
+	// Seen edge-on a blade is a line: widen it across the view instead (Ghost of Tsushima's
+	// view-space thickening), so the field stays full from every side.
+	vec3 cam_l = to_local * (CAMERA_POSITION_WORLD - base_w);
+	vec2 to_cam = cam_l.xz - p.xz;
+	float cam_d = length(to_cam);
+	if (cam_d > 1e-3) {
+		to_cam /= cam_d;
+		float edge = 1.0 - abs(to_cam.y);
+		p.xz += vec2(-to_cam.y, to_cam.x) * sign(to_cam.x + 1e-6) * side * w * (1.0 - 0.85 * t) * edge * view_facing;
+	}
 	// Rounded across its width, as a real blade.
 	vec3 n = normalize(cross(across, tangent));
 	VERTEX = p;
@@ -202,6 +230,8 @@ void fragment() {
 	material->set_shader_parameter("dryness", dryness);
 	material->set_shader_parameter("fallback_wind", fallback_wind);
 	material->set_shader_parameter("wind_response", wind_response);
+	material->set_shader_parameter("trample_rect", Vector4());
+	material->set_shader_parameter("view_facing", view_facing);
 	if (blade_mesh.is_valid()) {
 		blade_mesh->surface_set_material(0, material);
 	}
@@ -304,6 +334,9 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	if (map && !map->is_baked()) {
 		return; // Wait for the map.
 	}
+	if (!ground_baked) {
+		_bake_ground(map);
+	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const Vector2 c(p_center.x, p_center.z);
 	const float reach = radius + tile_size * 0.75f;
@@ -370,8 +403,337 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	}
 }
 
+// Ground tint: where grass grows the ground under it takes the grass's colour, so the gaps
+// between blades read as more grass (thatch and shade) instead of bare soil. Coverage is the
+// rules' suitability on the data map's grid, published as grass_ground_* globals for the
+// terrain's shader (get_ground_shader_code()).
+void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
+	ground_baked = true;
+	if (!ground_tint_enabled || !is_inside_tree()) {
+		return;
+	}
+	Vector4 rect;
+	Ref<Image> img;
+	if (p_map) {
+		const int res = MIN(p_map->get_resolution(), 1024);
+		const float size = p_map->get_size();
+		const Vector3 c = p_map->get_global_position();
+		rect = Vector4(c.x - size * 0.5f, c.z - size * 0.5f, size, size);
+		Ref<PlantSpecies> r = rules;
+		if (r.is_null()) {
+			r.instantiate();
+		}
+		Vector<uint8_t> data;
+		data.resize(res * res);
+		uint8_t *w = data.ptrw();
+		for (int z = 0; z < res; z++) {
+			for (int x = 0; x < res; x++) {
+				const Vector3 p(rect.x + (x + 0.5f) * size / res, 0.0f, rect.y + (z + 0.5f) * size / res);
+				w[z * res + x] = uint8_t(CLAMP(r->get_suitability(p_map, p), 0.0f, 1.0f) * 255.0f + 0.5f);
+			}
+		}
+		img = Image::create_from_data(res, res, false, Image::FORMAT_L8, data);
+	} else {
+		// No map: grass everywhere.
+		rect = Vector4(-1e6f, -1e6f, 2e6f, 2e6f);
+		Vector<uint8_t> data;
+		data.push_back(255);
+		img = Image::create_from_data(1, 1, false, Image::FORMAT_L8, data);
+	}
+	ground_texture = ImageTexture::create_from_image(img);
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->global_shader_parameter_set("grass_ground_map", ground_texture->get_rid());
+	rs->global_shader_parameter_set("grass_ground_rect", rect);
+	rs->global_shader_parameter_set("grass_ground_color", Vector4(ground_tint.r, ground_tint.g, ground_tint.b, ground_tint.a));
+}
+
+String GrassField3D::get_ground_shader_code() {
+	return R"(
+// GrassField3D ground tint: mix a terrain albedo towards the grass's ground colour where grass grows.
+global uniform sampler2D grass_ground_map : filter_linear;
+global uniform vec4 grass_ground_rect;
+global uniform vec4 grass_ground_color;
+
+float grass_ground_cover(vec3 world_pos) {
+	if (grass_ground_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 uv = (world_pos.xz - grass_ground_rect.xy) / grass_ground_rect.zw;
+	vec2 half_texel = 0.5 / vec2(textureSize(grass_ground_map, 0));
+	// Nothing outside the map: fade out over its outer texel instead of smearing the edge.
+	vec2 outside = max(half_texel - uv, uv - (1.0 - half_texel));
+	float inside = 1.0 - clamp(max(outside.x, outside.y) / half_texel.x, 0.0, 1.0);
+	return textureLod(grass_ground_map, clamp(uv, half_texel, 1.0 - half_texel), 0.0).r * inside;
+}
+
+vec3 grass_ground(vec3 world_pos, vec3 albedo) {
+	return mix(albedo, grass_ground_color.rgb, grass_ground_cover(world_pos) * grass_ground_color.a);
+}
+)";
+}
+
+void GrassField3D::set_blade_segments(int p_segments) {
+	blade_segments = CLAMP(p_segments, 1, 8);
+	rebuild();
+}
+
+void GrassField3D::set_view_facing(float p_facing) {
+	view_facing = CLAMP(p_facing, 0.0f, 1.0f);
+	if (material.is_valid()) {
+		material->set_shader_parameter("view_facing", view_facing);
+	}
+}
+
+void GrassField3D::set_ground_tint(const Color &p_color) {
+	ground_tint = p_color;
+	ground_baked = false;
+}
+
+void GrassField3D::set_ground_tint_enabled(bool p_enabled) {
+	ground_tint_enabled = p_enabled;
+	ground_baked = false;
+	if (!p_enabled && is_inside_tree()) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_rect", Vector4());
+	}
+}
+
+// Trample field. Texels are world aligned, so a moving centre scrolls the field without smearing it.
+
+void GrassField3D::_trample_recenter(const Vector3 &p_center) {
+	const int res = trample_resolution;
+	const float texel = trample_size / res;
+	const Vector2i origin(int(Math::floor(p_center.x / texel)) - res / 2, int(Math::floor(p_center.z / texel)) - res / 2);
+	if ((int)trample.size() != res * res) {
+		trample.resize(res * res);
+		for (Vector2 &b : trample) {
+			b = Vector2();
+		}
+		trample_origin = origin;
+		return;
+	}
+	if (origin == trample_origin) {
+		return;
+	}
+	const Vector2i shift = origin - trample_origin;
+	LocalVector<Vector2> moved;
+	moved.resize(res * res);
+	for (int z = 0; z < res; z++) {
+		for (int x = 0; x < res; x++) {
+			const int sx = x + shift.x;
+			const int sz = z + shift.y;
+			moved[z * res + x] = (sx >= 0 && sx < res && sz >= 0 && sz < res) ? trample[sz * res + sx] : Vector2();
+		}
+	}
+	trample = moved;
+	trample_origin = origin;
+}
+
+void GrassField3D::add_trample(const Vector3 &p_position, float p_radius, const Vector3 &p_velocity, float p_strength) {
+	const int res = trample_resolution;
+	if ((int)trample.size() != res * res || p_radius <= 0.0f) {
+		return;
+	}
+	const float texel = trample_size / res;
+	const float reach = p_radius * 1.25f;
+	const Vector2 c(p_position.x, p_position.z);
+	const Vector2 v(p_velocity.x, p_velocity.z);
+	const float speed = v.length();
+	const Vector2 vd = speed > 1e-3f ? v / speed : Vector2();
+	const int x0 = MAX(int(Math::floor((c.x - reach) / texel)) - trample_origin.x, 0);
+	const int x1 = MIN(int(Math::floor((c.x + reach) / texel)) - trample_origin.x, res - 1);
+	const int z0 = MAX(int(Math::floor((c.y - reach) / texel)) - trample_origin.y, 0);
+	const int z1 = MIN(int(Math::floor((c.y + reach) / texel)) - trample_origin.y, res - 1);
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const Vector2 q((trample_origin.x + x + 0.5f) * texel, (trample_origin.y + z + 0.5f) * texel);
+			const Vector2 rel = q - c;
+			const float d = rel.length();
+			if (d >= reach) {
+				continue;
+			}
+			// Pressed flat under the mover, fading over its rim.
+			const float f = 1.0f - Math::smoothstep(p_radius * 0.6f, reach, d);
+			// Blades fall away from the mover and forward along its motion (Jahrmann and Wimmer).
+			Vector2 dir = (d > 1e-3f ? rel / d : Vector2()) * 0.6f + vd * MIN(speed, 1.0f);
+			if (dir.length() < 1e-3f) {
+				dir = Vector2(1.0f, 0.0f);
+			}
+			const Vector2 target = dir.normalized() * f * CLAMP(p_strength, 0.0f, 1.0f);
+			Vector2 &b = trample[z * res + x];
+			if (target.length_squared() > b.length_squared()) {
+				b = target;
+				trample_active = true;
+			}
+		}
+	}
+}
+
+Vector2 GrassField3D::get_trample_at(const Vector3 &p_position) const {
+	const int res = trample_resolution;
+	if ((int)trample.size() != res * res) {
+		return Vector2();
+	}
+	const float texel = trample_size / res;
+	const int x = int(Math::floor(p_position.x / texel)) - trample_origin.x;
+	const int z = int(Math::floor(p_position.z / texel)) - trample_origin.y;
+	if (x < 0 || x >= res || z < 0 || z >= res) {
+		return Vector2();
+	}
+	return trample[z * res + x];
+}
+
+void GrassField3D::clear_trample() {
+	for (Vector2 &b : trample) {
+		b = Vector2();
+	}
+	trample_active = true; // Upload the cleared field once.
+}
+
+Vector2 GrassField3D::_mover_extent(Node3D *p_node) const {
+	if (p_node->has_meta("trample_radius")) {
+		const float r = p_node->get_meta("trample_radius");
+		return Vector2(r, r);
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(p_node->get_child(i));
+		if (!cs || cs->is_disabled() || cs->get_shape().is_null()) {
+			continue;
+		}
+		const Ref<Shape3D> shape = cs->get_shape();
+		const float sc = cs->get_global_basis().get_scale().x;
+		if (const SphereShape3D *sp = Object::cast_to<SphereShape3D>(shape.ptr())) {
+			return Vector2(sp->get_radius(), sp->get_radius()) * sc;
+		}
+		if (const CapsuleShape3D *cp = Object::cast_to<CapsuleShape3D>(shape.ptr())) {
+			return Vector2(cp->get_radius(), cp->get_height() * 0.5f) * sc;
+		}
+		if (const CylinderShape3D *cy = Object::cast_to<CylinderShape3D>(shape.ptr())) {
+			return Vector2(cy->get_radius(), cy->get_height() * 0.5f) * sc;
+		}
+		if (const BoxShape3D *bx = Object::cast_to<BoxShape3D>(shape.ptr())) {
+			const Vector3 s = bx->get_size() * 0.5f * sc;
+			return Vector2(MAX(s.x, s.z), s.y);
+		}
+	}
+	return Vector2(trample_radius, trample_radius);
+}
+
+void GrassField3D::_trample_step(double p_delta) {
+	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	if (map && !map->is_baked()) {
+		map = nullptr;
+	}
+	// Recovery: every texel relaxes towards upright with the given half-life.
+	if (trample_active) {
+		const float keep = trample_recovery > 0.0f ? Math::pow(0.5f, float(p_delta) / trample_recovery) : 0.0f;
+		float largest = 0.0f;
+		for (Vector2 &b : trample) {
+			b *= keep;
+			largest = MAX(largest, b.length_squared());
+		}
+		if (largest < 1e-6f) {
+			for (Vector2 &b : trample) {
+				b = Vector2();
+			}
+			trample_active = false;
+			_trample_upload(); // Upload the relaxed field once.
+		}
+	}
+	// Movers: any Node3D in the group whose underside is within the grass.
+	const float top = MAX(blade_height.x, blade_height.y);
+	const float ground_y = get_global_position().y;
+	HashMap<ObjectID, Vector3> seen;
+	if (is_inside_tree()) {
+		const Vector<Node *> movers = get_tree()->get_nodes_in_group(trample_group);
+		for (Node *n : movers) {
+			Node3D *n3 = Object::cast_to<Node3D>(n);
+			if (!n3 || !n3->is_visible_in_tree()) {
+				continue;
+			}
+			const Vector3 pos = n3->get_global_position();
+			const Vector3 *last = trample_last.getptr(n3->get_instance_id());
+			Vector3 vel = (last && p_delta > 0.0) ? (pos - *last) / float(p_delta) : Vector3();
+			if (vel.length_squared() > 30.0f * 30.0f) {
+				vel = Vector3(); // Teleported, not moving.
+			}
+			seen.insert(n3->get_instance_id(), pos);
+			const Vector2 ext = _mover_extent(n3);
+			const float ground = map ? map->get_height_at(pos) : ground_y;
+			if (pos.y - ext.y - ground > top) {
+				continue; // Above the grass.
+			}
+			add_trample(pos, ext.x, vel);
+		}
+	}
+	trample_last = seen;
+	if (trample_active) {
+		_trample_upload();
+	}
+}
+
+void GrassField3D::_trample_upload() {
+	if (material.is_null()) {
+		return;
+	}
+	const int res = trample_resolution;
+	if (!trample_enabled || (int)trample.size() != res * res) {
+		material->set_shader_parameter("trample_rect", Vector4());
+		return;
+	}
+	Vector<uint8_t> data;
+	data.resize(res * res * 4);
+	uint16_t *w = (uint16_t *)data.ptrw();
+	for (int i = 0; i < res * res; i++) {
+		w[i * 2 + 0] = Math::make_half_float(trample[i].x);
+		w[i * 2 + 1] = Math::make_half_float(trample[i].y);
+	}
+	if (trample_image.is_valid() && trample_image->get_width() == res) {
+		trample_image->set_data(res, res, false, Image::FORMAT_RGH, data);
+	} else {
+		trample_image = Image::create_from_data(res, res, false, Image::FORMAT_RGH, data);
+	}
+	if (trample_texture.is_valid() && trample_texture->get_width() == res) {
+		trample_texture->update(trample_image);
+	} else {
+		trample_texture = ImageTexture::create_from_image(trample_image);
+	}
+	if (material->get_shader_parameter("trample_map") != Variant(trample_texture)) {
+		material->set_shader_parameter("trample_map", trample_texture);
+	}
+	const float texel = trample_size / res;
+	material->set_shader_parameter("trample_rect", Vector4(trample_origin.x * texel, trample_origin.y * texel, trample_size, trample_size));
+}
+
+void GrassField3D::set_trample_enabled(bool p_enabled) {
+	trample_enabled = p_enabled;
+	if (!trample_enabled) {
+		trample.clear();
+		trample_last.clear();
+		trample_active = false;
+	}
+	_trample_upload();
+}
+
+void GrassField3D::set_trample_size(float p_size) {
+	trample_size = MAX(p_size, 1.0f);
+	trample.clear();
+}
+
+void GrassField3D::set_trample_resolution(int p_resolution) {
+	trample_resolution = CLAMP(p_resolution, 8, 2048);
+	trample.clear();
+}
+
 void GrassField3D::update_at(const Vector3 &p_center) {
 	_update_tiles(p_center);
+	if (trample_enabled) {
+		const Vector2i before = trample_origin;
+		const bool fresh = (int)trample.size() != trample_resolution * trample_resolution || material->get_shader_parameter("trample_map").get_type() == Variant::NIL;
+		_trample_recenter(p_center);
+		if (fresh || before != trample_origin) {
+			_trample_upload();
+		}
+	}
 }
 
 void GrassField3D::rebuild() {
@@ -382,6 +744,7 @@ void GrassField3D::rebuild() {
 	blade_count = 0;
 	blade_mesh.unref();
 	material.unref();
+	ground_baked = false;
 }
 
 void GrassField3D::_notification(int p_what) {
@@ -401,7 +764,10 @@ void GrassField3D::_notification(int p_what) {
 			Viewport *vp = get_viewport();
 			Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
 			if (cam) {
-				_update_tiles(cam->get_global_position());
+				update_at(cam->get_global_position());
+			}
+			if (trample_enabled && !trample.is_empty()) {
+				_trample_step(get_process_delta_time());
 			}
 		} break;
 	}
@@ -499,6 +865,22 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_tile_size, get_tile_size, "size")
 	GRASS_BIND(set_fallback_wind, get_fallback_wind, "wind")
 	GRASS_BIND(set_wind_response, get_wind_response, "response")
+	ClassDB::bind_method(D_METHOD("set_trample_enabled", "enabled"), &GrassField3D::set_trample_enabled);
+	ClassDB::bind_method(D_METHOD("is_trample_enabled"), &GrassField3D::is_trample_enabled);
+	GRASS_BIND(set_blade_segments, get_blade_segments, "segments")
+	GRASS_BIND(set_view_facing, get_view_facing, "facing")
+	GRASS_BIND(set_ground_tint, get_ground_tint, "color")
+	ClassDB::bind_method(D_METHOD("set_ground_tint_enabled", "enabled"), &GrassField3D::set_ground_tint_enabled);
+	ClassDB::bind_method(D_METHOD("is_ground_tint_enabled"), &GrassField3D::is_ground_tint_enabled);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("get_ground_shader_code"), &GrassField3D::get_ground_shader_code);
+	GRASS_BIND(set_trample_group, get_trample_group, "group")
+	GRASS_BIND(set_trample_size, get_trample_size, "size")
+	GRASS_BIND(set_trample_resolution, get_trample_resolution, "resolution")
+	GRASS_BIND(set_trample_radius, get_trample_radius, "radius")
+	GRASS_BIND(set_trample_recovery, get_trample_recovery, "seconds")
+	ClassDB::bind_method(D_METHOD("add_trample", "position", "radius", "velocity", "strength"), &GrassField3D::add_trample, DEFVAL(Vector3()), DEFVAL(1.0f));
+	ClassDB::bind_method(D_METHOD("get_trample_at", "position"), &GrassField3D::get_trample_at);
+	ClassDB::bind_method(D_METHOD("clear_trample"), &GrassField3D::clear_trample);
 #undef GRASS_BIND
 	ClassDB::bind_method(D_METHOD("rebuild"), &GrassField3D::rebuild);
 	ClassDB::bind_method(D_METHOD("update_at", "center"), &GrassField3D::update_at);
@@ -514,15 +896,27 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "blade_height", PROPERTY_HINT_NONE, "suffix:m"), "set_blade_height", "get_blade_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "blade_width", PROPERTY_HINT_RANGE, "0.001,0.2,0.001,suffix:m"), "set_blade_width", "get_blade_width");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "clump_size", PROPERTY_HINT_RANGE, "0.05,10,0.05,suffix:m"), "set_clump_size", "get_clump_size");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "blade_segments", PROPERTY_HINT_RANGE, "1,8,1"), "set_blade_segments", "get_blade_segments");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "view_facing", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_view_facing", "get_view_facing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lean", PROPERTY_HINT_RANGE, "0,1.4,0.01,radians_as_degrees"), "set_lean", "get_lean");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "base_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_base_color", "get_base_color");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "tip_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_tip_color", "get_tip_color");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "dry_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_dry_color", "get_dry_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dryness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_dryness", "get_dryness");
+	ADD_GROUP("Ground", "ground_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_tint_enabled"), "set_ground_tint_enabled", "is_ground_tint_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "ground_tint"), "set_ground_tint", "get_ground_tint");
 	ADD_GROUP("Range", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radius", PROPERTY_HINT_RANGE, "1,500,0.5,or_greater,suffix:m"), "set_radius", "get_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_GROUP("Wind", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "fallback_wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_fallback_wind", "get_fallback_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_response", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_wind_response", "get_wind_response");
+	ADD_GROUP("Trample", "trample_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "trample_enabled"), "set_trample_enabled", "is_trample_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::STRING_NAME, "trample_group"), "set_trample_group", "get_trample_group");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "trample_size", PROPERTY_HINT_RANGE, "4,256,0.5,suffix:m"), "set_trample_size", "get_trample_size");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "trample_resolution", PROPERTY_HINT_RANGE, "8,1024,1"), "set_trample_resolution", "get_trample_resolution");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "trample_radius", PROPERTY_HINT_RANGE, "0.01,5,0.01,suffix:m"), "set_trample_radius", "get_trample_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "trample_recovery", PROPERTY_HINT_RANGE, "0,120,0.1,suffix:s"), "set_trample_recovery", "get_trample_recovery");
 }

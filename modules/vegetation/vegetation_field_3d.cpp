@@ -310,6 +310,12 @@ Error VegetationField3D::populate() {
 					MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 					mmi->set_name(vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
 					mmi->set_multimesh(mm);
+					if (sp->get_visibility_range() > 0.0f) {
+						// Ground cover too small to see far away: dropped by distance, faded out.
+						mmi->set_visibility_range_end(sp->get_visibility_range());
+						mmi->set_visibility_range_end_margin(sp->get_visibility_range() * 0.15f);
+						mmi->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
+					}
 					add_child(mmi, false, INTERNAL_MODE_BACK);
 					generated.push_back(mmi);
 				}

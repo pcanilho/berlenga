@@ -5,11 +5,27 @@
 	</brief_description>
 	<description>
 		Grows real blade geometry in square tiles around the current camera, out to [member radius]. Blades sit on a jittered world grid seeded by position, so the same ground always grows the same blades; neighbouring blades are grouped into clumps that share height, facing, lean and dryness. Where a [TerrainDataMap3D] is set in [member data_map], blades stand on its height and [member rules] (a [PlantSpecies]) decides where they grow (slope, wetness, water depth, distance to water); without one they grow flat at this node's height.
-			Each blade is a quadratic Bezier strip bent in the vertex shader by the wind from [WeatherMap3D] when one is present, else by [member fallback_wind], with its length preserved. Far tiles keep fewer blades (by a fixed rank per blade, so thinning never reshuffles) and widen them to keep the coverage. Rain from the weather map darkens and smooths the blades. Tiles are ordinary MultiMeshes, so the path tracer sees every blade.
+			Each blade is a quadratic Bezier strip bent in the vertex shader by the wind from [WeatherMap3D] when one is present, else by [member fallback_wind], with its length preserved. Far tiles keep fewer blades (by a fixed rank per blade, so thinning never reshuffles) and widen them to keep the coverage. Rain from the weather map darkens and smooths the blades, and bodies in [member trample_group] lay them down (see [member trample_enabled]). Tiles are ordinary MultiMeshes, so the path tracer sees every blade.
 	</description>
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="add_trample">
+			<return type="void" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="velocity" type="Vector3" default="Vector3(0, 0, 0)" />
+			<param index="3" name="strength" type="float" default="1.0" />
+			<description>
+				Presses the grass at [param position] within [param radius] metres, as a mover does: flat under it, bent away from it at its rim and forward along [param velocity]. [param strength] scales the bend (0 to 1). Use it for footsteps, landings or anything not in [member trample_group].
+			</description>
+		</method>
+		<method name="clear_trample">
+			<return type="void" />
+			<description>
+				Stands every trampled blade back up at once.
+			</description>
+		</method>
 		<method name="get_blade_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -22,6 +38,12 @@
 				Returns the time, in milliseconds, of the last frame that built tiles.
 			</description>
 		</method>
+		<method name="get_ground_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Returns shader code for a terrain material: [code]grass_ground(world_pos, albedo)[/code] mixes [param albedo] towards [member ground_tint] where this field's rules let grass grow, and [code]grass_ground_cover(world_pos)[/code] returns that coverage (0 to 1). Paste it into the terrain's shader; it reads the [code]grass_ground_*[/code] global uniforms this node publishes.
+			</description>
+		</method>
 		<method name="get_material" qualifiers="const">
 			<return type="ShaderMaterial" />
 			<description>
@@ -32,6 +54,13 @@
 			<return type="int" />
 			<description>
 				Returns the number of live tiles.
+			</description>
+		</method>
+		<method name="get_trample_at" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				Returns the trample bend at [param position]: a world x/z direction whose length is the amount, from 0 (upright) to 1 (flat). Zero outside the trample field.
 			</description>
 		</method>
 		<method name="rebuild">
@@ -55,6 +84,9 @@
 		<member name="blade_height" type="Vector2" setter="set_blade_height" getter="get_blade_height" default="Vector2(0.25, 0.6)">
 			Minimum and maximum blade height, in metres. Each clump picks a height in this range.
 		</member>
+		<member name="blade_segments" type="int" setter="set_blade_segments" getter="get_blade_segments" default="4">
+			Segments along each blade. 4 bends smoothly; 1 (a single triangle) suits a short, dense undercoat at a quarter of the vertices.
+		</member>
 		<member name="blade_width" type="float" setter="set_blade_width" getter="get_blade_width" default="0.04">
 			Blade width at the root, in metres.
 		</member>
@@ -76,6 +108,12 @@
 		<member name="fallback_wind" type="Vector2" setter="set_fallback_wind" getter="get_fallback_wind" default="Vector2(2, 0.5)">
 			Wind velocity (x, z) in metres per second, used when no [WeatherMap3D] publishes wind.
 		</member>
+		<member name="ground_tint" type="Color" setter="set_ground_tint" getter="get_ground_tint" default="Color(0.05, 0.09, 0.025, 0.85)">
+			Colour the ground takes under the grass (the shaded thatch between blades), with alpha as the strength. Read by terrain shaders through [method get_ground_shader_code].
+		</member>
+		<member name="ground_tint_enabled" type="bool" setter="set_ground_tint_enabled" getter="is_ground_tint_enabled" default="true">
+			If [code]true[/code], this field publishes its coverage and [member ground_tint] as the [code]grass_ground_*[/code] global uniforms. With several fields, enable it on the one that covers the most ground.
+		</member>
 		<member name="lean" type="float" setter="set_lean" getter="get_lean" default="0.35">
 			Largest lean of a blade at rest, in metres of tip offset per metre of height.
 		</member>
@@ -90,6 +128,27 @@
 		</member>
 		<member name="tip_color" type="Color" setter="set_tip_color" getter="get_tip_color" default="Color(0.45, 0.6, 0.22, 1)">
 			Blade colour at the tip.
+		</member>
+		<member name="trample_enabled" type="bool" setter="set_trample_enabled" getter="is_trample_enabled" default="true">
+			If [code]true[/code], movers lay the grass down and it springs back. The field covers [member trample_size] around the camera.
+		</member>
+		<member name="trample_group" type="StringName" setter="set_trample_group" getter="get_trample_group" default="&amp;&quot;grass_trample&quot;">
+			Every [Node3D] in this group tramples the grass while its underside is within the blades. Its radius comes from the meta [code]trample_radius[/code], else its first [CollisionShape3D] (sphere, capsule, cylinder or box), else [member trample_radius].
+		</member>
+		<member name="trample_radius" type="float" setter="set_trample_radius" getter="get_trample_radius" default="0.4">
+			Radius, in metres, of a mover with neither a [code]trample_radius[/code] meta nor a collision shape.
+		</member>
+		<member name="trample_recovery" type="float" setter="set_trample_recovery" getter="get_trample_recovery" default="6.0">
+			Half-life, in seconds, of the bend: trampled blades stand halfway back up in this time. 0 springs back at once.
+		</member>
+		<member name="trample_resolution" type="int" setter="set_trample_resolution" getter="get_trample_resolution" default="128">
+			Texels a side of the trample field. Higher keeps narrower trails.
+		</member>
+		<member name="trample_size" type="float" setter="set_trample_size" getter="get_trample_size" default="32.0">
+			Edge, in metres, of the square trample field around the camera.
+		</member>
+		<member name="view_facing" type="float" setter="set_view_facing" getter="get_view_facing" default="0.6">
+			How much a blade seen edge-on widens across the view (Ghost of Tsushima's view-space thickening), so the field looks full from every side. 0 turns it off.
 		</member>
 		<member name="wind_response" type="float" setter="set_wind_response" getter="get_wind_response" default="0.12">
 			How far blades bend for a given wind speed.

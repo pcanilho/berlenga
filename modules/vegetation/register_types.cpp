@@ -34,6 +34,7 @@
 #include "plant_species.h"
 #include "vegetation_field_3d.h"
 
+#include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 
 void initialize_vegetation_module(ModuleInitializationLevel p_level) {
@@ -44,6 +45,21 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(Biome);
 	GDREGISTER_CLASS(VegetationField3D);
 	GDREGISTER_CLASS(GrassField3D);
+	// Declared so terrain shaders using GrassField3D.get_ground_shader_code() compile without a field.
+	const struct {
+		const char *name;
+		const char *type;
+	} globals[] = {
+		{ "grass_ground_map", "sampler2D" },
+		{ "grass_ground_rect", "vec4" },
+		{ "grass_ground_color", "vec4" },
+	};
+	for (const auto &g : globals) {
+		Dictionary d;
+		d["type"] = g.type;
+		d["value"] = String(g.type) == "vec4" ? Variant(Vector4()) : Variant("");
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, String("shader_globals/") + g.name, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), d);
+	}
 }
 
 void uninitialize_vegetation_module(ModuleInitializationLevel p_level) {

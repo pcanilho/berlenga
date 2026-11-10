@@ -32,8 +32,10 @@
 
 #include "plant_species.h"
 
+#include "core/io/image.h"
 #include "core/templates/hash_map.h"
 #include "scene/3d/node_3d.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 
@@ -69,6 +71,28 @@ class GrassField3D : public Node3D {
 	Vector2 fallback_wind = Vector2(2.0f, 0.5f);
 	float wind_response = 0.12f;
 	int max_tiles_per_frame = 12;
+	int blade_segments = 4;
+	float view_facing = 0.6f;
+	// Ground under the grass takes its colour (alpha: strength), through the grass_ground_* globals.
+	Color ground_tint = Color(0.05f, 0.09f, 0.025f, 0.85f);
+	bool ground_tint_enabled = true;
+	bool ground_baked = false;
+	Ref<ImageTexture> ground_texture;
+
+	// Trample field (docs/ideas/grass.md, contact): bend per texel around the camera, pressed by
+	// movers and relaxing back, so blades stay stateless and trails persist.
+	bool trample_enabled = true;
+	StringName trample_group = "grass_trample";
+	float trample_size = 32.0f;
+	int trample_resolution = 128;
+	float trample_radius = 0.4f;
+	float trample_recovery = 6.0f; // Half-life in seconds.
+	LocalVector<Vector2> trample; // World xz bend per texel, length 0..1.
+	Vector2i trample_origin; // World texel of the map's first texel.
+	bool trample_active = false;
+	Ref<Image> trample_image;
+	Ref<ImageTexture> trample_texture;
+	HashMap<ObjectID, Vector3> trample_last;
 
 	HashMap<Vector2i, Tile> tiles;
 	Ref<ArrayMesh> blade_mesh;
@@ -82,6 +106,11 @@ class GrassField3D : public Node3D {
 	void _build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map);
 	void _free_tile(Tile &p_tile);
 	void _update_tiles(const Vector3 &p_center);
+	void _bake_ground(TerrainDataMap3D *p_map);
+	void _trample_recenter(const Vector3 &p_center);
+	void _trample_step(double p_delta);
+	void _trample_upload();
+	Vector2 _mover_extent(Node3D *p_node) const; // Radius and half height.
 
 protected:
 	void _notification(int p_what);
@@ -118,6 +147,33 @@ public:
 	Vector2 get_fallback_wind() const { return fallback_wind; }
 	void set_wind_response(float p_response);
 	float get_wind_response() const { return wind_response; }
+
+	void set_blade_segments(int p_segments);
+	int get_blade_segments() const { return blade_segments; }
+	void set_view_facing(float p_facing);
+	float get_view_facing() const { return view_facing; }
+	void set_ground_tint(const Color &p_color);
+	Color get_ground_tint() const { return ground_tint; }
+	void set_ground_tint_enabled(bool p_enabled);
+	bool is_ground_tint_enabled() const { return ground_tint_enabled; }
+	static String get_ground_shader_code();
+
+	void set_trample_enabled(bool p_enabled);
+	bool is_trample_enabled() const { return trample_enabled; }
+	void set_trample_group(const StringName &p_group) { trample_group = p_group; }
+	StringName get_trample_group() const { return trample_group; }
+	void set_trample_size(float p_size);
+	float get_trample_size() const { return trample_size; }
+	void set_trample_resolution(int p_resolution);
+	int get_trample_resolution() const { return trample_resolution; }
+	void set_trample_radius(float p_radius) { trample_radius = MAX(p_radius, 0.01f); }
+	float get_trample_radius() const { return trample_radius; }
+	void set_trample_recovery(float p_seconds) { trample_recovery = MAX(p_seconds, 0.0f); }
+	float get_trample_recovery() const { return trample_recovery; }
+
+	void add_trample(const Vector3 &p_position, float p_radius, const Vector3 &p_velocity = Vector3(), float p_strength = 1.0f);
+	Vector2 get_trample_at(const Vector3 &p_position) const;
+	void clear_trample();
 
 	void rebuild();
 	void update_at(const Vector3 &p_center);
