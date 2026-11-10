@@ -55,7 +55,7 @@ namespace {
 // same way. rt_vertex_dynamic: the path tracer recaptures it every frame.
 const char *HAIR_RENDER_SHADER = R"(
 shader_type spatial;
-render_mode cull_disabled, rt_vertex_dynamic, hair_strands;
+render_mode cull_disabled, rt_vertex_dynamic, rt_force_opaque, hair_strands;
 
 uniform sampler2D hair_positions : filter_nearest, repeat_disable;
 uniform int texture_width = 1;
@@ -152,6 +152,7 @@ void fragment() {
 		}
 		coverage = 1.0;
 	}
+	// rt_force_opaque: the path tracer traces the strands as solid fibres (ALPHA is 1 there).
 	// Blended, as TressFX blends its strands: each fades over what lies behind it by the share of
 	// the pixel it covers. Thin strands are faint, so the blend barely depends on draw order.
 	ALPHA = coverage;
