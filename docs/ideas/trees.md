@@ -212,6 +212,39 @@ meshes are generated variants, listed first in the Biome; `canopy_radius` and
 trees carry no colliders on `SnowCover3D.ground_collision_mask`. Generated variants are cached
 as resources at edit time (binaries to Gitea LFS) or rebuilt deterministically on load.
 
+## 7a. Collision and touch
+
+Asked for on 10 Nov: vegetation should react to bodies, not only grass.
+
+How others do it:
+- **CryEngine (Crysis, Kingdom Come).** Trunks carry simple physics proxies (cylinders or
+  capsules) and stop characters and vehicles. Bushes and low branches use "touch bending":
+  artist-placed chains of branch helpers become physicalized ropes that living entities and
+  vehicles push aside, and that spring back by their stiffness and damping. Breakable trees
+  split at authored joints when an impact exceeds their strength, and the pieces become rigid
+  bodies (CryEngine docs: Touch Bending; Vegetation 04 Bushes; Vegetation 05 Trees, Breakable).
+- **Horizon Zero Dawn.** Canopies have no collision, trunks are cylinders, and canopies react
+  to force fields (the player, machines, explosions) written into the same wind textures as the
+  weather (Sanders, GDC 2018).
+- **God of War.** Wind "motors" on characters and effects add to a 3D wind field that bushes
+  and trees receive (Feeley, GDC 2019).
+- **Unreal 5.7 / The Witcher 4 demo.** Trees are bones; wind and interaction are transforms
+  written to the bones, so anything that moves bones (a field, a contact) moves the tree.
+
+Our design follows the same split and reuses what the fork has:
+1. **Trunk and limb colliders.** From the branch graph: capsules for the trunk and every limb
+   thicker than a threshold (about 8 cm), one static compound per tree variant, created through
+   the physics server per instance only inside the physics radius and streamed with the tiles.
+   They use their own collision layer, never `SnowCover3D.ground_collision_mask`.
+2. **Touch bending.** The bone wind solver (section 3) takes contact as an extra force: bodies
+   stamp position and velocity into the trample field the grass already reads, and each bone
+   chain near a body is pushed out of a few collision spheres, as the hair solver does
+   (`PhysXHair3D`). The same beam stiffness that drives the wind response springs the branch
+   back. Shrubs, saplings and low branches react; trunks do not.
+3. **Breaking.** Pirk 2014's stress test on a contact impulse snaps a branch or a sapling: its
+   bones are frozen and the part becomes a PhysX rigid body (Blast for trunks later). Felled
+   trees and logs are PhysX bodies with the same capsules.
+
 ## 8. Stages
 
 1. Growth model and species table (oak, beech, birch, Scots pine, Norway spruce, hazel,
@@ -219,7 +252,8 @@ as resources at edit time (binaries to Gitea LFS) or rebuilt deterministically o
 2. Meshing with junction collars, bark and leaves, three LODs, raster and path traced 100%
    crops against the stand-ins.
 3. Skeleton and GPU wind solver over instance bones, with the weather wind.
-4. Shrubs, saplings, hedges, and deadwood decay classes plus PhysX logs.
+4. Shrubs, saplings, hedges, and deadwood decay classes plus PhysX logs; trunk and limb
+   colliders, touch bending through the bone solver, breaking.
 5. Hook into `VegetationField3D` (real trees replace stand-ins, canopy from the grown crown)
    and the showcase forest.
 6. Scale on the PC: RT LOD sharing, OMM cost, partitioned TLAS, bones-in-view budget.
