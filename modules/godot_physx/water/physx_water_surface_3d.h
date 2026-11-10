@@ -441,6 +441,7 @@ private:
 	LocalVector<StringName> breaker_params;
 	Ref<Material> _breaker_material();
 	void _update_breakers();
+	float _sample_height_at(Vector3 p_world_pos, ObjectID p_wake, float p_origin_y) const;
 	void _hide_breakers();
 	void _update_breaker_spray(const LocalVector<Vector3> &p_points, const LocalVector<Vector3> &p_dirs, const LocalVector<float> &p_weights, float p_rate, float p_speed);
 	void _bake_shore_waves();
