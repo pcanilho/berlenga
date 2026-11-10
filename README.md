@@ -40,6 +40,14 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Shadow-only casters bounce light.
 - Lit raster transparents and rain (`rendering/pathtracing/max_transparency_layers` 0), still traced in reflections.
 
+<details><summary>Image: indirect light reuse</summary>
+
+![A window-lit room at 4 samples per pixel, indirect light reuse off and on](docs/media/indirect-reuse.jpg)
+
+*Indirect light reuse: the same 4 samples per pixel, off then on; both brightened 3x to show the noise.*
+
+</details>
+
 ### Materials
 - **Back lighting** (`rendering/pathtracing/back_lighting`): light through leaves, paper and curtains, with coloured shadows; back light texture.
 - **Transmission** (BaseMaterial3D section, `rendering/pathtracing/transmission`): thin glass, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.
