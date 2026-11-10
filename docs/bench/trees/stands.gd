@@ -8,8 +8,9 @@ extends Node3D
 #   --map=path.png    the placement maps of every stand in one image
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --variants=N      meshes per species (default 1)
-#   --region=path.png make_woodland() over a generated 4 km mountain range with its geology and
-#                     climate (placement only, no meshes): the stands as belts on a hillshade
+#   --region=path.png make_woodland() over a 6 km massif with its climate (placement only, no
+#                     meshes): the stands as belts on a hillshade
+#   --generated       with --region: a TerrainGenerator3D range (4 km, geology and soil) instead
 
 const SIZE := 160.0
 const STREAM_HALF := 3.0 # Stream bed half width, metres.
@@ -34,12 +35,14 @@ var gen: TreeGenerator
 var dm: TerrainDataMap3D
 var fails := 0
 var variants := 1
+var use_generator := false
 
 func run(args: Dictionary) -> void:
 	variants = int(args.get("variants", "1"))
 	gen = TreeGenerator.new()
 	gen.seed = int(args.get("seed", "1"))
 	if args.has("region"):
+		use_generator = args.has("generated")
 		await _region(args["region"])
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -282,16 +285,44 @@ class Mountain extends Node3D:
 		return ridge + 60.0 * sin(p.x * 0.004) * cos(p.z * 0.003) + 40.0
 
 func _region(path: String) -> void:
-	const WORLD := 6000.0
-	var tg := Mountain.new()
-	add_child(tg)
+	var WORLD := 4096.0 if use_generator else 6000.0
+	var tg: Node3D
 	var t := Time.get_ticks_msec()
+	if use_generator:
+		# The terrain bench's range (docs/bench/terrain_gen), mountain view settings.
+		var range_path := Path3D.new()
+		var curve := Curve3D.new()
+		curve.add_point(Vector3(-1900, 0, 700), Vector3.ZERO, Vector3(600, 0, -200))
+		curve.add_point(Vector3(-300, 0, 100), Vector3(-500, 0, 100), Vector3(500, 0, -100))
+		curve.add_point(Vector3(1900, 0, -600), Vector3(-600, 0, 0))
+		range_path.curve = curve
+		add_child(range_path)
+		var noise := FastNoiseLite.new()
+		noise.seed = 7
+		noise.frequency = 1.0 / 1500.0
+		noise.fractal_octaves = 3
+		var g3 := TerrainGenerator3D.new()
+		g3.size = Vector2(WORLD, WORLD)
+		g3.cell_size = 16.0
+		g3.seed = 1
+		g3.uplift_noise = noise
+		g3.uplift = 6.0
+		g3.range_width = 1300.0
+		add_child(g3)
+		g3.ranges = [g3.get_path_to(range_path)]
+		g3.generate()
+		tg = g3
+	else:
+		tg = Mountain.new()
+		add_child(tg)
 	var map := TerrainDataMap3D.new()
 	map.bake_on_ready = false
 	map.size = WORLD
 	map.resolution = 600
 	add_child(map)
 	map.height_source = map.get_path_to(tg)
+	if use_generator:
+		map.geology_source = map.get_path_to(tg)
 	# A cool temperate climate (Central European uplands to Alps): the belts from beech and oak
 	# in the valleys through spruce and fir to larch at the tree line.
 	var recipe := ClimateRecipe.new()
@@ -340,7 +371,7 @@ func _region(path: String) -> void:
 			var base := Color(0.86, 0.84, 0.78)
 			img.set_pixel(x, z, base * (0.8 + 0.2 * shade))
 	print("height %.0f to %.0f m" % [hmin, hmax])
-	for hh in [100.0, 600.0, 1100.0, 1600.0, 2100.0, 2450.0]:
+	for hh in ([] if use_generator else [100.0, 600.0, 1100.0, 1600.0, 2100.0, 2450.0]):
 		var q := Vector3(400.0 + 2100.0 * sqrt(-log((hh - 40.0) / 2500.0)), 0, -300.0)
 		print("  at %.0f m: T %.1f C, January %.1f C, P %.0f mm" % [map.get_height_at(q), map.get_temperature_at(q), map.get_temperature_at(q, 15.0), map.get_precipitation_at(q)])
 	var sps: Array = biome.species
