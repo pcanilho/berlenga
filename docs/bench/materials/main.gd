@@ -47,6 +47,7 @@ extends Node3D
 #                     Hair; --hair=compare_shader: that HairMesh through a shader's HAIR outputs instead
 #   --debug=N         path tracing debug view (Environment.pathtracing_debug_mode), e.g. 4 normal map
 #   --raster          raster only, for comparison
+#   --aa=MODE         raster anti-aliasing: taa, msaa (4x), both or none (default)
 #   --spp=N --bounces=N  path tracing samples and bounces (default 64, 3)
 #   --frames=N        frames rendered before --out is saved (default 8)
 #   --set=setting:value  any project setting, e.g. --set=rendering/pathtracing/clearcoat:0
@@ -85,6 +86,11 @@ func _ready() -> void:
 		elif a.begins_with("--hair="): hair = a.substr(7)
 		elif a == "--ripples": ripples = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
+		elif a.begins_with("--aa="):
+			# Raster anti-aliasing: taa, msaa (4x), both, or none (the default).
+			var aa := a.substr(5)
+			get_viewport().use_taa = aa == "taa" or aa == "both"
+			get_viewport().msaa_3d = Viewport.MSAA_4X if aa == "msaa" or aa == "both" else Viewport.MSAA_DISABLED
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":", true, 1)
 			ProjectSettings.set_setting(kv[0], str_to_var(kv[1]))

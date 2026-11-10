@@ -311,6 +311,29 @@ groomed offset turned with the guide segment; TressFX adds its offset unturned).
 
 Test head: 30,000 strands (3,000 guides) of 20 points, 0.3 mm wide at the root.
 
+## Stage 2d: raster strands (TressFX coverage)
+
+Raster strands 0.3 mm wide are far below a pixel, so each pixel either hits one or misses: grain
+that no amount of strands fixes. TressFX (`TressFXStrands.hlsl`, `ComputeCoverage` in
+`TressFXRendering.hlsl`), HairWorks (MSAA coverage) and Unreal (minimum pixel width plus
+coverage, resolved by TAA) all draw strands at least a pixel wide and fade them to the share of
+the pixel the real fibre covers. Ours, in the PhysXHair3D render shader, raster only:
+
+- One ribbon facing the camera (the second crossed strip collapsed), half width = real half
+  width + 0.71 px, the pixel measured from the projection and `VIEWPORT_SIZE` at the point's depth.
+- Coverage: wider than a pixel, solid with a one-pixel soft edge; thinner, a tent across the
+  ribbon whose area equals the strand's real width, so the hair's total opacity is physical.
+- `ALPHA` with `ALPHA_HASH_SCALE`: stochastic, so depth prepass and shadows keep working and
+  TAA or MSAA resolve it (no order-independent transparency needed, unlike TressFX's PPLL).
+- Shadow maps: the same ribbons and coverage, so the hair's shadow is partial and accumulates
+  through the volume, a stochastic stand-in for TressFX's and Unreal's deep opacity maps. The
+  widening is capped at 2 mm there (a far cascade's texel would make every strand centimetres
+  wide; that stalled lavapipe) and at 1 cm elsewhere.
+- Path tracing keeps the real-width crossed strips (`IN_PATH_TRACER`, a new spatial built-in:
+  true in the RT capture variant and in hit shaders), so PT detail is unchanged.
+
+Bench: `--scene=strands_sim --raster --aa=taa|msaa|both|none`.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.

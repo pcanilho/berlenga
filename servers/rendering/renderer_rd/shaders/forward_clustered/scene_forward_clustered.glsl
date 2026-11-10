@@ -17,6 +17,11 @@
 
 #define SHADER_IS_SRGB false
 #define SHADER_SPACE_FAR 0.0
+#ifdef MODE_RT_CAPTURE
+#define SHADER_IN_PATH_TRACER true
+#else
+#define SHADER_IN_PATH_TRACER false
+#endif
 
 #ifdef USE_MULTIVIEW
 #define OUTPUT_IS_MULTIVIEW true
@@ -905,6 +910,11 @@ void main() {
 
 #define SHADER_IS_SRGB false
 #define SHADER_SPACE_FAR 0.0
+#ifdef MODE_RT_CAPTURE
+#define SHADER_IN_PATH_TRACER true
+#else
+#define SHADER_IN_PATH_TRACER false
+#endif
 
 #ifdef USE_MULTIVIEW
 #define OUTPUT_IS_MULTIVIEW true
