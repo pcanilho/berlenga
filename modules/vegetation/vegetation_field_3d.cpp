@@ -1,0 +1,422 @@
+/**************************************************************************/
+/*  vegetation_field_3d.cpp                                               */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#include "vegetation_field_3d.h"
+
+#include "core/config/engine.h"
+#include "core/math/random_pcg.h"
+#include "core/object/callable_mp.h"
+#include "core/object/class_db.h"
+#include "core/os/os.h"
+#include "core/templates/hashfuncs.h"
+#include "scene/3d/multimesh_instance_3d.h"
+#include "scene/resources/multimesh.h"
+
+#include "modules/terrain_deform/terrain_data_map_3d.h"
+
+namespace {
+
+float wrap_delta(float p_d, float p_size) {
+	p_d = Math::abs(p_d);
+	return MIN(p_d, p_size - p_d);
+}
+
+// Bridson (2007) Poisson-disk sampling on a torus of side p_size: no two points closer than
+// p_r, also across the wrap, so the tile repeats without seams.
+void poisson_torus(float p_size, float p_r, RandomPCG &p_rng, LocalVector<Vector2> &r_points) {
+	const float cell = p_r / Math::SQRT2;
+	const int n = MAX(1, int(Math::floor(p_size / cell)));
+	const float cs = p_size / n; // Cells tile the torus exactly; cs <= r / sqrt(2) holds.
+	LocalVector<int> grid;
+	grid.resize(n * n);
+	for (int i = 0; i < n * n; i++) {
+		grid[i] = -1;
+	}
+	LocalVector<int> active;
+	auto cell_of = [&](const Vector2 &p) -> Vector2i {
+		return Vector2i(CLAMP(int(p.x / cs), 0, n - 1), CLAMP(int(p.y / cs), 0, n - 1));
+	};
+	auto fits = [&](const Vector2 &p) -> bool {
+		const Vector2i c = cell_of(p);
+		const int reach = int(Math::ceil(p_r / cs));
+		for (int dz = -reach; dz <= reach; dz++) {
+			for (int dx = -reach; dx <= reach; dx++) {
+				const int gx = (c.x + dx + n * 4) % n;
+				const int gz = (c.y + dz + n * 4) % n;
+				const int idx = grid[gz * n + gx];
+				if (idx < 0) {
+					continue;
+				}
+				const Vector2 q = r_points[idx];
+				const float ddx = wrap_delta(q.x - p.x, p_size);
+				const float ddz = wrap_delta(q.y - p.y, p_size);
+				if (ddx * ddx + ddz * ddz < p_r * p_r) {
+					return false;
+				}
+			}
+		}
+		return true;
+	};
+	auto add = [&](const Vector2 &p) {
+		const Vector2i c = cell_of(p);
+		grid[c.y * n + c.x] = r_points.size();
+		active.push_back(r_points.size());
+		r_points.push_back(p);
+	};
+	add(Vector2(p_rng.randf() * p_size, p_rng.randf() * p_size));
+	const int k = 30;
+	while (!active.is_empty()) {
+		const uint32_t ai = p_rng.rand(active.size());
+		const Vector2 base = r_points[active[ai]];
+		bool found = false;
+		for (int t = 0; t < k; t++) {
+			const float ang = p_rng.randf() * Math::TAU;
+			const float rad = p_r * (1.0f + p_rng.randf());
+			Vector2 p = base + Vector2(Math::cos(ang), Math::sin(ang)) * rad;
+			p.x = Math::fposmod(p.x, p_size);
+			p.y = Math::fposmod(p.y, p_size);
+			if (grid[cell_of(p).y * n + cell_of(p).x] >= 0) {
+				continue;
+			}
+			if (fits(p)) {
+				add(p);
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			active[ai] = active[active.size() - 1];
+			active.resize(active.size() - 1);
+		}
+	}
+}
+
+uint32_t tile_hash(int p_x, int p_z, int p_seed, int p_species) {
+	uint32_t h = hash_murmur3_one_32(uint32_t(p_x));
+	h = hash_murmur3_one_32(uint32_t(p_z), h);
+	h = hash_murmur3_one_32(uint32_t(p_seed), h);
+	h = hash_murmur3_one_32(uint32_t(p_species), h);
+	return hash_fmix32(h);
+}
+
+} // namespace
+
+const VegetationField3D::Pattern &VegetationField3D::_get_pattern(float p_spacing, int p_species) {
+	const uint64_t key = (uint64_t(hash_murmur3_one_float(p_spacing, hash_murmur3_one_float(tile_size, uint32_t(seed)))) << 32) | uint32_t(p_species);
+	Pattern *existing = patterns.getptr(key);
+	if (existing) {
+		return *existing;
+	}
+	Pattern p;
+	RandomPCG rng(uint64_t(seed) * 1000003ull + uint64_t(p_species) * 7919ull + 17ull);
+	poisson_torus(tile_size, p_spacing, rng, p.points);
+	const int count = p.points.size();
+	// Random ranks: Bridson inserts points in a spatially coherent order, so the order is
+	// shuffled before ranking or density would cut the pattern into patches.
+	LocalVector<int> perm;
+	perm.resize(count);
+	for (int i = 0; i < count; i++) {
+		perm[i] = i;
+	}
+	for (int i = count - 1; i > 0; i--) {
+		SWAP(perm[i], perm[rng.rand(i + 1)]);
+	}
+	p.ranks.resize(count);
+	p.randoms.resize(count);
+	for (int i = 0; i < count; i++) {
+		p.ranks[perm[i]] = (i + 0.5f) / count;
+		p.randoms[i] = rng.randf();
+	}
+	patterns.insert(key, p);
+	return patterns[key];
+}
+
+void VegetationField3D::_clear_generated() {
+	for (MultiMeshInstance3D *mmi : generated) {
+		if (mmi->get_parent()) {
+			mmi->get_parent()->remove_child(mmi);
+		}
+		memdelete(mmi);
+	}
+	generated.clear();
+	placements.clear();
+	plant_count = 0;
+}
+
+void VegetationField3D::clear() {
+	_clear_generated();
+}
+
+Error VegetationField3D::populate() {
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	_clear_generated();
+	ERR_FAIL_COND_V_MSG(biome.is_null(), ERR_UNCONFIGURED, "VegetationField3D: no biome.");
+	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	ERR_FAIL_COND_V_MSG(!map || !map->is_baked(), ERR_UNCONFIGURED, "VegetationField3D: data_map must point to a baked TerrainDataMap3D.");
+
+	const TypedArray<PlantSpecies> species_list = biome->get_species();
+	const int species_count = species_list.size();
+	placements.resize(species_count);
+	float max_footprint = 0.0f;
+	for (int s = 0; s < species_count; s++) {
+		Ref<PlantSpecies> sp = species_list[s];
+		if (sp.is_valid()) {
+			max_footprint = MAX(max_footprint, sp->get_footprint());
+		}
+	}
+	// Footprints of placed plants, in a hash grid.
+	const float grid_cell = MAX(1.0f, max_footprint * 2.0f);
+	HashMap<Vector2i, LocalVector<int>> grid;
+	LocalVector<Placed> placed;
+
+	const Rect2 rect = map->get_map_rect();
+	const int tx0 = int(Math::floor(rect.position.x / tile_size));
+	const int tz0 = int(Math::floor(rect.position.y / tile_size));
+	const int tx1 = int(Math::ceil((rect.position.x + rect.size.x) / tile_size));
+	const int tz1 = int(Math::ceil((rect.position.y + rect.size.y) / tile_size));
+	const Transform3D to_local = get_global_transform().affine_inverse();
+
+	for (int s = 0; s < species_count; s++) {
+		Ref<PlantSpecies> sp = species_list[s];
+		if (sp.is_null()) {
+			continue;
+		}
+		const TypedArray<Mesh> meshes = sp->get_meshes();
+		const int variants = MAX(1, meshes.size());
+		const Pattern &pat = _get_pattern(sp->get_spacing(), s);
+		const float fp = sp->get_footprint();
+		const Vector2 scale_range = sp->get_scale_range();
+		const float align = sp->get_align_to_ground();
+		const int reach = int(Math::ceil((fp + max_footprint) / grid_cell));
+
+		for (int tz = tz0; tz < tz1; tz++) {
+			for (int tx = tx0; tx < tx1; tx++) {
+				const float shift = float(tile_hash(tx, tz, seed, s) & 0xFFFFFF) / float(0x1000000);
+				LocalVector<LocalVector<Transform3D>> xforms;
+				LocalVector<LocalVector<Color>> customs;
+				xforms.resize(variants);
+				customs.resize(variants);
+				for (uint32_t i = 0; i < pat.points.size(); i++) {
+					const Vector2 xz = Vector2(tx * tile_size, tz * tile_size) + pat.points[i];
+					if (!rect.has_point(xz)) {
+						continue;
+					}
+					// Ordered dither: a point survives where its (per-tile shifted) rank is below
+					// the density there, so density changes smoothly and the pattern stays blue noise.
+					const float rank = Math::fmod(pat.ranks[i] + shift, 1.0f);
+					if (rank >= sp->get_density()) {
+						continue;
+					}
+					const Vector3 p3(xz.x, 0.0f, xz.y);
+					if (rank >= sp->get_density() * sp->get_suitability(map, p3)) {
+						continue;
+					}
+					// Footprints of earlier species.
+					bool blocked = false;
+					const Vector2i gc(int(Math::floor(xz.x / grid_cell)), int(Math::floor(xz.y / grid_cell)));
+					for (int dz = -reach; dz <= reach && !blocked; dz++) {
+						for (int dx = -reach; dx <= reach && !blocked; dx++) {
+							const LocalVector<int> *bucket = grid.getptr(gc + Vector2i(dx, dz));
+							if (!bucket) {
+								continue;
+							}
+							for (int idx : *bucket) {
+								const Placed &o = placed[idx];
+								if (o.species == s) {
+									continue;
+								}
+								const float min_d = fp + o.footprint;
+								if (o.xz.distance_squared_to(xz) < min_d * min_d) {
+									blocked = true;
+									break;
+								}
+							}
+						}
+					}
+					if (blocked) {
+						continue;
+					}
+					placed.push_back({ xz, fp, s });
+					grid[gc].push_back(placed.size() - 1);
+
+					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
+					const float r = pat.randoms[i];
+					const float y = map->get_height_at(p3);
+					const float slope = map->get_slope_at(p3);
+					const float aspect = map->get_aspect_at(p3);
+					const Vector3 normal(Math::sin(aspect) * Math::sin(slope), Math::cos(slope), Math::cos(aspect) * Math::sin(slope));
+					const Vector3 up = Vector3(0, 1, 0).lerp(normal, align).normalized();
+					Basis b;
+					const Vector3 axis = Vector3(0, 1, 0).cross(up);
+					if (axis.length_squared() > 1e-10f) {
+						b = Basis(axis.normalized(), Math::acos(CLAMP(up.y, -1.0f, 1.0f)));
+					}
+					const float yaw = sp->is_random_yaw() ? Math::fmod(r * 7919.0f, 1.0f) * Math::TAU : 0.0f;
+					const float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f));
+					b = b * Basis(Vector3(0, 1, 0), yaw);
+					b.scale(Vector3(scale, scale, scale));
+					const int variant = MIN(int(r * variants), variants - 1);
+					const Transform3D world(b, Vector3(xz.x, y, xz.y));
+					xforms[variant].push_back(to_local * world);
+					customs[variant].push_back(Color(float(variant), scale, r, float(s)));
+					placements[s].push_back(world.origin);
+					plant_count++;
+				}
+				for (int v = 0; v < variants; v++) {
+					if (xforms[v].is_empty() || meshes.size() == 0) {
+						continue;
+					}
+					Ref<Mesh> mesh = meshes[v];
+					if (mesh.is_null()) {
+						continue;
+					}
+					Ref<MultiMesh> mm;
+					mm.instantiate();
+					mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+					mm->set_use_custom_data(true);
+					mm->set_mesh(mesh);
+					mm->set_instance_count(xforms[v].size());
+					for (uint32_t i = 0; i < xforms[v].size(); i++) {
+						mm->set_instance_transform(i, xforms[v][i]);
+						mm->set_instance_custom_data(i, customs[v][i]);
+					}
+					MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+					mmi->set_name(vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
+					mmi->set_multimesh(mm);
+					add_child(mmi, false, INTERNAL_MODE_BACK);
+					generated.push_back(mmi);
+				}
+			}
+		}
+	}
+	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	emit_signal(SNAME("populated"));
+	return OK;
+}
+
+PackedVector3Array VegetationField3D::get_placements(int p_species) const {
+	PackedVector3Array res;
+	ERR_FAIL_INDEX_V(p_species, int(placements.size()), res);
+	for (const Vector3 &p : placements[p_species]) {
+		res.push_back(p);
+	}
+	return res;
+}
+
+void VegetationField3D::queue_populate() {
+	if (populate_queued) {
+		return;
+	}
+	populate_queued = true;
+	callable_mp(this, &VegetationField3D::_queued_populate).call_deferred();
+}
+
+void VegetationField3D::_queued_populate() {
+	populate_queued = false;
+	if (is_inside_tree()) {
+		populate();
+	}
+}
+
+void VegetationField3D::_on_map_baked() {
+	if (populate_on_ready) {
+		queue_populate();
+	}
+}
+
+void VegetationField3D::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_READY: {
+			if (Engine::get_singleton()->is_editor_hint()) {
+				break;
+			}
+			TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+			if (map) {
+				// Repopulate whenever the map is baked again (terrain edits).
+				map->connect(SNAME("baked"), callable_mp(this, &VegetationField3D::_on_map_baked));
+				if (map->is_baked() && populate_on_ready) {
+					queue_populate();
+				}
+			}
+		} break;
+		case NOTIFICATION_PREDELETE: {
+			_clear_generated();
+		} break;
+	}
+}
+
+void VegetationField3D::set_biome(const Ref<Biome> &p_biome) {
+	biome = p_biome;
+}
+
+void VegetationField3D::set_data_map(const NodePath &p_path) {
+	data_map = p_path;
+}
+
+void VegetationField3D::set_tile_size(float p_size) {
+	tile_size = MAX(p_size, 1.0f);
+	patterns.clear();
+}
+
+void VegetationField3D::set_seed(int p_seed) {
+	seed = p_seed;
+	patterns.clear();
+}
+
+void VegetationField3D::set_populate_on_ready(bool p_enable) {
+	populate_on_ready = p_enable;
+}
+
+void VegetationField3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_biome", "biome"), &VegetationField3D::set_biome);
+	ClassDB::bind_method(D_METHOD("get_biome"), &VegetationField3D::get_biome);
+	ClassDB::bind_method(D_METHOD("set_data_map", "path"), &VegetationField3D::set_data_map);
+	ClassDB::bind_method(D_METHOD("get_data_map"), &VegetationField3D::get_data_map);
+	ClassDB::bind_method(D_METHOD("set_tile_size", "size"), &VegetationField3D::set_tile_size);
+	ClassDB::bind_method(D_METHOD("get_tile_size"), &VegetationField3D::get_tile_size);
+	ClassDB::bind_method(D_METHOD("set_seed", "seed"), &VegetationField3D::set_seed);
+	ClassDB::bind_method(D_METHOD("get_seed"), &VegetationField3D::get_seed);
+	ClassDB::bind_method(D_METHOD("set_populate_on_ready", "enable"), &VegetationField3D::set_populate_on_ready);
+	ClassDB::bind_method(D_METHOD("is_populate_on_ready"), &VegetationField3D::is_populate_on_ready);
+	ClassDB::bind_method(D_METHOD("populate"), &VegetationField3D::populate);
+	ClassDB::bind_method(D_METHOD("queue_populate"), &VegetationField3D::queue_populate);
+	ClassDB::bind_method(D_METHOD("clear"), &VegetationField3D::clear);
+	ClassDB::bind_method(D_METHOD("get_plant_count"), &VegetationField3D::get_plant_count);
+	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
+	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
+
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,256,1,or_greater,suffix:m"), "set_tile_size", "get_tile_size");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "populate_on_ready"), "set_populate_on_ready", "is_populate_on_ready");
+
+	ADD_SIGNAL(MethodInfo("populated"));
+}

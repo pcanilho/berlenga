@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PlantSpecies" inherits="Resource" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		One kind of plant: its meshes, spacing and the ground it grows on.
+	</brief_description>
+	<description>
+		Describes a plant for [VegetationField3D]: mesh variants, how far apart plants stand, how much room they keep from other species, and rules over the [TerrainDataMap3D] maps (slope, height, curvature, wetness, water depth, distance to water). Each rule is a range with a soft edge: a plant is kept with probability [member density] times the product of every rule's weight at its point. The defaults keep every plant on dry land; a water plant widens [member water_depth_range].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_rule_fade" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="rule" type="int" enum="PlantSpecies.Rule" />
+			<description>
+				Returns the soft edge of a rule, see [method set_rule_fade].
+			</description>
+		</method>
+		<method name="get_rule_range" qualifiers="const">
+			<return type="Vector2" />
+			<param index="0" name="rule" type="int" enum="PlantSpecies.Rule" />
+			<description>
+				Returns the range of a rule, see [method set_rule_range].
+			</description>
+		</method>
+		<method name="get_suitability_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="data_map" type="Object" />
+			<param index="1" name="global_position" type="Vector3" />
+			<description>
+				Returns the product of every rule's weight at [param global_position] on a baked [TerrainDataMap3D], from 0 (cannot grow here) to 1.
+			</description>
+		</method>
+		<method name="rule_weight" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="rule" type="int" enum="PlantSpecies.Rule" />
+			<param index="1" name="value" type="float" />
+			<description>
+				Returns the weight of [param value] against [param rule]: 1 inside the range, falling to 0 over the fade (smoothstep), 0 beyond.
+			</description>
+		</method>
+		<method name="set_rule_fade">
+			<return type="void" />
+			<param index="0" name="rule" type="int" enum="PlantSpecies.Rule" />
+			<param index="1" name="fade" type="float" />
+			<description>
+				Sets the soft edge of a rule, in the rule's units: the weight falls from 1 to 0 over this distance outside the range. 0 is a hard edge.
+			</description>
+		</method>
+		<method name="set_rule_range">
+			<return type="void" />
+			<param index="0" name="rule" type="int" enum="PlantSpecies.Rule" />
+			<param index="1" name="range" type="Vector2" />
+			<description>
+				Sets the range (min, max) of a rule in its units, see [enum Rule].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="align_to_ground" type="float" setter="set_align_to_ground" getter="get_align_to_ground" default="0.0">
+			How far the plant tilts from upright towards the ground normal: 0 upright (trees, reeds), 1 along the slope (ground cover).
+		</member>
+		<member name="curvature_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member curvature_range].
+		</member>
+		<member name="curvature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1000, 1000)">
+			Ground curvature range in 1/m: positive in hollows and valley floors, negative on ridges.
+		</member>
+		<member name="density" type="float" setter="set_density" getter="get_density" default="1.0">
+			Fraction of the Poisson-disk points kept where every rule is fully met, from 0 to 1.
+		</member>
+		<member name="footprint" type="float" setter="set_footprint" getter="get_footprint" default="0.5">
+			Radius in metres that later species in the [Biome] keep clear of (a trunk and its shade). 0 leaves room for anything.
+		</member>
+		<member name="height_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member height_range].
+		</member>
+		<member name="height_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100000, 100000)">
+			Ground height range in metres.
+		</member>
+		<member name="meshes" type="Mesh[]" setter="set_meshes" getter="get_meshes" default="[]">
+			Mesh variants; each plant picks one at random. Plants carry ([code]variant, scale, random, species[/code]) in [code]INSTANCE_CUSTOM[/code] for their materials.
+		</member>
+		<member name="random_yaw" type="bool" setter="set_random_yaw" getter="is_random_yaw" default="true">
+			If [code]true[/code], each plant turns to a random angle around its up axis.
+		</member>
+		<member name="scale_range" type="Vector2" setter="set_scale_range" getter="get_scale_range" default="Vector2(0.8, 1.2)">
+			Each plant's uniform scale is picked between [code]x[/code] and [code]y[/code].
+		</member>
+		<member name="slope_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member slope_range], in degrees.
+		</member>
+		<member name="slope_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 90)">
+			Ground slope range in degrees (0 is flat).
+		</member>
+		<member name="spacing" type="float" setter="set_spacing" getter="get_spacing" default="2.0">
+			Minimum distance in metres between two plants of this species (Poisson-disk radius).
+		</member>
+		<member name="water_depth_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.05">
+			Soft edge of [member water_depth_range], in metres.
+		</member>
+		<member name="water_depth_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 0)">
+			Water depth range in metres; 0 is dry land. The default (0, 0) with a 5 cm fade keeps plants out of water.
+		</member>
+		<member name="water_distance_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member water_distance_range], in metres.
+		</member>
+		<member name="water_distance_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1000000, 1000000)">
+			Signed distance to the shoreline range in metres: positive on land, negative under water.
+		</member>
+		<member name="wetness_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member wetness_range].
+		</member>
+		<member name="wetness_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1000, 1000)">
+			Topographic wetness index range: about 4 to 7 on hillsides, 10 and above where water collects.
+		</member>
+	</members>
+	<constants>
+		<constant name="RULE_SLOPE" value="0" enum="Rule">
+			Slope in degrees.
+		</constant>
+		<constant name="RULE_HEIGHT" value="1" enum="Rule">
+			Ground height in metres.
+		</constant>
+		<constant name="RULE_CURVATURE" value="2" enum="Rule">
+			Curvature in 1/m.
+		</constant>
+		<constant name="RULE_WETNESS" value="3" enum="Rule">
+			Topographic wetness index.
+		</constant>
+		<constant name="RULE_WATER_DEPTH" value="4" enum="Rule">
+			Water depth in metres.
+		</constant>
+		<constant name="RULE_WATER_DISTANCE" value="5" enum="Rule">
+			Signed distance to water in metres.
+		</constant>
+		<constant name="RULE_MAX" value="6" enum="Rule">
+			Number of rules.
+		</constant>
+	</constants>
+</class>

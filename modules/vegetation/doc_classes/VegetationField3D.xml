@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="VegetationField3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Places the plants of a [Biome] over a [TerrainDataMap3D].
+	</brief_description>
+	<description>
+		Places plants the way Horizon Zero Dawn does (van Muijden, GDC 2017): the map is cut into tiles of [member tile_size]; for each [PlantSpecies] in the [Biome]'s order, a tiled Poisson-disk pattern (Bridson 2007) is laid over each tile and each point is kept when its random rank is below the species' density times its rules there, so density changes smoothly and stays evenly spread. Plants stand on the map's height, keep later species out of their footprint, and are drawn as one [MultiMeshInstance3D] per mesh per tile (internal children, not saved). The result depends only on the map, the biome and [member seed].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Removes every placed plant.
+			</description>
+		</method>
+		<method name="get_placements" qualifiers="const">
+			<return type="PackedVector3Array" />
+			<param index="0" name="species" type="int" />
+			<description>
+				Returns the world positions of the plants of species [param species] (its index in the [Biome]) from the last [method populate].
+			</description>
+		</method>
+		<method name="get_plant_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Number of plants placed by the last [method populate].
+			</description>
+		</method>
+		<method name="get_populate_time_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Time the last [method populate] took, in milliseconds.
+			</description>
+		</method>
+		<method name="populate">
+			<return type="int" enum="Error" />
+			<description>
+				Places every species over the whole data map, replacing earlier plants. Returns [constant ERR_UNCONFIGURED] without a [member biome] or a baked map.
+			</description>
+		</method>
+		<method name="queue_populate">
+			<return type="void" />
+			<description>
+				Populates at the end of the frame, once.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="biome" type="Biome" setter="set_biome" getter="get_biome">
+			The species to place.
+		</member>
+		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
+			The [TerrainDataMap3D] that gives height, slope, wetness and water. Its area is the area planted.
+		</member>
+		<member name="populate_on_ready" type="bool" setter="set_populate_on_ready" getter="is_populate_on_ready" default="true">
+			If [code]true[/code], populate when ready (once the map is baked) and again whenever the map is baked again, after terrain edits.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Seed of the point patterns. The same seed gives the same plants.
+		</member>
+		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="32.0">
+			Width in metres of a tile: one point pattern and one [MultiMeshInstance3D] per mesh per tile, so tiles out of view are culled.
+		</member>
+	</members>
+	<signals>
+		<signal name="populated">
+			<description>
+				Emitted after each [method populate].
+			</description>
+		</signal>
+	</signals>
+</class>
