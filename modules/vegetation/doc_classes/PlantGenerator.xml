@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PlantGenerator" inherits="Resource" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Generates small meadow plants (rosettes, clover, ferns, sedges, wildflowers) as meshes.
+	</brief_description>
+	<description>
+		Builds a plant mesh from a [member preset] and a [member seed], after Prusinkiewicz et al., "The use of positional information in the modeling of plants" (2001): leaves, petals and florets are placed along their axes by phyllotaxis (the golden angle, Vogel's spiral for flower heads, whorls), their size, angle and bend are functions of their position, and leaves, petals and stems are swept along a turtle path. Each seed gives another plant of the same kind.
+		The mesh has one surface per part (leaf, stem, petal, centre) with double-sided materials and back lighting, so light through leaves looks the same in raster and under path tracing. UV2.x holds a wind weight (0 at the root, 1 at the tips) and the vertex colour an occlusion guess. With [member lods], distance LODs are generated as the scene importer does.
+		Use the meshes as [member PlantSpecies.meshes] in a [VegetationField3D]:
+		[codeblock]
+		var gen = PlantGenerator.new()
+		gen.preset = PlantGenerator.PRESET_DAISY
+		gen.apply_preset_colors()
+		species.meshes = gen.generate_variants(3)
+		[/codeblock]
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="apply_preset_colors">
+			<return type="void" />
+			<description>
+				Sets the colours to the [member preset]'s natural ones.
+			</description>
+		</method>
+		<method name="generate">
+			<return type="ArrayMesh" />
+			<description>
+				Builds the plant for the current [member preset] and [member seed].
+			</description>
+		</method>
+		<method name="generate_variants">
+			<return type="ArrayMesh[]" />
+			<param index="0" name="count" type="int" />
+			<description>
+				Builds [param count] plants with seeds [member seed], [member seed] + 1, and so on.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="centre_color" type="Color" setter="set_centre_color" getter="get_centre_color" default="Color(0.95, 0.65, 0.05, 1)">
+			Colour of flower centres, heads and spikes.
+		</member>
+		<member name="leaf_color" type="Color" setter="set_leaf_color" getter="get_leaf_color" default="Color(0.12, 0.3, 0.07, 1)">
+			Colour of the leaves.
+		</member>
+		<member name="lods" type="bool" setter="set_lods" getter="get_lods" default="true">
+			If [code]true[/code], distance LODs are generated (meshoptimizer), so plants far from the camera draw a fraction of their triangles.
+		</member>
+		<member name="petal_color" type="Color" setter="set_petal_color" getter="get_petal_color" default="Color(1, 0.78, 0.05, 1)">
+			Colour of the petals and florets.
+		</member>
+		<member name="preset" type="int" setter="set_preset" getter="get_preset" enum="PlantGenerator.Preset" default="0">
+			The kind of plant.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Seed of the random variation: each seed gives another plant of the same kind.
+		</member>
+		<member name="size" type="float" setter="set_size" getter="get_size" default="1.0">
+			Scale of the whole plant.
+		</member>
+		<member name="stem_color" type="Color" setter="set_stem_color" getter="get_stem_color" default="Color(0.2, 0.36, 0.1, 1)">
+			Colour of the stems.
+		</member>
+	</members>
+	<constants>
+		<constant name="PRESET_DANDELION" value="0" enum="Preset">
+			Dandelion: a rosette of toothed leaves at the golden angle, hollow stalks with a head of florets on Vogel's spiral.
+		</constant>
+		<constant name="PRESET_PLANTAIN" value="1" enum="Preset">
+			Ribwort plantain: narrow upright leaves and long stalks with dark flower spikes.
+		</constant>
+		<constant name="PRESET_CLOVER" value="2" enum="Preset">
+			White clover: petioles with three round leaflets, sometimes a globe flower head (florets on a Fibonacci sphere).
+		</constant>
+		<constant name="PRESET_FERN" value="3" enum="Preset">
+			Fern: arching fronds with alternate lobed pinnae, longest mid-frond.
+		</constant>
+		<constant name="PRESET_SEDGE" value="4" enum="Preset">
+			Sedge: a tuft of narrow V-section blades, sometimes stalks with brown spikelets.
+		</constant>
+		<constant name="PRESET_DAISY" value="5" enum="Preset">
+			Oxeye daisy: basal leaves, tall stems with a white ray flower and yellow disc.
+		</constant>
+		<constant name="PRESET_BUTTERCUP" value="6" enum="Preset">
+			Meadow buttercup: lobed basal leaves, branching stems with glossy yellow cup flowers.
+		</constant>
+		<constant name="PRESET_MAX" value="7" enum="Preset">
+			Number of presets.
+		</constant>
+	</constants>
+</class>

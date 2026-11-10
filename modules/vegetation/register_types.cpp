@@ -31,6 +31,7 @@
 #include "register_types.h"
 
 #include "grass_field_3d.h"
+#include "plant_generator.h"
 #include "plant_species.h"
 #include "vegetation_field_3d.h"
 
@@ -45,6 +46,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(Biome);
 	GDREGISTER_CLASS(VegetationField3D);
 	GDREGISTER_CLASS(GrassField3D);
+	GDREGISTER_CLASS(PlantGenerator);
 	// Declared so terrain shaders using GrassField3D.get_ground_shader_code() compile without a field.
 	const struct {
 		const char *name;
