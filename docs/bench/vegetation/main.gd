@@ -286,6 +286,23 @@ func _checks() -> void:
 	tree_sp.canopy_radius = 0.0
 	bush_sp.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 1.0))
 	field.populate()
+	# Climate (TerrainDataMap3D.bake_climate): a warmth rule keeps trees to the warmer half.
+	dm.climate_recipe = ClimateRecipe.new()
+	dm.bake_climate()
+	var temps: Array = []
+	for p in first:
+		temps.append(dm.get_temperature_at(p))
+	temps.sort()
+	var t_mid: float = temps[temps.size() / 2]
+	tree_sp.set_rule_range(PlantSpecies.RULE_TEMPERATURE, Vector2(t_mid, 100.0))
+	field.populate()
+	var cold := 0
+	for p in field.get_placements(0):
+		if dm.get_temperature_at(p) < t_mid - 1e-4:
+			cold += 1
+	_check("climate: trees only where warm enough", dm.has_climate() and cold == 0 and field.get_placements(0).size() < first.size() and temps[-1] > temps[0], [cold, field.get_placements(0).size(), temps[0], t_mid, temps[-1]])
+	tree_sp.set_rule_range(PlantSpecies.RULE_TEMPERATURE, Vector2(-100.0, 100.0))
+	field.populate()
 	_check("shade: no canopy, no shade", field.get_placements(1).size() == bushes_open and field.get_shade_at(t0) == 0.0, field.get_placements(1).size())
 	print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 

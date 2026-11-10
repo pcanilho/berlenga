@@ -67,17 +67,23 @@
 		<member name="align_to_ground" type="float" setter="set_align_to_ground" getter="get_align_to_ground" default="0.0">
 			How far the plant tilts from upright towards the ground normal: 0 upright (trees, reeds), 1 along the slope (ground cover).
 		</member>
-		<member name="curvature_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
-			Soft edge of [member curvature_range].
+		<member name="aridity_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member aridity_range].
 		</member>
-		<member name="curvature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1000, 1000)">
-			Ground curvature range in 1/m: positive in hollows and valley floors, negative on ridges.
+		<member name="aridity_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1000)">
+			Aridity index (annual precipitation over potential evapotranspiration, Thornthwaite) where the species grows: below 0.5 is dry steppe, above 1 humid. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
 		<member name="canopy_opacity" type="float" setter="set_canopy_opacity" getter="get_canopy_opacity" default="0.85">
 			Share of the light this species' crown stops under its core, for [member canopy_radius]. A broadleaf crown in summer stops about 0.85 to 0.95, a pine or birch less.
 		</member>
 		<member name="canopy_radius" type="float" setter="set_canopy_radius" getter="get_canopy_radius" default="0.0">
 			Crown radius in metres (times each plant's scale). Above 0 the species shades the ground under it, and later species in the [Biome] with a [member shade_range] are placed by that shade (see [method VegetationField3D.get_shade_at]).
+		</member>
+		<member name="curvature_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member curvature_range].
+		</member>
+		<member name="curvature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1000, 1000)">
+			Ground curvature range in 1/m: positive in hollows and valley floors, negative on ridges.
 		</member>
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1.0">
 			Fraction of the Poisson-disk points kept where every rule is fully met, from 0 to 1.
@@ -90,6 +96,12 @@
 		</member>
 		<member name="height_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100000, 100000)">
 			Ground height range in metres.
+		</member>
+		<member name="january_temperature_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member january_temperature_range].
+		</member>
+		<member name="january_temperature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100, 100)">
+			January mean temperature in °C where the species grows: its frost hardiness, for example [code]Vector2(-3, 100)[/code] for beech, which stops where winters are much colder. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
 		<member name="meshes" type="Mesh[]" setter="set_meshes" getter="get_meshes" default="[]">
 			Mesh variants; each plant picks one at random. Plants carry ([code]variant, scale, random, species[/code]) in [code]INSTANCE_CUSTOM[/code] for their materials.
@@ -105,6 +117,12 @@
 		</member>
 		<member name="patch_seed" type="int" setter="set_patch_seed" getter="get_patch_seed" default="0">
 			Seed of the patch noise.
+		</member>
+		<member name="precipitation_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member precipitation_range].
+		</member>
+		<member name="precipitation_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 100000)">
+			Annual precipitation in mm where the species grows. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
 		<member name="random_yaw" type="bool" setter="set_random_yaw" getter="is_random_yaw" default="true">
 			If [code]true[/code], each plant turns to a random angle around its up axis.
@@ -139,11 +157,23 @@
 		<member name="spacing" type="float" setter="set_spacing" getter="get_spacing" default="2.0">
 			Minimum distance in metres between two plants of this species (Poisson-disk radius).
 		</member>
+		<member name="sunlight_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member sunlight_range].
+		</member>
+		<member name="sunlight_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 2000)">
+			Annual mean shortwave radiation at the ground in W/m², with slope, aspect and horizons: sun-loving species on south-facing slopes, shade-tolerant ones on north-facing. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
+		</member>
 		<member name="talus_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member talus_range].
 		</member>
 		<member name="talus_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
 			Scree cover (0 to 1) where the species grows, from the map's geology. Keep most species to [code]Vector2(0, 0.2)[/code]; a few scree specialists take more. Ignored when the map has no geology.
+		</member>
+		<member name="temperature_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member temperature_range].
+		</member>
+		<member name="temperature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100, 100)">
+			Mean annual temperature in °C where the species grows; with the lapse rate it sets tree lines and altitude belts. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
 		<member name="visibility_range" type="float" setter="set_visibility_range" getter="get_visibility_range" default="0.0">
 			Distance, in metres, beyond which the species is not drawn (it fades out over the last 15%). For ground cover too small to see far away. 0 draws it at any distance.
@@ -198,7 +228,22 @@
 		<constant name="RULE_SHADE" value="9" enum="Rule">
 			Canopy shade, 0 to 1 (see [member shade_range]).
 		</constant>
-		<constant name="RULE_MAX" value="10" enum="Rule">
+		<constant name="RULE_TEMPERATURE" value="10" enum="Rule">
+			Mean annual temperature, °C (climate).
+		</constant>
+		<constant name="RULE_JANUARY_TEMPERATURE" value="11" enum="Rule">
+			January mean temperature, °C (climate).
+		</constant>
+		<constant name="RULE_PRECIPITATION" value="12" enum="Rule">
+			Annual precipitation, mm (climate).
+		</constant>
+		<constant name="RULE_ARIDITY" value="13" enum="Rule">
+			Aridity index (climate).
+		</constant>
+		<constant name="RULE_SUNLIGHT" value="14" enum="Rule">
+			Annual mean shortwave at the ground, W/m² (climate).
+		</constant>
+		<constant name="RULE_MAX" value="15" enum="Rule">
 			Number of rules.
 		</constant>
 	</constants>

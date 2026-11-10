@@ -54,6 +54,11 @@ public:
 		RULE_ROCK, // Bare rock exposure, 0 to 1 (geology).
 		RULE_TALUS, // Scree cover, 0 to 1 (geology).
 		RULE_SHADE, // Canopy shade, 0 open sky to 1 dense crown (VegetationField3D, from placed canopy).
+		RULE_TEMPERATURE, // Mean annual temperature, C (needs the map's climate).
+		RULE_JANUARY_TEMPERATURE, // January mean, C: frost hardiness.
+		RULE_PRECIPITATION, // mm a year.
+		RULE_ARIDITY, // Precipitation over potential evapotranspiration.
+		RULE_SUNLIGHT, // Annual mean shortwave, W/m2: sunny slopes against shaded ones.
 		RULE_MAX,
 	};
 
