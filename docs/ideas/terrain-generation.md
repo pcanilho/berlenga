@@ -535,6 +535,35 @@ Queries: `get_temperature_at(pos, day_of_year = -1)`, `get_precipitation_at`, `g
 Snow keeps its own WGEN weather and snow state. Not modelled: cold-air pooling and inversions, continentality
 within a map (maps are far smaller than the hundreds of km it acts over), seasonality of precipitation, fog.
 
+### Climate maps: what was built (10 Nov)
+
+As planned above: `ClimateRecipe`, `TerrainDataMap3D.bake_climate()` and its queries, `terrain_climate.h` (plain
+C++, threaded rows, a small radix-2 FFT). Differences from the plan:
+
+- **Rain shadow floor.** On an Alps-sized range (2000 m, sigma 15 km) the linear model gives 3 times the foot's
+  precipitation on the windward slope (Saentis against Zurich is about 2.5) but leaves the lee at 10 to 20% of the
+  background, drier than inner Alpine valleys (Sion about 60%): it knows only flow over the terrain, not showers
+  or fronts. `precipitation_floor` (0.4) keeps that share of the background on every wet hour, as the
+  `precip_min` of fastscape's implementation does.
+- **Scale.** Rain drifts about wind speed times (tau_c + tau_f), 20 km by default, so on maps under about 20 km it
+  falls past the crests (the model's spillover) and no rain shadow shows; precipitation then follows the range as
+  one broad patch. Temperature, snow share, sun and Sx carry the detail on small maps. Linear theory also wants
+  N h / U at or below 1; much taller, slower cases come out too dry over the crest.
+- **Clouds.** The clear-sky global is Meinel beam plus the Liu and Jordan diffuse share; clouds scale it by Kasten
+  and Czeplak and raise the diffuse share to 0.3 + 0.7 n^2. One mean cover all year.
+
+Cost (cloud CPU, threaded): the 4 km bench world at 16 m (256 x 256, precipitation at 64 m) 0.43 to 0.49 s; a
+24 km square at 64 m (375 x 375) 0.47 s. Horizons dominate; `horizon_distance` 0 drops them. Memory: 25 floats a
+cell (9 maps, 16 Sx). Nothing renders differently: the `terrain_climate_map` globals only exist once baked, and no
+material reads them yet.
+
+Checks (`--test`, 15 of 68): lapse-rate temperatures at the top of a hill (January -3.75 C, July 12.25 C); south
+face gets twice the north face's winter sun; flat ground 188 W/m2 a year (46 N, half cloud); open sky on flat
+ground; Sx +17 degrees in the lee, -16 windward; snow share 0.35 on top against 0.05 below; on the range, windward
+6000 mm against 1900 at the foot, lee 540, wettest point 12 km upwind of the crest, aridity lower in the lee;
+`bake()` keeps the climate; the generated world bakes. Maps: `--climate=map.png [--view] [--wind=270]`
+(temperature, precipitation, winter sun, snow share). Media fork/terrain/climate/.
+
 ## Sources
 
 - Smith, Barstad, A linear theory of orographic precipitation, Journal of the Atmospheric Sciences 61, 2004.
