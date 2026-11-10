@@ -30,6 +30,7 @@
 
 #include "register_types.h"
 
+#include "grass_field_3d.h"
 #include "plant_species.h"
 #include "vegetation_field_3d.h"
 
@@ -42,6 +43,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(PlantSpecies);
 	GDREGISTER_CLASS(Biome);
 	GDREGISTER_CLASS(VegetationField3D);
+	GDREGISTER_CLASS(GrassField3D);
 }
 
 void uninitialize_vegetation_module(ModuleInitializationLevel p_level) {
