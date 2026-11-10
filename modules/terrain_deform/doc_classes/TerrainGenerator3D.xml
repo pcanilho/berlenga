@@ -46,6 +46,17 @@
 				The simulated ground at a world position, without the detail filter. NaN outside the rectangle or before [method generate].
 			</description>
 		</method>
+		<method name="get_detail_shader_code" qualifiers="const">
+			<return type="String" />
+			<description>
+				Shader code for erosion detail below the vertex spacing: the slope of the detail filter's next octaves (below [member detail_octaves], from [member detail_wavelength] halved per octave), differentiated analytically, with this node's seed, depth, gully weight and heights baked in. It declares [code]vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float footprint)[/code], which returns the world normal with the detail added; [code]footprint[/code] is the pixel size in metres (octaves shorter than about four pixels fade out) or 0. Call it after [method generate] and paste the result into the terrain material, for example:
+				[codeblock lang=text]
+				float footprint = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (PROJECTION_MATRIX[1][1] * VIEWPORT_SIZE.y);
+				vec3 wn = terrain_detail_normal(wp, world_normal, 4, footprint);
+				NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
+				[/codeblock]
+			</description>
+		</method>
 		<method name="get_discharge" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="area" type="float" />

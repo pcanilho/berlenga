@@ -747,6 +747,142 @@ String TerrainGenerator3D::get_geology_shader_code() {
 	return c;
 }
 
+// The detail filter's slope law (TerrainErosionFilter::gradient) as shader code, for normals below the vertex spacing:
+// octaves continuing below the ones in the geometry, with this node's seed, depth, gully weight and heights baked in.
+String TerrainGenerator3D::get_detail_shader_code() const {
+	const uint32_t s0 = uint32_t(seed) * 0x2545F491u + 1u;
+	const double lac = 2.0;
+	const double start = detail_wavelength / Math::pow(lac, double(MAX(detail_octaves, 0)));
+	String c;
+	c += "// Erosion detail below the vertex spacing (TerrainGenerator3D.get_detail_shader_code()): the slope of the\n";
+	c += "// detail filter's next octaves, added to the surface normal. terrain_detail_normal(world_pos, world_normal,\n";
+	c += "// octaves, footprint) returns the new world normal; footprint is the pixel size in metres (octaves shorter than\n";
+	c += "// about four pixels fade out), 0 for none.\n";
+	c += vformat("const uint TD_SEED = %du;\n", int64_t(s0));
+	c += vformat("const int TD_FIRST_OCTAVE = %d;\n", MAX(detail_octaves, 0));
+	c += vformat("const float TD_WAVELENGTH = %.6f;\n", start);
+	c += vformat("const float TD_DEPTH = %.6f;\n", double(detail_depth));
+	c += vformat("const float TD_GULLY = %.6f;\n", MAX(double(detail_gully_weight), 1e-3));
+	c += vformat("const float TD_REACH = %.6f;\n", double(detail_reach));
+	c += vformat("const float TD_ASSUMED = %.6f;\n", double(detail_assumed_slope));
+	c += vformat("const float TD_VALLEY = %.3f;\n", double(result_min));
+	c += vformat("const float TD_PEAK = %.3f;\n", double(MAX(result_max, result_min + 1.0f)));
+	c += R"GLSL(
+uint td_hash(uint x, uint z, uint s) {
+	uint h = (x * 0x8DA6B343u) ^ (z * 0xD8163841u) ^ (s * 0xCB1AB31Fu);
+	h ^= h >> 16u;
+	h *= 0x7FEB352Du;
+	h ^= h >> 15u;
+	h *= 0x846CA68Bu;
+	h ^= h >> 16u;
+	return h;
+}
+
+float td_ease_out(float t) {
+	float v = 1.0 - clamp(t, 0.0, 1.0);
+	return 1.0 - v * v;
+}
+
+vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footprint) {
+	vec2 r = vec2(0.0);
+	float slope = length(g);
+	if (slope < 1e-6) {
+		return r;
+	}
+	vec2 st = g / slope * TD_ASSUMED;
+	float fade = clamp((h - TD_VALLEY) / (TD_PEAK - TD_VALLEY), 0.0, 1.0) * 2.0 - 1.0;
+	float mask = td_ease_out(slope / 0.5);
+	float lambda = TD_WAVELENGTH;
+	vec2 fd = vec2(0.0);
+	vec2 md = vec2(0.0);
+	for (int o = 0; o < octaves; o++) {
+		float sl = length(st);
+		if (sl < 1e-6) {
+			break;
+		}
+		vec2 t = vec2(-st.y, st.x) / sl;
+		vec2 f = p / lambda;
+		vec2 fi = floor(f);
+		float c = 0.0;
+		float s = 0.0;
+		float ws = 0.0;
+		vec2 dc = vec2(0.0);
+		vec2 ds = vec2(0.0);
+		vec2 dw = vec2(0.0);
+		uint oseed = TD_SEED + uint(TD_FIRST_OCTAVE + o) * 0x9E3779B9u;
+		for (int j = -2; j <= 2; j++) {
+			for (int i = -2; i <= 2; i++) {
+				vec2 cell = fi + vec2(float(i), float(j));
+				uint hs = td_hash(uint(int(cell.x)), uint(int(cell.y)), oseed);
+				vec2 piv = cell + vec2(float(hs & 0xffffu), float(hs >> 16u)) / 65536.0;
+				vec2 d = f - piv;
+				float w1 = 1.0 - dot(d, d) / 2.25;
+				if (w1 <= 0.0) {
+					continue;
+				}
+				float w = w1 * w1 * w1;
+				vec2 gw = 3.0 * w1 * w1 * (-2.0 * d / 2.25);
+				float ph = dot(d, t) * 6.2831853;
+				float cp = cos(ph);
+				float sp = sin(ph);
+				c += w * cp;
+				s += w * sp;
+				ws += w;
+				dc += gw * cp - w * sp * 6.2831853 * t;
+				ds += gw * sp + w * cp * 6.2831853 * t;
+				dw += gw;
+			}
+		}
+		if (ws <= 0.0) {
+			break;
+		}
+		c /= ws;
+		s /= ws;
+		dc = (dc / ws - c * dw / ws) / lambda;
+		ds = (ds / ws - s * dw / ws) / lambda;
+		float len = sqrt(c * c + s * s);
+		if (len > 0.5) {
+			vec2 dl = (c * dc + s * ds) / len;
+			dc = (dc - c * dl / len) / len;
+			ds = (ds - s * dl / len) / len;
+			c /= len;
+			s /= len;
+		} else {
+			dc *= 2.0;
+			ds *= 2.0;
+			c *= 2.0;
+			s *= 2.0;
+		}
+		float raw = c * TD_GULLY;
+		float faded = fade + (raw - fade) * mask;
+		fd = fd * (1.0 - mask) + mask * TD_GULLY * dc + (raw - fade) * md;
+		// Octaves fade out between eight and four pixels a wavelength (no shimmer).
+		float aa = footprint > 0.0 ? clamp(2.0 - 8.0 * footprint / lambda, 0.0, 1.0) : 1.0;
+		r += aa * fd * TD_DEPTH / TD_GULLY * lambda;
+		fade = faded;
+		float m0 = clamp(mask, 0.0, 1.0);
+		float reach = 1.0 - pow(1.0 - m0, TD_REACH);
+		float dreach = TD_REACH * pow(max(1.0 - m0, 0.0), TD_REACH - 1.0);
+		float as = abs(s);
+		float e = td_ease_out(as);
+		float de = as < 1.0 ? 2.0 * (1.0 - as) * sign(s) : 0.0;
+		md = dreach * md * e + reach * de * ds;
+		mask = reach * e;
+		st += -(s >= 0.0 ? 1.0 : -1.0) * TD_DEPTH * 6.2831853 * t;
+		lambda /= 2.0;
+	}
+	return r;
+}
+
+vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float footprint) {
+	vec2 g = -world_normal.xz / max(world_normal.y, 1e-3);
+	vec2 d = terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
+	return normalize(vec3(-(g.x + d.x), 1.0, -(g.y + d.y)));
+}
+)GLSL";
+	return c;
+}
+
 Vector3 TerrainGenerator3D::_cell_position(int p_cell) const {
 	const real_t x = result_rect.position.x + (p_cell % nx) * result_cell;
 	const real_t z = result_rect.position.y + (p_cell / nx) * result_cell;
@@ -1109,6 +1245,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_geology_image"), &TerrainGenerator3D::get_geology_image);
 	ClassDB::bind_method(D_METHOD("get_geology_texture"), &TerrainGenerator3D::get_geology_texture);
 	ClassDB::bind_static_method("TerrainGenerator3D", D_METHOD("get_geology_shader_code"), &TerrainGenerator3D::get_geology_shader_code);
+	ClassDB::bind_method(D_METHOD("get_detail_shader_code"), &TerrainGenerator3D::get_detail_shader_code);
 	ClassDB::bind_method(D_METHOD("get_discharge", "area"), &TerrainGenerator3D::get_discharge);
 	ClassDB::bind_method(D_METHOD("get_rivers", "min_area"), &TerrainGenerator3D::get_rivers);
 	ClassDB::bind_method(D_METHOD("build_river_paths", "parent", "min_area"), &TerrainGenerator3D::build_river_paths);

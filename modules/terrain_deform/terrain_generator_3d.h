@@ -323,6 +323,7 @@ public:
 	Ref<Image> get_geology_image() const;
 	Ref<Texture2D> get_geology_texture() const { return geology_texture; }
 	static String get_geology_shader_code();
+	String get_detail_shader_code() const;
 	real_t get_discharge(real_t p_area) const;
 	Array get_rivers(real_t p_min_area) const;
 	Array build_river_paths(Node *p_parent, real_t p_min_area);

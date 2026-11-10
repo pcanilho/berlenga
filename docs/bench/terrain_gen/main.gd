@@ -4,7 +4,7 @@
 #   godot --headless --path docs/bench/terrain_gen -- --test --terrain3d same on Terrain3D (addon installed)
 #   godot --headless --path docs/bench/terrain_gen -- --time             generation time at 256, 512, 1024 cells
 #   godot --path docs/bench/terrain_gen --rendering-driver vulkan -- --out=view.png [--raster] [--spp=16] [--close]
-#       [--cell=8 --res=513] [--view-res=1024] [--no-detail] [--crest=1] [--tiles[=2]]
+#       [--cell=8 --res=513] [--view-res=1024] [--no-detail] [--crest=1] [--tiles[=2]] [--mdetail=4]
 #   godot --headless --path docs/bench/terrain_gen -- --map=map.png      shaded relief with rivers
 extends Node3D
 
@@ -536,10 +536,18 @@ shader_type spatial;
 // Grass on soil, bare rock, scree and snow, per pixel from the generator's geology map (terrain_geology(), published
 // as shader globals), the world normal and height.
 uniform float hmax = 1000.0;
+uniform int detail_octaves = 0;
+%s
 %s
 void fragment() {
 	vec3 wn = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	if (detail_octaves > 0) {
+		// Erosion detail below the vertex spacing; octaves under two pixels fade out.
+		float footprint = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (PROJECTION_MATRIX[1][1] * VIEWPORT_SIZE.y);
+		wn = terrain_detail_normal(wp, wn, detail_octaves, footprint);
+		NORMAL = normalize((VIEW_MATRIX * vec4(wn, 0.0)).xyz);
+	}
 	vec4 geo = terrain_geology(wp);
 	vec3 col = mix(vec3(0.2, 0.3, 0.12), vec3(0.36, 0.33, 0.29), max(geo.y, smoothstep(0.85, 0.7, wn.y)));
 	col = mix(col, vec3(0.5, 0.45, 0.38), geo.z);
@@ -638,10 +646,11 @@ func _build_view() -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	var shader := Shader.new()
-	shader.code = VIEW_SHADER % TerrainGenerator3D.get_geology_shader_code()
+	shader.code = VIEW_SHADER % [TerrainGenerator3D.get_geology_shader_code(), gen.get_detail_shader_code()]
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
 	mat.set_shader_parameter("hmax", hmax)
+	mat.set_shader_parameter("detail_octaves", int(args.get("mdetail", "0")))
 	mi.material_override = mat
 	add_child(mi)
 	if ground_mesh:

@@ -358,12 +358,26 @@ borders larger than inside tiles, droplet flow over 5 times higher in valleys th
 4 m spacing 2.2 s, at 2 m about 14 s (cloud, 4 threads); bake only, no frame cost. Look: rills branching down every
 flank and flat alluvial floors in the valleys, raster and path traced alike.
 
+## Detail in the material: what was built
+
+`TerrainGenerator3D.get_detail_shader_code()` emits the detail filter's next octaves (below the ones in the geometry)
+as shader code that returns a normal, not a height: `terrain_detail_normal(world_pos, world_normal, octaves,
+footprint)`. Its slope is the filter differentiated analytically: the blended stripes (weights, phase and the
+partial normalization), carried through the stacked fade and the stacked mask. Its C++ twin
+`TerrainErosionFilter::gradient()` matches finite differences of `offset()` with correlation 0.99 over 20,000 points
+(0.79 with the sine term alone, 0.85 with the stripes differentiated, 0.99 once the mask's slope is carried too).
+Octaves shorter than about four pixels a wavelength fade out by the pixel footprint, so it does not shimmer at
+distance. The bench view uses it with `--mdetail=4` (8, 4, 2 and 1 m over a 4 m mesh): fine gullies on every flank,
+and the path traced frame keeps all of it (skylight shows it in the shadowed slopes the raster leaves dark). Cost:
+25 cells and one sine and cosine each per octave per pixel; GPU timing is queued for the PC (cloud has no GPU).
+
 ## Sources
 
 - Galin, Guérin, Peytavie et al., A Review of Digital Terrain Modeling, CGF 38(2), 2019.
 - Musgrave, Kolb, Mace, The synthesis and rendering of eroded fractal terrains, SIGGRAPH 1989.
 - Ebert, Musgrave, Peachey, Perlin, Worley, Texturing and Modeling: A Procedural Approach.
 - Quilez, noise derivatives and domain warping: https://iquilezles.org/articles/
+- Bigun and Granlund, Optimal orientation detection of linear symmetry, ICCV 1987.
 - Beyer, Implementation of a method for hydraulic erosion, bachelor's thesis, TU Munich, 2015.
 - Mei, Decaudin, Hu, Fast hydraulic erosion simulation and visualization on GPU, Pacific Graphics 2007.
 - O'Brien and Hodgins, Dynamic simulation of splashing fluids, Computer Animation 1995 (virtual pipes).
