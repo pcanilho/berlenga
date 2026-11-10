@@ -160,7 +160,19 @@
 		<constant name="PRESET_FEATHER_MOSS" value="28" enum="Preset">
 			Feather moss: wide, flat, yellow-green carpets as under spruce and pine.
 		</constant>
-		<constant name="PRESET_MAX" value="29" enum="Preset">
+		<constant name="PRESET_WOODRUFF" value="29" enum="Preset">
+			Woodruff: a clonal patch of upright unbranched stems, 12 to 28 cm, with whorls of six to nine narrow leaves held level and small white four-petalled flowers at the top; beech woods.
+		</constant>
+		<constant name="PRESET_WOOD_ANEMONE" value="30" enum="Preset">
+			Wood anemone: single stems with a whorl of three deeply three-lobed leaves two thirds up and one nodding white flower of six or seven tepals; the spring carpet of broadleaf woods.
+		</constant>
+		<constant name="PRESET_IVY" value="31" enum="Preset">
+			Ivy as ground cover: creeping runners along the floor with glossy, dark, lobed leaves on stalks turned up to the light, overlapping into a low carpet; oak and ash woods.
+		</constant>
+		<constant name="PRESET_HEATHER" value="32" enum="Preset">
+			Heather: a dwarf shrub of wiry branched woody stems clothed in short leafy shoots, some with spikes of pink-mauve bells; pine heath and acid open ground.
+		</constant>
+		<constant name="PRESET_MAX" value="33" enum="Preset">
 			Number of presets.
 		</constant>
 	</constants>

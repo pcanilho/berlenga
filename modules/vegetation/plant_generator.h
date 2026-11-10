@@ -76,6 +76,10 @@ public:
 		PRESET_WOOD_SORREL,
 		PRESET_SEEDLING,
 		PRESET_FEATHER_MOSS,
+		PRESET_WOODRUFF,
+		PRESET_WOOD_ANEMONE,
+		PRESET_IVY,
+		PRESET_HEATHER,
 		PRESET_MAX,
 	};
 
@@ -204,6 +208,10 @@ private:
 	void _build_twigs();
 	void _build_wood_sorrel();
 	void _build_seedling();
+	void _build_woodruff();
+	void _build_wood_anemone();
+	void _build_ivy();
+	void _build_heather();
 	void _add_pad(const Vector3 &p_centre, float p_radius, float p_heading);
 
 	static Ref<Shader> shaders[2]; // Plain and textured, shared by every generated plant.
