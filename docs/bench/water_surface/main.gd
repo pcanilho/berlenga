@@ -26,6 +26,8 @@ extends Node3D
 #   --pt-from=N     rasterize until frame N, path trace from then on (a long settle at raster speed)
 #   --tracers=N     N white flecks floating on the surface, carried by sample_flow() (shows the flow)
 #   --seq=N         also save the N frames after --frames, as path_0000.png ... (for a GIF)
+#   --seq-step=K    with --seq, save every Kth frame (a time-lapse)
+#   --view=top      straight down over the surf zone
 #   --dive=M        over the --seq frames, lower the camera by M metres (through the surface at --view=waterline)
 #   --cam-dy=M      raise (or lower) the camera by M metres
 #   --dump-shader=path  write the water material's shader code to a file
@@ -54,6 +56,7 @@ var node_params := {}
 var current := Vector2.ZERO
 var flow_out := ""
 var seq := 0
+var seq_step := 1
 var tracers := 0
 var pt_from := 0
 var bench_env: Environment
@@ -89,6 +92,7 @@ func _ready() -> void:
 			current = Vector2(float(c[0]), float(c[1]))
 		elif a.begins_with("--flow-out="): flow_out = a.substr(11)
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
+		elif a.begins_with("--seq-step="): seq_step = maxi(int(a.substr(11)), 1)
 		elif a.begins_with("--tracers="): tracers = int(a.substr(10))
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
@@ -228,6 +232,8 @@ func _ready() -> void:
 		"curl":
 			# Side on to the breakers, along their crests, where they plunge.
 			cam.look_at_from_position(Vector3(-10.0, 1.8, -1.0), Vector3(2.0, -0.2, -2.0))
+		"top":
+			cam.look_at_from_position(Vector3(0.0, 40.0, -6.0), Vector3(0.0, 0.0, -6.01))
 		"sea":
 			cam.look_at_from_position(Vector3(0, 4.0, -40.0), Vector3(0, -1.0, -110.0))
 		_:
@@ -409,11 +415,12 @@ func _process(_delta: float) -> void:
 		return
 	if dive != 0.0 and seq > 0 and n >= frames and n < frames + seq:
 		bench_cam.position.y -= dive / seq
-	if out != "" and seq > 0 and n >= frames and n < frames + seq:
-		await RenderingServer.frame_post_draw
-		get_viewport().get_texture().get_image().save_png(out.get_basename() + "_%04d.png" % (n - frames))
+	if out != "" and seq > 0 and n >= frames and n < frames + seq * seq_step:
+		if (n - frames) % seq_step == 0:
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png(out.get_basename() + "_%04d.png" % ((n - frames) / seq_step))
 		return
-	if out != "" and n >= frames + seq:
+	if out != "" and n >= frames + seq * seq_step:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(out)
 		for b in get_children():

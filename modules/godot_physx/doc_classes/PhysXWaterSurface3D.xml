@@ -277,8 +277,11 @@
 		<member name="shore_wave_direction" type="Vector2" setter="set_shore_wave_direction" getter="get_shore_wave_direction" default="Vector2(0, 0)">
 			The direction (X, Z) the shore waves travel in from the open sea before the seabed turns them. [code]Vector2(0, 0)[/code] uses [member wind_direction].
 		</member>
+		<member name="shore_wave_groups" type="float" setter="set_shore_wave_groups" getter="get_shore_wave_groups" default="1.0">
+			How much the shore waves' heights vary from wave to wave. At [code]1[/code] each wave has its own height, as in a real sea: the heights follow a Rayleigh distribution (Longuet-Higgins 1952) with [member shore_wave_height] as their rms, in sets of about five bigger waves every twelve or so, so big sets break on the outer bars while small waves run in further before they break (random-wave breaking, Battjes and Janssen 1978, Thornton and Guza 1983). Bigger waves also spill more and smaller ones plunge more. [code]0[/code] makes every wave the same height, so all crests break at the same place.
+		</member>
 		<member name="shore_wave_height" type="float" setter="set_shore_wave_height" getter="get_shore_wave_height" default="0.8">
-			Height (m, crest to trough) of the shore waves in deep water, before they grow in the shallows. The second, longer train is 0.6 of it.
+			Height (m, crest to trough) of the shore waves in deep water, before they grow in the shallows: the rms of the individual waves' heights when [member shore_wave_groups] is on (the significant height is about 1.4 times it). The second, longer train is 0.6 of it.
 		</member>
 		<member name="shore_wave_period" type="float" setter="set_shore_wave_period" getter="get_shore_wave_period" default="8.0">
 			Period (s) of the shore waves: longer swell runs faster, is turned more by the seabed, and breaks further out. The second train is 1.13 times longer, so the two beat into sets.
