@@ -13,6 +13,12 @@
 //   the speed is clamped.
 // MODE_FOLLOW then places the follow strands on their guides (HairWorks / TressFX follow hairs).
 // Per frame:
+//   MODE_VOL_CLEAR, MODE_VOL_SPLAT (volume on): hair-hair interaction as Petrovic, Henne and
+//                Anderson 2005 (Pixar, "Volumetric Methods for Simulation and Rendering of Hair"):
+//                the guide points splat their density and momentum into a grid in groom space;
+//                in MODE_STEP each point's velocity is pulled toward the grid's (friction between
+//                neighbouring strands) and pushed down the gradient of density above the groom's
+//                own (pressure, so the hair keeps its volume instead of packing flat).
 //   MODE_SDF_* (a collision body is set): TressFX's SDF collision (TressFXSDFCollision.hlsl): the
 //                body's triangles (skinned on the CPU) seed the cells they cross with their
 //                distance, jump flooding (Rong and Tan 2006) carries the nearest triangle to every
@@ -36,6 +42,8 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 #define MODE_SDF_SEED 9
 #define MODE_SDF_JUMP 10
 #define MODE_SDF_FINAL 11
+#define MODE_VOL_CLEAR 12
+#define MODE_VOL_SPLAT 13
 
 #define MAX_SPHERES 32
 
@@ -55,6 +63,8 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 sdf_origin; // xyz the grid's corner (world), w the cell size (m)
 	ivec4 sdf_dims; // xyz cells, w triangles (0: no collision body)
 	vec4 sdf_misc; // x unused, y collision margin (m)
+	vec4 vol_origin; // xyz the volume grid's corner (groom space), w its cell (m)
+	vec4 vol_misc; // x friction (per substep), y pressure stiffness (m^2/s^2), z mean groom density, w cells a side (0: off)
 };
 
 layout(push_constant, std430) uniform Pass {
@@ -93,6 +103,14 @@ layout(set = 0, binding = 8, std430) restrict readonly buffer Tris {
 
 layout(set = 0, binding = 9, std430) restrict buffer Sdf {
 	uint sdf[]; // cells: the distance (atomicMin of its bits while seeding, then the signed float); then cells more: the nearest triangle, or -1
+};
+
+layout(set = 0, binding = 10, std430) restrict buffer Vol {
+	int vol[]; // per cell: density, momentum xyz (fixed point, VOL_SCALE)
+};
+
+layout(set = 0, binding = 11, std430) restrict readonly buffer VolRest {
+	float vol_rest[]; // per cell: the groom's own density (guide points), from the CPU
 };
 
 layout(set = 0, binding = 6, std430) restrict readonly buffer Follow {
@@ -206,10 +224,104 @@ float sdf_at(vec3 p) {
 	return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
 }
 
+const float VOL_SCALE = 1024.0;
+
+int vol_index(ivec3 c) {
+	int g = int(vol_misc.w);
+	return (c.z * g + c.y) * g + c.x;
+}
+
+// Trilinear density (x, in guide points per cell) and velocity (yzw, world) at groom-space q.
+vec4 vol_sample(vec3 q) {
+	int g = int(vol_misc.w);
+	vec3 u = (q - vol_origin.xyz) / vol_origin.w - 0.5;
+	ivec3 c = ivec3(floor(u));
+	vec3 f = u - vec3(c);
+	vec4 acc = vec4(0.0);
+	for (int k = 0; k < 8; k++) {
+		ivec3 o = ivec3(k & 1, (k >> 1) & 1, k >> 2);
+		ivec3 cc = c + o;
+		if (any(lessThan(cc, ivec3(0))) || any(greaterThanEqual(cc, ivec3(g)))) {
+			continue;
+		}
+		vec3 wv = mix(1.0 - f, f, vec3(o));
+		float w = wv.x * wv.y * wv.z;
+		int i = vol_index(cc) * 4;
+		acc += w * vec4(vol[i], vol[i + 1], vol[i + 2], vol[i + 3]);
+	}
+	acc /= VOL_SCALE;
+	return vec4(acc.x, acc.x > 1e-4 ? acc.yzw / acc.x : vec3(0.0));
+}
+
+// The density above the groom's own (never below half the groom's mean, so hair blown into
+// empty space may gather some before it pushes), relative to that mean.
+float vol_excess(vec3 q) {
+	int g = int(vol_misc.w);
+	vec3 u = (q - vol_origin.xyz) / vol_origin.w - 0.5;
+	ivec3 c = ivec3(floor(u));
+	vec3 f = u - vec3(c);
+	float cur = 0.0;
+	float rest = 0.0;
+	for (int k = 0; k < 8; k++) {
+		ivec3 o = ivec3(k & 1, (k >> 1) & 1, k >> 2);
+		ivec3 cc = c + o;
+		if (any(lessThan(cc, ivec3(0))) || any(greaterThanEqual(cc, ivec3(g)))) {
+			continue;
+		}
+		vec3 wv = mix(1.0 - f, f, vec3(o));
+		float w = wv.x * wv.y * wv.z;
+		int i = vol_index(cc);
+		cur += w * float(vol[i * 4]) / VOL_SCALE;
+		rest += w * vol_rest[i];
+	}
+	return max(cur - max(rest, 0.5 * vol_misc.z), 0.0) / max(vol_misc.z, 1e-3);
+}
+
 void main() {
 	int id = int(gl_GlobalInvocationID.x);
 
 	int slot_points = int(inertia.z + 0.5);
+	if (pass.mode == MODE_VOL_CLEAR) {
+		int g = int(vol_misc.w);
+		if (id < g * g * g * 4) {
+			vol[id] = 0;
+		}
+		return;
+	}
+	if (pass.mode == MODE_VOL_SPLAT) {
+		// One thread per guide strand: every point splats its density and momentum into the 8
+		// cells around it (trilinear weights, fixed point atomics).
+		if (id >= counts.x || follow[id * 2].w >= 0.0) {
+			return;
+		}
+		int g = int(vol_misc.w);
+		mat4 to_groom = inverse(xform_cur);
+		float inv_dt = step.x > 0.0 ? 1.0 / step.x : 0.0;
+		int first = strands[id].x;
+		int n = strands[id].y;
+		for (int i = 1; i < n; i++) {
+			vec3 p = pos[first + i].xyz;
+			vec3 v = (p - prev[first + i].xyz) * inv_dt;
+			vec3 u = ((to_groom * vec4(p, 1.0)).xyz - vol_origin.xyz) / vol_origin.w - 0.5;
+			ivec3 c = ivec3(floor(u));
+			vec3 f = u - vec3(c);
+			for (int k = 0; k < 8; k++) {
+				ivec3 o = ivec3(k & 1, (k >> 1) & 1, k >> 2);
+				ivec3 cc = c + o;
+				if (any(lessThan(cc, ivec3(0))) || any(greaterThanEqual(cc, ivec3(g)))) {
+					continue;
+				}
+				vec3 wv = mix(1.0 - f, f, vec3(o));
+				float w = wv.x * wv.y * wv.z;
+				int ci = vol_index(cc) * 4;
+				atomicAdd(vol[ci], int(w * VOL_SCALE));
+				atomicAdd(vol[ci + 1], int(w * v.x * VOL_SCALE));
+				atomicAdd(vol[ci + 2], int(w * v.y * VOL_SCALE));
+				atomicAdd(vol[ci + 3], int(w * v.z * VOL_SCALE));
+			}
+		}
+		return;
+	}
 	if (pass.mode == MODE_SDF_CLEAR) {
 		if (id < sdf_cells()) {
 			sdf[id] = SDF_FAR;
@@ -502,6 +614,8 @@ void main() {
 	float wind_speed = length(wind.xyz);
 	float decay = step.y;
 	float global_range = step.w * float(n);
+	bool volume = vol_misc.w > 0.5;
+	mat4 to_groom = volume ? inverse(xform_cur) : mat4(1.0);
 	for (int i = 2; i < n; i++) {
 		int k = first + i;
 		vec3 p = pos[k].xyz;
@@ -511,6 +625,21 @@ void main() {
 			a += air.y * wind_speed * eddies((p - wind.xyz * misc.z) / max(air.z, 1e-3));
 		}
 		v = a + (v - a) * decay + accel.xyz * dt;
+		if (volume) {
+			// Hair-hair interaction (Petrovic et al. 2005): friction with the neighbours' mean
+			// velocity, and pressure down the gradient of density above the groom's.
+			vec3 q = (to_groom * vec4(p, 1.0)).xyz;
+			vec4 s = vol_sample(q);
+			if (s.x > 1e-3) {
+				v = mix(v, s.yzw, vol_misc.x);
+			}
+			float h = 0.5 * vol_origin.w;
+			vec3 gq = vec3(vol_excess(q + vec3(h, 0, 0)) - vol_excess(q - vec3(h, 0, 0)),
+							  vol_excess(q + vec3(0, h, 0)) - vol_excess(q - vec3(0, h, 0)),
+							  vol_excess(q + vec3(0, 0, h)) - vol_excess(q - vec3(0, 0, h))) /
+					(2.0 * h);
+			v -= vol_misc.y * (basis * gq) * dt;
+		}
 		vec3 np = p + v * dt;
 		// Global shape: pulled toward the groomed pose carried by the head, over the first
 		// global_range share of the strand.

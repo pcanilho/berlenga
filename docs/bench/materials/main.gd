@@ -44,7 +44,8 @@ extends Node3D
 #                     --hair=wind: the head held still in a 6 m/s gusty breeze; add "wavy" (--hair=wind_wavy,
 #                     --hair=wavy) for wavy hair; "blonde" for light hair, "back" for the sun low behind
 #                     the head, "plain" for Godot's standard lighting instead of hair_shading, "far" for the
-#                     camera 8 m away, "nolod" to draw every strand at any distance; "box" for square
+#                     camera 8 m away, "nolod" to draw every strand at any distance, "novolume" for
+#                     strands that pass through each other (volume_enabled off); "box" for square
 #                     shoulders (spheres only on the skull), "body" to make them the collision body,
 #                     "skinned" to skin them to a tilted bone (the head stays still), "hidebox" to see the drape;
 #                     --hair=compare: held still, beside the same groom on a HairMesh with BaseMaterial3D
@@ -684,6 +685,7 @@ func _strands_sim() -> void:
 	# "plain": Godot's standard lighting on the strands instead of the hair shading.
 	h.hair_shading = not hair.contains("plain")
 	h.lod_enabled = not hair.contains("nolod")
+	h.volume_enabled = not hair.contains("novolume")
 	if hair.contains("back"):
 		# The sun low behind the head, toward the camera: light through the hair.
 		for c in get_children():

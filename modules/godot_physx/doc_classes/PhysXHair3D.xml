@@ -112,6 +112,15 @@
 		<member name="use_world_gravity" type="bool" setter="set_use_world_gravity" getter="is_using_world_gravity" default="true">
 			Use the world's gravity (from the physics settings) instead of [member fixed_gravity].
 		</member>
+		<member name="volume_enabled" type="bool" setter="set_volume_enabled" getter="is_volume_enabled" default="true">
+			Strands push and drag on each other through a grid around the groom, as Petrovic, Henne and Anderson 2005 (Pixar): each frame the guide strands' density and velocity are gathered into 32 cells a side, and every point is pulled toward its neighbours' mean velocity ([member volume_friction]) and pushed out of hair packed denser than the groom ([member volume_stiffness]). The hair keeps its volume when it falls or blows instead of packing flat, and moves as a mass rather than as loose strands. Off: strands pass through each other, as before.
+		</member>
+		<member name="volume_friction" type="float" setter="set_volume_friction" getter="get_volume_friction" default="0.2">
+			How much each point takes up its neighbours' mean velocity, per 1/60 s. Higher makes the hair move more as one mass.
+		</member>
+		<member name="volume_stiffness" type="float" setter="set_volume_stiffness" getter="get_volume_stiffness" default="1.0">
+			How hard hair packed denser than the groom pushes apart, in m²/s² per unit of excess density. Higher keeps more volume.
+		</member>
 		<member name="vsp_accel_threshold" type="float" setter="set_vsp_accel_threshold" getter="get_vsp_accel_threshold" default="50.0">
 			The root acceleration, in m/s², above which the hair is carried with the head entirely ([member vsp_coeff] taken as [code]1[/code]), so a very fast turn doesn't overstretch it.
 		</member>

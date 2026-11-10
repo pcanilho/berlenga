@@ -85,6 +85,9 @@ class PhysXHair3D : public Node3D {
 	PackedVector4Array collision_spheres; // this node's space: centre, radius
 	NodePath collision_body;
 	float collision_cell_size = 0.01f;
+	bool volume_enabled = true;
+	float volume_friction = 0.2f;
+	float volume_stiffness = 1.0f;
 	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
 	struct BodyCache {
 		ObjectID mesh_instance;
@@ -193,6 +196,12 @@ public:
 	NodePath get_collision_body() const;
 	void set_collision_cell_size(float p_size);
 	float get_collision_cell_size() const;
+	void set_volume_enabled(bool p_enabled);
+	bool is_volume_enabled() const;
+	void set_volume_friction(float p_friction);
+	float get_volume_friction() const;
+	void set_volume_stiffness(float p_stiffness);
+	float get_volume_stiffness() const;
 	void set_collision_spheres(const PackedVector4Array &p_spheres);
 	PackedVector4Array get_collision_spheres() const;
 
