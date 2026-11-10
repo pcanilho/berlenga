@@ -446,8 +446,36 @@ Limits: lakes in steep fluvial valleys are small (1 to 2 ha with 20 to 35 m dams
 marker on a flatter reach or a deeper dam. No glacial overdeepening, lagoons or deltas yet. The sea surface covers
 the generated rectangle; its shore waves are baked on that grid (16 m cells for a 4 km world).
 
+## Star Citizen Planet Tech v5 (Genesis): what it does that we do not
+
+Paulo named Nyx I's planet tech as a bar (10 Nov). What CIG has shown (CitizenCon 2024 and 2025, monthly reports;
+summarised on the Star Citizen wiki), against TerrainGenerator3D:
+
+- Data pools over the whole planet: temperature and humidity (from v4), geology, soil type, soil depth, nutrients;
+  sun exposure and aspect derived from them. Ours: soil depth, bare rock, scree, sediment, drainage, rivers, water.
+  Missing: climate (temperature, precipitation or humidity, insolation), soil type and nutrients.
+- Erosion simulated offline, then medium tiles (base tiles 4 km) refine height plus soil and bedrock by slope, soil
+  and erosion. Ours matches: global stream power baked once, tile erosion, geology from it.
+- Rocks and cliffs follow local geology, in families, so boulders match the cliff above them; debris collects at
+  cliff bases from the erosion sim. Ours has the talus map, but nothing places rocks from it yet.
+- Biomes are emergent: each species has needs and competes for water, nutrients, light and space, with growth
+  stages and health. That is the vegetation thread's side (placement on our geology already started).
+- Terrain material layers bedrock, soil, litter, snow; moisture changes the look and wet ground dries slowly. Distant
+  terrain colour is drawn from the data, including vegetation that is not loaded, so far land matches near land.
+- A virtual terrain cache at several scales; scatter generated on the GPU.
+- Starchitect: searches the planet data for sites that meet a designer's rules (a farm needs workable soil and a
+  mild climate), then assembles locations from modular tiles.
+- Not shown in public: how they do rivers, lakes, coasts or overhangs, and any resolutions or costs.
+
+Candidates for us, generator side: a climate pass (temperature by lapse rate, insolation from slope and aspect,
+orographic precipitation by the linear model of Smith and Barstad 2004, giving humidity and snow lines); a site
+query over our maps (`find_sites()` with required and preferred ranges); rock and debris placement from talus and
+cliffs; a far-field colour map baked from geology and vegetation.
+
 ## Sources
 
+- Smith, Barstad, A linear theory of orographic precipitation, Journal of the Atmospheric Sciences 2004.
+- Star Citizen wiki, Planet Tech v5: https://starcitizen.tools/Planet_Tech_v5
 - Borgefors, Distance transformations in digital images, Computer Vision, Graphics and Image Processing 1986.
 - Costa, Schuster, The formation and failure of natural dams, GSA Bulletin 1988.
 - Korup, Recent research on landslide dams: a literature review with special attention to New Zealand, Progress in
