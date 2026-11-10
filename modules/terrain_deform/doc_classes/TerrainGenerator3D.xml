@@ -1,0 +1,263 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TerrainGenerator3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Generates mountain ranges for a whole world by tectonic uplift against fluvial erosion, and writes them into the ground.
+	</brief_description>
+	<description>
+		Simulates the large-scale landscape model of Cordonnier et al. 2016 ("Large Scale Terrain Generation from Tectonic Uplift and Fluvial Erosion"): rock rises at an uplift rate [code]U[/code], and rivers cut it by the stream power law [code]dh/dt = U - K A^m S[/code] (drainage area [code]A[/code], slope [code]S[/code]). Run towards equilibrium, the two make mountain ranges with connected, branching river valleys and the ridges between them, where uplift is high. The implicit solver of Braun and Willett 2013 makes every step stable at any [member time_step]. Closed basins are filled with sediment (Priority-Flood, Barnes et al. 2014), slopes are held under [member critical_slope], [member hillslope_diffusion] rounds hilltops, and drainage area is routed to all lower neighbours ([member flow_exponent]) so valleys do not follow the grid.
+		Where the rock rises is the input: [member base_uplift] everywhere, a painted [member uplift_map] over the rectangle, Path3D [member ranges] (a band of [member range_width] around each curve), and an [member uplift_noise] that breaks them up. The grid is [member size] metres centred on the node, every [member cell_size] metres; a coarse cell size (8 to 32 m) is intended, since this is the world's large-scale shape.
+		[method bake] (the inspector's Generate button) runs [method generate] then [method write_to_terrain], which samples the result bicubically onto the ground: a [code]Terrain3D[/code] node (called by name, never required; missing regions are created) or a [CollisionShape3D] with a [HeightMapShape3D], with an optional [member ground_mesh]. With a [member deformer], its brushes (rivers, roads, plots) are lifted before the write and applied again on the new ground.
+		The simulation is single-threaded and runs in a fixed order, so the same settings and [member seed] give the same terrain on every machine. Only the starting roughness depends on the seed; it decides which drainage network forms.
+		The result is not saved with the node (the ground keeps it). [method get_height], [method get_drainage_area] and [method get_sediment_depth] read it after [method generate].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="bake">
+			<return type="int" />
+			<description>
+				[method generate] then [method write_to_terrain]. Returns the number of vertices written.
+			</description>
+		</method>
+		<method name="clear_result">
+			<return type="void" />
+			<description>
+				Frees the generated grids.
+			</description>
+		</method>
+		<method name="generate">
+			<return type="bool" />
+			<description>
+				Runs [member steps] steps of uplift and erosion from a flat, slightly rough start. Returns [code]false[/code] if [member size] is empty.
+			</description>
+		</method>
+		<method name="get_base_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The simulated ground at a world position, without the detail filter. NaN outside the rectangle or before [method generate].
+			</description>
+		</method>
+		<method name="get_drainage_area" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Upstream drainage area at a world position, in square metres. Large values are rivers. NaN outside the rectangle or before [method generate].
+			</description>
+		</method>
+		<method name="get_drainage_image" qualifiers="const">
+			<return type="Image" />
+			<description>
+				Drainage area per grid node, [constant Image.FORMAT_RF], square metres.
+			</description>
+		</method>
+		<method name="get_grid_size" qualifiers="const">
+			<return type="Vector2i" />
+			<description>
+				Grid nodes along X and Z of the last [method generate].
+			</description>
+		</method>
+		<method name="get_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Generated ground height at a world position: the simulation (bicubic between grid nodes, including [member height_offset]) plus the detail filter. This is exactly what [method write_to_terrain] writes at a vertex. NaN outside the rectangle or before [method generate].
+			</description>
+		</method>
+		<method name="get_height_image" qualifiers="const">
+			<return type="Image" />
+			<description>
+				Generated heights per grid node, [constant Image.FORMAT_RF], metres.
+			</description>
+		</method>
+		<method name="get_last_change" qualifiers="const">
+			<return type="float" />
+			<description>
+				Largest height change in the last step, in metres. Small against [member uplift] times [member time_step] means the landscape is close to equilibrium.
+			</description>
+		</method>
+		<method name="get_last_generate_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Time the last [method generate] took, in milliseconds.
+			</description>
+		</method>
+		<method name="get_last_steps" qualifiers="const">
+			<return type="int" />
+			<description>
+				Steps the last [method generate] ran.
+			</description>
+		</method>
+		<method name="get_last_write_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Time the last [method write_to_terrain] took, in milliseconds.
+			</description>
+		</method>
+		<method name="get_sediment_depth" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Thickness of sediment that filled closed basins during the simulation, in metres: flat valley floors and old lake beds.
+			</description>
+		</method>
+		<method name="get_sediment_image" qualifiers="const">
+			<return type="Image" />
+			<description>
+				Sediment thickness per grid node, [constant Image.FORMAT_RF], metres.
+			</description>
+		</method>
+		<method name="get_uplift_image" qualifiers="const">
+			<return type="Image" />
+			<description>
+				The uplift rate used per grid node, [constant Image.FORMAT_RF], millimetres per year.
+			</description>
+		</method>
+		<method name="get_world_rect" qualifiers="const">
+			<return type="Rect2" />
+			<description>
+				The world X and Z rectangle the generator covers ([code]position.y[/code] is Z).
+			</description>
+		</method>
+		<method name="has_result" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether [method generate] has run since the node was created or [method clear_result].
+			</description>
+		</method>
+		<method name="write_to_terrain">
+			<return type="int" />
+			<description>
+				Writes the generated heights into the ground's vertices inside the rectangle. Returns the number written.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="area_exponent" type="float" setter="set_area_exponent" getter="get_area_exponent" default="0.5">
+			Exponent [code]m[/code] of drainage area in the stream power law (slope exponent [code]n = 1[/code]). 0.4 to 0.6 is typical of real rivers; higher concentrates erosion in big valleys.
+		</member>
+		<member name="base_uplift" type="float" setter="set_base_uplift" getter="get_base_uplift" default="0.1">
+			Uplift strength everywhere, 0 to 1, under the map and ranges. Low values give foothills between ranges.
+		</member>
+		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="16.0">
+			Metres between grid nodes. Coarse on purpose: this stage shapes ranges and valleys, finer detail is added on top.
+		</member>
+		<member name="critical_slope" type="float" setter="set_critical_slope" getter="get_critical_slope" default="40.0">
+			Steepest slope, in degrees, the rock holds along the flow direction; steeper ground collapses to it. 0 disables.
+		</member>
+		<member name="deformer" type="NodePath" setter="set_deformer" getter="get_deformer" default="NodePath(&quot;&quot;)">
+			Optional [TerrainDeformer3D]. Its brushes are lifted before the write and applied again after it, and its terrain is used when [member terrain] is empty.
+		</member>
+		<member name="detail_assumed_slope" type="float" setter="set_detail_assumed_slope" getter="get_detail_assumed_slope" default="0.6">
+			Slope the simulated ground is treated as having when steering the first gullies. Near the typical slope of the result.
+		</member>
+		<member name="detail_depth" type="float" setter="set_detail_depth" getter="get_detail_depth" default="0.08">
+			Gully depth as a fraction of its wavelength.
+		</member>
+		<member name="detail_enabled" type="bool" setter="set_detail_enabled" getter="is_detail_enabled" default="true">
+			Carves gullies and spurs into the simulated ground with an erosion filter (Clay John 2018, Fewes 2023, Johansen 2026): stripes laid down the slope, octave by octave, each steered by the one before, faded towards peaks and valleys where the slope vanishes. Every point is computed on its own, so tiles join exactly and the result does not depend on threads.
+		</member>
+		<member name="detail_gully_weight" type="float" setter="set_detail_gully_weight" getter="get_detail_gully_weight" default="0.5">
+			Below 1, gullies are scaled down and the overall offset up by the inverse, which keeps peaks pointed.
+		</member>
+		<member name="detail_octaves" type="int" setter="set_detail_octaves" getter="get_detail_octaves" default="4">
+			Gully octaves, each half the wavelength of the one before. Keep the smallest ([member detail_wavelength] / 2^(octaves - 1)) at four terrain vertices or more, or it aliases into spikes; a configuration warning says when it does not.
+		</member>
+		<member name="detail_reach" type="float" setter="set_detail_reach" getter="get_detail_reach" default="1.0">
+			How far smaller gullies reach from steep slopes onto gentler ground. Higher gives more detail.
+		</member>
+		<member name="detail_wavelength" type="float" setter="set_detail_wavelength" getter="get_detail_wavelength" default="128.0">
+			Width of the largest gullies, in metres.
+		</member>
+		<member name="erodibility" type="float" setter="set_erodibility" getter="get_erodibility" default="2e-05">
+			Stream power coefficient [code]K[/code]. Relief at equilibrium grows with [member uplift] / [member erodibility].
+		</member>
+		<member name="flow_exponent" type="float" setter="set_flow_exponent" getter="get_flow_exponent" default="1.0">
+			Drainage area is shared among all lower neighbours in proportion to slope to this power (multiple flow directions, Quinn et al. 1991, Freeman 1991). 0 routes all flow to the steepest neighbour (D8), which leaves straight 45 degree valleys.
+		</member>
+		<member name="generate_button" type="Callable" setter="" getter="get_bake_button" default="Callable()">
+			The inspector's Generate button: runs [method bake].
+		</member>
+		<member name="ground_mesh" type="NodePath" setter="set_ground_mesh" getter="get_ground_mesh" default="NodePath(&quot;&quot;)">
+			A [MeshInstance3D] regenerated from a [HeightMapShape3D] ground after the write. The [member deformer]'s ground mesh is used when empty.
+		</member>
+		<member name="height_offset" type="float" setter="set_height_offset" getter="get_height_offset" default="0.0">
+			Added to every generated height.
+		</member>
+		<member name="hillslope_diffusion" type="float" setter="set_hillslope_diffusion" getter="get_hillslope_diffusion" default="0.01">
+			Soil creep [code]k_d[/code] in square metres per year: rounds hilltops and softens ridges. 0 keeps sharp ridges.
+		</member>
+		<member name="initial_roughness" type="float" setter="set_initial_roughness" getter="get_initial_roughness" default="1.0">
+			Height of the seeded random roughness the simulation starts from, in metres.
+		</member>
+		<member name="max_height" type="float" setter="set_max_height" getter="get_max_height" default="0.0">
+			When above 0, the relief is scaled so the highest point is this far above [member sea_level]. 0 keeps the simulated heights.
+		</member>
+		<member name="outlet_edges" type="int" setter="set_outlet_edges" getter="get_outlet_edges" default="15">
+			Edges of the rectangle held at [member sea_level] where water leaves: bits [constant OUTLET_NEGATIVE_X], [constant OUTLET_POSITIVE_X], [constant OUTLET_NEGATIVE_Z], [constant OUTLET_POSITIVE_Z].
+		</member>
+		<member name="range_width" type="float" setter="set_range_width" getter="get_range_width" default="800.0">
+			Half width in metres of the uplift band around each Path3D in [member ranges]. A path's [code]width[/code] metadata overrides it, and its [code]uplift[/code] metadata sets its strength (default 1).
+		</member>
+		<member name="ranges" type="NodePath[]" setter="set_ranges" getter="get_ranges" default="[]">
+			Path3D nodes along which mountain ranges rise.
+		</member>
+		<member name="sea_level" type="float" setter="set_sea_level" getter="get_sea_level" default="0.0">
+			Height of the outlets and of the flat start.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Seed of the starting roughness. Different seeds give different drainage networks on the same uplift.
+		</member>
+		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(4096, 4096)">
+			Width (X) and depth (Z) in metres of the rectangle generated, centred on the node.
+		</member>
+		<member name="steps" type="int" setter="set_steps" getter="get_steps" default="300">
+			Time steps to simulate.
+		</member>
+		<member name="terrain" type="NodePath" setter="set_terrain" getter="get_terrain" default="NodePath(&quot;&quot;)">
+			The ground to write: a [code]Terrain3D[/code] node or a [CollisionShape3D] with a [HeightMapShape3D].
+		</member>
+		<member name="time_step" type="float" setter="set_time_step" getter="get_time_step" default="20000.0">
+			Years per step. The solver is stable at any step; larger steps reach equilibrium sooner with less detail in the transient.
+		</member>
+		<member name="uplift" type="float" setter="set_uplift" getter="get_uplift" default="2.0">
+			Uplift rate at full strength, in millimetres per year.
+		</member>
+		<member name="uplift_map" type="Texture2D" setter="set_uplift_map" getter="get_uplift_map">
+			Uplift strength painted over the rectangle (red channel, 0 to 1).
+		</member>
+		<member name="uplift_noise" type="Noise" setter="set_uplift_noise" getter="get_uplift_noise">
+			Noise sampled at world X and Z that scales the uplift from the map and ranges down where it is low.
+		</member>
+		<member name="uplift_noise_strength" type="float" setter="set_uplift_noise_strength" getter="get_uplift_noise_strength" default="0.5">
+			How far [member uplift_noise] can lower the uplift: where the noise is lowest the uplift is multiplied by [code]1 - strength[/code].
+		</member>
+	</members>
+	<signals>
+		<signal name="generated">
+			<description>
+				Emitted when [method generate] finishes.
+			</description>
+		</signal>
+		<signal name="written">
+			<param index="0" name="vertices" type="int" />
+			<description>
+				Emitted when [method write_to_terrain] finishes.
+			</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="OUTLET_NEGATIVE_X" value="1" enum="OutletEdge">
+			The edge at the smallest X.
+		</constant>
+		<constant name="OUTLET_POSITIVE_X" value="2" enum="OutletEdge">
+			The edge at the largest X.
+		</constant>
+		<constant name="OUTLET_NEGATIVE_Z" value="4" enum="OutletEdge">
+			The edge at the smallest Z.
+		</constant>
+		<constant name="OUTLET_POSITIVE_Z" value="8" enum="OutletEdge">
+			The edge at the largest Z.
+		</constant>
+	</constants>
+</class>

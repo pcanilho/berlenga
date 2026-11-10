@@ -16,6 +16,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Faster convergence**: light visibility memory and a radiance cache.
 - **Materials**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
 - **Hair**: fibre shading, strand grooms, TressFX strand simulation with body collision.
+- **Terrain**: mountain ranges raised and eroded per seed; non-destructive height brushes; terrain data maps.
 - **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Clouds**: a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
@@ -178,9 +179,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Raster hair shading** (`PhysXHair3D.hair_shading`): Marschner model as Unreal evaluates it, with multiple scattering and light through the strands in shadow maps, so backlit hair glows.
 - **Distance LOD** (`PhysXHair3D`: `lod_enabled`, `lod_start_distance`, `lod_end_distance`, `lod_strand_ratio`): far away, fewer and wider strands with the same look; simulation and path tracing keep every strand.
 - **Body collision** (`PhysXHair3D`: `collision_body`, `collision_cell_size`): strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.
+- **Hair volume** (`volume_enabled`, `volume_friction`, `volume_stiffness`): strands push and drag on each other through a density grid, so hair keeps its volume.
 - **Custom hair shaders**: `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.
 
-<details><summary>Images and clip: hair shading, strand hair, moving hair, raster strands, raster shading, distance LOD, body collision</summary>
+<details><summary>Images and clip: hair shading, strand hair, moving hair, raster strands, raster shading, distance LOD, body collision, hair volume</summary>
 
 ![Hair-shaded spheres and cards: raster, path traced, sun behind, cards backlit](docs/media/hair.jpg)
 
@@ -206,9 +208,34 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Distance LOD: fewer, wider strands far away, with the same look.*
 
-![Strand hair over a box body: no collision, body collision, body skinned to a tilted bone](docs/media/hair-body-collision.jpg)
+![Strand hair over rounded shoulders: spheres only, shoulders as the collision body, skinned to a tilted bone](docs/media/hair-body-collision.jpg)
 
-*Body collision: without it the hair falls through the shoulders; with it the hair drapes over them, also when the body is skinned and tilted.*
+*Body collision: with spheres only the hair sinks into the shoulders; with the shoulders as the body it drapes over them, also when skinned and tilted.*
+
+![Strand hair shaking and in wind, hair volume off and on](docs/media/hair-volume.jpg)
+
+*Hair volume: with it on, the hair stays full instead of collapsing into a flat sheet.*
+
+</details>
+
+### Terrain
+- **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`, `detail_wavelength`, `detail_octaves`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
+- **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
+- **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
+
+<details><summary>Images: mountain generation, terrain data maps</summary>
+
+![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
+
+*Mountain generation: ridges, valleys and the rivers that carved them, from one seed.*
+
+![The generated range, raster and path traced](docs/media/terrain-generator.jpg)
+
+*Mountain generation: the same range in 3D, raster and path traced.*
+
+![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
+
+*Terrain data maps: the stream bed, wet ground and banks come from the maps alone.*
 
 </details>
 
@@ -217,9 +244,8 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.
 - **GPU-placed instances** (`RenderingServer.multimesh_mark_buffer_rd_changed()`): MultiMesh records written by a compute shader reach culling, motion vectors and path tracing.
 - **Instance bones** (`MultiMesh.bones_per_instance`): each instance is skinned from its own records, so thousands of plants bend in the wind without a Skeleton3D each; raster and path traced. 900 swaying stems: 0.30 ms render CPU, against 5.97 ms as 900 Skeleton3D.
-- **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images and clip: plant placement, grass, grass in wind, GPU-placed instances, instance bones, terrain data maps</summary>
+<details><summary>Images and clip: plant placement, grass, grass in wind, GPU-placed instances, instance bones</summary>
 
 ![A valley with trees, bushes and reeds placed by biome rules, raster and path traced](docs/media/vegetation-placement.jpg)
 
@@ -240,10 +266,6 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Stems in rest pose, then bent by instance bones in one MultiMesh, path traced](docs/media/instance-bones.jpg)
 
 *Instance bones: one MultiMesh, every stem bent by its own bones.*
-
-![Slope, curvature, flow, wetness and distance-to-water maps of a valley, and the valley coloured from them](docs/media/terrain-data-maps.jpg)
-
-*Terrain data maps: the stream bed, wet ground and banks come from the maps alone.*
 
 </details>
 
@@ -383,7 +405,6 @@ Target: tens of thousands of objects over kilometres, mostly static.
 - **Off-screen culling** (`rendering/pathtracing/cull_max_distance`, `cull_min_size`): small or distant unseen objects leave the trace.
 - **Opacity micromaps** (`rendering/pathtracing/opacity_micromaps`): cut-out foliage traced without any-hit shaders.
 - **Mesh LOD in the path tracer** (`rendering/pathtracing/mesh_lod`).
-- **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 
 Settings for a large world, in `project.godot`:
 

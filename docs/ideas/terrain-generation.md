@@ -234,6 +234,63 @@ generic test scene rendered raster and path traced at 100% crop.
 Build order proposed: stages 1 and 2 with the bake into Terrain3D and `HeightMapShape3D`, then
 stage 3 (bake and material), then stage 5 maps, then stage 4.
 
+## Stages 1 and 2: what was built
+
+Picked 10 Nov: mountain ranges first. `TerrainGenerator3D` in `modules/terrain_deform`:
+
+- **Uplift** (stage 1): `base_uplift` everywhere, `uplift_map` (red channel over the rectangle), Path3D `ranges`
+  (raised-cosine band of `range_width`, per-path `width` and `uplift` metadata), all multiplied by `uplift_noise`.
+  Rate in mm/yr (`uplift`).
+- **Solver** (stage 2), `terrain_stream_power.h`, plain C++ on caller-owned buffers, single-threaded in a fixed
+  order: D8 receivers, Braun-Willett stack, implicit stream power (n = 1, `area_exponent` m), critical slope along
+  the receiver (`critical_slope`, threshold hillslopes), explicit hillslope diffusion with stable sub-steps,
+  Priority-Flood + epsilon only on steps that leave a closed basin (fill kept as `sediment`), and drainage area by
+  multiple flow directions (`flow_exponent`, cells visited highest first by an O(n) radix sort) so valleys do not
+  follow the grid. Outlet edges sit at `sea_level`. The seed only sets the starting roughness.
+- **Write**: bicubic (Catmull-Rom) onto Terrain3D, by name (missing regions created with `add_region_blank`,
+  heights written per region image, then the deformer's `commit_grid` path: edited flags, `update_maps`, collision)
+  or a `HeightMapShape3D` (+ ground mesh). A `deformer` is cleared before and re-applied after, so rivers, roads and
+  plots follow the new ground. `max_height` rescales relief; prefer `uplift` and `range_width`, since scaling
+  steepens slopes past the critical angle.
+- Inspector Generate button; `get_height`, `get_drainage_area`, `get_sediment_depth` and their images for the
+  next stages.
+
+Tuning (prototype, 4 km): `uplift` / `erodibility` sets equilibrium steepness (2 mm/yr over 2e-5 gives about 350 m
+of relief on an 800 m half-width range; 6 mm/yr and 1300 m about 1 km). Without `critical_slope` single cells
+grow into spikes; without diffusion ridges facet along the grid; `hillslope_diffusion` 0.01 m²/yr at 16 m is the
+balance. D8 alone leaves straight 45 degree valleys, hence MFD by default.
+
+Bench `docs/bench/terrain_gen` (`--test`, `--time`, `--map`, `--out`): 15 checks pass in the cloud (determinism by
+hash, another seed differs, relief, outlets, no pits, trunk river drains 21% of the world, slopes under the critical
+angle, `max_height`, HeightMapShape3D matches `get_height` at every vertex, deformer brush re-applied and its base
+height is the new ground). Generation time on the cloud CPU, 300 steps: 257² 5.3 s, 513² 26 s, 1025² 169 s. All
+of it is bake time; nothing runs per frame. The Terrain3D path is code-reviewed against Terrain3D 1.1 but not run
+in the cloud (`--test --terrain3d` once the addon is in the bench project, on the PC).
+
+Next after stages 1 and 2: stage 3, then stage 5 maps, then stage 4.
+
+## Stage 3: what was built
+
+`terrain_erosion_filter.h`, written from Johansen's description (not his MPL code): per octave a jittered grid one
+wavelength wide; stripes through each pivot run down the steering slope (cos height, sin slope), blended over the
+5x5 cells around the point with a compact weight (radius 1.5 cells, so no pivot enters or leaves at a cell border;
+the first 4x4 version left straight seams at 0.5 m crops); partial normalization (lengths over 1/2 to 1); fade
+approach with an altitude fade target; stacked fading (each octave's result is the next fade target, its creases and
+ridges multiply into the mask with the `detail_reach` power); straight gullies (the next octave steers by the sign of
+this one's slope); gully weight. The input gradient is a central difference one coarse cell either side, so it falls
+to zero across sharp crests and valley floors where the filter fades out.
+
+`TerrainGenerator3D` applies it in `get_height()`, and the terrain write fills rows in parallel through
+`WorkerThreadPool` from the same function, so written ground equals `get_height()` at every vertex and tiles join
+exactly. Defaults: 128 m, 4 octaves, depth 0.08, gully weight 0.5. Cost: about 1.8 microseconds a vertex on one
+cloud core (66k vertices written in 47 ms on 4 threads). Bake only; no frame cost.
+
+Look: raster and path traced close views at 100% crop show the same gullies and ridges; the path tracer keeps all
+the detail (the frame is noisier at 16 samples on the CPU, nothing missing). A thin comb a few metres tall remains on
+some summit silhouettes; to tune. Still open: the same function in the terrain material for detail under the vertex
+spacing (needs a GPU timing), and a ridge map output for texturing. Speed-ups when worlds grow: threading the per-cell passes, and FastFlow-style GPU
+routing (Jain et al. 2024).
+
 ## Sources
 
 - Galin, Guérin, Peytavie et al., A Review of Digital Terrain Modeling, CGF 38(2), 2019.

@@ -33,6 +33,7 @@
 #include "physx_water_wake_3d.h"
 
 #include "core/config/engine.h"
+#include "core/object/worker_thread_pool.h"
 #include "core/math/face3.h"
 #include "core/os/os.h"
 #include "core/object/class_db.h"
@@ -2023,6 +2024,22 @@ void PhysXWaterSurface3D::_hide_breakers() {
 	breaker_stat_spray_rate = 0.0f;
 }
 
+// Runs a lambda over a WorkerThreadPool group (the pool calls a member function).
+template <typename F>
+struct _LipJob {
+	F *fn = nullptr;
+	void run(uint32_t p_index, void *p_unused) { (*fn)(p_index); }
+};
+
+// Appends into a slice of a mesh array that a lip piece owns.
+template <typename T>
+struct _LipSlice {
+	T *ptr = nullptr;
+	int count = 0;
+	_FORCE_INLINE_ void push_back(const T &p_value) { ptr[count++] = p_value; }
+	_FORCE_INLINE_ const T &operator[](int p_index) const { return ptr[p_index]; }
+};
+
 void PhysXWaterSurface3D::_update_breakers() {
 	const uint64_t start_usec = OS::get_singleton()->get_ticks_usec();
 	const int n = grid_resolution;
@@ -2058,19 +2075,37 @@ void PhysXWaterSurface3D::_update_breakers() {
 		return _bilinear_sample(p_grid, n, dom, p_rel.x, p_rel.y);
 	};
 
-	PackedVector3Array verts;
-	PackedVector3Array normals;
-	PackedFloat32Array tangents;
-	PackedColorArray colors;
-	PackedVector2Array uvs;
-	PackedInt32Array indices;
-	LocalVector<Vector3> spray_points;
-	LocalVector<Vector3> spray_dirs;
-	LocalVector<float> spray_weights;
-	float spray_rate = 0.0f;
-	float spray_speed_sum = 0.0f;
-	int crest_points = 0;
+	// Each piece of crest builds its own rings on a worker thread (they only read the surface), straight into its
+	// own slice of the mesh arrays; the spray is joined in order after, so the mesh and the spray are the same as
+	// one thread building them all.
+	struct LipOut {
+		_LipSlice<Vector3> verts;
+		_LipSlice<Vector3> normals;
+		_LipSlice<float> tangents;
+		_LipSlice<Color> colors;
+		_LipSlice<Vector2> uvs;
+		_LipSlice<int32_t> indices;
+		LocalVector<Vector3> spray_points;
+		LocalVector<Vector3> spray_dirs;
+		LocalVector<float> spray_weights;
+		LocalVector<float> spray_speeds;
+		int crest_points = 0;
+	};
+	struct LipSegment {
+		int t = 0;
+		Vector2 a;
+		Vector2 b;
+		int pieces = 1;
+		float piece = 0.0f;
+		int first_vertex = 0;
+		int first_index = 0;
+	};
+	LocalVector<LipSegment> segments;
+	int vert_count = 0;
+	int index_count = 0;
 	const float winding = _front_winding();
+	// Read once here: the node's transform is not read from worker threads.
+	const float origin_y = get_global_position().y;
 
 	// How much lip there is at grid-relative p for train t (add_ring's own measure), without the surface.
 	auto alive_at = [&](int p_t, const Vector2 &p_rel) {
@@ -2081,7 +2116,7 @@ void PhysXWaterSurface3D::_update_breakers() {
 	};
 	// One cross-section at grid-relative p for train t, appended as a ring of RING vertices. Returns the outer
 	// sheet's direction of travel at the crest (for the winding) in r_dir and its tangent there in r_tangent.
-	auto add_ring = [&](int p_t, const Vector2 &p_rel, float p_piece, Vector3 &r_dir, Vector3 &r_tangent) {
+	auto add_ring = [&](LipOut &o, int p_t, const Vector2 &p_rel, float p_piece, Vector3 &r_dir, Vector3 &r_tangent) {
 		const float wx = p_rel.x + grid_center.x;
 		const float wz = p_rel.y + grid_center.y;
 		const float height = sample(shore_height[p_t], p_rel);
@@ -2097,40 +2132,40 @@ void PhysXWaterSurface3D::_update_breakers() {
 		const Vector3 dir = k > 1e-5f ? Vector3(gv.x / k, 0, gv.y / k) : Vector3(1, 0, 0);
 		r_dir = dir;
 		r_tangent = dir;
-		const float crest_y = sample_height(Vector3(wx, 0.0f, wz));
-		const Vector3 crest(wx, Math::is_finite(crest_y) ? crest_y : get_global_position().y + water_level, wz);
+		const float crest_y = _sample_height_at(Vector3(wx, 0.0f, wz), ObjectID(), origin_y);
+		const Vector3 crest(wx, Math::is_finite(crest_y) ? crest_y : origin_y + water_level, wz);
 		const Vector3 crest_local = to_local.xform(crest);
 		const Vector3 up_local = to_local.basis.xform(up).normalized();
 		// Tangents along the crest: the path tracer's hit rebuilds the vertex frame from normal and tangent.
 		const Vector3 along_local = to_local.basis.xform(up.cross(dir)).normalized();
 		auto push_normal = [&](const Vector3 &p_n) {
-			normals.push_back(p_n);
+			o.normals.push_back(p_n);
 			Vector3 t = along_local - p_n * p_n.dot(along_local);
 			t = t.length_squared() > 1e-8f ? t.normalized() : p_n.get_any_perpendicular();
-			tangents.push_back(t.x);
-			tangents.push_back(t.y);
-			tangents.push_back(t.z);
-			tangents.push_back(1.0f);
+			o.tangents.push_back(t.x);
+			o.tangents.push_back(t.y);
+			o.tangents.push_back(t.z);
+			o.tangents.push_back(1.0f);
 		};
 		const Color white_none(0, 0, 0, 0);
 		const float hc = height * vary * inside; // crest to trough
 		if (alive < 0.02f || hc < 0.05f || k <= 1e-5f || !Math::is_finite(crest_y)) {
 			// Nothing thrown here: the ring shrinks to the crest, so the sheet tapers off.
 			for (int r = 0; r < RING; r++) {
-				verts.push_back(crest_local);
+				o.verts.push_back(crest_local);
 				push_normal(up_local);
-				colors.push_back(white_none);
-				uvs.push_back(Vector2());
+				o.colors.push_back(white_none);
+				o.uvs.push_back(Vector2());
 			}
 			return;
 		}
-		crest_points++;
+		o.crest_points++;
 		// The throw: a tube up to about twice as long as it is high at full curl (the vortex shapes surveyed at
 		// surf breaks, Mead and Black 2001), and at most half a radian of phase. The lip lands on the water that
 		// far ahead: its drop sets the flight time, and the throw the jet speed relative to the crest.
 		const float throw_len = w * MIN(0.5f / k, 2.0f * hc);
 		const Vector3 land_guess = crest + dir * throw_len;
-		float land_y = sample_height(land_guess);
+		float land_y = _sample_height_at(land_guess, ObjectID(), origin_y);
 		if (!Math::is_finite(land_y)) {
 			land_y = crest.y - hc;
 		}
@@ -2175,18 +2210,18 @@ void PhysXWaterSurface3D::_update_breakers() {
 			}
 		}
 		for (int j = 0; j <= K; j++) {
-			verts.push_back(to_local.xform(outer[j]));
+			o.verts.push_back(to_local.xform(outer[j]));
 			push_normal(to_local.basis.xform(nrm[j]).normalized());
-			colors.push_back(Color(white[j], 0, 0, 0));
-			uvs.push_back(Vector2(white[j], 0.0f));
+			o.colors.push_back(Color(white[j], 0, 0, 0));
+			o.uvs.push_back(Vector2(white[j], 0.0f));
 		}
 		for (int j = K; j >= 0; j--) {
 			Vector3 inner = outer[j] - nrm[j] * th[j];
 			inner.y = MAX(inner.y, face_at[j] + 0.01f); // the underside stays clear of the face too
-			verts.push_back(to_local.xform(inner));
+			o.verts.push_back(to_local.xform(inner));
 			push_normal(to_local.basis.xform(-nrm[j]).normalized());
-			colors.push_back(Color(white[j], 0, 0, 0));
-			uvs.push_back(Vector2(white[j], 0.0f));
+			o.colors.push_back(Color(white[j], 0, 0, 0));
+			o.uvs.push_back(Vector2(white[j], 0.0f));
 		}
 		// Spray (Ihmsen et al. 2012): kinetic energy per unit mass of the lip, times the wave-crest potential at
 		// its edge (curvature 1 / thickness times its speed) and the trapped-air potential where it lands.
@@ -2204,20 +2239,18 @@ void PhysXWaterSurface3D::_update_breakers() {
 		if (edge_rate > 1e-3f) {
 			// Off the lip's edge, along its jet (absolute: the crest's own speed plus the throw).
 			const Vector3 v = dir * v_abs - up * (g * tau_max);
-			spray_points.push_back(to_local.xform(outer[K]));
-			spray_dirs.push_back(to_local.basis.xform(v.normalized()));
-			spray_weights.push_back(edge_rate);
-			spray_rate += edge_rate;
-			spray_speed_sum += edge_rate * 0.35f * v.length();
+			o.spray_points.push_back(to_local.xform(outer[K]));
+			o.spray_dirs.push_back(to_local.basis.xform(v.normalized()));
+			o.spray_weights.push_back(edge_rate);
+			o.spray_speeds.push_back(edge_rate * 0.35f * v.length());
 		}
 		if (land_rate > 1e-3f) {
 			// Thrown up and forward where it lands.
 			const Vector3 v = (dir * 0.6f + up).normalized();
-			spray_points.push_back(to_local.xform(land_point));
-			spray_dirs.push_back(to_local.basis.xform(v));
-			spray_weights.push_back(land_rate);
-			spray_rate += land_rate;
-			spray_speed_sum += land_rate * 0.6f * v_impact;
+			o.spray_points.push_back(to_local.xform(land_point));
+			o.spray_dirs.push_back(to_local.basis.xform(v));
+			o.spray_weights.push_back(land_rate);
+			o.spray_speeds.push_back(land_rate * 0.6f * v_impact);
 		}
 	};
 
@@ -2331,7 +2364,6 @@ void PhysXWaterSurface3D::_update_breakers() {
 							continue;
 						}
 						const int pieces = MAX(1, (int)Math::ceil(len / spacing));
-						const float piece = len / pieces;
 						bool alive_any = false;
 						for (int sidx = 0; sidx <= pieces && !alive_any; sidx++) {
 							alive_any = alive_at(t, a.lerp(b, float(sidx) / pieces)) >= 0.02f;
@@ -2339,39 +2371,102 @@ void PhysXWaterSurface3D::_update_breakers() {
 						if (!alive_any) {
 							continue;
 						}
-						const int first = verts.size();
-						Vector3 dir, tangent;
-						for (int sidx = 0; sidx <= pieces; sidx++) {
-							add_ring(t, a.lerp(b, float(sidx) / pieces), piece, dir, tangent);
-						}
-						// Each triangle is wound so its face agrees with the sheet's normals: the outside of the
-						// closed sheet faces out (the path tracer enters the water through front faces, and turns a
-						// shading normal that disagrees with its face around, which showed as dark quads). Where a
-						// sheet folds over the face below, a fixed winding per piece is not enough.
-						auto tri = [&](int p_a, int p_b, int p_c) {
-							const Vector3 fn = (verts[p_b] - verts[p_a]).cross(verts[p_c] - verts[p_a]);
-							const Vector3 vn = normals[p_a] + normals[p_b] + normals[p_c];
-							const bool flip = (fn.dot(vn) < 0.0f) == (winding > 0.0f);
-							indices.push_back(p_a);
-							indices.push_back(flip ? p_c : p_b);
-							indices.push_back(flip ? p_b : p_c);
-						};
-						for (int sidx = 0; sidx < pieces; sidx++) {
-							const int r0 = first + sidx * RING;
-							const int r1 = r0 + RING;
-							for (int r = 0; r < RING; r++) {
-								const int rn = (r + 1) % RING;
-								const int qa = r0 + r, qb = r1 + r, qc = r1 + rn, qd = r0 + rn;
-								tri(qa, qb, qc);
-								tri(qa, qc, qd);
-							}
-						}
+						segments.push_back({ t, a, b, pieces, len / pieces, vert_count, index_count });
+						vert_count += (pieces + 1) * RING;
+						index_count += pieces * RING * 6;
 					}
 				}
 			}
 		}
 	}
 
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedFloat32Array tangents;
+	PackedColorArray colors;
+	PackedVector2Array uvs;
+	PackedInt32Array indices;
+	verts.resize(vert_count);
+	normals.resize(vert_count);
+	tangents.resize(vert_count * 4);
+	colors.resize(vert_count);
+	uvs.resize(vert_count);
+	indices.resize(index_count);
+	LocalVector<LipOut> outs;
+	outs.resize(segments.size());
+	{
+		Vector3 *wv = verts.ptrw();
+		Vector3 *wn = normals.ptrw();
+		float *wt = tangents.ptrw();
+		Color *wc = colors.ptrw();
+		Vector2 *wu = uvs.ptrw();
+		int32_t *wi = indices.ptrw();
+		auto build_segment = [&](uint32_t p_index) {
+			const LipSegment &seg = segments[p_index];
+			LipOut &o = outs[p_index];
+			const int vb = seg.first_vertex;
+			o.verts.ptr = wv + vb;
+			o.normals.ptr = wn + vb;
+			o.tangents.ptr = wt + vb * 4;
+			o.colors.ptr = wc + vb;
+			o.uvs.ptr = wu + vb;
+			o.indices.ptr = wi + seg.first_index;
+			Vector3 dir, tangent;
+			for (int sidx = 0; sidx <= seg.pieces; sidx++) {
+				add_ring(o, seg.t, seg.a.lerp(seg.b, float(sidx) / seg.pieces), seg.piece, dir, tangent);
+			}
+			// Each triangle is wound so its face agrees with the sheet's normals: the outside of the closed sheet
+			// faces out (the path tracer enters the water through front faces, and turns a shading normal that
+			// disagrees with its face around, which showed as dark quads). Where a sheet folds over the face below, a
+			// fixed winding per piece is not enough.
+			auto tri = [&](int p_a, int p_b, int p_c) {
+				const Vector3 fn = (o.verts[p_b] - o.verts[p_a]).cross(o.verts[p_c] - o.verts[p_a]);
+				const Vector3 vn = o.normals[p_a] + o.normals[p_b] + o.normals[p_c];
+				const bool flip = (fn.dot(vn) < 0.0f) == (winding > 0.0f);
+				o.indices.push_back(vb + p_a);
+				o.indices.push_back(vb + (flip ? p_c : p_b));
+				o.indices.push_back(vb + (flip ? p_b : p_c));
+			};
+			for (int sidx = 0; sidx < seg.pieces; sidx++) {
+				const int r0 = sidx * RING;
+				const int r1 = r0 + RING;
+				for (int r = 0; r < RING; r++) {
+					const int rn = (r + 1) % RING;
+					const int qa = r0 + r, qb = r1 + r, qc = r1 + rn, qd = r0 + rn;
+					tri(qa, qb, qc);
+					tri(qa, qc, qd);
+				}
+			}
+		};
+		if (segments.size() > 8) {
+			_LipJob<decltype(build_segment)> job;
+			job.fn = &build_segment;
+			WorkerThreadPool *pool = WorkerThreadPool::get_singleton();
+			const WorkerThreadPool::GroupID gid = pool->add_template_group_task(&job, &_LipJob<decltype(build_segment)>::run, (void *)nullptr, (int)segments.size(), -1, true, SNAME("BreakerLips"));
+			pool->wait_for_group_task_completion(gid);
+		} else {
+			for (uint32_t i = 0; i < segments.size(); i++) {
+				build_segment(i);
+			}
+		}
+	}
+	// The spray, joined in order.
+	LocalVector<Vector3> spray_points;
+	LocalVector<Vector3> spray_dirs;
+	LocalVector<float> spray_weights;
+	float spray_rate = 0.0f;
+	float spray_speed_sum = 0.0f;
+	int crest_points = 0;
+	for (const LipOut &o : outs) {
+		crest_points += o.crest_points;
+		for (uint32_t i = 0; i < o.spray_points.size(); i++) {
+			spray_points.push_back(o.spray_points[i]);
+			spray_dirs.push_back(o.spray_dirs[i]);
+			spray_weights.push_back(o.spray_weights[i]);
+			spray_rate += o.spray_weights[i];
+			spray_speed_sum += o.spray_speeds[i];
+		}
+	}
 	if (breaker_instance == nullptr) {
 		breaker_instance = memnew(MeshInstance3D);
 		breaker_instance->set_name("BreakerLips");
@@ -4281,6 +4376,11 @@ float PhysXWaterSurface3D::_sample_height_excluding_wake_bind(Vector3 p_world_po
 }
 
 float PhysXWaterSurface3D::sample_height_excluding_wake(Vector3 p_world_pos, ObjectID p_wake) const {
+	return _sample_height_at(p_world_pos, p_wake, get_global_position().y);
+}
+
+// sample_height_excluding_wake with the node's height given (safe off the main thread).
+float PhysXWaterSurface3D::_sample_height_at(Vector3 p_world_pos, ObjectID p_wake, float p_origin_y) const {
 	if (!is_wet(p_world_pos)) {
 		return -Math::INF;
 	}
@@ -4309,7 +4409,7 @@ float PhysXWaterSurface3D::sample_height_excluding_wake(Vector3 p_world_pos, Obj
 	if (wake != 0.0f && !cell_depth.is_empty()) {
 		wake *= Math::smoothstep(0.0f, 0.3f, Math::lerp(_bilinear_sample(cell_depth, grid_resolution, active_domain_size, x, z), 1000.0f, beyond));
 	}
-	return get_global_position().y + ripple + ocean + wake + _shore_eta_at(x, z);
+	return p_origin_y + ripple + ocean + wake + _shore_eta_at(x, z);
 }
 
 bool PhysXWaterSurface3D::_open_beyond() const {

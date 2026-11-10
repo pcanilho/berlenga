@@ -1291,8 +1291,37 @@ rebuilt (not refitted) BLAS since its topology changes every tick, and
 per-triangle winding checked against its normals.
 
 Limits: the lip is one sheet per crest line (no splash-up jet after it
-lands), spray droplets are lit spheres without motion blur, and the CPU builds
-the rings (a compute pass would move it to the GPU).
+lands) and spray droplets are lit spheres without motion blur.
+
+### Lip build on worker threads (10 Nov)
+
+The audit proposed moving the ring build to a compute pass. Profiling it
+first (lavapipe cloud, 4 cores, `--view=lip`, about 1,100 crest points and
+20k vertices) showed where the tick went: about 2.2 ms building rings, 1 ms
+in the marching squares that find the crest lines, and 0.6 to 1 ms in the
+mesh upload. Each ring reads the surface height twice (`sample_height`:
+ripple readback, every ocean cascade with its choppy inversion and flow
+phases, wakes, shore waves). A compute port would have to duplicate all of
+that in GLSL and keep it in step with the CPU path the buoyancy and the
+material share, or read the mesh back, so it was not taken.
+
+Instead the marching pass now only lists the live crest pieces and their
+slots in the mesh arrays (a prefix sum of their ring and index counts), and
+each piece builds its rings straight into its slot on the WorkerThreadPool.
+The spray emitters are joined in piece order after. Height samples read the
+node's height once on the main thread (`_sample_height_at`), so workers
+never touch the scene tree. The output is bit-identical: hashes of the
+vertices, normals, tangents, colours, indices and spray totals match the
+single-thread build tick for tick.
+
+| Build | Lips CPU per tick (mean) |
+|---|---|
+| Before (one thread) | 4.6 ms |
+| Worker threads | 3.0 to 3.3 ms |
+
+The ring build alone goes from about 2.4 ms to 0.6 to 1.2 ms on 4 cores
+that lavapipe also uses; a desktop CPU with more free cores gains more.
+What is left is the marching squares and the mesh upload.
 
 ## The camera under water: research (9 Nov)
 

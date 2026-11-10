@@ -88,7 +88,8 @@ private:
 	bool waiting_for_terrain = false;
 	HashSet<ObjectID> connected_brushes;
 
-	// Backend state, valid during one apply / query.
+public:
+	// Backend state, valid during one apply / query. Shared with TerrainGenerator3D (C++ only).
 	struct Grid {
 		Backend backend = BACKEND_NONE;
 		real_t spacing = 1.0; // world units between grid vertices (X and Z)
@@ -109,14 +110,21 @@ private:
 		bool map_changed = false;
 	};
 
+	// Opens Terrain3D (by name) or a CollisionShape3D's HeightMapShape3D as a grid of world heights.
+	static bool open_grid(Node *p_terrain, Grid &r_grid);
+	static bool grid_get(Grid &r_grid, const Vector2i &p_cell, float &r_height);
+	static void grid_set(Grid &r_grid, const Vector2i &p_cell, float p_height);
+	// Uploads touched Terrain3D regions (and rebuilds its collision), or stores the HeightMapShape3D's map and
+	// regenerates p_ground_mesh from it.
+	static void commit_grid(Grid &r_grid, MeshInstance3D *p_ground_mesh);
+	static void rebuild_ground_mesh(const Grid &p_grid, MeshInstance3D *p_mesh);
+
+private:
 	static int64_t pack_cell(const Vector2i &p_cell) { return (int64_t(p_cell.x) << 32) | int64_t(uint32_t(p_cell.y)); }
 	static Vector2i unpack_cell(int64_t p_key) { return Vector2i(int32_t(p_key >> 32), int32_t(uint32_t(p_key & 0xffffffff))); }
 
 	bool _open_grid(Grid &r_grid) const;
-	bool _grid_get(Grid &r_grid, const Vector2i &p_cell, float &r_height) const;
-	void _grid_set(Grid &r_grid, const Vector2i &p_cell, float p_height) const;
 	void _commit_grid(Grid &r_grid);
-	void _rebuild_ground_mesh(const Grid &p_grid);
 
 	Vector<Object *> _get_brush_objects() const;
 	void _connect_brushes();
