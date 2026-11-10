@@ -1,3 +1,0 @@
-### Changed
-
-- README: Snow section.

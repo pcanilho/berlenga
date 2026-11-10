@@ -6,6 +6,33 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-f4df6168 (2026-11-10)
+
+### Added
+- Grass carpet: `GrassField3D.view_facing` (edge-on blades widen), `blade_segments` (short undercoat fields), ground tint for terrain shaders (`GrassField3D.get_ground_shader_code()`), `PlantSpecies` patches (`patch_scale`, `patch_cover`, `patch_invert`) and `visibility_range` for clover, flowers and other ground cover.
+- `GrassField3D` trample field: any node in the `grass_trample` group (radius from its collision shape) lays the grass down, and it springs back over `trample_recovery` seconds; `add_trample()` for scripts.
+- Spatial shader built-in `PREVIOUS_FRAME` (true while the vertex function runs for last frame's position) and render mode `alpha_motion_vectors` (a blended surface writes motion vectors in the alpha pass, blended by its alpha)
+- PhysXHair3D strands write motion vectors, so TAA, FSR 2 and DLSS follow moving hair instead of smearing it
+- Water: shore waves get their own heights (Rayleigh, in sets of about five bigger waves every twelve or so), so each breaks at its own place: big sets on the outer bars, small waves further in. `PhysXWaterSurface3D.shore_wave_groups` (default 1; 0 gives the old regular waves).
+- `SnowCover3D`: a snowpack that follows the camera and takes its weather from `WeatherMap3D`: rain or snow by temperature and humidity, colder with altitude, new snow density by temperature, settling, albedo ageing, melt by temperature and sunlight on each slope, meltwater held and refrozen, snow sliding off steep slopes and drifting into the lee of ridges. Queries `get_depth_at()`, `get_swe_at()`, `get_runoff_at()` and more; shader globals `snow_map`, `snow_map_rect`.
+- BaseMaterial3D Snow (`snow_enabled`, `snow_amount`, `snow_max_slope`, `snow_from_weather`): snow cover from the snowpack on any material, in raster and under path tracing.
+- `TerrainGenerator3D`: generates mountain ranges for a whole world from tectonic uplift (painted map, Path3D ranges, noise) against stream power erosion (Cordonnier et al. 2016, Braun and Willett 2013 implicit solver), with sediment-filled basins, a critical slope, hillslope diffusion and multiple-flow-direction drainage. Deterministic per seed. Writes into Terrain3D (by name) or a `HeightMapShape3D`, re-applying a `TerrainDeformer3D`'s brushes on the new ground; exposes height, drainage area and sediment maps.
+- `TerrainGenerator3D` detail: an erosion filter (Clay John 2018, Fewes 2023, Johansen 2026) carves branching gullies and spurs into the simulated ranges, computed per point so tiles join exactly; written in parallel (`detail_wavelength`, `detail_octaves`, `detail_depth`).
+- Weather: falling snow no longer wets surfaces (only the rain share, `WeatherMap3D.rain_fraction()`, reaches the water film), and a snowpack's runoff does instead (`set_surface_water_source()`, fed by `SnowCover3D`). New getters `get_air_temperature()`, `get_air_humidity()`, `get_canopy_height_at()`, `get_canopy_closure_at()`.
+
+### Changed
+- Water: plunging-breaker lips build on worker threads, about a third less CPU per tick, with the same mesh and spray.
+- README: grass trampling and ground cover lines; new grass images and clip.
+- README: hair motion vectors line and image.
+- README: Snow section.
+- README: terrain erosion detail images; detail fades on crests.
+- README: mountain generation erosion filter detail.
+- README: Terrain section with mountain generation; deformation and data map lines moved there.
+- README: shore wave groups line.
+
+### Fixed
+- `TerrainGenerator3D` detail no longer notches crests into a comb of teeth: the filter fades with the slope's coherence where opposite slopes meet. New `sample_heights()` returns the final ground on a grid, filled in parallel.
+
 ## build-13a222ec (2026-11-10)
 
 ### Added
