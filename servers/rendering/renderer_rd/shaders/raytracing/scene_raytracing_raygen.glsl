@@ -844,6 +844,22 @@ void main() {
 
 		vec3 ray_origin = camera_ray_origin;
 		vec3 ray_dir = direction.xyz;
+		// Without Ray Reconstruction nothing antialiases the image (its jittered camera does that
+		// over frames), so geometry finer than a pixel, such as hair strands, would alias to
+		// sparkle: the samples after the first spread over the pixel (box filter, R2 sequence,
+		// Roberts 2018, rotated per frame). The first stays at the centre for the guide buffers.
+		if (sample_idx > 0u && (RT_FLAGS & RT_FLAG_DLSS_RR_ENABLED) == 0u) {
+			vec2 jitter = fract(vec2(0.7548777, 0.5698403) * float(sample_idx) + vec2(0.7548777, 0.5698403) * float(frame_index % 4096u)) - 0.5;
+			vec2 dj = (pixel_center + jitter) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
+			vec4 target_j = scene_data_block.data.inv_projection_matrix * vec4(dj.x, dj.y, 1.0, 1.0);
+			vec3 view_origin_j = orthogonal ? vec3(target_j.xy / target_j.w, 0.0) : vec3(0.0);
+			vec3 view_direction_j = orthogonal ? vec3(0.0, 0.0, -1.0) : normalize(target_j.xyz);
+			ray_dir = (inv_view * vec4(view_direction_j, 0.0)).xyz;
+			ray_origin = (inv_view * vec4(view_origin_j, 1.0)).xyz;
+			if (rt_material_feature(RT_MATERIAL_FEATURE_REFRACTION) && !orthogonal) {
+				ray_origin += ray_dir * length(target_j.xyz / target_j.w);
+			}
+		}
 		// The ray cone's width at the segment's origin (texture level of detail, rt_texture_cone):
 		// 0 at a perspective eye, one pixel's footprint for an orthogonal camera, then grown by
 		// the pixel's spread angle over each segment traced.
