@@ -90,6 +90,14 @@ public:
 		// follows the mesh (faceted / stylized, and cheaper).
 		NORMAL_MODE_PER_VERTEX,
 	};
+	enum WaveSpreading {
+		// cos^2 about the wind with a weak back lobe (the first ocean).
+		WAVE_SPREADING_COS2,
+		// Donelan-Banner's measured sech^2 spreading (Horvath 2015's default), with his swell term.
+		WAVE_SPREADING_DONELAN_BANNER,
+		// Hasselmann et al. (1980)'s cos-2s(theta / 2) spreading, with the swell term.
+		WAVE_SPREADING_HASSELMANN,
+	};
 
 	// When the surface advances: every physics tick (each tick posts the whole GPU step -- ripple solve, FFT, blits,
 	// foam, readbacks), or once per rendered frame for all of that frame's ticks (the ripple layer still sub-steps
@@ -178,6 +186,10 @@ public:
 	// how tall and long the wind waves get. 0 = auto: the surface_mesh
 	// footprint's longest side for enclosed water, a fully developed open sea
 	// otherwise.
+	void set_wave_spreading(WaveSpreading p_spreading);
+	WaveSpreading get_wave_spreading() const { return wave_spreading; }
+	void set_swell(float p_swell);
+	float get_swell() const { return swell; }
 	void set_fetch(float p_fetch);
 	float get_fetch() const { return fetch; }
 	// The fetch actually in use (resolves the 0 = auto case).
@@ -479,6 +491,8 @@ private:
 	float _cascade_split(int p_index) const;
 	float cull_margin = 0.0f;
 	float fetch = 0.0f;
+	WaveSpreading wave_spreading = WAVE_SPREADING_DONELAN_BANNER;
+	float swell = 0.0f;
 	float render_extent = 0.0f;
 	int mesh_detail = 1;
 	bool follow_weather = false;
@@ -647,6 +661,7 @@ private:
 	Vector<Vector2> _collect_footprint() const;
 	void _configure_solver();
 	void _reinit_spectrum();
+	void _set_spreading();
 	// Casts the seabed rays; fills cell_depth.
 	void _sample_seabed();
 	static PackedByteArray _rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n);
@@ -669,4 +684,5 @@ private:
 };
 
 VARIANT_ENUM_CAST(PhysXWaterSurface3D::NormalMode);
+VARIANT_ENUM_CAST(PhysXWaterSurface3D::WaveSpreading);
 VARIANT_ENUM_CAST(PhysXWaterSurface3D::StepMode);

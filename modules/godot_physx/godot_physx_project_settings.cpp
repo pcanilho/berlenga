@@ -36,6 +36,9 @@ void GodotPhysXProjectSettings::register_settings() {
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/simulation/enhanced_determinism"), false);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/simulation/solver_type", PROPERTY_HINT_ENUM, "PGS,TGS"), 0);
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/simulation/allow_sleep"), true);
+	// The ocean FFT: each line's whole transform in shared memory, two dispatches a step (water_fft_rows.glsl);
+	// off = one dispatch per butterfly stage (water_fft.glsl). The same field either way.
+	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/water/shared_memory_fft"), true);
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/simulation/stabilization"), true);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/simulation/cpu_worker_threads", PROPERTY_HINT_RANGE, U"0,32,1"), 0);
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/cloth/tearing"), true);
