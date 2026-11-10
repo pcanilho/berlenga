@@ -659,6 +659,11 @@ void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
 		slide_accum = 0.0;
 		_slide();
 	}
+	// What reaches the ground under the pack (rain through it and melt) wets surfaces in place of the
+	// precipitation the weather map would put there.
+	if (WeatherMap3D *weather = WeatherMap3D::get_active()) {
+		weather->set_surface_water_source_cells(get_instance_id(), cell_runoff, resolution, get_map_rect());
+	}
 	update_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 }
 
@@ -847,6 +852,9 @@ void SnowCover3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			if (WeatherMap3D *weather = WeatherMap3D::get_active()) {
+				weather->clear_surface_water_source(this);
+			}
 			_finish_sx(true);
 			if (active == this) {
 				active = nullptr;

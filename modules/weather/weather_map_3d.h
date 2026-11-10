@@ -127,6 +127,16 @@ private:
 	Vector<float> cell_rain; // mm/h
 	Vector<float> cell_film; // mm
 	Vector<float> cell_puddle; // mm
+	// Water reaching the ground where another node takes the precipitation (a snowpack's runoff), mm/h;
+	// negative where none does, so the cell's own rain reaches the ground.
+	Vector<float> cell_inflow;
+	struct WaterSource {
+		ObjectID owner;
+		Vector<float> rates; // mm/h, row-major in z then x
+		int resolution = 0;
+		Rect2 rect;
+	};
+	LocalVector<WaterSource> water_sources;
 	Ref<Image> painted_image;
 
 	Vector<Storm> storms;
@@ -143,6 +153,8 @@ private:
 		float *type = nullptr;
 		float *rain = nullptr;
 		float *film = nullptr;
+		const float *inflow = nullptr;
+		float rain_fraction = 1.0f;
 		float *puddle = nullptr;
 	};
 	CellPass cell_pass;
@@ -212,6 +224,7 @@ private:
 	void _shift(Vector2i p_new_origin);
 	void _update_cells(double p_weather_dt);
 	void _update_row(uint32_t p_row, CellPass *p_pass);
+	void _gather_water_sources();
 	void _fill_gust_image();
 	void _upload();
 	void _publish_globals();
@@ -275,6 +288,12 @@ public:
 	float get_rain_rate() const { return rain_rate; }
 	void set_temperature(float p_celsius);
 	float get_temperature() const { return temperature; }
+	// The eased state the cells use (the settings are its targets).
+	float get_air_temperature() const { return cur_temperature; }
+	float get_air_humidity() const { return cur_humidity; }
+	// Share of precipitation that falls as rain at an air temperature and relative humidity (0..1), the
+	// complement of the snowfall fraction of Jennings et al. (2018).
+	static float rain_fraction(float p_celsius, float p_humidity);
 	void set_humidity(float p_humidity);
 	float get_humidity() const { return humidity; }
 	void set_surface_storage(float p_mm);
@@ -332,6 +351,14 @@ public:
 	float get_shelter_bake_time() const { return shelter.bake_ms; }
 	// Mean wind at a height over the open-ground wind there: canopy and lee, 0..1.
 	float get_shelter_at(Vector3 p_position, float p_height_above_ground = -1.0f) const;
+	// The canopy over a point: its height (m) and the share of the sky it closes (0..1).
+	float get_canopy_height_at(Vector3 p_position) const;
+	float get_canopy_closure_at(Vector3 p_position) const;
+	// Water a node delivers to the ground in place of the precipitation over its rect (a snowpack's melt
+	// and the rain through it), mm/h on a p_resolution square. Copied; call again to update.
+	void set_surface_water_source(Object *p_owner, const PackedFloat32Array &p_rates, int p_resolution, Rect2 p_rect);
+	void set_surface_water_source_cells(ObjectID p_owner, const Vector<float> &p_rates, int p_resolution, Rect2 p_rect);
+	void clear_surface_water_source(Object *p_owner);
 	Ref<Texture2D> get_shelter_texture() const { return shelter.texture; }
 	Rect2 get_shelter_rect() const { return shelter.rect(); }
 	static String get_wind_shader_code();
