@@ -387,11 +387,15 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Cloud shadows** (`sun_light`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.
 - **Sun projector**: `light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.
 
-<details><summary>Images: clouds, cloud shadows</summary>
+<details><summary>Images: clouds, no repeat, cloud shadows</summary>
 
-![A cloud layer over a field of blocks, path traced](docs/media/weather-clouds.jpg)
+![A cloud layer over a field of blocks, raster and path traced](docs/media/weather-clouds.jpg)
 
-*Clouds: the layer seen from the ground, with its shadows on the field.*
+*Clouds: the layer seen from the ground, with its shadows on the field, raster and path traced.*
+
+![Cloud cover from above over 24 km, before and after the fix](docs/media/clouds-repeat.jpg)
+
+*Clouds that never repeat: seen from above over 24 km, the 3 km grid is gone.*
 
 ![Cloud shadows moving across a field, seen from above, path traced](docs/media/weather-cloud-shadows.jpg)
 
