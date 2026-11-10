@@ -79,7 +79,7 @@
 			Bare rock.
 		</member>
 		<member name="rock_slope" type="float" setter="set_rock_slope" getter="get_rock_slope" default="40.0">
-			Slope in degrees past which rock shows, with or without geology.
+			Slope in degrees past which rock shows when there is no geology. With the generator's geology, rock follows its maps, and faces past [member cliff_slope] are bare too.
 		</member>
 		<member name="sand_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Beach sand.

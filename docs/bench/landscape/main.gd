@@ -755,6 +755,9 @@ func _build_camera() -> void:
 # --- Links -------------------------------------------------------------------------------------------------------
 
 func _checks() -> void:
+	if args.has("wind-snow-only"):
+		await _wind_snow_check()
+		return
 	var peak := _highest_point()
 	# Terrain -> rivers, lake, sea
 	check(rivers.size() >= 3, "terrain generator gives a river network (%d rivers placed)" % rivers.size())
@@ -1022,6 +1025,7 @@ func _checks() -> void:
 	snowfall.follow_target = NodePath("")
 	check(false, "snowfall extinction feeds the fog by itself (wired by a script here)", true)
 	check(false, "falling rain particles from the weather (none in the engine)", true)
+	await _wind_snow_check()
 	var passes := 0
 	var gaps := 0
 	var fails := 0
@@ -1030,6 +1034,41 @@ func _checks() -> void:
 		elif r[0] == "FAIL": fails += 1
 		else: gaps += 1
 	print("[landscape] links: %d pass, %d fail, %d gaps" % [passes, fails, gaps])
+
+
+# Wind moving lying snow (SnowTran-3D in SnowCover3D): a cold gale over the peak for six hours scours the
+# windward side and loads the lee. Run last: it changes the weather.
+func _wind_snow_check() -> void:
+	var peak := _highest_point()
+	var sp := Node3D.new()
+	add_child(sp)
+	sp.global_position = peak
+	snow.follow_target = snow.get_path_to(sp)
+	# A dry, cold gale: no new snow, so only the wind moves it.
+	weather.clear_storms()
+	weather.rain_rate = 0.0
+	weather.cloud_cover = 0.2
+	weather.temperature = -10.0 # at sea level; the lapse rate cools the peak further
+	weather.wind_speed = 15.0
+	weather.snap_to_settings()
+	for i in 4:
+		await get_tree().physics_frame
+	var w2: Vector2 = weather.get_mean_wind_at(peak).normalized()
+	var wd := Vector3(w2.x, 0, w2.y)
+	var side := Vector3(-wd.z, 0, wd.x)
+	var band := func(sign: float) -> float:
+		var sum := 0.0
+		for d in [20.0, 35.0, 50.0]:
+			for o in [-30.0, 0.0, 30.0]:
+				sum += snow.get_swe_at(peak + wd * d * sign + side * o)
+		return sum / 9.0
+	var wind0: float = band.call(-1.0)
+	var lee0: float = band.call(1.0)
+	snow.advance(6.0 * 3600.0)
+	var wind1: float = band.call(-1.0)
+	var lee1: float = band.call(1.0)
+	_log("wind on lying snow: windward %.0f to %.0f mm, lee %.0f to %.0f mm SWE, largest flux %.3f kg/(m s)" % [wind0, wind1, lee0, lee1, snow.get_blown_flux_max()])
+	check(snow.wind_transport_enabled and wind1 < wind0 * 0.9 and lee1 > lee0 * 1.05, "a cold gale moves the lying snow off the windward side of the peak into its lee (windward %.0f to %.0f mm, lee %.0f to %.0f mm)" % [wind0, wind1, lee0, lee1])
 
 
 func _snow_depth(p: Vector3) -> float:

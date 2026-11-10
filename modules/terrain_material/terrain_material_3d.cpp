@@ -253,7 +253,10 @@ void fragment() {
 	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08, tm_rock_cos + 0.04, wn.y);
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
 		vec4 g = terrain_geology(wp);
-		float rock = max(clamp(g.y, 0.0, 1.0), steep);
+		// The generator knows where soil holds (Heimsath soil on slopes up to its repose); below its cells only
+		// faces past the cliff slope are forced bare.
+		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08, tm_cliff_cos + 0.04, wn.y);
+		float rock = max(clamp(g.y, 0.0, 1.0), cliff_rock);
 		float scree = clamp(g.z, 0.0, 1.0) * (1.0 - rock);
 		float rest = max(1.0 - rock - scree, 0.0);
 		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w);
