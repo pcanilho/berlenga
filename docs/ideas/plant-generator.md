@@ -170,6 +170,62 @@ bracken run along the edge where the light falls off (phytosociology's Saum and 
 Placement (grass bench `--forest`): canopy shade bands, bramble 0.05 to 0.7, bracken 0.1 to 0.8,
 foxglove 0.1 to 0.7, placed right after the trees so the large plants claim their space first.
 
+## Bending under bodies and wind (stage 3c)
+
+Bodies walking through ferns, bracken, brambles and nettles push them aside, and the plants spring
+back. No colliders: a game has hundreds of these plants around the player and a physics body for
+each is the wrong cost.
+
+How others do it:
+
+- **CryEngine (Crysis, Kingdom Come: Deliverance)**: per-vertex "main bending" of the whole plant
+  about its root plus "detail bending" of leaf edges, weighted by painted vertex colours (Sousa,
+  GPU Gems 3, ch. 16). Touch bending on bushes adds a few physical branch ropes per instance.
+- **Unreal Engine**: Pivot Painter stores each branch's pivot and direction in UV channels, so
+  a vertex shader can turn every branch about its own base; interactive foliage is a spring per
+  instance.
+- **Ghost of Tsushima, Jahrmann and Wimmer 2017**: grass reads a trample texture around the
+  player: a bend vector per texel that relaxes back over time.
+
+What we build (one ShaderMaterial shared by all generated plants, so the path tracer sees the
+same bend through its vertex capture):
+
+- **One trample field for the whole ground cover.** GrassField3D already keeps the field for its
+  blades (bodies in the `grass_trample` group, half-life recovery). It now publishes it as the
+  global uniforms `grass_trample_map` and `grass_trample_rect`, with its fallback wind in
+  `grass_wind`; every plant reads them. Nothing new runs on the CPU.
+- **Organs turn about their own base (the Pivot Painter idea, done by the generator).** Each
+  part that starts on the ground (a frond from the rhizome, a bramble cane from the crown, a
+  nettle stem, a rosette leaf) starts an organ; everything grown on it belongs to it. UV2.y packs
+  the organ's base (heading and distance from the plant's origin); UV2.x is the bend weight,
+  0 at the base, 1 at the tips.
+- **Push direction from the organ's base and the part.** The field is read at the organ's base
+  and at the vertex (two fetches); the strength is the larger, so a frond lying across a boot goes
+  down with it.
+- **Upright parts lean, spreading parts lie down and swing.** Leaning a horizontal frond
+  sideways about a horizontal axis rolls it over. So the push splits: upright parts lean about
+  their base along it; parts that reach out from the base are laid down by its outward share and
+  swung about the vertical by its sideways share; a body never folds a part back over its base.
+  Parts laid past flat stay above the ground.
+- **Stiffness per plant**: bramble 4, bracken 2.5, moss and litter 50 (they do not bend), the
+  rest 1.5 (relative to grass). Maximum lean 1.2 / sqrt(stiffness) rad.
+- **Wind**: the same rotation, from WeatherMap3D's wind (gusts, canopy) or the grass's fallback
+  wind, with a few millimetres of leaf flutter along the normal (Sousa's detail bending).
+- **Shading kept**: the fragment code is BaseMaterial3D's (leaf textures, back light, wetness,
+  snow on faces that look up), so nothing is lost from the old StandardMaterial3D.
+
+Checks (plants bench, CPU renderer, 1280x720):
+
+- No push, no wind: raster frames match the old StandardMaterial3D to a mean difference below
+  0.013 of 255 (bracken, bramble, foxglove).
+- Frame time of all 60 plants: 111 to 125 ms before and after (the vertex work is lost in the
+  noise). GPU timing waits for the desktop (`--push`, `--wind`).
+- `--push --still` against `--push`: the stood-on nettle opens around the boot, bramble canes
+  are laid aside, neighbours outside the field do not move.
+
+Open: per-vertex sampling of the field costs two texture reads per vertex for every plant inside
+the field's rectangle; a far LOD can skip both.
+
 ## References
 
 - Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*, 1990.
@@ -180,5 +236,7 @@ foxglove 0.1 to 0.7, placed right after the trees so the large plants claim thei
 - Murray, "The physiological principle of minimum work", PNAS 1926 (vein radii).
 - Vogel, "A better way to construct the sunflower head", Mathematical Biosciences 1979.
 - Sousa, "Vegetation procedural animation and shading in Crysis", GPU Gems 3, ch. 16, 2007.
+- Lindquist, "Pivot Painter 2", Unreal Engine documentation, 2017.
+- Jahrmann, Wimmer, "Responsive real-time grass rendering for general 3D scenes", I3D 2017.
 - Lintermann, Deussen, "Interactive modeling of plants", IEEE CG&A 1999.
 - Weber, Penn, "Creation and rendering of realistic trees", SIGGRAPH 1995.

@@ -8,6 +8,9 @@ extends Node3D
 #   --close=P        close view of preset P (index in NAMES)
 #   --macro          with --close, one plant from a hand span away
 #   --notex          without the generated leaf textures
+#   --push           with --close: a body stands on the middle plant (bent through the trample field)
+#   --still          with --push: the body stands there but the trample field is off (the before shot)
+#   --wind=x,z       fallback wind for the plants (default none)
 #   --dump=dir       save the baked textures of the first seed as PNGs
 #   --out=path.png   save the frame
 
@@ -22,6 +25,9 @@ var out := ""
 var macro := false
 var notex := false
 var dump := ""
+var push := false
+var still := false
+var wind := Vector2.ZERO
 var n := 0
 var fails := 0
 
@@ -35,6 +41,11 @@ func _ready() -> void:
 		elif a == "--macro": macro = true
 		elif a == "--notex": notex = true
 		elif a.begins_with("--dump="): dump = a.substr(7)
+		elif a == "--push": push = true
+		elif a == "--still": still = true
+		elif a.begins_with("--wind="):
+			var w := a.substr(7).split(",")
+			wind = Vector2(float(w[0]), float(w[1]))
 	if test:
 		_checks()
 		get_tree().quit(1 if fails > 0 else 0)
@@ -52,11 +63,11 @@ func _ready() -> void:
 			mi.mesh = gen.generate()
 			if dump != "" and s == 0:
 				for si in mi.mesh.get_surface_count():
-					var mat := mi.mesh.surface_get_material(si) as BaseMaterial3D
-					if mat and mat.albedo_texture:
-						mat.albedo_texture.get_image().save_png("%s/%s_%d_albedo.png" % [dump, NAMES[p], si])
-						mat.normal_texture.get_image().save_png("%s/%s_%d_normal.png" % [dump, NAMES[p], si])
-						mat.backlight_texture.get_image().save_png("%s/%s_%d_back.png" % [dump, NAMES[p], si])
+					var mat := mi.mesh.surface_get_material(si) as ShaderMaterial
+					if mat and mat.get_shader_parameter("albedo_tex"):
+						(mat.get_shader_parameter("albedo_tex") as Texture2D).get_image().save_png("%s/%s_%d_albedo.png" % [dump, NAMES[p], si])
+						(mat.get_shader_parameter("normal_tex") as Texture2D).get_image().save_png("%s/%s_%d_normal.png" % [dump, NAMES[p], si])
+						(mat.get_shader_parameter("backlight_tex") as Texture2D).get_image().save_png("%s/%s_%d_back.png" % [dump, NAMES[p], si])
 			if macro and s != 0:
 				mi.free()
 				continue
@@ -91,6 +102,26 @@ func _ready() -> void:
 	sun.shadow_enabled = true
 	sun.light_energy = 2.0
 	add_child(sun)
+	if push or wind != Vector2.ZERO:
+		# A sparse grass field: it runs the trample field and publishes the wind the plants read.
+		var g := GrassField3D.new()
+		g.density = 0.1
+		g.radius = 4.0
+		g.fallback_wind = wind
+		g.trample_enabled = push and not still
+		g.trample_size = 8.0
+		add_child(g)
+		if push:
+			# A boot-sized capsule standing on the middle plant.
+			var body := MeshInstance3D.new()
+			var cap := CapsuleMesh.new()
+			cap.radius = 0.06
+			cap.height = 0.3
+			body.mesh = cap
+			body.set_meta("trample_radius", 0.22)
+			body.add_to_group("grass_trample")
+			add_child(body)
+			body.position = Vector3(0, 0.15, 0)
 	var cam := Camera3D.new()
 	cam.fov = 40
 	add_child(cam)
@@ -106,6 +137,10 @@ func _ready() -> void:
 			var span: float = max(bb.size.y, max(bb.size.x, bb.size.z))
 			cam.position = c + Vector3(0, span * 0.35, span * 1.9)
 		cam.look_at(c)
+	elif close >= 0 and push:
+		# From above and further back: the pushed plant and its neighbours.
+		cam.position = Vector3(0, 1.5, 1.7)
+		cam.look_at(Vector3(0, 0.15, 0))
 	elif close >= 0:
 		cam.position = Vector3(0, 0.42, 0.85)
 		cam.look_at(Vector3(0, 0.1, 0))
@@ -146,7 +181,8 @@ func _checks() -> void:
 
 func _process(_d: float) -> void:
 	n += 1
-	if n < 8:
+	# Raster waits for the wind and the trample field to settle; a traced frame costs minutes here.
+	if n < (90 if (push or wind != Vector2.ZERO) and raster else 8):
 		return
 	set_process(false)
 	await RenderingServer.frame_post_draw

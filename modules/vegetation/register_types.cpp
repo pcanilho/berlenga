@@ -57,6 +57,9 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "grass_ground_color", "vec4" },
 		{ "grass_ground_dry", "vec4" },
 		{ "grass_ground_params", "vec4" },
+		{ "grass_trample_map", "sampler2D" },
+		{ "grass_trample_rect", "vec4" },
+		{ "grass_wind", "vec4" },
 	};
 	for (const auto &g : globals) {
 		Dictionary d;
@@ -67,4 +70,8 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 }
 
 void uninitialize_vegetation_module(ModuleInitializationLevel p_level) {
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+		return;
+	}
+	PlantGenerator::free_shaders();
 }

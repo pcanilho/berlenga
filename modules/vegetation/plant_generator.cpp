@@ -30,6 +30,8 @@
 
 #include "plant_generator.h"
 
+#include "modules/weather/weather_map_3d.h"
+
 #include "core/object/class_db.h"
 #include "scene/resources/3d/importer_mesh.h"
 
@@ -92,8 +94,29 @@ float PlantGenerator::_leaf_width(const Leaf &p_leaf, float p_t) {
 	return w;
 }
 
+void PlantGenerator::_begin_organ(const Vector3 &p_origin) {
+	if (p_origin.y < 0.03f) {
+		// Whatever was built so far (some parts push their vertices directly) is the old organ's.
+		for (Builder &b : builders) {
+			_tag_organ(b);
+		}
+		organ_bases.push_back(p_origin);
+		organ = organ_bases.size(); // 0 stays the plant as a whole.
+	}
+}
+
+void PlantGenerator::_tag_organ(Builder &p_builder) const {
+	const int from = p_builder.organs.size();
+	p_builder.organs.resize(p_builder.verts.size());
+	int32_t *w = p_builder.organs.ptrw();
+	for (int i = from; i < p_builder.verts.size(); i++) {
+		w[i] = organ;
+	}
+}
+
 void PlantGenerator::_add_leaf(Surface p_surface, const Transform3D &p_base, const Leaf &p_leaf, float p_wind_base, float p_ao, const Color &p_tint) {
 	Builder &b = builders[p_surface];
+	_begin_organ(p_base.origin);
 	const int n = MAX(p_leaf.segments, 2);
 	const int first = b.verts.size();
 	Basis f = p_base.basis.orthonormalized();
@@ -129,10 +152,12 @@ void PlantGenerator::_add_leaf(Surface p_surface, const Transform3D &p_base, con
 			b.indices.append_array(PackedInt32Array({ r0 + c, r1 + c, r0 + c + 1, r0 + c + 1, r1 + c, r1 + c + 1 }));
 		}
 	}
+	_tag_organ(b);
 }
 
 Transform3D PlantGenerator::_add_stem(const Transform3D &p_base, float p_length, float p_r0, float p_r1, float p_bend, int p_segments, float p_wind_base, Surface p_surface) {
 	Builder &b = builders[p_surface];
+	_begin_organ(p_base.origin);
 	const int sides = 5;
 	const int n = MAX(p_segments, 1);
 	const int first = b.verts.size();
@@ -163,6 +188,7 @@ Transform3D PlantGenerator::_add_stem(const Transform3D &p_base, float p_length,
 			b.indices.append_array(PackedInt32Array({ a, c, a + sides, c, c + sides, a + sides }));
 		}
 	}
+	_tag_organ(b);
 	plant_height = MAX(plant_height, p.y);
 	return Transform3D(f, p);
 }
@@ -194,6 +220,7 @@ void PlantGenerator::_add_head(Surface p_surface, const Transform3D &p_base, flo
 		}
 	}
 	plant_height = MAX(plant_height, (p_base.origin + f.get_column(2) * p_height).y);
+	_tag_organ(b);
 }
 
 void PlantGenerator::_add_ray_flower(const Transform3D &p_top, float p_radius, int p_rays, const Leaf &p_petal) {
@@ -1888,38 +1915,200 @@ PlantGenerator::TextureSet PlantGenerator::_bake_moss_texture(uint32_t p_seed) c
 	return set;
 }
 
-Ref<StandardMaterial3D> PlantGenerator::_textured_material(const TextureSet &p_set, float p_roughness) const {
-	Ref<StandardMaterial3D> m;
+// One shader for every generated plant (docs/ideas/plant-generator.md, "Bending and wind").
+// Vertex: the plant turns about its root by a bend that grows towards the tips (UV2.x, the wind
+// weight baked per vertex), length-preserving like the grass blades: the wind's lean and gusts
+// (WeatherMap3D, else GrassField3D's fallback wind), and bodies pressing it down through the grass
+// trample field, which wins where it is set. Leaves add a small flutter (Sousa, "Vegetation
+// Procedural Animation and Shading in Crysis", GPU Gems 3, 16: main bending plus detail bending).
+// Fragment: leaf textures, back light, and the same wetness and snow lines as BaseMaterial3D.
+Ref<Shader> PlantGenerator::shaders[2];
+
+Ref<Shader> PlantGenerator::_plant_shader(bool p_textured) {
+	Ref<Shader> &sh = shaders[p_textured ? 1 : 0];
+	if (sh.is_valid()) {
+		return sh;
+	}
+	String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
+	if (p_textured) {
+		code += "#define PLANT_TEXTURED\n";
+	}
+	code += WeatherMap3D::get_wind_shader_code();
+	// The wind code already declares weather_map_rect: the wetness lines without their globals.
+	code += BaseMaterial3D::get_wetness_functions_code(false);
+	code += BaseMaterial3D::get_snow_shader_code();
+	code += R"(
+global uniform sampler2D weather_state_map;
+
+float weather_wetness_at(vec3 p_world_pos) {
+	if (weather_map_rect.z <= 0.0) {
+		return 0.0;
+	}
+	vec2 half_texel = 0.5 / vec2(textureSize(weather_state_map, 0));
+	vec2 uv = clamp((p_world_pos.xz - weather_map_rect.xy) / weather_map_rect.zw, half_texel, 1.0 - half_texel);
+	return textureLod(weather_state_map, uv, 0.0).g;
+}
+
+global uniform sampler2D grass_trample_map;
+global uniform vec4 grass_trample_rect;
+global uniform vec4 grass_wind; // xy: fallback wind (m/s, x and z), z: the grass's response (rad per m/s).
+
+uniform vec3 base_color : source_color = vec3(1.0);
+uniform vec3 backlight_color : source_color = vec3(0.0);
+uniform float roughness = 0.7;
+uniform float stiffness = 1.0; // Over the grass: 1 bends as much, 2 half as much.
+uniform float height = 0.3; // The plant's height, for the wind profile and the flutter.
+#ifdef PLANT_TEXTURED
+uniform sampler2D albedo_tex : source_color, filter_linear_mipmap_anisotropic;
+uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap_anisotropic;
+uniform sampler2D backlight_tex : hint_default_black, filter_linear_mipmap_anisotropic; // Linear, as BaseMaterial3D reads it.
+#endif
+
+varying vec3 v_world;
+varying vec3 v_geo_n;
+
+vec3 plant_wind(vec3 wp, float h) {
+	if (weather_map_rect.z > 0.0) {
+		return weather_wind(wp, h);
+	}
+	vec2 w = grass_wind.xy;
+	float s = length(w);
+	if (s < 1e-4) {
+		return vec3(0.0);
+	}
+	vec2 d = w / s;
+	float phase = dot(wp.xz, d) * 0.12 - TIME * s * 0.12;
+	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
+	return vec3(w.x, 0.0, w.y) * g;
+}
+
+vec3 rotate_about(vec3 v, vec3 axis, float a) {
+	return v * cos(a) + cross(axis, v) * sin(a) + axis * dot(axis, v) * (1.0 - cos(a));
+}
+
+void vertex() {
+	float w = clamp(UV2.x, 0.0, 1.0);
+	vec3 root = MODEL_MATRIX[3].xyz;
+	mat3 to_local = inverse(mat3(MODEL_MATRIX));
+	vec3 rest_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	if (w > 0.0) {
+		float resp = (grass_wind.z > 0.0 ? grass_wind.z : 0.12) / max(stiffness, 0.05);
+		vec3 wind = to_local * plant_wind(root, max(height * 0.66, 0.05));
+		vec2 wl = wind.xz;
+		float ws = length(wl);
+		vec2 off = ws > 1e-4 ? wl / ws * min(ws * resp, 1.1) : vec2(0.0);
+		// Bodies: the trample field lays the plant down along the push, replacing the wind where
+		// it is set. Each basal organ (a frond, a cane, a tiller) turns about its own base, whose
+		// place UV2.y carries; the push's direction comes from the field at that base and at this
+		// part, its strength from whichever is pressed harder.
+		float turns = floor(UV2.y);
+		float dist = (UV2.y - turns) * 2.0;
+		float ha = (turns + 0.5) / 1024.0 * 6.2831853;
+		vec3 pivot = vec3(cos(ha) * dist, 0.0, sin(ha) * dist);
+		vec3 rel = VERTEX - pivot;
+		vec2 hd = rel.xz; // The way this part reaches out from its base.
+		float hl = length(hd);
+		hd = hl > 1e-4 ? hd / hl : vec2(0.0);
+		float upright = max(rel.y, 0.0) / max(max(rel.y, 0.0) + hl, 1e-4);
+		float press = 0.0;
+		vec2 push = vec2(0.0);
+		if (grass_trample_rect.z > 0.0) {
+			vec2 pw = (MODEL_MATRIX * vec4(pivot, 1.0)).xz;
+			vec2 ub = (pw - grass_trample_rect.xy) / grass_trample_rect.zw;
+			vec2 uv = (rest_world.xz - grass_trample_rect.xy) / grass_trample_rect.zw;
+			vec2 tb = textureLod(grass_trample_map, ub, 0.0).rg * float(all(greaterThan(ub, vec2(0.0))) && all(lessThan(ub, vec2(1.0))));
+			vec2 tv = textureLod(grass_trample_map, uv, 0.0).rg * float(all(greaterThan(uv, vec2(0.0))) && all(lessThan(uv, vec2(1.0))));
+			press = smoothstep(0.0, 1.0, min(max(length(tb), length(tv)), 1.0));
+			vec2 b = tb * 2.0 + tv;
+			if (press > 1e-3 && length(b) > 1e-4) {
+				push = normalize((to_local * vec3(b.x, 0.0, b.y)).xz) * 1.2 / max(sqrt(stiffness), 0.3);
+			}
+		}
+		// Upright parts lean about their base along the push (or the wind). Parts that spread out
+		// (fronds, arching canes, rosette leaves) cannot be leaned sideways without rolling them
+		// over: they are laid down by the push's outward share and swung about their base by its
+		// sideways share.
+		float out_share = dot(push, hd);
+		vec2 side = push - out_share * hd;
+		out_share = abs(out_share); // Pressed down and outwards, never folded back over its base.
+		vec2 lean = mix(off, mix(hd * out_share, push, upright), press);
+		float ang = min(length(lean), 1.3) * w;
+		float rest_y = VERTEX.y;
+		if (ang > 1e-4) {
+			vec3 axis = normalize(cross(vec3(0.0, 1.0, 0.0), vec3(lean.x, 0.0, lean.y)));
+			rel = rotate_about(rel, axis, ang);
+			NORMAL = rotate_about(NORMAL, axis, ang);
+		}
+		float swing = press * (1.0 - upright) * dot(side, vec2(-hd.y, hd.x)) * 0.6 * w;
+		if (abs(swing) > 1e-4) {
+			rel = rotate_about(rel, vec3(0.0, -1.0, 0.0), swing);
+			NORMAL = rotate_about(NORMAL, vec3(0.0, -1.0, 0.0), swing);
+		}
+		VERTEX = pivot + rel;
+		// Spreading parts laid down past flat would go under the ground.
+		VERTEX.y = max(VERTEX.y, min(rest_y, 0.01 * w));
+		// Leaf flutter: a few millimetres along the normal, out of phase across the plant.
+		float ph = dot(rest_world, vec3(7.1, 3.3, 5.7));
+		VERTEX += NORMAL * sin(TIME * (6.0 + 3.0 * fract(ph)) + ph) * 0.004 * w * clamp(ws * 0.2, 0.0, 1.0) * clamp(height * 4.0, 0.3, 1.5);
+	}
+	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	v_geo_n = normalize(mat3(MODEL_MATRIX) * NORMAL);
+}
+
+void fragment() {
+	vec3 albedo = base_color * COLOR.rgb;
+	vec3 back = backlight_color;
+#ifdef PLANT_TEXTURED
+	albedo *= texture(albedo_tex, UV).rgb;
+	back = texture(backlight_tex, UV).rgb;
+	NORMAL_MAP = texture(normal_tex, UV).rgb;
+#endif
+	float rough = roughness;
+	float metallic = 0.0;
+	float specular = 0.35; // Leaf cuticle.
+	vec3 n_world = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	// Rain: leaves barely soak (low porosity), they darken a little and turn glossy.
+	weather_wetness_apply(weather_wetness_at(v_world), n_world.y, metallic, 0.15, albedo, rough);
+	// Snow lies on the faces that look up.
+	vec4 snow_s = snow_cover_at(v_world);
+	float snow = snow_cover_weight(snow_s.x, 60.0, n_world, n_world);
+	snow_cover_apply(snow, snow_s.y, snow_s.z, albedo, rough, metallic, specular);
+	ALBEDO = albedo;
+	ROUGHNESS = rough;
+	METALLIC = metallic;
+	SPECULAR = specular;
+	BACKLIGHT = back * (1.0 - snow);
+}
+)";
+	sh.instantiate();
+	sh->set_code(code);
+	return sh;
+}
+
+void PlantGenerator::free_shaders() {
+	shaders[0].unref();
+	shaders[1].unref();
+}
+
+Ref<ShaderMaterial> PlantGenerator::_textured_material(const TextureSet &p_set, float p_roughness) const {
+	Ref<ShaderMaterial> m;
 	m.instantiate();
-	m->set_albedo(Color(1, 1, 1));
-	m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, p_set.albedo);
-	m->set_roughness(p_roughness);
-	m->set_specular(0.35f);
-	m->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-	m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
-	m->set_feature(BaseMaterial3D::FEATURE_NORMAL_MAPPING, true);
-	m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, p_set.normal);
-	m->set_normal_scale(1.0f);
-	m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
-	m->set_backlight(Color(0, 0, 0));
-	m->set_texture(BaseMaterial3D::TEXTURE_BACKLIGHT, p_set.backlight);
-	m->set_texture_filter(BaseMaterial3D::TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC);
+	m->set_shader(_plant_shader(true));
+	m->set_shader_parameter("albedo_tex", p_set.albedo);
+	m->set_shader_parameter("normal_tex", p_set.normal);
+	m->set_shader_parameter("backlight_tex", p_set.backlight);
+	m->set_shader_parameter("roughness", p_roughness);
 	return m;
 }
 
-Ref<StandardMaterial3D> PlantGenerator::_material(const Color &p_color, float p_roughness, bool p_backlight) const {
-	Ref<StandardMaterial3D> m;
+Ref<ShaderMaterial> PlantGenerator::_material(const Color &p_color, float p_roughness, bool p_backlight) const {
+	Ref<ShaderMaterial> m;
 	m.instantiate();
-	m->set_albedo(p_color);
-	m->set_roughness(p_roughness);
-	m->set_specular(0.35f); // Leaf cuticle: a little less than the default dielectric.
-	m->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-	m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
-	if (p_backlight) {
-		// Thin leaves and petals pass light through (the engine's back lighting, raster and traced).
-		m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
-		m->set_backlight(p_color * 0.6f);
-	}
+	m->set_shader(_plant_shader(false));
+	m->set_shader_parameter("base_color", p_color);
+	m->set_shader_parameter("roughness", p_roughness);
+	// Thin leaves and petals pass light through (the engine's back lighting, raster and traced).
+	m->set_shader_parameter("backlight_color", p_backlight ? p_color * 0.6f : Color(0, 0, 0));
 	return m;
 }
 
@@ -2028,6 +2217,8 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		b = Builder();
 	}
 	plant_height = 0.0f;
+	organ = 0;
+	organ_bases.clear();
 	rng.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(preset) + 1);
 	switch (preset) {
 		case PRESET_DANDELION:
@@ -2093,6 +2284,25 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_MAX:
 			break;
 	}
+	// Each vertex carries its organ's base in UV2.y: whole steps the heading from the plant's
+	// origin (1024 to a turn), the fraction the distance over 2 m. 0 is the origin itself.
+	for (Builder &b : builders) {
+		_tag_organ(b);
+		Vector2 *uw = b.uv2s.ptrw();
+		for (int i = 0; i < b.verts.size(); i++) {
+			const int o = b.organs[i];
+			if (o <= 0) {
+				continue;
+			}
+			const Vector3 &base = organ_bases[o - 1];
+			const Vector2 a = Vector2(base.x, base.z) * size;
+			if (a.length() < 1e-3f) {
+				continue;
+			}
+			const float turn = Math::fposmod(Math::atan2(a.y, a.x) / float(Math::TAU), 1.0f);
+			uw[i].y = Math::floor(MIN(turn * 1024.0f, 1023.0f)) + MIN(a.length() * 0.5f, 0.999f);
+		}
+	}
 	Ref<ImporterMesh> im;
 	im.instantiate();
 	const Color colors[SURFACE_MAX] = { leaf_color, stem_color, petal_color, centre_color };
@@ -2137,7 +2347,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		arrays[Mesh::ARRAY_COLOR] = b.colors;
 		arrays[Mesh::ARRAY_INDEX] = b.indices;
 		static const char *names[SURFACE_MAX] = { "leaf", "stem", "petal", "centre" };
-		Ref<StandardMaterial3D> mat;
+		Ref<ShaderMaterial> mat;
 		if (textures && preset == PRESET_MOSS && s == SURFACE_CENTRE) {
 			const uint64_t key = (uint64_t(preset) << 40) ^ (uint64_t(s) << 36) ^ (uint64_t(uint32_t(seed % 3)) << 32) ^ uint64_t(Math::abs(int(leaf_color.to_rgba32()) % 1000003)) ^ (uint64_t(texture_size) << 44);
 			TextureSet *ts = texture_cache.getptr(key);
@@ -2159,6 +2369,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		} else {
 			mat = _material(colors[s], roughness[s], s != SURFACE_CENTRE);
 		}
+		mat->set_shader_parameter("height", MAX(plant_height * size, 0.05f));
+		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_LEAF_LITTER ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds

@@ -45,6 +45,7 @@ class PlantGenerator : public Resource {
 	GDCLASS(PlantGenerator, Resource);
 
 public:
+	static void free_shaders();
 	enum Preset {
 		PRESET_DANDELION,
 		PRESET_PLANTAIN,
@@ -121,7 +122,8 @@ private:
 		PackedVector3Array verts;
 		PackedVector3Array normals;
 		PackedVector2Array uvs;
-		PackedVector2Array uv2s; // x: wind weight (0 at the root, 1 at the tips), y: unused.
+		PackedVector2Array uv2s; // x: wind weight (0 at the root, 1 at the tips), y: the organ's base, packed (generate()).
+		PackedInt32Array organs; // Per vertex: the basal organ it belongs to (0: the plant as a whole).
 		PackedColorArray colors; // Ambient occlusion guess, multiplies the albedo.
 		PackedInt32Array indices;
 	};
@@ -145,6 +147,13 @@ private:
 	Builder builders[SURFACE_MAX];
 	RandomPCG rng;
 	float plant_height = 0.0f;
+	// Basal organs (a frond, a cane, a tiller, a rosette leaf): everything added after an organ that
+	// starts on the ground belongs to it, until the next one. The shader bends each organ about its
+	// own base (bracken fronds and bramble canes rise from a rhizome or crown, not the plant's origin).
+	int organ = 0;
+	LocalVector<Vector3> organ_bases;
+	void _begin_organ(const Vector3 &p_origin);
+	void _tag_organ(Builder &p_builder) const;
 
 	float _rand(float p_from, float p_to) { return Math::lerp(p_from, p_to, rng.randf()); }
 	static float _leaf_width(const Leaf &p_leaf, float p_t);
@@ -179,8 +188,10 @@ private:
 	void _build_bramble();
 	void _build_foxglove();
 
-	Ref<StandardMaterial3D> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
-	Ref<StandardMaterial3D> _textured_material(const TextureSet &p_set, float p_roughness) const;
+	static Ref<Shader> shaders[2]; // Plain and textured, shared by every generated plant.
+	static Ref<Shader> _plant_shader(bool p_textured);
+	Ref<ShaderMaterial> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
+	Ref<ShaderMaterial> _textured_material(const TextureSet &p_set, float p_roughness) const;
 	bool textures = true;
 	int texture_size = 256;
 	HashMap<uint64_t, TextureSet> texture_cache;

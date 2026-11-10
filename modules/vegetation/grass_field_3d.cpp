@@ -463,6 +463,10 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 // terrain's shader (get_ground_shader_code()).
 void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	ground_baked = true;
+	if (is_inside_tree()) {
+		// The fallback wind for the other plants (PlantGenerator's shader), so they sway with the grass.
+		RenderingServer::get_singleton()->global_shader_parameter_set("grass_wind", Vector4(fallback_wind.x, fallback_wind.y, wind_response, 0.0f));
+	}
 	if (!ground_tint_enabled || !is_inside_tree()) {
 		return;
 	}
@@ -768,8 +772,10 @@ void GrassField3D::_trample_upload() {
 		return;
 	}
 	const int res = trample_resolution;
+	RenderingServer *rs = RenderingServer::get_singleton();
 	if (!trample_enabled || (int)trample.size() != res * res) {
 		material->set_shader_parameter("trample_rect", Vector4());
+		rs->global_shader_parameter_set("grass_trample_rect", Vector4());
 		return;
 	}
 	Vector<uint8_t> data;
@@ -793,7 +799,11 @@ void GrassField3D::_trample_upload() {
 		material->set_shader_parameter("trample_map", trample_texture);
 	}
 	const float texel = trample_size / res;
-	material->set_shader_parameter("trample_rect", Vector4(trample_origin.x * texel, trample_origin.y * texel, trample_size, trample_size));
+	const Vector4 trect(trample_origin.x * texel, trample_origin.y * texel, trample_size, trample_size);
+	material->set_shader_parameter("trample_rect", trect);
+	// The same field for every other plant (PlantGenerator's shader): one trample for the ground cover.
+	rs->global_shader_parameter_set("grass_trample_map", trample_texture->get_rid());
+	rs->global_shader_parameter_set("grass_trample_rect", trect);
 }
 
 void GrassField3D::set_trample_enabled(bool p_enabled) {
@@ -951,6 +961,7 @@ void GrassField3D::set_fallback_wind(const Vector2 &p_wind) {
 	if (material.is_valid()) {
 		material->set_shader_parameter("fallback_wind", fallback_wind);
 	}
+	ground_baked = false; // Republishes grass_wind for the other plants.
 }
 void GrassField3D::set_wind_response(float p_response) {
 	wind_response = MAX(p_response, 0.0f);
