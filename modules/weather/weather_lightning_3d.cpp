@@ -52,6 +52,7 @@ constexpr float AIR_PRESSURE = 101325.0f; // Pa
 constexpr float LEADER_SPEED = 2.0e5f; // m/s, a stepped leader's mean speed (Rakov and Uman)
 constexpr float COARSE_STEP = 30.0f; // m, the random walk's step before the fine kinks
 constexpr int TUBE_SIDES = 5;
+constexpr float DIRECTIONAL_FROM = 400.0f; // m: farther flashes light the raster as a directional light
 
 // p_dir turned by p_angle about a random axis across it.
 Vector3 turn(const Vector3 &p_dir, float p_angle, RandomPCG &p_rng) {
@@ -624,29 +625,66 @@ int WeatherLightning3D::_start_flash(const Vector3 &p_position, bool p_cloud_to_
 		_build_mesh(f, listener, 2.0f * Math::tan(fov * 0.5f) / height, ortho, cam ? cam->get_size() / height : 0.0f);
 	}
 
-	// The light for the rasterizer: at the channel point nearest the camera (cloud flashes: in the cloud).
+	// The light for the rasterizer stands in for the channel's light at the camera: the irradiance
+	// vector there, the sum over the channel's pieces of radiance times projected area (w l sin) over
+	// r^2, along each piece's direction (cloud flashes: a light in the cloud).
 	Vector3 light_at = f.glow;
 	if (p_cloud_to_ground) {
-		float best = 1e30f;
+		Vector3 irradiance;
+		for (uint32_t i = 0; i + 1 < f.main_channel.size(); i++) {
+			const Vector3 piece = f.main_channel[i + 1] - f.main_channel[i];
+			const Vector3 to = (f.main_channel[i] + f.main_channel[i + 1]) * 0.5f - listener;
+			const float r2 = MAX(to.length_squared(), 1.0f);
+			const Vector3 dir = to / Math::sqrt(r2);
+			const float projected = piece.cross(dir).length(); // l sin
+			irradiance += dir * (projected / r2);
+		}
+		// Per unit of channel_energy (L w): the light's direction and strength.
+		f.irradiance = irradiance.length();
+		const Vector3 dir = f.irradiance > 0.0f ? irradiance / f.irradiance : Vector3(0, 1, 0);
+		// The light sits at the channel point that lies most nearly along that direction.
+		float best = -2.0f;
 		for (const Vector3 &v : f.main_channel) {
-			const float d = v.distance_squared_to(listener);
-			if (d < best) {
-				best = d;
+			const float c = (v - listener).normalized().dot(dir);
+			if (c > best) {
+				best = c;
 				light_at = v;
 			}
 		}
 	}
-	OmniLight3D *light = memnew(OmniLight3D);
+	// Far ground flashes light the rasterized scene as a directional light from the channel: an omni
+	// light's cube shadow map spread over kilometres keeps no detail, and across a scene a few hundred
+	// metres wide a source this far away is close to parallel (the sun's approximation). Near flashes
+	// keep an omni light, whose direction and fall-off change across the scene. Cloud flashes keep an
+	// omni light in the glowing cloud, which also lights the scene under path tracing and so must
+	// have a place.
+	const float d_cam = MAX(light_at.distance_to(listener), 50.0f);
+	const bool directional = p_cloud_to_ground && d_cam > DIRECTIONAL_FROM;
+	Light3D *light;
+	if (directional) {
+		DirectionalLight3D *dl = memnew(DirectionalLight3D);
+		dl->set_sky_mode(DirectionalLight3D::SKY_MODE_LIGHT_ONLY); // not a sun to the sky shader
+		dl->set_param(Light3D::PARAM_SHADOW_MAX_DISTANCE, raster_shadow_distance);
+		light = dl;
+	} else {
+		OmniLight3D *omni = memnew(OmniLight3D);
+		omni->set_param(Light3D::PARAM_ATTENUATION, 2.0f); // inverse square, as the energy below assumes
+		omni->set_param(Light3D::PARAM_RANGE, CLAMP(d_cam * 4.0f, 500.0f, 60000.0f));
+		light = omni;
+	}
 	light->set_as_top_level(true);
 	light->set_color(channel_color);
 	light->set_param(Light3D::PARAM_ENERGY, 0.0f);
-	light->set_param(Light3D::PARAM_ATTENUATION, 2.0f); // inverse square, as the energy below assumes
-	const float d_cam = MAX(light_at.distance_to(listener), 50.0f);
-	light->set_param(Light3D::PARAM_RANGE, CLAMP(d_cam * 4.0f, 500.0f, 60000.0f));
 	light->set_shadow(raster_light_shadows);
 	light->set_visible(false);
 	add_child(light, false, INTERNAL_MODE_BACK);
-	light->set_global_position(light_at);
+	if (directional) {
+		light->set_global_transform(Transform3D(Basis(), light_at).looking_at(listener, Math::abs((listener - light_at).normalized().y) > 0.99f ? Vector3(1, 0, 0) : Vector3(0, 1, 0)));
+	} else {
+		light->set_global_position(light_at);
+	}
+	f.light_distance = d_cam;
+	f.directional = directional;
 	f.light = light;
 
 	flashes.push_back(f);
@@ -793,13 +831,15 @@ void WeatherLightning3D::_process_frame(double p_delta) {
 			}
 		}
 		if (f.light) {
-			// A channel's irradiance at distance d is 2 L w / d; an omni light gives pi E / d^2, so
-			// E = 2 L w d / pi matches it at the camera. Cloud flashes: a source of power W behind a
-			// cloud that lets about 0.3 of it out below, E = 0.3 W / (4 pi^2).
-			const float d = MAX(f.light->get_global_position().distance_to(listener), 50.0f);
+			// The channel's irradiance at the camera is channel_energy times f.irradiance. A directional
+			// light of energy E gives pi E, an omni light pi E / d^2. Cloud flashes: a source of power W
+			// behind a cloud that lets about 0.3 of it out below, E = 0.3 W / (4 pi^2).
 			float energy;
 			if (f.cloud_to_ground) {
-				energy = 2.0f * channel_energy * d / Math::PI * MAX(f.brightness, f.branch_brightness);
+				energy = channel_energy * f.irradiance / Math::PI * MAX(f.brightness, f.branch_brightness);
+				if (!f.directional) {
+					energy *= f.light_distance * f.light_distance;
+				}
 			} else {
 				energy = 0.3f * sky_flash_energy * f.brightness / (4.0f * Math::PI * Math::PI);
 			}
@@ -976,6 +1016,10 @@ void WeatherLightning3D::set_raster_light_shadows(bool p_enabled) {
 	raster_light_shadows = p_enabled;
 }
 
+void WeatherLightning3D::set_raster_shadow_distance(float p_distance) {
+	raster_shadow_distance = MAX(p_distance, 1.0f);
+}
+
 void WeatherLightning3D::set_thunder_enabled(bool p_enabled) {
 	thunder_enabled = p_enabled;
 }
@@ -1016,6 +1060,8 @@ void WeatherLightning3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_raster_light_scale"), &WeatherLightning3D::get_raster_light_scale);
 	ClassDB::bind_method(D_METHOD("set_raster_light_shadows", "enabled"), &WeatherLightning3D::set_raster_light_shadows);
 	ClassDB::bind_method(D_METHOD("get_raster_light_shadows"), &WeatherLightning3D::get_raster_light_shadows);
+	ClassDB::bind_method(D_METHOD("set_raster_shadow_distance", "distance"), &WeatherLightning3D::set_raster_shadow_distance);
+	ClassDB::bind_method(D_METHOD("get_raster_shadow_distance"), &WeatherLightning3D::get_raster_shadow_distance);
 	ClassDB::bind_method(D_METHOD("set_thunder_enabled", "enabled"), &WeatherLightning3D::set_thunder_enabled);
 	ClassDB::bind_method(D_METHOD("is_thunder_enabled"), &WeatherLightning3D::is_thunder_enabled);
 	ClassDB::bind_method(D_METHOD("set_thunder_volume_db", "db"), &WeatherLightning3D::set_thunder_volume_db);
@@ -1051,6 +1097,7 @@ void WeatherLightning3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sky_flash_energy", PROPERTY_HINT_RANGE, "0,1e10,1,or_greater"), "set_sky_flash_energy", "get_sky_flash_energy");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "raster_light_scale", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_raster_light_scale", "get_raster_light_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "raster_light_shadows"), "set_raster_light_shadows", "get_raster_light_shadows");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "raster_shadow_distance", PROPERTY_HINT_RANGE, "10,4000,1,or_greater,suffix:m"), "set_raster_shadow_distance", "get_raster_shadow_distance");
 	ADD_GROUP("Thunder", "thunder_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "thunder_enabled"), "set_thunder_enabled", "is_thunder_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "thunder_volume_db", PROPERTY_HINT_RANGE, "-80,24,0.1,suffix:dB"), "set_thunder_volume_db", "get_thunder_volume_db");
