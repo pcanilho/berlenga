@@ -6,6 +6,26 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-7eb6a91b (2026-11-10)
+
+### Added
+- Sky shaders: `half_res_reprojection` render mode. The half resolution pass is drawn a sixteenth at a time and resolved at full resolution, as Nubis does. `WeatherSkyMaterial.cloud_reprojection` is on by default: full-resolution clouds for a quarter of the marching.
+- `GrassField3D`: procedural grass around the camera, blades seeded by world position and grouped in clumps, rules over a `TerrainDataMap3D`, LOD by rank, wind from `WeatherMap3D` and wetness from the weather map; visible to the path tracer.
+- Path tracer: light reuse across pixels and frames (`rendering/pathtracing/light_reuse`, ReSTIR DI, off by default): +1.2 dB at 1 spp with hundreds of overlapping lights.
+- BaseMaterial3D Wetness (`wetness_enabled`, `wetness_porosity`, `wetness_amount`, `wetness_from_weather`): surfaces darken and turn glossier when the weather map is wet (Lagarde 2013), in raster and under path tracing.
+- `TerrainDataMap3D`: baked terrain analysis maps for placement and materials: slope, aspect, curvature, flow accumulation, wetness index, water depth and signed distance to water, as CPU queries and shader globals.
+- Vegetation placement: `PlantSpecies` (meshes, spacing, footprint, rules on slope, height, curvature, wetness, water depth and distance), `Biome` (species in priority order) and `VegetationField3D` (tiled Poisson-disk placement over a `TerrainDataMap3D`, one MultiMesh per mesh per tile).
+
+### Changed
+- README: Vegetation grass line, image and clip.
+- README: light reuse (ReSTIR DI) line.
+- README: Vegetation plant placement line and image.
+- README: Vegetation terrain data maps line and image; terrain analysis papers in docs/REFERENCES.md.
+- README: wet surfaces material line and image.
+
+### Fixed
+- Shaders using `WeatherMap3D.get_wind_shader_code()` compile without a WeatherMap3D in the scene (the wind globals are declared as project settings), and `weather_wind()` returns no wind there.
+
 ## build-950721c5 (2026-11-10)
 
 ### Added
