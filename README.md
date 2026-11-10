@@ -155,9 +155,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Fibre shading** (BaseMaterial3D Hair section, `rendering/pathtracing/hair`): Chiang hair model under path tracing, melanin colour, on shells, cards and strands; mask for single-material characters.
 - **Strand grooms** (`HairGroom`, `HairMesh`): grown on a scalp mesh or loaded from a HAIR file.
 - **Moving strand hair** (`PhysXHair3D`): AMD TressFX's simulation on GPU compute, guide and follow strands, velocity shock propagation, wind with gusts and turbulence, collision spheres.
-- **Custom hair shaders**: `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes.
+- **Raster strands** (TressFX coverage): at least a pixel wide, faded to the real fibre's share, self-shadowing; smooth with TAA or MSAA.
+- **Custom hair shaders**: `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.
 
-<details><summary>Images and clip: hair shading, strand hair, moving hair</summary>
+<details><summary>Images and clip: hair shading, strand hair, moving hair, raster strands</summary>
 
 ![Hair-shaded spheres and cards: raster, path traced, sun behind, cards backlit](docs/media/hair.jpg)
 
@@ -170,6 +171,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Simulated strand hair blown by gusting wind, raster](docs/media/hair-sim.gif)
 
 *Moving strand hair: the groom streams and flutters in gusting wind.*
+
+![Raster strand hair: plain strands, then with TressFX coverage and self-shadowing](docs/media/hair-raster.jpg)
+
+*Raster strands: plain strands top left; with coverage and self-shadowing in the other three.*
 
 </details>
 
