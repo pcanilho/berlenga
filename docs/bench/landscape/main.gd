@@ -12,6 +12,7 @@ extends Node3D
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 16)
 #   --view=wide|lake|fall|beach|peak   camera (default wide)
+#   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
 #   --probe           print coast profiles, lakes and rivers from the generator
 #   --weather=storm|clear         weather state (default storm)
 
@@ -44,6 +45,7 @@ var sky_mat: WeatherSkyMaterial
 var snow: SnowCover3D
 var snowfall: SnowFall3D
 var cornices: SnowCornice3D
+var lightning: WeatherLightning3D
 var probe: Node3D
 var data_map: TerrainDataMap3D
 var veg: VegetationField3D
@@ -101,6 +103,10 @@ func _ready() -> void:
 			await get_tree().process_frame
 			w += 1
 		for i in int(args.get("spp-frames", "4")):
+			await get_tree().process_frame
+	if args.has("strike"):
+		lightning.strike(Vector3(float(args.get("strike-x", "-300")), 0, float(args.get("strike-z", "-400"))), true)
+		for i in int(args.get("strike-frames", "2")):
 			await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	var out: String = args.get("out", "")
@@ -355,19 +361,9 @@ func _build_water() -> void:
 		for l in lakes:
 			if absf(l.global_position.y + l.water_level - lake_level) < absf(lake.global_position.y + lake.water_level - lake_level):
 				lake = l
-	if ocean:
-		# The wide views look past the generated rectangle, and the sea follows the storm.
-		ocean.render_extent = 12000.0
-		ocean.open_sea_beyond = true
-		ocean.follow_weather = true
-		ocean.wave_cascades = 3
-		ocean_set_by_hand = true
-	for l in lakes:
-		l.follow_weather = true
 	rivers = gen.build_river_paths(self, float(args.get("min-area", "1500000")))
 	_log("water + %d rivers built in %d ms (%d lakes)" % [rivers.size(), Time.get_ticks_msec() - t, lakes.size()])
 
-var ocean_set_by_hand := false
 
 
 func _river(nm: String, pts: PackedVector3Array, ws: PackedFloat32Array, q: float, target: Node) -> PhysXRiver3D:
@@ -502,7 +498,12 @@ func _weather_settings() -> void:
 	weather.humidity = 0.95 if storm else 0.6
 	weather.snap_to_settings()
 	if storm:
+		weather.cloud_thickness = 2500.0 # a deep storm cell: about 1.6 flashes a minute
 		weather.add_storm(Vector2(-300, -400), 1500.0, 20.0, 12.0, 0.0)
+	# Lightning and thunder from the storm cells.
+	lightning = WeatherLightning3D.new()
+	lightning.name = "Lightning"
+	add_child(lightning)
 
 
 func _run_weather() -> void:
@@ -743,7 +744,12 @@ func _checks() -> void:
 	var beach_share := float(low) / maxf(n_c, 1)
 	check(beach_share > 0.3 and depth_sum / maxf(n_c, 1) > 2.0, "beaches rise from the sea (%d%% of %d coast points 0.3 to 4 m high 40 m inland; seabed %.1f m deep 300 m out on average)" % [int(beach_share * 100.0), n_c, depth_sum / maxf(n_c, 1)])
 	check(ocean != null and ocean.shore_waves and ocean.seabed_from_floor, "the sea has shore waves on the measured seabed")
-	check(not ocean_set_by_hand, "the generated sea needs no hand settings (set by hand: render_extent and open_sea_beyond for views past the rectangle, follow_weather, wave_cascades)", true)
+	check(ocean != null and ocean.follow_weather and ocean.open_sea_beyond and ocean.render_extent >= 8000.0 and ocean.wave_cascades >= 3, "the generated sea follows the weather and runs past the world with no hand settings (extent %.0f m, %d cascades)" % [ocean.render_extent if ocean else 0.0, ocean.wave_cascades if ocean else 0])
+	var lakes_follow := 0
+	for l in lakes:
+		if l.follow_weather:
+			lakes_follow += 1
+	check(lakes_follow == lakes.size(), "lake surfaces follow the weather wind (%d of %d)" % [lakes_follow, lakes.size()])
 	# Lakes: surfaces at their levels, rivers in and out.
 	var lr: Array = gen.get_lake_results()
 	check(lakes.size() == lr.size() and lr.size() > 0, "the generator makes lakes and build_water() places a surface on each (%d)" % lakes.size())
@@ -849,7 +855,23 @@ func _checks() -> void:
 	check(total > 0 and on_rock == 0, "trees follow the generator's geology: %d of %d on bare rock, scree or thin soil" % [on_rock, total])
 	check(false, "rain raises river discharge and lake level (rivers carry a fixed discharge)", true)
 	check(false, "snowmelt runoff reaches rivers (it feeds the surface water film only)", true)
-	check(false, "lightning and thunder in storms (no system in the engine)", true)
+	# Lightning: a ground flash in the storm cell, its channel lighting the scene, thunder after it.
+	var strikes_before := lightning.get_ground_strike_count()
+	lightning.strike(Vector3(-300, 0, -400), true)
+	var bright := 0.0
+	var t0 := Time.get_ticks_msec()
+	for i in 120:
+		await get_tree().process_frame
+		bright = maxf(bright, lightning.get_flash_brightness())
+	_log("lightning after %d ms: strikes %d, ground %d (before %d), channel %d points" % [Time.get_ticks_msec() - t0, lightning.get_strike_count(), lightning.get_ground_strike_count(), strikes_before, lightning.get_last_channel().size()])
+	var ch: PackedVector3Array = lightning.get_last_channel()
+	var ground_end := ch[ch.size() - 1] if ch.size() > 0 else Vector3(INF, INF, INF)
+	var on_ground := ch.size() > 0 and absf(ground_end.y - height_at(ground_end.x, ground_end.z)) < 5.0
+	check(lightning.get_ground_strike_count() > strikes_before and on_ground and bright > 0.0, "lightning strikes the ground in the storm (channel %d points, ends %.1f m from the ground, brightness %.2f)" % [ch.size(), absf(ground_end.y - height_at(ground_end.x, ground_end.z)) if ch.size() > 0 else -1.0, bright])
+	var dist := cam.global_position.distance_to(ground_end) if ch.size() > 0 else 0.0
+	var delay := lightning.get_last_thunder_delay()
+	check(delay > 0.0 and absf(delay - dist / 343.0) < 0.35 * dist / 343.0 + 0.5, "thunder follows the flash by its distance (%.1f s for about %.0f m; %.1f s long)" % [delay, dist, lightning.get_last_thunder_length()])
+	_log("flash rate (Price and Rind) for a cloud top at %.0f m: %.2f a minute" % [weather.cloud_base_height + weather.cloud_thickness, lightning.get_flash_rate(weather.cloud_base_height + weather.cloud_thickness)])
 	check(false, "the terrain's geology/detail-normal ShaderMaterial gets the engine's snow and wetness (BaseMaterial3D only)", true)
 	# Falling snow: on the peak in the storm, none at the coast (rain there).
 	var probe_node := Node3D.new()
