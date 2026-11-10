@@ -2732,11 +2732,23 @@ void PhysXWaterSurface3D::_follow_weather(double p_delta) {
 	if (weather == nullptr) {
 		return;
 	}
-	weather_check_accum += p_delta;
-	if (weather_check_accum < 0.25 && weather_sea_valid) {
+	// A snapped weather (snap_to_settings(), or its first update) snaps the sea too, once the map's cells
+	// hold the new state: a sample taken before reads the old wind.
+	if (weather->get_snap_serial() != weather_snap_serial) {
+		weather_snap_serial = weather->get_snap_serial();
+		weather_sea_valid = false;
+	}
+	if (!weather_sea_valid && !weather->are_cells_fresh_since_snap()) {
 		return;
 	}
-	const double dt = weather_check_accum * weather->get_time_scale();
+	// Weather time skipped by advance() grows the sea as well.
+	const double skipped = weather->get_advanced_time() - weather_advanced_seen;
+	weather_advanced_seen = weather->get_advanced_time();
+	weather_check_accum += p_delta;
+	if (weather_check_accum < 0.25 && weather_sea_valid && skipped <= 0.0) {
+		return;
+	}
+	const double dt = weather_check_accum * weather->get_time_scale() + MAX(skipped, 0.0);
 	weather_check_accum = 0.0;
 	const Vector2 w = weather->get_mean_wind_at(get_global_position());
 	const float target_speed = MAX(w.length(), 0.5f);
@@ -2764,6 +2776,11 @@ void PhysXWaterSurface3D::_follow_weather(double p_delta) {
 void PhysXWaterSurface3D::set_follow_weather(bool p_enabled) {
 	follow_weather = p_enabled;
 	weather_sea_valid = false;
+#ifdef MODULE_WEATHER_ENABLED
+	if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
+		weather_advanced_seen = weather->get_advanced_time();
+	}
+#endif
 }
 
 void PhysXWaterSurface3D::set_sea_state(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch) {

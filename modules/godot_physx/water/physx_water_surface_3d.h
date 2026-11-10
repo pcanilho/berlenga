@@ -483,6 +483,8 @@ private:
 	int mesh_detail = 1;
 	bool follow_weather = false;
 	bool weather_sea_valid = false;
+	uint64_t weather_snap_serial = 0;
+	double weather_advanced_seen = 0.0;
 	double weather_check_accum = 0.0;
 	float weather_sea_speed = 8.0f;
 	Vector2 weather_sea_direction = Vector2(1, 0);

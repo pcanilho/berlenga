@@ -222,9 +222,12 @@ float WeatherMap3D::_storm_weight(const Storm &p_storm) const {
 }
 
 void WeatherMap3D::_ease_base(double p_dt) {
-	if (!eased_once || transition_time <= 0.0f) {
-		snap_to_settings();
-		eased_once = true;
+	if (!eased_once) {
+		_snap();
+		return;
+	}
+	if (transition_time <= 0.0f) {
+		_set_base_to_settings();
 		return;
 	}
 	const float a = 1.0f - Math::exp(-float(p_dt) / transition_time);
@@ -240,6 +243,28 @@ void WeatherMap3D::_ease_base(double p_dt) {
 }
 
 void WeatherMap3D::snap_to_settings() {
+	_snap();
+	// Refresh the cells now, so what reads them (the sea's wind) sees the snapped state at once
+	// rather than at the next update, by when the base may have eased on toward newer settings.
+	if (is_inside_tree() && !Engine::get_singleton()->is_editor_hint()) {
+		if (cell_film.size() != resolution * resolution) {
+			_allocate();
+		}
+		_follow(_follow_position());
+		_update_cells(0.0);
+		_upload();
+	}
+}
+
+void WeatherMap3D::_snap() {
+	// Later updates ease from here instead of snapping again to whatever the settings are by then.
+	eased_once = true;
+	snap_serial++;
+	snap_cells_serial = cells_serial;
+	_set_base_to_settings();
+}
+
+void WeatherMap3D::_set_base_to_settings() {
 	cur_wind_speed = wind_speed;
 	cur_wind_direction = wind_direction.length_squared() > 1e-8f ? wind_direction.normalized() : Vector2(1, 0);
 	cur_cloud_cover = cloud_cover;
@@ -322,6 +347,7 @@ void WeatherMap3D::_update_cells(double p_weather_dt) {
 	c.cover = cell_cover.ptrw();
 	c.type = cell_type.ptrw();
 	c.rain = cell_rain.ptrw();
+	cells_serial++;
 	c.film = cell_film.ptrw();
 	c.puddle = cell_puddle.ptrw();
 	// Snow does not wet surfaces as it falls: only the rain share reaches the film.
@@ -567,6 +593,7 @@ void WeatherMap3D::advance(float p_seconds) {
 		_update_cells(step);
 		left -= step;
 	}
+	advanced_time += MAX(p_seconds, 0.0f);
 	_upload();
 }
 
