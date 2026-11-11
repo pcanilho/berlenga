@@ -11,7 +11,8 @@ extends Node3D
 #   --out=path.png    render a view (path traced unless --raster)
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 16)
-#   --view=wide|lake|lakewater|fall|beach|peak   camera (default wide; lakewater: low over the lake)
+#   --view=wide|lake|lakewater|valley|fall|beach|peak   camera (default wide; lakewater: low over the lake;
+#                         valley: from behind the high lake down to the clearing)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
 #   --falls           print every waterfall the rivers found (lip, landing, height)
@@ -205,7 +206,9 @@ func _generate() -> void:
 		lake_marker = Node3D.new()
 		lake_marker.name = "HighLake"
 		lake_marker.position = Vector3(float(args.get("lake-x", "0")), 0, float(args.get("lake-z", "-1300")))
-		lake_marker.set_meta("depth", float(args.get("lake-depth", "30")))
+		lake_marker.set_meta("depth", float(args.get("lake-depth", "60")))
+		# A bedrock sill, not a landslide dam: the lake spills over its own lip and the falls below it stay.
+		lake_marker.set_meta("rock_lip", true)
 		add_child(lake_marker)
 	gen = TerrainGenerator3D.new()
 	gen.name = "Generator"
@@ -263,7 +266,7 @@ func _generate() -> void:
 			var pts: PackedVector3Array = rivs[int(tall["river"])]["points"]
 			var i := int(tall["index"])
 			var run := 0.0
-			var up_m := float(args.get("lake-up", "180"))
+			var up_m := float(args.get("lake-up", "250"))
 			while i > 0 and run < up_m:
 				run += pts[i].distance_to(pts[i - 1])
 				i -= 1
@@ -792,6 +795,23 @@ func _build_vegetation() -> void:
 	veg.populate_on_ready = false
 	add_child(veg)
 	veg.data_map = veg.get_path_to(data_map)
+	if args.get("layout", "range") == "valley":
+		# The clearing: the trees keep off the alluvial floor, read from the generator's sediment (a floodplain
+		# meadow). Built here by script from get_sediment_image (a GAP: the generator publishes no clearing mask).
+		var sed: Image = gen.get_sediment_image()
+		var mask := Image.create(sed.get_width(), sed.get_height(), false, Image.FORMAT_RGB8)
+		var top := float(args.get("clearing-sediment", "1.0"))
+		for j in sed.get_height():
+			for i in sed.get_width():
+				var d := sed.get_pixel(i, j).r
+				mask.set_pixel(i, j, Color(1.0 - smoothstep(top * 0.3, top, d), 0, 0))
+		veg.density_mask = ImageTexture.create_from_image(mask)
+		var wr: Rect2 = gen.get_world_rect()
+		veg.density_mask_rect = wr
+		for sp in [conifer, broad]:
+			sp.mask_channel = 0
+		# Nor on the low coastal flat and the beach behind it.
+		conifer.set_rule_range(PlantSpecies.RULE_HEIGHT, Vector2(6, 100000))
 	# The forest as shelter for the wind: the field writes its stands into the weather map's canopy.
 	veg.weather_map = veg.get_path_to(weather)
 	veg.populate()
@@ -930,6 +950,14 @@ func _build_camera() -> void:
 					best_pos = Vector3(c.x, y, c.z)
 			cam.position = best_pos
 			cam.look_at(lake_center)
+		"valley":
+			# From above the falls, down over the high lake's outflow; the clearing and the sea beyond.
+			var lk := Vector3(lake_center.x, 0, lake_center.z)
+			var dir := Vector3(0, 0, 1)
+			var c := lk - dir * float(args.get("valley-back", "350"))
+			cam.fov = 60.0
+			cam.position = Vector3(c.x, maxf(height_at(c.x, c.z) + 40.0, lake_level + float(args.get("valley-up", "140"))), c.z)
+			cam.look_at(Vector3(lk.x, lake_level - 220.0, lk.z + 900.0))
 		"lakewater":
 			# Low over the water at one end of the lake, looking along it to the mountains behind: the water cell
 			# farthest from the water's centroid, pulled a little back over the water.
@@ -1324,6 +1352,8 @@ func _checks() -> void:
 	snowfall.follow_target = NodePath("")
 	check(snowfall.haze_enabled and haze_peak > 0.0 and haze_peak > haze_coast * 2.0, "falling and blowing snow thicken the fog on the peak by themselves (extinction %.4f /m on the peak, %.4f at the coast)" % [haze_peak, haze_coast])
 	check(false, "falling rain particles from the weather (none in the engine)", true)
+	if args.get("layout", "range") == "valley":
+		check(false, "the clearing on the valley floor comes from the generator by itself (a density mask is built by script from its sediment here)", true)
 	# The gale check lays 40 mm of snow and moves the near square to the peak, and leaves them: only in test
 	# runs, which quit after the checks, so a picture is never taken of its snow (with --snow=none the square's
 	# edge showed as a straight snow line across the range).
