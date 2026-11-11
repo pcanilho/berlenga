@@ -120,7 +120,7 @@ Each feature that changes the look or the cost can be turned off with the settin
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
 - **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
-<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, reflections, whitecaps, currents, live flow, boat wakes, white water, rivers, waterfall mist, under water</summary>
+<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, reflections, whitecaps, lake ripples, currents, live flow, boat wakes, white water, rivers, waterfall mist, under water</summary>
 
 ![The pool with clear and with murky water](docs/media/murky-water.jpg)
 
@@ -149,6 +149,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Sea from above at 6, 14 and 20 m/s, fixed whitecap threshold and whitecap_auto](docs/media/whitecaps.jpg)
 
 *Whitecaps: with a fixed threshold the cover barely changes with the wind; now it grows from none at 6 m/s to many at 20 m/s.*
+
+![A lake looking into the sun, raster, with wind ripples and glitter](docs/media/lake-ripples.jpg)
+
+*Lake ripples: short wind waves and sun glitter on a lake, where the surface used to lie flat.*
 
 ![Waves breaking on a beach, raster](docs/media/shore-waves.gif)
 
