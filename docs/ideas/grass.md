@@ -293,7 +293,7 @@ GDC 2017) thin blades out per blade, not per tile, and colour the terrain like t
 field reads to the horizon.
 
 - Blades: from 60% of the radius to just inside it, each blade drops out at its own point in a
-  random order and shrinks to nothing (`fade_band` in the blade shader, set from the field's
+  set order and shrinks to nothing (`fade_band` in the blade shader, set from the field's
   centre each update). The last blade is gone before the outermost tiles end.
 - Ground: over the same band `grass_ground()` turns the ground under the grass to the blades'
   own colour seen from a distance (`grass_ground_far`: base to tip, some dry, darkened by the
@@ -301,6 +301,18 @@ field reads to the horizon.
   The band is a global (`grass_ground_fade`), published by the widest GrassField3D, so a near
   undercoat field does not pull it in.
 - Cost: one distance and a smoothstep per blade vertex; nothing on the CPU.
+
+
+### Even thinning (blue-noise ranks)
+
+A hash per blade gave white noise: as a level or the band thins the grass, survivors bunch into
+clumps with bare gaps. Which blades a coarser level keeps now comes from a 64 x 64 blue-noise
+rank mask (void and cluster, Ulichney 1993; built once at start, tens of milliseconds), turned or mirrored
+per 64-cell block so it does not repeat. Every threshold of such a mask keeps an even spread, so
+both the distance levels and the outer band (which drops blades in the order of their rank within
+the coarsest level, `INSTANCE_CUSTOM.w` integer part) thin evenly. An R2 dither (Roberts 2018) was
+tried first: even, but on the blade grid it shows diagonal rows. No cost per frame; the blade
+count per level is unchanged.
 
 ## References
 

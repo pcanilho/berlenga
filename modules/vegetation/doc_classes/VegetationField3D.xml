@@ -55,6 +55,13 @@
 				Canopy shade at [param global_position], from 0 (open sky) to 1 (dense crown), from the plants of species with [member PlantSpecies.canopy_radius] placed by the last [method populate]. Each crown stops [member PlantSpecies.canopy_opacity] of the light under its core, fading out a little past its rim; overlapping crowns multiply their transmission. Species with a [member PlantSpecies.shade_range] are placed by it, so list canopy species first in the [Biome].
 			</description>
 		</method>
+		<method name="get_stand_shade_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The shade the ground gets from the stand: [method get_shade_at] weighed by how closed the canopy is over about 5 m around, on half-metre cells after [method populate]. Under a lone open-grown tree it stays low, so the sward and no litter mat stay there; under a closed canopy it equals the shade. [GrassField3D] reads it for its shade rule, and the forest floor's litter follows it.
+			</description>
+		</method>
 		<method name="populate">
 			<return type="int" enum="Error" />
 			<description>
@@ -77,6 +84,9 @@
 		</member>
 		<member name="biome" type="Biome" setter="set_biome" getter="get_biome">
 			The species to place.
+		</member>
+		<member name="canopy_field" type="NodePath" setter="set_canopy_field" getter="get_canopy_field" default="NodePath(&quot;&quot;)">
+			Another [VegetationField3D] whose crowns also shade this field's plants, as [member GrassField3D.canopy_field] does for grass. Its shade and conifer share combine with this field's own crowns (transmissions multiply), so a small herb field around the camera grows its shade plants under a large forest field's trees.
 		</member>
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			The [TerrainDataMap3D] that gives height, slope, wetness and water. Its area is the area planted.

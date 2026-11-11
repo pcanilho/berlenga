@@ -29,6 +29,8 @@
 /**************************************************************************/
 
 #include "plant_generator.h"
+
+#include "scene/resources/surface_tool.h"
 #include "plant_species.h"
 
 #include "modules/weather/weather_map_3d.h"
@@ -2646,6 +2648,127 @@ PlantGenerator::TextureSet PlantGenerator::_bake_moss_texture(uint32_t p_seed) c
 // trample field, which wins where it is set. Leaves add a small flutter (Sousa, "Vegetation
 // Procedural Animation and Shading in Crysis", GPU Gems 3, 16: main bending plus detail bending).
 // Fragment: leaf textures, back light, and the same wetness and snow lines as BaseMaterial3D.
+// Card reduction (docs/ideas/vegetation-lod-streaming.md, "Cheaper plants"): each island of a
+// leaf or petal surface is a card. Every vertex gets its card's pivot (the card's first vertex,
+// where it is built from) and, packed in w, the card's length in millimetres plus a stable rank
+// in [0, 1). The LODs keep the cards ranked below a half, a quarter and an eighth, at an error
+// twice the size the plant shader has already shrunk the others away at (_plant_shader()).
+bool PlantGenerator::_card_lods(const Builder &p_builder, CardSurface &r_cards) const {
+	const int nv = p_builder.verts.size();
+	const int ni = p_builder.indices.size();
+	LocalVector<int> parent;
+	parent.resize(nv);
+	for (int i = 0; i < nv; i++) {
+		parent[i] = i;
+	}
+	auto find = [&](int x) {
+		while (parent[x] != x) {
+			parent[x] = parent[parent[x]];
+			x = parent[x];
+		}
+		return x;
+	};
+	const int *ix = p_builder.indices.ptr();
+	for (int i = 0; i < ni; i += 3) {
+		const int a = find(ix[i]);
+		const int b = find(ix[i + 1]);
+		const int c = find(ix[i + 2]);
+		parent[b] = a;
+		parent[find(c)] = a;
+	}
+	// Cards in the order of their first vertex: the root of each island is its smallest index.
+	HashMap<int, int> card_of_root;
+	LocalVector<int> card_pivot;
+	LocalVector<float> card_len;
+	LocalVector<int> card_of;
+	card_of.resize(nv);
+	const Vector3 *vr = p_builder.verts.ptr();
+	for (int i = 0; i < nv; i++) {
+		const int r = find(i);
+		int *c = card_of_root.getptr(r);
+		if (!c) {
+			card_of_root.insert(r, card_pivot.size());
+			card_pivot.push_back(i);
+			card_len.push_back(0.0f);
+			c = card_of_root.getptr(r);
+		}
+		card_of[i] = *c;
+		card_len[*c] = MAX(card_len[*c], vr[i].distance_to(vr[card_pivot[*c]]));
+	}
+	const int cards = card_pivot.size();
+	if (cards < 24) {
+		return false; // A few big leaves: meshoptimizer's chain is fine.
+	}
+	LocalVector<float> rank;
+	rank.resize(cards);
+	float mean_len = 0.0f;
+	for (int c = 0; c < cards; c++) {
+		// A Weyl sequence: even shares at every keep, unlike a hash.
+		rank[c] = Math::fmod(0.5f + float(c) * 0.6180339887f, 1.0f);
+		mean_len += card_len[c];
+	}
+	mean_len /= float(cards);
+	PackedFloat32Array custom;
+	custom.resize(nv * 4);
+	float *cw = custom.ptrw();
+	for (int i = 0; i < nv; i++) {
+		const int c = card_of[i];
+		const Vector3 &p = vr[card_pivot[c]];
+		cw[i * 4 + 0] = p.x;
+		cw[i * 4 + 1] = p.y;
+		cw[i * 4 + 2] = p.z;
+		cw[i * 4 + 3] = Math::floor(CLAMP(card_len[c] * 1000.0f, 1.0f, 100000.0f)) + MIN(rank[c], 0.999f);
+	}
+	r_cards.custom = custom;
+	// Levels at errors from an eighth of a card up: each keeps the cards the shader still draws
+	// there (a half of them at an error of one card length, an eighth at four), then lets
+	// meshoptimizer simplify what is left within the same error, as the stock chain does.
+	const bool simplify = SurfaceTool::simplify_func && SurfaceTool::simplify_scale_func;
+	const float extent = simplify ? SurfaceTool::simplify_scale_func((const float *)vr, nv, sizeof(Vector3)) : 1.0f;
+	LocalVector<unsigned int> src;
+	LocalVector<unsigned int> dst;
+	int prev = ni;
+	float e = mean_len * 0.125f;
+	for (int level = 0; level < 10; level++, e *= 2.0f) {
+		const float keep = CLAMP(mean_len / (2.0f * e), 0.125f, 1.0f);
+		src.clear();
+		for (int i = 0; i < ni; i += 3) {
+			if (keep >= 1.0f || rank[card_of[ix[i]]] < keep) {
+				src.push_back(ix[i]);
+				src.push_back(ix[i + 1]);
+				src.push_back(ix[i + 2]);
+			}
+		}
+		size_t n = src.size();
+		if (simplify && n > 0) {
+			dst.resize(n);
+			float err = 0.0f;
+			n = SurfaceTool::simplify_func(dst.ptr(), src.ptr(), src.size(), (const float *)vr, nv, sizeof(Vector3), 0, e / MAX(extent, 1e-6f), 0, &err);
+		} else {
+			dst = src;
+		}
+		if (n < 3) {
+			break;
+		}
+		if (int(n) > prev * 4 / 5) {
+			continue; // Not worth a level.
+		}
+		PackedInt32Array lod;
+		lod.resize(n);
+		for (size_t k = 0; k < n; k++) {
+			lod.set(k, dst[k]);
+		}
+		r_cards.lods[e] = lod;
+		prev = n;
+		if (keep <= 0.125f && n < 36) {
+			break;
+		}
+	}
+	r_cards.last_card_error = mean_len * 4.0f;
+	r_cards.last_card_indices = prev;
+	return true;
+}
+
 Ref<Shader> PlantGenerator::shaders[2];
 
 Ref<Shader> PlantGenerator::_plant_shader(bool p_textured) {
@@ -2712,6 +2835,20 @@ vec3 rotate_about(vec3 v, vec3 axis, float a) {
 }
 
 void vertex() {
+	// Card reduction (docs/ideas/vegetation-lod-streaming.md): as a leaf card shrinks below a few
+	// pixels, cards drop out in rank order, shrinking to their pivot, and the survivors grow to
+	// keep the covered area (SpeedTree leaf reduction, Nanite Preserve Area). The mesh's LODs drop
+	// a card's triangles only once it is gone here. Projected size at a 1080p, 60 degree view from
+	// the main camera, so shadows match.
+	if (CUSTOM0.w >= 1.0) {
+		vec3 pivot = CUSTOM0.xyz;
+		float card_len = floor(CUSTOM0.w) * 0.001 * length(MODEL_MATRIX[0].xyz);
+		float rank = fract(CUSTOM0.w);
+		float d = max(length((MODEL_MATRIX * vec4(pivot, 1.0)).xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz), 0.01);
+		float keep = clamp(card_len / d * 935.0 / 4.0, 0.125, 1.0);
+		float sc = smoothstep(rank, rank + 0.1, keep * 1.1) * inversesqrt(keep);
+		VERTEX = pivot + (VERTEX - pivot) * sc;
+	}
 	float w = clamp(UV2.x, 0.0, 1.0);
 	vec3 root = MODEL_MATRIX[3].xyz;
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
@@ -3168,6 +3305,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 	}
 	Ref<ImporterMesh> im;
 	im.instantiate();
+	LocalVector<CardSurface> card_surfaces;
 	const Color colors[SURFACE_MAX] = { leaf_color, stem_color, petal_color, centre_color };
 	const float roughness[SURFACE_MAX] = { preset == PRESET_WATER_LILY ? 0.35f : (preset == PRESET_IVY ? 0.6f : 0.72f), 0.75f, preset == PRESET_BUTTERCUP ? 0.2f : 0.5f, 0.8f }; // Lily pads: waxy, shed water.
 	for (int s = 0; s < SURFACE_MAX; s++) {
@@ -3210,6 +3348,19 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		arrays[Mesh::ARRAY_COLOR] = b.colors;
 		arrays[Mesh::ARRAY_INDEX] = b.indices;
 		static const char *names[SURFACE_MAX] = { "leaf", "stem", "petal", "centre" };
+		// Leaves as separate cards: their own LOD chain by card rank (_card_lods()),
+		// since edge-collapse simplification stalls on many small islands.
+		// Not petals: a flower's few petals are its colour accent far off, and dropping some of
+		// them dims the drift even with the area kept (seen in the heath shots).
+		if (lods && s == SURFACE_LEAF) {
+			CardSurface cs;
+			if (_card_lods(b, cs)) {
+				arrays[Mesh::ARRAY_CUSTOM0] = cs.custom;
+				cs.surface = im->get_surface_count();
+				cs.arrays = arrays;
+				card_surfaces.push_back(cs);
+			}
+		}
 		Ref<ShaderMaterial> mat;
 		if (textures && (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS) && s == SURFACE_CENTRE) {
 			const uint64_t key = (uint64_t(preset) << 40) ^ (uint64_t(s) << 36) ^ (uint64_t(uint32_t(seed % 3)) << 32) ^ uint64_t(Math::abs(int(leaf_color.to_rgba32()) % 1000003)) ^ (uint64_t(texture_size) << 44);
@@ -3241,6 +3392,33 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 	// thousands of these, and from a few metres a plant needs a fraction of its triangles.
 	if (lods && im->get_surface_count() > 0) {
 		im->generate_lods(60.0f, Array());
+	}
+	if (!card_surfaces.is_empty()) {
+		// Rebuild with the card surfaces' own chains in place of meshoptimizer's (which drop
+		// cards in no fixed order, so the shader could not have shrunk them first).
+		Ref<ImporterMesh> out;
+		out.instantiate();
+		for (int i = 0; i < im->get_surface_count(); i++) {
+			const CardSurface *cs = nullptr;
+			for (const CardSurface &c : card_surfaces) {
+				if (c.surface == i) {
+					cs = &c;
+				}
+			}
+			if (cs) {
+				const uint64_t flags = uint64_t(Mesh::ARRAY_CUSTOM_RGBA_FLOAT) << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT;
+				out->add_surface(Mesh::PRIMITIVE_TRIANGLES, cs->arrays, TypedArray<Array>(), cs->lods, im->get_surface_material(i), im->get_surface_name(i), flags);
+			} else {
+				Dictionary lod_map;
+				for (int l = 0; l < im->get_surface_lod_count(i); l++) {
+					lod_map[im->get_surface_lod_size(i, l)] = im->get_surface_lod_indices(i, l);
+				}
+				Array arr = im->get_surface_arrays(i);
+				arr[Mesh::ARRAY_CUSTOM0] = Variant(); // A card surface that kept meshoptimizer's chain.
+				out->add_surface(Mesh::PRIMITIVE_TRIANGLES, arr, TypedArray<Array>(), lod_map, im->get_surface_material(i), im->get_surface_name(i));
+			}
+		}
+		im = out;
 	}
 	Ref<ArrayMesh> mesh = im->get_mesh();
 	for (Builder &b : builders) {

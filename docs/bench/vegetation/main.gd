@@ -264,6 +264,25 @@ func _checks() -> void:
 	_check("shade: core of a crown", under_t >= 0.89, under_t)
 	_check("shade: bushes only under crowns", sunny == 0 and field.get_placements(1).size() > 20 and field.get_placements(1).size() < bushes_open, [sunny, field.get_placements(1).size(), bushes_open])
 	_check("shade: trees unchanged", field.get_placements(0) == first, field.get_placements(0).size())
+	# canopy_field: a second field without trees (a camera-local herb layer) reads the first's crowns.
+	var herbs := VegetationField3D.new()
+	herbs.name = "Herbs"
+	herbs.populate_on_ready = false
+	var hb := Biome.new()
+	hb.species = [bush_sp]
+	herbs.biome = hb
+	add_child(herbs)
+	herbs.data_map = herbs.get_path_to(dm)
+	herbs.populate()
+	var open_n := herbs.get_placements(0).size()
+	herbs.canopy_field = herbs.get_path_to(field)
+	herbs.populate()
+	var herb_sunny := 0
+	for p in herbs.get_placements(0):
+		if field.get_shade_at(p) < 0.5:
+			herb_sunny += 1
+	_check("canopy_field: a field without trees grows its shade plants under another's crowns", open_n == 0 and herb_sunny == 0 and herbs.get_placements(0).size() > 20, [open_n, herb_sunny, herbs.get_placements(0).size()])
+	herbs.queue_free()
 	# The same canopy reaches WeatherMap3D (canopy_map), so snow and wind see the same forest.
 	var wm := WeatherMap3D.new()
 	wm.name = "Weather"

@@ -53,6 +53,14 @@ thousands of triangles a plant at any distance.
    impostors baked by PlantGenerator, drawn in raster beyond a set distance with a dithered
    crossfade. The path tracer keeps the smallest mesh LOD (a flat impostor would lose depth
    and shadows under path tracing, against the rule that path tracing must not remove detail).
+   **Built (1a).** Leaf surfaces with 24 or more cards (petals excluded: dropping them dims
+   the flowers) keep the pivot and a Weyl-sequence rank per card in CUSTOM0; each LOD level
+   keeps the cards ranked under its share and then lets meshoptimizer simplify the survivors
+   within the same error, so cards and their outlines both shrink. Triangles drawn by a
+   2,600-plant heath bench (raster, 640 x 360 view across it): heather 112k to 70k, woodruff
+   42k to 17k, bramble unchanged (its leaves were already reduced by meshoptimizer). Raster
+   crops match; path traced frames before and after differ by 0.15 of 255 on average (the
+   path tracer draws the full mesh and the shader keeps every card at full size up close).
 3. **Measure**: triangles per hectare in the grass bench's heath and beech floors before and
    after, raster and path traced at 100% crop, GPU time on the PC.
 

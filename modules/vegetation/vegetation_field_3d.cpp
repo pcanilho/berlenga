@@ -222,6 +222,11 @@ Error VegetationField3D::populate() {
 			mask_img->decompress();
 		}
 	}
+	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
+	const VegetationField3D *other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+	if (other == this) {
+		other = nullptr;
+	}
 	auto mask_at = [&](const Vector2 &p_xz, int p_channel) -> float {
 		if (mask_img.is_null() || mask_img->is_empty() || !density_mask_rect.has_point(p_xz)) {
 			return 1.0f;
@@ -302,7 +307,16 @@ Error VegetationField3D::populate() {
 					float suit = sp->get_suitability(map, p3);
 					if ((shade_rule || conifer_rule) && suit > 0.0f) {
 						float conifer = 0.0f;
-						const float shade = _shade_at(xz, &conifer);
+						float shade = _shade_at(xz, &conifer);
+						if (other) {
+							// Both canopies stop light: transmissions multiply; the stand type is
+							// each one's share of the cover.
+							const Vector3 g(xz.x, 0.0f, xz.y);
+							const float os = other->get_shade_at(g);
+							const float oc = other->get_conifer_at(g);
+							conifer = (shade + os) > 1e-4f ? (conifer * shade + oc * os) / (shade + os) : 0.0f;
+							shade = 1.0f - (1.0f - shade) * (1.0f - os);
+						}
 						if (shade_rule) {
 							suit *= sp->rule_weight(PlantSpecies::RULE_SHADE, shade);
 						}
@@ -481,6 +495,7 @@ Error VegetationField3D::populate() {
 		}
 	}
 	_publish_canopy(rect);
+	_build_stand(rect);
 	_publish_floor(rect);
 	_publish_far(rect);
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
@@ -588,28 +603,120 @@ void VegetationField3D::_publish_canopy(const Rect2 &p_rect) {
 	wm->set_canopy_map(ImageTexture::create_from_image(img));
 }
 
+// The shade under the stand, on half-metre cells: the crowns' shade weighed by how closed the
+// stand is (_build_stand()). Under one open-grown tree the ground keeps its sward and gets no
+// litter mat, as an open-grown tree sheds onto grass that keeps growing, so its leaves blow away
+// or rot in the sward; under a closed canopy it is the full shade. The forest floor map and the
+// grass's shade rule (get_stand_shade_at()) both read it.
+void VegetationField3D::_build_stand(const Rect2 &p_rect) {
+	stand_shade.clear();
+	stand_conifer.clear();
+	stand_rect = p_rect;
+	if (crowns.is_empty()) {
+		return;
+	}
+	const int w = CLAMP(int(Math::ceil(p_rect.size.x * 2.0f)), 1, 2048);
+	const int h = CLAMP(int(Math::ceil(p_rect.size.y * 2.0f)), 1, 2048);
+	stand_size = Vector2i(w, h);
+	LocalVector<float> shade;
+	LocalVector<float> conifer;
+	shade.resize(w * h);
+	conifer.resize(w * h);
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			const Vector2 p = p_rect.position + Vector2((x + 0.5f) * p_rect.size.x / w, (y + 0.5f) * p_rect.size.y / h);
+			shade[y * w + x] = _shade_at(p, &conifer[y * w + x]);
+		}
+	}
+	// The closure of the stand: the mean shade over about 5 m around (a separable box blur).
+	const int rad_x = MAX(1, int(Math::round(5.0f * w / p_rect.size.x)));
+	const int rad_y = MAX(1, int(Math::round(5.0f * h / p_rect.size.y)));
+	LocalVector<float> tmp;
+	tmp.resize(w * h);
+	for (int y = 0; y < h; y++) {
+		float sum = 0.0f;
+		int n = 0;
+		for (int x = -rad_x; x < w + rad_x; x++) {
+			const int add = x + rad_x;
+			if (add >= 0 && add < w) {
+				sum += shade[y * w + add];
+				n++;
+			}
+			const int rem = x - rad_x - 1;
+			if (rem >= 0 && rem < w) {
+				sum -= shade[y * w + rem];
+				n--;
+			}
+			if (x >= 0 && x < w) {
+				tmp[y * w + x] = n > 0 ? sum / n : 0.0f;
+			}
+		}
+	}
+	LocalVector<float> stand;
+	stand.resize(w * h);
+	for (int x = 0; x < w; x++) {
+		float sum = 0.0f;
+		int n = 0;
+		for (int y = -rad_y; y < h + rad_y; y++) {
+			const int add = y + rad_y;
+			if (add >= 0 && add < h) {
+				sum += tmp[add * w + x];
+				n++;
+			}
+			const int rem = y - rad_y - 1;
+			if (rem >= 0 && rem < h) {
+				sum -= tmp[rem * w + x];
+				n--;
+			}
+			if (y >= 0 && y < h) {
+				stand[y * w + x] = n > 0 ? sum / n : 0.0f;
+			}
+		}
+	}
+	stand_shade.resize(w * h);
+	for (int i = 0; i < w * h; i++) {
+		stand_shade[i] = shade[i] * Math::smoothstep(0.25f, 0.65f, stand[i]);
+	}
+	stand_conifer = conifer;
+}
+
+float VegetationField3D::get_stand_shade_at(const Vector3 &p_global_position) const {
+	if (stand_shade.is_empty()) {
+		return get_shade_at(p_global_position);
+	}
+	const float fx = (p_global_position.x - stand_rect.position.x) / stand_rect.size.x * stand_size.x - 0.5f;
+	const float fy = (p_global_position.z - stand_rect.position.y) / stand_rect.size.y * stand_size.y - 0.5f;
+	if (fx < -0.5f || fy < -0.5f || fx > stand_size.x - 0.5f || fy > stand_size.y - 0.5f) {
+		return get_shade_at(p_global_position);
+	}
+	const int x0 = CLAMP(int(Math::floor(fx)), 0, stand_size.x - 1);
+	const int y0 = CLAMP(int(Math::floor(fy)), 0, stand_size.y - 1);
+	const int x1 = MIN(x0 + 1, stand_size.x - 1);
+	const int y1 = MIN(y0 + 1, stand_size.y - 1);
+	const float tx = CLAMP(fx - x0, 0.0f, 1.0f);
+	const float ty = CLAMP(fy - y0, 0.0f, 1.0f);
+	const float a = Math::lerp(stand_shade[y0 * stand_size.x + x0], stand_shade[y0 * stand_size.x + x1], tx);
+	const float b = Math::lerp(stand_shade[y1 * stand_size.x + x0], stand_shade[y1 * stand_size.x + x1], tx);
+	return Math::lerp(a, b, ty);
+}
+
 // The forest floor under the placed crowns, for the ground's shader (get_floor_shader_code()):
-// canopy closure (the shade, 1 - transmitted sky light) in red and the conifer share of the
+// litter cover (the shade, 1 - transmitted sky light, weighed by how closed the stand is) in red and the conifer share of the
 // cover in green, on half-metre cells. Under a closed canopy the floor is litter, not soil
 // (docs/ideas/forest-floor.md), and its kind follows the trees: leaves under broadleaves,
 // needles and moss under conifers.
 void VegetationField3D::_publish_floor(const Rect2 &p_rect) {
-	if (!forest_floor_enabled || !is_inside_tree() || crowns.is_empty()) {
+	if (!forest_floor_enabled || !is_inside_tree() || crowns.is_empty() || stand_shade.is_empty()) {
 		return; // Another field with crowns may own the floor map; an empty one leaves it alone.
 	}
-	const int w = CLAMP(int(Math::ceil(p_rect.size.x * 2.0f)), 1, 2048);
-	const int h = CLAMP(int(Math::ceil(p_rect.size.y * 2.0f)), 1, 2048);
+	const int w = stand_size.x;
+	const int h = stand_size.y;
 	Vector<uint8_t> data;
 	data.resize(w * h * 2);
 	uint8_t *d = data.ptrw();
-	for (int y = 0; y < h; y++) {
-		for (int x = 0; x < w; x++) {
-			const Vector2 p = p_rect.position + Vector2((x + 0.5f) * p_rect.size.x / w, (y + 0.5f) * p_rect.size.y / h);
-			float conifer = 0.0f;
-			const float shade = _shade_at(p, &conifer);
-			d[(y * w + x) * 2 + 0] = uint8_t(CLAMP(shade, 0.0f, 1.0f) * 255.0f + 0.5f);
-			d[(y * w + x) * 2 + 1] = uint8_t(CLAMP(conifer, 0.0f, 1.0f) * 255.0f + 0.5f);
-		}
+	for (int i = 0; i < w * h; i++) {
+		d[i * 2 + 0] = uint8_t(CLAMP(stand_shade[i], 0.0f, 1.0f) * 255.0f + 0.5f);
+		d[i * 2 + 1] = uint8_t(CLAMP(stand_conifer[i], 0.0f, 1.0f) * 255.0f + 0.5f);
 	}
 	floor_texture = ImageTexture::create_from_image(Image::create_from_data(w, h, false, Image::FORMAT_RG8, data));
 	RenderingServer *rs = RenderingServer::get_singleton();
@@ -838,7 +945,9 @@ vec3 vegetation_far(vec3 world_pos, vec3 albedo, vec3 camera_pos) {
 vec3 forest_floor(vec3 world_pos, vec3 albedo) {
 	vec2 f = forest_floor_at(world_pos);
 	// Litter blows a little past the crowns and thins out where light reaches the ground.
-	float cover = smoothstep(0.12, 0.5, f.x + 0.12 * (ff_noise(world_pos.xz * 0.6) - 0.5));
+	// Ragged, patchy edge: two octaves of noise, so the mat breaks into drifts as it thins.
+	float n = ff_noise(world_pos.xz * 0.6) * 0.65 + ff_noise(world_pos.xz * 2.3 + 5.1) * 0.35;
+	float cover = smoothstep(0.15, 0.6, f.x + 0.3 * (n - 0.5));
 	if (cover <= 0.0) {
 		return albedo;
 	}
@@ -941,6 +1050,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_density_mask"), &VegetationField3D::get_density_mask);
 	ClassDB::bind_method(D_METHOD("set_density_mask_rect", "rect"), &VegetationField3D::set_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
+	ClassDB::bind_method(D_METHOD("set_canopy_field", "path"), &VegetationField3D::set_canopy_field);
+	ClassDB::bind_method(D_METHOD("get_canopy_field"), &VegetationField3D::get_canopy_field);
 	ClassDB::bind_method(D_METHOD("set_weather_map", "path"), &VegetationField3D::set_weather_map);
 	ClassDB::bind_method(D_METHOD("get_weather_map"), &VegetationField3D::get_weather_map);
 	ClassDB::bind_method(D_METHOD("set_tile_size", "size"), &VegetationField3D::set_tile_size);
@@ -956,6 +1067,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
+	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);
 	ClassDB::bind_method(D_METHOD("set_forest_floor_enabled", "enabled"), &VegetationField3D::set_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
@@ -964,6 +1076,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "forest_floor_enabled"), "set_forest_floor_enabled", "is_forest_floor_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "density_mask", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_density_mask", "get_density_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "density_mask_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_density_mask_rect", "get_density_mask_rect");

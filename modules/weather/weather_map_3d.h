@@ -276,6 +276,10 @@ private:
 
 	float _cell_size() const { return extent / resolution; }
 	float _sample(const Vector<float> &p_field, Vector2 p_xz, int p_stride = 1, int p_offset = 0) const;
+	// The arithmetic behind _sample() and get_sun_visibility_at(), shared with Snapshot so both answer alike.
+	static float _sample_grid(const Vector<float> &p_field, int p_n, float p_cell_size, Vector2i p_origin_cell, bool p_origin_valid, Vector2 p_xz, int p_stride, int p_offset);
+	static float _sample_shadow(const Vector<float> &p_values, int p_res, float p_size, Vector3 p_axis_u, Vector3 p_axis_v, Vector2 p_corner, Vector3 p_position);
+	Vector2 _shadow_corner_now() const;
 	float _cloud_noise(Vector2 p_xz) const;
 	float _storm_weight(const Storm &p_storm) const;
 	WeatherClouds::State _cloud_state() const;
@@ -457,6 +461,32 @@ public:
 	float get_puddle_at(Vector3 p_position) const; // mm
 	float get_cloud_density_at(Vector3 p_position) const; // extinction, 1/m
 	float get_sun_visibility_at(Vector3 p_position) const; // 0..1, from the last cloud shadow bake
+
+	// A read-only copy of the rain, cloud cover and cloud shadow with the parameters to sample them, for readers on
+	// worker threads. Take it on the main thread. The arrays share the map's buffers (copy on write), so while a
+	// snapshot is held each weather update copies them once. Its *_at() answer as get_rain_at(),
+	// get_cloud_cover_at() and get_sun_visibility_at() did when it was taken.
+	struct Snapshot {
+		bool valid = false;
+		bool origin_valid = false;
+		int resolution = 0;
+		float cell_size = 1.0f;
+		Vector2i origin_cell;
+		Vector<float> rain;
+		Vector<float> cover;
+		bool has_sun = false; // a sun light is set: the shadow bake, not the cover, dims the sun
+		Vector3 shadow_axis_u;
+		Vector3 shadow_axis_v;
+		Vector2 shadow_corner; // with the cloud drift since the bake applied
+		float shadow_size = 0.0f;
+		int shadow_res = 0;
+		Vector<float> shadow_values;
+
+		float rain_at(Vector3 p_position) const;
+		float cloud_cover_at(Vector3 p_position) const;
+		float sun_visibility_at(Vector3 p_position) const;
+	};
+	Snapshot get_snapshot() const;
 	// Bakes the cloud shadow now and waits for it (normally it runs in the background).
 	void update_cloud_shadow();
 	double get_weather_time() const { return weather_time; }

@@ -235,23 +235,7 @@ void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uin
 		}
 	}
 	steep_dirty = true;
-	_sample_canopy();
-}
-
-void SnowCover3D::_sample_canopy() {
-	const int n = resolution;
-	if (cell_canopy.size() != n * n) {
-		return;
-	}
-	const WeatherMap3D *wm = owner || !canopy_enabled ? nullptr : WeatherMap3D::get_active();
-	const float cs = _cell_size();
-	float *c = cell_canopy.ptrw();
-	for (int z = 0; z < n; z++) {
-		for (int x = 0; x < n; x++) {
-			const int i = z * n + x;
-			c[i] = wm ? CLAMP(wm->get_canopy_closure_at(Vector3((origin_cell.x + x + 0.5f) * cs, cell_ground[i], (origin_cell.y + z + 0.5f) * cs)), 0.0f, 1.0f) : 0.0f;
-		}
-	}
+	_refresh_cell_inputs(p_from_row, p_to_row, p_only);
 }
 
 void SnowCover3D::_follow(Vector3 p_center) {
@@ -285,10 +269,13 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_climate_precip };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
+		if (f->size() != n * n) {
+			continue;
+		}
 		const Vector<float> old = *f;
 		float *w = f->ptrw();
 		for (int z = 0; z < n; z++) {
@@ -425,6 +412,8 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 		in.humidity = humidity;
 	}
 	in.base_precip = precipitation_rate;
+	// The weather the cells read, as it is now: the update may run on a worker while the map moves on.
+	in.wx = in.weather ? in.weather->get_snapshot() : WeatherMap3D::Snapshot();
 	in.climate_map = get_climate_map_node();
 	in.climate_background = in.climate_map ? in.climate_map->get_climate_recipe()->get_precipitation() : 0.0f;
 
@@ -511,8 +500,17 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 		const float h = cell_ground[i];
 		const float t = in.temperature - lapse_rate * 0.001f * (h - in.ref_height);
 
-		// Precipitation (gathered with its orographic share by _gather_row), split into snow and rain.
-		const float p = in_precip[i] * in.dt_h;
+		const Vector3 pos = _cell_center(x, z);
+		// Precipitation, split into snow and rain. The weather as it was when the update started (its
+		// snapshot: this may run on a worker while the map updates).
+		const float rate = in.wx.valid ? in.wx.rain_at(pos) : in.base_precip;
+		// More falls higher up and on windward slopes (orographic enhancement): the terrain climate's
+		// precipitation field when there is one (read into cell_climate_precip on the main thread), else
+		// precipitation_gradient per 100 m.
+		const float oro = in.climate_map && in.climate_background > 0.0f && cell_climate_precip.size() == n * n
+				? MAX(cell_climate_precip[i] / in.climate_background, 0.0f)
+				: MAX(1.0f + precipitation_gradient * (h - in.ref_height) * 0.01f, 0.0f);
+		const float p = MAX(rate, 0.0f) * oro * in.dt_h;
 		const float share = snowfall_fraction(t, in.humidity);
 		float snow = p * share;
 		float rain_extra = 0.0f;
@@ -537,8 +535,8 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			}
 			if (load > 0.0f) {
 				const float u = last_wind.length();
-				const float rate = MAX(t + 273.15f - 270.15f, 0.0f) / 1.87e5f + u / 1.56e5f;
-				const float drop = load * (1.0f - Math::exp(-rate * in.dt_h * 3600.0f));
+				const float unload = MAX(t + 273.15f - 270.15f, 0.0f) / 1.87e5f + u / 1.56e5f;
+				const float drop = load * (1.0f - Math::exp(-unload * in.dt_h * 3600.0f));
 				load -= drop;
 				snow += drop;
 				if (t > 0.0f) {
@@ -610,7 +608,12 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				const Vector3 normal = Vector3(-(cell_ground[z * n + xr] - cell_ground[z * n + xl]) / ((xr - xl) * cs), 1.0f,
 						-(cell_ground[zu * n + x] - cell_ground[zd * n + x]) / ((zu - zd) * cs))
 											   .normalized();
-				const float vis = in_vis[i]; // through the clouds (_gather_row)
+				// Through the clouds: the weather map's cloud shadow when it bakes one for a sun, else the cloud
+				// cover by Kasten and Czeplak (1980), 1 - 0.75 N^3.4.
+				float vis = 1.0f;
+				if (in.wx.valid) {
+					vis = in.wx.has_sun ? in.wx.sun_visibility_at(pos) : 1.0f - 0.75f * Math::pow(in.wx.cloud_cover_at(pos), 3.4f);
+				}
 				g = in.direct_normal * (MAX(normal.dot(in.sun_dir), 0.0f) * vis + DIFFUSE_SHARE * in.sun_dir.y);
 			}
 			const float m = (melt_temperature_factor * t + melt_shortwave_factor * (1.0f - alb) * g) * in.dt_h;
@@ -837,63 +840,52 @@ void SnowCover3D::_slide() {
 	}
 }
 
-// What the cells read from the weather and the terrain climate, gathered on the main thread: the weather
-// map changes under a worker, so the background update must not call it (follow-up 14).
-void SnowCover3D::_gather_row(uint32_t p_row, void *p_unused) {
-	const Inputs &in = inputs;
+// What the cells read from other nodes that cannot be read from a worker: the canopy closure (the weather
+// map's shelter) and the terrain climate's precipitation. Main thread, for rows [p_from, p_to). Both change
+// rarely: each update refreshes a sixteenth of the rows, and the cells sampled anew (a shift) at once.
+void SnowCover3D::_refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only) {
 	const int n = resolution;
-	const int z = int(p_row);
-	const WeatherMap3D *canopy_map = gather_canopy ? WeatherMap3D::get_active() : nullptr;
-	for (int x = 0; x < n; x++) {
-		const int i = z * n + x;
-		const Vector3 pos = _cell_center(x, z);
-		const float h = cell_ground[i];
-		const float rate = in.weather ? in.weather->get_rain_at(pos) : in.base_precip;
-		// More falls higher up and on windward slopes (orographic enhancement): the terrain climate's
-		// precipitation field when there is one, else precipitation_gradient per 100 m.
-		const float oro = in.climate_map && in.climate_background > 0.0f
-				? MAX(in.climate_map->get_precipitation_at(pos) / in.climate_background, 0.0f)
-				: MAX(1.0f + precipitation_gradient * (h - in.ref_height) * 0.01f, 0.0f);
-		in_precip.write[i] = MAX(rate, 0.0f) * oro;
-		// Through the clouds: the weather map's cloud shadow when it bakes one for a sun, else the cloud
-		// cover by Kasten and Czeplak (1980), 1 - 0.75 N^3.4. Only where the melt reads it.
-		float vis = 1.0f;
-		if (in.weather && in.direct_normal > 0.0f && in.temperature - lapse_rate * 0.001f * (h - in.ref_height) > melt_threshold) {
-			if (in.weather->get_sun_light().is_empty()) {
-				vis = 1.0f - 0.75f * Math::pow(in.weather->get_cloud_cover_at(pos), 3.4f);
-			} else {
-				vis = in.weather->get_sun_visibility_at(pos);
+	const int nn = n * n;
+	const WeatherMap3D *wm = owner || !canopy_enabled ? nullptr : WeatherMap3D::get_active();
+	const TerrainDataMap3D *cm = get_climate_map_node();
+	const bool canopy = cell_canopy.size() == nn;
+	if (cm) {
+		if (cell_climate_precip.size() != nn) {
+			cell_climate_precip.resize(nn);
+			cell_climate_precip.fill(0.0f);
+			p_from_row = 0;
+			p_to_row = n;
+			p_only = nullptr;
+		}
+	} else {
+		cell_climate_precip.clear();
+	}
+	float *c = canopy ? cell_canopy.ptrw() : nullptr;
+	float *cp = cm ? cell_climate_precip.ptrw() : nullptr;
+	for (int z = p_from_row; z < p_to_row; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			if (p_only && !(*p_only)[i]) {
+				continue;
+			}
+			const Vector3 pos = _cell_center(x, z);
+			if (c) {
+				c[i] = wm ? CLAMP(wm->get_canopy_closure_at(pos), 0.0f, 1.0f) : 0.0f;
+			}
+			if (cp) {
+				cp[i] = cm->get_precipitation_at(pos);
 			}
 		}
-		in_vis.write[i] = vis;
-		if (gather_canopy) {
-			cell_canopy.write[i] = canopy_map ? CLAMP(canopy_map->get_canopy_closure_at(pos), 0.0f, 1.0f) : 0.0f;
-		}
 	}
-}
-
-void SnowCover3D::_gather_inputs() {
-	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
-	const int nn = resolution * resolution;
-	in_precip.resize(nn);
-	in_vis.resize(nn);
-	in_precip.ptrw();
-	in_vis.ptrw();
-	// The canopy can change under the square (a forest populated later): read it again now and then.
-	gather_canopy = canopy_enabled && !owner && (update_count % 16) == 0 && cell_canopy.size() == nn;
-	if (gather_canopy) {
-		cell_canopy.ptrw();
-	}
-	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &SnowCover3D::_gather_row, (void *)nullptr, resolution, -1, true, String("SnowCover3D gather"));
-	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
-	gather_usec = OS::get_singleton()->get_ticks_usec() - t0;
 }
 
 // Main thread: the inputs (weather, sun, wind, Sx) for one update.
 void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 	_prepare_inputs(p_weather_dt, p_blocking);
 	inputs.weather_dt = p_weather_dt;
-	_gather_inputs();
+	const int band = MAX(resolution / 16, 1);
+	const int from = int(update_count % uint64_t((resolution + band - 1) / band)) * band;
+	_refresh_cell_inputs(from, MIN(from + band, resolution), nullptr);
 }
 
 // The cells, slides, drift and cornices: any thread, nothing else touching the cells meanwhile.
@@ -940,7 +932,7 @@ void SnowCover3D::_update_cells(bool p_parallel) {
 	if (cornices_enabled) {
 		_grow_cornices(inputs.dt_h, last_wind);
 	}
-	update_msec = double(OS::get_singleton()->get_ticks_usec() - t0 + gather_usec) / 1000.0;
+	update_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 }
 
 // Main thread, after the cells.

@@ -37,6 +37,7 @@
 #include "core/math/random_pcg.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
+#include "core/os/thread.h"
 #include "core/templates/hash_set.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
@@ -527,13 +528,17 @@ void WeatherMap3D::_update_row(uint32_t p_row, CellPass *p_pass) {
 }
 
 float WeatherMap3D::_sample(const Vector<float> &p_field, Vector2 p_xz, int p_stride, int p_offset) const {
-	const int n = resolution;
-	if (p_field.size() < n * n * p_stride || !origin_valid) {
+	return _sample_grid(p_field, resolution, _cell_size(), origin_cell, origin_valid, p_xz, p_stride, p_offset);
+}
+
+float WeatherMap3D::_sample_grid(const Vector<float> &p_field, int p_n, float p_cell_size, Vector2i p_origin_cell, bool p_origin_valid, Vector2 p_xz, int p_stride, int p_offset) {
+	const int n = p_n;
+	if (n < 2 || p_field.size() < n * n * p_stride || !p_origin_valid) {
 		return 0.0f;
 	}
-	const float cs = _cell_size();
-	const float fx = CLAMP(p_xz.x / cs - origin_cell.x - 0.5f, 0.0f, float(n - 1));
-	const float fz = CLAMP(p_xz.y / cs - origin_cell.y - 0.5f, 0.0f, float(n - 1));
+	const float cs = p_cell_size;
+	const float fx = CLAMP(p_xz.x / cs - p_origin_cell.x - 0.5f, 0.0f, float(n - 1));
+	const float fz = CLAMP(p_xz.y / cs - p_origin_cell.y - 0.5f, 0.0f, float(n - 1));
 	const int x0 = MIN(int(fx), n - 2);
 	const int z0 = MIN(int(fz), n - 2);
 	const float tx = fx - x0;
@@ -1303,25 +1308,66 @@ void WeatherMap3D::_release_shadow_light() {
 	shadow_light = ObjectID();
 }
 
-float WeatherMap3D::get_sun_visibility_at(Vector3 p_position) const {
-	if (shadow_values.size() != shadow_res * shadow_res || shadow_res < 2) {
-		return 1.0f;
-	}
+// The bake's corner moved by the cloud drift since the bake.
+Vector2 WeatherMap3D::_shadow_corner_now() const {
 	const Vector2 d = cloud_drift - shadow_drift;
 	const Vector3 d3(d.x, 0.0f, d.y);
-	const Vector2 corner = shadow_corner + Vector2(d3.dot(shadow_axis_u), d3.dot(shadow_axis_v));
-	const float texel = shadow_size / shadow_res;
-	const Vector2 f = (Vector2(p_position.dot(shadow_axis_u), p_position.dot(shadow_axis_v)) - corner) / texel - Vector2(0.5f, 0.5f);
-	if (f.x < -0.5f || f.y < -0.5f || f.x > shadow_res - 0.5f || f.y > shadow_res - 0.5f) {
+	return shadow_corner + Vector2(d3.dot(shadow_axis_u), d3.dot(shadow_axis_v));
+}
+
+float WeatherMap3D::_sample_shadow(const Vector<float> &p_values, int p_res, float p_size, Vector3 p_axis_u, Vector3 p_axis_v, Vector2 p_corner, Vector3 p_position) {
+	const int res = p_res;
+	if (res < 2 || p_values.size() != res * res) {
 		return 1.0f;
 	}
-	const int x0 = CLAMP(int(Math::floor(f.x)), 0, shadow_res - 2);
-	const int y0 = CLAMP(int(Math::floor(f.y)), 0, shadow_res - 2);
+	const float texel = p_size / res;
+	const Vector2 f = (Vector2(p_position.dot(p_axis_u), p_position.dot(p_axis_v)) - p_corner) / texel - Vector2(0.5f, 0.5f);
+	if (f.x < -0.5f || f.y < -0.5f || f.x > res - 0.5f || f.y > res - 0.5f) {
+		return 1.0f;
+	}
+	const int x0 = CLAMP(int(Math::floor(f.x)), 0, res - 2);
+	const int y0 = CLAMP(int(Math::floor(f.y)), 0, res - 2);
 	const float tx = CLAMP(f.x - x0, 0.0f, 1.0f);
 	const float ty = CLAMP(f.y - y0, 0.0f, 1.0f);
-	const float *v = shadow_values.ptr();
-	auto at = [&](int x, int y) { return v[y * shadow_res + x]; };
+	const float *v = p_values.ptr();
+	auto at = [&](int x, int y) { return v[y * res + x]; };
 	return Math::lerp(Math::lerp(at(x0, y0), at(x0 + 1, y0), tx), Math::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), tx), ty);
+}
+
+float WeatherMap3D::get_sun_visibility_at(Vector3 p_position) const {
+	return _sample_shadow(shadow_values, shadow_res, shadow_size, shadow_axis_u, shadow_axis_v, _shadow_corner_now(), p_position);
+}
+
+WeatherMap3D::Snapshot WeatherMap3D::get_snapshot() const {
+	ERR_FAIL_COND_V_MSG(!Thread::is_main_thread(), Snapshot(), "WeatherMap3D.get_snapshot() must be called on the main thread.");
+	Snapshot r;
+	r.valid = true;
+	r.origin_valid = origin_valid;
+	r.resolution = resolution;
+	r.cell_size = _cell_size();
+	r.origin_cell = origin_cell;
+	r.rain = cell_rain;
+	r.cover = cell_cover;
+	r.has_sun = !sun_light.is_empty();
+	r.shadow_axis_u = shadow_axis_u;
+	r.shadow_axis_v = shadow_axis_v;
+	r.shadow_corner = _shadow_corner_now();
+	r.shadow_size = shadow_size;
+	r.shadow_res = shadow_res;
+	r.shadow_values = shadow_values;
+	return r;
+}
+
+float WeatherMap3D::Snapshot::rain_at(Vector3 p_position) const {
+	return MAX(_sample_grid(rain, resolution, cell_size, origin_cell, origin_valid, Vector2(p_position.x, p_position.z), 1, 0), 0.0f);
+}
+
+float WeatherMap3D::Snapshot::cloud_cover_at(Vector3 p_position) const {
+	return CLAMP(_sample_grid(cover, resolution, cell_size, origin_cell, origin_valid, Vector2(p_position.x, p_position.z), 1, 0), 0.0f, 1.0f);
+}
+
+float WeatherMap3D::Snapshot::sun_visibility_at(Vector3 p_position) const {
+	return _sample_shadow(shadow_values, shadow_res, shadow_size, shadow_axis_u, shadow_axis_v, shadow_corner, p_position);
 }
 
 // The sky material of the environment the camera sees, when it is a WeatherSkyMaterial.
