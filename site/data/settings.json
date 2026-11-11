@@ -1078,7 +1078,7 @@
     "glacial_erosion"
    ],
    "note": "",
-   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes.",
+   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -1249,6 +1249,19 @@
    "topic": "Ground"
   },
   {
+   "name": "Far blend",
+   "settings": [
+    "far_blend_enabled",
+    "far_start",
+    "far_fade"
+   ],
+   "note": "",
+   "what": "far ground takes the colour of the plant cover map.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Landscape3D",
    "settings": [
     "source",
@@ -1374,6 +1387,17 @@
    ],
    "note": "",
    "what": "plants keep out of the soaked ground in a waterfall's spray zone, where only mosses grow.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
+   "name": "Plant cover map",
+   "settings": [
+    "VegetationField3D.cover_map_enabled"
+   ],
+   "note": "",
+   "what": "a colour map of the plant cover baked from the planting rules, for distant terrain.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Placement"

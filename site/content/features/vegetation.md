@@ -17,6 +17,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Placement by climate** (`temperature_range`, `january_temperature_range`, `precipitation_range`, `aridity_range`, `sunlight_range`): species by temperature, winter frost, rain, aridity and sunlight.
 - **Density masks** (`density_mask`, `density_mask_rect`; per species `mask_channel`, `mask_invert`): a painted texture thins or clears any species per channel, for clearings and paths.
 - **Waterfall spray** (`PlantSpecies.spray_range`): plants keep out of the soaked ground in a waterfall's spray zone, where only mosses grow.
+- **Plant cover map** (`VegetationField3D.cover_map_enabled`): a colour map of the plant cover baked from the planting rules, for distant terrain.
 - **Canopy shade** (`canopy_radius`, `shade_range`; `weather_map`): understorey placed by the shade of placed crowns; crowns feed the weather's canopy map.
 
 ## Grass
