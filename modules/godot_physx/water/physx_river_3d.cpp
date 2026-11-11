@@ -67,7 +67,7 @@ shader_type spatial;
 // depth and casts caustics (the same as PhysXWaterSurface3D's).
 render_mode cull_disabled;
 #else
-render_mode blend_mix, cull_disabled, unshaded;
+render_mode blend_mix, cull_disabled;
 #endif
 
 // Animation clock, set by PhysXRiver3D while the game runs (0 in the editor,
@@ -266,18 +266,33 @@ void fragment() {
 	ALPHA = smoothstep(0.0, max(edge_softness, 1e-3), depth) * v_info.b;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
-	// Unshaded with a small bounded shading term, as PhysXWaterSurface3D's raster look.
+	// Open water keeps PhysXWaterSurface3D's raster look: its own colour with a
+	// small bounded shading term, plus the sky and the sun's glitter, written to
+	// EMISSION (no ALBEDO, no SPECULAR, so the lights add nothing to it). White
+	// water is a rough diffuse surface: it goes to ALBEDO and takes the scene's
+	// lights and shadows, so a cascade in a shaded valley no longer glows (the
+	// path tracer already lit it; docs/ideas/water.md "Step 4f").
 	vec3 n = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
 	float deep = smoothstep(0.0, 1.2, depth);
 	vec3 base_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl);
 	float base_a = mix(shallow_color.a, water_color.a, deep);
-	ALBEDO = mix(base_rgb, foam_color.rgb, foam);
 	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * v_info.b;
-	ALPHA = mix(base_a, foam_color.a, foam) * edge;
-	// The sky and the sun's glitter on open water (none on foam, nor past the waterline).
-	vec4 refl = water_raster_reflect(ALBEDO, ALPHA, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness);
-	ALBEDO = refl.rgb;
+	float a0 = mix(base_a, foam_color.a, foam) * edge;
+	// The reflection term is linear in the colour, so the water's part and the
+	// foam's part split exactly: what was one unshaded colour is now emission
+	// plus a lit albedo, the same where the light is the old fixed one.
+	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness);
+	float a_new = max(refl.a, 1e-4);
+	// Light the surface let through (1 - F), recovered from the alpha it returned.
+	float through = a0 < 0.9999 ? clamp((1.0 - refl.a) / (1.0 - a0), 0.0, 1.0) : 1.0;
+	float keep = a0 * through / a_new;
+	NORMAL = n;
+	EMISSION = refl.rgb;
+	ALBEDO = foam_color.rgb * foam * keep;
+	ROUGHNESS = 0.85;
+	SPECULAR = 0.25 * foam;
+	METALLIC = 0.0;
 	ALPHA = refl.a;
 #endif
 }
@@ -294,7 +309,7 @@ shader_type spatial;
 #if defined(RT)
 render_mode cull_back;
 #else
-render_mode blend_mix, cull_back, unshaded;
+render_mode blend_mix, cull_back;
 #endif
 
 uniform float water_time = 0.0;
@@ -343,8 +358,13 @@ void fragment() {
 	ALPHA = cover;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
-	float ndotl = clamp(dot(NORMAL, (VIEW_MATRIX * vec4(0.3, 0.85, 0.4, 0.0)).xyz), 0.0, 1.0);
-	ALBEDO = mix(water_color.rgb * mix(0.8, 1.15, ndotl), foam_color.rgb * mix(0.85, 1.05, ndotl), foam);
+	// Lit by the scene's lights, shadows and sky like any surface (it was unshaded with a fixed light,
+	// so a fall in a shaded valley glowed flat white): white water scatters diffusely, the clear sheet
+	// is a smooth dielectric showing the sky in its specular.
+	ALBEDO = mix(water_color.rgb, foam_color.rgb, foam);
+	ROUGHNESS = mix(pathtraced_roughness + 0.1, 0.85, foam);
+	SPECULAR = 0.5;
+	METALLIC = 0.0;
 	ALPHA = mix(water_color.a, foam_color.a, foam) * cover;
 #endif
 }

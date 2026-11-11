@@ -1009,6 +1009,15 @@ scene, so it is not shown in the cloud shots. Limits: the lip is taken as
 level across the river, each column's jet is independent (no contraction of
 the sheet), and the live window does not see the fall.
 
+**Raster lighting (11 Nov).** The raster sheet and the river's white water
+were drawn unshaded with a fixed light direction, so a cascade or a fall in a
+shaded valley glowed flat white (pixels about 194 on a dark hillside) while the
+path tracer lit it properly. Foam is a rough diffuse scatterer, so both now
+take the scene's lights, shadows and sky: the fall sheet is a lit material,
+and the river keeps its open-water look (own colour, sky and sun reflections)
+as EMISSION while its white water goes to a lit ALBEDO. The reflection term is
+linear in the colour, so the split is exact and open water is unchanged.
+
 ## Step 5a: ocean wave cascades and the TMA spectrum (9 Nov)
 
 ### Problem
