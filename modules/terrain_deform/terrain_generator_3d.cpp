@@ -2083,7 +2083,6 @@ Array TerrainGenerator3D::build_water(Node *p_parent) {
 			lake->set("seabed_from_floor", true);
 			lake->set("render_extent", 0.0);
 			lake->set("wind_speed", 4.0);
-			lake->set("wave_amplitude", 0.2);
 			lake->set("follow_weather", true);
 		}
 		lake->set_meta("level", l.level);
