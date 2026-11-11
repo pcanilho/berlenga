@@ -313,6 +313,7 @@ func _generate() -> void:
 		gen.glacial_rock_scale = float(args.get("rock-scale", "500"))
 		gen.glacial_inflow_balance = float(args.get("ice-inflow", "0"))
 		gen.glacial_coarse_cell = float(args.get("ice-coarse", "0"))
+		gen.ice_worn_detail = args.has("ice-worn")
 		gen.glacial_erosion = float(args.get("glacial-erosion", "1"))
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
@@ -715,6 +716,12 @@ func _lake_and_fall() -> void:
 					for i in range(-12, 25):
 						row.append("%.1f" % gen.get_height(pc + dr * i * 1.0))
 					print("POOL ", f.get("id"), " along ", " ".join(row))
+				var lp: PackedVector3Array = f.get("lip_points", PackedVector3Array())
+				if lp.size() > 0:
+					var ly := PackedStringArray()
+					for q in lp:
+						ly.append("%.1f" % (q.y - f["top"].y))
+					_log("    lip width %.1f m, points vs top: %s" % [f.get("lip_width", 0.0), " ".join(ly)])
 				_log("    %s %s, dir %s, impact %.1f m/s (free %.1f), tiers %d, lands in %s, pool %s" % [f.get("id", "?"), f.get("type", "?"), f.get("direction", Vector3.ZERO), f.get("impact_speed", 0.0), f.get("impact_speed_free", 0.0), f.get("tiers", []).size(), f.get("lands_in", "?"), ("r %.1f m, depth %.1f m, level %.1f" % [f["pool_radius"], f["pool_depth"], f["pool_level"]]) if f.has("pool_radius") else "none"])
 		_log("waterfalls from the generator: %d, tallest %.0f m high, %.0f m wide, %.1f m3/s at %s" % [gen_falls.size(), tall["height"], tall["width"], tall["discharge"], top])
 	_log("lake at %s level %.1f m" % [lake_center, lake_level])
