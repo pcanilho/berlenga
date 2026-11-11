@@ -376,6 +376,10 @@ constexpr float CASCADE_MIN_DROP = 0.15f; // m
 
 } // namespace
 
+String PhysXRiver3D::get_fall_shader_code() {
+	return String(FALL_SHADER_SRC);
+}
+
 namespace {
 float cross_value(const PhysXRiver3D::Section &p_sec, const LocalVector<float> &p_values, float p_n, float p_margin, int p_m) {
 	const float half = 0.5f * p_sec.width + p_margin;

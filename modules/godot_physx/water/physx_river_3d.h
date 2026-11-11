@@ -207,6 +207,8 @@ protected:
 	static void _bind_methods();
 
 public:
+	// The falling-sheet shader (streaks riding the water, aeration, break-up), shared with PhysXWaterfalls3D.
+	static String get_fall_shader_code();
 	void set_widths(const PackedFloat32Array &p_widths);
 	PackedFloat32Array get_widths() const { return widths; }
 	void set_depths(const PackedFloat32Array &p_depths);
