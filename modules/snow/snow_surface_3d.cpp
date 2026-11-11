@@ -1163,22 +1163,22 @@ PackedByteArray SnowSurface3D::_gpu_cover_cells(int &r_n, bool &r_valid) const {
 	const SnowCover3D *cover = _cover();
 	r_n = 0;
 	r_valid = false;
-	if (!cover || !cover->origin_valid || cover->cell_swe.size() != cover->resolution * cover->resolution) {
+	if (!cover || !cover->origin_valid || cover->pub.swe.size() != cover->resolution * cover->resolution) {
 		return out;
 	}
 	const int cn = cover->resolution;
 	const int cells = cn * cn;
 	out.resize(cells * 32);
 	float *w = reinterpret_cast<float *>(out.ptrw());
-	const bool crust = cover->cell_crust.size() == cells;
-	const bool fresh = cover->cell_new_depth.size() == cells;
+	const bool crust = cover->pub.crust.size() == cells;
+	const bool fresh = cover->pub.new_depth.size() == cells;
 	const bool ground_ok = cover->cell_ground.size() == cells;
 	for (int i = 0; i < cells; i++) {
-		w[i * 8 + 0] = cover->cell_swe[i];
-		w[i * 8 + 1] = cover->cell_density[i];
-		w[i * 8 + 2] = crust ? cover->cell_crust[i] : 0.0f;
-		w[i * 8 + 3] = crust ? cover->cell_crust_burial[i] : 0.0f;
-		w[i * 8 + 4] = fresh ? cover->cell_new_depth[i] : 0.0f;
+		w[i * 8 + 0] = cover->pub.swe[i];
+		w[i * 8 + 1] = cover->pub.density[i];
+		w[i * 8 + 2] = crust ? cover->pub.crust[i] : 0.0f;
+		w[i * 8 + 3] = crust ? cover->pub.crust_burial[i] : 0.0f;
+		w[i * 8 + 4] = fresh ? cover->pub.new_depth[i] : 0.0f;
 		w[i * 8 + 5] = ground_ok ? cover->cell_ground[i] : 0.0f;
 		w[i * 8 + 6] = 0.0f;
 		w[i * 8 + 7] = 0.0f;

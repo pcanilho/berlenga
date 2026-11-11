@@ -27,6 +27,8 @@ extends Node3D
 #                     (sparkle) prints the share of glinting pixels and the mean luminance
 #   --view=shelter    a shed and young spruces after a snowfall: bare ground under the roof, snow in the
 #                     crowns and less under them (--test=shelter for the checks)
+#   --test=background updates on worker threads (follow-up 14): the same pack as updates run in the frame,
+#                     the getters steady while one runs, the main thread's share of each update
 #   --test=crust      melt-freeze crusts: formed by a thaw and a frost, harder each cycle, a boot breaks a
 #                     first-cycle crust and stands on a second-cycle one, new snow over it
 #   --view=windblown  a ridge after new snow and a day of 15 m/s wind (--snow=H hours of wind, default 24;
@@ -123,6 +125,8 @@ func _ready() -> void:
 			await _run_failure_tests()
 		elif only == "icicles":
 			_run_icicle_tests()
+		elif only == "background":
+			await _run_background_tests()
 
 		else:
 			await _run_tests()
@@ -310,6 +314,7 @@ func _run_tests() -> void:
 	await _run_climate_tests()
 	await _run_failure_tests()
 	_run_icicle_tests()
+	await _run_background_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -818,6 +823,102 @@ func _run_shelter_tests() -> void:
 	var held2 := snow.get_canopy_load_at(Vector3(0, 0, 0))
 	var under2 := snow.get_swe_at(Vector3(0, 0, 0))
 	_check("it unloads onto the snow below", held2 < held * 0.5 and under2 > under, "%.1f mm left in the canopy after a day at -1 C in 6 m/s wind; %.1f mm below (was %.1f)" % [held2, under2, under])
+
+
+# Follow-up 14: the cover's updates on worker threads, swapped in when done. A snowy, windy, sunny mountain with a
+# world tier is run through the same physics frames twice, once updating in the frame and once in the
+# background: the packs must come out the same, and the getters must not change while an update runs.
+func _background_run(background: bool, updates: int) -> Dictionary:
+	await _setup("mountain", 512.0, 256, 0.5)
+	weather.rain_rate = 2.0
+	weather.cloud_cover = 0.6
+	weather.wind_speed = 12.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	sun.visible = true
+	sun.rotation_degrees = Vector3(-35.0, 150.0, 0.0)
+	snow.add_snow(150.0, 200.0)
+	snow.climate = _climate(9.0)
+	snow.bake_climate(Rect2(-2048, -2048, 4096, 4096), 64)
+	snow.world_update_every = 3
+	# Warm up in the frame: Sx for this wind baked on both tiers, so no bake lands mid-run.
+	snow.advance(60.0)
+	snow.advance_world(3600.0)
+	snow.background_updates = background
+	snow.update_rate = 2.0
+	var start: int = snow.get_update_count()
+	var main_ms: Array[float] = []
+	var work_ms := 0.0
+	var steady := true
+	var seen: int = start
+	var water := snow.get_total_water()
+	var probe := Vector3(37.0, 0, -61.0)
+	var probe_swe := snow.get_swe_at(probe)
+	var busy_frames := 0
+	while snow.get_update_count() < start + updates:
+		await get_tree().physics_frame
+		if snow.get_update_count() != seen:
+			seen = snow.get_update_count()
+			main_ms.append(snow.get_main_thread_msec())
+			work_ms += snow.get_update_time_msec()
+			water = snow.get_total_water()
+			probe_swe = snow.get_swe_at(probe)
+		if snow.is_updating():
+			busy_frames += 1
+			if snow.get_total_water() != water or snow.get_swe_at(probe) != probe_swe:
+				steady = false
+	snow.update_rate = 0.0001
+	snow.sync_update()
+	var r := {}
+	var grid := PackedFloat32Array()
+	for z in range(-240, 241, 24):
+		for x in range(-240, 241, 24):
+			var q := Vector3(x, 0, z)
+			grid.append(snow.get_swe_at(q))
+			grid.append(snow.get_density_at(q))
+			grid.append(snow.get_crust_thickness_at(q))
+	for z in range(-1900, 1901, 200):
+		for x in range(-1900, 1901, 200):
+			grid.append(snow.get_world_swe_at(Vector3(x, 0, z)))
+	r.grid = grid
+	r.water = snow.get_total_water()
+	r.main_ms = main_ms
+	r.work_ms = work_ms / maxf(main_ms.size(), 1)
+	r.steady = steady
+	r.busy_frames = busy_frames
+	r.failures = snow.get_cornice_failure_count()
+	return r
+
+
+func _run_background_tests() -> void:
+	print("Follow-up 14: cover updates in the background")
+	var n := 12
+	var a: Dictionary = await _background_run(false, n)
+	var b: Dictionary = await _background_run(true, n)
+	var ga: PackedFloat32Array = a.grid
+	var gb: PackedFloat32Array = b.grid
+	var worst := 0.0
+	for i in ga.size():
+		worst = maxf(worst, absf(ga[i] - gb[i]))
+	_check("the same pack as updating in the frame", worst == 0.0 and a.water == b.water, "%d samples over both tiers, largest difference %.6f; water %.1f against %.1f kg" % [ga.size(), worst, a.water, b.water])
+	_check("getters steady while an update runs", b.steady and b.busy_frames > 0, "%d physics frames with an update in flight" % b.busy_frames)
+	var ma: Array[float] = a.main_ms
+	var mb: Array[float] = b.main_ms
+	var fmt := func(m: Array[float]) -> String:
+		var s := 0.0
+		var top := 0.0
+		for v in m:
+			s += v
+			top = maxf(top, v)
+		return "mean %.2f ms, worst %.2f ms" % [s / maxf(m.size(), 1), top]
+	print("  main thread per update, 256 x 256 cells and a 64 x 64 world tier every 3rd update: in the frame %s; in the background %s (cells, drift, slides and cornices %.2f ms on a worker)" % [fmt.call(ma), fmt.call(mb), b.work_ms])
+	var top_b := 0.0
+	var top_a := 0.0
+	for v in mb:
+		top_b = maxf(top_b, v)
+	for v in ma:
+		top_a = maxf(top_a, v)
+	_check("the frame no longer waits for the update", top_b < 0.5 * top_a, "worst %.2f ms against %.2f ms" % [top_b, top_a])
 
 
 func _climate(wind_speed: float) -> SnowClimate:

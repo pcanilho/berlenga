@@ -177,6 +177,7 @@ class SnowCover3D : public Node3D {
 		float wind_factor = 0.0f; // drift weight, 0..1
 		float drift_norm = 1.0f;
 		float base_precip = 0.0f;
+		double weather_dt = 0.0; // s of weather time this update steps
 		const WeatherMap3D *weather = nullptr;
 		const TerrainDataMap3D *climate_map = nullptr; // baked, with a recipe
 		float climate_background = 0.0f; // mm a year, the recipe's flat-ground precipitation
@@ -210,7 +211,7 @@ class SnowCover3D : public Node3D {
 	void _slide();
 	void _update_crust(float &r_crust, float &r_cycles, float &r_burial, float &r_wet, float p_rain, float p_melt_depth, float p_refrozen, float p_liquid_before, float p_liquid) const;
 	void _update(double p_weather_dt, bool p_blocking);
-	void _upload();
+	void _upload(); // the textures and the published copies, now (main thread)
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	void _publish_globals();
 	bool _in_world_only(Vector3 p_position) const;
@@ -230,6 +231,41 @@ class SnowCover3D : public Node3D {
 	void _make_world();
 	void _free_world();
 	void _publish_world_globals();
+
+	// Background updates (docs/ideas/snow.md, follow-up 14). The cells, slides, drift and cornices (and the
+	// world tier's turn) run on a worker thread; the main thread gathers the weather the cells read before
+	// it starts and swaps the results in when it is done. Readers on the main thread read `pub`, the
+	// published copies (shared buffers, copied on the worker's first write), so they never wait.
+	struct Published {
+		Vector<float> swe, liquid, density, albedo, runoff, canopy_load, new_depth;
+		Vector<float> crust, crust_cycles, crust_burial, crust_wet;
+		Vector<float> cornice_x, cornice_z, cornice_crack;
+	} pub;
+	bool background_updates = true;
+	WorkerThreadPool::TaskID cover_task = WorkerThreadPool::INVALID_TASK_ID;
+	bool cover_task_world = false; // the task carries the world tier's turn
+	double world_dt = 0.0;
+	// Weather the cells read, gathered on the main thread before each update: mm/h of water falling (with
+	// the orographic share) and the share of the sun through the clouds.
+	Vector<float> in_precip;
+	Vector<float> in_vis;
+	bool gather_canopy = false;
+	uint64_t gather_usec = 0;
+	uint64_t main_usec = 0; // main-thread time of the last update (gather, start, swap in)
+	// The textures' images, built off the main thread.
+	Ref<Image> upload_snow;
+	Ref<Image> upload_catch;
+	void _publish_cells();
+	void _gather_row(uint32_t p_row, void *p_unused);
+	void _gather_inputs();
+	void _update_begin(double p_weather_dt, bool p_blocking);
+	void _update_cells(bool p_parallel);
+	void _update_end();
+	void _build_upload();
+	void _apply_upload();
+	void _start_background(double p_weather_dt, bool p_world);
+	void _background_task(void *p_unused);
+	bool _finish_background(bool p_wait);
 
 protected:
 	void _notification(int p_what);
@@ -372,6 +408,13 @@ public:
 	float get_drift_factor() const { return last_drift; } // 0..1, wind above the blowing threshold
 	float get_total_water() const; // kg (mm over m2) on the whole map
 	double get_update_time_msec() const { return update_msec; }
+	double get_main_thread_msec() const { return main_usec / 1000.0; }
+	// Background updates (on by default): the cover steps on a worker thread and swaps in when done.
+	void set_background_updates(bool p_enabled);
+	bool is_background_updates() const { return background_updates; }
+	bool is_updating() const { return cover_task != WorkerThreadPool::INVALID_TASK_ID; }
+	// Waits for an update in flight and swaps it in (tests and tools; the game never needs to).
+	void sync_update();
 	Ref<Texture2D> get_snow_texture() const { return snow_texture; }
 
 	// The published relations, for scripts and checks.

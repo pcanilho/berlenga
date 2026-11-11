@@ -1053,3 +1053,47 @@ the CPU). GPU time is on the PC queue.
 **Known limits.** Collision and the queries lag the GPU by the read back (about three rendered frames);
 the CPU path lagged by up to 1/15 s already. Outside the cover's near square the GPU sees no snow
 (the CPU path reads the world tier there; the field is always well inside the square).
+
+## Follow-up 14: cover updates in the background (built 11 Nov 2026)
+
+**Problem.** `SnowCover3D` stepped its cells in the physics frame that started an update: 256 x 256 cells took
+5 to 7 ms on the main thread twice a second (rows 2 ms on four threads, drift, slides and cornices 3 ms, the
+textures' bytes), and every 8th update the world tier added 4 to 6 ms more. Each was a hitch.
+
+**Technique.** The standard way engines take slow simulation off the frame: run the step as a job on a worker
+thread against inputs fixed when it starts, keep readers on the last *published* state, and swap the new
+state in when the job is done (double buffering; Andersson, "Parallel Futures of a Game Engine", Frostbite
+2010; Gyrling, "Parallelizing the Naughty Dog Engine Using Fibers", GDC 2015; Unreal's async tasks for its
+landscape grass maps). Readers see the pack one update late, which at 2 Hz is far below anything visible,
+and nothing on the main thread waits.
+
+**Design.**
+- `_update` is split into three parts. `_update_begin` runs on the main thread: the inputs (sun, wind, Sx)
+  and a gather of what the cells read from other nodes (the weather map's rain, cloud cover and cloud
+  shadow; the terrain climate's precipitation share; the canopy every 16th update) into per-cell arrays.
+  `_update_cells` runs on any thread: rows, slides, wind transport and cornices. `_update_end` runs on the
+  main thread: runoff to the weather map and the counters. The in-frame path calls all three, so both paths
+  run the same code on the same inputs.
+- Published copies: every field a getter, `SnowSurface3D` or `SnowCornice3D` reads has a published twin
+  (`pub`). The twins share their buffers (Godot's `Vector` is copy-on-write with an atomic count), so
+  publishing costs nothing. The worker's first write to a field copies it on the worker, and the main thread
+  keeps reading the old buffer, untouched.
+- One task carries the near square and, on its turn, the world tier: the square's state feeds the world,
+  then the world cells step (a cornice failing there drops debris into the square), then both textures'
+  images are built. The main thread only hands the images to the textures.
+- Everything that changes the cells on the main thread (`advance`, `add_snow`, `clear`, a shift of the
+  square, a climate bake, a new climate) waits for the task first. The square does not follow the camera
+  while a task runs: it moves when the task lands, a frame or two later.
+- `background_updates` (on by default) switches it off, and `sync_update()` waits for a task in flight.
+
+**Results** (`docs/bench/snow --test=background`: a sunny, windy, snowing mountain at 256 x 256 cells with a
+64 x 64 world tier every 3rd update, run through the same physics frames both ways):
+- The pack comes out bit-identical: 1723 samples over both tiers, water to the gram.
+- Getters return the same values on every frame an update is in flight.
+- Main-thread cost per update falls from 5.1 to 6.0 ms (worst 5.8 to 6.9 ms) to 0.9 to 1.2 ms (worst 1.1 to 1.7 ms), split
+  between the frame that starts it and the frame that swaps it in. The worker takes 7 to 9 ms.
+
+**Limits and next step.** About 0.5 to 0.9 ms of what is left is the weather gather. The weather map cannot be read
+from a worker while it updates. A read-only snapshot of its rain, cover and cloud shadow (shared buffers,
+taken on the main thread) would let the gather move onto the worker as well. It needs an addition to
+`WeatherMap3D`, which is the weather owner's to make.
