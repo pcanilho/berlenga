@@ -30,9 +30,11 @@
 
 #include "physx_river_3d.h"
 
+#include "flow_poisson.h"
 #include "physx_water_surface_3d.h"
 
 #include "core/config/engine.h"
+#include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_set.h"
@@ -1729,81 +1731,120 @@ void PhysXRiver3D::_solve_flow(float p_ds) {
 			}
 		}
 
-		// SOR on div(grad(psi) / K) = 0 with the bend metric. Face weights:
-		// along s 1 / (h K ds^2), across h / (K dn^2); a face onto a wall
-		// takes the wet cell's own K.
-		const float ds2 = p_ds * p_ds;
-		auto face = [&](int p_a, int p_b, bool p_along, float p_h, float p_dn2) -> float {
-			const float ka = inv_k[p_a];
-			const float kb = inv_k[p_b];
-			const float k = (ka > 0.0f && kb > 0.0f) ? 0.5f * (ka + kb) : MAX(ka, kb);
-			return p_along ? k / (p_h * ds2) : k * p_h / p_dn2;
-		};
-		LocalVector<float> comp_num;
-		LocalVector<float> comp_den;
-		comp_num.resize(comps);
-		comp_den.resize(comps);
-		const float omega = 1.85f;
-		const float tolerance = 1e-5f * sections[count - 1].discharge;
-		for (int iter = 0; iter < 4000; iter++) {
-			float max_change = 0.0f;
-			for (int i = 1; i < count - 1; i++) {
-				const float dn2 = dn_of(i) * dn_of(i);
+		if (bool(GLOBAL_GET("physics/physx_3d/water/multigrid_flow"))) {
+			// The same equation in its symmetric finite-volume form (cell area h ds dn): along s a face
+			// conducts K_f dn_f / (h_f ds), across K_f h_f ds / dn, with K_f the mean of a wet pair or the wet
+			// cell's own onto a wall, and the metric h at the face; then multigrid-preconditioned CG.
+			LocalVector<int> kind;
+			LocalVector<int> island_of;
+			LocalVector<float> fcx;
+			LocalVector<float> fcz;
+			kind.resize(cells);
+			fcx.resize(cells);
+			fcz.resize(cells);
+			island_of.resize(comps);
+			int islands = 0;
+			for (int q = 0; q < comps; q++) {
+				island_of[q] = comp_island[q] ? islands++ : -1;
+			}
+			auto k_face = [&](int p_a, int p_b) -> float {
+				const float ka = inv_k[p_a];
+				const float kb = inv_k[p_b];
+				return (ka > 0.0f && kb > 0.0f) ? 0.5f * (ka + kb) : MAX(ka, kb);
+			};
+			for (int i = 0; i < count; i++) {
+				const float dn = dn_of(i);
 				for (int j = 0; j <= m; j++) {
 					const int k = i * row + j;
-					if (inv_k[k] == 0.0f) {
-						continue;
+					if (i == 0 || i == count - 1) {
+						kind[k] = FlowPoisson::FIXED;
+					} else if (comp[k] >= 0) {
+						kind[k] = island_of[comp[k]] >= 0 ? FlowPoisson::ISLAND + island_of[comp[k]] : FlowPoisson::FIXED;
+					} else {
+						kind[k] = FlowPoisson::UNKNOWN;
 					}
-					const float h = metric(i, j);
-					float num = 0.0f;
-					float den = 0.0f;
-					const int nb[4] = { k - row, k + row, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
-					for (int q = 0; q < 4; q++) {
-						if (nb[q] < 0) {
-							continue; // the strip's side edge: no flow across it
-						}
-						const float w = face(k, nb[q], q < 2, h, dn2);
-						num += w * psi[nb[q]];
-						den += w;
-					}
-					if (den > 0.0f) {
-						const float change = omega * (num / den - psi[k]);
-						psi[k] += change;
-						max_change = MAX(max_change, Math::abs(change));
-					}
+					fcx[k] = j < m ? k_face(k, k + 1) * 0.5f * (metric(i, j) + metric(i, j + 1)) * p_ds / dn : 0.0f;
+					fcz[k] = i < count - 1 ? k_face(k, k + row) * 0.5f * (dn + dn_of(i + 1)) / (0.5f * (metric(i, j) + metric(i + 1, j)) * p_ds) : 0.0f;
 				}
 			}
-			// Islands: psi where the flow round them sums to zero.
-			for (int q = 0; q < comps; q++) {
-				comp_num[q] = 0.0f;
-				comp_den[q] = 0.0f;
-			}
-			for (int i = 1; i < count - 1; i++) {
-				const float dn2 = dn_of(i) * dn_of(i);
-				for (int j = 0; j <= m; j++) {
-					const int k = i * row + j;
-					if (inv_k[k] == 0.0f) {
-						continue;
-					}
-					const int nb[4] = { k - row, k + row, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
-					for (int q = 0; q < 4; q++) {
-						if (nb[q] < 0 || comp[nb[q]] < 0 || !comp_island[comp[nb[q]]]) {
+			FlowPoisson::solve(row, count, fcx, fcz, kind, islands, psi);
+		} else {
+			// SOR on div(grad(psi) / K) = 0 with the bend metric. Face weights:
+			// along s 1 / (h K ds^2), across h / (K dn^2); a face onto a wall
+			// takes the wet cell's own K.
+			const float ds2 = p_ds * p_ds;
+			auto face = [&](int p_a, int p_b, bool p_along, float p_h, float p_dn2) -> float {
+				const float ka = inv_k[p_a];
+				const float kb = inv_k[p_b];
+				const float k = (ka > 0.0f && kb > 0.0f) ? 0.5f * (ka + kb) : MAX(ka, kb);
+				return p_along ? k / (p_h * ds2) : k * p_h / p_dn2;
+			};
+			LocalVector<float> comp_num;
+			LocalVector<float> comp_den;
+			comp_num.resize(comps);
+			comp_den.resize(comps);
+			const float omega = 1.85f;
+			const float tolerance = 1e-5f * sections[count - 1].discharge;
+			for (int iter = 0; iter < 4000; iter++) {
+				float max_change = 0.0f;
+				for (int i = 1; i < count - 1; i++) {
+					const float dn2 = dn_of(i) * dn_of(i);
+					for (int j = 0; j <= m; j++) {
+						const int k = i * row + j;
+						if (inv_k[k] == 0.0f) {
 							continue;
 						}
-						const float w = face(k, nb[q], q < 2, metric(i, j), dn2);
-						comp_num[comp[nb[q]]] += w * psi[k];
-						comp_den[comp[nb[q]]] += w;
+						const float h = metric(i, j);
+						float num = 0.0f;
+						float den = 0.0f;
+						const int nb[4] = { k - row, k + row, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
+						for (int q = 0; q < 4; q++) {
+							if (nb[q] < 0) {
+								continue; // the strip's side edge: no flow across it
+							}
+							const float w = face(k, nb[q], q < 2, h, dn2);
+							num += w * psi[nb[q]];
+							den += w;
+						}
+						if (den > 0.0f) {
+							const float change = omega * (num / den - psi[k]);
+							psi[k] += change;
+							max_change = MAX(max_change, Math::abs(change));
+						}
 					}
 				}
-			}
-			for (int c = 0; c < cells; c++) {
-				const int q = comp[c];
-				if (q >= 0 && comp_island[q] && comp_den[q] > 0.0f) {
-					psi[c] = comp_num[q] / comp_den[q];
+				// Islands: psi where the flow round them sums to zero.
+				for (int q = 0; q < comps; q++) {
+					comp_num[q] = 0.0f;
+					comp_den[q] = 0.0f;
 				}
-			}
-			if (max_change < tolerance && iter > 4) {
-				break;
+				for (int i = 1; i < count - 1; i++) {
+					const float dn2 = dn_of(i) * dn_of(i);
+					for (int j = 0; j <= m; j++) {
+						const int k = i * row + j;
+						if (inv_k[k] == 0.0f) {
+							continue;
+						}
+						const int nb[4] = { k - row, k + row, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
+						for (int q = 0; q < 4; q++) {
+							if (nb[q] < 0 || comp[nb[q]] < 0 || !comp_island[comp[nb[q]]]) {
+								continue;
+							}
+							const float w = face(k, nb[q], q < 2, metric(i, j), dn2);
+							comp_num[comp[nb[q]]] += w * psi[k];
+							comp_den[comp[nb[q]]] += w;
+						}
+					}
+				}
+				for (int c = 0; c < cells; c++) {
+					const int q = comp[c];
+					if (q >= 0 && comp_island[q] && comp_den[q] > 0.0f) {
+						psi[c] = comp_num[q] / comp_den[q];
+					}
+				}
+				if (max_change < tolerance && iter > 4) {
+					break;
+				}
 			}
 		}
 	}

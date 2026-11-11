@@ -39,6 +39,9 @@ void GodotPhysXProjectSettings::register_settings() {
 	// The ocean FFT: each line's whole transform in shared memory, two dispatches a step (water_fft_rows.glsl);
 	// off = one dispatch per butterfly stage (water_fft.glsl). The same field either way.
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/water/shared_memory_fft"), false); // on once timed on a GPU
+	// The water flow bakes (sea and lake currents, rivers round rocks): multigrid-preconditioned conjugate
+	// gradients (flow_poisson.h); off = the older SOR sweeps. The same flow either way.
+	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/water/multigrid_flow"), true);
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/simulation/stabilization"), true);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/simulation/cpu_worker_threads", PROPERTY_HINT_RANGE, U"0,32,1"), 0);
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/cloth/tearing"), true);

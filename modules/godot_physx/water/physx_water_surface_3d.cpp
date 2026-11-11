@@ -30,10 +30,12 @@
 
 #include "physx_water_surface_3d.h"
 
+#include "flow_poisson.h"
 #include "physx_water_wake_3d.h"
 #include "water_raster_reflections.h"
 
 #include "core/config/engine.h"
+#include "core/config/project_settings.h"
 #include "core/math/face3.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
@@ -3257,43 +3259,57 @@ void PhysXWaterSurface3D::_bake_flow() {
 			psi[i] = comp_value[comp[i]];
 		}
 	}
-	// SOR on div(grad(psi) / h) = 0; face weights 1 / (mean depth) / spacing^2.
+	// div(grad(psi) / h) = 0; face conductances 1 / (mean depth) / spacing^2 (a face onto dry ground takes
+	// the wet cell's own depth: the wall holds its patch's psi).
 	const float wx = 1.0f / (dx * dx);
 	const float wz = 1.0f / (dz * dz);
-	const float omega = 2.0f / (1.0f + Math::sin(Math::PI / n));
-	const float tolerance = 1e-5f * mean; // float psi stalls near 1e-6 of its range
-	struct IslandLink {
-		int cell;
-		int comp;
-		float w;
-	};
-	LocalVector<IslandLink> island_links;
-	for (int z = 1; z < n - 1; z++) {
-		for (int x = 1; x < n - 1; x++) {
-			const int i = z * n + x;
-			if (fixed[i] || h[i] <= 0.0f) {
-				continue;
-			}
-			const int nb[4] = { i - 1, i + 1, i - n, i + n };
-			const float sw[4] = { wx, wx, wz, wz };
-			for (int k = 0; k < 4; k++) {
-				const int j = nb[k];
-				if (h[j] <= 0.0f && comp[j] >= 0 && !comp_fixed[comp[j]]) {
-					island_links.push_back({ i, comp[j], sw[k] / h[i] });
-				}
-			}
-		}
-	}
-	LocalVector<float> comp_num;
-	LocalVector<float> comp_den;
-	comp_num.resize(comp_count);
-	comp_den.resize(comp_count);
-	for (int iter = 0; iter < 4000; iter++) {
-		float max_change = 0.0f;
+	if (bool(GLOBAL_GET("physics/physx_3d/water/multigrid_flow"))) {
+		LocalVector<int> kind;
+		LocalVector<int> island_of;
+		LocalVector<float> fcx;
+		LocalVector<float> fcz;
+		kind.resize(cells);
+		fcx.resize(cells);
+		fcz.resize(cells);
+		island_of.resize(comp_count);
+		int islands = 0;
 		for (int c = 0; c < comp_count; c++) {
-			comp_num[c] = 0.0f;
-			comp_den[c] = 0.0f;
+			island_of[c] = comp_fixed[c] ? -1 : islands++;
 		}
+		auto conductance = [&](int p_a, int p_b, float p_w) -> float {
+			if (h[p_a] > 0.0f && h[p_b] > 0.0f) {
+				return p_w / (0.5f * (h[p_a] + h[p_b]));
+			}
+			if (h[p_a] > 0.0f || h[p_b] > 0.0f) {
+				return p_w / MAX(h[p_a], h[p_b]);
+			}
+			return 0.0f;
+		};
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				if (fixed[i]) {
+					kind[i] = FlowPoisson::FIXED;
+				} else if (comp[i] >= 0) {
+					kind[i] = island_of[comp[i]] >= 0 ? FlowPoisson::ISLAND + island_of[comp[i]] : FlowPoisson::FIXED;
+				} else {
+					kind[i] = FlowPoisson::UNKNOWN;
+				}
+				fcx[i] = x < n - 1 ? conductance(i, i + 1, wx) : 0.0f;
+				fcz[i] = z < n - 1 ? conductance(i, i + n, wz) : 0.0f;
+			}
+		}
+		FlowPoisson::solve(n, n, fcx, fcz, kind, islands, psi);
+	} else {
+		// SOR on div(grad(psi) / h) = 0; face weights 1 / (mean depth) / spacing^2.
+		const float omega = 2.0f / (1.0f + Math::sin(Math::PI / n));
+		const float tolerance = 1e-5f * mean; // float psi stalls near 1e-6 of its range
+		struct IslandLink {
+			int cell;
+			int comp;
+			float w;
+		};
+		LocalVector<IslandLink> island_links;
 		for (int z = 1; z < n - 1; z++) {
 			for (int x = 1; x < n - 1; x++) {
 				const int i = z * n + x;
@@ -3302,39 +3318,66 @@ void PhysXWaterSurface3D::_bake_flow() {
 				}
 				const int nb[4] = { i - 1, i + 1, i - n, i + n };
 				const float sw[4] = { wx, wx, wz, wz };
-				float num = 0.0f;
-				float den = 0.0f;
 				for (int k = 0; k < 4; k++) {
 					const int j = nb[k];
-					// A wall face: the wet cell's own depth (the wall holds its patch's psi).
-					const float hf = h[j] > 0.0f ? 0.5f * (h[i] + h[j]) : h[i];
-					const float w = sw[k] / hf;
-					num += w * psi[j];
-					den += w;
+					if (h[j] <= 0.0f && comp[j] >= 0 && !comp_fixed[comp[j]]) {
+						island_links.push_back({ i, comp[j], sw[k] / h[i] });
+					}
 				}
-				if (!(den > 0.0f)) {
-					continue;
-				}
-				const float target = num / den;
-				const float change = omega * (target - psi[i]);
-				psi[i] += change;
-				max_change = MAX(max_change, Math::abs(change));
 			}
 		}
-		// Islands: the value that sends no net flow round them (their wet neighbours' weighted mean, after
-		// this sweep: Gauss-Seidel on the island's own unknown too, or the two fight and diverge).
-		for (const IslandLink &l : island_links) {
-			comp_num[l.comp] += l.w * psi[l.cell];
-			comp_den[l.comp] += l.w;
-		}
-		for (int i = 0; i < cells; i++) {
-			const int c = comp[i];
-			if (c >= 0 && !comp_fixed[c] && comp_den[c] > 0.0f) {
-				psi[i] = comp_num[c] / comp_den[c];
+		LocalVector<float> comp_num;
+		LocalVector<float> comp_den;
+		comp_num.resize(comp_count);
+		comp_den.resize(comp_count);
+		for (int iter = 0; iter < 4000; iter++) {
+			float max_change = 0.0f;
+			for (int c = 0; c < comp_count; c++) {
+				comp_num[c] = 0.0f;
+				comp_den[c] = 0.0f;
 			}
-		}
-		if (max_change < tolerance && iter > 20) {
-			break;
+			for (int z = 1; z < n - 1; z++) {
+				for (int x = 1; x < n - 1; x++) {
+					const int i = z * n + x;
+					if (fixed[i] || h[i] <= 0.0f) {
+						continue;
+					}
+					const int nb[4] = { i - 1, i + 1, i - n, i + n };
+					const float sw[4] = { wx, wx, wz, wz };
+					float num = 0.0f;
+					float den = 0.0f;
+					for (int k = 0; k < 4; k++) {
+						const int j = nb[k];
+						// A wall face: the wet cell's own depth (the wall holds its patch's psi).
+						const float hf = h[j] > 0.0f ? 0.5f * (h[i] + h[j]) : h[i];
+						const float w = sw[k] / hf;
+						num += w * psi[j];
+						den += w;
+					}
+					if (!(den > 0.0f)) {
+						continue;
+					}
+					const float target = num / den;
+					const float change = omega * (target - psi[i]);
+					psi[i] += change;
+					max_change = MAX(max_change, Math::abs(change));
+				}
+			}
+			// Islands: the value that sends no net flow round them (their wet neighbours' weighted mean, after
+			// this sweep: Gauss-Seidel on the island's own unknown too, or the two fight and diverge).
+			for (const IslandLink &l : island_links) {
+				comp_num[l.comp] += l.w * psi[l.cell];
+				comp_den[l.comp] += l.w;
+			}
+			for (int i = 0; i < cells; i++) {
+				const int c = comp[i];
+				if (c >= 0 && !comp_fixed[c] && comp_den[c] > 0.0f) {
+					psi[i] = comp_num[c] / comp_den[c];
+				}
+			}
+			if (max_change < tolerance && iter > 20) {
+				break;
+			}
 		}
 	}
 	// Velocity per wet cell from central differences.

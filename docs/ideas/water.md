@@ -1736,6 +1736,39 @@ Waterfall sheets keep the tint.
 Unresolved: raster cloud shadows do not dim the glitter (an unshaded material does not read the light's
 shadow); the path tracer's do.
 
+## Step 5j: multigrid flow bakes (11 Nov, audit item 10)
+
+The flow bakes solve a stream function: `div(grad(psi) / h) = 0` over the sea or lake's simulated square
+(the current round islands and along shores) and `div(grad(psi) / K)` with the bend metric over a river
+(round rocks). Both used SOR, which needs a few hundred to a few thousand sweeps and grows with the grid
+squared. Now both call `FlowPoisson::solve` (`water/flow_poisson.h`): conjugate gradients in double,
+preconditioned by one symmetric multigrid V-cycle (McAdams, Sifakis and Teran 2010; the cycle after
+Briggs, Henson and McCormick, A Multigrid Tutorial).
+
+- Levels: 2 x 2 aggregates with the Galerkin coarse operator, which on this stencil is just "add up the
+  conductances crossing between aggregates, drop those inside one from the diagonal". Banks, fixed edges
+  and dry ground fall out on their own (no conductance), so no geometric special cases.
+- Unsmoothed aggregation undershoots the smooth error, so the coarse correction is scaled by 1.8 (the
+  over-correction of Braess 1995): CG iterations 30 -> 14 at 320 x 320. One forward Gauss-Seidel sweep
+  before, one backward after, so the preconditioner stays symmetric. Levels in float, CG in double.
+- Islands (a rock, an islet: one unknown psi set so no net flow goes round it) are extra unknowns
+  coupled to their wet neighbours, preconditioned with Jacobi beside the V-cycle.
+- Rivers: the strip equation is now in its symmetric finite-volume form (along a face K_f dn_f / (h_f
+  ds), across K_f h_f ds / dn, the metric h at the face rather than at the cell), which CG needs. It
+  shifts the flow round rocks on a bend by up to 0.07 m/s of 3.8 (mean 0.01); the old form was not
+  conservative there.
+- `physics/physx_3d/water/multigrid_flow` (on) is the opt-out, back to SOR.
+
+Timings (cloud CPU, `docs/bench/water_surface --current=0.6,0.2 --bake-time=N`, whole bake):
+
+| Grid | SOR | Multigrid |
+|---|---|---|
+| 160 x 160 | 62 ms | 10 ms |
+| 320 x 320 | 515 ms | 50 ms |
+| River bench, 25 x 201 (`--bake-time`) | solve about 6 ms, rebuild 12 ms | solve 1.5 ms, rebuild 7.5 ms |
+
+The sea's flow is the same to 0.4 mm/s (fastest 2.1 m/s), since the equation did not change there.
+
 ## Sources
 
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).

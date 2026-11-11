@@ -28,6 +28,8 @@ extends Node3D
 #   --view=fallfront the waterfall from downstream, looking up at the falling sheet
 #   --live           the live window: shallow-water simulation round the rocks (eddies, live foam)
 #   --report         print the cross-sections and the boxes' positions
+#   --bake-time=N    time N rebuilds with the multigrid flow solve and with the older SOR sweeps
+#                    (physics/physx_3d/water/multigrid_flow), print each mean and how far the two flows differ
 #
 # Run with --fixed-fps 30.
 
@@ -40,6 +42,7 @@ var pt_from := 0
 var out := ""
 var seq := 0
 var report := false
+var bake_time := 0
 var carve := false
 var live := false
 var joins := false
@@ -98,6 +101,7 @@ func _ready() -> void:
 		if a.begins_with("--view="): view = a.substr(7)
 		elif a == "--raster": raster = true
 		elif a == "--report": report = true
+		elif a.begins_with("--bake-time="): bake_time = int(a.substr(12))
 		elif a == "--carve": carve = true
 		elif a == "--live": live = true
 		elif a == "--joins": joins = true
@@ -223,6 +227,32 @@ func _ready() -> void:
 	var wm: ShaderMaterial = river.get("water_material")
 	for k in water_params:
 		if wm: wm.set_shader_parameter(k, water_params[k])
+	if bake_time > 0:
+		var keep: bool = ProjectSettings.get_setting("physics/physx_3d/water/multigrid_flow")
+		var fields := []
+		for mg in [true, false]:
+			ProjectSettings.set_setting("physics/physx_3d/water/multigrid_flow", mg)
+			river.call("rebuild")
+			var t0 := Time.get_ticks_usec()
+			for i in bake_time:
+				river.call("rebuild")
+			print("river rebuild (%s): %.2f ms" % ["multigrid" if mg else "SOR", (Time.get_ticks_usec() - t0) / 1000.0 / bake_time])
+			var f := PackedFloat32Array()
+			for i in river.call("get_section_count"):
+				var s: Dictionary = river.call("get_section", i)
+				f.append_array(s.speeds)
+				f.append_array(s.across)
+			fields.append(f)
+		var worst := 0.0
+		var top := 0.0
+		var sum := 0.0
+		for i in fields[0].size():
+			worst = maxf(worst, absf(fields[0][i] - fields[1][i]))
+			sum += absf(fields[0][i] - fields[1][i])
+			top = maxf(top, absf(fields[1][i]))
+		print("flow difference: max %.4f m/s, mean %.5f m/s (fastest %.2f m/s)" % [worst, sum / maxi(fields[0].size(), 1), top])
+		ProjectSettings.set_setting("physics/physx_3d/water/multigrid_flow", keep)
+		river.call("rebuild")
 	if report:
 		for i in range(0, river.call("get_section_count"), 8):
 			var s: Dictionary = river.call("get_section", i)
