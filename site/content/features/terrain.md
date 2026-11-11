@@ -107,6 +107,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
+- **Far blend** (TerrainMaterial3D `far_blend_enabled`, `far_start`, `far_fade`, off by default): far ground takes the colour of the plant cover map.
+
 - **Landscape3D** (`source`, `spacing`, `lod_error`): heightfield ground from a TerrainGenerator3D or a height image, as chunk meshes with crack-free LODs and one BLAS per chunk level, so nothing rebuilds while the camera moves. Heights stream in coarse first and chunk meshes build on worker threads (`stream_heights`); baked heights load 4 km at 1 m in under a second.
 
   ![A valley drawn by Landscape3D at 1 m spacing, raster vs path traced](media/landscape3d.jpg)
