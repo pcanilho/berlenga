@@ -208,6 +208,13 @@ func _generate() -> void:
 		# A cirque of peaks round the north holding a high lake; its outflow falls off the range front into a wide
 		# grassy valley floor that runs south between two low ridges to the sea.
 		range_nodes.append(_range_path("Cirque", [Vector3(-1900, 0, -700), Vector3(-900, 0, -1600), Vector3(0, 0, -1850), Vector3(900, 0, -1600), Vector3(1900, 0, -700)], 0.0, 1.0))
+		if args.has("bowl"):
+			# A high bowl among the peaks (x,z,radius,share): uplift scaled down inside it, so its floor stays gentle above
+			# the rock bar that holds its outlet.
+			var bw: PackedStringArray = args["bowl"].split(",")
+			var bowl := _range_path("Bowl", [Vector3(float(bw[0]), 0, float(bw[1])), Vector3(float(bw[0]) + 1.0, 0, float(bw[1]))], float(bw[2]), float(bw[3]))
+			bowl.set_meta("basin", true)
+			range_nodes.append(bowl)
 		range_nodes.append(_range_path("WestRidge", [Vector3(-1500, 0, -900), Vector3(-1450, 0, 1100)], 380.0, 0.35))
 		range_nodes.append(_range_path("EastRidge", [Vector3(1500, 0, -900), Vector3(1450, 0, 1100)], 380.0, 0.35))
 		for y in 64:
@@ -305,6 +312,28 @@ func _generate() -> void:
 				sill.set_meta("level", float(args["sill-level"]))
 			add_child(sill)
 			markers.append(gen.get_path_to(sill))
+		if args.has("bar"):
+			# A bar of resistant rock across the valley (x0,z0,x1,z1), held at --bar-level: a riegel the river and the
+			# ice cross slowly, so the ground above it stays high (sill markers every 32 m).
+			var bv: PackedStringArray = args["bar"].split(",")
+			var bar_pts: Array[Vector3] = []
+			for k in range(0, bv.size() - 1, 2):
+				bar_pts.append(Vector3(float(bv[k]), 0, float(bv[k + 1])))
+			var along: Array[Vector3] = []
+			for k in bar_pts.size() - 1:
+				var steps := maxi(1, int(bar_pts[k].distance_to(bar_pts[k + 1]) / 32.0))
+				for i in steps:
+					along.append(bar_pts[k].lerp(bar_pts[k + 1], float(i) / steps))
+			along.append(bar_pts[bar_pts.size() - 1])
+			for i in along.size():
+				var m := Node3D.new()
+				m.name = "Bar%d" % i
+				m.position = along[i]
+				m.set_meta("sill", float(args.get("bar-width", "40")))
+				if args.has("bar-level"):
+					m.set_meta("level", float(args["bar-level"]))
+				add_child(m)
+				markers.append(gen.get_path_to(m))
 		gen.inflows = markers
 	var t := Time.get_ticks_msec()
 	# One climate for the rivers (rain and snowmelt by month), the data map's climate fields and the plants: a mild
@@ -343,7 +372,7 @@ func _generate() -> void:
 	if gen.glacial_enabled:
 		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded()])
 		for l in gen.get_lake_results():
-			_log("  lake level %.0f m, depth %.0f m, %.1f ha, catchment %.2f km2 at %s" % [l["level"], l["depth"], l["area"] / 1e4, l["catchment"] / 1e6, l["center"]])
+			_log("  lake level %.0f m, depth %.0f m, %.1f ha, catchment %.2f km2 at %s, outlet %s" % [l["level"], l["depth"], l["area"] / 1e4, l["catchment"] / 1e6, l["center"], l.get("outlet")])
 	if args.has("dump-heights"):
 		var hb := PackedFloat32Array()
 		for zi in 257:

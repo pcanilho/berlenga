@@ -212,9 +212,20 @@ public:
 		return max_dh;
 	}
 
+	// A sill with a level is a hard band at that height (a riegel's top): the rock above it is ordinary and wears
+	// down to it as any other ground does, so the bar never stands up as a wall however fast the uplift.
+	double _sill_at(int i) const {
+		if (!b.sill || b.sill[i] <= 0.0) {
+			return 0.0;
+		}
+		if (b.sill_level && !std::isnan(b.sill_level[i]) && b.height[i] > b.sill_level[i] + 1.0) {
+			return 0.0;
+		}
+		return b.sill[i];
+	}
 	double _talus_at(int i) const {
 		const double t = b.talus_cell ? b.talus_cell[i] : p.talus;
-		return (b.sill && b.sill[i] > 0.0) ? std::fmax(t, 11.43) : t; // a sill stands at 85 degrees
+		return _sill_at(i) > 0.0 ? std::fmax(t, 11.43) : t; // a sill stands at 85 degrees
 	}
 	// A sill with a level is not worn below it (nor lifted to it: never above the surface before this step's erosion).
 	double _hold(int i, double hi, double top) const {
@@ -225,7 +236,7 @@ public:
 	}
 	double _erodibility_at(int i) const {
 		double kk = b.erodibility_scale ? p.erodibility * b.erodibility_scale[i] : p.erodibility;
-		return b.sill ? kk * (1.0 - 0.995 * b.sill[i]) : kk;
+		return b.sill ? kk * (1.0 - 0.995 * _sill_at(i)) : kk;
 	}
 
 	// Implicit stream power and critical slope, from the outlets up: every receiver is final before its donors.

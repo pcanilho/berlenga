@@ -65,9 +65,10 @@ public:
 		double exponent = 2.02; // l
 		double adverse = 1.5; // no erosion where the bed rises along the flow faster than this times the surface slope
 		double cell = 64.0; // ice grid spacing, metres (rounded to a whole number of bed cells)
-		double max_step_erosion = 15.0; // metres per sub-step at most (the ice is solved again between)
+		double max_step_erosion = 25.0; // metres per sub-step at most (the ice is solved again between)
 		int first_iterations = 6000;
-		int iterations = 800; // warm-started solves
+		int iterations = 200; // warm-started solves
+		int max_sub_steps = 24; // per call; the rest of the time is dropped (the ice has worn what it can)
 		double smoothing = 1.5; // ice cells: Gaussian sigma for the sliding speed
 	};
 	Params p;
@@ -84,8 +85,9 @@ public:
 
 	// Erodes p_bed (nx * ny, spacing dx) by glacial erosion over p_years. Optional p_sediment: loose fill on top,
 	// removed first. Optional p_fixed: cells that stay (outlets, the sea).
-	// Optional p_resist (0..1): resistant bedrock (a riegel or cirque threshold) quarried 200 times slower at 1.
-	void erode(double *p_bed, int nx, int ny, double dx, double p_years, double *p_sediment = nullptr, const uint8_t *p_fixed = nullptr, const double *p_resist = nullptr) {
+	// Optional p_resist (0..1): resistant bedrock (a riegel or cirque threshold) quarried 200 times slower at 1;
+	// with p_level (NaN: none) only at and below that height, and never worn below it.
+	void erode(double *p_bed, int nx, int ny, double dx, double p_years, double *p_sediment = nullptr, const uint8_t *p_fixed = nullptr, const double *p_resist = nullptr, const double *p_level = nullptr) {
 		sub_steps = 0;
 		eroded_max = 0.0;
 		const int k = std::max(1, (int)std::lround(p.cell / dx));
@@ -105,7 +107,7 @@ public:
 		flux.resize(m);
 		total.assign(size_t(nx) * ny, 0.0);
 		double t = 0.0;
-		for (int guard = 0; t < p_years && guard < 400; guard++) {
+		for (int guard = 0; t < p_years && guard < p.max_sub_steps; guard++) {
 			for (int z = 0; z < gz; z++) {
 				for (int x = 0; x < gx; x++) {
 					bed[z * gx + x] = p_bed[std::min(z * k, ny - 1) * nx + std::min(x * k, nx - 1)];
@@ -136,7 +138,12 @@ public:
 					const int x0 = std::min((int)fx, gx - 1), x1 = std::min(x0 + 1, gx - 1);
 					const double tx = fx - x0;
 					const double r = (rate[z0 * gx + x0] * (1.0 - tx) + rate[z0 * gx + x1] * tx) * (1.0 - tz) + (rate[z1 * gx + x0] * (1.0 - tx) + rate[z1 * gx + x1] * tx) * tz;
-					const double e = r * dt / (p_resist ? 1.0 + 199.0 * p_resist[i] : 1.0);
+					const bool lv = p_level && !std::isnan(p_level[i]);
+					const bool hard = p_resist && p_resist[i] > 0.0 && (!lv || p_bed[i] <= p_level[i] + 1.0);
+					double e = r * dt / (hard ? 1.0 + 199.0 * p_resist[i] : 1.0);
+					if (lv && p_resist && p_resist[i] > 0.0) {
+						e = std::min(e, std::max(0.0, p_bed[i] - p_level[i]));
+					}
 					if (e <= 0.0) {
 						continue;
 					}

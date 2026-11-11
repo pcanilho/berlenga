@@ -35,6 +35,7 @@
 #include "terrain_erosion_filter.h"
 #include "terrain_geology.h"
 #include "terrain_glacial.h"
+#include <cstdlib>
 #include "terrain_hydraulic.h"
 #include "terrain_runoff.h"
 #include "terrain_stream_power.h"
@@ -152,7 +153,7 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 		const Transform3D xf = path->get_global_transform();
 		const real_t w = path->has_meta("width") ? real_t(path->get_meta("width")) : range_width;
 		const real_t strength = path->has_meta("uplift") ? real_t(path->get_meta("uplift")) : real_t(1.0);
-		if (w <= 0.0) {
+		if (w <= 0.0 || path->has_meta("basin")) {
 			continue;
 		}
 		for (int s = 0; s + 1 < pts.size(); s++) {
@@ -175,6 +176,45 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 						const float v = float(strength * (0.5 + 0.5 * Math::cos(Math::PI * d)));
 						field[z * nx + x] = MAX(field[z * nx + x], v);
 					}
+				}
+			}
+		}
+	}
+
+	// Basins: paths with "basin" metadata scale the uplift down to their "uplift" share along the curve (raised
+	// cosine over the width), after the map and ranges: a high bowl among the peaks, a cirque floor, a pass.
+	for (int r = 0; r < ranges.size(); r++) {
+		Path3D *path = Object::cast_to<Path3D>(get_node_or_null(ranges[r]));
+		if (!path || path->get_curve().is_null() || !path->has_meta("basin")) {
+			continue;
+		}
+		const PackedVector3Array pts = path->get_curve()->get_baked_points();
+		const Transform3D xf = path->get_global_transform();
+		const real_t w = path->has_meta("width") ? real_t(path->get_meta("width")) : range_width;
+		const real_t share = path->has_meta("uplift") ? real_t(path->get_meta("uplift")) : real_t(0.0);
+		if (w <= 0.0 || pts.is_empty()) {
+			continue;
+		}
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				const Vector2 p(rect.position.x + x * cell_size, rect.position.y + z * cell_size);
+				real_t dmin = 1e30;
+				for (int k = 0; k < pts.size(); k++) {
+					const Vector3 a3 = xf.xform(pts[k]);
+					if (k + 1 < pts.size()) {
+						const Vector3 b3 = xf.xform(pts[k + 1]);
+						const Vector2 a(a3.x, a3.z), ab = Vector2(b3.x, b3.z) - a;
+						const real_t len2 = ab.length_squared();
+						const real_t t = len2 > 0.0 ? CLAMP((p - a).dot(ab) / len2, real_t(0.0), real_t(1.0)) : real_t(0.0);
+						dmin = MIN(dmin, p.distance_to(a + ab * t));
+					} else {
+						dmin = MIN(dmin, p.distance_to(Vector2(a3.x, a3.z)));
+					}
+				}
+				const real_t d = dmin / w;
+				if (d < 1.0) {
+					const real_t c = 0.5 + 0.5 * Math::cos(Math::PI * d);
+					field[z * nx + x] *= float(Math::lerp(real_t(1.0), share, c));
 				}
 			}
 		}
@@ -381,11 +421,12 @@ bool TerrainGenerator3D::generate() {
 		}
 	};
 	// Ice ages between the rivers' steps (Cordonnier et al. 2023 alternate glacial and fluvial periods): every
-	// fourth step the glaciers of the ground as it stands erode for glacial_share of those steps' time.
+	// eighth step the glaciers of the ground as it stands erode for glacial_share of those steps' time.
 	TerrainGlacial glac;
 	glac.p.ela = glacial_ela;
 	glac.p.erodibility *= double(glacial_erosion);
 	glac.p.sliding = glacial_sliding;
+	if (getenv("GLAC_SIGMA")) { glac.p.smoothing = atof(getenv("GLAC_SIGMA")); } // TUNING, remove
 	const bool glacial = glacial_enabled && glacial_erosion > 0.0;
 	uint64_t glacial_usec = 0;
 	int glacial_count = 0;
@@ -393,9 +434,9 @@ bool TerrainGenerator3D::generate() {
 		strata_update(p_n, p_h, p_up);
 		const double c = sp.step();
 		strata_time += double(time_step);
-		if (glacial && glacial_share > 0.0 && ++glacial_count % 4 == 0) {
+		if (glacial && glacial_share > 0.0 && ++glacial_count % 8 == 0) {
 			const uint64_t tg = OS::get_singleton()->get_ticks_usec();
-			glac.erode(sp.b.height, sp.p.nx, sp.p.ny, sp.p.dx, 4.0 * double(time_step) * double(glacial_share), sp.b.sediment, sp.b.outlet, sp.b.sill);
+			glac.erode(sp.b.height, sp.p.nx, sp.p.ny, sp.p.dx, 8.0 * double(time_step) * double(glacial_share), sp.b.sediment, sp.b.outlet, sp.b.sill, sp.b.sill_level);
 			glacial_usec += OS::get_singleton()->get_ticks_usec() - tg;
 		}
 		return c;
@@ -560,7 +601,7 @@ bool TerrainGenerator3D::generate() {
 	LocalVector<double> unfilled;
 	if (glacial && glacial_final > 0.0) {
 		const uint64_t tg = OS::get_singleton()->get_ticks_usec();
-		glac.erode(h.ptr(), nx, ny, cell_size, double(glacial_final), sed.ptr(), sp.b.outlet, sill_fine.is_empty() ? nullptr : sill_fine.ptr());
+		glac.erode(h.ptr(), nx, ny, cell_size, double(glacial_final), sed.ptr(), sp.b.outlet, sill_fine.is_empty() ? nullptr : sill_fine.ptr(), level_fine.is_empty() ? nullptr : level_fine.ptr());
 		glacial_usec += OS::get_singleton()->get_ticks_usec() - tg;
 		last_glacial_eroded = real_t(glac.eroded_max);
 		last_glacial_ice_area = real_t(glac.ice_area);
@@ -601,13 +642,44 @@ bool TerrainGenerator3D::generate() {
 	}
 	sp.route();
 	if (!unfilled.is_empty()) {
-		// The basins stay: the receivers and areas come from the filled surface (water crosses the lakes), the
-		// ground and its sediment go back to what the ice left.
-		for (int i = 0; i < n; i++) {
-			const double fill = h[i] - unfilled[i];
-			if (fill > 0.0) {
-				sed[i] = MAX(sed[i] - fill, 0.0);
-				h[i] = unfilled[i];
+		// The basins the ice wore stay: the receivers and areas come from the filled surface (water crosses the
+		// lakes), the ground and its sediment go back to what the ice left. Other hollows stay filled.
+		LocalVector<uint8_t> seen;
+		seen.resize(n);
+		memset(seen.ptr(), 0, n);
+		LocalVector<int32_t> part;
+		for (int s0 = 0; s0 < n; s0++) {
+			if (seen[s0] || h[s0] - unfilled[s0] <= 0.0) {
+				continue;
+			}
+			part.clear();
+			part.push_back(s0);
+			seen[s0] = 1;
+			bool iced = false;
+			for (uint32_t q = 0; q < part.size(); q++) {
+				const int32_t c = part[q];
+				iced = iced || glacial_ice[c] > 1.0f;
+				const int cx = c % nx, cz = c / nx;
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int xx = cx + dx, zz = cz + dz;
+						if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+							continue;
+						}
+						const int j = zz * nx + xx;
+						if (!seen[j] && h[j] - unfilled[j] > 0.0) {
+							seen[j] = 1;
+							part.push_back(j);
+						}
+					}
+				}
+			}
+			if (!iced) {
+				continue;
+			}
+			for (int32_t c : part) {
+				sed[c] = MAX(sed[c] - (h[c] - unfilled[c]), 0.0);
+				h[c] = unfilled[c];
 			}
 		}
 	}
@@ -2589,8 +2661,10 @@ void TerrainGenerator3D::_basin_lakes(std::vector<uint8_t> &r_taken) {
 		comp[s0] = s0;
 		float deepest = 0.0f;
 		int32_t bottom = s0;
+		bool iced = false;
 		for (size_t q = 0; q < cells.size(); q++) {
 			const int32_t c = cells[q];
+			iced = iced || glacial_ice[c] > 1.0f;
 			const float d = fill[c] - heights[c];
 			if (d > deepest) {
 				deepest = d;
@@ -2609,7 +2683,8 @@ void TerrainGenerator3D::_basin_lakes(std::vector<uint8_t> &r_taken) {
 				}
 			}
 		}
-		if (deepest < 1.0f || double(cells.size()) * cell_size * cell_size < double(lake_min_area)) {
+		// Only basins the ice wore (the rivers' own hollows fill with sediment as they always have).
+		if (!iced || deepest < 1.0f || double(cells.size()) * cell_size * cell_size < double(lake_min_area)) {
 			continue;
 		}
 		// Out of the basin down the receivers (laid on the filled surface): the first cell outside is the sill.
@@ -2626,7 +2701,12 @@ void TerrainGenerator3D::_basin_lakes(std::vector<uint8_t> &r_taken) {
 		info.bed = heights[bottom];
 		info.outlet = outlet;
 		info.dam = outlet;
-		info.catchment = channel_area[outlet];
+		// The largest drainage through any of its cells (a river crossing the lake), the outlet's own at least.
+		float through = channel_area[outlet];
+		for (int32_t c : cells) {
+			through = MAX(through, channel_area[c]);
+		}
+		info.catchment = through;
 		info.cells = int(cells.size());
 		info.lo = Vector2i(nx, ny);
 		info.hi = Vector2i(-1, -1);
