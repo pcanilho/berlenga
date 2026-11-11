@@ -108,6 +108,14 @@ public:
 		STAND_MAX,
 	};
 
+	enum Climber {
+		CLIMBER_NONE,
+		CLIMBER_IVY, // Hedera helix: root-climbing up the stem, evergreen.
+		CLIMBER_LIANA, // Clematis vitalba, wild grape: hanging from the limbs, looping between them.
+		CLIMBER_HONEYSUCKLE, // Lonicera: twining in spirals round thin stems and limbs.
+		CLIMBER_MAX,
+	};
+
 	enum Region {
 		REGION_EUROPE,
 		REGION_NORTH_AMERICA,
@@ -272,6 +280,7 @@ private:
 	void _build_rig();
 	void _apply_decay();
 	void _fell();
+	void _shed_branch();
 	PackedFloat32Array _collider_data() const;
 	void _skin_stem(Builder &r_b, const Vector4i &p_part, int p_axis, const LocalVector<Vector3> &p_points, int p_sides) const;
 	PackedFloat32Array _rig_data() const;
@@ -293,6 +302,7 @@ private:
 	bool rigged = false;
 	int decay_class = 0; // 0 living; 1-5 deadwood decay classes (Maser et al. 1979).
 	bool fallen = false; // Lying on the ground as a log.
+	bool fallen_branch = false; // Only one shed limb of the grown tree, lying on the ground.
 	AABB envelope; // Clipping volume for hedges and topiary (size 0: off).
 	float collider_radius = 0.08f; // Wood thicker than this gets collision capsules.
 	int broken_tip = -1; // Stem node whose end is a broken top.
@@ -327,6 +337,14 @@ private:
 
 public:
 	static constexpr int MAX_BONES = 48;
+	// Moss on bark (docs/ideas/trees.md section 5c): a tint at every LOD and a displaced moss
+	// shell over the bark at LOD 0, by species, height, upper faces and decay.
+	float moss_cover = 1.0f;
+	Climber climber = CLIMBER_NONE;
+	float climber_cover = 0.6f;
+	float _moss_amount() const;
+	float _moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount) const;
+	static constexpr float MOSS_SHELL_MIN_RADIUS = 0.05f;
 	static constexpr float BARK_TILE = 0.4f; // Metres of bark one texture tile covers.
 	static constexpr int RIG_STRIDE = 18;
 	// Rig record layout (Mesh meta "tree_rig", RIG_STRIDE floats per bone).
@@ -399,16 +417,32 @@ private:
 		Ref<Image> height; // Metres of relief over the tile, for displaced near trunks.
 	};
 	BarkSet bark_sets[BARK_MAX];
+	BarkSet moss_set;
+	const BarkSet &_moss_set();
 	static BarkKind _bark_kind(Preset p_preset);
 	const BarkSet &_bark_set(BarkKind p_kind);
 	void _mark_spurs(int p_year);
 	Ref<ArrayMesh> _build_mesh();
+	// Climbers (docs/ideas/trees.md section 5b): stems grown over the host's bark, in its bark
+	// surface and skinned to its bones; leaves in its leaf surface and published as points.
+	struct Support {
+		LocalVector<Vector3> pts;
+		LocalVector<float> rad;
+		LocalVector<int> bone;
+		bool stem = false;
+	};
+	LocalVector<Support> supports;
+	PackedFloat32Array climber_leaves;
+	void _grow_climbers(Builder &r_bark, Builder &r_leaves);
+	void _climber_stem(Builder &r_bark, const LocalVector<Vector3> &p_path, const LocalVector<int> &p_bones, float p_r0, float p_r1, const Color &p_color);
+	void _climber_leaf(Builder &r_leaves, const Vector3 &p_at, const Vector3 &p_out, const Vector3 &p_normal, float p_size, int p_bone, const Color &p_color);
 	enum Form {
 		FORM_OPEN,
 		FORM_STAND,
 		FORM_SAPLING, // Advance regeneration: the stand-grown form at a fifth of its age.
 		FORM_SNAG, // Standing dead, decay classes 2-4 over the variants.
 		FORM_LOG, // Fallen dead, decay classes 2-4.
+		FORM_BRANCH, // A shed limb on the ground (coarse woody debris under the logs' size).
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
 
@@ -440,6 +474,14 @@ public:
 	int get_decay_class() const { return decay_class; }
 	void set_fallen(bool p_fallen) { fallen = p_fallen; }
 	bool is_fallen() const { return fallen; }
+	void set_climber(Climber p_climber) { climber = p_climber; }
+	Climber get_climber() const { return climber; }
+	void set_climber_cover(float p_cover) { climber_cover = CLAMP(p_cover, 0.0f, 1.0f); }
+	float get_climber_cover() const { return climber_cover; }
+	void set_moss_cover(float p_cover) { moss_cover = MAX(p_cover, 0.0f); }
+	float get_moss_cover() const { return moss_cover; }
+	void set_fallen_branch(bool p_fallen_branch) { fallen_branch = p_fallen_branch; }
+	bool is_fallen_branch() const { return fallen_branch; }
 	void set_envelope(const AABB &p_envelope) { envelope = p_envelope; }
 	AABB get_envelope() const { return envelope; }
 	void set_collider_radius(float p_radius) { collider_radius = MAX(p_radius, 0.0f); }
@@ -485,4 +527,5 @@ VARIANT_ENUM_CAST(TreeGenerator::Phyllotaxis);
 VARIANT_ENUM_CAST(TreeGenerator::Param);
 VARIANT_ENUM_CAST(TreeGenerator::Stand);
 VARIANT_ENUM_CAST(TreeGenerator::Region);
+VARIANT_ENUM_CAST(TreeGenerator::Climber);
 VARIANT_ENUM_CAST(TreeGenerator::RigField);

@@ -14,6 +14,7 @@ extends Node3D
 #   --view=side|crop|trunk  side: whole trees; crop: a 100% crop into the crown of the first tree;
 #                     trunk: the first tree's bark at arm's length
 #   --set=name:value  override a growth property on every preset, e.g. --set=shed_ratio:0.2
+#   --view=base|log  the first tree's foot (moss), or the last plant (the log with --decays)
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
 #   --wind ...        wind on rigged trees: see wind.gd
@@ -166,7 +167,7 @@ func _build_scene() -> void:
 			if decays:
 				overrides["decay_class"] = mini(int(forest), 5) if int(forest) < 6 else 3
 				overrides["fallen"] = int(forest) == 6
-			var d := _gen(p, false if decays else forest, seed)
+			var d := _gen(p, (stand == "forest") if decays else forest, seed)
 			infos.append(d)
 			w = max(w, d.crown_radius)
 			tallest = max(tallest, d.height)
@@ -175,8 +176,7 @@ func _build_scene() -> void:
 		for i in infos.size():
 			var d: Dictionary = infos[i]
 			x += d.crown_radius
-			if xs.is_empty():
-				xs.append(x)
+			xs.append(x)
 			_place(d.mesh, Vector3(x, 0, 0))
 			x += d.crown_radius + 1.0
 			print("%s %s: %.1f m tall, %d internodes, %d tris, %.0f ms" % [NAMES[p], ("class %s" % rows[i]) if decays else ("forest" if rows[i] else "open"), d.height, d.internodes, d.tris, d.ms])
@@ -223,6 +223,16 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[0] + 0.3, 1.4, 2.2)
 		cam.look_at(Vector3(xs[0], 1.2, 0))
 		cam.fov = 40.0
+	elif view == "base":
+		# The foot of the first tree, where moss gathers: 3 m away, looking down at the flare.
+		cam.position = Vector3(xs[0] + 0.6, 1.1, 3.0)
+		cam.look_at(Vector3(xs[0], 0.45, 0))
+		cam.fov = 45.0
+	elif view == "log":
+		# The last plant in the row (the log with --decays) from 3.5 m, slightly above.
+		cam.position = Vector3(xs[xs.size() - 1] + 1.0, 1.6, 3.5)
+		cam.look_at(Vector3(xs[xs.size() - 1], 0.3, 0))
+		cam.fov = 50.0
 	elif view == "crop":
 		var h: float = first_info.height
 		cam.position = Vector3(xs[0] + first_info.crown_radius * 0.9, h * 0.62, 4.0)

@@ -147,7 +147,7 @@ func _stand_checks() -> void:
 		var stand_count := 0
 		var open_count := 0
 		var canopy_total := 0
-		var regen := {"sapling": 0, "snag": 0, "log": 0}
+		var regen := {"sapling": 0, "snag": 0, "log": 0, "fallen branch": 0}
 		for s in sps.size():
 			var n: int = f.get_placements(s).size()
 			var nm: String = sps[s].resource_name
@@ -165,7 +165,7 @@ func _stand_checks() -> void:
 			_check(f.get_plant_count() > 0 and open_count == f.get_plant_count(), "hedgerow: shrubs and open-grown standards only (%d)" % open_count)
 		else:
 			_check(stand_count > 0, "%s: stand-grown trees form the canopy (%d stand-grown, %d gap and shrub)" % [STAND_NAMES[i], stand_count, open_count])
-			_check(regen.sapling > 0 and regen.snag > 0 and regen.log > 0 and regen.snag + regen.log < stand_count, "%s: %d saplings, %d snags, %d logs" % [STAND_NAMES[i], regen.sapling, regen.snag, regen.log])
+			_check(regen.sapling > 0 and regen.snag > 0 and regen.log > 0 and regen.snag + regen.log < stand_count and regen["fallen branch"] > 0, "%s: %d saplings, %d snags, %d logs, %d fallen branches" % [STAND_NAMES[i], regen.sapling, regen.snag, regen.log, regen["fallen branch"]])
 		if i == TreeGenerator.STAND_RIPARIAN:
 			var far := 0
 			for p in f.get_placements(0):

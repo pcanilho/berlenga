@@ -237,7 +237,12 @@ func _test_deadwood() -> void:
 				t += m.surface_get_array_index_len(s) / 3
 			tris.append(t)
 			heights.append(g.get_height())
-			leaves.append(m.get_surface_count())
+			# Bark plus foliage surfaces (moss is bark cover, not foliage).
+			var foliage := 1
+			for s in m.get_surface_count():
+				if m.surface_get_name(s) in ["leaves", "needles"]:
+					foliage += 1
+			leaves.append(foliage)
 		var name: String = NAMES[p]
 		if g.get_param(TreeGenerator.PARAM_NEEDLES) > 0.5:
 			_check(leaves[0] > 1, "%s class 1: keeps its needles (red stage)" % name)
@@ -253,7 +258,17 @@ func _test_deadwood() -> void:
 		var log := g.generate()
 		var b := log.get_aabb()
 		_check(b.size.y < 4.0 and maxf(b.size.x, b.size.z) > h0 * 0.4, "%s log: lies %.1f m long, %.1f m high" % [name, maxf(b.size.x, b.size.z), b.size.y])
+		var moss_alive := _surface_tris(alive, "moss")
+		var moss_log := _surface_tris(log, "moss")
+		_check(moss_log > moss_alive and moss_log > 0, "%s: moss on the log (%d triangles) beyond the living tree's (%d)" % [name, moss_log, moss_alive])
 		g.fallen = false
+		g.fallen_branch = true
+		g.decay_class = 2
+		var br := g.generate()
+		var bb := br.get_aabb()
+		var blen := maxf(bb.size.x, bb.size.z)
+		_check(bb.size.y < 1.6 and blen > 1.0 and blen < h0 * 0.7 and bb.position.y > -0.3, "%s fallen branch: lies %.1f m long, %.1f m high" % [name, blen, bb.size.y])
+		g.fallen_branch = false
 		g.decay_class = 0
 	# A clipped hawthorn stays inside its hedge envelope (leaves may poke out by a leaf).
 	var hg := TreeGenerator.new()
@@ -343,3 +358,9 @@ func _render(dir: String, frames: int, still: float, pt: bool) -> void:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(dir.path_join("frame_%04d.png" % f))
 	print("saved %d frames, solve %.3f ms per frame" % [frames, ms / frames])
+
+func _surface_tris(m: Mesh, surface: String) -> int:
+	for s in m.get_surface_count():
+		if m.surface_get_name(s) == surface:
+			return m.surface_get_array_index_len(s) / 3
+	return 0

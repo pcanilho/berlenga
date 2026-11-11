@@ -1861,6 +1861,475 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	return set;
 }
 
+// Epiphytic moss on bark, by species. Bryophyte cover follows bark texture and pH and its water
+// holding: high on rough, nutrient-rich bark (ash, sycamore, elder, oak, alder, willow), low on
+// acid or shedding bark (pine, birch, larch) and on the smooth, fast-drying bark of beech except
+// at the foot (Barkman, Phytosociology and Ecology of Cryptogamic Epiphytes, 1958).
+static const float MOSS_AFFINITY[TreeGenerator::PRESET_MAX] = {
+	0.8f, // Oak.
+	0.55f, // Beech.
+	0.3f, // Birch.
+	0.2f, // Scots pine.
+	0.4f, // Norway spruce.
+	0.7f, // Hazel.
+	0.5f, // Hawthorn.
+	0.6f, // Lime.
+	0.85f, // Sycamore maple.
+	0.8f, // Ash.
+	0.5f, // Horse chestnut.
+	0.9f, // Black alder.
+	0.85f, // White willow.
+	0.3f, // Larch.
+	0.5f, // Silver fir.
+	0.5f, // Rowan.
+	0.8f, // Elder.
+	0.3f, // Holly.
+	0.4f, // Yew.
+	0.3f, // Box.
+	0.75f, // Sugar maple.
+	0.6f, // Red maple.
+	0.6f, // Red oak.
+	0.7f, // White oak.
+	0.3f, // White pine.
+	0.6f, // Hemlock.
+	0.5f, // American beech.
+	0.25f, // Paper birch.
+	0.6f, // Yellow birch.
+	0.6f, // Witch hazel.
+	0.3f, // Mountain laurel.
+};
+
+float TreeGenerator::_moss_amount() const {
+	if (moss_cover <= 0.0f) {
+		return 0.0f;
+	}
+	// Open-grown trees dry in sun and wind; stand-grown ones sit in the stand's humid shade.
+	const float shade = Math::lerp(0.65f, 1.0f, CLAMP(forest_shade / 0.6f, 0.0f, 1.0f));
+	// Dead wood holds water as it softens and is colonised from the ground up (Soderstrom,
+	// Bryophyte succession on decaying logs, 1988): mossier with each decay class.
+	static const float DECAY[6] = { 1.0f, 0.8f, 1.1f, 1.3f, 1.3f, 1.4f };
+	float k = moss_cover * MOSS_AFFINITY[preset] * shade * DECAY[CLAMP(decay_class, 0, 5)];
+	if (fallen || fallen_branch) {
+		k *= 1.3f; // Wood on the ground sits in the litter's moisture.
+	}
+	return k;
+}
+
+namespace {
+float moss_noise(const Vector3 &p_p, uint32_t p_salt) {
+	const int ix = int(Math::floor(p_p.x)), iy = int(Math::floor(p_p.y)), iz = int(Math::floor(p_p.z));
+	const float fx = p_p.x - ix, fy = p_p.y - iy, fz = p_p.z - iz;
+	const float sx = fx * fx * (3.0f - 2.0f * fx), sy = fy * fy * (3.0f - 2.0f * fy), sz = fz * fz * (3.0f - 2.0f * fz);
+	auto at = [&](int i, int j, int k) { return bark_hash(i, j, p_salt + uint32_t(k) * 2654435761u); };
+	auto plane = [&](int k) {
+		return Math::lerp(Math::lerp(at(ix, iy, k), at(ix + 1, iy, k), sx), Math::lerp(at(ix, iy + 1, k), at(ix + 1, iy + 1, k), sx), sy);
+	};
+	return Math::lerp(plane(iz), plane(iz + 1), sz);
+}
+} // namespace
+
+// Moss weight 0..1 at a bark point: a skirt at the foot of the stem where stemflow and splash
+// keep the bark wet, the upper faces of level limbs and logs where water and litter settle, broken
+// into patches (Barkman 1958). Aspect is left out: placed trees turn about their axis.
+float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount) const {
+	const float h = MAX(p_pos.y - p_ground, 0.0f);
+	const float foot = Math::exp(-h / 1.1f);
+	const float up = p_normal.y;
+	const float top = CLAMP((up - 0.35f) / 0.5f, 0.0f, 1.0f) * 0.75f;
+	const float patch = 0.65f * moss_noise(p_pos * 2.2f, 0x6d6f7373u + uint32_t(seed)) + 0.35f * moss_noise(p_pos * 7.0f, 0x6d6f7374u);
+	return CLAMP(p_amount * MAX(foot, top) * (1.9f * patch - 0.25f), 0.0f, 1.0f);
+}
+
+// Moss texture over one bark tile: a turf of tiny shoots (2-4 mm) gathered into cushions a few
+// centimetres across, dark in the gaps. Albedo multiplies the vertex colour, which carries the
+// green; the height also lifts the shell into cushions.
+const TreeGenerator::BarkSet &TreeGenerator::_moss_set() {
+	if (moss_set.albedo.is_valid()) {
+		return moss_set;
+	}
+	const int N = 512;
+	const float texel = BARK_TILE / N;
+	Vector<float> h;
+	h.resize(N * N);
+	float *hw = h.ptrw();
+	Vector<uint8_t> abytes, nbytes, rbytes, hbytes;
+	abytes.resize(N * N * 3);
+	nbytes.resize(N * N * 3);
+	rbytes.resize(N * N * 3);
+	hbytes.resize(N * N * 4);
+	Vector<float> tone;
+	tone.resize(N * N);
+	float *tw = tone.ptrw();
+	for (int y = 0; y < N; y++) {
+		for (int x = 0; x < N; x++) {
+			const float u = (x + 0.5f) / N, v = (y + 0.5f) / N;
+			// Cushions about 4 cm across (10 per tile), shoots about 3 mm (128 per tile).
+			// Domain-warped so the value-noise lattice does not show as a grid of dots.
+			const float wu = u + 0.012f * bark_fbm(u, v, 24, 24, 2, 517u), wv = v + 0.012f * bark_fbm(u, v, 24, 24, 2, 519u);
+			const float cushion = bark_fbm(wu, wv, 10, 10, 3, 501u) + 0.5f;
+			const float shoots = bark_fbm(wu, wv, 96, 96, 3, 509u) + 0.5f;
+			const float tips = CLAMP((bark_fbm(wv, wu, 192, 192, 2, 513u) + 0.5f - 0.55f) * 4.0f, 0.0f, 1.0f);
+			const float c = CLAMP((cushion - 0.3f) / 0.5f, 0.0f, 1.0f);
+			hw[y * N + x] = 0.006f * c + 0.0025f * shoots + 0.001f * tips;
+			// Shoot tips are paler and yellower; the turf between them and the gaps between
+			// cushions are dark.
+			tw[y * N + x] = 0.55f + 0.35f * shoots + 0.25f * tips - 0.35f * (1.0f - c);
+		}
+	}
+	for (int y = 0; y < N; y++) {
+		for (int x = 0; x < N; x++) {
+			const int k = y * N + x;
+			const float t = CLAMP(tw[k], 0.15f, 1.15f);
+			const float r = t * 1.1f, g = t, b = t * 0.8f;
+			const float f[3] = { r, g, b };
+			for (int c = 0; c < 3; c++) {
+				const float fc = CLAMP(f[c] * 0.85f, 0.0f, 1.0f);
+				abytes.write[k * 3 + c] = uint8_t(Math::round(Color(fc, fc, fc).linear_to_srgb().r * 255.0f));
+			}
+			const float hx = hw[y * N + (x + 1) % N] - hw[y * N + (x + N - 1) % N];
+			const float hy = hw[((y + 1) % N) * N + x] - hw[((y + N - 1) % N) * N + x];
+			Vector3 n = Vector3(-hx / (2.0f * texel), hy / (2.0f * texel), 1.0f).normalized();
+			nbytes.write[k * 3 + 0] = uint8_t(Math::round((n.x * 0.5f + 0.5f) * 255.0f));
+			nbytes.write[k * 3 + 1] = uint8_t(Math::round((n.y * 0.5f + 0.5f) * 255.0f));
+			nbytes.write[k * 3 + 2] = uint8_t(Math::round((n.z * 0.5f + 0.5f) * 255.0f));
+			// Moss is matte: a turf of shoots scatters light in every direction.
+			rbytes.write[k * 3 + 0] = 255;
+			rbytes.write[k * 3 + 1] = uint8_t(Math::round(CLAMP(0.92f - 0.1f * (tw[k] - 0.6f), 0.7f, 1.0f) * 255.0f));
+			rbytes.write[k * 3 + 2] = 0;
+			memcpy(hbytes.ptrw() + k * 4, &hw[k], 4);
+		}
+	}
+	Ref<Image> ai = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, abytes);
+	ai->generate_mipmaps();
+	Ref<Image> ni = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, nbytes);
+	ni->generate_mipmaps(true);
+	Ref<Image> ri = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, rbytes);
+	ri->generate_mipmaps();
+	moss_set.albedo = ImageTexture::create_from_image(ai);
+	moss_set.normal = ImageTexture::create_from_image(ni);
+	moss_set.roughness = ImageTexture::create_from_image(ri);
+	moss_set.height = Image::create_from_data(N, N, false, Image::FORMAT_RF, hbytes);
+	return moss_set;
+}
+
+// A climber's stem: a thin tube along a path, in pieces so each piece follows the bone of the
+// host where it lies; it tapers from p_r0 to p_r1 and drops out with the twigs at coarser LODs.
+void TreeGenerator::_climber_stem(Builder &r_bark, const LocalVector<Vector3> &p_path, const LocalVector<int> &p_bones, float p_r0, float p_r1, const Color &p_color) {
+	const int n = int(p_path.size());
+	if (n < 2) {
+		return;
+	}
+	const int piece = 12;
+	for (int a = 0; a < n - 1; a += piece) {
+		const int b = MIN(a + piece, n - 1);
+		LocalVector<Vector3> pts;
+		LocalVector<float> rad;
+		for (int i = a; i <= b; i++) {
+			pts.push_back(p_path[i]);
+			rad.push_back(Math::lerp(p_r0, p_r1, float(i) / float(n - 1)));
+		}
+		const int sides = rad[0] > 0.006f ? 5 : (rad[0] > 0.003f ? 4 : 3);
+		r_bark.bone = p_bones[a];
+		r_bark.role = Builder::ROLE_ALL;
+		Vector4i part;
+		r_bark.begin(part);
+		_tube(r_bark, pts, rad, sides, 0.0f, p_color);
+		r_bark.end(part, rad[0]);
+	}
+}
+
+void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const Vector3 &p_out, const Vector3 &p_normal, float p_size, int p_bone, const Color &p_color) {
+	// A climber's leaf is about as broad as long (ivy, clematis leaflets, honeysuckle), whatever
+	// the host's leaf width.
+	const float saved_width = params[PARAM_LEAF_WIDTH];
+	params[PARAM_LEAF_WIDTH] = 0.42f;
+	r_leaves.bone = p_bone;
+	Vector4i part;
+	r_leaves.begin(part);
+	_add_leaf(r_leaves, p_at, p_out, p_normal, p_size, p_color);
+	r_leaves.end(part, 0.0f);
+	params[PARAM_LEAF_WIDTH] = saved_width;
+	leaf_count++;
+	// Published for vegetation's climber leaf meshes: position, blade normal, petiole direction,
+	// size, light.
+	const float vals[11] = { p_at.x, p_at.y, p_at.z, p_normal.x, p_normal.y, p_normal.z, p_out.x, p_out.y, p_out.z, p_size, 0.5f };
+	for (float v : vals) {
+		climber_leaves.push_back(v);
+	}
+}
+
+// Climbers over the host's own wood (section 5b). Ivy follows Luft's Ivy Generator (2007): a
+// tip that keeps to the surface it climbs, steered by a random walk and upward phototropism,
+// branching as it goes, with leaves along it; the support here is the analytic stem tube, so
+// staying on the surface is exact. Lianas hang from limbs or loop between two of them as
+// catenaries (the unsupported stems of Hadrich, Benes, Deussen and Pirk, 2017). Honeysuckle
+// twines in helices round thin stems.
+void TreeGenerator::_grow_climbers(Builder &r_bark, Builder &r_leaves) {
+	if (supports.is_empty()) {
+		return;
+	}
+	RandomPCG cr;
+	cr.seed(uint64_t(seed) * 1013904223u + uint64_t(climber) * 31u + 7u);
+	auto gauss = [&]() { return (cr.randf() + cr.randf() + cr.randf() - 1.5f) * 1.414f; };
+	const Vector3 world_up(0, 1, 0);
+	// Per support: arc length at each point, tangents and a transported normal (as _tube does).
+	struct Frames {
+		LocalVector<float> s;
+		LocalVector<Vector3> t;
+		LocalVector<Vector3> n;
+	};
+	LocalVector<Frames> frames;
+	frames.resize(supports.size());
+	for (uint32_t k = 0; k < supports.size(); k++) {
+		const Support &sp = supports[k];
+		Frames &f = frames[k];
+		const int m = int(sp.pts.size());
+		Vector3 t = m > 1 ? (sp.pts[1] - sp.pts[0]).normalized() : world_up;
+		Vector3 nrm = t.cross(Math::abs(t.y) < 0.9f ? world_up : Vector3(1, 0, 0)).normalized();
+		float acc = 0.0f;
+		for (int i = 0; i < m; i++) {
+			Vector3 t2 = t;
+			if (m > 1) {
+				t2 = (sp.pts[MIN(i + 1, m - 1)] - sp.pts[MAX(i - 1, 0)]).normalized();
+			}
+			const Vector3 axis = t.cross(t2);
+			if (axis.length_squared() > 1e-10f) {
+				nrm = nrm.rotated(axis.normalized(), Math::acos(CLAMP(t.dot(t2), -1.0f, 1.0f)));
+			}
+			nrm = (nrm - t2 * nrm.dot(t2)).normalized();
+			t = t2;
+			if (i > 0) {
+				acc += sp.pts[i].distance_to(sp.pts[i - 1]);
+			}
+			f.s.push_back(acc);
+			f.t.push_back(t);
+			f.n.push_back(nrm);
+		}
+	}
+	// A point on support k at arc length p_s and angle p_theta, p_lift off the bark.
+	struct Surf {
+		Vector3 pos, out, t;
+		float r = 0.0f;
+		int bone = 0;
+	};
+	auto surf = [&](int k, float p_s, float p_theta, float p_lift) -> Surf {
+		const Support &sp = supports[k];
+		const Frames &f = frames[k];
+		const int m = int(sp.pts.size());
+		int i = 0;
+		while (i + 2 < m && f.s[i + 1] < p_s) {
+			i++;
+		}
+		const int j = MIN(i + 1, m - 1);
+		const float len = MAX(f.s[j] - f.s[i], 1e-5f);
+		const float u = CLAMP((p_s - f.s[i]) / len, 0.0f, 1.0f);
+		Surf o;
+		o.t = f.t[i].lerp(f.t[j], u).normalized();
+		Vector3 nrm = f.n[i].lerp(f.n[j], u);
+		nrm = (nrm - o.t * nrm.dot(o.t)).normalized();
+		const Vector3 bin = o.t.cross(nrm);
+		o.out = nrm * Math::cos(p_theta) + bin * Math::sin(p_theta);
+		o.r = Math::lerp(sp.rad[i], sp.rad[j], u);
+		o.pos = sp.pts[i].lerp(sp.pts[j], u) + o.out * (o.r + p_lift);
+		o.bone = u < 0.5f ? sp.bone[i] : sp.bone[j];
+		return o;
+	};
+	const float ground = nodes[0].start.y;
+
+	if (climber == CLIMBER_IVY) {
+		const Color stem_col(0.2f, 0.17f, 0.13f);
+		struct Shoot {
+			int k;
+			float s, theta, phi, length, r0;
+			int depth;
+		};
+		LocalVector<Shoot> todo;
+		for (uint32_t k = 0; k < supports.size(); k++) {
+			if (!supports[k].stem) {
+				continue;
+			}
+			const float total = frames[k].s[frames[k].s.size() - 1];
+			// From the foot up to where the crown starts, further with more cover (ivy reaches
+			// the crown of old trees; it thins where the bark is in full light).
+			const float reach = MIN(total * 0.95f, Math::lerp(1.2f, MAX(crown_base, 2.0f) + 0.3f * (height - crown_base), climber_cover));
+			const float side = cr.randf() * float(Math::TAU);
+			const int count = 3 + int(climber_cover * 10.0f);
+			for (int c = 0; c < count; c++) {
+				todo.push_back({ int(k), 0.12f + 0.1f * cr.randf(), side + Math::lerp(-1.7f, 1.7f, cr.randf()), 0.0f, reach * Math::lerp(0.55f, 1.0f, cr.randf()), Math::lerp(0.006f, 0.011f, cr.randf()), 0 });
+			}
+		}
+		const float step = 0.03f;
+		int shoots = 0;
+		// First in, first out: every main shoot grows before the budget goes to side shoots.
+		for (uint32_t next = 0; next < todo.size() && shoots < 120; next++) {
+			Shoot sh = todo[next];
+			shoots++;
+			LocalVector<Vector3> path;
+			LocalVector<int> bones;
+			const float s_end = MIN(sh.s + sh.length, frames[sh.k].s[frames[sh.k].s.size() - 1] - 0.05f);
+			int leaf_side = 1;
+			for (int st = 0; sh.s < s_end && st < 4000; st++) {
+				const Surf p = surf(sh.k, sh.s, sh.theta, 0.006f);
+				path.push_back(p.pos);
+				bones.push_back(p.bone);
+				if (st > 0) {
+					// Leaves on petioles off the shaded face, blades turned out and up to the light,
+					// larger low down (shade leaves).
+					const float h = p.pos.y - ground;
+					const float size = Math::lerp(0.095f, 0.055f, CLAMP(h / 12.0f, 0.0f, 1.0f)) * Math::lerp(0.75f, 1.15f, cr.randf());
+					const Vector3 side_dir = p.out.cross(p.t).normalized() * float(leaf_side);
+					leaf_side = -leaf_side;
+					const Vector3 normal = (p.out * 0.85f + world_up * 0.35f).normalized();
+					const Vector3 out = (p.out * 0.55f + side_dir * 0.6f - p.t * 0.35f).normalized();
+					const float tone = Math::lerp(0.8f, 1.15f, cr.randf());
+					_climber_leaf(r_leaves, p.pos + p.out * 0.015f, out, normal, size, p.bone, Color(0.045f * tone, 0.09f * tone, 0.025f * tone));
+				}
+				if (sh.depth < 3 && st > 4 && cr.randf() < 0.05f) {
+					todo.push_back({ sh.k, sh.s, sh.theta, sh.phi + (cr.randf() < 0.5f ? 1.0f : -1.0f), (s_end - sh.s) * Math::lerp(0.3f, 0.7f, cr.randf()), sh.r0 * 0.6f, sh.depth + 1 });
+				}
+				sh.s += step * Math::cos(sh.phi);
+				sh.theta += step * Math::sin(sh.phi) / MAX(p.r + 0.006f, 0.02f);
+				sh.phi += 0.4f * gauss();
+				sh.phi *= 0.95f;
+				sh.phi = CLAMP(sh.phi, -1.3f, 1.3f);
+			}
+			_climber_stem(r_bark, path, bones, sh.r0, 0.0025f, stem_col);
+		}
+	} else if (climber == CLIMBER_LIANA) {
+		const Color stem_col(0.26f, 0.21f, 0.15f);
+		const Color leaf_col(0.05f, 0.085f, 0.025f);
+		// Anchors on limbs above head height.
+		LocalVector<Vector2i> anchors;
+		for (uint32_t k = 0; k < supports.size(); k++) {
+			const Support &sp = supports[k];
+			if (sp.stem) {
+				continue;
+			}
+			for (uint32_t i = 0; i < sp.pts.size(); i++) {
+				if (sp.rad[i] >= 0.035f && sp.pts[i].y - ground > 2.5f) {
+					anchors.push_back(Vector2i(k, i));
+				}
+			}
+		}
+		// Up the stem first: one or two woody stems straight up to the crown.
+		for (uint32_t k = 0; k < supports.size(); k++) {
+			if (!supports[k].stem) {
+				continue;
+			}
+			const float total = frames[k].s[frames[k].s.size() - 1];
+			const float reach = MIN(total * 0.9f, MAX(crown_base, 2.0f));
+			const int count = 1 + int(climber_cover * 1.5f);
+			for (int c = 0; c < count; c++) {
+				LocalVector<Vector3> path;
+				LocalVector<int> bones;
+				float theta = cr.randf() * float(Math::TAU);
+				for (float sa = 0.05f; sa < reach; sa += 0.08f) {
+					theta += 0.04f * gauss();
+					const Surf p = surf(k, sa, theta, 0.012f);
+					path.push_back(p.pos);
+					bones.push_back(p.bone);
+				}
+				_climber_stem(r_bark, path, bones, Math::lerp(0.012f, 0.02f, cr.randf()), 0.008f, stem_col);
+			}
+		}
+		const int strands = anchors.is_empty() ? 0 : 3 + int(climber_cover * 20.0f);
+		for (int c = 0; c < strands; c++) {
+			const Vector2i a = anchors[cr.rand() % anchors.size()];
+			const Vector3 pa = supports[a.x].pts[a.y];
+			const int bone_a = supports[a.x].bone[a.y];
+			LocalVector<Vector3> path;
+			LocalVector<int> bones;
+			// A loop to another limb 1.5 to 5 m away, else a strand hanging free.
+			int pick = -1;
+			for (int tries = 0; tries < 12 && pick < 0; tries++) {
+				const int b = cr.rand() % anchors.size();
+				const float d = supports[anchors[b].x].pts[anchors[b].y].distance_to(pa);
+				if (anchors[b].x != a.x && d > 1.5f && d < 5.0f) {
+					pick = b;
+				}
+			}
+			const Vector3 side = Vector3(gauss(), 0.0f, gauss()).normalized();
+			if (pick >= 0 && cr.randf() < 0.6f) {
+				const Vector3 pb = supports[anchors[pick].x].pts[anchors[pick].y];
+				const int bone_b = supports[anchors[pick].x].bone[anchors[pick].y];
+				const float span = pa.distance_to(pb);
+				const float sag = span * Math::lerp(0.2f, 0.5f, cr.randf());
+				const int n = MAX(4, int(span / 0.08f));
+				for (int i = 0; i <= n; i++) {
+					const float t = float(i) / n;
+					// A parabola is within a few per cent of the catenary at these sags.
+					path.push_back(pa.lerp(pb, t) - world_up * (sag * 4.0f * t * (1.0f - t)) + side * (0.05f * Math::sin(t * float(Math::PI))));
+					bones.push_back(t < 0.5f ? bone_a : bone_b);
+				}
+			} else {
+				const float len = MIN(pa.y - ground - 0.4f, Math::lerp(1.0f, 6.0f, cr.randf()));
+				const int n = MAX(3, int(len / 0.08f));
+				for (int i = 0; i <= n; i++) {
+					const float t = float(i) / n;
+					path.push_back(pa - world_up * (len * t) + side * (0.25f * len * t * t));
+					bones.push_back(bone_a);
+				}
+			}
+			const float r0 = Math::lerp(0.004f, 0.012f, cr.randf());
+			_climber_stem(r_bark, path, bones, r0, 0.003f, stem_col);
+			// Opposite pairs of leaves, more toward the light at the strand's ends.
+			for (uint32_t i = 2; i + 1 < path.size(); i += 2) {
+				if (cr.randf() > 0.85f) {
+					continue;
+				}
+				const Vector3 t = (path[i + 1] - path[i - 1]).normalized();
+				Vector3 sdir = t.cross(world_up);
+				if (sdir.length_squared() < 1e-4f) {
+					sdir = Vector3(1, 0, 0);
+				}
+				sdir.normalize();
+				for (int pair = -1; pair <= 1; pair += 2) {
+					const Vector3 out = (sdir * float(pair) - world_up * 0.4f).normalized();
+					const Vector3 normal = (world_up + sdir * float(pair) * 0.3f).normalized();
+					_climber_leaf(r_leaves, path[i], out, normal, Math::lerp(0.04f, 0.065f, cr.randf()), bones[i], leaf_col);
+				}
+			}
+		}
+	} else if (climber == CLIMBER_HONEYSUCKLE) {
+		const Color stem_col(0.3f, 0.22f, 0.16f);
+		const Color leaf_col(0.045f, 0.08f, 0.03f);
+		LocalVector<int> thin;
+		for (uint32_t k = 0; k < supports.size(); k++) {
+			if (supports[k].rad[0] <= 0.09f) {
+				thin.push_back(k);
+			}
+		}
+		const int vines = thin.is_empty() ? 0 : 1 + int(climber_cover * 5.0f);
+		for (int c = 0; c < vines; c++) {
+			const int k = thin[cr.rand() % thin.size()];
+			const float total = frames[k].s[frames[k].s.size() - 1];
+			const float len = MIN(total * 0.9f, Math::lerp(1.0f, 3.5f, cr.randf()));
+			// Lonicera twines clockwise seen from above (right-handed), one turn per 12 cm or so.
+			const float pitch = Math::lerp(0.1f, 0.16f, cr.randf());
+			float theta = cr.randf() * float(Math::TAU);
+			LocalVector<Vector3> path;
+			LocalVector<int> bones;
+			int pair_at = 0;
+			for (float sa = 0.02f; sa < len; sa += 0.02f) {
+				const Surf p = surf(k, sa, theta, 0.004f);
+				theta -= 0.02f / pitch * float(Math::TAU);
+				path.push_back(p.pos);
+				bones.push_back(p.bone);
+				if (++pair_at % 4 == 0) {
+					for (int pair = -1; pair <= 1; pair += 2) {
+						const Vector3 sdir = p.out.cross(p.t).normalized() * float(pair);
+						const Vector3 out = (p.out * 0.6f + sdir * 0.6f).normalized();
+						_climber_leaf(r_leaves, p.pos, out, (world_up + p.out * 0.4f).normalized(), Math::lerp(0.035f, 0.055f, cr.randf()), p.bone, leaf_col);
+					}
+				}
+			}
+			_climber_stem(r_bark, path, bones, 0.004f, 0.002f, stem_col);
+		}
+	}
+	r_bark.bone = 0;
+	r_leaves.bone = 0;
+}
+
 Ref<Texture2D> TreeGenerator::_spray_texture() {
 	if (spray_texture.is_valid()) {
 		return spray_texture;
@@ -1988,9 +2457,12 @@ void TreeGenerator::_apply_decay() {
 			spurs[i] = 0;
 		}
 	}
-	const float min_r = MIN_RADIUS[decay_class];
+	// A shed limb keeps its length: only its finest twigs drop (Harmon 1986), and no top breaks.
+	const float min_r = MIN_RADIUS[decay_class] * (fallen_branch ? 0.35f : 1.0f);
 	float cut_y = 1e9f;
-	if (decay_class == 3) {
+	if (fallen_branch) {
+		// The limb falls whole; class 4 and 5 stubs and stumps only apply to standing wood.
+	} else if (decay_class == 3) {
 		cut_y = height * Math::lerp(0.55f, 0.85f, dr.randf());
 	} else if (decay_class == 4) {
 		cut_y = height * Math::lerp(0.3f, 0.6f, dr.randf());
@@ -2010,11 +2482,11 @@ void TreeGenerator::_apply_decay() {
 		const bool stem_node = n.order == 0;
 		if (!stem_node) {
 			const bool off_stem = nodes[n.parent].order == 0 && nodes[n.parent].main != i;
-			if (decay_class >= 5 || (decay_class == 4 && !off_stem)) {
+			if (!fallen_branch && (decay_class >= 5 || (decay_class == 4 && !off_stem))) {
 				n.removed = true;
 				continue;
 			}
-			if (decay_class == 4) {
+			if (decay_class == 4 && !fallen_branch) {
 				// A stub: the first few decimetres of the limb, its tip snapped.
 				n.length = MIN(n.length, Math::lerp(0.15f, 0.5f, dr.randf()));
 				n.main = -1;
@@ -2087,6 +2559,136 @@ void TreeGenerator::_fell() {
 	for (const Node &n : nodes) {
 		if (!n.removed) {
 			height = MAX(height, n.end().y - base.y);
+		}
+	}
+}
+
+// A shed limb: one first-order limb of the grown (and decayed) tree, 4 to 14 cm at its base, cut
+// from the stem and laid on the ground along a random bearing. Most fallen wood in a forest is
+// limbs and tops rather than whole trees (Harmon et al. 1986, coarse woody debris); twig loss
+// and weathering follow its decay class.
+void TreeGenerator::_shed_branch() {
+	RandomPCG br;
+	br.seed(uint64_t(seed) * 2246822519u + 17u);
+	const float target = Math::lerp(0.04f, 0.14f, br.randf());
+	int pick = -1;
+	float best = 1e9f;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.order != 1 || nodes[n.parent].order != 0 || nodes[n.parent].main == i) {
+			continue;
+		}
+		// Prefer a limb of about the target girth that is also long: a short stub of the right
+		// radius reads as a stick, not a fallen branch.
+		float chain = 0.0f;
+		for (int k = i; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+			chain += nodes[k].length;
+		}
+		const float d = Math::abs(Math::log(MAX(n.radius, 0.002f) / target)) - 0.15f * MIN(chain, 4.0f) + 0.05f * br.randf();
+		if (d < best) {
+			best = d;
+			pick = i;
+		}
+	}
+	if (pick < 0) {
+		return;
+	}
+	// Keep the picked limb's subtree only (children come after their parents).
+	LocalVector<bool> keep;
+	keep.resize(nodes.size());
+	for (int i = 0; i < int(nodes.size()); i++) {
+		keep[i] = i == pick || (i > pick && nodes[i].parent >= 0 && keep[nodes[i].parent]);
+	}
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!keep[i]) {
+			nodes[i].removed = true;
+		}
+	}
+	// Lay it down: its overall direction (base to the mean of its wood) turned level along a
+	// random bearing, resting on its thickest part.
+	const Vector3 base = nodes[pick].start;
+	Vector3 mean;
+	int count = 0;
+	for (int i = pick; i < int(nodes.size()); i++) {
+		if (keep[i]) {
+			mean += nodes[i].end();
+			count++;
+		}
+	}
+	Vector3 along = (mean / float(MAX(count, 1)) - base).normalized();
+	if (along.length_squared() < 0.5f) {
+		along = nodes[pick].dir;
+	}
+	const float bearing = br.randf() * float(Math::TAU);
+	const Vector3 level(Math::cos(bearing), 0.0f, Math::sin(bearing));
+	Basis turn;
+	const Vector3 axis = along.cross(level);
+	if (axis.length_squared() > 1e-8f) {
+		turn = Basis(axis.normalized(), Math::acos(CLAMP(along.dot(level), -1.0f, 1.0f)));
+	}
+	// Roll about its own length to the rest that lays its side branches flattest: a fallen limb
+	// settles onto its laterals instead of balancing with them upright.
+	{
+		const float roll0 = br.randf() * float(Math::TAU);
+		float best_roll = roll0;
+		float best_rise = 1e30f;
+		for (int k = 0; k < 12; k++) {
+			const float roll = roll0 + float(k) * float(Math::TAU) / 12.0f;
+			const Basis t = Basis(level, roll) * turn;
+			float rise = 0.0f;
+			for (int i = pick + 1; i < int(nodes.size()); i++) {
+				if (keep[i] && !nodes[i].removed) {
+					rise += Math::abs(t.xform(nodes[i].dir).y) * nodes[i].length * nodes[i].radius;
+				}
+			}
+			if (rise < best_rise) {
+				best_rise = rise;
+				best_roll = roll;
+			}
+		}
+		turn = Basis(level, best_roll) * turn;
+	}
+	const Vector3 ground = nodes[0].start;
+	for (int i = pick; i < int(nodes.size()); i++) {
+		if (keep[i]) {
+			nodes[i].start = ground + turn.xform(nodes[i].start - base);
+			nodes[i].dir = turn.xform(nodes[i].dir);
+		}
+	}
+	// Rest the limb's own axis on the ground: its lowest point (a bent limb sags at one end or
+	// the middle) sits at ground level plus its radius there.
+	LocalVector<bool> axis_node;
+	axis_node.resize(nodes.size());
+	for (int i = 0; i < int(nodes.size()); i++) {
+		axis_node[i] = false;
+	}
+	float lift = -1e30f;
+	for (int k = pick; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+		axis_node[k] = true;
+		const Node &n = nodes[k];
+		lift = MAX(lift, ground.y + n.radius * 0.85f - MIN(n.start.y, n.end().y));
+	}
+	for (int i = pick; i < int(nodes.size()); i++) {
+		if (keep[i]) {
+			nodes[i].start.y += lift;
+		}
+	}
+	// Side branches pointing into the ground broke off when it fell, and so did those standing
+	// high: a dead lateral more than a few limb diameters up snaps on impact or soon after.
+	const float stand_max = ground.y + MAX(0.6f, 8.0f * nodes[pick].radius);
+	for (int i = pick + 1; i < int(nodes.size()); i++) {
+		Node &n = nodes[i];
+		if (n.removed || axis_node[i]) {
+			continue;
+		}
+		if (nodes[n.parent].removed || MIN(n.start.y, n.end().y) < ground.y - 0.02f || n.end().y > stand_max) {
+			n.removed = true;
+		}
+	}
+	height = 0.0f;
+	for (const Node &n : nodes) {
+		if (!n.removed) {
+			height = MAX(height, n.end().y - ground.y);
 		}
 	}
 }
@@ -2366,11 +2968,44 @@ PackedFloat32Array TreeGenerator::_rig_data() const {
 	return d;
 }
 
+// LOD levels: screen-space error in metres (what Godot compares against the pixel threshold),
+// share of leaves kept, and the thinnest bark tube kept.
+static const struct {
+	float error;
+	float keep;
+	float min_radius;
+} TREE_LODS[] = {
+	{ 0.05f, 0.5f, 0.01f },
+	{ 0.2f, 0.15f, 0.03f },
+	{ 0.8f, 0.04f, 0.08f },
+};
+
 Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	Builder bark;
 	bark.use_tangents = true;
 	Builder leaves;
+	Builder moss;
+	moss.use_tangents = true;
 	leaf_count = 0;
+	supports.clear();
+	climber_leaves.clear();
+	const float moss_k = _moss_amount();
+	const float moss_ground = nodes.is_empty() ? 0.0f : nodes[0].start.y;
+	// Moss greens the bark under it at every LOD (the shell's footprint, and all the moss there
+	// is at coarser levels): the tint follows the same weight as the shell.
+	const Color moss_green(0.085f, 0.13f, 0.025f);
+	auto moss_tint = [&](Builder &r_b, const Vector4i &p_part) {
+		if (moss_k <= 0.0f) {
+			return;
+		}
+		for (int v = p_part.z; v < p_part.z + p_part.w; v++) {
+			const float w = _moss_at(r_b.verts[v], r_b.normals[v], moss_ground, moss_k);
+			const float t = 0.85f * CLAMP((w - 0.15f) / 0.4f, 0.0f, 1.0f);
+			if (t > 0.0f) {
+				r_b.colors.write[v] = r_b.colors[v].lerp(moss_green, t);
+			}
+		}
+	};
 	if (rigged) {
 		_build_rig();
 	} else {
@@ -2469,6 +3104,21 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// Sink the base below the ground line.
 			pts[0] -= Vector3(0, 0.15f, 0);
 		}
+		if (climber != CLIMBER_NONE && r0 >= 0.02f) {
+			// Kept for the climbers: the axis as meshed, its radii and the bone at each point.
+			Support sup;
+			sup.pts = pts;
+			sup.rad = rad;
+			sup.stem = stem;
+			int c = 0;
+			for (uint32_t i = 0; i < pts.size(); i++) {
+				while (c + 1 < int(chain.size()) && (pts[i] - nodes[chain[c]].end()).dot(nodes[chain[c]].dir) > 0.0f) {
+					c++;
+				}
+				sup.bone.push_back(node_bone[chain[c]]);
+			}
+			supports.push_back(sup);
+		}
 		int sides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.03f)), 3, 24);
 		if (stem) {
 			sides = MAX(sides, 10);
@@ -2488,11 +3138,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			bark.begin(part);
 			_tube(bark, pts, rad, sides, 0.0f, col);
 			bark.end(part, r0);
+			moss_tint(bark, part);
 			if (rigged) {
 				_skin_stem(bark, part, s, pts, sides);
 			}
 		}
-		if (relief) {
+		const bool moss_shell = moss_k > 0.05f && r0 >= MOSS_SHELL_MIN_RADIUS;
+		if (relief || moss_shell) {
 			// LOD 0 and the path tracer: the same tube at about 2.5 cm around and 5 cm along,
 			// displaced by the bark's relief. Bark thickens with girth, so thin limbs carry a
 			// quarter of a mature trunk's furrow depth (Kratt et al. 2015, cambial growth).
@@ -2511,13 +3163,136 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const int rsides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.025f)), 24, 128);
 			const float scale = bark_relief * CLAMP(r0 / 0.35f, 0.25f, 1.0f);
 			const BarkSet &bs = _bark_set(_bark_kind(preset));
-			Vector4i part;
-			bark.role = skip_lods ? Builder::ROLE_ALL : Builder::ROLE_RELIEF;
-			bark.begin(part);
-			_tube(bark, rp, rr, rsides, 0.0f, col, bs.height.ptr(), scale);
-			bark.end(part, r0);
-			if (rigged) {
-				_skin_stem(bark, part, s, rp, rsides);
+			if (relief) {
+				Vector4i part;
+				bark.role = skip_lods ? Builder::ROLE_ALL : Builder::ROLE_RELIEF;
+				bark.begin(part);
+				_tube(bark, rp, rr, rsides, 0.0f, col, bs.height.ptr(), scale);
+				bark.end(part, r0);
+				moss_tint(bark, part);
+				if (rigged) {
+					_skin_stem(bark, part, s, rp, rsides);
+				}
+			}
+			if (moss_shell) {
+				// The moss shell (section 5c): the same displaced tube, lifted by the moss's depth
+				// where the weight is high and sunk below the bark where it fades, so the moss edge
+				// needs no alpha; quads wholly under the bark are dropped. Cushions thin out on
+				// thin limbs.
+				const float depth = 0.018f * CLAMP(r0 / 0.15f, 0.35f, 1.0f);
+				Vector4i part;
+				moss.bone = node_bone[s];
+				moss.begin(part);
+				_tube(moss, rp, rr, rsides, 0.0f, col);
+				moss.end(part, r0);
+				// The bark's own displacement under each shell vertex (as the relief tube has it).
+				const Vector<uint8_t> bh_buf = bs.height->get_data();
+				const float *bh = reinterpret_cast<const float *>(bh_buf.ptr());
+				const int bn = bs.height->get_width();
+				auto bark_disp = [&](const Vector2 &p_uv) -> float {
+					if (!relief) {
+						return 0.0f;
+					}
+					const float x = (p_uv.x - Math::floor(p_uv.x)) * bn - 0.5f, y = (p_uv.y - Math::floor(p_uv.y)) * bn - 0.5f;
+					const int x0 = int(Math::floor(x)), y0 = int(Math::floor(y));
+					const float fx = x - x0, fy = y - y0;
+					auto at = [&](int i, int j) { return bh[((j % bn + bn) % bn) * bn + ((i % bn + bn) % bn)]; };
+					return scale * Math::lerp(Math::lerp(at(x0, y0), at(x0 + 1, y0), fx), Math::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx), fy);
+				};
+				// Moss fills the furrows first, then grows over the plates (Barkman 1958): the moss
+				// surface rises from the furrow floor to above the plate tops as its weight grows,
+				// and wherever it is below the bark it stays hidden just under it.
+				const float floor_d = relief ? -0.045f * scale : -0.004f; // Below the deepest furrow (3 cm plus grain).
+				if (rigged) {
+					_skin_stem(moss, part, s, rp, rsides);
+				}
+				LocalVector<float> wv;
+				wv.resize(part.w);
+				for (int i = 0; i < part.w; i++) {
+					const int v = part.z + i;
+					const Vector3 n = moss.normals[v];
+					const float w = _moss_at(moss.verts[v], n, moss_ground, moss_k);
+					// Hummocks a hand across: the vertices are 2.5 cm apart, so the texture's 4 cm
+					// cushions stay in the normal map and the geometry carries only what it resolves.
+					const float hummock = moss_noise(moss.verts[v] * 9.0f, 0x6d6f7376u);
+					// A narrow ramp: the moss edge is a contour of the smooth weight that only dips into
+					// the furrows just ahead of it; a wide one shows the 2.5 cm vertex grid as blocks
+					// where furrows are partly filled.
+					const float ramp = CLAMP((w - 0.35f) / 0.25f, 0.0f, 1.0f);
+					const float fill = Math::lerp(floor_d, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
+					const float under = bark_disp(moss.uvs[v]);
+					// Shown where the fill stands above the bark; wv carries the margin.
+					wv[i] = fill - under;
+					moss.verts.write[v] = moss.verts[v] + n * MAX(fill, under - 0.004f);
+					// Wetter, deeper moss is darker; thin moss on dry faces yellower.
+					const float dry = moss_noise(moss.verts[v] * 1.3f, 0x6d6f7375u);
+					moss.colors.write[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - w * 0.4f, 0.0f, 1.0f));
+				}
+				// Keep quads (two triangles each) with any corner showing.
+				int at = part.x;
+				int32_t *iw = moss.indices.ptrw();
+				for (int q = part.x; q + 5 < part.x + part.y; q += 6) {
+					bool show = false;
+					for (int k = 0; k < 6 && !show; k++) {
+						show = wv[iw[q + k] - part.z] > 0.0f;
+					}
+					if (show) {
+						for (int k = 0; k < 6; k++) {
+							iw[at + k] = iw[q + k];
+						}
+						at += 6;
+					}
+				}
+				const int kept = at - part.x;
+				// Compact the part's vertices to those still referenced.
+				LocalVector<int> remap;
+				remap.resize(part.w);
+				for (int i = 0; i < part.w; i++) {
+					remap[i] = -1;
+				}
+				// Mark, then number in vertex order, so the in-place copy below only moves down.
+				for (int q = part.x; q < at; q++) {
+					remap[iw[q] - part.z] = 0;
+				}
+				int nv = 0;
+				for (int i = 0; i < part.w; i++) {
+					if (remap[i] == 0) {
+						remap[i] = nv++;
+					}
+				}
+				for (int i = 0; i < part.w; i++) {
+					if (remap[i] < 0) {
+						continue;
+					}
+					const int from = part.z + i, to = part.z + remap[i];
+					moss.verts.write[to] = moss.verts[from];
+					moss.normals.write[to] = moss.normals[from];
+					moss.uvs.write[to] = moss.uvs[from];
+					moss.colors.write[to] = moss.colors[from];
+					for (int c = 0; c < 4; c++) {
+						moss.tangents.write[to * 4 + c] = moss.tangents[from * 4 + c];
+						moss.bones.write[to * 4 + c] = moss.bones[from * 4 + c];
+						moss.weights.write[to * 4 + c] = moss.weights[from * 4 + c];
+					}
+				}
+				for (int q = part.x; q < at; q++) {
+					iw[q] = part.z + remap[iw[q] - part.z];
+				}
+				moss.indices.resize(at);
+				moss.verts.resize(part.z + nv);
+				moss.normals.resize(part.z + nv);
+				moss.uvs.resize(part.z + nv);
+				moss.colors.resize(part.z + nv);
+				moss.tangents.resize((part.z + nv) * 4);
+				moss.bones.resize((part.z + nv) * 4);
+				moss.weights.resize((part.z + nv) * 4);
+				if (kept > 0) {
+					moss.parts[moss.parts.size() - 1] = Vector4i(part.x, kept, part.z, nv);
+				} else {
+					moss.parts.resize(moss.parts.size() - 1);
+					moss.part_size.resize(moss.part_size.size() - 1);
+					moss.part_role.resize(moss.part_role.size() - 1);
+				}
 			}
 		}
 		bark.role = Builder::ROLE_ALL;
@@ -2835,10 +3610,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 	}
 
+	if (climber != CLIMBER_NONE && climber_cover > 0.0f) {
+		_grow_climbers(bark, leaves);
+	}
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
-	Builder *builders[2] = { &bark, &leaves };
-	for (int s = 0; s < 2; s++) {
+	Builder *builders[3] = { &bark, &leaves, &moss };
+	for (int s = 0; s < 3; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
 			continue;
@@ -2854,7 +3632,21 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// enlarged to keep the crown's leaf area (Cook, Halstead, Planck and Ryu, Stochastic
 		// Simplification of Aggregate Detail, SIGGRAPH 2007). Real leaves at every level, never
 		// cards, so shadows and path-traced rays still meet foliage; the path tracer uses LOD 0.
-		const Dictionary lods = skip_lods ? Dictionary() : (s == 0 ? _bark_lods(b) : _leaf_lods(b));
+		Dictionary lods;
+		if (!skip_lods) {
+			if (s == 0) {
+				lods = _bark_lods(b);
+			} else if (s == 1) {
+				lods = _leaf_lods(b);
+			} else {
+				// The moss shell is LOD 0 only (and the path tracer's); coarser levels keep the tint.
+				PackedInt32Array none;
+				none.push_back(0);
+				none.push_back(0);
+				none.push_back(0);
+				lods[TREE_LODS[0].error] = none;
+			}
+		}
 		if (s == 0) {
 			// LOD 0 draws the relief tubes in place of the plain ones they cover.
 			bool any_plain = false;
@@ -2915,7 +3707,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				m->set_feature(BaseMaterial3D::FEATURE_NORMAL_MAPPING, true);
 				m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, bs.normal);
 			}
-			mesh->surface_set_name(s, "bark");
+			mesh->surface_set_name(mesh->get_surface_count() - 1, "bark");
+		} else if (s == 2) {
+			const BarkSet &ms = _moss_set();
+			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, ms.albedo);
+			m->set_roughness(1.0f);
+			m->set_texture(BaseMaterial3D::TEXTURE_ROUGHNESS, ms.roughness);
+			m->set_roughness_texture_channel(BaseMaterial3D::TEXTURE_CHANNEL_GREEN);
+			m->set_feature(BaseMaterial3D::FEATURE_NORMAL_MAPPING, true);
+			m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, ms.normal);
+			mesh->surface_set_name(mesh->get_surface_count() - 1, "moss");
 		} else {
 			m->set_roughness(needles ? 0.5f : 0.6f);
 			if (needles && needle_sprays) {
@@ -2935,6 +3736,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		mesh->surface_set_material(mesh->get_surface_count() - 1, m);
 	}
 	mesh->set_meta(SNAME("tree_colliders"), _collider_data());
+	if (!climber_leaves.is_empty()) {
+		mesh->set_meta(SNAME("tree_climber_leaves"), climber_leaves);
+	}
 	if (rigged) {
 		mesh->set_meta(SNAME("tree_rig"), _rig_data());
 		// Vogel's exponent: drag grows as U^(2 + B) as foliage streamlines (Vogel 1989).
@@ -2943,17 +3747,6 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	return mesh;
 }
 
-// LOD levels: screen-space error in metres (what Godot compares against the pixel threshold),
-// share of leaves kept, and the thinnest bark tube kept.
-static const struct {
-	float error;
-	float keep;
-	float min_radius;
-} TREE_LODS[] = {
-	{ 0.05f, 0.5f, 0.01f },
-	{ 0.2f, 0.15f, 0.03f },
-	{ 0.8f, 0.04f, 0.08f },
-};
 
 Dictionary TreeGenerator::_bark_lods(const Builder &p_bark) const {
 	Dictionary lods;
@@ -3107,6 +3900,10 @@ void TreeGenerator::apply_habitat(const Ref<PlantSpecies> &p_species) const {
 	p_species->set_rule_fade(PlantSpecies::RULE_ARIDITY, 0.15f);
 	p_species->set_rule_range(PlantSpecies::RULE_SLOPE, Vector2(0.0f, h.slope_max));
 	p_species->set_rule_fade(PlantSpecies::RULE_SLOPE, 5.0f);
+	if (preset == PRESET_BLACK_ALDER || preset == PRESET_WHITE_WILLOW) {
+		// Wet-ground trees stand in waterfall spray too (gorge alder and willow carr).
+		p_species->set_rule_range(PlantSpecies::RULE_SPRAY, Vector2(0.0f, 1.0f));
+	}
 	p_species->set_rule_range(PlantSpecies::RULE_SOIL_DEPTH, Vector2(h.soil_min, 100000.0f));
 	p_species->set_rule_fade(PlantSpecies::RULE_SOIL_DEPTH, h.soil_min * 0.5f);
 	// Woody plants root on land: no trees standing in water.
@@ -3126,6 +3923,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		p_form = FORM_STAND;
 	}
 	p_stand_grown = p_form != FORM_OPEN;
+	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
+	const bool saved_rigged = rigged;
+	if (p_form == FORM_LOG || p_form == FORM_BRANCH) {
+		rigged = false;
+	}
 	const int key = (int(p_preset) * 8 + int(p_form)) * 2 + (rigged ? 1 : 0);
 	const Habitat &h = HABITATS[p_preset];
 	if (!mesh_cache.has(key) || mesh_cache[key].size() < MAX(p_variants, 1)) {
@@ -3155,6 +3957,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const int n = MAX(p_variants, 1);
 		const int saved_decay = decay_class;
 		const bool saved_fallen = fallen;
+		const bool saved_branch = fallen_branch;
 		if (p_form == FORM_SAPLING) {
 			params[PARAM_YEARS] = MAX(6.0f, Math::round(params[PARAM_YEARS] * 0.2f));
 		}
@@ -3163,6 +3966,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			if (p_form == FORM_SNAG || p_form == FORM_LOG) {
 				decay_class = 2 + v % 3;
 				fallen = p_form == FORM_LOG;
+			} else if (p_form == FORM_BRANCH) {
+				// Freshly shed (twigs still on) to well rotted.
+				decay_class = 1 + v % 3;
+				fallen_branch = true;
 			}
 			Ref<ArrayMesh> mesh = generate();
 			crown += crown_radius;
@@ -3172,6 +3979,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		}
 		decay_class = saved_decay;
 		fallen = saved_fallen;
+		fallen_branch = saved_branch;
 		mesh_cache[key] = meshes;
 		crown_cache[key] = crown / n;
 		// One full-needle variant for the near range (the field repeats it over the variants):
@@ -3201,7 +4009,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	Ref<PlantSpecies> sp;
 	sp.instantiate();
 	sp->set_meta("preset", int(p_preset));
-	static const char *form_names[] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)" };
+	static const char *form_names[] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -3261,6 +4069,13 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			sp->set_canopy_opacity(0.1f);
 			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
 			break;
+		case FORM_BRANCH:
+			sp->set_spacing(h.stand_spacing * 0.9f);
+			sp->set_canopy_radius(0.0f);
+			sp->set_canopy_opacity(0.0f);
+			sp->set_align_to_ground(1.0f);
+			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
+			break;
 		case FORM_LOG:
 			sp->set_spacing(h.stand_spacing * 2.5f);
 			sp->set_canopy_radius(0.0f);
@@ -3271,6 +4086,24 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		default:
 			break;
 	}
+	{
+		// Seen from far above (the distant terrain's plant cover map): a crown is its leaf colour
+		// darkened by its own shade, hiding most of the ground; snags and logs show weathered
+		// wood over little ground.
+		TreeGenerator look;
+		look.set_preset(p_preset);
+		const Color leaf = look.get_leaf_color(), bark = look.get_bark_color();
+		const float self_shade = conifer ? 0.7f : 0.8f;
+		Color far = Color(leaf.r * self_shade, leaf.g * self_shade, leaf.b * self_shade, conifer ? 0.85f : 0.9f);
+		if (p_form == FORM_SAPLING) {
+			far.a = 0.5f;
+		} else if (p_form == FORM_SNAG || p_form == FORM_LOG || p_form == FORM_BRANCH) {
+			const Color wood = bark.lerp(Color(0.42f, 0.39f, 0.33f), 0.6f);
+			far = Color(wood.r, wood.g, wood.b, p_form == FORM_SNAG ? 0.15f : 0.1f);
+		}
+		sp->set_far_color(far);
+	}
+	rigged = saved_rigged;
 	return sp;
 }
 
@@ -3484,7 +4317,9 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		snag->set_density(0.25f);
 		Ref<PlantSpecies> log = _stand_species(lead, true, p_variants, FORM_LOG);
 		log->set_density(0.4f);
-		for (const Ref<PlantSpecies> &extra : { sap, snag, log }) {
+		Ref<PlantSpecies> branch = _stand_species(lead, true, p_variants, FORM_BRANCH);
+		branch->set_density(0.7f);
+		for (const Ref<PlantSpecies> &extra : { sap, snag, log, branch }) {
 			// Inside the stand's own belt.
 			for (int r = 0; r < PlantSpecies::RULE_MAX; r++) {
 				if (PlantSpecies::Rule(r) == PlantSpecies::RULE_SHADE) {
@@ -3634,7 +4469,9 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	if (decay_class > 0) {
 		_apply_decay();
 	}
-	if (fallen) {
+	if (fallen_branch) {
+		_shed_branch();
+	} else if (fallen) {
 		_fell();
 	}
 	Ref<ArrayMesh> mesh = _build_mesh();
@@ -3667,6 +4504,14 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_decay_class"), &TreeGenerator::get_decay_class);
 	ClassDB::bind_method(D_METHOD("set_fallen", "fallen"), &TreeGenerator::set_fallen);
 	ClassDB::bind_method(D_METHOD("is_fallen"), &TreeGenerator::is_fallen);
+	ClassDB::bind_method(D_METHOD("set_fallen_branch", "fallen_branch"), &TreeGenerator::set_fallen_branch);
+	ClassDB::bind_method(D_METHOD("set_moss_cover", "cover"), &TreeGenerator::set_moss_cover);
+	ClassDB::bind_method(D_METHOD("set_climber", "climber"), &TreeGenerator::set_climber);
+	ClassDB::bind_method(D_METHOD("get_climber"), &TreeGenerator::get_climber);
+	ClassDB::bind_method(D_METHOD("set_climber_cover", "cover"), &TreeGenerator::set_climber_cover);
+	ClassDB::bind_method(D_METHOD("get_climber_cover"), &TreeGenerator::get_climber_cover);
+	ClassDB::bind_method(D_METHOD("get_moss_cover"), &TreeGenerator::get_moss_cover);
+	ClassDB::bind_method(D_METHOD("is_fallen_branch"), &TreeGenerator::is_fallen_branch);
 	ClassDB::bind_method(D_METHOD("set_envelope", "envelope"), &TreeGenerator::set_envelope);
 	ClassDB::bind_method(D_METHOD("get_envelope"), &TreeGenerator::get_envelope);
 	ClassDB::bind_method(D_METHOD("set_collider_radius", "radius"), &TreeGenerator::set_collider_radius);
@@ -3713,6 +4558,10 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_relief", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_bark_relief", "get_bark_relief");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "decay_class", PROPERTY_HINT_RANGE, "0,5,1"), "set_decay_class", "get_decay_class");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen"), "set_fallen", "is_fallen");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen_branch"), "set_fallen_branch", "is_fallen_branch");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_moss_cover", "get_moss_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "climber", PROPERTY_HINT_ENUM, "None,Ivy,Liana,Honeysuckle"), "set_climber", "get_climber");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "climber_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_climber_cover", "get_climber_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::AABB, "envelope"), "set_envelope", "get_envelope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collider_radius", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_collider_radius", "get_collider_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_needle_range", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_near_needle_range", "get_near_needle_range");
@@ -3771,6 +4620,11 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_MONTANE_CONIFER);
 	BIND_ENUM_CONSTANT(STAND_SUBALPINE);
 	BIND_ENUM_CONSTANT(STAND_PINE_HEATH);
+	BIND_ENUM_CONSTANT(CLIMBER_NONE);
+	BIND_ENUM_CONSTANT(CLIMBER_IVY);
+	BIND_ENUM_CONSTANT(CLIMBER_LIANA);
+	BIND_ENUM_CONSTANT(CLIMBER_HONEYSUCKLE);
+	BIND_ENUM_CONSTANT(CLIMBER_MAX);
 	BIND_ENUM_CONSTANT(STAND_RIPARIAN);
 	BIND_ENUM_CONSTANT(STAND_HEDGEROW);
 	BIND_ENUM_CONSTANT(STAND_NORTHERN_HARDWOOD);

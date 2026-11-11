@@ -286,6 +286,67 @@ and touch bending of section 7a add a contact moment to the same bones.
   (classes 2-4, 2.5x spacing) at 0.25 and logs (classes 2-4, felled) at 0.4, placed by the
   lead's own climate rules. Hedgerows have no lead and get none.
 
+### 5b. Fallen branches and climbers (plan, 11 Nov)
+
+**Fallen branches.** Most woody debris on a forest floor is shed limbs and broken tops, not
+whole trees (Harmon et al. 1986). `FORM_BRANCH` takes one first-order limb of the lead tree,
+4-14 cm at its base, after its decay class (1: twigs on, 2: twigs gone, 3: rotting), lays its
+overall direction level along a random bearing and rolls it about its length, dropping side
+branches that would reach into the ground. Each stand places them at density 0.7 next to its
+logs, never rigged (wood on the ground does not sway).
+
+**Climbers (vines).** What the field does:
+- Thomas Luft's *Ivy Generator* (2007): a growing tip is pulled by adhesion to the nearest
+  surface, gravity and a random walk, with roots where it touches; leaves along the stem, sized
+  by light. The standard look for ivy on trunks and walls.
+- Hädrich, Benes, Deussen and Pirk, *Interactive Modeling and Authoring of Climbing Plants*
+  (Eurographics 2017): climbers as an anisotropic particle system competing for light and
+  support, with stems that hang under gravity where they lose support, and that can be
+  attached to moving supports.
+- Benes and Millán, *Virtual Climbing Plants Competing for Space* (CASA 2002).
+
+Our plan, joint with vegetation (which builds the leaves with its plant generator):
+1. **Ivy on trunks.** Luft's tip growth over our own bark surface (the stem and limb tubes are
+   analytic, so the nearest-surface pull is exact and cheap): from the root flare up the shaded
+   side, thinning with height and light, in the host's bark mesh and skinned to the host's bones
+   so it sways with the tree. Leaves: points along the stem (position, normal, up, size, light)
+   published as mesh meta `tree_climber_leaves`; vegetation's ivy leaf mesh is instanced there
+   into the host's leaf surface (`TreeGenerator.climber_leaf_mesh`, a built-in leaf without it).
+2. **Hanging lianas** in deep forest (old man's beard, honeysuckle): stems that leave the trunk
+   for a neighbour's limb and hang between them as catenaries (Hädrich 2017's unsupported
+   stems), which needs pairs of trees, so it is built per stand by the stand methods.
+3. Controls: `climber` (none, ivy, clematis, honeysuckle), `climber_cover` 0-1, and the stand
+   methods set them per stand (ivy in oak, beech and riparian woods; lianas in riparian and
+   oak-lime-ash on rich soils).
+
+### 5c. Moss on bark (as built, 11 Nov)
+
+Where moss grows: epiphytic bryophytes follow bark texture, pH and water holding (Barkman,
+*Phytosociology and Ecology of Cryptogamic Epiphytes*, 1958): thick on rough, nutrient-rich bark
+(ash, sycamore, elder, oak, alder, willow), sparse on acid or shedding bark (pine, birch, larch)
+and on smooth beech except at the foot. On each tree it gathers at the foot of the stem
+(stemflow and splash), on the upper faces of level limbs, and fills furrows before it covers
+plates. Dead wood is colonised from the ground up and gets mossier as it softens (Soderstrom,
+*Bryophyte succession on decaying logs*, 1988).
+
+How games do it: CryEngine (Ryse) layers a moss shell over the base mesh with a vertex-painted
+mask; most engines blend a world-up moss layer in the material. A material-only blend shows no
+volume and the fork's path tracer runs a fixed-function StandardMaterial3D without the detail
+layer, so we build geometry:
+- Weight per point: `moss_cover` x species affinity x stand shade (open-grown 0.65) x decay
+  (class 1 0.8 up to class 5 1.4, wood on the ground x1.3), times max(foot skirt e^(-h/1.1 m),
+  upper faces) times patch noise.
+- **Tint** at every LOD: the bark's vertex colour goes to moss green with the weight.
+- **Shell** at LOD 0 and for the path tracer, on wood 5 cm and up: the displaced bark tube
+  again, lifted by up to 1.8 cm of moss (hand-sized hummocks) where the weight is high and kept
+  4 mm under the bark where it fades, so the edge needs no alpha; it enters furrows just ahead
+  of the plates. Quads wholly under the bark are dropped. Its own surface "moss": a baked turf
+  texture (shoots of about 3 mm in cushions of about 4 cm, domain-warped), matte.
+- Aspect is not used: placed trees turn about their axis, so a north side baked into the mesh
+  would point anywhere.
+- Cost: oak open-grown 56k moss triangles on 4.2M of bark; stand-grown oak 19k on 0.8M; a
+  class 3 oak log 190k on 0.18M.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what
@@ -500,6 +561,11 @@ needles are millimetres wide, and without multisampling they missed every sample
 read as sticks; games run TAA or DLSS, which integrate that coverage.
 
 ## References
+
+- Luft, T. An Ivy Generator. 2007. graphics.uni-konstanz.de/~luft/ivy_generator.
+- Hädrich, T., Benes, B., Deussen, O., Pirk, S. Interactive Modeling and Authoring of Climbing Plants. Computer Graphics Forum 36(2), 2017.
+- Benes, B., Millán, E. U. Virtual Climbing Plants Competing for Space. Computer Animation 2002.
+- Harmon, M. E. et al. Ecology of Coarse Woody Debris in Temperate Ecosystems. Advances in Ecological Research 15, 1986.
 
 - Lefebvre, S., Neyret, F. Synthesizing Bark. EGWR 2002.
 - Wang, X., Wang, L., Liu, L., Hu, S., Guo, B. Interactive Modeling of Tree Bark. Pacific Graphics 2003.
