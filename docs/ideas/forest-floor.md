@@ -213,6 +213,11 @@ instead of a shade floor, so a beech edge spills leaves several metres into the 
 twigs stay closer in. Not yet: skew downwind of the prevailing wind, and trapping in hollows
 and against logs.
 
+Built (5, seedlings): `make_floor` hands the stand's leaves to its seedlings too, so each seedling
+is one of the stand's trees by share, with true leaves in that tree's form at about two thirds of
+the adult size (shade leaves of young trees) and seed leaves as the genus has them: a broad fan
+pair for beech, a strap pair for maples and ash, none for oaks (hypogeal germination).
+
 Checks: raster and path traced before/after at `--forest=in` (beech, oak, spruce) and the
 forest edge; counts per square metre against the figures above; triangles and placement cost.
 
