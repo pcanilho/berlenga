@@ -4,7 +4,7 @@
 
 Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for large open worlds. Based on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot) (2 November 2026).
 
-**[Download](https://github.com/pcanilho/berlenga/releases/latest):** Windows (Ray Reconstruction: add NVIDIA's DLSS, Streamline and Reflex DLLs next to the exe), Linux x86_64/arm64 (no Ray Reconstruction), macOS (raster only). **Docs:** [pcanilho.github.io/berlenga](https://pcanilho.github.io/berlenga/). **Changes:** [CHANGELOG.md](CHANGELOG.md).
+**[Download](https://github.com/pcanilho/berlenga/releases/latest):** Windows (Ray Reconstruction: add NVIDIA's DLSS, Streamline and Reflex DLLs next to the exe), Linux x86_64/arm64 (no Ray Reconstruction), macOS (raster only). **Docs:** [berlenga.canilho.net](https://berlenga.canilho.net/). **Changes:** [CHANGELOG.md](CHANGELOG.md).
 
 ![1024 street lamps: NVIDIA-RTX/godot on the left keeps 64 of them, Berlenga on the right lights them all](docs/media/many-lights.jpg)
 
@@ -12,21 +12,21 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 
 ## At a glance
 
-- **[Lights](https://pcanilho.github.io/berlenga/features/lighting/)**: 4096 path-traced lights (upstream 64); emissive surfaces count as lights.
-- **[Faster convergence](https://pcanilho.github.io/berlenga/features/lighting/)**: light visibility memory and a radiance cache.
-- **[Materials](https://pcanilho.github.io/berlenga/features/materials/)**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
-- **[Hair](https://pcanilho.github.io/berlenga/features/hair/)**: fibre shading, strand grooms, TressFX strand simulation with body collision.
-- **[Terrain](https://pcanilho.github.io/berlenga/features/terrain/)**: mountain ranges raised and eroded per seed, with geology, river networks, coasts and lakes; non-destructive height brushes; terrain data maps.
-- **[Snow](https://pcanilho.github.io/berlenga/features/snow/)**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced; deep snow with tracks; falling and blowing snow; baked winters and cornices.
-- **[Vegetation](https://pcanilho.github.io/berlenga/features/vegetation/)**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
-- **[Weather](https://pcanilho.github.io/berlenga/features/weather/)**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
-- **[Sky and clouds](https://pcanilho.github.io/berlenga/features/sky-and-clouds/)**: sun and moon set by date, time and place; a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
-- **[Water](https://pcanilho.github.io/berlenga/features/water/)**: refraction, murky water, caustics, ocean, currents, boat wakes, white water, rivers and waterfalls, shore waves, camera under water.
-- **[Exposure](https://pcanilho.github.io/berlenga/features/exposure/)**: histogram metering, dark-scene key, local exposure.
-- **[Physics](https://pcanilho.github.io/berlenga/features/physics/)**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
-- **[Open worlds](https://pcanilho.github.io/berlenga/features/open-worlds/)**: camera-relative tracing, persistent instances, culling, mesh LOD.
+- **[Lights](https://berlenga.canilho.net/features/lighting/)**: 4096 path-traced lights (upstream 64); emissive surfaces count as lights.
+- **[Faster convergence](https://berlenga.canilho.net/features/lighting/)**: light visibility memory and a radiance cache.
+- **[Materials](https://berlenga.canilho.net/features/materials/)**: clearcoat, back lighting, thin-glass transmission, subsurface scattering; textures filter like raster.
+- **[Hair](https://berlenga.canilho.net/features/hair/)**: fibre shading, strand grooms, TressFX strand simulation with body collision.
+- **[Terrain](https://berlenga.canilho.net/features/terrain/)**: mountain ranges raised and eroded per seed, with geology, river networks, coasts and lakes; non-destructive height brushes; terrain data maps.
+- **[Snow](https://berlenga.canilho.net/features/snow/)**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced; deep snow with tracks; falling and blowing snow; baked winters and cornices.
+- **[Vegetation](https://berlenga.canilho.net/features/vegetation/)**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
+- **[Weather](https://berlenga.canilho.net/features/weather/)**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
+- **[Sky and clouds](https://berlenga.canilho.net/features/sky-and-clouds/)**: sun and moon set by date, time and place; a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
+- **[Water](https://berlenga.canilho.net/features/water/)**: refraction, murky water, caustics, ocean, currents, boat wakes, white water, rivers and waterfalls, shore waves, camera under water.
+- **[Exposure](https://berlenga.canilho.net/features/exposure/)**: histogram metering, dark-scene key, local exposure.
+- **[Physics](https://berlenga.canilho.net/features/physics/)**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
+- **[Open worlds](https://berlenga.canilho.net/features/open-worlds/)**: camera-relative tracing, persistent instances, culling, mesh LOD.
 
-Every feature with its setting and images: [features](https://pcanilho.github.io/berlenga/features/).
+Every feature with its setting and images: [features](https://berlenga.canilho.net/features/).
 
 ## References
 

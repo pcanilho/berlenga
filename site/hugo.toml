@@ -1,4 +1,4 @@
-baseURL = "https://pcanilho.github.io/berlenga/"
+baseURL = "https://berlenga.canilho.net/"
 languageCode = "en"
 title = "Berlenga"
 disableKinds = ["taxonomy", "term", "RSS"]
