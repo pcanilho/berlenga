@@ -18,6 +18,12 @@
 				The mean air concentration self-aerated flow reaches on a chute of this slope, [code]0.9 sin a[/code] (Chanson 1993), at most 0.9.
 			</description>
 		</method>
+		<method name="get_contact_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				The shader the sheets are drawn with: water that fades in over its wandering edge, wet rock in patches past it, white water with streaks below the inception point.
+			</description>
+		</method>
 		<method name="get_contact_falls" qualifiers="const">
 			<return type="Array" />
 			<description>
@@ -70,6 +76,9 @@
 		</member>
 		<member name="spray" type="bool" setter="set_spray" getter="get_spray" default="true">
 			Spray at each ledge and at the foot of each face.
+		</member>
+		<member name="wet_margin" type="float" setter="set_wet_margin" getter="get_wet_margin" default="0.6">
+			Width (m) of wet rock drawn either side of the water: darker and glossy, in patches.
 		</member>
 	</members>
 </class>

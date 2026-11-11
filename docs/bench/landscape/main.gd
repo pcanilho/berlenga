@@ -1562,13 +1562,19 @@ func _build_camera() -> void:
 					d.y = 0
 					d = d.normalized()
 					var h := top.y - bot.y
-					var mid := bot.lerp(top, 0.45)
+					# --contact-look=f: aim at that fraction of the drop up from the foot (default 0.45).
+					var mid := bot.lerp(top, float(args.get("contact-look", "0.45")))
 					var side := Vector3(-d.z, 0, d.x)
 					var c := bot + d * maxf(h * 1.6, 25.0) + Vector3(0, h * 0.3, 0)
 					var found := false
 					# The first spot in front of the face with a clear line to its middle (gorges hide it).
 					for lift in [0.0, 0.5, 1.0, 2.0]:
-						for k in [2.0, 2.6, 3.4, 4.5]:
+						# --contact-dist=m: a close-up from about that far (else two to four and a half drops away).
+						var ks := [2.0, 2.6, 3.4, 4.5]
+						if args.has("contact-dist"):
+							var k0 := float(args["contact-dist"]) / maxf(h, 1.0)
+							ks = [k0, k0 * 1.25, k0 * 1.6, k0 * 2.0]
+						for k in ks:
 							for o in [0.35, -0.35, 0.0, 0.7, -0.7]:
 								if found:
 									continue
@@ -1586,6 +1592,8 @@ func _build_camera() -> void:
 					cam.position = c
 					cam.look_at(mid)
 					cam.fov = clampf(rad_to_deg(2.0 * atan(0.8 * h / c.distance_to(mid))), 25.0, 70.0)
+					if args.has("contact-fov"):
+						cam.fov = float(args["contact-fov"])
 					if args.has("contact-cam"):
 						# --contact-cam=back,up: straight down the fall's own direction from the foot, back and up (m).
 						var bu: PackedStringArray = args["contact-cam"].split(",")

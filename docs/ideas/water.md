@@ -1926,8 +1926,21 @@ fork can.
 - Per row: speed from `dv/ds = (g sin a - f v^3 / 8q) / v` (`friction_factor` 0.2), so the sheet speeds up on
   the steep part and slows on the foot; air 0 above the inception point and towards `0.9 sin a` below it over
   about 1.5 m (the surface whitens right at the inception point; a first build with 5 m left a 16 m main-river
-  cascade with its inception at 11 m clear all the way down); thickness `q / v / (1 - C)`. The sheet uses the river fall shader: whiteness from `C / 0.9`,
-  streaks scrolled with the travel time.
+  cascade with its inception at 11 m clear all the way down); thickness `q / v / (1 - C)`.
+- Width and shape across (look fix, 11 Nov; the first build drew a flat strip the width of the wetted lip with
+  saw-tooth edges, because its outer columns were 1 to 2 m apart and the river fall shader cut holes along the
+  edge with a hard threshold): the water runs `4 sqrt(Q)` m wide (hydraulic geometry of steep channels,
+  width about `a Q^0.5`, Leopold and Maddock 1953), at most the wetted lip, centred where the lip shares put it.
+  Across it the flow per metre is a parabola, `1.5 q (1 - (2u - 1)^2)`, so the middle is thick and white and the
+  sides thin out. Columns are 0.15 to 0.4 m apart, each following the ground, and run `wet_margin` (0.6 m) past
+  the water on both sides.
+- Own shader (`get_contact_shader_code()`): each vertex carries its distance inside the water's edge. The edge
+  wanders with the face (two octaves of noise fixed to the rock, down the face, a share of the half-width), so
+  the sheet narrows and widens as it goes down; the water fades in over 15 cm, so no step shows. Past the edge
+  the rock is wet in patches: darker and glossy (wet surfaces lose albedo and roughness, Lagarde 2013), drawn as
+  a dark, low-roughness veil. White water has fine lumps and thin spots riding the flow; near the margins the
+  film is thinner, less white and more see-through. Path tracing uses the same edge as a cut-out and the wet veil
+  as partial coverage.
 - Spray (`GPUParticles3D`) at each ledge of the record and at the foot, scaled by `0.5 rho Q v^2`; a
   `PhysXWaterMist3D` box over the face with a line source along it, only for falls carrying at least
   `mist_min_discharge` (0.2 m3/s): a trickle wets the rock but throws no measurable mist.
@@ -1940,6 +1953,9 @@ fork can.
 
 - Wood, Ackers and Loveless, General method for critical point on spillways, J. Hydraulic Eng. 109(2), 1983;
   Chanson, Self-aerated flows on chutes and spillways, J. Hydraulic Eng. 119(2), 1993.
+- Leopold and Maddock, The hydraulic geometry of stream channels, USGS Professional Paper 252, 1953.
+- Lagarde, Water drop 2b: dynamic rain and its effects (wet surfaces), 2013:
+  https://seblagarde.wordpress.com/2013/04/14/water-drop-2b-dynamic-rain-and-its-effects/
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).
 - Battjes, Surf similarity, Coastal Engineering Proceedings (1974).
 - Fournier and Reeves, A simple model of ocean waves, SIGGRAPH 1986.

@@ -136,6 +136,91 @@ GPUParticles3D *make_spray(const Transform3D &p_xf, float p_speed, float p_width
 	spray->set_draw_pass_mesh(0, drop);
 	return spray;
 }
+
+// The film of water over the rock. A contact fall is a thin sheet that clings to the face, so it reads by its
+// margins: where the film thins out the rock shows through darkened and glossy, and the water's edge wanders
+// with the relief instead of running ruler-straight. Vertex data: COLOR.r = metres inside the water's edge
+// (-1..1 m packed into 0..1), COLOR.g = aeration (0..0.9 packed into 0..1), COLOR.b = half the water's width / 4 m;
+// UV = (seconds of travel from the lip, metres across), UV2 = (speed m/s, metres down the face).
+const char *CONTACT_SHADER_SRC = R"(
+shader_type spatial;
+#if defined(RT)
+render_mode cull_back;
+#else
+render_mode blend_mix, cull_back, depth_draw_never;
+#endif
+
+uniform float water_time = 0.0;
+uniform vec4 water_color : source_color = vec4(0.30, 0.40, 0.40, 0.35);
+uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
+// Wet rock beside the water: a darkening veil with a sharp, sky-coloured gloss.
+uniform vec4 wet_color : source_color = vec4(0.02, 0.025, 0.03, 0.4);
+uniform float wet_margin = 0.6;
+uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
+uniform float pathtraced_roughness : hint_range(0.0, 1.0) = 0.05;
+uniform float streak_scale = 3.0;
+uniform float streak_rate = 5.0;
+// How far the edge wanders, as a share of the half-width (at most 1.5 m of half-width counts).
+uniform float edge_wander = 0.45;
+
+float f_hash(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+float f_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(f_hash(i), f_hash(i + vec2(1.0, 0.0)), u.x),
+			mix(f_hash(i + vec2(0.0, 1.0)), f_hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+void fragment() {
+	float edge_m = COLOR.r * 2.0 - 1.0;
+	float aeration = COLOR.g;
+	float half_w = min(COLOR.b * 4.0, 1.5);
+	float down = UV2.y;
+	// The margin wanders with the relief: slow swings over metres and small fingers, fixed to the rock (the
+	// film follows the same grooves all the time), each side on its own pattern.
+	float side = step(wet_margin + half_w, UV.y) * 17.0;
+	float wander = (f_noise(vec2(down * 0.35, side)) - 0.5) * 2.0;
+	wander += 0.4 * (f_noise(vec2(down * 1.7 + 5.0, side + 3.0)) - 0.5) * 2.0;
+	float e = edge_m + wander * edge_wander * half_w;
+	// Streaks ride the water.
+	vec2 p = vec2(UV.y * streak_scale, (UV.x - water_time) * streak_rate);
+	float streak = 0.55 * f_noise(p * vec2(1.0, 0.35)) + 0.3 * f_noise(p * vec2(2.3, 0.9) + 7.0) + 0.15 * f_noise(p * vec2(5.1, 2.4) - 3.0);
+	// Thin film near the margin: less white, more see-through.
+	float film = smoothstep(0.0, 0.5 * max(half_w, 0.2), e);
+	float foam = smoothstep(0.15, 0.85, aeration * mix(0.55, 1.0, film) + (streak - 0.5) * 0.9);
+	float water = smoothstep(-0.03, 0.12, e);
+	// Wet rock: splash and seep reach out in patches, not as an even band.
+	float seep = f_noise(vec2(down * 1.1, UV.y * 1.9)) * 0.6 + f_noise(vec2(down * 4.3, UV.y * 5.7)) * 0.4;
+	float wet = smoothstep(0.0, 0.25, e + wet_margin * (seep * 1.2 - 0.2));
+	// Fine texture of the white water: lumps and thin spots that move with it.
+	float lumps = f_noise(p * vec2(2.0, 1.4) + 11.0) * 0.6 + f_noise(p * vec2(6.0, 4.0) - 5.0) * 0.4;
+#if defined(RT)
+	float cover = water > 0.5 ? 1.0 : wet * wet_color.a;
+	ALBEDO = water > 0.5 ? mix(vec3(1.0), foam_color.rgb, foam) : wet_color.rgb;
+	ROUGHNESS = water > 0.5 ? mix(pathtraced_roughness, 0.8, foam) : 0.12;
+	SPECULAR = 0.5;
+	METALLIC = 0.0;
+	TRANSMISSION = water > 0.5 ? 1.0 - foam : 0.0;
+	IOR = 1.33;
+	ABSORPTION = pathtraced_absorption;
+	ALPHA = cover;
+#else
+	vec3 water_rgb = mix(water_color.rgb, foam_color.rgb * (0.82 + 0.18 * lumps), foam);
+	float water_a = mix(water_color.a, foam_color.a * mix(0.55, 1.0, smoothstep(0.25, 0.6, lumps)), foam) * mix(0.6, 1.0, film);
+	ALBEDO = mix(wet_color.rgb, water_rgb, water);
+	ROUGHNESS = mix(0.12, mix(pathtraced_roughness + 0.1, 0.85, foam), water);
+	SPECULAR = 0.5;
+	METALLIC = 0.0;
+	ALPHA = max(water * water_a, wet * wet_color.a);
+#endif
+}
+)";
 } // namespace
 
 // Self-aeration on a steep chute. The turbulent boundary layer grows from the lip and reaches the surface at the
@@ -213,14 +298,45 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 		wet_share.push_back(sh);
 		total += sh;
 	}
-	int main_col = 0; // the column carrying the most water speaks for the fall in get_contact_falls()
+	// The water's own width: the wetted lip, narrowed for a small flow (steep mountain channels run about
+	// 4 sqrt(Q) m wide, Q in m3/s), centred on where the shares put the water. Across it the discharge per metre
+	// follows a parabola, deepest in the middle, so the white sheet thins out to its margins; past them a band of
+	// wet rock (wet_margin) carries no water.
+	float centre = 0.0f;
 	for (int c = 0; c < cols; c++) {
 		wet_share.set(c, total > 0.0f ? wet_share[c] / total : 1.0f / cols);
-		if (wet_share[c] > wet_share[main_col]) {
-			main_col = c;
+		centre += wet_share[c] * (float(c0 + c) / (lip.size() - 1) - 0.5f) * lw;
+	}
+	const float wet_span = spacing * (cols - 1);
+	const float width = CLAMP(4.0f * Math::sqrt(face.discharge), 0.6f, MAX(wet_span, 0.6f));
+	centre = CLAMP(centre, (float(c0) / (lip.size() - 1) - 0.5f) * lw + 0.5f * width, MAX((float(c1) / (lip.size() - 1) - 0.5f) * lw - 0.5f * width, (float(c0) / (lip.size() - 1) - 0.5f) * lw + 0.5f * width));
+	if (wet_span < width) {
+		centre = (float(c0 + c1) * 0.5f / (lip.size() - 1) - 0.5f) * lw;
+	}
+	face.width = width;
+	const float margin = MAX(wet_margin, 0.0f);
+	const float col_step = CLAMP((width + 2.0f * margin) / 8.0f, 0.15f, 0.4f);
+	const int vcols = CLAMP((int)Math::ceil((width + 2.0f * margin) / col_step) + 1, 4, 96);
+	// A point on the lip polyline at an offset across it (linear between the record's points, extended past them).
+	auto lip_at = [&](float p_offset) -> Vector3 {
+		const float f = (p_offset / lw + 0.5f) * (lip.size() - 1);
+		const int i = CLAMP((int)Math::floor(f), 0, lip.size() - 2);
+		return lip[i].lerp(lip[i + 1], f - i);
+	};
+	LocalVector<float> offsets;
+	LocalVector<float> col_q;
+	LocalVector<float> col_edge;
+	int main_col = 0;
+	for (int k = 0; k < vcols; k++) {
+		const float o = centre - 0.5f * width - margin + (width + 2.0f * margin) * k / (vcols - 1);
+		const float u = (o - (centre - 0.5f * width)) / width;
+		offsets.push_back(o);
+		col_q.push_back(u > 0.0f && u < 1.0f ? 1.5f * face.discharge / width * (1.0f - (2.0f * u - 1.0f) * (2.0f * u - 1.0f)) : 0.0f);
+		col_edge.push_back(MIN(o - (centre - 0.5f * width), (centre + 0.5f * width) - o)); // m inside the water (< 0 outside)
+		if (Math::abs(o - centre) < Math::abs(offsets[main_col] - centre)) {
+			main_col = k;
 		}
 	}
-	face.width = spacing * (cols - 1);
 	// The line down the face under each column, as (run from the lip, height below it): the ground itself where
 	// the source can be asked for heights (get_height), else between the record's three profiles (at -0.35, 0 and
 	// +0.35 of the lip width). Cut a little past the foot and smoothed with a centripetal Catmull-Rom spline.
@@ -237,13 +353,14 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	LocalVector<PackedFloat32Array> arcs;
 	float longest = 0.0f;
 	float sin_face = 1.0f;
-	for (int c = c0; c <= c1; c++) {
+	for (int c = 0; c < vcols; c++) {
+		const Vector3 lip_c = lip_at(offsets[c]);
 		PackedVector2Array pts;
 		if (ask) {
 			const int n = CLAMP((int)Math::ceil(reach / 0.5f), 2, 2048);
 			for (int i = 0; i <= n; i++) {
 				const float run = reach * i / n;
-				const Vector3 q = Vector3(lip[c].x, 0.0f, lip[c].z) + dir * run;
+				const Vector3 q = Vector3(lip_c.x, 0.0f, lip_c.z) + dir * run;
 				const float y = float(p_source->call("get_height", q)) - face.top.y;
 				pts.push_back(Vector2(run, y));
 				// The drop counts from this column's own brink (a lip line can cross ground below the record's top).
@@ -252,8 +369,7 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 				}
 			}
 		} else {
-			const float o = (float(c) / (lip.size() - 1) - 0.5f) * lw;
-			const float f = CLAMP(o / (0.35f * lw), -1.0f, 1.0f);
+			const float f = CLAMP(offsets[c] / (0.35f * lw), -1.0f, 1.0f);
 			const PackedVector3Array pa = profiles[f < 0.0f ? 0 : 1];
 			const PackedVector3Array pb = profiles[f < 0.0f ? 1 : 2];
 			const float w = f < 0.0f ? f + 1.0f : f;
@@ -275,7 +391,7 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			return; // A line that stops short of the foot: no face to drape over.
 		}
 		longest = MAX(longest, arc[arc.size() - 1]);
-		if (c - c0 == main_col) {
+		if (c == main_col) {
 			sin_face = CLAMP(face.height / MAX(arc[arc.size() - 1], 1e-3f), 0.05f, 1.0f);
 		}
 		lines.push_back(line);
@@ -283,13 +399,15 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	}
 	const int rows = CLAMP((int)Math::ceil(longest / MAX(row_spacing, 0.25f)) + 1, 2, 1024);
 	const Vector3 up(0, 1, 0);
-	for (int c = 0; c < cols; c++) {
+	for (int c = 0; c < vcols; c++) {
 		Column col;
-		col.q = face.discharge * wet_share[c] / spacing;
+		// The speed and air of the thin margins follow the water a little way in (a margin column has no flow).
+		col.q = MAX(col_q[c], 0.15f * face.discharge / width);
+		col.edge = col_edge[c];
 		const PackedVector2Array &line = lines[c];
 		const PackedFloat32Array &arc = arcs[c];
 		const float len = arc[arc.size() - 1];
-		const Vector3 lip_c = lip[c0 + c];
+		const Vector3 lip_c = lip_at(offsets[c]);
 		const float v0 = Math::pow(GRAVITY * MAX(col.q, 1e-5f), 1.0f / 3.0f);
 		const float li = inception_length(col.q, sin_face, rock_roughness);
 		float air = 0.0f;
@@ -329,7 +447,7 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			// there); on gentler steps it detrains as quickly.
 			air += (target - air) * (1.0f - Math::exp(-ds / 1.5f));
 			// Bulked thickness over the rock: the clear-water depth swelled by the air it carries.
-			const float depth = MAX(col.q / MAX(v, 0.1f), 0.003f) / (1.0f - MIN(air, 0.9f));
+			const float depth = col.edge > 0.0f ? MAX(col.q / MAX(v, 0.1f), 0.003f) / (1.0f - MIN(air, 0.9f)) : 0.0f;
 			const Vector2 n2 = Vector2(-t.y, t.x).y < 0.0f ? Vector2(t.y, -t.x) : Vector2(-t.y, t.x);
 			const Vector3 base = Vector3(lip_c.x, face.top.y, lip_c.z) + dir * p.x + up * p.y;
 			const Vector3 nrm = (dir * n2.x + up * n2.y).normalized();
@@ -338,6 +456,7 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			col.speed.push_back(v);
 			col.air.push_back(air);
 			col.travel.push_back(travel);
+			col.dist.push_back(s_from_lip);
 			prev_v = v;
 			prev_p = p;
 		}
@@ -373,6 +492,7 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			col.speed.resize(keep);
 			col.air.resize(keep);
 			col.travel.resize(keep);
+			col.dist.resize(keep);
 		}
 	}
 	// Ledges: where the water strikes each one, at the speed it has there (the middle column's nearest row).
@@ -400,6 +520,10 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	faces.push_back(face);
 }
 
+String PhysXWaterfalls3D::get_contact_shader_code() {
+	return String(CONTACT_SHADER_SRC);
+}
+
 void PhysXWaterfalls3D::_build_mesh() {
 	if (mesh_instance == nullptr) {
 		mesh_instance = memnew(MeshInstance3D);
@@ -409,9 +533,10 @@ void PhysXWaterfalls3D::_build_mesh() {
 	if (material.is_null()) {
 		Ref<Shader> shader;
 		shader.instantiate();
-		shader->set_code(PhysXRiver3D::get_fall_shader_code());
+		shader->set_code(get_contact_shader_code());
 		material.instantiate();
 		material->set_shader(shader);
+		material->set_shader_parameter("wet_margin", wet_margin);
 	}
 	mesh_instance->set_material_override(material);
 	const Transform3D inv = (is_inside_tree() ? get_global_transform() : get_transform()).affine_inverse();
@@ -427,16 +552,15 @@ void PhysXWaterfalls3D::_build_mesh() {
 			continue;
 		}
 		const int rows = face.columns[0].points.size();
-		float q_max = 1e-6f;
-		for (const Column &col : face.columns) {
-			q_max = MAX(q_max, col.q);
-		}
 		const int base = verts.size();
-		const float spacing = MAX(face.width, 1.0f) / (cols - 1);
+		float across_m = 0.0f;
 		for (int c = 0; c < cols; c++) {
 			const Column &col = face.columns[c];
-			const float end = (c == 0 || c == cols - 1) ? 0.0f : 1.0f;
-			const float edge = end * CLAMP(4.0f * col.q / q_max, 0.0f, 1.0f);
+			if (c > 0) {
+				across_m += col.points[0].distance_to(face.columns[c - 1].points[0]);
+			}
+			// Metres inside the water's margin, -1..1 m packed into 0..1 (the shader feathers it).
+			const float edge = CLAMP(0.5f + 0.5f * col.edge, 0.0f, 1.0f);
 			for (int r = 0; r < rows; r++) {
 				verts.push_back(inv.xform(col.points[r]));
 				const Vector3 a = col.points[MIN(r + 1, rows - 1)] - col.points[MAX(r - 1, 0)];
@@ -447,10 +571,10 @@ void PhysXWaterfalls3D::_build_mesh() {
 					n = -n;
 				}
 				normals.push_back(inv.basis.xform(n.normalized()).normalized());
-				uvs.push_back(Vector2(col.travel[r], c * spacing));
-				uv2s.push_back(Vector2(col.speed[r], 0.0f));
+				uvs.push_back(Vector2(col.travel[r], across_m));
+				uv2s.push_back(Vector2(col.speed[r], col.dist[r]));
 				// Aeration as a share of the most a sheet can hold (0.9): the streaks still show through white water.
-				colors.push_back(Color(edge, CLAMP(col.air[r] / 0.9f, 0.0f, 1.0f), 0.0f, 1.0f));
+				colors.push_back(Color(edge, CLAMP(col.air[r] / 0.9f, 0.0f, 1.0f), CLAMP(0.125f * face.width, 0.0f, 1.0f), 1.0f));
 			}
 		}
 		for (int c = 0; c + 1 < cols; c++) {
@@ -722,6 +846,17 @@ void PhysXWaterfalls3D::set_friction_factor(float p_f) {
 	friction_factor = MAX(p_f, 0.005f);
 }
 
+void PhysXWaterfalls3D::set_wet_margin(float p_margin) {
+	wet_margin = MAX(p_margin, 0.0f);
+	if (material.is_valid()) {
+		material->set_shader_parameter("wet_margin", wet_margin);
+	}
+}
+
+float PhysXWaterfalls3D::get_wet_margin() const {
+	return wet_margin;
+}
+
 void PhysXWaterfalls3D::set_row_spacing(float p_spacing) {
 	row_spacing = MAX(p_spacing, 0.25f);
 }
@@ -747,6 +882,9 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rock_roughness"), &PhysXWaterfalls3D::get_rock_roughness);
 	ClassDB::bind_method(D_METHOD("set_friction_factor", "f"), &PhysXWaterfalls3D::set_friction_factor);
 	ClassDB::bind_method(D_METHOD("get_friction_factor"), &PhysXWaterfalls3D::get_friction_factor);
+	ClassDB::bind_method(D_METHOD("set_wet_margin", "margin"), &PhysXWaterfalls3D::set_wet_margin);
+	ClassDB::bind_method(D_METHOD("get_wet_margin"), &PhysXWaterfalls3D::get_wet_margin);
+	ClassDB::bind_static_method("PhysXWaterfalls3D", D_METHOD("get_contact_shader_code"), &PhysXWaterfalls3D::get_contact_shader_code);
 	ClassDB::bind_method(D_METHOD("set_row_spacing", "spacing"), &PhysXWaterfalls3D::set_row_spacing);
 	ClassDB::bind_method(D_METHOD("get_row_spacing"), &PhysXWaterfalls3D::get_row_spacing);
 	ClassDB::bind_static_method("PhysXWaterfalls3D", D_METHOD("inception_length", "q", "sin_slope", "ks"), &PhysXWaterfalls3D::inception_length);
@@ -761,6 +899,7 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_height", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_min_height", "get_min_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_roughness", PROPERTY_HINT_RANGE, "0.001,1,0.001,suffix:m"), "set_rock_roughness", "get_rock_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction_factor", PROPERTY_HINT_RANGE, "0.005,1,0.001"), "set_friction_factor", "get_friction_factor");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_margin", PROPERTY_HINT_RANGE, "0,3,0.05,suffix:m"), "set_wet_margin", "get_wet_margin");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "row_spacing", PROPERTY_HINT_RANGE, "0.25,10,0.05,suffix:m"), "set_row_spacing", "get_row_spacing");
 }
 

@@ -49,7 +49,9 @@ public:
 		PackedFloat32Array speed; // m/s
 		PackedFloat32Array air; // mean air concentration C, 0..1
 		PackedFloat32Array travel; // s since the lip
+		PackedFloat32Array dist; // m down the face from the lip
 		float q = 0.0f; // m^2/s
+		float edge = 0.0f; // m inside the water's margin (< 0 on the wet rock beyond it)
 	};
 	struct Face {
 		String id;
@@ -80,6 +82,7 @@ private:
 	float rock_roughness = 0.15f; // k_s, m
 	float friction_factor = 0.2f; // Darcy-Weisbach f of white water on rough rock (Chanson: 0.1 to 0.3 on steps)
 	float row_spacing = 1.0f; // m along the face
+	float wet_margin = 0.6f; // m of wet rock either side of the water
 
 	LocalVector<Face> faces;
 	// Standing water from the source (sea level, lakes as rectangle and level): a sheet stops where it meets it.
@@ -104,6 +107,9 @@ protected:
 
 public:
 	void rebuild();
+	static String get_contact_shader_code();
+	void set_wet_margin(float p_margin);
+	float get_wet_margin() const;
 	Array get_contact_falls() const;
 
 	void set_source(const NodePath &p_path);
