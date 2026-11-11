@@ -121,6 +121,8 @@ func _ready() -> void:
 				vd["glacial-erosion"] = "5"
 				# The main river's glacier comes in from beyond the map with it (0.03 m/yr over its 60 km²).
 				vd["ice-inflow"] = "0.03"
+				# Its margins stood still for 3000 years at the end and left moraines.
+				vd["moraine-age"] = "3000"
 		for k in vd:
 			if not args.has(k):
 				args[k] = vd[k]
@@ -281,6 +283,7 @@ func _generate() -> void:
 	# Rock beds stepped into cliff faces (ledges), --ledges=0 for smooth faces.
 	gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
 	gen.gorge_age = float(args.get("gorge-age", "12000"))
+	gen.moraine_age = float(args.get("moraine-age", "0"))
 	gen.fan_backfill = not args.has("no-backfill")
 	if args.has("glacial"):
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
@@ -398,6 +401,8 @@ func _generate() -> void:
 			_log("high lake marker %.0f m up the river from the %.0f m fall at %s" % [run, tall["height"], tall["top"]])
 			gen.generate()
 	_log("generate %d ms, grid %s, last change %.3f m, fan slots filled %d" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change(), gen.get_last_slots_filled()])
+	if gen.moraine_age > 0.0:
+		_log("moraines: %.0f m3 of debris" % gen.get_last_moraine_volume())
 	if gen.glacial_enabled:
 		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded()])
 		for l in gen.get_lake_results():

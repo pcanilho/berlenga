@@ -696,6 +696,213 @@ bool TerrainGenerator3D::generate() {
 				}
 			}
 		}
+		// Moraines: rock falling from the walls onto the ice rides it down to the margin and is dropped there; a
+		// margin that stands still for moraine_age years builds a ridge (lateral along the sides, a terminal loop
+		// at the snout) that can dam a lake (Benn and Evans 2010, ch. 11; Rowan, Egholm and Clark 2015).
+		last_moraine_volume = 0.0;
+		if (moraine_age > 0.0) {
+			const double c = double(cell_size);
+			const double wall = Math::tan(Math::deg_to_rad(40.0));
+			const double repose = Math::tan(Math::deg_to_rad(34.0)); // fresh till's flanks
+			const double retreat = 0.001; // m/yr of headwall retreat (Hallet, Hunter and Bogen 1996: 0.1 to several mm/yr)
+			LocalVector<double> ice, s_top, debris, dep;
+			LocalVector<uint8_t> carried;
+			ice.resize(n);
+			s_top.resize(n);
+			debris.resize(n);
+			dep.resize(n);
+			carried.resize(n);
+			for (int z = 0; z < ny; z++) {
+				for (int x = 0; x < nx; x++) {
+					const int i = z * nx + x;
+					ice[i] = glac.ice_at(x, z, cell_size);
+					s_top[i] = h[i] + ice[i];
+					debris[i] = 0.0;
+					dep[i] = 0.0;
+					carried[i] = 0;
+				}
+			}
+			// The ice grid is 64 m: smooth its thickness on the fine grid (two box passes of 3 cells each way) so the
+			// margin follows a curve, not the ice grid's steps; the glacier's edge is where it is 10 m thick (thinner
+			// ice is the smooth solve's skirt over the slopes, not a glacier).
+			{
+				LocalVector<double> tmpb;
+				tmpb.resize(n);
+				for (int pass = 0; pass < 2; pass++) {
+					for (int z = 0; z < ny; z++) {
+						for (int x = 0; x < nx; x++) {
+							double sum = 0.0;
+							int w = 0;
+							for (int d = -3; d <= 3; d++) {
+								const int xx = CLAMP(x + d, 0, nx - 1);
+								sum += ice[z * nx + xx];
+								w++;
+							}
+							tmpb[z * nx + x] = sum / w;
+						}
+					}
+					for (int z = 0; z < ny; z++) {
+						for (int x = 0; x < nx; x++) {
+							double sum = 0.0;
+							int w = 0;
+							for (int d = -3; d <= 3; d++) {
+								const int zz = CLAMP(z + d, 0, ny - 1);
+								sum += tmpb[zz * nx + x];
+								w++;
+							}
+							ice[z * nx + x] = sum / w;
+						}
+					}
+				}
+				for (int i = 0; i < n; i++) {
+					ice[i] = MAX(0.0, ice[i] - 9.0); // the glacier's edge at 10 m
+					s_top[i] = h[i] + ice[i];
+				}
+			}
+			auto slope_at = [&](int x, int z) {
+				const int x0 = MAX(x - 1, 0), x1 = MIN(x + 1, nx - 1), z0 = MAX(z - 1, 0), z1 = MIN(z + 1, ny - 1);
+				const double gx = (h[z * nx + x1] - h[z * nx + x0]) / ((x1 - x0) * c);
+				const double gz = (h[z1 * nx + x] - h[z0 * nx + x]) / ((z1 - z0) * c);
+				return Math::sqrt(gx * gx + gz * gz);
+			};
+			// Supply: bare walls steeper than 40 degrees retreat over the stand; their rock goes down the wall.
+			for (int z = 0; z < ny; z++) {
+				for (int x = 0; x < nx; x++) {
+					const int i = z * nx + x;
+					if (ice[i] <= 1.0 && slope_at(x, z) > wall) {
+						debris[i] = retreat * moraine_age * c * c * slope_at(x, z);
+					}
+				}
+			}
+			// Basal debris: what the ice quarried over the stand, its share of the last glaciation's wear. About half
+			// leaves in the meltwater (outwash); the rest is carried to the margin as till (Hallet et al. 1996).
+			{
+				const std::vector<double> &worn = glac.get_total();
+				if (worn.size() == size_t(n) && glacial_final > 0.0) {
+					const double share = 0.5 * MIN(1.0, moraine_age / double(glacial_final));
+					for (int i = 0; i < n; i++) {
+						if (ice[i] > 1.0) {
+							debris[i] += worn[i] * share * c * c;
+						}
+					}
+				}
+			}
+			// Down the surface (bed + ice) from the top: on bare ground the rock only keeps going while the wall is
+			// steep (otherwise it is talus, the rockfall above handles it); on the ice it rides to the first bare
+			// cell, where it is dropped.
+			LocalVector<int32_t> ord;
+			ord.resize(n);
+			for (int i = 0; i < n; i++) {
+				ord[i] = i;
+			}
+			const double *sp_top = s_top.ptr();
+			std::sort(ord.ptr(), ord.ptr() + n, [sp_top](int32_t a, int32_t b) { return sp_top[a] > sp_top[b]; });
+			for (int k = 0; k < n; k++) {
+				const int32_t i = ord[k];
+				if (debris[i] <= 0.0) {
+					continue;
+				}
+				const bool on_ice = ice[i] > 1.0;
+				if (!on_ice && carried[i]) {
+					dep[i] += debris[i]; // the margin
+					continue;
+				}
+				const int x = i % nx, z = i / nx;
+				if (!on_ice && slope_at(x, z) <= wall) {
+					continue; // talus below a wall that never reached the ice
+				}
+				// Multiple flow directions (Freeman 1991; Quinn et al. 1991): the load splits over every lower
+				// neighbour by slope^1.1, so it spreads across the ice as flow lines diverge toward the margins
+				// instead of gathering on one line (single-direction routing dropped it all at a few points).
+				int nbs[8];
+				double wts[8];
+				int cnt = 0;
+				double wsum = 0.0;
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int xx = x + dx, zz = z + dz;
+						if ((dx == 0 && dz == 0) || xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+							continue;
+						}
+						const int j = zz * nx + xx;
+						const double L = (dx != 0 && dz != 0 ? Math::SQRT2 : 1.0) * c;
+						const double g = (s_top[i] - s_top[j]) / L;
+						if (g > 0.0) {
+							nbs[cnt] = j;
+							wts[cnt] = Math::pow(g, 1.1) * (dx != 0 && dz != 0 ? 0.354 : 0.5); // contour length
+							wsum += wts[cnt];
+							cnt++;
+						}
+					}
+				}
+				if (cnt == 0) {
+					continue; // a hollow in the ice surface: the load goes englacial and leaves in the meltwater
+				}
+				for (int q = 0; q < cnt; q++) {
+					debris[nbs[q]] += debris[i] * wts[q] / wsum;
+					carried[nbs[q]] |= uint8_t(on_ice || carried[i]);
+				}
+			}
+			// Each margin cell's debris spread along the margin (the ice edge wanders a little over the stand), then
+			// laid as a cone at the angle of repose, V = pi r^2 t / 3 with t = r tan(repose); cones merge by maximum.
+			LocalVector<double> spread;
+			spread.resize(n);
+			for (int pass = 0; pass < 2; pass++) {
+				for (int i = 0; i < n; i++) {
+					spread[i] = dep[i];
+				}
+				for (int z = 1; z < ny - 1; z++) {
+					for (int x = 1; x < nx - 1; x++) {
+						const int i = z * nx + x;
+						if (dep[i] <= 0.0) {
+							continue;
+						}
+						double sum = 0.0, w = 0.0;
+						for (int dz = -1; dz <= 1; dz++) {
+							for (int dx = -1; dx <= 1; dx++) {
+								const int j = i + dz * nx + dx;
+								if (dep[j] > 0.0) {
+									sum += dep[j];
+									w += 1.0;
+								}
+							}
+						}
+						spread[i] = sum / w;
+					}
+				}
+				for (int i = 0; i < n; i++) {
+					dep[i] = spread[i];
+				}
+			}
+			LocalVector<double> top;
+			top.resize(n);
+			memcpy(top.ptr(), h.ptr(), sizeof(double) * n);
+			for (int i = 0; i < n; i++) {
+				if (dep[i] <= 0.0) {
+					continue;
+				}
+				last_moraine_volume += dep[i];
+				const double t = Math::pow(3.0 * dep[i] * repose * repose / Math::PI, 1.0 / 3.0);
+				const int rc = int(Math::ceil(t / repose / c));
+				const int x = i % nx, z = i / nx;
+				for (int zz = MAX(z - rc, 0); zz <= MIN(z + rc, ny - 1); zz++) {
+					for (int xx = MAX(x - rc, 0); xx <= MIN(x + rc, nx - 1); xx++) {
+						const int j = zz * nx + xx;
+						if (sp.b.outlet && sp.b.outlet[j]) {
+							continue;
+						}
+						const double d = Math::sqrt(double((xx - x) * (xx - x) + (zz - z) * (zz - z))) * c;
+						top[j] = MAX(top[j], h[i] + t - repose * d);
+					}
+				}
+			}
+			for (int i = 0; i < n; i++) {
+				if (top[i] > h[i]) {
+					sed[i] += top[i] - h[i]; // till: loose, soil on it
+					h[i] = top[i];
+				}
+			}
+		}
 		last_glacial_eroded = real_t(glac.eroded_max);
 		last_glacial_ice_area = real_t(glac.ice_area);
 		glacial_ice.resize(n);
@@ -4171,6 +4378,9 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_spray_image"), &TerrainGenerator3D::get_spray_image);
 	ClassDB::bind_method(D_METHOD("set_gorge_age", "years"), &TerrainGenerator3D::set_gorge_age);
 	ClassDB::bind_method(D_METHOD("get_gorge_age"), &TerrainGenerator3D::get_gorge_age);
+	ClassDB::bind_method(D_METHOD("set_moraine_age", "years"), &TerrainGenerator3D::set_moraine_age);
+	ClassDB::bind_method(D_METHOD("get_moraine_age"), &TerrainGenerator3D::get_moraine_age);
+	ClassDB::bind_method(D_METHOD("get_last_moraine_volume"), &TerrainGenerator3D::get_last_moraine_volume);
 	ClassDB::bind_method(D_METHOD("set_gorge_rate", "rate"), &TerrainGenerator3D::set_gorge_rate);
 	ClassDB::bind_method(D_METHOD("get_gorge_rate"), &TerrainGenerator3D::get_gorge_rate);
 	ClassDB::bind_method(D_METHOD("set_fan_backfill", "enable"), &TerrainGenerator3D::set_fan_backfill);
@@ -4346,6 +4556,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunge_pools"), "set_plunge_pools", "get_plunge_pools");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fan_backfill"), "set_fan_backfill", "get_fan_backfill");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_age", PROPERTY_HINT_RANGE, "0,100000,100,or_greater,suffix:yr"), "set_gorge_age", "get_gorge_age");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moraine_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_moraine_age", "get_moraine_age");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_rate", PROPERTY_HINT_RANGE, "0,0.1,0.0001,or_greater"), "set_gorge_rate", "get_gorge_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_cell", PROPERTY_HINT_RANGE, "0,32,0.5,suffix:m"), "set_spray_cell", "get_spray_cell");
 	ADD_GROUP("Inflows", "inflow");

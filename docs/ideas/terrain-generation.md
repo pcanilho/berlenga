@@ -1079,6 +1079,51 @@ Ice inflow at the map edge (built 11 Nov, Paulo picked at 20:23):
 - Cost: the ice stage takes 7 to 8 s with an inflow glacier against 2.5 s without (a larger ice area means shorter
   erosion sub-steps). Only when the setting is on.
 
+## Moraines (research, 11 Nov night; proposed to Paulo, recommended)
+
+Why: a glaciated valley without moraines reads as eroded by water; the sharp ridges along the old ice edges and
+the loop across the valley at its furthest reach are the landform people know glacial valleys by, and the loop
+dams lakes (Lake Garda, Lago Maggiore, most piedmont lakes).
+
+What makes them:
+
+- Debris: rockfall from the walls above the ice lands on the glacier (supraglacial debris), is carried down with the
+  ice along flow lines (lateral and medial bands), and is dropped where the ice melts: the margins. A margin that
+  holds still for centuries builds a ridge; the furthest stand leaves the terminal loop (Benn and Evans, Glaciers and
+  Glaciation, ch. 11; Anderson, Anderson et al. 2012 on how debris cover lets glaciers reach far and builds large
+  moraines; Rowan, Egholm and Clark 2015 for a debris-transport ice model, Earth and Planetary Science Letters 430).
+- Shape: crests sharp, flanks near the angle of repose (30 to 38 degrees) when young, the inner flank steeper;
+  lateral ridges tens of metres high in Alpine valleys, terminal loops 10 to 50 m.
+
+Design (one pass after the last glaciation, no new solve):
+
+1. Supply: ice-free cells steeper than 40 degrees next to the ice shed headwall retreat (about 1 mm/yr) times their
+   area onto the nearest ice cell.
+2. Transport: route the debris down the ice surface (steepest descent on bed + ice, as a flow accumulation weighted
+   by supply) to the first cell where the ice ends.
+3. Deposit: each margin cell gets its debris volume over a stand time (`moraine_age`, about 2000 years, the last
+   stillstand) as a ridge: a cone at 34 degrees round it, maximum with the ground. The basin-lake rule finds the
+   lakes behind the loops by itself.
+4. Material: `get_soil_at`-style channel for till (grey, bouldery) so the vegetation and the ground shader can tell
+   moraine from alluvium; boulders scattered on crests from get_boulders.
+
+Cost: one routing pass on the fine grid, well under the ice stage's time.
+
+Built (11 Nov night, Paulo picked all four proposals at 21:25):
+
+- `moraine_age` (years, 0 = off). Supply: bare walls over 40 degrees retreat 1 mm/yr onto the ice, plus half the
+  basal wear of the stand (the rest leaves in the meltwater). Transport: multiple flow directions down the ice
+  surface (Freeman 1991); single-direction routing gathered everything on a few flow lines and dropped it at 47
+  points. Deposit: at the first cell where the ice ends, spread along the margin, laid as 34 degree cones merged by
+  maximum, added to the sediment (till carries soil).
+- The edge of the glacier is where the ice, smoothed on the fine grid, is 10 m thick: the 64 m ice grid's
+  bilinear edge drew staircases, and the solve's thin skirt over the slopes put the margin on every hillside.
+- A hollow in the ice surface keeps its load (englacial, out with the meltwater); dropping it there left scattered
+  bumps under the ice.
+- Valley with no markers, 3000 years: terminal loops round each lobe at the mountain foot and lateral ridges round
+  the ice-free peaks, up to about 30 m; the lakes at the foot grow behind them (20 to 23 ha, 8.6 to 10.6 ha).
+  About 4e5 m3 of debris at 3000 years (the bench default with `--auto-lake`). Cost under 0.1 s.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
