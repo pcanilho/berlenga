@@ -97,6 +97,45 @@ None meets the bar or reaches the path tracer with its wind.
 - **Leaf optics:** thin-leaf transmission and back lighting are in the fork; leaf colour by
   season (SpeedTree 10.1 seasons) gives autumn, and bare winter crowns let snow sit on twigs.
 
+### 2a. Bark (stage 6 plan)
+
+What the field does:
+- **Fracture of an expanding outer layer.** Bark patterns come from the dead outer bark cracking
+  as the cambium widens the stem: Lefebvre and Neyret, *Synthesizing Bark* (EGWR 2002) grow
+  cracks along the stem as circumference grows; Wang et al., *Interactive Modeling of Tree Bark*
+  (PG 2003) synthesise from samples onto the stem; Kratt et al., *Woodification* (CGF 2015) tie
+  bark thickness and cracking to cambial growth; Pixar's *Elemental Bark* layers a procedural
+  fracture over shaded wood. All share one rule we can use directly: crack spacing and depth
+  follow how much the stem has grown since that bark formed.
+- **Games.** SpeedTree tiles a scanned bark per species with UVs continuous along the stem and a
+  fixed number of repeats around each branch, plus tessellated displacement near the camera; the
+  Witcher 4 forest (UE 5.6, Nanite foliage) models trunks as real geometry and displaces them.
+  Normal maps alone go flat in silhouettes and under path tracing (section 2).
+
+Our plan (assets stay out of git: everything is procedural):
+1. **Bark baker.** One tileable texture set per species (albedo, normal, roughness, height; 512
+   px over 0.4 m), baked once at generation and cached like the leaf textures. Families:
+   smooth (beech, hornbeam, young birch, rowan: grey, faint lenticel dashes), furrowed (oak,
+   ash, lime, chestnut, elm, willow: anisotropic Voronoi cracks stretched 4-8x along the stem,
+   interlaced ridges), plated (Scots and white pine: wide plates, deep furrows, orange upper
+   stem), scaly (spruce, larch, hemlock: small flakes), flaking (sycamore, maples: patch
+   mosaic of colour), papery (birch: white with horizontal lenticels, black diamond fissures
+   low on the stem). Crack depth and width scale with stem age at that height (Lefebvre-Neyret),
+   so the base of an old oak is deeply furrowed and its limbs nearly smooth.
+2. **UVs.** u around the stem in a whole number of repeats chosen from each branch's base
+   circumference, v along the branch as arc length from the root, continuous through junction
+   collars, so the texel density stays even and nothing stretches.
+3. **Real relief near the camera.** The near variant (the `near_meshes` swap the needles use)
+   rebuilds stems and limbs over 8 cm with 32 or more sides and 4 cm rings, displaced by the
+   baked height times the species' bark depth (oak and pine up to 3-4 cm, beech under 1 mm).
+   Raster and the path tracer both see the ridges. Mid and far LODs keep the texture with its
+   normal map.
+4. Later: moss and lichen on up-facing and wet sides from the climate maps; decayed classes
+   peel to bare wood with the same baker.
+
+Checks: 100% crops raster against PT (detail kept), texel density along a stem, no seams around
+or along, cost of the near trunks (vertices, BLAS memory).
+
 ## 3. Wind
 
 - **Vertex-shader layers** (Sousa, GPU Gems 3 ch. 16; Horizon Zero Dawn: distance to trunk,
@@ -461,6 +500,10 @@ needles are millimetres wide, and without multisampling they missed every sample
 read as sticks; games run TAA or DLSS, which integrate that coverage.
 
 ## References
+
+- Lefebvre, S., Neyret, F. Synthesizing Bark. EGWR 2002.
+- Wang, X., Wang, L., Liu, L., Hu, S., Guo, B. Interactive Modeling of Tree Bark. Pacific Graphics 2003.
+- Kratt, J., Spicker, M., Guayaquil, A., Fiser, M., Pirk, S., Deussen, O., Hart, J. C., Benes, B. Woodification: User-Controlled Cambial Growth Modeling. Computer Graphics Forum 34(2), 2015.
 
 - Weber, Penn, SIGGRAPH 1995. Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*,
   1990. Runions, Lane, Prusinkiewicz, 2007. Palubicki et al., SIGGRAPH 2009. Stava et al., CGF
