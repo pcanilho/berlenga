@@ -205,7 +205,16 @@
 		<constant name="FLOOR_HEDGEROW" value="6" enum="FloorStand">
 			Hedgerow bottom: bramble, nettle, ivy, foxglove, fern.
 		</constant>
-		<constant name="FLOOR_MAX" value="7" enum="FloorStand">
+		<constant name="FLOOR_NORTHERN_HARDWOOD" value="7" enum="FloorStand">
+			Northern hardwoods (sugar maple, beech, birch): deep leaf litter, spring ephemerals, ferns, wood sorrel, many seedlings.
+		</constant>
+		<constant name="FLOOR_EASTERN_OAK" value="8" enum="FloorStand">
+			Eastern oak and hickory: oak litter with blueberry and huckleberry carpets, bracken in gaps, few herbs.
+		</constant>
+		<constant name="FLOOR_PINE_HEMLOCK" value="9" enum="FloorStand">
+			White pine and hemlock: deep needle duff, nearly bare; a little moss, wood sorrel and seedlings.
+		</constant>
+		<constant name="FLOOR_MAX" value="10" enum="FloorStand">
 			Number of floor stand types.
 		</constant>
 	</constants>

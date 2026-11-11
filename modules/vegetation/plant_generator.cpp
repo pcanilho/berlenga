@@ -3358,6 +3358,35 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			set[0].density = 1.0f;
 			set[0].patch_cover = 0.7f;
 			break;
+		case FLOOR_NORTHERN_HARDWOOD:
+			// Sugar maple, beech, birch (North America): deep leaf litter, a spring carpet of
+			// ephemerals (trout lily, spring beauty: anemone-like, here wood anemone), ferns,
+			// wood sorrel, maple seedlings by the thousand.
+			set = LocalVector<FloorSpec>({ gap_bramble, fern, seedling,
+				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 6.0f, 0.45f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
+				sorrel, moss, twigs, leaves, needles });
+			set[1].density = 0.8f;
+			set[1].patch_cover = 0.55f;
+			set[2].density = 0.9f;
+			break;
+		case FLOOR_EASTERN_OAK:
+			// Oak and hickory on drier ground: oak litter with lowbush blueberry and huckleberry
+			// (the bilberry preset's form), bracken in gaps, few herbs.
+			set = LocalVector<FloorSpec>({ gap_bracken, fern, seedling, bilberry, moss, twigs, leaves, needles });
+			set[1].density = 0.35f;
+			set[3].conifer_min = 0.0f; // Ericaceous shrubs under oak here, not only conifers.
+			set[3].density = 1.0f;
+			set[3].patch_cover = 0.7f;
+			break;
+		case FLOOR_PINE_HEMLOCK:
+			// White pine and hemlock: deep needle duff in the hemlock's dark, nearly bare; a little
+			// moss, wood sorrel and seedlings where light reaches.
+			set = LocalVector<FloorSpec>({ fern, seedling, sorrel, moss, twigs, needles });
+			set[0].density = 0.2f;
+			set[1].density = 0.25f;
+			set[2].density = 0.4f;
+			set[3].density = 0.4f;
+			break;
 		case FLOOR_MAX:
 			break;
 	}
@@ -3495,6 +3524,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(FLOOR_PINE_HEATH);
 	BIND_ENUM_CONSTANT(FLOOR_RIPARIAN);
 	BIND_ENUM_CONSTANT(FLOOR_HEDGEROW);
+	BIND_ENUM_CONSTANT(FLOOR_NORTHERN_HARDWOOD);
+	BIND_ENUM_CONSTANT(FLOOR_EASTERN_OAK);
+	BIND_ENUM_CONSTANT(FLOOR_PINE_HEMLOCK);
 	BIND_ENUM_CONSTANT(FLOOR_MAX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 }

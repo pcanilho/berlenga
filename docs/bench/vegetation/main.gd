@@ -320,9 +320,9 @@ func _checks() -> void:
 	field.density_mask = ImageTexture.create_from_image(img)
 	field.density_mask_rect = rect
 	tree_sp.mask_channel = 0
-	var bush_sp: PlantSpecies = field.biome.species[1]
-	bush_sp.mask_channel = 0
-	bush_sp.mask_invert = true
+	var mask_bush: PlantSpecies = field.biome.species[1]
+	mask_bush.mask_channel = 0
+	mask_bush.mask_invert = true
 	field.populate()
 	var in_clearing := 0
 	for t in field.get_placements(0):
@@ -334,7 +334,7 @@ func _checks() -> void:
 			bush_out += 1
 	_check("density mask: no tree in the clearing, bushes only inside it", in_clearing == 0 and bush_out == 0 and field.get_placements(0).size() < all_trees and field.get_placements(1).size() > 0, [in_clearing, bush_out, field.get_placements(0).size(), all_trees])
 	tree_sp.mask_channel = -1
-	bush_sp.mask_channel = -1
+	mask_bush.mask_channel = -1
 	field.density_mask = null
 	print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 

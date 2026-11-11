@@ -69,6 +69,12 @@
 		</method>
 	</methods>
 	<members>
+		<member name="density_mask" type="Texture2D" setter="set_density_mask" getter="get_density_mask">
+			A density mask over [member density_mask_rect], read once per [method populate] (bilinear). Each species with a [member PlantSpecies.mask_channel] multiplies its suitability by that channel (or by one minus it with [member PlantSpecies.mask_invert]), the way open-world tools paint or generate per-layer density maps (Unreal's landscape layer weights for grass types, Unity's terrain detail maps, Horizon Zero Dawn's density maps per ecotope). Paint a clearing as 0 in the trees' channel and the meadow's species can read the same channel inverted. Outside the rect the mask counts as 1.
+		</member>
+		<member name="density_mask_rect" type="Rect2" setter="set_density_mask_rect" getter="get_density_mask_rect" default="Rect2(0, 0, 0, 0)">
+			The world rectangle (x and z, metres) that [member density_mask] covers.
+		</member>
 		<member name="biome" type="Biome" setter="set_biome" getter="get_biome">
 			The species to place.
 		</member>

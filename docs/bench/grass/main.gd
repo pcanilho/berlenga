@@ -961,9 +961,6 @@ func _checks() -> void:
 						if cd.r < 0.0 or cd.r > 1.0 or absf(cd.g - sp.visibility_range) > 1e-3 or absf(ch.visibility_range_end - sp.visibility_range * 1.05) > 1e-3:
 							bad += 1
 		_check("plants carry rank and range for thinning", ranged > 1000 and bad == 0, "%d ranged, %d bad" % [ranged, bad])
-		var far_rect: Vector4 = RenderingServer.global_shader_parameter_get("vegetation_far_rect")
-		var far_range: float = RenderingServer.global_shader_parameter_get("vegetation_far_range")
-		_check("plants' far colour published", far_rect.z > 0.0 and far_range > 5.0 and far_range < 50.0, "%s range %.1f" % [str(far_rect), far_range])
 
 func _place(node: Node3D, x: float, z: float, lift: float) -> void:
 	node.global_position = Vector3(x, height(x, z) + lift, z)

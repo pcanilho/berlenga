@@ -267,6 +267,9 @@ public:
 		FLOOR_PINE_HEATH,
 		FLOOR_RIPARIAN,
 		FLOOR_HEDGEROW,
+		FLOOR_NORTHERN_HARDWOOD,
+		FLOOR_EASTERN_OAK,
+		FLOOR_PINE_HEMLOCK,
 		FLOOR_MAX,
 	};
 	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true);
