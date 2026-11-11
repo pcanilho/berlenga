@@ -21,7 +21,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
 - **Clouds**: a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
-- **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, shore waves, camera under water.
+- **Water**: refraction, murky water, caustics, ocean, currents, boat wakes, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
 - **Physics**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
 - **Open worlds**: camera-relative tracing, persistent instances, culling, mesh LOD.
@@ -106,6 +106,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Plunging breakers** (`shore_wave_curl`, `shore_spray`, `shore_spray_amount`): the crest throws a sheet of water that lands ahead and sinks into the bore, with spray where it is thin and where it lands.
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
 - **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
+- **Boat wakes** (`PhysXWaterWake3D.dispersive`, `breaking_slope`): waves stepped with deep-water dispersion in Fourier space form the Kelvin pattern, a 19.5 degree wedge of transverse and diverging waves.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
 - **Rivers** (`PhysXRiver3D`: `discharge`, `roughness`, `max_slope`): drawn as a curve; finds its depth and never runs uphill.
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.
@@ -115,7 +116,7 @@ Each feature that changes the look or the cost can be turned off with the settin
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
 - **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
-<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, whitecaps, currents, live flow, white water, rivers, under water</summary>
+<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, whitecaps, currents, live flow, boat wakes, white water, rivers, under water</summary>
 
 ![The pool with clear and with murky water](docs/media/murky-water.jpg)
 
@@ -160,6 +161,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Flecks carried past a rock, baked flow vs live flow](docs/media/live-flow.gif)
 
 *Live flow: the streaks roll up into a wake behind the rock.*
+
+![Wake heights from above at 4, 6 and 10 m/s, before and now](docs/media/boat-wakes.jpg)
+
+*Boat wakes: before, a flat wedge; now transverse and diverging waves form the Kelvin pattern.*
 
 ![Foam lines trailing a rock in a current](docs/media/white-water.gif)
 
@@ -318,7 +323,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Climate maps: cold high ridges, rain over the range, shaded faces in winter, snow on the high crest.*
 
-![A generated range with its ground material: rock, scree, soil and a sand beach](docs/media/terrain-ground.jpg)
+![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach](docs/media/terrain-ground.jpg)
 
 *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
