@@ -20,7 +20,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Snow**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced; deep snow with tracks; falling and blowing snow; baked winters and cornices.
 - **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
-- **Clouds**: a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
+- **Sky and clouds**: sun and moon set by date, time and place; a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
 - **Water**: refraction, murky water, caustics, ocean, currents, boat wakes, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
 - **Physics**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
@@ -429,7 +429,8 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 </details>
 
-### Clouds
+### Sky and clouds
+- **Sun and moon clock** (`SkyClock`): date, time and place point the sun and moon lights, with moon phases (Meeus); the sun is within 0.0004 degrees of the ephemeris and sunrise within half a minute of the almanac (`docs/bench/sky --test`).
 - **Cloud layer** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
 - **Clouds that never repeat** (always on): shape noise read at two scales with an irrational ratio.
 - **Cloud reprojection** (`WeatherSkyMaterial.cloud_reprojection`, on by default): clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.
