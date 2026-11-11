@@ -2678,8 +2678,12 @@ void TreeGenerator::apply_habitat(const Ref<PlantSpecies> &p_species) const {
 // One species of a stand. The stand-grown form (grown with neighbours: tall, narrow, high crown
 // base) fills the stand; the open-grown form is the same tree in a clearing or at an edge, kept
 // there by a shade rule, and shrubs get the shade their light value allows.
-Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_grown, int p_variants) {
-	const int key = (int(p_preset) * 2 + (p_stand_grown ? 1 : 0)) * 2 + (rigged ? 1 : 0);
+Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form) {
+	if (p_form == FORM_OPEN && p_stand_grown) {
+		p_form = FORM_STAND;
+	}
+	p_stand_grown = p_form != FORM_OPEN;
+	const int key = (int(p_preset) * 8 + int(p_form)) * 2 + (rigged ? 1 : 0);
 	const Habitat &h = HABITATS[p_preset];
 	if (!mesh_cache.has(key) || mesh_cache[key].size() < MAX(p_variants, 1)) {
 		// Generate with this generator's colours and seed, under the preset's own parameters.
@@ -2706,20 +2710,31 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		TypedArray<Mesh> meshes;
 		float crown = 0.0f;
 		const int n = MAX(p_variants, 1);
+		const int saved_decay = decay_class;
+		const bool saved_fallen = fallen;
+		if (p_form == FORM_SAPLING) {
+			params[PARAM_YEARS] = MAX(6.0f, Math::round(params[PARAM_YEARS] * 0.2f));
+		}
 		for (int v = 0; v < n; v++) {
 			seed = saved_seed * 31 + v;
+			if (p_form == FORM_SNAG || p_form == FORM_LOG) {
+				decay_class = 2 + v % 3;
+				fallen = p_form == FORM_LOG;
+			}
 			Ref<ArrayMesh> mesh = generate();
 			crown += crown_radius;
 			if (p_variants > 0) {
 				meshes.push_back(mesh);
 			}
 		}
+		decay_class = saved_decay;
+		fallen = saved_fallen;
 		mesh_cache[key] = meshes;
 		crown_cache[key] = crown / n;
 		// One full-needle variant for the near range (the field repeats it over the variants):
 		// about 30M vertices for a spruce, so one only, and no LOD copies since it is only drawn
 		// close. GPU memory and path tracing cost of it are not yet measured.
-		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0) {
+		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND)) {
 			needle_sprays = false;
 			skip_lods = true;
 			seed = saved_seed * 31;
@@ -2742,7 +2757,9 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 
 	Ref<PlantSpecies> sp;
 	sp.instantiate();
-	sp->set_name(String(preset_names[p_preset]) + (p_stand_grown ? " (stand)" : " (open)"));
+	sp->set_meta("preset", int(p_preset));
+	static const char *form_names[] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)" };
+	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
 		meshes.resize(p_variants);
@@ -2784,6 +2801,32 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	if (is_shrub(p_preset)) {
 		sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, h.shade_max));
 		sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.1f);
+	}
+	switch (p_form) {
+		case FORM_SAPLING:
+			// Advance regeneration waits under the canopy as far as the species bears shade
+			// (beech, fir, hemlock, sugar maple deep; oak, pine, birch, larch only in gaps).
+			sp->set_spacing(h.stand_spacing * 0.5f);
+			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, MIN(h.shade_max + 0.1f, 0.97f)));
+			sp->set_rule_fade(PlantSpecies::RULE_SHADE, 0.05f);
+			sp->set_canopy_opacity(h.opacity * 0.5f);
+			break;
+		case FORM_SNAG:
+			// A dead crown casts little shade; snags stand between the living trees.
+			sp->set_spacing(h.stand_spacing * 2.5f);
+			sp->set_canopy_radius(crown * 0.3f);
+			sp->set_canopy_opacity(0.1f);
+			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
+			break;
+		case FORM_LOG:
+			sp->set_spacing(h.stand_spacing * 2.5f);
+			sp->set_canopy_radius(0.0f);
+			sp->set_canopy_opacity(0.0f);
+			sp->set_align_to_ground(1.0f); // Lies along the slope.
+			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
+			break;
+		default:
+			break;
 	}
 	return sp;
 }
@@ -2843,8 +2886,10 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		p_sp->set_rule_fade(p_rule, p_fade);
 	};
 
+	Preset lead = PRESET_MAX; // The stand's leading tree, whose saplings, snags and logs it holds.
 	switch (p_stand) {
 		case STAND_BEECH: {
+			lead = PRESET_BEECH;
 			// Closed beech canopy; sycamore and ash in clumps between, thinner, with gaps the open
 			// forms and shrubs take; little shrub layer survives the beech shade (Ellenberg 1988:
 			// Fagion).
@@ -2862,6 +2907,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			shrub(PRESET_ELDER, 0.15f);
 		} break;
 		case STAND_OAK_MIXED: {
+			lead = PRESET_OAK;
 			// Oak and small-leaved lime in clumps, ash in moist hollows, a hazel coppice layer,
 			// birch and hawthorn in the clearings.
 			Ref<PlantSpecies> ash = canopy(PRESET_ASH, 1.0f, 0.0f, 0.0f, false, true);
@@ -2880,6 +2926,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			box->set_patch_seed(patch_seed + 5);
 		} break;
 		case STAND_MONTANE_CONIFER: {
+			lead = PRESET_SILVER_FIR;
 			// Spruce-fir with beech of the montane belt, mixed in clumps.
 			// The montane belt: about 1.5 to 6 C annual mean (Ellenberg 1988; Ozenda 1985).
 			const Vector2 belt(1.5f, 6.0f);
@@ -2891,6 +2938,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			clip(shrub(PRESET_ELDER, 0.1f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 		} break;
 		case STAND_SUBALPINE: {
+			lead = PRESET_NORWAY_SPRUCE;
 			// Larch and spruce thinning towards the tree line; rowan in the gaps.
 			// Subalpine up to the tree line (about the 10 C July isotherm; Korner 2012).
 			// Its cold end is the tree line, about -1.5 C annual mean in the Alps.
@@ -2901,6 +2949,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			clip(open(PRESET_ROWAN, 0.4f), PlantSpecies::RULE_TEMPERATURE, belt, 1.0f);
 		} break;
 		case STAND_PINE_HEATH: {
+			lead = PRESET_SCOTS_PINE;
 			// Scots pine on dry ground, open enough for birch and rowan beneath.
 			const Vector2 dry(0.0f, 750.0f);
 			clip(canopy(PRESET_SCOTS_PINE, 0.9f, 80.0f, 0.85f, false, true), PlantSpecies::RULE_PRECIPITATION, dry, 100.0f);
@@ -2909,6 +2958,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			clip(shrub(PRESET_ROWAN, 0.3f), PlantSpecies::RULE_PRECIPITATION, dry, 100.0f);
 		} break;
 		case STAND_RIPARIAN: {
+			lead = PRESET_BLACK_ALDER;
 			// Alder carr on the banks, white willows at the water's edge, elder.
 			canopy(PRESET_BLACK_ALDER, 1.0f, 0.0f, 0.0f, false, true);
 			open(PRESET_WHITE_WILLOW, 0.6f);
@@ -2928,6 +2978,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			open(PRESET_ROWAN, 0.3f);
 		} break;
 		case STAND_NORTHERN_HARDWOOD: {
+			lead = PRESET_SUGAR_MAPLE;
 			// Sugar maple-beech-yellow birch (SAF cover type 25; Eyre 1980; Braun 1950): maple and
 			// beech in clumps, yellow birch in gaps, hemlock where it is moist; witch-hazel beneath.
 			canopy(PRESET_SUGAR_MAPLE, 1.0f, 60.0f, 0.6f, false, true);
@@ -2941,6 +2992,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			shrub(PRESET_WITCH_HAZEL, 0.5f);
 		} break;
 		case STAND_EASTERN_OAK: {
+			lead = PRESET_RED_OAK;
 			// Oak forest of the eastern uplands (SAF 52-55, white oak-red oak): the two oaks in
 			// clumps, red maple between; mountain laurel thickets and witch-hazel in the shrub layer.
 			canopy(PRESET_WHITE_OAK, 1.0f, 70.0f, 0.55f, false, true);
@@ -2955,6 +3007,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			shrub(PRESET_WITCH_HAZEL, 0.4f);
 		} break;
 		case STAND_PINE_HEMLOCK: {
+			lead = PRESET_HEMLOCK;
 			// White pine-hemlock (SAF 22): emergent pines over hemlock, which takes the shade and
 			// the moist slopes; paper birch and red maple in openings.
 			canopy(PRESET_WHITE_PINE, 1.0f, 60.0f, 0.6f, false, true);
@@ -2966,6 +3019,39 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		} break;
 		case STAND_MAX:
 			break;
+	}
+	if (lead != PRESET_MAX && !list.is_empty()) {
+		// Every stand also regenerates and dies (docs/ideas/trees.md section 5): saplings of its
+		// leading tree wait beneath it, and snags and logs of it lie between the living trees,
+		// about what an unmanaged temperate forest holds (Christensen et al., For. Ecol. Manage.
+		// 210, 2005: 30-130 m3/ha of deadwood in European beech reserves; managed stands far less).
+		// The belt rules come from the lead's own canopy entry (the stand's first species can be
+		// one held to wet hollows).
+		Ref<PlantSpecies> first = list[0];
+		for (int i = 0; i < list.size(); i++) {
+			const Ref<PlantSpecies> c = list[i];
+			if (int(c->get_meta("preset", -1)) == int(lead)) {
+				first = c;
+				break;
+			}
+		}
+		Ref<PlantSpecies> sap = _stand_species(lead, true, p_variants, FORM_SAPLING);
+		sap->set_density(0.6f);
+		Ref<PlantSpecies> snag = _stand_species(lead, true, p_variants, FORM_SNAG);
+		snag->set_density(0.25f);
+		Ref<PlantSpecies> log = _stand_species(lead, true, p_variants, FORM_LOG);
+		log->set_density(0.4f);
+		for (const Ref<PlantSpecies> &extra : { sap, snag, log }) {
+			// Inside the stand's own belt.
+			for (int r = 0; r < PlantSpecies::RULE_MAX; r++) {
+				if (PlantSpecies::Rule(r) == PlantSpecies::RULE_SHADE) {
+					continue;
+				}
+				extra->set_rule_range(PlantSpecies::Rule(r), first->get_rule_range(PlantSpecies::Rule(r)));
+				extra->set_rule_fade(PlantSpecies::Rule(r), first->get_rule_fade(PlantSpecies::Rule(r)));
+			}
+			list.push_back(extra);
+		}
 	}
 	if (p_stand == STAND_HEDGEROW) {
 		// A hedge is a line of light: no shade rules within it.

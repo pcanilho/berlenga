@@ -361,7 +361,14 @@ private:
 	Ref<Texture2D> _spray_texture();
 	void _mark_spurs(int p_year);
 	Ref<ArrayMesh> _build_mesh();
-	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants);
+	enum Form {
+		FORM_OPEN,
+		FORM_STAND,
+		FORM_SAPLING, // Advance regeneration: the stand-grown form at a fifth of its age.
+		FORM_SNAG, // Standing dead, decay classes 2-4 over the variants.
+		FORM_LOG, // Fallen dead, decay classes 2-4.
+	};
+	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
 
 protected:
 	static void _bind_methods();
