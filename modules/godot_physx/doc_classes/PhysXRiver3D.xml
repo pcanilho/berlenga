@@ -201,6 +201,9 @@
 		<member name="obstacle_collision_mask" type="int" setter="set_obstacle_collision_mask" getter="get_obstacle_collision_mask" default="0">
 			Physics layers of rocks and other obstacles in the river, measured on top of the ground. The flow parts round them and white water gathers at them. Needed with [member carve], since a carving river measures the uncarved terrain from [member base_height_source]; without carving, rocks on the [member ground_collision_mask] layers are found anyway.
 		</member>
+		<member name="raster_reflections" type="bool" setter="set_raster_reflections" getter="get_raster_reflections" default="true">
+			Raster only: open water mirrors the sky and the sun's glitter by the exact Fresnel term, as the path tracer sees it (the same as [member PhysXWaterSurface3D.raster_reflections]). Off, the surface is the unlit tint it was before.
+		</member>
 		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.035">
 			Manning's roughness: about 0.013 for concrete, 0.03 for a clean natural channel, 0.05 for a stony or weedy one. Rougher rivers run slower and deeper.
 		</member>

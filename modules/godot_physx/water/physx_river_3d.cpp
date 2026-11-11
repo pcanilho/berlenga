@@ -37,17 +37,16 @@
 #include "core/object/class_db.h"
 #include "core/templates/hash_set.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/gpu_particles_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/main/viewport.h"
-#include "scene/resources/texture_rd.h"
+#include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/mesh.h"
-#include "scene/resources/shader.h"
-#include "servers/physics_3d/physics_server_3d.h"
-
-#include "scene/3d/gpu_particles_3d.h"
-#include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/particle_process_material.h"
+#include "scene/resources/shader.h"
+#include "scene/resources/texture_rd.h"
+#include "servers/physics_3d/physics_server_3d.h"
 
 #ifdef GODOT_PHYSX_FLOW
 #include "../flow/physx_flow_emitter_3d.h"
@@ -115,7 +114,8 @@ uniform vec2 live_texel = vec2(0.25);
 uniform vec3 live_tilt = vec3(0.0);
 uniform sampler2D live_height_tex : hint_default_black, filter_linear, repeat_disable;
 uniform sampler2D live_flow_tex : hint_default_black, filter_linear, repeat_disable;
-
+// Raster reflections from above (water_raster_reflections.h).
+)" WATER_RASTER_REFLECTIONS_GLSL R"(
 varying vec3 v_world;
 varying vec2 v_flow;
 varying vec4 v_info;
@@ -272,6 +272,10 @@ void fragment() {
 	ALBEDO = mix(base_rgb, foam_color.rgb, foam);
 	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * v_info.b;
 	ALPHA = mix(base_a, foam_color.a, foam) * edge;
+	// The sky and the sun's glitter on open water (none on foam, nor past the waterline).
+	vec4 refl = water_raster_reflect(ALBEDO, ALPHA, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness);
+	ALBEDO = refl.rgb;
+	ALPHA = refl.a;
 #endif
 }
 )";
@@ -399,6 +403,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_mouth_blend", "blend"), &PhysXRiver3D::set_mouth_blend);
 	ClassDB::bind_method(D_METHOD("get_mouth_blend"), &PhysXRiver3D::get_mouth_blend);
 	ClassDB::bind_method(D_METHOD("get_discharge_at", "s"), &PhysXRiver3D::get_discharge_at);
+	ClassDB::bind_method(D_METHOD("set_raster_reflections", "enabled"), &PhysXRiver3D::set_raster_reflections);
+	ClassDB::bind_method(D_METHOD("get_raster_reflections"), &PhysXRiver3D::get_raster_reflections);
 	ClassDB::bind_method(D_METHOD("set_live_flow", "enabled"), &PhysXRiver3D::set_live_flow);
 	ClassDB::bind_method(D_METHOD("get_live_flow"), &PhysXRiver3D::get_live_flow);
 	ClassDB::bind_method(D_METHOD("set_live_domain_size", "size"), &PhysXRiver3D::set_live_domain_size);
@@ -466,6 +472,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("rebuilt"));
 	ADD_GROUP("Live flow", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_flow"), "set_live_flow", "get_live_flow");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "raster_reflections"), "set_raster_reflections", "get_raster_reflections");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_domain_size", PROPERTY_HINT_RANGE, "8,256,1,or_greater,suffix:m"), "set_live_domain_size", "get_live_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "live_grid_resolution", PROPERTY_HINT_RANGE, "32,512,1"), "set_live_grid_resolution", "get_live_grid_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,suffix:1/s"), "set_wall_friction", "get_wall_friction");
@@ -1106,6 +1113,7 @@ void PhysXRiver3D::_notification(int p_what) {
 			water_time += get_process_delta_time();
 			if (water_material.is_valid()) {
 				water_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
+				raster_reflection_state.update(this, water_material, raster_reflections);
 			}
 			if (fall_material.is_valid() && !falls.is_empty()) {
 				fall_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
@@ -2433,7 +2441,6 @@ bool PhysXRiver3D::_locate(const Vector3 &p_world, int &r_section, float &r_t, f
 	r_n = n;
 	return true;
 }
-
 
 float PhysXRiver3D::sample_depth(const Vector3 &p_world_pos) const {
 	int i;
