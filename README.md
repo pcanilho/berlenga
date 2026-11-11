@@ -106,6 +106,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Wave groups** (`shore_wave_groups`): shore waves arrive in sets with their own Rayleigh heights, so each breaks at its own place.
 - **Plunging breakers** (`shore_wave_curl`, `shore_spray`, `shore_spray_amount`): the crest throws a sheet of water that lands ahead and sinks into the bore, with spray where it is thin and where it lands.
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
+- **Faster flow bakes** (`physics/physx_3d/water/multigrid_flow`): multigrid-preconditioned conjugate gradients bake the flow 7 to 10 times faster than SOR.
 - **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
 - **Boat wakes** (`PhysXWaterWake3D.dispersive`, `breaking_slope`): waves stepped with deep-water dispersion in Fourier space form the Kelvin pattern, a 19.5 degree wedge of transverse and diverging waves.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
