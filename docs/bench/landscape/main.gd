@@ -41,6 +41,7 @@ var lake_level := 0.0
 var fall_point := Vector3.ZERO
 var fall_dir := Vector2(0, 1)
 var gen_falls: Array = []
+var climate: ClimateRecipe
 var rivers: Array = []
 var weather: WeatherMap3D
 var sky_mat: WeatherSkyMaterial
@@ -183,6 +184,15 @@ func _generate() -> void:
 	add_child(gen)
 	gen.ranges = [gen.get_path_to(path), gen.get_path_to(spur)]
 	var t := Time.get_ticks_msec()
+	# One climate for the rivers (rain and snowmelt by month), the data map's climate fields and the plants: a mild
+	# coast with the wet wind from the sea (south, +Z).
+	climate = ClimateRecipe.new()
+	climate.temperature_january = 4.0
+	climate.temperature_july = 19.0
+	climate.precipitation = 1100.0
+	climate.wind_from = 190.0
+	gen.climate_recipe = climate
+	gen.river_month = int(args.get("month", "4")) # spring: the snowmelt flood
 	gen.generate()
 	_log("generate %d ms, grid %s, last change %.3f m" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change()])
 	t = Time.get_ticks_msec()
@@ -544,7 +554,10 @@ func _build_vegetation() -> void:
 		ws.append(data_map.get_path_to(w))
 	data_map.water_sources = ws
 	data_map.geology_source = data_map.get_path_to(gen)
+	data_map.climate_recipe = climate
 	data_map.bake()
+	if not data_map.has_climate():
+		data_map.bake_climate()
 	_log("data map bake %d ms" % (Time.get_ticks_msec() - t))
 	t = Time.get_ticks_msec()
 	# STAND-IN trees: tree generation is not built yet, so cones and balls mark where the forest grows.
@@ -908,8 +921,36 @@ func _checks() -> void:
 			if data_map.get_rock_at(p) > 0.4 or data_map.get_talus_at(p) > 0.3 or data_map.get_soil_depth_at(p) < 0.4:
 				on_rock += 1
 	check(total > 0 and on_rock == 0, "trees follow the generator's geology: %d of %d on bare rock, scree or thin soil" % [on_rock, total])
-	check(false, "rain raises river discharge and lake level (rivers carry a fixed discharge)", true)
-	check(false, "snowmelt runoff reaches rivers (it feeds the surface water film only)", true)
+	# Rivers carry the climate's water: rain and snowmelt by month, the same recipe as the data map's climate.
+	var big_r: Dictionary = {}
+	for r in gen.get_rivers(float(args.get("min-area", "1500000"))):
+		if big_r.is_empty() or r["areas"][r["areas"].size() - 1] > big_r["areas"][big_r["areas"].size() - 1]:
+			big_r = r
+	var rp: PackedVector3Array = big_r.get("points", PackedVector3Array())
+	var mouth := rp[maxi(rp.size() - 3, 0)] if rp.size() > 0 else Vector3.ZERO
+	# The river's own monthly discharge at its mouth (what build_river_paths gives the river).
+	var md: Array = big_r.get("monthly_discharge", [])
+	var q_spring := 0.0
+	var q_summer := 0.0
+	if md.size() == 12:
+		q_spring = float(md[3])
+		q_summer = float(md[7])
+	elif md.size() > 0 and md[md.size() - 1] is Array:
+		q_spring = float(md[md.size() - 1][3])
+		q_summer = float(md[md.size() - 1][7])
+	var melt := gen.get_snow_water_at(_highest_point(), 2)
+	var months := ""
+	for v in md:
+		months += " %.2f" % float(v)
+	_log("largest river at its mouth by month (m3/s):%s" % months)
+	_log("largest river: %.2f m3/s in April, %.2f in August; snow water on the peak in March %.0f mm" % [q_spring, q_summer, melt])
+	check(q_spring > 0.0 and q_summer > 0.0, "rivers carry the climate's rain and snowmelt (%.1f m3/s at the largest mouth in April)" % q_spring)
+	var q_wet := 0.0
+	for m in [11, 0, 1, 2, 3]:
+		q_wet = maxf(q_wet, float(md[m]) if md.size() == 12 else 0.0)
+	check(q_wet > q_summer * 1.5, "rivers follow the seasons: winter and spring high water, a late-summer low (%.2f against %.2f m3/s)" % [q_wet, q_summer])
+	check(melt > 0.0, "snow on the high ground holds winter water for the spring melt (%.0f mm on the peak in March)" % melt)
+	check(false, "the live weather's rain raises rivers and lakes (flows follow the climate by month, not the storm overhead)", true)
 	# Footprints: sand on the beach, mud on the lake bank in the rain, litter under the forest, none on bare rock.
 	var beach_p := Vector3(0, 0, _coast_z(0.0) - 25.0)
 	beach_p.y = height_at(beach_p.x, beach_p.z)
