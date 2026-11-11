@@ -118,9 +118,12 @@ public:
 	Buffers b;
 	int pits_filled = 0; // cells raised by the last fill
 	int deposition_passes = 0; // Gauss-Seidel passes the last step took
+	int64_t deposition_pass_total = 0; // over all steps
 	std::vector<double> dep_start; // heights after uplift, before erosion and deposition
 	std::vector<double> dep_flux; // eroded volume from each cell and everything above it, m^3 per step
 	std::vector<uint8_t> dep_undercut; // hard blocks broken off this step (decided on the first pass)
+	std::vector<double> dep_affine; // per cell: h_i = alpha + beta h_r, inflow M + N h_i (see _deposition_direct)
+	std::vector<double> dep_coef; // per cell, fixed over a step's passes: f, G a / A, G / A, top (see _deposition_pass)
 	std::vector<double> dep_area; // drainage area along the receiver tree the flux follows (not the MFD area)
 
 	// Outlets cached per cell (the edge test and the mask were most of the profile); rebuilt when the grid or the
@@ -187,7 +190,7 @@ public:
 		if (p.deposition > 0.0) {
 			_solve_with_deposition();
 		} else {
-			_solve(nullptr);
+			_solve();
 		}
 
 		if (p.diffusion > 0.0) {
@@ -202,13 +205,10 @@ public:
 	}
 
 	// Implicit stream power and critical slope, from the outlets up: every receiver is final before its donors.
-	// p_up: with deposition, the sediment volume arriving from upstream of each cell (Yuan et al. 2019, eq. 13
-	// solved for h_i with the cell's own share implicit), and b.temp the heights after uplift.
-	void _solve(const double *p_up) {
+	void _solve() {
 		const int n = p.nx * p.ny;
 		double *h = b.height;
 		const bool half_m = p.area_exponent == 0.5;
-		const double cell_area = p.dx * p.dx;
 		for (int k = 0; k < n; k++) {
 			const int i = b.stack[k];
 			const int r = b.receiver[i];
@@ -218,18 +218,14 @@ public:
 			const double d = b.receiver_dist[i];
 			const double am = half_m ? std::sqrt(b.area[i]) : std::pow(b.area[i], p.area_exponent);
 			double kk = b.erodibility_scale ? p.erodibility * b.erodibility_scale[i] : p.erodibility;
-			double top = p_up ? dep_start[i] : h[i];
-			// With deposition the undercut is decided once per step, on the first (incision-only) pass: the later
+			double top = h[i];
+			// With deposition the undercut is decided once per step, here on the incision-only solve: the deposition
 			// passes move the foot by small amounts, and a block that breaks off and back in turn never settles.
 			bool undercut = b.hard_depth && b.hard_depth[i] > 0.0;
 			if (undercut) {
-				if (!p_up) {
-					undercut = h[r] < top - b.hard_depth[i] - p.talus * d;
-					if (p.deposition > 0.0) {
-						dep_undercut[i] = undercut;
-					}
-				} else {
-					undercut = dep_undercut[i];
+				undercut = h[r] < top - b.hard_depth[i] - p.talus * d;
+				if (p.deposition > 0.0) {
+					dep_undercut[i] = undercut;
 				}
 			}
 			if (undercut) {
@@ -240,14 +236,7 @@ public:
 				kk = p.erodibility;
 			}
 			const double f = kk * p.dt * am / d;
-			double hi;
-			if (p_up) {
-				const double g = p.deposition / dep_area[i];
-				const double ga = g * cell_area;
-				hi = ((1.0 + ga) * top + g * std::fmax(p_up[i], 0.0) + f * h[r]) / (1.0 + f + ga);
-			} else {
-				hi = (top + f * h[r]) / (1.0 + f);
-			}
+			double hi = (top + f * h[r]) / (1.0 + f);
 			if (p.talus > 0.0) {
 				hi = std::fmin(hi, h[r] + (b.talus_cell ? b.talus_cell[i] : p.talus) * d);
 			}
@@ -255,9 +244,11 @@ public:
 		}
 	}
 
-	// Yuan et al. 2019: the flux into a cell depends on the new heights upstream, which the stack solves after it,
-	// so the solve is repeated with the flux from the last pass (Gauss-Seidel) until the heights settle. Alluvium
-	// (the surface raised above the uplifted ground, worn first when the river cuts again) goes to b.sediment.
+	// Yuan et al. 2019: the flux into a cell depends on the new heights upstream, which the stack solves after it.
+	// They repeat the solve with the last pass's flux (Gauss-Seidel) until the heights settle; here the linear system
+	// is solved exactly first (_deposition_direct), and the passes only settle what the critical slope clamps
+	// change (one or two, against seven on average before). Alluvium (the surface raised above the uplifted ground,
+	// worn first when the river cuts again) goes to b.sediment.
 	void _solve_with_deposition() {
 		const int n = p.nx * p.ny;
 		double *h = b.height;
@@ -277,8 +268,10 @@ public:
 		}
 		std::vector<double> &up = dep_flux;
 		std::vector<double> prev(n);
-		_solve(nullptr); // first guess: no deposition
+		_solve(); // incision only: decides the undercut and which cells sit at the critical slope
 		deposition_passes = 0;
+		_deposition_coefficients();
+		_deposition_direct();
 		for (int it = 0; it < p.deposition_iterations; it++) {
 			for (int i = 0; i < n; i++) {
 				up[i] = 0.0;
@@ -292,12 +285,7 @@ public:
 				}
 			}
 			memcpy(prev.data(), h, sizeof(double) * n);
-			for (int i = 0; i < n; i++) {
-				if (b.receiver[i] != i) {
-					h[i] = dep_start[i];
-				}
-			}
-			_solve(up.data());
+			_deposition_pass(up.data());
 			deposition_passes++;
 			// Under-relaxed: the full update swings between two states when a step moves much sediment (the
 			// flux and the heights it raises chase each other); half steps settle, halving the change per pass.
@@ -311,10 +299,120 @@ public:
 				break;
 			}
 		}
+		deposition_pass_total += deposition_passes;
 		if (b.sediment) {
 			for (int i = 0; i < n; i++) {
 				b.sediment[i] = std::fmax(b.sediment[i] + h[i] - dep_start[i], 0.0);
 			}
+		}
+	}
+
+	// What a deposition pass needs per cell does not change over a step's passes (area, distance, rock, and the
+	// undercut decided on the first pass): computed once, a pass is a few multiply-adds per cell in stack order.
+	void _deposition_coefficients() {
+		const int n = p.nx * p.ny;
+		const bool half_m = p.area_exponent == 0.5;
+		const double cell_area = p.dx * p.dx;
+		dep_coef.resize(size_t(n) * 4);
+		for (int i = 0; i < n; i++) {
+			double *c = &dep_coef[size_t(i) * 4];
+			const int r = b.receiver[i];
+			if (r == i) {
+				c[0] = c[1] = c[2] = 0.0;
+				c[3] = dep_start[i];
+				continue;
+			}
+			const double d = b.receiver_dist[i];
+			const double am = half_m ? std::sqrt(b.area[i]) : std::pow(b.area[i], p.area_exponent);
+			double kk = b.erodibility_scale ? p.erodibility * b.erodibility_scale[i] : p.erodibility;
+			double top = dep_start[i];
+			if (b.hard_depth && b.hard_depth[i] > 0.0 && dep_undercut[i]) {
+				top = top - b.hard_depth[i];
+				kk = p.erodibility;
+			}
+			const double g = p.deposition / dep_area[i];
+			c[0] = kk * p.dt * am / d;
+			c[1] = g * cell_area;
+			c[2] = g;
+			c[3] = top;
+		}
+	}
+
+	// The deposition equations are linear in the heights along the receiver tree: the flux into a cell is the sum of
+	// what its donors pass on, each affine in the cell's own height once their subtrees are. So one sweep from the
+	// sources down writes every cell as h_i = alpha + beta h_r (and its outflow likewise), and one sweep from the
+	// outlets up gives the heights: the exact solve without passes. The critical slope (a min) is applied on the way
+	// up; the passes after it settle what that clamp changes.
+	void _deposition_direct() {
+		const int n = p.nx * p.ny;
+		double *h = b.height;
+		const double a = p.dx * p.dx;
+		dep_affine.assign(size_t(n) * 4, 0.0); // alpha, beta, then M, N: the inflow from donors as M + N h_i
+		double *af = dep_affine.data();
+		const double *coef = dep_coef.data();
+		for (int k = n - 1; k >= 0; k--) {
+			const int i = b.stack[k];
+			const int r = b.receiver[i];
+			if (r == i) {
+				continue;
+			}
+			const double *c = coef + size_t(i) * 4;
+			double *e = af + size_t(i) * 4;
+			const double f = c[0], ga = c[1], g = c[2], top = c[3];
+			const double m = e[2], nn = e[3];
+			const double d = 1.0 + f + ga - g * nn;
+			e[0] = ((1.0 + ga) * top + g * m) / d;
+			e[1] = f / d;
+			// A cell the first pass left at the critical slope is taken to stay there (h_i = h_r + S_c d): its
+			// outflow follows that line. The sweep up takes the lower of the two, so a wrong guess only leaves a flux
+			// difference for the passes after it.
+			double alpha = e[0], beta = e[1];
+			if (p.talus > 0.0) {
+				const double sd = (b.talus_cell ? b.talus_cell[i] : p.talus) * b.receiver_dist[i];
+				if (h[i] >= h[r] + sd - 1e-9) {
+					alpha = sd;
+					beta = 1.0;
+				}
+			}
+			// Outflow to r: inflow plus the volume this cell loses, M + N h_i + (start - h_i) a, with h_i = alpha + beta h_r.
+			double *er = af + size_t(r) * 4;
+			er[2] += m + dep_start[i] * a + (nn - a) * alpha;
+			er[3] += (nn - a) * beta;
+		}
+		for (int k = 0; k < n; k++) {
+			const int i = b.stack[k];
+			const int r = b.receiver[i];
+			if (r == i) {
+				continue;
+			}
+			const double *e = af + size_t(i) * 4;
+			double hi = e[0] + e[1] * h[r];
+			if (p.talus > 0.0) {
+				hi = std::fmin(hi, h[r] + (b.talus_cell ? b.talus_cell[i] : p.talus) * b.receiver_dist[i]);
+			}
+			h[i] = hi;
+		}
+	}
+
+	// One Gauss-Seidel pass of the deposition solve (Yuan et al. 2019, eq. 13 solved for h_i with the cell's own
+	// share implicit), p_up the sediment volume arriving from upstream of each cell.
+	void _deposition_pass(const double *p_up) {
+		const int n = p.nx * p.ny;
+		double *h = b.height;
+		const double *coef = dep_coef.data();
+		for (int k = 0; k < n; k++) {
+			const int i = b.stack[k];
+			const int r = b.receiver[i];
+			if (r == i) {
+				continue;
+			}
+			const double *c = coef + size_t(i) * 4;
+			const double f = c[0], ga = c[1], top = c[3];
+			double hi = ((1.0 + ga) * top + c[2] * std::fmax(p_up[i], 0.0) + f * h[r]) / (1.0 + f + ga);
+			if (p.talus > 0.0) {
+				hi = std::fmin(hi, h[r] + (b.talus_cell ? b.talus_cell[i] : p.talus) * b.receiver_dist[i]);
+			}
+			h[i] = hi;
 		}
 	}
 

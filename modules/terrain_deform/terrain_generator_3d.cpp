@@ -529,6 +529,7 @@ bool TerrainGenerator3D::generate() {
 	sp.b.hard_depth = nullptr;
 	sp.b.diffusion_scale = nullptr;
 	last_steps = levels > 0 ? steps + levels * refine_steps : steps;
+	last_deposition_passes = sp.deposition_pass_total;
 	last_coarse_levels = levels;
 	last_change = real_t(change);
 
@@ -2881,6 +2882,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_last_generate_msec"), &TerrainGenerator3D::get_last_generate_msec);
 	ClassDB::bind_method(D_METHOD("get_last_write_msec"), &TerrainGenerator3D::get_last_write_msec);
 	ClassDB::bind_method(D_METHOD("get_last_steps"), &TerrainGenerator3D::get_last_steps);
+	ClassDB::bind_method(D_METHOD("get_last_deposition_passes"), &TerrainGenerator3D::get_last_deposition_passes);
 	ClassDB::bind_method(D_METHOD("get_last_change"), &TerrainGenerator3D::get_last_change);
 	ClassDB::bind_method(D_METHOD("get_bake_button"), &TerrainGenerator3D::get_bake_button);
 

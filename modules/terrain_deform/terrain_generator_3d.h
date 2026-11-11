@@ -243,6 +243,7 @@ private:
 	double last_generate_msec = 0.0;
 	double last_write_msec = 0.0;
 	int last_steps = 0;
+	int64_t last_deposition_passes = 0;
 	int last_coarse_levels = 0;
 	real_t last_change = 0.0;
 
@@ -513,6 +514,7 @@ public:
 	double get_last_generate_msec() const { return last_generate_msec; }
 	double get_last_write_msec() const { return last_write_msec; }
 	int get_last_steps() const { return last_steps; }
+	int64_t get_last_deposition_passes() const { return last_deposition_passes; }
 	real_t get_last_change() const { return last_change; }
 
 	Callable get_bake_button();

@@ -802,6 +802,24 @@ Results:
 - terrain_gen bench: with the whole world rising, the highest point goes from 343 to 480 m at 0.5, as Yuan
   predicts. With `base_uplift` 0, 45% of the land ends up on over 1 m of alluvium.
 - Cost: 2.6 to 3.5 s (+35%) on the rising world, and 1.9 to 3.4 s on still ground, where most passes run to 12.
+  Since the direct solve (below): deposition itself costs about 0.4 s of a 3 s generate.
+
+Cheaper deposition solve (11 Nov, Paulo's pick): the passes were most of deposition's cost (about 7 a step,
+2,638 on the bench's rising world at G 0.5; each a flux sweep and a solve sweep). Tried first, all on the passes:
+starting each step from the last step's flux (more passes, 4,385: receivers move between steps), a relaxation
+weight per node that halves where the change flips sign (2,846), and Aitken's dynamic relaxation (Irons and Tuck
+1969, as in partitioned fluid-structure coupling; 2,146). None fixes the cause: Gauss-Seidel solves a system that
+needs no iteration. With n = 1, Yuan's equation is linear in the heights along the receiver tree: the flux into a
+node is what its donors pass on, each affine in the node's own height once their subtrees are. One sweep from the
+sources down writes every node as `h = alpha + beta h_receiver` (and its outflow likewise); one sweep from the
+outlets up gives the exact heights. Only the critical slope (a min) is not linear: nodes the incision-only solve
+left at it are taken to stay there (`h = h_r + S_c d`), the sweep up takes the lower of the two, and the old
+passes then settle any wrong guess. Measured (`terrain_gen -- --deposition-time`): 903 passes against 2,638
+(rising world, G 0.5) and 1,141 against 3,555 (G 1); with no clamps the first check pass moves under 2 cm. The
+deposition part of a generate drops from about 0.73 to 0.40 s; per-node terms that do not change over a step's
+passes are also computed once (byte for byte the same result). The terrain changes as a long simulation does
+when its steps differ by centimetres: on the showcase valley the plain, fans and winding rivers keep their
+character, but rivers sit in other places (one capture moves the high lake east).
 
 A lake above a waterfall (fix, 11 Nov): the showcase put a lake marker 120 to 300 m up a river with a 34 m fall,
 and the fall vanished. Marker dams are landslide dams (Costa and Schuster 1988) with a 0.35 downstream face; on a

@@ -84,6 +84,19 @@ func _ready() -> void:
 			gen.sample_heights(r.position, 1.0, Vector2i(2048, 1024))
 			print("%s: %.0f ns/point" % [k, (Time.get_ticks_usec() - t) * 1000.0 / (2048 * 1024)])
 		get_tree().quit()
+	elif args.has("deposition-time"):
+		# Deposition cost: generate time and Gauss-Seidel passes, rising world and still ground. --save=prefix writes
+		# the heights (EXR) to compare runs.
+		for still in [false, true]:
+			gen.base_uplift = 0.0 if still else 0.1
+			for g in [0.0, 0.5, 1.0]:
+				gen.deposition = g
+				gen.generate()
+				var r := _valley_report()
+				print("     %s G %.1f: %.0f ms, %d deposition passes" % ["still" if still else "rising", g, r["msec"], gen.get_last_deposition_passes()])
+				if args.has("save"):
+					gen.get_height_image().save_exr("%s_%s_%.1f.exr" % [args["save"], "still" if still else "rising", g])
+		get_tree().quit()
 	elif args.has("landscape-time"):
 		await _landscape_time()
 		get_tree().quit()
