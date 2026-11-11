@@ -440,6 +440,16 @@ public:
 	Vector3 get_wind_at(Vector3 p_position, float p_height_above_ground = -1.0f) const;
 	// Mean wind at 10 m, no gusts (x, z).
 	Vector2 get_mean_wind_at(Vector3 p_position) const;
+	// The parts of get_wind_at() for solvers that filter the turbulence themselves (TreeWind3D):
+	// the mean air velocity (log law, shelter, gust patches), the along-wind direction of the gust
+	// frame and the gust standard deviation there (m/s, shelter included).
+	void get_wind_parts(Vector3 p_position, float p_height_above_ground, Vector3 &r_mean, Vector2 &r_along, float &r_sigma) const;
+	// The gust waves: per wave (k along, k across) in the base wind's frame (rad/m), amplitude per
+	// unit sigma and phase; wave i drives axis i / GUSTS_PER_AXIS (along, across, vertical). The
+	// pattern moves with the base wind, so a wave's frequency is k along times get_base_wind_speed().
+	void get_gust_waves(LocalVector<Vector4> &r_waves) const;
+	Vector2 get_base_wind_direction() const { return cur_wind_direction; }
+	float get_base_wind_speed() const { return cur_wind_speed; }
 	float get_rain_at(Vector3 p_position) const; // mm/h
 	float get_cloud_cover_at(Vector3 p_position) const;
 	float get_cloud_type_at(Vector3 p_position) const;

@@ -13,6 +13,7 @@ def get_doc_classes():
         "GrassField3D",
         "PlantSpecies",
         "TreeGenerator",
+        "TreeWind3D",
         "VegetationField3D",
     ]
 

@@ -200,16 +200,61 @@ private:
 		// radius for bark).
 		LocalVector<Vector4i> parts;
 		LocalVector<float> part_size;
+		// Skin (rigged trees): four bone indices and weights per vertex; parts take `bone`.
+		PackedInt32Array bones;
+		PackedFloat32Array weights;
+		int bone = 0;
 		void begin(Vector4i &r_part) const { r_part = Vector4i(indices.size(), 0, verts.size(), 0); }
 		void end(Vector4i &r_part, float p_size) {
 			r_part.y = indices.size() - r_part.x;
 			r_part.w = verts.size() - r_part.z;
+			for (int v = bones.size() / 4; v < verts.size(); v++) {
+				bones.push_back(bone);
+				bones.push_back(0);
+				bones.push_back(0);
+				bones.push_back(0);
+				weights.push_back(1.0f);
+				weights.push_back(0.0f);
+				weights.push_back(0.0f);
+				weights.push_back(0.0f);
+			}
 			if (r_part.y > 0) {
 				parts.push_back(r_part);
 				part_size.push_back(p_size);
 			}
 		}
 	};
+	// One bone of the wind rig (docs/ideas/trees.md, section 3a).
+	struct RigBone {
+		int parent = -1;
+		Vector3 pivot;
+		Vector3 dir;
+		float length = 0.0f;
+		float radius = 0.0f; // At the middle of the bone: sets its bending stiffness.
+		float zeta = 0.15f;
+		int axis = -1; // First node of the axis it belongs to (-1: root).
+		int segment = 0; // Segment of a split stem.
+		int group = 0; // First bone of its axis.
+		double compliance = 0.0; // Radians per N m at its base.
+		bool stem = false;
+		// Accumulated over everything the bone carries: drag area (and its first moment), mass
+		// (and its first and second moments).
+		double a0 = 0.0, m0 = 0.0, m2 = 0.0;
+		Vector3 a1, m1;
+	};
+	LocalVector<RigBone> rig;
+	LocalVector<int> node_bone;
+	LocalVector<float> node_drag; // m2 of effective frontal area per node (wood and foliage).
+	LocalVector<float> node_mass; // kg per node.
+	LocalVector<float> axis_offset; // Per node: arc length from its axis start to the node's start.
+	HashMap<int, Vector2> stem_segments; // Stem axis -> (segments, segment length).
+	HashMap<int, int> axis_bone; // Boned axis -> its (first) bone.
+	void _build_rig();
+	void _apply_decay();
+	void _fell();
+	PackedFloat32Array _collider_data() const;
+	void _skin_stem(Builder &r_b, const Vector4i &p_part, int p_axis, const LocalVector<Vector3> &p_points, int p_sides) const;
+	PackedFloat32Array _rig_data() const;
 	Dictionary _bark_lods(const Builder &p_bark) const;
 	Dictionary _leaf_lods(Builder &r_leaves) const;
 
@@ -223,6 +268,12 @@ private:
 	bool needle_sprays = false;
 	float near_needle_range = 0.0f; // Metres; > 0 gives placed conifers a full-needle near mesh.
 	bool skip_lods = false;
+	bool rigged = false;
+	int decay_class = 0; // 0 living; 1-5 deadwood decay classes (Maser et al. 1979).
+	bool fallen = false; // Lying on the ground as a log.
+	AABB envelope; // Clipping volume for hedges and topiary (size 0: off).
+	float collider_radius = 0.08f; // Wood thicker than this gets collision capsules.
+	int broken_tip = -1; // Stem node whose end is a broken top.
 	bool mask_invert = false;
 	Color bark_color = Color(0.3f, 0.26f, 0.21f);
 	Color leaf_color = Color(0.16f, 0.3f, 0.08f);
@@ -251,6 +302,33 @@ private:
 	float leaf_area_index = 0.0f;
 	static constexpr float MAX_LEAF_AREA_INDEX = 5.5f;
 	static constexpr float MAX_LEAF_AREA_DENSITY = 1.5f; // m2 of leaf per m3 of crown.
+
+public:
+	static constexpr int MAX_BONES = 48;
+	static constexpr int RIG_STRIDE = 18;
+	// Rig record layout (Mesh meta "tree_rig", RIG_STRIDE floats per bone).
+	enum RigField {
+		RIG_PARENT,
+		RIG_PIVOT_X,
+		RIG_PIVOT_Y,
+		RIG_PIVOT_Z,
+		RIG_CENTROID_X, // Drag centroid of the carried load, relative to the pivot.
+		RIG_CENTROID_Y,
+		RIG_CENTROID_Z,
+		RIG_AREA, // m2, effective frontal area of the carried wood and foliage.
+		RIG_STIFFNESS, // N m per radian.
+		RIG_INERTIA, // kg m2 about the pivot.
+		RIG_ZETA,
+		RIG_RADIUS,
+		RIG_LENGTH,
+		RIG_DIR_X,
+		RIG_DIR_Y,
+		RIG_DIR_Z,
+		RIG_GROUP, // First bone of its stem (segments sway as one mode), else the bone itself.
+		RIG_MASS, // kg carried.
+	};
+
+private:
 	int shed_count = 0;
 	uint64_t generation_usec = 0;
 
@@ -307,6 +385,18 @@ public:
 	float get_near_needle_range() const { return near_needle_range; }
 	void set_needle_sprays(bool p_sprays) { needle_sprays = p_sprays; }
 	bool get_needle_sprays() const { return needle_sprays; }
+	void set_decay_class(int p_class) { decay_class = CLAMP(p_class, 0, 5); }
+	int get_decay_class() const { return decay_class; }
+	void set_fallen(bool p_fallen) { fallen = p_fallen; }
+	bool is_fallen() const { return fallen; }
+	void set_envelope(const AABB &p_envelope) { envelope = p_envelope; }
+	AABB get_envelope() const { return envelope; }
+	void set_collider_radius(float p_radius) { collider_radius = MAX(p_radius, 0.0f); }
+	float get_collider_radius() const { return collider_radius; }
+	PackedFloat32Array get_collision_capsules() const { return _collider_data(); }
+	void set_rigged(bool p_rigged) { rigged = p_rigged; }
+	bool is_rigged() const { return rigged; }
+	int get_bone_count() const { return rig.size(); }
 	void set_mask_invert(bool p_invert) { mask_invert = p_invert; }
 	bool get_mask_invert() const { return mask_invert; }
 	void set_bark_color(const Color &p_color) { bark_color = p_color; }
@@ -344,3 +434,4 @@ VARIANT_ENUM_CAST(TreeGenerator::Phyllotaxis);
 VARIANT_ENUM_CAST(TreeGenerator::Param);
 VARIANT_ENUM_CAST(TreeGenerator::Stand);
 VARIANT_ENUM_CAST(TreeGenerator::Region);
+VARIANT_ENUM_CAST(TreeGenerator::RigField);

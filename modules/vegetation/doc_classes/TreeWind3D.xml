@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TreeWind3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Wind, touch, colliders and snapping branches for rigged trees ([member TreeGenerator.rigged]).
+	</brief_description>
+	<description>
+		Moves the MultiMesh instance bones of rigged trees under [member target]. Every bone is a damped cantilever spring; its motion is the turbulence filtered by that oscillator, in closed form: the [WeatherMap3D] gust waves through the bone's quasi-static gain, plus a narrow-band sway at its own frequency (Davenport 1961; Shinya and Fournier 1992; Stam 1997). It is stateless, so poses are deterministic in [member time] and the whole forest stays coherent, and raster and the path tracer skin the same pose. Nodes in [member touch_group] push branches aside (they spring back at their own frequency), and fast ones snap thin branches off as rigid bodies. Trunks and limbs get static capsule colliders near the camera. See docs/ideas/trees.md, sections 3a and 7a.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_bone_bends">
+			<return type="PackedVector3Array" />
+			<param index="0" name="mesh" type="Mesh" />
+			<param index="1" name="placement" type="Transform3D" />
+			<param index="2" name="seed" type="int" />
+			<description>
+				For tests: each bone's turn relative to its parent (axis times angle, tree space) for [param mesh] placed at [param placement], at the current [member time].
+			</description>
+		</method>
+		<method name="get_collider_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Instances that have colliders now.
+			</description>
+		</method>
+		<method name="get_mesh_bone_count" qualifiers="static">
+			<return type="int" />
+			<param index="0" name="mesh" type="Mesh" />
+			<description>
+				Bones of a rigged mesh (0 if it has no rig).
+			</description>
+		</method>
+		<method name="get_piece_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Snapped branches still in the scene.
+			</description>
+		</method>
+		<method name="get_rig_frequencies" qualifiers="static">
+			<return type="PackedFloat32Array" />
+			<param index="0" name="mesh" type="Mesh" />
+			<description>
+				Each bone's sway frequency (Hz) at scale 1: one per axis, by Rayleigh's quotient on its static shape.
+			</description>
+		</method>
+		<method name="get_solve_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Time the last [method update] took (ms).
+			</description>
+		</method>
+		<method name="get_solved_instances" qualifiers="const">
+			<return type="int" />
+			<description>
+				Instances posed by the last [method update].
+			</description>
+		</method>
+		<method name="get_target_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				MultiMeshes of rigged trees found under [member target].
+			</description>
+		</method>
+		<method name="get_touch_bends" qualifiers="const">
+			<return type="PackedVector3Array" />
+			<param index="0" name="target" type="int" />
+			<param index="1" name="instance" type="int" />
+			<description>
+				For tests: the touch turn of each bone of one instance (empty when it is not being touched or springing back).
+			</description>
+		</method>
+		<method name="make_multimesh" qualifiers="static">
+			<return type="MultiMesh" />
+			<param index="0" name="mesh" type="Mesh" />
+			<param index="1" name="transforms" type="Transform3D[]" />
+			<param index="2" name="custom_data" type="PackedColorArray" default="PackedColorArray()" />
+			<description>
+				A MultiMesh of [param mesh] at rest at each of [param transforms], with one record per bone per instance ([member MultiMesh.bones_per_instance]), as [TreeWind3D] and the rigged materials expect.
+			</description>
+		</method>
+		<method name="rescan">
+			<return type="void" />
+			<description>
+				Forgets the targets found so far and looks for them again (also done every second).
+			</description>
+		</method>
+		<method name="update">
+			<return type="void" />
+			<param index="0" name="delta" type="float" />
+			<description>
+				Advances [member time] by [param delta] and poses every instance in range. Called each frame while [member active].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="active" type="bool" setter="set_active" getter="is_active" default="true">
+			Updates every frame by itself. Off: call [method update].
+		</member>
+		<member name="break_radius" type="float" setter="set_break_radius" getter="get_break_radius" default="0.04">
+			Branches thinner than this (m) can snap.
+		</member>
+		<member name="break_speed" type="float" setter="set_break_speed" getter="get_break_speed" default="3.0">
+			A body faster than this (m/s) that bends a thin branch past about 35 degrees snaps it off.
+		</member>
+		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
+			Static capsule colliders for trunks and limbs ([method TreeGenerator.get_collision_capsules]) of instances inside [member collision_range].
+		</member>
+		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
+			Physics layer of the tree colliders.
+		</member>
+		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="0">
+			Physics mask of the tree colliders.
+		</member>
+		<member name="collision_range" type="float" setter="set_collision_range" getter="get_collision_range" default="60.0">
+			Instances closer than this to the camera (m) have colliders.
+		</member>
+		<member name="drag_scale" type="float" setter="set_drag_scale" getter="get_drag_scale" default="1.0">
+			Scales the wind's drag on every tree.
+		</member>
+		<member name="fallback_turbulence" type="float" setter="set_fallback_turbulence" getter="get_fallback_turbulence" default="0.2">
+			Turbulence intensity (sigma over mean) without a weather map.
+		</member>
+		<member name="fallback_wind" type="Vector2" setter="set_fallback_wind" getter="get_fallback_wind" default="Vector2(4, 0)">
+			Wind at 10 m (x, z; m/s) without a weather map.
+		</member>
+		<member name="max_bend" type="float" setter="set_max_bend" getter="get_max_bend" default="0.5">
+			Largest turn of one bone (radians), approached smoothly.
+		</member>
+		<member name="stiffness_scale" type="float" setter="set_stiffness_scale" getter="get_stiffness_scale" default="1.0">
+			Scales every bone's stiffness (and so its frequency, by the square root).
+		</member>
+		<member name="target" type="NodePath" setter="set_target" getter="get_target" default="NodePath(&quot;..&quot;)">
+			Node searched (with its children and internal children) for MultiMeshInstance3Ds of rigged trees.
+		</member>
+		<member name="time" type="float" setter="set_time" getter="get_time">
+			Wind time (s). Poses depend only on it and the weather.
+		</member>
+		<member name="touch_enabled" type="bool" setter="set_touch_enabled" getter="is_touch_enabled" default="true">
+			Lets nodes in [member touch_group] push branches.
+		</member>
+		<member name="touch_group" type="StringName" setter="set_touch_group" getter="get_touch_group" default="&amp;&quot;tree_touch&quot;">
+			Group of Node3Ds that touch trees: characters, vehicles, animals. A node's [code]touch_radius[/code] meta sets its size.
+		</member>
+		<member name="touch_radius" type="float" setter="set_touch_radius" getter="get_touch_radius" default="0.4">
+			Radius of a touching node without its own [code]touch_radius[/code] meta (m).
+		</member>
+		<member name="touch_stiffness" type="float" setter="set_touch_stiffness" getter="get_touch_stiffness" default="4000.0">
+			How hard a body pushes: bones stiffer than this (N m per radian) yield proportionally less, so twigs give way and trunks do not.
+		</member>
+		<member name="weather_map" type="NodePath" setter="set_weather_map" getter="get_weather_map" default="NodePath(&quot;&quot;)">
+			The [WeatherMap3D] whose wind, shelter and gusts move the trees.
+		</member>
+		<member name="wind_range" type="float" setter="set_wind_range" getter="get_wind_range" default="200.0">
+			Instances closer than this to the camera (m) move; further ones hold their rest pose.
+		</member>
+	</members>
+</class>

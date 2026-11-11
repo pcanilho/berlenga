@@ -13,7 +13,9 @@ extends Node3D
 #   --seed=N          (default 1)
 #   --view=side|crop  side: whole trees; crop: a 100% crop into the crown of the first tree
 #   --set=name:value  override a growth property on every preset, e.g. --set=shed_ratio:0.2
+#   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
+#   --wind ...        wind on rigged trees: see wind.gd
 
 const NAMES := ["oak", "beech", "birch", "Scots pine", "Norway spruce", "hazel", "hawthorn", "lime", "sycamore maple",
 		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box",
@@ -40,9 +42,20 @@ var stand := "both"
 var seed := 1
 var view := "side"
 var overrides := {}
+var decays := false
 var fails := 0
 
 func _ready() -> void:
+	if "--wind" in OS.get_cmdline_user_args():
+		# Wind on rigged trees: wind.gd.
+		var wargs := {}
+		for a in OS.get_cmdline_user_args():
+			var kv := a.trim_prefix("--").split("=", true, 1)
+			wargs[kv[0]] = kv[1] if kv.size() > 1 else ""
+		var wb: Node3D = load("res://wind.gd").new()
+		add_child(wb)
+		wb.run(wargs)
+		return
 	if "--stands" in OS.get_cmdline_user_args():
 		# Stands and placement: stands.gd.
 		var args := {}
@@ -73,6 +86,8 @@ func _ready() -> void:
 			seed = int(a.substr(7))
 		elif a.begins_with("--view="):
 			view = a.substr(7)
+		elif a == "--decays":
+			decays = true
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
 			overrides[kv[0]] = float(kv[1])
@@ -141,11 +156,16 @@ func _build_scene() -> void:
 	var tallest := 0.0
 	var first_info := {}
 	var xs: Array[float] = []
+	if decays:
+		rows = [0, 1, 2, 3, 4, 5, 6]
 	for p in presets:
 		var w := 0.0
 		var infos := []
 		for forest in rows:
-			var d := _gen(p, forest, seed)
+			if decays:
+				overrides["decay_class"] = mini(int(forest), 5) if int(forest) < 6 else 3
+				overrides["fallen"] = int(forest) == 6
+			var d := _gen(p, false if decays else forest, seed)
 			infos.append(d)
 			w = max(w, d.crown_radius)
 			tallest = max(tallest, d.height)
@@ -158,7 +178,7 @@ func _build_scene() -> void:
 				xs.append(x)
 			_place(d.mesh, Vector3(x, 0, 0))
 			x += d.crown_radius + 1.0
-			print("%s %s: %.1f m tall, %d internodes, %d tris, %.0f ms" % [NAMES[p], "forest" if rows[i] else "open", d.height, d.internodes, d.tris, d.ms])
+			print("%s %s: %.1f m tall, %d internodes, %d tris, %.0f ms" % [NAMES[p], ("class %s" % rows[i]) if decays else ("forest" if rows[i] else "open"), d.height, d.internodes, d.tris, d.ms])
 		x += 2.0
 	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new()

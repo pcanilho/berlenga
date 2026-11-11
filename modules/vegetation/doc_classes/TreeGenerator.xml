@@ -36,6 +36,18 @@
 				Clear bole of the last tree grown: the height of the lowest live limb over 2 cm thick leaving a stem. Stand-grown trees self-prune to a long clear bole.
 			</description>
 		</method>
+		<method name="get_bone_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Bones of the wind rig of the last [method generate] with [member rigged] on (0 otherwise).
+			</description>
+		</method>
+		<method name="get_collision_capsules" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<description>
+				Collision capsules for wood thicker than [member collider_radius] in the last generated tree: 8 floats each, the two ends (x, y, z), the radius and the rig bone carrying it. [method generate] also stores them as the mesh meta [code]tree_colliders[/code].
+			</description>
+		</method>
 		<method name="get_crown_base" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -54,17 +66,17 @@
 				Shed branches kept as dead wood on the last tree grown.
 			</description>
 		</method>
-		<method name="get_generation_usec" qualifiers="const">
-			<return type="int" />
-			<description>
-				Time the last [method generate] took, in microseconds.
-			</description>
-		</method>
 		<method name="get_foliage_profile" qualifiers="const">
 			<return type="PackedFloat32Array" />
 			<param index="0" name="bins" type="int" default="10" />
 			<description>
 				Mean horizontal reach (metres from the stem) of the leafy shoots of the last tree grown, in [param bins] equal height slices from the ground to the top. A slice with no foliage reads 0.
+			</description>
+		</method>
+		<method name="get_generation_usec" qualifiers="const">
+			<return type="int" />
+			<description>
+				Time the last [method generate] took, in microseconds.
 			</description>
 		</method>
 		<method name="get_height" qualifiers="const">
@@ -162,8 +174,11 @@
 		<member name="bud_idle_years" type="float" setter="set_param" getter="get_param" default="3.0">
 			Years a lateral bud waits without growing before it dies.
 		</member>
-		<member name="bud_light_min" type="float" setter="set_param" getter="get_param" default="0.05">
+		<member name="bud_light_min" type="float" setter="set_param" getter="get_param" default="0.0">
 			Light below which a bud dies.
+		</member>
+		<member name="collider_radius" type="float" setter="set_collider_radius" getter="get_collider_radius" default="0.08">
+			Wood thicker than this gets collision capsules ([method get_collision_capsules]); 0 turns them off.
 		</member>
 		<member name="crown_cone" type="float" setter="set_param" getter="get_param" default="0.0">
 			Excurrent crown shape: a branch reaches out at most this many times its depth below the top of the tree, so spruce, fir, larch and pine keep a cone (Kantola and Makela 2004). Shoots that would leave the cone wait until the leader has grown. 0 turns it off.
@@ -171,11 +186,20 @@
 		<member name="dead_branch_keep" type="float" setter="set_param" getter="get_param" default="0.15">
 			Share of shed branches kept on the tree as dead wood.
 		</member>
+		<member name="decay_class" type="int" setter="set_decay_class" getter="get_decay_class" default="0">
+			0 for a living tree; 1 to 5 are the deadwood decay classes foresters use (Maser et al. 1979): 1 dead with twigs and bark, 2 twigs lost, 3 bark sloughing and the top snapped, 4 limb stubs on a stem broken lower, 5 a stump.
+		</member>
 		<member name="direction_noise" type="float" setter="set_param" getter="get_param" default="14.0">
 			Random deviation of each shoot, in degrees.
 		</member>
 		<member name="divergence" type="float" setter="set_param" getter="get_param" default="137.5">
 			Angle between successive lateral buds around the axis, in degrees (137.5 is the golden angle).
+		</member>
+		<member name="envelope" type="AABB" setter="set_envelope" getter="get_envelope" default="AABB(0, 0, 0, 0, 0, 0)">
+			A clipping volume (tree space). Shoots that would grow out of it are cut back each year, as a hedge trimmer does (Palubicki 2009), which gives clipped hedges and topiary. A zero size turns it off.
+		</member>
+		<member name="fallen" type="bool" setter="set_fallen" getter="is_fallen" default="false">
+			Lays the tree on the ground as a log along a random bearing; limbs that would reach into the ground break off, and on a decayed log ([member decay_class] 3 or more) so do the ones standing up.
 		</member>
 		<member name="forest_shade" type="float" setter="set_forest_shade" getter="get_forest_shade" default="0.0">
 			Side shade from neighbours: 0 grows the tree in the open; around 0.6 grows it in a closed stand.
@@ -198,7 +222,7 @@
 		<member name="lateral_extension" type="float" setter="set_param" getter="get_param" default="1.0">
 			Shoot length factor per branching order, up to order 2. It changes only how far branches reach, not how many buds or leaves they carry; below 1 it gives the narrow cone of open-grown spruce, fir and larch (Wilson 2000).
 		</member>
-		<member name="leader_growth" type="float" setter="set_param" getter="get_param" default="0.7">
+		<member name="leader_growth" type="float" setter="set_param" getter="get_param" default="0.65">
 			Most metres a stem's leader grows in a year (about 0.6 for beech and maple, up to 1 for birch, larch and white pine). It keeps stand-grown trees, whose shaded sides send all vigor up, to real heights and crown depths. 0 removes the limit.
 		</member>
 		<member name="leaf_color" type="Color" setter="set_leaf_color" getter="get_leaf_color" default="Color(0.13, 0.25, 0.06, 1)">
@@ -228,17 +252,17 @@
 		<member name="max_shoot" type="float" setter="set_param" getter="get_param" default="2.0">
 			Most internodes one bud can grow in a year.
 		</member>
-		<member name="needles" type="float" setter="set_param" getter="get_param" default="0.0">
-			Above 0, foliage is needles on bottle-brush shoots instead of leaves.
-		</member>
-		<member name="phototropism" type="float" setter="set_param" getter="get_param" default="0.12">
-			How strongly shoots turn toward the light.
-		</member>
 		<member name="near_needle_range" type="float" setter="set_near_needle_range" getter="get_near_needle_range" default="0.0">
 			Above 0, conifer species from [method make_species], [method make_stand] and [method make_woodland] also carry one full-needle mesh as [code]near_meshes[/code], drawn by [VegetationField3D] within this many metres (about 30 suits), with needle sprays beyond. A full-needle spruce is about 30M vertices, so only one variant is made.
 		</member>
 		<member name="needle_sprays" type="bool" setter="set_needle_sprays" getter="get_needle_sprays" default="false">
 			Conifers draw each shoot's needles as two crossed sprays with a generated needle image (hashed alpha with alpha to coverage) instead of one triangle per needle: a spruce falls from about 53M to 7M vertices and keeps its needle coverage at distance. Up close the sprays read flatter than real needles, so [method generate] keeps real needles by default for a tree near the camera, while [method make_species], [method make_stand] and [method make_woodland] always use sprays.
+		</member>
+		<member name="needles" type="float" setter="set_param" getter="get_param" default="0.0">
+			Above 0, foliage is needles on bottle-brush shoots instead of leaves.
+		</member>
+		<member name="phototropism" type="float" setter="set_param" getter="get_param" default="0.12">
+			How strongly shoots turn toward the light.
 		</member>
 		<member name="phyllotaxis" type="int" setter="set_phyllotaxis" getter="get_phyllotaxis" enum="TreeGenerator.Phyllotaxis" default="0">
 			Bud arrangement: alternate, opposite or whorled.
@@ -249,22 +273,25 @@
 		<member name="preset" type="int" setter="set_preset" getter="get_preset" enum="TreeGenerator.Preset" default="0">
 			The species. Setting it resets every parameter to the species values.
 		</member>
+		<member name="rigged" type="bool" setter="set_rigged" getter="is_rigged" default="false">
+			Builds a wind rig: bones from the grown branch graph, skin weights on every vertex, and each bone's stiffness, load and inertia as the mesh meta [code]tree_rig[/code] ([constant RIG_STRIDE] floats a bone, see [enum RigField]). The materials are then skinned from MultiMesh instance bones, so a rigged mesh is drawn through [method TreeWind3D.make_multimesh] (or a MultiMesh with [member MultiMesh.bones_per_instance] set to its bone count), and [TreeWind3D] moves it.
+		</member>
 		<member name="root_flare" type="float" setter="set_param" getter="get_param" default="0.7">
 			Widening of the trunk at the ground.
 		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Random seed of the tree.
 		</member>
-		<member name="shadow_depth" type="float" setter="set_param" getter="get_param" default="6.0">
+		<member name="shadow_depth" type="float" setter="set_param" getter="get_param" default="4.0">
 			Layers of the shadow pyramid below each bud.
 		</member>
 		<member name="shadow_falloff" type="float" setter="set_param" getter="get_param" default="1.25">
 			Base of the shadow decay with depth in the pyramid.
 		</member>
-		<member name="shadow_strength" type="float" setter="set_param" getter="get_param" default="0.12">
+		<member name="shadow_strength" type="float" setter="set_param" getter="get_param" default="0.08">
 			Shade one bud casts in its own cell.
 		</member>
-		<member name="shed_ratio" type="float" setter="set_param" getter="get_param" default="0.17">
+		<member name="shed_ratio" type="float" setter="set_param" getter="get_param" default="0.056">
 			Branches whose light per internode falls below this share of the tree's are shed.
 		</member>
 		<member name="stem_spread" type="float" setter="set_param" getter="get_param" default="0.0">
@@ -430,6 +457,66 @@
 		</constant>
 		<constant name="REGION_MAX" value="2" enum="Region">
 			Number of regions.
+		</constant>
+		<constant name="MAX_BONES" value="48">
+			Most bones a rigged tree gets.
+		</constant>
+		<constant name="RIG_STRIDE" value="18">
+			Floats per bone in the [code]tree_rig[/code] mesh meta.
+		</constant>
+		<constant name="RIG_PARENT" value="0" enum="RigField">
+			Parent bone (the root bone 0 has -1).
+		</constant>
+		<constant name="RIG_PIVOT_X" value="1" enum="RigField">
+			Bone pivot (its base), x.
+		</constant>
+		<constant name="RIG_PIVOT_Y" value="2" enum="RigField">
+			Bone pivot, y.
+		</constant>
+		<constant name="RIG_PIVOT_Z" value="3" enum="RigField">
+			Bone pivot, z.
+		</constant>
+		<constant name="RIG_CENTROID_X" value="4" enum="RigField">
+			Centroid of the drag area the bone carries, relative to the pivot, x.
+		</constant>
+		<constant name="RIG_CENTROID_Y" value="5" enum="RigField">
+			Drag centroid, y.
+		</constant>
+		<constant name="RIG_CENTROID_Z" value="6" enum="RigField">
+			Drag centroid, z.
+		</constant>
+		<constant name="RIG_AREA" value="7" enum="RigField">
+			Effective frontal area of the wood and foliage the bone carries (m²).
+		</constant>
+		<constant name="RIG_STIFFNESS" value="8" enum="RigField">
+			Bending stiffness at the pivot (N m per radian).
+		</constant>
+		<constant name="RIG_INERTIA" value="9" enum="RigField">
+			Moment of inertia of the carried load about the pivot (kg m²).
+		</constant>
+		<constant name="RIG_ZETA" value="10" enum="RigField">
+			Damping ratio.
+		</constant>
+		<constant name="RIG_RADIUS" value="11" enum="RigField">
+			Wood radius a third of the way up the bone (m).
+		</constant>
+		<constant name="RIG_LENGTH" value="12" enum="RigField">
+			Bone length (m).
+		</constant>
+		<constant name="RIG_DIR_X" value="13" enum="RigField">
+			Bone direction, x.
+		</constant>
+		<constant name="RIG_DIR_Y" value="14" enum="RigField">
+			Bone direction, y.
+		</constant>
+		<constant name="RIG_DIR_Z" value="15" enum="RigField">
+			Bone direction, z.
+		</constant>
+		<constant name="RIG_GROUP" value="16" enum="RigField">
+			First bone of the axis (stem or limb) this bone belongs to; an axis sways as one mode.
+		</constant>
+		<constant name="RIG_MASS" value="17" enum="RigField">
+			Green mass the bone carries (kg).
 		</constant>
 		<constant name="PHYLLOTAXIS_ALTERNATE" value="0" enum="Phyllotaxis">
 			One lateral bud per node, turned by [member divergence].

@@ -123,6 +123,67 @@ The fork already has the delivery path: `MultiMesh.bones_per_instance`
 per-instance bone records, raster and path tracer match (mean pixel difference 0.013), and a
 compute pass can write the records (gpu-multimesh-records.md). What is missing is the solver.
 
+### 3a. The solver we build (stage 3)
+
+Wind on a tree is a structure loaded by turbulence, the problem wind engineers solve for
+towers and bridges in the frequency domain: the load spectrum times the structure's transfer
+function (Davenport, *The application of statistical concepts to the wind loading of
+structures*, Proc. ICE 19, 1961). Shinya and Fournier (*Stochastic motion: motion under the
+influence of wind*, Eurographics 1992) and Stam (*Stochastic dynamics: simulating the effects of
+turbulence on flexible structures*, Eurographics 1997) brought it to graphics: each mode of a
+plant is a damped oscillator, and its motion is the turbulence spectrum filtered by that
+oscillator. de Langre (*Effects of wind on plants*, Annu. Rev. Fluid Mech. 40, 2008) reviews the
+mechanics this rests on.
+
+`WeatherMap3D` already synthesises its gusts as Kaimal-weighted plane waves under Taylor's frozen
+turbulence: each wave has a wave vector and so a frequency, omega = k U. A linear oscillator's
+steady response to one wave is exact: the wave scaled by |H(omega)| and delayed by its phase,
+H = 1 / (1 - (omega/omega0)^2 + 2 i zeta omega/omega0). So every bone's motion is a closed-form
+sum over the same waves the grass and the clouds see. No state, no time step: it is
+deterministic, it never blows up at a frame hitch, any instance can be solved on any thread or
+on the GPU, raster and the path tracer read one pose, and the whole forest stays coherent (a gust
+front visibly rolls through the stand because the waves' phases depend on position).
+
+1. **Rig, from the grown branch graph.** Rigid parts, as in The Witcher 4: trunk (and each
+   basal stem) split into up to four segments with linear blending across the joints; then
+   the thickest limbs, whose parent is already a bone, down to about 2 cm radius; at most 48
+   bones a tree, one root bone. Every internode, twig, leaf and spray takes the bone of the
+   nearest boned axis below it.
+2. **Bone mechanics.** Each bone is a cantilever spring at its base. Rotational stiffness
+   k = 3 E I / L with I = pi r^4 / 4 at the bone's base (green-wood modulus E about 8.5 GPa;
+   Forest Products Laboratory, *Wood Handbook*, 2010). Inertia J sums the wood (green density
+   about 900 kg/m3) and foliage (about 0.2 kg per m2 of leaf, fresh) of everything the bone
+   carries about its pivot, so omega0 = sqrt(k / J). Checked against measured trees: sway
+   frequencies of 0.15-0.8 Hz for mature trunks, rising with diameter over height squared
+   (Moore and Maguire, *Natural sway frequencies and damping ratios of trees*, Trees 18, 2004),
+   and several Hz for limbs. Damping ratio about 0.1 for trunks with foliage, 0.15 for limbs
+   (same review; most of it is aerodynamic).
+3. **Load.** Drag on the bone's subtree, F = 1/2 rho Cd A |U| U, applied at the centroid of
+   that drag area, with A the frontal area of wood and foliage the bone carries. Foliage
+   streamlines as the wind rises, so Cd falls as U^B above about 4 m/s, Vogel's exponent
+   B of about -0.7 for broad leaves and -0.5 for needles (Vogel, *Drag and reconfiguration of
+   broad leaves in high winds*, J. Exp. Bot. 40, 1989). The quadratic drag is linearised about
+   the mean wind at the bone (the quasi-steady gust load of Davenport 1961): a static bend from
+   the mean, and a gust part that passes through the oscillator.
+4. **Turbulence: background plus resonance.** Davenport's gust loading splits a structure's
+   response in two, and so does the solver. The background part is the weather's own waves
+   (8 log-spaced Kaimal bands per axis, up to a few Hz at moderate wind), each passed through
+   the bone's quasi-static gain, so a gust front sways the whole stand together. The resonant
+   part is what a lightly damped oscillator does with the broadband load near its own
+   frequency: a narrow-band sway of variance S_F(f0) pi f0 / (4 zeta k^2), with S_F the Kaimal
+   load spectrum at f0. It is drawn as two waves at f0 (1 +- zeta) with phases hashed per bone
+   and per tree, which gives the beating envelope such a response has, along and across the
+   wind (across-wind sway of trees is of the same order; de Langre 2008). Mean wind is the
+   weather's at the bone's height (log law, canopy and lee shelter, gust patches).
+5. **Pose.** Each bone turns about its pivot by theta = (c x F) / k (the moment over the
+   stiffness), clamped to 0.5 rad, and carries its children. Records are written into a
+   MultiMesh with `bones_per_instance` (placement times the bone chain), so raster and the path
+   tracer skin the same pose. Trees past `wind_range` keep their rest pose.
+
+The CPU solver runs over worker threads and is the reference; a compute version of the same sum
+is the step for forest scale on the PC (one thread per bone, as in The Witcher 4). The colliders
+and touch bending of section 7a add a contact moment to the same bones.
+
 ## 4. Far trees and open-world scale
 
 - **Billboards and impostors** (Horizon: top LODs are cross planes; God of War: card clusters
@@ -161,6 +222,17 @@ compute pass can write the records (gpu-multimesh-records.md). What is missing i
   and logs match the living species around them. Shade-shed branches from the growth model
   give dead lower limbs on living conifers. Fallen logs and broken branches become PhysX
   bodies; stumps and logs feed the snow and wetness shaders like any other mesh.
+
+### 5a. As built (stage 4)
+
+- `TreeGenerator.decay_class` 1-5 applies the classes above to the grown tree: 1 drops the
+  foliage, 2 the twigs under 1.2 cm, 3 the limbs under 3 cm and snaps the top at 55-85% of the
+  height (a splintered break of pale wood), 4 leaves limb stubs of 15-50 cm on a stem broken at
+  30-60%, 5 is a stump of 0.4-1.5 m. Bark weathers grey, then to pale and darkening wood.
+- `fallen` lays it on the ground as a log; limbs that would reach into the ground break off, and
+  on a decayed log the ones standing up have rotted off too.
+- `envelope` clips growth to a box (shoots leaving it are cut back each year), for hedges and
+  topiary; a clipped hawthorn keeps its full leaf count inside the box.
 
 ## 6. What the games at Paulo's bar do
 
@@ -244,6 +316,19 @@ Our design follows the same split and reuses what the fork has:
 3. **Breaking.** Pirk 2014's stress test on a contact impulse snaps a branch or a sapling: its
    bones are frozen and the part becomes a PhysX rigid body (Blast for trunks later). Felled
    trees and logs are PhysX bodies with the same capsules.
+
+### 7b. As built
+
+`TreeGenerator.get_collision_capsules()` (also the mesh meta `tree_colliders`): wood thicker
+than `collider_radius` (8 cm) in capsules of up to 2 m. `TreeWind3D` gives instances within
+`collision_range` a static body of those capsules on `collision_layer`, through the physics
+server (PhysX when that is the server). Nodes in `touch_group` push the bones they reach out
+of their sphere; each bone yields by `touch_stiffness` over its own stiffness, so twigs and
+shrub stems give way and trunks do not, and springs back on its own frequency, more damped than
+in free sway (leaves rub). A body faster than `break_speed` that bends a branch thinner than
+`break_radius` past about 35 degrees snaps it: the bones collapse on the tree and the branch,
+cut from the tree's mesh, becomes a RigidBody3D thrown with half the body's speed. Grass under
+the tree still reads the trample field as before.
 
 ## 8. Stages
 
