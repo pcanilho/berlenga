@@ -839,6 +839,185 @@ drew a ripple pattern over the plain; the generator now publishes the share of d
 heights at the fan front, from the solver itself (rivers re-cutting the toe each step); more sediment diffusion
 (Fastscape's separate sediment diffusivity) removed them but left a jagged scarp, so it needs more work.
 
+Fan slots (11 Nov): fans backfill the channels a river abandons (avulsion; Bryant, Falk and Paola 1995; Jerolmack and
+Paola 2007), but a single-direction solver leaves each abandoned one-cell trench open. `fan_backfill` (on) fills,
+after the last step and before the final routing, alluvium cells (at least 0.3 m of sediment) that carry less than a
+river's area (0.1 km2) and sit at least 0.5 m below six or more of their eight neighbours, to the median of the
+neighbours (an edge-keeping filter, so terrace steps and scarps stay), two passes. On the valley layout it fills 9
+cells by 1.5 to 8 m (a three-cell slot across the plain at (-400, 512)); lakes, falls and rivers are unchanged.
+Active channels still move between runs with the step count: that is the river migrating, not a trench.
+
+## One main river: inflow from beyond the map, and caprock lips (11 Nov, Paulo's pick)
+
+The valley's rivers carried about 0.1 m3/s at most: the 16 km2 tile holds catchments of 2.6 km2 at best, so no fall
+can be a curtain and no river dominates the plain. Real valleys are fed from far upstream.
+
+Research:
+
+- Landscape models with open boundaries take water and sediment in at boundary nodes: Landlab's flow routing takes a
+  per-node water input (`water__unit_flux_in`), FastScape and goSPL a precipitation or inflow field. Drainage area
+  is the stream power law's proxy for discharge, so an inflow of land is extra area at a node.
+- Large rivers are graded (Mackin 1948): with 60 km2 coming in at the map edge the river cut a gorge through the range
+  to sea level and its falls went to the side streams. Falls on large rivers sit where a hard caprock lip holds them
+  (Niagara; Gilbert 1907; Haviv et al. 2010), which the strata model already makes.
+- A free-falling jet needs a face it clears: a vertical or undercut lip. The jet leaves the brink near critical depth
+  (Rouse 1936), at v = (g q)^(1/3) per unit width, and travels v sqrt(2H/g) out over a drop H. A steep face that
+  recedes further than that is a cascade (horsetail), not a plunge.
+
+Built:
+
+- `inflows` (markers, metadata `area` in km2, default `inflow_area` 25): land beyond the map draining in at the
+  marker's node (the nearest node off an outlet edge or the sea). It counts as drainage area in every erosion step
+  and level, in deposition, in the rivers' routing and in the monthly runoff (at the climate of the node it enters
+  at), so discharge and the water balance stay one. `get_inflow_cells()` lists them. No sediment comes in with it.
+- `fall_lips` (default on): falls of 4 m or more over rock at least half hard keep a vertical face. The grid holds a
+  drop over a whole 16 m cell at best (25 m drop: about 58 degrees), so the ground holds the lip's height to the
+  middle of the drop and the foot's after it, the step taking 3 m (a 1 m step oblique to the 1 m grid aliased into vertical ribs), its line wandering by up to 2 m, across the river's width plus 12 m fading into the
+  slope. `get_waterfalls()` now gives `face_run`, `jet_throw` and `free_fall` by the rule above.
+- Showcase valley (`--layout=valley --inflow=60 --inflow-at=lake`): 60 km2 into the high lake gives its outflow 2.2
+  m3/s (3.0 at the spring peak); it falls 63 m over a caprock lip (jet 4.6 m out, face 1 m) and the plain's streams
+  join it as one main river to the sea. At the north edge instead (`--inflow-at=edge`) it cuts a graded gorge with no
+  fall. The river module tests clearance against its sections' bed (4 m ground body in the bench, sections apart),
+  so it still sees the face as a ramp; sampling the face by raycast as the lip already is would make it agree.
+
+## Glacial erosion: cirques, troughs, hanging valleys (research, 11 Nov; waits on Paulo's pick)
+
+Why: the valley wants a high lake above a big fall on its main river. Fluvial erosion alone cannot hold it: a river
+of 2-3 m3/s grades its bed down (the inflow tests above), so a pinned sill gives 250-380 m falls or is bypassed. In
+mountains, high lakes above big falls are mostly glacial: cirque basins (overdeepened at the glacier's head, Barr
+and Spagnolo 2015) and hanging valleys (a tributary glacier, thinner and slower, erodes less than the trunk; its
+valley is left above the trough when the ice goes, and its stream falls off the lip, as in Yosemite).
+
+Established techniques:
+
+- Cordonnier, Jouvet, Peytavie, Braun, Cani, Benes, Galin, Guerin, Gain 2023, "Forming Terrains by Glacial
+  Erosion" (ACM TOG 42(4), SIGGRAPH): ice flow from a learned emulator of the Stokes equations (IGM, Jouvet et al.
+  2022), erosion rate proportional to sliding speed squared, alternated with fluvial erosion over glacial cycles;
+  makes U valleys, cirques, hanging valleys and lakes on a heightfield. The reference for us.
+- Shallow ice approximation (SIA: Mahaffy 1976; mass-conserving MUSCL scheme, Jarosch, Schoof and Anslow 2013):
+  ice flux from thickness and surface slope, explicit, cheap on a grid; the usual stand-in for Stokes flow in
+  landscape models (Braun, Zwartz and Tomkin 1999; Herman and Braun 2008; Egholm et al. 2009).
+- Erosion law: abrasion and quarrying at rate K_g |u_b|^l with l about 1 to 2 (Humphrey and Raymond 1994; Herman et
+  al. 2015), u_b the basal sliding speed.
+- Mass balance from the climate: accumulation above the equilibrium line (ELA), melt below, linear in height (the
+  climate recipe already has temperature by height and snowfall).
+
+Plan (if picked): an ice stage in terrain_stream_power's loop: SIA ice thickness on the same grid (MUSCL fluxes,
+adaptive time step), sliding speed as a share of the deformation speed, glacial erosion added to the stream power
+solve for the glacial part of each cycle, then fluvial steps on the ice-free ground; parameters `glacial_ela`,
+`glacial_erosion`, `glacial_cycles`. Expected cost: SIA needs small time steps (CFL on diffusivity); on the 257 grid
+a few hundred ice steps per cycle, about a second; coarse levels first as for the rivers. Checks: a cirque basin
+holds a lake by itself (no marker), a tributary hangs above the trunk, U cross-sections (width over depth).
+
+### Glacial erosion: what was built (11 Nov, Paulo picked the stage at 14:55 and the high bowl at 15:59)
+
+- `TerrainGlacial` (terrain_glacial.h): shallow ice on a 64 m grid, flux q = -Gamma H^5 |grad s|^2 grad s with the
+  thickness upwinded on each face; steady state by pseudo-time Jacobi with a local step min(0.03 dx^2/D, 20 yr)
+  (6000 iterations on the first solve, 200 warm after). Mass balance from `glacial_ela` and a gradient of 0.006 per
+  year, capped at 2 m a year.
+- Sliding speed from the flux (|q| / max(H, 10 m), blurred over 3 ice cells); the H^4 S^3 deformation speed with
+  the valley walls' slopes ran away. Erosion K_g u^l with K_g 2.7e-7 and l 2.02 (Herman et al. 2015), none on
+  adverse slopes steeper than 1.5 times the ice surface (Alley et al. 2003), in sub-steps of at most 25 m.
+- Interleaved: every 8 river steps the ice wears 8 dt `glacial_share` years, then a last glaciation of
+  `glacial_final` years. A rockfall clamp after it keeps slopes under `strata_cliff_angle` (75 degrees) by raising
+  the cell below, one sweep from the top down (Schmidt and Montgomery 1995 threshold hillslopes).
+- Hollows the ice dug stay unfilled after routing and become lakes (depth at least 1 m, area at least
+  `lake_min_area`); other hollows still fill.
+- Sill markers with a level are a hard band (rock at most 1 m over the level does not wear). A range path with
+  `basin` metadata lowers uplift under it (raised cosine), so a bowl can sit behind a bar.
+- Result on the valley layout (bowl at (350, -1850), bar at 450 m, ELA 450 m): a lake at 450 m, 43 m deep, 1.9 ha;
+  the main river (3.6 m3/s) leaves it over the bar and falls 333 m, free of the face. Ice costs about 1.3 s.
+- Not yet: the lake is small (the bowl is narrow), the bar runs straight, and lake banks are bare rock.
+
+### Ledges on cliff faces (11 Nov)
+
+A heightfield cliff is a smooth curtain. Bedded rock breaks into steps: the hard bed stands as a riser, the soft
+bed under it weathers back into a ledge (the terrace filters Gaea and World Machine use do the same). `cliff_ledge_spacing` (default 0, off) and `cliff_ledge_strength` terrace slopes between 40 and 55
+degrees into beds of that spacing, the bed line wobbling with value noise, each bed a narrow ledge (20 to 35 percent of the bed,
+rising a quarter of its height) under a riser; bed thickness varies by a monotonic warp of height. Wide ledges (60
+percent of each bed, the first try) read as rice terraces close up. Alluvium no longer fades detail on slopes steeper than repose.
+
+### Fall data for the water (contract agreed with the water thread, 11 Nov)
+
+Each entry of `get_waterfalls()` now also has: `id` (river and distance down it, stable for a seed), `direction`,
+`lip_points` (8 across the brink) and `lip_share` (Manning: unit discharge as depth^(5/3) under the critical-depth
+surface), `lip_width`, `overhang` (0: a heightfield cannot undercut), `caprock` (hard bed thickness),
+`face_profiles` (3 lines of 16 samples), `tiers` and `ledges`, `type` (plunge, tiered, horsetail, cascade, after the
+World Waterfall Database), `power` (rho g Q H), `breakup_length` (Horeni 1956: 6 q^0.32), `impact_speed` (drag
+limited: past break-up the drops close on about 9 m/s terminal speed over v_t^2/g, Gunn and Kinzer 1949),
+`impact_speed_free` and `discharge_months`.
+
+## Plunge pools (research, 11 Nov; ordered by the water contract)
+
+Why: a fall lands in a pool, and the water code needs one to put its foam, mist and churn in. Today the foot is the
+ground the river left, flat or sloping.
+
+Established techniques:
+
+- Mason and Arumugam 1985 (free jet scour below dams, J. Hydraulic Engineering 111(2)): from 47 model and prototype
+  data sets, scour plus tailwater depth D + Y = 3.27 q^0.60 H^0.05 h^0.15 / (g^0.30 d^0.10), q the unit discharge,
+  H the drop, h the tailwater depth, d the bed grain size. The usual engineering estimate of ultimate scour.
+- Pagliara, Hager and Minor 2006 (plane plunge pool scour, J. Hydraulic Engineering 132): the pool's length is
+  several times its depth and its shape similar across flows, upstream wall steep, downstream ridge gentle.
+- Bollaert and Schleiss 2003 (comprehensive scour method): rock breaks by jet pressure fluctuations in joints;
+  scour stops once the jet has diffused through the pool depth (core gone after 4 to 6 jet widths).
+- Scheingross and Lamb 2016, 2017 (JGR Earth Surface): bedrock pools deepen by sediment the jet swirls against the
+  floor, and widen as the fall retreats; pool depth grows with discharge and drop, and stops where the jet can no
+  longer move the bed grains out.
+
+Plan: for every fall the rivers make (drop at least 4 m), bake a pool at the jet's impact point (the brink plus
+the jet throw, at least past the face), depth from Mason and Arumugam with d = 0.3 m cobbles and the tailwater the
+river's normal depth, clamped to 1 to 15 m, radius max(lip width / 2 + 2 D, 3 D) after Pagliara's shape. The 1 m
+ground takes min(ground, foot - D (1 - (r/R)^2)), so the pool holds water to its lowest rim. New keys:
+`pool_center`, `pool_radius`, `pool_depth`, `pool_level` (the lowest rim). Off with `plunge_pools = false`.
+
+## Spray potential (11 Nov; the static half of the water thread's spray wetting)
+
+No published model gives the spray field of a natural fall. Measurements around plunging jets below dams (flood
+discharge atomization) show spray intensity falling off roughly exponentially with distance from the impact, and
+the reach growing with the jet's energy. We bake that as a static map: `terrain_spray_potential` (L8, `spray_cell`
+4 m over the result, rect in `terrain_spray_rect`). Each fall of 4 m or more sprays from its path in plan (lip to
+impact) with weight 0.35 to 1 growing down the drop, peak 0.25 to 1 by log10(1 + Q H), falloff exp(-2 d / R) with
+R = 3 (Q H)^0.4 m (at least 4 m; about 50 m for the 3.6 m3/s, 333 m fall, about 300 m for the Victoria Falls,
+matching the width of its spray forest), fading with height above the lip. Falls combine as 1 - prod(1 - p). The
+water thread's live mist, drifting with the wind, multiplies with it at run time.
+
+## Gorges: falls that wore back upstream (research and build, 11 Nov)
+
+A fall over a hard bed does not stay where the river first steepened: the plunge pool undercuts the soft rock
+below the caprock, the lip collapses block by block, and the fall walks upstream leaving a slot gorge as wide as the
+river (Niagara, about 1 m a year at 5700 m3/s, Gilbert 1907; the caprock mechanism, Haviv et al. 2010). Landscape
+models write the knickpoint's speed as a celerity C A^p or C Q^p with p about 0.5 to 1 (Crosby and Whipple 2006;
+Berlin and Anderson 2007); in massive, unjointed rock falls barely move (Lamb and Dietrich 2009). Hayakawa and
+Matsukura 2003 fit Japanese falls' recession to discharge, fall size and rock strength the same way.
+
+Built: `gorge_age` (years since the falls began wearing back, 0 off; the bench uses 12000, since the ice left) and
+`gorge_rate` (0.013 m a year per sqrt(m3/s), Niagara's rate). Each lipped fall's lip moves up its river by
+age x rate x sqrt(Q), a twentieth of that where the lip is a sill (a riegel of massive rock). It stops at a lake
+(the fall would drain it), the fall above, and three cells from the map's edge (an inflow's reach is not on the
+map). Below the new lip, `_ground` cuts a slot along the river's cells: the river's width plus 2 m, walls rising
+over 2 m, its floor falling 1 percent to the old foot. The fall's record moves to the gorge's head, and its pool
+sits at the slot's head. On the valley layout three side falls wore back 35 to 40 m into slots 8 m wide and 12 m
+deep; the main fall stays on its bar (the lake's outlet).
+
+## Rocks below cliffs (11 Nov; a leftover from the Planet Tech comparison)
+
+Cliffs shed blocks, and the blocks come to rest on the talus below them, the biggest furthest out. Established
+practice: rockfall run-out by the shadow angle (the line from the top of the talus to the furthest block dips about
+27.5 degrees at the least, Evans and Hungr 1993) or the travel angle from the release point (the "Fahrboeschung",
+Heim 1932; about 32 degrees for small rockfalls, Corominas 1996); fall sorting, larger blocks rolling further
+(Kirkby and Statham 1975); block sizes by a power law (Dussauge-Peisser et al. 2002). Engines place such debris as
+procedural scatter from slope and exposure rules (UE's PCG, Horizon Zero Dawn's GPU placement, Star Citizen's
+"debris from cliffs").
+
+Built: `get_boulders(rect, density)` returns (x, ground y, z, radius) for every block resting in the rect. Each grid
+cell steeper than 45 degrees with at least 30 percent bare rock sheds about one block per 150 m2 of face times its
+exposure; each block's radius is Pareto (exponent 2.5) from 0.25 to 3 m; it rolls down the steepest way over the
+grid in 3 m steps, bouncing up to 35 degrees off the fall line each step, and rests once its travel angle from the release point drops below 27.5 to 33.5 degrees (2 degrees
+less per metre of radius) and the ground has eased; blocks that reach water are dropped. Deterministic for a seed;
+about 21 000 blocks and 0.3 s for the 4 km valley layout. Placement nodes (vegetation's scatter, Tripo rock props)
+read the list; the bench shows grey stand-ins (`--boulders`).
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
@@ -859,6 +1038,31 @@ heights at the fan front, from the solver itself (rivers re-cutting the toe each
   numerical modeling, JGR 115, F03028, 2010.
 - Forte, Yanites, Whipple, Complexities of landscape evolution during incision through layered stratigraphy with
   contrasts in rock strength, ESPL 41, 2016.
+- Mason, Arumugam, Free jet scour below dams and flip buckets, J. Hydraulic Engineering 111(2), 1985.
+- Pagliara, Hager, Minor, Hydraulics of plane plunge pool scour, J. Hydraulic Engineering 132, 2006.
+- Bollaert, Schleiss, Scour of rock due to the impact of plunging high velocity jets, J. Hydraulic Research 41, 2003.
+- Scheingross, Lamb, Sediment transport through self-adjusting, bedrock-walled waterfall plunge pools, JGR Earth
+  Surface 121, 2016.
+- Horeni, Disintegration of a free jet of water in air, Sesit 93, Prague, 1956.
+- Gunn, Kinzer, The terminal velocity of fall for water droplets in stagnant air, J. Meteorology 6, 1949.
+- Herman, Beyssac, Brughelli et al., Erosion by an Alpine glacier, Science 350, 2015.
+- Alley, Lawson, Larson, Evenson, Baker, Stabilizing feedbacks in glacier-bed erosion, Nature 424, 2003.
+- Schmidt, Montgomery, Limits to relief, Science 270, 1995.
+- Cordonnier et al., Forming terrains by glacial erosion, ACM TOG 42(4), 2023.
+- Crosby, Whipple, Knickpoint initiation and distribution within fluvial networks: 236 waterfalls in the Waipaoa
+  River, North Island, New Zealand, Geomorphology 82, 2006.
+- Berlin, Anderson, Modeling of knickpoint retreat on the Roan Plateau, western Colorado, JGR 112, F03S06, 2007.
+- Hayakawa, Matsukura, Recession rates of waterfalls in Boso Peninsula, Japan, and a predictive equation, ESPL 28,
+  2003.
+- Evans, Hungr, The assessment of rockfall hazard at the base of talus slopes, Canadian Geotechnical Journal 30,
+  1993.
+- Kirkby, Statham, Surface stone movement and scree formation, Journal of Geology 83, 1975.
+- Corominas, The angle of reach as a mobility index for small and large landslides, Canadian Geotechnical Journal
+  33, 1996.
+- Dussauge-Peisser, Helmstetter, Grasso et al., Probabilistic approach to rock fall hazard assessment: potential of
+  historical data analysis, Natural Hazards and Earth System Sciences 2, 2002.
+- Bryant, Falk, Paola, Experimental study of avulsion frequency and rate of deposition, Geology 23, 1995.
+- Jerolmack, Paola, Complexity in a cellular model of river avulsion, Geomorphology 91, 2007.
 - Lamb, Dietrich, The persistence of waterfalls in fractured rock, GSA Bulletin 121, 2009.
 - Scheingross, Lamb, A mechanistic model of waterfall plunge pool erosion into bedrock, JGR Earth Surface 122, 2017.
 - Perne, Covington, Thaler, Myre, Steady state, erosional continuity, and the topography of landscapes developed in

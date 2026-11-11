@@ -83,6 +83,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Per-stem sway** (always on): each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.
 - **Near and far meshes** (`PlantSpecies.near_meshes`, `near_range`): heavier meshes near the camera, crossfaded with dithering a few plants at a time.
 - **Far thinning** (`PlantSpecies.far_color`): plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.
+- **Plant impostors** (`PlantGenerator.make_impostor()`, `add_impostors()`, `impostor_range`): large plants turn into octahedral impostors past a range in raster (brambles and bracken past 15 m), while path tracing keeps the meshes; an oak wood view drops from 3.91M to 2.98M triangles.
 
 ## Instances
 

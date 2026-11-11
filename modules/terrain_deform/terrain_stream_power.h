@@ -112,6 +112,14 @@ public:
 		const double *hard_depth = nullptr;
 		// Optional diffusion factor per cell (0..1): bare hard rock does not creep, so its cliffs stay sharp.
 		const double *diffusion_scale = nullptr;
+		// Optional drainage area entering at a cell from beyond the grid (m^2): a river from upstream of the map edge,
+		// or a lake fed by a catchment the map does not hold. It erodes and carries water as that much land would.
+		const double *inflow_area = nullptr;
+		// Optional resistant sill (0..1): bedrock that holds a lake's outlet high (a cirque or hanging-valley sill,
+		// the lip of a fall). It erodes 200 times slower at 1 and stands as a near-vertical face.
+		const double *sill = nullptr;
+		// Optional height a sill node is not worn below (NaN: none), as long as uplift has raised it that high.
+		const double *sill_level = nullptr;
 	};
 
 	Params p;
@@ -204,6 +212,33 @@ public:
 		return max_dh;
 	}
 
+	// A sill with a level is a hard band at that height (a riegel's top): the rock above it is ordinary and wears
+	// down to it as any other ground does, so the bar never stands up as a wall however fast the uplift.
+	double _sill_at(int i) const {
+		if (!b.sill || b.sill[i] <= 0.0) {
+			return 0.0;
+		}
+		if (b.sill_level && !std::isnan(b.sill_level[i]) && b.height[i] > b.sill_level[i] + 1.0) {
+			return 0.0;
+		}
+		return b.sill[i];
+	}
+	double _talus_at(int i) const {
+		const double t = b.talus_cell ? b.talus_cell[i] : p.talus;
+		return _sill_at(i) > 0.0 ? std::fmax(t, 11.43) : t; // a sill stands at 85 degrees
+	}
+	// A sill with a level is not worn below it (nor lifted to it: never above the surface before this step's erosion).
+	double _hold(int i, double hi, double top) const {
+		if (b.sill_level && !std::isnan(b.sill_level[i])) {
+			return std::fmax(hi, std::fmin(b.sill_level[i], top));
+		}
+		return hi;
+	}
+	double _erodibility_at(int i) const {
+		double kk = b.erodibility_scale ? p.erodibility * b.erodibility_scale[i] : p.erodibility;
+		return b.sill ? kk * (1.0 - 0.995 * _sill_at(i)) : kk;
+	}
+
 	// Implicit stream power and critical slope, from the outlets up: every receiver is final before its donors.
 	void _solve() {
 		const int n = p.nx * p.ny;
@@ -217,7 +252,7 @@ public:
 			}
 			const double d = b.receiver_dist[i];
 			const double am = half_m ? std::sqrt(b.area[i]) : std::pow(b.area[i], p.area_exponent);
-			double kk = b.erodibility_scale ? p.erodibility * b.erodibility_scale[i] : p.erodibility;
+			double kk = _erodibility_at(i);
 			double top = h[i];
 			// With deposition the undercut is decided once per step, here on the incision-only solve: the deposition
 			// passes move the foot by small amounts, and a block that breaks off and back in turn never settles.
@@ -238,9 +273,9 @@ public:
 			const double f = kk * p.dt * am / d;
 			double hi = (top + f * h[r]) / (1.0 + f);
 			if (p.talus > 0.0) {
-				hi = std::fmin(hi, h[r] + (b.talus_cell ? b.talus_cell[i] : p.talus) * d);
+				hi = std::fmin(hi, h[r] + _talus_at(i) * d);
 			}
-			h[i] = hi;
+			h[i] = _hold(i, hi, h[i]);
 		}
 	}
 
@@ -258,6 +293,11 @@ public:
 		// The flux runs down the single receiver tree, so it is spread over that tree's area: dividing it by the
 		// multiple-flow area, which can be far smaller on a cell the tree funnels into, would pile it up there.
 		dep_area.assign(n, cell_area);
+		if (b.inflow_area) {
+			for (int i = 0; i < n; i++) {
+				dep_area[i] += b.inflow_area[i];
+			}
+		}
 		dep_undercut.assign(n, 0);
 		for (int k = n - 1; k >= 0; k--) {
 			const int i = b.stack[k];
@@ -324,7 +364,7 @@ public:
 			}
 			const double d = b.receiver_dist[i];
 			const double am = half_m ? std::sqrt(b.area[i]) : std::pow(b.area[i], p.area_exponent);
-			double kk = b.erodibility_scale ? p.erodibility * b.erodibility_scale[i] : p.erodibility;
+			double kk = _erodibility_at(i);
 			double top = dep_start[i];
 			if (b.hard_depth && b.hard_depth[i] > 0.0 && dep_undercut[i]) {
 				top = top - b.hard_depth[i];
@@ -368,7 +408,7 @@ public:
 			// difference for the passes after it.
 			double alpha = e[0], beta = e[1];
 			if (p.talus > 0.0) {
-				const double sd = (b.talus_cell ? b.talus_cell[i] : p.talus) * b.receiver_dist[i];
+				const double sd = _talus_at(i) * b.receiver_dist[i];
 				if (h[i] >= h[r] + sd - 1e-9) {
 					alpha = sd;
 					beta = 1.0;
@@ -388,9 +428,9 @@ public:
 			const double *e = af + size_t(i) * 4;
 			double hi = e[0] + e[1] * h[r];
 			if (p.talus > 0.0) {
-				hi = std::fmin(hi, h[r] + (b.talus_cell ? b.talus_cell[i] : p.talus) * b.receiver_dist[i]);
+				hi = std::fmin(hi, h[r] + _talus_at(i) * b.receiver_dist[i]);
 			}
-			h[i] = hi;
+			h[i] = _hold(i, hi, dep_start[i]);
 		}
 	}
 
@@ -410,9 +450,9 @@ public:
 			const double f = c[0], ga = c[1], top = c[3];
 			double hi = ((1.0 + ga) * top + c[2] * std::fmax(p_up[i], 0.0) + f * h[r]) / (1.0 + f + ga);
 			if (p.talus > 0.0) {
-				hi = std::fmin(hi, h[r] + (b.talus_cell ? b.talus_cell[i] : p.talus) * b.receiver_dist[i]);
+				hi = std::fmin(hi, h[r] + _talus_at(i) * b.receiver_dist[i]);
 			}
-			h[i] = hi;
+			h[i] = _hold(i, hi, dep_start[i]);
 		}
 	}
 
@@ -656,7 +696,7 @@ private:
 		const int n = p.nx * p.ny;
 		const double cell_area = p.dx * p.dx;
 		for (int i = 0; i < n; i++) {
-			b.area[i] = cell_area;
+			b.area[i] = b.inflow_area ? cell_area + b.inflow_area[i] : cell_area;
 		}
 		if (p.flow_exponent <= 0.0) {
 			// D8: down the receiver tree, from the top of the stack.
