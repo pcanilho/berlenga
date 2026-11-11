@@ -1560,6 +1560,43 @@ FFT cost: lavapipe runs workgroups on CPU threads, where 256-thread barriers are
 standard fast one (64 dispatches a step become 2). So the setting ships OFF, and goes on by default once
 the PC times it faster (PC queue).
 
+## Step 5g: whitecap cover from the wind (10 Nov, audit item 6)
+
+### Problem
+
+Whitecaps came from a fixed Jacobian threshold (`foam_threshold`, 0.7). How much of the sea that whitens
+depends on the spectrum, the choppiness, the cascades, the fetch and now the spreading, not on the wind
+alone, so the same threshold gave 0.18% cover at 14 m/s with three cascades (step 5d) where the sea shows
+about 3%, and changing any wave setting changed the foam with it.
+
+### Published methods
+
+- **Monahan and O'Muircheartaigh, "Optimal power-law description of oceanic whitecap coverage dependence
+  on wind speed" (J. Phys. Oceanogr. 10, 1980).** From open-ocean photographs: cover
+  `W = 3.84e-6 U10^3.41` (fraction): 0.1% at 6 m/s, 1% at 10 m/s, 3% at 14 m/s, 8% at 20 m/s. Later
+  surveys (Anguelova and Webster 2006, Callaghan et al. 2008) keep the cubic law with a spread of about a
+  factor of 3 at one wind (sea temperature, a rising or falling sea), and a threshold near 3-4 m/s.
+- **Dupuy and Bruneton, "Real-time animation and rendering of ocean whitecaps" (SIGGRAPH Asia 2012).**
+  Whitecaps where the Jacobian of the choppy displacement falls below a threshold, which they set from
+  the Jacobian's statistics so the cover matches the measured coverage at that wind.
+- Engines: Crest and UE water take a fixed foam threshold or coverage slider; HDRP's water reads the
+  simulation's foam with a wind-speed-dependent amount curve, artist set.
+
+### As built
+
+- The foam pass sums its foam over the grid (one atomic per workgroup), read back each step with the
+  height. The cascades draw their foam over each other (max), so the share left clear is the product of
+  each one's: `cover = 1 - prod(1 - c_i)`.
+- `PhysXWaterSurface3D.whitecap_auto` (on by default) steers the threshold each step, an integral
+  controller in log cover (the cover spans decades with the wind, and a threshold step changes it by a
+  factor): `threshold -= 0.08 ln(cover / W) dt`. The same threshold goes to every cascade's foam pass and
+  the material's summed-crest test. It holds Monahan's cover whatever the waves' settings, and follows
+  the wind as the weather changes it. Below about 3 m/s the target is under 0.01%, and the threshold
+  runs down until the sea is clear.
+- `whitecap_cover_scale` (1) scales the target, inside the measured spread. `whitecap_auto` off keeps the
+  fixed `foam_threshold` (the opt-out); with it on, `foam_threshold` is the starting point.
+- `get_whitecap_cover()`, `get_whitecap_target_cover()`, `get_effective_foam_threshold()` for a bench.
+
 ## Sources
 
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).
