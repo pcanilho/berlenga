@@ -1084,6 +1084,17 @@
    "topic": "Generation"
   },
   {
+   "name": "Moraines",
+   "settings": [
+    "moraine_age"
+   ],
+   "note": "",
+   "what": "debris carried down the last glaciers builds ridges at their margins that dam lakes.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
    "name": "Cliff ledges",
    "settings": [
     "cliff_ledge_spacing",

@@ -224,6 +224,8 @@ private:
 		real_t floor_top = 0.0, floor_bottom = 0.0, length = 0.0;
 	};
 	double gorge_age = 0.0; // years of lip retreat; 0 none
+	double moraine_age = 0.0; // years the last glaciation's margins stood still, building moraines; 0 none
+	double last_moraine_volume = 0.0; // m3 of debris the last generate() laid in moraines
 	double gorge_rate = 0.013; // m a year per sqrt(m3/s)
 	LocalVector<Gorge> gorges;
 	bool fall_lips = true;
@@ -539,6 +541,9 @@ public:
 	int get_lake_count() const { return lake_count; }
 	void set_gorge_age(double p_years) { gorge_age = MAX(p_years, 0.0); }
 	double get_gorge_age() const { return gorge_age; }
+	void set_moraine_age(double p_years) { moraine_age = MAX(p_years, 0.0); }
+	double get_moraine_age() const { return moraine_age; }
+	double get_last_moraine_volume() const { return last_moraine_volume; }
 	void set_gorge_rate(double p_rate) { gorge_rate = MAX(p_rate, 0.0); }
 	double get_gorge_rate() const { return gorge_rate; }
 	void set_fan_backfill(bool p_enable) { fan_backfill = p_enable; }
