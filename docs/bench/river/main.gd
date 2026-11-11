@@ -27,6 +27,7 @@ extends Node3D
 #   --view=fall      the waterfall from the side
 #   --view=fallfront the waterfall from downstream, looking up at the falling sheet
 #   --live           the live window: shallow-water simulation round the rocks (eddies, live foam)
+#   --mist           with --falls, print the mist's densest point and its spread each second
 #   --report         print the cross-sections and the boxes' positions
 #   --bake-time=N    time N rebuilds with the multigrid flow solve and with the older SOR sweeps
 #                    (physics/physx_3d/water/multigrid_flow), print each mean and how far the two flows differ
@@ -42,6 +43,7 @@ var pt_from := 0
 var out := ""
 var seq := 0
 var report := false
+var mist_report := false
 var bake_time := 0
 var carve := false
 var live := false
@@ -101,6 +103,7 @@ func _ready() -> void:
 		if a.begins_with("--view="): view = a.substr(7)
 		elif a == "--raster": raster = true
 		elif a == "--report": report = true
+		elif a == "--mist": mist_report = true
 		elif a.begins_with("--bake-time="): bake_time = int(a.substr(12))
 		elif a == "--carve": carve = true
 		elif a == "--live": live = true
@@ -135,6 +138,11 @@ func _ready() -> void:
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = bounces
 	env.pathtracing_debug_mode = debug_mode
+	# Volumetric fog with no fog of its own, so the falls' mist (PhysXWaterMist3D, a FogVolume) shows in raster.
+	env.volumetric_fog_enabled = falls
+	env.volumetric_fog_density = 0.0
+	env.volumetric_fog_anisotropy = 0.6
+	env.volumetric_fog_ambient_inject = 1.0
 	bench_env = env
 	var we := WorldEnvironment.new()
 	we.environment = env
@@ -454,6 +462,18 @@ func _process(_delta: float) -> void:
 	n += 1
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
+	if mist_report and n == frames - 1:
+		for m in river.find_children("*", "PhysXWaterMist3D", true, false):
+			var t0 := Time.get_ticks_usec()
+			m.advance(0.0)
+			var t1 := Time.get_ticks_usec()
+			m.advance(2.0)
+			var t2 := Time.get_ticks_usec()
+			var up := (t1 - t0) / 1000.0
+			print("mist: step %.2f ms, upload %.2f ms, grid about %s cells, %d steps a second" % [((t2 - t1) / 1000.0 - up) / (2.0 * m.update_rate), up, m.size / maxf(m.cell_size, 0.0001), int(m.update_rate)])
+	if mist_report and n % 30 == 0:
+		for m in river.find_children("*", "PhysXWaterMist3D", true, false):
+			print("frame %d mist max %.2f g/m3 at foot %.2f, 5 m up %.2f, 10 m out %.2f" % [n, m.get_max_density(), m.sample_density(m.global_transform * (m.source_position + Vector3(0, 1, 0))), m.sample_density(m.global_transform * (m.source_position + Vector3(0, 5, 0))), m.sample_density(m.global_transform * (m.source_position + Vector3(0, 1, -10)))])
 	if report and n % 60 == 0:
 		for b in boxes:
 			print("frame %d box at %s flow %s" % [n, b.global_position, river.call("sample_flow", b.global_position)])
