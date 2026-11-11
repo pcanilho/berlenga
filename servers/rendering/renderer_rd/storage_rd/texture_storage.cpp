@@ -1642,6 +1642,10 @@ void TextureStorage::_texture_2d_update(RID p_texture, const Ref<Image> &p_image
 	Ref<Image> validated = _validate_texture_format(p_image, f);
 
 	RD::get_singleton()->texture_update(tex->rd_texture, p_layer, validated->get_data());
+
+	// The decal and area light atlases hold copies: refresh them, or projectors and decals keep the old image.
+	decal_atlas_mark_dirty_on_texture(p_texture);
+	area_light_atlas_mark_dirty_on_texture(p_texture);
 }
 
 void TextureStorage::texture_2d_update(RID p_texture, const Ref<Image> &p_image, int p_layer) {
