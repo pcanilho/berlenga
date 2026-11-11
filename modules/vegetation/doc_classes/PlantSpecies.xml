@@ -106,6 +106,12 @@
 		<member name="meshes" type="Mesh[]" setter="set_meshes" getter="get_meshes" default="[]">
 			Mesh variants; each plant picks one at random. Plants carry ([code]variant, scale, random, species[/code]) in [code]INSTANCE_CUSTOM[/code] for their materials.
 		</member>
+		<member name="mask_channel" type="int" setter="set_mask_channel" getter="get_mask_channel" default="-1">
+			The channel of [member VegetationField3D.density_mask] that scales this species' density: 0 red, 1 green, 2 blue, 3 alpha; -1 ignores the mask.
+		</member>
+		<member name="mask_invert" type="bool" setter="set_mask_invert" getter="is_mask_invert" default="false">
+			If [code]true[/code], the species grows where the mask channel is low instead (one minus it), so a meadow can fill exactly the clearing that keeps trees out.
+		</member>
 		<member name="patch_cover" type="float" setter="set_patch_cover" getter="get_patch_cover" default="0.5">
 			Fraction of the ground inside patches.
 		</member>

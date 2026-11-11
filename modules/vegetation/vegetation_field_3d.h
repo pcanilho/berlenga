@@ -65,6 +65,9 @@ class VegetationField3D : public Node3D {
 		float top = 0.0f; // Crown top above the ground, metres.
 	};
 	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
+	// Painted or generated density over a world rect: each species reads one channel (PlantSpecies.mask_channel).
+	Ref<Texture2D> density_mask;
+	Rect2 density_mask_rect;
 	void _publish_canopy(const Rect2 &p_rect);
 	static constexpr float CROWN_CELL = 8.0f;
 	LocalVector<Crown> crowns;
@@ -99,6 +102,10 @@ public:
 	Ref<Biome> get_biome() const { return biome; }
 	void set_data_map(const NodePath &p_path);
 	NodePath get_data_map() const { return data_map; }
+	void set_density_mask(const Ref<Texture2D> &p_mask) { density_mask = p_mask; }
+	Ref<Texture2D> get_density_mask() const { return density_mask; }
+	void set_density_mask_rect(const Rect2 &p_rect) { density_mask_rect = p_rect; }
+	Rect2 get_density_mask_rect() const { return density_mask_rect; }
 	void set_weather_map(const NodePath &p_path) { weather_map = p_path; }
 	NodePath get_weather_map() const { return weather_map; }
 	void set_tile_size(float p_size);

@@ -205,6 +205,32 @@ Error VegetationField3D::populate() {
 	LocalVector<Placed> placed;
 
 	const Rect2 rect = map->get_map_rect();
+	// The density mask, read once on the CPU (bilinear, clamped to its rect; outside it a species
+	// with a channel grows as if the mask were 1).
+	Ref<Image> mask_img;
+	if (density_mask.is_valid() && density_mask_rect.has_area()) {
+		mask_img = density_mask->get_image();
+		if (mask_img.is_valid() && mask_img->is_compressed()) {
+			mask_img = mask_img->duplicate();
+			mask_img->decompress();
+		}
+	}
+	auto mask_at = [&](const Vector2 &p_xz, int p_channel) -> float {
+		if (mask_img.is_null() || mask_img->is_empty() || !density_mask_rect.has_point(p_xz)) {
+			return 1.0f;
+		}
+		const Vector2 uv = (p_xz - density_mask_rect.position) / density_mask_rect.size;
+		const float fx = uv.x * mask_img->get_width() - 0.5f;
+		const float fy = uv.y * mask_img->get_height() - 0.5f;
+		const int x0 = CLAMP(int(Math::floor(fx)), 0, mask_img->get_width() - 1);
+		const int y0 = CLAMP(int(Math::floor(fy)), 0, mask_img->get_height() - 1);
+		const int x1 = MIN(x0 + 1, mask_img->get_width() - 1);
+		const int y1 = MIN(y0 + 1, mask_img->get_height() - 1);
+		const float ax = CLAMP(fx - Math::floor(fx), 0.0f, 1.0f);
+		const float ay = CLAMP(fy - Math::floor(fy), 0.0f, 1.0f);
+		const Color c = mask_img->get_pixel(x0, y0).lerp(mask_img->get_pixel(x1, y0), ax).lerp(mask_img->get_pixel(x0, y1).lerp(mask_img->get_pixel(x1, y1), ax), ay);
+		return c[p_channel];
+	};
 	const int tx0 = int(Math::floor(rect.position.x / tile_size));
 	const int tz0 = int(Math::floor(rect.position.y / tile_size));
 	const int tx1 = int(Math::ceil((rect.position.x + rect.size.x) / tile_size));
@@ -255,6 +281,10 @@ Error VegetationField3D::populate() {
 					float suit = sp->get_suitability(map, p3);
 					if (shade_rule && suit > 0.0f) {
 						suit *= sp->rule_weight(PlantSpecies::RULE_SHADE, _shade_at(xz));
+					}
+					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
+						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
+						suit *= sp->is_mask_invert() ? 1.0f - m : m;
 					}
 					if (rank >= sp->get_density() * suit) {
 						continue;
@@ -525,6 +555,10 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_biome"), &VegetationField3D::get_biome);
 	ClassDB::bind_method(D_METHOD("set_data_map", "path"), &VegetationField3D::set_data_map);
 	ClassDB::bind_method(D_METHOD("get_data_map"), &VegetationField3D::get_data_map);
+	ClassDB::bind_method(D_METHOD("set_density_mask", "mask"), &VegetationField3D::set_density_mask);
+	ClassDB::bind_method(D_METHOD("get_density_mask"), &VegetationField3D::get_density_mask);
+	ClassDB::bind_method(D_METHOD("set_density_mask_rect", "rect"), &VegetationField3D::set_density_mask_rect);
+	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("set_weather_map", "path"), &VegetationField3D::set_weather_map);
 	ClassDB::bind_method(D_METHOD("get_weather_map"), &VegetationField3D::get_weather_map);
 	ClassDB::bind_method(D_METHOD("set_tile_size", "size"), &VegetationField3D::set_tile_size);
@@ -544,6 +578,8 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "density_mask", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_density_mask", "get_density_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "density_mask_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_density_mask_rect", "get_density_mask_rect");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,256,1,or_greater,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "populate_on_ready"), "set_populate_on_ready", "is_populate_on_ready");
