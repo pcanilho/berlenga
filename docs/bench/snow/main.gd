@@ -43,6 +43,7 @@ extends Node3D
 #   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
+#   --deform=R,E[,S]  (trail view) deformation texels R over E m, triangles every S m
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
 #                     under the boots, balls and wheel; 2 holds the boots (--close: down on the boot prints)
 #   --view=props      close: bumpy ground, boxes, a sphere, a 45 degree board and a 70 degree wall after snow
@@ -1373,6 +1374,14 @@ func _build_trail(cam: Camera3D) -> void:
 	if OS.get_cmdline_user_args().has("--close"):
 		# Triangles as fine as the deformation texels (6 cm), for the pieces of a broken crust.
 		surface.detail_spacing = 0.0625
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--deform="):
+			# The deformation field's texels and extent, and the triangles' spacing: --deform=768,24[,0.03125].
+			var v := a.substr(9).split(",")
+			surface.deform_resolution = int(v[0])
+			surface.deform_extent = float(v[1])
+			if v.size() > 2:
+				surface.detail_spacing = float(v[2])
 	add_child(surface)
 	# Movers, driven on set paths so the shot is the same each run: a walker whose two boots print the
 	# snow (boot boxes in the snow_deform group, 80 kg on 0.035 m2: Bekker), a cart wheel and two balls

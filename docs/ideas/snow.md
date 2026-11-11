@@ -912,3 +912,21 @@ year (1185 mm against 1200) and its seasonality (December 125 mm, June 58 mm); t
 mountain gets more than flat ground; an east wind mirrors the field; the bake's snow follows it. The
 landscape bench's gap "SnowClimate is set apart" is now a pass. Its check "cornices grow on the lee
 crests around the peak" failed before this change too (0 pieces since the gentler valley layout).
+
+## Follow-up 8: clean print edges at fine deform settings (11 Nov 2026)
+
+At 768 texels over 24 m (3.1 cm) prints showed spikes and toothed walls. Three causes, three fixes:
+- Rim snow from one step landed in the hole of the step before, and thin walls of untrodden snow were left
+  between overlapping steps with rim heaped on both sides; at 6 cm texels the coarser field smeared them,
+  at 3 cm they stood as spikes. The pushed snow is loose, so it now slides at its repose angle (45 degrees,
+  Abe 2004) with the granular ground's Sumner erosion step (`GroundDeformField.slump()`), rim only: the
+  compacted walls stand, crust plates stay as heaped.
+- Footprints were stamped by texel centre in or out, a staircase along a turned boot. They are now drawn
+  antialiased from the signed distance to the edge over half a texel (half, so a boot two texels wide
+  still sinks to full depth in the middle).
+- Triangles coarser than the texels (the 6.25 cm close mesh on a 3.1 cm field) sampled walls on and off.
+  The vertex shader now averages four taps over its spacing, the displacement prefiltered to the mesh's
+  rate as geometry clipmaps do; the fragment's normal keeps the texels' detail.
+
+Cost: the step with four rolling bodies goes from about 1.0 to 1.6 ms of CPU (slumping owed tiles for a
+second after each press). All snow and ground checks pass.

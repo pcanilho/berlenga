@@ -208,6 +208,9 @@ int GroundDeformField::slump(double p_delta, const G &p_ground, const T &p_param
 					if (!p_params(wx, wz, tan_repose, rate, max_dent)) {
 						continue;
 					}
+					if (rim[i] <= 0.0f && dent[i] >= max_dent) {
+						continue; // Nothing here can move.
+					}
 					const float gi = p_ground(wx, wz);
 					const float si = gi + rim[i] - dent[i];
 					float excess[8];

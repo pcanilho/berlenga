@@ -390,9 +390,25 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 		}
 		return MAX(Math::sqrt(r_d2) - p_radius, 0.0f);
 	};
-	auto inside = [&](float wx, float wz, float &r_d2) {
-		const float o = outside(wx, wz, r_d2);
-		return o <= 0.0f && (p_box || r_d2 <= r2);
+	// Coverage of the texel by the footprint, from the signed distance to its edge (negative inside) over
+	// half a texel: the edge is drawn antialiased, so a turned box or a circle leaves a smoother wall on the
+	// texel grid instead of a staircase. Half a texel, not one: a boot only two texels wide still sinks
+	// to its full depth in the middle.
+	auto coverage = [&](float wx, float wz, float &r_d2) {
+		const float dx = wx - p_position.x;
+		const float dz = wz - p_position.z;
+		r_d2 = dx * dx + dz * dz;
+		float sd;
+		if (p_box) {
+			const float lx = cy * dx - sy * dz;
+			const float lz = sy * dx + cy * dz;
+			const float qx = Math::abs(lx) - p_half.x;
+			const float qz = Math::abs(lz) - p_half.y;
+			sd = Math::sqrt(MAX(qx, 0.0f) * MAX(qx, 0.0f) + MAX(qz, 0.0f) * MAX(qz, 0.0f)) + MIN(MAX(qx, qz), 0.0f);
+		} else {
+			sd = Math::sqrt(r_d2) - p_radius;
+		}
+		return CLAMP(0.5f - 2.0f * sd / t, 0.0f, 1.0f);
 	};
 	auto profile = [&](float d2) {
 		return p_round ? p_bottom + p_radius - Math::sqrt(MAX(r2 - d2, 0.0f)) : p_bottom;
@@ -404,7 +420,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			const float wx = (origin.x + x + 0.5f) * t;
 			const float wz = (origin.y + z + 0.5f) * t;
 			float d2;
-			if (!inside(wx, wz, d2)) {
+			if (coverage(wx, wz, d2) <= 0.0f) {
 				continue;
 			}
 			const Column c = p_columns.column(wx, wz);
@@ -429,7 +445,8 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			const float wx = (origin.x + x + 0.5f) * t;
 			const float wz = (origin.y + z + 0.5f) * t;
 			float d2;
-			if (!inside(wx, wz, d2)) {
+			const float cover = coverage(wx, wz, d2);
+			if (cover <= 0.0f) {
 				continue;
 			}
 			const Column c = p_columns.column(wx, wz);
@@ -438,7 +455,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			}
 			const int i = z * n + x;
 			const float s = c.surface - dent[i] + rim[i];
-			float target = profile(d2);
+			float target = profile(MIN(d2, r2));
 			if (p_sink > 0.0f) {
 				const float w = p_round ? Math::sqrt(MAX(1.0f - d2 / r2, 0.0f)) : 1.0f;
 				target = MIN(target, c.surface - p_sink * w);
@@ -447,7 +464,8 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			if (target >= s) {
 				continue;
 			}
-			const float delta = s - target;
+			// An edge texel goes down by the share of it the footprint covers.
+			const float delta = (s - target) * cover;
 			deepest = MAX(deepest, c.surface - target);
 			const float take = MIN(rim[i], delta);
 			rim[i] -= take;
