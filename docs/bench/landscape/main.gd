@@ -210,6 +210,20 @@ func _ready() -> void:
 	get_tree().quit(0)
 
 
+# Broad-leaved trees of the forest field (any species, stand-ins or generated): crowns of 2 m and more where the
+# stands are not conifer.
+func _broadleaf_trees() -> PackedVector3Array:
+	var out := PackedVector3Array()
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as PlantSpecies
+		if sp == null or sp.canopy_radius < 2.0:
+			continue
+		for tp in veg.get_placements(i):
+			if veg.get_conifer_at(tp) < 0.3:
+				out.push_back(tp)
+	return out
+
+
 func _log(s: String) -> void:
 	print("[landscape] ", s)
 
@@ -1034,6 +1048,10 @@ func _build_weather() -> void:
 	anchor.name = "WorldAnchor"
 	add_child(anchor)
 	add_child(weather)
+	# One season state for every system (WeatherMap3D.get_season): the date from the SkyClock, the year's weather
+	# from the same climate as the rivers and the plants.
+	weather.climate = climate
+	weather.sky_clock = weather.get_path_to(clock)
 	weather.follow_target = weather.get_path_to(anchor)
 	if args.get("cloud-shadow", "1") != "0":
 		weather.sun_light = weather.get_path_to(sun) # the clouds' shadow, as the sun's projector
@@ -1458,6 +1476,68 @@ func _build_camera() -> void:
 			cam.position = Vector3(ex - 60.0, height_at(ex - 60.0, cz) + 14.0, cz)
 			cam.look_at(Vector3(ex, height_at(ex, ez) + 10.0, ez))
 			_log("treeline edge at (%.0f, %.0f)" % [ex, ez])
+		"forestfloor":
+			# Inside a broad-leaved stand at kneeling height, looking 14 m along the floor under closed crowns.
+			var trees2 := _broadleaf_trees()
+			var fpick := Vector3.INF
+			var fdir := Vector3.ZERO
+			var fbest := -1.0
+			for tp in trees2:
+				if tp.y < 3.0:
+					continue
+				for k in 8:
+					var d := Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0))
+					var sh := minf(veg.get_stand_shade_at(tp + d * 4.0), veg.get_stand_shade_at(tp + d * 14.0))
+					if sh > fbest and rad_to_deg(data_map.get_slope_at(tp + d * 4.0)) < 12.0:
+						fbest = sh
+						fpick = tp
+						fdir = d
+				if fbest > 0.8:
+					break
+			if fpick == Vector3.INF:
+				fpick = Vector3(0, height_at(0, 0), 0)
+				fdir = Vector3(0, 0, 1)
+			var cf := fpick + fdir * 4.0 + Vector3(-fdir.z, 0, fdir.x) * 1.5
+			cf.y = height_at(cf.x, cf.z) + 1.1
+			var lf := fpick + fdir * 14.0
+			lf.y = height_at(lf.x, lf.z) + 0.2
+			cam.fov = 65.0
+			cam.position = cf
+			cam.look_at(lf)
+			_log("forestfloor camera at %s, stand shade %.2f, litter %.2f" % [str(cf), fbest, veg.get_litter_at(lf)])
+		"woodedge":
+			# At a broad-leaved wood's edge at eye height, 9 m out from a rim tree, looking at the leaf drift that thins
+			# past its crowns (get_litter_at), on open ground with no stand shade behind the camera.
+			var trees := _broadleaf_trees()
+			var pick := Vector3.INF
+			var pdir := Vector3.ZERO
+			var best_h := INF
+			for tp in trees:
+				if tp.y < 3.0 or tp.y > best_h:
+					continue
+				for k in 16:
+					var d := Vector3(cos(TAU * k / 16.0), 0, sin(TAU * k / 16.0))
+					var q := tp + d * 12.0
+					if veg.get_stand_shade_at(q) > 0.05 or veg.get_litter_at(tp + d * 3.0) < 0.3:
+						continue
+					if rad_to_deg(data_map.get_slope_at(q)) > 15.0:
+						continue
+					pick = tp
+					pdir = d
+					best_h = tp.y
+					break
+			if pick == Vector3.INF:
+				_log("woodedge: no open rim on a broad-leaved stand, falling back to the meadow view")
+				pick = Vector3(0, height_at(0, 0), 0)
+				pdir = Vector3(0, 0, 1)
+			var ce := pick + pdir * 9.0
+			ce.y = height_at(ce.x, ce.z) + 1.6
+			var la := pick + pdir * 2.0
+			la.y = height_at(la.x, la.z) + 0.4
+			cam.fov = 60.0
+			cam.position = ce
+			cam.look_at(la)
+			_log("woodedge camera at %s, litter %.2f at the rim, %.2f under the camera" % [str(ce), veg.get_litter_at(pick + pdir * 3.0), veg.get_litter_at(ce)])
 		"meadow":
 			# Standing in the clearing at eye height, 60 m short of the forest edge (the treeline view's edge), looking
 			# across the herbs and grass at it.
@@ -1639,7 +1719,10 @@ func _build_cover() -> void:
 		sp.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
 	# The forest floor under the forest field's crowns: the montane conifer set (spruce, fir, beech: the stand-in
 	# cones and balls), bigger plants first, sorted by the crowns' conifer share.
-	var floor_sp: Array = PlantGenerator.make_floor(PlantGenerator.FLOOR_MONTANE_CONIFER, 3)
+	# --floor=beech|oak|hedgerow|montane picks the floor set (beech and oak floors carry the violets and herb robert).
+	var floors := {"montane": PlantGenerator.FLOOR_MONTANE_CONIFER, "beech": PlantGenerator.FLOOR_BEECH,
+			"oak": PlantGenerator.FLOOR_OAK_MIXED, "hedgerow": PlantGenerator.FLOOR_HEDGEROW}
+	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3)
 	b.species = floor_sp.slice(0, 3) + _wetland_species() + meadow_sp + floor_sp.slice(3)
 	for sp in b.species:
 		var ps := sp as PlantSpecies
@@ -2025,6 +2108,10 @@ func _checks() -> void:
 	for m in [11, 0, 1, 2, 3]:
 		q_wet = maxf(q_wet, float(md[m]) if md.size() == 12 else 0.0)
 	check(q_wet > q_summer * 1.5, "rivers follow the seasons: winter and spring high water, a late-summer low (%.2f against %.2f m3/s)" % [q_wet, q_summer])
+	var season: Dictionary = weather.get_season()
+	var want_day: int = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334][clock.month - 1] + clock.day
+	check(season.has("day_of_year") and absi(int(season["day_of_year"]) - want_day) <= 1 and season.get("photoperiod_h", 0.0) > 0.0,
+			"one season state from the SkyClock and the climate (day %d, %.1f h of daylight, forcing %.2f, snow line %.0f m)" % [int(season.get("day_of_year", -1)), float(season.get("photoperiod_h", 0.0)), float(season.get("forcing", 0.0)), float(season.get("snow_line_m", 0.0))])
 	check(melt > 0.0, "snow on the high ground holds winter water for the spring melt (%.0f mm on the peak in March)" % melt)
 	check(false, "the live weather's rain raises rivers and lakes (flows follow the climate by month, not the storm overhead)", true)
 	# Footprints: sand on the beach, mud on the lake bank in the rain, litter under the forest, none on bare rock.
