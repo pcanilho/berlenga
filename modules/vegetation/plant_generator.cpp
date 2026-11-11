@@ -2775,7 +2775,7 @@ String PlantGenerator::shader_common_code() {
 	String code = WeatherMap3D::get_wind_shader_code();
 	code += VegetationLight::SHADER_CODE;
 	// VegetationField3D packs the light a plant grew in into the fraction of its range (custom y).
-	code += "float vegetation_light_of(float y) { return y > 0.0 ? fract(y) * (101.0 / 100.0) * 1.5 : 1.0; }\n";
+	code += "float vegetation_light_of(float y) { float f = fract(y); return f > 0.5 / 101.0 ? f * (101.0 / 100.0) * 1.5 : 1.0; }\n";
 	// The wind code already declares weather_map_rect: the wetness lines without their globals.
 	code += BaseMaterial3D::get_wetness_functions_code(false);
 	code += BaseMaterial3D::get_snow_shader_code();
@@ -3004,6 +3004,148 @@ void PlantGenerator::free_shaders() {
 	shaders[0].unref();
 	shaders[1].unref();
 	impostor_shader.unref();
+}
+
+// Climber leaves for the trees' vines, one leaf per mesh (docs/ideas/plant-generator.md,
+// "Climber leaves"). Ivy (Hedera helix): palmate, 3 to 5 shallow lobes, dark and glossy with pale
+// veins. Old man's beard (Clematis vitalba): pinnate, five ovate leaflets on a rachis that twines.
+// Honeysuckle (Lonicera periclymenum): ovate to elliptic, entire, short-stalked, dull green.
+Array PlantGenerator::make_climber_leaves(int p_climber, int p_variants) {
+	Array out;
+	const int climber = p_climber == PRESET_IVY ? CLIMBER_IVY : CLAMP(p_climber, 0, int(CLIMBER_HONEYSUCKLE));
+	Ref<PlantGenerator> g;
+	g.instantiate();
+	g->preset = PRESET_IVY; // Ivy's texture spec, adjusted below for the others.
+	g->leaf_wear = 0.25f; // A few bites and the odd yellowing leaf among the four.
+	Leaf l;
+	l.length = 1.0f;
+	l.segments = 8;
+	float roughness = 0.6f;
+	LeafTexture t = g->_leaf_texture_spec(false);
+	switch (climber) {
+		case CLIMBER_IVY:
+			g->leaf_color = Color(0.05f, 0.15f, 0.04f);
+			l.shape = LEAF_PALMATE;
+			l.lobes = 2;
+			l.lobe_depth = 0.28f;
+			l.width = 1.1f;
+			l.fold = 0.1f;
+			l.bend = 0.15f;
+			break;
+		case CLIMBER_CLEMATIS:
+			g->leaf_color = Color(0.1f, 0.24f, 0.06f);
+			l.shape = LEAF_OVATE;
+			l.width = 0.55f;
+			l.fold = 0.15f;
+			l.bend = 0.3f;
+			roughness = 0.72f;
+			break;
+		default: // CLIMBER_HONEYSUCKLE
+			g->leaf_color = Color(0.11f, 0.25f, 0.08f);
+			l.shape = LEAF_OVATE;
+			l.width = 0.55f;
+			l.fold = 0.2f;
+			l.bend = 0.25f;
+			l.petiole = 0.06f;
+			roughness = 0.75f;
+			break;
+	}
+	t = g->_leaf_texture_spec(false);
+	t.leaf = l;
+	t.aspect = l.width;
+	if (climber == CLIMBER_IVY) {
+		t.venation = VENATION_PALMATE;
+		t.vein = Color(0.38f, 0.45f, 0.3f);
+		t.yellowing = 0.1f;
+		t.spots = 0.15f;
+	} else {
+		t.venation = VENATION_PINNATE;
+		t.yellowing = 0.2f;
+		t.spots = 0.2f;
+	}
+	const TextureSet ts = g->_bake_leaf_texture(t, 9001u + uint32_t(climber) * 101u);
+	Ref<ShaderMaterial> mat = g->_textured_material(ts, roughness);
+	mat->set_shader_parameter("height", 1.0f);
+	mat->set_shader_parameter("stiffness", 1.5f);
+	mat->set_shader_parameter("light_response", 1.0f);
+	const Basis flat = organ_frame(Vector3(0, 0, 1), Vector3(0, 1, 0));
+	for (int v = 0; v < MAX(p_variants, 1); v++) {
+		g->seed = v;
+		g->rng.seed(uint64_t(9001 + climber * 31 + v));
+		for (Builder &b : g->builders) {
+			b = Builder();
+		}
+		g->organ = 0;
+		g->organ_bases.clear();
+		Leaf lv = l;
+		lv.width = l.width * g->_rand(0.9f, 1.1f);
+		lv.bend = l.bend * g->_rand(0.7f, 1.3f);
+		lv.twist = g->_rand(-0.15f, 0.15f);
+		if (climber == CLIMBER_CLEMATIS) {
+			// A rachis with two opposite pairs of stalked leaflets and one at the tip.
+			Leaf rachis;
+			rachis.shape = LEAF_LINEAR;
+			rachis.length = 0.62f;
+			rachis.width = 0.025f;
+			rachis.fold = 0.0f;
+			rachis.bend = 0.2f;
+			rachis.segments = 4;
+			g->_add_leaf(SURFACE_LEAF, Transform3D(flat, Vector3()), rachis, 0.0f);
+			const float at[2] = { 0.3f, 0.58f };
+			for (int k = 0; k < 2; k++) {
+				for (int side = -1; side <= 1; side += 2) {
+					Leaf lf = lv;
+					lf.length = g->_rand(0.36f, 0.44f) * (k == 0 ? 1.0f : 0.92f);
+					lf.width = lf.length * lv.width;
+					const Vector3 d = Vector3(float(side), 0.0f, 0.55f).normalized();
+					g->_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), Vector3(0.012f * side, 0.002f, at[k] * 0.62f)), lf, 0.3f + 0.3f * k);
+				}
+			}
+			Leaf tip = lv;
+			tip.length = 0.38f;
+			tip.width = tip.length * lv.width;
+			g->_add_leaf(SURFACE_LEAF, Transform3D(flat, Vector3(0.0f, 0.003f, 0.6f)), tip, 0.8f);
+		} else {
+			lv.width = lv.width * lv.length;
+			g->_add_leaf(SURFACE_LEAF, Transform3D(flat, Vector3()), lv, 0.0f);
+		}
+		Builder &b = g->builders[SURFACE_LEAF];
+		b.normals.resize(b.verts.size());
+		b.normals.fill(Vector3());
+		Vector3 *nw = b.normals.ptrw();
+		const Vector3 *vr = b.verts.ptr();
+		int *iw = b.indices.ptrw();
+		for (int i = 0; i < b.indices.size(); i += 3) {
+			SWAP(iw[i + 1], iw[i + 2]);
+		}
+		for (int i = 0; i < b.indices.size(); i += 3) {
+			const int i0 = b.indices[i];
+			const int i1 = b.indices[i + 2];
+			const int i2 = b.indices[i + 1];
+			const Vector3 fn = (vr[i1] - vr[i0]).cross(vr[i2] - vr[i0]);
+			nw[i0] += fn;
+			nw[i1] += fn;
+			nw[i2] += fn;
+		}
+		for (int i = 0; i < b.verts.size(); i++) {
+			nw[i] = nw[i].length_squared() > 0.0f ? nw[i].normalized() : Vector3(0, 1, 0);
+		}
+		Array arrays;
+		arrays.resize(Mesh::ARRAY_MAX);
+		arrays[Mesh::ARRAY_VERTEX] = b.verts;
+		arrays[Mesh::ARRAY_NORMAL] = b.normals;
+		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
+		arrays[Mesh::ARRAY_TEX_UV2] = b.uv2s;
+		arrays[Mesh::ARRAY_COLOR] = b.colors;
+		arrays[Mesh::ARRAY_INDEX] = b.indices;
+		Ref<ArrayMesh> m;
+		m.instantiate();
+		m->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+		m->surface_set_material(0, mat);
+		m->set_name(vformat("climber_leaf_%d_%d", climber, v));
+		out.push_back(m);
+	}
+	return out;
 }
 
 Ref<ShaderMaterial> PlantGenerator::_textured_material(const TextureSet &p_set, float p_roughness) const {
@@ -3724,6 +3866,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_IVY);
 	BIND_ENUM_CONSTANT(PRESET_HEATHER);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));
+	BIND_ENUM_CONSTANT(CLIMBER_IVY);
+	BIND_ENUM_CONSTANT(CLIMBER_CLEMATIS);
+	BIND_ENUM_CONSTANT(CLIMBER_HONEYSUCKLE);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_impostor", "mesh", "frames", "frame_size"), &PlantGenerator::make_impostor, DEFVAL(8), DEFVAL(64));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("add_impostors", "species", "range", "frames", "frame_size"), &PlantGenerator::add_impostors, DEFVAL(8), DEFVAL(64));
 	BIND_ENUM_CONSTANT(FLOOR_BEECH);
