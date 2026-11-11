@@ -91,6 +91,8 @@ public:
 		PRESET_WOOD_ANEMONE,
 		PRESET_IVY,
 		PRESET_HEATHER,
+		PRESET_VIOLET,
+		PRESET_HERB_ROBERT,
 		PRESET_MAX,
 	};
 
@@ -230,6 +232,8 @@ private:
 	void _build_twigs();
 	void _build_wood_sorrel();
 	void _build_seedling();
+	void _build_violet();
+	void _build_herb_robert();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();

@@ -9,6 +9,7 @@ extends Node3D
 #   --wind=x,z       fallback wind in m/s (default 3,1); 0,0 for still grass
 #   --weather        a WeatherMap3D drives the wind instead
 #   --frames=N       frames before the capture (default 20)
+#   --litter-wind=x,z  downwind lean of the leaf drift (VegetationField3D.litter_wind), e.g. 0.6,0
 #   --out=path.png   save the last frame
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
@@ -55,6 +56,7 @@ var trample := false
 var layers := true
 var close := false
 var forest := false
+var litter_wind := Vector2()
 var forest_in := false
 var stand := "beech"
 var stand_set := false
@@ -131,6 +133,9 @@ func _ready() -> void:
 			forest = true
 			forest_in = true
 		elif a == "--notex": notex = true
+		elif a.begins_with("--litter-wind="):
+			var lw := a.substr(14).split(",")
+			litter_wind = Vector2(float(lw[0]), float(lw[1]))
 		elif a.begins_with("--stand="):
 			stand = a.substr(8)
 			stand_set = true
@@ -224,6 +229,7 @@ func _ready() -> void:
 		cover.tile_size = 4.0
 		cover.biome = _cover_biome()
 		cover.forest_floor_enabled = not no_floor
+		cover.litter_wind = litter_wind
 		if clearing >= 0:
 			_set_clearing()
 		add_child(cover)

@@ -83,7 +83,7 @@
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
-				Broad-leaf litter fallen at [param global_position], from 0 (none) to 1 (a full mat), from the crowns placed by the last [method populate]. Under a crown it is full; past the rim it thins over about 6 m, the drift of leaves blown out of a stand into its edge or a clearing (Ferrari and Sugita 1996). Needle-leaved crowns add none. Species with a [member PlantSpecies.litter_range] are placed by it.
+				Broad-leaf litter fallen at [param global_position], from 0 (none) to 1 (a full mat), from the crowns placed by the last [method populate]. Under a crown it is full; past the rim it thins over about 6 m, the drift of leaves blown out of a stand into its edge or a clearing (Ferrari and Sugita 1996), farther downwind ([member litter_wind]). Needle-leaved crowns add none. Species with a [member PlantSpecies.litter_range] are placed by it.
 			</description>
 		</method>
 		<method name="get_stand_shade_at" qualifiers="const">
@@ -130,6 +130,9 @@
 		</member>
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			The [TerrainDataMap3D] that gives height, slope, wetness and water. Its area is the area planted.
+		</member>
+		<member name="litter_wind" type="Vector2" setter="set_litter_wind" getter="get_litter_wind" default="Vector2(0, 0)">
+			Downwind lean of the leaf drift ([method get_litter_at]): its direction is the way the leaf-fall wind blows toward (x, z), its length (up to [code]0.8[/code]) how much farther the drift reaches downwind and the less upwind. Zero: taken from the [member weather_map]'s wind at placement, half a lean at 10 m/s.
 		</member>
 		<member name="populate_on_ready" type="bool" setter="set_populate_on_ready" getter="is_populate_on_ready" default="true">
 			If [code]true[/code], populate when ready (once the map is baked) and again whenever the map is baked again, after terrain edits.

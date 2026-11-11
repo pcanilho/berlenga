@@ -222,6 +222,12 @@
 		<constant name="PRESET_HEATHER" value="32" enum="Preset">
 			Heather: a dwarf shrub of wiry branched woody stems clothed in short leafy shoots, some with spikes of pink-mauve bells; pine heath and acid open ground.
 		</constant>
+		<constant name="PRESET_VIOLET" value="33" enum="Preset">
+			Common dog-violet: a rosette of long-stalked, rounded heart-shaped leaves with shallow rounded teeth, and nodding blue-violet flowers on arched stalks; half-shaded woods, hedge banks and grassland.
+		</constant>
+		<constant name="PRESET_HERB_ROBERT" value="34" enum="Preset">
+			Herb Robert: a straggling herb with red stems, opposite leaves of three deeply lobed leaflets on long stalks, and small pink five-petalled flowers at the stem tips; woodland rides, gaps, edges and hedge bottoms.
+		</constant>
 		<constant name="CLIMBER_IVY" value="0" enum="Climber">
 			Ivy (Hedera helix): palmate, shallow lobes, dark and glossy with pale veins.
 		</constant>
@@ -231,7 +237,7 @@
 		<constant name="CLIMBER_HONEYSUCKLE" value="2" enum="Climber">
 			Honeysuckle (Lonicera periclymenum): ovate, short-stalked, dull green.
 		</constant>
-		<constant name="PRESET_MAX" value="33" enum="Preset">
+		<constant name="PRESET_MAX" value="35" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">

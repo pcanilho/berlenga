@@ -72,6 +72,8 @@ class VegetationField3D : public Node3D {
 		float conifer = 0.0f; // 1 for a needle-leaved crown.
 	};
 	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
+	Vector2 litter_wind; // Downwind lean of the leaf drift; zero: from the weather map's wind.
+	Vector2 litter_skew; // The lean of the last placement.
 	NodePath canopy_field; // Another VegetationField3D whose crowns also shade this one's plants.
 	// Painted or generated density over a world rect: each species reads one channel (PlantSpecies.mask_channel).
 	Ref<Texture2D> density_mask;
@@ -130,6 +132,8 @@ class VegetationField3D : public Node3D {
 		float crown_max = 0.0f;
 		float grid_cell = 1.0f;
 		float sun_mean = 0.0f; // VegetationLight::sun_mean().
+		Vector2 litter_skew; // crown_litter()'s downwind lean.
+		float litter_reach = 0.0f; // How far past a crown its litter can land.
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -283,6 +287,8 @@ public:
 	Rect2 get_density_mask_rect() const { return density_mask_rect; }
 	void set_canopy_field(const NodePath &p_path) { canopy_field = p_path; }
 	NodePath get_canopy_field() const { return canopy_field; }
+	void set_litter_wind(const Vector2 &p_wind) { litter_wind = p_wind; }
+	Vector2 get_litter_wind() const { return litter_wind; }
 	void set_weather_map(const NodePath &p_path) { weather_map = p_path; }
 	NodePath get_weather_map() const { return weather_map; }
 	void set_tile_size(float p_size);

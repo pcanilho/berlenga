@@ -249,6 +249,18 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	if (r_setup.other == this) {
 		r_setup.other = nullptr;
 	}
+	// Leaf drift downwind: litter_wind, or else the weather's wind (autumn gales carry leaves
+	// furthest; 10 m/s leans the drift by half).
+	Vector2 skew = litter_wind;
+	if (skew == Vector2() && !weather_map.is_empty()) {
+		const WeatherMap3D *wm = Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map));
+		if (wm && wm->get_wind_direction() != Vector2()) {
+			skew = wm->get_wind_direction().normalized() * (0.05f * wm->get_wind_speed());
+		}
+	}
+	r_setup.litter_skew = skew.limit_length(0.8f);
+	r_setup.litter_reach = 3.0f * LITTER_SPREAD * (1.0f + r_setup.litter_skew.length());
+	litter_skew = r_setup.litter_skew;
 	const TypedArray<PlantSpecies> species_list = biome->get_species();
 	const int count = species_list.size();
 	r_setup.species.resize(count);
@@ -300,7 +312,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 				halo = MAX(halo, later.halo + ps.crown_max * 1.4f);
 			}
 			if (ps.crown_max > 0.0f && later.sp->uses_litter()) {
-				halo = MAX(halo, later.halo + ps.crown_max + 3.0f * LITTER_SPREAD);
+				halo = MAX(halo, later.halo + ps.crown_max + r_setup.litter_reach);
 			}
 		}
 		ps.halo = halo;
@@ -356,8 +368,10 @@ float crown_shade(const Grid &p_grid, const Crowns &p_crowns, float p_reach, flo
 // drops its leaves under itself and, with an exponential tail (Ferrari and Sugita 1996), past its
 // edge over LITTER_SPREAD metres, so edges and clearings get a drift that thins outwards. Summed
 // as a deposit and turned into cover: about 1 under closed crowns.
+// p_skew leans the tail downwind (its direction, the way the wind blows toward; its length k makes
+// the drift reach 1 + k times as far downwind and 1 - k times as far upwind).
 template <typename Grid, typename Crowns>
-float crown_litter(const Grid &p_grid, const Crowns &p_crowns, float p_reach, float p_cell, const Vector2 &p_xz) {
+float crown_litter(const Grid &p_grid, const Crowns &p_crowns, float p_reach, float p_cell, const Vector2 &p_xz, const Vector2 &p_skew) {
 	if (p_crowns.is_empty()) {
 		return 0.0f;
 	}
@@ -372,11 +386,18 @@ float crown_litter(const Grid &p_grid, const Crowns &p_crowns, float p_reach, fl
 			}
 			for (int idx : *bucket) {
 				const auto &c = p_crowns[idx];
-				const float beyond = c.xz.distance_to(p_xz) - c.radius;
-				if (beyond > 3.0f * VegetationField3D::LITTER_SPREAD) {
+				const Vector2 to = p_xz - c.xz;
+				const float dist = to.length();
+				const float beyond = dist - c.radius;
+				if (beyond <= 0.0f) {
+					deposit += c.opacity * (1.0f - c.conifer);
 					continue;
 				}
-				deposit += c.opacity * (1.0f - c.conifer) * (beyond <= 0.0f ? 1.0f : Math::exp(-beyond / VegetationField3D::LITTER_SPREAD));
+				const float spread = VegetationField3D::LITTER_SPREAD * (1.0f + to.dot(p_skew) / dist);
+				if (beyond > 3.0f * spread) {
+					continue;
+				}
+				deposit += c.opacity * (1.0f - c.conifer) * Math::exp(-beyond / spread);
 			}
 		}
 	}
@@ -499,7 +520,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 					}
 					if (litter_rule && suit > 0.0f) {
-						float litter = crown_litter(local_crown_grid, local_crowns, p_setup.crown_max + 3.0f * LITTER_SPREAD, CROWN_CELL, xz);
+						float litter = crown_litter(local_crown_grid, local_crowns, p_setup.crown_max + p_setup.litter_reach, CROWN_CELL, xz, p_setup.litter_skew);
 						if (p_setup.other) {
 							litter = 1.0f - (1.0f - litter) * (1.0f - p_setup.other->get_litter_at(Vector3(xz.x, 0.0f, xz.y)));
 						}
@@ -1528,7 +1549,7 @@ float VegetationField3D::get_conifer_at(const Vector3 &p_global_position) const 
 
 float VegetationField3D::get_litter_at(const Vector3 &p_global_position) const {
 	RWLockRead guard(crown_lock);
-	return crown_litter(crown_grid, crowns, max_crown_radius + 3.0f * LITTER_SPREAD, CROWN_CELL, Vector2(p_global_position.x, p_global_position.z));
+	return crown_litter(crown_grid, crowns, max_crown_radius + 3.0f * LITTER_SPREAD * (1.0f + litter_skew.length()), CROWN_CELL, Vector2(p_global_position.x, p_global_position.z), litter_skew);
 }
 
 PackedVector3Array VegetationField3D::get_placements(int p_species) const {
@@ -1978,6 +1999,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("set_canopy_field", "path"), &VegetationField3D::set_canopy_field);
 	ClassDB::bind_method(D_METHOD("get_canopy_field"), &VegetationField3D::get_canopy_field);
+	ClassDB::bind_method(D_METHOD("set_litter_wind", "wind"), &VegetationField3D::set_litter_wind);
+	ClassDB::bind_method(D_METHOD("get_litter_wind"), &VegetationField3D::get_litter_wind);
 	ClassDB::bind_method(D_METHOD("set_weather_map", "path"), &VegetationField3D::set_weather_map);
 	ClassDB::bind_method(D_METHOD("get_weather_map"), &VegetationField3D::get_weather_map);
 	ClassDB::bind_method(D_METHOD("set_tile_size", "size"), &VegetationField3D::set_tile_size);
@@ -2022,6 +2045,7 @@ void VegetationField3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "litter_wind"), "set_litter_wind", "get_litter_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "forest_floor_enabled"), "set_forest_floor_enabled", "is_forest_floor_enabled");
