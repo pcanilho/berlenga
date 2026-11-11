@@ -6,6 +6,22 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-091c98e1 (2026-11-11)
+
+### Fixed
+- WeatherSkyMaterial: clouds no longer look like flat-topped slabs with vertical walls (the shape noise was stretched so far in height that each cloud was one column through the layer), and distant clouds near the horizon are no longer boxes (the noise is read at the pixel's footprint, not the march step).
+
+### Changed
+- README: cornice fall and icicles lines; cornice fall image.
+- README: exact path traced snow sparkle; SPECULAR_NORMAL shader output.
+- README: pixel antialiasing line and image; hair deep shadows raster and path traced pair.
+
+### Added
+- Snow: cornices open a tension crack by creep and fall once their root cannot hold them, as tumbling blocks with debris at the foot of the face (`SnowCover3D.cornice_failure_enabled`, signal `cornice_failed`, `SnowCornice3D.debris_enabled`).
+- Snow: `SnowIcicles3D`, icicles grown along an edge from melt water running off the snow above into air below freezing, drawn as clear ice under raster and path tracing.
+- Spatial shaders: `SPECULAR_NORMAL`, a normal for the base specular lobe alone under the path tracer (the diffuse keeps `NORMAL`); raster ignores it.
+- Snow: exact path-traced sparkle, every 2 mm ice grain of dry snow a facet hit per ray, with the global shader parameter `snow_exact_glints` (off by default); `snow_glint_apply_specular()` in `get_snow_shader_code()` for custom shaders.
+
 ## build-d916f05e (2026-11-11)
 
 ### Changed
