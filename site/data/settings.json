@@ -1312,6 +1312,18 @@
    "topic": "Placement"
   },
   {
+   "name": "Streamed placement",
+   "settings": [
+    "VegetationField3D.streaming",
+    "stream_radius"
+   ],
+   "note": "",
+   "what": "tiles are placed on worker threads around the camera, identical to a full placement; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
    "name": "Placement by geology",
    "settings": [
     "TerrainDataMap3D.geology_source",
