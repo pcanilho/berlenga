@@ -11,6 +11,7 @@ extends Node3D
 #   --out=path.png    render a view (path traced unless --raster)
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 16)
+#   --boulders=D     rockfall blocks below cliffs at density D (default 1, 0 none), grey stand-ins
 #   --lake-pick=high  the lake views and checks use the highest lake (default the biggest)
 #   --view=wide|lake|lakewater|valley|fall|beach|peak|treeline|meadow   camera (default wide; lakewater: low over the lake;
 #                         valley: from behind the high lake down to the clearing; treeline: the clearing's edge)
@@ -75,6 +76,7 @@ var cover: VegetationField3D # meadow herbs and waterside plants near the camera
 var prints: GroundSurface3D
 var prints_probe: Node3D
 var sun: DirectionalLight3D
+var boulder_spot := Vector3.ZERO
 var clock: SkyClock
 var cam: Camera3D
 var env: Environment
@@ -377,6 +379,49 @@ func _generate() -> void:
 		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded()])
 		for l in gen.get_lake_results():
 			_log("  lake level %.0f m, depth %.0f m, %.1f ha, catchment %.2f km2 at %s, outlet %s" % [l["level"], l["depth"], l["area"] / 1e4, l["catchment"] / 1e6, l["center"], l.get("outlet")])
+	if args.get("boulders", "1") != "0":
+		var tb := Time.get_ticks_msec()
+		var bl: PackedVector4Array = gen.get_boulders(Rect2(-2048, -2048, 4096, 4096), float(args.get("boulders", "1")))
+		var big := 0
+		for b in bl:
+			if b.w >= 1.0:
+				big += 1
+		_log("boulders below cliffs: %d (%d of 1 m radius or more) in %d ms" % [bl.size(), big, Time.get_ticks_msec() - tb])
+		# For --view=boulders: the densest 40 m patch of blocks near the middle of the map.
+		var cells := {}
+		for b in bl:
+			var sl := absf(gen.get_height(Vector3(b.x + 8.0, 0, b.z)) - gen.get_height(Vector3(b.x - 8.0, 0, b.z))) / 16.0 + absf(gen.get_height(Vector3(b.x, 0, b.z + 8.0)) - gen.get_height(Vector3(b.x, 0, b.z - 8.0))) / 16.0
+			if absf(b.x) < 1500.0 and absf(b.z) < 1500.0 and sl < 0.5:
+				var key := Vector2i(int(floor(b.x / 40.0)), int(floor(b.z / 40.0)))
+				cells[key] = int(cells.get(key, 0)) + 1
+		var best_n := 0
+		for key in cells:
+			if cells[key] > best_n:
+				best_n = cells[key]
+				boulder_spot = Vector3(key.x * 40.0 + 20.0, 0, key.y * 40.0 + 20.0)
+		_log("densest block patch: %d blocks in 40 m at %s" % [best_n, boulder_spot])
+		if bl.size() > 0:
+			# Stand-ins: flattened low spheres, a third sunk into the ground, until real rock meshes come.
+			var sm := SphereMesh.new()
+			sm.radial_segments = 7
+			sm.rings = 4
+			var rm := StandardMaterial3D.new()
+			rm.albedo_color = Color(0.42, 0.40, 0.37)
+			rm.roughness = 0.9
+			sm.material = rm
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = sm
+			mm.instance_count = bl.size()
+			for k in bl.size():
+				var b := bl[k]
+				var r := b.w
+				var basis := Basis(Vector3.UP, fmod(b.x * 12.9898 + b.z * 78.233, TAU)).scaled(Vector3(r * 2.4, r * 1.3, r * 1.9))
+				mm.set_instance_transform(k, Transform3D(basis, Vector3(b.x, b.y + r * 0.3, b.z)))
+			var mmi := MultiMeshInstance3D.new()
+			mmi.name = "Boulders"
+			mmi.multimesh = mm
+			add_child(mmi)
 	if args.has("soil-probe"):
 		for zz in [-1100, -900, -600, -300, 0, 300, 600, 900, 1200]:
 			var row := PackedStringArray()
@@ -1246,6 +1291,21 @@ func _build_camera() -> void:
 					best_pos = Vector3(c.x, y, c.z)
 			cam.position = best_pos
 			cam.look_at(lake_center)
+		"boulders":
+			# Over the densest patch of fallen blocks, looking back up at the cliff they came from.
+			var bs := Vector3(boulder_spot.x, height_at(boulder_spot.x, boulder_spot.z), boulder_spot.z)
+			var up := Vector3.ZERO
+			for k in 8:
+				var a := TAU * k / 8.0
+				var d := Vector3(cos(a), 0, sin(a))
+				var hh := height_at(bs.x + d.x * 60.0, bs.z + d.z * 60.0)
+				if hh - bs.y > up.y:
+					up = Vector3(d.x, hh - bs.y, d.z)
+			var away := -Vector3(up.x, 0, up.z).normalized() if up.y > 0.0 else Vector3(0, 0, 1)
+			var gb := gen.get_height(bs)
+			cam.fov = 50.0
+			cam.position = Vector3(bs.x, gb + 45.0, bs.z) + away * 25.0
+			cam.look_at(Vector3(bs.x, gb, bs.z))
 		"valley":
 			# From above the falls, down over the high lake's outflow; the clearing and the sea beyond.
 			var lk := Vector3(lake_center.x, 0, lake_center.z)

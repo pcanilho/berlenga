@@ -1077,14 +1077,16 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 			const double wob = L * (0.8 * _gen_value_noise(ls, p_x, p_z, 240.0) + 0.25 * _gen_value_noise(ls + 1u, p_x, p_z, 60.0));
 			const double h0 = double(base) + off;
 			// Beds of uneven thickness: the bed count runs on a monotonic warp of height (two incommensurate waves,
-			// slope stays positive), and each bed's riser share is its own (0.25 to 0.55).
+			// slope stays positive), and each bed's ledge share is its own.
 			const double hw = (h0 + wob) / L;
 			const double q = hw + 0.22 * Math::sin(hw * 2.3999632) + 0.12 * Math::sin(hw * 0.9213 + 1.7);
 			const double fl = Math::floor(q);
 			const double f = q - fl;
 			const uint32_t bh = (uint32_t(int64_t(fl)) * 0x9E3779B1u) ^ (ls * 0x85EBCA6Bu);
-			const double r = 0.25 + 0.3 * double((bh >> 8) & 0xFFFF) / 65535.0;
-			double t = f < 1.0 - r ? 0.08 * f / (1.0 - r) : 0.08 + 0.92 * (f - (1.0 - r)) / r;
+			// Each bed: a narrow ledge (20 to 35 percent of the bed, rising a quarter of its height, so it still sheds
+			// water and scree) and the riser above it.
+			const double l = 0.2 + 0.15 * double((bh >> 8) & 0xFFFF) / 65535.0;
+			double t = f < l ? 0.25 * f / l : 0.25 + 0.75 * (f - l) / (1.0 - l);
 			// Back from bed units to height: invert the warp locally (Newton step from q).
 			const double qt = fl + t;
 			const double dq = 1.0 + 0.22 * 2.3999632 * Math::cos(hw * 2.3999632) + 0.12 * 0.9213 * Math::cos(hw * 0.9213 + 1.7);
@@ -1977,6 +1979,116 @@ void TerrainGenerator3D::_publish_globals() {
 		set_global("terrain_spray_potential", spray_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 		set_global("terrain_spray_rect", Vector4(r.position.x, r.position.y, (spray_nx - 1) * spray_cell, (spray_ny - 1) * spray_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
 	}
+}
+
+/* Boulders below cliffs (docs/ideas/terrain-generation.md, "Rocks below cliffs") */
+
+namespace {
+inline uint32_t boulder_hash(uint32_t p_a, uint32_t p_b, uint32_t p_c) {
+	uint32_t h = p_a * 0x9E3779B1u ^ (p_b + 0x7F4A7C15u) * 0x85EBCA6Bu ^ (p_c + 0x165667B1u) * 0xC2B2AE35u;
+	h ^= h >> 16;
+	h *= 0x7FEB352Du;
+	h ^= h >> 15;
+	h *= 0x846CA68Bu;
+	h ^= h >> 16;
+	return h;
+}
+inline real_t boulder_unit(uint32_t p_h) {
+	return real_t(p_h >> 8) / real_t(16777216.0);
+}
+} // namespace
+
+// Blocks that fell off the cliffs and where they came to rest: each rock cell steeper than 45 degrees sheds blocks in
+// proportion to its exposed face; each block rolls down the steepest way until its travel angle (from where it left
+// the face) drops below the shadow angle (27.5 degrees at the least, Evans and Hungr 1993), larger blocks running
+// further (fall sorting, Kirkby and Statham 1975). Sizes follow a power law (Pareto, exponent 2.5) from 0.25 to 3 m
+// in radius. Deterministic for the seed; returns (x, ground y, z, radius) for blocks resting inside p_rect.
+PackedVector4Array TerrainGenerator3D::get_boulders(const Rect2 &p_rect, real_t p_density) const {
+	PackedVector4Array out;
+	const int n = nx * ny;
+	if (n <= 0 || heights.size() != uint32_t(n) || p_density <= 0.0) {
+		return out;
+	}
+	const real_t margin = 400.0;
+	const Rect2 src = p_rect.grow(margin);
+	const int x0 = CLAMP(int(Math::floor((src.position.x - result_rect.position.x) / result_cell)), 1, nx - 2);
+	const int x1 = CLAMP(int(Math::ceil((src.position.x + src.size.x - result_rect.position.x) / result_cell)), 1, nx - 2);
+	const int z0 = CLAMP(int(Math::floor((src.position.y - result_rect.position.y) / result_cell)), 1, ny - 2);
+	const int z1 = CLAMP(int(Math::ceil((src.position.y + src.size.y - result_rect.position.y) / result_cell)), 1, ny - 2);
+	const bool has_rock = rock.size() == uint32_t(n);
+	const bool has_water = water_body.size() == uint32_t(n);
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const int i = z * nx + x;
+			const real_t gx = (heights[i + 1] - heights[i - 1]) / (2.0f * result_cell);
+			const real_t gz = (heights[i + nx] - heights[i - nx]) / (2.0f * result_cell);
+			const real_t slope = Math::sqrt(gx * gx + gz * gz);
+			const real_t rk = has_rock ? rock[i] : real_t(slope > 1.0f ? 1.0f : 0.0f);
+			if (slope < 1.0f || rk < 0.3f || (has_water && water_body[i] != 0)) {
+				continue;
+			}
+			// Face area in the cell times exposure; about one block per 150 m2 of bare face at density 1.
+			const real_t face = result_cell * result_cell * Math::sqrt(1.0f + slope * slope) * rk;
+			const real_t want = face / 150.0f * p_density;
+			int count = int(want);
+			if (boulder_unit(boulder_hash(uint32_t(seed), uint32_t(i), 9999u)) < want - count) {
+				count++;
+			}
+			for (int b = 0; b < count; b++) {
+				const uint32_t h0 = boulder_hash(uint32_t(seed), uint32_t(i), uint32_t(b) * 4u);
+				const real_t u1 = boulder_unit(h0);
+				const real_t u2 = boulder_unit(boulder_hash(uint32_t(seed), uint32_t(i), uint32_t(b) * 4u + 1u));
+				const real_t u3 = boulder_unit(boulder_hash(uint32_t(seed), uint32_t(i), uint32_t(b) * 4u + 2u));
+				const real_t u4 = boulder_unit(boulder_hash(uint32_t(seed), uint32_t(i), uint32_t(b) * 4u + 3u));
+				// Pareto radius, alpha 2.5, 0.25 .. 3 m.
+				const real_t radius = MIN(real_t(0.25) * Math::pow(1.0f - u3 * 0.999f, real_t(-1.0 / 2.5)), real_t(3.0));
+				const real_t shadow = Math::deg_to_rad(real_t(27.5) + real_t(6.0) * u4 - real_t(2.0) * (radius - 0.25f));
+				const real_t tan_shadow = Math::tan(MAX(shadow, Math::deg_to_rad(real_t(22.0))));
+				const Vector3 c = _cell_position(i);
+				Vector2 p(c.x + (u1 - 0.5f) * result_cell, c.z + (u2 - 0.5f) * result_cell);
+				// The run-out follows the grid's surface (bilinear; the 1 m detail only steers a block locally), in 3 m
+				// steps; the resting height comes from the full ground.
+				auto surf = [&](real_t px, real_t pz) { return real_t(_sample(heights, px, pz)); };
+				const real_t start = surf(p.x, p.y);
+				real_t travelled = 0.0;
+				real_t h = start;
+				bool lost = false;
+				for (int step = 0; step < 200; step++) {
+					const real_t e = 4.0;
+					const Vector2 grad((surf(p.x + e, p.y) - surf(p.x - e, p.y)) / (2.0f * e), (surf(p.x, p.y + e) - surf(p.x, p.y - e)) / (2.0f * e));
+					const real_t gl = grad.length();
+					if (gl < 1e-3f) {
+						break;
+					}
+					// Blocks bounce and spin off the fall line: up to 35 degrees either side each step, so they fan out
+					// over the talus instead of all funnelling into the gully below.
+					const real_t jit = (boulder_unit(boulder_hash(h0, uint32_t(step), 77u)) - 0.5f) * Math::deg_to_rad(real_t(70.0));
+					const Vector2 np = p - (grad / gl).rotated(jit) * 3.0f;
+					const real_t nh = surf(np.x, np.y);
+					if (!Math::is_finite(nh) || nh >= h) {
+						break;
+					}
+					travelled += 3.0f;
+					p = np;
+					h = nh;
+					// Rest once the line from the release point dips under the shadow angle and the ground has eased.
+					if ((start - h) < tan_shadow * travelled && gl < 0.75f) {
+						break;
+					}
+					const int ci = CLAMP(int(Math::round((p.y - result_rect.position.y) / result_cell)), 0, ny - 1) * nx + CLAMP(int(Math::round((p.x - result_rect.position.x) / result_cell)), 0, nx - 1);
+					if (has_water && water_body[ci] != 0) {
+						lost = true; // into a lake, the sea or a river's water: out of sight
+						break;
+					}
+				}
+				if (lost || travelled < 4.0f || !p_rect.has_point(p)) {
+					continue;
+				}
+				out.push_back(Vector4(p.x, _ground(p.x, p.y), p.y, radius));
+			}
+		}
+	}
+	return out;
 }
 
 /* Spray potential (docs/ideas/terrain-generation.md, "Spray potential") */
@@ -3941,6 +4053,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_beach_slope"), &TerrainGenerator3D::get_beach_slope);
 	ClassDB::bind_method(D_METHOD("set_lake_count", "count"), &TerrainGenerator3D::set_lake_count);
 	ClassDB::bind_method(D_METHOD("get_lake_count"), &TerrainGenerator3D::get_lake_count);
+	ClassDB::bind_method(D_METHOD("get_boulders", "rect", "density"), &TerrainGenerator3D::get_boulders, DEFVAL(1.0));
 	ClassDB::bind_method(D_METHOD("set_spray_cell", "metres"), &TerrainGenerator3D::set_spray_cell);
 	ClassDB::bind_method(D_METHOD("get_spray_cell"), &TerrainGenerator3D::get_spray_cell);
 	ClassDB::bind_method(D_METHOD("get_spray_potential", "global_position"), &TerrainGenerator3D::get_spray_potential);

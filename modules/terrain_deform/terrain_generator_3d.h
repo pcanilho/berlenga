@@ -597,6 +597,7 @@ public:
 	real_t get_rock_hardness(const Vector3 &p_global_position) const;
 	Array get_river_sites(real_t p_min_area = 1.0e5, real_t p_min_discharge = 0.0, real_t p_run = 200.0) const;
 	Array get_waterfalls(real_t p_min_area = 1.0e5, real_t p_min_height = 5.0) const;
+	PackedVector4Array get_boulders(const Rect2 &p_rect, real_t p_density = 1.0) const;
 	void set_spray_cell(real_t p_cell) { spray_cell = MAX(p_cell, real_t(0.0)); }
 	real_t get_spray_cell() const { return spray_cell; }
 	real_t get_spray_potential(const Vector3 &p_global_position) const;

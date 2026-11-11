@@ -925,8 +925,9 @@ holds a lake by itself (no marker), a tributary hangs above the trunk, U cross-s
 
 A heightfield cliff is a smooth curtain. Bedded rock breaks into steps: the hard bed stands as a riser, the soft
 bed under it weathers back into a ledge (the terrace filters Gaea and World Machine use do the same). `cliff_ledge_spacing` (default 0, off) and `cliff_ledge_strength` terrace slopes between 40 and 55
-degrees into beds of that spacing, the bed line wobbling with value noise, 60 percent of each bed a near-flat
-ledge and the rest a riser. Alluvium no longer fades detail on slopes steeper than repose.
+degrees into beds of that spacing, the bed line wobbling with value noise, each bed a narrow ledge (20 to 35 percent of the bed,
+rising a quarter of its height) under a riser; bed thickness varies by a monotonic warp of height. Wide ledges (60
+percent of each bed, the first try) read as rice terraces close up. Alluvium no longer fades detail on slopes steeper than repose.
 
 ### Fall data for the water (contract agreed with the water thread, 11 Nov)
 
@@ -991,6 +992,24 @@ over 2 m, its floor falling 1 percent to the old foot. The fall's record moves t
 sits at the slot's head. On the valley layout three side falls wore back 35 to 40 m into slots 8 m wide and 12 m
 deep; the main fall stays on its bar (the lake's outlet).
 
+## Rocks below cliffs (11 Nov; a leftover from the Planet Tech comparison)
+
+Cliffs shed blocks, and the blocks come to rest on the talus below them, the biggest furthest out. Established
+practice: rockfall run-out by the shadow angle (the line from the top of the talus to the furthest block dips about
+27.5 degrees at the least, Evans and Hungr 1993) or the travel angle from the release point (the "Fahrboeschung",
+Heim 1932; about 32 degrees for small rockfalls, Corominas 1996); fall sorting, larger blocks rolling further
+(Kirkby and Statham 1975); block sizes by a power law (Dussauge-Peisser et al. 2002). Engines place such debris as
+procedural scatter from slope and exposure rules (UE's PCG, Horizon Zero Dawn's GPU placement, Star Citizen's
+"debris from cliffs").
+
+Built: `get_boulders(rect, density)` returns (x, ground y, z, radius) for every block resting in the rect. Each grid
+cell steeper than 45 degrees with at least 30 percent bare rock sheds about one block per 150 m2 of face times its
+exposure; each block's radius is Pareto (exponent 2.5) from 0.25 to 3 m; it rolls down the steepest way over the
+grid in 3 m steps, bouncing up to 35 degrees off the fall line each step, and rests once its travel angle from the release point drops below 27.5 to 33.5 degrees (2 degrees
+less per metre of radius) and the ground has eased; blocks that reach water are dropped. Deterministic for a seed;
+about 21 000 blocks and 0.3 s for the 4 km valley layout. Placement nodes (vegetation's scatter, Tripo rock props)
+read the list; the bench shows grey stand-ins (`--boulders`).
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
@@ -1027,6 +1046,13 @@ deep; the main fall stays on its bar (the lake's outlet).
 - Berlin, Anderson, Modeling of knickpoint retreat on the Roan Plateau, western Colorado, JGR 112, F03S06, 2007.
 - Hayakawa, Matsukura, Recession rates of waterfalls in Boso Peninsula, Japan, and a predictive equation, ESPL 28,
   2003.
+- Evans, Hungr, The assessment of rockfall hazard at the base of talus slopes, Canadian Geotechnical Journal 30,
+  1993.
+- Kirkby, Statham, Surface stone movement and scree formation, Journal of Geology 83, 1975.
+- Corominas, The angle of reach as a mobility index for small and large landslides, Canadian Geotechnical Journal
+  33, 1996.
+- Dussauge-Peisser, Helmstetter, Grasso et al., Probabilistic approach to rock fall hazard assessment: potential of
+  historical data analysis, Natural Hazards and Earth System Sciences 2, 2002.
 - Lamb, Dietrich, The persistence of waterfalls in fractured rock, GSA Bulletin 121, 2009.
 - Scheingross, Lamb, A mechanistic model of waterfall plunge pool erosion into bedrock, JGR Earth Surface 122, 2017.
 - Perne, Covington, Thaler, Myre, Steady state, erosional continuity, and the topography of landscapes developed in
