@@ -485,7 +485,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Cornice fall: a crack opens behind the lip, then the lip breaks into tumbling blocks.*
 
-![Backlit icicles under an eave, raster](docs/media/snow-icicles.jpg)
+![Backlit icicles under an eave, raster and path traced](docs/media/snow-icicles.jpg)
 
 *Icicles: clear ice with a hazy core, longest where the most melt water drips.*
 
