@@ -57,6 +57,7 @@ public:
 		CHANNEL_SOIL_DEPTH, // Metres (geology_source only).
 		CHANNEL_ROCK, // Bare rock exposure, 0 to 1 (geology_source only).
 		CHANNEL_TALUS, // Scree cover, 0 to 1 (geology_source only).
+		CHANNEL_SPRAY, // Waterfall spray potential, 0 to 1 (geology_source only).
 		CHANNEL_MAX,
 	};
 
@@ -130,6 +131,7 @@ public:
 	void set_geology_source(const NodePath &p_path) { geology_source = p_path; }
 	NodePath get_geology_source() const { return geology_source; }
 	bool has_geology() const { return baked_geology; }
+	float get_spray_at(const Vector3 &p_pos) const;
 	void set_water_sources(const TypedArray<NodePath> &p_sources);
 	TypedArray<NodePath> get_water_sources() const { return water_sources; }
 	void set_flow_exponent(float p_exponent);

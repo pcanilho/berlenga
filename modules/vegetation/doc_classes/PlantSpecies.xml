@@ -73,11 +73,20 @@
 		<member name="aridity_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1000)">
 			Aridity index (annual precipitation over potential evapotranspiration, Thornthwaite) where the species grows: below 0.5 is dry steppe, above 1 humid. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
+		<member name="canopy_conifer" type="bool" setter="set_canopy_conifer" getter="is_canopy_conifer" default="false">
+			If [code]true[/code], this species' crown is needle-leaved (pine, spruce, fir, larch). [VegetationField3D] counts each crown's share of the cover overhead, so the floor under it can follow the stand type through [member conifer_range].
+		</member>
 		<member name="canopy_opacity" type="float" setter="set_canopy_opacity" getter="get_canopy_opacity" default="0.85">
 			Share of the light this species' crown stops under its core, for [member canopy_radius]. A broadleaf crown in summer stops about 0.85 to 0.95, a pine or birch less.
 		</member>
 		<member name="canopy_radius" type="float" setter="set_canopy_radius" getter="get_canopy_radius" default="0.0">
 			Crown radius in metres (times each plant's scale). Above 0 the species shades the ground under it, and later species in the [Biome] with a [member shade_range] are placed by that shade (see [method VegetationField3D.get_shade_at]).
+		</member>
+		<member name="conifer_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Fade width outside [member conifer_range].
+		</member>
+		<member name="conifer_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
+			Share of the canopy overhead that is needle-leaved where this species grows, from [code]0.0[/code] (broadleaf: beech, oak) to [code]1.0[/code] (conifer: spruce, pine), from crowns with [member canopy_conifer] placed earlier by the same [VegetationField3D]. Open ground counts as [code]0.0[/code].
 		</member>
 		<member name="curvature_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member curvature_range].
@@ -87,6 +96,12 @@
 		</member>
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1.0">
 			Fraction of the Poisson-disk points kept where every rule is fully met, from 0 to 1.
+		</member>
+		<member name="far_color" type="Color" setter="set_far_color" getter="get_far_color" default="Color(0, 0, 0, 0)">
+			The plant seen from far above (rgb) and how much of the ground it hides (alpha, 0 to 1). Beyond its [member visibility_range] the plants are thinned away, and [VegetationField3D] bakes this colour into the ground's [code]vegetation_far_map[/code] where they grew, so a stand of them stays a patch of their colour to the horizon (see [method VegetationField3D.get_floor_shader_code]). Alpha 0 leaves the ground as it is.
+		</member>
+		<member name="floating" type="bool" setter="set_floating" getter="is_floating" default="false">
+			If [code]true[/code], plants sit level on the water surface ([method TerrainDataMap3D.get_water_depth_at] above the ground), as water lilies do. Pair it with a [member water_depth_range] that starts above zero.
 		</member>
 		<member name="footprint" type="float" setter="set_footprint" getter="get_footprint" default="0.5">
 			Radius in metres that later species in the [Biome] keep clear of (a trunk and its shade). 0 leaves room for anything.
@@ -111,6 +126,12 @@
 		</member>
 		<member name="mask_invert" type="bool" setter="set_mask_invert" getter="is_mask_invert" default="false">
 			If [code]true[/code], the species grows where the mask channel is low instead (one minus it), so a meadow can fill exactly the clearing that keeps trees out.
+		</member>
+		<member name="near_meshes" type="Mesh[]" setter="set_near_meshes" getter="get_near_meshes" default="[]">
+			Heavier meshes drawn within [member near_range], one per entry of [member meshes] in the same order (a shorter list repeats). Each plant keeps its variant, so a tree with real needles near the camera and needle sprays beyond it stays the same tree. The field cuts such a species into cells about a quarter of [member near_range] across (at least 4 m), so the swap happens a few plants at a time, and crossfades the two over the last tenth of the range with a dither.
+		</member>
+		<member name="near_range" type="float" setter="set_near_range" getter="get_near_range" default="0.0">
+			Distance in metres within which [member near_meshes] are drawn instead of [member meshes]. 0 turns the swap off.
 		</member>
 		<member name="patch_cover" type="float" setter="set_patch_cover" getter="get_patch_cover" default="0.5">
 			Fraction of the ground inside patches.
@@ -169,6 +190,12 @@
 		<member name="sunlight_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 2000)">
 			Annual mean shortwave radiation at the ground in W/m², with slope, aspect and horizons: sun-loving species on south-facing slopes, shade-tolerant ones on north-facing. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
+		<member name="spray_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.15">
+			Soft edge of [member spray_range].
+		</member>
+		<member name="spray_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 0.5)">
+			Waterfall spray potential (0 to 1, [method TerrainDataMap3D.get_spray_at]) where the species grows. By default no plant grows in a fall's soaked zone, where only mosses and wet rock hold; mosses from [method PlantGenerator.make_floor] take [code]Vector2(0, 1)[/code]. Ignored when the map has no geology.
+		</member>
 		<member name="talus_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member talus_range].
 		</member>
@@ -182,7 +209,7 @@
 			Mean annual temperature in °C where the species grows; with the lapse rate it sets tree lines and altitude belts. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
 		<member name="visibility_range" type="float" setter="set_visibility_range" getter="get_visibility_range" default="0.0">
-			Distance, in metres, beyond which the species is not drawn (it fades out over the last 15%). For ground cover too small to see far away. 0 draws it at any distance.
+			Distance, in metres, beyond which the species is not drawn. For ground cover too small to see far away. Plants with the generated plant material thin out before it: from 35% of the range the share drawn falls to none at the range, each plant shrinking away in the order of its placement rank while the rest grow slightly to hold the cover, so there are no pops; [member far_color] then carries them on the ground. 0 draws it at any distance.
 		</member>
 		<member name="water_depth_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.05">
 			Soft edge of [member water_depth_range], in metres.
@@ -249,7 +276,13 @@
 		<constant name="RULE_SUNLIGHT" value="14" enum="Rule">
 			Annual mean shortwave at the ground, W/m² (climate).
 		</constant>
-		<constant name="RULE_MAX" value="15" enum="Rule">
+		<constant name="RULE_CONIFER" value="15" enum="Rule">
+			Share of the canopy overhead that is needle-leaved, [code]0[/code] to [code]1[/code].
+		</constant>
+		<constant name="RULE_SPRAY" value="16" enum="Rule">
+			Waterfall spray potential, [code]0[/code] to [code]1[/code] ([method TerrainDataMap3D.get_spray_at]).
+		</constant>
+		<constant name="RULE_MAX" value="17" enum="Rule">
 			Number of rules.
 		</constant>
 	</constants>

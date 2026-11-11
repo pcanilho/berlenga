@@ -31,6 +31,7 @@
 #include "register_types.h"
 
 #include "grass_field_3d.h"
+#include "plant_generator.h"
 #include "plant_species.h"
 #include "vegetation_field_3d.h"
 
@@ -45,6 +46,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(Biome);
 	GDREGISTER_CLASS(VegetationField3D);
 	GDREGISTER_CLASS(GrassField3D);
+	GDREGISTER_CLASS(PlantGenerator);
 	// Declared so terrain shaders using GrassField3D.get_ground_shader_code() compile without a field.
 	const struct {
 		const char *name;
@@ -55,14 +57,28 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		{ "grass_ground_color", "vec4" },
 		{ "grass_ground_fade", "vec4" },
 		{ "grass_ground_far", "vec4" },
+		{ "grass_ground_dry", "vec4" },
+		{ "grass_ground_params", "vec4" },
+		{ "grass_trample_map", "sampler2D" },
+		{ "grass_trample_rect", "vec4" },
+		{ "grass_wind", "vec4" },
+		{ "forest_floor_map", "sampler2D" },
+		{ "forest_floor_rect", "vec4" },
+		{ "vegetation_far_map", "sampler2D" },
+		{ "vegetation_far_rect", "vec4" },
+		{ "vegetation_far_range", "float" },
 	};
 	for (const auto &g : globals) {
 		Dictionary d;
 		d["type"] = g.type;
-		d["value"] = String(g.type) == "vec4" ? Variant(Vector4()) : Variant("");
+		d["value"] = String(g.type) == "vec4" ? Variant(Vector4()) : (String(g.type) == "float" ? Variant(0.0f) : Variant(""));
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, String("shader_globals/") + g.name, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), d);
 	}
 }
 
 void uninitialize_vegetation_module(ModuleInitializationLevel p_level) {
+	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
+		return;
+	}
+	PlantGenerator::free_shaders();
 }

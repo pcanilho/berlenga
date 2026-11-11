@@ -377,9 +377,12 @@ Error TerrainDataMap3D::bake() {
 		float *ch_soil = channels[CHANNEL_SOIL_DEPTH].ptr();
 		float *ch_rock = channels[CHANNEL_ROCK].ptr();
 		float *ch_talus = channels[CHANNEL_TALUS].ptr();
+		float *ch_spray = channels[CHANNEL_SPRAY].ptr();
 		Node *gs = geology_source.is_empty() ? nullptr : get_node_or_null(geology_source);
 		TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(gs);
 		if (gs && (gen || gs->has_method("get_geology_at"))) {
+			// Spray from the falls (TerrainGenerator3D's spray map), so plants keep out of a curtain's wet zone.
+			const bool spray_method = !gen && gs->has_method("get_spray_potential");
 			for (int z = 0; z < n; z++) {
 				for (int x = 0; x < n; x++) {
 					const int i = z * n + x;
@@ -388,11 +391,13 @@ Error TerrainDataMap3D::bake() {
 						ch_soil[i] = gen->get_soil_depth(p);
 						ch_rock[i] = gen->get_rock_exposure(p);
 						ch_talus[i] = gen->get_talus(p);
+						ch_spray[i] = gen->get_spray_potential(p);
 					} else {
 						const Color g = gs->call("get_geology_at", p);
 						ch_soil[i] = g.r;
 						ch_rock[i] = g.g;
 						ch_talus[i] = g.b;
+						ch_spray[i] = spray_method ? float(gs->call("get_spray_potential", p)) : 0.0f;
 					}
 				}
 			}
@@ -403,6 +408,7 @@ Error TerrainDataMap3D::bake() {
 				ch_soil[i] = 0.0f;
 				ch_rock[i] = 0.0f;
 				ch_talus[i] = 0.0f;
+				ch_spray[i] = 0.0f;
 			}
 		}
 	}
@@ -712,6 +718,10 @@ float TerrainDataMap3D::get_talus_at(const Vector3 &p_pos) const {
 	return _sample(CHANNEL_TALUS, p_pos);
 }
 
+float TerrainDataMap3D::get_spray_at(const Vector3 &p_pos) const {
+	return _sample(CHANNEL_SPRAY, p_pos);
+}
+
 Ref<Image> TerrainDataMap3D::get_channel_image(Channel p_channel) const {
 	ERR_FAIL_INDEX_V(p_channel, CHANNEL_MAX, Ref<Image>());
 	ERR_FAIL_COND_V(baked_resolution == 0, Ref<Image>());
@@ -988,6 +998,7 @@ void TerrainDataMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_soil_depth_at", "global_position"), &TerrainDataMap3D::get_soil_depth_at);
 	ClassDB::bind_method(D_METHOD("get_rock_at", "global_position"), &TerrainDataMap3D::get_rock_at);
 	ClassDB::bind_method(D_METHOD("get_talus_at", "global_position"), &TerrainDataMap3D::get_talus_at);
+	ClassDB::bind_method(D_METHOD("get_spray_at", "global_position"), &TerrainDataMap3D::get_spray_at);
 	ClassDB::bind_method(D_METHOD("set_height_source", "path"), &TerrainDataMap3D::set_height_source);
 	ClassDB::bind_method(D_METHOD("get_height_source"), &TerrainDataMap3D::get_height_source);
 	ClassDB::bind_method(D_METHOD("set_ground_collision_mask", "mask"), &TerrainDataMap3D::set_ground_collision_mask);
@@ -1064,6 +1075,7 @@ void TerrainDataMap3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(CHANNEL_SOIL_DEPTH);
 	BIND_ENUM_CONSTANT(CHANNEL_ROCK);
 	BIND_ENUM_CONSTANT(CHANNEL_TALUS);
+	BIND_ENUM_CONSTANT(CHANNEL_SPRAY);
 	BIND_ENUM_CONSTANT(CHANNEL_MAX);
 
 	BIND_ENUM_CONSTANT(CLIMATE_TEMPERATURE_MEAN);

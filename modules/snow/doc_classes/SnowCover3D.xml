@@ -234,6 +234,12 @@
 				Returns the world XZ rectangle the map covers.
 			</description>
 		</method>
+		<method name="get_main_thread_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Returns the main thread's share of the last update, in milliseconds: gathering the weather the cells read, starting the update and swapping its results in. With [member background_updates] off, the whole update.
+			</description>
+		</method>
 		<method name="get_new_snow_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -291,7 +297,7 @@
 		<method name="get_update_time_msec" qualifiers="const">
 			<return type="float" />
 			<description>
-				Returns how long the last update took on the calling thread, in milliseconds.
+				Returns how long the last update's work took, in milliseconds: the weather gathered on the main thread plus the cells, slides, drift and cornices on whichever thread ran them.
 			</description>
 		</method>
 		<method name="get_wetness_at" qualifiers="const">
@@ -349,6 +355,12 @@
 				Returns the density of new snow falling at [param celsius] (Hedstrom and Pomeroy 1998): 67.92 + 51.25 exp(T / 2.59) kg/m³.
 			</description>
 		</method>
+		<method name="is_updating" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] while an update runs in the background. The getters keep answering from the last finished update meanwhile.
+			</description>
+		</method>
 		<method name="refresh_heights">
 			<return type="void" />
 			<description>
@@ -370,6 +382,12 @@
 				Returns the share of precipitation that falls as snow at air temperature [param celsius] and relative humidity [param humidity] (0 to 1), from the logistic model of Jennings et al. (2018): 1 / (1 + exp(-10.04 + 1.41 T + 0.09 RH)), RH in percent. Half falls as snow at 3.9 °C in dry air (50%) and at 1.4 °C in humid air (90%).
 			</description>
 		</method>
+		<method name="sync_update">
+			<return type="void" />
+			<description>
+				Waits for an update running in the background and swaps its results in now. For tests and tools: the game never needs it.
+			</description>
+		</method>
 		<method name="transport_flux" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="wind10" type="float" />
@@ -389,6 +407,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="background_updates" type="bool" setter="set_background_updates" getter="is_background_updates" default="true">
+			If [code]true[/code], each update (and the world tier's turn) runs on a worker thread and its results are swapped in when it is done, so no frame waits for it. The main thread only gathers the weather the cells read first. The results are the same as with [code]false[/code], which runs each update in the frame that starts it; the getters answer from the last finished update until the next one lands.
+		</member>
 		<member name="canopy_enabled" type="bool" setter="set_canopy_enabled" getter="is_canopy_enabled" default="true">
 			Trees in the [WeatherMap3D]'s canopy hold falling snow in their crowns and unload it later in wind and warmth (Hedstrom and Pomeroy 1998; Roesch et al. 2001).
 		</member>

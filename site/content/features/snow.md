@@ -16,6 +16,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Snowfall and melt: snow builds up down the slopes, then melts back to the summit.*
 
+- **Snowpack on a worker thread** (`SnowCover3D.background_updates`, on by default): snowpack updates run off the main thread and swap in when done, so the frame never waits; main-thread share per update about 6 ms down to about 1 ms.
+
 - **Snow climate** (`SnowClimate`, `recipe`; `SnowCover3D.climate_map`): bakes a winter over the whole terrain from the terrain's climate recipe and precipitation map, with snow lines, shaded faces that keep their snow and loaded lee slopes; the cover carries it on with the weather and draws it far away.
 
   ![A peak after a baked winter, raster and path traced](media/snow-climate.jpg)
@@ -67,6 +69,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
   ![Footprints in deep snow at a fine deform resolution, before and after](media/snow-print-edges.jpg)
 
   *Print edges: spikes and toothed walls before; clean rims now.*
+
+- **Deep snow on the GPU** (`SnowSurface3D.gpu_simulation`, on by default): pressing, slumping and refilling run in compute shaders, main-thread cost 1.5 ms down to 0.04 ms with the same prints; the CPU path stays for Compatibility.
 
 - **Bow wave** (`velocity` on `SnowSurface3D.press()`, `press_box()`; automatic for bodies in the deform groups): fast bodies push the rim ahead (full at 4 m/s), leaving side berms and an end mound, mass kept; snow and ground.
 

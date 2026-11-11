@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PlantGenerator" inherits="Resource" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Generates small meadow plants (rosettes, clover, ferns, sedges, wildflowers) as meshes.
+	</brief_description>
+	<description>
+		Builds a plant mesh from a [member preset] and a [member seed], after Prusinkiewicz et al., "The use of positional information in the modeling of plants" (2001): leaves, petals and florets are placed along their axes by phyllotaxis (the golden angle, Vogel's spiral for flower heads, whorls), their size, angle and bend are functions of their position, and leaves, petals and stems are swept along a turtle path. Each seed gives another plant of the same kind.
+		The mesh has one surface per part (leaf, stem, petal, centre) with double-sided materials and back lighting, so light through leaves looks the same in raster and under path tracing. UV2.x holds a wind weight (0 at the root, 1 at the tips) and the vertex colour an occlusion guess. With [member lods], distance LODs are generated as the scene importer does.
+		Use the meshes as [member PlantSpecies.meshes] in a [VegetationField3D]:
+		[codeblock]
+		var gen = PlantGenerator.new()
+		gen.preset = PlantGenerator.PRESET_DAISY
+		gen.apply_preset_colors()
+		species.meshes = gen.generate_variants(3)
+		[/codeblock]
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="make_floor" qualifiers="static">
+			<return type="Resource[]" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.FloorStand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="impostor_range" type="float" default="15.0" />
+			<description>
+				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance.
+			</description>
+		</method>
+		<method name="add_impostors" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="species" type="Resource" />
+			<param index="1" name="range" type="float" />
+			<param index="2" name="frames" type="int" default="8" />
+			<param index="3" name="frame_size" type="int" default="64" />
+			<description>
+				Gives a [PlantSpecies] impostors of its meshes ([method make_impostor]): its meshes move to [member PlantSpecies.near_meshes] and are drawn up to [param range] metres, the impostors beyond, with a dithered crossfade. Raster only: under path tracing [VegetationField3D] draws the meshes at every distance, so path tracing keeps the plants' depth and shadows. The species must not have near meshes yet.
+			</description>
+		</method>
+		<method name="apply_preset_colors">
+			<return type="void" />
+			<description>
+				Sets the colours to the [member preset]'s natural ones.
+			</description>
+		</method>
+		<method name="generate">
+			<return type="ArrayMesh" />
+			<description>
+				Builds the plant for the current [member preset] and [member seed].
+			</description>
+		</method>
+		<method name="generate_variants">
+			<return type="ArrayMesh[]" />
+			<param index="0" name="count" type="int" />
+			<description>
+				Builds [param count] plants with seeds [member seed], [member seed] + 1, and so on.
+			</description>
+		</method>
+		<method name="make_impostor" qualifiers="static">
+			<return type="ArrayMesh" />
+			<param index="0" name="mesh" type="Mesh" />
+			<param index="1" name="frames" type="int" default="8" />
+			<param index="2" name="frame_size" type="int" default="64" />
+			<description>
+				Bakes an octahedral impostor of a plant (Brucks, 2018): the plant seen from [param frames] by [param frames] directions over the upper hemisphere, each [param frame_size] texels square and fitted to the plant, into an albedo and coverage atlas and a normal, depth and back light atlas. Returns a quad whose shader turns it to the view, blends the three nearest views, and moves each pixel to the plant's surface by the baked depth, so it meets the ground and casts and receives shadows like the mesh. Wind, wetness, snow and [VegetationField3D]'s far thinning work as on the plant shader. The quad has the meta [code]impostor_of[/code] set to [param mesh]. About 2.8 MB of textures with the defaults; baking runs on all cores.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="centre_color" type="Color" setter="set_centre_color" getter="get_centre_color" default="Color(0.95, 0.65, 0.05, 1)">
+			Colour of flower centres, heads and spikes.
+		</member>
+		<member name="leaf_color" type="Color" setter="set_leaf_color" getter="get_leaf_color" default="Color(0.12, 0.3, 0.07, 1)">
+			Colour of the leaves.
+		</member>
+		<member name="leaf_wear" type="float" setter="set_leaf_wear" getter="get_leaf_wear" default="0.5">
+			How worn the leaves are, from [code]0.0[/code] (every leaf whole and green) to [code]1.0[/code]: uneven halves, round insect bites out of the margin with dried rims, dead tips on grass-like blades, and older, lower leaves yellowing and browning. Each leaf draws its wear from its own hash, so changing it does not change the plant's shape. The browning travels in the vertex colour's alpha.
+		</member>
+		<member name="lods" type="bool" setter="set_lods" getter="get_lods" default="true">
+			If [code]true[/code], distance LODs are generated (meshoptimizer), so plants far from the camera draw a fraction of their triangles.
+		</member>
+		<member name="petal_color" type="Color" setter="set_petal_color" getter="get_petal_color" default="Color(1, 0.78, 0.05, 1)">
+			Colour of the petals and florets.
+		</member>
+		<member name="preset" type="int" setter="set_preset" getter="get_preset" enum="PlantGenerator.Preset" default="0">
+			The kind of plant.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Seed of the random variation: each seed gives another plant of the same kind.
+		</member>
+		<member name="size" type="float" setter="set_size" getter="get_size" default="1.0">
+			Scale of the whole plant.
+		</member>
+		<member name="stem_color" type="Color" setter="set_stem_color" getter="get_stem_color" default="Color(0.2, 0.36, 0.1, 1)">
+			Colour of the stems.
+		</member>
+		<member name="texture_size" type="int" setter="set_texture_size" getter="get_texture_size" default="256">
+			Size in pixels of the generated leaf and petal textures.
+		</member>
+		<member name="textures" type="bool" setter="set_textures" getter="get_textures" default="true">
+			If [code]true[/code], leaves and petals get generated textures: veins grown by open venation (Runions et al. 2005) with widths by Murray's law, colour drift, dry margins and spots in the albedo, a normal map that sinks the veins, and a translucency map in the back light texture where the veins block light. Textures are baked once per preset, surface and seed variant and shared between meshes.
+		</member>
+	</members>
+	<constants>
+		<constant name="PRESET_DANDELION" value="0" enum="Preset">
+			Dandelion: a rosette of toothed leaves at the golden angle, hollow stalks with a head of florets on Vogel's spiral.
+		</constant>
+		<constant name="PRESET_PLANTAIN" value="1" enum="Preset">
+			Ribwort plantain: narrow upright leaves and long stalks with dark flower spikes.
+		</constant>
+		<constant name="PRESET_CLOVER" value="2" enum="Preset">
+			White clover: petioles with three round leaflets, sometimes a globe flower head (florets on a Fibonacci sphere).
+		</constant>
+		<constant name="PRESET_FERN" value="3" enum="Preset">
+			Fern: arching fronds with alternate lobed pinnae, longest mid-frond.
+		</constant>
+		<constant name="PRESET_SEDGE" value="4" enum="Preset">
+			Sedge: a tuft of narrow V-section blades, sometimes stalks with brown spikelets.
+		</constant>
+		<constant name="PRESET_DAISY" value="5" enum="Preset">
+			Oxeye daisy: basal leaves, tall stems with a white ray flower and yellow disc.
+		</constant>
+		<constant name="PRESET_BUTTERCUP" value="6" enum="Preset">
+			Meadow buttercup: lobed basal leaves, branching stems with glossy yellow cup flowers.
+		</constant>
+		<constant name="PRESET_NETTLE" value="7" enum="Preset">
+			Stinging nettle: a patch of erect stems with opposite, toothed, heart-shaped leaves and hanging flower strings.
+		</constant>
+		<constant name="PRESET_THISTLE" value="8" enum="Preset">
+			Spear thistle: a rosette of deeply lobed spiny leaves and a branched stem with purple flower heads (first-year plants are rosettes only).
+		</constant>
+		<constant name="PRESET_YARROW" value="9" enum="Preset">
+			Yarrow: feathery, finely divided leaves and a flat-topped cluster of small white flower heads.
+		</constant>
+		<constant name="PRESET_DOCK" value="10" enum="Preset">
+			Broad-leaved dock: big wavy-edged basal leaves with red veins and a tall rust-brown seed stem.
+		</constant>
+		<constant name="PRESET_COCKSFOOT" value="11" enum="Preset">
+			Cock's-foot grass: a coarse tussock of broad blades with clustered, one-sided flower heads.
+		</constant>
+		<constant name="PRESET_TIMOTHY" value="12" enum="Preset">
+			Timothy grass: a tuft of narrow blades with tall stems ending in a dense cylindrical spike.
+		</constant>
+		<constant name="PRESET_DRY_GRASS" value="13" enum="Preset">
+			Last year's dead grass: straw blades, bent, broken and lying flat.
+		</constant>
+		<constant name="PRESET_LEAF_LITTER" value="14" enum="Preset">
+			Fallen leaves of several shapes and colours with a few twigs, lying on the ground.
+		</constant>
+		<constant name="PRESET_MOSS" value="15" enum="Preset">
+			A moss cushion: a low mound packed with upright shoots.
+		</constant>
+		<constant name="PRESET_BILBERRY" value="16" enum="Preset">
+			Bilberry: a dwarf shrub of branched green stems with small oval leaves and a few dark berries.
+		</constant>
+		<constant name="PRESET_BRACKEN" value="17" enum="Preset">
+			Bracken: a few tall fronds whose triangular, finely divided blades turn nearly flat, for woodland edges and clearings.
+		</constant>
+		<constant name="PRESET_BRAMBLE" value="18" enum="Preset">
+			Bramble: arching red canes with leaves of three or five toothed leaflets and clusters of dark berries.
+		</constant>
+		<constant name="PRESET_FOXGLOVE" value="19" enum="Preset">
+			Foxglove: a rosette of soft toothed leaves and a tall spike of purple bells hanging to one side.
+		</constant>
+		<constant name="PRESET_REED" value="20" enum="Preset">
+			Common reed: a stand of tall culms with two ranks of drooping grey-green leaves and nodding purplish plumes, for shallow water and wet ground.
+		</constant>
+		<constant name="PRESET_CATTAIL" value="21" enum="Preset">
+			Bulrush or cattail: fans of long, twisting strap leaves and stiff stems carrying the dark brown cigar of female flowers with the male spike above, for shallow water.
+		</constant>
+		<constant name="PRESET_RUSH" value="22" enum="Preset">
+			Soft rush: a dense tussock of glossy leafless stems with pale brown flower clusters bursting from their sides, for wet pasture and marsh.
+		</constant>
+		<constant name="PRESET_WATER_LILY" value="23" enum="Preset">
+			White water lily: round floating pads with a cleft to the stalk and a few white flowers on the surface. Its origin is the water surface (see [member PlantSpecies.floating]).
+		</constant>
+		<constant name="PRESET_NEEDLE_LITTER" value="24" enum="Preset">
+			Needle litter: loose fallen needles lying across each other and a few cones, the relief over the needle carpet that [method VegetationField3D.get_floor_shader_code] draws on the ground under conifers.
+		</constant>
+		<constant name="PRESET_TWIGS" value="25" enum="Preset">
+			Fallen twigs and small branches lying on the forest floor.
+		</constant>
+		<constant name="PRESET_WOOD_SORREL" value="26" enum="Preset">
+			Wood sorrel: carpets of three folded heart-shaped leaflets on slender stalks, with a few white flowers; for shady woods.
+		</constant>
+		<constant name="PRESET_SEEDLING" value="27" enum="Preset">
+			Tree seedling: a thin zigzag woody stem with two-ranked oval, wavy-edged leaves, 8 to 75 cm tall; the youngest keep their broad seed leaves, older ones grow flat side sprays from the upper nodes (shade form).
+		</constant>
+		<constant name="PRESET_FEATHER_MOSS" value="28" enum="Preset">
+			Feather moss: wide, flat, yellow-green carpets as under spruce and pine.
+		</constant>
+		<constant name="PRESET_WOODRUFF" value="29" enum="Preset">
+			Woodruff: a clonal patch of upright unbranched stems, 12 to 28 cm, with whorls of six to nine narrow leaves held level and small white four-petalled flowers at the top; beech woods.
+		</constant>
+		<constant name="PRESET_WOOD_ANEMONE" value="30" enum="Preset">
+			Wood anemone: single stems with a whorl of three deeply three-lobed leaves two thirds up and one nodding white flower of six or seven tepals; the spring carpet of broadleaf woods.
+		</constant>
+		<constant name="PRESET_IVY" value="31" enum="Preset">
+			Ivy as ground cover: creeping runners along the floor with glossy, dark, lobed leaves on stalks turned up to the light, overlapping into a low carpet; oak and ash woods.
+		</constant>
+		<constant name="PRESET_HEATHER" value="32" enum="Preset">
+			Heather: a dwarf shrub of wiry branched woody stems clothed in short leafy shoots, some with spikes of pink-mauve bells; pine heath and acid open ground.
+		</constant>
+		<constant name="PRESET_MAX" value="33" enum="Preset">
+			Number of presets.
+		</constant>
+		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">
+			Beech wood: deep leaf litter, beech seedlings, woodruff, wood sorrel, wood anemone, few ferns.
+		</constant>
+		<constant name="FLOOR_OAK_MIXED" value="1" enum="FloorStand">
+			Oak, lime and ash: a rich herb layer, bramble under the crowns, ivy carpets, wood anemone, ferns, bracken in gaps.
+		</constant>
+		<constant name="FLOOR_MONTANE_CONIFER" value="2" enum="FloorStand">
+			Montane spruce, fir and beech: wood sorrel, ferns and bilberry on mixed leaf and needle litter.
+		</constant>
+		<constant name="FLOOR_SUBALPINE" value="3" enum="FloorStand">
+			Subalpine larch and spruce: bilberry carpets, heather in the light, few herbs.
+		</constant>
+		<constant name="FLOOR_PINE_HEATH" value="4" enum="FloorStand">
+			Pine heath: bilberry, heather and hair-grass under open crowns, bracken in gaps.
+		</constant>
+		<constant name="FLOOR_RIPARIAN" value="5" enum="FloorStand">
+			Riparian alder and willow: nettle, sedge and rush near water, ferns.
+		</constant>
+		<constant name="FLOOR_HEDGEROW" value="6" enum="FloorStand">
+			Hedgerow bottom: bramble, nettle, ivy, foxglove, fern.
+		</constant>
+		<constant name="FLOOR_NORTHERN_HARDWOOD" value="7" enum="FloorStand">
+			Northern hardwoods (sugar maple, beech, birch): deep leaf litter, spring ephemerals, ferns, wood sorrel, many seedlings.
+		</constant>
+		<constant name="FLOOR_EASTERN_OAK" value="8" enum="FloorStand">
+			Eastern oak and hickory: oak litter with blueberry and huckleberry carpets, bracken in gaps, few herbs.
+		</constant>
+		<constant name="FLOOR_PINE_HEMLOCK" value="9" enum="FloorStand">
+			White pine and hemlock: deep needle duff, nearly bare; a little moss, wood sorrel and seedlings.
+		</constant>
+		<constant name="FLOOR_MAX" value="10" enum="FloorStand">
+			Number of floor stand types.
+		</constant>
+	</constants>
+</class>

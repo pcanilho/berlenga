@@ -987,3 +987,115 @@ Check: `--view=sparkle --mirror --spp=16`, an overhead mirror showing the snow a
 the mirror the snow went from flat (standard deviation 4.5 of 255) to speckled (4.8) at the coarse grid
 level its 10 m path resolves; exact glints there give 16.2. The snow seen directly is unchanged (mean
 difference 0.2 of 255, sample noise). Image: fork/snow/stage5/mirror_glints_before_after_exact.png.
+
+## Follow-up 13: the print field on the GPU (built 11 Nov 2026)
+
+**Where the time goes (cloud CPU, 4 cores, `--view=trail`, 4 bodies).** Each physics step of
+`SnowSurface3D`: texture upload 0.7 ms (512 x 512 dent and rim turned to half floats and sent whole),
+slumping 0.4 to 0.8 ms, the collision heightfield 0.4 ms a step on average (1.6 ms every fifteenth of a
+second), pressing 0.07 ms. `SnowCover3D`: 5 ms per update of 256 x 256 cells, twice a second, and the world
+tier 5.5 ms every eighth update, both blocking one physics step (a hitch, not a steady cost).
+
+**How others do it.** Batman: Arkham Origins (Barre-Brisebois, GDC 2014) renders the actors from below
+the snow into an orthographic heightmap, accumulates it ping-pong and blurs it, under 1 ms of GPU on the
+consoles of 2013 with no readback. Rise of the Tomb Raider (Michels, SIGGRAPH 2015) does it with compute
+and tessellation, independent of the snow mesh. Ghost of Yotei (Sucker Punch, 2025) renders particles and
+geometry into a displacement buffer. All keep the field on the GPU and draw from it directly. Ours also
+conserves mass (compaction plus a rim, Sumner, O'Brien and Hodgins 1999), slumps to the angle of repose,
+breaks crusts, shoves a bow wave and gives bodies collision, so it is compute rather than a depth render,
+and the CPU gets a copy back for collision and queries.
+
+**Design.**
+- The field (dent, rim, slump owed) lives in GPU storage buffers. A blit writes the RGBA half-float
+  texture the material samples (wrapped as `Texture2DRD`, a stable RID): no upload.
+- Pressing: the CPU still reads the bodies, their path and their Bekker sinkage, and sends a list of
+  stamps. Per stamp, in order (overlapping steps of one path must see each other): a contact pass, a press
+  pass that sums the pushed volume with an integer atomic, the crust crack pass, and the rim pass that
+  spreads it. Same maths as `GroundDeformField::press`.
+- Columns (the undisturbed surface, the deepest dent, crust) come from textures the cover already has
+  (snow map: depth and density; catch map: the roof height) plus a new small crust map, and the surface's
+  ground texture. No per-texel CPU calls.
+- Slumping: the CPU version moves snow texel by texel in place (Gauss-Seidel). On the GPU it is two
+  gather passes per step (Jacobi): each texel works out what it gives and how it splits; each texel then
+  takes its neighbours' shares. The excess is the same function on both sides, so mass is kept exactly.
+  Slumping owed is a per-texel timer instead of per tile.
+- Relaxing (refill by new snow, wind, settling) is one pass when the cover updates.
+- Moving the square: a copy pass shifts the field by whole tiles; tiles leaving go to a tile cache on the
+  GPU (same size limit and least-recently-used rule as the CPU cache), tiles coming back are copied in.
+- The CPU copy: a pass writes the collision heights (ground plus cover plus dent and rim, the same as
+  `_surface_at`) and the field is read back asynchronously at the collision rate, so collision,
+  `get_dent_at`, `get_rim_at`, `get_moved_volume` and the world-tier feed lag by a frame or two.
+  `press()` returns the volume measured against that copy. `sync_deformation()` blocks for tests.
+- `gpu_simulation` (default on) falls back to the CPU path where there is no RenderingDevice
+  (Compatibility renderer, headless).
+- Next: the same for `GroundSurface3D` (fresh channel, slow mud), then the cover and world tier cells
+  (each cell's update is independent; drift and slides are stencils).
+
+**Built.** `modules/snow/snow_deform.glsl` (one compute shader, a pass per push constant) and
+`SnowDeformGPU` (the render-thread side); `SnowSurface3D.gpu_simulation` (on by default),
+`is_gpu_active()`, `sync_deformation()`. Pressing runs every stamp of a step in order inside one
+workgroup, so the sums (volume moved, pushed, deepest, the rim weights) are exact tree reductions with no
+float atomics. Slumping uses the CPU's step, half the largest excess (Jacobi with the same share is
+stable here because only rim moves and only downhill). GPU memory at 512 x 512: 8 MB of field (two
+buffers for the slumping passes), 2 MB scratch, 2 MB texture, 1 MB read back, 16 MB for 1024 cached tiles
+(as the CPU cache). `GroundDeformField::StampSink` lets the field send its presses elsewhere;
+`GroundSurface3D` is unchanged (CPU).
+
+**Results (cloud CPU device, lavapipe).** The physics step's main-thread time: 1.52 ms on the CPU path,
+0.04 ms on the GPU path in `--view=trail`, 0.19 ms in the test's four-body walk (unpacking the read-back
+copy, at 15 Hz). The same walk: dent 1.3064 m3 and rim 0.1817 m3 on the GPU against 1.3037 and 0.1858 on
+the CPU. With the walker set on the surface it left (`_walk` waits for the read back), the crust test
+matches to the millimetre (12 mm down beside the hole, rim 0.0156 of 0.3285 m3 against 0.3286), and a boot
+sinks 0.209 m on both. A path-traced `--view=trail` frame differs by 0.02 of 255 on average. All snow
+checks pass on both paths (`--test` under a window for the GPU, `--headless` for the CPU; `--gpu=0` forces
+the CPU). GPU time is on the PC queue.
+
+**Known limits.** Collision and the queries lag the GPU by the read back (about three rendered frames);
+the CPU path lagged by up to 1/15 s already. Outside the cover's near square the GPU sees no snow
+(the CPU path reads the world tier there; the field is always well inside the square).
+
+## Follow-up 14: cover updates in the background (built 11 Nov 2026)
+
+**Problem.** `SnowCover3D` stepped its cells in the physics frame that started an update: 256 x 256 cells took
+5 to 7 ms on the main thread twice a second (rows 2 ms on four threads, drift, slides and cornices 3 ms, the
+textures' bytes), and every 8th update the world tier added 4 to 6 ms more. Each was a hitch.
+
+**Technique.** The standard way engines take slow simulation off the frame: run the step as a job on a worker
+thread against inputs fixed when it starts, keep readers on the last *published* state, and swap the new
+state in when the job is done (double buffering; Andersson, "Parallel Futures of a Game Engine", Frostbite
+2010; Gyrling, "Parallelizing the Naughty Dog Engine Using Fibers", GDC 2015; Unreal's async tasks for its
+landscape grass maps). Readers see the pack one update late, which at 2 Hz is far below anything visible,
+and nothing on the main thread waits.
+
+**Design.**
+- `_update` is split into three parts. `_update_begin` runs on the main thread: the inputs (sun, wind, Sx)
+  and a snapshot of the weather map (`WeatherMap3D::get_snapshot()`, #247: its rain, cloud cover and cloud
+  shadow as shared buffers with their sampling parameters, so the cells read the weather as it was when
+  the update started while the map moves on). What cannot be snapshotted (the canopy closure from the
+  weather's shelter, the terrain climate's precipitation) is read into per-cell arrays on the main thread
+  when cells are sampled anew, and a sixteenth of the rows is refreshed each update.
+  `_update_cells` runs on any thread: rows, slides, wind transport and cornices. `_update_end` runs on the
+  main thread: runoff to the weather map and the counters. The in-frame path calls all three, so both paths
+  run the same code on the same inputs.
+- Published copies: every field a getter, `SnowSurface3D` or `SnowCornice3D` reads has a published twin
+  (`pub`). The twins share their buffers (Godot's `Vector` is copy-on-write with an atomic count), so
+  publishing costs nothing. The worker's first write to a field copies it on the worker, and the main thread
+  keeps reading the old buffer, untouched.
+- One task carries the near square and, on its turn, the world tier: the square's state feeds the world,
+  then the world cells step (a cornice failing there drops debris into the square), then both textures'
+  images are built. The main thread only hands the images to the textures.
+- Everything that changes the cells on the main thread (`advance`, `add_snow`, `clear`, a shift of the
+  square, a climate bake, a new climate) waits for the task first. The square does not follow the camera
+  while a task runs: it moves when the task lands, a frame or two later.
+- `background_updates` (on by default) switches it off, and `sync_update()` waits for a task in flight.
+
+**Results** (`docs/bench/snow --test=background`: a sunny, windy, snowing mountain at 256 x 256 cells with a
+64 x 64 world tier every 3rd update, run through the same physics frames both ways):
+- The pack comes out bit-identical: 1723 samples over both tiers, water to the gram.
+- Getters return the same values on every frame an update is in flight.
+- Main-thread cost per update falls from 4.5 to 6.0 ms (worst 5.8 to 6.9 ms) to 0.3 ms (worst 0.4 ms), split
+  between the frame that starts it and the frame that swaps it in. The worker takes 7 to 9 ms. (With the
+  weather still gathered on the main thread, the first version, 79e42843, left 0.9 to 1.2 ms.)
+
+**Limits.** A setter changed while an update is in flight may apply to it or to the next one. Holding a
+weather snapshot makes the map copy each of its arrays once on its next update (32 KB each at 128 x 128).

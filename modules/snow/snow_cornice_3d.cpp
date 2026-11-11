@@ -182,7 +182,7 @@ void SnowCornice3D::rebuild() {
 	segment_count = 0;
 	SnowCover3D *cover = SnowCover3D::get_active();
 	const SnowCover3D *w = cover ? cover->world : nullptr;
-	if (!w || w->cell_cornice_x.size() != w->resolution * w->resolution) {
+	if (!w || w->pub.cornice_x.size() != w->resolution * w->resolution) {
 		mesh_instance->set_mesh(Ref<Mesh>());
 		shape->set_shape(Ref<Shape3D>());
 		return;
@@ -200,7 +200,7 @@ void SnowCornice3D::rebuild() {
 	for (int z = MAX(cz0 - r, 0); z <= MIN(cz0 + r, n - 1); z++) {
 		for (int x = MAX(cx0 - r, 0); x <= MIN(cx0 + r, n - 1); x++) {
 			const int i = z * n + x;
-			const Vector2 c(w->cell_cornice_x[i], w->cell_cornice_z[i]);
+			const Vector2 c(w->pub.cornice_x[i], w->pub.cornice_z[i]);
 			const float len = c.length();
 			if (len < min_length) {
 				continue;
@@ -225,7 +225,7 @@ void SnowCornice3D::rebuild() {
 			const float depth = w->get_depth_at(Vector3(at.x, 0.0f, at.y));
 			cr.top = Vector3(at.x, best + depth, at.y);
 			cr.depth = depth;
-			cr.crack = w->cell_cornice_crack.size() == n * n ? w->cell_cornice_crack[i] : 0.0f;
+			cr.crack = w->pub.cornice_crack.size() == n * n ? w->pub.cornice_crack[i] : 0.0f;
 			crests.insert(i, cr);
 		}
 	}

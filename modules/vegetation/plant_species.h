@@ -59,6 +59,8 @@ public:
 		RULE_PRECIPITATION, // mm a year.
 		RULE_ARIDITY, // Precipitation over potential evapotranspiration.
 		RULE_SUNLIGHT, // Annual mean shortwave, W/m2: sunny slopes against shaded ones.
+		RULE_CONIFER, // Share of the canopy overhead that is needle-leaved, 0 broadleaf to 1 conifer (VegetationField3D).
+		RULE_SPRAY, // Waterfall spray potential, 0 to 1 (geology from a TerrainGenerator3D).
 		RULE_MAX,
 	};
 
@@ -70,6 +72,7 @@ private:
 	Vector2 scale_range = Vector2(0.8f, 1.2f);
 	float align_to_ground = 0.0f;
 	bool random_yaw = true;
+	bool floating = false; // Rides the water surface (water lilies), not the ground under it.
 	// Patches: clover beds, flower drifts. Value noise over the ground keeps the species to
 	// patches about patch_scale metres across, covering patch_cover of the ground.
 	float patch_scale = 0.0f; // 0: no patches.
@@ -79,10 +82,16 @@ private:
 	bool mask_invert = false; // Grow where the mask is low instead.
 	bool patch_invert = false; // Grow between the patches instead (same scale, cover and seed: the exact complement).
 	float visibility_range = 0.0f; // 0: always drawn.
+	// Near detail: heavier meshes (same variant order as meshes) drawn within near_range,
+	// meshes beyond it, with a dithered crossfade over the last tenth.
+	TypedArray<Mesh> near_meshes;
+	float near_range = 0.0f; // 0: no near swap.
+	Color far_color = Color(0, 0, 0, 0); // The plant seen from far above (rgb) and how much ground it hides (a).
 	// A canopy species shades what grows under it: crown radius (times the plant's scale) and
 	// the share of light its crown stops.
 	float canopy_radius = 0.0f; // 0: casts no shade.
 	float canopy_opacity = 0.85f;
+	bool canopy_conifer = false; // The crown drops needles, not leaves: picks the floor under it.
 	Vector2 ranges[RULE_MAX];
 	float fades[RULE_MAX] = {};
 
@@ -105,12 +114,21 @@ public:
 	void set_patch_invert(bool p_invert) { patch_invert = p_invert; }
 	bool is_patch_invert() const { return patch_invert; }
 	float get_patch_weight(const Vector3 &p_pos) const;
+	void set_near_meshes(const TypedArray<Mesh> &p_meshes) { near_meshes = p_meshes; }
+	TypedArray<Mesh> get_near_meshes() const { return near_meshes; }
+	void set_near_range(float p_range) { near_range = MAX(p_range, 0.0f); }
+	float get_near_range() const { return near_range; }
 	void set_visibility_range(float p_range) { visibility_range = MAX(p_range, 0.0f); }
 	float get_visibility_range() const { return visibility_range; }
+	void set_far_color(const Color &p_color) { far_color = p_color; }
+	Color get_far_color() const { return far_color; }
 	void set_canopy_radius(float p_radius) { canopy_radius = MAX(p_radius, 0.0f); }
 	float get_canopy_radius() const { return canopy_radius; }
 	void set_canopy_opacity(float p_opacity) { canopy_opacity = CLAMP(p_opacity, 0.0f, 1.0f); }
 	float get_canopy_opacity() const { return canopy_opacity; }
+	void set_canopy_conifer(bool p_conifer);
+	bool is_canopy_conifer() const { return canopy_conifer; }
+	bool uses_conifer() const { return ranges[RULE_CONIFER].x > 0.0f || ranges[RULE_CONIFER].y < 1.0f; }
 	// True when the shade rule is narrower than "anywhere", so placement must compute shade.
 	bool uses_shade() const { return ranges[RULE_SHADE].x > 0.0f || ranges[RULE_SHADE].y < 1.0f; }
 	void set_spacing(float p_spacing);
@@ -125,6 +143,8 @@ public:
 	float get_align_to_ground() const { return align_to_ground; }
 	void set_random_yaw(bool p_enable);
 	bool is_random_yaw() const { return random_yaw; }
+	void set_floating(bool p_floating);
+	bool is_floating() const { return floating; }
 
 	void set_rule_range(Rule p_rule, const Vector2 &p_range);
 	Vector2 get_rule_range(Rule p_rule) const;

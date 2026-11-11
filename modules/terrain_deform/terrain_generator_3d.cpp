@@ -34,6 +34,9 @@
 #include "terrain_deformer_3d.h"
 #include "terrain_erosion_filter.h"
 #include "terrain_geology.h"
+#include "terrain_glacial.h"
+
+#include <algorithm>
 #include "terrain_hydraulic.h"
 #include "terrain_runoff.h"
 #include "terrain_stream_power.h"
@@ -66,6 +69,20 @@ static inline double _gen_hash01(uint32_t p_seed, uint32_t p_i) {
 	x *= 0x846CA68Bu;
 	x ^= x >> 16;
 	return double(x) / 4294967296.0;
+}
+
+// Smooth value noise in -1..1 (bilinear with a smoothstep fade on a hashed lattice), for slow wobbles.
+static double _gen_value_noise(uint32_t p_seed, double p_x, double p_z, double p_wavelength) {
+	const double x = p_x / p_wavelength, z = p_z / p_wavelength;
+	const double fx = Math::floor(x), fz = Math::floor(z);
+	const int32_t ix = int32_t(fx), iz = int32_t(fz);
+	double tx = x - fx, tz = z - fz;
+	tx = tx * tx * (3.0 - 2.0 * tx);
+	tz = tz * tz * (3.0 - 2.0 * tz);
+	auto at = [&](int32_t a, int32_t b) { return 2.0 * _gen_hash01(p_seed, uint32_t(a) * 73856093u ^ uint32_t(b) * 19349663u) - 1.0; };
+	const double a = Math::lerp(at(ix, iz), at(ix + 1, iz), tx);
+	const double b = Math::lerp(at(ix, iz + 1), at(ix + 1, iz + 1), tx);
+	return Math::lerp(a, b, tz);
 }
 
 void TerrainGenerator3D::set_size(const Vector2 &p_size) {
@@ -151,7 +168,7 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 		const Transform3D xf = path->get_global_transform();
 		const real_t w = path->has_meta("width") ? real_t(path->get_meta("width")) : range_width;
 		const real_t strength = path->has_meta("uplift") ? real_t(path->get_meta("uplift")) : real_t(1.0);
-		if (w <= 0.0) {
+		if (w <= 0.0 || path->has_meta("basin")) {
 			continue;
 		}
 		for (int s = 0; s + 1 < pts.size(); s++) {
@@ -174,6 +191,45 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 						const float v = float(strength * (0.5 + 0.5 * Math::cos(Math::PI * d)));
 						field[z * nx + x] = MAX(field[z * nx + x], v);
 					}
+				}
+			}
+		}
+	}
+
+	// Basins: paths with "basin" metadata scale the uplift down to their "uplift" share along the curve (raised
+	// cosine over the width), after the map and ranges: a high bowl among the peaks, a cirque floor, a pass.
+	for (int r = 0; r < ranges.size(); r++) {
+		Path3D *path = Object::cast_to<Path3D>(get_node_or_null(ranges[r]));
+		if (!path || path->get_curve().is_null() || !path->has_meta("basin")) {
+			continue;
+		}
+		const PackedVector3Array pts = path->get_curve()->get_baked_points();
+		const Transform3D xf = path->get_global_transform();
+		const real_t w = path->has_meta("width") ? real_t(path->get_meta("width")) : range_width;
+		const real_t share = path->has_meta("uplift") ? real_t(path->get_meta("uplift")) : real_t(0.0);
+		if (w <= 0.0 || pts.is_empty()) {
+			continue;
+		}
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				const Vector2 p(rect.position.x + x * cell_size, rect.position.y + z * cell_size);
+				real_t dmin = 1e30;
+				for (int k = 0; k < pts.size(); k++) {
+					const Vector3 a3 = xf.xform(pts[k]);
+					if (k + 1 < pts.size()) {
+						const Vector3 b3 = xf.xform(pts[k + 1]);
+						const Vector2 a(a3.x, a3.z), ab = Vector2(b3.x, b3.z) - a;
+						const real_t len2 = ab.length_squared();
+						const real_t t = len2 > 0.0 ? CLAMP((p - a).dot(ab) / len2, real_t(0.0), real_t(1.0)) : real_t(0.0);
+						dmin = MIN(dmin, p.distance_to(a + ab * t));
+					} else {
+						dmin = MIN(dmin, p.distance_to(Vector2(a3.x, a3.z)));
+					}
+				}
+				const real_t d = dmin / w;
+				if (d < 1.0) {
+					const real_t c = 0.5 + 0.5 * Math::cos(Math::PI * d);
+					field[z * nx + x] *= float(Math::lerp(real_t(1.0), share, c));
 				}
 			}
 		}
@@ -297,6 +353,16 @@ bool TerrainGenerator3D::generate() {
 		sp.b.outlet = outlet_mask.ptr();
 	}
 
+	// Land beyond the map draining in at the inflow markers, on every grid the steps run on.
+	const LocalVector<InflowPoint> inflow_points = _inflow_points();
+	LocalVector<double> inflow_fine, sill_fine, level_fine, water_fine;
+	if (!inflow_points.is_empty()) {
+		_inflow_grid(inflow_points, nx, ny, cell_size, sp.b.outlet, inflow_fine, sill_fine, level_fine, &water_fine);
+		sp.b.inflow_area = inflow_fine.ptr();
+		sp.b.sill = sill_fine.is_empty() ? nullptr : sill_fine.ptr();
+		sp.b.sill_level = level_fine.is_empty() ? nullptr : level_fine.ptr();
+	}
+
 	// Layered rock (Forte, Yanites and Whipple 2016; Haviv et al. 2010): bands of hard rock in a sequence that rises
 	// with the uplift. A node's rock is the layer at its stratigraphic height: the ground height minus the uplift
 	// since the start (the rock under it has risen that far), plus the dip along its direction and a slow wobble.
@@ -369,10 +435,56 @@ bool TerrainGenerator3D::generate() {
 			}
 		}
 	};
+	// Ice ages between the rivers' steps (Cordonnier et al. 2023 alternate glacial and fluvial periods): every
+	// eighth step the glaciers of the ground as it stands erode for glacial_share of those steps' time.
+	TerrainGlacial glac;
+	glac.p.ela = glacial_ela;
+	glac.p.erodibility *= double(glacial_erosion);
+	glac.p.sliding = glacial_sliding;
+	const bool glacial = glacial_enabled && glacial_erosion > 0.0;
+	uint64_t glacial_usec = 0;
+	int glacial_count = 0;
+	// Rock quality under the ice: joint density varies over hundreds of metres, and glaciers quarry well-jointed rock
+	// far faster (Duhnforth et al. 2010). exp(variation x two octaves of noise), mean about 1; soft patches dig
+	// basins, sound rock stands as bars (Cook and Swift 2012). Built per grid size (coarse levels have their own).
+	std::vector<double> rock_scale, rock_combined;
+	int rock_scale_nx = 0;
+	auto glacial_scale = [&](int p_nx, int p_ny, double p_dx) -> const double * {
+		if (glacial_rock_variation <= 0.0) {
+			return nullptr;
+		}
+		if (rock_scale_nx != p_nx || rock_scale.size() != size_t(p_nx) * p_ny) {
+			rock_scale.resize(size_t(p_nx) * p_ny);
+			rock_scale_nx = p_nx;
+			const uint32_t rs = uint32_t(seed) * 0x9E3779B1u + 4242u;
+			const double L = double(glacial_rock_scale);
+			for (int z = 0; z < p_ny; z++) {
+				for (int x = 0; x < p_nx; x++) {
+					const double wx = result_rect.position.x + x * p_dx, wz = result_rect.position.y + z * p_dx;
+					const double v = 0.75 * _gen_value_noise(rs, wx, wz, L) + 0.35 * _gen_value_noise(rs + 1u, wx, wz, 0.43 * L);
+					rock_scale[size_t(z) * p_nx + x] = Math::exp(double(glacial_rock_variation) * v);
+				}
+			}
+		}
+		// Hard beds of the strata quarry slower too (riegels where a trough crosses a hard bed).
+		if (strata_enabled && strata_k.size() == uint32_t(p_nx * p_ny)) {
+			rock_combined.resize(rock_scale.size());
+			for (size_t i = 0; i < rock_scale.size(); i++) {
+				rock_combined[i] = rock_scale[i] * strata_k[i];
+			}
+			return rock_combined.data();
+		}
+		return rock_scale.data();
+	};
 	auto strata_step = [&](int p_n, const double *p_h, const double *p_up) -> double {
 		strata_update(p_n, p_h, p_up);
 		const double c = sp.step();
 		strata_time += double(time_step);
+		if (glacial && glacial_share > 0.0 && ++glacial_count % 8 == 0) {
+			const uint64_t tg = OS::get_singleton()->get_ticks_usec();
+			glac.erode(sp.b.height, sp.p.nx, sp.p.ny, sp.p.dx, 8.0 * double(time_step) * double(glacial_share), sp.b.sediment, sp.b.outlet, sp.b.sill, sp.b.sill_level, glacial_scale(sp.p.nx, sp.p.ny, sp.p.dx));
+			glacial_usec += OS::get_singleton()->get_ticks_usec() - tg;
+		}
 		return c;
 	};
 
@@ -400,7 +512,7 @@ bool TerrainGenerator3D::generate() {
 	} else {
 		struct Level {
 			int nx = 0, ny = 0;
-			LocalVector<double> up, h, sed;
+			LocalVector<double> up, h, sed, inflow, sill, level;
 			LocalVector<uint8_t> outlet;
 		};
 		LocalVector<Level> lv;
@@ -450,6 +562,18 @@ bool TerrainGenerator3D::generate() {
 			sp.b.uplift = l == 0 ? up.ptr() : L.up.ptr();
 			sp.b.outlet = l == 0 ? fine_outlet : (L.outlet.is_empty() ? nullptr : L.outlet.ptr());
 			sp.invalidate_outlets();
+			if (!inflow_points.is_empty()) {
+				if (l == 0) {
+					sp.b.inflow_area = inflow_fine.ptr();
+					sp.b.sill = sill_fine.is_empty() ? nullptr : sill_fine.ptr();
+					sp.b.sill_level = level_fine.is_empty() ? nullptr : level_fine.ptr();
+				} else {
+					_inflow_grid(inflow_points, L.nx, L.ny, sp.p.dx, sp.b.outlet, L.inflow, L.sill, L.level, nullptr);
+					sp.b.inflow_area = L.inflow.ptr();
+					sp.b.sill = L.sill.is_empty() ? nullptr : L.sill.ptr();
+					sp.b.sill_level = L.level.is_empty() ? nullptr : L.level.ptr();
+				}
+			}
 			strata_prepare(L.nx, L.ny, sp.p.dx);
 			for (int s = 0; s < p_steps; s++) {
 				change = strata_step(L.nx * L.ny, p_h, sp.b.uplift);
@@ -511,6 +635,80 @@ bool TerrainGenerator3D::generate() {
 		sp.b.uplift = up.ptr();
 		sp.b.outlet = fine_outlet;
 		sp.invalidate_outlets();
+		sp.b.inflow_area = inflow_fine.is_empty() ? nullptr : inflow_fine.ptr();
+		sp.b.sill = sill_fine.is_empty() ? nullptr : sill_fine.ptr();
+		sp.b.sill_level = level_fine.is_empty() ? nullptr : level_fine.ptr();
+	}
+	// The last glaciation, after the rivers: its basins are left as they are (lakes, _basin_lakes), so the routing
+	// below runs on a filled copy.
+	glacial_ice.clear();
+	last_glacial_eroded = 0.0;
+	last_glacial_ice_area = 0.0;
+	LocalVector<double> unfilled;
+	if (glacial && glacial_final > 0.0) {
+		const uint64_t tg = OS::get_singleton()->get_ticks_usec();
+		glac.erode(h.ptr(), nx, ny, cell_size, double(glacial_final), sed.ptr(), sp.b.outlet, sill_fine.is_empty() ? nullptr : sill_fine.ptr(), level_fine.is_empty() ? nullptr : level_fine.ptr(), glacial_scale(nx, ny, cell_size));
+		glacial_usec += OS::get_singleton()->get_ticks_usec() - tg;
+		// Walls the ice left steeper than rock stands for long (the trough's side, the step below a riegel) shed
+		// rockfall until they are no steeper than strata_cliff_angle; the debris piles at their feet. One
+		// sweep from the highest cell down settles every pair, since each cell's higher neighbours are final first.
+		{
+			const double S = Math::tan(Math::deg_to_rad(double(strata_cliff_angle)));
+			LocalVector<int32_t> ord;
+			ord.resize(n);
+			for (int i = 0; i < n; i++) {
+				ord[i] = i;
+			}
+			const double *hp = h.ptr();
+			std::sort(ord.ptr(), ord.ptr() + n, [hp](int32_t a, int32_t b) { return hp[a] > hp[b]; });
+			const uint8_t *fixed = sp.b.outlet;
+			for (int k = 0; k < n; k++) {
+				const int32_t i = ord[k];
+				if (fixed && fixed[i]) {
+					continue;
+				}
+				const int x = i % nx, z = i / nx;
+				double need = h[i];
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int xx = x + dx, zz = z + dz;
+						if ((dx == 0 && dz == 0) || xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+							continue;
+						}
+						const double d = (dx != 0 && dz != 0 ? Math::SQRT2 : 1.0) * double(cell_size);
+						need = MAX(need, h[zz * nx + xx] - S * d);
+					}
+				}
+				if (need > h[i]) {
+					h[i] = need; // blocky rockfall debris, not alluvium: it keeps its detail
+				}
+			}
+		}
+		last_glacial_eroded = real_t(glac.eroded_max);
+		last_glacial_ice_area = real_t(glac.ice_area);
+		glacial_ice.resize(n);
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				glacial_ice[z * nx + x] = float(glac.ice_at(x, z, cell_size));
+			}
+		}
+		unfilled.resize(n);
+		memcpy(unfilled.ptr(), h.ptr(), sizeof(double) * n);
+	}
+	last_glacial_msec = real_t(double(glacial_usec) / 1000.0);
+	sill_cells.clear();
+	if (!sill_fine.is_empty()) {
+		sill_cells.resize(n);
+		for (int i = 0; i < n; i++) {
+			sill_cells[i] = float(sill_fine[i]);
+		}
+	}
+	inflow_cells.clear();
+	if (!water_fine.is_empty()) {
+		inflow_cells.resize(n);
+		for (int i = 0; i < n; i++) {
+			inflow_cells[i] = float(water_fine[i]);
+		}
 	}
 	hardness.clear();
 	if (strata_enabled) {
@@ -523,7 +721,88 @@ bool TerrainGenerator3D::generate() {
 			hardness[i] = float(strata_weight(h[i] - up[i] * strata_time + strata_offset[i]));
 		}
 	}
+	// Abandoned slots on the fans: the single-direction rivers switch cells from step to step on a depositing
+	// surface and each leaves a one-cell trench in the toe (a channel the river has since left). Real fans backfill
+	// abandoned channels (avulsion, Bryant et al. 1995; Jerolmack and Paola 2007). A cell on alluvium lower than six
+	// or more of its eight neighbours by half a metre, carrying less than a river's area, fills to the median of its
+	// neighbours (an edge-keeping filter: steps and scarps stay). Two passes.
+	last_slots_filled = 0;
+	if (result_deposition && fan_backfill) {
+		const double river_area = 1.0e5;
+		for (int pass = 0; pass < 2; pass++) {
+			for (int z = 1; z < ny - 1; z++) {
+				for (int x = 1; x < nx - 1; x++) {
+					const int i = z * nx + x;
+					if (sed[i] < 0.3 || area[i] >= river_area) {
+						continue;
+					}
+					double nb[8];
+					int k = 0, higher = 0;
+					for (int dz = -1; dz <= 1; dz++) {
+						for (int dx = -1; dx <= 1; dx++) {
+							if (dx == 0 && dz == 0) {
+								continue;
+							}
+							nb[k] = h[i + dz * nx + dx];
+							higher += nb[k] > h[i] + 0.5 ? 1 : 0;
+							k++;
+						}
+					}
+					if (higher < 6) {
+						continue;
+					}
+					std::sort(nb, nb + 8);
+					const double med = 0.5 * (nb[3] + nb[4]);
+					sed[i] += med - h[i];
+					h[i] = med;
+					last_slots_filled++;
+				}
+			}
+		}
+	}
 	sp.route();
+	if (!unfilled.is_empty()) {
+		// The basins the ice wore stay: the receivers and areas come from the filled surface (water crosses the
+		// lakes), the ground and its sediment go back to what the ice left. Other hollows stay filled.
+		LocalVector<uint8_t> seen;
+		seen.resize(n);
+		memset(seen.ptr(), 0, n);
+		LocalVector<int32_t> part;
+		for (int s0 = 0; s0 < n; s0++) {
+			if (seen[s0] || h[s0] - unfilled[s0] <= 0.0) {
+				continue;
+			}
+			part.clear();
+			part.push_back(s0);
+			seen[s0] = 1;
+			bool iced = false;
+			for (uint32_t q = 0; q < part.size(); q++) {
+				const int32_t c = part[q];
+				iced = iced || glacial_ice[c] > 1.0f;
+				const int cx = c % nx, cz = c / nx;
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int xx = cx + dx, zz = cz + dz;
+						if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+							continue;
+						}
+						const int j = zz * nx + xx;
+						if (!seen[j] && h[j] - unfilled[j] > 0.0) {
+							seen[j] = 1;
+							part.push_back(j);
+						}
+					}
+				}
+			}
+			if (!iced) {
+				continue;
+			}
+			for (int32_t c : part) {
+				sed[c] = MAX(sed[c] - (h[c] - unfilled[c]), 0.0);
+				h[c] = unfilled[c];
+			}
+		}
+	}
 	sp.b.erodibility_scale = nullptr;
 	sp.b.talus_cell = nullptr;
 	sp.b.hard_depth = nullptr;
@@ -550,6 +829,28 @@ bool TerrainGenerator3D::generate() {
 		drainage[i] = float(area[i]);
 		sediment[i] = float(sed[i] * scale);
 		uplift_field[i] = float(up[i] * 1.0e3);
+	}
+	// Loose fill cannot stand steeper than its critical slope: what the solver left on such ground (deposits on hard
+	// sill cells that do not wear, then faces cut below them) is rock with scree, not soil. Faded from 85% to 110%
+	// of the critical gradient, as the geology fades soil (otherwise a 74 degree bar face read as 390 m of soil and
+	// grew grass and conifers).
+	if (critical_slope > 0.0) {
+		const double cs = Math::tan(Math::deg_to_rad(double(critical_slope)));
+		LocalVector<float> keep;
+		keep.resize(n);
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				const int i = z * nx + x;
+				const double gx = (heights[z * nx + MIN(x + 1, nx - 1)] - heights[z * nx + MAX(x - 1, 0)]) / (double(MIN(x + 1, nx - 1) - MAX(x - 1, 0)) * cell_size);
+				const double gz = (heights[MIN(z + 1, ny - 1) * nx + x] - heights[MAX(z - 1, 0) * nx + x]) / (double(MIN(z + 1, ny - 1) - MAX(z - 1, 0)) * cell_size);
+				const double t = CLAMP((Math::sqrt(gx * gx + gz * gz) - 0.85 * cs) / (0.25 * cs), 0.0, 1.0);
+				keep[i] = float(1.0 - t * t * (3.0 - 2.0 * t));
+			}
+		}
+		for (int i = 0; i < n; i++) {
+			sediment[i] *= keep[i];
+			sed[i] *= double(keep[i]);
+		}
 	}
 	_alluvium_reach();
 
@@ -603,9 +904,11 @@ bool TerrainGenerator3D::generate() {
 	}
 	const uint64_t tr = OS::get_singleton()->get_ticks_usec();
 	_route_rivers();
+	_bake_lips();
 	water_usec += OS::get_singleton()->get_ticks_usec() - tr;
 	last_water_msec = double(water_usec) / 1000.0;
 	_bake_detail_keep();
+	_bake_spray();
 	_publish_globals();
 	_erode_tiles();
 	last_generate_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
@@ -621,6 +924,11 @@ void TerrainGenerator3D::clear_result() {
 	drainage.clear();
 	sediment.clear();
 	alluvium_reach.clear();
+	inflow_cells.clear();
+	sill_cells.clear();
+	glacial_ice.clear();
+	lips.clear();
+	lip_buckets.clear();
 	uplift_field.clear();
 	soil.clear();
 	rock.clear();
@@ -760,6 +1068,15 @@ void TerrainGenerator3D::_alluvium_reach() {
 	}
 }
 
+namespace {
+constexpr real_t LIP_BUCKET = 128.0; // m
+constexpr real_t LIP_FACE = 3.0; // m the face takes from the lip's height to the foot's (three 1 m grid steps, so a face oblique to the grid does not alias into ribs)
+constexpr real_t LIP_SIDE = 12.0; // m beside the held width over which the step fades into the slope
+constexpr real_t GORGE_WALL = 2.0; // m over which a gorge wall rises from its floor to the ground beside it
+constexpr real_t POOL_BAR = 1.4; // the tail bar reaches this many pool radii from the centre
+constexpr real_t LIP_END = 8.0; // m before the lip and past the foot over which it fades
+} // namespace
+
 float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	const float base = _sample(heights, p_x, p_z);
 	if (!detail_enabled || detail_octaves <= 0 || detail_depth <= 0.0 || Math::is_nan(base)) {
@@ -827,13 +1144,48 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 		// fade out over its first half metre, so a fan front or a terrace riser stays a soft bank instead of growing
 		// rocky knobs. The fade reaches past the thin
 		// edge of a deposit (see _alluvium_reach), so a fan toe does not grow a comb of gullies either.
-		const double sd = CLAMP(double(_sample(alluvium_reach, p_x, p_z)) / ALLUVIUM_FADE, 0.0, 1.0);
+		// Loose fill does not stand steeper than its angle of repose (about 35 degrees): on steeper ground the
+		// sample is rock however much sediment the cells around it hold, and keeps its detail.
+		const double steep = CLAMP((Math::sqrt(gx * gx + gz * gz) - 0.7) / 0.3, 0.0, 1.0);
+		const double sd = CLAMP(double(_sample(alluvium_reach, p_x, p_z)) / ALLUVIUM_FADE, 0.0, 1.0) * (1.0 - steep * steep * (3.0 - 2.0 * steep));
 		off *= 1.0 - sd * sd * (3.0 - 2.0 * sd);
 	}
 	if (has_sea) {
 		// Beaches and the coastal strip stay smooth: the detail grows in over the first metres above the sea.
 		const double t = CLAMP((double(base) - double(result_min) - 0.5) / 5.5, 0.0, 1.0);
 		off *= t * t * (3.0 - 2.0 * t);
+	}
+	// Ledges on cliffs (row 11 of the waterfall gap list): steep faces of bedded rock weather into steps, each harder
+	// bed a ledge over a softer recess (differential erosion of interbedded strata, Forte et al. 2016; the layered
+	// subsurface of Cordonnier et al. 2018, "Sculpting mountains"). Beds every cliff_ledge_spacing metres, their
+	// heights wandering by most of a bed over a few hundred metres; each bed is a near-flat ledge for 60% of its
+	// height and a riser for the rest, faded in from 40 to 55 degrees so soil slopes stay as they were.
+	if (cliff_ledge_spacing > 0.0) {
+		const double slope = Math::sqrt(gx * gx + gz * gz);
+		const double tw = CLAMP((slope - 0.84) / (1.43 - 0.84), 0.0, 1.0);
+		double w = tw * tw * (3.0 - 2.0 * tw) * double(cliff_ledge_strength) * _water_fade(p_x, p_z);
+		if (w > 0.0) {
+			const double L = double(cliff_ledge_spacing);
+			const uint32_t ls = uint32_t(seed) * 0x9E3779B1u + 77u;
+			const double wob = L * (0.8 * _gen_value_noise(ls, p_x, p_z, 240.0) + 0.25 * _gen_value_noise(ls + 1u, p_x, p_z, 60.0));
+			const double h0 = double(base) + off;
+			// Beds of uneven thickness: the bed count runs on a monotonic warp of height (two incommensurate waves,
+			// slope stays positive), and each bed's ledge share is its own.
+			const double hw = (h0 + wob) / L;
+			const double q = hw + 0.22 * Math::sin(hw * 2.3999632) + 0.12 * Math::sin(hw * 0.9213 + 1.7);
+			const double fl = Math::floor(q);
+			const double f = q - fl;
+			const uint32_t bh = (uint32_t(int64_t(fl)) * 0x9E3779B1u) ^ (ls * 0x85EBCA6Bu);
+			// Each bed: a narrow ledge (20 to 35 percent of the bed, rising a quarter of its height, so it still sheds
+			// water and scree) and the riser above it.
+			const double l = 0.2 + 0.15 * double((bh >> 8) & 0xFFFF) / 65535.0;
+			double t = f < l ? 0.25 * f / l : 0.25 + 0.75 * (f - l) / (1.0 - l);
+			// Back from bed units to height: invert the warp locally (Newton step from q).
+			const double qt = fl + t;
+			const double dq = 1.0 + 0.22 * 2.3999632 * Math::cos(hw * 2.3999632) + 0.12 * 0.9213 * Math::cos(hw * 0.9213 + 1.7);
+			const double ht = (hw + (qt - q) / dq) * L - wob;
+			off += w * (ht - h0);
+		}
 	}
 	// With a sea, a cut deeper than a quarter of the ground's height above that floor is compressed smoothly (exponentially, same
 	// slope where it starts) to at most half of it, so gully floors near the coast keep sloping down to the sea
@@ -874,7 +1226,7 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 			}
 		}
 	}
-	return g;
+	return lip_buckets.is_empty() ? g : _apply_lips(p_x, p_z, g);
 }
 
 // Bilinear on the tile erosion grid (its cells are fine: a few metres).
@@ -1196,8 +1548,18 @@ Array TerrainGenerator3D::get_waterfalls(real_t p_min_area, real_t p_min_height)
 			while (e + 1 < cells.size() && steep(e)) {
 				e++;
 			}
-			const Vector3 top = Vector3(_cell_position(cells[k]).x, _ground(_cell_position(cells[k]).x, _cell_position(cells[k]).z), _cell_position(cells[k]).z);
-			const Vector3 bottom = Vector3(_cell_position(cells[e]).x, _ground(_cell_position(cells[e]).x, _cell_position(cells[e]).z), _cell_position(cells[e]).z);
+			Vector3 top = Vector3(_cell_position(cells[k]).x, _ground(_cell_position(cells[k]).x, _cell_position(cells[k]).z), _cell_position(cells[k]).z);
+			Vector3 bottom = Vector3(_cell_position(cells[e]).x, _ground(_cell_position(cells[e]).x, _cell_position(cells[e]).z), _cell_position(cells[e]).z);
+			// A lip worn back up a gorge: the fall is at the gorge's head, from its brink to the slot floor below.
+			for (const FallLip &l : lips) {
+				if (l.origin.distance_to(Vector2(top.x, top.z)) < 0.5f * result_cell && l.top.distance_to(l.origin) > 0.5f) {
+					const Vector2 brink = l.top + l.dir * (0.5f * l.run - 0.5f * LIP_FACE - 0.5f);
+					const Vector2 foot = l.top + l.dir * (0.5f * l.run + 0.5f * LIP_FACE + 1.0f);
+					top = Vector3(brink.x, _ground(brink.x, brink.y), brink.y);
+					bottom = Vector3(foot.x, _ground(foot.x, foot.y), foot.y);
+					break;
+				}
+			}
 			const real_t drop = heights[cells[k]] - heights[cells[e]];
 			if (drop >= p_min_height) {
 				Dictionary w;
@@ -1209,12 +1571,211 @@ Array TerrainGenerator3D::get_waterfalls(real_t p_min_area, real_t p_min_height)
 				w["river"] = r;
 				w["index"] = k;
 				w["hardness"] = get_rock_hardness(top);
+				// Free fall: the jet leaving the brink at critical depth (v = (g q)^(1/3), q per metre of width) clears
+				// the face over the drop when it travels further out than the face recedes.
+				const real_t q = real_t(w["discharge"]) / MAX(widths[k], 0.5f);
+				const real_t v = Math::pow(9.81f * MAX(q, real_t(0.0)), real_t(1.0 / 3.0));
+				const real_t hgt = MAX(top.y - bottom.y, real_t(0.0));
+				const real_t throw_m = v * Math::sqrt(2.0f * hgt / 9.81f);
+				bool lipped = false;
+				const Vector3 cell_top = _cell_position(cells[k]);
+				for (const FallLip &l : lips) {
+					lipped = lipped || (l.origin.distance_to(Vector2(cell_top.x, cell_top.z)) < 0.5f * result_cell);
+				}
+				const real_t face = lipped ? LIP_FACE : Vector2(top.x - bottom.x, top.z - bottom.z).length();
+				w["face_run"] = face;
+				w["jet_throw"] = throw_m;
+				w["free_fall"] = throw_m > face;
+				_fall_contract(w, pts, k, e, cells, widths[k], v);
 				out.push_back(w);
 			}
 			k = e;
 		}
 	}
 	return out;
+}
+
+// The rest of a fall's record for the water code (docs/ideas/terrain-generation.md, "Fall data for the water"):
+// the lip across its width with each part's share of the flow, the face down three lines, its tiers and ledges, the
+// form, power, impact speed, the flow by month and a stable id.
+void TerrainGenerator3D::_fall_contract(Dictionary &r_fall, const PackedVector3Array &p_pts, int p_k, int p_e, const PackedInt32Array &p_cells, real_t p_width, real_t p_v0) const {
+	const Vector3 top = r_fall["top"];
+	const Vector3 bottom = r_fall["bottom"];
+	const real_t height = MAX(real_t(r_fall["height"]), real_t(0.0));
+	const real_t discharge = r_fall["discharge"];
+	Vector2 dir = Vector2(bottom.x - top.x, bottom.z - top.z);
+	const real_t span = dir.length();
+	dir = span > 1e-4 ? dir / span : Vector2(0, 1);
+	const Vector2 across(-dir.y, dir.x);
+	r_fall["direction"] = Vector3(dir.x, 0, dir.y);
+	// Stable id: the river and the distance down it to the lip (the same for the same seed and settings).
+	real_t along = 0.0;
+	for (int i = 1; i <= p_k && i < p_pts.size(); i++) {
+		along += Vector2(p_pts[i].x - p_pts[i - 1].x, p_pts[i].z - p_pts[i - 1].z).length();
+	}
+	r_fall["id"] = vformat("r%d_%dm", int(r_fall["river"]), int(Math::round(along)));
+	// The lip: 8 points across the channel at the brink, the ground under each, and each one's share of the flow by
+	// Manning's law across the section (unit discharge goes as depth^(5/3) under a common water surface; the surface
+	// is set by the river's width at the lip, so the deepest part of the brink carries most).
+	const real_t lw = MAX(p_width, real_t(2.0));
+	PackedVector3Array lip;
+	PackedFloat32Array share;
+	real_t lo = 1e30f;
+	for (int i = 0; i < 8; i++) {
+		const real_t o = (real_t(i) / 7.0 - 0.5) * lw;
+		const Vector2 q = Vector2(top.x, top.z) + across * o;
+		const real_t g = _ground(q.x, q.y);
+		lip.push_back(Vector3(q.x, g, q.y));
+		lo = MIN(lo, g);
+	}
+	// Water surface: the lowest brink point plus the critical depth of the whole flow over the width.
+	const real_t yc = Math::pow(MAX(discharge, real_t(0.0)) / lw, real_t(2.0 / 3.0)) / Math::pow(real_t(9.81), real_t(1.0 / 3.0));
+	const real_t surface = lo + MAX(yc, real_t(0.02));
+	real_t total = 0.0;
+	for (int i = 0; i < 8; i++) {
+		const real_t dpt = MAX(surface - lip[i].y, real_t(0.0));
+		const real_t sh = Math::pow(dpt, real_t(5.0 / 3.0));
+		share.push_back(sh);
+		total += sh;
+	}
+	for (int i = 0; i < 8; i++) {
+		share.set(i, total > 0.0 ? share[i] / total : real_t(1.0 / 8.0));
+	}
+	r_fall["lip_points"] = lip;
+	r_fall["lip_share"] = share;
+	r_fall["lip_width"] = lw;
+	r_fall["overhang"] = 0.0; // a heightfield cannot undercut; the free-fall test above stands in for it
+	// The hard bed the lip stands on: a strata band's thickness, or none on ordinary rock.
+	r_fall["caprock"] = (strata_enabled && get_rock_hardness(top) >= 0.5f) ? real_t(strata_spacing * strata_hard_fraction) : real_t(0.0);
+	// Face profiles down three lines (left, centre, right of the lip): 16 samples of (run from the lip, height
+	// below it, overhang flag 0) from the brink to a little past the foot.
+	const real_t reach = span + 8.0f;
+	Array faces;
+	for (int line = 0; line < 3; line++) {
+		const real_t o = (real_t(line) - 1.0f) * 0.35f * lw;
+		PackedVector3Array prof;
+		for (int i = 0; i < 16; i++) {
+			const real_t run = reach * real_t(i) / 15.0f;
+			const Vector2 q = Vector2(top.x, top.z) + across * o + dir * run;
+			prof.push_back(Vector3(run, _ground(q.x, q.y) - top.y, 0.0));
+		}
+		faces.push_back(prof);
+	}
+	r_fall["face_profiles"] = faces;
+	// Tiers and ledges down the centre line at 1 m: a ledge is a stretch at most 0.35 steep (19 degrees) at least
+	// 2 m long between steeper drops of 2 m or more; the drops between ledges are the tiers.
+	Array tiers, ledges;
+	{
+		const int steps = MAX(2, int(Math::ceil(reach)));
+		real_t prev = top.y;
+		real_t tier_top = top.y;
+		Vector3 tier_top_p = top;
+		real_t flat = 0.0;
+		Vector3 flat_start;
+		for (int i = 1; i <= steps; i++) {
+			const real_t run = reach * real_t(i) / steps;
+			const Vector2 q = Vector2(top.x, top.z) + dir * run;
+			const real_t g = _ground(q.x, q.y);
+			const real_t dz = prev - g;
+			const real_t dx = reach / steps;
+			if (dz <= 0.35f * dx) {
+				if (flat == 0.0) {
+					flat_start = Vector3(q.x, g, q.y);
+				}
+				flat += dx;
+			} else {
+				if (flat >= 2.0f && tier_top - flat_start.y >= 2.0f && run < span) {
+					Dictionary t;
+					t["top"] = tier_top_p;
+					t["bottom"] = flat_start;
+					t["height"] = tier_top - flat_start.y;
+					tiers.push_back(t);
+					Dictionary l;
+					l["position"] = flat_start;
+					l["depth"] = flat;
+					ledges.push_back(l);
+					tier_top = flat_start.y;
+					tier_top_p = flat_start;
+				}
+				flat = 0.0;
+			}
+			prev = g;
+		}
+		if (tier_top - bottom.y >= 0.5f) {
+			Dictionary t;
+			t["top"] = tier_top_p;
+			t["bottom"] = bottom;
+			t["height"] = tier_top - bottom.y;
+			tiers.push_back(t);
+		}
+	}
+	r_fall["tiers"] = tiers;
+	r_fall["ledges"] = ledges;
+	// Form (the World Waterfall Database's names): free of the face - plunge; several drops - tiered; down rock
+	// steeper than 60 degrees - horsetail; gentler - cascade.
+	const real_t face_slope = span > 0.0 ? height / span : 1e3f;
+	String type;
+	if (tiers.size() >= 2) {
+		type = "tiered";
+	} else if (bool(r_fall["free_fall"])) {
+		type = "plunge";
+	} else if (face_slope >= 1.73f) {
+		type = "horsetail";
+	} else {
+		type = "cascade";
+	}
+	r_fall["type"] = type;
+	r_fall["power"] = 1000.0f * 9.81f * discharge * height;
+	// Impact speed. A falling sheet breaks up after L_b = 6 q^0.32 m (Horeni 1956, q in m2/s per metre of lip); past
+	// that it falls as drops and blobs that approach their terminal speed (about 9 m/s for drops of 3 mm and more,
+	// Gunn and Kinzer 1949) over a drag length v_t^2 / g. impact_speed_free is the drag-free sqrt(v0^2 + 2 g H).
+	const real_t qw = MAX(discharge / lw, real_t(1e-4));
+	const real_t lb = 6.0f * Math::pow(qw, real_t(0.32));
+	const real_t vfree = Math::sqrt(p_v0 * p_v0 + 2.0f * 9.81f * height);
+	const real_t vt = 9.0f;
+	real_t vimp = vfree;
+	if (height > lb) {
+		const real_t vb = Math::sqrt(p_v0 * p_v0 + 2.0f * 9.81f * lb);
+		vimp = vt + (MAX(vb, vt) - vt) * Math::exp(-(height - lb) / (vt * vt / 9.81f));
+	}
+	r_fall["breakup_length"] = lb;
+	r_fall["impact_speed"] = MIN(vimp, vfree);
+	r_fall["impact_speed_free"] = vfree;
+	PackedFloat32Array months;
+	for (int m = 0; m < 12; m++) {
+		months.push_back(_flow(p_cells[p_k], m));
+	}
+	r_fall["discharge_months"] = months;
+	// The plunge pool baked for this fall (none where it lands in a lake or the sea): centre on the floor, radius,
+	// depth below the foot, and the level it holds water to (the lowest point of its rim).
+	const Vector3 origin = _cell_position(p_cells[p_k]);
+	for (const PlungePool &pl : pools) {
+		if (pl.top.distance_to(Vector2(origin.x, origin.z)) < 0.5f * result_cell) {
+			// The water spills over the lowest point of the rim's crest: the highest ground along each radius
+			// from the edge of the hole out over the tail bar, lowest over all directions.
+			real_t level = 1e30f;
+			for (int i = 0; i < 32; i++) {
+				const real_t an = Math::TAU * real_t(i) / 32.0f;
+				real_t crest = -1e30f;
+				for (int j = 0; j <= 8; j++) {
+					const real_t rr = pl.radius * (0.9f + (POOL_BAR - 0.9f) * real_t(j) / 8.0f);
+					const real_t gh = _ground(pl.center.x + Math::cos(an) * rr, pl.center.y + Math::sin(an) * rr);
+					if (Math::is_finite(gh)) {
+						crest = MAX(crest, gh);
+					}
+				}
+				level = MIN(level, crest);
+			}
+			r_fall["pool_center"] = Vector3(pl.center.x, _ground(pl.center.x, pl.center.y), pl.center.y);
+			r_fall["pool_radius"] = pl.radius;
+			r_fall["pool_depth"] = MAX(level - _ground(pl.center.x, pl.center.y), real_t(0.0));
+			r_fall["pool_level"] = level;
+			break;
+		}
+	}
+	// Where the fall lands: "pool", "lake" or "sea" (a fall into standing water gets no pool of its own).
+	const int wb = water_body.size() == uint32_t(nx * ny) ? water_body[p_cells[p_e]] : 0;
+	r_fall["lands_in"] = r_fall.has("pool_radius") ? String("pool") : (wb == 1 ? String("sea") : (wb >= 2 ? String("lake") : String("ground")));
 }
 
 /* Rain and snowmelt (terrain_runoff.h; docs/ideas/terrain-generation.md "Rain and snowmelt feed the rivers") */
@@ -1381,7 +1942,8 @@ void TerrainGenerator3D::_route_runoff(const LocalVector<int32_t> &p_receivers, 
 					const Vector3 p = _cell_position(i);
 					mm = _runoff_sample(m, p.x, p.z);
 				}
-				acc[i] = mm * to_flow;
+				// Land beyond the map draining in here gets the same rain and melt as the node it enters at.
+				acc[i] = mm * to_flow * (inflow_cells.is_empty() ? 1.0 : 1.0 + double(inflow_cells[i]) / ca);
 			}
 		});
 		for (uint32_t q = 0; q < p_order.size(); q++) {
@@ -1506,6 +2068,216 @@ void TerrainGenerator3D::_publish_globals() {
 	if (detail_keep_texture.is_valid()) {
 		set_global("terrain_detail_keep_map", detail_keep_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	}
+	if (spray_texture.is_valid()) {
+		set_global("terrain_spray_potential", spray_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		set_global("terrain_spray_rect", Vector4(r.position.x, r.position.y, (spray_nx - 1) * spray_cell, (spray_ny - 1) * spray_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
+}
+
+/* Boulders below cliffs (docs/ideas/terrain-generation.md, "Rocks below cliffs") */
+
+namespace {
+inline uint32_t boulder_hash(uint32_t p_a, uint32_t p_b, uint32_t p_c) {
+	uint32_t h = p_a * 0x9E3779B1u ^ (p_b + 0x7F4A7C15u) * 0x85EBCA6Bu ^ (p_c + 0x165667B1u) * 0xC2B2AE35u;
+	h ^= h >> 16;
+	h *= 0x7FEB352Du;
+	h ^= h >> 15;
+	h *= 0x846CA68Bu;
+	h ^= h >> 16;
+	return h;
+}
+inline real_t boulder_unit(uint32_t p_h) {
+	return real_t(p_h >> 8) / real_t(16777216.0);
+}
+} // namespace
+
+// Blocks that fell off the cliffs and where they came to rest: each rock cell steeper than 45 degrees sheds blocks in
+// proportion to its exposed face; each block rolls down the steepest way until its travel angle (from where it left
+// the face) drops below the shadow angle (27.5 degrees at the least, Evans and Hungr 1993), larger blocks running
+// further (fall sorting, Kirkby and Statham 1975). Sizes follow a power law (Pareto, exponent 2.5) from 0.25 to 3 m
+// in radius. Deterministic for the seed; returns (x, ground y, z, radius) for blocks resting inside p_rect.
+PackedVector4Array TerrainGenerator3D::get_boulders(const Rect2 &p_rect, real_t p_density) const {
+	PackedVector4Array out;
+	const int n = nx * ny;
+	if (n <= 0 || heights.size() != uint32_t(n) || p_density <= 0.0) {
+		return out;
+	}
+	const real_t margin = 400.0;
+	const Rect2 src = p_rect.grow(margin);
+	const int x0 = CLAMP(int(Math::floor((src.position.x - result_rect.position.x) / result_cell)), 1, nx - 2);
+	const int x1 = CLAMP(int(Math::ceil((src.position.x + src.size.x - result_rect.position.x) / result_cell)), 1, nx - 2);
+	const int z0 = CLAMP(int(Math::floor((src.position.y - result_rect.position.y) / result_cell)), 1, ny - 2);
+	const int z1 = CLAMP(int(Math::ceil((src.position.y + src.size.y - result_rect.position.y) / result_cell)), 1, ny - 2);
+	const bool has_rock = rock.size() == uint32_t(n);
+	const bool has_water = water_body.size() == uint32_t(n);
+	for (int z = z0; z <= z1; z++) {
+		for (int x = x0; x <= x1; x++) {
+			const int i = z * nx + x;
+			const real_t gx = (heights[i + 1] - heights[i - 1]) / (2.0f * result_cell);
+			const real_t gz = (heights[i + nx] - heights[i - nx]) / (2.0f * result_cell);
+			const real_t slope = Math::sqrt(gx * gx + gz * gz);
+			const real_t rk = has_rock ? rock[i] : real_t(slope > 1.0f ? 1.0f : 0.0f);
+			if (slope < 1.0f || rk < 0.3f || (has_water && water_body[i] != 0)) {
+				continue;
+			}
+			// Face area in the cell times exposure; about one block per 150 m2 of bare face at density 1.
+			const real_t face = result_cell * result_cell * Math::sqrt(1.0f + slope * slope) * rk;
+			const real_t want = face / 150.0f * p_density;
+			int count = int(want);
+			if (boulder_unit(boulder_hash(uint32_t(seed), uint32_t(i), 9999u)) < want - count) {
+				count++;
+			}
+			for (int b = 0; b < count; b++) {
+				const uint32_t h0 = boulder_hash(uint32_t(seed), uint32_t(i), uint32_t(b) * 4u);
+				const real_t u1 = boulder_unit(h0);
+				const real_t u2 = boulder_unit(boulder_hash(uint32_t(seed), uint32_t(i), uint32_t(b) * 4u + 1u));
+				const real_t u3 = boulder_unit(boulder_hash(uint32_t(seed), uint32_t(i), uint32_t(b) * 4u + 2u));
+				const real_t u4 = boulder_unit(boulder_hash(uint32_t(seed), uint32_t(i), uint32_t(b) * 4u + 3u));
+				// Pareto radius, alpha 2.5, 0.25 .. 3 m.
+				const real_t radius = MIN(real_t(0.25) * Math::pow(1.0f - u3 * 0.999f, real_t(-1.0 / 2.5)), real_t(3.0));
+				const real_t shadow = Math::deg_to_rad(real_t(27.5) + real_t(6.0) * u4 - real_t(2.0) * (radius - 0.25f));
+				const real_t tan_shadow = Math::tan(MAX(shadow, Math::deg_to_rad(real_t(22.0))));
+				const Vector3 c = _cell_position(i);
+				Vector2 p(c.x + (u1 - 0.5f) * result_cell, c.z + (u2 - 0.5f) * result_cell);
+				// The run-out follows the grid's surface (bilinear; the 1 m detail only steers a block locally), in 3 m
+				// steps; the resting height comes from the full ground.
+				auto surf = [&](real_t px, real_t pz) { return real_t(_sample(heights, px, pz)); };
+				const real_t start = surf(p.x, p.y);
+				real_t travelled = 0.0;
+				real_t h = start;
+				bool lost = false;
+				for (int step = 0; step < 200; step++) {
+					const real_t e = 4.0;
+					const Vector2 grad((surf(p.x + e, p.y) - surf(p.x - e, p.y)) / (2.0f * e), (surf(p.x, p.y + e) - surf(p.x, p.y - e)) / (2.0f * e));
+					const real_t gl = grad.length();
+					if (gl < 1e-3f) {
+						break;
+					}
+					// Blocks bounce and spin off the fall line: up to 35 degrees either side each step, so they fan out
+					// over the talus instead of all funnelling into the gully below.
+					const real_t jit = (boulder_unit(boulder_hash(h0, uint32_t(step), 77u)) - 0.5f) * Math::deg_to_rad(real_t(70.0));
+					const Vector2 np = p - (grad / gl).rotated(jit) * 3.0f;
+					const real_t nh = surf(np.x, np.y);
+					if (!Math::is_finite(nh) || nh >= h) {
+						break;
+					}
+					travelled += 3.0f;
+					p = np;
+					h = nh;
+					// Rest once the line from the release point dips under the shadow angle and the ground has eased.
+					if ((start - h) < tan_shadow * travelled && gl < 0.75f) {
+						break;
+					}
+					const int ci = CLAMP(int(Math::round((p.y - result_rect.position.y) / result_cell)), 0, ny - 1) * nx + CLAMP(int(Math::round((p.x - result_rect.position.x) / result_cell)), 0, nx - 1);
+					if (has_water && water_body[ci] != 0) {
+						lost = true; // into a lake, the sea or a river's water: out of sight
+						break;
+					}
+				}
+				if (lost || travelled < 4.0f || !p_rect.has_point(p)) {
+					continue;
+				}
+				out.push_back(Vector4(p.x, _ground(p.x, p.y), p.y, radius));
+			}
+		}
+	}
+	return out;
+}
+
+/* Spray potential (docs/ideas/terrain-generation.md, "Spray potential") */
+
+// The static baseline of where the falls keep the ground wet: each fall sprays from the line its water takes (lip
+// to impact) and most from where it lands. Intensity falls off exponentially with distance (as measured around
+// plunging jets: dam spillway atomization) over a reach that grows with the fall's power, and fades with height
+// above the source (spray settles, it does not climb). Live wetting from wind-blown mist multiplies with it at run
+// time; this map only says how much spray a place can get.
+void TerrainGenerator3D::_bake_spray() {
+	spray.clear();
+	spray_nx = spray_ny = 0;
+	if (spray_cell <= 0.0 || nx < 2 || ny < 2) {
+		spray_texture.unref();
+		return;
+	}
+	spray_nx = MAX(2, int(Math::floor((nx - 1) * result_cell / spray_cell)) + 1);
+	spray_ny = MAX(2, int(Math::floor((ny - 1) * result_cell / spray_cell)) + 1);
+	spray.resize(spray_nx * spray_ny);
+	for (float &v : spray) {
+		v = 0.0f;
+	}
+	const Array falls = get_waterfalls(1.0e4, 4.0);
+	for (int f = 0; f < falls.size(); f++) {
+		const Dictionary w = falls[f];
+		const Vector3 top = w["top"];
+		const Vector3 impact = w.has("pool_center") ? Vector3(w["pool_center"]) : Vector3(w["bottom"]);
+		const real_t q = MAX(real_t(w["discharge"]), real_t(0.0));
+		const real_t h = MAX(real_t(w["height"]), real_t(0.0));
+		// Reach: 3 (Q H)^0.4 m, at least 4 m (a 20 m fall of 30 l/s wets a few metres; 3.6 m3/s over 330 m about
+		// 50 m; the Victoria Falls' 1000 m3/s over 108 m some 300 m, the rainforest's width).
+		const real_t reach = MAX(real_t(3.0) * Math::pow(q * h, real_t(0.4)), real_t(4.0));
+		const real_t peak = CLAMP(real_t(0.25) + real_t(0.25) * Math::log(1.0 + q * h) / Math::log(real_t(10.0)), real_t(0.25), real_t(1.0));
+		const real_t ext = reach * 1.5f;
+		const int x0 = CLAMP(int(Math::floor((MIN(top.x, impact.x) - ext - result_rect.position.x) / spray_cell)), 0, spray_nx - 1);
+		const int x1 = CLAMP(int(Math::ceil((MAX(top.x, impact.x) + ext - result_rect.position.x) / spray_cell)), 0, spray_nx - 1);
+		const int z0 = CLAMP(int(Math::floor((MIN(top.z, impact.z) - ext - result_rect.position.y) / spray_cell)), 0, spray_ny - 1);
+		const int z1 = CLAMP(int(Math::ceil((MAX(top.z, impact.z) + ext - result_rect.position.y) / spray_cell)), 0, spray_ny - 1);
+		const Vector3 seg = impact - top;
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const real_t px = result_rect.position.x + x * spray_cell;
+				const real_t pz = result_rect.position.y + z * spray_cell;
+				const Vector3 p(px, _ground(px, pz), pz);
+				// Horizontal distance to the water's path in plan (lip to impact); the curtain wets everything below the
+				// lip beside it, more the further down (the sheet breaks into spray as it falls), most at the impact.
+				const Vector2 s2(seg.x, seg.z);
+				const real_t t = CLAMP(Vector2(p.x - top.x, p.z - top.z).dot(s2) / MAX(s2.length_squared(), real_t(1e-6)), real_t(0.0), real_t(1.0));
+				const Vector2 c(top.x + s2.x * t, top.z + s2.y * t);
+				const real_t d = Vector2(p.x - c.x, p.z - c.y).length();
+				if (d > ext) {
+					continue;
+				}
+				const real_t above = MAX(p.y - MAX(top.y, impact.y), real_t(0.0));
+				const real_t down = CLAMP((top.y - p.y) / MAX(h, real_t(1.0)), real_t(0.0), real_t(1.0));
+				const real_t source = 0.35f + 0.65f * down * down;
+				const real_t v = peak * source * Math::exp(-2.0f * d / reach) * Math::exp(-above / (0.25f * reach + 2.0f));
+				float &o = spray[z * spray_nx + x];
+				o = 1.0f - (1.0f - o) * (1.0f - float(MIN(v, real_t(1.0)))); // several falls add like probabilities
+			}
+		}
+	}
+	const Ref<Image> img = get_spray_image();
+	if (spray_texture.is_valid() && spray_texture->get_width() == spray_nx && spray_texture->get_height() == spray_ny) {
+		spray_texture->update(img);
+	} else {
+		spray_texture = ImageTexture::create_from_image(img);
+	}
+}
+
+Ref<Image> TerrainGenerator3D::get_spray_image() const {
+	if (spray_nx < 2 || spray.size() != uint32_t(spray_nx * spray_ny)) {
+		return Ref<Image>();
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(spray.size());
+	uint8_t *w = bytes.ptrw();
+	for (uint32_t i = 0; i < spray.size(); i++) {
+		w[i] = uint8_t(CLAMP(int(Math::round(spray[i] * 255.0f)), 0, 255));
+	}
+	return Image::create_from_data(spray_nx, spray_ny, false, Image::FORMAT_L8, bytes);
+}
+
+real_t TerrainGenerator3D::get_spray_potential(const Vector3 &p_global_position) const {
+	if (spray_nx < 2 || spray.size() != uint32_t(spray_nx * spray_ny)) {
+		return 0.0;
+	}
+	const Vector3 &local = p_global_position; // the generator's grid is in world x z, as get_rock_hardness
+	const real_t fx = CLAMP((local.x - result_rect.position.x) / spray_cell, real_t(0.0), real_t(spray_nx - 1));
+	const real_t fz = CLAMP((local.z - result_rect.position.y) / spray_cell, real_t(0.0), real_t(spray_ny - 1));
+	const int x = MIN(int(fx), spray_nx - 2), z = MIN(int(fz), spray_ny - 2);
+	const real_t tx = fx - x, tz = fz - z;
+	const float *g = spray.ptr();
+	const real_t a = Math::lerp(real_t(g[z * spray_nx + x]), real_t(g[z * spray_nx + x + 1]), tx);
+	const real_t b = Math::lerp(real_t(g[(z + 1) * spray_nx + x]), real_t(g[(z + 1) * spray_nx + x + 1]), tx);
+	return Math::lerp(a, b, tz);
 }
 
 // How much of the geometric erosion detail each grid node keeps (_ground_detail's fades for water, alluvium and the
@@ -1688,6 +2460,13 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 }
 
 vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float footprint) {
+	// The detail is a heightfield's (gullies on slopes, looked up by x and z): on faces past about 60 degrees a
+	// lookup by x and z runs down the face as vertical streaks, so it fades out there (the material's own rock
+	// texture, projected on the face, carries the detail).
+	float face = smoothstep(0.35, 0.55, world_normal.y);
+	if (face <= 0.0) {
+		return world_normal;
+	}
 	vec2 g = -world_normal.xz / max(world_normal.y, 1e-3);
 	vec2 size = vec2(textureSize(terrain_detail_keep_map, 0));
 	vec2 u = clamp((world_pos.xz - TD_RECT.xy) / TD_RECT.zw, 0.0, 1.0);
@@ -1695,7 +2474,7 @@ vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float
 	if (keep <= 0.0) {
 		return world_normal;
 	}
-	vec2 d = keep * terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
+	vec2 d = face * keep * terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
 	return normalize(vec3(-(g.x + d.x), 1.0, -(g.y + d.y)));
 }
 )GLSL";
@@ -1837,6 +2616,399 @@ double TerrainGenerator3D::_marker_face_slope(const Node3D *p_marker) {
 
 // Lakes: the dams on lake markers first, then automatic ones on valley floors with at least lake_catchment above
 // them, in a seeded order, lake_spacing apart, away from the sea.
+/* Fall lips */
+
+// A free-falling fall needs a face the jet clears: over hard rock the face stands vertical (the caprock lip). The
+// grid holds a drop over a whole cell at best (16 m: about 58 degrees for 25 m), so each fall the rivers make over
+// hard rock (at least 4 m, rock at the lip at least half hard) is kept here, and _ground holds the lip's height to the
+// middle of the drop and the foot's after it, the step taking LIP_FACE metres.
+void TerrainGenerator3D::_bake_lips() {
+	lips.clear();
+	pools.clear();
+	gorges.clear();
+	lip_buckets.clear();
+	const bool hard_map = hardness.size() == uint32_t(nx * ny);
+	const bool sills = sill_cells.size() == uint32_t(nx * ny);
+	const bool want_lips = fall_lips && (hard_map || sills);
+	if (!want_lips && !plunge_pools) {
+		return;
+	}
+	const Array rivers = _rivers(1.0e5, true);
+	for (int r = 0; r < rivers.size(); r++) {
+		const Dictionary d = rivers[r];
+		const PackedInt32Array cells = d["cells"];
+		const PackedFloat32Array widths = d["widths"];
+		auto steep = [&](int a) {
+			const int u = cells[a], v = cells[a + 1];
+			const real_t run = result_cell * Math::sqrt(real_t((u % nx - v % nx) * (u % nx - v % nx) + (u / nx - v / nx) * (u / nx - v / nx)));
+			return heights[u] - heights[v] > run;
+		};
+		int k = 0;
+		while (k + 1 < cells.size()) {
+			if (!steep(k)) {
+				k++;
+				continue;
+			}
+			int e = k;
+			while (e + 1 < cells.size() && steep(e)) {
+				e++;
+			}
+			const int u = cells[k], v = cells[e];
+			const real_t drop = heights[u] - heights[v];
+			if (drop < 4.0f) {
+				k = e;
+				continue;
+			}
+			const Vector3 a = _cell_position(u), b = _cell_position(v);
+			const Vector2 origin = Vector2(a.x, a.z);
+			Vector2 top = origin;
+			Vector2 dv = Vector2(b.x, b.z) - top;
+			real_t run = dv.length();
+			Vector2 dir = run > 0.0 ? dv / run : Vector2(0, 1);
+			real_t h_top = heights[u], h_foot = heights[v];
+			const real_t width = MAX(real_t(widths[k]), real_t(4.0));
+			const bool massive = sills && sill_cells[u] > 0.5f;
+			const bool lipped = want_lips && ((hard_map && hardness[u] >= 0.5f) || massive);
+			// Gorge: the lip has worn back upstream for gorge_age years at gorge_rate sqrt(Q) metres a year (knickpoint
+			// celerity, Crosby and Whipple 2006; the rate fitted to Niagara, Gilbert 1907), a twentieth of that in
+			// massive rock (a riegel; Lamb and Dietrich 2009). It stops short of a lake (the fall would drain it) and
+			// of the fall above, and leaves a slot as wide as the river with a floor falling gently to the old foot.
+			if (lipped && gorge_age > 0.0) {
+				const real_t q = MAX(real_t(_flow(u, river_month)), real_t(0.0));
+				real_t want = real_t(gorge_age) * real_t(gorge_rate) * Math::sqrt(q) * (massive ? 0.05f : 1.0f);
+				Gorge g;
+				g.half_width = MAX(0.5f * width + 1.0f, real_t(3.0));
+				g.points.push_back(Vector2(b.x, b.z));
+				g.points.push_back(origin);
+				real_t len = 0.0;
+				int j = k;
+				Vector2 lip_at = origin;
+				while (j > 0 && want > 0.0) {
+					const int c = cells[j - 1];
+					if ((water_body.size() == uint32_t(nx * ny) && water_body[c] != 0) || (lake_rim.size() == uint32_t(nx * ny) && !Math::is_nan(lake_rim[c])) || (j - 1 > 0 && steep(j - 2))) {
+						break;
+					}
+					if (c % nx < 3 || c / nx < 3 || c % nx >= nx - 3 || c / nx >= ny - 3) {
+						break; // the river came in over the map's edge: its reach above is not here
+					}
+					const Vector3 cp = _cell_position(c);
+					const Vector2 p2(cp.x, cp.z);
+					const real_t step = p2.distance_to(lip_at);
+					// Keep two cells of the reach above the new lip untouched.
+					if (j - 1 < 2) {
+						break;
+					}
+					if (step >= want) {
+						lip_at = lip_at + (p2 - lip_at) * (want / MAX(step, real_t(1e-3)));
+						h_top = Math::lerp(h_top, heights[c], want / MAX(step, real_t(1e-3)));
+						len += want;
+						want = 0.0;
+						g.points.push_back(lip_at);
+						break;
+					}
+					lip_at = p2;
+					h_top = heights[c];
+					len += step;
+					want -= step;
+					g.points.push_back(lip_at);
+					j--;
+				}
+				if (len >= 2.0f) {
+					g.points.reverse(); // new lip first, down to the old foot
+					g.floor_top = h_foot + 0.01f * len;
+					g.floor_bottom = h_foot;
+					real_t total = 0.0;
+					for (uint32_t i = 1; i < g.points.size(); i++) {
+						total += g.points[i].distance_to(g.points[i - 1]);
+					}
+					g.length = total;
+					g.origin = origin;
+					// The new fall: from the worn-back lip into the head of the slot.
+					dir = (g.points[1] - g.points[0]).normalized();
+					top = g.points[0] - dir * (0.5f * LIP_FACE + 1.0f);
+					run = LIP_FACE + 2.0f;
+					h_foot = g.floor_top;
+					gorges.push_back(g);
+				}
+			}
+			if (lipped) {
+				FallLip lip;
+				lip.origin = origin;
+				lip.top = top;
+				lip.run = run;
+				lip.dir = dir;
+				lip.h_top = h_top;
+				lip.h_bottom = h_foot;
+				lip.half_width = width;
+				lips.push_back(lip);
+			}
+			// The pool where the jet lands: past the face (the lip's step sits mid-run), or at the foot of a fall that
+			// runs down its rock. None where the fall ends in a lake or the sea.
+			const bool wet = water_body.size() == uint32_t(nx * ny) && water_body[v] != 0;
+			if (plunge_pools && !wet) {
+				const real_t q = MAX(real_t(_flow(u, river_month)) / real_t(widths[k] > 0.5f ? widths[k] : 0.5f), real_t(1e-4));
+				const real_t v0 = Math::pow(9.81f * q, real_t(1.0 / 3.0));
+				const real_t throw_m = v0 * Math::sqrt(2.0f * MAX(h_top - h_foot, real_t(0.0)) / 9.81f);
+				const real_t face_at = lipped ? 0.5f * run - 0.5f * LIP_FACE : 0.0f;
+				const real_t face_end = lipped ? 0.5f * run + 0.5f * LIP_FACE : run;
+				// Mason and Arumugam 1985: D + Y = 3.27 q^0.60 H^0.05 h^0.15 / (g^0.30 d^0.10); tailwater h at the
+				// critical depth, cobbles d = 0.3 m. At least 1.5 m (a fall of 4 m or more always leaves a hollow).
+				const real_t h = MAX(Math::pow(q * q / 9.81f, real_t(1.0 / 3.0)), real_t(0.2));
+				const real_t dy = 3.27f * Math::pow(q, real_t(0.60)) * Math::pow(MAX(h_top - h_foot, real_t(1.0)), real_t(0.05)) * Math::pow(h, real_t(0.15)) / (Math::pow(real_t(9.81), real_t(0.30)) * Math::pow(real_t(0.3), real_t(0.10)));
+				PlungePool pool;
+				pool.top = origin;
+				pool.depth = CLAMP(dy - h, real_t(1.5), real_t(15.0));
+				// Pagliara et al. 2006: the scour hole is several times longer than deep; and wider than the jet.
+				pool.radius = MAX(MAX(0.35f * width, 3.0f * pool.depth), real_t(4.0));
+				const real_t s = MAX(face_at + throw_m, face_end + 0.5f * pool.radius);
+				pool.center = top + dir * s;
+				// The floor hangs from the ground where the pool lies (past the foot cell the bed may keep falling).
+				pool.foot = MIN(h_foot, _sample(heights, pool.center.x, pool.center.y));
+				pool.dir = dir;
+				pools.push_back(pool);
+			}
+			k = e;
+		}
+	}
+	if (lips.is_empty() && pools.is_empty() && gorges.is_empty()) {
+		return;
+	}
+	lip_bx = int(Math::ceil(result_rect.size.x / LIP_BUCKET)) + 1;
+	lip_bz = int(Math::ceil(result_rect.size.y / LIP_BUCKET)) + 1;
+	lip_buckets.resize(lip_bx * lip_bz);
+	auto add = [&](const Vector2 &p_c, real_t p_reach, int p_index) {
+		const int x0 = CLAMP(int(Math::floor((p_c.x - p_reach - result_rect.position.x) / LIP_BUCKET)), 0, lip_bx - 1);
+		const int x1 = CLAMP(int(Math::floor((p_c.x + p_reach - result_rect.position.x) / LIP_BUCKET)), 0, lip_bx - 1);
+		const int z0 = CLAMP(int(Math::floor((p_c.y - p_reach - result_rect.position.y) / LIP_BUCKET)), 0, lip_bz - 1);
+		const int z1 = CLAMP(int(Math::floor((p_c.y + p_reach - result_rect.position.y) / LIP_BUCKET)), 0, lip_bz - 1);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				lip_buckets[z * lip_bx + x].push_back(p_index);
+			}
+		}
+	};
+	// Lips by index, pools after them (index lips.size() + j).
+	for (uint32_t i = 0; i < lips.size(); i++) {
+		const FallLip &l = lips[i];
+		add(l.top, l.half_width + LIP_SIDE + l.run + LIP_END, int(i));
+	}
+	for (uint32_t j = 0; j < pools.size(); j++) {
+		add(pools[j].center, pools[j].radius * POOL_BAR, int(lips.size() + j));
+	}
+	// Gorges after the pools, one entry per segment's bucket span.
+	for (uint32_t j = 0; j < gorges.size(); j++) {
+		const Gorge &g = gorges[j];
+		for (uint32_t i = 1; i < g.points.size(); i++) {
+			add((g.points[i] + g.points[i - 1]) * 0.5f, 0.5f * g.points[i].distance_to(g.points[i - 1]) + g.half_width + GORGE_WALL, int(lips.size() + pools.size() + j));
+		}
+	}
+}
+
+float TerrainGenerator3D::_apply_lips(real_t p_x, real_t p_z, float p_g) const {
+	const int bx = int(Math::floor((p_x - result_rect.position.x) / LIP_BUCKET));
+	const int bz = int(Math::floor((p_z - result_rect.position.y) / LIP_BUCKET));
+	if (bx < 0 || bz < 0 || bx >= lip_bx || bz >= lip_bz) {
+		return p_g;
+	}
+	float g = p_g;
+	const LocalVector<int> &bucket = lip_buckets[bz * lip_bx + bx];
+	int last_gorge = -1;
+	for (int i : bucket) {
+		const int gi = i - int(lips.size() + pools.size());
+		if (gi < 0 || gi == last_gorge) {
+			continue;
+		}
+		last_gorge = gi;
+		// The slot: within the half width the floor (falling gently from the new lip to the old foot), walls standing
+		// over GORGE_WALL metres beside it.
+		const Gorge &gg = gorges[gi];
+		const Vector2 pp(p_x, p_z);
+		real_t best = 1e30f, at = 0.0, acc = 0.0;
+		for (uint32_t k = 1; k < gg.points.size(); k++) {
+			const Vector2 a = gg.points[k - 1], b = gg.points[k];
+			const Vector2 ab = b - a;
+			const real_t l2 = MAX(ab.length_squared(), real_t(1e-6));
+			const real_t t = CLAMP((pp - a).dot(ab) / l2, real_t(0.0), real_t(1.0));
+			const real_t dd = pp.distance_to(a + ab * t);
+			if (dd < best) {
+				best = dd;
+				at = acc + t * Math::sqrt(l2);
+			}
+			acc += Math::sqrt(l2);
+		}
+		if (best >= gg.half_width + GORGE_WALL) {
+			continue;
+		}
+		const real_t floor_h = Math::lerp(gg.floor_top, gg.floor_bottom, CLAMP(at / MAX(gg.length, real_t(1e-3)), real_t(0.0), real_t(1.0)));
+		const real_t w = best <= gg.half_width ? 1.0 : 1.0 - (best - gg.half_width) / GORGE_WALL;
+		if (g > floor_h) {
+			g = float(Math::lerp(real_t(g), floor_h, w * w * (3.0 - 2.0 * w)));
+		}
+	}
+	for (int i : bucket) {
+		if (i >= int(lips.size())) {
+			continue;
+		}
+		const FallLip &l = lips[i];
+		const Vector2 q = Vector2(p_x, p_z) - l.top;
+		const real_t s = q.dot(l.dir);
+		const real_t t = Math::abs(q.cross(l.dir));
+		if (s < -LIP_END || s > l.run + LIP_END || t > l.half_width + LIP_SIDE) {
+			continue;
+		}
+		auto fade = [](real_t x) { return x * x * (real_t(3.0) - real_t(2.0) * x); };
+		const real_t wa = s < 0.0 ? fade(CLAMP(1.0 + s / LIP_END, 0.0, 1.0)) : (s > l.run ? fade(CLAMP(1.0 - (s - l.run) / LIP_END, 0.0, 1.0)) : 1.0);
+		const real_t wl = t <= l.half_width ? 1.0 : fade(CLAMP(1.0 - (t - l.half_width) / LIP_SIDE, 0.0, 1.0));
+		const real_t w = wa * wl;
+		if (w <= 0.0) {
+			continue;
+		}
+		// The step: the lip's height to the middle of the drop, the foot's after it. The face line wanders by up
+		// to 2 m along its length (jointed rock breaks off in blocks, not along a ruler).
+		const Vector2 along = Vector2(-l.dir.y, l.dir.x);
+		const real_t wander = 2.0 * TerrainErosionFilter::fbm(uint32_t(seed) * 0x9E3779B1u + uint32_t(i), q.dot(along), real_t(i) * 97.0, 9.0, 3);
+		const real_t u = CLAMP((s - 0.5 * l.run - wander) / LIP_FACE + 0.5, 0.0, 1.0);
+		const real_t h = Math::lerp(l.h_top, l.h_bottom, fade(u));
+		g = float(Math::lerp(real_t(g), h, w));
+	}
+	// Pools after the lips: a bowl (1 - (r/R)^2)^2 deep at the centre, flat at the rim, cut below the foot.
+	for (int i : bucket) {
+		if (i < int(lips.size()) || i >= int(lips.size() + pools.size())) {
+			continue;
+		}
+		const PlungePool &pl = pools[i - lips.size()];
+		const Vector2 d = Vector2(p_x, p_z) - pl.center;
+		const real_t r2 = d.length_squared() / (pl.radius * pl.radius);
+		if (r2 >= POOL_BAR * POOL_BAR) {
+			continue;
+		}
+		// The tail bar: what the jet scours out piles up downstream of the hole (Pagliara et al. 2006), so the pool
+		// holds water where the ground falls away below the foot. Up to the foot's height, peaking just past the
+		// rim, on the downstream side only, and at most the depth plus a metre high.
+		const real_t r = Math::sqrt(r2);
+		const real_t ahead = d.dot(pl.dir) / MAX(d.length(), real_t(1e-3));
+		if (ahead > 0.0 && r > 0.8) {
+			const real_t x = (r - 0.8) / (POOL_BAR - 0.8);
+			const real_t bump = Math::sin(Math::PI * x);
+			const real_t raise = CLAMP(pl.foot - real_t(g), real_t(0.0), pl.depth + 1.0f);
+			g += float(raise * bump * Math::sqrt(ahead));
+		}
+		if (r2 >= 1.0) {
+			continue;
+		}
+		const real_t floor_h = pl.foot - pl.depth * (1.0 - r2) * (1.0 - r2);
+		g = MIN(g, float(floor_h));
+	}
+	return g;
+}
+
+/* Inflows */
+
+LocalVector<TerrainGenerator3D::InflowPoint> TerrainGenerator3D::_inflow_points() const {
+	LocalVector<InflowPoint> pts;
+	for (int m = 0; m < inflows.size(); m++) {
+		const Node3D *marker = Object::cast_to<Node3D>(get_node_or_null(inflows[m]));
+		if (!marker) {
+			WARN_PRINT(vformat("TerrainGenerator3D: inflow marker %s is not a Node3D in the tree; ignored.", String(inflows[m])));
+			continue;
+		}
+		InflowPoint ip;
+		const Vector3 p = marker->get_global_position();
+		ip.position = Vector2(p.x, p.z);
+		// A marker with only a sill (no area metadata and a sill or level) brings no land in.
+		const bool sill_only = !marker->has_meta("area") && (marker->has_meta("sill") || marker->has_meta("level"));
+		ip.area = sill_only ? 0.0 : double(marker->has_meta("area") ? real_t(marker->get_meta("area")) : inflow_area) * 1.0e6;
+		ip.sill = marker->has_meta("sill") ? double(real_t(marker->get_meta("sill"))) : 0.0;
+		ip.erosion = marker->has_meta("erosion") ? CLAMP(double(real_t(marker->get_meta("erosion"))), 0.0, 1.0) : 1.0;
+		if (marker->has_meta("level")) {
+			ip.level = double(real_t(marker->get_meta("level"))) - double(height_offset);
+			ip.sill = MAX(ip.sill, 1.0); // a level needs a sill to hold it (at least the entry node)
+		}
+		if (ip.area > 0.0 || ip.sill > 0.0) {
+			pts.push_back(ip);
+		}
+	}
+	return pts;
+}
+
+// The node each inflow enters at on a p_nx x p_ny grid of p_dx spacing: the one under the marker, or, when that is
+// an outlet (an open map edge or the sea), the nearest node within 8 that is not, so the water runs over the land.
+void TerrainGenerator3D::_inflow_grid(const LocalVector<InflowPoint> &p_points, int p_nx, int p_ny, double p_dx, const uint8_t *p_outlet, LocalVector<double> &r_area, LocalVector<double> &r_sill, LocalVector<double> &r_level, LocalVector<double> *r_water) const {
+	r_area.resize(p_nx * p_ny);
+	memset(r_area.ptr(), 0, sizeof(double) * p_nx * p_ny);
+	if (r_water) {
+		r_water->resize(p_nx * p_ny);
+		memset(r_water->ptr(), 0, sizeof(double) * p_nx * p_ny);
+	}
+	r_sill.clear();
+	r_level.clear();
+	auto outlet = [&](int x, int z) {
+		return (p_outlet && p_outlet[z * p_nx + x]) || ((outlet_edges & 1) && x == 0) || ((outlet_edges & 2) && x == p_nx - 1) || ((outlet_edges & 4) && z == 0) || ((outlet_edges & 8) && z == p_ny - 1);
+	};
+	for (const InflowPoint &ip : p_points) {
+		const int cx = CLAMP(int(Math::round((ip.position.x - result_rect.position.x) / p_dx)), 0, p_nx - 1);
+		const int cz = CLAMP(int(Math::round((ip.position.y - result_rect.position.y) / p_dx)), 0, p_ny - 1);
+		int best = -1, best_d = 1 << 30;
+		for (int z = MAX(cz - 8, 0); z <= MIN(cz + 8, p_ny - 1); z++) {
+			for (int x = MAX(cx - 8, 0); x <= MIN(cx + 8, p_nx - 1); x++) {
+				const int d = (x - cx) * (x - cx) + (z - cz) * (z - cz);
+				if (d < best_d && !outlet(x, z)) {
+					best = z * p_nx + x;
+					best_d = d;
+				}
+			}
+		}
+		if (best >= 0) {
+			r_area[best] += ip.area * ip.erosion;
+			if (r_water) {
+				(*r_water)[best] += ip.area;
+			}
+			if (ip.sill > 0.0) {
+				// A sill of resistant rock round the entry: full within the radius, at least the entry node itself.
+				if (r_sill.is_empty()) {
+					r_sill.resize(p_nx * p_ny);
+					memset(r_sill.ptr(), 0, sizeof(double) * p_nx * p_ny);
+				}
+				const int bx = best % p_nx, bz = best / p_nx;
+				const int rc = int(Math::ceil(ip.sill / p_dx));
+				for (int z = MAX(bz - rc, 0); z <= MIN(bz + rc, p_ny - 1); z++) {
+					for (int x = MAX(bx - rc, 0); x <= MIN(bx + rc, p_nx - 1); x++) {
+						const double dd = Math::sqrt(double((x - bx) * (x - bx) + (z - bz) * (z - bz))) * p_dx;
+						if (dd <= MAX(ip.sill, 0.5 * p_dx)) {
+							r_sill[z * p_nx + x] = 1.0;
+							if (!Math::is_nan(ip.level)) {
+								if (r_level.is_empty()) {
+									r_level.resize(p_nx * p_ny);
+									for (uint32_t k = 0; k < r_level.size(); k++) {
+										r_level[k] = NAN;
+									}
+								}
+								r_level[z * p_nx + x] = ip.level;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// Where land beyond the map drains in: position (on the ground) and area (m2), one per node.
+Array TerrainGenerator3D::get_inflow_cells() const {
+	Array out;
+	for (uint32_t i = 0; i < inflow_cells.size(); i++) {
+		if (inflow_cells[i] > 0.0f) {
+			Dictionary d;
+			Vector3 p = _cell_position(int(i));
+			p.y = heights[i];
+			d["position"] = p;
+			d["area"] = inflow_cells[i];
+			out.push_back(d);
+		}
+	}
+	return out;
+}
+
 void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 	const int n = nx * ny;
 	lake_info.clear();
@@ -1845,12 +3017,15 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 	for (int i = 0; i < n; i++) {
 		water_body[i] = p_sea[i] ? 1 : 0;
 	}
-	if (lake_count <= 0 && lakes.is_empty()) {
-		return;
-	}
 	std::vector<uint8_t> taken(n);
 	for (int i = 0; i < n; i++) {
 		taken[i] = p_sea[i];
+	}
+	if (!glacial_ice.is_empty()) {
+		_basin_lakes(taken);
+	}
+	if (lake_count <= 0 && lakes.is_empty()) {
+		return;
 	}
 	TerrainCoast::LakeParams lp;
 	lp.nx = nx;
@@ -2024,7 +3199,7 @@ void TerrainGenerator3D::_route_rivers() {
 	indeg.resize(n);
 	memset(indeg.ptr(), 0, sizeof(int32_t) * n);
 	for (int i = 0; i < n; i++) {
-		river_area[i] = float(double(cell_size) * cell_size);
+		river_area[i] = float(double(cell_size) * cell_size + (inflow_cells.is_empty() ? 0.0 : double(inflow_cells[i])));
 		if (rec2[i] != i) {
 			indeg[rec2[i]]++;
 		}
@@ -2203,6 +3378,122 @@ Array TerrainGenerator3D::get_lake_results() const {
 		out.push_back(d);
 	}
 	return out;
+}
+
+// Lakes in the rock basins the last glaciation left (cirques, overdeepened troughs): every closed basin of the ground
+// at least lake_min_area in size and 1 m deep fills to its spill point (Priority-Flood, Barnes et al. 2014), and
+// spills over its lowest rim cell, which the rivers below already leave by.
+void TerrainGenerator3D::_basin_lakes(std::vector<uint8_t> &r_taken) {
+	const int n = nx * ny;
+	std::vector<float> fill(heights.ptr(), heights.ptr() + n);
+	std::vector<uint8_t> closed(n, 0);
+	typedef std::pair<float, int32_t> Item;
+	std::priority_queue<Item, std::vector<Item>, std::greater<Item>> heap;
+	for (int i = 0; i < n; i++) {
+		if (receivers[i] == i || r_taken[i]) {
+			closed[i] = 1;
+			heap.push(Item(fill[i], i));
+		}
+	}
+	static const int DX[8] = { -1, 0, 1, -1, 1, -1, 0, 1 };
+	static const int DZ[8] = { -1, -1, -1, 0, 0, 1, 1, 1 };
+	while (!heap.empty()) {
+		const Item it = heap.top();
+		heap.pop();
+		const int32_t c = it.second;
+		const int x = c % nx, z = c / nx;
+		for (int k = 0; k < 8; k++) {
+			const int xx = x + DX[k], zz = z + DZ[k];
+			if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+				continue;
+			}
+			const int j = zz * nx + xx;
+			if (closed[j]) {
+				continue;
+			}
+			closed[j] = 1;
+			fill[j] = MAX(fill[j], fill[c]);
+			heap.push(Item(fill[j], j));
+		}
+	}
+	std::vector<int32_t> comp(n, -1);
+	std::vector<int32_t> cells;
+	for (int s0 = 0; s0 < n; s0++) {
+		if (comp[s0] >= 0 || r_taken[s0] || fill[s0] - heights[s0] <= 0.01f) {
+			continue;
+		}
+		cells.clear();
+		cells.push_back(s0);
+		comp[s0] = s0;
+		float deepest = 0.0f;
+		int32_t bottom = s0;
+		bool iced = false;
+		for (size_t q = 0; q < cells.size(); q++) {
+			const int32_t c = cells[q];
+			iced = iced || glacial_ice[c] > 1.0f;
+			const float d = fill[c] - heights[c];
+			if (d > deepest) {
+				deepest = d;
+				bottom = c;
+			}
+			const int x = c % nx, z = c / nx;
+			for (int k = 0; k < 8; k++) {
+				const int xx = x + DX[k], zz = z + DZ[k];
+				if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+					continue;
+				}
+				const int j = zz * nx + xx;
+				if (comp[j] < 0 && !r_taken[j] && fill[j] - heights[j] > 0.01f) {
+					comp[j] = s0;
+					cells.push_back(j);
+				}
+			}
+		}
+		// Only basins the ice wore (the rivers' own hollows fill with sediment as they always have).
+		if (!iced || deepest < 1.0f || double(cells.size()) * cell_size * cell_size < double(lake_min_area)) {
+			continue;
+		}
+		// Out of the basin down the receivers (laid on the filled surface): the first cell outside is the sill.
+		int32_t outlet = bottom;
+		for (int guard = 0; guard < n && comp[outlet] == s0 && receivers[outlet] != outlet; guard++) {
+			outlet = receivers[outlet];
+		}
+		if (comp[outlet] == s0) {
+			continue;
+		}
+		const int k = int(lake_info.size());
+		LakeInfo info;
+		info.level = fill[bottom];
+		info.bed = heights[bottom];
+		info.outlet = outlet;
+		info.dam = outlet;
+		// The largest drainage through any of its cells (a river crossing the lake), the outlet's own at least.
+		float through = channel_area[outlet];
+		for (int32_t c : cells) {
+			through = MAX(through, channel_area[c]);
+		}
+		info.catchment = through;
+		info.cells = int(cells.size());
+		info.lo = Vector2i(nx, ny);
+		info.hi = Vector2i(-1, -1);
+		for (int32_t c : cells) {
+			water_body[c] = 2 + k;
+			r_taken[c] = 1;
+			const Vector2i p(c % nx, c / nx);
+			info.lo = info.lo.min(p);
+			info.hi = info.hi.max(p);
+		}
+		lake_info.push_back(info);
+	}
+}
+
+real_t TerrainGenerator3D::get_glacier_depth(const Vector3 &p_global_position) const {
+	if (nx <= 0 || glacial_ice.size() != uint32_t(nx * ny)) {
+		return 0.0;
+	}
+	const int x = CLAMP(int(Math::round((p_global_position.x - result_rect.position.x) / result_cell)), 0, nx - 1);
+	const int z = CLAMP(int(Math::round((p_global_position.z - result_rect.position.y) / result_cell)), 0, ny - 1);
+	return glacial_ice[z * nx + x];
 }
 
 // Height of the water surface over a point (the sea's or a lake's), NaN on dry ground or outside.
@@ -2777,6 +4068,30 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rock_exposure", "global_position"), &TerrainGenerator3D::get_rock_exposure);
 	ClassDB::bind_method(D_METHOD("get_talus", "global_position"), &TerrainGenerator3D::get_talus);
 	ClassDB::bind_method(D_METHOD("get_geology_at", "global_position"), &TerrainGenerator3D::get_geology_at);
+	ClassDB::bind_method(D_METHOD("set_cliff_ledge_spacing", "value"), &TerrainGenerator3D::set_cliff_ledge_spacing);
+	ClassDB::bind_method(D_METHOD("get_cliff_ledge_spacing"), &TerrainGenerator3D::get_cliff_ledge_spacing);
+	ClassDB::bind_method(D_METHOD("set_cliff_ledge_strength", "value"), &TerrainGenerator3D::set_cliff_ledge_strength);
+	ClassDB::bind_method(D_METHOD("get_cliff_ledge_strength"), &TerrainGenerator3D::get_cliff_ledge_strength);
+	ClassDB::bind_method(D_METHOD("set_glacial_enabled", "value"), &TerrainGenerator3D::set_glacial_enabled);
+	ClassDB::bind_method(D_METHOD("is_glacial_enabled"), &TerrainGenerator3D::is_glacial_enabled);
+	ClassDB::bind_method(D_METHOD("set_glacial_ela", "value"), &TerrainGenerator3D::set_glacial_ela);
+	ClassDB::bind_method(D_METHOD("get_glacial_ela"), &TerrainGenerator3D::get_glacial_ela);
+	ClassDB::bind_method(D_METHOD("set_glacial_share", "value"), &TerrainGenerator3D::set_glacial_share);
+	ClassDB::bind_method(D_METHOD("get_glacial_share"), &TerrainGenerator3D::get_glacial_share);
+	ClassDB::bind_method(D_METHOD("set_glacial_final", "value"), &TerrainGenerator3D::set_glacial_final);
+	ClassDB::bind_method(D_METHOD("get_glacial_final"), &TerrainGenerator3D::get_glacial_final);
+	ClassDB::bind_method(D_METHOD("set_glacial_erosion", "value"), &TerrainGenerator3D::set_glacial_erosion);
+	ClassDB::bind_method(D_METHOD("get_glacial_erosion"), &TerrainGenerator3D::get_glacial_erosion);
+	ClassDB::bind_method(D_METHOD("set_glacial_rock_variation", "value"), &TerrainGenerator3D::set_glacial_rock_variation);
+	ClassDB::bind_method(D_METHOD("get_glacial_rock_variation"), &TerrainGenerator3D::get_glacial_rock_variation);
+	ClassDB::bind_method(D_METHOD("set_glacial_rock_scale", "value"), &TerrainGenerator3D::set_glacial_rock_scale);
+	ClassDB::bind_method(D_METHOD("get_glacial_rock_scale"), &TerrainGenerator3D::get_glacial_rock_scale);
+	ClassDB::bind_method(D_METHOD("set_glacial_sliding", "value"), &TerrainGenerator3D::set_glacial_sliding);
+	ClassDB::bind_method(D_METHOD("get_glacial_sliding"), &TerrainGenerator3D::get_glacial_sliding);
+	ClassDB::bind_method(D_METHOD("get_last_glacial_eroded"), &TerrainGenerator3D::get_last_glacial_eroded);
+	ClassDB::bind_method(D_METHOD("get_last_glacial_ice_area"), &TerrainGenerator3D::get_last_glacial_ice_area);
+	ClassDB::bind_method(D_METHOD("get_last_glacial_msec"), &TerrainGenerator3D::get_last_glacial_msec);
+	ClassDB::bind_method(D_METHOD("get_glacier_depth", "global_position"), &TerrainGenerator3D::get_glacier_depth);
 	ClassDB::bind_method(D_METHOD("set_strata_enabled", "value"), &TerrainGenerator3D::set_strata_enabled);
 	ClassDB::bind_method(D_METHOD("is_strata_enabled"), &TerrainGenerator3D::is_strata_enabled);
 	ClassDB::bind_method(D_METHOD("set_strata_spacing", "value"), &TerrainGenerator3D::set_strata_spacing);
@@ -2835,6 +4150,27 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_beach_slope"), &TerrainGenerator3D::get_beach_slope);
 	ClassDB::bind_method(D_METHOD("set_lake_count", "count"), &TerrainGenerator3D::set_lake_count);
 	ClassDB::bind_method(D_METHOD("get_lake_count"), &TerrainGenerator3D::get_lake_count);
+	ClassDB::bind_method(D_METHOD("get_boulders", "rect", "density"), &TerrainGenerator3D::get_boulders, DEFVAL(1.0));
+	ClassDB::bind_method(D_METHOD("set_spray_cell", "metres"), &TerrainGenerator3D::set_spray_cell);
+	ClassDB::bind_method(D_METHOD("get_spray_cell"), &TerrainGenerator3D::get_spray_cell);
+	ClassDB::bind_method(D_METHOD("get_spray_potential", "global_position"), &TerrainGenerator3D::get_spray_potential);
+	ClassDB::bind_method(D_METHOD("get_spray_image"), &TerrainGenerator3D::get_spray_image);
+	ClassDB::bind_method(D_METHOD("set_gorge_age", "years"), &TerrainGenerator3D::set_gorge_age);
+	ClassDB::bind_method(D_METHOD("get_gorge_age"), &TerrainGenerator3D::get_gorge_age);
+	ClassDB::bind_method(D_METHOD("set_gorge_rate", "rate"), &TerrainGenerator3D::set_gorge_rate);
+	ClassDB::bind_method(D_METHOD("get_gorge_rate"), &TerrainGenerator3D::get_gorge_rate);
+	ClassDB::bind_method(D_METHOD("set_fan_backfill", "enable"), &TerrainGenerator3D::set_fan_backfill);
+	ClassDB::bind_method(D_METHOD("get_fan_backfill"), &TerrainGenerator3D::get_fan_backfill);
+	ClassDB::bind_method(D_METHOD("get_last_slots_filled"), &TerrainGenerator3D::get_last_slots_filled);
+	ClassDB::bind_method(D_METHOD("set_plunge_pools", "enable"), &TerrainGenerator3D::set_plunge_pools);
+	ClassDB::bind_method(D_METHOD("get_plunge_pools"), &TerrainGenerator3D::get_plunge_pools);
+	ClassDB::bind_method(D_METHOD("set_fall_lips", "enable"), &TerrainGenerator3D::set_fall_lips);
+	ClassDB::bind_method(D_METHOD("get_fall_lips"), &TerrainGenerator3D::get_fall_lips);
+	ClassDB::bind_method(D_METHOD("set_inflows", "markers"), &TerrainGenerator3D::set_inflows);
+	ClassDB::bind_method(D_METHOD("get_inflows"), &TerrainGenerator3D::get_inflows);
+	ClassDB::bind_method(D_METHOD("set_inflow_area", "km2"), &TerrainGenerator3D::set_inflow_area);
+	ClassDB::bind_method(D_METHOD("get_inflow_area"), &TerrainGenerator3D::get_inflow_area);
+	ClassDB::bind_method(D_METHOD("get_inflow_cells"), &TerrainGenerator3D::get_inflow_cells);
 	ClassDB::bind_method(D_METHOD("set_lakes", "markers"), &TerrainGenerator3D::set_lakes);
 	ClassDB::bind_method(D_METHOD("get_lakes"), &TerrainGenerator3D::get_lakes);
 	ClassDB::bind_method(D_METHOD("set_lake_depth", "depth"), &TerrainGenerator3D::set_lake_depth);
@@ -2917,6 +4253,9 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "height_offset", PROPERTY_HINT_NONE, "suffix:m"), "set_height_offset", "get_height_offset");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_height", PROPERTY_HINT_RANGE, "0,10000,1,or_greater,suffix:m"), "set_max_height", "get_max_height");
 
+	ADD_GROUP("Cliffs", "cliff_");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_ledge_spacing", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_cliff_ledge_spacing", "get_cliff_ledge_spacing");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_ledge_strength", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_cliff_ledge_strength", "get_cliff_ledge_strength");
 	ADD_GROUP("Detail", "detail_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "detail_enabled"), "set_detail_enabled", "is_detail_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "detail_wavelength", PROPERTY_HINT_RANGE, "1,2000,1,or_greater,suffix:m"), "set_detail_wavelength", "get_detail_wavelength");
@@ -2959,6 +4298,16 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_channel_area", PROPERTY_HINT_RANGE, "0,1000000,1,or_greater,exp,suffix:m²"), "set_strata_channel_area", "get_strata_channel_area");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_wobble", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m"), "set_strata_wobble", "get_strata_wobble");
 
+	ADD_GROUP("Glacial", "glacial_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glacial_enabled"), "set_glacial_enabled", "is_glacial_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_ela", PROPERTY_HINT_RANGE, "-1000,5000,1,or_greater,or_less,suffix:m"), "set_glacial_ela", "get_glacial_ela");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_share", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_glacial_share", "get_glacial_share");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_final", PROPERTY_HINT_RANGE, "0,1000000,100,or_greater,suffix:yr"), "set_glacial_final", "get_glacial_final");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_erosion", PROPERTY_HINT_RANGE, "0,100,0.01,or_greater,exp"), "set_glacial_erosion", "get_glacial_erosion");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_sliding", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_glacial_sliding", "get_glacial_sliding");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_variation", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_glacial_rock_variation", "get_glacial_rock_variation");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_scale", PROPERTY_HINT_RANGE, "16,4000,1,suffix:m"), "set_glacial_rock_scale", "get_glacial_rock_scale");
+
 	ADD_GROUP("Coast", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_edges", PROPERTY_HINT_FLAGS, "-X,+X,-Z,+Z"), "set_ocean_edges", "get_ocean_edges");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "coast_distance", PROPERTY_HINT_RANGE, "0,10000,1,or_greater,suffix:m"), "set_coast_distance", "get_coast_distance");
@@ -2978,6 +4327,15 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lake_min_area", PROPERTY_HINT_RANGE, "0,1e8,1,or_greater,suffix:m²"), "set_lake_min_area", "get_lake_min_area");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lake_spacing", PROPERTY_HINT_RANGE, "0,20000,1,or_greater,suffix:m"), "set_lake_spacing", "get_lake_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lake_evaporation", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:mm/yr"), "set_lake_evaporation", "get_lake_evaporation");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_lips"), "set_fall_lips", "get_fall_lips");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunge_pools"), "set_plunge_pools", "get_plunge_pools");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fan_backfill"), "set_fan_backfill", "get_fan_backfill");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_age", PROPERTY_HINT_RANGE, "0,100000,100,or_greater,suffix:yr"), "set_gorge_age", "get_gorge_age");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_rate", PROPERTY_HINT_RANGE, "0,0.1,0.0001,or_greater"), "set_gorge_rate", "get_gorge_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_cell", PROPERTY_HINT_RANGE, "0,32,0.5,suffix:m"), "set_spray_cell", "get_spray_cell");
+	ADD_GROUP("Inflows", "inflow");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "inflows", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_inflows", "get_inflows");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "inflow_area", PROPERTY_HINT_RANGE, "0,10000,0.1,or_greater,suffix:km²"), "set_inflow_area", "get_inflow_area");
 
 	ADD_GROUP("Output", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain"), "set_terrain", "get_terrain");

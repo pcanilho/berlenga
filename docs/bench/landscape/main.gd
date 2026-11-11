@@ -11,7 +11,10 @@ extends Node3D
 #   --out=path.png    render a view (path traced unless --raster)
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 16)
-#   --view=wide|lake|lakewater|valley|fall|beach|peak   camera (default wide; lakewater: low over the lake;
+#   --boulders=D     rockfall blocks below cliffs at density D (default 1, 0 none), grey stand-ins
+#   --far-blend [--far-start=M]   TerrainMaterial3D's far blend over a test plant cover map
+#   --lake-pick=high  the lake views and checks use the highest lake (default the biggest)
+#   --view=wide|lake|lakewater|valley|fall|beach|peak|treeline|meadow   camera (default wide; lakewater: low over the lake;
 #                         valley: from behind the high lake down to the clearing; treeline: the clearing's edge)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
@@ -53,6 +56,7 @@ var lake_axes := Vector2(140, 90)
 var lake_dir := Vector2(0, 1)
 var lake_level := 0.0
 var fall_point := Vector3.ZERO
+var fall_height := 30.0 # the tallest generator fall (m), framing its view
 var fall_dir := Vector2(0, 1)
 var gen_falls: Array = []
 var climate: ClimateRecipe
@@ -68,9 +72,13 @@ var probe: Node3D
 var data_map: TerrainDataMap3D
 var veg: VegetationField3D
 var grass: GrassField3D
+var sward: Array = [] # the grass layers (tall, undercoat, turf)
+var cover: VegetationField3D # meadow herbs and waterside plants near the camera
 var prints: GroundSurface3D
 var prints_probe: Node3D
 var sun: DirectionalLight3D
+var boulder_spot := Vector3.ZERO
+var cover_tex: ImageTexture
 var clock: SkyClock
 var cam: Camera3D
 var env: Environment
@@ -96,6 +104,21 @@ func _ready() -> void:
 		# alluvial plain (Yuan et al. 2019), no general uplift, the high block lower in the middle to gather a trunk
 		# river, smaller rivers kept (the mountain streams), lakes only from the high lake marker.
 		var vd := {"deposition": "0.5", "base-uplift": "0", "floor-uplift": "0", "funnel": "0.7", "min-area": "500000", "lakes": "0"}
+		if not args.has("valley-classic"):
+			# The showcase valley (terrain's settings, 11 Nov): the main river's catchment reaches past the map
+			# (60 km² flowing in), a hard-rock bar across the cirque holds a glacial lake at 450 m, and its outflow
+			# drops about 340 m off the bar into a pool. --valley-classic keeps the earlier valley without them.
+			vd.merge({"no-lake": "1", "inflow": "60", "inflow-erosion": "0.3", "bar": "-300,-1650,350,-1500,1000,-1650",
+					"bar-level": "450", "bowl": "350,-1800,650,0.1", "glacial": "1", "ela": "450", "glacial-erosion": "10",
+					"lake-pick": "high"})
+			if args.has("auto-lake"):
+				# No hand-made bowl or bar: the ice finds its own basins and bars in rock of varying quality.
+				for k2 in ["bar", "bar-level", "bowl"]:
+					vd.erase(k2)
+				vd["rock-var"] = "1.0"
+				# A slightly lower snowline and harder ice than the marked valley: cirques in every side valley.
+				vd["ela"] = "400"
+				vd["glacial-erosion"] = "15"
 		for k in vd:
 			if not args.has(k):
 				args[k] = vd[k]
@@ -120,6 +143,8 @@ func _ready() -> void:
 	if args.get("prints", "1") != "0":
 		_build_prints()
 	_build_camera()
+	if args.get("plants", "1") != "0":
+		_build_cover()
 	_run_weather()
 	_log("setup done in %d ms" % (Time.get_ticks_msec() - t_start))
 	for i in 30:
@@ -131,6 +156,11 @@ func _ready() -> void:
 	if args.has("test"):
 		get_tree().quit(0)
 		return
+	# The snowpack updates on a worker thread: the picture waits for the last update to land.
+	var waited := 0
+	while snow != null and snow.has_method("is_updating") and snow.is_updating() and waited < 600:
+		await get_tree().process_frame
+		waited += 1
 	if landscape != null:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
@@ -198,6 +228,13 @@ func _generate() -> void:
 		# A cirque of peaks round the north holding a high lake; its outflow falls off the range front into a wide
 		# grassy valley floor that runs south between two low ridges to the sea.
 		range_nodes.append(_range_path("Cirque", [Vector3(-1900, 0, -700), Vector3(-900, 0, -1600), Vector3(0, 0, -1850), Vector3(900, 0, -1600), Vector3(1900, 0, -700)], 0.0, 1.0))
+		if args.has("bowl"):
+			# A high bowl among the peaks (x,z,radius,share): uplift scaled down inside it, so its floor stays gentle above
+			# the rock bar that holds its outlet.
+			var bw: PackedStringArray = args["bowl"].split(",")
+			var bowl := _range_path("Bowl", [Vector3(float(bw[0]), 0, float(bw[1])), Vector3(float(bw[0]) + 1.0, 0, float(bw[1]))], float(bw[2]), float(bw[3]))
+			bowl.set_meta("basin", true)
+			range_nodes.append(bowl)
 		range_nodes.append(_range_path("WestRidge", [Vector3(-1500, 0, -900), Vector3(-1450, 0, 1100)], 380.0, 0.35))
 		range_nodes.append(_range_path("EastRidge", [Vector3(1500, 0, -900), Vector3(1450, 0, 1100)], 380.0, 0.35))
 		for y in 64:
@@ -211,6 +248,7 @@ func _generate() -> void:
 				var funnel := 1.0 - float(args.get("funnel", "0.5")) * (1.0 - smoothstep(0.0, 1500.0, absf(xw)))
 				var s := lerpf(0.12, 0.02, floor_w) * float(args.get("floor-uplift", "1")) * (1.0 - north) + 0.9 * north * funnel
 				up.set_pixel(x, y, Color(s, 0, 0))
+	if layout != "range" and not args.has("no-lake"):
 		lake_marker = Node3D.new()
 		lake_marker.name = "HighLake"
 		lake_marker.position = Vector3(float(args.get("lake-x", "0")), 0, float(args.get("lake-z", "-1300")))
@@ -238,6 +276,19 @@ func _generate() -> void:
 	gen.detail_octaves = int(args.get("gdetail", "6" if args.get("mesh", "landscape") == "landscape" else "4"))
 	gen.tile_erosion_enabled = args.has("tiles")
 	gen.deposition = float(args.get("deposition", "0"))
+	# Rock beds stepped into cliff faces (ledges), --ledges=0 for smooth faces.
+	gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
+	gen.gorge_age = float(args.get("gorge-age", "12000"))
+	gen.fan_backfill = not args.has("no-backfill")
+	if args.has("glacial"):
+		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
+		gen.glacial_enabled = true
+		gen.glacial_ela = float(args.get("ela", "500"))
+		gen.glacial_share = float(args.get("glacial-share", "0.5"))
+		gen.glacial_final = float(args.get("glacial-final", "100000"))
+		gen.glacial_rock_variation = float(args.get("rock-var", "0"))
+		gen.glacial_rock_scale = float(args.get("rock-scale", "500"))
+		gen.glacial_erosion = float(args.get("glacial-erosion", "1"))
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
 	if args.has("steps"):
@@ -250,6 +301,66 @@ func _generate() -> void:
 	if lake_marker != null:
 		var lp: Array[NodePath] = [gen.get_path_to(lake_marker)]
 		gen.lakes = lp
+	if layout != "range":
+		var markers: Array[NodePath] = []
+		if args.has("inflow"):
+			# The main river's catchment reaches past the map: that land drains in at --inflow-at: edge (the north
+			# edge above the cirque, or --inflow-x/z), lake (the high lake marker), or x,z.
+			var at: String = args.get("inflow-at", "edge")
+			var inflow := Node3D.new()
+			inflow.name = "Inflow"
+			if at == "lake":
+				inflow.position = lake_marker.position
+			elif at.contains(","):
+				inflow.position = Vector3(float(at.get_slice(",", 0)), 0, float(at.get_slice(",", 1)))
+			else:
+				inflow.position = Vector3(float(args.get("inflow-x", "0")), 0, float(args.get("inflow-z", "-2048")))
+			inflow.set_meta("area", float(args["inflow"]))
+			if args.has("inflow-erosion"):
+				# Share of that land's area that erodes (0: it only brings water).
+				inflow.set_meta("erosion", float(args["inflow-erosion"]))
+			if at == "lake":
+				lake_marker.set_meta("inflow", inflow)
+			if args.has("inflow-level"):
+				# The land beyond the edge is high: the river enters at this height, not cut down to the plain's.
+				inflow.set_meta("level", float(args["inflow-level"]))
+			add_child(inflow)
+			markers.append(gen.get_path_to(inflow))
+		if args.has("sill"):
+			# A sill of resistant rock (m radius) at the high lake's outlet (or --sill-at=x,z), held at --sill-level:
+			# the river upstream grades to it, the lake sits behind it, and the river falls off it.
+			var sill := Node3D.new()
+			sill.name = "Sill"
+			var sa: String = args.get("sill-at", "")
+			sill.position = Vector3(float(sa.get_slice(",", 0)), 0, float(sa.get_slice(",", 1))) if sa.contains(",") else lake_marker.position
+			sill.set_meta("sill", float(args["sill"]))
+			if args.has("sill-level"):
+				sill.set_meta("level", float(args["sill-level"]))
+			add_child(sill)
+			markers.append(gen.get_path_to(sill))
+		if args.has("bar"):
+			# A bar of resistant rock across the valley (x0,z0,x1,z1), held at --bar-level: a riegel the river and the
+			# ice cross slowly, so the ground above it stays high (sill markers every 32 m).
+			var bv: PackedStringArray = args["bar"].split(",")
+			var bar_pts: Array[Vector3] = []
+			for k in range(0, bv.size() - 1, 2):
+				bar_pts.append(Vector3(float(bv[k]), 0, float(bv[k + 1])))
+			var along: Array[Vector3] = []
+			for k in bar_pts.size() - 1:
+				var steps := maxi(1, int(bar_pts[k].distance_to(bar_pts[k + 1]) / 32.0))
+				for i in steps:
+					along.append(bar_pts[k].lerp(bar_pts[k + 1], float(i) / steps))
+			along.append(bar_pts[bar_pts.size() - 1])
+			for i in along.size():
+				var m := Node3D.new()
+				m.name = "Bar%d" % i
+				m.position = along[i]
+				m.set_meta("sill", float(args.get("bar-width", "40")))
+				if args.has("bar-level"):
+					m.set_meta("level", float(args["bar-level"]))
+				add_child(m)
+				markers.append(gen.get_path_to(m))
+		gen.inflows = markers
 	var t := Time.get_ticks_msec()
 	# One climate for the rivers (rain and snowmelt by month), the data map's climate fields and the plants: a mild
 	# coast with the wet wind from the sea (south, +Z).
@@ -279,9 +390,127 @@ func _generate() -> void:
 				run += pts[i].distance_to(pts[i - 1])
 				i -= 1
 			lake_marker.position = Vector3(pts[i].x, 0, pts[i].z)
+			if lake_marker.has_meta("inflow"):
+				(lake_marker.get_meta("inflow") as Node3D).position = lake_marker.position
 			_log("high lake marker %.0f m up the river from the %.0f m fall at %s" % [run, tall["height"], tall["top"]])
 			gen.generate()
-	_log("generate %d ms, grid %s, last change %.3f m" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change()])
+	_log("generate %d ms, grid %s, last change %.3f m, fan slots filled %d" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change(), gen.get_last_slots_filled()])
+	if gen.glacial_enabled:
+		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded()])
+		for l in gen.get_lake_results():
+			_log("  lake level %.0f m, depth %.0f m, %.1f ha, catchment %.2f km2 at %s, outlet %s" % [l["level"], l["depth"], l["area"] / 1e4, l["catchment"] / 1e6, l["center"], l.get("outlet")])
+	if args.get("boulders", "1") != "0":
+		var tb := Time.get_ticks_msec()
+		var bl: PackedVector4Array = gen.get_boulders(Rect2(-2048, -2048, 4096, 4096), float(args.get("boulders", "1")))
+		var big := 0
+		for b in bl:
+			if b.w >= 1.0:
+				big += 1
+		_log("boulders below cliffs: %d (%d of 1 m radius or more) in %d ms" % [bl.size(), big, Time.get_ticks_msec() - tb])
+		# For --view=boulders: the densest 40 m patch of blocks near the middle of the map.
+		var cells := {}
+		for b in bl:
+			var sl := absf(gen.get_height(Vector3(b.x + 8.0, 0, b.z)) - gen.get_height(Vector3(b.x - 8.0, 0, b.z))) / 16.0 + absf(gen.get_height(Vector3(b.x, 0, b.z + 8.0)) - gen.get_height(Vector3(b.x, 0, b.z - 8.0))) / 16.0
+			if absf(b.x) < 1500.0 and absf(b.z) < 1500.0 and sl < 0.5:
+				var key := Vector2i(int(floor(b.x / 40.0)), int(floor(b.z / 40.0)))
+				cells[key] = int(cells.get(key, 0)) + 1
+		var best_n := 0
+		for key in cells:
+			if cells[key] > best_n:
+				best_n = cells[key]
+				boulder_spot = Vector3(key.x * 40.0 + 20.0, 0, key.y * 40.0 + 20.0)
+		_log("densest block patch: %d blocks in 40 m at %s" % [best_n, boulder_spot])
+		if bl.size() > 0:
+			# Stand-ins: flattened low spheres, a third sunk into the ground, until real rock meshes come.
+			var sm := SphereMesh.new()
+			sm.radial_segments = 7
+			sm.rings = 4
+			var rm := StandardMaterial3D.new()
+			rm.albedo_color = Color(0.42, 0.40, 0.37)
+			rm.roughness = 0.9
+			sm.material = rm
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = sm
+			mm.instance_count = bl.size()
+			for k in bl.size():
+				var b := bl[k]
+				var r := b.w
+				var basis := Basis(Vector3.UP, fmod(b.x * 12.9898 + b.z * 78.233, TAU)).scaled(Vector3(r * 2.4, r * 1.3, r * 1.9))
+				mm.set_instance_transform(k, Transform3D(basis, Vector3(b.x, b.y + r * 0.3, b.z)))
+			var mmi := MultiMeshInstance3D.new()
+			mmi.name = "Boulders"
+			mmi.multimesh = mm
+			add_child(mmi)
+	if args.has("soil-probe"):
+		for zz in [-1100, -900, -600, -300, 0, 300, 600, 900, 1200]:
+			var row := PackedStringArray()
+			for xx in [-900, -600, -300, 0, 300, 600, 900]:
+				var pp := Vector3(xx, 0, zz)
+				row.append("%.0f:%.1f/%.2f/%.1f" % [gen.get_height(pp), gen.get_soil_depth(pp), gen.get_rock_exposure(pp), gen.get_sediment_depth(pp)])
+			print("SOIL z ", zz, " ", " ".join(row))
+	if args.has("face-probe"):
+		var fp: PackedStringArray = args["face-probe"].split(",")
+		var o := Vector3(float(fp[0]), 0, float(fp[1]))
+		var dv := Vector3(float(fp[2]), 0, float(fp[3])).normalized()
+		var row := PackedStringArray()
+		for i in 80:
+			row.append("%.0f/%.0f/%.1f/%.2f/%.1f" % [gen.get_height(o + dv * i * 2.0), gen.get_base_height(o + dv * i * 2.0), gen.get_soil_depth(o + dv * i * 2.0), gen.get_rock_exposure(o + dv * i * 2.0), gen.get_sediment_depth(o + dv * i * 2.0)])
+		print("FACE ", " ".join(row))
+	if args.has("dump-heights"):
+		var hb := PackedFloat32Array()
+		for zi in 257:
+			for xi in 257:
+				hb.append(gen.get_base_height(Vector3(-2048 + xi * 16, 0, -2048 + zi * 16)))
+		var fa := FileAccess.open(args["dump-heights"], FileAccess.WRITE)
+		fa.store_buffer(hb.to_byte_array())
+		fa.close()
+		get_tree().quit()
+		return
+	if args.has("groove-probe"):
+		var img := Image.create(1400, 500, false, Image.FORMAT_RGB8)
+		for half in 2:
+			for j in 250:
+				for i in 700:
+					var q := Vector3(-1400 + i * 4, 0, 500 + j * 4)
+					var hx: float
+					var hz: float
+					if half == 0:
+						hx = gen.get_base_height(q + Vector3(2, 0, 0)) - gen.get_base_height(q - Vector3(2, 0, 0))
+						hz = gen.get_base_height(q + Vector3(0, 0, 2)) - gen.get_base_height(q - Vector3(0, 0, 2))
+					else:
+						hx = gen.get_height(q + Vector3(2, 0, 0)) - gen.get_height(q - Vector3(2, 0, 0))
+						hz = gen.get_height(q + Vector3(0, 0, 2)) - gen.get_height(q - Vector3(0, 0, 2))
+					var n := Vector3(-hx / 4.0, 1.0, -hz / 4.0).normalized()
+					var l := clampf(n.dot(Vector3(-0.5, 0.7, -0.5).normalized()), 0, 1)
+					img.set_pixel(i + half * 700, j * 2, Color(l, l, l))
+					img.set_pixel(i + half * 700, j * 2 + 1, Color(l, l, l))
+		img.save_png(args["groove-probe"])
+		var rough := 0
+		var rmax := 0.0
+		var nalluv := 0
+		for zi in range(1, 255):
+			for xi in range(1, 255):
+				var q := Vector3(-2048 + xi * 16, 0, -2048 + zi * 16)
+				if gen.get_sediment_depth(q) < 1.0:
+					continue
+				nalluv += 1
+				var c := gen.get_base_height(q)
+				var lx := gen.get_base_height(q + Vector3(16, 0, 0)) + gen.get_base_height(q - Vector3(16, 0, 0)) - 2 * c
+				var lz := gen.get_base_height(q + Vector3(0, 0, 16)) + gen.get_base_height(q - Vector3(0, 0, 16)) - 2 * c
+				var m := maxf(absf(lx), absf(lz))
+				rmax = maxf(rmax, m)
+				if m > 4.0:
+					rough += 1
+		print("ROUGH alluvium cells %d, one-cell bumps over 4 m %d, largest %.1f m" % [nalluv, rough, rmax])
+		for z in range(640, 900, 16):
+			var row := PackedStringArray()
+			for x in range(-160, 176, 16):
+				var q := Vector3(x, 0, z)
+				row.append("%5.1f/%3.0f" % [gen.get_base_height(q), gen.get_sediment_depth(q)])
+			print("z%4d " % z, " ".join(row))
+		get_tree().quit()
+		return
 	if args.has("profile"):
 		# Heights down the middle of the valley and across it, for laying out the floor.
 		var down := PackedStringArray()
@@ -409,7 +638,7 @@ func _lake_and_fall() -> void:
 	if lr.size() > 0:
 		var big: Dictionary = lr[0]
 		for l in lr:
-			if l["area"] > big["area"]:
+			if (l["level"] > big["level"]) if args.get("lake-pick", "") == "high" else (l["area"] > big["area"]):
 				big = l
 		lake_center = big["center"]
 		lake_level = big["level"]
@@ -429,26 +658,46 @@ func _lake_and_fall() -> void:
 		var top: Vector3 = tall["top"]
 		var bottom: Vector3 = tall["bottom"]
 		fall_point = top
+		fall_height = float(tall["height"])
 		var fd := bottom - top
 		fall_dir = Vector2(fd.x, fd.z).normalized() if Vector2(fd.x, fd.z).length() > 0.1 else Vector2(0, 1)
+		if args.has("lip-profile"):
+			var lt: Vector3 = tall["top"]
+			var lb: Vector3 = tall["bottom"]
+			var dd := Vector3(lb.x - lt.x, 0, lb.z - lt.z).normalized()
+			var prof := PackedStringArray()
+			for k in range(-4, 44, 2):
+				var q := lt + dd * float(k)
+				prof.append("%d:%.1f" % [k, gen.get_height(q)])
+			_log("lip profile (m along: height) " + " ".join(prof))
+		if args.has("spray-map"):
+			var si: Image = gen.get_spray_image()
+			if si:
+				si.save_png(args["spray-map"])
+				print("SPRAY ", si.get_size(), " at big fall foot ", gen.get_spray_potential(Vector3(400, 0, -1420)))
+		if args.has("list-falls"):
+			for f in gen_falls:
+				var run: float = Vector2(f["top"].x - f["bottom"].x, f["top"].z - f["bottom"].z).length()
+				_log("  fall %.0f m over %.0f m, Q %.2f, hardness %.2f, face %.1f m, jet %.1f m, free %s, top %s" % [f["height"], run, f["discharge"], f["hardness"], f["face_run"], f["jet_throw"], str(f["free_fall"]), f["top"]])
+				if args.has("pool-probe") and f.has("pool_center"):
+					var pc: Vector3 = f["pool_center"]
+					var dr: Vector3 = f["direction"]
+					var row := PackedStringArray()
+					for i in range(-12, 25):
+						row.append("%.1f" % gen.get_height(pc + dr * i * 1.0))
+					print("POOL ", f.get("id"), " along ", " ".join(row))
+				_log("    %s %s, dir %s, impact %.1f m/s (free %.1f), tiers %d, lands in %s, pool %s" % [f.get("id", "?"), f.get("type", "?"), f.get("direction", Vector3.ZERO), f.get("impact_speed", 0.0), f.get("impact_speed_free", 0.0), f.get("tiers", []).size(), f.get("lands_in", "?"), ("r %.1f m, depth %.1f m, level %.1f" % [f["pool_radius"], f["pool_depth"], f["pool_level"]]) if f.has("pool_radius") else "none"])
 		_log("waterfalls from the generator: %d, tallest %.0f m high, %.0f m wide, %.1f m3/s at %s" % [gen_falls.size(), tall["height"], tall["width"], tall["discharge"], top])
 	_log("lake at %s level %.1f m" % [lake_center, lake_level])
 
 
 func _build_ground() -> void:
 	var t := Time.get_ticks_msec()
-	var shape := HeightMapShape3D.new()
-	shape.map_width = NX
-	shape.map_depth = NZ
-	shape.map_data = heights
-	ground_body = StaticBody3D.new()
-	ground_body.name = "Ground"
-	var cs := CollisionShape3D.new()
-	cs.shape = shape
-	cs.scale = Vector3(STEP, 1.0, STEP)
-	ground_body.add_child(cs)
-	ground_body.position = Vector3(X0 + (NX - 1) * STEP * 0.5, 0.0, Z0 + (NZ - 1) * STEP * 0.5)
-	add_child(ground_body)
+	var use_landscape: bool = args.get("mesh", "landscape") == "landscape"
+	# The ground body: Landscape3D's own 1 m heightfield tiles with the landscape mesh (vertical lips stay vertical
+	# for the rivers' falls), the 4 m HeightMapShape3D with the grid mesh or --collision=heightmap.
+	if not use_landscape or args.get("collision", "landscape") == "heightmap":
+		_build_heightmap_body()
 	var gh := Ground.new()
 	gh.name = "GroundHeight"
 	gh.bench = self
@@ -459,6 +708,23 @@ func _build_ground() -> void:
 		var tm := TerrainMaterial3D.new()
 		tm.use_generator(gen)
 		tm.detail_octaves = int(args.get("mdetail", "4"))
+		if args.has("far-blend"):
+			# Far ground blend against a test cover map (vegetation publishes the real one): dark green cover over
+			# the low ground, thinning out with height, 8 m texels over the generator's area.
+			tm.far_blend_enabled = true
+			tm.far_start = float(args.get("far-start", "300"))
+			var cn := 512
+			var ci := Image.create(cn, cn, false, Image.FORMAT_RGBA8)
+			for zz in cn:
+				for xx in cn:
+					var px := -2048.0 + xx * 8.0
+					var pz := -2048.0 + zz * 8.0
+					var hh := gen.get_height(Vector3(px, 0, pz))
+					var cov := clampf(1.0 - (hh - 60.0) / 300.0, 0.0, 0.85) if hh > 2.0 else 0.0
+					ci.set_pixel(xx, zz, Color(0.16, 0.24, 0.09, cov))
+			cover_tex = ImageTexture.create_from_image(ci)
+			RenderingServer.global_shader_parameter_set("terrain_cover_map", cover_tex.get_rid())
+			RenderingServer.global_shader_parameter_set("terrain_cover_rect", Vector4(-2048, -2048, 4096, 4096))
 		tm.update_shader()
 		ground_mat = tm
 	else:
@@ -477,14 +743,43 @@ func _build_ground() -> void:
 		landscape.material = ground_mat
 		landscape.lod_error = float(args.get("lod-error", "2"))
 		landscape.source = landscape.get_path_to(gen)
-		if "collision_enabled" in landscape:
-			landscape.collision_enabled = false # the bench keeps its own HeightMapShape3D ground body (4 m)
+		var own_body := ground_body == null
+		landscape.collision_enabled = own_body
+		if own_body:
+			# Every chunk gets its body: the checks probe the whole world (peak, beach, banks), not only round the
+			# camera. 4096 tiles of 64 m at 1 m, about 0.2 s.
+			var centre := Node3D.new()
+			centre.name = "CollisionCentre"
+			add_child(centre)
+			var wr: Rect2 = gen.get_world_rect()
+			centre.global_position = Vector3(wr.get_center().x, 0, wr.get_center().y)
+			landscape.collision_target = landscape.get_path_to(centre)
+			landscape.collision_radius = wr.size.length() * 0.5 + 64.0
 		landscape.rebuild()
+		if own_body:
+			landscape.load_all_heights()
+			landscape.update_collision()
 		var st: Dictionary = landscape.get_stats()
-		_log("landscape %s" % st)
+		_log("landscape %s, ground %d ms" % [st, Time.get_ticks_msec() - t])
 		return
 	_build_grid_mesh()
 	_log("ground %d ms" % (Time.get_ticks_msec() - t))
+
+
+# The 4 m HeightMapShape3D ground body (--mesh=grid or --collision=heightmap).
+func _build_heightmap_body() -> void:
+	var shape := HeightMapShape3D.new()
+	shape.map_width = NX
+	shape.map_depth = NZ
+	shape.map_data = heights
+	ground_body = StaticBody3D.new()
+	ground_body.name = "Ground"
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	cs.scale = Vector3(STEP, 1.0, STEP)
+	ground_body.add_child(cs)
+	ground_body.position = Vector3(X0 + (NX - 1) * STEP * 0.5, 0.0, Z0 + (NZ - 1) * STEP * 0.5)
+	add_child(ground_body)
 
 
 # The 4 m grid ground (--mesh=grid): one mesh, no LODs, geology vertex colours for the standard material.
@@ -861,6 +1156,55 @@ func _build_vegetation() -> void:
 	grass.radius = float(args.get("grass-radius", "40"))
 	add_child(grass)
 	grass.data_map = grass.get_path_to(data_map)
+	if args.get("plants", "1") != "0":
+		# The sward in three layers (the grass bench's meadow): tall blades in patches, a short dense undercoat that
+		# owns the ground tint, and a very short turf right at the camera (overlapped density grids, Serious Sam 4).
+		meadow.patch_scale = 9.0
+		meadow.patch_cover = 0.55
+		meadow.patch_seed = 5
+		grass.ground_tint_enabled = false
+		var under := GrassField3D.new()
+		under.name = "Undercoat"
+		under.rules = meadow.duplicate()
+		(under.rules as PlantSpecies).patch_cover = 1.0
+		under.blade_segments = 2
+		under.blade_height = Vector2(0.06, 0.18)
+		under.blade_width = 0.02
+		under.density = 640.0
+		under.radius = 14.0
+		under.tile_size = 4.0
+		under.clump_size = 0.5
+		under.lean = 0.5
+		under.base_color = Color(0.1, 0.2, 0.05)
+		under.tip_color = Color(0.38, 0.52, 0.16)
+		under.dryness = 0.35
+		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
+		add_child(under)
+		under.data_map = under.get_path_to(data_map)
+		var turf := GrassField3D.new()
+		turf.name = "Turf"
+		turf.rules = under.rules
+		turf.blade_segments = 1
+		turf.blade_height = Vector2(0.03, 0.07)
+		turf.blade_width = 0.012
+		turf.density = 1600.0
+		turf.radius = 5.0
+		turf.tile_size = 2.0
+		turf.clump_size = 0.3
+		turf.lean = 0.6
+		turf.base_color = Color(0.08, 0.16, 0.04)
+		turf.tip_color = Color(0.3, 0.42, 0.12)
+		turf.dryness = 0.35
+		turf.ground_tint_enabled = false
+		add_child(turf)
+		turf.data_map = turf.get_path_to(data_map)
+		sward = [grass, under, turf]
+		# The sward thins out under the forest's crowns.
+		for g in sward:
+			var r: PlantSpecies = g.rules
+			r.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.3))
+			r.set_rule_fade(PlantSpecies.RULE_SHADE, 0.4)
+			g.canopy_field = g.get_path_to(veg)
 
 
 # Footprints in the ground around the camera: sand on the beach, mud on wet banks, leaf litter under the forest, none
@@ -984,6 +1328,21 @@ func _build_camera() -> void:
 					best_pos = Vector3(c.x, y, c.z)
 			cam.position = best_pos
 			cam.look_at(lake_center)
+		"boulders":
+			# Over the densest patch of fallen blocks, looking back up at the cliff they came from.
+			var bs := Vector3(boulder_spot.x, height_at(boulder_spot.x, boulder_spot.z), boulder_spot.z)
+			var up := Vector3.ZERO
+			for k in 8:
+				var a := TAU * k / 8.0
+				var d := Vector3(cos(a), 0, sin(a))
+				var hh := height_at(bs.x + d.x * 60.0, bs.z + d.z * 60.0)
+				if hh - bs.y > up.y:
+					up = Vector3(d.x, hh - bs.y, d.z)
+			var away := -Vector3(up.x, 0, up.z).normalized() if up.y > 0.0 else Vector3(0, 0, 1)
+			var gb := gen.get_height(bs)
+			cam.fov = 50.0
+			cam.position = Vector3(bs.x, gb + 45.0, bs.z) + away * 25.0
+			cam.look_at(Vector3(bs.x, gb, bs.z))
 		"valley":
 			# From above the falls, down over the high lake's outflow; the clearing and the sea beyond.
 			var lk := Vector3(lake_center.x, 0, lake_center.z)
@@ -1004,6 +1363,17 @@ func _build_camera() -> void:
 			cam.position = Vector3(ex - 60.0, height_at(ex - 60.0, cz) + 14.0, cz)
 			cam.look_at(Vector3(ex, height_at(ex, ez) + 10.0, ez))
 			_log("treeline edge at (%.0f, %.0f)" % [ex, ez])
+		"meadow":
+			# Standing in the clearing at eye height, 60 m short of the forest edge (the treeline view's edge), looking
+			# across the herbs and grass at it.
+			var ex := float(args.get("treeline-x", "300"))
+			var ez := 400.0
+			while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
+				ez -= 16.0
+			cam.fov = 55.0
+			var cz := ez + 60.0
+			cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, cz) + 1.7, cz)
+			cam.look_at(Vector3(ex, height_at(ex, ez) + 4.0, ez))
 		"lakewater":
 			# Low over the water at one end of the lake, looking along it to the mountains behind: the water cell
 			# farthest from the water's centroid, pulled a little back over the water.
@@ -1042,20 +1412,31 @@ func _build_camera() -> void:
 			var ahead := mid + (mid - c) * 1.5
 			cam.look_at(Vector3(ahead.x, lake_level + 22.0, ahead.z))
 			_log("lakewater camera over %d water cells, %.0f m from the far end" % [cells.size(), c.distance_to(mid) * 2.0])
+		"lip":
+			# Close on the fall's face: from the plunge pool side, 50 m out, looking at the middle of the drop.
+			var fd3l := Vector3(fall_dir.x, 0, fall_dir.y)
+			var c := fall_point + fd3l * 70.0 + Vector3(12, 0, 0)
+			c.y = height_at(c.x, c.z) + 25.0
+			cam.position = c
+			cam.look_at(fall_point + fd3l * 18.0 + Vector3(0, -30, 0))
 		"fall":
 			# Downstream of the fall, at the first spot with a clear view of the whole drop (gorges hide it).
 			var fd3 := Vector3(fall_dir.x, 0, fall_dir.y)
 			var side := Vector3(-fall_dir.y, 0, fall_dir.x)
-			var mid := fall_point + Vector3(0, -12, 0)
+			# Framed by the drop: far enough out for the whole height (a 330 m fall wants half a kilometre), the
+			# lens narrowed to fit it.
+			var h := maxf(fall_height, 20.0)
+			var mid := fall_point + Vector3(0, -0.45 * h, 0)
 			var best := Vector3.ZERO
 			var found := false
-			for dist in [90.0, 130.0, 180.0, 240.0, 320.0]:
-				for off in [0.0, 25.0, -25.0, 50.0, -50.0]:
-					var c: Vector3 = fall_point + fd3 * dist + side * off
-					c.y = height_at(c.x, c.z) + 10.0
+			for k in [1.6, 2.2, 3.0, 4.0]:
+				var dist: float = maxf(90.0, k * h)
+				for off in [0.0, 0.15, -0.15, 0.3, -0.3]:
+					var c: Vector3 = fall_point + fd3 * dist + side * off * dist
+					c.y = height_at(c.x, c.z) + maxf(10.0, 0.1 * h)
 					var clear := true
-					for t in range(1, 20):
-						var q := c.lerp(mid, t / 20.0)
+					for t in range(1, 30):
+						var q := c.lerp(mid, t / 30.0)
 						if height_at(q.x, q.z) > q.y - 1.0:
 							clear = false
 							break
@@ -1066,10 +1447,11 @@ func _build_camera() -> void:
 				if found:
 					break
 			if not found:
-				best = fall_point + fd3 * 200.0
-				best.y = height_at(best.x, best.z) + 60.0
+				best = fall_point + fd3 * maxf(200.0, 3.0 * h)
+				best.y = height_at(best.x, best.z) + maxf(60.0, 0.3 * h)
 			cam.position = best
 			cam.look_at(mid)
+			cam.fov = clampf(rad_to_deg(2.0 * atan(0.75 * h / best.distance_to(mid))), 25.0, 70.0)
 		"beach":
 			cam.fov = 60.0
 			cam.position = Vector3(40.0, 0.0, coast_z - 60.0)
@@ -1084,7 +1466,165 @@ func _build_camera() -> void:
 		_:
 			cam.position = Vector3(300, 520, coast_z + 900.0)
 			cam.look_at(Vector3(-100, 250, -700))
-	grass.update_at(cam.global_position)
+	for g in sward:
+		g.update_at(cam.global_position)
+	if sward.is_empty():
+		grass.update_at(cam.global_position)
+
+
+# Herbs, flowers and waterside plants from PlantGenerator round the camera. STOPGAP (a GAP check): VegetationField3D
+# places over its whole data map, so a 16 km² world cannot carry a herb layer at 0.25 m spacing; this builds a
+# camera-local data map and field instead, until placement streams round the camera.
+func _build_cover() -> void:
+	var t := Time.get_ticks_msec()
+	var eye := cam.global_position
+	var ahead := -cam.global_basis.z
+	ahead.y = 0.0
+	ahead = ahead.normalized() if ahead.length() > 0.01 else Vector3(0, 0, 1)
+	var c := eye + ahead * 50.0
+	if eye.y - height_at(c.x, c.z) > 80.0:
+		_log("cover: camera too high for the herb layer, skipped")
+		return
+	var dm := TerrainDataMap3D.new()
+	dm.name = "CoverMap"
+	dm.size = 160.0
+	dm.resolution = 320
+	dm.bake_on_ready = false
+	add_child(dm)
+	dm.global_position = Vector3(c.x, 0, c.z)
+	dm.height_source = dm.get_path_to(get_node("GroundHeight"))
+	var ws: Array[NodePath] = []
+	for np in data_map.water_sources:
+		ws.append(dm.get_path_to(data_map.get_node(np)))
+	dm.water_sources = ws
+	dm.geology_source = dm.get_path_to(gen)
+	dm.bake()
+	var b := Biome.new()
+	var meadow_sp := _meadow_species()
+	for sp in meadow_sp:
+		# Meadow plants keep out from under closed crowns (the forest field's, through canopy_field).
+		sp.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.4))
+		sp.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
+	# The forest floor under the forest field's crowns: the montane conifer set (spruce, fir, beech: the stand-in
+	# cones and balls), bigger plants first, sorted by the crowns' conifer share.
+	var floor_sp: Array = PlantGenerator.make_floor(PlantGenerator.FLOOR_MONTANE_CONIFER, 3)
+	b.species = floor_sp.slice(0, 3) + _wetland_species() + meadow_sp + floor_sp.slice(3)
+	for sp in b.species:
+		var ps := sp as PlantSpecies
+		# Plants on soil, not on bare rock, scree or steep faces, and not on the beach sand.
+		ps.set_rule_range(PlantSpecies.RULE_ROCK, Vector2(0, 0.3))
+		ps.set_rule_fade(PlantSpecies.RULE_ROCK, 0.1)
+		if not ps.floating:
+			ps.set_rule_range(PlantSpecies.RULE_SLOPE, Vector2(0, 32))
+			ps.set_rule_fade(PlantSpecies.RULE_SLOPE, 5.0)
+		ps.set_rule_range(PlantSpecies.RULE_HEIGHT, Vector2(3, 100000))
+		if not ps.has_meta("floor"):
+			_set_far_color(ps)
+	cover = VegetationField3D.new()
+	cover.name = "Cover"
+	cover.populate_on_ready = false
+	cover.tile_size = 8.0
+	cover.biome = b
+	cover.forest_floor_enabled = false # the forest's own field publishes the floor
+	add_child(cover)
+	cover.data_map = cover.get_path_to(dm)
+	cover.canopy_field = cover.get_path_to(veg) # shade and conifer share from the forest's crowns
+	cover.populate()
+	_log("cover %d plants (%d species) round %s in %d ms" % [cover.get_plant_count(), b.species.size(), str(c.round()), Time.get_ticks_msec() - t])
+
+
+func _variants(preset: int, count: int) -> Array:
+	var pg := PlantGenerator.new()
+	pg.preset = preset
+	pg.apply_preset_colors()
+	var meshes := pg.generate_variants(count)
+	for m in meshes:
+		m.set_meta("preset", preset)
+	return meshes
+
+
+# Far away the ground takes the plant's colour (PlantSpecies.far_color, as make_floor() sets it).
+func _set_far_color(sp: PlantSpecies) -> void:
+	if sp.meshes.is_empty() or sp.far_color.a > 0.0:
+		return
+	var m: Mesh = sp.meshes[0]
+	var pg := PlantGenerator.new()
+	pg.preset = m.get_meta("preset", 0)
+	pg.apply_preset_colors()
+	var lc: Color = pg.leaf_color * 0.8
+	sp.far_color = Color(lc.r, lc.g, lc.b, clampf(m.get_aabb().end.y / 0.6, 0.2, 0.9))
+
+
+func _plant(presets: Array, spacing: float, footprint: float, density: float, range_m: float, patch := 0.0, cover_share := 1.0, seed := 0) -> PlantSpecies:
+	var sp := PlantSpecies.new()
+	var ms: Array = []
+	for pr in presets:
+		ms += _variants(pr, 3)
+	sp.meshes = ms
+	sp.spacing = spacing
+	sp.footprint = footprint
+	sp.density = density
+	sp.visibility_range = range_m
+	if patch > 0.0:
+		sp.patch_scale = patch
+		sp.patch_cover = cover_share
+		sp.patch_seed = seed
+	return sp
+
+
+# The meadow (the grass bench's set, docs/ideas/plant-generator.md): flowers and weeds in patches, tussocks with the
+# tall grass, clover where it is not, last year's dead grass under everything, nettles on moist rich ground.
+func _meadow_species() -> Array:
+	var flowers := _plant([PlantGenerator.PRESET_DAISY, PlantGenerator.PRESET_BUTTERCUP, PlantGenerator.PRESET_DANDELION], 0.25, 0.12, 0.9, 15.0, 6.0, 0.35, 11)
+	flowers.scale_range = Vector2(1.1, 1.5)
+	var plantain := _plant([PlantGenerator.PRESET_PLANTAIN], 0.5, 0.15, 0.5, 12.0, 4.0, 0.35, 21)
+	var clover := _plant([PlantGenerator.PRESET_CLOVER], 0.22, 0.0, 0.8, 10.0, 9.0, 0.55, 5)
+	clover.patch_invert = true
+	var tussock := _plant([PlantGenerator.PRESET_COCKSFOOT, PlantGenerator.PRESET_TIMOTHY], 0.7, 0.2, 0.45, 25.0, 9.0, 0.55, 5)
+	var nettle := _plant([PlantGenerator.PRESET_NETTLE], 0.35, 0.15, 0.85, 25.0, 5.0, 0.22, 31)
+	nettle.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(1.0, 25.0))
+	nettle.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 4.0)
+	var dock := _plant([PlantGenerator.PRESET_DOCK], 0.9, 0.25, 0.5, 20.0, 7.0, 0.35, 41)
+	var thistle := _plant([PlantGenerator.PRESET_THISTLE], 1.6, 0.25, 0.35, 20.0)
+	var yarrow := _plant([PlantGenerator.PRESET_YARROW], 0.5, 0.1, 0.6, 15.0, 5.0, 0.3, 51)
+	yarrow.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(6.0, 1000000.0))
+	yarrow.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 3.0)
+	var dry := _plant([PlantGenerator.PRESET_DRY_GRASS], 0.3, 0.0, 0.55, 12.0)
+	dry.scale_range = Vector2(0.7, 1.2)
+	var list := [flowers, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry]
+	return list
+
+
+# Hydrosere zonation (Spence 1982; Keddy 2010): lilies in deeper water, bulrush and reed in the shallows, sedge and
+# soft rush on the wet shore. Depth and distance from the data map.
+func _wetland_species() -> Array:
+	var lily := _plant([PlantGenerator.PRESET_WATER_LILY], 1.1, 0.5, 0.9, 50.0, 6.0, 0.7, 81)
+	lily.floating = true
+	lily.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.35, 2.5))
+	lily.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.2)
+	var cattail := _plant([PlantGenerator.PRESET_CATTAIL], 0.7, 0.35, 0.9, 60.0, 5.0, 0.5, 83)
+	cattail.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.1, 0.6))
+	cattail.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.05)
+	var reed := _plant([PlantGenerator.PRESET_REED], 0.6, 0.3, 0.95, 60.0, 8.0, 0.6, 85)
+	reed.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.0, 1.2))
+	reed.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.15)
+	var rush := _plant([PlantGenerator.PRESET_RUSH], 0.5, 0.2, 0.8, 30.0, 4.0, 0.5, 87)
+	rush.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(0.0, 4.0))
+	rush.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 1.5)
+	var sedge := _plant([PlantGenerator.PRESET_SEDGE], 0.45, 0.2, 0.8, 30.0)
+	sedge.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(0.0, 3.0))
+	sedge.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 1.5)
+	return [lily, cattail, reed, rush, sedge]
+
+
+func _suit_one(rule: int, base: PlantSpecies) -> float:
+	var sp := PlantSpecies.new()
+	sp.set_rule_range(rule, base.get_rule_range(rule))
+	sp.set_rule_fade(rule, base.get_rule_fade(rule))
+	return sp.get_suitability_at(data_map, _dbg_pt)
+
+
+var _dbg_pt := Vector3.ZERO
 
 
 # --- Links -------------------------------------------------------------------------------------------------------
@@ -1264,16 +1804,34 @@ func _checks() -> void:
 			var a := TAU * k / 24.0
 			var q := lake_center + Vector3(cos(a), 0, sin(a)) * (lake_axes.y + ring * 20.0)
 			q.y = height_at(q.x, q.z)
-			if q.y > 5.0 and q.y < 650.0 and data_map.get_slope_at(q) < 20.0 and data_map.get_water_distance_at(q) > 6.0 and data_map.get_rock_at(q) < 0.2 and weather.get_canopy_closure_at(q) < 0.1:
+			if q.y > 5.0 and q.y < 650.0 and rad_to_deg(data_map.get_slope_at(q)) < 20.0 and data_map.get_water_distance_at(q) > 6.0 and data_map.get_rock_at(q) < 0.2 and weather.get_canopy_closure_at(q) < 0.1:
 				meadow_pt = q
 				found = true
 				break
 		if found:
 			break
-	grass.update_at(meadow_pt)
-	var g := grass.get_blade_count()
-	check(g > 0, "grass grows from the data map's rules on a meadow (%d blades); it bends with weather_wind" % g)
-	grass.update_at(cam.global_position)
+	# Every layer of the sward counts: the tall blades grow in patches, the undercoat and turf everywhere.
+	var layers: Array = sward if not sward.is_empty() else [grass]
+	var g := 0
+	var per := PackedStringArray()
+	for f in layers:
+		f.update_at(meadow_pt)
+		g += f.get_blade_count()
+		var suit: float = f.rules.get_suitability_at(data_map, meadow_pt) if f.rules else -1.0
+		per.append("%s %d (suitability %.2f)" % [f.name, f.get_blade_count(), suit])
+	_dbg_pt = meadow_pt
+	if args.has("grass-debug") and not sward.is_empty():
+		var base: PlantSpecies = (sward[1] as GrassField3D).rules.duplicate()
+		var r0 := PlantSpecies.new()
+		for rr in [PlantSpecies.RULE_SLOPE, PlantSpecies.RULE_WATER_DISTANCE, PlantSpecies.RULE_HEIGHT, PlantSpecies.RULE_SHADE]:
+			r0.set_rule_range(rr, base.get_rule_range(rr))
+			print("rule %d range %s fade %.2f alone -> %.2f" % [rr, base.get_rule_range(rr), base.get_rule_fade(rr), _suit_one(rr, base)])
+		print("default species -> %.2f, data map shade %.2f slope %.1f deg water %.1f" % [PlantSpecies.new().get_suitability_at(data_map, meadow_pt), data_map.get_shade_at(meadow_pt) if data_map.has_method("get_shade_at") else -1.0, rad_to_deg(data_map.get_slope_at(meadow_pt)), data_map.get_water_distance_at(meadow_pt)])
+	if veg.has_method("get_stand_shade_at"):
+		per.append("stand shade %.2f at %s" % [veg.get_stand_shade_at(meadow_pt), str(meadow_pt.round())])
+	check(g > 0, "grass grows from the data map's rules on a meadow (%d blades: %s); it bends with weather_wind" % [g, ", ".join(per)])
+	for f in layers:
+		f.update_at(cam.global_position)
 	check(false, "trees and shrubs bend with the wind (stand-in forest is static; tree generation and bone wind not built)", true)
 	# A dry point below the lake's level, far from it and from the rivers (on the coastal plain).
 	var plain := Vector3.ZERO
@@ -1340,14 +1898,26 @@ func _checks() -> void:
 	# Footprints: sand on the beach, mud on the lake bank in the rain, litter under the forest, none on bare rock.
 	var beach_p := Vector3(0, 0, _coast_z(0.0) - 25.0)
 	beach_p.y = height_at(beach_p.x, beach_p.z)
-	var bank_p := lake_center
-	var ld := Vector3(lake_dir.x, 0, lake_dir.y)
-	for k in 400:
-		bank_p += ld * 2.0
-		if height_at(bank_p.x, bank_p.z) > lake_level + 0.5:
+	# A soft bank: round the lake, the first shore with soil rather than bare rock (glacier-cut lakes sit in rock).
+	var bank_p := Vector3.INF
+	var a0 := atan2(lake_dir.y, lake_dir.x)
+	for k in 24:
+		var a := a0 + TAU * k / 24.0
+		var ld := Vector3(cos(a), 0, sin(a))
+		var q := lake_center
+		for i in 400:
+			q += ld * 2.0
+			if height_at(q.x, q.z) > lake_level + 0.5:
+				break
+		q += ld * 3.0
+		q.y = height_at(q.x, q.z)
+		if data_map.get_rock_at(q) < 0.3:
+			bank_p = q
 			break
-	bank_p += ld * 3.0
-	bank_p.y = height_at(bank_p.x, bank_p.z)
+	var soft_bank := bank_p.is_finite()
+	if not soft_bank:
+		bank_p = lake_center + Vector3(lake_dir.x, 0, lake_dir.y) * (lake_axes.x + 3.0)
+		bank_p.y = height_at(bank_p.x, bank_p.z)
 	# The densest snow-free stand: the placement with the most trees within 15 m (of the first few hundred).
 	var trees: Array = veg.get_placements(1) + veg.get_placements(0)
 	var tree_p := Vector3.INF
@@ -1386,7 +1956,10 @@ func _checks() -> void:
 	var storm: bool = args.get("weather", "storm") == "storm"
 	# Dry sand takes 1.5 to 3 cm under a boot, rain-damp sand under 1 cm (firmer).
 	check(pb["sand"] > 0.5 and pb["dent"] > (0.002 if storm else 0.012), "boots print the beach sand (%.1f cm, %s)" % [pb["dent"] * 100.0, "damp" if storm else "dry"])
-	check(pl["dent"] > 0.005 and (not storm or pl["sink"] > 0.04), "boots sink into the lake bank, mud in the rain (%.1f cm)" % (pl["sink"] * 100.0))
+	if soft_bank:
+		check(pl["dent"] > 0.005 and (not storm or pl["sink"] > 0.04), "boots sink into the lake bank, mud in the rain (%.1f cm)" % (pl["sink"] * 100.0))
+	else:
+		_log("lake bank: every shore of the lake is bare rock, no mud to print (%.1f cm)" % (pl["sink"] * 100.0))
 	check(pf["litter"] > 0.005 and pf["dent"] > 0.005, "the forest floor carries litter from the canopy (%.1f cm) and takes prints" % (pf["litter"] * 100.0))
 	check(rock_p.is_finite() and not pr["deformable"] and pr["dent"] < 0.001, "bare rock from the generator takes no print")
 	check(prints.get_patch_material() is TerrainMaterial3D or not (ground_mat is TerrainMaterial3D), "the print patch is drawn with the terrain's own material")
@@ -1441,6 +2014,8 @@ func _checks() -> void:
 	snowfall.follow_target = NodePath("")
 	check(snowfall.haze_enabled and haze_peak > 0.0 and haze_peak > haze_coast * 2.0, "falling and blowing snow thicken the fog on the peak by themselves (extinction %.4f /m on the peak, %.4f at the coast)" % [haze_peak, haze_coast])
 	check(false, "falling rain particles from the weather (none in the engine)", true)
+	if cover != null or args.get("plants", "1") != "0":
+		check(false, "ground cover streams round the camera on the world's data map (a camera-local cover map and field are built by script here)", true)
 	if args.get("layout", "range") == "valley":
 		check(false, "the clearing on the valley floor comes from the generator by itself (a density mask is built by script from its sediment here)", true)
 	# The gale check lays 40 mm of snow and moves the near square to the peak, and leaves them: only in test

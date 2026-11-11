@@ -8,8 +8,15 @@ extends Node3D
 #   --out=path.png   render a view (path traced unless --raster)
 #   --raster         raster only
 #   --spp=N          path tracing samples (default 16)
+#   --stream-cost    a 1 km map of trees over the oak wood's floor (PlantGenerator.make_floor),
+#                    streamed 200 m around a point running across it at 6 m/s: prints the
+#                    main thread's slowest frame and map publish each second
 
 const SIZE := 256.0
+var size := SIZE
+var stream_cost := false
+var runner: Node3D
+var stream_t := 0.0
 var test := false
 var raster := false
 var spp := 16
@@ -38,6 +45,9 @@ class Geology extends Node3D:
 		if p.x > 40.0:
 			return Color(0.15, 0.4, 0.0, 0.0)
 		return Color(1.2, 0.0, 0.0, 0.0)
+	# A waterfall's spray zone: soaked within 15 m of (-40, -40), drying out to 25 m.
+	func get_spray_potential(p: Vector3) -> float:
+		return 1.0 - smoothstep(15.0, 25.0, Vector2(p.x, p.z).distance_to(Vector2(-40, -40)))
 
 static func height(x: float, z: float) -> float:
 	var pit := -0.8 * exp(-(x * x + (z - 40.0) * (z - 40.0)) / 30.0)
@@ -49,12 +59,15 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
-	var w := int(SIZE) + 1
+		elif a == "--stream-cost":
+			stream_cost = true
+			size = 1024.0
+	var w := int(size) + 1
 	var data := PackedFloat32Array()
 	data.resize(w * w)
 	for z in w:
 		for x in w:
-			data[z * w + x] = height(x - SIZE * 0.5, z - SIZE * 0.5)
+			data[z * w + x] = height(x - size * 0.5, z - size * 0.5)
 	var shape := HeightMapShape3D.new()
 	shape.map_width = w
 	shape.map_depth = w
@@ -72,8 +85,8 @@ func _ready() -> void:
 	add_child(river)
 	dm = TerrainDataMap3D.new()
 	dm.name = "Map"
-	dm.size = SIZE
-	dm.resolution = 256
+	dm.size = size
+	dm.resolution = 512 if stream_cost else 256
 	dm.bake_on_ready = false
 	dm.water_sources = [NodePath("../Lake"), NodePath("../River")]
 	add_child(dm)
@@ -83,6 +96,8 @@ func _ready() -> void:
 	field.biome = _biome()
 	add_child(field)
 	field.data_map = field.get_path_to(dm)
+	if stream_cost:
+		_setup_stream_cost()
 	if not out.is_empty():
 		_build_view()
 
@@ -141,11 +156,47 @@ func _biome() -> Biome:
 	b.species = [tree, bush, reed]
 	return b
 
+func _setup_stream_cost() -> void:
+	var tree: PlantSpecies = field.biome.species[0]
+	tree.canopy_radius = 3.0
+	tree.canopy_opacity = 0.9
+	var species: Array = [tree]
+	species.append_array(Array(PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 3, false)))
+	field.biome = Biome.new()
+	field.biome.species = species
+	field.tile_size = 16.0
+	runner = Node3D.new()
+	add_child(runner)
+	runner.position = Vector3(-300, 0, -300)
+	field.stream_target = field.get_path_to(runner)
+	field.stream_radius = 200.0
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 400, 0)
+	cam.rotation_degrees = Vector3(90, 0, 0) # At the sky: the cost of streaming, not of drawing.
+	add_child(cam)
+
+func _process(dt: float) -> void:
+	if not stream_cost or n < 3:
+		return
+	if not field.streaming:
+		print("STREAM_COST species=%d" % field.biome.species.size())
+		field.streaming = true
+	stream_t += dt
+	# Fixed steps, as if at 60 fps, so the run covers the same ground however slow the frame.
+	runner.position += Vector3(1, 0, 1).normalized() * 6.0 / 60.0
+	if Engine.get_process_frames() % 60 == 0:
+		var st := field.get_stream_stats()
+		print("STREAM_COST t=%.0fs pos=%s tiles=%d jobs=%d plants=%d frame_max=%.2fms publish=%.1fms idle=%s" % [stream_t, str(Vector2(runner.position.x, runner.position.z).round()), st.tiles, st.jobs, field.get_plant_count(), st.frame_max_msec, st.publish_msec, str(field.is_stream_idle())])
+	if runner.position.x > 300.0:
+		get_tree().quit()
+
 func _physics_process(_d: float) -> void:
 	n += 1
 	if n != 3:
 		return
 	dm.bake()
+	if stream_cost:
+		return
 	var err := field.populate()
 	var counts := []
 	for s in 3:
@@ -153,6 +204,8 @@ func _physics_process(_d: float) -> void:
 	print("VEG_POPULATE err=%d plants=%d per_species=%s ms=%.1f" % [err, field.get_plant_count(), str(counts), field.get_populate_time_msec()])
 	if test:
 		_checks()
+		await _stream_checks()
+		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
 	else:
@@ -243,6 +296,12 @@ func _checks() -> void:
 			west += 1
 	_check("geology: map has it", dm.has_geology() and is_equal_approx(dm.get_rock_at(Vector3(100, 0, 0)), 1.0), dm.get_rock_at(Vector3(100, 0, 0)))
 	_check("geology: no tree on thin soil or bare rock", on_rock == 0 and west > 10, [on_rock, west])
+	var wet := 0
+	for s in 2:
+		for p in field.get_placements(s):
+			if dm.get_spray_at(p) > 0.65:
+				wet += 1
+	_check("spray: no tree or bush in a fall's wet zone", wet == 0 and dm.get_spray_at(Vector3(-40, 0, -40)) > 0.95 and field.get_placements(0).size() > 50, [wet, dm.get_spray_at(Vector3(-40, 0, -40)), field.get_placements(0).size()])
 	dm.geology_source = NodePath()
 	dm.bake()
 	field.populate()
@@ -264,6 +323,25 @@ func _checks() -> void:
 	_check("shade: core of a crown", under_t >= 0.89, under_t)
 	_check("shade: bushes only under crowns", sunny == 0 and field.get_placements(1).size() > 20 and field.get_placements(1).size() < bushes_open, [sunny, field.get_placements(1).size(), bushes_open])
 	_check("shade: trees unchanged", field.get_placements(0) == first, field.get_placements(0).size())
+	# canopy_field: a second field without trees (a camera-local herb layer) reads the first's crowns.
+	var herbs := VegetationField3D.new()
+	herbs.name = "Herbs"
+	herbs.populate_on_ready = false
+	var hb := Biome.new()
+	hb.species = [bush_sp]
+	herbs.biome = hb
+	add_child(herbs)
+	herbs.data_map = herbs.get_path_to(dm)
+	herbs.populate()
+	var open_n := herbs.get_placements(0).size()
+	herbs.canopy_field = herbs.get_path_to(field)
+	herbs.populate()
+	var herb_sunny := 0
+	for p in herbs.get_placements(0):
+		if field.get_shade_at(p) < 0.5:
+			herb_sunny += 1
+	_check("canopy_field: a field without trees grows its shade plants under another's crowns", open_n == 0 and herb_sunny == 0 and herbs.get_placements(0).size() > 20, [open_n, herb_sunny, herbs.get_placements(0).size()])
+	herbs.queue_free()
 	# The same canopy reaches WeatherMap3D (canopy_map), so snow and wind see the same forest.
 	var wm := WeatherMap3D.new()
 	wm.name = "Weather"
@@ -336,7 +414,139 @@ func _checks() -> void:
 	tree_sp.mask_channel = -1
 	mask_bush.mask_channel = -1
 	field.density_mask = null
-	print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+	# Near swap: a heavier mesh within near_range, the same plants in the same places.
+	var near_box := BoxMesh.new()
+	tree_sp.near_meshes = [near_box]
+	tree_sp.near_range = 30.0
+	field.populate()
+	var near_n := 0
+	var far_n := 0
+	var bad_range := 0
+	var near_pos := {}
+	var far_pos := {}
+	for ch in field.get_children(true):
+		if not ch is MultiMeshInstance3D or ch.multimesh.mesh == null:
+			continue
+		var mm: MultiMesh = ch.multimesh
+		var is_near: bool = mm.mesh == near_box
+		var is_tree: bool = is_near or tree_sp.meshes.has(mm.mesh)
+		if not is_tree:
+			continue
+		if is_near:
+			near_n += mm.instance_count
+			if not is_equal_approx(ch.visibility_range_end, 30.0) or ch.visibility_range_begin != 0.0:
+				bad_range += 1
+		else:
+			far_n += mm.instance_count
+			if not is_equal_approx(ch.visibility_range_begin, 30.0):
+				bad_range += 1
+		for i in mm.instance_count:
+			var key := str(mm.get_instance_transform(i).origin.snapped(Vector3.ONE * 0.01))
+			if is_near:
+				near_pos[key] = true
+			else:
+				far_pos[key] = true
+	var unmatched := 0
+	for k in near_pos:
+		if not far_pos.has(k):
+			unmatched += 1
+	_check("near swap: every tree drawn near and far, split by range", near_n == far_n and near_n == field.get_placements(0).size() and unmatched == 0 and bad_range == 0 and field.get_placements(0) == first, [near_n, far_n, field.get_placements(0).size(), unmatched, bad_range])
+	tree_sp.near_meshes = []
+	tree_sp.near_range = 0.0
+	# Impostors: the species' meshes near, their baked impostors (two triangles each) past the range.
+	var real_meshes: Array = tree_sp.meshes.duplicate()
+	PlantGenerator.add_impostors(tree_sp, 30.0, 4, 16)
+	field.populate()
+	var imp_n := 0
+	var mesh_n := 0
+	var bad_imp := 0
+	for ch in field.get_children(true):
+		if not ch is MultiMeshInstance3D or ch.multimesh.mesh == null:
+			continue
+		var m: Mesh = ch.multimesh.mesh
+		if m.has_meta("impostor_of"):
+			imp_n += ch.multimesh.instance_count
+			if not real_meshes.has(m.get_meta("impostor_of")) or m.get_faces().size() != 6 or not is_equal_approx(ch.visibility_range_begin, 30.0):
+				bad_imp += 1
+		elif real_meshes.has(m):
+			mesh_n += ch.multimesh.instance_count
+	_check("impostors: each tree drawn as its mesh near and its impostor far", imp_n == mesh_n and imp_n == field.get_placements(0).size() and bad_imp == 0, [imp_n, mesh_n, field.get_placements(0).size(), bad_imp])
+	tree_sp.meshes = real_meshes
+	tree_sp.near_meshes = []
+	tree_sp.near_range = 0.0
+
+# Streaming: tiles placed on workers around a moving centre come out exactly as populate() placed
+# them (shade bushes under the trees' crowns, so each tile's halo matters), and go past the radius.
+func _stream_wait(f: VegetationField3D) -> int:
+	for i in 900:
+		await get_tree().process_frame
+		if f.is_stream_idle():
+			return i
+	return -1
+
+func _streamed_set(full: PackedVector3Array, centre: Vector2, radius: float, ts: float) -> Dictionary:
+	var want := {}
+	for p in full:
+		var lo := Vector2(floorf(p.x / ts), floorf(p.z / ts)) * ts
+		var d := Vector2(maxf(maxf(lo.x - centre.x, centre.x - lo.x - ts), 0.0), maxf(maxf(lo.y - centre.y, centre.y - lo.y - ts), 0.0)).length()
+		if d <= radius:
+			want[p] = true
+	return want
+
+# Tiles stay a tile and a half past the radius before they go (hysteresis): only compare within it.
+func _same(got: PackedVector3Array, want: Dictionary, centre: Vector2, radius: float, ts: float) -> bool:
+	var inside := _streamed_set(got, centre, radius, ts)
+	if inside.size() != want.size():
+		return false
+	for p in inside:
+		if not want.has(p):
+			return false
+	return true
+
+func _stream_checks() -> void:
+	field.weather_map = NodePath()
+	field.populate()
+	var full := []
+	for s in 3:
+		full.append(field.get_placements(s))
+	var target := Node3D.new()
+	add_child(target)
+	target.global_position = Vector3(-60, 0, -50)
+	var sf := VegetationField3D.new()
+	sf.name = "Streamed"
+	sf.populate_on_ready = false
+	sf.biome = field.biome
+	add_child(sf)
+	sf.data_map = sf.get_path_to(dm)
+	sf.stream_target = sf.get_path_to(target)
+	sf.stream_radius = 60.0
+	sf.streaming = true
+	var frames := await _stream_wait(sf)
+	var ok := frames >= 0
+	var counts := []
+	for s in 3:
+		var want := _streamed_set(full[s], Vector2(-60, -50), 60.0, sf.tile_size)
+		counts.append([sf.get_placements(s).size(), want.size()])
+		ok = ok and _same(sf.get_placements(s), want, Vector2(-60, -50), 60.0, sf.tile_size)
+	var drawn := 0
+	for ch in sf.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh.mesh == field.biome.species[0].meshes[0]:
+			drawn += ch.multimesh.instance_count
+	_check("streaming: tiles around the centre match populate() exactly", ok and drawn == sf.get_placements(0).size(), [frames, sf.get_stream_tile_count(), counts, drawn])
+	target.global_position = Vector3(80, 0, 70)
+	frames = await _stream_wait(sf)
+	ok = frames >= 0
+	var old_left := 0
+	for s in 3:
+		old_left += sf.get_placements(s).size() - _streamed_set(sf.get_placements(s), Vector2(80, 70), 60.0 + 1.5 * sf.tile_size, sf.tile_size).size()
+	counts = []
+	for s in 3:
+		var want := _streamed_set(full[s], Vector2(80, 70), 60.0, sf.tile_size)
+		counts.append([sf.get_placements(s).size(), want.size()])
+		ok = ok and _same(sf.get_placements(s), want, Vector2(80, 70), 60.0, sf.tile_size)
+	_check("streaming: moved centre, tiles past the radius freed, new ones match", ok and old_left == 0, [frames, sf.get_stream_tile_count(), counts, old_left])
+	sf.queue_free()
+	target.queue_free()
 
 func _build_view() -> void:
 	var gm := StandardMaterial3D.new()
@@ -348,7 +558,7 @@ func _build_view() -> void:
 	add_child(mi)
 	var water := MeshInstance3D.new()
 	var wp := PlaneMesh.new()
-	wp.size = Vector2(SIZE, SIZE)
+	wp.size = Vector2(size, size)
 	var wmat := StandardMaterial3D.new()
 	wmat.albedo_color = Color(0.1, 0.2, 0.25)
 	wmat.roughness = 0.05
@@ -399,11 +609,11 @@ func _ground_mesh() -> Mesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var res := 128
-	var step := SIZE / res
+	var step := size / res
 	for z in res:
 		for x in res:
-			var x0 := -SIZE * 0.5 + x * step
-			var z0 := -SIZE * 0.5 + z * step
+			var x0 := -size * 0.5 + x * step
+			var z0 := -size * 0.5 + z * step
 			var q := [Vector3(x0, height(x0, z0), z0), Vector3(x0 + step, height(x0 + step, z0), z0),
 					Vector3(x0 + step, height(x0 + step, z0 + step), z0 + step), Vector3(x0, height(x0, z0 + step), z0 + step)]
 			for i in [0, 1, 2, 0, 2, 3]:

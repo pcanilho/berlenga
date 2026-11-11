@@ -9,6 +9,24 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_stream_stats">
+			<return type="Dictionary" />
+			<description>
+				Main-thread cost of [member streaming]: [code]tiles[/code] (placed tiles held), [code]jobs[/code] (tiles being placed on workers), [code]frame_max_msec[/code] (the slowest frame since the last call, which resets it) and [code]publish_msec[/code] (handing the last maps to the renderer).
+			</description>
+		</method>
+		<method name="get_stream_tile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of placed tiles held around the centre while [member streaming].
+			</description>
+		</method>
+		<method name="is_stream_idle" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] once every tile within [member stream_radius] is placed and drawn and the maps are up to date. [signal populated] is emitted each time this becomes [code]true[/code].
+			</description>
+		</method>
 		<method name="clear">
 			<return type="void" />
 			<description>
@@ -34,11 +52,32 @@
 				Time the last [method populate] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_conifer_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Share of the canopy over [param global_position] that is needle-leaved ([member PlantSpecies.canopy_conifer]), weighted by how much each crown covers it: [code]0.0[/code] under broadleaf trees or in the open, [code]1.0[/code] under conifers.
+			</description>
+		</method>
+		<method name="get_floor_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Shader code for terrain materials: [code]forest_floor(world_pos, albedo)[/code] returns the ground's albedo with the forest floor laid over it where the canopy closes, leaf litter under broadleaf crowns, needles over duff with feather moss drifts under conifers, a patchwork in mixed stands. It reads the [code]forest_floor_map[/code] and [code]forest_floor_rect[/code] global shader parameters (see [member forest_floor_enabled]). Use it in a fragment shader. [method GrassField3D.get_ground_shader_code] includes it and its [code]grass_ground()[/code] calls it, so materials that use the grass ground get the litter too.
+				It also gives [code]vegetation_far(world_pos, albedo, camera_pos)[/code]: call it after [code]grass_ground()[/code] with [code]CAMERA_POSITION_WORLD[/code]. Where plants with a [member PlantSpecies.far_color] grew, it blends their colour into the ground as the plant shader thins them away with distance, with the same curve: none up to 35% of the species' range, all of it at the range. It reads the [code]vegetation_far_map[/code], [code]vegetation_far_rect[/code] and [code]vegetation_far_range[/code] global shader parameters, published after each [method populate] that places such plants.
+			</description>
+		</method>
 		<method name="get_shade_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
 				Canopy shade at [param global_position], from 0 (open sky) to 1 (dense crown), from the plants of species with [member PlantSpecies.canopy_radius] placed by the last [method populate]. Each crown stops [member PlantSpecies.canopy_opacity] of the light under its core, fading out a little past its rim; overlapping crowns multiply their transmission. Species with a [member PlantSpecies.shade_range] are placed by it, so list canopy species first in the [Biome].
+			</description>
+		</method>
+		<method name="get_stand_shade_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The shade the ground gets from the stand: [method get_shade_at] weighed by how closed the canopy is over about 5 m around, on half-metre cells after [method populate]. Under a lone open-grown tree it stays low, so the sward and no litter mat stay there; under a closed canopy it equals the shade. [GrassField3D] reads it for its shade rule, and the forest floor's litter follows it.
 			</description>
 		</method>
 		<method name="populate">
@@ -64,6 +103,9 @@
 		<member name="biome" type="Biome" setter="set_biome" getter="get_biome">
 			The species to place.
 		</member>
+		<member name="canopy_field" type="NodePath" setter="set_canopy_field" getter="get_canopy_field" default="NodePath(&quot;&quot;)">
+			Another [VegetationField3D] whose crowns also shade this field's plants, as [member GrassField3D.canopy_field] does for grass. Its shade and conifer share combine with this field's own crowns (transmissions multiply), so a small herb field around the camera grows its shade plants under a large forest field's trees.
+		</member>
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			The [TerrainDataMap3D] that gives height, slope, wetness and water. Its area is the area planted.
 		</member>
@@ -73,8 +115,26 @@
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Seed of the point patterns. The same seed gives the same plants.
 		</member>
+		<member name="stream_budget_msec" type="float" setter="set_stream_budget_msec" getter="get_stream_budget_msec" default="2.0">
+			Main-thread time per frame for adding placed tiles to the scene while [member streaming], nearest first. One tile always goes in, so a frame can run over by one tile's cost.
+		</member>
+		<member name="stream_maps_radius" type="float" setter="set_stream_maps_radius" getter="get_stream_maps_radius" default="96.0">
+			While [member streaming], the canopy map, the stand shade and the forest floor map cover this far around the centre (half-metre cells); the far colour map covers [member stream_radius].
+		</member>
+		<member name="stream_radius" type="float" setter="set_stream_radius" getter="get_stream_radius" default="200.0">
+			While [member streaming], tiles within this distance of the centre are placed. Each species is drawn only out to its [member PlantSpecies.visibility_range] (all of the radius when it has none); tiles a tile and a half past the radius are freed.
+		</member>
+		<member name="stream_target" type="NodePath" setter="set_stream_target" getter="get_stream_target" default="NodePath(&quot;&quot;)">
+			The [Node3D] streaming follows. Empty: the viewport's camera.
+		</member>
+		<member name="streaming" type="bool" setter="set_streaming" getter="is_streaming" default="false">
+			Places tiles around a centre ([member stream_target]) as it moves instead of the whole map at once: each tile is placed on a worker thread, nearest first, together with the larger plants around it that act on it (footprints and crown shade), so it comes out exactly as [method populate] would place it. The maps (canopy, forest floor, far colour) follow the centre and are computed on a worker too. [member populate_on_ready] is ignored while streaming; a new bake of the [member data_map] places everything again.
+		</member>
 		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="32.0">
 			Width in metres of a tile: one point pattern and one [MultiMeshInstance3D] per mesh per tile, so tiles out of view are culled.
+		</member>
+		<member name="forest_floor_enabled" type="bool" setter="set_forest_floor_enabled" getter="is_forest_floor_enabled" default="true">
+			If [code]true[/code], each [method populate] that places canopy crowns publishes canopy closure ([method get_shade_at]) and conifer share ([method get_conifer_at]) on half-metre cells over the data map's rect as the [code]forest_floor_map[/code] and [code]forest_floor_rect[/code] global shader parameters, read by [method get_floor_shader_code]. A field without crowns leaves them as they are, so one field can own the trees while others place the plants.
 		</member>
 		<member name="weather_map" type="NodePath" setter="set_weather_map" getter="get_weather_map" default="NodePath(&quot;&quot;)">
 			Path to a [WeatherMap3D]. After each [method populate] the placed canopy species are written to its [member WeatherMap3D.canopy_map] over the data map's rect (about 1 m cells): crown top height in red, leaf area index over 4 in green, taking [member PlantSpecies.canopy_opacity] as [code]1 - exp(-0.5 LAI)[/code]. [method WeatherMap3D.get_canopy_closure_at] then matches [method get_shade_at], and snow, wind and light under the trees all see the same forest. This replaces any canopy map already set there.
@@ -83,7 +143,7 @@
 	<signals>
 		<signal name="populated">
 			<description>
-				Emitted after each [method populate].
+				Emitted after each [method populate], and while [member streaming] each time [method is_stream_idle] becomes [code]true[/code].
 			</description>
 		</signal>
 	</signals>

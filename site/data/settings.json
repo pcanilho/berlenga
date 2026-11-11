@@ -737,7 +737,7 @@
     "raster_reflections"
    ],
    "note": "",
-   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows.",
+   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -1071,12 +1071,48 @@
    "topic": "Generation"
   },
   {
+   "name": "Glacial erosion",
+   "settings": [
+    "glacial_enabled",
+    "glacial_ela",
+    "glacial_erosion"
+   ],
+   "note": "",
+   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Cliff ledges",
+   "settings": [
+    "cliff_ledge_spacing",
+    "cliff_ledge_strength"
+   ],
+   "note": "",
+   "what": "rock beds of uneven thickness step faces steeper than 40 degrees into ledges.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Fallen blocks",
+   "settings": [
+    "get_boulders(rect, density)"
+   ],
+   "note": "",
+   "what": "blocks shed by cliffs rest below them, the largest furthest out.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
    "name": "River deposition",
    "settings": [
     "deposition"
    ],
    "note": "",
-   "what": "rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors.",
+   "what": "rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors; solved exactly per step along the river tree, at about half the earlier cost.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Rivers, coasts and lakes"
@@ -1111,6 +1147,42 @@
    ],
    "note": "",
    "what": "position, discharge, catchment, drop and run along every river, for placing lakes and falls.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Waterfall records",
+   "settings": [
+    "get_waterfalls()"
+   ],
+   "note": "",
+   "what": "each fall's type, lip, face profiles, tiers, power, impact speed and plunge pool, for water effects.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Plunge pools and gorges",
+   "settings": [
+    "plunge_pools",
+    "gorge_age",
+    "gorge_rate"
+   ],
+   "note": "",
+   "what": "falls of 4 m or more scour a pool that holds water, and lips over hard rock wear back upstream into slot gorges.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Spray map",
+   "settings": [
+    "terrain_spray_potential",
+    "get_spray_potential()"
+   ],
+   "note": "",
+   "what": "where fall spray keeps the ground wet, from each fall's power and distance.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Rivers, coasts and lakes"
@@ -1240,6 +1312,18 @@
    "topic": "Placement"
   },
   {
+   "name": "Streamed placement",
+   "settings": [
+    "VegetationField3D.streaming",
+    "stream_radius"
+   ],
+   "note": "",
+   "what": "tiles are placed on worker threads around the camera, identical to a full placement; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
    "name": "Placement by geology",
    "settings": [
     "TerrainDataMap3D.geology_source",
@@ -1284,6 +1368,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Waterfall spray",
+   "settings": [
+    "PlantSpecies.spray_range"
+   ],
+   "note": "",
+   "what": "plants keep out of the soaked ground in a waterfall's spray zone, where only mosses grow.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
    "name": "Canopy shade",
    "settings": [
     "canopy_radius",
@@ -1311,7 +1406,20 @@
    "name": "Grass edge fade",
    "settings": [],
    "note": "always on",
-   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge.",
+   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
+   "name": "Layered meadow",
+   "settings": [
+    "GrassField3D.color_variation",
+    "get_ground_shader_code()",
+    "canopy_field"
+   ],
+   "note": "",
+   "what": "blades vary in colour over the field and per blade, some dead from the root, with midribs and tapered tips; the ground under the grass becomes matching turf, and the sward follows the canopy shade.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -1340,6 +1448,108 @@
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
+  },
+  {
+   "name": "Plant generator",
+   "settings": [
+    "PlantGenerator"
+   ],
+   "note": "",
+   "what": "meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Forest floor",
+   "settings": [
+    "PlantGenerator.make_floor(stand, variants)",
+    "VegetationField3D.forest_floor_enabled"
+   ],
+   "note": "",
+   "what": "herbs, mosses and seedlings by the stand above, and the ground under closed canopy turns to leaf, needle or moss litter.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Wetland plants",
+   "settings": [
+    "PlantSpecies.floating",
+    "water_depth_range"
+   ],
+   "note": "",
+   "what": "reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Leaf wear",
+   "settings": [
+    "PlantGenerator.leaf_wear"
+   ],
+   "note": "",
+   "what": "insect bites, uneven halves, dead tips and older leaves yellowing and browning, per leaf.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Bending",
+   "settings": [
+    "GrassField3D"
+   ],
+   "note": "",
+   "what": "plants bend away from bodies and spring back, and lean in the wind.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Per-stem sway",
+   "settings": [],
+   "note": "always on",
+   "what": "each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Near and far meshes",
+   "settings": [
+    "PlantSpecies.near_meshes",
+    "near_range"
+   ],
+   "note": "",
+   "what": "heavier meshes near the camera, crossfaded with dithering a few plants at a time.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Far thinning",
+   "settings": [
+    "PlantSpecies.far_color"
+   ],
+   "note": "",
+   "what": "plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Plant impostors",
+   "settings": [
+    "PlantGenerator.make_impostor()",
+    "add_impostors()",
+    "impostor_range"
+   ],
+   "note": "",
+   "what": "large plants turn into octahedral impostors past a range in raster (brambles and bracken past 15 m), while path tracing keeps the meshes; an oak wood view drops from 3.91M to 2.98M triangles.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
   },
   {
    "name": "GPU-placed instances",
@@ -1549,6 +1759,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Snowpack on a worker thread",
+   "settings": [
+    "SnowCover3D.background_updates"
+   ],
+   "note": "",
+   "what": "snowpack updates run off the main thread and swap in when done, so the frame never waits; main-thread share per update about 6 ms down to about 1 ms.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Snow climate",
    "settings": [
     "SnowClimate",
@@ -1623,6 +1844,17 @@
    ],
    "note": "",
    "what": "deep snow as geometry with prints and tracks; bodies sink by weight (Bekker) and rest in their own tracks; tracks refill with new snow and wind; print edges stay clean at fine deform resolutions, with pushed-aside snow sliding at its repose angle.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Deep snow"
+  },
+  {
+   "name": "Deep snow on the GPU",
+   "settings": [
+    "SnowSurface3D.gpu_simulation"
+   ],
+   "note": "",
+   "what": "pressing, slumping and refilling run in compute shaders, main-thread cost 1.5 ms down to 0.04 ms with the same prints; the CPU path stays for Compatibility.",
    "page": "snow",
    "title": "Snow",
    "topic": "Deep snow"

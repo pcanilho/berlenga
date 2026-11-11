@@ -59,6 +59,21 @@ cliffs, then weather on top), the weather functions shared with every other mate
    Without a generator it falls back to slope and height rules, so it also serves hand-made terrain.
 3. The landscape bench switches its ground to it and the GAP line becomes a check.
 
+## Far ground: plant cover colour past far_start (11 Nov)
+
+Distant terrain reads by its cover, not its soil: a forested slope at 2 km is dark green even where no plant is drawn.
+Engines bake a world colour map for the far field (Frostbite's terrain colour map, Andersson 2007; Far Cry 5's world
+colour map, McLaren 2018; UE's landscape macro variation). Here the ground colour itself already comes right at
+distance (geology map plus each layer texture's lowest mip), so only the cover is new. Vegetation publishes
+`terrain_cover_map` (RGBA8: sRGB mean cover colour from above with canopy shade, alpha the cover share) and
+`terrain_cover_rect` (x, z, width, depth), 4 m texels, from the same colours `vegetation_far()` uses.
+`far_blend_enabled` (off by default; the code is only compiled when on) blends, between `far_start` (300 m) and
+`far_start + far_fade` (150 m), from the near result (grass tint, `vegetation_far()`) to the bare ground under the
+cover colour by its share, so the far cover replaces `vegetation_far()` and nothing stacks. It sits after the layer
+blend and detail normal and before ground deformation, wetness and snow, which still lie on it. Unset globals (rect
+width 0) leave the ground as it is. Distance is from the camera to the shaded point, the same rule
+`vegetation_far()` uses, also on path-traced bounce hits.
+
 ## Cost and quality
 
 - Raster: biplanar doubles fetches only on steep pixels; five layers with height blend is about what Terrain3D

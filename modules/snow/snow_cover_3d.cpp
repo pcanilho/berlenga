@@ -125,6 +125,7 @@ Vector3 SnowCover3D::_follow_position() const {
 }
 
 void SnowCover3D::_allocate() {
+	_finish_background(true);
 	_finish_sx(true);
 	const int nn = resolution * resolution;
 	cell_ground.resize(nn);
@@ -172,6 +173,7 @@ void SnowCover3D::_allocate() {
 	origin_valid = false;
 	sx_valid = false;
 	sx_dirty = false;
+	_publish_cells();
 }
 
 Vector3 SnowCover3D::_cell_center(int p_x, int p_z) const {
@@ -233,23 +235,7 @@ void SnowCover3D::_sample_heights(int p_from_row, int p_to_row, const Vector<uin
 		}
 	}
 	steep_dirty = true;
-	_sample_canopy();
-}
-
-void SnowCover3D::_sample_canopy() {
-	const int n = resolution;
-	if (cell_canopy.size() != n * n) {
-		return;
-	}
-	const WeatherMap3D *wm = owner || !canopy_enabled ? nullptr : WeatherMap3D::get_active();
-	const float cs = _cell_size();
-	float *c = cell_canopy.ptrw();
-	for (int z = 0; z < n; z++) {
-		for (int x = 0; x < n; x++) {
-			const int i = z * n + x;
-			c[i] = wm ? CLAMP(wm->get_canopy_closure_at(Vector3((origin_cell.x + x + 0.5f) * cs, cell_ground[i], (origin_cell.y + z + 0.5f) * cs)), 0.0f, 1.0f) : 0.0f;
-		}
-	}
+	_refresh_cell_inputs(p_from_row, p_to_row, p_only);
 }
 
 void SnowCover3D::_follow(Vector3 p_center) {
@@ -265,6 +251,7 @@ void SnowCover3D::_follow(Vector3 p_center) {
 		_sample_heights(0, resolution);
 		sx_valid = false;
 		_seed_from_world(nullptr);
+		_publish_cells();
 		return;
 	}
 	if (want != origin_cell) {
@@ -273,6 +260,7 @@ void SnowCover3D::_follow(Vector3 p_center) {
 }
 
 void SnowCover3D::_shift(Vector2i p_new_origin) {
+	_finish_background(true);
 	// A bake in flight reads the ground: let it land first (it is shifted with the rest).
 	_finish_sx(true);
 	// What the cells leaving the square did goes back to the world tier first.
@@ -281,10 +269,13 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
 	// where there is one, else the state of the nearest cell that was inside it.
-	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet };
+	Vector<float> *fields[] = { &cell_ground, &cell_swe, &cell_liquid, &cell_density, &cell_albedo, &cell_runoff, &cell_sx, &cell_new_depth, &cell_canopy, &cell_canopy_load, &cell_crust, &cell_crust_cycles, &cell_crust_burial, &cell_crust_wet, &cell_climate_precip };
 	Vector<uint8_t> fresh;
 	fresh.resize(n * n);
 	for (Vector<float> *f : fields) {
+		if (f->size() != n * n) {
+			continue;
+		}
 		const Vector<float> old = *f;
 		float *w = f->ptrw();
 		for (int z = 0; z < n; z++) {
@@ -304,6 +295,7 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	if (world) {
 		world->_upload();
 	}
+	_publish_cells(); // the getters read the moved square from now
 	sx_dirty = sx_valid;
 }
 
@@ -420,6 +412,8 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 		in.humidity = humidity;
 	}
 	in.base_precip = precipitation_rate;
+	// The weather the cells read, as it is now: the update may run on a worker while the map moves on.
+	in.wx = in.weather ? in.weather->get_snapshot() : WeatherMap3D::Snapshot();
 	in.climate_map = get_climate_map_node();
 	in.climate_background = in.climate_map ? in.climate_map->get_climate_recipe()->get_precipitation() : 0.0f;
 
@@ -503,16 +497,18 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 	const int z = int(p_row);
 	for (int x = 0; x < n; x++) {
 		const int i = z * n + x;
-		const Vector3 pos = _cell_center(x, z);
 		const float h = cell_ground[i];
 		const float t = in.temperature - lapse_rate * 0.001f * (h - in.ref_height);
 
-		// Precipitation, split into snow and rain.
-		const float rate = in.weather ? in.weather->get_rain_at(pos) : in.base_precip;
+		const Vector3 pos = _cell_center(x, z);
+		// Precipitation, split into snow and rain. The weather as it was when the update started (its
+		// snapshot: this may run on a worker while the map updates).
+		const float rate = in.wx.valid ? in.wx.rain_at(pos) : in.base_precip;
 		// More falls higher up and on windward slopes (orographic enhancement): the terrain climate's
-		// precipitation field when there is one, else precipitation_gradient per 100 m.
-		const float oro = in.climate_map && in.climate_background > 0.0f
-				? MAX(in.climate_map->get_precipitation_at(pos) / in.climate_background, 0.0f)
+		// precipitation field when there is one (read into cell_climate_precip on the main thread), else
+		// precipitation_gradient per 100 m.
+		const float oro = in.climate_map && in.climate_background > 0.0f && cell_climate_precip.size() == n * n
+				? MAX(cell_climate_precip[i] / in.climate_background, 0.0f)
 				: MAX(1.0f + precipitation_gradient * (h - in.ref_height) * 0.01f, 0.0f);
 		const float p = MAX(rate, 0.0f) * oro * in.dt_h;
 		const float share = snowfall_fraction(t, in.humidity);
@@ -539,8 +535,8 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 			}
 			if (load > 0.0f) {
 				const float u = last_wind.length();
-				const float rate = MAX(t + 273.15f - 270.15f, 0.0f) / 1.87e5f + u / 1.56e5f;
-				const float drop = load * (1.0f - Math::exp(-rate * in.dt_h * 3600.0f));
+				const float unload = MAX(t + 273.15f - 270.15f, 0.0f) / 1.87e5f + u / 1.56e5f;
+				const float drop = load * (1.0f - Math::exp(-unload * in.dt_h * 3600.0f));
 				load -= drop;
 				snow += drop;
 				if (t > 0.0f) {
@@ -615,12 +611,8 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 				// Through the clouds: the weather map's cloud shadow when it bakes one for a sun, else the cloud
 				// cover by Kasten and Czeplak (1980), 1 - 0.75 N^3.4.
 				float vis = 1.0f;
-				if (in.weather) {
-					if (in.weather->get_sun_light().is_empty()) {
-						vis = 1.0f - 0.75f * Math::pow(in.weather->get_cloud_cover_at(pos), 3.4f);
-					} else {
-						vis = in.weather->get_sun_visibility_at(pos);
-					}
+				if (in.wx.valid) {
+					vis = in.wx.has_sun ? in.wx.sun_visibility_at(pos) : 1.0f - 0.75f * Math::pow(in.wx.cloud_cover_at(pos), 3.4f);
 				}
 				g = in.direct_normal * (MAX(normal.dot(in.sun_dir), 0.0f) * vis + DIFFUSE_SHARE * in.sun_dir.y);
 			}
@@ -848,11 +840,60 @@ void SnowCover3D::_slide() {
 	}
 }
 
-void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
-	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+// What the cells read from other nodes that cannot be read from a worker: the canopy closure (the weather
+// map's shelter) and the terrain climate's precipitation. Main thread, for rows [p_from, p_to). Both change
+// rarely: each update refreshes a sixteenth of the rows, and the cells sampled anew (a shift) at once.
+void SnowCover3D::_refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only) {
+	const int n = resolution;
+	const int nn = n * n;
+	const WeatherMap3D *wm = owner || !canopy_enabled ? nullptr : WeatherMap3D::get_active();
+	const TerrainDataMap3D *cm = get_climate_map_node();
+	const bool canopy = cell_canopy.size() == nn;
+	if (cm) {
+		if (cell_climate_precip.size() != nn) {
+			cell_climate_precip.resize(nn);
+			cell_climate_precip.fill(0.0f);
+			p_from_row = 0;
+			p_to_row = n;
+			p_only = nullptr;
+		}
+	} else {
+		cell_climate_precip.clear();
+	}
+	float *c = canopy ? cell_canopy.ptrw() : nullptr;
+	float *cp = cm ? cell_climate_precip.ptrw() : nullptr;
+	for (int z = p_from_row; z < p_to_row; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			if (p_only && !(*p_only)[i]) {
+				continue;
+			}
+			const Vector3 pos = _cell_center(x, z);
+			if (c) {
+				c[i] = wm ? CLAMP(wm->get_canopy_closure_at(pos), 0.0f, 1.0f) : 0.0f;
+			}
+			if (cp) {
+				cp[i] = cm->get_precipitation_at(pos);
+			}
+		}
+	}
+}
+
+// Main thread: the inputs (weather, sun, wind, Sx) for one update.
+void SnowCover3D::_update_begin(double p_weather_dt, bool p_blocking) {
 	_prepare_inputs(p_weather_dt, p_blocking);
+	inputs.weather_dt = p_weather_dt;
+	const int band = MAX(resolution / 16, 1);
+	const int from = int(update_count % uint64_t((resolution + band - 1) / band)) * band;
+	_refresh_cell_inputs(from, MIN(from + band, resolution), nullptr);
+}
+
+// The cells, slides, drift and cornices: any thread, nothing else touching the cells meanwhile.
+void SnowCover3D::_update_cells(bool p_parallel) {
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	// The rows write the fields in parallel through write[]: make each one unique first, or a copy held
-	// elsewhere (the weather map keeps the runoff) turns every write into a racing copy-on-write.
+	// elsewhere (the published copies, the weather map's runoff) turns every write into a racing
+	// copy-on-write.
 	cell_swe.ptrw();
 	cell_liquid.ptrw();
 	cell_density.ptrw();
@@ -864,14 +905,20 @@ void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
 	cell_crust_wet.ptrw();
 	cell_new_depth.ptrw();
 	cell_canopy_load.ptrw();
-	// The canopy can change under the square (a forest populated later): read it again now and then.
-	if (canopy_enabled && !owner && (update_count % 16) == 0) {
-		_sample_canopy();
+	cell_cornice_x.ptrw();
+	cell_cornice_z.ptrw();
+	cell_cornice_crack.ptrw();
+	if (p_parallel) {
+		WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &SnowCover3D::_update_row, (void *)nullptr, resolution, -1, true, String("SnowCover3D cells"));
+		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
+	} else {
+		// On a worker already: the rows in turn (a pool thread waiting on its own group could starve it).
+		for (int z = 0; z < resolution; z++) {
+			_update_row(uint32_t(z), nullptr);
+		}
 	}
-	WorkerThreadPool::GroupID task = WorkerThreadPool::get_singleton()->add_template_group_task(this, &SnowCover3D::_update_row, (void *)nullptr, resolution, -1, true, String("SnowCover3D cells"));
-	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(task);
 	// Sliding is slow next to a frame: a pass every slide_interval of weather time.
-	slide_accum += p_weather_dt;
+	slide_accum += inputs.weather_dt;
 	if (slide_enabled && slide_accum >= slide_interval) {
 		slide_accum = 0.0;
 		_slide();
@@ -885,19 +932,114 @@ void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
 	if (cornices_enabled) {
 		_grow_cornices(inputs.dt_h, last_wind);
 	}
+	update_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+}
+
+// Main thread, after the cells.
+void SnowCover3D::_update_end() {
 	// What reaches the ground under the pack (rain through it and melt) wets surfaces in place of the
 	// precipitation the weather map would put there. (Not the world tier's: the near square stands for it.)
 	if (WeatherMap3D *weather = owner ? nullptr : WeatherMap3D::get_active()) {
 		weather->set_surface_water_source_cells(get_instance_id(), cell_runoff, resolution, get_map_rect());
 	}
-	update_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	last_step_hours = inputs.dt_h;
 	last_drift = inputs.wind_factor;
 	update_count++;
 }
 
+void SnowCover3D::_update(double p_weather_dt, bool p_blocking) {
+	_update_begin(p_weather_dt, p_blocking);
+	_update_cells(true);
+	_update_end();
+}
+
+void SnowCover3D::_publish_cells() {
+	if (driven) {
+		return; // a climate bake: read by nobody until it is done
+	}
+	pub.swe = cell_swe;
+	pub.liquid = cell_liquid;
+	pub.density = cell_density;
+	pub.albedo = cell_albedo;
+	pub.runoff = cell_runoff;
+	pub.canopy_load = cell_canopy_load;
+	pub.new_depth = cell_new_depth;
+	pub.crust = cell_crust;
+	pub.crust_cycles = cell_crust_cycles;
+	pub.crust_burial = cell_crust_burial;
+	pub.crust_wet = cell_crust_wet;
+	pub.cornice_x = cell_cornice_x;
+	pub.cornice_z = cell_cornice_z;
+	pub.cornice_crack = cell_cornice_crack;
+}
+
+void SnowCover3D::_start_background(double p_weather_dt, bool p_world) {
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	_update_begin(p_weather_dt, false);
+	cover_task_world = p_world && world;
+	if (cover_task_world) {
+		world->_update_begin(world_dt, false);
+	}
+	cover_task = WorkerThreadPool::get_singleton()->add_template_task(this, &SnowCover3D::_background_task, (void *)nullptr, false, String("SnowCover3D update"));
+	main_usec = OS::get_singleton()->get_ticks_usec() - t0;
+}
+
+void SnowCover3D::_background_task(void *p_unused) {
+	_update_cells(false);
+	if (cover_task_world) {
+		// The world tier's turn: the square's state goes up first, then the world cells step (a cornice
+		// failing there drops its debris into the square too), then both maps' bytes.
+		_feed_world();
+		world->_update_cells(false);
+		world->_build_upload();
+	}
+	_build_upload();
+}
+
+bool SnowCover3D::_finish_background(bool p_wait) {
+	if (cover_task == WorkerThreadPool::INVALID_TASK_ID) {
+		return false;
+	}
+	if (!p_wait && !WorkerThreadPool::get_singleton()->is_task_completed(cover_task)) {
+		return false;
+	}
+	WorkerThreadPool::get_singleton()->wait_for_task_completion(cover_task);
+	cover_task = WorkerThreadPool::INVALID_TASK_ID;
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	_update_end();
+	if (cover_task_world) {
+		world->_update_end();
+		_emit_cornice_failures();
+		world->_apply_upload();
+		world->_publish_cells();
+		_publish_world_globals();
+	}
+	_apply_upload();
+	_publish_cells();
+	main_usec += OS::get_singleton()->get_ticks_usec() - t0;
+	return true;
+}
+
+void SnowCover3D::sync_update() {
+	_finish_background(true);
+}
+
+void SnowCover3D::set_background_updates(bool p_enabled) {
+	_finish_background(true);
+	background_updates = p_enabled;
+}
+
 void SnowCover3D::_upload() {
+	_build_upload();
+	_apply_upload();
+	_publish_cells();
+}
+
+// The textures' bytes: any thread.
+void SnowCover3D::_build_upload() {
 	const int n = resolution;
+	upload_snow.unref();
+	upload_catch.unref();
 	if (snow_image.is_null() || snow_image->get_width() != n) {
 		return;
 	}
@@ -914,7 +1056,7 @@ void SnowCover3D::_upload() {
 		w[i * 4 + 2] = Math::make_half_float(wet);
 		w[i * 4 + 3] = Math::make_half_float(cell_density[i] / 1000.0f);
 	}
-	snow_image->set_data(n, n, false, Image::FORMAT_RGBAH, bytes);
+	upload_snow = Image::create_from_data(n, n, false, Image::FORMAT_RGBAH, bytes);
 	// The catch map: the height of the surface the pack lies on, the canopy's load over its capacity, and
 	// the canopy closure. Materials leave what lies under an overhang bare and give tree crowns their load.
 	if (catch_image.is_valid() && catch_image->get_width() == n) {
@@ -929,7 +1071,21 @@ void SnowCover3D::_upload() {
 			cw[i * 4 + 2] = closure;
 			cw[i * 4 + 3] = 1.0f;
 		}
-		catch_image->set_data(n, n, false, Image::FORMAT_RGBAF, cb);
+		upload_catch = Image::create_from_data(n, n, false, Image::FORMAT_RGBAF, cb);
+	}
+}
+
+// Main thread: the bytes into the textures.
+void SnowCover3D::_apply_upload() {
+	const int n = resolution;
+	if (upload_snow.is_null() || upload_snow->get_width() != n || snow_image.is_null() || snow_image->get_width() != n) {
+		return;
+	}
+	snow_image = upload_snow;
+	upload_snow.unref();
+	if (upload_catch.is_valid() && catch_image.is_valid() && catch_image->get_width() == n) {
+		catch_image = upload_catch;
+		upload_catch.unref();
 		if (catch_texture.is_null()) {
 			catch_texture = ImageTexture::create_from_image(catch_image);
 		} else {
@@ -971,6 +1127,7 @@ void SnowCover3D::_publish_globals() {
 }
 
 void SnowCover3D::advance(float p_seconds) {
+	_finish_background(true);
 	if (cell_swe.size() != resolution * resolution) {
 		_allocate();
 	}
@@ -985,6 +1142,7 @@ void SnowCover3D::advance(float p_seconds) {
 }
 
 void SnowCover3D::advance_world(float p_seconds) {
+	_finish_background(true);
 	if (!world) {
 		return;
 	}
@@ -1149,7 +1307,7 @@ uint64_t SnowCover3D::get_cornice_failure_count() const {
 
 float SnowCover3D::get_cornice_crack_at(Vector3 p_position) const {
 	const SnowCover3D *c = world ? world : (cornices_enabled ? this : nullptr);
-	if (!c || c->cell_cornice_crack.size() != c->resolution * c->resolution) {
+	if (!c || c->pub.cornice_crack.size() != c->resolution * c->resolution) {
 		return 0.0f;
 	}
 	const float cs = c->_cell_size();
@@ -1158,7 +1316,7 @@ float SnowCover3D::get_cornice_crack_at(Vector3 p_position) const {
 	if (x < 0 || z < 0 || x >= c->resolution || z >= c->resolution) {
 		return 0.0f;
 	}
-	return c->cell_cornice_crack[z * c->resolution + x];
+	return c->pub.cornice_crack[z * c->resolution + x];
 }
 
 void SnowCover3D::set_cornice_failure_enabled(bool p_enabled) {
@@ -1665,6 +1823,7 @@ void SnowCover3D::_make_world() {
 }
 
 void SnowCover3D::_free_world() {
+	_finish_background(true);
 	if (!world) {
 		return;
 	}
@@ -1689,6 +1848,7 @@ void SnowCover3D::_publish_world_globals() {
 }
 
 Error SnowCover3D::bake_climate(Rect2 p_rect, int p_resolution) {
+	_finish_background(true);
 	ERR_FAIL_COND_V_MSG(climate.is_null(), ERR_UNCONFIGURED, "SnowCover3D: set a climate to bake.");
 	ERR_FAIL_COND_V(p_rect.size.x <= 0.0f || p_rect.size.y <= 0.0f || p_resolution < 4, ERR_INVALID_PARAMETER);
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
@@ -1736,7 +1896,7 @@ float SnowCover3D::canopy_capacity(float p_closure, float p_snow_density) {
 }
 
 float SnowCover3D::get_canopy_load_at(Vector3 p_position) const {
-	return cell_canopy_load.size() == resolution * resolution ? MAX(_sample(cell_canopy_load, Vector2(p_position.x, p_position.z)), 0.0f) : 0.0f;
+	return pub.canopy_load.size() == resolution * resolution ? MAX(_sample(pub.canopy_load, Vector2(p_position.x, p_position.z)), 0.0f) : 0.0f;
 }
 
 float SnowCover3D::get_canopy_capacity_at(Vector3 p_position) const {
@@ -1753,7 +1913,7 @@ float SnowCover3D::get_world_depth_at(Vector3 p_position) const {
 
 Vector2 SnowCover3D::get_cornice_at(Vector3 p_position) const {
 	const SnowCover3D *c = world ? world : (cornices_enabled ? this : nullptr);
-	if (!c || c->cell_cornice_x.size() != c->resolution * c->resolution) {
+	if (!c || c->pub.cornice_x.size() != c->resolution * c->resolution) {
 		return Vector2();
 	}
 	const float cs = c->_cell_size();
@@ -1763,7 +1923,7 @@ Vector2 SnowCover3D::get_cornice_at(Vector3 p_position) const {
 		return Vector2();
 	}
 	const int i = z * c->resolution + x;
-	return Vector2(c->cell_cornice_x[i], c->cell_cornice_z[i]);
+	return Vector2(c->pub.cornice_x[i], c->pub.cornice_z[i]);
 }
 
 Ref<Texture2D> SnowCover3D::get_world_texture() const {
@@ -1771,6 +1931,7 @@ Ref<Texture2D> SnowCover3D::get_world_texture() const {
 }
 
 void SnowCover3D::clear() {
+	_finish_background(true);
 	cell_swe.fill(0.0f);
 	cell_liquid.fill(0.0f);
 	cell_density.fill(100.0f);
@@ -1783,6 +1944,7 @@ void SnowCover3D::clear() {
 }
 
 void SnowCover3D::add_snow(float p_swe_mm, float p_density) {
+	_finish_background(true);
 	if (cell_swe.size() != resolution * resolution) {
 		_allocate();
 		_follow(_follow_position());
@@ -1806,6 +1968,7 @@ void SnowCover3D::add_snow(float p_swe_mm, float p_density) {
 }
 
 void SnowCover3D::refresh_heights() {
+	_finish_background(true);
 	if (cell_ground.size() == resolution * resolution && origin_valid) {
 		_finish_sx(true);
 		_sample_heights(0, resolution);
@@ -1858,17 +2021,18 @@ float SnowCover3D::get_swe_at(Vector3 p_position) const {
 	if (!get_map_rect().has_point(Vector2(p_position.x, p_position.z))) {
 		return 0.0f; // no world tier: no snow known outside the square (as the materials read it), not its edge
 	}
-	return MAX(_sample(cell_swe, Vector2(p_position.x, p_position.z)), 0.0f);
+	return MAX(_sample(pub.swe, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
 float SnowCover3D::get_density_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_density_at(p_position);
 	}
-	return _sample(cell_density, Vector2(p_position.x, p_position.z));
+	return _sample(pub.density, Vector2(p_position.x, p_position.z));
 }
 
 void SnowCover3D::add_crust(float p_thickness, float p_cycles) {
+	_finish_background(true);
 	if (cell_crust.size() != cell_swe.size()) {
 		return;
 	}
@@ -1880,51 +2044,52 @@ void SnowCover3D::add_crust(float p_thickness, float p_cycles) {
 		cell_crust_wet.write[i] = 0.0f;
 	}
 	update_count++;
+	_publish_cells();
 }
 
 float SnowCover3D::get_crust_thickness_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_crust_thickness_at(p_position);
 	}
-	return cell_crust.is_empty() ? 0.0f : _sample(cell_crust, Vector2(p_position.x, p_position.z));
+	return pub.crust.is_empty() ? 0.0f : _sample(pub.crust, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_crust_depth_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_crust_depth_at(p_position);
 	}
-	if (cell_crust.is_empty()) {
+	if (pub.crust.is_empty()) {
 		return 0.0f;
 	}
-	return _sample(cell_crust_burial, Vector2(p_position.x, p_position.z));
+	return _sample(pub.crust_burial, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_crust_cycles_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_crust_cycles_at(p_position);
 	}
-	return cell_crust.is_empty() ? 0.0f : _sample(cell_crust_cycles, Vector2(p_position.x, p_position.z));
+	return pub.crust.is_empty() ? 0.0f : _sample(pub.crust_cycles, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_crust_strength_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_crust_strength_at(p_position);
 	}
-	if (cell_crust.is_empty()) {
+	if (pub.crust.is_empty()) {
 		return 0.0f;
 	}
 	const Vector2 p(p_position.x, p_position.z);
-	if (_sample(cell_crust_wet, p) > 0.5f) {
+	if (_sample(pub.crust_wet, p) > 0.5f) {
 		return 0.0f; // wet: it is slush until it freezes again
 	}
-	return crust_strength(_sample(cell_crust_cycles, p), _sample(cell_crust, p));
+	return crust_strength(_sample(pub.crust_cycles, p), _sample(pub.crust, p));
 }
 
 float SnowCover3D::get_albedo_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_albedo_at(p_position);
 	}
-	return _sample(cell_albedo, Vector2(p_position.x, p_position.z));
+	return _sample(pub.albedo, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_wetness_at(Vector3 p_position) const {
@@ -1932,14 +2097,14 @@ float SnowCover3D::get_wetness_at(Vector3 p_position) const {
 		return world->get_wetness_at(p_position);
 	}
 	const Vector2 p(p_position.x, p_position.z);
-	const float swe = _sample(cell_swe, p);
-	const float liq = _sample(cell_liquid, p);
+	const float swe = _sample(pub.swe, p);
+	const float liq = _sample(pub.liquid, p);
 	const float hold = liquid_capacity * (swe - liq);
 	return hold > 1e-4f ? CLAMP(liq / hold, 0.0f, 1.0f) : 0.0f;
 }
 
 float SnowCover3D::get_runoff_at(Vector3 p_position) const {
-	return MAX(_sample(cell_runoff, Vector2(p_position.x, p_position.z)), 0.0f);
+	return MAX(_sample(pub.runoff, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
 float SnowCover3D::get_air_temperature_at(Vector3 p_position) const {
@@ -1958,7 +2123,7 @@ float SnowCover3D::get_snowfall_rate_at(Vector3 p_position) const {
 }
 
 float SnowCover3D::get_new_snow_at(Vector3 p_position) const {
-	return _sample(cell_new_depth, Vector2(p_position.x, p_position.z));
+	return _sample(pub.new_depth, Vector2(p_position.x, p_position.z));
 }
 
 float SnowCover3D::get_ground_height_at(Vector3 p_position) const {
@@ -1968,11 +2133,11 @@ float SnowCover3D::get_ground_height_at(Vector3 p_position) const {
 float SnowCover3D::get_total_water() const {
 	const float cs = _cell_size();
 	double sum = 0.0;
-	for (int i = 0; i < cell_swe.size(); i++) {
-		sum += cell_swe[i];
+	for (int i = 0; i < pub.swe.size(); i++) {
+		sum += pub.swe[i];
 	}
-	for (int i = 0; i < cell_canopy_load.size(); i++) {
-		sum += cell_canopy_load[i];
+	for (int i = 0; i < pub.canopy_load.size(); i++) {
+		sum += pub.canopy_load[i];
 	}
 	return float(sum * cs * cs);
 }
@@ -2001,6 +2166,7 @@ void SnowCover3D::_notification(int p_what) {
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
+			_finish_background(true);
 			if (WeatherMap3D *weather = WeatherMap3D::get_active()) {
 				weather->clear_surface_water_source(this);
 			}
@@ -2015,8 +2181,33 @@ void SnowCover3D::_notification(int p_what) {
 			const WeatherMap3D *weather = WeatherMap3D::get_active();
 			const double scale = weather ? weather->get_time_scale() : time_scale;
 			update_accum += get_physics_process_delta_time();
+			if (background_updates) {
+				// An update in flight swaps in once it is done; the square follows and the next one starts
+				// only then (the step it takes is the time since the last one started, as before).
+				_finish_background(false);
+				if (is_updating()) {
+					break;
+				}
+				_follow(_follow_position());
+				if (update_accum >= 1.0 / MAX(update_rate, 0.01f)) {
+					bool world_turn = false;
+					if (world) {
+						world_accum += update_accum * scale;
+						if (++world_counter >= MAX(world_update_every, 1)) {
+							world_counter = 0;
+							world_dt = world_accum;
+							world_accum = 0.0;
+							world_turn = true;
+						}
+					}
+					_start_background(update_accum * scale, world_turn);
+					update_accum = 0.0;
+				}
+				break;
+			}
 			_follow(_follow_position());
 			if (update_accum >= 1.0 / MAX(update_rate, 0.01f)) {
+				const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 				_update(update_accum * scale, false);
 				if (world) {
 					world_accum += update_accum * scale;
@@ -2032,6 +2223,7 @@ void SnowCover3D::_notification(int p_what) {
 				}
 				update_accum = 0.0;
 				_upload();
+				main_usec = OS::get_singleton()->get_ticks_usec() - t0;
 			}
 		} break;
 	}
@@ -2183,6 +2375,7 @@ float SnowCover3D::get_orographic_factor_at(Vector3 p_position, float p_ref_heig
 }
 
 void SnowCover3D::set_climate(const Ref<SnowClimate> &p_climate) {
+	_finish_background(true);
 	climate = p_climate;
 	if (is_inside_tree()) {
 		_make_world();
@@ -2302,6 +2495,11 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_drift_factor"), &SnowCover3D::get_drift_factor);
 	ClassDB::bind_method(D_METHOD("get_total_water"), &SnowCover3D::get_total_water);
 	ClassDB::bind_method(D_METHOD("get_update_time_msec"), &SnowCover3D::get_update_time_msec);
+	ClassDB::bind_method(D_METHOD("get_main_thread_msec"), &SnowCover3D::get_main_thread_msec);
+	ClassDB::bind_method(D_METHOD("set_background_updates", "enabled"), &SnowCover3D::set_background_updates);
+	ClassDB::bind_method(D_METHOD("is_background_updates"), &SnowCover3D::is_background_updates);
+	ClassDB::bind_method(D_METHOD("is_updating"), &SnowCover3D::is_updating);
+	ClassDB::bind_method(D_METHOD("sync_update"), &SnowCover3D::sync_update);
 	ClassDB::bind_method(D_METHOD("get_snow_texture"), &SnowCover3D::get_snow_texture);
 	ClassDB::bind_method(D_METHOD("set_precipitation_gradient", "share"), &SnowCover3D::set_precipitation_gradient);
 	ClassDB::bind_method(D_METHOD("get_precipitation_gradient"), &SnowCover3D::get_precipitation_gradient);
@@ -2337,6 +2535,7 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "resolution", PROPERTY_HINT_RANGE, "4,2048,1"), "set_resolution", "get_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "follow_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_follow_target", "get_follow_target");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "update_rate", PROPERTY_HINT_RANGE, "0.01,60,0.01,suffix:Hz"), "set_update_rate", "get_update_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "background_updates"), "set_background_updates", "is_background_updates");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "height_source"), "set_height_source", "get_height_source");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ground_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_ground_collision_mask", "get_ground_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shelter_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_shelter_collision_mask", "get_shelter_collision_mask");
@@ -2383,6 +2582,10 @@ SnowCover3D::SnowCover3D() {
 }
 
 SnowCover3D::~SnowCover3D() {
+	if (cover_task != WorkerThreadPool::INVALID_TASK_ID) {
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(cover_task);
+		cover_task = WorkerThreadPool::INVALID_TASK_ID;
+	}
 	_finish_sx(true);
 	_free_world();
 	if (active == this) {

@@ -58,7 +58,7 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
   *Lake ripples: short wind waves and sun glitter on a lake, where the surface used to lie flat.*
 
-- **Raster reflections** (`raster_reflections` on PhysXWaterSurface3D and PhysXRiver3D): raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows.
+- **Raster reflections** (`raster_reflections` on PhysXWaterSurface3D and PhysXRiver3D): raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk.
 
   ![Raster sea toward the sun, before and with raster_reflections](media/water-reflections.jpg)
 

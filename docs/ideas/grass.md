@@ -232,6 +232,59 @@ and flowers place in 72 ms once. Frame time on the cloud CPU rasteriser, close v
 against 217 ms for the single field (+10%), 123,078 blades against 79,992. GPU timings wait for
 the PC. Media: grass-carpet.jpg (before above, after below), grass-carpet-pt.jpg.
 
+## Blade detail (stage 2.4)
+
+The wide meadow shot showed the carpet, not the plants on it: one flat green, wide single-triangle
+blades and a pale soil between them. What the published grass does about that:
+
+- **Colour at several scales.** Ghost of Tsushima varies colour per clump and over the field; Horizon
+  Zero Dawn and CryEngine (Kingdom Come: Deliverance 2) tint vegetation from a large-scale colour map.
+  GrassField3D now drifts each blade towards a yellower or a bluer green by two octaves of world noise
+  (about 9 m and 2 m) plus a per-blade term, with a value jitter of about 20%. `color_variation`
+  (default 0.5) scales it; 0 gives the old single colour.
+- **Thatch.** Real swards carry dead blades from the root, not only dry tips. A third of the
+  `dryness` fraction is now straw from the root.
+- **Monocot leaf detail.** A lighter midrib and faint parallel veins across the blade, faded out by
+  `fwidth` once a blade is under a few pixels wide, so far blades do not shimmer.
+- **Blade outline.** Edges stay nearly parallel and taper near the tip (width `1 - 0.9 t^2`) instead of a
+  linear wedge.
+- **Bench carpet.** The undercoat in `docs/bench/grass` is now two-segment blades, 2 cm wide at
+  640 /m² (was one triangle 4.5 cm wide at 320 /m²), over a darker soil tint: under a dense sward the
+  soil sits in the blades' shade, so it should read darker than the blades, not lighter.
+
+Cost on the CPU rasteriser (lavapipe, 1280x720, meadow with all species): 517 ms before, 610 ms after;
+almost all of it is the doubled undercoat. The shader changes alone are a few ALU ops per fragment.
+
+## Hiding the ground (stage 2.5)
+
+Paulo, 10 Nov: in KCD2 and Star Citizen's Nyx the floor is never seen through the vegetation; ours
+showed gaps. What the published work does is not more blades alone but making the ground the base
+of the grass:
+
+- Serious Sam 4 (Croteam, GDC 2019, "4 Million Acres"): blades are true geometry, "albedo colored
+  from the floor", the floor material matched to the grass, a per-blade ambient shadow on the floor,
+  and several density grids overlapped; a separate material set inside forests.
+- Ghost of Tsushima (GDC 2021): normals tilted outward keep the field full; far grass becomes
+  artist-authored textures.
+- Star Citizen Planet Tech v5: the terrain shader colours the ground from the vegetation that is not
+  loaded yet, so the ground already reads as grass before the blades appear; ground layers are
+  bedrock, soil, then surface items (leaves).
+
+What we built:
+
+- `get_ground_shader_code()` now gives `grass_turf()`: the sward's root colour (`ground_tint`),
+  tinted by the same colour patches as the blades (one shared function, so blade and floor agree
+  everywhere), streaks of matted blades along a slowly turning direction, and dark thatch from the
+  grass's `dryness` and `dry_color`. `grass_ground(world_pos, albedo)` keeps its signature and now
+  mixes the soil to that turf where grass grows. New globals: `grass_ground_dry`, `grass_ground_params`.
+- Bench: a third, very short and dense grid near the camera (`Turf`: 1600 /m², 3 to 7 cm, 5 m
+  radius), as Serious Sam 4 overlaps grids.
+
+Cost on the CPU rasteriser (1280x720 meadow): turf ground 610 to 595 ms (free, within noise); the
+near turf grid 595 to 1033 ms. The grid's real cost needs the GPU bench (about 125k extra
+one-triangle blades): on lavapipe every blade is CPU work. The ground alone removes the pale gaps;
+the grid fills the nearest metres.
+
 ## Outer band (no edge at the radius)
 
 Before: tiles were built out to `radius` and stopped, so the field ended in a hard line (the
@@ -240,7 +293,7 @@ GDC 2017) thin blades out per blade, not per tile, and colour the terrain like t
 field reads to the horizon.
 
 - Blades: from 60% of the radius to just inside it, each blade drops out at its own point in a
-  random order and shrinks to nothing (`fade_band` in the blade shader, set from the field's
+  set order and shrinks to nothing (`fade_band` in the blade shader, set from the field's
   centre each update). The last blade is gone before the outermost tiles end.
 - Ground: over the same band `grass_ground()` turns the ground under the grass to the blades'
   own colour seen from a distance (`grass_ground_far`: base to tip, some dry, darkened by the
@@ -248,6 +301,18 @@ field reads to the horizon.
   The band is a global (`grass_ground_fade`), published by the widest GrassField3D, so a near
   undercoat field does not pull it in.
 - Cost: one distance and a smoothstep per blade vertex; nothing on the CPU.
+
+
+### Even thinning (blue-noise ranks)
+
+A hash per blade gave white noise: as a level or the band thins the grass, survivors bunch into
+clumps with bare gaps. Which blades a coarser level keeps now comes from a 64 x 64 blue-noise
+rank mask (void and cluster, Ulichney 1993; built once at start, tens of milliseconds), turned or mirrored
+per 64-cell block so it does not repeat. Every threshold of such a mask keeps an even spread, so
+both the distance levels and the outer band (which drops blades in the order of their rank within
+the coarsest level, `INSTANCE_CUSTOM.w` integer part) thin evenly. An R2 dither (Roberts 2018) was
+tried first: even, but on the blade grid it shows diagonal rows. No cost per frame; the blade
+count per level is unchanged.
 
 ## References
 
