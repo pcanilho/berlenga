@@ -1368,6 +1368,17 @@
    "topic": "Placement"
   },
   {
+   "name": "Waterfall spray",
+   "settings": [
+    "PlantSpecies.spray_range"
+   ],
+   "note": "",
+   "what": "plants keep out of the soaked ground in a waterfall's spray zone, where only mosses grow.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
    "name": "Canopy shade",
    "settings": [
     "canopy_radius",
