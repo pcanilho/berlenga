@@ -123,6 +123,20 @@ private:
 	real_t strata_dip_direction = 0.0; // degrees clockwise from north, the way the layers go down
 	real_t strata_wobble = 12.0; // m, layer heights wander by this much
 	real_t strata_channel_area = 20000.0; // m^2, drainage from which the bed's rock counts (channel heads)
+
+	// Glaciers (docs/ideas/terrain-generation.md, "Glacial erosion"): ice from the shallow ice approximation erodes
+	// troughs, cirques and overdeepened basins; ice ages alternate with the rivers, and a last glaciation after them
+	// leaves its basins as lakes.
+	bool glacial_enabled = false;
+	real_t glacial_ela = 500.0; // m, equilibrium line altitude
+	real_t glacial_share = 0.5; // share of the run's time under ice
+	real_t glacial_final = 100000.0; // years of the last glaciation, after the rivers
+	real_t glacial_erosion = 1.0; // multiplier on K_g of Herman et al. 2015
+	real_t glacial_sliding = 1.0; // sliding speed over depth-averaged ice speed
+	real_t last_glacial_eroded = 0.0;
+	real_t last_glacial_ice_area = 0.0;
+	real_t last_glacial_msec = 0.0;
+	LocalVector<float> glacial_ice; // m, ice of the last glaciation at its end
 	real_t river_runoff = 1000.0; // mm/yr, without a climate_recipe
 	Ref<ClimateRecipe> climate_recipe; // rivers from rain and snowmelt (terrain_runoff.h)
 	int river_month = -1; // the month build_river_paths and get_rivers use, -1 the annual mean
@@ -228,6 +242,7 @@ private:
 	void _build_sea_mask(LocalVector<uint8_t> &r_sea) const;
 	void _shape_coast(const LocalVector<uint8_t> &p_sea);
 	void _make_lakes(const LocalVector<uint8_t> &p_sea);
+	void _basin_lakes(std::vector<uint8_t> &r_taken);
 	struct InflowPoint {
 		Vector2 position;
 		double area = 0.0; // m2
@@ -404,6 +419,22 @@ public:
 	real_t get_talus_angle() const { return talus_angle; }
 	void set_talus_reach(real_t p_value) { talus_reach = MAX(p_value, real_t(1.0)); }
 	real_t get_talus_reach() const { return talus_reach; }
+	void set_glacial_enabled(bool p_enable) { glacial_enabled = p_enable; }
+	bool is_glacial_enabled() const { return glacial_enabled; }
+	void set_glacial_ela(real_t p_value) { glacial_ela = p_value; }
+	real_t get_glacial_ela() const { return glacial_ela; }
+	void set_glacial_share(real_t p_value) { glacial_share = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
+	real_t get_glacial_share() const { return glacial_share; }
+	void set_glacial_final(real_t p_value) { glacial_final = MAX(p_value, real_t(0.0)); }
+	real_t get_glacial_final() const { return glacial_final; }
+	void set_glacial_erosion(real_t p_value) { glacial_erosion = MAX(p_value, real_t(0.0)); }
+	real_t get_glacial_erosion() const { return glacial_erosion; }
+	void set_glacial_sliding(real_t p_value) { glacial_sliding = MAX(p_value, real_t(0.0)); }
+	real_t get_glacial_sliding() const { return glacial_sliding; }
+	real_t get_last_glacial_eroded() const { return last_glacial_eroded; }
+	real_t get_last_glacial_ice_area() const { return last_glacial_ice_area; }
+	real_t get_last_glacial_msec() const { return last_glacial_msec; }
+	real_t get_glacier_depth(const Vector3 &p_global_position) const;
 	void set_strata_enabled(bool p_enable) { strata_enabled = p_enable; }
 	bool is_strata_enabled() const { return strata_enabled; }
 	void set_strata_channel_area(real_t p_value) { strata_channel_area = MAX(p_value, real_t(0.0)); }

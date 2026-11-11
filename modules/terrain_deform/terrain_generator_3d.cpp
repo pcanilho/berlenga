@@ -34,6 +34,7 @@
 #include "terrain_deformer_3d.h"
 #include "terrain_erosion_filter.h"
 #include "terrain_geology.h"
+#include "terrain_glacial.h"
 #include "terrain_hydraulic.h"
 #include "terrain_runoff.h"
 #include "terrain_stream_power.h"
@@ -379,10 +380,24 @@ bool TerrainGenerator3D::generate() {
 			}
 		}
 	};
+	// Ice ages between the rivers' steps (Cordonnier et al. 2023 alternate glacial and fluvial periods): every
+	// fourth step the glaciers of the ground as it stands erode for glacial_share of those steps' time.
+	TerrainGlacial glac;
+	glac.p.ela = glacial_ela;
+	glac.p.erodibility *= double(glacial_erosion);
+	glac.p.sliding = glacial_sliding;
+	const bool glacial = glacial_enabled && glacial_erosion > 0.0;
+	uint64_t glacial_usec = 0;
+	int glacial_count = 0;
 	auto strata_step = [&](int p_n, const double *p_h, const double *p_up) -> double {
 		strata_update(p_n, p_h, p_up);
 		const double c = sp.step();
 		strata_time += double(time_step);
+		if (glacial && glacial_share > 0.0 && ++glacial_count % 4 == 0) {
+			const uint64_t tg = OS::get_singleton()->get_ticks_usec();
+			glac.erode(sp.b.height, sp.p.nx, sp.p.ny, sp.p.dx, 4.0 * double(time_step) * double(glacial_share), sp.b.sediment, sp.b.outlet, sp.b.sill);
+			glacial_usec += OS::get_singleton()->get_ticks_usec() - tg;
+		}
 		return c;
 	};
 
@@ -537,6 +552,28 @@ bool TerrainGenerator3D::generate() {
 		sp.b.sill = sill_fine.is_empty() ? nullptr : sill_fine.ptr();
 		sp.b.sill_level = level_fine.is_empty() ? nullptr : level_fine.ptr();
 	}
+	// The last glaciation, after the rivers: its basins are left as they are (lakes, _basin_lakes), so the routing
+	// below runs on a filled copy.
+	glacial_ice.clear();
+	last_glacial_eroded = 0.0;
+	last_glacial_ice_area = 0.0;
+	LocalVector<double> unfilled;
+	if (glacial && glacial_final > 0.0) {
+		const uint64_t tg = OS::get_singleton()->get_ticks_usec();
+		glac.erode(h.ptr(), nx, ny, cell_size, double(glacial_final), sed.ptr(), sp.b.outlet, sill_fine.is_empty() ? nullptr : sill_fine.ptr());
+		glacial_usec += OS::get_singleton()->get_ticks_usec() - tg;
+		last_glacial_eroded = real_t(glac.eroded_max);
+		last_glacial_ice_area = real_t(glac.ice_area);
+		glacial_ice.resize(n);
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				glacial_ice[z * nx + x] = float(glac.ice_at(x, z, cell_size));
+			}
+		}
+		unfilled.resize(n);
+		memcpy(unfilled.ptr(), h.ptr(), sizeof(double) * n);
+	}
+	last_glacial_msec = real_t(double(glacial_usec) / 1000.0);
 	sill_cells.clear();
 	if (!sill_fine.is_empty()) {
 		sill_cells.resize(n);
@@ -563,6 +600,17 @@ bool TerrainGenerator3D::generate() {
 		}
 	}
 	sp.route();
+	if (!unfilled.is_empty()) {
+		// The basins stay: the receivers and areas come from the filled surface (water crosses the lakes), the
+		// ground and its sediment go back to what the ice left.
+		for (int i = 0; i < n; i++) {
+			const double fill = h[i] - unfilled[i];
+			if (fill > 0.0) {
+				sed[i] = MAX(sed[i] - fill, 0.0);
+				h[i] = unfilled[i];
+			}
+		}
+	}
 	sp.b.erodibility_scale = nullptr;
 	sp.b.talus_cell = nullptr;
 	sp.b.hard_depth = nullptr;
@@ -663,6 +711,7 @@ void TerrainGenerator3D::clear_result() {
 	alluvium_reach.clear();
 	inflow_cells.clear();
 	sill_cells.clear();
+	glacial_ice.clear();
 	lips.clear();
 	lip_buckets.clear();
 	uplift_field.clear();
@@ -2130,12 +2179,15 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 	for (int i = 0; i < n; i++) {
 		water_body[i] = p_sea[i] ? 1 : 0;
 	}
-	if (lake_count <= 0 && lakes.is_empty()) {
-		return;
-	}
 	std::vector<uint8_t> taken(n);
 	for (int i = 0; i < n; i++) {
 		taken[i] = p_sea[i];
+	}
+	if (!glacial_ice.is_empty()) {
+		_basin_lakes(taken);
+	}
+	if (lake_count <= 0 && lakes.is_empty()) {
+		return;
 	}
 	TerrainCoast::LakeParams lp;
 	lp.nx = nx;
@@ -2488,6 +2540,114 @@ Array TerrainGenerator3D::get_lake_results() const {
 		out.push_back(d);
 	}
 	return out;
+}
+
+// Lakes in the rock basins the last glaciation left (cirques, overdeepened troughs): every closed basin of the ground
+// at least lake_min_area in size and 1 m deep fills to its spill point (Priority-Flood, Barnes et al. 2014), and
+// spills over its lowest rim cell, which the rivers below already leave by.
+void TerrainGenerator3D::_basin_lakes(std::vector<uint8_t> &r_taken) {
+	const int n = nx * ny;
+	std::vector<float> fill(heights.ptr(), heights.ptr() + n);
+	std::vector<uint8_t> closed(n, 0);
+	typedef std::pair<float, int32_t> Item;
+	std::priority_queue<Item, std::vector<Item>, std::greater<Item>> heap;
+	for (int i = 0; i < n; i++) {
+		if (receivers[i] == i || r_taken[i]) {
+			closed[i] = 1;
+			heap.push(Item(fill[i], i));
+		}
+	}
+	static const int DX[8] = { -1, 0, 1, -1, 1, -1, 0, 1 };
+	static const int DZ[8] = { -1, -1, -1, 0, 0, 1, 1, 1 };
+	while (!heap.empty()) {
+		const Item it = heap.top();
+		heap.pop();
+		const int32_t c = it.second;
+		const int x = c % nx, z = c / nx;
+		for (int k = 0; k < 8; k++) {
+			const int xx = x + DX[k], zz = z + DZ[k];
+			if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+				continue;
+			}
+			const int j = zz * nx + xx;
+			if (closed[j]) {
+				continue;
+			}
+			closed[j] = 1;
+			fill[j] = MAX(fill[j], fill[c]);
+			heap.push(Item(fill[j], j));
+		}
+	}
+	std::vector<int32_t> comp(n, -1);
+	std::vector<int32_t> cells;
+	for (int s0 = 0; s0 < n; s0++) {
+		if (comp[s0] >= 0 || r_taken[s0] || fill[s0] - heights[s0] <= 0.01f) {
+			continue;
+		}
+		cells.clear();
+		cells.push_back(s0);
+		comp[s0] = s0;
+		float deepest = 0.0f;
+		int32_t bottom = s0;
+		for (size_t q = 0; q < cells.size(); q++) {
+			const int32_t c = cells[q];
+			const float d = fill[c] - heights[c];
+			if (d > deepest) {
+				deepest = d;
+				bottom = c;
+			}
+			const int x = c % nx, z = c / nx;
+			for (int k = 0; k < 8; k++) {
+				const int xx = x + DX[k], zz = z + DZ[k];
+				if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+					continue;
+				}
+				const int j = zz * nx + xx;
+				if (comp[j] < 0 && !r_taken[j] && fill[j] - heights[j] > 0.01f) {
+					comp[j] = s0;
+					cells.push_back(j);
+				}
+			}
+		}
+		if (deepest < 1.0f || double(cells.size()) * cell_size * cell_size < double(lake_min_area)) {
+			continue;
+		}
+		// Out of the basin down the receivers (laid on the filled surface): the first cell outside is the sill.
+		int32_t outlet = bottom;
+		for (int guard = 0; guard < n && comp[outlet] == s0 && receivers[outlet] != outlet; guard++) {
+			outlet = receivers[outlet];
+		}
+		if (comp[outlet] == s0) {
+			continue;
+		}
+		const int k = int(lake_info.size());
+		LakeInfo info;
+		info.level = fill[bottom];
+		info.bed = heights[bottom];
+		info.outlet = outlet;
+		info.dam = outlet;
+		info.catchment = channel_area[outlet];
+		info.cells = int(cells.size());
+		info.lo = Vector2i(nx, ny);
+		info.hi = Vector2i(-1, -1);
+		for (int32_t c : cells) {
+			water_body[c] = 2 + k;
+			r_taken[c] = 1;
+			const Vector2i p(c % nx, c / nx);
+			info.lo = info.lo.min(p);
+			info.hi = info.hi.max(p);
+		}
+		lake_info.push_back(info);
+	}
+}
+
+real_t TerrainGenerator3D::get_glacier_depth(const Vector3 &p_global_position) const {
+	if (nx <= 0 || glacial_ice.size() != uint32_t(nx * ny)) {
+		return 0.0;
+	}
+	const int x = CLAMP(int(Math::round((p_global_position.x - result_rect.position.x) / result_cell)), 0, nx - 1);
+	const int z = CLAMP(int(Math::round((p_global_position.z - result_rect.position.y) / result_cell)), 0, ny - 1);
+	return glacial_ice[z * nx + x];
 }
 
 // Height of the water surface over a point (the sea's or a lake's), NaN on dry ground or outside.
@@ -3062,6 +3222,22 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_rock_exposure", "global_position"), &TerrainGenerator3D::get_rock_exposure);
 	ClassDB::bind_method(D_METHOD("get_talus", "global_position"), &TerrainGenerator3D::get_talus);
 	ClassDB::bind_method(D_METHOD("get_geology_at", "global_position"), &TerrainGenerator3D::get_geology_at);
+	ClassDB::bind_method(D_METHOD("set_glacial_enabled", "value"), &TerrainGenerator3D::set_glacial_enabled);
+	ClassDB::bind_method(D_METHOD("is_glacial_enabled"), &TerrainGenerator3D::is_glacial_enabled);
+	ClassDB::bind_method(D_METHOD("set_glacial_ela", "value"), &TerrainGenerator3D::set_glacial_ela);
+	ClassDB::bind_method(D_METHOD("get_glacial_ela"), &TerrainGenerator3D::get_glacial_ela);
+	ClassDB::bind_method(D_METHOD("set_glacial_share", "value"), &TerrainGenerator3D::set_glacial_share);
+	ClassDB::bind_method(D_METHOD("get_glacial_share"), &TerrainGenerator3D::get_glacial_share);
+	ClassDB::bind_method(D_METHOD("set_glacial_final", "value"), &TerrainGenerator3D::set_glacial_final);
+	ClassDB::bind_method(D_METHOD("get_glacial_final"), &TerrainGenerator3D::get_glacial_final);
+	ClassDB::bind_method(D_METHOD("set_glacial_erosion", "value"), &TerrainGenerator3D::set_glacial_erosion);
+	ClassDB::bind_method(D_METHOD("get_glacial_erosion"), &TerrainGenerator3D::get_glacial_erosion);
+	ClassDB::bind_method(D_METHOD("set_glacial_sliding", "value"), &TerrainGenerator3D::set_glacial_sliding);
+	ClassDB::bind_method(D_METHOD("get_glacial_sliding"), &TerrainGenerator3D::get_glacial_sliding);
+	ClassDB::bind_method(D_METHOD("get_last_glacial_eroded"), &TerrainGenerator3D::get_last_glacial_eroded);
+	ClassDB::bind_method(D_METHOD("get_last_glacial_ice_area"), &TerrainGenerator3D::get_last_glacial_ice_area);
+	ClassDB::bind_method(D_METHOD("get_last_glacial_msec"), &TerrainGenerator3D::get_last_glacial_msec);
+	ClassDB::bind_method(D_METHOD("get_glacier_depth", "global_position"), &TerrainGenerator3D::get_glacier_depth);
 	ClassDB::bind_method(D_METHOD("set_strata_enabled", "value"), &TerrainGenerator3D::set_strata_enabled);
 	ClassDB::bind_method(D_METHOD("is_strata_enabled"), &TerrainGenerator3D::is_strata_enabled);
 	ClassDB::bind_method(D_METHOD("set_strata_spacing", "value"), &TerrainGenerator3D::set_strata_spacing);
@@ -3250,6 +3426,14 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_dip_direction", PROPERTY_HINT_RANGE, "0,360,0.1,degrees"), "set_strata_dip_direction", "get_strata_dip_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_channel_area", PROPERTY_HINT_RANGE, "0,1000000,1,or_greater,exp,suffix:m²"), "set_strata_channel_area", "get_strata_channel_area");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strata_wobble", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m"), "set_strata_wobble", "get_strata_wobble");
+
+	ADD_GROUP("Glacial", "glacial_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "glacial_enabled"), "set_glacial_enabled", "is_glacial_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_ela", PROPERTY_HINT_RANGE, "-1000,5000,1,or_greater,or_less,suffix:m"), "set_glacial_ela", "get_glacial_ela");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_share", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_glacial_share", "get_glacial_share");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_final", PROPERTY_HINT_RANGE, "0,1000000,100,or_greater,suffix:yr"), "set_glacial_final", "get_glacial_final");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_erosion", PROPERTY_HINT_RANGE, "0,100,0.01,or_greater,exp"), "set_glacial_erosion", "get_glacial_erosion");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_sliding", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_glacial_sliding", "get_glacial_sliding");
 
 	ADD_GROUP("Coast", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_edges", PROPERTY_HINT_FLAGS, "-X,+X,-Z,+Z"), "set_ocean_edges", "get_ocean_edges");

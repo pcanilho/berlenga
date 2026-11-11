@@ -221,6 +221,7 @@ func _generate() -> void:
 				var funnel := 1.0 - float(args.get("funnel", "0.5")) * (1.0 - smoothstep(0.0, 1500.0, absf(xw)))
 				var s := lerpf(0.12, 0.02, floor_w) * float(args.get("floor-uplift", "1")) * (1.0 - north) + 0.9 * north * funnel
 				up.set_pixel(x, y, Color(s, 0, 0))
+	if layout != "range" and not args.has("no-lake"):
 		lake_marker = Node3D.new()
 		lake_marker.name = "HighLake"
 		lake_marker.position = Vector3(float(args.get("lake-x", "0")), 0, float(args.get("lake-z", "-1300")))
@@ -248,6 +249,13 @@ func _generate() -> void:
 	gen.detail_octaves = int(args.get("gdetail", "6" if args.get("mesh", "landscape") == "landscape" else "4"))
 	gen.tile_erosion_enabled = args.has("tiles")
 	gen.deposition = float(args.get("deposition", "0"))
+	if args.has("glacial"):
+		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
+		gen.glacial_enabled = true
+		gen.glacial_ela = float(args.get("ela", "500"))
+		gen.glacial_share = float(args.get("glacial-share", "0.5"))
+		gen.glacial_final = float(args.get("glacial-final", "100000"))
+		gen.glacial_erosion = float(args.get("glacial-erosion", "1"))
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
 	if args.has("steps"):
@@ -260,6 +268,7 @@ func _generate() -> void:
 	if lake_marker != null:
 		var lp: Array[NodePath] = [gen.get_path_to(lake_marker)]
 		gen.lakes = lp
+	if layout != "range":
 		var markers: Array[NodePath] = []
 		if args.has("inflow"):
 			# The main river's catchment reaches past the map: that land drains in at --inflow-at: edge (the north
@@ -331,6 +340,64 @@ func _generate() -> void:
 			_log("high lake marker %.0f m up the river from the %.0f m fall at %s" % [run, tall["height"], tall["top"]])
 			gen.generate()
 	_log("generate %d ms, grid %s, last change %.3f m" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change()])
+	if gen.glacial_enabled:
+		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded()])
+		for l in gen.get_lake_results():
+			_log("  lake level %.0f m, depth %.0f m, %.1f ha, catchment %.2f km2 at %s" % [l["level"], l["depth"], l["area"] / 1e4, l["catchment"] / 1e6, l["center"]])
+	if args.has("dump-heights"):
+		var hb := PackedFloat32Array()
+		for zi in 257:
+			for xi in 257:
+				hb.append(gen.get_base_height(Vector3(-2048 + xi * 16, 0, -2048 + zi * 16)))
+		var fa := FileAccess.open(args["dump-heights"], FileAccess.WRITE)
+		fa.store_buffer(hb.to_byte_array())
+		fa.close()
+		get_tree().quit()
+		return
+	if args.has("groove-probe"):
+		var img := Image.create(1400, 500, false, Image.FORMAT_RGB8)
+		for half in 2:
+			for j in 250:
+				for i in 700:
+					var q := Vector3(-1400 + i * 4, 0, 500 + j * 4)
+					var hx: float
+					var hz: float
+					if half == 0:
+						hx = gen.get_base_height(q + Vector3(2, 0, 0)) - gen.get_base_height(q - Vector3(2, 0, 0))
+						hz = gen.get_base_height(q + Vector3(0, 0, 2)) - gen.get_base_height(q - Vector3(0, 0, 2))
+					else:
+						hx = gen.get_height(q + Vector3(2, 0, 0)) - gen.get_height(q - Vector3(2, 0, 0))
+						hz = gen.get_height(q + Vector3(0, 0, 2)) - gen.get_height(q - Vector3(0, 0, 2))
+					var n := Vector3(-hx / 4.0, 1.0, -hz / 4.0).normalized()
+					var l := clampf(n.dot(Vector3(-0.5, 0.7, -0.5).normalized()), 0, 1)
+					img.set_pixel(i + half * 700, j * 2, Color(l, l, l))
+					img.set_pixel(i + half * 700, j * 2 + 1, Color(l, l, l))
+		img.save_png(args["groove-probe"])
+		var rough := 0
+		var rmax := 0.0
+		var nalluv := 0
+		for zi in range(1, 255):
+			for xi in range(1, 255):
+				var q := Vector3(-2048 + xi * 16, 0, -2048 + zi * 16)
+				if gen.get_sediment_depth(q) < 1.0:
+					continue
+				nalluv += 1
+				var c := gen.get_base_height(q)
+				var lx := gen.get_base_height(q + Vector3(16, 0, 0)) + gen.get_base_height(q - Vector3(16, 0, 0)) - 2 * c
+				var lz := gen.get_base_height(q + Vector3(0, 0, 16)) + gen.get_base_height(q - Vector3(0, 0, 16)) - 2 * c
+				var m := maxf(absf(lx), absf(lz))
+				rmax = maxf(rmax, m)
+				if m > 4.0:
+					rough += 1
+		print("ROUGH alluvium cells %d, one-cell bumps over 4 m %d, largest %.1f m" % [nalluv, rough, rmax])
+		for z in range(640, 900, 16):
+			var row := PackedStringArray()
+			for x in range(-160, 176, 16):
+				var q := Vector3(x, 0, z)
+				row.append("%5.1f/%3.0f" % [gen.get_base_height(q), gen.get_sediment_depth(q)])
+			print("z%4d " % z, " ".join(row))
+		get_tree().quit()
+		return
 	if args.has("profile"):
 		# Heights down the middle of the valley and across it, for laying out the floor.
 		var down := PackedStringArray()
