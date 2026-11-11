@@ -3615,6 +3615,9 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, f.water_max * 0.3f);
 		}
 		sp->set_visibility_range(f.visibility);
+		if (f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS) {
+			sp->set_rule_range(PlantSpecies::RULE_SPRAY, Vector2(0.0f, 1.0f)); // Mosses take a fall's spray zone.
+		}
 		// Far away the ground takes the plant's colour (VegetationField3D's vegetation_far_map):
 		// the leaves, a little darker for the shade inside the plant, hiding more ground the
 		// taller the plant. Litter and twigs are the ground's own (forest_floor()).

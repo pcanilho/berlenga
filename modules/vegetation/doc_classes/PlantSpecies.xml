@@ -190,6 +190,12 @@
 		<member name="sunlight_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 2000)">
 			Annual mean shortwave radiation at the ground in W/m², with slope, aspect and horizons: sun-loving species on south-facing slopes, shade-tolerant ones on north-facing. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
+		<member name="spray_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.15">
+			Soft edge of [member spray_range].
+		</member>
+		<member name="spray_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 0.5)">
+			Waterfall spray potential (0 to 1, [method TerrainDataMap3D.get_spray_at]) where the species grows. By default no plant grows in a fall's soaked zone, where only mosses and wet rock hold; mosses from [method PlantGenerator.make_floor] take [code]Vector2(0, 1)[/code]. Ignored when the map has no geology.
+		</member>
 		<member name="talus_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member talus_range].
 		</member>
@@ -273,7 +279,10 @@
 		<constant name="RULE_CONIFER" value="15" enum="Rule">
 			Share of the canopy overhead that is needle-leaved, [code]0[/code] to [code]1[/code].
 		</constant>
-		<constant name="RULE_MAX" value="16" enum="Rule">
+		<constant name="RULE_SPRAY" value="16" enum="Rule">
+			Waterfall spray potential, [code]0[/code] to [code]1[/code] ([method TerrainDataMap3D.get_spray_at]).
+		</constant>
+		<constant name="RULE_MAX" value="17" enum="Rule">
 			Number of rules.
 		</constant>
 	</constants>

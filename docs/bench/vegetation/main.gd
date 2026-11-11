@@ -45,6 +45,9 @@ class Geology extends Node3D:
 		if p.x > 40.0:
 			return Color(0.15, 0.4, 0.0, 0.0)
 		return Color(1.2, 0.0, 0.0, 0.0)
+	# A waterfall's spray zone: soaked within 15 m of (-40, -40), drying out to 25 m.
+	func get_spray_potential(p: Vector3) -> float:
+		return 1.0 - smoothstep(15.0, 25.0, Vector2(p.x, p.z).distance_to(Vector2(-40, -40)))
 
 static func height(x: float, z: float) -> float:
 	var pit := -0.8 * exp(-(x * x + (z - 40.0) * (z - 40.0)) / 30.0)
@@ -293,6 +296,12 @@ func _checks() -> void:
 			west += 1
 	_check("geology: map has it", dm.has_geology() and is_equal_approx(dm.get_rock_at(Vector3(100, 0, 0)), 1.0), dm.get_rock_at(Vector3(100, 0, 0)))
 	_check("geology: no tree on thin soil or bare rock", on_rock == 0 and west > 10, [on_rock, west])
+	var wet := 0
+	for s in 2:
+		for p in field.get_placements(s):
+			if dm.get_spray_at(p) > 0.65:
+				wet += 1
+	_check("spray: no tree or bush in a fall's wet zone", wet == 0 and dm.get_spray_at(Vector3(-40, 0, -40)) > 0.95 and field.get_placements(0).size() > 50, [wet, dm.get_spray_at(Vector3(-40, 0, -40)), field.get_placements(0).size()])
 	dm.geology_source = NodePath()
 	dm.bake()
 	field.populate()
