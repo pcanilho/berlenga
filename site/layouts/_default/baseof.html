@@ -9,6 +9,8 @@
 <meta property="og:title" content="{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} · {{ site.Title }}{{ end }}">
 <meta property="og:description" content="{{ site.Params.description }}">
 <meta property="og:image" content="{{ "media/many-lights.jpg" | absURL }}">
+<meta name="twitter:card" content="summary_large_image">
+<meta property="og:type" content="website">
 <script>
 (function(){try{var t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}})();
 </script>
