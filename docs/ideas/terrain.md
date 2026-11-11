@@ -254,6 +254,47 @@ Limits: one region re-upload per apply (authoring and occasional events, not per
 the Terrain3D capture under path tracing may keep the old ground until the camera moves (the
 capture is keyed on camera and uniforms, not on texture contents); to check on the PC.
 
+## Landscape3D: staged build (Paulo's pick, 11 Nov)
+
+Paulo picked B ("own terrain mesh with LOD") on 11 Nov, after the showcase ground turned out to be one 4 m
+mesh that looks low-poly up close. What the tracer already gives (render_raytracing.cpp, read 11 Nov):
+
+- A static mesh surface gets one BLAS, built on first use and kept in the surface cache while the mesh lives
+  (`process_surface`); nothing is refit while the camera moves. Godot mesh LODs get one BLAS per (surface,
+  level) with a 120-frame TTL (`process_surface_lod`, `rendering/pathtracing/mesh_lod`).
+- Persistent instance slots (`rendering/pathtracing/persistent_instances`) rewrite an instance's TLAS entry
+  only when its base or transform changes.
+
+So a terrain made of plain static chunk meshes, where an LOD switch swaps the instance's mesh, already gets
+"BLAS built once, swapped on LOD change" with no tracer change. Godot's own mesh LODs are not used: they are
+picked per instance by raster with its own error metric and leave cracks between neighbours.
+
+Stage 1 (now): `Landscape3D` (modules/terrain_deform), a Node3D that draws a heightfield as chunks.
+
+- **Height source.** A `TerrainGenerator3D` by node path (`sample_heights`, the final ground with its
+  detail filter) or a `FORMAT_RF` image plus origin. Default 1 m spacing (the bench ground is 4 m).
+- **Chunks.** 64 x 64 quads (64 m at 1 m). Each chunk keeps its 65 x 65 heights plus normals from the full
+  grid (central differences at 1 m), so coarse levels keep fine-scale shading.
+- **LOD chain.** Level l samples every 2^l vertex (64, 32, 16, 8, 4 quads a side). Each level's geometric
+  error is the largest height gap between it and level 0 inside the chunk, measured once at build.
+- **Choice.** Screen error = error x (viewport height / (2 tan(fov / 2))) / distance to the chunk's box,
+  in pixels; the coarsest level under `lod_error` (default 1 px) wins. A chunk goes coarser only once the
+  error is under 0.7 x the limit (hysteresis), so it does not flip at a boundary. Distance to the box, not
+  view direction: chunks behind the camera keep their level, so shadows and reflections see the same ground.
+  Then neighbours are restricted to one level apart (finer wins).
+- **Stitching.** Where a neighbour is one level coarser, the edge drops its odd vertices (one fan triangle
+  per two edge quads), so edges are watertight with no skirts. Meshes per (chunk, level, edge mask) are made
+  when first used and freed after a while unused, so only the few masks in use cost memory and a BLAS.
+- **Drawing.** One RenderingServer instance per chunk (no scene nodes), the node's material, shadows on.
+- **No toggle needed:** nothing changes for a project that does not add the node.
+
+Stage 2: PhysX collision tiles from the same heights (128 m `PxHeightField` with per-cell materials,
+`modifySamples` for edits). Stage 3: far field proxy per region and streaming on worker threads. Stage 4:
+`TerrainDeformer3D` writes into it (brush layers re-bake touched chunks only).
+
+Bench: `docs/bench/landscape_lod` (checks: watertight edges at every mask, levels one apart, no rebuilds
+while the camera only turns, build ms), and the landscape scene's low shore view in raster and path traced.
+
 ## Open questions
 
 - Region and chunk sizes against the partitioned TLAS cell (128 m columns in Valence, 1024 m

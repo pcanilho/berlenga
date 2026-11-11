@@ -1646,12 +1646,12 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 	lp.max_cells = MAX(n / 4, 16);
 	std::vector<float> before(n);
 	LocalVector<Vector2i> sites;
-	auto try_site = [&](int32_t p_site, real_t p_depth) -> bool {
+	auto try_site = [&](int32_t p_site, real_t p_depth, const char **r_why = nullptr) -> bool {
 		lp.dam_height = p_depth;
 		lp.dam_half_width = MAX(10.0 * p_depth, 3.0 * cell_size);
 		memcpy(before.data(), heights.ptr(), sizeof(float) * n);
 		TerrainCoast::Lake lake;
-		if (!TerrainCoast::make_lake(lp, p_site, receivers.ptr(), channel_area.ptr(), taken.data(), heights.ptr(), lake)) {
+		if (!TerrainCoast::make_lake(lp, p_site, receivers.ptr(), channel_area.ptr(), taken.data(), heights.ptr(), lake, r_why)) {
 			return false;
 		}
 		const int k = int(lake_info.size());
@@ -1689,6 +1689,7 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 	for (int m = 0; m < lakes.size(); m++) {
 		Node3D *marker = Object::cast_to<Node3D>(get_node_or_null(lakes[m]));
 		if (!marker) {
+			WARN_PRINT(vformat("TerrainGenerator3D: lake marker %s is not a Node3D in the tree; no lake made.", String(lakes[m])));
 			continue;
 		}
 		const Vector3 p = marker->get_global_position();
@@ -1712,8 +1713,17 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 				}
 			}
 		}
-		if (best >= 0) {
-			try_site(best, marker->has_meta("depth") ? real_t(marker->get_meta("depth")) : lake_depth);
+		const real_t depth = marker->has_meta("depth") ? real_t(marker->get_meta("depth")) : lake_depth;
+		const char *why = nullptr;
+		if (cx < 0 || cz < 0 || cx >= nx || cz >= ny) {
+			why = "it stands outside the generated area";
+		} else if (best < 0) {
+			why = "no free valley floor within three cells (it is in the sea, in another lake, or on a ridge)";
+		} else if (!try_site(best, depth, &why) && !why) {
+			why = "no lake formed";
+		}
+		if (why) {
+			WARN_PRINT(vformat("TerrainGenerator3D: lake marker %s at (%.0f, %.0f) made no lake: %s.", marker->get_name(), p.x, p.z, why));
 		}
 	}
 	if (lake_count <= 0) {

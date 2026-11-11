@@ -15,6 +15,10 @@
 #       waterfalls listed, river long profiles (x, z, height, hardness, log area); view: --strata --focus=fall --close
 #   godot --headless --path docs/bench/terrain_gen -- --compare=prefix [--cell=8] [--refine=40]  coarse-to-fine
 #       against single-level: time, height percentiles, slopes, drainage density; relief maps prefix_{one,multi}.png
+#   godot --headless --path docs/bench/terrain_gen -- --landscape-test [--spacing=16 --quads=16]  Landscape3D checks only
+#       (watertight edges at every level, neighbours one level apart, no rebuilds while turning); view: --landscape[=1]
+#       draws the ground as a Landscape3D at that spacing instead of one 4 m (2 m close) mesh; --focus=ground
+#       [--x --z --eye=3] stands on a flank
 #   godot --headless --path docs/bench/terrain_gen -- [--coast] --climate=map.png  climate maps (temperature,
 #       precipitation, winter sun, snow share) of the generated world [--wind=270] [--view: taller range]
 extends Node3D
@@ -28,6 +32,7 @@ var ground_shape: CollisionShape3D
 var ground_mesh: MeshInstance3D
 var terrain: Node3D
 var deformer: TerrainDeformer3D
+var landscape: Landscape3D
 
 
 func check(ok: bool, what: String) -> void:
@@ -58,6 +63,12 @@ func _ready() -> void:
 		_build_height_map(int(args.get("res", "257")))
 	if args.has("test"):
 		await _run_checks()
+		print("%d checks, %d failed" % [checks, failures])
+		print("PASS" if failures == 0 else "FAIL")
+		get_tree().quit(1 if failures else 0)
+	elif args.has("landscape-test"):
+		gen.generate()
+		_landscape_checks()
 		print("%d checks, %d failed" % [checks, failures])
 		print("PASS" if failures == 0 else "FAIL")
 		get_tree().quit(1 if failures else 0)
@@ -115,6 +126,8 @@ func _ready() -> void:
 		var raster := args.has("raster")
 		for i in (6 if raster else 12):
 			await RenderingServer.frame_post_draw
+		if landscape:
+			print("landscape ", landscape.get_stats())
 		get_viewport().get_texture().get_image().save_png(args["out"])
 		print("saved ", args["out"])
 		get_tree().quit()
@@ -540,6 +553,7 @@ func _run_checks() -> void:
 	await _climate_checks()
 	_strata_checks()
 	_runoff_checks()
+	_landscape_checks()
 
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
 	var plot := TerrainBrush3D.new()
@@ -913,8 +927,6 @@ func _build_view() -> void:
 	arrays[Mesh.ARRAY_INDEX] = idx
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
 	var shader := Shader.new()
 	shader.code = VIEW_SHADER % [TerrainGenerator3D.get_geology_shader_code(), gen.get_detail_shader_code()]
 	var mat := ShaderMaterial.new()
@@ -923,8 +935,21 @@ func _build_view() -> void:
 	mat.set_shader_parameter("detail_octaves", int(args.get("mdetail", "0")))
 	if gen.has_sea_result():
 		mat.set_shader_parameter("sea_level", gen.sea_level + gen.height_offset)
-	mi.material_override = mat
-	add_child(mi)
+	if args.has("landscape"):
+		# The ground as a Landscape3D: chunk meshes with LODs at the given spacing (1 m by default).
+		var ls := Landscape3D.new()
+		ls.spacing = float(args["landscape"]) if args["landscape"] != "1" else 1.0
+		ls.lod_error = float(args.get("lod-error", "1.0"))
+		ls.material = mat
+		add_child(ls)
+		ls.source = ls.get_path_to(gen)
+		ls.rebuild()
+		landscape = ls
+	else:
+		var mi := MeshInstance3D.new()
+		mi.mesh = mesh
+		mi.material_override = mat
+		add_child(mi)
 	if ground_mesh:
 		ground_mesh.visible = false
 	if args.has("coast"):
@@ -1006,6 +1031,20 @@ func _build_view() -> void:
 		cam.position = Vector3(400, 120, 2350)
 		add_child(cam)
 		cam.look_at(Vector3(-300, 10, 1500))
+	elif args.get("focus", "") == "ground":
+		# Standing on a flank of the range, looking across the slope: where vertex spacing shows.
+		var at := Vector3(float(args.get("x", "-300")), 0.0, float(args.get("z", "100")))
+		at.y = gen.get_height(at) + float(args.get("eye", "3"))
+		var to := at + Vector3(float(args.get("dx", "80")), 0.0, float(args.get("dz", "60")))
+		to.y = gen.get_height(to)
+		cam.fov = 60.0
+		cam.near = 0.1
+		cam.position = at
+		add_child(cam)
+		cam.look_at(to)
+		# Low raking sun across the view, so facets show.
+		var side := Vector3(to.x - at.x, 0.0, to.z - at.z).normalized().rotated(Vector3.UP, float(args.get("sun", "1.4")))
+		sun.look_at_from_position(to + side * 3000.0 + Vector3(0, 700, 0), to)
 	elif args.has("close"):
 		# Close view of one flank, for raster and path traced crops at 100%.
 		cam.fov = 40.0
@@ -1028,6 +1067,141 @@ func _hill_source(height: float, sigma: float) -> Node3D:
 	n.set("height", height)
 	n.set("sigma", sigma)
 	return n
+
+
+func _edge_key(a: Vector3, b: Vector3) -> String:
+	var ka := "%d,%d" % [roundi(a.x * 8.0), roundi(a.z * 8.0)]
+	var kb := "%d,%d" % [roundi(b.x * 8.0), roundi(b.z * 8.0)]
+	return ka + ";" + kb if ka < kb else kb + ";" + ka
+
+
+func _landscape_checks() -> void:
+	# Landscape3D: chunk meshes with an LOD chain over the generated ground, coarse here so the checks stay fast.
+	var ls := Landscape3D.new()
+	ls.spacing = float(args.get("spacing", "16"))
+	ls.chunk_quads = int(args.get("quads", "16"))
+	ls.lod_levels = 4
+	ls.lod_error = float(args.get("lod-error", "8"))
+	add_child(ls)
+	ls.source = ls.get_path_to(gen)
+	check(ls.rebuild(), "Landscape3D builds from the generator")
+	var grid := ls.get_chunk_grid()
+	var st: Dictionary = ls.get_stats()
+	print("     landscape %dx%d chunks, %d levels, %.1f ms" % [grid.x, grid.y, ls.get_lod_count(), st["build_msec"]])
+	var mono := true
+	var coarse_err := 0.0
+	for cz in grid.y:
+		for cx in grid.x:
+			var c := Vector2i(cx, cz)
+			mono = mono and ls.get_chunk_lod_error(c, 0) == 0.0
+			for l in range(1, ls.get_lod_count()):
+				mono = mono and ls.get_chunk_lod_error(c, l) >= ls.get_chunk_lod_error(c, l - 1)
+			coarse_err = maxf(coarse_err, ls.get_chunk_lod_error(c, ls.get_lod_count() - 1))
+	check(mono, "each coarser level departs at least as far from the ground (worst %.1f m)" % coarse_err)
+	var probe := Vector3(-300.0, 0.0, 100.0)
+	check(absf(ls.get_height(Vector3(-2048.0 + 64 * ls.spacing, 0, -2048.0 + 64 * ls.spacing)) - gen.get_height(Vector3(-2048.0 + 64 * ls.spacing, 0, -2048.0 + 64 * ls.spacing))) < 0.01, "its heights are the generator's at the grid points")
+	# A camera low over the range, looking along it.
+	var proj := Projection.create_perspective(50.0, 16.0 / 9.0, 0.1, 20000.0)
+	var eye := Transform3D(Basis(), probe + Vector3(0, gen.get_height(probe) + 30.0, 0)).looking_at(Vector3(1500, 0, 1500))
+	ls.update_lods(eye, proj, 540.0)
+	var lods := {}
+	var apart := true
+	var masks_ok := true
+	for cz in grid.y:
+		for cx in grid.x:
+			var l := ls.get_chunk_lod(Vector2i(cx, cz))
+			lods[l] = lods.get(l, 0) + 1
+			var m := ls.get_chunk_edge_mask(Vector2i(cx, cz))
+			var nbs := [Vector2i(cx, cz - 1), Vector2i(cx + 1, cz), Vector2i(cx, cz + 1), Vector2i(cx - 1, cz)]
+			for s in 4:
+				var nb: Vector2i = nbs[s]
+				if nb.x < 0 or nb.y < 0 or nb.x >= grid.x or nb.y >= grid.y:
+					masks_ok = masks_ok and (m & (1 << s)) == 0
+					continue
+				var nl := ls.get_chunk_lod(nb)
+				apart = apart and absi(nl - l) <= 1
+				masks_ok = masks_ok and (((m >> s) & 1) == 1) == (nl > l)
+	print("     chunks per level ", lods)
+	check(lods.size() >= 3, "near chunks fine, far ones coarse (%d levels in use)" % lods.size())
+	check(apart, "neighbouring chunks are at most one level apart")
+	check(masks_ok, "edges are stitched exactly where the neighbour is coarser")
+	# Watertight: every triangle edge inside the ground is shared by exactly two triangles, at every level and mask.
+	var edges := {}
+	var tris := 0
+	for cz in grid.y:
+		for cx in grid.x:
+			var t := ls.get_chunk_triangles(Vector2i(cx, cz))
+			tris += t.size() / 3
+			for i in range(0, t.size(), 3):
+				for e in 3:
+					var k := _edge_key(t[i + e], t[i + (e + 1) % 3])
+					edges[k] = edges.get(k, 0) + 1
+	var bad := 0
+	var lo := -2048.0
+	var hi := -2048.0 + grid.x * ls.chunk_quads * ls.spacing
+	for k in edges:
+		if edges[k] == 2:
+			continue
+		var pts: PackedStringArray = k.split(";")
+		var a := pts[0].split(",")
+		var b := pts[1].split(",")
+		var ax := float(a[0]) / 8.0
+		var az := float(a[1]) / 8.0
+		var bx := float(b[0]) / 8.0
+		var bz := float(b[1]) / 8.0
+		var outer := (ax == bx and (ax == lo or ax == hi)) or (az == bz and (az == lo or az == hi))
+		if not (outer and edges[k] == 1):
+			bad += 1
+	check(bad == 0, "no cracks: every inner edge is shared by two triangles (%d triangles, %d bad edges)" % [tris, bad])
+	st = ls.get_stats()
+	var full: int = grid.x * grid.y * ls.chunk_quads * ls.chunk_quads * 2
+	check(int(st["triangles"]) < full * 3 / 4, "the LODs draw fewer triangles (%d against %d at full detail)" % [st["triangles"], full])
+	# Turning on the spot changes nothing; flying away goes coarse; coming back reuses the kept meshes.
+	var builds: int = st["mesh_builds"]
+	var switches: int = st["lod_switches"]
+	for a in 8:
+		ls.update_lods(Transform3D(eye.basis.rotated(Vector3.UP, a * TAU / 8.0), eye.origin), proj, 540.0)
+	st = ls.get_stats()
+	check(int(st["mesh_builds"]) == builds and int(st["lod_switches"]) == switches, "turning the camera builds and switches nothing (behind keeps its level)")
+	ls.update_lods(Transform3D(eye.basis, eye.origin + Vector3(0, 6000, 0)), proj, 540.0)
+	var far_tris: int = ls.get_stats()["triangles"]
+	ls.update_lods(eye, proj, 540.0)
+	st = ls.get_stats()
+	check(far_tris < int(st["triangles"]), "from high up it draws fewer triangles (%d against %d)" % [far_tris, st["triangles"]])
+	var builds_back: int = st["mesh_builds"]
+	ls.update_lods(Transform3D(eye.basis, eye.origin + Vector3(0, 6000, 0)), proj, 540.0)
+	ls.update_lods(eye, proj, 540.0)
+	check(int(ls.get_stats()["mesh_builds"]) == builds_back, "flying back and forth reuses the kept meshes (%d built in all)" % builds_back)
+	# Hysteresis: a small step back and forth at a level boundary does not flip chunks.
+	var sw0: int = ls.get_stats()["lod_switches"]
+	for i in 6:
+		ls.update_lods(Transform3D(eye.basis, eye.origin + Vector3(0, 0, 1.0 if i % 2 == 0 else 0.0)), proj, 540.0)
+	check(int(ls.get_stats()["lod_switches"]) - sw0 <= 2, "a 1 m jiggle does not flip levels (%d switches)" % (int(ls.get_stats()["lod_switches"]) - sw0))
+	# Full detail at 1 m over a 1 km square: build time and update cost.
+	var big := Landscape3D.new()
+	big.spacing = 1.0
+	big.height_image = gen.sample_heights(Vector2(-500, -400), 1.0, Vector2i(1025, 1025))
+	big.origin = Vector2(-500, -400)
+	add_child(big)
+	big.rebuild()
+	big.update_lods(eye, proj, 1080.0)
+	var first_update: float = big.get_stats()["update_usec"]
+	big.update_lods(Transform3D(eye.basis.rotated(Vector3.UP, 0.5), eye.origin), proj, 1080.0)
+	var bs: Dictionary = big.get_stats()
+	print("     1 km at 1 m: first update with mesh builds %.0f ms" % (first_update / 1000.0))
+	var med := []
+	for l in big.get_lod_count():
+		var e := PackedFloat32Array()
+		for cz in big.get_chunk_grid().y:
+			for cx in big.get_chunk_grid().x:
+				e.append(big.get_chunk_lod_error(Vector2i(cx, cz), l))
+		e.sort()
+		med.append("%.2f" % e[e.size() / 2])
+	print("     1 km at 1 m: median error per level (m) ", med)
+	print("     1 km at 1 m: build %.0f ms, update %.0f us, %d triangles drawn, per level %s" % [bs["build_msec"], bs["update_usec"], bs["triangles"], bs["chunks_per_level"]])
+	check(int(bs["triangles"]) > 0 and float(bs["update_usec"]) < 5000.0, "1 km at 1 m picks its levels (no builds) in under 5 ms (%.0f us)" % bs["update_usec"])
+	big.queue_free()
+	ls.queue_free()
 
 
 func _strata_checks() -> void:
