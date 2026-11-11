@@ -44,6 +44,7 @@
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/scene_string_names.h"
+#include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
 
 #ifdef TOOLS_ENABLED
@@ -270,6 +271,174 @@ void Landscape3D::_evict(bool p_all) {
 		RS::get_singleton()->free_rid(meshes[key].mesh);
 		meshes.erase(key);
 	}
+}
+
+/* Collision */
+
+// What the collision follows: collision_target, else the camera.
+Node3D *Landscape3D::_collision_node() const {
+	if (!is_inside_tree()) {
+		return nullptr;
+	}
+	if (!collision_target.is_empty()) {
+		return Object::cast_to<Node3D>(get_node_or_null(collision_target));
+	}
+	return _camera();
+}
+
+// One static heightfield per chunk within collision_radius of the target, at full detail (level 0, whatever level
+// the chunk is drawn at), split like the drawn level 0 mesh. Tiles are freed past 1.25 x the radius. A chunk not read
+// in full yet gets its tile once read; the target's own chunk and its neighbours are read at once.
+void Landscape3D::_update_collision() {
+	const bool on = collision_enabled && !chunks.is_empty() && is_inside_tree() && get_world_3d().is_valid() && !Engine::get_singleton()->is_editor_hint();
+	Node3D *tn = on ? _collision_node() : nullptr;
+	if (!tn) {
+		if (collision_tiles > 0) {
+			_free_all_collision();
+		}
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	const Vector3 t = get_global_transform().affine_inverse().xform(tn->get_global_position());
+	const real_t size = chunk_quads * spacing;
+	const real_t keep = collision_radius * 1.25f;
+	auto dist = [&](int p_cx, int p_cz) {
+		const real_t x0 = origin.x + p_cx * size, z0 = origin.y + p_cz * size;
+		const Vector2 q(CLAMP(real_t(t.x), x0, x0 + size), CLAMP(real_t(t.z), z0, z0 + size));
+		return q.distance_to(Vector2(t.x, t.z));
+	};
+	// Tiles out of reach go.
+	for (uint32_t i = 0; i < chunks.size() && collision_tiles > 0; i++) {
+		if (chunks[i].body.is_valid() && dist(i % cw, i / cw) > keep) {
+			_free_collision(int(i));
+		}
+	}
+	const int tx = int(Math::floor((t.x - origin.x) / size));
+	const int tz = int(Math::floor((t.z - origin.y) / size));
+	const int reach = int(Math::ceil(collision_radius / size)) + 1;
+	// The ground right under the target cannot wait for the stream.
+	LocalVector<int> urgent;
+	for (int z = MAX(0, tz - 1); z <= MIN(ch - 1, tz + 1); z++) {
+		for (int x = MAX(0, tx - 1); x <= MIN(cw - 1, tx + 1); x++) {
+			const int i = z * cw + x;
+			if (!chunks[i].fine && dist(x, z) <= collision_radius) {
+				urgent.push_back(i);
+			}
+		}
+	}
+	if (!urgent.is_empty() && _stream_generator()) {
+		_finish_meshes(true);
+		_finish_heights(true);
+		LocalVector<int> left;
+		for (int i : urgent) {
+			if (!chunks[i].fine) {
+				left.push_back(i);
+			}
+		}
+		_read_chunks(left);
+	}
+	for (int z = MAX(0, tz - reach); z <= MIN(ch - 1, tz + reach); z++) {
+		for (int x = MAX(0, tx - reach); x <= MIN(cw - 1, tx + reach); x++) {
+			const int i = z * cw + x;
+			if (!chunks[i].body.is_valid() && chunks[i].fine && dist(x, z) <= collision_radius) {
+				_collision_tile(i);
+			}
+		}
+	}
+	last_collision_usec = double(OS::get_singleton()->get_ticks_usec() - t0);
+}
+
+void Landscape3D::_collision_tile(int p_chunk) {
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	Chunk &c = chunks[p_chunk];
+	const int cx = p_chunk % cw, cz = p_chunk / cw;
+	const int row = chunk_quads + 1;
+	PackedFloat32Array h;
+	h.resize(row * row);
+	float *w = h.ptrw();
+	for (int j = 0; j < row; j++) {
+		memcpy(w + j * row, heights.ptr() + size_t(cz * chunk_quads + j) * gw + cx * chunk_quads, row * sizeof(float));
+	}
+	Dictionary d;
+	d["width"] = row;
+	d["depth"] = row;
+	d["heights"] = h;
+	d["min_height"] = c.min_h;
+	d["max_height"] = MAX(c.max_h, c.min_h + 0.001f);
+	d["fan_blocks"] = true;
+	c.shape = ps->heightmap_shape_create();
+	ps->shape_set_data(c.shape, d);
+	c.body = ps->body_create();
+	ps->body_set_mode(c.body, PhysicsServer3D::BODY_MODE_STATIC);
+	// The shape is centred on its middle sample and one unit per sample: scale it to the spacing.
+	const real_t half = chunk_quads * spacing * 0.5f;
+	const Vector3 centre(origin.x + cx * chunk_quads * spacing + half, 0.0, origin.y + cz * chunk_quads * spacing + half);
+	ps->body_add_shape(c.body, c.shape, Transform3D(Basis().scaled(Vector3(spacing, 1.0, spacing)), centre));
+	ps->body_set_collision_layer(c.body, collision_layer);
+	ps->body_set_collision_mask(c.body, collision_mask);
+	if (physics_material.is_valid()) {
+		ps->body_set_param(c.body, PhysicsServer3D::BODY_PARAM_FRICTION, physics_material->computed_friction());
+		ps->body_set_param(c.body, PhysicsServer3D::BODY_PARAM_BOUNCE, physics_material->computed_bounce());
+	}
+	ps->body_attach_object_instance_id(c.body, get_instance_id());
+	ps->body_set_state(c.body, PhysicsServer3D::BODY_STATE_TRANSFORM, get_global_transform());
+	ps->body_set_space(c.body, get_world_3d()->get_space());
+	collision_tiles++;
+}
+
+void Landscape3D::_free_collision(int p_chunk) {
+	Chunk &c = chunks[p_chunk];
+	if (c.body.is_valid()) {
+		PhysicsServer3D::get_singleton()->free_rid(c.body);
+		c.body = RID();
+		collision_tiles--;
+	}
+	if (c.shape.is_valid()) {
+		PhysicsServer3D::get_singleton()->free_rid(c.shape);
+		c.shape = RID();
+	}
+}
+
+void Landscape3D::_free_all_collision() {
+	for (uint32_t i = 0; i < chunks.size(); i++) {
+		_free_collision(int(i));
+	}
+	collision_tiles = 0;
+}
+
+bool Landscape3D::has_chunk_collision(const Vector2i &p_chunk) const {
+	ERR_FAIL_COND_V(p_chunk.x < 0 || p_chunk.y < 0 || p_chunk.x >= cw || p_chunk.y >= ch, false);
+	return chunks[p_chunk.y * cw + p_chunk.x].body.is_valid();
+}
+
+void Landscape3D::set_collision_enabled(bool p_enable) {
+	collision_enabled = p_enable;
+	if (!p_enable) {
+		_free_all_collision();
+	}
+}
+
+void Landscape3D::set_collision_layer(uint32_t p_layer) {
+	collision_layer = p_layer;
+	for (Chunk &c : chunks) {
+		if (c.body.is_valid()) {
+			PhysicsServer3D::get_singleton()->body_set_collision_layer(c.body, p_layer);
+		}
+	}
+}
+
+void Landscape3D::set_collision_mask(uint32_t p_mask) {
+	collision_mask = p_mask;
+	for (Chunk &c : chunks) {
+		if (c.body.is_valid()) {
+			PhysicsServer3D::get_singleton()->body_set_collision_mask(c.body, p_mask);
+		}
+	}
+}
+
+void Landscape3D::set_physics_material(const Ref<PhysicsMaterial> &p_material) {
+	physics_material = p_material;
+	_free_all_collision(); // rebuilt with the new values on the next update
 }
 
 void Landscape3D::_free_instances() {
@@ -621,6 +790,18 @@ void Landscape3D::_launch_heights() {
 	if (list.is_empty()) {
 		return;
 	}
+	// Ground the collision target will stand on comes first of all.
+	if (Node3D *tn = collision_enabled ? _collision_node() : nullptr) {
+		const Vector3 t = get_global_transform().affine_inverse().xform(tn->get_global_position());
+		for (Candidate &cand : list) {
+			const int cx = cand.chunk % cw, cz = cand.chunk / cw;
+			const Rect2 r(origin.x + cx * size, origin.y + cz * size, size, size);
+			const Vector2 q(CLAMP(real_t(t.x), r.position.x, r.position.x + size), CLAMP(real_t(t.z), r.position.y, r.position.y + size));
+			if (q.distance_to(Vector2(t.x, t.z)) <= collision_radius) {
+				cand.order -= 4e9f;
+			}
+		}
+	}
 	list.sort();
 	const int batch = MIN(int(list.size()), MAX(4, WorkerThreadPool::get_singleton()->get_thread_count() * 2));
 	LocalVector<int> pick;
@@ -804,6 +985,7 @@ void Landscape3D::set_cast_shadows(bool p_enable) {
 void Landscape3D::clear() {
 	_on_source_changing();
 	_free_instances();
+	_free_all_collision();
 	_evict(true);
 	chunks.clear();
 	heights.clear();
@@ -955,6 +1137,7 @@ bool Landscape3D::rebuild() {
 			_set_chunk_mesh(i, levels - 1, 0);
 		}
 	}
+	_update_collision();
 	update_gizmos();
 	const uint64_t t_end = OS::get_singleton()->get_ticks_usec();
 	last_build_msec = double(t_end - t0) / 1000.0;
@@ -1057,6 +1240,8 @@ Dictionary Landscape3D::get_stats() const {
 	d["chunks_streamed"] = int64_t(chunks_streamed);
 	d["detail_estimate"] = detail_estimate;
 	d["busy"] = mesh_group >= 0 || height_group >= 0;
+	d["collision_tiles"] = collision_tiles;
+	d["collision_usec"] = last_collision_usec;
 	return d;
 }
 
@@ -1070,10 +1255,18 @@ void Landscape3D::_notification(int p_what) {
 		case NOTIFICATION_EXIT_WORLD: {
 			_wait_all();
 			_free_instances();
+			_free_all_collision();
 			set_process_internal(false);
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
 			_update_transforms();
+			if (is_inside_tree()) {
+				for (Chunk &c : chunks) {
+					if (c.body.is_valid()) {
+						PhysicsServer3D::get_singleton()->body_set_state(c.body, PhysicsServer3D::BODY_STATE_TRANSFORM, get_global_transform());
+					}
+				}
+			}
 			lods_dirty = true;
 		} break;
 		case NOTIFICATION_VISIBILITY_CHANGED: {
@@ -1109,6 +1302,7 @@ void Landscape3D::_notification(int p_what) {
 					_launch_meshes(false);
 				}
 			}
+			_update_collision();
 			_launch_heights();
 			if (frame % 60 == 0) {
 				_evict(false);
@@ -1149,6 +1343,20 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_stream_heights", "enable"), &Landscape3D::set_stream_heights);
 	ClassDB::bind_method(D_METHOD("is_streaming_heights"), &Landscape3D::is_streaming_heights);
 
+	ClassDB::bind_method(D_METHOD("set_collision_enabled", "enable"), &Landscape3D::set_collision_enabled);
+	ClassDB::bind_method(D_METHOD("is_collision_enabled"), &Landscape3D::is_collision_enabled);
+	ClassDB::bind_method(D_METHOD("set_collision_radius", "radius"), &Landscape3D::set_collision_radius);
+	ClassDB::bind_method(D_METHOD("get_collision_radius"), &Landscape3D::get_collision_radius);
+	ClassDB::bind_method(D_METHOD("set_collision_target", "path"), &Landscape3D::set_collision_target);
+	ClassDB::bind_method(D_METHOD("get_collision_target"), &Landscape3D::get_collision_target);
+	ClassDB::bind_method(D_METHOD("set_collision_layer", "layer"), &Landscape3D::set_collision_layer);
+	ClassDB::bind_method(D_METHOD("get_collision_layer"), &Landscape3D::get_collision_layer);
+	ClassDB::bind_method(D_METHOD("set_collision_mask", "mask"), &Landscape3D::set_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_collision_mask"), &Landscape3D::get_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_physics_material", "material"), &Landscape3D::set_physics_material);
+	ClassDB::bind_method(D_METHOD("get_physics_material"), &Landscape3D::get_physics_material);
+	ClassDB::bind_method(D_METHOD("update_collision"), &Landscape3D::update_collision);
+	ClassDB::bind_method(D_METHOD("has_chunk_collision", "chunk"), &Landscape3D::has_chunk_collision);
 	ClassDB::bind_method(D_METHOD("rebuild"), &Landscape3D::rebuild);
 	ClassDB::bind_method(D_METHOD("clear"), &Landscape3D::clear);
 	ClassDB::bind_method(D_METHOD("update_lods", "camera_transform", "projection", "viewport_height"), &Landscape3D::update_lods);
@@ -1179,4 +1387,12 @@ void Landscape3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_shadows"), "set_cast_shadows", "is_casting_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_heights"), "set_stream_heights", "is_streaming_heights");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "camera", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Camera3D"), "set_camera", "get_camera");
+	ADD_GROUP("Collision", "collision_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collision_enabled"), "set_collision_enabled", "is_collision_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_radius", PROPERTY_HINT_RANGE, "0,2048,1,or_greater,suffix:m"), "set_collision_radius", "get_collision_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "collision_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_collision_target", "get_collision_target");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_mask", "get_collision_mask");
+	ADD_GROUP("", "");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "physics_material", PROPERTY_HINT_RESOURCE_TYPE, "PhysicsMaterial"), "set_physics_material", "get_physics_material");
 }

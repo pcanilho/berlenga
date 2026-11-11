@@ -36,6 +36,7 @@
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
+#include "scene/resources/physics_material.h"
 #include "servers/rendering/rendering_server_types.h"
 
 class Camera3D;
@@ -68,6 +69,8 @@ class Landscape3D : public Node3D {
 		uint32_t gen = 0; // bumped when heights under the chunk's vertices or normals change
 		bool fine = true; // all heights read (false: only every 4th point, the rest interpolated)
 		bool loading = false;
+		RID body; // static heightfield near the collision target, at full detail
+		RID shape;
 	};
 	struct MeshEntry {
 		RID mesh;
@@ -102,6 +105,14 @@ class Landscape3D : public Node3D {
 	bool cast_shadows = true;
 	NodePath camera_path;
 	bool stream_heights = true;
+	bool collision_enabled = true;
+	real_t collision_radius = 192.0;
+	NodePath collision_target;
+	uint32_t collision_layer = 1;
+	uint32_t collision_mask = 1;
+	Ref<PhysicsMaterial> physics_material;
+	int collision_tiles = 0;
+	double last_collision_usec = 0.0;
 
 	// The grid: gw x gh heights from origin, spacing apart (chunks x chunk_quads + 1 a side).
 	LocalVector<float> heights;
@@ -172,6 +183,11 @@ class Landscape3D : public Node3D {
 	void _finish_meshes(bool p_wait);
 	void _wait_all();
 	void _on_source_changing();
+	Node3D *_collision_node() const;
+	void _update_collision();
+	void _collision_tile(int p_chunk);
+	void _free_collision(int p_chunk);
+	void _free_all_collision();
 	void _update_lods(const Transform3D &p_camera, const Projection &p_projection, real_t p_viewport_height, int p_read);
 
 protected:
@@ -199,6 +215,20 @@ public:
 	bool is_casting_shadows() const { return cast_shadows; }
 	void set_camera(const NodePath &p_path) { camera_path = p_path; }
 	NodePath get_camera() const { return camera_path; }
+	void set_collision_enabled(bool p_enable);
+	bool is_collision_enabled() const { return collision_enabled; }
+	void set_collision_radius(real_t p_radius) { collision_radius = MAX(p_radius, real_t(0.0)); }
+	real_t get_collision_radius() const { return collision_radius; }
+	void set_collision_target(const NodePath &p_path) { collision_target = p_path; }
+	NodePath get_collision_target() const { return collision_target; }
+	void set_collision_layer(uint32_t p_layer);
+	uint32_t get_collision_layer() const { return collision_layer; }
+	void set_collision_mask(uint32_t p_mask);
+	uint32_t get_collision_mask() const { return collision_mask; }
+	void set_physics_material(const Ref<PhysicsMaterial> &p_material);
+	Ref<PhysicsMaterial> get_physics_material() const { return physics_material; }
+	void update_collision() { _update_collision(); }
+	bool has_chunk_collision(const Vector2i &p_chunk) const;
 	void set_stream_heights(bool p_enable) { stream_heights = p_enable; }
 	bool is_streaming_heights() const { return stream_heights; }
 

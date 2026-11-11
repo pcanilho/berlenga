@@ -2873,6 +2873,9 @@
 		<constant name="SUPPORTS_VERTEX_PIPELINE_STORES" value="15" enum="Features">
 			Support for storage buffer writes from vertex shaders. On Vulkan, requires the [code]vertexPipelineStoresAndAtomics[/code] feature.
 		</constant>
+		<constant name="SUPPORTS_RAYTRACING_INVOCATION_REORDER" value="16" enum="Features">
+			Support for shader execution reordering in ray tracing pipelines. On Vulkan, requires [code]VK_EXT_ray_tracing_invocation_reorder[/code] and its [code]rayTracingInvocationReorder[/code] feature. The path tracer uses it only when this is supported.
+		</constant>
 		<constant name="LIMIT_MAX_BOUND_UNIFORM_SETS" value="0" enum="Limit">
 			Maximum number of uniform sets that can be bound at a given time.
 		</constant>
