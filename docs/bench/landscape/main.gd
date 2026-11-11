@@ -11,12 +11,15 @@ extends Node3D
 #   --out=path.png    render a view (path traced unless --raster)
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 16)
-#   --view=wide|lake|fall|beach|peak   camera (default wide)
+#   --view=wide|lake|lakewater|fall|beach|peak   camera (default wide; lakewater: low over the lake)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
 #   --falls           print every waterfall the rivers found (lip, landing, height)
 #   --probe           print coast profiles, lakes and rivers from the generator
 #   --weather=storm|clear         weather state (default storm)
+#   --snow=climate|none   the winter baked by SnowClimate (default), or a snow-free ground for stills
+#   --month=N --time=H    0-based month of the rivers and the SkyClock date (default 4, 15 May) and local time (16.5)
+#   --prints=0            no GroundSurface3D (footprints) node
 
 const STEP := 4.0 # metres between ground vertices
 const X0 := -2048.0
@@ -57,6 +60,7 @@ var grass: GrassField3D
 var prints: GroundSurface3D
 var prints_probe: Node3D
 var sun: DirectionalLight3D
+var clock: SkyClock
 var cam: Camera3D
 var env: Environment
 var results: Array = []
@@ -90,7 +94,8 @@ func _ready() -> void:
 	for r in rivers:
 		r.rebuild()
 	_build_vegetation()
-	_build_prints()
+	if args.get("prints", "1") != "0":
+		_build_prints()
 	_build_camera()
 	_run_weather()
 	_log("setup done in %d ms" % (Time.get_ticks_msec() - t_start))
@@ -425,7 +430,18 @@ func _build_weather() -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 6000.0
 	add_child(sun)
-	sun.look_at_from_position(Vector3(-2500, 1500, 2500), Vector3.ZERO)
+	# The sun from a date, a time and a place (SkyClock, Meeus): the month is the rivers' month, so the light,
+	# the flows and the snowmelt are one day. World -Z is north; mid-latitude mountains on a western coast.
+	clock = SkyClock.new()
+	clock.name = "SkyClock"
+	add_child(clock)
+	clock.latitude = 45.0
+	clock.longitude = 0.0
+	clock.utc_offset = 0.0
+	clock.month = int(args.get("month", "4")) + 1
+	clock.day = 15
+	clock.time_of_day = float(args.get("time", "16.5"))
+	clock.sun_light = clock.get_path_to(sun)
 	weather = WeatherMap3D.new()
 	weather.name = "Weather"
 	weather.extent = 8192.0
@@ -722,10 +738,56 @@ func _build_camera() -> void:
 	var coast_z := _coast_z(0.0)
 	match view:
 		"lake":
-			var back := Vector3(lake_dir.x, 0, lake_dir.y) * -1.0
-			var side := Vector3(-lake_dir.y, 0, lake_dir.x)
-			cam.position = lake_center + (Vector3(lake_dir.x, 0, lake_dir.y) * 260.0 + side * 120.0) + Vector3(0, 70, 0)
-			cam.look_at(lake_center + back * 80.0)
+			# The generator puts the lake anywhere: look at it from the open side inside the world, high enough that
+			# no ground stands between the camera and the water.
+			var best_pos := Vector3.ZERO
+			var best_y := INF
+			for k in 16:
+				var a := TAU * k / 16.0
+				var d := Vector3(cos(a), 0, sin(a))
+				var c := lake_center + d * 260.0
+				if absf(c.x) > 1880.0 or c.z < -1880.0 or c.z > 2900.0:
+					continue
+				var top := lake_center.y
+				for t in range(1, 21):
+					var q := lake_center.lerp(c, t / 20.0)
+					top = maxf(top, height_at(q.x, q.z) + 12.0 * t / 20.0)
+				var y := maxf(top + 25.0, lake_center.y + 60.0)
+				if y < best_y:
+					best_y = y
+					best_pos = Vector3(c.x, y, c.z)
+			cam.position = best_pos
+			cam.look_at(lake_center)
+		"lakewater":
+			# Low over the water at one end of the lake, looking along it to the mountains behind: the water cell
+			# farthest from the water's centroid, pulled a little back over the water.
+			var cells: Array[Vector3] = []
+			var span := maxf(lake_axes.x, 60.0) * 1.6
+			var gx := -span
+			while gx <= span:
+				var gz := -span
+				while gz <= span:
+					var q := Vector3(lake_center.x + gx, 0, lake_center.z + gz)
+					if height_at(q.x, q.z) < lake_level - 1.0:
+						cells.append(q)
+					gz += 6.0
+				gx += 6.0
+			var mid := Vector3(lake_center.x, 0, lake_center.z)
+			if cells.size() > 0:
+				mid = Vector3.ZERO
+				for q in cells:
+					mid += q
+				mid /= cells.size()
+			var far := mid
+			for q in cells:
+				if q.distance_to(mid) > far.distance_to(mid):
+					far = q
+			var c := far.lerp(mid, 0.12)
+			cam.fov = 50.0
+			cam.position = Vector3(c.x, lake_level + 5.0, c.z)
+			var ahead := mid + (mid - c) * 1.5
+			cam.look_at(Vector3(ahead.x, lake_level + 22.0, ahead.z))
+			_log("lakewater camera over %d water cells, %.0f m from the far end" % [cells.size(), c.distance_to(mid) * 2.0])
 		"fall":
 			var fd3 := Vector3(fall_dir.x, 0, fall_dir.y)
 			var side := Vector3(-fall_dir.y, 0, fall_dir.x)
@@ -765,6 +827,16 @@ func _checks() -> void:
 			for f in r.get_waterfalls():
 				print("fall on %s: lip %s impact %s height %.1f m q %.2f lip_speed %.2f breakup %.1f" % [r.name, f.lip, f.impact, f.height, f.discharge, f.lip_speed, f.breakup_length])
 	check(gen_falls.size() > 0 and lip > 0, "the generator's rock bands make waterfalls and the rivers fall there (%d from the generator, %d lips on the rivers)" % [gen_falls.size(), lip])
+	# Waterfall mist: each river makes it at its falls, the weather blows it, and it turns the volumetric fog on itself.
+	var mists: Array[Node] = []
+	for r in rivers:
+		mists.append_array(r.find_children("*", "PhysXWaterMist3D", true, false))
+	var mist_max := 0.0
+	for m in mists:
+		m.advance(20.0)
+		mist_max = maxf(mist_max, m.get_max_density())
+	await get_tree().process_frame
+	check(mists.size() > 0 and mist_max > 0.0 and env.volumetric_fog_enabled, "waterfall mist rises at the falls and shows with no fog set by hand (%d mists, densest %.2f g/m3, volumetric fog %s)" % [mists.size(), mist_max, "on" if env.volumetric_fog_enabled else "off"])
 	if args.has("probe"):
 		for z in range(1000, 2049, 40):
 			var pp := Vector3(0, 0, z)
@@ -882,6 +954,13 @@ func _checks() -> void:
 	check(cornices.get_segment_count() > 0, "cornices grow on the lee crests around the peak (%d pieces)" % cornices.get_segment_count())
 	cornices.follow_target = NodePath("")
 	check(ocean.follow_weather and absf(ocean.wind_speed - weather.get_mean_wind_at(ocean.global_position).length()) < 3.0, "sea state follows the weather wind (%.1f m/s vs %.1f)" % [ocean.wind_speed, weather.get_mean_wind_at(ocean.global_position).length()])
+	# The sun from the clock: the date and place point the light, nothing placed by hand.
+	var sun_to := sun.global_transform.basis.z
+	check(clock != null and sun_to.dot(clock.get_sun_direction()) > 0.9995 and clock.get_sun_altitude() > 0.0, "the sun stands where SkyClock puts it for %02d-%02d %.2f h at %.0f N (altitude %.1f, azimuth %.1f deg)" % [clock.month, clock.day, clock.time_of_day, clock.latitude, clock.get_sun_altitude(), clock.get_sun_azimuth()])
+	# Whitecaps from the same wind (Monahan & O'Muircheartaigh 1980, W = 3.84e-6 U^3.41): no hand-set foam threshold.
+	var wc_u := weather.get_mean_wind_at(ocean.global_position).length()
+	var wc_expect := minf(3.84e-6 * pow(wc_u, 3.41), 0.5)
+	check(ocean.whitecap_auto and absf(ocean.get_whitecap_target_cover() - wc_expect) <= maxf(0.25 * wc_expect, 0.002), "whitecap cover follows the weather wind (%.2f%% at %.1f m/s, expected %.2f%%)" % [ocean.get_whitecap_target_cover() * 100.0, wc_u, wc_expect * 100.0])
 	# Grass on a meadow (the wide camera hangs over the sea, where none grows): the nearest open, gentle, dry cell
 	# around the lake, searched outward so the probe follows the terrain's realisation.
 	var meadow_pt := lake_center
