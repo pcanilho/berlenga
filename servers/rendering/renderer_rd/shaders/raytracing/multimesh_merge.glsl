@@ -229,7 +229,9 @@ void bake_instanced(uint idx, uint inst, uint vtx) {
 }
 
 void main() {
-	uint idx = gl_GlobalInvocationID.x;
+	// Large merges dispatch as rows of workgroups (the device caps the X group count, 65535 on some), so
+	// the flat index runs along X and then down Y.
+	uint idx = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x;
 	uint total_v = push.vertex_count * push.instance_count;
 
 	// --- Per-vertex section: bake position and TBN, replicate attributes ---

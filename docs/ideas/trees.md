@@ -225,14 +225,19 @@ and touch bending of section 7a add a contact moment to the same bones.
 
 ### 5a. As built (stage 4)
 
-- `TreeGenerator.decay_class` 1-5 applies the classes above to the grown tree: 1 drops the
-  foliage, 2 the twigs under 1.2 cm, 3 the limbs under 3 cm and snaps the top at 55-85% of the
+- `TreeGenerator.decay_class` 1-5 applies the classes above to the grown tree: 1 drops broad
+  leaves but keeps a conifer's needles, gone red-brown (the red stage of beetle-killed spruce and
+  pine, shed in the second or third year), 2 the twigs under 1.2 cm, 3 the limbs under 3 cm and snaps the top at 55-85% of the
   height (a splintered break of pale wood), 4 leaves limb stubs of 15-50 cm on a stem broken at
   30-60%, 5 is a stump of 0.4-1.5 m. Bark weathers grey, then to pale and darkening wood.
 - `fallen` lays it on the ground as a log; limbs that would reach into the ground break off, and
   on a decayed log the ones standing up have rotted off too.
 - `envelope` clips growth to a box (shoots leaving it are cut back each year), for hedges and
   topiary; a clipped hawthorn keeps its full leaf count inside the box.
+- Every stand (`make_stand`) now carries the regeneration and deadwood of its leading tree:
+  saplings (a fifth of the age, half the spacing, tolerating deep shade) at density 0.6, snags
+  (classes 2-4, 2.5x spacing) at 0.25 and logs (classes 2-4, felled) at 0.4, placed by the
+  lead's own climate rules. Hedgerows have no lead and get none.
 
 ## 6. What the games at Paulo's bar do
 

@@ -225,6 +225,7 @@ func _test_deadwood() -> void:
 		g.seed = 2
 		var alive := g.generate()
 		var h0 := g.get_height()
+		var bark0: Color = g.bark_color
 		var tris := []
 		var heights := []
 		var leaves := []
@@ -238,7 +239,11 @@ func _test_deadwood() -> void:
 			heights.append(g.get_height())
 			leaves.append(m.get_surface_count())
 		var name: String = NAMES[p]
-		_check(leaves[0] == 1, "%s class 1: bark only, no foliage" % name)
+		if g.get_param(TreeGenerator.PARAM_NEEDLES) > 0.5:
+			_check(leaves[0] > 1, "%s class 1: keeps its needles (red stage)" % name)
+		else:
+			_check(leaves[0] == 1, "%s class 1: bark only, no foliage" % name)
+		_check(g.bark_color == bark0 and leaves[1] == 1, "%s class 2: needles gone, living colours restored after generate" % name)
 		_check(tris[1] < tris[0], "%s class 2: twigs gone (%d of %d triangles)" % [name, tris[1], tris[0]])
 		_check(heights[2] < h0 * 0.9 and heights[2] > h0 * 0.45, "%s class 3: top broken at %.1f of %.1f m" % [name, heights[2], h0])
 		_check(heights[3] < heights[2] + 0.5 and tris[3] < tris[2], "%s class 4: stubs on a lower stem (%.1f m)" % [name, heights[3]])

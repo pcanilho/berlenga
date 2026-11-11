@@ -1646,7 +1646,14 @@ void TreeGenerator::_apply_decay() {
 	RandomPCG dr;
 	dr.seed(uint64_t(seed) * 2654435761u + uint64_t(decay_class) * 97u + 11u);
 	static const float MIN_RADIUS[6] = { 0.0f, 0.0f, 0.012f, 0.03f, 0.0f, 0.0f };
-	for (uint32_t i = 0; i < nodes.size(); i++) {
+	// A conifer dead a year or two keeps its needles, gone red-brown (the "red stage" of beetle-
+	// killed spruce and pine; they fall in the second or third year). Broad leaves are shed by the
+	// first winter.
+	const bool red_needles = decay_class == 1 && params[PARAM_NEEDLES] > 0.5f;
+	if (red_needles) {
+		leaf_color = Color(0.3f, 0.13f, 0.05f);
+	}
+	for (uint32_t i = 0; i < nodes.size() && !red_needles; i++) {
 		nodes[i].leafy = false;
 		if (i < spurs.size()) {
 			spurs[i] = 0;
@@ -1711,7 +1718,7 @@ void TreeGenerator::_apply_decay() {
 		}
 	}
 	// Bark greys as it weathers, then sloughs off to pale, then darkening, wood.
-	static const Color WEATHERED[6] = { Color(), Color(0.33f, 0.3f, 0.26f), Color(0.4f, 0.38f, 0.34f), Color(0.5f, 0.47f, 0.41f),
+	static const Color WEATHERED[6] = { Color(), Color(0.33f, 0.3f, 0.26f), Color(0.4f, 0.38f, 0.34f), Color(0.42f, 0.39f, 0.33f),
 		Color(0.42f, 0.36f, 0.28f), Color(0.3f, 0.25f, 0.19f) };
 	bark_color = bark_color.lerp(WEATHERED[decay_class], decay_class >= 3 ? 0.85f : 0.55f);
 }
@@ -3184,6 +3191,10 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	_measure();
 	_mark_spurs(years);
 	broken_tip = -1;
+	// Decay recolours bark and needles for this mesh only, so a generator reused for several
+	// classes (the stand snags and logs) starts each one from the living colours.
+	const Color living_bark = bark_color;
+	const Color living_leaf = leaf_color;
 	if (decay_class > 0) {
 		_apply_decay();
 	}
@@ -3191,6 +3202,8 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		_fell();
 	}
 	Ref<ArrayMesh> mesh = _build_mesh();
+	bark_color = living_bark;
+	leaf_color = living_leaf;
 	generation_usec = OS::get_singleton()->get_ticks_usec() - t0;
 	return mesh;
 }
