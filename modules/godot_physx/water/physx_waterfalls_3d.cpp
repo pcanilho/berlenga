@@ -35,8 +35,11 @@
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
+#include "core/templates/local_vector.h"
 #include "scene/3d/gpu_particles_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/main/scene_tree.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/particle_process_material.h"
@@ -150,7 +153,7 @@ float PhysXWaterfalls3D::equilibrium_air(float p_sin_slope) {
 	return MIN(0.9f * CLAMP(p_sin_slope, 0.0f, 1.0f), 0.9f);
 }
 
-void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall) {
+void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) {
 	Face face;
 	face.id = p_fall.get("id", String());
 	face.type = p_fall.get("type", String());
@@ -172,59 +175,117 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall) {
 		return;
 	}
 	const float lw = MAX(face.width, 1.0f);
-	const int cols = lip.size();
-	// The column carrying the most water speaks for the fall in get_contact_falls().
-	int main_col = 0;
-	for (int c = 1; c < cols; c++) {
-		if (share[c] > share[main_col]) {
+	const float spacing = lw / (lip.size() - 1);
+	// The wet part of the lip: the brink points no higher than the water over the lowest one (a gorge's lip line
+	// runs up its walls). Their shares come from the record, or from the water depth over each.
+	int lowest = 0;
+	for (int c = 1; c < lip.size(); c++) {
+		if (lip[c].y < lip[lowest].y) {
+			lowest = c;
+		}
+	}
+	const float yc = Math::pow(face.discharge / lw, 2.0f / 3.0f) / Math::pow(GRAVITY, 1.0f / 3.0f);
+	const float surface = lip[lowest].y + MAX(1.5f * yc, 0.25f);
+	int c0 = lowest;
+	int c1 = lowest;
+	while (c0 > 0 && lip[c0 - 1].y <= surface) {
+		c0--;
+	}
+	while (c1 < lip.size() - 1 && lip[c1 + 1].y <= surface) {
+		c1++;
+	}
+	// At least two columns: a dry neighbour carries a thin edge.
+	if (c1 == c0) {
+		if (c1 < lip.size() - 1) {
+			c1++;
+		} else {
+			c0--;
+		}
+	}
+	const int cols = c1 - c0 + 1;
+	PackedFloat32Array wet_share;
+	float total = 0.0f;
+	for (int c = c0; c <= c1; c++) {
+		const float sh = MAX(share[c], 0.0f) * Math::pow(MAX(surface - lip[c].y, 0.01f), 5.0f / 3.0f);
+		wet_share.push_back(sh);
+		total += sh;
+	}
+	int main_col = 0; // the column carrying the most water speaks for the fall in get_contact_falls()
+	for (int c = 0; c < cols; c++) {
+		wet_share.set(c, total > 0.0f ? wet_share[c] / total : 1.0f / cols);
+		if (wet_share[c] > wet_share[main_col]) {
 			main_col = c;
 		}
 	}
-	const float spacing = lw / (cols - 1);
-	// The smoothed (run, depth below the lip) line down each of the three profiles, cut a little past the foot.
-	PackedVector2Array lines[3];
-	PackedFloat32Array arcs[3];
+	face.width = spacing * (cols - 1);
+	// The line down the face under each column, as (run from the lip, height below it): the ground itself where
+	// the source can be asked for heights (get_height), else between the record's three profiles (at -0.35, 0 and
+	// +0.35 of the lip width). Cut a little past the foot and smoothed with a centripetal Catmull-Rom spline.
+	const bool ask = p_source != nullptr && p_source->has_method("get_height");
+	float reach = 0.0f;
 	for (int l = 0; l < 3; l++) {
 		const PackedVector3Array prof = profiles[l];
-		PackedVector2Array pts;
-		for (int i = 0; i < prof.size(); i++) {
-			pts.push_back(Vector2(prof[i].x, prof[i].y));
-			if (prof[i].y <= -face.height - 1.0f) {
-				break;
-			}
-		}
-		if (pts.size() < 2) {
+		if (prof.size() < 2) {
 			return;
 		}
-		lines[l] = smooth_profile(pts);
+		reach = MAX(reach, prof[prof.size() - 1].x);
+	}
+	LocalVector<PackedVector2Array> lines;
+	LocalVector<PackedFloat32Array> arcs;
+	float longest = 0.0f;
+	float sin_face = 1.0f;
+	for (int c = c0; c <= c1; c++) {
+		PackedVector2Array pts;
+		if (ask) {
+			const int n = CLAMP((int)Math::ceil(reach / 0.5f), 2, 2048);
+			for (int i = 0; i <= n; i++) {
+				const float run = reach * i / n;
+				const Vector3 q = Vector3(lip[c].x, 0.0f, lip[c].z) + dir * run;
+				const float y = float(p_source->call("get_height", q)) - face.top.y;
+				pts.push_back(Vector2(run, y));
+				if (y <= -face.height - 1.0f) {
+					break;
+				}
+			}
+		} else {
+			const float o = (float(c) / (lip.size() - 1) - 0.5f) * lw;
+			const float f = CLAMP(o / (0.35f * lw), -1.0f, 1.0f);
+			const PackedVector3Array pa = profiles[f < 0.0f ? 0 : 1];
+			const PackedVector3Array pb = profiles[f < 0.0f ? 1 : 2];
+			const float w = f < 0.0f ? f + 1.0f : f;
+			for (int i = 0; i < MIN(pa.size(), pb.size()); i++) {
+				const Vector2 pt = Vector2(pa[i].x, pa[i].y).lerp(Vector2(pb[i].x, pb[i].y), w);
+				pts.push_back(pt);
+				if (pt.y <= -face.height - 1.0f) {
+					break;
+				}
+			}
+		}
+		const PackedVector2Array line = pts.size() > 2 && !ask ? smooth_profile(pts) : pts;
 		PackedFloat32Array arc;
 		arc.push_back(0.0f);
-		for (int i = 1; i < lines[l].size(); i++) {
-			arc.push_back(arc[i - 1] + lines[l][i].distance_to(lines[l][i - 1]));
+		for (int i = 1; i < line.size(); i++) {
+			arc.push_back(arc[i - 1] + line[i].distance_to(line[i - 1]));
 		}
-		arcs[l] = arc;
-	}
-	float longest = 0.0f;
-	float shortest = 1e30f;
-	for (int l = 0; l < 3; l++) {
-		longest = MAX(longest, arcs[l][arcs[l].size() - 1]);
-		shortest = MIN(shortest, arcs[l][arcs[l].size() - 1]);
-	}
-	if (shortest < 0.5f * face.height) {
-		return; // A profile that stops short of the foot: no face to drape over.
+		if (line.size() < 2 || -line[line.size() - 1].y < 0.5f * face.height) {
+			return; // A line that stops short of the foot: no face to drape over.
+		}
+		longest = MAX(longest, arc[arc.size() - 1]);
+		if (c - c0 == main_col) {
+			sin_face = CLAMP(face.height / MAX(arc[arc.size() - 1], 1e-3f), 0.05f, 1.0f);
+		}
+		lines.push_back(line);
+		arcs.push_back(arc);
 	}
 	const int rows = CLAMP((int)Math::ceil(longest / MAX(row_spacing, 0.25f)) + 1, 2, 1024);
-	// Mean steepness of the face, for the inception point.
-	const float sin_face = CLAMP(face.height / MAX(arcs[1][arcs[1].size() - 1], 1e-3f), 0.05f, 1.0f);
 	const Vector3 up(0, 1, 0);
 	for (int c = 0; c < cols; c++) {
 		Column col;
-		col.q = face.discharge * share[c] / spacing;
-		const float o = (float(c) / (cols - 1) - 0.5f) * lw;
-		// Between the profiles at -0.35, 0 and +0.35 of the width.
-		const float f = CLAMP(o / (0.35f * lw), -1.0f, 1.0f);
-		const int l0 = f < 0.0f ? 0 : 1;
-		const float w = f < 0.0f ? f + 1.0f : f;
+		col.q = face.discharge * wet_share[c] / spacing;
+		const PackedVector2Array &line = lines[c];
+		const PackedFloat32Array &arc = arcs[c];
+		const float len = arc[arc.size() - 1];
+		const Vector3 lip_c = lip[c0 + c];
 		const float v0 = Math::pow(GRAVITY * MAX(col.q, 1e-5f), 1.0f / 3.0f);
 		const float li = inception_length(col.q, sin_face, rock_roughness);
 		float air = 0.0f;
@@ -233,34 +294,42 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall) {
 		Vector2 prev_p;
 		for (int r = 0; r < rows; r++) {
 			const float fr = float(r) / (rows - 1);
-			const Vector2 p = at_fraction(lines[l0], arcs[l0], fr).lerp(at_fraction(lines[l0 + 1], arcs[l0 + 1], fr), w);
-			const Vector2 pn = at_fraction(lines[l0], arcs[l0], MIN(fr + 0.5f / rows, 1.0f)).lerp(at_fraction(lines[l0 + 1], arcs[l0 + 1], MIN(fr + 0.5f / rows, 1.0f)), w);
-			const Vector2 pp = at_fraction(lines[l0], arcs[l0], MAX(fr - 0.5f / rows, 0.0f)).lerp(at_fraction(lines[l0 + 1], arcs[l0 + 1], MAX(fr - 0.5f / rows, 0.0f)), w);
+			const Vector2 p = at_fraction(line, arc, fr);
+			// The bed's direction over about a metre either side (the line is sampled finer than that).
+			const float span = MAX(1.0f / MAX(len, 1e-3f), 0.5f / rows);
+			const Vector2 pn = at_fraction(line, arc, MIN(fr + span, 1.0f));
+			const Vector2 pp = at_fraction(line, arc, MAX(fr - span, 0.0f));
 			Vector2 t = pn - pp;
 			t = t.length_squared() > 1e-10f ? t.normalized() : Vector2(0, -1);
 			const float sin_a = CLAMP(-t.y, 0.02f, 1.0f);
 			const float ds = r > 0 ? p.distance_to(prev_p) : 0.0f;
-			// Speed: towards the friction-limited (normal) speed of a thin sheet on the slope (Manning, hydraulic
-			// radius about the depth), never faster than falling freely from the lip.
-			const float drop = MAX(-p.y, 0.0f);
-			const float v_free = Math::sqrt(v0 * v0 + 2.0f * GRAVITY * drop);
-			const float d_n = Math::pow(MAX(col.q, 1e-5f) * manning_n / Math::sqrt(sin_a), 0.6f);
-			const float v_n = MAX(col.q, 1e-5f) / d_n;
-			const float v = CLAMP(v_n, 0.3f, v_free);
+			// Speed: the sheet's momentum along the bed, gravity down the slope against Darcy-Weisbach friction on
+			// the depth q / v (uniform equilibrium flow on chutes, Chanson 1993): dv/ds = (g sin a - f v^3 / 8q) / v.
+			// It tends to the normal speed (8 g q sin a / f)^(1/3) within a few metres and slows on the flatter foot.
+			float v = prev_v;
+			if (r > 0) {
+				const int sub = 8;
+				const float h = ds / sub;
+				for (int k = 0; k < sub; k++) {
+					const float acc = GRAVITY * sin_a - friction_factor * v * v * v / (8.0f * MAX(col.q, 1e-5f));
+					v = Math::sqrt(MAX(v * v + 2.0f * acc * h, 0.09f));
+				}
+			}
 			if (r > 0) {
 				travel += ds / MAX(0.5f * (v + prev_v), 0.1f);
 			}
 			// Air: none above the inception point, then towards C_e for the local slope over about 5 m (it
 			// detrains on the gentler steps).
-			const float s_from_lip = r * (arcs[l0][arcs[l0].size() - 1] * (1.0f - w) + arcs[l0 + 1][arcs[l0 + 1].size() - 1] * w) / (rows - 1);
+			const float s_from_lip = fr * len;
 			const float target = s_from_lip > li ? equilibrium_air(sin_a) : 0.0f;
 			air += (target - air) * (1.0f - Math::exp(-ds / 5.0f));
 			// Bulked thickness over the rock: the clear-water depth swelled by the air it carries.
 			const float depth = MAX(col.q / MAX(v, 0.1f), 0.003f) / (1.0f - MIN(air, 0.9f));
 			const Vector2 n2 = Vector2(-t.y, t.x).y < 0.0f ? Vector2(t.y, -t.x) : Vector2(-t.y, t.x);
-			const Vector3 base = Vector3(lip[c].x, face.top.y, lip[c].z) + dir * p.x + up * p.y;
+			const Vector3 base = Vector3(lip_c.x, face.top.y, lip_c.z) + dir * p.x + up * p.y;
 			const Vector3 nrm = (dir * n2.x + up * n2.y).normalized();
-			col.points.push_back(base + nrm * (depth + 0.03f));
+			// Clear of the ground mesh, whose triangles cut the chords of a steep face.
+			col.points.push_back(base + nrm * (depth + 0.05f + 0.15f * sin_a));
 			col.speed.push_back(v);
 			col.air.push_back(air);
 			col.travel.push_back(travel);
@@ -352,7 +421,8 @@ void PhysXWaterfalls3D::_build_mesh() {
 				normals.push_back(inv.basis.xform(n.normalized()).normalized());
 				uvs.push_back(Vector2(col.travel[r], c * spacing));
 				uv2s.push_back(Vector2(col.speed[r], 0.0f));
-				colors.push_back(Color(edge, CLAMP(col.air[r] / 0.45f, 0.0f, 1.0f), 0.0f, 1.0f));
+				// Aeration as a share of the most a sheet can hold (0.9): the streaks still show through white water.
+				colors.push_back(Color(edge, CLAMP(col.air[r] / 0.9f, 0.0f, 1.0f), 0.0f, 1.0f));
 			}
 		}
 		for (int c = 0; c + 1 < cols; c++) {
@@ -480,11 +550,39 @@ void PhysXWaterfalls3D::rebuild() {
 			if (type.is_empty() || type == "plunge" || float(f.get("height", 0.0f)) < min_height) {
 				continue;
 			}
-			_build_face(f);
+			_build_face(f, src);
 		}
 	}
 	_build_mesh();
 	_build_effects();
+	_exclude_from_rivers();
+}
+
+// The rivers draw their own falls from their beds: hand them the lips drawn here, so a contact fall is not also a
+// free jet leaving the face.
+void PhysXWaterfalls3D::_exclude_from_rivers() {
+	if (!is_inside_tree()) {
+		return;
+	}
+	PackedVector3Array lips;
+	for (const Face &face : faces) {
+		lips.push_back(face.top);
+		lips.push_back(face.foot);
+	}
+	LocalVector<Node *> stack;
+	stack.push_back(get_tree()->get_root());
+	while (!stack.is_empty()) {
+		Node *n = stack[stack.size() - 1];
+		stack.resize(stack.size() - 1);
+		if (PhysXRiver3D *river = Object::cast_to<PhysXRiver3D>(n)) {
+			if (river->get_fall_exclusions() != lips) {
+				river->set_fall_exclusions(lips);
+			}
+		}
+		for (int i = 0; i < n->get_child_count(); i++) {
+			stack.push_back(n->get_child(i));
+		}
+	}
 }
 
 Array PhysXWaterfalls3D::get_contact_falls() const {
@@ -555,8 +653,8 @@ void PhysXWaterfalls3D::set_rock_roughness(float p_ks) {
 	rock_roughness = MAX(p_ks, 0.001f);
 }
 
-void PhysXWaterfalls3D::set_manning_n(float p_n) {
-	manning_n = MAX(p_n, 0.005f);
+void PhysXWaterfalls3D::set_friction_factor(float p_f) {
+	friction_factor = MAX(p_f, 0.005f);
 }
 
 void PhysXWaterfalls3D::set_row_spacing(float p_spacing) {
@@ -582,8 +680,8 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_min_height"), &PhysXWaterfalls3D::get_min_height);
 	ClassDB::bind_method(D_METHOD("set_rock_roughness", "ks"), &PhysXWaterfalls3D::set_rock_roughness);
 	ClassDB::bind_method(D_METHOD("get_rock_roughness"), &PhysXWaterfalls3D::get_rock_roughness);
-	ClassDB::bind_method(D_METHOD("set_manning_n", "n"), &PhysXWaterfalls3D::set_manning_n);
-	ClassDB::bind_method(D_METHOD("get_manning_n"), &PhysXWaterfalls3D::get_manning_n);
+	ClassDB::bind_method(D_METHOD("set_friction_factor", "f"), &PhysXWaterfalls3D::set_friction_factor);
+	ClassDB::bind_method(D_METHOD("get_friction_factor"), &PhysXWaterfalls3D::get_friction_factor);
 	ClassDB::bind_method(D_METHOD("set_row_spacing", "spacing"), &PhysXWaterfalls3D::set_row_spacing);
 	ClassDB::bind_method(D_METHOD("get_row_spacing"), &PhysXWaterfalls3D::get_row_spacing);
 	ClassDB::bind_static_method("PhysXWaterfalls3D", D_METHOD("inception_length", "q", "sin_slope", "ks"), &PhysXWaterfalls3D::inception_length);
@@ -597,7 +695,7 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mist_min_discharge", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m\u00b3/s"), "set_mist_min_discharge", "get_mist_min_discharge");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_height", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_min_height", "get_min_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_roughness", PROPERTY_HINT_RANGE, "0.001,1,0.001,suffix:m"), "set_rock_roughness", "get_rock_roughness");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "manning_n", PROPERTY_HINT_RANGE, "0.005,0.2,0.001"), "set_manning_n", "get_manning_n");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction_factor", PROPERTY_HINT_RANGE, "0.005,1,0.001"), "set_friction_factor", "get_friction_factor");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "row_spacing", PROPERTY_HINT_RANGE, "0.25,10,0.05,suffix:m"), "set_row_spacing", "get_row_spacing");
 }
 

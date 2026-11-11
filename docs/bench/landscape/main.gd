@@ -900,7 +900,7 @@ func _build_water() -> void:
 	rivers = gen.build_river_paths(self, float(args.get("min-area", "1500000")))
 	_log("water + %d rivers built in %d ms (%d lakes)" % [rivers.size(), Time.get_ticks_msec() - t, lakes.size()])
 	# Contact falls (cascades and horsetails down steep rock) from the generator's fall records.
-	if ClassDB.class_exists("PhysXWaterfalls3D") and args.get("contact-falls", "1") != "0":
+	if ClassDB.class_exists("PhysXWaterfalls3D"):
 		var wf = ClassDB.instantiate("PhysXWaterfalls3D")
 		wf.name = "Waterfalls"
 		add_child(wf)
@@ -909,6 +909,35 @@ func _build_water() -> void:
 		for f in wf.get_contact_falls():
 			_log("contact fall %s" % [f])
 		contact_falls = wf.get_contact_falls()
+		if args.has("contact-debug"):
+			for ch in wf.get_children(true):
+				if ch is MeshInstance3D and ch.mesh != null:
+					var vs: PackedVector3Array = ch.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+					var below := 0
+					var worst := 0.0
+					var mean := 0.0
+					for v in vs:
+						var dh: float = v.y - gen.get_height(v)
+						mean += dh
+						worst = minf(worst, dh)
+						if dh < 0.0:
+							below += 1
+					_log("contact sheet: %d vertices, %d below the ground, mean %.2f m above, worst %.2f m" % [vs.size(), below, mean / maxf(vs.size(), 1), worst])
+			for g in gen.get_waterfalls():
+				if g.get("type", "") == "plunge":
+					continue
+				var top: Vector3 = g["top"]
+				var lip: PackedVector3Array = g["lip_points"]
+				var prof: PackedVector3Array = g["face_profiles"][1]
+				var d: Vector3 = g["direction"]
+				var s := ""
+				for i in [0, 3, 6, 9, 12, 15]:
+					var q: Vector3 = (lip[3] + lip[4]) * 0.5 + d * prof[i].x
+					s += " %.1f/%.1f" % [prof[i].y + top.y, gen.get_height(q)]
+				_log("  %s share %s profile vs ground:%s" % [g["id"], g["lip_share"], s])
+				break
+		# --contact-falls=0: built (the contact view still finds them) but hidden, for before/after pairs.
+		wf.visible = args.get("contact-falls", "1") != "0"
 
 
 
@@ -1517,7 +1546,7 @@ func _build_camera() -> void:
 								if found:
 									continue
 								var q: Vector3 = bot + d * h * k + side * h * k * o
-								q.y = maxf(height_at(q.x, q.z) + 2.0, mid.y - h * 0.1) + h * lift
+								q.y = maxf(height_at(q.x, q.z) + 5.0, mid.y - h * 0.1) + h * lift
 								var clear := true
 								for t in range(1, 20):
 									var p := q.lerp(mid, t / 20.0)
@@ -1530,7 +1559,10 @@ func _build_camera() -> void:
 					cam.position = c
 					cam.look_at(mid)
 					cam.fov = clampf(rad_to_deg(2.0 * atan(0.8 * h / c.distance_to(mid))), 25.0, 70.0)
-					_log("contact view of %s from %s" % [pick["id"], c])
+					_log("contact view of %s from %s, top %s" % [pick["id"], c, top])
+					for r in rivers:
+						for rf in r.get_waterfalls():
+							_log("  river %s fall at %s, %.1f m, %d exclusions" % [r.name, rf["lip"], rf["height"], r.fall_exclusions.size()])
 		"beach":
 			cam.fov = 60.0
 			cam.position = Vector3(40.0, 0.0, coast_z - 60.0)
