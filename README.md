@@ -115,10 +115,11 @@ Each feature that changes the look or the cost can be turned off with the settin
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
   - Joins lakes, the sea and other rivers (`mouth_target`), ponding to the water level; tributaries add their flow.
   - Waterfalls (`fall_min_height`): a falling sheet that thins, whitens and breaks up, with a boiling pool and spray.
+  - Waterfall mist (`fall_mist_amount`, `PhysXWaterMist3D`): a simulated mist grid per fall, drawn as a raster FogVolume and path traced.
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
 - **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
-<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, reflections, whitecaps, currents, live flow, boat wakes, white water, rivers, under water</summary>
+<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, reflections, whitecaps, currents, live flow, boat wakes, white water, rivers, waterfall mist, under water</summary>
 
 ![The pool with clear and with murky water](docs/media/murky-water.jpg)
 
@@ -195,6 +196,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A waterfall from a river lip into a pool, raster vs path traced](docs/media/waterfall.jpg)
 
 *Waterfall: the sheet breaks up into white water above the pool.*
+
+![A waterfall into a pool, raster, before and with mist](docs/media/waterfall-mist.jpg)
+
+*Waterfall mist: a haze now rises from the pool and drifts past the fall.*
 
 ![Under water near crates, raster vs path traced](docs/media/underwater.jpg)
 
