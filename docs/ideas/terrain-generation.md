@@ -962,6 +962,17 @@ river's normal depth, clamped to 1 to 15 m, radius max(lip width / 2 + 2 D, 3 D)
 ground takes min(ground, foot - D (1 - (r/R)^2)), so the pool holds water to its lowest rim. New keys:
 `pool_center`, `pool_radius`, `pool_depth`, `pool_level` (the lowest rim). Off with `plunge_pools = false`.
 
+## Spray potential (11 Nov; the static half of the water thread's spray wetting)
+
+No published model gives the spray field of a natural fall. Measurements around plunging jets below dams (flood
+discharge atomization) show spray intensity falling off roughly exponentially with distance from the impact, and
+the reach growing with the jet's energy. We bake that as a static map: `terrain_spray_potential` (L8, `spray_cell`
+4 m over the result, rect in `terrain_spray_rect`). Each fall of 4 m or more sprays from its path in plan (lip to
+impact) with weight 0.35 to 1 growing down the drop, peak 0.25 to 1 by log10(1 + Q H), falloff exp(-2 d / R) with
+R = 3 (Q H)^0.4 m (at least 4 m; about 50 m for the 3.6 m3/s, 333 m fall, about 300 m for the Victoria Falls,
+matching the width of its spray forest), fading with height above the lip. Falls combine as 1 - prod(1 - p). The
+water thread's live mist, drifting with the wind, multiplies with it at run time.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

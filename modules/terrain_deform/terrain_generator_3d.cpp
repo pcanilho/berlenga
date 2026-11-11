@@ -815,6 +815,7 @@ bool TerrainGenerator3D::generate() {
 	water_usec += OS::get_singleton()->get_ticks_usec() - tr;
 	last_water_msec = double(water_usec) / 1000.0;
 	_bake_detail_keep();
+	_bake_spray();
 	_publish_globals();
 	_erode_tiles();
 	last_generate_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
@@ -1956,6 +1957,106 @@ void TerrainGenerator3D::_publish_globals() {
 	if (detail_keep_texture.is_valid()) {
 		set_global("terrain_detail_keep_map", detail_keep_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	}
+	if (spray_texture.is_valid()) {
+		set_global("terrain_spray_potential", spray_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+		set_global("terrain_spray_rect", Vector4(r.position.x, r.position.y, (spray_nx - 1) * spray_cell, (spray_ny - 1) * spray_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
+}
+
+/* Spray potential (docs/ideas/terrain-generation.md, "Spray potential") */
+
+// The static baseline of where the falls keep the ground wet: each fall sprays from the line its water takes (lip
+// to impact) and most from where it lands. Intensity falls off exponentially with distance (as measured around
+// plunging jets: dam spillway atomization) over a reach that grows with the fall's power, and fades with height
+// above the source (spray settles, it does not climb). Live wetting from wind-blown mist multiplies with it at run
+// time; this map only says how much spray a place can get.
+void TerrainGenerator3D::_bake_spray() {
+	spray.clear();
+	spray_nx = spray_ny = 0;
+	if (spray_cell <= 0.0 || nx < 2 || ny < 2) {
+		spray_texture.unref();
+		return;
+	}
+	spray_nx = MAX(2, int(Math::floor((nx - 1) * result_cell / spray_cell)) + 1);
+	spray_ny = MAX(2, int(Math::floor((ny - 1) * result_cell / spray_cell)) + 1);
+	spray.resize(spray_nx * spray_ny);
+	for (float &v : spray) {
+		v = 0.0f;
+	}
+	const Array falls = get_waterfalls(1.0e4, 4.0);
+	for (int f = 0; f < falls.size(); f++) {
+		const Dictionary w = falls[f];
+		const Vector3 top = w["top"];
+		const Vector3 impact = w.has("pool_center") ? Vector3(w["pool_center"]) : Vector3(w["bottom"]);
+		const real_t q = MAX(real_t(w["discharge"]), real_t(0.0));
+		const real_t h = MAX(real_t(w["height"]), real_t(0.0));
+		// Reach: 3 (Q H)^0.4 m, at least 4 m (a 20 m fall of 30 l/s wets a few metres; 3.6 m3/s over 330 m about
+		// 50 m; the Victoria Falls' 1000 m3/s over 108 m some 300 m, the rainforest's width).
+		const real_t reach = MAX(real_t(3.0) * Math::pow(q * h, real_t(0.4)), real_t(4.0));
+		const real_t peak = CLAMP(real_t(0.25) + real_t(0.25) * Math::log(1.0 + q * h) / Math::log(real_t(10.0)), real_t(0.25), real_t(1.0));
+		const real_t ext = reach * 1.5f;
+		const int x0 = CLAMP(int(Math::floor((MIN(top.x, impact.x) - ext - result_rect.position.x) / spray_cell)), 0, spray_nx - 1);
+		const int x1 = CLAMP(int(Math::ceil((MAX(top.x, impact.x) + ext - result_rect.position.x) / spray_cell)), 0, spray_nx - 1);
+		const int z0 = CLAMP(int(Math::floor((MIN(top.z, impact.z) - ext - result_rect.position.y) / spray_cell)), 0, spray_ny - 1);
+		const int z1 = CLAMP(int(Math::ceil((MAX(top.z, impact.z) + ext - result_rect.position.y) / spray_cell)), 0, spray_ny - 1);
+		const Vector3 seg = impact - top;
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const real_t px = result_rect.position.x + x * spray_cell;
+				const real_t pz = result_rect.position.y + z * spray_cell;
+				const Vector3 p(px, _ground(px, pz), pz);
+				// Horizontal distance to the water's path in plan (lip to impact); the curtain wets everything below the
+				// lip beside it, more the further down (the sheet breaks into spray as it falls), most at the impact.
+				const Vector2 s2(seg.x, seg.z);
+				const real_t t = CLAMP(Vector2(p.x - top.x, p.z - top.z).dot(s2) / MAX(s2.length_squared(), real_t(1e-6)), real_t(0.0), real_t(1.0));
+				const Vector2 c(top.x + s2.x * t, top.z + s2.y * t);
+				const real_t d = Vector2(p.x - c.x, p.z - c.y).length();
+				if (d > ext) {
+					continue;
+				}
+				const real_t above = MAX(p.y - MAX(top.y, impact.y), real_t(0.0));
+				const real_t down = CLAMP((top.y - p.y) / MAX(h, real_t(1.0)), real_t(0.0), real_t(1.0));
+				const real_t source = 0.35f + 0.65f * down * down;
+				const real_t v = peak * source * Math::exp(-2.0f * d / reach) * Math::exp(-above / (0.25f * reach + 2.0f));
+				float &o = spray[z * spray_nx + x];
+				o = 1.0f - (1.0f - o) * (1.0f - float(MIN(v, real_t(1.0)))); // several falls add like probabilities
+			}
+		}
+	}
+	const Ref<Image> img = get_spray_image();
+	if (spray_texture.is_valid() && spray_texture->get_width() == spray_nx && spray_texture->get_height() == spray_ny) {
+		spray_texture->update(img);
+	} else {
+		spray_texture = ImageTexture::create_from_image(img);
+	}
+}
+
+Ref<Image> TerrainGenerator3D::get_spray_image() const {
+	if (spray_nx < 2 || spray.size() != uint32_t(spray_nx * spray_ny)) {
+		return Ref<Image>();
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(spray.size());
+	uint8_t *w = bytes.ptrw();
+	for (uint32_t i = 0; i < spray.size(); i++) {
+		w[i] = uint8_t(CLAMP(int(Math::round(spray[i] * 255.0f)), 0, 255));
+	}
+	return Image::create_from_data(spray_nx, spray_ny, false, Image::FORMAT_L8, bytes);
+}
+
+real_t TerrainGenerator3D::get_spray_potential(const Vector3 &p_global_position) const {
+	if (spray_nx < 2 || spray.size() != uint32_t(spray_nx * spray_ny)) {
+		return 0.0;
+	}
+	const Vector3 &local = p_global_position; // the generator's grid is in world x z, as get_rock_hardness
+	const real_t fx = CLAMP((local.x - result_rect.position.x) / spray_cell, real_t(0.0), real_t(spray_nx - 1));
+	const real_t fz = CLAMP((local.z - result_rect.position.y) / spray_cell, real_t(0.0), real_t(spray_ny - 1));
+	const int x = MIN(int(fx), spray_nx - 2), z = MIN(int(fz), spray_ny - 2);
+	const real_t tx = fx - x, tz = fz - z;
+	const float *g = spray.ptr();
+	const real_t a = Math::lerp(real_t(g[z * spray_nx + x]), real_t(g[z * spray_nx + x + 1]), tx);
+	const real_t b = Math::lerp(real_t(g[(z + 1) * spray_nx + x]), real_t(g[(z + 1) * spray_nx + x + 1]), tx);
+	return Math::lerp(a, b, tz);
 }
 
 // How much of the geometric erosion detail each grid node keeps (_ground_detail's fades for water, alluvium and the
@@ -3717,6 +3818,10 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_beach_slope"), &TerrainGenerator3D::get_beach_slope);
 	ClassDB::bind_method(D_METHOD("set_lake_count", "count"), &TerrainGenerator3D::set_lake_count);
 	ClassDB::bind_method(D_METHOD("get_lake_count"), &TerrainGenerator3D::get_lake_count);
+	ClassDB::bind_method(D_METHOD("set_spray_cell", "metres"), &TerrainGenerator3D::set_spray_cell);
+	ClassDB::bind_method(D_METHOD("get_spray_cell"), &TerrainGenerator3D::get_spray_cell);
+	ClassDB::bind_method(D_METHOD("get_spray_potential", "global_position"), &TerrainGenerator3D::get_spray_potential);
+	ClassDB::bind_method(D_METHOD("get_spray_image"), &TerrainGenerator3D::get_spray_image);
 	ClassDB::bind_method(D_METHOD("set_plunge_pools", "enable"), &TerrainGenerator3D::set_plunge_pools);
 	ClassDB::bind_method(D_METHOD("get_plunge_pools"), &TerrainGenerator3D::get_plunge_pools);
 	ClassDB::bind_method(D_METHOD("set_fall_lips", "enable"), &TerrainGenerator3D::set_fall_lips);
@@ -3882,6 +3987,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lake_evaporation", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:mm/yr"), "set_lake_evaporation", "get_lake_evaporation");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_lips"), "set_fall_lips", "get_fall_lips");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunge_pools"), "set_plunge_pools", "get_plunge_pools");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_cell", PROPERTY_HINT_RANGE, "0,32,0.5,suffix:m"), "set_spray_cell", "get_spray_cell");
 	ADD_GROUP("Inflows", "inflow");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "inflows", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_inflows", "get_inflows");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "inflow_area", PROPERTY_HINT_RANGE, "0,10000,0.1,or_greater,suffix:km²"), "set_inflow_area", "get_inflow_area");

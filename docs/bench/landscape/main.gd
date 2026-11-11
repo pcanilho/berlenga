@@ -596,6 +596,11 @@ func _lake_and_fall() -> void:
 				var q := lt + dd * float(k)
 				prof.append("%d:%.1f" % [k, gen.get_height(q)])
 			_log("lip profile (m along: height) " + " ".join(prof))
+		if args.has("spray-map"):
+			var si: Image = gen.get_spray_image()
+			if si:
+				si.save_png(args["spray-map"])
+				print("SPRAY ", si.get_size(), " at big fall foot ", gen.get_spray_potential(Vector3(400, 0, -1420)))
 		if args.has("list-falls"):
 			for f in gen_falls:
 				var run: float = Vector2(f["top"].x - f["bottom"].x, f["top"].z - f["bottom"].z).length()

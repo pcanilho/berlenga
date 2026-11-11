@@ -270,6 +270,12 @@ private:
 	Vector3 _lake_center(int p_lake) const;
 	Ref<ImageTexture> geology_texture;
 	Ref<ImageTexture> detail_keep_texture; // share of the erosion detail kept, per node (_bake_detail_keep)
+	// Static spray potential of the falls (0..1) on its own finer grid over the result (_bake_spray).
+	real_t spray_cell = 4.0;
+	int spray_nx = 0, spray_ny = 0;
+	LocalVector<float> spray;
+	Ref<ImageTexture> spray_texture;
+	void _bake_spray();
 	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).
 	int tile_nx = 0;
 	int tile_nz = 0;
@@ -576,6 +582,10 @@ public:
 	real_t get_rock_hardness(const Vector3 &p_global_position) const;
 	Array get_river_sites(real_t p_min_area = 1.0e5, real_t p_min_discharge = 0.0, real_t p_run = 200.0) const;
 	Array get_waterfalls(real_t p_min_area = 1.0e5, real_t p_min_height = 5.0) const;
+	void set_spray_cell(real_t p_cell) { spray_cell = MAX(p_cell, real_t(0.0)); }
+	real_t get_spray_cell() const { return spray_cell; }
+	real_t get_spray_potential(const Vector3 &p_global_position) const;
+	Ref<Image> get_spray_image() const;
 	Color get_geology_at(const Vector3 &p_global_position) const;
 	Ref<Image> get_geology_image() const;
 	Ref<Texture2D> get_geology_texture() const { return geology_texture; }
