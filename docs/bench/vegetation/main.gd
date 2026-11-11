@@ -330,6 +330,22 @@ func _checks() -> void:
 	_check("shade: core of a crown", under_t >= 0.89, under_t)
 	_check("shade: bushes only under crowns", sunny == 0 and field.get_placements(1).size() > 20 and field.get_placements(1).size() < bushes_open, [sunny, field.get_placements(1).size(), bushes_open])
 	_check("shade: trees unchanged", field.get_placements(0) == first, field.get_placements(0).size())
+	# Light: each ranged plant carries the light it grew in (VegetationLight), which tints it.
+	bush_sp.visibility_range = 30.0
+	field.populate()
+	var lit_n := 0
+	var lit_bad := 0
+	for ch in field.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh.mesh == bush_sp.meshes[0]:
+			for i in ch.multimesh.instance_count:
+				var y: float = ch.multimesh.get_instance_custom_data(i).g
+				var light := (y - floorf(y)) * 101.0 / 100.0 * 1.5
+				var shade := field.get_shade_at(ch.global_transform * ch.multimesh.get_instance_transform(i).origin)
+				lit_n += 1
+				if floorf(y) != 30.0 or absf(light - (1.0 - shade)) > 0.03:
+					lit_bad += 1
+	_check("light: shade plants carry the light under the crowns", lit_n > 20 and lit_bad == 0, [lit_n, lit_bad])
+	bush_sp.visibility_range = 0.0
 	# canopy_field: a second field without trees (a camera-local herb layer) reads the first's crowns.
 	var herbs := VegetationField3D.new()
 	herbs.name = "Herbs"

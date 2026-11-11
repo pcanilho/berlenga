@@ -17,6 +17,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Placement by climate** (`temperature_range`, `january_temperature_range`, `precipitation_range`, `aridity_range`, `sunlight_range`): species by temperature, winter frost, rain, aridity and sunlight.
 - **Density masks** (`density_mask`, `density_mask_rect`; per species `mask_channel`, `mask_invert`): a painted texture thins or clears any species per channel, for clearings and paths.
 - **Waterfall spray** (`PlantSpecies.spray_range`): plants keep out of the soaked ground in a waterfall's spray zone, where only mosses grow.
+- **Plant cover map** (`VegetationField3D.cover_map_enabled`): a colour map of the plant cover baked from the planting rules, for distant terrain.
 - **Canopy shade** (`canopy_radius`, `shade_range`; `weather_map`): understorey placed by the shade of placed crowns; crowns feed the weather's canopy map.
 
 ## Grass
@@ -82,6 +83,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Bending: the nettles part round the body.*
 
+- **Sun and shade growth** (always on): grass and ground plants take the colour and height of the light they grow in, like sun and shade leaves.
 - **Per-stem sway** (always on): each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.
 - **Near and far meshes** (`PlantSpecies.near_meshes`, `near_range`): heavier meshes near the camera, crossfaded with dithering a few plants at a time.
 - **Far thinning** (`PlantSpecies.far_color`): plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.

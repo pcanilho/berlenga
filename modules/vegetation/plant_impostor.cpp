@@ -561,6 +561,7 @@ varying flat vec2 v_f0;
 varying flat vec2 v_f1;
 varying flat vec2 v_f2;
 varying flat vec3 v_w;
+varying float v_light;
 varying flat vec3 v_d0;
 varying flat vec3 v_d1;
 varying flat vec3 v_d2;
@@ -653,8 +654,9 @@ void vertex() {
 	}
 	// Far distance, as the plant shader: thinned by rank, the survivors grown a little.
 	v_scale = 1.0;
+	v_light = vegetation_light_of(INSTANCE_CUSTOM.y);
 	if (INSTANCE_CUSTOM.y > 0.0) {
-		float range = INSTANCE_CUSTOM.y;
+		float range = floor(INSTANCE_CUSTOM.y);
 		float dist = length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz);
 		float keep = clamp((range - dist) / (range * 0.65), 0.0, 1.0);
 		v_scale = smoothstep(INSTANCE_CUSTOM.x, INSTANCE_CUSTOM.x + 0.12, keep * 1.12) * (1.0 + 0.25 * (1.0 - keep));
@@ -686,6 +688,7 @@ void fragment() {
 	vec4 b1 = frame_tex(impostor_normal, v_f1, v_uv1, dx, dy);
 	vec4 b2 = frame_tex(impostor_normal, v_f2, v_uv2, dx, dy);
 	vec3 albedo = a0.rgb * wn.x + a1.rgb * wn.y + a2.rgb * wn.z;
+	albedo = vegetation_light_tint(albedo, v_light);
 	vec3 n_local = normalize(oct_decode(b0.xy) * wn.x + oct_decode(b1.xy) * wn.y + oct_decode(b2.xy) * wn.z + vec3(0.0, 1e-4, 0.0));
 	float back = (b0.w * wn.x + b1.w * wn.y + b2.w * wn.z) * 2.0;
 	// Pixel depth offset: the baked depth moves the fragment to the plant's surface, so the quad

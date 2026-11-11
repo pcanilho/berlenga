@@ -48,7 +48,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Rock layers: rivers step down over the hard bands, leaving waterfalls up to 30 m.*
 
-- **Glacial erosion** (`glacial_enabled`, `glacial_ela`, `glacial_erosion`): ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers.
+- **Glacial erosion** (`glacial_enabled`, `glacial_ela`, `glacial_erosion`): ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off).
 - **Cliff ledges** (`cliff_ledge_spacing`, `cliff_ledge_strength`): rock beds of uneven thickness step faces steeper than 40 degrees into ledges.
 - **Fallen blocks** (`get_boulders(rect, density)`): blocks shed by cliffs rest below them, the largest furthest out.
 
@@ -106,6 +106,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   ![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach, raster vs path traced](media/terrain-ground.jpg)
 
   *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
+
+- **Far blend** (TerrainMaterial3D `far_blend_enabled`, `far_start`, `far_fade`, off by default): far ground takes the colour of the plant cover map.
 
 - **Landscape3D** (`source`, `spacing`, `lod_error`): heightfield ground from a TerrainGenerator3D or a height image, as chunk meshes with crack-free LODs and one BLAS per chunk level, so nothing rebuilds while the camera moves. Heights stream in coarse first and chunk meshes build on worker threads (`stream_heights`); baked heights load 4 km at 1 m in under a second.
 

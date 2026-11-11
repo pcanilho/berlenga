@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "plant_generator.h"
+#include "vegetation_light.h"
 
 #include "scene/resources/surface_tool.h"
 #include "plant_species.h"
@@ -2772,6 +2773,9 @@ bool PlantGenerator::_card_lods(const Builder &p_builder, CardSurface &r_cards) 
 // Shared by the plant shader and the impostor shader (plant_impostor.cpp): wind, wetness, snow.
 String PlantGenerator::shader_common_code() {
 	String code = WeatherMap3D::get_wind_shader_code();
+	code += VegetationLight::SHADER_CODE;
+	// VegetationField3D packs the light a plant grew in into the fraction of its range (custom y).
+	code += "float vegetation_light_of(float y) { return y > 0.0 ? fract(y) * (101.0 / 100.0) * 1.5 : 1.0; }\n";
 	// The wind code already declares weather_map_rect: the wetness lines without their globals.
 	code += BaseMaterial3D::get_wetness_functions_code(false);
 	code += BaseMaterial3D::get_snow_shader_code();
@@ -2837,6 +2841,8 @@ uniform sampler2D backlight_tex : hint_default_black, filter_linear_mipmap_aniso
 
 varying vec3 v_world;
 varying vec3 v_geo_n;
+varying float v_light;
+uniform float light_response = 1.0;
 
 
 vec3 rotate_about(vec3 v, vec3 axis, float a) {
@@ -2940,8 +2946,9 @@ void vertex() {
 	// share passes its rank, and the survivors grow a little to hold the cover (Horizon Zero
 	// Dawn's thinning by rank, Ghost of Tsushima's widening). Measured from the main camera, so
 	// shadow and other passes thin the same plants; the ground's colour takes over (vegetation_far()).
+	v_light = vegetation_light_of(INSTANCE_CUSTOM.y);
 	if (INSTANCE_CUSTOM.y > 0.0) {
-		float range = INSTANCE_CUSTOM.y;
+		float range = floor(INSTANCE_CUSTOM.y);
 		float d = length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz);
 		float keep = clamp((range - d) / (range * 0.65), 0.0, 1.0);
 		float s = smoothstep(INSTANCE_CUSTOM.x, INSTANCE_CUSTOM.x + 0.12, keep * 1.12);
@@ -2969,6 +2976,8 @@ void fragment() {
 		albedo = mix(albedo, mix(yellow, brown, smoothstep(0.35, 0.85, dead)), smoothstep(0.0, 0.5, dead));
 		back *= 1.0 - 0.7 * dead;
 	}
+	// Living tissue acclimates to its light (sun and shade leaves); litter and dead tissue do not.
+	albedo = mix(albedo, vegetation_light_tint(albedo, v_light), light_response * (1.0 - dead));
 	float rough = roughness;
 	float metallic = 0.0;
 	float specular = 0.35; // Leaf cuticle.
@@ -3394,6 +3403,8 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			mat = _material(colors[s], roughness[s], s != SURFACE_CENTRE);
 		}
 		mat->set_shader_parameter("height", MAX(plant_height * size, 0.05f));
+		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
+		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
 		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);

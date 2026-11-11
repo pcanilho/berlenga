@@ -31,6 +31,7 @@
 #include "vegetation_field_3d.h"
 
 #include "grass_field_3d.h"
+#include "vegetation_light.h"
 
 // Rigged trees (TreeWind3D, from the trees work) when that class is in the module.
 #if __has_include("tree_wind_3d.h")
@@ -200,6 +201,27 @@ void VegetationField3D::clear() {
 	_clear_generated();
 }
 
+float VegetationLight::sun_mean(const TerrainDataMap3D *p_map) {
+	if (!p_map || !p_map->has_climate()) {
+		return 0.0f;
+	}
+	const Rect2 r = p_map->get_map_rect();
+	double sum = 0.0;
+	for (int z = 0; z < 16; z++) {
+		for (int x = 0; x < 16; x++) {
+			sum += p_map->get_shortwave_at(Vector3(r.position.x + (x + 0.5f) * r.size.x / 16.0f, 0.0f, r.position.y + (z + 0.5f) * r.size.y / 16.0f));
+		}
+	}
+	return float(sum / 256.0);
+}
+
+float VegetationLight::exposure(const TerrainDataMap3D *p_map, float p_sun_mean, float p_x, float p_z) {
+	if (p_sun_mean <= 0.0f) {
+		return 1.0f;
+	}
+	return CLAMP(p_map->get_shortwave_at(Vector3(p_x, 0.0f, p_z)) / p_sun_mean, 0.3f, 1.5f);
+}
+
 // Everything placement needs, read on the main thread so tiles can be placed on workers.
 bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	r_setup = PlaceSetup();
@@ -281,6 +303,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		ps.halo = halo;
 	}
 	r_setup.grid_cell = MAX(1.0f, r_setup.max_footprint * 2.0f);
+	r_setup.sun_mean = VegetationLight::sun_mean(map);
 	return true;
 }
 
@@ -420,9 +443,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					const Vector3 p3(xz.x, 0.0f, xz.y);
 					float suit = sp->get_suitability(map, p3);
-					if ((shade_rule || conifer_rule) && suit > 0.0f) {
+					float shade = 0.0f;
+					if ((shade_rule || conifer_rule || range > 0.0f) && suit > 0.0f) {
 						float conifer = 0.0f;
-						float shade = crown_shade(local_crown_grid, local_crowns, crown_reach, CROWN_CELL, xz, &conifer);
+						shade = crown_shade(local_crown_grid, local_crowns, crown_reach, CROWN_CELL, xz, &conifer);
 						if (p_setup.other) {
 							// Both canopies stop light: transmissions multiply; the stand type is
 							// each one's share of the cover.
@@ -509,7 +533,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					out->species[s].xforms[variant].push_back(p_setup.to_local * world);
 					// Custom data for the plant shader: the rank among the plants kept here (blue noise,
 					// so thinning by distance keeps the field even), the species' range, size, species.
-					out->species[s].customs[variant].push_back(Color(CLAMP(rank / MAX(keep, 1e-4f), 0.0f, 1.0f), range, scale, float(s)));
+					// y: the range in whole metres, and in its fraction the light the plant grew in
+					// (VegetationLight), which tints its leaves; species without a range get neither.
+					const float light = (1.0f - shade) * VegetationLight::exposure(map, p_setup.sun_mean, xz.x, xz.y);
+					const float range_light = range > 0.0f ? MAX(Math::floor(range), 1.0f) + VegetationLight::pack(light) / 101.0f : 0.0f;
+					out->species[s].customs[variant].push_back(Color(CLAMP(rank / MAX(keep, 1e-4f), 0.0f, 1.0f), range_light, scale, float(s)));
 					if (ps.far_color.a > 0.0f && range > 0.0f) {
 						// The ground a plant hides: a disc of half its spacing, scaled.
 						const float rr = 0.5f * sp->get_spacing() * scale;

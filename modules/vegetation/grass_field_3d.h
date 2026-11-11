@@ -67,6 +67,7 @@ class GrassField3D : public Node3D {
 	Color tip_color = Color(0.45f, 0.6f, 0.22f);
 	Color dry_color = Color(0.55f, 0.48f, 0.28f);
 	float dryness = 0.2f;
+	float sun_mean = 0.0f; // VegetationLight::sun_mean() of the data map.
 	float color_variation = 0.5f;
 	float radius = 40.0f;
 	float tile_size = 8.0f;

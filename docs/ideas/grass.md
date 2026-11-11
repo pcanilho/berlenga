@@ -314,6 +314,24 @@ the coarsest level, `INSTANCE_CUSTOM.w` integer part) thin evenly. An R2 dither 
 tried first: even, but on the blade grid it shows diagonal rows. No cost per frame; the blade
 count per level is unchanged.
 
+## Sun and shade
+
+Leaves acclimate to the light they grow in (Lichtenthaler 2007): shade leaves carry more
+chlorophyll per area and less carotenoid, so they are darker and bluer green; sun leaves are paler
+and yellower. Grass under shade stretches and flops (shade avoidance, Franklin 2008).
+
+The light a plant grew in is (1 - crown shade) x slope exposure, where exposure is the climate
+map's shortwave over its map mean, clamped to 0.3..1.5 (1 without a climate). It is fixed when the
+plant is placed, so it costs nothing per frame:
+
+- ground plants carry it in the fraction of INSTANCE_CUSTOM.y (the range keeps the whole metres);
+- grass blades in the integer part of INSTANCE_CUSTOM.z over 4 (the rest lean stays below 4);
+- shared shader `vegetation_light_tint()` (vegetation_light.h): shade towards x(0.72, 0.85, 0.84),
+  full sun above 1.0..1.3 towards x(1.12, 1.05, 0.74). Light 1 (open flat ground) is unchanged.
+- grass height x(1 + 0.35 shade - 0.15 sun), lean x(1 + 0.8 shade); shade keeps grass green
+  (its dry share falls by up to 70%), a sunny slope adds a quarter.
+- only leaves and stems respond; petals, litter, twigs and dead (worn) tissue keep their colour.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

@@ -169,9 +169,12 @@ under the placed crowns. Cost: about 70 ms on four cores for a square kilometre 
 dry, times 0.32). A turbid-medium canopy model (Monsi and Saeki 1953; Ross 1981 G-function; as
 in Bruneton and Neyret 2012) was tried against rendered blades in five variants (grass bench
 `--far-match`): off by 1.0 to 1.6x, no better than the hand match (0.6 to 1.1x). Most of the
-visible step at the grass edge is the bare ground's specular sheen at grazing angles, which the
-blades hide; the colour is the smaller part. Next: measure the colour from a small render of
-the blades themselves.
+visible step at the grass edge was the bare ground's specular sheen at grazing angles, which the
+blades hide: `grass_ground_specular()` (GrassField3D's ground shader code) now lowers the
+ground's specular to 0.1 under the sward, and the far meadow matches the blades within 5% in the
+default grass (it read pale grey before). Ground shaders that call `grass_ground()` should also
+set `SPECULAR = grass_ground_specular(wp, specular)`. Next: measure the colour from a small
+render of the blades themselves, so other grass settings match as well.
 
 ## References
 

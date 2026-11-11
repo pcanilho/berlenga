@@ -545,6 +545,18 @@ remaining gap does not move with any of it: there the head blocks the sun, and t
 lights it with the sky and the light the floor bounces, which raster gets only from global
 illumination (SDFGI, VoxelGI), not from the hair shading.
 
+Also tried and not kept: sky occlusion through the hair, as Unreal's hair voxels. The solver's
+32^3 density grid went to the material (head and body opaque), and each strand point marched 14
+directions through it for an AO term and a bent normal for the ambient light. Against the path
+traced frame the error rose from 43 to 48: the hair's raster colour is already the colour of a mass
+of fibres (its own shadowing included), so occlusion only darkened hair the path tracer shows
+brighter. Turning the reflections to the bent normal did lift the far side, but with a grey sky
+sheen from grazing Fresnel, not the hair's colour. The experiment is kept as a patch outside the
+tree. On the way it found two path tracer bugs, fixed: a material writing BENT_NORMAL_MAP failed
+to compile its hit shader (the object vanished), and the dynamic BLAS scheduler never refit an item
+larger than the whole refit budget (1.5 M triangles), so a 30k-strand groom stayed where it was
+first built while the raster hair moved.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.

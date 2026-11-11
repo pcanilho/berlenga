@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "grass_field_3d.h"
+#include "vegetation_light.h"
 
 #include "vegetation_field_3d.h"
 
@@ -233,16 +234,20 @@ varying float v_t;
 varying float v_dry;
 varying float v_wet;
 varying vec3 v_tint;
+varying float v_light;
 
 uniform float color_variation;
 )";
 	code += GRASS_COLOR_CODE;
+	code += VegetationLight::SHADER_CODE;
 	code += R"(
 
 void vertex() {
 	float h = INSTANCE_CUSTOM.x;
 	float w = INSTANCE_CUSTOM.y;
-	float rest_lean = INSTANCE_CUSTOM.z;
+	float light_q = floor(INSTANCE_CUSTOM.z / 4.0);
+	float rest_lean = INSTANCE_CUSTOM.z - light_q * 4.0;
+	v_light = light_q / 100.0 * 1.5;
 	float rnd = fract(INSTANCE_CUSTOM.w);
 	float t = VERTEX.y;
 	float side = VERTEX.x;
@@ -318,10 +323,12 @@ uniform float dryness;
 
 void fragment() {
 	float t = smoothstep(0.0, 1.0, v_t);
-	vec3 tipc = mix(tip_color, dry_color, step(1.0 - dryness, v_dry) * smoothstep(0.3, 1.0, v_t));
+	// Shade keeps grass green; a sunny slope dries it first.
+	float dry_share = clamp(dryness * (1.0 - 0.7 * (1.0 - clamp(v_light, 0.0, 1.0))) + 0.25 * smoothstep(1.0, 1.3, v_light), 0.0, 1.0);
+	vec3 tipc = mix(tip_color, dry_color, step(1.0 - dry_share, v_dry) * smoothstep(0.3, 1.0, v_t));
 	vec3 c = mix(base_color, tipc, t) * v_tint;
 	// Some blades of the dry fraction are dead from the root (thatch), straw that greys with age.
-	float dead = step(1.0 - dryness * 0.3, v_dry);
+	float dead = step(1.0 - dry_share * 0.3, v_dry);
 	c = mix(c, dry_color * mix(0.7, 1.0, t) * (0.75 + 0.5 * fract(v_dry * 31.0)), dead);
 	// Midrib and parallel veins (monocot leaves), faded out once a blade is under a few pixels wide.
 	float x = abs(UV.x - 0.5) * 2.0;
@@ -332,6 +339,7 @@ void fragment() {
 	c *= 1.0 + detail * (0.18 * rib - 0.07 * veins * (1.0 - rib) - 0.12 * x * x);
 	// Darker towards the root, where the field shades itself.
 	c *= mix(0.6, 1.0, t);
+	c = vegetation_light_tint(c, v_light);
 	// Wet blades (Lagarde 2013, low porosity): a little darker and glossier.
 	float wet_factor = mix(1.0, 0.2, 0.25);
 	ALBEDO = c * mix(1.0, wet_factor, v_wet);
@@ -381,6 +389,19 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 		r.instantiate(); // Defaults: dry land only.
 	}
 	const VegetationField3D *canopy = _get_canopy(r.ptr());
+	// The light the blades grew in (VegetationLight), on a 1 m grid over the tile: the crowns'
+	// shade from the canopy field (even when the rules ignore shade) and the slope's sun.
+	const VegetationField3D *crowns = canopy_field.is_empty() || !is_inside_tree() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+	const int lg = int(Math::ceil(tile_size)) + 1;
+	LocalVector<float> light_grid;
+	light_grid.resize(lg * lg);
+	for (int gz = 0; gz < lg; gz++) {
+		for (int gx = 0; gx < lg; gx++) {
+			const Vector3 q(x0 + gx, 0.0f, z0 + gz);
+			const float sh = crowns ? crowns->get_shade_at(q) : 0.0f;
+			light_grid[gz * lg + gx] = (1.0f - sh) * (p_map ? VegetationLight::exposure(p_map, sun_mean, q.x, q.z) : 1.0f);
+		}
+	}
 	LocalVector<Transform3D> xforms;
 	LocalVector<Color> customs;
 	// Wider blades where fewer remain, so the field keeps its coverage at a distance.
@@ -417,14 +438,25 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			const float clump_h = unit(hc, 0);
 			const float clump_yaw = unit(hc, 8) * Math::TAU;
 			const float rnd = unit(hb, 16);
-			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16));
+			const float lx = CLAMP(x - x0, 0.0f, float(lg - 1));
+			const float lz = CLAMP(z - z0, 0.0f, float(lg - 1));
+			const int gx = MIN(int(lx), lg - 2);
+			const int gz = MIN(int(lz), lg - 2);
+			const float light = Math::lerp(Math::lerp(light_grid[gz * lg + gx], light_grid[gz * lg + gx + 1], lx - gx), Math::lerp(light_grid[(gz + 1) * lg + gx], light_grid[(gz + 1) * lg + gx + 1], lx - gx), lz - gz);
+			// Shade avoidance (Franklin 2008): grass in shade grows longer and laxer; in full sun on a
+			// sunny slope, shorter.
+			const float shade_t = 1.0f - CLAMP(light, 0.0f, 1.0f);
+			const float sun_t = Math::smoothstep(1.0f, 1.3f, light);
+			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * clump_h + 0.35f * unit(hj, 16)) * (1.0f + 0.35f * shade_t - 0.15f * sun_t);
 			const float yaw = clump_yaw + (unit(hj, 24) - 0.5f) * 1.6f;
 			const Transform3D world(Basis(Vector3(0, 1, 0), yaw), Vector3(x, y, z));
 			xforms.push_back(to_local * world);
 			// w: the outer band's drop order in the integer part (the rank within the coarsest level,
 			// so the last blades left are evenly spread too), the blade's random value in the fraction.
 			const float order = Math::floor(Math::fmod(rank * 8.0f, 1.0f) * 255.0f);
-			customs.push_back(Color(height, width, lean * (0.4f + 1.2f * unit(hc, 16)), order + 0.999f * Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
+			// z: the light in its integer part over 4 (VegetationLight::pack), the rest lean (under 4).
+			const float blade_lean = MIN(lean * (0.4f + 1.2f * unit(hc, 16)) * (1.0f + 0.8f * shade_t), 3.99f);
+			customs.push_back(Color(height, width, VegetationLight::pack(light) * 4.0f + blade_lean, order + 0.999f * Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
 		}
 	}
 	Tile tile;
@@ -582,6 +614,7 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 // terrain's shader (get_ground_shader_code()).
 void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	ground_baked = true;
+	sun_mean = VegetationLight::sun_mean(p_map);
 	fade_band = Vector4(); // Send the band and the far colour again.
 	if (is_inside_tree()) {
 		// The fallback wind for the other plants (PlantGenerator's shader), so they sway with the grass.
@@ -678,6 +711,28 @@ vec3 grass_turf(vec3 world_pos) {
 	// Shaded at the base of the sward, so darker than the dry tips above it.
 	c = mix(c, grass_ground_dry.rgb * (0.25 + 0.2 * streak), 0.8 * smoothstep(0.8 - grass_ground_dry.a * 0.5, 0.95 - grass_ground_dry.a * 0.5, thatch));
 	return c;
+}
+
+// How much of the ground the sward stands for at a point: its cover, full where the blades have
+// thinned away (the outer band), as grass_ground() weighs the turf.
+float grass_ground_weight(vec3 world_pos) {
+	float cover = grass_ground_cover(world_pos);
+	if (cover <= 0.0) {
+		return 0.0;
+	}
+	float gone = 0.0;
+	if (grass_ground_fade.w > 0.0) {
+		gone = 1.0 - clamp((grass_ground_fade.z - length(world_pos.xz - grass_ground_fade.xy)) / grass_ground_fade.w, 0.0, 1.0);
+	}
+	return cover * mix(grass_ground_color.a, 1.0, gone);
+}
+
+// The ground's specular under the sward: the blades hide the soil's sheen at the grazing angles a
+// field is seen at, so a meadow from afar is near-Lambertian. Without this the far meadow beyond
+// the blades turned pale grey against them (grass bench --far-match: the sheen was most of the
+// step at the grass edge; 0.1 matches the blades).
+float grass_ground_specular(vec3 world_pos, float specular) {
+	return mix(specular, min(specular, 0.1), grass_ground_weight(world_pos));
 }
 
 // The ground's albedo under the vegetation: litter where the canopy closes (forest_floor()), then
