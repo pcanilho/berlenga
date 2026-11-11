@@ -23,8 +23,17 @@
 			<param index="1" name="variants" type="int" default="3" />
 			<param index="2" name="textures" type="bool" default="true" />
 			<param index="3" name="impostor_range" type="float" default="15.0" />
+			<param index="4" name="season" type="Dictionary" default="{}" />
 			<description>
-				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance.
+				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance. The leaf litter is the stand's own fallen leaves ([method stand_litter_leaves]); [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for the fallen colours and the share of fresh leaves.
+			</description>
+		</method>
+		<method name="stand_litter_leaves" qualifiers="static">
+			<return type="Array" />
+			<param index="0" name="stand" type="int" enum="PlantGenerator.FloorStand" />
+			<param index="1" name="season" type="Dictionary" default="{}" />
+			<description>
+				The leaves a stand drops, for [member litter_leaves]: one [Dictionary] per broadleaf species with its share of the litter ([code]share[/code]), its leaf form as the tree generator's [code]get_leaf_form()[/code] gives it ([code]kind[/code], [code]count[/code], [code]depth[/code], [code]width[/code], [code]size[/code]), its fallen colour ([code]color[/code]) and the share of fresh leaves among the older litter ([code]fresh[/code]). Forms and, with [param season], colours come from the tree generator when that class is present.
 			</description>
 		</method>
 		<method name="add_impostors" qualifiers="static">
@@ -56,6 +65,14 @@
 				Builds [param count] plants with seeds [member seed], [member seed] + 1, and so on.
 			</description>
 		</method>
+		<method name="make_climber_leaves" qualifiers="static">
+			<return type="Array" />
+			<param index="0" name="climber" type="int" />
+			<param index="1" name="variants" type="int" default="4" />
+			<description>
+				Returns [param variants] single-leaf [ArrayMesh]es of a climber ([constant CLIMBER_IVY], [constant CLIMBER_CLEMATIS] or [constant CLIMBER_HONEYSUCKLE]; [constant PRESET_IVY] reads as ivy), for vines grown by other generators. Each leaf lies in the local XZ plane with its base at the origin, points +Z and is 1 m long; scale it per instance. Each carries the plant material, so it sways, wears, wets and takes snow and light like the ground plants.
+			</description>
+		</method>
 		<method name="make_impostor" qualifiers="static">
 			<return type="ArrayMesh" />
 			<param index="0" name="mesh" type="Mesh" />
@@ -75,6 +92,9 @@
 		</member>
 		<member name="leaf_wear" type="float" setter="set_leaf_wear" getter="get_leaf_wear" default="0.5">
 			How worn the leaves are, from [code]0.0[/code] (every leaf whole and green) to [code]1.0[/code]: uneven halves, round insect bites out of the margin with dried rims, dead tips on grass-like blades, and older, lower leaves yellowing and browning. Each leaf draws its wear from its own hash, so changing it does not change the plant's shape. The browning travels in the vertex colour's alpha.
+		</member>
+		<member name="litter_leaves" type="Array" setter="set_litter_leaves" getter="get_litter_leaves" default="[]">
+			For [constant PRESET_LEAF_LITTER]: the stand's fallen leaves ([method stand_litter_leaves]). Each card then carries about two layers of those leaves over its disc, picked by share and shaped by kind: simple, lobed with rounded lobes, palmate, pinnate (mostly loose leaflets, now and then a whole leaf) or digitate. Fresh leaves keep their fallen colour; older ones darken to grey brown and curl. Empty: generic broadleaf litter.
 		</member>
 		<member name="lods" type="bool" setter="set_lods" getter="get_lods" default="true">
 			If [code]true[/code], distance LODs are generated (meshoptimizer), so plants far from the camera draw a fraction of their triangles.
@@ -200,6 +220,15 @@
 		</constant>
 		<constant name="PRESET_HEATHER" value="32" enum="Preset">
 			Heather: a dwarf shrub of wiry branched woody stems clothed in short leafy shoots, some with spikes of pink-mauve bells; pine heath and acid open ground.
+		</constant>
+		<constant name="CLIMBER_IVY" value="0" enum="Climber">
+			Ivy (Hedera helix): palmate, shallow lobes, dark and glossy with pale veins.
+		</constant>
+		<constant name="CLIMBER_CLEMATIS" value="1" enum="Climber">
+			Old man's beard (Clematis vitalba): pinnate, two pairs of ovate leaflets and one at the tip.
+		</constant>
+		<constant name="CLIMBER_HONEYSUCKLE" value="2" enum="Climber">
+			Honeysuckle (Lonicera periclymenum): ovate, short-stalked, dull green.
 		</constant>
 		<constant name="PRESET_MAX" value="33" enum="Preset">
 			Number of presets.

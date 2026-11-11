@@ -14,6 +14,7 @@ extends Node3D
 #   --boulders=D     rockfall blocks below cliffs at density D (default 1, 0 none), grey stand-ins
 #   --far-blend [--far-start=M]   TerrainMaterial3D's far blend over a test plant cover map
 #   --lake-pick=high  the lake views and checks use the highest lake (default the biggest)
+#   --cam=x,y,z --look=x,y,z  a fixed camera (a negative y: that height above the ground)
 #   --view=wide|lake|lakewater|valley|fall|beach|peak|treeline|meadow   camera (default wide; lakewater: low over the lake;
 #                         valley: from behind the high lake down to the clearing; treeline: the clearing's edge)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
@@ -301,6 +302,7 @@ func _generate() -> void:
 	gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
 	gen.gorge_age = float(args.get("gorge-age", "12000"))
 	gen.moraine_age = float(args.get("moraine-age", "0"))
+	gen.scree_age = float(args.get("scree-age", "0"))
 	gen.fan_backfill = not args.has("no-backfill")
 	if args.has("glacial"):
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
@@ -311,6 +313,8 @@ func _generate() -> void:
 		gen.glacial_rock_variation = float(args.get("rock-var", "0"))
 		gen.glacial_rock_scale = float(args.get("rock-scale", "500"))
 		gen.glacial_inflow_balance = float(args.get("ice-inflow", "0"))
+		gen.glacial_coarse_cell = float(args.get("ice-coarse", "0"))
+		gen.ice_worn_detail = args.has("ice-worn")
 		gen.glacial_erosion = float(args.get("glacial-erosion", "1"))
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
@@ -420,6 +424,8 @@ func _generate() -> void:
 	_log("generate %d ms, grid %s, last change %.3f m, fan slots filled %d" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change(), gen.get_last_slots_filled()])
 	if gen.moraine_age > 0.0:
 		_log("moraines: %.0f m3 of debris" % gen.get_last_moraine_volume())
+	if gen.scree_age > 0.0:
+		_log("scree: %.0f m3" % gen.get_last_scree_volume())
 	if gen.glacial_enabled:
 		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded()])
 		for l in gen.get_lake_results():
@@ -711,6 +717,12 @@ func _lake_and_fall() -> void:
 					for i in range(-12, 25):
 						row.append("%.1f" % gen.get_height(pc + dr * i * 1.0))
 					print("POOL ", f.get("id"), " along ", " ".join(row))
+				var lp: PackedVector3Array = f.get("lip_points", PackedVector3Array())
+				if lp.size() > 0:
+					var ly := PackedStringArray()
+					for q in lp:
+						ly.append("%.1f" % (q.y - f["top"].y))
+					_log("    lip width %.1f m, points vs top: %s" % [f.get("lip_width", 0.0), " ".join(ly)])
 				_log("    %s %s, dir %s, impact %.1f m/s (free %.1f), tiers %d, lands in %s, pool %s" % [f.get("id", "?"), f.get("type", "?"), f.get("direction", Vector3.ZERO), f.get("impact_speed", 0.0), f.get("impact_speed_free", 0.0), f.get("tiers", []).size(), f.get("lands_in", "?"), ("r %.1f m, depth %.1f m, level %.1f" % [f["pool_radius"], f["pool_depth"], f["pool_level"]]) if f.has("pool_radius") else "none"])
 		_log("waterfalls from the generator: %d, tallest %.0f m high, %.0f m wide, %.1f m3/s at %s" % [gen_falls.size(), tall["height"], tall["width"], tall["discharge"], top])
 	_log("lake at %s level %.1f m" % [lake_center, lake_level])
@@ -1377,6 +1389,10 @@ func _tree_mesh(conifer: bool, h: float) -> Mesh:
 
 # --- Camera ------------------------------------------------------------------------------------------------------
 
+func _vec3_arg(v: String) -> Vector3:
+	return Vector3(float(v.get_slice(",", 0)), float(v.get_slice(",", 1)), float(v.get_slice(",", 2)))
+
+
 func _build_camera() -> void:
 	cam = Camera3D.new()
 	cam.far = 20000.0
@@ -1595,6 +1611,16 @@ func _build_camera() -> void:
 		_:
 			cam.position = Vector3(300, 520, coast_z + 900.0)
 			cam.look_at(Vector3(-100, 250, -700))
+	if args.has("cam") and args.has("look"):
+		# A fixed shot for before/after pairs: --cam=x,y,z --look=x,y,z (y of either below 0: that far above the ground).
+		var cv := _vec3_arg(args["cam"])
+		var lv := _vec3_arg(args["look"])
+		if cv.y < 0.0:
+			cv.y = height_at(cv.x, cv.z) - cv.y
+		if lv.y < 0.0:
+			lv.y = height_at(lv.x, lv.z) - lv.y
+		cam.position = cv
+		cam.look_at(lv)
 	for g in sward:
 		g.update_at(cam.global_position)
 	if sward.is_empty():

@@ -1124,6 +1124,65 @@ Built (11 Nov night, Paulo picked all four proposals at 21:25):
   the ice-free peaks, up to about 30 m; the lakes at the foot grow behind them (20 to 23 ha, 8.6 to 10.6 ha).
   About 4e5 m3 of debris at 3000 years (the bench default with `--auto-lake`). Cost under 0.1 s.
 
+## Scree (built 11 Nov night, Paulo picked it with the others)
+
+What makes it: rock walls retreat by rockfall, about 0.1 to 1 mm/yr since the ice left (Sass 2005; Hales and Roering
+2005, sensitive to frost cracking). The blocks fall down the wall, gather in its gullies and stop where the ground
+flattens below it: cones under gullies, aprons under plain faces, straight at the angle of repose with a concave toe
+where the large blocks run further (Statham 1976; Luckman 2013, Treatise on Geomorphology 7.15). Streams undercut
+their toes and carry them off. Graphics papers place blocks on such slopes (Paris et al. 2020) but shape the ground by
+thermal erosion only; World Creator and Gaea have debris layers of the same kind.
+
+Built: `scree_age` (years, 0 = off). Supply: walls over 50 degrees (a 45 degree threshold took the sharp crests
+between two slopes as walls and studded the slopes with cones) retreat 0.5 mm/yr. Transport: multiple flow
+directions by slope^4 (single direction gathered a whole wall onto a few cells: one 90 m cone buried the pool lake
+under the 338 m fall). Deposit: where the ground falls below 38 degrees, a half cone against the wall at
+`talus_angle` with its last third eased out, merged by maximum, then two 3x3 passes on the scree only. No scree in
+standing water (priority-flood basins, Barnes et al. 2014), on streams of 5 ha or more, or within 48 m of rivers of
+1 km2 (they work their floor). No soil added: it stays bare.
+
+Result, showcase valley at 10000 years: 2.2e6 m3, aprons fill the hollows at the feet of the walls; every lake and
+fall stays. Off by default and in the bench (`--scree-age=10000` to see it): the difference is modest at 16 m cells,
+and it reads as rock until the ground shader gets a scree material (next step: mark it in the talus channel).
+
+## Faster ice stage (11 Nov night)
+
+Measured (showcase valley): the steady-ice solve is 96% of the ice stage, 1.26 of 1.30 s, in 128 solves (6000
+pseudo-steps for the first, 200 warm-started for each after) on a 65 x 65 ice grid; a pseudo-step costs about 9 ns a
+node, so the loop itself is already lean. The solve never settles: the largest steady-state imbalance stays at 15 to
+37 m/yr after each warm start, so the terrain depends on the iteration path, and any change to the iterations
+changes the result.
+
+Tried:
+
+- Accelerated pseudo-transient (a damped second-order update, Räss et al. 2022, GMD 15): diverges on the shallow-ice
+  equation's H^5 diffusivity at damping 0.9 and 0.95, even with the stable step.
+- Larger pseudo steps (0.1 instead of 0.03 d^2/D): slower and worse (oscillation, imbalance doubled).
+- Coarse-to-fine in time: the ice ages between river steps on a 128 m ice grid, the last glaciation on 64 m
+  (`glacial_coarse_cell`, 0 = off). The ice stage takes a third of the time (1.29 to 0.42 s; 8.1 to 2.2 s with an
+  inflow glacier). The terrain is similar but not the same: the showcase lake shrinks from 3.0 to 2.3 ha and the
+  fall moves; on the automatic valley the side-valley tarns do not form (the coarse ice wears the cirques
+  differently). Kept as an option for previews and very large worlds, off by default.
+
+The real fix is a converged steady-ice solver: the steady shallow-ice sheet as an obstacle problem solved by Newton
+with a multigrid inner solve (Jouvet and Bueler 2012, SIAM J. Appl. Math. 72; Bueler 2016, J. Glaciology 62), which
+settles in tens of iterations instead of thousands and makes the result independent of the iteration path. It
+changes the terrain once (to the converged answer), so it needs a before/after look.
+
+## Ice-worn rock (built 11 Nov night)
+
+What it is: rock the ice slid over is abraded smooth on the faces that meet the flow (stoss) and quarried into
+steps on the faces it leaves (lee): roches moutonnees and whalebacks, streamlined along the flow, scratched by
+striations parallel to it (Glasser and Bennett 2004; Hallet 1979 and 1996 on abrasion and quarrying; Krabbendam and
+Glasser 2011 on whalebacks vs roches moutonnees). At our scale it lives in the detail normal, not in the geometry.
+
+Built: `ice_worn_detail` (off by default). The generator publishes `terrain_ice_flow` (RGBA8 on the geology grid:
+rg the last glaciers' flow direction down their surface, b the wear, full at 20 m of glacial erosion) and
+`terrain_ice_flow_rect` (zero: off). terrain_detail_normal() then scales the detail's slope along the flow: faces
+rising into the flow by 1 - 0.7 wear, faces falling away by 1 + 0.8 wear, and adds striations 0.35 m apart across
+the flow (faded by the pixel footprint). Showcase cirque from the floor: the slopes the ice ran down lose their soft
+gullies on one side and keep sharp steps on the other; the effect is subtle at a distance, as it is in nature.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

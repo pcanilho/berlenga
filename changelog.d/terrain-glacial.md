@@ -10,7 +10,11 @@
 - `glacial_rock_variation`, `glacial_rock_scale`: rock quality under the ice (joint density) varies the glacial erosion rate, so the ice digs its own basins and leaves its own bars: tarns and paternoster lakes form with no markers.
 - `glacial_inflow_balance`: glaciers whose catchment lies beyond the map come in with their rivers (net balance times each inflow's off-map area), so the main valley gets its trough and chain of lakes with no markers.
 - `moraine_age`: the last glaciation's margins build moraines (wall rockfall and basal debris carried down the ice, laid at its edge), terminal loops and lateral ridges that dam lakes behind them.
+- `scree_age`: rock walls shed scree for that many years into aprons and cones at their feet, kept out of lakes and river floors.
+- `glacial_coarse_cell`: the ice ages between river steps can run on a coarser ice grid, about three times faster (the terrain is similar, not the same).
+- `ice_worn_detail`: rock the last glaciers wore keeps smooth faces toward the ice flow, stepped faces away from it, and fine striations (`terrain_ice_flow` global).
 ### Fixed
+- `get_waterfalls()`: the brink moves to the channel when the river's cell sits on a slot's edge, the lip spans the wetted width only, and falls under a lake or the sea, or under the minimum height once on the channel, are left out.
 - Abandoned one-cell river slots on fans are backfilled (`fan_backfill`, on).
 - Detail no longer fades on faces steeper than loose fill can stand, however much sediment the cells around them hold.
 - Loose fill no longer reads as soil on ground steeper than `critical_slope` (a 74 degree bar face showed 390 m of soil and grew plants).

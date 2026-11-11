@@ -85,6 +85,7 @@ float alpha_scissor_threshold = -1.0; // Negative until the shader writes ALPHA_
 float alpha_hash_scale = 1.0;
 vec3 light_vertex = vec3(0.0);
 float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET: raster shadow maps only
+float positional_shadow_offset = 0.0; // POSITIONAL_SHADOW_OFFSET: raster shadow maps only
 vec2 rt_point_coord = vec2(0.0);
 float rt_depth = 0.0;
 float premul_alpha = 1.0;

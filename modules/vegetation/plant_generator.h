@@ -49,6 +49,14 @@ public:
 	static String shader_common_code(); // Wind, wetness and snow lines shared with the impostor shader.
 	static Ref<ArrayMesh> make_impostor(const Ref<Mesh> &p_mesh, int p_frames = 8, int p_frame_size = 64);
 	static void add_impostors(const Ref<Resource> &p_species, float p_range, int p_frames = 8, int p_frame_size = 64);
+	// Single leaves of climbers for TreeGenerator's vines (CLIMBER_* or PRESET_IVY): each lies in
+	// local XZ, its base at the origin, pointing +Z, 1 m long, with the plant ShaderMaterial.
+	enum Climber {
+		CLIMBER_IVY,
+		CLIMBER_CLEMATIS,
+		CLIMBER_HONEYSUCKLE,
+	};
+	static Array make_climber_leaves(int p_climber, int p_variants = 4);
 	enum Preset {
 		PRESET_DANDELION,
 		PRESET_PLANTAIN,
@@ -106,6 +114,7 @@ public:
 		int lobes = 0; // Lobes on each side (dandelion teeth, buttercup lobes).
 		float lobe_depth = 0.0f;
 		int segments = 10;
+		bool round_lobes = false; // Rounded lobes (oak) instead of teeth pointing back.
 	};
 
 	enum Venation {
@@ -192,6 +201,7 @@ private:
 	void _add_vogel_head(const Transform3D &p_top, float p_radius, int p_florets, const Leaf &p_floret);
 	void _add_cup_flower(const Transform3D &p_top, float p_radius);
 
+	void _build_stand_litter();
 	void _build_dandelion();
 	void _build_plantain();
 	void _build_clover();
@@ -235,6 +245,7 @@ private:
 	bool textures = true;
 	int texture_size = 256;
 	float leaf_wear = 0.5f;
+	Array litter_leaves; // Leaf litter: the stand's fallen leaves (forms with share and colour); empty: generic.
 	uint32_t leaf_serial = 0; // Counts the leaves of a plant: their wear draws from it, not from rng.
 	HashMap<uint64_t, TextureSet> texture_cache;
 	LeafTexture _leaf_texture_spec(bool p_petal) const;
@@ -266,6 +277,8 @@ public:
 	bool get_textures() const { return textures; }
 	void set_texture_size(int p_size) { texture_size = CLAMP(p_size, 32, 2048); }
 	void set_leaf_wear(float p_wear) { leaf_wear = CLAMP(p_wear, 0.0f, 1.0f); }
+	void set_litter_leaves(const Array &p_leaves) { litter_leaves = p_leaves; }
+	Array get_litter_leaves() const { return litter_leaves; }
 	float get_leaf_wear() const { return leaf_wear; }
 	int get_texture_size() const { return texture_size; }
 	Ref<ArrayMesh> generate();
@@ -286,8 +299,10 @@ public:
 		FLOOR_PINE_HEMLOCK,
 		FLOOR_MAX,
 	};
-	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true, float p_impostor_range = 15.0f);
+	static Array stand_litter_leaves(FloorStand p_stand, const Dictionary &p_season = Dictionary());
+	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true, float p_impostor_range = 15.0f, const Dictionary &p_season = Dictionary());
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
+VARIANT_ENUM_CAST(PlantGenerator::Climber);
 VARIANT_ENUM_CAST(PlantGenerator::FloorStand);

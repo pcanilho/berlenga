@@ -116,6 +116,91 @@ foxglove (step 5). Bench: `docs/bench/grass --forest=in --stand=beech|oak|spruce
 Triangles per plant: heather 14k and woodruff 6.4k are the heaviest; they wait for the far-distance
 LOD work (stage 6) before dense use.
 
+## Fallen leaves, twigs and small leafy plants (research, step 6)
+
+Asked for: fallen leaves that read as the trees above them, small sticks between the plants, and
+small leafy plants breaking up grass and litter, with the forest floor's real amounts. The trees
+module owns wood from 1 cm thick up (sticks, branches, logs, with `tree_deadwood_axis`); this
+module owns leaf litter, twigs under 1 cm and the small plants.
+
+### How much falls, and how much stays
+
+- **Leaf fall.** A closed broadleaf stand drops about its own leaf area every year: leaf area index
+  4 to 7 in beech and oak, leaf mass per area 40 to 100 g/m2 (Poorter et al. 2009), so 2.5 to 4.5
+  t/ha of leaves. Young or open stands drop far less: 0.6 to 1.6 t/ha in a 10-year common garden
+  (Carnol and Bazgir 2013, Table 4: beech 0.65, oak 0.54, spruce 1.2, birch 1.6 t/ha/yr).
+  In leaf layers: one year's fall covers the ground about LAI times over.
+- **What stays depends on the species.** Decay rates differ by about a factor five (Hobbie et al.
+  2006, 14 species in one garden): ash, alder, lime and maple litter is mostly gone by summer
+  (decay constant k about 1 per year or more; soil and herbs show through), beech, oak and spruce
+  litter lasts two to four years (k 0.2 to 0.4), so the floor stays brown under them all year.
+  With fall F (layers per year) and k, the steady layers on the ground are F/k, and the share of
+  ground they hide, for leaves dropped at random, is 1 - exp(-layers) (the Poisson cover we
+  already use for crowns). Beech: 5/0.3 = 16 layers, fully covered; ash in July: about one layer,
+  63% covered, with soil and herbs in the gaps.
+- **Where it lands.** Leaves fall mostly under their own crowns, with a tail that reaches tens of
+  metres downwind (Ferrari and Sugita 1996: a dispersal kernel fitted per species, most within
+  one or two crown radii). So edges and clearings get a drift of leaves that thins outward and
+  leans downwind, and leaves pile against logs, trunks, stones and in hollows.
+- **Twigs under 1 cm.** Foresters count down wood by diameter class with line-intersect sampling
+  (Brown 1974; the US Forest Inventory, Woodall and Monleon 2008): the class under 0.64 cm is
+  typically 0.5 to 2 t/ha on the floor of a closed wood. A twig 0.5 cm thick and 20 cm long weighs
+  about 2 g, so that is 25 to 100 twigs per square metre, mostly short broken pieces half hidden
+  in the litter. Twigs and small branches are 5 to 20% of the yearly litterfall (Carnol and
+  Bazgir: birch and alder about 20%, beech and spruce under 5% in young stands).
+- **Small leafy plants.** Tree seedlings carpet the floor after a mast year (hundreds per square
+  metre under beech) and thin to a few per square metre within two years; in light, herbs with
+  broad leaves (wood sorrel, violets, herb Robert, enchanter's nightshade, ground ivy) and bramble
+  shoots. In meadows the grass is broken by rosettes and low broad-leaved herbs (plantain,
+  dandelion, clover, yarrow, ground ivy).
+- **Around fallen wood.** Moss cover on a log grows with its decay class; old logs carry ferns,
+  seedlings (nurse logs) and wood sorrel on top; leaves collect on the uphill side and in the
+  angle with the ground (Stokland, Siitonen and Jonsson 2012).
+
+### How games and engines do it
+
+- Horizon Zero Dawn (van Muijden, GDC 2017): every asset placed from its own density map built
+  from rules over the terrain data; small debris is just another placed layer with footprints.
+- Far Cry 5 (Carrier, GDC 2018): debris and dead leaves scattered by rules around the trees that
+  were placed first (distance to trunk, slope, flow), so the floor reads as caused by the trees.
+- Unreal PCG: scatter with filters on distance to other points (around trunks and logs), self
+  pruning, and density from attributes; the same graph places trees then their litter.
+- Kingdom Come: Deliverance II and Star Citizen's planets: a scanned litter ground material does
+  most of the cover; near the camera instanced leaves, sticks and small plants give it relief.
+- Ground detail far below a pixel: texture bombing (Glanville 2004) or stochastic tiling (Heitz
+  and Neyret 2018) to scatter leaf shapes in the ground material without repeating tiles.
+
+### Plan
+
+1. **Leaves from the trees above.** Per stand species, read `TreeGenerator.get_leaf_form(preset)`
+   (shape) and `get_leaf_season(preset, season)` (autumn colour, fallen share). Build litter leaf
+   cards from those forms (curled, a few fresh and many older, darker and skeletonised ones) and
+   the litter ground texture from the same shapes, so beech floors show beech leaves and oak
+   floors oak leaves.
+2. **Amount from the numbers above.** Layers on the ground = fall x leaf area / decay per
+   species, mixed by the canopy map's species shares; ground cover = 1 - exp(-layers) drives both
+   the litter ground blend and the 3D leaf density. Fast-decaying stands show soil and herbs by
+   summer, slow ones stay brown.
+3. **Drift.** The canopy layer blurred by a dispersal kernel leaning downwind (from the weather
+   map's prevailing wind) gives leaves past the crowns into edges and clearings, on grass too;
+   more in hollows (terrain curvature) and on the uphill side of logs and trunks.
+4. **Twigs under 1 cm.** Count from the class load per stand (beech, oak 1 to 2 t/ha; pine,
+   spruce less), bark colour from the trees' bark family, broken and forked short pieces, mostly
+   under crowns with a tail into the edge.
+5. **Small leafy plants.** Seedlings of the stand's species after the season (dense then thinning),
+   broad-leaved herbs in the light patches, and low rosettes mixed through meadow grass.
+6. **Around trees' fallen wood.** Read `tree_deadwood_axis` on deadwood species: moss and wood
+   sorrel on top of old logs, ferns and seedlings along them, a band of trapped leaves on the
+   uphill side; nothing under the log's footprint. A no-op until those species are present.
+
+Built (1): `PlantGenerator.stand_litter_leaves(stand, season)` and `litter_leaves`; `make_floor`
+gives its leaf litter the stand's leaves (forms and fallen colours from the tree generator when
+present, the same values in a table otherwise). Cards hold about two layers of leaves, so a card
+of red oak has ten big leaves and one of hawthorn forty small ones.
+
+Checks: raster and path traced before/after at `--forest=in` (beech, oak, spruce) and the
+forest edge; counts per square metre against the figures above; triangles and placement cost.
+
 ## References
 
 - Ellenberg, *Vegetation Mitteleuropas mit den Alpen*, 5th ed., 1996; Ellenberg and Leuschner,
@@ -123,3 +208,18 @@ LOD work (stage 6) before dense use.
 - Gilliam, "The ecological significance of the herbaceous layer in temperate forest
   ecosystems", BioScience 57, 2007.
 - van Muijden, "GPU-Based Run-Time Procedural Placement in Horizon: Zero Dawn", GDC 2017.
+- Poorter et al., "Causes and consequences of variation in leaf mass per area (LMA): a
+  meta-analysis", New Phytologist 182, 2009.
+- Carnol and Bazgir, "Nutrient return to the forest floor through litter and throughfall under 7
+  forest species after conversion from Norway spruce", Forest Ecology and Management 309, 2013.
+- Hobbie et al., "Tree species effects on decomposition and forest floor dynamics in a common
+  garden", Ecology 87, 2006.
+- Ferrari and Sugita, "A spatially explicit model of leaf litter fall in hemlock-hardwood
+  forests", Canadian Journal of Forest Research 26, 1996.
+- Brown, "Handbook for inventorying downed woody material", USDA Forest Service GTR INT-16, 1974.
+- Woodall and Monleon, "Sampling protocol, estimation, and analysis procedures for the down woody
+  materials indicator of the FIA program", USDA Forest Service GTR NRS-22, 2008.
+- Stokland, Siitonen and Jonsson, *Biodiversity in Dead Wood*, Cambridge, 2012.
+- Carrier, "Procedural World Generation of Far Cry 5", GDC 2018.
+- Glanville, "Texture Bombing", GPU Gems, 2004; Heitz and Neyret, "High-Performance By-Example
+  Noise using a Histogram-Preserving Blending Operator", HPG 2018.

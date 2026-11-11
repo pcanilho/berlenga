@@ -43,8 +43,8 @@
 
 namespace {
 // std140 Params in hair_strands.glsl: 7 vec4, 4 mat4, MAX_SPHERES vec4, 3 vec4 (SDF), 2 vec4 (volume),
-// 5 vec4 (deep opacity map).
-constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16 + 10 * 16;
+// 2 + 4 per map vec4 (deep opacity maps).
+constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16 + (7 + HairStrandSolverGPU::DOM_SLOTS * 4) * 16;
 constexpr int SDF_PARAMS = (7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16) / 4; // float index
 constexpr uint32_t GROUP = 64; // local_size_x
 
@@ -253,12 +253,12 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 	history = false;
 
 	const int dom_cells = DOM_CELLS * DOM_CELLS;
-	buf_dom_depth = storage_from(rd, nullptr, dom_cells * 2 * 4);
-	buf_dom_accum = storage_from(rd, nullptr, dom_cells * 3 * 4);
+	buf_dom_depth = storage_from(rd, nullptr, DOM_SLOTS * dom_cells * 2 * 4);
+	buf_dom_accum = storage_from(rd, nullptr, DOM_SLOTS * dom_cells * 3 * 4);
 	RD::TextureFormat df;
 	df.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
 	df.width = DOM_CELLS * 2;
-	df.height = DOM_CELLS;
+	df.height = DOM_CELLS * DOM_SLOTS;
 	df.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
 	Vector<uint8_t> far;
 	far.resize(df.width * df.height * 16);
@@ -486,17 +486,18 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 		run(MODE_SDF_FINAL, 1.0f, 1.0f, cells);
 		run(MODE_SDF_COLLIDE, 1.0f, 1.0f, strand_count);
 	}
-	if (fl[DOM_PARAMS + 3] > 0.0f) {
-		// The deep opacity map, from the final positions of every strand.
+	const int dom_maps = CLAMP((int)fl[DOM_PARAMS + 3], 0, (int)DOM_SLOTS);
+	for (int m = 0; m < dom_maps; m++) {
+		// The deep opacity maps, one per light, from the final positions of every strand.
 		const int dom_cells = DOM_CELLS * DOM_CELLS;
-		run(MODE_DOM_CLEAR, 1.0f, 1.0f, dom_cells);
-		run(MODE_DOM_OPAQUE, 1.0f, 1.0f, dom_cells);
+		run(MODE_DOM_CLEAR, 1.0f, 1.0f, dom_cells, m);
+		run(MODE_DOM_OPAQUE, 1.0f, 1.0f, dom_cells, m);
 		if (tri_count > 0) {
-			run(MODE_DOM_OPAQUE_TRIS, 1.0f, 1.0f, tri_count);
+			run(MODE_DOM_OPAQUE_TRIS, 1.0f, 1.0f, tri_count, m);
 		}
-		run(MODE_DOM_FRONT, 1.0f, 1.0f, strand_count);
-		run(MODE_DOM_ACCUM, 1.0f, 1.0f, strand_count);
-		run(MODE_DOM_RESOLVE, 1.0f, 1.0f, dom_cells);
+		run(MODE_DOM_FRONT, 1.0f, 1.0f, strand_count, m);
+		run(MODE_DOM_ACCUM, 1.0f, 1.0f, strand_count, m);
+		run(MODE_DOM_RESOLVE, 1.0f, 1.0f, dom_cells, m);
 	}
 	if (slot_points > 0) {
 		// Draw order, far to near: bitonic sort of the strands by depth.
@@ -749,32 +750,26 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 		f[SDF_PARAMS + 8] = band;
 		f[SDF_PARAMS + 9] = MAX(p_settings.margin, 0.0f);
 	}
-	// The deep opacity map toward the light.
-	if (p_settings.dom_radius > 0.0f && p_settings.dom_light.length_squared() > 1e-6f) {
-		const Vector3 l = p_settings.dom_light.normalized();
-		Vector3 u, v;
-		deep_shadow_axes(l, u, v);
+	// The deep opacity maps, one per light.
+	{
 		const Vector3 layers = deep_shadow_layers();
 		float *d = f + DOM_PARAMS;
-		d[0] = p_settings.dom_center.x;
-		d[1] = p_settings.dom_center.y;
-		d[2] = p_settings.dom_center.z;
-		d[3] = p_settings.dom_radius;
-		d[4] = u.x;
-		d[5] = u.y;
-		d[6] = u.z;
-		d[7] = (float)HairStrandSolverGPU::DOM_CELLS;
-		d[8] = v.x;
-		d[9] = v.y;
-		d[10] = v.z;
-		d[11] = MAX(p_settings.root_width, 0.0f);
-		d[12] = l.x;
-		d[13] = l.y;
-		d[14] = l.z;
-		d[15] = MAX(p_settings.tip_width, 0.0f);
-		d[16] = layers.x;
-		d[17] = layers.y;
-		d[18] = layers.z;
+		int maps = 0;
+		for (const Settings::DeepShadowLight &light : p_settings.dom_lights) {
+			if (maps >= HairStrandSolverGPU::DOM_SLOTS) {
+				break;
+			}
+			if (deep_shadow_slot(light, d + 8 + maps * 16)) {
+				maps++;
+			}
+		}
+		d[0] = (float)HairStrandSolverGPU::DOM_CELLS;
+		d[1] = MAX(p_settings.root_width, 0.0f);
+		d[2] = MAX(p_settings.tip_width, 0.0f);
+		d[3] = (float)maps;
+		d[4] = layers.x;
+		d[5] = layers.y;
+		d[6] = layers.z;
 	}
 	// The hair volume (Petrovic et al. 2005).
 	if (p_settings.volume_enabled && vol_cells > 0) {
@@ -812,6 +807,41 @@ void HairStrandSolver::deep_shadow_axes(const Vector3 &p_light, Vector3 &r_u, Ve
 	const Vector3 up = Math::abs(p_light.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
 	r_u = up.cross(p_light).normalized();
 	r_v = p_light.cross(r_u);
+}
+
+bool HairStrandSolver::deep_shadow_slot(const Settings::DeepShadowLight &p_light, float r_slot[16]) {
+	if (p_light.radius <= 0.0f) {
+		return false;
+	}
+	Vector3 l;
+	float distance = 0.0f;
+	float tan_half = 0.0f;
+	if (p_light.local) {
+		// A perspective map from the light that just holds the hair's bounding sphere; a light
+		// inside the sphere (or almost) cannot hold it in one view.
+		const Vector3 to_light = p_light.light - p_light.center;
+		distance = to_light.length();
+		if (distance < p_light.radius * 1.05f) {
+			return false;
+		}
+		l = to_light / distance;
+		tan_half = p_light.radius / Math::sqrt(distance * distance - p_light.radius * p_light.radius);
+	} else {
+		if (p_light.light.length_squared() < 1e-6f) {
+			return false;
+		}
+		l = p_light.light.normalized();
+	}
+	Vector3 u, v;
+	deep_shadow_axes(l, u, v);
+	const float slot[16] = {
+		p_light.center.x, p_light.center.y, p_light.center.z, p_light.radius,
+		u.x, u.y, u.z, p_light.local ? 1.0f : 0.0f,
+		v.x, v.y, v.z, tan_half,
+		l.x, l.y, l.z, distance
+	};
+	memcpy(r_slot, slot, sizeof(slot));
+	return true;
 }
 
 RID HairStrandSolver::get_previous_position_texture_rd_rid() const {
