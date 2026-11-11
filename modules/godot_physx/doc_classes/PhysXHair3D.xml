@@ -110,6 +110,9 @@
 		<member name="substeps" type="int" setter="set_substeps" getter="get_substeps" default="4">
 			Solver steps per frame. More keeps long hair stiffer and fast heads cleaner, at a small GPU cost.
 		</member>
+		<member name="simplify_tolerance" type="float" setter="set_simplify_tolerance" getter="get_simplify_tolerance" default="0.5">
+			Where a groomed strand runs straight, the strands are drawn (raster and path traced) through fewer of its points: Douglas-Peucker on the groomed strand, as Unreal Engine's groom decimation, keeping every point the strand would otherwise stray from by more than this share of [member root_width]. Below a strand's own width the drawn hair looks the same, with fewer triangles for the path tracer to refit and fewer vertices to shade. Every point still simulates. Wavy, curly and frizzy grooms keep most of their points. [code]0[/code]: every point is drawn.
+		</member>
 		<member name="tip_width" type="float" setter="set_tip_width" getter="get_tip_width" default="0.0001">
 			The width of a strand at the tip, in metres.
 		</member>

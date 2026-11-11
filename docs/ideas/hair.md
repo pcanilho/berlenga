@@ -607,6 +607,18 @@ The path tracer sees each strand as two crossed strips, four triangles a segment
 
 None was built: no option gives a large saving without losing detail on a 40-series GPU.
 
+Built afterwards at Paulo's pick (`simplify_tolerance`, default 0.5 of the root width): each
+strand is drawn through its Douglas-Peucker points only, chosen once on the groomed strand; the
+solver's output pass maps a slot's k-th texel to the strand's k-th drawn point (a per-strand list
+in a new buffer), so every point still simulates, collides and casts into the deep shadows. The
+render mesh's slots are as long as the strand that keeps the most points (the strands are sorted
+into the slots each frame for blending), so the saving follows the worst strand, not the mean:
+the 20-point straight bench groom draws at most 19 (5% fewer triangles), a 64-point straight
+groom at most 37 (42% fewer); wavy and frizzy grooms keep every point. Raster and path traced
+frames at 100% crop are the same with and without (raster mean difference 0.19 levels, the path
+traced difference is its noise). Capping the slots at the 95th percentile would save 16% on the
+bench groom but moves 2.6% of strands by up to 0.28 mm, so it was not done.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.

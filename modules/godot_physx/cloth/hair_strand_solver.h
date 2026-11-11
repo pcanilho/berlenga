@@ -63,6 +63,7 @@ public:
 	bool history = false; // buf_last holds last frame's output
 	RID buf_tris, buf_sdf; // the collision body's triangles and its distance field
 	RID buf_vol, buf_vol_rest; // the hair volume grid (density, momentum) and the groom's own density
+	RID buf_render_points; // per strand the points drawn: (first, count), then the indices
 	int vol_cells = 0; // a side, 0: no volume grid
 	int tris_capacity = 0; // triangles buf_tris holds
 	RID uniform_set;
@@ -76,7 +77,7 @@ public:
 	bool needs_reset = true;
 
 	void rt_compile(Ref<HairStrandSolverGPU> p_self);
-	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points, PackedFloat32Array p_vol_rest, int p_vol_cells);
+	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points, PackedInt32Array p_render_points, PackedFloat32Array p_vol_rest, int p_vol_cells);
 	void rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps, PackedFloat32Array p_tris);
 	void rt_make_uniform_set();
 	void rt_reset(Ref<HairStrandSolverGPU> p_self);
@@ -146,7 +147,9 @@ public:
 	// p_slot_points > 0: the output texture holds the strands sorted far to near from the camera
 	// (for blending), p_slot_points texels each (padded past a strand's end, w = -1; otherwise w is
 	// the share of the strand's points). 0: one texel per point, in groom order.
-	void build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow, int p_slot_points = 0);
+	// p_render_points (sorted output only): per strand (first, count) into the list that follows
+	// them, the strand's points drawn (local indices, root to tip); empty: every point.
+	void build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow, int p_slot_points = 0, const PackedInt32Array &p_render_points = PackedInt32Array());
 	// p_xform: groom space -> world this frame.
 	void step(const Transform3D &p_xform, double p_delta, int p_substeps, const Settings &p_settings);
 	void reset();
