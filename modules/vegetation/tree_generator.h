@@ -220,6 +220,7 @@ private:
 	float forest_shade = 0.0f;
 	float forest_spacing = 4.0f;
 	int mask_channel = -1; // Passed to every PlantSpecies the stand methods build.
+	bool needle_sprays = false;
 	bool mask_invert = false;
 	Color bark_color = Color(0.3f, 0.26f, 0.21f);
 	Color leaf_color = Color(0.16f, 0.3f, 0.08f);
@@ -274,6 +275,9 @@ private:
 	static void _tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color);
 	void _add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, const Vector3 &p_up, float p_size, const Color &p_color);
 	void _add_needle(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color);
+	void _add_spray(Builder &r_b, const Vector3 &p_base, const Vector3 &p_dir, float p_length, float p_half_width, const Vector3 &p_side, const Color &p_color);
+	Ref<Texture2D> spray_texture; // Built on first use; per generator so it never outlives the renderer.
+	Ref<Texture2D> _spray_texture();
 	void _mark_spurs(int p_year);
 	Ref<ArrayMesh> _build_mesh();
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants);
@@ -296,6 +300,8 @@ public:
 	float get_forest_spacing() const { return forest_spacing; }
 	void set_mask_channel(int p_channel) { mask_channel = CLAMP(p_channel, -1, 3); }
 	int get_mask_channel() const { return mask_channel; }
+	void set_needle_sprays(bool p_sprays) { needle_sprays = p_sprays; }
+	bool get_needle_sprays() const { return needle_sprays; }
 	void set_mask_invert(bool p_invert) { mask_invert = p_invert; }
 	bool get_mask_invert() const { return mask_invert; }
 	void set_bark_color(const Color &p_color) { bark_color = p_color; }

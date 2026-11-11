@@ -234,6 +234,9 @@
 		<member name="phototropism" type="float" setter="set_param" getter="get_param" default="0.12">
 			How strongly shoots turn toward the light.
 		</member>
+		<member name="needle_sprays" type="bool" setter="set_needle_sprays" getter="get_needle_sprays" default="false">
+			Conifers draw each shoot's needles as two crossed sprays with a generated needle image (hashed alpha with alpha to coverage) instead of one triangle per needle: a spruce falls from about 53M to 7M vertices and keeps its needle coverage at distance. Up close the sprays read flatter than real needles, so [method generate] keeps real needles by default for a tree near the camera, while [method make_species], [method make_stand] and [method make_woodland] always use sprays.
+		</member>
 		<member name="phyllotaxis" type="int" setter="set_phyllotaxis" getter="get_phyllotaxis" enum="TreeGenerator.Phyllotaxis" default="0">
 			Bud arrangement: alternate, opposite or whorled.
 		</member>

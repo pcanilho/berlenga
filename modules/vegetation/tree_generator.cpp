@@ -32,6 +32,7 @@
 
 #include "core/object/class_db.h"
 #include "core/os/os.h"
+#include "scene/resources/image_texture.h"
 
 static constexpr int MAX_NODES = 150000;
 
@@ -1502,6 +1503,107 @@ void TreeGenerator::_add_needle(Builder &r_b, const Vector3 &p_base, const Vecto
 	r_b.indices.push_back(base + 1);
 }
 
+// A needle spray: a quad along the shoot, its texture a bottle brush of needles (Ref: SpeedTree
+// fronds; Witcher 4 and UE foliage). Alpha-cut, so the path tracer sees the same needles through
+// opacity micromaps where the hardware has them.
+void TreeGenerator::_add_spray(Builder &r_b, const Vector3 &p_base, const Vector3 &p_dir, float p_length, float p_half_width, const Vector3 &p_side, const Color &p_color) {
+	const Vector3 n = p_dir.cross(p_side).normalized();
+	const int base = r_b.verts.size();
+	const Vector3 corners[4] = { p_base - p_side * p_half_width, p_base + p_side * p_half_width,
+		p_base + p_dir * p_length + p_side * p_half_width, p_base + p_dir * p_length - p_side * p_half_width };
+	const Vector2 uv[4] = { Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0) };
+	for (int k = 0; k < 4; k++) {
+		r_b.verts.push_back(corners[k]);
+		r_b.normals.push_back(n);
+		r_b.uvs.push_back(uv[k]);
+		r_b.colors.push_back(p_color);
+	}
+	const int idx[6] = { 0, 1, 2, 0, 2, 3 };
+	for (int k = 0; k < 6; k++) {
+		r_b.indices.push_back(base + idx[k]);
+	}
+}
+
+// The needle image: a twig up the middle and needles leaving it forward at about 50 degrees on
+// both sides. Mipmaps keep the needle coverage of the full image (Castano, "Computing Alpha
+// Mipmaps", 2010), so sprays do not fade to bare twigs at distance.
+Ref<Texture2D> TreeGenerator::_spray_texture() {
+	if (spray_texture.is_valid()) {
+		return spray_texture;
+	}
+	const int w = 128, h = 256;
+	Vector<uint8_t> alpha;
+	alpha.resize(w * h);
+	memset(alpha.ptrw(), 0, alpha.size());
+	RandomPCG r;
+	r.seed(1234);
+	auto line = [&](float x0, float y0, float x1, float y1, float th) {
+		const int steps = int(Math::ceil(Math::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0)) * 2.0f));
+		for (int k = 0; k <= steps; k++) {
+			const float t = float(k) / MAX(steps, 1);
+			const float cx = Math::lerp(x0, x1, t), cy = Math::lerp(y0, y1, t);
+			const float rr = th * (1.0f - 0.6f * t);
+			for (int yy = int(cy - rr - 1); yy <= int(cy + rr + 1); yy++) {
+				for (int xx = int(cx - rr - 1); xx <= int(cx + rr + 1); xx++) {
+					if (xx < 0 || yy < 0 || xx >= w || yy >= h) {
+						continue;
+					}
+					const float d = Math::sqrt((xx + 0.5f - cx) * (xx + 0.5f - cx) + (yy + 0.5f - cy) * (yy + 0.5f - cy));
+					const float a = CLAMP(rr + 0.5f - d, 0.0f, 1.0f);
+					uint8_t &px = alpha.ptrw()[yy * w + xx];
+					px = MAX(px, uint8_t(a * 255.0f));
+				}
+			}
+		}
+	};
+	line(w * 0.5f, h, w * 0.5f, 0.0f, 1.6f); // The twig.
+	for (int k = 0; k < 90; k++) {
+		const float y = h * (0.02f + 0.96f * (k + r.randf()) / 90.0f);
+		const float side = (k & 1) ? 1.0f : -1.0f;
+		const float ang = Math::deg_to_rad(40.0f + 25.0f * r.randf());
+		const float len = w * 0.5f * (0.75f + 0.25f * r.randf()) / Math::sin(ang);
+		line(w * 0.5f, y, w * 0.5f + side * Math::sin(ang) * len * 0.97f, y - Math::cos(ang) * len, 1.3f);
+	}
+	Ref<Image> img = Image::create_empty(w, h, false, Image::FORMAT_RGBA8);
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			img->set_pixel(x, y, Color(1, 1, 1, alpha[y * w + x] / 255.0f));
+		}
+	}
+	img->generate_mipmaps();
+	// Coverage-preserving alpha: scale each mip's alpha so as many texels pass 0.5 as in mip 0.
+	auto coverage = [](const Ref<Image> &p_img, int p_mip, float p_scale) {
+		int64_t ofs, size;
+		int mw, mh;
+		p_img->get_mipmap_offset_size_and_dimensions(p_mip, ofs, size, mw, mh);
+		const uint8_t *d = p_img->get_data().ptr() + ofs;
+		int pass = 0;
+		for (int k = 0; k < mw * mh; k++) {
+			pass += d[k * 4 + 3] * p_scale >= 127.5f ? 1 : 0;
+		}
+		return float(pass) / float(mw * mh);
+	};
+	const float target = coverage(img, 0, 1.0f);
+	Vector<uint8_t> data = img->get_data();
+	for (int m = 1; m <= img->get_mipmap_count(); m++) {
+		float lo = 0.0f, hi = 8.0f;
+		for (int it = 0; it < 16; it++) {
+			const float mid = 0.5f * (lo + hi);
+			(coverage(img, m, mid) < target ? lo : hi) = mid;
+		}
+		int64_t ofs, size;
+		int mw, mh;
+		img->get_mipmap_offset_size_and_dimensions(m, ofs, size, mw, mh);
+		uint8_t *d = data.ptrw() + ofs;
+		for (int k = 0; k < mw * mh; k++) {
+			d[k * 4 + 3] = uint8_t(MIN(255.0f, d[k * 4 + 3] * hi));
+		}
+	}
+	img = Image::create_from_data(w, h, true, Image::FORMAT_RGBA8, data);
+	spray_texture = ImageTexture::create_from_image(img);
+	return spray_texture;
+}
+
 // Short shoots. Broadleaves carry much of their foliage on spurs along the branches of the last
 // years, not only at the shoot tips: oak, beech and lime short shoots live 5 to 10 years and new
 // ones break from older wood up to limb size
@@ -1683,6 +1785,20 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					rad.push_back(br * 0.6f);
 					{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color); bark.end(part, rad[0]); }
 				}
+				if (needle_sprays) {
+					// One brush as two crossed alpha-cut sprays (the needle image is drawn from the
+					// same needle angle and length), in the branch plane and across it.
+					const float jitter = 0.85f + 0.3f * lr.randf();
+					const Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
+					Vector3 flat = plane_side - bdir * plane_side.dot(bdir);
+					flat = flat.length_squared() > 1e-6f ? flat.normalized() : perp;
+					const Vector3 cross = bdir.cross(flat).normalized();
+					const float half = size * 0.8f;
+					{ Vector4i part; leaves.begin(part); _add_spray(leaves, b0, bdir, blen + size * 0.5f, half, flat, c); leaves.end(part, 0.0f); }
+					{ Vector4i part; leaves.begin(part); _add_spray(leaves, b0, bdir, blen + size * 0.5f, half, cross, c); leaves.end(part, 0.0f); }
+					leaf_count += per_brush;
+					continue;
+				}
 				for (int k = 0; k < per_brush; k++) {
 					const float t = (k + 0.5f) / per_brush;
 					roll += 2.39996f;
@@ -1804,6 +1920,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			mesh->surface_set_name(s, "bark");
 		} else {
 			m->set_roughness(needles ? 0.5f : 0.6f);
+			if (needles && needle_sprays) {
+				m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _spray_texture());
+				// Hashed alpha with alpha to coverage: a spray seen as a pixel-wide line keeps its
+				// needle coverage as a fraction of samples (Wyman and McGuire, Hashed Alpha Testing,
+				// I3D 2017). A 0.5 alpha cut turned far sprays fully transparent once the mip
+				// averaged their needles below the cut.
+				m->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA_HASH);
+				m->set_alpha_antialiasing(BaseMaterial3D::ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE);
+			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
 			m->set_backlight(leaf_color * 0.6f);
@@ -1994,6 +2119,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const Color saved_leaf = leaf_color;
 
 		set_preset(p_preset);
+		// Placed trees are seen in numbers and mostly from a distance: conifers there use needle
+		// sprays (a spruce is 7M vertices instead of 53M). A single tree near the camera is grown
+		// with generate() and keeps every needle.
+		const bool saved_sprays = needle_sprays;
+		needle_sprays = true;
 		forest_shade = p_stand_grown ? 0.6f : 0.0f;
 		// Neighbours in a Poisson-disk stand stand on average about 1.3 times the minimum spacing
 		// apart, so crowns grown to that boundary close the canopy as real stands do.
@@ -2018,6 +2148,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		phyllotaxis = saved_phyllotaxis;
 		forest_shade = saved_shade;
 		forest_spacing = saved_spacing;
+		needle_sprays = saved_sprays;
 		bark_color = saved_bark;
 		leaf_color = saved_leaf;
 	}
@@ -2395,6 +2526,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mask_channel"), &TreeGenerator::get_mask_channel);
 	ClassDB::bind_method(D_METHOD("set_mask_invert", "invert"), &TreeGenerator::set_mask_invert);
 	ClassDB::bind_method(D_METHOD("get_mask_invert"), &TreeGenerator::get_mask_invert);
+	ClassDB::bind_method(D_METHOD("set_needle_sprays", "sprays"), &TreeGenerator::set_needle_sprays);
+	ClassDB::bind_method(D_METHOD("get_needle_sprays"), &TreeGenerator::get_needle_sprays);
 	ClassDB::bind_method(D_METHOD("set_bark_color", "color"), &TreeGenerator::set_bark_color);
 	ClassDB::bind_method(D_METHOD("get_bark_color"), &TreeGenerator::get_bark_color);
 	ClassDB::bind_method(D_METHOD("set_leaf_color", "color"), &TreeGenerator::set_leaf_color);
@@ -2424,6 +2557,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_shade", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_forest_shade", "get_forest_shade");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mask_channel", PROPERTY_HINT_ENUM, "None:-1,Red:0,Green:1,Blue:2,Alpha:3"), "set_mask_channel", "get_mask_channel");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mask_invert"), "set_mask_invert", "get_mask_invert");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "needle_sprays"), "set_needle_sprays", "get_needle_sprays");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_spacing", PROPERTY_HINT_RANGE, "1,20,0.1,suffix:m"), "set_forest_spacing", "get_forest_spacing");
 	ADD_GROUP("Colors", "");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "bark_color"), "set_bark_color", "get_bark_color");

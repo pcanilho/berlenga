@@ -330,7 +330,13 @@ the leaf area holds (Cook et al. 2007), each level a subset of the one before. R
 every level, never cards; the path tracer uses LOD 0. Open oak 7.4M triangles, then 3.0M, 1.1M,
 0.3M; at 60, 250 and 600 m the LOD and full meshes look the same (lod_oak_60_250_600m.jpg).
 Enlarged copies add about 70% to the leaf vertex buffer. Needles: a spruce is 9.8M needle
-triangles and about 30M vertices before LODs, too heavy; see the needle question in the thread.
+triangles and 53M vertices with LOD copies. Paulo's pick (11 Nov): real needles near, sprays
+far. `needle_sprays` draws each shoot as two crossed sprays with a generated needle image
+(SpeedTree-style fronds), hashed alpha with alpha to coverage (Wyman and McGuire, I3D 2017) and
+coverage-preserving mips (Castano 2010): a 0.5 alpha cut made far sprays vanish once mips
+averaged below it. Spruce 53M to 7M vertices; at 55 m as full as real needles. Stand and
+woodland species always use sprays; `generate()` keeps real needles for a tree near the camera.
+Under the path tracer the sprays want opacity micromaps (PC check).
 
 **Eastern North America** (Paulo's pick, 11 Nov). Sugar and red maple, northern red and white
 oak, eastern white pine, eastern hemlock, American beech, paper and yellow birch, witch-hazel and
