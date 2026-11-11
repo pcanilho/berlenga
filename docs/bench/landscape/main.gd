@@ -226,7 +226,11 @@ func _generate() -> void:
 	# Erosion detail down to 4 m gullies on the 1 m Landscape3D ground (16 m on the 4 m grid, which would alias finer).
 	gen.detail_octaves = int(args.get("gdetail", "6" if args.get("mesh", "landscape") == "landscape" else "4"))
 	gen.tile_erosion_enabled = args.has("tiles")
-	gen.deposition = float(args.get("deposition", "0")) # rivers drop sediment where they slow (Yuan et al. 2019)
+	gen.deposition = float(args.get("deposition", "0"))
+	if args.has("refine"):
+		gen.refine_steps = int(args["refine"])
+	if args.has("steps"):
+		gen.steps = int(args["steps"]) # rivers drop sediment where they slow (Yuan et al. 2019)
 	add_child(gen)
 	var rp: Array[NodePath] = []
 	for n in range_nodes:
@@ -276,6 +280,11 @@ func _generate() -> void:
 		for x in range(-1200, 1300, 200):
 			across.append("%d:%.1f" % [x, gen.get_height(Vector3(x, 0, 200))])
 		_log("down the valley (z:height/sediment) " + " ".join(down))
+		if args.has("profile-fine"):
+			var fine := PackedStringArray()
+			for z in range(600, 1600, 32):
+				fine.append("%d:%.1f" % [z, gen.get_base_height(Vector3(float(args.get("px", "0")), 0, z))])
+			_log("base heights near the coast " + " ".join(fine))
 		_log("across at z=200 (x:h) " + " ".join(across))
 	t = Time.get_ticks_msec()
 	var img := gen.sample_heights(Vector2(X0, Z0), STEP, Vector2i(NX, NZ))
