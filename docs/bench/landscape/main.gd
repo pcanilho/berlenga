@@ -20,11 +20,13 @@ extends Node3D
 #   --weather=storm|clear         weather state (default storm)
 #   --snow=climate|none   the winter baked by SnowClimate (default), or a snow-free ground for stills
 #   --month=N --time=H    0-based month of the rivers and the SkyClock date (default 4, 15 May) and local time (16.5)
+#   --day=N               day of the month (default 15)
 #   --prints=0            no GroundSurface3D (footprints) node
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
+#   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
 #   --checks              with --out, run the link checks before the picture (they change the scene)
 
 const STEP := 4.0 # metres between ground vertices
@@ -614,7 +616,7 @@ func _build_weather() -> void:
 	clock.longitude = 0.0
 	clock.utc_offset = 0.0
 	clock.month = int(args.get("month", "4")) + 1
-	clock.day = 15
+	clock.day = int(args.get("day", "15"))
 	clock.time_of_day = float(args.get("time", "16.5"))
 	clock.sun_light = clock.get_path_to(sun)
 	weather = WeatherMap3D.new()
@@ -631,6 +633,9 @@ func _build_weather() -> void:
 	weather.sun_light = weather.get_path_to(sun)
 	env = Environment.new()
 	sky_mat = WeatherSkyMaterial.new()
+	if args.has("atmosphere"):
+		sky_mat.atmosphere_model = WeatherSkyMaterial.ATMOSPHERE_PHYSICAL_SKY if args["atmosphere"] == "physical" else WeatherSkyMaterial.ATMOSPHERE_SCATTERING
+	sky_mat.set_shader_parameter("atmo_far_water", 1.0) # the sea runs on past the scene to the horizon
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.process_mode = Sky.PROCESS_MODE_INCREMENTAL

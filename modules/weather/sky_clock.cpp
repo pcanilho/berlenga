@@ -28,12 +28,14 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-
 #include "sky_clock.h"
 
+#include "atmosphere.h"
+#include "weather_sky_material.h"
+
 #include "core/config/engine.h"
-#include "core/object/class_db.h"
 #include "core/math/math_funcs.h"
+#include "core/object/class_db.h"
 #include "scene/3d/light_3d.h"
 
 namespace {
@@ -402,34 +404,66 @@ void SkyClock::_apply_lights() {
 		if (hide_below_horizon) {
 			light->set_visible(b.alt > -b.radius);
 		}
+		if (drive_light_energy) {
+			// The light at the ground: the body above the air through the air's transmittance (the
+			// atmosphere's own tables, so the light and the sky agree), coloured by what is left.
+			const double top = b.path == &sun_light ? get_sun_illuminance_top() : get_moon_illuminance_top();
+			const Vector3 t = air_transmittance(b.alt / DEG, light->get_global_position().y);
+			const double peak = MAX(MAX(t.x, t.y), t.z);
+			if (peak > 1e-6) {
+				light->set_color(Color(t.x / peak, t.y / peak, t.z / peak).linear_to_srgb());
+			}
+			light->set_param(Light3D::PARAM_ENERGY, float(top * peak * energy_per_lux));
+		}
 	}
+	// The sky's scattering atmosphere takes both bodies above the air.
+	Ref<WeatherSkyMaterial> sky_mat = WeatherSkyMaterial::find_for(this);
+	sky_material_id = sky_mat.is_valid() ? sky_mat->get_instance_id() : ObjectID();
+	if (sky_mat.is_valid() && drive_light_energy) {
+		const double e_sun = get_sun_illuminance_top() * energy_per_lux;
+		const double e_moon = get_moon_illuminance_top() * energy_per_lux;
+		sky_mat->set_atmosphere_lights(get_sun_direction(), Vector3(e_sun, e_sun, e_sun), get_moon_direction(), Vector3(e_moon, e_moon, e_moon));
+	}
+}
+
+Vector3 SkyClock::air_transmittance(double p_altitude_deg, double p_height) {
+	static const WeatherAtmosphere::Params params;
+	const double r = params.bottom_radius + MAX(p_height, 1.0);
+	return WeatherAtmosphere::transmittance(params, r, Math::sin(p_altitude_deg * DEG));
 }
 
 void SkyClock::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_READY: {
-			set_process_internal(time_scale != 0.0);
+			// Every frame: the sky may be set up after the clock (or swapped), and then takes the lights.
+			set_process_internal(true);
 			_apply_lights();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
-			if (Engine::get_singleton()->is_editor_hint()) {
-				return;
+			if (time_scale != 0.0 && !Engine::get_singleton()->is_editor_hint()) {
+				advance(get_process_delta_time() * time_scale);
+			} else if (drive_light_energy) {
+				Ref<WeatherSkyMaterial> sky_mat = WeatherSkyMaterial::find_for(this);
+				if (sky_mat.is_valid() && sky_mat->get_instance_id() != sky_material_id) {
+					_apply_lights();
+				}
 			}
-			advance(get_process_delta_time() * time_scale);
 		} break;
 	}
 }
 
-#define SKY_CLOCK_SETTER(m_name, m_type, m_member)    \
+#define SKY_CLOCK_SETTER(m_name, m_type, m_member) \
 	void SkyClock::set_##m_name(m_type p_value) { \
-		m_member = p_value;                       \
-		dirty = true;                             \
-		_apply_lights();                          \
+		m_member = p_value; \
+		dirty = true; \
+		_apply_lights(); \
 	}
 
 SKY_CLOCK_SETTER(utc_offset, double, utc_offset)
 SKY_CLOCK_SETTER(refraction, bool, refraction)
 SKY_CLOCK_SETTER(hide_below_horizon, bool, hide_below_horizon)
+SKY_CLOCK_SETTER(drive_light_energy, bool, drive_light_energy)
+SKY_CLOCK_SETTER(energy_per_lux, double, energy_per_lux)
 
 void SkyClock::set_year(int p_year) {
 	year = p_year;
@@ -467,9 +501,6 @@ void SkyClock::set_north_offset(double p_deg) {
 }
 void SkyClock::set_time_scale(double p_scale) {
 	time_scale = p_scale;
-	if (is_inside_tree()) {
-		set_process_internal(time_scale != 0.0);
-	}
 }
 void SkyClock::set_sun_light(const NodePath &p_path) {
 	sun_light = p_path;
@@ -655,4 +686,11 @@ void SkyClock::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "moon_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_moon_light", "get_moon_light");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hide_below_horizon"), "set_hide_below_horizon", "get_hide_below_horizon");
+	ClassDB::bind_method(D_METHOD("set_drive_light_energy", "drive"), &SkyClock::set_drive_light_energy);
+	ClassDB::bind_method(D_METHOD("get_drive_light_energy"), &SkyClock::get_drive_light_energy);
+	ClassDB::bind_method(D_METHOD("set_energy_per_lux", "scale"), &SkyClock::set_energy_per_lux);
+	ClassDB::bind_method(D_METHOD("get_energy_per_lux"), &SkyClock::get_energy_per_lux);
+	ClassDB::bind_static_method("SkyClock", D_METHOD("air_transmittance", "altitude_degrees", "height"), &SkyClock::air_transmittance);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drive_light_energy"), "set_drive_light_energy", "get_drive_light_energy");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "energy_per_lux", PROPERTY_HINT_RANGE, "0,0.001,0.0000001,or_greater"), "set_energy_per_lux", "get_energy_per_lux");
 }
