@@ -193,6 +193,11 @@ module owns leaf litter, twigs under 1 cm and the small plants.
    sorrel on top of old logs, ferns and seedlings along them, a band of trapped leaves on the
    uphill side; nothing under the log's footprint. A no-op until those species are present.
 
+Built (1): `PlantGenerator.stand_litter_leaves(stand, season)` and `litter_leaves`; `make_floor`
+gives its leaf litter the stand's leaves (forms and fallen colours from the tree generator when
+present, the same values in a table otherwise). Cards hold about two layers of leaves, so a card
+of red oak has ten big leaves and one of hawthorn forty small ones.
+
 Checks: raster and path traced before/after at `--forest=in` (beech, oak, spruce) and the
 forest edge; counts per square metre against the figures above; triangles and placement cost.
 
