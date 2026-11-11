@@ -2005,7 +2005,8 @@ void main() {
 			if (srect.z > 0.0) {
 				vec2 nuv = (spos.xz - srect.xy) / srect.zw;
 				vec2 ne = min(nuv, 1.0 - nuv);
-				float nw = wrect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : 1.0;
+				// With no world tier, no data outside the square (as the raster shader).
+				float nw = wrect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
 				if (nw > 0.0) {
 					uint smap = uint(get_rt_param(RT_PARAM_SNOW_MAP));
 					vec2 ssize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), 0));

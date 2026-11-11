@@ -1776,6 +1776,9 @@ float SnowCover3D::get_swe_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_swe_at(p_position);
 	}
+	if (!get_map_rect().has_point(Vector2(p_position.x, p_position.z))) {
+		return 0.0f; // no world tier: no snow known outside the square (as the materials read it), not its edge
+	}
 	return MAX(_sample(cell_swe, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 

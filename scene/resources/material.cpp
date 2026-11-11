@@ -776,7 +776,8 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 	if (snow_map_rect.z > 0.0) {
 		vec2 nuv = (p_world_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
 		vec2 ne = min(nuv, 1.0 - nuv);
-		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : 1.0;
+		// With no world tier there is nothing outside the square: no data there, not its edge stretched out.
+		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
 		if (nw > 0.0) {
 			vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
 			s = mix(s, textureLod(snow_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);

@@ -214,6 +214,10 @@ func _run_tests() -> void:
 	var water := snow.get_total_water()
 	var area := 256.0 * 256.0
 	_check("snowfall keeps the water", absf(water / area - 20.0) < 0.05, "%.2f mm of 20 mm" % (water / area))
+	# With no world tier the square is all the pack there is: outside it there is no snow (the materials read the
+	# same), not the edge's snow stretched outward.
+	var outside := Vector3(200.0, 0, 0)
+	_check("no snow known outside the square without a world tier", not snow.has_world() and snow.get_depth_at(outside) == 0.0 and snow.get_depth_at(Vector3(120.0, 0, 0)) > 0.0, "%.3f m at 200 m, %.3f m at 120 m" % [snow.get_depth_at(outside), snow.get_depth_at(Vector3(120.0, 0, 0))])
 	var rho0 := SnowCover3D.new_snow_density(-5.0)
 	print("  after the fall: %.1f cm deep, %.0f kg/m3 (fresh %.0f), albedo %.2f" % [snow.get_depth_at(p) * 100.0, snow.get_density_at(p), rho0, snow.get_albedo_at(p)])
 	var rho_before := snow.get_density_at(p)
