@@ -29,7 +29,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Grass in wind: gusts sweep across the field downwind.*
 
-- **Grass edge fade** (always on): blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge.
+- **Grass edge fade** (always on): blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.
 
   ![Grass seen from above its radius: a hard edge before, a fade after](media/grass-outer-band.jpg)
 
