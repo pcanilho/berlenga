@@ -130,6 +130,7 @@ public:
 		PARAM_TWIG_DROOP, // Downward hang of thin shoots (birch, spruce), radians at the tip.
 		PARAM_LEAF_WIDTH, // Leaf blade width over length (willow narrow, chestnut leaflets broad).
 		PARAM_APICAL_CONTROL, // Shoot growth on a branch of order k is scaled by this^k (Stava 2014; excurrent conifers < 1).
+		PARAM_LATERAL_EXTENSION, // Shoot length on a branch of order k is scaled by this^k; length only, not vigor.
 		PARAM_MAX,
 	};
 

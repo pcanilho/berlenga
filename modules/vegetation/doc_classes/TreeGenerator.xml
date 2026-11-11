@@ -178,6 +178,9 @@
 		<member name="internode_length_age" type="float" setter="set_param" getter="get_param" default="0.985">
 			Factor per year on the internode length: shoots shorten as the tree ages.
 		</member>
+		<member name="lateral_extension" type="float" setter="set_param" getter="get_param" default="1.0">
+			Shoot length factor per branching order, up to order 2. It changes only how far branches reach, not how many buds or leaves they carry; below 1 it gives the narrow cone of open-grown spruce, fir and larch (Wilson 2000).
+		</member>
 		<member name="leaf_color" type="Color" setter="set_leaf_color" getter="get_leaf_color" default="Color(0.13, 0.25, 0.06, 1)">
 			Leaf or needle colour.
 		</member>
@@ -465,7 +468,10 @@
 		<constant name="PARAM_APICAL_CONTROL" value="36" enum="Param">
 			Index of [member apical_control].
 		</constant>
-		<constant name="PARAM_MAX" value="37" enum="Param">
+		<constant name="PARAM_LATERAL_EXTENSION" value="37" enum="Param">
+			Index of [member lateral_extension].
+		</constant>
+		<constant name="PARAM_MAX" value="38" enum="Param">
 			Number of parameters.
 		</constant>
 	</constants>

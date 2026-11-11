@@ -306,9 +306,14 @@ index 17. Whole twigs are now dropped at random to at most LAI 5.5, the temperat
 (was 1.49M, 23.6M). `get_leaf_area_index()` reports it. The hero mesh is still millions of
 triangles; LODs and leaf clusters are stage 2.
 
-Known limits: open-grown conifers spread too wide at the base (spruce about 39 m across where a
-solitary one is 10 to 14 m); a lateral-extension factor (Wilson 2000) made crowns collapse in
-the shadow model, so this needs its own pass.
+**Conifer cones.** Open-grown conifers spread too wide (spruce 39 m across). Branches of an
+excurrent conifer extend at a fraction of the leader's rate (Wilson 2000; Kantola and Makela
+2004). Scaling bud vigor for that starved the crown (vigor comes from collected light) and the
+tree collapsed to a pole; `lateral_extension` scales shoot length alone, per order up to 2, so
+buds and needles stay. With a lighter self-shadow so the denser crown keeps its buds: spruce and
+fir 0.35 (shadow 0.022), larch 0.32 (0.03), Scots pine 0.45 (0.04). Open crown radius: spruce
+19.6 to 9.0 m, pine 17.1 to 8.4, larch 7.1, fir 8.5; forest forms keep crowns of 3 m and bases
+near 20 m. Heights rose to 34-36 m, inside the test ranges but on the tall side for 50 years.
 
 ## References
 

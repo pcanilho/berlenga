@@ -97,6 +97,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 	p[PARAM_NEEDLES] = 0;
 	p[PARAM_TWIG_DROOP] = 0;
 	p[PARAM_APICAL_CONTROL] = 1.0f;
+	p[PARAM_LATERAL_EXTENSION] = 1.0f;
 	p[PARAM_LEAF_WIDTH] = 0.32f;
 	phyllotaxis = PHYLLOTAXIS_ALTERNATE;
 	switch (p_preset) {
@@ -170,7 +171,12 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 3;
 			bark_color = Color(0.42f, 0.27f, 0.18f);
 			leaf_color = Color(0.12f, 0.22f, 0.1f);
+			p[PARAM_LATERAL_EXTENSION] = 0.45f;
+			p[PARAM_SHADOW_STRENGTH] = 0.04f;
 			break;
+		// Conifers: branches extend at about a third of the leader's rate (open-grown spruce and fir
+		// crowns are about a fifth as wide as tall), with a lighter shadow so the denser crown keeps
+		// its buds.
 		case PRESET_NORWAY_SPRUCE: // Picea abies: strong leader, drooping laterals, dead lower limbs.
 			p[PARAM_YEARS] = 50;
 			p[PARAM_INTERNODE_LENGTH] = 0.35f;
@@ -193,6 +199,8 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 6;
 			bark_color = Color(0.33f, 0.27f, 0.23f);
 			leaf_color = Color(0.07f, 0.17f, 0.08f);
+			p[PARAM_LATERAL_EXTENSION] = 0.35f;
+			p[PARAM_SHADOW_STRENGTH] = 0.022f;
 			break;
 		case PRESET_HAZEL: // Corylus avellana: multi-stemmed, basitonic, sprouts from the base.
 			p[PARAM_YEARS] = 15;
@@ -335,6 +343,8 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 1;
 			bark_color = Color(0.36f, 0.25f, 0.2f);
 			leaf_color = Color(0.25f, 0.4f, 0.12f);
+			p[PARAM_LATERAL_EXTENSION] = 0.32f;
+			p[PARAM_SHADOW_STRENGTH] = 0.03f;
 			break;
 		case PRESET_SILVER_FIR: // Abies alba: very shade tolerant, flat horizontal sprays.
 			p[PARAM_YEARS] = 50;
@@ -356,6 +366,8 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 8;
 			bark_color = Color(0.5f, 0.5f, 0.48f);
 			leaf_color = Color(0.06f, 0.16f, 0.07f);
+			p[PARAM_LATERAL_EXTENSION] = 0.35f;
+			p[PARAM_SHADOW_STRENGTH] = 0.022f;
 			break;
 		case PRESET_ROWAN: // Sorbus aucuparia: small tree, ascending branches, pinnate leaves.
 			p[PARAM_YEARS] = 22;
@@ -860,7 +872,12 @@ void TreeGenerator::_grow_year(int p_year) {
 		const Node &from = nodes[bud.node];
 		const bool from_root = bud.node == 0;
 		const int order = (bud.terminal || from_root) ? from.order : from.order + 1;
-		const float len = base_len * CLAMP(bud.vigor / float(count), 0.25f, 1.5f);
+		// Lateral extension (Wilson 2000; Kantola and Makela 2004): in excurrent conifers the
+		// branches lengthen far more slowly than the leader, which sets the narrow cone. Scaling the
+		// vigor for it starved the crown of buds and leaves (vigor comes from collected light) and
+		// the tree collapsed to a pole; scaling the shoot length alone keeps every bud and needle
+		// and only draws the branches in.
+		const float len = base_len * CLAMP(bud.vigor / float(count), 0.25f, 1.5f) * Math::pow(params[PARAM_LATERAL_EXTENSION], float(MIN(order, 2)));
 		const float grav = order == 0 ? params[PARAM_TRUNK_GRAVITROPISM] : params[PARAM_GRAVITROPISM];
 		Vector3 pos = from_root ? from.start : from.end();
 		Vector3 dir = bud.dir;
@@ -1940,7 +1957,8 @@ void TreeGenerator::_bind_methods() {
 		"direction_noise", "phototropism", "gravitropism", "trunk_gravitropism", "shadow_strength",
 		"shadow_falloff", "shadow_depth", "bud_light_min", "bud_idle_years", "shed_ratio", "dead_branch_keep",
 		"tip_radius", "pipe_exponent", "gravity_bending", "stems", "stem_spread", "basal_sprouts", "root_flare",
-		"leaf_size", "leaves_per_internode", "leaf_years", "needles", "twig_droop", "leaf_width", "apical_control"
+		"leaf_size", "leaves_per_internode", "leaf_years", "needles", "twig_droop", "leaf_width", "apical_control",
+		"lateral_extension"
 	};
 	for (int i = 0; i < PARAM_MAX; i++) {
 		ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, names[i]), "set_param", "get_param", i);
@@ -2015,5 +2033,6 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PARAM_TWIG_DROOP);
 	BIND_ENUM_CONSTANT(PARAM_LEAF_WIDTH);
 	BIND_ENUM_CONSTANT(PARAM_APICAL_CONTROL);
+	BIND_ENUM_CONSTANT(PARAM_LATERAL_EXTENSION);
 	BIND_ENUM_CONSTANT(PARAM_MAX);
 }
