@@ -3374,6 +3374,7 @@
 		</member>
 		<member name="rendering/pathtracing/relative_origin_grid" type="float" setter="" getter="" default="1024.0">
 			Size in meters of the grid the path tracer's origin snaps to. The path tracer works in positions relative to the corner of the grid cell the camera is in (on the X and Z axes), so 32-bit positions on the GPU stay precise when the camera is kilometers from the world origin. Without it, shadows, reflections and contact points start to break up past about 10 km. The origin moves only when the camera leaves its cell, and shaders still see absolute world positions. Set to [code]0.0[/code] to trace in absolute world positions, as Godot does.
+		</member>
 		<member name="rendering/pathtracing/simulated_gas" type="bool" setter="" getter="" default="true">
 			The path tracer traces simulated gas (smoke and fire from the PhysX module's Flow node) as a participating medium: light scatters inside it, it casts soft shadows, it shows in reflections, and fire emits light into the scene. The Flow volume nearest the camera is traced; the others keep Flow's own ray march. When disabled, all Flow volumes use Flow's ray march drawn over the path traced image. Has no effect without the PhysX module or without path tracing.
 		</member>
