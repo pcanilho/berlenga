@@ -3958,6 +3958,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const int saved_decay = decay_class;
 		const bool saved_fallen = fallen;
 		const bool saved_branch = fallen_branch;
+		const Climber saved_climber = climber;
+		const float saved_climber_cover = climber_cover;
 		if (p_form == FORM_SAPLING) {
 			params[PARAM_YEARS] = MAX(6.0f, Math::round(params[PARAM_YEARS] * 0.2f));
 		}
@@ -3971,6 +3973,30 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 				decay_class = 1 + v % 3;
 				fallen_branch = true;
 			}
+			// Climbers on some of the variants of their usual hosts (section 5b): ivy on about a
+			// quarter of rough- and smooth-barked broadleaves (and their snags), lianas on another
+			// share in rich woods, honeysuckle twining in shrubs. The generator's climber_cover
+			// scales them (0: none).
+			climber = CLIMBER_NONE;
+			if (saved_climber_cover > 0.0f && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_SNAG)) {
+				const uint32_t bit = 1u << int(p_preset);
+				const uint32_t ivy_hosts = (1u << PRESET_OAK) | (1u << PRESET_BEECH) | (1u << PRESET_ASH) | (1u << PRESET_SYCAMORE_MAPLE) | (1u << PRESET_LIME) |
+						(1u << PRESET_BLACK_ALDER) | (1u << PRESET_WHITE_WILLOW) | (1u << PRESET_HORSE_CHESTNUT) | (1u << PRESET_HAWTHORN) | (1u << PRESET_ELDER) |
+						(1u << PRESET_SUGAR_MAPLE) | (1u << PRESET_RED_MAPLE) | (1u << PRESET_RED_OAK) | (1u << PRESET_WHITE_OAK) | (1u << PRESET_AMERICAN_BEECH) | (1u << PRESET_YELLOW_BIRCH);
+				const uint32_t liana_hosts = (1u << PRESET_OAK) | (1u << PRESET_ASH) | (1u << PRESET_LIME) | (1u << PRESET_SYCAMORE_MAPLE) | (1u << PRESET_BLACK_ALDER) |
+						(1u << PRESET_WHITE_WILLOW) | (1u << PRESET_SUGAR_MAPLE) | (1u << PRESET_RED_MAPLE) | (1u << PRESET_RED_OAK) | (1u << PRESET_WHITE_OAK);
+				const uint32_t twine_hosts = (1u << PRESET_HAZEL) | (1u << PRESET_HAWTHORN) | (1u << PRESET_ROWAN) | (1u << PRESET_ELDER) | (1u << PRESET_WITCH_HAZEL);
+				if (v % 4 == 1 && (ivy_hosts & bit)) {
+					climber = CLIMBER_IVY;
+					climber_cover = saved_climber_cover * Math::lerp(0.5f, 1.0f, float((uint32_t(seed) * 2654435761u) >> 24) / 255.0f);
+				} else if (v % 4 == 3 && p_form != FORM_SNAG && (liana_hosts & bit)) {
+					climber = CLIMBER_LIANA;
+					climber_cover = saved_climber_cover;
+				} else if (v % 4 == 2 && p_form != FORM_SNAG && (twine_hosts & bit)) {
+					climber = CLIMBER_HONEYSUCKLE;
+					climber_cover = saved_climber_cover;
+				}
+			}
 			Ref<ArrayMesh> mesh = generate();
 			crown += crown_radius;
 			if (p_variants > 0) {
@@ -3980,6 +4006,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		decay_class = saved_decay;
 		fallen = saved_fallen;
 		fallen_branch = saved_branch;
+		climber = saved_climber;
+		climber_cover = saved_climber_cover;
 		mesh_cache[key] = meshes;
 		crown_cache[key] = crown / n;
 		// One full-needle variant for the near range (the field repeats it over the variants):

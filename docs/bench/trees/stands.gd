@@ -166,6 +166,14 @@ func _stand_checks() -> void:
 		else:
 			_check(stand_count > 0, "%s: stand-grown trees form the canopy (%d stand-grown, %d gap and shrub)" % [STAND_NAMES[i], stand_count, open_count])
 			_check(regen.sapling > 0 and regen.snag > 0 and regen.log > 0 and regen.snag + regen.log < stand_count and regen["fallen branch"] > 0, "%s: %d saplings, %d snags, %d logs, %d fallen branches" % [STAND_NAMES[i], regen.sapling, regen.snag, regen.log, regen["fallen branch"]])
+		# Climbers ride on variants 1-3 of each host (one variant in four), so need --variants=2+.
+		if variants >= 2 and (i == TreeGenerator.STAND_OAK_MIXED or i == TreeGenerator.STAND_RIPARIAN):
+			var climbing := 0
+			for sp in sps:
+				for m in sp.meshes:
+					if m.has_meta("tree_climber_leaves"):
+						climbing += 1
+			_check(climbing > 0, "%s: %d tree variants carry climbers" % [STAND_NAMES[i], climbing])
 		if i == TreeGenerator.STAND_RIPARIAN:
 			var far := 0
 			for p in f.get_placements(0):
