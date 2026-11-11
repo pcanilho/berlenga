@@ -30,7 +30,7 @@ extends Node3D
 #   --dolly          from that corner, walk in 0.3 m a frame (with --clip and --frames)
 #   --terrain-material  the ground drawn with TerrainMaterial3D (its grass tint calls grass_ground())
 #   --clearing       a closed wood with a clearing opened by VegetationField3D.density_mask, seen
-#                    from 28 m up across its edge; --clearing=0 the same wood and camera, no mask
+#                    from 40 m up across its edge; --clearing=0 the same wood and camera, no mask
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
 const SIZE := 96.0
@@ -58,7 +58,7 @@ var no_floor := false
 var no_far := false
 var far_view := false
 var clearing := -1 # -1 off, 0 the wood without its mask, 1 with it.
-const CLEARING_C := Vector2(-18.0, 20.0)
+const CLEARING_C := Vector2(0.0, 24.0)
 var dolly := false
 var swamp := false
 var swamp_close := false
@@ -347,7 +347,7 @@ void fragment() {
 		cam.position = Vector3(eye.x, height(eye.x, eye.y) + 2.6, eye.y)
 		cam.look_at(Vector3(shore.x + dir.x * 6.0, -0.6, shore.y + dir.y * 6.0))
 
-# A closed wood (no tree patches) and, with the mask, an irregular clearing about 30 m across:
+# A closed wood (no tree patches) and, with the mask, an irregular clearing about 22 m across:
 # the trees read the mask's red channel, so they stay out where it is 0, and the meadow, the
 # sward and the edge plants fill the light (their shade rules) without a mask of their own.
 func _set_clearing() -> void:
@@ -364,18 +364,20 @@ func _set_clearing() -> void:
 		for x in res:
 			var w := Vector2((x + 0.5) / res * SIZE - SIZE * 0.5, (y + 0.5) / res * SIZE - SIZE * 0.5) - CLEARING_C
 			var a := atan2(w.y, w.x)
-			var r := 14.0 + 3.0 * sin(3.0 * a) + 2.0 * sin(5.0 * a + 1.0)
+			var r := 11.0 + 2.5 * sin(3.0 * a) + 1.5 * sin(5.0 * a + 1.0)
 			var v := smoothstep(r - 1.5, r + 1.5, w.length())
 			img.set_pixel(x, y, Color(v, v, v, 1.0))
 	cover.density_mask = ImageTexture.create_from_image(img)
 	cover.density_mask_rect = Rect2(-SIZE * 0.5, -SIZE * 0.5, SIZE, SIZE)
 
-# 28 m up over the clearing, looking across its edge into the wood.
+# 40 m up beside the clearing, looking down across it to its far edge and the wood beyond.
 func _frame_clearing() -> void:
-	var d := Vector2(-1.0, 1.0).normalized()
-	var eye := CLEARING_C - d * 10.0
-	var at := CLEARING_C + d * 16.0
-	cam.position = Vector3(eye.x, height(eye.x, eye.y) + 28.0, eye.y)
+	# From above the pond side, steep and narrow, so the wood frames the clearing and neither
+	# the pond nor the map's edge is in view.
+	var eye := CLEARING_C + Vector2(0.0, -13.0)
+	var at := CLEARING_C + Vector2(0.0, 3.0)
+	cam.fov = 50.0
+	cam.position = Vector3(eye.x, height(eye.x, eye.y) + 40.0, eye.y)
 	cam.look_at(Vector3(at.x, height(at.x, at.y), at.y))
 
 # Stand at a wood's edge: the tree nearest the usual view, seen from the open side.
