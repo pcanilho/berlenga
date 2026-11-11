@@ -202,7 +202,7 @@ void fragment() {
 	float lumps = f_noise(p * vec2(2.0, 1.4) + 11.0) * 0.6 + f_noise(p * vec2(6.0, 4.0) - 5.0) * 0.4;
 #if defined(RT)
 	float cover = water > 0.5 ? 1.0 : wet * wet_color.a;
-	ALBEDO = water > 0.5 ? mix(vec3(1.0), foam_color.rgb, foam) : wet_color.rgb;
+	ALBEDO = water > 0.5 ? mix(vec3(1.0), foam_color.rgb * (0.82 + 0.18 * lumps), foam) : wet_color.rgb;
 	ROUGHNESS = water > 0.5 ? mix(pathtraced_roughness, 0.8, foam) : 0.12;
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
