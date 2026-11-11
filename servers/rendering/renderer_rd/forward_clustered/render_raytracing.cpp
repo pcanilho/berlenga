@@ -5532,6 +5532,14 @@ bool RTTlasBuilder::_gather_mm_surfaces(const Instance &p_inst, const InstanceMa
 			}
 			continue;
 		}
+		// A surface whose vertex() is captured but has no capture yet (its first one waits for the dynamic budget) is
+		// left out until it has one: its bare mesh can be far from what vertex() makes of it (a grass blade's mesh is a
+		// unit strip that the shader bends into a blade), and a missing surface for a frame is better than a wrong one.
+		if (!captured && !is_particles && RenderRaytracing::is_capture_surface(mm_surf, RenderRaytracing::read_capture_mode())) {
+			pending_surface_count++;
+			persistable = false;
+			continue;
+		}
 		pending.source = _rt_drawn_instances(source, uses_trails);
 		pending.mm_surf = mm_surf;
 		pending.mesh_surface = mm_surf->surface;
