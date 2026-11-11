@@ -49,6 +49,7 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 	} globals[] = {
 		{ "terrain_geology_map", "sampler2D" },
 		{ "terrain_geology_rect", "vec4" },
+		{ "terrain_detail_keep_map", "sampler2D" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {

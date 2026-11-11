@@ -42,8 +42,9 @@
 #include "servers/rendering/rendering_server.h"
 
 namespace {
-// std140 Params in hair_strands.glsl: 7 vec4, 4 mat4, MAX_SPHERES vec4, 3 vec4 (SDF), 2 vec4 (volume).
-constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16 + 5 * 16;
+// std140 Params in hair_strands.glsl: 7 vec4, 4 mat4, MAX_SPHERES vec4, 3 vec4 (SDF), 2 vec4 (volume),
+// 5 vec4 (deep opacity map).
+constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16 + 10 * 16;
 constexpr int SDF_PARAMS = (7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16) / 4; // float index
 constexpr uint32_t GROUP = 64; // local_size_x
 
@@ -66,9 +67,16 @@ enum Mode {
 	MODE_SDF_FINAL = 11,
 	MODE_VOL_CLEAR = 12,
 	MODE_VOL_SPLAT = 13,
+	MODE_DOM_CLEAR = 14,
+	MODE_DOM_FRONT = 15,
+	MODE_DOM_OPAQUE = 16,
+	MODE_DOM_OPAQUE_TRIS = 17,
+	MODE_DOM_ACCUM = 18,
+	MODE_DOM_RESOLVE = 19,
 };
 constexpr int VOL_PARAMS = SDF_PARAMS + 12; // float index
 constexpr int VOL_CELLS = 32; // a side
+constexpr int DOM_PARAMS = VOL_PARAMS + 8; // float index
 
 struct PassConstants {
 	int32_t mode;
@@ -172,7 +180,7 @@ void HairStrandSolverGPU::rt_free_buffers() {
 		rd->free_rid(uniform_set);
 	}
 	uniform_set = RID();
-	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &tex_out_prev, &buf_last, &buf_tris, &buf_sdf, &buf_vol, &buf_vol_rest };
+	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &tex_out_prev, &buf_last, &buf_dom_depth, &buf_dom_accum, &tex_dom, &buf_tris, &buf_sdf, &buf_vol, &buf_vol_rest };
 	history = false;
 	vol_cells = 0;
 	tris_capacity = 0;
@@ -243,6 +251,30 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 	tex_out_prev = rd->texture_create(tf, RD::TextureView(), data);
 	buf_last = storage_from(rd, nullptr, point_count * 16);
 	history = false;
+
+	const int dom_cells = DOM_CELLS * DOM_CELLS;
+	buf_dom_depth = storage_from(rd, nullptr, dom_cells * 2 * 4);
+	buf_dom_accum = storage_from(rd, nullptr, dom_cells * 3 * 4);
+	RD::TextureFormat df;
+	df.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
+	df.width = DOM_CELLS * 2;
+	df.height = DOM_CELLS;
+	df.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+	Vector<uint8_t> far;
+	far.resize(df.width * df.height * 16);
+	{
+		// No map yet: no hair and nothing opaque anywhere.
+		float *fp = (float *)far.ptrw();
+		for (uint32_t i = 0; i < df.width * df.height; i++) {
+			fp[i * 4 + 0] = 1e9f;
+			fp[i * 4 + 1] = 0.0f;
+			fp[i * 4 + 2] = 0.0f;
+			fp[i * 4 + 3] = 0.0f;
+		}
+	}
+	Vector<Vector<uint8_t>> dom_data;
+	dom_data.push_back(far);
+	tex_dom = rd->texture_create(df, RD::TextureView(), dom_data);
 
 	// No collision body yet: placeholders, grown on the first step that has one.
 	buf_tris = storage_from(rd, nullptr, 16);
@@ -339,6 +371,27 @@ void HairStrandSolverGPU::rt_make_uniform_set() {
 		u.append_id(buf_last);
 		uniforms.push_back(u);
 	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 14;
+		u.append_id(buf_dom_depth);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 15;
+		u.append_id(buf_dom_accum);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		u.binding = 16;
+		u.append_id(tex_dom);
+		uniforms.push_back(u);
+	}
 	uniform_set = rd->uniform_set_create(uniforms, shader, 0);
 }
 
@@ -432,6 +485,18 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 		run(MODE_SDF_JUMP, 1.0f, 1.0f, cells, 1); // JFA+1: fixes most of its misses
 		run(MODE_SDF_FINAL, 1.0f, 1.0f, cells);
 		run(MODE_SDF_COLLIDE, 1.0f, 1.0f, strand_count);
+	}
+	if (fl[DOM_PARAMS + 3] > 0.0f) {
+		// The deep opacity map, from the final positions of every strand.
+		const int dom_cells = DOM_CELLS * DOM_CELLS;
+		run(MODE_DOM_CLEAR, 1.0f, 1.0f, dom_cells);
+		run(MODE_DOM_OPAQUE, 1.0f, 1.0f, dom_cells);
+		if (tri_count > 0) {
+			run(MODE_DOM_OPAQUE_TRIS, 1.0f, 1.0f, tri_count);
+		}
+		run(MODE_DOM_FRONT, 1.0f, 1.0f, strand_count);
+		run(MODE_DOM_ACCUM, 1.0f, 1.0f, strand_count);
+		run(MODE_DOM_RESOLVE, 1.0f, 1.0f, dom_cells);
 	}
 	if (slot_points > 0) {
 		// Draw order, far to near: bitonic sort of the strands by depth.
@@ -684,6 +749,33 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 		f[SDF_PARAMS + 8] = band;
 		f[SDF_PARAMS + 9] = MAX(p_settings.margin, 0.0f);
 	}
+	// The deep opacity map toward the light.
+	if (p_settings.dom_radius > 0.0f && p_settings.dom_light.length_squared() > 1e-6f) {
+		const Vector3 l = p_settings.dom_light.normalized();
+		Vector3 u, v;
+		deep_shadow_axes(l, u, v);
+		const Vector3 layers = deep_shadow_layers();
+		float *d = f + DOM_PARAMS;
+		d[0] = p_settings.dom_center.x;
+		d[1] = p_settings.dom_center.y;
+		d[2] = p_settings.dom_center.z;
+		d[3] = p_settings.dom_radius;
+		d[4] = u.x;
+		d[5] = u.y;
+		d[6] = u.z;
+		d[7] = (float)HairStrandSolverGPU::DOM_CELLS;
+		d[8] = v.x;
+		d[9] = v.y;
+		d[10] = v.z;
+		d[11] = MAX(p_settings.root_width, 0.0f);
+		d[12] = l.x;
+		d[13] = l.y;
+		d[14] = l.z;
+		d[15] = MAX(p_settings.tip_width, 0.0f);
+		d[16] = layers.x;
+		d[17] = layers.y;
+		d[18] = layers.z;
+	}
 	// The hair volume (Petrovic et al. 2005).
 	if (p_settings.volume_enabled && vol_cells > 0) {
 		f[VOL_PARAMS + 0] = vol_origin.x;
@@ -710,6 +802,16 @@ void HairStrandSolver::reset() {
 
 RID HairStrandSolver::get_position_texture_rd_rid() const {
 	return gpu.is_valid() ? gpu->tex_out : RID();
+}
+
+RID HairStrandSolver::get_deep_shadow_texture_rd_rid() const {
+	return gpu.is_valid() ? gpu->tex_dom : RID();
+}
+
+void HairStrandSolver::deep_shadow_axes(const Vector3 &p_light, Vector3 &r_u, Vector3 &r_v) {
+	const Vector3 up = Math::abs(p_light.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+	r_u = up.cross(p_light).normalized();
+	r_v = p_light.cross(r_u);
 }
 
 RID HairStrandSolver::get_previous_position_texture_rd_rid() const {

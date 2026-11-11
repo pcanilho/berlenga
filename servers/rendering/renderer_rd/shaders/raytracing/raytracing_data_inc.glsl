@@ -162,7 +162,7 @@ struct MaterialData {
 	uint transmission_texture; // Red scales transmission.
 	uint medium; // With RT_MAT_FLAG_VOLUME: the extinction code of the volume it bounds, see rt_medium_absorption().
 	uint scatter; // unorm8x4: single-scatter albedo of that volume (rgb) and (g + 1) / 2 of its phase. See rt_material_scatter().
-	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode; wetness in 9-26, see rt_material_wetness().
+	uint subsurface; // Bits 0-7 unorm8 subsurface scattering strength (0: none), bit 8 Skin Mode; wetness in 9-26, see rt_material_wetness(); snow 27-28; ground deform 29.
 	uint subsurface_texture; // texture_subsurface_scattering: red scales the strength.
 	uint hair; // unorm8 beta_m, beta_n, (tilt + 10) / 20; bits 24-25 direction, 26 melanin, 27 cards. See rt_material_hair().
 	uint hair_absorption; // Melanin absorption per fibre diameter (rt_medium_absorption() code).
@@ -242,6 +242,11 @@ vec2 rt_material_subsurface(MaterialData p_mat) {
 vec4 rt_material_wetness(MaterialData p_mat) {
 	return vec4(float((p_mat.subsurface >> 9u) & 0xFFu) / 255.0, float((p_mat.subsurface >> 17u) & 0xFFu) / 255.0,
 			float((p_mat.subsurface >> 25u) & 1u), float((p_mat.subsurface >> 26u) & 1u));
+}
+
+// BaseMaterial3D Ground Deform on GroundSurface3D's patch: the turned-ground tint is on.
+bool rt_material_ground_deform(MaterialData p_mat) {
+	return ((p_mat.subsurface >> 29u) & 1u) != 0u;
 }
 
 // BaseMaterial3D Snow: amount (x), snow_max_slope in degrees (y), on (z), cover from the snow map (w).

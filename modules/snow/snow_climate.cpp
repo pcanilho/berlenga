@@ -31,6 +31,7 @@
 #include "snow_climate.h"
 
 #include "core/object/class_db.h"
+#include "modules/terrain_deform/climate_recipe.h"
 
 namespace {
 constexpr float SOLAR_CONSTANT = 1353.0f;
@@ -51,6 +52,32 @@ float SnowClimate::seasonal_temperature(float p_day_of_year) const {
 	return mean - amp * Math::cos(Math::TAU * (p_day_of_year - COLDEST_DAY) / 365.0f);
 }
 
+float SnowClimate::seasonal_lapse_rate(float p_day_of_year, float p_default) const {
+	if (recipe.is_null()) {
+		return p_default;
+	}
+	// The terrain climate's harmonic (TerrainClimate::month_value) on the day, coldest in late January.
+	const float w = recipe->get_lapse_rate_january();
+	const float s = recipe->get_lapse_rate_july();
+	return 0.5f * (w + s) - 0.5f * (s - w) * Math::cos(Math::TAU * (p_day_of_year - COLDEST_DAY) / 365.0f);
+}
+
+float SnowClimate::wet_day_amount(float p_day_of_year) const {
+	if (recipe.is_null()) {
+		return wet_day_precipitation;
+	}
+	const TerrainClimate::Params &cp = recipe->get_params();
+	const int month = CLAMP(int((p_day_of_year - 1.0f) / (365.0f / 12.0f)), 0, 11);
+	const float per_day = MAX(cp.precipitation, 0.0f) * TerrainClimate::precipitation_share(cp, month) * 12.0f / 365.0f;
+	const float p_wet = wet_after_dry / MAX(1.0f + wet_after_dry - wet_after_wet, 1e-3f);
+	return per_day / MAX(p_wet, 1e-3f);
+}
+
+void SnowClimate::set_recipe(const Ref<ClimateRecipe> &p_recipe) {
+	recipe = p_recipe;
+	emit_changed();
+}
+
 Vector3 SnowClimate::sun_direction(float p_day_of_year, float p_hour) const {
 	// Declination (Cooper 1969) and the hour angle at local solar time; x east, y up, z south.
 	const float decl = Math::deg_to_rad(23.44f) * Math::sin(Math::TAU * (284.0f + p_day_of_year) / 365.0f);
@@ -63,6 +90,17 @@ Vector3 SnowClimate::sun_direction(float p_day_of_year, float p_hour) const {
 }
 
 void SnowClimate::start_weather() {
+	if (recipe.is_valid()) {
+		latitude = recipe->get_latitude();
+		base_height = recipe->get_reference_height();
+		january_temperature = recipe->get_temperature_january();
+		july_temperature = recipe->get_temperature_july();
+		temperature_variability = recipe->get_daily_temperature_spread();
+		prevailing_wind_from = recipe->get_wind_from();
+		wind_spread = recipe->get_wind_spread();
+		// The recipe's wind is the wet-day wind (its precipitation follows it); dry days blow softer.
+		wind_speed = recipe->get_wind_speed() / MAX(storm_wind_factor, 0.1f);
+	}
 	rng.seed(uint64_t(seed) * 2654435761ull + 12345u);
 	wet = false;
 	residual = 0.0f;
@@ -74,7 +112,8 @@ SnowClimate::Hour SnowClimate::weather_at(int p_day, float p_hour) {
 		gen_day = p_day;
 		// WGEN (Richardson 1981): occurrence by a two-state Markov chain, amount exponential on wet days.
 		wet = rng.randf() < (wet ? wet_after_wet : wet_after_dry);
-		day_precip = wet ? -wet_day_precipitation * Math::log(MAX(1.0f - rng.randf(), 1e-6f)) : 0.0f;
+		const float day_of_year = float((start_day - 1 + p_day) % 365) + 1.0f;
+		day_precip = wet ? -wet_day_amount(day_of_year) * Math::log(MAX(1.0f - rng.randf(), 1e-6f)) : 0.0f;
 		// Temperature: the seasonal mean plus a first-order autoregressive residual; wet days run a little
 		// cooler and swing less through the day.
 		residual = temperature_persistence * residual + temperature_variability * Math::sqrt(MAX(1.0f - temperature_persistence * temperature_persistence, 0.0f)) * _normal();
@@ -150,6 +189,11 @@ void SnowClimate::clear_result() {
 void SnowClimate::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("seasonal_temperature", "day_of_year"), &SnowClimate::seasonal_temperature);
 	ClassDB::bind_method(D_METHOD("sun_direction", "day_of_year", "hour"), &SnowClimate::sun_direction);
+	ClassDB::bind_method(D_METHOD("seasonal_lapse_rate", "day_of_year", "default"), &SnowClimate::seasonal_lapse_rate);
+	ClassDB::bind_method(D_METHOD("wet_day_amount", "day_of_year"), &SnowClimate::wet_day_amount);
+	ClassDB::bind_method(D_METHOD("set_recipe", "recipe"), &SnowClimate::set_recipe);
+	ClassDB::bind_method(D_METHOD("get_recipe"), &SnowClimate::get_recipe);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "recipe", PROPERTY_HINT_RESOURCE_TYPE, "ClimateRecipe"), "set_recipe", "get_recipe");
 	ClassDB::bind_method(D_METHOD("sample_days", "days"), &SnowClimate::sample_days);
 	ClassDB::bind_method(D_METHOD("is_baked"), &SnowClimate::is_baked);
 	ClassDB::bind_method(D_METHOD("clear_result"), &SnowClimate::clear_result);

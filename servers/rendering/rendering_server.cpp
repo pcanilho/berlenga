@@ -3920,6 +3920,10 @@ void RenderingServer::init() {
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/max_transparency_layers_reflection", PROPERTY_HINT_RANGE, "0,64,1"), 4);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/max_transparency_layers_indirect", PROPERTY_HINT_RANGE, "0,64,1"), 1);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/transparency_max_bounce", PROPERTY_HINT_RANGE, "0,8,1"), 2);
+	// Smooth transmission past a path's first crossing does not spend max bounces, up to this many extra
+	// segments (Cycles keeps transmission bounces apart the same way): light through a pane's back face or
+	// out of ice keeps the bounces it needs to light what lies beyond.
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/pathtracing/transmission_bounces", PROPERTY_HINT_RANGE, "0,8,1"), 4);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparency_indirect_range", PROPERTY_HINT_RANGE, "0,10000,0.1,or_greater,suffix:m"), 0.0);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparency_indirect_fade", PROPERTY_HINT_RANGE, "0,1000,0.1,or_greater,suffix:m"), 0.0);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/pathtracing/transparency_dominant_layer_alpha", PROPERTY_HINT_RANGE, "0,1,0.01"), 0.5);

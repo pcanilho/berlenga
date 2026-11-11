@@ -94,6 +94,12 @@ bool rt_debug_keeps_transparency(int p_vis_mode) {
 #define RT_PARAM_SNOW_WORLD_RECT_H 54
 #define RT_PARAM_SNOW_CATCH_MAP 55
 #define RT_PARAM_INDIRECT_REUSE 56 // 0 off, else 1 + the reservoir slot written + 2 when last frame's is valid (raytracing_indirect_reuse_inc.glsl)
+#define RT_PARAM_SNOW_EXACT_GLINTS 57 // 1: every snow grain is a facet, per ray (snow_grain_facet in the raygen)
+#define RT_PARAM_TRANSMISSION_BOUNCES 58 // extra path segments for transmission past the first (glass, ice, water), outside max bounces
+#define RT_PARAM_GROUND_DEFORM_MAP 60 // GroundSurface3D deform map (dent, rim, albedo and roughness factors), 0 = none
+#define RT_PARAM_GROUND_DEFORM_X 61 // its world XZ origin and size
+#define RT_PARAM_GROUND_DEFORM_Z 62
+#define RT_PARAM_GROUND_DEFORM_SIZE 63
 
 // ============================================================================
 // PATHTRACING PAYLOAD (32 bytes, fp16/unorm-packed)

@@ -4,17 +4,40 @@
 		A physical sky with volumetric clouds from the weather map.
 	</brief_description>
 	<description>
-		Godot's [PhysicalSkyMaterial] atmosphere with clouds raymarched through it, after Guerrilla's Nubis and Frostbite: a layer on a round planet, Beer-Lambert steps that conserve energy, a forward and a back Henyey-Greenstein lobe, Wrenninge's multiple scattering octaves and a two-stream diffuse term, and six steps towards the sun from each sample. The clouds are drawn in the half resolution pass, with fewer steps for the radiance map that lights the scene. With [member cloud_reprojection], a sixteenth of the screen's pixels are marched a frame and the rest are kept from the frames before.
+		An atmosphere ([member atmosphere_model]) with clouds raymarched through it, after Guerrilla's Nubis and Frostbite: a layer on a round planet, Beer-Lambert steps that conserve energy, a forward and a back Henyey-Greenstein lobe, Wrenninge's multiple scattering octaves and a two-stream diffuse term, and six steps towards the sun from each sample. The clouds are drawn in the half resolution pass, with fewer steps for the radiance map that lights the scene. With [member cloud_reprojection], a sixteenth of the screen's pixels are marched a frame and the rest are kept from the frames before.
 		A [WeatherMap3D] in the scene sends it the cloud cover, type, storms and drift at its [member WeatherMap3D.update_rate]; without one, the sky shows the defaults. Set the [Sky]'s [member Sky.process_mode] to [constant Sky.PROCESS_MODE_INCREMENTAL] or [constant Sky.PROCESS_MODE_REALTIME] so the lighting follows the moving clouds.
-		Its uniforms are under [b]Shader Parameters[/b]: the atmosphere's (as [PhysicalSkyMaterial]), and [code]cloud_steps[/code], [code]cloud_radiance_steps[/code], [code]cloud_light_steps[/code], [code]cloud_far[/code] and [code]cloud_brightness[/code]. The [code]weather_map[/code] group is set by the map.
+		Its uniforms are under [b]Shader Parameters[/b]: the older atmosphere's (as [PhysicalSkyMaterial]); the [code]atmosphere[/code] group ([code]atmo_steps[/code], [code]atmo_radiance_steps[/code], [code]atmo_cloud_air_steps[/code], and [code]atmo_far_water[/code], 1 when open sea runs on past the scene to the horizon); and [code]cloud_steps[/code], [code]cloud_radiance_steps[/code], [code]cloud_light_steps[/code], [code]cloud_far[/code] and [code]cloud_brightness[/code]. The [code]weather_map[/code] group is set by the map.
 		Under path tracing, bounce rays see the clouds through the radiance map. Enable [member Environment.pathtracing_sky_shader_enabled] for camera rays to see them at full detail.
-		[b]Note:[/b] Night skies are not handled: without a sun the clouds are dark.
+		[b]Note:[/b] The moon lights the air but is not drawn yet, and there are no stars yet.
 	</description>
 	<tutorials>
 	</tutorials>
+	<methods>
+		<method name="set_atmosphere_lights">
+			<return type="void" />
+			<param index="0" name="sun_direction" type="Vector3" />
+			<param index="1" name="sun_irradiance" type="Vector3" />
+			<param index="2" name="moon_direction" type="Vector3" />
+			<param index="3" name="moon_irradiance" type="Vector3" />
+			<description>
+				Lights the scattering atmosphere with two bodies above the air: directions toward them, and their irradiance in light energy units before the air. [SkyClock] calls this when [member SkyClock.drive_light_energy] is on. Until it is called, the sky takes the first directional light as the sun above the air.
+			</description>
+		</method>
+	</methods>
 	<members>
+		<member name="atmosphere_model" type="int" setter="set_atmosphere_model" getter="get_atmosphere_model" enum="WeatherSkyMaterial.AtmosphereModel" default="1">
+			The air's model. [constant ATMOSPHERE_SCATTERING] is Hillaire's (2020): Rayleigh, Mie and ozone marched per pixel over a transmittance table and a multiple scattering table baked once at start (about 0.3 s), lit by the sun and the moon, from the ground to space, through golden hour, twilight and the Earth's shadow. The clouds are seen through the air in front of them (aerial perspective) and reach the horizon. [constant ATMOSPHERE_PHYSICAL_SKY] is the older Preetham-based model of [PhysicalSkyMaterial], fitted to daylight, with clouds cut at [code]cloud_far[/code].
+		</member>
 		<member name="cloud_reprojection" type="bool" setter="set_cloud_reprojection" getter="is_cloud_reprojection_enabled" default="true">
 			Temporal reprojection of the clouds, as Guerrilla's Nubis does: each frame one pixel of every 4x4 block is marched, in an order that covers all of them in 16 frames, and the rest are carried over from the frames before through the camera's turn (the sky shader's [code]half_res_reprojection[/code] render mode). The clouds come out at full resolution for a quarter of the half resolution pass's marching. Off, every half resolution pixel is marched every frame. Clouds that change fast trail by up to 16 frames.
 		</member>
 	</members>
+	<constants>
+		<constant name="ATMOSPHERE_PHYSICAL_SKY" value="0" enum="AtmosphereModel">
+			The older model, as [PhysicalSkyMaterial].
+		</constant>
+		<constant name="ATMOSPHERE_SCATTERING" value="1" enum="AtmosphereModel">
+			Hillaire 2020, multiple scattering, two lights.
+		</constant>
+	</constants>
 </class>

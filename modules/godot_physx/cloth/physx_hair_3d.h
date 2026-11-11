@@ -85,6 +85,12 @@ class PhysXHair3D : public Node3D {
 	PackedVector4Array collision_spheres; // this node's space: centre, radius
 	NodePath collision_body;
 	float collision_cell_size = 0.01f;
+	bool deep_shadows = true;
+	NodePath deep_shadow_light;
+	ObjectID deep_shadow_light_cache; // the light found (deep_shadow_light, or the first shadowed DirectionalLight3D)
+	uint64_t deep_shadow_search_frame = 0;
+	bool deep_shadow_on = false; // last set on the material
+	int draw_slot_points = 1;
 	bool volume_enabled = true;
 	float volume_friction = 0.2f;
 	float volume_stiffness = 1.0f;
@@ -105,6 +111,7 @@ class PhysXHair3D : public Node3D {
 	Ref<ShaderMaterial> copy_material;
 	Ref<Texture2DRD> pos_texture;
 	Ref<Texture2DRD> prev_pos_texture; // last frame's positions, for motion vectors
+	Ref<Texture2DRD> deep_shadow_texture; // the deep opacity map
 	bool built = false;
 	bool build_pending = false;
 
@@ -120,6 +127,7 @@ class PhysXHair3D : public Node3D {
 	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) const;
 	Color _mass_color() const;
 	void _body_triangles(PackedVector3Array &r_tris);
+	class DirectionalLight3D *_deep_shadow_light();
 
 protected:
 	void _notification(int p_what);
@@ -197,6 +205,10 @@ public:
 	NodePath get_collision_body() const;
 	void set_collision_cell_size(float p_size);
 	float get_collision_cell_size() const;
+	void set_deep_shadows(bool p_enabled);
+	bool is_deep_shadows() const;
+	void set_deep_shadow_light(const NodePath &p_path);
+	NodePath get_deep_shadow_light() const;
 	void set_volume_enabled(bool p_enabled);
 	bool is_volume_enabled() const;
 	void set_volume_friction(float p_friction);

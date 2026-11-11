@@ -30,9 +30,12 @@
 
 #include "water_wake_solver.h"
 
+#include "water_fft_rows.glsl.gen.h"
 #include "water_wake.glsl.gen.h"
+#include "water_wake_modes.glsl.gen.h"
 
 #include "core/math/math_funcs.h"
+#include "core/math/math_funcs_binary.h"
 #include "core/object/callable_mp.h"
 #include "servers/display/display_server.h"
 #include "servers/rendering/rendering_device.h"
@@ -42,6 +45,8 @@
 namespace {
 constexpr int PARAMS_BYTES = 128; // ivec4 grid, vec4 wave, cell, foam, track, spread, prof_a, prof_b (std140)
 constexpr int READBACK_EVERY = 3; // physics ticks between height readbacks
+constexpr int MODES_PC_BYTES = 32; // water_wake_modes.glsl: ivec4 grid, vec4 step
+constexpr int FFT_ROWS_MAX_N = 1024; // water_fft_rows.glsl's MAX_N
 
 RID storage(RenderingDevice *p_rd, int p_bytes) {
 	Vector<uint8_t> zeros;
@@ -64,6 +69,23 @@ void WaterWakeSolverGPU::rt_compile(Ref<WaterWakeSolverGPU> p_self) {
 	shader = rd->shader_create_from_spirv(sf->get_spirv_stages());
 	ERR_FAIL_COND(shader.is_null());
 	pipeline = rd->compute_pipeline_create(shader);
+
+	// The dispersive step's two shaders. Without them the wake falls back to the wave equation.
+	const char *srcs[2] = { water_fft_rows_shader_glsl, water_wake_modes_shader_glsl };
+	RID *shaders[2] = { &shader_fft, &shader_modes };
+	RID *pipelines[2] = { &pipeline_fft, &pipeline_modes };
+	for (int i = 0; i < 2; i++) {
+		Ref<RDShaderFile> f;
+		f.instantiate();
+		if (f->parse_versions_from_text(srcs[i]) != OK) {
+			ERR_PRINT("WaterWakeSolver: a dispersive wake shader failed to compile.");
+			continue;
+		}
+		*shaders[i] = rd->shader_create_from_spirv(f->get_spirv_stages());
+		if (shaders[i]->is_valid()) {
+			*pipelines[i] = rd->compute_pipeline_create(*shaders[i]);
+		}
+	}
 }
 
 void WaterWakeSolverGPU::rt_free_buffers() {
@@ -71,13 +93,13 @@ void WaterWakeSolverGPU::rt_free_buffers() {
 		return;
 	}
 	built.clear();
-	for (RID *r : { &uset_atob, &uset_btoa }) {
+	for (RID *r : { &uset_atob, &uset_btoa, &uset_post, &uset_rows, &uset_cols, &uset_modes }) {
 		if (r->is_valid() && rd->uniform_set_is_valid(*r)) {
 			rd->free_rid(*r);
 		}
 		*r = RID();
 	}
-	for (RID *r : { &buf_params, &buf_state_a, &buf_state_b, &buf_sources, &tex_height }) {
+	for (RID *r : { &buf_params, &buf_state_a, &buf_state_b, &buf_sources, &tex_height, &buf_spec_a, &buf_spec_b, &buf_spec_c, &buf_fft_rows_params, &buf_fft_cols_params, &buf_dummy_in, &buf_dummy_out }) {
 		if (r->is_valid()) {
 			rd->free_rid(*r);
 			*r = RID();
@@ -90,26 +112,27 @@ void WaterWakeSolverGPU::rt_free(Ref<WaterWakeSolverGPU> p_self) {
 	if (rd == nullptr) {
 		return;
 	}
-	if (pipeline.is_valid()) {
-		rd->free_rid(pipeline);
-		pipeline = RID();
-	}
-	if (shader.is_valid()) {
-		rd->free_rid(shader);
-		shader = RID();
+	for (RID *r : { &pipeline, &pipeline_fft, &pipeline_modes, &shader, &shader_fft, &shader_modes }) {
+		if (r->is_valid()) {
+			rd->free_rid(*r);
+			*r = RID();
+		}
 	}
 }
 
-void WaterWakeSolverGPU::rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n) {
+void WaterWakeSolverGPU::rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n, bool p_dispersive) {
 	if (rd == nullptr || shader.is_null()) {
 		return;
 	}
 	rt_free_buffers();
 	n = p_n;
+	dispersive = p_dispersive && pipeline_fft.is_valid() && pipeline_modes.is_valid() && n <= FFT_ROWS_MAX_N && (n & (n - 1)) == 0;
 	buf_params = rd->uniform_buffer_create(PARAMS_BYTES);
 	buf_state_a = storage(rd, n * n * 16);
 	buf_state_b = storage(rd, n * n * 16);
 	buf_sources = storage(rd, MAX_SOURCES * 32);
+	// The wake shader always binds the FFT field (binding 5); the wave equation leaves it alone.
+	buf_spec_a = storage(rd, dispersive ? n * n * 8 : 16);
 
 	RD::TextureFormat tf;
 	tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
@@ -123,7 +146,7 @@ void WaterWakeSolverGPU::rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n) {
 	data.push_back(zeros);
 	tex_height = rd->texture_create(tf, RD::TextureView(), data);
 
-	auto make_set = [&](RID p_in, RID p_out) {
+	auto make_set = [&](RID p_in, RID p_out, RID p_spec) {
 		Vector<RD::Uniform> u;
 		RD::Uniform p;
 		p.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
@@ -143,11 +166,68 @@ void WaterWakeSolverGPU::rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n) {
 		img.binding = 4;
 		img.append_id(tex_height);
 		u.push_back(img);
+		RD::Uniform sp;
+		sp.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		sp.binding = 5;
+		sp.append_id(p_spec);
+		u.push_back(sp);
 		return rd->uniform_set_create(u, shader, 0);
 	};
-	uset_atob = make_set(buf_state_a, buf_state_b);
-	uset_btoa = make_set(buf_state_b, buf_state_a);
+	uset_atob = make_set(buf_state_a, buf_state_b, buf_spec_a);
+	uset_btoa = make_set(buf_state_b, buf_state_a, buf_spec_a);
 	a_is_current = true;
+
+	if (dispersive) {
+		buf_spec_b = storage(rd, n * n * 8);
+		buf_spec_c = storage(rd, n * n * 8);
+		buf_dummy_in = storage(rd, 16);
+		buf_dummy_out = storage(rd, 16);
+		int log2n = 0;
+		while ((1 << log2n) < n) {
+			log2n++;
+		}
+		auto fft_params = [&](int p_horiz) {
+			RID b = rd->uniform_buffer_create(16);
+			const int32_t vals[4] = { n, log2n, p_horiz, 0 };
+			rd->buffer_update(b, 0, 16, vals);
+			return b;
+		};
+		buf_fft_rows_params = fft_params(1);
+		buf_fft_cols_params = fft_params(0);
+		// One field through the batched row FFT (z = 1): the other three slots read and write a dummy.
+		auto make_fft = [&](RID p_params, RID p_in, RID p_out) {
+			Vector<RD::Uniform> u;
+			RD::Uniform p;
+			p.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
+			p.binding = 0;
+			p.append_id(p_params);
+			u.push_back(p);
+			for (int i = 0; i < 8; i++) {
+				RD::Uniform s;
+				s.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				s.binding = i + 1;
+				s.append_id(i == 0 ? p_in : (i == 4 ? p_out : (i < 4 ? buf_dummy_in : buf_dummy_out)));
+				u.push_back(s);
+			}
+			return rd->uniform_set_create(u, shader_fft, 0);
+		};
+		uset_rows = make_fft(buf_fft_rows_params, buf_spec_a, buf_spec_b);
+		uset_cols = make_fft(buf_fft_cols_params, buf_spec_b, buf_spec_c);
+		{
+			Vector<RD::Uniform> u;
+			const RID bufs[2] = { buf_spec_c, buf_spec_a };
+			for (int i = 0; i < 2; i++) {
+				RD::Uniform s;
+				s.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+				s.binding = i;
+				s.append_id(bufs[i]);
+				u.push_back(s);
+			}
+			uset_modes = rd->uniform_set_create(u, shader_modes, 0);
+		}
+		// After the FFTs: the field is back in spec_c, the pass-1 state in B, the new state to A.
+		uset_post = make_set(buf_state_b, buf_state_a, buf_spec_c);
+	}
 	{
 		MutexLock lock(cache_mtx);
 		height_cache.clear();
@@ -155,7 +235,7 @@ void WaterWakeSolverGPU::rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n) {
 	built.set();
 }
 
-void WaterWakeSolverGPU::rt_step(Ref<WaterWakeSolverGPU> p_self, PackedByteArray p_params, PackedFloat32Array p_sources, Vector2 p_origin, bool p_readback) {
+void WaterWakeSolverGPU::rt_step(Ref<WaterWakeSolverGPU> p_self, PackedByteArray p_params, PackedFloat32Array p_sources, PackedByteArray p_modes, Vector2 p_origin, bool p_readback) {
 	if (rd == nullptr || !built.is_set()) {
 		return;
 	}
@@ -163,14 +243,38 @@ void WaterWakeSolverGPU::rt_step(Ref<WaterWakeSolverGPU> p_self, PackedByteArray
 	if (!p_sources.is_empty()) {
 		rd->buffer_update(buf_sources, 0, MIN(p_sources.size(), MAX_SOURCES * 8) * 4, p_sources.ptr());
 	}
-	const RID set = a_is_current ? uset_atob : uset_btoa;
-	RD::ComputeListID cl = rd->compute_list_begin();
-	rd->compute_list_bind_compute_pipeline(cl, pipeline);
-	rd->compute_list_bind_uniform_set(cl, set, 0);
 	const uint32_t groups = (uint32_t)((n + 7) / 8);
-	rd->compute_list_dispatch(cl, groups, groups, 1);
-	rd->compute_list_end();
-	a_is_current = !a_is_current;
+	int32_t pass[4] = { 0, 0, 0, 0 };
+	// One compute list per dispatch: the render graph orders them by the buffers they share. (A barrier inside one
+	// list re-applies the last push constant to the next pipeline, which the FFT, having none, rejects.)
+	auto run = [&](RID p_pipeline, RID p_set, const void *p_pc, uint32_t p_pc_bytes, uint32_t p_gx, uint32_t p_gy) {
+		RD::ComputeListID cl = rd->compute_list_begin();
+		rd->compute_list_bind_compute_pipeline(cl, p_pipeline);
+		rd->compute_list_bind_uniform_set(cl, p_set, 0);
+		if (p_pc_bytes > 0) {
+			rd->compute_list_set_push_constant(cl, p_pc, p_pc_bytes);
+		}
+		rd->compute_list_dispatch(cl, p_gx, p_gy, 1);
+		rd->compute_list_end();
+	};
+	if (dispersive && p_modes.size() == MODES_PC_BYTES) {
+		// Pass 1 (A -> B, field to spec_a), FFT, modes (back to spec_a), FFT, pass 2 (B -> A). A stays current.
+		pass[0] = 1;
+		run(pipeline, uset_atob, pass, sizeof(pass), groups, groups);
+		for (int round = 0; round < 2; round++) {
+			run(pipeline_fft, uset_rows, nullptr, 0, 1, n);
+			run(pipeline_fft, uset_cols, nullptr, 0, 1, n);
+			if (round == 0) {
+				run(pipeline_modes, uset_modes, p_modes.ptr(), MODES_PC_BYTES, groups, groups);
+			}
+		}
+		pass[0] = 2;
+		run(pipeline, uset_post, pass, sizeof(pass), groups, groups);
+		a_is_current = true;
+	} else {
+		run(pipeline, a_is_current ? uset_atob : uset_btoa, pass, sizeof(pass), groups, groups);
+		a_is_current = !a_is_current;
+	}
 	if (p_readback) {
 		const RID current = a_is_current ? buf_state_a : buf_state_b;
 		rd->buffer_get_data_async(current, callable_mp(this, &WaterWakeSolverGPU::rt_on_readback).bind(p_self, p_origin), 0, n * n * 16);
@@ -245,14 +349,21 @@ void WaterWakeSolver::_dispatch(const Callable &p_call) const {
 	}
 }
 
-void WaterWakeSolver::build(int p_cells, float p_size) {
+void WaterWakeSolver::build(int p_cells, float p_size, bool p_dispersive) {
 	n = MAX(p_cells, 16);
 	size = MAX(p_size, 1.0f);
+	dispersive = p_dispersive && gpu.is_valid();
+	if (dispersive) {
+		// The FFT wants a power of two: round up, keeping the cell size.
+		const int n2 = MIN((int)Math::next_power_of_2((uint32_t)n), FFT_ROWS_MAX_N);
+		size *= (float)n2 / (float)n;
+		n = n2;
+	}
 	have_origin = false;
 	if (gpu.is_null()) {
 		return; // no device (headless): the callable below would be built on a null object
 	}
-	_dispatch(callable_mp(gpu.ptr(), &WaterWakeSolverGPU::rt_build).bind(gpu, n));
+	_dispatch(callable_mp(gpu.ptr(), &WaterWakeSolverGPU::rt_build).bind(gpu, n, dispersive));
 	if (gpu.is_valid() && !gpu->local) {
 		// The texture RID must exist before the caller wraps it.
 		RenderingServer::get_singleton()->sync();
@@ -312,8 +423,19 @@ void WaterWakeSolver::step(double p_delta, const Vector2 &p_center, const Vector
 		sw[i * 8 + 4] = p_sources[i].foam;
 		sw[i * 8 + 5] = p_sources[i].drift ? 1.0f : 0.0f;
 	}
+	PackedByteArray modes;
+	if (dispersive) {
+		modes.resize(MODES_PC_BYTES);
+		const int32_t mg[4] = { n, 0, 0, 0 };
+		// Damping, and the grid filter: the shortest waves the grid holds lose 2/s more (k^4 below that). The exact
+		// step loses nothing on its own, where the explicit wave equation smears its waves as it goes, so it takes
+		// an eighth of the damping: at the default, the transverse waves still stand 50 m behind a boat.
+		const float ms[4] = { Math::TAU / size, dt, p_damping * 0.125f, 2.0f };
+		memcpy(modes.ptrw(), mg, 16);
+		memcpy(modes.ptrw() + 16, ms, 16);
+	}
 	const bool readback = (ticks++ % READBACK_EVERY) == 0;
-	_dispatch(callable_mp(gpu.ptr(), &WaterWakeSolverGPU::rt_step).bind(gpu, params, src, origin, readback));
+	_dispatch(callable_mp(gpu.ptr(), &WaterWakeSolverGPU::rt_step).bind(gpu, params, src, modes, origin, readback));
 }
 
 RID WaterWakeSolver::get_height_texture_rd_rid() const {

@@ -30,24 +30,26 @@
 
 #include "physx_river_3d.h"
 
+#include "flow_poisson.h"
+#include "physx_water_mist_3d.h"
 #include "physx_water_surface_3d.h"
 
 #include "core/config/engine.h"
+#include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_set.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/gpu_particles_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/main/viewport.h"
-#include "scene/resources/texture_rd.h"
+#include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/mesh.h"
-#include "scene/resources/shader.h"
-#include "servers/physics_3d/physics_server_3d.h"
-
-#include "scene/3d/gpu_particles_3d.h"
-#include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/particle_process_material.h"
+#include "scene/resources/shader.h"
+#include "scene/resources/texture_rd.h"
+#include "servers/physics_3d/physics_server_3d.h"
 
 #ifdef GODOT_PHYSX_FLOW
 #include "../flow/physx_flow_emitter_3d.h"
@@ -65,7 +67,7 @@ shader_type spatial;
 // depth and casts caustics (the same as PhysXWaterSurface3D's).
 render_mode cull_disabled;
 #else
-render_mode blend_mix, cull_disabled, unshaded;
+render_mode blend_mix, cull_disabled;
 #endif
 
 // Animation clock, set by PhysXRiver3D while the game runs (0 in the editor,
@@ -115,7 +117,8 @@ uniform vec2 live_texel = vec2(0.25);
 uniform vec3 live_tilt = vec3(0.0);
 uniform sampler2D live_height_tex : hint_default_black, filter_linear, repeat_disable;
 uniform sampler2D live_flow_tex : hint_default_black, filter_linear, repeat_disable;
-
+// Raster reflections from above (water_raster_reflections.h).
+)" WATER_RASTER_REFLECTIONS_GLSL R"(
 varying vec3 v_world;
 varying vec2 v_flow;
 varying vec4 v_info;
@@ -263,15 +266,34 @@ void fragment() {
 	ALPHA = smoothstep(0.0, max(edge_softness, 1e-3), depth) * v_info.b;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
-	// Unshaded with a small bounded shading term, as PhysXWaterSurface3D's raster look.
+	// Open water keeps PhysXWaterSurface3D's raster look: its own colour with a
+	// small bounded shading term, plus the sky and the sun's glitter, written to
+	// EMISSION (no ALBEDO, no SPECULAR, so the lights add nothing to it). White
+	// water is a rough diffuse surface: it goes to ALBEDO and takes the scene's
+	// lights and shadows, so a cascade in a shaded valley no longer glows (the
+	// path tracer already lit it; docs/ideas/water.md "Step 4f").
 	vec3 n = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
 	float deep = smoothstep(0.0, 1.2, depth);
 	vec3 base_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl);
 	float base_a = mix(shallow_color.a, water_color.a, deep);
-	ALBEDO = mix(base_rgb, foam_color.rgb, foam);
 	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * v_info.b;
-	ALPHA = mix(base_a, foam_color.a, foam) * edge;
+	float a0 = mix(base_a, foam_color.a, foam) * edge;
+	// The reflection term is linear in the colour, so the water's part and the
+	// foam's part split exactly: what was one unshaded colour is now emission
+	// plus a lit albedo, the same where the light is the old fixed one.
+	vec4 refl = water_raster_reflect(base_rgb * (1.0 - foam), a0, world_normal, v_world, CAMERA_POSITION_WORLD, edge * (1.0 - foam), pathtraced_roughness);
+	float a_new = max(refl.a, 1e-4);
+	// Light the surface let through (1 - F), recovered from the alpha it returned.
+	float through = a0 < 0.9999 ? clamp((1.0 - refl.a) / (1.0 - a0), 0.0, 1.0) : 1.0;
+	float keep = a0 * through / a_new;
+	NORMAL = n;
+	EMISSION = refl.rgb;
+	ALBEDO = foam_color.rgb * foam * keep;
+	ROUGHNESS = 0.85;
+	SPECULAR = 0.25 * foam;
+	METALLIC = 0.0;
+	ALPHA = refl.a;
 #endif
 }
 )";
@@ -287,7 +309,7 @@ shader_type spatial;
 #if defined(RT)
 render_mode cull_back;
 #else
-render_mode blend_mix, cull_back, unshaded;
+render_mode blend_mix, cull_back;
 #endif
 
 uniform float water_time = 0.0;
@@ -336,8 +358,13 @@ void fragment() {
 	ALPHA = cover;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
-	float ndotl = clamp(dot(NORMAL, (VIEW_MATRIX * vec4(0.3, 0.85, 0.4, 0.0)).xyz), 0.0, 1.0);
-	ALBEDO = mix(water_color.rgb * mix(0.8, 1.15, ndotl), foam_color.rgb * mix(0.85, 1.05, ndotl), foam);
+	// Lit by the scene's lights, shadows and sky like any surface (it was unshaded with a fixed light,
+	// so a fall in a shaded valley glowed flat white): white water scatters diffusely, the clear sheet
+	// is a smooth dielectric showing the sky in its specular.
+	ALBEDO = mix(water_color.rgb, foam_color.rgb, foam);
+	ROUGHNESS = mix(pathtraced_roughness + 0.1, 0.85, foam);
+	SPECULAR = 0.5;
+	METALLIC = 0.0;
 	ALPHA = mix(water_color.a, foam_color.a, foam) * cover;
 #endif
 }
@@ -393,12 +420,16 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_fall_spray"), &PhysXRiver3D::get_fall_spray);
 	ClassDB::bind_method(D_METHOD("set_fall_mist", "enabled"), &PhysXRiver3D::set_fall_mist);
 	ClassDB::bind_method(D_METHOD("get_fall_mist"), &PhysXRiver3D::get_fall_mist);
+	ClassDB::bind_method(D_METHOD("set_fall_mist_amount", "amount"), &PhysXRiver3D::set_fall_mist_amount);
+	ClassDB::bind_method(D_METHOD("get_fall_mist_amount"), &PhysXRiver3D::get_fall_mist_amount);
 	ClassDB::bind_method(D_METHOD("set_fall_material", "material"), &PhysXRiver3D::set_fall_material);
 	ClassDB::bind_method(D_METHOD("get_fall_material"), &PhysXRiver3D::get_fall_material);
 	ClassDB::bind_method(D_METHOD("get_waterfalls"), &PhysXRiver3D::get_waterfalls);
 	ClassDB::bind_method(D_METHOD("set_mouth_blend", "blend"), &PhysXRiver3D::set_mouth_blend);
 	ClassDB::bind_method(D_METHOD("get_mouth_blend"), &PhysXRiver3D::get_mouth_blend);
 	ClassDB::bind_method(D_METHOD("get_discharge_at", "s"), &PhysXRiver3D::get_discharge_at);
+	ClassDB::bind_method(D_METHOD("set_raster_reflections", "enabled"), &PhysXRiver3D::set_raster_reflections);
+	ClassDB::bind_method(D_METHOD("get_raster_reflections"), &PhysXRiver3D::get_raster_reflections);
 	ClassDB::bind_method(D_METHOD("set_live_flow", "enabled"), &PhysXRiver3D::set_live_flow);
 	ClassDB::bind_method(D_METHOD("get_live_flow"), &PhysXRiver3D::get_live_flow);
 	ClassDB::bind_method(D_METHOD("set_live_domain_size", "size"), &PhysXRiver3D::set_live_domain_size);
@@ -462,10 +493,12 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_min_height", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_fall_min_height", "get_fall_min_height");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_spray"), "set_fall_spray", "get_fall_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_mist"), "set_fall_mist", "get_fall_mist");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_mist_amount", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater"), "set_fall_mist_amount", "get_fall_mist_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fall_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_fall_material", "get_fall_material");
 	ADD_SIGNAL(MethodInfo("rebuilt"));
 	ADD_GROUP("Live flow", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "live_flow"), "set_live_flow", "get_live_flow");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "raster_reflections"), "set_raster_reflections", "get_raster_reflections");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "live_domain_size", PROPERTY_HINT_RANGE, "8,256,1,or_greater,suffix:m"), "set_live_domain_size", "get_live_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "live_grid_resolution", PROPERTY_HINT_RANGE, "32,512,1"), "set_live_grid_resolution", "get_live_grid_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wall_friction", PROPERTY_HINT_RANGE, "0,10,0.05,suffix:1/s"), "set_wall_friction", "get_wall_friction");
@@ -1106,6 +1139,7 @@ void PhysXRiver3D::_notification(int p_what) {
 			water_time += get_process_delta_time();
 			if (water_material.is_valid()) {
 				water_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
+				raster_reflection_state.update(this, water_material, raster_reflections);
 			}
 			if (fall_material.is_valid() && !falls.is_empty()) {
 				fall_material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
@@ -1721,81 +1755,120 @@ void PhysXRiver3D::_solve_flow(float p_ds) {
 			}
 		}
 
-		// SOR on div(grad(psi) / K) = 0 with the bend metric. Face weights:
-		// along s 1 / (h K ds^2), across h / (K dn^2); a face onto a wall
-		// takes the wet cell's own K.
-		const float ds2 = p_ds * p_ds;
-		auto face = [&](int p_a, int p_b, bool p_along, float p_h, float p_dn2) -> float {
-			const float ka = inv_k[p_a];
-			const float kb = inv_k[p_b];
-			const float k = (ka > 0.0f && kb > 0.0f) ? 0.5f * (ka + kb) : MAX(ka, kb);
-			return p_along ? k / (p_h * ds2) : k * p_h / p_dn2;
-		};
-		LocalVector<float> comp_num;
-		LocalVector<float> comp_den;
-		comp_num.resize(comps);
-		comp_den.resize(comps);
-		const float omega = 1.85f;
-		const float tolerance = 1e-5f * sections[count - 1].discharge;
-		for (int iter = 0; iter < 4000; iter++) {
-			float max_change = 0.0f;
-			for (int i = 1; i < count - 1; i++) {
-				const float dn2 = dn_of(i) * dn_of(i);
+		if (bool(GLOBAL_GET("physics/physx_3d/water/multigrid_flow"))) {
+			// The same equation in its symmetric finite-volume form (cell area h ds dn): along s a face
+			// conducts K_f dn_f / (h_f ds), across K_f h_f ds / dn, with K_f the mean of a wet pair or the wet
+			// cell's own onto a wall, and the metric h at the face; then multigrid-preconditioned CG.
+			LocalVector<int> kind;
+			LocalVector<int> island_of;
+			LocalVector<float> fcx;
+			LocalVector<float> fcz;
+			kind.resize(cells);
+			fcx.resize(cells);
+			fcz.resize(cells);
+			island_of.resize(comps);
+			int islands = 0;
+			for (int q = 0; q < comps; q++) {
+				island_of[q] = comp_island[q] ? islands++ : -1;
+			}
+			auto k_face = [&](int p_a, int p_b) -> float {
+				const float ka = inv_k[p_a];
+				const float kb = inv_k[p_b];
+				return (ka > 0.0f && kb > 0.0f) ? 0.5f * (ka + kb) : MAX(ka, kb);
+			};
+			for (int i = 0; i < count; i++) {
+				const float dn = dn_of(i);
 				for (int j = 0; j <= m; j++) {
 					const int k = i * row + j;
-					if (inv_k[k] == 0.0f) {
-						continue;
+					if (i == 0 || i == count - 1) {
+						kind[k] = FlowPoisson::FIXED;
+					} else if (comp[k] >= 0) {
+						kind[k] = island_of[comp[k]] >= 0 ? FlowPoisson::ISLAND + island_of[comp[k]] : FlowPoisson::FIXED;
+					} else {
+						kind[k] = FlowPoisson::UNKNOWN;
 					}
-					const float h = metric(i, j);
-					float num = 0.0f;
-					float den = 0.0f;
-					const int nb[4] = { k - row, k + row, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
-					for (int q = 0; q < 4; q++) {
-						if (nb[q] < 0) {
-							continue; // the strip's side edge: no flow across it
-						}
-						const float w = face(k, nb[q], q < 2, h, dn2);
-						num += w * psi[nb[q]];
-						den += w;
-					}
-					if (den > 0.0f) {
-						const float change = omega * (num / den - psi[k]);
-						psi[k] += change;
-						max_change = MAX(max_change, Math::abs(change));
-					}
+					fcx[k] = j < m ? k_face(k, k + 1) * 0.5f * (metric(i, j) + metric(i, j + 1)) * p_ds / dn : 0.0f;
+					fcz[k] = i < count - 1 ? k_face(k, k + row) * 0.5f * (dn + dn_of(i + 1)) / (0.5f * (metric(i, j) + metric(i + 1, j)) * p_ds) : 0.0f;
 				}
 			}
-			// Islands: psi where the flow round them sums to zero.
-			for (int q = 0; q < comps; q++) {
-				comp_num[q] = 0.0f;
-				comp_den[q] = 0.0f;
-			}
-			for (int i = 1; i < count - 1; i++) {
-				const float dn2 = dn_of(i) * dn_of(i);
-				for (int j = 0; j <= m; j++) {
-					const int k = i * row + j;
-					if (inv_k[k] == 0.0f) {
-						continue;
-					}
-					const int nb[4] = { k - row, k + row, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
-					for (int q = 0; q < 4; q++) {
-						if (nb[q] < 0 || comp[nb[q]] < 0 || !comp_island[comp[nb[q]]]) {
+			FlowPoisson::solve(row, count, fcx, fcz, kind, islands, psi);
+		} else {
+			// SOR on div(grad(psi) / K) = 0 with the bend metric. Face weights:
+			// along s 1 / (h K ds^2), across h / (K dn^2); a face onto a wall
+			// takes the wet cell's own K.
+			const float ds2 = p_ds * p_ds;
+			auto face = [&](int p_a, int p_b, bool p_along, float p_h, float p_dn2) -> float {
+				const float ka = inv_k[p_a];
+				const float kb = inv_k[p_b];
+				const float k = (ka > 0.0f && kb > 0.0f) ? 0.5f * (ka + kb) : MAX(ka, kb);
+				return p_along ? k / (p_h * ds2) : k * p_h / p_dn2;
+			};
+			LocalVector<float> comp_num;
+			LocalVector<float> comp_den;
+			comp_num.resize(comps);
+			comp_den.resize(comps);
+			const float omega = 1.85f;
+			const float tolerance = 1e-5f * sections[count - 1].discharge;
+			for (int iter = 0; iter < 4000; iter++) {
+				float max_change = 0.0f;
+				for (int i = 1; i < count - 1; i++) {
+					const float dn2 = dn_of(i) * dn_of(i);
+					for (int j = 0; j <= m; j++) {
+						const int k = i * row + j;
+						if (inv_k[k] == 0.0f) {
 							continue;
 						}
-						const float w = face(k, nb[q], q < 2, metric(i, j), dn2);
-						comp_num[comp[nb[q]]] += w * psi[k];
-						comp_den[comp[nb[q]]] += w;
+						const float h = metric(i, j);
+						float num = 0.0f;
+						float den = 0.0f;
+						const int nb[4] = { k - row, k + row, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
+						for (int q = 0; q < 4; q++) {
+							if (nb[q] < 0) {
+								continue; // the strip's side edge: no flow across it
+							}
+							const float w = face(k, nb[q], q < 2, h, dn2);
+							num += w * psi[nb[q]];
+							den += w;
+						}
+						if (den > 0.0f) {
+							const float change = omega * (num / den - psi[k]);
+							psi[k] += change;
+							max_change = MAX(max_change, Math::abs(change));
+						}
 					}
 				}
-			}
-			for (int c = 0; c < cells; c++) {
-				const int q = comp[c];
-				if (q >= 0 && comp_island[q] && comp_den[q] > 0.0f) {
-					psi[c] = comp_num[q] / comp_den[q];
+				// Islands: psi where the flow round them sums to zero.
+				for (int q = 0; q < comps; q++) {
+					comp_num[q] = 0.0f;
+					comp_den[q] = 0.0f;
 				}
-			}
-			if (max_change < tolerance && iter > 4) {
-				break;
+				for (int i = 1; i < count - 1; i++) {
+					const float dn2 = dn_of(i) * dn_of(i);
+					for (int j = 0; j <= m; j++) {
+						const int k = i * row + j;
+						if (inv_k[k] == 0.0f) {
+							continue;
+						}
+						const int nb[4] = { k - row, k + row, j > 0 ? k - 1 : -1, j < m ? k + 1 : -1 };
+						for (int q = 0; q < 4; q++) {
+							if (nb[q] < 0 || comp[nb[q]] < 0 || !comp_island[comp[nb[q]]]) {
+								continue;
+							}
+							const float w = face(k, nb[q], q < 2, metric(i, j), dn2);
+							comp_num[comp[nb[q]]] += w * psi[k];
+							comp_den[comp[nb[q]]] += w;
+						}
+					}
+				}
+				for (int c = 0; c < cells; c++) {
+					const int q = comp[c];
+					if (q >= 0 && comp_island[q] && comp_den[q] > 0.0f) {
+						psi[c] = comp_num[q] / comp_den[q];
+					}
+				}
+				if (max_change < tolerance && iter > 4) {
+					break;
+				}
 			}
 		}
 	}
@@ -2275,8 +2348,8 @@ void PhysXRiver3D::_build_fall_mesh() {
 // rho g Q H. Spray: droplets thrown up from the impact line at a share of the
 // impact speed (GPUParticles3D, small spheres, lit, so they show under path
 // tracing). Mist: the finest drops, which fall at a few cm/s and drift out on
-// the air the fall drags down -- a cool PhysXFlowEmitter3D feeding the
-// scene's PhysXFlow3D (it does nothing without one).
+// the air the fall drags down -- a PhysXWaterMist3D grid per fall, or a cool
+// PhysXFlowEmitter3D feeding the scene's PhysXFlow3D when it has one.
 void PhysXRiver3D::_build_fall_effects() {
 	for (Node3D *n : fall_effects) {
 		if (n != nullptr) {
@@ -2334,23 +2407,52 @@ void PhysXRiver3D::_build_fall_effects() {
 			add_child(spray, false, INTERNAL_MODE_BACK);
 			fall_effects.push_back(spray);
 		}
-#ifdef GODOT_PHYSX_FLOW
 		if (fall_mist) {
-			PhysXFlowEmitter3D *mist = memnew(PhysXFlowEmitter3D);
-			mist->set_name("FallMist");
-			Transform3D mxf = xf;
-			mxf.origin += Vector3(0, 0.6f, 0);
-			mist->set_transform(mxf);
-			mist->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
-			mist->set_size(Vector3(fall.width + 1.0f, 1.2f, 2.0f));
-			// The fall's wind: out from the foot at a fraction of the impact speed.
-			mist->set_velocity(Vector3(0, 0.4f, -0.15f * fall.impact_speed));
-			mist->set_temperature(0.0f);
-			mist->set_smoke(CLAMP(power / 100000.0f, 0.2f, 2.0f));
-			add_child(mist, false, INTERNAL_MODE_BACK);
-			fall_effects.push_back(mist);
-		}
+			bool to_flow = false;
+#ifdef GODOT_PHYSX_FLOW
+			// A scene with a PhysXFlow3D simulates the mist in its own gas grid (a full fluid solve).
+			to_flow = is_inside_tree() && !get_tree()->get_root()->find_children("*", "PhysXFlow3D", true, false).is_empty();
+			if (to_flow) {
+				PhysXFlowEmitter3D *mist = memnew(PhysXFlowEmitter3D);
+				mist->set_name("FallMist");
+				Transform3D mxf = xf;
+				mxf.origin += Vector3(0, 0.6f, 0);
+				mist->set_transform(mxf);
+				mist->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+				mist->set_size(Vector3(fall.width + 1.0f, 1.2f, 2.0f));
+				// The fall's wind: out from the foot at a fraction of the impact speed.
+				mist->set_velocity(Vector3(0, 0.4f, -0.15f * fall.impact_speed));
+				mist->set_temperature(0.0f);
+				mist->set_smoke(CLAMP(power / 100000.0f, 0.2f, 2.0f));
+				add_child(mist, false, INTERNAL_MODE_BACK);
+				fall_effects.push_back(mist);
+			}
 #endif
+			if (!to_flow) {
+				// Otherwise its own mist grid (PhysXWaterMist3D): fed with a share of the fall's water that
+				// grows with the square of the impact speed (atomisation by the jet), blown out along the
+				// pool by the air the fall drags down (about 0.3 of the impact speed).
+				const float reach = CLAMP(4.0f + 0.6f * fall.height, 6.0f, 24.0f);
+				const float side = MAX(fall.width + 2.0f * reach, 2.0f * reach);
+				const float shift = MAX(reach - 3.0f, 0.0f);
+				PhysXWaterMist3D *mist = memnew(PhysXWaterMist3D);
+				mist->set_name("FallMist");
+				Transform3D mxf = xf;
+				mxf.origin += fall.tangent * shift;
+				mist->set_transform(mxf);
+				mist->set_size(Vector3(side, CLAMP(fall.height + 4.0f, 6.0f, 30.0f), side));
+				mist->set_cell_size(0.5f);
+				mist->set_source_position(Vector3(0.0f, 0.5f, shift));
+				mist->set_source_extents(Vector3(0.5f * fall.width + 0.5f, 0.75f, 1.0f));
+				mist->set_jet_direction(Vector3(0.0f, 0.0f, -1.0f));
+				mist->set_jet_speed(MIN(0.3f * fall.impact_speed, 12.0f));
+				const float q_total = fall.q * fall.width; // m^3/s
+				const float v = fall.impact_speed / 10.0f;
+				mist->set_source_rate(fall_mist_amount * 1e-5f * v * v * 1000.0f * q_total * 1000.0f); // g/s
+				add_child(mist, false, INTERNAL_MODE_BACK);
+				fall_effects.push_back(mist);
+			}
+		}
 	}
 	(void)c;
 }
@@ -2367,6 +2469,11 @@ void PhysXRiver3D::set_fall_spray(bool p_enabled) {
 
 void PhysXRiver3D::set_fall_mist(bool p_enabled) {
 	fall_mist = p_enabled;
+	_queue_build();
+}
+
+void PhysXRiver3D::set_fall_mist_amount(float p_amount) {
+	fall_mist_amount = MAX(p_amount, 0.0f);
 	_queue_build();
 }
 
@@ -2433,7 +2540,6 @@ bool PhysXRiver3D::_locate(const Vector3 &p_world, int &r_section, float &r_t, f
 	r_n = n;
 	return true;
 }
-
 
 float PhysXRiver3D::sample_depth(const Vector3 &p_world_pos) const {
 	int i;

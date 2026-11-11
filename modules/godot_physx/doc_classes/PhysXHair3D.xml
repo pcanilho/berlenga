@@ -31,6 +31,13 @@
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.08">
 			How fast a point's velocity relaxes toward the air's: each substep it keeps [code]exp(-damping * 60 * dt)[/code] of the difference (TressFX's damping). In still air this slows the hair; in [member wind] it is how quickly the hair takes up the wind. Hair is light enough that air, not its weight, sets how it moves: higher is floatier, lower is heavier and swings longer.
 		</member>
+		<member name="deep_shadow_light" type="NodePath" setter="set_deep_shadow_light" getter="get_deep_shadow_light" default="NodePath(&quot;&quot;)">
+			The [DirectionalLight3D] [member deep_shadows] are built toward. Empty: the brightest shadowed [DirectionalLight3D] in the scene, found by itself.
+		</member>
+		<member name="deep_shadows" type="bool" setter="set_deep_shadows" getter="is_deep_shadows" default="true">
+			With [member hair_shading], the strands shade themselves from one directional light ([member deep_shadow_light]) with a deep opacity map (Yuksel and Keyser 2008, as Unreal Engine's hair): each frame the solver records, from the light, where the first hair is, how much hair lies in three layers past it, and where the collision spheres and [member collision_body] are, and each strand takes the light that passes the hair and head in front of it. The self-shadow is smooth instead of the shadow map's grain, and light thins through the hair as through real hair. The hair still casts into the shadow map for everything else, each strand at its own share of texels (stochastic transparency), so a shadow behind several strands builds up as their product. Other lights shadow the hair through the shadow maps as before. Off: the shadow maps alone, as before.
+			[b]Note:[/b] the head counts only through [member collision_spheres] and [member collision_body]; something opaque inside the hair that neither covers does not shadow the hair from that light.
+		</member>
 		<member name="fixed_gravity" type="Vector3" setter="set_fixed_gravity" getter="get_fixed_gravity" default="Vector3(0, -9.8, 0)">
 			The gravity used when [member use_world_gravity] is off.
 		</member>

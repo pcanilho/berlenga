@@ -53,6 +53,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 class TerrainStreamPower {
 public:
@@ -72,6 +73,13 @@ public:
 		// (Freeman 1991; Holmgren 1994; the "p_flow" of Schott et al. 2023). Removes the straight 45 degree valleys
 		// single-direction (D8) routing leaves on a grid. 0 = D8.
 		double flow_exponent = 1.1;
+		// Sediment deposition, G of Yuan, Braun, Guerit et al. 2019 (JGR Earth Surface): dh/dt = U - K A^m S +
+		// (G / A) Qs, Qs the sediment flux from upstream. 0 = detachment-limited (pure incision); around 1 rivers
+		// drop much of their load where they slow, filling valleys into flat alluvial floors and floodplains.
+		double deposition = 0.0;
+		int deposition_iterations = 12; // Gauss-Seidel passes at most (Yuan et al. report a few)
+		double deposition_tolerance = 5.0e-2; // metres: stop once no cell moves more in a pass
+		double deposition_relaxation = 0.5;
 	};
 
 	// Buffers: all nx * ny, row-major (z rows of x). The caller allocates them; outlet cells are fixed.
@@ -94,13 +102,52 @@ public:
 		uint64_t *sort_keys = nullptr; // 2 * nx * ny
 		uint32_t *radix_count = nullptr; // 65536
 		uint8_t *flags = nullptr; // nx * ny
+		// Optional rock strength per cell (layered rock): K multiplier and tan(critical slope). Null: uniform.
+		const double *erodibility_scale = nullptr;
+		const double *talus_cell = nullptr;
+		// Optional: how far below the surface the hard rock ends (0 where the surface is soft). A hard cell whose
+		// receiver lies below that depth stands on soft rock exposed in the face under it: undercut, its block of hard
+		// rock collapses and it erodes on as the soft rock does, so the face retreats as a cliff (the caprock
+		// waterfall, Gilbert 1907; Haviv et al. 2010).
+		const double *hard_depth = nullptr;
+		// Optional diffusion factor per cell (0..1): bare hard rock does not creep, so its cliffs stay sharp.
+		const double *diffusion_scale = nullptr;
 	};
 
 	Params p;
 	Buffers b;
 	int pits_filled = 0; // cells raised by the last fill
+	int deposition_passes = 0; // Gauss-Seidel passes the last step took
+	std::vector<double> dep_start; // heights after uplift, before erosion and deposition
+	std::vector<double> dep_flux; // eroded volume from each cell and everything above it, m^3 per step
+	std::vector<uint8_t> dep_undercut; // hard blocks broken off this step (decided on the first pass)
+	std::vector<double> dep_area; // drainage area along the receiver tree the flux follows (not the MFD area)
 
-	bool is_outlet(int i) const {
+	// Outlets cached per cell (the edge test and the mask were most of the profile); rebuilt when the grid or the
+	// mask changes.
+	std::vector<uint8_t> outlet_cache;
+	int cache_nx = -1, cache_ny = -1, cache_edges = -1;
+	const uint8_t *cache_mask = nullptr;
+
+	void _update_outlets() {
+		if (cache_nx == p.nx && cache_ny == p.ny && cache_edges == p.outlet_edges && cache_mask == b.outlet && int(outlet_cache.size()) == p.nx * p.ny) {
+			return;
+		}
+		const int n = p.nx * p.ny;
+		outlet_cache.assign(n, 0);
+		for (int i = 0; i < n; i++) {
+			outlet_cache[i] = _outlet_test(i) ? 1 : 0;
+		}
+		cache_nx = p.nx;
+		cache_ny = p.ny;
+		cache_edges = p.outlet_edges;
+		cache_mask = b.outlet;
+	}
+
+	bool is_outlet(int i) const { return outlet_cache[i] != 0; }
+	void invalidate_outlets() { cache_nx = -1; }
+
+	bool _outlet_test(int i) const {
 		const int x = i % p.nx;
 		const int z = i / p.nx;
 		if (b.outlet && b.outlet[i]) {
@@ -112,6 +159,7 @@ public:
 
 	// One time step; returns the largest height change in metres.
 	double step() {
+		_update_outlets();
 		const int n = p.nx * p.ny;
 		double *h = b.height;
 		memcpy(b.scratch, h, sizeof(double) * n);
@@ -136,22 +184,10 @@ public:
 
 		_accumulate_area();
 
-		const bool half_m = p.area_exponent == 0.5;
-		// Implicit stream power and critical slope, from the outlets up: every receiver is final before its donors.
-		for (int k = 0; k < n; k++) {
-			const int i = b.stack[k];
-			const int r = b.receiver[i];
-			if (r == i) {
-				continue;
-			}
-			const double d = b.receiver_dist[i];
-			const double am = half_m ? std::sqrt(b.area[i]) : std::pow(b.area[i], p.area_exponent);
-			const double f = p.erodibility * p.dt * am / d;
-			double hi = (h[i] + f * h[r]) / (1.0 + f);
-			if (p.talus > 0.0) {
-				hi = std::fmin(hi, h[r] + p.talus * d);
-			}
-			h[i] = hi;
+		if (p.deposition > 0.0) {
+			_solve_with_deposition();
+		} else {
+			_solve(nullptr);
 		}
 
 		if (p.diffusion > 0.0) {
@@ -165,9 +201,127 @@ public:
 		return max_dh;
 	}
 
+	// Implicit stream power and critical slope, from the outlets up: every receiver is final before its donors.
+	// p_up: with deposition, the sediment volume arriving from upstream of each cell (Yuan et al. 2019, eq. 13
+	// solved for h_i with the cell's own share implicit), and b.temp the heights after uplift.
+	void _solve(const double *p_up) {
+		const int n = p.nx * p.ny;
+		double *h = b.height;
+		const bool half_m = p.area_exponent == 0.5;
+		const double cell_area = p.dx * p.dx;
+		for (int k = 0; k < n; k++) {
+			const int i = b.stack[k];
+			const int r = b.receiver[i];
+			if (r == i) {
+				continue;
+			}
+			const double d = b.receiver_dist[i];
+			const double am = half_m ? std::sqrt(b.area[i]) : std::pow(b.area[i], p.area_exponent);
+			double kk = b.erodibility_scale ? p.erodibility * b.erodibility_scale[i] : p.erodibility;
+			double top = p_up ? dep_start[i] : h[i];
+			// With deposition the undercut is decided once per step, on the first (incision-only) pass: the later
+			// passes move the foot by small amounts, and a block that breaks off and back in turn never settles.
+			bool undercut = b.hard_depth && b.hard_depth[i] > 0.0;
+			if (undercut) {
+				if (!p_up) {
+					undercut = h[r] < top - b.hard_depth[i] - p.talus * d;
+					if (p.deposition > 0.0) {
+						dep_undercut[i] = undercut;
+					}
+				} else {
+					undercut = dep_undercut[i];
+				}
+			}
+			if (undercut) {
+				// Undercut: the soft rock under the block has worn back past it (its foot lower than the band's base by
+				// a soft slope at its critical gradient), so the block of hard rock breaks off whole and the soft rock
+				// under it erodes on. The face retreats a cell per such undercutting, at the pace the foot incises.
+				top = top - b.hard_depth[i];
+				kk = p.erodibility;
+			}
+			const double f = kk * p.dt * am / d;
+			double hi;
+			if (p_up) {
+				const double g = p.deposition / dep_area[i];
+				const double ga = g * cell_area;
+				hi = ((1.0 + ga) * top + g * std::fmax(p_up[i], 0.0) + f * h[r]) / (1.0 + f + ga);
+			} else {
+				hi = (top + f * h[r]) / (1.0 + f);
+			}
+			if (p.talus > 0.0) {
+				hi = std::fmin(hi, h[r] + (b.talus_cell ? b.talus_cell[i] : p.talus) * d);
+			}
+			h[i] = hi;
+		}
+	}
+
+	// Yuan et al. 2019: the flux into a cell depends on the new heights upstream, which the stack solves after it,
+	// so the solve is repeated with the flux from the last pass (Gauss-Seidel) until the heights settle. Alluvium
+	// (the surface raised above the uplifted ground, worn first when the river cuts again) goes to b.sediment.
+	void _solve_with_deposition() {
+		const int n = p.nx * p.ny;
+		double *h = b.height;
+		const double cell_area = p.dx * p.dx;
+		dep_start.assign(h, h + n);
+		dep_flux.resize(n);
+		// The flux runs down the single receiver tree, so it is spread over that tree's area: dividing it by the
+		// multiple-flow area, which can be far smaller on a cell the tree funnels into, would pile it up there.
+		dep_area.assign(n, cell_area);
+		dep_undercut.assign(n, 0);
+		for (int k = n - 1; k >= 0; k--) {
+			const int i = b.stack[k];
+			const int r = b.receiver[i];
+			if (r != i) {
+				dep_area[r] += dep_area[i];
+			}
+		}
+		std::vector<double> &up = dep_flux;
+		std::vector<double> prev(n);
+		_solve(nullptr); // first guess: no deposition
+		deposition_passes = 0;
+		for (int it = 0; it < p.deposition_iterations; it++) {
+			for (int i = 0; i < n; i++) {
+				up[i] = 0.0;
+			}
+			// Upstream volume: down the stack from the top, each cell passes on what came in plus what it lost.
+			for (int k = n - 1; k >= 0; k--) {
+				const int i = b.stack[k];
+				const int r = b.receiver[i];
+				if (r != i) {
+					up[r] += up[i] + (dep_start[i] - h[i]) * cell_area;
+				}
+			}
+			memcpy(prev.data(), h, sizeof(double) * n);
+			for (int i = 0; i < n; i++) {
+				if (b.receiver[i] != i) {
+					h[i] = dep_start[i];
+				}
+			}
+			_solve(up.data());
+			deposition_passes++;
+			// Under-relaxed: the full update swings between two states when a step moves much sediment (the
+			// flux and the heights it raises chase each other); half steps settle, halving the change per pass.
+			const double w = it == 0 ? 1.0 : p.deposition_relaxation;
+			double moved = 0.0;
+			for (int i = 0; i < n; i++) {
+				h[i] = prev[i] + w * (h[i] - prev[i]);
+				moved = std::fmax(moved, std::fabs(h[i] - prev[i]));
+			}
+			if (moved < p.deposition_tolerance) {
+				break;
+			}
+		}
+		if (b.sediment) {
+			for (int i = 0; i < n; i++) {
+				b.sediment[i] = std::fmax(b.sediment[i] + h[i] - dep_start[i], 0.0);
+			}
+		}
+	}
+
 	// Routing only (receivers, stack, area) on the current heights, after filling any basin the last step left (so
 	// the result drains everywhere); no erosion. For the final heights and maps.
 	void route() {
+		_update_outlets();
 		_compute_receivers();
 		if (_count_pits() > 0) {
 			_priority_flood_fill();
@@ -482,6 +636,17 @@ private:
 					const double r = x < nx - 1 ? b.temp[i + 1] : c;
 					const double u = z > 0 ? b.temp[i - nx] : c;
 					const double d = z < ny - 1 ? b.temp[i + nx] : c;
+					if (b.diffusion_scale) {
+						// Conservative fluxes, each across a face at the smaller factor of its two cells.
+						const double *k = b.diffusion_scale;
+						const double ki = k[i];
+						const double kl = x > 0 ? std::fmin(ki, k[i - 1]) : 0.0;
+						const double kr = x < nx - 1 ? std::fmin(ki, k[i + 1]) : 0.0;
+						const double ku = z > 0 ? std::fmin(ki, k[i - nx]) : 0.0;
+						const double kd = z < ny - 1 ? std::fmin(ki, k[i + nx]) : 0.0;
+						h[i] = c + a * (kl * (l - c) + kr * (r - c) + ku * (u - c) + kd * (d - c));
+						continue;
+					}
 					h[i] = c + a * (l + r + u + d - 4.0 * c);
 				}
 			}

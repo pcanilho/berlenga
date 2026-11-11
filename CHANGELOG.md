@@ -6,6 +6,125 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-a86e608b (2026-11-11)
+
+### Changed
+- The sea, lake and river flow bakes solve their stream function with multigrid-preconditioned conjugate gradients instead of SOR: about 6x faster at 160 x 160 cells, 10x at 320 x 320, the same flow. `physics/physx_3d/water/multigrid_flow` (on) is the opt-out.
+- README: faster flow bakes line.
+- README: raster reflections cover rivers; river image and shore waves clip re-rendered.
+
+### Fixed
+- Raster rivers seen from above now reflect the sky and the sun's glitter by the exact Fresnel term, like the sea since `raster_reflections` on PhysXWaterSurface3D; PhysXRiver3D `raster_reflections` (on) is the opt-out. The sea and rivers share the code (water_raster_reflections.h).
+
+## build-163faf95 (2026-11-11)
+
+### Fixed
+- Raster water seen from above now reflects the sky and the sun's glitter by the exact Fresnel term, as the path tracer does; before, it was an unlit tint with no reflection at all (no glitter path, no sky at grazing angles). PhysXWaterSurface3D `raster_reflections` (on) is the opt-out.
+
+### Changed
+- README: boat wakes line and image; wide ground shot with the cloud layer.
+- README: raster water reflections line and image.
+
+## build-0fe6589a (2026-11-11)
+
+### Added
+- PhysXWaterWake3D `dispersive` (on by default): the wake's waves are stepped in Fourier space with deep-water dispersion (eWave, Tessendorf 2014), so each wavelength travels at its own speed and a moving hull leaves the Kelvin pattern: a 19.5 degree wedge with transverse waves behind the stern and diverging waves on its arms. The hull acts as a pressure patch. Off keeps the wave equation at `wave_speed`. The grid rounds up to a power of two (192 cells over 48 m become 256 over 64 m).
+- PhysXWaterWake3D `breaking_slope` (0.3): with `dispersive`, the wave slope past which wake waves break into foam.
+
+### Changed
+- README: whitecaps by wind speed line and image.
+
+## build-c29dac43 (2026-11-11)
+
+### Changed
+- Snow: icicles read as clear ice with a hazy core (`SnowIcicles3D.hazy_core`, `core_material`), and their ripples grow with length instead of striping every cone under path tracing.
+
+### Added
+- PhysXWaterSurface3D `whitecap_auto` (on by default) and `whitecap_cover_scale`: the foam threshold is steered so the share of sea under whitecaps follows the wind as measured at sea (Monahan and O'Muircheartaigh 1980: about 1% at 10 m/s, 3% at 14 m/s, 10% at 20 m/s), whatever the cascades, choppiness or fetch; `get_whitecap_cover()`, `get_whitecap_target_cover()`, `get_effective_foam_threshold()`.
+
+## build-091c98e1 (2026-11-11)
+
+### Fixed
+- WeatherSkyMaterial: clouds no longer look like flat-topped slabs with vertical walls (the shape noise was stretched so far in height that each cloud was one column through the layer), and distant clouds near the horizon are no longer boxes (the noise is read at the pixel's footprint, not the march step).
+
+### Changed
+- README: cornice fall and icicles lines; cornice fall image.
+- README: exact path traced snow sparkle; SPECULAR_NORMAL shader output.
+- README: pixel antialiasing line and image; hair deep shadows raster and path traced pair.
+
+### Added
+- Snow: cornices open a tension crack by creep and fall once their root cannot hold them, as tumbling blocks with debris at the foot of the face (`SnowCover3D.cornice_failure_enabled`, signal `cornice_failed`, `SnowCornice3D.debris_enabled`).
+- Snow: `SnowIcicles3D`, icicles grown along an edge from melt water running off the snow above into air below freezing, drawn as clear ice under raster and path tracing.
+- Spatial shaders: `SPECULAR_NORMAL`, a normal for the base specular lobe alone under the path tracer (the diffuse keeps `NORMAL`); raster ignores it.
+- Snow: exact path-traced sparkle, every 2 mm ice grain of dry snow a facet hit per ray, with the global shader parameter `snow_exact_glints` (off by default); `snow_glint_apply_specular()` in `get_snow_shader_code()` for custom shaders.
+
+## build-d916f05e (2026-11-11)
+
+### Changed
+- Path tracing without Ray Reconstruction spreads each pixel's samples after the first across the pixel (box filter), so detail finer than a pixel, such as hair strands, is antialiased instead of sparkling
+- README: rivers fed by rain and snowmelt line and chart.
+- README: terrain rock layers and waterfalls line and image.
+- README: measured ocean wave spreading line.
+
+## build-250256ab (2026-11-10)
+
+### Added
+- PhysXWaterSurface3D `wave_spreading` (Donelan-Banner by default, Hasselmann, or the old Cos2) and `swell`, after Horvath 2015: the dominant waves run with the wind and short waves cross, matching Cox and Munk's measured slopes (1.41 against 1.48 along/across at 14 m/s; Cos2 gave 2.72).
+- `physics/physx_3d/water/shared_memory_fft` (off until timed on a GPU): the ocean FFT runs each line's whole transform in shared memory, all four transforms of a step in two dispatches per cascade instead of 8 log2(N); the same field.
+- `TerrainMaterial3D.ground_deform_enabled`: the terrain takes `GroundSurface3D` prints (sand, mud, leaf litter) with its own material.
+
+### Changed
+- README: wind moves lying snow line and image.
+
+## build-939acbda (2026-11-10)
+
+### Added
+- PhysXHair3D `deep_shadows` (on, with `hair_shading`) and `deep_shadow_light`: the raster strands shade themselves from a directional light with a deep opacity map (Yuksel and Keyser 2008), smooth instead of grainy
+- Spatial shader fragment output `DIRECTIONAL_SHADOW_OFFSET`: moves the fragment's directional shadow lookups toward each light by that many metres
+
+### Changed
+- PhysXHair3D strands cast into shadow maps with their own noise threshold each (stochastic transparency), so the shadow behind several strands builds up as their product
+- README: clouds that never repeat line.
+- README: hair deep opacity shadows line and image.
+
+## build-7c77cee2 (2026-11-10)
+
+### Fixed
+- Clouds no longer repeat in a grid: the shape noise is read twice at an irrational ratio of scales and turned against the world's axes, at 128³ instead of 64³. Cover still means share of sky.
+
+### Changed
+- README: coarse-to-fine erosion line and image.
+- README: footprints in ground line and image.
+- README: melt-freeze crusts line and image.
+- README: terrain ground material line; snow and wetness shader code for ShaderMaterials.
+
+### Added
+- `TerrainMaterial3D`: a ground material that writes its own shader: rock, scree, soil, alluvium and sand layers chosen by the terrain generator's geology (or by slope without it), height-blended, biplanar on cliffs, with the erosion detail normal, grass ground tint, wetness and snow.
+- `BaseMaterial3D.get_snow_shader_code()` and `get_wetness_shader_code()`: the engine's snow and wetness lines for any `ShaderMaterial`, the same text `BaseMaterial3D` uses.
+
+## build-dabf251a (2026-11-10)
+
+### Changed
+- Weather: precipitation haze layers are lit by the sky as well as the sun, so blowing snow reads white. A source given a radius now sets the layer's ground at its centre's height, so the layer follows the terrain instead of sitting at `ground_height`.
+- README: terrain climate maps line and image.
+- README: vegetation climate placement and canopy shade lines.
+
+### Added
+- `PlantSpecies` climate rules: `temperature_range`, `january_temperature_range`, `precipitation_range`, `aridity_range` and `sunlight_range`, read from `TerrainDataMap3D.bake_climate()`.
+
+## build-bc9b8f27 (2026-11-10)
+
+### Changed
+- Weather: precipitation haze layers are lit by the sky as well as the sun, so blowing snow reads white. A source given a radius now sets the layer's ground at its centre's height, so the layer follows the terrain instead of sitting at `ground_height`.
+- README: terrain climate maps line and image.
+- README: indirect light reuse (ReSTIR GI) line.
+- README: snowstorms line and blizzard image.
+- README: vegetation climate placement and canopy shade lines.
+
+### Added
+- Path tracing: indirect light reuse (ReSTIR GI), `rendering/pathtracing/indirect_reuse`, off by default. The first bounce of each pixel's diffuse samples is resampled across frames and neighbouring pixels. A room lit through one window goes from 22.8 to 30.0 dB at 4 spp, better than 64 spp without it. Uses 104 bytes per internal pixel.
+- `PlantSpecies` climate rules: `temperature_range`, `january_temperature_range`, `precipitation_range`, `aridity_range` and `sunlight_range`, read from `TerrainDataMap3D.bake_climate()`.
+
 ## build-943d6ac9 (2026-11-10)
 
 ### Fixed

@@ -708,6 +708,7 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.renames["RIM_TINT"] = "rim_tint_highp";
 		actions.renames["CLEARCOAT"] = "clearcoat_highp";
 		actions.renames["CLEARCOAT_ROUGHNESS"] = "clearcoat_roughness_highp";
+		actions.renames["SPECULAR_NORMAL"] = "specular_normal";
 		actions.renames["ANISOTROPY"] = "anisotropy_highp";
 		actions.renames["ANISOTROPY_FLOW"] = "anisotropy_flow_highp";
 		actions.renames["SSS_STRENGTH"] = "sss_strength_highp";
@@ -742,6 +743,7 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.renames["CUSTOM2"] = "custom2_attrib";
 		actions.renames["CUSTOM3"] = "custom3_attrib";
 		actions.renames["LIGHT_VERTEX"] = "light_vertex";
+		actions.renames["DIRECTIONAL_SHADOW_OFFSET"] = "directional_shadow_offset";
 
 		actions.renames["NODE_POSITION_WORLD"] = "read_model_matrix[3].xyz";
 		actions.renames["CAMERA_POSITION_WORLD"] = "inv_view_matrix[3].xyz";

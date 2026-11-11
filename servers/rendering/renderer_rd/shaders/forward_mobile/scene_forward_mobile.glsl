@@ -1175,6 +1175,7 @@ void main() {
 	float rim_tint_highp = 0.0;
 	float clearcoat_highp = 0.0;
 	float clearcoat_roughness_highp = 0.0;
+	vec3 specular_normal = vec3(0.0); // SPECULAR_NORMAL: path tracing only; raster ignores it.
 	float anisotropy_highp = 0.0;
 	vec2 anisotropy_flow_highp = vec2(1.0, 0.0);
 #ifdef PREMUL_ALPHA_USED
@@ -1263,6 +1264,7 @@ void main() {
 #ifdef LIGHT_VERTEX_USED
 	vec3 light_vertex = vertex;
 #endif //LIGHT_VERTEX_USED
+	float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET
 
 	mat3 model_normal_matrix;
 	if (bool(instances.data[draw_call.instance_index].flags & INSTANCE_FLAGS_NON_UNIFORM_SCALE)) {
@@ -2009,7 +2011,7 @@ void main() {
 #define BIAS_FUNC(m_var, m_idx) \
 	hvec3 normal_bias = base_normal_bias * half(directional_lights.data[i].shadow_normal_bias[m_idx]); \
 	normal_bias -= light_dir * dot(light_dir, normal_bias); \
-	normal_bias += light_dir * half(directional_lights.data[i].shadow_bias[m_idx]); \
+	normal_bias += light_dir * half(directional_lights.data[i].shadow_bias[m_idx] + directional_shadow_offset); \
 	m_var.xyz += vec3(normal_bias);
 
 					if (depth_z < directional_lights.data[i].shadow_split_offsets.x) {

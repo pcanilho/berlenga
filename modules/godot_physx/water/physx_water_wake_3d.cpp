@@ -46,6 +46,8 @@ void PhysXWaterWake3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_size"), &PhysXWaterWake3D::get_size);
 	ClassDB::bind_method(D_METHOD("set_cells", "cells"), &PhysXWaterWake3D::set_cells);
 	ClassDB::bind_method(D_METHOD("get_cells"), &PhysXWaterWake3D::get_cells);
+	ClassDB::bind_method(D_METHOD("set_dispersive", "dispersive"), &PhysXWaterWake3D::set_dispersive);
+	ClassDB::bind_method(D_METHOD("is_dispersive"), &PhysXWaterWake3D::is_dispersive);
 	ClassDB::bind_method(D_METHOD("set_wave_speed", "speed"), &PhysXWaterWake3D::set_wave_speed);
 	ClassDB::bind_method(D_METHOD("get_wave_speed"), &PhysXWaterWake3D::get_wave_speed);
 	ClassDB::bind_method(D_METHOD("set_damping", "damping"), &PhysXWaterWake3D::set_damping);
@@ -82,6 +84,8 @@ void PhysXWaterWake3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXWaterWake3D::get_foam_persistence);
 	ClassDB::bind_method(D_METHOD("set_foam_slope", "slope"), &PhysXWaterWake3D::set_foam_slope);
 	ClassDB::bind_method(D_METHOD("get_foam_slope"), &PhysXWaterWake3D::get_foam_slope);
+	ClassDB::bind_method(D_METHOD("set_breaking_slope", "slope"), &PhysXWaterWake3D::set_breaking_slope);
+	ClassDB::bind_method(D_METHOD("get_breaking_slope"), &PhysXWaterWake3D::get_breaking_slope);
 	ClassDB::bind_method(D_METHOD("set_foam_slope_gain", "gain"), &PhysXWaterWake3D::set_foam_slope_gain);
 	ClassDB::bind_method(D_METHOD("get_foam_slope_gain"), &PhysXWaterWake3D::get_foam_slope_gain);
 	ClassDB::bind_method(D_METHOD("set_foam_spread", "speed"), &PhysXWaterWake3D::set_foam_spread);
@@ -95,6 +99,7 @@ void PhysXWaterWake3D::_bind_methods() {
 	ADD_GROUP("Grid", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "size", PROPERTY_HINT_RANGE, "4,200,0.1,or_greater,suffix:m"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cells", PROPERTY_HINT_RANGE, "16,512,1"), "set_cells", "get_cells");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dispersive"), "set_dispersive", "is_dispersive");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_speed", PROPERTY_HINT_RANGE, "0.1,20,0.01,suffix:m/s"), "set_wave_speed", "get_wave_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_damping", "get_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "border_damping", PROPERTY_HINT_RANGE, "0,60,0.1"), "set_border_damping", "get_border_damping");
@@ -106,6 +111,7 @@ void PhysXWaterWake3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "propeller_position", PROPERTY_HINT_NONE, "suffix:m"), "set_propeller_position", "get_propeller_position");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.05,30,0.05,suffix:s"), "set_foam_persistence", "get_foam_persistence");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_slope", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_foam_slope", "get_foam_slope");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "breaking_slope", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_breaking_slope", "get_breaking_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_slope_gain", PROPERTY_HINT_RANGE, "0,20,0.01"), "set_foam_slope_gain", "get_foam_slope_gain");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_spread", PROPERTY_HINT_RANGE, "0,10,0.01,suffix:m/s"), "set_foam_spread", "get_foam_spread");
 	ADD_GROUP("Hull", "");
@@ -191,7 +197,7 @@ void PhysXWaterWake3D::_build() {
 		solver = nullptr;
 		return;
 	}
-	solver->build(cells, size);
+	solver->build(cells, size, dispersive);
 	height_texture.instantiate();
 	height_texture->set_texture_rd_rid(solver->get_height_texture_rd_rid());
 	slot = water->register_wake(get_instance_id());
@@ -272,13 +278,17 @@ void PhysXWaterWake3D::_physics_step(double p_delta) {
 		sources.push_back(f);
 	}
 	pending_foam.clear();
-	const float border_cells = MAX(cells * 0.1f, 4.0f);
+	// (The dispersive grid may be larger than set: rounded up to a power of two.) Its border band is wider:
+	// long Kelvin waves need more room to be absorbed before they wrap round the periodic grid.
+	const float border_cells = MAX(solver->get_cells() * (solver->is_dispersive() ? 0.15f : 0.1f), 4.0f);
 	// Most of the grid trails behind: the wake is there, not ahead.
 	Vector2 heading(vel.x, vel.z);
 	heading = speed > 0.5f ? heading / speed : Vector2(fwd.x, fwd.z).normalized();
-	const Vector2 center = Vector2(xf.origin.x, xf.origin.z) - heading * (size * 0.25f);
+	const Vector2 center = Vector2(xf.origin.x, xf.origin.z) - heading * (solver->get_size() * 0.25f);
 	const Vector3 stern = bow - fwd * length;
-	solver->step(p_delta, center, sources, wave_speed, damping, border_damping, border_cells, foam_persistence, foam_slope, foam_slope_gain,
+	// Dispersive waves are sharper and steeper than the wave equation's: they foam where they would break.
+	const float slope_foam = solver->is_dispersive() ? breaking_slope : foam_slope;
+	solver->step(p_delta, center, sources, wave_speed, damping, border_damping, border_cells, foam_persistence, slope_foam, foam_slope_gain,
 			Vector2(bow.x, bow.z), Vector2(stern.x, stern.z), foam_spread * MIN(speed_frac, 1.0f), MAX(beam * 3.0f, 2.0f), beam * 0.5f, bow_foam * speed_frac * in_water, hull_profile);
 	if (slot >= 0) {
 		const Vector2 o = solver->get_origin();
@@ -339,6 +349,14 @@ void PhysXWaterWake3D::set_water_surface_path(const NodePath &p_path) {
 
 void PhysXWaterWake3D::set_size(float p_size) {
 	size = MAX(p_size, 4.0f);
+	if (is_inside_tree() && !Engine::get_singleton()->is_editor_hint()) {
+		_clear();
+		water_id = ObjectID();
+	}
+}
+
+void PhysXWaterWake3D::set_dispersive(bool p_dispersive) {
+	dispersive = p_dispersive;
 	if (is_inside_tree() && !Engine::get_singleton()->is_editor_hint()) {
 		_clear();
 		water_id = ObjectID();

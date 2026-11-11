@@ -226,6 +226,7 @@ public:
 		FEATURE_HAIR,
 		FEATURE_WETNESS,
 		FEATURE_SNOW,
+		FEATURE_GROUND_DEFORM,
 		FEATURE_MAX
 	};
 
@@ -413,6 +414,7 @@ private:
 		uint64_t hair_cards : 1;
 		uint64_t wetness_from_weather : 1;
 		uint64_t snow_from_weather : 1;
+		uint64_t ground_deform_patch : 1;
 
 		// flag bitfield
 		uint32_t feature_mask;
@@ -473,6 +475,7 @@ private:
 		mk.hair_cards = hair_cards;
 		mk.wetness_from_weather = wetness_from_weather;
 		mk.snow_from_weather = snow_from_weather;
+		mk.ground_deform_patch = ground_deform_patch;
 
 		mk.stencil_mode = stencil_mode;
 		mk.stencil_flags = stencil_flags;
@@ -519,6 +522,7 @@ private:
 		StringName transmission_ior;
 		StringName transmission_attenuation_color;
 		StringName transmission_attenuation_distance;
+		StringName transmission_thickness;
 		StringName transmission_scatter_strength;
 		StringName transmission_scatter_color;
 		StringName transmission_scatter_anisotropy;
@@ -617,6 +621,7 @@ private:
 	float transmission_ior = 1.5f;
 	Color transmission_attenuation_color = Color(1, 1, 1);
 	float transmission_attenuation_distance = 0.0f;
+	float transmission_thickness = 0.0f;
 	float transmission_scatter_strength = 0.0f;
 	Color transmission_scatter_color = Color(1, 1, 1);
 	float transmission_scatter_anisotropy = 0.0f;
@@ -636,6 +641,7 @@ private:
 	float snow_amount = 1.0f;
 	float snow_max_slope = 60.0f;
 	bool snow_from_weather = true;
+	bool ground_deform_patch = false;
 	float point_size = 0.0f;
 	float alpha_scissor_threshold = 0.0f;
 	float alpha_hash_scale = 0.0f;
@@ -824,6 +830,8 @@ public:
 
 	void set_transmission_attenuation_distance(float p_distance);
 	float get_transmission_attenuation_distance() const;
+	void set_transmission_thickness(float p_thickness);
+	float get_transmission_thickness() const;
 
 	void set_transmission_scatter_strength(float p_strength);
 	float get_transmission_scatter_strength() const;
@@ -881,6 +889,15 @@ public:
 
 	void set_snow_from_weather(bool p_enable);
 	bool is_snow_from_weather() const;
+
+	// Ground deformation (docs/ideas/ground-deform.md): set by GroundSurface3D on its copy of the ground
+	// material, which draws the deformed patch; the terrain's own material is lowered under it.
+	void set_ground_deform_patch(bool p_enable);
+	bool is_ground_deform_patch() const;
+	// The same lines for a ShaderMaterial or a terrain's own shader: globals, a uniform and the functions
+	// ground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL) and ground_deform_tint(world).
+	static String get_ground_deform_shader_code();
+	static String _ground_deform_code(bool p_patch_uniform, bool p_patch);
 
 	void set_point_size(float p_point_size);
 	float get_point_size() const;

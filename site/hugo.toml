@@ -1,0 +1,42 @@
+baseURL = "https://berlenga.canilho.net/"
+languageCode = "en"
+title = "Berlenga"
+disableKinds = ["taxonomy", "term", "RSS"]
+enableRobotsTXT = true
+
+[params]
+description = "A Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for large open worlds."
+tagline = "Path tracing for large open worlds"
+repo = "https://github.com/pcanilho/berlenga"
+
+[markup.goldmark.renderer]
+unsafe = true
+
+[markup.highlight]
+noClasses = false
+
+[[module.mounts]]
+source = "content"
+target = "content"
+[[module.mounts]]
+source = "layouts"
+target = "layouts"
+[[module.mounts]]
+source = "static"
+target = "static"
+[[module.mounts]]
+source = "../docs/media"
+target = "static/media"
+[[module.mounts]]
+source = "../misc/dist/linux/berlenga.svg"
+target = "static/berlenga.svg"
+[[module.mounts]]
+source = "assets"
+target = "assets"
+[[module.mounts]]
+source = "../docs/REFERENCES.md"
+target = "assets/references.md"
+
+[markup.tableOfContents]
+startLevel = 2
+endLevel = 2

@@ -126,6 +126,9 @@ String TerrainMaterial3D::get_shader_code() const {
 	if (snow_enabled) {
 		c += BaseMaterial3D::get_snow_shader_code();
 	}
+	if (ground_deform_enabled) {
+		c += BaseMaterial3D::get_ground_deform_shader_code();
+	}
 	c += R"(
 uniform bool tm_geology = true;
 uniform float tm_sea_level = 0.0;
@@ -234,6 +237,11 @@ vec3 tm_perturb(vec3 nt, ivec2 axes) {
 		}
 		c += "}\n";
 	}
+	if (ground_deform_enabled) {
+		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
+		// with a copy of this material, takes the printed surface.
+		c += "\nvoid vertex() {\n\tground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n}\n";
+	}
 	c += R"(
 void fragment() {
 	vec3 wp = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -243,9 +251,14 @@ void fragment() {
 	// drains; without it, rock past the rock slope and soil elsewhere. Sand on the beach band above the sea.
 	float w[5];
 	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08, tm_rock_cos + 0.04, wn.y);
+	float beach_sand = -1.0;
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
 		vec4 g = terrain_geology(wp);
-		float rock = max(clamp(g.y, 0.0, 1.0), steep);
+		beach_sand = clamp(-g.x, 0.0, 1.0);
+		// The generator knows where soil holds (Heimsath soil on slopes up to its repose); below its cells only
+		// faces past the cliff slope are forced bare.
+		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08, tm_cliff_cos + 0.04, wn.y);
+		float rock = max(clamp(g.y, 0.0, 1.0), cliff_rock);
 		float scree = clamp(g.z, 0.0, 1.0) * (1.0 - rock);
 		float rest = max(1.0 - rock - scree, 0.0);
 		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w);
@@ -259,7 +272,9 @@ void fragment() {
 		w[2] = 1.0 - steep;
 		w[3] = 0.0;
 	}
-	float sand = 1.0 - smoothstep(tm_beach_height * 0.6, tm_beach_height, wp.y - tm_sea_level);
+	// Sand under the sea, and on land where the generator made a beach (its geology's soil channel is -1..0 there);
+	// without a generator, on anything below beach_height. A low coastal plain behind the beach keeps its soil.
+	float sand = beach_sand >= 0.0 ? max(beach_sand, 1.0 - smoothstep(-0.2, 0.3, wp.y - tm_sea_level)) : 1.0 - smoothstep(tm_beach_height * 0.6, tm_beach_height, wp.y - tm_sea_level);
 	sand *= 1.0 - steep;
 	for (int i = 0; i < 4; i++) {
 		w[i] *= 1.0 - sand;
@@ -367,6 +382,10 @@ void fragment() {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
 		// Plants thinned away by distance leave their colour on the ground (VegetationField3D).
 		c += "\talbedo = vegetation_far(wp, albedo, CAMERA_POSITION_WORLD);\n";
+	}
+	if (ground_deform_enabled) {
+		// Freshly turned ground is darker until it dries.
+		c += "\tvec2 gd = ground_deform_tint(wp);\n\talbedo *= gd.x;\n\trough = clamp(rough * gd.y, 0.0, 1.0);\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5;\n";
 	if (wetness_enabled) {
@@ -504,6 +523,7 @@ MAT_SETTER_CODE(const String &, detail_code)
 MAT_SETTER_CODE(bool, grass_tint_enabled)
 MAT_SETTER_CODE(bool, wetness_enabled)
 MAT_SETTER_CODE(bool, snow_enabled)
+MAT_SETTER_CODE(bool, ground_deform_enabled)
 
 void TerrainMaterial3D::use_generator(Object *p_generator) {
 	TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(p_generator);
@@ -540,6 +560,7 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::BOOL, wetness_enabled, is_wetness_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, snow_enabled, is_snow_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, snow_max_slope, get_snow_max_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")
+	BIND_PROP(Variant::BOOL, ground_deform_enabled, is_ground_deform_enabled, PROPERTY_HINT_NONE, "")
 #undef BIND_PROP
 
 	BIND_ENUM_CONSTANT(LAYER_ROCK);

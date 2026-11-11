@@ -575,3 +575,415 @@ weather map at 1 m over the snow (snowfall 0.009, blowing 0.013) and the snowfal
 **Cost.** Six cosines per particle per frame for the eddies; the haze is the weather map's (an
 environment fog density and one fog volume). **Limits.** Beyond the fog volume's 300 m only the
 falling part hazes the distance; the layer is flat over the 150 m around the camera.
+
+## Follow-up 3: the deform field moves to the ground module (built 10 Nov 2026)
+
+Footprints in bare ground (docs/ideas/ground-deform.md) need the same field, so the field (dent and rim
+arrays, the tile cache, pressing with mass conservation, the body scan) moved to `modules/ground`
+(`GroundDeformField`), with the ground query `SnowCover3D` used (`GroundHeightQuery`). `SnowSurface3D`
+keeps its own rules (snow depth and density decide the deepest print, snowfall and wind refill it) and
+behaves as before; its checks pass unchanged.
+
+## Follow-up 3d: crusts that boots break through (built 10 Nov 2026)
+
+**What is known.** The snow classification (Fierz et al. 2009) names the crusts a walker meets: the
+melt-freeze crust (MFcr), "at most a few centimetres thick", whose "strength increases with number of
+melt-freeze cycles"; rain and sun crusts (IFrc, IFsc), thin glazes of ice; wind crusts, "hard but
+usually breakable". Layered snowpack models (SNOWPACK, Lehning et al. 2002; Crocus, Vionnet et al.
+2012) follow every layer's grains, liquid water and refreezing; a crust is a layer whose wet grains
+froze into polycrystals. Hardness in the field is the hand test (Fierz et al. 2009, Table 1.4): the
+object that goes in at 10-15 N, fist (F), four fingers (4F), one finger (1F), pencil (P), knife (K),
+or ice (I), with ram resistances of 0-50, 50-175, 175-390, 390-715, 715-1200 and over 1200 N. Shear and
+tension tests (Jamieson and Johnston 1990; Abe 2004) give strength by density, but for layers in the
+pack, not for a crust loaded through.
+
+**What we built.** Only the top crust is kept, per snow cell: its thickness, melt-freeze cycles, the
+snow over it, and whether it is wet.
+- A surface wetted by melt or rain that refreezes becomes a crust. The refrozen water thickens it, at
+  250 kg/m3 of density gained in the layer it freezes in (our estimate), up to 5 cm. Frozen through, it
+  counts one more cycle. While wet again it bears nothing.
+- New snow and snow sliding down bury it; melt takes the snow over it first; the snow over it settles
+  with the pack. When the snow over a buried crust gets wet, a new top crust starts there.
+- Bearing pressure from the hand test: 12 N over each object's face (fist 100, four fingers 20, one
+  finger 2, pencil 0.5, knife 0.1 cm2, our estimates) bounds each hardness; the geometric centres of
+  the bands are F 0.5, 4F 2.7, 1F 19, P 120, K 540 kPa, ice 1.2 MPa. A first-cycle crust is 1F, each
+  further cycle half a step harder (48 kPa after two, 120 after three). Thinner than 2 cm, it bears in
+  proportion to its thickness (punching shear grows with it).
+- `SnowSurface3D`: a body's pressure on its contact patch against the crust. Under it, the body stands
+  on the crust and only the snow over the crust compacts. Over it, or driven through at a set depth, it
+  breaks: a crust on soft snow is a plate on an elastic foundation, which cracks radially from the load
+  and around it near its characteristic length l = (E h^3 / (12 (1 - nu^2) k))^(1/4) (Hertz 1884;
+  Hetenyi 1946). With E ~ 50 MPa and k ~ 1e5 N/m3 (our estimates) a 2 cm crust has l ~ 0.13 m, growing
+  as h^(3/4). The pieces out to a jagged crack line (seven radial sectors, each its own reach) tip into
+  the hole, their inner edges down by up to half its depth, and the rim heaps in 12 cm plates.
+  Everything goes through the shared deform field, so both renderers trace it.
+- An adult's boot (75 kg on 0.035 m2, 21 kPa) breaks a first-cycle crust and stands on a second-cycle
+  one: the classic spring morning, where the walker on the hard crust at dawn starts breaking through
+  once it thaws (wet crust bears nothing).
+
+**Checks** (`docs/bench/snow --test=crust`, also in `--test`, 8 of 8): the bands give 19, 48 and
+120 kPa; new snow has no crust; ten hours at +8 C then fourteen at -8 C make a 1.5 cm first-cycle crust
+(wet in the thaw, bearing 0) bearing 14 kPa; a walker breaks it (0.18 m deep), and 25 cm from the
+trail's middle the surface is 1.2 cm down, varying 40% along it (cracked pieces tipped in; 0 without a
+crust), the rim holding no more than the pushed share; a second thaw and frost give 3 cm, two
+cycles and 48 kPa, and the walker leaves no print; 10 cm of new snow over it: the walker compacts that
+(0.055 m, the limit to the crust 0.057 m) and stops; with `crust_enabled` off the same walker sinks
+0.21 m. The other snow checks (`--test`, `climate`, `shelter`) and the ground checks pass unchanged.
+
+**Shots.** `--view=trail --close --crust=1` against `--crust=0` (boots and balls through a 2 cm crust:
+wider holes with tipped pieces and lumpy rims) and `--crust=2` (no boot prints), raster and path traced.
+
+**Not built.** Deeper crusts (only the top one is kept); wind crusts (wind packing, follow-up 4 moves
+lying snow); the glaze's look (a shinier surface on a sun or rain crust); crust sound. A wet crust
+bearing a little would need wet-snow strength (not found).
+
+Sources: Fierz, Armstrong, Durand, Etchevers, Greene, McClung, Nishimura, Satyawali and Sokratov, The
+International Classification for Seasonal Snow on the Ground, IHP-VII Technical Documents in Hydrology
+83, UNESCO-IHP 2009. Lehning, Bartelt, Brown, Fierz and Satyawali, A physical SNOWPACK model for the
+Swiss avalanche warning, Part II: Snow microstructure, Cold Regions Science and Technology 35, 2002.
+Vionnet, Brun, Morin, Boone, Faroux, Le Moigne, Martin and Willemet, The detailed snowpack scheme
+Crocus and its implementation in SURFEX v7.2, Geoscientific Model Development 5, 2012. Jamieson and
+Johnston, In-situ tensile tests of snowpack layers, J. Glaciology 36, 1990. Abe, Shear strength and
+angle of repose of snow layers including graupel, Annals of Glaciology 38, 2004. Hertz, Ueber das
+Gleichgewicht schwimmender elastischer Platten, Annalen der Physik 258, 1884. Hetenyi, Beams on
+Elastic Foundation, University of Michigan Press 1946.
+
+## Follow-up 4: the wind moves lying snow (built 10 Nov 2026)
+
+**What is known.** SnowTran-3D (Liston and Sturm 1998; in SnowModel, Liston and Elder 2006) is the
+standard: a mass balance dS/dt = -div(Qs + Qt) - sublimation on the snow grid, with saltation Qs
+(Pomeroy and Gray 1990) and turbulent suspension Qt (Pomeroy and Male 1992's PBSM profile), driven by a
+wind that MicroMet (Liston and Elder 2006) weights over the terrain by its slope along the wind and its
+curvature, W = 1 + gs Os + gc Oc. The threshold rises with density: u*t = 0.10 exp(0.003 rho) (Liston
+et al. 2007). Tabler (1991) measured total transport in the lowest 5 m in Wyoming as
+Q = U10^3.8 / 233847 kg/(m s). Winstral's Sx (already used for falling snow) classifies shelter but moves
+nothing that is already down.
+
+**What we built** (`SnowCover3D.wind_transport_enabled`, on by default, near square and world tier):
+- Flux per cell from the 10 m wind times MicroMet's weight (slope and curvature each scaled to +-0.5
+  over the map, gs = gc = 0.5, curvature over `wind_curvature_length`, 20 m): saltation by Pomeroy and
+  Gray plus PBSM suspension integrated to 5 m (tabled by wind speed), faded in from the threshold so the
+  flux has no step there (our smoothing). Threshold: the higher of Li and Pomeroy by temperature and
+  Liston's by density.
+- Donor-cell transport: each cell sends its flux through its downwind faces, at most the snow it can
+  give, in substeps of at most 2 mm through a face. Snow comes in at the upwind edge of the map as from a
+  cell like the edge one and leaves at the downwind edge (an open map, so a map-wide total is kept only
+  when the edges match).
+- Laid down wind-packed at 300 kg/m3 (our pick within the 250-400 of wind slabs), burying a crust; taken
+  from the top. Nothing moves under a frozen crust, in wet or thawing snow, or under trees (closure over
+  0.2).
+
+**Checks** (`--test=transport`, also in `--test`): the flux is 0.048 kg/(m s) at 15 m/s and 0.162 at
+20 m/s against Tabler's 0.126 and 0.376 (within a factor of 3; at 10 m/s, 0.008 against 0.027, nearer
+the threshold his fit, which has none, stays higher); no transport at the threshold, in snow at +0.5 C,
+or in 450 kg/m3 snow at 9 m/s; six hours of 15 m/s across a 100 m ridge with 40 mm of new snow scour
+the windward shoulder from 40 to 11 mm and load the lee below the crest from 40 to 135 mm (157 kg/m3),
+the even flank between passing it on unchanged; water kept to 0.000% on the symmetric map; a frozen
+crust holds everything. One update of 128 x 128 cells in that gale, transport included: 2.7 ms (CPU).
+The Sx drift check now runs with transport off (it checks the falling snow alone, on an open map).
+
+**Shot.** `--view=windblown` (`--transport=0` for the same day without): a day of 15 m/s over the ridge
+leaves the windward flank bare and the lee white, raster and path traced alike.
+
+**Not built.** Sublimation of blowing snow (PBSM's largest loss in open terrain); MicroMet's turning of
+the wind around hills; drifts reshaping the ground the wind sees (snow surface instead of ground);
+sastrugi and ripples (under a cell).
+
+Sources: Liston and Sturm, A snow-transport model for complex terrain, J. Glaciology 44(148), 1998.
+Liston and Elder, A meteorological distribution system for high-resolution terrestrial modeling
+(MicroMet), J. Hydrometeorology 7, 2006; A distributed snow-evolution modeling system (SnowModel), J.
+Hydrometeorology 7, 2006. Liston, Haehnel, Sturm, Hiemstra, Berezovskaya and Tabler, Simulating complex
+snow distributions in windy environments using SnowTran-3D, J. Glaciology 53(181), 2007. Pomeroy and
+Gray, Saltation of snow, Water Resources Research 26(7), 1990. Pomeroy and Male, Steady-state suspension
+of snow, J. Hydrology 136, 1992. Li and Pomeroy, Estimates of threshold wind speeds for snow transport
+using meteorological data, J. Applied Meteorology 36, 1997. Tabler, Snow transport as a function of wind
+speed and height, Cold Regions Engineering, ASCE 1991.
+
+## Follow-up 5: exact sparkle under the path tracer (built 10 Nov 2026)
+
+Stage 5's sparkle is a footprint grid: one facet per cell, sized to the pixel, the same in raster and
+path tracing. A path tracer can do better: it already shoots many rays through a pixel, so if every grain
+is a facet the samples integrate the grains in the footprint themselves, at any distance and on every
+bounce. The glint papers (Jakob, Hasan, Yan, Lawrence, Ramamoorthi and Marschner 2014; Yan, Hasan, Jakob,
+Lawrence, Marschner and Ramamoorthi 2014; Chermain, Sauvage, Dischler and Dachsbacher 2020) count facets
+in a footprint to get that integral cheaply; their reference is the brute-force one, every facet traced,
+which is what this is. Atanasov and Koylazov (2016, V-Ray's glints) do the same per-ray facet sampling
+in production.
+
+- **The facet.** Each 2 mm grain cell (hashed from the world position) holds one facet, its normal
+  GGX-sampled with alpha 0.4 around the snow's normal, as stage 5's facets.
+- **Specular on its own normal.** The path tracer's material result gets a `specular_normal`: when set,
+  the base specular lobe (evaluation, sampling and its pdf) lies on it while the diffuse keeps the
+  shading normal. Snow sets it to the facet, at roughness 0.22 (alpha 0.05, a smooth ice face). An
+  earlier try carried the facet on the coat lobe, as stage 5 does: snow came out 7% darker (mean
+  luminance 0.576 against 0.623), because the coat dims the diffuse under it.
+- **For custom shaders.** A new spatial fragment output, `SPECULAR_NORMAL` (view space, like `NORMAL`),
+  sets it; raster ignores it. `SnowSurface3D` uses it, and `snow_glint_apply_specular()` in
+  `get_snow_shader_code()` gives other snow shaders the same (the terrain material).
+- **Wet and trodden snow** fade to the plain rough lobe exactly as stage 5's glints do.
+- **Toggle.** The global shader parameter `snow_exact_glints` (rt_param 57), off by default: at the
+  samples a CPU check can afford the result is grainy (8% of pixels glint at 16 samples against 0.1%
+  for the grid), which the denoiser is there to settle. Off, the path tracer keeps stage 5's grid.
+
+**Checks.** `--view=sparkle --spp=16 --glints=exact` (and `--view=trail ...` for `SnowSurface3D`): mean
+luminance 0.634 against 0.624 for the grid and 0.619 in raster (with the samples spread over the
+pixel, as main now does; 0.604 against 0.623 before); the deep snow of the trail view 1% brighter than
+with the grid; a glitter path toward the sun in both. All snow and ground checks pass.
+
+**Cost.** One hash and a GGX sample per snow hit, the same BRDF work; GPU time and the look with Ray
+Reconstruction on the PC queue before it can be on by default.
+
+Sources: Jakob, Hasan, Yan, Lawrence, Ramamoorthi and Marschner, Discrete stochastic microfacet models,
+SIGGRAPH 2014. Yan, Hasan, Jakob, Lawrence, Marschner and Ramamoorthi, Rendering glints on
+high-resolution normal-mapped specular surfaces, SIGGRAPH 2014. Chermain, Sauvage, Dischler and
+Dachsbacher, Procedural physically based BRDF for real-time rendering of glints, Pacific Graphics 2020.
+Atanasov and Koylazov, A practical stochastic algorithm for rendering mirror-like flakes, SIGGRAPH 2016
+Talks.
+
+## Follow-up 6: cornices that fall, and icicles (built 11 Nov 2026)
+
+### Cornice failure
+
+Field studies on Svalbard measured what a cornice does before it falls. Vogel, Eckerstorfer and
+Christiansen (2012) found that a tension crack opens behind the cornice, where the shallow snow of the
+plateau meets the thick cornice. The slab tilts out about a fixed pivot and the crack opens almost
+linearly, at 0.4 to 2.8 cm a day. It opened at 8.6 cm a day in the days before a complete failure.
+Failure came four to five weeks after a crack opened, most often in the June thaw, with rain and warm
+storms as triggers. Hancock, Eckerstorfer, Prokop and Hendrikx (2020) scanned cornices with lidar and
+found most falls coincided with winter storms that loaded them; one fell after rain.
+
+- **The load.** Treat the overhang as a cantilever that thins from its root to the lip. At the root it
+  is as thick as it is long, which is stage 4's profile. Its bending stress at the root is `rho g L`:
+  450 kg/m3 wind-packed snow, plus the weight of its liquid water. The tension crack cuts into the
+  section. A crack open to a tenth of the length (a tilt of about 6 degrees) takes 60% of it, so the
+  stress rises as `1 / (1 - 0.6 s)^2`.
+- **The strength.** Sommerfeld (1971) gives the most snow holds in tension:
+  `log10 sigma = -4.3 + 3 log10 rho`, with sigma in 100 Pa, which is 457 kPa at 450 kg/m3. A slab
+  metres across fails at its weakest flaw. McClung's (1979) large samples hold much less, so we take a
+  tenth. Melt water weakens the bonds, by `1 / (1 + 20 theta)`; that factor is our pick. A cold,
+  uncracked cornice therefore falls at 10.4 m, near the longest field cornices (stage 4 caps growth at
+  12 m).
+- **The creep.** The crack opens at `L sigma / eta`. Here eta is the snow viscosity of Crocus
+  (Vionnet et al. 2012):
+  `eta0 rho / 250 exp(0.1 (0 C - T) + 0.023 rho) / (1 + 60 theta)`.
+  For a 4 m cornice that gives 0.86 cm a day at -5 C, 1.42 at 0 C and 4.9 wet, the range measured at
+  Gruvefjellet. With the crack 30 cm open, wet, it reaches 16 cm a day.
+- **Filling.** Snow the wind lays on the cornice fills its crack as fast as the slab grows. That is our
+  pick: cracks open in calm, mild spells, as observed.
+- **The fall.** When the stress passes the strength, the slab beyond the crack falls: 0.9 L^2 of
+  profile per metre of crest. It lands as 500 kg/m3 debris on the first cell downwind where the ground
+  flattens under 30 degrees. The debris goes into both the world tier and the near square.
+  `SnowCover3D` emits `cornice_failed(position, direction, length, mass)`. Near the camera,
+  `SnowCornice3D` breaks the slab into 3 to 16 rigid chunks that tumble down the face: rounded,
+  irregular balls a third of the cornice's length across, with convex colliders. They are removed after
+  `debris_lifetime`. The drawn cornice shows its crack: the roof opens and the slab tilts out about a
+  pivot low in its root.
+
+**Checks** (`--test=failure`):
+- The crack rates above.
+- A cold cornice falls at 10.4 m.
+- A baked ridge at 1 April, left in calm at -10 C, has its longest cornice (5.7 m) open its crack 7.4 cm
+  in a week and fall on day 20. In a calm thaw at +1.5 C it falls on day 5.
+- The debris lands 144 m out below the face.
+- With failure off, none fall.
+
+**Shots.** `--view=cornice --crack=4` shows the crack across a cornice's roof after four days of thaw.
+`--view=cornice --fall` shows the first cornice to fall in that thaw (day 5), seen from the lee two
+thirds of a second later, its chunks tumbling down the face below the bare crest.
+
+Over a baked winter, cornices now fall and regrow. On the cold alpine ridge the longest at 1 April is
+5.7 m (it was 4.2 m without failure, since cracks filled by accretion let others grow longer before
+they fall). On the mild 16 m ridge they are 3.1 m on 1 March and gone by 1 April after its March
+thaws, so a showcase wanting cornices there should end its bake by 1 March.
+
+### Icicles
+
+`SnowIcicles3D` grows icicles along an edge: a line of points, such as an eave or a ledge. They grow
+where melt water runs off the snow above into air below freezing.
+
+- **The water.** It comes from `SnowCover3D.get_runoff_at()` at the edge, times `catchment_length`. A
+  heated roof adds `heat_loss` (W/m2) melting the snow from below, which is how icicles and ice dams
+  form on houses. Water gathers into runnels, so each place along the edge gets `3 r^2` of the mean.
+  Some places grow long icicles; many stay short.
+- **Growth.** This follows Makkonen (1988), with the two stages of Szilder and Lozowski (1994). Heat
+  leaves the wet ice at 0 C by:
+  - convection, taking the larger of forced and free: Ranz-Marshall and Churchill for the tip's drop,
+    Churchill-Bernstein and Churchill-Chu for the wall;
+  - evaporation into the air's humidity, by the Lewis relation;
+  - long-wave radiation at `4 sigma T^3`.
+
+  While water reaches the tip, the tip lengthens as a tube of spongy ice holding 26% liquid. The tube is
+  as wide as the 5 mm pendant drop: `dL/dt = 2 q / (rho_i Lf 0.74)`, 1.05 cm/h at -10 C in still air
+  and 4.3 cm/h at 2 m/s. The wall thickens as its wetted half freezes the running film. That share,
+  0.5, is our pick. It puts length growth at 8.2 times diameter growth, the low end of the 8 to 32
+  Maeno, Makkonen, Nishimura, Kosugi and Takahashi (1994) measured. A balance over the whole wall gives
+  4. Water the wall and tip do not freeze drips. Once the wall freezes all the water, the icicle only
+  thickens. Above 0 C the same coefficients melt it back. An icicle thinned to the drop's size at its
+  root falls.
+- **Look.** Each icicle is a cone with ten sides, from its root radius down to the drop (Szilder and
+  Lozowski: close to conical). The material is clear ice: transmission, IOR 1.31, specular 0.335 for
+  1.8% reflectance, no absorption over a few centimetres. Centimetre ripples along it come from a
+  normal map (Ueno 2003; Chen and Morris 2013: about 1 cm whatever the icicle).
+- **Look, revised (11 Nov).** The first shots read as dark, opaque cones. Three causes, three fixes:
+  - Ice that holds impurities (roof water does) is hazy, not from air but from pockets of impure
+    water caught in layers as the icicle thickens (Ladan and Morris 2022). So each icicle has a
+    hazy core: a cone of 0.4 of its radius over 0.8 of its length (the tip, the newest ice, stays
+    clear), white, rough 0.5 and back lit so light comes through it (`hazy_core`, `core_material`).
+    It is opaque so the clear ice around it refracts it in raster as under path tracing.
+  - The ripple slope drops from 0.12 to 0.06 (a ripple about 0.1 mm high on its 1 cm). At 0.12 the
+    path tracer bent alternate ripples onto the sky and onto the eave, black and white stripes.
+  - Even at 0.06 every cone still showed regular stripes under path tracing. Painting the eave red
+    turned the stripes red: they are the eave refracted, cut into bands by the ripples, because a slope
+    of only 0.01 swings a ray through the cone between the eave and the sky. Without the ripple map
+    the eave shows as one smooth patch. Ripples grow with the icicle (Chen and Morris 2013), so they now
+    do here: none below 10 cm, full slope at 50 cm, smooth over the last 4 cm to the tip, and a random
+    phase per icicle so neighbours' bands do not line up. The strength rides in UV.x across a 64 by 32
+    ripple map, wide so that mipmaps blend only close strengths.
+  - A solid cone bends what is behind it upward: under an eave the path tracer shows the wood's
+    shaded underside through the ice, which needs a fourth bounce for the sky lighting it. At the
+    default 3 bounces it was black. Fixed (11 Nov) with a transmission budget apart from the bounce
+    count, as Cycles keeps one: after the first bounce, crossing a transmissive surface or reflecting
+    inside it is free, up to `rendering/pathtracing/transmission_bounces` (default 4, rt_param 58)
+    extra segments. At 3 bounces plus 4 the icicle view matches 6 plain bounces within noise, in
+    about 70% of the time (79 s against 113 s on the software renderer). Raster refracts at the front face only, so it shows the sky
+    where the path tracer shows the eave; the ice reads as clear in both.
+  - The bench view is now backlit, at the icicles' height, against a snowy land (`--close` for 100%).
+
+**Checks** (`--test=icicles`):
+- The rates above. Colder and windier grow faster; nothing grows above 0 C.
+- An edge with three sunny days at -4 C (melt for six hours, then a night at -8 C) grows icicles up
+  to 22 cm, 1.1 kg of ice from 32 kg of water. The rest dripped.
+- A trickle the wall can freeze thickens them without lengthening them.
+- Twelve hours at +4 C melt the longest back from 22 to 13 cm.
+
+`--view=icicles` shows a shed's eave after the same three days, in raster and path traced.
+
+**Not built:**
+- Supercooled water and the slower length growth Maeno et al. found with more water.
+- Sunlight melting icicles below 0 C.
+- Icicles falling as rigid bodies.
+- Icicles along cornice lips and rock.
+- A cornice's own mass taken from the snow it is built from (stage 4 adds it).
+
+Sources:
+- Vogel, Eckerstorfer and Christiansen, Cornice dynamics and meteorological control at Gruvefjellet,
+  Central Svalbard, The Cryosphere 6, 2012.
+- Hancock, Eckerstorfer, Prokop and Hendrikx, Quantifying seasonal cornice dynamics using a
+  terrestrial laser scanner in Svalbard, Norway, NHESS 20, 2020.
+- Sommerfeld, The relationship between density and tensile strength in snow, J. Glaciology 10(60),
+  1971.
+- McClung, In-situ estimates of the tensile strength of snow utilizing large sample sizes,
+  J. Glaciology 22(87), 1979.
+- Vionnet et al., The detailed snowpack scheme Crocus and its implementation in SURFEX v7.2, GMD 5,
+  2012.
+- Makkonen, A model of icicle growth, J. Glaciology 34(116), 1988.
+- Szilder and Lozowski, An analytical model of icicle growth, Annals of Glaciology 19, 1994.
+- Maeno, Makkonen, Nishimura, Kosugi and Takahashi, Growth rates of icicles, J. Glaciology 40(135),
+  1994.
+- Ueno, Morphological instability of the solid-liquid interface in crystal growth under supercooled
+  liquid film flow and natural convection airflow, Physics of Fluids 15, 2003.
+- Chen and Morris, On the origin and evolution of icicle ripples, New Journal of Physics 15, 2013.
+- Ladan and Morris, Pattern of inclusions inside rippled icicles, Physical Review E 106, 054211, 2022.
+
+## Follow-up 7: one climate with the terrain (built 11 Nov 2026)
+
+The winter bake had its own recipe, apart from the ClimateRecipe the terrain generator's rivers, the data
+map's climate fields and the plants use. Now `SnowClimate.recipe` takes that ClimateRecipe and
+`SnowCover3D.climate_map` a TerrainDataMap3D with its climate baked.
+
+- From the recipe: latitude, reference height, January and July means, the day-to-day spread (the
+  generator's residual), and the wet-day wind (the recipe's wind is the one its precipitation follows; dry
+  days blow `storm_wind_factor` softer). Each month's wet-day amount is the recipe's year of precipitation
+  times the month's share (its seasonality harmonic) over the Markov chain's share of wet days, so the
+  WGEN chain (Richardson 1981) keeps its persistence and the totals match the recipe. The bake's lapse
+  rate follows the recipe's winter and summer values (Rolland 2003) day by day. The diurnal range and the
+  wet/dry chain stay the SnowClimate's own: the recipe has no daily statistics.
+- From the climate map: its precipitation field (Smith and Barstad 2004, summed over the wet-day wind
+  rose) over the recipe's flat-ground precipitation scales what falls on each cell, in place of
+  `precipitation_gradient`, in the bake, the world tier and the near square (and
+  `get_snowfall_rate_at()`).
+- On the bench mountain (700 m, 9 m/s westerly, the recipe's 1000 s conversion and fallout times) the
+  field peaks 500 m in the lee of the summit: the advection length (about 9 km) is longer than the hill,
+  so it spills over, as linear theory says small hills do. The snow follows: windward over lee snow
+  water at 350-550 m goes from 1.00 to 0.46. Bigger ranges get their windward maximum back.
+
+**Checks** (`--test=climate`): ten years from the recipe give its January mean (1.6 C against 2.0), its
+year (1185 mm against 1200) and its seasonality (December 125 mm, June 58 mm); the lapse rates; the
+mountain gets more than flat ground; an east wind mirrors the field; the bake's snow follows it. The
+landscape bench's gap "SnowClimate is set apart" is now a pass. Its check "cornices grow on the lee
+crests around the peak" failed before this change too (0 pieces since the gentler valley layout).
+
+## Follow-up 8: clean print edges at fine deform settings (11 Nov 2026)
+
+At 768 texels over 24 m (3.1 cm) prints showed spikes and toothed walls. Three causes, three fixes:
+- Rim snow from one step landed in the hole of the step before, and thin walls of untrodden snow were left
+  between overlapping steps with rim heaped on both sides; at 6 cm texels the coarser field smeared them,
+  at 3 cm they stood as spikes. The pushed snow is loose, so it now slides at its repose angle (45 degrees,
+  Abe 2004) with the granular ground's Sumner erosion step (`GroundDeformField.slump()`), rim only: the
+  compacted walls stand, crust plates stay as heaped.
+- Footprints were stamped by texel centre in or out, a staircase along a turned boot. They are now drawn
+  antialiased from the signed distance to the edge over half a texel (half, so a boot two texels wide
+  still sinks to full depth in the middle).
+- Triangles coarser than the texels (the 6.25 cm close mesh on a 3.1 cm field) sampled walls on and off.
+  The vertex shader now averages four taps over its spacing, the displacement prefiltered to the mesh's
+  rate as geometry clipmaps do; the fragment's normal keeps the texels' detail.
+
+Cost: the step with four rolling bodies goes from about 1.0 to 1.6 ms of CPU (slumping owed tiles for a
+second after each press). All snow and ground checks pass.
+
+## Follow-up 9: raster refraction out through the far side (11 Nov 2026)
+
+Raster transmission refracted once at the front face and carried the ray on to whatever was behind, as
+for water over a pool's floor. A solid needs the second surface. The established real-time answers:
+Wyman's image-space refraction (2005, the back faces' depth and normals in their own pass) and Filament's
+"solid" refraction (the object as a sphere of a given thickness: exit point thickness * -dot(N, T) along
+the refracted ray, exit normal normalize(dot(N, T) T - N/2), refract back out). The second needs no extra
+pass, so `BaseMaterial3D.transmission_thickness` (glTF KHR_materials_volume's thicknessFactor, now read
+and written by the glTF importer and exporter) uses it; the exit ray then travels to the depth behind,
+and absorption runs over the path inside only. 0 keeps the old behaviour. Icicles use 4 cm.
+
+On the bench's eave the change is small: the icicles bend the view a little more and read slightly
+clearer. The path tracer's view of the eave's underside through the ice comes from light reflected
+inside the cone, which a screen-space method cannot follow, so that difference stays.
+
+## Follow-up 10: the bow wave (11 Nov 2026)
+
+A body slow enough compacts what it meets; a fast one cannot and shoves it ahead, the ploughing seen in
+front of tyres, sled runners and blades in deep snow (the CRREL cold-regions mobility models, Richmond,
+Shoop and Blaisdell 1995, count it as a separate ploughing resistance). In `GroundDeformField.press()`,
+with the body's velocity (from its motion between frames for bodies in the deform groups):
+- the rim's weights lean forward by 1 + 3 cos(angle to the heading) and reach one ring width further
+  ahead, both scaled by speed / 4 m/s (full above);
+- rim snow the body meets again is loose: at full speed all of it is pushed on, not 30%, so the wave
+  rides ahead, grows, spills to the sides as berms and is left as a mound where the body stops.
+Mass is kept (only where the pushed share lands changes). The constants are chosen for the look, not
+measured. Checks: a flat foot at 5 m/s leaves 0.176 m of rim ahead against 0.033 m behind, 30% of the
+dent; driven on 1.5 m, the highest rim in front is 0.194 m against 0.101 m beside the track. Bench:
+`--view=trail --sled [--close]`.
+
+## Follow-up 11: the near square feeds the world tier (11 Nov 2026)
+
+The world tier seeded the near square, but nothing went back: drifts, slides, sheltered and sunny faces
+worked out on the fine cells were lost once the square moved on and the cells came back from the coarse
+pack. Nested weather models solve the same thing with two-way nesting: the fine grid's state, averaged
+over each coarse cell it covers, replaces the parent's there (WRF's feedback). `SnowCover3D` now does
+that before each world update and before the square shifts: water and liquid as area means, density
+as the column's mass over its depth, albedo weighted by water; crusts and cornices stay the world's.
+Only world cells the square covers whole are fed. Check (`--test=climate`): 30 mm of fresh snow on the
+square shows in the world tier under it (373 to 384 mm, the square's 394 mm less an hour of the world's
+own update), nothing changes beyond it.
+
+## Follow-up 12: sparkle on reflected and bounced rays (11 Nov 2026)
+
+Stage 5's footprint grid needs a footprint, and the path tracer had one only for camera rays (pixel angle
+times distance), so snow seen in a mirror, a window or water showed the plain rough lobe. The path tracer
+already carries ray cones from the camera through every bounce for texture levels (Akenine-Moller,
+Nilsson, Andersson, Barre-Brisebois, Toth and Karras 2019, "Texture Level of Detail Strategies for
+Real-Time Ray Tracing"; with the JCGT 2021 follow-up), so the grid now sizes itself by that cone on every
+ray after the first. Camera rays keep the pixel footprint, as raster. Exact glints (follow-up 5) were
+already per ray on every bounce and are unchanged.
+
+Check: `--view=sparkle --mirror --spp=16`, an overhead mirror showing the snow ahead toward the sun. In
+the mirror the snow went from flat (standard deviation 4.5 of 255) to speckled (4.8) at the coarse grid
+level its 10 m path resolves; exact glints there give 16.2. The snow seen directly is unchanged (mean
+difference 0.2 of 255, sample noise). Image: fork/snow/stage5/mirror_glints_before_after_exact.png.

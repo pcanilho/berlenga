@@ -1,1 +1,0 @@
-- TerrainDataMap3D: `bake_climate()` with a `ClimateRecipe` bakes temperature (seasonal lapse rates), orographic precipitation (Smith and Barstad 2004), snow share, aridity, annual and winter sunlight with terrain horizons, sky view and Winstral Sx for 16 wind directions, with queries and `terrain_climate_map` shader globals.

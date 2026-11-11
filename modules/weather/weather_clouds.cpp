@@ -265,17 +265,24 @@ float value_noise(Vector2 p_p) {
 	return Math::lerp(Math::lerp(a, b, tx), Math::lerp(c, d, tx), ty);
 }
 
+// Quilez's fbm rotation (36.87 degrees, an angle whose multiples never line up again): each octave's
+// lattice turned against the last and against the world's axes, so no grid shows through.
+Vector2 rotate_lattice(Vector2 p_p) {
+	return Vector2(0.8f * p_p.x - 0.6f * p_p.y, 0.6f * p_p.x + 0.8f * p_p.y);
+}
+
 float cover_noise(Vector2 p_xz, Vector2 p_drift, float p_scale) {
 	const Vector2 p = (p_xz - p_drift) / MAX(p_scale, 1.0f);
 	float v = 0.0f;
 	float amp = 0.5f;
 	float freq = 1.0f;
 	float norm = 0.0f;
+	Vector2 q = rotate_lattice(p);
 	for (int o = 0; o < 4; o++) {
-		v += amp * value_noise(p * freq + Vector2(17.1f * o, 31.7f * o));
+		v += amp * value_noise(q + Vector2(17.1f * o, 31.7f * o));
 		norm += amp;
 		amp *= 0.5f;
-		freq *= 2.03f;
+		q = rotate_lattice(q) * 2.03f;
 	}
 	return v / norm;
 }
@@ -315,8 +322,40 @@ Vector2 cover_type_at(const State &p_state, Vector2 p_xz) {
 // The shape noise is stretched twice vertically, so a column through the layer sees about one
 // value of it: the share of sky the clouds cover then follows the cover setting, and the height
 // profile, not the noise, shapes bases and tops.
+//
+// The shape noise is one tile, shape_scale wide, so read once it brings the same clouds back every
+// tile, in a grid seen to the horizon. It is read twice instead: once turned 36.87 degrees against
+// the world's axes, once turned twice that and 1.618 times larger. The two tiles' periods have an
+// irrational ratio, so their sum never repeats (the aperiodic tiling idea of Wang tiles and of
+// Quilez's "texture repetition", with two lookups). The sum of two even values is triangular; its
+// CDF evens it out again, so cover still means share of sky.
+constexpr float SHAPE_SECOND = 0.618034f; // the second read's frequency against the first
+
+Vector2 rotate_shape_a(Vector2 p_p) {
+	return rotate_lattice(p_p);
+}
+
+Vector2 rotate_shape_b(Vector2 p_p) {
+	return rotate_lattice(rotate_lattice(p_p)) * SHAPE_SECOND + Vector2(0.37f, 0.71f);
+}
+
+float even_sum(float p_a, float p_b) {
+	const float s = p_a + p_b;
+	return s < 1.0f ? 0.5f * s * s : 1.0f - 0.5f * (2.0f - s) * (2.0f - s);
+}
+
 Vector3 shape_coord(const State &p_state, const Vector3 &p_pos) {
-	return Vector3(p_pos.x - p_state.drift.x, p_pos.y * 0.5f, p_pos.z - p_state.drift.y) / p_state.shape_scale;
+	const Vector2 xz = rotate_shape_a(Vector2(p_pos.x - p_state.drift.x, p_pos.z - p_state.drift.y) / p_state.shape_scale);
+	return Vector3(xz.x, p_pos.y * 0.7f / p_state.shape_scale, xz.y);
+}
+
+float shape_at(const State &p_state, const Vector3 &p_pos) {
+	const Vector2 p = Vector2(p_pos.x - p_state.drift.x, p_pos.z - p_state.drift.y) / p_state.shape_scale;
+	const float y = p_pos.y * 0.7f / p_state.shape_scale;
+	const Vector2 a = rotate_shape_a(p);
+	const Vector2 b = rotate_shape_b(p);
+	const Vector<float> &noise = shape_noise();
+	return even_sum(sample_tiled(noise, SHAPE_SIZE, Vector3(a.x, y, a.y)), sample_tiled(noise, SHAPE_SIZE, Vector3(b.x, y * SHAPE_SECOND + 0.53f, b.y)));
 }
 
 float extinction_at(const State &p_state, const Vector3 &p_pos) {
@@ -333,7 +372,7 @@ float extinction_at(const State &p_state, const Vector3 &p_pos) {
 	}
 	const float cu = smoothstep(0.2f, 0.8f, ct.y);
 	const float profile = smoothstep(0.0f, Math::lerp(0.2f, 0.05f, cu), h) * (1.0f - smoothstep(1.0f - Math::lerp(0.15f, 0.6f, cu), 1.0f, h));
-	const float n = sample_tiled(shape_noise(), SHAPE_SIZE, shape_coord(p_state, p_pos));
+	const float n = shape_at(p_state, p_pos);
 	// Nubis's coverage remap, remap(n p, 1 - c, 1, 0, 1): where the noise is high the cloud reaches
 	// further up the profile, which domes the tops.
 	const float shape = MAX(n * profile - (1.0f - ct.x), 0.0f) / MAX(ct.x, 0.001f);
@@ -418,19 +457,39 @@ float wc_value_noise(vec2 p) {
 	return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
 }
 
+vec2 wc_rotate(vec2 p) {
+	return vec2(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
+}
+
 float wc_cover_noise(vec2 xz) {
 	vec2 p = (xz - cloud_drift) / max(cloud_cover_scale, 1.0);
 	float v = 0.0;
 	float amp = 0.5;
-	float freq = 1.0;
 	float norm = 0.0;
+	vec2 q = wc_rotate(p);
 	for (int o = 0; o < 4; o++) {
-		v += amp * wc_value_noise(p * freq + vec2(17.1, 31.7) * float(o));
+		v += amp * wc_value_noise(q + vec2(17.1, 31.7) * float(o));
 		norm += amp;
 		amp *= 0.5;
-		freq *= 2.03;
+		q = wc_rotate(q) * 2.03;
 	}
 	return v / norm;
+}
+
+// The shape noise read twice, turned and at two scales with an irrational ratio, evened out again
+// (shape_at() on the CPU): no tile repeats.
+float wc_shape(vec3 p, float p_step) {
+	vec2 xz = (p.xz - cloud_drift) / cloud_shape_scale;
+	// Stretched 1.4 times in height: towers, but not so tall that a cloud is one column through the
+	// whole layer, cut flat at its base and top (slabs with vertical walls).
+	float y = p.y * 0.7 / cloud_shape_scale;
+	vec2 a = wc_rotate(xz);
+	vec2 b = wc_rotate(wc_rotate(xz)) * 0.618034 + vec2(0.37, 0.71);
+	float lod = log2(p_step / (cloud_shape_scale / 128.0));
+	float na = textureLod(cloud_shape, vec3(a.x, y, a.y), max(lod, 0.0)).r;
+	float nb = textureLod(cloud_shape, vec3(b.x, y * 0.618034 + 0.53, b.y), max(lod + log2(0.618034), 0.0)).r;
+	float s = na + nb;
+	return s < 1.0 ? 0.5 * s * s : 1.0 - 0.5 * (2.0 - s) * (2.0 - s);
 }
 
 float wc_top_height(float t) {
@@ -469,13 +528,13 @@ float wc_extinction(vec3 p, vec2 ct, bool p_detail, float p_step) {
 	}
 	float cu = smoothstep(0.2, 0.8, ct.y);
 	float profile = smoothstep(0.0, mix(0.2, 0.05, cu), h) * (1.0 - smoothstep(1.0 - mix(0.15, 0.6, cu), 1.0, h));
-	vec3 q = vec3(p.x - cloud_drift.x, p.y * 0.5, p.z - cloud_drift.y) / cloud_shape_scale;
-	float texel = cloud_shape_scale / 64.0;
-	float n = textureLod(cloud_shape, q, max(log2(p_step / texel), 0.0)).r;
+	float texel = cloud_shape_scale / 128.0;
+	float n = wc_shape(p, p_step);
 	float shape = max(n * profile - (1.0 - ct.x), 0.0) / max(ct.x, 0.001);
 	if (p_detail && shape > 0.0) {
 		// Erode the edges with the detail noise, wispy below and billowing higher up (Nubis 2017).
-		vec3 qd = vec3(p.x - cloud_drift.x, p.y, p.z - cloud_drift.y) / cloud_shape_scale * 8.0;
+		vec2 sxz = wc_rotate(p.xz - cloud_drift);
+		vec3 qd = vec3(sxz.x, p.y, sxz.y) / cloud_shape_scale * 8.0;
 		float d = textureLod(cloud_detail, qd, max(log2(p_step / (texel * 0.25)), 0.0)).r;
 		float e = 0.45 * mix(d, 1.0 - d, clamp(h * 4.0, 0.0, 1.0));
 		shape = clamp((shape - e) / (1.0 - e), 0.0, 1.0);

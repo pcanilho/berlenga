@@ -24,7 +24,7 @@ struct RTVolumeParams {
 	vec4 world_max; // xyz: simulation units; w: 1 when a volume is present
 	vec4 block_size; // xyz: block size (simulation units); w: layer index
 	vec4 medium; // x: extinction per meter at density 1; y: albedo; z: HG g; w: density majorant
-	vec4 emission; // x: emission scale; y: 1 / temperature range; z: 1 when emissive; w: unused
+	vec4 emission; // x: emission scale; y: 1 / temperature range; z: 1 when emissive; w: dense box count (0: the sparse atlas)
 	vec4 heat_ramp[8]; // rgb: emitted color along the temperature range
 	vec4 smoke_color; // rgb: scattering color
 };
@@ -95,8 +95,33 @@ void rt_volume_accessor_update(inout RTVolumeAccessor a, ivec4 p_loc) {
 	}
 }
 
+// Dense boxes (RTDenseVolumes: waterfall mist), instead of the sparse atlas when emission.w holds a
+// box count: box i is level[2i] (min corner in meters, meters per texel) and level[2i + 1] (texels,
+// first atlas slice); the boxes are stacked along the atlas's z with a zero texel between them, the
+// density in r (no temperature: they never emit).
+bool rt_volume_dense_fetch(vec3 p_pos, out vec2 r_temp_smoke) {
+	r_temp_smoke = vec2(0.0);
+	int count = int(rt_volume.emission.w + 0.5);
+	for (int i = 0; i < count; i++) {
+		vec4 o = uintBitsToFloat(rt_volume.level[2 * i]);
+		uvec4 d = rt_volume.level[2 * i + 1];
+		vec3 g = (p_pos - o.xyz) / o.w;
+		if (any(lessThan(g, vec3(0.0))) || any(greaterThanEqual(g, vec3(d.xyz)))) {
+			continue;
+		}
+		vec3 size = vec3(textureSize(sampler3D(rt_volume_density, SAMPLER_LINEAR_CLAMP), 0));
+		vec3 uvw = (clamp(g, vec3(0.5), vec3(d.xyz) - 0.5) + vec3(0.0, 0.0, float(d.w))) / size;
+		r_temp_smoke = vec2(0.0, textureLod(sampler3D(rt_volume_density, SAMPLER_LINEAR_CLAMP), uvw, 0.0).r);
+		return true;
+	}
+	return false;
+}
+
 // Temperature (x) and smoke (y) at a point in simulation units; false where no block is allocated.
 bool rt_volume_fetch(vec3 p_pos_sim, inout RTVolumeAccessor a, out vec2 r_temp_smoke) {
+	if (rt_volume.emission.w > 0.5) {
+		return rt_volume_dense_fetch(p_pos_sim, r_temp_smoke);
+	}
 	vec3 cell = rt_volume.block_size.xyz / vec3(rt_volume.level[0].xyz + 1u);
 	vec3 vidxf = p_pos_sim / cell;
 	ivec4 loc = ivec4(ivec3(floor(vidxf)) >> ivec3(RTV_BLOCK_DIM_BITS), int(rt_volume.block_size.w));
