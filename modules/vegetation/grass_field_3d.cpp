@@ -680,6 +680,28 @@ vec3 grass_turf(vec3 world_pos) {
 	return c;
 }
 
+// How much of the ground the sward stands for at a point: its cover, full where the blades have
+// thinned away (the outer band), as grass_ground() weighs the turf.
+float grass_ground_weight(vec3 world_pos) {
+	float cover = grass_ground_cover(world_pos);
+	if (cover <= 0.0) {
+		return 0.0;
+	}
+	float gone = 0.0;
+	if (grass_ground_fade.w > 0.0) {
+		gone = 1.0 - clamp((grass_ground_fade.z - length(world_pos.xz - grass_ground_fade.xy)) / grass_ground_fade.w, 0.0, 1.0);
+	}
+	return cover * mix(grass_ground_color.a, 1.0, gone);
+}
+
+// The ground's specular under the sward: the blades hide the soil's sheen at the grazing angles a
+// field is seen at, so a meadow from afar is near-Lambertian. Without this the far meadow beyond
+// the blades turned pale grey against them (grass bench --far-match: the sheen was most of the
+// step at the grass edge; 0.1 matches the blades).
+float grass_ground_specular(vec3 world_pos, float specular) {
+	return mix(specular, min(specular, 0.1), grass_ground_weight(world_pos));
+}
+
 // The ground's albedo under the vegetation: litter where the canopy closes (forest_floor()), then
 // the sward's turf where grass grows.
 vec3 grass_ground(vec3 world_pos, vec3 albedo) {

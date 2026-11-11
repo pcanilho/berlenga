@@ -33,6 +33,8 @@ extends Node3D
 #                    from 40 m up across its edge; --clearing=0 the same wood and camera, no mask
 #   --lone           scattered open-grown trees over the meadow (no litter mat under a lone
 #                    crown), seen from the --clearing camera
+#   --far-match      the default view twice, the blades out to 22-32 m and then the ground's far
+#                    colour there instead (radius 10 m): prints both mean colours and their ratio
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
 const SIZE := 96.0
@@ -74,6 +76,8 @@ var notex := false
 var t_frames := 0
 var under: GrassField3D
 var cover: VegetationField3D
+var far_match := false
+var far_a := Color()
 var ball: StaticBody3D
 var walker: Node3D
 var t := 0.0
@@ -111,6 +115,7 @@ func _ready() -> void:
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
 		elif a == "--prims": prims = true
+		elif a == "--far-match": far_match = true
 		elif a == "--impostors=0": no_impostors = true
 		elif a == "--lone":
 			forest = true
@@ -251,6 +256,7 @@ void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 void fragment() {
 	ALBEDO = vegetation_far(wp, grass_ground(wp, vec3(0.11, 0.12, 0.06)), CAMERA_POSITION_WORLD);
 	ROUGHNESS = 0.95;
+	SPECULAR = grass_ground_specular(wp, 0.5);
 }
 """
 	gm.shader = gs
@@ -279,7 +285,7 @@ void fragment() {
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR if far_match else Environment.TONE_MAPPER_AGX # Linear: colours compare as they are.
 	env.pathtracing_enabled = not raster
 	env.pathtracing_sky_shader_enabled = true
 	env.pathtracing_samples_per_pixel = spp
@@ -1101,6 +1107,27 @@ func _trample_checks(dt: float) -> bool:
 		return true
 	return false
 
+# Mean linear colour of the screen rows between 12 and 18 m ahead, right part of the width (no pond).
+func _region_mean() -> Color:
+	var img := get_viewport().get_texture().get_image()
+	var fwd := -cam.global_transform.basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized()
+	var rows := []
+	for d in [12.0, 18.0]:
+		var q: Vector3 = cam.global_position + fwd * d
+		q.y = height(q.x, q.z)
+		rows.append(int(cam.unproject_position(q).y))
+	var sum := Color(0, 0, 0)
+	var cnt := 0
+	for y in range(mini(rows[0], rows[1]), maxi(rows[0], rows[1]) + 1):
+		for x in range(img.get_width() * 11 / 20, img.get_width() * 19 / 20):
+			var c := img.get_pixel(x, y).srgb_to_linear()
+			sum += c
+			cnt += 1
+	print("GRASS_FAR_ROWS ", rows)
+	return sum / maxf(cnt, 1)
+
 func _process(dt: float) -> void:
 	n += 1
 	if n == 2:
@@ -1154,7 +1181,46 @@ func _process(dt: float) -> void:
 		if n >= frames:
 			get_tree().quit()
 		return
-	if n < frames:
+	if far_match and n == 3:
+		# Variants of the tall grass, to see whether the far colour follows the blades.
+		match OS.get_environment("GRASS_VARIANT"):
+			"dry":
+				grass.dryness = 0.8
+				grass.tip_color = Color(0.62, 0.55, 0.25)
+			"lawn":
+				grass.blade_height = Vector2(0.08, 0.18)
+				grass.density = 900.0
+			"lean":
+				grass.lean = 1.0
+			"dark":
+				grass.base_color = Color(0.03, 0.08, 0.02)
+				grass.tip_color = Color(0.15, 0.3, 0.06)
+	if far_match and n == frames:
+		await RenderingServer.frame_post_draw
+		far_a = _region_mean()
+		get_viewport().get_texture().get_image().save_png("user://far_match_a.png")
+		grass.radius = 10.0
+		return
+	if far_match and n == frames + 12:
+		await RenderingServer.frame_post_draw
+		var b := _region_mean()
+		get_viewport().get_texture().get_image().save_png("user://far_match_b.png")
+		print("GRASS_FAR_MATCH blades=%s far_ground=%s ratio=%s" % [str(far_a), str(b), str(Color(far_a.r / b.r, far_a.g / b.g, far_a.b / b.b))])
+		# The earlier hand-matched colour, for comparison.
+		var bl := grass.base_color.srgb_to_linear()
+		var tl := grass.tip_color.srgb_to_linear()
+		var dl := grass.dry_color.srgb_to_linear()
+		var old := bl.lerp(tl, 0.6).lerp(dl, grass.dryness * 0.35) * 0.32
+		print("GRASS_FAR_COLOURS published=%s old=%s" % [str(grass.get_far_color()), str(old)])
+		RenderingServer.global_shader_parameter_set("grass_ground_far", Vector4(old.r, old.g, old.b, 1.0))
+		return
+	if far_match and n == frames + 24:
+		await RenderingServer.frame_post_draw
+		var c := _region_mean()
+		print("GRASS_FAR_MATCH old far_ground=%s ratio=%s" % [str(c), str(Color(far_a.r / c.r, far_a.g / c.g, far_a.b / c.b))])
+		get_tree().quit()
+		return
+	if far_match or n < frames:
 		return
 	set_process(false)
 	if t_frames > 0:

@@ -48,6 +48,7 @@
 			<return type="String" />
 			<description>
 				Returns shader code for a terrain material: [code]grass_ground(world_pos, albedo)[/code] mixes [param albedo] towards [member ground_tint] where this field's rules let grass grow, and [code]grass_ground_cover(world_pos)[/code] returns that coverage (0 to 1). Paste it into the terrain's shader; it reads the [code]grass_ground_*[/code] global uniforms this node publishes.
+			Also [code]grass_ground_specular(world_pos, specular)[/code]: the ground's specular under the sward (the blades hide the soil's sheen), for the ground shader's [code]SPECULAR[/code].
 			</description>
 		</method>
 		<method name="get_material" qualifiers="const">
