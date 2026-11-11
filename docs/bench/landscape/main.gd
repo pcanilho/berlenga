@@ -27,6 +27,8 @@ extends Node3D
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
+#   --trees=cones|generated  forest: stand-in cones (default) or TreeGenerator's rigged woodland with wind
+#                         (--tree-variants=N, default 2)
 #   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
 #   --checks              with --out, run the link checks before the picture (they change the scene)
 
@@ -855,6 +857,9 @@ func _build_vegetation() -> void:
 	broad.patch_cover = 0.65
 	var biome := Biome.new()
 	biome.species = [conifer, broad]
+	var generated_trees: bool = args.get("trees", "cones") == "generated"
+	if generated_trees:
+		biome = _generated_forest(args.get("layout", "range") == "valley")
 	veg = VegetationField3D.new()
 	veg.name = "Forest"
 	veg.biome = biome
@@ -883,6 +888,8 @@ func _build_vegetation() -> void:
 	veg.weather_map = veg.get_path_to(weather)
 	veg.populate()
 	_log("forest %d plants in %d ms" % [veg.get_plant_count(), Time.get_ticks_msec() - t])
+	if generated_trees:
+		_tree_wind()
 	# Grass near the camera, on the same maps, moved by the weather's wind.
 	var meadow := PlantSpecies.new()
 	meadow.set_rule_range(PlantSpecies.RULE_SLOPE, Vector2(0, 28))
@@ -996,6 +1003,25 @@ func _prints_at(p: Vector3) -> Dictionary:
 	m["dent"] = prints.get_dent_at(p)
 	return m
 
+
+# --trees=generated: TreeGenerator's European woodland (its stands sorted onto the climate belts, with
+# saplings, snags and logs), rigged, and one TreeWind3D posing it from the weather's wind, with trunk and
+# limb colliders near the camera. Needs the trees branch until it is on main.
+func _generated_forest(clearing: bool) -> Biome:
+	var tg := TreeGenerator.new()
+	tg.rigged = true
+	if clearing:
+		tg.mask_channel = 0 # the valley's clearing mask (red), as the cones use it
+	var b: Biome = tg.make_woodland(int(args.get("tree-variants", "2")), TreeGenerator.REGION_EUROPE)
+	_log("generated woodland: %d species" % b.species.size())
+	return b
+
+func _tree_wind() -> void:
+	var tw := TreeWind3D.new()
+	tw.name = "TreeWind"
+	add_child(tw)
+	tw.target = tw.get_path_to(veg)
+	tw.weather_map = tw.get_path_to(weather)
 
 func _tree_mesh(conifer: bool, h: float) -> Mesh:
 	var st := SurfaceTool.new()
