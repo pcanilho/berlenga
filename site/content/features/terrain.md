@@ -63,6 +63,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   *Rivers by month: a spring snowmelt flood in cold mountains, winter or summer high water in mild climates.*
 
 - **River network** (`build_river_paths()`): rivers with widths and discharges, made into joined `PhysXRiver3D` paths.
+- **River sites** (`get_river_sites(min_area, min_discharge, run)`): position, discharge, catchment, drop and run along every river, for placing lakes and falls.
 - **Coast and lakes** (`ocean_edges` or `sea_map`; `lake_count`, `lakes`; `build_water()`): sea with a Dean-profile seabed and beaches; lakes behind natural dams or rock lips that spill as waterfalls; builds the sea and lake surfaces, and rivers end in them.
 
   ![A generated island map: sea, beaches, rivers and two dammed lakes](media/terrain-coast-map.jpg)
@@ -99,7 +100,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
-- **Landscape3D** (`source`, `spacing`, `lod_error`): heightfield ground from a TerrainGenerator3D or a height image, as chunk meshes with crack-free LODs and one BLAS per chunk level, so nothing rebuilds while the camera moves.
+- **Landscape3D** (`source`, `spacing`, `lod_error`): heightfield ground from a TerrainGenerator3D or a height image, as chunk meshes with crack-free LODs and one BLAS per chunk level, so nothing rebuilds while the camera moves. Heights stream in coarse first and chunk meshes build on worker threads (`stream_heights`); baked heights load 4 km at 1 m in under a second.
 
   ![A valley drawn by Landscape3D at 1 m spacing, raster vs path traced](media/landscape3d.jpg)
 

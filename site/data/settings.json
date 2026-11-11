@@ -1105,6 +1105,17 @@
    "topic": "Rivers, coasts and lakes"
   },
   {
+   "name": "River sites",
+   "settings": [
+    "get_river_sites(min_area, min_discharge, run)"
+   ],
+   "note": "",
+   "what": "position, discharge, catchment, drop and run along every river, for placing lakes and falls.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
    "name": "Coast and lakes",
    "settings": [
     "ocean_edges",
@@ -1173,7 +1184,7 @@
     "lod_error"
    ],
    "note": "",
-   "what": "heightfield ground from a TerrainGenerator3D or a height image, as chunk meshes with crack-free LODs and one BLAS per chunk level, so nothing rebuilds while the camera moves.",
+   "what": "heightfield ground from a TerrainGenerator3D or a height image, as chunk meshes with crack-free LODs and one BLAS per chunk level, so nothing rebuilds while the camera moves. Heights stream in coarse first and chunk meshes build on worker threads (`stream_heights`); baked heights load 4 km at 1 m in under a second.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
