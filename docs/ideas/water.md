@@ -1788,8 +1788,10 @@ Now `PhysXWaterMist3D`: the finest drops (radius about 20 um) as a small grid of
   evaporation, the source. Parallel over z slabs.
 - Source: a share of the fall's water that grows with the square of the impact speed (atomisation by the
   jet), `1e-5 (v / 10 m/s)^2` of the mass flow, `fall_mist_amount` to scale it.
-- Raster: a FogVolume over the box with the grid as its density texture (needs the Environment's
-  volumetric fog; density 0 and ambient inject 1 light it with the sky and add no fog of its own).
+- Raster: a FogVolume over the box with the grid as its density texture. FogVolumes need the
+  Environment's volumetric fog: while a mist is live and it is off, the mist turns it on at density 0
+  (no fog of its own), ambient inject 1 (lit by the sky) and 200 m reach, and puts it back after (as
+  WeatherMap3D's haze layers do, so it works with or without a weather node).
 - Path tracing: RTVolumes gained dense boxes (up to five, one atlas, density in r; `emission.w` holds the
   count and switches `rt_volume_fetch` to them), traced by the same delta tracking and ratio tracking as
   Flow's gas (Woodcock; Novak et al. 2014), albedo 0.999, Henyey-Greenstein g 0.85 for drops this size.

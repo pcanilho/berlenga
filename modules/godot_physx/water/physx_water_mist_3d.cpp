@@ -33,7 +33,11 @@
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/3d/fog_volume.h"
+#include "scene/main/viewport.h"
+#include "scene/resources/3d/world_3d.h"
+#include "scene/resources/environment.h"
 #include "scene/resources/3d/fog_material.h"
 #include "scene/resources/image_texture.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_volumes.h"
@@ -52,6 +56,67 @@ constexpr float GROWTH_G = 1.0e-10f; // m^2/s: r dr/dt = G (S - 1) near 10-20 C 
 // Every mist in the tree; the path tracer gets them all as one atlas.
 LocalVector<PhysXWaterMist3D *> mists;
 Ref<ImageTexture3D> atlas;
+
+// Raster mist is a FogVolume, which shows only with the Environment's volumetric fog on. While a mist is
+// live and the Environment has it off, it is turned on with no fog of its own (density 0) and lit by the
+// sky (ambient inject 1), as WeatherMap3D's haze layers do; put back when the last mist goes, unless
+// something else changed those settings meanwhile.
+struct FogClaim {
+	Ref<Environment> env;
+	bool enabled = false;
+	float density = 0.0f;
+	float ambient_inject = 0.0f;
+	float length = 64.0f;
+} fog_claim;
+
+Ref<Environment> find_environment(Node *p_node) {
+	Viewport *vp = p_node->get_viewport();
+	Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
+	if (cam && cam->get_environment().is_valid()) {
+		return cam->get_environment();
+	}
+	Ref<World3D> world = vp ? vp->find_world_3d() : Ref<World3D>();
+	if (world.is_valid()) {
+		return world->get_environment().is_valid() ? world->get_environment() : world->get_fallback_environment();
+	}
+	return Ref<Environment>();
+}
+
+void release_fog() {
+	if (fog_claim.env.is_valid()) {
+		Ref<Environment> env = fog_claim.env;
+		// Only what is still as the mist left it.
+		if (env->is_volumetric_fog_enabled() && env->get_volumetric_fog_density() == 0.0f) {
+			env->set_volumetric_fog_enabled(fog_claim.enabled);
+			env->set_volumetric_fog_density(fog_claim.density);
+			env->set_volumetric_fog_ambient_inject(fog_claim.ambient_inject);
+			env->set_volumetric_fog_length(fog_claim.length);
+		}
+	}
+	fog_claim = FogClaim();
+}
+
+void claim_fog(Node *p_node) {
+	Ref<Environment> env = find_environment(p_node);
+	if (env != fog_claim.env) {
+		release_fog();
+	}
+	if (env.is_null() || fog_claim.env.is_valid() || env->is_volumetric_fog_enabled()) {
+		return; // already on: the project's own volumetric fog shows the mist
+	}
+	fog_claim.env = env;
+	fog_claim.enabled = false;
+	fog_claim.density = env->get_volumetric_fog_density();
+	fog_claim.ambient_inject = env->get_volumetric_fog_ambient_inject();
+	fog_claim.length = env->get_volumetric_fog_length();
+	env->set_volumetric_fog_enabled(true);
+	env->set_volumetric_fog_density(0.0f);
+	if (fog_claim.ambient_inject <= 0.0f) {
+		env->set_volumetric_fog_ambient_inject(1.0f);
+	}
+	// The default 64 m reach would cut a fall's mist off seen from across a valley.
+	env->set_volumetric_fog_length(MAX(fog_claim.length, 200.0f));
+}
 
 template <typename F>
 struct MistJob {
@@ -270,9 +335,11 @@ static void _publish_mists() {
 	}
 	if (used.is_empty()) {
 		atlas.unref();
+		release_fog();
 		RTVolumes::set_dense(dv);
 		return;
 	}
+	claim_fog(used[0]);
 	const PhysXWaterMist3D *first = used[0];
 	dv.extinction = PhysXWaterMist3D::extinction_per_density(first->get_drop_radius());
 	dv.albedo = 0.999f; // water barely absorbs over these paths
