@@ -1,1 +1,0 @@
-- TerrainGenerator3D: ground beside lakes no longer shows terraces with stepped walls along the grid cells (the lake rim hold now fades out over two cells).

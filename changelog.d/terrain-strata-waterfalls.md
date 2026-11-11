@@ -1,1 +1,0 @@
-- TerrainGenerator3D: layered rock (`strata_enabled`): hard bands that rivers cut into caprock waterfalls, with `get_rock_hardness()` and `get_waterfalls()` listing each fall with its lip, foot, height and discharge.

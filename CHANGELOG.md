@@ -6,6 +6,14 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-d916f05e (2026-11-11)
+
+### Changed
+- Path tracing without Ray Reconstruction spreads each pixel's samples after the first across the pixel (box filter), so detail finer than a pixel, such as hair strands, is antialiased instead of sparkling
+- README: rivers fed by rain and snowmelt line and chart.
+- README: terrain rock layers and waterfalls line and image.
+- README: measured ocean wave spreading line.
+
 ## build-250256ab (2026-11-10)
 
 ### Added

@@ -1,1 +1,0 @@
-- TerrainGenerator3D: rivers fed by rain and snowmelt from a `climate_recipe` (monthly water balance with degree-day melt), with `river_month` for spring floods and low summer water, and `get_runoff_at()`, `get_snow_water_at()`, `get_discharge_at()`.
