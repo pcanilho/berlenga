@@ -114,7 +114,7 @@ func _gen(p: int, forest: bool, s: int) -> Dictionary:
 		g.set(k, bool(overrides[k]) if typeof(g.get(k)) == TYPE_BOOL else overrides[k])
 	g.forest_shade = 0.6 if forest else 0.0
 	if day >= 0:
-		g.season = season_for(day)
+		g.season = weather_season(day)
 	# The spacing make_species() grows the stand form at: the stand spacing times 1.3.
 	g.forest_spacing = STAND_SPACING[p] * 1.3
 	var mesh := g.generate()
@@ -124,6 +124,20 @@ func _gen(p: int, forest: bool, s: int) -> Dictionary:
 	return {"mesh": mesh, "height": g.get_height(), "crown_radius": g.get_crown_radius(), "crown_base": g.get_crown_base(),
 		"internodes": g.get_internode_count(), "leaves": g.get_leaf_count(), "dead": g.get_dead_branch_count(),
 		"shed": g.get_shed_count(), "tris": tris, "ms": g.get_generation_usec() / 1000.0}
+
+# The shared season state (WeatherMap3D.get_season(), section 2c) for a 0 C January / 18 C July
+# climate at the weather's own latitude (46 N without a SkyClock) on a given day; the stand-in
+# below if the weather module gives none.
+static func weather_season(d: int) -> Dictionary:
+	var w := WeatherMap3D.new()
+	var c := ClimateRecipe.new()
+	c.temperature_january = 0.0
+	c.temperature_july = 18.0
+	w.climate = c
+	w.season_day = d
+	var s := w.get_season()
+	w.free()
+	return s if not s.is_empty() else season_for(d, 46.0)
 
 # A stand-in for WeatherMap3D.get_season() (docs/ideas/trees.md 2c): a temperate climate at
 # 50 N, daily mean 0 C mid-January to 18 C mid-July, integrated from 1 Jan (forcing, degree days
@@ -201,6 +215,10 @@ func _season_test() -> void:
 	_check(ls.call(21, 285).autumn > ls.call(0, 285).autumn, "red maple turns before oak (12 Oct: %.2f vs %.2f)" % [ls.call(21, 285).autumn, ls.call(0, 285).autumn])
 	var late: Dictionary = ls.call(2, 330)
 	_check(late.fallen_fraction > 0.9, "birch bare by late November (%.2f fallen)" % late.fallen_fraction)
+	var real := weather_season(290)
+	var mine := season_for(290, real.get("latitude_deg", 50.0))
+	_check(absf(real.forcing - mine.forcing) < 0.1 * mine.forcing and absf(real.senescence - mine.senescence) < 0.15 * mine.senescence + 10.0,
+			"WeatherMap3D season on 17 Oct matches the stand-in (forcing %.0f vs %.0f, senescence %.0f vs %.0f)" % [real.forcing, mine.forcing, real.senescence, mine.senescence])
 	var pine: Dictionary = ls.call(3, 20)
 	_check(pine.leaf_out == 1.0 and pine.fallen_fraction == 0.0, "Scots pine keeps its needles in January")
 	var g := TreeGenerator.new()

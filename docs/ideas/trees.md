@@ -193,7 +193,8 @@ max(0, 20 - T) (P / 13.2)^2).
   until budburst).
 - Changing the date regenerates the meshes (stands cache by season). A per-instance shader
   path, without regeneration, is a later step if a game day has to pass in view.
-- Bench: `--day=N` renders and tests at a day of year; `--test` checks the leaf-out order, red
+- Bench: `--day=N` renders and tests at a day of year with WeatherMap3D.get_season() (on main
+  since #252; it matches the bench's stand-in season_for() within 5%); `--test` checks the leaf-out order, red
   maple before oak, birch bare by late November, pine unchanged and bare January crowns.
 
 ### 2d. Welded junctions (as built, 11 Nov; Paulo picked)
