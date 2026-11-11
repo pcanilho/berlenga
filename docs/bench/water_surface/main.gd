@@ -24,6 +24,13 @@ extends Node3D
 #   --whitecaps=U1,U2,...  step the wind through these speeds (m/s), --whitecap-hold frames each, and print the
 #                   whitecap cover the wind asks for (Monahan) against the cover on the foam grids, and the threshold
 #   --whitecap-hold=N  frames at each wind speed (default 600)
+#   --boat=U        a hull (8 m x 2.4 m) crossing open sea along +X at U m/s, with a PhysXWaterWake3D; the camera
+#                   follows it (--view=boat from above, --view=boat_low from behind and to the side, --view=boat_sun
+#                   from ahead looking back toward the sun); no beach
+#   --wake=prop:value  a PhysXWaterWake3D property (e.g. dispersive:false)
+#   --wake-out=path.png  at the last frame, the wake's height around the boat (grey, +-3 sigma) and the Kelvin
+#                   measures: the wedge half-angle (where the waves are highest, each distance behind the bow)
+#                   and the transverse wavelength along the track (theory 19.47 degrees, 2 pi U^2 / g)
 #   --debug=N       path tracing debug view (Environment.pathtracing_debug_mode)
 #   --water=param:value  a water shader parameter, e.g. --water=pathtraced_scattering:Vector3(0,0,0)
 #   --node=prop:value  a PhysXWaterSurface3D property (e.g. live_flow:false)
@@ -87,6 +94,11 @@ var breaker_peak := {}
 var perf_proc := 0.0
 var perf_phys := 0.0
 var perf_n := 0
+var boat_speed := 0.0
+var boat: RigidBody3D
+var wake: Node3D
+var wake_params := {}
+var wake_out := ""
 
 
 # The surface height from sample_height() on a 256 x 256 grid over 160 m of open sea, grey from -2 to +2 sigma,
@@ -144,6 +156,11 @@ func _ready() -> void:
 		elif a.begins_with("--tracers="): tracers = int(a.substr(10))
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
+		elif a.begins_with("--boat="): boat_speed = float(a.substr(7))
+		elif a.begins_with("--wake-out="): wake_out = a.substr(11)
+		elif a.begins_with("--wake="):
+			var wkv2 := a.substr(7).split(":", true, 1)
+			wake_params[wkv2[0]] = str_to_var(wkv2[1])
 		elif a == "--profile": profile = true
 		elif a == "--perf": perf = true
 		elif a == "--breakers": breakers = true
@@ -181,6 +198,9 @@ func _ready() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-50, -140, 0)
 	sun.shadow_enabled = true
+	if view == "boat_sun":
+		# Low, ahead of the camera: the glitter path runs down the wake and lights up its waves.
+		sun.look_at_from_position(Vector3.ZERO, Vector3(36.0, -10.0, 28.0))
 	add_child(sun)
 
 	# Sand: a 200 m slab sloping down away from the camera, from dry beach out to about 9 m of water, with a few rocks.
@@ -192,7 +212,10 @@ func _ready() -> void:
 		# Under water the floor needs to fall away faster, for depth to look through.
 		slope_deg = 12.0 if view in ["submerged", "waterline", "up"] else 5.0
 	var slope := deg_to_rad(slope_deg)
-	_slab(Vector3(200, 1, 200), Vector3(0, -1.2, 0), Vector3(-slope, 0, 0), sand_mat)
+	if boat_speed > 0.0:
+		pass # open sea: no floor
+	else:
+		_slab(Vector3(200, 1, 200), Vector3(0, -1.2, 0), Vector3(-slope, 0, 0), sand_mat)
 	var rock_mat := StandardMaterial3D.new()
 	rock_mat.albedo_color = Color(0.3, 0.3, 0.32)
 	rock_mat.roughness = 0.8
@@ -256,6 +279,9 @@ func _ready() -> void:
 		add_child(body)
 		b.set("water_surface_path", b.get_path_to(water))
 
+	if boat_speed > 0.0:
+		_add_boat()
+
 	var cam := Camera3D.new()
 	cam.fov = 45
 	add_child(cam)
@@ -284,6 +310,8 @@ func _ready() -> void:
 			cam.look_at_from_position(Vector3(0.0, 40.0, -6.0), Vector3(0.0, 0.0, -6.01))
 		"sea":
 			cam.look_at_from_position(Vector3(0, 4.0, -40.0), Vector3(0, -1.0, -110.0))
+		"boat", "boat_low", "boat_sun":
+			pass # follows the boat (_process)
 		"sea_top":
 			cam.look_at_from_position(Vector3(0, 90.0, -110.0), Vector3(0, 0.0, -110.01))
 		_:
@@ -292,6 +320,119 @@ func _ready() -> void:
 
 	cam.position.y += cam_dy
 	bench_cam = cam
+
+
+# A hull crossing open sea along +X, held at the waterline at a steady speed (no buoyancy: the wake alone).
+func _add_boat() -> void:
+	boat = RigidBody3D.new()
+	boat.mass = 2000.0
+	boat.gravity_scale = 0.0
+	boat.axis_lock_angular_x = true
+	boat.axis_lock_angular_y = true
+	boat.axis_lock_angular_z = true
+	boat.axis_lock_linear_y = true
+	var cs := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = Vector3(2.4, 1.0, 8.0)
+	cs.shape = box
+	boat.add_child(cs)
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(2.4, 1.2, 8.0)
+	mi.mesh = bm
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.75, 0.2, 0.15)
+	mi.material_override = m
+	mi.position.y = 0.3
+	boat.add_child(mi)
+	# Local +Z is the bow: face +X.
+	boat.rotation.y = PI * 0.5
+	boat.position = Vector3(-70.0, 0.0, -110.0)
+	add_child(boat)
+	wake = ClassDB.instantiate("PhysXWaterWake3D")
+	wake.set("water_surface_path", NodePath("../../" + str(water.name)))
+	wake.set("hull_length", 8.0)
+	wake.set("hull_beam", 2.4)
+	wake.set("hull_profile", PackedFloat32Array([0.15, 0.6, 0.9, 1.0, 1.0, 1.0, 0.95, 0.85]))
+	wake.set("source_count", 9)
+	wake.set("reference_speed", boat_speed)
+	for k in wake_params:
+		wake.set(k, wake_params[k])
+	boat.add_child(wake)
+
+
+func _physics_process(_delta: float) -> void:
+	if boat != null:
+		boat.linear_velocity = Vector3(boat_speed, 0.0, 0.0)
+		boat.angular_velocity = Vector3.ZERO
+
+
+# --wake-out: the wake around the boat from sample_height(), and the Kelvin measures.
+func _save_wake() -> void:
+	var dx := 0.25
+	var behind := 56.0 # m behind the bow
+	var side := 24.0
+	var w := int(behind / dx)
+	var hgt := int(2.0 * side / dx)
+	var bow := boat.global_position.x + 4.0
+	var z0 := boat.global_position.z
+	var h := PackedFloat32Array()
+	h.resize(w * hgt)
+	var s2 := 0.0
+	for j in hgt:
+		for i in w:
+			var v := float(wake.call("sample_height", Vector3(bow + 4.0 - i * dx, 0.0, z0 - side + (j + 0.5) * dx)))
+			h[j * w + i] = v
+			s2 += v * v
+	var sigma := sqrt(s2 / (w * hgt))
+	var img := Image.create(w, hgt, false, Image.FORMAT_L8)
+	for j in hgt:
+		for i in w:
+			img.set_pixel(i, j, Color.from_hsv(0, 0, clampf(0.5 + h[j * w + i] / (6.0 * sigma), 0.0, 1.0)))
+	img.save_png(wake_out)
+	# Wedge: at each distance behind the bow, the outermost offset each side where the wave envelope (|h| max
+	# over 1 m along x) still reaches a quarter of its peak across that side: the cusp line bounding the waves
+	# (outside it they die away). Half-angle = atan(offset / distance), median over 16..48 m.
+	var angles := PackedFloat32Array()
+	for xb in range(16, 49, 2):
+		for sgn in [-1, 1]:
+			var envs := PackedFloat32Array()
+			var top := 0.0
+			for jj in int(side / dx):
+				var j := int((side + sgn * (jj + 0.5) * dx) / dx)
+				var env := 0.0
+				for di in 4:
+					var i := int((xb + 4.0) / dx) + di
+					env = maxf(env, absf(h[j * w + i]))
+				envs.push_back(env)
+				top = maxf(top, env)
+			var edge_y := 0.0
+			for jj in envs.size():
+				if envs[jj] >= 0.25 * top:
+					edge_y = (jj + 0.5) * dx
+			angles.push_back(rad_to_deg(atan2(edge_y, float(xb))))
+	angles.sort()
+	# Transverse wavelength: zero up-crossings of h along the track (offset 0), 8..50 m behind the bow.
+	var ups := PackedFloat32Array()
+	var jc := int(side / dx)
+	for i in range(int(12.0 / dx), int(54.0 / dx)):
+		var a := h[jc * w + i]
+		var b := h[jc * w + i + 1]
+		if a < 0.0 and b >= 0.0:
+			ups.push_back(i * dx)
+	var lam := 0.0
+	if ups.size() >= 2:
+		lam = (ups[ups.size() - 1] - ups[0]) / (ups.size() - 1)
+	print("WAKE U=%.1f m/s dispersive %s: wedge half-angle (outer edge) median %.1f deg (quartiles %.1f..%.1f; Kelvin 19.47), transverse wavelength %.1f m (theory %.1f), rms %.3f m, peak %.3f m" % [
+		boat_speed, str(wake.get("dispersive")), angles[angles.size() / 2], angles[angles.size() / 4], angles[3 * angles.size() / 4],
+		lam, TAU * boat_speed * boat_speed / 9.81, sigma, _peak(h)])
+
+
+func _peak(h: PackedFloat32Array) -> float:
+	var m := 0.0
+	for v in h:
+		m = maxf(m, absf(v))
+	return m
 
 
 func _checker(a: Color, b: Color) -> ImageTexture:
@@ -363,6 +504,19 @@ func _tracers_step(p_dt: float) -> void:
 
 func _process(_delta: float) -> void:
 	n += 1
+	if boat != null:
+		var bp := boat.global_position
+		if view == "boat":
+			bench_cam.look_at_from_position(Vector3(bp.x - 20.0, 70.0, bp.z), Vector3(bp.x - 20.0, 0.0, bp.z + 0.01))
+		elif view == "boat_sun":
+			# Ahead and to the side, looking back along the wake toward the sun: the waves catch its glint.
+			bench_cam.look_at_from_position(Vector3(bp.x + 14.0, 8.0, bp.z + 22.0), Vector3(bp.x - 22.0, 0.0, bp.z - 6.0))
+		elif view == "boat_low":
+			bench_cam.look_at_from_position(Vector3(bp.x - 34.0, 9.0, bp.z + 16.0), Vector3(bp.x - 8.0, 0.0, bp.z))
+		if wake_out != "" and n == frames - 1:
+			_save_wake()
+			if out == "":
+				get_tree().quit()
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
 	_tracers_step(1.0 / 30.0)

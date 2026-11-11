@@ -1618,6 +1618,98 @@ moved with the cascades and the choppiness; steered, the cover is on Monahan's c
 0.77 with three cascades (0.54-0.64 at choppiness 1.5). Cost: one atomic per 64 texels in the foam
 pass and a 4-byte readback with the existing ones.
 
+## Step 5h: dispersive boat wakes with the Kelvin pattern (11 Nov, audit item 9)
+
+### Problem
+
+The wake grid that travels with a boat (`PhysXWaterWake3D`, `water_wake.glsl`) runs the plain wave
+equation at one speed (`wave_speed`, 2.2 m/s). Every wavelength travels at that speed, so a moving hull
+makes a Mach cone: a V whose angle changes with the boat's speed, with no transverse waves behind the
+stern and no feathered diverging waves on its arms. Real deep water is dispersive (`omega^2 = g k`: long
+waves are faster), and that alone makes the Kelvin pattern: a wedge of half-angle 19.47 degrees at any
+speed (Thomson 1887), transverse waves of wavelength `2 pi U^2 / g` inside it and short diverging waves
+on its edges, narrowing at high hull Froude numbers (Rabaud and Moisy 2013).
+
+### Published methods
+
+- **Water Surface Wavelets (Jeschke et al., SIGGRAPH 2018)**, the audit's suggestion. Wave amplitude on
+  a 4D grid (position x direction x wavenumber), advected at the group speed, the height rebuilt from a
+  precomputed profile buffer. It carries waves over kilometres at about 8 ms for 4096^2 x 16 on a
+  laptop GPU. Its phases are random per direction, so it cannot build patterns made by interference:
+  the paper says wake patterns that depend on "constructive interference between coherent phases" are
+  impractical with it. The Kelvin pattern is one, so it does not give what the audit promised. Not used.
+- **Water Wave Packets (Jeschke and Wojtan, SIGGRAPH 2017).** Lagrangian packets with exact
+  dispersion: Kelvin wakes come out right, but a boat wake takes millions of packets (0.5-2 fps in the
+  paper). Too slow for a game.
+- **iWave (Tessendorf 2004)** and **dispersion kernels (Canabal et al., SIGGRAPH Asia 2016).** A height
+  grid with the vertical-derivative operator `sqrt(-laplacian)` as a convolution kernel, so the grid
+  has deep-water dispersion and moving sources leave Kelvin wakes. A short kernel gets long waves wrong
+  (its transform is smooth at k = 0 where `|k|` has a cusp), which is what Canabal et al. fix with
+  fitted kernels.
+- **eWave (Tessendorf 2014)**, the same equation stepped in Fourier space with an exponential
+  integrator: every mode is an exact oscillator at `omega = sqrt(g k)`, so dispersion is exact at every
+  wavelength the grid holds and the step is unconditionally stable. It costs two FFTs a step. A moving
+  pressure patch on it is the classic Havelock problem, whose linear answer is the Kelvin wake.
+- Engines: UE water, Crest and HDRP draw boat wakes as foam trails, decals or a non-dispersive ripple
+  sim; Crest's dynamic waves are the wave equation at one speed, like ours was.
+
+### Plan
+
+eWave on the wake grid, keeping everything else the grid does (it slides with the boat, foam, the hull
+bands, propeller wash, breaking):
+
+1. The hull is a pressure head `d(x)` (its dip, as before). The surface oscillates about `-d`:
+   `h_tt = -g sqrt(-laplacian) (h + d)`. A hull at rest still sits in its dip; a moving one radiates the
+   Kelvin pattern. No more pulling the height toward the dip.
+2. Each step: a spatial pass shifts the state as the grid slides and packs `z = (h + d) + i v`; one
+   complex FFT (rows, then columns, the shared-memory shader the ocean uses); a mode pass splits `H`
+   and `V` by Hermitian symmetry and turns each mode by `omega dt`; the inverse FFT; a spatial pass
+   takes `h = Re - d`, damps a border band (the grid is periodic in Fourier space; the band keeps waves
+   from wrapping), and does the foam and breaking as before.
+3. `dispersive` (on by default) is the opt-out; off keeps the wave equation. With it on the grid side
+   is a power of two (192 cells rounds up to 256, the size growing to keep the cell size), and
+   `wave_speed` is unused.
+4. Bench: a boat crossing calm sea at 4, 6 and 10 m/s, the wake heights read back from above; measure
+   the wedge angle against 19.47 degrees and the transverse wavelength against `2 pi U^2 / g`.
+
+### As built
+
+As planned, with three things learned on the bench:
+
+- The exact step loses no energy on its own, so the wave equation's damping (0.25/s) took the transverse
+  waves out 30 m behind the boat. With `dispersive` an eighth of `damping` applies.
+- Dispersive waves near the bow are steep (slope 0.3-0.4) and the old foam threshold (slope 0.08) turned
+  the whole wedge white. `breaking_slope` (0.3, where whitecapping starts; Stokes' limit is about 0.44)
+  replaces `foam_slope` with it on: the bow waves break, the Kelvin waves stay glassy.
+- The grid is periodic in Fourier space; the border band is 15% of the side (10% before) so long waves
+  are gone before they wrap.
+
+The step is pass 1 (slide, foam, the dip, pack) + row/column FFT + mode pass + row/column FFT + pass 2,
+each its own compute list (a barrier inside one list re-pushes the last push constant onto the FFT
+pipeline, which has none). 256^2 by default.
+
+### Results (lavapipe, `docs/bench/water_surface --boat=U --wake-out`, an 8 m x 2.4 m hull, 15 s in)
+
+Wedge half-angle: the outermost offset where the wave envelope still reaches a quarter of its peak,
+median over 16-48 m behind the bow. Transverse wavelength: zero up-crossings along the track.
+
+| U (m/s) | hull Froude | wedge, wave equation (before) | wedge, dispersive | transverse wavelength, dispersive (theory) |
+|---|---|---|---|---|
+| 4 | 0.45 | 32.2 | 21.8 | 9.0 m (10.2) |
+| 6 | 0.68 | 21.4 | 19.5 | 23.8 m (23.1) |
+| 10 | 1.13 | 12.9 | 12.3 | longer than the grid (64.0) |
+
+Before, the wedge was a Mach cone (`asin(2.2 / U)`: 33 degrees at 4 m/s, 13 at 10), filled with a flat
+raised plateau and no transverse waves. Now it holds near Kelvin's 19.5 degrees up to a hull Froude
+number of about 0.7, with transverse waves of the right length, then narrows as ships' wakes do at
+high Froude numbers (Rabaud and Moisy 2013: the angle falls about as 1 / Froude past 0.6). The path traced frame
+shows the waves in the sun's glitter path (no denoiser here). The raster frame does not show a glitter
+path on this bench's sea at all, wake or not: a raster sun-specular question for later, not the wake.
+
+Cost: two 256^2 complex FFTs and three 256^2 passes a step, about what one ocean cascade's FFT costs
+(the GPU timing goes on the PC queue). The CPU side is unchanged.
+
+
 ## Sources
 
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).

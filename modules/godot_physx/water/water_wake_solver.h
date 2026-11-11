@@ -59,6 +59,13 @@ public:
 	bool a_is_current = true;
 	int n = 0;
 
+	// Dispersive mode (eWave): the field goes through a complex FFT (the
+	// ocean's shared-memory row FFT), the mode step, and back.
+	bool dispersive = false;
+	RID shader_fft, pipeline_fft, shader_modes, pipeline_modes;
+	RID buf_spec_a, buf_spec_b, buf_spec_c, buf_fft_rows_params, buf_fft_cols_params, buf_dummy_in, buf_dummy_out;
+	RID uset_post, uset_rows, uset_cols, uset_modes;
+
 	// Last readback: heights (m) on the grid, and the grid origin (world xz
 	// of cell 0's corner) they were computed at.
 	Mutex cache_mtx;
@@ -66,9 +73,10 @@ public:
 	Vector2 cache_origin;
 
 	void rt_compile(Ref<WaterWakeSolverGPU> p_self);
-	void rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n);
-	// p_params: packed as the shader's Params; p_sources: 8 floats per source.
-	void rt_step(Ref<WaterWakeSolverGPU> p_self, PackedByteArray p_params, PackedFloat32Array p_sources, Vector2 p_origin, bool p_readback);
+	void rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n, bool p_dispersive);
+	// p_params: packed as the shader's Params; p_sources: 8 floats per source;
+	// p_modes: water_wake_modes.glsl's push constants (dispersive only).
+	void rt_step(Ref<WaterWakeSolverGPU> p_self, PackedByteArray p_params, PackedFloat32Array p_sources, PackedByteArray p_modes, Vector2 p_origin, bool p_readback);
 	void rt_on_readback(const PackedByteArray &p_data, Ref<WaterWakeSolverGPU> p_self, Vector2 p_origin);
 	void rt_free(Ref<WaterWakeSolverGPU> p_self);
 	void rt_free_buffers();
@@ -82,6 +90,7 @@ class WaterWakeSolver {
 
 	int n = 128;
 	float size = 32.0f;
+	bool dispersive = false;
 	bool have_origin = false;
 	Vector2i origin_cell; // grid origin in whole cells of the world
 	int ticks = 0;
@@ -98,8 +107,12 @@ public:
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }
 	bool is_built() const { return is_available() && gpu->built.is_set(); }
 
-	void build(int p_cells, float p_size);
-	// p_wave_speed m/s, p_damping and p_border_damping per second.
+	// p_dispersive: deep-water dispersion (eWave) instead of the wave
+	// equation at one speed; the cells then round up to a power of two, the
+	// size growing with them to keep the cell size.
+	void build(int p_cells, float p_size, bool p_dispersive = false);
+	bool is_dispersive() const { return dispersive; }
+	// p_wave_speed m/s (wave equation only), p_damping and p_border_damping per second.
 	// p_foam_persistence: seconds foam takes to fade (to 1/e); p_foam_slope: wave
 	// slope past which wake waves foam, p_foam_slope_gain how much per second;
 	// foam is pushed out from the bow-stern line at p_foam_spread m/s, fading

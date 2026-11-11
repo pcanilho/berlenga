@@ -255,6 +255,8 @@ for _glsl in _mpm_bs_glsl:
 _water_glsl = ("water_ripple.glsl",)
 # Moving wake grid -- self-contained, no shared include.
 env_physx.GLSL_HEADER(os.path.join("water", "water_wake.glsl"))
+# Its dispersive step: the per-mode exponential update between the two FFTs.
+env_physx.GLSL_HEADER(os.path.join("water", "water_wake_modes.glsl"))
 _water_glsl_dep = [os.path.join("water", "water_inc.glsl"), "#glsl_builders.py"]
 for _glsl in _water_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))
