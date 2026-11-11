@@ -118,6 +118,29 @@ square would take minutes and hold every plant in memory.
 6. GPU placement (Horizon) only if the CPU workers do not keep up at a run's speed: the CPU path
    reuses all the rule code and the trees' and snow's readers of the placements.
 
+**Built (2).** `VegetationField3D.streaming`. Placement is split into a read-only setup
+(`_make_setup()`, main thread), `_place()` over a tile rect (any thread) and `_commit_species()`
+(main thread). Each species gets a halo, worked back from the last species: how far around a
+tile it must be placed for every later species, itself placed over its own halo, to see the same
+footprints and crowns as in one placement of the whole map. A streamed tile places each species
+over the tile plus its halo and keeps only the tile, so it is bit-identical to `populate()`
+(vegetation bench `--test`: three species, shade bushes under tree crowns, two centres).
+`populate()` runs the same code over the whole rect. Tiles go to WorkerThreadPool nearest
+first, as many as there are workers; the main thread adds each tile's species to the scene within
+`stream_budget_msec`, only out to that species' visibility range (herbs near, trees all of the
+radius), and frees tiles a tile and a half past `stream_radius` (hysteresis). The canopy, stand
+shade, forest floor (out to `stream_maps_radius`, 96 m) and far colour (out to `stream_radius`)
+maps are computed from the tiles on a worker as the centre moves and only handed over on the
+main thread; freed tiles stay alive until that job is done. Other fields read this field's
+crowns under a read lock, so a streamed herb layer can shade from a streamed forest.
+
+Measured (`--stream-cost`: 1 km map, trees with crowns over the 12-species oak floor from
+`make_floor()`, 16 m tiles, 200 m radius, running at 6 m/s, 4 cloud cores): about 600 tiles and
+600k plants held; the four workers keep up (rarely more than 2 jobs in flight after the start,
+which fills the radius in about 3 s); main thread at most 1.5 to 3.9 ms a frame (2 ms budget
+plus one tile); handing over the maps 0.6 to 2 ms. Publishing the maps on the main thread had
+cost 20 to 29 ms, which is why they moved to a worker.
+
 ## References
 
 - SpeedTree documentation, "Level of detail" (leaf reduction and scaling).

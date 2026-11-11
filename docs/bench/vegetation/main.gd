@@ -8,8 +8,15 @@ extends Node3D
 #   --out=path.png   render a view (path traced unless --raster)
 #   --raster         raster only
 #   --spp=N          path tracing samples (default 16)
+#   --stream-cost    a 1 km map of trees over the oak wood's floor (PlantGenerator.make_floor),
+#                    streamed 200 m around a point running across it at 6 m/s: prints the
+#                    main thread's slowest frame and map publish each second
 
 const SIZE := 256.0
+var size := SIZE
+var stream_cost := false
+var runner: Node3D
+var stream_t := 0.0
 var test := false
 var raster := false
 var spp := 16
@@ -49,12 +56,15 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
-	var w := int(SIZE) + 1
+		elif a == "--stream-cost":
+			stream_cost = true
+			size = 1024.0
+	var w := int(size) + 1
 	var data := PackedFloat32Array()
 	data.resize(w * w)
 	for z in w:
 		for x in w:
-			data[z * w + x] = height(x - SIZE * 0.5, z - SIZE * 0.5)
+			data[z * w + x] = height(x - size * 0.5, z - size * 0.5)
 	var shape := HeightMapShape3D.new()
 	shape.map_width = w
 	shape.map_depth = w
@@ -72,8 +82,8 @@ func _ready() -> void:
 	add_child(river)
 	dm = TerrainDataMap3D.new()
 	dm.name = "Map"
-	dm.size = SIZE
-	dm.resolution = 256
+	dm.size = size
+	dm.resolution = 512 if stream_cost else 256
 	dm.bake_on_ready = false
 	dm.water_sources = [NodePath("../Lake"), NodePath("../River")]
 	add_child(dm)
@@ -83,6 +93,8 @@ func _ready() -> void:
 	field.biome = _biome()
 	add_child(field)
 	field.data_map = field.get_path_to(dm)
+	if stream_cost:
+		_setup_stream_cost()
 	if not out.is_empty():
 		_build_view()
 
@@ -141,11 +153,47 @@ func _biome() -> Biome:
 	b.species = [tree, bush, reed]
 	return b
 
+func _setup_stream_cost() -> void:
+	var tree: PlantSpecies = field.biome.species[0]
+	tree.canopy_radius = 3.0
+	tree.canopy_opacity = 0.9
+	var species: Array = [tree]
+	species.append_array(Array(PlantGenerator.make_floor(PlantGenerator.FLOOR_OAK_MIXED, 3, false)))
+	field.biome = Biome.new()
+	field.biome.species = species
+	field.tile_size = 16.0
+	runner = Node3D.new()
+	add_child(runner)
+	runner.position = Vector3(-300, 0, -300)
+	field.stream_target = field.get_path_to(runner)
+	field.stream_radius = 200.0
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 400, 0)
+	cam.rotation_degrees = Vector3(90, 0, 0) # At the sky: the cost of streaming, not of drawing.
+	add_child(cam)
+
+func _process(dt: float) -> void:
+	if not stream_cost or n < 3:
+		return
+	if not field.streaming:
+		print("STREAM_COST species=%d" % field.biome.species.size())
+		field.streaming = true
+	stream_t += dt
+	# Fixed steps, as if at 60 fps, so the run covers the same ground however slow the frame.
+	runner.position += Vector3(1, 0, 1).normalized() * 6.0 / 60.0
+	if Engine.get_process_frames() % 60 == 0:
+		var st := field.get_stream_stats()
+		print("STREAM_COST t=%.0fs pos=%s tiles=%d jobs=%d plants=%d frame_max=%.2fms publish=%.1fms idle=%s" % [stream_t, str(Vector2(runner.position.x, runner.position.z).round()), st.tiles, st.jobs, field.get_plant_count(), st.frame_max_msec, st.publish_msec, str(field.is_stream_idle())])
+	if runner.position.x > 300.0:
+		get_tree().quit()
+
 func _physics_process(_d: float) -> void:
 	n += 1
 	if n != 3:
 		return
 	dm.bake()
+	if stream_cost:
+		return
 	var err := field.populate()
 	var counts := []
 	for s in 3:
@@ -153,6 +201,8 @@ func _physics_process(_d: float) -> void:
 	print("VEG_POPULATE err=%d plants=%d per_species=%s ms=%.1f" % [err, field.get_plant_count(), str(counts), field.get_populate_time_msec()])
 	if test:
 		_checks()
+		await _stream_checks()
+		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
 	else:
@@ -415,7 +465,79 @@ func _checks() -> void:
 	tree_sp.meshes = real_meshes
 	tree_sp.near_meshes = []
 	tree_sp.near_range = 0.0
-	print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+
+# Streaming: tiles placed on workers around a moving centre come out exactly as populate() placed
+# them (shade bushes under the trees' crowns, so each tile's halo matters), and go past the radius.
+func _stream_wait(f: VegetationField3D) -> int:
+	for i in 900:
+		await get_tree().process_frame
+		if f.is_stream_idle():
+			return i
+	return -1
+
+func _streamed_set(full: PackedVector3Array, centre: Vector2, radius: float, ts: float) -> Dictionary:
+	var want := {}
+	for p in full:
+		var lo := Vector2(floorf(p.x / ts), floorf(p.z / ts)) * ts
+		var d := Vector2(maxf(maxf(lo.x - centre.x, centre.x - lo.x - ts), 0.0), maxf(maxf(lo.y - centre.y, centre.y - lo.y - ts), 0.0)).length()
+		if d <= radius:
+			want[p] = true
+	return want
+
+# Tiles stay a tile and a half past the radius before they go (hysteresis): only compare within it.
+func _same(got: PackedVector3Array, want: Dictionary, centre: Vector2, radius: float, ts: float) -> bool:
+	var inside := _streamed_set(got, centre, radius, ts)
+	if inside.size() != want.size():
+		return false
+	for p in inside:
+		if not want.has(p):
+			return false
+	return true
+
+func _stream_checks() -> void:
+	field.weather_map = NodePath()
+	field.populate()
+	var full := []
+	for s in 3:
+		full.append(field.get_placements(s))
+	var target := Node3D.new()
+	add_child(target)
+	target.global_position = Vector3(-60, 0, -50)
+	var sf := VegetationField3D.new()
+	sf.name = "Streamed"
+	sf.populate_on_ready = false
+	sf.biome = field.biome
+	add_child(sf)
+	sf.data_map = sf.get_path_to(dm)
+	sf.stream_target = sf.get_path_to(target)
+	sf.stream_radius = 60.0
+	sf.streaming = true
+	var frames := await _stream_wait(sf)
+	var ok := frames >= 0
+	var counts := []
+	for s in 3:
+		var want := _streamed_set(full[s], Vector2(-60, -50), 60.0, sf.tile_size)
+		counts.append([sf.get_placements(s).size(), want.size()])
+		ok = ok and _same(sf.get_placements(s), want, Vector2(-60, -50), 60.0, sf.tile_size)
+	var drawn := 0
+	for ch in sf.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh.mesh == field.biome.species[0].meshes[0]:
+			drawn += ch.multimesh.instance_count
+	_check("streaming: tiles around the centre match populate() exactly", ok and drawn == sf.get_placements(0).size(), [frames, sf.get_stream_tile_count(), counts, drawn])
+	target.global_position = Vector3(80, 0, 70)
+	frames = await _stream_wait(sf)
+	ok = frames >= 0
+	var old_left := 0
+	for s in 3:
+		old_left += sf.get_placements(s).size() - _streamed_set(sf.get_placements(s), Vector2(80, 70), 60.0 + 1.5 * sf.tile_size, sf.tile_size).size()
+	counts = []
+	for s in 3:
+		var want := _streamed_set(full[s], Vector2(80, 70), 60.0, sf.tile_size)
+		counts.append([sf.get_placements(s).size(), want.size()])
+		ok = ok and _same(sf.get_placements(s), want, Vector2(80, 70), 60.0, sf.tile_size)
+	_check("streaming: moved centre, tiles past the radius freed, new ones match", ok and old_left == 0, [frames, sf.get_stream_tile_count(), counts, old_left])
+	sf.queue_free()
+	target.queue_free()
 
 func _build_view() -> void:
 	var gm := StandardMaterial3D.new()
@@ -427,7 +549,7 @@ func _build_view() -> void:
 	add_child(mi)
 	var water := MeshInstance3D.new()
 	var wp := PlaneMesh.new()
-	wp.size = Vector2(SIZE, SIZE)
+	wp.size = Vector2(size, size)
 	var wmat := StandardMaterial3D.new()
 	wmat.albedo_color = Color(0.1, 0.2, 0.25)
 	wmat.roughness = 0.05
@@ -478,11 +600,11 @@ func _ground_mesh() -> Mesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var res := 128
-	var step := SIZE / res
+	var step := size / res
 	for z in res:
 		for x in res:
-			var x0 := -SIZE * 0.5 + x * step
-			var z0 := -SIZE * 0.5 + z * step
+			var x0 := -size * 0.5 + x * step
+			var z0 := -size * 0.5 + z * step
 			var q := [Vector3(x0, height(x0, z0), z0), Vector3(x0 + step, height(x0 + step, z0), z0),
 					Vector3(x0 + step, height(x0 + step, z0 + step), z0 + step), Vector3(x0, height(x0, z0 + step), z0 + step)]
 			for i in [0, 1, 2, 0, 2, 3]:

@@ -9,6 +9,24 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_stream_stats">
+			<return type="Dictionary" />
+			<description>
+				Main-thread cost of [member streaming]: [code]tiles[/code] (placed tiles held), [code]jobs[/code] (tiles being placed on workers), [code]frame_max_msec[/code] (the slowest frame since the last call, which resets it) and [code]publish_msec[/code] (handing the last maps to the renderer).
+			</description>
+		</method>
+		<method name="get_stream_tile_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of placed tiles held around the centre while [member streaming].
+			</description>
+		</method>
+		<method name="is_stream_idle" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] once every tile within [member stream_radius] is placed and drawn and the maps are up to date. [signal populated] is emitted each time this becomes [code]true[/code].
+			</description>
+		</method>
 		<method name="clear">
 			<return type="void" />
 			<description>
@@ -97,6 +115,21 @@
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Seed of the point patterns. The same seed gives the same plants.
 		</member>
+		<member name="stream_budget_msec" type="float" setter="set_stream_budget_msec" getter="get_stream_budget_msec" default="2.0">
+			Main-thread time per frame for adding placed tiles to the scene while [member streaming], nearest first. One tile always goes in, so a frame can run over by one tile's cost.
+		</member>
+		<member name="stream_maps_radius" type="float" setter="set_stream_maps_radius" getter="get_stream_maps_radius" default="96.0">
+			While [member streaming], the canopy map, the stand shade and the forest floor map cover this far around the centre (half-metre cells); the far colour map covers [member stream_radius].
+		</member>
+		<member name="stream_radius" type="float" setter="set_stream_radius" getter="get_stream_radius" default="200.0">
+			While [member streaming], tiles within this distance of the centre are placed. Each species is drawn only out to its [member PlantSpecies.visibility_range] (all of the radius when it has none); tiles a tile and a half past the radius are freed.
+		</member>
+		<member name="stream_target" type="NodePath" setter="set_stream_target" getter="get_stream_target" default="NodePath(&quot;&quot;)">
+			The [Node3D] streaming follows. Empty: the viewport's camera.
+		</member>
+		<member name="streaming" type="bool" setter="set_streaming" getter="is_streaming" default="false">
+			Places tiles around a centre ([member stream_target]) as it moves instead of the whole map at once: each tile is placed on a worker thread, nearest first, together with the larger plants around it that act on it (footprints and crown shade), so it comes out exactly as [method populate] would place it. The maps (canopy, forest floor, far colour) follow the centre and are computed on a worker too. [member populate_on_ready] is ignored while streaming; a new bake of the [member data_map] places everything again.
+		</member>
 		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="32.0">
 			Width in metres of a tile: one point pattern and one [MultiMeshInstance3D] per mesh per tile, so tiles out of view are culled.
 		</member>
@@ -110,7 +143,7 @@
 	<signals>
 		<signal name="populated">
 			<description>
-				Emitted after each [method populate].
+				Emitted after each [method populate], and while [member streaming] each time [method is_stream_idle] becomes [code]true[/code].
 			</description>
 		</signal>
 	</signals>
