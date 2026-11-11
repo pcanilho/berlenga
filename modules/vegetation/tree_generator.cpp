@@ -2425,6 +2425,42 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			rad.push_back(r_end);
 		}
 		const bool stem = first.parent == 0;
+		if (!stem && r0 > 0.01f && pts.size() >= 2) {
+			// Branch collar: a limb swells where it leaves its parent, so its base meets the
+			// parent's bark in a smooth fillet instead of a pipe pushed into a pipe (the welded
+			// junctions of SpeedTree; Bloomenthal 1985 for the implicit version). The swelling
+			// grows with the limb's share of the parent's girth and fades over about one limb
+			// radius past the parent's surface.
+			const Node &par = nodes[first.parent];
+			const float rp = MAX(par.radius, r0);
+			const float sin_a = MAX(first.dir.cross(par.dir).length(), 0.35f);
+			const float surf = rp / sin_a; // From the parent's axis to its surface along the limb.
+			// Forks of near-equal stems get none: their join is a crotch, not a collar.
+			const float ratio = r0 / rp;
+			const float swell = 0.2f * CLAMP(ratio * 2.5f, 0.2f, 1.0f) * (1.0f - Math::smoothstep(0.35f, 0.6f, ratio));
+			const float seg = pts[0].distance_to(pts[1]);
+			LocalVector<Vector3> cp;
+			LocalVector<float> cr;
+			cp.push_back(pts[0]);
+			cr.push_back(rad[0] * (1.0f + swell));
+			const float marks[5] = { 0.85f, 1.0f, 1.0f, 1.0f, 1.0f };
+			const float after[5] = { 0.0f, 0.0f, 0.4f, 1.0f, 2.0f };
+			for (int k = 0; k < 5; k++) {
+				const float d = surf * marks[k] + r0 * after[k];
+				if (d >= seg * 0.95f) {
+					break;
+				}
+				const float past = MAX(d - surf, 0.0f);
+				cp.push_back(pts[0].lerp(pts[1], d / seg));
+				cr.push_back(Math::lerp(rad[0], rad[1], d / seg) * (1.0f + swell * Math::exp(-past / (0.7f * r0))));
+			}
+			for (uint32_t i = 1; i < pts.size(); i++) {
+				cp.push_back(pts[i]);
+				cr.push_back(rad[i]);
+			}
+			pts = cp;
+			rad = cr;
+		}
 		if (stem && flare > 0.0f) {
 			for (int i = 0; i < int(pts.size()); i++) {
 				const float h = MAX(0.0f, pts[i].y - nodes[0].start.y);
