@@ -569,16 +569,18 @@ void VegetationField3D::_publish_far(const Rect2 &p_rect) {
 		far_cells.clear();
 		return; // Nothing to show far away; another field may own the map.
 	}
-	// Premultiplied linear colour (half floats), so filtering between a patch and bare cells
-	// fades the cover without darkening the colour.
-	Ref<Image> img = Image::create_empty(far_size.x, far_size.y, false, Image::FORMAT_RGBAH);
+	// Premultiplied linear colour, stored as its square root in 8 bits (dark plant colours keep
+	// their precision; the shader squares it back), so filtering between a patch and bare cells
+	// fades the cover without darkening the colour. 8-bit RGBA: the path tracer's material
+	// evaluation reads it as the raster does (a half-float map came back white there).
+	Ref<Image> img = Image::create_empty(far_size.x, far_size.y, false, Image::FORMAT_RGBA8);
 	for (int y = 0; y < far_size.y; y++) {
 		for (int x = 0; x < far_size.x; x++) {
 			const FarCell &c = far_cells[y * far_size.x + x];
 			const float inv = c.cover > 0.0f ? 1.0f / c.cover : 0.0f;
 			// Overlapping plants: cover adds as 1 - exp(-sum), like overlapping crowns.
 			const float a = 1.0f - Math::exp(-c.cover);
-			img->set_pixel(x, y, Color(c.r * inv * a, c.g * inv * a, c.b * inv * a, a));
+			img->set_pixel(x, y, Color(Math::sqrt(c.r * inv * a), Math::sqrt(c.g * inv * a), Math::sqrt(c.b * inv * a), a));
 		}
 	}
 	far_texture = ImageTexture::create_from_image(img);
@@ -608,7 +610,7 @@ String VegetationField3D::get_floor_shader_code() {
 // cells, one leaf per cell at a random turn and size, overlapping their neighbours, two layers;
 // needles the same with thin strokes. Each layer fades to its mean colour once a pixel covers
 // its detail, so it neither aliases nor costs anything far away.
-global uniform sampler2D forest_floor_map : filter_linear;
+global uniform sampler2D forest_floor_map : hint_default_black, filter_linear;
 global uniform vec4 forest_floor_rect; // xy: corner, zw: size; z 0 = no forest.
 
 vec2 ff_hash2(vec2 p) {
@@ -739,7 +741,7 @@ vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
 	return c;
 }
 
-global uniform sampler2D vegetation_far_map : filter_linear; // Premultiplied linear colour, cover.
+global uniform sampler2D vegetation_far_map : hint_default_black, filter_linear; // sqrt of premultiplied linear colour, cover.
 global uniform vec4 vegetation_far_rect; // z 0: no plants published.
 global uniform float vegetation_far_range;
 
@@ -764,7 +766,7 @@ vec3 vegetation_far(vec3 world_pos, vec3 albedo, vec3 camera_pos) {
 		return albedo;
 	}
 	vec4 f = textureLod(vegetation_far_map, uv, 0.0);
-	return albedo * (1.0 - f.a * gone) + f.rgb * gone;
+	return albedo * (1.0 - f.a * gone) + f.rgb * f.rgb * gone;
 }
 
 // Ground albedo with the forest floor over it, where the canopy closes.
