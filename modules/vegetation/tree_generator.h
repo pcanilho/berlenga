@@ -154,6 +154,7 @@ public:
 		PARAM_APICAL_CONTROL, // Shoot growth on a branch of order k is scaled by this^k (Stava 2014; excurrent conifers < 1).
 		PARAM_LATERAL_EXTENSION, // Shoot length on a branch of order k is scaled by this^k; length only, not vigor.
 		PARAM_CROWN_CONE, // Excurrent crown: branches reach at most this times their depth below the top (0: off).
+		PARAM_LEADER_GROWTH, // Most metres a leader grows in a year (0: no limit).
 		PARAM_MAX,
 	};
 
@@ -224,9 +225,11 @@ private:
 	float height = 0.0f;
 	float crown_radius = 0.0f;
 	float crown_base = 0.0f;
+	float bole_height = 0.0f;
 	int leaf_count = 0;
 	float leaf_area_index = 0.0f;
 	static constexpr float MAX_LEAF_AREA_INDEX = 5.5f;
+	static constexpr float MAX_LEAF_AREA_DENSITY = 1.5f; // m2 of leaf per m3 of crown.
 	int shed_count = 0;
 	uint64_t generation_usec = 0;
 
@@ -292,6 +295,8 @@ public:
 	float get_height() const { return height; }
 	float get_crown_radius() const { return crown_radius; }
 	float get_crown_base() const { return crown_base; }
+	float get_bole_height() const { return bole_height; }
+	PackedFloat32Array get_foliage_profile(int p_bins) const;
 	int get_internode_count() const;
 	int get_dead_branch_count() const;
 	int get_leaf_count() const { return leaf_count; }

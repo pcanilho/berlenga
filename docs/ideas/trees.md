@@ -306,6 +306,20 @@ index 17. Whole twigs are now dropped at random to at most LAI 5.5, the temperat
 (was 1.49M, 23.6M). `get_leaf_area_index()` reports it. The hero mesh is still millions of
 triangles; LODs and leaf clusters are stage 2.
 
+**Stand-grown form, second pass.** Stand trees poured all vigor into the leader (beech 39 m,
+sugar maple 36 m at 50 years) with a crown a few metres deep. `leader_growth` caps the metres any
+shoot adds in a year (0.6-0.7 for beech, oak and maples, 0.75-0.9 for white pine, spruce, larch
+and birch). Capped, they turned broom-shaped instead: low limbs of the open sapling climbed to the
+canopy, because the stand was modelled at its final spacing from the first year. The stand now
+starts dense and thins as it grows, spacing a quarter of the top height (Hart-Becking index 20-30%;
+Wilson 1946) up to the mature spacing, so lower limbs are shaded out early: forest beech clear
+bole 0.6 m to 5 m, sugar maple 13 m (`get_bole_height()`). Leaves are now thinned first where they
+crowd, to 1.5 m2 of leaf per m3 (Lalic and Mihailovic 2004), then to the crown's LAI, and by twigs
+and leaves in equal parts, so the dense top shell thins before the sparse inner crown. Conifer
+buds no longer die of shade (crowded young whorls under the tip left a bare band); they go only
+by shedding. `get_foliage_profile(bins)` gives foliage reach per height slice for checks. Still
+open: stand crowns hold leaves only in the top few metres.
+
 **Eastern North America** (Paulo's pick, 11 Nov). Sugar and red maple, northern red and white
 oak, eastern white pine, eastern hemlock, American beech, paper and yellow birch, witch-hazel and
 mountain laurel. Each starts from its nearest European relative's growth rules and changes habit,

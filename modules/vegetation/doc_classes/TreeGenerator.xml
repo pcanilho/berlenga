@@ -30,6 +30,12 @@
 				Grows the tree of the current [member preset], [member seed] and parameters, and returns its mesh. The same settings always give the same tree.
 			</description>
 		</method>
+		<method name="get_bole_height" qualifiers="const">
+			<return type="float" />
+			<description>
+				Clear bole of the last tree grown: the height of the lowest live limb over 2 cm thick leaving a stem. Stand-grown trees self-prune to a long clear bole.
+			</description>
+		</method>
 		<method name="get_crown_base" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -52,6 +58,13 @@
 			<return type="int" />
 			<description>
 				Time the last [method generate] took, in microseconds.
+			</description>
+		</method>
+		<method name="get_foliage_profile" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<param index="0" name="bins" type="int" default="10" />
+			<description>
+				Mean horizontal reach (metres from the stem) of the leafy shoots of the last tree grown, in [param bins] equal height slices from the ground to the top. A slice with no foliage reads 0.
 			</description>
 		</method>
 		<method name="get_height" qualifiers="const">
@@ -184,6 +197,9 @@
 		</member>
 		<member name="lateral_extension" type="float" setter="set_param" getter="get_param" default="1.0">
 			Shoot length factor per branching order, up to order 2. It changes only how far branches reach, not how many buds or leaves they carry; below 1 it gives the narrow cone of open-grown spruce, fir and larch (Wilson 2000).
+		</member>
+		<member name="leader_growth" type="float" setter="set_param" getter="get_param" default="0.7">
+			Most metres a stem's leader grows in a year (about 0.6 for beech and maple, up to 1 for birch, larch and white pine). It keeps stand-grown trees, whose shaded sides send all vigor up, to real heights and crown depths. 0 removes the limit.
 		</member>
 		<member name="leaf_color" type="Color" setter="set_leaf_color" getter="get_leaf_color" default="Color(0.13, 0.25, 0.06, 1)">
 			Leaf or needle colour.
@@ -529,7 +545,10 @@
 		<constant name="PARAM_CROWN_CONE" value="38" enum="Param">
 			Index of [member crown_cone].
 		</constant>
-		<constant name="PARAM_MAX" value="39" enum="Param">
+		<constant name="PARAM_LEADER_GROWTH" value="39" enum="Param">
+			Index of [member leader_growth].
+		</constant>
+		<constant name="PARAM_MAX" value="40" enum="Param">
 			Number of parameters.
 		</constant>
 	</constants>

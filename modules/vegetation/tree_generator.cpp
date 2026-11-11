@@ -141,10 +141,12 @@ void TreeGenerator::set_preset(Preset p_preset) {
 	p[PARAM_APICAL_CONTROL] = 1.0f;
 	p[PARAM_LATERAL_EXTENSION] = 1.0f;
 	p[PARAM_CROWN_CONE] = 0.0f;
+	p[PARAM_LEADER_GROWTH] = 0.7f;
 	p[PARAM_LEAF_WIDTH] = 0.32f;
 	phyllotaxis = PHYLLOTAXIS_ALTERNATE;
 	switch (p_preset) {
 		case PRESET_OAK: // Quercus robur: decurrent, wide, gnarled, light-demanding.
+			p[PARAM_LEADER_GROWTH] = 0.65f;
 			p[PARAM_YEARS] = 45;
 			p[PARAM_INTERNODE_LENGTH] = 0.45f;
 			p[PARAM_APICAL_DOMINANCE] = 0.57f;
@@ -161,6 +163,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			leaf_color = Color(0.13f, 0.25f, 0.06f);
 			break;
 		case PRESET_BEECH: // Fagus sylvatica: tall, smooth grey bark, very shade tolerant.
+			p[PARAM_LEADER_GROWTH] = 0.6f;
 			p[PARAM_YEARS] = 50;
 			p[PARAM_APICAL_DOMINANCE] = 0.57f;
 			p[PARAM_APICAL_DOMINANCE_OLD] = 0.51f;
@@ -177,6 +180,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			leaf_color = Color(0.17f, 0.3f, 0.07f);
 			break;
 		case PRESET_BIRCH: // Betula pendula: narrow, pendulous twigs, white bark, pioneer.
+			p[PARAM_LEADER_GROWTH] = 0.9f;
 			p[PARAM_YEARS] = 28;
 			p[PARAM_APICAL_DOMINANCE] = 0.58f;
 			p[PARAM_APICAL_DOMINANCE_OLD] = 0.54f;
@@ -218,12 +222,15 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			bark_color = Color(0.42f, 0.27f, 0.18f);
 			leaf_color = Color(0.12f, 0.22f, 0.1f);
 			p[PARAM_CROWN_CONE] = 0.45f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.0f;
 			p[PARAM_SHADOW_STRENGTH] = 0.04f;
 			break;
 		// Conifers keep a cone: branches reach about 0.3 of their depth below the top (open-grown
 		// spruce and fir crowns are about a third as wide as tall), with a lighter shadow so the
-		// denser crown keeps its buds.
+		// denser crown keeps its buds. Whorl buds near the top crowd into few shadow cells and died
+		// of shade there, leaving a bare band under the tip; conifer buds only die by shedding.
 		case PRESET_NORWAY_SPRUCE: // Picea abies: strong leader, drooping laterals, dead lower limbs.
+			p[PARAM_LEADER_GROWTH] = 0.8f;
 			p[PARAM_YEARS] = 50;
 			p[PARAM_INTERNODE_LENGTH] = 0.35f;
 			phyllotaxis = PHYLLOTAXIS_WHORLED;
@@ -246,6 +253,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			bark_color = Color(0.33f, 0.27f, 0.23f);
 			leaf_color = Color(0.07f, 0.17f, 0.08f);
 			p[PARAM_CROWN_CONE] = 0.3f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.0f;
 			p[PARAM_SHADOW_STRENGTH] = 0.022f;
 			break;
 		case PRESET_HAZEL: // Corylus avellana: multi-stemmed, basitonic, sprouts from the base.
@@ -298,6 +306,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			leaf_color = Color(0.17f, 0.31f, 0.08f);
 			break;
 		case PRESET_SYCAMORE_MAPLE: // Acer pseudoplatanus: opposite buds, broad dome, big leaves.
+			p[PARAM_LEADER_GROWTH] = 0.7f;
 			p[PARAM_YEARS] = 42;
 			phyllotaxis = PHYLLOTAXIS_OPPOSITE;
 			p[PARAM_APICAL_DOMINANCE] = 0.57f;
@@ -371,6 +380,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			leaf_color = Color(0.25f, 0.33f, 0.2f);
 			break;
 		case PRESET_LARCH: // Larix decidua: whorled conifer, deciduous needle tufts, hanging twigs.
+			p[PARAM_LEADER_GROWTH] = 0.9f;
 			p[PARAM_YEARS] = 38;
 			phyllotaxis = PHYLLOTAXIS_WHORLED;
 			p[PARAM_WHORL_BUDS] = 4;
@@ -390,9 +400,11 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			bark_color = Color(0.36f, 0.25f, 0.2f);
 			leaf_color = Color(0.25f, 0.4f, 0.12f);
 			p[PARAM_CROWN_CONE] = 0.35f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.0f;
 			p[PARAM_SHADOW_STRENGTH] = 0.03f;
 			break;
 		case PRESET_SILVER_FIR: // Abies alba: very shade tolerant, flat horizontal sprays.
+			p[PARAM_LEADER_GROWTH] = 0.7f;
 			p[PARAM_YEARS] = 50;
 			p[PARAM_INTERNODE_LENGTH] = 0.35f;
 			phyllotaxis = PHYLLOTAXIS_WHORLED;
@@ -413,6 +425,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			bark_color = Color(0.5f, 0.5f, 0.48f);
 			leaf_color = Color(0.06f, 0.16f, 0.07f);
 			p[PARAM_CROWN_CONE] = 0.3f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.0f;
 			p[PARAM_SHADOW_STRENGTH] = 0.022f;
 			break;
 		case PRESET_ROWAN: // Sorbus aucuparia: small tree, ascending branches, pinnate leaves.
@@ -572,6 +585,7 @@ void TreeGenerator::_set_north_american(Preset p_preset) {
 			leaf_color = Color(0.13f, 0.26f, 0.08f);
 			break;
 		case PRESET_WHITE_PINE: // Pinus strobus: tall, level whorls in tiers, long soft needles.
+			p[PARAM_LEADER_GROWTH] = 0.75f;
 			p[PARAM_YEARS] = 50;
 			p[PARAM_INTERNODE_LENGTH] = 0.45f;
 			p[PARAM_APICAL_DOMINANCE] = 0.78f;
@@ -589,6 +603,7 @@ void TreeGenerator::_set_north_american(Preset p_preset) {
 			leaf_color = Color(0.1f, 0.2f, 0.14f);
 			break;
 		case PRESET_HEMLOCK: // Tsuga canadensis: nodding leader, fine drooping sprays, deepest shade.
+			p[PARAM_LEADER_GROWTH] = 0.6f;
 			p[PARAM_YEARS] = 55;
 			p[PARAM_INTERNODE_LENGTH] = 0.3f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
@@ -888,7 +903,12 @@ void TreeGenerator::_build_shadow_grid(int p_year) {
 		}
 	}
 	if (forest_shade > 0.0f && top > 0.0f) {
-		const float r0 = forest_spacing * 0.5f;
+		// A stand starts dense and thins as it grows: spacing stays near a quarter of the top
+		// height (the Hart-Becking spacing index of 20-30% that forest stands keep through their
+		// life; Wilson 1946), up to the mature spacing. Grown at the final spacing from the first
+		// year, a stand tree kept the low limbs of an open sapling and grew broom-shaped; closing
+		// the canopy early shades them out and leaves the clear bole of real stand-grown trees.
+		const float r0 = 0.5f * CLAMP(0.25f * top, 2.0f * cell, forest_spacing);
 		const float r1 = r0 + 2.0f * cell;
 		const Vector3 base = nodes[0].start;
 		for (int y = 0; y < grid_size.y; y++) {
@@ -1053,6 +1073,7 @@ void TreeGenerator::_grow_year(int p_year) {
 		// Stochastic rounding: a bud with vigor 0.4 grows one internode four years in ten, so weak
 		// buds are slow rather than starved outright.
 		int count = MIN(int(Math::floor(buds[bi].vigor + rng.randf())), int(params[PARAM_MAX_SHOOT]));
+		bool waiting = false;
 		if (cone > 0.0f && count > 0) {
 			const Node &on = nodes[buds[bi].node];
 			const bool at_root = buds[bi].node == 0;
@@ -1063,16 +1084,21 @@ void TreeGenerator::_grow_year(int p_year) {
 				for (int k = 0; k < count; k++) {
 					const Vector3 q = p0 + buds[bi].dir * (l0 * (k + 1));
 					const float reach = Vector2(q.x - root.x, q.z - root.z).length();
-					if (reach > cone * MAX(top - q.y, 0.0f) + 0.3f) {
+					// One internode of slack, so a new whorl at the tip can start its first shoot.
+					if (reach > cone * MAX(top - q.y, 0.0f) + l0) {
 						break;
 					}
 					allowed++;
 				}
+				waiting = allowed == 0;
 				count = allowed;
 			}
 		}
 		if (count < 1) {
-			buds[bi].idle++;
+			// A bud held back by the cone is not starved: it waits for the leader without ageing.
+			if (!waiting) {
+				buds[bi].idle++;
+			}
 			// Terminal buds that cannot extend stay alive as spurs (they die only of shade); dormant
 			// lateral buds die after a few years.
 			if (!buds[bi].terminal && buds[bi].idle > int(params[PARAM_BUD_IDLE_YEARS])) {
@@ -1096,7 +1122,15 @@ void TreeGenerator::_grow_year(int p_year) {
 		// vigor for it starved the crown of buds and leaves (vigor comes from collected light) and
 		// the tree collapsed to a pole; scaling the shoot length alone keeps every bud and needle
 		// and only draws the branches in.
-		const float len = base_len * CLAMP(bud.vigor / float(count), 0.25f, 1.5f) * Math::pow(params[PARAM_LATERAL_EXTENSION], float(MIN(order, 2)));
+		float len = base_len * CLAMP(bud.vigor / float(count), 0.25f, 1.5f) * Math::pow(params[PARAM_LATERAL_EXTENSION], float(MIN(order, 2)));
+		// Height growth has a ceiling (the largest annual leader shoots: about 0.6 m for beech and
+		// maple, 0.8-1 m for spruce, larch, birch and white pine; Burns and Honkala 1990; Schutt et
+		// al., Enzyklopadie der Holzgewachse). Without it a stand-grown tree, its sides shaded,
+		// poured all vigor into the leader and reached 36-46 m in 50 years with a crown a few
+		// metres deep.
+		if (params[PARAM_LEADER_GROWTH] > 0.0f) { // Every shoot: a branch turned up to replace the leader obeys it too.
+			len = MIN(len, params[PARAM_LEADER_GROWTH] / float(count));
+		}
 		const float grav = order == 0 ? params[PARAM_TRUNK_GRAVITROPISM] : params[PARAM_GRAVITROPISM];
 		Vector3 pos = from_root ? from.start : from.end();
 		Vector3 dir = bud.dir;
@@ -1302,6 +1336,15 @@ void TreeGenerator::_measure() {
 			leaf_reach.push_back(Vector2(e.x, e.z).length());
 			leaf_heights.push_back(e.y);
 		}
+	}
+	// Clear bole: the lowest live limb (over 2 cm thick) leaving a stem.
+	bole_height = height;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.dead || n.order == 0 || n.radius < 0.02f || nodes[n.parent].order != 0 || nodes[n.parent].main == i) {
+			continue;
+		}
+		bole_height = MIN(bole_height, n.start.y);
 	}
 	crown_base = 0.0f;
 	if (!leaf_heights.is_empty()) {
@@ -1554,26 +1597,51 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	RandomPCG lr;
 	lr.seed(uint64_t(seed) * 7919u + 13u);
 	// Leaf area budget. One internode stands for a whole twig system, so the raw count can put far
-	// more leaf area on the tree than it carries: an open oak came out near leaf area index 17. Real
-	// temperate broadleaf crowns hold LAI 3-8, about 5-6 on average (Breda, J. Exp. Bot. 54, 2003;
-	// Asner et al., Global Ecol. Biogeogr. 12, 2003), so drop whole twigs at random until the crown
-	// holds that. Leaf size stays true; the count and the mesh fall to real numbers.
-	float keep = 1.0f;
+	// more leaf area on the tree than it carries: an open oak came out near leaf area index 17.
+	// Two real limits thin it. Locally, leaf area density in a broadleaf crown peaks near 1.5 m2 of
+	// leaf per m3 (beech and oak canopies, 1-2; Lalic and Mihailovic, J. Appl. Meteorol. 43, 2004),
+	// so leaves are thinned first where shoots crowd, mostly the sunlit top shell, and the sparse
+	// lower and inner crown keeps what it has. Over the whole crown, temperate broadleaves hold LAI
+	// 3-8, about 5-6 (Breda, J. Exp. Bot. 54, 2003; Asner et al., Global Ecol. Biogeogr. 12, 2003).
+	// Leaf size stays true; the count and the mesh fall to real numbers.
+	LocalVector<float> node_keep;
+	node_keep.resize(nodes.size());
+	for (float &k : node_keep) {
+		k = 1.0f;
+	}
 	leaf_area_index = 0.0f;
 	if (!needles && per > 0 && crown_radius > 0.0f) {
 		// Blade area: 2 * width * size^2 * integral of sin(pi t^0.75) over t (0.656).
 		const float blade = 2.0f * params[PARAM_LEAF_WIDTH] * size * size * 0.656f;
-		double area = 0.0;
+		const float voxel = 1.0f; // Metres.
+		HashMap<Vector3i, float> density;
+		LocalVector<float> node_area;
+		node_area.resize(nodes.size());
 		for (int i = 1; i < int(nodes.size()); i++) {
 			const Node &n = nodes[i];
+			node_area[i] = 0.0f;
 			if ((!n.leafy && !spurs[i]) || n.removed || n.dead) {
 				continue;
 			}
 			const int tw = spurs[i] ? MAX(1, per / 12) : MAX(1, per / 4);
-			area += double(tw * MAX(1, per / tw)) * blade;
+			node_area[i] = float(tw * MAX(1, per / tw)) * blade;
+			const Vector3i v = Vector3i((n.end() / voxel).floor());
+			density[v] = (density.has(v) ? density[v] : 0.0f) + node_area[i];
+		}
+		double area = 0.0;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (node_area[i] <= 0.0f) {
+				continue;
+			}
+			const float d = density[Vector3i((nodes[i].end() / voxel).floor())] / (voxel * voxel * voxel);
+			node_keep[i] = d > MAX_LEAF_AREA_DENSITY ? MAX_LEAF_AREA_DENSITY / d : 1.0f;
+			area += double(node_area[i] * node_keep[i]);
 		}
 		const float lai = float(area / (Math::PI * crown_radius * crown_radius));
-		keep = lai > MAX_LEAF_AREA_INDEX ? MAX_LEAF_AREA_INDEX / lai : 1.0f;
+		const float keep = lai > MAX_LEAF_AREA_INDEX ? MAX_LEAF_AREA_INDEX / lai : 1.0f;
+		for (float &k : node_keep) {
+			k *= keep;
+		}
 		leaf_area_index = lai * keep;
 	}
 	for (int i = 1; i < int(nodes.size()); i++) {
@@ -1581,6 +1649,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		if ((!n.leafy && !spurs[i]) || n.removed || n.dead) {
 			continue;
 		}
+		// Thin by twigs and by leaves on the kept twigs in equal parts: dropping whole twigs alone
+		// left heavily thinned crowns as isolated clumps with daylight between them.
+		const float keep_twig = Math::sqrt(node_keep[i]);
+		const float keep_leaf = keep_twig;
 		Vector3 ref = Math::abs(n.dir.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
 		const Vector3 perp = n.dir.cross(ref).normalized();
 		float roll = lr.randf() * Math::TAU;
@@ -1654,6 +1726,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			Vector3 side0 = p_dir.cross(Vector3(0, 1, 0));
 			side0 = side0.length_squared() > 1e-6f ? side0.normalized() : perp;
 			for (int k = 0; k < p_leaves; k++) {
+				if (keep_leaf < 1.0f && lr.randf() > keep_leaf) {
+					continue;
+				}
 				const float u = (k + 1.0f) / p_leaves;
 				const Vector3 at = u < 0.5f ? p_base.lerp(mid, u * 2.0f) : mid.lerp(tip, u * 2.0f - 1.0f);
 				const Vector3 side = side0 * ((k & 1) ? 1.0f : -1.0f);
@@ -1677,7 +1752,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float elev = Math::deg_to_rad(Math::lerp(-35.0f, 45.0f, lr.randf()));
 			const Vector3 tdir = (around * (0.8f * Math::cos(elev)) + n.dir * 0.5f + Vector3(0, Math::sin(elev), 0)).normalized();
 			const float tlen = n.length * (0.45f + 0.45f * lr.randf());
-			if (lr.randf() > keep) {
+			if (lr.randf() > keep_twig) {
 				continue;
 			}
 			if (lr.randf() < 0.4f && per_twig >= 4) {
@@ -2153,6 +2228,34 @@ Ref<Biome> TreeGenerator::make_woodland(int p_variants, Region p_region) {
 	return biome;
 }
 
+// Foliage by height: the mean horizontal reach of leafy shoots in each of p_bins equal slices from
+// the ground to the top, so tests can see where a crown is full and where it is bare.
+PackedFloat32Array TreeGenerator::get_foliage_profile(int p_bins) const {
+	PackedFloat32Array out;
+	ERR_FAIL_COND_V(p_bins < 1 || nodes.is_empty(), out);
+	out.resize(p_bins);
+	PackedInt32Array count;
+	count.resize(p_bins);
+	out.fill(0.0f);
+	count.fill(0);
+	const Vector3 root = nodes[0].start;
+	const float h = MAX(height, 0.01f);
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.dead || !(n.leafy || (i < int(spurs.size()) && spurs[i]))) {
+			continue;
+		}
+		const Vector3 e = n.end();
+		const int b = CLAMP(int((e.y - root.y) / h * p_bins), 0, p_bins - 1);
+		out.write[b] += Vector2(e.x - root.x, e.z - root.z).length();
+		count.write[b]++;
+	}
+	for (int b = 0; b < p_bins; b++) {
+		out.write[b] = count[b] > 0 ? out[b] / count[b] : 0.0f;
+	}
+	return out;
+}
+
 Ref<ArrayMesh> TreeGenerator::generate() {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	nodes.clear();
@@ -2222,6 +2325,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_height"), &TreeGenerator::get_height);
 	ClassDB::bind_method(D_METHOD("get_crown_radius"), &TreeGenerator::get_crown_radius);
 	ClassDB::bind_method(D_METHOD("get_crown_base"), &TreeGenerator::get_crown_base);
+	ClassDB::bind_method(D_METHOD("get_bole_height"), &TreeGenerator::get_bole_height);
+	ClassDB::bind_method(D_METHOD("get_foliage_profile", "bins"), &TreeGenerator::get_foliage_profile, DEFVAL(10));
 	ClassDB::bind_method(D_METHOD("get_internode_count"), &TreeGenerator::get_internode_count);
 	ClassDB::bind_method(D_METHOD("get_dead_branch_count"), &TreeGenerator::get_dead_branch_count);
 	ClassDB::bind_method(D_METHOD("get_leaf_count"), &TreeGenerator::get_leaf_count);
@@ -2246,7 +2351,7 @@ void TreeGenerator::_bind_methods() {
 		"shadow_falloff", "shadow_depth", "bud_light_min", "bud_idle_years", "shed_ratio", "dead_branch_keep",
 		"tip_radius", "pipe_exponent", "gravity_bending", "stems", "stem_spread", "basal_sprouts", "root_flare",
 		"leaf_size", "leaves_per_internode", "leaf_years", "needles", "twig_droop", "leaf_width", "apical_control",
-		"lateral_extension", "crown_cone"
+		"lateral_extension", "crown_cone", "leader_growth"
 	};
 	for (int i = 0; i < PARAM_MAX; i++) {
 		ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, names[i]), "set_param", "get_param", i);
@@ -2340,5 +2445,6 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PARAM_APICAL_CONTROL);
 	BIND_ENUM_CONSTANT(PARAM_LATERAL_EXTENSION);
 	BIND_ENUM_CONSTANT(PARAM_CROWN_CONE);
+	BIND_ENUM_CONSTANT(PARAM_LEADER_GROWTH);
 	BIND_ENUM_CONSTANT(PARAM_MAX);
 }
