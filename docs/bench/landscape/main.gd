@@ -116,6 +116,9 @@ func _ready() -> void:
 				for k2 in ["bar", "bar-level", "bowl"]:
 					vd.erase(k2)
 				vd["rock-var"] = "1.0"
+				# A slightly lower snowline and harder ice than the marked valley: cirques in every side valley.
+				vd["ela"] = "400"
+				vd["glacial-erosion"] = "15"
 		for k in vd:
 			if not args.has(k):
 				args[k] = vd[k]

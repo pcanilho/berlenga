@@ -1043,6 +1043,20 @@ and the existing basin-lake rule makes lakes of them with no markers. Test: the 
 `--bowl` makes a lake at 300 m or higher with a fall below it on a river, and hanging side valleys show steps at
 their mouths.
 
+Built (11 Nov):
+
+- The rock-quality multiplier acts on the ice grid's erosion rate (64 m nodes), not per bed cell. Per bed cell, a
+  soft cell between ice nodes was invisible to the step limit and to the supercooling stop (both on the ice grid)
+  and dug pits 500 to 2700 m deep. On the ice grid the stop holds and each basin is as wide as the ice samples.
+- `--layout=valley --auto-lake` (no bar, bowl or level markers; ELA 400 m, erosion x15, variation 1.0): seven
+  tarns and paternoster lakes form by themselves at 140 to 310 m in the side valleys, 1.5 to 2.5 ha, each with a
+  fall of 20 to 40 m below its outlet. Erosion stays under 80 m; the ice stage takes 2.5 s.
+- Variation 1.4 to 2.0 makes lakes 100 to 250 m deep in 2 to 3 ha basins: deeper than real cirque lakes (depth
+  about a tenth of the width), so the bench keeps 1.0.
+- Not yet: the big fall on the main river. Its glacier comes from beyond the map (the inflow carries water, not
+  ice), so the trunk is never glaciated at the map edge and no riegel forms on it. That needs ice inflow at the
+  edge, an ice flux boundary at the inflow cell; the showcase keeps its marked bar until then.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

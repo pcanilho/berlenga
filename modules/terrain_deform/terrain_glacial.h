@@ -117,6 +117,15 @@ public:
 			_solve(first ? p.first_iterations : p.iterations);
 			first = false;
 			_erosion_rate();
+			if (p_scale) {
+				// Rock quality acts on the ice grid's rate, so the step limit and the adverse-slope stop (both on
+				// that grid) see it: a soft patch digs a basin as wide as the ice samples, never a narrow pit.
+				for (int z = 0; z < gz; z++) {
+					for (int x = 0; x < gx; x++) {
+						rate[z * gx + x] *= p_scale[std::min(z * k, ny - 1) * nx + std::min(x * k, nx - 1)];
+					}
+				}
+			}
 			double rmax = 0.0;
 			for (int i = 0; i < m; i++) {
 				rmax = std::max(rmax, rate[i]);
@@ -142,9 +151,6 @@ public:
 					const bool lv = p_level && !std::isnan(p_level[i]);
 					const bool hard = p_resist && p_resist[i] > 0.0 && (!lv || p_bed[i] <= p_level[i] + 1.0);
 					double e = r * dt / (hard ? 1.0 + 199.0 * p_resist[i] : 1.0);
-					if (p_scale) {
-						e *= p_scale[i]; // rock quality: joint density and hardness (soft patches dig basins)
-					}
 					if (lv && p_resist && p_resist[i] > 0.0) {
 						e = std::min(e, std::max(0.0, p_bed[i] - p_level[i]));
 					}
