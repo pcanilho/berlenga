@@ -5,7 +5,7 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 ---
 
 - **Snow cover** (`SnowCover3D`): a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift.
-- **Deep snow** (`SnowSurface3D`, `snow_deform` group): deep snow as geometry with prints and tracks; bodies sink by weight (Bekker) and rest in their own tracks; tracks refill with new snow and wind.
+- **Deep snow** (`SnowSurface3D`, `snow_deform` group): deep snow as geometry with prints and tracks; bodies sink by weight (Bekker) and rest in their own tracks; tracks refill with new snow and wind; print edges stay clean at fine deform resolutions, with pushed-aside snow sliding at its repose angle.
 - **Falling snow** (`SnowFall3D`): falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.
 - **Snow climate** (`SnowClimate`, `recipe`; `SnowCover3D.climate_map`): bakes a winter over the whole terrain from the terrain's climate recipe and precipitation map, with snow lines, shaded faces that keep their snow and loaded lee slopes; the cover carries it on with the weather and draws it far away.
 - **Cornices** (`SnowCornice3D`): overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).
@@ -44,6 +44,10 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 ![Bodies leaving prints and tracks in deep snow](media/snow-tracks.gif)
 
 *Tracks: bodies sink in by weight as they move.*
+
+![Footprints in deep snow at a fine deform resolution, before and after](media/snow-print-edges.jpg)
+
+*Print edges: spikes and toothed walls before; clean rims now.*
 
 ![Falling snow round a shelter at full size, raster and path traced](media/snowfall.jpg)
 
