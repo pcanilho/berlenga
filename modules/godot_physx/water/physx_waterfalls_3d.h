@@ -78,7 +78,7 @@ private:
 	float mist_min_discharge = 0.2f;
 	float min_height = 5.0f;
 	float rock_roughness = 0.15f; // k_s, m
-	float manning_n = 0.05f; // rough rock
+	float friction_factor = 0.2f; // Darcy-Weisbach f of white water on rough rock (Chanson: 0.1 to 0.3 on steps)
 	float row_spacing = 1.0f; // m along the face
 
 	LocalVector<Face> faces;
@@ -87,7 +87,8 @@ private:
 	LocalVector<Node3D *> effects;
 	double water_time = 0.0;
 
-	void _build_face(const Dictionary &p_fall);
+	void _build_face(const Dictionary &p_fall, Object *p_source);
+	void _exclude_from_rivers();
 	void _build_mesh();
 	void _build_effects();
 	void _clear_effects();
@@ -116,8 +117,8 @@ public:
 	float get_min_height() const { return min_height; }
 	void set_rock_roughness(float p_ks);
 	float get_rock_roughness() const { return rock_roughness; }
-	void set_manning_n(float p_n);
-	float get_manning_n() const { return manning_n; }
+	void set_friction_factor(float p_f);
+	float get_friction_factor() const { return friction_factor; }
 	void set_row_spacing(float p_spacing);
 	float get_row_spacing() const { return row_spacing; }
 

@@ -420,6 +420,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mouth_target"), &PhysXRiver3D::get_mouth_target);
 	ClassDB::bind_method(D_METHOD("set_fall_min_height", "height"), &PhysXRiver3D::set_fall_min_height);
 	ClassDB::bind_method(D_METHOD("get_fall_min_height"), &PhysXRiver3D::get_fall_min_height);
+	ClassDB::bind_method(D_METHOD("set_fall_exclusions", "points"), &PhysXRiver3D::set_fall_exclusions);
+	ClassDB::bind_method(D_METHOD("get_fall_exclusions"), &PhysXRiver3D::get_fall_exclusions);
 	ClassDB::bind_method(D_METHOD("set_fall_spray", "enabled"), &PhysXRiver3D::set_fall_spray);
 	ClassDB::bind_method(D_METHOD("get_fall_spray"), &PhysXRiver3D::get_fall_spray);
 	ClassDB::bind_method(D_METHOD("set_fall_mist", "enabled"), &PhysXRiver3D::set_fall_mist);
@@ -495,6 +497,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mouth_blend", PROPERTY_HINT_RANGE, "0,50,0.1,or_greater,suffix:m"), "set_mouth_blend", "get_mouth_blend");
 	ADD_GROUP("Waterfalls", "fall_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_min_height", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_fall_min_height", "get_fall_min_height");
+	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "fall_exclusions"), "set_fall_exclusions", "get_fall_exclusions");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_spray"), "set_fall_spray", "get_fall_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_mist"), "set_fall_mist", "get_fall_mist");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_mist_amount", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater"), "set_fall_mist_amount", "get_fall_mist_amount");
@@ -2086,6 +2089,27 @@ void PhysXRiver3D::_find_falls(PhysicsDirectSpaceState3D *p_space, const LocalVe
 		sec.fall_drop = false;
 		sec.plunge = 0.0f;
 	}
+	// Faces another node draws (PhysXWaterfalls3D's contact falls, as lip and foot pairs): the ribbon down them is
+	// hidden under that sheet, and no fall is made there.
+	if (fall_exclusions.size() >= 2) {
+		const Transform3D to_local = (is_inside_tree() ? get_global_transform() : get_transform()).affine_inverse();
+		for (int e = 0; e + 1 < fall_exclusions.size(); e += 2) {
+			const Vector3 lip = to_local.xform(fall_exclusions[e]);
+			const Vector3 foot = to_local.xform(fall_exclusions[e + 1]);
+			const Vector2 l2(lip.x, lip.z);
+			const Vector2 f2(foot.x, foot.z);
+			for (int k = 0; k + 1 < count; k++) {
+				const Vector3 c = sections[k].centre.lerp(sections[k + 1].centre, 0.5f);
+				const Vector2 c2(c.x, c.z);
+				const Vector2 seg = f2 - l2;
+				const float t = seg.length_squared() > 1e-6f ? CLAMP((c2 - l2).dot(seg) / seg.length_squared(), 0.0f, 1.0f) : 0.0f;
+				const float reach = MAX(6.0f, sections[k].width);
+				if (c2.distance_to(l2 + seg * t) < reach && sections[k].surface < lip.y + 1.0f && sections[k + 1].surface > foot.y - 1.0f) {
+					sections[k].fall_drop = true;
+				}
+			}
+		}
+	}
 	if (fall_min_height <= 0.0f || count < 3) {
 		return;
 	}
@@ -2145,6 +2169,10 @@ void PhysXRiver3D::_find_falls(PhysicsDirectSpaceState3D *p_space, const LocalVe
 		fall.lip = sa.centre.lerp(sections[a + 1].centre, t_lip);
 		fall.lip.y = p_bed[a];
 		fall.pool = sections[b].surface;
+		// A fall another node draws (a contact fall on its face) is not drawn again here.
+		if (sections[a].fall_drop || sections[b].fall_drop) {
+			continue;
+		}
 		// The free jet must stay clear of the ground (the underside of the sheet
 		// against the bed under it); a steep chute it would run down stays a cascade.
 		const float drop = fall.lip.y + 0.5f * yb - fall.pool;
@@ -2463,6 +2491,11 @@ void PhysXRiver3D::_build_fall_effects() {
 
 void PhysXRiver3D::set_fall_min_height(float p_height) {
 	fall_min_height = MAX(p_height, 0.0f);
+	_queue_build();
+}
+
+void PhysXRiver3D::set_fall_exclusions(const PackedVector3Array &p_points) {
+	fall_exclusions = p_points;
 	_queue_build();
 }
 

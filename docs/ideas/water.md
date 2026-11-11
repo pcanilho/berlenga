@@ -1865,8 +1865,80 @@ metres up. Raster and path tracing agree to about a third on how much the mist b
 
 Not done: rainbows (a Mie lobe at 138 degrees needs a spectral phase function; HG has none).
 
+## Step 6a: contact falls (11 Nov, first of three waterfall stages)
+
+Gap analysis : most falls the terrain generator makes are not free
+drops. The water stays on a steep face (horsetail or slide), and the river drew those as a plain ribbon.
+
+### What a contact fall shows
+
+- **White from part-way down.** On a steep chute the turbulent boundary layer grows from the lip; where it
+  reaches the surface, air is drawn in and the flow turns white (the inception point). Upstream of it the
+  water is clear and glassy. Smooth chutes (Wood, Ackers and Loveless 1983; Chanson, "Self-aerated flows on
+  chutes and spillways", J. Hydraulic Eng. 119(2), 1993): `L_i / k_s = 13.6 (sin a)^0.0796 F*^0.713`, with
+  `F* = q / sqrt(g sin a k_s^3)` and `k_s` the rock roughness. Below it the mean air concentration grows to
+  an equilibrium `C_e = 0.9 sin a` (Chanson 1993, up to about 75 degrees). On rock with `k_s` 0.1 to 0.3 m
+  and q of 0.1 to 0.7 m^2/s, `L_i` is 2 to 8 m: a tall face is white for nearly all of its height.
+- **Bulking.** Aerated water swells: depth `d = d_w / (1 - C)`, so the white sheet is two to ten times
+  thicker than clear water at the same discharge.
+- **Ledges throw spray.** Where the face steps out (a rock bed), the sheet hits the step at near the speed
+  it has gathered and splashes; each ledge is a small plunge.
+- **Mist off the face.** Fine drops leave the aerated surface the whole way down, so a tall contact fall
+  carries a thin veil, densest at the ledges and the foot.
+- **Speed.** Steep thin films reach their friction-limited speed within metres; they do not accelerate as
+  a free jet. Uniform equilibrium flow on chutes: `V = (8 g q sin a / f)^(1/3)` (Darcy-Weisbach friction on the
+  depth `q / V`; Chanson 1993), with `f` about 0.1 to 0.3 on rough or stepped rock.
+
+### How others do it
+
+Shipped games use hand-placed meshes with panning white textures and particles at the foot (UE: Niagara plus
+panning meshes; Unity HDRP's Glacier sample: deformer plus animated decals; Horizon: impact effects only).
+None tie whiteness to the flow. Hydraulics gives the inception point and the air content directly, so the
+fork can.
+
+### Design
+
+1. **Classify.** A cascade run taller than `fall_min_height` whose free jet would hit the face is a contact
+   fall (today it is dropped). When the terrain generator's per-fall record is available (`type`,
+   `face_profiles`, `ledges`), use it instead of the mesh.
+2. **Follow the face.** The ribbon keeps draping down the face, resampled with a centripetal Catmull-Rom
+   spline where it is steep (no polyline corners).
+3. **Aeration.** Per section: friction-limited speed and clear-water depth from Manning on the bed slope;
+   distance from the lip; `C = 0` above the inception point, rising to `C_e = 0.9 sin a` over a few `L_i`
+   below it. Whiteness and opacity from `C`; thickness `d_w / (1 - C)`. Streak texture scrolled at the
+   section's speed.
+4. **Ledges.** Where the bed slope drops sharply going down (convex-concave step), an impact: spray from
+   the existing GPU spray at a share of the speed there, scaled by the local flow power.
+5. **Mist.** The existing mist grid takes a line source along the face (strength from speed squared and
+   air content), not only a point at the foot.
+6. **Report.** `get_waterfalls()` lists contact falls with `type = "contact"`, `inception_length`,
+   `air_concentration`.
+
+### As built
+
+- `PhysXWaterfalls3D` (modules/godot_physx/water) reads `get_waterfalls()` from its `source` (TerrainGenerator3D)
+  and drapes a sheet down every fall that is not a free plunge (`type` cascade, horsetail or tiered).
+- The sheet covers the wet part of the lip only: the brink points no higher than 1.5 critical depths over the
+  lowest one (a gorge's lip line runs up its walls). Each column follows the ground under it, sampled every
+  0.5 m with the source's `get_height()`; without one, it falls back to the record's three face profiles,
+  smoothed with a centripetal Catmull-Rom spline. A first build that only used the profiles left 30% of the
+  sheet under the ground on the valley layout (gorge walls); following the ground leaves 3%.
+- Per row: speed from `dv/ds = (g sin a - f v^3 / 8q) / v` (`friction_factor` 0.2), so the sheet speeds up on
+  the steep part and slows on the foot; air 0 above the inception point and towards `0.9 sin a` below it over
+  about 5 m; thickness `q / v / (1 - C)`. The sheet uses the river fall shader: whiteness from `C / 0.9`,
+  streaks scrolled with the travel time.
+- Spray (`GPUParticles3D`) at each ledge of the record and at the foot, scaled by `0.5 rho Q v^2`; a
+  `PhysXWaterMist3D` box over the face with a line source along it, only for falls carrying at least
+  `mist_min_discharge` (0.2 m3/s): a trickle wets the rock but throws no measurable mist.
+- Rivers draw their own falls from their beds. `PhysXRiver3D.fall_exclusions` takes the lips drawn here, so a
+  contact fall is not also drawn as a free jet leaving the face.
+- `get_contact_falls()` reports per fall `inception_length`, `air_at_foot`, `air_peak`, `impact_speed`, ledges
+  and rows. Opt-out: `contact_falls = false`.
+
 ## Sources
 
+- Wood, Ackers and Loveless, General method for critical point on spillways, J. Hydraulic Eng. 109(2), 1983;
+  Chanson, Self-aerated flows on chutes and spillways, J. Hydraulic Eng. 119(2), 1993.
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).
 - Battjes, Surf similarity, Coastal Engineering Proceedings (1974).
 - Fournier and Reeves, A simple model of ocean waves, SIGGRAPH 1986.
