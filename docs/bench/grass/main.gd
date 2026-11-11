@@ -31,6 +31,8 @@ extends Node3D
 #   --terrain-material  the ground drawn with TerrainMaterial3D (its grass tint calls grass_ground())
 #   --clearing       a closed wood with a clearing opened by VegetationField3D.density_mask, seen
 #                    from 40 m up across its edge; --clearing=0 the same wood and camera, no mask
+#   --lone           scattered open-grown trees over the meadow (no litter mat under a lone
+#                    crown), seen from the --clearing camera
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
 const SIZE := 96.0
@@ -106,6 +108,9 @@ func _ready() -> void:
 		elif a == "--floor=0": no_floor = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
+		elif a == "--lone":
+			forest = true
+			clearing = 2
 		elif a == "--clearing" or a == "--clearing=0":
 			forest = true
 			clearing = 0 if a.ends_with("=0") else 1
@@ -356,7 +361,9 @@ func _set_clearing() -> void:
 		if ps.canopy_radius > 0.0:
 			ps.patch_scale = 0.0
 			ps.mask_channel = 0 if clearing == 1 else -1
-	if clearing == 0:
+			if clearing == 2:
+				ps.density = 0.1
+	if clearing != 1:
 		return
 	var res := 192
 	var img := Image.create_empty(res, res, false, Image.FORMAT_RGBA8)
