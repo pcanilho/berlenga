@@ -930,3 +930,18 @@ At 768 texels over 24 m (3.1 cm) prints showed spikes and toothed walls. Three c
 
 Cost: the step with four rolling bodies goes from about 1.0 to 1.6 ms of CPU (slumping owed tiles for a
 second after each press). All snow and ground checks pass.
+
+## Follow-up 9: raster refraction out through the far side (11 Nov 2026)
+
+Raster transmission refracted once at the front face and carried the ray on to whatever was behind, as
+for water over a pool's floor. A solid needs the second surface. The established real-time answers:
+Wyman's image-space refraction (2005, the back faces' depth and normals in their own pass) and Filament's
+"solid" refraction (the object as a sphere of a given thickness: exit point thickness * -dot(N, T) along
+the refracted ray, exit normal normalize(dot(N, T) T - N/2), refract back out). The second needs no extra
+pass, so `BaseMaterial3D.transmission_thickness` (glTF KHR_materials_volume's thicknessFactor, now read
+and written by the glTF importer and exporter) uses it; the exit ray then travels to the depth behind,
+and absorption runs over the path inside only. 0 keeps the old behaviour. Icicles use 4 cm.
+
+On the bench's eave the change is small: the icicles bend the view a little more and read slightly
+clearer. The path tracer's view of the eave's underside through the ice comes from light reflected
+inside the cone, which a screen-space method cannot follow, so that difference stays.

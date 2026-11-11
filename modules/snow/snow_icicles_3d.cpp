@@ -337,8 +337,10 @@ void SnowIcicles3D::_ensure_children() {
 		default_material->set_transmission(1.0f);
 		default_material->set_transmission_thin_walled(false);
 		default_material->set_transmission_ior(1.31f);
-		// Clear ice absorbs little over a few centimetres (its blue needs metres), so no absorption: in raster it
-		// would be measured to the depth behind the icicle, the sky.
+		// A solid about 4 cm across: raster refraction bends the view again where it leaves the far side, as
+		// the path tracer does, instead of carrying on into the scene behind.
+		default_material->set_transmission_thickness(0.04f);
+		// Clear ice absorbs little over a few centimetres (its blue needs metres), so no absorption.
 		// One ripple down its height (UV.y), its strength across (UV.x): column 0 smooth, the last a slope of 0.06
 		// (a ripple about a tenth of a millimetre high on its 1 cm wavelength). Steeper, path traced refraction
 		// breaks the ice into black and white bands.
