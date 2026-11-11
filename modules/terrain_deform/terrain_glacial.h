@@ -86,8 +86,9 @@ public:
 	// Erodes p_bed (nx * ny, spacing dx) by glacial erosion over p_years. Optional p_sediment: loose fill on top,
 	// removed first. Optional p_fixed: cells that stay (outlets, the sea).
 	// Optional p_resist (0..1): resistant bedrock (a riegel or cirque threshold) quarried 200 times slower at 1;
-	// with p_level (NaN: none) only at and below that height, and never worn below it.
-	void erode(double *p_bed, int nx, int ny, double dx, double p_years, double *p_sediment = nullptr, const uint8_t *p_fixed = nullptr, const double *p_resist = nullptr, const double *p_level = nullptr) {
+	// with p_level (NaN: none) only at and below that height, and never worn below it. Optional p_scale: per-cell
+	// multiplier on the erosion rate (rock quality).
+	void erode(double *p_bed, int nx, int ny, double dx, double p_years, double *p_sediment = nullptr, const uint8_t *p_fixed = nullptr, const double *p_resist = nullptr, const double *p_level = nullptr, const double *p_scale = nullptr) {
 		sub_steps = 0;
 		eroded_max = 0.0;
 		const int k = std::max(1, (int)std::lround(p.cell / dx));
@@ -141,6 +142,9 @@ public:
 					const bool lv = p_level && !std::isnan(p_level[i]);
 					const bool hard = p_resist && p_resist[i] > 0.0 && (!lv || p_bed[i] <= p_level[i] + 1.0);
 					double e = r * dt / (hard ? 1.0 + 199.0 * p_resist[i] : 1.0);
+					if (p_scale) {
+						e *= p_scale[i]; // rock quality: joint density and hardness (soft patches dig basins)
+					}
 					if (lv && p_resist && p_resist[i] > 0.0) {
 						e = std::min(e, std::max(0.0, p_bed[i] - p_level[i]));
 					}

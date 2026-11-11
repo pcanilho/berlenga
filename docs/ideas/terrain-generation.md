@@ -1018,6 +1018,31 @@ less per metre of radius) and the ground has eased; blocks that reach water are 
 about 21 000 blocks and 0.3 s for the 4 km valley layout. Placement nodes (vegetation's scatter, Tripo rock props)
 read the list; the bench shows grey stand-ins (`--boulders`).
 
+## Automatic high lakes: riegels, overdeepenings and hanging valleys (research, 11 Nov; Paulo picked at 19:41)
+
+Why: the showcase's high lake needs a hand-drawn bowl and bar. An open world (mortal-plane) needs the generator to
+make them itself.
+
+What makes them in nature:
+
+- Overdeepenings and riegels: a glacier erodes at a rate set by its sliding speed and by the rock. Where the rock is
+  weaker (more joints, softer beds) or where ice converges (confluences, a narrowing), it digs a basin; where the
+  rock is stronger it leaves a bar, the riegel. Chains of them hold paternoster lakes down a trough (Cook and Swift
+  2012, "Subglacial basins: their origin and importance", Earth-Science Reviews 115; Hooke 1991 on the feedback
+  that deepens a basin once it starts: GSA Bulletin 103). Jointing, more than hardness alone, sets quarrying rates
+  (Dühnforth, Anderson, Ward and Stock 2010, Geology 38; Krabbendam and Glasser 2011).
+- Hanging valleys: a tributary glacier carries less ice than the trunk, slides slower and erodes less, so its
+  floor is left above the trunk's and its stream falls off the lip. The hang height grows with the ice-discharge
+  contrast (Amundson and Iverson 2006, JGR 111, F01020), which our erosion law (K_g u^l) already gives once the
+  trunk carries much more ice than its tributaries.
+
+Plan: the ice stage's erosion gets a rock-quality field (`glacial_rock_variation`, the spread, and
+`glacial_rock_scale`, its wavelength, about 500 m), a smooth noise of joint density that multiplies K_g by
+exp(variation x noise); where strata are on, hard bands also slow it. Soft patches become basins, hard ones bars,
+and the existing basin-lake rule makes lakes of them with no markers. Test: the valley layout without `--bar` and
+`--bowl` makes a lake at 300 m or higher with a fall below it on a river, and hanging side valleys show steps at
+their mouths.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

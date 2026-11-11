@@ -111,6 +111,11 @@ func _ready() -> void:
 			vd.merge({"no-lake": "1", "inflow": "60", "inflow-erosion": "0.3", "bar": "-300,-1650,350,-1500,1000,-1650",
 					"bar-level": "450", "bowl": "350,-1800,650,0.1", "glacial": "1", "ela": "450", "glacial-erosion": "10",
 					"lake-pick": "high"})
+			if args.has("auto-lake"):
+				# No hand-made bowl or bar: the ice finds its own basins and bars in rock of varying quality.
+				for k2 in ["bar", "bar-level", "bowl"]:
+					vd.erase(k2)
+				vd["rock-var"] = "1.0"
 		for k in vd:
 			if not args.has(k):
 				args[k] = vd[k]
@@ -278,6 +283,8 @@ func _generate() -> void:
 		gen.glacial_ela = float(args.get("ela", "500"))
 		gen.glacial_share = float(args.get("glacial-share", "0.5"))
 		gen.glacial_final = float(args.get("glacial-final", "100000"))
+		gen.glacial_rock_variation = float(args.get("rock-var", "0"))
+		gen.glacial_rock_scale = float(args.get("rock-scale", "500"))
 		gen.glacial_erosion = float(args.get("glacial-erosion", "1"))
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
