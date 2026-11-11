@@ -4085,6 +4085,13 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, f.water_max * 0.3f);
 		}
 		sp->set_visibility_range(f.visibility);
+		if (f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_TWIGS) {
+			// Litter lies where the crowns drop it, drifting past their edges into the light
+			// (PlantSpecies.RULE_LITTER), not only in their shade. Twigs fall nearer the trunk.
+			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
+			sp->set_rule_range(PlantSpecies::RULE_LITTER, Vector2(f.preset == P::PRESET_TWIGS ? 0.35f : 0.12f, 1.0f));
+			sp->set_rule_fade(PlantSpecies::RULE_LITTER, 0.3f);
+		}
 		if (f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS) {
 			sp->set_rule_range(PlantSpecies::RULE_SPRAY, Vector2(0.0f, 1.0f)); // Mosses take a fall's spray zone.
 		}

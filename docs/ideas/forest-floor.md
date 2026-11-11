@@ -205,6 +205,14 @@ Twigs are now the class under 1 cm: 4 to 9 pieces a card, 5 to 35 cm long, 2 to 
 short ones broken bits and the longer ones forked, in the stand's twig bark colour, about ten
 visible a square metre under closed crowns.
 
+Built (3): leaf drift. `VegetationField3D.get_litter_at()` sums each broad-leaved crown's
+opacity, full under the crown and falling off as e^(-d/6 m) past its rim (most leaves land
+within about one tree height of the stem, Ferrari and Sugita 1996), cut at 18 m; litter is
+1 - e^(-3 x deposit). Leaf litter and twigs in `make_floor` take `litter_range` (0.12 and 0.35 up)
+instead of a shade floor, so a beech edge spills leaves several metres into the meadow while
+twigs stay closer in. Not yet: skew downwind of the prevailing wind, and trapping in hollows
+and against logs.
+
 Checks: raster and path traced before/after at `--forest=in` (beech, oak, spruce) and the
 forest edge; counts per square metre against the figures above; triangles and placement cost.
 
