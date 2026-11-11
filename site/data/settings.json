@@ -1529,6 +1529,15 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Fine detail kept in the wide snow map",
+   "settings": [],
+   "note": "always on",
+   "what": "drifts, slides and melt worked out near the camera are written back to the wide snowpack, so they are still there when the camera leaves and returns.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Shelter",
    "settings": [
     "SnowCover3D.canopy_enabled",
@@ -1671,6 +1680,15 @@
    ],
    "note": "",
    "what": "every 2 mm ice grain is a facet hit per ray.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Sparkle"
+  },
+  {
+   "name": "Sparkle in path traced reflections",
+   "settings": [],
+   "note": "always on",
+   "what": "snow seen in a mirror, water or a window glints too, sized by each ray's cone, and light bounced off snow carries its glints.",
    "page": "snow",
    "title": "Snow",
    "topic": "Sparkle"

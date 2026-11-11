@@ -22,6 +22,8 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Snow climate: snow holds on the shaded and lee faces below the snow line.*
 
+- **Fine detail kept in the wide snow map** (always on): drifts, slides and melt worked out near the camera are written back to the wide snowpack, so they are still there when the camera leaves and returns.
+
 - **Shelter** (`SnowCover3D.canopy_enabled`, `shelter_collision_mask`): ground under roofs and overhangs stays bare; tree crowns hold snow and unload it later.
 
   ![A shelter and snow-laden trees, raster and path traced](media/snow-shelter.jpg)
@@ -123,3 +125,5 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
   ![Snow sparkle in raster, path traced with the grid model, and path traced with exact grains](media/snow-exact-glints.jpg)
 
   *Exact sparkle: each ice grain catches the sun on its own, densest round the highlight.*
+
+- **Sparkle in path traced reflections** (always on): snow seen in a mirror, water or a window glints too, sized by each ray's cone, and light bounced off snow carries its glints.
