@@ -437,18 +437,11 @@ func _lake_and_fall() -> void:
 
 func _build_ground() -> void:
 	var t := Time.get_ticks_msec()
-	var shape := HeightMapShape3D.new()
-	shape.map_width = NX
-	shape.map_depth = NZ
-	shape.map_data = heights
-	ground_body = StaticBody3D.new()
-	ground_body.name = "Ground"
-	var cs := CollisionShape3D.new()
-	cs.shape = shape
-	cs.scale = Vector3(STEP, 1.0, STEP)
-	ground_body.add_child(cs)
-	ground_body.position = Vector3(X0 + (NX - 1) * STEP * 0.5, 0.0, Z0 + (NZ - 1) * STEP * 0.5)
-	add_child(ground_body)
+	var use_landscape: bool = args.get("mesh", "landscape") == "landscape"
+	# The ground body: Landscape3D's own 1 m heightfield tiles with the landscape mesh (vertical lips stay vertical
+	# for the rivers' falls), the 4 m HeightMapShape3D with the grid mesh or --collision=heightmap.
+	if not use_landscape or args.get("collision", "landscape") == "heightmap":
+		_build_heightmap_body()
 	var gh := Ground.new()
 	gh.name = "GroundHeight"
 	gh.bench = self
@@ -477,14 +470,43 @@ func _build_ground() -> void:
 		landscape.material = ground_mat
 		landscape.lod_error = float(args.get("lod-error", "2"))
 		landscape.source = landscape.get_path_to(gen)
-		if "collision_enabled" in landscape:
-			landscape.collision_enabled = false # the bench keeps its own HeightMapShape3D ground body (4 m)
+		var own_body := ground_body == null
+		landscape.collision_enabled = own_body
+		if own_body:
+			# Every chunk gets its body: the checks probe the whole world (peak, beach, banks), not only round the
+			# camera. 4096 tiles of 64 m at 1 m, about 0.2 s.
+			var centre := Node3D.new()
+			centre.name = "CollisionCentre"
+			add_child(centre)
+			var wr: Rect2 = gen.get_world_rect()
+			centre.global_position = Vector3(wr.get_center().x, 0, wr.get_center().y)
+			landscape.collision_target = landscape.get_path_to(centre)
+			landscape.collision_radius = wr.size.length() * 0.5 + 64.0
 		landscape.rebuild()
+		if own_body:
+			landscape.load_all_heights()
+			landscape.update_collision()
 		var st: Dictionary = landscape.get_stats()
-		_log("landscape %s" % st)
+		_log("landscape %s, ground %d ms" % [st, Time.get_ticks_msec() - t])
 		return
 	_build_grid_mesh()
 	_log("ground %d ms" % (Time.get_ticks_msec() - t))
+
+
+# The 4 m HeightMapShape3D ground body (--mesh=grid or --collision=heightmap).
+func _build_heightmap_body() -> void:
+	var shape := HeightMapShape3D.new()
+	shape.map_width = NX
+	shape.map_depth = NZ
+	shape.map_data = heights
+	ground_body = StaticBody3D.new()
+	ground_body.name = "Ground"
+	var cs := CollisionShape3D.new()
+	cs.shape = shape
+	cs.scale = Vector3(STEP, 1.0, STEP)
+	ground_body.add_child(cs)
+	ground_body.position = Vector3(X0 + (NX - 1) * STEP * 0.5, 0.0, Z0 + (NZ - 1) * STEP * 0.5)
+	add_child(ground_body)
 
 
 # The 4 m grid ground (--mesh=grid): one mesh, no LODs, geology vertex colours for the standard material.
