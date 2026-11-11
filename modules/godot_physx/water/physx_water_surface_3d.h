@@ -315,6 +315,8 @@ public:
 	bool get_underwater_enabled() const { return underwater_enabled; }
 	void set_underwater_meniscus(float p_strength);
 	float get_underwater_meniscus() const { return underwater_meniscus; }
+	void set_underwater_shafts(bool p_enabled);
+	bool get_underwater_shafts() const { return underwater_shafts; }
 	// True while the active camera is under the surface (as the last frame drew it).
 	bool is_camera_underwater() const { return underwater_camera_below; }
 
@@ -640,6 +642,10 @@ private:
 
 	bool underwater_enabled = true;
 	float underwater_meniscus = 0.35f;
+	bool underwater_shafts = true; // raster light shafts under water, from the caustics map (built for them)
+	bool shafts_live = false; // the camera is under water with the sun up: the map is drawn each step
+	Vector3 shafts_sun_travel = Vector3(0, -1, 0); // the sun's light, travelling (air side)
+	bool _caustics_built() const { return caustics_enabled || (underwater_enabled && underwater_shafts); }
 	bool underwater_shown = false;
 	bool underwater_camera_below = false;
 	MeshInstance3D *underwater_fog_instance = nullptr;

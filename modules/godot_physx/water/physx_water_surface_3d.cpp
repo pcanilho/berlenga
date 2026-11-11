@@ -280,6 +280,18 @@ uniform vec3 underwater_sun_irradiance = vec3(0.0);
 uniform vec3 underwater_sky_radiance = vec3(0.0);
 // How dark the thin line where the surface crosses the lens is (0 none).
 uniform float underwater_meniscus : hint_range(0.0, 1.0) = 0.35;
+// Light shafts under water (raster): the light-space caustics map (water_caustics_map.glsl) read along the
+// view ray. R is the incidence x tone(focused light), tone(f) = f / (f + 8) of the concentration's excess f
+// over 1; origin (xyz) and half extent (w), the light-space axes, the ocean tile it repeats with, the sun's
+// incidence cosine and the reference depth the map is focused at.
+uniform bool underwater_shafts = false;
+uniform sampler2D underwater_caustics : filter_linear, repeat_disable;
+uniform vec4 underwater_caustics_origin = vec4(0.0, 0.0, 0.0, 1.0);
+uniform vec3 underwater_caustics_right = vec3(1.0, 0.0, 0.0);
+uniform vec3 underwater_caustics_up = vec3(0.0, 0.0, 1.0);
+uniform vec2 underwater_caustics_tile = vec2(64.0);
+uniform float underwater_caustics_incidence = 1.0;
+uniform float underwater_caustics_depth = 2.5;
 // Raster reflections from above (water_raster_reflections.h).
 )" WATER_RASTER_REFLECTIONS_GLSL R"(
 #if (defined(UNDERWATER_FOG) || defined(UNDERWATER_SURFACE)) && !defined(RT)
@@ -834,7 +846,7 @@ vec3 uw_segment(vec3 b, float len) {
 // refracted slant and the sky by exp(-1.2 sigma_t z) (diffuse light crossing the Snell window
 // slantwise); the sun scatters by the water's Henyey-Greenstein phase, the sky isotropically
 // (half the sphere lit). The path tracer does the same by sampling.
-vec3 uw_inscatter(float z0, vec3 d, float len) {
+vec3 uw_inscatter_shafts(float z0, vec3 d, float len, float p_shafts) {
 	vec3 st = uw_sigma_t();
 	vec3 ss = max(pathtraced_scattering, vec3(0.0));
 	float mu = max(-underwater_sun_direction.y, 0.05);
@@ -843,7 +855,72 @@ vec3 uw_inscatter(float z0, vec3 d, float len) {
 			exp(-a * z0) * uw_segment(st - a * d.y, len);
 	vec3 k = st * 1.2;
 	vec3 sky = underwater_sky_radiance * 0.5 * exp(-k * z0) * uw_segment(st - k * d.y, len);
-	return ss * (sun + sky);
+	return ss * (sun * p_shafts + sky);
+}
+
+vec3 uw_inscatter(float z0, vec3 d, float len) {
+	return uw_inscatter_shafts(z0, d, len, 1.0);
+}
+
+// Light shafts: how much more (or less) sunlight than average reaches p, from the caustics map. The surface
+// focuses the light it lets through into sheets along the refracted sun; seen edge on in the water they
+// are the shafts. The map holds the focusing at one depth; its contrast grows from nothing at the surface
+// to that depth and fades past it as the sheets cross and blur. Averages to 1 over a tile (the mean
+// concentration of the map near the camera, f_mean), so the water's in-scatter keeps its brightness.
+float uw_caustic_excess(vec3 p) {
+	vec3 o = underwater_caustics_origin.xyz;
+	vec2 tile = max(underwater_caustics_tile, vec2(1e-3));
+	p.xz -= tile * round((p.xz - o.xz) / tile);
+	vec2 uv = vec2(dot(p - o, underwater_caustics_right), dot(p - o, underwater_caustics_up)) / underwater_caustics_origin.w * 0.5 + 0.5;
+	float r = textureLod(underwater_caustics, clamp(uv, vec2(0.0), vec2(1.0)), 0.0).r;
+	float inc = max(underwater_caustics_incidence, 1e-3);
+	return 8.0 * r / max(inc - r, inc * 0.02);
+}
+
+float uw_caustic_mean(vec3 p_cam, float p_level) {
+	float sum = 0.0;
+	vec2 step = underwater_caustics_tile * 0.25;
+	for (int i = 0; i < 4; i++) {
+		for (int j = 0; j < 4; j++) {
+			vec3 q = vec3(p_cam.x + (float(i) - 1.375) * step.x, p_level - underwater_caustics_depth, p_cam.z + (float(j) - 1.625) * step.y);
+			sum += uw_caustic_excess(q);
+		}
+	}
+	return sum / 16.0;
+}
+
+float uw_caustic_light(vec3 p, float z, float f_mean) {
+	float zr = max(underwater_caustics_depth, 0.1);
+	float contrast = smoothstep(0.0, zr, z) * exp(-max(z - zr, 0.0) / (3.0 * zr));
+	float m = (1.0 + uw_caustic_excess(p)) / (1.0 + f_mean);
+	return 1.0 + contrast * (m - 1.0);
+}
+
+// The sun's in-scatter along the view ray with the shafts, as the share of the uniform sun's (the
+// closed form in uw_inscatter): a jittered march over the first few mean free paths of the segment, each
+// step weighed by the light that reaches it and comes back (exp(-sigma_t (z / mu + t))).
+float uw_shaft_ratio(vec3 p0, vec3 d, float z0, float len, float level, vec2 frag) {
+	vec3 st = uw_sigma_t();
+	float s = dot(st, vec3(1.0 / 3.0));
+	float mu = max(-underwater_sun_direction.y, 0.05);
+	float span = min(len, min(6.0 / max(s, 1e-3), 40.0));
+	if (span < 1e-3) {
+		return 1.0;
+	}
+	float f_mean = uw_caustic_mean(p0, level);
+	float jitter = fract(52.9829189 * fract(dot(frag, vec2(0.06711056, 0.00583715))));
+	const int STEPS = 24;
+	float dt = span / float(STEPS);
+	float num = 0.0;
+	float den = 0.0;
+	for (int i = 0; i < STEPS; i++) {
+		float t = (float(i) + jitter) * dt;
+		float z = max(z0 - d.y * t, 0.0);
+		float w = exp(-s * (z / mu + t));
+		num += w * uw_caustic_light(p0 + d * t, z, f_mean);
+		den += w;
+	}
+	return den > 0.0 ? num / den : 1.0;
 }
 
 // The share of the surface's light left at depth z (raster lights ignore the water above a surface).
@@ -932,7 +1009,8 @@ void fragment() {
 			scene *= uw_light_at_depth(max(surface_height_world(p_o.xz, base_y) - p_o.y, 0.0));
 		}
 		float seg = min(len, to_surface);
-		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter(z0, d, seg)) * (1.0 - meniscus);
+		float shafts = underwater_shafts ? uw_shaft_ratio(p_near, d, z0, seg, base_y + water_level, FRAGCOORD.xy) : 1.0;
+		ALBEDO = (scene * exp(-uw_sigma_t() * seg) + uw_inscatter_shafts(z0, d, seg, shafts)) * (1.0 - meniscus);
 		ALPHA = 1.0;
 	}
 #endif
@@ -1388,6 +1466,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_underwater_enabled"), &PhysXWaterSurface3D::get_underwater_enabled);
 	ClassDB::bind_method(D_METHOD("set_underwater_meniscus", "strength"), &PhysXWaterSurface3D::set_underwater_meniscus);
 	ClassDB::bind_method(D_METHOD("get_underwater_meniscus"), &PhysXWaterSurface3D::get_underwater_meniscus);
+	ClassDB::bind_method(D_METHOD("set_underwater_shafts", "enabled"), &PhysXWaterSurface3D::set_underwater_shafts);
+	ClassDB::bind_method(D_METHOD("get_underwater_shafts"), &PhysXWaterSurface3D::get_underwater_shafts);
 	ClassDB::bind_method(D_METHOD("is_camera_underwater"), &PhysXWaterSurface3D::is_camera_underwater);
 	ClassDB::bind_method(D_METHOD("set_caustics_enabled", "enabled"), &PhysXWaterSurface3D::set_caustics_enabled);
 	ClassDB::bind_method(D_METHOD("get_caustics_enabled"), &PhysXWaterSurface3D::get_caustics_enabled);
@@ -1498,6 +1578,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "raster_reflections"), "set_raster_reflections", "get_raster_reflections");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "underwater_enabled"), "set_underwater_enabled", "get_underwater_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "underwater_meniscus", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_underwater_meniscus", "get_underwater_meniscus");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "underwater_shafts"), "set_underwater_shafts", "get_underwater_shafts");
 
 	ADD_GROUP("Caustics", "caustic");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "caustics_enabled"), "set_caustics_enabled", "get_caustics_enabled");
@@ -3748,9 +3829,13 @@ void PhysXWaterSurface3D::set_water_material(const Ref<ShaderMaterial> &p_materi
 }
 
 void PhysXWaterSurface3D::set_underwater_enabled(bool p_enabled) {
+	const bool was = _caustics_built();
 	underwater_enabled = p_enabled;
 	if (!underwater_enabled) {
 		_set_underwater_shown(false);
+	}
+	if (_caustics_built() != was) {
+		_rebuild();
 	}
 }
 
@@ -3811,6 +3896,7 @@ void PhysXWaterSurface3D::_set_underwater_shown(bool p_shown) {
 	}
 	if (!p_shown) {
 		underwater_camera_below = false;
+		shafts_live = false;
 		if (water_material.is_valid()) {
 			water_material->set_shader_parameter("underwater_camera_below", false);
 		}
@@ -3857,12 +3943,15 @@ void PhysXWaterSurface3D::_update_underwater() {
 	DirectionalLight3D *sun = raster_reflection_state.find_sun(this);
 	Vector3 sun_dir(0, -1, 0);
 	Vector3 sun_irradiance;
+	float sun_cos_i = 0.0f;
 	if (sun != nullptr && sun->is_visible_in_tree()) {
 		// Light travels along the light's -Z; refracted down into the water (Snell, IOR 1.33) and
 		// thinned by the surface's Fresnel reflection. Raster lights are pi x energy in irradiance.
 		const Vector3 travel = -sun->get_global_transform().basis.get_column(2).normalized();
 		const float cos_i = -travel.y;
 		if (cos_i > 0.0f) {
+			sun_cos_i = cos_i;
+			shafts_sun_travel = travel;
 			const float sin_i = Math::sqrt(MAX(1.0f - cos_i * cos_i, 0.0f));
 			const float sin_t = sin_i / 1.33f;
 			const float cos_t = Math::sqrt(MAX(1.0f - sin_t * sin_t, 0.0f));
@@ -3920,6 +4009,19 @@ void PhysXWaterSurface3D::_update_underwater() {
 			}
 		}
 	}
+	// Light shafts: the caustics map, drawn each step while they show.
+	shafts_live = underwater_shafts && underwater_camera_below && sun_cos_i > 0.0f && caustics_texture.is_valid() && solver.is_available();
+	underwater_fog_material->set_shader_parameter("underwater_shafts", shafts_live);
+	if (shafts_live) {
+		const Vector3 o = solver.get_caustics_origin();
+		underwater_fog_material->set_shader_parameter("underwater_caustics", caustics_texture);
+		underwater_fog_material->set_shader_parameter("underwater_caustics_origin", Vector4(o.x, o.y, o.z, solver.get_caustics_half_extent()));
+		underwater_fog_material->set_shader_parameter("underwater_caustics_right", solver.get_caustics_light_right());
+		underwater_fog_material->set_shader_parameter("underwater_caustics_up", solver.get_caustics_light_up());
+		underwater_fog_material->set_shader_parameter("underwater_caustics_tile", solver.get_caustics_tile_size());
+		underwater_fog_material->set_shader_parameter("underwater_caustics_incidence", caustics_enabled ? MAX(-caustics_sun_direction.normalized().y, 0.01f) : sun_cos_i);
+		underwater_fog_material->set_shader_parameter("underwater_caustics_depth", caustics_reference_depth);
+	}
 	for (Ref<ShaderMaterial> m : { water_material, underwater_fog_material, underwater_surface_material }) {
 		m->set_shader_parameter("underwater_active", true);
 		m->set_shader_parameter("underwater_camera_below", underwater_camera_below);
@@ -3927,6 +4029,17 @@ void PhysXWaterSurface3D::_update_underwater() {
 		m->set_shader_parameter("underwater_sun_irradiance", sun_irradiance);
 		m->set_shader_parameter("underwater_sky_radiance", Vector3(sky.r, sky.g, sky.b));
 		m->set_shader_parameter("underwater_meniscus", underwater_meniscus);
+	}
+}
+
+void PhysXWaterSurface3D::set_underwater_shafts(bool p_enabled) {
+	const bool was = _caustics_built();
+	underwater_shafts = p_enabled;
+	if (!underwater_shafts) {
+		shafts_live = false;
+	}
+	if (_caustics_built() != was) {
+		_rebuild();
 	}
 }
 
@@ -4172,7 +4285,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.wind_direction = wind_direction;
 	s.wave_amplitude = wave_amplitude;
 	s.fetch = get_effective_fetch();
-	s.caustics_enabled = caustics_enabled;
+	s.caustics_enabled = _caustics_built();
 	s.ocean_k_min = wave_cascades > 1 ? _cascade_split(0) : 0.0f;
 	s.ocean_k_max = 0.0f;
 	s.wave_spreading = int(wave_spreading);
@@ -4341,8 +4454,10 @@ void PhysXWaterSurface3D::_after_step() {
 			_bind_textures();
 		}
 	}
-	if (solver.is_available() && caustics_enabled) {
-		solver.render_caustics(Vector3(grid_center.x, get_global_position().y, grid_center.y), caustics_sun_direction, caustics_reference_depth, 1.333f, _open_beyond());
+	if (solver.is_available() && (caustics_enabled || shafts_live)) {
+		// Drawn for the raster shafts too, while the camera is under water: with the scene's sun then,
+		// unless caustics_enabled set its own.
+		solver.render_caustics(Vector3(grid_center.x, get_global_position().y, grid_center.y), caustics_enabled ? caustics_sun_direction : shafts_sun_travel, caustics_reference_depth, 1.333f, _open_beyond());
 	}
 	frames_since_refresh++;
 	if (frames_since_refresh >= REFRESH_EVERY_FRAMES) {
@@ -4396,7 +4511,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 		shore_depth_tex.instantiate();
 	}
 	shore_depth_tex->set_texture_rd_rid(solver.get_shore_depth_texture_rd_rid());
-	if (caustics_enabled) {
+	if (_caustics_built()) {
 		if (caustics_texture.is_null()) {
 			caustics_texture.instantiate();
 		}
