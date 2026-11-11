@@ -258,6 +258,7 @@ func _generate() -> void:
 	gen.deposition = float(args.get("deposition", "0"))
 	# Rock beds stepped into cliff faces (ledges), --ledges=0 for smooth faces.
 	gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
+	gen.gorge_age = float(args.get("gorge-age", "12000"))
 	if args.has("glacial"):
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
 		gen.glacial_enabled = true

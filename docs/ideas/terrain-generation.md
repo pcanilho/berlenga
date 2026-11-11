@@ -973,6 +973,24 @@ R = 3 (Q H)^0.4 m (at least 4 m; about 50 m for the 3.6 m3/s, 333 m fall, about 
 matching the width of its spray forest), fading with height above the lip. Falls combine as 1 - prod(1 - p). The
 water thread's live mist, drifting with the wind, multiplies with it at run time.
 
+## Gorges: falls that wore back upstream (research and build, 11 Nov)
+
+A fall over a hard bed does not stay where the river first steepened: the plunge pool undercuts the soft rock
+below the caprock, the lip collapses block by block, and the fall walks upstream leaving a slot gorge as wide as the
+river (Niagara, about 1 m a year at 5700 m3/s, Gilbert 1907; the caprock mechanism, Haviv et al. 2010). Landscape
+models write the knickpoint's speed as a celerity C A^p or C Q^p with p about 0.5 to 1 (Crosby and Whipple 2006;
+Berlin and Anderson 2007); in massive, unjointed rock falls barely move (Lamb and Dietrich 2009). Hayakawa and
+Matsukura 2003 fit Japanese falls' recession to discharge, fall size and rock strength the same way.
+
+Built: `gorge_age` (years since the falls began wearing back, 0 off; the bench uses 12000, since the ice left) and
+`gorge_rate` (0.013 m a year per sqrt(m3/s), Niagara's rate). Each lipped fall's lip moves up its river by
+age x rate x sqrt(Q), a twentieth of that where the lip is a sill (a riegel of massive rock). It stops at a lake
+(the fall would drain it), the fall above, and three cells from the map's edge (an inflow's reach is not on the
+map). Below the new lip, `_ground` cuts a slot along the river's cells: the river's width plus 2 m, walls rising
+over 2 m, its floor falling 1 percent to the old foot. The fall's record moves to the gorge's head, and its pool
+sits at the slot's head. On the valley layout three side falls wore back 35 to 40 m into slots 8 m wide and 12 m
+deep; the main fall stays on its bar (the lake's outlet).
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
@@ -1004,6 +1022,11 @@ water thread's live mist, drifting with the wind, multiplies with it at run time
 - Alley, Lawson, Larson, Evenson, Baker, Stabilizing feedbacks in glacier-bed erosion, Nature 424, 2003.
 - Schmidt, Montgomery, Limits to relief, Science 270, 1995.
 - Cordonnier et al., Forming terrains by glacial erosion, ACM TOG 42(4), 2023.
+- Crosby, Whipple, Knickpoint initiation and distribution within fluvial networks: 236 waterfalls in the Waipaoa
+  River, North Island, New Zealand, Geomorphology 82, 2006.
+- Berlin, Anderson, Modeling of knickpoint retreat on the Roan Plateau, western Colorado, JGR 112, F03S06, 2007.
+- Hayakawa, Matsukura, Recession rates of waterfalls in Boso Peninsula, Japan, and a predictive equation, ESPL 28,
+  2003.
 - Lamb, Dietrich, The persistence of waterfalls in fractured rock, GSA Bulletin 121, 2009.
 - Scheingross, Lamb, A mechanistic model of waterfall plunge pool erosion into bedrock, JGR Earth Surface 122, 2017.
 - Perne, Covington, Thaler, Myre, Steady state, erosional continuity, and the topography of landscapes developed in

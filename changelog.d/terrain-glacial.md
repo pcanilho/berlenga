@@ -5,5 +5,6 @@
 - `get_waterfalls()` fall record for the water code: `id`, `direction`, `type` (plunge, horsetail, cascade, tiered), `lip_points` with `lip_share` (Manning share of the flow), `lip_width`, `caprock`, `overhang`, three `face_profiles`, `tiers`, `ledges`, `power`, `breakup_length`, drag-limited `impact_speed` and `impact_speed_free`, `discharge_months`, and the plunge pool: `pool_center`, `pool_radius`, `pool_depth`, `pool_level`, `lands_in` (pool, lake, sea, ground).
 - `plunge_pools` (on): a scour hole below each fall of 4 m or more (Mason and Arumugam depth), with its tail bar downstream so it holds water.
 - `terrain_spray_potential` global map (with `terrain_spray_rect`, `spray_cell` 4 m, `get_spray_potential()`, `get_spray_image()`): the static share of fall spray each place can get, from each fall's power and the distance to its water.
+- `gorge_age`, `gorge_rate`: lips over hard rock wear back upstream (knickpoint retreat, rate times sqrt(Q), a twentieth in massive rock) and leave a slot gorge below the fall; never into a lake. `get_waterfalls()` reports the fall at the gorge's head.
 ### Fixed
 - Detail no longer fades on faces steeper than loose fill can stand, however much sediment the cells around them hold.

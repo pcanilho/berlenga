@@ -199,7 +199,8 @@ private:
 	// Falls over hard rock: the face stands vertical (the caprock lip, Gilbert 1907; Haviv et al. 2010), sharper than
 	// the grid can hold, so _ground steps the ground there.
 	struct FallLip {
-		Vector2 top; // lip cell, world x z
+		Vector2 origin; // the lip cell the rivers left, world x z (get_waterfalls matches on it)
+		Vector2 top; // where the step starts: the lip cell, or the worn-back lip at a gorge's head
 		Vector2 dir; // downstream, unit
 		real_t run = 0.0; // m from the lip cell to the foot cell
 		real_t h_top = 0.0, h_bottom = 0.0;
@@ -212,6 +213,16 @@ private:
 		Vector2 dir; // downstream, unit
 		real_t radius = 0.0, depth = 0.0, foot = 0.0; // the floor is foot - depth at the centre
 	};
+	// Gorges below falls whose lip has worn back upstream (knickpoint retreat).
+	struct Gorge {
+		Vector2 origin; // the lip cell the rivers left
+		LocalVector<Vector2> points; // new lip first, down to the old foot
+		real_t half_width = 3.0;
+		real_t floor_top = 0.0, floor_bottom = 0.0, length = 0.0;
+	};
+	double gorge_age = 0.0; // years of lip retreat; 0 none
+	double gorge_rate = 0.013; // m a year per sqrt(m3/s)
+	LocalVector<Gorge> gorges;
 	bool fall_lips = true;
 	bool plunge_pools = true;
 	LocalVector<FallLip> lips;
@@ -515,6 +526,10 @@ public:
 	real_t get_beach_slope() const { return beach_slope; }
 	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
 	int get_lake_count() const { return lake_count; }
+	void set_gorge_age(double p_years) { gorge_age = MAX(p_years, 0.0); }
+	double get_gorge_age() const { return gorge_age; }
+	void set_gorge_rate(double p_rate) { gorge_rate = MAX(p_rate, 0.0); }
+	double get_gorge_rate() const { return gorge_rate; }
 	void set_plunge_pools(bool p_enable) { plunge_pools = p_enable; }
 	bool get_plunge_pools() const { return plunge_pools; }
 	void set_fall_lips(bool p_enable) { fall_lips = p_enable; }

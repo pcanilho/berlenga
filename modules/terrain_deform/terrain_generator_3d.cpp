@@ -979,6 +979,7 @@ namespace {
 constexpr real_t LIP_BUCKET = 128.0; // m
 constexpr real_t LIP_FACE = 3.0; // m the face takes from the lip's height to the foot's (three 1 m grid steps, so a face oblique to the grid does not alias into ribs)
 constexpr real_t LIP_SIDE = 12.0; // m beside the held width over which the step fades into the slope
+constexpr real_t GORGE_WALL = 2.0; // m over which a gorge wall rises from its floor to the ground beside it
 constexpr real_t POOL_BAR = 1.4; // the tail bar reaches this many pool radii from the centre
 constexpr real_t LIP_END = 8.0; // m before the lip and past the foot over which it fades
 } // namespace
@@ -1452,8 +1453,18 @@ Array TerrainGenerator3D::get_waterfalls(real_t p_min_area, real_t p_min_height)
 			while (e + 1 < cells.size() && steep(e)) {
 				e++;
 			}
-			const Vector3 top = Vector3(_cell_position(cells[k]).x, _ground(_cell_position(cells[k]).x, _cell_position(cells[k]).z), _cell_position(cells[k]).z);
-			const Vector3 bottom = Vector3(_cell_position(cells[e]).x, _ground(_cell_position(cells[e]).x, _cell_position(cells[e]).z), _cell_position(cells[e]).z);
+			Vector3 top = Vector3(_cell_position(cells[k]).x, _ground(_cell_position(cells[k]).x, _cell_position(cells[k]).z), _cell_position(cells[k]).z);
+			Vector3 bottom = Vector3(_cell_position(cells[e]).x, _ground(_cell_position(cells[e]).x, _cell_position(cells[e]).z), _cell_position(cells[e]).z);
+			// A lip worn back up a gorge: the fall is at the gorge's head, from its brink to the slot floor below.
+			for (const FallLip &l : lips) {
+				if (l.origin.distance_to(Vector2(top.x, top.z)) < 0.5f * result_cell && l.top.distance_to(l.origin) > 0.5f) {
+					const Vector2 brink = l.top + l.dir * (0.5f * l.run - 0.5f * LIP_FACE - 0.5f);
+					const Vector2 foot = l.top + l.dir * (0.5f * l.run + 0.5f * LIP_FACE + 1.0f);
+					top = Vector3(brink.x, _ground(brink.x, brink.y), brink.y);
+					bottom = Vector3(foot.x, _ground(foot.x, foot.y), foot.y);
+					break;
+				}
+			}
 			const real_t drop = heights[cells[k]] - heights[cells[e]];
 			if (drop >= p_min_height) {
 				Dictionary w;
@@ -1472,8 +1483,9 @@ Array TerrainGenerator3D::get_waterfalls(real_t p_min_area, real_t p_min_height)
 				const real_t hgt = MAX(top.y - bottom.y, real_t(0.0));
 				const real_t throw_m = v * Math::sqrt(2.0f * hgt / 9.81f);
 				bool lipped = false;
+				const Vector3 cell_top = _cell_position(cells[k]);
 				for (const FallLip &l : lips) {
-					lipped = lipped || (l.top.distance_to(Vector2(top.x, top.z)) < 0.5f * result_cell);
+					lipped = lipped || (l.origin.distance_to(Vector2(cell_top.x, cell_top.z)) < 0.5f * result_cell);
 				}
 				const real_t face = lipped ? LIP_FACE : Vector2(top.x - bottom.x, top.z - bottom.z).length();
 				w["face_run"] = face;
@@ -1641,8 +1653,9 @@ void TerrainGenerator3D::_fall_contract(Dictionary &r_fall, const PackedVector3A
 	r_fall["discharge_months"] = months;
 	// The plunge pool baked for this fall (none where it lands in a lake or the sea): centre on the floor, radius,
 	// depth below the foot, and the level it holds water to (the lowest point of its rim).
+	const Vector3 origin = _cell_position(p_cells[p_k]);
 	for (const PlungePool &pl : pools) {
-		if (pl.top.distance_to(Vector2(top.x, top.z)) < 0.5f * result_cell) {
+		if (pl.top.distance_to(Vector2(origin.x, origin.z)) < 0.5f * result_cell) {
 			// The water spills over the lowest point of the rim's crest: the highest ground along each radius
 			// from the edge of the hole out over the tail bar, lowest over all directions.
 			real_t level = 1e30f;
@@ -1651,7 +1664,10 @@ void TerrainGenerator3D::_fall_contract(Dictionary &r_fall, const PackedVector3A
 				real_t crest = -1e30f;
 				for (int j = 0; j <= 8; j++) {
 					const real_t rr = pl.radius * (0.9f + (POOL_BAR - 0.9f) * real_t(j) / 8.0f);
-					crest = MAX(crest, _ground(pl.center.x + Math::cos(an) * rr, pl.center.y + Math::sin(an) * rr));
+					const real_t gh = _ground(pl.center.x + Math::cos(an) * rr, pl.center.y + Math::sin(an) * rr);
+					if (Math::is_finite(gh)) {
+						crest = MAX(crest, gh);
+					}
 				}
 				level = MIN(level, crest);
 			}
@@ -2404,6 +2420,7 @@ double TerrainGenerator3D::_marker_face_slope(const Node3D *p_marker) {
 void TerrainGenerator3D::_bake_lips() {
 	lips.clear();
 	pools.clear();
+	gorges.clear();
 	lip_buckets.clear();
 	const bool hard_map = hardness.size() == uint32_t(nx * ny);
 	const bool sills = sill_cells.size() == uint32_t(nx * ny);
@@ -2438,19 +2455,85 @@ void TerrainGenerator3D::_bake_lips() {
 				continue;
 			}
 			const Vector3 a = _cell_position(u), b = _cell_position(v);
-			const Vector2 top = Vector2(a.x, a.z);
+			const Vector2 origin = Vector2(a.x, a.z);
+			Vector2 top = origin;
 			Vector2 dv = Vector2(b.x, b.z) - top;
-			const real_t run = dv.length();
-			const Vector2 dir = run > 0.0 ? dv / run : Vector2(0, 1);
+			real_t run = dv.length();
+			Vector2 dir = run > 0.0 ? dv / run : Vector2(0, 1);
+			real_t h_top = heights[u], h_foot = heights[v];
 			const real_t width = MAX(real_t(widths[k]), real_t(4.0));
-			const bool lipped = want_lips && ((hard_map && hardness[u] >= 0.5f) || (sills && sill_cells[u] > 0.5f));
+			const bool massive = sills && sill_cells[u] > 0.5f;
+			const bool lipped = want_lips && ((hard_map && hardness[u] >= 0.5f) || massive);
+			// Gorge: the lip has worn back upstream for gorge_age years at gorge_rate sqrt(Q) metres a year (knickpoint
+			// celerity, Crosby and Whipple 2006; the rate fitted to Niagara, Gilbert 1907), a twentieth of that in
+			// massive rock (a riegel; Lamb and Dietrich 2009). It stops short of a lake (the fall would drain it) and
+			// of the fall above, and leaves a slot as wide as the river with a floor falling gently to the old foot.
+			if (lipped && gorge_age > 0.0) {
+				const real_t q = MAX(real_t(_flow(u, river_month)), real_t(0.0));
+				real_t want = real_t(gorge_age) * real_t(gorge_rate) * Math::sqrt(q) * (massive ? 0.05f : 1.0f);
+				Gorge g;
+				g.half_width = MAX(0.5f * width + 1.0f, real_t(3.0));
+				g.points.push_back(Vector2(b.x, b.z));
+				g.points.push_back(origin);
+				real_t len = 0.0;
+				int j = k;
+				Vector2 lip_at = origin;
+				while (j > 0 && want > 0.0) {
+					const int c = cells[j - 1];
+					if ((water_body.size() == uint32_t(nx * ny) && water_body[c] != 0) || (lake_rim.size() == uint32_t(nx * ny) && !Math::is_nan(lake_rim[c])) || (j - 1 > 0 && steep(j - 2))) {
+						break;
+					}
+					if (c % nx < 3 || c / nx < 3 || c % nx >= nx - 3 || c / nx >= ny - 3) {
+						break; // the river came in over the map's edge: its reach above is not here
+					}
+					const Vector3 cp = _cell_position(c);
+					const Vector2 p2(cp.x, cp.z);
+					const real_t step = p2.distance_to(lip_at);
+					// Keep two cells of the reach above the new lip untouched.
+					if (j - 1 < 2) {
+						break;
+					}
+					if (step >= want) {
+						lip_at = lip_at + (p2 - lip_at) * (want / MAX(step, real_t(1e-3)));
+						h_top = Math::lerp(h_top, heights[c], want / MAX(step, real_t(1e-3)));
+						len += want;
+						want = 0.0;
+						g.points.push_back(lip_at);
+						break;
+					}
+					lip_at = p2;
+					h_top = heights[c];
+					len += step;
+					want -= step;
+					g.points.push_back(lip_at);
+					j--;
+				}
+				if (len >= 2.0f) {
+					g.points.reverse(); // new lip first, down to the old foot
+					g.floor_top = h_foot + 0.01f * len;
+					g.floor_bottom = h_foot;
+					real_t total = 0.0;
+					for (uint32_t i = 1; i < g.points.size(); i++) {
+						total += g.points[i].distance_to(g.points[i - 1]);
+					}
+					g.length = total;
+					g.origin = origin;
+					// The new fall: from the worn-back lip into the head of the slot.
+					dir = (g.points[1] - g.points[0]).normalized();
+					top = g.points[0] - dir * (0.5f * LIP_FACE + 1.0f);
+					run = LIP_FACE + 2.0f;
+					h_foot = g.floor_top;
+					gorges.push_back(g);
+				}
+			}
 			if (lipped) {
 				FallLip lip;
+				lip.origin = origin;
 				lip.top = top;
 				lip.run = run;
 				lip.dir = dir;
-				lip.h_top = heights[u];
-				lip.h_bottom = heights[v];
+				lip.h_top = h_top;
+				lip.h_bottom = h_foot;
 				lip.half_width = width;
 				lips.push_back(lip);
 			}
@@ -2460,29 +2543,29 @@ void TerrainGenerator3D::_bake_lips() {
 			if (plunge_pools && !wet) {
 				const real_t q = MAX(real_t(_flow(u, river_month)) / real_t(widths[k] > 0.5f ? widths[k] : 0.5f), real_t(1e-4));
 				const real_t v0 = Math::pow(9.81f * q, real_t(1.0 / 3.0));
-				const real_t throw_m = v0 * Math::sqrt(2.0f * drop / 9.81f);
+				const real_t throw_m = v0 * Math::sqrt(2.0f * MAX(h_top - h_foot, real_t(0.0)) / 9.81f);
 				const real_t face_at = lipped ? 0.5f * run - 0.5f * LIP_FACE : 0.0f;
 				const real_t face_end = lipped ? 0.5f * run + 0.5f * LIP_FACE : run;
 				// Mason and Arumugam 1985: D + Y = 3.27 q^0.60 H^0.05 h^0.15 / (g^0.30 d^0.10); tailwater h at the
 				// critical depth, cobbles d = 0.3 m. At least 1.5 m (a fall of 4 m or more always leaves a hollow).
 				const real_t h = MAX(Math::pow(q * q / 9.81f, real_t(1.0 / 3.0)), real_t(0.2));
-				const real_t dy = 3.27f * Math::pow(q, real_t(0.60)) * Math::pow(drop, real_t(0.05)) * Math::pow(h, real_t(0.15)) / (Math::pow(real_t(9.81), real_t(0.30)) * Math::pow(real_t(0.3), real_t(0.10)));
+				const real_t dy = 3.27f * Math::pow(q, real_t(0.60)) * Math::pow(MAX(h_top - h_foot, real_t(1.0)), real_t(0.05)) * Math::pow(h, real_t(0.15)) / (Math::pow(real_t(9.81), real_t(0.30)) * Math::pow(real_t(0.3), real_t(0.10)));
 				PlungePool pool;
-				pool.top = top;
+				pool.top = origin;
 				pool.depth = CLAMP(dy - h, real_t(1.5), real_t(15.0));
 				// Pagliara et al. 2006: the scour hole is several times longer than deep; and wider than the jet.
 				pool.radius = MAX(MAX(0.35f * width, 3.0f * pool.depth), real_t(4.0));
 				const real_t s = MAX(face_at + throw_m, face_end + 0.5f * pool.radius);
 				pool.center = top + dir * s;
 				// The floor hangs from the ground where the pool lies (past the foot cell the bed may keep falling).
-				pool.foot = MIN(heights[v], _sample(heights, pool.center.x, pool.center.y));
+				pool.foot = MIN(h_foot, _sample(heights, pool.center.x, pool.center.y));
 				pool.dir = dir;
 				pools.push_back(pool);
 			}
 			k = e;
 		}
 	}
-	if (lips.is_empty() && pools.is_empty()) {
+	if (lips.is_empty() && pools.is_empty() && gorges.is_empty()) {
 		return;
 	}
 	lip_bx = int(Math::ceil(result_rect.size.x / LIP_BUCKET)) + 1;
@@ -2507,6 +2590,13 @@ void TerrainGenerator3D::_bake_lips() {
 	for (uint32_t j = 0; j < pools.size(); j++) {
 		add(pools[j].center, pools[j].radius * POOL_BAR, int(lips.size() + j));
 	}
+	// Gorges after the pools, one entry per segment's bucket span.
+	for (uint32_t j = 0; j < gorges.size(); j++) {
+		const Gorge &g = gorges[j];
+		for (uint32_t i = 1; i < g.points.size(); i++) {
+			add((g.points[i] + g.points[i - 1]) * 0.5f, 0.5f * g.points[i].distance_to(g.points[i - 1]) + g.half_width + GORGE_WALL, int(lips.size() + pools.size() + j));
+		}
+	}
 }
 
 float TerrainGenerator3D::_apply_lips(real_t p_x, real_t p_z, float p_g) const {
@@ -2517,6 +2607,39 @@ float TerrainGenerator3D::_apply_lips(real_t p_x, real_t p_z, float p_g) const {
 	}
 	float g = p_g;
 	const LocalVector<int> &bucket = lip_buckets[bz * lip_bx + bx];
+	int last_gorge = -1;
+	for (int i : bucket) {
+		const int gi = i - int(lips.size() + pools.size());
+		if (gi < 0 || gi == last_gorge) {
+			continue;
+		}
+		last_gorge = gi;
+		// The slot: within the half width the floor (falling gently from the new lip to the old foot), walls standing
+		// over GORGE_WALL metres beside it.
+		const Gorge &gg = gorges[gi];
+		const Vector2 pp(p_x, p_z);
+		real_t best = 1e30f, at = 0.0, acc = 0.0;
+		for (uint32_t k = 1; k < gg.points.size(); k++) {
+			const Vector2 a = gg.points[k - 1], b = gg.points[k];
+			const Vector2 ab = b - a;
+			const real_t l2 = MAX(ab.length_squared(), real_t(1e-6));
+			const real_t t = CLAMP((pp - a).dot(ab) / l2, real_t(0.0), real_t(1.0));
+			const real_t dd = pp.distance_to(a + ab * t);
+			if (dd < best) {
+				best = dd;
+				at = acc + t * Math::sqrt(l2);
+			}
+			acc += Math::sqrt(l2);
+		}
+		if (best >= gg.half_width + GORGE_WALL) {
+			continue;
+		}
+		const real_t floor_h = Math::lerp(gg.floor_top, gg.floor_bottom, CLAMP(at / MAX(gg.length, real_t(1e-3)), real_t(0.0), real_t(1.0)));
+		const real_t w = best <= gg.half_width ? 1.0 : 1.0 - (best - gg.half_width) / GORGE_WALL;
+		if (g > floor_h) {
+			g = float(Math::lerp(real_t(g), floor_h, w * w * (3.0 - 2.0 * w)));
+		}
+	}
 	for (int i : bucket) {
 		if (i >= int(lips.size())) {
 			continue;
@@ -2545,7 +2668,7 @@ float TerrainGenerator3D::_apply_lips(real_t p_x, real_t p_z, float p_g) const {
 	}
 	// Pools after the lips: a bowl (1 - (r/R)^2)^2 deep at the centre, flat at the rim, cut below the foot.
 	for (int i : bucket) {
-		if (i < int(lips.size())) {
+		if (i < int(lips.size()) || i >= int(lips.size() + pools.size())) {
 			continue;
 		}
 		const PlungePool &pl = pools[i - lips.size()];
@@ -3822,6 +3945,10 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_spray_cell"), &TerrainGenerator3D::get_spray_cell);
 	ClassDB::bind_method(D_METHOD("get_spray_potential", "global_position"), &TerrainGenerator3D::get_spray_potential);
 	ClassDB::bind_method(D_METHOD("get_spray_image"), &TerrainGenerator3D::get_spray_image);
+	ClassDB::bind_method(D_METHOD("set_gorge_age", "years"), &TerrainGenerator3D::set_gorge_age);
+	ClassDB::bind_method(D_METHOD("get_gorge_age"), &TerrainGenerator3D::get_gorge_age);
+	ClassDB::bind_method(D_METHOD("set_gorge_rate", "rate"), &TerrainGenerator3D::set_gorge_rate);
+	ClassDB::bind_method(D_METHOD("get_gorge_rate"), &TerrainGenerator3D::get_gorge_rate);
 	ClassDB::bind_method(D_METHOD("set_plunge_pools", "enable"), &TerrainGenerator3D::set_plunge_pools);
 	ClassDB::bind_method(D_METHOD("get_plunge_pools"), &TerrainGenerator3D::get_plunge_pools);
 	ClassDB::bind_method(D_METHOD("set_fall_lips", "enable"), &TerrainGenerator3D::set_fall_lips);
@@ -3987,6 +4114,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lake_evaporation", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:mm/yr"), "set_lake_evaporation", "get_lake_evaporation");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_lips"), "set_fall_lips", "get_fall_lips");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunge_pools"), "set_plunge_pools", "get_plunge_pools");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_age", PROPERTY_HINT_RANGE, "0,100000,100,or_greater,suffix:yr"), "set_gorge_age", "get_gorge_age");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_rate", PROPERTY_HINT_RANGE, "0,0.1,0.0001,or_greater"), "set_gorge_rate", "get_gorge_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_cell", PROPERTY_HINT_RANGE, "0,32,0.5,suffix:m"), "set_spray_cell", "get_spray_cell");
 	ADD_GROUP("Inflows", "inflow");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "inflows", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_inflows", "get_inflows");
