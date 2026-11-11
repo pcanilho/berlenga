@@ -197,6 +197,8 @@ void TerrainGenerator3D::_build_uplift(LocalVector<double> &r_uplift) const {
 }
 
 bool TerrainGenerator3D::generate() {
+	// Readers on other threads (Landscape3D streaming heights) finish before any grid is replaced.
+	emit_signal(SNAME("changing"));
 	if (size.x <= 0.0 || size.y <= 0.0) {
 		clear_result();
 		return false;
@@ -548,6 +550,7 @@ bool TerrainGenerator3D::generate() {
 		sediment[i] = float(sed[i] * scale);
 		uplift_field[i] = float(up[i] * 1.0e3);
 	}
+	_alluvium_reach();
 
 	// Seabed and beaches below and along the coast.
 	const uint64_t tw = OS::get_singleton()->get_ticks_usec();
@@ -601,6 +604,7 @@ bool TerrainGenerator3D::generate() {
 	_route_rivers();
 	water_usec += OS::get_singleton()->get_ticks_usec() - tr;
 	last_water_msec = double(water_usec) / 1000.0;
+	_bake_detail_keep();
 	_publish_globals();
 	_erode_tiles();
 	last_generate_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
@@ -609,11 +613,13 @@ bool TerrainGenerator3D::generate() {
 }
 
 void TerrainGenerator3D::clear_result() {
+	emit_signal(SNAME("changing"));
 	nx = 0;
 	ny = 0;
 	heights.clear();
 	drainage.clear();
 	sediment.clear();
+	alluvium_reach.clear();
 	uplift_field.clear();
 	soil.clear();
 	rock.clear();
@@ -667,6 +673,90 @@ float TerrainGenerator3D::_sample(const LocalVector<float> &p_grid, real_t p_x, 
 		rows[k] = cr(at(ix - 1, z), at(ix, z), at(ix + 1, z), at(ix + 2, z), fx);
 	}
 	return float(cr(rows[0], rows[1], rows[2], rows[3], fz));
+}
+
+// Alluvium depth (capped at the ALLUVIUM_FADE metres over which the detail fades) carried out past the deposit,
+// losing all of it over 3/8 of the detail's longest wavelength: the toe of a fan, where the deposit thins to a few
+// decimetres over a wide convex slope, would otherwise get the bedrock gullies at nearly full depth, all running
+// down the same slope side by side. A two-pass
+// chamfer distance (Borgefors 1986), so it costs two sweeps of the grid.
+static constexpr float ALLUVIUM_FADE = 0.5f;
+
+void TerrainGenerator3D::_alluvium_reach() {
+	alluvium_reach.clear();
+	if (!result_deposition || sediment.size() != uint32_t(nx * ny) || nx < 2 || ny < 2) {
+		return;
+	}
+	const int n = nx * ny;
+	alluvium_reach.resize(n);
+	for (int i = 0; i < n; i++) {
+		alluvium_reach[i] = MIN(MAX(sediment[i], 0.0f), ALLUVIUM_FADE);
+	}
+	// River channels across the floor keep little alluvium themselves (they are where it moves): a plateau of two
+	// cells first, so a channel and its banks inside a deposit count as the deposit, then the fall-off.
+	{
+		const int rad = MAX(1, int(Math::round(32.0 / double(cell_size))));
+		LocalVector<float> row_max;
+		row_max.resize(n);
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				float v = 0.0f;
+				for (int k = MAX(0, x - rad); k <= MIN(nx - 1, x + rad); k++) {
+					v = MAX(v, alluvium_reach[z * nx + k]);
+				}
+				row_max[z * nx + x] = v;
+			}
+		}
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				float v = 0.0f;
+				for (int k = MAX(0, z - rad); k <= MIN(ny - 1, z + rad); k++) {
+					v = MAX(v, row_max[k * nx + x]);
+				}
+				alluvium_reach[z * nx + x] = v;
+			}
+		}
+	}
+	const float per_m = ALLUVIUM_FADE / float(MAX(double(detail_wavelength) * 0.375, double(cell_size)));
+	const float a = per_m * float(cell_size);
+	const float d = a * float(Math::SQRT2);
+	float *r = alluvium_reach.ptr();
+	for (int z = 0; z < ny; z++) {
+		for (int x = 0; x < nx; x++) {
+			float v = r[z * nx + x];
+			if (x > 0) {
+				v = MAX(v, r[z * nx + x - 1] - a);
+			}
+			if (z > 0) {
+				v = MAX(v, r[(z - 1) * nx + x] - a);
+				if (x > 0) {
+					v = MAX(v, r[(z - 1) * nx + x - 1] - d);
+				}
+				if (x < nx - 1) {
+					v = MAX(v, r[(z - 1) * nx + x + 1] - d);
+				}
+			}
+			r[z * nx + x] = v;
+		}
+	}
+	for (int z = ny - 1; z >= 0; z--) {
+		for (int x = nx - 1; x >= 0; x--) {
+			float v = r[z * nx + x];
+			if (x < nx - 1) {
+				v = MAX(v, r[z * nx + x + 1] - a);
+			}
+			if (z < ny - 1) {
+				v = MAX(v, r[(z + 1) * nx + x] - a);
+				if (x < nx - 1) {
+					v = MAX(v, r[(z + 1) * nx + x + 1] - d);
+				}
+				if (x > 0) {
+					v = MAX(v, r[(z + 1) * nx + x - 1] - d);
+				}
+			}
+			r[z * nx + x] = v;
+		}
+	}
 }
 
 float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
@@ -731,10 +821,12 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	// Not under water (the seabed and lake beds stay smooth), and never down to the outlets: land the filter cuts
 	// stays above the sea (by 0.15 m), so the coast keeps its shape and no hollow floods.
 	off *= _water_fade(p_x, p_z);
-	if (result_deposition && sediment.size() == heights.size()) {
-		// Alluvium the rivers laid down is smooth: bedrock gullies and crests fade out over its first 2 m, so a fan
-		// front or a terrace riser stays a soft bank instead of growing rocky knobs.
-		const double sd = CLAMP(double(_sample(sediment, p_x, p_z)) / 2.0, 0.0, 1.0);
+	if (result_deposition && alluvium_reach.size() == heights.size()) {
+		// Alluvium the rivers laid down is smooth (an aggrading surface buries gullies): bedrock gullies and crests
+		// fade out over its first half metre, so a fan front or a terrace riser stays a soft bank instead of growing
+		// rocky knobs. The fade reaches past the thin
+		// edge of a deposit (see _alluvium_reach), so a fan toe does not grow a comb of gullies either.
+		const double sd = CLAMP(double(_sample(alluvium_reach, p_x, p_z)) / ALLUVIUM_FADE, 0.0, 1.0);
 		off *= 1.0 - sd * sd * (3.0 - 2.0 * sd);
 	}
 	if (has_sea) {
@@ -1020,6 +1112,56 @@ real_t TerrainGenerator3D::get_rock_hardness(const Vector3 &p_global_position) c
 		return 0.0;
 	}
 	return CLAMP(_sample(hardness, p_global_position.x, p_global_position.z), 0.0f, 1.0f);
+}
+
+// Places along the rivers for lakes and falls: every river point carrying at least p_min_discharge (m3/s, in
+// river_month), with how far the river drops over the next p_run metres downstream. Each is a Dictionary: position
+// (on the ground), discharge, area (drainage, m2), drop (m over p_run), run (m actually measured, shorter at a mouth),
+// river and index (as in get_rivers(p_min_area)). Ordered by river, then downstream.
+Array TerrainGenerator3D::get_river_sites(real_t p_min_area, real_t p_min_discharge, real_t p_run) const {
+	Array out;
+	if (heights.size() != uint32_t(nx * ny)) {
+		return out;
+	}
+	const Array rivers = _rivers(p_min_area, true);
+	const real_t run = MAX(p_run, real_t(0.0));
+	for (int r = 0; r < rivers.size(); r++) {
+		const Dictionary d = rivers[r];
+		const PackedInt32Array cells = d["cells"];
+		const PackedVector3Array pts = d["points"];
+		const PackedFloat32Array areas = d["areas"];
+		// Distance along the river from its first point, to find the point p_run further down.
+		LocalVector<real_t> along;
+		along.resize(pts.size());
+		real_t acc = 0.0;
+		for (int k = 0; k < pts.size(); k++) {
+			acc += k > 0 ? Vector2(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z).length() : 0.0;
+			along[k] = acc;
+		}
+		int e = 0;
+		for (int k = 0; k < cells.size() && k < pts.size(); k++) {
+			const float q = _flow(cells[k], river_month);
+			if (q < p_min_discharge) {
+				continue;
+			}
+			e = MAX(e, k);
+			while (e + 1 < pts.size() && along[e] - along[k] < run) {
+				e++;
+			}
+			const Vector3 top(pts[k].x, _ground(pts[k].x, pts[k].z), pts[k].z);
+			const real_t below = _ground(pts[e].x, pts[e].z);
+			Dictionary w;
+			w["position"] = top;
+			w["discharge"] = q;
+			w["area"] = k < areas.size() ? real_t(areas[k]) : real_t(0.0);
+			w["drop"] = top.y - below;
+			w["run"] = along[e] - along[k];
+			w["river"] = r;
+			w["index"] = k;
+			out.push_back(w);
+		}
+	}
+	return out;
 }
 
 // Waterfalls along the rivers: runs of the channel steeper than 45 degrees in the eroded heights (soft rock stands at
@@ -1360,6 +1502,42 @@ void TerrainGenerator3D::_publish_globals() {
 	const Rect2 &r = result_rect;
 	set_global("terrain_geology_map", geology_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 	set_global("terrain_geology_rect", Vector4(r.position.x, r.position.y, (nx - 1) * result_cell, (ny - 1) * result_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+	if (detail_keep_texture.is_valid()) {
+		set_global("terrain_detail_keep_map", detail_keep_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
+	}
+}
+
+// How much of the geometric erosion detail each grid node keeps (_ground_detail's fades for water, alluvium and the
+// coastal strip), so the detail normal in materials fades in the same places (an unset global reads white: full
+// detail).
+void TerrainGenerator3D::_bake_detail_keep() {
+	const int n = nx * ny;
+	if (n <= 0 || heights.size() != uint32_t(n)) {
+		detail_keep_texture.unref();
+		return;
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(n * sizeof(float));
+	float *w = reinterpret_cast<float *>(bytes.ptrw());
+	for (int i = 0; i < n; i++) {
+		const Vector3 p = _cell_position(i);
+		double keep = _water_fade(p.x, p.z);
+		if (result_deposition && alluvium_reach.size() == uint32_t(n)) {
+			const double sd = CLAMP(double(alluvium_reach[i]) / ALLUVIUM_FADE, 0.0, 1.0);
+			keep *= 1.0 - sd * sd * (3.0 - 2.0 * sd);
+		}
+		if (has_sea) {
+			const double t = CLAMP((double(heights[i]) - double(result_min) - 0.5) / 5.5, 0.0, 1.0);
+			keep *= t * t * (3.0 - 2.0 * t);
+		}
+		w[i] = float(keep);
+	}
+	const Ref<Image> img = Image::create_from_data(nx, ny, false, Image::FORMAT_RF, bytes);
+	if (detail_keep_texture.is_valid() && detail_keep_texture->get_width() == nx && detail_keep_texture->get_height() == ny) {
+		detail_keep_texture->update(img);
+	} else {
+		detail_keep_texture = ImageTexture::create_from_image(img);
+	}
 }
 
 String TerrainGenerator3D::get_geology_shader_code() {
@@ -1397,6 +1575,10 @@ String TerrainGenerator3D::get_detail_shader_code() const {
 	c += vformat("const float TD_ASSUMED = %.6f;\n", double(detail_assumed_slope));
 	c += vformat("const float TD_VALLEY = %.3f;\n", double(result_min));
 	c += vformat("const float TD_PEAK = %.3f;\n", double(MAX(result_max, result_min + 1.0f)));
+	// The grid rectangle (first to last node) of the map of where the geometric detail fades (alluvium, water,
+	// coast), published as terrain_detail_keep_map (1 = full detail).
+	c += vformat("const vec4 TD_RECT = vec4(%.3f, %.3f, %.3f, %.3f);\n", double(result_rect.position.x), double(result_rect.position.y), double(MAX(nx - 1, 1) * result_cell), double(MAX(ny - 1, 1) * result_cell));
+	c += "global uniform sampler2D terrain_detail_keep_map;\n";
 	c += R"GLSL(
 uint td_hash(uint x, uint z, uint s) {
 	uint h = (x * 0x8DA6B343u) ^ (z * 0xD8163841u) ^ (s * 0xCB1AB31Fu);
@@ -1506,7 +1688,13 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 
 vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float footprint) {
 	vec2 g = -world_normal.xz / max(world_normal.y, 1e-3);
-	vec2 d = terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
+	vec2 size = vec2(textureSize(terrain_detail_keep_map, 0));
+	vec2 u = clamp((world_pos.xz - TD_RECT.xy) / TD_RECT.zw, 0.0, 1.0);
+	float keep = clamp(textureLod(terrain_detail_keep_map, (u * (size - 1.0) + 0.5) / size, 0.0).r, 0.0, 1.0);
+	if (keep <= 0.0) {
+		return world_normal;
+	}
+	vec2 d = keep * terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
 	return normalize(vec3(-(g.x + d.x), 1.0, -(g.y + d.y)));
 }
 )GLSL";
@@ -2608,6 +2796,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_strata_channel_area"), &TerrainGenerator3D::get_strata_channel_area);
 	ClassDB::bind_method(D_METHOD("get_rock_hardness", "global_position"), &TerrainGenerator3D::get_rock_hardness);
 	ClassDB::bind_method(D_METHOD("get_waterfalls", "min_area", "min_height"), &TerrainGenerator3D::get_waterfalls, DEFVAL(1.0e5), DEFVAL(5.0));
+	ClassDB::bind_method(D_METHOD("get_river_sites", "min_area", "min_discharge", "run"), &TerrainGenerator3D::get_river_sites, DEFVAL(1.0e5), DEFVAL(0.0), DEFVAL(200.0));
 	ClassDB::bind_method(D_METHOD("get_geology_image"), &TerrainGenerator3D::get_geology_image);
 	ClassDB::bind_method(D_METHOD("get_geology_texture"), &TerrainGenerator3D::get_geology_texture);
 	ClassDB::bind_static_method("TerrainGenerator3D", D_METHOD("get_geology_shader_code"), &TerrainGenerator3D::get_geology_shader_code);
@@ -2793,6 +2982,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "deformer", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDeformer3D"), "set_deformer", "get_deformer");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "ground_mesh", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_ground_mesh", "get_ground_mesh");
 
+	ADD_SIGNAL(MethodInfo("changing"));
 	ADD_SIGNAL(MethodInfo("generated"));
 	ADD_SIGNAL(MethodInfo("written", PropertyInfo(Variant::INT, "vertices")));
 

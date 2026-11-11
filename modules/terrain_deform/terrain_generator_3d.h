@@ -161,6 +161,7 @@ private:
 	LocalVector<float> heights;
 	LocalVector<float> drainage;
 	LocalVector<float> sediment;
+	LocalVector<float> alluvium_reach; // alluvium depth (to 0.5 m) carried past the deposit's edge; fades the detail
 	LocalVector<float> uplift_field;
 	LocalVector<float> soil;
 	LocalVector<float> rock;
@@ -213,6 +214,7 @@ private:
 	static double _marker_face_slope(const Node3D *p_marker);
 	Vector3 _lake_center(int p_lake) const;
 	Ref<ImageTexture> geology_texture;
+	Ref<ImageTexture> detail_keep_texture; // share of the erosion detail kept, per node (_bake_detail_keep)
 	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).
 	int tile_nx = 0;
 	int tile_nz = 0;
@@ -266,6 +268,8 @@ private:
 	float _runoff_sample(int p_field, real_t p_x, real_t p_z) const;
 	float _flow(int p_cell, int p_month) const;
 	void _route_runoff(const LocalVector<int32_t> &p_receivers, const LocalVector<int32_t> &p_order);
+	void _alluvium_reach();
+	void _bake_detail_keep();
 	void _fill(real_t p_x0, real_t p_z0, real_t p_spacing, int p_width, int p_rows, float *r_out) const;
 
 protected:
@@ -484,6 +488,7 @@ public:
 	real_t get_rock_exposure(const Vector3 &p_global_position) const;
 	real_t get_talus(const Vector3 &p_global_position) const;
 	real_t get_rock_hardness(const Vector3 &p_global_position) const;
+	Array get_river_sites(real_t p_min_area = 1.0e5, real_t p_min_discharge = 0.0, real_t p_run = 200.0) const;
 	Array get_waterfalls(real_t p_min_area = 1.0e5, real_t p_min_height = 5.0) const;
 	Color get_geology_at(const Vector3 &p_global_position) const;
 	Ref<Image> get_geology_image() const;
