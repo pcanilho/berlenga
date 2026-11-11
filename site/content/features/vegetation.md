@@ -83,6 +83,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Bending: the nettles part round the body.*
 
+- **Sun and shade growth** (always on): grass and ground plants take the colour and height of the light they grow in, like sun and shade leaves.
 - **Per-stem sway** (always on): each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.
 - **Near and far meshes** (`PlantSpecies.near_meshes`, `near_range`): heavier meshes near the camera, crossfaded with dithering a few plants at a time.
 - **Far thinning** (`PlantSpecies.far_color`): plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.
