@@ -35,6 +35,7 @@
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
+#include "core/os/mutex.h"
 #include "core/os/os.h"
 #include "core/templates/hashfuncs.h"
 #include "scene/3d/camera_3d.h"
@@ -64,8 +65,71 @@ float unit(uint32_t p_h, int p_shift) {
 	return float((p_h >> p_shift) & 0xFFu) / 255.0f;
 }
 
-float unit16(uint32_t p_h) {
-	return float(p_h & 0xFFFFu) / 65536.0f;
+// Blue-noise rank mask (void and cluster, Ulichney 1993): 64 x 64 cells ranked so that every
+// threshold keeps an even spread, with no clumps and gaps and no lattice rows. Built once, by
+// putting each next point in the largest void (lowest Gaussian energy, wrapping round).
+constexpr int BLUE_SIZE = 64;
+
+const uint16_t *blue_ranks() {
+	static uint16_t ranks[BLUE_SIZE * BLUE_SIZE];
+	static bool built = false;
+	static BinaryMutex lock;
+	MutexLock guard(lock);
+	if (built) {
+		return ranks;
+	}
+	const int n = BLUE_SIZE * BLUE_SIZE;
+	float kernel[BLUE_SIZE * BLUE_SIZE];
+	for (int y = 0; y < BLUE_SIZE; y++) {
+		for (int x = 0; x < BLUE_SIZE; x++) {
+			const int dx = MIN(x, BLUE_SIZE - x);
+			const int dy = MIN(y, BLUE_SIZE - y);
+			kernel[y * BLUE_SIZE + x] = Math::exp(-float(dx * dx + dy * dy) / (2.0f * 1.9f * 1.9f));
+		}
+	}
+	LocalVector<float> energy;
+	energy.resize(n);
+	for (int i = 0; i < n; i++) {
+		energy[i] = float(hash_fmix32(uint32_t(i) * 0x9E3779B9u + 7u) & 0xFFFFu) * 1e-9f; // Breaks ties.
+	}
+	for (int r = 0; r < n; r++) {
+		int best = 0;
+		for (int i = 1; i < n; i++) {
+			if (energy[i] < energy[best]) {
+				best = i;
+			}
+		}
+		ranks[best] = uint16_t(r);
+		energy[best] = 1e30f;
+		const int bx = best % BLUE_SIZE;
+		const int by = best / BLUE_SIZE;
+		for (int y = 0; y < BLUE_SIZE; y++) {
+			const int ky = ((y - by) & (BLUE_SIZE - 1)) * BLUE_SIZE;
+			for (int x = 0; x < BLUE_SIZE; x++) {
+				energy[y * BLUE_SIZE + x] += kernel[ky + ((x - bx) & (BLUE_SIZE - 1))];
+			}
+		}
+	}
+	built = true;
+	return ranks;
+}
+
+// A cell's rank in [0, 1): the mask, turned or mirrored per 64-cell block so it does not repeat.
+float blue_rank(int p_x, int p_z) {
+	const uint16_t *ranks = blue_ranks();
+	const uint32_t sym = cell_hash(p_x >> 6, p_z >> 6, 0x27D4EB2Fu) & 7u;
+	int x = p_x & (BLUE_SIZE - 1);
+	int z = p_z & (BLUE_SIZE - 1);
+	if (sym & 1u) {
+		x = BLUE_SIZE - 1 - x;
+	}
+	if (sym & 2u) {
+		z = BLUE_SIZE - 1 - z;
+	}
+	if (sym & 4u) {
+		SWAP(x, z);
+	}
+	return (float(ranks[z * BLUE_SIZE + x]) + 0.5f) / float(BLUE_SIZE * BLUE_SIZE);
 }
 
 } // namespace
@@ -179,7 +243,7 @@ void vertex() {
 	float h = INSTANCE_CUSTOM.x;
 	float w = INSTANCE_CUSTOM.y;
 	float rest_lean = INSTANCE_CUSTOM.z;
-	float rnd = INSTANCE_CUSTOM.w;
+	float rnd = fract(INSTANCE_CUSTOM.w);
 	float t = VERTEX.y;
 	float side = VERTEX.x;
 	vec3 base_w = (MODEL_MATRIX * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
@@ -227,13 +291,13 @@ void vertex() {
 	}
 	// Rounded across its width, as a real blade.
 	vec3 n = normalize(cross(across, tangent));
-	// Outer band (Ghost of Tsushima, Horizon Zero Dawn): blades drop out one at a time in a random
-	// order and shrink to nothing before the radius, so the field has no edge; the ground under
+	// Outer band (Ghost of Tsushima, Horizon Zero Dawn): blades drop out one at a time in an even
+	// dither order and shrink to nothing before the radius, so the field has no edge; the ground under
 	// them takes the blades' colour (get_ground_shader_code()). fade_band: centre xz, the distance
 	// where the last blade is gone, the width of the band.
 	if (fade_band.w > 0.0) {
 		float keep_b = clamp((fade_band.z - length(base_w.xz - fade_band.xy)) / fade_band.w, 0.0, 1.0);
-		float order = fract(rnd * 91.7 + 0.29);
+		float order = floor(INSTANCE_CUSTOM.w) / 256.0;
 		p *= smoothstep(order, order + 0.15, keep_b * 1.15);
 	}
 	VERTEX = p;
@@ -325,7 +389,9 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 		for (int ix = ix0; ix < ix1; ix++) {
 			const uint32_t hb = cell_hash(ix, iz, 0x9E3779B9u);
 			// The rank decides which blades a coarser level keeps: the same ones, so nothing pops.
-			const float rank = unit16(hb);
+			// A blue-noise mask instead of a hash: every threshold keeps an even spread, so thinned
+			// grass has no clumps and gaps.
+			const float rank = blue_rank(ix, iz);
 			if (rank >= keep) {
 				continue;
 			}
@@ -355,7 +421,10 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			const float yaw = clump_yaw + (unit(hj, 24) - 0.5f) * 1.6f;
 			const Transform3D world(Basis(Vector3(0, 1, 0), yaw), Vector3(x, y, z));
 			xforms.push_back(to_local * world);
-			customs.push_back(Color(height, width, lean * (0.4f + 1.2f * unit(hc, 16)), Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
+			// w: the outer band's drop order in the integer part (the rank within the coarsest level,
+			// so the last blades left are evenly spread too), the blade's random value in the fraction.
+			const float order = Math::floor(Math::fmod(rank * 8.0f, 1.0f) * 255.0f);
+			customs.push_back(Color(height, width, lean * (0.4f + 1.2f * unit(hc, 16)), order + 0.999f * Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
 		}
 	}
 	Tile tile;
