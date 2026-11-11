@@ -385,10 +385,10 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		# Standing in the stand: a short view (and shadow) distance keeps a CPU render bounded.
 		cam.far = 70.0
 		sun.directional_shadow_max_distance = 70.0
-		var eye := Vector3(-20, 0, 30)
+		var eye := Vector3(0, 0, 45) # on the stream bed, the one gap in the stand
 		eye.y = valley.get_height(eye) + 1.7
 		cam.position = eye
-		cam.look_at(eye + Vector3(0.6, 0.12, -1))
+		cam.look_at(eye + Vector3(-0.35, 0.18, -1))
 	for k in (8 if raster else 12):
 		await RenderingServer.frame_post_draw
 	var out: String = args.get("out", "/tmp/plot.png")
