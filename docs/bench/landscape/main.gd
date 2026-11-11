@@ -1451,7 +1451,7 @@ func _build_camera() -> void:
 			var want: String = args.get("contact", "")
 			var pick := {}
 			for f in contact_falls:
-				if (want != "" and f["id"] == want) or (want == "" and (pick.is_empty() or f["discharge"] > pick["discharge"])):
+				if (want != "" and f["id"] == want) or (want == "" and (pick.is_empty() or f["discharge"] * f["height"] > pick["discharge"] * pick["height"])):
 					pick = f
 			for g in gen.get_waterfalls():
 				if not pick.is_empty() and g.get("id", "") == pick["id"]:
@@ -1461,11 +1461,30 @@ func _build_camera() -> void:
 					d.y = 0
 					d = d.normalized()
 					var h := top.y - bot.y
-					var dist := float(args.get("contact-dist", str(maxf(h * 1.6, 25.0))))
-					var c := bot + d * dist + Vector3(-d.z, 0, d.x) * dist * 0.35
-					c.y = maxf(height_at(c.x, c.z) + 2.0, bot.y + h * 0.3)
+					var mid := bot.lerp(top, 0.45)
+					var side := Vector3(-d.z, 0, d.x)
+					var c := bot + d * maxf(h * 1.6, 25.0) + Vector3(0, h * 0.3, 0)
+					var found := false
+					# The first spot in front of the face with a clear line to its middle (gorges hide it).
+					for lift in [0.0, 0.5, 1.0, 2.0]:
+						for k in [1.2, 1.6, 2.2, 3.0, 4.0]:
+							for o in [0.35, -0.35, 0.0, 0.7, -0.7]:
+								if found:
+									continue
+								var q: Vector3 = bot + d * h * k + side * h * k * o
+								q.y = maxf(height_at(q.x, q.z) + 2.0, mid.y - h * 0.1) + h * lift
+								var clear := true
+								for t in range(1, 20):
+									var p := q.lerp(mid, t / 20.0)
+									if height_at(p.x, p.z) > p.y - 0.5:
+										clear = false
+										break
+								if clear:
+									c = q
+									found = true
 					cam.position = c
-					cam.look_at(bot.lerp(top, 0.45))
+					cam.look_at(mid)
+					cam.fov = clampf(rad_to_deg(2.0 * atan(0.8 * h / c.distance_to(mid))), 25.0, 70.0)
 					_log("contact view of %s from %s" % [pick["id"], c])
 		"beach":
 			cam.fov = 60.0
