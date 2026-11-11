@@ -172,6 +172,22 @@ Order inside the sky step: the clock and ephemeris first (small, and everything 
 atmosphere with two lights, then the night sky, then exposure and the Purkinje shift. Paulo chose on 10 Nov to
 build the moon with the sky step.
 
+### As built: step 1, the clock (11 Nov)
+
+`SkyClock` (modules/weather/sky_clock.*), a Node: `year`, `month`, `day`, `time_of_day`, `utc_offset`,
+`time_scale`, `latitude`, `longitude`, `north_offset`, `refraction`, `sun_light`, `moon_light`,
+`hide_below_horizon`. It points both lights and reports the sun's and the moon's direction, altitude and
+azimuth, the moon's phase angle, lit fraction, bright limb angle (from the zenith, for the disc's shading) and
+magnitude, the light above the air in lux, sidereal time and `get_celestial_basis()` for the stars. The moon
+uses the 50 largest longitude and distance terms and 30 largest latitude terms of Meeus 47.A and 47.B, plus
+parallax (the moon sits up to 1 deg lower from the ground) and Saemundsson refraction.
+
+`docs/bench/sky --test` against Meeus' worked examples: the sun within 0.0004 deg (25.a), the moon within 0.001
+deg in longitude and 10 km in distance (47.a), the phase angle within 0.001 deg (48.a), sidereal time within
+0.005 s (12.a); Lisbon on 21 June 2026 rises at 06:11.7 and sets at 21:05.3 (almanac 06:12, 21:05); full moon
+0.27 lux above the air. One update costs about 2 microseconds. The lights' colour and strength come with the
+atmosphere (step 2), which owns the transmittance.
+
 ### Checks
 
 - Positions against published almanac values. The JPL Horizons ephemeris gives the sun and the moon for a
