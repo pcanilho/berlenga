@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} · {{ site.Title }}{{ end }}</title>
+<meta name="description" content="{{ with .Description }}{{ . }}{{ else }}{{ site.Params.description }}{{ end }}">
+<link rel="icon" href="{{ "berlenga.svg" | relURL }}" type="image/svg+xml">
+{{ $css := resources.Get "site.css" | minify | fingerprint }}
+<link rel="stylesheet" href="{{ $css.RelPermalink }}">
+</head>
+<body>
+<header class="top">
+  <button class="menu" aria-label="Menu" onclick="document.body.classList.toggle('nav-open')">☰</button>
+  <a class="brand" href="{{ "" | relURL }}"><img src="{{ "berlenga.svg" | relURL }}" alt="" width="24" height="24">Berlenga</a>
+  <nav class="links">
+    <a href="{{ site.Params.repo }}/releases/latest">Download</a>
+    <a href="{{ site.Params.repo }}/blob/main/CHANGELOG.md">Changelog</a>
+    <a href="{{ site.Params.repo }}">GitHub</a>
+  </nav>
+</header>
+<div class="wrap">
+  <aside class="side">{{ partial "nav.html" . }}</aside>
+  <main class="content">
+    {{ block "main" . }}{{ end }}
+  </main>
+</div>
+<footer class="foot">MIT, like Godot. Berlenga is an independent fork and is not affiliated with or endorsed by the Godot Foundation.</footer>
+</body>
+</html>

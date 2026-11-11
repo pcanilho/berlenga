@@ -1,0 +1,9 @@
+{{ define "main" }}
+{{ .Content }}
+{{ with site.GetPage "/features" }}
+<h2 id="at-a-glance">At a glance</h2>
+<ul class="cards">
+{{ range .Pages.ByWeight }}<li><a href="{{ .RelPermalink }}"><b>{{ .Title }}</b>{{ with .Params.summary }}<span>{{ . }}</span>{{ end }}</a></li>{{ end }}
+</ul>
+{{ end }}
+{{ end }}

@@ -1,0 +1,55 @@
+:root{--bg:#f7f7f5;--panel:#ffffff;--text:#1d2125;--muted:#5d6670;--line:#e2e4e7;--accent:#2d6aa3;--code:#eef0f2;--side:250px}
+@media (prefers-color-scheme:dark){:root{--bg:#121417;--panel:#181b1f;--text:#e3e6e9;--muted:#9aa3ad;--line:#2a2f35;--accent:#7fb1e0;--code:#22262b}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:16px;height:56px;padding:0 20px;background:var(--panel);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:18px;color:var(--text)}
+.brand:hover{text-decoration:none}
+.links{margin-left:auto;display:flex;gap:18px;font-size:15px}
+.menu{display:none;background:none;border:0;color:var(--text);font-size:20px;cursor:pointer;padding:4px}
+.wrap{display:flex;max-width:1280px;margin:0 auto}
+.side{position:sticky;top:56px;align-self:flex-start;width:var(--side);flex:none;height:calc(100vh - 56px);overflow:auto;padding:20px 12px 40px 20px;border-right:1px solid var(--line);font-size:15px}
+.side ul{list-style:none;margin:0 0 8px;padding:0}
+.side li a{display:block;padding:4px 10px;border-radius:6px;color:var(--text)}
+.side li a:hover{background:var(--code);text-decoration:none}
+.side li a.on{background:var(--code);color:var(--accent);font-weight:600}
+.side .group{margin:18px 10px 6px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.content{flex:1;min-width:0;max-width:880px;padding:28px 40px 64px}
+h1{font-size:32px;line-height:1.2;margin:4px 0 20px}
+h2{font-size:22px;margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--line)}
+h3{font-size:18px;margin:28px 0 8px}
+.anchor{margin-left:8px;color:var(--muted);opacity:0;font-weight:400}
+h1:hover .anchor,h2:hover .anchor,h3:hover .anchor{opacity:1}
+img{max-width:100%;height:auto;display:block;border-radius:6px;margin:16px 0 6px}
+p:has(> em:only-child){margin-top:0;color:var(--muted);font-size:14.5px}
+ul{padding-left:22px}li{margin:4px 0}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.88em;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+pre{background:var(--code);padding:14px 16px;border-radius:8px;overflow:auto}pre code{padding:0;background:none}
+table{border-collapse:collapse;width:100%;font-size:14.5px;display:block;overflow-x:auto}
+th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{white-space:nowrap}
+td:first-child{white-space:nowrap;font-weight:600}
+.cards{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.cards li{margin:0}
+.cards a{display:block;height:100%;padding:14px 16px;background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--text)}
+.cards a:hover{border-color:var(--accent);text-decoration:none}
+.cards b{display:block;color:var(--accent);margin-bottom:4px}
+.cards span{display:block;color:var(--muted);font-size:14px;line-height:1.45}
+.hero{margin:0 0 6px}
+.lead{font-size:18px;color:var(--muted);margin:0 0 20px}
+.btns{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 24px}
+.btns a{padding:8px 16px;border-radius:8px;border:1px solid var(--line);background:var(--panel);font-weight:600}
+.btns a.primary{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+.btns a:hover{text-decoration:none;filter:brightness(1.08)}
+.foot{border-top:1px solid var(--line);color:var(--muted);font-size:13px;text-align:center;padding:20px 16px}
+@media (max-width:860px){
+ .menu{display:block}.links{gap:12px;font-size:14px}
+ .side{position:fixed;left:0;top:56px;z-index:4;background:var(--panel);transform:translateX(-100%);transition:transform .2s;width:260px}
+ body.nav-open .side{transform:none;box-shadow:0 0 0 100vmax rgba(0,0,0,.35)}
+ .content{padding:20px 16px 48px}
+ h1{font-size:26px}
+}
+@media (max-width:420px){.links a:nth-child(2){display:none}}
+h1+h2{border-top:0;margin-top:8px}
