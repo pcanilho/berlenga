@@ -388,7 +388,7 @@ void fragment() {
 )";
 	}
 	if (far_blend_enabled) {
-		c += "\tvec3 tm_bare = albedo;\n";
+		c += "\tvec3 tm_bare = albedo;\n\tfloat tm_far_t = 0.0;\n\tfloat tm_far_cover = 0.0;\n";
 	}
 	if (grass_tint_enabled) {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
@@ -407,6 +407,8 @@ void fragment() {
 			vec3 cs = cover.rgb;
 			vec3 cover_lin = mix(cs / 12.92, pow((cs + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), cs));
 			albedo = mix(albedo, mix(tm_bare, cover_lin, cover.a), far_t);
+			tm_far_t = far_t;
+			tm_far_cover = cover.a;
 		}
 	}
 )";
@@ -416,6 +418,14 @@ void fragment() {
 		c += "\tvec2 gd = ground_deform_tint(wp);\n\talbedo *= gd.x;\n\trough = clamp(rough * gd.y, 0.0, 1.0);\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5;\n";
+	if (grass_tint_enabled) {
+		// The sward hides the soil's sheen (GrassField3D): without it the meadow past the blades reads pale grey.
+		c += "\tspecular = grass_ground_specular(wp, specular);\n";
+	}
+	if (far_blend_enabled) {
+		// Past far_start the cover map hides the sheen by its cover share, as the sward does near.
+		c += "\tspecular = mix(specular, mix(0.5, 0.1, tm_far_cover), tm_far_t);\n";
+	}
 	if (wetness_enabled) {
 		// Rain soaks the ground by each layer's porosity (Lagarde 2013), before snow lies on it.
 		c += "\tweather_wetness_apply(tm_wetness * weather_wetness_at(wp), wn.y, metallic, porosity, albedo, rough);\n";

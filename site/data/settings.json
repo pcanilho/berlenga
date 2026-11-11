@@ -1078,7 +1078,18 @@
     "glacial_erosion"
    ],
    "note": "",
-   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers.",
+   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off).",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Moraines",
+   "settings": [
+    "moraine_age"
+   ],
+   "note": "",
+   "what": "debris carried down the last glaciers builds ridges at their margins that dam lakes.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -1526,6 +1537,15 @@
    ],
    "note": "",
    "what": "plants bend away from bodies and spring back, and lean in the wind.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Sun and shade growth",
+   "settings": [],
+   "note": "always on",
+   "what": "grass and ground plants take the colour and height of the light they grow in, like sun and shade leaves.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

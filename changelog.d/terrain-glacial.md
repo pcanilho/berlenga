@@ -9,6 +9,7 @@
 - `get_boulders(rect, density)`: blocks shed by cliffs, resting where their travel angle drops below the shadow angle, larger blocks further out; (x, y, z, radius) for placement.
 - `glacial_rock_variation`, `glacial_rock_scale`: rock quality under the ice (joint density) varies the glacial erosion rate, so the ice digs its own basins and leaves its own bars: tarns and paternoster lakes form with no markers.
 - `glacial_inflow_balance`: glaciers whose catchment lies beyond the map come in with their rivers (net balance times each inflow's off-map area), so the main valley gets its trough and chain of lakes with no markers.
+- `moraine_age`: the last glaciation's margins build moraines (wall rockfall and basal debris carried down the ice, laid at its edge), terminal loops and lateral ridges that dam lakes behind them.
 ### Fixed
 - Abandoned one-cell river slots on fans are backfilled (`fan_backfill`, on).
 - Detail no longer fades on faces steeper than loose fill can stand, however much sediment the cells around them hold.
