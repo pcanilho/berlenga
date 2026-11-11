@@ -11,7 +11,7 @@ extends Node3D
 #   --out=path.png    render a view (path traced unless --raster)
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 16)
-#   --view=wide|lake|lakewater|valley|fall|beach|peak   camera (default wide; lakewater: low over the lake;
+#   --view=wide|lake|lakewater|valley|fall|beach|peak|treeline|meadow   camera (default wide; lakewater: low over the lake;
 #                         valley: from behind the high lake down to the clearing; treeline: the clearing's edge)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
@@ -69,6 +69,8 @@ var probe: Node3D
 var data_map: TerrainDataMap3D
 var veg: VegetationField3D
 var grass: GrassField3D
+var sward: Array = [] # the grass layers (tall, undercoat, turf)
+var cover: VegetationField3D # meadow herbs and waterside plants near the camera
 var prints: GroundSurface3D
 var prints_probe: Node3D
 var sun: DirectionalLight3D
@@ -121,6 +123,8 @@ func _ready() -> void:
 	if args.get("prints", "1") != "0":
 		_build_prints()
 	_build_camera()
+	if args.get("plants", "1") != "0":
+		_build_cover()
 	_run_weather()
 	_log("setup done in %d ms" % (Time.get_ticks_msec() - t_start))
 	for i in 30:
@@ -890,6 +894,55 @@ func _build_vegetation() -> void:
 	grass.radius = float(args.get("grass-radius", "40"))
 	add_child(grass)
 	grass.data_map = grass.get_path_to(data_map)
+	if args.get("plants", "1") != "0":
+		# The sward in three layers (the grass bench's meadow): tall blades in patches, a short dense undercoat that
+		# owns the ground tint, and a very short turf right at the camera (overlapped density grids, Serious Sam 4).
+		meadow.patch_scale = 9.0
+		meadow.patch_cover = 0.55
+		meadow.patch_seed = 5
+		grass.ground_tint_enabled = false
+		var under := GrassField3D.new()
+		under.name = "Undercoat"
+		under.rules = meadow.duplicate()
+		(under.rules as PlantSpecies).patch_cover = 1.0
+		under.blade_segments = 2
+		under.blade_height = Vector2(0.06, 0.18)
+		under.blade_width = 0.02
+		under.density = 640.0
+		under.radius = 14.0
+		under.tile_size = 4.0
+		under.clump_size = 0.5
+		under.lean = 0.5
+		under.base_color = Color(0.1, 0.2, 0.05)
+		under.tip_color = Color(0.38, 0.52, 0.16)
+		under.dryness = 0.35
+		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
+		add_child(under)
+		under.data_map = under.get_path_to(data_map)
+		var turf := GrassField3D.new()
+		turf.name = "Turf"
+		turf.rules = under.rules
+		turf.blade_segments = 1
+		turf.blade_height = Vector2(0.03, 0.07)
+		turf.blade_width = 0.012
+		turf.density = 1600.0
+		turf.radius = 5.0
+		turf.tile_size = 2.0
+		turf.clump_size = 0.3
+		turf.lean = 0.6
+		turf.base_color = Color(0.08, 0.16, 0.04)
+		turf.tip_color = Color(0.3, 0.42, 0.12)
+		turf.dryness = 0.35
+		turf.ground_tint_enabled = false
+		add_child(turf)
+		turf.data_map = turf.get_path_to(data_map)
+		sward = [grass, under, turf]
+		# The sward thins out under the forest's crowns.
+		for g in sward:
+			var r: PlantSpecies = g.rules
+			r.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.3))
+			r.set_rule_fade(PlantSpecies.RULE_SHADE, 0.4)
+			g.canopy_field = g.get_path_to(veg)
 
 
 # Footprints in the ground around the camera: sand on the beach, mud on wet banks, leaf litter under the forest, none
@@ -1033,6 +1086,17 @@ func _build_camera() -> void:
 			cam.position = Vector3(ex - 60.0, height_at(ex - 60.0, cz) + 14.0, cz)
 			cam.look_at(Vector3(ex, height_at(ex, ez) + 10.0, ez))
 			_log("treeline edge at (%.0f, %.0f)" % [ex, ez])
+		"meadow":
+			# Standing in the clearing at eye height, 60 m short of the forest edge (the treeline view's edge), looking
+			# across the herbs and grass at it.
+			var ex := float(args.get("treeline-x", "300"))
+			var ez := 400.0
+			while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
+				ez -= 16.0
+			cam.fov = 55.0
+			var cz := ez + 60.0
+			cam.position = Vector3(ex - 10.0, height_at(ex - 10.0, cz) + 1.7, cz)
+			cam.look_at(Vector3(ex, height_at(ex, ez) + 4.0, ez))
 		"lakewater":
 			# Low over the water at one end of the lake, looking along it to the mountains behind: the water cell
 			# farthest from the water's centroid, pulled a little back over the water.
@@ -1118,7 +1182,155 @@ func _build_camera() -> void:
 		_:
 			cam.position = Vector3(300, 520, coast_z + 900.0)
 			cam.look_at(Vector3(-100, 250, -700))
-	grass.update_at(cam.global_position)
+	for g in sward:
+		g.update_at(cam.global_position)
+	if sward.is_empty():
+		grass.update_at(cam.global_position)
+
+
+# Herbs, flowers and waterside plants from PlantGenerator round the camera. STOPGAP (a GAP check): VegetationField3D
+# places over its whole data map, so a 16 km² world cannot carry a herb layer at 0.25 m spacing; this builds a
+# camera-local data map and field instead, until placement streams round the camera.
+func _build_cover() -> void:
+	var t := Time.get_ticks_msec()
+	var eye := cam.global_position
+	var ahead := -cam.global_basis.z
+	ahead.y = 0.0
+	ahead = ahead.normalized() if ahead.length() > 0.01 else Vector3(0, 0, 1)
+	var c := eye + ahead * 50.0
+	if eye.y - height_at(c.x, c.z) > 80.0:
+		_log("cover: camera too high for the herb layer, skipped")
+		return
+	var dm := TerrainDataMap3D.new()
+	dm.name = "CoverMap"
+	dm.size = 160.0
+	dm.resolution = 320
+	dm.bake_on_ready = false
+	add_child(dm)
+	dm.global_position = Vector3(c.x, 0, c.z)
+	dm.height_source = dm.get_path_to(get_node("GroundHeight"))
+	var ws: Array[NodePath] = []
+	for np in data_map.water_sources:
+		ws.append(dm.get_path_to(data_map.get_node(np)))
+	dm.water_sources = ws
+	dm.geology_source = dm.get_path_to(gen)
+	dm.bake()
+	var b := Biome.new()
+	var meadow_sp := _meadow_species()
+	for sp in meadow_sp:
+		# Meadow plants keep out from under closed crowns (the forest field's, through canopy_field).
+		sp.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.4))
+		sp.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
+	# The forest floor under the forest field's crowns: the montane conifer set (spruce, fir, beech: the stand-in
+	# cones and balls), bigger plants first, sorted by the crowns' conifer share.
+	var floor_sp: Array = PlantGenerator.make_floor(PlantGenerator.FLOOR_MONTANE_CONIFER, 3)
+	b.species = floor_sp.slice(0, 3) + _wetland_species() + meadow_sp + floor_sp.slice(3)
+	for sp in b.species:
+		var ps := sp as PlantSpecies
+		# Plants on soil, not on bare rock, scree or steep faces, and not on the beach sand.
+		ps.set_rule_range(PlantSpecies.RULE_ROCK, Vector2(0, 0.3))
+		ps.set_rule_fade(PlantSpecies.RULE_ROCK, 0.1)
+		if not ps.floating:
+			ps.set_rule_range(PlantSpecies.RULE_SLOPE, Vector2(0, 32))
+			ps.set_rule_fade(PlantSpecies.RULE_SLOPE, 5.0)
+		ps.set_rule_range(PlantSpecies.RULE_HEIGHT, Vector2(3, 100000))
+		if not ps.has_meta("floor"):
+			_set_far_color(ps)
+	cover = VegetationField3D.new()
+	cover.name = "Cover"
+	cover.populate_on_ready = false
+	cover.tile_size = 8.0
+	cover.biome = b
+	cover.forest_floor_enabled = false # the forest's own field publishes the floor
+	add_child(cover)
+	cover.data_map = cover.get_path_to(dm)
+	cover.canopy_field = cover.get_path_to(veg) # shade and conifer share from the forest's crowns
+	cover.populate()
+	_log("cover %d plants (%d species) round %s in %d ms" % [cover.get_plant_count(), b.species.size(), str(c.round()), Time.get_ticks_msec() - t])
+
+
+func _variants(preset: int, count: int) -> Array:
+	var pg := PlantGenerator.new()
+	pg.preset = preset
+	pg.apply_preset_colors()
+	var meshes := pg.generate_variants(count)
+	for m in meshes:
+		m.set_meta("preset", preset)
+	return meshes
+
+
+# Far away the ground takes the plant's colour (PlantSpecies.far_color, as make_floor() sets it).
+func _set_far_color(sp: PlantSpecies) -> void:
+	if sp.meshes.is_empty() or sp.far_color.a > 0.0:
+		return
+	var m: Mesh = sp.meshes[0]
+	var pg := PlantGenerator.new()
+	pg.preset = m.get_meta("preset", 0)
+	pg.apply_preset_colors()
+	var lc: Color = pg.leaf_color * 0.8
+	sp.far_color = Color(lc.r, lc.g, lc.b, clampf(m.get_aabb().end.y / 0.6, 0.2, 0.9))
+
+
+func _plant(presets: Array, spacing: float, footprint: float, density: float, range_m: float, patch := 0.0, cover_share := 1.0, seed := 0) -> PlantSpecies:
+	var sp := PlantSpecies.new()
+	var ms: Array = []
+	for pr in presets:
+		ms += _variants(pr, 3)
+	sp.meshes = ms
+	sp.spacing = spacing
+	sp.footprint = footprint
+	sp.density = density
+	sp.visibility_range = range_m
+	if patch > 0.0:
+		sp.patch_scale = patch
+		sp.patch_cover = cover_share
+		sp.patch_seed = seed
+	return sp
+
+
+# The meadow (the grass bench's set, docs/ideas/plant-generator.md): flowers and weeds in patches, tussocks with the
+# tall grass, clover where it is not, last year's dead grass under everything, nettles on moist rich ground.
+func _meadow_species() -> Array:
+	var flowers := _plant([PlantGenerator.PRESET_DAISY, PlantGenerator.PRESET_BUTTERCUP, PlantGenerator.PRESET_DANDELION], 0.25, 0.12, 0.9, 15.0, 6.0, 0.35, 11)
+	flowers.scale_range = Vector2(1.1, 1.5)
+	var plantain := _plant([PlantGenerator.PRESET_PLANTAIN], 0.5, 0.15, 0.5, 12.0, 4.0, 0.35, 21)
+	var clover := _plant([PlantGenerator.PRESET_CLOVER], 0.22, 0.0, 0.8, 10.0, 9.0, 0.55, 5)
+	clover.patch_invert = true
+	var tussock := _plant([PlantGenerator.PRESET_COCKSFOOT, PlantGenerator.PRESET_TIMOTHY], 0.7, 0.2, 0.45, 25.0, 9.0, 0.55, 5)
+	var nettle := _plant([PlantGenerator.PRESET_NETTLE], 0.35, 0.15, 0.85, 25.0, 5.0, 0.22, 31)
+	nettle.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(1.0, 25.0))
+	nettle.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 4.0)
+	var dock := _plant([PlantGenerator.PRESET_DOCK], 0.9, 0.25, 0.5, 20.0, 7.0, 0.35, 41)
+	var thistle := _plant([PlantGenerator.PRESET_THISTLE], 1.6, 0.25, 0.35, 20.0)
+	var yarrow := _plant([PlantGenerator.PRESET_YARROW], 0.5, 0.1, 0.6, 15.0, 5.0, 0.3, 51)
+	yarrow.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(6.0, 1000000.0))
+	yarrow.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 3.0)
+	var dry := _plant([PlantGenerator.PRESET_DRY_GRASS], 0.3, 0.0, 0.55, 12.0)
+	dry.scale_range = Vector2(0.7, 1.2)
+	var list := [flowers, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry]
+	return list
+
+
+# Hydrosere zonation (Spence 1982; Keddy 2010): lilies in deeper water, bulrush and reed in the shallows, sedge and
+# soft rush on the wet shore. Depth and distance from the data map.
+func _wetland_species() -> Array:
+	var lily := _plant([PlantGenerator.PRESET_WATER_LILY], 1.1, 0.5, 0.9, 50.0, 6.0, 0.7, 81)
+	lily.floating = true
+	lily.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.35, 2.5))
+	lily.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.2)
+	var cattail := _plant([PlantGenerator.PRESET_CATTAIL], 0.7, 0.35, 0.9, 60.0, 5.0, 0.5, 83)
+	cattail.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.1, 0.6))
+	cattail.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.05)
+	var reed := _plant([PlantGenerator.PRESET_REED], 0.6, 0.3, 0.95, 60.0, 8.0, 0.6, 85)
+	reed.set_rule_range(PlantSpecies.RULE_WATER_DEPTH, Vector2(0.0, 1.2))
+	reed.set_rule_fade(PlantSpecies.RULE_WATER_DEPTH, 0.15)
+	var rush := _plant([PlantGenerator.PRESET_RUSH], 0.5, 0.2, 0.8, 30.0, 4.0, 0.5, 87)
+	rush.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(0.0, 4.0))
+	rush.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 1.5)
+	var sedge := _plant([PlantGenerator.PRESET_SEDGE], 0.45, 0.2, 0.8, 30.0)
+	sedge.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(0.0, 3.0))
+	sedge.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 1.5)
+	return [lily, cattail, reed, rush, sedge]
 
 
 # --- Links -------------------------------------------------------------------------------------------------------
@@ -1304,10 +1516,17 @@ func _checks() -> void:
 				break
 		if found:
 			break
-	grass.update_at(meadow_pt)
-	var g := grass.get_blade_count()
-	check(g > 0, "grass grows from the data map's rules on a meadow (%d blades); it bends with weather_wind" % g)
-	grass.update_at(cam.global_position)
+	# Every layer of the sward counts: the tall blades grow in patches, the undercoat and turf everywhere.
+	var layers: Array = sward if not sward.is_empty() else [grass]
+	var g := 0
+	var per := PackedStringArray()
+	for f in layers:
+		f.update_at(meadow_pt)
+		g += f.get_blade_count()
+		per.append("%s %d" % [f.name, f.get_blade_count()])
+	check(g > 0, "grass grows from the data map's rules on a meadow (%d blades: %s); it bends with weather_wind" % [g, ", ".join(per)])
+	for f in layers:
+		f.update_at(cam.global_position)
 	check(false, "trees and shrubs bend with the wind (stand-in forest is static; tree generation and bone wind not built)", true)
 	# A dry point below the lake's level, far from it and from the rivers (on the coastal plain).
 	var plain := Vector3.ZERO
@@ -1475,6 +1694,8 @@ func _checks() -> void:
 	snowfall.follow_target = NodePath("")
 	check(snowfall.haze_enabled and haze_peak > 0.0 and haze_peak > haze_coast * 2.0, "falling and blowing snow thicken the fog on the peak by themselves (extinction %.4f /m on the peak, %.4f at the coast)" % [haze_peak, haze_coast])
 	check(false, "falling rain particles from the weather (none in the engine)", true)
+	if cover != null or args.get("plants", "1") != "0":
+		check(false, "ground cover streams round the camera on the world's data map (a camera-local cover map and field are built by script here)", true)
 	if args.get("layout", "range") == "valley":
 		check(false, "the clearing on the valley floor comes from the generator by itself (a density mask is built by script from its sediment here)", true)
 	# The gale check lays 40 mm of snow and moves the near square to the peak, and leaves them: only in test
