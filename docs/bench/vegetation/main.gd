@@ -394,6 +394,27 @@ func _checks() -> void:
 	_check("near swap: every tree drawn near and far, split by range", near_n == far_n and near_n == field.get_placements(0).size() and unmatched == 0 and bad_range == 0 and field.get_placements(0) == first, [near_n, far_n, field.get_placements(0).size(), unmatched, bad_range])
 	tree_sp.near_meshes = []
 	tree_sp.near_range = 0.0
+	# Impostors: the species' meshes near, their baked impostors (two triangles each) past the range.
+	var real_meshes: Array = tree_sp.meshes.duplicate()
+	PlantGenerator.add_impostors(tree_sp, 30.0, 4, 16)
+	field.populate()
+	var imp_n := 0
+	var mesh_n := 0
+	var bad_imp := 0
+	for ch in field.get_children(true):
+		if not ch is MultiMeshInstance3D or ch.multimesh.mesh == null:
+			continue
+		var m: Mesh = ch.multimesh.mesh
+		if m.has_meta("impostor_of"):
+			imp_n += ch.multimesh.instance_count
+			if not real_meshes.has(m.get_meta("impostor_of")) or m.get_faces().size() != 6 or not is_equal_approx(ch.visibility_range_begin, 30.0):
+				bad_imp += 1
+		elif real_meshes.has(m):
+			mesh_n += ch.multimesh.instance_count
+	_check("impostors: each tree drawn as its mesh near and its impostor far", imp_n == mesh_n and imp_n == field.get_placements(0).size() and bad_imp == 0, [imp_n, mesh_n, field.get_placements(0).size(), bad_imp])
+	tree_sp.meshes = real_meshes
+	tree_sp.near_meshes = []
+	tree_sp.near_range = 0.0
 	print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
 func _build_view() -> void:

@@ -103,6 +103,14 @@ class VegetationField3D : public Node3D {
 
 	HashMap<uint64_t, Pattern> patterns;
 	LocalVector<MultiMeshInstance3D *> generated;
+	// Far cells drawing impostors (PlantGenerator.make_impostor): raster only, so under path
+	// tracing they draw the plant's mesh instead (the impostor's "impostor_of").
+	LocalVector<MultiMeshInstance3D *> impostor_cells;
+	LocalVector<Ref<Mesh>> impostor_meshes; // Per cell.
+	bool impostors_traced = false;
+	double impostor_check = 0.0;
+	bool _path_traced() const;
+	void _update_impostors(bool p_traced);
 	LocalVector<LocalVector<Vector3>> placements; // Per species, world positions.
 	int plant_count = 0;
 	double populate_msec = 0.0;

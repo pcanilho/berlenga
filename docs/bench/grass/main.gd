@@ -59,6 +59,8 @@ var stand_set := false
 var no_floor := false
 var no_far := false
 var far_view := false
+var prims := false
+var no_impostors := false
 var clearing := -1 # -1 off, 0 the wood without its mask, 1 with it.
 const CLEARING_C := Vector2(0.0, 24.0)
 var dolly := false
@@ -108,6 +110,8 @@ func _ready() -> void:
 		elif a == "--floor=0": no_floor = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
+		elif a == "--prims": prims = true
+		elif a == "--impostors=0": no_impostors = true
 		elif a == "--lone":
 			forest = true
 			clearing = 2
@@ -440,6 +444,54 @@ func _frame_forest() -> void:
 
 # Ground plants from PlantGenerator (three variants each), in patches (PlantSpecies.patch_*),
 # drawn near only: wildflower drifts, plantain, clover between the tall grass, sedge by the water.
+# --prims: triangles drawn in the frame, then again without each group of plants, to show
+# where the triangles go (which plants would gain from cheaper far forms).
+func _print_prims() -> void:
+	var info := func(): return RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
+	print("PRIMS total=%d" % info.call())
+	var imp_cells := 0
+	for node in find_children("*", "MultiMeshInstance3D", true, false):
+		if node.multimesh and node.multimesh.mesh and node.multimesh.mesh.has_meta("impostor_of"):
+			imp_cells += 1
+	print("PRIMS cells drawing impostors: %d" % imp_cells)
+	if not raster:
+		return # Path traced frames are too slow to repeat per group.
+	var groups := {}
+	for node in find_children("*", "MultiMeshInstance3D", true, false):
+		var mmi := node as MultiMeshInstance3D
+		if mmi.multimesh and mmi.multimesh.mesh:
+			var m := mmi.multimesh.mesh
+			var key: String = str(m.get_meta("preset")) if m.has_meta("preset") else (m.resource_name if m.resource_name != "" else _mesh_key(mmi))
+			if not groups.has(key):
+				groups[key] = []
+			groups[key].append(mmi)
+	for key in groups:
+		for mmi in groups[key]: mmi.visible = false
+		for i in 3: await RenderingServer.frame_post_draw
+		print("PRIMS without %s (%d nodes): %d" % [key, groups[key].size(), info.call()])
+		for mmi in groups[key]: mmi.visible = true
+		var cam := get_viewport().get_camera_3d().global_position
+		for far_d in [10.0, 20.0, 40.0]:
+			var hidden := 0
+			for mmi in groups[key]:
+				var bb: AABB = mmi.global_transform * mmi.get_aabb()
+				if bb.get_center().distance_to(cam) > far_d:
+					mmi.visible = false; hidden += 1
+			for i in 3: await RenderingServer.frame_post_draw
+			print("PRIMS   %s beyond %d m (%d nodes): %d" % [key, far_d, hidden, info.call()])
+			for mmi in groups[key]: mmi.visible = true
+	for i in 3: await RenderingServer.frame_post_draw
+
+func _mesh_key(mmi: MultiMeshInstance3D) -> String:
+	var m := mmi.multimesh.mesh
+	if not (mmi.get_parent() is VegetationField3D):
+		return mmi.get_parent().get_class()
+	var tris := 0
+	for i in m.get_surface_count():
+		var a := m.surface_get_arrays(i)
+		tris += (a[Mesh.ARRAY_INDEX].size() if a[Mesh.ARRAY_INDEX] else a[Mesh.ARRAY_VERTEX].size()) / 3
+	return "plant %.1fm %d surf %dk tris" % [m.get_aabb().size.y, m.get_surface_count(), tris / 1000]
+
 func _variants(preset: int, count: int, size := 1.0) -> Array:
 	var gen := PlantGenerator.new()
 	gen.textures = not notex
@@ -687,7 +739,7 @@ func _stand_floor() -> Array:
 			"pine": PlantGenerator.FLOOR_PINE_HEATH, "larch": PlantGenerator.FLOOR_SUBALPINE}
 	if not stand_set or not sets.has(stand):
 		return _floor_species()
-	return Array(PlantGenerator.make_floor(sets[stand], 3, not notex))
+	return Array(PlantGenerator.make_floor(sets[stand], 3, not notex, 0.0 if no_impostors else 15.0))
 
 # The wood's stand-in trees by --stand. Conifers set canopy_conifer, which the floor reads.
 func _stand_trees() -> Array:
@@ -1109,6 +1161,8 @@ func _process(dt: float) -> void:
 		var blades := grass.get_blade_count() + (under.get_blade_count() if under else 0)
 		print("GRASS_FRAME_MS %.1f blades=%d" % [(Time.get_ticks_usec() - t_frames) / 30000.0, blades])
 	await RenderingServer.frame_post_draw
+	if prims:
+		await _print_prims()
 	if not out.is_empty():
 		get_viewport().get_texture().get_image().save_png(out)
 		print("saved ", out)

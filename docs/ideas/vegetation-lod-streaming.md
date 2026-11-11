@@ -61,6 +61,22 @@ thousands of triangles a plant at any distance.
    42k to 17k, bramble unchanged (its leaves were already reduced by meshoptimizer). Raster
    crops match; path traced frames before and after differ by 0.15 of 255 on average (the
    path tracer draws the full mesh and the shader keeps every card at full size up close).
+   **Built (1b).** `PlantGenerator.make_impostor()` bakes on the CPU (all cores, about 0.1 s a
+   plant): 8 x 8 hemi-octahedral views with frame directions at the cell centres (the lowest
+   ring looks about 7 degrees down, so flat leaves do not vanish edge-on), each 64 texels fitted
+   to the plant's extent from that side, 4 x 4 samples a texel. Atlas A: albedo (as the plant
+   shader colours it, wear included) and coverage, raised by half so leaves under a texel still
+   pass the alpha test, with mips that keep the share passing (Castaño 2010). Atlas B: normal
+   (octahedral), depth, back light. The shader blends the three nearest views (Brucks),
+   reprojects each through the view ray, writes depth from the baked depth and lights at that
+   surface (`LIGHT_VERTEX`); shadow casters sit 8% of the radius behind it so the camera's views
+   do not shadow themselves. `add_impostors(species, range)` moves the meshes to near meshes and
+   puts impostors beyond; `make_floor()` does it for bramble and bracken at 15 m. Under path
+   tracing VegetationField3D swaps its impostor cells back to the meshes (checked four times a
+   second, and at populate), so path tracing loses nothing.
+   Oak wood view in the grass bench (`--forest=in --stand=oak --prims`): 3.91M to 2.98M
+   triangles a frame; `make_floor` 0.9 s to 1.5 s; about 17 MB of textures for the six
+   impostors. Single bramble at 20 and 35 m: impostor and mesh alike.
 3. **Measure**: triangles per hectare in the grass bench's heath and beech floors before and
    after, raster and path traced at 100% crop, GPU time on the PC.
 

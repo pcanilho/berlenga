@@ -48,6 +48,9 @@
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/weather/weather_map_3d.h"
+#include "modules/weather/weather_sky_material.h"
+#include "scene/main/viewport.h"
+#include "scene/resources/environment.h"
 #include "scene/resources/image_texture.h"
 
 namespace {
@@ -178,6 +181,9 @@ void VegetationField3D::_clear_generated() {
 		memdelete(mmi);
 	}
 	generated.clear();
+	impostor_cells.clear();
+	impostor_meshes.clear();
+	set_process_internal(false);
 	placements.clear();
 	plant_count = 0;
 }
@@ -189,6 +195,7 @@ void VegetationField3D::clear() {
 Error VegetationField3D::populate() {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	_clear_generated();
+	impostors_traced = is_inside_tree() && _path_traced(); // Cells start with the right mesh.
 	ERR_FAIL_COND_V_MSG(biome.is_null(), ERR_UNCONFIGURED, "VegetationField3D: no biome.");
 	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 	ERR_FAIL_COND_V_MSG(!map || !map->is_baked(), ERR_UNCONFIGURED, "VegetationField3D: data_map must point to a baked TerrainDataMap3D.");
@@ -488,12 +495,20 @@ Error VegetationField3D::populate() {
 							}
 							add_child(mmi, false, INTERNAL_MODE_BACK);
 							generated.push_back(mmi);
+							if (!near_pass && draw_mesh->has_meta(SNAME("impostor_of"))) {
+								impostor_cells.push_back(mmi);
+								impostor_meshes.push_back(draw_mesh);
+								if (impostors_traced) {
+									mm->set_mesh(draw_mesh->get_meta(SNAME("impostor_of")));
+								}
+							}
 						}
 					}
 				}
 			}
 		}
 	}
+	set_process_internal(!impostor_cells.is_empty());
 	_publish_canopy(rect);
 	_build_stand(rect);
 	_publish_floor(rect);
@@ -992,6 +1007,25 @@ void VegetationField3D::_queued_populate() {
 	}
 }
 
+bool VegetationField3D::_path_traced() const {
+	Viewport *vp = get_viewport();
+	if (!vp || !vp->is_using_pathtracing()) {
+		return false;
+	}
+	const Ref<Environment> env = WeatherSkyMaterial::find_environment(const_cast<VegetationField3D *>(this));
+	return env.is_valid() && env->is_pathtracing_enabled();
+}
+
+void VegetationField3D::_update_impostors(bool p_traced) {
+	impostors_traced = p_traced;
+	for (uint32_t i = 0; i < impostor_cells.size(); i++) {
+		Ref<MultiMesh> mm = impostor_cells[i]->get_multimesh();
+		if (mm.is_valid()) {
+			mm->set_mesh(p_traced ? Ref<Mesh>(impostor_meshes[i]->get_meta(SNAME("impostor_of"))) : impostor_meshes[i]);
+		}
+	}
+}
+
 void VegetationField3D::_on_map_baked() {
 	if (populate_on_ready) {
 		queue_populate();
@@ -1015,6 +1049,17 @@ void VegetationField3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_PREDELETE: {
 			_clear_generated();
+		} break;
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			// A few times a second: has path tracing been switched on or off?
+			impostor_check -= get_process_delta_time();
+			if (impostor_check <= 0.0) {
+				impostor_check = 0.25;
+				const bool traced = _path_traced();
+				if (traced != impostors_traced) {
+					_update_impostors(traced);
+				}
+			}
 		} break;
 	}
 }
