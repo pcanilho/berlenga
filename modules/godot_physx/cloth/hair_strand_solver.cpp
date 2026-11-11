@@ -180,7 +180,7 @@ void HairStrandSolverGPU::rt_free_buffers() {
 		rd->free_rid(uniform_set);
 	}
 	uniform_set = RID();
-	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &tex_out_prev, &buf_last, &buf_dom_depth, &buf_dom_accum, &tex_dom, &buf_tris, &buf_sdf, &buf_vol, &buf_vol_rest };
+	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &tex_out_prev, &buf_last, &buf_dom_depth, &buf_dom_accum, &tex_dom, &buf_tris, &buf_sdf, &buf_vol, &buf_vol_rest, &buf_render_points };
 	history = false;
 	vol_cells = 0;
 	tris_capacity = 0;
@@ -210,7 +210,7 @@ void HairStrandSolverGPU::rt_free(Ref<HairStrandSolverGPU> p_self) {
 	shader = RID();
 }
 
-void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points, PackedFloat32Array p_vol_rest, int p_vol_cells) {
+void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points, PackedInt32Array p_render_points, PackedFloat32Array p_vol_rest, int p_vol_cells) {
 	if (rd == nullptr || shader.is_null()) {
 		return;
 	}
@@ -227,6 +227,25 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 	buf_prev = storage_from(rd, nullptr, point_count * 16);
 	buf_follow = storage_from(rd, (const uint8_t *)p_follow.ptr(), p_follow.size() * 4);
 	slot_points = MAX(p_slot_points, 0);
+	{
+		// The points drawn per strand; every point when none are given.
+		PackedInt32Array rp = p_render_points;
+		if (rp.size() < strand_count * 2) {
+			rp.resize(strand_count * 2 + point_count);
+			int *w = rp.ptrw();
+			int at = 0;
+			for (int s = 0; s < strand_count; s++) {
+				const int n = p_strands[s * 2 + 1];
+				w[s * 2] = at;
+				w[s * 2 + 1] = n;
+				for (int k = 0; k < n; k++) {
+					w[strand_count * 2 + at + k] = k;
+				}
+				at += n;
+			}
+		}
+		buf_render_points = storage_from(rd, (const uint8_t *)rp.ptr(), rp.size() * 4);
+	}
 	sort_size = 1;
 	while (sort_size < strand_count) {
 		sort_size <<= 1;
@@ -355,6 +374,13 @@ void HairStrandSolverGPU::rt_make_uniform_set() {
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		u.binding = 11;
 		u.append_id(buf_vol_rest);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 17;
+		u.append_id(buf_render_points);
 		uniforms.push_back(u);
 	}
 	{
@@ -571,7 +597,7 @@ void HairStrandSolver::_dispatch(const Callable &p_call) const {
 	}
 }
 
-void HairStrandSolver::build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow, int p_slot_points) {
+void HairStrandSolver::build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow, int p_slot_points, const PackedInt32Array &p_render_points) {
 	if (gpu.is_null()) {
 		return;
 	}
@@ -645,7 +671,7 @@ void HairStrandSolver::build(const PackedFloat32Array &p_rest, const PackedInt32
 			vol_rest.clear();
 		}
 	}
-	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_build).bind(gpu, p_rest, p_strands, p_follow, p_slot_points, vol_rest, vol_cells));
+	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_build).bind(gpu, p_rest, p_strands, p_follow, p_slot_points, p_render_points, vol_rest, vol_cells));
 	if (!gpu->local) {
 		// The texture RID must exist before the caller wraps it.
 		RenderingServer::get_singleton()->sync();

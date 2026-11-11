@@ -45,7 +45,7 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Raster strands: sorted and blended with no AA; each strand is drawn at its real width, so the groom stays sharp.*
 
-- **Distance LOD** (`PhysXHair3D`: `lod_enabled`, `lod_start_distance`, `lod_end_distance`, `lod_strand_ratio`): far away, fewer and wider strands with the same look; simulation and path tracing keep every strand.
+- **Distance LOD** (`PhysXHair3D`: `lod_enabled`, `lod_start_distance`, `lod_end_distance`, `lod_strand_ratio`): far away, fewer and wider strands with the same look; simulation and path tracing keep every strand. Straight hair is drawn through fewer points with the same look (`simplify_tolerance`).
 
   ![Distant strand hair: all strands, then distance LOD](media/hair-lod.jpg)
 

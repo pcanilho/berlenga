@@ -50,6 +50,7 @@ class PhysXHair3D : public Node3D {
 
 	Ref<HairGroom> groom;
 	float root_width = 0.0004f;
+	float simplify_tolerance = 0.5f; // share of root_width a drawn strand may stray from its points
 	float tip_width = 0.0001f;
 	float melanin = 0.5f;
 	float melanin_redness = 0.0f;
@@ -128,6 +129,7 @@ class PhysXHair3D : public Node3D {
 	void _step(double p_delta);
 	Vector3 _fibre_absorption() const;
 	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) const;
+	int _render_points(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, PackedInt32Array &r_points) const;
 	Color _mass_color() const;
 	void _body_triangles(PackedVector3Array &r_tris);
 	class DirectionalLight3D *_deep_shadow_light();
@@ -144,6 +146,8 @@ public:
 	Ref<HairGroom> get_groom() const;
 	void set_root_width(float p_width);
 	float get_root_width() const;
+	void set_simplify_tolerance(float p_tolerance);
+	float get_simplify_tolerance() const;
 	void set_tip_width(float p_width);
 	float get_tip_width() const;
 	void set_melanin(float p_melanin);

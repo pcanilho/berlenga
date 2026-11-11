@@ -976,7 +976,7 @@
     "lod_strand_ratio"
    ],
    "note": "",
-   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand.",
+   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand. Straight hair is drawn through fewer points with the same look (`simplify_tolerance`).",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"
@@ -1537,7 +1537,7 @@
     "VegetationField3D.forest_floor_enabled"
    ],
    "note": "",
-   "what": "herbs, mosses and seedlings by the stand above, and the ground under closed canopy turns to leaf, needle or moss litter.",
+   "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -1545,10 +1545,11 @@
   {
    "name": "Leaf drift",
    "settings": [
-    "PlantSpecies.litter_range"
+    "PlantSpecies.litter_range",
+    "VegetationField3D.litter_wind"
    ],
    "note": "",
-   "what": "fallen leaves drift past the crowns into edges and clearings.",
+   "what": "fallen leaves drift past the crowns into edges and clearings, farther downwind.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

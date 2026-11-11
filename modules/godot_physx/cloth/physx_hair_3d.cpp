@@ -31,6 +31,7 @@
 #include "physx_hair_3d.h"
 
 #include "core/config/engine.h"
+#include "core/math/geometry_3d.h"
 #include "core/math/random_pcg.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -428,6 +429,70 @@ Color PhysXHair3D::_mass_color() const {
 	return Color(Math::exp(-d * Math::sqrt(s.x)), Math::exp(-d * Math::sqrt(s.y)), Math::exp(-d * Math::sqrt(s.z))).linear_to_srgb();
 }
 
+// Per strand the points drawn (local indices, root and tip always): Douglas-Peucker on the groomed
+// strand within simplify_tolerance times the root width. r_points: (first, count) per strand, then
+// the indices. Returns the most points any strand draws (the render mesh's slot size).
+int PhysXHair3D::_render_points(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, PackedInt32Array &r_points) const {
+	const int sc = p_counts.size();
+	const float eps = MAX(simplify_tolerance, 0.0f) * root_width;
+	LocalVector<int> list;
+	r_points.resize(sc * 2);
+	int *head = r_points.ptrw();
+	LocalVector<bool> keep;
+	LocalVector<Vector2i> stack;
+	int most = 0;
+	int start = 0;
+	for (int s = 0; s < sc; s++) {
+		const int n = MAX(p_counts[s], 0);
+		head[s * 2] = list.size();
+		keep.resize(n);
+		for (int k = 0; k < n; k++) {
+			keep[k] = eps <= 0.0f || k == 0 || k == n - 1;
+		}
+		if (eps > 0.0f && n > 2) {
+			stack.clear();
+			stack.push_back(Vector2i(0, n - 1));
+			while (!stack.is_empty()) {
+				const Vector2i r = stack[stack.size() - 1];
+				stack.remove_at(stack.size() - 1);
+				const Vector3 a = p_points[start + r.x];
+				const Vector3 b = p_points[start + r.y];
+				float worst = -1.0f;
+				int at = -1;
+				for (int k = r.x + 1; k < r.y; k++) {
+					const float d = Geometry3D::get_closest_point_to_segment(p_points[start + k], a, b).distance_to(p_points[start + k]);
+					if (d > worst) {
+						worst = d;
+						at = k;
+					}
+				}
+				if (at >= 0 && worst > eps) {
+					keep[at] = true;
+					stack.push_back(Vector2i(r.x, at));
+					stack.push_back(Vector2i(at, r.y));
+				}
+			}
+		}
+		int kept = 0;
+		for (int k = 0; k < n; k++) {
+			if (keep[k]) {
+				list.push_back(k);
+				kept++;
+			}
+		}
+		head[s * 2 + 1] = kept;
+		most = MAX(most, kept);
+		start += n;
+	}
+	const int base = r_points.size();
+	r_points.resize(base + list.size());
+	int *w = r_points.ptrw();
+	for (uint32_t i = 0; i < list.size(); i++) {
+		w[base + i] = list[i];
+	}
+	return most;
+}
+
 // Guide strands and who follows them (HairWorks guide curves, TressFX follow hairs): a seeded
 // random share of the strands simulates, and every other strand follows its three nearest guides
 // by root, weighted by inverse squared distance. 8 floats per strand, see HairStrandSolver::build().
@@ -677,13 +742,16 @@ void PhysXHair3D::_build() {
 		}
 	}
 
-	// Render mesh: two crossed strips per point, as HairMesh, the positions rebuilt in vertex() from
-	// the solver's output, which holds the strands sorted far to near from the camera (for
-	// blending): slot_points texels per strand, padded past a short strand's end.
-	int slot_points = 0;
-	for (int c = 0; c < counts.size(); c++) {
-		slot_points = MAX(slot_points, counts[c]);
-	}
+	// The points the strands are drawn through: where a strand runs straight its middle points are
+	// left out of the render mesh (Douglas-Peucker on the groomed strand, as Unreal's groom LOD
+	// decimation), within simplify_tolerance of the root width, below what a strand's own width
+	// shows. Every point still simulates and casts into the deep shadows.
+	PackedInt32Array render_points;
+	const int slot_points = _render_points(pts, counts, render_points);
+
+	// Render mesh: two crossed strips per drawn point, as HairMesh, the positions rebuilt in
+	// vertex() from the solver's output, which holds the strands sorted far to near from the camera
+	// (for blending): slot_points texels per strand, padded past a short strand's end.
 	PackedVector3Array verts;
 	PackedVector3Array normals;
 	PackedFloat32Array tangents;
@@ -797,7 +865,7 @@ void PhysXHair3D::_build() {
 		render_instance = nullptr;
 		ERR_FAIL_MSG("PhysXHair3D: no RenderingDevice, the hair can't be simulated.");
 	}
-	solver->build(rest, strands, _follow_data(pts, counts), slot_points);
+	solver->build(rest, strands, _follow_data(pts, counts), slot_points, render_points);
 	pos_texture.instantiate();
 	pos_texture->set_texture_rd_rid(solver->get_position_texture_rd_rid());
 	prev_pos_texture.instantiate();
@@ -1101,6 +1169,15 @@ void PhysXHair3D::set_root_width(float p_width) {
 
 float PhysXHair3D::get_root_width() const {
 	return root_width;
+}
+
+void PhysXHair3D::set_simplify_tolerance(float p_tolerance) {
+	simplify_tolerance = MAX(p_tolerance, 0.0f);
+	_queue_build();
+}
+
+float PhysXHair3D::get_simplify_tolerance() const {
+	return simplify_tolerance;
 }
 
 void PhysXHair3D::set_tip_width(float p_width) {
@@ -1544,6 +1621,8 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_groom", "groom"), &PhysXHair3D::set_groom);
 	ClassDB::bind_method(D_METHOD("get_groom"), &PhysXHair3D::get_groom);
 	ClassDB::bind_method(D_METHOD("set_root_width", "width"), &PhysXHair3D::set_root_width);
+	ClassDB::bind_method(D_METHOD("set_simplify_tolerance", "tolerance"), &PhysXHair3D::set_simplify_tolerance);
+	ClassDB::bind_method(D_METHOD("get_simplify_tolerance"), &PhysXHair3D::get_simplify_tolerance);
 	ClassDB::bind_method(D_METHOD("get_root_width"), &PhysXHair3D::get_root_width);
 	ClassDB::bind_method(D_METHOD("set_tip_width", "width"), &PhysXHair3D::set_tip_width);
 	ClassDB::bind_method(D_METHOD("get_tip_width"), &PhysXHair3D::get_tip_width);
@@ -1628,6 +1707,7 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "groom", PROPERTY_HINT_RESOURCE_TYPE, HairGroom::get_class_static()), "set_groom", "get_groom");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "root_width", PROPERTY_HINT_RANGE, "0,0.01,0.00001,or_greater,suffix:m"), "set_root_width", "get_root_width");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tip_width", PROPERTY_HINT_RANGE, "0,0.01,0.00001,or_greater,suffix:m"), "set_tip_width", "get_tip_width");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "simplify_tolerance", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_simplify_tolerance", "get_simplify_tolerance");
 	ADD_GROUP("Look", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melanin", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_melanin", "get_melanin");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melanin_redness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_melanin_redness", "get_melanin_redness");

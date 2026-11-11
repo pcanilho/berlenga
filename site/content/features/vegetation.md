@@ -58,14 +58,14 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 ## Plants
 
-- **Plant generator** (`PlantGenerator`, 33 presets): meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.
+- **Plant generator** (`PlantGenerator`, 35 presets): meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.
 
   ![Generated dandelions and plantains, three seeds each](media/plant-generator.jpg)
 
   *Plant generator: three seeds each of dandelion and plantain.*
 
-- **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms), and the ground under closed canopy turns to leaf, needle or moss litter.
-- **Leaf drift** (`PlantSpecies.litter_range`): fallen leaves drift past the crowns into edges and clearings.
+- **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.
+- **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`): fallen leaves drift past the crowns into edges and clearings, farther downwind.
 - **Wetland plants** (`PlantSpecies.floating`, `water_depth_range`): reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.
 
   ![A swamp with reeds, bulrushes and water lilies, raster and path traced](media/wetland-plants.jpg)
