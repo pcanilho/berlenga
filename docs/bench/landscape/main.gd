@@ -11,6 +11,7 @@ extends Node3D
 #   --out=path.png    render a view (path traced unless --raster)
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 16)
+#   --lake-pick=high  the lake views and checks use the highest lake (default the biggest)
 #   --view=wide|lake|lakewater|valley|fall|beach|peak|treeline|meadow   camera (default wide; lakewater: low over the lake;
 #                         valley: from behind the high lake down to the clearing; treeline: the clearing's edge)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
@@ -376,6 +377,13 @@ func _generate() -> void:
 		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded()])
 		for l in gen.get_lake_results():
 			_log("  lake level %.0f m, depth %.0f m, %.1f ha, catchment %.2f km2 at %s, outlet %s" % [l["level"], l["depth"], l["area"] / 1e4, l["catchment"] / 1e6, l["center"], l.get("outlet")])
+	if args.has("soil-probe"):
+		for zz in [-1100, -900, -600, -300, 0, 300, 600, 900, 1200]:
+			var row := PackedStringArray()
+			for xx in [-900, -600, -300, 0, 300, 600, 900]:
+				var pp := Vector3(xx, 0, zz)
+				row.append("%.0f:%.1f/%.2f/%.1f" % [gen.get_height(pp), gen.get_soil_depth(pp), gen.get_rock_exposure(pp), gen.get_sediment_depth(pp)])
+			print("SOIL z ", zz, " ", " ".join(row))
 	if args.has("face-probe"):
 		var fp: PackedStringArray = args["face-probe"].split(",")
 		var o := Vector3(float(fp[0]), 0, float(fp[1]))
@@ -565,7 +573,7 @@ func _lake_and_fall() -> void:
 	if lr.size() > 0:
 		var big: Dictionary = lr[0]
 		for l in lr:
-			if l["area"] > big["area"]:
+			if (l["level"] > big["level"]) if args.get("lake-pick", "") == "high" else (l["area"] > big["area"]):
 				big = l
 		lake_center = big["center"]
 		lake_level = big["level"]
@@ -613,7 +621,7 @@ func _lake_and_fall() -> void:
 					for i in range(-12, 25):
 						row.append("%.1f" % gen.get_height(pc + dr * i * 1.0))
 					print("POOL ", f.get("id"), " along ", " ".join(row))
-				_log("    %s %s, impact %.1f m/s (free %.1f), tiers %d, lands in %s, pool %s" % [f.get("id", "?"), f.get("type", "?"), f.get("impact_speed", 0.0), f.get("impact_speed_free", 0.0), f.get("tiers", []).size(), f.get("lands_in", "?"), ("r %.1f m, depth %.1f m, level %.1f" % [f["pool_radius"], f["pool_depth"], f["pool_level"]]) if f.has("pool_radius") else "none"])
+				_log("    %s %s, dir %s, impact %.1f m/s (free %.1f), tiers %d, lands in %s, pool %s" % [f.get("id", "?"), f.get("type", "?"), f.get("direction", Vector3.ZERO), f.get("impact_speed", 0.0), f.get("impact_speed_free", 0.0), f.get("tiers", []).size(), f.get("lands_in", "?"), ("r %.1f m, depth %.1f m, level %.1f" % [f["pool_radius"], f["pool_depth"], f["pool_level"]]) if f.has("pool_radius") else "none"])
 		_log("waterfalls from the generator: %d, tallest %.0f m high, %.0f m wide, %.1f m3/s at %s" % [gen_falls.size(), tall["height"], tall["width"], tall["discharge"], top])
 	_log("lake at %s level %.1f m" % [lake_center, lake_level])
 
