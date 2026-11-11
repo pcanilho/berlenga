@@ -1069,8 +1069,11 @@ and nothing on the main thread waits.
 
 **Design.**
 - `_update` is split into three parts. `_update_begin` runs on the main thread: the inputs (sun, wind, Sx)
-  and a gather of what the cells read from other nodes (the weather map's rain, cloud cover and cloud
-  shadow; the terrain climate's precipitation share; the canopy every 16th update) into per-cell arrays.
+  and a snapshot of the weather map (`WeatherMap3D::get_snapshot()`, #247: its rain, cloud cover and cloud
+  shadow as shared buffers with their sampling parameters, so the cells read the weather as it was when
+  the update started while the map moves on). What cannot be snapshotted (the canopy closure from the
+  weather's shelter, the terrain climate's precipitation) is read into per-cell arrays on the main thread
+  when cells are sampled anew, and a sixteenth of the rows is refreshed each update.
   `_update_cells` runs on any thread: rows, slides, wind transport and cornices. `_update_end` runs on the
   main thread: runoff to the weather map and the counters. The in-frame path calls all three, so both paths
   run the same code on the same inputs.
@@ -1090,10 +1093,9 @@ and nothing on the main thread waits.
 64 x 64 world tier every 3rd update, run through the same physics frames both ways):
 - The pack comes out bit-identical: 1723 samples over both tiers, water to the gram.
 - Getters return the same values on every frame an update is in flight.
-- Main-thread cost per update falls from 5.1 to 6.0 ms (worst 5.8 to 6.9 ms) to 0.9 to 1.2 ms (worst 1.1 to 1.7 ms), split
-  between the frame that starts it and the frame that swaps it in. The worker takes 7 to 9 ms.
+- Main-thread cost per update falls from 4.5 to 6.0 ms (worst 5.8 to 6.9 ms) to 0.3 ms (worst 0.4 ms), split
+  between the frame that starts it and the frame that swaps it in. The worker takes 7 to 9 ms. (With the
+  weather still gathered on the main thread, the first version, 79e42843, left 0.9 to 1.2 ms.)
 
-**Limits and next step.** About 0.5 to 0.9 ms of what is left is the weather gather. The weather map cannot be read
-from a worker while it updates. A read-only snapshot of its rain, cover and cloud shadow (shared buffers,
-taken on the main thread) would let the gather move onto the worker as well. It needs an addition to
-`WeatherMap3D`, which is the weather owner's to make.
+**Limits.** A setter changed while an update is in flight may apply to it or to the next one. Holding a
+weather snapshot makes the map copy each of its arrays once on its next update (32 KB each at 128 x 128).

@@ -36,6 +36,7 @@
 #include "core/io/image.h"
 #include "core/object/worker_thread_pool.h"
 #include "modules/ground/ground_height_query.h"
+#include "modules/weather/weather_map_3d.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 
@@ -45,7 +46,6 @@ class SnowCornice3D;
 class TerrainDeformer3D;
 class TerrainDataMap3D;
 
-class WeatherMap3D;
 
 // The snowpack on a square of cells that follows the camera (docs/ideas/snow.md). Per cell it keeps the
 // snow water equivalent, its density, its liquid water and its albedo, and advances them from the weather:
@@ -178,7 +178,8 @@ class SnowCover3D : public Node3D {
 		float drift_norm = 1.0f;
 		float base_precip = 0.0f;
 		double weather_dt = 0.0; // s of weather time this update steps
-		const WeatherMap3D *weather = nullptr;
+		const WeatherMap3D *weather = nullptr; // main thread only
+		WeatherMap3D::Snapshot wx; // what the cells read of it (any thread)
 		const TerrainDataMap3D *climate_map = nullptr; // baked, with a recipe
 		float climate_background = 0.0f; // mm a year, the recipe's flat-ground precipitation
 	} inputs;
@@ -215,7 +216,6 @@ class SnowCover3D : public Node3D {
 	void _set_global(const StringName &p_name, const Variant &p_value, int p_type);
 	void _publish_globals();
 	bool _in_world_only(Vector3 p_position) const;
-	void _sample_canopy();
 	float _sample(const Vector<float> &p_field, Vector2 p_xz) const;
 	Vector3 _cell_center(int p_x, int p_z) const;
 	void _setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_resolution);
@@ -245,19 +245,14 @@ class SnowCover3D : public Node3D {
 	WorkerThreadPool::TaskID cover_task = WorkerThreadPool::INVALID_TASK_ID;
 	bool cover_task_world = false; // the task carries the world tier's turn
 	double world_dt = 0.0;
-	// Weather the cells read, gathered on the main thread before each update: mm/h of water falling (with
-	// the orographic share) and the share of the sun through the clouds.
-	Vector<float> in_precip;
-	Vector<float> in_vis;
-	bool gather_canopy = false;
-	uint64_t gather_usec = 0;
+	// The terrain climate's precipitation per cell (mm a year), read on the main thread.
+	Vector<float> cell_climate_precip;
 	uint64_t main_usec = 0; // main-thread time of the last update (gather, start, swap in)
 	// The textures' images, built off the main thread.
 	Ref<Image> upload_snow;
 	Ref<Image> upload_catch;
 	void _publish_cells();
-	void _gather_row(uint32_t p_row, void *p_unused);
-	void _gather_inputs();
+	void _refresh_cell_inputs(int p_from_row, int p_to_row, const Vector<uint8_t> *p_only);
 	void _update_begin(double p_weather_dt, bool p_blocking);
 	void _update_cells(bool p_parallel);
 	void _update_end();
