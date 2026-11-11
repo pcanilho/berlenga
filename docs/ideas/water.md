@@ -1750,6 +1750,44 @@ Waterfall sheets keep the tint.
 Unresolved: raster cloud shadows do not dim the glitter (an unshaded material does not read the light's
 shadow); the path tracer's do.
 
+## Lakes lay flat (11 Nov, bug)
+
+A lake's fetch is its own size, so at 4 m/s on a 200 m lake the JONSWAP peak is about 0.5 m long (Hs about 3 cm).
+The FFT tile is 40 m with 64 or 128 points, so the peak fell below two cells and only the spectrum's tail under it
+was kept: the bench measured Hs 0.00 m and a low camera saw a flat sheet. The ocean grid is now raised until the
+peak spans four cells, up to 256 (Hs 0.02 m, ripples and glitter visible). Open sea is unchanged.
+
+## Research: the scene mirrored in raster water (11 Nov, not built)
+
+The showcase found that a calm raster lake reads as flat blue from a low camera. Raster water (Step 5i) reflects
+only the sky panorama and the sun, so mountains and trees never mirror in it. Godot's SSR only runs for opaque
+surfaces, and the water is blended. Path tracing already mirrors the scene.
+
+How others do it:
+- Unreal 5: water uses the Single Layer Water shading model, drawn in its own pass after the opaques. Screen-space
+  reflections (or Lumen) trace against the scene's depth, and the sky and reflection captures fill the gaps.
+- Unity HDRP water: screen-space reflections on the water surface, with reflection probes and the sky behind.
+- Crest (Unity): planar reflections (a second camera mirrored in the water plane) in its built-in pipeline
+  version, and the render pipeline's SSR in newer versions.
+- Sea of Thieves and many open-world games: SSR on water, with a cubemap or sky fallback.
+
+The two methods:
+1. **SSR marched inside the water shader.** A transparent Godot shader can read the opaque scene
+   (`hint_screen_texture`) and its depth (`hint_depth_texture`). March the reflected ray in screen space with a
+   perspective-correct DDA (McGuire and Mara, *Efficient GPU Screen-Space Ray Tracing*, JCGT 2014), refine the hit
+   by bisection, and fade near the screen edges and by thickness. Where the ray misses, keep today's sky and sun.
+   For a lake seen from a low camera, the mountains above it are on screen, which is the best case for SSR.
+   It misses whatever is off screen, and objects drawn after the water (other transparents).
+   Cost: one march per water pixel, about 24 to 32 depth reads. Estimated 0.2 to 0.5 ms at 1440p with half the
+   screen as water on a high-end GPU, to be measured on the PC.
+2. **Planar reflections.** Draw the scene again from a camera mirrored in the water plane, into a texture the water
+   samples, distorted by the wave normal. This is exact for flat water and also shows off-screen objects, but it
+   costs a second scene pass (roughly 30 to 100% of the frame's opaque cost per reflecting plane). It needs one
+   pass per water height, so every lake at a different level costs its own pass.
+
+Recommendation: method 1, with `raster_scene_reflections` as an opt-out and the sky panorama as the fallback.
+Planar stays a possible later option for a single hero plane. Not built until Paulo picks it.
+
 ## Step 5j: multigrid flow bakes (11 Nov, audit item 10)
 
 The flow bakes solve a stream function: `div(grad(psi) / h) = 0` over the sea or lake's simulated square

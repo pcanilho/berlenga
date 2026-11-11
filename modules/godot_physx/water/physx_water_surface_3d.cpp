@@ -3719,6 +3719,26 @@ void PhysXWaterSurface3D::set_fetch(float p_fetch) {
 	_reinit_spectrum();
 }
 
+// A fetch-limited sea's waves are short: on a lake of a few hundred metres at 4 m/s the JONSWAP peak
+// (omega_p = 22 (g^2 / (U F))^(1/3)) is about half a metre long, shorter than two cells of a 64 or 128 point
+// grid over the 40 m tile, so the FFT held only the spectrum's tail below the peak and the lake lay flat
+// (Hs 0.00 m against 0.03 m from the spectrum). The grid is raised until the peak spans at least four
+// cells, up to 256 points (one cascade's tile keeps its size, so nothing else changes). Open sea, whose
+// peak is metres long, keeps ocean_grid_resolution.
+int PhysXWaterSurface3D::_resolved_ocean_grid_resolution() const {
+	int n = ocean_grid_resolution;
+	const float u = MAX(wind_speed, 0.5f);
+	const float f = MAX(get_effective_fetch(), 1.0f);
+	const float g = 9.81f;
+	const float wp = 22.0f * Math::pow(g * g / (u * f), 1.0f / 3.0f);
+	const float lambda_p = Math::TAU * g / (wp * wp);
+	const float tile = MAX(ocean_domain_size.x, ocean_domain_size.y);
+	while (n < 256 && tile / n > 0.25f * lambda_p) {
+		n *= 2;
+	}
+	return n;
+}
+
 float PhysXWaterSurface3D::get_effective_fetch() const {
 	if (fetch > 0.0f) {
 		return fetch;
@@ -4184,7 +4204,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.ripple_amplitude = ripple_amplitude;
 	s.gravity = 9.81f;
 	s.water_level = water_level;
-	s.ocean_grid_resolution = ocean_grid_resolution;
+	s.ocean_grid_resolution = _resolved_ocean_grid_resolution();
 	s.ocean_domain_size = ocean_domain_size;
 	s.wind_speed = wind_speed;
 	s.wind_direction = wind_direction;
