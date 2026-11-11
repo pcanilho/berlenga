@@ -28,11 +28,13 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install Hugo
-        run: pip install hugo==0.169.0
+        run: pip install hugo==0.169.0 "pagefind[bin]==1.6.0"
       - id: pages
         uses: actions/configure-pages@v5
       - name: Build
         run: hugo --source site --minify --baseURL "${{ steps.pages.outputs.base_url }}/" --destination "${{ github.workspace }}/public"
+      - name: Search index
+        run: python -m pagefind --site public
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public

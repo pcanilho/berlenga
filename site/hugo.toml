@@ -6,6 +6,7 @@ enableRobotsTXT = true
 
 [params]
 description = "A Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction, built for large open worlds."
+tagline = "Path tracing for large open worlds"
 repo = "https://github.com/pcanilho/berlenga"
 
 [markup.goldmark.renderer]

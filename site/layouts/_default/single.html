@@ -1,4 +1,16 @@
 {{ define "main" }}
-<h1>{{ .Title }}</h1>
-{{ .Content }}
+<article>
+  {{ if eq .Section "features" }}<p class="eyebrow">Features</p>{{ end }}
+  <h1>{{ .Title }}</h1>
+  {{ with .Params.summary }}<p class="lead">{{ . }}</p>{{ end }}
+  <div class="prose">{{ .Content }}</div>
+</article>
+{{ if eq .Section "features" }}
+<nav class="pager" aria-label="Pages" data-pagefind-ignore>
+  {{ $list := (site.GetPage "/features").Pages.ByWeight }}{{ $i := 0 }}{{ range $k, $p := $list }}{{ if eq $p $ }}{{ $i = $k }}{{ end }}{{ end }}
+  {{ if gt $i 0 }}{{ with index $list (sub $i 1) }}<a class="prev" href="{{ .RelPermalink }}"><small>Previous</small>{{ .Title }}</a>{{ end }}{{ else }}<span></span>{{ end }}
+  {{ if lt (add $i 1) (len $list) }}{{ with index $list (add $i 1) }}<a class="next" href="{{ .RelPermalink }}"><small>Next</small>{{ .Title }}</a>{{ end }}{{ end }}
+</nav>
+{{ end }}
+<p class="edit" data-pagefind-ignore><a href="{{ site.Params.repo }}/edit/main/site/content/{{ .File.Path }}">Edit this page on GitHub</a></p>
 {{ end }}
