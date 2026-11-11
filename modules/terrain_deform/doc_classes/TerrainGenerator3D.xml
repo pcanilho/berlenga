@@ -464,7 +464,7 @@
 			Area (km²) an inflow marker without [code]area[/code] metadata brings in.
 		</member>
 		<member name="inflows" type="NodePath[]" setter="set_inflows" getter="get_inflows" default="[]">
-			Markers ([Node3D]) where land beyond the map drains in: a river from upstream of the map edge, or a lake fed by a catchment behind its ridge. Metadata [code]area[/code] (km²), else [member inflow_area]. It enters at the marker's node (the nearest one off an outlet edge or the sea) and counts as that much drainage area in erosion, deposition, the rivers and their monthly discharge (at the rain and melt of the node it enters at). It brings no sediment.
+			Markers ([Node3D]) where land beyond the map drains in: a river from upstream of the map edge, or a lake fed by a catchment behind its ridge. Metadata [code]area[/code] (km²), else [member inflow_area]. It enters at the marker's node (the nearest one off an outlet edge or the sea) and counts as that much drainage area in erosion, deposition, the rivers and their monthly discharge (at the rain and melt of the node it enters at). It brings no sediment. More metadata: [code]erosion[/code] (0..1, the share of that area that erodes; 0 brings water only), [code]sill[/code] (m: resistant rock round the entry, eroding 200 times slower and standing at 85 degrees) and [code]level[/code] (m: the sill is not worn below this height once uplift has raised it there). A marker with [code]sill[/code] or [code]level[/code] and no [code]area[/code] is a sill only.
 		</member>
 		<member name="initial_roughness" type="float" setter="set_initial_roughness" getter="get_initial_roughness" default="1.0">
 			Height of the seeded random roughness the simulation starts from, in metres.

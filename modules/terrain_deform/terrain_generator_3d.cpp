@@ -299,10 +299,12 @@ bool TerrainGenerator3D::generate() {
 
 	// Land beyond the map draining in at the inflow markers, on every grid the steps run on.
 	const LocalVector<InflowPoint> inflow_points = _inflow_points();
-	LocalVector<double> inflow_fine;
+	LocalVector<double> inflow_fine, sill_fine, level_fine, water_fine;
 	if (!inflow_points.is_empty()) {
-		_inflow_grid(inflow_points, nx, ny, cell_size, sp.b.outlet, inflow_fine);
+		_inflow_grid(inflow_points, nx, ny, cell_size, sp.b.outlet, inflow_fine, sill_fine, level_fine, &water_fine);
 		sp.b.inflow_area = inflow_fine.ptr();
+		sp.b.sill = sill_fine.is_empty() ? nullptr : sill_fine.ptr();
+		sp.b.sill_level = level_fine.is_empty() ? nullptr : level_fine.ptr();
 	}
 
 	// Layered rock (Forte, Yanites and Whipple 2016; Haviv et al. 2010): bands of hard rock in a sequence that rises
@@ -408,7 +410,7 @@ bool TerrainGenerator3D::generate() {
 	} else {
 		struct Level {
 			int nx = 0, ny = 0;
-			LocalVector<double> up, h, sed, inflow;
+			LocalVector<double> up, h, sed, inflow, sill, level;
 			LocalVector<uint8_t> outlet;
 		};
 		LocalVector<Level> lv;
@@ -461,9 +463,13 @@ bool TerrainGenerator3D::generate() {
 			if (!inflow_points.is_empty()) {
 				if (l == 0) {
 					sp.b.inflow_area = inflow_fine.ptr();
+					sp.b.sill = sill_fine.is_empty() ? nullptr : sill_fine.ptr();
+					sp.b.sill_level = level_fine.is_empty() ? nullptr : level_fine.ptr();
 				} else {
-					_inflow_grid(inflow_points, L.nx, L.ny, sp.p.dx, sp.b.outlet, L.inflow);
+					_inflow_grid(inflow_points, L.nx, L.ny, sp.p.dx, sp.b.outlet, L.inflow, L.sill, L.level, nullptr);
 					sp.b.inflow_area = L.inflow.ptr();
+					sp.b.sill = L.sill.is_empty() ? nullptr : L.sill.ptr();
+					sp.b.sill_level = L.level.is_empty() ? nullptr : L.level.ptr();
 				}
 			}
 			strata_prepare(L.nx, L.ny, sp.p.dx);
@@ -528,12 +534,21 @@ bool TerrainGenerator3D::generate() {
 		sp.b.outlet = fine_outlet;
 		sp.invalidate_outlets();
 		sp.b.inflow_area = inflow_fine.is_empty() ? nullptr : inflow_fine.ptr();
+		sp.b.sill = sill_fine.is_empty() ? nullptr : sill_fine.ptr();
+		sp.b.sill_level = level_fine.is_empty() ? nullptr : level_fine.ptr();
+	}
+	sill_cells.clear();
+	if (!sill_fine.is_empty()) {
+		sill_cells.resize(n);
+		for (int i = 0; i < n; i++) {
+			sill_cells[i] = float(sill_fine[i]);
+		}
 	}
 	inflow_cells.clear();
-	if (!inflow_fine.is_empty()) {
+	if (!water_fine.is_empty()) {
 		inflow_cells.resize(n);
 		for (int i = 0; i < n; i++) {
-			inflow_cells[i] = float(inflow_fine[i]);
+			inflow_cells[i] = float(water_fine[i]);
 		}
 	}
 	hardness.clear();
@@ -647,6 +662,7 @@ void TerrainGenerator3D::clear_result() {
 	sediment.clear();
 	alluvium_reach.clear();
 	inflow_cells.clear();
+	sill_cells.clear();
 	lips.clear();
 	lip_buckets.clear();
 	uplift_field.clear();
@@ -1903,7 +1919,9 @@ double TerrainGenerator3D::_marker_face_slope(const Node3D *p_marker) {
 void TerrainGenerator3D::_bake_lips() {
 	lips.clear();
 	lip_buckets.clear();
-	if (!fall_lips || hardness.size() != uint32_t(nx * ny)) {
+	const bool hard_map = hardness.size() == uint32_t(nx * ny);
+	const bool sills = sill_cells.size() == uint32_t(nx * ny);
+	if (!fall_lips || (!hard_map && !sills)) {
 		return;
 	}
 	const Array rivers = _rivers(1.0e5, true);
@@ -1928,7 +1946,7 @@ void TerrainGenerator3D::_bake_lips() {
 			}
 			const int u = cells[k], v = cells[e];
 			const real_t drop = heights[u] - heights[v];
-			if (drop >= 4.0f && hardness[u] >= 0.5f) {
+			if (drop >= 4.0f && ((hard_map && hardness[u] >= 0.5f) || (sills && sill_cells[u] > 0.5f))) {
 				FallLip lip;
 				const Vector3 a = _cell_position(u), b = _cell_position(v);
 				lip.top = Vector2(a.x, a.z);
@@ -2010,8 +2028,16 @@ LocalVector<TerrainGenerator3D::InflowPoint> TerrainGenerator3D::_inflow_points(
 		InflowPoint ip;
 		const Vector3 p = marker->get_global_position();
 		ip.position = Vector2(p.x, p.z);
-		ip.area = double(marker->has_meta("area") ? real_t(marker->get_meta("area")) : inflow_area) * 1.0e6;
-		if (ip.area > 0.0) {
+		// A marker with only a sill (no area metadata and a sill or level) brings no land in.
+		const bool sill_only = !marker->has_meta("area") && (marker->has_meta("sill") || marker->has_meta("level"));
+		ip.area = sill_only ? 0.0 : double(marker->has_meta("area") ? real_t(marker->get_meta("area")) : inflow_area) * 1.0e6;
+		ip.sill = marker->has_meta("sill") ? double(real_t(marker->get_meta("sill"))) : 0.0;
+		ip.erosion = marker->has_meta("erosion") ? CLAMP(double(real_t(marker->get_meta("erosion"))), 0.0, 1.0) : 1.0;
+		if (marker->has_meta("level")) {
+			ip.level = double(real_t(marker->get_meta("level"))) - double(height_offset);
+			ip.sill = MAX(ip.sill, 1.0); // a level needs a sill to hold it (at least the entry node)
+		}
+		if (ip.area > 0.0 || ip.sill > 0.0) {
 			pts.push_back(ip);
 		}
 	}
@@ -2020,9 +2046,15 @@ LocalVector<TerrainGenerator3D::InflowPoint> TerrainGenerator3D::_inflow_points(
 
 // The node each inflow enters at on a p_nx x p_ny grid of p_dx spacing: the one under the marker, or, when that is
 // an outlet (an open map edge or the sea), the nearest node within 8 that is not, so the water runs over the land.
-void TerrainGenerator3D::_inflow_grid(const LocalVector<InflowPoint> &p_points, int p_nx, int p_ny, double p_dx, const uint8_t *p_outlet, LocalVector<double> &r_area) const {
+void TerrainGenerator3D::_inflow_grid(const LocalVector<InflowPoint> &p_points, int p_nx, int p_ny, double p_dx, const uint8_t *p_outlet, LocalVector<double> &r_area, LocalVector<double> &r_sill, LocalVector<double> &r_level, LocalVector<double> *r_water) const {
 	r_area.resize(p_nx * p_ny);
 	memset(r_area.ptr(), 0, sizeof(double) * p_nx * p_ny);
+	if (r_water) {
+		r_water->resize(p_nx * p_ny);
+		memset(r_water->ptr(), 0, sizeof(double) * p_nx * p_ny);
+	}
+	r_sill.clear();
+	r_level.clear();
 	auto outlet = [&](int x, int z) {
 		return (p_outlet && p_outlet[z * p_nx + x]) || ((outlet_edges & 1) && x == 0) || ((outlet_edges & 2) && x == p_nx - 1) || ((outlet_edges & 4) && z == 0) || ((outlet_edges & 8) && z == p_ny - 1);
 	};
@@ -2040,7 +2072,36 @@ void TerrainGenerator3D::_inflow_grid(const LocalVector<InflowPoint> &p_points, 
 			}
 		}
 		if (best >= 0) {
-			r_area[best] += ip.area;
+			r_area[best] += ip.area * ip.erosion;
+			if (r_water) {
+				(*r_water)[best] += ip.area;
+			}
+			if (ip.sill > 0.0) {
+				// A sill of resistant rock round the entry: full within the radius, at least the entry node itself.
+				if (r_sill.is_empty()) {
+					r_sill.resize(p_nx * p_ny);
+					memset(r_sill.ptr(), 0, sizeof(double) * p_nx * p_ny);
+				}
+				const int bx = best % p_nx, bz = best / p_nx;
+				const int rc = int(Math::ceil(ip.sill / p_dx));
+				for (int z = MAX(bz - rc, 0); z <= MIN(bz + rc, p_ny - 1); z++) {
+					for (int x = MAX(bx - rc, 0); x <= MIN(bx + rc, p_nx - 1); x++) {
+						const double dd = Math::sqrt(double((x - bx) * (x - bx) + (z - bz) * (z - bz))) * p_dx;
+						if (dd <= MAX(ip.sill, 0.5 * p_dx)) {
+							r_sill[z * p_nx + x] = 1.0;
+							if (!Math::is_nan(ip.level)) {
+								if (r_level.is_empty()) {
+									r_level.resize(p_nx * p_ny);
+									for (uint32_t k = 0; k < r_level.size(); k++) {
+										r_level[k] = NAN;
+									}
+								}
+								r_level[z * p_nx + x] = ip.level;
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 }

@@ -148,6 +148,7 @@ private:
 	TypedArray<NodePath> inflows;
 	real_t inflow_area = 25.0; // km2
 	LocalVector<float> inflow_cells; // m2 entering at each node of the result (empty: none)
+	LocalVector<float> sill_cells; // resistant sill round an inflow, 0..1 (empty: none)
 	real_t lake_depth = 20.0; // m of dam above the valley floor
 	real_t lake_catchment = 2.0e5; // m^2, least drainage area at an automatic dam
 	real_t lake_min_area = 10000.0; // m^2
@@ -230,9 +231,12 @@ private:
 	struct InflowPoint {
 		Vector2 position;
 		double area = 0.0; // m2
+		double sill = 0.0; // m radius of resistant rock round the entry (0: none)
+		double level = NAN; // height (eroded metres) the sill is not worn below
+		double erosion = 1.0; // share of the area that erodes (1: all; 0: water only)
 	};
 	LocalVector<InflowPoint> _inflow_points() const;
-	void _inflow_grid(const LocalVector<InflowPoint> &p_points, int p_nx, int p_ny, double p_dx, const uint8_t *p_outlet, LocalVector<double> &r_area) const;
+	void _inflow_grid(const LocalVector<InflowPoint> &p_points, int p_nx, int p_ny, double p_dx, const uint8_t *p_outlet, LocalVector<double> &r_area, LocalVector<double> &r_sill, LocalVector<double> &r_level, LocalVector<double> *r_water) const;
 	void _route_rivers();
 	float _water_fade(real_t p_x, real_t p_z) const;
 	Ref<ArrayMesh> _lake_outline(int p_lake, const Vector3 &p_origin) const;

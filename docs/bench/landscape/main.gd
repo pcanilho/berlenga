@@ -260,19 +260,43 @@ func _generate() -> void:
 	if lake_marker != null:
 		var lp: Array[NodePath] = [gen.get_path_to(lake_marker)]
 		gen.lakes = lp
+		var markers: Array[NodePath] = []
 		if args.has("inflow"):
-			# The main river's catchment reaches past the map's north edge: that land drains in where the river
-			# enters (--inflow-x/z, default the north edge above the cirque), so the high lake and its fall carry it.
-			# --inflow-at=lake: it drains into the high lake instead (a catchment behind the cirque).
-			var inflow := lake_marker
-			if args.get("inflow-at", "edge") != "lake":
-				inflow = Node3D.new()
-				inflow.name = "Inflow"
+			# The main river's catchment reaches past the map: that land drains in at --inflow-at: edge (the north
+			# edge above the cirque, or --inflow-x/z), lake (the high lake marker), or x,z.
+			var at: String = args.get("inflow-at", "edge")
+			var inflow := Node3D.new()
+			inflow.name = "Inflow"
+			if at == "lake":
+				inflow.position = lake_marker.position
+			elif at.contains(","):
+				inflow.position = Vector3(float(at.get_slice(",", 0)), 0, float(at.get_slice(",", 1)))
+			else:
 				inflow.position = Vector3(float(args.get("inflow-x", "0")), 0, float(args.get("inflow-z", "-2048")))
-				add_child(inflow)
 			inflow.set_meta("area", float(args["inflow"]))
-			var ip: Array[NodePath] = [gen.get_path_to(inflow)]
-			gen.inflows = ip
+			if args.has("inflow-erosion"):
+				# Share of that land's area that erodes (0: it only brings water).
+				inflow.set_meta("erosion", float(args["inflow-erosion"]))
+			if at == "lake":
+				lake_marker.set_meta("inflow", inflow)
+			if args.has("inflow-level"):
+				# The land beyond the edge is high: the river enters at this height, not cut down to the plain's.
+				inflow.set_meta("level", float(args["inflow-level"]))
+			add_child(inflow)
+			markers.append(gen.get_path_to(inflow))
+		if args.has("sill"):
+			# A sill of resistant rock (m radius) at the high lake's outlet (or --sill-at=x,z), held at --sill-level:
+			# the river upstream grades to it, the lake sits behind it, and the river falls off it.
+			var sill := Node3D.new()
+			sill.name = "Sill"
+			var sa: String = args.get("sill-at", "")
+			sill.position = Vector3(float(sa.get_slice(",", 0)), 0, float(sa.get_slice(",", 1))) if sa.contains(",") else lake_marker.position
+			sill.set_meta("sill", float(args["sill"]))
+			if args.has("sill-level"):
+				sill.set_meta("level", float(args["sill-level"]))
+			add_child(sill)
+			markers.append(gen.get_path_to(sill))
+		gen.inflows = markers
 	var t := Time.get_ticks_msec()
 	# One climate for the rivers (rain and snowmelt by month), the data map's climate fields and the plants: a mild
 	# coast with the wet wind from the sea (south, +Z).
@@ -302,6 +326,8 @@ func _generate() -> void:
 				run += pts[i].distance_to(pts[i - 1])
 				i -= 1
 			lake_marker.position = Vector3(pts[i].x, 0, pts[i].z)
+			if lake_marker.has_meta("inflow"):
+				(lake_marker.get_meta("inflow") as Node3D).position = lake_marker.position
 			_log("high lake marker %.0f m up the river from the %.0f m fall at %s" % [run, tall["height"], tall["top"]])
 			gen.generate()
 	_log("generate %d ms, grid %s, last change %.3f m" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change()])
