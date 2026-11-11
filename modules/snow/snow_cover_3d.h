@@ -94,6 +94,9 @@ class SnowCover3D : public Node3D {
 	float wind_curvature_length = 20.0f; // m, MicroMet's curvature length scale
 	bool publish_shader_globals = true;
 	float precipitation_gradient = 0.0f; // share more per 100 m above the reference height
+	// A TerrainDataMap3D with a baked climate: its precipitation field (orographic, Smith and Barstad 2004)
+	// over its recipe's flat-ground precipitation scales what falls, in place of precipitation_gradient.
+	NodePath climate_map;
 
 	// The world tier (docs/ideas/snow.md, stage 4): a coarse pack over the whole terrain, started from a baked
 	// climate and carried on by the weather at a lower rate. It seeds cells entering this square and draws the
@@ -174,6 +177,8 @@ class SnowCover3D : public Node3D {
 		float drift_norm = 1.0f;
 		float base_precip = 0.0f;
 		const WeatherMap3D *weather = nullptr;
+		const TerrainDataMap3D *climate_map = nullptr; // baked, with a recipe
+		float climate_background = 0.0f; // mm a year, the recipe's flat-ground precipitation
 	} inputs;
 
 	Ref<Image> snow_image;
@@ -306,6 +311,13 @@ public:
 	bool get_publish_shader_globals() const { return publish_shader_globals; }
 	void set_precipitation_gradient(float p_share);
 	float get_precipitation_gradient() const { return precipitation_gradient; }
+	void set_climate_map(const NodePath &p_path);
+	NodePath get_climate_map() const { return climate_map; }
+	// The data map climate_map points at, when it has a baked climate and a recipe; else null.
+	const TerrainDataMap3D *get_climate_map_node() const;
+	// Share of the recipe's background precipitation falling at a point: the climate map's, else
+	// precipitation_gradient's per 100 m above p_ref_height.
+	float get_orographic_factor_at(Vector3 p_position, float p_ref_height) const;
 	void set_climate(const Ref<SnowClimate> &p_climate);
 	Ref<SnowClimate> get_climate() const { return climate; }
 	void set_world_update_every(int p_updates);

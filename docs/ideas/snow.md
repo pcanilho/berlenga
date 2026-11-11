@@ -884,3 +884,31 @@ Sources:
   liquid film flow and natural convection airflow, Physics of Fluids 15, 2003.
 - Chen and Morris, On the origin and evolution of icicle ripples, New Journal of Physics 15, 2013.
 - Ladan and Morris, Pattern of inclusions inside rippled icicles, Physical Review E 106, 054211, 2022.
+
+## Follow-up 7: one climate with the terrain (built 11 Nov 2026)
+
+The winter bake had its own recipe, apart from the ClimateRecipe the terrain generator's rivers, the data
+map's climate fields and the plants use. Now `SnowClimate.recipe` takes that ClimateRecipe and
+`SnowCover3D.climate_map` a TerrainDataMap3D with its climate baked.
+
+- From the recipe: latitude, reference height, January and July means, the day-to-day spread (the
+  generator's residual), and the wet-day wind (the recipe's wind is the one its precipitation follows; dry
+  days blow `storm_wind_factor` softer). Each month's wet-day amount is the recipe's year of precipitation
+  times the month's share (its seasonality harmonic) over the Markov chain's share of wet days, so the
+  WGEN chain (Richardson 1981) keeps its persistence and the totals match the recipe. The bake's lapse
+  rate follows the recipe's winter and summer values (Rolland 2003) day by day. The diurnal range and the
+  wet/dry chain stay the SnowClimate's own: the recipe has no daily statistics.
+- From the climate map: its precipitation field (Smith and Barstad 2004, summed over the wet-day wind
+  rose) over the recipe's flat-ground precipitation scales what falls on each cell, in place of
+  `precipitation_gradient`, in the bake, the world tier and the near square (and
+  `get_snowfall_rate_at()`).
+- On the bench mountain (700 m, 9 m/s westerly, the recipe's 1000 s conversion and fallout times) the
+  field peaks 500 m in the lee of the summit: the advection length (about 9 km) is longer than the hill,
+  so it spills over, as linear theory says small hills do. The snow follows: windward over lee snow
+  water at 350-550 m goes from 1.00 to 0.46. Bigger ranges get their windward maximum back.
+
+**Checks** (`--test=climate`): ten years from the recipe give its January mean (1.6 C against 2.0), its
+year (1185 mm against 1200) and its seasonality (December 125 mm, June 58 mm); the lapse rates; the
+mountain gets more than flat ground; an east wind mirrors the field; the bake's snow follows it. The
+landscape bench's gap "SnowClimate is set apart" is now a pass. Its check "cornices grow on the lee
+crests around the peak" failed before this change too (0 pieces since the gentler valley layout).

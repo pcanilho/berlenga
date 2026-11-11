@@ -804,6 +804,118 @@ func _alpine(wind_speed: float) -> SnowClimate:
 	return c
 
 
+func _recipe() -> ClimateRecipe:
+	var r := ClimateRecipe.new()
+	r.latitude = 52.0
+	r.reference_height = 0.0
+	r.temperature_january = 2.0
+	r.temperature_july = 19.0
+	r.precipitation = 1200.0
+	r.precipitation_seasonality = 0.4
+	r.precipitation_peak_month = 11.0 # December
+	r.wind_from = 270.0
+	r.wind_speed = 9.0
+	return r
+
+
+func _run_recipe_tests() -> void:
+	print("One climate with the terrain (SnowClimate.recipe, SnowCover3D.climate_map)")
+	var r := _recipe()
+	var c := _climate(5.0)
+	c.recipe = r
+	c.start_day = 1
+	var days := c.sample_days(3650)
+	var jan := 0.0
+	var jan_n := 0
+	var year := 0.0
+	var dec := 0.0
+	var jun := 0.0
+	for d in 3650:
+		var doy := d % 365
+		year += days[d * 4 + 1] / 10.0
+		if doy < 31:
+			jan += days[d * 4]
+			jan_n += 1
+		elif doy >= 334:
+			dec += days[d * 4 + 1] / 10.0
+		elif doy >= 151 and doy < 181:
+			jun += days[d * 4 + 1] / 10.0
+	_check("recipe: its latitude, January mean and wet-day wind", is_equal_approx(c.latitude, 52.0) and absf(jan / jan_n - 2.0) < 0.6 and is_equal_approx(c.wind_speed * c.storm_wind_factor, 9.0), "latitude %.0f, January %.2f C (recipe 2.0), wet-day wind %.1f m/s" % [c.latitude, jan / jan_n, c.wind_speed * c.storm_wind_factor])
+	_check("recipe: the year's precipitation", absf(year - 1200.0) < 0.08 * 1200.0, "%.0f mm a year (recipe 1200)" % year)
+	_check("recipe: its seasonality (wettest in December)", dec > 1.6 * jun, "December %.0f mm, June %.0f mm (harmonic 0.4: about 2.3 to 1)" % [dec, jun])
+	var l_jan := c.seasonal_lapse_rate(20.0, 6.5)
+	var l_jul := c.seasonal_lapse_rate(202.0, 6.5)
+	_check("recipe: winter and summer lapse rates", absf(l_jan - r.lapse_rate_january) < 0.05 and absf(l_jul - r.lapse_rate_july) < 0.05, "%.2f and %.2f C/km" % [l_jan, l_jul])
+
+	# The terrain's climate map on the mountain: more on the windward (west) side and summit, less in the lee.
+	await _setup("mountain", 512.0, 128, -2.0)
+	var dm := TerrainDataMap3D.new()
+	dm.name = "DataMap"
+	dm.size = 4096.0
+	dm.resolution = 256
+	add_child(dm)
+	dm.height_source = dm.get_path_to(ground)
+	dm.climate_recipe = r
+	var t0 := Time.get_ticks_msec()
+	dm.bake_climate()
+	print("  data map climate on 4 km: %d ms" % (Time.get_ticks_msec() - t0))
+	snow.climate_map = snow.get_path_to(dm)
+	var flat := snow.get_orographic_factor_at(Vector3(-1900, 0, 1900), 0.0)
+	var top := Vector3.ZERO
+	var top_h := -1e9
+	for i in 4000:
+		var q := Vector3(randf_range(-800, 800), 0, randf_range(-800, 800))
+		var hq: float = ground.get_height(q)
+		if hq > top_h:
+			top_h = hq
+			top = q
+	var windward := snow.get_orographic_factor_at(top + Vector3(-500, 0, 0), 0.0)
+	var lee := snow.get_orographic_factor_at(top + Vector3(900, 0, 0), 0.0)
+	var probe := ""
+	for dx in [-1500, -1000, -500, 0, 500, 1000, 1500, 2000]:
+		probe += " %d m x%.2f" % [dx, snow.get_orographic_factor_at(top + Vector3(dx, 0, 0), 0.0)]
+	print("  precipitation factor along the wind (summit at 0):" + probe)
+	_check("climate map: the mountain gets more than flat ground", windward > 1.1 and lee > 1.1 and absf(flat - 1.0) < 0.15, "x%.2f windward, x%.2f in the lee, x%.2f on far flat ground" % [windward, lee, flat])
+	# The same wind from the east mirrors it.
+	var r2 := _recipe()
+	r2.wind_from = 90.0
+	dm.climate_recipe = r2
+	dm.bake_climate()
+	var windward2 := snow.get_orographic_factor_at(top + Vector3(500, 0, 0), 0.0)
+	var lee2 := snow.get_orographic_factor_at(top + Vector3(-900, 0, 0), 0.0)
+	_check("climate map: an east wind mirrors it", absf(windward2 - windward) < 0.1 * windward and absf(lee2 - lee) < 0.1 * lee, "x%.2f windward, x%.2f in the lee" % [windward2, lee2])
+	dm.climate_recipe = r
+	dm.bake_climate()
+	# A winter from the same recipe, with the map and without: the map moves snow water to the windward side
+	# (drift still loads the lee in both).
+	var ratios := []
+	for use_map in [false, true]:
+		snow.climate_map = snow.get_path_to(dm) if use_map else NodePath()
+		var mc := _climate(5.0)
+		mc.recipe = r
+		snow.climate = mc
+		t0 = Time.get_ticks_msec()
+		snow.bake_climate(Rect2(-2048, -2048, 4096, 4096), 256)
+		print("  bake with the recipe%s: %.1f s" % [" and climate map" if use_map else "", (Time.get_ticks_msec() - t0) / 1000.0])
+		var w_sum := 0.0
+		var l_sum := 0.0
+		seed(7)
+		for i in 20000:
+			var q := Vector3(randf_range(-1400, 1400), 0, randf_range(-1400, 1400))
+			var hq: float = ground.get_height(q)
+			if hq < 350.0 or hq > 550.0:
+				continue
+			if q.x < top.x - 150.0:
+				w_sum += snow.get_world_swe_at(q)
+			elif q.x > top.x + 150.0:
+				l_sum += snow.get_world_swe_at(q)
+		ratios.append(w_sum / maxf(l_sum, 1.0))
+	# Where the map puts more precipitation, the bake puts more snow.
+	var map_ratio := snow.get_orographic_factor_at(top + Vector3(-500, 0, 0), 0.0) / snow.get_orographic_factor_at(top + Vector3(900, 0, 0), 0.0)
+	_check("climate map: the bake's snow follows its precipitation", (ratios[1] - ratios[0]) * (map_ratio - 1.0) > 0.0 and absf(ratios[1] / ratios[0] - 1.0) > 0.1, "windward over lee snow water at 350-550 m: %.2f with the map, %.2f without (map's precipitation windward over lee %.2f)" % [ratios[1], ratios[0], map_ratio])
+	dm.queue_free()
+
+
 func _run_climate_tests() -> void:
 	print("Stage 4: the climate bake")
 	# The winter generator against its own recipe over ten years (WGEN, Richardson 1981).
@@ -916,6 +1028,8 @@ func _run_climate_tests() -> void:
 	t0 = Time.get_ticks_usec()
 	snow.advance_world(3600.0)
 	print("  world tier, 256 x 256 cells, one update: %.1f ms" % ((Time.get_ticks_usec() - t0) / 1000.0))
+
+	await _run_recipe_tests()
 
 	# Cornices on a ridge: a winter of westerlies in the band where they grow (Yu et al. 2023), then too
 	# little wind, then gales.

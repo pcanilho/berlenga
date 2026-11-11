@@ -241,6 +241,14 @@
 				Returns the depth of new snow, in metres, the last update (or [method add_snow]) laid at [param position].
 			</description>
 		</method>
+		<method name="get_orographic_factor_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<param index="1" name="reference_height" type="float" />
+			<description>
+				The share of the background precipitation that falls at [param position]: the [member climate_map]'s precipitation over its recipe's [member ClimateRecipe.precipitation] when it has a baked climate, else [member precipitation_gradient] per 100 m above [param reference_height].
+			</description>
+		</method>
 		<method name="get_runoff_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -386,6 +394,9 @@
 		</member>
 		<member name="climate" type="SnowClimate" setter="set_climate" getter="get_climate">
 			A baked [SnowClimate]: the cover keeps a coarse world tier of snow over its square, carries it on with the weather at a lower rate, seeds cells entering the near square from it (then sheds what their finer slopes cannot hold) and publishes it as [code]snow_world_map[/code] and [code]snow_world_rect[/code], which [BaseMaterial3D] snow and the path tracer read beyond the near square.
+		</member>
+		<member name="climate_map" type="NodePath" setter="set_climate_map" getter="get_climate_map" default="NodePath(&quot;&quot;)">
+			A [TerrainDataMap3D] with a baked climate and a [member TerrainDataMap3D.climate_recipe]. Its precipitation field (the linear theory of orographic precipitation, Smith and Barstad 2004: more on windward slopes and summits, less in their rain shadow) over the recipe's flat-ground precipitation scales what falls on every cell, in place of [member precipitation_gradient], in the near square, the world tier and [method bake_climate]. Set [member SnowClimate.recipe] to the same recipe for one climate across snow, rivers and plants.
 		</member>
 		<member name="cornice_failure_enabled" type="bool" setter="set_cornice_failure_enabled" getter="is_cornice_failure_enabled" default="true">
 			If [code]true[/code], the world tier's cornices open a tension crack behind them by creep and fall once the root cannot hold them (see [method cornice_root_stress] and [method cornice_strength]). The fallen slab lands as dense debris at the foot of the face below, in the world tier and the near square, and [signal cornice_failed] is emitted. Cold cornices hold for weeks; thaws and rain bring them down within days, so most fall in spring.

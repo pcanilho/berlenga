@@ -415,6 +415,8 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 		in.humidity = humidity;
 	}
 	in.base_precip = precipitation_rate;
+	in.climate_map = get_climate_map_node();
+	in.climate_background = in.climate_map ? in.climate_map->get_climate_recipe()->get_precipitation() : 0.0f;
 
 	// The sun: this node's light, else the weather map's (the world tier: its owner's; a bake: the date's).
 	in.sun_dir = Vector3();
@@ -502,8 +504,11 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 
 		// Precipitation, split into snow and rain.
 		const float rate = in.weather ? in.weather->get_rain_at(pos) : in.base_precip;
-		// More falls higher up (orographic enhancement), by precipitation_gradient per 100 m.
-		const float oro = MAX(1.0f + precipitation_gradient * (h - in.ref_height) * 0.01f, 0.0f);
+		// More falls higher up and on windward slopes (orographic enhancement): the terrain climate's
+		// precipitation field when there is one, else precipitation_gradient per 100 m.
+		const float oro = in.climate_map && in.climate_background > 0.0f
+				? MAX(in.climate_map->get_precipitation_at(pos) / in.climate_background, 0.0f)
+				: MAX(1.0f + precipitation_gradient * (h - in.ref_height) * 0.01f, 0.0f);
 		const float p = MAX(rate, 0.0f) * oro * in.dt_h;
 		const float share = snowfall_fraction(t, in.humidity);
 		float snow = p * share;
@@ -1625,6 +1630,7 @@ Error SnowCover3D::bake_climate(Rect2 p_rect, int p_resolution) {
 	for (int d = 0; d < climate->get_days(); d++) {
 		for (int hr = 0; hr < 24; hr += step) {
 			const SnowClimate::Hour w = climate->weather_at(d, hr + 0.5f * step);
+			b->lapse_rate = climate->seasonal_lapse_rate(float((climate->get_start_day() - 1 + d) % 365) + 1.0f, lapse_rate);
 			b->temperature = w.temperature;
 			b->humidity = w.humidity;
 			b->precipitation_rate = w.precipitation;
@@ -1874,7 +1880,8 @@ float SnowCover3D::get_snowfall_rate_at(Vector3 p_position) const {
 	const WeatherMap3D *w = WeatherMap3D::get_active();
 	const float rate = w ? w->get_rain_at(p_position) : precipitation_rate;
 	const float rh = w ? w->get_humidity() : humidity;
-	return MAX(rate, 0.0f) * snowfall_fraction(get_air_temperature_at(p_position), rh);
+	const float ref = w ? w->get_ground_height() : (is_inside_tree() ? get_global_position().y : 0.0f);
+	return MAX(rate, 0.0f) * get_orographic_factor_at(p_position, ref) * snowfall_fraction(get_air_temperature_at(p_position), rh);
 }
 
 float SnowCover3D::get_new_snow_at(Vector3 p_position) const {
@@ -2080,6 +2087,27 @@ void SnowCover3D::set_precipitation_gradient(float p_share) {
 	precipitation_gradient = MAX(p_share, 0.0f);
 }
 
+void SnowCover3D::set_climate_map(const NodePath &p_path) {
+	climate_map = p_path;
+}
+
+const TerrainDataMap3D *SnowCover3D::get_climate_map_node() const {
+	const SnowCover3D *o = owner ? owner : this;
+	if (o->climate_map.is_empty() || !o->is_inside_tree()) {
+		return nullptr;
+	}
+	const TerrainDataMap3D *m = Object::cast_to<TerrainDataMap3D>(o->get_node_or_null(o->climate_map));
+	return m && m->has_climate() && m->get_climate_recipe().is_valid() ? m : nullptr;
+}
+
+float SnowCover3D::get_orographic_factor_at(Vector3 p_position, float p_ref_height) const {
+	const TerrainDataMap3D *m = get_climate_map_node();
+	if (m && m->get_climate_recipe()->get_precipitation() > 0.0f) {
+		return MAX(m->get_precipitation_at(p_position) / m->get_climate_recipe()->get_precipitation(), 0.0f);
+	}
+	return MAX(1.0f + precipitation_gradient * (p_position.y - p_ref_height) * 0.01f, 0.0f);
+}
+
 void SnowCover3D::set_climate(const Ref<SnowClimate> &p_climate) {
 	climate = p_climate;
 	if (is_inside_tree()) {
@@ -2203,6 +2231,9 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_snow_texture"), &SnowCover3D::get_snow_texture);
 	ClassDB::bind_method(D_METHOD("set_precipitation_gradient", "share"), &SnowCover3D::set_precipitation_gradient);
 	ClassDB::bind_method(D_METHOD("get_precipitation_gradient"), &SnowCover3D::get_precipitation_gradient);
+	ClassDB::bind_method(D_METHOD("set_climate_map", "path"), &SnowCover3D::set_climate_map);
+	ClassDB::bind_method(D_METHOD("get_climate_map"), &SnowCover3D::get_climate_map);
+	ClassDB::bind_method(D_METHOD("get_orographic_factor_at", "position", "reference_height"), &SnowCover3D::get_orographic_factor_at);
 	ClassDB::bind_method(D_METHOD("set_climate", "climate"), &SnowCover3D::set_climate);
 	ClassDB::bind_method(D_METHOD("get_climate"), &SnowCover3D::get_climate);
 	ClassDB::bind_method(D_METHOD("set_world_update_every", "updates"), &SnowCover3D::set_world_update_every);
@@ -2267,6 +2298,7 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "climate", PROPERTY_HINT_RESOURCE_TYPE, "SnowClimate"), "set_climate", "get_climate");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "world_update_every", PROPERTY_HINT_RANGE, "1,120,1"), "set_world_update_every", "get_world_update_every");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "precipitation_gradient", PROPERTY_HINT_RANGE, "0,0.5,0.005"), "set_precipitation_gradient", "get_precipitation_gradient");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "climate_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_climate_map", "get_climate_map");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cornice_failure_enabled"), "set_cornice_failure_enabled", "is_cornice_failure_enabled");
 	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "publish_shader_globals"), "set_publish_shader_globals", "get_publish_shader_globals");

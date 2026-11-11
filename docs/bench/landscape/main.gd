@@ -246,7 +246,7 @@ func _generate() -> void:
 	# One climate for the rivers (rain and snowmelt by month), the data map's climate fields and the plants: a mild
 	# coast with the wet wind from the sea (south, +Z).
 	climate = ClimateRecipe.new()
-	climate.temperature_january = 1.0 # the same winter as the snowpack's SnowClimate
+	climate.temperature_january = 1.0 # the snowpack's winter too (SnowClimate.recipe)
 	climate.temperature_july = 17.0
 	climate.precipitation = 1100.0
 	climate.wind_from = 190.0
@@ -656,24 +656,7 @@ func _build_weather() -> void:
 	snow.height_source = snow.get_path_to(get_node("GroundHeight"))
 	snow.sun_light = snow.get_path_to(sun)
 	if args.get("snow", "climate") == "climate":
-		var climate := SnowClimate.new()
-		climate.base_height = 0.0
-		climate.january_temperature = 1.0 # mild coast, cold peaks
-		climate.prevailing_wind_from = 190.0 # from the sea
-		climate.wind_speed = float(args.get("climate-wind", "5"))
-		snow.climate = climate
-		var t := Time.get_ticks_msec()
-		snow.bake_climate(Rect2(-2048, -2048, 4096, 4096), int(args.get("climate-res", "256")))
-		_log("snow climate baked in %d ms" % (Time.get_ticks_msec() - t))
-		var sw: PackedFloat32Array = climate.swe
-		var mx := 0.0
-		var nz := 0
-		for v in sw:
-			mx = maxf(mx, v)
-			if v > 1.0: nz += 1
-		var cx := 0.0
-		for v in climate.cornice_x: cx = maxf(cx, absf(v))
-		_log("climate swe max %.1f mm, %d of %d cells with snow, cornice max %.2f m, has_world %s" % [mx, nz, sw.size(), cx, snow.has_world()])
+		pass # the winter is baked once the data map has the terrain's climate (_bake_snow_winter())
 	else:
 		snow.extent = 4096.0
 		snow.follow_target = snow.get_path_to(get_node("WorldAnchor"))
@@ -686,6 +669,30 @@ func _build_weather() -> void:
 	add_child(snowfall)
 	snowfall.snow_cover = snowfall.get_path_to(snow)
 	snow.global_position = Vector3(0, 0, 0)
+
+
+func _bake_snow_winter() -> void:
+	# The snowpack's winter from the same ClimateRecipe as the rivers, the data map and the plants: its
+	# temperatures, wet-day wind and precipitation drive the winter generator, and the data map's orographic
+	# precipitation field says where more of it falls.
+	if args.get("snow", "climate") != "climate":
+		return
+	var winter := SnowClimate.new()
+	winter.recipe = climate
+	snow.climate_map = snow.get_path_to(data_map)
+	snow.climate = winter
+	var t := Time.get_ticks_msec()
+	snow.bake_climate(Rect2(-2048, -2048, 4096, 4096), int(args.get("climate-res", "256")))
+	_log("snow climate baked in %d ms" % (Time.get_ticks_msec() - t))
+	var sw: PackedFloat32Array = winter.swe
+	var mx := 0.0
+	var nz := 0
+	for v in sw:
+		mx = maxf(mx, v)
+		if v > 1.0: nz += 1
+	var cx := 0.0
+	for v in winter.cornice_x: cx = maxf(cx, absf(v))
+	_log("climate swe max %.1f mm, %d of %d cells with snow, cornice max %.2f m, has_world %s" % [mx, nz, sw.size(), cx, snow.has_world()])
 
 
 func _weather_settings() -> void:
@@ -744,6 +751,7 @@ func _build_vegetation() -> void:
 	if not data_map.has_climate():
 		data_map.bake_climate()
 	_log("data map bake %d ms" % (Time.get_ticks_msec() - t))
+	_bake_snow_winter()
 	t = Time.get_ticks_msec()
 	# STAND-IN trees: tree generation is not built yet, so cones and balls mark where the forest grows.
 	var conifer := PlantSpecies.new()
@@ -1207,7 +1215,10 @@ func _checks() -> void:
 		for p in veg.get_placements(sp):
 			line = maxf(line, p.y)
 			coldest = minf(coldest, data_map.get_temperature_at(p))
-	check(false, "the snowpack's winter comes from the same climate as rivers and plants (SnowClimate is set apart here)", true)
+	if args.get("snow", "climate") == "climate":
+		var winter: SnowClimate = snow.climate
+		check(winter != null and winter.recipe == climate and snow.get_climate_map() == snow.get_path_to(data_map) and is_equal_approx(winter.january_temperature, climate.temperature_january) and snow.has_world(),
+				"the snowpack's winter comes from the same climate as rivers and plants (SnowClimate.recipe, climate_map)")
 	check(data_map.has_climate() and coldest > 5.5 and line > 0.0, "the climate sets the tree line (%.0f m, where the mean year is %.1f C)" % [line, coldest])
 	# Geology rules: no tree stands on bare rock or scree, every tree on soil.
 	var on_rock := 0
