@@ -150,6 +150,10 @@ layout(set = 0, binding = 11, std430) restrict readonly buffer VolRest {
 	float vol_rest[]; // per cell: the groom's own density (guide points), from the CPU
 };
 
+layout(set = 0, binding = 17, std430) restrict readonly buffer RenderPoints {
+	int render_points[]; // per strand (first, count) into the list after them: the points drawn (local indices)
+};
+
 layout(set = 0, binding = 6, std430) restrict readonly buffer Follow {
 	vec4 follow[]; // per strand, two: guide strands (x, y, z; w < 0 for a guide itself), then their weights
 };
@@ -722,11 +726,15 @@ void main() {
 		if (id >= counts.x * slot_points) {
 			return;
 		}
+		// The slot's k-th texel is the strand's k-th drawn point (straight runs leave some out).
 		int strand = int(order[id / slot_points].y + 0.5);
 		int k = id % slot_points;
 		int sn = strands[strand].y;
-		int sp = strands[strand].x + clamp(k, 0, max(sn - 1, 0));
-		float along = k < sn ? float(k) / float(max(sn - 1, 1)) : -1.0;
+		int rn = render_points[strand * 2 + 1];
+		int ri = render_points[strand * 2] + clamp(k, 0, max(rn - 1, 0));
+		int local_k = clamp(render_points[counts.x * 2 + ri], 0, max(sn - 1, 0));
+		int sp = strands[strand].x + local_k;
+		float along = k < rn ? float(local_k) / float(max(sn - 1, 1)) : -1.0;
 		// Distance LOD (TressFX): a fixed random subset of the strands is left out of the raster
 		// draw, flagged by along + 2; the render shader widens the rest to keep the hair's opacity.
 		// The path tracer still draws every strand at its real width.
@@ -735,7 +743,7 @@ void main() {
 		}
 		vec3 o = to_world(world_to_out, pos[sp].xyz);
 		vec3 before = o;
-		if (k < sn) {
+		if (k < rn) {
 			// One texel per real point (padding past the end only repeats the last one), so each
 			// point's history is read and replaced by a single thread.
 			before = history ? last[sp].xyz : o;
