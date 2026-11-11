@@ -196,7 +196,22 @@ private:
 		PackedVector2Array uvs;
 		PackedColorArray colors;
 		PackedInt32Array indices;
+		// Parts for LODs: first index, index count, first vertex, vertex count; and a size (tube
+		// radius for bark).
+		LocalVector<Vector4i> parts;
+		LocalVector<float> part_size;
+		void begin(Vector4i &r_part) const { r_part = Vector4i(indices.size(), 0, verts.size(), 0); }
+		void end(Vector4i &r_part, float p_size) {
+			r_part.y = indices.size() - r_part.x;
+			r_part.w = verts.size() - r_part.z;
+			if (r_part.y > 0) {
+				parts.push_back(r_part);
+				part_size.push_back(p_size);
+			}
+		}
 	};
+	Dictionary _bark_lods(const Builder &p_bark) const;
+	Dictionary _leaf_lods(Builder &r_leaves) const;
 
 	Preset preset = PRESET_OAK;
 	int seed = 0;

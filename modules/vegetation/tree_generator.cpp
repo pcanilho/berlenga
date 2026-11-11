@@ -1587,7 +1587,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 		const float tint = 0.92f + 0.16f * float((uint32_t(s) * 2654435761u) >> 24) / 255.0f;
 		col = Color(col.r * tint, col.g * tint, col.b * tint);
-		_tube(bark, pts, rad, sides, 0.0f, col);
+		{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, sides, 0.0f, col); bark.end(part, r0); }
 	}
 
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
@@ -1681,7 +1681,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					rad.push_back(br);
 					pts.push_back(b0 + bdir * blen);
 					rad.push_back(br * 0.6f);
-					_tube(bark, pts, rad, 3, 0.0f, bark_color);
+					{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color); bark.end(part, rad[0]); }
 				}
 				for (int k = 0; k < per_brush; k++) {
 					const float t = (k + 0.5f) / per_brush;
@@ -1692,7 +1692,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					const float jitter = 0.85f + 0.3f * lr.randf();
 					const Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
 					const Vector3 out = (ar * 0.75f + bdir * 0.66f).normalized();
-					_add_needle(leaves, base, out, size * (0.8f + 0.4f * lr.randf()), c);
+					{ Vector4i part; leaves.begin(part); _add_needle(leaves, base, out, size * (0.8f + 0.4f * lr.randf()), c); leaves.end(part, 0.0f); }
 					leaf_count++;
 				}
 			}
@@ -1721,7 +1721,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const Vector3 tip = mid + tip_dir * (p_len * 0.5f);
 			pts.push_back(tip);
 			rad.push_back(p_r * 0.5f);
-			_tube(bark, pts, rad, 3, 0.0f, bark_color);
+			{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color); bark.end(part, rad[0]); }
 			Vector3 side0 = p_dir.cross(Vector3(0, 1, 0));
 			side0 = side0.length_squared() > 1e-6f ? side0.normalized() : perp;
 			for (int k = 0; k < p_leaves; k++) {
@@ -1738,7 +1738,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				const Vector3 up = Vector3(Math::sin(inc) * Math::cos(az), Math::cos(inc), Math::sin(inc) * Math::sin(az));
 				const float jitter = 0.85f + 0.3f * lr.randf();
 				const Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
-				_add_leaf(leaves, at, k == p_leaves - 1 ? tip_dir : out, up, size * (0.75f + 0.5f * lr.randf()), c);
+				{ Vector4i part; leaves.begin(part); _add_leaf(leaves, at, k == p_leaves - 1 ? tip_dir : out, up, size * (0.75f + 0.5f * lr.randf()), c); leaves.end(part, 0.0f); }
 				leaf_count++;
 			}
 		};
@@ -1781,8 +1781,18 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		arrays[Mesh::ARRAY_NORMAL] = b.normals;
 		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
 		arrays[Mesh::ARRAY_COLOR] = b.colors;
+		// Index LODs (the renderer picks one per instance by screen-space error): thin twigs and
+		// then limbs drop out of the bark, and leaves are stochastically pruned with the survivors
+		// enlarged to keep the crown's leaf area (Cook, Halstead, Planck and Ryu, Stochastic
+		// Simplification of Aggregate Detail, SIGGRAPH 2007). Real leaves at every level, never
+		// cards, so shadows and path-traced rays still meet foliage; the path tracer uses LOD 0.
+		const Dictionary lods = s == 0 ? _bark_lods(b) : _leaf_lods(b);
+		arrays[Mesh::ARRAY_VERTEX] = b.verts;
+		arrays[Mesh::ARRAY_NORMAL] = b.normals;
+		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
+		arrays[Mesh::ARRAY_COLOR] = b.colors;
 		arrays[Mesh::ARRAY_INDEX] = b.indices;
-		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods);
 		Ref<StandardMaterial3D> m;
 		m.instantiate();
 		m->set_albedo(Color(1, 1, 1));
@@ -1802,6 +1812,73 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		mesh->surface_set_material(mesh->get_surface_count() - 1, m);
 	}
 	return mesh;
+}
+
+// LOD levels: screen-space error in metres (what Godot compares against the pixel threshold),
+// share of leaves kept, and the thinnest bark tube kept.
+static const struct {
+	float error;
+	float keep;
+	float min_radius;
+} TREE_LODS[] = {
+	{ 0.05f, 0.5f, 0.01f },
+	{ 0.2f, 0.15f, 0.03f },
+	{ 0.8f, 0.04f, 0.08f },
+};
+
+Dictionary TreeGenerator::_bark_lods(const Builder &p_bark) const {
+	Dictionary lods;
+	for (const auto &level : TREE_LODS) {
+		PackedInt32Array idx;
+		for (uint32_t i = 0; i < p_bark.parts.size(); i++) {
+			if (p_bark.part_size[i] < level.min_radius) {
+				continue;
+			}
+			const Vector4i &pt = p_bark.parts[i];
+			const int at = idx.size();
+			idx.resize(at + pt.y);
+			memcpy(idx.ptrw() + at, p_bark.indices.ptr() + pt.x, sizeof(int32_t) * pt.y);
+		}
+		if (idx.is_empty()) {
+			break;
+		}
+		lods[level.error] = idx;
+	}
+	return lods;
+}
+
+Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves) const {
+	Dictionary lods;
+	const uint32_t count = r_leaves.parts.size();
+	for (const auto &level : TREE_LODS) {
+		// Survivors grow about their base by 1/sqrt(keep), so the kept leaf area matches.
+		const float grow = 1.0f / Math::sqrt(level.keep);
+		PackedInt32Array idx;
+		for (uint32_t i = 0; i < count; i++) {
+			// A fixed hash per leaf, so each level's survivors are a subset of the level before.
+			const float u = float((uint32_t(i) * 2654435761u) >> 8) / 16777216.0f;
+			if (u >= level.keep) {
+				continue;
+			}
+			const Vector4i pt = r_leaves.parts[i];
+			const int v0 = r_leaves.verts.size();
+			const Vector3 pivot = r_leaves.verts[pt.z];
+			for (int v = 0; v < pt.w; v++) {
+				r_leaves.verts.push_back(pivot + (r_leaves.verts[pt.z + v] - pivot) * grow);
+				r_leaves.normals.push_back(r_leaves.normals[pt.z + v]);
+				r_leaves.uvs.push_back(r_leaves.uvs[pt.z + v]);
+				r_leaves.colors.push_back(r_leaves.colors[pt.z + v]);
+			}
+			for (int k = 0; k < pt.y; k++) {
+				idx.push_back(r_leaves.indices[pt.x + k] - pt.z + v0);
+			}
+		}
+		if (idx.is_empty()) {
+			break;
+		}
+		lods[level.error] = idx;
+	}
+	return lods;
 }
 
 // Habitat of each preset: where the species grows wild in Europe, as climate envelopes from the

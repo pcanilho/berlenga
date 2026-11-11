@@ -323,6 +323,15 @@ the top (light below 0.05 in the linear model). Buds now die only in full darkne
 tolerant buds live on a few percent of open light (Larcher 2003), and weak branches still go by
 shedding: forest beech crown depth 2.6 m to 8 m, open oak foliage from 2.8 m.
 
+**LODs (stage 2, first part).** Each surface carries three index LODs that Godot picks per
+instance by screen error (0.05, 0.2, 0.8 m): bark drops tubes under 1, 3 and 8 cm; leaves are
+stochastically pruned to 50, 15 and 4%, survivors enlarged by 1/sqrt(keep) about their base so
+the leaf area holds (Cook et al. 2007), each level a subset of the one before. Real leaves at
+every level, never cards; the path tracer uses LOD 0. Open oak 7.4M triangles, then 3.0M, 1.1M,
+0.3M; at 60, 250 and 600 m the LOD and full meshes look the same (lod_oak_60_250_600m.jpg).
+Enlarged copies add about 70% to the leaf vertex buffer. Needles: a spruce is 9.8M needle
+triangles and about 30M vertices before LODs, too heavy; see the needle question in the thread.
+
 **Eastern North America** (Paulo's pick, 11 Nov). Sugar and red maple, northern red and white
 oak, eastern white pine, eastern hemlock, American beech, paper and yellow birch, witch-hazel and
 mountain laurel. Each starts from its nearest European relative's growth rules and changes habit,
