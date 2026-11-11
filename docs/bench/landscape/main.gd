@@ -149,6 +149,15 @@ func _ready() -> void:
 	_build_camera()
 	if args.get("plants", "1") != "0":
 		_build_cover()
+	if args.has("far-cover") and veg != null:
+		# The world field publishes terrain_cover_map from its rules (crowns, far plant colours, the sward), built
+		# when it places: placed again here once the grass is set up.
+		var tc := Time.get_ticks_msec()
+		veg.cover_grass = veg.get_path_to(grass)
+		veg.cover_map_enabled = true
+		veg.populate()
+		var ct: Texture2D = veg.get_cover_texture()
+		_log("far cover map %s in %d ms (forest placed again)" % [str(ct.get_size()) if ct else "missing", Time.get_ticks_msec() - tc])
 	_run_weather()
 	_log("setup done in %d ms" % (Time.get_ticks_msec() - t_start))
 	for i in 30:
@@ -160,6 +169,13 @@ func _ready() -> void:
 	if args.has("test"):
 		get_tree().quit(0)
 		return
+	# The streamed ground cover settles round the camera before the picture.
+	var sw := 0
+	while cover != null and not cover.is_stream_idle() and sw < 1200:
+		await get_tree().process_frame
+		sw += 1
+	if cover != null:
+		_log("cover: %d plants in %d tiles after %d frames, %s" % [cover.get_plant_count(), cover.get_stream_tile_count(), sw, str(cover.get_stream_stats())])
 	# The snowpack updates on a worker thread: the picture waits for the last update to land.
 	var waited := 0
 	while snow != null and snow.has_method("is_updating") and snow.is_updating() and waited < 600:
@@ -716,7 +732,11 @@ func _build_ground() -> void:
 		var tm := TerrainMaterial3D.new()
 		tm.use_generator(gen)
 		tm.detail_octaves = int(args.get("mdetail", "4"))
-		if args.has("far-blend"):
+		if args.has("far-cover"):
+			# Far ground blend against the plant cover map the world field builds (cover_map_enabled below).
+			tm.far_blend_enabled = true
+			tm.far_start = float(args.get("far-start", "300"))
+		elif args.has("far-blend"):
 			# Far ground blend against a test cover map (vegetation publishes the real one): dark green cover over
 			# the low ground, thinning out with height, 8 m texels over the generator's area.
 			tm.far_blend_enabled = true
@@ -1480,33 +1500,10 @@ func _build_camera() -> void:
 		grass.update_at(cam.global_position)
 
 
-# Herbs, flowers and waterside plants from PlantGenerator round the camera. STOPGAP (a GAP check): VegetationField3D
-# places over its whole data map, so a 16 km² world cannot carry a herb layer at 0.25 m spacing; this builds a
-# camera-local data map and field instead, until placement streams round the camera.
+# Herbs, flowers and waterside plants from PlantGenerator, streamed round the camera on the world's data map
+# (VegetationField3D.streaming: tiles placed on workers out to stream_radius, each species to its visibility range).
 func _build_cover() -> void:
 	var t := Time.get_ticks_msec()
-	var eye := cam.global_position
-	var ahead := -cam.global_basis.z
-	ahead.y = 0.0
-	ahead = ahead.normalized() if ahead.length() > 0.01 else Vector3(0, 0, 1)
-	var c := eye + ahead * 50.0
-	if eye.y - height_at(c.x, c.z) > 80.0:
-		_log("cover: camera too high for the herb layer, skipped")
-		return
-	var dm := TerrainDataMap3D.new()
-	dm.name = "CoverMap"
-	dm.size = 160.0
-	dm.resolution = 320
-	dm.bake_on_ready = false
-	add_child(dm)
-	dm.global_position = Vector3(c.x, 0, c.z)
-	dm.height_source = dm.get_path_to(get_node("GroundHeight"))
-	var ws: Array[NodePath] = []
-	for np in data_map.water_sources:
-		ws.append(dm.get_path_to(data_map.get_node(np)))
-	dm.water_sources = ws
-	dm.geology_source = dm.get_path_to(gen)
-	dm.bake()
 	var b := Biome.new()
 	var meadow_sp := _meadow_species()
 	for sp in meadow_sp:
@@ -1530,15 +1527,15 @@ func _build_cover() -> void:
 			_set_far_color(ps)
 	cover = VegetationField3D.new()
 	cover.name = "Cover"
-	cover.populate_on_ready = false
 	cover.tile_size = 8.0
 	cover.biome = b
 	cover.forest_floor_enabled = false # the forest's own field publishes the floor
+	cover.streaming = true
+	cover.stream_radius = 80.0 # the herbs draw to 10 to 60 m
 	add_child(cover)
-	cover.data_map = cover.get_path_to(dm)
+	cover.data_map = cover.get_path_to(data_map)
 	cover.canopy_field = cover.get_path_to(veg) # shade and conifer share from the forest's crowns
-	cover.populate()
-	_log("cover %d plants (%d species) round %s in %d ms" % [cover.get_plant_count(), b.species.size(), str(c.round()), Time.get_ticks_msec() - t])
+	_log("cover: %d species streaming round the camera, set up in %d ms" % [b.species.size(), Time.get_ticks_msec() - t])
 
 
 func _variants(preset: int, count: int) -> Array:
@@ -2022,8 +2019,20 @@ func _checks() -> void:
 	snowfall.follow_target = NodePath("")
 	check(snowfall.haze_enabled and haze_peak > 0.0 and haze_peak > haze_coast * 2.0, "falling and blowing snow thicken the fog on the peak by themselves (extinction %.4f /m on the peak, %.4f at the coast)" % [haze_peak, haze_coast])
 	check(false, "falling rain particles from the weather (none in the engine)", true)
-	if cover != null or args.get("plants", "1") != "0":
-		check(false, "ground cover streams round the camera on the world's data map (a camera-local cover map and field are built by script here)", true)
+	if cover != null:
+		# Stream round the grass check's meadow point: the test camera sits too high for the 80 m ring.
+		var st := Node3D.new()
+		add_child(st)
+		st.global_position = _dbg_pt + Vector3(0, 1.7, 0)
+		cover.stream_target = cover.get_path_to(st)
+		var sf := 0
+		for i in 3:
+			await get_tree().process_frame
+			sf += 1
+		while not cover.is_stream_idle() and sf < 1200:
+			await get_tree().process_frame
+			sf += 1
+		check(cover.streaming and cover.is_stream_idle() and cover.get_plant_count() > 0, "ground cover streams round the camera on the world's data map (%d plants, settled after %d frames, %s)" % [cover.get_plant_count(), sf, str(cover.get_stream_stats())])
 	if args.get("layout", "range") == "valley":
 		check(false, "the clearing on the valley floor comes from the generator by itself (a density mask is built by script from its sediment here)", true)
 	# The gale check lays 40 mm of snow and moves the near square to the peak, and leaves them: only in test
