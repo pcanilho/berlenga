@@ -1902,7 +1902,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// enlarged to keep the crown's leaf area (Cook, Halstead, Planck and Ryu, Stochastic
 		// Simplification of Aggregate Detail, SIGGRAPH 2007). Real leaves at every level, never
 		// cards, so shadows and path-traced rays still meet foliage; the path tracer uses LOD 0.
-		const Dictionary lods = s == 0 ? _bark_lods(b) : _leaf_lods(b);
+		const Dictionary lods = skip_lods ? Dictionary() : (s == 0 ? _bark_lods(b) : _leaf_lods(b));
 		arrays[Mesh::ARRAY_VERTEX] = b.verts;
 		arrays[Mesh::ARRAY_NORMAL] = b.normals;
 		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
@@ -2141,6 +2141,18 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		}
 		mesh_cache[key] = meshes;
 		crown_cache[key] = crown / n;
+		// One full-needle variant for the near range (the field repeats it over the variants):
+		// about 30M vertices for a spruce, so one only, and no LOD copies since it is only drawn
+		// close. GPU memory and path tracing cost of it are not yet measured.
+		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0) {
+			needle_sprays = false;
+			skip_lods = true;
+			seed = saved_seed * 31;
+			TypedArray<Mesh> near;
+			near.push_back(generate());
+			near_cache[key] = near;
+			skip_lods = false;
+		}
 
 		seed = saved_seed;
 		preset = saved_preset;
@@ -2161,6 +2173,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		meshes.resize(p_variants);
 	}
 	sp->set_meshes(meshes);
+	if (near_needle_range > 0.0f && near_cache.has(key)) {
+		// PlantSpecies near_meshes/near_range (vegetation module); a no-op without them.
+		sp->set("near_meshes", near_cache[key]);
+		sp->set("near_range", near_needle_range);
+	}
 	{
 		const Preset saved_preset = preset;
 		preset = p_preset;
@@ -2203,6 +2220,7 @@ Ref<PlantSpecies> TreeGenerator::make_species(bool p_stand_grown, int p_variants
 void TreeGenerator::clear_cache() {
 	mesh_cache.clear();
 	crown_cache.clear();
+	near_cache.clear();
 }
 
 // Stands, in placement order: the stand's canopy trees first (stand-grown form; a second species
@@ -2528,6 +2546,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mask_invert"), &TreeGenerator::get_mask_invert);
 	ClassDB::bind_method(D_METHOD("set_needle_sprays", "sprays"), &TreeGenerator::set_needle_sprays);
 	ClassDB::bind_method(D_METHOD("get_needle_sprays"), &TreeGenerator::get_needle_sprays);
+	ClassDB::bind_method(D_METHOD("set_near_needle_range", "range"), &TreeGenerator::set_near_needle_range);
+	ClassDB::bind_method(D_METHOD("get_near_needle_range"), &TreeGenerator::get_near_needle_range);
 	ClassDB::bind_method(D_METHOD("set_bark_color", "color"), &TreeGenerator::set_bark_color);
 	ClassDB::bind_method(D_METHOD("get_bark_color"), &TreeGenerator::get_bark_color);
 	ClassDB::bind_method(D_METHOD("set_leaf_color", "color"), &TreeGenerator::set_leaf_color);
@@ -2558,6 +2578,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mask_channel", PROPERTY_HINT_ENUM, "None:-1,Red:0,Green:1,Blue:2,Alpha:3"), "set_mask_channel", "get_mask_channel");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mask_invert"), "set_mask_invert", "get_mask_invert");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "needle_sprays"), "set_needle_sprays", "get_needle_sprays");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_needle_range", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_near_needle_range", "get_near_needle_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_spacing", PROPERTY_HINT_RANGE, "1,20,0.1,suffix:m"), "set_forest_spacing", "get_forest_spacing");
 	ADD_GROUP("Colors", "");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "bark_color"), "set_bark_color", "get_bark_color");

@@ -221,6 +221,8 @@ private:
 	float forest_spacing = 4.0f;
 	int mask_channel = -1; // Passed to every PlantSpecies the stand methods build.
 	bool needle_sprays = false;
+	float near_needle_range = 0.0f; // Metres; > 0 gives placed conifers a full-needle near mesh.
+	bool skip_lods = false;
 	bool mask_invert = false;
 	Color bark_color = Color(0.3f, 0.26f, 0.21f);
 	Color leaf_color = Color(0.16f, 0.3f, 0.08f);
@@ -228,6 +230,7 @@ private:
 	// Generated meshes per preset and form, reused by make_species() and make_stand().
 	HashMap<int, TypedArray<Mesh>> mesh_cache;
 	HashMap<int, float> crown_cache;
+	HashMap<int, TypedArray<Mesh>> near_cache;
 
 	LocalVector<Node> nodes;
 	LocalVector<uint8_t> spurs; // Per node: carries short-shoot leaves in the mesh (not in growth).
@@ -300,6 +303,8 @@ public:
 	float get_forest_spacing() const { return forest_spacing; }
 	void set_mask_channel(int p_channel) { mask_channel = CLAMP(p_channel, -1, 3); }
 	int get_mask_channel() const { return mask_channel; }
+	void set_near_needle_range(float p_range) { near_needle_range = MAX(p_range, 0.0f); }
+	float get_near_needle_range() const { return near_needle_range; }
 	void set_needle_sprays(bool p_sprays) { needle_sprays = p_sprays; }
 	bool get_needle_sprays() const { return needle_sprays; }
 	void set_mask_invert(bool p_invert) { mask_invert = p_invert; }

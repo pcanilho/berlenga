@@ -234,6 +234,9 @@
 		<member name="phototropism" type="float" setter="set_param" getter="get_param" default="0.12">
 			How strongly shoots turn toward the light.
 		</member>
+		<member name="near_needle_range" type="float" setter="set_near_needle_range" getter="get_near_needle_range" default="0.0">
+			Above 0, conifer species from [method make_species], [method make_stand] and [method make_woodland] also carry one full-needle mesh as [code]near_meshes[/code], drawn by [VegetationField3D] within this many metres (about 30 suits), with needle sprays beyond. A full-needle spruce is about 30M vertices, so only one variant is made.
+		</member>
 		<member name="needle_sprays" type="bool" setter="set_needle_sprays" getter="get_needle_sprays" default="false">
 			Conifers draw each shoot's needles as two crossed sprays with a generated needle image (hashed alpha with alpha to coverage) instead of one triangle per needle: a spruce falls from about 53M to 7M vertices and keeps its needle coverage at distance. Up close the sprays read flatter than real needles, so [method generate] keeps real needles by default for a tree near the camera, while [method make_species], [method make_stand] and [method make_woodland] always use sprays.
 		</member>
