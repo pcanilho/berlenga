@@ -57,6 +57,18 @@ uniform sampler2D raster_sky_panorama : filter_linear, repeat_enable, hint_defau
 uniform float raster_sky_energy = 0.0; // 0 = no sky baked (then no sky term)
 uniform vec3 raster_sun_travel = vec3(0.0, -1.0, 0.0); // the direction sunlight travels
 uniform vec3 raster_sun_irradiance = vec3(0.0); // pi x energy x colour, as a raster light
+uniform vec3 raster_sky_irradiance = vec3(0.0); // from the baked sky on a level surface (before raster_sky_energy)
+
+// The light on the water's body: what a level white diffuse surface would send back under the sun and
+// the sky (irradiance / pi), so the open water's colour, which is drawn as emission, darkens with the day
+// as the lit foam beside it does. Without a baked sky and sun (raster_reflections off), 1: the colour as set.
+vec3 water_raster_body_light() {
+	if (!raster_reflections || raster_sky_energy <= 0.0) {
+		return vec3(1.0);
+	}
+	vec3 e = raster_sun_irradiance * max(-raster_sun_travel.y, 0.0) + raster_sky_irradiance * raster_sky_energy;
+	return e / PI;
+}
 
 vec4 water_raster_reflect(vec3 p_albedo, float p_alpha, vec3 p_normal, vec3 p_world, vec3 p_camera, float p_surface, float p_roughness) {
 	if (!raster_reflections) {
@@ -110,6 +122,7 @@ class WaterRasterReflections {
 	int sky_rebake = 0;
 	Ref<ImageTexture> sky_texture;
 	float sky_energy = 0.0f;
+	Vector3 sky_irradiance; // the baked sky's irradiance on a level surface
 
 public:
 	// The first visible directional light (not sky-only), looked up again now and then.

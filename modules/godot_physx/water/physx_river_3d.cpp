@@ -275,7 +275,7 @@ void fragment() {
 	vec3 n = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
 	float deep = smoothstep(0.0, 1.2, depth);
-	vec3 base_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl);
+	vec3 base_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl) * water_raster_body_light();
 	float base_a = mix(shallow_color.a, water_color.a, deep);
 	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * v_info.b;
 	float a0 = mix(base_a, foam_color.a, foam) * edge;
