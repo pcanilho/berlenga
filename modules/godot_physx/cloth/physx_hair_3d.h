@@ -89,7 +89,10 @@ class PhysXHair3D : public Node3D {
 	NodePath deep_shadow_light;
 	ObjectID deep_shadow_light_cache; // the light found (deep_shadow_light, or the first shadowed DirectionalLight3D)
 	uint64_t deep_shadow_search_frame = 0;
-	bool deep_shadow_on = false; // last set on the material
+	int deep_shadow_local_lights = 3; // omni and spot lights with their own map, at most
+	LocalVector<ObjectID> deep_shadow_local_cache; // shadowed omni and spot lights found by the search
+	uint64_t deep_shadow_local_search_frame = 0;
+	int deep_shadow_on = 0; // deep opacity maps last set on the material
 	int draw_slot_points = 1;
 	bool volume_enabled = true;
 	float volume_friction = 0.2f;
@@ -128,6 +131,7 @@ class PhysXHair3D : public Node3D {
 	Color _mass_color() const;
 	void _body_triangles(PackedVector3Array &r_tris);
 	class DirectionalLight3D *_deep_shadow_light();
+	void _deep_shadow_local_lights(const Vector3 &p_center, float p_radius, uint32_t p_layers, LocalVector<class Light3D *> &r_lights);
 
 protected:
 	void _notification(int p_what);
@@ -209,6 +213,8 @@ public:
 	bool is_deep_shadows() const;
 	void set_deep_shadow_light(const NodePath &p_path);
 	NodePath get_deep_shadow_light() const;
+	void set_deep_shadow_local_lights(int p_count);
+	int get_deep_shadow_local_lights() const;
 	void set_volume_enabled(bool p_enabled);
 	bool is_volume_enabled() const;
 	void set_volume_friction(float p_friction);

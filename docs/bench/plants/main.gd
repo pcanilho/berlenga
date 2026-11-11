@@ -174,6 +174,17 @@ func _tris(m: Mesh) -> int:
 	return t
 
 func _checks() -> void:
+	# Climber leaves for the trees' vines: single leaves in XZ, base at the origin, +Z, 1 m long.
+	for c in [PlantGenerator.CLIMBER_IVY, PlantGenerator.CLIMBER_CLEMATIS, PlantGenerator.CLIMBER_HONEYSUCKLE]:
+		var leaves := PlantGenerator.make_climber_leaves(c, 4)
+		var ok := leaves.size() == 4
+		var box := AABB()
+		for lm in leaves:
+			var a: AABB = lm.get_aabb()
+			box = a if box.size == Vector3() else box.merge(a)
+			ok = ok and lm.surface_get_material(0) is ShaderMaterial
+		ok = ok and box.position.z > -0.02 and box.end.z > 0.85 and box.end.z < 1.1 and absf(box.position.y) < 0.3 and box.end.y < 0.3
+		_check("climber leaves %d: four flat leaves along +Z, 1 m" % c, ok, box)
 	var gen := PlantGenerator.new()
 	if wear >= 0.0:
 		gen.leaf_wear = wear

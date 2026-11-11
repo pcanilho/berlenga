@@ -18,13 +18,13 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Raster hair shading: backlit, the strands glow warm.*
 
-- **Deep opacity shadows** (`PhysXHair3D.deep_shadows`, on with `hair_shading`): raster strands shadow themselves in depth, calibrated against the path tracer.
+- **Deep opacity shadows** (`PhysXHair3D.deep_shadows`, on with `hair_shading`): raster strands shadow themselves in depth, calibrated against the path tracer; omni and spot lights too (`deep_shadow_local_lights`).
 
   ![Strand hair with deep opacity shadows in raster, and path traced](media/hair-deep-shadows.jpg)
 
   *Deep opacity shadows: raster darkens the hair with depth like the path tracer; path tracing shows more fuzz at the edges.*
 
-- **Custom hair shaders**: `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.
+- **Custom hair shaders**: `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` and `POSITIONAL_SHADOW_OFFSET` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.
 
 ## Strands
 

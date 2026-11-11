@@ -56,6 +56,14 @@
 				Builds [param count] plants with seeds [member seed], [member seed] + 1, and so on.
 			</description>
 		</method>
+		<method name="make_climber_leaves" qualifiers="static">
+			<return type="Array" />
+			<param index="0" name="climber" type="int" />
+			<param index="1" name="variants" type="int" default="4" />
+			<description>
+				Returns [param variants] single-leaf [ArrayMesh]es of a climber ([constant CLIMBER_IVY], [constant CLIMBER_CLEMATIS] or [constant CLIMBER_HONEYSUCKLE]; [constant PRESET_IVY] reads as ivy), for vines grown by other generators. Each leaf lies in the local XZ plane with its base at the origin, points +Z and is 1 m long; scale it per instance. Each carries the plant material, so it sways, wears, wets and takes snow and light like the ground plants.
+			</description>
+		</method>
 		<method name="make_impostor" qualifiers="static">
 			<return type="ArrayMesh" />
 			<param index="0" name="mesh" type="Mesh" />
@@ -200,6 +208,15 @@
 		</constant>
 		<constant name="PRESET_HEATHER" value="32" enum="Preset">
 			Heather: a dwarf shrub of wiry branched woody stems clothed in short leafy shoots, some with spikes of pink-mauve bells; pine heath and acid open ground.
+		</constant>
+		<constant name="CLIMBER_IVY" value="0" enum="Climber">
+			Ivy (Hedera helix): palmate, shallow lobes, dark and glossy with pale veins.
+		</constant>
+		<constant name="CLIMBER_CLEMATIS" value="1" enum="Climber">
+			Old man's beard (Clematis vitalba): pinnate, two pairs of ovate leaflets and one at the tip.
+		</constant>
+		<constant name="CLIMBER_HONEYSUCKLE" value="2" enum="Climber">
+			Honeysuckle (Lonicera periclymenum): ovate, short-stalked, dull green.
 		</constant>
 		<constant name="PRESET_MAX" value="33" enum="Preset">
 			Number of presets.

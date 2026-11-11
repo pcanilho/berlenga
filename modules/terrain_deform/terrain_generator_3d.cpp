@@ -453,6 +453,15 @@ bool TerrainGenerator3D::generate() {
 			glac.sources.push_back(src);
 		}
 	}
+	// The ice ages between the river steps can run on a coarser ice grid (glacial_coarse_cell): the steady-ice solve
+	// is 96% of the stage, and a grid twice as coarse has a quarter of the nodes and takes four times longer pseudo
+	// steps. The last glaciation, the one whose basins and walls are left, always runs on glac's 64 m grid.
+	TerrainGlacial glac_mid = glac;
+	TerrainGlacial *mid = &glac;
+	if (glacial_coarse_cell > 0.0) {
+		glac_mid.p.cell = double(glacial_coarse_cell);
+		mid = &glac_mid;
+	}
 	const bool glacial = glacial_enabled && glacial_erosion > 0.0;
 	uint64_t glacial_usec = 0;
 	int glacial_count = 0;
@@ -494,7 +503,7 @@ bool TerrainGenerator3D::generate() {
 		strata_time += double(time_step);
 		if (glacial && glacial_share > 0.0 && ++glacial_count % 8 == 0) {
 			const uint64_t tg = OS::get_singleton()->get_ticks_usec();
-			glac.erode(sp.b.height, sp.p.nx, sp.p.ny, sp.p.dx, 8.0 * double(time_step) * double(glacial_share), sp.b.sediment, sp.b.outlet, sp.b.sill, sp.b.sill_level, glacial_scale(sp.p.nx, sp.p.ny, sp.p.dx));
+			mid->erode(sp.b.height, sp.p.nx, sp.p.ny, sp.p.dx, 8.0 * double(time_step) * double(glacial_share), sp.b.sediment, sp.b.outlet, sp.b.sill, sp.b.sill_level, glacial_scale(sp.p.nx, sp.p.ny, sp.p.dx));
 			glacial_usec += OS::get_singleton()->get_ticks_usec() - tg;
 		}
 		return c;
@@ -657,6 +666,230 @@ bool TerrainGenerator3D::generate() {
 	last_glacial_eroded = 0.0;
 	last_glacial_ice_area = 0.0;
 	LocalVector<double> unfilled;
+	// Scree: cliffs shed rock for scree_age years (postglacial rockwall retreat, about 0.5 mm/yr: Sass 2005;
+	// Hales and Roering 2005); it falls down the steepest way, gathers in the gullies and stops at the cliff's foot,
+	// where it builds cones against the wall at the angle of repose (talus cones, Statham 1976; Luckman 2013).
+	// Loose and coarse: no soil is added on it.
+	last_scree_volume = 0.0;
+	auto scree_pass = [&]() {
+		if (scree_age <= 0.0) {
+			return;
+		}
+		const double c = double(cell_size);
+		const double cliff = Math::tan(Math::deg_to_rad(50.0)); // a rock wall, not a sharp crest between two slopes
+		const double stream_area = 5.0e4; // m2: a perennial stream's head in these mountains
+		const double foot = Math::tan(Math::deg_to_rad(38.0));
+		const double repose = Math::tan(Math::deg_to_rad(double(talus_angle)));
+		const double retreat = 0.0005;
+		LocalVector<double> load, dep;
+		load.resize(n);
+		dep.resize(n);
+		// Basins (the lakes to come): priority-flood fill from the map edge and the sea (Barnes, Lehman and Mulla
+		// 2014). Rock falling into standing water sinks to its bed; cones are built only above the water line.
+		LocalVector<double> water;
+		water.resize(n);
+		{
+			typedef std::pair<double, int32_t> Item;
+			std::priority_queue<Item, std::vector<Item>, std::greater<Item>> pq;
+			LocalVector<uint8_t> seen;
+			seen.resize(n);
+			memset(seen.ptr(), 0, n);
+			for (int i = 0; i < n; i++) {
+				const int x = i % nx, z = i / nx;
+				if (x == 0 || z == 0 || x == nx - 1 || z == ny - 1 || (sp.b.outlet && sp.b.outlet[i])) {
+					water[i] = h[i];
+					seen[i] = 1;
+					pq.push(Item(h[i], i));
+				}
+			}
+			while (!pq.empty()) {
+				const Item it = pq.top();
+				pq.pop();
+				const int x = it.second % nx, z = it.second / nx;
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int xx = x + dx, zz = z + dz;
+						if ((dx == 0 && dz == 0) || xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+							continue;
+						}
+						const int j = zz * nx + xx;
+						if (seen[j]) {
+							continue;
+						}
+						seen[j] = 1;
+						water[j] = MAX(h[j], it.first);
+						pq.push(Item(water[j], j));
+					}
+				}
+			}
+		}
+		// A river's floor: cells within 48 m of a channel draining 1 km2 or more. The river works its floor and
+		// carries off the toe of any talus that reaches it, so no talus is laid there (its pools and lakes stay).
+		{
+			const int rr = MAX(1, int(Math::ceil(48.0 / c)));
+			LocalVector<uint8_t> near;
+			near.resize(n);
+			memset(near.ptr(), 0, n);
+			for (int i = 0; i < n; i++) {
+				if (area[i] < 1.0e6) {
+					continue;
+				}
+				const int x = i % nx, z = i / nx;
+				for (int zz = MAX(z - rr, 0); zz <= MIN(z + rr, ny - 1); zz++) {
+					for (int xx = MAX(x - rr, 0); xx <= MIN(x + rr, nx - 1); xx++) {
+						near[zz * nx + xx] = 1;
+					}
+				}
+			}
+			for (int i = 0; i < n; i++) {
+				if (near[i]) {
+					water[i] = MAX(water[i], h[i] + 1.0);
+				}
+			}
+		}
+		auto wet = [&](int i) { return water[i] > h[i] + 0.5; };
+		auto steepest = [&](int i, double &r_g) {
+			const int x = i % nx, z = i / nx;
+			int best = -1;
+			r_g = 0.0;
+			for (int dz = -1; dz <= 1; dz++) {
+				for (int dx = -1; dx <= 1; dx++) {
+					const int xx = x + dx, zz = z + dz;
+					if ((dx == 0 && dz == 0) || xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+						continue;
+					}
+					const int j = zz * nx + xx;
+					const double g = (h[i] - h[j]) / ((dx != 0 && dz != 0 ? Math::SQRT2 : 1.0) * c);
+					if (g > r_g) {
+						r_g = g;
+						best = j;
+					}
+				}
+			}
+			return best;
+		};
+		for (int i = 0; i < n; i++) {
+			double g;
+			steepest(i, g);
+			load[i] = g > cliff ? retreat * scree_age * c * c * Math::sqrt(1.0 + g * g) : 0.0;
+			dep[i] = 0.0;
+		}
+		LocalVector<int32_t> ord;
+		ord.resize(n);
+		for (int i = 0; i < n; i++) {
+			ord[i] = i;
+		}
+		const double *hp = h.ptr();
+		std::sort(ord.ptr(), ord.ptr() + n, [hp](int32_t a, int32_t b) { return hp[a] > hp[b]; });
+		const uint8_t *fixed = sp.b.outlet;
+		for (int k = 0; k < n; k++) {
+			const int32_t i = ord[k];
+			if (load[i] <= 0.0) {
+				continue;
+			}
+			double g;
+			const int j = steepest(i, g);
+			if (j < 0 || (fixed && fixed[j])) {
+				continue; // into the sea or off the map
+			}
+			if (g < foot) {
+				dep[i] += load[i]; // the foot of the wall
+				continue;
+			}
+			// Down every lower neighbour by slope^4 (multiple flow directions, close to the steepest path): a plain
+			// face spreads its fall into an apron along its foot, gullies gather theirs into cones.
+			const int x = i % nx, z = i / nx;
+			int nbs[8];
+			double wts[8];
+			int cnt = 0;
+			double wsum = 0.0;
+			for (int dz = -1; dz <= 1; dz++) {
+				for (int dx = -1; dx <= 1; dx++) {
+					const int xx = x + dx, zz = z + dz;
+					if ((dx == 0 && dz == 0) || xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+						continue;
+					}
+					const int q = zz * nx + xx;
+					const double gq = (h[i] - h[q]) / ((dx != 0 && dz != 0 ? Math::SQRT2 : 1.0) * c);
+					if (gq > 0.0) {
+						nbs[cnt] = q;
+						wts[cnt] = gq * gq * gq * gq;
+						wsum += wts[cnt];
+						cnt++;
+					}
+				}
+			}
+			for (int q = 0; q < cnt; q++) {
+				const int t = nbs[q];
+				if ((fixed && fixed[t]) || area[t] > stream_area || wet(t)) {
+					continue; // a stream takes what falls into it (talus lines valleys, it does not dam them); a lake swallows it
+				}
+				load[t] += load[i] * wts[q] / wsum;
+			}
+		}
+		// A half cone against the wall, V = pi r^2 t / 6 with t = r tan(repose), merged by maximum. Its toe is
+		// concave (the larger blocks run further, fall sorting): the last third of the radius eases out.
+		LocalVector<double> top;
+		top.resize(n);
+		memcpy(top.ptr(), h.ptr(), sizeof(double) * n);
+		for (int i = 0; i < n; i++) {
+			if (dep[i] <= 0.0) {
+				continue;
+			}
+			last_scree_volume += dep[i];
+			const double t = Math::pow(6.0 * dep[i] * repose * repose / Math::PI, 1.0 / 3.0);
+			const double r = t / repose;
+			const int rc = int(Math::ceil(r / c)) + 1;
+			const int x = i % nx, z = i / nx;
+			for (int zz = MAX(z - rc, 0); zz <= MIN(z + rc, ny - 1); zz++) {
+				for (int xx = MAX(x - rc, 0); xx <= MIN(x + rc, nx - 1); xx++) {
+					const int j = zz * nx + xx;
+					if ((fixed && fixed[j]) || area[j] > stream_area || wet(j)) {
+						continue; // the stream keeps its bed (it carries off the toe), the lake its basin
+					}
+					const double d = Math::sqrt(double((xx - x) * (xx - x) + (zz - z) * (zz - z))) * c;
+					const double u = d / r;
+					double zc;
+					if (u < 0.67) {
+						zc = t - repose * d;
+					} else {
+						const double v = (u - 0.67) / 0.33; // 0..1 over the toe: slope eases to 0
+						zc = t * 0.33 * (1.0 - v) * (1.0 - v);
+						if (u >= 1.0) {
+							zc = 0.0;
+						}
+					}
+					top[j] = MAX(top[j], h[i] + zc);
+				}
+			}
+		}
+		// The cones from neighbouring foot cells merge by maximum and leave ribs between them; real aprons are
+		// smooth sheets (the scree shifts, Statham 1976). Two 3x3 passes over the scree only, never below the rock.
+		LocalVector<double> sm;
+		sm.resize(n);
+		for (int pass = 0; pass < 2; pass++) {
+			memcpy(sm.ptr(), top.ptr(), sizeof(double) * n);
+			for (int z = 1; z < ny - 1; z++) {
+				for (int x = 1; x < nx - 1; x++) {
+					const int i = z * nx + x;
+					if (top[i] <= h[i] + 0.01) {
+						continue;
+					}
+					double sum = 0.0;
+					for (int dz = -1; dz <= 1; dz++) {
+						for (int dx = -1; dx <= 1; dx++) {
+							sum += top[i + dz * nx + dx];
+						}
+					}
+					sm[i] = MAX(h[i], sum / 9.0);
+				}
+			}
+			memcpy(top.ptr(), sm.ptr(), sizeof(double) * n);
+		}
+		for (int i = 0; i < n; i++) {
+			h[i] = top[i];
+		}
+	};
 	if (glacial && glacial_final > 0.0) {
 		const uint64_t tg = OS::get_singleton()->get_ticks_usec();
 		glac.erode(h.ptr(), nx, ny, cell_size, double(glacial_final), sed.ptr(), sp.b.outlet, sill_fine.is_empty() ? nullptr : sill_fine.ptr(), level_fine.is_empty() ? nullptr : level_fine.ptr(), glacial_scale(nx, ny, cell_size));
@@ -696,6 +929,213 @@ bool TerrainGenerator3D::generate() {
 				}
 			}
 		}
+		// Moraines: rock falling from the walls onto the ice rides it down to the margin and is dropped there; a
+		// margin that stands still for moraine_age years builds a ridge (lateral along the sides, a terminal loop
+		// at the snout) that can dam a lake (Benn and Evans 2010, ch. 11; Rowan, Egholm and Clark 2015).
+		last_moraine_volume = 0.0;
+		if (moraine_age > 0.0) {
+			const double c = double(cell_size);
+			const double wall = Math::tan(Math::deg_to_rad(40.0));
+			const double repose = Math::tan(Math::deg_to_rad(34.0)); // fresh till's flanks
+			const double retreat = 0.001; // m/yr of headwall retreat (Hallet, Hunter and Bogen 1996: 0.1 to several mm/yr)
+			LocalVector<double> ice, s_top, debris, dep;
+			LocalVector<uint8_t> carried;
+			ice.resize(n);
+			s_top.resize(n);
+			debris.resize(n);
+			dep.resize(n);
+			carried.resize(n);
+			for (int z = 0; z < ny; z++) {
+				for (int x = 0; x < nx; x++) {
+					const int i = z * nx + x;
+					ice[i] = glac.ice_at(x, z, cell_size);
+					s_top[i] = h[i] + ice[i];
+					debris[i] = 0.0;
+					dep[i] = 0.0;
+					carried[i] = 0;
+				}
+			}
+			// The ice grid is 64 m: smooth its thickness on the fine grid (two box passes of 3 cells each way) so the
+			// margin follows a curve, not the ice grid's steps; the glacier's edge is where it is 10 m thick (thinner
+			// ice is the smooth solve's skirt over the slopes, not a glacier).
+			{
+				LocalVector<double> tmpb;
+				tmpb.resize(n);
+				for (int pass = 0; pass < 2; pass++) {
+					for (int z = 0; z < ny; z++) {
+						for (int x = 0; x < nx; x++) {
+							double sum = 0.0;
+							int w = 0;
+							for (int d = -3; d <= 3; d++) {
+								const int xx = CLAMP(x + d, 0, nx - 1);
+								sum += ice[z * nx + xx];
+								w++;
+							}
+							tmpb[z * nx + x] = sum / w;
+						}
+					}
+					for (int z = 0; z < ny; z++) {
+						for (int x = 0; x < nx; x++) {
+							double sum = 0.0;
+							int w = 0;
+							for (int d = -3; d <= 3; d++) {
+								const int zz = CLAMP(z + d, 0, ny - 1);
+								sum += tmpb[zz * nx + x];
+								w++;
+							}
+							ice[z * nx + x] = sum / w;
+						}
+					}
+				}
+				for (int i = 0; i < n; i++) {
+					ice[i] = MAX(0.0, ice[i] - 9.0); // the glacier's edge at 10 m
+					s_top[i] = h[i] + ice[i];
+				}
+			}
+			auto slope_at = [&](int x, int z) {
+				const int x0 = MAX(x - 1, 0), x1 = MIN(x + 1, nx - 1), z0 = MAX(z - 1, 0), z1 = MIN(z + 1, ny - 1);
+				const double gx = (h[z * nx + x1] - h[z * nx + x0]) / ((x1 - x0) * c);
+				const double gz = (h[z1 * nx + x] - h[z0 * nx + x]) / ((z1 - z0) * c);
+				return Math::sqrt(gx * gx + gz * gz);
+			};
+			// Supply: bare walls steeper than 40 degrees retreat over the stand; their rock goes down the wall.
+			for (int z = 0; z < ny; z++) {
+				for (int x = 0; x < nx; x++) {
+					const int i = z * nx + x;
+					if (ice[i] <= 1.0 && slope_at(x, z) > wall) {
+						debris[i] = retreat * moraine_age * c * c * slope_at(x, z);
+					}
+				}
+			}
+			// Basal debris: what the ice quarried over the stand, its share of the last glaciation's wear. About half
+			// leaves in the meltwater (outwash); the rest is carried to the margin as till (Hallet et al. 1996).
+			{
+				const std::vector<double> &worn = glac.get_total();
+				if (worn.size() == size_t(n) && glacial_final > 0.0) {
+					const double share = 0.5 * MIN(1.0, moraine_age / double(glacial_final));
+					for (int i = 0; i < n; i++) {
+						if (ice[i] > 1.0) {
+							debris[i] += worn[i] * share * c * c;
+						}
+					}
+				}
+			}
+			// Down the surface (bed + ice) from the top: on bare ground the rock only keeps going while the wall is
+			// steep (otherwise it is talus, the rockfall above handles it); on the ice it rides to the first bare
+			// cell, where it is dropped.
+			LocalVector<int32_t> ord;
+			ord.resize(n);
+			for (int i = 0; i < n; i++) {
+				ord[i] = i;
+			}
+			const double *sp_top = s_top.ptr();
+			std::sort(ord.ptr(), ord.ptr() + n, [sp_top](int32_t a, int32_t b) { return sp_top[a] > sp_top[b]; });
+			for (int k = 0; k < n; k++) {
+				const int32_t i = ord[k];
+				if (debris[i] <= 0.0) {
+					continue;
+				}
+				const bool on_ice = ice[i] > 1.0;
+				if (!on_ice && carried[i]) {
+					dep[i] += debris[i]; // the margin
+					continue;
+				}
+				const int x = i % nx, z = i / nx;
+				if (!on_ice && slope_at(x, z) <= wall) {
+					continue; // talus below a wall that never reached the ice
+				}
+				// Multiple flow directions (Freeman 1991; Quinn et al. 1991): the load splits over every lower
+				// neighbour by slope^1.1, so it spreads across the ice as flow lines diverge toward the margins
+				// instead of gathering on one line (single-direction routing dropped it all at a few points).
+				int nbs[8];
+				double wts[8];
+				int cnt = 0;
+				double wsum = 0.0;
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int xx = x + dx, zz = z + dz;
+						if ((dx == 0 && dz == 0) || xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+							continue;
+						}
+						const int j = zz * nx + xx;
+						const double L = (dx != 0 && dz != 0 ? Math::SQRT2 : 1.0) * c;
+						const double g = (s_top[i] - s_top[j]) / L;
+						if (g > 0.0) {
+							nbs[cnt] = j;
+							wts[cnt] = Math::pow(g, 1.1) * (dx != 0 && dz != 0 ? 0.354 : 0.5); // contour length
+							wsum += wts[cnt];
+							cnt++;
+						}
+					}
+				}
+				if (cnt == 0) {
+					continue; // a hollow in the ice surface: the load goes englacial and leaves in the meltwater
+				}
+				for (int q = 0; q < cnt; q++) {
+					debris[nbs[q]] += debris[i] * wts[q] / wsum;
+					carried[nbs[q]] |= uint8_t(on_ice || carried[i]);
+				}
+			}
+			// Each margin cell's debris spread along the margin (the ice edge wanders a little over the stand), then
+			// laid as a cone at the angle of repose, V = pi r^2 t / 3 with t = r tan(repose); cones merge by maximum.
+			LocalVector<double> spread;
+			spread.resize(n);
+			for (int pass = 0; pass < 2; pass++) {
+				for (int i = 0; i < n; i++) {
+					spread[i] = dep[i];
+				}
+				for (int z = 1; z < ny - 1; z++) {
+					for (int x = 1; x < nx - 1; x++) {
+						const int i = z * nx + x;
+						if (dep[i] <= 0.0) {
+							continue;
+						}
+						double sum = 0.0, w = 0.0;
+						for (int dz = -1; dz <= 1; dz++) {
+							for (int dx = -1; dx <= 1; dx++) {
+								const int j = i + dz * nx + dx;
+								if (dep[j] > 0.0) {
+									sum += dep[j];
+									w += 1.0;
+								}
+							}
+						}
+						spread[i] = sum / w;
+					}
+				}
+				for (int i = 0; i < n; i++) {
+					dep[i] = spread[i];
+				}
+			}
+			LocalVector<double> top;
+			top.resize(n);
+			memcpy(top.ptr(), h.ptr(), sizeof(double) * n);
+			for (int i = 0; i < n; i++) {
+				if (dep[i] <= 0.0) {
+					continue;
+				}
+				last_moraine_volume += dep[i];
+				const double t = Math::pow(3.0 * dep[i] * repose * repose / Math::PI, 1.0 / 3.0);
+				const int rc = int(Math::ceil(t / repose / c));
+				const int x = i % nx, z = i / nx;
+				for (int zz = MAX(z - rc, 0); zz <= MIN(z + rc, ny - 1); zz++) {
+					for (int xx = MAX(x - rc, 0); xx <= MIN(x + rc, nx - 1); xx++) {
+						const int j = zz * nx + xx;
+						if (sp.b.outlet && sp.b.outlet[j]) {
+							continue;
+						}
+						const double d = Math::sqrt(double((xx - x) * (xx - x) + (zz - z) * (zz - z))) * c;
+						top[j] = MAX(top[j], h[i] + t - repose * d);
+					}
+				}
+			}
+			for (int i = 0; i < n; i++) {
+				if (top[i] > h[i]) {
+					sed[i] += top[i] - h[i]; // till: loose, soil on it
+					h[i] = top[i];
+				}
+			}
+		}
 		last_glacial_eroded = real_t(glac.eroded_max);
 		last_glacial_ice_area = real_t(glac.ice_area);
 		glacial_ice.resize(n);
@@ -704,8 +1144,11 @@ bool TerrainGenerator3D::generate() {
 				glacial_ice[z * nx + x] = float(glac.ice_at(x, z, cell_size));
 			}
 		}
+		scree_pass();
 		unfilled.resize(n);
 		memcpy(unfilled.ptr(), h.ptr(), sizeof(double) * n);
+	} else {
+		scree_pass();
 	}
 	last_glacial_msec = real_t(double(glacial_usec) / 1000.0);
 	sill_cells.clear();
@@ -4100,6 +4543,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_glacial_rock_scale"), &TerrainGenerator3D::get_glacial_rock_scale);
 	ClassDB::bind_method(D_METHOD("set_glacial_inflow_balance", "value"), &TerrainGenerator3D::set_glacial_inflow_balance);
 	ClassDB::bind_method(D_METHOD("get_glacial_inflow_balance"), &TerrainGenerator3D::get_glacial_inflow_balance);
+	ClassDB::bind_method(D_METHOD("set_glacial_coarse_cell", "metres"), &TerrainGenerator3D::set_glacial_coarse_cell);
+	ClassDB::bind_method(D_METHOD("get_glacial_coarse_cell"), &TerrainGenerator3D::get_glacial_coarse_cell);
 	ClassDB::bind_method(D_METHOD("set_glacial_sliding", "value"), &TerrainGenerator3D::set_glacial_sliding);
 	ClassDB::bind_method(D_METHOD("get_glacial_sliding"), &TerrainGenerator3D::get_glacial_sliding);
 	ClassDB::bind_method(D_METHOD("get_last_glacial_eroded"), &TerrainGenerator3D::get_last_glacial_eroded);
@@ -4171,6 +4616,12 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_spray_image"), &TerrainGenerator3D::get_spray_image);
 	ClassDB::bind_method(D_METHOD("set_gorge_age", "years"), &TerrainGenerator3D::set_gorge_age);
 	ClassDB::bind_method(D_METHOD("get_gorge_age"), &TerrainGenerator3D::get_gorge_age);
+	ClassDB::bind_method(D_METHOD("set_moraine_age", "years"), &TerrainGenerator3D::set_moraine_age);
+	ClassDB::bind_method(D_METHOD("get_moraine_age"), &TerrainGenerator3D::get_moraine_age);
+	ClassDB::bind_method(D_METHOD("get_last_moraine_volume"), &TerrainGenerator3D::get_last_moraine_volume);
+	ClassDB::bind_method(D_METHOD("set_scree_age", "years"), &TerrainGenerator3D::set_scree_age);
+	ClassDB::bind_method(D_METHOD("get_scree_age"), &TerrainGenerator3D::get_scree_age);
+	ClassDB::bind_method(D_METHOD("get_last_scree_volume"), &TerrainGenerator3D::get_last_scree_volume);
 	ClassDB::bind_method(D_METHOD("set_gorge_rate", "rate"), &TerrainGenerator3D::set_gorge_rate);
 	ClassDB::bind_method(D_METHOD("get_gorge_rate"), &TerrainGenerator3D::get_gorge_rate);
 	ClassDB::bind_method(D_METHOD("set_fan_backfill", "enable"), &TerrainGenerator3D::set_fan_backfill);
@@ -4322,6 +4773,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_variation", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_glacial_rock_variation", "get_glacial_rock_variation");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_scale", PROPERTY_HINT_RANGE, "16,4000,1,suffix:m"), "set_glacial_rock_scale", "get_glacial_rock_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_inflow_balance", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater,suffix:m/yr"), "set_glacial_inflow_balance", "get_glacial_inflow_balance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_coarse_cell", PROPERTY_HINT_RANGE, "0,512,1,suffix:m"), "set_glacial_coarse_cell", "get_glacial_coarse_cell");
 
 	ADD_GROUP("Coast", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_edges", PROPERTY_HINT_FLAGS, "-X,+X,-Z,+Z"), "set_ocean_edges", "get_ocean_edges");
@@ -4346,6 +4798,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunge_pools"), "set_plunge_pools", "get_plunge_pools");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fan_backfill"), "set_fan_backfill", "get_fan_backfill");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_age", PROPERTY_HINT_RANGE, "0,100000,100,or_greater,suffix:yr"), "set_gorge_age", "get_gorge_age");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moraine_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_moraine_age", "get_moraine_age");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scree_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_scree_age", "get_scree_age");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_rate", PROPERTY_HINT_RANGE, "0,0.1,0.0001,or_greater"), "set_gorge_rate", "get_gorge_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_cell", PROPERTY_HINT_RANGE, "0,32,0.5,suffix:m"), "set_spray_cell", "get_spray_cell");
 	ADD_GROUP("Inflows", "inflow");

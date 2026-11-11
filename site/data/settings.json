@@ -900,7 +900,7 @@
     "hair_shading"
    ],
    "note": "",
-   "what": "raster strands shadow themselves in depth, calibrated against the path tracer.",
+   "what": "raster strands shadow themselves in depth, calibrated against the path tracer; omni and spot lights too (`deep_shadow_local_lights`).",
    "page": "hair",
    "title": "Hair",
    "topic": "Shading"
@@ -911,12 +911,13 @@
     "HAIR",
     "HAIR_ABSORPTION",
     "HAIR_ROUGHNESS",
+    "POSITIONAL_SHADOW_OFFSET",
     "hair_strands",
     "hair_cards",
     "IN_PATH_TRACER"
    ],
    "note": "",
-   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
+   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` and `POSITIONAL_SHADOW_OFFSET` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
    "page": "hair",
    "title": "Hair",
    "topic": "Shading"
@@ -1079,6 +1080,17 @@
    ],
    "note": "",
    "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off).",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Moraines",
+   "settings": [
+    "moraine_age"
+   ],
+   "note": "",
+   "what": "debris carried down the last glaciers builds ridges at their margins that dam lakes.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"

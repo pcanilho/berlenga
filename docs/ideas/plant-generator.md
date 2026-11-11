@@ -399,3 +399,16 @@ beyond. Two meshes per variant, same variant order, so each tree keeps its shape
 - Jahrmann, Wimmer, "Responsive real-time grass rendering for general 3D scenes", I3D 2017.
 - Lintermann, Deussen, "Interactive modeling of plants", IEEE CG&A 1999.
 - Weber, Penn, "Creation and rendering of realistic trees", SIGGRAPH 1995.
+
+## Climber leaves
+
+`PlantGenerator.make_climber_leaves(climber, variants = 4)` returns single-leaf meshes for the trees'
+vines (TreeGenerator instances them along its climber stems): each lies in local XZ with its base at
+the origin, points +Z, is 1 m long, and carries the plant ShaderMaterial (wind, wear, wetness, snow,
+sun and shade). `CLIMBER_IVY` (Hedera helix, palmate with shallow lobes, dark glossy, pale veins; also
+accepts `PRESET_IVY`), `CLIMBER_CLEMATIS` (Clematis vitalba, pinnate: two pairs of ovate leaflets and
+one at the tip on a rachis), `CLIMBER_HONEYSUCKLE` (Lonicera periclymenum, ovate, short-stalked, dull).
+Leaf wear is a quarter, so about one leaf in the set is bitten or yellowing.
+
+Instances that carry only a whole number in INSTANCE_CUSTOM.y read as open-ground light (the light
+packing reserves 0 for "not recorded").

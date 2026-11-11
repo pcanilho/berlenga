@@ -39,7 +39,7 @@ class TerrainDataMap3D;
 // without climate). Packed into instance custom data as 0..1.5 in 1/100 steps.
 namespace VegetationLight {
 
-constexpr float MAX = 1.5f;
+constexpr float LIGHT_MAX = 1.5f;
 
 // The map's mean annual shortwave (TerrainDataMap3D climate), 0 without climate.
 float sun_mean(const TerrainDataMap3D *p_map);
@@ -47,8 +47,10 @@ float sun_mean(const TerrainDataMap3D *p_map);
 // Sun exposure of a point against the map's mean: 1 without climate.
 float exposure(const TerrainDataMap3D *p_map, float p_sun_mean, float p_x, float p_z);
 
+// 1..100: 0 is left for "no light recorded" (instances of other systems that only carry a whole
+// number there), which the shader reads as open ground.
 inline float pack(float p_light) {
-	return Math::round(CLAMP(p_light / MAX, 0.0f, 1.0f) * 100.0f);
+	return MAX(1.0f, Math::round(CLAMP(p_light / LIGHT_MAX, 0.0f, 1.0f) * 100.0f));
 }
 
 // Sun and shade leaves (Lichtenthaler et al. 2007): leaves grown in shade carry more chlorophyll

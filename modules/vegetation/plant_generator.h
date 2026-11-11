@@ -49,6 +49,14 @@ public:
 	static String shader_common_code(); // Wind, wetness and snow lines shared with the impostor shader.
 	static Ref<ArrayMesh> make_impostor(const Ref<Mesh> &p_mesh, int p_frames = 8, int p_frame_size = 64);
 	static void add_impostors(const Ref<Resource> &p_species, float p_range, int p_frames = 8, int p_frame_size = 64);
+	// Single leaves of climbers for TreeGenerator's vines (CLIMBER_* or PRESET_IVY): each lies in
+	// local XZ, its base at the origin, pointing +Z, 1 m long, with the plant ShaderMaterial.
+	enum Climber {
+		CLIMBER_IVY,
+		CLIMBER_CLEMATIS,
+		CLIMBER_HONEYSUCKLE,
+	};
+	static Array make_climber_leaves(int p_climber, int p_variants = 4);
 	enum Preset {
 		PRESET_DANDELION,
 		PRESET_PLANTAIN,
@@ -290,4 +298,5 @@ public:
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);
+VARIANT_ENUM_CAST(PlantGenerator::Climber);
 VARIANT_ENUM_CAST(PlantGenerator::FloorStand);
