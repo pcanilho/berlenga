@@ -367,6 +367,17 @@ func _save_map(path: String) -> void:
 					img.set_pixelv(pp, Color(1, 0.1, 0.1))
 	img.save_png(path)
 	_log("map saved " + path)
+	# Discharge along the rivers, to place the high lake where the fall below it carries a real curtain.
+	var ri := 0
+	for r in gen.get_rivers(float(args.get("min-area", "1500000"))):
+		var rp: PackedVector3Array = r["points"]
+		var ar: PackedFloat32Array = r["areas"]
+		_log("river %d: %d pts, head %s, mouth %s, area %.2f km2, Q %.2f m3/s (max month %.2f), ends %s, joins %d" % [ri, rp.size(),
+				str(rp[0].round()), str(rp[rp.size() - 1].round()), ar[ar.size() - 1] / 1e6, r["discharge"],
+				Array(r["monthly_discharge"]).max(), r["ends_in"], r["joins"]])
+		ri += 1
+	for f in gen.get_waterfalls(float(args.get("min-area", "1500000")), 2.0):
+		_log("fall: top %s h %.1f m, w %.1f m, Q %.2f m3/s, river %d" % [str(f["top"].round()), f["height"], f["width"], f["discharge"], f["river"]])
 	for px in [-1200.0, -500.0, 0.0, 500.0]:
 		var row := ""
 		var pz := -1900.0
