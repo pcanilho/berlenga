@@ -20,6 +20,7 @@ extends Node3D
 #   --snow=climate|none   the winter baked by SnowClimate (default), or a snow-free ground for stills
 #   --month=N --time=H    0-based month of the rivers and the SkyClock date (default 4, 15 May) and local time (16.5)
 #   --prints=0            no GroundSurface3D (footprints) node
+#   --checks              with --out, run the link checks before the picture (they change the scene)
 
 const STEP := 4.0 # metres between ground vertices
 const X0 := -2048.0
@@ -101,7 +102,10 @@ func _ready() -> void:
 	_log("setup done in %d ms" % (Time.get_ticks_msec() - t_start))
 	for i in 30:
 		await get_tree().process_frame
-	await _checks()
+	# The checks move probes, press prints and step the weather: a picture only runs them when asked (--checks),
+	# and under path tracing each of their frames is a full traced frame.
+	if args.has("test") or args.has("checks"):
+		await _checks()
 	if args.has("test"):
 		get_tree().quit(0)
 		return
@@ -778,9 +782,17 @@ func _build_camera() -> void:
 				for q in cells:
 					mid += q
 				mid /= cells.size()
+			# The end facing away from the sun, so the camera looks into the sun's glitter on the ripples.
+			var away := Vector3.ZERO
+			if clock != null:
+				var sd := clock.get_sun_direction()
+				away = -Vector3(sd.x, 0, sd.z).normalized()
 			var far := mid
+			var far_score := -INF
 			for q in cells:
-				if q.distance_to(mid) > far.distance_to(mid):
+				var score := q.distance_to(mid) + 1.5 * (q - mid).dot(away)
+				if score > far_score:
+					far_score = score
 					far = q
 			var c := far.lerp(mid, 0.12)
 			cam.fov = 50.0
