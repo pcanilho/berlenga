@@ -14,6 +14,7 @@ extends Node3D
 #   --view=side|crop|trunk  side: whole trees; crop: a 100% crop into the crown of the first tree;
 #                     trunk: the first tree's bark at arm's length
 #   --set=name:value  override a growth property on every preset, e.g. --set=shed_ratio:0.2
+#   --view=fork       where the first limbs leave the first tree's stem (junctions)
 #   --view=leaf       the crop view zoomed in to single leaves
 #   --view=base|log  the first tree's foot (moss), or the last plant (the log with --decays)
 #   --day=N           day of year: leaves by season, from a stand-in climate (see season_for)
@@ -110,7 +111,7 @@ func _gen(p: int, forest: bool, s: int) -> Dictionary:
 	g.preset = p
 	g.seed = s
 	for k in overrides:
-		g.set(k, overrides[k])
+		g.set(k, bool(overrides[k]) if typeof(g.get(k)) == TYPE_BOOL else overrides[k])
 	g.forest_shade = 0.6 if forest else 0.0
 	if day >= 0:
 		g.season = season_for(day)
@@ -307,6 +308,12 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[xs.size() - 1] + 1.0, 1.6, 3.5)
 		cam.look_at(Vector3(xs[xs.size() - 1], 0.3, 0))
 		cam.fov = 50.0
+	elif view == "fork":
+		# Where the first limbs leave the stem: the junctions (trees.md 2d).
+		var cb: float = first_info.crown_base
+		cam.position = Vector3(xs[0] + 2.2, cb + 0.6, 2.6)
+		cam.look_at(Vector3(xs[0], cb + 0.4, 0))
+		cam.fov = 40.0
 	elif view == "crop" or view == "leaf":
 		var h: float = first_info.height
 		cam.position = Vector3(xs[0] + first_info.crown_radius * 0.9, h * 0.62, 4.0)

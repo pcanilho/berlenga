@@ -196,6 +196,29 @@ max(0, 20 - T) (P / 13.2)^2).
 - Bench: `--day=N` renders and tests at a day of year; `--test` checks the leaf-out order, red
   maple before oak, birch bare by late November, pine unchanged and bare January crowns.
 
+### 2d. Welded junctions (as built, 11 Nov; Paulo picked)
+
+A limb's tube used to start on its parent's axis, a pipe pushed into a pipe: from close by
+the cut showed as a hard ring, and on smooth bark (beech) the pipe's end poked out. Now
+(`junction_weld`, on by default) every vertex of the limb inside its parent slides along the
+limb's axis onto the parent's bark: SpeedTree's weld. The contact curve is the intersection of
+the two generalized cylinders, as in Bloomenthal 1985 and Lluch et al. 2004, without their
+implicit surfaces, so it adds no triangles.
+- The parent is modelled as up to three tapered segments (the internodes before, at and after
+  the junction), so a weld never lands on bark that is not there where the parent's axis bends.
+  If any vertex would leave through an open end, the limb is not welded at all.
+- The slide works on the undisplaced tube and moves the displaced vertex by the same amount,
+  so bark relief keeps its shape at the seam. v grows with the slide, so the bark keeps its
+  texel density over the long footprint of a steep limb.
+- Normals blend to the parent's over about 0.8 limb radius, so the seam shades as one surface.
+  On rigged trees the seam takes the parent's bone with the same weight, so wind does not open
+  it.
+- Left alone: near-parallel limbs (under about 12 degrees) and near-equal forks (limb over 0.6
+  of the parent's radius). These are crotches with bark inclusion, not collars, and need
+  a crotch model of their own.
+- Seen while testing: some limbs pass through a neighbouring stem (space colonisation keeps
+  buds apart, not grown wood). That was there before the weld and is a separate fix.
+
 ## 3. Wind
 
 - **Vertex-shader layers** (Sousa, GPU Gems 3 ch. 16; Horizon Zero Dawn: distance to trunk,

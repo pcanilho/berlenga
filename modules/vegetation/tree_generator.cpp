@@ -3310,6 +3310,181 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	}
 	const float flare = params[PARAM_ROOT_FLARE];
 	const float trunk_r = nodes[0].main >= 0 ? nodes[nodes[0].main].radius : (nodes[0].first_lateral >= 0 ? nodes[nodes[0].first_lateral].radius : 0.1f);
+	// Welded junctions (docs/ideas/trees.md 2d): the limb's tube is cut where it meets its
+	// parent, every vertex inside the parent slid along the limb's axis onto the parent's bark
+	// (SpeedTree's weld; the contact curve is the intersection of the two generalized cylinders,
+	// as in Bloomenthal 1985 and Lluch et al. 2004, without their implicit surface). Normals blend
+	// to the parent's over the collar so the seam shades as one surface, and on rigged trees the
+	// contact follows the parent's bone so wind does not open it.
+	auto weld = [&](Builder &r_b, const Vector4i &p_part, int p_node, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides) {
+		const Node &child = nodes[p_node];
+		const Node &par = nodes[child.parent];
+		const Vector3 d = child.dir;
+		if (d.cross(par.dir).length() < 0.2f || child.radius < 0.01f || child.radius > 0.6f * par.radius) {
+			// A crotch of near-parallel or near-equal stems: no single surface to weld onto (the
+			// collar code leaves these alone too).
+			return;
+		}
+		// The parent axis around the junction as up to three straight segments (the internode
+		// before, the parent internode, the one after), each a tapered cylinder: at a fork the
+		// parent's axis bends, and a single infinite cylinder would weld onto bark that is not
+		// there.
+		struct Seg {
+			Vector3 a, u;
+			float len, ra, rb;
+		};
+		Seg segs[3];
+		int nseg = 0;
+		auto add_seg = [&](int p_n) {
+			if (p_n <= 0 || nodes[p_n].removed || nodes[p_n].length < 1e-4f) {
+				return;
+			}
+			const Node &n = nodes[p_n];
+			const int nx = n.main;
+			segs[nseg++] = { n.start, n.dir, n.length, n.radius, nx >= 0 && !nodes[nx].removed ? nodes[nx].radius : n.radius * 0.6f };
+		};
+		if (par.parent > 0 && nodes[par.parent].main == child.parent) {
+			add_seg(par.parent);
+		}
+		add_seg(child.parent);
+		if (par.main >= 0) {
+			add_seg(par.main);
+		}
+		if (nseg == 0) {
+			return;
+		}
+		// Signed distance from a segment's bark (a little under it, 0.98, so no gap shows), and
+		// the axial parameter; outside the segment's length it does not count.
+		auto seg_at = [&](const Seg &p_s, const Vector3 &p_q, float &r_t, Vector3 &r_radial) {
+			const Vector3 rel = p_q - p_s.a;
+			r_t = rel.dot(p_s.u) / p_s.len;
+			r_radial = rel - p_s.u * rel.dot(p_s.u);
+			return 0.98f * Math::lerp(p_s.ra, p_s.rb, CLAMP(r_t, 0.0f, 1.0f));
+		};
+		const float r0 = child.radius;
+		const float reach = MAX(par.radius, r0) / MAX(d.cross(par.dir).length(), 0.2f) + 2.0f * r0;
+		const int pb = node_bone.size() > uint32_t(child.parent) ? node_bone[child.parent] : 0;
+		Vector3 *vv = r_b.verts.ptrw();
+		Vector3 *nn = r_b.normals.ptrw();
+		Vector2 *uv = r_b.uvs.ptrw();
+		// The tube's bark tile length along the axis (as _tube lays it), so a vertex slid along
+		// the axis keeps its texel density instead of stretching the bark over the footprint.
+		const float girth = Math::TAU * MAX(p_rad[0], 0.001f);
+		const float circumference = girth / MAX(1.0f, Math::round(girth / BARK_TILE));
+		// Two passes: find every slide first, and weld nothing if any vertex would leave through
+		// open bark (a crotch between near-equal stems): a ragged, half-welded tube end shows
+		// its inside, the unwelded one stays hidden in its parent as before.
+		LocalVector<float> slides;
+		slides.resize(p_part.w);
+		for (int pass_apply = 0; pass_apply < 2; pass_apply++)
+		for (int v = p_part.z; v < p_part.z + p_part.w; v++) {
+			// Decide and slide on the undisplaced tube (ring centre + normal x radius), then move
+			// the displaced vertex by the same amount: bark relief keeps its shape at the seam
+			// instead of furrow vertices jumping ahead of their plate-top neighbours.
+			const int ring = (v - p_part.z) / (p_sides + 1);
+			if (ring >= int(p_pts.size())) {
+				break;
+			}
+			Vector3 q = p_pts[ring] + nn[v] * p_rad[ring];
+			if ((q - child.start).dot(d) > reach) {
+				continue;
+			}
+			// Slide along +d out of every segment the point is inside; give up (leave the vertex
+			// where it was) if it would leave through a segment's open end.
+			float slid = 0.0f;
+			bool ok = true;
+			for (int pass = 0; pass < 4 && ok; pass++) {
+				int inside = -1;
+				for (int k = 0; k < nseg; k++) {
+					float t;
+					Vector3 radial;
+					const float rk = seg_at(segs[k], q, t, radial);
+					if (t >= 0.0f && t <= 1.0f && radial.length() < rk) {
+						inside = k;
+						break;
+					}
+				}
+				if (inside < 0) {
+					break;
+				}
+				const Seg &sg = segs[inside];
+				float t;
+				Vector3 radial;
+				const float rk = seg_at(sg, q, t, radial);
+				const Vector3 dp = d - sg.u * d.dot(sg.u);
+				const float a = dp.length_squared();
+				const float b = 2.0f * radial.dot(dp);
+				const float c = radial.length_squared() - rk * rk;
+				const float disc = b * b - 4.0f * a * c;
+				if (a < 1e-8f || disc < 0.0f) {
+					ok = false;
+					break;
+				}
+				const float step = (-b + Math::sqrt(disc)) / (2.0f * a) + 1e-4f;
+				const Vector3 nq = q + d * step;
+				float nt;
+				Vector3 nr;
+				seg_at(sg, nq, nt, nr);
+				if (nt < -0.05f || nt > 1.05f) {
+					// Out through an open end: unless the next segment takes it, there is no bark.
+					bool covered = false;
+					for (int k = 0; k < nseg; k++) {
+						float kt;
+						Vector3 kr;
+						const float rk2 = seg_at(segs[k], nq, kt, kr);
+						covered = covered || (k != inside && kt >= 0.0f && kt <= 1.0f && kr.length() < rk2 * 1.05f);
+					}
+					if (!covered) {
+						ok = false;
+						break;
+					}
+				}
+				q = nq;
+				slid += step;
+			}
+			if (pass_apply == 0) {
+				if (!ok) {
+					return;
+				}
+				slides[v - p_part.z] = slid;
+				continue;
+			}
+			if (slid > 0.0f) {
+				vv[v] += d * slid;
+				uv[v].y += slid / circumference;
+			}
+			// Normal blend over the collar: toward the nearest segment's bark normal.
+			float out = 1e9f;
+			Vector3 pn = nn[v];
+			for (int k = 0; k < nseg; k++) {
+				float t;
+				Vector3 radial;
+				const float rk = seg_at(segs[k], q, t, radial) / 0.98f;
+				if (t < -0.05f || t > 1.05f || radial.length_squared() < 1e-12f) {
+					continue;
+				}
+				const float o = radial.length() - rk;
+				if (o < out) {
+					out = o;
+					pn = radial.normalized();
+				}
+			}
+			const float w = Math::pow(CLAMP(1.0f - out / (0.8f * r0), 0.0f, 1.0f), 2.0f);
+			if (w <= 0.0f) {
+				continue;
+			}
+			nn[v] = nn[v].lerp(pn, w).normalized();
+			if (rigged && r_b.bones.size() >= (v + 1) * 4) {
+				int32_t *bw = r_b.bones.ptrw();
+				float *ww = r_b.weights.ptrw();
+				if (ww[v * 4 + 1] == 0.0f && bw[v * 4] != pb) {
+					bw[v * 4 + 1] = pb;
+					ww[v * 4 + 1] = w;
+					ww[v * 4] = 1.0f - w;
+				}
+			}
+		}
+	};
 	LocalVector<Vector3> pts;
 	LocalVector<float> rad;
 	LocalVector<int> chain;
@@ -3429,6 +3604,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (rigged) {
 				_skin_stem(bark, part, s, pts, sides);
 			}
+			if (!stem && junction_weld) {
+				weld(bark, part, s, pts, rad, sides);
+			}
 		}
 		const bool moss_shell = moss_k > 0.05f && r0 >= MOSS_SHELL_MIN_RADIUS;
 		if (relief || moss_shell) {
@@ -3459,6 +3637,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				moss_tint(bark, part);
 				if (rigged) {
 					_skin_stem(bark, part, s, rp, rsides);
+				}
+				if (!stem && junction_weld) {
+					weld(bark, part, s, rp, rr, rsides);
 				}
 			}
 			if (moss_shell) {
@@ -4924,6 +5105,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_form", "preset"), &TreeGenerator::get_leaf_form);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_season", "preset", "season"), &TreeGenerator::get_leaf_season);
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);
+	ClassDB::bind_method(D_METHOD("set_junction_weld", "enabled"), &TreeGenerator::set_junction_weld);
+	ClassDB::bind_method(D_METHOD("get_junction_weld"), &TreeGenerator::get_junction_weld);
 	ClassDB::bind_method(D_METHOD("get_season"), &TreeGenerator::get_season);
 	ClassDB::bind_method(D_METHOD("set_compress_vertices", "enable"), &TreeGenerator::set_compress_vertices);
 	ClassDB::bind_method(D_METHOD("is_compress_vertices"), &TreeGenerator::is_compress_vertices);
@@ -4969,6 +5152,7 @@ void TreeGenerator::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Oak,Beech,Birch,Scots Pine,Norway Spruce,Hazel,Hawthorn,Lime,Sycamore Maple,Ash,Horse Chestnut,Black Alder,White Willow,European Larch,Silver Fir,Rowan,Elder,Holly,Yew,Box,Sugar Maple,Red Maple,Northern Red Oak,White Oak,Eastern White Pine,Eastern Hemlock,American Beech,Paper Birch,Yellow Birch,Witch-hazel,Mountain Laurel"), "set_preset", "get_preset");
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "junction_weld"), "set_junction_weld", "get_junction_weld");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "phyllotaxis", PROPERTY_HINT_ENUM, "Alternate,Opposite,Whorled"), "set_phyllotaxis", "get_phyllotaxis");
 	ADD_GROUP("Stand", "forest_");

@@ -322,6 +322,7 @@ private:
 
 	// Generated meshes per preset and form, reused by make_species() and make_stand().
 	HashMap<int, TypedArray<Mesh>> mesh_cache;
+	bool junction_weld = true; // Limbs welded onto their parent's bark (trees.md 2d).
 	Dictionary season; // Empty: midsummer, full green leaves.
 	struct LeafSeason {
 		float out = 1.0f; // This year's leaves grown (0 none, 1 full size).
@@ -539,6 +540,11 @@ public:
 		mesh_cache.clear();
 	}
 	Dictionary get_season() const { return season; }
+	void set_junction_weld(bool p_on) {
+		junction_weld = p_on;
+		mesh_cache.clear();
+	}
+	bool get_junction_weld() const { return junction_weld; }
 
 	Ref<ArrayMesh> generate();
 
