@@ -490,8 +490,9 @@ func _whitecap_step() -> void:
 	if i >= whitecap_winds.size():
 		get_tree().quit()
 		return
+	if k < 5:
+		water.call("set_wind_speed", whitecap_winds[i]) # again over a few frames: the first ones come before the solver is up
 	if k == 0:
-		water.call("set_wind_speed", whitecap_winds[i])
 		whitecap_sum = Vector3.ZERO
 		whitecap_count = 0
 	var cover := float(water.call("get_whitecap_cover"))

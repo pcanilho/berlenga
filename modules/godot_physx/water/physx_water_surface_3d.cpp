@@ -3576,12 +3576,10 @@ void PhysXWaterSurface3D::_push_foam_settings() {
 // controller in log cover: the cover spans decades with the wind (0.1% to
 // 10%), and a threshold step changes it by a factor, not an amount.
 void PhysXWaterSurface3D::_steer_whitecaps() {
-	if (!whitecap_auto || !foam_enabled) {
-		whitecap_clock = -1.0;
-		return;
-	}
-	const float c0 = solver.get_foam_cover();
+	const float c0 = foam_enabled ? solver.get_foam_cover() : -1.0f;
 	if (c0 < 0.0f) {
+		whitecap_measured = -1.0f;
+		whitecap_clock = -1.0;
 		return;
 	}
 	double clear = 1.0 - c0;
@@ -3592,6 +3590,10 @@ void PhysXWaterSurface3D::_steer_whitecaps() {
 		}
 	}
 	whitecap_measured = (float)(1.0 - clear);
+	if (!whitecap_auto) {
+		whitecap_clock = -1.0;
+		return;
+	}
 	const double dt = whitecap_clock < 0.0 ? 0.0 : water_time - whitecap_clock;
 	whitecap_clock = water_time;
 	if (dt <= 0.0 || dt > 0.5) {

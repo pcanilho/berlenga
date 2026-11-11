@@ -1597,6 +1597,27 @@ about 3%, and changing any wave setting changed the foam with it.
   fixed `foam_threshold` (the opt-out); with it on, `foam_threshold` is the starting point.
 - `get_whitecap_cover()`, `get_whitecap_target_cover()`, `get_effective_foam_threshold()` for a bench.
 
+### Results (lavapipe, `docs/bench/water_surface --view=sea_top --whitecaps=4,...,20`, 15 s a wind, mean of the last 7.5 s)
+
+Share of the sea under foam (mean foam on the grids; the material's lace erosion keeps the mean):
+
+| U (m/s) | Monahan | fixed 0.7, 3 cascades (before) | auto, 3 cascades | auto, choppiness 1.5 | fixed 0.7, 1 cascade |
+|---|---|---|---|---|---|
+| 4 | 0.04% | 0.10% | 0.05% | 0.01% | 0.31% |
+| 6 | 0.17% | 0.30% | 0.18% | 0.18% | 0.68% |
+| 8 | 0.46% | 0.56% | 0.49% | 0.47% | 1.37% |
+| 10 | 0.99% | 0.96% | 0.99% | 0.98% | 1.99% |
+| 12 | 1.84% | 1.29% | 1.85% | 1.83% | 2.63% |
+| 14 | 3.11% | 1.67% | 3.12% | 3.11% | 3.77% |
+| 17 | 6.03% | 2.36% | 6.05% | 5.98% | 5.20% |
+| 20 | 10.5% | 3.03% | 10.4% | 10.3% | 6.21% |
+
+The fixed threshold grew the cover 30 times from 4 to 20 m/s where the sea grows it 240 times, and
+moved with the cascades and the choppiness; steered, the cover is on Monahan's curve within 1-8% from
+6 m/s up (4 m/s still settling from a far start at choppiness 1.5). The threshold stays between 0.68 and
+0.77 with three cascades (0.54-0.64 at choppiness 1.5). Cost: one atomic per 64 texels in the foam
+pass and a 4-byte readback with the existing ones.
+
 ## Sources
 
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).

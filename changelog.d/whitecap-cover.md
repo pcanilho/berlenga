@@ -1,0 +1,2 @@
+### Added
+- PhysXWaterSurface3D `whitecap_auto` (on by default) and `whitecap_cover_scale`: the foam threshold is steered so the share of sea under whitecaps follows the wind as measured at sea (Monahan and O'Muircheartaigh 1980: about 1% at 10 m/s, 3% at 14 m/s, 10% at 20 m/s), whatever the cascades, choppiness or fetch; `get_whitecap_cover()`, `get_whitecap_target_cover()`, `get_effective_foam_threshold()`.
