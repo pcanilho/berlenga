@@ -945,3 +945,18 @@ and absorption runs over the path inside only. 0 keeps the old behaviour. Icicle
 On the bench's eave the change is small: the icicles bend the view a little more and read slightly
 clearer. The path tracer's view of the eave's underside through the ice comes from light reflected
 inside the cone, which a screen-space method cannot follow, so that difference stays.
+
+## Follow-up 10: the bow wave (11 Nov 2026)
+
+A body slow enough compacts what it meets; a fast one cannot and shoves it ahead, the ploughing seen in
+front of tyres, sled runners and blades in deep snow (the CRREL cold-regions mobility models, Richmond,
+Shoop and Blaisdell 1995, count it as a separate ploughing resistance). In `GroundDeformField.press()`,
+with the body's velocity (from its motion between frames for bodies in the deform groups):
+- the rim's weights lean forward by 1 + 3 cos(angle to the heading) and reach one ring width further
+  ahead, both scaled by speed / 4 m/s (full above);
+- rim snow the body meets again is loose: at full speed all of it is pushed on, not 30%, so the wave
+  rides ahead, grows, spills to the sides as berms and is left as a mound where the body stops.
+Mass is kept (only where the pushed share lands changes). The constants are chosen for the look, not
+measured. Checks: a flat foot at 5 m/s leaves 0.176 m of rim ahead against 0.033 m behind, 30% of the
+dent; driven on 1.5 m, the highest rim in front is 0.194 m against 0.101 m beside the track. Bench:
+`--view=trail --sled [--close]`.

@@ -567,12 +567,12 @@ float SnowSurface3D::_surface_at(float p_x, float p_z, const SnowCover3D *p_cove
 // ---------------------------------------------------------------------------------------------------------
 // Deformation
 
-float SnowSurface3D::press(Vector3 p_position, float p_radius, float p_bottom, float p_sink, bool p_round) {
-	return _press(p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round);
+float SnowSurface3D::press(Vector3 p_position, float p_radius, float p_bottom, float p_sink, bool p_round, Vector3 p_velocity) {
+	return _press(p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round, Vector2(p_velocity.x, p_velocity.z));
 }
 
-float SnowSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink) {
-	return _press(p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false);
+float SnowSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink, Vector3 p_velocity) {
+	return _press(p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, Vector2(p_velocity.x, p_velocity.z));
 }
 
 GroundDeformField::Column SnowSurface3D::SnowColumns::column(float p_x, float p_z) const {
@@ -634,7 +634,7 @@ float SnowSurface3D::SnowColumns::sinkage(const GroundDeformField::Body &p_body)
 	return z;
 }
 
-float SnowSurface3D::_press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round) {
+float SnowSurface3D::_press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, Vector2 p_velocity) {
 	SnowCover3D *cover = _cover();
 	if (!deform_enabled || !cover) {
 		return 0.0f;
@@ -642,7 +642,7 @@ float SnowSurface3D::_press(Vector3 p_position, float p_radius, Vector2 p_half, 
 	SnowColumns cols;
 	cols.surface = this;
 	cols.cover = cover;
-	const float moved = field.press(cols, p_position, p_radius, p_half, p_yaw, p_box, p_bottom, p_sink, p_round, contact_tolerance);
+	const float moved = field.press(cols, p_position, p_radius, p_half, p_yaw, p_box, p_bottom, p_sink, p_round, contact_tolerance, p_velocity);
 	if (moved > 0.0f) {
 		collision_dirty = true;
 	}
@@ -1065,8 +1065,8 @@ void SnowSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_collision_rate", "rate"), &SnowSurface3D::set_collision_rate);
 	ClassDB::bind_method(D_METHOD("get_collision_rate"), &SnowSurface3D::get_collision_rate);
 
-	ClassDB::bind_method(D_METHOD("press", "position", "radius", "bottom", "sink", "round"), &SnowSurface3D::press, DEFVAL(0.0f), DEFVAL(true));
-	ClassDB::bind_method(D_METHOD("press_box", "position", "size", "yaw", "bottom", "sink"), &SnowSurface3D::press_box, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("press", "position", "radius", "bottom", "sink", "round", "velocity"), &SnowSurface3D::press, DEFVAL(0.0f), DEFVAL(true), DEFVAL(Vector3()));
+	ClassDB::bind_method(D_METHOD("press_box", "position", "size", "yaw", "bottom", "sink", "velocity"), &SnowSurface3D::press_box, DEFVAL(0.0f), DEFVAL(Vector3()));
 	ClassDB::bind_static_method("SnowSurface3D", D_METHOD("bekker_sinkage", "pressure_kpa", "width", "n", "kc", "kphi"), &SnowSurface3D::bekker_sinkage);
 	ClassDB::bind_method(D_METHOD("clear_deformation"), &SnowSurface3D::clear_deformation);
 	ClassDB::bind_method(D_METHOD("refresh_ground"), &SnowSurface3D::refresh_ground);

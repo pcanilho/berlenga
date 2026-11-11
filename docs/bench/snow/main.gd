@@ -43,6 +43,7 @@ extends Node3D
 #   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
+#   --sled            (trail view) a sled pulled at 4 m/s for 2 s and lifted away: its bow wave and berm
 #   --deform=R,E[,S]  (trail view) deformation texels R over E m, triangles every S m
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
 #                     under the boots, balls and wheel; 2 holds the boots (--close: down on the boot prints)
@@ -539,6 +540,26 @@ func _run_surface_tests() -> void:
 	_check("rim holds the pushed share (mass conserved)", absf(vol.y - 0.3 * vol.x) < 0.01 * vol.x, "dent %.4f m3, rim %.4f m3 (%.1f%%), moved %.4f m3" % [vol.x, vol.y, 100.0 * vol.y / vol.x, moved])
 	var rim_at := surface.get_rim_at(Vector3(p.x + 0.36, 0, p.z))
 	_check("a raised rim beside the print", rim_at > 0.01, "%.3f m at 6 cm outside" % rim_at)
+
+	# A bow wave: the same flat foot moving at 5 m/s piles its rim ahead (mass kept).
+	var bw := Vector3(-6.0, 0, 6.0)
+	var vol0 := surface.get_moved_volume()
+	surface.press(bw, 0.3, -1.0, 0.0, false, Vector3(5.0, 0, 0))
+	var vol1 := surface.get_moved_volume()
+	var ahead := surface.get_rim_at(bw + Vector3(0.36, 0, 0))
+	var behind := surface.get_rim_at(bw - Vector3(0.36, 0, 0))
+	var dvol := vol1 - vol0
+	_check("a fast body piles its rim ahead (bow wave), mass kept", ahead > 2.0 * behind and absf(dvol.y - 0.3 * dvol.x) < 0.01 * dvol.x, "%.3f m ahead, %.3f m behind at 6 cm; rim %.1f%% of the dent" % [ahead, behind, 100.0 * dvol.y / dvol.x])
+	# Driven on along x in 5 cm steps, the bow rides in front.
+	var sp := bw
+	for k in 30:
+		sp = bw + Vector3(0.05 * (k + 1), 0, 0)
+		surface.press(sp, 0.3, -1.0, 0.0, false, Vector3(5.0, 0, 0))
+	var front := 0.0
+	for k in 13:
+		front = maxf(front, surface.get_rim_at(sp + Vector3(0.3 + 0.05 * k, 0, 0)))
+	var flank := surface.get_rim_at(sp + Vector3(-0.6, 0, 0.4))
+	_check("the bow rides ahead and spills to the sides", front > flank and front > ahead, "highest %.3f m in front after 1.5 m (%.3f m after one press), %.3f m beside the track behind" % [front, ahead, flank])
 
 	# A boot print turned 90 degrees: long along x, narrow along z.
 	var bp := Vector3(6.0, 0, -6.0)
@@ -1355,6 +1376,10 @@ func _build_trail(cam: Camera3D) -> void:
 		cam.position = Vector3(-1.2, 1.1, 2.6)
 		cam.look_at(Vector3(-2.9, 0.3, 1.0))
 		cam.fov = 50.0
+		if OS.get_cmdline_user_args().has("--sled"):
+			# Down on the end of the sled's track and the berm its bow wave left.
+			cam.position = Vector3(0.2, 1.0, 5.6)
+			cam.look_at(Vector3(-2.2, 0.2, 3.4))
 	var target := Marker3D.new()
 	target.name = "Probe"
 	add_child(target)
@@ -1458,6 +1483,23 @@ func _build_trail(cam: Camera3D) -> void:
 	wheel.add_child(wmi)
 	wheel.add_to_group("snow_deform")
 	add_child(wheel)
+	if OS.get_cmdline_user_args().has("--sled"):
+		# A sled pulled fast (4 m/s) through the snow, its underside 15 cm down: a bow wave rides ahead and
+		# is left as a berm where it stops.
+		var sled := Node3D.new()
+		sled.name = "Sled"
+		var sc := CollisionShape3D.new()
+		sc.shape = BoxShape3D.new()
+		(sc.shape as BoxShape3D).size = Vector3(1.2, 0.2, 0.5)
+		sled.add_child(sc)
+		var smi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(1.2, 0.2, 0.5)
+		smi.mesh = bm
+		smi.material_override = dark
+		sled.add_child(smi)
+		sled.add_to_group("snow_deform")
+		add_child(sled)
 	walking = true
 	# Path tracing is slow on a CPU device: simulate under raster, trace only the saved frames.
 	var we: WorldEnvironment = null
@@ -1880,6 +1922,14 @@ func _physics_process(delta: float) -> void:
 	var wp := Vector3(-8.0 + 1.7 * walk_t, 0, -4.0)
 	w.global_position = Vector3(wp.x, _undisturbed(wp) - 0.2 + 0.4, wp.z)
 	w.rotation.z = -wp.x / 0.4
+	var sled: Node3D = get_node_or_null("Sled")
+	if sled:
+		# Pulled for 2 s, then lifted away so the berm it pushed is seen.
+		if walk_t > 2.0:
+			sled.remove_from_group("snow_deform")
+			sled.visible = false
+		var sp := Vector3(-10.0 + 4.0 * minf(walk_t, 2.0), 0, 3.4)
+		sled.global_position = Vector3(sp.x, _undisturbed(sp) - 0.15 + 0.1, sp.z)
 
 
 func _save_frame(suffix: String) -> void:
