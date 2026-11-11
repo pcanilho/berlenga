@@ -532,6 +532,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Icicles: clear ice with a hazy core, longest where the most melt water drips.*
 
+![Icicles under an eave, path traced at the default 3 bounces with transmission_bounces](docs/media/icicles-transmission.jpg)
+
+*Transmission bounces: at the default 3 bounces the icicles stay clear instead of going dark.*
+
 ![Snow surface close up: dry in raster, dry path traced, and wet](docs/media/snow-sparkle.jpg)
 
 *Sparkle: dry snow glints in raster and path tracing; wet snow loses it.*
