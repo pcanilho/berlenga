@@ -1390,7 +1390,11 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 	Vector3 ref = Math::abs(t.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
 	Vector3 nrm = t.cross(ref).normalized();
 	float v = p_v0;
-	const float circumference = Math::TAU * MAX(p_radii[0], 0.001f);
+	// A whole number of bark tiles around the stem (no seam), v in the same tile width so the
+	// pattern keeps its aspect; thin shoots carry one tile, a finer pattern, as young bark is.
+	const float girth = Math::TAU * MAX(p_radii[0], 0.001f);
+	const float repeats = MAX(1.0f, Math::round(girth / BARK_TILE));
+	const float circumference = girth / repeats;
 	for (int r = 0; r < rings; r++) {
 		Vector3 t2;
 		if (r == 0) {
@@ -1416,8 +1420,16 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 			const Vector3 dir = nrm * Math::cos(ang) + bin * Math::sin(ang);
 			r_b.verts.push_back(p_points[r] + dir * p_radii[r]);
 			r_b.normals.push_back(dir);
-			r_b.uvs.push_back(Vector2(float(s) / p_sides, v));
+			r_b.uvs.push_back(Vector2(float(s) / p_sides * repeats, v));
 			r_b.colors.push_back(p_color);
+			if (r_b.use_tangents) {
+				// Along u; the binormal (normal x tangent) then runs along the stem, with v.
+				const Vector3 tan = bin * Math::cos(ang) - nrm * Math::sin(ang);
+				r_b.tangents.push_back(tan.x);
+				r_b.tangents.push_back(tan.y);
+				r_b.tangents.push_back(tan.z);
+				r_b.tangents.push_back(1.0f);
+			}
 		}
 	}
 	for (int r = 0; r < rings - 1; r++) {
@@ -1532,6 +1544,279 @@ void TreeGenerator::_add_spray(Builder &r_b, const Vector3 &p_base, const Vector
 // The needle image: a twig up the middle and needles leaving it forward at about 50 degrees on
 // both sides. Mipmaps keep the needle coverage of the full image (Castano, "Computing Alpha
 // Mipmaps", 2010), so sprays do not fade to bare twigs at distance.
+// Bark families by species (docs/ideas/trees.md section 2a).
+TreeGenerator::BarkKind TreeGenerator::_bark_kind(Preset p_preset) {
+	switch (p_preset) {
+		case PRESET_BEECH:
+		case PRESET_AMERICAN_BEECH:
+		case PRESET_HAZEL:
+		case PRESET_ROWAN:
+		case PRESET_HOLLY:
+		case PRESET_BOX:
+		case PRESET_RED_MAPLE:
+		case PRESET_WITCH_HAZEL:
+			return BARK_SMOOTH;
+		case PRESET_SCOTS_PINE:
+		case PRESET_WHITE_PINE:
+		case PRESET_LARCH:
+			return BARK_PLATED;
+		case PRESET_NORWAY_SPRUCE:
+		case PRESET_HEMLOCK:
+		case PRESET_SILVER_FIR:
+		case PRESET_HAWTHORN:
+		case PRESET_YEW:
+		case PRESET_MOUNTAIN_LAUREL:
+			return BARK_SCALY;
+		case PRESET_SYCAMORE_MAPLE:
+		case PRESET_HORSE_CHESTNUT:
+			return BARK_FLAKING;
+		case PRESET_BIRCH:
+		case PRESET_PAPER_BIRCH:
+		case PRESET_YELLOW_BIRCH:
+			return BARK_PAPERY;
+		default:
+			return BARK_FURROWED; // Oaks, lime, ash, alder, willow, elder, sugar maple.
+	}
+}
+
+namespace {
+// Tileable value noise: lattice of p_period cells over [0, 1), wrapped.
+float bark_hash(int p_x, int p_y, uint32_t p_salt) {
+	uint32_t h = uint32_t(p_x) * 374761393u + uint32_t(p_y) * 668265263u + p_salt * 2246822519u;
+	h = (h ^ (h >> 13)) * 1274126177u;
+	return float((h ^ (h >> 16)) & 0xffffffu) / float(0xffffff);
+}
+
+float bark_value(float p_x, float p_y, int p_px, int p_py, uint32_t p_salt) {
+	const float x = p_x * p_px, y = p_y * p_py;
+	const int ix = int(Math::floor(x)), iy = int(Math::floor(y));
+	const float fx = x - ix, fy = y - iy;
+	const float sx = fx * fx * (3.0f - 2.0f * fx), sy = fy * fy * (3.0f - 2.0f * fy);
+	auto at = [&](int i, int j) { return bark_hash(((i % p_px) + p_px) % p_px, ((j % p_py) + p_py) % p_py, p_salt); };
+	const float a = Math::lerp(at(ix, iy), at(ix + 1, iy), sx);
+	const float b = Math::lerp(at(ix, iy + 1), at(ix + 1, iy + 1), sx);
+	return Math::lerp(a, b, sy);
+}
+
+// Fractal sum, -0.5..0.5, periods doubling from (p_px, p_py).
+float bark_fbm(float p_x, float p_y, int p_px, int p_py, int p_octaves, uint32_t p_salt) {
+	float sum = 0.0f, amp = 0.5f, norm = 0.0f;
+	for (int o = 0; o < p_octaves; o++) {
+		sum += amp * (bark_value(p_x, p_y, p_px << o, p_py << o, p_salt + o) - 0.5f);
+		norm += amp;
+		amp *= 0.5f;
+	}
+	return sum / norm * 0.5f;
+}
+
+// Wrapped Voronoi in cell units (cells p_cu by p_cv over the tile, so cells stretch with the
+// tile's aspect): distance to the nearest site, to the edge between the two nearest, the nearest
+// cell's id and its site.
+struct BarkCell {
+	float f1 = 1e9f;
+	float edge = 1e9f;
+	uint32_t id = 0;
+	Vector2 site;
+};
+
+BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt) {
+	const float x = p_x * p_cu, y = p_y * p_cv;
+	const int ix = int(Math::floor(x)), iy = int(Math::floor(y));
+	Vector2 sites[25];
+	uint32_t ids[25];
+	int n = 0;
+	for (int j = -2; j <= 2; j++) {
+		for (int i = -2; i <= 2; i++) {
+			const int cx = ((ix + i) % p_cu + p_cu) % p_cu, cy = ((iy + j) % p_cv + p_cv) % p_cv;
+			const float jx = bark_hash(cx, cy, p_salt), jy = bark_hash(cx, cy, p_salt + 7u);
+			sites[n] = Vector2(ix + i + jx, iy + j + jy);
+			ids[n] = uint32_t(cy * p_cu + cx);
+			n++;
+		}
+	}
+	const Vector2 p(x, y);
+	int a = 0;
+	for (int k = 1; k < n; k++) {
+		if (p.distance_squared_to(sites[k]) < p.distance_squared_to(sites[a])) {
+			a = k;
+		}
+	}
+	BarkCell c;
+	c.f1 = p.distance_to(sites[a]);
+	c.id = ids[a];
+	c.site = sites[a];
+	// Distance to the bisector with each other site (exact distance to the cell's edge).
+	for (int k = 0; k < n; k++) {
+		if (k == a) {
+			continue;
+		}
+		const Vector2 d = sites[k] - sites[a];
+		const float len = d.length();
+		if (len < 1e-6f) {
+			continue;
+		}
+		const Vector2 mid = (sites[a] + sites[k]) * 0.5f;
+		c.edge = MIN(c.edge, (mid - p).dot(d / len));
+	}
+	return c;
+}
+} // namespace
+
+// A tileable bark set (albedo multiplier, tangent-space normal, roughness, height in metres) for
+// one family, BARK_TILE metres square. Cracks follow Lefebvre and Neyret 2002 in spirit: a
+// stiff outer layer split into plates whose shape (long ridges, plates, scales, flakes) is the
+// family's, with depth from the species' bark thickness.
+const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
+	BarkSet &set = bark_sets[p_kind];
+	if (set.albedo.is_valid()) {
+		return set;
+	}
+	const int N = 512;
+	const float texel = BARK_TILE / N;
+	struct Look {
+		int cu, cv; // Plates around and along one tile.
+		float crack; // Crack half-width, in cell units.
+		float depth; // Metres from plate top to crack floor.
+		float grain; // Fibre and surface noise, metres.
+		float dark; // Albedo in the cracks.
+		float mottle; // Albedo variation over plates.
+	};
+	static const Look LOOKS[BARK_MAX] = {
+		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.06f }, // Smooth: no plates, fine grain, lenticels.
+		{ 6, 3, 0.1f, 0.028f, 0.004f, 0.3f, 0.12f }, // Furrowed: long interlaced ridges.
+		{ 4, 2, 0.16f, 0.03f, 0.0025f, 0.25f, 0.2f }, // Plated: wide flat plates, deep furrows.
+		{ 12, 9, 0.06f, 0.006f, 0.0015f, 0.45f, 0.14f }, // Scaly: small overlapping scales.
+		{ 5, 4, 0.03f, 0.003f, 0.001f, 0.6f, 0.0f }, // Flaking: shallow edges, colour mosaic.
+		{ 3, 40, 0.0f, 0.0008f, 0.0004f, 1.0f, 0.04f }, // Papery: smooth, lenticel bands.
+	};
+	const Look &L = LOOKS[p_kind];
+	const uint32_t salt = 101u + uint32_t(p_kind) * 31u;
+	Vector<float> h;
+	h.resize(N * N);
+	Vector<float> alb;
+	alb.resize(N * N * 3);
+	Vector<float> rough;
+	rough.resize(N * N);
+	float *hw = h.ptrw();
+	float *aw = alb.ptrw();
+	float *rw = rough.ptrw();
+	for (int y = 0; y < N; y++) {
+		for (int x = 0; x < N; x++) {
+			const float u = (x + 0.5f) / N, v = (y + 0.5f) / N;
+			const int k = y * N + x;
+			// Fibres run along the stem: noise stretched along v.
+			const float fibre = bark_fbm(u, v, 48, 6, 3, salt + 3u);
+			float height = L.grain * (fibre + 0.5f * bark_fbm(u, v, 16, 16, 4, salt + 9u));
+			Color a(1, 1, 1);
+			float r = 0.88f + 0.08f * fibre;
+			if (L.crack > 0.0f) {
+				// Warp the lookup so ridges interlace and wander rather than sit on a grid.
+				const float warp = p_kind == BARK_PLATED ? 2.0f : 1.0f;
+				const float wu = u + 0.035f * warp * bark_fbm(u, v, 4, 4, 2, salt + 21u);
+				const float wv = v + 0.05f * warp * bark_fbm(u, v, 4, 4, 2, salt + 27u);
+				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt);
+				// Cracks open unevenly: wider where the layer split first.
+				const float crack_w = L.crack * (0.5f + 2.0f * (bark_fbm(u, v, 6, 3, 2, salt + 33u) + 0.5f));
+				float open = Math::smoothstep(0.0f, crack_w, c.edge); // 0 in the crack, 1 on the plate.
+				float plate = open;
+				if (p_kind == BARK_FURROWED) {
+					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
+					// and splitting like an oak's interlaced ridges. The cells only add the shallower
+					// cross breaks that cut ridges into lengths.
+					const float n = bark_fbm(wu, wv, L.cu, 1, 3, salt + 51u);
+					const float furrow = Math::smoothstep(0.0f, 0.18f, Math::abs(n));
+					const float cross = Math::lerp(1.0f, open, 0.55f);
+					open = MIN(furrow, cross);
+					plate = Math::sqrt(open); // Rounded ridge tops.
+				} else if (p_kind == BARK_PLATED) {
+					// Flat plate tops, steep walls, and each plate built of thin flaking layers.
+					const float layers = Math::floor((bark_fbm(u, v, 12, 6, 3, salt + 57u) + 0.5f) * 4.0f) / 4.0f;
+					plate = Math::smoothstep(0.0f, 0.5f, open) * (0.75f + 0.25f * layers);
+				} else if (p_kind == BARK_SCALY) {
+					// Shingles: each scale lifts toward its lower edge, over the next one down.
+					const float below = (wv - Math::floor(wv)) * L.cv - c.site.y; // -1..1 cell units
+					plate = open * (0.55f + 0.45f * CLAMP(0.5f + below, 0.0f, 1.0f));
+				}
+				const float plate_noise = bark_hash(int(c.id), 3, salt + 41u);
+				height += L.depth * (plate - 1.0f) + L.depth * 0.15f * (plate_noise - 0.5f) * plate;
+				const float shade = Math::lerp(L.dark, 1.0f + L.mottle * (plate_noise - 0.5f), plate);
+				a = Color(shade, shade, shade);
+				r = Math::lerp(1.0f, r, plate);
+				if (p_kind == BARK_FLAKING) {
+					// Fresh inner bark where a flake fell: warmer and paler patches.
+					const float fresh = bark_hash(int(c.id), 5, salt + 43u);
+					if (fresh > 0.55f) {
+						const float t = (fresh - 0.55f) / 0.45f;
+						a = Color(1.0f + 0.25f * t, 1.0f + 0.1f * t, 1.0f - 0.15f * t) * shade;
+						height += L.depth * 0.6f;
+					}
+				}
+			}
+			if (p_kind == BARK_SMOOTH || p_kind == BARK_PAPERY) {
+				// Lenticels: short dashes across the stem (long and dark on birch).
+				const int cu = p_kind == BARK_PAPERY ? 5 : 14, cv = p_kind == BARK_PAPERY ? 26 : 24;
+				const float lx = u * cu, ly = v * cv;
+				const int ix = int(lx), iy = int(ly);
+				const float on = bark_hash(ix, iy, salt + 61u);
+				if (on > (p_kind == BARK_PAPERY ? 0.62f : 0.6f)) {
+					const float cx = 0.5f + 0.3f * (bark_hash(ix, iy, salt + 63u) - 0.5f);
+					const float len = p_kind == BARK_PAPERY ? 0.1f + 0.4f * bark_hash(ix, iy, salt + 65u) : 0.1f + 0.08f * on;
+					const float dx = (lx - ix - cx) / len, dy = (ly - iy - 0.5f) / 0.18f;
+					const float m = 1.0f - Math::smoothstep(0.6f, 1.0f, dx * dx + dy * dy);
+					const float lent = p_kind == BARK_PAPERY ? 0.18f : 0.7f;
+					a = a * Math::lerp(1.0f, lent, m);
+					height += m * 0.0004f;
+					r = Math::lerp(r, 0.97f, m);
+				}
+				const float tone = 1.0f + L.mottle * bark_fbm(u, v, 3, 6, 3, salt + 71u) * 2.0f;
+				a = a * tone;
+			}
+			hw[k] = height;
+			aw[k * 3 + 0] = a.r;
+			aw[k * 3 + 1] = a.g;
+			aw[k * 3 + 2] = a.b;
+			rw[k] = CLAMP(r, 0.0f, 1.0f);
+		}
+	}
+	Vector<uint8_t> abytes, nbytes, rbytes;
+	abytes.resize(N * N * 3);
+	nbytes.resize(N * N * 3);
+	rbytes.resize(N * N);
+	Vector<uint8_t> hbytes;
+	hbytes.resize(N * N * 4);
+	for (int y = 0; y < N; y++) {
+		for (int x = 0; x < N; x++) {
+			const int k = y * N + x;
+			for (int c = 0; c < 3; c++) {
+				// The albedo multiplies the vertex colour (species and weathering), so it is stored
+				// as a linear factor encoded to sRGB for the albedo slot.
+				const float f = CLAMP(aw[k * 3 + c] * 0.92f, 0.0f, 1.0f);
+				abytes.write[k * 3 + c] = uint8_t(Math::round(Color(f, f, f).linear_to_srgb().r * 255.0f));
+			}
+			const float hx = hw[y * N + (x + 1) % N] - hw[y * N + (x + N - 1) % N];
+			const float hy = hw[((y + 1) % N) * N + x] - hw[((y + N - 1) % N) * N + x];
+			// OpenGL convention (Godot): +y up the image is +v, so the y slope flips.
+			Vector3 n = Vector3(-hx / (2.0f * texel), hy / (2.0f * texel), 1.0f).normalized();
+			nbytes.write[k * 3 + 0] = uint8_t(Math::round((n.x * 0.5f + 0.5f) * 255.0f));
+			nbytes.write[k * 3 + 1] = uint8_t(Math::round((n.y * 0.5f + 0.5f) * 255.0f));
+			nbytes.write[k * 3 + 2] = uint8_t(Math::round((n.z * 0.5f + 0.5f) * 255.0f));
+			rbytes.write[k] = uint8_t(Math::round(rw[k] * 255.0f));
+			memcpy(hbytes.ptrw() + k * 4, &hw[k], 4);
+		}
+	}
+	Ref<Image> ai = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, abytes);
+	ai->generate_mipmaps();
+	Ref<Image> ni = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, nbytes);
+	ni->generate_mipmaps(true);
+	Ref<Image> ri = Image::create_from_data(N, N, false, Image::FORMAT_L8, rbytes);
+	ri->generate_mipmaps();
+	set.albedo = ImageTexture::create_from_image(ai);
+	set.normal = ImageTexture::create_from_image(ni);
+	set.roughness = ImageTexture::create_from_image(ri);
+	set.height = Image::create_from_data(N, N, false, Image::FORMAT_RF, hbytes);
+	return set;
+}
+
 Ref<Texture2D> TreeGenerator::_spray_texture() {
 	if (spray_texture.is_valid()) {
 		return spray_texture;
@@ -2039,6 +2324,7 @@ PackedFloat32Array TreeGenerator::_rig_data() const {
 
 Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	Builder bark;
+	bark.use_tangents = true;
 	Builder leaves;
 	leaf_count = 0;
 	if (rigged) {
@@ -2462,6 +2748,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
 		arrays[Mesh::ARRAY_COLOR] = b.colors;
 		arrays[Mesh::ARRAY_INDEX] = b.indices;
+		if (b.use_tangents && b.tangents.size() == b.verts.size() * 4) {
+			arrays[Mesh::ARRAY_TANGENT] = b.tangents;
+		}
 		if (rigged) {
 			arrays[Mesh::ARRAY_BONES] = b.bones;
 			arrays[Mesh::ARRAY_WEIGHTS] = b.weights;
@@ -2478,7 +2767,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			m->set_flag(BaseMaterial3D::FLAG_PARTICLE_TRAILS_MODE, true);
 		}
 		if (s == 0) {
-			m->set_roughness(0.92f);
+			const BarkSet &bs = _bark_set(_bark_kind(preset));
+			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, bs.albedo);
+			m->set_roughness(1.0f);
+			m->set_texture(BaseMaterial3D::TEXTURE_ROUGHNESS, bs.roughness);
+			m->set_roughness_texture_channel(BaseMaterial3D::TEXTURE_CHANNEL_RED);
+			if (b.use_tangents) {
+				m->set_feature(BaseMaterial3D::FEATURE_NORMAL_MAPPING, true);
+				m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, bs.normal);
+			}
 			mesh->surface_set_name(s, "bark");
 		} else {
 			m->set_roughness(needles ? 0.5f : 0.6f);

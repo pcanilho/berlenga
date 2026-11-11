@@ -196,6 +196,10 @@ private:
 		PackedVector2Array uvs;
 		PackedColorArray colors;
 		PackedInt32Array indices;
+		// Bark only: tangents along u (around the stem), w = 1; vertices built without one get
+		// a padded tangent in end().
+		PackedFloat32Array tangents;
+		bool use_tangents = false;
 		// Parts for LODs: first index, index count, first vertex, vertex count; and a size (tube
 		// radius for bark).
 		LocalVector<Vector4i> parts;
@@ -208,6 +212,12 @@ private:
 		void end(Vector4i &r_part, float p_size) {
 			r_part.y = indices.size() - r_part.x;
 			r_part.w = verts.size() - r_part.z;
+			while (use_tangents && tangents.size() < verts.size() * 4) {
+				tangents.push_back(1.0f);
+				tangents.push_back(0.0f);
+				tangents.push_back(0.0f);
+				tangents.push_back(1.0f);
+			}
 			for (int v = bones.size() / 4; v < verts.size(); v++) {
 				bones.push_back(bone);
 				bones.push_back(0);
@@ -305,6 +315,7 @@ private:
 
 public:
 	static constexpr int MAX_BONES = 48;
+	static constexpr float BARK_TILE = 0.4f; // Metres of bark one texture tile covers.
 	static constexpr int RIG_STRIDE = 18;
 	// Rig record layout (Mesh meta "tree_rig", RIG_STRIDE floats per bone).
 	enum RigField {
@@ -359,6 +370,25 @@ private:
 	void _add_spray(Builder &r_b, const Vector3 &p_base, const Vector3 &p_dir, float p_length, float p_half_width, const Vector3 &p_side, const Color &p_color);
 	Ref<Texture2D> spray_texture; // Built on first use; per generator so it never outlives the renderer.
 	Ref<Texture2D> _spray_texture();
+	// Bark (docs/ideas/trees.md section 2a): one tileable procedural set per bark family.
+	enum BarkKind {
+		BARK_SMOOTH,
+		BARK_FURROWED,
+		BARK_PLATED,
+		BARK_SCALY,
+		BARK_FLAKING,
+		BARK_PAPERY,
+		BARK_MAX,
+	};
+	struct BarkSet {
+		Ref<Texture2D> albedo;
+		Ref<Texture2D> normal;
+		Ref<Texture2D> roughness;
+		Ref<Image> height; // Metres of relief over the tile, for displaced near trunks.
+	};
+	BarkSet bark_sets[BARK_MAX];
+	static BarkKind _bark_kind(Preset p_preset);
+	const BarkSet &_bark_set(BarkKind p_kind);
 	void _mark_spurs(int p_year);
 	Ref<ArrayMesh> _build_mesh();
 	enum Form {

@@ -11,7 +11,8 @@ extends Node3D
 #   --presets=a,b,c   several species
 #   --stand=open|forest|both   growth setting (default both: open in front, forest-grown behind)
 #   --seed=N          (default 1)
-#   --view=side|crop  side: whole trees; crop: a 100% crop into the crown of the first tree
+#   --view=side|crop|trunk  side: whole trees; crop: a 100% crop into the crown of the first tree;
+#                     trunk: the first tree's bark at arm's length
 #   --set=name:value  override a growth property on every preset, e.g. --set=shed_ratio:0.2
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
@@ -217,7 +218,12 @@ func _build_scene() -> void:
 	cam.fov = 40.0
 	add_child(cam)
 	var cx := x * 0.5
-	if view == "crop":
+	if view == "trunk":
+		# Bark at arm's length: 2.2 m from the first tree's trunk, at chest height.
+		cam.position = Vector3(xs[0] + 0.3, 1.4, 2.2)
+		cam.look_at(Vector3(xs[0], 1.2, 0))
+		cam.fov = 40.0
+	elif view == "crop":
 		var h: float = first_info.height
 		cam.position = Vector3(xs[0] + first_info.crown_radius * 0.9, h * 0.62, 4.0)
 		cam.look_at(Vector3(xs[0], h * 0.62, 0))
