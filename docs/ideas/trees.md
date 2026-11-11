@@ -136,7 +136,7 @@ Our plan (assets stay out of git: everything is procedural):
 Checks: 100% crops raster against PT (detail kept), texel density along a stem, no seams around
 or along, cost of the near trunks (vertices, BLAS memory).
 
-### 2b. Species leaves (plan, 11 Nov; Paulo picked)
+### 2b. Species leaves (11 Nov; Paulo picked)
 
 Leaf architecture by species (Ellis et al., *Manual of Leaf Architecture*, 2009): simple
 (beech, birch, lime, alder, willow, holly), pinnately lobed (oaks: rounded lobes in white and
@@ -153,6 +153,18 @@ Silhouette is geometry, never alpha: the path tracer sees the true outline and n
   species' angle and a margin band), multiplying the vertex colour; a weak normal map for vein
   relief.
 - The leaf form and colour per species are exposed for the ground plants' leaf litter.
+
+As built (11 Nov): `TreeGenerator.get_leaf_form(preset)` returns `{kind, count, lobes, depth,
+width, size, color}` (kind is `LEAF_SIMPLE/LOBED/PALMATE/PINNATE/DIGITATE/NEEDLE`); stand species
+carry meta `leaf_preset`. Pointed lobes take two rows a lobe, rounded ones (pedunculate and white
+oak) three on an obovate blade with a terminal lobe. A compound leaf fills several leaf slots
+(count / 3) with the same total area, so crown density, drag and mass do not change. Horse
+chestnut leaflets are obovate. Venation is one shared 128 x 256 texture (midrib, eight
+secondaries, margin band), albedo lifted 1.13 so the average colour stays the species'. No
+normal map yet. LOD 0 leaf triangles in a stand (forest_shade 0.6, seed 1), lens before:
+oak 209k to 975k, sycamore 86k to 287k, ash 423k to 846k, horse chestnut 92k to 322k, rowan
+294k to 638k, red oak 80k to 239k. LOD 1 and coarser are unchanged (the twins). Whether an
+alpha-cut lens with an opacity micromap beats this under the path tracer is on the PC queue.
 
 ## 3. Wind
 

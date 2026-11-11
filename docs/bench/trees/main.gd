@@ -14,6 +14,7 @@ extends Node3D
 #   --view=side|crop|trunk  side: whole trees; crop: a 100% crop into the crown of the first tree;
 #                     trunk: the first tree's bark at arm's length
 #   --set=name:value  override a growth property on every preset, e.g. --set=shed_ratio:0.2
+#   --view=leaf       the crop view zoomed in to single leaves
 #   --view=base|log  the first tree's foot (moss), or the last plant (the log with --decays)
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
@@ -233,11 +234,11 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[xs.size() - 1] + 1.0, 1.6, 3.5)
 		cam.look_at(Vector3(xs[xs.size() - 1], 0.3, 0))
 		cam.fov = 50.0
-	elif view == "crop":
+	elif view == "crop" or view == "leaf":
 		var h: float = first_info.height
 		cam.position = Vector3(xs[0] + first_info.crown_radius * 0.9, h * 0.62, 4.0)
 		cam.look_at(Vector3(xs[0], h * 0.62, 0))
-		cam.fov = 30.0
+		cam.fov = 30.0 if view == "crop" else 7.0
 	else:
 		var span: float = max(x, tallest * 1.6)
 		var dist := span * 0.5 / tan(deg_to_rad(cam.fov * 0.5)) * 0.62 + 6.0

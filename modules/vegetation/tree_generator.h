@@ -108,6 +108,16 @@ public:
 		STAND_MAX,
 	};
 
+	// Leaf architecture (Ellis et al., Manual of Leaf Architecture, 2009).
+	enum LeafKind {
+		LEAF_SIMPLE,
+		LEAF_LOBED, // Pinnately lobed: oaks, hawthorn.
+		LEAF_PALMATE, // Palmately lobed: sycamore, maples.
+		LEAF_PINNATE, // Pinnately compound: ash, rowan, elder.
+		LEAF_DIGITATE, // Palmately compound: horse chestnut.
+		LEAF_NEEDLE,
+	};
+
 	enum Climber {
 		CLIMBER_NONE,
 		CLIMBER_IVY, // Hedera helix: root-climbing up the stem, evergreen.
@@ -398,6 +408,15 @@ private:
 
 	static void _tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height = nullptr, float p_relief = 0.0f);
 	void _add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, const Vector3 &p_up, float p_size, const Color &p_color);
+	// Species leaves (docs/ideas/trees.md section 2b): the detailed blade at LOD 0 and for the
+	// path tracer, a simple lens of the same area (its twin) at the coarser levels.
+	void _add_blade(Builder &r_b, const Vector3 &p_start, const Vector3 &p_along, const Vector3 &p_side, const Vector3 &p_n, float p_length, float p_half_width, int p_steps, int p_lobes, float p_depth, const Color &p_color, bool p_round = false, float p_shape = 0.75f);
+	Builder leaf_twins;
+	HashMap<int, Vector4i> leaf_twin_of; // Leaf part index -> its twin's indices and vertices in leaf_twins.
+	bool species_leaf_forms = true; // Off for climbers' leaves.
+	uint32_t compound_slot = 0;
+	Ref<Texture2D> leaf_texture;
+	Ref<Texture2D> _leaf_texture();
 	void _add_needle(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color);
 	void _add_spray(Builder &r_b, const Vector3 &p_base, const Vector3 &p_dir, float p_length, float p_half_width, const Vector3 &p_side, const Color &p_color);
 	Ref<Texture2D> spray_texture; // Built on first use; per generator so it never outlives the renderer.
@@ -501,6 +520,7 @@ public:
 	Color get_bark_color() const { return bark_color; }
 	void set_leaf_color(const Color &p_color) { leaf_color = p_color; }
 	Color get_leaf_color() const { return leaf_color; }
+	static Dictionary get_leaf_form(Preset p_preset);
 
 	Ref<ArrayMesh> generate();
 
@@ -533,4 +553,5 @@ VARIANT_ENUM_CAST(TreeGenerator::Param);
 VARIANT_ENUM_CAST(TreeGenerator::Stand);
 VARIANT_ENUM_CAST(TreeGenerator::Region);
 VARIANT_ENUM_CAST(TreeGenerator::Climber);
+VARIANT_ENUM_CAST(TreeGenerator::LeafKind);
 VARIANT_ENUM_CAST(TreeGenerator::RigField);

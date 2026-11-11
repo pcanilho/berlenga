@@ -1470,37 +1470,97 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 
 // A broad leaf: a short petiole, then an ovate blade folded along its midrib, turned to face
 // mostly upward (leaves orient to the light).
-void TreeGenerator::_add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, const Vector3 &p_up, float p_size, const Color &p_color) {
-	Vector3 n = p_up;
-	Vector3 along = (p_out - n * p_out.dot(n));
-	if (along.length_squared() < 1e-6f) {
-		along = n.cross(Vector3(1, 0, 0));
-	}
-	along.normalize();
-	const Vector3 side = n.cross(along).normalized();
-	const Vector3 start = p_base + p_out * (p_size * 0.15f);
-	const int steps = 3;
+// Each species' leaf: kind, lobes or leaflets, and lobe depth (sinus depth as a share of the
+// half width). Simple leaves keep the lens of PARAM_LEAF_WIDTH.
+struct LeafFormSpec {
+	TreeGenerator::LeafKind kind;
+	int count;
+	float depth;
+	bool round = false; // Rounded lobes (three rows a lobe) instead of pointed ones (two).
+};
+static const LeafFormSpec LEAF_FORMS[TreeGenerator::PRESET_MAX] = {
+	{ TreeGenerator::LEAF_LOBED, 4, 0.55f, true }, // Oak: four or five rounded lobes a side.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Beech.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Birch.
+	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Scots pine.
+	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Norway spruce.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Hazel.
+	{ TreeGenerator::LEAF_LOBED, 2, 0.7f }, // Hawthorn: two or three deep lobes a side.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Lime.
+	{ TreeGenerator::LEAF_PALMATE, 5, 0.45f }, // Sycamore maple.
+	{ TreeGenerator::LEAF_PINNATE, 9, 0.0f }, // Ash: 7-13 leaflets.
+	{ TreeGenerator::LEAF_DIGITATE, 7, 0.0f }, // Horse chestnut: 5-7 leaflets.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Black alder.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // White willow.
+	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Larch.
+	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Silver fir.
+	{ TreeGenerator::LEAF_PINNATE, 13, 0.0f }, // Rowan: 11-15 leaflets.
+	{ TreeGenerator::LEAF_PINNATE, 5, 0.0f }, // Elder: 5-7 leaflets.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Holly.
+	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Yew.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Box.
+	{ TreeGenerator::LEAF_PALMATE, 5, 0.6f }, // Sugar maple.
+	{ TreeGenerator::LEAF_PALMATE, 3, 0.35f }, // Red maple.
+	{ TreeGenerator::LEAF_LOBED, 4, 0.65f }, // Red oak: bristle-tipped lobes, deep sinuses.
+	{ TreeGenerator::LEAF_LOBED, 4, 0.6f, true }, // White oak: rounded lobes.
+	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // White pine.
+	{ TreeGenerator::LEAF_NEEDLE, 0, 0.0f }, // Hemlock.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // American beech.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Paper birch.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Yellow birch.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Witch hazel.
+	{ TreeGenerator::LEAF_SIMPLE, 0, 0.0f }, // Mountain laurel.
+};
+
+Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
+	ERR_FAIL_INDEX_V(int(p_preset), int(PRESET_MAX), Dictionary());
+	TreeGenerator look;
+	look.set_preset(p_preset);
+	Dictionary d;
+	d["kind"] = int(LEAF_FORMS[p_preset].kind);
+	d["count"] = LEAF_FORMS[p_preset].count; // Lobes a side (lobed), lobes (palmate) or leaflets (compound).
+	d["lobes"] = LEAF_FORMS[p_preset].count;
+	d["depth"] = LEAF_FORMS[p_preset].depth;
+	d["width"] = look.get_param(PARAM_LEAF_WIDTH); // Half width over length.
+	d["size"] = look.get_param(PARAM_LEAF_SIZE); // Metres.
+	d["color"] = look.get_leaf_color();
+	return d;
+}
+
+// A folded lens blade: rows of three vertices (midrib, two margins) from base to tip, the width
+// profile sin(pi t^p_shape) (0.75 ovate, widest below the middle; 1.6 obovate, widest toward the
+// tip), with p_lobes lobes a side cut p_depth into it: pointed (a tip row between sinus rows) or
+// rounded (two shoulder rows between sinus rows, as in oak).
+void TreeGenerator::_add_blade(Builder &r_b, const Vector3 &p_start, const Vector3 &p_along, const Vector3 &p_side, const Vector3 &p_n, float p_length, float p_half_width, int p_steps, int p_lobes, float p_depth, const Color &p_color, bool p_round, float p_shape) {
 	const int base = r_b.verts.size();
-	for (int i = 0; i <= steps; i++) {
-		const float t = float(i) / steps;
-		const float w = params[PARAM_LEAF_WIDTH] * p_size * Math::sin(Math::PI * Math::pow(t, 0.75f));
-		const float droop = -0.25f * p_size * t * t;
-		const Vector3 mid = start + along * (t * p_size) + n * droop;
-		const Vector3 fold = n * (0.12f * w);
+	for (int i = 0; i <= p_steps; i++) {
+		const float t = float(i) / p_steps;
+		float w = p_half_width * Math::sin(Math::PI * Math::pow(t, p_shape));
+		if (p_lobes > 0 && i > 0 && i < p_steps) {
+			const int rows = p_round ? 3 : 2;
+			if (i % rows == 0) {
+				w *= 1.0f - p_depth; // Sinus.
+			} else if (p_round) {
+				w *= 1.0f - 0.08f * p_depth; // Shoulders: a lobe with a broad, round end.
+			}
+		}
+		const float droop = -0.25f * p_length * t * t;
+		const Vector3 mid = p_start + p_along * (t * p_length) + p_n * droop;
+		const Vector3 fold = p_n * (0.12f * w);
 		r_b.verts.push_back(mid);
-		r_b.normals.push_back(n);
+		r_b.normals.push_back(p_n);
 		r_b.uvs.push_back(Vector2(0.5f, t));
 		r_b.colors.push_back(p_color);
-		r_b.verts.push_back(mid + side * w + fold);
-		r_b.normals.push_back((n - side * 0.2f).normalized());
+		r_b.verts.push_back(mid + p_side * w + fold);
+		r_b.normals.push_back((p_n - p_side * 0.2f).normalized());
 		r_b.uvs.push_back(Vector2(1.0f, t));
 		r_b.colors.push_back(p_color);
-		r_b.verts.push_back(mid - side * w + fold);
-		r_b.normals.push_back((n + side * 0.2f).normalized());
+		r_b.verts.push_back(mid - p_side * w + fold);
+		r_b.normals.push_back((p_n + p_side * 0.2f).normalized());
 		r_b.uvs.push_back(Vector2(0.0f, t));
 		r_b.colors.push_back(p_color);
 	}
-	for (int i = 0; i < steps; i++) {
+	for (int i = 0; i < p_steps; i++) {
 		const int m0 = base + i * 3, m1 = m0 + 3;
 		r_b.indices.push_back(m0);
 		r_b.indices.push_back(m1);
@@ -1514,6 +1574,98 @@ void TreeGenerator::_add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3
 		r_b.indices.push_back(m0 + 2);
 		r_b.indices.push_back(m1 + 2);
 		r_b.indices.push_back(m1);
+	}
+}
+
+// A leaf: a short petiole, then the species' blade turned to face mostly upward (leaves orient
+// to the light). Lobed, palmate and compound leaves keep a simple lens of the same area as a twin
+// for the coarser LODs.
+void TreeGenerator::_add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, const Vector3 &p_up, float p_size, const Color &p_color) {
+	Vector3 n = p_up;
+	Vector3 along = (p_out - n * p_out.dot(n));
+	if (along.length_squared() < 1e-6f) {
+		along = n.cross(Vector3(1, 0, 0));
+	}
+	along.normalize();
+	const Vector3 side = n.cross(along).normalized();
+	const Vector3 start = p_base + p_out * (p_size * 0.15f);
+	const float hw = params[PARAM_LEAF_WIDTH] * p_size;
+	const LeafFormSpec &form = LEAF_FORMS[preset];
+	if (!species_leaf_forms || form.kind == LEAF_SIMPLE || form.kind == LEAF_NEEDLE) {
+		_add_blade(r_b, start, along, side, n, p_size, hw, 3, 0, 0.0f, p_color);
+		return;
+	}
+	// Compound leaves are big: one fills the slots of several simple ones (n_eff), with the same
+	// leaf area (the crown's density, drag and mass stay those of the slots).
+	const bool compound = form.kind == LEAF_PINNATE || form.kind == LEAF_DIGITATE;
+	const int n_eff = compound ? MAX(2, form.count / 3) : 1;
+	if (compound && (compound_slot++ % n_eff) != 0) {
+		return;
+	}
+	const float slot_area = 2.0f * 0.656f * hw * p_size * float(n_eff); // Lens area: 2 W L x 0.656.
+	// The twin: today's lens (n_eff slots of it), for LOD 1 and coarser.
+	{
+		const float k = Math::sqrt(float(n_eff));
+		const int ti = leaf_twins.indices.size(), tv = leaf_twins.verts.size();
+		_add_blade(leaf_twins, start, along, side, n, p_size * k, hw * k, 3, 0, 0.0f, p_color);
+		leaf_twin_of[int(r_b.parts.size())] = Vector4i(ti, leaf_twins.indices.size() - ti, tv, leaf_twins.verts.size() - tv);
+	}
+	switch (form.kind) {
+		case LEAF_LOBED: {
+			// Lobes widen the blade: the same area with lobes a little wider than the lens.
+			const float w = hw * (1.0f + 0.5f * form.depth);
+			// Rounded lobes end in a terminal lobe (one more shoulder row before the tip), on an
+			// obovate blade, widest above the middle, as in oak.
+			const int steps = form.round ? 3 * form.count + 2 : 2 * form.count + 1;
+			_add_blade(r_b, start, along, side, n, p_size, w, steps, form.count, form.depth, p_color, form.round, form.round ? 1.3f : 0.75f);
+		} break;
+		case LEAF_PALMATE: {
+			// Lobes fanned from the petiole: the middle one longest, the outer ones short. Each
+			// is narrow; together they make the palm.
+			const int k = form.count;
+			const float spread = Math::deg_to_rad(k > 3 ? 75.0f : 50.0f);
+			for (int i = 0; i < k; i++) {
+				const float f = k > 1 ? float(i) / (k - 1) * 2.0f - 1.0f : 0.0f;
+				const float a = f * spread;
+				const Vector3 dir = (along * Math::cos(a) + side * Math::sin(a)).normalized();
+				const Vector3 sd = n.cross(dir).normalized();
+				const float len = p_size * Math::lerp(1.0f, 0.55f, Math::abs(f)) * 0.72f;
+				_add_blade(r_b, start, dir, sd, n, len, len * 0.42f * (1.0f - 0.4f * form.depth), 2, 0, 0.0f, p_color);
+			}
+		} break;
+		case LEAF_PINNATE: {
+			// Leaflets in opposite pairs along the rachis, with one at the tip.
+			const int pairs = form.count / 2;
+			// Leaflets of 2 x 0.3 l x l x 0.656 each share the slots' area.
+			const float leaflet = Math::sqrt(slot_area / (float(form.count) * 2.0f * 0.656f * 0.3f));
+			const float rachis = leaflet * 0.6f * float(pairs + 1);
+			for (int i = 0; i < pairs; i++) {
+				const float t = Math::lerp(0.25f, 0.9f, pairs > 1 ? float(i) / (pairs - 1) : 0.5f);
+				const Vector3 at = start + along * (rachis * t) + n * (-0.15f * rachis * t * t);
+				for (int sgn = -1; sgn <= 1; sgn += 2) {
+					const Vector3 dir = (side * float(sgn) * 0.85f + along * 0.5f).normalized();
+					_add_blade(r_b, at, dir, n.cross(dir).normalized(), n, leaflet, leaflet * 0.3f, 2, 0, 0.0f, p_color);
+				}
+			}
+			const Vector3 tip = start + along * rachis + n * (-0.15f * rachis);
+			_add_blade(r_b, tip, along, side, n, leaflet, leaflet * 0.3f, 2, 0, 0.0f, p_color);
+		} break;
+		case LEAF_DIGITATE: {
+			const int k = form.count;
+			const float spread = Math::deg_to_rad(80.0f);
+			// Obovate leaflets, widest toward the tip. Lengths fall from 1 in the middle to 0.5
+			// outside: sum of squares about 0.56 k, scaled to the slots' area.
+			const float unit = Math::sqrt(slot_area / (2.0f * 0.656f * 0.34f * 0.56f * float(k)));
+			for (int i = 0; i < k; i++) {
+				const float f = float(i) / (k - 1) * 2.0f - 1.0f;
+				const float a = f * spread;
+				const Vector3 dir = (along * Math::cos(a) + side * Math::sin(a)).normalized();
+				const float len = unit * Math::lerp(1.0f, 0.5f, Math::abs(f));
+				_add_blade(r_b, start + dir * (unit * 0.05f), dir, n.cross(dir).normalized(), n, len, len * 0.34f, 3, 0, 0.0f, p_color, false, 1.6f);
+			}
+		} break;
+		default:
+			break;
 	}
 }
 
@@ -2046,7 +2198,9 @@ void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const 
 	r_leaves.bone = p_bone;
 	Vector4i part;
 	r_leaves.begin(part);
+	species_leaf_forms = false;
 	_add_leaf(r_leaves, p_at, p_out, p_normal, p_size, p_color);
+	species_leaf_forms = true;
 	r_leaves.end(part, 0.0f);
 	params[PARAM_LEAF_WIDTH] = saved_width;
 	leaf_count++;
@@ -2328,6 +2482,45 @@ void TreeGenerator::_grow_climbers(Builder &r_bark, Builder &r_leaves) {
 	}
 	r_bark.bone = 0;
 	r_leaves.bone = 0;
+}
+
+// Venation over a blade's UVs (u across, 0.5 the midrib; v base to tip), as a factor on the
+// vertex colour: a pale midrib, secondaries running out toward the margin at about 45 degrees
+// and fading there, a slightly darker margin band and fine mottling (after the pinnate
+// patterns of Runions et al., Modeling and Visualization of Leaf Venation Patterns, 2005). One
+// texture serves every blade, lobe and leaflet.
+Ref<Texture2D> TreeGenerator::_leaf_texture() {
+	if (leaf_texture.is_valid()) {
+		return leaf_texture;
+	}
+	const int w = 128, h = 256;
+	Vector<uint8_t> px;
+	px.resize(w * h * 3);
+	for (int y = 0; y < h; y++) {
+		for (int x = 0; x < w; x++) {
+			const float u = (x + 0.5f) / w, v = (y + 0.5f) / h;
+			const float d = Math::abs(u - 0.5f) * 2.0f; // 0 at the midrib, 1 at the margin.
+			float f = 0.86f + 0.06f * (bark_fbm(u, v, 8, 16, 3, 701u) * 2.0f);
+			// Midrib, thinning toward the tip.
+			const float mid_w = Math::lerp(0.035f, 0.01f, v);
+			f = Math::lerp(f, 1.0f, CLAMP(1.0f - d / mid_w, 0.0f, 1.0f));
+			// Secondaries: lines of constant v - 0.35 d, eight to a blade, fading at the margin.
+			const float phase = (v - 0.35f * d) * 8.0f;
+			const float line = Math::abs(phase - Math::round(phase));
+			const float sec = CLAMP(1.0f - line / 0.06f, 0.0f, 1.0f) * (1.0f - Math::smoothstep(0.7f, 0.95f, d)) * (d > mid_w ? 1.0f : 0.0f);
+			f = Math::lerp(f, 0.97f, sec * 0.8f);
+			// Margin band.
+			f *= 1.0f - 0.08f * Math::smoothstep(0.85f, 1.0f, d);
+			const uint8_t b = uint8_t(Math::round(Color(f, f, f).linear_to_srgb().r * 255.0f));
+			for (int c = 0; c < 3; c++) {
+				px.write[(y * w + x) * 3 + c] = b;
+			}
+		}
+	}
+	Ref<Image> img = Image::create_from_data(w, h, false, Image::FORMAT_RGB8, px);
+	img->generate_mipmaps();
+	leaf_texture = ImageTexture::create_from_image(img);
+	return leaf_texture;
 }
 
 Ref<Texture2D> TreeGenerator::_spray_texture() {
@@ -2994,6 +3187,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	leaf_count = 0;
 	supports.clear();
 	climber_leaves.clear();
+	leaf_twins = Builder();
+	leaf_twin_of.clear();
+	compound_slot = 0;
 	const float moss_k = _moss_amount();
 	const float moss_ground = nodes.is_empty() ? 0.0f : nodes[0].start.y;
 	// Moss greens the bark under it at every LOD (the shell's footprint, and all the moss there
@@ -3732,6 +3928,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				// averaged their needles below the cut.
 				m->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA_HASH);
 				m->set_alpha_antialiasing(BaseMaterial3D::ALPHA_ANTIALIASING_ALPHA_TO_COVERAGE);
+			} else if (!needles) {
+				// Venation; the factor averages about 0.88, so the albedo lifts it back to the
+				// species' leaf colour on average.
+				m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _leaf_texture());
+				m->set_albedo(Color(1.13f, 1.13f, 1.13f));
 			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
@@ -3795,20 +3996,26 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves) const {
 			const Vector4i pt = r_leaves.parts[i];
 			const int v0 = r_leaves.verts.size();
 			const Vector3 pivot = r_leaves.verts[pt.z];
-			for (int v = 0; v < pt.w; v++) {
-				r_leaves.verts.push_back(pivot + (r_leaves.verts[pt.z + v] - pivot) * grow);
-				r_leaves.normals.push_back(r_leaves.normals[pt.z + v]);
-				r_leaves.uvs.push_back(r_leaves.uvs[pt.z + v]);
-				r_leaves.colors.push_back(r_leaves.colors[pt.z + v]);
-				if (r_leaves.bones.size() >= (pt.z + v + 1) * 4) {
+			// A species leaf (lobed, palmate, compound) is drawn as its simple twin here.
+			const Vector4i *twin = leaf_twin_of.getptr(int(i));
+			const Builder &src = twin ? leaf_twins : r_leaves;
+			const Vector4i sp = twin ? *twin : pt;
+			const bool skinned = r_leaves.bones.size() >= (pt.z + 1) * 4;
+			for (int v = 0; v < sp.w; v++) {
+				r_leaves.verts.push_back(pivot + (src.verts[sp.z + v] - pivot) * grow);
+				r_leaves.normals.push_back(src.normals[sp.z + v]);
+				r_leaves.uvs.push_back(src.uvs[sp.z + v]);
+				r_leaves.colors.push_back(src.colors[sp.z + v]);
+				if (skinned) {
+					// The leaf's own skin (one bone per leaf) from its first vertex.
 					for (int k = 0; k < 4; k++) {
-						r_leaves.bones.push_back(r_leaves.bones[(pt.z + v) * 4 + k]);
-						r_leaves.weights.push_back(r_leaves.weights[(pt.z + v) * 4 + k]);
+						r_leaves.bones.push_back(r_leaves.bones[pt.z * 4 + k]);
+						r_leaves.weights.push_back(r_leaves.weights[pt.z * 4 + k]);
 					}
 				}
 			}
-			for (int k = 0; k < pt.y; k++) {
-				idx.push_back(r_leaves.indices[pt.x + k] - pt.z + v0);
+			for (int k = 0; k < sp.y; k++) {
+				idx.push_back(src.indices[sp.x + k] - sp.z + v0);
 			}
 		}
 		if (idx.is_empty()) {
@@ -4044,6 +4251,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	Ref<PlantSpecies> sp;
 	sp.instantiate();
 	sp->set_meta("preset", int(p_preset));
+	sp->set_meta("leaf_preset", int(p_preset)); // The leaves it drops: get_leaf_form(leaf_preset).
 	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
 		sp->set_meta("deadwood", true);
 	}
@@ -4583,6 +4791,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_fallen"), &TreeGenerator::is_fallen);
 	ClassDB::bind_method(D_METHOD("set_fallen_branch", "fallen_branch"), &TreeGenerator::set_fallen_branch);
 	ClassDB::bind_method(D_METHOD("set_moss_cover", "cover"), &TreeGenerator::set_moss_cover);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_form", "preset"), &TreeGenerator::get_leaf_form);
 	ClassDB::bind_method(D_METHOD("set_compress_vertices", "enable"), &TreeGenerator::set_compress_vertices);
 	ClassDB::bind_method(D_METHOD("is_compress_vertices"), &TreeGenerator::is_compress_vertices);
 	ClassDB::bind_method(D_METHOD("set_climber", "climber"), &TreeGenerator::set_climber);
@@ -4700,6 +4909,12 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_MONTANE_CONIFER);
 	BIND_ENUM_CONSTANT(STAND_SUBALPINE);
 	BIND_ENUM_CONSTANT(STAND_PINE_HEATH);
+	BIND_ENUM_CONSTANT(LEAF_SIMPLE);
+	BIND_ENUM_CONSTANT(LEAF_LOBED);
+	BIND_ENUM_CONSTANT(LEAF_PALMATE);
+	BIND_ENUM_CONSTANT(LEAF_PINNATE);
+	BIND_ENUM_CONSTANT(LEAF_DIGITATE);
+	BIND_ENUM_CONSTANT(LEAF_NEEDLE);
 	BIND_ENUM_CONSTANT(CLIMBER_NONE);
 	BIND_ENUM_CONSTANT(CLIMBER_IVY);
 	BIND_ENUM_CONSTANT(CLIMBER_LIANA);
