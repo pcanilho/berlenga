@@ -104,6 +104,13 @@ func _ready() -> void:
 		# alluvial plain (Yuan et al. 2019), no general uplift, the high block lower in the middle to gather a trunk
 		# river, smaller rivers kept (the mountain streams), lakes only from the high lake marker.
 		var vd := {"deposition": "0.5", "base-uplift": "0", "floor-uplift": "0", "funnel": "0.7", "min-area": "500000", "lakes": "0"}
+		if not args.has("valley-classic"):
+			# The showcase valley (terrain's settings, 11 Nov): the main river's catchment reaches past the map
+			# (60 km² flowing in), a hard-rock bar across the cirque holds a glacial lake at 450 m, and its outflow
+			# drops about 340 m off the bar into a pool. --valley-classic keeps the earlier valley without them.
+			vd.merge({"no-lake": "1", "inflow": "60", "inflow-erosion": "0.3", "bar": "-300,-1650,350,-1500,1000,-1650",
+					"bar-level": "450", "bowl": "350,-1800,650,0.1", "glacial": "1", "ela": "450", "glacial-erosion": "10",
+					"lake-pick": "high"})
 		for k in vd:
 			if not args.has(k):
 				args[k] = vd[k]
@@ -1787,7 +1794,7 @@ func _checks() -> void:
 			var a := TAU * k / 24.0
 			var q := lake_center + Vector3(cos(a), 0, sin(a)) * (lake_axes.y + ring * 20.0)
 			q.y = height_at(q.x, q.z)
-			if q.y > 5.0 and q.y < 650.0 and data_map.get_slope_at(q) < 20.0 and data_map.get_water_distance_at(q) > 6.0 and data_map.get_rock_at(q) < 0.2 and weather.get_canopy_closure_at(q) < 0.1:
+			if q.y > 5.0 and q.y < 650.0 and rad_to_deg(data_map.get_slope_at(q)) < 20.0 and data_map.get_water_distance_at(q) > 6.0 and data_map.get_rock_at(q) < 0.2 and weather.get_canopy_closure_at(q) < 0.1:
 				meadow_pt = q
 				found = true
 				break
@@ -1809,7 +1816,7 @@ func _checks() -> void:
 		for rr in [PlantSpecies.RULE_SLOPE, PlantSpecies.RULE_WATER_DISTANCE, PlantSpecies.RULE_HEIGHT, PlantSpecies.RULE_SHADE]:
 			r0.set_rule_range(rr, base.get_rule_range(rr))
 			print("rule %d range %s fade %.2f alone -> %.2f" % [rr, base.get_rule_range(rr), base.get_rule_fade(rr), _suit_one(rr, base)])
-		print("default species -> %.2f, data map shade %.2f slope %.1f water %.1f" % [PlantSpecies.new().get_suitability_at(data_map, meadow_pt), data_map.get_shade_at(meadow_pt) if data_map.has_method("get_shade_at") else -1.0, data_map.get_slope_at(meadow_pt), data_map.get_water_distance_at(meadow_pt)])
+		print("default species -> %.2f, data map shade %.2f slope %.1f deg water %.1f" % [PlantSpecies.new().get_suitability_at(data_map, meadow_pt), data_map.get_shade_at(meadow_pt) if data_map.has_method("get_shade_at") else -1.0, rad_to_deg(data_map.get_slope_at(meadow_pt)), data_map.get_water_distance_at(meadow_pt)])
 	if veg.has_method("get_stand_shade_at"):
 		per.append("stand shade %.2f at %s" % [veg.get_stand_shade_at(meadow_pt), str(meadow_pt.round())])
 	check(g > 0, "grass grows from the data map's rules on a meadow (%d blades: %s); it bends with weather_wind" % [g, ", ".join(per)])
@@ -1881,14 +1888,26 @@ func _checks() -> void:
 	# Footprints: sand on the beach, mud on the lake bank in the rain, litter under the forest, none on bare rock.
 	var beach_p := Vector3(0, 0, _coast_z(0.0) - 25.0)
 	beach_p.y = height_at(beach_p.x, beach_p.z)
-	var bank_p := lake_center
-	var ld := Vector3(lake_dir.x, 0, lake_dir.y)
-	for k in 400:
-		bank_p += ld * 2.0
-		if height_at(bank_p.x, bank_p.z) > lake_level + 0.5:
+	# A soft bank: round the lake, the first shore with soil rather than bare rock (glacier-cut lakes sit in rock).
+	var bank_p := Vector3.INF
+	var a0 := atan2(lake_dir.y, lake_dir.x)
+	for k in 24:
+		var a := a0 + TAU * k / 24.0
+		var ld := Vector3(cos(a), 0, sin(a))
+		var q := lake_center
+		for i in 400:
+			q += ld * 2.0
+			if height_at(q.x, q.z) > lake_level + 0.5:
+				break
+		q += ld * 3.0
+		q.y = height_at(q.x, q.z)
+		if data_map.get_rock_at(q) < 0.3:
+			bank_p = q
 			break
-	bank_p += ld * 3.0
-	bank_p.y = height_at(bank_p.x, bank_p.z)
+	var soft_bank := bank_p.is_finite()
+	if not soft_bank:
+		bank_p = lake_center + Vector3(lake_dir.x, 0, lake_dir.y) * (lake_axes.x + 3.0)
+		bank_p.y = height_at(bank_p.x, bank_p.z)
 	# The densest snow-free stand: the placement with the most trees within 15 m (of the first few hundred).
 	var trees: Array = veg.get_placements(1) + veg.get_placements(0)
 	var tree_p := Vector3.INF
@@ -1927,7 +1946,10 @@ func _checks() -> void:
 	var storm: bool = args.get("weather", "storm") == "storm"
 	# Dry sand takes 1.5 to 3 cm under a boot, rain-damp sand under 1 cm (firmer).
 	check(pb["sand"] > 0.5 and pb["dent"] > (0.002 if storm else 0.012), "boots print the beach sand (%.1f cm, %s)" % [pb["dent"] * 100.0, "damp" if storm else "dry"])
-	check(pl["dent"] > 0.005 and (not storm or pl["sink"] > 0.04), "boots sink into the lake bank, mud in the rain (%.1f cm)" % (pl["sink"] * 100.0))
+	if soft_bank:
+		check(pl["dent"] > 0.005 and (not storm or pl["sink"] > 0.04), "boots sink into the lake bank, mud in the rain (%.1f cm)" % (pl["sink"] * 100.0))
+	else:
+		_log("lake bank: every shore of the lake is bare rock, no mud to print (%.1f cm)" % (pl["sink"] * 100.0))
 	check(pf["litter"] > 0.005 and pf["dent"] > 0.005, "the forest floor carries litter from the canopy (%.1f cm) and takes prints" % (pf["litter"] * 100.0))
 	check(rock_p.is_finite() and not pr["deformable"] and pr["dent"] < 0.001, "bare rock from the generator takes no print")
 	check(prints.get_patch_material() is TerrainMaterial3D or not (ground_mat is TerrainMaterial3D), "the print patch is drawn with the terrain's own material")
