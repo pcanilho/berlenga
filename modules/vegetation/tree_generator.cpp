@@ -30,6 +30,9 @@
 
 #include "tree_generator.h"
 #include "plant_generator.h"
+#include "modules/weather/weather_map_3d.h"
+#include "scene/resources/shader.h"
+#include "servers/rendering/rendering_server.h"
 
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -4311,7 +4314,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			m->set_backlight(leaf_color * 0.6f);
 			mesh->surface_set_name(mesh->get_surface_count() - 1, needles ? "needles" : "leaves");
 		}
-		mesh->surface_set_material(mesh->get_surface_count() - 1, m);
+		if ((s == 1 && !needles) || s == 3) {
+			mesh->surface_set_material(mesh->get_surface_count() - 1, _flutter_material(m, s == 3 ? 0.05f : params[PARAM_LEAF_SIZE]));
+		} else {
+			mesh->surface_set_material(mesh->get_surface_count() - 1, m);
+		}
 	}
 	mesh->set_meta(SNAME("tree_colliders"), _collider_data());
 	if (!climber_leaves.is_empty()) {
@@ -4349,6 +4356,110 @@ Dictionary TreeGenerator::_bark_lods(const Builder &p_bark) const {
 		lods[level.error] = idx;
 	}
 	return lods;
+}
+
+// Leaf flutter (docs/ideas/trees.md 3b): the leaf material's own shader (BaseMaterial3D's
+// generated code, so skinning from instance bones, snow and wetness stay as they are) with Sousa's
+// detail bending (GPU Gems 3, ch. 16, Crysis): each leaf bends along its normal with distance
+// from the petiole squared, and twists about its midrib (the blade's UV.x, 0.5 on the midrib),
+// at a few hertz out of phase leaf to leaf (the phase from the leaf's vertex colour, the same on
+// every vertex of a leaf at every LOD), scaled by the local wind (plant_wind, the ground plants'
+// weather-map wind). Twisting about the stalk is what SpeedTree's leaf ripple and Unreal's Pivot
+// Painter show; bending and twist are a few millimetres to a centimetre, which raster and the
+// path tracer's captured vertex shader both see.
+Ref<Material> TreeGenerator::_flutter_material(const Ref<StandardMaterial3D> &p_base, float p_leaf_size) const {
+	if (leaf_flutter <= 0.0f || p_base.is_null() || RenderingServer::get_singleton() == nullptr) {
+		return p_base;
+	}
+	BaseMaterial3D::flush_changes();
+	String code = RenderingServer::get_singleton()->shader_get_code(p_base->get_shader_rid());
+	const int vx = code.find("void vertex() {");
+	if (code.is_empty() || vx < 0) {
+		return p_base;
+	}
+	// The wind lines, minus any global the generated code already declares.
+	String wind;
+	const String plant_wind_code = R"(
+global uniform vec4 grass_wind;
+vec3 plant_wind(vec3 wp, float h) {
+	if (weather_map_rect.z > 0.0) {
+		return weather_wind(wp, h);
+	}
+	vec2 w = grass_wind.xy;
+	float s = length(w);
+	if (s < 1e-4) {
+		return vec3(0.0);
+	}
+	vec2 d = w / s;
+	float phase = dot(wp.xz, d) * 0.12 - TIME * s * 0.12;
+	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
+	return vec3(w.x, 0.0, w.y) * g;
+}
+)";
+	// The ground plants' wind (PlantGenerator's plant_wind, the same weather-map wind and fallback).
+	const Vector<String> lines = (WeatherMap3D::get_wind_shader_code() + plant_wind_code).split("\n");
+	for (const String &l : lines) {
+		const String t = l.strip_edges();
+		if (t.begins_with("global uniform") && code.contains(t)) {
+			continue;
+		}
+		wind += l + "\n";
+	}
+	const String uniforms = "uniform float flutter_amount = 1.0;\nuniform float flutter_size = 0.1;\n";
+	const String body = R"(
+	{
+		// Leaf flutter (TreeGenerator::_flutter_material).
+		vec3 fw = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		float fs = length(plant_wind(fw, max(fw.y - MODEL_MATRIX[3].y, 1.0)));
+		float fa = flutter_amount * smoothstep(0.5, 9.0, fs);
+		if (fa > 0.0) {
+			float fph = fract(dot(COLOR.rgb, vec3(91.37, 47.13, 13.71))) * 6.2831853;
+			float fq = 5.0 + 4.0 * fract(fph * 3.17) + 0.25 * fs;
+			float fx = UV.x - 0.5;
+			float ft = UV.y;
+			VERTEX += NORMAL * (flutter_size * fa * (0.07 * ft * ft * sin(TIME * fq + fph) + 0.3 * fx * ft * sin(TIME * fq * 1.31 + fph * 2.3)));
+		}
+	}
+)";
+	code = code.insert(vx + String("void vertex() {").length(), body);
+	code = code.insert(vx, uniforms + wind + "\n");
+	// The path tracer: flutter is a raster motion of millimetres; the traced leaves keep their
+	// shape and follow the bones. A static tree is traced from its rest mesh (no capture), a
+	// rigged one is captured only when its bones move (as the plain material was), never because
+	// TIME moved: capturing a whole crown every frame for flutter costs memory and BLAS builds.
+	const int rm = code.find("render_mode ");
+	if (rm >= 0) {
+		code = code.insert(rm + String("render_mode ").length(), rigged ? "rt_vertex_frozen, " : "rt_vertex_static, ");
+	}
+	Ref<Shader> sh;
+	sh.instantiate();
+	sh->set_code(code);
+	Ref<ShaderMaterial> m;
+	m.instantiate();
+	m->set_shader(sh);
+	// The base material's parameters, as BaseMaterial3D set them on its own RID.
+	List<PropertyInfo> uniforms_list;
+	sh->get_shader_uniform_list(&uniforms_list);
+	const RID base_rid = p_base->get_rid();
+	for (const PropertyInfo &pi : uniforms_list) {
+		Variant v = RenderingServer::get_singleton()->material_get_param(base_rid, pi.name);
+		if (v.get_type() == Variant::RID) {
+			// Textures go back as the Texture resources (the path tracer reads those).
+			for (int t = 0; t < BaseMaterial3D::TEXTURE_MAX; t++) {
+				const Ref<Texture2D> tex = p_base->get_texture(BaseMaterial3D::TextureParam(t));
+				if (tex.is_valid() && tex->get_rid() == RID(v)) {
+					v = tex;
+					break;
+				}
+			}
+		}
+		if (v.get_type() != Variant::NIL) {
+			m->set_shader_parameter(pi.name, v);
+		}
+	}
+	m->set_shader_parameter("flutter_amount", leaf_flutter);
+	m->set_shader_parameter("flutter_size", p_leaf_size);
+	return m;
 }
 
 Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
@@ -4725,9 +4836,9 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		const float self_shade = conifer ? 0.7f : 0.8f;
 		// Seasons: the turned share takes the autumn colour; a bare crown hides little ground.
 		const LeafSeason ls = _leaf_season(p_preset, season);
-		const Color crown = leaf.lerp(ls.color, ls.season_blend());
+		const Color crown_color = leaf.lerp(ls.color, ls.season_blend());
 		const float leafy = ls.out * (1.0f - ls.fallen);
-		Color far = Color(crown.r * self_shade, crown.g * self_shade, crown.b * self_shade, Math::lerp(0.35f, conifer ? 0.85f : 0.9f, leafy));
+		Color far = Color(crown_color.r * self_shade, crown_color.g * self_shade, crown_color.b * self_shade, Math::lerp(0.35f, conifer ? 0.85f : 0.9f, leafy));
 		if (p_form == FORM_SAPLING) {
 			far.a = 0.5f;
 		} else if (p_form == FORM_SNAG || p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
@@ -5172,6 +5283,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);
 	ClassDB::bind_method(D_METHOD("set_junction_weld", "enabled"), &TreeGenerator::set_junction_weld);
 	ClassDB::bind_method(D_METHOD("set_climber_plant_leaves", "enabled"), &TreeGenerator::set_climber_plant_leaves);
+	ClassDB::bind_method(D_METHOD("set_leaf_flutter", "amount"), &TreeGenerator::set_leaf_flutter);
+	ClassDB::bind_method(D_METHOD("get_leaf_flutter"), &TreeGenerator::get_leaf_flutter);
 	ClassDB::bind_method(D_METHOD("get_climber_plant_leaves"), &TreeGenerator::get_climber_plant_leaves);
 	ClassDB::bind_method(D_METHOD("get_junction_weld"), &TreeGenerator::get_junction_weld);
 	ClassDB::bind_method(D_METHOD("get_season"), &TreeGenerator::get_season);
@@ -5221,6 +5334,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "junction_weld"), "set_junction_weld", "get_junction_weld");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "climber_plant_leaves"), "set_climber_plant_leaves", "get_climber_plant_leaves");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leaf_flutter", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_leaf_flutter", "get_leaf_flutter");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "phyllotaxis", PROPERTY_HINT_ENUM, "Alternate,Opposite,Whorled"), "set_phyllotaxis", "get_phyllotaxis");
 	ADD_GROUP("Stand", "forest_");

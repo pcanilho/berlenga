@@ -245,6 +245,27 @@ The fork already has the delivery path: `MultiMesh.bones_per_instance`
 per-instance bone records, raster and path tracer match (mean pixel difference 0.013), and a
 compute pass can write the records (gpu-multimesh-records.md). What is missing is the solver.
 
+### 3b. Leaf flutter (as built, 11 Nov; Paulo picked)
+
+Bones carry the branches; each leaf adds its own flutter in the leaf shader (`leaf_flutter`,
+default 1). The material is BaseMaterial3D's generated shader for the leaf surface, so skinning
+from instance bones, snow, wetness and backlight stay as they were, with Sousa's detail
+bending added at the top of vertex() (*Vegetation Procedural Animation and Shading in Crysis*,
+GPU Gems 3, ch. 16). The leaf bends along its normal with the square of the distance from the
+petiole (UV.y), and twists about its midrib (UV.x - 0.5), which is the motion SpeedTree's leaf
+ripple and Unreal's Pivot Painter show. Each leaf runs at 5-9 Hz plus a little more in strong
+wind, its phase taken from its vertex colour (the same on all of a leaf's vertices at every
+LOD). The amount follows the ground plants' wind (`plant_wind`: the weather map's wind, or the
+fallback), so trees, plants and grass share one wind. It is zero in calm air and full from
+about 9 m/s, and moves a leaf's tip by millimetres and its edges by about a centimetre.
+- Path tracer: the leaves keep their rest shape and follow the bones. Static trees are traced
+  from the rest mesh (`rt_vertex_static`). Rigged trees are captured when their bones move
+  (`rt_vertex_frozen`), as with the plain material, never because TIME moved: recapturing a
+  20-million-triangle open-grown oak crown every frame ran the cloud out of memory.
+- At rest the material is pixel-identical to the plain one in raster (mean difference 0.000002)
+  and in the path tracer.
+- Climber leaves flutter too; needles do not.
+
 ### 3a. The solver we build (stage 3)
 
 Wind on a tree is a structure loaded by turbulence, the problem wind engineers solve for

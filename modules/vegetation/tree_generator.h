@@ -300,6 +300,8 @@ private:
 	// instanced into their own surface; empty when climber_plant_leaves is off.
 	Builder climber_leaf_b;
 	bool climber_plant_leaves = true;
+	float leaf_flutter = 1.0f; // Leaf flutter amount (trees.md 3b); 0 keeps the plain material.
+	Ref<Material> _flutter_material(const Ref<StandardMaterial3D> &p_base, float p_leaf_size) const;
 	static Array _plant_climber_leaves(Climber p_climber);
 	static Array plant_climber_cache[4];
 
@@ -565,6 +567,11 @@ public:
 		mesh_cache.clear();
 	}
 	bool get_climber_plant_leaves() const { return climber_plant_leaves; }
+	void set_leaf_flutter(float p_amount) {
+		leaf_flutter = MAX(p_amount, 0.0f);
+		mesh_cache.clear();
+	}
+	float get_leaf_flutter() const { return leaf_flutter; }
 
 	Ref<ArrayMesh> generate();
 
