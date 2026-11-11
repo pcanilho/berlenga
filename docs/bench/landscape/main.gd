@@ -187,8 +187,8 @@ func _generate() -> void:
 	# One climate for the rivers (rain and snowmelt by month), the data map's climate fields and the plants: a mild
 	# coast with the wet wind from the sea (south, +Z).
 	climate = ClimateRecipe.new()
-	climate.temperature_january = 4.0
-	climate.temperature_july = 19.0
+	climate.temperature_january = 1.0 # the same winter as the snowpack's SnowClimate
+	climate.temperature_july = 17.0
 	climate.precipitation = 1100.0
 	climate.wind_from = 190.0
 	gen.climate_recipe = climate
@@ -560,8 +560,10 @@ func _build_vegetation() -> void:
 	conifer.density = 0.8
 	conifer.footprint = 3.0
 	conifer.canopy_radius = 3.0 # the cone's base (0.22 of 14 m)
-	conifer.set_rule_range(PlantSpecies.RULE_HEIGHT, Vector2(120, 650))
-	conifer.set_rule_fade(PlantSpecies.RULE_HEIGHT, 80.0)
+	# Altitude belts from the climate, not from heights: conifers in the cool belt up to the tree line, broadleaves
+	# in the mild lowlands where winters stay above -3 C (beech's frost hardiness).
+	conifer.temperature_range = Vector2(6.5, 11.0)
+	conifer.temperature_fade = 0.6
 	conifer.set_rule_range(PlantSpecies.RULE_SLOPE, Vector2(0, 32))
 	conifer.set_rule_fade(PlantSpecies.RULE_SLOPE, 6.0)
 	conifer.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(10, 1000000))
@@ -577,8 +579,10 @@ func _build_vegetation() -> void:
 	broad.density = 0.7
 	broad.footprint = 3.5
 	broad.canopy_radius = 3.3 # the crown ball (0.3 of 11 m)
-	broad.set_rule_range(PlantSpecies.RULE_HEIGHT, Vector2(6, 220))
-	broad.set_rule_fade(PlantSpecies.RULE_HEIGHT, 40.0)
+	broad.temperature_range = Vector2(10.0, 30.0)
+	broad.temperature_fade = 0.3
+	broad.january_temperature_range = Vector2(-3.0, 100.0)
+	broad.set_rule_range(PlantSpecies.RULE_HEIGHT, Vector2(6, 100000)) # above the beach
 	broad.set_rule_range(PlantSpecies.RULE_SLOPE, Vector2(0, 25))
 	broad.set_rule_fade(PlantSpecies.RULE_SLOPE, 5.0)
 	broad.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(12, 1000000))
@@ -904,7 +908,16 @@ func _checks() -> void:
 			break
 	var wd := data_map.get_water_depth_at(plain)
 	check(plain.y < lake_level and wd <= 0.0, "data map: land away from the lake stays dry (%.1f m deep at %.0f m, lake at %.0f m)" % [wd, plain.y, lake_level])
-	check(veg.get_plant_count() > 1000, "forest placed by slope, height and water rules (%d plants)" % veg.get_plant_count())
+	check(veg.get_plant_count() > 1000, "forest placed by slope, climate and water rules (%d plants)" % veg.get_plant_count())
+	# The tree line comes from the climate: the coldest tree stands where the mean year is about 6 C.
+	var line := 0.0
+	var coldest := 100.0
+	for sp in 2:
+		for p in veg.get_placements(sp):
+			line = maxf(line, p.y)
+			coldest = minf(coldest, data_map.get_temperature_at(p))
+	check(false, "the snowpack's winter comes from the same climate as rivers and plants (SnowClimate is set apart here)", true)
+	check(data_map.has_climate() and coldest > 5.5 and line > 0.0, "the climate sets the tree line (%.0f m, where the mean year is %.1f C)" % [line, coldest])
 	# Geology rules: no tree stands on bare rock or scree, every tree on soil.
 	var on_rock := 0
 	var total := 0
@@ -955,11 +968,13 @@ func _checks() -> void:
 			break
 	bank_p += ld * 3.0
 	bank_p.y = height_at(bank_p.x, bank_p.z)
-	# The densest stand: the placement with the most trees within 15 m (of the first few hundred).
+	# The densest snow-free stand: the placement with the most trees within 15 m (of the first few hundred).
 	var trees: Array = veg.get_placements(1) + veg.get_placements(0)
 	var tree_p := Vector3.INF
 	var best := 0
 	for i in mini(trees.size(), 400):
+		if _snow_depth(trees[i]) > 0.01:
+			continue # snow takes the print there, not the litter
 		var nb := 0
 		for q in trees:
 			if (q as Vector3).distance_squared_to(trees[i]) < 225.0:
