@@ -924,6 +924,17 @@ func _build_water() -> void:
 							below += 1
 					_log("contact sheet: %d vertices, %d below the ground, mean %.2f m above, worst %.2f m" % [vs.size(), below, mean / maxf(vs.size(), 1), worst])
 			for g in gen.get_waterfalls():
+				if g.get("id", "") == args.get("contact", ""):
+					var tp: Vector3 = g["top"]
+					var dd: Vector3 = g["direction"]
+					var lp: PackedVector3Array = g["lip_points"]
+					_log("  %s top %s bottom %s height %.1f lip_width %.1f share %s" % [g["id"], tp, g["bottom"], g["height"], g["lip_width"], g["lip_share"]])
+					for c in lp.size():
+						var line := ""
+						for i in 12:
+							var q: Vector3 = Vector3(lp[c].x, 0, lp[c].z) + dd * i * 2.0
+							line += " %.1f" % (gen.get_height(q) - tp.y)
+						_log("    lip %d at %.1f:%s" % [c, lp[c].y - tp.y, line])
 				if g.get("type", "") == "plunge":
 					continue
 				var top: Vector3 = g["top"]
@@ -1546,11 +1557,11 @@ func _build_camera() -> void:
 								if found:
 									continue
 								var q: Vector3 = bot + d * h * k + side * h * k * o
-								q.y = maxf(height_at(q.x, q.z) + 5.0, mid.y - h * 0.1) + h * lift
+								q.y = maxf(gen.get_height(q) + 5.0, mid.y - h * 0.1) + h * lift
 								var clear := true
 								for t in range(1, 20):
 									var p := q.lerp(mid, t / 20.0)
-									if height_at(p.x, p.z) > p.y - 2.0:
+									if gen.get_height(p) > p.y - 1.0:
 										clear = false
 										break
 								if clear:
@@ -1559,6 +1570,13 @@ func _build_camera() -> void:
 					cam.position = c
 					cam.look_at(mid)
 					cam.fov = clampf(rad_to_deg(2.0 * atan(0.8 * h / c.distance_to(mid))), 25.0, 70.0)
+					if args.has("contact-cam"):
+						# --contact-cam=back,up: straight down the fall's own direction from the foot, back and up (m).
+						var bu: PackedStringArray = args["contact-cam"].split(",")
+						c = bot + d * float(bu[0]) + Vector3(0, float(bu[1]), 0)
+						cam.position = c
+						cam.look_at(mid)
+						cam.fov = 60.0
 					_log("contact view of %s from %s, top %s" % [pick["id"], c, top])
 					for r in rivers:
 						for rf in r.get_waterfalls():

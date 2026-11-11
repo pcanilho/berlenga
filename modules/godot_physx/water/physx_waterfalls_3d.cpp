@@ -174,6 +174,9 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	if (lip.size() < 2 || share.size() != lip.size() || profiles.size() != 3 || face.discharge <= 0.0f) {
 		return;
 	}
+	if (_water_level(face.top, p_source) > face.top.y + 0.5f) {
+		return; // under a lake or the sea: no fall to see
+	}
 	const float lw = MAX(face.width, 1.0f);
 	const float spacing = lw / (lip.size() - 1);
 	// The wet part of the lip: the brink points no higher than the water over the lowest one (a gorge's lip line
@@ -243,7 +246,8 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 				const Vector3 q = Vector3(lip[c].x, 0.0f, lip[c].z) + dir * run;
 				const float y = float(p_source->call("get_height", q)) - face.top.y;
 				pts.push_back(Vector2(run, y));
-				if (y <= -face.height - 1.0f) {
+				// The drop counts from this column's own brink (a lip line can cross ground below the record's top).
+				if (y <= pts[0].y - face.height - 1.0f) {
 					break;
 				}
 			}
@@ -267,7 +271,7 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 		for (int i = 1; i < line.size(); i++) {
 			arc.push_back(arc[i - 1] + line[i].distance_to(line[i - 1]));
 		}
-		if (line.size() < 2 || -line[line.size() - 1].y < 0.5f * face.height) {
+		if (line.size() < 2 || line[0].y - line[line.size() - 1].y < 0.5f * face.height) {
 			return; // A line that stops short of the foot: no face to drape over.
 		}
 		longest = MAX(longest, arc[arc.size() - 1]);
@@ -347,6 +351,29 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			face.air_peak = peak;
 		}
 		face.columns.push_back(col);
+	}
+	// The sheet stops where its middle column meets standing water (a fall into a lake or the sea).
+	{
+		const Column &m = face.columns[main_col];
+		int keep = m.points.size();
+		for (int r = 1; r < m.points.size(); r++) {
+			if (m.points[r].y < _water_level(m.points[r], p_source)) {
+				keep = r + 1;
+				break;
+			}
+		}
+		if (keep < 2) {
+			return;
+		}
+		if (keep < m.points.size()) {
+			face.foot = m.points[keep - 1];
+		}
+		for (Column &col : face.columns) {
+			col.points.resize(keep);
+			col.speed.resize(keep);
+			col.air.resize(keep);
+			col.travel.resize(keep);
+		}
 	}
 	// Ledges: where the water strikes each one, at the speed it has there (the middle column's nearest row).
 	const Array ledges = p_fall.get("ledges", Array());
@@ -538,9 +565,46 @@ void PhysXWaterfalls3D::_build_effects() {
 	}
 }
 
+// The standing water's level over a point (a lake's where its rectangle covers it and the ground is below the
+// level, else the sea's), or a very low number with none.
+float PhysXWaterfalls3D::_water_level(const Vector3 &p_position, Object *p_source) const {
+	if (p_source != nullptr && p_source->has_method("get_water_level")) {
+		// The source knows its own water bodies (TerrainGenerator3D: NaN on dry ground).
+		const float w = p_source->call("get_water_level", p_position);
+		return Math::is_finite(w) ? w : -1e30f;
+	}
+	float level = sea_level;
+	const Vector2 xz(p_position.x, p_position.z);
+	for (uint32_t i = 0; i < lake_rects.size(); i++) {
+		if (lake_rects[i].has_point(xz) && lake_levels[i] > level) {
+			const float ground = p_source != nullptr && p_source->has_method("get_height") ? float(p_source->call("get_height", p_position)) : p_position.y;
+			if (ground < lake_levels[i]) {
+				level = lake_levels[i];
+			}
+		}
+	}
+	return level;
+}
+
 void PhysXWaterfalls3D::rebuild() {
 	faces.clear();
 	Node *src = has_node(source) ? get_node(source) : nullptr;
+	sea_level = -1e30f;
+	lake_rects.clear();
+	lake_levels.clear();
+	if (src != nullptr && src->has_method("get_sea_level")) {
+		sea_level = src->call("get_sea_level");
+	}
+	if (src != nullptr && src->has_method("get_lake_results")) {
+		const Array lakes = src->call("get_lake_results");
+		for (int i = 0; i < lakes.size(); i++) {
+			const Dictionary l = lakes[i];
+			if (l.has("rect") && l.has("level")) {
+				lake_rects.push_back(l["rect"]);
+				lake_levels.push_back(l["level"]);
+			}
+		}
+	}
 	if (contact_falls && src != nullptr && src->has_method("get_waterfalls")) {
 		const Array falls = src->call("get_waterfalls");
 		for (int i = 0; i < falls.size(); i++) {

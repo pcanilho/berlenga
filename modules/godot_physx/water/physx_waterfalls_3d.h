@@ -82,6 +82,11 @@ private:
 	float row_spacing = 1.0f; // m along the face
 
 	LocalVector<Face> faces;
+	// Standing water from the source (sea level, lakes as rectangle and level): a sheet stops where it meets it.
+	float sea_level = -1e30f;
+	LocalVector<Rect2> lake_rects;
+	LocalVector<float> lake_levels;
+	float _water_level(const Vector3 &p_position, Object *p_source) const;
 	MeshInstance3D *mesh_instance = nullptr;
 	Ref<ShaderMaterial> material;
 	LocalVector<Node3D *> effects;
