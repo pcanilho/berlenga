@@ -122,7 +122,11 @@ void TreeGenerator::set_preset(Preset p_preset) {
 	p[PARAM_SHADOW_STRENGTH] = 0.08f;
 	p[PARAM_SHADOW_FALLOFF] = 1.25f;
 	p[PARAM_SHADOW_DEPTH] = 4;
-	p[PARAM_BUD_LIGHT_MIN] = 0.05f;
+	// Buds die of shade only where no light reaches at all. A threshold above that killed the
+	// buds of every crowded crown a few metres under its top (stand-grown trees kept a leafy cap
+	// and no crown); shade-tolerant buds live on a few percent of open light (Larcher 2003), and
+	// branches that do not pay for themselves still go by shedding.
+	p[PARAM_BUD_LIGHT_MIN] = 0.0f;
 	p[PARAM_BUD_IDLE_YEARS] = 3;
 	p[PARAM_SHED_RATIO] = 0.05f;
 	p[PARAM_DEAD_BRANCH_KEEP] = 0.15f;
@@ -222,13 +226,11 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			bark_color = Color(0.42f, 0.27f, 0.18f);
 			leaf_color = Color(0.12f, 0.22f, 0.1f);
 			p[PARAM_CROWN_CONE] = 0.45f;
-			p[PARAM_BUD_LIGHT_MIN] = 0.0f;
 			p[PARAM_SHADOW_STRENGTH] = 0.04f;
 			break;
 		// Conifers keep a cone: branches reach about 0.3 of their depth below the top (open-grown
 		// spruce and fir crowns are about a third as wide as tall), with a lighter shadow so the
-		// denser crown keeps its buds. Whorl buds near the top crowd into few shadow cells and died
-		// of shade there, leaving a bare band under the tip; conifer buds only die by shedding.
+		// denser crown keeps its buds.
 		case PRESET_NORWAY_SPRUCE: // Picea abies: strong leader, drooping laterals, dead lower limbs.
 			p[PARAM_LEADER_GROWTH] = 0.8f;
 			p[PARAM_YEARS] = 50;
@@ -253,7 +255,6 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			bark_color = Color(0.33f, 0.27f, 0.23f);
 			leaf_color = Color(0.07f, 0.17f, 0.08f);
 			p[PARAM_CROWN_CONE] = 0.3f;
-			p[PARAM_BUD_LIGHT_MIN] = 0.0f;
 			p[PARAM_SHADOW_STRENGTH] = 0.022f;
 			break;
 		case PRESET_HAZEL: // Corylus avellana: multi-stemmed, basitonic, sprouts from the base.
@@ -400,7 +401,6 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			bark_color = Color(0.36f, 0.25f, 0.2f);
 			leaf_color = Color(0.25f, 0.4f, 0.12f);
 			p[PARAM_CROWN_CONE] = 0.35f;
-			p[PARAM_BUD_LIGHT_MIN] = 0.0f;
 			p[PARAM_SHADOW_STRENGTH] = 0.03f;
 			break;
 		case PRESET_SILVER_FIR: // Abies alba: very shade tolerant, flat horizontal sprays.
@@ -425,7 +425,6 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			bark_color = Color(0.5f, 0.5f, 0.48f);
 			leaf_color = Color(0.06f, 0.16f, 0.07f);
 			p[PARAM_CROWN_CONE] = 0.3f;
-			p[PARAM_BUD_LIGHT_MIN] = 0.0f;
 			p[PARAM_SHADOW_STRENGTH] = 0.022f;
 			break;
 		case PRESET_ROWAN: // Sorbus aucuparia: small tree, ascending branches, pinnate leaves.

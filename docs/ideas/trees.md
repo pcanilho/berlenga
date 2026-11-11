@@ -317,8 +317,11 @@ bole 0.6 m to 5 m, sugar maple 13 m (`get_bole_height()`). Leaves are now thinne
 crowd, to 1.5 m2 of leaf per m3 (Lalic and Mihailovic 2004), then to the crown's LAI, and by twigs
 and leaves in equal parts, so the dense top shell thins before the sparse inner crown. Conifer
 buds no longer die of shade (crowded young whorls under the tip left a bare band); they go only
-by shedding. `get_foliage_profile(bins)` gives foliage reach per height slice for checks. Still
-open: stand crowns hold leaves only in the top few metres.
+by shedding. `get_foliage_profile(bins)` gives foliage reach per height slice for checks. Stand
+crowns then held leaves only in their top few metres: buds were dying of shade a few metres under
+the top (light below 0.05 in the linear model). Buds now die only in full darkness, as shade-
+tolerant buds live on a few percent of open light (Larcher 2003), and weak branches still go by
+shedding: forest beech crown depth 2.6 m to 8 m, open oak foliage from 2.8 m.
 
 **Eastern North America** (Paulo's pick, 11 Nov). Sugar and red maple, northern red and white
 oak, eastern white pine, eastern hemlock, American beech, paper and yellow birch, witch-hazel and
