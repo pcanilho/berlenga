@@ -62,6 +62,7 @@ var sky_mat: WeatherSkyMaterial
 var snow: SnowCover3D
 var snowfall: SnowFall3D
 var cornices: SnowCornice3D
+var cornice_climate_max := 0.0 # the baked winter's largest cornice (m): 0 where the crests hold too little snow
 var lightning: WeatherLightning3D
 var probe: Node3D
 var data_map: TerrainDataMap3D
@@ -476,6 +477,8 @@ func _build_ground() -> void:
 		landscape.material = ground_mat
 		landscape.lod_error = float(args.get("lod-error", "2"))
 		landscape.source = landscape.get_path_to(gen)
+		if "collision_enabled" in landscape:
+			landscape.collision_enabled = false # the bench keeps its own HeightMapShape3D ground body (4 m)
 		landscape.rebuild()
 		var st: Dictionary = landscape.get_stats()
 		_log("landscape %s" % st)
@@ -714,6 +717,7 @@ func _bake_snow_winter() -> void:
 		if v > 1.0: nz += 1
 	var cx := 0.0
 	for v in winter.cornice_x: cx = maxf(cx, absf(v))
+	cornice_climate_max = cx
 	_log("climate swe max %.1f mm, %d of %d cells with snow, cornice max %.2f m, has_world %s" % [mx, nz, sw.size(), cx, snow.has_world()])
 
 
@@ -1098,6 +1102,19 @@ func _checks() -> void:
 		if args.has("falls"):
 			for f in r.get_waterfalls():
 				print("fall on %s: lip %s impact %s height %.1f m q %.2f lip_speed %.2f breakup %.1f" % [r.name, f.lip, f.impact, f.height, f.discharge, f.lip_speed, f.breakup_length])
+	if args.has("falls"):
+		for r in rivers:
+			var c: Curve3D = r.curve
+			var steep := 0.0
+			var at := Vector3()
+			for k in range(1, c.point_count):
+				var a := c.get_point_position(k - 1)
+				var b := c.get_point_position(k)
+				var run := Vector2(b.x - a.x, b.z - a.z).length()
+				if run > 0.01 and (a.y - b.y) / run > steep:
+					steep = (a.y - b.y) / run
+					at = a
+			print("river %s: %d points, q %.2f, steepest step %.2f at %s, %d falls" % [r.name, c.point_count, r.discharge, steep, at, r.get_waterfalls().size()])
 	check(gen_falls.size() > 0 and lip > 0, "the generator's rock bands make waterfalls and the rivers fall there (%d from the generator, %d lips on the rivers)" % [gen_falls.size(), lip])
 	# Waterfall mist: each river makes it at its falls, the weather blows it, and it turns the volumetric fog on itself.
 	var mists: Array[Node] = []
@@ -1223,7 +1240,12 @@ func _checks() -> void:
 	cprobe.global_position = peak
 	cornices.follow_target = cornices.get_path_to(cprobe)
 	cornices.rebuild()
-	check(cornices.get_segment_count() > 0, "cornices grow on the lee crests around the peak (%d pieces)" % cornices.get_segment_count())
+	if cornice_climate_max < 0.3:
+		# A mild winter (the valley layout's crests stay under 1000 m): the climate itself builds no cornices, so
+		# none is right; the check only applies where the baked winter grows them.
+		_log("cornices: none expected, the baked winter's largest is %.2f m (%d pieces)" % [cornice_climate_max, cornices.get_segment_count()])
+	else:
+		check(cornices.get_segment_count() > 0, "cornices grow on the lee crests around the peak (%d pieces)" % cornices.get_segment_count())
 	cornices.follow_target = NodePath("")
 	check(ocean.follow_weather and absf(ocean.wind_speed - weather.get_mean_wind_at(ocean.global_position).length()) < 3.0, "sea state follows the weather wind (%.1f m/s vs %.1f)" % [ocean.wind_speed, weather.get_mean_wind_at(ocean.global_position).length()])
 	# The sun from the clock: the date and place point the light, nothing placed by hand.
