@@ -441,6 +441,18 @@ bool TerrainGenerator3D::generate() {
 	glac.p.ela = glacial_ela;
 	glac.p.erodibility *= double(glacial_erosion);
 	glac.p.sliding = glacial_sliding;
+	// Glaciers whose catchment lies beyond the map come in with their rivers: each inflow brings its off-map area
+	// times the mean net balance there as ice.
+	glac.sources.clear();
+	if (glacial_inflow_balance > 0.0) {
+		for (const InflowPoint &ip : inflow_points) {
+			TerrainGlacial::Source src;
+			src.u = (ip.position.x - result_rect.position.x) / MAX(result_rect.size.x, real_t(1.0));
+			src.v = (ip.position.y - result_rect.position.y) / MAX(result_rect.size.y, real_t(1.0));
+			src.q = ip.area * double(glacial_inflow_balance);
+			glac.sources.push_back(src);
+		}
+	}
 	const bool glacial = glacial_enabled && glacial_erosion > 0.0;
 	uint64_t glacial_usec = 0;
 	int glacial_count = 0;
@@ -4086,6 +4098,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_glacial_rock_variation"), &TerrainGenerator3D::get_glacial_rock_variation);
 	ClassDB::bind_method(D_METHOD("set_glacial_rock_scale", "value"), &TerrainGenerator3D::set_glacial_rock_scale);
 	ClassDB::bind_method(D_METHOD("get_glacial_rock_scale"), &TerrainGenerator3D::get_glacial_rock_scale);
+	ClassDB::bind_method(D_METHOD("set_glacial_inflow_balance", "value"), &TerrainGenerator3D::set_glacial_inflow_balance);
+	ClassDB::bind_method(D_METHOD("get_glacial_inflow_balance"), &TerrainGenerator3D::get_glacial_inflow_balance);
 	ClassDB::bind_method(D_METHOD("set_glacial_sliding", "value"), &TerrainGenerator3D::set_glacial_sliding);
 	ClassDB::bind_method(D_METHOD("get_glacial_sliding"), &TerrainGenerator3D::get_glacial_sliding);
 	ClassDB::bind_method(D_METHOD("get_last_glacial_eroded"), &TerrainGenerator3D::get_last_glacial_eroded);
@@ -4307,6 +4321,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_sliding", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_glacial_sliding", "get_glacial_sliding");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_variation", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_glacial_rock_variation", "get_glacial_rock_variation");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_scale", PROPERTY_HINT_RANGE, "16,4000,1,suffix:m"), "set_glacial_rock_scale", "get_glacial_rock_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_inflow_balance", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater,suffix:m/yr"), "set_glacial_inflow_balance", "get_glacial_inflow_balance");
 
 	ADD_GROUP("Coast", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_edges", PROPERTY_HINT_FLAGS, "-X,+X,-Z,+Z"), "set_ocean_edges", "get_ocean_edges");

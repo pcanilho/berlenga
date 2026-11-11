@@ -137,6 +137,7 @@ private:
 	real_t glacial_sliding = 1.0; // sliding speed over depth-averaged ice speed
 	real_t glacial_rock_variation = 0.0; // spread of rock quality under the ice (log of the erosion multiplier); 0 even
 	real_t glacial_rock_scale = 500.0; // m, wavelength of that variation
+	real_t glacial_inflow_balance = 0.0; // m/yr of ice per m2 of each inflow's off-map catchment (0: water only)
 	real_t last_glacial_eroded = 0.0;
 	real_t last_glacial_ice_area = 0.0;
 	real_t last_glacial_msec = 0.0;
@@ -470,6 +471,8 @@ public:
 	real_t get_glacial_rock_variation() const { return glacial_rock_variation; }
 	void set_glacial_rock_scale(real_t p_value) { glacial_rock_scale = MAX(p_value, real_t(16.0)); }
 	real_t get_glacial_rock_scale() const { return glacial_rock_scale; }
+	void set_glacial_inflow_balance(real_t p_value) { glacial_inflow_balance = MAX(p_value, real_t(0.0)); }
+	real_t get_glacial_inflow_balance() const { return glacial_inflow_balance; }
 	void set_glacial_sliding(real_t p_value) { glacial_sliding = MAX(p_value, real_t(0.0)); }
 	real_t get_glacial_sliding() const { return glacial_sliding; }
 	real_t get_last_glacial_eroded() const { return last_glacial_eroded; }

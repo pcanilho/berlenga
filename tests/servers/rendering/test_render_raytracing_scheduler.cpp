@@ -294,6 +294,27 @@ TEST_CASE("[RTDynamicScheduler] An oversized new item still builds when it comes
 	CHECK(h.scheduler.get_stats().get_updated() <= budgets.max_operations);
 }
 
+TEST_CASE("[RTDynamicScheduler] An oversized item still refits when it comes first") {
+	Harness h;
+	RTSchedulerBudgets budgets;
+	budgets.update_triangles = 1500000;
+	budgets.build_triangles = 500000;
+	h.scheduler.set_budgets(budgets);
+	LocalVector<RTSchedulerItem> items;
+	items.push_back(make_item(0, 2800000));
+	items[0].blas_update = RSE::RT_BLAS_UPDATE_REFIT;
+	h.frame(items); // its first build
+	for (int i = 0; i < 3; i++) {
+		const LocalVector<RTSchedulerAction> &actions = h.frame(items);
+		CHECK(actions[0] == RT_SCHEDULER_REFIT);
+	}
+	// Beside small items it still comes first once it is stale, and the small ones keep the budget's rule.
+	items.push_back(make_item(1, 100));
+	h.frame(items);
+	const LocalVector<RTSchedulerAction> &actions = h.frame(items);
+	CHECK(count_actions(actions, RT_SCHEDULER_HOLD) <= 1);
+}
+
 TEST_CASE("[RTDynamicScheduler] New items build before structure changes of existing ones") {
 	Harness h;
 	RTSchedulerBudgets budgets;

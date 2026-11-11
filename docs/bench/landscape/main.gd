@@ -116,9 +116,11 @@ func _ready() -> void:
 				for k2 in ["bar", "bar-level", "bowl"]:
 					vd.erase(k2)
 				vd["rock-var"] = "1.0"
-				# A slightly lower snowline and harder ice than the marked valley: cirques in every side valley.
+				# A slightly lower snowline than the marked valley: cirques in every side valley.
 				vd["ela"] = "400"
-				vd["glacial-erosion"] = "15"
+				vd["glacial-erosion"] = "5"
+				# The main river's glacier comes in from beyond the map with it (0.03 m/yr over its 60 km²).
+				vd["ice-inflow"] = "0.03"
 		for k in vd:
 			if not args.has(k):
 				args[k] = vd[k]
@@ -288,6 +290,7 @@ func _generate() -> void:
 		gen.glacial_final = float(args.get("glacial-final", "100000"))
 		gen.glacial_rock_variation = float(args.get("rock-var", "0"))
 		gen.glacial_rock_scale = float(args.get("rock-scale", "500"))
+		gen.glacial_inflow_balance = float(args.get("ice-inflow", "0"))
 		gen.glacial_erosion = float(args.get("glacial-erosion", "1"))
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
