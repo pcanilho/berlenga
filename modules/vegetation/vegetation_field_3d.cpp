@@ -30,6 +30,12 @@
 
 #include "vegetation_field_3d.h"
 
+// Rigged trees (TreeWind3D, from the trees work) when that class is in the module.
+#if __has_include("tree_wind_3d.h")
+#include "tree_wind_3d.h"
+#define VEGETATION_HAS_TREE_WIND
+#endif
+
 #include "core/config/engine.h"
 #include "core/math/random_pcg.h"
 #include "core/object/callable_mp.h"
@@ -423,10 +429,26 @@ Error VegetationField3D::populate() {
 							mm->set_transform_format(MultiMesh::TRANSFORM_3D);
 							mm->set_use_custom_data(true);
 							mm->set_mesh(near_pass ? near_mesh : mesh);
-							mm->set_instance_count(buckets[b].size());
-							for (uint32_t i = 0; i < buckets[b].size(); i++) {
-								mm->set_instance_transform(i, xforms[v][buckets[b][i]]);
-								mm->set_instance_custom_data(i, customs[v][buckets[b][i]]);
+							const Ref<Mesh> draw_mesh = near_pass ? near_mesh : mesh;
+#ifdef VEGETATION_HAS_TREE_WIND
+							if (TreeWind3D::get_mesh_bone_count(draw_mesh) > 0) {
+								// A rigged tree: one record per bone, which TreeWind3D (target: this
+								// field) poses each frame.
+								LocalVector<Transform3D> bx;
+								LocalVector<Color> bc;
+								for (uint32_t i : buckets[b]) {
+									bx.push_back(xforms[v][i]);
+									bc.push_back(customs[v][i]);
+								}
+								TreeWind3D::fill_rest(mm, draw_mesh, bx, bc);
+							} else
+#endif
+							{
+								mm->set_instance_count(buckets[b].size());
+								for (uint32_t i = 0; i < buckets[b].size(); i++) {
+									mm->set_instance_transform(i, xforms[v][buckets[b][i]]);
+									mm->set_instance_custom_data(i, customs[v][buckets[b][i]]);
+								}
 							}
 							MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 							mmi->set_name(cells > 1 ? vformat("Plants%s_%d_%d_%d_%d_%d", near_pass ? "Near" : "", s, v, tx, tz, b) : vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
