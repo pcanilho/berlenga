@@ -225,6 +225,7 @@ class SnowCover3D : public Node3D {
 	float last_blown = 0.0f; // mm moved per cell (mean) by the last update's transport
 	float last_blown_max = 0.0f; // kg/(m s), largest transport flux in the last update
 	void _seed_from_world(const Vector<uint8_t> *p_only);
+	void _feed_world();
 	void _make_world();
 	void _free_world();
 	void _publish_world_globals();

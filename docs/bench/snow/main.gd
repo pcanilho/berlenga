@@ -1047,9 +1047,21 @@ func _run_climate_tests() -> void:
 			ok_seed = false
 	_check("the near square starts from the world tier", ok_seed, "largest difference %.1f%%" % (worst * 100.0))
 	_check("the world tier is up for materials", snow.has_world() and snow.get_world_texture() != null and snow.get_world_rect().size.x >= 4096.0, "world rect %s" % str(snow.get_world_rect()))
+	# Two-way: what the square does goes back to the world tier under it (fresh snow here), and not beyond.
+	var fq := snow.global_position + Vector3(37.0, 0, -51.0)
+	var far_q := snow.global_position + Vector3(-700.0, 0, 300.0)
+	var w_before := snow.get_world_swe_at(fq)
+	var far_before := snow.get_world_swe_at(far_q)
+	snow.add_snow(30.0, 100.0)
+	var near_now := 0.0
+	for k in 16:
+		near_now += snow.get_swe_at(fq + Vector3((k % 4) * 4.0 - 6.0, 0, (k / 4) * 4.0 - 6.0)) / 16.0
 	t0 = Time.get_ticks_usec()
 	snow.advance_world(3600.0)
 	print("  world tier, 256 x 256 cells, one update: %.1f ms" % ((Time.get_ticks_usec() - t0) / 1000.0))
+	var w_after := snow.get_world_swe_at(fq)
+	var far_after := snow.get_world_swe_at(far_q)
+	_check("the square feeds the world tier under it (two-way nesting)", w_after > w_before + 10.0 and absf(w_after - near_now) < 0.05 * maxf(near_now, 10.0) and absf(far_after - far_before) < 5.0, "world %.0f mm before, %.0f after, square %.0f mm there; far away %.0f to %.0f mm" % [w_before, w_after, near_now, far_before, far_after])
 
 	await _run_recipe_tests()
 

@@ -960,3 +960,15 @@ Mass is kept (only where the pushed share lands changes). The constants are chos
 measured. Checks: a flat foot at 5 m/s leaves 0.176 m of rim ahead against 0.033 m behind, 30% of the
 dent; driven on 1.5 m, the highest rim in front is 0.194 m against 0.101 m beside the track. Bench:
 `--view=trail --sled [--close]`.
+
+## Follow-up 11: the near square feeds the world tier (11 Nov 2026)
+
+The world tier seeded the near square, but nothing went back: drifts, slides, sheltered and sunny faces
+worked out on the fine cells were lost once the square moved on and the cells came back from the coarse
+pack. Nested weather models solve the same thing with two-way nesting: the fine grid's state, averaged
+over each coarse cell it covers, replaces the parent's there (WRF's feedback). `SnowCover3D` now does
+that before each world update and before the square shifts: water and liquid as area means, density
+as the column's mass over its depth, albedo weighted by water; crusts and cornices stay the world's.
+Only world cells the square covers whole are fed. Check (`--test=climate`): 30 mm of fresh snow on the
+square shows in the world tier under it (373 to 384 mm, the square's 394 mm less an hour of the world's
+own update), nothing changes beyond it.
