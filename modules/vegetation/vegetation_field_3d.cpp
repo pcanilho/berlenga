@@ -237,6 +237,7 @@ Error VegetationField3D::populate() {
 	const int tx1 = int(Math::ceil((rect.position.x + rect.size.x) / tile_size));
 	const int tz1 = int(Math::ceil((rect.position.y + rect.size.y) / tile_size));
 	const Transform3D to_local = get_global_transform().affine_inverse();
+	const Transform3D global_xf = get_global_transform();
 
 	// Far ground colour cells, about 1 m.
 	far_size = Vector2i(CLAMP(int(Math::ceil(rect.size.x)), 1, 2048), CLAMP(int(Math::ceil(rect.size.y)), 1, 2048));
@@ -252,6 +253,10 @@ Error VegetationField3D::populate() {
 		const Color far_srgb = sp->get_far_color();
 		const Color far_color = Color(far_srgb.r, far_srgb.g, far_srgb.b).srgb_to_linear() * Color(1, 1, 1, 0) + Color(0, 0, 0, far_srgb.a);
 		const float range = sp->get_visibility_range();
+		const TypedArray<Mesh> near_meshes = sp->get_near_meshes();
+		const float near_range = sp->get_near_range();
+		// Cells for the near swap: a quarter of the swap distance, at least 4 m.
+		const float near_cell = MAX(near_range * 0.25f, 4.0f);
 		const int variants = MAX(1, meshes.size());
 		const Pattern &pat = _get_pattern(sp->get_spacing(), s);
 		const float fp = sp->get_footprint();
@@ -390,27 +395,65 @@ Error VegetationField3D::populate() {
 					if (mesh.is_null()) {
 						continue;
 					}
-					Ref<MultiMesh> mm;
-					mm.instantiate();
-					mm->set_transform_format(MultiMesh::TRANSFORM_3D);
-					mm->set_use_custom_data(true);
-					mm->set_mesh(mesh);
-					mm->set_instance_count(xforms[v].size());
+					Ref<Mesh> near_mesh;
+					if (near_range > 0.0f && near_meshes.size() > 0) {
+						near_mesh = near_meshes[v % near_meshes.size()];
+					}
+					// Godot's visibility range measures to the centre of the whole MultiMesh, so a
+					// species with a near mesh is cut into small cells: the swap then happens a few
+					// plants at a time instead of a whole tile at once.
+					const int cells = near_mesh.is_valid() ? CLAMP(int(Math::ceil(tile_size / near_cell)), 1, 16) : 1;
+					const Vector2 tile_origin = Vector2(tx * tile_size, tz * tile_size);
+					LocalVector<LocalVector<uint32_t>> buckets;
+					buckets.resize(cells * cells);
 					for (uint32_t i = 0; i < xforms[v].size(); i++) {
-						mm->set_instance_transform(i, xforms[v][i]);
-						mm->set_instance_custom_data(i, customs[v][i]);
+						const Vector3 o = global_xf.xform(xforms[v][i].origin);
+						const int cx = CLAMP(int((o.x - tile_origin.x) / tile_size * cells), 0, cells - 1);
+						const int cz = CLAMP(int((o.z - tile_origin.y) / tile_size * cells), 0, cells - 1);
+						buckets[cz * cells + cx].push_back(i);
 					}
-					MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
-					mmi->set_name(vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
-					mmi->set_multimesh(mm);
-					if (range > 0.0f) {
-						// Ground cover too small to see far away. The plant shader thins the instances
-						// by rank and shrinks them out before the range (docs/ideas/plant-generator.md,
-						// "Far distance"), so the tile is cut only once every plant in it is gone.
-						mmi->set_visibility_range_end(range * 1.05f);
+					for (int b = 0; b < cells * cells; b++) {
+						if (buckets[b].is_empty()) {
+							continue;
+						}
+						for (int pass = 0; pass < (near_mesh.is_valid() ? 2 : 1); pass++) {
+							const bool near_pass = pass == 1;
+							Ref<MultiMesh> mm;
+							mm.instantiate();
+							mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+							mm->set_use_custom_data(true);
+							mm->set_mesh(near_pass ? near_mesh : mesh);
+							mm->set_instance_count(buckets[b].size());
+							for (uint32_t i = 0; i < buckets[b].size(); i++) {
+								mm->set_instance_transform(i, xforms[v][buckets[b][i]]);
+								mm->set_instance_custom_data(i, customs[v][buckets[b][i]]);
+							}
+							MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+							mmi->set_name(cells > 1 ? vformat("Plants%s_%d_%d_%d_%d_%d", near_pass ? "Near" : "", s, v, tx, tz, b) : vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
+							mmi->set_multimesh(mm);
+							if (near_mesh.is_valid()) {
+								// Crossfade: both draw over the margin, each dithered in or out
+								// (GeometryInstance3D fade mode Self), so the swap never pops.
+								const float margin = MAX(near_range * 0.1f, 1.0f);
+								mmi->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
+								if (near_pass) {
+									mmi->set_visibility_range_end(near_range);
+									mmi->set_visibility_range_end_margin(margin);
+								} else {
+									mmi->set_visibility_range_begin(near_range);
+									mmi->set_visibility_range_begin_margin(margin);
+								}
+							}
+							if (range > 0.0f && !near_pass) {
+								// Ground cover too small to see far away. The plant shader thins the instances
+								// by rank and shrinks them out before the range (docs/ideas/plant-generator.md,
+								// "Far distance"), so the tile is cut only once every plant in it is gone.
+								mmi->set_visibility_range_end(range * 1.05f);
+							}
+							add_child(mmi, false, INTERNAL_MODE_BACK);
+							generated.push_back(mmi);
+						}
 					}
-					add_child(mmi, false, INTERNAL_MODE_BACK);
-					generated.push_back(mmi);
 				}
 			}
 		}

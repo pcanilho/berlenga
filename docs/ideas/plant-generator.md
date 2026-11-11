@@ -359,6 +359,21 @@ What we build:
    `make_floor()` sets it for its species from the generator's colours.
 4. **Mesh LODs** stay as they were (`PlantGenerator.lods`, the engine's automatic LOD per tile).
 
+## Near detail swap (trees)
+
+Asked by the trees work: conifers carry real needles near the camera and needle sprays (cards)
+beyond. Two meshes per variant, same variant order, so each tree keeps its shape across the swap.
+
+- Godot's `visibility_range_begin/end` with fade mode Self is a dithered crossfade per
+  instance node, and the engine measures it to the centre of the node's bounds. For a MultiMesh
+  that is the centre of the whole tile, so a 16 m tile would swap all its trees at once.
+- Built: `PlantSpecies.near_meshes` and `near_range`. For such a species the field splits each
+  tile into cells of `near_range / 4` (at least 4 m) and gives every cell two MultiMeshes: the
+  near one ends at `near_range`, the far one begins there, both with a margin of 10% (at least
+  1 m) and fade mode Self. Inside the margin both draw, dithered in and out, so nothing pops and
+  only the trees in a narrow ring pay for both meshes.
+- Species without near meshes keep one MultiMesh per tile, as before.
+
 ## References
 
 - Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*, 1990.

@@ -127,6 +127,12 @@
 		<member name="mask_invert" type="bool" setter="set_mask_invert" getter="is_mask_invert" default="false">
 			If [code]true[/code], the species grows where the mask channel is low instead (one minus it), so a meadow can fill exactly the clearing that keeps trees out.
 		</member>
+		<member name="near_meshes" type="Mesh[]" setter="set_near_meshes" getter="get_near_meshes" default="[]">
+			Heavier meshes drawn within [member near_range], one per entry of [member meshes] in the same order (a shorter list repeats). Each plant keeps its variant, so a tree with real needles near the camera and needle sprays beyond it stays the same tree. The field cuts such a species into cells about a quarter of [member near_range] across (at least 4 m), so the swap happens a few plants at a time, and crossfades the two over the last tenth of the range with a dither.
+		</member>
+		<member name="near_range" type="float" setter="set_near_range" getter="get_near_range" default="0.0">
+			Distance in metres within which [member near_meshes] are drawn instead of [member meshes]. 0 turns the swap off.
+		</member>
 		<member name="patch_cover" type="float" setter="set_patch_cover" getter="get_patch_cover" default="0.5">
 			Fraction of the ground inside patches.
 		</member>

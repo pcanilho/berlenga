@@ -336,6 +336,45 @@ func _checks() -> void:
 	tree_sp.mask_channel = -1
 	mask_bush.mask_channel = -1
 	field.density_mask = null
+	# Near swap: a heavier mesh within near_range, the same plants in the same places.
+	var near_box := BoxMesh.new()
+	tree_sp.near_meshes = [near_box]
+	tree_sp.near_range = 30.0
+	field.populate()
+	var near_n := 0
+	var far_n := 0
+	var bad_range := 0
+	var near_pos := {}
+	var far_pos := {}
+	for ch in field.get_children(true):
+		if not ch is MultiMeshInstance3D or ch.multimesh.mesh == null:
+			continue
+		var mm: MultiMesh = ch.multimesh
+		var is_near: bool = mm.mesh == near_box
+		var is_tree: bool = is_near or tree_sp.meshes.has(mm.mesh)
+		if not is_tree:
+			continue
+		if is_near:
+			near_n += mm.instance_count
+			if not is_equal_approx(ch.visibility_range_end, 30.0) or ch.visibility_range_begin != 0.0:
+				bad_range += 1
+		else:
+			far_n += mm.instance_count
+			if not is_equal_approx(ch.visibility_range_begin, 30.0):
+				bad_range += 1
+		for i in mm.instance_count:
+			var key := str(mm.get_instance_transform(i).origin.snapped(Vector3.ONE * 0.01))
+			if is_near:
+				near_pos[key] = true
+			else:
+				far_pos[key] = true
+	var unmatched := 0
+	for k in near_pos:
+		if not far_pos.has(k):
+			unmatched += 1
+	_check("near swap: every tree drawn near and far, split by range", near_n == far_n and near_n == field.get_placements(0).size() and unmatched == 0 and bad_range == 0 and field.get_placements(0) == first, [near_n, far_n, field.get_placements(0).size(), unmatched, bad_range])
+	tree_sp.near_meshes = []
+	tree_sp.near_range = 0.0
 	print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
 func _build_view() -> void:
