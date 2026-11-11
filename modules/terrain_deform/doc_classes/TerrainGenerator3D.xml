@@ -391,6 +391,9 @@
 		<member name="deformer" type="NodePath" setter="set_deformer" getter="get_deformer" default="NodePath(&quot;&quot;)">
 			Optional [TerrainDeformer3D]. Its brushes are lifted before the write and applied again after it, and its terrain is used when [member terrain] is empty.
 		</member>
+		<member name="deposition" type="float" setter="set_deposition" getter="get_deposition" default="0.0">
+			Sediment deposition, the [code]G[/code] of Yuan et al. 2019: [code]dh/dt = U - K A^m S + (G / A) Qs[/code], with [code]Qs[/code] the sediment carried from upstream. 0 keeps rivers cutting only. Where ranges rise out of ground that does not rise (low [member base_uplift]), about 0.5 makes the rivers leaving the mountains build flat alluvial plains with winding channels; higher values build fans up the range front. Where all the ground rises, deposition steepens the rivers instead and the mountains stand higher. Alluvium is added to [method get_sediment_depth]. Generation takes up to about 80% longer.
+		</member>
 		<member name="detail_assumed_slope" type="float" setter="set_detail_assumed_slope" getter="get_detail_assumed_slope" default="0.6">
 			Slope the simulated ground is treated as having when steering the first gullies. Near the typical slope of the result.
 		</member>

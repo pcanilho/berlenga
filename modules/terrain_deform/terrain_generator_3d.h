@@ -73,6 +73,7 @@ private:
 	real_t erodibility = 2.0e-5;
 	real_t area_exponent = 0.5;
 	real_t hillslope_diffusion = 0.01; // m^2/yr
+	real_t deposition = 0.0; // G of Yuan et al. 2019; 0 = incision only
 	real_t critical_slope = 40.0; // degrees
 	real_t flow_exponent = 1.0;
 	real_t time_step = 20000.0; // years
@@ -296,6 +297,8 @@ public:
 	real_t get_area_exponent() const { return area_exponent; }
 	void set_hillslope_diffusion(real_t p_value) { hillslope_diffusion = MAX(p_value, real_t(0.0)); }
 	real_t get_hillslope_diffusion() const { return hillslope_diffusion; }
+	void set_deposition(real_t p_value) { deposition = MAX(p_value, real_t(0.0)); }
+	real_t get_deposition() const { return deposition; }
 	void set_critical_slope(real_t p_degrees) { critical_slope = CLAMP(p_degrees, real_t(0.0), real_t(80.0)); }
 	real_t get_critical_slope() const { return critical_slope; }
 	void set_flow_exponent(real_t p_value) { flow_exponent = CLAMP(p_value, real_t(0.0), real_t(10.0)); }

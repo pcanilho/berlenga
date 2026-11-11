@@ -188,7 +188,7 @@ func _generate() -> void:
 				# High in the north, a low floor south of the range front (z > -700) that is lowest along the middle.
 				var north := 1.0 - smoothstep(-1100.0, -600.0, z)
 				var floor_w := 1.0 - smoothstep(550.0, 1000.0, absf(xw))
-				var s := lerpf(0.12, 0.02, floor_w) * (1.0 - north) + 0.9 * north
+				var s := lerpf(0.12, 0.02, floor_w) * float(args.get("floor-uplift", "1")) * (1.0 - north) + 0.9 * north
 				up.set_pixel(x, y, Color(s, 0, 0))
 		lake_marker = Node3D.new()
 		lake_marker.name = "HighLake"
@@ -201,7 +201,7 @@ func _generate() -> void:
 	gen.cell_size = float(args.get("cell", "16"))
 	gen.seed = 3
 	gen.uplift = float(args.get("uplift", "3.0"))
-	gen.base_uplift = 0.1
+	gen.base_uplift = float(args.get("base-uplift", "0.1"))
 	gen.uplift_map = ImageTexture.create_from_image(up)
 	gen.uplift_noise = noise
 	# The sea along the south edge is the only outlet; the generator shapes the coast, beach and seabed.
@@ -212,6 +212,7 @@ func _generate() -> void:
 	gen.lake_count = int(args.get("lakes", "3" if layout == "range" else "0"))
 	gen.strata_enabled = not args.has("no-strata") # hard rock bands: waterfalls where rivers cross them
 	gen.tile_erosion_enabled = args.has("tiles")
+	gen.deposition = float(args.get("deposition", "0")) # rivers drop sediment where they slow (Yuan et al. 2019)
 	add_child(gen)
 	var rp: Array[NodePath] = []
 	for n in range_nodes:
@@ -232,6 +233,16 @@ func _generate() -> void:
 	gen.river_month = int(args.get("month", "4")) # spring: the snowmelt flood
 	gen.generate()
 	_log("generate %d ms, grid %s, last change %.3f m" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change()])
+	if args.has("profile"):
+		# Heights down the middle of the valley and across it, for laying out the floor.
+		var down := PackedStringArray()
+		for z in range(-800, 1300, 200):
+			down.append("%d:%.1f/%.1f" % [z, gen.get_height(Vector3(0, 0, z)), gen.get_sediment_depth(Vector3(0, 0, z))])
+		var across := PackedStringArray()
+		for x in range(-1200, 1300, 200):
+			across.append("%d:%.1f" % [x, gen.get_height(Vector3(x, 0, 200))])
+		_log("down the valley (z:height/sediment) " + " ".join(down))
+		_log("across at z=200 (x:h) " + " ".join(across))
 	t = Time.get_ticks_msec()
 	var img := gen.sample_heights(Vector2(X0, Z0), STEP, Vector2i(NX, NZ))
 	heights = img.get_data().to_float32_array()

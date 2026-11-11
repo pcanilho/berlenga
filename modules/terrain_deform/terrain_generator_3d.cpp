@@ -248,6 +248,7 @@ bool TerrainGenerator3D::generate() {
 	sp.p.erodibility = erodibility;
 	sp.p.area_exponent = area_exponent;
 	sp.p.diffusion = hillslope_diffusion;
+	sp.p.deposition = deposition;
 	sp.p.talus = critical_slope > 0.0 ? Math::tan(Math::deg_to_rad(double(critical_slope))) : 0.0;
 	sp.p.base_level = sea_level;
 	sp.p.outlet_edges = outlet_edges;
@@ -2478,6 +2479,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_area_exponent"), &TerrainGenerator3D::get_area_exponent);
 	ClassDB::bind_method(D_METHOD("set_hillslope_diffusion", "diffusion"), &TerrainGenerator3D::set_hillslope_diffusion);
 	ClassDB::bind_method(D_METHOD("get_hillslope_diffusion"), &TerrainGenerator3D::get_hillslope_diffusion);
+	ClassDB::bind_method(D_METHOD("set_deposition", "deposition"), &TerrainGenerator3D::set_deposition);
+	ClassDB::bind_method(D_METHOD("get_deposition"), &TerrainGenerator3D::get_deposition);
 	ClassDB::bind_method(D_METHOD("set_critical_slope", "degrees"), &TerrainGenerator3D::set_critical_slope);
 	ClassDB::bind_method(D_METHOD("get_critical_slope"), &TerrainGenerator3D::get_critical_slope);
 	ClassDB::bind_method(D_METHOD("set_flow_exponent", "exponent"), &TerrainGenerator3D::set_flow_exponent);
@@ -2682,6 +2685,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "erodibility", PROPERTY_HINT_RANGE, "0,0.001,0.0000001,or_greater,exp"), "set_erodibility", "get_erodibility");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "area_exponent", PROPERTY_HINT_RANGE, "0.1,1,0.01"), "set_area_exponent", "get_area_exponent");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hillslope_diffusion", PROPERTY_HINT_RANGE, "0,1,0.001,or_greater,suffix:m²/yr"), "set_hillslope_diffusion", "get_hillslope_diffusion");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deposition", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_deposition", "get_deposition");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "critical_slope", PROPERTY_HINT_RANGE, "0,80,0.1,degrees"), "set_critical_slope", "get_critical_slope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "flow_exponent", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_flow_exponent", "get_flow_exponent");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "time_step", PROPERTY_HINT_RANGE, "1,1000000,1,or_greater,suffix:yr"), "set_time_step", "get_time_step");

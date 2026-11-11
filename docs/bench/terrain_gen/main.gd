@@ -72,6 +72,15 @@ func _ready() -> void:
 		print("%d checks, %d failed" % [checks, failures])
 		print("PASS" if failures == 0 else "FAIL")
 		get_tree().quit(1 if failures else 0)
+	elif args.has("valleys"):
+		if args.has("view"):
+			gen.uplift = 6.0
+			gen.range_width = 1300.0
+		gen.generate()
+		_valley_report()
+		if args["valleys"] != "1":
+			_save_map(args["valleys"])
+		get_tree().quit()
 	elif args.has("runoff"):
 		_runoff_report()
 		get_tree().quit()
@@ -171,6 +180,8 @@ func _build_generator(cell: float) -> void:
 		gen.river_month = int(args.get("month", "-1"))
 	if args.has("strata"):
 		gen.strata_enabled = true
+	if args.has("deposition"):
+		gen.deposition = float(args["deposition"])
 	for a in args:
 		if a.begins_with("strata_"):
 			gen.set(a, str_to_var(args[a]))
@@ -553,6 +564,7 @@ func _run_checks() -> void:
 	await _climate_checks()
 	_strata_checks()
 	_runoff_checks()
+	_deposition_checks()
 	_landscape_checks()
 
 	# Write into the ground, with a brush on the deformer that must survive the new ground.
@@ -1202,6 +1214,83 @@ func _landscape_checks() -> void:
 	check(int(bs["triangles"]) > 0 and float(bs["update_usec"]) < 5000.0, "1 km at 1 m picks its levels (no builds) in under 5 ms (%.0f us)" % bs["update_usec"])
 	big.queue_free()
 	ls.queue_free()
+
+
+func _deposition_checks() -> void:
+	# Deposition (Yuan et al. 2019): off changes nothing. On, with the ranges rising out of ground that does not rise
+	# (base_uplift 0), the rivers leaving the mountains drop sediment and build alluvial plains; where everything
+	# rises, it steepens the rivers instead, so the range stands higher (relief grows with 1 + G).
+	var before := _hash(gen.get_height_image())
+	var r0 := _valley_report()
+	gen.deposition = 0.0
+	gen.generate()
+	check(_hash(gen.get_height_image()) == before, "deposition 0 leaves the terrain byte for byte")
+	gen.deposition = 0.5
+	gen.generate()
+	var r1 := _valley_report()
+	check(r1["highest"] > r0["highest"], "where all the ground rises, deposition steepens the rivers (highest %.0f m against %.0f m)" % [r1["highest"], r0["highest"]])
+	check(r1["msec"] < r0["msec"] * 1.6, "deposition costs under 60%% more time (%.0f against %.0f ms)" % [r1["msec"], r0["msec"]])
+	gen.base_uplift = 0.0
+	gen.deposition = 0.0
+	gen.generate()
+	var b0 := _valley_report()
+	gen.deposition = 0.5
+	gen.generate()
+	var b1 := _valley_report()
+	check(b1["alluvium_share"] > b0["alluvium_share"] + 0.05, "below ranges on still ground, deposition spreads alluvium (%.0f%% of the land on over 1 m, against %.0f%%)" % [100.0 * b1["alluvium_share"], 100.0 * b0["alluvium_share"]])
+	gen.base_uplift = 0.1
+	gen.deposition = 0.0
+	gen.generate()
+
+
+# Valley floors: how much of the land below the mountains is flat, how deep its alluvium, by drainage area.
+func _valley_report() -> Dictionary:
+	var g := gen.get_grid_size()
+	var cell := gen.cell_size
+	var hi := gen.get_height_image().get_data().to_float32_array()
+	var ar := gen.get_drainage_image().get_data().to_float32_array()
+	var sd := gen.get_sediment_image().get_data().to_float32_array()
+	var land := 0
+	var flat := 0
+	var floor_cells := 0
+	var floor_flat := 0
+	var floor_sed := 0.0
+	var hmax := 0.0
+	for i in hi.size():
+		hmax = maxf(hmax, hi[i])
+	for z in range(1, g.y - 1):
+		for x in range(1, g.x - 1):
+			var i := z * g.x + x
+			if hi[i] <= gen.sea_level + 0.5:
+				continue
+			land += 1
+			var sx := (hi[i + 1] - hi[i - 1]) / (2.0 * cell)
+			var sz := (hi[i + g.x] - hi[i - g.x]) / (2.0 * cell)
+			var slope := sqrt(sx * sx + sz * sz)
+			if slope < 0.03:
+				flat += 1
+			if ar[i] > 2.0e6:
+				floor_cells += 1
+				floor_sed += sd[i]
+				if slope < 0.03:
+					floor_flat += 1
+	var deep := 0
+	var smax := 0.0
+	for i in sd.size():
+		smax = maxf(smax, sd[i])
+		if sd[i] > 1.0 and hi[i] > gen.sea_level + 0.5:
+			deep += 1
+	var r := {
+		"alluvium_share": float(deep) / maxi(land, 1),
+		"alluvium_max": smax,
+		"msec": gen.get_last_generate_msec(),
+		"highest": hmax,
+		"flat_land": float(flat) / maxi(land, 1),
+		"valley_flat": float(floor_flat) / maxi(floor_cells, 1),
+		"valley_alluvium": floor_sed / maxi(floor_cells, 1),
+	}
+	print("deposition %.2f: %.0f ms, highest %.0f m, land under 3%% slope %.1f%%, valley cells (>2 km2) under 3%% %.1f%%, mean alluvium on them %.1f m, land on over 1 m of sediment %.1f%% (deepest %.0f m)" % [gen.deposition, r["msec"], hmax, 100.0 * r["flat_land"], 100.0 * r["valley_flat"], r["valley_alluvium"], 100.0 * r["alluvium_share"], smax])
+	return r
 
 
 func _strata_checks() -> void:

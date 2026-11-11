@@ -757,7 +757,56 @@ flat terraces with walls stepping along the cell lines on the dam flanks. The ho
 the water and fades out over the next two (bilinear weight), so the detail runs on beside the lake
 (fork/terrain/runoff/lake_rim_before_after.png).
 
+## Valley floors: rivers that deposit (Paulo picked 11 Nov 10:33)
+
+The showcase wants a wide, flat, grassy valley floor with the river from a high lake running through it to the sea.
+The stream power model only cuts, so every valley is a V and every low area is hills.
+
+Research:
+
+- **Yuan, Braun, Guerit et al. 2019** (JGR Earth Surface, "A new efficient method to solve the stream power law
+  model taking into account sediment deposition"): adds `(G / A) Qs` to `dh/dt = U - K A^m S`, Qs the sediment
+  flux from upstream, G dimensionless. It stays implicit and O(n) per pass; Qs depends on the new heights
+  upstream, so the solve is repeated (Gauss-Seidel) until it settles. FastScape and goSPL use it. Where all the
+  ground rises, steady-state slopes grow by 1 + G (more relief); where ground does not rise below the mountains,
+  rivers drop their load and build alluvial plains and fans. Chosen: same solver, same cost order.
+- **Davy and Lague 2009** (the xi-q model): erosion-deposition with a transport length; Yuan's G is its efficient
+  form for n = 1.
+- **Transport-limited and undercapacity models** (Whipple and Tucker 2002): explicit, need small time steps;
+  far too slow at our 20,000-year steps.
+- **Flood filling to a level** (non-physical): flat but dead, rivers cross in straight lines; no.
+- **Glacial erosion** (Cordonnier et al. 2023, U valleys, cirque lakes): deferred by Paulo.
+
+Built (`deposition` on TerrainGenerator3D, the solver in terrain_stream_power.h):
+
+- The first pass is the old incision-only solve. Then each pass sums the eroded volume down the receiver tree
+  and solves `h_i (1 + F + G a/A_i) = h*_i (1 + G a/A_i) + F h_r + G Qs_up / A_i` from the outlets up.
+- A is the drainage area along the same single receiver tree as the flux. The multiple-flow area can be far
+  smaller on a cell the tree funnels into, and dividing by it piled sediment there and the passes never settled.
+- The caprock undercut is decided once per step, on the first pass; a block breaking off and back in turn made
+  passes swing by its whole thickness.
+- Passes are under-relaxed by half: the full update swings between two states when a step moves a lot of
+  sediment. The change then halves each pass; it stops under 5 cm or after 12 passes.
+- Alluvium (ground raised above the uplifted rock, worn first when the river cuts back) goes into the sediment
+  map, so `get_sediment_depth` and the geology's alluvium follow it. With deposition 0 nothing changes, byte for
+  byte.
+
+Results:
+
+- Showcase valley layout (`docs/bench/landscape --layout=valley --map=... --deposition=G --base-uplift=0
+  --floor-uplift=0 --profile`). With 0 the floor is flat at 2.5 m and rivers run in grid lines. With 0.5 an
+  alluvial plain about 40 m high slopes gently to the sea, flat across, with winding rivers. At 1 and above the
+  fans climb the range front.
+- The scene's floor was hills mainly because `base_uplift` 0.1 lifts it: a floor needs ground that does not
+  rise. Deposition then shapes it.
+- terrain_gen bench: with the whole world rising, the highest point goes from 343 to 480 m at 0.5, as Yuan
+  predicts. With `base_uplift` 0, 45% of the land ends up on over 1 m of alluvium.
+- Cost: 2.6 to 3.5 s (+35%) on the rising world, and 1.9 to 3.4 s on still ground, where most passes run to 12.
+
 ## Sources
+
+- Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
+- Davy, Lague 2009, "Fluvial erosion/transport equation of landscape evolution models revisited", JGR Earth Surface 114.
 
 - McCabe, Markstrom, A monthly water-balance model driven by a graphical user interface, USGS Open-File Report
   2007-1088, 2007.
