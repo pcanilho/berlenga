@@ -3,7 +3,7 @@ title: "Comparisons"
 weight: 30
 ---
 
-Scenes: [docs/media/showcase](media/showcase) and [docs/media/light-selection](media/light-selection).
+Scenes: [docs/media/showcase](https://github.com/pcanilho/berlenga/tree/main/docs/media/showcase) and [docs/media/light-selection](https://github.com/pcanilho/berlenga/tree/main/docs/media/light-selection).
 
 ## Glass shadows: NVIDIA-RTX/godot vs Berlenga
 
