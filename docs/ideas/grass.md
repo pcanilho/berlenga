@@ -232,6 +232,23 @@ and flowers place in 72 ms once. Frame time on the cloud CPU rasteriser, close v
 against 217 ms for the single field (+10%), 123,078 blades against 79,992. GPU timings wait for
 the PC. Media: grass-carpet.jpg (before above, after below), grass-carpet-pt.jpg.
 
+## Outer band (no edge at the radius)
+
+Before: tiles were built out to `radius` and stopped, so the field ended in a hard line (the
+valley scene's 40 m). Ghost of Tsushima (Wohllaib, GDC 2021) and Horizon Zero Dawn (van Muijden,
+GDC 2017) thin blades out per blade, not per tile, and colour the terrain like the grass so the
+field reads to the horizon.
+
+- Blades: from 60% of the radius to just inside it, each blade drops out at its own point in a
+  random order and shrinks to nothing (`fade_band` in the blade shader, set from the field's
+  centre each update). The last blade is gone before the outermost tiles end.
+- Ground: over the same band `grass_ground()` turns the ground under the grass to the blades'
+  own colour seen from a distance (`grass_ground_far`: base to tip, some dry, darkened by the
+  sward's self shade), fully covering, so beyond the blades the ground is the field's colour.
+  The band is a global (`grass_ground_fade`), published by the widest GrassField3D, so a near
+  undercoat field does not pull it in.
+- Cost: one distance and a smoothstep per blade vertex; nothing on the CPU.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

@@ -50,7 +50,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 ## Rivers, coasts and lakes
 
-- **River deposition** (`deposition`, off by default): rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors.
+- **River deposition** (`deposition`, off by default): rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors; solved exactly per step along the river tree, at about half the earlier cost.
 
   ![A generated range around a wide flat valley floor that runs down to the beach, raster](media/terrain-deposition.jpg)
 

@@ -1308,6 +1308,15 @@
    "topic": "Grass"
   },
   {
+   "name": "Grass edge fade",
+   "settings": [],
+   "note": "always on",
+   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Trampling",
    "settings": [
     "grass_trample",

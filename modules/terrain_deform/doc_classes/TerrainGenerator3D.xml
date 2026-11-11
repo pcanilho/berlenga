@@ -160,6 +160,12 @@
 				Coarser grids the last [method generate] ran on (0: one level).
 			</description>
 		</method>
+		<method name="get_last_deposition_passes" qualifiers="const">
+			<return type="int" />
+			<description>
+				Deposition passes the last [method generate] ran, over all steps and levels (0 with [member deposition] 0). Each step solves the deposition exactly in two sweeps, then runs passes until no node moves 5 cm; one or two a step is usual.
+			</description>
+		</method>
 		<method name="get_last_generate_msec" qualifiers="const">
 			<return type="float" />
 			<description>

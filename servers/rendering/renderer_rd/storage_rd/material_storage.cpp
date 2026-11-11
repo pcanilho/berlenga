@@ -1880,6 +1880,9 @@ void MaterialStorage::global_shader_parameter_set(const StringName &p_name, cons
 				Material *material = material_storage->get_material(E);
 				ERR_CONTINUE(!material);
 				material_storage->_material_queue_update(material, false, true);
+				// The path tracer caches each material's bindless texture indices: a new
+				// global texture must refresh them, as it refreshes the raster uniform set.
+				material_storage->_material_rt_invalidate(material);
 			}
 		}
 	}
@@ -1912,6 +1915,9 @@ void MaterialStorage::global_shader_parameter_set_override(const StringName &p_n
 			Material *material = material_storage->get_material(E);
 			ERR_CONTINUE(!material);
 			material_storage->_material_queue_update(material, false, true);
+			// The path tracer caches each material's bindless texture indices: a new
+			// global texture must refresh them, as it refreshes the raster uniform set.
+			material_storage->_material_rt_invalidate(material);
 		}
 	}
 }
