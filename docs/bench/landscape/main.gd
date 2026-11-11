@@ -53,6 +53,7 @@ var lake_axes := Vector2(140, 90)
 var lake_dir := Vector2(0, 1)
 var lake_level := 0.0
 var fall_point := Vector3.ZERO
+var fall_height := 30.0 # the tallest generator fall (m), framing its view
 var fall_dir := Vector2(0, 1)
 var gen_falls: Array = []
 var climate: ClimateRecipe
@@ -434,6 +435,7 @@ func _lake_and_fall() -> void:
 		var top: Vector3 = tall["top"]
 		var bottom: Vector3 = tall["bottom"]
 		fall_point = top
+		fall_height = float(tall["height"])
 		var fd := bottom - top
 		fall_dir = Vector2(fd.x, fd.z).normalized() if Vector2(fd.x, fd.z).length() > 0.1 else Vector2(0, 1)
 		_log("waterfalls from the generator: %d, tallest %.0f m high, %.0f m wide, %.1f m3/s at %s" % [gen_falls.size(), tall["height"], tall["width"], tall["discharge"], top])
@@ -1073,16 +1075,20 @@ func _build_camera() -> void:
 			# Downstream of the fall, at the first spot with a clear view of the whole drop (gorges hide it).
 			var fd3 := Vector3(fall_dir.x, 0, fall_dir.y)
 			var side := Vector3(-fall_dir.y, 0, fall_dir.x)
-			var mid := fall_point + Vector3(0, -12, 0)
+			# Framed by the drop: far enough out for the whole height (a 330 m fall wants half a kilometre), the
+			# lens narrowed to fit it.
+			var h := maxf(fall_height, 20.0)
+			var mid := fall_point + Vector3(0, -0.45 * h, 0)
 			var best := Vector3.ZERO
 			var found := false
-			for dist in [90.0, 130.0, 180.0, 240.0, 320.0]:
-				for off in [0.0, 25.0, -25.0, 50.0, -50.0]:
-					var c: Vector3 = fall_point + fd3 * dist + side * off
-					c.y = height_at(c.x, c.z) + 10.0
+			for k in [1.6, 2.2, 3.0, 4.0]:
+				var dist: float = maxf(90.0, k * h)
+				for off in [0.0, 0.15, -0.15, 0.3, -0.3]:
+					var c: Vector3 = fall_point + fd3 * dist + side * off * dist
+					c.y = height_at(c.x, c.z) + maxf(10.0, 0.1 * h)
 					var clear := true
-					for t in range(1, 20):
-						var q := c.lerp(mid, t / 20.0)
+					for t in range(1, 30):
+						var q := c.lerp(mid, t / 30.0)
 						if height_at(q.x, q.z) > q.y - 1.0:
 							clear = false
 							break
@@ -1093,10 +1099,11 @@ func _build_camera() -> void:
 				if found:
 					break
 			if not found:
-				best = fall_point + fd3 * 200.0
-				best.y = height_at(best.x, best.z) + 60.0
+				best = fall_point + fd3 * maxf(200.0, 3.0 * h)
+				best.y = height_at(best.x, best.z) + maxf(60.0, 0.3 * h)
 			cam.position = best
 			cam.look_at(mid)
+			cam.fov = clampf(rad_to_deg(2.0 * atan(0.75 * h / best.distance_to(mid))), 25.0, 70.0)
 		"beach":
 			cam.fov = 60.0
 			cam.position = Vector3(40.0, 0.0, coast_z - 60.0)
