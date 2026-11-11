@@ -1637,10 +1637,20 @@ struct BarkCell {
 	float f1 = 1e9f;
 	float edge = 1e9f;
 	uint32_t id = 0;
+	uint32_t across = 0; // The neighbour across the nearest edge.
 	Vector2 site;
 };
 
-BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt) {
+// A wall between two cells cracks unless the pair is one of the share p_merge that never split;
+// with p_scar > 0 only walls between a scar cell (hash over p_scar) and a whole one crack.
+bool bark_cracks(uint32_t p_a, uint32_t p_b, float p_merge, float p_scar, uint32_t p_salt) {
+	if (p_scar > 0.0f) {
+		return (bark_hash(int(p_a), 5, p_salt) > p_scar) != (bark_hash(int(p_b), 5, p_salt) > p_scar);
+	}
+	return bark_hash(int(MIN(p_a, p_b)), int(MAX(p_a, p_b)), p_salt + 77u) >= p_merge;
+}
+
+BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt, float p_merge = 0.0f, float p_scar = 0.0f, uint32_t p_msalt = 0) {
 	const float x = p_x * p_cu, y = p_y * p_cv;
 	const int ix = int(Math::floor(x)), iy = int(Math::floor(y));
 	Vector2 sites[25];
@@ -1677,7 +1687,11 @@ BarkCell bark_voronoi(float p_x, float p_y, int p_cu, int p_cv, uint32_t p_salt)
 			continue;
 		}
 		const Vector2 mid = (sites[a] + sites[k]) * 0.5f;
-		c.edge = MIN(c.edge, (mid - p).dot(d / len));
+		const float e = (mid - p).dot(d / len);
+		if (e < c.edge && bark_cracks(ids[a], ids[k], p_merge, p_scar, p_msalt)) {
+			c.edge = e;
+			c.across = ids[k];
+		}
 	}
 	return c;
 }
@@ -1732,13 +1746,21 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			float r = 0.88f + 0.08f * fibre;
 			if (L.crack > 0.0f) {
 				// Warp the lookup so ridges interlace and wander rather than sit on a grid.
-				const float warp = p_kind == BARK_PLATED ? 2.0f : 1.0f;
+				const float warp = p_kind == BARK_PLATED ? 2.0f : (p_kind == BARK_FLAKING ? 10.0f : 1.0f);
 				const float wu = u + 0.035f * warp * bark_fbm(u, v, 4, 4, 2, salt + 21u);
 				const float wv = v + 0.05f * warp * bark_fbm(u, v, 4, 4, 2, salt + 27u);
-				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt);
-				// Cracks open unevenly: wider where the layer split first.
+				const float merge = p_kind == BARK_PLATED ? 0.35f : (p_kind == BARK_SCALY ? 0.1f : 0.0f);
+				const float scar_cut = p_kind == BARK_FLAKING ? 0.62f : 0.0f;
+				const BarkCell c = bark_voronoi(wu - Math::floor(wu), wv - Math::floor(wv), L.cu, L.cv, salt, merge, scar_cut, salt + 43u);
+				// Cracks open unevenly: wider where the layer split first. Some cell walls never
+				// cracked, so plates join into larger irregular shapes, and the plate rims are
+				// ragged rather than straight (what makes a Voronoi read as tiles).
 				const float crack_w = L.crack * (0.5f + 2.0f * (bark_fbm(u, v, 6, 3, 2, salt + 33u) + 0.5f));
-				float open = Math::smoothstep(0.0f, crack_w, c.edge); // 0 in the crack, 1 on the plate.
+				const float ragged = c.edge + 0.12f * bark_fbm(u, v, 24, 24, 3, salt + 81u) + (p_kind == BARK_FLAKING ? 1.2f * bark_fbm(u, v, 8, 8, 2, salt + 83u) : 0.0f);
+				float open = Math::smoothstep(0.0f, crack_w, ragged);
+				// Flaking bark is mostly smooth: only a fallen flake leaves an edge, around a shallow
+				// scar of fresh, warmer inner bark (sycamore, plane, horse chestnut).
+				const bool scar = scar_cut > 0.0f && bark_hash(int(c.id), 5, salt + 43u) > scar_cut; // 0 in the crack, 1 on the plate.
 				float plate = open;
 				if (p_kind == BARK_FURROWED) {
 					// Furrows are the zero lines of noise stretched along the stem: long, wavy, merging
@@ -1758,19 +1780,16 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					const float below = (wv - Math::floor(wv)) * L.cv - c.site.y; // -1..1 cell units
 					plate = open * (0.55f + 0.45f * CLAMP(0.5f + below, 0.0f, 1.0f));
 				}
-				const float plate_noise = bark_hash(int(c.id), 3, salt + 41u);
+				// Plate tone drifts smoothly (a per-cell tone outlines joined plates).
+				const float plate_noise = 0.5f + bark_fbm(u, v, 5, 3, 2, salt + 41u) * 1.6f;
 				height += L.depth * (plate - 1.0f) + L.depth * 0.15f * (plate_noise - 0.5f) * plate;
 				const float shade = Math::lerp(L.dark, 1.0f + L.mottle * (plate_noise - 0.5f), plate);
 				a = Color(shade, shade, shade);
 				r = Math::lerp(1.0f, r, plate);
-				if (p_kind == BARK_FLAKING) {
-					// Fresh inner bark where a flake fell: warmer and paler patches.
-					const float fresh = bark_hash(int(c.id), 5, salt + 43u);
-					if (fresh > 0.55f) {
-						const float t = (fresh - 0.55f) / 0.45f;
-						a = Color(1.0f + 0.25f * t, 1.0f + 0.1f * t, 1.0f - 0.15f * t) * shade;
-						height += L.depth * 0.6f;
-					}
+				if (scar) {
+					const float t = 0.5f + bark_fbm(u, v, 4, 4, 2, salt + 47u) * 1.6f;
+					a = Color(1.08f + 0.12f * t, 0.9f + 0.06f * t, 0.74f - 0.08f * t) * shade;
+					height -= L.depth * 0.5f * open;
 				}
 			}
 			if (p_kind == BARK_SMOOTH || p_kind == BARK_PAPERY) {
