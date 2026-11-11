@@ -1,6 +1,9 @@
 extends Node3D
 # Sky bench (docs/ideas/day-night.md).
 #   --test   check SkyClock against Meeus' worked examples and known sky facts, print PASS/FAIL, quit
+#   --sky [--model=scattering|physical] [--time=H] [--out=path.png] [--frames=N]
+#            the sky alone (WeatherSkyMaterial, clouds from the defaults, sun from SkyClock), looking south-west
+#            and a little up; prints the mean frame time, saves the last frame
 
 var fails := 0
 
@@ -10,12 +13,66 @@ func _ready() -> void:
 	if args.has("--test"):
 		_test()
 		get_tree().quit(1 if fails > 0 else 0)
+	elif args.has("--sky"):
+		var kv := {}
+		for a in args:
+			var p: PackedStringArray = a.trim_prefix("--").split("=", true, 1)
+			kv[p[0]] = p[1] if p.size() > 1 else "1"
+		await _sky(kv)
+		get_tree().quit()
+
+
+func _sky(kv: Dictionary) -> void:
+	var sun := DirectionalLight3D.new()
+	add_child(sun)
+	var mat := WeatherSkyMaterial.new()
+	mat.atmosphere_model = WeatherSkyMaterial.ATMOSPHERE_PHYSICAL_SKY if kv.get("model", "scattering") == "physical" else WeatherSkyMaterial.ATMOSPHERE_SCATTERING
+	mat.cloud_reprojection = kv.has("reproject")
+	var sky := Sky.new()
+	sky.sky_material = mat
+	sky.process_mode = Sky.PROCESS_MODE_REALTIME
+	var env := Environment.new()
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+	env.tonemap_mode = Environment.TONE_MAPPER_AGX
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	var cam := Camera3D.new()
+	cam.position = Vector3(0, 2, 0)
+	cam.fov = 90.0
+	add_child(cam)
+	cam.rotation_degrees = Vector3(float(kv.get("pitch", "12")), float(kv.get("yaw", "135")), 0) # south-west
+	cam.make_current()
+	var clock := SkyClock.new()
+	add_child(clock)
+	clock.latitude = 45.0
+	clock.longitude = 0.0
+	clock.month = 5
+	clock.day = 31
+	clock.time_of_day = float(kv.get("time", "19.0"))
+	clock.sun_light = clock.get_path_to(sun)
+	for i in 20:
+		await get_tree().process_frame
+	var n := int(kv.get("frames", "30"))
+	var t0 := Time.get_ticks_usec()
+	for i in n:
+		await RenderingServer.frame_post_draw
+	var ms := (Time.get_ticks_usec() - t0) / 1000.0 / n
+	print("[sky] %s at %.2f h (sun %.2f deg): %.2f ms a frame" % [kv.get("model", "scattering"), clock.time_of_day, clock.get_sun_altitude(), ms])
+	if kv.has("out"):
+		get_viewport().get_texture().get_image().save_png(kv["out"])
 
 
 func check(ok: bool, what: String) -> void:
 	print(("[sky] PASS  " if ok else "[sky] FAIL  ") + what)
 	if not ok:
 		fails += 1
+
+
+func _lin(col: Color) -> Vector3:
+	var l := col.srgb_to_linear()
+	return Vector3(l.r, l.g, l.b)
 
 
 func ang(a: float, b: float) -> float:
@@ -129,6 +186,32 @@ func _test() -> void:
 	var without_r: float = c.get_sun_altitude()
 	print("[sky] refraction at sunrise: %.3f deg" % (with_r - without_r))
 	check(with_r - without_r > 0.45 and with_r - without_r < 0.65, "refraction at the horizon lifts the sun by about 0.57 deg")
+	# The air's transmittance toward the sun (the atmosphere's own tables, Hillaire 2020 / Bruneton 2008 Earth air).
+	var tz := SkyClock.air_transmittance(90.0, 0.0)
+	var t5 := SkyClock.air_transmittance(5.0, 0.0)
+	var t0h := SkyClock.air_transmittance(0.0, 0.0)
+	var lum := func(v: Vector3) -> float: return 0.2126 * v.x + 0.7152 * v.y + 0.0722 * v.z
+	print("[sky] air transmittance from sea level: zenith %s, 5 deg %s, horizon %s" % [tz, t5, t0h])
+	check(tz.x > tz.y and tz.y > tz.z, "the air lets through more red than green than blue")
+	check(lum.call(tz) > 0.78 and lum.call(tz) < 0.9, "sun at the zenith: %.0f lux of 133,800 reach sea level (clear air: 100,000 to 120,000)" % (133800.0 * lum.call(tz)))
+	check(t5.z / t5.x < 0.4, "sun 5 deg up is orange (blue/red %.2f)" % (t5.z / t5.x))
+	check(lum.call(SkyClock.air_transmittance(5.0, 3000.0)) > lum.call(t5), "the air is thinner from a mountain (3 km)")
+	# The lights take that colour and strength.
+	c.year = 2026
+	c.month = 6
+	c.day = 21
+	c.time_of_day = 13.6
+	var noon_e := sun_l.light_energy
+	var noon_lux: float = noon_e * lum.call(_lin(sun_l.light_color)) / 1e-5
+	print("[sky] noon sun light energy %.3f colour %s" % [noon_e, sun_l.light_color])
+	check(noon_e > 0.95 and noon_e < 1.25 and sun_l.light_color.b > 0.85, "noon sun: light_energy %.2f (about 1.1 for 110,000 lux), near white" % noon_e)
+	for k in 600:
+		c.time_of_day = 20.0 + k / 600.0
+		if c.get_sun_altitude() < 3.0:
+			break
+	var low_lux: float = sun_l.light_energy * lum.call(_lin(sun_l.light_color)) / 1e-5
+	print("[sky] sun %.1f deg up: energy %.3f colour %s, %.0f lux against %.0f at noon" % [c.get_sun_altitude(), sun_l.light_energy, sun_l.light_color, low_lux, noon_lux])
+	check(low_lux < 0.4 * noon_lux and sun_l.light_color.b < 0.5 * sun_l.light_color.r, "low sun: dimmer and orange")
 	# Speed: the whole ephemeris.
 	var t0 := Time.get_ticks_usec()
 	for k in 1000:

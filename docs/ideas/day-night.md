@@ -188,6 +188,39 @@ deg in longitude and 10 km in distance (47.a), the phase angle within 0.001 deg 
 0.27 lux above the air. One update costs about 2 microseconds. The lights' colour and strength come with the
 atmosphere (step 2), which owns the transmittance.
 
+### As built: step 2, the atmosphere (11 Nov)
+
+`WeatherSkyMaterial.atmosphere_model` SCATTERING (default; `PHYSICAL_SKY` keeps the older Preetham model).
+modules/weather/atmosphere.* holds Earth's air as Bruneton 2008 and Hillaire 2020 give it (Rayleigh, Mie with
+Cornette-Shanks phase, an ozone layer) and bakes two tables once at start, shared by every sky: transmittance
+(256x64, Bruneton's parameterization) and Hillaire's multiple scattering table (32x32, Psi_ms = L2/(1 - f_ms)).
+The sky shader marches the air per pixel in its quarter resolution pass (32 steps, 12 for the radiance map,
+quadratic spacing), lit by two bodies above the air, so golden hour, the Earth's shadow and twilight come out of
+the same model; the half resolution pass puts the clouds over it.
+
+- **Lights.** With `SkyClock.drive_light_energy` (on), each light's colour and energy are its body's lux above
+  the air times the same transmittance (`SkyClock.air_transmittance`, read on the CPU), scaled by
+  `energy_per_lux` (1e-5: noon sun about 1.2, full moon about 2.7e-6). The clock hands both bodies to the sky
+  (`set_atmosphere_lights`), and checks every frame for a sky set up after it. Without a clock, the sky takes
+  the first directional light as the sun above the air.
+- **Aerial perspective on the clouds** (Hillaire 2016 and 2020, as Unreal's volumetric clouds): the cloud march
+  returns the distance to what it saw, weighted by how much each step hid; the air in front of that distance is
+  marched (12 steps) and the clouds are seen through it. The deck then runs out to 200 km and fades into the
+  horizon haze. This fixed the flat grey band between the cloud deck and the sea horizon in the landscape bench
+  (raster and path traced): the old model cut the clouds at `cloud_far` (40 km), leaving clear air under them.
+- **Open water past the scene** (`atmo_far_water`, 0 to 1): rays that meet the curved sea beyond the scene's own
+  water see the sky mirrored at that angle by Fresnel, through the air in front, instead of a grey ground.
+- **Cost.** On the cloud machine's CPU Vulkan the sky alone at 960x540 with the radiance map redrawn every frame
+  went from about 100 to 125-145 ms (the air at half resolution was +48%; moving it to the quarter resolution
+  pass brought that down). GPU timing is on the PC queue.
+- **Checks** (`docs/bench/sky --test`): sun at the zenith gives 117,000 lux at sea level (clear air: 100,000 to
+  120,000); 5 deg up the light is orange (blue/red 0.12); thinner air from 3 km; noon light_energy 1.22, near
+  white; 3 deg up 25,000 lux and orange. Bench `docs/bench/sky --sky [--model= --time= --out=]` draws the sky
+  alone and times it; the landscape bench takes `--atmosphere=scattering|physical` and `--day=N`.
+- **Not yet:** the moon lights the air but is not drawn, there are no stars, and at a fixed exposure twilight
+  goes black within about 3 deg below the horizon, as it should: exposure is step 4. Raster open water's body
+  colour is unlit emission, so it glows at dusk; that is a water fix, next.
+
 ### Checks
 
 - Positions against published almanac values. The JPL Horizons ephemeris gives the sun and the moon for a
