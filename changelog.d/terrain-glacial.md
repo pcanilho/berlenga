@@ -10,3 +10,4 @@
 ### Fixed
 - Abandoned one-cell river slots on fans are backfilled (`fan_backfill`, on).
 - Detail no longer fades on faces steeper than loose fill can stand, however much sediment the cells around them hold.
+- Loose fill no longer reads as soil on ground steeper than `critical_slope` (a 74 degree bar face showed 390 m of soil and grew plants).

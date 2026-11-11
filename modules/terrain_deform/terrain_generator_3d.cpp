@@ -798,6 +798,28 @@ bool TerrainGenerator3D::generate() {
 		sediment[i] = float(sed[i] * scale);
 		uplift_field[i] = float(up[i] * 1.0e3);
 	}
+	// Loose fill cannot stand steeper than its critical slope: what the solver left on such ground (deposits on hard
+	// sill cells that do not wear, then faces cut below them) is rock with scree, not soil. Faded from 85% to 110%
+	// of the critical gradient, as the geology fades soil (otherwise a 74 degree bar face read as 390 m of soil and
+	// grew grass and conifers).
+	if (critical_slope > 0.0) {
+		const double cs = Math::tan(Math::deg_to_rad(double(critical_slope)));
+		LocalVector<float> keep;
+		keep.resize(n);
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				const int i = z * nx + x;
+				const double gx = (heights[z * nx + MIN(x + 1, nx - 1)] - heights[z * nx + MAX(x - 1, 0)]) / (double(MIN(x + 1, nx - 1) - MAX(x - 1, 0)) * cell_size);
+				const double gz = (heights[MIN(z + 1, ny - 1) * nx + x] - heights[MAX(z - 1, 0) * nx + x]) / (double(MIN(z + 1, ny - 1) - MAX(z - 1, 0)) * cell_size);
+				const double t = CLAMP((Math::sqrt(gx * gx + gz * gz) - 0.85 * cs) / (0.25 * cs), 0.0, 1.0);
+				keep[i] = float(1.0 - t * t * (3.0 - 2.0 * t));
+			}
+		}
+		for (int i = 0; i < n; i++) {
+			sediment[i] *= keep[i];
+			sed[i] *= double(keep[i]);
+		}
+	}
 	_alluvium_reach();
 
 	// Seabed and beaches below and along the coast.

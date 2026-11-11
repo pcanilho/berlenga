@@ -438,7 +438,7 @@ func _generate() -> void:
 		var dv := Vector3(float(fp[2]), 0, float(fp[3])).normalized()
 		var row := PackedStringArray()
 		for i in 80:
-			row.append("%.1f/%.1f" % [gen.get_height(o + dv * i * 2.0), gen.get_sediment_depth(o + dv * i * 2.0)])
+			row.append("%.0f/%.0f/%.1f/%.2f/%.1f" % [gen.get_height(o + dv * i * 2.0), gen.get_base_height(o + dv * i * 2.0), gen.get_soil_depth(o + dv * i * 2.0), gen.get_rock_exposure(o + dv * i * 2.0), gen.get_sediment_depth(o + dv * i * 2.0)])
 		print("FACE ", " ".join(row))
 	if args.has("dump-heights"):
 		var hb := PackedFloat32Array()
