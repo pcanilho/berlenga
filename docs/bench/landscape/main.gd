@@ -59,6 +59,7 @@ var fall_point := Vector3.ZERO
 var fall_height := 30.0 # the tallest generator fall (m), framing its view
 var fall_dir := Vector2(0, 1)
 var gen_falls: Array = []
+var contact_falls: Array = []
 var climate: ClimateRecipe
 var rivers: Array = []
 var weather: WeatherMap3D
@@ -898,6 +899,16 @@ func _build_water() -> void:
 				lake = l
 	rivers = gen.build_river_paths(self, float(args.get("min-area", "1500000")))
 	_log("water + %d rivers built in %d ms (%d lakes)" % [rivers.size(), Time.get_ticks_msec() - t, lakes.size()])
+	# Contact falls (cascades and horsetails down steep rock) from the generator's fall records.
+	if ClassDB.class_exists("PhysXWaterfalls3D") and args.get("contact-falls", "1") != "0":
+		var wf = ClassDB.instantiate("PhysXWaterfalls3D")
+		wf.name = "Waterfalls"
+		add_child(wf)
+		wf.source = wf.get_path_to(gen)
+		wf.rebuild()
+		for f in wf.get_contact_falls():
+			_log("contact fall %s" % [f])
+		contact_falls = wf.get_contact_falls()
 
 
 
@@ -1480,6 +1491,27 @@ func _build_camera() -> void:
 			cam.position = best
 			cam.look_at(mid)
 			cam.fov = clampf(rad_to_deg(2.0 * atan(0.75 * h / best.distance_to(mid))), 25.0, 70.0)
+		"contact":
+			# One contact fall (--contact=id, default the one with most water), seen from below and in front.
+			var want: String = args.get("contact", "")
+			var pick := {}
+			for f in contact_falls:
+				if (want != "" and f["id"] == want) or (want == "" and (pick.is_empty() or f["discharge"] > pick["discharge"])):
+					pick = f
+			for g in gen.get_waterfalls():
+				if not pick.is_empty() and g.get("id", "") == pick["id"]:
+					var top: Vector3 = g["top"]
+					var bot: Vector3 = g["bottom"]
+					var d: Vector3 = g.get("direction", Vector3(0, 0, 1))
+					d.y = 0
+					d = d.normalized()
+					var h := top.y - bot.y
+					var dist := float(args.get("contact-dist", str(maxf(h * 1.6, 25.0))))
+					var c := bot + d * dist + Vector3(-d.z, 0, d.x) * dist * 0.35
+					c.y = maxf(height_at(c.x, c.z) + 2.0, bot.y + h * 0.3)
+					cam.position = c
+					cam.look_at(bot.lerp(top, 0.45))
+					_log("contact view of %s from %s" % [pick["id"], c])
 		"beach":
 			cam.fov = 60.0
 			cam.position = Vector3(40.0, 0.0, coast_z - 60.0)

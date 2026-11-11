@@ -62,6 +62,7 @@ public:
 		float impact_speed = 0.0f;
 		float inception = 0.0f; // m down the face to the inception point (centre column)
 		float air_at_foot = 0.0f;
+		float air_peak = 0.0f;
 		LocalVector<Column> columns;
 		PackedVector3Array ledges; // world
 		PackedFloat32Array ledge_speed; // m/s of the water striking each
@@ -74,6 +75,7 @@ private:
 	bool spray = true;
 	bool mist = true;
 	float mist_amount = 1.0f;
+	float mist_min_discharge = 0.2f;
 	float min_height = 5.0f;
 	float rock_roughness = 0.15f; // k_s, m
 	float manning_n = 0.05f; // rough rock
@@ -108,6 +110,8 @@ public:
 	bool get_mist() const { return mist; }
 	void set_mist_amount(float p_amount);
 	float get_mist_amount() const { return mist_amount; }
+	void set_mist_min_discharge(float p_q);
+	float get_mist_min_discharge() const { return mist_min_discharge; }
 	void set_min_height(float p_height);
 	float get_min_height() const { return min_height; }
 	void set_rock_roughness(float p_ks);
