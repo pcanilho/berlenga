@@ -251,8 +251,10 @@ void fragment() {
 	// drains; without it, rock past the rock slope and soil elsewhere. Sand on the beach band above the sea.
 	float w[5];
 	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08, tm_rock_cos + 0.04, wn.y);
+	float beach_sand = -1.0;
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
 		vec4 g = terrain_geology(wp);
+		beach_sand = clamp(-g.x, 0.0, 1.0);
 		// The generator knows where soil holds (Heimsath soil on slopes up to its repose); below its cells only
 		// faces past the cliff slope are forced bare.
 		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08, tm_cliff_cos + 0.04, wn.y);
@@ -270,7 +272,9 @@ void fragment() {
 		w[2] = 1.0 - steep;
 		w[3] = 0.0;
 	}
-	float sand = 1.0 - smoothstep(tm_beach_height * 0.6, tm_beach_height, wp.y - tm_sea_level);
+	// Sand under the sea, and on land where the generator made a beach (its geology's soil channel is -1..0 there);
+	// without a generator, on anything below beach_height. A low coastal plain behind the beach keeps its soil.
+	float sand = beach_sand >= 0.0 ? max(beach_sand, 1.0 - smoothstep(-0.2, 0.3, wp.y - tm_sea_level)) : 1.0 - smoothstep(tm_beach_height * 0.6, tm_beach_height, wp.y - tm_sea_level);
 	sand *= 1.0 - steep;
 	for (int i = 0; i < 4; i++) {
 		w[i] *= 1.0 - sand;

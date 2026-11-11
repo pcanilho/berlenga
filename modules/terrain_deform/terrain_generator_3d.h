@@ -165,6 +165,7 @@ private:
 	LocalVector<float> soil;
 	LocalVector<float> rock;
 	LocalVector<float> talus;
+	LocalVector<float> beach; // 1 on the beach face, fading over the backshore; 0 inland and where no beach
 	LocalVector<float> hardness; // 0 soft .. 1 hard rock at the surface (strata)
 	LocalVector<int32_t> receivers;
 	LocalVector<float> channel_area; // D8 drainage area along the receivers, for the rivers
@@ -232,6 +233,7 @@ private:
 	void _erode_tiles();
 	float _tile_sample(const LocalVector<float> &p_grid, real_t p_x, real_t p_z) const;
 	float _ground_detail(real_t p_x, real_t p_z) const;
+	bool result_deposition = false; // the last generate() deposited (alluvium smooths the detail)
 	Rect2 result_rect; // where the last generate() ran; the result stays there if the node moves
 	real_t result_cell = 1.0;
 	float result_min = 0.0f;

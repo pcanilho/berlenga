@@ -249,6 +249,7 @@ bool TerrainGenerator3D::generate() {
 	sp.p.area_exponent = area_exponent;
 	sp.p.diffusion = hillslope_diffusion;
 	sp.p.deposition = deposition;
+	result_deposition = deposition > 0.0;
 	sp.p.talus = critical_slope > 0.0 ? Math::tan(Math::deg_to_rad(double(critical_slope))) : 0.0;
 	sp.p.base_level = sea_level;
 	sp.p.outlet_edges = outlet_edges;
@@ -617,6 +618,7 @@ void TerrainGenerator3D::clear_result() {
 	soil.clear();
 	rock.clear();
 	talus.clear();
+	beach.clear();
 	receivers.clear();
 	channel_area.clear();
 	water_body.clear();
@@ -729,6 +731,12 @@ float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	// Not under water (the seabed and lake beds stay smooth), and never down to the outlets: land the filter cuts
 	// stays above the sea (by 0.15 m), so the coast keeps its shape and no hollow floods.
 	off *= _water_fade(p_x, p_z);
+	if (result_deposition && sediment.size() == heights.size()) {
+		// Alluvium the rivers laid down is smooth: bedrock gullies and crests fade out over its first 2 m, so a fan
+		// front or a terrace riser stays a soft bank instead of growing rocky knobs.
+		const double sd = CLAMP(double(_sample(sediment, p_x, p_z)) / 2.0, 0.0, 1.0);
+		off *= 1.0 - sd * sd * (3.0 - 2.0 * sd);
+	}
 	if (has_sea) {
 		// Beaches and the coastal strip stay smooth: the detail grows in over the first metres above the sea.
 		const double t = CLAMP((double(base) - double(result_min) - 0.5) / 5.5, 0.0, 1.0);
@@ -1324,7 +1332,9 @@ Ref<Image> TerrainGenerator3D::get_geology_image() const {
 	bytes.resize(n * 4 * sizeof(float));
 	float *w = reinterpret_cast<float *>(bytes.ptrw());
 	for (int i = 0; i < n; i++) {
-		w[i * 4 + 0] = soil[i];
+		// Sand where the coast made a beach, as a negative soil depth (-1 on the beach face, fading to 0 behind it),
+		// so materials put sand on beaches and not on every low coastal plain.
+		w[i * 4 + 0] = (beach.size() == uint32_t(n) && beach[i] > 0.0f) ? -beach[i] : soil[i];
 		w[i * 4 + 1] = rock[i];
 		w[i * 4 + 2] = talus[i];
 		w[i * 4 + 3] = float(std::log10(MAX(double(drainage[i]), 1.0)));
@@ -1355,7 +1365,7 @@ void TerrainGenerator3D::_publish_globals() {
 String TerrainGenerator3D::get_geology_shader_code() {
 	String c;
 	c += "// Geology from TerrainGenerator3D (TerrainGenerator3D.get_geology_shader_code()).\n";
-	c += "// terrain_geology(p) = (soil depth m, rock exposure 0..1, talus 0..1, log10 drainage area m2)\n";
+	c += "// terrain_geology(p) = (soil depth m, or -1..0 on beach sand; rock exposure 0..1, talus 0..1, log10 drainage area m2)\n";
 	c += "global uniform sampler2D terrain_geology_map;\n";
 	c += "global uniform vec4 terrain_geology_rect;\n\n";
 	c += "vec4 terrain_geology(vec3 world_pos) {\n";
@@ -1586,6 +1596,8 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 	const double water = result_min;
 	const double half = 0.5 * cell_size;
 	const double surf = 300.0;
+	beach.resize(n);
+	memset(beach.ptr(), 0, sizeof(float) * n);
 	const uint32_t s = uint32_t(seed) * 0x9E3779B1u + 0x7F4A7C15u;
 	for (int i = 0; i < n; i++) {
 		const double px = result_rect.position.x + (i % nx) * cell_size;
@@ -1613,8 +1625,9 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 			if (w > 0.0 && x < w + back) {
 				const double t = CLAMP((x - w) / back, 0.0, 1.0);
 				const double blend = t * t * (3.0 - 2.0 * t);
-				const double beach = water + MAX(beach_slope * x, 0.15);
-				heights[i] = float(MIN(double(heights[i]), Math::lerp(beach, double(heights[i]), blend)));
+				const double beach_h = water + MAX(beach_slope * x, 0.15);
+				heights[i] = float(MIN(double(heights[i]), Math::lerp(beach_h, double(heights[i]), blend)));
+				beach[i] = float(1.0 - blend);
 			}
 		}
 	}

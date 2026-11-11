@@ -52,7 +52,7 @@
 			River sediment along valley floors.
 		</member>
 		<member name="beach_height" type="float" setter="set_beach_height" getter="get_beach_height" default="2.5">
-			Height above [member sea_level] that sand reaches.
+			Height above [member sea_level] that sand reaches when there is no generator geology. With [member geology_enabled] and a [TerrainGenerator3D], sand follows the generator's beaches instead (and covers ground under the sea), so a low coastal plain behind a beach keeps its soil.
 		</member>
 		<member name="blend_depth" type="float" setter="set_blend_depth" getter="get_blend_depth" default="0.2">
 			Height-blend transition depth. Smaller gives sharper borders between layers.

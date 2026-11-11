@@ -283,7 +283,8 @@ func _generate() -> void:
 		if args.has("profile-fine"):
 			var fine := PackedStringArray()
 			for z in range(600, 1600, 32):
-				fine.append("%d:%.1f" % [z, gen.get_base_height(Vector3(float(args.get("px", "0")), 0, z))])
+				var q := Vector3(float(args.get("px", "0")), 0, z)
+				fine.append("%d:%.1f/s%.0f/r%.2f" % [z, gen.get_base_height(q), gen.get_sediment_depth(q), gen.get_rock_exposure(q)])
 			_log("base heights near the coast " + " ".join(fine))
 		_log("across at z=200 (x:h) " + " ".join(across))
 	t = Time.get_ticks_msec()
