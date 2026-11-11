@@ -306,6 +306,17 @@ index 17. Whole twigs are now dropped at random to at most LAI 5.5, the temperat
 (was 1.49M, 23.6M). `get_leaf_area_index()` reports it. The hero mesh is still millions of
 triangles; LODs and leaf clusters are stage 2.
 
+**Eastern North America** (Paulo's pick, 11 Nov). Sugar and red maple, northern red and white
+oak, eastern white pine, eastern hemlock, American beech, paper and yellow birch, witch-hazel and
+mountain laurel. Each starts from its nearest European relative's growth rules and changes habit,
+leaf size, bark and colour. Climate envelopes from Silvics of North America (Burns and Honkala
+1990) where it gives figures, otherwise the USGS percentile atlas (Thompson et al. 1999). Stands
+follow the SAF forest cover types (Eyre 1980) and Braun's forest regions (1950): northern
+hardwood (sugar maple, beech, yellow birch, hemlock on moist ground), eastern oak (white and red
+oak, red maple, mountain laurel thickets) and pine-hemlock. `make_woodland(variants,
+REGION_NORTH_AMERICA)` joins them; the bench region map takes `--na`. Birch crowns were also too
+wide (radius 12.8 m on a 23 m tree): `lateral_extension` 0.65 brings that to 7.
+
 **Conifer cones.** Open-grown conifers spread too wide (spruce 39 m across). Branches of an
 excurrent conifer extend at a fraction of the leader's rate (Wilson 2000; Kantola and Makela
 2004). Scaling bud vigor for that starved the crown (vigor comes from collected light) and the
@@ -344,3 +355,8 @@ near 20 m. Heights rose to 34-36 m, inside the test ranges but on the tall side 
   Hedera and Ilex as climate indicators*, 1944. Breda, *Ground-based measurements of leaf area
   index*, J. Exp. Bot. 2003. Asner, Scurlock, Hicke, *Global synthesis of leaf area index
   observations*, Global Ecol. Biogeogr. 2003. Larcher, *Physiological Plant Ecology*, 2003.
+- Burns and Honkala (tech. coords.), *Silvics of North America*, USDA Agriculture Handbook 654,
+  1990. Thompson, Anderson, Bartlein, *Atlas of relations between climatic parameters and
+  distributions of important trees and shrubs in North America*, USGS Professional Paper 1650,
+  1999. Eyre (ed.), *Forest Cover Types of the United States and Canada*, SAF, 1980. Braun,
+  *Deciduous Forests of Eastern North America*, 1950.

@@ -70,6 +70,18 @@ public:
 		PRESET_HOLLY,
 		PRESET_YEW,
 		PRESET_BOX,
+		// Eastern North America.
+		PRESET_SUGAR_MAPLE,
+		PRESET_RED_MAPLE,
+		PRESET_RED_OAK,
+		PRESET_WHITE_OAK,
+		PRESET_WHITE_PINE,
+		PRESET_HEMLOCK,
+		PRESET_AMERICAN_BEECH,
+		PRESET_PAPER_BIRCH,
+		PRESET_YELLOW_BIRCH,
+		PRESET_WITCH_HAZEL,
+		PRESET_MOUNTAIN_LAUREL,
 		PRESET_MAX,
 	};
 
@@ -89,7 +101,17 @@ public:
 		STAND_PINE_HEATH, // Scots pine on dry, poor ground, with birch and rowan.
 		STAND_RIPARIAN, // Alder carr and willows along water, elder.
 		STAND_HEDGEROW, // Hawthorn, hazel, elder, rowan, with open-grown oak, lime and chestnut standards.
+		// Eastern North America.
+		STAND_NORTHERN_HARDWOOD, // Sugar maple, American beech, yellow birch, hemlock in cool ravines.
+		STAND_EASTERN_OAK, // Red and white oak with red maple; mountain laurel and witch-hazel beneath.
+		STAND_PINE_HEMLOCK, // White pine and hemlock, paper birch in openings.
 		STAND_MAX,
+	};
+
+	enum Region {
+		REGION_EUROPE,
+		REGION_NORTH_AMERICA,
+		REGION_MAX,
 	};
 
 	enum Param {
@@ -207,6 +229,7 @@ private:
 	int shed_count = 0;
 	uint64_t generation_usec = 0;
 
+	void _set_north_american(Preset p_preset);
 	float _rand(float p_from, float p_to) { return Math::lerp(p_from, p_to, rng.randf()); }
 	Vector3 _random_unit();
 	float _lambda(int p_year) const;
@@ -262,7 +285,7 @@ public:
 	void apply_habitat(const Ref<PlantSpecies> &p_species) const;
 	Ref<PlantSpecies> make_species(bool p_stand_grown, int p_variants);
 	Ref<Biome> make_stand(Stand p_stand, int p_variants);
-	Ref<Biome> make_woodland(int p_variants);
+	Ref<Biome> make_woodland(int p_variants, Region p_region = REGION_EUROPE);
 	void clear_cache();
 
 	float get_height() const { return height; }
@@ -282,3 +305,4 @@ VARIANT_ENUM_CAST(TreeGenerator::Preset);
 VARIANT_ENUM_CAST(TreeGenerator::Phyllotaxis);
 VARIANT_ENUM_CAST(TreeGenerator::Param);
 VARIANT_ENUM_CAST(TreeGenerator::Stand);
+VARIANT_ENUM_CAST(TreeGenerator::Region);

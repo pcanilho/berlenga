@@ -16,14 +16,19 @@ extends Node3D
 #   --stands ...      stands and placement instead: see stands.gd
 
 const NAMES := ["oak", "beech", "birch", "Scots pine", "Norway spruce", "hazel", "hawthorn", "lime", "sycamore maple",
-		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box"]
-const SHRUBS := [5, 6, 16, 17, 18, 19] # Shrubs and evergreens that stay leafy low in a stand.
+		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box",
+		"sugar maple", "red maple", "red oak", "white oak", "white pine", "hemlock", "American beech", "paper birch",
+		"yellow birch", "witch-hazel", "mountain laurel"]
+const SHRUBS := [5, 6, 16, 17, 18, 19, 29, 30] # Shrubs and evergreens that stay leafy low in a stand.
 # Stem spacing in a mature stand (m), as in TreeGenerator's habitat table.
-const STAND_SPACING := [9.0, 7.0, 5.0, 5.5, 4.5, 3.0, 3.0, 7.0, 7.0, 7.0, 9.0, 5.0, 7.0, 6.0, 5.0, 4.0, 3.0, 4.0, 5.0, 2.5]
+const STAND_SPACING := [9.0, 7.0, 5.0, 5.5, 4.5, 3.0, 3.0, 7.0, 7.0, 7.0, 9.0, 5.0, 7.0, 6.0, 5.0, 4.0, 3.0, 4.0, 5.0, 2.5,
+		7.0, 6.0, 8.0, 9.0, 6.0, 5.0, 7.0, 4.5, 6.0, 3.0, 2.5]
 # Plausible heights (m) for the default ages: mature trees, shrubs at full size.
 const HEIGHT_RANGE := [Vector2(12, 30), Vector2(14, 34), Vector2(10, 28), Vector2(12, 32), Vector2(14, 38), Vector2(2.5, 8), Vector2(3, 10),
 		Vector2(12, 38), Vector2(12, 30), Vector2(14, 40), Vector2(12, 28), Vector2(10, 26), Vector2(10, 25), Vector2(15, 38),
-		Vector2(15, 40), Vector2(5, 15), Vector2(2.5, 8), Vector2(4, 15), Vector2(5, 20), Vector2(1.5, 6)]
+		Vector2(15, 40), Vector2(5, 15), Vector2(2.5, 8), Vector2(4, 15), Vector2(5, 20), Vector2(1.5, 6),
+		Vector2(15, 37), Vector2(12, 30), Vector2(15, 35), Vector2(15, 32), Vector2(18, 46), Vector2(15, 40), Vector2(15, 35),
+		Vector2(12, 30), Vector2(15, 32), Vector2(3, 9), Vector2(1.5, 6)]
 
 var test := false
 var raster := false
@@ -110,7 +115,7 @@ func _run_test() -> void:
 			print("%-14s %-7s %6.1f  %7.1f  %10.1f  %10d  %6d  %5d  %4d  %8d  %6.0f" % [NAMES[p], pair[0], d.height, d.crown_radius, d.crown_base, d.internodes, d.leaves, d.dead, d.shed, d.tris, d.ms])
 		var r: Vector2 = HEIGHT_RANGE[p]
 		_check(o.height >= r.x and o.height <= r.y, "%s open-grown height %.1f m in %.0f-%.0f m" % [NAMES[p], o.height, r.x, r.y])
-		if not p in SHRUBS and p != 14: # Shrubs and shade-tolerant fir keep low foliage in a stand.
+		if not p in SHRUBS and not p in [14, 25]: # Shrubs and shade-tolerant fir and hemlock keep low foliage in a stand.
 			_check(f.crown_base > o.crown_base, "%s forest-grown crown base %.1f m above open-grown %.1f m" % [NAMES[p], f.crown_base, o.crown_base])
 		_check(f.crown_radius < o.crown_radius, "%s forest-grown crown narrower (%.1f m vs %.1f m)" % [NAMES[p], f.crown_radius, o.crown_radius])
 		var again := _gen(p, false, seed)

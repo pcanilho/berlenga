@@ -37,11 +37,14 @@ static constexpr int MAX_NODES = 150000;
 
 static const char *preset_names[TreeGenerator::PRESET_MAX] = {
 	"Oak", "Beech", "Birch", "Scots Pine", "Norway Spruce", "Hazel", "Hawthorn", "Lime", "Sycamore Maple", "Ash",
-	"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box"
+	"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box",
+	"Sugar Maple", "Red Maple", "Northern Red Oak", "White Oak", "Eastern White Pine", "Eastern Hemlock", "American Beech",
+	"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel"
 };
 
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
-	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow"
+	"Beech Forest", "Oak Mixed Forest", "Montane Conifer Forest", "Subalpine Forest", "Pine Heath", "Riparian Woodland", "Hedgerow",
+	"Northern Hardwood Forest", "Eastern Oak Forest", "Pine-Hemlock Forest"
 };
 
 TreeGenerator::TreeGenerator() {
@@ -52,8 +55,47 @@ TreeGenerator::TreeGenerator() {
 // the leader dominates and for how long (excurrent conifers versus decurrent broadleaves), how
 // much shade the species tolerates before it sheds (beech and spruce keep low branches, pine and
 // birch prune themselves), branching angles and phyllotaxis, and leaf size.
+// The eastern North American species grow by the same rules as their closest European relatives
+// (same genus or growth habit), so each starts from that preset and changes what differs: crown
+// habit, leaf and needle size, bark and colour (Burns and Honkala, "Silvics of North America",
+// USDA Agriculture Handbook 654, 1990; Sibley, "The Sibley Guide to Trees", 2009).
+static TreeGenerator::Preset european_relative(TreeGenerator::Preset p_preset) {
+	switch (p_preset) {
+		case TreeGenerator::PRESET_SUGAR_MAPLE:
+		case TreeGenerator::PRESET_RED_MAPLE:
+			return TreeGenerator::PRESET_SYCAMORE_MAPLE;
+		case TreeGenerator::PRESET_RED_OAK:
+		case TreeGenerator::PRESET_WHITE_OAK:
+			return TreeGenerator::PRESET_OAK;
+		case TreeGenerator::PRESET_WHITE_PINE:
+			return TreeGenerator::PRESET_SCOTS_PINE;
+		case TreeGenerator::PRESET_HEMLOCK:
+			return TreeGenerator::PRESET_SILVER_FIR;
+		case TreeGenerator::PRESET_AMERICAN_BEECH:
+			return TreeGenerator::PRESET_BEECH;
+		case TreeGenerator::PRESET_PAPER_BIRCH:
+		case TreeGenerator::PRESET_YELLOW_BIRCH:
+			return TreeGenerator::PRESET_BIRCH;
+		case TreeGenerator::PRESET_WITCH_HAZEL:
+			return TreeGenerator::PRESET_HAZEL;
+		case TreeGenerator::PRESET_MOUNTAIN_LAUREL:
+			return TreeGenerator::PRESET_BOX;
+		default:
+			return p_preset;
+	}
+}
+
 void TreeGenerator::set_preset(Preset p_preset) {
 	ERR_FAIL_INDEX(int(p_preset), int(PRESET_MAX));
+	const Preset relative = european_relative(p_preset);
+	if (relative != p_preset) {
+		set_preset(relative);
+		preset = p_preset;
+		_set_north_american(p_preset);
+		emit_changed();
+		notify_property_list_changed();
+		return;
+	}
 	preset = p_preset;
 	float *p = params;
 	// Shared defaults.
@@ -143,6 +185,9 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.75f;
 			p[PARAM_SHED_RATIO] = 0.059f;
 			p[PARAM_TWIG_DROOP] = 1.2f;
+			// Birch crowns are narrow (about a quarter as wide as tall); branches lengthen slower
+			// than the leader.
+			p[PARAM_LATERAL_EXTENSION] = 0.65f;
 			p[PARAM_LEAF_SIZE] = 0.05f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 40;
 			p[PARAM_ROOT_FLARE] = 0.3f;
@@ -471,6 +516,147 @@ void TreeGenerator::set_preset(Preset p_preset) {
 	}
 	emit_changed();
 	notify_property_list_changed();
+}
+
+void TreeGenerator::_set_north_american(Preset p_preset) {
+	float *p = params;
+	switch (p_preset) {
+		case PRESET_SUGAR_MAPLE: // Acer saccharum: tall, dense oval crown, very shade tolerant.
+			p[PARAM_YEARS] = 50;
+			p[PARAM_APICAL_DOMINANCE] = 0.6f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.53f;
+			p[PARAM_BRANCH_ANGLE] = 40;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.6f;
+			p[PARAM_SHED_RATIO] = 0.03f;
+			p[PARAM_LEAF_SIZE] = 0.12f;
+			p[PARAM_LEAF_WIDTH] = 0.55f;
+			bark_color = Color(0.38f, 0.35f, 0.31f);
+			leaf_color = Color(0.12f, 0.27f, 0.06f);
+			break;
+		case PRESET_RED_MAPLE: // Acer rubrum: smaller, irregular oval crown, red twigs, wet to dry ground.
+			p[PARAM_YEARS] = 38;
+			p[PARAM_APICAL_DOMINANCE] = 0.56f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.51f;
+			p[PARAM_BRANCH_ANGLE] = 38;
+			p[PARAM_DIRECTION_NOISE] = 10;
+			p[PARAM_LEAF_SIZE] = 0.09f;
+			p[PARAM_LEAF_WIDTH] = 0.5f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 20;
+			bark_color = Color(0.46f, 0.44f, 0.41f);
+			leaf_color = Color(0.13f, 0.26f, 0.08f);
+			break;
+		case PRESET_RED_OAK: // Quercus rubra: straighter and more upright than pedunculate oak, fast.
+			p[PARAM_YEARS] = 45;
+			p[PARAM_INTERNODE_LENGTH] = 0.5f;
+			p[PARAM_APICAL_DOMINANCE] = 0.6f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.51f;
+			p[PARAM_BRANCH_ANGLE] = 42;
+			p[PARAM_DIRECTION_NOISE] = 9;
+			p[PARAM_GRAVITROPISM] = 0.1f;
+			p[PARAM_LEAF_SIZE] = 0.16f;
+			p[PARAM_LEAF_WIDTH] = 0.42f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 26;
+			bark_color = Color(0.3f, 0.29f, 0.27f);
+			leaf_color = Color(0.11f, 0.24f, 0.06f);
+			break;
+		case PRESET_WHITE_OAK: // Quercus alba: open-grown, a short bole and a wide-spreading crown.
+			p[PARAM_YEARS] = 50;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.47f;
+			p[PARAM_BRANCH_ANGLE] = 55;
+			p[PARAM_GRAVITROPISM] = 0.02f;
+			p[PARAM_LEAF_SIZE] = 0.15f;
+			p[PARAM_LEAF_WIDTH] = 0.45f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 26;
+			bark_color = Color(0.5f, 0.48f, 0.44f);
+			leaf_color = Color(0.13f, 0.26f, 0.08f);
+			break;
+		case PRESET_WHITE_PINE: // Pinus strobus: tall, level whorls in tiers, long soft needles.
+			p[PARAM_YEARS] = 50;
+			p[PARAM_INTERNODE_LENGTH] = 0.45f;
+			p[PARAM_APICAL_DOMINANCE] = 0.78f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.6f;
+			p[PARAM_BRANCH_ANGLE] = 80;
+			p[PARAM_GRAVITROPISM] = 0.04f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 1.0f;
+			p[PARAM_SHED_RATIO] = 0.06f;
+			p[PARAM_LEAF_SIZE] = 0.1f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 100;
+			p[PARAM_LEAF_YEARS] = 2;
+			p[PARAM_TWIG_DROOP] = 0.3f;
+			p[PARAM_LATERAL_EXTENSION] = 0.5f;
+			bark_color = Color(0.3f, 0.28f, 0.26f);
+			leaf_color = Color(0.1f, 0.2f, 0.14f);
+			break;
+		case PRESET_HEMLOCK: // Tsuga canadensis: nodding leader, fine drooping sprays, deepest shade.
+			p[PARAM_YEARS] = 55;
+			p[PARAM_INTERNODE_LENGTH] = 0.3f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
+			p[PARAM_BRANCH_ANGLE] = 75;
+			p[PARAM_GRAVITROPISM] = -0.05f;
+			p[PARAM_TWIG_DROOP] = 0.9f;
+			p[PARAM_LEAF_SIZE] = 0.016f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 170;
+			p[PARAM_LEAF_YEARS] = 4;
+			p[PARAM_LATERAL_EXTENSION] = 0.4f;
+			bark_color = Color(0.36f, 0.28f, 0.24f);
+			leaf_color = Color(0.06f, 0.15f, 0.07f);
+			break;
+		case PRESET_AMERICAN_BEECH: // Fagus grandifolia: like European beech, rounder crown, root suckers.
+			p[PARAM_YEARS] = 48;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_BRANCH_ANGLE] = 48;
+			p[PARAM_LEAF_SIZE] = 0.1f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 30;
+			bark_color = Color(0.52f, 0.52f, 0.5f);
+			break;
+		case PRESET_PAPER_BIRCH: // Betula papyrifera: chalk-white peeling bark, twigs not pendulous.
+			p[PARAM_YEARS] = 30;
+			p[PARAM_TWIG_DROOP] = 0.35f;
+			p[PARAM_BRANCH_ANGLE] = 42;
+			p[PARAM_LEAF_SIZE] = 0.08f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 28;
+			bark_color = Color(0.85f, 0.84f, 0.8f);
+			leaf_color = Color(0.18f, 0.32f, 0.08f);
+			break;
+		case PRESET_YELLOW_BIRCH: // Betula alleghaniensis: bronze peeling bark, broad crown, long-lived.
+			p[PARAM_YEARS] = 45;
+			p[PARAM_LATERAL_EXTENSION] = 0.8f;
+			p[PARAM_TWIG_DROOP] = 0.2f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_BRANCH_ANGLE] = 45;
+			p[PARAM_GRAVITROPISM] = 0.06f;
+			p[PARAM_LEAF_SIZE] = 0.09f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 28;
+			bark_color = Color(0.62f, 0.52f, 0.38f);
+			leaf_color = Color(0.15f, 0.29f, 0.07f);
+			break;
+		case PRESET_WITCH_HAZEL: // Hamamelis virginiana: understorey shrub, spreading zigzag stems.
+			p[PARAM_YEARS] = 18;
+			p[PARAM_STEMS] = 4;
+			p[PARAM_STEM_SPREAD] = 35;
+			p[PARAM_BRANCH_ANGLE] = 50;
+			p[PARAM_DIRECTION_NOISE] = 16;
+			p[PARAM_LEAF_SIZE] = 0.11f;
+			p[PARAM_LEAF_WIDTH] = 0.6f;
+			bark_color = Color(0.44f, 0.38f, 0.32f);
+			break;
+		case PRESET_MOUNTAIN_LAUREL: // Kalmia latifolia: evergreen thicket shrub of acid oak woods.
+			p[PARAM_YEARS] = 20;
+			p[PARAM_INTERNODE_LENGTH] = 0.12f;
+			phyllotaxis = PHYLLOTAXIS_ALTERNATE;
+			p[PARAM_DIRECTION_NOISE] = 18;
+			p[PARAM_STEMS] = 5;
+			p[PARAM_STEM_SPREAD] = 35;
+			p[PARAM_LEAF_SIZE] = 0.08f;
+			p[PARAM_LEAF_WIDTH] = 0.3f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 10;
+			p[PARAM_LEAF_YEARS] = 2;
+			bark_color = Color(0.4f, 0.3f, 0.24f);
+			leaf_color = Color(0.08f, 0.2f, 0.07f);
+			break;
+		default:
+			break;
+	}
 }
 
 void TreeGenerator::set_param(Param p_param, float p_value) {
@@ -1554,10 +1740,27 @@ static const Habitat HABITATS[TreeGenerator::PRESET_MAX] = {
 	{ 6, 15, -1.5f, 9, 600, 2500, 0.7f, 40, 0.2f, 0, 0.92f, 0.90f, 4.0f, 0.7f }, // Holly
 	{ 6, 13, -6, 8, 600, 2000, 0.6f, 45, 0.1f, 0, 0.95f, 0.95f, 5.0f, 0.8f }, // Yew
 	{ 8, 15, -3, 9, 500, 1400, 0.4f, 45, 0.05f, 0, 0.9f, 0.85f, 2.5f, 0.5f }, // Box
+	// Eastern North America: Silvics of North America (Burns and Honkala 1990) where it gives
+	// figures (white oak 7-21 C annual and 760 mm; yellow birch from the 2 C isotherm and 640 mm;
+	// hemlock, January -12 to 6 C and over 740 mm; sugar maple, January -18 to 10 C and 510 mm;
+	// white pine 510 mm), the rest from the climate percentiles of Thompson, Anderson and
+	// Bartlein, USGS Professional Paper 1650-A, 1999.
+	{ 2, 14, -18, 6, 600, 2000, 0.7f, 40, 0.3f, 0, 0.9f, 0.90f, 7.0f, 1.0f }, // Sugar maple
+	{ 2, 21, -18, 12, 650, 2000, 0.6f, 40, 0.15f, 0, 0.7f, 0.70f, 6.0f, 0.9f }, // Red maple
+	{ 4, 16, -15, 6, 650, 1600, 0.55f, 40, 0.3f, 0, 0.55f, 0.70f, 8.0f, 1.1f }, // Red oak
+	{ 7, 21, -12, 12, 760, 2000, 0.55f, 40, 0.3f, 0, 0.45f, 0.65f, 9.0f, 1.2f }, // White oak
+	{ 2, 14, -18, 4, 510, 2000, 0.4f, 45, 0.1f, 0, 0.6f, 0.55f, 6.0f, 0.9f }, // White pine
+	{ 3, 13, -14, 6, 740, 2000, 0.9f, 45, 0.15f, 0, 0.95f, 0.92f, 5.0f, 0.8f }, // Hemlock
+	{ 3, 20, -14, 12, 750, 2000, 0.8f, 45, 0.3f, 0, 0.9f, 0.90f, 7.0f, 1.0f }, // American beech
+	{ -5, 8, -30, -4, 300, 1500, 0.4f, 45, 0.1f, 0, 0.4f, 0.45f, 4.5f, 0.7f }, // Paper birch
+	{ 2, 10, -18, -3, 640, 1500, 0.8f, 40, 0.2f, 0, 0.65f, 0.70f, 6.0f, 0.9f }, // Yellow birch
+	{ 3, 19, -15, 10, 650, 1600, 0.6f, 40, 0.2f, 0, 0.85f, 0.65f, 3.0f, 0.6f }, // Witch-hazel
+	{ 7, 19, -8, 10, 750, 2000, 0.6f, 45, 0.1f, 0, 0.85f, 0.80f, 2.5f, 0.5f }, // Mountain laurel
 };
 
 static bool is_shrub(TreeGenerator::Preset p_preset) {
-	return p_preset == TreeGenerator::PRESET_HAZEL || p_preset == TreeGenerator::PRESET_HAWTHORN || p_preset == TreeGenerator::PRESET_ELDER || p_preset == TreeGenerator::PRESET_HOLLY || p_preset == TreeGenerator::PRESET_BOX;
+	return p_preset == TreeGenerator::PRESET_HAZEL || p_preset == TreeGenerator::PRESET_HAWTHORN || p_preset == TreeGenerator::PRESET_ELDER || p_preset == TreeGenerator::PRESET_HOLLY || p_preset == TreeGenerator::PRESET_BOX ||
+			p_preset == TreeGenerator::PRESET_WITCH_HAZEL || p_preset == TreeGenerator::PRESET_MOUNTAIN_LAUREL;
 }
 
 void TreeGenerator::apply_habitat(const Ref<PlantSpecies> &p_species) const {
@@ -1652,7 +1855,8 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	const float crown = crown_cache[key];
 	// Needle cover overhead for the forest floor (VegetationField3D.get_conifer_at on the
 	// vegetation branch); a no-op until PlantSpecies has the property.
-	const bool conifer = p_preset == PRESET_SCOTS_PINE || p_preset == PRESET_NORWAY_SPRUCE || p_preset == PRESET_SILVER_FIR || p_preset == PRESET_LARCH || p_preset == PRESET_YEW;
+	const bool conifer = p_preset == PRESET_SCOTS_PINE || p_preset == PRESET_NORWAY_SPRUCE || p_preset == PRESET_SILVER_FIR || p_preset == PRESET_LARCH || p_preset == PRESET_YEW ||
+			p_preset == PRESET_WHITE_PINE || p_preset == PRESET_HEMLOCK;
 	sp->set("canopy_conifer", conifer);
 	sp->set_canopy_radius(crown);
 	sp->set_canopy_opacity(h.opacity);
@@ -1812,6 +2016,43 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			shrub(PRESET_ELDER, 0.4f);
 			open(PRESET_ROWAN, 0.3f);
 		} break;
+		case STAND_NORTHERN_HARDWOOD: {
+			// Sugar maple-beech-yellow birch (SAF cover type 25; Eyre 1980; Braun 1950): maple and
+			// beech in clumps, yellow birch in gaps, hemlock where it is moist; witch-hazel beneath.
+			canopy(PRESET_SUGAR_MAPLE, 1.0f, 60.0f, 0.6f, false, true);
+			canopy(PRESET_AMERICAN_BEECH, 1.0f, 60.0f, 0.6f, true, false);
+			Ref<PlantSpecies> hemlock = canopy(PRESET_HEMLOCK, 0.8f, 0.0f, 0.0f, false, false);
+			hemlock->set_rule_range(PlantSpecies::RULE_WETNESS, Vector2(7.0f, 1000.0f));
+			hemlock->set_rule_fade(PlantSpecies::RULE_WETNESS, 1.5f);
+			canopy(PRESET_YELLOW_BIRCH, 0.6f, 0.0f, 0.0f, false, false);
+			open(PRESET_SUGAR_MAPLE, 0.25f);
+			open(PRESET_PAPER_BIRCH, 0.3f);
+			shrub(PRESET_WITCH_HAZEL, 0.5f);
+		} break;
+		case STAND_EASTERN_OAK: {
+			// Oak forest of the eastern uplands (SAF 52-55, white oak-red oak): the two oaks in
+			// clumps, red maple between; mountain laurel thickets and witch-hazel in the shrub layer.
+			canopy(PRESET_WHITE_OAK, 1.0f, 70.0f, 0.55f, false, true);
+			canopy(PRESET_RED_OAK, 1.0f, 70.0f, 0.55f, true, false);
+			canopy(PRESET_RED_MAPLE, 0.7f, 0.0f, 0.0f, false, false);
+			open(PRESET_WHITE_OAK, 0.3f);
+			open(PRESET_RED_MAPLE, 0.3f);
+			Ref<PlantSpecies> laurel = shrub(PRESET_MOUNTAIN_LAUREL, 0.8f);
+			laurel->set_patch_scale(35.0f);
+			laurel->set_patch_cover(0.45f);
+			laurel->set_patch_seed(patch_seed + 7);
+			shrub(PRESET_WITCH_HAZEL, 0.4f);
+		} break;
+		case STAND_PINE_HEMLOCK: {
+			// White pine-hemlock (SAF 22): emergent pines over hemlock, which takes the shade and
+			// the moist slopes; paper birch and red maple in openings.
+			canopy(PRESET_WHITE_PINE, 1.0f, 60.0f, 0.6f, false, true);
+			canopy(PRESET_HEMLOCK, 1.0f, 60.0f, 0.6f, true, false);
+			canopy(PRESET_RED_MAPLE, 0.4f, 0.0f, 0.0f, false, false);
+			open(PRESET_WHITE_PINE, 0.35f);
+			open(PRESET_PAPER_BIRCH, 0.4f);
+			shrub(PRESET_WITCH_HAZEL, 0.3f);
+		} break;
 		case STAND_MAX:
 			break;
 	}
@@ -1837,8 +2078,22 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 // edges, then the cold belts, then the shade casters (beech before oak), then pine on what the
 // broadleaves leave dry. Climate rules keep each stand to its belt; where belts overlap, the shade
 // rule of the later stand's trees leaves the ground to the earlier canopy.
-Ref<Biome> TreeGenerator::make_woodland(int p_variants) {
-	static const Stand order[] = { STAND_RIPARIAN, STAND_SUBALPINE, STAND_MONTANE_CONIFER, STAND_BEECH, STAND_OAK_MIXED, STAND_PINE_HEATH };
+Ref<Biome> TreeGenerator::make_woodland(int p_variants, Region p_region) {
+	ERR_FAIL_INDEX_V(int(p_region), int(REGION_MAX), Ref<Biome>());
+	static const Stand europe[] = { STAND_RIPARIAN, STAND_SUBALPINE, STAND_MONTANE_CONIFER, STAND_BEECH, STAND_OAK_MIXED, STAND_PINE_HEATH };
+	// North America: hemlock-pine holds the cool, moist ground, northern hardwoods the cool
+	// uplands, oak the warmer and drier south, as in Braun's deciduous forest regions (1950).
+	static const Stand north_america[] = { STAND_PINE_HEMLOCK, STAND_NORTHERN_HARDWOOD, STAND_EASTERN_OAK };
+	LocalVector<Stand> order;
+	if (p_region == REGION_EUROPE) {
+		for (Stand st : europe) {
+			order.push_back(st);
+		}
+	} else {
+		for (Stand st : north_america) {
+			order.push_back(st);
+		}
+	}
 	TypedArray<PlantSpecies> canopies, rest;
 	for (Stand st : order) {
 		Ref<Biome> b = make_stand(st, p_variants);
@@ -1860,7 +2115,7 @@ Ref<Biome> TreeGenerator::make_woodland(int p_variants) {
 	list.append_array(rest);
 	Ref<Biome> biome;
 	biome.instantiate();
-	biome->set_name("Woodland");
+	biome->set_name(p_region == REGION_EUROPE ? "Woodland" : "North American Woodland");
 	biome->set_species(list);
 	return biome;
 }
@@ -1929,7 +2184,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("apply_habitat", "species"), &TreeGenerator::apply_habitat);
 	ClassDB::bind_method(D_METHOD("make_species", "stand_grown", "variants"), &TreeGenerator::make_species, DEFVAL(3));
 	ClassDB::bind_method(D_METHOD("make_stand", "stand", "variants"), &TreeGenerator::make_stand, DEFVAL(3));
-	ClassDB::bind_method(D_METHOD("make_woodland", "variants"), &TreeGenerator::make_woodland, DEFVAL(3));
+	ClassDB::bind_method(D_METHOD("make_woodland", "variants", "region"), &TreeGenerator::make_woodland, DEFVAL(3), DEFVAL(REGION_EUROPE));
 	ClassDB::bind_method(D_METHOD("clear_cache"), &TreeGenerator::clear_cache);
 	ClassDB::bind_method(D_METHOD("get_height"), &TreeGenerator::get_height);
 	ClassDB::bind_method(D_METHOD("get_crown_radius"), &TreeGenerator::get_crown_radius);
@@ -1941,7 +2196,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shed_count"), &TreeGenerator::get_shed_count);
 	ClassDB::bind_method(D_METHOD("get_generation_usec"), &TreeGenerator::get_generation_usec);
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Oak,Beech,Birch,Scots Pine,Norway Spruce,Hazel,Hawthorn,Lime,Sycamore Maple,Ash,Horse Chestnut,Black Alder,White Willow,European Larch,Silver Fir,Rowan,Elder,Holly,Yew,Box"), "set_preset", "get_preset");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Oak,Beech,Birch,Scots Pine,Norway Spruce,Hazel,Hawthorn,Lime,Sycamore Maple,Ash,Horse Chestnut,Black Alder,White Willow,European Larch,Silver Fir,Rowan,Elder,Holly,Yew,Box,Sugar Maple,Red Maple,Northern Red Oak,White Oak,Eastern White Pine,Eastern Hemlock,American Beech,Paper Birch,Yellow Birch,Witch-hazel,Mountain Laurel"), "set_preset", "get_preset");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "phyllotaxis", PROPERTY_HINT_ENUM, "Alternate,Opposite,Whorled"), "set_phyllotaxis", "get_phyllotaxis");
 	ADD_GROUP("Stand", "forest_");
@@ -1984,6 +2239,17 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_HOLLY);
 	BIND_ENUM_CONSTANT(PRESET_YEW);
 	BIND_ENUM_CONSTANT(PRESET_BOX);
+	BIND_ENUM_CONSTANT(PRESET_SUGAR_MAPLE);
+	BIND_ENUM_CONSTANT(PRESET_RED_MAPLE);
+	BIND_ENUM_CONSTANT(PRESET_RED_OAK);
+	BIND_ENUM_CONSTANT(PRESET_WHITE_OAK);
+	BIND_ENUM_CONSTANT(PRESET_WHITE_PINE);
+	BIND_ENUM_CONSTANT(PRESET_HEMLOCK);
+	BIND_ENUM_CONSTANT(PRESET_AMERICAN_BEECH);
+	BIND_ENUM_CONSTANT(PRESET_PAPER_BIRCH);
+	BIND_ENUM_CONSTANT(PRESET_YELLOW_BIRCH);
+	BIND_ENUM_CONSTANT(PRESET_WITCH_HAZEL);
+	BIND_ENUM_CONSTANT(PRESET_MOUNTAIN_LAUREL);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 	BIND_ENUM_CONSTANT(STAND_BEECH);
 	BIND_ENUM_CONSTANT(STAND_OAK_MIXED);
@@ -1992,7 +2258,13 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(STAND_PINE_HEATH);
 	BIND_ENUM_CONSTANT(STAND_RIPARIAN);
 	BIND_ENUM_CONSTANT(STAND_HEDGEROW);
+	BIND_ENUM_CONSTANT(STAND_NORTHERN_HARDWOOD);
+	BIND_ENUM_CONSTANT(STAND_EASTERN_OAK);
+	BIND_ENUM_CONSTANT(STAND_PINE_HEMLOCK);
 	BIND_ENUM_CONSTANT(STAND_MAX);
+	BIND_ENUM_CONSTANT(REGION_EUROPE);
+	BIND_ENUM_CONSTANT(REGION_NORTH_AMERICA);
+	BIND_ENUM_CONSTANT(REGION_MAX);
 	BIND_ENUM_CONSTANT(PHYLLOTAXIS_ALTERNATE);
 	BIND_ENUM_CONSTANT(PHYLLOTAXIS_OPPOSITE);
 	BIND_ENUM_CONSTANT(PHYLLOTAXIS_WHORLED);

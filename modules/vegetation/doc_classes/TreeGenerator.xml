@@ -110,8 +110,9 @@
 		<method name="make_woodland">
 			<return type="Biome" />
 			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="region" type="int" enum="TreeGenerator.Region" default="0" />
 			<description>
-				Returns one [Biome] with every woodland stand (all but [constant STAND_HEDGEROW]): riparian, subalpine, montane conifer, beech, oak mixed and pine heath, canopy trees of all stands first. Climate rules keep each stand to its belt; where belts overlap, later stands only fill the gaps earlier crowns leave. Append floor species after it.
+				Returns one [Biome] with every woodland stand of [param region]. Europe (all but [constant STAND_HEDGEROW]): riparian, subalpine, montane conifer, beech, oak mixed and pine heath. North America: pine-hemlock, northern hardwood and eastern oak. Canopy trees of all stands come first. Climate rules keep each stand to its belt; where belts overlap, later stands only fill the gaps earlier crowns leave. Append floor species after it.
 			</description>
 		</method>
 		<method name="set_param">
@@ -321,7 +322,40 @@
 		<constant name="PRESET_BOX" value="19" enum="Preset">
 			Box (Buxus sempervirens), a dense evergreen shrub with small opposite leaves.
 		</constant>
-		<constant name="PRESET_MAX" value="20" enum="Preset">
+		<constant name="PRESET_SUGAR_MAPLE" value="20" enum="Preset">
+			Sugar maple (Acer saccharum), a tall, very shade-tolerant maple with a dense oval crown.
+		</constant>
+		<constant name="PRESET_RED_MAPLE" value="21" enum="Preset">
+			Red maple (Acer rubrum), a smaller maple of wet and dry ground alike, with red twigs.
+		</constant>
+		<constant name="PRESET_RED_OAK" value="22" enum="Preset">
+			Northern red oak (Quercus rubra), straighter and more upright than the European oak.
+		</constant>
+		<constant name="PRESET_WHITE_OAK" value="23" enum="Preset">
+			White oak (Quercus alba): a short bole and a wide-spreading crown when open-grown.
+		</constant>
+		<constant name="PRESET_WHITE_PINE" value="24" enum="Preset">
+			Eastern white pine (Pinus strobus), tall, with level whorls in tiers and long soft needles.
+		</constant>
+		<constant name="PRESET_HEMLOCK" value="25" enum="Preset">
+			Eastern hemlock (Tsuga canadensis), a nodding leader and fine drooping sprays; casts the deepest shade.
+		</constant>
+		<constant name="PRESET_AMERICAN_BEECH" value="26" enum="Preset">
+			American beech (Fagus grandifolia), like the European beech with a rounder crown.
+		</constant>
+		<constant name="PRESET_PAPER_BIRCH" value="27" enum="Preset">
+			Paper birch (Betula papyrifera), a boreal pioneer with chalk-white bark and twigs that do not hang.
+		</constant>
+		<constant name="PRESET_YELLOW_BIRCH" value="28" enum="Preset">
+			Yellow birch (Betula alleghaniensis), bronze peeling bark and a broad crown.
+		</constant>
+		<constant name="PRESET_WITCH_HAZEL" value="29" enum="Preset">
+			Witch-hazel (Hamamelis virginiana), a spreading understorey shrub.
+		</constant>
+		<constant name="PRESET_MOUNTAIN_LAUREL" value="30" enum="Preset">
+			Mountain laurel (Kalmia latifolia), an evergreen shrub that forms thickets in oak woods.
+		</constant>
+		<constant name="PRESET_MAX" value="31" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">
@@ -345,8 +379,26 @@
 		<constant name="STAND_HEDGEROW" value="6" enum="Stand">
 			Hawthorn, hazel, elder and rowan with open-grown oak, lime and horse chestnut standards; for hedge lines the scene places itself.
 		</constant>
-		<constant name="STAND_MAX" value="7" enum="Stand">
+		<constant name="STAND_NORTHERN_HARDWOOD" value="7" enum="Stand">
+			Sugar maple and American beech in clumps, yellow birch, hemlock on moist ground, witch-hazel beneath.
+		</constant>
+		<constant name="STAND_EASTERN_OAK" value="8" enum="Stand">
+			White and red oak in clumps with red maple; mountain laurel thickets and witch-hazel beneath.
+		</constant>
+		<constant name="STAND_PINE_HEMLOCK" value="9" enum="Stand">
+			Eastern white pine over hemlock, with red maple, and paper birch in openings.
+		</constant>
+		<constant name="STAND_MAX" value="10" enum="Stand">
 			Number of stand types.
+		</constant>
+		<constant name="REGION_EUROPE" value="0" enum="Region">
+			The European stands, for [method make_woodland].
+		</constant>
+		<constant name="REGION_NORTH_AMERICA" value="1" enum="Region">
+			The eastern North American stands, for [method make_woodland].
+		</constant>
+		<constant name="REGION_MAX" value="2" enum="Region">
+			Number of regions.
 		</constant>
 		<constant name="PHYLLOTAXIS_ALTERNATE" value="0" enum="Phyllotaxis">
 			One lateral bud per node, turned by [member divergence].

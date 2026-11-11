@@ -11,6 +11,7 @@ extends Node3D
 #   --region=path.png make_woodland() over a 6 km massif with its climate (placement only, no
 #                     meshes): the stands as belts on a hillshade
 #   --generated       with --region: a TerrainGenerator3D range (4 km, geology and soil) instead
+#   --na              with --region: the North American woodland instead of the European one
 
 const SIZE := 160.0
 const STREAM_HALF := 3.0 # Stream bed half width, metres.
@@ -28,14 +29,18 @@ class Stream extends Node3D:
 
 const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2b"), Color("1f4d2b"), Color("c9a227"),
 		Color("b03a2e"), Color("7fbf7f"), Color("e07b39"), Color("9aa0a6"), Color("8e44ad"), Color("3b6e8f"), Color("a3c4a8"),
-		Color("d4b483"), Color("335c4c"), Color("e74c3c"), Color("f5e6a8"), Color("0b3d1e"), Color("4a2c1a"), Color("5c7a2e")]
-const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow", "woodland"]
+		Color("d4b483"), Color("335c4c"), Color("e74c3c"), Color("f5e6a8"), Color("0b3d1e"), Color("4a2c1a"), Color("5c7a2e"),
+		Color("d35400"), Color("c0392b"), Color("a04000"), Color("b7950b"), Color("4d6b5a"), Color("17332a"), Color("a6acaf"),
+		Color("f4f1ea"), Color("caa472"), Color("e5c07b"), Color("6c8f3a")]
+const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow",
+		"northern hardwood", "eastern oak", "pine-hemlock", "woodland", "NA woodland"]
 
 var gen: TreeGenerator
 var dm: TerrainDataMap3D
 var fails := 0
 var variants := 1
 var use_generator := false
+var north_america := false
 
 func run(args: Dictionary) -> void:
 	variants = int(args.get("variants", "1"))
@@ -43,6 +48,7 @@ func run(args: Dictionary) -> void:
 	gen.seed = int(args.get("seed", "1"))
 	if args.has("region"):
 		use_generator = args.has("generated")
+		north_america = args.has("na")
 		await _region(args["region"])
 		get_tree().quit(1 if fails > 0 else 0)
 		return
@@ -93,7 +99,11 @@ func _field(biome: Biome) -> VegetationField3D:
 	return f
 
 func _biome(i: int) -> Biome:
-	return gen.make_woodland(variants) if i == TreeGenerator.STAND_MAX else gen.make_stand(i, variants)
+	if i == TreeGenerator.STAND_MAX:
+		return gen.make_woodland(variants)
+	if i == TreeGenerator.STAND_MAX + 1:
+		return gen.make_woodland(variants, TreeGenerator.REGION_NORTH_AMERICA)
+	return gen.make_stand(i, variants)
 
 func _habitat_checks() -> void:
 	var sp := PlantSpecies.new()
@@ -113,11 +123,19 @@ func _habitat_checks() -> void:
 	gen.preset = TreeGenerator.PRESET_SCOTS_PINE
 	gen.apply_habitat(sp)
 	_check(sp.rule_weight(PlantSpecies.RULE_ARIDITY, 0.5) == 1.0, "pine takes dry ground (aridity 0.5)")
+	sp = PlantSpecies.new()
+	gen.preset = TreeGenerator.PRESET_PAPER_BIRCH
+	gen.apply_habitat(sp)
+	_check(sp.rule_weight(PlantSpecies.RULE_TEMPERATURE, 14.0) == 0.0 and sp.rule_weight(PlantSpecies.RULE_JANUARY_TEMPERATURE, -20.0) == 1.0, "paper birch is boreal (none at 14 C annual, full at -20 C January)")
+	sp = PlantSpecies.new()
+	gen.preset = TreeGenerator.PRESET_WHITE_OAK
+	gen.apply_habitat(sp)
+	_check(sp.rule_weight(PlantSpecies.RULE_TEMPERATURE, 18.0) == 1.0 and sp.rule_weight(PlantSpecies.RULE_TEMPERATURE, 3.0) == 0.0, "white oak in the warm south (full at 18 C, none at 3 C)")
 
 func _stand_checks() -> void:
 	print("stand              species                     placed  per_ha")
 	var area_ha := SIZE * SIZE / 10000.0
-	for i in TreeGenerator.STAND_MAX + 1:
+	for i in TreeGenerator.STAND_MAX + 2:
 		var t := Time.get_ticks_msec()
 		var biome := _biome(i)
 		var f := _field(biome)
@@ -145,7 +163,7 @@ func _stand_checks() -> void:
 				if dm.get_water_distance_at(p) > 40.0 + 16.0:
 					far += 1
 			_check(far == 0, "riparian: no alder beyond its 40 m (+16 m fade) of water (%d)" % far)
-		if i == TreeGenerator.STAND_MAX:
+		if i >= TreeGenerator.STAND_MAX:
 			# All stands at once on a map without climate: the gap rule must stop them stacking.
 			var per_ha := canopy_total / area_ha
 			_check(per_ha < 700.0, "woodland: canopy trees do not stack across stands (%.0f per ha)" % per_ha)
@@ -154,10 +172,10 @@ func _stand_checks() -> void:
 func _draw_maps(path: String) -> void:
 	var px := 320
 	var cols := 4
-	var rows := 2
+	var rows := 3
 	var img := Image.create(px * cols, px * rows, false, Image.FORMAT_RGB8)
 	img.fill(Color(0.93, 0.92, 0.88))
-	for i in TreeGenerator.STAND_MAX + 1:
+	for i in TreeGenerator.STAND_MAX + 2:
 		var biome := _biome(i)
 		var f := _field(biome)
 		var ox := (i % cols) * px
@@ -183,7 +201,9 @@ func _draw_maps(path: String) -> void:
 	print("saved ", path)
 
 const PRESET_NAMES := ["Oak", "Beech", "Birch", "Scots Pine", "Norway Spruce", "Hazel", "Hawthorn", "Lime", "Sycamore Maple", "Ash",
-		"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box"]
+		"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box",
+		"Sugar Maple", "Red Maple", "Northern Red Oak", "White Oak", "Eastern White Pine", "Eastern Hemlock", "American Beech",
+		"Paper Birch", "Yellow Birch", "Witch-hazel", "Mountain Laurel"]
 
 func _preset_of(nm: String) -> int:
 	var base := nm.substr(0, nm.find(" ("))
@@ -274,7 +294,8 @@ func _render_plot(i: int, args: Dictionary) -> void:
 
 # --- Region: stands as belts over a generated range ------------------------------------------------
 
-const STAND_COLORS := [Color("3f8f4f"), Color("b5a642"), Color("1f4d3b"), Color("7a6aa8"), Color("c0703a"), Color("3b6e8f"), Color("888888")]
+const STAND_COLORS := [Color("3f8f4f"), Color("b5a642"), Color("1f4d3b"), Color("7a6aa8"), Color("c0703a"), Color("3b6e8f"), Color("888888"),
+		Color("c86f2e"), Color("8a5a2b"), Color("234d45")]
 
 class Mountain extends Node3D:
 	# A massif with forest-able slopes (at most about 33 degrees) and a valley floor: the climate
@@ -334,7 +355,7 @@ func _region(path: String) -> void:
 	_check(map.bake() == OK, "region data map bakes")
 	_check(map.bake_climate() == OK, "region climate bakes")
 	t = Time.get_ticks_msec()
-	var biome := gen.make_woodland(0)
+	var biome := gen.make_woodland(0, TreeGenerator.REGION_NORTH_AMERICA if north_america else TreeGenerator.REGION_EUROPE)
 	print("woodland species (no meshes) %d ms" % (Time.get_ticks_msec() - t))
 	var f := VegetationField3D.new()
 	f.populate_on_ready = false
