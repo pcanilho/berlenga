@@ -29,6 +29,12 @@ summary: "Biome plant placement from terrain maps; grass in the weather's wind; 
 
   *Grass in wind: gusts sweep across the field downwind.*
 
+- **Grass edge fade** (always on): blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge.
+
+  ![Grass seen from above its radius: a hard edge before, a fade after](media/grass-outer-band.jpg)
+
+  *Grass edge fade: the band where grass ends blends into the ground.*
+
 - **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back.
 
   ![A body walking through grass that lies down and springs back, raster](media/grass-trample.gif)
