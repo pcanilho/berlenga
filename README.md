@@ -347,7 +347,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Climate maps: cold high ridges, rain over the range, shaded faces in winter, snow on the high crest.*
 
-![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach](docs/media/terrain-ground.jpg)
+![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach, raster vs path traced](docs/media/terrain-ground.jpg)
 
 *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
 
