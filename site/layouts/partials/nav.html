@@ -11,5 +11,5 @@
 {{ end }}
 <p class="group">More</p>
 <ul>
-  {{ range slice "/comparisons" "/references" }}{{ with site.GetPage . }}<li><a href="{{ .RelPermalink }}" {{ if eq $cur . }}class="on"{{ end }}>{{ .Title }}</a></li>{{ end }}{{ end }}
+  {{ range slice "/settings" "/comparisons" "/references" }}{{ with site.GetPage . }}<li><a href="{{ .RelPermalink }}" {{ if eq $cur . }}class="on"{{ end }}>{{ .Title }}</a></li>{{ end }}{{ end }}
 </ul>

@@ -7,6 +7,8 @@ on:
       - "site/**"
       - "docs/media/**"
       - "docs/REFERENCES.md"
+      - "doc/classes/ProjectSettings.xml"
+      - "doc/classes/Environment.xml"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -31,6 +33,8 @@ jobs:
         run: pip install hugo==0.169.0 "pagefind[bin]==1.6.0"
       - id: pages
         uses: actions/configure-pages@v5
+      - name: Settings table
+        run: python site/tools/settings.py
       - name: Build
         run: hugo --source site --minify --baseURL "${{ steps.pages.outputs.base_url }}/" --destination "${{ github.workspace }}/public"
       - name: Search index

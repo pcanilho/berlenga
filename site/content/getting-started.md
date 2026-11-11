@@ -35,7 +35,7 @@ get_viewport().scaling_3d_scale = 1.0
 
 ## Settings
 
-Path tracer settings live under **Project Settings > Rendering > Pathtracing** (`rendering/pathtracing/...`). Each feature page names its setting or node property. [Open worlds]({{< relref "features/open-worlds" >}}) lists settings for large scenes.
+Path tracer settings live under **Project Settings > Rendering > Pathtracing** (`rendering/pathtracing/...`). Each feature page names its setting or node property. [Open worlds]({{< relref "features/open-worlds" >}}) lists settings for large scenes. Every setting with its default: [Settings]({{< relref "settings" >}}).
 
 ## Physics
 

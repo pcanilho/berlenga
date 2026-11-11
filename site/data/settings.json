@@ -1,0 +1,1776 @@
+{
+ "project": [
+  {
+   "name": "rendering/pathtracing/async_shader_compilation",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, path tracing ray hit shaders are compiled asynchronously in the background."
+  },
+  {
+   "name": "rendering/pathtracing/debug_heatmap_max_ticks",
+   "type": "float",
+   "default": "100000.0",
+   "about": "Elapsed device clock ticks mapped to purple in `Environment.RT_DEBUG_TIMING_HEATMAP`."
+  },
+  {
+   "name": "rendering/pathtracing/debug_heatmap_opacity",
+   "type": "float",
+   "default": "0.35",
+   "about": "Opacity of `Environment.RT_DEBUG_TIMING_HEATMAP`, applied after denoising and tone mapping."
+  },
+  {
+   "name": "rendering/pathtracing/decals",
+   "type": "int",
+   "default": "0",
+   "about": "Which path vertices the path tracer projects Decals onto."
+  },
+  {
+   "name": "rendering/pathtracing/deformed_mesh_cache_ttl_frames",
+   "type": "int",
+   "default": "60",
+   "about": "Number of frames a skinned or vertex-displaced deformed-mesh BLAS is kept alive in the path tracer cache after its last visible frame."
+  },
+  {
+   "name": "rendering/pathtracing/dynamic_blas_build_triangle_budget",
+   "type": "int",
+   "default": "500000",
+   "about": "Maximum number of triangles in full BLAS builds of dynamic geometry (GPU particles, camera-facing MultiMeshes) per frame, shared by all viewports."
+  },
+  {
+   "name": "rendering/pathtracing/dynamic_blas_max_operations",
+   "type": "int",
+   "default": "2000",
+   "about": "Maximum number of BLAS builds plus refits of dynamic geometry per frame, shared by all viewports."
+  },
+  {
+   "name": "rendering/pathtracing/dynamic_blas_update_triangle_budget",
+   "type": "int",
+   "default": "1500000",
+   "about": "Maximum number of triangles in BLAS refits of dynamic geometry per frame, shared by all viewports."
+  },
+  {
+   "name": "rendering/pathtracing/dynamic_max_stale_frames",
+   "type": "int",
+   "default": "30",
+   "about": "Dynamic geometry that has not been updated for this many frames is updated even when the visibility estimate says it can wait."
+  },
+  {
+   "name": "rendering/pathtracing/dynamic_offscreen_size_weight",
+   "type": "float",
+   "default": "0.25",
+   "about": "Priority weight of dynamic geometry outside the camera frustum, which only reflections, refractions and shadows can see."
+  },
+  {
+   "name": "rendering/pathtracing/dynamic_rebuild_interval_frames",
+   "type": "int",
+   "default": "4",
+   "about": "One in this many BLAS updates of dynamic geometry is a full rebuild instead of a refit, restoring the BVH quality that refits slowly lose as particles spread."
+  },
+  {
+   "name": "rendering/pathtracing/emissive_lights",
+   "type": "bool",
+   "default": "true",
+   "about": "The path tracer samples emissive surfaces (opaque StandardMaterial3D with emission, up to 1024 a frame, the strongest at the camera) as lights: each shaded point gets a light sample on one of them, weighed against bounce rays by multiple importance sampling.",
+   "page": "lighting",
+   "title": "Lighting"
+  },
+  {
+   "name": "rendering/pathtracing/hair",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, the path tracer scatters light off surfaces with `BaseMaterial3D.hair_enabled` as hair fibres do (Chiang, Bitterli, Tappan and Burley, \"A Practical and Controllable Hair and Fur Model for Production Path Tracing\", 2016): a white highlight shifted towards the roots, light passing through the fibres, a coloured second highlight and all longer paths, with lights, bounce rays and emissive surfaces all sampled through it.",
+   "page": "hair",
+   "title": "Hair"
+  },
+  {
+   "name": "rendering/pathtracing/indirect_reuse",
+   "type": "bool",
+   "default": "false",
+   "about": "Where a camera ray's first hit sends its first bounce through the diffuse lobe, that bounce is kept per pixel (ReSTIR GI: Ouyang et al.",
+   "page": "lighting",
+   "title": "Lighting"
+  },
+  {
+   "name": "rendering/pathtracing/light_reuse",
+   "type": "bool",
+   "default": "false",
+   "about": "Where a camera ray first hits a surface, the positional light it picks is kept per pixel (ReSTIR DI: spatiotemporal reservoir resampling, Bitterli et al.",
+   "page": "lighting",
+   "title": "Lighting"
+  },
+  {
+   "name": "rendering/pathtracing/light_visibility_memory",
+   "type": "bool",
+   "default": "true",
+   "about": "The path tracer remembers, for each small region of the scene, which lights recently lit it and how often each light's samples were blocked or fell on the surface's unlit side.",
+   "page": "lighting",
+   "title": "Lighting"
+  },
+  {
+   "name": "rendering/pathtracing/back_lighting",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, the path tracer passes light through surfaces with back lighting (`BaseMaterial3D.backlight_enabled`, or `BACKLIGHT` in a shader), such as leaves, paper, curtains and lampshades.",
+   "page": "materials",
+   "title": "Materials"
+  },
+  {
+   "name": "rendering/pathtracing/caustics",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, the path tracer draws water caustics from the first DirectionalLight3D: the bright, moving lines a rippled surface gathers sunlight into on the floor below it.",
+   "page": "water",
+   "title": "Water"
+  },
+  {
+   "name": "rendering/pathtracing/caustics_area",
+   "type": "float",
+   "default": "16.0",
+   "about": "Width in metres of the square that gets `rendering/pathtracing/caustics`, centred on the surface at the middle of the screen (at least half its width ahead of the camera)."
+  },
+  {
+   "name": "rendering/pathtracing/caustics_cascades",
+   "type": "int",
+   "default": "3",
+   "about": "How many caustics maps cover the water, as shadow cascades do: each is 4 times wider than the one before around the same centre (`rendering/pathtracing/caustics_area`, then 4 and 16 times it: 16, 64 and 256 m by default).",
+   "page": "water",
+   "title": "Water"
+  },
+  {
+   "name": "rendering/pathtracing/clearcoat",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, the path tracer traces the clear coat of materials (`BaseMaterial3D.clearcoat_enabled`, or `CLEARCOAT` in a shader) as the rasterizer shades it: a thin glossy dielectric layer over the surface, reflecting about 4% of light head-on and more at grazing angles, on the mesh's normal without the normal map.",
+   "page": "materials",
+   "title": "Materials"
+  },
+  {
+   "name": "rendering/pathtracing/cull_max_distance",
+   "type": "float",
+   "default": "0.0",
+   "about": "Distance in meters past which geometry outside the camera's view is left out of path tracing, so it casts no shadows or reflections and bounces no light.",
+   "page": "open-worlds",
+   "title": "Open worlds"
+  },
+  {
+   "name": "rendering/pathtracing/cull_min_size",
+   "type": "float",
+   "default": "0.0",
+   "about": "Angular radius in degrees under which an object outside the camera's view is left out of path tracing: its bounding sphere's radius over its distance from the camera, so small objects drop out sooner than large ones.",
+   "page": "open-worlds",
+   "title": "Open worlds"
+  },
+  {
+   "name": "rendering/pathtracing/mesh_lod",
+   "type": "bool",
+   "default": "false",
+   "about": "If `true`, the path tracer traces each static mesh surface at the level of detail the rasterizer would draw it at, using the mesh's LODs (generated on import) and `rendering/mesh_lod/lod_change/threshold_pixels`.",
+   "page": "open-worlds",
+   "title": "Open worlds"
+  },
+  {
+   "name": "rendering/pathtracing/persistent_instances",
+   "type": "bool",
+   "default": "false",
+   "about": "If `true`, each traced mesh instance keeps its acceleration-structure instances and geometry data from frame to frame, and only instances that changed (moved, changed material, mesh, layers or visibility) are written again.",
+   "page": "open-worlds",
+   "title": "Open worlds"
+  },
+  {
+   "name": "rendering/pathtracing/transmission",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, the path tracer traces light through surfaces with `BaseMaterial3D.transmission_enabled` as thin glass: rays and shadows pass straight through, tinted by the albedo, less the light the surface reflects, and blurred by roughness.",
+   "page": "materials",
+   "title": "Materials"
+  },
+  {
+   "name": "rendering/pathtracing/refraction",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, the path tracer refracts light into and out of surfaces with `BaseMaterial3D.transmission_enabled` and `BaseMaterial3D.transmission_thin_walled` off, such as water or a glass block: rays bend by `BaseMaterial3D.transmission_ior`, with total internal reflection, and every ray inside is absorbed by `BaseMaterial3D.transmission_attenuation_color` and `BaseMaterial3D.transmission_attenuation_distance` (Beer-Lambert), so deep water darkens and tints by depth.",
+   "page": "water",
+   "title": "Water"
+  },
+  {
+   "name": "rendering/pathtracing/radiance_cache",
+   "type": "bool",
+   "default": "true",
+   "about": "The path tracer learns, in cells around the camera, how much light rough surfaces send back, their own lighting and further bounces together.",
+   "page": "lighting",
+   "title": "Lighting"
+  },
+  {
+   "name": "rendering/pathtracing/relative_origin_grid",
+   "type": "float",
+   "default": "1024.0",
+   "about": "Size in meters of the grid the path tracer's origin snaps to.",
+   "page": "open-worlds",
+   "title": "Open worlds"
+  },
+  {
+   "name": "rendering/pathtracing/simulated_gas",
+   "type": "bool",
+   "default": "true",
+   "about": "The path tracer traces simulated gas (smoke and fire from the PhysX module's Flow node) as a participating medium: light scatters inside it, it casts soft shadows, it shows in reflections, and fire emits light into the scene.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)"
+  },
+  {
+   "name": "rendering/pathtracing/subsurface_scattering",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, the path tracer traces subsurface scattering (`BaseMaterial3D.subsurf_scatter_enabled`, or `SSS_STRENGTH` in a shader) as light wandering inside the mesh: a bounce enters the surface, takes a random walk through a medium whose colour after many scattering events is the albedo and whose radius is `rendering/pathtracing/subsurface_scattering_scale` times the strength, and leaves where it next meets the surface, where lights are sampled.",
+   "page": "materials",
+   "title": "Materials"
+  },
+  {
+   "name": "rendering/pathtracing/subsurface_scattering_scale",
+   "type": "float",
+   "default": "0.01",
+   "about": "Radius in metres that light travels under a surface with `rendering/pathtracing/subsurface_scattering` at a subsurface strength of `1.0`; the strength scales it.",
+   "page": "materials",
+   "title": "Materials"
+  },
+  {
+   "name": "rendering/pathtracing/max_decals",
+   "type": "int",
+   "default": "1024",
+   "about": "Maximum number of Decals the path tracer considers per frame, from `0` to `65536`."
+  },
+  {
+   "name": "rendering/pathtracing/max_transparency_layers",
+   "type": "int",
+   "default": "4",
+   "about": "Maximum number of transparent layers the path tracer peels on primary (camera) segments, from `0` to `64`.",
+   "page": "lighting",
+   "title": "Lighting"
+  },
+  {
+   "name": "rendering/pathtracing/max_transparency_layers_indirect",
+   "type": "int",
+   "default": "1",
+   "about": "Maximum number of transparent layers the path tracer peels on non-singular (diffuse and glossy) bounce segments, from `0` to `64`."
+  },
+  {
+   "name": "rendering/pathtracing/max_transparency_layers_reflection",
+   "type": "int",
+   "default": "4",
+   "about": "Maximum number of transparent layers the path tracer peels on singular (mirror) reflection chains after the camera segment, from `0` to `64`."
+  },
+  {
+   "name": "rendering/pathtracing/multimesh_blas_cache_ttl_frames",
+   "type": "int",
+   "default": "3600",
+   "about": "Number of frames a merged MultiMesh BLAS is kept alive in the path tracer cache after its last visible frame."
+  },
+  {
+   "name": "rendering/pathtracing/multimesh_cache_cpu_transforms",
+   "type": "bool",
+   "default": "false",
+   "about": "When enabled, setting `MultiMesh.buffer` keeps a CPU-side mirror of the instance transform data in sync with the GPU buffer."
+  },
+  {
+   "name": "rendering/pathtracing/multimesh_merged_blas_max_triangles",
+   "type": "int",
+   "default": "65536",
+   "about": "Maximum total triangle count (`instance_count * triangles_per_surface`) for a MultiMesh surface to use a single merged BLAS in the path tracer."
+  },
+  {
+   "name": "rendering/pathtracing/opacity_micromap_max_level",
+   "type": "int",
+   "default": "10",
+   "about": "The finest subdivision level of an opacity micromap triangle (4^level micro-triangles), also capped by the device."
+  },
+  {
+   "name": "rendering/pathtracing/opacity_micromap_scale",
+   "type": "float",
+   "default": "2.0",
+   "about": "The alpha texels one opacity micromap micro-triangle covers; a triangle's level follows its area in texels."
+  },
+  {
+   "name": "rendering/pathtracing/opacity_micromaps",
+   "type": "bool",
+   "default": "false",
+   "about": "If `true`, static surfaces whose StandardMaterial3D uses alpha scissor get an opacity micromap (Vulkan `VK_EXT_opacity_micromap`), baked on the GPU from the material's albedo alpha the first time they are traced.",
+   "page": "open-worlds",
+   "title": "Open worlds"
+  },
+  {
+   "name": "rendering/pathtracing/parallel_planning",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, the path tracer plans its per-frame instance records on the worker thread pool once a viewport has at least 256 instances."
+  },
+  {
+   "name": "rendering/pathtracing/transparency_dominant_layer_alpha",
+   "type": "float",
+   "default": "0.5",
+   "about": "Minimum alpha the nearest transparent layer needs to become the pixel's dominant surface in the path tracer."
+  },
+  {
+   "name": "rendering/pathtracing/transparency_indirect_fade",
+   "type": "float",
+   "default": "0.0",
+   "about": "Distance in meters over which transparent layers fade out before reaching `rendering/pathtracing/transparency_indirect_range`."
+  },
+  {
+   "name": "rendering/pathtracing/transparency_indirect_range",
+   "type": "float",
+   "default": "0.0",
+   "about": "Maximum distance in meters that indirect (bounce) ray segments trace for transparent surfaces."
+  },
+  {
+   "name": "rendering/pathtracing/transparency_max_bounce",
+   "type": "int",
+   "default": "2",
+   "about": "Last bounce index at which the path tracer performs transparency handling."
+  },
+  {
+   "name": "rendering/pathtracing/transmission_bounces",
+   "type": "int",
+   "default": "4",
+   "about": "Extra path segments for transmission (glass, ice, water, at any roughness).",
+   "page": "lighting",
+   "title": "Lighting"
+  },
+  {
+   "name": "rendering/pathtracing/use_shader_execution_reordering",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, enables NVIDIA Shader Execution Reordering in the path tracer."
+  },
+  {
+   "name": "rendering/pathtracing/transparency_at_output_size",
+   "type": "bool",
+   "default": "true",
+   "about": "Under DLSS Ray Reconstruction, transparent surfaces (particles, glass, rain) are drawn into a layer of their own at the internal resolution and laid over Ray Reconstruction's output."
+  },
+  {
+   "name": "rendering/pathtracing/transparent_lighting/bounce",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, each cell of the path tracer's light cache for transparents (see `rendering/pathtracing/transparent_lighting/enabled`) also traces one ray a frame in a random direction: the sky and the light bounced off the traced scene (a lit wall, a neon sign) reach particles and transparents."
+  },
+  {
+   "name": "rendering/pathtracing/transparent_lighting/enabled",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, transparent surfaces and particles (rain, splashes, smoke, glass) are lit by the path tracer while it is on: a camera-aligned grid of cells (the internal size over 8 across, 64 slices from `rendering/pathtracing/transparent_lighting/near` to `rendering/pathtracing/transparent_lighting/far`) is refreshed by the trace every frame, each cell taking one omni or spot light from the light grid, picked by its contribution, and every directional light, each through a shadow ray, and the sky and one bounce (see `rendering/pathtracing/transparent_lighting/bounce`), blended over the frames."
+  },
+  {
+   "name": "rendering/pathtracing/transparent_lighting/far",
+   "type": "float",
+   "default": "150.0",
+   "about": "The view distance, in meters, where the path tracer's light cache for transparents ends (see `rendering/pathtracing/transparent_lighting/enabled`)."
+  },
+  {
+   "name": "rendering/pathtracing/transparent_lighting/near",
+   "type": "float",
+   "default": "0.5",
+   "about": "The view distance, in meters, where the path tracer's light cache for transparents begins (see `rendering/pathtracing/transparent_lighting/far`)."
+  },
+  {
+   "name": "rendering/pathtracing/transparent_lighting/particle_anisotropy",
+   "type": "float",
+   "default": "0.75",
+   "about": "How much light particles scatter forward under the path tracer's light cache for transparents (see `rendering/pathtracing/transparent_lighting/enabled`)."
+  },
+  {
+   "name": "rendering/pathtracing/use_simple_shadows",
+   "type": "bool",
+   "default": "false",
+   "about": "If `true`, shadow rays use Ray Queries instead of fully traced rays."
+  },
+  {
+   "name": "rendering/pathtracing/vertex_capture_mode",
+   "type": "int",
+   "default": "0",
+   "about": "Controls which surfaces the path tracer vertex-captures: it runs the material's raster `vertex()` function and traces the resulting geometry, so custom vertex displacement, hand-written `MODELVIEW_MATRIX` billboards and particle trails match the rasterized image."
+  },
+  {
+   "name": "rendering/pathtracing/volumetric_fog_positional_shadow_rays",
+   "type": "int",
+   "default": "2",
+   "about": "Maximum number of shadow rays traced per volumetric fog froxel for shadowed OmniLight3Ds and SpotLight3Ds when path tracing."
+  },
+  {
+   "name": "rendering/pathtracing/volumetric_fog_shadows",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, volumetric fog traces ray query shadows for shadowed lights when path tracing."
+  },
+  {
+   "name": "rendering/streamline/dlss_preset",
+   "type": "String",
+   "default": "\"?\"",
+   "about": "The default NVIDIA DLSS Super Resolution preset to use."
+  },
+  {
+   "name": "rendering/streamline/dlss_ray_reconstruction_preset",
+   "type": "String",
+   "default": "\"?\"",
+   "about": "The default NVIDIA DLSS Ray Reconstruction preset to use.",
+   "page": "dlss-ray-reconstruction",
+   "title": "DLSS Ray Reconstruction"
+  },
+  {
+   "name": "rendering/streamline/reflex_frame_limit_us",
+   "type": "int",
+   "default": "0",
+   "about": "If not `0`, enables NVIDIA Reflex Frame Rate Limiter, which intelligently reduces framerate whilst keeping latency as low as possible."
+  },
+  {
+   "name": "rendering/streamline/reflex_mode",
+   "type": "int",
+   "default": "0",
+   "about": "If `1`, enables NVIDIA Reflex, which reduces latency by rendering just before vertical sync."
+  },
+  {
+   "name": "rendering/streamline/streamline_imgui",
+   "type": "bool",
+   "default": "false",
+   "about": "If `1`, enables Streamline ImgUI Plugin."
+  },
+  {
+   "name": "rendering/streamline/streamline_log",
+   "type": "bool",
+   "default": "false",
+   "about": "If `1`, enables Streamline Logging."
+  }
+ ],
+ "environment": [
+  {
+   "name": "pathtracing_debug_mode",
+   "type": "int",
+   "default": "0",
+   "about": "Selects a debug visualization channel to display instead of the final path-traced image."
+  },
+  {
+   "name": "pathtracing_denoiser",
+   "type": "int",
+   "default": "1",
+   "about": "The denoiser used to reduce noise in the path-traced image."
+  },
+  {
+   "name": "pathtracing_enabled",
+   "type": "bool",
+   "default": "false",
+   "about": "If `true`, enables hardware-accelerated path tracing for this environment."
+  },
+  {
+   "name": "pathtracing_max_bounces",
+   "type": "int",
+   "default": "3",
+   "about": "Maximum number of times a ray is allowed to bounce off surfaces before it is terminated."
+  },
+  {
+   "name": "pathtracing_samples_per_pixel",
+   "type": "int",
+   "default": "1",
+   "about": "Number of ray samples cast per pixel per frame."
+  },
+  {
+   "name": "pathtracing_sky_shader_enabled",
+   "type": "bool",
+   "default": "false",
+   "about": "If `true`, the sky shader is evaluated per-pixel into a screen-space buffer and sampled directly by camera rays, so the path-traced background matches the rasterized sky exactly.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds"
+  }
+ ],
+ "features": [
+  {
+   "name": "4096 lights",
+   "settings": [],
+   "note": "upstream 64",
+   "what": "camera-following light grid with resampled importance sampling.",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
+   "name": "Emissive surfaces as lights",
+   "settings": [
+    "rendering/pathtracing/emissive_lights"
+   ],
+   "note": "",
+   "what": "",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
+   "name": "Light visibility memory",
+   "settings": [
+    "rendering/pathtracing/light_visibility_memory"
+   ],
+   "note": "",
+   "what": "hidden lights stop taking samples.",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
+   "name": "Radiance cache",
+   "settings": [
+    "rendering/pathtracing/radiance_cache"
+   ],
+   "note": "",
+   "what": "bounces end on cached light.",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
+   "name": "Transmission bounces",
+   "settings": [
+    "rendering/pathtracing/transmission_bounces"
+   ],
+   "note": "",
+   "what": "glass, ice and water get their own bounce budget; matches 6 bounces in about 70% of the time, so icicles under an eave no longer go dark at the default 3.",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
+   "name": "Light reuse",
+   "settings": [
+    "rendering/pathtracing/light_reuse"
+   ],
+   "note": "",
+   "what": "ReSTIR DI reuses light samples across pixels and frames.",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
+   "name": "Indirect light reuse",
+   "settings": [
+    "rendering/pathtracing/indirect_reuse"
+   ],
+   "note": "",
+   "what": "ReSTIR GI; rooms and shade lit by bounced light are far less noisy at the same samples.",
+   "page": "lighting",
+   "title": "Lighting",
+   "topic": ""
+  },
+  {
+   "name": "Back lighting",
+   "settings": [
+    "rendering/pathtracing/back_lighting"
+   ],
+   "note": "",
+   "what": "light through leaves, paper and curtains, with coloured shadows; back light texture.",
+   "page": "materials",
+   "title": "Materials",
+   "topic": ""
+  },
+  {
+   "name": "Transmission",
+   "settings": [
+    "rendering/pathtracing/transmission"
+   ],
+   "note": "",
+   "what": "thin glass, tinted and blurred by roughness, with tinted shadows; transmission texture; `TRANSMISSION` in shaders; glTF `KHR_materials_transmission`.",
+   "page": "materials",
+   "title": "Materials",
+   "topic": ""
+  },
+  {
+   "name": "Clearcoat",
+   "settings": [
+    "rendering/pathtracing/clearcoat"
+   ],
+   "note": "",
+   "what": "matches raster, with traced coat reflections; coat texture.",
+   "page": "materials",
+   "title": "Materials",
+   "topic": ""
+  },
+  {
+   "name": "Subsurface scattering",
+   "settings": [
+    "rendering/pathtracing/subsurface_scattering",
+    "subsurface_scattering_scale"
+   ],
+   "note": "",
+   "what": "random walk inside closed meshes; skin, wax and marble soften and thin parts glow when backlit.",
+   "page": "materials",
+   "title": "Materials",
+   "topic": ""
+  },
+  {
+   "name": "Wet surfaces",
+   "settings": [
+    "wetness_enabled",
+    "wetness_porosity"
+   ],
+   "note": "",
+   "what": "porous surfaces darken and turn glossier as the weather map gets wet, raster and path traced; `get_wetness_shader_code()` for ShaderMaterials.",
+   "page": "materials",
+   "title": "Materials",
+   "topic": ""
+  },
+  {
+   "name": "Refraction",
+   "settings": [
+    "rendering/pathtracing/refraction"
+   ],
+   "note": "",
+   "what": "water and glass blocks bend light by their IOR, with total internal reflection and depth tint; glTF `KHR_materials_volume`, `KHR_materials_ior`.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Murky water",
+   "settings": [
+    "IOR",
+    "ABSORPTION",
+    "SCATTERING",
+    "KHR_materials_scatter"
+   ],
+   "note": "",
+   "what": "scattering media; `IOR`, `ABSORPTION` and `SCATTERING` in shaders; glTF `KHR_materials_scatter` draft.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Caustics",
+   "settings": [
+    "rendering/pathtracing/caustics"
+   ],
+   "note": "",
+   "what": "sunlight lines under rippled water.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Caustic cascades",
+   "settings": [
+    "rendering/pathtracing/caustics_cascades"
+   ],
+   "note": "",
+   "what": "sun caustics out to 256 m, near lines unchanged.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Light in water"
+  },
+  {
+   "name": "Path-traced ocean",
+   "settings": [
+    "PhysXWaterSurface3D",
+    "pathtraced_absorption",
+    "pathtraced_scattering",
+    "pathtraced_roughness"
+   ],
+   "note": "",
+   "what": "waves refract, tint and scatter, with caustics on the seabed.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Ocean swell",
+   "settings": [
+    "wave_cascades"
+   ],
+   "note": "",
+   "what": "up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Measured wave spreading",
+   "settings": [
+    "wave_spreading",
+    "swell"
+   ],
+   "note": "",
+   "what": "Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Whitecaps by wind speed",
+   "settings": [
+    "whitecap_auto",
+    "whitecap_cover_scale"
+   ],
+   "note": "",
+   "what": "whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Lake ripples",
+   "settings": [
+    "fetch"
+   ],
+   "note": "",
+   "what": "on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Raster reflections",
+   "settings": [
+    "raster_reflections"
+   ],
+   "note": "",
+   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Finer water mesh up close",
+   "settings": [
+    "mesh_detail"
+   ],
+   "note": "",
+   "what": "",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Boat wakes",
+   "settings": [
+    "PhysXWaterWake3D.dispersive",
+    "breaking_slope"
+   ],
+   "note": "",
+   "what": "waves stepped with deep-water dispersion in Fourier space form the Kelvin pattern, a 19.5 degree wedge of transverse and diverging waves.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Shore waves",
+   "settings": [
+    "shore_waves"
+   ],
+   "note": "",
+   "what": "swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
+   "name": "Wave groups",
+   "settings": [
+    "shore_wave_groups"
+   ],
+   "note": "",
+   "what": "shore waves arrive in sets with their own Rayleigh heights, so each breaks at its own place.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
+   "name": "Plunging breakers",
+   "settings": [
+    "shore_wave_curl",
+    "shore_spray",
+    "shore_spray_amount"
+   ],
+   "note": "",
+   "what": "the crest throws a sheet of water that lands ahead and sinks into the bore, with spray where it is thin and where it lands.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
+   "name": "Currents",
+   "settings": [
+    "current",
+    "flow_period"
+   ],
+   "note": "",
+   "what": "flow round rocks and along shores carries waves, foam and floating objects.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Live flow",
+   "settings": [
+    "live_flow",
+    "wall_friction"
+   ],
+   "note": "",
+   "what": "near the player, rocks and banks shed wakes and eddies.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "White water",
+   "settings": [
+    "flow_foam"
+   ],
+   "note": "",
+   "what": "foam in fast water, trailing rocks and drifting downstream.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Rivers",
+   "settings": [
+    "PhysXRiver3D",
+    "discharge",
+    "roughness",
+    "max_slope"
+   ],
+   "note": "",
+   "what": "drawn as a curve; finds its depth and never runs uphill.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Faster flow bakes",
+   "settings": [
+    "physics/physx_3d/water/multigrid_flow"
+   ],
+   "note": "",
+   "what": "multigrid-preconditioned conjugate gradients bake the flow 7 to 10 times faster than SOR.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
+   "name": "Camera under water",
+   "settings": [
+    "underwater_enabled"
+   ],
+   "note": "",
+   "what": "fog, scattering, Snell's window, image split at the water line.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Under water"
+  },
+  {
+   "name": "Fibre shading",
+   "settings": [
+    "rendering/pathtracing/hair"
+   ],
+   "note": "",
+   "what": "Chiang hair model under path tracing, melanin colour, on shells, cards and strands; mask for single-material characters.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Raster hair shading",
+   "settings": [
+    "PhysXHair3D.hair_shading"
+   ],
+   "note": "",
+   "what": "Marschner model as Unreal evaluates it, with multiple scattering and light through the strands in shadow maps, so backlit hair glows.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Deep opacity shadows",
+   "settings": [
+    "PhysXHair3D.deep_shadows",
+    "hair_shading"
+   ],
+   "note": "",
+   "what": "raster strands shadow themselves in depth, calibrated against the path tracer.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Custom hair shaders",
+   "settings": [
+    "HAIR",
+    "HAIR_ABSORPTION",
+    "HAIR_ROUGHNESS",
+    "hair_strands",
+    "hair_cards",
+    "IN_PATH_TRACER"
+   ],
+   "note": "",
+   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
+   "name": "Strand grooms",
+   "settings": [
+    "HairGroom",
+    "HairMesh"
+   ],
+   "note": "",
+   "what": "grown on a scalp mesh or loaded from a HAIR file.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Moving strand hair",
+   "settings": [
+    "PhysXHair3D"
+   ],
+   "note": "",
+   "what": "AMD TressFX's simulation on GPU compute, guide and follow strands, velocity shock propagation, wind with gusts and turbulence, collision spheres.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Raster strands",
+   "settings": [],
+   "note": "TressFX coverage",
+   "what": "blended and sorted far to near on the GPU each frame; smooth without TAA or MSAA, and the hair shadows itself.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Distance LOD",
+   "settings": [
+    "PhysXHair3D",
+    "lod_enabled",
+    "lod_start_distance",
+    "lod_end_distance",
+    "lod_strand_ratio"
+   ],
+   "note": "",
+   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Motion vectors for strands",
+   "settings": [
+    "PREVIOUS_FRAME",
+    "render_mode alpha_motion_vectors"
+   ],
+   "note": "",
+   "what": "TAA, FSR 2 and DLSS follow moving hair instead of smearing it; shaders get `PREVIOUS_FRAME` and `render_mode alpha_motion_vectors`.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Body collision",
+   "settings": [
+    "PhysXHair3D",
+    "collision_body",
+    "collision_cell_size"
+   ],
+   "note": "",
+   "what": "strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
+   "name": "Hair volume",
+   "settings": [
+    "volume_enabled",
+    "volume_friction",
+    "volume_stiffness"
+   ],
+   "note": "",
+   "what": "strands push and drag on each other through a density grid, so hair keeps its volume.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
+   "name": "Mountain generation",
+   "settings": [
+    "TerrainGenerator3D",
+    "uplift",
+    "ranges",
+    "erodibility",
+    "critical_slope",
+    "detail_wavelength",
+    "detail_octaves",
+    "detail_crest"
+   ],
+   "note": "",
+   "what": "raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; on crests gullies keep part of their depth and a ridged noise adds irregular pinnacles; the same for a seed; writes into Terrain3D or a HeightMapShape3D.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Coarse-to-fine erosion",
+   "settings": [
+    "coarse_levels",
+    "refine_steps"
+   ],
+   "note": "",
+   "what": "about 3.7 times faster at 4 m cells, with the same relief.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Tile erosion",
+   "settings": [
+    "tile_erosion_enabled"
+   ],
+   "note": "",
+   "what": "droplet hydraulic and thermal erosion in seamless overlapping tiles.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Material detail",
+   "settings": [
+    "get_detail_shader_code()"
+   ],
+   "note": "",
+   "what": "erosion detail below the vertex spacing in the terrain material; path tracing keeps it.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Rock layers and waterfalls",
+   "settings": [
+    "strata_enabled",
+    "get_waterfalls()"
+   ],
+   "note": "",
+   "what": "hard and soft bands that rivers cut into caprock waterfalls.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "River deposition",
+   "settings": [
+    "deposition"
+   ],
+   "note": "",
+   "what": "rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Rivers fed by rain and snowmelt",
+   "settings": [
+    "climate_recipe",
+    "river_month"
+   ],
+   "note": "",
+   "what": "a monthly water balance from the climate sets each river's flow, month by month.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "River network",
+   "settings": [
+    "build_river_paths()"
+   ],
+   "note": "",
+   "what": "rivers with widths and discharges, made into joined `PhysXRiver3D` paths.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Coast and lakes",
+   "settings": [
+    "ocean_edges",
+    "sea_map",
+    "lake_count",
+    "lakes",
+    "build_water()"
+   ],
+   "note": "",
+   "what": "sea with a Dean-profile seabed and beaches; lakes behind natural dams or rock lips that spill as waterfalls; builds the sea and lake surfaces, and rivers end in them.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Geology maps",
+   "settings": [
+    "terrain_geology()"
+   ],
+   "note": "",
+   "what": "soil, bare rock and scree from the erosion run.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Maps"
+  },
+  {
+   "name": "Climate maps",
+   "settings": [
+    "TerrainDataMap3D.bake_climate()",
+    "ClimateRecipe"
+   ],
+   "note": "",
+   "what": "temperature, orographic rain and rain shadows, snow share, aridity, winter and annual sunlight with terrain shadows, and wind exposure.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Maps"
+  },
+  {
+   "name": "Terrain data maps",
+   "settings": [
+    "TerrainDataMap3D"
+   ],
+   "note": "",
+   "what": "bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Maps"
+  },
+  {
+   "name": "Ground material",
+   "settings": [
+    "TerrainMaterial3D",
+    "use_generator()"
+   ],
+   "note": "",
+   "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Landscape3D",
+   "settings": [
+    "source",
+    "spacing",
+    "lod_error"
+   ],
+   "note": "",
+   "what": "heightfield ground from a TerrainGenerator3D or a height image, as chunk meshes with crack-free LODs and one BLAS per chunk level, so nothing rebuilds while the camera moves.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Footprints in ground",
+   "settings": [
+    "GroundSurface3D",
+    "BaseMaterial3D.ground_deform_enabled"
+   ],
+   "note": "",
+   "what": "prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Terrain deformation",
+   "settings": [
+    "TerrainDeformer3D",
+    "TerrainBrush3D"
+   ],
+   "note": "",
+   "what": "non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Plant placement",
+   "settings": [
+    "VegetationField3D",
+    "Biome",
+    "PlantSpecies"
+   ],
+   "note": "",
+   "what": "places species by spacing, footprint and rules on slope, wetness and distance to water over a `TerrainDataMap3D`; evenly spread, the same for a seed. 12,899 plants over 256 m place once in about 45 ms, then draw as ordinary MultiMeshes.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
+   "name": "Placement by geology",
+   "settings": [
+    "TerrainDataMap3D.geology_source",
+    "PlantSpecies",
+    "soil_depth_range",
+    "rock_range",
+    "talus_range"
+   ],
+   "note": "",
+   "what": "plants follow the generated soil, rock and scree; trees stay off bare rock and thin soil, grass thins on rock.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
+   "name": "Placement by climate",
+   "settings": [
+    "temperature_range",
+    "january_temperature_range",
+    "precipitation_range",
+    "aridity_range",
+    "sunlight_range"
+   ],
+   "note": "",
+   "what": "species by temperature, winter frost, rain, aridity and sunlight.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
+   "name": "Density masks",
+   "settings": [
+    "density_mask",
+    "density_mask_rect",
+    "mask_channel",
+    "mask_invert"
+   ],
+   "note": "",
+   "what": "a painted texture thins or clears any species per channel, for clearings and paths.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
+   "name": "Canopy shade",
+   "settings": [
+    "canopy_radius",
+    "shade_range",
+    "weather_map"
+   ],
+   "note": "",
+   "what": "understorey placed by the shade of placed crowns; crowns feed the weather's canopy map.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
+   "name": "Grass",
+   "settings": [
+    "GrassField3D"
+   ],
+   "note": "",
+   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
+   "name": "Trampling",
+   "settings": [
+    "grass_trample",
+    "GrassField3D.trample_recovery"
+   ],
+   "note": "",
+   "what": "bodies lay grass down and it springs back.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
+   "name": "Ground cover",
+   "settings": [
+    "GrassField3D",
+    "view_facing",
+    "PlantSpecies"
+   ],
+   "note": "",
+   "what": "edge-on blades widened, ground tinted under grass, clover and flower drifts.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
+   "name": "GPU-placed instances",
+   "settings": [
+    "RenderingServer.multimesh_mark_buffer_rd_changed()"
+   ],
+   "note": "",
+   "what": "MultiMesh records written by a compute shader reach culling, motion vectors and path tracing.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Instances"
+  },
+  {
+   "name": "Instance bones",
+   "settings": [
+    "MultiMesh.bones_per_instance"
+   ],
+   "note": "",
+   "what": "each instance is skinned from its own records, so thousands of plants bend in the wind without a Skeleton3D each; raster and path traced. 900 swaying stems: 0.30 ms render CPU, against 5.97 ms as 900 Skeleton3D.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Instances"
+  },
+  {
+   "name": "Weather map",
+   "settings": [
+    "WeatherMap3D"
+   ],
+   "note": "",
+   "what": "one weather state round the camera (wind, cloud cover, rain, wetness, puddles), read by every shader through global uniforms, raster and path traced.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Wind",
+   "settings": [
+    "roughness_length"
+   ],
+   "note": "",
+   "what": "slows near the ground (`roughness_length`); gusts follow the measured spectrum and travel with the wind.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Wind near the ground",
+   "settings": [
+    "add_canopy",
+    "add_shelter_box",
+    "gust_patch_size"
+   ],
+   "note": "",
+   "what": "shelter inside plant canopies and behind buildings; gust patches sweep across fields.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Storms",
+   "settings": [
+    "add_storm"
+   ],
+   "note": "",
+   "what": "drift with the wind, with a rain core and a downdraft.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Lightning and thunder",
+   "settings": [
+    "WeatherLightning3D"
+   ],
+   "note": "",
+   "what": "strikes from storm cells at a rate set by cloud-top height, lit by their own channel under path tracing, with sharp shadows in raster too (`raster_shadow_distance`) and thunder made from the channel.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Precipitation haze",
+   "settings": [
+    "WeatherMap3D.set_precipitation_extinction()"
+   ],
+   "note": "",
+   "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Wet surfaces and puddles",
+   "settings": [
+    "surface_storage",
+    "puddle_drain_rate",
+    "temperature",
+    "humidity"
+   ],
+   "note": "",
+   "what": "fill with rain and dry by evaporation; materials with Wetness on darken and gloss up.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Followers",
+   "settings": [
+    "follow_weather",
+    "weather_wind"
+   ],
+   "note": "",
+   "what": "water waves grow with the weather's wind (`follow_weather`); cloth and hair move in it (`weather_wind`).",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Sun and moon clock",
+   "settings": [
+    "SkyClock"
+   ],
+   "note": "",
+   "what": "date, time and place point the sun and moon lights, with moon phases (Meeus); the sun is within 0.0004 degrees of the ephemeris and sunrise within half a minute of the almanac (`docs/bench/sky --test`).",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Sky atmosphere",
+   "settings": [
+    "WeatherSkyMaterial.atmosphere_model",
+    "SkyClock.drive_light_energy"
+   ],
+   "note": "",
+   "what": "multiple scattering (Hillaire 2020) lit by sun and moon, with twilight, the Earth's shadow and clouds hazed to the horizon; `atmo_far_water` hazes far sea, `energy_per_lux` scales the lights.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Cloud layer",
+   "settings": [
+    "cloud_base_height",
+    "cloud_thickness",
+    "cloud_density"
+   ],
+   "note": "",
+   "what": "shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Clouds that never repeat",
+   "settings": [],
+   "note": "always on",
+   "what": "shape noise read at two scales with an irrational ratio.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Cloud reprojection",
+   "settings": [
+    "WeatherSkyMaterial.cloud_reprojection"
+   ],
+   "note": "",
+   "what": "clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Cloud shadows",
+   "settings": [
+    "sun_light"
+   ],
+   "note": "",
+   "what": "the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Sun projector",
+   "settings": [
+    "light_projector",
+    "projector_size",
+    "projector_offset"
+   ],
+   "note": "",
+   "what": "`light_projector` works on DirectionalLight3D (`projector_size`, `projector_offset`), raster and path traced.",
+   "page": "sky-and-clouds",
+   "title": "Sky and clouds",
+   "topic": ""
+  },
+  {
+   "name": "Snow cover",
+   "settings": [
+    "SnowCover3D"
+   ],
+   "note": "",
+   "what": "a snowpack from the weather map, with snowfall, settling, melt, sliding off steep slopes and wind drift.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
+   "name": "Snow climate",
+   "settings": [
+    "SnowClimate",
+    "recipe",
+    "SnowCover3D.climate_map"
+   ],
+   "note": "",
+   "what": "bakes a winter over the whole terrain from the terrain's climate recipe and precipitation map, with snow lines, shaded faces that keep their snow and loaded lee slopes; the cover carries it on with the weather and draws it far away.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
+   "name": "Shelter",
+   "settings": [
+    "SnowCover3D.canopy_enabled",
+    "shelter_collision_mask"
+   ],
+   "note": "",
+   "what": "ground under roofs and overhangs stays bare; tree crowns hold snow and unload it later.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
+   "name": "Wind moves lying snow",
+   "settings": [
+    "SnowCover3D.wind_transport_enabled"
+   ],
+   "note": "",
+   "what": "windward shoulders and crests are scoured and the lee fills with wind-packed snow.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
+   "name": "Melt-freeze crusts",
+   "settings": [
+    "SnowCover3D.crust_enabled"
+   ],
+   "note": "",
+   "what": "a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
+   "name": "Snow on materials",
+   "settings": [
+    "snow_enabled"
+   ],
+   "note": "",
+   "what": "surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
+   "name": "Deep snow",
+   "settings": [
+    "SnowSurface3D",
+    "snow_deform"
+   ],
+   "note": "",
+   "what": "deep snow as geometry with prints and tracks; bodies sink by weight (Bekker) and rest in their own tracks; tracks refill with new snow and wind; print edges stay clean at fine deform resolutions, with pushed-aside snow sliding at its repose angle.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Deep snow"
+  },
+  {
+   "name": "Falling snow",
+   "settings": [
+    "SnowFall3D"
+   ],
+   "note": "",
+   "what": "falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Falling snow"
+  },
+  {
+   "name": "Snowstorms",
+   "settings": [
+    "SnowFall3D.haze_enabled",
+    "turbulence"
+   ],
+   "note": "",
+   "what": "falling and blowing snow haze the air through the weather map (Pomeroy-Male suspension, 118 m visibility at 20 m/s); flakes ride turbulent eddies.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Falling snow"
+  },
+  {
+   "name": "Cornices",
+   "settings": [
+    "SnowCornice3D"
+   ],
+   "note": "",
+   "what": "overhangs on lee crests, with collision; milder ranges grow them too (crest wind speed-up).",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Cornices and ice"
+  },
+  {
+   "name": "Cornices crack and fall",
+   "settings": [
+    "cornice_failure_enabled"
+   ],
+   "note": "",
+   "what": "a creeping tension crack, tumbling blocks, debris below.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Cornices and ice"
+  },
+  {
+   "name": "Icicles",
+   "settings": [
+    "SnowIcicles3D",
+    "hazy_core"
+   ],
+   "note": "",
+   "what": "grown from roof melt water below freezing; clear ice with a hazy core.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Cornices and ice"
+  },
+  {
+   "name": "Sparkle",
+   "settings": [],
+   "note": "",
+   "what": "dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Sparkle"
+  },
+  {
+   "name": "Exact path traced sparkle",
+   "settings": [
+    "snow_exact_glints"
+   ],
+   "note": "",
+   "what": "every 2 mm ice grain is a facet hit per ray.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Sparkle"
+  },
+  {
+   "name": "Histogram metering",
+   "settings": [
+    "rendering/camera/auto_exposure/metering"
+   ],
+   "note": "",
+   "what": "lamps in view no longer darken the scene.",
+   "page": "exposure",
+   "title": "Exposure",
+   "topic": ""
+  },
+  {
+   "name": "Dark-scene key",
+   "settings": [
+    "dark_scene_luminance"
+   ],
+   "note": "",
+   "what": "night stays night.",
+   "page": "exposure",
+   "title": "Exposure",
+   "topic": ""
+  },
+  {
+   "name": "Local exposure",
+   "settings": [
+    "local_highlight_contrast",
+    "local_shadow_contrast"
+   ],
+   "note": "",
+   "what": "",
+   "page": "exposure",
+   "title": "Exposure",
+   "topic": ""
+  },
+  {
+   "name": "Pixel antialiasing",
+   "settings": [],
+   "note": "",
+   "what": "when Ray Reconstruction is off: samples after the first spread over the pixel (R2 sequence), so sub-pixel detail antialiases instead of sparkling.",
+   "page": "dlss-ray-reconstruction",
+   "title": "DLSS Ray Reconstruction",
+   "topic": ""
+  },
+  {
+   "name": "Path-traced smoke and fire",
+   "settings": [
+    "rendering/pathtracing/simulated_gas"
+   ],
+   "note": "",
+   "what": "",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Cloth tearing",
+   "settings": [
+    "PhysXCloth3D.tear_factor",
+    "physics/physx_3d/cloth/tearing"
+   ],
+   "note": "",
+   "what": "overstretched edges split and the rip runs.",
+   "page": "physics",
+   "title": "Physics (PhysX 5)",
+   "topic": ""
+  },
+  {
+   "name": "Camera-relative tracing",
+   "settings": [
+    "rendering/pathtracing/relative_origin_grid"
+   ],
+   "note": "",
+   "what": "exact shadows and reflections far from the origin.",
+   "page": "open-worlds",
+   "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Persistent instances",
+   "settings": [
+    "rendering/pathtracing/persistent_instances"
+   ],
+   "note": "",
+   "what": "unchanged objects and MultiMeshes cost no per-frame work.",
+   "page": "open-worlds",
+   "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Off-screen culling",
+   "settings": [
+    "rendering/pathtracing/cull_max_distance",
+    "cull_min_size"
+   ],
+   "note": "",
+   "what": "small or distant unseen objects leave the trace.",
+   "page": "open-worlds",
+   "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Opacity micromaps",
+   "settings": [
+    "rendering/pathtracing/opacity_micromaps"
+   ],
+   "note": "",
+   "what": "cut-out foliage traced without any-hit shaders.",
+   "page": "open-worlds",
+   "title": "Open worlds",
+   "topic": ""
+  },
+  {
+   "name": "Mesh LOD in the path tracer",
+   "settings": [
+    "rendering/pathtracing/mesh_lod"
+   ],
+   "note": "",
+   "what": "",
+   "page": "open-worlds",
+   "title": "Open worlds",
+   "topic": ""
+  }
+ ]
+}

@@ -249,3 +249,38 @@ document.querySelectorAll('.content img.zoomable').forEach((img) => {
   addEventListener('scroll', update, { passive: true });
   update();
 })();
+
+// Settings page: filter box and tabs.
+(() => {
+  const box = document.querySelector('[data-set-filter]');
+  if (!box) return;
+  const sections = [...document.querySelectorAll('[data-set-section]')];
+  const tabs = [...document.querySelectorAll('[data-set-tab]')];
+  const count = document.querySelector('[data-set-count]');
+  const empty = document.querySelector('[data-set-empty]');
+  let tab = 'all';
+  const run = () => {
+    const words = box.value.toLowerCase().split(/\s+/).filter(Boolean);
+    let shown = 0, total = 0;
+    for (const s of sections) {
+      const on = tab === 'all' || s.dataset.setSection === tab;
+      let n = 0;
+      for (const r of s.querySelectorAll('tbody tr')) {
+        total += on ? 1 : 0;
+        const t = r.dataset.text || (r.dataset.text = r.textContent.toLowerCase().replace(/_/g, ' ') + ' ' + r.textContent.toLowerCase());
+        const ok = on && words.every(w => t.includes(w));
+        r.hidden = !ok; n += ok ? 1 : 0;
+      }
+      s.hidden = !n; shown += n;
+    }
+    count.textContent = words.length ? `${shown} of ${total} settings` : `${total} settings`;
+    empty.hidden = shown > 0;
+  };
+  box.addEventListener('input', run);
+  tabs.forEach(b => b.addEventListener('click', () => {
+    tab = b.dataset.setTab; tabs.forEach(x => x.classList.toggle('on', x === b)); run();
+  }));
+  const q = new URLSearchParams(location.search).get('q');
+  if (q) box.value = q;
+  run();
+})();

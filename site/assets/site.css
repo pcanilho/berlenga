@@ -194,3 +194,48 @@ dialog::backdrop{background:rgba(5,9,14,.72);backdrop-filter:blur(4px)}
 .compare-label.left{left:0.6%}
 .compare-label.right{right:0.6%}
 .compare-label.right.low{top:auto!important;bottom:1.5%}
+
+/* Settings page */
+.prose h2,.settings h2{scroll-margin-top:84px}
+.set-tools{position:sticky;top:60px;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:14px 0;margin:8px 0 4px;background:var(--bg);border-bottom:1px solid var(--line)}
+.set-filter{flex:1 1 280px;display:flex;align-items:center;gap:8px;padding:0 12px;height:40px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--muted)}
+.set-filter:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.set-filter input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:15px}
+.set-tabs{display:flex;gap:4px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--bg2)}
+.set-tabs button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:13.5px;font-weight:600;padding:6px 12px;border-radius:7px;cursor:pointer}
+.set-tabs button:hover{color:var(--text)}
+.set-tabs button.on{background:var(--panel);color:var(--accent);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.set-count{margin:0;font-size:13px;color:var(--muted);flex-basis:100%}
+.settings section{margin-top:28px}
+.set-note{color:var(--muted);margin:-4px 0 12px;font-size:14px}
+.set-table{width:100%;border-collapse:collapse;font-size:14.5px}
+.set-table th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700;padding:8px 10px;border-bottom:1px solid var(--line)}
+.set-table td{vertical-align:top;padding:10px;border-bottom:1px solid var(--line)}
+.set-table tr:hover td{background:var(--bg2)}
+.set-table code{font-size:12.5px;white-space:nowrap;display:inline-block;margin:1px 0}
+.set-table td:first-child{width:38%}
+.set-what{display:block;color:var(--muted);font-size:13.5px;margin-top:2px}
+.set-name span{opacity:.55}
+.set-page{white-space:nowrap;font-size:13.5px}
+.set-muted{color:var(--muted);font-size:13px}
+.set-empty{color:var(--muted);padding:24px 0}
+@media (max-width:860px){
+  .set-tools{top:56px}
+  .set-table thead{display:none}
+  .set-table,.set-table tbody,.set-table tr,.set-table td{display:block;width:auto!important}
+  .set-table tr{padding:10px 0;border-bottom:1px solid var(--line)}
+  .set-table td{border:0;padding:3px 0}
+  .set-table td[data-label="Page"]{display:none}
+  .set-table code{white-space:normal;word-break:break-all}
+}
+.settings [hidden]{display:none!important}
+.set-table{display:table;border:0;border-radius:0;table-layout:fixed}
+.set-table th{background:transparent}
+.set-table td:first-child{white-space:normal;font-weight:400}
+.set-table th:first-child{width:36%}
+[data-set-section="features"] .set-table th:nth-child(2){width:40%}
+[data-set-section="features"] .set-table th:nth-child(3){width:24%}
+[data-set-section="project"] .set-table th:nth-child(2),[data-set-section="environment"] .set-table th:nth-child(2){width:14%}
+.set-name{white-space:normal!important;word-break:break-word}
+.set-name span{display:block;font-size:11px;opacity:.6}
+.set-table td code{white-space:normal;word-break:break-word}
