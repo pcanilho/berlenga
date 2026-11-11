@@ -4448,7 +4448,12 @@ bool RenderRaytracing::_build_merged_mm_blas(
 		if (mode == MergeShader::MODE_INDEXED) {
 			thread_count = MAX(thread_count, instance_count * index_count);
 		}
-		rd->compute_list_dispatch_threads(p_compute_list, thread_count, 1, 1);
+		// One thread per vertex or index of every instance: a large skinned MultiMesh passes the device's X
+		// group limit (65535 on some), so the groups wrap into rows (the shader flattens X and Y back).
+		const uint32_t groups = Math::division_round_up(thread_count, 64u);
+		const uint32_t max_x = MAX(uint32_t(rd->limit_get(RD::LIMIT_MAX_COMPUTE_WORKGROUP_COUNT_X)), 1u);
+		const uint32_t groups_x = MIN(groups, max_x);
+		rd->compute_list_dispatch(p_compute_list, groups_x, Math::division_round_up(groups, groups_x), 1);
 
 		// Drop the RID now that the dispatch is recorded; the underlying Vulkan
 		// descriptor set lives in the linear pool until frame end.
