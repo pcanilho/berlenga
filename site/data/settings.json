@@ -900,7 +900,7 @@
     "hair_shading"
    ],
    "note": "",
-   "what": "raster strands shadow themselves in depth, calibrated against the path tracer.",
+   "what": "raster strands shadow themselves in depth, calibrated against the path tracer; omni and spot lights too (`deep_shadow_local_lights`).",
    "page": "hair",
    "title": "Hair",
    "topic": "Shading"
@@ -911,12 +911,13 @@
     "HAIR",
     "HAIR_ABSORPTION",
     "HAIR_ROUGHNESS",
+    "POSITIONAL_SHADOW_OFFSET",
     "hair_strands",
     "hair_cards",
     "IN_PATH_TRACER"
    ],
    "note": "",
-   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
+   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` and `POSITIONAL_SHADOW_OFFSET` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
    "page": "hair",
    "title": "Hair",
    "topic": "Shading"

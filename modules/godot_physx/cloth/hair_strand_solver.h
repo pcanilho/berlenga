@@ -32,6 +32,7 @@
 
 #include "core/math/transform_3d.h"
 #include "core/object/ref_counted.h"
+#include "core/templates/local_vector.h"
 #include "core/templates/rid.h"
 #include "core/templates/safe_refcount.h"
 #include "core/variant/variant.h"
@@ -48,6 +49,7 @@ public:
 	static constexpr int MAX_SPHERES = 32;
 	static constexpr int MAX_SDF_CELLS = 64 * 64 * 64;
 	static constexpr int DOM_CELLS = 256; // deep opacity map, a side
+	static constexpr int DOM_SLOTS = 4; // deep opacity maps (lights), at most
 
 	RenderingDevice *rd = nullptr;
 	bool local = false;
@@ -124,10 +126,14 @@ public:
 		bool volume_enabled = true; // hair-hair interaction through a density grid (Petrovic 2005)
 		float volume_friction = 0.2f; // pull toward the neighbours' mean velocity, per 1/60 s
 		float volume_stiffness = 1.0f; // push out of hair packed denser than the groom
-		// Deep opacity map (Yuksel and Keyser 2008) toward one directional light; radius 0: off.
-		Vector3 dom_center; // world
-		float dom_radius = 0.0f;
-		Vector3 dom_light; // world, toward the light
+		// Deep opacity maps (Yuksel and Keyser 2008), one per light, up to DOM_SLOTS; none: off.
+		struct DeepShadowLight {
+			Vector3 center; // world, the hair's bounding sphere
+			float radius = 0.0f;
+			Vector3 light; // world: toward the light (directional), or the light's position (local)
+			bool local = false; // an omni or spot light
+		};
+		LocalVector<DeepShadowLight> dom_lights;
 		float root_width = 0.0004f; // m, the strands' width, for their coverage
 		float tip_width = 0.0001f;
 	};
@@ -150,11 +156,15 @@ public:
 
 	RID get_position_texture_rd_rid() const;
 	RID get_previous_position_texture_rd_rid() const;
-	// The deep opacity map: DOM_CELLS x DOM_CELLS cells (first hair's depth, coverage summed to the
-	// end of each of three layers), then as many more (the first opaque depth).
+	// The deep opacity maps, one row of DOM_CELLS per light (in Settings::dom_lights' order): per
+	// row DOM_CELLS x DOM_CELLS cells (first hair's depth, coverage summed to the end of each of
+	// three layers), then as many more (the first opaque depth).
 	RID get_deep_shadow_texture_rd_rid() const;
-	// The map's axes for a light direction (world, toward the light), as step() builds them.
+	// A map's axes for a light direction (world, toward the light), as step() builds them.
 	static void deep_shadow_axes(const Vector3 &p_light, Vector3 &r_u, Vector3 &r_v);
+	// A map as step() lays it out for the shader: 4 vec4 (see hair_strands.glsl's dom_slot), or
+	// false when the light cannot hold one (a local light inside the hair's bounding sphere).
+	static bool deep_shadow_slot(const Settings::DeepShadowLight &p_light, float r_slot[16]);
 	static Vector3 deep_shadow_layers() { return Vector3(0.01f, 0.04f, 0.15f); }
 	int get_texture_width() const;
 

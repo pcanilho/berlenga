@@ -2313,6 +2313,7 @@ void main() {
 	vec3 light_vertex = vertex;
 #endif //LIGHT_VERTEX_USED
 	float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET (Forward+ only)
+	float positional_shadow_offset = 0.0; // POSITIONAL_SHADOW_OFFSET (Forward+ and Mobile only)
 
 	highp mat3 model_normal_matrix;
 	if (bool(model_flags & uint(FLAGS_NON_UNIFORM_SCALE))) {
