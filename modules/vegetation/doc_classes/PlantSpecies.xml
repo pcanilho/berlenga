@@ -97,6 +97,9 @@
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1.0">
 			Fraction of the Poisson-disk points kept where every rule is fully met, from 0 to 1.
 		</member>
+		<member name="far_color" type="Color" setter="set_far_color" getter="get_far_color" default="Color(0, 0, 0, 0)">
+			The plant seen from far above (rgb) and how much of the ground it hides (alpha, 0 to 1). Beyond its [member visibility_range] the plants are thinned away, and [VegetationField3D] bakes this colour into the ground's [code]vegetation_far_map[/code] where they grew, so a stand of them stays a patch of their colour to the horizon (see [method VegetationField3D.get_floor_shader_code]). Alpha 0 leaves the ground as it is.
+		</member>
 		<member name="floating" type="bool" setter="set_floating" getter="is_floating" default="false">
 			If [code]true[/code], plants sit level on the water surface ([method TerrainDataMap3D.get_water_depth_at] above the ground), as water lilies do. Pair it with a [member water_depth_range] that starts above zero.
 		</member>
@@ -188,7 +191,7 @@
 			Mean annual temperature in °C where the species grows; with the lapse rate it sets tree lines and altitude belts. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
 		<member name="visibility_range" type="float" setter="set_visibility_range" getter="get_visibility_range" default="0.0">
-			Distance, in metres, beyond which the species is not drawn (it fades out over the last 15%). For ground cover too small to see far away. 0 draws it at any distance.
+			Distance, in metres, beyond which the species is not drawn. For ground cover too small to see far away. Plants with the generated plant material thin out before it: from 35% of the range the share drawn falls to none at the range, each plant shrinking away in the order of its placement rank while the rest grow slightly to hold the cover, so there are no pops; [member far_color] then carries them on the ground. 0 draws it at any distance.
 		</member>
 		<member name="water_depth_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.05">
 			Soft edge of [member water_depth_range], in metres.

@@ -212,12 +212,20 @@ Error VegetationField3D::populate() {
 	const int tz1 = int(Math::ceil((rect.position.y + rect.size.y) / tile_size));
 	const Transform3D to_local = get_global_transform().affine_inverse();
 
+	// Far ground colour cells, about 1 m.
+	far_size = Vector2i(CLAMP(int(Math::ceil(rect.size.x)), 1, 2048), CLAMP(int(Math::ceil(rect.size.y)), 1, 2048));
+	far_cells.clear();
+	far_cells.resize(far_size.x * far_size.y);
+
 	for (int s = 0; s < species_count; s++) {
 		Ref<PlantSpecies> sp = species_list[s];
 		if (sp.is_null()) {
 			continue;
 		}
 		const TypedArray<Mesh> meshes = sp->get_meshes();
+		const Color far_srgb = sp->get_far_color();
+		const Color far_color = Color(far_srgb.r, far_srgb.g, far_srgb.b).srgb_to_linear() * Color(1, 1, 1, 0) + Color(0, 0, 0, far_srgb.a);
+		const float range = sp->get_visibility_range();
 		const int variants = MAX(1, meshes.size());
 		const Pattern &pat = _get_pattern(sp->get_spacing(), s);
 		const float fp = sp->get_footprint();
@@ -265,7 +273,8 @@ Error VegetationField3D::populate() {
 							suit *= sp->rule_weight(PlantSpecies::RULE_CONIFER, conifer);
 						}
 					}
-					if (rank >= sp->get_density() * suit) {
+					const float keep = sp->get_density() * suit;
+					if (rank >= keep) {
 						continue;
 					}
 					// Footprints of earlier species.
@@ -323,7 +332,23 @@ Error VegetationField3D::populate() {
 						max_crown_radius = MAX(max_crown_radius, cr);
 					}
 					xforms[variant].push_back(to_local * world);
-					customs[variant].push_back(Color(float(variant), scale, r, float(s)));
+					// Custom data for the plant shader: the rank among the plants kept here (blue noise,
+					// so thinning by distance keeps the field even), the species' range, size, species.
+					customs[variant].push_back(Color(CLAMP(rank / MAX(keep, 1e-4f), 0.0f, 1.0f), range, scale, float(s)));
+					if (far_color.a > 0.0f && range > 0.0f) {
+						const int fx = CLAMP(int((xz.x - rect.position.x) / rect.size.x * far_size.x), 0, far_size.x - 1);
+						const int fz = CLAMP(int((xz.y - rect.position.y) / rect.size.y * far_size.y), 0, far_size.y - 1);
+						const float cell_area = (rect.size.x / far_size.x) * (rect.size.y / far_size.y);
+						// The ground a plant hides: a disc of half its spacing, scaled.
+						const float rr = 0.5f * sp->get_spacing() * scale;
+						const float c = far_color.a * MIN(Math::PI * rr * rr / cell_area, 4.0f);
+						FarCell &fc = far_cells[fz * far_size.x + fx];
+						fc.r += far_color.r * c;
+						fc.g += far_color.g * c;
+						fc.b += far_color.b * c;
+						fc.cover += c;
+						fc.range += range * c;
+					}
 					placements[s].push_back(world.origin);
 					plant_count++;
 				}
@@ -348,11 +373,11 @@ Error VegetationField3D::populate() {
 					MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 					mmi->set_name(vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
 					mmi->set_multimesh(mm);
-					if (sp->get_visibility_range() > 0.0f) {
-						// Ground cover too small to see far away: dropped by distance, faded out.
-						mmi->set_visibility_range_end(sp->get_visibility_range());
-						mmi->set_visibility_range_end_margin(sp->get_visibility_range() * 0.15f);
-						mmi->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
+					if (range > 0.0f) {
+						// Ground cover too small to see far away. The plant shader thins the instances
+						// by rank and shrinks them out before the range (docs/ideas/plant-generator.md,
+						// "Far distance"), so the tile is cut only once every plant in it is gone.
+						mmi->set_visibility_range_end(range * 1.05f);
 					}
 					add_child(mmi, false, INTERNAL_MODE_BACK);
 					generated.push_back(mmi);
@@ -362,6 +387,7 @@ Error VegetationField3D::populate() {
 	}
 	_publish_canopy(rect);
 	_publish_floor(rect);
+	_publish_far(rect);
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("populated"));
 	return OK;
@@ -494,6 +520,43 @@ void VegetationField3D::_publish_floor(const Rect2 &p_rect) {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->global_shader_parameter_set("forest_floor_map", floor_texture->get_rid());
 	rs->global_shader_parameter_set("forest_floor_rect", Vector4(p_rect.position.x, p_rect.position.y, p_rect.size.x, p_rect.size.y));
+}
+
+// Plants beyond their range as ground colour (vegetation_far_map, read by get_floor_shader_code()'s
+// vegetation_far()): the mean colour of the plants on each cell and the share of ground they hide,
+// and in the map's rect a mean range, so the ground takes over as the plant shader thins them.
+void VegetationField3D::_publish_far(const Rect2 &p_rect) {
+	if (!is_inside_tree()) {
+		return;
+	}
+	float range_sum = 0.0f;
+	float cover_sum = 0.0f;
+	for (const FarCell &c : far_cells) {
+		range_sum += c.range;
+		cover_sum += c.cover;
+	}
+	if (cover_sum <= 0.0f) {
+		far_cells.clear();
+		return; // Nothing to show far away; another field may own the map.
+	}
+	// Premultiplied linear colour (half floats), so filtering between a patch and bare cells
+	// fades the cover without darkening the colour.
+	Ref<Image> img = Image::create_empty(far_size.x, far_size.y, false, Image::FORMAT_RGBAH);
+	for (int y = 0; y < far_size.y; y++) {
+		for (int x = 0; x < far_size.x; x++) {
+			const FarCell &c = far_cells[y * far_size.x + x];
+			const float inv = c.cover > 0.0f ? 1.0f / c.cover : 0.0f;
+			// Overlapping plants: cover adds as 1 - exp(-sum), like overlapping crowns.
+			const float a = 1.0f - Math::exp(-c.cover);
+			img->set_pixel(x, y, Color(c.r * inv * a, c.g * inv * a, c.b * inv * a, a));
+		}
+	}
+	far_texture = ImageTexture::create_from_image(img);
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->global_shader_parameter_set("vegetation_far_map", far_texture->get_rid());
+	rs->global_shader_parameter_set("vegetation_far_rect", Vector4(p_rect.position.x, p_rect.position.y, p_rect.size.x, p_rect.size.y));
+	rs->global_shader_parameter_set("vegetation_far_range", range_sum / cover_sum);
+	far_cells.clear();
 }
 
 void VegetationField3D::set_forest_floor_enabled(bool p_enabled) {
@@ -644,6 +707,34 @@ vec3 forest_litter(vec3 world_pos, float conifer, float footprint) {
 		c = mix(c, duff, needle);
 	}
 	return c;
+}
+
+global uniform sampler2D vegetation_far_map : filter_linear; // Premultiplied linear colour, cover.
+global uniform vec4 vegetation_far_rect; // z 0: no plants published.
+global uniform float vegetation_far_range;
+
+// The share of plants the plant shader still draws at a distance from the camera, as a share of
+// the range (PlantGenerator's thinning): 1 to 35% of the range, 0 at the range.
+float vegetation_keep(float d, float range) {
+	return clamp((range - d) / (range * 0.65), 0.0, 1.0);
+}
+
+// Ground albedo with the placed plants' colour over it where they have been thinned away. Call it
+// after grass_ground() with CAMERA_POSITION_WORLD.
+vec3 vegetation_far(vec3 world_pos, vec3 albedo, vec3 camera_pos) {
+	if (vegetation_far_rect.z <= 0.0 || vegetation_far_range <= 0.0) {
+		return albedo;
+	}
+	vec2 uv = (world_pos.xz - vegetation_far_rect.xy) / vegetation_far_rect.zw;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return albedo;
+	}
+	float gone = 1.0 - vegetation_keep(length(world_pos - camera_pos), vegetation_far_range);
+	if (gone <= 0.0) {
+		return albedo;
+	}
+	vec4 f = textureLod(vegetation_far_map, uv, 0.0);
+	return albedo * (1.0 - f.a * gone) + f.rgb * gone;
 }
 
 // Ground albedo with the forest floor over it, where the canopy closes.

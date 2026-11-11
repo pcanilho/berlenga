@@ -240,6 +240,8 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_patch_weight", "global_position"), &PlantSpecies::get_patch_weight);
 	ClassDB::bind_method(D_METHOD("set_visibility_range", "range"), &PlantSpecies::set_visibility_range);
 	ClassDB::bind_method(D_METHOD("get_visibility_range"), &PlantSpecies::get_visibility_range);
+	ClassDB::bind_method(D_METHOD("set_far_color", "color"), &PlantSpecies::set_far_color);
+	ClassDB::bind_method(D_METHOD("get_far_color"), &PlantSpecies::get_far_color);
 	ClassDB::bind_method(D_METHOD("set_canopy_radius", "radius"), &PlantSpecies::set_canopy_radius);
 	ClassDB::bind_method(D_METHOD("get_canopy_radius"), &PlantSpecies::get_canopy_radius);
 	ClassDB::bind_method(D_METHOD("set_canopy_opacity", "opacity"), &PlantSpecies::set_canopy_opacity);
@@ -257,6 +259,7 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "random_yaw"), "set_random_yaw", "is_random_yaw");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "floating"), "set_floating", "is_floating");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "visibility_range", PROPERTY_HINT_RANGE, "0,1000,0.5,or_greater,suffix:m"), "set_visibility_range", "get_visibility_range");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "far_color"), "set_far_color", "get_far_color");
 	ADD_GROUP("Canopy", "canopy_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_radius", PROPERTY_HINT_RANGE, "0,30,0.1,or_greater,suffix:m"), "set_canopy_radius", "get_canopy_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_opacity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_canopy_opacity", "get_canopy_opacity");

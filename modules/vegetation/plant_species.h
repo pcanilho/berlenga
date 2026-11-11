@@ -79,6 +79,7 @@ private:
 	int patch_seed = 0;
 	bool patch_invert = false; // Grow between the patches instead (same scale, cover and seed: the exact complement).
 	float visibility_range = 0.0f; // 0: always drawn.
+	Color far_color = Color(0, 0, 0, 0); // The plant seen from far above (rgb) and how much ground it hides (a).
 	// A canopy species shades what grows under it: crown radius (times the plant's scale) and
 	// the share of light its crown stops.
 	float canopy_radius = 0.0f; // 0: casts no shade.
@@ -104,6 +105,8 @@ public:
 	float get_patch_weight(const Vector3 &p_pos) const;
 	void set_visibility_range(float p_range) { visibility_range = MAX(p_range, 0.0f); }
 	float get_visibility_range() const { return visibility_range; }
+	void set_far_color(const Color &p_color) { far_color = p_color; }
+	Color get_far_color() const { return far_color; }
 	void set_canopy_radius(float p_radius) { canopy_radius = MAX(p_radius, 0.0f); }
 	float get_canopy_radius() const { return canopy_radius; }
 	void set_canopy_opacity(float p_opacity) { canopy_opacity = CLAMP(p_opacity, 0.0f, 1.0f); }

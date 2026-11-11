@@ -2788,6 +2788,19 @@ void vertex() {
 		float ph = dot(rest_world, vec3(7.1, 3.3, 5.7));
 		VERTEX += NORMAL * sin(TIME * (6.0 + 3.0 * fract(ph)) + ph) * 0.004 * w * clamp(ws * 0.2, 0.0, 1.0) * clamp(height * 4.0, 0.3, 1.5);
 	}
+	// Far distance (docs/ideas/plant-generator.md, stage 6): VegetationField3D gives each instance
+	// its blue-noise rank among the plants kept there (x) and its species' range (y). The share
+	// kept falls from 1 at 35% of the range to 0 at the range; a plant shrinks to nothing as the
+	// share passes its rank, and the survivors grow a little to hold the cover (Horizon Zero
+	// Dawn's thinning by rank, Ghost of Tsushima's widening). Measured from the main camera, so
+	// shadow and other passes thin the same plants; the ground's colour takes over (vegetation_far()).
+	if (INSTANCE_CUSTOM.y > 0.0) {
+		float range = INSTANCE_CUSTOM.y;
+		float d = length(MODEL_MATRIX[3].xyz - MAIN_CAM_INV_VIEW_MATRIX[3].xyz);
+		float keep = clamp((range - d) / (range * 0.65), 0.0, 1.0);
+		float s = smoothstep(INSTANCE_CUSTOM.x, INSTANCE_CUSTOM.x + 0.12, keep * 1.12);
+		VERTEX *= s * (1.0 + 0.25 * (1.0 - keep));
+	}
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_geo_n = normalize(mat3(MODEL_MATRIX) * NORMAL);
 }
@@ -3385,6 +3398,15 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, f.water_max * 0.3f);
 		}
 		sp->set_visibility_range(f.visibility);
+		// Far away the ground takes the plant's colour (VegetationField3D's vegetation_far_map):
+		// the leaves, a little darker for the shade inside the plant, hiding more ground the
+		// taller the plant. Litter and twigs are the ground's own (forest_floor()).
+		if (f.preset != P::PRESET_LEAF_LITTER && f.preset != P::PRESET_NEEDLE_LITTER && f.preset != P::PRESET_TWIGS && v.size() > 0) {
+			const Ref<ArrayMesh> m0 = v[0];
+			const float h = m0.is_valid() ? m0->get_aabb().get_end().y : 0.2f;
+			const Color lc = gen->get_leaf_color() * 0.8f;
+			sp->set_far_color(Color(lc.r, lc.g, lc.b, CLAMP(h / 0.6f, 0.2f, 0.9f)));
+		}
 		sp->set_meta("floor", true);
 		out.push_back(sp);
 		seed_base += 11;

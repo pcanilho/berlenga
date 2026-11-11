@@ -45,6 +45,7 @@
 			<return type="String" />
 			<description>
 				Shader code for terrain materials: [code]forest_floor(world_pos, albedo)[/code] returns the ground's albedo with the forest floor laid over it where the canopy closes, leaf litter under broadleaf crowns, needles over duff with feather moss drifts under conifers, a patchwork in mixed stands. It reads the [code]forest_floor_map[/code] and [code]forest_floor_rect[/code] global shader parameters (see [member forest_floor_enabled]). Use it in a fragment shader. [method GrassField3D.get_ground_shader_code] includes it and its [code]grass_ground()[/code] calls it, so materials that use the grass ground get the litter too.
+				It also gives [code]vegetation_far(world_pos, albedo, camera_pos)[/code]: call it after [code]grass_ground()[/code] with [code]CAMERA_POSITION_WORLD[/code]. Where plants with a [member PlantSpecies.far_color] grew, it blends their colour into the ground as the plant shader thins them away with distance, with the same curve: none up to 35% of the species' range, all of it at the range. It reads the [code]vegetation_far_map[/code], [code]vegetation_far_rect[/code] and [code]vegetation_far_range[/code] global shader parameters, published after each [method populate] that places such plants.
 			</description>
 		</method>
 		<method name="get_shade_at" qualifiers="const">

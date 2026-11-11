@@ -365,6 +365,8 @@ void fragment() {
 	}
 	if (grass_tint_enabled) {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
+		// Plants thinned away by distance leave their colour on the ground (VegetationField3D).
+		c += "\talbedo = vegetation_far(wp, albedo, CAMERA_POSITION_WORLD);\n";
 	}
 	c += "\tfloat metallic = 0.0;\n\tfloat specular = 0.5;\n";
 	if (wetness_enabled) {

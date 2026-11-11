@@ -25,6 +25,9 @@ extends Node3D
 #   --swamp=close    the same, looking down on a water lily
 #   --turf=0         without the near turf layer
 #   --floor=0        without the litter on the ground under the crowns (cost comparison)
+#   --far=0          without the plants' colour on the ground beyond their range (before/after)
+#   --far            a high view over the land, to see plants thin out and the ground take over
+#   --dolly          from that corner, walk in 0.3 m a frame (with --clip and --frames)
 #   --terrain-material  the ground drawn with TerrainMaterial3D (its grass tint calls grass_ground())
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
@@ -50,6 +53,9 @@ var forest_in := false
 var stand := "beech"
 var stand_set := false
 var no_floor := false
+var no_far := false
+var far_view := false
+var dolly := false
 var swamp := false
 var swamp_close := false
 var ground_mat: ShaderMaterial
@@ -94,6 +100,11 @@ func _ready() -> void:
 			swamp_close = true
 		elif a == "--turf=0": no_turf = true
 		elif a == "--floor=0": no_floor = true
+		elif a == "--far=0": no_far = true
+		elif a == "--far": far_view = true
+		elif a == "--dolly":
+			far_view = true
+			dolly = true
 		elif a == "--terrain-material": terrain_mat = true
 		elif a == "--forest=in":
 			forest = true
@@ -220,7 +231,7 @@ varying vec3 wp;
 // forest_floor_* globals): leaves, needles and moss by the stand above.
 void vertex() { wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz; }
 void fragment() {
-	ALBEDO = grass_ground(wp, vec3(0.11, 0.12, 0.06));
+	ALBEDO = vegetation_far(wp, grass_ground(wp, vec3(0.11, 0.12, 0.06)), CAMERA_POSITION_WORLD);
 	ROUGHNESS = 0.95;
 }
 """
@@ -308,6 +319,10 @@ void fragment() {
 		# Closer, looking down on the trails.
 		cam.position = Vector3(1.5, height(1.5, 17.0) + 1.6, 17.0)
 		cam.look_at(Vector3(0.5, height(0.5, 10.0), 10.0))
+	if far_view and not test:
+		# From a corner, a little up, across the whole map: near plants, thinning, ground beyond.
+		cam.position = Vector3(42, height(42, 42) + (2.0 if dolly else 7.0), 42)
+		cam.look_at(Vector3(-20, height(-20, -20) - 2.0, -20))
 	if swamp and not test:
 		# Walk from the usual view towards the deepest water until the shore, stand back from it.
 		var from := Vector2(6, 20)
@@ -366,7 +381,11 @@ func _frame_forest() -> void:
 				far_d = near_d
 				eye = cand
 		at = eye - away * 6.0
-	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 1.5, eye.z)
+	if far_view:
+		# Back out into the open: the edge's bracken and bramble 30 to 60 m off.
+		eye = best + away * 38.0
+		at = best
+	cam.position = Vector3(eye.x, height(eye.x, eye.z) + (2.5 if far_view else 1.5), eye.z)
 	cam.look_at(Vector3(at.x, height(at.x, at.z) + (-0.4 if forest_in else 0.3), at.z))
 	print("GRASS_FOREST tree=%s eye=%s shade_under=%.2f" % [str(best), str(cam.position), cover.get_shade_at(best)])
 
@@ -378,7 +397,30 @@ func _variants(preset: int, count: int, size := 1.0) -> Array:
 	gen.preset = preset
 	gen.size = size
 	gen.apply_preset_colors()
-	return gen.generate_variants(count)
+	var meshes := gen.generate_variants(count)
+	for m in meshes:
+		m.set_meta("preset", preset)
+	return meshes
+
+# Far away the ground takes each plant's colour (PlantSpecies.far_color, as make_floor() sets it):
+# its leaves a little darker, hiding more ground the taller it is. Litter and twigs are the
+# ground's own already.
+func _set_far_colors(b: Biome) -> void:
+	for sp in b.species:
+		var spc := sp as PlantSpecies
+		if spc.meshes.is_empty() or spc.visibility_range <= 0.0 or spc.far_color.a > 0.0:
+			continue
+		var m: Mesh = spc.meshes[0]
+		if not m.has_meta("preset"):
+			continue
+		var preset: int = m.get_meta("preset")
+		if preset in [PlantGenerator.PRESET_LEAF_LITTER, PlantGenerator.PRESET_NEEDLE_LITTER, PlantGenerator.PRESET_TWIGS]:
+			continue
+		var gen := PlantGenerator.new()
+		gen.preset = preset
+		gen.apply_preset_colors()
+		var lc: Color = gen.leaf_color * 0.8
+		spc.far_color = Color(lc.r, lc.g, lc.b, clampf(m.get_aabb().end.y / 0.6, 0.2, 0.9))
 
 func _cover_biome() -> Biome:
 	var flowers := PlantSpecies.new()
@@ -487,6 +529,11 @@ func _cover_biome() -> Biome:
 		b.species = _stand_trees() + floor_sp.slice(0, 3) + b.species + floor_sp.slice(3)
 	if swamp:
 		b.species = _wetland_species() + b.species
+	if no_far:
+		for sp in b.species:
+			(sp as PlantSpecies).far_color = Color(0, 0, 0, 0)
+	else:
+		_set_far_colors(b)
 	return b
 
 # Hydrosere zonation (Spence 1982; Keddy 2010): floating-leaved plants in deeper water,
@@ -898,6 +945,25 @@ func _checks() -> void:
 	grass.update_at(cam.global_position + Vector3(30, 0, 0))
 	print("GRASS_MOVE tiles=%d build_ms=%.1f" % [grass.get_tile_count(), grass.get_build_time_msec()])
 	grass.update_at(cam.global_position)
+	if cover:
+		# Far distance: every ranged plant carries its rank (0..1) and its species' range for the
+		# shader's thinning, and the tile is cut just past that range.
+		var ranged := 0
+		var bad := 0
+		for ch in cover.get_children(true):
+			if ch is MultiMeshInstance3D:
+				var mm: MultiMesh = ch.multimesh
+				for i in mm.instance_count:
+					var cd := mm.get_instance_custom_data(i)
+					var sp: PlantSpecies = cover.biome.species[int(cd.a)]
+					if sp.visibility_range > 0.0:
+						ranged += 1
+						if cd.r < 0.0 or cd.r > 1.0 or absf(cd.g - sp.visibility_range) > 1e-3 or absf(ch.visibility_range_end - sp.visibility_range * 1.05) > 1e-3:
+							bad += 1
+		_check("plants carry rank and range for thinning", ranged > 1000 and bad == 0, "%d ranged, %d bad" % [ranged, bad])
+		var far_rect: Vector4 = RenderingServer.global_shader_parameter_get("vegetation_far_rect")
+		var far_range: float = RenderingServer.global_shader_parameter_get("vegetation_far_range")
+		_check("plants' far colour published", far_rect.z > 0.0 and far_range > 5.0 and far_range < 50.0, "%s range %.1f" % [str(far_rect), far_range])
 
 func _place(node: Node3D, x: float, z: float, lift: float) -> void:
 	node.global_position = Vector3(x, height(x, z) + lift, z)
@@ -975,6 +1041,12 @@ func _process(dt: float) -> void:
 		return
 	if test:
 		return
+	if dolly and n >= 20:
+		# Walk into the land: plants grow in one by one as they come into range.
+		var fwd := -cam.global_transform.basis.z
+		fwd.y = 0.0
+		var p := cam.position + fwd.normalized() * 0.3
+		cam.position = Vector3(p.x, height(p.x, p.z) + 2.0, p.z)
 	if not clip.is_empty() and n >= 20:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(clip.path_join("f%03d.png" % (n - 20)))

@@ -323,6 +323,42 @@ Not built here: the mud of the shore belongs to the granular ground (GroundSurfa
 snags and fallen logs to the trees' deadwood; duckweed and drifting leaves to the water
 material; reeds turning straw-coloured in winter waits for a season input.
 
+## Far distance (stage 6)
+
+Before: each species had a `visibility_range`; a whole tile of instances faded out at once by
+dithered fade near that range, so plants vanished tile by tile and a stand of bracken or
+bramble became bare ground beyond 40 m. What others do:
+
+- Horizon Zero Dawn (van Muijden, GDC 2017): placement is a density field; at distance the
+  density threshold rises, so instances drop out one by one in the order of their dither rank,
+  shrinking to nothing before they are removed instead of popping.
+- Ghost of Tsushima (Wohllaib, GDC 2021, "Procedural Grass Rendering in Ghost of Tsushima"):
+  far tiles keep fewer blades and widen the survivors to keep the cover; beyond the grass the
+  terrain's own colour is the grass colour, so the field reads to the horizon.
+- Far Cry 5 (Carrier, GDC 2018): per-instance fade by distance, and the terrain carries the
+  vegetation's tint where the meshes are gone.
+- Octahedral impostors (Brucks 2018, Fortnite): baked views on an atlas, right for trees and
+  large shrubs (trees thread), too costly per variant for knee-high ground plants that are a few
+  pixels tall at the range where they would be used.
+
+What we build:
+
+1. **Thinning by rank, scale-out.** Each instance carries its placement rank (its blue-noise
+   dither rank over the local density) and its species' range in its custom data. The plant
+   shader keeps a share of instances that falls from 1 at 35% of the range to 0 at the range;
+   an instance whose rank passes the share shrinks to nothing over a short window, and the
+   survivors grow up to 25% to hold the cover (Ghost of Tsushima's widening). Distance is
+   taken from the main camera (`MAIN_CAM_INV_VIEW_MATRIX`), so shadow passes thin the same
+   plants. Because ranks are blue noise, the thinned field stays evenly spread.
+2. **Tile cut after the last plant.** A tile's visibility range ends just past the species'
+   range, where every instance has already shrunk away: no tile pop and no dither fade.
+3. **The ground takes over.** `PlantSpecies.far_color` (rgb: the plant's colour seen from above,
+   alpha: how much of the ground it hides). VegetationField3D bakes the placed plants into
+   `vegetation_far_map` (colour and cover on 1 m cells) and `grass_ground()` blends it in with
+   the same curve as the thinning, so a bracken stand stays a rust-green patch to the horizon.
+   `make_floor()` sets it for its species from the generator's colours.
+4. **Mesh LODs** stay as they were (`PlantGenerator.lods`, the engine's automatic LOD per tile).
+
 ## References
 
 - Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*, 1990.

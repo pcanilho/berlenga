@@ -71,6 +71,14 @@ class VegetationField3D : public Node3D {
 	bool forest_floor_enabled = true;
 	Ref<Texture2D> floor_texture;
 	void _publish_floor(const Rect2 &p_rect);
+	// Placed plants as ground colour beyond their range (vegetation_far_* globals).
+	struct FarCell {
+		float r = 0.0f, g = 0.0f, b = 0.0f, cover = 0.0f, range = 0.0f;
+	};
+	LocalVector<FarCell> far_cells;
+	Vector2i far_size;
+	Ref<Texture2D> far_texture;
+	void _publish_far(const Rect2 &p_rect);
 	static constexpr float CROWN_CELL = 8.0f;
 	LocalVector<Crown> crowns;
 	HashMap<Vector2i, LocalVector<int>> crown_grid;
