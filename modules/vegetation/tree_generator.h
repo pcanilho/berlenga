@@ -153,6 +153,7 @@ public:
 		PARAM_LEAF_WIDTH, // Leaf blade width over length (willow narrow, chestnut leaflets broad).
 		PARAM_APICAL_CONTROL, // Shoot growth on a branch of order k is scaled by this^k (Stava 2014; excurrent conifers < 1).
 		PARAM_LATERAL_EXTENSION, // Shoot length on a branch of order k is scaled by this^k; length only, not vigor.
+		PARAM_CROWN_CONE, // Excurrent crown: branches reach at most this times their depth below the top (0: off).
 		PARAM_MAX,
 	};
 

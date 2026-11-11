@@ -140,6 +140,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 	p[PARAM_TWIG_DROOP] = 0;
 	p[PARAM_APICAL_CONTROL] = 1.0f;
 	p[PARAM_LATERAL_EXTENSION] = 1.0f;
+	p[PARAM_CROWN_CONE] = 0.0f;
 	p[PARAM_LEAF_WIDTH] = 0.32f;
 	phyllotaxis = PHYLLOTAXIS_ALTERNATE;
 	switch (p_preset) {
@@ -216,12 +217,12 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 3;
 			bark_color = Color(0.42f, 0.27f, 0.18f);
 			leaf_color = Color(0.12f, 0.22f, 0.1f);
-			p[PARAM_LATERAL_EXTENSION] = 0.45f;
+			p[PARAM_CROWN_CONE] = 0.45f;
 			p[PARAM_SHADOW_STRENGTH] = 0.04f;
 			break;
-		// Conifers: branches extend at about a third of the leader's rate (open-grown spruce and fir
-		// crowns are about a fifth as wide as tall), with a lighter shadow so the denser crown keeps
-		// its buds.
+		// Conifers keep a cone: branches reach about 0.3 of their depth below the top (open-grown
+		// spruce and fir crowns are about a third as wide as tall), with a lighter shadow so the
+		// denser crown keeps its buds.
 		case PRESET_NORWAY_SPRUCE: // Picea abies: strong leader, drooping laterals, dead lower limbs.
 			p[PARAM_YEARS] = 50;
 			p[PARAM_INTERNODE_LENGTH] = 0.35f;
@@ -244,7 +245,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 6;
 			bark_color = Color(0.33f, 0.27f, 0.23f);
 			leaf_color = Color(0.07f, 0.17f, 0.08f);
-			p[PARAM_LATERAL_EXTENSION] = 0.35f;
+			p[PARAM_CROWN_CONE] = 0.3f;
 			p[PARAM_SHADOW_STRENGTH] = 0.022f;
 			break;
 		case PRESET_HAZEL: // Corylus avellana: multi-stemmed, basitonic, sprouts from the base.
@@ -388,7 +389,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 1;
 			bark_color = Color(0.36f, 0.25f, 0.2f);
 			leaf_color = Color(0.25f, 0.4f, 0.12f);
-			p[PARAM_LATERAL_EXTENSION] = 0.32f;
+			p[PARAM_CROWN_CONE] = 0.35f;
 			p[PARAM_SHADOW_STRENGTH] = 0.03f;
 			break;
 		case PRESET_SILVER_FIR: // Abies alba: very shade tolerant, flat horizontal sprays.
@@ -411,7 +412,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAF_YEARS] = 8;
 			bark_color = Color(0.5f, 0.5f, 0.48f);
 			leaf_color = Color(0.06f, 0.16f, 0.07f);
-			p[PARAM_LATERAL_EXTENSION] = 0.35f;
+			p[PARAM_CROWN_CONE] = 0.3f;
 			p[PARAM_SHADOW_STRENGTH] = 0.022f;
 			break;
 		case PRESET_ROWAN: // Sorbus aucuparia: small tree, ascending branches, pinnate leaves.
@@ -583,7 +584,7 @@ void TreeGenerator::_set_north_american(Preset p_preset) {
 			p[PARAM_LEAVES_PER_INTERNODE] = 100;
 			p[PARAM_LEAF_YEARS] = 2;
 			p[PARAM_TWIG_DROOP] = 0.3f;
-			p[PARAM_LATERAL_EXTENSION] = 0.5f;
+			p[PARAM_CROWN_CONE] = 0.45f;
 			bark_color = Color(0.3f, 0.28f, 0.26f);
 			leaf_color = Color(0.1f, 0.2f, 0.14f);
 			break;
@@ -597,7 +598,7 @@ void TreeGenerator::_set_north_american(Preset p_preset) {
 			p[PARAM_LEAF_SIZE] = 0.016f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 170;
 			p[PARAM_LEAF_YEARS] = 4;
-			p[PARAM_LATERAL_EXTENSION] = 0.4f;
+			p[PARAM_CROWN_CONE] = 0.35f;
 			bark_color = Color(0.36f, 0.28f, 0.24f);
 			leaf_color = Color(0.06f, 0.15f, 0.07f);
 			break;
@@ -1024,6 +1025,20 @@ void TreeGenerator::_grow_year(int p_year) {
 	const int bud_count = int(buds.size());
 	const float base_len = _internode_length(p_year);
 	const float noise = Math::deg_to_rad(params[PARAM_DIRECTION_NOISE]);
+	// Crown cone of excurrent trees: a branch reaches out at most crown_cone times its depth below
+	// the leader's tip (Kantola and Makela 2004: Norway spruce branch length grows with depth in
+	// the crown, the whole crown keeping a near-constant shape). Shoots that would leave the cone
+	// wait for the leader to rise, so young branches near the top grow at full rate but stay short.
+	const float cone = params[PARAM_CROWN_CONE];
+	float top = 0.0f;
+	const Vector3 root = nodes[0].start;
+	if (cone > 0.0f) {
+		for (const Node &n : nodes) {
+			if (n.order == 0 && !n.removed) {
+				top = MAX(top, n.end().y);
+			}
+		}
+	}
 	for (int bi = 0; bi < bud_count; bi++) {
 		if (!buds[bi].alive) {
 			continue;
@@ -1037,7 +1052,25 @@ void TreeGenerator::_grow_year(int p_year) {
 		}
 		// Stochastic rounding: a bud with vigor 0.4 grows one internode four years in ten, so weak
 		// buds are slow rather than starved outright.
-		const int count = MIN(int(Math::floor(buds[bi].vigor + rng.randf())), int(params[PARAM_MAX_SHOOT]));
+		int count = MIN(int(Math::floor(buds[bi].vigor + rng.randf())), int(params[PARAM_MAX_SHOOT]));
+		if (cone > 0.0f && count > 0) {
+			const Node &on = nodes[buds[bi].node];
+			const bool at_root = buds[bi].node == 0;
+			if (!at_root && (!buds[bi].terminal || on.order > 0)) {
+				const Vector3 p0 = on.end();
+				const float l0 = base_len * CLAMP(buds[bi].vigor / float(count), 0.25f, 1.5f);
+				int allowed = 0;
+				for (int k = 0; k < count; k++) {
+					const Vector3 q = p0 + buds[bi].dir * (l0 * (k + 1));
+					const float reach = Vector2(q.x - root.x, q.z - root.z).length();
+					if (reach > cone * MAX(top - q.y, 0.0f) + 0.3f) {
+						break;
+					}
+					allowed++;
+				}
+				count = allowed;
+			}
+		}
 		if (count < 1) {
 			buds[bi].idle++;
 			// Terminal buds that cannot extend stay alive as spurs (they die only of shade); dormant
@@ -2213,7 +2246,7 @@ void TreeGenerator::_bind_methods() {
 		"shadow_falloff", "shadow_depth", "bud_light_min", "bud_idle_years", "shed_ratio", "dead_branch_keep",
 		"tip_radius", "pipe_exponent", "gravity_bending", "stems", "stem_spread", "basal_sprouts", "root_flare",
 		"leaf_size", "leaves_per_internode", "leaf_years", "needles", "twig_droop", "leaf_width", "apical_control",
-		"lateral_extension"
+		"lateral_extension", "crown_cone"
 	};
 	for (int i = 0; i < PARAM_MAX; i++) {
 		ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, names[i]), "set_param", "get_param", i);
@@ -2306,5 +2339,6 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PARAM_LEAF_WIDTH);
 	BIND_ENUM_CONSTANT(PARAM_APICAL_CONTROL);
 	BIND_ENUM_CONSTANT(PARAM_LATERAL_EXTENSION);
+	BIND_ENUM_CONSTANT(PARAM_CROWN_CONE);
 	BIND_ENUM_CONSTANT(PARAM_MAX);
 }

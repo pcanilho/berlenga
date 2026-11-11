@@ -317,14 +317,18 @@ oak, red maple, mountain laurel thickets) and pine-hemlock. `make_woodland(varia
 REGION_NORTH_AMERICA)` joins them; the bench region map takes `--na`. Birch crowns were also too
 wide (radius 12.8 m on a 23 m tree): `lateral_extension` 0.65 brings that to 7.
 
-**Conifer cones.** Open-grown conifers spread too wide (spruce 39 m across). Branches of an
-excurrent conifer extend at a fraction of the leader's rate (Wilson 2000; Kantola and Makela
-2004). Scaling bud vigor for that starved the crown (vigor comes from collected light) and the
-tree collapsed to a pole; `lateral_extension` scales shoot length alone, per order up to 2, so
-buds and needles stay. With a lighter self-shadow so the denser crown keeps its buds: spruce and
-fir 0.35 (shadow 0.022), larch 0.32 (0.03), Scots pine 0.45 (0.04). Open crown radius: spruce
-19.6 to 9.0 m, pine 17.1 to 8.4, larch 7.1, fir 8.5; forest forms keep crowns of 3 m and bases
-near 20 m. Heights rose to 34-36 m, inside the test ranges but on the tall side for 50 years.
+**Conifer cones.** Open-grown conifers spread too wide (spruce 39 m across). Scaling bud vigor
+on branches starved the crown and it collapsed to a pole; scaling shoot length alone
+(`lateral_extension`) narrowed it but left the young upper branches as stubs, so the top half
+looked bare. What holds now is `crown_cone`: a branch reaches at most that many times its depth
+below the leader's tip (Kantola and Makela 2004: spruce branch length grows with depth in the
+crown, the crown keeping its shape). Shoots that would leave the cone wait for the leader, so
+upper branches grow at full rate but stay short. Spruce and fir 0.3, larch and hemlock 0.35,
+Scots and white pine 0.45, with a lighter self-shadow so the denser crown keeps its buds. Open
+spruce: 33.6 m tall, crown radius 8.7 m, branches to the top; forest forms crown 3 m, base near
+20 m. `lateral_extension` stays for broadleaves (birch 0.65). The bench renders with 8x MSAA:
+needles are millimetres wide, and without multisampling they missed every sample and conifers
+read as sticks; games run TAA or DLSS, which integrate that coverage.
 
 ## References
 

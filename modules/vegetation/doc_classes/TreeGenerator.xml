@@ -152,6 +152,9 @@
 		<member name="bud_light_min" type="float" setter="set_param" getter="get_param" default="0.05">
 			Light below which a bud dies.
 		</member>
+		<member name="crown_cone" type="float" setter="set_param" getter="get_param" default="0.0">
+			Excurrent crown shape: a branch reaches out at most this many times its depth below the top of the tree, so spruce, fir, larch and pine keep a cone (Kantola and Makela 2004). Shoots that would leave the cone wait until the leader has grown. 0 turns it off.
+		</member>
 		<member name="dead_branch_keep" type="float" setter="set_param" getter="get_param" default="0.15">
 			Share of shed branches kept on the tree as dead wood.
 		</member>
@@ -523,7 +526,10 @@
 		<constant name="PARAM_LATERAL_EXTENSION" value="37" enum="Param">
 			Index of [member lateral_extension].
 		</constant>
-		<constant name="PARAM_MAX" value="38" enum="Param">
+		<constant name="PARAM_CROWN_CONE" value="38" enum="Param">
+			Index of [member crown_cone].
+		</constant>
+		<constant name="PARAM_MAX" value="39" enum="Param">
 			Number of parameters.
 		</constant>
 	</constants>

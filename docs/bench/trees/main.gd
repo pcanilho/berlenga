@@ -180,6 +180,10 @@ func _build_scene() -> void:
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = 3
+	# Needles are a few millimetres wide, far under a pixel at lineup distance: without
+	# multisampling most miss every sample point and conifers read as bare sticks. Games run TAA
+	# or DLSS, which integrate that coverage; 8x MSAA stands in for it here.
+	get_viewport().msaa_3d = Viewport.MSAA_8X
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
