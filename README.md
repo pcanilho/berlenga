@@ -99,7 +99,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 - **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
 - **Measured wave spreading** (`wave_spreading`, `swell`): Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.
-- **Raster reflections** (`PhysXWaterSurface3D.raster_reflections`): raster water reflects the sky and the sun's glitter by the exact Fresnel term, matching the path tracer.
+- **Raster reflections** (`raster_reflections` on PhysXWaterSurface3D and PhysXRiver3D): raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer.
 - **Whitecaps by wind speed** (`whitecap_auto`, on; `whitecap_cover_scale`): whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.
 - **Finer water mesh up close** (`mesh_detail`).
 - **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).
