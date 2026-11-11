@@ -34,6 +34,7 @@
 #include "physx_water_mist_3d.h"
 
 #include "core/config/engine.h"
+#include "core/object/class_db.h"
 #include "scene/3d/gpu_particles_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/resources/3d/primitive_meshes.h"
@@ -172,6 +173,13 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall) {
 	}
 	const float lw = MAX(face.width, 1.0f);
 	const int cols = lip.size();
+	// The column carrying the most water speaks for the fall in get_contact_falls().
+	int main_col = 0;
+	for (int c = 1; c < cols; c++) {
+		if (share[c] > share[main_col]) {
+			main_col = c;
+		}
+	}
 	const float spacing = lw / (cols - 1);
 	// The smoothed (run, depth below the lip) line down each of the three profiles, cut a little past the foot.
 	PackedVector2Array lines[3];
@@ -197,8 +205,13 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall) {
 		arcs[l] = arc;
 	}
 	float longest = 0.0f;
+	float shortest = 1e30f;
 	for (int l = 0; l < 3; l++) {
 		longest = MAX(longest, arcs[l][arcs[l].size() - 1]);
+		shortest = MIN(shortest, arcs[l][arcs[l].size() - 1]);
+	}
+	if (shortest < 0.5f * face.height) {
+		return; // A profile that stops short of the foot: no face to drape over.
 	}
 	const int rows = CLAMP((int)Math::ceil(longest / MAX(row_spacing, 0.25f)) + 1, 2, 1024);
 	// Mean steepness of the face, for the inception point.
@@ -254,15 +267,20 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall) {
 			prev_v = v;
 			prev_p = p;
 		}
-		if (c == cols / 2) {
+		if (c == main_col) {
 			face.inception = li;
 			face.air_at_foot = air;
+			float peak = 0.0f;
+			for (int r = 0; r < col.air.size(); r++) {
+				peak = MAX(peak, col.air[r]);
+			}
+			face.air_peak = peak;
 		}
 		face.columns.push_back(col);
 	}
 	// Ledges: where the water strikes each one, at the speed it has there (the middle column's nearest row).
 	const Array ledges = p_fall.get("ledges", Array());
-	const Column &mid = face.columns[cols / 2];
+	const Column &mid = face.columns[main_col];
 	for (int i = 0; i < ledges.size(); i++) {
 		const Dictionary l = ledges[i];
 		const Vector3 at = l.get("position", Vector3());
@@ -278,7 +296,8 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall) {
 		face.ledges.push_back(at);
 		face.ledge_speed.push_back(v);
 	}
-	if (face.impact_speed <= 0.0f && mid.speed.size() > 0) {
+	// The record's impact speed is a free jet's: water on the rock arrives at its own (friction-limited) speed.
+	if (mid.speed.size() > 0) {
 		face.impact_speed = mid.speed[mid.speed.size() - 1];
 	}
 	faces.push_back(face);
@@ -420,7 +439,8 @@ void PhysXWaterfalls3D::_build_effects() {
 			add_child(s, false, INTERNAL_MODE_BACK);
 			effects.push_back(s);
 		}
-		if (mist) {
+		// A trickle down the rock (spring melt, a side stream) wets it but throws no measurable mist.
+		if (mist && face.discharge >= mist_min_discharge) {
 			// Fine drops leave the aerated sheet all the way down: a line source along the face, densest where it
 			// lands. The share of the water atomised grows with the square of the speed (as PhysXRiver3D's falls).
 			const Vector3 run_v = face.foot - face.top;
@@ -477,6 +497,7 @@ Array PhysXWaterfalls3D::get_contact_falls() const {
 		d["discharge"] = face.discharge;
 		d["inception_length"] = face.inception;
 		d["air_at_foot"] = face.air_at_foot;
+		d["air_peak"] = face.air_peak;
 		d["impact_speed"] = face.impact_speed;
 		d["ledges"] = face.ledges.size();
 		d["rows"] = face.columns.is_empty() ? 0 : face.columns[0].points.size();
@@ -519,6 +540,13 @@ void PhysXWaterfalls3D::set_mist_amount(float p_amount) {
 	mist_amount = MAX(p_amount, 0.0f);
 }
 
+void PhysXWaterfalls3D::set_mist_min_discharge(float p_q) {
+	mist_min_discharge = MAX(p_q, 0.0f);
+	if (is_inside_tree()) {
+		_build_effects();
+	}
+}
+
 void PhysXWaterfalls3D::set_min_height(float p_height) {
 	min_height = MAX(p_height, 0.0f);
 }
@@ -548,6 +576,8 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_mist"), &PhysXWaterfalls3D::get_mist);
 	ClassDB::bind_method(D_METHOD("set_mist_amount", "amount"), &PhysXWaterfalls3D::set_mist_amount);
 	ClassDB::bind_method(D_METHOD("get_mist_amount"), &PhysXWaterfalls3D::get_mist_amount);
+	ClassDB::bind_method(D_METHOD("set_mist_min_discharge", "discharge"), &PhysXWaterfalls3D::set_mist_min_discharge);
+	ClassDB::bind_method(D_METHOD("get_mist_min_discharge"), &PhysXWaterfalls3D::get_mist_min_discharge);
 	ClassDB::bind_method(D_METHOD("set_min_height", "height"), &PhysXWaterfalls3D::set_min_height);
 	ClassDB::bind_method(D_METHOD("get_min_height"), &PhysXWaterfalls3D::get_min_height);
 	ClassDB::bind_method(D_METHOD("set_rock_roughness", "ks"), &PhysXWaterfalls3D::set_rock_roughness);
@@ -564,6 +594,7 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "spray"), "set_spray", "get_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mist"), "set_mist", "get_mist");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mist_amount", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_mist_amount", "get_mist_amount");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mist_min_discharge", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater,suffix:m\u00b3/s"), "set_mist_min_discharge", "get_mist_min_discharge");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "min_height", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_min_height", "get_min_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_roughness", PROPERTY_HINT_RANGE, "0.001,1,0.001,suffix:m"), "set_rock_roughness", "get_rock_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "manning_n", PROPERTY_HINT_RANGE, "0.005,0.2,0.001"), "set_manning_n", "get_manning_n");
