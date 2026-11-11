@@ -73,12 +73,16 @@ void TreeGenerator::set_preset(Preset p_preset) {
 	p[PARAM_PHOTOTROPISM] = 0.12f;
 	p[PARAM_GRAVITROPISM] = 0.08f;
 	p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
-	p[PARAM_SHADOW_STRENGTH] = 0.12f;
+	// Shade and shedding are soft: sky light reaches a crown from the whole hemisphere, not only
+	// from above, so a short, light shadow pyramid stands in for it; with a deeper or darker one
+	// every upper layer killed the branches below and open-grown trees kept leaves only on top
+	// (crown base 14 m on an open oak against 2-4 m in nature).
+	p[PARAM_SHADOW_STRENGTH] = 0.08f;
 	p[PARAM_SHADOW_FALLOFF] = 1.25f;
-	p[PARAM_SHADOW_DEPTH] = 6;
+	p[PARAM_SHADOW_DEPTH] = 4;
 	p[PARAM_BUD_LIGHT_MIN] = 0.05f;
 	p[PARAM_BUD_IDLE_YEARS] = 3;
-	p[PARAM_SHED_RATIO] = 0.15f;
+	p[PARAM_SHED_RATIO] = 0.05f;
 	p[PARAM_DEAD_BRANCH_KEEP] = 0.15f;
 	p[PARAM_TIP_RADIUS] = 0.004f;
 	p[PARAM_PIPE_EXPONENT] = 2.1f;
@@ -106,7 +110,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_DIRECTION_NOISE] = 14;
 			p[PARAM_GRAVITROPISM] = 0.04f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.35f;
-			p[PARAM_SHED_RATIO] = 0.17f;
+			p[PARAM_SHED_RATIO] = 0.056f;
 			p[PARAM_ROOT_FLARE] = 0.7f;
 			p[PARAM_LEAF_SIZE] = 0.11f;
 			bark_color = Color(0.27f, 0.24f, 0.2f);
@@ -121,7 +125,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_DIVERGENCE] = 180; // Distichous.
 			p[PARAM_DIRECTION_NOISE] = 6;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
-			p[PARAM_SHED_RATIO] = 0.08f;
+			p[PARAM_SHED_RATIO] = 0.026f;
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.05f;
 			p[PARAM_LEAF_SIZE] = 0.08f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 36;
@@ -136,7 +140,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_DIRECTION_NOISE] = 6;
 			p[PARAM_GRAVITROPISM] = 0.12f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.75f;
-			p[PARAM_SHED_RATIO] = 0.18f;
+			p[PARAM_SHED_RATIO] = 0.059f;
 			p[PARAM_TWIG_DROOP] = 1.2f;
 			p[PARAM_LEAF_SIZE] = 0.05f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 40;
@@ -158,7 +162,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.9f;
 			p[PARAM_APICAL_CONTROL] = 0.7f;
 			p[PARAM_PHOTOTROPISM] = 0.08f;
-			p[PARAM_SHED_RATIO] = 0.3f;
+			p[PARAM_SHED_RATIO] = 0.099f;
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.1f;
 			p[PARAM_NEEDLES] = 1;
 			p[PARAM_LEAF_SIZE] = 0.065f;
@@ -180,7 +184,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_TRUNK_GRAVITROPISM] = 1.2f;
 			p[PARAM_APICAL_CONTROL] = 0.65f;
 			p[PARAM_PHOTOTROPISM] = 0.04f;
-			p[PARAM_SHED_RATIO] = 0.1f;
+			p[PARAM_SHED_RATIO] = 0.033f;
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.7f;
 			p[PARAM_TWIG_DROOP] = 0.8f;
 			p[PARAM_NEEDLES] = 1;
@@ -217,7 +221,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_BRANCH_ANGLE] = 55;
 			p[PARAM_DIRECTION_NOISE] = 18;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.3f;
-			p[PARAM_SHED_RATIO] = 0.1f;
+			p[PARAM_SHED_RATIO] = 0.033f;
 			p[PARAM_STEMS] = 2;
 			p[PARAM_STEM_SPREAD] = 15;
 			p[PARAM_LEAF_SIZE] = 0.045f;
@@ -232,7 +236,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_DIVERGENCE] = 180;
 			p[PARAM_BRANCH_ANGLE] = 45;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.6f;
-			p[PARAM_SHED_RATIO] = 0.08f;
+			p[PARAM_SHED_RATIO] = 0.026f;
 			p[PARAM_LEAF_SIZE] = 0.075f;
 			p[PARAM_LEAF_WIDTH] = 0.42f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 28;
@@ -246,7 +250,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
 			p[PARAM_BRANCH_ANGLE] = 45;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
-			p[PARAM_SHED_RATIO] = 0.12f;
+			p[PARAM_SHED_RATIO] = 0.04f;
 			p[PARAM_LEAF_SIZE] = 0.13f;
 			p[PARAM_LEAF_WIDTH] = 0.5f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 16;
@@ -261,7 +265,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_BRANCH_ANGLE] = 40;
 			p[PARAM_GRAVITROPISM] = 0.16f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.7f;
-			p[PARAM_SHED_RATIO] = 0.2f;
+			p[PARAM_SHED_RATIO] = 0.066f;
 			p[PARAM_LEAF_SIZE] = 0.07f; // Leaflets of the pinnate leaf.
 			p[PARAM_LEAF_WIDTH] = 0.3f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 30;
@@ -275,7 +279,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
 			p[PARAM_BRANCH_ANGLE] = 50;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
-			p[PARAM_SHED_RATIO] = 0.1f;
+			p[PARAM_SHED_RATIO] = 0.033f;
 			p[PARAM_TWIG_DROOP] = 0.4f;
 			p[PARAM_LEAF_SIZE] = 0.16f; // Leaflets of the palmate leaf.
 			p[PARAM_LEAF_WIDTH] = 0.36f;
@@ -290,7 +294,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_APICAL_CONTROL] = 0.85f;
 			p[PARAM_BRANCH_ANGLE] = 55;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.8f;
-			p[PARAM_SHED_RATIO] = 0.22f;
+			p[PARAM_SHED_RATIO] = 0.073f;
 			p[PARAM_LEAF_SIZE] = 0.07f;
 			p[PARAM_LEAF_WIDTH] = 0.5f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 26;
@@ -305,7 +309,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_GRAVITROPISM] = 0.14f;
 			p[PARAM_DIRECTION_NOISE] = 10;
 			p[PARAM_TWIG_DROOP] = 1.2f;
-			p[PARAM_SHED_RATIO] = 0.18f;
+			p[PARAM_SHED_RATIO] = 0.059f;
 			p[PARAM_LEAF_SIZE] = 0.09f;
 			p[PARAM_LEAF_WIDTH] = 0.13f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 36;
@@ -324,7 +328,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_TRUNK_GRAVITROPISM] = 1.0f;
 			p[PARAM_PHOTOTROPISM] = 0.06f;
 			p[PARAM_TWIG_DROOP] = 0.9f;
-			p[PARAM_SHED_RATIO] = 0.3f;
+			p[PARAM_SHED_RATIO] = 0.099f;
 			p[PARAM_NEEDLES] = 1;
 			p[PARAM_LEAF_SIZE] = 0.03f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 110;
@@ -344,7 +348,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_GRAVITROPISM] = 0.03f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 1.2f;
 			p[PARAM_PHOTOTROPISM] = 0.04f;
-			p[PARAM_SHED_RATIO] = 0.1f;
+			p[PARAM_SHED_RATIO] = 0.033f;
 			p[PARAM_DEAD_BRANCH_KEEP] = 0.5f;
 			p[PARAM_NEEDLES] = 1;
 			p[PARAM_LEAF_SIZE] = 0.028f;
@@ -361,7 +365,7 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_BRANCH_ANGLE] = 35;
 			p[PARAM_GRAVITROPISM] = 0.15f;
 			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
-			p[PARAM_SHED_RATIO] = 0.16f;
+			p[PARAM_SHED_RATIO] = 0.053f;
 			p[PARAM_LEAF_SIZE] = 0.05f; // Leaflets.
 			p[PARAM_LEAF_WIDTH] = 0.3f;
 			p[PARAM_LEAVES_PER_INTERNODE] = 30;
@@ -633,19 +637,18 @@ void TreeGenerator::_build_shadow_grid(int p_year) {
 			// Past half the spacing the neighbours' crowns fill the space at every height up to
 			// their tops (in Palubicki 2009 trees grown in one grid meet at a shared boundary, the
 			// crown shyness of real stands), so the crown keeps to its own cell; below the canopy
-			// band their crowns and stems close the side light even more.
+			// band the closed canopy overhead (theirs and this tree's own) leaves the whole
+			// understorey dim, near the stem as well, so lower branches die and the stem self-prunes.
 			const float below = CLAMP((0.7f * top - wy) / MAX(0.2f * top, cell), 0.0f, 1.0f);
-			const float sy = forest_shade * (1.5f + 0.5f * below);
+			const float sy = forest_shade * 1.5f;
+			const float under = forest_shade * 2.0f * below;
 			for (int z = 0; z < grid_size.z; z++) {
 				for (int x = 0; x < grid_size.x; x++) {
 					const float dx = grid_origin.x + (x + 0.5f) * cell - base.x;
 					const float dz = grid_origin.z + (z + 0.5f) * cell - base.z;
 					const float r = Math::sqrt(dx * dx + dz * dz);
-					if (r <= r0) {
-						continue;
-					}
 					const float t = CLAMP((r - r0) / (r1 - r0), 0.0f, 1.0f);
-					shadow[_cell_index(Vector3i(x, y, z))] += sy * t * t * (3.0f - 2.0f * t);
+					shadow[_cell_index(Vector3i(x, y, z))] += under + sy * t * t * (3.0f - 2.0f * t);
 				}
 			}
 		}
@@ -1182,7 +1185,7 @@ void TreeGenerator::_mark_spurs(int p_year) {
 		if (n.leafy || n.dead || n.removed || n.length <= 0.0f || n.order == 0 || n.born <= p_year - 30 || n.radius > 0.12f) {
 			continue;
 		}
-		spurs[i] = Math::exp(-_shadow_at(n.end())) > 0.05f ? 1 : 0;
+		spurs[i] = Math::exp(-_shadow_at(n.end())) > 0.02f ? 1 : 0;
 	}
 }
 
