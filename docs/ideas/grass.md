@@ -332,6 +332,76 @@ plant is placed, so it costs nothing per frame:
   (its dry share falls by up to 70%), a sunny slope adds a quarter.
 - only leaves and stems respond; petals, litter, twigs and dead (worn) tissue keep their colour.
 
+## GPU grass (research, stage 3)
+
+Paulo's pick, 11 Nov: denser grass for the same cost, as Ghost of Tsushima does it. Research
+before code.
+
+### What the published games do
+
+- **Ghost of Tsushima** (Wohllaib, GDC 2021). No blade is stored. Every frame a compute pass walks
+  the tiles near the camera, reads the painted grass type and density maps, makes each candidate
+  blade from a position hash, culls it against the frustum and by distance, and appends survivors
+  to an instance buffer drawn indirectly. There are two vertex counts, 15 near and 7 far, and
+  density falls off smoothly per blade, not per tile.
+- **Ghost of Yotei** (Sucker Punch tech deep dive, PlayStation Blog, 23 Oct 2025). The same GPU
+  compute renderer, now emitting twice as much grass and as many renderable items. Compute jobs
+  occlusion-cull, allocate memory and fill draw records. In a far mountain view, "over one million
+  trees, rocks, and bushes are culled down to about sixty thousand individual items". Weapon swings
+  write a cut buffer that the grass reads.
+- **Horizon Zero Dawn** (van Muijden, GDC 2017). Placement rules are evaluated on the GPU over
+  terrain maps in tiles around the camera, and the density maps are made from rules rather than
+  painted. This is the part we already do on the CPU with `PlantSpecies` and `TerrainDataMap3D`.
+- **Frostbite** (Wihlidal, GDC 2016) and **Assassin's Creed Unity** (Haar and Aaltonen,
+  SIGGRAPH 2015) laid out GPU-driven culling and compaction into indirect draws, which every later
+  grass system relies on.
+- **Unreal Engine 5.7** added Nanite Foliage (instanced assemblies, voxelised far foliage). It is
+  aimed at trees and shrubs. Grass in UE still comes from the Grass Type / PCG paths.
+
+### Where our grass spends its time today
+
+- **CPU build per tile.** At 60 blades/m2 an 8 m tile builds in about 0.25 ms. The loop is per
+  blade: rule checks, height lookup, light grid, packing. At three to five times the density that
+  becomes 0.75 to 1.25 ms per tile, and 12 tiles in a frame (`max_tiles_per_frame`) makes a 9 to
+  15 ms spike whenever the camera crosses a tile line. This is what caps density now.
+- **Raster draws whole tiles.** Godot culls each tile's MultiMesh by its AABB, so with 8 m tiles
+  per-blade frustum culling would save little; most of the drawn blades are in view.
+- **The path tracer's merged BLAS cap.** A tile of 3,840 blades at about 8 triangles is 31k
+  triangles, under `multimesh_merged_blas_max_triangles` (65,536). Three times the density is 92k:
+  the tile would fall to the expanded path, one TLAS record per blade. Denser grass needs smaller
+  tiles (4 m: 23k) or fewer triangles far out.
+
+### What fits this engine
+
+The path tracer settles the design. `multimesh_mark_buffer_rd_changed()`
+(gpu-multimesh-records.md) brings GPU-written records to the path tracer cheaply when they change
+as tiles stream in. Records culled and rewritten every frame, as in Ghost of Tsushima, would mean
+a merged BLAS rebuilt every frame for every near tile, and blades behind the camera would drop out
+of reflections and shadows. Path tracing must not remove detail. So:
+
+1. **Stage 3a: GPU tile fill (Horizon placement, Tsushima blades).** On the CPU, per tile, only a
+   small map is baked: suitability x shade rule, light and ground height, on 0.5 m texels (256
+   texels for an 8 m tile instead of 3,840 blades). It is built from the same `PlantSpecies` rules,
+   so placement does not change. A compute shader then writes the tile's records straight into its
+   MultiMesh (`multimesh_get_buffer_rd_rid`) from the same hashes, blue-noise rank, clumps, light
+   packing and custom data as the CPU loop today, and calls `multimesh_mark_buffer_rd_changed`.
+   Blades come out identical, so raster and path tracing stay matched, but the per-blade work moves
+   to the GPU, where 10k blades are a few microseconds. The current CPU path stays as the
+   reference and the fallback (`--test` compares both).
+2. **Density and tile size.** With the CPU cost gone, raise near density (for example 60 to
+   180/m2) and use 4 m tiles inside the path tracer's animated radius so every tile stays a merged
+   BLAS. Thinning by rank keeps working per blade. Check the refit budget (1.5M triangles) against
+   the new near count; past it, the far tiles hold their pose as now.
+3. **Stage 3b (later, raster only): per-frame visible compaction.** For raster without path
+   tracing, a compute pass can cull blades against the frustum and Hi-Z and apply smooth distance
+   thinning and a 7-vertex far blade into an indirect MultiMesh (`use_indirect`). With path tracing
+   on, the tile records stay the source. This is only worth doing if the PC timings show vertex cost
+   from blades out of view or occluded.
+
+Cloud checks: identical records CPU vs GPU (hash of the buffers), tile build time before/after,
+raster vs path traced crops of the denser field at 100%, with no SHADER ERROR. GPU frame timings
+need the PC.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.
@@ -342,3 +412,6 @@ plant is placed, so it costs nothing per frame:
 - Sousa, Vegetation Procedural Animation and Shading in Crysis, GPU Gems 3, ch. 16 (2007).
 - SimpleGrassTextured, https://github.com/IcterusGames/SimpleGrassTextured (MIT), code read.
 - GodotGrass, https://github.com/2Retr0/GodotGrass (MIT), code read.
+- Sucker Punch, Ghost of Yotei tech deep dive, PlayStation Blog, 23 Oct 2025.
+- Wihlidal, Optimizing the Graphics Pipeline with Compute, GDC 2016.
+- Haar, Aaltonen, GPU-Driven Rendering Pipelines, SIGGRAPH 2015 Advances course.
