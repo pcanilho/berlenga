@@ -71,6 +71,7 @@
 #include "water/physx_buoyancy_3d.h"
 #include "water/physx_river_3d.h"
 #include "water/physx_water_mist_3d.h"
+#include "water/physx_waterfalls_3d.h"
 #include "water/physx_water_spray_3d.h"
 #include "water/physx_water_surface_3d.h"
 #include "water/physx_water_wake_3d.h"
@@ -143,6 +144,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXWaterWake3D);
 		GDREGISTER_CLASS(PhysXWaterSpray3D);
 		GDREGISTER_CLASS(PhysXWaterMist3D);
+		GDREGISTER_CLASS(PhysXWaterfalls3D);
 		// Runtime-bridge MVP probe, not public API yet -- see vehicle/godot_physx_vehicle_probe.h.
 		GDREGISTER_CLASS(GodotPhysXVehicleProbe);
 		GDREGISTER_CLASS(PhysXVehicle3D);
