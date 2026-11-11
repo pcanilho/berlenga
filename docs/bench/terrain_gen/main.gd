@@ -66,6 +66,27 @@ func _ready() -> void:
 		print("%d checks, %d failed" % [checks, failures])
 		print("PASS" if failures == 0 else "FAIL")
 		get_tree().quit(1 if failures else 0)
+	elif args.has("sample-prof"):
+		gen.generate()
+		var r: Rect2 = gen.get_world_rect()
+		for k in ["all", "oct1", "oct2", "no_tile", "no_crest", "no_detail"]:
+			if k == "oct1":
+				gen.detail_octaves = 1
+			if k == "oct2":
+				gen.detail_octaves = 2
+			if k == "no_tile":
+				gen.tile_erosion_enabled = false
+			if k == "no_crest":
+				gen.detail_crest = 0.0
+			if k == "no_detail":
+				gen.detail_enabled = false
+			var t := Time.get_ticks_usec()
+			gen.sample_heights(r.position, 1.0, Vector2i(2048, 1024))
+			print("%s: %.0f ns/point" % [k, (Time.get_ticks_usec() - t) * 1000.0 / (2048 * 1024)])
+		get_tree().quit()
+	elif args.has("landscape-time"):
+		await _landscape_time()
+		get_tree().quit()
 	elif args.has("landscape-test"):
 		gen.generate()
 		_landscape_checks()
@@ -132,6 +153,10 @@ func _ready() -> void:
 			gen.tile_erosion_spacing = float(args["tiles"]) if args["tiles"] != "1" else 2.0
 		gen.bake()
 		_build_view()
+		if landscape:
+			# Exact for the capture: what the view needs read in full and its meshes built before the frames.
+			await get_tree().process_frame
+			landscape.update_lods_from_camera()
 		var raster := args.has("raster")
 		for i in (6 if raster else 12):
 			await RenderingServer.frame_post_draw
@@ -952,6 +977,7 @@ func _build_view() -> void:
 		var ls := Landscape3D.new()
 		ls.spacing = float(args["landscape"]) if args["landscape"] != "1" else 1.0
 		ls.lod_error = float(args.get("lod-error", "1.0"))
+		ls.stream_heights = not args.has("no-stream")
 		ls.material = mat
 		add_child(ls)
 		ls.source = ls.get_path_to(gen)
@@ -1100,6 +1126,39 @@ func _landscape_checks() -> void:
 	var grid := ls.get_chunk_grid()
 	var st: Dictionary = ls.get_stats()
 	print("     landscape %dx%d chunks, %d levels, %.1f ms" % [grid.x, grid.y, ls.get_lod_count(), st["build_msec"]])
+	# Streaming: the 4 m grid first; a view reads in full only what it shows finer, and never shows coarser than
+	# the same view over the ground read in full.
+	var unread0: int = st["unread_chunks"]
+	check(ls.is_streaming_heights() and unread0 > 0 and unread0 < grid.x * grid.y, "only the 4 m grid read at first (%d of %d chunks unread, detail estimate %.2f m)" % [unread0, grid.x * grid.y, st["detail_estimate"]])
+	var sproj := Projection.create_perspective(50.0, 16.0 / 9.0, 0.1, 20000.0)
+	var sprobe := Vector3(-300.0, 0.0, 100.0)
+	var seye := Transform3D(Basis(), sprobe + Vector3(0, gen.get_height(sprobe) + 30.0, 0)).looking_at(Vector3(1500, 0, 1500))
+	ls.update_lods(seye, sproj, 540.0)
+	var fullls := Landscape3D.new()
+	fullls.spacing = ls.spacing
+	fullls.chunk_quads = ls.chunk_quads
+	fullls.lod_levels = ls.lod_levels
+	fullls.lod_error = ls.lod_error
+	fullls.stream_heights = false
+	add_child(fullls)
+	fullls.source = fullls.get_path_to(gen)
+	fullls.rebuild()
+	fullls.update_lods(seye, sproj, 540.0)
+	var fine_ok := true
+	var not_coarser := true
+	var read := 0
+	for cz in grid.y:
+		for cx in grid.x:
+			var c := Vector2i(cx, cz)
+			read += 1 if ls.is_chunk_loaded(c) else 0
+			fine_ok = fine_ok and (ls.get_chunk_lod(c) >= 2 or ls.is_chunk_loaded(c))
+			not_coarser = not_coarser and ls.get_chunk_lod(c) <= fullls.get_chunk_lod(c)
+	check(fine_ok and read < grid.x * grid.y, "the view reads in full only chunks it shows finer than 4 m (%d of %d read)" % [read, grid.x * grid.y])
+	check(not_coarser, "no chunk is drawn coarser than over the ground read in full")
+	fullls.queue_free()
+	ls.load_all_heights()
+	st = ls.get_stats()
+	check(ls.is_fully_loaded() and int(st["unread_chunks"]) == 0, "load_all_heights reads the rest")
 	var mono := true
 	var coarse_err := 0.0
 	for cz in grid.y:
@@ -1319,6 +1378,20 @@ func _strata_checks() -> void:
 			in_band += 1
 	check(tall >= 3, "strata: rivers step down over waterfalls (%d of 8 m or more, %d of 15 m or more)" % [falls.size(), tall])
 	check(falls.size() > 0 and in_band == falls.size(), "strata: every waterfall cuts a hard band (%d of %d)" % [in_band, falls.size()])
+	# River sites for lakes and falls: every waterfall lip shows up with its discharge and a drop at least its height.
+	var sites := gen.get_river_sites(1.0e5, 0.0, 100.0)
+	var found := 0
+	for f in falls:
+		for s in sites:
+			if s["river"] == f["river"] and s["index"] == f["index"]:
+				if absf(float(s["discharge"]) - float(f["discharge"])) < 1e-4 and float(s["drop"]) >= float(f["height"]) - 1.0:
+					found += 1
+				break
+	var wet := gen.get_river_sites(1.0e5, 1.0, 100.0)
+	var dry_ok := true
+	for s in wet:
+		dry_ok = dry_ok and float(s["discharge"]) >= 1.0
+	check(falls.size() > 0 and found == falls.size() and wet.size() < sites.size() and dry_ok, "river sites list every fall lip with its discharge and drop, and filter by discharge (%d sites, %d over 1 m3/s)" % [sites.size(), wet.size()])
 	# No hard pinnacles: ground steeper than 60 degrees stays rare (the river faces), as without the bands.
 	var cs := 16.0
 	var steep := 0
@@ -1738,3 +1811,62 @@ func _runoff_report() -> void:
 			for k in 12:
 				snow.append("%.1f" % gen.get_snow_water_at(best, k))
 			out.store_line("snow,%.0f,%s" % [best.y, ",".join(snow)])
+
+
+# Loading cost of Landscape3D at 1 m with a camera in place: rebuild (what the first frame needs), then frames
+# with the per-frame streaming and off-thread mesh builds (main thread time per frame) until all is read, standing
+# still and then flying 600 m; then the same view over ground read in full, level for level.
+func _landscape_time() -> void:
+	gen.generate()
+	var at := Vector3(600, 0, -200)
+	var eye := Transform3D(Basis(), at + Vector3(0, gen.get_height(at) + float(args.get("eye-height", "40")), 0)).looking_at(Vector3(0, gen.get_height(Vector3.ZERO), 0))
+	get_viewport().size = Vector2i(1920, 1080)
+	var cam := Camera3D.new()
+	cam.fov = 50.0
+	add_child(cam)
+	cam.global_transform = eye
+	cam.make_current()
+	var ls := Landscape3D.new()
+	ls.spacing = float(args.get("spacing", "1"))
+	ls.stream_heights = not args.has("no-stream")
+	add_child(ls)
+	var t := Time.get_ticks_usec()
+	if args.has("baked"):
+		# Heights baked once to a file, as a shipped world would load them.
+		var path := "user://landscape_heights.exr"
+		if not FileAccess.file_exists(path):
+			var r: Rect2 = gen.get_world_rect()
+			gen.sample_heights(r.position, ls.spacing, Vector2i(int(r.size.x / ls.spacing) + 1, int(r.size.y / ls.spacing) + 1)).save_exr(path, true)
+		t = Time.get_ticks_usec()
+		ls.height_image = Image.load_from_file(path)
+		ls.origin = gen.get_world_rect().position
+		print("load baked heights %.0f ms" % ((Time.get_ticks_usec() - t) / 1000.0))
+	else:
+		ls.source = ls.get_path_to(gen)
+	ls.rebuild()
+	print("rebuild with the first view %.0f ms " % ((Time.get_ticks_usec() - t) / 1000.0), ls.get_stats())
+	var worst := 0.0
+	var total := 0.0
+	var frames := 0
+	var exact_at := -1
+	t = Time.get_ticks_usec()
+	while frames < 6000:
+		if frames >= 120 and frames < 420:
+			cam.global_transform = Transform3D(eye.basis, eye.origin + Vector3(-2.0 * (frames - 120), 0, 2.0 * (frames - 120)))
+		var f0 := Time.get_ticks_usec()
+		await get_tree().process_frame
+		var dt := (Time.get_ticks_usec() - f0) / 1000.0
+		worst = maxf(worst, dt)
+		total += dt
+		frames += 1
+		if frames == 120:
+			print("standing 120 frames: %.1f s, %d chunks still unread" % [(Time.get_ticks_usec() - t) / 1e6, ls.get_stats()["unread_chunks"]])
+		if frames >= 420 and ls.is_fully_loaded() and not ls.get_stats()["busy"]:
+			exact_at = frames
+			break
+	print("all read after %d frames (%.1f s): frame worst %.1f ms, mean %.2f ms " % [exact_at, (Time.get_ticks_usec() - t) / 1e6, worst, total / frames], ls.get_stats())
+	var probe_err := 0.0
+	for i in 200:
+		var p := Vector3(randf_range(-1900, 1900), 0, randf_range(-1900, 1900)).snapped(Vector3(ls.spacing, 1, ls.spacing))
+		probe_err = maxf(probe_err, absf(ls.get_height(p) - gen.get_height(p)))
+	print("heights against the generator at 200 grid points: worst %.4f m" % probe_err)
