@@ -6,6 +6,16 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-a86e608b (2026-11-11)
+
+### Changed
+- The sea, lake and river flow bakes solve their stream function with multigrid-preconditioned conjugate gradients instead of SOR: about 6x faster at 160 x 160 cells, 10x at 320 x 320, the same flow. `physics/physx_3d/water/multigrid_flow` (on) is the opt-out.
+- README: faster flow bakes line.
+- README: raster reflections cover rivers; river image and shore waves clip re-rendered.
+
+### Fixed
+- Raster rivers seen from above now reflect the sky and the sun's glitter by the exact Fresnel term, like the sea since `raster_reflections` on PhysXWaterSurface3D; PhysXRiver3D `raster_reflections` (on) is the opt-out. The sea and rivers share the code (water_raster_reflections.h).
+
 ## build-163faf95 (2026-11-11)
 
 ### Fixed
