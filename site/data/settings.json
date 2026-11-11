@@ -976,7 +976,7 @@
     "lod_strand_ratio"
    ],
    "note": "",
-   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand.",
+   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand. Straight hair is drawn through fewer points with the same look (`simplify_tolerance`).",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"
