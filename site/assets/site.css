@@ -159,3 +159,23 @@ dialog::backdrop{background:rgba(5,9,14,.72);backdrop-filter:blur(4px)}
 #pagefind mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 2px}
 #pagefind .pagefind-ui__result-link{color:var(--text)}
 #pagefind .pagefind-ui__search-clear{background:none;color:var(--muted)}
+/* Before/after pairs */
+.pair{position:relative;margin:20px 0 8px}
+.pair > img{margin:0}
+.pair[data-mode="slider"] > img{display:none}
+.pair[data-mode="side"] .compare{display:none}
+.compare{--pos:50%;position:relative;width:100%;max-height:78vh;margin:0 auto;border-radius:10px;overflow:hidden;box-shadow:var(--shadow);border:1px solid var(--line);cursor:ew-resize;touch-action:pan-y;user-select:none;background:var(--bg2)}
+.compare-layer{position:absolute;inset:0;background-repeat:no-repeat}
+.compare-layer.before{clip-path:inset(0 calc(100% - var(--pos)) 0 0)}
+.compare-handle{position:absolute;top:0;bottom:0;left:var(--pos);width:2px;margin-left:-1px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.25);pointer-events:none}
+.compare-handle span{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:#fff;color:#0a0f15;font:700 15px/1 Inter,sans-serif;letter-spacing:-1px;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+.compare-range{position:absolute;inset:0;width:100%;height:100%;opacity:0;margin:0;cursor:ew-resize;pointer-events:none}
+.compare-range:focus-visible + *,.compare:has(.compare-range:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.pair-bar{display:flex;gap:4px;justify-content:flex-end;margin-top:8px}
+.pair-bar button{font:inherit;font-size:12.5px;font-weight:600;padding:4px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer}
+.pair-bar button:hover{color:var(--text);border-color:var(--accent)}
+.pair-bar button[aria-pressed="true"]{color:var(--accent);background:var(--accent-soft);border-color:transparent}
+.compare-label{position:absolute;background-repeat:no-repeat;pointer-events:none;border-radius:3px}
+.compare-label.left{left:0.6%}
+.compare-label.right{right:0.6%}
+.compare-label.right.low{top:auto!important;bottom:1.5%}
