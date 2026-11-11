@@ -901,6 +901,67 @@ solve for the glacial part of each cycle, then fluvial steps on the ice-free gro
 a few hundred ice steps per cycle, about a second; coarse levels first as for the rivers. Checks: a cirque basin
 holds a lake by itself (no marker), a tributary hangs above the trunk, U cross-sections (width over depth).
 
+### Glacial erosion: what was built (11 Nov, Paulo picked the stage at 14:55 and the high bowl at 15:59)
+
+- `TerrainGlacial` (terrain_glacial.h): shallow ice on a 64 m grid, flux q = -Gamma H^5 |grad s|^2 grad s with the
+  thickness upwinded on each face; steady state by pseudo-time Jacobi with a local step min(0.03 dx^2/D, 20 yr)
+  (6000 iterations on the first solve, 200 warm after). Mass balance from `glacial_ela` and a gradient of 0.006 per
+  year, capped at 2 m a year.
+- Sliding speed from the flux (|q| / max(H, 10 m), blurred over 3 ice cells); the H^4 S^3 deformation speed with
+  the valley walls' slopes ran away. Erosion K_g u^l with K_g 2.7e-7 and l 2.02 (Herman et al. 2015), none on
+  adverse slopes steeper than 1.5 times the ice surface (Alley et al. 2003), in sub-steps of at most 25 m.
+- Interleaved: every 8 river steps the ice wears 8 dt `glacial_share` years, then a last glaciation of
+  `glacial_final` years. A rockfall clamp after it keeps slopes under `strata_cliff_angle` (75 degrees) by raising
+  the cell below, one sweep from the top down (Schmidt and Montgomery 1995 threshold hillslopes).
+- Hollows the ice dug stay unfilled after routing and become lakes (depth at least 1 m, area at least
+  `lake_min_area`); other hollows still fill.
+- Sill markers with a level are a hard band (rock at most 1 m over the level does not wear). A range path with
+  `basin` metadata lowers uplift under it (raised cosine), so a bowl can sit behind a bar.
+- Result on the valley layout (bowl at (350, -1850), bar at 450 m, ELA 450 m): a lake at 450 m, 43 m deep, 1.9 ha;
+  the main river (3.6 m3/s) leaves it over the bar and falls 333 m, free of the face. Ice costs about 1.3 s.
+- Not yet: the lake is small (the bowl is narrow), the bar runs straight, and lake banks are bare rock.
+
+### Ledges on cliff faces (11 Nov)
+
+A heightfield cliff is a smooth curtain. Bedded rock breaks into steps: the hard bed stands as a riser, the soft
+bed under it weathers back into a ledge (the terrace filters Gaea and World Machine use do the same). `cliff_ledge_spacing` (default 0, off) and `cliff_ledge_strength` terrace slopes between 40 and 55
+degrees into beds of that spacing, the bed line wobbling with value noise, 60 percent of each bed a near-flat
+ledge and the rest a riser. Alluvium no longer fades detail on slopes steeper than repose.
+
+### Fall data for the water (contract agreed with the water thread, 11 Nov)
+
+Each entry of `get_waterfalls()` now also has: `id` (river and distance down it, stable for a seed), `direction`,
+`lip_points` (8 across the brink) and `lip_share` (Manning: unit discharge as depth^(5/3) under the critical-depth
+surface), `lip_width`, `overhang` (0: a heightfield cannot undercut), `caprock` (hard bed thickness),
+`face_profiles` (3 lines of 16 samples), `tiers` and `ledges`, `type` (plunge, tiered, horsetail, cascade, after the
+World Waterfall Database), `power` (rho g Q H), `breakup_length` (Horeni 1956: 6 q^0.32), `impact_speed` (drag
+limited: past break-up the drops close on about 9 m/s terminal speed over v_t^2/g, Gunn and Kinzer 1949),
+`impact_speed_free` and `discharge_months`.
+
+## Plunge pools (research, 11 Nov; ordered by the water contract)
+
+Why: a fall lands in a pool, and the water code needs one to put its foam, mist and churn in. Today the foot is the
+ground the river left, flat or sloping.
+
+Established techniques:
+
+- Mason and Arumugam 1985 (free jet scour below dams, J. Hydraulic Engineering 111(2)): from 47 model and prototype
+  data sets, scour plus tailwater depth D + Y = 3.27 q^0.60 H^0.05 h^0.15 / (g^0.30 d^0.10), q the unit discharge,
+  H the drop, h the tailwater depth, d the bed grain size. The usual engineering estimate of ultimate scour.
+- Pagliara, Hager and Minor 2006 (plane plunge pool scour, J. Hydraulic Engineering 132): the pool's length is
+  several times its depth and its shape similar across flows, upstream wall steep, downstream ridge gentle.
+- Bollaert and Schleiss 2003 (comprehensive scour method): rock breaks by jet pressure fluctuations in joints;
+  scour stops once the jet has diffused through the pool depth (core gone after 4 to 6 jet widths).
+- Scheingross and Lamb 2016, 2017 (JGR Earth Surface): bedrock pools deepen by sediment the jet swirls against the
+  floor, and widen as the fall retreats; pool depth grows with discharge and drop, and stops where the jet can no
+  longer move the bed grains out.
+
+Plan: for every fall the rivers make (drop at least 4 m), bake a pool at the jet's impact point (the brink plus
+the jet throw, at least past the face), depth from Mason and Arumugam with d = 0.3 m cobbles and the tailwater the
+river's normal depth, clamped to 1 to 15 m, radius max(lip width / 2 + 2 D, 3 D) after Pagliara's shape. The 1 m
+ground takes min(ground, foot - D (1 - (r/R)^2)), so the pool holds water to its lowest rim. New keys:
+`pool_center`, `pool_radius`, `pool_depth`, `pool_level` (the lowest rim). Off with `plunge_pools = false`.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
@@ -921,6 +982,17 @@ holds a lake by itself (no marker), a tributary hangs above the trunk, U cross-s
   numerical modeling, JGR 115, F03028, 2010.
 - Forte, Yanites, Whipple, Complexities of landscape evolution during incision through layered stratigraphy with
   contrasts in rock strength, ESPL 41, 2016.
+- Mason, Arumugam, Free jet scour below dams and flip buckets, J. Hydraulic Engineering 111(2), 1985.
+- Pagliara, Hager, Minor, Hydraulics of plane plunge pool scour, J. Hydraulic Engineering 132, 2006.
+- Bollaert, Schleiss, Scour of rock due to the impact of plunging high velocity jets, J. Hydraulic Research 41, 2003.
+- Scheingross, Lamb, Sediment transport through self-adjusting, bedrock-walled waterfall plunge pools, JGR Earth
+  Surface 121, 2016.
+- Horeni, Disintegration of a free jet of water in air, Sesit 93, Prague, 1956.
+- Gunn, Kinzer, The terminal velocity of fall for water droplets in stagnant air, J. Meteorology 6, 1949.
+- Herman, Beyssac, Brughelli et al., Erosion by an Alpine glacier, Science 350, 2015.
+- Alley, Lawson, Larson, Evenson, Baker, Stabilizing feedbacks in glacier-bed erosion, Nature 424, 2003.
+- Schmidt, Montgomery, Limits to relief, Science 270, 1995.
+- Cordonnier et al., Forming terrains by glacial erosion, ACM TOG 42(4), 2023.
 - Lamb, Dietrich, The persistence of waterfalls in fractured rock, GSA Bulletin 121, 2009.
 - Scheingross, Lamb, A mechanistic model of waterfall plunge pool erosion into bedrock, JGR Earth Surface 122, 2017.
 - Perne, Covington, Thaler, Myre, Steady state, erosional continuity, and the topography of landscapes developed in

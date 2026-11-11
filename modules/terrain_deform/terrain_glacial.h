@@ -69,7 +69,7 @@ public:
 		int first_iterations = 6000;
 		int iterations = 200; // warm-started solves
 		int max_sub_steps = 24; // per call; the rest of the time is dropped (the ice has worn what it can)
-		double smoothing = 1.5; // ice cells: Gaussian sigma for the sliding speed
+		double smoothing = 3.0; // ice cells: Gaussian sigma for the sliding speed (about 200 m, two to three ice thicknesses)
 	};
 	Params p;
 

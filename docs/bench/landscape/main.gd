@@ -256,6 +256,8 @@ func _generate() -> void:
 	gen.detail_octaves = int(args.get("gdetail", "6" if args.get("mesh", "landscape") == "landscape" else "4"))
 	gen.tile_erosion_enabled = args.has("tiles")
 	gen.deposition = float(args.get("deposition", "0"))
+	# Rock beds stepped into cliff faces (ledges), --ledges=0 for smooth faces.
+	gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
 	if args.has("glacial"):
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
 		gen.glacial_enabled = true
@@ -373,6 +375,14 @@ func _generate() -> void:
 		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded()])
 		for l in gen.get_lake_results():
 			_log("  lake level %.0f m, depth %.0f m, %.1f ha, catchment %.2f km2 at %s, outlet %s" % [l["level"], l["depth"], l["area"] / 1e4, l["catchment"] / 1e6, l["center"], l.get("outlet")])
+	if args.has("face-probe"):
+		var fp: PackedStringArray = args["face-probe"].split(",")
+		var o := Vector3(float(fp[0]), 0, float(fp[1]))
+		var dv := Vector3(float(fp[2]), 0, float(fp[3])).normalized()
+		var row := PackedStringArray()
+		for i in 80:
+			row.append("%.1f/%.1f" % [gen.get_height(o + dv * i * 2.0), gen.get_sediment_depth(o + dv * i * 2.0)])
+		print("FACE ", " ".join(row))
 	if args.has("dump-heights"):
 		var hb := PackedFloat32Array()
 		for zi in 257:
@@ -590,6 +600,14 @@ func _lake_and_fall() -> void:
 			for f in gen_falls:
 				var run: float = Vector2(f["top"].x - f["bottom"].x, f["top"].z - f["bottom"].z).length()
 				_log("  fall %.0f m over %.0f m, Q %.2f, hardness %.2f, face %.1f m, jet %.1f m, free %s, top %s" % [f["height"], run, f["discharge"], f["hardness"], f["face_run"], f["jet_throw"], str(f["free_fall"]), f["top"]])
+				if args.has("pool-probe") and f.has("pool_center"):
+					var pc: Vector3 = f["pool_center"]
+					var dr: Vector3 = f["direction"]
+					var row := PackedStringArray()
+					for i in range(-12, 25):
+						row.append("%.1f" % gen.get_height(pc + dr * i * 1.0))
+					print("POOL ", f.get("id"), " along ", " ".join(row))
+				_log("    %s %s, impact %.1f m/s (free %.1f), tiers %d, lands in %s, pool %s" % [f.get("id", "?"), f.get("type", "?"), f.get("impact_speed", 0.0), f.get("impact_speed_free", 0.0), f.get("tiers", []).size(), f.get("lands_in", "?"), ("r %.1f m, depth %.1f m, level %.1f" % [f["pool_radius"], f["pool_depth"], f["pool_level"]]) if f.has("pool_radius") else "none"])
 		_log("waterfalls from the generator: %d, tallest %.0f m high, %.0f m wide, %.1f m3/s at %s" % [gen_falls.size(), tall["height"], tall["width"], tall["discharge"], top])
 	_log("lake at %s level %.1f m" % [lake_center, lake_level])
 

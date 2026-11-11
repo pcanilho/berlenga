@@ -95,6 +95,8 @@ private:
 	real_t detail_gully_weight = 0.5;
 	real_t detail_assumed_slope = 0.6;
 	real_t detail_crest = 1.0; // ridged noise on crests, times the gully amplitude
+	real_t cliff_ledge_spacing = 0.0; // m between rock beds stepped into faces steeper than 40 degrees; 0 = off
+	real_t cliff_ledge_strength = 1.0;
 
 	// Tile erosion (stage 4): droplet hydraulic plus thermal erosion on a fine grid, in overlapping tiles.
 	bool tile_erosion_enabled = false;
@@ -203,8 +205,17 @@ private:
 		real_t h_top = 0.0, h_bottom = 0.0;
 		real_t half_width = 0.0; // m held vertical either side of the river's line
 	};
+	// Plunge pools at the foot of falls (Mason and Arumugam 1985 depth, Pagliara et al. 2006 shape).
+	struct PlungePool {
+		Vector2 top; // the fall's lip cell, to match it in get_waterfalls
+		Vector2 center;
+		Vector2 dir; // downstream, unit
+		real_t radius = 0.0, depth = 0.0, foot = 0.0; // the floor is foot - depth at the centre
+	};
 	bool fall_lips = true;
+	bool plunge_pools = true;
 	LocalVector<FallLip> lips;
+	LocalVector<PlungePool> pools;
 	LocalVector<LocalVector<int>> lip_buckets; // per LIP_BUCKET-metre square of the result
 	int lip_bx = 0, lip_bz = 0;
 	void _bake_lips();
@@ -312,6 +323,7 @@ private:
 	void _bake_runoff(const LocalVector<uint8_t> &p_sea);
 	float _runoff_sample(int p_field, real_t p_x, real_t p_z) const;
 	float _flow(int p_cell, int p_month) const;
+	void _fall_contract(Dictionary &r_fall, const PackedVector3Array &p_pts, int p_k, int p_e, const PackedInt32Array &p_cells, real_t p_width, real_t p_v0) const;
 	void _route_runoff(const LocalVector<int32_t> &p_receivers, const LocalVector<int32_t> &p_order);
 	void _alluvium_reach();
 	void _bake_detail_keep();
@@ -387,6 +399,10 @@ public:
 	real_t get_detail_reach() const { return detail_reach; }
 	void set_detail_gully_weight(real_t p_value) { detail_gully_weight = CLAMP(p_value, real_t(0.05), real_t(1.0)); }
 	real_t get_detail_gully_weight() const { return detail_gully_weight; }
+	void set_cliff_ledge_spacing(real_t p_value) { cliff_ledge_spacing = MAX(p_value, real_t(0.0)); }
+	real_t get_cliff_ledge_spacing() const { return cliff_ledge_spacing; }
+	void set_cliff_ledge_strength(real_t p_value) { cliff_ledge_strength = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
+	real_t get_cliff_ledge_strength() const { return cliff_ledge_strength; }
 	void set_detail_crest(real_t p_value) { detail_crest = MAX(p_value, real_t(0.0)); }
 	real_t get_detail_crest() const { return detail_crest; }
 	void set_detail_assumed_slope(real_t p_value) { detail_assumed_slope = MAX(p_value, real_t(0.01)); }
@@ -493,6 +509,8 @@ public:
 	real_t get_beach_slope() const { return beach_slope; }
 	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
 	int get_lake_count() const { return lake_count; }
+	void set_plunge_pools(bool p_enable) { plunge_pools = p_enable; }
+	bool get_plunge_pools() const { return plunge_pools; }
 	void set_fall_lips(bool p_enable) { fall_lips = p_enable; }
 	bool get_fall_lips() const { return fall_lips; }
 	void set_inflows(const TypedArray<NodePath> &p_inflows) { inflows = p_inflows; }
