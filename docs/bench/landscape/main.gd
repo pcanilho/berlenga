@@ -14,6 +14,7 @@ extends Node3D
 #   --view=wide|lake|fall|beach|peak   camera (default wide)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
+#   --falls           print every waterfall the rivers found (lip, landing, height)
 #   --probe           print coast profiles, lakes and rivers from the generator
 #   --weather=storm|clear         weather state (default storm)
 
@@ -760,6 +761,9 @@ func _checks() -> void:
 	var lip := 0
 	for r in rivers:
 		lip += r.get_waterfalls().size()
+		if args.has("falls"):
+			for f in r.get_waterfalls():
+				print("fall on %s: lip %s impact %s height %.1f m q %.2f lip_speed %.2f breakup %.1f" % [r.name, f.lip, f.impact, f.height, f.discharge, f.lip_speed, f.breakup_length])
 	check(gen_falls.size() > 0 and lip > 0, "the generator's rock bands make waterfalls and the rivers fall there (%d from the generator, %d lips on the rivers)" % [gen_falls.size(), lip])
 	if args.has("probe"):
 		for z in range(1000, 2049, 40):
