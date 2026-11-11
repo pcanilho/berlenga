@@ -78,6 +78,8 @@ class GrassField3D : public Node3D {
 	// Ground under the grass takes its colour (alpha: strength), through the grass_ground_* globals.
 	Color ground_tint = Color(0.05f, 0.09f, 0.025f, 0.85f);
 	bool ground_tint_enabled = true;
+	Vector4 fade_band; // Last centre and band sent to the shaders.
+	static GrassField3D *fade_owner; // The field whose band the ground shader reads.
 	bool ground_baked = false;
 	class VegetationField3D *_get_canopy(const PlantSpecies *p_rules) const;
 	Ref<ImageTexture> ground_texture;
@@ -108,6 +110,7 @@ class GrassField3D : public Node3D {
 	int _lod_for(float p_distance) const;
 	void _build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map);
 	void _free_tile(Tile &p_tile);
+	void _update_fade(const Vector2 &p_center);
 	void _update_tiles(const Vector3 &p_center);
 	void _bake_ground(TerrainDataMap3D *p_map);
 	void _trample_recenter(const Vector3 &p_center);

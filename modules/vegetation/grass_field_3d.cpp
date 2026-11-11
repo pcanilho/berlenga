@@ -143,7 +143,7 @@ void GrassField3D::_build_material() {
 	String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
 	code += "// GrassField3D blades (docs/ideas/grass.md): quadratic Bezier bent by the wind, after Ghost of Tsushima.\n";
 	code += "uniform vec3 base_color : source_color;\nuniform vec3 tip_color : source_color;\nuniform vec3 dry_color : source_color;\n";
-	code += "uniform vec2 fallback_wind;\nuniform float wind_response;\nuniform float view_facing;\n";
+	code += "uniform vec2 fallback_wind;\nuniform float wind_response;\nuniform float view_facing;\nuniform vec4 fade_band;\n";
 	code += "uniform sampler2D trample_map : filter_linear, repeat_disable;\nuniform vec4 trample_rect;\n";
 	code += "global uniform sampler2D weather_state_map;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
@@ -227,6 +227,15 @@ void vertex() {
 	}
 	// Rounded across its width, as a real blade.
 	vec3 n = normalize(cross(across, tangent));
+	// Outer band (Ghost of Tsushima, Horizon Zero Dawn): blades drop out one at a time in a random
+	// order and shrink to nothing before the radius, so the field has no edge; the ground under
+	// them takes the blades' colour (get_ground_shader_code()). fade_band: centre xz, the distance
+	// where the last blade is gone, the width of the band.
+	if (fade_band.w > 0.0) {
+		float keep_b = clamp((fade_band.z - length(base_w.xz - fade_band.xy)) / fade_band.w, 0.0, 1.0);
+		float order = fract(rnd * 91.7 + 0.29);
+		p *= smoothstep(order, order + 0.15, keep_b * 1.15);
+	}
 	VERTEX = p;
 	NORMAL = normalize(n + across * side * 0.9);
 
@@ -281,6 +290,7 @@ void fragment() {
 	material->set_shader_parameter("wind_response", wind_response);
 	material->set_shader_parameter("trample_rect", Vector4());
 	material->set_shader_parameter("view_facing", view_facing);
+	material->set_shader_parameter("fade_band", fade_band);
 	if (blade_mesh.is_valid()) {
 		blade_mesh->surface_set_material(0, material);
 	}
@@ -382,6 +392,40 @@ void GrassField3D::_free_tile(Tile &p_tile) {
 	}
 }
 
+// The outer band: blades thin out from 60% of the radius and are all gone just inside it (the
+// blade shader's fade_band), and the ground under the grass turns to the blades' colour over the
+// same band (grass_ground_fade, grass_ground_far), so the field ends without an edge.
+GrassField3D *GrassField3D::fade_owner = nullptr;
+
+void GrassField3D::_update_fade(const Vector2 &p_center) {
+	const Vector4 band(p_center.x, p_center.y, radius * 0.97f, radius * 0.37f);
+	if (band.is_equal_approx(fade_band)) {
+		return;
+	}
+	fade_band = band;
+	if (material.is_valid()) {
+		material->set_shader_parameter("fade_band", band);
+	}
+	// The ground's band is global: the widest field publishes it, so a near undercoat field does
+	// not pull the ground's blade colour in to its own short radius.
+	if (fade_owner && fade_owner != this && fade_owner->radius > radius) {
+		return;
+	}
+	// The widest field even without a ground tint of its own: its blades are the ones seen last.
+	if (is_inside_tree()) {
+		fade_owner = this;
+		RenderingServer *rs = RenderingServer::get_singleton();
+		rs->global_shader_parameter_set("grass_ground_fade", band);
+		// The blades seen from a distance: mostly the upper blade, some dry, darkened by the shade the
+		// sward casts on itself (matched to the field's mean colour in the grass bench).
+		const Color b = base_color.srgb_to_linear();
+		const Color t = tip_color.srgb_to_linear();
+		const Color d = dry_color.srgb_to_linear();
+		const Color far = b.lerp(t, 0.6f).lerp(d, dryness * 0.35f) * 0.32f;
+		rs->global_shader_parameter_set("grass_ground_far", Vector4(far.r, far.g, far.b, 1.0f));
+	}
+}
+
 void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	_ensure_resources();
 	TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
@@ -394,6 +438,7 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const Vector2 c(p_center.x, p_center.z);
 	const float reach = radius + tile_size * 0.75f;
+	_update_fade(c);
 	// Drop tiles out of range or at the wrong level.
 	LocalVector<Vector2i> drop;
 	for (KeyValue<Vector2i, Tile> &kv : tiles) {
@@ -463,6 +508,7 @@ void GrassField3D::_update_tiles(const Vector3 &p_center) {
 // terrain's shader (get_ground_shader_code()).
 void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	ground_baked = true;
+	fade_band = Vector4(); // Send the band and the far colour again.
 	if (is_inside_tree()) {
 		// The fallback wind for the other plants (PlantGenerator's shader), so they sway with the grass.
 		RenderingServer::get_singleton()->global_shader_parameter_set("grass_wind", Vector4(fallback_wind.x, fallback_wind.y, wind_response, 0.0f));
@@ -525,6 +571,8 @@ global uniform vec4 grass_ground_rect;
 global uniform vec4 grass_ground_color; // rgb: the sward's root colour; a: how much it covers the soil.
 global uniform vec4 grass_ground_dry; // rgb: thatch colour; a: the grass's dryness.
 global uniform vec4 grass_ground_params; // x: colour variation.
+global uniform vec4 grass_ground_fade; // xy: centre of the blades, z: where the last is gone, w: the band they thin over.
+global uniform vec4 grass_ground_far; // rgb: the blades' colour seen from a distance.
 )";
 	code += GRASS_COLOR_CODE;
 	code += VegetationField3D::get_floor_shader_code();
@@ -566,7 +614,21 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 	if (cover <= 0.0) {
 		return albedo;
 	}
-	return mix(albedo, grass_turf(world_pos), cover * grass_ground_color.a);
+	// Where the blades have thinned away (the blade shader's outer band) the turf becomes the
+	// blades' own colour with their patch tint, fully covering, so the field reads to the horizon.
+	float gone = 0.0;
+	if (grass_ground_fade.w > 0.0) {
+		gone = 1.0 - clamp((grass_ground_fade.z - length(world_pos.xz - grass_ground_fade.xy)) / grass_ground_fade.w, 0.0, 1.0);
+	}
+	vec3 turf = grass_turf(world_pos);
+	if (gone > 0.0) {
+		vec2 xz = world_pos.xz;
+		vec3 far = grass_ground_far.rgb * grass_patch_tint(xz, grass_noise(xz * 3.0), 0.5, grass_ground_params.x);
+		// Keep the turf's streaks and thatch as brightness, so the far sward is not flat.
+		float lum = dot(turf, vec3(0.3, 0.59, 0.11)) / max(dot(grass_ground_color.rgb, vec3(0.3, 0.59, 0.11)), 1e-3);
+		turf = mix(turf, far * clamp(lum, 0.5, 1.5), gone);
+	}
+	return mix(albedo, turf, cover * mix(grass_ground_color.a, 1.0, gone));
 }
 )";
 	return code;
@@ -880,6 +942,12 @@ void GrassField3D::_notification(int p_what) {
 }
 
 GrassField3D::~GrassField3D() {
+	if (fade_owner == this) {
+		fade_owner = nullptr;
+		if (RenderingServer::get_singleton()) {
+			RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_fade", Vector4());
+		}
+	}
 	// Tile instances are internal children: Node frees them before this runs.
 }
 

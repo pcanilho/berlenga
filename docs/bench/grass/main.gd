@@ -29,6 +29,8 @@ extends Node3D
 #   --far            a high view over the land, to see plants thin out and the ground take over
 #   --dolly          from that corner, walk in 0.3 m a frame (with --clip and --frames)
 #   --terrain-material  the ground drawn with TerrainMaterial3D (its grass tint calls grass_ground())
+#   --clearing       a closed wood with a clearing opened by VegetationField3D.density_mask, seen
+#                    from 28 m up across its edge; --clearing=0 the same wood and camera, no mask
 #   --trample        a ball rolls and a walker strides through the grass, leaving trails
 
 const SIZE := 96.0
@@ -55,6 +57,8 @@ var stand_set := false
 var no_floor := false
 var no_far := false
 var far_view := false
+var clearing := -1 # -1 off, 0 the wood without its mask, 1 with it.
+const CLEARING_C := Vector2(-18.0, 20.0)
 var dolly := false
 var swamp := false
 var swamp_close := false
@@ -102,6 +106,9 @@ func _ready() -> void:
 		elif a == "--floor=0": no_floor = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
+		elif a == "--clearing" or a == "--clearing=0":
+			forest = true
+			clearing = 0 if a.ends_with("=0") else 1
 		elif a == "--dolly":
 			far_view = true
 			dolly = true
@@ -203,6 +210,8 @@ func _ready() -> void:
 		cover.tile_size = 4.0
 		cover.biome = _cover_biome()
 		cover.forest_floor_enabled = not no_floor
+		if clearing >= 0:
+			_set_clearing()
 		add_child(cover)
 		cover.data_map = cover.get_path_to(dm)
 		if forest:
@@ -337,6 +346,37 @@ void fragment() {
 		var eye := shore - dir * 9.0 + Vector2(dir.y, -dir.x) * 1.5
 		cam.position = Vector3(eye.x, height(eye.x, eye.y) + 2.6, eye.y)
 		cam.look_at(Vector3(shore.x + dir.x * 6.0, -0.6, shore.y + dir.y * 6.0))
+
+# A closed wood (no tree patches) and, with the mask, an irregular clearing about 30 m across:
+# the trees read the mask's red channel, so they stay out where it is 0, and the meadow, the
+# sward and the edge plants fill the light (their shade rules) without a mask of their own.
+func _set_clearing() -> void:
+	for sp in cover.biome.species:
+		var ps := sp as PlantSpecies
+		if ps.canopy_radius > 0.0:
+			ps.patch_scale = 0.0
+			ps.mask_channel = 0 if clearing == 1 else -1
+	if clearing == 0:
+		return
+	var res := 192
+	var img := Image.create_empty(res, res, false, Image.FORMAT_RGBA8)
+	for y in res:
+		for x in res:
+			var w := Vector2((x + 0.5) / res * SIZE - SIZE * 0.5, (y + 0.5) / res * SIZE - SIZE * 0.5) - CLEARING_C
+			var a := atan2(w.y, w.x)
+			var r := 14.0 + 3.0 * sin(3.0 * a) + 2.0 * sin(5.0 * a + 1.0)
+			var v := smoothstep(r - 1.5, r + 1.5, w.length())
+			img.set_pixel(x, y, Color(v, v, v, 1.0))
+	cover.density_mask = ImageTexture.create_from_image(img)
+	cover.density_mask_rect = Rect2(-SIZE * 0.5, -SIZE * 0.5, SIZE, SIZE)
+
+# 28 m up over the clearing, looking across its edge into the wood.
+func _frame_clearing() -> void:
+	var d := Vector2(-1.0, 1.0).normalized()
+	var eye := CLEARING_C - d * 10.0
+	var at := CLEARING_C + d * 16.0
+	cam.position = Vector3(eye.x, height(eye.x, eye.y) + 28.0, eye.y)
+	cam.look_at(Vector3(at.x, height(at.x, at.y), at.y))
 
 # Stand at a wood's edge: the tree nearest the usual view, seen from the open side.
 func _frame_forest() -> void:
@@ -1014,7 +1054,10 @@ func _process(dt: float) -> void:
 				grass.rebuild()
 				under.rebuild()
 				turf.rebuild()
-				_frame_forest()
+				if clearing >= 0:
+					_frame_clearing()
+				else:
+					_frame_forest()
 			if swamp:
 				var lilies := cover.get_placements(0)
 				var floating := 0
