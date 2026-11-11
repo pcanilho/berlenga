@@ -6,6 +6,15 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-163faf95 (2026-11-11)
+
+### Fixed
+- Raster water seen from above now reflects the sky and the sun's glitter by the exact Fresnel term, as the path tracer does; before, it was an unlit tint with no reflection at all (no glitter path, no sky at grazing angles). PhysXWaterSurface3D `raster_reflections` (on) is the opt-out.
+
+### Changed
+- README: boat wakes line and image; wide ground shot with the cloud layer.
+- README: raster water reflections line and image.
+
 ## build-0fe6589a (2026-11-11)
 
 ### Added
