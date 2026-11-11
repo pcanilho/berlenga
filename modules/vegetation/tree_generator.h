@@ -322,6 +322,16 @@ private:
 
 	// Generated meshes per preset and form, reused by make_species() and make_stand().
 	HashMap<int, TypedArray<Mesh>> mesh_cache;
+	Dictionary season; // Empty: midsummer, full green leaves.
+	struct LeafSeason {
+		float out = 1.0f; // This year's leaves grown (0 none, 1 full size).
+		float autumn = 0.0f; // Share of leaves turned.
+		float fallen = 0.0f; // Share of the latest leaf crop on the ground.
+		Color color; // Turned leaf colour.
+		// The turned share of the leaves still on the tree.
+		float season_blend() const { return fallen >= 1.0f ? 0.0f : CLAMP((autumn - fallen) / (1.0f - fallen), 0.0f, 1.0f); }
+	};
+	static LeafSeason _leaf_season(Preset p_preset, const Dictionary &p_season);
 	HashMap<int, float> crown_cache;
 	HashMap<int, TypedArray<Mesh>> near_cache;
 
@@ -521,6 +531,14 @@ public:
 	void set_leaf_color(const Color &p_color) { leaf_color = p_color; }
 	Color get_leaf_color() const { return leaf_color; }
 	static Dictionary get_leaf_form(Preset p_preset);
+	// Phenology from the shared season state (WeatherMap3D.get_season()): leaf_out, autumn,
+	// fallen_fraction and autumn_color for one species. docs/ideas/trees.md 2c.
+	static Dictionary get_leaf_season(Preset p_preset, const Dictionary &p_season);
+	void set_season(const Dictionary &p_season) {
+		season = p_season;
+		mesh_cache.clear();
+	}
+	Dictionary get_season() const { return season; }
 
 	Ref<ArrayMesh> generate();
 

@@ -1527,6 +1527,92 @@ Dictionary TreeGenerator::get_leaf_form(Preset p_preset) {
 	return d;
 }
 
+// Phenology per species (docs/ideas/trees.md 2c). Budburst: thermal time above 5 C from 1 Jan
+// (Cannell and Smith 1983), the requirement falling with winter chilling (Murray, Cannell and
+// Smith 1989: F* = a + b exp(r C)); leaves then expand over about 180 degree days. Autumn:
+// Delpierre et al. 2009 senescence sum (cold degree days under shortening days); colouring
+// spreads from onset over the span, leaf fall follows the lag behind. Forcing requirements
+// order the species as observed in Europe (Vitasse et al. 2009, Pan European Phenology
+// network): elder, hazel and willow first, birch, larch and horse chestnut early, beech and
+// oak late, ash last. Autumn colours: the species' carotenoid yellows, anthocyanin reds (red
+// maple, rowan, red oak) and tannin browns (oaks, beech).
+struct LeafSeasonSpec {
+	bool deciduous;
+	float forcing; // Degree days above 5 C to budburst at typical chilling.
+	float onset; // Senescence sum where colouring starts.
+	float span; // Senescence sum from first to last leaf turned.
+	float lag; // Senescence sum from colouring to falling.
+	Color autumn;
+};
+static const LeafSeasonSpec LEAF_SEASONS[TreeGenerator::PRESET_MAX] = {
+	{ true, 270.0f, 330.0f, 260.0f, 140.0f, Color(0.3f, 0.18f, 0.05f) }, // Oak: late, brown.
+	{ true, 260.0f, 290.0f, 220.0f, 120.0f, Color(0.38f, 0.17f, 0.04f) }, // Beech: copper.
+	{ true, 150.0f, 180.0f, 220.0f, 90.0f, Color(0.45f, 0.33f, 0.04f) }, // Birch: early, yellow.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Scots pine.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Norway spruce.
+	{ true, 120.0f, 220.0f, 220.0f, 100.0f, Color(0.4f, 0.31f, 0.05f) }, // Hazel.
+	{ true, 160.0f, 230.0f, 200.0f, 100.0f, Color(0.32f, 0.11f, 0.04f) }, // Hawthorn: red brown.
+	{ true, 230.0f, 200.0f, 200.0f, 90.0f, Color(0.42f, 0.32f, 0.05f) }, // Lime: yellow.
+	{ true, 200.0f, 230.0f, 220.0f, 100.0f, Color(0.38f, 0.28f, 0.05f) }, // Sycamore: yellow brown.
+	{ true, 320.0f, 200.0f, 160.0f, 40.0f, Color(0.32f, 0.32f, 0.09f) }, // Ash: last out, falls barely turned.
+	{ true, 160.0f, 170.0f, 220.0f, 110.0f, Color(0.42f, 0.2f, 0.04f) }, // Horse chestnut: orange brown, early.
+	{ true, 170.0f, 330.0f, 140.0f, 30.0f, Color(0.17f, 0.21f, 0.06f) }, // Black alder: falls green.
+	{ true, 130.0f, 280.0f, 220.0f, 100.0f, Color(0.38f, 0.33f, 0.07f) }, // White willow: yellow.
+	{ true, 140.0f, 300.0f, 200.0f, 120.0f, Color(0.45f, 0.3f, 0.05f) }, // Larch: gold needles, then bare.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Silver fir.
+	{ true, 160.0f, 190.0f, 200.0f, 100.0f, Color(0.45f, 0.1f, 0.03f) }, // Rowan: red orange.
+	{ true, 100.0f, 250.0f, 200.0f, 80.0f, Color(0.3f, 0.22f, 0.08f) }, // Elder: first out.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Holly.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Yew.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Box.
+	{ true, 220.0f, 170.0f, 200.0f, 110.0f, Color(0.55f, 0.2f, 0.02f) }, // Sugar maple: orange.
+	{ true, 200.0f, 150.0f, 200.0f, 110.0f, Color(0.5f, 0.05f, 0.03f) }, // Red maple: scarlet, first to turn.
+	{ true, 260.0f, 260.0f, 240.0f, 130.0f, Color(0.35f, 0.07f, 0.03f) }, // Red oak: russet red.
+	{ true, 290.0f, 300.0f, 240.0f, 140.0f, Color(0.28f, 0.1f, 0.06f) }, // White oak: purple brown.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // White pine.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Hemlock.
+	{ true, 270.0f, 260.0f, 220.0f, 120.0f, Color(0.42f, 0.28f, 0.06f) }, // American beech: bronze.
+	{ true, 160.0f, 170.0f, 200.0f, 90.0f, Color(0.48f, 0.36f, 0.04f) }, // Paper birch: yellow.
+	{ true, 190.0f, 190.0f, 200.0f, 90.0f, Color(0.46f, 0.35f, 0.05f) }, // Yellow birch.
+	{ true, 200.0f, 210.0f, 200.0f, 100.0f, Color(0.47f, 0.37f, 0.05f) }, // Witch hazel: yellow.
+	{ false, 0.0f, 0.0f, 1.0f, 0.0f, Color() }, // Mountain laurel.
+};
+
+TreeGenerator::LeafSeason TreeGenerator::_leaf_season(Preset p_preset, const Dictionary &p_season) {
+	LeafSeason ls;
+	ERR_FAIL_INDEX_V(int(p_preset), int(PRESET_MAX), ls);
+	const LeafSeasonSpec &sp = LEAF_SEASONS[p_preset];
+	ls.color = sp.autumn;
+	if (!sp.deciduous || p_season.is_empty()) {
+		return ls;
+	}
+	const float forcing = p_season.get("forcing", 1000.0f);
+	const float chilling = p_season.get("chilling", 80.0f);
+	const float senescence = p_season.get("senescence", 0.0f);
+	const float day = p_season.get("day_of_year", 182.0f);
+	// Murray et al. 1989 shape, normalised to 1 at 80 chilling days.
+	const float need = 0.55f * sp.forcing * (0.55f + 0.9f * Math::exp(-0.012f * MAX(chilling, 0.0f))) / 0.894f;
+	ls.out = CLAMP((forcing - need) / 150.0f, 0.0f, 1.0f);
+	ls.autumn = CLAMP((senescence - sp.onset) / sp.span, 0.0f, 1.0f);
+	ls.fallen = CLAMP((senescence - sp.onset - sp.lag) / sp.span, 0.0f, 1.0f);
+	if (forcing <= need && day < 182.0f) {
+		// Winter and early spring: last year's crop is all down, none grown yet.
+		ls.out = 0.0f;
+		ls.fallen = 1.0f;
+	}
+	return ls;
+}
+
+Dictionary TreeGenerator::get_leaf_season(Preset p_preset, const Dictionary &p_season) {
+	const LeafSeason ls = _leaf_season(p_preset, p_season);
+	Dictionary d;
+	d["leaf_out"] = ls.out;
+	d["autumn"] = ls.autumn;
+	d["fallen_fraction"] = ls.fallen;
+	d["autumn_color"] = ls.color;
+	return d;
+}
+
 // A folded lens blade: rows of three vertices (midrib, two margins) from base to tip, the width
 // profile sin(pi t^p_shape) (0.75 ovate, widest below the middle; 1.6 obovate, widest toward the
 // tip), with p_lobes lobes a side cut p_depth into it: pointed (a tip row between sinus rows) or
@@ -3602,6 +3688,35 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			node_drag[i] *= exposure;
 		}
 	}
+	// The season (2c): leaves not yet out or fallen are left off, so drag and mass follow; the
+	// rest grow from small and pale in spring to full size, and turn in autumn in a fixed order
+	// per leaf (the first to turn falls first).
+	const LeafSeason leaf_season = _leaf_season(preset, season);
+	uint32_t leaf_slot = 0; // Every broad leaf the summer tree has, kept or not: a stable key.
+	const uint32_t season_seed = hash_murmur3_one_32(uint32_t(seed) * 2654435761u + 977u);
+	auto season_leaf = [&](uint32_t p_key, Color &r_color, float &r_size) -> bool {
+		if (season.is_empty()) {
+			return true;
+		}
+		if (leaf_season.out <= 0.0f || leaf_season.fallen >= 1.0f) {
+			return false;
+		}
+		const float h = float(hash_murmur3_one_32(p_key, season_seed) & 0xffffff) / float(0x1000000);
+		if (h < leaf_season.fallen) {
+			return false;
+		}
+		if (leaf_season.out < 1.0f) {
+			const float young = 1.0f - leaf_season.out;
+			r_size *= Math::lerp(1.0f, 0.3f, young);
+			r_color = r_color.lerp(Color(r_color.r * 1.6f, r_color.g * 1.45f, r_color.b * 0.9f), young * 0.7f);
+		}
+		const float turn = CLAMP((leaf_season.autumn - h) * 6.0f, 0.0f, 1.0f);
+		if (turn > 0.0f) {
+			const float jitter = 0.85f + 0.3f * float((hash_murmur3_one_32(p_key ^ 0x9e3779b9u, season_seed) >> 8) & 0xffff) / 65535.0f;
+			r_color = r_color.lerp(Color(leaf_season.color.r * jitter, leaf_season.color.g * jitter, leaf_season.color.b), turn);
+		}
+		return true;
+	};
 	for (int i = 1; i < int(nodes.size()); i++) {
 		const Node &n = nodes[i];
 		if ((!n.leafy && !spurs[i]) || n.removed || n.dead) {
@@ -3648,11 +3763,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// One brush as two crossed alpha-cut sprays (the needle image is drawn from the
 					// same needle angle and length), in the branch plane and across it.
 					const float jitter = 0.85f + 0.3f * lr.randf();
-					const Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
+					Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
+					float spray_size = 1.0f;
+					if (!season_leaf(uint32_t(i) * 4099u + uint32_t(sh), c, spray_size)) {
+						continue;
+					}
 					Vector3 flat = plane_side - bdir * plane_side.dot(bdir);
 					flat = flat.length_squared() > 1e-6f ? flat.normalized() : perp;
 					const Vector3 cross = bdir.cross(flat).normalized();
-					const float half = size * 0.8f;
+					const float half = size * 0.8f * spray_size;
 					{ Vector4i part; leaves.begin(part); _add_spray(leaves, b0, bdir, blen + size * 0.5f, half, flat, c); leaves.end(part, 0.0f); }
 					{ Vector4i part; leaves.begin(part); _add_spray(leaves, b0, bdir, blen + size * 0.5f, half, cross, c); leaves.end(part, 0.0f); }
 					leaf_count += per_brush;
@@ -3671,9 +3790,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					const Vector3 ar = (around - bdir * around.dot(bdir)).normalized();
 					const Vector3 base = b0 + bdir * (blen * t) + ar * br;
 					const float jitter = 0.85f + 0.3f * lr.randf();
-					const Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
+					Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
 					const Vector3 out = (ar * 0.75f + bdir * 0.66f).normalized();
-					{ Vector4i part; leaves.begin(part); _add_needle(leaves, base, out, size * (0.8f + 0.4f * lr.randf()), c); leaves.end(part, 0.0f); }
+					float needle_size = size * (0.8f + 0.4f * lr.randf());
+					if (!season_leaf(uint32_t(i) * 4099u + uint32_t(sh * 257 + k), c, needle_size)) {
+						continue;
+					}
+					{ Vector4i part; leaves.begin(part); _add_needle(leaves, base, out, needle_size, c); leaves.end(part, 0.0f); }
 					leaf_count++;
 				}
 			}
@@ -3719,8 +3842,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				const float az = lr.randf() * Math::TAU;
 				const Vector3 up = Vector3(Math::sin(inc) * Math::cos(az), Math::cos(inc), Math::sin(inc) * Math::sin(az));
 				const float jitter = 0.85f + 0.3f * lr.randf();
-				const Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
-				const float leaf_size = size * (0.75f + 0.5f * lr.randf());
+				Color c = Color(leaf_color.r * jitter, leaf_color.g * jitter, leaf_color.b * (0.9f + 0.2f * lr.randf()));
+				float leaf_size = size * (0.75f + 0.5f * lr.randf());
+				if (!season_leaf(leaf_slot++, c, leaf_size)) {
+					continue;
+				}
 				{ Vector4i part; leaves.begin(part); _add_leaf(leaves, at, k == p_leaves - 1 ? tip_dir : out, up, leaf_size, c); leaves.end(part, 0.0f); }
 				leaf_count++;
 				const float blade_area = 2.0f * params[PARAM_LEAF_WIDTH] * leaf_size * leaf_size * 0.656f;
@@ -4351,7 +4477,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		look.set_preset(p_preset);
 		const Color leaf = look.get_leaf_color(), bark = look.get_bark_color();
 		const float self_shade = conifer ? 0.7f : 0.8f;
-		Color far = Color(leaf.r * self_shade, leaf.g * self_shade, leaf.b * self_shade, conifer ? 0.85f : 0.9f);
+		// Seasons: the turned share takes the autumn colour; a bare crown hides little ground.
+		const LeafSeason ls = _leaf_season(p_preset, season);
+		const Color crown = leaf.lerp(ls.color, ls.season_blend());
+		const float leafy = ls.out * (1.0f - ls.fallen);
+		Color far = Color(crown.r * self_shade, crown.g * self_shade, crown.b * self_shade, Math::lerp(0.35f, conifer ? 0.85f : 0.9f, leafy));
 		if (p_form == FORM_SAPLING) {
 			far.a = 0.5f;
 		} else if (p_form == FORM_SNAG || p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
@@ -4792,6 +4922,9 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fallen_branch", "fallen_branch"), &TreeGenerator::set_fallen_branch);
 	ClassDB::bind_method(D_METHOD("set_moss_cover", "cover"), &TreeGenerator::set_moss_cover);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_form", "preset"), &TreeGenerator::get_leaf_form);
+	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_season", "preset", "season"), &TreeGenerator::get_leaf_season);
+	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);
+	ClassDB::bind_method(D_METHOD("get_season"), &TreeGenerator::get_season);
 	ClassDB::bind_method(D_METHOD("set_compress_vertices", "enable"), &TreeGenerator::set_compress_vertices);
 	ClassDB::bind_method(D_METHOD("is_compress_vertices"), &TreeGenerator::is_compress_vertices);
 	ClassDB::bind_method(D_METHOD("set_climber", "climber"), &TreeGenerator::set_climber);
@@ -4835,6 +4968,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_generation_usec"), &TreeGenerator::get_generation_usec);
 
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Oak,Beech,Birch,Scots Pine,Norway Spruce,Hazel,Hawthorn,Lime,Sycamore Maple,Ash,Horse Chestnut,Black Alder,White Willow,European Larch,Silver Fir,Rowan,Elder,Holly,Yew,Box,Sugar Maple,Red Maple,Northern Red Oak,White Oak,Eastern White Pine,Eastern Hemlock,American Beech,Paper Birch,Yellow Birch,Witch-hazel,Mountain Laurel"), "set_preset", "get_preset");
+	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "phyllotaxis", PROPERTY_HINT_ENUM, "Alternate,Opposite,Whorled"), "set_phyllotaxis", "get_phyllotaxis");
 	ADD_GROUP("Stand", "forest_");

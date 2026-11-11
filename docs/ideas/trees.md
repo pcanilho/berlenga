@@ -166,6 +166,36 @@ oak 209k to 975k, sycamore 86k to 287k, ash 423k to 846k, horse chestnut 92k to 
 294k to 638k, red oak 80k to 239k. LOD 1 and coarser are unchanged (the twins). Whether an
 alpha-cut lens with an opacity micromap beats this under the path tracer is on the PC queue.
 
+### 2c. Seasons (as built, 11 Nov; Paulo picked)
+
+One season state for every system: WeatherMap3D.get_season() (water/weather owns it), dated by
+SkyClock and built from ClimateRecipe's climatology plus the live temperature anomaly, so any
+date is right at once. Keys read here: day_of_year, latitude_deg, photoperiod_h (Forsythe et
+al. 1995), forcing (degree days above 5 C from 1 Jan), chilling (days of 0-5 C from 1 Nov),
+senescence (Delpierre et al. 2009: from the first day under 13.2 h after midsummer, the sum of
+max(0, 20 - T) (P / 13.2)^2).
+- Budburst: thermal time (Cannell and Smith 1983), the requirement falling with chilling as in
+  Murray, Cannell and Smith 1989; leaves then expand over 150 degree days, small and pale at
+  first. Species order follows European observations (Vitasse et al. 2009; PEP725): elder,
+  hazel, birch and horse chestnut early, beech and oak late, ash last. With the bench's
+  stand-in climate (50 N, 0 C January, 18 C July) budburst runs from day 107 (elder) to 126
+  (ash).
+- Autumn: each species colours from a senescence onset over a span, and drops leaves after a
+  lag (ash and alder drop nearly green, oaks hold theirs into December). Each leaf has a fixed
+  place in the order, so the first to turn is the first to fall. Colours: carotenoid yellows
+  (birch, lime, larch), anthocyanin reds (red maple, rowan, red oak), tannin browns (oaks,
+  beech copper).
+- `TreeGenerator.season` (the dictionary) leaves out the leaves not grown or fallen, so wind
+  drag and mass follow the season; far_color follows the turned share and the bare crown.
+  Evergreens never change; larch turns gold and goes bare.
+- `TreeGenerator.get_leaf_season(preset, season)` gives leaf_out, autumn, fallen_fraction and
+  autumn_color for vegetation's leaf litter (fallen_fraction stays 1 from the last leaf fall
+  until budburst).
+- Changing the date regenerates the meshes (stands cache by season). A per-instance shader
+  path, without regeneration, is a later step if a game day has to pass in view.
+- Bench: `--day=N` renders and tests at a day of year; `--test` checks the leaf-out order, red
+  maple before oak, birch bare by late November, pine unchanged and bare January crowns.
+
 ## 3. Wind
 
 - **Vertex-shader layers** (Sousa, GPU Gems 3 ch. 16; Horizon Zero Dawn: distance to trunk,

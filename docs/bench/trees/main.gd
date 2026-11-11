@@ -16,6 +16,7 @@ extends Node3D
 #   --set=name:value  override a growth property on every preset, e.g. --set=shed_ratio:0.2
 #   --view=leaf       the crop view zoomed in to single leaves
 #   --view=base|log  the first tree's foot (moss), or the last plant (the log with --decays)
+#   --day=N           day of year: leaves by season, from a stand-in climate (see season_for)
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
 #   --wind ...        wind on rigged trees: see wind.gd
@@ -46,6 +47,7 @@ var seed := 1
 var view := "side"
 var overrides := {}
 var decays := false
+var day := -1
 var fails := 0
 
 func _ready() -> void:
@@ -91,6 +93,8 @@ func _ready() -> void:
 			view = a.substr(7)
 		elif a == "--decays":
 			decays = true
+		elif a.begins_with("--day="):
+			day = int(a.substr(6))
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
 			overrides[kv[0]] = float(kv[1])
@@ -108,6 +112,8 @@ func _gen(p: int, forest: bool, s: int) -> Dictionary:
 	for k in overrides:
 		g.set(k, overrides[k])
 	g.forest_shade = 0.6 if forest else 0.0
+	if day >= 0:
+		g.season = season_for(day)
 	# The spacing make_species() grows the stand form at: the stand spacing times 1.3.
 	g.forest_spacing = STAND_SPACING[p] * 1.3
 	var mesh := g.generate()
@@ -117,6 +123,37 @@ func _gen(p: int, forest: bool, s: int) -> Dictionary:
 	return {"mesh": mesh, "height": g.get_height(), "crown_radius": g.get_crown_radius(), "crown_base": g.get_crown_base(),
 		"internodes": g.get_internode_count(), "leaves": g.get_leaf_count(), "dead": g.get_dead_branch_count(),
 		"shed": g.get_shed_count(), "tris": tris, "ms": g.get_generation_usec() / 1000.0}
+
+# A stand-in for WeatherMap3D.get_season() (docs/ideas/trees.md 2c): a temperate climate at
+# 50 N, daily mean 0 C mid-January to 18 C mid-July, integrated from 1 Jan (forcing, degree days
+# above 5 C), from 1 Nov (chilling, days of 0-5 C) and, once days shorten below 13.2 h after
+# midsummer, Delpierre et al. 2009's senescence sum.
+static func season_for(d: int, lat := 50.0) -> Dictionary:
+	var temp := func(x: float) -> float: return 9.0 + 9.0 * cos(TAU * (x - 200.0) / 365.0)
+	var photo := func(x: float) -> float:
+		# Forsythe et al. 1995 (CBM model), day length with civil twilight 0.8333 deg.
+		var th := 0.2163108 + 2.0 * atan(0.9671396 * tan(0.0086 * (x - 186.0)))
+		var ph := asin(0.39795 * cos(th))
+		var c := (sin(deg_to_rad(0.8333)) + sin(deg_to_rad(lat)) * sin(ph)) / (cos(deg_to_rad(lat)) * cos(ph))
+		return 24.0 - 24.0 / PI * acos(clampf(c, -1.0, 1.0))
+	var forcing := 0.0
+	var senescence := 0.0
+	var chilling := 0.0
+	var started := false
+	for x in range(1, d + 1):
+		var t: float = temp.call(float(x))
+		forcing += maxf(t - 5.0, 0.0)
+		var p: float = photo.call(float(x))
+		if x > 172 and p < 13.2:
+			started = true
+		if started:
+			senescence += maxf(20.0 - t, 0.0) * pow(p / 13.2, 2.0)
+	for x in (range(305, d + 1) if d >= 305 else range(305, 366) + range(1, d + 1)):
+		var t: float = temp.call(float(x))
+		if t >= 0.0 and t <= 5.0:
+			chilling += 1.0
+	return {"day_of_year": float(d), "latitude_deg": lat, "photoperiod_h": photo.call(float(d)), "forcing": forcing,
+		"chilling": chilling, "senescence": senescence, "snow_depth": 0.0, "soil_frost": 0.0}
 
 func _check(ok: bool, what: String) -> void:
 	if not ok:
@@ -138,9 +175,45 @@ func _run_test() -> void:
 		_check(f.crown_radius < o.crown_radius, "%s forest-grown crown narrower (%.1f m vs %.1f m)" % [NAMES[p], f.crown_radius, o.crown_radius])
 		var again := _gen(p, false, seed)
 		_check(again.internodes == o.internodes and is_equal_approx(again.height, o.height), "%s deterministic for one seed" % NAMES[p])
+	_season_test()
 	var other := _gen(0, false, seed + 1)
 	var first := _gen(0, false, seed)
 	_check(other.internodes != first.internodes, "oak seeds give different trees")
+
+# Phenology (trees.md 2c): order of leaf-out and colour, bare winter crowns, evergreens unchanged.
+func _season_test() -> void:
+	var ls := func(p: int, d: int) -> Dictionary: return TreeGenerator.get_leaf_season(p, season_for(d))
+	var summer: Dictionary = ls.call(0, 182)
+	_check(summer.leaf_out == 1.0 and summer.autumn == 0.0 and summer.fallen_fraction == 0.0, "oak in full leaf on 1 July")
+	var winter: Dictionary = ls.call(0, 20)
+	_check(winter.leaf_out == 0.0 and winter.fallen_fraction == 1.0, "oak bare in January")
+	var first := -1
+	var order := []
+	for p in [16, 5, 2, 10, 1, 0, 9]: # Elder, hazel, birch, horse chestnut, beech, oak, ash.
+		for d in range(60, 200):
+			if ls.call(p, d).leaf_out > 0.0:
+				order.append(d)
+				break
+	var sorted := order.duplicate()
+	sorted.sort()
+	_check(order.size() == 7 and order == sorted and order[0] < order[6] - 10, "leaf-out order elder..ash, days %s" % str(order))
+	_check(ls.call(21, 285).autumn > ls.call(0, 285).autumn, "red maple turns before oak (12 Oct: %.2f vs %.2f)" % [ls.call(21, 285).autumn, ls.call(0, 285).autumn])
+	var late: Dictionary = ls.call(2, 330)
+	_check(late.fallen_fraction > 0.9, "birch bare by late November (%.2f fallen)" % late.fallen_fraction)
+	var pine: Dictionary = ls.call(3, 20)
+	_check(pine.leaf_out == 1.0 and pine.fallen_fraction == 0.0, "Scots pine keeps its needles in January")
+	var g := TreeGenerator.new()
+	g.preset = 2
+	g.generate()
+	var full := g.get_leaf_count()
+	g.season = season_for(20)
+	var bare_mesh := g.generate()
+	var bare := g.get_leaf_count()
+	var bare_ok := bare_mesh != null and bare_mesh.get_surface_count() > 0
+	g.season = season_for(300)
+	g.generate()
+	var thin := g.get_leaf_count()
+	_check(bare == 0 and bare_ok and thin > 0 and thin < full, "birch leaves: summer %d, 27 Oct %d, January %d (bark still built)" % [full, thin, bare])
 
 func _place(mesh: Mesh, pos: Vector3) -> void:
 	var mi := MeshInstance3D.new()
