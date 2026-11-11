@@ -1065,7 +1065,11 @@ func _checks() -> void:
 	snowfall.follow_target = NodePath("")
 	check(snowfall.haze_enabled and haze_peak > 0.0 and haze_peak > haze_coast * 2.0, "falling and blowing snow thicken the fog on the peak by themselves (extinction %.4f /m on the peak, %.4f at the coast)" % [haze_peak, haze_coast])
 	check(false, "falling rain particles from the weather (none in the engine)", true)
-	await _wind_snow_check()
+	# The gale check lays 40 mm of snow and moves the near square to the peak, and leaves them: only in test
+	# runs, which quit after the checks, so a picture is never taken of its snow (with --snow=none the square's
+	# edge showed as a straight snow line across the range).
+	if args.has("test"):
+		await _wind_snow_check()
 	var passes := 0
 	var gaps := 0
 	var fails := 0
