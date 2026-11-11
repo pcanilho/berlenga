@@ -129,6 +129,7 @@ class VegetationField3D : public Node3D {
 		float max_footprint = 0.0f;
 		float crown_max = 0.0f;
 		float grid_cell = 1.0f;
+		float sun_mean = 0.0f; // VegetationLight::sun_mean().
 	};
 	struct FarAdd {
 		Vector2 xz;

@@ -1054,7 +1054,8 @@ func _checks() -> void:
 	grass.update_at(cam.global_position)
 	if cover:
 		# Far distance: every ranged plant carries its rank (0..1) and its species' range for the
-		# shader's thinning, and the tile is cut just past that range.
+		# shader's thinning (whole metres; the fraction is the light it grew in), and the tile is
+		# cut just past that range.
 		var ranged := 0
 		var bad := 0
 		for ch in cover.get_children(true):
@@ -1065,7 +1066,7 @@ func _checks() -> void:
 					var sp: PlantSpecies = cover.biome.species[int(cd.a)]
 					if sp.visibility_range > 0.0:
 						ranged += 1
-						if cd.r < 0.0 or cd.r > 1.0 or absf(cd.g - sp.visibility_range) > 1e-3 or absf(ch.visibility_range_end - sp.visibility_range * 1.05) > 1e-3:
+						if cd.r < 0.0 or cd.r > 1.0 or absf(floorf(cd.g) - floorf(sp.visibility_range)) > 1e-3 or absf(ch.visibility_range_end - sp.visibility_range * 1.05) > 1e-3:
 							bad += 1
 		_check("plants carry rank and range for thinning", ranged > 1000 and bad == 0, "%d ranged, %d bad" % [ranged, bad])
 
