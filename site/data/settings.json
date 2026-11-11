@@ -1071,6 +1071,42 @@
    "topic": "Generation"
   },
   {
+   "name": "Glacial erosion",
+   "settings": [
+    "glacial_enabled",
+    "glacial_ela",
+    "glacial_erosion"
+   ],
+   "note": "",
+   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Cliff ledges",
+   "settings": [
+    "cliff_ledge_spacing",
+    "cliff_ledge_strength"
+   ],
+   "note": "",
+   "what": "rock beds of uneven thickness step faces steeper than 40 degrees into ledges.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Fallen blocks",
+   "settings": [
+    "get_boulders(rect, density)"
+   ],
+   "note": "",
+   "what": "blocks shed by cliffs rest below them, the largest furthest out.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
    "name": "River deposition",
    "settings": [
     "deposition"
@@ -1111,6 +1147,42 @@
    ],
    "note": "",
    "what": "position, discharge, catchment, drop and run along every river, for placing lakes and falls.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Waterfall records",
+   "settings": [
+    "get_waterfalls()"
+   ],
+   "note": "",
+   "what": "each fall's type, lip, face profiles, tiers, power, impact speed and plunge pool, for water effects.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Plunge pools and gorges",
+   "settings": [
+    "plunge_pools",
+    "gorge_age",
+    "gorge_rate"
+   ],
+   "note": "",
+   "what": "falls of 4 m or more scour a pool that holds water, and lips over hard rock wear back upstream into slot gorges.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Spray map",
+   "settings": [
+    "terrain_spray_potential",
+    "get_spray_potential()"
+   ],
+   "note": "",
+   "what": "where fall spray keeps the ground wet, from each fall's power and distance.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Rivers, coasts and lakes"

@@ -48,6 +48,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Rock layers: rivers step down over the hard bands, leaving waterfalls up to 30 m.*
 
+- **Glacial erosion** (`glacial_enabled`, `glacial_ela`, `glacial_erosion`): ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes.
+- **Cliff ledges** (`cliff_ledge_spacing`, `cliff_ledge_strength`): rock beds of uneven thickness step faces steeper than 40 degrees into ledges.
+- **Fallen blocks** (`get_boulders(rect, density)`): blocks shed by cliffs rest below them, the largest furthest out.
+
 ## Rivers, coasts and lakes
 
 - **River deposition** (`deposition`, off by default): rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors; solved exactly per step along the river tree, at about half the earlier cost.
@@ -64,6 +68,9 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **River network** (`build_river_paths()`): rivers with widths and discharges, made into joined `PhysXRiver3D` paths.
 - **River sites** (`get_river_sites(min_area, min_discharge, run)`): position, discharge, catchment, drop and run along every river, for placing lakes and falls.
+- **Waterfall records** (`get_waterfalls()`): each fall's type, lip, face profiles, tiers, power, impact speed and plunge pool, for water effects.
+- **Plunge pools and gorges** (`plunge_pools`, `gorge_age`, `gorge_rate`): falls of 4 m or more scour a pool that holds water, and lips over hard rock wear back upstream into slot gorges.
+- **Spray map** (`terrain_spray_potential`, `get_spray_potential()`): where fall spray keeps the ground wet, from each fall's power and distance.
 - **Coast and lakes** (`ocean_edges` or `sea_map`; `lake_count`, `lakes`; `build_water()`): sea with a Dean-profile seabed and beaches; lakes behind natural dams or rock lips that spill as waterfalls; builds the sea and lake surfaces, and rivers end in them.
 
   ![A generated island map: sea, beaches, rivers and two dammed lakes](media/terrain-coast-map.jpg)
