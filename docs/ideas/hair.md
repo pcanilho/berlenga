@@ -557,6 +557,39 @@ to compile its hit shader (the object vanished), and the dynamic BLAS scheduler 
 larger than the whole refit budget (1.5 M triangles), so a 30k-strand groom stayed where it was
 first built while the raster hair moved.
 
+## Stage 2k: deep shadows from omni and spot lights
+
+Stage 2j's deep opacity map follows one directional light; under lamps (night streets, rooms)
+the hair fell back to the shadow maps' grain. Unreal's hair builds a deep shadow map per light and
+groom, for local lights a perspective view from the light that just holds the groom's bounds;
+TressFX's shadow likewise follows whichever light casts it.
+
+Ours (`deep_shadow_local_lights`, default 3): up to three shadowed OmniLight3D / SpotLight3D
+nodes, the ones that light the hair most (energy times Godot's omni falloff at the hair's centre,
+spot lights outside their cone skipped), each get a map beside the directional light's, built by
+the same passes with the map index in the push constant. A local map is a perspective view from
+the light: cells across by angle (the half angle's tangent just holds the hair's bounding
+sphere), depth the distance from the light less that to the sphere's near side, so the layers
+(1, 4, 15 cm past the first hair) mean the same as in the directional map. Strand coverage uses the
+cell's width at the segment's depth and the segment's length across the light's ray; the head's
+spheres are hit by rays from the light through each cell. A light inside the bounding sphere gets
+no map. The hair shader reads every map per strand point (4 cells each) and light() finds a
+light's map by direction (toward an omni or spot light's position, or along a directional one).
+
+So the hair does not shadow itself twice, a new fragment output, `POSITIONAL_SHADOW_OFFSET`, moves
+the omni and spot shadow lookups toward each light by that many metres (as
+`DIRECTIONAL_SHADOW_OFFSET`); the hair sets it to the largest of its local maps' distances past
+the first hair. Lights without a map lose the hair's self-shadow through it (their lookups move
+too), the reason the strongest lights take the maps. The raster's second (collapsed) strip now
+skips the map lookups, which halves their per-vertex cost.
+
+Measured (bench `--hair=wavy_lamp`, an omni light up and to the side, sun off, sky dimmed; mean
+brightness over the five regions against a 16 spp path traced frame): error 321 with the shadow
+maps alone (`wavy_lamp_nolocal`, the hair washed out pale), 105 with the lamp's map (the warm,
+darker mass the path tracer shows). The sun scene is unchanged (error 42.9 before and after).
+`wavy_spotlamp` renders the spot light's map. Cost on the cloud's software Vulkan, 60 frames: 184 s
+without the lamp's map, 197 s with it (+7%); the GPU cost is on the PC queue.
+
 ## Checked: lighter path traced strands
 
 The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,

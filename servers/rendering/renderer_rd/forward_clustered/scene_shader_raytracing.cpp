@@ -1427,7 +1427,6 @@ bool SceneShaderRaytracing::_build_initial_bundle(uint32_t p_rt_flags, PipelineB
 
 // Any thread (RD synchronizes pipeline creation internally).
 RID SceneShaderRaytracing::_create_initial_pipeline(uint32_t p_rt_flags, RID p_base_shader) {
-
 	Vector<RD::PipelineSpecializationConstant> spec_constants;
 	{
 		RD::PipelineSpecializationConstant sc;
@@ -2171,6 +2170,7 @@ void SceneShaderRaytracing::init(const String p_defines) {
 		actions.renames["CUSTOM3"] = "custom3_attrib";
 		actions.renames["LIGHT_VERTEX"] = "light_vertex";
 		actions.renames["DIRECTIONAL_SHADOW_OFFSET"] = "directional_shadow_offset";
+		actions.renames["POSITIONAL_SHADOW_OFFSET"] = "positional_shadow_offset";
 
 		actions.renames["NODE_POSITION_WORLD"] = "read_model_matrix[3].xyz";
 		actions.renames["CAMERA_POSITION_WORLD"] = "inv_view_matrix[3].xyz";
