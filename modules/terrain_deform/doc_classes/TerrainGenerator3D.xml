@@ -332,7 +332,7 @@
 			<param index="0" name="min_area" type="float" default="100000.0" />
 			<param index="1" name="min_height" type="float" default="5.0" />
 			<description>
-				Waterfalls along the rivers of [method get_rivers] ([param min_area]): runs of the channel steeper than 45 degrees in the eroded ground that drop at least [param min_height] m. Soft rock never stands steeper than [member critical_slope], so they form where rivers cut the hard bands of [member strata_enabled]. Each is a [Dictionary]: [code]top[/code] and [code]bottom[/code] (the lip and the foot, on the ground), [code]height[/code], [code]width[/code] and [code]discharge[/code] (of the river at the lip), [code]river[/code] (index in [method get_rivers]), [code]index[/code] (the lip's point in that river) and [code]hardness[/code] (of the rock at the lip; a lip that has just broken off stands on soft rock for a while), [code]face_run[/code] (m the face recedes over the drop: 1 where [member fall_lips] keeps it vertical), [code]jet_throw[/code] (m a free jet from the brink travels out over the drop, at critical flow) and [code]free_fall[/code] (the jet clears the face: a plunge rather than a cascade).
+				Waterfalls along the rivers of [method get_rivers] ([param min_area]): runs of the channel steeper than 45 degrees in the eroded ground that drop at least [param min_height] m. Soft rock never stands steeper than [member critical_slope], so they form where rivers cut the hard bands of [member strata_enabled]. Each is a [Dictionary]: [code]top[/code] and [code]bottom[/code] (the lip and the foot, on the ground), [code]height[/code], [code]width[/code] and [code]discharge[/code] (of the river at the lip), [code]river[/code] (index in [method get_rivers]), [code]index[/code] (the lip's point in that river) and [code]hardness[/code] (of the rock at the lip; a lip that has just broken off stands on soft rock for a while), [code]face_run[/code] (m the face recedes over the drop: 3 where [member fall_lips] keeps it vertical), [code]jet_throw[/code] (m a free jet from the brink travels out over the drop, at critical flow) and [code]free_fall[/code] (the jet clears the face: a plunge rather than a cascade).
 			</description>
 		</method>
 		<method name="get_world_rect" qualifiers="const">
@@ -443,7 +443,7 @@
 			Stream power coefficient [code]K[/code]. Relief at equilibrium grows with [member uplift] / [member erodibility].
 		</member>
 		<member name="fall_lips" type="bool" setter="set_fall_lips" getter="get_fall_lips" default="true">
-			Falls of 4 m or more over hard rock (the strata's caprock) keep a vertical face: the ground holds the lip's height to the middle of the drop and the foot's after it, over 1 m, so the jet falls free. The grid alone holds a drop over a whole cell at best.
+			Falls of 4 m or more over hard rock (the strata's caprock) keep a vertical face: the ground holds the lip's height to the middle of the drop and the foot's after it, over 3 m, so the jet falls free. The grid alone holds a drop over a whole cell at best.
 		</member>
 		<member name="flow_exponent" type="float" setter="set_flow_exponent" getter="get_flow_exponent" default="1.0">
 			Drainage area is shared among all lower neighbours in proportion to slope to this power (multiple flow directions, Quinn et al. 1991, Freeman 1991). 0 routes all flow to the steepest neighbour (D8), which leaves straight 45 degree valleys.

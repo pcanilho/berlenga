@@ -1161,6 +1161,13 @@ func _build_camera() -> void:
 			var ahead := mid + (mid - c) * 1.5
 			cam.look_at(Vector3(ahead.x, lake_level + 22.0, ahead.z))
 			_log("lakewater camera over %d water cells, %.0f m from the far end" % [cells.size(), c.distance_to(mid) * 2.0])
+		"lip":
+			# Close on the fall's face: from the plunge pool side, 50 m out, looking at the middle of the drop.
+			var fd3l := Vector3(fall_dir.x, 0, fall_dir.y)
+			var c := fall_point + fd3l * 70.0 + Vector3(12, 0, 0)
+			c.y = height_at(c.x, c.z) + 25.0
+			cam.position = c
+			cam.look_at(fall_point + fd3l * 18.0 + Vector3(0, -30, 0))
 		"fall":
 			# Downstream of the fall, at the first spot with a clear view of the whole drop (gorges hide it).
 			var fd3 := Vector3(fall_dir.x, 0, fall_dir.y)

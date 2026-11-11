@@ -790,7 +790,7 @@ void TerrainGenerator3D::_alluvium_reach() {
 
 namespace {
 constexpr real_t LIP_BUCKET = 128.0; // m
-constexpr real_t LIP_FACE = 1.0; // m the face takes from the lip's height to the foot's
+constexpr real_t LIP_FACE = 3.0; // m the face takes from the lip's height to the foot's (three 1 m grid steps, so a face oblique to the grid does not alias into ribs)
 constexpr real_t LIP_SIDE = 12.0; // m beside the held width over which the step fades into the slope
 constexpr real_t LIP_END = 8.0; // m before the lip and past the foot over which it fades
 } // namespace
@@ -1738,6 +1738,13 @@ vec2 terrain_detail_gradient(vec2 p, float h, vec2 g, int octaves, float footpri
 }
 
 vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float footprint) {
+	// The detail is a heightfield's (gullies on slopes, looked up by x and z): on faces past about 60 degrees a
+	// lookup by x and z runs down the face as vertical streaks, so it fades out there (the material's own rock
+	// texture, projected on the face, carries the detail).
+	float face = smoothstep(0.35, 0.55, world_normal.y);
+	if (face <= 0.0) {
+		return world_normal;
+	}
 	vec2 g = -world_normal.xz / max(world_normal.y, 1e-3);
 	vec2 size = vec2(textureSize(terrain_detail_keep_map, 0));
 	vec2 u = clamp((world_pos.xz - TD_RECT.xy) / TD_RECT.zw, 0.0, 1.0);
@@ -1745,7 +1752,7 @@ vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float
 	if (keep <= 0.0) {
 		return world_normal;
 	}
-	vec2 d = keep * terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
+	vec2 d = face * keep * terrain_detail_gradient(world_pos.xz, world_pos.y, g, octaves, footprint);
 	return normalize(vec3(-(g.x + d.x), 1.0, -(g.y + d.y)));
 }
 )GLSL";
@@ -1979,8 +1986,11 @@ float TerrainGenerator3D::_apply_lips(real_t p_x, real_t p_z, float p_g) const {
 		if (w <= 0.0) {
 			continue;
 		}
-		// The step: the lip's height to the middle of the drop, the foot's after it.
-		const real_t u = CLAMP((s - 0.5 * l.run) / LIP_FACE + 0.5, 0.0, 1.0);
+		// The step: the lip's height to the middle of the drop, the foot's after it. The face line wanders by up
+		// to 2 m along its length (jointed rock breaks off in blocks, not along a ruler).
+		const Vector2 along = Vector2(-l.dir.y, l.dir.x);
+		const real_t wander = 2.0 * TerrainErosionFilter::fbm(uint32_t(seed) * 0x9E3779B1u + uint32_t(i), q.dot(along), real_t(i) * 97.0, 9.0, 3);
+		const real_t u = CLAMP((s - 0.5 * l.run - wander) / LIP_FACE + 0.5, 0.0, 1.0);
 		const real_t h = Math::lerp(l.h_top, l.h_bottom, fade(u));
 		g = float(Math::lerp(real_t(g), h, w));
 	}

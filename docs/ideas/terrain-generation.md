@@ -864,7 +864,7 @@ Built:
   at), so discharge and the water balance stay one. `get_inflow_cells()` lists them. No sediment comes in with it.
 - `fall_lips` (default on): falls of 4 m or more over rock at least half hard keep a vertical face. The grid holds a
   drop over a whole 16 m cell at best (25 m drop: about 58 degrees), so the ground holds the lip's height to the
-  middle of the drop and the foot's after it, the step taking 1 m, across the river's width plus 12 m fading into the
+  middle of the drop and the foot's after it, the step taking 3 m (a 1 m step oblique to the 1 m grid aliased into vertical ribs), its line wandering by up to 2 m, across the river's width plus 12 m fading into the
   slope. `get_waterfalls()` now gives `face_run`, `jet_throw` and `free_fall` by the rule above.
 - Showcase valley (`--layout=valley --inflow=60 --inflow-at=lake`): 60 km2 into the high lake gives its outflow 2.2
   m3/s (3.0 at the spring peak); it falls 63 m over a caprock lip (jet 4.6 m out, face 1 m) and the plain's streams
