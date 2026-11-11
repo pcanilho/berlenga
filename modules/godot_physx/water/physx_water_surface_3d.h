@@ -44,6 +44,7 @@ class Texture2DRD;
 class Texture2D;
 class Image;
 class ImageTexture;
+class DirectionalLight3D;
 class ArrayMesh;
 class GPUParticles3D;
 class ParticleProcessMaterial;
@@ -305,6 +306,10 @@ public:
 	// The camera under water (raster): a full screen fog pass under the surface, the image split at the
 	// water line, and the surface drawn from below (Snell's window, total internal reflection). Only
 	// while the camera is near the water. The path tracer needs nothing: it finds the camera's medium.
+	// Raster only: the surface mirrors the sky and the sun's glitter by the Fresnel term, as the path tracer
+	// sees it. Off = the old unlit tint.
+	void set_raster_reflections(bool p_enabled);
+	bool get_raster_reflections() const { return raster_reflections; }
 	void set_underwater_enabled(bool p_enabled);
 	bool get_underwater_enabled() const { return underwater_enabled; }
 	void set_underwater_meniscus(float p_strength);
@@ -647,6 +652,14 @@ private:
 	Color underwater_sky_radiance;
 	void _update_underwater();
 	void _set_underwater_shown(bool p_shown);
+	DirectionalLight3D *_find_sun();
+	// Raster reflections from above (sky panorama + sun glitter), see the shader's raster_reflections.
+	bool raster_reflections = true;
+	RID raster_sky_baked;
+	int raster_sky_rebake = 0;
+	Ref<ImageTexture> raster_sky_texture;
+	float raster_sky_energy = 0.0f;
+	void _update_raster_reflections();
 	bool caustics_enabled = false; // off by default: a draw pass every frame, only worth it over a visible floor
 	Vector3 caustics_sun_direction = Vector3(-0.35f, -1.0f, -0.25f);
 	float caustics_reference_depth = 2.5f;
