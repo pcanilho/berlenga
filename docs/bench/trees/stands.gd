@@ -28,7 +28,7 @@ class Stream extends Node3D:
 
 const COLORS := [Color("6b8e23"), Color("2e8b57"), Color("d8d8c0"), Color("8b5a2b"), Color("1f4d2b"), Color("c9a227"),
 		Color("b03a2e"), Color("7fbf7f"), Color("e07b39"), Color("9aa0a6"), Color("8e44ad"), Color("3b6e8f"), Color("a3c4a8"),
-		Color("d4b483"), Color("335c4c"), Color("e74c3c"), Color("f5e6a8")]
+		Color("d4b483"), Color("335c4c"), Color("e74c3c"), Color("f5e6a8"), Color("0b3d1e"), Color("4a2c1a"), Color("5c7a2e")]
 const STAND_NAMES := ["beech", "oak mixed", "montane conifer", "subalpine", "pine heath", "riparian", "hedgerow", "woodland"]
 
 var gen: TreeGenerator
@@ -183,7 +183,7 @@ func _draw_maps(path: String) -> void:
 	print("saved ", path)
 
 const PRESET_NAMES := ["Oak", "Beech", "Birch", "Scots Pine", "Norway Spruce", "Hazel", "Hawthorn", "Lime", "Sycamore Maple", "Ash",
-		"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder"]
+		"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box"]
 
 func _preset_of(nm: String) -> int:
 	var base := nm.substr(0, nm.find(" ("))

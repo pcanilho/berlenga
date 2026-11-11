@@ -37,7 +37,7 @@ static constexpr int MAX_NODES = 150000;
 
 static const char *preset_names[TreeGenerator::PRESET_MAX] = {
 	"Oak", "Beech", "Birch", "Scots Pine", "Norway Spruce", "Hazel", "Hawthorn", "Lime", "Sycamore Maple", "Ash",
-	"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder"
+	"Horse Chestnut", "Black Alder", "White Willow", "European Larch", "Silver Fir", "Rowan", "Elder", "Holly", "Yew", "Box"
 };
 
 static const char *stand_names[TreeGenerator::STAND_MAX] = {
@@ -390,6 +390,69 @@ void TreeGenerator::set_preset(Preset p_preset) {
 			p[PARAM_LEAVES_PER_INTERNODE] = 24;
 			bark_color = Color(0.4f, 0.36f, 0.3f);
 			leaf_color = Color(0.13f, 0.27f, 0.07f);
+			break;
+		case PRESET_HOLLY: // Ilex aquifolium: evergreen, dense pyramid leafy to the ground, deep shade tolerance.
+			p[PARAM_YEARS] = 40;
+			p[PARAM_INTERNODE_LENGTH] = 0.18f;
+			p[PARAM_APICAL_DOMINANCE] = 0.62f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.58f;
+			p[PARAM_APICAL_CONTROL] = 0.85f;
+			p[PARAM_BRANCH_ANGLE] = 55;
+			p[PARAM_DIRECTION_NOISE] = 10;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.8f;
+			p[PARAM_SHED_RATIO] = 0.015f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.02f;
+			p[PARAM_LEAF_SIZE] = 0.065f;
+			p[PARAM_LEAF_WIDTH] = 0.5f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 14;
+			p[PARAM_LEAF_YEARS] = 3; // Leaves live about three years.
+			bark_color = Color(0.45f, 0.45f, 0.42f);
+			leaf_color = Color(0.05f, 0.15f, 0.05f);
+			break;
+		case PRESET_YEW: // Taxus baccata: evergreen, broad dense crown, flat needles, often several stems.
+			p[PARAM_YEARS] = 60;
+			p[PARAM_INTERNODE_LENGTH] = 0.15f;
+			p[PARAM_APICAL_DOMINANCE] = 0.56f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.52f;
+			p[PARAM_MATURITY] = 30;
+			p[PARAM_BRANCH_ANGLE] = 65;
+			p[PARAM_DIRECTION_NOISE] = 12;
+			p[PARAM_GRAVITROPISM] = 0.02f;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.5f;
+			p[PARAM_SHED_RATIO] = 0.01f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.02f;
+			p[PARAM_STEMS] = 3;
+			p[PARAM_STEM_SPREAD] = 12;
+			p[PARAM_ROOT_FLARE] = 0.9f;
+			p[PARAM_TWIG_DROOP] = 0.4f;
+			p[PARAM_NEEDLES] = 1;
+			p[PARAM_LEAF_SIZE] = 0.025f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 90;
+			p[PARAM_LEAF_YEARS] = 6;
+			bark_color = Color(0.45f, 0.26f, 0.18f);
+			leaf_color = Color(0.04f, 0.12f, 0.05f);
+			break;
+		case PRESET_BOX: // Buxus sempervirens: evergreen shrub, small opposite leaves, very dense.
+			p[PARAM_YEARS] = 25;
+			p[PARAM_INTERNODE_LENGTH] = 0.08f;
+			phyllotaxis = PHYLLOTAXIS_OPPOSITE;
+			p[PARAM_APICAL_DOMINANCE] = 0.52f;
+			p[PARAM_APICAL_DOMINANCE_OLD] = 0.5f;
+			p[PARAM_BRANCH_ANGLE] = 40;
+			p[PARAM_DIRECTION_NOISE] = 14;
+			p[PARAM_TRUNK_GRAVITROPISM] = 0.3f;
+			p[PARAM_SHED_RATIO] = 0.01f;
+			p[PARAM_BUD_LIGHT_MIN] = 0.02f;
+			p[PARAM_STEMS] = 4;
+			p[PARAM_STEM_SPREAD] = 25;
+			p[PARAM_BASAL_SPROUTS] = 0.2f;
+			p[PARAM_ROOT_FLARE] = 0.2f;
+			p[PARAM_LEAF_SIZE] = 0.022f;
+			p[PARAM_LEAF_WIDTH] = 0.55f;
+			p[PARAM_LEAVES_PER_INTERNODE] = 12;
+			p[PARAM_LEAF_YEARS] = 3;
+			bark_color = Color(0.5f, 0.45f, 0.36f);
+			leaf_color = Color(0.07f, 0.17f, 0.05f);
 			break;
 		case PRESET_MAX:
 			break;
@@ -1442,10 +1505,15 @@ static const Habitat HABITATS[TreeGenerator::PRESET_MAX] = {
 	{ 4, 10, -12, 2, 900, 2500, 1.0f, 45, 0.3f, 0, 0.5f, 0.90f, 5.0f, 0.8f }, // Silver fir
 	{ -2, 11, -25, 5, 500, 2000, 0.6f, 45, 0.1f, 0, 0.45f, 0.60f, 4.0f, 0.6f }, // Rowan
 	{ 5, 14, -12, 8, 500, 1400, 0.6f, 35, 0.3f, 0, 0.7f, 0.70f, 3.0f, 0.6f }, // Elder
+	// Holly's cold limit is the January mean of about -0.5 C (Iversen 1944, the classic
+	// climatic indicator species); it fills the shrub layer of oceanic beech and oak woods.
+	{ 6, 15, -1.5f, 9, 600, 2500, 0.7f, 40, 0.2f, 0, 0.92f, 0.90f, 4.0f, 0.7f }, // Holly
+	{ 6, 13, -6, 8, 600, 2000, 0.6f, 45, 0.1f, 0, 0.95f, 0.95f, 5.0f, 0.8f }, // Yew
+	{ 8, 15, -3, 9, 500, 1400, 0.4f, 45, 0.05f, 0, 0.9f, 0.85f, 2.5f, 0.5f }, // Box
 };
 
 static bool is_shrub(TreeGenerator::Preset p_preset) {
-	return p_preset == TreeGenerator::PRESET_HAZEL || p_preset == TreeGenerator::PRESET_HAWTHORN || p_preset == TreeGenerator::PRESET_ELDER;
+	return p_preset == TreeGenerator::PRESET_HAZEL || p_preset == TreeGenerator::PRESET_HAWTHORN || p_preset == TreeGenerator::PRESET_ELDER || p_preset == TreeGenerator::PRESET_HOLLY || p_preset == TreeGenerator::PRESET_BOX;
 }
 
 void TreeGenerator::apply_habitat(const Ref<PlantSpecies> &p_species) const {
@@ -1540,7 +1608,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	const float crown = crown_cache[key];
 	// Needle cover overhead for the forest floor (VegetationField3D.get_conifer_at on the
 	// vegetation branch); a no-op until PlantSpecies has the property.
-	const bool conifer = p_preset == PRESET_SCOTS_PINE || p_preset == PRESET_NORWAY_SPRUCE || p_preset == PRESET_SILVER_FIR || p_preset == PRESET_LARCH;
+	const bool conifer = p_preset == PRESET_SCOTS_PINE || p_preset == PRESET_NORWAY_SPRUCE || p_preset == PRESET_SILVER_FIR || p_preset == PRESET_LARCH || p_preset == PRESET_YEW;
 	sp->set("canopy_conifer", conifer);
 	sp->set_canopy_radius(crown);
 	sp->set_canopy_opacity(h.opacity);
@@ -1625,6 +1693,12 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			canopy(PRESET_SYCAMORE_MAPLE, 0.6f, 60.0f, 0.8f, true, false);
 			canopy(PRESET_ASH, 0.5f, 60.0f, 0.8f, true, false);
 			open(PRESET_BEECH, 0.3f);
+			// Holly and yew are what does grow under beech (Taxo-Fagetum, Ilici-Fagetum).
+			shrub(PRESET_HOLLY, 0.5f);
+			Ref<PlantSpecies> yew = shrub(PRESET_YEW, 0.25f);
+			yew->set_patch_scale(40.0f);
+			yew->set_patch_cover(0.35f);
+			yew->set_patch_seed(patch_seed + 3);
 			shrub(PRESET_HAZEL, 0.25f);
 			shrub(PRESET_ELDER, 0.15f);
 		} break;
@@ -1639,7 +1713,12 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			open(PRESET_OAK, 0.3f);
 			open(PRESET_BIRCH, 0.4f);
 			shrub(PRESET_HAZEL, 0.7f);
+			shrub(PRESET_HOLLY, 0.3f);
 			shrub(PRESET_HAWTHORN, 0.35f);
+			Ref<PlantSpecies> box = shrub(PRESET_BOX, 0.4f);
+			box->set_patch_scale(30.0f);
+			box->set_patch_cover(0.3f);
+			box->set_patch_seed(patch_seed + 5);
 		} break;
 		case STAND_MONTANE_CONIFER: {
 			// Spruce-fir with beech of the montane belt, mixed in clumps.
@@ -1685,6 +1764,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 			open(PRESET_HORSE_CHESTNUT, 0.1f);
 			shrub(PRESET_HAWTHORN, 1.0f);
 			shrub(PRESET_HAZEL, 0.7f);
+			shrub(PRESET_HOLLY, 0.3f);
 			shrub(PRESET_ELDER, 0.4f);
 			open(PRESET_ROWAN, 0.3f);
 		} break;
@@ -1816,7 +1896,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shed_count"), &TreeGenerator::get_shed_count);
 	ClassDB::bind_method(D_METHOD("get_generation_usec"), &TreeGenerator::get_generation_usec);
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Oak,Beech,Birch,Scots Pine,Norway Spruce,Hazel,Hawthorn,Lime,Sycamore Maple,Ash,Horse Chestnut,Black Alder,White Willow,European Larch,Silver Fir,Rowan,Elder"), "set_preset", "get_preset");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Oak,Beech,Birch,Scots Pine,Norway Spruce,Hazel,Hawthorn,Lime,Sycamore Maple,Ash,Horse Chestnut,Black Alder,White Willow,European Larch,Silver Fir,Rowan,Elder,Holly,Yew,Box"), "set_preset", "get_preset");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "phyllotaxis", PROPERTY_HINT_ENUM, "Alternate,Opposite,Whorled"), "set_phyllotaxis", "get_phyllotaxis");
 	ADD_GROUP("Stand", "forest_");
@@ -1855,6 +1935,9 @@ void TreeGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_SILVER_FIR);
 	BIND_ENUM_CONSTANT(PRESET_ROWAN);
 	BIND_ENUM_CONSTANT(PRESET_ELDER);
+	BIND_ENUM_CONSTANT(PRESET_HOLLY);
+	BIND_ENUM_CONSTANT(PRESET_YEW);
+	BIND_ENUM_CONSTANT(PRESET_BOX);
 	BIND_ENUM_CONSTANT(PRESET_MAX);
 	BIND_ENUM_CONSTANT(STAND_BEECH);
 	BIND_ENUM_CONSTANT(STAND_OAK_MIXED);

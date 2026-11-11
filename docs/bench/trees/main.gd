@@ -16,14 +16,14 @@ extends Node3D
 #   --stands ...      stands and placement instead: see stands.gd
 
 const NAMES := ["oak", "beech", "birch", "Scots pine", "Norway spruce", "hazel", "hawthorn", "lime", "sycamore maple",
-		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder"]
-const SHRUBS := [5, 6, 16]
+		"ash", "horse chestnut", "black alder", "white willow", "European larch", "silver fir", "rowan", "elder", "holly", "yew", "box"]
+const SHRUBS := [5, 6, 16, 17, 18, 19] # Shrubs and evergreens that stay leafy low in a stand.
 # Stem spacing in a mature stand (m), as in TreeGenerator's habitat table.
-const STAND_SPACING := [9.0, 7.0, 5.0, 5.5, 4.5, 3.0, 3.0, 7.0, 7.0, 7.0, 9.0, 5.0, 7.0, 6.0, 5.0, 4.0, 3.0]
+const STAND_SPACING := [9.0, 7.0, 5.0, 5.5, 4.5, 3.0, 3.0, 7.0, 7.0, 7.0, 9.0, 5.0, 7.0, 6.0, 5.0, 4.0, 3.0, 4.0, 5.0, 2.5]
 # Plausible heights (m) for the default ages: mature trees, shrubs at full size.
 const HEIGHT_RANGE := [Vector2(12, 30), Vector2(14, 34), Vector2(10, 28), Vector2(12, 32), Vector2(14, 38), Vector2(2.5, 8), Vector2(3, 10),
 		Vector2(12, 38), Vector2(12, 30), Vector2(14, 40), Vector2(12, 28), Vector2(10, 26), Vector2(10, 25), Vector2(15, 38),
-		Vector2(15, 40), Vector2(5, 15), Vector2(2.5, 8)]
+		Vector2(15, 40), Vector2(5, 15), Vector2(2.5, 8), Vector2(4, 15), Vector2(5, 20), Vector2(1.5, 6)]
 
 var test := false
 var raster := false

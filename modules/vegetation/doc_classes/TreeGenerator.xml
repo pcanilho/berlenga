@@ -303,7 +303,16 @@
 		<constant name="PRESET_ELDER" value="16" enum="Preset">
 			Elder (Sambucus nigra), a shrub.
 		</constant>
-		<constant name="PRESET_MAX" value="17" enum="Preset">
+		<constant name="PRESET_HOLLY" value="17" enum="Preset">
+			Holly (Ilex aquifolium), an evergreen shrub or small tree leafy to the ground; the shrub layer of oceanic beech and oak woods.
+		</constant>
+		<constant name="PRESET_YEW" value="18" enum="Preset">
+			Yew (Taxus baccata), an evergreen with flat needles and a broad dense crown, the most shade tolerant European tree.
+		</constant>
+		<constant name="PRESET_BOX" value="19" enum="Preset">
+			Box (Buxus sempervirens), a dense evergreen shrub with small opposite leaves.
+		</constant>
+		<constant name="PRESET_MAX" value="20" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="STAND_BEECH" value="0" enum="Stand">
