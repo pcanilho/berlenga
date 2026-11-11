@@ -23,6 +23,7 @@ extends Node3D
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
+#   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
 #   --checks              with --out, run the link checks before the picture (they change the scene)
 
 const STEP := 4.0 # metres between ground vertices
@@ -37,6 +38,7 @@ var gen: TerrainGenerator3D
 var heights := PackedFloat32Array()
 var ground_body: StaticBody3D
 var ground_mesh: MeshInstance3D
+var landscape: Landscape3D
 var ground_mat: Material
 var ocean: PhysXWaterSurface3D
 var lake: PhysXWaterSurface3D
@@ -84,6 +86,14 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
+	if args.get("layout", "range") == "valley":
+		# The valley's settings (any can be overridden): a still floor where the rivers drop their load into a flat
+		# alluvial plain (Yuan et al. 2019), no general uplift, the high block lower in the middle to gather a trunk
+		# river, smaller rivers kept (the mountain streams), lakes only from the high lake marker.
+		var vd := {"deposition": "0.5", "base-uplift": "0", "floor-uplift": "0", "funnel": "0.7", "min-area": "500000", "lakes": "0"}
+		for k in vd:
+			if not args.has(k):
+				args[k] = vd[k]
 	t_start = Time.get_ticks_msec()
 	_generate()
 	_lake_and_fall()
@@ -188,12 +198,14 @@ func _generate() -> void:
 				# High in the north, a low floor south of the range front (z > -700) that is lowest along the middle.
 				var north := 1.0 - smoothstep(-1100.0, -600.0, z)
 				var floor_w := 1.0 - smoothstep(550.0, 1000.0, absf(xw))
-				var s := lerpf(0.12, 0.02, floor_w) * float(args.get("floor-uplift", "1")) * (1.0 - north) + 0.9 * north
+				# The block lower along the middle so its valleys gather into one trunk that leaves the range there.
+				var funnel := 1.0 - float(args.get("funnel", "0.5")) * (1.0 - smoothstep(0.0, 1500.0, absf(xw)))
+				var s := lerpf(0.12, 0.02, floor_w) * float(args.get("floor-uplift", "1")) * (1.0 - north) + 0.9 * north * funnel
 				up.set_pixel(x, y, Color(s, 0, 0))
 		lake_marker = Node3D.new()
 		lake_marker.name = "HighLake"
 		lake_marker.position = Vector3(float(args.get("lake-x", "0")), 0, float(args.get("lake-z", "-1300")))
-		lake_marker.set_meta("depth", float(args.get("lake-depth", "18")))
+		lake_marker.set_meta("depth", float(args.get("lake-depth", "30")))
 		add_child(lake_marker)
 	gen = TerrainGenerator3D.new()
 	gen.name = "Generator"
@@ -211,6 +223,8 @@ func _generate() -> void:
 	# Lakes: automatic dammed valley lakes.
 	gen.lake_count = int(args.get("lakes", "3" if layout == "range" else "0"))
 	gen.strata_enabled = not args.has("no-strata") # hard rock bands: waterfalls where rivers cross them
+	# Erosion detail down to 4 m gullies on the 1 m Landscape3D ground (16 m on the 4 m grid, which would alias finer).
+	gen.detail_octaves = int(args.get("gdetail", "6" if args.get("mesh", "landscape") == "landscape" else "4"))
 	gen.tile_erosion_enabled = args.has("tiles")
 	gen.deposition = float(args.get("deposition", "0")) # rivers drop sediment where they slow (Yuan et al. 2019)
 	add_child(gen)
@@ -232,6 +246,26 @@ func _generate() -> void:
 	gen.climate_recipe = climate
 	gen.river_month = int(args.get("month", "4")) # spring: the snowmelt flood
 	gen.generate()
+	if lake_marker != null and not args.has("lake-x"):
+		# The high lake sits above the range's tallest fall: a marker up its river from the lip, then the ground is
+		# generated again with the dam (the falls come from the rock bands, which the dam does not move).
+		var falls: Array = gen.get_waterfalls(float(args.get("min-area", "500000")), 4.0)
+		var rivs: Array = gen.get_rivers(float(args.get("min-area", "500000")))
+		var tall: Dictionary = {}
+		for f in falls:
+			if tall.is_empty() or f["height"] > tall["height"]:
+				tall = f
+		if not tall.is_empty():
+			var pts: PackedVector3Array = rivs[int(tall["river"])]["points"]
+			var i := int(tall["index"])
+			var run := 0.0
+			var up_m := float(args.get("lake-up", "180"))
+			while i > 0 and run < up_m:
+				run += pts[i].distance_to(pts[i - 1])
+				i -= 1
+			lake_marker.position = Vector3(pts[i].x, 0, pts[i].z)
+			_log("high lake marker %.0f m up the river from the %.0f m fall at %s" % [run, tall["height"], tall["top"]])
+			gen.generate()
 	_log("generate %d ms, grid %s, last change %.3f m" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change()])
 	if args.has("profile"):
 		# Heights down the middle of the valley and across it, for laying out the floor.
@@ -387,6 +421,40 @@ func _build_ground() -> void:
 	gh.name = "GroundHeight"
 	gh.bench = self
 	add_child(gh)
+	if args.get("ground", "terrain") == "terrain":
+		# TerrainMaterial3D: layers by the generator's geology, height-blended, biplanar cliffs, erosion detail
+		# normals, grass tint, wetness and snow. Plain colours here (textures would come from LFS).
+		var tm := TerrainMaterial3D.new()
+		tm.use_generator(gen)
+		tm.detail_octaves = int(args.get("mdetail", "4"))
+		tm.update_shader()
+		ground_mat = tm
+	else:
+		var sm := StandardMaterial3D.new()
+		sm.vertex_color_use_as_albedo = true
+		sm.roughness = 0.9
+		sm.set_feature(BaseMaterial3D.FEATURE_WETNESS, true)
+		sm.wetness_porosity = 0.8
+		sm.set_feature(BaseMaterial3D.FEATURE_SNOW, true)
+		ground_mat = sm
+	if args.get("mesh", "landscape") == "landscape":
+		# Landscape3D: the generator's ground at 1 m up close, chunked with crack-free LODs picked from the camera.
+		landscape = Landscape3D.new()
+		landscape.name = "Landscape"
+		add_child(landscape)
+		landscape.material = ground_mat
+		landscape.lod_error = float(args.get("lod-error", "2"))
+		landscape.source = landscape.get_path_to(gen)
+		landscape.rebuild()
+		var st: Dictionary = landscape.get_stats()
+		_log("landscape %s" % st)
+		return
+	_build_grid_mesh()
+	_log("ground %d ms" % (Time.get_ticks_msec() - t))
+
+
+# The 4 m grid ground (--mesh=grid): one mesh, no LODs, geology vertex colours for the standard material.
+func _build_grid_mesh() -> void:
 	# Display mesh, coloured by the generator's geology: bare rock, scree, soil, alluvium; sand at the coast.
 	# STAND-IN material: a StandardMaterial3D with vertex colours, because the engine's snow and wetness live on
 	# BaseMaterial3D only (under path tracing too), while the generator's geology and detail-normal code is shader
@@ -445,28 +513,11 @@ func _build_ground() -> void:
 	arrays[Mesh.ARRAY_INDEX] = idx
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	if args.get("ground", "terrain") == "terrain":
-		# TerrainMaterial3D: layers by the generator's geology, height-blended, biplanar cliffs, erosion detail
-		# normals, grass tint, wetness and snow. Plain colours here (textures would come from LFS).
-		var tm := TerrainMaterial3D.new()
-		tm.use_generator(gen)
-		tm.detail_octaves = int(args.get("mdetail", "4"))
-		tm.update_shader()
-		ground_mat = tm
-	else:
-		var sm := StandardMaterial3D.new()
-		sm.vertex_color_use_as_albedo = true
-		sm.roughness = 0.9
-		sm.set_feature(BaseMaterial3D.FEATURE_WETNESS, true)
-		sm.wetness_porosity = 0.8
-		sm.set_feature(BaseMaterial3D.FEATURE_SNOW, true)
-		ground_mat = sm
 	ground_mesh = MeshInstance3D.new()
 	ground_mesh.name = "GroundMesh"
 	ground_mesh.mesh = mesh
 	ground_mesh.material_override = ground_mat
 	add_child(ground_mesh)
-	_log("ground %d ms" % (Time.get_ticks_msec() - t))
 
 
 # --- Water -------------------------------------------------------------------------------------------------------
