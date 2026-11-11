@@ -695,6 +695,86 @@ void WeatherMap3D::_publish_globals() {
 	globals_added = true;
 }
 
+// Season (docs/ideas/weather.md, "Season state").
+WeatherSeason::Climate WeatherMap3D::_season_climate() const {
+	WeatherSeason::Climate c;
+	const Node *clock = has_node(sky_clock) ? get_node(sky_clock) : nullptr;
+	if (clock != nullptr) {
+		c.latitude = float(clock->get("latitude"));
+	}
+	if (climate.is_valid()) {
+		// Read by name so weather does not depend on the terrain module's ClimateRecipe.
+		auto read = [&](const StringName &p_name, float &r_value) {
+			bool ok = false;
+			const Variant v = climate->get(p_name, &ok);
+			if (ok && (v.get_type() == Variant::FLOAT || v.get_type() == Variant::INT)) {
+				r_value = float(v);
+			}
+		};
+		if (clock == nullptr) {
+			read(SNAME("latitude"), c.latitude);
+		}
+		read(SNAME("reference_height"), c.reference_height);
+		read(SNAME("temperature_january"), c.temperature_january);
+		read(SNAME("temperature_july"), c.temperature_july);
+		read(SNAME("lapse_rate_january"), c.lapse_rate_january);
+		read(SNAME("lapse_rate_july"), c.lapse_rate_july);
+		read(SNAME("precipitation"), c.precipitation);
+		read(SNAME("precipitation_seasonality"), c.precipitation_seasonality);
+		read(SNAME("precipitation_peak_month"), c.precipitation_peak_month);
+		read(SNAME("rain_snow_threshold"), c.rain_snow_threshold);
+		read(SNAME("daily_temperature_spread"), c.daily_temperature_spread);
+		read(SNAME("melt_factor"), c.melt_factor);
+		read(SNAME("soil_capacity"), c.soil_capacity);
+	}
+	return c;
+}
+
+int WeatherMap3D::get_day_of_year() const {
+	const Node *clock = has_node(sky_clock) ? get_node(sky_clock) : nullptr;
+	if (clock == nullptr) {
+		return CLAMP(season_day, 1, 365);
+	}
+	static const int START[12] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
+	const int month = CLAMP(int(clock->get("month")), 1, 12);
+	const int day = CLAMP(int(clock->get("day")), 1, 31);
+	return CLAMP(START[month - 1] + day, 1, 365); // 29 February counts as 1 March
+}
+
+Dictionary WeatherMap3D::get_season() {
+	const int day = get_day_of_year();
+	if (!season_cached || day != season_cache_day || Math::abs(season_anomaly - season_cache_anomaly) > 0.25f) {
+		season_cache = WeatherSeason::compute(_season_climate(), ground_height, day, season_anomaly);
+		season_cache_day = day;
+		season_cache_anomaly = season_anomaly;
+		season_cached = true;
+	}
+	return WeatherSeason::to_dictionary(season_cache);
+}
+
+Dictionary WeatherMap3D::get_season_at_height(float p_height) const {
+	return WeatherSeason::to_dictionary(WeatherSeason::compute(_season_climate(), p_height, get_day_of_year(), season_anomaly));
+}
+
+void WeatherMap3D::set_sky_clock(const NodePath &p_path) {
+	sky_clock = p_path;
+	season_cached = false;
+}
+
+void WeatherMap3D::set_season_day(int p_day) {
+	season_day = CLAMP(p_day, 1, 365);
+	season_cached = false;
+}
+
+void WeatherMap3D::set_climate(const Ref<Resource> &p_climate) {
+	climate = p_climate;
+	season_cached = false;
+}
+
+void WeatherMap3D::set_season_anomaly(float p_kelvin) {
+	season_anomaly = p_kelvin;
+}
+
 void WeatherMap3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
@@ -730,6 +810,12 @@ void WeatherMap3D::_notification(int p_what) {
 			const double dt = get_physics_process_delta_time();
 			const double wdt = dt * time_scale;
 			_advance(wdt, dt);
+			// The live air's departure from the climate, averaged over about a month of weather time.
+			if (climate.is_valid() && wdt > 0.0) {
+				const WeatherSeason::Climate c = _season_climate();
+				const float clim = WeatherSeason::day_temperature(c, ground_height, float(get_day_of_year()));
+				season_anomaly += (cur_temperature - clim - season_anomaly) * float(1.0 - Math::exp(-wdt / (30.0 * 86400.0)));
+			}
 			update_accum += wdt;
 			const double period = time_scale / MAX(update_rate, 0.01f);
 			_follow(_follow_position());
@@ -1598,6 +1684,18 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("update_cloud_shadow"), &WeatherMap3D::update_cloud_shadow);
 	ClassDB::bind_method(D_METHOD("get_cloud_shadow_texture"), &WeatherMap3D::get_cloud_shadow_texture);
 
+	ClassDB::bind_method(D_METHOD("set_sky_clock", "path"), &WeatherMap3D::set_sky_clock);
+	ClassDB::bind_method(D_METHOD("get_sky_clock"), &WeatherMap3D::get_sky_clock);
+	ClassDB::bind_method(D_METHOD("set_season_day", "day"), &WeatherMap3D::set_season_day);
+	ClassDB::bind_method(D_METHOD("get_season_day"), &WeatherMap3D::get_season_day);
+	ClassDB::bind_method(D_METHOD("set_climate", "climate"), &WeatherMap3D::set_climate);
+	ClassDB::bind_method(D_METHOD("get_climate"), &WeatherMap3D::get_climate);
+	ClassDB::bind_method(D_METHOD("set_season_anomaly", "kelvin"), &WeatherMap3D::set_season_anomaly);
+	ClassDB::bind_method(D_METHOD("get_season_anomaly"), &WeatherMap3D::get_season_anomaly);
+	ClassDB::bind_method(D_METHOD("get_day_of_year"), &WeatherMap3D::get_day_of_year);
+	ClassDB::bind_method(D_METHOD("get_season"), &WeatherMap3D::get_season);
+	ClassDB::bind_method(D_METHOD("get_season_at_height", "height"), &WeatherMap3D::get_season_at_height);
+
 	ADD_GROUP("Map", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "extent", PROPERTY_HINT_RANGE, "16,100000,1,or_greater,suffix:m"), "set_extent", "get_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "resolution", PROPERTY_HINT_RANGE, "8,1024,1"), "set_resolution", "get_resolution");
@@ -1608,6 +1706,12 @@ void WeatherMap3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_height", PROPERTY_HINT_NONE, "suffix:m"), "set_ground_height", "get_ground_height");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "publish_shader_globals"), "set_publish_shader_globals", "get_publish_shader_globals");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "drive_environment_fog"), "set_drive_environment_fog", "get_drive_environment_fog");
+	ADD_GROUP("Season", "");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sky_clock", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "SkyClock"), "set_sky_clock", "get_sky_clock");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "season_day", PROPERTY_HINT_RANGE, "1,365,1"), "set_season_day", "get_season_day");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "climate", PROPERTY_HINT_RESOURCE_TYPE, "Resource"), "set_climate", "get_climate");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "season_anomaly", PROPERTY_HINT_RANGE, "-20,20,0.01,suffix:K"), "set_season_anomaly", "get_season_anomaly");
+
 	ADD_GROUP("Wind", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_speed", PROPERTY_HINT_RANGE, "0,60,0.1,or_greater,suffix:m/s"), "set_wind_speed", "get_wind_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_direction"), "set_wind_direction", "get_wind_direction");
