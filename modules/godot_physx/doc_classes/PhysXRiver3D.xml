@@ -157,7 +157,10 @@
 			A drop at least this tall (m), over which the water can fall clear of the ground, is a waterfall: the surface draws down to the brink depth before the lip, the water leaves it and falls as a free jet onto the water below, which boils white. Lower drops, and chutes the jet would run down, stay cascades. 0 turns waterfalls off.
 		</member>
 		<member name="fall_mist" type="bool" setter="set_fall_mist" getter="get_fall_mist" default="true">
-			Mist at the foot of each waterfall, drifting out on the air the fall drags down with it: a [code]PhysXFlowEmitter3D[/code] feeding the scene's [code]PhysXFlow3D[/code] (nothing without one, or in a build without NVIDIA Flow). Scaled with the fall's power.
+			Mist at the foot of each waterfall, drifting out on the air the fall drags down with it: a [PhysXWaterMist3D] per fall, fed with a share of the fall's water that grows with the square of its impact speed, and blown out along the pool at about 0.3 of that speed. In a scene with a [code]PhysXFlow3D[/code] (builds with NVIDIA Flow), a [code]PhysXFlowEmitter3D[/code] feeding it instead.
+		</member>
+		<member name="fall_mist_amount" type="float" setter="set_fall_mist_amount" getter="get_fall_mist_amount" default="1.0">
+			Scales the mist each fall's [PhysXWaterMist3D] is fed.
 		</member>
 		<member name="fall_spray" type="bool" setter="set_fall_spray" getter="get_fall_spray" default="true">
 			Spray thrown up where each waterfall lands: droplets launched at a share of the impact speed (a [GPUParticles3D] made by the river), scaled with the fall's power. Not in the editor.

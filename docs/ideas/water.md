@@ -1769,6 +1769,40 @@ Timings (cloud CPU, `docs/bench/water_surface --current=0.6,0.2 --bake-time=N`, 
 
 The sea's flow is the same to 0.4 mm/s (fastest 2.1 m/s), since the equation did not change there.
 
+## Step 5k: waterfall mist on every build (11 Nov, audit item 11)
+
+Mist only existed with NVIDIA Flow: each fall fed a `PhysXFlowEmitter3D`, which does nothing without a
+`PhysXFlow3D` in the scene, so the bench, the showcase and every build without Flow had spray and no mist.
+
+Now `PhysXWaterMist3D`: the finest drops (radius about 20 um) as a small grid of liquid water content
+(g/m^3) over a world-aligned box, stepped on the CPU at 15 Hz.
+
+- Physics per drop size: Stokes settling, 2/9 rho_w g r^2 / mu (4.8 cm/s at 20 um); evaporation time
+  r^2 / (2 G (1 - RH)) from the diffusional growth law r dr/dt = G (S - 1), G about 1e-10 m^2/s (Rogers
+  and Yau, A Short Course in Cloud Physics, ch. 7): 13 s at 85%, a minute at 97%, humidity from the
+  WeatherMap3D; extinction 3 Q LWC / (4 rho_w r) with Q about 2 (0.075 /m per g/m^3 at 20 um).
+- Air: the spray wind a fall drags down leaves the impact as a wall jet (Glauert 1956: thickening about
+  0.1 r, slowing as it spreads), at about 0.3 of the impact speed, never back into the cliff, with some of
+  it rising near the impact (the billow up the fall's face); plus the WeatherMap3D's wind.
+- Steps: semi-Lagrangian advection (Stam, Stable Fluids, 1999), explicit turbulent diffusion (0.5 m^2/s),
+  evaporation, the source. Parallel over z slabs.
+- Source: a share of the fall's water that grows with the square of the impact speed (atomisation by the
+  jet), `1e-5 (v / 10 m/s)^2` of the mass flow, `fall_mist_amount` to scale it.
+- Raster: a FogVolume over the box with the grid as its density texture (needs the Environment's
+  volumetric fog; density 0 and ambient inject 1 light it with the sky and add no fog of its own).
+- Path tracing: RTVolumes gained dense boxes (up to five, one atlas, density in r; `emission.w` holds the
+  count and switches `rt_volume_fetch` to them), traced by the same delta tracking and ratio tracking as
+  Flow's gas (Woodcock; Novak et al. 2014), albedo 0.999, Henyey-Greenstein g 0.85 for drops this size.
+  A frame where a PhysXFlow3D publishes its gas traces that instead (one medium a frame).
+- A scene with a PhysXFlow3D keeps the Flow emitter (a full fluid solve) instead of the grid.
+
+River bench `--falls --view=fall --mist` (6 m fall, 40 x 20 x 40 cells): step 0.46 ms + texture 0.17 ms
+of CPU, 15 times a second (about 0.3 ms a frame at 30 fps). Near the foot about 2.7 g/m^3, 0.7 five
+metres up. Raster and path tracing agree to about a third on how much the mist brightens the far bank
+(+9 and +14 grey levels): Godot's froxel fog is coarser. GPU cost of the traced mist: PC queue.
+
+Not done: rainbows (a Mie lobe at 138 degrees needs a spectral phase function; HG has none).
+
 ## Sources
 
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).

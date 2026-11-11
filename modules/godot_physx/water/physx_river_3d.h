@@ -164,6 +164,7 @@ private:
 	float fall_min_height = 1.5f; // m; 0 turns falls off (every drop stays a cascade)
 	bool fall_spray = true;
 	bool fall_mist = true;
+	float fall_mist_amount = 1.0f; // scales the mist each fall makes (its own grid, without a PhysXFlow3D)
 	Ref<ShaderMaterial> fall_material;
 	LocalVector<Fall> falls;
 	LocalVector<Node3D *> fall_effects; // spray particles and mist emitters, rebuilt with the falls
@@ -287,6 +288,8 @@ public:
 	bool get_fall_spray() const { return fall_spray; }
 	void set_fall_mist(bool p_enabled);
 	bool get_fall_mist() const { return fall_mist; }
+	void set_fall_mist_amount(float p_amount);
+	float get_fall_mist_amount() const { return fall_mist_amount; }
 	void set_fall_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_fall_material() const { return fall_material; }
 	// Each waterfall: lip and impact (world), height, speeds, break-up length.

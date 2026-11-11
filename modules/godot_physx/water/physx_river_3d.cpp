@@ -31,6 +31,7 @@
 #include "physx_river_3d.h"
 
 #include "flow_poisson.h"
+#include "physx_water_mist_3d.h"
 #include "physx_water_surface_3d.h"
 
 #include "core/config/engine.h"
@@ -399,6 +400,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_fall_spray"), &PhysXRiver3D::get_fall_spray);
 	ClassDB::bind_method(D_METHOD("set_fall_mist", "enabled"), &PhysXRiver3D::set_fall_mist);
 	ClassDB::bind_method(D_METHOD("get_fall_mist"), &PhysXRiver3D::get_fall_mist);
+	ClassDB::bind_method(D_METHOD("set_fall_mist_amount", "amount"), &PhysXRiver3D::set_fall_mist_amount);
+	ClassDB::bind_method(D_METHOD("get_fall_mist_amount"), &PhysXRiver3D::get_fall_mist_amount);
 	ClassDB::bind_method(D_METHOD("set_fall_material", "material"), &PhysXRiver3D::set_fall_material);
 	ClassDB::bind_method(D_METHOD("get_fall_material"), &PhysXRiver3D::get_fall_material);
 	ClassDB::bind_method(D_METHOD("get_waterfalls"), &PhysXRiver3D::get_waterfalls);
@@ -470,6 +473,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_min_height", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_fall_min_height", "get_fall_min_height");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_spray"), "set_fall_spray", "get_fall_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_mist"), "set_fall_mist", "get_fall_mist");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fall_mist_amount", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater"), "set_fall_mist_amount", "get_fall_mist_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fall_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_fall_material", "get_fall_material");
 	ADD_SIGNAL(MethodInfo("rebuilt"));
 	ADD_GROUP("Live flow", "");
@@ -2324,8 +2328,8 @@ void PhysXRiver3D::_build_fall_mesh() {
 // rho g Q H. Spray: droplets thrown up from the impact line at a share of the
 // impact speed (GPUParticles3D, small spheres, lit, so they show under path
 // tracing). Mist: the finest drops, which fall at a few cm/s and drift out on
-// the air the fall drags down -- a cool PhysXFlowEmitter3D feeding the
-// scene's PhysXFlow3D (it does nothing without one).
+// the air the fall drags down -- a PhysXWaterMist3D grid per fall, or a cool
+// PhysXFlowEmitter3D feeding the scene's PhysXFlow3D when it has one.
 void PhysXRiver3D::_build_fall_effects() {
 	for (Node3D *n : fall_effects) {
 		if (n != nullptr) {
@@ -2383,23 +2387,52 @@ void PhysXRiver3D::_build_fall_effects() {
 			add_child(spray, false, INTERNAL_MODE_BACK);
 			fall_effects.push_back(spray);
 		}
-#ifdef GODOT_PHYSX_FLOW
 		if (fall_mist) {
-			PhysXFlowEmitter3D *mist = memnew(PhysXFlowEmitter3D);
-			mist->set_name("FallMist");
-			Transform3D mxf = xf;
-			mxf.origin += Vector3(0, 0.6f, 0);
-			mist->set_transform(mxf);
-			mist->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
-			mist->set_size(Vector3(fall.width + 1.0f, 1.2f, 2.0f));
-			// The fall's wind: out from the foot at a fraction of the impact speed.
-			mist->set_velocity(Vector3(0, 0.4f, -0.15f * fall.impact_speed));
-			mist->set_temperature(0.0f);
-			mist->set_smoke(CLAMP(power / 100000.0f, 0.2f, 2.0f));
-			add_child(mist, false, INTERNAL_MODE_BACK);
-			fall_effects.push_back(mist);
-		}
+			bool to_flow = false;
+#ifdef GODOT_PHYSX_FLOW
+			// A scene with a PhysXFlow3D simulates the mist in its own gas grid (a full fluid solve).
+			to_flow = is_inside_tree() && !get_tree()->get_root()->find_children("*", "PhysXFlow3D", true, false).is_empty();
+			if (to_flow) {
+				PhysXFlowEmitter3D *mist = memnew(PhysXFlowEmitter3D);
+				mist->set_name("FallMist");
+				Transform3D mxf = xf;
+				mxf.origin += Vector3(0, 0.6f, 0);
+				mist->set_transform(mxf);
+				mist->set_shape(PhysXFlowEmitter3D::SHAPE_BOX);
+				mist->set_size(Vector3(fall.width + 1.0f, 1.2f, 2.0f));
+				// The fall's wind: out from the foot at a fraction of the impact speed.
+				mist->set_velocity(Vector3(0, 0.4f, -0.15f * fall.impact_speed));
+				mist->set_temperature(0.0f);
+				mist->set_smoke(CLAMP(power / 100000.0f, 0.2f, 2.0f));
+				add_child(mist, false, INTERNAL_MODE_BACK);
+				fall_effects.push_back(mist);
+			}
 #endif
+			if (!to_flow) {
+				// Otherwise its own mist grid (PhysXWaterMist3D): fed with a share of the fall's water that
+				// grows with the square of the impact speed (atomisation by the jet), blown out along the
+				// pool by the air the fall drags down (about 0.3 of the impact speed).
+				const float reach = CLAMP(4.0f + 0.6f * fall.height, 6.0f, 24.0f);
+				const float side = MAX(fall.width + 2.0f * reach, 2.0f * reach);
+				const float shift = MAX(reach - 3.0f, 0.0f);
+				PhysXWaterMist3D *mist = memnew(PhysXWaterMist3D);
+				mist->set_name("FallMist");
+				Transform3D mxf = xf;
+				mxf.origin += fall.tangent * shift;
+				mist->set_transform(mxf);
+				mist->set_size(Vector3(side, CLAMP(fall.height + 4.0f, 6.0f, 30.0f), side));
+				mist->set_cell_size(0.5f);
+				mist->set_source_position(Vector3(0.0f, 0.5f, shift));
+				mist->set_source_extents(Vector3(0.5f * fall.width + 0.5f, 0.75f, 1.0f));
+				mist->set_jet_direction(Vector3(0.0f, 0.0f, -1.0f));
+				mist->set_jet_speed(MIN(0.3f * fall.impact_speed, 12.0f));
+				const float q_total = fall.q * fall.width; // m^3/s
+				const float v = fall.impact_speed / 10.0f;
+				mist->set_source_rate(fall_mist_amount * 1e-5f * v * v * 1000.0f * q_total * 1000.0f); // g/s
+				add_child(mist, false, INTERNAL_MODE_BACK);
+				fall_effects.push_back(mist);
+			}
+		}
 	}
 	(void)c;
 }
@@ -2416,6 +2449,11 @@ void PhysXRiver3D::set_fall_spray(bool p_enabled) {
 
 void PhysXRiver3D::set_fall_mist(bool p_enabled) {
 	fall_mist = p_enabled;
+	_queue_build();
+}
+
+void PhysXRiver3D::set_fall_mist_amount(float p_amount) {
+	fall_mist_amount = MAX(p_amount, 0.0f);
 	_queue_build();
 }
 
