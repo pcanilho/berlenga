@@ -1925,7 +1925,8 @@ fork can.
   sheet under the ground on the valley layout (gorge walls); following the ground leaves 3%.
 - Per row: speed from `dv/ds = (g sin a - f v^3 / 8q) / v` (`friction_factor` 0.2), so the sheet speeds up on
   the steep part and slows on the foot; air 0 above the inception point and towards `0.9 sin a` below it over
-  about 5 m; thickness `q / v / (1 - C)`. The sheet uses the river fall shader: whiteness from `C / 0.9`,
+  about 1.5 m (the surface whitens right at the inception point; a first build with 5 m left a 16 m main-river
+  cascade with its inception at 11 m clear all the way down); thickness `q / v / (1 - C)`. The sheet uses the river fall shader: whiteness from `C / 0.9`,
   streaks scrolled with the travel time.
 - Spray (`GPUParticles3D`) at each ledge of the record and at the foot, scaled by `0.5 rho Q v^2`; a
   `PhysXWaterMist3D` box over the face with a line source along it, only for falls carrying at least

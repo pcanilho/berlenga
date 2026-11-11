@@ -318,11 +318,12 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			if (r > 0) {
 				travel += ds / MAX(0.5f * (v + prev_v), 0.1f);
 			}
-			// Air: none above the inception point, then towards C_e for the local slope over about 5 m (it
-			// detrains on the gentler steps).
+			// Air: none above the inception point, then towards C_e for the local slope.
 			const float s_from_lip = fr * len;
 			const float target = s_from_lip > li ? equilibrium_air(sin_a) : 0.0f;
-			air += (target - air) * (1.0f - Math::exp(-ds / 5.0f));
+			// The surface whitens within a metre or two of the inception point (the boundary layer breaks through
+			// there); on gentler steps it detrains as quickly.
+			air += (target - air) * (1.0f - Math::exp(-ds / 1.5f));
 			// Bulked thickness over the rock: the clear-water depth swelled by the air it carries.
 			const float depth = MAX(col.q / MAX(v, 0.1f), 0.003f) / (1.0f - MIN(air, 0.9f));
 			const Vector2 n2 = Vector2(-t.y, t.x).y < 0.0f ? Vector2(t.y, -t.x) : Vector2(-t.y, t.x);

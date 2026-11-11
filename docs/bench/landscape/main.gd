@@ -1541,7 +1541,7 @@ func _build_camera() -> void:
 					var found := false
 					# The first spot in front of the face with a clear line to its middle (gorges hide it).
 					for lift in [0.0, 0.5, 1.0, 2.0]:
-						for k in [1.2, 1.6, 2.2, 3.0, 4.0]:
+						for k in [2.0, 2.6, 3.4, 4.5]:
 							for o in [0.35, -0.35, 0.0, 0.7, -0.7]:
 								if found:
 									continue
@@ -1550,7 +1550,7 @@ func _build_camera() -> void:
 								var clear := true
 								for t in range(1, 20):
 									var p := q.lerp(mid, t / 20.0)
-									if height_at(p.x, p.z) > p.y - 0.5:
+									if height_at(p.x, p.z) > p.y - 2.0:
 										clear = false
 										break
 								if clear:
