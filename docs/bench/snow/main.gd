@@ -34,6 +34,15 @@ extends Node3D
 #   --test=transport  the wind moving lying snow (SnowTran-3D): the flux against Tabler (1991), a ridge
 #                     scoured on its windward side and crest and loaded below it in the lee, mass kept, a crust
 #                     and warm snow holding
+#   --test=failure    cornice failure: the tension crack's opening rate against Gruvefjellet (Vogel et al.
+#                     2012), the length a cold cornice falls at, a baked cornice holding a cold month and
+#                     falling in a thaw with its debris at the foot of the face, none with failure off
+#   --test=icicles    icicles: tip and wall rates (Makkonen 1988), the ratio of the two against Maeno et al.
+#                     (1994), an eave in a day of thaw over frost, water kept, thickening once the wall
+#                     freezes all of it, melting back
+#   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
+#                     first cornice falls, a moment later (the blocks tumbling)
+#   --view=icicles    a snowy roof's eave after a sunny day at -4 C: icicles in raster or path traced
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
 #                     under the boots, balls and wheel; 2 holds the boots (--close: down on the boot prints)
 #   --view=props      close: bumpy ground, boxes, a sphere, a 45 degree board and a 70 degree wall after snow
@@ -48,6 +57,9 @@ extends Node3D
 const GroundScript := preload("res://ground.gd")
 
 var view := "mountain"
+var crack_days := 0
+var fall_at := Vector3.ZERO
+var fall := false
 var raster := false
 var test := false
 var out := ""
@@ -93,6 +105,8 @@ func _ready() -> void:
 		elif a.begins_with("--melt="): melt_hours = float(a.substr(7))
 		elif a.begins_with("--crust="): crust_cycles = float(a.substr(8))
 		elif a.begins_with("--transport="): transport = a.substr(12) != "0"
+		elif a.begins_with("--crack="): crack_days = int(a.substr(8))
+		elif a == "--fall": fall = true
 	if test:
 		if only == "climate":
 			await _run_climate_tests()
@@ -102,6 +116,10 @@ func _ready() -> void:
 			await _run_crust_tests()
 		elif only == "transport":
 			await _run_transport_tests()
+		elif only == "failure":
+			await _run_failure_tests()
+		elif only == "icicles":
+			_run_icicle_tests()
 
 		else:
 			await _run_tests()
@@ -283,6 +301,8 @@ func _run_tests() -> void:
 	await _run_fall_tests()
 	await _run_shelter_tests()
 	await _run_climate_tests()
+	await _run_failure_tests()
+	_run_icicle_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -919,13 +939,18 @@ func _run_climate_tests() -> void:
 	var mild := _climate(5.0)
 	mild.january_temperature = 1.0
 	mild.base_height = -700.0
-	snow.climate = mild
-	snow.bake_climate(Rect2(-2048, -2048, 4096, 4096), 256)
-	var mild_len := 0.0
-	for z in range(-300, 300, 8):
-		for x in range(-40, 24, 4):
-			mild_len = maxf(mild_len, snow.get_cornice_at(Vector3(x, 0, z)).length())
-	_check("cornices on a milder ridge at 16 m cells", mild_len > 1.0, "%.2f m" % mild_len)
+	var mild_lens := []
+	for end_days in [151, 182]:
+		# To 1 March, and on to 1 April through its first spring thaws (follow-up 6: cornices fall).
+		mild.days = end_days
+		snow.climate = mild
+		snow.bake_climate(Rect2(-2048, -2048, 4096, 4096), 256)
+		var mild_len := 0.0
+		for z in range(-300, 300, 8):
+			for x in range(-40, 24, 4):
+				mild_len = maxf(mild_len, snow.get_cornice_at(Vector3(x, 0, z)).length())
+		mild_lens.append(mild_len)
+	_check("cornices on a milder ridge at 16 m cells, falling in its March thaws", mild_lens[0] > 1.0 and mild_lens[1] < mild_lens[0], "%.2f m on 1 March, %.2f m on 1 April" % [mild_lens[0], mild_lens[1]])
 	_check("no cornices in light wind", lengths[1][0].length() < 0.3, "%.2f m" % lengths[1][0].length())
 	_check("gales keep them short", lengths[2][0].length() < good.length() * 0.5, "%.2f m against %.2f m" % [lengths[2][0].length(), good.length()])
 	# The mesh, with collision.
@@ -954,6 +979,114 @@ func _run_climate_tests() -> void:
 			hits += 1
 	_check("cornice mesh: overhangs with collision", cor.get_segment_count() > 10 and tries > 0 and hits >= tries * 0.8, "%d segments; a ray down halfway out stops on the cornice above the lee face in %d of %d places" % [cor.get_segment_count(), hits, tries])
 	cor.queue_free()
+
+
+func _longest_cornice() -> Vector3:
+	# The crest cell with the longest cornice on the cornice ridge (x, z, length).
+	var best := Vector3.ZERO
+	for z in range(-300, 300, 8):
+		for x in range(-16, 8, 4):
+			var l := snow.get_cornice_at(Vector3(x, 0, z)).length()
+			if l > best.z:
+				best = Vector3(x, z, l)
+	return best
+
+
+func _run_failure_tests() -> void:
+	print("Cornice failure (follow-up 6):")
+	var cold := SnowCover3D.cornice_crack_rate(4.0, 0.0, -5.0, 0.0) * 100.0
+	var zero := SnowCover3D.cornice_crack_rate(4.0, 0.0, 0.0, 0.0) * 100.0
+	var wet := SnowCover3D.cornice_crack_rate(4.0, 0.0, 0.0, 0.08) * 100.0
+	var late := SnowCover3D.cornice_crack_rate(4.0, 0.3, 0.0, 0.08) * 100.0
+	_check("crack opening rate against Gruvefjellet (0.4 to 2.8 cm a day, 8.6 before failing; Vogel et al. 2012)", cold > 0.3 and cold < 2.8 and zero > cold and zero < 2.8 and wet > zero and late > wet and late < 20.0, "4 m slab: %.2f cm/day at -5 C, %.2f at 0 C, %.2f wet, %.2f wet with the crack 30 cm open" % [cold, zero, wet, late])
+	var fall_len := 0.0
+	for i in 400:
+		var l := 0.05 * i
+		if SnowCover3D.cornice_root_stress(l, 0.0, 0.0) > SnowCover3D.cornice_strength(0.0):
+			fall_len = l
+			break
+	_check("a cold, uncracked cornice falls near the longest field cornices", fall_len > 7.0 and fall_len < 13.0, "at %.1f m (root strength %.1f kPa)" % [fall_len, SnowCover3D.cornice_strength(0.0)])
+	# A baked ridge (1 April), left in calm cold, in a calm thaw, and with failure off: the day the longest
+	# cornice falls, its crack after a week, the debris below.
+	var days := {}
+	for mode in ["cold", "thaw", "off"]:
+		await _setup("cornice", 256.0, 64, -10.0)
+		snow.cornice_failure_enabled = mode != "off"
+		snow.climate = _alpine(5.0)
+		snow.bake_climate(Rect2(-512, -512, 1024, 1024), 128)
+		var failures := []
+		snow.cornice_failed.connect(func(pos, dir, length, mass): failures.append([pos, dir, length, mass]))
+		weather.wind_speed = 1.0
+		weather.temperature = 1.5 if mode == "thaw" else -10.0
+		weather.snap_to_settings()
+		weather.advance(1.0)
+		var c0 := _longest_cornice()
+		var at0 := Vector3(c0.x, 0, c0.y)
+		var lee0 := []
+		for k in 24:
+			lee0.append(snow.get_world_swe_at(Vector3(c0.x + 8.0 * (k + 1), 0, c0.y)))
+		var day := -1
+		var week_crack := 0.0
+		for d in 60:
+			snow.advance_world(86400.0)
+			if d == 6:
+				week_crack = snow.get_cornice_crack_at(at0)
+			if day < 0 and snow.get_cornice_at(at0).length() < 0.25 * c0.z:
+				day = d + 1
+				if mode != "off":
+					break
+		days[mode] = day
+		if mode == "off":
+			_check("failure off: none fall", failures.size() == 0 and snow.get_cornice_failure_count() == 0, "%d" % failures.size())
+			continue
+		var mass := 0.0
+		for f in failures:
+			mass += f[3]
+		var gain := -INF
+		var out := 0.0
+		for k in 24:
+			var g: float = snow.get_world_swe_at(Vector3(c0.x + 8.0 * (k + 1), 0, c0.y)) - lee0[k]
+			if g > gain:
+				gain = g
+				out = 8.0 * (k + 1)
+		print("  %s: the longest cornice %.1f m, its crack %.1f cm after a week, gone on day %d; %d failures on the ridge (%.0f t), %.0f mm more snow %.0f m out from the crest" % [mode, c0.z, week_crack * 100.0, day, failures.size(), mass / 1000.0, gain, out])
+		if mode == "cold":
+			_check("calm cold: the crack opens about a centimetre a day, the cornice falls after weeks, not days (4 to 5 weeks from crack to failure at Gruvefjellet; Vogel et al. 2012)", week_crack > 0.03 and week_crack < 0.2 and day > 14, "%.1f cm after a week, gone on day %d" % [week_crack * 100.0, day])
+			if failures.size() > 0:
+				var f: Array = failures[0]
+				_check("a failed slab falls out over the lee, its debris lands below", f[1].x > 0.8 and f[2] > 0.5 and gain > 0.0, "direction %s, %.1f m long; %.0f mm of debris" % [str(f[1]), f[2], gain])
+		else:
+			_check("a thaw brings them down sooner", day > 0 and day < days["cold"], "day %d against %d" % [day, days["cold"]])
+
+
+func _run_icicle_tests() -> void:
+	print("Icicles (follow-up 6):")
+	var tip_still := SnowIcicles3D.tip_growth_rate(-10.0, 0.0) * 100.0
+	var tip_wind := SnowIcicles3D.tip_growth_rate(-10.0, 2.0) * 100.0
+	var wall_still := SnowIcicles3D.wall_growth_rate(-10.0, 0.0, 0.01, 0.2) * 2000.0
+	var wall_wind := SnowIcicles3D.wall_growth_rate(-10.0, 2.0, 0.01, 0.2) * 2000.0
+	print("  at -10 C: tip %.2f cm/h still, %.2f at 2 m/s; diameter of a 20 cm icicle %.2f mm/h still, %.2f at 2 m/s" % [tip_still, tip_wind, wall_still, wall_wind])
+	var ratio := tip_still * 10.0 / wall_still
+	_check("length against diameter growth in still air (8 to 32 measured; Maeno et al. 1994)", ratio > 4.0 and ratio < 64.0, "%.1f" % ratio)
+	_check("colder and windier grow faster, none above 0 C", SnowIcicles3D.tip_growth_rate(-20.0, 0.0) > SnowIcicles3D.tip_growth_rate(-5.0, 0.0) and tip_wind > tip_still and SnowIcicles3D.tip_growth_rate(1.0, 2.0) == 0.0, "tip at -5 C %.2f, -20 C %.2f cm/h" % [SnowIcicles3D.tip_growth_rate(-5.0, 0.0) * 100.0, SnowIcicles3D.tip_growth_rate(-20.0, 0.0) * 100.0])
+	var ice := SnowIcicles3D.new()
+	ice.edge = PackedVector3Array([Vector3(-1, 0, 0), Vector3(1, 0, 0)])
+	# Melt off a sunny roof: 0.3 mm/h over a 3 m catchment, 6 hours a day, at -4 C and still air.
+	var supplied := 0.0
+	for day in 3:
+		ice.grow(6.0, -4.0, 0.5, 0.9)
+		supplied += 6.0 * 0.9 * 2.0
+		ice.grow(18.0, -8.0, 0.5, 0.0)
+	var longest := ice.get_longest()
+	_check("three sunny days at -4 C grow icicles", longest > 0.1 and longest < 1.5, "longest %.2f m of %d sites, %.3f kg of ice" % [longest, ice.get_icicle_count(), ice.get_ice_mass()])
+	_check("ice is no more than the water that came", ice.get_ice_mass() <= supplied * 1.001, "%.3f kg of %.3f kg supplied (%.3f kg/h dripped on the last day)" % [ice.get_ice_mass(), supplied, ice.get_last_dripped()])
+	var l0 := ice.get_longest()
+	var m0 := ice.get_ice_mass()
+	ice.grow(24.0, -8.0, 0.5, 0.004)
+	_check("a trickle the wall freezes: thicker, no longer (Szilder and Lozowski 1994)", ice.get_longest() < l0 + 0.002 and ice.get_ice_mass() > m0, "longest %.3f to %.3f m, %.3f to %.3f kg" % [l0, ice.get_longest(), m0, ice.get_ice_mass()])
+	ice.grow(12.0, 4.0, 2.0, 0.0)
+	_check("a thaw melts them back", ice.get_longest() < l0 * 0.8, "%.3f m after 12 h at +4 C" % ice.get_longest())
+	ice.free()
 
 
 func _snow_line() -> float:
@@ -985,7 +1118,7 @@ func _build_view() -> void:
 		await _setup("flat", 32.0, 128, -6.0)
 	elif view == "windblown":
 		await _setup("ridge", 512.0, 256, -8.0)
-	elif view == "shelter":
+	elif view == "shelter" or view == "icicles":
 		await _setup("flat", 32.0, 128, -6.0)
 	else:
 		await _setup("flat", 32.0, 128, -4.0)
@@ -1033,6 +1166,9 @@ func _build_view() -> void:
 		return
 	elif view == "shelter":
 		await _build_shelter(cam)
+		return
+	elif view == "icicles":
+		await _build_icicles(cam)
 		return
 	else:
 		snow.drift_enabled = false
@@ -1236,7 +1372,7 @@ func _build_climate(cam: Camera3D) -> void:
 	else:
 		snow.climate = _alpine(5.0)
 		snow.bake_climate(Rect2(-512, -512, 1024, 1024), 128)
-		_add_terrain(1024.0, 512, Color(0.36, 0.34, 0.31), 64.0)
+		_add_terrain(1024.0, 512, Color(0.36, 0.34, 0.31), 64.0, fall)
 		var cor := SnowCornice3D.new()
 		cor.name = "Cornices"
 		cor.follow_target = NodePath("../Ground")
@@ -1246,12 +1382,44 @@ func _build_climate(cam: Camera3D) -> void:
 		for z in range(-80, 81, 16):
 			row += " %d: %.1f" % [z, snow.get_cornice_at(Vector3(-4, 0, z)).length()]
 		print(row, ", %d segments" % cor.get_segment_count())
+		if crack_days > 0 or fall:
+			# A calm thaw after the bake: the tension cracks open (follow-up 6); with --fall, on until the
+			# first cornice in view falls, then a moment for its blocks to tumble.
+			weather.wind_speed = 1.0
+			weather.temperature = 1.0
+			weather.snap_to_settings()
+			weather.advance(1.0)
+			var n0 := snow.get_cornice_failure_count()
+			var fell := []
+			snow.cornice_failed.connect(func(pos, dir, length, mass): fell.append(pos))
+			for d in (crack_days if crack_days > 0 else 60):
+				snow.advance_world(86400.0)
+				if fall and fell.size() > 0:
+					print("a cornice fell on day %d (%d along the ridge), %d blocks, at %s" % [d + 1, snow.get_cornice_failure_count() - n0, cor.get_debris_count(), str(fell[0])])
+					fall_at = fell[0]
+					break
+			if not fall:
+				cor.rebuild()
+			var crow := "cracks along the crest (cm):"
+			for z in range(-80, 81, 16):
+				crow += " %d: %.0f" % [z, snow.get_cornice_crack_at(Vector3(-4, 0, z)) * 100.0]
+			print(crow)
 		# From the lee side, along the crest, so the overhang shows in profile; morning sun from the south-east.
 		sun.rotation_degrees = Vector3(-30.0, 50.0, 0.0)
 		cam.position = Vector3(26.0, 146.0, 40.0)
 		cam.far = 3000.0
 		cam.look_at(Vector3(-2.0, 150.0, -10.0))
 		cam.fov = 50.0
+		if fall_at != Vector3.ZERO:
+			# From the lee, across the face below where it broke off, the blocks a moment into their fall.
+			cam.position = fall_at + Vector3(28.0, -4.0, 20.0)
+			cam.look_at(fall_at + Vector3(3.0, -6.0, 0.0))
+			for f in 40:
+				await get_tree().physics_frame
+		elif crack_days > 0:
+			# Close over a cornice's roof, from the windward side, to see its crack.
+			cam.position = Vector3(-14.0, 157.0, 10.0)
+			cam.look_at(Vector3(2.0, 146.0, -2.0))
 	var we: WorldEnvironment = null
 	for c in get_children():
 		if c is WorldEnvironment:
@@ -1292,6 +1460,55 @@ func _build_windblown(cam: Camera3D) -> void:
 	cam.fov = 45.0
 	for i in 4:
 		await get_tree().physics_frame
+	await _save_frame("")
+	get_tree().quit()
+
+
+func _build_icicles(cam: Camera3D) -> void:
+	# A lean-to shed after a snowfall and three sunny days at -4 C: melt off its roof freezes at the eave.
+	snow.drift_enabled = false
+	sun.visible = true
+	sun.shadow_enabled = true
+	# A low afternoon sun from behind the shed, so light comes through the ice.
+	sun.rotation_degrees = Vector3(-18.0, 160.0, 0.0)
+	_add_terrain(32.0, 128, Color(0.36, 0.33, 0.28), 2.0)
+	snow.height_source = NodePath("")
+	var floor_body := StaticBody3D.new()
+	var floor_shape := CollisionShape3D.new()
+	floor_shape.shape = WorldBoundaryShape3D.new()
+	floor_body.add_child(floor_shape)
+	add_child(floor_body)
+	var wood := _ground_material(Color(0.42, 0.28, 0.16), 1.0)
+	_prop(BoxMesh.new(), Vector3(5.0, 0.12, 3.4), Vector3(-2.5, 2.6, -1.5), Vector3(10, 0, 0), wood)
+	for p in [Vector3(-4.8, 1.25, -0.1), Vector3(-0.2, 1.25, -0.1), Vector3(-4.8, 1.25, -2.9), Vector3(-0.2, 1.25, -2.9)]:
+		var post := MeshInstance3D.new()
+		post.mesh = BoxMesh.new()
+		post.scale = Vector3(0.15, 2.5, 0.15)
+		post.position = p
+		post.material_override = wood
+		add_child(post)
+	weather.rebake_shelter()
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	snow.refresh_heights()
+	_precipitate(10.0, 2.0)
+	# The roof's front edge: 1.7 m out from its middle, dropped by its 10 degree slope, under its thickness.
+	# Rooted a little inside the roof.
+	var eave_y := 2.6 - 1.7 * sin(deg_to_rad(10.0)) - 0.03
+	var ice := SnowIcicles3D.new()
+	ice.name = "Icicles"
+	ice.spacing = 0.12
+	ice.edge = PackedVector3Array([Vector3(-4.95, eave_y, 0.17), Vector3(-0.05, eave_y, 0.17)])
+	add_child(ice)
+	# Three days: six hours of melt off the sunny roof (0.3 mm/h over its 3.4 m) at -4 C, then a night at -8 C.
+	for day in 3:
+		ice.grow(6.0, -4.0, 0.5, 0.3 * 3.4)
+		ice.grow(18.0, -8.0, 0.5, 0.0)
+	print("icicles: %d sites, longest %.2f m, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), ice.get_ice_mass()])
+	cam.position = Vector3(-1.5, 1.85, 1.25)
+	cam.look_at(Vector3(-2.1, 2.08, 0.17))
+	cam.fov = 50.0
+	await get_tree().process_frame
 	await _save_frame("")
 	get_tree().quit()
 
@@ -1558,7 +1775,7 @@ func _ground_material(color: Color, tile: float) -> StandardMaterial3D:
 	return m
 
 
-func _add_terrain(extent: float, cells: int, color: Color, tile: float) -> void:
+func _add_terrain(extent: float, cells: int, color: Color, tile: float, collide := false) -> void:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var step := extent / cells
@@ -1584,6 +1801,13 @@ func _add_terrain(extent: float, cells: int, color: Color, tile: float) -> void:
 	mi.mesh = st.commit()
 	mi.material_override = _ground_material(color, tile)
 	add_child(mi)
+	if collide:
+		# For bodies that fall on it (the blocks of a failed cornice).
+		var body := StaticBody3D.new()
+		var shape := CollisionShape3D.new()
+		shape.shape = mi.mesh.create_trimesh_shape()
+		body.add_child(shape)
+		add_child(body)
 
 
 func _add_props() -> void:

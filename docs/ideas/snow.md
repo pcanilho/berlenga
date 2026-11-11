@@ -739,3 +739,123 @@ high-resolution normal-mapped specular surfaces, SIGGRAPH 2014. Chermain, Sauvag
 Dachsbacher, Procedural physically based BRDF for real-time rendering of glints, Pacific Graphics 2020.
 Atanasov and Koylazov, A practical stochastic algorithm for rendering mirror-like flakes, SIGGRAPH 2016
 Talks.
+
+## Follow-up 6: cornices that fall, and icicles (built 11 Nov 2026)
+
+### Cornice failure
+
+Field studies on Svalbard measured what a cornice does before it falls. Vogel, Eckerstorfer and
+Christiansen (2012) found that a tension crack opens behind the cornice, where the shallow snow of the
+plateau meets the thick cornice. The slab tilts out about a fixed pivot and the crack opens almost
+linearly, at 0.4 to 2.8 cm a day. It opened at 8.6 cm a day in the days before a complete failure.
+Failure came four to five weeks after a crack opened, most often in the June thaw, with rain and warm
+storms as triggers. Hancock, Eckerstorfer, Prokop and Hendrikx (2020) scanned cornices with lidar and
+found most falls coincided with winter storms that loaded them; one fell after rain.
+
+- **The load.** Treat the overhang as a cantilever that thins from its root to the lip. At the root it
+  is as thick as it is long, which is stage 4's profile. Its bending stress at the root is `rho g L`:
+  450 kg/m3 wind-packed snow, plus the weight of its liquid water. The tension crack cuts into the
+  section. A crack open to a tenth of the length (a tilt of about 6 degrees) takes 60% of it, so the
+  stress rises as `1 / (1 - 0.6 s)^2`.
+- **The strength.** Sommerfeld (1971) gives the most snow holds in tension:
+  `log10 sigma = -4.3 + 3 log10 rho`, with sigma in 100 Pa, which is 457 kPa at 450 kg/m3. A slab
+  metres across fails at its weakest flaw. McClung's (1979) large samples hold much less, so we take a
+  tenth. Melt water weakens the bonds, by `1 / (1 + 20 theta)`; that factor is our pick. A cold,
+  uncracked cornice therefore falls at 10.4 m, near the longest field cornices (stage 4 caps growth at
+  12 m).
+- **The creep.** The crack opens at `L sigma / eta`. Here eta is the snow viscosity of Crocus
+  (Vionnet et al. 2012):
+  `eta0 rho / 250 exp(0.1 (0 C - T) + 0.023 rho) / (1 + 60 theta)`.
+  For a 4 m cornice that gives 0.86 cm a day at -5 C, 1.42 at 0 C and 4.9 wet, the range measured at
+  Gruvefjellet. With the crack 30 cm open, wet, it reaches 16 cm a day.
+- **Filling.** Snow the wind lays on the cornice fills its crack as fast as the slab grows. That is our
+  pick: cracks open in calm, mild spells, as observed.
+- **The fall.** When the stress passes the strength, the slab beyond the crack falls: 0.9 L^2 of
+  profile per metre of crest. It lands as 500 kg/m3 debris on the first cell downwind where the ground
+  flattens under 30 degrees. The debris goes into both the world tier and the near square.
+  `SnowCover3D` emits `cornice_failed(position, direction, length, mass)`. Near the camera,
+  `SnowCornice3D` breaks the slab into 3 to 16 rigid chunks that tumble down the face: rounded,
+  irregular balls a third of the cornice's length across, with convex colliders. They are removed after
+  `debris_lifetime`. The drawn cornice shows its crack: the roof opens and the slab tilts out about a
+  pivot low in its root.
+
+**Checks** (`--test=failure`):
+- The crack rates above.
+- A cold cornice falls at 10.4 m.
+- A baked ridge at 1 April, left in calm at -10 C, has its longest cornice (5.7 m) open its crack 7.4 cm
+  in a week and fall on day 20. In a calm thaw at +1.5 C it falls on day 5.
+- The debris lands 144 m out below the face.
+- With failure off, none fall.
+
+**Shots.** `--view=cornice --crack=4` shows the crack across a cornice's roof after four days of thaw.
+`--view=cornice --fall` shows the first cornice to fall in that thaw (day 5), seen from the lee two
+thirds of a second later, its chunks tumbling down the face below the bare crest.
+
+Over a baked winter, cornices now fall and regrow. On the cold alpine ridge the longest at 1 April is
+5.7 m (it was 4.2 m without failure, since cracks filled by accretion let others grow longer before
+they fall). On the mild 16 m ridge they are 3.1 m on 1 March and gone by 1 April after its March
+thaws, so a showcase wanting cornices there should end its bake by 1 March.
+
+### Icicles
+
+`SnowIcicles3D` grows icicles along an edge: a line of points, such as an eave or a ledge. They grow
+where melt water runs off the snow above into air below freezing.
+
+- **The water.** It comes from `SnowCover3D.get_runoff_at()` at the edge, times `catchment_length`. A
+  heated roof adds `heat_loss` (W/m2) melting the snow from below, which is how icicles and ice dams
+  form on houses. Water gathers into runnels, so each place along the edge gets `3 r^2` of the mean.
+  Some places grow long icicles; many stay short.
+- **Growth.** This follows Makkonen (1988), with the two stages of Szilder and Lozowski (1994). Heat
+  leaves the wet ice at 0 C by:
+  - convection, taking the larger of forced and free: Ranz-Marshall and Churchill for the tip's drop,
+    Churchill-Bernstein and Churchill-Chu for the wall;
+  - evaporation into the air's humidity, by the Lewis relation;
+  - long-wave radiation at `4 sigma T^3`.
+
+  While water reaches the tip, the tip lengthens as a tube of spongy ice holding 26% liquid. The tube is
+  as wide as the 5 mm pendant drop: `dL/dt = 2 q / (rho_i Lf 0.74)`, 1.05 cm/h at -10 C in still air
+  and 4.3 cm/h at 2 m/s. The wall thickens as its wetted half freezes the running film. That share,
+  0.5, is our pick. It puts length growth at 8.2 times diameter growth, the low end of the 8 to 32
+  Maeno, Makkonen, Nishimura, Kosugi and Takahashi (1994) measured. A balance over the whole wall gives
+  4. Water the wall and tip do not freeze drips. Once the wall freezes all the water, the icicle only
+  thickens. Above 0 C the same coefficients melt it back. An icicle thinned to the drop's size at its
+  root falls.
+- **Look.** Each icicle is a cone with ten sides, from its root radius down to the drop (Szilder and
+  Lozowski: close to conical). The material is clear ice: transmission, IOR 1.31, specular 0.335 for
+  1.8% reflectance, no absorption over a few centimetres. Centimetre ripples along it come from a
+  normal map (Ueno 2003; Chen and Morris 2013: about 1 cm whatever the icicle).
+
+**Checks** (`--test=icicles`):
+- The rates above. Colder and windier grow faster; nothing grows above 0 C.
+- An edge with three sunny days at -4 C (melt for six hours, then a night at -8 C) grows icicles up
+  to 22 cm, 1.1 kg of ice from 32 kg of water. The rest dripped.
+- A trickle the wall can freeze thickens them without lengthening them.
+- Twelve hours at +4 C melt the longest back from 22 to 13 cm.
+
+`--view=icicles` shows a shed's eave after the same three days, in raster and path traced.
+
+**Not built:**
+- Supercooled water and the slower length growth Maeno et al. found with more water.
+- Sunlight melting icicles below 0 C.
+- Icicles falling as rigid bodies.
+- Icicles along cornice lips and rock.
+- A cornice's own mass taken from the snow it is built from (stage 4 adds it).
+
+Sources:
+- Vogel, Eckerstorfer and Christiansen, Cornice dynamics and meteorological control at Gruvefjellet,
+  Central Svalbard, The Cryosphere 6, 2012.
+- Hancock, Eckerstorfer, Prokop and Hendrikx, Quantifying seasonal cornice dynamics using a
+  terrestrial laser scanner in Svalbard, Norway, NHESS 20, 2020.
+- Sommerfeld, The relationship between density and tensile strength in snow, J. Glaciology 10(60),
+  1971.
+- McClung, In-situ estimates of the tensile strength of snow utilizing large sample sizes,
+  J. Glaciology 22(87), 1979.
+- Vionnet et al., The detailed snowpack scheme Crocus and its implementation in SURFEX v7.2, GMD 5,
+  2012.
+- Makkonen, A model of icicle growth, J. Glaciology 34(116), 1988.
+- Szilder and Lozowski, An analytical model of icicle growth, Annals of Glaciology 19, 1994.
+- Maeno, Makkonen, Nishimura, Kosugi and Takahashi, Growth rates of icicles, J. Glaciology 40(135),
+  1994.
+- Ueno, Morphological instability of the solid-liquid interface in crystal growth under supercooled
+  liquid film flow and natural convection airflow, Physics of Fluids 15, 2003.
+- Chen and Morris, On the origin and evolution of icicle ripples, New Journal of Physics 15, 2013.

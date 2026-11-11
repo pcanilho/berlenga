@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SnowIcicles3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Grows icicles where melt water runs off an edge into air below freezing.
+	</brief_description>
+	<description>
+		Icicles along [member edge], such as a roof's eave or a ledge, from melt water running off the snow above while the air is below 0 °C: a sunny roof at -4 °C, or a warm roof melting its snow from below ([member heat_loss]). Each icicle grows by the heat its tip and wall lose to the air (Makkonen 1988; Szilder and Lozowski 1994): while water reaches the tip it lengthens as a tube of spongy ice around the pendant drop and the rest drips; the wall thickens with the film running down it; once the wall freezes all the water, the icicle only thickens. Above 0 °C they melt back. Water gathers into a few runnels along an edge, so some places grow long icicles and many stay short. Drawn as cones of clear ice (transmission, index of refraction 1.31) with centimetre ripples along them (Ueno 2003; Chen and Morris 2013), in raster and under path tracing.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="hours" type="float" />
+			<description>
+				Grows the icicles over [param hours] with the conditions at the edge now: [SnowCover3D]'s melt water running off the snow above ([method SnowCover3D.get_runoff_at]) over [member catchment_length], plus [member heat_loss] melting it from below, its air temperature, and the [WeatherMap3D]'s wind and humidity. Called on each update of the active [SnowCover3D].
+			</description>
+		</method>
+		<method name="clear">
+			<return type="void" />
+			<description>
+				Removes all ice.
+			</description>
+		</method>
+		<method name="get_ice_mass" qualifiers="const">
+			<return type="float" />
+			<description>
+				The ice of all the icicles, in kg.
+			</description>
+		</method>
+		<method name="get_icicle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many places along the edge can grow an icicle.
+			</description>
+		</method>
+		<method name="get_icicle_length" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="index" type="int" />
+			<description>
+				The length of icicle [param index], in metres (0: none).
+			</description>
+		</method>
+		<method name="get_icicle_radius" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="index" type="int" />
+			<description>
+				The radius at the root of icicle [param index], in metres.
+			</description>
+		</method>
+		<method name="get_last_dripped" qualifiers="const">
+			<return type="float" />
+			<description>
+				The water that dripped off the tips in the last step, kg/h.
+			</description>
+		</method>
+		<method name="get_last_supply" qualifiers="const">
+			<return type="float" />
+			<description>
+				The water that reached the icicles in the last step, kg/h.
+			</description>
+		</method>
+		<method name="get_longest" qualifiers="const">
+			<return type="float" />
+			<description>
+				The longest icicle, in metres.
+			</description>
+		</method>
+		<method name="grow">
+			<return type="void" />
+			<param index="0" name="hours" type="float" />
+			<param index="1" name="celsius" type="float" />
+			<param index="2" name="wind" type="float" />
+			<param index="3" name="supply" type="float" />
+			<param index="4" name="humidity" type="float" default="0.8" />
+			<description>
+				Grows (or, above 0 °C, melts) the icicles over [param hours] with the air at [param celsius] and [param humidity], a wind of [param wind] m/s and [param supply] kg of water an hour reaching each metre of edge.
+			</description>
+		</method>
+		<method name="tip_growth_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<param index="1" name="wind" type="float" />
+			<param index="2" name="humidity" type="float" default="0.8" />
+			<description>
+				How fast an icicle lengthens with water enough, in m/h: the pendant drop at its tip loses heat to the air by convection (the larger of forced and free), evaporation and radiation (Makkonen 1988), freezing a tube of spongy ice holding 26% water as wide as the drop. About 1 cm/h at -10 °C in still air, 4 at 2 m/s.
+			</description>
+		</method>
+		<method name="wall_growth_rate" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="celsius" type="float" />
+			<param index="1" name="wind" type="float" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="length" type="float" />
+			<param index="4" name="humidity" type="float" default="0.8" />
+			<description>
+				How fast an icicle [param length] m long and [param radius] m at its root thickens, in m/h of radius: the film running down it freezes as fast as the wetted half of the wall loses heat. In still air at -10 °C length grows about 8 times as fast as diameter, the low end of the 8 to 32 Maeno et al. (1994) measured.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="catchment_length" type="float" setter="set_catchment_length" getter="get_catchment_length" default="3.0">
+			How far up the roof or slope above the edge the melt water comes from, in metres.
+		</member>
+		<member name="edge" type="PackedVector3Array" setter="set_edge" getter="get_edge" default="PackedVector3Array()">
+			The edge the icicles hang from, as a line of points in local space.
+		</member>
+		<member name="heat_loss" type="float" setter="set_heat_loss" getter="get_heat_loss" default="0.0">
+			Heat leaking through the roof under the snow, in W/m², melting it from below while there is snow (the source of icicles and ice dams on heated buildings). 0 for an unheated roof or a rock ledge.
+		</member>
+		<member name="material" type="Material" setter="set_material" getter="get_material">
+			The material; empty uses clear ice.
+		</member>
+		<member name="max_length" type="float" setter="set_max_length" getter="get_max_length" default="1.5">
+			The longest an icicle grows, in metres.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Seeds where along the edge the water gathers.
+		</member>
+		<member name="spacing" type="float" setter="set_spacing" getter="get_spacing" default="0.15">
+			How far apart icicles can hang, in metres.
+		</member>
+	</members>
+</class>
