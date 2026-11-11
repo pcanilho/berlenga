@@ -129,6 +129,10 @@ func _ready() -> void:
 	if args.has("test"):
 		get_tree().quit(0)
 		return
+	if landscape != null:
+		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
+		landscape.load_all_heights()
+		landscape.update_lods_from_camera()
 	var frames := int(args.get("frames", "6" if args.has("raster") else "40"))
 	for i in frames:
 		await get_tree().process_frame
