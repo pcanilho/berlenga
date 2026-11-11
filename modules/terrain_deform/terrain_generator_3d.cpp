@@ -689,6 +689,45 @@ bool TerrainGenerator3D::generate() {
 			hardness[i] = float(strata_weight(h[i] - up[i] * strata_time + strata_offset[i]));
 		}
 	}
+	// Abandoned slots on the fans: the single-direction rivers switch cells from step to step on a depositing
+	// surface and each leaves a one-cell trench in the toe (a channel the river has since left). Real fans backfill
+	// abandoned channels (avulsion, Bryant et al. 1995; Jerolmack and Paola 2007). A cell on alluvium lower than six
+	// or more of its eight neighbours by half a metre, carrying less than a river's area, fills to the median of its
+	// neighbours (an edge-keeping filter: steps and scarps stay). Two passes.
+	last_slots_filled = 0;
+	if (result_deposition && fan_backfill) {
+		const double river_area = 1.0e5;
+		for (int pass = 0; pass < 2; pass++) {
+			for (int z = 1; z < ny - 1; z++) {
+				for (int x = 1; x < nx - 1; x++) {
+					const int i = z * nx + x;
+					if (sed[i] < 0.3 || area[i] >= river_area) {
+						continue;
+					}
+					double nb[8];
+					int k = 0, higher = 0;
+					for (int dz = -1; dz <= 1; dz++) {
+						for (int dx = -1; dx <= 1; dx++) {
+							if (dx == 0 && dz == 0) {
+								continue;
+							}
+							nb[k] = h[i + dz * nx + dx];
+							higher += nb[k] > h[i] + 0.5 ? 1 : 0;
+							k++;
+						}
+					}
+					if (higher < 6) {
+						continue;
+					}
+					std::sort(nb, nb + 8);
+					const double med = 0.5 * (nb[3] + nb[4]);
+					sed[i] += med - h[i];
+					h[i] = med;
+					last_slots_filled++;
+				}
+			}
+		}
+	}
 	sp.route();
 	if (!unfilled.is_empty()) {
 		// The basins the ice wore stay: the receivers and areas come from the filled surface (water crosses the
@@ -4062,6 +4101,9 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_gorge_age"), &TerrainGenerator3D::get_gorge_age);
 	ClassDB::bind_method(D_METHOD("set_gorge_rate", "rate"), &TerrainGenerator3D::set_gorge_rate);
 	ClassDB::bind_method(D_METHOD("get_gorge_rate"), &TerrainGenerator3D::get_gorge_rate);
+	ClassDB::bind_method(D_METHOD("set_fan_backfill", "enable"), &TerrainGenerator3D::set_fan_backfill);
+	ClassDB::bind_method(D_METHOD("get_fan_backfill"), &TerrainGenerator3D::get_fan_backfill);
+	ClassDB::bind_method(D_METHOD("get_last_slots_filled"), &TerrainGenerator3D::get_last_slots_filled);
 	ClassDB::bind_method(D_METHOD("set_plunge_pools", "enable"), &TerrainGenerator3D::set_plunge_pools);
 	ClassDB::bind_method(D_METHOD("get_plunge_pools"), &TerrainGenerator3D::get_plunge_pools);
 	ClassDB::bind_method(D_METHOD("set_fall_lips", "enable"), &TerrainGenerator3D::set_fall_lips);
@@ -4227,6 +4269,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lake_evaporation", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:mm/yr"), "set_lake_evaporation", "get_lake_evaporation");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_lips"), "set_fall_lips", "get_fall_lips");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunge_pools"), "set_plunge_pools", "get_plunge_pools");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fan_backfill"), "set_fan_backfill", "get_fan_backfill");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_age", PROPERTY_HINT_RANGE, "0,100000,100,or_greater,suffix:yr"), "set_gorge_age", "get_gorge_age");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_rate", PROPERTY_HINT_RANGE, "0,0.1,0.0001,or_greater"), "set_gorge_rate", "get_gorge_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_cell", PROPERTY_HINT_RANGE, "0,32,0.5,suffix:m"), "set_spray_cell", "get_spray_cell");

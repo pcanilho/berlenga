@@ -8,4 +8,5 @@
 - `gorge_age`, `gorge_rate`: lips over hard rock wear back upstream (knickpoint retreat, rate times sqrt(Q), a twentieth in massive rock) and leave a slot gorge below the fall; never into a lake. `get_waterfalls()` reports the fall at the gorge's head.
 - `get_boulders(rect, density)`: blocks shed by cliffs, resting where their travel angle drops below the shadow angle, larger blocks further out; (x, y, z, radius) for placement.
 ### Fixed
+- Abandoned one-cell river slots on fans are backfilled (`fan_backfill`, on).
 - Detail no longer fades on faces steeper than loose fill can stand, however much sediment the cells around them hold.

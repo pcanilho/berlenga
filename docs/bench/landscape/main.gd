@@ -262,6 +262,7 @@ func _generate() -> void:
 	# Rock beds stepped into cliff faces (ledges), --ledges=0 for smooth faces.
 	gen.cliff_ledge_spacing = float(args.get("ledges", "16"))
 	gen.gorge_age = float(args.get("gorge-age", "12000"))
+	gen.fan_backfill = not args.has("no-backfill")
 	if args.has("glacial"):
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
 		gen.glacial_enabled = true
@@ -374,7 +375,7 @@ func _generate() -> void:
 				(lake_marker.get_meta("inflow") as Node3D).position = lake_marker.position
 			_log("high lake marker %.0f m up the river from the %.0f m fall at %s" % [run, tall["height"], tall["top"]])
 			gen.generate()
-	_log("generate %d ms, grid %s, last change %.3f m" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change()])
+	_log("generate %d ms, grid %s, last change %.3f m, fan slots filled %d" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change(), gen.get_last_slots_filled()])
 	if gen.glacial_enabled:
 		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded()])
 		for l in gen.get_lake_results():

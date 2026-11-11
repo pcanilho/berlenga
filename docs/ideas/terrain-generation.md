@@ -839,6 +839,14 @@ drew a ripple pattern over the plain; the generator now publishes the share of d
 heights at the fan front, from the solver itself (rivers re-cutting the toe each step); more sediment diffusion
 (Fastscape's separate sediment diffusivity) removed them but left a jagged scarp, so it needs more work.
 
+Fan slots (11 Nov): fans backfill the channels a river abandons (avulsion; Bryant, Falk and Paola 1995; Jerolmack and
+Paola 2007), but a single-direction solver leaves each abandoned one-cell trench open. `fan_backfill` (on) fills,
+after the last step and before the final routing, alluvium cells (at least 0.3 m of sediment) that carry less than a
+river's area (0.1 km2) and sit at least 0.5 m below six or more of their eight neighbours, to the median of the
+neighbours (an edge-keeping filter, so terrace steps and scarps stay), two passes. On the valley layout it fills 9
+cells by 1.5 to 8 m (a three-cell slot across the plain at (-400, 512)); lakes, falls and rivers are unchanged.
+Active channels still move between runs with the step count: that is the river migrating, not a trench.
+
 ## One main river: inflow from beyond the map, and caprock lips (11 Nov, Paulo's pick)
 
 The valley's rivers carried about 0.1 m3/s at most: the 16 km2 tile holds catchments of 2.6 km2 at best, so no fall
@@ -1053,6 +1061,8 @@ read the list; the bench shows grey stand-ins (`--boulders`).
   33, 1996.
 - Dussauge-Peisser, Helmstetter, Grasso et al., Probabilistic approach to rock fall hazard assessment: potential of
   historical data analysis, Natural Hazards and Earth System Sciences 2, 2002.
+- Bryant, Falk, Paola, Experimental study of avulsion frequency and rate of deposition, Geology 23, 1995.
+- Jerolmack, Paola, Complexity in a cellular model of river avulsion, Geomorphology 91, 2007.
 - Lamb, Dietrich, The persistence of waterfalls in fractured rock, GSA Bulletin 121, 2009.
 - Scheingross, Lamb, A mechanistic model of waterfall plunge pool erosion into bedrock, JGR Earth Surface 122, 2017.
 - Perne, Covington, Thaler, Myre, Steady state, erosional continuity, and the topography of landscapes developed in

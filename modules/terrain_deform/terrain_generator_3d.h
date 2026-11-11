@@ -225,6 +225,8 @@ private:
 	LocalVector<Gorge> gorges;
 	bool fall_lips = true;
 	bool plunge_pools = true;
+	bool fan_backfill = true;
+	int last_slots_filled = 0;
 	LocalVector<FallLip> lips;
 	LocalVector<PlungePool> pools;
 	LocalVector<LocalVector<int>> lip_buckets; // per LIP_BUCKET-metre square of the result
@@ -530,6 +532,9 @@ public:
 	double get_gorge_age() const { return gorge_age; }
 	void set_gorge_rate(double p_rate) { gorge_rate = MAX(p_rate, 0.0); }
 	double get_gorge_rate() const { return gorge_rate; }
+	void set_fan_backfill(bool p_enable) { fan_backfill = p_enable; }
+	bool get_fan_backfill() const { return fan_backfill; }
+	int get_last_slots_filled() const { return last_slots_filled; }
 	void set_plunge_pools(bool p_enable) { plunge_pools = p_enable; }
 	bool get_plunge_pools() const { return plunge_pools; }
 	void set_fall_lips(bool p_enable) { fall_lips = p_enable; }
