@@ -60,6 +60,7 @@ public:
 		RULE_ARIDITY, // Precipitation over potential evapotranspiration.
 		RULE_SUNLIGHT, // Annual mean shortwave, W/m2: sunny slopes against shaded ones.
 		RULE_CONIFER, // Share of the canopy overhead that is needle-leaved, 0 broadleaf to 1 conifer (VegetationField3D).
+		RULE_SPRAY, // Waterfall spray potential, 0 to 1 (geology from a TerrainGenerator3D).
 		RULE_MAX,
 	};
 

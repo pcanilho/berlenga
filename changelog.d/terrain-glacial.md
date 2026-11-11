@@ -7,6 +7,7 @@
 - `terrain_spray_potential` global map (with `terrain_spray_rect`, `spray_cell` 4 m, `get_spray_potential()`, `get_spray_image()`): the static share of fall spray each place can get, from each fall's power and the distance to its water.
 - `gorge_age`, `gorge_rate`: lips over hard rock wear back upstream (knickpoint retreat, rate times sqrt(Q), a twentieth in massive rock) and leave a slot gorge below the fall; never into a lake. `get_waterfalls()` reports the fall at the gorge's head.
 - `get_boulders(rect, density)`: blocks shed by cliffs, resting where their travel angle drops below the shadow angle, larger blocks further out; (x, y, z, radius) for placement.
+- `glacial_rock_variation`, `glacial_rock_scale`: rock quality under the ice (joint density) varies the glacial erosion rate, so the ice digs its own basins and leaves its own bars: tarns and paternoster lakes form with no markers.
 ### Fixed
 - Abandoned one-cell river slots on fans are backfilled (`fan_backfill`, on).
 - Detail no longer fades on faces steeper than loose fill can stand, however much sediment the cells around them hold.

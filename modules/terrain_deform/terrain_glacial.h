@@ -86,8 +86,9 @@ public:
 	// Erodes p_bed (nx * ny, spacing dx) by glacial erosion over p_years. Optional p_sediment: loose fill on top,
 	// removed first. Optional p_fixed: cells that stay (outlets, the sea).
 	// Optional p_resist (0..1): resistant bedrock (a riegel or cirque threshold) quarried 200 times slower at 1;
-	// with p_level (NaN: none) only at and below that height, and never worn below it.
-	void erode(double *p_bed, int nx, int ny, double dx, double p_years, double *p_sediment = nullptr, const uint8_t *p_fixed = nullptr, const double *p_resist = nullptr, const double *p_level = nullptr) {
+	// with p_level (NaN: none) only at and below that height, and never worn below it. Optional p_scale: per-cell
+	// multiplier on the erosion rate (rock quality).
+	void erode(double *p_bed, int nx, int ny, double dx, double p_years, double *p_sediment = nullptr, const uint8_t *p_fixed = nullptr, const double *p_resist = nullptr, const double *p_level = nullptr, const double *p_scale = nullptr) {
 		sub_steps = 0;
 		eroded_max = 0.0;
 		const int k = std::max(1, (int)std::lround(p.cell / dx));
@@ -116,6 +117,15 @@ public:
 			_solve(first ? p.first_iterations : p.iterations);
 			first = false;
 			_erosion_rate();
+			if (p_scale) {
+				// Rock quality acts on the ice grid's rate, so the step limit and the adverse-slope stop (both on
+				// that grid) see it: a soft patch digs a basin as wide as the ice samples, never a narrow pit.
+				for (int z = 0; z < gz; z++) {
+					for (int x = 0; x < gx; x++) {
+						rate[z * gx + x] *= p_scale[std::min(z * k, ny - 1) * nx + std::min(x * k, nx - 1)];
+					}
+				}
+			}
 			double rmax = 0.0;
 			for (int i = 0; i < m; i++) {
 				rmax = std::max(rmax, rate[i]);

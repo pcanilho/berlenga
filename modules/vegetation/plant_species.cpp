@@ -53,6 +53,10 @@ PlantSpecies::PlantSpecies() {
 	ranges[RULE_ARIDITY] = Vector2(0.0f, 1000.0f);
 	ranges[RULE_SUNLIGHT] = Vector2(0.0f, 2000.0f);
 	ranges[RULE_CONIFER] = Vector2(0.0f, 1.0f);
+	// Out of a waterfall's spray by default: in the curtain's wet zone only mosses and wet rock
+	// (spray-zone vegetation; a species that wants it widens the range).
+	ranges[RULE_SPRAY] = Vector2(0.0f, 0.5f);
+	fades[RULE_SPRAY] = 0.15f;
 }
 
 void PlantSpecies::set_meshes(const TypedArray<Mesh> &p_meshes) {
@@ -147,6 +151,7 @@ float PlantSpecies::get_suitability(const TerrainDataMap3D *p_map, const Vector3
 		w *= rule_weight(RULE_SOIL_DEPTH, p_map->get_soil_depth_at(p_pos));
 		w *= rule_weight(RULE_ROCK, p_map->get_rock_at(p_pos));
 		w *= rule_weight(RULE_TALUS, p_map->get_talus_at(p_pos));
+		w *= rule_weight(RULE_SPRAY, p_map->get_spray_at(p_pos));
 	}
 	if (p_map->has_climate() && w > 0.0f) {
 		// Climate from TerrainDataMap3D.bake_climate(): where a species can live at all
@@ -316,6 +321,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "sunlight_fade", PROPERTY_HINT_RANGE, "0,200,1,suffix:W/m²"), "set_rule_fade", "get_rule_fade", RULE_SUNLIGHT);
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "conifer_range"), "set_rule_range", "get_rule_range", RULE_CONIFER);
 	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "conifer_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_CONIFER);
+	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "spray_range"), "set_rule_range", "get_rule_range", RULE_SPRAY);
+	ADD_PROPERTYI(PropertyInfo(Variant::FLOAT, "spray_fade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_rule_fade", "get_rule_fade", RULE_SPRAY);
 
 	BIND_ENUM_CONSTANT(RULE_SLOPE);
 	BIND_ENUM_CONSTANT(RULE_HEIGHT);
@@ -333,6 +340,7 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_ARIDITY);
 	BIND_ENUM_CONSTANT(RULE_SUNLIGHT);
 	BIND_ENUM_CONSTANT(RULE_CONIFER);
+	BIND_ENUM_CONSTANT(RULE_SPRAY);
 	BIND_ENUM_CONSTANT(RULE_MAX);
 }
 

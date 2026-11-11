@@ -135,6 +135,8 @@ private:
 	real_t glacial_final = 100000.0; // years of the last glaciation, after the rivers
 	real_t glacial_erosion = 1.0; // multiplier on K_g of Herman et al. 2015
 	real_t glacial_sliding = 1.0; // sliding speed over depth-averaged ice speed
+	real_t glacial_rock_variation = 0.0; // spread of rock quality under the ice (log of the erosion multiplier); 0 even
+	real_t glacial_rock_scale = 500.0; // m, wavelength of that variation
 	real_t last_glacial_eroded = 0.0;
 	real_t last_glacial_ice_area = 0.0;
 	real_t last_glacial_msec = 0.0;
@@ -464,6 +466,10 @@ public:
 	real_t get_glacial_final() const { return glacial_final; }
 	void set_glacial_erosion(real_t p_value) { glacial_erosion = MAX(p_value, real_t(0.0)); }
 	real_t get_glacial_erosion() const { return glacial_erosion; }
+	void set_glacial_rock_variation(real_t p_value) { glacial_rock_variation = MAX(p_value, real_t(0.0)); }
+	real_t get_glacial_rock_variation() const { return glacial_rock_variation; }
+	void set_glacial_rock_scale(real_t p_value) { glacial_rock_scale = MAX(p_value, real_t(16.0)); }
+	real_t get_glacial_rock_scale() const { return glacial_rock_scale; }
 	void set_glacial_sliding(real_t p_value) { glacial_sliding = MAX(p_value, real_t(0.0)); }
 	real_t get_glacial_sliding() const { return glacial_sliding; }
 	real_t get_last_glacial_eroded() const { return last_glacial_eroded; }

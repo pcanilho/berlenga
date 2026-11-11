@@ -196,6 +196,13 @@
 				Scree (talus) cover at [param global_position], 0 to 1, from [member geology_source] (0 without one).
 			</description>
 		</method>
+		<method name="get_spray_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Waterfall spray potential at [param global_position], 0 to 1, from a [TerrainGenerator3D] [member geology_source] ([method TerrainGenerator3D.get_spray_potential]), or from a source node's own [code]get_spray_potential(Vector3)[/code]. 0 without either.
+			</description>
+		</method>
 		<method name="get_temperature_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -341,7 +348,10 @@
 		<constant name="CHANNEL_TALUS" value="10" enum="Channel">
 			Scree cover, 0 to 1 (from [member geology_source]).
 		</constant>
-		<constant name="CHANNEL_MAX" value="11" enum="Channel">
+		<constant name="CHANNEL_SPRAY" value="11" enum="Channel">
+			Waterfall spray potential, 0 to 1 (from [member geology_source]).
+		</constant>
+		<constant name="CHANNEL_MAX" value="12" enum="Channel">
 			Number of channels.
 		</constant>
 		<constant name="CLIMATE_TEMPERATURE_MEAN" value="0" enum="ClimateChannel">

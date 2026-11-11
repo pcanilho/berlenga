@@ -30,6 +30,8 @@
 
 #include "vegetation_field_3d.h"
 
+#include "grass_field_3d.h"
+
 // Rigged trees (TreeWind3D, from the trees work) when that class is in the module.
 #if __has_include("tree_wind_3d.h")
 #include "tree_wind_3d.h"
@@ -869,6 +871,310 @@ void VegetationField3D::_apply_maps(Maps &p_maps) {
 	}
 }
 
+namespace {
+
+// A density mask texel, bilinear, clamped to its rect; 1 outside it (as _place() reads it).
+float cover_mask_at(const Image *p_mask, const Rect2 &p_rect, const Vector2 &p_xz, int p_channel) {
+	if (!p_mask || p_mask->is_empty() || !p_rect.has_point(p_xz)) {
+		return 1.0f;
+	}
+	const Vector2 uv = (p_xz - p_rect.position) / p_rect.size;
+	const float fx = uv.x * p_mask->get_width() - 0.5f;
+	const float fy = uv.y * p_mask->get_height() - 0.5f;
+	const int x0 = CLAMP(int(Math::floor(fx)), 0, p_mask->get_width() - 1);
+	const int y0 = CLAMP(int(Math::floor(fy)), 0, p_mask->get_height() - 1);
+	const int x1 = MIN(x0 + 1, p_mask->get_width() - 1);
+	const int y1 = MIN(y0 + 1, p_mask->get_height() - 1);
+	const float ax = CLAMP(fx - Math::floor(fx), 0.0f, 1.0f);
+	const float ay = CLAMP(fy - Math::floor(fy), 0.0f, 1.0f);
+	const Color c = p_mask->get_pixel(x0, y0).lerp(p_mask->get_pixel(x1, y0), ax).lerp(p_mask->get_pixel(x0, y1).lerp(p_mask->get_pixel(x1, y1), ax), ay);
+	return c[p_channel];
+}
+
+uint8_t cover_srgb8(float p_c) {
+	p_c = CLAMP(p_c, 0.0f, 1.0f);
+	const float s = p_c < 0.0031308f ? p_c * 12.92f : 1.055f * Math::pow(p_c, 1.0f / 2.4f) - 0.055f;
+	return uint8_t(s * 255.0f + 0.5f);
+}
+
+} // namespace
+
+// The plant cover per texel as seen from far above, from the rules rather than placed plants, so it
+// reaches every kilometre of the map while only the camera's surroundings are placed (the far
+// field colour maps of Frostbite, Andersson 2007, and Far Cry 5, McLaren 2018). Three layers:
+// the crowns (expected crown area per square metre through Beer's law with their opacity, as the
+// canopy map), the plants under them (their far colours, by the shade and stand type those crowns
+// give, as vegetation_far() weighs placed plants) and the grass under those (its rules and far
+// colour). The count per square metre is each species' Poisson pattern density times its density
+// times its suitability; footprints between species are not modelled at this scale.
+void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
+	const CoverJob &job = *static_cast<const CoverJob *>(p_job);
+	const PlaceSetup &setup = *job.setup;
+	const TerrainDataMap3D *map = setup.map;
+	const Image *mask = setup.mask_img.ptr();
+	const float ts2 = setup.tile_size * setup.tile_size;
+	(void)ts2;
+	// Crowns without a far colour: a sunlit broadleaf or needle crown from above (linear).
+	const Vector3 broadleaf(0.045f, 0.075f, 0.025f);
+	const Vector3 needles(0.025f, 0.045f, 0.022f);
+	for (int x = 0; x < job.w; x++) {
+		const Vector2 xz = job.rect.position + Vector2((x + 0.5f) * job.rect.size.x / job.w, (p_row + 0.5f) * job.rect.size.y / job.h);
+		const Vector3 p(xz.x, 0.0f, xz.y);
+		// Suitability averaged over four points of the texel, so patches smaller than a texel
+		// (patch_scale) come out as their mean cover instead of speckle that shimmers far away.
+		const Vector2 sub = Vector2(job.rect.size.x / job.w, job.rect.size.y / job.h) * 0.25f;
+		const Vector3 subs[4] = { p + Vector3(-sub.x, 0, -sub.y), p + Vector3(sub.x, 0, -sub.y), p + Vector3(-sub.x, 0, sub.y), p + Vector3(sub.x, 0, sub.y) };
+		auto suit_at = [&](const PlaceSpecies &p_ps) {
+			float sum = 0.0f;
+			for (const Vector3 &q : subs) {
+				float suit = p_ps.sp->get_suitability(map, q);
+				if (p_ps.sp->get_mask_channel() >= 0 && suit > 0.0f) {
+					const float m = CLAMP(cover_mask_at(mask, setup.mask_rect, Vector2(q.x, q.z), p_ps.sp->get_mask_channel()), 0.0f, 1.0f);
+					suit *= p_ps.sp->is_mask_invert() ? 1.0f - m : m;
+				}
+				sum += suit;
+			}
+			return sum * 0.25f * p_ps.sp->get_density();
+		};
+		float *cr = const_cast<float *>(job.crowns.ptr()) + (int64_t(p_row) * job.w + x) * 5;
+		if (job.pass == 0) {
+			// Crowns.
+			float k_sum = 0.0f;
+			float k_conifer = 0.0f;
+			Vector3 crown;
+			for (uint32_t s = 0; s < setup.species.size(); s++) {
+				const PlaceSpecies &ps = setup.species[s];
+				if (job.crown_k[s].is_empty()) {
+					continue;
+				}
+				const float q = CLAMP(suit_at(ps), 0.0f, 1.0f) * 10.0f;
+				if (q <= 0.0f) {
+					continue;
+				}
+				const int i = MIN(int(q), 9);
+				const float k = Math::lerp(job.crown_k[s][i], job.crown_k[s][i + 1], q - i);
+				const bool con = ps.sp->is_canopy_conifer();
+				const Vector3 c = ps.far_color.a > 0.0f ? Vector3(ps.far_color.r, ps.far_color.g, ps.far_color.b) : (con ? needles : broadleaf);
+				crown += c * k;
+				k_sum += k;
+				k_conifer += con ? k : 0.0f;
+			}
+			cr[0] = k_sum;
+			cr[1] = k_conifer;
+			cr[2] = crown.x;
+			cr[3] = crown.y;
+			cr[4] = crown.z;
+			continue;
+		}
+		const float k_sum = cr[0];
+		const float closure = 1.0f - Math::exp(-k_sum);
+		const float conifer = k_sum > 0.0f ? cr[1] / k_sum : 0.0f;
+		const Vector3 crown = k_sum > 0.0f ? Vector3(cr[2], cr[3], cr[4]) / k_sum : Vector3();
+		// The plants under the crowns.
+		float c_sum = 0.0f;
+		Vector3 plants;
+		for (const PlaceSpecies &ps : setup.species) {
+			if (ps.sp.is_null() || ps.far_color.a <= 0.0f || (ps.sp->get_canopy_radius() > 0.0f && !ps.sp->uses_shade() && !ps.sp->uses_conifer())) {
+				continue;
+			}
+			float suit = suit_at(ps);
+			if (ps.sp->uses_shade()) {
+				suit *= ps.sp->rule_weight(PlantSpecies::RULE_SHADE, closure);
+			}
+			if (ps.sp->uses_conifer()) {
+				suit *= ps.sp->rule_weight(PlantSpecies::RULE_CONIFER, conifer);
+			}
+			if (suit <= 0.0f) {
+				continue;
+			}
+			const Vector2 sr = ps.sp->get_scale_range();
+			const float rr = 0.5f * ps.sp->get_spacing() * (sr.x + sr.y) * 0.5f;
+			const float c = MIN(suit * ps.pattern.points.size() / ts2 * float(Math::PI) * rr * rr * ps.far_color.a, 4.0f * ps.far_color.a);
+			plants += Vector3(ps.far_color.r, ps.far_color.g, ps.far_color.b) * c;
+			c_sum += c;
+		}
+		const float a_plants = 1.0f - Math::exp(-c_sum);
+		if (c_sum > 0.0f) {
+			plants /= c_sum;
+		}
+		// The grass under them.
+		float g = 0.0f;
+		if (job.grass.is_valid()) {
+			for (const Vector3 &q : subs) {
+				g += CLAMP(job.grass->get_suitability(map, q), 0.0f, 1.0f) * 0.25f;
+			}
+			if (job.grass->uses_shade()) {
+				g *= job.grass->rule_weight(PlantSpecies::RULE_SHADE, closure);
+			}
+		}
+		const Vector3 grass(job.grass_far.r, job.grass_far.g, job.grass_far.b);
+		const float ground_a = 1.0f - (1.0f - g) * (1.0f - a_plants);
+		Vector3 ground = ground_a > 0.0f ? (grass * (g * (1.0f - a_plants)) + plants * a_plants) / ground_a : Vector3();
+		const float a = 1.0f - (1.0f - ground_a) * (1.0f - closure);
+		const Vector3 col = a > 0.0f ? (ground * (ground_a * (1.0f - closure)) + crown * closure) / a : Vector3();
+		uint8_t *o = job.out + (int64_t(p_row) * job.w + x) * 4;
+		o[0] = cover_srgb8(col.x);
+		o[1] = cover_srgb8(col.y);
+		o[2] = cover_srgb8(col.z);
+		o[3] = uint8_t(CLAMP(a, 0.0f, 1.0f) * 255.0f + 0.5f);
+	}
+}
+
+void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
+	if (!cover_map_enabled || !is_inside_tree()) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	CoverJob job;
+	job.setup = &p_setup;
+	job.rect = p_setup.rect;
+	job.w = CLAMP(int(Math::ceil(job.rect.size.x / cover_cell)), 1, 4096);
+	job.h = CLAMP(int(Math::ceil(job.rect.size.y / cover_cell)), 1, 4096);
+	GrassField3D *grass = cover_grass.is_empty() ? nullptr : Object::cast_to<GrassField3D>(get_node_or_null(cover_grass));
+	if (grass) {
+		job.grass = grass->get_rules();
+		if (job.grass.is_null()) {
+			job.grass.instantiate(); // The grass's default rules: dry land.
+		}
+		job.grass_far = grass->get_far_color();
+	}
+	// The crowns over each canopy species' own pattern (the tile, wrapped), as _shade_at() sees
+	// them: exact for the spacing of a Poisson-disk stand, which covers more ground than crowns
+	// dropped at random would (Beer's law alone would need a clumping index, Nilson 1971).
+	job.crown_k.resize(p_setup.species.size());
+	const float ts = p_setup.tile_size;
+	for (uint32_t s = 0; s < p_setup.species.size(); s++) {
+		const PlaceSpecies &ps = p_setup.species[s];
+		if (ps.sp.is_null() || ps.sp->get_canopy_radius() <= 0.0f || ps.sp->uses_shade() || ps.sp->uses_conifer()) {
+			continue;
+		}
+		const Vector2 sr = ps.sp->get_scale_range();
+		const float r = ps.sp->get_canopy_radius() * (sr.x + sr.y) * 0.5f;
+		const float opacity = ps.sp->get_canopy_opacity();
+		const int grid = CLAMP(int(Math::ceil(ts)), 8, 64);
+		job.crown_k[s].resize(11);
+		for (int qi = 0; qi <= 10; qi++) {
+			const float keep = qi / 10.0f;
+			double shade = 0.0;
+			for (int gy = 0; gy < grid; gy++) {
+				for (int gx = 0; gx < grid; gx++) {
+					const Vector2 at((gx + 0.5f) * ts / grid, (gy + 0.5f) * ts / grid);
+					float transmit = 1.0f;
+					for (uint32_t i = 0; i < ps.pattern.points.size(); i++) {
+						if (ps.pattern.ranks[i] >= keep) {
+							continue;
+						}
+						for (int oy = -1; oy <= 1; oy++) {
+							for (int ox = -1; ox <= 1; ox++) {
+								const float d = (ps.pattern.points[i] + Vector2(ox, oy) * ts).distance_to(at) / r;
+								if (d < 1.4f) {
+									transmit *= 1.0f - opacity * (1.0f - Math::smoothstep(0.6f, 1.4f, d));
+								}
+							}
+						}
+					}
+					shade += 1.0f - transmit;
+				}
+			}
+			job.crown_k[s][qi] = -Math::log(MAX(1.0f - float(shade / (grid * grid)), 1e-4f));
+		}
+	}
+	Vector<uint8_t> data;
+	data.resize(job.w * job.h * 4);
+	job.out = data.ptrw();
+	job.crowns.resize(job.w * job.h * 5);
+	WorkerThreadPool *wtp = WorkerThreadPool::get_singleton();
+	job.pass = 0;
+	wtp->wait_for_group_task_completion(wtp->add_native_group_task(&VegetationField3D::_cover_row, &job, job.h, -1, true, "VegetationField3D cover"));
+	// Crowns spread past the trunks they grow on (to the edge of a lake, past a stand's last
+	// suitable cell): blur them by the crown radius, which keeps their mean.
+	float crown_r = 0.0f;
+	for (uint32_t s = 0; s < p_setup.species.size(); s++) {
+		if (!job.crown_k[s].is_empty()) {
+			const Vector2 sr = p_setup.species[s].sp->get_scale_range();
+			crown_r = MAX(crown_r, p_setup.species[s].sp->get_canopy_radius() * (sr.x + sr.y) * 0.5f);
+		}
+	}
+	const int rad = int(Math::round(crown_r / cover_cell));
+	if (rad > 0) {
+		LocalVector<float> tmp;
+		tmp.resize(job.crowns.size());
+		for (int pass = 0; pass < 2; pass++) {
+			const LocalVector<float> &src = pass == 0 ? job.crowns : tmp;
+			LocalVector<float> &dst = pass == 0 ? tmp : job.crowns;
+			for (int y = 0; y < job.h; y++) {
+				for (int x = 0; x < job.w; x++) {
+					float acc[5] = {};
+					int n = 0;
+					for (int d = -rad; d <= rad; d++) {
+						const int xx = pass == 0 ? x + d : x;
+						const int yy = pass == 0 ? y : y + d;
+						if (xx < 0 || yy < 0 || xx >= job.w || yy >= job.h) {
+							continue;
+						}
+						const float *c = src.ptr() + (int64_t(yy) * job.w + xx) * 5;
+						for (int k = 0; k < 5; k++) {
+							acc[k] += c[k];
+						}
+						n++;
+					}
+					float *o = dst.ptr() + (int64_t(y) * job.w + x) * 5;
+					for (int k = 0; k < 5; k++) {
+						o[k] = acc[k] / n;
+					}
+				}
+			}
+		}
+	}
+	job.pass = 1;
+	wtp->wait_for_group_task_completion(wtp->add_native_group_task(&VegetationField3D::_cover_row, &job, job.h, -1, true, "VegetationField3D cover"));
+	// Patches a few metres across still speckle the 4 m texels; the far field only needs their
+	// mean, and the terrain samples the map's top level: a 3 x 3 box over premultiplied cover.
+	{
+		auto lin = [](uint8_t p_v) { return Color(p_v / 255.0f, 0, 0).srgb_to_linear().r; };
+		LocalVector<float> pre;
+		pre.resize(job.w * job.h * 4);
+		for (int i = 0; i < job.w * job.h; i++) {
+			const uint8_t *o = job.out + int64_t(i) * 4;
+			const float a = o[3] / 255.0f;
+			pre[i * 4 + 0] = lin(o[0]) * a;
+			pre[i * 4 + 1] = lin(o[1]) * a;
+			pre[i * 4 + 2] = lin(o[2]) * a;
+			pre[i * 4 + 3] = a;
+		}
+		for (int y = 0; y < job.h; y++) {
+			for (int x = 0; x < job.w; x++) {
+				float acc[4] = {};
+				int n = 0;
+				for (int dy = -1; dy <= 1; dy++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int xx = x + dx;
+						const int yy = y + dy;
+						if (xx < 0 || yy < 0 || xx >= job.w || yy >= job.h) {
+							continue;
+						}
+						for (int k = 0; k < 4; k++) {
+							acc[k] += pre[(yy * job.w + xx) * 4 + k];
+						}
+						n++;
+					}
+				}
+				const float a = acc[3] / n;
+				uint8_t *o = job.out + (int64_t(y) * job.w + x) * 4;
+				for (int k = 0; k < 3; k++) {
+					o[k] = cover_srgb8(a > 0.0f ? acc[k] / n / a : 0.0f);
+				}
+				o[3] = uint8_t(CLAMP(a, 0.0f, 1.0f) * 255.0f + 0.5f);
+			}
+		}
+	}
+	cover_texture = ImageTexture::create_from_image(Image::create_from_data(job.w, job.h, false, Image::FORMAT_RGBA8, data));
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->global_shader_parameter_set("terrain_cover_map", cover_texture->get_rid());
+	rs->global_shader_parameter_set("terrain_cover_rect", Vector4(job.rect.position.x, job.rect.position.y, job.rect.size.x, job.rect.size.y));
+	print_verbose(vformat("VegetationField3D: cover map %dx%d in %.1f ms.", job.w, job.h, (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0));
+}
+
 Error VegetationField3D::populate() {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	_clear_generated();
@@ -877,6 +1183,7 @@ Error VegetationField3D::populate() {
 	if (!_make_setup(setup)) {
 		return ERR_UNCONFIGURED;
 	}
+	_build_cover(setup);
 	const Rect2 rect = setup.rect;
 	const Rect2i tiles(Vector2i(int(Math::floor(rect.position.x / tile_size)), int(Math::floor(rect.position.y / tile_size))),
 			Vector2i(int(Math::ceil((rect.position.x + rect.size.x) / tile_size)) - int(Math::floor(rect.position.x / tile_size)),
@@ -1249,6 +1556,7 @@ void VegetationField3D::_stream_update(double p_delta) {
 		}
 		stream_setup_valid = true;
 		impostors_traced = _path_traced();
+		_build_cover(stream_setup);
 	}
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const uint64_t budget = uint64_t(stream_budget_msec * 1000.0f);
@@ -1615,6 +1923,13 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_forest_floor_enabled", "enabled"), &VegetationField3D::set_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("get_conifer_at", "global_position"), &VegetationField3D::get_conifer_at);
+	ClassDB::bind_method(D_METHOD("set_cover_map_enabled", "enable"), &VegetationField3D::set_cover_map_enabled);
+	ClassDB::bind_method(D_METHOD("is_cover_map_enabled"), &VegetationField3D::is_cover_map_enabled);
+	ClassDB::bind_method(D_METHOD("set_cover_grass", "path"), &VegetationField3D::set_cover_grass);
+	ClassDB::bind_method(D_METHOD("get_cover_grass"), &VegetationField3D::get_cover_grass);
+	ClassDB::bind_method(D_METHOD("set_cover_cell", "cell"), &VegetationField3D::set_cover_cell);
+	ClassDB::bind_method(D_METHOD("get_cover_cell"), &VegetationField3D::get_cover_cell);
+	ClassDB::bind_method(D_METHOD("get_cover_texture"), &VegetationField3D::get_cover_texture);
 	ClassDB::bind_method(D_METHOD("set_streaming", "enable"), &VegetationField3D::set_streaming);
 	ClassDB::bind_method(D_METHOD("is_streaming"), &VegetationField3D::is_streaming);
 	ClassDB::bind_method(D_METHOD("set_stream_target", "path"), &VegetationField3D::set_stream_target);
@@ -1640,6 +1955,10 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "populate_on_ready"), "set_populate_on_ready", "is_populate_on_ready");
 
+	ADD_GROUP("Cover map", "cover_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cover_map_enabled"), "set_cover_map_enabled", "is_cover_map_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "cover_grass", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D"), "set_cover_grass", "get_cover_grass");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cover_cell", PROPERTY_HINT_RANGE, "0.5,64,0.5,suffix:m"), "set_cover_cell", "get_cover_cell");
 	ADD_GROUP("Streaming", "stream");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "streaming"), "set_streaming", "is_streaming");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "stream_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Node3D"), "set_stream_target", "get_stream_target");

@@ -10,6 +10,12 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_far_color" qualifiers="const">
+			<return type="Color" />
+			<description>
+				The field seen from a distance, linear: the colour the ground under the grass takes where the blades have thinned away ([code]grass_ground_far[/code]), and the grass layer of [member VegetationField3D.cover_grass].
+			</description>
+		</method>
 		<method name="add_trample">
 			<return type="void" />
 			<param index="0" name="position" type="Vector3" />
