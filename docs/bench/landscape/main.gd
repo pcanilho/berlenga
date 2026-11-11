@@ -20,6 +20,9 @@ extends Node3D
 #   --snow=climate|none   the winter baked by SnowClimate (default), or a snow-free ground for stills
 #   --month=N --time=H    0-based month of the rivers and the SkyClock date (default 4, 15 May) and local time (16.5)
 #   --prints=0            no GroundSurface3D (footprints) node
+#   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
+#                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
+#   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --checks              with --out, run the link checks before the picture (they change the scene)
 
 const STEP := 4.0 # metres between ground vertices
@@ -84,6 +87,10 @@ func _ready() -> void:
 	t_start = Time.get_ticks_msec()
 	_generate()
 	_lake_and_fall()
+	if args.has("map"):
+		_save_map(args["map"])
+		get_tree().quit(0)
+		return
 	_build_ground()
 	await get_tree().physics_frame
 	await get_tree().physics_frame
@@ -145,35 +152,49 @@ func check(ok: bool, what: String, gap := false) -> void:
 # --- Terrain -----------------------------------------------------------------------------------------------------
 
 func _generate() -> void:
-	# A range across the north with a spur, uplift fading out towards a coastal plain in the south; water leaves only
-	# by the south edge, so every river runs to the sea.
-	var path := Path3D.new()
-	path.name = "Range"
-	var curve := Curve3D.new()
-	curve.add_point(Vector3(-2000, 0, -900), Vector3.ZERO, Vector3(600, 0, -300))
-	curve.add_point(Vector3(-200, 0, -1300), Vector3(-500, 0, 0), Vector3(500, 0, 0))
-	curve.add_point(Vector3(2000, 0, -1000), Vector3(-600, 0, -200))
-	path.curve = curve
-	add_child(path)
-	var spur := Path3D.new()
-	spur.name = "Spur"
-	var c2 := Curve3D.new()
-	c2.add_point(Vector3(700, 0, -1200))
-	c2.add_point(Vector3(1100, 0, 200))
-	spur.curve = c2
-	spur.set_meta("width", 450.0)
-	spur.set_meta("uplift", 0.6)
-	add_child(spur)
+	var layout: String = args.get("layout", "range")
+	var range_nodes: Array[Node3D] = []
 	var noise := FastNoiseLite.new()
 	noise.seed = 7
 	noise.frequency = 1.0 / 1500.0
 	noise.fractal_octaves = 3
 	var up := Image.create(64, 64, false, Image.FORMAT_RF)
-	for y in 64:
-		var z := Z0 + (y + 0.5) / 64.0 * GEN_SIZE
-		var s := 0.15 + 0.85 * (1.0 - smoothstep(-400.0, 1100.0, z))
-		for x in 64:
-			up.set_pixel(x, y, Color(s, 0, 0))
+	var lake_marker: Node3D = null
+	if layout == "range":
+		# A range across the north with a spur, uplift fading out towards a coastal plain in the south.
+		var rng := _range_path("Range", [Vector3(-2000, 0, -900), Vector3(-200, 0, -1300), Vector3(2000, 0, -1000)], 0.0, 1.0)
+		var rc := Curve3D.new()
+		rc.add_point(Vector3(-2000, 0, -900), Vector3.ZERO, Vector3(600, 0, -300))
+		rc.add_point(Vector3(-200, 0, -1300), Vector3(-500, 0, 0), Vector3(500, 0, 0))
+		rc.add_point(Vector3(2000, 0, -1000), Vector3(-600, 0, -200))
+		rng.curve = rc
+		range_nodes.append(rng)
+		range_nodes.append(_range_path("Spur", [Vector3(700, 0, -1200), Vector3(1100, 0, 200)], 450.0, 0.6))
+		for y in 64:
+			var z := Z0 + (y + 0.5) / 64.0 * GEN_SIZE
+			var s := 0.15 + 0.85 * (1.0 - smoothstep(-400.0, 1100.0, z))
+			for x in 64:
+				up.set_pixel(x, y, Color(s, 0, 0))
+	else:
+		# A cirque of peaks round the north holding a high lake; its outflow falls off the range front into a wide
+		# grassy valley floor that runs south between two low ridges to the sea.
+		range_nodes.append(_range_path("Cirque", [Vector3(-1900, 0, -700), Vector3(-900, 0, -1600), Vector3(0, 0, -1850), Vector3(900, 0, -1600), Vector3(1900, 0, -700)], 0.0, 1.0))
+		range_nodes.append(_range_path("WestRidge", [Vector3(-1500, 0, -900), Vector3(-1450, 0, 1100)], 380.0, 0.35))
+		range_nodes.append(_range_path("EastRidge", [Vector3(1500, 0, -900), Vector3(1450, 0, 1100)], 380.0, 0.35))
+		for y in 64:
+			var z := Z0 + (y + 0.5) / 64.0 * GEN_SIZE
+			for x in 64:
+				var xw := X0 + (x + 0.5) / 64.0 * GEN_SIZE
+				# High in the north, a low floor south of the range front (z > -700) that is lowest along the middle.
+				var north := 1.0 - smoothstep(-1100.0, -600.0, z)
+				var floor_w := 1.0 - smoothstep(550.0, 1000.0, absf(xw))
+				var s := lerpf(0.12, 0.02, floor_w) * (1.0 - north) + 0.9 * north
+				up.set_pixel(x, y, Color(s, 0, 0))
+		lake_marker = Node3D.new()
+		lake_marker.name = "HighLake"
+		lake_marker.position = Vector3(float(args.get("lake-x", "0")), 0, float(args.get("lake-z", "-1300")))
+		lake_marker.set_meta("depth", float(args.get("lake-depth", "18")))
+		add_child(lake_marker)
 	gen = TerrainGenerator3D.new()
 	gen.name = "Generator"
 	gen.size = Vector2(GEN_SIZE, GEN_SIZE)
@@ -188,11 +209,17 @@ func _generate() -> void:
 	gen.ocean_edges = TerrainGenerator3D.OUTLET_POSITIVE_Z
 	gen.coast_distance = 600.0
 	# Lakes: automatic dammed valley lakes.
-	gen.lake_count = int(args.get("lakes", "3"))
+	gen.lake_count = int(args.get("lakes", "3" if layout == "range" else "0"))
 	gen.strata_enabled = not args.has("no-strata") # hard rock bands: waterfalls where rivers cross them
 	gen.tile_erosion_enabled = args.has("tiles")
 	add_child(gen)
-	gen.ranges = [gen.get_path_to(path), gen.get_path_to(spur)]
+	var rp: Array[NodePath] = []
+	for n in range_nodes:
+		rp.append(gen.get_path_to(n))
+	gen.ranges = rp
+	if lake_marker != null:
+		var lp: Array[NodePath] = [gen.get_path_to(lake_marker)]
+		gen.lakes = lp
 	var t := Time.get_ticks_msec()
 	# One climate for the rivers (rain and snowmelt by month), the data map's climate fields and the plants: a mild
 	# coast with the wet wind from the sea (south, +Z).
@@ -218,6 +245,75 @@ func _generate() -> void:
 		_log("  lake level %.1f m, depth %.1f m, area %.1f ha, outlet %s" % [l["level"], l["depth"], l["area"] / 10000.0, l.has("outlet")])
 	_log("sample_heights %d ms, highest %.0f m" % [Time.get_ticks_msec() - t, hmax])
 
+
+
+func _range_path(n: String, pts: Array, width: float, uplift: float) -> Path3D:
+	var path := Path3D.new()
+	path.name = n
+	var curve := Curve3D.new()
+	for i in pts.size():
+		var tin := Vector3.ZERO
+		var tout := Vector3.ZERO
+		if i > 0 and i < pts.size() - 1:
+			var t: Vector3 = (pts[i + 1] - pts[i - 1]) * 0.25
+			tin = -t
+			tout = t
+		curve.add_point(pts[i], tin, tout)
+	path.curve = curve
+	if width > 0.0:
+		path.set_meta("width", width)
+	if uplift != 1.0:
+		path.set_meta("uplift", uplift)
+	add_child(path)
+	return path
+
+
+# A top-down map of the generated land for laying out a scene quickly: hillshade, sea and lakes in blue, rivers in
+# cyan, the generator's waterfalls in red. 16 m a pixel, north up.
+func _save_map(path: String) -> void:
+	var w := (NX - 1) / 4 + 1
+	var h := (NZ - 1) / 4 + 1
+	var img := Image.create(w, h, false, Image.FORMAT_RGB8)
+	var water: Image = gen.get_water_image()
+	for j in h:
+		for i in w:
+			var x := X0 + i * 16.0
+			var z := Z0 + j * 16.0
+			var e := height_at(x, z)
+			var dx := height_at(x + 16.0, z) - height_at(x - 16.0, z)
+			var dz := height_at(x, z + 16.0) - height_at(x, z - 16.0)
+			var n := Vector3(-dx, 64.0, -dz).normalized()
+			var shade := clampf(n.dot(Vector3(-0.5, 0.7, -0.5).normalized()), 0.0, 1.0)
+			var tint := Color(0.45, 0.6, 0.35).lerp(Color(0.75, 0.72, 0.68), clampf(e / 900.0, 0.0, 1.0))
+			var c := tint * (0.35 + 0.75 * shade)
+			var wd := 0.0
+			if water != null and i < water.get_width() and j < water.get_height():
+				wd = water.get_pixel(i, j).r
+			if e < gen.sea_level or wd > 0.3:
+				c = Color(0.15, 0.3, 0.6)
+			img.set_pixel(i, j, Color(c.r, c.g, c.b))
+	for r in gen.get_rivers(float(args.get("min-area", "1500000"))):
+		for q in r["points"]:
+			var pi := Vector2i(int((q.x - X0) / 16.0), int((q.z - Z0) / 16.0))
+			if pi.x >= 0 and pi.y >= 0 and pi.x < w and pi.y < h:
+				img.set_pixelv(pi, Color(0.3, 0.9, 1.0))
+	for f in gen_falls:
+		var q: Vector3 = f["top"]
+		var pi := Vector2i(int((q.x - X0) / 16.0), int((q.z - Z0) / 16.0))
+		for dy in range(-2, 3):
+			for dx in range(-2, 3):
+				var pp := pi + Vector2i(dx, dy)
+				if pp.x >= 0 and pp.y >= 0 and pp.x < w and pp.y < h:
+					img.set_pixelv(pp, Color(1, 0.1, 0.1))
+	img.save_png(path)
+	_log("map saved " + path)
+	for px in [-1200.0, -500.0, 0.0, 500.0]:
+		var row := ""
+		var pz := -1900.0
+		while pz <= 1500.0:
+			row += " %.0f" % height_at(px, pz)
+			pz += 200.0
+		_log("profile x %.0f, z -1900..1500 by 200:%s" % [px, row])
 
 func height_at(x: float, z: float) -> float:
 	var fx := clampf((x - X0) / STEP, 0.0, NX - 1.001)
