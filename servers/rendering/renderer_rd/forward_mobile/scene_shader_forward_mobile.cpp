@@ -708,6 +708,7 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.renames["RIM_TINT"] = "rim_tint_highp";
 		actions.renames["CLEARCOAT"] = "clearcoat_highp";
 		actions.renames["CLEARCOAT_ROUGHNESS"] = "clearcoat_roughness_highp";
+		actions.renames["SPECULAR_NORMAL"] = "specular_normal";
 		actions.renames["ANISOTROPY"] = "anisotropy_highp";
 		actions.renames["ANISOTROPY_FLOW"] = "anisotropy_flow_highp";
 		actions.renames["SSS_STRENGTH"] = "sss_strength_highp";

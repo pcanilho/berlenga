@@ -30,9 +30,11 @@
 
 #pragma once
 
+#include "water_raster_reflections.h"
+#include "water_solver.h"
+
 #include "scene/3d/path_3d.h"
 #include "scene/resources/material.h"
-#include "water_solver.h"
 
 class MeshInstance3D;
 class Texture2DRD;
@@ -120,6 +122,8 @@ private:
 
 	// The live window: shallow-water simulation on a square round the camera.
 	bool live_flow = false;
+	bool raster_reflections = true;
+	WaterRasterReflections raster_reflection_state;
 	float live_domain_size = 48.0f; // m
 	int live_grid_resolution = 192;
 	float wall_friction = 1.5f; // 1/s, along rocks and banks
@@ -160,6 +164,7 @@ private:
 	float fall_min_height = 1.5f; // m; 0 turns falls off (every drop stays a cascade)
 	bool fall_spray = true;
 	bool fall_mist = true;
+	float fall_mist_amount = 1.0f; // scales the mist each fall makes (its own grid, without a PhysXFlow3D)
 	Ref<ShaderMaterial> fall_material;
 	LocalVector<Fall> falls;
 	LocalVector<Node3D *> fall_effects; // spray particles and mist emitters, rebuilt with the falls
@@ -243,6 +248,9 @@ public:
 	// The channel as height brushes for a terrain deformer, one per square tile
 	// of p_tile_size m (world XZ) the river touches.
 	Array get_carve_brushes(float p_tile_size = 64.0f) const;
+	// Raster only: the sky and the sun's glitter on open water by the Fresnel term (water_raster_reflections.h).
+	void set_raster_reflections(bool p_enabled) { raster_reflections = p_enabled; }
+	bool get_raster_reflections() const { return raster_reflections; }
 	void set_live_flow(bool p_enabled);
 	bool get_live_flow() const { return live_flow; }
 	void set_live_domain_size(float p_size);
@@ -280,6 +288,8 @@ public:
 	bool get_fall_spray() const { return fall_spray; }
 	void set_fall_mist(bool p_enabled);
 	bool get_fall_mist() const { return fall_mist; }
+	void set_fall_mist_amount(float p_amount);
+	float get_fall_mist_amount() const { return fall_mist_amount; }
 	void set_fall_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_fall_material() const { return fall_material; }
 	// Each waterfall: lip and impact (world), height, speeds, break-up length.

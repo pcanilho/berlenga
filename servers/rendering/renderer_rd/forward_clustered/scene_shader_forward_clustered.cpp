@@ -1054,6 +1054,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["RIM_TINT"] = "rim_tint";
 		actions.renames["CLEARCOAT"] = "clearcoat";
 		actions.renames["CLEARCOAT_ROUGHNESS"] = "clearcoat_roughness";
+		actions.renames["SPECULAR_NORMAL"] = "specular_normal";
 		actions.renames["ANISOTROPY"] = "anisotropy";
 		actions.renames["ANISOTROPY_FLOW"] = "anisotropy_flow";
 		actions.renames["SSS_STRENGTH"] = "sss_strength";

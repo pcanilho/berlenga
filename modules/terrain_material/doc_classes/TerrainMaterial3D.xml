@@ -52,7 +52,7 @@
 			River sediment along valley floors.
 		</member>
 		<member name="beach_height" type="float" setter="set_beach_height" getter="get_beach_height" default="2.5">
-			Height above [member sea_level] that sand reaches.
+			Height above [member sea_level] that sand reaches when there is no generator geology. With [member geology_enabled] and a [TerrainGenerator3D], sand follows the generator's beaches instead (and covers ground under the sea), so a low coastal plain behind a beach keeps its soil.
 		</member>
 		<member name="blend_depth" type="float" setter="set_blend_depth" getter="get_blend_depth" default="0.2">
 			Height-blend transition depth. Smaller gives sharper borders between layers.
@@ -72,11 +72,14 @@
 		<member name="grass_tint_enabled" type="bool" setter="set_grass_tint_enabled" getter="is_grass_tint_enabled" default="true">
 			Tint the ground where [GrassField3D] grows, as [method GrassField3D.get_ground_shader_code] does.
 		</member>
+		<member name="ground_deform_enabled" type="bool" setter="set_ground_deform_enabled" getter="is_ground_deform_enabled" default="true">
+			Take prints from a [GroundSurface3D] whose [member GroundSurface3D.material] is this material: the terrain sinks under the printed patch and freshly turned ground darkens (see [method BaseMaterial3D.get_ground_deform_shader_code]).
+		</member>
 		<member name="rock_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Bare rock.
 		</member>
 		<member name="rock_slope" type="float" setter="set_rock_slope" getter="get_rock_slope" default="40.0">
-			Slope in degrees past which rock shows, with or without geology.
+			Slope in degrees past which rock shows when there is no geology. With the generator's geology, rock follows its maps, and faces past [member cliff_slope] are bare too.
 		</member>
 		<member name="sand_layer" type="TerrainMaterialLayer" setter="set_layer" getter="get_layer">
 			Beach sand.

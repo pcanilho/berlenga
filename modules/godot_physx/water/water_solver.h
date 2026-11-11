@@ -65,6 +65,8 @@ public:
 	RID shader_spectrum_init, pipeline_spectrum_init;
 	RID shader_spectrum_evolve, pipeline_spectrum_evolve;
 	RID shader_fft, pipeline_fft;
+	RID shader_fft_rows, pipeline_fft_rows; // the whole FFT of a line in shared memory (water_fft_rows.glsl)
+	RID buf_fft_rows_params, buf_fft_cols_params, uset_fft_rows, uset_fft_cols;
 	// Blit-to-texture: the only new shader shape in this module -- writes a
 	// storage buffer's contents into a real RD image2D (R32_SFLOAT), which
 	// Texture2DRD then wraps for direct, zero-copy sampling by the scene
@@ -105,6 +107,8 @@ public:
 	RID tex_ocean_deriv; // RGBA32F (dh/dx, dh/dz, dDx/dx, dDz/dz)
 	RID tex_ocean_foam; // R32F foam amount 0..1, rest coordinates, persists across steps
 	RID buf_foam_params, uset_foam;
+	RID buf_foam_cover; // one uint: the foam pass's sum over the grid, read back each step
+	SafeNumeric<uint32_t> foam_cover_bits{ 0xFFFFFFFFu }; // float bits of the mean foam, all ones = unknown
 	float foam_choppiness = 1.0f;
 	float foam_threshold = 0.7f;
 	float foam_persistence = 2.5f;
@@ -256,7 +260,7 @@ public:
 	void rt_set_swash(Ref<WaterSolverGPU> p_self, float p_run_up, float p_drain_speed, float p_dry_time);
 	void rt_set_shore_waves(Ref<WaterSolverGPU> p_self, RID p_texture, bool p_on, Vector2 p_omega, float p_h0, float p_l0);
 	void rt_set_shore_clock(Ref<WaterSolverGPU> p_self, double p_time, Vector2 p_center);
-	void rt_set_band(Ref<WaterSolverGPU> p_self, float p_k_min, float p_k_max);
+	void rt_set_band(Ref<WaterSolverGPU> p_self, float p_k_min, float p_k_max, int p_spreading, float p_swell);
 	void rt_reinit_spectrum(Ref<WaterSolverGPU> p_self, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
 	// The ripple layer moved (a re-centre): its state + composed height zeroed in place -- the ocean, its textures and
 	// every other buffer stay (see WaterSolver::recenter).
@@ -278,6 +282,8 @@ public:
 	void rt_on_ripple_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self, int64_t p_serial);
 	void rt_on_ocean_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self);
 	void rt_on_ocean_dz(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
+	void rt_on_foam_cover(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
+	void _rt_store_foam_cover(const PackedByteArray &p_data);
 	void rt_on_ripple_state(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
 
 	~WaterSolverGPU();
@@ -300,6 +306,8 @@ private:
 	PackedFloat32Array _init_cell_depth;
 	PackedFloat32Array _init_base_flux;
 	float _init_depth = 3.0f;
+	int _init_spreading = 1; // PhysXWaterSurface3D::WaveSpreading
+	float _init_swell = 0.0f;
 	// Wavenumber band this ocean carries (rad/m; 0 = no bound): one cascade of a
 	// multi-cascade ocean leaves the rest of the spectrum to the others.
 	float _init_k_min = 0.0f;
@@ -359,6 +367,9 @@ public:
 		// one cascade of a multi-cascade ocean (PhysXWaterSurface3D::wave_cascades).
 		float ocean_k_min = 0.0f;
 		float ocean_k_max = 0.0f;
+		// Directional spreading (PhysXWaterSurface3D::WaveSpreading) and Horvath's swell (0..1).
+		int wave_spreading = 1;
+		float swell = 0.0f;
 
 		// Light-space caustic map (see water_caustics_map.glsl). The grid/
 		// buffers are only built if this is true at configure() time -- keep
@@ -397,6 +408,8 @@ public:
 	void configure(const Settings &p_settings);
 	// The ocean's sea state in place (h0 only — no rebuild; see WaterSolverGPU::rt_reinit_spectrum).
 	void reinit_spectrum(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
+	// The spectrum's directional spreading and swell, in place (regenerates h0 like reinit_spectrum()).
+	void set_spreading(int p_spreading, float p_swell);
 	// The ripple grid's centre moved (a constant-depth square only): no rebuild -- the ripples are cleared, the ocean
 	// (world-anchored) carries on; bodies' spheres / pending impulses are dropped (they were relative to the old centre).
 	void recenter(Vector2 p_grid_center);
@@ -532,6 +545,9 @@ public:
 	// water_spectrum_evolve.glsl); get_ocean_dz_grid() the z displacement.
 	void get_ocean_height_grid(Vector<float> &r_height, Vector<float> &r_imag, int &r_n, Vector2 &r_domain_size, double *r_time = nullptr) const;
 	void get_ocean_dz_grid(Vector<float> &r_dz) const;
+	// Mean whitecap foam (0..1) over the ocean grid at the last readback,
+	// -1 before the first one or with foam off.
+	float get_foam_cover() const;
 	// dh/dx of the ocean layer from the FFT (readback, for tests).
 	void get_ocean_slope_x_grid(Vector<float> &r_slope_x) const;
 

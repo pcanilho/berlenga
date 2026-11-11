@@ -162,6 +162,9 @@ void SnowCover3D::_allocate() {
 	cell_cornice_z.resize(cornices_enabled ? nn : 0);
 	cell_cornice_x.fill(0.0f);
 	cell_cornice_z.fill(0.0f);
+	cell_cornice_crack.resize(cornices_enabled ? nn : 0);
+	cell_cornice_crack.fill(0.0f);
+	cornice_failures.clear();
 	sx_cache.clear();
 	snow_image = Image::create_empty(resolution, resolution, false, Image::FORMAT_RGBAH);
 	snow_texture.unref();
@@ -412,6 +415,8 @@ void SnowCover3D::_prepare_inputs(double p_weather_dt, bool p_blocking) {
 		in.humidity = humidity;
 	}
 	in.base_precip = precipitation_rate;
+	in.climate_map = get_climate_map_node();
+	in.climate_background = in.climate_map ? in.climate_map->get_climate_recipe()->get_precipitation() : 0.0f;
 
 	// The sun: this node's light, else the weather map's (the world tier: its owner's; a bake: the date's).
 	in.sun_dir = Vector3();
@@ -499,8 +504,11 @@ void SnowCover3D::_update_row(uint32_t p_row, void *p_unused) {
 
 		// Precipitation, split into snow and rain.
 		const float rate = in.weather ? in.weather->get_rain_at(pos) : in.base_precip;
-		// More falls higher up (orographic enhancement), by precipitation_gradient per 100 m.
-		const float oro = MAX(1.0f + precipitation_gradient * (h - in.ref_height) * 0.01f, 0.0f);
+		// More falls higher up and on windward slopes (orographic enhancement): the terrain climate's
+		// precipitation field when there is one, else precipitation_gradient per 100 m.
+		const float oro = in.climate_map && in.climate_background > 0.0f
+				? MAX(in.climate_map->get_precipitation_at(pos) / in.climate_background, 0.0f)
+				: MAX(1.0f + precipitation_gradient * (h - in.ref_height) * 0.01f, 0.0f);
 		const float p = MAX(rate, 0.0f) * oro * in.dt_h;
 		const float share = snowfall_fraction(t, in.humidity);
 		float snow = p * share;
@@ -980,6 +988,7 @@ void SnowCover3D::advance_world(float p_seconds) {
 		const double step = MIN(left, 3600.0);
 		world->_update(step, true);
 		left -= step;
+		_emit_cornice_failures();
 	}
 	world->_upload();
 	_publish_world_globals();
@@ -996,6 +1005,161 @@ float SnowCover3D::cornice_growth_share(float p_wind_ratio) {
 		return 0.0f;
 	}
 	return r < 1.4f ? (r - 1.0f) / 0.4f : (2.0f - r) / 0.6f;
+}
+
+// Cornice failure (docs/ideas/snow.md, follow-up 6). The slab is wind-packed snow of 450 kg/m3 (stage 4); its
+// liquid water adds weight.
+static constexpr float CORNICE_DENSITY = 450.0f; // kg/m3
+static constexpr float CORNICE_DEBRIS_DENSITY = 500.0f; // kg/m3, avalanche debris
+
+float SnowCover3D::cornice_root_stress(float p_length, float p_crack, float p_liquid) {
+	// The overhang as a cantilever thinning from its root (as thick as it is long, stage 4's profile) to the
+	// lip: the root carries rho g h L^2 / 6, a bending stress of rho g L at the top of the section. The tension
+	// crack cuts into the section; open to a tenth of the length (a tilt of about 6 degrees) it has taken 60%.
+	if (p_length <= 0.0f) {
+		return 0.0f;
+	}
+	const float s = MIN(MAX(p_crack, 0.0f) / (0.1f * p_length), 1.0f);
+	const float k = 1.0f - 0.6f * s;
+	const float rho = CORNICE_DENSITY * (1.0f + CLAMP(p_liquid, 0.0f, 0.5f));
+	return rho * 9.81f * p_length / (k * k) * 0.001f;
+}
+
+float SnowCover3D::cornice_strength(float p_liquid) {
+	// Sommerfeld (1971): the most snow of density rho holds in tension, log10 sigma = -4.3 + 3 log10 rho (sigma
+	// in 100 Pa), 457 kPa at 450 kg/m3. A slab metres across holds far less than the small samples (the weakest
+	// flaw decides; McClung 1979's large samples): a tenth, so a cold cornice falls at about 10 m, near the
+	// longest field cornices. Melt water in the bonds weakens it further (our pick: a third at 10% water by
+	// volume).
+	const float rho = CORNICE_DENSITY;
+	const float theta = CLAMP(p_liquid, 0.0f, 0.5f) * rho / 1000.0f;
+	return 0.1f * 5.012e-3f * rho * rho * rho * 0.001f / (1.0f + 20.0f * theta);
+}
+
+float SnowCover3D::cornice_crack_rate(float p_length, float p_crack, float p_celsius, float p_liquid) {
+	// The slab tilts about its root by viscous creep: strain rate sigma / eta with the snow viscosity of Crocus
+	// (Vionnet et al. 2012), eta = eta0 rho / 250 exp(0.1 (0 C - T) + 0.023 rho) / (1 + 60 theta), the crack
+	// opening that over the slab's length. A 4 m cornice at -5 C opens about 0.9 cm a day, at 0 C 1.4, wet 4,
+	// close to the 0.4 to 2.8 cm a day measured at Gruvefjellet, rising to 8.6 before a failure (Vogel et
+	// al. 2012).
+	if (p_length <= 0.0f) {
+		return 0.0f;
+	}
+	const float rho = CORNICE_DENSITY;
+	const float theta = CLAMP(p_liquid, 0.0f, 0.5f) * rho / 1000.0f;
+	const float tc = MIN(p_celsius, 0.0f);
+	const double eta = 7.62237e6 * (rho / 250.0) * Math::exp(-0.1 * tc + 0.023 * rho) / (1.0 + 60.0 * theta);
+	const double sigma = cornice_root_stress(p_length, p_crack, p_liquid) * 1000.0;
+	return float(p_length * sigma / eta * 86400.0);
+}
+
+void SnowCover3D::_deposit(int p_index, float p_swe_mm, float p_density) {
+	if (p_swe_mm <= 0.0f) {
+		return;
+	}
+	float &swe = cell_swe.write[p_index];
+	float &rho = cell_density.write[p_index];
+	const float depth = (swe > SWE_MIN ? swe / rho : 0.0f) + p_swe_mm / p_density;
+	swe += p_swe_mm;
+	rho = swe / MAX(depth, 1e-6f);
+	if (cell_crust.size() == cell_swe.size() && cell_crust[p_index] > 0.0f) {
+		cell_crust_burial.write[p_index] += p_swe_mm / p_density;
+	}
+}
+
+void SnowCover3D::_fail_cornice(int p_index, float p_length, Vector2 p_dir) {
+	// The slab out from the crack falls (the drawn profile beyond it: 0.9 L^2 a metre of crest) and lands at
+	// the foot of the face below as debris: the first cell downwind where the ground flattens under 30 degrees.
+	const int n = resolution;
+	const float cs = _cell_size();
+	const int x0 = p_index % n;
+	const int z0 = p_index / n;
+	const float mass = 0.9f * p_length * p_length * cs * CORNICE_DENSITY;
+	const float tan_foot = Math::tan(Math::deg_to_rad(30.0f));
+	int foot = -1;
+	float fx = x0 + 0.5f, fz = z0 + 0.5f;
+	int prev = p_index;
+	for (int k = 1; k <= 32; k++) {
+		fx += p_dir.x;
+		fz += p_dir.y;
+		const int x = int(Math::floor(fx));
+		const int z = int(Math::floor(fz));
+		if (x < 0 || z < 0 || x >= n || z >= n) {
+			break;
+		}
+		const int j = z * n + x;
+		if (j == prev) {
+			continue;
+		}
+		if (k > 1 && cell_ground[prev] - cell_ground[j] < tan_foot * cs) {
+			foot = j;
+			break;
+		}
+		prev = j;
+	}
+	if (foot < 0) {
+		foot = prev;
+	}
+	const float swe = mass / (cs * cs); // kg/m2 = mm
+	_deposit(foot, swe, CORNICE_DEBRIS_DENSITY);
+	const Vector3 foot_pos = _cell_center(foot % n, foot / n);
+	if (owner && owner->cell_swe.size() == owner->resolution * owner->resolution && owner->origin_valid) {
+		// The near square too, over the cells under the world cell.
+		const float ocs = owner->_cell_size();
+		const int on = owner->resolution;
+		const int ox0 = int(Math::floor((foot_pos.x - 0.5f * cs) / ocs)) - owner->origin_cell.x;
+		const int oz0 = int(Math::floor((foot_pos.z - 0.5f * cs) / ocs)) - owner->origin_cell.y;
+		const int span = MAX(int(Math::round(cs / ocs)), 1);
+		for (int z = MAX(oz0, 0); z < MIN(oz0 + span, on); z++) {
+			for (int x = MAX(ox0, 0); x < MIN(ox0 + span, on); x++) {
+				owner->_deposit(z * on + x, swe, CORNICE_DEBRIS_DENSITY);
+			}
+		}
+	}
+	CorniceFailure f;
+	const Vector3 c = _cell_center(x0, z0);
+	f.position = Vector3(c.x, cell_ground[p_index] + cell_swe[p_index] / MAX(cell_density[p_index], 50.0f), c.z);
+	f.direction = p_dir;
+	f.length = p_length;
+	f.mass = mass;
+	cornice_failures.push_back(f);
+	cornice_failure_count++;
+}
+
+void SnowCover3D::_emit_cornice_failures() {
+	if (!world || world->cornice_failures.is_empty()) {
+		return;
+	}
+	const Vector<CorniceFailure> list = world->cornice_failures;
+	world->cornice_failures.clear();
+	for (const CorniceFailure &f : list) {
+		emit_signal(SNAME("cornice_failed"), f.position, Vector3(f.direction.x, 0.0f, f.direction.y), f.length, f.mass);
+	}
+}
+
+uint64_t SnowCover3D::get_cornice_failure_count() const {
+	return world ? world->cornice_failure_count : cornice_failure_count;
+}
+
+float SnowCover3D::get_cornice_crack_at(Vector3 p_position) const {
+	const SnowCover3D *c = world ? world : (cornices_enabled ? this : nullptr);
+	if (!c || c->cell_cornice_crack.size() != c->resolution * c->resolution) {
+		return 0.0f;
+	}
+	const float cs = c->_cell_size();
+	const int x = int(Math::floor(p_position.x / cs)) - c->origin_cell.x;
+	const int z = int(Math::floor(p_position.z / cs)) - c->origin_cell.y;
+	if (x < 0 || z < 0 || x >= c->resolution || z >= c->resolution) {
+		return 0.0f;
+	}
+	return c->cell_cornice_crack[z * c->resolution + x];
+}
+
+void SnowCover3D::set_cornice_failure_enabled(bool p_enabled) {
+	cornice_failure_enabled = p_enabled;
+	if (world) {
+		world->cornice_failure_enabled = p_enabled;
+	}
 }
 
 void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_resolution) {
@@ -1018,6 +1182,7 @@ void SnowCover3D::_setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_reso
 	drift_threshold_wind = owner->drift_threshold_wind;
 	wind_transport_enabled = owner->wind_transport_enabled;
 	wind_curvature_length = owner->wind_curvature_length;
+	cornice_failure_enabled = owner->cornice_failure_enabled;
 	precipitation_gradient = owner->precipitation_gradient;
 	publish_shader_globals = false;
 	cornices_enabled = true;
@@ -1260,6 +1425,11 @@ void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
 	const Vector2 dir = u > 0.1f ? p_wind / u : Vector2();
 	float *cx = cell_cornice_x.ptrw();
 	float *cz = cell_cornice_z.ptrw();
+	if (cell_cornice_crack.size() != n * n) {
+		cell_cornice_crack.resize(n * n);
+		cell_cornice_crack.fill(0.0f);
+	}
+	float *crack = cell_cornice_crack.ptrw();
 	auto cell = [&](int p_x, int p_z) { return CLAMP(p_z, 0, n - 1) * n + CLAMP(p_x, 0, n - 1); };
 	for (int z = 1; z < n - 1; z++) {
 		for (int x = 1; x < n - 1; x++) {
@@ -1267,9 +1437,13 @@ void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
 			if (cell_swe[i] <= SWE_MIN) {
 				cx[i] = 0.0f;
 				cz[i] = 0.0f;
+				crack[i] = 0.0f;
 				continue;
 			}
-			const bool has = cx[i] != 0.0f || cz[i] != 0.0f;
+			bool has = cx[i] != 0.0f || cz[i] != 0.0f;
+			if (!has) {
+				crack[i] = 0.0f;
+			}
 			const float h = cell_ground[i];
 			const float t = inputs.temperature - lapse_rate * 0.001f * (h - inputs.ref_height);
 			if (has && t > melt_threshold) {
@@ -1277,6 +1451,20 @@ void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
 				const float k = MAX(len - 0.0005f * (t - melt_threshold) * p_dt_h, 0.0f) / MAX(len, 1e-6f);
 				cx[i] *= k;
 				cz[i] *= k;
+			}
+			if (has && cornice_failure_enabled) {
+				// The overhang creeps over its root: the tension crack behind it opens, faster when warm, wet
+				// or long, and the slab falls once its root cannot hold it (follow-up 6).
+				const float len = Vector2(cx[i], cz[i]).length();
+				const float liquid = cell_liquid[i] / MAX(cell_swe[i], 1.0f);
+				crack[i] += cornice_crack_rate(len, crack[i], t, liquid) * p_dt_h / 24.0f;
+				if (len >= 0.25f && cornice_root_stress(len, crack[i], liquid) > cornice_strength(liquid)) {
+					_fail_cornice(i, len, Vector2(cx[i], cz[i]) / len);
+					cx[i] = 0.0f;
+					cz[i] = 0.0f;
+					crack[i] = 0.0f;
+					continue;
+				}
 			}
 			if (u < 0.1f || t >= 0.0f) {
 				continue;
@@ -1320,6 +1508,9 @@ void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
 			}
 			cx[i] = c.x;
 			cz[i] = c.y;
+			// Snow the wind lays on the cornice fills its crack and sinters over it (our pick: as fast as the
+			// slab grows), so cracks open in calm, mild spells and mostly in spring (Vogel et al. 2012).
+			crack[i] = MAX(crack[i] - g * RATE * p_dt_h, 0.0f);
 		}
 	}
 }
@@ -1439,6 +1630,7 @@ Error SnowCover3D::bake_climate(Rect2 p_rect, int p_resolution) {
 	for (int d = 0; d < climate->get_days(); d++) {
 		for (int hr = 0; hr < 24; hr += step) {
 			const SnowClimate::Hour w = climate->weather_at(d, hr + 0.5f * step);
+			b->lapse_rate = climate->seasonal_lapse_rate(float((climate->get_start_day() - 1 + d) % 365) + 1.0f, lapse_rate);
 			b->temperature = w.temperature;
 			b->humidity = w.humidity;
 			b->precipitation_rate = w.precipitation;
@@ -1590,6 +1782,9 @@ float SnowCover3D::get_swe_at(Vector3 p_position) const {
 	if (_in_world_only(p_position)) {
 		return world->get_swe_at(p_position);
 	}
+	if (!get_map_rect().has_point(Vector2(p_position.x, p_position.z))) {
+		return 0.0f; // no world tier: no snow known outside the square (as the materials read it), not its edge
+	}
 	return MAX(_sample(cell_swe, Vector2(p_position.x, p_position.z)), 0.0f);
 }
 
@@ -1685,7 +1880,8 @@ float SnowCover3D::get_snowfall_rate_at(Vector3 p_position) const {
 	const WeatherMap3D *w = WeatherMap3D::get_active();
 	const float rate = w ? w->get_rain_at(p_position) : precipitation_rate;
 	const float rh = w ? w->get_humidity() : humidity;
-	return MAX(rate, 0.0f) * snowfall_fraction(get_air_temperature_at(p_position), rh);
+	const float ref = w ? w->get_ground_height() : (is_inside_tree() ? get_global_position().y : 0.0f);
+	return MAX(rate, 0.0f) * get_orographic_factor_at(p_position, ref) * snowfall_fraction(get_air_temperature_at(p_position), rh);
 }
 
 float SnowCover3D::get_new_snow_at(Vector3 p_position) const {
@@ -1755,6 +1951,7 @@ void SnowCover3D::_notification(int p_what) {
 						world_counter = 0;
 						world->_update(world_accum, false);
 						world_accum = 0.0;
+						_emit_cornice_failures();
 						world->_upload();
 						_publish_world_globals();
 					}
@@ -1890,6 +2087,27 @@ void SnowCover3D::set_precipitation_gradient(float p_share) {
 	precipitation_gradient = MAX(p_share, 0.0f);
 }
 
+void SnowCover3D::set_climate_map(const NodePath &p_path) {
+	climate_map = p_path;
+}
+
+const TerrainDataMap3D *SnowCover3D::get_climate_map_node() const {
+	const SnowCover3D *o = owner ? owner : this;
+	if (o->climate_map.is_empty() || !o->is_inside_tree()) {
+		return nullptr;
+	}
+	const TerrainDataMap3D *m = Object::cast_to<TerrainDataMap3D>(o->get_node_or_null(o->climate_map));
+	return m && m->has_climate() && m->get_climate_recipe().is_valid() ? m : nullptr;
+}
+
+float SnowCover3D::get_orographic_factor_at(Vector3 p_position, float p_ref_height) const {
+	const TerrainDataMap3D *m = get_climate_map_node();
+	if (m && m->get_climate_recipe()->get_precipitation() > 0.0f) {
+		return MAX(m->get_precipitation_at(p_position) / m->get_climate_recipe()->get_precipitation(), 0.0f);
+	}
+	return MAX(1.0f + precipitation_gradient * (p_position.y - p_ref_height) * 0.01f, 0.0f);
+}
+
 void SnowCover3D::set_climate(const Ref<SnowClimate> &p_climate) {
 	climate = p_climate;
 	if (is_inside_tree()) {
@@ -2013,6 +2231,9 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_snow_texture"), &SnowCover3D::get_snow_texture);
 	ClassDB::bind_method(D_METHOD("set_precipitation_gradient", "share"), &SnowCover3D::set_precipitation_gradient);
 	ClassDB::bind_method(D_METHOD("get_precipitation_gradient"), &SnowCover3D::get_precipitation_gradient);
+	ClassDB::bind_method(D_METHOD("set_climate_map", "path"), &SnowCover3D::set_climate_map);
+	ClassDB::bind_method(D_METHOD("get_climate_map"), &SnowCover3D::get_climate_map);
+	ClassDB::bind_method(D_METHOD("get_orographic_factor_at", "position", "reference_height"), &SnowCover3D::get_orographic_factor_at);
 	ClassDB::bind_method(D_METHOD("set_climate", "climate"), &SnowCover3D::set_climate);
 	ClassDB::bind_method(D_METHOD("get_climate"), &SnowCover3D::get_climate);
 	ClassDB::bind_method(D_METHOD("set_world_update_every", "updates"), &SnowCover3D::set_world_update_every);
@@ -2026,6 +2247,14 @@ void SnowCover3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_world_texture"), &SnowCover3D::get_world_texture);
 	ClassDB::bind_method(D_METHOD("advance_world", "seconds"), &SnowCover3D::advance_world);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("cornice_growth_share", "wind_ratio"), &SnowCover3D::cornice_growth_share);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("cornice_root_stress", "length", "crack", "liquid"), &SnowCover3D::cornice_root_stress);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("cornice_strength", "liquid"), &SnowCover3D::cornice_strength);
+	ClassDB::bind_static_method("SnowCover3D", D_METHOD("cornice_crack_rate", "length", "crack", "celsius", "liquid"), &SnowCover3D::cornice_crack_rate);
+	ClassDB::bind_method(D_METHOD("get_cornice_crack_at", "position"), &SnowCover3D::get_cornice_crack_at);
+	ClassDB::bind_method(D_METHOD("set_cornice_failure_enabled", "enabled"), &SnowCover3D::set_cornice_failure_enabled);
+	ClassDB::bind_method(D_METHOD("is_cornice_failure_enabled"), &SnowCover3D::is_cornice_failure_enabled);
+	ClassDB::bind_method(D_METHOD("get_cornice_failure_count"), &SnowCover3D::get_cornice_failure_count);
+	ADD_SIGNAL(MethodInfo("cornice_failed", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::VECTOR3, "direction"), PropertyInfo(Variant::FLOAT, "length"), PropertyInfo(Variant::FLOAT, "mass")));
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("snowfall_fraction", "celsius", "humidity"), &SnowCover3D::snowfall_fraction);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("new_snow_density", "celsius"), &SnowCover3D::new_snow_density);
 	ClassDB::bind_static_method("SnowCover3D", D_METHOD("holding_depth", "slope_degrees", "min_mm", "decay"), &SnowCover3D::holding_depth);
@@ -2069,6 +2298,8 @@ void SnowCover3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "climate", PROPERTY_HINT_RESOURCE_TYPE, "SnowClimate"), "set_climate", "get_climate");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "world_update_every", PROPERTY_HINT_RANGE, "1,120,1"), "set_world_update_every", "get_world_update_every");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "precipitation_gradient", PROPERTY_HINT_RANGE, "0,0.5,0.005"), "set_precipitation_gradient", "get_precipitation_gradient");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "climate_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_climate_map", "get_climate_map");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cornice_failure_enabled"), "set_cornice_failure_enabled", "is_cornice_failure_enabled");
 	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "publish_shader_globals"), "set_publish_shader_globals", "get_publish_shader_globals");
 }

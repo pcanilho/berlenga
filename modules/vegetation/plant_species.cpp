@@ -222,6 +222,10 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_patch_cover"), &PlantSpecies::get_patch_cover);
 	ClassDB::bind_method(D_METHOD("set_patch_seed", "seed"), &PlantSpecies::set_patch_seed);
 	ClassDB::bind_method(D_METHOD("get_patch_seed"), &PlantSpecies::get_patch_seed);
+	ClassDB::bind_method(D_METHOD("set_mask_channel", "channel"), &PlantSpecies::set_mask_channel);
+	ClassDB::bind_method(D_METHOD("get_mask_channel"), &PlantSpecies::get_mask_channel);
+	ClassDB::bind_method(D_METHOD("set_mask_invert", "invert"), &PlantSpecies::set_mask_invert);
+	ClassDB::bind_method(D_METHOD("is_mask_invert"), &PlantSpecies::is_mask_invert);
 	ClassDB::bind_method(D_METHOD("set_patch_invert", "invert"), &PlantSpecies::set_patch_invert);
 	ClassDB::bind_method(D_METHOD("is_patch_invert"), &PlantSpecies::is_patch_invert);
 	ClassDB::bind_method(D_METHOD("get_patch_weight", "global_position"), &PlantSpecies::get_patch_weight);
@@ -249,6 +253,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_patch_cover", "get_patch_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "patch_seed"), "set_patch_seed", "get_patch_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "patch_invert"), "set_patch_invert", "is_patch_invert");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "mask_channel", PROPERTY_HINT_ENUM, "None:-1,Red:0,Green:1,Blue:2,Alpha:3"), "set_mask_channel", "get_mask_channel");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mask_invert"), "set_mask_invert", "is_mask_invert");
 
 	ADD_GROUP("Rules", "");
 	ADD_PROPERTYI(PropertyInfo(Variant::VECTOR2, "slope_range", PROPERTY_HINT_NONE, "suffix:°"), "set_rule_range", "get_rule_range", RULE_SLOPE);

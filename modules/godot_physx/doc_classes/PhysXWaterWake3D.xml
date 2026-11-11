@@ -4,7 +4,7 @@
 		The wake and foam a [RigidBody3D] leaves on a [PhysXWaterSurface3D] as it moves.
 	</brief_description>
 	<description>
-		Add as a child of a [RigidBody3D] -- a boat, usually alongside a [PhysXBuoyancy3D] and a [PhysXBoat3D]. It runs a small ripple simulation on the GPU, centered a little behind the body, that the hull pushes down as it moves: a row of dips along its keel, deeper with speed. The grid is fixed to the water, not the body: as it slides along with the body, the waves and foam stay where they were made and fade out behind, and waves reaching the grid's edge are absorbed rather than reflected back. A boat at speed draws a Kelvin wake.
+		Add as a child of a [RigidBody3D] -- a boat, usually alongside a [PhysXBuoyancy3D] and a [PhysXBoat3D]. It runs a small ripple simulation on the GPU, centered a little behind the body, that the hull pushes down as it moves: a row of dips along its keel, deeper with speed. The grid is fixed to the water, not the body: as it slides along with the body, the waves and foam stay where they were made and fade out behind, and waves reaching the grid's edge are absorbed rather than reflected back. With [member dispersive] on, the waves travel as on deep water, long ones faster than short, so a boat at speed draws a true Kelvin wake: a wedge of about 19.5 degrees each side, with transverse waves behind the stern and diverging waves along its arms.
 		The wake is drawn by the water surface's material and included in [method PhysXWaterSurface3D.sample_height], so other floating bodies ride it -- everywhere there is water, past the surface's simulated square and over its shore ripple grid alike. The body's own [PhysXBuoyancy3D] doesn't float on its own wake. A surface draws up to four wakes.
 		It also carries foam, in two layers:
 		- [b]Hull foam[/b]: churned into a band just outside the hull along its sides, heaviest at the bow ([member bow_foam]), then pushed out sideways from the hull's line ([member foam_spread]) so it peels off into the two bands of a boat's wake. Steep wake waves break into it too ([member foam_slope]). Foam added with [method add_foam] drifts out with it.
@@ -52,17 +52,23 @@
 		<member name="bow_foam" type="float" setter="set_bow_foam" getter="get_bow_foam" default="8.0">
 			Hull foam churned in per second at the bow, along the hull's sides, at [member reference_speed]; it tapers off toward the stern and scales with speed.
 		</member>
+		<member name="breaking_slope" type="float" setter="set_breaking_slope" getter="get_breaking_slope" default="0.3">
+			With [member dispersive] on: the wake waves' slope past which they break into foam, in place of [member foam_slope]. Waves start whitecapping near a steepness [code]ak[/code] of 0.3 and cannot stand past the Stokes limit, about 0.44, so a displacement hull's Kelvin waves stay glassy and only the steepest, near the bow, break.
+		</member>
 		<member name="cells" type="int" setter="set_cells" getter="get_cells" default="192">
 			Grid cells per side. With [member size] this sets the cell size: keep it around 0.25 m for crisp foam and short wake waves. The cost grows with the square of it; the GPU step is cheap, but the readback for [method sample_height] grows the same way.
 		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.25">
-			How quickly the wake's waves die out, per second.
+			How quickly the wake's waves die out, per second. With [member dispersive] on, an eighth of it applies: the exact step does not smear the waves out as the wave equation does, and real wakes run on for hundreds of meters.
+		</member>
+		<member name="dispersive" type="bool" setter="set_dispersive" getter="is_dispersive" default="true">
+			Steps the wake's waves with deep-water dispersion (eWave, Tessendorf 2014): each wavelength travels at its own speed, [code]omega = sqrt(g k)[/code], in Fourier space, two FFTs a step. The hull acts as a pressure patch, its dip where the water rests, and a moving hull leaves the Kelvin pattern. The grid's [member cells] round up to a power of two, the grid growing with them to keep the cell size (192 cells over 48 m become 256 over 64 m). Off, the waves follow the wave equation at one speed, [member wave_speed]: a V whose angle changes with the boat's speed.
 		</member>
 		<member name="foam_persistence" type="float" setter="set_foam_persistence" getter="get_foam_persistence" default="4.0">
 			Seconds the foam takes to fade to about a third.
 		</member>
 		<member name="foam_slope" type="float" setter="set_foam_slope" getter="get_foam_slope" default="0.08">
-			The wake wave slope past which waves break into hull foam.
+			The wake wave slope past which waves break into hull foam. With [member dispersive] on, [member breaking_slope] is used instead.
 		</member>
 		<member name="foam_slope_gain" type="float" setter="set_foam_slope_gain" getter="get_foam_slope_gain" default="4.0">
 			Foam per second per unit of slope past [member foam_slope].
@@ -113,7 +119,7 @@
 			The [PhysXWaterSurface3D] to draw on. Empty uses the sibling [PhysXBuoyancy3D]'s.
 		</member>
 		<member name="wave_speed" type="float" setter="set_wave_speed" getter="get_wave_speed" default="2.2">
-			How fast (m/s) the wake's waves travel. With the body's speed it sets the wake's angle: slower waves give a narrower V.
+			With [member dispersive] off: how fast (m/s) the wake's waves travel. With the body's speed it sets the wake's angle: slower waves give a narrower V. Unused with [member dispersive] on.
 		</member>
 	</members>
 </class>

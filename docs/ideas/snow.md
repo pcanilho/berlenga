@@ -698,3 +698,217 @@ Gray, Saltation of snow, Water Resources Research 26(7), 1990. Pomeroy and Male,
 of snow, J. Hydrology 136, 1992. Li and Pomeroy, Estimates of threshold wind speeds for snow transport
 using meteorological data, J. Applied Meteorology 36, 1997. Tabler, Snow transport as a function of wind
 speed and height, Cold Regions Engineering, ASCE 1991.
+
+## Follow-up 5: exact sparkle under the path tracer (built 10 Nov 2026)
+
+Stage 5's sparkle is a footprint grid: one facet per cell, sized to the pixel, the same in raster and
+path tracing. A path tracer can do better: it already shoots many rays through a pixel, so if every grain
+is a facet the samples integrate the grains in the footprint themselves, at any distance and on every
+bounce. The glint papers (Jakob, Hasan, Yan, Lawrence, Ramamoorthi and Marschner 2014; Yan, Hasan, Jakob,
+Lawrence, Marschner and Ramamoorthi 2014; Chermain, Sauvage, Dischler and Dachsbacher 2020) count facets
+in a footprint to get that integral cheaply; their reference is the brute-force one, every facet traced,
+which is what this is. Atanasov and Koylazov (2016, V-Ray's glints) do the same per-ray facet sampling
+in production.
+
+- **The facet.** Each 2 mm grain cell (hashed from the world position) holds one facet, its normal
+  GGX-sampled with alpha 0.4 around the snow's normal, as stage 5's facets.
+- **Specular on its own normal.** The path tracer's material result gets a `specular_normal`: when set,
+  the base specular lobe (evaluation, sampling and its pdf) lies on it while the diffuse keeps the
+  shading normal. Snow sets it to the facet, at roughness 0.22 (alpha 0.05, a smooth ice face). An
+  earlier try carried the facet on the coat lobe, as stage 5 does: snow came out 7% darker (mean
+  luminance 0.576 against 0.623), because the coat dims the diffuse under it.
+- **For custom shaders.** A new spatial fragment output, `SPECULAR_NORMAL` (view space, like `NORMAL`),
+  sets it; raster ignores it. `SnowSurface3D` uses it, and `snow_glint_apply_specular()` in
+  `get_snow_shader_code()` gives other snow shaders the same (the terrain material).
+- **Wet and trodden snow** fade to the plain rough lobe exactly as stage 5's glints do.
+- **Toggle.** The global shader parameter `snow_exact_glints` (rt_param 57), off by default: at the
+  samples a CPU check can afford the result is grainy (8% of pixels glint at 16 samples against 0.1%
+  for the grid), which the denoiser is there to settle. Off, the path tracer keeps stage 5's grid.
+
+**Checks.** `--view=sparkle --spp=16 --glints=exact` (and `--view=trail ...` for `SnowSurface3D`): mean
+luminance 0.634 against 0.624 for the grid and 0.619 in raster (with the samples spread over the
+pixel, as main now does; 0.604 against 0.623 before); the deep snow of the trail view 1% brighter than
+with the grid; a glitter path toward the sun in both. All snow and ground checks pass.
+
+**Cost.** One hash and a GGX sample per snow hit, the same BRDF work; GPU time and the look with Ray
+Reconstruction on the PC queue before it can be on by default.
+
+Sources: Jakob, Hasan, Yan, Lawrence, Ramamoorthi and Marschner, Discrete stochastic microfacet models,
+SIGGRAPH 2014. Yan, Hasan, Jakob, Lawrence, Marschner and Ramamoorthi, Rendering glints on
+high-resolution normal-mapped specular surfaces, SIGGRAPH 2014. Chermain, Sauvage, Dischler and
+Dachsbacher, Procedural physically based BRDF for real-time rendering of glints, Pacific Graphics 2020.
+Atanasov and Koylazov, A practical stochastic algorithm for rendering mirror-like flakes, SIGGRAPH 2016
+Talks.
+
+## Follow-up 6: cornices that fall, and icicles (built 11 Nov 2026)
+
+### Cornice failure
+
+Field studies on Svalbard measured what a cornice does before it falls. Vogel, Eckerstorfer and
+Christiansen (2012) found that a tension crack opens behind the cornice, where the shallow snow of the
+plateau meets the thick cornice. The slab tilts out about a fixed pivot and the crack opens almost
+linearly, at 0.4 to 2.8 cm a day. It opened at 8.6 cm a day in the days before a complete failure.
+Failure came four to five weeks after a crack opened, most often in the June thaw, with rain and warm
+storms as triggers. Hancock, Eckerstorfer, Prokop and Hendrikx (2020) scanned cornices with lidar and
+found most falls coincided with winter storms that loaded them; one fell after rain.
+
+- **The load.** Treat the overhang as a cantilever that thins from its root to the lip. At the root it
+  is as thick as it is long, which is stage 4's profile. Its bending stress at the root is `rho g L`:
+  450 kg/m3 wind-packed snow, plus the weight of its liquid water. The tension crack cuts into the
+  section. A crack open to a tenth of the length (a tilt of about 6 degrees) takes 60% of it, so the
+  stress rises as `1 / (1 - 0.6 s)^2`.
+- **The strength.** Sommerfeld (1971) gives the most snow holds in tension:
+  `log10 sigma = -4.3 + 3 log10 rho`, with sigma in 100 Pa, which is 457 kPa at 450 kg/m3. A slab
+  metres across fails at its weakest flaw. McClung's (1979) large samples hold much less, so we take a
+  tenth. Melt water weakens the bonds, by `1 / (1 + 20 theta)`; that factor is our pick. A cold,
+  uncracked cornice therefore falls at 10.4 m, near the longest field cornices (stage 4 caps growth at
+  12 m).
+- **The creep.** The crack opens at `L sigma / eta`. Here eta is the snow viscosity of Crocus
+  (Vionnet et al. 2012):
+  `eta0 rho / 250 exp(0.1 (0 C - T) + 0.023 rho) / (1 + 60 theta)`.
+  For a 4 m cornice that gives 0.86 cm a day at -5 C, 1.42 at 0 C and 4.9 wet, the range measured at
+  Gruvefjellet. With the crack 30 cm open, wet, it reaches 16 cm a day.
+- **Filling.** Snow the wind lays on the cornice fills its crack as fast as the slab grows. That is our
+  pick: cracks open in calm, mild spells, as observed.
+- **The fall.** When the stress passes the strength, the slab beyond the crack falls: 0.9 L^2 of
+  profile per metre of crest. It lands as 500 kg/m3 debris on the first cell downwind where the ground
+  flattens under 30 degrees. The debris goes into both the world tier and the near square.
+  `SnowCover3D` emits `cornice_failed(position, direction, length, mass)`. Near the camera,
+  `SnowCornice3D` breaks the slab into 3 to 16 rigid chunks that tumble down the face: rounded,
+  irregular balls a third of the cornice's length across, with convex colliders. They are removed after
+  `debris_lifetime`. The drawn cornice shows its crack: the roof opens and the slab tilts out about a
+  pivot low in its root.
+
+**Checks** (`--test=failure`):
+- The crack rates above.
+- A cold cornice falls at 10.4 m.
+- A baked ridge at 1 April, left in calm at -10 C, has its longest cornice (5.7 m) open its crack 7.4 cm
+  in a week and fall on day 20. In a calm thaw at +1.5 C it falls on day 5.
+- The debris lands 144 m out below the face.
+- With failure off, none fall.
+
+**Shots.** `--view=cornice --crack=4` shows the crack across a cornice's roof after four days of thaw.
+`--view=cornice --fall` shows the first cornice to fall in that thaw (day 5), seen from the lee two
+thirds of a second later, its chunks tumbling down the face below the bare crest.
+
+Over a baked winter, cornices now fall and regrow. On the cold alpine ridge the longest at 1 April is
+5.7 m (it was 4.2 m without failure, since cracks filled by accretion let others grow longer before
+they fall). On the mild 16 m ridge they are 3.1 m on 1 March and gone by 1 April after its March
+thaws, so a showcase wanting cornices there should end its bake by 1 March.
+
+### Icicles
+
+`SnowIcicles3D` grows icicles along an edge: a line of points, such as an eave or a ledge. They grow
+where melt water runs off the snow above into air below freezing.
+
+- **The water.** It comes from `SnowCover3D.get_runoff_at()` at the edge, times `catchment_length`. A
+  heated roof adds `heat_loss` (W/m2) melting the snow from below, which is how icicles and ice dams
+  form on houses. Water gathers into runnels, so each place along the edge gets `3 r^2` of the mean.
+  Some places grow long icicles; many stay short.
+- **Growth.** This follows Makkonen (1988), with the two stages of Szilder and Lozowski (1994). Heat
+  leaves the wet ice at 0 C by:
+  - convection, taking the larger of forced and free: Ranz-Marshall and Churchill for the tip's drop,
+    Churchill-Bernstein and Churchill-Chu for the wall;
+  - evaporation into the air's humidity, by the Lewis relation;
+  - long-wave radiation at `4 sigma T^3`.
+
+  While water reaches the tip, the tip lengthens as a tube of spongy ice holding 26% liquid. The tube is
+  as wide as the 5 mm pendant drop: `dL/dt = 2 q / (rho_i Lf 0.74)`, 1.05 cm/h at -10 C in still air
+  and 4.3 cm/h at 2 m/s. The wall thickens as its wetted half freezes the running film. That share,
+  0.5, is our pick. It puts length growth at 8.2 times diameter growth, the low end of the 8 to 32
+  Maeno, Makkonen, Nishimura, Kosugi and Takahashi (1994) measured. A balance over the whole wall gives
+  4. Water the wall and tip do not freeze drips. Once the wall freezes all the water, the icicle only
+  thickens. Above 0 C the same coefficients melt it back. An icicle thinned to the drop's size at its
+  root falls.
+- **Look.** Each icicle is a cone with ten sides, from its root radius down to the drop (Szilder and
+  Lozowski: close to conical). The material is clear ice: transmission, IOR 1.31, specular 0.335 for
+  1.8% reflectance, no absorption over a few centimetres. Centimetre ripples along it come from a
+  normal map (Ueno 2003; Chen and Morris 2013: about 1 cm whatever the icicle).
+- **Look, revised (11 Nov).** The first shots read as dark, opaque cones. Three causes, three fixes:
+  - Ice that holds impurities (roof water does) is hazy, not from air but from pockets of impure
+    water caught in layers as the icicle thickens (Ladan and Morris 2022). So each icicle has a
+    hazy core: a cone of 0.4 of its radius over 0.8 of its length (the tip, the newest ice, stays
+    clear), white, rough 0.5 and back lit so light comes through it (`hazy_core`, `core_material`).
+    It is opaque so the clear ice around it refracts it in raster as under path tracing.
+  - The ripple slope drops from 0.12 to 0.06 (a ripple about 0.1 mm high on its 1 cm). At 0.12 the
+    path tracer bent alternate ripples onto the sky and onto the eave, black and white stripes.
+  - Even at 0.06 every cone still showed regular stripes under path tracing. Painting the eave red
+    turned the stripes red: they are the eave refracted, cut into bands by the ripples, because a slope
+    of only 0.01 swings a ray through the cone between the eave and the sky. Without the ripple map
+    the eave shows as one smooth patch. Ripples grow with the icicle (Chen and Morris 2013), so they now
+    do here: none below 10 cm, full slope at 50 cm, smooth over the last 4 cm to the tip, and a random
+    phase per icicle so neighbours' bands do not line up. The strength rides in UV.x across a 64 by 32
+    ripple map, wide so that mipmaps blend only close strengths.
+  - A solid cone bends what is behind it upward: under an eave the path tracer shows the wood's
+    shaded underside through the ice, which needs a fourth bounce for the sky lighting it. At the
+    default 3 bounces it was black. Fixed (11 Nov) with a transmission budget apart from the bounce
+    count, as Cycles keeps one: after the first bounce, crossing a transmissive surface or reflecting
+    inside it is free, up to `rendering/pathtracing/transmission_bounces` (default 4, rt_param 58)
+    extra segments. At 3 bounces plus 4 the icicle view matches 6 plain bounces within noise, in
+    about 70% of the time (79 s against 113 s on the software renderer). Raster refracts at the front face only, so it shows the sky
+    where the path tracer shows the eave; the ice reads as clear in both.
+  - The bench view is now backlit, at the icicles' height, against a snowy land (`--close` for 100%).
+
+**Checks** (`--test=icicles`):
+- The rates above. Colder and windier grow faster; nothing grows above 0 C.
+- An edge with three sunny days at -4 C (melt for six hours, then a night at -8 C) grows icicles up
+  to 22 cm, 1.1 kg of ice from 32 kg of water. The rest dripped.
+- A trickle the wall can freeze thickens them without lengthening them.
+- Twelve hours at +4 C melt the longest back from 22 to 13 cm.
+
+`--view=icicles` shows a shed's eave after the same three days, in raster and path traced.
+
+**Not built:**
+- Supercooled water and the slower length growth Maeno et al. found with more water.
+- Sunlight melting icicles below 0 C.
+- Icicles falling as rigid bodies.
+- Icicles along cornice lips and rock.
+- A cornice's own mass taken from the snow it is built from (stage 4 adds it).
+
+Sources:
+- Vogel, Eckerstorfer and Christiansen, Cornice dynamics and meteorological control at Gruvefjellet,
+  Central Svalbard, The Cryosphere 6, 2012.
+- Hancock, Eckerstorfer, Prokop and Hendrikx, Quantifying seasonal cornice dynamics using a
+  terrestrial laser scanner in Svalbard, Norway, NHESS 20, 2020.
+- Sommerfeld, The relationship between density and tensile strength in snow, J. Glaciology 10(60),
+  1971.
+- McClung, In-situ estimates of the tensile strength of snow utilizing large sample sizes,
+  J. Glaciology 22(87), 1979.
+- Vionnet et al., The detailed snowpack scheme Crocus and its implementation in SURFEX v7.2, GMD 5,
+  2012.
+- Makkonen, A model of icicle growth, J. Glaciology 34(116), 1988.
+- Szilder and Lozowski, An analytical model of icicle growth, Annals of Glaciology 19, 1994.
+- Maeno, Makkonen, Nishimura, Kosugi and Takahashi, Growth rates of icicles, J. Glaciology 40(135),
+  1994.
+- Ueno, Morphological instability of the solid-liquid interface in crystal growth under supercooled
+  liquid film flow and natural convection airflow, Physics of Fluids 15, 2003.
+- Chen and Morris, On the origin and evolution of icicle ripples, New Journal of Physics 15, 2013.
+- Ladan and Morris, Pattern of inclusions inside rippled icicles, Physical Review E 106, 054211, 2022.
+
+## Follow-up 7: one climate with the terrain (built 11 Nov 2026)
+
+The winter bake had its own recipe, apart from the ClimateRecipe the terrain generator's rivers, the data
+map's climate fields and the plants use. Now `SnowClimate.recipe` takes that ClimateRecipe and
+`SnowCover3D.climate_map` a TerrainDataMap3D with its climate baked.
+
+- From the recipe: latitude, reference height, January and July means, the day-to-day spread (the
+  generator's residual), and the wet-day wind (the recipe's wind is the one its precipitation follows; dry
+  days blow `storm_wind_factor` softer). Each month's wet-day amount is the recipe's year of precipitation
+  times the month's share (its seasonality harmonic) over the Markov chain's share of wet days, so the
+  WGEN chain (Richardson 1981) keeps its persistence and the totals match the recipe. The bake's lapse
+  rate follows the recipe's winter and summer values (Rolland 2003) day by day. The diurnal range and the
+  wet/dry chain stay the SnowClimate's own: the recipe has no daily statistics.
+- From the climate map: its precipitation field (Smith and Barstad 2004, summed over the wet-day wind
+  rose) over the recipe's flat-ground precipitation scales what falls on each cell, in place of
+  `precipitation_gradient`, in the bake, the world tier and the near square (and
+  `get_snowfall_rate_at()`).
+- On the bench mountain (700 m, 9 m/s westerly, the recipe's 1000 s conversion and fallout times) the
+  field peaks 500 m in the lee of the summit: the advection length (about 9 km) is longer than the hill,
+  so it spills over, as linear theory says small hills do. The snow follows: windward over lee snow
+  water at 350-550 m goes from 1.00 to 0.46. Bigger ranges get their windward maximum back.
+
+**Checks** (`--test=climate`): ten years from the recipe give its January mean (1.6 C against 2.0), its
+year (1185 mm against 1200) and its seasonality (December 125 mm, June 58 mm); the lapse rates; the
+mountain gets more than flat ground; an east wind mirrors the field; the bake's snow follows it. The
+landscape bench's gap "SnowClimate is set apart" is now a pass. Its check "cornices grow on the lee
+crests around the peak" failed before this change too (0 pieces since the gentler valley layout).

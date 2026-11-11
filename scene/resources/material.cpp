@@ -617,6 +617,12 @@ void BaseMaterial3D::init_shaders() {
 		// And its world tier, the coarse pack over the whole terrain drawn outside the near square.
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_world_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
+		// Under the path tracer every ice grain a facet, per ray (docs/ideas/snow.md, follow-up 5). Off by
+		// default: it needs many samples or the denoiser; off, the path tracer uses the raster's footprint grid.
+		Dictionary exact;
+		exact["type"] = "bool";
+		exact["value"] = false;
+		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/snow_exact_glints", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), exact);
 		// Ground deformation reads GroundSurface3D's (rect width 0 = none: nothing lowered, nothing moved).
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_map", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), state_map);
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, "shader_globals/ground_deform_rect", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), map_rect);
@@ -742,6 +748,8 @@ void weather_wetness_apply(float p_wet, float p_normal_y, float p_metallic, floa
 
 String BaseMaterial3D::get_snow_functions_code(bool p_from_weather) {
 	String code;
+	// Read by snow_glint_apply_specular() under the path tracer, with or without a snowpack.
+	code += "global uniform bool snow_exact_glints;\n";
 	if (p_from_weather) {
 		code += R"(global uniform sampler2D snow_map;
 global uniform sampler2D snow_catch_map;
@@ -768,7 +776,8 @@ vec4 snow_cover_at(vec3 p_world_pos) {
 	if (snow_map_rect.z > 0.0) {
 		vec2 nuv = (p_world_pos.xz - snow_map_rect.xy) / snow_map_rect.zw;
 		vec2 ne = min(nuv, 1.0 - nuv);
-		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : 1.0;
+		// With no world tier there is nothing outside the square: no data there, not its edge stretched out.
+		float nw = snow_world_rect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
 		if (nw > 0.0) {
 			vec2 half_texel = 0.5 / vec2(textureSize(snow_map, 0));
 			s = mix(s, textureLod(snow_map, clamp(nuv, half_texel, 1.0 - half_texel), 0.0), nw);
@@ -885,6 +894,47 @@ void snow_glint_apply(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, fl
 			r_clearcoat_roughness = 0.5;
 		}
 	}
+}
+
+// Exact sparkle under the path tracer (docs/ideas/snow.md, follow-up 5; the same function is in
+// scene_raytracing_raygen.glsl and SnowSurface3D's shader): the facet of the 2 mm grain at a point. Every grain
+// is an ice facet, its normal GGX-tilted (alpha 0.4); a pixel's samples land on different grains, so the path
+// tracer integrates the footprint's own facets (the reference Jakob et al. 2014 and Yan et al. 2014 measure
+// their counting models against), at any distance and on any bounce.
+vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
+	const float grain = 0.002;
+	ivec3 q = ivec3(floor(p_pos / grain));
+	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	float r1 = float(h & 0xffffu) / 65536.0;
+	float r2 = float(h >> 16u) / 65536.0;
+	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * r2;
+	return normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
+}
+
+// snow_glint_apply that also owns the snow's specular (call it in place of snow_glint_apply): under the path
+// tracer (with snow_exact_glints) the base specular lies on the facet of the grain hit (SPECULAR_NORMAL, view
+// space; the diffuse keeps NORMAL) at the facet's own roughness; elsewhere as above.
+void snow_glint_apply_specular(vec3 p_world_pos, vec3 p_geo_normal, float p_footprint, float p_snow, float p_wet, mat4 p_view, vec3 p_tangent, vec3 p_binormal, inout vec3 r_normal, inout vec3 r_normal_map, inout float r_normal_map_depth, inout float r_clearcoat, inout float r_clearcoat_roughness, inout float r_roughness, inout vec3 r_specular_normal) {
+	if (!(IN_PATH_TRACER && snow_exact_glints)) {
+		snow_glint_apply(p_world_pos, p_geo_normal, p_footprint, p_snow, p_wet, p_view, p_tangent, p_binormal, r_normal, r_normal_map, r_normal_map_depth, r_clearcoat, r_clearcoat_roughness);
+		return;
+	}
+	float gw = step(0.5, p_snow) * (1.0 - smoothstep(0.05, 0.3, p_wet));
+	if (gw <= 0.0) {
+		return;
+	}
+	r_specular_normal = normalize((p_view * vec4(snow_grain_facet(p_world_pos, p_geo_normal), 0.0)).xyz);
+	r_roughness = mix(r_roughness, 0.22, gw);
 }
 )";
 	return code;

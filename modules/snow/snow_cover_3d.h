@@ -94,6 +94,9 @@ class SnowCover3D : public Node3D {
 	float wind_curvature_length = 20.0f; // m, MicroMet's curvature length scale
 	bool publish_shader_globals = true;
 	float precipitation_gradient = 0.0f; // share more per 100 m above the reference height
+	// A TerrainDataMap3D with a baked climate: its precipitation field (orographic, Smith and Barstad 2004)
+	// over its recipe's flat-ground precipitation scales what falls, in place of precipitation_gradient.
+	NodePath climate_map;
 
 	// The world tier (docs/ideas/snow.md, stage 4): a coarse pack over the whole terrain, started from a baked
 	// climate and carried on by the weather at a lower rate. It seeds cells entering this square and draws the
@@ -117,6 +120,17 @@ class SnowCover3D : public Node3D {
 	bool cornices_enabled = false;
 	Vector<float> cell_cornice_x;
 	Vector<float> cell_cornice_z;
+	// Cornice failure (docs/ideas/snow.md, follow-up 6): the tension crack behind each cornice, its opening (m).
+	bool cornice_failure_enabled = true;
+	Vector<float> cell_cornice_crack;
+	struct CorniceFailure {
+		Vector3 position; // the crest top
+		Vector2 direction; // out over the lee
+		float length = 0.0f; // m
+		float mass = 0.0f; // kg
+	};
+	Vector<CorniceFailure> cornice_failures; // since the owner last emitted them
+	uint64_t cornice_failure_count = 0;
 	Vector2 last_wind; // m/s at 10 m, last update
 
 	// Cells.
@@ -163,6 +177,8 @@ class SnowCover3D : public Node3D {
 		float drift_norm = 1.0f;
 		float base_precip = 0.0f;
 		const WeatherMap3D *weather = nullptr;
+		const TerrainDataMap3D *climate_map = nullptr; // baked, with a recipe
+		float climate_background = 0.0f; // mm a year, the recipe's flat-ground precipitation
 	} inputs;
 
 	Ref<Image> snow_image;
@@ -202,6 +218,9 @@ class SnowCover3D : public Node3D {
 	Vector3 _cell_center(int p_x, int p_z) const;
 	void _setup_internal(SnowCover3D *p_owner, Rect2 p_rect, int p_resolution);
 	void _grow_cornices(float p_dt_h, Vector2 p_wind);
+	void _fail_cornice(int p_index, float p_length, Vector2 p_dir);
+	void _deposit(int p_index, float p_swe_mm, float p_density);
+	void _emit_cornice_failures();
 	void _blow(float p_dt_h, Vector2 p_wind);
 	float last_blown = 0.0f; // mm moved per cell (mean) by the last update's transport
 	float last_blown_max = 0.0f; // kg/(m s), largest transport flux in the last update
@@ -292,6 +311,13 @@ public:
 	bool get_publish_shader_globals() const { return publish_shader_globals; }
 	void set_precipitation_gradient(float p_share);
 	float get_precipitation_gradient() const { return precipitation_gradient; }
+	void set_climate_map(const NodePath &p_path);
+	NodePath get_climate_map() const { return climate_map; }
+	// The data map climate_map points at, when it has a baked climate and a recipe; else null.
+	const TerrainDataMap3D *get_climate_map_node() const;
+	// Share of the recipe's background precipitation falling at a point: the climate map's, else
+	// precipitation_gradient's per 100 m above p_ref_height.
+	float get_orographic_factor_at(Vector3 p_position, float p_ref_height) const;
 	void set_climate(const Ref<SnowClimate> &p_climate);
 	Ref<SnowClimate> get_climate() const { return climate; }
 	void set_world_update_every(int p_updates);
@@ -305,6 +331,10 @@ public:
 	float get_world_depth_at(Vector3 p_position) const; // m, the world tier
 	float get_world_swe_at(Vector3 p_position) const; // mm, the world tier
 	Vector2 get_cornice_at(Vector3 p_position) const; // m, the overhang's length along its wind (world tier)
+	float get_cornice_crack_at(Vector3 p_position) const; // m, the opening of the tension crack behind it
+	void set_cornice_failure_enabled(bool p_enabled);
+	bool is_cornice_failure_enabled() const { return cornice_failure_enabled; }
+	uint64_t get_cornice_failure_count() const;
 	Ref<Texture2D> get_world_texture() const;
 	void advance_world(float p_seconds);
 
@@ -349,6 +379,12 @@ public:
 	// Cornice growth against the wind over the blowing threshold (Yu et al. 2023): 0 below 1 and above 2,
 	// most at 1.4.
 	static float cornice_growth_share(float p_wind_ratio);
+	// Cornice failure (follow-up 6): the tensile stress at the root of an overhang p_length long with its
+	// tension crack p_crack open (kPa), the slab's tensile strength (kPa) and the crack's opening rate (m/day),
+	// p_liquid the pack's liquid water over its water.
+	static float cornice_root_stress(float p_length, float p_crack, float p_liquid);
+	static float cornice_strength(float p_liquid);
+	static float cornice_crack_rate(float p_length, float p_crack, float p_celsius, float p_liquid);
 
 	SnowCover3D();
 	~SnowCover3D();

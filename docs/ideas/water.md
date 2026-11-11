@@ -1009,6 +1009,20 @@ scene, so it is not shown in the cloud shots. Limits: the lip is taken as
 level across the river, each column's jet is independent (no contraction of
 the sheet), and the live window does not see the fall.
 
+**Raster lighting (11 Nov).** The raster sheet and the river's white water
+were drawn unshaded with a fixed light direction, so a cascade or a fall in a
+shaded valley glowed flat white (pixels about 194 on a dark hillside) while the
+path tracer lit it properly. Foam is a rough diffuse scatterer, so both now
+take the scene's lights, shadows and sky: the fall sheet is a lit material,
+and the river keeps its open-water look (own colour, sky and sun reflections)
+as EMISSION while its white water goes to a lit ALBEDO. The reflection term is
+linear in the colour, so the split is exact and open water is unchanged.
+PhysXWaterSurface3D's raster foam (whitecaps, shore foam, the rim) and wet
+sand take the same split: open water stays as it was, foam and wet sand are lit.
+In the water bench with the sun turned down (`--sun-energy=0.1`) the surf no
+longer glows brighter than the sand beside it; in full sun the frame barely
+changes.
+
 ## Step 5a: ocean wave cascades and the TMA spectrum (9 Nov)
 
 ### Problem
@@ -1509,6 +1523,340 @@ ones further up.
 - **Not built:** raster light shafts, raster caustics, fog on transparent objects under water in
   raster, bubbles. With several cameras the node follows the active one.
 
+## Step 5f: directional spreading and a shared-memory FFT (10 Nov, audit item 5)
+
+### Problem
+
+- The spectrum spread its energy about the wind as `cos^2 theta` (and a 4% back lobe), the same at every
+  wavelength. Measured seas are narrowest at the spectrum's peak and wider above and below it, so the
+  dominant waves run with the wind while short waves cross at wide angles. At 14 m/s our sea's slopes were
+  2.7 times steeper along the wind than across it; Cox and Munk (1954, sun glitter) measured about 1.5.
+- No way to ask for swell: long, nearly parallel crests from a storm far away.
+- Each cascade's FFT ran one dispatch per butterfly stage for each of its four transforms: 8 log2(N)
+  dispatches a step, through global memory each time (48 at N = 64, 64 at N = 256), times the cascades.
+
+### Published methods
+
+- **Horvath, "Empirical directional wave spectra for computer graphics" (DigiPro 2015), section 6.**
+  Compares cos^2, Mitsuyasu, Hasselmann (both `Q(s) |cos(theta/2)|^2s` with a measured `s(w)`) and
+  Donelan-Banner (`b / (2 tanh(b pi)) sech^2(b theta)`, `b(w / wp)` piecewise; he uses the first branch
+  below 0.56 wp too). His default: TMA spectrum and Donelan-Banner spreading. Swell (section 6.1): the
+  spreading times `Q(s) |cos(theta/2)|^2s` with `s = 16 tanh(wp / w) swell^2`, normalised again (a
+  quadrature for Donelan-Banner; for Hasselmann the exponents add, closed form).
+- **FFT on the GPU:** a line's whole radix-2 Stockham FFT in one workgroup's shared memory, log2(N)
+  stages with barriers, several transforms batched in one dispatch (Flügge 2017, "Realtime GPGPU FFT ocean
+  water simulation"; GodotOceanWaves; Crest and Atlas batch all cascades in a texture array).
+
+### As built
+
+- `PhysXWaterSurface3D.wave_spreading`: Donelan-Banner (default), Hasselmann, or Cos2 (the old one,
+  kept as the opt-out). `swell` 0..1 for the first two. The spectrum init evaluates them per mode, the
+  swell product normalised by a 64-point quadrature; regenerated in place like a wind change.
+- `water_fft_rows.glsl`: rows then columns, all four transforms of a step along z: 2 dispatches a step
+  per cascade. Same butterflies as `water_fft.glsl`, so the field is the same: the height map and the
+  rendered frame are bit-identical to the per-stage passes. Up to N = 1024 (shared memory); larger grids,
+  and the project setting `physics/physx_3d/water/shared_memory_fft` off (the default until a GPU timing), take the per-stage passes.
+
+### Results (lavapipe, `docs/bench/water_surface --view=sea_top --height-out`, 3 cascades, 14 m/s)
+
+| Spreading | Hs | slope variance z / x (wind mostly along z) |
+|---|---|---|
+| Cos2 (before) | 1.13 m | 2.72 |
+| Donelan-Banner | 1.09 m | 1.41 |
+| Hasselmann | 1.12 m | 1.17 |
+| Donelan-Banner, swell 0.8 | 1.09 m | 2.55 |
+
+Cox and Munk's upwind / crosswind slope variance at 14 m/s is 1.48: Donelan-Banner matches it. The
+wave height is unchanged (the spreading only moves energy between directions).
+
+FFT cost: lavapipe runs workgroups on CPU threads, where 256-thread barriers are costly: 247 against
+210 ms a frame at N = 256 with 3 cascades. That says nothing about a GPU, where this layout is the
+standard fast one (64 dispatches a step become 2). So the setting ships OFF, and goes on by default once
+the PC times it faster (PC queue).
+
+## Step 5g: whitecap cover from the wind (10 Nov, audit item 6)
+
+### Problem
+
+Whitecaps came from a fixed Jacobian threshold (`foam_threshold`, 0.7). How much of the sea that whitens
+depends on the spectrum, the choppiness, the cascades, the fetch and now the spreading, not on the wind
+alone, so the same threshold gave 0.18% cover at 14 m/s with three cascades (step 5d) where the sea shows
+about 3%, and changing any wave setting changed the foam with it.
+
+### Published methods
+
+- **Monahan and O'Muircheartaigh, "Optimal power-law description of oceanic whitecap coverage dependence
+  on wind speed" (J. Phys. Oceanogr. 10, 1980).** From open-ocean photographs: cover
+  `W = 3.84e-6 U10^3.41` (fraction): 0.1% at 6 m/s, 1% at 10 m/s, 3% at 14 m/s, 8% at 20 m/s. Later
+  surveys (Anguelova and Webster 2006, Callaghan et al. 2008) keep the cubic law with a spread of about a
+  factor of 3 at one wind (sea temperature, a rising or falling sea), and a threshold near 3-4 m/s.
+- **Dupuy and Bruneton, "Real-time animation and rendering of ocean whitecaps" (SIGGRAPH Asia 2012).**
+  Whitecaps where the Jacobian of the choppy displacement falls below a threshold, which they set from
+  the Jacobian's statistics so the cover matches the measured coverage at that wind.
+- Engines: Crest and UE water take a fixed foam threshold or coverage slider; HDRP's water reads the
+  simulation's foam with a wind-speed-dependent amount curve, artist set.
+
+### As built
+
+- The foam pass sums its foam over the grid (one atomic per workgroup), read back each step with the
+  height. The cascades draw their foam over each other (max), so the share left clear is the product of
+  each one's: `cover = 1 - prod(1 - c_i)`.
+- `PhysXWaterSurface3D.whitecap_auto` (on by default) steers the threshold each step, an integral
+  controller in log cover (the cover spans decades with the wind, and a threshold step changes it by a
+  factor): `threshold -= 0.08 ln(cover / W) dt`. The same threshold goes to every cascade's foam pass and
+  the material's summed-crest test. It holds Monahan's cover whatever the waves' settings, and follows
+  the wind as the weather changes it. Below about 3 m/s the target is under 0.01%, and the threshold
+  runs down until the sea is clear.
+- `whitecap_cover_scale` (1) scales the target, inside the measured spread. `whitecap_auto` off keeps the
+  fixed `foam_threshold` (the opt-out); with it on, `foam_threshold` is the starting point.
+- `get_whitecap_cover()`, `get_whitecap_target_cover()`, `get_effective_foam_threshold()` for a bench.
+
+### Results (lavapipe, `docs/bench/water_surface --view=sea_top --whitecaps=4,...,20`, 15 s a wind, mean of the last 7.5 s)
+
+Share of the sea under foam (mean foam on the grids; the material's lace erosion keeps the mean):
+
+| U (m/s) | Monahan | fixed 0.7, 3 cascades (before) | auto, 3 cascades | auto, choppiness 1.5 | fixed 0.7, 1 cascade |
+|---|---|---|---|---|---|
+| 4 | 0.04% | 0.10% | 0.05% | 0.01% | 0.31% |
+| 6 | 0.17% | 0.30% | 0.18% | 0.18% | 0.68% |
+| 8 | 0.46% | 0.56% | 0.49% | 0.47% | 1.37% |
+| 10 | 0.99% | 0.96% | 0.99% | 0.98% | 1.99% |
+| 12 | 1.84% | 1.29% | 1.85% | 1.83% | 2.63% |
+| 14 | 3.11% | 1.67% | 3.12% | 3.11% | 3.77% |
+| 17 | 6.03% | 2.36% | 6.05% | 5.98% | 5.20% |
+| 20 | 10.5% | 3.03% | 10.4% | 10.3% | 6.21% |
+
+The fixed threshold grew the cover 30 times from 4 to 20 m/s where the sea grows it 240 times, and
+moved with the cascades and the choppiness; steered, the cover is on Monahan's curve within 1-8% from
+6 m/s up (4 m/s still settling from a far start at choppiness 1.5). The threshold stays between 0.68 and
+0.77 with three cascades (0.54-0.64 at choppiness 1.5). Cost: one atomic per 64 texels in the foam
+pass and a 4-byte readback with the existing ones.
+
+## Step 5h: dispersive boat wakes with the Kelvin pattern (11 Nov, audit item 9)
+
+### Problem
+
+The wake grid that travels with a boat (`PhysXWaterWake3D`, `water_wake.glsl`) runs the plain wave
+equation at one speed (`wave_speed`, 2.2 m/s). Every wavelength travels at that speed, so a moving hull
+makes a Mach cone: a V whose angle changes with the boat's speed, with no transverse waves behind the
+stern and no feathered diverging waves on its arms. Real deep water is dispersive (`omega^2 = g k`: long
+waves are faster), and that alone makes the Kelvin pattern: a wedge of half-angle 19.47 degrees at any
+speed (Thomson 1887), transverse waves of wavelength `2 pi U^2 / g` inside it and short diverging waves
+on its edges, narrowing at high hull Froude numbers (Rabaud and Moisy 2013).
+
+### Published methods
+
+- **Water Surface Wavelets (Jeschke et al., SIGGRAPH 2018)**, the audit's suggestion. Wave amplitude on
+  a 4D grid (position x direction x wavenumber), advected at the group speed, the height rebuilt from a
+  precomputed profile buffer. It carries waves over kilometres at about 8 ms for 4096^2 x 16 on a
+  laptop GPU. Its phases are random per direction, so it cannot build patterns made by interference:
+  the paper says wake patterns that depend on "constructive interference between coherent phases" are
+  impractical with it. The Kelvin pattern is one, so it does not give what the audit promised. Not used.
+- **Water Wave Packets (Jeschke and Wojtan, SIGGRAPH 2017).** Lagrangian packets with exact
+  dispersion: Kelvin wakes come out right, but a boat wake takes millions of packets (0.5-2 fps in the
+  paper). Too slow for a game.
+- **iWave (Tessendorf 2004)** and **dispersion kernels (Canabal et al., SIGGRAPH Asia 2016).** A height
+  grid with the vertical-derivative operator `sqrt(-laplacian)` as a convolution kernel, so the grid
+  has deep-water dispersion and moving sources leave Kelvin wakes. A short kernel gets long waves wrong
+  (its transform is smooth at k = 0 where `|k|` has a cusp), which is what Canabal et al. fix with
+  fitted kernels.
+- **eWave (Tessendorf 2014)**, the same equation stepped in Fourier space with an exponential
+  integrator: every mode is an exact oscillator at `omega = sqrt(g k)`, so dispersion is exact at every
+  wavelength the grid holds and the step is unconditionally stable. It costs two FFTs a step. A moving
+  pressure patch on it is the classic Havelock problem, whose linear answer is the Kelvin wake.
+- Engines: UE water, Crest and HDRP draw boat wakes as foam trails, decals or a non-dispersive ripple
+  sim; Crest's dynamic waves are the wave equation at one speed, like ours was.
+
+### Plan
+
+eWave on the wake grid, keeping everything else the grid does (it slides with the boat, foam, the hull
+bands, propeller wash, breaking):
+
+1. The hull is a pressure head `d(x)` (its dip, as before). The surface oscillates about `-d`:
+   `h_tt = -g sqrt(-laplacian) (h + d)`. A hull at rest still sits in its dip; a moving one radiates the
+   Kelvin pattern. No more pulling the height toward the dip.
+2. Each step: a spatial pass shifts the state as the grid slides and packs `z = (h + d) + i v`; one
+   complex FFT (rows, then columns, the shared-memory shader the ocean uses); a mode pass splits `H`
+   and `V` by Hermitian symmetry and turns each mode by `omega dt`; the inverse FFT; a spatial pass
+   takes `h = Re - d`, damps a border band (the grid is periodic in Fourier space; the band keeps waves
+   from wrapping), and does the foam and breaking as before.
+3. `dispersive` (on by default) is the opt-out; off keeps the wave equation. With it on the grid side
+   is a power of two (192 cells rounds up to 256, the size growing to keep the cell size), and
+   `wave_speed` is unused.
+4. Bench: a boat crossing calm sea at 4, 6 and 10 m/s, the wake heights read back from above; measure
+   the wedge angle against 19.47 degrees and the transverse wavelength against `2 pi U^2 / g`.
+
+### As built
+
+As planned, with three things learned on the bench:
+
+- The exact step loses no energy on its own, so the wave equation's damping (0.25/s) took the transverse
+  waves out 30 m behind the boat. With `dispersive` an eighth of `damping` applies.
+- Dispersive waves near the bow are steep (slope 0.3-0.4) and the old foam threshold (slope 0.08) turned
+  the whole wedge white. `breaking_slope` (0.3, where whitecapping starts; Stokes' limit is about 0.44)
+  replaces `foam_slope` with it on: the bow waves break, the Kelvin waves stay glassy.
+- The grid is periodic in Fourier space; the border band is 15% of the side (10% before) so long waves
+  are gone before they wrap.
+
+The step is pass 1 (slide, foam, the dip, pack) + row/column FFT + mode pass + row/column FFT + pass 2,
+each its own compute list (a barrier inside one list re-pushes the last push constant onto the FFT
+pipeline, which has none). 256^2 by default.
+
+### Results (lavapipe, `docs/bench/water_surface --boat=U --wake-out`, an 8 m x 2.4 m hull, 15 s in)
+
+Wedge half-angle: the outermost offset where the wave envelope still reaches a quarter of its peak,
+median over 16-48 m behind the bow. Transverse wavelength: zero up-crossings along the track.
+
+| U (m/s) | hull Froude | wedge, wave equation (before) | wedge, dispersive | transverse wavelength, dispersive (theory) |
+|---|---|---|---|---|
+| 4 | 0.45 | 32.2 | 21.8 | 9.0 m (10.2) |
+| 6 | 0.68 | 21.4 | 19.5 | 23.8 m (23.1) |
+| 10 | 1.13 | 12.9 | 12.3 | longer than the grid (64.0) |
+
+Before, the wedge was a Mach cone (`asin(2.2 / U)`: 33 degrees at 4 m/s, 13 at 10), filled with a flat
+raised plateau and no transverse waves. Now it holds near Kelvin's 19.5 degrees up to a hull Froude
+number of about 0.7, with transverse waves of the right length, then narrows as ships' wakes do at
+high Froude numbers (Rabaud and Moisy 2013: the angle falls about as 1 / Froude past 0.6). The path traced frame
+shows the waves in the sun's glitter path (no denoiser here). The raster frame does not show a glitter
+path on this bench's sea at all, wake or not: a raster sun-specular question for later, not the wake.
+
+Cost: two 256^2 complex FFTs and three 256^2 passes a step, about what one ocean cascade's FFT costs
+(the GPU timing goes on the PC queue). The CPU side is unchanged.
+
+
+## Step 5i: raster reflections from above (11 Nov, bug)
+
+The raster surface seen from above was `unshaded`: a tint shaped by a fixed pseudo-light, with no sky and
+no sun in it (an old fix for blown-out blending, when the surface was lit as if opaque and then blended
+over the lit floor). So a raster sea showed no glitter path and no sky at grazing angles, where the path
+tracer shows both, and boat wakes were nearly invisible in raster.
+
+Now, still unshaded and still blended (so the old blow-out cannot come back), the surface adds what it
+reflects and lets through only the rest: `out = old (1 - F) + F sky(r) + sun`, written for blend_mix.
+
+- `F`: the exact unpolarized Fresnel term, air into water (2% looking down, most of the light at grazing).
+- Sky: a 128 x 64 radiance panorama of the environment's sky (`sky_bake_panorama`), baked again every
+  four seconds, read along the reflected ray (turned up to the horizon where a steep wave points it down).
+- Sun: a GGX lobe at `pathtraced_roughness` (Bruneton, Neyret and Holzschuch 2010 light the sea with a
+  microfacet sun the same way), its roughness widened by how fast the normal turns across the pixel
+  (geometric specular antialiasing, Tokuyoshi and Kaplanyan 2019): close up the glints are sharp, far
+  out they merge into a glitter path instead of flickering.
+- None on foam or dry sand. `PhysXWaterSurface3D.raster_reflections` (on) is the opt-out.
+
+Rivers (`PhysXRiver3D`) had the same unlit raster look and now share the code
+(`water_raster_reflections.h`: the GLSL and the sun and sky lookup), with their own `raster_reflections`.
+Waterfall sheets keep the tint.
+
+Unresolved: raster cloud shadows do not dim the glitter (an unshaded material does not read the light's
+shadow); the path tracer's do.
+
+## Lakes lay flat (11 Nov, bug)
+
+A lake's fetch is its own size, so at 4 m/s on a 200 m lake the JONSWAP peak is about 0.5 m long (Hs about 3 cm).
+The FFT tile is 40 m with 64 or 128 points, so the peak fell below two cells and only the spectrum's tail under it
+was kept: the bench measured Hs 0.00 m and a low camera saw a flat sheet. The ocean grid is now raised until the
+peak spans four cells, up to 256 (Hs 0.02 m, ripples and glitter visible). Open sea is unchanged.
+
+## Research: the scene mirrored in raster water (11 Nov, not built)
+
+The showcase found that a calm raster lake reads as flat blue from a low camera. Raster water (Step 5i) reflects
+only the sky panorama and the sun, so mountains and trees never mirror in it. Godot's SSR only runs for opaque
+surfaces, and the water is blended. Path tracing already mirrors the scene.
+
+How others do it:
+- Unreal 5: water uses the Single Layer Water shading model, drawn in its own pass after the opaques. Screen-space
+  reflections (or Lumen) trace against the scene's depth, and the sky and reflection captures fill the gaps.
+- Unity HDRP water: screen-space reflections on the water surface, with reflection probes and the sky behind.
+- Crest (Unity): planar reflections (a second camera mirrored in the water plane) in its built-in pipeline
+  version, and the render pipeline's SSR in newer versions.
+- Sea of Thieves and many open-world games: SSR on water, with a cubemap or sky fallback.
+
+The two methods:
+1. **SSR marched inside the water shader.** A transparent Godot shader can read the opaque scene
+   (`hint_screen_texture`) and its depth (`hint_depth_texture`). March the reflected ray in screen space with a
+   perspective-correct DDA (McGuire and Mara, *Efficient GPU Screen-Space Ray Tracing*, JCGT 2014), refine the hit
+   by bisection, and fade near the screen edges and by thickness. Where the ray misses, keep today's sky and sun.
+   For a lake seen from a low camera, the mountains above it are on screen, which is the best case for SSR.
+   It misses whatever is off screen, and objects drawn after the water (other transparents).
+   Cost: one march per water pixel, about 24 to 32 depth reads. Estimated 0.2 to 0.5 ms at 1440p with half the
+   screen as water on a high-end GPU, to be measured on the PC.
+2. **Planar reflections.** Draw the scene again from a camera mirrored in the water plane, into a texture the water
+   samples, distorted by the wave normal. This is exact for flat water and also shows off-screen objects, but it
+   costs a second scene pass (roughly 30 to 100% of the frame's opaque cost per reflecting plane). It needs one
+   pass per water height, so every lake at a different level costs its own pass.
+
+Recommendation: method 1, with `raster_scene_reflections` as an opt-out and the sky panorama as the fallback.
+Planar stays a possible later option for a single hero plane. Not built until Paulo picks it.
+
+## Step 5j: multigrid flow bakes (11 Nov, audit item 10)
+
+The flow bakes solve a stream function: `div(grad(psi) / h) = 0` over the sea or lake's simulated square
+(the current round islands and along shores) and `div(grad(psi) / K)` with the bend metric over a river
+(round rocks). Both used SOR, which needs a few hundred to a few thousand sweeps and grows with the grid
+squared. Now both call `FlowPoisson::solve` (`water/flow_poisson.h`): conjugate gradients in double,
+preconditioned by one symmetric multigrid V-cycle (McAdams, Sifakis and Teran 2010; the cycle after
+Briggs, Henson and McCormick, A Multigrid Tutorial).
+
+- Levels: 2 x 2 aggregates with the Galerkin coarse operator, which on this stencil is just "add up the
+  conductances crossing between aggregates, drop those inside one from the diagonal". Banks, fixed edges
+  and dry ground fall out on their own (no conductance), so no geometric special cases.
+- Unsmoothed aggregation undershoots the smooth error, so the coarse correction is scaled by 1.8 (the
+  over-correction of Braess 1995): CG iterations 30 -> 14 at 320 x 320. One forward Gauss-Seidel sweep
+  before, one backward after, so the preconditioner stays symmetric. Levels in float, CG in double.
+- Islands (a rock, an islet: one unknown psi set so no net flow goes round it) are extra unknowns
+  coupled to their wet neighbours, preconditioned with Jacobi beside the V-cycle.
+- Rivers: the strip equation is now in its symmetric finite-volume form (along a face K_f dn_f / (h_f
+  ds), across K_f h_f ds / dn, the metric h at the face rather than at the cell), which CG needs. It
+  shifts the flow round rocks on a bend by up to 0.07 m/s of 3.8 (mean 0.01); the old form was not
+  conservative there.
+- `physics/physx_3d/water/multigrid_flow` (on) is the opt-out, back to SOR.
+
+Timings (cloud CPU, `docs/bench/water_surface --current=0.6,0.2 --bake-time=N`, whole bake):
+
+| Grid | SOR | Multigrid |
+|---|---|---|
+| 160 x 160 | 62 ms | 10 ms |
+| 320 x 320 | 515 ms | 50 ms |
+| River bench, 25 x 201 (`--bake-time`) | solve about 6 ms, rebuild 12 ms | solve 1.5 ms, rebuild 7.5 ms |
+
+The sea's flow is the same to 0.4 mm/s (fastest 2.1 m/s), since the equation did not change there.
+
+## Step 5k: waterfall mist on every build (11 Nov, audit item 11)
+
+Mist only existed with NVIDIA Flow: each fall fed a `PhysXFlowEmitter3D`, which does nothing without a
+`PhysXFlow3D` in the scene, so the bench, the showcase and every build without Flow had spray and no mist.
+
+Now `PhysXWaterMist3D`: the finest drops (radius about 20 um) as a small grid of liquid water content
+(g/m^3) over a world-aligned box, stepped on the CPU at 15 Hz.
+
+- Physics per drop size: Stokes settling, 2/9 rho_w g r^2 / mu (4.8 cm/s at 20 um); evaporation time
+  r^2 / (2 G (1 - RH)) from the diffusional growth law r dr/dt = G (S - 1), G about 1e-10 m^2/s (Rogers
+  and Yau, A Short Course in Cloud Physics, ch. 7): 13 s at 85%, a minute at 97%, humidity from the
+  WeatherMap3D; extinction 3 Q LWC / (4 rho_w r) with Q about 2 (0.075 /m per g/m^3 at 20 um).
+- Air: the spray wind a fall drags down leaves the impact as a wall jet (Glauert 1956: thickening about
+  0.1 r, slowing as it spreads), at about 0.3 of the impact speed, never back into the cliff, with some of
+  it rising near the impact (the billow up the fall's face); plus the WeatherMap3D's wind.
+- Steps: semi-Lagrangian advection (Stam, Stable Fluids, 1999), explicit turbulent diffusion (0.5 m^2/s),
+  evaporation, the source. Parallel over z slabs.
+- Source: a share of the fall's water that grows with the square of the impact speed (atomisation by the
+  jet), `1e-5 (v / 10 m/s)^2` of the mass flow, `fall_mist_amount` to scale it.
+- Raster: a FogVolume over the box with the grid as its density texture. FogVolumes need the
+  Environment's volumetric fog: while a mist is live and it is off, the mist turns it on at density 0
+  (no fog of its own), ambient inject 1 (lit by the sky) and 200 m reach, and puts it back after (as
+  WeatherMap3D's haze layers do, so it works with or without a weather node).
+- Path tracing: RTVolumes gained dense boxes (up to five, one atlas, density in r; `emission.w` holds the
+  count and switches `rt_volume_fetch` to them), traced by the same delta tracking and ratio tracking as
+  Flow's gas (Woodcock; Novak et al. 2014), albedo 0.999, Henyey-Greenstein g 0.85 for drops this size.
+  A frame where a PhysXFlow3D publishes its gas traces that instead (one medium a frame).
+- A scene with a PhysXFlow3D keeps the Flow emitter (a full fluid solve) instead of the grid.
+
+River bench `--falls --view=fall --mist` (6 m fall, 40 x 20 x 40 cells): step 0.46 ms + texture 0.17 ms
+of CPU, 15 times a second (about 0.3 ms a frame at 30 fps). Near the foot about 2.7 g/m^3, 0.7 five
+metres up. Raster and path tracing agree to about a third on how much the mist brightens the far bank
+(+9 and +14 grey levels): Godot's froxel fog is coarser. GPU cost of the traced mist: PC queue.
+
+Not done: rainbows (a Mie lobe at 138 degrees needs a spectral phase function; HG has none).
+
 ## Sources
 
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).
@@ -1634,6 +1982,10 @@ ones further up.
   https://www.cg.tuwien.ac.at/research/publications/2010/bagar2010/bagar2010-draft.pdf
 - Malan, Real-time water in Horizon Forbidden West, SIGGRAPH 2022 Advances:
   https://advances.realtimerendering.com/s2022/SIGGRAPH2022-Advances-Water-Malan.pdf
+- Cox and Munk, Measurement of the roughness of the sea surface from photographs of the sun's glitter, JOSA 44, 1954.
+- Flügge, Realtime GPGPU FFT ocean water simulation, TU Hamburg-Harburg, 2017.
+- Donelan, Hamilton and Hui, Directional spectra of wind-generated waves, Phil. Trans. R. Soc. A 315, 1985.
+- Hasselmann, Dunckel and Ewing, Directional wave spectra observed during JONSWAP 1973, J. Phys. Oceanogr. 10, 1980.
 - Horvath, Empirical directional wave spectra for computer graphics, DigiPro 2015:
   https://dl.acm.org/doi/10.1145/2791261.2791267
 - Bouws, Guenther, Rosenthal and Vincent, Similarity of the wind wave spectrum in finite depth water (TMA),

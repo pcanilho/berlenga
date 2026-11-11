@@ -35,6 +35,7 @@
 #include "snow_cornice_3d.h"
 #include "snow_cover_3d.h"
 #include "snow_fall_3d.h"
+#include "snow_icicles_3d.h"
 #include "snow_surface_3d.h"
 
 #include "core/object/class_db.h"
@@ -49,6 +50,7 @@ void initialize_snow_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(SnowCornice3D);
 	GDREGISTER_CLASS(SnowSurface3D);
 	GDREGISTER_CLASS(SnowFall3D);
+	GDREGISTER_CLASS(SnowIcicles3D);
 }
 
 void uninitialize_snow_module(ModuleInitializationLevel p_level) {

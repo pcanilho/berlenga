@@ -29,6 +29,14 @@
 				Runs the weather generator from its seed for [param days] days and returns four floats a day: mean temperature at [member base_height] (C), water (mm), mean wind speed (m/s) and [code]1[/code] for a wet day. For checks and tuning.
 			</description>
 		</method>
+		<method name="seasonal_lapse_rate" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="day_of_year" type="float" />
+			<param index="1" name="default" type="float" />
+			<description>
+				The temperature lapse rate in C/km on a day of the year, a harmonic between the [member recipe]'s [member ClimateRecipe.lapse_rate_january] and [member ClimateRecipe.lapse_rate_july]. Returns [param default] without a recipe. [method SnowCover3D.bake_climate] uses it each day.
+			</description>
+		</method>
 		<method name="seasonal_temperature" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="day_of_year" type="float" />
@@ -42,6 +50,13 @@
 			<param index="1" name="hour" type="float" />
 			<description>
 				The direction toward the sun at [member latitude] on a day of the year and a local solar hour: x east, y up, z south (north is -z). Below the horizon when y is negative.
+			</description>
+		</method>
+		<method name="wet_day_amount" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="day_of_year" type="float" />
+			<description>
+				The mean water of a wet day, in mm, on a day of the year. With a [member recipe], the month's share of [member ClimateRecipe.precipitation] (by [member ClimateRecipe.precipitation_seasonality] and [member ClimateRecipe.precipitation_peak_month]) over the Markov chain's share of wet days; without one, [member wet_day_precipitation].
 			</description>
 		</method>
 	</methods>
@@ -84,6 +99,9 @@
 		</member>
 		<member name="prevailing_wind_from" type="float" setter="set_prevailing_wind_from" getter="get_prevailing_wind_from" default="270.0">
 			The bearing the prevailing wind comes from, degrees clockwise from north (north is -z): 270 is a westerly, blowing toward +x.
+		</member>
+		<member name="recipe" type="ClimateRecipe" setter="set_recipe" getter="get_recipe">
+			The terrain's climate, the same [ClimateRecipe] its [TerrainGenerator3D] rivers and [TerrainDataMap3D] climate maps use. When set, [method start_weather] (and so every bake) takes from it [member latitude], [member base_height] (its reference height), [member january_temperature], [member july_temperature], [member temperature_variability] (its daily temperature spread), [member prevailing_wind_from], [member wind_spread] and the wet-day wind (so [member wind_speed] becomes its wind speed over [member storm_wind_factor]); each month's wet-day amount follows its precipitation and seasonality ([method wet_day_amount]); the bake's lapse rate follows its winter and summer values ([method seasonal_lapse_rate]). The wet and dry day chain and [member daily_range] stay this resource's. Point [member SnowCover3D.climate_map] at the data map for its orographic precipitation too.
 		</member>
 		<member name="rect" type="Rect2" setter="set_rect" getter="get_rect" default="Rect2(0, 0, 0, 0)">
 			Baked: the square the snowpack covers, in world XZ.

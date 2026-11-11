@@ -844,6 +844,22 @@ void main() {
 
 		vec3 ray_origin = camera_ray_origin;
 		vec3 ray_dir = direction.xyz;
+		// Without Ray Reconstruction nothing antialiases the image (its jittered camera does that
+		// over frames), so geometry finer than a pixel, such as hair strands, would alias to
+		// sparkle: the samples after the first spread over the pixel (box filter, R2 sequence,
+		// Roberts 2018, rotated per frame). The first stays at the centre for the guide buffers.
+		if (sample_idx > 0u && (RT_FLAGS & RT_FLAG_DLSS_RR_ENABLED) == 0u) {
+			vec2 jitter = fract(vec2(0.7548777, 0.5698403) * float(sample_idx) + vec2(0.7548777, 0.5698403) * float(frame_index % 4096u)) - 0.5;
+			vec2 dj = (pixel_center + jitter) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
+			vec4 target_j = scene_data_block.data.inv_projection_matrix * vec4(dj.x, dj.y, 1.0, 1.0);
+			vec3 view_origin_j = orthogonal ? vec3(target_j.xy / target_j.w, 0.0) : vec3(0.0);
+			vec3 view_direction_j = orthogonal ? vec3(0.0, 0.0, -1.0) : normalize(target_j.xyz);
+			ray_dir = (inv_view * vec4(view_direction_j, 0.0)).xyz;
+			ray_origin = (inv_view * vec4(view_origin_j, 1.0)).xyz;
+			if (rt_material_feature(RT_MATERIAL_FEATURE_REFRACTION) && !orthogonal) {
+				ray_origin += ray_dir * length(target_j.xyz / target_j.w);
+			}
+		}
 		// The ray cone's width at the segment's origin (texture level of detail, rt_texture_cone):
 		// 0 at a perspective eye, one pixel's footprint for an orthogonal camera, then grown by
 		// the pixel's spread angle over each segment traced.
@@ -886,7 +902,10 @@ void main() {
 		vec3 ir_x2 = vec3(0.0);
 		vec3 ir_n2 = vec3(0.0, 0.0, 1.0);
 
-		[[dont_unroll]] for (uint bounce = 0u; bounce <= max_bounces; bounce++) {
+		// Transmission past the first bounce does not count toward max_bounces (see the transmission lobe in
+		// sample_surface_continuation()); the extra segments it may take are capped here.
+		const uint segment_limit = max_bounces + uint(get_rt_param(RT_PARAM_TRANSMISSION_BOUNCES));
+		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit; bounce++) {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
 			uint flags_entry = ps.packed_bounces_flags;
@@ -1626,6 +1645,30 @@ vec2 rt_prefiltered_dfg(float p_roughness, float p_NdotV) {
 // ============================================================================
 // MAIN
 // ============================================================================
+// Exact sparkle (docs/ideas/snow.md, follow-up 5): the facet of the grain a ray hits. Every 2 mm grain is
+// an ice facet, its normal GGX-distributed (alpha 0.4) about the snow's; a pixel's samples land on
+// different grains, so the path tracer integrates the discrete facets of the footprint itself
+// (the reference of Jakob et al. 2014 and Yan et al. 2014), at any distance and on any bounce.
+vec3 snow_grain_facet(vec3 p_pos, vec3 p_n) {
+	const float grain = 0.002;
+	ivec3 q = ivec3(floor(p_pos / grain));
+	uint h = (uint(q.x) * 73856093u) ^ (uint(q.y) * 19349663u) ^ (uint(q.z) * 83492791u);
+	h ^= h >> 16u;
+	h *= 0x7feb352du;
+	h ^= h >> 15u;
+	h *= 0x846ca68bu;
+	h ^= h >> 16u;
+	float r1 = float(h & 0xffffu) / 65536.0;
+	float r2 = float(h >> 16u) / 65536.0;
+	float tan2 = 0.16 * r1 / max(1.0 - r1, 1e-4);
+	float ct = inversesqrt(1.0 + tan2);
+	float st = sqrt(max(1.0 - ct * ct, 0.0));
+	vec3 t = normalize(cross(p_n, abs(p_n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	vec3 b = cross(p_n, t);
+	float phi = 6.2831853 * r2;
+	return normalize(p_n * ct + (t * cos(phi) + b * sin(phi)) * st);
+}
+
 // Snow sparkle (docs/ideas/snow.md, stage 5): the same function as BaseMaterial3D's raster shader, there
 // with its comments. Returns a facet normal and its weight (0: none) for a footprint in metres.
 vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
@@ -1719,6 +1762,8 @@ void main() {
 	m.normal = normalize(view_to_world * normal);
 	// The coat lies on NORMAL before the normal map, as raster's geo_normal (snow's glints write it).
 	m.coat_normal = m.normal;
+	// SPECULAR_NORMAL tilts the base specular alone (snow grain facets); diffuse keeps NORMAL.
+	m.specular_normal = dot(specular_normal, specular_normal) > 0.25 ? normalize(view_to_world * specular_normal) : vec3(0.0);
 
 	// The vertex stage may have rewritten TANGENT/BINORMAL (triplanar mapping
 	// does), so the shading frame comes from the shader, not the mesh TBN.
@@ -1963,7 +2008,8 @@ void main() {
 			if (srect.z > 0.0) {
 				vec2 nuv = (spos.xz - srect.xy) / srect.zw;
 				vec2 ne = min(nuv, 1.0 - nuv);
-				float nw = wrect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : 1.0;
+				// With no world tier, no data outside the square (as the raster shader).
+				float nw = wrect.z > 0.0 ? clamp(min(ne.x, ne.y) * 10.0, 0.0, 1.0) : step(0.0, min(ne.x, ne.y));
 				if (nw > 0.0) {
 					uint smap = uint(get_rt_param(RT_PARAM_SNOW_MAP));
 					vec2 ssize = vec2(textureSize(sampler2D(bindless_textures[nonuniformEXT(smap)], SAMPLER_LINEAR_CLAMP), 0));
@@ -2006,7 +2052,15 @@ void main() {
 		m.normal = normalize(mix(m.normal, h.geometry_normal, snow));
 		// Sparkle on dry snow, seen by camera rays only: their footprint is the pixel's angle times the
 		// distance (shaders here have no derivatives). Bounces see the plain rough snow.
-		if (get_total_bounces(payload.packed_bounces_flags) == 0u && snow >= 0.5) {
+		float glint_dry = 1.0 - smoothstep(0.05, 0.3, snow_wet);
+		if (get_rt_param(RT_PARAM_SNOW_EXACT_GLINTS) > 0.5 && snow >= 0.5 && glint_dry > 0.0) {
+			// Exact: the snow's ice specular (F0 0.018) lies on the facet of the grain hit, near-smooth
+			// (roughness 0.22, alpha 0.05), the diffuse staying on the snow's normal. Over a pixel's
+			// samples the facets sum to the rough lobe (alpha 0.4) they stand for, with the glints of the
+			// grains that mirror a light. Melt water films the grains over: the rough lobe comes back.
+			m.specular_normal = snow_grain_facet(h.hit_pos + rt_origin.xyz, h.geometry_normal);
+			m.roughness = mix(m.roughness, 0.22, glint_dry);
+		} else if (get_total_bounces(payload.packed_bounces_flags) == 0u && snow >= 0.5) {
 			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w,
 					scene_data_block.data.inv_view_matrix[2].w);
 			float pix = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * scene_data_block.data.viewport_size.y);

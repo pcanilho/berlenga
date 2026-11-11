@@ -1,1 +1,0 @@
-- TerrainGenerator3D: mountainsides keep soil up to the critical slope (incision only on channels, nonlinear creep), with bare rock on sharp crests and cliffs instead of on every steep slope.

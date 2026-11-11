@@ -30,13 +30,16 @@
 
 #include "physx_water_surface_3d.h"
 
+#include "flow_poisson.h"
 #include "physx_water_wake_3d.h"
+#include "water_raster_reflections.h"
 
 #include "core/config/engine.h"
-#include "core/object/worker_thread_pool.h"
+#include "core/config/project_settings.h"
 #include "core/math/face3.h"
-#include "core/os/os.h"
 #include "core/object/class_db.h"
+#include "core/object/worker_thread_pool.h"
+#include "core/os/os.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/camera_3d.h"
@@ -44,22 +47,22 @@
 #include "scene/3d/light_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/main/scene_tree.h"
-#include "scene/main/window.h"
 #include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
-#include "scene/resources/sky.h"
 #include "scene/resources/3d/world_3d.h"
+#include "scene/resources/sky.h"
 
 #include "modules/modules_enabled.gen.h" // For weather.
 #ifdef MODULE_WEATHER_ENABLED
 #include "modules/weather/weather_map_3d.h"
 #endif
 #include "scene/resources/environment.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/particle_process_material.h"
 #include "scene/resources/shader.h"
-#include "scene/resources/image_texture.h"
 #include "scene/resources/texture_rd.h"
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
@@ -88,7 +91,7 @@ namespace {
 // height field the vertex is displaced by -- the surface used to move but
 // never actually shade like it moved, which was a real, separate
 // contributor to an earlier "looks flat" complaint. Feeds a small, bounded,
-// self-contained shading term in fragment() (unshaded, not Godot's real
+// self-contained shading term in fragment() (emission, not Godot's real
 // PBR NORMAL) -- see fragment()'s own comment for why real PBR lighting on
 // this material caused a genuine overexposure bug.
 const char *WATER_SHADER_SRC = R"(
@@ -110,7 +113,9 @@ render_mode cull_disabled, rt_blas_rebuild;
 // lights. The raster look below stays as it is.
 render_mode cull_disabled;
 #else
-render_mode blend_mix, cull_disabled, unshaded;
+// Lit, but open water writes only EMISSION (see the end of fragment()), so only foam and wet sand take the
+// scene's light.
+render_mode blend_mix, cull_disabled;
 #endif
 
 uniform sampler2D ripple_height_tex : hint_default_black, filter_linear, repeat_disable;
@@ -277,6 +282,8 @@ uniform vec3 underwater_sun_irradiance = vec3(0.0);
 uniform vec3 underwater_sky_radiance = vec3(0.0);
 // How dark the thin line where the surface crosses the lens is (0 none).
 uniform float underwater_meniscus : hint_range(0.0, 1.0) = 0.35;
+// Raster reflections from above (water_raster_reflections.h).
+)" WATER_RASTER_REFLECTIONS_GLSL R"(
 #if (defined(UNDERWATER_FOG) || defined(UNDERWATER_SURFACE)) && !defined(RT)
 uniform sampler2D underwater_screen : hint_screen_texture, filter_linear, repeat_disable;
 uniform sampler2D underwater_depth : hint_depth_texture, filter_nearest, repeat_disable;
@@ -1168,8 +1175,30 @@ void fragment() {
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #endif
 #else
-	ALPHA = water_a + wet_a;
-	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);
+	// Open water keeps its own bounded look above (no PBR light on it, which is what blew out when it was
+	// lit as a whole and blended over the lit floor): it goes to EMISSION. Foam (whitecaps, shore foam, the
+	// rim) and wet sand are rough diffuse surfaces: they go to ALBEDO and take the scene's lights, shadows
+	// and sky, so a whitecap under a cloud shadow or in the evening no longer glows (the path tracer
+	// already lit them; docs/ideas/water.md "Step 4f", raster lighting). Same split as PhysXRiver3D's.
+	float a0 = water_a + wet_a;
+	float inv_a0 = 1.0 / max(a0, 1e-4);
+	vec3 open_rgb = base_rgb * (1.0 - foam) * water_a * inv_a0;
+	vec3 lit_rgb = (foam_color.rgb * foam * water_a + wet_sand_color.rgb * wet_a) * inv_a0;
+	vec4 refl = vec4(open_rgb, a0);
+	if (camera_above) {
+		// Open water reflects; foam and dry sand are rough.
+		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), pathtraced_roughness);
+	}
+	// The reflection is linear in the colour: the lit part keeps what the surface let through (1 - F).
+	float through = a0 < 0.9999 ? clamp((1.0 - refl.a) / (1.0 - a0), 0.0, 1.0) : 1.0;
+	float lit_w = clamp((foam * water_a + wet_a) * inv_a0, 0.0, 1.0);
+	NORMAL = n;
+	EMISSION = refl.rgb;
+	ALBEDO = lit_rgb * a0 * through / max(refl.a, 1e-4);
+	ROUGHNESS = 0.85;
+	SPECULAR = 0.25 * lit_w;
+	METALLIC = 0.0;
+	ALPHA = refl.a;
 #endif
 #endif // UNDERWATER_SURFACE
 }
@@ -1331,6 +1360,13 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_foam_enabled"), &PhysXWaterSurface3D::get_foam_enabled);
 	ClassDB::bind_method(D_METHOD("set_foam_threshold", "threshold"), &PhysXWaterSurface3D::set_foam_threshold);
 	ClassDB::bind_method(D_METHOD("get_foam_threshold"), &PhysXWaterSurface3D::get_foam_threshold);
+	ClassDB::bind_method(D_METHOD("set_whitecap_auto", "enabled"), &PhysXWaterSurface3D::set_whitecap_auto);
+	ClassDB::bind_method(D_METHOD("get_whitecap_auto"), &PhysXWaterSurface3D::get_whitecap_auto);
+	ClassDB::bind_method(D_METHOD("set_whitecap_cover_scale", "scale"), &PhysXWaterSurface3D::set_whitecap_cover_scale);
+	ClassDB::bind_method(D_METHOD("get_whitecap_cover_scale"), &PhysXWaterSurface3D::get_whitecap_cover_scale);
+	ClassDB::bind_method(D_METHOD("get_whitecap_target_cover"), &PhysXWaterSurface3D::get_whitecap_target_cover);
+	ClassDB::bind_method(D_METHOD("get_whitecap_cover"), &PhysXWaterSurface3D::get_whitecap_cover);
+	ClassDB::bind_method(D_METHOD("get_effective_foam_threshold"), &PhysXWaterSurface3D::get_effective_foam_threshold);
 	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXWaterSurface3D::set_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXWaterSurface3D::get_foam_persistence);
 	ClassDB::bind_method(D_METHOD("set_shore_foam_band", "depth"), &PhysXWaterSurface3D::set_shore_foam_band);
@@ -1364,6 +1400,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &PhysXWaterSurface3D::set_water_material);
 	ClassDB::bind_method(D_METHOD("get_water_material"), &PhysXWaterSurface3D::get_water_material);
 
+	ClassDB::bind_method(D_METHOD("set_raster_reflections", "enabled"), &PhysXWaterSurface3D::set_raster_reflections);
+	ClassDB::bind_method(D_METHOD("get_raster_reflections"), &PhysXWaterSurface3D::get_raster_reflections);
 	ClassDB::bind_method(D_METHOD("set_underwater_enabled", "enabled"), &PhysXWaterSurface3D::set_underwater_enabled);
 	ClassDB::bind_method(D_METHOD("get_underwater_enabled"), &PhysXWaterSurface3D::get_underwater_enabled);
 	ClassDB::bind_method(D_METHOD("set_underwater_meniscus", "strength"), &PhysXWaterSurface3D::set_underwater_meniscus);
@@ -1394,6 +1432,13 @@ void PhysXWaterSurface3D::_bind_methods() {
 
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_VERTEX);
+	BIND_ENUM_CONSTANT(WAVE_SPREADING_COS2);
+	BIND_ENUM_CONSTANT(WAVE_SPREADING_DONELAN_BANNER);
+	BIND_ENUM_CONSTANT(WAVE_SPREADING_HASSELMANN);
+	ClassDB::bind_method(D_METHOD("set_wave_spreading", "spreading"), &PhysXWaterSurface3D::set_wave_spreading);
+	ClassDB::bind_method(D_METHOD("get_wave_spreading"), &PhysXWaterSurface3D::get_wave_spreading);
+	ClassDB::bind_method(D_METHOD("set_swell", "swell"), &PhysXWaterSurface3D::set_swell);
+	ClassDB::bind_method(D_METHOD("get_swell"), &PhysXWaterSurface3D::get_swell);
 
 	ClassDB::bind_method(D_METHOD("set_step_mode", "mode"), &PhysXWaterSurface3D::set_step_mode);
 	ClassDB::bind_method(D_METHOD("get_step_mode"), &PhysXWaterSurface3D::get_step_mode);
@@ -1438,9 +1483,13 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_cascades", PROPERTY_HINT_RANGE, "1,4,1"), "set_wave_cascades", "get_wave_cascades");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_cascade_ratio", PROPERTY_HINT_RANGE, "2,16,0.1"), "set_wave_cascade_ratio", "get_wave_cascade_ratio");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fetch", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), "set_fetch", "get_fetch");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "wave_spreading", PROPERTY_HINT_ENUM, "Cos2,Donelan-Banner,Hasselmann"), "set_wave_spreading", "get_wave_spreading");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swell", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_swell", "get_swell");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "choppiness", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_choppiness", "get_choppiness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "foam_enabled"), "set_foam_enabled", "get_foam_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_threshold", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_foam_threshold", "get_foam_threshold");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "whitecap_auto"), "set_whitecap_auto", "get_whitecap_auto");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "whitecap_cover_scale", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_whitecap_cover_scale", "get_whitecap_cover_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_foam_band", PROPERTY_HINT_RANGE, "0,5,0.05,or_greater,suffix:m"), "set_shore_foam_band", "get_shore_foam_band");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "open_sea_beyond"), "set_open_sea_beyond", "get_open_sea_beyond");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_undertow", PROPERTY_HINT_RANGE, "0,1.5,0.01,or_greater,suffix:m/s"), "set_shore_undertow", "get_shore_undertow");
@@ -1464,6 +1513,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "water_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_water_material", "get_water_material");
 
 	ADD_GROUP("Underwater", "underwater_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "raster_reflections"), "set_raster_reflections", "get_raster_reflections");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "underwater_enabled"), "set_underwater_enabled", "get_underwater_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "underwater_meniscus", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_underwater_meniscus", "get_underwater_meniscus");
 
@@ -1596,7 +1646,7 @@ void PhysXWaterSurface3D::_configure_cascades(const WaterSolver::Settings &p_bas
 		c->domain = s.ocean_domain_size;
 		c->solver.set_rest_threshold(1e-3f);
 		c->solver.configure(s);
-		c->solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+		c->solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 		extra_cascades.push_back(c);
 	}
 }
@@ -3227,43 +3277,57 @@ void PhysXWaterSurface3D::_bake_flow() {
 			psi[i] = comp_value[comp[i]];
 		}
 	}
-	// SOR on div(grad(psi) / h) = 0; face weights 1 / (mean depth) / spacing^2.
+	// div(grad(psi) / h) = 0; face conductances 1 / (mean depth) / spacing^2 (a face onto dry ground takes
+	// the wet cell's own depth: the wall holds its patch's psi).
 	const float wx = 1.0f / (dx * dx);
 	const float wz = 1.0f / (dz * dz);
-	const float omega = 2.0f / (1.0f + Math::sin(Math::PI / n));
-	const float tolerance = 1e-5f * mean; // float psi stalls near 1e-6 of its range
-	struct IslandLink {
-		int cell;
-		int comp;
-		float w;
-	};
-	LocalVector<IslandLink> island_links;
-	for (int z = 1; z < n - 1; z++) {
-		for (int x = 1; x < n - 1; x++) {
-			const int i = z * n + x;
-			if (fixed[i] || h[i] <= 0.0f) {
-				continue;
-			}
-			const int nb[4] = { i - 1, i + 1, i - n, i + n };
-			const float sw[4] = { wx, wx, wz, wz };
-			for (int k = 0; k < 4; k++) {
-				const int j = nb[k];
-				if (h[j] <= 0.0f && comp[j] >= 0 && !comp_fixed[comp[j]]) {
-					island_links.push_back({ i, comp[j], sw[k] / h[i] });
-				}
-			}
-		}
-	}
-	LocalVector<float> comp_num;
-	LocalVector<float> comp_den;
-	comp_num.resize(comp_count);
-	comp_den.resize(comp_count);
-	for (int iter = 0; iter < 4000; iter++) {
-		float max_change = 0.0f;
+	if (bool(GLOBAL_GET("physics/physx_3d/water/multigrid_flow"))) {
+		LocalVector<int> kind;
+		LocalVector<int> island_of;
+		LocalVector<float> fcx;
+		LocalVector<float> fcz;
+		kind.resize(cells);
+		fcx.resize(cells);
+		fcz.resize(cells);
+		island_of.resize(comp_count);
+		int islands = 0;
 		for (int c = 0; c < comp_count; c++) {
-			comp_num[c] = 0.0f;
-			comp_den[c] = 0.0f;
+			island_of[c] = comp_fixed[c] ? -1 : islands++;
 		}
+		auto conductance = [&](int p_a, int p_b, float p_w) -> float {
+			if (h[p_a] > 0.0f && h[p_b] > 0.0f) {
+				return p_w / (0.5f * (h[p_a] + h[p_b]));
+			}
+			if (h[p_a] > 0.0f || h[p_b] > 0.0f) {
+				return p_w / MAX(h[p_a], h[p_b]);
+			}
+			return 0.0f;
+		};
+		for (int z = 0; z < n; z++) {
+			for (int x = 0; x < n; x++) {
+				const int i = z * n + x;
+				if (fixed[i]) {
+					kind[i] = FlowPoisson::FIXED;
+				} else if (comp[i] >= 0) {
+					kind[i] = island_of[comp[i]] >= 0 ? FlowPoisson::ISLAND + island_of[comp[i]] : FlowPoisson::FIXED;
+				} else {
+					kind[i] = FlowPoisson::UNKNOWN;
+				}
+				fcx[i] = x < n - 1 ? conductance(i, i + 1, wx) : 0.0f;
+				fcz[i] = z < n - 1 ? conductance(i, i + n, wz) : 0.0f;
+			}
+		}
+		FlowPoisson::solve(n, n, fcx, fcz, kind, islands, psi);
+	} else {
+		// SOR on div(grad(psi) / h) = 0; face weights 1 / (mean depth) / spacing^2.
+		const float omega = 2.0f / (1.0f + Math::sin(Math::PI / n));
+		const float tolerance = 1e-5f * mean; // float psi stalls near 1e-6 of its range
+		struct IslandLink {
+			int cell;
+			int comp;
+			float w;
+		};
+		LocalVector<IslandLink> island_links;
 		for (int z = 1; z < n - 1; z++) {
 			for (int x = 1; x < n - 1; x++) {
 				const int i = z * n + x;
@@ -3272,39 +3336,66 @@ void PhysXWaterSurface3D::_bake_flow() {
 				}
 				const int nb[4] = { i - 1, i + 1, i - n, i + n };
 				const float sw[4] = { wx, wx, wz, wz };
-				float num = 0.0f;
-				float den = 0.0f;
 				for (int k = 0; k < 4; k++) {
 					const int j = nb[k];
-					// A wall face: the wet cell's own depth (the wall holds its patch's psi).
-					const float hf = h[j] > 0.0f ? 0.5f * (h[i] + h[j]) : h[i];
-					const float w = sw[k] / hf;
-					num += w * psi[j];
-					den += w;
+					if (h[j] <= 0.0f && comp[j] >= 0 && !comp_fixed[comp[j]]) {
+						island_links.push_back({ i, comp[j], sw[k] / h[i] });
+					}
 				}
-				if (!(den > 0.0f)) {
-					continue;
-				}
-				const float target = num / den;
-				const float change = omega * (target - psi[i]);
-				psi[i] += change;
-				max_change = MAX(max_change, Math::abs(change));
 			}
 		}
-		// Islands: the value that sends no net flow round them (their wet neighbours' weighted mean, after
-		// this sweep: Gauss-Seidel on the island's own unknown too, or the two fight and diverge).
-		for (const IslandLink &l : island_links) {
-			comp_num[l.comp] += l.w * psi[l.cell];
-			comp_den[l.comp] += l.w;
-		}
-		for (int i = 0; i < cells; i++) {
-			const int c = comp[i];
-			if (c >= 0 && !comp_fixed[c] && comp_den[c] > 0.0f) {
-				psi[i] = comp_num[c] / comp_den[c];
+		LocalVector<float> comp_num;
+		LocalVector<float> comp_den;
+		comp_num.resize(comp_count);
+		comp_den.resize(comp_count);
+		for (int iter = 0; iter < 4000; iter++) {
+			float max_change = 0.0f;
+			for (int c = 0; c < comp_count; c++) {
+				comp_num[c] = 0.0f;
+				comp_den[c] = 0.0f;
 			}
-		}
-		if (max_change < tolerance && iter > 20) {
-			break;
+			for (int z = 1; z < n - 1; z++) {
+				for (int x = 1; x < n - 1; x++) {
+					const int i = z * n + x;
+					if (fixed[i] || h[i] <= 0.0f) {
+						continue;
+					}
+					const int nb[4] = { i - 1, i + 1, i - n, i + n };
+					const float sw[4] = { wx, wx, wz, wz };
+					float num = 0.0f;
+					float den = 0.0f;
+					for (int k = 0; k < 4; k++) {
+						const int j = nb[k];
+						// A wall face: the wet cell's own depth (the wall holds its patch's psi).
+						const float hf = h[j] > 0.0f ? 0.5f * (h[i] + h[j]) : h[i];
+						const float w = sw[k] / hf;
+						num += w * psi[j];
+						den += w;
+					}
+					if (!(den > 0.0f)) {
+						continue;
+					}
+					const float target = num / den;
+					const float change = omega * (target - psi[i]);
+					psi[i] += change;
+					max_change = MAX(max_change, Math::abs(change));
+				}
+			}
+			// Islands: the value that sends no net flow round them (their wet neighbours' weighted mean, after
+			// this sweep: Gauss-Seidel on the island's own unknown too, or the two fight and diverge).
+			for (const IslandLink &l : island_links) {
+				comp_num[l.comp] += l.w * psi[l.cell];
+				comp_den[l.comp] += l.w;
+			}
+			for (int i = 0; i < cells; i++) {
+				const int c = comp[i];
+				if (c >= 0 && !comp_fixed[c] && comp_den[c] > 0.0f) {
+					psi[i] = comp_num[c] / comp_den[c];
+				}
+			}
+			if (max_change < tolerance && iter > 20) {
+				break;
+			}
 		}
 	}
 	// Velocity per wet cell from central differences.
@@ -3468,20 +3559,20 @@ void PhysXWaterSurface3D::set_choppiness(float p_choppiness) {
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("choppiness", choppiness);
 	}
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 }
 
 void PhysXWaterSurface3D::set_foam_enabled(bool p_enabled) {
 	foam_enabled = p_enabled;
 	if (water_material.is_valid()) {
-		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? foam_threshold : -100.0f);
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? _live_foam_threshold() : -100.0f);
 	}
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 }
 
 void PhysXWaterSurface3D::set_shore_undertow(float p_speed) {
 	shore_undertow = MAX(p_speed, 0.0f);
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 }
 
 void PhysXWaterSurface3D::set_swash_run_up(float p_height) {
@@ -3508,20 +3599,91 @@ void PhysXWaterSurface3D::set_open_sea_beyond(bool p_open) {
 
 void PhysXWaterSurface3D::set_shore_foam_band(float p_depth) {
 	shore_foam_band = MAX(p_depth, 0.0f);
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 }
 
 void PhysXWaterSurface3D::set_foam_threshold(float p_threshold) {
 	foam_threshold = p_threshold;
+	whitecap_threshold = p_threshold; // the steering starts again from here
 	if (water_material.is_valid()) {
-		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? foam_threshold : -100.0f);
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? _live_foam_threshold() : -100.0f);
 	}
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
+}
+
+void PhysXWaterSurface3D::set_whitecap_auto(bool p_auto) {
+	whitecap_auto = p_auto;
+	whitecap_threshold = foam_threshold;
+	whitecap_clock = -1.0;
+	_push_foam_settings();
+}
+
+void PhysXWaterSurface3D::set_whitecap_cover_scale(float p_scale) {
+	whitecap_cover_scale = MAX(p_scale, 0.0f);
+}
+
+// Monahan and O'Muircheartaigh (1980), the fit to all their open-ocean
+// photographs: W = 3.84e-6 U10^3.41, U10 the wind 10 m up in m/s.
+float PhysXWaterSurface3D::get_whitecap_target_cover() const {
+	return MIN(3.84e-6f * Math::pow(MAX(wind_speed, 0.0f), 3.41f) * whitecap_cover_scale, 0.5f);
+}
+
+// The threshold, the material's crest threshold and every cascade's foam
+// pass, all from one place.
+void PhysXWaterSurface3D::_push_foam_settings() {
+	const float th = _live_foam_threshold();
+	whitecap_pushed = th;
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? th : -100.0f);
+	}
+	solver.set_foam_settings(foam_enabled, choppiness, th, foam_persistence, shore_foam_band, shore_undertow);
+	for (WaveCascade *c : extra_cascades) {
+		c->solver.set_foam_settings(foam_enabled, choppiness, th, foam_persistence, shore_foam_band, shore_undertow);
+	}
+}
+
+// Steers the foam threshold so the whitecap cover follows the wind. The
+// cover is each cascade's mean foam read back from its foam pass; the
+// cascades draw their foam on top of each other (max), so for independent
+// fields the share left clear is the product of each one's. An integral
+// controller in log cover: the cover spans decades with the wind (0.1% to
+// 10%), and a threshold step changes it by a factor, not an amount.
+void PhysXWaterSurface3D::_steer_whitecaps() {
+	const float c0 = foam_enabled ? solver.get_foam_cover() : -1.0f;
+	if (c0 < 0.0f) {
+		whitecap_measured = -1.0f;
+		whitecap_clock = -1.0;
+		return;
+	}
+	double clear = 1.0 - c0;
+	for (WaveCascade *c : extra_cascades) {
+		const float ci = c->solver.get_foam_cover();
+		if (ci >= 0.0f) {
+			clear *= 1.0 - ci;
+		}
+	}
+	whitecap_measured = (float)(1.0 - clear);
+	if (!whitecap_auto) {
+		whitecap_clock = -1.0;
+		return;
+	}
+	const double dt = whitecap_clock < 0.0 ? 0.0 : water_time - whitecap_clock;
+	whitecap_clock = water_time;
+	if (dt <= 0.0 || dt > 0.5) {
+		return;
+	}
+	constexpr float FLOOR = 1e-4f; // below this both read as clear sea
+	constexpr float GAIN = 0.08f; // threshold change per second per e-fold of error
+	const float err = CLAMP(Math::log((whitecap_measured + FLOOR) / (get_whitecap_target_cover() + FLOOR)), -3.0f, 3.0f);
+	whitecap_threshold = CLAMP(whitecap_threshold - GAIN * err * (float)dt, -1.0f, 1.5f);
+	if (Math::abs(whitecap_threshold - whitecap_pushed) > 0.002f) {
+		_push_foam_settings();
+	}
 }
 
 void PhysXWaterSurface3D::set_foam_persistence(float p_seconds) {
 	foam_persistence = MAX(p_seconds, 0.05f);
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 }
 
 void PhysXWaterSurface3D::set_normal_mode(NormalMode p_mode) {
@@ -3531,9 +3693,50 @@ void PhysXWaterSurface3D::set_normal_mode(NormalMode p_mode) {
 	}
 }
 
+void PhysXWaterSurface3D::set_wave_spreading(WaveSpreading p_spreading) {
+	wave_spreading = p_spreading;
+	_set_spreading();
+}
+
+void PhysXWaterSurface3D::set_swell(float p_swell) {
+	swell = CLAMP(p_swell, 0.0f, 1.0f);
+	_set_spreading();
+}
+
+void PhysXWaterSurface3D::_set_spreading() {
+	if (solver.is_available() && !Engine::get_singleton()->is_editor_hint()) {
+		solver.set_spreading(int(wave_spreading), swell);
+		for (WaveCascade *c : extra_cascades) {
+			c->solver.set_spreading(int(wave_spreading), swell);
+		}
+		return;
+	}
+	_rebuild();
+}
+
 void PhysXWaterSurface3D::set_fetch(float p_fetch) {
 	fetch = MAX(p_fetch, 0.0f);
 	_reinit_spectrum();
+}
+
+// A fetch-limited sea's waves are short: on a lake of a few hundred metres at 4 m/s the JONSWAP peak
+// (omega_p = 22 (g^2 / (U F))^(1/3)) is about half a metre long, shorter than two cells of a 64 or 128 point
+// grid over the 40 m tile, so the FFT held only the spectrum's tail below the peak and the lake lay flat
+// (Hs 0.00 m against 0.03 m from the spectrum). The grid is raised until the peak spans at least four
+// cells, up to 256 points (one cascade's tile keeps its size, so nothing else changes). Open sea, whose
+// peak is metres long, keeps ocean_grid_resolution.
+int PhysXWaterSurface3D::_resolved_ocean_grid_resolution() const {
+	int n = ocean_grid_resolution;
+	const float u = MAX(wind_speed, 0.5f);
+	const float f = MAX(get_effective_fetch(), 1.0f);
+	const float g = 9.81f;
+	const float wp = 22.0f * Math::pow(g * g / (u * f), 1.0f / 3.0f);
+	const float lambda_p = Math::TAU * g / (wp * wp);
+	const float tile = MAX(ocean_domain_size.x, ocean_domain_size.y);
+	while (n < 256 && tile / n > 0.25f * lambda_p) {
+		n *= 2;
+	}
+	return n;
 }
 
 float PhysXWaterSurface3D::get_effective_fetch() const {
@@ -3654,6 +3857,17 @@ void PhysXWaterSurface3D::_set_underwater_shown(bool p_shown) {
 
 // Shows the underwater passes while the camera is within reach of the water and feeds them the
 // camera's side of the surface and the light entering the water.
+void PhysXWaterSurface3D::set_raster_reflections(bool p_enabled) {
+	raster_reflections = p_enabled;
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("raster_reflections", raster_reflections);
+	}
+}
+
+void PhysXWaterSurface3D::_update_raster_reflections() {
+	raster_reflection_state.update(this, water_material, raster_reflections);
+}
+
 void PhysXWaterSurface3D::_update_underwater() {
 	const Viewport *vp = get_viewport();
 	const Camera3D *cam = vp != nullptr ? vp->get_camera_3d() : nullptr;
@@ -3678,21 +3892,7 @@ void PhysXWaterSurface3D::_update_underwater() {
 	}
 	underwater_camera_below = cp.y < h;
 
-	// The sun: the first visible directional light, looked up again now and then.
-	DirectionalLight3D *sun = ObjectDB::get_instance<DirectionalLight3D>(underwater_sun);
-	if ((sun == nullptr || !sun->is_inside_tree()) && underwater_sun_search-- <= 0) {
-		underwater_sun_search = 60;
-		underwater_sun = ObjectID();
-		TypedArray<Node> lights = get_tree()->get_root()->find_children("*", "DirectionalLight3D", true, false);
-		for (int i = 0; i < lights.size(); i++) {
-			DirectionalLight3D *l = Object::cast_to<DirectionalLight3D>(lights[i]);
-			if (l != nullptr && l->is_visible_in_tree() && l->get_sky_mode() != DirectionalLight3D::SKY_MODE_SKY_ONLY) {
-				underwater_sun = l->get_instance_id();
-				sun = l;
-				break;
-			}
-		}
-	}
+	DirectionalLight3D *sun = raster_reflection_state.find_sun(this);
 	Vector3 sun_dir(0, -1, 0);
 	Vector3 sun_irradiance;
 	if (sun != nullptr && sun->is_visible_in_tree()) {
@@ -3725,8 +3925,7 @@ void PhysXWaterSurface3D::_update_underwater() {
 	if (env.is_valid()) {
 		const Color ambient = env->get_ambient_light_color().srgb_to_linear() * env->get_ambient_light_energy();
 		const Environment::AmbientSource source = env->get_ambient_source();
-		const bool from_sky = env->get_sky().is_valid() && (source == Environment::AMBIENT_SOURCE_SKY ||
-																	(source == Environment::AMBIENT_SOURCE_BG && env->get_background() == Environment::BG_SKY));
+		const bool from_sky = env->get_sky().is_valid() && (source == Environment::AMBIENT_SOURCE_SKY || (source == Environment::AMBIENT_SOURCE_BG && env->get_background() == Environment::BG_SKY));
 		if (from_sky) {
 			const RID sky_rid = env->get_sky()->get_rid();
 			// Again every few seconds (a sky that changes with the time of day), and until the sky has
@@ -3816,6 +4015,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 				}
 				_update_mesh_offset();
 				_update_underwater();
+				_update_raster_reflections();
 			}
 		} break;
 	}
@@ -4004,7 +4204,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.ripple_amplitude = ripple_amplitude;
 	s.gravity = 9.81f;
 	s.water_level = water_level;
-	s.ocean_grid_resolution = ocean_grid_resolution;
+	s.ocean_grid_resolution = _resolved_ocean_grid_resolution();
 	s.ocean_domain_size = ocean_domain_size;
 	s.wind_speed = wind_speed;
 	s.wind_direction = wind_direction;
@@ -4013,13 +4213,15 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.caustics_enabled = caustics_enabled;
 	s.ocean_k_min = wave_cascades > 1 ? _cascade_split(0) : 0.0f;
 	s.ocean_k_max = 0.0f;
+	s.wave_spreading = int(wave_spreading);
+	s.swell = swell;
 	// configure() frees the solver's textures and makes new ones: let go of
 	// the old ones first (a runtime change -- wave_amplitude, say -- drew with
 	// freed textures until the new ones were bound).
 	_detach_textures();
 	solver.configure(s);
 	_configure_cascades(s);
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 	solver.set_flow_foam(flow_foam, flow_foam_persistence);
 	if (!solver.has_device() && !warned_no_device) {
@@ -4167,6 +4369,7 @@ void PhysXWaterSurface3D::_frame_update() {
 }
 
 void PhysXWaterSurface3D::_after_step() {
+	_steer_whitecaps();
 	if (solver.is_available()) {
 		bool cascades_ready = true;
 		for (WaveCascade *c : extra_cascades) {
@@ -4269,7 +4472,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 	}
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("wave_cascade_count", 1 + (int)extra_cascades.size());
-		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? foam_threshold : -100.0f);
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? _live_foam_threshold() : -100.0f);
 	}
 	textures_bound = true;
 	_update_flow_material(); // the live flow's texture exists now

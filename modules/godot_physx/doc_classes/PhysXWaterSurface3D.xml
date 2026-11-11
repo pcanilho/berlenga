@@ -78,11 +78,29 @@
 				The fetch (meters of open water the wind blows over) the wave spectrum actually uses: [member fetch] when it's above 0, otherwise the automatic value -- the longest side of the [member surface_mesh] footprint for enclosed water, or 100 km (a fully developed open sea) for the plain square.
 			</description>
 		</method>
+		<method name="get_effective_foam_threshold" qualifiers="const">
+			<return type="float" />
+			<description>
+				The foam threshold in use: [member foam_threshold], or with [member whitecap_auto] on, the threshold steered to the wind's whitecap cover.
+			</description>
+		</method>
 		<method name="get_wave_cascade_size" qualifiers="const">
 			<return type="Vector2" />
 			<param index="0" name="index" type="int" />
 			<description>
 				The tile size of wave cascade [param index]: [member ocean_domain_size] times [member wave_cascade_ratio] to the power [param index].
+			</description>
+		</method>
+		<method name="get_whitecap_cover" qualifiers="const">
+			<return type="float" />
+			<description>
+				The share of the sea under whitecap foam (0 to 1) at the last readback of the foam grids, or [code]-1[/code] before the first one.
+			</description>
+		</method>
+		<method name="get_whitecap_target_cover" qualifiers="const">
+			<return type="float" />
+			<description>
+				The whitecap cover the wind asks for with [member whitecap_auto]: [code]3.84e-6 * wind_speed^3.41[/code] (Monahan and O'Muircheartaigh 1980) times [member whitecap_cover_scale], at most [code]0.5[/code].
 			</description>
 		</method>
 		<method name="is_camera_underwater" qualifiers="const">
@@ -226,6 +244,9 @@
 		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="96">
 			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].
 		</member>
+		<member name="mesh_detail" type="int" setter="set_mesh_detail" getter="get_mesh_detail" default="1">
+			Rendered mesh cells per [member ocean_grid_resolution] cell (1 to 4). A curling breaker needs cells of about a tenth of the wave's height to fold over cleanly; the vertex and path tracing costs grow with the square of this.
+		</member>
 		<member name="normal_mode" type="int" setter="set_normal_mode" getter="get_normal_mode" enum="PhysXWaterSurface3D.NormalMode" default="0">
 			How the surface's normals and whitecap foam are computed, set on the material through its [code]per_pixel_normals[/code] uniform. [constant NORMAL_MODE_PER_PIXEL] uses the exact slopes and displacement derivatives the ocean FFT also produces ([code]ocean_deriv_tex[/code]), so crests shade smoothly and foam follows the folds at any mesh density -- the realistic choice. [constant NORMAL_MODE_PER_VERTEX] takes finite differences of the displaced mesh, so the shading follows the mesh -- softer, faceted at a coarse [member ocean_grid_resolution], for a stylized look.
 		</member>
@@ -233,13 +254,13 @@
 			World-space extent (X, Z) of the FFT ocean layer -- also the size of the rendered [PlaneMesh].
 		</member>
 		<member name="ocean_grid_resolution" type="int" setter="set_ocean_grid_resolution" getter="get_ocean_grid_resolution" default="64">
-			Cell count per side of the FFT ocean layer's grid. Rounded up to the nearest power of two if set otherwise -- the Stockham FFT passes require it. Independent of [member grid_resolution]/[member domain_size] (the ripple layer's own grid) by design: they're two different consumers of "water height" with very different resolution/precision needs, kept architecturally separate rather than forced to share one grid.
-		</member>
-		<member name="mesh_detail" type="int" setter="set_mesh_detail" getter="get_mesh_detail" default="1">
-			Rendered mesh cells per [member ocean_grid_resolution] cell (1 to 4). A curling breaker needs cells of about a tenth of the wave's height to fold over cleanly; the vertex and path tracing costs grow with the square of this.
+			Cell count per side of the FFT ocean layer's grid. Rounded up to the nearest power of two if set otherwise -- the Stockham FFT passes require it. Independent of [member grid_resolution]/[member domain_size] (the ripple layer's own grid) by design: they're two different consumers of "water height" with very different resolution/precision needs, kept architecturally separate rather than forced to share one grid. Up to 1024, with the project setting [code]physics/physx_3d/water/shared_memory_fft[/code] (off until it is timed on a GPU) each step's four transforms run as two dispatches with each line's whole FFT in shared memory instead of one dispatch per butterfly stage; the field is the same. A fetch-limited surface (a lake, or a small [member fetch]) whose spectral peak would span fewer than four cells is given a finer grid, up to 256, so its short waves are not lost.
 		</member>
 		<member name="open_sea_beyond" type="bool" setter="set_open_sea_beyond" getter="get_open_sea_beyond" default="false">
 			With a [member render_extent] past the simulated square: if [code]true[/code], the sea out there is open, deep water (full waves, never dry) instead of the square's edge carried outward. Use it when the square follows the camera or player over a coastline: without it, the far sea takes the edge's seabed -- flat, raised to the ground height, with the shore's wet-sand and foam patterns, and [method sample_height] calling it dry.
+		</member>
+		<member name="raster_reflections" type="bool" setter="set_raster_reflections" getter="get_raster_reflections" default="true">
+			Raster only, seen from above: the surface mirrors the sky (a small panorama of the environment's sky, baked again every few seconds) and the sun's glitter by the exact Fresnel term, as the path tracer sees it. The sun's highlight uses a GGX lobe at [code]pathtraced_roughness[/code], widened by how fast the wave normals turn across each pixel (geometric specular antialiasing, Tokuyoshi and Kaplanyan 2019), so a far sea gathers its glints into a glitter path instead of flickering. Off, the surface is the unlit tint it was before.
 		</member>
 		<member name="render_extent" type="float" setter="set_render_extent" getter="get_render_extent" default="0.0">
 			Side length in meters of the rendered surface, centered on the simulation, for open water that runs to the horizon. Past the simulated square the FFT ocean tiles seamlessly (it's periodic), the ripples settle to still water, and the seabed/shoreline values at the square's edge carry on outward; vertex spacing grows with distance, so a few hundred meters costs only a few hundred extra vertices per side. [code]0[/code] (or anything up to [member ocean_domain_size]) renders just the simulated square -- keep it that way for walled water. Ignored with a [member surface_mesh]. Custom materials need to sample the ocean textures with repeat to match (the built-in one does).
@@ -262,14 +283,14 @@
 		<member name="shore_foam_band" type="float" setter="set_shore_foam_band" getter="get_shore_foam_band" default="0.5">
 			Shore foam: where the still water is shallower than this many meters, each arriving wave crest leaves a thin, lacy foam sheet at the waterline that moves with the water (see [member shore_undertow]), carries on up the swash onto the sand thinning out as it goes (see [member swash_run_up]), and fades out after it (about 1.5 x [member foam_persistence]). Needs a varying depth, so it only appears with [member seabed_from_floor] -- a pool's walls don't get it. [code]0[/code] turns it off, as does [member foam_enabled]. The default material also tints the shallows toward a milky [code]shallow_color[/code] ([code]shallow_tint[/code]) and feathers the surface where it meets the shore; [code]shore_foam_strength[/code] and [code]shore_foam_breakup[/code] tune the sheet. The visible waterline isn't the still-water depth contour: it moves with the arriving waves and slow noise, forming drifting lobes and bays, with a thin bright rim behind it ([code]shore_rim_strength[/code]). The edge is measured in real water depth, independent of [member shallow_fade_depth]: it pulls back over at most [code]swash_reach[/code] meters of depth (pushed in by crests of [code]swash_wave_height[/code]), and [code]shore_edge_softness[/code] is the depth in meters it feathers out over, so the surface only turns clear where the water really is that thin.
 		</member>
-		<member name="shore_undertow" type="float" setter="set_shore_undertow" getter="get_shore_undertow" default="0.3">
-			Steady seaward drift (m/s) of the shore foam. The foam moves with the water along the seabed slope at the shallow-water particle velocity -- pushed up the beach under each arriving crest, drawn back between crests (with the local wave height capped by depth-limited breaking) -- and this undertow drags it back out into the water on top of that, so the sheet surges in and slides back out in streaks. [code]0[/code] leaves it rocking in place.
-		</member>
 		<member name="shore_spray" type="bool" setter="set_shore_spray" getter="get_shore_spray" default="true">
 			Spray from plunging lips: droplets where the lip's edge is thin and fast and where it lands, at rates from the kinetic, wave-crest and trapped-air potentials of Ihmsen et al. (2012). Drawn by one [GPUParticles3D].
 		</member>
 		<member name="shore_spray_amount" type="int" setter="set_shore_spray_amount" getter="get_shore_spray_amount" default="3000">
 			The most spray droplets alive at once.
+		</member>
+		<member name="shore_undertow" type="float" setter="set_shore_undertow" getter="get_shore_undertow" default="0.3">
+			Steady seaward drift (m/s) of the shore foam. The foam moves with the water along the seabed slope at the shallow-water particle velocity -- pushed up the beach under each arriving crest, drawn back between crests (with the local wave height capped by depth-limited breaking) -- and this undertow drags it back out into the water on top of that, so the sheet surges in and slides back out in streaks. [code]0[/code] leaves it rocking in place.
 		</member>
 		<member name="shore_wave_curl" type="float" setter="set_shore_wave_curl" getter="get_shore_wave_curl" default="1.0">
 			How far plunging breakers curl over: a sheet of water (the lip) is thrown off the crest along a ballistic path over the steep face and lands on the water ahead, then sinks into the bore (Thurey et al. 2007). The lip is separate geometry along the crest lines, so it does not need a fine mesh, and it throws spray (see [member shore_spray]). Whether a beach plunges is set by its slope and the swell's steepness (the surf similarity number, Battjes 1974): gentle beaches spill, moderate ones plunge, steep ones surge, so the curl comes and goes along a varied coast. [code]0[/code] leaves only spilling crests.
@@ -302,6 +323,9 @@
 		<member name="swash_run_up" type="float" setter="set_swash_run_up" getter="get_swash_run_up" default="0.3">
 			Swash: the bigger arriving waves (the crests well above the usual ones, so it comes in sets) run up past the still-water line onto the dry sand as a thin film, at most this high (m above still water, not distance along the sand), in tongues that vary along the beach, then slide back down at [member swash_drain_speed]. The run-up grows with the sea state, so a calm lake barely moves. Sand the water has covered stays dark and glossy and dries over [member wet_sand_dry_time]. Needs a varying depth ([member seabed_from_floor]); a pool's walls don't get it. [code]0[/code] turns the run-up off (the sand below the still water still reads wet). The default material draws the film on the sand ([code]swash_film_thickness[/code]) with a ragged, fingered edge ([code]swash_edge_breakup[/code]; [code]shore_detail_scale[/code] sets how fine that, the rim lace and the wet-sand edge are -- [code]foam_detail_scale[/code] only covers the whitecaps and the shore foam sheet) and blends [code]wet_sand_color[/code] over the ground, so it works with any floor material.
 		</member>
+		<member name="swell" type="float" setter="set_swell" getter="get_swell" default="0.0">
+			With [constant WAVE_SPREADING_DONELAN_BANNER] or [constant WAVE_SPREADING_HASSELMANN], how much of the sea is swell from a distant storm, 0 to 1: Horvath's term, a [code]cos^2s(theta / 2)[/code] factor with [code]s = 16 tanh(wp / w) swell^2[/code], narrows the long waves to nearly parallel crests. 0 is a pure wind sea.
+		</member>
 		<member name="underwater_enabled" type="bool" setter="set_underwater_enabled" getter="get_underwater_enabled" default="true">
 			The view from under the water, in raster: while the camera is under the surface (or within reach of the waves), a full screen pass fogs what lies under the water by the distance the light travels in it, with the medium of the path traced water ([code]pathtraced_absorption[/code], [code]pathtraced_scattering[/code] and [code]pathtraced_scattering_anisotropy[/code] on [member water_material]), lit by the first visible [DirectionalLight3D] refracted into the water and by the environment's sky. The image splits where the surface crosses the lens, and the surface seen from below shows the world above through Snell's window, refracted, and a mirror of the water past the critical angle (total internal reflection). Surfaces under the water lose the light the water above them absorbed. Off, or with the camera away from the water, nothing extra is drawn. The path tracer needs no setting: it starts the camera's rays in the water by itself (with [code]rendering/pathtracing/refraction[/code] on). Transparent objects under the water are not fogged in raster.
 		</member>
@@ -323,8 +347,17 @@
 		<member name="wave_cascades" type="int" setter="set_wave_cascades" getter="get_wave_cascades" default="1">
 			Number of FFT tiles summed into the ocean. 1 is the single tile of [member ocean_domain_size], which holds no wave longer than the tile, so a strong wind on open water stays short and low. Each extra cascade is a tile [member wave_cascade_ratio] times larger, carrying the band of longer waves (swell), and every tile keeps only waves shorter than a quarter of its size, so none of them shows its repeat. Each extra cascade costs one more FFT ocean on the GPU.
 		</member>
+		<member name="wave_spreading" type="int" setter="set_wave_spreading" getter="get_wave_spreading" enum="PhysXWaterSurface3D.WaveSpreading" default="1">
+			How the ocean's wave energy spreads around the wind direction, from Horvath (2015, "Empirical directional wave spectra for computer graphics"). [constant WAVE_SPREADING_DONELAN_BANNER] (default, Horvath's recommendation) is the measured [code]sech^2[/code] spreading: narrowest at the spectrum's peak, so the dominant waves run with the wind, and wider for shorter and longer waves, so short waves cross. [constant WAVE_SPREADING_HASSELMANN] is Hasselmann et al. (1980)'s [code]cos^2s(theta / 2)[/code] form, wider again for short waves. [constant WAVE_SPREADING_COS2] is the earlier [code]cos^2[/code] spreading with a weak back lobe. [member swell] narrows the first two. Changing it regenerates the spectrum in place.
+		</member>
 		<member name="wet_sand_dry_time" type="float" setter="set_wet_sand_dry_time" getter="get_wet_sand_dry_time" default="12.0">
 			Time constant (s) for sand uncovered by the swash to dry: the wet darkening fades to about a third over this long. See [member swash_run_up].
+		</member>
+		<member name="whitecap_auto" type="bool" setter="set_whitecap_auto" getter="get_whitecap_auto" default="true">
+			If [code]true[/code], the foam threshold is steered each step so the share of sea under whitecaps follows the wind speed as measured at sea (Monahan and O'Muircheartaigh 1980): about 0.1% at 6 m/s, 1% at 10 m/s, 3% at 14 m/s and 8% at 20 m/s, and none in a light breeze. It holds whatever the choppiness, cascades, fetch or spreading. [member foam_threshold] is then only where the steering starts. If [code]false[/code], [member foam_threshold] is used as set.
+		</member>
+		<member name="whitecap_cover_scale" type="float" setter="set_whitecap_cover_scale" getter="get_whitecap_cover_scale" default="1.0">
+			Multiplies the whitecap cover [member whitecap_auto] aims for. Measured covers at one wind speed spread by about a factor of 3 either way (warmer water and a rising sea foam more), so values between [code]0.3[/code] and [code]3[/code] stay realistic.
 		</member>
 		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
 			Direction (X, Z) the wind blows toward; the FFT ocean waves are aligned with it and travel downwind. Need not be normalized.
@@ -339,6 +372,15 @@
 		</constant>
 		<constant name="NORMAL_MODE_PER_VERTEX" value="1" enum="NormalMode">
 			Normals and foam per vertex from finite differences of the displaced mesh.
+		</constant>
+		<constant name="WAVE_SPREADING_COS2" value="0" enum="WaveSpreading">
+			[code]cos^2[/code] spreading about the wind with a weak back lobe.
+		</constant>
+		<constant name="WAVE_SPREADING_DONELAN_BANNER" value="1" enum="WaveSpreading">
+			Donelan-Banner's measured spreading, with Horvath's swell term.
+		</constant>
+		<constant name="WAVE_SPREADING_HASSELMANN" value="2" enum="WaveSpreading">
+			Hasselmann's measured spreading, with Horvath's swell term.
 		</constant>
 		<constant name="STEP_MODE_PER_TICK" value="0" enum="StepMode">
 			The surface steps every physics tick.

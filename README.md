@@ -20,8 +20,8 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **Snow**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced; deep snow with tracks; falling and blowing snow; baked winters and cornices.
 - **Vegetation**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **Weather**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
-- **Clouds**: a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
-- **Water**: refraction, murky water, caustics, ocean, currents, white water, rivers and waterfalls, shore waves, camera under water.
+- **Sky and clouds**: sun and moon set by date, time and place; a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
+- **Water**: refraction, murky water, caustics, ocean, currents, boat wakes, white water, rivers and waterfalls, shore waves, camera under water.
 - **Exposure**: histogram metering, dark-scene key, local exposure.
 - **Physics**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
 - **Open worlds**: camera-relative tracing, persistent instances, culling, mesh LOD.
@@ -35,6 +35,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Emissive surfaces as lights** (`rendering/pathtracing/emissive_lights`).
 - **Light visibility memory** (`rendering/pathtracing/light_visibility_memory`): hidden lights stop taking samples.
 - **Radiance cache** (`rendering/pathtracing/radiance_cache`): bounces end on cached light.
+- **Transmission bounces** (`rendering/pathtracing/transmission_bounces`): glass, ice and water get their own bounce budget; matches 6 bounces in about 70% of the time, so icicles under an eave no longer go dark at the default 3.
 - **Light reuse** (`rendering/pathtracing/light_reuse`, off by default): ReSTIR DI reuses light samples across pixels and frames.
 - **Indirect light reuse** (`rendering/pathtracing/indirect_reuse`, off by default): ReSTIR GI; rooms and shade lit by bounced light are far less noisy at the same samples.
 - Shadow-only casters bounce light.
@@ -57,7 +58,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - Shaders writing `BACKLIGHT` or `TRANSMISSION` tint their shadows.
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
-- Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders.
+- Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders; `SPECULAR_NORMAL` output, a separate normal for the specular lobe under path tracing.
 
 <details><summary>Images: transmission, back lighting, clearcoat, layer textures, subsurface scattering, wet surfaces</summary>
 
@@ -98,22 +99,29 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Caustic cascades** (`rendering/pathtracing/caustics_cascades`): sun caustics out to 256 m, near lines unchanged.
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 - **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
+- **Measured wave spreading** (`wave_spreading`, `swell`): Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.
+- **Raster reflections** (`raster_reflections` on PhysXWaterSurface3D and PhysXRiver3D): raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows.
+- **Lake ripples** (automatic from `fetch`): on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.
+- **Whitecaps by wind speed** (`whitecap_auto`, on; `whitecap_cover_scale`): whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.
 - **Finer water mesh up close** (`mesh_detail`).
 - **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).
 - **Wave groups** (`shore_wave_groups`): shore waves arrive in sets with their own Rayleigh heights, so each breaks at its own place.
 - **Plunging breakers** (`shore_wave_curl`, `shore_spray`, `shore_spray_amount`): the crest throws a sheet of water that lands ahead and sinks into the bore, with spray where it is thin and where it lands.
 - **Currents** (`current`, `flow_period`): flow round rocks and along shores carries waves, foam and floating objects.
+- **Faster flow bakes** (`physics/physx_3d/water/multigrid_flow`): multigrid-preconditioned conjugate gradients bake the flow 7 to 10 times faster than SOR.
 - **Live flow** (`live_flow`, `wall_friction`): near the player, rocks and banks shed wakes and eddies.
+- **Boat wakes** (`PhysXWaterWake3D.dispersive`, `breaking_slope`): waves stepped with deep-water dispersion in Fourier space form the Kelvin pattern, a 19.5 degree wedge of transverse and diverging waves.
 - **White water** (`flow_foam`): foam in fast water, trailing rocks and drifting downstream.
 - **Rivers** (`PhysXRiver3D`: `discharge`, `roughness`, `max_slope`): drawn as a curve; finds its depth and never runs uphill.
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
   - Joins lakes, the sea and other rivers (`mouth_target`), ponding to the water level; tributaries add their flow.
   - Waterfalls (`fall_min_height`): a falling sheet that thins, whitens and breaks up, with a boiling pool and spray.
+  - Waterfall mist (`fall_mist_amount`, `PhysXWaterMist3D`): a simulated mist grid per fall, drawn as a raster FogVolume and path traced.
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
 - **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
-<details><summary>Images and clips: murky water, caustics, ocean, currents, live flow, white water, rivers, under water</summary>
+<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, reflections, whitecaps, lake ripples, currents, live flow, boat wakes, white water, rivers, waterfall mist, under water</summary>
 
 ![The pool with clear and with murky water](docs/media/murky-water.jpg)
 
@@ -130,6 +138,22 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Open sea with one wave layer and with three](docs/media/ocean-swell.jpg)
 
 *Ocean swell: one layer repeats the same foam patches; three layers add long swell.*
+
+![Sea surface height from above, 160 m at 14 m/s, four spreading models](docs/media/ocean-spreading.jpg)
+
+*Wave spreading: cos² gave long parallel crests; the measured spreading breaks them up, and swell adds long crests back.*
+
+![Raster sea toward the sun, before and with raster_reflections](docs/media/water-reflections.jpg)
+
+*Raster reflections: the flat dark sea now shows the sky and a band of sun glitter.*
+
+![Sea from above at 6, 14 and 20 m/s, fixed whitecap threshold and whitecap_auto](docs/media/whitecaps.jpg)
+
+*Whitecaps: with a fixed threshold the cover barely changes with the wind; now it grows from none at 6 m/s to many at 20 m/s.*
+
+![A lake looking into the sun, raster, with wind ripples and glitter](docs/media/lake-ripples.jpg)
+
+*Lake ripples: short wind waves and sun glitter on a lake, where the surface used to lie flat.*
 
 ![Waves breaking on a beach, raster](docs/media/shore-waves.gif)
 
@@ -150,6 +174,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Flecks carried past a rock, baked flow vs live flow](docs/media/live-flow.gif)
 
 *Live flow: the streaks roll up into a wake behind the rock.*
+
+![Wake heights from above at 4, 6 and 10 m/s, before and now](docs/media/boat-wakes.jpg)
+
+*Boat wakes: before, a flat wedge; now transverse and diverging waves form the Kelvin pattern.*
 
 ![Foam lines trailing a rock in a current](docs/media/white-water.gif)
 
@@ -174,6 +202,18 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A waterfall from a river lip into a pool, raster vs path traced](docs/media/waterfall.jpg)
 
 *Waterfall: the sheet breaks up into white water above the pool.*
+
+![A waterfall into a pool, raster, before and with mist](docs/media/waterfall-mist.jpg)
+
+*Waterfall mist: a haze now rises from the pool and drifts past the fall.*
+
+![A raster waterfall in a shaded gorge, before and lit by the scene](docs/media/waterfall-lighting.jpg)
+
+*Waterfall lighting: the raster fall no longer glows white in the shade of the gorge.*
+
+![Shore foam in shade, raster, before and lit by the scene](docs/media/sea-foam-lighting.jpg)
+
+*Foam lighting: shore foam in shade is no longer bright white.*
 
 ![Under water near crates, raster vs path traced](docs/media/underwater.jpg)
 
@@ -234,27 +274,31 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Motion vectors: before, only part of the hair reports its motion; after, every strand does.*
 
-![Strand hair with deep opacity shadows, raster](docs/media/hair-deep-shadows.jpg)
+![Strand hair with deep opacity shadows in raster, and path traced](docs/media/hair-deep-shadows.jpg)
 
-*Deep opacity shadows: the hair darkens gradually with depth from the light, raster.*
+*Deep opacity shadows: raster darkens the hair with depth like the path tracer; path tracing shows more fuzz at the edges.*
 
 </details>
 
 ### Terrain
 - **Mountain generation** (`TerrainGenerator3D`: `uplift`, `ranges`, `erodibility`, `critical_slope`, `detail_wavelength`, `detail_octaves`, `detail_crest`): raises ranges from an uplift map, Path3D ranges and noise, then erodes them to equilibrium with stream power erosion; branching gullies come from an erosion filter computed per point, so tiles join exactly; on crests gullies keep part of their depth and a ridged noise adds irregular pinnacles; the same for a seed; writes into Terrain3D or a HeightMapShape3D.
+- **River deposition** (`deposition`, off by default): rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors.
 - **Coarse-to-fine erosion** (`coarse_levels`, `refine_steps`): about 3.7 times faster at 4 m cells, with the same relief.
 - **Tile erosion** (`tile_erosion_enabled`): droplet hydraulic and thermal erosion in seamless overlapping tiles.
 - **Material detail** (`get_detail_shader_code()`): erosion detail below the vertex spacing in the terrain material; path tracing keeps it.
+- **Rock layers and waterfalls** (`strata_enabled`, `get_waterfalls()`): hard and soft bands that rivers cut into caprock waterfalls.
+- **Rivers fed by rain and snowmelt** (`climate_recipe`, `river_month`): a monthly water balance from the climate sets each river's flow, month by month.
 - **Geology maps** (`terrain_geology()` in shaders): soil, bare rock and scree from the erosion run.
 - **River network** (`build_river_paths()`): rivers with widths and discharges, made into joined `PhysXRiver3D` paths.
-- **Coast and lakes** (`ocean_edges` or `sea_map`; `lake_count`, `lakes`; `build_water()`): sea with a Dean-profile seabed and beaches; lakes behind natural dams; builds the sea and lake surfaces, and rivers end in them.
+- **Coast and lakes** (`ocean_edges` or `sea_map`; `lake_count`, `lakes`; `build_water()`): sea with a Dean-profile seabed and beaches; lakes behind natural dams or rock lips that spill as waterfalls; builds the sea and lake surfaces, and rivers end in them.
 - **Climate maps** (`TerrainDataMap3D.bake_climate()`, `ClimateRecipe`): temperature, orographic rain and rain shadows, snow share, aridity, winter and annual sunlight with terrain shadows, and wind exposure.
 - **Ground material** (`TerrainMaterial3D`, `use_generator()`): rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow.
+- **Landscape3D** (`source`, `spacing`, `lod_error`): heightfield ground from a TerrainGenerator3D or a height image, as chunk meshes with crack-free LODs and one BLAS per chunk level, so nothing rebuilds while the camera moves.
 - **Footprints in ground** (`GroundSurface3D`, `BaseMaterial3D.ground_deform_enabled`): prints in sand, soil, mud and leaf litter; moisture from the weather map, walls slump to the angle of repose.
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: mountain generation, coarse to fine, crests, tile erosion, material detail, geology, coast, climate, ground material, footprints, terrain data maps</summary>
+<details><summary>Images: mountain generation, coarse to fine, crests, tile erosion, material detail, waterfalls, deposition, river flow by month, geology, coast, climate, ground material, Landscape3D, footprints, terrain data maps</summary>
 
 ![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
 
@@ -284,6 +328,18 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Material detail: rills finer than the 4 m mesh, drawn by the material.*
 
+![Rivers and waterfalls on a layered range, and river long profiles before and after](docs/media/terrain-waterfalls.jpg)
+
+*Rock layers: rivers step down over the hard bands, leaving waterfalls up to 30 m.*
+
+![A generated range around a wide flat valley floor that runs down to the beach, raster](docs/media/terrain-deposition.jpg)
+
+*River deposition: the rivers fill the valley between the ridges with a flat alluvial floor.*
+
+![River flow by month in three climates, and snow lying by height](docs/media/terrain-runoff.jpg)
+
+*Rivers by month: a spring snowmelt flood in cold mountains, winter or summer high water in mild climates.*
+
 ![Geology map with soil, rock, scree and rivers, and the range path traced and coloured from it](docs/media/terrain-geology.jpg)
 
 *Geology: soil green, bare rock grey, scree ochre, rivers blue; the shader colours the range from the map.*
@@ -298,9 +354,13 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Climate maps: cold high ridges, rain over the range, shaded faces in winter, snow on the high crest.*
 
-![A generated range with its ground material: rock, scree, soil and a sand beach](docs/media/terrain-ground.jpg)
+![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach, raster vs path traced](docs/media/terrain-ground.jpg)
 
-*Ground material: bare rock on the ridges, soil and green in the valleys, a sand beach at the coast, all from the generator's geology.*
+*Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
+
+![A valley drawn by Landscape3D at 1 m spacing, raster vs path traced](docs/media/landscape3d.jpg)
+
+*Landscape3D: a 1 m heightfield with sharp ridges and a narrow valley floor, the same in raster and path tracing.*
 
 ![Footprints and tracks in dry sand, damp sand, soil, mud and leaf litter, raster and path traced](docs/media/ground-footprints.jpg)
 
@@ -315,6 +375,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 ### Vegetation
 - **Plant placement** (`VegetationField3D`, `Biome`, `PlantSpecies`): places species by spacing, footprint and rules on slope, wetness and distance to water over a `TerrainDataMap3D`; evenly spread, the same for a seed. 12,899 plants over 256 m place once in about 45 ms, then draw as ordinary MultiMeshes.
 - **Placement by geology** (`TerrainDataMap3D.geology_source`; `PlantSpecies` `soil_depth_range`, `rock_range`, `talus_range`): plants follow the generated soil, rock and scree; trees stay off bare rock and thin soil, grass thins on rock.
+- **Density masks** (`density_mask`, `density_mask_rect`; per species `mask_channel`, `mask_invert`): a painted texture thins or clears any species per channel, for clearings and paths.
 - **Placement by climate** (`temperature_range`, `january_temperature_range`, `precipitation_range`, `aridity_range`, `sunlight_range`): species by temperature, winter frost, rain, aridity and sunlight.
 - **Canopy shade** (`canopy_radius`, `shade_range`; `weather_map`): understorey placed by the shade of placed crowns; crowns feed the weather's canopy map.
 - **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.
@@ -385,7 +446,8 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 </details>
 
-### Clouds
+### Sky and clouds
+- **Sun and moon clock** (`SkyClock`): date, time and place point the sun and moon lights, with moon phases (Meeus); the sun is within 0.0004 degrees of the ephemeris and sunrise within half a minute of the almanac (`docs/bench/sky --test`).
 - **Cloud layer** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
 - **Clouds that never repeat** (always on): shape noise read at two scales with an irrational ratio.
 - **Cloud reprojection** (`WeatherSkyMaterial.cloud_reprojection`, on by default): clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.
@@ -418,10 +480,13 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Shelter** (`SnowCover3D.canopy_enabled`, `shelter_collision_mask`): ground under roofs and overhangs stays bare; tree crowns hold snow and unload it later.
 - **Wind moves lying snow** (`SnowCover3D.wind_transport_enabled`): windward shoulders and crests are scoured and the lee fills with wind-packed snow.
 - **Melt-freeze crusts** (`SnowCover3D.crust_enabled`): a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.
+- **Cornices crack and fall** (`cornice_failure_enabled`): a creeping tension crack, tumbling blocks, debris below.
+- **Icicles** (`SnowIcicles3D`, `hazy_core`): grown from roof melt water below freezing; clear ice with a hazy core.
 - **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
+- **Exact path traced sparkle** (`snow_exact_glints`, off by default): every 2 mm ice grain is a facet hit per ray.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.
 
-<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, sparkle, shelter, crust, wind transport</summary>
+<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, cornice fall, icicles, sparkle, shelter, crust, wind transport</summary>
 
 ![Snow on a mountain, raster and path traced](docs/media/snow-mountain.jpg)
 
@@ -463,9 +528,25 @@ Each feature that changes the look or the cost can be turned off with the settin
 
 *Cornice: a lip of snow over the lee side of a crest.*
 
+![A cornice with a tension crack, then fallen into blocks below, raster and path traced](docs/media/snow-cornice-fall.jpg)
+
+*Cornice fall: a crack opens behind the lip, then the lip breaks into tumbling blocks.*
+
+![Backlit icicles under an eave, raster and path traced](docs/media/snow-icicles.jpg)
+
+*Icicles: clear ice with a hazy core, longest where the most melt water drips.*
+
+![Icicles under an eave, path traced at the default 3 bounces with transmission_bounces](docs/media/icicles-transmission.jpg)
+
+*Transmission bounces: at the default 3 bounces the icicles stay clear instead of going dark.*
+
 ![Snow surface close up: dry in raster, dry path traced, and wet](docs/media/snow-sparkle.jpg)
 
 *Sparkle: dry snow glints in raster and path tracing; wet snow loses it.*
+
+![Snow sparkle in raster, path traced with the grid model, and path traced with exact grains](docs/media/snow-exact-glints.jpg)
+
+*Exact sparkle: each ice grain catches the sun on its own, densest round the highlight.*
 
 ![A shelter and snow-laden trees, raster and path traced](docs/media/snow-shelter.jpg)
 
@@ -489,6 +570,15 @@ Each feature that changes the look or the cost can be turned off with the settin
 ### DLSS Ray Reconstruction
 - DLSS 4.5 (`rendering/streamline/dlss_ray_reconstruction_preset`).
 - Continuous thin rain and correct blending over its output; frame generation fixes.
+- **Pixel antialiasing** when Ray Reconstruction is off: samples after the first spread over the pixel (R2 sequence), so sub-pixel detail antialiases instead of sparkling.
+
+<details><summary>Image: pixel antialiasing</summary>
+
+![Path traced strand hair: sparkling at 256 spp before, smooth at 64 spp with pixel antialiasing](docs/media/pixel-aa.jpg)
+
+*Pixel antialiasing: sub-pixel strands sparkled even at 256 samples; now 64 resolve smoothly.*
+
+</details>
 
 ### Physics (PhysX 5)
 ![PhysX: cloth flag in wind, a Blast wall broken by a ball, rigid crates, Flow smoke](docs/media/physx.gif)

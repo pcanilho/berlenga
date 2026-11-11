@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SkyClock" inherits="Node" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Date, time and place on Earth: drives the sun and moon lights, the moon's phase and the stars' rotation.
+	</brief_description>
+	<description>
+		Positions follow Meeus, [i]Astronomical Algorithms[/i] (2nd ed.): the sun from chapter 25 (about 0.01 deg), the moon from the main periodic terms of chapter 47 (about 0.001 deg against Meeus' worked example), apparent sidereal time from chapter 12 and the moon's phase and bright limb from chapter 48. The moon's parallax and atmospheric refraction (Saemundsson) are applied, so altitudes are what an observer sees. World axes: +Y up, -Z north (turned by [member north_offset]), +X east. Assign [member sun_light] and [member moon_light] and the clock points them; set [member time_scale] to run the clock. One update costs a few microseconds. See [code]docs/ideas/day-night.md[/code] in the repository and [code]docs/bench/sky --test[/code].
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="seconds" type="float" />
+			<description>
+				Moves the clock forward by [param seconds] (backward if negative), rolling the date over.
+			</description>
+		</method>
+		<method name="get_celestial_basis">
+			<return type="Basis" />
+			<description>
+				The rotation from the equatorial frame (x toward RA 0h, y toward RA 6h, z toward the north celestial pole) to world space, for placing stars by right ascension and declination.
+			</description>
+		</method>
+		<method name="get_ephemeris">
+			<return type="Dictionary" />
+			<description>
+				The raw numbers in degrees, km and hours: [code]jd_ut, jd_tt, sun_lon, sun_ra, sun_dec, sun_distance_km, moon_lon, moon_lat, moon_ra, moon_dec, moon_distance_km, obliquity, lst_hours, sun_alt, sun_az, moon_alt, moon_az, moon_phase_angle[/code].
+			</description>
+		</method>
+		<method name="get_julian_day" qualifiers="const">
+			<return type="float" />
+			<description>
+				The Julian day (UT) of the clock's date and time.
+			</description>
+		</method>
+		<method name="get_local_sidereal_time">
+			<return type="float" />
+			<description>
+				Local apparent sidereal time in hours.
+			</description>
+		</method>
+		<method name="get_moon_altitude">
+			<return type="float" />
+			<description>
+				The moon's apparent altitude in degrees (parallax and refraction applied).
+			</description>
+		</method>
+		<method name="get_moon_azimuth">
+			<return type="float" />
+			<description>
+				The moon's azimuth in degrees from north through east.
+			</description>
+		</method>
+		<method name="get_moon_bright_limb_angle">
+			<return type="float" />
+			<description>
+				Which way the lit side of the moon faces: the angle in degrees from the zenith direction on the sky, counterclockwise (toward the east limb). The moon's phase shading turns by this.
+			</description>
+		</method>
+		<method name="get_moon_direction">
+			<return type="Vector3" />
+			<description>
+				Unit vector from the scene toward the moon.
+			</description>
+		</method>
+		<method name="get_moon_distance">
+			<return type="float" />
+			<description>
+				Earth-moon distance in km.
+			</description>
+		</method>
+		<method name="get_moon_illuminance_top">
+			<return type="float" />
+			<description>
+				The moon's illuminance above the atmosphere in lux, from its magnitude (about 0.26 lux at full moon).
+			</description>
+		</method>
+		<method name="get_moon_illuminated_fraction">
+			<return type="float" />
+			<description>
+				Fraction of the moon's disc that is lit, 0 (new) to 1 (full).
+			</description>
+		</method>
+		<method name="get_moon_magnitude">
+			<return type="float" />
+			<description>
+				The moon's visual magnitude: -12.73 + 0.026 |a| + 4e-9 a^4 at phase angle a (Allen), corrected for distance.
+			</description>
+		</method>
+		<method name="get_moon_phase_angle">
+			<return type="float" />
+			<description>
+				The sun-moon-Earth angle in degrees: 0 at full moon, 180 at new moon.
+			</description>
+		</method>
+		<method name="get_sun_altitude">
+			<return type="float" />
+			<description>
+				The sun's apparent altitude in degrees (refraction applied when [member refraction] is on).
+			</description>
+		</method>
+		<method name="get_sun_azimuth">
+			<return type="float" />
+			<description>
+				The sun's azimuth in degrees from north through east.
+			</description>
+		</method>
+		<method name="get_sun_direction">
+			<return type="Vector3" />
+			<description>
+				Unit vector from the scene toward the sun.
+			</description>
+		</method>
+		<method name="get_sun_distance">
+			<return type="float" />
+			<description>
+				Earth-sun distance in km.
+			</description>
+		</method>
+		<method name="get_sun_illuminance_top">
+			<return type="float" />
+			<description>
+				Sunlight above the atmosphere in lux (133,800 lux at 1 AU, Darula et al. 2005).
+			</description>
+		</method>
+		<method name="julian_day" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="year" type="int" />
+			<param index="1" name="month" type="int" />
+			<param index="2" name="day" type="float" />
+			<description>
+				Julian day of a Gregorian date; [param day] may carry a fraction (Meeus chapter 7).
+			</description>
+		</method>
+		<method name="set_julian_day">
+			<return type="void" />
+			<param index="0" name="jd_ut" type="float" />
+			<description>
+				Sets the clock to a Julian day (UT); the local date and time follow [member utc_offset].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="day" type="int" setter="set_day" getter="get_day" default="21">
+			Day of the month (local).
+		</member>
+		<member name="hide_below_horizon" type="bool" setter="set_hide_below_horizon" getter="get_hide_below_horizon" default="true">
+			Hide each light while its body is below the horizon.
+		</member>
+		<member name="latitude" type="float" setter="set_latitude" getter="get_latitude" default="39.4">
+			Observer latitude in degrees, north positive.
+		</member>
+		<member name="longitude" type="float" setter="set_longitude" getter="get_longitude" default="-9.5">
+			Observer longitude in degrees, east positive.
+		</member>
+		<member name="month" type="int" setter="set_month" getter="get_month" default="6">
+			Month (local), 1 to 12.
+		</member>
+		<member name="moon_light" type="NodePath" setter="set_moon_light" getter="get_moon_light" default="NodePath(&quot;&quot;)">
+			A [DirectionalLight3D] the clock points from the moon.
+		</member>
+		<member name="north_offset" type="float" setter="set_north_offset" getter="get_north_offset" default="0.0">
+			How far north is turned from world -Z toward +X, in degrees.
+		</member>
+		<member name="refraction" type="bool" setter="set_refraction" getter="get_refraction" default="true">
+			Lift bodies near the horizon by atmospheric refraction (about 0.57 deg at the horizon), as seen.
+		</member>
+		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
+			A [DirectionalLight3D] the clock points from the sun.
+		</member>
+		<member name="time_of_day" type="float" setter="set_time_of_day" getter="get_time_of_day" default="12.0">
+			Local clock time in hours.
+		</member>
+		<member name="time_scale" type="float" setter="set_time_scale" getter="get_time_scale" default="0.0">
+			Simulated seconds per real second while the game runs; 0 stops the clock, 3600 is an hour a second.
+		</member>
+		<member name="utc_offset" type="float" setter="set_utc_offset" getter="get_utc_offset" default="0.0">
+			The local clock's offset from UTC in hours (1 for Lisbon summer time).
+		</member>
+		<member name="year" type="int" setter="set_year" getter="get_year" default="2026">
+			Year (local).
+		</member>
+	</members>
+</class>

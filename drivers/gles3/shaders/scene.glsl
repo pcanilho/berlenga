@@ -2232,6 +2232,7 @@ void main() {
 	float rim_tint = 0.0;
 	float clearcoat = 0.0;
 	float clearcoat_roughness = 0.0;
+	vec3 specular_normal = vec3(0.0); // SPECULAR_NORMAL: path tracing only; raster ignores it.
 	float anisotropy = 0.0;
 	vec2 anisotropy_flow = vec2(1.0, 0.0);
 #ifdef PREMUL_ALPHA_USED

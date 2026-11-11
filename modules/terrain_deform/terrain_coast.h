@@ -140,11 +140,14 @@ public:
 	// A dam at p_site and the lake behind it, modifying p_h. p_rec: receivers (downstream neighbour, itself at an
 	// outlet); p_area: drainage area along them (m^2); p_taken: cells that must stay as they are (sea, other lakes and
 	// dams). Returns false (and leaves p_h as it was) when no lake of min_area forms.
-	static bool make_lake(const LakeParams &p, int32_t p_site, const int32_t *p_rec, const float *p_area, const uint8_t *p_taken, float *p_h, Lake &r_lake) {
+	static bool make_lake(const LakeParams &p, int32_t p_site, const int32_t *p_rec, const float *p_area, const uint8_t *p_taken, float *p_h, Lake &r_lake, const char **r_why = nullptr) {
+		const char *why_dummy = nullptr;
+		const char *&why = r_why ? *r_why : why_dummy;
 		const int nx = p.nx;
 		const int ny = p.ny;
 		const int n = nx * ny;
 		if (p_site < 0 || p_site >= n || p_rec[p_site] == p_site || p_taken[p_site]) {
+			why = "the valley floor there is a sink, the sea or another lake";
 			return false;
 		}
 		// Down-valley direction: towards the cell four steps down the receivers.
@@ -158,6 +161,7 @@ public:
 		double dirz = double(e / nx - sz);
 		const double dl = std::sqrt(dirx * dirx + dirz * dirz);
 		if (dl < 1e-9) {
+			why = "no stream runs down from there";
 			return false;
 		}
 		dirx /= dl;
@@ -280,6 +284,7 @@ public:
 		}
 		if (seed < 0) {
 			restore();
+			why = "the dam holds no water behind it (the valley floor rises too fast upstream)";
 			return false;
 		}
 		closed[seed] = 1;
@@ -309,6 +314,7 @@ public:
 			popped.push_back(c);
 			if (int(popped.size()) > p.max_cells) {
 				restore();
+				why = "the water would cover more than a quarter of the map";
 				return false;
 			}
 			const int x = c % nx;
@@ -338,6 +344,7 @@ public:
 		} else {
 			if (rim < 0) {
 				restore();
+				why = "the water spills out at once, below the dam's height";
 				return false;
 			}
 			// Spills over a col lower than the dam: the col is the outlet, and the dam needs no spillway.
@@ -364,6 +371,7 @@ public:
 			const size_t k = size_t(inflow / (p.evaporation * p.dx * p.dx));
 			if (k < 2 || k >= under.size()) {
 				restore();
+				why = "evaporation takes all the inflow (raise the catchment or lower lake_evaporation)";
 				return false;
 			}
 			lake_level = under[k];
@@ -435,6 +443,7 @@ public:
 		}
 		if (double(lake.cells.size()) * p.dx * p.dx < p.min_area) {
 			restore();
+			why = "the lake would be smaller than lake_min_area (a steep, narrow valley; raise the marker's depth)";
 			return false;
 		}
 		r_lake = std::move(lake);

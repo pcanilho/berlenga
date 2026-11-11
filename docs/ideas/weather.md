@@ -454,6 +454,27 @@ As built (`weather_clouds.cpp`, CPU and sky GLSL in step):
 - Cost: shadow bake 26 to 44 ms in the background once a second (two reads, a bigger texture);
   the sky march reads the shape twice per step. GPU time on the PC queue.
 
+## Step 3d: clouds as slabs (11 Nov 2026)
+
+The landscape bench's wide shot showed the clouds as boxy, flat-faced slabs. Two causes, both
+reproduced in `docs/bench/weather --view=clouds_wide` (its clear weather, sun and camera):
+
+- **Columns cut flat.** The shape noise was read at half its horizontal rate in height (`y * 0.5`),
+  so a feature was about 1.5 km tall in a layer about 1.1 km deep: each cloud was one column through
+  the whole layer, cut flat by the height profile at its base and top, with vertical walls. Read at
+  `y * 0.7` now: clouds still tower (Nubis keeps a vertical stretch for cumulus) but end at their own
+  heights, with rounded tops. The CPU density reads the same. Shadow share against cover (0.2 to 1.0)
+  goes from 16/33/52/73/95% to 27/47/66/82/96% (columns now vary in height).
+- **Far noise read too coarse.** The march read the noise at the scale of its step, which at grazing
+  angles is hundreds of metres (64 steps over up to 40 km): a mip 4 or 5 levels down, a few texels
+  across, whose trilinear blend thresholded is a box. It now reads at the pixel's footprint
+  (distance times the pixel's angle, from the derivatives of the view direction), as texture
+  filtering does; the jitter and the reprojection average along the ray. No cost.
+- Tried and left out: up to 3 times the steps along long horizon paths (Hillaire 2016 scales the
+  count with the path length): less grain at the horizon, but about 20% more frame time on lavapipe.
+- Not the cause: the reprojection (with it off, the slabs show the same after 200 frames), the 12 h
+  of drift, the Sky's process mode, the frame time.
+
 ## Sources
 
 - Schneider, The Real-time Volumetric Cloudscapes of Horizon Zero Dawn,

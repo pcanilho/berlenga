@@ -32,6 +32,8 @@
 
 RTSparseVolume RTVolumes::volume;
 bool RTVolumes::present = false;
+RTDenseVolumes RTVolumes::dense;
+Mutex RTVolumes::dense_mutex;
 
 void RTVolumes::set_volume(const RTSparseVolume &p_volume) {
 	volume = p_volume;
@@ -48,5 +50,19 @@ bool RTVolumes::get_volume(RTSparseVolume &r_volume) {
 		return false;
 	}
 	r_volume = volume;
+	return true;
+}
+
+void RTVolumes::set_dense(const RTDenseVolumes &p_dense) {
+	MutexLock lock(dense_mutex);
+	dense = p_dense;
+}
+
+bool RTVolumes::get_dense(RTDenseVolumes &r_dense) {
+	MutexLock lock(dense_mutex);
+	if (!dense.texture.is_valid() || dense.boxes.is_empty()) {
+		return false;
+	}
+	r_dense = dense;
 	return true;
 }

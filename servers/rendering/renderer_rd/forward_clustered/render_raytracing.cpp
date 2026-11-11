@@ -7134,6 +7134,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_MAX_TRANSPARENCY_LAYERS_REFLECTION] = (float)GLOBAL_GET_CACHED(int, "rendering/pathtracing/max_transparency_layers_reflection");
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT] = (float)GLOBAL_GET_CACHED(int, "rendering/pathtracing/max_transparency_layers_indirect");
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSPARENCY_MAX_BOUNCE] = (float)GLOBAL_GET_CACHED(int, "rendering/pathtracing/transparency_max_bounce");
+		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSMISSION_BOUNCES] = (float)GLOBAL_GET_CACHED(int, "rendering/pathtracing/transmission_bounces");
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSPARENT_COUNT] = (float)p_state->transparent_instance_count;
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSPARENCY_INDIRECT_RANGE] = (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/transparency_indirect_range");
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSPARENCY_INDIRECT_FADE] = (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/transparency_indirect_fade");
@@ -7401,6 +7402,9 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 				}
 				RID catch_rd = has_snow && catch_tex.is_valid() ? RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(catch_tex) : RID();
 				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_CATCH_MAP] = catch_rd.is_valid() ? float(bindless_block->add_texture(catch_rd)) : 0.0f;
+				static const StringName snow_exact_name = "snow_exact_glints";
+				const Variant exact_var = ms->global_shader_parameter_get_internal(snow_exact_name);
+				rt_ubo.params[SceneShaderRaytracing::RT_PARAM_SNOW_EXACT_GLINTS] = (exact_var.get_type() == Variant::BOOL && bool(exact_var)) ? 1.0f : 0.0f;
 			}
 			// The world tier, the same way.
 			static const StringName snow_world_map_name = "snow_world_map";
@@ -7729,7 +7733,49 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 			vp.smoke_color[0] = vol.smoke_color.r;
 			vp.smoke_color[1] = vol.smoke_color.g;
 			vp.smoke_color[2] = vol.smoke_color.b;
-		} else {
+		}
+		// No simulated gas this frame: the dense boxes (waterfall mist), if any. emission.w holds their
+		// count, which switches the shader to them; level[] holds the boxes, two uvec4 each.
+		RTDenseVolumes dense;
+		RID dense_texture;
+		if (!has_volume && RTVolumes::get_dense(dense)) {
+			dense_texture = RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(dense.texture);
+		}
+		if (dense_texture.is_valid()) {
+			const int count = MIN((int)dense.boxes.size(), RTDenseVolumes::MAX_BOXES);
+			Vector3 lo(1e30f, 1e30f, 1e30f);
+			Vector3 hi(-1e30f, -1e30f, -1e30f);
+			for (int i = 0; i < count; i++) {
+				const RTDenseBox &b = dense.boxes[i];
+				const float f[4] = { b.origin.x, b.origin.y, b.origin.z, b.cell };
+				memcpy(&vp.level[i * 8], f, sizeof(f));
+				vp.level[i * 8 + 4] = uint32_t(b.size.x);
+				vp.level[i * 8 + 5] = uint32_t(b.size.y);
+				vp.level[i * 8 + 6] = uint32_t(b.size.z);
+				vp.level[i * 8 + 7] = uint32_t(b.atlas_z);
+				lo = lo.min(b.origin);
+				hi = hi.max(b.origin + Vector3(b.size) * b.cell);
+			}
+			vp.world_min[0] = lo.x;
+			vp.world_min[1] = lo.y;
+			vp.world_min[2] = lo.z;
+			vp.world_min[3] = 1.0f;
+			vp.world_max[0] = hi.x;
+			vp.world_max[1] = hi.y;
+			vp.world_max[2] = hi.z;
+			vp.world_max[3] = 1.0f;
+			vp.block_size[0] = 1.0f; // empty space is skipped a metre at a time
+			vp.block_size[1] = 1.0f;
+			vp.block_size[2] = 1.0f;
+			vp.medium[0] = dense.extinction;
+			vp.medium[1] = dense.albedo;
+			vp.medium[2] = dense.anisotropy;
+			vp.medium[3] = MAX(dense.max_density, 1e-6f);
+			vp.emission[3] = float(count);
+			vp.smoke_color[0] = dense.color.r;
+			vp.smoke_color[1] = dense.color.g;
+			vp.smoke_color[2] = dense.color.b;
+		} else if (!has_volume) {
 			vp.world_min[3] = 1.0f;
 		}
 		if (!p_state->volume_params_buffer.is_valid()) {
@@ -7741,7 +7787,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		RD::Uniform u;
 		u.binding = 47;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		u.append_id(has_volume ? vol.density : RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK));
+		u.append_id(has_volume ? vol.density : (dense_texture.is_valid() ? dense_texture : RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK)));
 		uniforms.push_back(u);
 
 		u = RD::Uniform();

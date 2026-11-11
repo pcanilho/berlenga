@@ -75,6 +75,20 @@ void ClimateRecipe::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_horizon_distance"), &ClimateRecipe::get_horizon_distance);
 	ClassDB::bind_method(D_METHOD("set_sx_distance", "value"), &ClimateRecipe::set_sx_distance);
 	ClassDB::bind_method(D_METHOD("get_sx_distance"), &ClimateRecipe::get_sx_distance);
+	ClassDB::bind_method(D_METHOD("set_precipitation_seasonality", "value"), &ClimateRecipe::set_precipitation_seasonality);
+	ClassDB::bind_method(D_METHOD("get_precipitation_seasonality"), &ClimateRecipe::get_precipitation_seasonality);
+	ClassDB::bind_method(D_METHOD("set_precipitation_peak_month", "value"), &ClimateRecipe::set_precipitation_peak_month);
+	ClassDB::bind_method(D_METHOD("get_precipitation_peak_month"), &ClimateRecipe::get_precipitation_peak_month);
+	ClassDB::bind_method(D_METHOD("set_melt_factor", "value"), &ClimateRecipe::set_melt_factor);
+	ClassDB::bind_method(D_METHOD("get_melt_factor"), &ClimateRecipe::get_melt_factor);
+	ClassDB::bind_method(D_METHOD("set_radiation_melt_factor", "value"), &ClimateRecipe::set_radiation_melt_factor);
+	ClassDB::bind_method(D_METHOD("get_radiation_melt_factor"), &ClimateRecipe::get_radiation_melt_factor);
+	ClassDB::bind_method(D_METHOD("set_soil_capacity", "value"), &ClimateRecipe::set_soil_capacity);
+	ClassDB::bind_method(D_METHOD("get_soil_capacity"), &ClimateRecipe::get_soil_capacity);
+	ClassDB::bind_method(D_METHOD("set_direct_runoff", "value"), &ClimateRecipe::set_direct_runoff);
+	ClassDB::bind_method(D_METHOD("get_direct_runoff"), &ClimateRecipe::get_direct_runoff);
+	ClassDB::bind_method(D_METHOD("set_groundwater_release", "value"), &ClimateRecipe::set_groundwater_release);
+	ClassDB::bind_method(D_METHOD("get_groundwater_release"), &ClimateRecipe::get_groundwater_release);
 	ClassDB::bind_method(D_METHOD("set_sun_cell", "value"), &ClimateRecipe::set_sun_cell);
 	ClassDB::bind_method(D_METHOD("get_sun_cell"), &ClimateRecipe::get_sun_cell);
 	ClassDB::bind_method(D_METHOD("set_precipitation_cell", "value"), &ClimateRecipe::set_precipitation_cell);
@@ -103,6 +117,9 @@ void ClimateRecipe::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fallout_time", PROPERTY_HINT_RANGE, "10,10000,1,suffix:s"), "set_fallout_time", "get_fallout_time");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "precipitation_floor", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_precipitation_floor", "get_precipitation_floor");
 
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "precipitation_seasonality", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_precipitation_seasonality", "get_precipitation_seasonality");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "precipitation_peak_month", PROPERTY_HINT_RANGE, "0,11,1"), "set_precipitation_peak_month", "get_precipitation_peak_month");
+
 	ADD_GROUP("Sun", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloud_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_cloud_cover", "get_cloud_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ground_albedo", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_ground_albedo", "get_ground_albedo");
@@ -110,6 +127,13 @@ void ClimateRecipe::_bind_methods() {
 
 	ADD_GROUP("Wind exposure", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sx_distance", PROPERTY_HINT_RANGE, "1,1000,1,suffix:m"), "set_sx_distance", "get_sx_distance");
+
+	ADD_GROUP("Runoff", "");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melt_factor", PROPERTY_HINT_RANGE, "0,10,0.01,suffix:mm/d/K"), "set_melt_factor", "get_melt_factor");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radiation_melt_factor", PROPERTY_HINT_RANGE, "0,0.1,0.0001"), "set_radiation_melt_factor", "get_radiation_melt_factor");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "soil_capacity", PROPERTY_HINT_RANGE, "0,1000,1,suffix:mm"), "set_soil_capacity", "get_soil_capacity");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "direct_runoff", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_direct_runoff", "get_direct_runoff");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "groundwater_release", PROPERTY_HINT_RANGE, "0.01,1,0.01"), "set_groundwater_release", "get_groundwater_release");
 
 	ADD_GROUP("Grid", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sun_cell", PROPERTY_HINT_RANGE, "1,256,0.1,suffix:m"), "set_sun_cell", "get_sun_cell");
