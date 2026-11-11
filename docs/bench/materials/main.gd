@@ -47,7 +47,8 @@ extends Node3D
 #                     camera 8 m away, "nolod" to draw every strand at any distance, "novolume" for
 #                     strands that pass through each other (volume_enabled off), "taa" for temporal
 #                     antialiasing, "mvview" to see the motion vectors, "nodeep" for the shadow map
-#                     alone (deep_shadows off); "box" for broad
+#                     alone (deep_shadows off), "lamp" for night under an omni light beside the head
+#                     ("spotlamp" a spot light; "nolocal" without the lamp's own deep shadow map); "box" for broad
 #                     rounded shoulders (spheres only on the skull), "body" to make the shoulders (with
 #                     or without "box") the collision body, held still and seen from the side,
 #                     "skinned" to skin them to a tilted bone (the head stays still), "hidebox" to see the drape;
@@ -701,6 +702,31 @@ func _strands_sim() -> void:
 		for c in get_children():
 			if c is DirectionalLight3D:
 				c.rotation_degrees = Vector3(-15, 160, 0)
+	if hair.contains("lamp"):
+		# Night under a lamp: the sun off, the sky dimmed, and an omni light up and to the side
+		# of the head ("spotlamp": a spot light aimed at it), which gets its own deep opacity map
+		# ("nolocal": it does not, the shadow maps alone as before).
+		for c in get_children():
+			if c is DirectionalLight3D:
+				c.visible = false
+			if c is WorldEnvironment:
+				c.environment.background_energy_multiplier = 0.05
+		var lamp: Light3D
+		if hair.contains("spotlamp"):
+			var spot := SpotLight3D.new()
+			spot.spot_range = 4.0
+			spot.spot_angle = 25.0
+			lamp = spot
+		else:
+			var omni := OmniLight3D.new()
+			omni.omni_range = 4.0
+			lamp = omni
+		lamp.light_energy = 2.0
+		lamp.shadow_enabled = true
+		add_child(lamp)
+		lamp.look_at_from_position(Vector3(-0.55, 0.85, 0.3), Vector3(0, 0.3, 0))
+		if hair.contains("nolocal"):
+			h.deep_shadow_local_lights = 0
 	if hair.contains("all"):
 		h.guide_ratio = 1.0
 	h.wind = Vector3(1.5, 0, 0)

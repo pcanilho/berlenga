@@ -524,7 +524,8 @@ void light_process_omni(uint idx, vec3 vertex, hvec3 eye_vec, hvec3 normal, vec3
 		// Omni lights use direction.xy to store to store the offset between the two paraboloid regions
 		vec2 flip_offset = omni_lights.data[idx].direction.xy;
 
-		vec3 local_vert = (omni_lights.data[idx].shadow_matrix * vec4(vertex, 1.0)).xyz;
+		vec3 shadow_vertex = vertex + (positional_shadow_offset > 0.0 ? normalize(light_rel_vec) * positional_shadow_offset : vec3(0.0));
+		vec3 local_vert = (omni_lights.data[idx].shadow_matrix * vec4(shadow_vertex, 1.0)).xyz;
 
 		float shadow_len = length(local_vert); //need to remember shadow len from here
 		vec3 shadow_dir = normalize(local_vert);
@@ -828,7 +829,8 @@ void light_process_spot(uint idx, vec3 vertex, hvec3 eye_vec, hvec3 normal, vec3
 		vec3 normal_bias = vec3(normal) * light_length * spot_lights.data[idx].shadow_normal_bias * (1.0 - abs(dot(normal, light_rel_vec_norm)));
 
 		//there is a shadowmap
-		vec4 v = vec4(vertex + normal_bias, 1.0);
+		vec3 shadow_vertex = vertex + (positional_shadow_offset > 0.0 ? vec3(light_rel_vec_norm) * positional_shadow_offset : vec3(0.0));
+		vec4 v = vec4(shadow_vertex + normal_bias, 1.0);
 
 		vec4 splane = (spot_lights.data[idx].shadow_matrix * v);
 		splane.z += spot_lights.data[idx].shadow_bias;

@@ -1094,6 +1094,13 @@ layout(set = MATERIAL_UNIFORM_SET, binding = 0, std140) uniform MaterialUniforms
 
 #GLOBALS
 
+// POSITIONAL_SHADOW_OFFSET (spatial fragment output): moves this fragment's omni and spot shadow
+// lookups toward each light by that many metres (as DIRECTIONAL_SHADOW_OFFSET for directional
+// lights), so a surface that shadows itself another way (strand hair's deep opacity maps) can skip
+// its own layers in the shadow map and keep what lies beyond them. Global: the light functions
+// read it. Declared in every pass, as the material's code writes it in every pass.
+float positional_shadow_offset = 0.0;
+
 #ifdef MODE_RENDER_DEPTH
 
 #ifdef MODE_RENDER_MATERIAL
