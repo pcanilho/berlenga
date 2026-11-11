@@ -143,7 +143,11 @@ float cloud_phase(float cos_theta, float p_c) {
 }
 
 // Clouds along rd from the camera: radiance (rgb) and transmittance (a).
-vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter) {
+// p_pixel: the angle (rad) one pixel spans. The noise is read at the pixel's footprint, t * p_pixel,
+// not at the march step: at grazing angles a step is hundreds of metres, and the shape noise read
+// at that scale is a few texels across, whose trilinear blend thresholded is a box (flat faces,
+// square corners). Along the ray the jitter (and the reprojection) average the steps instead.
+vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel) {
 	vec3 ro = vec3(0.0, PLANET_RADIUS + cam.y, 0.0);
 	float r_base = PLANET_RADIUS + cloud_base_height;
 	float r_top = PLANET_RADIUS + cloud_top_max;
@@ -180,7 +184,7 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		vec3 pl = ro + rd * t;
 		vec3 p = vec3(cam.x + rd.x * t, length(pl) - PLANET_RADIUS, cam.z + rd.z * t);
 		vec2 ct = wc_cover_type(p.xz);
-		float sigma = wc_extinction(p, ct, true, ds);
+		float sigma = wc_extinction(p, ct, true, min(ds, t * p_pixel));
 		if (sigma <= 1e-6) {
 			continue;
 		}
@@ -261,7 +265,12 @@ void sky() {
 		// Reprojected (half_res_reprojection): a new start each frame, which the resolve averages.
 		jitter = AT_CUBEMAP_PASS ? 0.5 : fract(jitter + 0.61803399 * floor(TIME * 60.0));
 #endif
-		vec4 clouds = march_clouds(POSITION, EYEDIR, sun_dir, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter);
+		// One pixel's angle, from the eye direction's change to the next pixel (the pass is uniform, so
+		// the derivatives are defined here).
+		vec3 dir_dx = dFdx(EYEDIR);
+		vec3 dir_dy = dFdy(EYEDIR);
+		float pixel_angle = max(length(dir_dx), length(dir_dy));
+		vec4 clouds = march_clouds(POSITION, EYEDIR, sun_dir, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter, pixel_angle);
 		COLOR = clouds.rgb;
 		ALPHA = clouds.a;
 	} else {

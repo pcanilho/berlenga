@@ -346,12 +346,12 @@ float even_sum(float p_a, float p_b) {
 
 Vector3 shape_coord(const State &p_state, const Vector3 &p_pos) {
 	const Vector2 xz = rotate_shape_a(Vector2(p_pos.x - p_state.drift.x, p_pos.z - p_state.drift.y) / p_state.shape_scale);
-	return Vector3(xz.x, p_pos.y * 0.5f / p_state.shape_scale, xz.y);
+	return Vector3(xz.x, p_pos.y * 0.7f / p_state.shape_scale, xz.y);
 }
 
 float shape_at(const State &p_state, const Vector3 &p_pos) {
 	const Vector2 p = Vector2(p_pos.x - p_state.drift.x, p_pos.z - p_state.drift.y) / p_state.shape_scale;
-	const float y = p_pos.y * 0.5f / p_state.shape_scale;
+	const float y = p_pos.y * 0.7f / p_state.shape_scale;
 	const Vector2 a = rotate_shape_a(p);
 	const Vector2 b = rotate_shape_b(p);
 	const Vector<float> &noise = shape_noise();
@@ -480,7 +480,9 @@ float wc_cover_noise(vec2 xz) {
 // (shape_at() on the CPU): no tile repeats.
 float wc_shape(vec3 p, float p_step) {
 	vec2 xz = (p.xz - cloud_drift) / cloud_shape_scale;
-	float y = p.y * 0.5 / cloud_shape_scale;
+	// Stretched 1.4 times in height: towers, but not so tall that a cloud is one column through the
+	// whole layer, cut flat at its base and top (slabs with vertical walls).
+	float y = p.y * 0.7 / cloud_shape_scale;
 	vec2 a = wc_rotate(xz);
 	vec2 b = wc_rotate(wc_rotate(xz)) * 0.618034 + vec2(0.37, 0.71);
 	float lod = log2(p_step / (cloud_shape_scale / 128.0));
