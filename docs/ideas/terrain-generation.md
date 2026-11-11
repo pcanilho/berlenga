@@ -872,6 +872,35 @@ Built:
   fall. The river module tests clearance against its sections' bed (4 m ground body in the bench, sections apart),
   so it still sees the face as a ramp; sampling the face by raycast as the lip already is would make it agree.
 
+## Glacial erosion: cirques, troughs, hanging valleys (research, 11 Nov; waits on Paulo's pick)
+
+Why: the valley wants a high lake above a big fall on its main river. Fluvial erosion alone cannot hold it: a river
+of 2-3 m3/s grades its bed down (the inflow tests above), so a pinned sill gives 250-380 m falls or is bypassed. In
+mountains, high lakes above big falls are mostly glacial: cirque basins (overdeepened at the glacier's head, Barr
+and Spagnolo 2015) and hanging valleys (a tributary glacier, thinner and slower, erodes less than the trunk; its
+valley is left above the trough when the ice goes, and its stream falls off the lip, as in Yosemite).
+
+Established techniques:
+
+- Cordonnier, Jouvet, Peytavie, Braun, Cani, Benes, Galin, Guerin, Gain 2023, "Forming Terrains by Glacial
+  Erosion" (ACM TOG 42(4), SIGGRAPH): ice flow from a learned emulator of the Stokes equations (IGM, Jouvet et al.
+  2022), erosion rate proportional to sliding speed squared, alternated with fluvial erosion over glacial cycles;
+  makes U valleys, cirques, hanging valleys and lakes on a heightfield. The reference for us.
+- Shallow ice approximation (SIA: Mahaffy 1976; mass-conserving MUSCL scheme, Jarosch, Schoof and Anslow 2013):
+  ice flux from thickness and surface slope, explicit, cheap on a grid; the usual stand-in for Stokes flow in
+  landscape models (Braun, Zwartz and Tomkin 1999; Herman and Braun 2008; Egholm et al. 2009).
+- Erosion law: abrasion and quarrying at rate K_g |u_b|^l with l about 1 to 2 (Humphrey and Raymond 1994; Herman et
+  al. 2015), u_b the basal sliding speed.
+- Mass balance from the climate: accumulation above the equilibrium line (ELA), melt below, linear in height (the
+  climate recipe already has temperature by height and snowfall).
+
+Plan (if picked): an ice stage in terrain_stream_power's loop: SIA ice thickness on the same grid (MUSCL fluxes,
+adaptive time step), sliding speed as a share of the deformation speed, glacial erosion added to the stream power
+solve for the glacial part of each cycle, then fluvial steps on the ice-free ground; parameters `glacial_ela`,
+`glacial_erosion`, `glacial_cycles`. Expected cost: SIA needs small time steps (CFL on diffusivity); on the 257 grid
+a few hundred ice steps per cycle, about a second; coarse levels first as for the rivers. Checks: a cirque basin
+holds a lake by itself (no marker), a tributary hangs above the trunk, U cross-sections (width over depth).
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
