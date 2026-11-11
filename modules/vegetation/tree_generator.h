@@ -295,7 +295,22 @@ private:
 	void _skin_stem(Builder &r_b, const Vector4i &p_part, int p_axis, const LocalVector<Vector3> &p_points, int p_sides) const;
 	PackedFloat32Array _rig_data() const;
 	Dictionary _bark_lods(const Builder &p_bark) const;
-	Dictionary _leaf_lods(Builder &r_leaves) const;
+	Dictionary _leaf_lods(Builder &r_leaves, bool p_twins = true) const;
+	// Climber leaves from PlantGenerator.make_climber_leaves (one baked set per climber, shared),
+	// instanced into their own surface; empty when climber_plant_leaves is off.
+	Builder climber_leaf_b;
+	bool climber_plant_leaves = true;
+	static Array _plant_climber_leaves(Climber p_climber);
+	static Array plant_climber_cache[4];
+
+public:
+	static void free_climber_leaves() {
+		for (Array &a : plant_climber_cache) {
+			a.clear();
+		}
+	}
+
+private:
 
 	Preset preset = PRESET_OAK;
 	int seed = 0;
@@ -545,6 +560,11 @@ public:
 		mesh_cache.clear();
 	}
 	bool get_junction_weld() const { return junction_weld; }
+	void set_climber_plant_leaves(bool p_on) {
+		climber_plant_leaves = p_on;
+		mesh_cache.clear();
+	}
+	bool get_climber_plant_leaves() const { return climber_plant_leaves; }
 
 	Ref<ArrayMesh> generate();
 

@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "tree_generator.h"
+#include "plant_generator.h"
 
 #include "core/object/class_db.h"
 #include "core/os/os.h"
@@ -2276,18 +2277,66 @@ void TreeGenerator::_climber_stem(Builder &r_bark, const LocalVector<Vector3> &p
 	}
 }
 
+// Liana stands for clematis (old man's beard), the hanging climber of rich lowland woods.
+Array TreeGenerator::plant_climber_cache[4];
+
+Array TreeGenerator::_plant_climber_leaves(Climber p_climber) {
+	Array *cache = plant_climber_cache;
+	if (p_climber <= CLIMBER_NONE || p_climber >= CLIMBER_MAX) {
+		return Array();
+	}
+	if (cache[p_climber].is_empty()) {
+		const int kind = p_climber == CLIMBER_IVY ? PlantGenerator::CLIMBER_IVY : (p_climber == CLIMBER_LIANA ? PlantGenerator::CLIMBER_CLEMATIS : PlantGenerator::CLIMBER_HONEYSUCKLE);
+		cache[p_climber] = PlantGenerator::make_climber_leaves(kind, 4);
+	}
+	return cache[p_climber];
+}
+
 void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const Vector3 &p_out, const Vector3 &p_normal, float p_size, int p_bone, const Color &p_color) {
 	// A climber's leaf is about as broad as long (ivy, clematis leaflets, honeysuckle), whatever
 	// the host's leaf width.
 	const float saved_width = params[PARAM_LEAF_WIDTH];
 	params[PARAM_LEAF_WIDTH] = 0.42f;
-	r_leaves.bone = p_bone;
-	Vector4i part;
-	r_leaves.begin(part);
-	species_leaf_forms = false;
-	_add_leaf(r_leaves, p_at, p_out, p_normal, p_size, p_color);
-	species_leaf_forms = true;
-	r_leaves.end(part, 0.0f);
+	const Array plant = climber_plant_leaves ? _plant_climber_leaves(climber) : Array();
+	if (!plant.is_empty()) {
+		// The ground plants' leaf for this climber (lies in XZ, base at the origin, +Z, 1 m),
+		// one of its variants, turned onto our blade frame and scaled to the leaf's length.
+		const uint32_t h = hash_murmur3_one_32(uint32_t(climber_leaves.size() / 11), uint32_t(seed) * 7919u + 13u);
+		const Ref<ArrayMesh> m = plant[h % uint32_t(plant.size())];
+		const Array a = m->surface_get_arrays(0);
+		const PackedVector3Array mv = a[Mesh::ARRAY_VERTEX];
+		const PackedVector3Array mn = a[Mesh::ARRAY_NORMAL];
+		const PackedVector2Array mu = a[Mesh::ARRAY_TEX_UV];
+		const PackedInt32Array mi = a[Mesh::ARRAY_INDEX];
+		Vector3 z = p_out - p_normal * p_out.dot(p_normal);
+		z = z.length_squared() > 1e-8f ? z.normalized() : p_normal.cross(Vector3(1, 0, 0)).normalized();
+		const Vector3 y = p_normal.normalized();
+		const Basis b = Basis(y.cross(z), y, z) * p_size; // Columns: X, Y (blade normal), Z (along).
+		Builder &cb = climber_leaf_b;
+		cb.bone = p_bone;
+		Vector4i part;
+		cb.begin(part);
+		const int v0 = cb.verts.size();
+		const float tone = 0.85f + 0.3f * float((h >> 8) & 0xff) / 255.0f;
+		for (int i = 0; i < mv.size(); i++) {
+			cb.verts.push_back(p_at + b.xform(mv[i]));
+			cb.normals.push_back((i < mn.size() ? Basis(y.cross(z), y, z).xform(mn[i]) : y).normalized());
+			cb.uvs.push_back(i < mu.size() ? mu[i] : Vector2());
+			cb.colors.push_back(Color(tone, tone, tone));
+		}
+		for (int i = 0; i < mi.size(); i++) {
+			cb.indices.push_back(v0 + mi[i]);
+		}
+		cb.end(part, 0.0f);
+	} else {
+		r_leaves.bone = p_bone;
+		Vector4i part;
+		r_leaves.begin(part);
+		species_leaf_forms = false;
+		_add_leaf(r_leaves, p_at, p_out, p_normal, p_size, p_color);
+		species_leaf_forms = true;
+		r_leaves.end(part, 0.0f);
+	}
 	params[PARAM_LEAF_WIDTH] = saved_width;
 	leaf_count++;
 	// Published for vegetation's climber leaf meshes: position, blade normal, petiole direction,
@@ -4118,13 +4167,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 	}
 
+	climber_leaf_b = Builder();
 	if (climber != CLIMBER_NONE && climber_cover > 0.0f) {
 		_grow_climbers(bark, leaves);
 	}
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
-	Builder *builders[3] = { &bark, &leaves, &moss };
-	for (int s = 0; s < 3; s++) {
+	Builder *builders[4] = { &bark, &leaves, &moss, &climber_leaf_b };
+	for (int s = 0; s < 4; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
 			continue;
@@ -4146,6 +4196,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				lods = _bark_lods(b);
 			} else if (s == 1) {
 				lods = _leaf_lods(b);
+			} else if (s == 3) {
+				lods = _leaf_lods(b, false);
 			} else {
 				// The moss shell is LOD 0 only (and the path tracer's); coarser levels keep the tint.
 				PackedInt32Array none;
@@ -4216,6 +4268,19 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, bs.normal);
 			}
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "bark");
+		} else if (s == 3) {
+			// The climber's own leaf textures from the plant material; vertex colour is a tone.
+			const Ref<ArrayMesh> pmesh = _plant_climber_leaves(climber)[0];
+			const Ref<ShaderMaterial> pm = pmesh->surface_get_material(0);
+			if (pm.is_valid()) {
+				m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, pm->get_shader_parameter("albedo_tex"));
+				m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
+				m->set_texture(BaseMaterial3D::TEXTURE_BACKLIGHT, pm->get_shader_parameter("backlight_tex"));
+				m->set_backlight(Color(1, 1, 1));
+				m->set_roughness(pm->get_shader_parameter("roughness"));
+			}
+			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+			mesh->surface_set_name(mesh->get_surface_count() - 1, "climber_leaves");
 		} else if (s == 2) {
 			const BarkSet &ms = _moss_set();
 			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, ms.albedo);
@@ -4286,7 +4351,7 @@ Dictionary TreeGenerator::_bark_lods(const Builder &p_bark) const {
 	return lods;
 }
 
-Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves) const {
+Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves, bool p_twins) const {
 	Dictionary lods;
 	const int s_full_count = r_leaves.indices.size();
 	const uint32_t count = r_leaves.parts.size();
@@ -4304,7 +4369,7 @@ Dictionary TreeGenerator::_leaf_lods(Builder &r_leaves) const {
 			const int v0 = r_leaves.verts.size();
 			const Vector3 pivot = r_leaves.verts[pt.z];
 			// A species leaf (lobed, palmate, compound) is drawn as its simple twin here.
-			const Vector4i *twin = leaf_twin_of.getptr(int(i));
+			const Vector4i *twin = p_twins ? leaf_twin_of.getptr(int(i)) : nullptr;
 			const Builder &src = twin ? leaf_twins : r_leaves;
 			const Vector4i sp = twin ? *twin : pt;
 			const bool skinned = r_leaves.bones.size() >= (pt.z + 1) * 4;
@@ -5106,6 +5171,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_season", "preset", "season"), &TreeGenerator::get_leaf_season);
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);
 	ClassDB::bind_method(D_METHOD("set_junction_weld", "enabled"), &TreeGenerator::set_junction_weld);
+	ClassDB::bind_method(D_METHOD("set_climber_plant_leaves", "enabled"), &TreeGenerator::set_climber_plant_leaves);
+	ClassDB::bind_method(D_METHOD("get_climber_plant_leaves"), &TreeGenerator::get_climber_plant_leaves);
 	ClassDB::bind_method(D_METHOD("get_junction_weld"), &TreeGenerator::get_junction_weld);
 	ClassDB::bind_method(D_METHOD("get_season"), &TreeGenerator::get_season);
 	ClassDB::bind_method(D_METHOD("set_compress_vertices", "enable"), &TreeGenerator::set_compress_vertices);
@@ -5153,6 +5220,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Oak,Beech,Birch,Scots Pine,Norway Spruce,Hazel,Hawthorn,Lime,Sycamore Maple,Ash,Horse Chestnut,Black Alder,White Willow,European Larch,Silver Fir,Rowan,Elder,Holly,Yew,Box,Sugar Maple,Red Maple,Northern Red Oak,White Oak,Eastern White Pine,Eastern Hemlock,American Beech,Paper Birch,Yellow Birch,Witch-hazel,Mountain Laurel"), "set_preset", "get_preset");
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "junction_weld"), "set_junction_weld", "get_junction_weld");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "climber_plant_leaves"), "set_climber_plant_leaves", "get_climber_plant_leaves");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "phyllotaxis", PROPERTY_HINT_ENUM, "Alternate,Opposite,Whorled"), "set_phyllotaxis", "get_phyllotaxis");
 	ADD_GROUP("Stand", "forest_");

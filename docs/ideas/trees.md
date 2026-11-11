@@ -404,7 +404,10 @@ Our plan, joint with vegetation (which builds the leaves with its plant generato
    side, thinning with height and light, in the host's bark mesh and skinned to the host's bones
    so it sways with the tree. Leaves: points along the stem (position, normal, up, size, light)
    published as mesh meta `tree_climber_leaves`; vegetation's ivy leaf mesh is instanced there
-   into the host's leaf surface (`TreeGenerator.climber_leaf_mesh`, a built-in leaf without it).
+   into a `climber_leaves` surface of the host (as built: `PlantGenerator.make_climber_leaves`,
+   four variants a climber baked once and shared; liana uses clematis; its albedo and backlight
+   textures on the tree's own skinned material, so vines sway with the host; `climber_plant_leaves`
+   off falls back to a built-in lens leaf).
 2. **Hanging lianas** in deep forest (old man's beard, honeysuckle): stems that leave the trunk
    for a neighbour's limb and hang between them as catenaries (Hädrich 2017's unsupported
    stems), which needs pairs of trees, so it is built per stand by the stand methods.

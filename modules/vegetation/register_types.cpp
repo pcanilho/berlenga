@@ -84,5 +84,6 @@ void uninitialize_vegetation_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
+	TreeGenerator::free_climber_leaves();
 	PlantGenerator::free_shaders();
 }
