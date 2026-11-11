@@ -131,6 +131,11 @@ func _ready() -> void:
 	if args.has("test"):
 		get_tree().quit(0)
 		return
+	# The snowpack updates on a worker thread: the picture waits for the last update to land.
+	var waited := 0
+	while snow != null and snow.has_method("is_updating") and snow.is_updating() and waited < 600:
+		await get_tree().process_frame
+		waited += 1
 	if landscape != null:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
