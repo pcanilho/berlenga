@@ -12,7 +12,7 @@ extends Node3D
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 16)
 #   --view=wide|lake|lakewater|valley|fall|beach|peak   camera (default wide; lakewater: low over the lake;
-#                         valley: from behind the high lake down to the clearing)
+#                         valley: from behind the high lake down to the clearing; treeline: the clearing's edge)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
 #   --falls           print every waterfall the rivers found (lip, landing, height)
@@ -20,11 +20,14 @@ extends Node3D
 #   --weather=storm|clear         weather state (default storm)
 #   --snow=climate|none   the winter baked by SnowClimate (default), or a snow-free ground for stills
 #   --month=N --time=H    0-based month of the rivers and the SkyClock date (default 4, 15 May) and local time (16.5)
+#   --day=N               day of the month (default 15)
+#   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
 #   --prints=0            no GroundSurface3D (footprints) node
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
+#   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
 #   --checks              with --out, run the link checks before the picture (they change the scene)
 
 const STEP := 4.0 # metres between ground vertices
@@ -127,6 +130,10 @@ func _ready() -> void:
 	if args.has("test"):
 		get_tree().quit(0)
 		return
+	if landscape != null:
+		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
+		landscape.load_all_heights()
+		landscape.update_lods_from_camera()
 	var frames := int(args.get("frames", "6" if args.has("raster") else "40"))
 	for i in frames:
 		await get_tree().process_frame
@@ -365,6 +372,17 @@ func _save_map(path: String) -> void:
 					img.set_pixelv(pp, Color(1, 0.1, 0.1))
 	img.save_png(path)
 	_log("map saved " + path)
+	# Discharge along the rivers, to place the high lake where the fall below it carries a real curtain.
+	var ri := 0
+	for r in gen.get_rivers(float(args.get("min-area", "1500000"))):
+		var rp: PackedVector3Array = r["points"]
+		var ar: PackedFloat32Array = r["areas"]
+		_log("river %d: %d pts, head %s, mouth %s, area %.2f km2, Q %.2f m3/s (max month %.2f), ends %s, joins %d" % [ri, rp.size(),
+				str(rp[0].round()), str(rp[rp.size() - 1].round()), ar[ar.size() - 1] / 1e6, r["discharge"],
+				Array(r["monthly_discharge"]).max(), r["ends_in"], r["joins"]])
+		ri += 1
+	for f in gen.get_waterfalls(float(args.get("min-area", "1500000")), 2.0):
+		_log("fall: top %s h %.1f m, w %.1f m, Q %.2f m3/s, river %d" % [str(f["top"].round()), f["height"], f["width"], f["discharge"], f["river"]])
 	for px in [-1200.0, -500.0, 0.0, 500.0]:
 		var row := ""
 		var pz := -1900.0
@@ -602,8 +620,8 @@ func _build_weather() -> void:
 	sun = DirectionalLight3D.new()
 	sun.name = "Sun"
 	sun.light_energy = 1.6
-	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 6000.0
+	sun.shadow_enabled = args.get("sun-shadow", "1") != "0"
+	sun.directional_shadow_max_distance = float(args.get("shadow-max", "6000"))
 	add_child(sun)
 	# The sun from a date, a time and a place (SkyClock, Meeus): the month is the rivers' month, so the light,
 	# the flows and the snowmelt are one day. World -Z is north; mid-latitude mountains on a western coast.
@@ -614,7 +632,7 @@ func _build_weather() -> void:
 	clock.longitude = 0.0
 	clock.utc_offset = 0.0
 	clock.month = int(args.get("month", "4")) + 1
-	clock.day = 15
+	clock.day = int(args.get("day", "15"))
 	clock.time_of_day = float(args.get("time", "16.5"))
 	clock.sun_light = clock.get_path_to(sun)
 	weather = WeatherMap3D.new()
@@ -628,9 +646,13 @@ func _build_weather() -> void:
 	add_child(anchor)
 	add_child(weather)
 	weather.follow_target = weather.get_path_to(anchor)
-	weather.sun_light = weather.get_path_to(sun)
+	if args.get("cloud-shadow", "1") != "0":
+		weather.sun_light = weather.get_path_to(sun) # the clouds' shadow, as the sun's projector
 	env = Environment.new()
 	sky_mat = WeatherSkyMaterial.new()
+	if args.has("atmosphere"):
+		sky_mat.atmosphere_model = WeatherSkyMaterial.ATMOSPHERE_PHYSICAL_SKY if args["atmosphere"] == "physical" else WeatherSkyMaterial.ATMOSPHERE_SCATTERING
+	sky_mat.set_shader_parameter("atmo_far_water", 1.0) # the sea runs on past the scene to the horizon
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	sky.process_mode = Sky.PROCESS_MODE_INCREMENTAL
@@ -966,6 +988,18 @@ func _build_camera() -> void:
 			cam.fov = 60.0
 			cam.position = Vector3(c.x, maxf(height_at(c.x, c.z) + 40.0, lake_level + float(args.get("valley-up", "140"))), c.z)
 			cam.look_at(Vector3(lk.x, lake_level - 220.0, lk.z + 900.0))
+		"treeline":
+			# Where the clearing's mask meets the forest: walk north up the valley from the plain until the sediment
+			# thins out, then look at that edge from the grass.
+			var ex := float(args.get("treeline-x", "300"))
+			var ez := 400.0
+			while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
+				ez -= 16.0
+			cam.fov = 50.0
+			var cz := ez + 220.0
+			cam.position = Vector3(ex - 60.0, height_at(ex - 60.0, cz) + 14.0, cz)
+			cam.look_at(Vector3(ex, height_at(ex, ez) + 10.0, ez))
+			_log("treeline edge at (%.0f, %.0f)" % [ex, ez])
 		"lakewater":
 			# Low over the water at one end of the lake, looking along it to the mountains behind: the water cell
 			# farthest from the water's centroid, pulled a little back over the water.
@@ -1005,11 +1039,33 @@ func _build_camera() -> void:
 			cam.look_at(Vector3(ahead.x, lake_level + 22.0, ahead.z))
 			_log("lakewater camera over %d water cells, %.0f m from the far end" % [cells.size(), c.distance_to(mid) * 2.0])
 		"fall":
+			# Downstream of the fall, at the first spot with a clear view of the whole drop (gorges hide it).
 			var fd3 := Vector3(fall_dir.x, 0, fall_dir.y)
 			var side := Vector3(-fall_dir.y, 0, fall_dir.x)
-			cam.position = fall_point + fd3 * 90.0 + side * 30.0 + Vector3(0, 2.0, 0)
-			cam.position.y = height_at(cam.position.x, cam.position.z) + 8.0
-			cam.look_at(fall_point + Vector3(0, -6, 0))
+			var mid := fall_point + Vector3(0, -12, 0)
+			var best := Vector3.ZERO
+			var found := false
+			for dist in [90.0, 130.0, 180.0, 240.0, 320.0]:
+				for off in [0.0, 25.0, -25.0, 50.0, -50.0]:
+					var c: Vector3 = fall_point + fd3 * dist + side * off
+					c.y = height_at(c.x, c.z) + 10.0
+					var clear := true
+					for t in range(1, 20):
+						var q := c.lerp(mid, t / 20.0)
+						if height_at(q.x, q.z) > q.y - 1.0:
+							clear = false
+							break
+					if clear:
+						best = c
+						found = true
+						break
+				if found:
+					break
+			if not found:
+				best = fall_point + fd3 * 200.0
+				best.y = height_at(best.x, best.z) + 60.0
+			cam.position = best
+			cam.look_at(mid)
 		"beach":
 			cam.fov = 60.0
 			cam.position = Vector3(40.0, 0.0, coast_z - 60.0)

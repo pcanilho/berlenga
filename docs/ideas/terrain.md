@@ -295,6 +295,89 @@ Stage 2: PhysX collision tiles from the same heights (128 m `PxHeightField` with
 Bench: `docs/bench/landscape_lod` (checks: watertight edges at every mask, levels one apart, no rebuilds
 while the camera only turns, build ms), and the landscape scene's low shore view in raster and path traced.
 
+## Landscape3D: streaming and off-thread builds (11 Nov)
+
+Measured on the 4 km showcase at 1 m (cloud, 4 cores): rebuild 6.6 s, of which 6.3 s is reading 16.8M heights
+from the generator (its detail filter per point) and 0.26 s measuring level errors. The first level update builds
+8,165 meshes on the main thread (0.71 s). Flying 200 m builds 207 more: a 42 ms frame.
+
+How others do it:
+
+- **Chunked LOD (Ulrich 2002)**: the chunk quadtree streams from disk coarse first; a chunk draws at its parent's
+  level until its own data arrives, so nothing is missing, only coarser for a few frames.
+- **CDLOD (Strugar 2010)** and **Far Cry 5's terrain (GDC 2018)**: heights stream per quadtree node by distance, and
+  the visible selection only uses nodes whose data is resident.
+- **Unreal World Partition / Landscape streaming proxies**: actors load asynchronously by distance from streaming
+  sources, with HLOD proxies standing in until they do; mesh building and uploads run off the game thread and are
+  budgeted per frame.
+- **Terrain3D**: loads regions synchronously (`load_region`), which is what stalls here too.
+
+What Landscape3D does:
+
+- **Coarse first.** Rebuild reads every fourth point (the level 2 grid, 1/16 of the points). Level 2 and coarser
+  meshes use only those points, so every chunk can draw at once with exact heights at its vertices.
+- **Then fine, where it shows.** A chunk's 1 m heights are read when the camera needs a level finer than 2 there,
+  nearest (largest error) first, on worker threads, a few chunks a frame. Until then the chunk stays at level 2.
+  At rebuild, the chunks the current camera needs fine are read at once, so the first frame is already exact.
+  `load_all_heights()` reads the rest (bakes, tests).
+- **Normals** stay 1 m central differences. Unread points between the 4 m grid are filled by bilinear interpolation,
+  and on that fill the 1 m difference at a 4 m point equals the 4 m difference, so unread chunks shade from their
+  4 m grid. When a chunk is read, it and its eight neighbours (whose edge and corner normals read across) get a new
+  height generation in their mesh keys and rebuild.
+- **Estimates for unread chunks.** Their level 2+ errors are measured on the 4 m grid plus, per level, the largest
+  growth seen on 1 in 64 chunks read in full at rebuild (x1.25). The levels below 2 are never picked, and a chunk
+  next to an unread one stays at level 1 or coarser. Reading only ever makes a chunk finer, never coarser.
+- **Meshes off the main thread.** A level update computes the target levels and edge masks, builds any missing
+  meshes on worker threads (`mesh_create_surface_data_from_arrays`), and swaps the whole target in once they are
+  ready. Swapping all at once keeps neighbours one level apart with matching edges, so there are never cracks.
+  The current ground stays on screen meanwhile.
+- `TerrainGenerator3D` emits `changing` before `generate()` replaces its grids; Landscape3D waits for its readers
+  there and stops streaming.
+
+Measured (`docs/bench/terrain_gen -- --landscape-time [--baked] [--eye-height=2]`, cloud, 4 cores, 1080p, 1 px):
+
+| | before | now |
+|---|---|---|
+| 4 km at 1 m from the generator, to the first frame | 6.6 s + 0.71 s | 6.9 s (all reads and builds on workers) |
+| same, heights baked to an EXR and loaded | (not supported) | 0.42 s load + 0.45 s rebuild and first frame |
+| flying 2 m a frame: main thread per frame | 42 ms when 200 m of chunks change | worst 7 to 9 ms frame, mesh hand-over 0.05 to 0.5 ms |
+
+The streamed first view is no faster on this 4 km world: at 1 px on 1080p the 4 m grid is off by more than a pixel
+out to about 4.5 km (its median error is 3.9 m), so the view needs nearly every chunk at full detail. Streaming
+pays where the world is larger than that view, which is the open-world case; for a 4 km world the win is baking.
+Reading from the generator is the cost (370 ns a point on four cores, all in the erosion detail filter, about
+70 ns per octave); a faster filter would speed up every read. Next: disk tiles for worlds that do not fit in
+memory, with the same coarse-first order.
+
+## Landscape3D: collision tiles (11 Nov)
+
+How others do it:
+
+- **Unreal Landscape**: one heightfield per landscape component, optionally at a lower collision mip
+  (`CollisionMipLevel`) with a separate simple-collision mip for queries; components stream with World Partition.
+- **Terrain3D**: "dynamic" collision builds heightfield shapes only in a square around the camera (or a target) and
+  rebuilds them as it moves, because full-map collision costs too much memory and build time on large maps.
+- **Unity**: one `TerrainCollider` heightfield per terrain tile.
+- **PhysX** heightfields (`PxHeightField`): 16-bit samples with a per-cell tessellation flag that picks the
+  diagonal each cell is split along, and holes as a material; `modifySamples` updates a region in place.
+
+What Landscape3D does:
+
+- One static heightfield per chunk (64 m at 1 m spacing, 65 x 65 samples) at full detail, never a coarser level:
+  the player stands on the true ground whatever the chunk draws.
+- Only chunks within `collision_radius` of `collision_target` (the camera by default) have one; tiles further
+  than 1.25 times the radius are freed, so a walking player does not rebuild at the edge. A tile is built once its
+  chunk is read in full; the chunk under the target and its neighbours are read at once if they are not.
+- The cells are split along the same diagonals as the level 0 mesh (its 2 x 2 fan blocks; PhysX tessellation
+  flag per cell), so what the camera sees and what the body stands on are the same triangles. Other physics
+  engines use their own split: off by up to half the height difference across a cell's diagonals (measured up
+  to 1.7 m at 2 m spacing on the steepest ground of the bench world).
+- Shapes go through the PhysicsServer3D heightmap shape, so they work with any engine; PhysX quantises heights to
+  16 bits over the tile's own range (under a millimetre on a 64 m tile).
+- Measured (`terrain_gen -- --landscape-test`, cloud CPU): 49 tiles at 1 m, 192 m radius built in 1.7 ms; a
+  64 m step frees and builds a row in 0.3 ms; rays land within 0.7 mm of the drawn triangles (grid points, edge
+  midpoints and cell centres); first build while streaming 5 ms (the target's chunks read at once).
+
 ## Open questions
 
 - Region and chunk sizes against the partitioned TLAS cell (128 m columns in Valence, 1024 m

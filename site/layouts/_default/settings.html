@@ -1,0 +1,59 @@
+{{ define "main" }}
+{{ $d := site.Data.settings }}
+<article class="settings">
+  <h1>{{ .Title }}</h1>
+  <p class="lead">{{ .Params.summary }}</p>
+  <div class="set-tools" data-pagefind-ignore>
+    <label class="set-filter">
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <input type="search" placeholder="Filter by name, setting or page" aria-label="Filter settings" data-set-filter>
+    </label>
+    <div class="set-tabs" role="tablist">
+      <button class="on" data-set-tab="all">All</button>
+      <button data-set-tab="features">Features</button>
+      <button data-set-tab="project">Project</button>
+      <button data-set-tab="environment">Environment</button>
+    </div>
+    <p class="set-count" data-set-count aria-live="polite"></p>
+  </div>
+
+  <section data-set-section="features">
+    <h2 id="features">By feature</h2>
+    <table class="set-table">
+      <thead><tr><th>Feature</th><th>Setting</th><th>Page</th></tr></thead>
+      <tbody>
+      {{ range $d.features }}
+        {{ $href := (site.GetPage (printf "/features/%s" .page)).RelPermalink }}{{ with .topic }}{{ $href = printf "%s#%s" $href (anchorize .) }}{{ end }}
+        <tr>
+          <td data-label="Feature"><a href="{{ $href }}"><strong>{{ .name }}</strong></a>{{ with .what }}<span class="set-what">{{ . | markdownify }}</span>{{ end }}</td>
+          <td data-label="Setting">{{ range .settings }}<code>{{ . }}</code> {{ else }}<span class="set-muted">{{ or .note "no setting" }}</span>{{ end }}</td>
+          <td data-label="Page"><a class="set-page" href="{{ $href }}">{{ .title }}</a></td>
+        </tr>
+      {{ end }}
+      </tbody>
+    </table>
+  </section>
+
+  {{ range slice (dict "key" "project" "title" "Project settings" "rows" $d.project "where" "Project Settings, Rendering") (dict "key" "environment" "title" "Environment" "rows" $d.environment "where" "the Environment resource") }}
+  <section data-set-section="{{ .key }}">
+    <h2 id="{{ .key }}">{{ .title }}</h2>
+    <p class="set-note">Set in {{ .where }}. Defaults as shipped.</p>
+    <table class="set-table">
+      <thead><tr><th>Setting</th><th>Default</th><th>What it does</th></tr></thead>
+      <tbody>
+      {{ range .rows }}
+        {{ $parts := split .name "/" }}{{ $t := .title }}
+        <tr>
+          <td data-label="Setting"><code class="set-name">{{ if gt (len $parts) 2 }}<span>{{ delimit (first (sub (len $parts) 1) $parts) "/" }}/</span>{{ end }}{{ index $parts (sub (len $parts) 1) }}</code></td>
+          <td data-label="Default"><code>{{ replace .default `"` "" }}</code></td>
+          <td data-label="What it does">{{ .about | markdownify }}{{ with .page }} <a class="set-page" href="{{ (site.GetPage (printf "/features/%s" .)).RelPermalink }}">{{ $t }}</a>{{ end }}</td>
+        </tr>
+      {{ end }}
+      </tbody>
+    </table>
+  </section>
+  {{ end }}
+  <p class="set-empty" data-set-empty hidden>No setting matches.</p>
+</article>
+<p class="edit" data-pagefind-ignore>Built from the feature pages and <code>doc/classes</code> by <code>site/tools/settings.py</code>.</p>
+{{ end }}

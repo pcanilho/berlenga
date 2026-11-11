@@ -6,7 +6,10 @@
 	<description>
 		Draws a height grid (from a [TerrainGenerator3D] or an [Image]) as square chunks of [member chunk_quads] quads. Each chunk has a chain of levels, every one half as dense as the one before, and the level is picked per chunk by projected error: the largest height gap between that level and full detail, in pixels at the chunk's distance, must stay under [member lod_error]. Neighbours are kept at most one level apart, and edges next to a coarser neighbour skip their odd vertices, so the ground has no cracks and needs no skirts.
 		Vertices never move in the shader: a level change swaps the chunk's mesh. Under path tracing each mesh (chunk, level, edge variant) gets one acceleration structure, built when first drawn and kept, so a moving camera costs no rebuilds or refits; only level changes build. Levels depend on distance, not on view direction, so chunks behind the camera keep theirs and off-screen shadows and reflections see the same ground. Meshes no chunk uses are freed after about 600 frames.
-		The node does not move the ground with its transform in sampling: with a [member source], keep the node at the world origin. The level-0 grid is held in memory; streaming and collision come later (docs/ideas/terrain.md).
+		With a [TerrainGenerator3D] as [member source] and [member stream_heights] on, [method rebuild] first reads every 4th point only (a 4 m grid at 1 m spacing) and fills the rest by interpolation; the chunks the camera needs finer are read in full before the first frame where the 4 m grid would be clearly off, and all others on worker threads over the next frames, the ones the view needs first, nearest first. Until a chunk is read its errors are estimates calibrated on a sparse set of read chunks, it is drawn no finer than the 4 m grid, and its neighbours at most one level finer. Meshes for new levels are built on worker threads too, and a new set of levels is shown only once all its meshes are ready, so a frame never mixes levels that do not fit and moving costs the main thread well under a millisecond.
+		Computing 1 m heights from the generator is the slow part (about 370 ns a point on four cores). A world that is loaded rather than generated should bake them once ([code]sample_heights(...).save_exr(path, true)[/code]) and set [member height_image] from the file: 4 km at 1 m then loads and shows its first frame in under a second.
+		The node does not move the ground with its transform in sampling: with a [member source], keep the node at the world origin. The level-0 grid is held in memory; disk streaming comes later (docs/ideas/terrain.md).
+		Collision: with [member collision_enabled], every chunk within [member collision_radius] of [member collision_target] (the camera when empty) gets a static heightfield body at full detail, whatever level it is drawn at, and loses it past 1.25 times the radius. With PhysX each cell is split along the same diagonal as the drawn full-detail mesh, so bodies rest on the triangles that are drawn (within a millimetre); other physics servers use their own split, up to the height difference across a cell off. A chunk still being streamed gets its body once read; the chunk under the target and its neighbours are read at once. At 1 m spacing and the default radius that is 49 bodies, built in under 2 ms, and a 64 m step costs about 0.3 ms. Bodies report this node as their collider.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -74,7 +77,33 @@
 		<method name="get_stats" qualifiers="const">
 			<return type="Dictionary" />
 			<description>
-				[code]chunks[/code], [code]triangles[/code] drawn, [code]chunks_per_level[/code], [code]meshes[/code] kept, total [code]mesh_builds[/code] and [code]lod_switches[/code], [code]build_msec[/code] of the last [method rebuild], [code]update_usec[/code] of the last level update.
+				[code]chunks[/code], [code]triangles[/code] drawn, [code]chunks_per_level[/code], [code]meshes[/code] kept, total [code]mesh_builds[/code] and [code]lod_switches[/code], [code]build_msec[/code] of the last [method rebuild] (of it [code]source_msec[/code] reading heights and [code]measure_msec[/code] measuring errors), [code]update_usec[/code] of the last level pick (with any synchronous reads), [code]apply_usec[/code] to hand the last built meshes to the renderer, [code]unread_chunks[/code] and [code]chunks_streamed[/code] while streaming, the [code]detail_estimate[/code] added to unread chunks' errors (metres), [code]busy[/code] while worker threads are reading or building, [code]collision_tiles[/code] and the [code]collision_usec[/code] of the last collision update.
+			</description>
+		</method>
+		<method name="has_chunk_collision" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="chunk" type="Vector2i" />
+			<description>
+				Whether the chunk has a collision body now.
+			</description>
+		</method>
+		<method name="is_chunk_loaded" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="chunk" type="Vector2i" />
+			<description>
+				Whether the chunk's heights are read in full (always [code]true[/code] without streaming).
+			</description>
+		</method>
+		<method name="is_fully_loaded" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether every chunk is read in full.
+			</description>
+		</method>
+		<method name="load_all_heights">
+			<return type="void" />
+			<description>
+				Reads every chunk not read yet now, in parallel, and waits; for bakes, tests and captures that need the exact ground everywhere.
 			</description>
 		</method>
 		<method name="rebuild">
@@ -83,13 +112,19 @@
 				Reads the heights from [member source] or [member height_image], measures every chunk's level errors (in parallel) and creates the chunks. Returns [code]false[/code] when there are no heights.
 			</description>
 		</method>
+		<method name="update_collision">
+			<return type="void" />
+			<description>
+				Adds and frees collision bodies for where [member collision_target] is now. The node does this every frame; call it after moving the target by hand within a frame, or in tests.
+			</description>
+		</method>
 		<method name="update_lods">
 			<return type="void" />
 			<param index="0" name="camera_transform" type="Transform3D" />
 			<param index="1" name="projection" type="Projection" />
 			<param index="2" name="viewport_height" type="float" />
 			<description>
-				Picks every chunk's level for a camera at [param camera_transform] with [param projection], on a viewport [param viewport_height] pixels tall. Called each frame for the current camera when it moves; call it directly for tests or other views.
+				Picks every chunk's level for a camera at [param camera_transform] with [param projection], on a viewport [param viewport_height] pixels tall, reads the chunks that view needs in full and builds the missing meshes, and waits, so the result is exact on return. Each frame the node does the same for the current camera without waiting (see [member stream_heights]); call this directly for tests, captures or other views.
 			</description>
 		</method>
 		<method name="update_lods_from_camera">
@@ -109,6 +144,21 @@
 		<member name="chunk_quads" type="int" setter="set_chunk_quads" getter="get_chunk_quads" default="64">
 			Quads along a chunk's side at full detail (a power of two, 8 to 256).
 		</member>
+		<member name="collision_enabled" type="bool" setter="set_collision_enabled" getter="is_collision_enabled" default="true">
+			Static heightfield bodies near [member collision_target]. Not built in the editor.
+		</member>
+		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
+			Physics layers the ground is on.
+		</member>
+		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
+			Physics layers the ground scans.
+		</member>
+		<member name="collision_radius" type="float" setter="set_collision_radius" getter="get_collision_radius" default="192.0">
+			Chunks this close to the target (nearest point of the chunk, horizontally) get bodies.
+		</member>
+		<member name="collision_target" type="NodePath" setter="set_collision_target" getter="get_collision_target" default="NodePath(&quot;&quot;)">
+			The node the bodies follow, usually the player. Empty: the camera.
+		</member>
 		<member name="height_image" type="Image" setter="set_height_image" getter="get_height_image">
 			Heights as an image, one pixel per grid point from [member origin], used when [member source] is empty.
 		</member>
@@ -124,11 +174,17 @@
 		<member name="origin" type="Vector2" setter="set_origin" getter="get_origin" default="Vector2(0, 0)">
 			World X and Z of the first grid point. Set from the source's rectangle when [member source] is used.
 		</member>
+		<member name="physics_material" type="PhysicsMaterial" setter="set_physics_material" getter="get_physics_material">
+			Friction and bounce of the ground bodies.
+		</member>
 		<member name="source" type="NodePath" setter="set_source" getter="get_source" default="NodePath(&quot;&quot;)">
 			A node with [code]sample_heights(origin, spacing, size)[/code] and [code]get_world_rect()[/code], such as a [TerrainGenerator3D] after [method TerrainGenerator3D.generate].
 		</member>
 		<member name="spacing" type="float" setter="set_spacing" getter="get_spacing" default="1.0">
 			Metres between grid points at full detail.
+		</member>
+		<member name="stream_heights" type="bool" setter="set_stream_heights" getter="is_streaming_heights" default="true">
+			With a [TerrainGenerator3D] as [member source] (and [member lod_levels] above 3), read a 4 m grid first and the rest per chunk as the camera needs it, on worker threads. Off: [method rebuild] reads everything first. Reading stops (keeping what was read) when the generator starts a new [method TerrainGenerator3D.generate].
 		</member>
 	</members>
 </class>

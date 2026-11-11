@@ -275,6 +275,8 @@ void SnowCover3D::_follow(Vector3 p_center) {
 void SnowCover3D::_shift(Vector2i p_new_origin) {
 	// A bake in flight reads the ground: let it land first (it is shifted with the rest).
 	_finish_sx(true);
+	// What the cells leaving the square did goes back to the world tier first.
+	_feed_world();
 	const int n = resolution;
 	const Vector2i d = p_new_origin - origin_cell;
 	// The pack is history: cells that stay keep theirs. Cells entering the square take the world tier's pack
@@ -299,6 +301,9 @@ void SnowCover3D::_shift(Vector2i p_new_origin) {
 	// New cells need their own ground; Sx is rebaked in the background, the shifted one serves meanwhile.
 	_sample_heights(0, n, &fresh);
 	_seed_from_world(&fresh);
+	if (world) {
+		world->_upload();
+	}
 	sx_dirty = sx_valid;
 }
 
@@ -986,6 +991,7 @@ void SnowCover3D::advance_world(float p_seconds) {
 	double left = MAX(p_seconds, 0.0f);
 	while (left > 0.0) {
 		const double step = MIN(left, 3600.0);
+		_feed_world();
 		world->_update(step, true);
 		left -= step;
 		_emit_cornice_failures();
@@ -1515,6 +1521,73 @@ void SnowCover3D::_grow_cornices(float p_dt_h, Vector2 p_wind) {
 	}
 }
 
+void SnowCover3D::_feed_world() {
+	// Two-way nesting (as nested weather models feed a fine grid back to its parent, WRF's feedback): each
+	// world cell the square covers whole takes the square's state averaged over it, so what the finer
+	// cells did (drifts, sheltered and sunny faces, slides, melt) is not lost when the square moves on
+	// and the cells come back from the world tier. Water is averaged; density over the depth it makes
+	// (the column's mass over its depth); albedo weighted by water.
+	if (!world || owner || !origin_valid || cell_swe.size() != resolution * resolution) {
+		return;
+	}
+	const float cs = _cell_size();
+	const float wcs = world->_cell_size();
+	if (wcs < cs * 1.5f) {
+		return; // no coarser: nothing to average
+	}
+	const int n = resolution;
+	const int wn = world->resolution;
+	const Rect2 near = get_map_rect();
+	const float *swe = cell_swe.ptr();
+	const float *liq = cell_liquid.ptr();
+	const float *rho = cell_density.ptr();
+	const float *alb = cell_albedo.ptr();
+	float *wswe = world->cell_swe.ptrw();
+	float *wliq = world->cell_liquid.ptrw();
+	float *wrho = world->cell_density.ptrw();
+	float *walb = world->cell_albedo.ptrw();
+	const int wx0 = MAX(int(Math::ceil(near.position.x / wcs)) - world->origin_cell.x, 0);
+	const int wz0 = MAX(int(Math::ceil(near.position.y / wcs)) - world->origin_cell.y, 0);
+	const int wx1 = MIN(int(Math::floor((near.position.x + near.size.x) / wcs)) - world->origin_cell.x, wn);
+	const int wz1 = MIN(int(Math::floor((near.position.y + near.size.y) / wcs)) - world->origin_cell.y, wn);
+	for (int wz = wz0; wz < wz1; wz++) {
+		for (int wx = wx0; wx < wx1; wx++) {
+			// The square's cells whose centres lie in this world cell.
+			const float ax = (world->origin_cell.x + wx) * wcs;
+			const float az = (world->origin_cell.y + wz) * wcs;
+			const int x0 = MAX(int(Math::ceil(ax / cs - 0.5f)) - origin_cell.x, 0);
+			const int z0 = MAX(int(Math::ceil(az / cs - 0.5f)) - origin_cell.y, 0);
+			const int x1 = MIN(int(Math::ceil((ax + wcs) / cs - 0.5f)) - origin_cell.x, n);
+			const int z1 = MIN(int(Math::ceil((az + wcs) / cs - 0.5f)) - origin_cell.y, n);
+			double w_sum = 0.0;
+			double l_sum = 0.0;
+			double depth_sum = 0.0;
+			double a_sum = 0.0;
+			int count = 0;
+			for (int z = z0; z < z1; z++) {
+				for (int x = x0; x < x1; x++) {
+					const int i = z * n + x;
+					w_sum += swe[i];
+					l_sum += liq[i];
+					depth_sum += swe[i] / MAX(rho[i], 30.0f);
+					a_sum += swe[i] * alb[i];
+					count++;
+				}
+			}
+			if (count == 0) {
+				continue;
+			}
+			const int wi = wz * wn + wx;
+			wswe[wi] = float(w_sum / count);
+			wliq[wi] = float(l_sum / count);
+			if (w_sum > 0.0 && depth_sum > 0.0) {
+				wrho[wi] = CLAMP(float(w_sum / depth_sum), 30.0f, 917.0f);
+				walb[wi] = float(a_sum / w_sum);
+			}
+		}
+	}
+}
+
 void SnowCover3D::_seed_from_world(const Vector<uint8_t> *p_only) {
 	// Cells arriving in the square start from the world tier's pack; the slide then sheds what the finer
 	// slopes cannot hold (SnowSlide on the near cells), so cliffs come out bare and their feet loaded.
@@ -1949,6 +2022,7 @@ void SnowCover3D::_notification(int p_what) {
 					world_accum += update_accum * scale;
 					if (++world_counter >= MAX(world_update_every, 1)) {
 						world_counter = 0;
+						_feed_world();
 						world->_update(world_accum, false);
 						world_accum = 0.0;
 						_emit_cornice_failures();

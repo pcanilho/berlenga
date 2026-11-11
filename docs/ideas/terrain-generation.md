@@ -810,6 +810,17 @@ nature sit behind a bedrock lip (cirque and hanging-valley sills). Markers now t
 about 72 degrees) or `face_slope`. On the valley layout, a 60 m marker dam 250 m above two falls (31 and 26 m)
 buried both; with `rock_lip` both stay and the lake spills over its own 70 m lip.
 
+Detail on alluvium (fix, 11 Nov): the showcase valley showed trenches along the floor's rivers and a comb of
+gullies on the fan toe. The erosion detail faded over the first 2 m of alluvium, but rivers keep their own cells
+nearly bare (the alluvium sits beside them) and the toe's deposit thins to decimetres, so the detail cut 5 to 20 m
+there. An aggrading surface buries gullies, so the fade now saturates at 0.5 m, holds 32 m past the deposit (a
+channel and its banks count as the deposit) and thins out over 3/8 of `detail_wavelength` (two chamfer sweeps,
+Borgefors 1986). The material's detail normal used to ignore every fade (alluvium, water, the coastal strip) and
+drew a ripple pattern over the plain; the generator now publishes the share of detail each node keeps
+(`terrain_detail_keep_map`) and the detail normal scales by it. Still open: short one-cell slots in the base
+heights at the fan front, from the solver itself (rivers re-cutting the toe each step); more sediment diffusion
+(Fastscape's separate sediment diffusivity) removed them but left a jagged scarp, so it needs more work.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

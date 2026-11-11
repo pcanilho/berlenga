@@ -912,3 +912,78 @@ year (1185 mm against 1200) and its seasonality (December 125 mm, June 58 mm); t
 mountain gets more than flat ground; an east wind mirrors the field; the bake's snow follows it. The
 landscape bench's gap "SnowClimate is set apart" is now a pass. Its check "cornices grow on the lee
 crests around the peak" failed before this change too (0 pieces since the gentler valley layout).
+
+## Follow-up 8: clean print edges at fine deform settings (11 Nov 2026)
+
+At 768 texels over 24 m (3.1 cm) prints showed spikes and toothed walls. Three causes, three fixes:
+- Rim snow from one step landed in the hole of the step before, and thin walls of untrodden snow were left
+  between overlapping steps with rim heaped on both sides; at 6 cm texels the coarser field smeared them,
+  at 3 cm they stood as spikes. The pushed snow is loose, so it now slides at its repose angle (45 degrees,
+  Abe 2004) with the granular ground's Sumner erosion step (`GroundDeformField.slump()`), rim only: the
+  compacted walls stand, crust plates stay as heaped.
+- Footprints were stamped by texel centre in or out, a staircase along a turned boot. They are now drawn
+  antialiased from the signed distance to the edge over half a texel (half, so a boot two texels wide
+  still sinks to full depth in the middle).
+- Triangles coarser than the texels (the 6.25 cm close mesh on a 3.1 cm field) sampled walls on and off.
+  The vertex shader now averages four taps over its spacing, the displacement prefiltered to the mesh's
+  rate as geometry clipmaps do; the fragment's normal keeps the texels' detail.
+
+Cost: the step with four rolling bodies goes from about 1.0 to 1.6 ms of CPU (slumping owed tiles for a
+second after each press). All snow and ground checks pass.
+
+## Follow-up 9: raster refraction out through the far side (11 Nov 2026)
+
+Raster transmission refracted once at the front face and carried the ray on to whatever was behind, as
+for water over a pool's floor. A solid needs the second surface. The established real-time answers:
+Wyman's image-space refraction (2005, the back faces' depth and normals in their own pass) and Filament's
+"solid" refraction (the object as a sphere of a given thickness: exit point thickness * -dot(N, T) along
+the refracted ray, exit normal normalize(dot(N, T) T - N/2), refract back out). The second needs no extra
+pass, so `BaseMaterial3D.transmission_thickness` (glTF KHR_materials_volume's thicknessFactor, now read
+and written by the glTF importer and exporter) uses it; the exit ray then travels to the depth behind,
+and absorption runs over the path inside only. 0 keeps the old behaviour. Icicles use 4 cm.
+
+On the bench's eave the change is small: the icicles bend the view a little more and read slightly
+clearer. The path tracer's view of the eave's underside through the ice comes from light reflected
+inside the cone, which a screen-space method cannot follow, so that difference stays.
+
+## Follow-up 10: the bow wave (11 Nov 2026)
+
+A body slow enough compacts what it meets; a fast one cannot and shoves it ahead, the ploughing seen in
+front of tyres, sled runners and blades in deep snow (the CRREL cold-regions mobility models, Richmond,
+Shoop and Blaisdell 1995, count it as a separate ploughing resistance). In `GroundDeformField.press()`,
+with the body's velocity (from its motion between frames for bodies in the deform groups):
+- the rim's weights lean forward by 1 + 3 cos(angle to the heading) and reach one ring width further
+  ahead, both scaled by speed / 4 m/s (full above);
+- rim snow the body meets again is loose: at full speed all of it is pushed on, not 30%, so the wave
+  rides ahead, grows, spills to the sides as berms and is left as a mound where the body stops.
+Mass is kept (only where the pushed share lands changes). The constants are chosen for the look, not
+measured. Checks: a flat foot at 5 m/s leaves 0.176 m of rim ahead against 0.033 m behind, 30% of the
+dent; driven on 1.5 m, the highest rim in front is 0.194 m against 0.101 m beside the track. Bench:
+`--view=trail --sled [--close]`.
+
+## Follow-up 11: the near square feeds the world tier (11 Nov 2026)
+
+The world tier seeded the near square, but nothing went back: drifts, slides, sheltered and sunny faces
+worked out on the fine cells were lost once the square moved on and the cells came back from the coarse
+pack. Nested weather models solve the same thing with two-way nesting: the fine grid's state, averaged
+over each coarse cell it covers, replaces the parent's there (WRF's feedback). `SnowCover3D` now does
+that before each world update and before the square shifts: water and liquid as area means, density
+as the column's mass over its depth, albedo weighted by water; crusts and cornices stay the world's.
+Only world cells the square covers whole are fed. Check (`--test=climate`): 30 mm of fresh snow on the
+square shows in the world tier under it (373 to 384 mm, the square's 394 mm less an hour of the world's
+own update), nothing changes beyond it.
+
+## Follow-up 12: sparkle on reflected and bounced rays (11 Nov 2026)
+
+Stage 5's footprint grid needs a footprint, and the path tracer had one only for camera rays (pixel angle
+times distance), so snow seen in a mirror, a window or water showed the plain rough lobe. The path tracer
+already carries ray cones from the camera through every bounce for texture levels (Akenine-Moller,
+Nilsson, Andersson, Barre-Brisebois, Toth and Karras 2019, "Texture Level of Detail Strategies for
+Real-Time Ray Tracing"; with the JCGT 2021 follow-up), so the grid now sizes itself by that cone on every
+ray after the first. Camera rays keep the pixel footprint, as raster. Exact glints (follow-up 5) were
+already per ray on every bounce and are unchanged.
+
+Check: `--view=sparkle --mirror --spp=16`, an overhead mirror showing the snow ahead toward the sun. In
+the mirror the snow went from flat (standard deviation 4.5 of 255) to speckled (4.8) at the coarse grid
+level its 10 m path resolves; exact glints there give 16.2. The snow seen directly is unchanged (mean
+difference 0.2 of 255, sample noise). Image: fork/snow/stage5/mirror_glints_before_after_exact.png.

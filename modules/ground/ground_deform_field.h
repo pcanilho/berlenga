@@ -120,7 +120,7 @@ public:
 
 	// Presses down to p_bottom within the footprint (a bowl when p_round, an oriented box when
 	// p_box), and p_sink below the undisturbed surface. Returns the volume moved, m3.
-	float press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance);
+	float press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity = Vector2());
 	// Bodies in p_groups press along the path they moved since the last call.
 	void press_bodies(SceneTree *p_tree, const PackedStringArray &p_groups, const Columns &p_columns, float p_character_mass, float p_character_area, float p_contact_tolerance, double p_delta);
 	static bool read_body(Node3D *p_node, float p_character_mass, float p_character_area, Body &r_body);
@@ -207,6 +207,9 @@ int GroundDeformField::slump(double p_delta, const G &p_ground, const T &p_param
 					float max_dent;
 					if (!p_params(wx, wz, tan_repose, rate, max_dent)) {
 						continue;
+					}
+					if (rim[i] <= 0.0f && dent[i] >= max_dent) {
+						continue; // Nothing here can move.
 					}
 					const float gi = p_ground(wx, wz);
 					const float si = gi + rim[i] - dent[i];

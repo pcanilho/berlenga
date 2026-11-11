@@ -335,6 +335,9 @@ float GroundDeformField::body_sinkage(const Body &p_body, float p_n, float p_kc,
 static constexpr float CRACK_LENGTH = 0.13f; // m at 2 cm
 static constexpr float PLATE = 0.12f; // m, the pieces heaped in the rim
 static constexpr int CRACK_SECTORS = 7; // radial cracks around a break
+static constexpr float BOW_SPEED = 4.0f; // m/s at which the bow wave is full
+static constexpr float BOW_GAIN = 3.0f; // weight of the rim straight ahead over behind, less one, at full speed
+static constexpr float BOW_REACH = 1.0f; // the rim ahead reaches this much further, in ring widths, at full speed
 
 float GroundDeformField::body_pressure(const Body &p_body, float p_sinkage) {
 	if (p_body.mass <= 0.0f) {
@@ -353,7 +356,7 @@ float GroundDeformField::body_pressure(const Body &p_body, float p_sinkage) {
 	return load / (p_body.wheel ? l * MAX(p_body.width, 0.01f) : Math::PI * 0.25f * l * l);
 }
 
-float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance) {
+float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) {
 	if (!valid || p_radius <= 0.0f || (p_box && (p_half.x <= 0.0f || p_half.y <= 0.0f))) {
 		return 0.0f;
 	}
@@ -364,7 +367,14 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 	const float ring = 0.5f * (p_box ? Math::sqrt(p_half.x * p_half.y) : p_radius);
 	const float crust = p_columns.column(p_position.x, p_position.z).crust;
 	const float crack = crust > 0.0f ? CRACK_LENGTH * Math::pow(crust / 0.02f, 0.75f) : 0.0f;
-	const float span = (p_box ? p_half.length() : p_radius) + MAX(ring, 1.6f * crack);
+	// A bow wave: a fast body cannot compact what it meets in time and shoves it ahead (the ploughing of
+	// snow in front of tyres and blades, CRREL cold-regions mobility work). The rim leans and reaches
+	// forward with the speed; pressed again as the body comes on, it rides ahead and spills to the sides
+	// as a berm. Mass is kept: only where the pushed share lands changes.
+	const float speed = p_velocity.length();
+	const float bow = CLAMP(speed / BOW_SPEED, 0.0f, 1.0f);
+	const Vector2 heading = speed > 1e-4f ? p_velocity / speed : Vector2();
+	const float span = (p_box ? p_half.length() : p_radius) + MAX(ring * (1.0f + bow * BOW_REACH), 1.6f * crack);
 	const int x0 = MAX(int(Math::floor((p_position.x - span) / t)) - origin.x, 0);
 	const int x1 = MIN(int(Math::ceil((p_position.x + span) / t)) - origin.x, n - 1);
 	const int z0 = MAX(int(Math::floor((p_position.z - span) / t)) - origin.y, 0);
@@ -390,9 +400,25 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 		}
 		return MAX(Math::sqrt(r_d2) - p_radius, 0.0f);
 	};
-	auto inside = [&](float wx, float wz, float &r_d2) {
-		const float o = outside(wx, wz, r_d2);
-		return o <= 0.0f && (p_box || r_d2 <= r2);
+	// Coverage of the texel by the footprint, from the signed distance to its edge (negative inside) over
+	// half a texel: the edge is drawn antialiased, so a turned box or a circle leaves a smoother wall on the
+	// texel grid instead of a staircase. Half a texel, not one: a boot only two texels wide still sinks
+	// to its full depth in the middle.
+	auto coverage = [&](float wx, float wz, float &r_d2) {
+		const float dx = wx - p_position.x;
+		const float dz = wz - p_position.z;
+		r_d2 = dx * dx + dz * dz;
+		float sd;
+		if (p_box) {
+			const float lx = cy * dx - sy * dz;
+			const float lz = sy * dx + cy * dz;
+			const float qx = Math::abs(lx) - p_half.x;
+			const float qz = Math::abs(lz) - p_half.y;
+			sd = Math::sqrt(MAX(qx, 0.0f) * MAX(qx, 0.0f) + MAX(qz, 0.0f) * MAX(qz, 0.0f)) + MIN(MAX(qx, qz), 0.0f);
+		} else {
+			sd = Math::sqrt(r_d2) - p_radius;
+		}
+		return CLAMP(0.5f - 2.0f * sd / t, 0.0f, 1.0f);
 	};
 	auto profile = [&](float d2) {
 		return p_round ? p_bottom + p_radius - Math::sqrt(MAX(r2 - d2, 0.0f)) : p_bottom;
@@ -404,7 +430,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			const float wx = (origin.x + x + 0.5f) * t;
 			const float wz = (origin.y + z + 0.5f) * t;
 			float d2;
-			if (!inside(wx, wz, d2)) {
+			if (coverage(wx, wz, d2) <= 0.0f) {
 				continue;
 			}
 			const Column c = p_columns.column(wx, wz);
@@ -429,7 +455,8 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			const float wx = (origin.x + x + 0.5f) * t;
 			const float wz = (origin.y + z + 0.5f) * t;
 			float d2;
-			if (!inside(wx, wz, d2)) {
+			const float cover = coverage(wx, wz, d2);
+			if (cover <= 0.0f) {
 				continue;
 			}
 			const Column c = p_columns.column(wx, wz);
@@ -438,7 +465,7 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			}
 			const int i = z * n + x;
 			const float s = c.surface - dent[i] + rim[i];
-			float target = profile(d2);
+			float target = profile(MIN(d2, r2));
 			if (p_sink > 0.0f) {
 				const float w = p_round ? Math::sqrt(MAX(1.0f - d2 / r2, 0.0f)) : 1.0f;
 				target = MIN(target, c.surface - p_sink * w);
@@ -447,7 +474,8 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 			if (target >= s) {
 				continue;
 			}
-			const float delta = s - target;
+			// An edge texel goes down by the share of it the footprint covers.
+			const float delta = (s - target) * cover;
 			deepest = MAX(deepest, c.surface - target);
 			const float take = MIN(rim[i], delta);
 			rim[i] -= take;
@@ -456,7 +484,9 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 				fresh[i] = 1.0f;
 			}
 			moved += delta * area;
-			pushed += delta * area * c.rim_share;
+			// Rim met again is loose: a fast body shoves all of it on (the bow riding ahead), a slow one
+			// presses it like the rest.
+			pushed += ((delta - take) * c.rim_share + take * Math::lerp(c.rim_share, 1.0f, bow)) * area;
 			_mark(x, z, press_settle);
 		}
 	}
@@ -514,14 +544,19 @@ float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, flo
 				const float wz = (origin.y + z + 0.5f) * t;
 				float d2;
 				const float o = outside(wx, wz, d2);
-				if (o <= 0.0f || o >= ring) {
+				float ahead = 0.0f;
+				if (bow > 0.0f && d2 > 1e-8f) {
+					ahead = MAX(((wx - p_position.x) * heading.x + (wz - p_position.z) * heading.y) / Math::sqrt(d2), 0.0f) * bow;
+				}
+				const float reach = ring * (1.0f + BOW_REACH * ahead);
+				if (o <= 0.0f || o >= reach) {
 					continue;
 				}
 				const Column c = p_columns.column(wx, wz);
 				if (!c.deformable) {
 					continue;
 				}
-				float w = 1.0f - o / ring;
+				float w = (1.0f - o / reach) * (1.0f + BOW_GAIN * ahead);
 				if (c.crust > 0.0f) {
 					// A broken crust: the rim is heaped in plates, each a tilted slab of its own height.
 					const int px = int(Math::floor(wx / PLATE));
@@ -648,10 +683,11 @@ void GroundDeformField::press_bodies(SceneTree *p_tree, const PackedStringArray 
 				from = center; // teleported
 			}
 			const float dist = Vector2(center.x - from.x, center.z - from.z).length();
+			const Vector2 velocity = Vector2(center.x - from.x, center.z - from.z) / MAX(float(p_delta), 1e-4f);
 			const int steps = CLAMP(int(Math::ceil(dist / MAX(b.radius * 0.5f, 0.01f))), 1, 16);
 			for (int k = 1; k <= steps; k++) {
 				const Vector3 p = from.lerp(center, float(k) / steps);
-				press(p_columns, p, b.radius, b.box ? b.box_half : Vector2(), b.yaw, b.box, p.y - b.half_height, sink, b.round, p_contact_tolerance);
+				press(p_columns, p, b.radius, b.box ? b.box_half : Vector2(), b.yaw, b.box, p.y - b.half_height, sink, b.round, p_contact_tolerance, velocity);
 			}
 			movers[n3->get_instance_id()] = Mover{ center, frame };
 		}

@@ -58,6 +58,10 @@
 // and fragment() (a finer normal from the deformation texels, plus a few millimetres of wind
 // ripple), so trails keep their edges at any mesh density. Snow optics as BaseMaterial3D's snow
 // (ice F0 0.018, roughness 0.7 dry to 0.35 wet), compacted snow a little darker and smoother.
+// Loose, disturbed snow's angle of repose: about 45 degrees for dry snow pushed aside (Abe 2004 measured
+// heaps of disaggregated snow layers; debris and plough berms stand at 35 to 50 degrees).
+static constexpr float LOOSE_SNOW_TAN_REPOSE = 1.0f;
+
 static const char *SNOW_SURFACE_SHADER = R"(
 shader_type spatial;
 render_mode cull_back, depth_draw_opaque;
@@ -74,6 +78,7 @@ uniform vec4 mesh_rect;
 uniform float min_depth = 0.03;
 uniform float edge_fade = 8.0;
 uniform float detail_step = 0.0625;
+uniform float vertex_step = 0.0625;
 uniform float coarse_step = 0.5;
 uniform float micro_relief = 1.0;
 uniform vec3 tint = vec3(1.0);
@@ -113,12 +118,28 @@ float snow_fade(vec2 p) {
 	vec2 d = min(p - mesh_rect.xy, mesh_rect.xy + mesh_rect.zw - p);
 	return smoothstep(0.0, edge_fade, min(d.x, d.y));
 }
-float snow_height(vec2 p) {
-	vec2 dr = snow_deform(p);
+// The deformation averaged over a vertex's spacing where the triangles are coarser than the texels (a
+// displacement prefiltered to the mesh's sampling rate, as geometry clipmaps filter each level): without
+// it, vertices land on and off a print's wall and a turned edge zigzags. The fragment's normal keeps the
+// texels' own detail.
+vec2 snow_deform_vertex(vec2 p) {
+	float r = 0.5 * max(vertex_step - detail_step, 0.0);
+	if (r <= 0.0) {
+		return snow_deform(p);
+	}
+	return 0.25 * (snow_deform(p + vec2(-r, -r)) + snow_deform(p + vec2(r, -r)) + snow_deform(p + vec2(-r, r)) + snow_deform(p + vec2(r, r)));
+}
+float snow_height_with(vec2 p, vec2 dr) {
 	float d = snow_pack(p).r * snow_fade(p) - dr.x + dr.y;
 	// Under min_depth the snow is the ground material's; the surface tucks 5 cm under the ground.
 	float lift = d >= min_depth ? d : mix(-0.05, min_depth, max(d, 0.0) / min_depth);
 	return snow_ground(p) + lift;
+}
+float snow_height(vec2 p) {
+	return snow_height_with(p, snow_deform(p));
+}
+float snow_height_vertex(vec2 p) {
+	return snow_height_with(p, snow_deform_vertex(p));
 }
 float snow_hash(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -194,10 +215,10 @@ float snow_ripple(vec2 p) {
 void vertex() {
 	vec2 p = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xz;
 	vec2 duv = (p - deform_rect.xy) / max(deform_rect.zw, vec2(1e-4));
-	float e = (deform_rect.z > 0.0 && snow_inside(duv)) ? detail_step * 2.0 : coarse_step;
-	float h = snow_height(p);
-	float hx = snow_height(p + vec2(e, 0.0)) - snow_height(p - vec2(e, 0.0));
-	float hz = snow_height(p + vec2(0.0, e)) - snow_height(p - vec2(0.0, e));
+	float e = (deform_rect.z > 0.0 && snow_inside(duv)) ? max(detail_step * 2.0, vertex_step) : coarse_step;
+	float h = snow_height_vertex(p);
+	float hx = snow_height_vertex(p + vec2(e, 0.0)) - snow_height_vertex(p - vec2(e, 0.0));
+	float hz = snow_height_vertex(p + vec2(0.0, e)) - snow_height_vertex(p - vec2(0.0, e));
 	vec3 n = normalize(vec3(-hx, 2.0 * e, -hz));
 	vec3 t = normalize(vec3(2.0 * e, hx, 0.0));
 	vec3 b = normalize(cross(n, t));
@@ -546,12 +567,12 @@ float SnowSurface3D::_surface_at(float p_x, float p_z, const SnowCover3D *p_cove
 // ---------------------------------------------------------------------------------------------------------
 // Deformation
 
-float SnowSurface3D::press(Vector3 p_position, float p_radius, float p_bottom, float p_sink, bool p_round) {
-	return _press(p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round);
+float SnowSurface3D::press(Vector3 p_position, float p_radius, float p_bottom, float p_sink, bool p_round, Vector3 p_velocity) {
+	return _press(p_position, p_radius, Vector2(), 0.0f, false, p_bottom, p_sink, p_round, Vector2(p_velocity.x, p_velocity.z));
 }
 
-float SnowSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink) {
-	return _press(p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false);
+float SnowSurface3D::press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink, Vector3 p_velocity) {
+	return _press(p_position, 0.5f * MAX(p_size.x, p_size.y), p_size * 0.5f, p_yaw, true, p_bottom, p_sink, false, Vector2(p_velocity.x, p_velocity.z));
 }
 
 GroundDeformField::Column SnowSurface3D::SnowColumns::column(float p_x, float p_z) const {
@@ -613,7 +634,7 @@ float SnowSurface3D::SnowColumns::sinkage(const GroundDeformField::Body &p_body)
 	return z;
 }
 
-float SnowSurface3D::_press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round) {
+float SnowSurface3D::_press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, Vector2 p_velocity) {
 	SnowCover3D *cover = _cover();
 	if (!deform_enabled || !cover) {
 		return 0.0f;
@@ -621,7 +642,7 @@ float SnowSurface3D::_press(Vector3 p_position, float p_radius, Vector2 p_half, 
 	SnowColumns cols;
 	cols.surface = this;
 	cols.cover = cover;
-	const float moved = field.press(cols, p_position, p_radius, p_half, p_yaw, p_box, p_bottom, p_sink, p_round, contact_tolerance);
+	const float moved = field.press(cols, p_position, p_radius, p_half, p_yaw, p_box, p_bottom, p_sink, p_round, contact_tolerance, p_velocity);
 	if (moved > 0.0f) {
 		collision_dirty = true;
 	}
@@ -760,6 +781,7 @@ void SnowSurface3D::_update_material() {
 	material->set_shader_parameter("min_depth", min_depth);
 	material->set_shader_parameter("edge_fade", edge_fade);
 	material->set_shader_parameter("detail_step", _texel());
+	material->set_shader_parameter("vertex_step", detail_spacing);
 	material->set_shader_parameter("coarse_step", MAX(ground_spacing, max_spacing * 0.5f));
 	material->set_shader_parameter("micro_relief", micro_relief);
 	material->set_shader_parameter("tint", Vector3(tint.r, tint.g, tint.b));
@@ -813,7 +835,25 @@ void SnowSurface3D::_notification(int p_what) {
 			const double delta = get_physics_process_delta_time();
 			_follow(_follow_position());
 			if (deform_enabled && field.valid) {
+				// Pressed tiles owe a second of slumping: the snow a body pushes aside is loose and slides off
+				// where it lies steeper than its repose (Sumner's erosion step, as the granular ground): into
+				// the print, or off a thin wall left between two overlapping steps. Only that rim moves: the
+				// compacted walls stand.
+				field.press_settle = 1.0f;
 				_press_movers(delta);
+				auto ground_fn = [this](float x, float z) { return _ground_at(x, z); };
+				const SnowCover3D *slump_cover = _cover();
+				auto params_fn = [slump_cover](float x, float z, float &r_tan, float &r_rate, float &r_max) {
+					// Plates of a broken crust are slabs, not loose snow: they stay as heaped.
+					if (!slump_cover || slump_cover->get_crust_thickness_at(Vector3(x, 0, z)) > 0.0f) {
+						return false;
+					}
+					r_tan = LOOSE_SNOW_TAN_REPOSE;
+					r_rate = 1e3f;
+					r_max = 0.0f;
+					return true;
+				};
+				field.slump(delta, ground_fn, params_fn);
 				_relax();
 			}
 			collision_accum += delta;
@@ -1025,8 +1065,8 @@ void SnowSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_collision_rate", "rate"), &SnowSurface3D::set_collision_rate);
 	ClassDB::bind_method(D_METHOD("get_collision_rate"), &SnowSurface3D::get_collision_rate);
 
-	ClassDB::bind_method(D_METHOD("press", "position", "radius", "bottom", "sink", "round"), &SnowSurface3D::press, DEFVAL(0.0f), DEFVAL(true));
-	ClassDB::bind_method(D_METHOD("press_box", "position", "size", "yaw", "bottom", "sink"), &SnowSurface3D::press_box, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("press", "position", "radius", "bottom", "sink", "round", "velocity"), &SnowSurface3D::press, DEFVAL(0.0f), DEFVAL(true), DEFVAL(Vector3()));
+	ClassDB::bind_method(D_METHOD("press_box", "position", "size", "yaw", "bottom", "sink", "velocity"), &SnowSurface3D::press_box, DEFVAL(0.0f), DEFVAL(Vector3()));
 	ClassDB::bind_static_method("SnowSurface3D", D_METHOD("bekker_sinkage", "pressure_kpa", "width", "n", "kc", "kphi"), &SnowSurface3D::bekker_sinkage);
 	ClassDB::bind_method(D_METHOD("clear_deformation"), &SnowSurface3D::clear_deformation);
 	ClassDB::bind_method(D_METHOD("refresh_ground"), &SnowSurface3D::refresh_ground);

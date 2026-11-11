@@ -202,6 +202,15 @@
 				Mean runoff over the land of the last [method generate] with a [member climate_recipe], in mm a year. Lakes balance their inflow and evaporation with it.
 			</description>
 		</method>
+		<method name="get_river_sites" qualifiers="const">
+			<return type="Array" />
+			<param index="0" name="min_area" type="float" default="100000.0" />
+			<param index="1" name="min_discharge" type="float" default="0.0" />
+			<param index="2" name="run" type="float" default="200.0" />
+			<description>
+				Places along the rivers of [method get_rivers] ([param min_area]) for lakes and falls: every river point carrying at least [param min_discharge] m³/s in [member river_month], with how far the river drops over the next [param run] metres. Each is a [Dictionary]: [code]position[/code] (on the ground), [code]discharge[/code], [code]area[/code] (drainage, m²), [code]drop[/code] (m over the run), [code]run[/code] (m actually measured, shorter near a mouth), [code]river[/code] and [code]index[/code] (as in [method get_rivers]). For a lake that feeds a visible fall, pick a point with enough discharge and a large drop below it, and put a lake marker (with [code]rock_lip[/code] metadata) there.
+			</description>
+		</method>
 		<method name="get_rivers" qualifiers="const">
 			<return type="Array" />
 			<param index="0" name="min_area" type="float" />
@@ -597,6 +606,11 @@
 		</member>
 	</members>
 	<signals>
+		<signal name="changing">
+			<description>
+				Emitted when [method generate] or [method clear_result] starts, before any result is replaced. Work that reads the ground on other threads (a [Landscape3D] streaming its heights) finishes here.
+			</description>
+		</signal>
 		<signal name="generated">
 			<description>
 				Emitted when [method generate] finishes.

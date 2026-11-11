@@ -83,9 +83,12 @@ private:
 	NodePath sun_light;
 	NodePath moon_light;
 	bool hide_below_horizon = true;
+	bool drive_light_energy = true;
+	double energy_per_lux = 1e-5; // light_energy for one lux above the air (sun at noon about 1.1)
 
 	Sky sky;
 	bool dirty = true;
+	ObjectID sky_material_id; // the sky last given the lights
 
 	void _update();
 	void _apply_lights();
@@ -129,6 +132,12 @@ public:
 	NodePath get_sun_light() const { return sun_light; }
 	void set_moon_light(const NodePath &p_path);
 	NodePath get_moon_light() const { return moon_light; }
+	void set_drive_light_energy(bool p_drive);
+	bool get_drive_light_energy() const { return drive_light_energy; }
+	void set_energy_per_lux(double p_scale);
+	double get_energy_per_lux() const { return energy_per_lux; }
+	// Transmittance of the air toward a body at this apparent altitude (deg) from height p_height (m).
+	static Vector3 air_transmittance(double p_altitude_deg, double p_height);
 	void set_hide_below_horizon(bool p_hide);
 	bool get_hide_below_horizon() const { return hide_below_horizon; }
 

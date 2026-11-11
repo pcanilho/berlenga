@@ -85,8 +85,9 @@
 			<param index="2" name="bottom" type="float" />
 			<param index="3" name="sink" type="float" default="0.0" />
 			<param index="4" name="round" type="bool" default="true" />
+			<param index="5" name="velocity" type="Vector3" default="Vector3(0, 0, 0)" />
 			<description>
-				Presses the snow down to [param bottom] (the world height of a body's underside) within [param radius] of [param position]: a bowl when [param round], flat otherwise. [param sink] presses that much further below the undisturbed surface (Bekker sinkage). Snow never goes below what [member compacted_density] allows; [member rim_share] of what moves goes into a rim around the print. Returns the volume moved, in cubic metres. Nothing happens unless the underside touches the snow.
+				Presses the snow down to [param bottom] (the world height of a body's underside) within [param radius] of [param position]: a bowl when [param round], flat otherwise. [param sink] presses that much further below the undisturbed surface (Bekker sinkage). Snow never goes below what [member compacted_density] allows; [member rim_share] of what moves goes into a rim around the print. A [param velocity] (m/s; bodies in the deform groups get theirs from their motion) leans the rim forward: a fast body shoves snow ahead of it in a bow wave that rides in front and spills to the sides, full at 4 m/s. Returns the volume moved, in cubic metres. Nothing happens unless the underside touches the snow.
 			</description>
 		</method>
 		<method name="press_box">
@@ -96,6 +97,7 @@
 			<param index="2" name="yaw" type="float" />
 			<param index="3" name="bottom" type="float" />
 			<param index="4" name="sink" type="float" default="0.0" />
+			<param index="5" name="velocity" type="Vector3" default="Vector3(0, 0, 0)" />
 			<description>
 				Like [method press], with a flat rectangular print [param size] wide (x) and long (y), turned by [param yaw] radians about up: a boot, a runner, a crate.
 			</description>

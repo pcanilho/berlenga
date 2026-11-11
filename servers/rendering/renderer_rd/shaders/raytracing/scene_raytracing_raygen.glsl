@@ -2050,8 +2050,10 @@ void main() {
 		m.metalness = mix(m.metalness, 0.0, snow);
 		m.specular = mix(m.specular, 0.335, snow);
 		m.normal = normalize(mix(m.normal, h.geometry_normal, snow));
-		// Sparkle on dry snow, seen by camera rays only: their footprint is the pixel's angle times the
-		// distance (shaders here have no derivatives). Bounces see the plain rough snow.
+		// Sparkle on dry snow. Camera rays size the grid by the pixel's angle times the distance, as raster
+		// does; reflected and bounced rays by their ray cone (Akenine-Moller et al. 2019, carried from the
+		// camera through each bounce), so snow seen in water or a window, and the light it bounces, keeps
+		// its glints at the grain size that footprint resolves.
 		float glint_dry = 1.0 - smoothstep(0.05, 0.3, snow_wet);
 		if (get_rt_param(RT_PARAM_SNOW_EXACT_GLINTS) > 0.5 && snow >= 0.5 && glint_dry > 0.0) {
 			// Exact: the snow's ice specular (F0 0.018) lies on the facet of the grain hit, near-smooth
@@ -2060,11 +2062,16 @@ void main() {
 			// grains that mirror a light. Melt water films the grains over: the rough lobe comes back.
 			m.specular_normal = snow_grain_facet(h.hit_pos + rt_origin.xyz, h.geometry_normal);
 			m.roughness = mix(m.roughness, 0.22, glint_dry);
-		} else if (get_total_bounces(payload.packed_bounces_flags) == 0u && snow >= 0.5) {
-			vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w,
-					scene_data_block.data.inv_view_matrix[2].w);
-			float pix = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * scene_data_block.data.viewport_size.y);
-			float fp = scene_data_block.data.projection_matrix[3][3] != 0.0 ? pix : distance(h.hit_pos, cam) * pix;
+		} else if (snow >= 0.5 && (get_total_bounces(payload.packed_bounces_flags) == 0u || rt_cone_footprint_log2 > RT_TEXTURE_LOD_BASE)) {
+			float fp;
+			if (get_total_bounces(payload.packed_bounces_flags) == 0u) {
+				vec3 cam = vec3(scene_data_block.data.inv_view_matrix[0].w, scene_data_block.data.inv_view_matrix[1].w,
+						scene_data_block.data.inv_view_matrix[2].w);
+				float pix = 2.0 / (abs(scene_data_block.data.projection_matrix[1][1]) * scene_data_block.data.viewport_size.y);
+				fp = scene_data_block.data.projection_matrix[3][3] != 0.0 ? pix : distance(h.hit_pos, cam) * pix;
+			} else {
+				fp = exp2(rt_cone_footprint_log2);
+			}
 			vec4 g = snow_glint(h.hit_pos + rt_origin.xyz, h.geometry_normal, fp);
 			float gw = g.w * (1.0 - smoothstep(0.05, 0.3, snow_wet));
 			if (gw > 0.0 && rt_material_feature(RT_MATERIAL_FEATURE_CLEARCOAT)) {

@@ -522,6 +522,7 @@ private:
 		StringName transmission_ior;
 		StringName transmission_attenuation_color;
 		StringName transmission_attenuation_distance;
+		StringName transmission_thickness;
 		StringName transmission_scatter_strength;
 		StringName transmission_scatter_color;
 		StringName transmission_scatter_anisotropy;
@@ -620,6 +621,7 @@ private:
 	float transmission_ior = 1.5f;
 	Color transmission_attenuation_color = Color(1, 1, 1);
 	float transmission_attenuation_distance = 0.0f;
+	float transmission_thickness = 0.0f;
 	float transmission_scatter_strength = 0.0f;
 	Color transmission_scatter_color = Color(1, 1, 1);
 	float transmission_scatter_anisotropy = 0.0f;
@@ -828,6 +830,8 @@ public:
 
 	void set_transmission_attenuation_distance(float p_distance);
 	float get_transmission_attenuation_distance() const;
+	void set_transmission_thickness(float p_thickness);
+	float get_transmission_thickness() const;
 
 	void set_transmission_scatter_strength(float p_strength);
 	float get_transmission_scatter_strength() const;

@@ -151,7 +151,7 @@ class SnowSurface3D : public Node3D {
 	void _shift_deform(Vector2i p_origin);
 	float _ground_at(float p_x, float p_z) const;
 	float _dent_max(float p_depth, float p_density) const;
-	float _press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round);
+	float _press(Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, Vector2 p_velocity = Vector2());
 	void _press_movers(double p_delta);
 	void _relax();
 	void _update_collision();
@@ -231,10 +231,10 @@ public:
 	// Presses the snow down to p_bottom (world height of the body's underside) within p_radius of
 	// p_position (a bowl for round bodies, flat for boxes), plus p_sink of Bekker sinkage below the
 	// undisturbed surface. Returns the snow volume moved, m3.
-	float press(Vector3 p_position, float p_radius, float p_bottom, float p_sink = 0.0f, bool p_round = true);
+	float press(Vector3 p_position, float p_radius, float p_bottom, float p_sink = 0.0f, bool p_round = true, Vector3 p_velocity = Vector3());
 	// The same with a flat rectangular print p_size wide (x) and long (z), turned by p_yaw about up:
 	// a boot, a sled runner, a crate.
-	float press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink = 0.0f);
+	float press_box(Vector3 p_position, Vector2 p_size, float p_yaw, float p_bottom, float p_sink = 0.0f, Vector3 p_velocity = Vector3());
 	static float bekker_sinkage(float p_pressure_kpa, float p_width, float p_n, float p_kc, float p_kphi); // m
 	void clear_deformation();
 	void refresh_ground();

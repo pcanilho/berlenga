@@ -388,6 +388,19 @@ bool GodotPhysXShape3D::set_data(const Variant &p_data) {
 				}
 			}
 
+			// "fan_blocks": cells split along the diagonals of 2 x 2 fan blocks around odd (x, z) samples (Landscape3D's
+			// level 0 mesh), so the body stands on the drawn triangles: the diagonal runs through the block centre,
+			// from (x, z) to (x + 1, z + 1) where x + z is even. Holes keep the default split their marking assumes.
+			if (!any_hole && bool(d.get("fan_blocks", false))) {
+				for (int z = 0; z < depth - 1; z++) {
+					for (int x = 0; x < width - 1; x++) {
+						if (((x + z) & 1) == 0) {
+							samples[(uint32_t)(x * depth + z)].setTessFlag();
+						}
+					}
+				}
+			}
+
 			PxHeightFieldDesc hf_desc;
 			hf_desc.nbRows = (PxU32)width;
 			hf_desc.nbColumns = (PxU32)depth;

@@ -43,6 +43,9 @@ extends Node3D
 #   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
+#   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
+#   --sled            (trail view) a sled pulled at 4 m/s for 2 s and lifted away: its bow wave and berm
+#   --deform=R,E[,S]  (trail view) deformation texels R over E m, triangles every S m
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
 #                     under the boots, balls and wheel; 2 holds the boots (--close: down on the boot prints)
 #   --view=props      close: bumpy ground, boxes, a sphere, a 45 degree board and a 70 degree wall after snow
@@ -539,6 +542,26 @@ func _run_surface_tests() -> void:
 	var rim_at := surface.get_rim_at(Vector3(p.x + 0.36, 0, p.z))
 	_check("a raised rim beside the print", rim_at > 0.01, "%.3f m at 6 cm outside" % rim_at)
 
+	# A bow wave: the same flat foot moving at 5 m/s piles its rim ahead (mass kept).
+	var bw := Vector3(-6.0, 0, 6.0)
+	var vol0 := surface.get_moved_volume()
+	surface.press(bw, 0.3, -1.0, 0.0, false, Vector3(5.0, 0, 0))
+	var vol1 := surface.get_moved_volume()
+	var ahead := surface.get_rim_at(bw + Vector3(0.36, 0, 0))
+	var behind := surface.get_rim_at(bw - Vector3(0.36, 0, 0))
+	var dvol := vol1 - vol0
+	_check("a fast body piles its rim ahead (bow wave), mass kept", ahead > 2.0 * behind and absf(dvol.y - 0.3 * dvol.x) < 0.01 * dvol.x, "%.3f m ahead, %.3f m behind at 6 cm; rim %.1f%% of the dent" % [ahead, behind, 100.0 * dvol.y / dvol.x])
+	# Driven on along x in 5 cm steps, the bow rides in front.
+	var sp := bw
+	for k in 30:
+		sp = bw + Vector3(0.05 * (k + 1), 0, 0)
+		surface.press(sp, 0.3, -1.0, 0.0, false, Vector3(5.0, 0, 0))
+	var front := 0.0
+	for k in 13:
+		front = maxf(front, surface.get_rim_at(sp + Vector3(0.3 + 0.05 * k, 0, 0)))
+	var flank := surface.get_rim_at(sp + Vector3(-0.6, 0, 0.4))
+	_check("the bow rides ahead and spills to the sides", front > flank and front > ahead, "highest %.3f m in front after 1.5 m (%.3f m after one press), %.3f m beside the track behind" % [front, ahead, flank])
+
 	# A boot print turned 90 degrees: long along x, narrow along z.
 	var bp := Vector3(6.0, 0, -6.0)
 	surface.press_box(bp, Vector2(0.1, 0.28), PI * 0.5, -1.0, 0.0)
@@ -1025,9 +1048,21 @@ func _run_climate_tests() -> void:
 			ok_seed = false
 	_check("the near square starts from the world tier", ok_seed, "largest difference %.1f%%" % (worst * 100.0))
 	_check("the world tier is up for materials", snow.has_world() and snow.get_world_texture() != null and snow.get_world_rect().size.x >= 4096.0, "world rect %s" % str(snow.get_world_rect()))
+	# Two-way: what the square does goes back to the world tier under it (fresh snow here), and not beyond.
+	var fq := snow.global_position + Vector3(37.0, 0, -51.0)
+	var far_q := snow.global_position + Vector3(-700.0, 0, 300.0)
+	var w_before := snow.get_world_swe_at(fq)
+	var far_before := snow.get_world_swe_at(far_q)
+	snow.add_snow(30.0, 100.0)
+	var near_now := 0.0
+	for k in 16:
+		near_now += snow.get_swe_at(fq + Vector3((k % 4) * 4.0 - 6.0, 0, (k / 4) * 4.0 - 6.0)) / 16.0
 	t0 = Time.get_ticks_usec()
 	snow.advance_world(3600.0)
 	print("  world tier, 256 x 256 cells, one update: %.1f ms" % ((Time.get_ticks_usec() - t0) / 1000.0))
+	var w_after := snow.get_world_swe_at(fq)
+	var far_after := snow.get_world_swe_at(far_q)
+	_check("the square feeds the world tier under it (two-way nesting)", w_after > w_before + 10.0 and absf(w_after - near_now) < 0.05 * maxf(near_now, 10.0) and absf(far_after - far_before) < 5.0, "world %.0f mm before, %.0f after, square %.0f mm there; far away %.0f to %.0f mm" % [w_before, w_after, near_now, far_before, far_after])
 
 	await _run_recipe_tests()
 
@@ -1354,6 +1389,10 @@ func _build_trail(cam: Camera3D) -> void:
 		cam.position = Vector3(-1.2, 1.1, 2.6)
 		cam.look_at(Vector3(-2.9, 0.3, 1.0))
 		cam.fov = 50.0
+		if OS.get_cmdline_user_args().has("--sled"):
+			# Down on the end of the sled's track and the berm its bow wave left.
+			cam.position = Vector3(0.2, 1.0, 5.6)
+			cam.look_at(Vector3(-2.2, 0.2, 3.4))
 	var target := Marker3D.new()
 	target.name = "Probe"
 	add_child(target)
@@ -1373,6 +1412,14 @@ func _build_trail(cam: Camera3D) -> void:
 	if OS.get_cmdline_user_args().has("--close"):
 		# Triangles as fine as the deformation texels (6 cm), for the pieces of a broken crust.
 		surface.detail_spacing = 0.0625
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--deform="):
+			# The deformation field's texels and extent, and the triangles' spacing: --deform=768,24[,0.03125].
+			var v := a.substr(9).split(",")
+			surface.deform_resolution = int(v[0])
+			surface.deform_extent = float(v[1])
+			if v.size() > 2:
+				surface.detail_spacing = float(v[2])
 	add_child(surface)
 	# Movers, driven on set paths so the shot is the same each run: a walker whose two boots print the
 	# snow (boot boxes in the snow_deform group, 80 kg on 0.035 m2: Bekker), a cart wheel and two balls
@@ -1449,6 +1496,23 @@ func _build_trail(cam: Camera3D) -> void:
 	wheel.add_child(wmi)
 	wheel.add_to_group("snow_deform")
 	add_child(wheel)
+	if OS.get_cmdline_user_args().has("--sled"):
+		# A sled pulled fast (4 m/s) through the snow, its underside 15 cm down: a bow wave rides ahead and
+		# is left as a berm where it stops.
+		var sled := Node3D.new()
+		sled.name = "Sled"
+		var sc := CollisionShape3D.new()
+		sc.shape = BoxShape3D.new()
+		(sc.shape as BoxShape3D).size = Vector3(1.2, 0.2, 0.5)
+		sled.add_child(sc)
+		var smi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(1.2, 0.2, 0.5)
+		smi.mesh = bm
+		smi.material_override = dark
+		sled.add_child(smi)
+		sled.add_to_group("snow_deform")
+		add_child(sled)
 	walking = true
 	# Path tracing is slow on a CPU device: simulate under raster, trace only the saved frames.
 	var we: WorldEnvironment = null
@@ -1716,6 +1780,40 @@ func _build_sparkle(cam: Camera3D) -> void:
 	cam.position = Vector3(0.0, 1.5, 6.0)
 	cam.look_at(Vector3(0.0, 0.0, -3.0))
 	cam.fov = 50.0
+	var mirror_rect := Rect2i()
+	if OS.get_cmdline_user_args().has("--mirror"):
+		# An overhead mirror tilted down and forward: it shows the snow ahead from above, toward the low
+		# sun, so its reflection should glint like the snow seen directly (path traced: reflected rays).
+		cam.look_at(Vector3(0.0, 0.9, -3.0))
+		var mirror := MeshInstance3D.new()
+		var q := QuadMesh.new()
+		q.size = Vector2(3.0, 1.6)
+		mirror.mesh = q
+		var mm := StandardMaterial3D.new()
+		mm.metallic = 1.0
+		mm.roughness = 0.0
+		mm.albedo_color = Color(0.95, 0.95, 0.95)
+		mirror.material_override = mm
+		add_child(mirror)
+		var n := Vector3(0.0, -0.97, 0.24).normalized()
+		mirror.look_at_from_position(Vector3(0.0, 2.6, 0.0), Vector3(0.0, 2.6, 0.0) - n)
+		# Its rectangle on screen, for counting glints inside it.
+		var pts := []
+		for c in [Vector2(-1.5, -0.8), Vector2(1.5, -0.8), Vector2(-1.5, 0.8), Vector2(1.5, 0.8)]:
+			pts.append(cam.unproject_position(mirror.global_transform * Vector3(c.x, c.y, 0.0)))
+		var lo := Vector2(1e9, 1e9)
+		var hi := Vector2(-1e9, -1e9)
+		for pt: Vector2 in pts:
+			lo = lo.min(pt)
+			hi = hi.max(pt)
+		mirror_rect = Rect2i(Vector2i(lo) + Vector2i(8, 8), Vector2i(hi - lo) - Vector2i(16, 16))
+		if OS.get_cmdline_user_args().has("--close"):
+			# Up at the mirror, the reflected snow filling the frame.
+			q.size = Vector2(5.0, 3.0)
+			cam.position = Vector3(0.0, 1.4, 2.6)
+			cam.look_at(Vector3(0.0, 2.6, 0.0))
+			cam.fov = 45.0
+			mirror_rect = Rect2i(0, 0, int(get_viewport().get_visible_rect().size.x), int(get_viewport().get_visible_rect().size.y)).grow(-8)
 	await get_tree().physics_frame
 	snow.refresh_heights()
 	_precipitate(8.0, 2.0)
@@ -1751,6 +1849,18 @@ func _build_sparkle(cam: Camera3D) -> void:
 			if lum[y * w + x] > ring / 8.0 * 1.2:
 				count += 1
 	print("sparkle: glinting %.3f%% of %d pixels, mean luminance %.4f" % [100.0 * count / total, total, mean_lum / total])
+	if mirror_rect.size.x > 0:
+		var mc := 0
+		var mt := 0
+		for y in range(maxi(mirror_rect.position.y, 2), mini(mirror_rect.end.y, h - 2)):
+			for x in range(maxi(mirror_rect.position.x, 2), mini(mirror_rect.end.x, w - 2)):
+				var ring := 0.0
+				for d in [Vector2i(-2, 0), Vector2i(2, 0), Vector2i(0, -2), Vector2i(0, 2), Vector2i(-2, -2), Vector2i(2, 2), Vector2i(-2, 2), Vector2i(2, -2)]:
+					ring += lum[(y + d.y) * w + x + d.x]
+				mt += 1
+				if lum[y * w + x] > ring / 8.0 * 1.2:
+					mc += 1
+		print("sparkle: in the mirror %s, glinting %.3f%% of %d pixels" % [str(mirror_rect), 100.0 * mc / maxi(mt, 1), mt])
 	get_tree().quit()
 
 
@@ -1871,6 +1981,14 @@ func _physics_process(delta: float) -> void:
 	var wp := Vector3(-8.0 + 1.7 * walk_t, 0, -4.0)
 	w.global_position = Vector3(wp.x, _undisturbed(wp) - 0.2 + 0.4, wp.z)
 	w.rotation.z = -wp.x / 0.4
+	var sled: Node3D = get_node_or_null("Sled")
+	if sled:
+		# Pulled for 2 s, then lifted away so the berm it pushed is seen.
+		if walk_t > 2.0:
+			sled.remove_from_group("snow_deform")
+			sled.visible = false
+		var sp := Vector3(-10.0 + 4.0 * minf(walk_t, 2.0), 0, 3.4)
+		sled.global_position = Vector3(sp.x, _undisturbed(sp) - 0.15 + 0.1, sp.z)
 
 
 func _save_frame(suffix: String) -> void:

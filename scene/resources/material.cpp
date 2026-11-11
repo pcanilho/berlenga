@@ -582,6 +582,7 @@ void BaseMaterial3D::init_shaders() {
 	shader_names->transmission_ior = "transmission_ior";
 	shader_names->transmission_attenuation_color = "transmission_attenuation_color";
 	shader_names->transmission_attenuation_distance = "transmission_attenuation_distance";
+	shader_names->transmission_thickness = "transmission_thickness";
 	shader_names->transmission_scatter_strength = "transmission_scatter_strength";
 	shader_names->transmission_scatter_color = "transmission_scatter_color";
 	shader_names->transmission_scatter_anisotropy = "transmission_scatter_anisotropy";
@@ -1417,6 +1418,7 @@ uniform sampler2D texture_transmission : hint_default_white, %s;
 uniform float transmission_ior : hint_range(1.0, 3.0, 0.01);
 uniform vec4 transmission_attenuation_color : source_color;
 uniform float transmission_attenuation_distance : hint_range(0.0, 1000.0, 0.01);
+uniform float transmission_thickness : hint_range(0.0, 100.0, 0.001);
 uniform float transmission_scatter_strength : hint_range(0.0, 1.0, 0.01);
 uniform vec4 transmission_scatter_color : source_color;
 uniform float transmission_scatter_anisotropy : hint_range(-0.99, 0.99, 0.01);
@@ -2158,7 +2160,21 @@ void fragment() {)";
 	// The view ray (VIEW points at the eye even in orthogonal projection).
 	vec3 transmission_incident = PROJECTION_MATRIX[3][3] == 1.0 ? vec3(0.0, 0.0, -1.0) : normalize(VERTEX);
 	vec3 transmission_ray = refract(transmission_incident, NORMAL, 1.0 / max(transmission_ior, 1.0));
-	vec4 transmission_clip = PROJECTION_MATRIX * vec4(VERTEX + transmission_ray * min(distance(transmission_back.xyz, VERTEX), 1.0e4), 1.0);
+	vec3 transmission_start = VERTEX;
+	float transmission_inside = -1.0; // path inside the medium; below 0: up to what lies behind
+	if (transmission_thickness > 0.0) {
+		// A solid of this thickness (glTF KHR_materials_volume thicknessFactor): the ray leaves it through a
+		// second surface and bends back there. Filament's solid refraction model: the object as a sphere,
+		// the exit point thickness * -dot(N, ray) along the refracted ray, the exit normal from the sphere.
+		float transmission_nor = dot(NORMAL, transmission_ray);
+		transmission_inside = transmission_thickness * max(-transmission_nor, 0.0);
+		transmission_start = VERTEX + transmission_ray * transmission_inside;
+		vec3 transmission_exit_n = normalize(transmission_nor * transmission_ray - NORMAL * 0.5);
+		vec3 transmission_out = refract(transmission_ray, transmission_exit_n, max(transmission_ior, 1.0));
+		// Total internal reflection keeps the ray inside: carry on along it.
+		transmission_ray = dot(transmission_out, transmission_out) > 0.0 ? transmission_out : transmission_ray;
+	}
+	vec4 transmission_clip = PROJECTION_MATRIX * vec4(transmission_start + transmission_ray * min(max(distance(transmission_back.xyz, VERTEX) - max(transmission_inside, 0.0), 0.0), 1.0e4), 1.0);
 	vec2 transmission_uv = clamp(transmission_clip.xy / transmission_clip.w * 0.5 + 0.5, vec2(0.0), vec2(1.0));
 	transmission_depth_tex = textureLod(depth_texture, transmission_uv, 0.0).r;
 	transmission_ndc = OUTPUT_IS_SRGB ? vec4(vec3(transmission_uv, transmission_depth_tex) * 2.0 - 1.0, 1.0) : vec4(transmission_uv * 2.0 - 1.0, transmission_depth_tex, 1.0);
@@ -2170,7 +2186,7 @@ void fragment() {)";
 		transmission_found = transmission_back;
 	}
 	if (transmission_attenuation_distance > 0.0) {
-		float transmission_path = min(distance(transmission_found.xyz, VERTEX), 1.0e4);
+		float transmission_path = transmission_inside >= 0.0 ? transmission_inside : min(distance(transmission_found.xyz, VERTEX), 1.0e4);
 		transmission_absorption = pow(max(transmission_attenuation_color.rgb, vec3(1.0e-4)), vec3(transmission_path / transmission_attenuation_distance));
 	}
 	// What the medium scatters back looks, after many bounces, like a diffuse surface of its multi-scatter
@@ -2849,6 +2865,15 @@ float BaseMaterial3D::get_transmission_attenuation_distance() const {
 	return transmission_attenuation_distance;
 }
 
+void BaseMaterial3D::set_transmission_thickness(float p_thickness) {
+	transmission_thickness = MAX(p_thickness, 0.0f);
+	_material_set_param(shader_names->transmission_thickness, transmission_thickness);
+}
+
+float BaseMaterial3D::get_transmission_thickness() const {
+	return transmission_thickness;
+}
+
 void BaseMaterial3D::set_transmission_scatter_strength(float p_strength) {
 	transmission_scatter_strength = CLAMP(p_strength, 0.0f, 1.0f);
 	_material_set_param(shader_names->transmission_scatter_strength, transmission_scatter_strength);
@@ -3213,7 +3238,7 @@ void BaseMaterial3D::_validate_property(PropertyInfo &p_property) const {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 		}
 
-		if ((p_property.name == "transmission_ior" || p_property.name == "transmission_attenuation_color" || p_property.name == "transmission_attenuation_distance" ||
+		if ((p_property.name == "transmission_ior" || p_property.name == "transmission_attenuation_color" || p_property.name == "transmission_attenuation_distance" || p_property.name == "transmission_thickness" ||
 					p_property.name == "transmission_scatter_strength" || p_property.name == "transmission_scatter_color" || p_property.name == "transmission_scatter_anisotropy") &&
 				transmission_thin_walled) {
 			p_property.usage = PROPERTY_USAGE_NO_EDITOR;
@@ -4232,6 +4257,8 @@ void BaseMaterial3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_transmission_attenuation_distance", "distance"), &BaseMaterial3D::set_transmission_attenuation_distance);
 	ClassDB::bind_method(D_METHOD("get_transmission_attenuation_distance"), &BaseMaterial3D::get_transmission_attenuation_distance);
+	ClassDB::bind_method(D_METHOD("set_transmission_thickness", "thickness"), &BaseMaterial3D::set_transmission_thickness);
+	ClassDB::bind_method(D_METHOD("get_transmission_thickness"), &BaseMaterial3D::get_transmission_thickness);
 
 	ClassDB::bind_method(D_METHOD("set_transmission_scatter_strength", "strength"), &BaseMaterial3D::set_transmission_scatter_strength);
 	ClassDB::bind_method(D_METHOD("get_transmission_scatter_strength"), &BaseMaterial3D::get_transmission_scatter_strength);
@@ -4569,6 +4596,7 @@ void BaseMaterial3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_ior", PROPERTY_HINT_RANGE, "1,3,0.01"), "set_transmission_ior", "get_transmission_ior");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "transmission_attenuation_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_transmission_attenuation_color", "get_transmission_attenuation_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_attenuation_distance", PROPERTY_HINT_RANGE, "0,1000,0.01,or_greater,suffix:m"), "set_transmission_attenuation_distance", "get_transmission_attenuation_distance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_thickness", PROPERTY_HINT_RANGE, "0,10,0.001,or_greater,suffix:m"), "set_transmission_thickness", "get_transmission_thickness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_scatter_strength", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_transmission_scatter_strength", "get_transmission_scatter_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "transmission_scatter_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_transmission_scatter_color", "get_transmission_scatter_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transmission_scatter_anisotropy", PROPERTY_HINT_RANGE, "-0.99,0.99,0.01"), "set_transmission_scatter_anisotropy", "get_transmission_scatter_anisotropy");
@@ -4877,6 +4905,7 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	set_transmission_ior(1.5);
 	set_transmission_attenuation_color(Color(1, 1, 1));
 	set_transmission_attenuation_distance(0.0);
+	set_transmission_thickness(0.0);
 	set_transmission_scatter_strength(0.0);
 	set_transmission_scatter_color(Color(1, 1, 1));
 	set_transmission_scatter_anisotropy(0.0);
