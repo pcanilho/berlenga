@@ -118,6 +118,12 @@
 		<member name="january_temperature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-100, 100)">
 			January mean temperature in °C where the species grows: its frost hardiness, for example [code]Vector2(-3, 100)[/code] for beech, which stops where winters are much colder. Ignored when the map has no climate ([method TerrainDataMap3D.bake_climate]).
 		</member>
+		<member name="litter_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
+			Soft edge of [member litter_range].
+		</member>
+		<member name="litter_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
+			Range of leaf litter fallen from the crowns the plant may grow on ([method VegetationField3D.get_litter_at]): full under broad-leaved crowns, thinning over a few metres past their rim, so litter drifts into edges and clearings. Needle-leaved crowns drop none.
+		</member>
 		<member name="meshes" type="Mesh[]" setter="set_meshes" getter="get_meshes" default="[]">
 			Mesh variants; each plant picks one at random. Plants carry ([code]variant, scale, random, species[/code]) in [code]INSTANCE_CUSTOM[/code] for their materials.
 		</member>
@@ -282,7 +288,10 @@
 		<constant name="RULE_SPRAY" value="16" enum="Rule">
 			Waterfall spray potential, [code]0[/code] to [code]1[/code] ([method TerrainDataMap3D.get_spray_at]).
 		</constant>
-		<constant name="RULE_MAX" value="17" enum="Rule">
+		<constant name="RULE_LITTER" value="17" enum="Rule">
+			Broad-leaf litter fallen from the crowns, [code]0[/code] to [code]1[/code] ([method VegetationField3D.get_litter_at]).
+		</constant>
+		<constant name="RULE_MAX" value="18" enum="Rule">
 			Number of rules.
 		</constant>
 	</constants>

@@ -850,6 +850,18 @@
    "topic": "Currents and rivers"
   },
   {
+   "name": "Contact waterfalls",
+   "settings": [
+    "PhysXWaterfalls3D",
+    "contact_falls"
+   ],
+   "note": "",
+   "what": "water that clings to steep rock, clear at the lip and white below the inception point, with spray off ledges.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
    "name": "Faster flow bakes",
    "settings": [
     "physics/physx_3d/water/multigrid_flow"
@@ -900,7 +912,7 @@
     "hair_shading"
    ],
    "note": "",
-   "what": "raster strands shadow themselves in depth, calibrated against the path tracer.",
+   "what": "raster strands shadow themselves in depth, calibrated against the path tracer; omni and spot lights too (`deep_shadow_local_lights`).",
    "page": "hair",
    "title": "Hair",
    "topic": "Shading"
@@ -911,12 +923,13 @@
     "HAIR",
     "HAIR_ABSORPTION",
     "HAIR_ROUGHNESS",
+    "POSITIONAL_SHADOW_OFFSET",
     "hair_strands",
     "hair_cards",
     "IN_PATH_TRACER"
    ],
    "note": "",
-   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
+   "what": "`HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` and `POSITIONAL_SHADOW_OFFSET` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.",
    "page": "hair",
    "title": "Hair",
    "topic": "Shading"
@@ -1078,7 +1091,7 @@
     "glacial_erosion"
    ],
    "note": "",
-   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off).",
+   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -1095,6 +1108,17 @@
    "topic": "Generation"
   },
   {
+   "name": "Ice-worn rock",
+   "settings": [
+    "ice_worn_detail"
+   ],
+   "note": "",
+   "what": "faces toward the old ice flow are smoothed, faces away are stepped, with striations.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
    "name": "Cliff ledges",
    "settings": [
     "cliff_ledge_spacing",
@@ -1102,6 +1126,17 @@
    ],
    "note": "",
    "what": "rock beds of uneven thickness step faces steeper than 40 degrees into ledges.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Scree",
+   "settings": [
+    "scree_age"
+   ],
+   "note": "",
+   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -1508,6 +1543,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Leaf drift",
+   "settings": [
+    "PlantSpecies.litter_range"
+   ],
+   "note": "",
+   "what": "fallen leaves drift past the crowns into edges and clearings.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Wetland plants",
    "settings": [
     "PlantSpecies.floating",
@@ -1648,6 +1694,17 @@
    ],
    "note": "",
    "what": "shelter inside plant canopies and behind buildings; gust patches sweep across fields.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Season state",
+   "settings": [
+    "WeatherMap3D.get_season()"
+   ],
+   "note": "",
+   "what": "day length, budburst and leaf-colour sums, snow line, soil frost and moisture from the date and climate, for every system.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

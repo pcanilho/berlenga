@@ -55,6 +55,9 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_spray_rect", "vec4" },
 		{ "terrain_cover_map", "sampler2D" },
 		{ "terrain_cover_rect", "vec4" },
+		// The last glaciers' flow and wear, for ice-worn rock in the detail normal (TerrainGenerator3D.ice_worn_detail).
+		{ "terrain_ice_flow", "sampler2D" },
+		{ "terrain_ice_flow_rect", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {

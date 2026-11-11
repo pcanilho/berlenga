@@ -15,6 +15,7 @@ extends Node3D
 #   --wind=x,z       fallback wind for the plants (default none)
 #   --dump=dir       save the baked textures of the first seed as PNGs
 #   --seq=N          save N frames in a row as path_000.png... (run with --fixed-fps 30 for a clip)
+#   --stand=S        give the litter and seedling presets the leaves of floor stand S (make_floor's FloorStand)
 #   --out=path.png   save the frame
 
 const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather"]
@@ -24,6 +25,7 @@ var test := false
 var raster := false
 var spp := 16
 var close := -1
+var stand := -1
 var out := ""
 var macro := false
 var notex := false
@@ -52,6 +54,7 @@ func _ready() -> void:
 		elif a == "--top": top = true
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
 		elif a.begins_with("--wear="): wear = float(a.substr(7))
+		elif a.begins_with("--stand="): stand = int(a.substr(8))
 		elif a.begins_with("--wind="):
 			var w := a.substr(7).split(",")
 			wind = Vector2(float(w[0]), float(w[1]))
@@ -63,6 +66,8 @@ func _ready() -> void:
 	gen.textures = not notex
 	if wear >= 0.0:
 		gen.leaf_wear = wear
+	if stand >= 0:
+		gen.litter_leaves = PlantGenerator.stand_litter_leaves(stand)
 	for p in NAMES.size():
 		if close >= 0 and p != close:
 			continue
@@ -174,6 +179,30 @@ func _tris(m: Mesh) -> int:
 	return t
 
 func _checks() -> void:
+	# Climber leaves for the trees' vines: single leaves in XZ, base at the origin, +Z, 1 m long.
+	for c in [PlantGenerator.CLIMBER_IVY, PlantGenerator.CLIMBER_CLEMATIS, PlantGenerator.CLIMBER_HONEYSUCKLE]:
+		var leaves := PlantGenerator.make_climber_leaves(c, 4)
+		var ok := leaves.size() == 4
+		var box := AABB()
+		for lm in leaves:
+			var a: AABB = lm.get_aabb()
+			box = a if box.size == Vector3() else box.merge(a)
+			ok = ok and lm.surface_get_material(0) is ShaderMaterial
+		ok = ok and box.position.z > -0.02 and box.end.z > 0.85 and box.end.z < 1.1 and absf(box.position.y) < 0.3 and box.end.y < 0.3
+		_check("climber leaves %d: four flat leaves along +Z, 1 m" % c, ok, box)
+	# Seedlings of a stand's trees: every leaf kind builds a small plant (oak lobed, sycamore palmate, ash pinnate).
+	for st in [PlantGenerator.FLOOR_BEECH, PlantGenerator.FLOOR_OAK_MIXED, PlantGenerator.FLOOR_NORTHERN_HARDWOOD]:
+		var sg := PlantGenerator.new()
+		sg.preset = PlantGenerator.PRESET_SEEDLING
+		sg.litter_leaves = PlantGenerator.stand_litter_leaves(st)
+		var ok := true
+		var tris := 0
+		for sd in 6:
+			sg.seed = sd
+			var sm := sg.generate()
+			tris = maxi(tris, _tris(sm))
+			ok = ok and sm.get_surface_count() > 0 and sm.get_aabb().size.y > 0.03 and sm.get_aabb().size.y < 1.0
+		_check("stand %d seedlings" % st, ok and tris < 6000, tris)
 	var gen := PlantGenerator.new()
 	if wear >= 0.0:
 		gen.leaf_wear = wear
@@ -198,7 +227,7 @@ func _checks() -> void:
 		var set := PlantGenerator.make_floor(st, 1, false)
 		var ok := set.size() >= 6
 		for sp in set:
-			ok = ok and (sp as PlantSpecies).meshes.size() == 1 and ((sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_SHADE) != Vector2(0, 1) or (sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_WATER_DISTANCE).y < 100.0)
+			ok = ok and (sp as PlantSpecies).meshes.size() == 1 and ((sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_SHADE) != Vector2(0, 1) or (sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_LITTER) != Vector2(0, 1) or (sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_WATER_DISTANCE).y < 100.0)
 		_check("floor set %d" % st, ok, set.size())
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 

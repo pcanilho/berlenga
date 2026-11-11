@@ -475,6 +475,28 @@ reproduced in `docs/bench/weather --view=clouds_wide` (its clear weather, sun an
 - Not the cause: the reprojection (with it off, the slabs show the same after 200 frames), the 12 h
   of drift, the Sky's process mode, the frame time.
 
+## Season state (11 Nov)
+
+One state of the year for every system that follows it: trees (budburst, colour, leaf fall), ground plants
+(browning), snow and water. `WeatherMap3D.get_season()`; trees and plants keep their own per-species thresholds.
+
+- **Date**: the SkyClock's (`sky_clock`), or `season_day`. No second calendar.
+- **Climatology, not only running sums.** The game and the benches never run a whole year, so a state made only
+  from accumulators would start empty on any date. The sums run day by day over a climatological year: a harmonic
+  through the `ClimateRecipe`'s January and July means and lapse rates (as TerrainGenerator3D's water balance),
+  shifted by `season_anomaly`, the live air's departure from the climate averaged over about a month of weather
+  time. Jumping to a date gives its state at once; a cold spell still delays spring.
+- **Keys**: `photoperiod_h` (Forsythe et al. 1995, CBM model); `forcing`, degree days above 5 C since 1 January,
+  and `chilling`, days of 0 to 5 C since 1 November (Cannell and Smith 1983); `senescence`, from the first day
+  after midsummer under 13.2 h, `sum max(0, 20 - T) (P / 13.2)^2` (Delpierre et al. 2009); `snow_depth`,
+  `snow_cover`, `snow_line_m` from a degree-day snowpack (Hock 2003) since 1 August, snow share by a normal spread
+  of daily means about the rain/snow threshold (Jennings et al. 2018); `soil_frost`, freezing degree days under
+  less than about 20 cm of snow, thawed back by warm days (the frost index of Nelson and Outcalt 1987, simplest
+  form); `soil_moisture`, a daily Thornthwaite and Mather (1957) bucket with Thornthwaite (1948) evaporation,
+  spun up a year.
+- Site values at `ground_height`; `get_season_at_height()` for another height. Ground snow at a place stays
+  SnowCover3D's.
+
 ## Sources
 
 - Schneider, The Real-time Volumetric Cloudscapes of Horizon Zero Dawn,

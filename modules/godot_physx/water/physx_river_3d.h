@@ -162,6 +162,7 @@ private:
 
 	// Waterfalls (see docs/ideas/water.md "Step 4f").
 	float fall_min_height = 1.5f; // m; 0 turns falls off (every drop stays a cascade)
+	PackedVector3Array fall_exclusions; // lip and foot pairs of faces drawn by another node (PhysXWaterfalls3D)
 	bool fall_spray = true;
 	bool fall_mist = true;
 	float fall_mist_amount = 1.0f; // scales the mist each fall makes (its own grid, without a PhysXFlow3D)
@@ -207,6 +208,8 @@ protected:
 	static void _bind_methods();
 
 public:
+	// The falling-sheet shader (streaks riding the water, aeration, break-up), shared with PhysXWaterfalls3D.
+	static String get_fall_shader_code();
 	void set_widths(const PackedFloat32Array &p_widths);
 	PackedFloat32Array get_widths() const { return widths; }
 	void set_depths(const PackedFloat32Array &p_depths);
@@ -284,6 +287,8 @@ public:
 	float get_discharge_at(float p_s) const;
 	void set_fall_min_height(float p_height);
 	float get_fall_min_height() const { return fall_min_height; }
+	void set_fall_exclusions(const PackedVector3Array &p_points);
+	PackedVector3Array get_fall_exclusions() const { return fall_exclusions; }
 	void set_fall_spray(bool p_enabled);
 	bool get_fall_spray() const { return fall_spray; }
 	void set_fall_mist(bool p_enabled);

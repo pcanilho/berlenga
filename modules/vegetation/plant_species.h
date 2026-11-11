@@ -61,6 +61,7 @@ public:
 		RULE_SUNLIGHT, // Annual mean shortwave, W/m2: sunny slopes against shaded ones.
 		RULE_CONIFER, // Share of the canopy overhead that is needle-leaved, 0 broadleaf to 1 conifer (VegetationField3D).
 		RULE_SPRAY, // Waterfall spray potential, 0 to 1 (geology from a TerrainGenerator3D).
+		RULE_LITTER, // Leaf fall from the placed canopy, 0 none to 1 under closed crowns, drifting past the crowns (VegetationField3D).
 		RULE_MAX,
 	};
 
@@ -131,6 +132,7 @@ public:
 	bool uses_conifer() const { return ranges[RULE_CONIFER].x > 0.0f || ranges[RULE_CONIFER].y < 1.0f; }
 	// True when the shade rule is narrower than "anywhere", so placement must compute shade.
 	bool uses_shade() const { return ranges[RULE_SHADE].x > 0.0f || ranges[RULE_SHADE].y < 1.0f; }
+	bool uses_litter() const { return ranges[RULE_LITTER].x > 0.0f || ranges[RULE_LITTER].y < 1.0f; }
 	void set_spacing(float p_spacing);
 	float get_spacing() const { return spacing; }
 	void set_footprint(float p_footprint);

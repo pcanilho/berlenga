@@ -138,6 +138,8 @@ private:
 	real_t glacial_rock_variation = 0.0; // spread of rock quality under the ice (log of the erosion multiplier); 0 even
 	real_t glacial_rock_scale = 500.0; // m, wavelength of that variation
 	real_t glacial_inflow_balance = 0.0; // m/yr of ice per m2 of each inflow's off-map catchment (0: water only)
+	real_t glacial_coarse_cell = 0.0; // m, ice grid of the ice ages between river steps; 0 = the last glaciation's
+	bool ice_worn_detail = false; // publish terrain_ice_flow: the detail normal smooths stoss faces, roughens lee faces, adds striations
 	real_t last_glacial_eroded = 0.0;
 	real_t last_glacial_ice_area = 0.0;
 	real_t last_glacial_msec = 0.0;
@@ -295,6 +297,7 @@ private:
 	int spray_nx = 0, spray_ny = 0;
 	LocalVector<float> spray;
 	Ref<ImageTexture> spray_texture;
+	Ref<ImageTexture> ice_flow_texture; // rg flow direction, b wear (ice_worn_detail)
 	void _bake_spray();
 	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).
 	int tile_nx = 0;
@@ -477,6 +480,10 @@ public:
 	real_t get_glacial_rock_scale() const { return glacial_rock_scale; }
 	void set_glacial_inflow_balance(real_t p_value) { glacial_inflow_balance = MAX(p_value, real_t(0.0)); }
 	real_t get_glacial_inflow_balance() const { return glacial_inflow_balance; }
+	void set_glacial_coarse_cell(real_t p_value) { glacial_coarse_cell = MAX(p_value, real_t(0.0)); }
+	real_t get_glacial_coarse_cell() const { return glacial_coarse_cell; }
+	void set_ice_worn_detail(bool p_enabled) { ice_worn_detail = p_enabled; }
+	bool is_ice_worn_detail() const { return ice_worn_detail; }
 	void set_glacial_sliding(real_t p_value) { glacial_sliding = MAX(p_value, real_t(0.0)); }
 	real_t get_glacial_sliding() const { return glacial_sliding; }
 	real_t get_last_glacial_eroded() const { return last_glacial_eroded; }
