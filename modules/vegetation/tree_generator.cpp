@@ -1317,6 +1317,29 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	const float size = params[PARAM_LEAF_SIZE];
 	RandomPCG lr;
 	lr.seed(uint64_t(seed) * 7919u + 13u);
+	// Leaf area budget. One internode stands for a whole twig system, so the raw count can put far
+	// more leaf area on the tree than it carries: an open oak came out near leaf area index 17. Real
+	// temperate broadleaf crowns hold LAI 3-8, about 5-6 on average (Breda, J. Exp. Bot. 54, 2003;
+	// Asner et al., Global Ecol. Biogeogr. 12, 2003), so drop whole twigs at random until the crown
+	// holds that. Leaf size stays true; the count and the mesh fall to real numbers.
+	float keep = 1.0f;
+	leaf_area_index = 0.0f;
+	if (!needles && per > 0 && crown_radius > 0.0f) {
+		// Blade area: 2 * width * size^2 * integral of sin(pi t^0.75) over t (0.656).
+		const float blade = 2.0f * params[PARAM_LEAF_WIDTH] * size * size * 0.656f;
+		double area = 0.0;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			const Node &n = nodes[i];
+			if ((!n.leafy && !spurs[i]) || n.removed || n.dead) {
+				continue;
+			}
+			const int tw = spurs[i] ? MAX(1, per / 12) : MAX(1, per / 4);
+			area += double(tw * MAX(1, per / tw)) * blade;
+		}
+		const float lai = float(area / (Math::PI * crown_radius * crown_radius));
+		keep = lai > MAX_LEAF_AREA_INDEX ? MAX_LEAF_AREA_INDEX / lai : 1.0f;
+		leaf_area_index = lai * keep;
+	}
 	for (int i = 1; i < int(nodes.size()); i++) {
 		const Node &n = nodes[i];
 		if ((!n.leafy && !spurs[i]) || n.removed || n.dead) {
@@ -1374,7 +1397,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// foliage fills the crown volume instead of lying in flat plates; leaf blades are tilted by
 		// a spherical-like leaf angle distribution (Campbell 1986: most broadleaf canopies have a
 		// mean leaf inclination near 45-60 degrees, not horizontal).
-		const int twigs = MAX(1, per / 4);
+		// Spurs on older wood carry a few short shoots, not a whole year's spray.
+		const int twigs = spurs[i] ? MAX(1, per / 12) : MAX(1, per / 4);
 		const int per_twig = MAX(1, per / twigs);
 		const float twig_r = params[PARAM_TIP_RADIUS] * 0.6f;
 		const float droop = params[PARAM_TWIG_DROOP];
@@ -1417,6 +1441,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float elev = Math::deg_to_rad(Math::lerp(-35.0f, 45.0f, lr.randf()));
 			const Vector3 tdir = (around * (0.8f * Math::cos(elev)) + n.dir * 0.5f + Vector3(0, Math::sin(elev), 0)).normalized();
 			const float tlen = n.length * (0.45f + 0.45f * lr.randf());
+			if (lr.randf() > keep) {
+				continue;
+			}
 			if (lr.randf() < 0.4f && per_twig >= 4) {
 				// A forked twig: two shorter shoots sharing the leaves.
 				const Vector3 fork = tdir.cross(n.dir).normalized();
@@ -1893,6 +1920,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_internode_count"), &TreeGenerator::get_internode_count);
 	ClassDB::bind_method(D_METHOD("get_dead_branch_count"), &TreeGenerator::get_dead_branch_count);
 	ClassDB::bind_method(D_METHOD("get_leaf_count"), &TreeGenerator::get_leaf_count);
+	ClassDB::bind_method(D_METHOD("get_leaf_area_index"), &TreeGenerator::get_leaf_area_index);
 	ClassDB::bind_method(D_METHOD("get_shed_count"), &TreeGenerator::get_shed_count);
 	ClassDB::bind_method(D_METHOD("get_generation_usec"), &TreeGenerator::get_generation_usec);
 

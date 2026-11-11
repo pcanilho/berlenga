@@ -292,11 +292,23 @@ canopy trees, then open-grown trees in gaps, then shrubs under their shade limit
 take only gaps earlier crowns leave, so overlapping belts form ecotones instead of stacking.
 Bench: `docs/bench/trees -- --stands --test | --map= | --region= | --plot=N`.
 
-Known limits: open-grown conifers spread too wide at the base (spruce about 45 m across where a
+**Foliage through the crown.** Open-grown trees keep leaves down to the lower branches: a weaker,
+deeper shadow (strength 0.08 over 4 cells) and a third of the old shedding. Short shoots (spurs)
+on wood under 30 years and 12 cm thick carry leaves wherever Beer-Lambert light exp(-shadow)
+stays above 2%; they are added to the mesh after growth, since letting them shade during growth
+collapsed crowns to poles. Twigs leave in all directions and some fork; leaf normals follow a
+spherical-like inclination (Campbell 1986). Holly, yew and box form the evergreen understorey
+(holly kept to January above -1.5 C, Iversen 1944).
+
+**Leaf area budget.** One internode stands for a twig system, which put an open oak near leaf area
+index 17. Whole twigs are now dropped at random to at most LAI 5.5, the temperate broadleaf mean
+(Breda 2003; Asner et al. 2003); leaf size stays true. Open oak: 442k leaves, 7.7M triangles
+(was 1.49M, 23.6M). `get_leaf_area_index()` reports it. The hero mesh is still millions of
+triangles; LODs and leaf clusters are stage 2.
+
+Known limits: open-grown conifers spread too wide at the base (spruce about 39 m across where a
 solitary one is 10 to 14 m); a lateral-extension factor (Wilson 2000) made crowns collapse in
-the shadow model, so this needs its own pass. Generated mountainsides from TerrainGenerator3D
-are bare rock at 40 to 50 degrees with no soil, so no tree grows on them; the region bench uses
-a smooth massif until that changes.
+the shadow model, so this needs its own pass.
 
 ## References
 
@@ -322,3 +334,8 @@ a smooth massif until that changes.
   Europe*, 1988. Ozenda, *La vegetation de la chaine alpine*, 1985. Korner, *Alpine Treelines*,
   2012. Wilson, *Apical control of branch growth and angle in woody plants*, Am. J. Bot. 2000.
   Kantola and Makela, *Crown development in Norway spruce*, Trees 2004.
+- Campbell, *Extinction coefficients for radiation in plant canopies calculated using an
+  ellipsoidal inclination angle distribution*, Agric. For. Meteorol. 1986. Iversen, *Viscum,
+  Hedera and Ilex as climate indicators*, 1944. Breda, *Ground-based measurements of leaf area
+  index*, J. Exp. Bot. 2003. Asner, Scurlock, Hicke, *Global synthesis of leaf area index
+  observations*, Global Ecol. Biogeogr. 2003. Larcher, *Physiological Plant Ecology*, 2003.

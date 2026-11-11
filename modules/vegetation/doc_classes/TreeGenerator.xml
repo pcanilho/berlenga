@@ -66,6 +66,12 @@
 				Internodes (stem segments) of the last tree grown.
 			</description>
 		</method>
+		<method name="get_leaf_area_index" qualifiers="const">
+			<return type="float" />
+			<description>
+				Leaf area of the last broadleaf tree grown divided by its crown's ground area. The mesh is thinned to at most 5.5, the average of temperate broadleaf crowns. Zero for conifers.
+			</description>
+		</method>
 		<method name="get_leaf_count" qualifiers="const">
 			<return type="int" />
 			<description>

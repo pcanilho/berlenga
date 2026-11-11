@@ -201,6 +201,8 @@ private:
 	float crown_radius = 0.0f;
 	float crown_base = 0.0f;
 	int leaf_count = 0;
+	float leaf_area_index = 0.0f;
+	static constexpr float MAX_LEAF_AREA_INDEX = 5.5f;
 	int shed_count = 0;
 	uint64_t generation_usec = 0;
 
@@ -268,6 +270,7 @@ public:
 	int get_internode_count() const;
 	int get_dead_branch_count() const;
 	int get_leaf_count() const { return leaf_count; }
+	float get_leaf_area_index() const { return leaf_area_index; }
 	int get_shed_count() const { return shed_count; }
 	int get_generation_usec() const { return int(generation_usec); }
 
