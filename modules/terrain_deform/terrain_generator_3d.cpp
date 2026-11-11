@@ -297,6 +297,14 @@ bool TerrainGenerator3D::generate() {
 		sp.b.outlet = outlet_mask.ptr();
 	}
 
+	// Land beyond the map draining in at the inflow markers, on every grid the steps run on.
+	const LocalVector<InflowPoint> inflow_points = _inflow_points();
+	LocalVector<double> inflow_fine;
+	if (!inflow_points.is_empty()) {
+		_inflow_grid(inflow_points, nx, ny, cell_size, sp.b.outlet, inflow_fine);
+		sp.b.inflow_area = inflow_fine.ptr();
+	}
+
 	// Layered rock (Forte, Yanites and Whipple 2016; Haviv et al. 2010): bands of hard rock in a sequence that rises
 	// with the uplift. A node's rock is the layer at its stratigraphic height: the ground height minus the uplift
 	// since the start (the rock under it has risen that far), plus the dip along its direction and a slow wobble.
@@ -400,7 +408,7 @@ bool TerrainGenerator3D::generate() {
 	} else {
 		struct Level {
 			int nx = 0, ny = 0;
-			LocalVector<double> up, h, sed;
+			LocalVector<double> up, h, sed, inflow;
 			LocalVector<uint8_t> outlet;
 		};
 		LocalVector<Level> lv;
@@ -450,6 +458,14 @@ bool TerrainGenerator3D::generate() {
 			sp.b.uplift = l == 0 ? up.ptr() : L.up.ptr();
 			sp.b.outlet = l == 0 ? fine_outlet : (L.outlet.is_empty() ? nullptr : L.outlet.ptr());
 			sp.invalidate_outlets();
+			if (!inflow_points.is_empty()) {
+				if (l == 0) {
+					sp.b.inflow_area = inflow_fine.ptr();
+				} else {
+					_inflow_grid(inflow_points, L.nx, L.ny, sp.p.dx, sp.b.outlet, L.inflow);
+					sp.b.inflow_area = L.inflow.ptr();
+				}
+			}
 			strata_prepare(L.nx, L.ny, sp.p.dx);
 			for (int s = 0; s < p_steps; s++) {
 				change = strata_step(L.nx * L.ny, p_h, sp.b.uplift);
@@ -511,6 +527,14 @@ bool TerrainGenerator3D::generate() {
 		sp.b.uplift = up.ptr();
 		sp.b.outlet = fine_outlet;
 		sp.invalidate_outlets();
+		sp.b.inflow_area = inflow_fine.is_empty() ? nullptr : inflow_fine.ptr();
+	}
+	inflow_cells.clear();
+	if (!inflow_fine.is_empty()) {
+		inflow_cells.resize(n);
+		for (int i = 0; i < n; i++) {
+			inflow_cells[i] = float(inflow_fine[i]);
+		}
 	}
 	hardness.clear();
 	if (strata_enabled) {
@@ -603,6 +627,7 @@ bool TerrainGenerator3D::generate() {
 	}
 	const uint64_t tr = OS::get_singleton()->get_ticks_usec();
 	_route_rivers();
+	_bake_lips();
 	water_usec += OS::get_singleton()->get_ticks_usec() - tr;
 	last_water_msec = double(water_usec) / 1000.0;
 	_bake_detail_keep();
@@ -621,6 +646,9 @@ void TerrainGenerator3D::clear_result() {
 	drainage.clear();
 	sediment.clear();
 	alluvium_reach.clear();
+	inflow_cells.clear();
+	lips.clear();
+	lip_buckets.clear();
 	uplift_field.clear();
 	soil.clear();
 	rock.clear();
@@ -760,6 +788,13 @@ void TerrainGenerator3D::_alluvium_reach() {
 	}
 }
 
+namespace {
+constexpr real_t LIP_BUCKET = 128.0; // m
+constexpr real_t LIP_FACE = 1.0; // m the face takes from the lip's height to the foot's
+constexpr real_t LIP_SIDE = 12.0; // m beside the held width over which the step fades into the slope
+constexpr real_t LIP_END = 8.0; // m before the lip and past the foot over which it fades
+} // namespace
+
 float TerrainGenerator3D::_ground_detail(real_t p_x, real_t p_z) const {
 	const float base = _sample(heights, p_x, p_z);
 	if (!detail_enabled || detail_octaves <= 0 || detail_depth <= 0.0 || Math::is_nan(base)) {
@@ -874,7 +909,7 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 			}
 		}
 	}
-	return g;
+	return lips.is_empty() ? g : _apply_lips(p_x, p_z, g);
 }
 
 // Bilinear on the tile erosion grid (its cells are fine: a few metres).
@@ -1209,6 +1244,20 @@ Array TerrainGenerator3D::get_waterfalls(real_t p_min_area, real_t p_min_height)
 				w["river"] = r;
 				w["index"] = k;
 				w["hardness"] = get_rock_hardness(top);
+				// Free fall: the jet leaving the brink at critical depth (v = (g q)^(1/3), q per metre of width) clears
+				// the face over the drop when it travels further out than the face recedes.
+				const real_t q = real_t(w["discharge"]) / MAX(widths[k], 0.5f);
+				const real_t v = Math::pow(9.81f * MAX(q, real_t(0.0)), real_t(1.0 / 3.0));
+				const real_t hgt = MAX(top.y - bottom.y, real_t(0.0));
+				const real_t throw_m = v * Math::sqrt(2.0f * hgt / 9.81f);
+				bool lipped = false;
+				for (const FallLip &l : lips) {
+					lipped = lipped || (l.top.distance_to(Vector2(top.x, top.z)) < 0.5f * result_cell);
+				}
+				const real_t face = lipped ? LIP_FACE : Vector2(top.x - bottom.x, top.z - bottom.z).length();
+				w["face_run"] = face;
+				w["jet_throw"] = throw_m;
+				w["free_fall"] = throw_m > face;
 				out.push_back(w);
 			}
 			k = e;
@@ -1381,7 +1430,8 @@ void TerrainGenerator3D::_route_runoff(const LocalVector<int32_t> &p_receivers, 
 					const Vector3 p = _cell_position(i);
 					mm = _runoff_sample(m, p.x, p.z);
 				}
-				acc[i] = mm * to_flow;
+				// Land beyond the map draining in here gets the same rain and melt as the node it enters at.
+				acc[i] = mm * to_flow * (inflow_cells.is_empty() ? 1.0 : 1.0 + double(inflow_cells[i]) / ca);
 			}
 		});
 		for (uint32_t q = 0; q < p_order.size(); q++) {
@@ -1837,6 +1887,170 @@ double TerrainGenerator3D::_marker_face_slope(const Node3D *p_marker) {
 
 // Lakes: the dams on lake markers first, then automatic ones on valley floors with at least lake_catchment above
 // them, in a seeded order, lake_spacing apart, away from the sea.
+/* Fall lips */
+
+// A free-falling fall needs a face the jet clears: over hard rock the face stands vertical (the caprock lip). The
+// grid holds a drop over a whole cell at best (16 m: about 58 degrees for 25 m), so each fall the rivers make over
+// hard rock (at least 4 m, rock at the lip at least half hard) is kept here, and _ground holds the lip's height to the
+// middle of the drop and the foot's after it, the step taking LIP_FACE metres.
+void TerrainGenerator3D::_bake_lips() {
+	lips.clear();
+	lip_buckets.clear();
+	if (!fall_lips || hardness.size() != uint32_t(nx * ny)) {
+		return;
+	}
+	const Array rivers = _rivers(1.0e5, true);
+	for (int r = 0; r < rivers.size(); r++) {
+		const Dictionary d = rivers[r];
+		const PackedInt32Array cells = d["cells"];
+		const PackedFloat32Array widths = d["widths"];
+		auto steep = [&](int a) {
+			const int u = cells[a], v = cells[a + 1];
+			const real_t run = result_cell * Math::sqrt(real_t((u % nx - v % nx) * (u % nx - v % nx) + (u / nx - v / nx) * (u / nx - v / nx)));
+			return heights[u] - heights[v] > run;
+		};
+		int k = 0;
+		while (k + 1 < cells.size()) {
+			if (!steep(k)) {
+				k++;
+				continue;
+			}
+			int e = k;
+			while (e + 1 < cells.size() && steep(e)) {
+				e++;
+			}
+			const int u = cells[k], v = cells[e];
+			const real_t drop = heights[u] - heights[v];
+			if (drop >= 4.0f && hardness[u] >= 0.5f) {
+				FallLip lip;
+				const Vector3 a = _cell_position(u), b = _cell_position(v);
+				lip.top = Vector2(a.x, a.z);
+				const Vector2 dv = Vector2(b.x, b.z) - lip.top;
+				lip.run = dv.length();
+				lip.dir = lip.run > 0.0 ? dv / lip.run : Vector2(0, 1);
+				lip.h_top = heights[u];
+				lip.h_bottom = heights[v];
+				lip.half_width = MAX(real_t(widths[k]), real_t(4.0));
+				lips.push_back(lip);
+			}
+			k = e;
+		}
+	}
+	if (lips.is_empty()) {
+		return;
+	}
+	lip_bx = int(Math::ceil(result_rect.size.x / LIP_BUCKET)) + 1;
+	lip_bz = int(Math::ceil(result_rect.size.y / LIP_BUCKET)) + 1;
+	lip_buckets.resize(lip_bx * lip_bz);
+	for (uint32_t i = 0; i < lips.size(); i++) {
+		const FallLip &l = lips[i];
+		const real_t reach = l.half_width + LIP_SIDE + l.run + LIP_END;
+		const int x0 = CLAMP(int(Math::floor((l.top.x - reach - result_rect.position.x) / LIP_BUCKET)), 0, lip_bx - 1);
+		const int x1 = CLAMP(int(Math::floor((l.top.x + reach - result_rect.position.x) / LIP_BUCKET)), 0, lip_bx - 1);
+		const int z0 = CLAMP(int(Math::floor((l.top.y - reach - result_rect.position.y) / LIP_BUCKET)), 0, lip_bz - 1);
+		const int z1 = CLAMP(int(Math::floor((l.top.y + reach - result_rect.position.y) / LIP_BUCKET)), 0, lip_bz - 1);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				lip_buckets[z * lip_bx + x].push_back(int(i));
+			}
+		}
+	}
+}
+
+float TerrainGenerator3D::_apply_lips(real_t p_x, real_t p_z, float p_g) const {
+	const int bx = int(Math::floor((p_x - result_rect.position.x) / LIP_BUCKET));
+	const int bz = int(Math::floor((p_z - result_rect.position.y) / LIP_BUCKET));
+	if (bx < 0 || bz < 0 || bx >= lip_bx || bz >= lip_bz) {
+		return p_g;
+	}
+	float g = p_g;
+	for (int i : lip_buckets[bz * lip_bx + bx]) {
+		const FallLip &l = lips[i];
+		const Vector2 q = Vector2(p_x, p_z) - l.top;
+		const real_t s = q.dot(l.dir);
+		const real_t t = Math::abs(q.cross(l.dir));
+		if (s < -LIP_END || s > l.run + LIP_END || t > l.half_width + LIP_SIDE) {
+			continue;
+		}
+		auto fade = [](real_t x) { return x * x * (real_t(3.0) - real_t(2.0) * x); };
+		const real_t wa = s < 0.0 ? fade(CLAMP(1.0 + s / LIP_END, 0.0, 1.0)) : (s > l.run ? fade(CLAMP(1.0 - (s - l.run) / LIP_END, 0.0, 1.0)) : 1.0);
+		const real_t wl = t <= l.half_width ? 1.0 : fade(CLAMP(1.0 - (t - l.half_width) / LIP_SIDE, 0.0, 1.0));
+		const real_t w = wa * wl;
+		if (w <= 0.0) {
+			continue;
+		}
+		// The step: the lip's height to the middle of the drop, the foot's after it.
+		const real_t u = CLAMP((s - 0.5 * l.run) / LIP_FACE + 0.5, 0.0, 1.0);
+		const real_t h = Math::lerp(l.h_top, l.h_bottom, fade(u));
+		g = float(Math::lerp(real_t(g), h, w));
+	}
+	return g;
+}
+
+/* Inflows */
+
+LocalVector<TerrainGenerator3D::InflowPoint> TerrainGenerator3D::_inflow_points() const {
+	LocalVector<InflowPoint> pts;
+	for (int m = 0; m < inflows.size(); m++) {
+		const Node3D *marker = Object::cast_to<Node3D>(get_node_or_null(inflows[m]));
+		if (!marker) {
+			WARN_PRINT(vformat("TerrainGenerator3D: inflow marker %s is not a Node3D in the tree; ignored.", String(inflows[m])));
+			continue;
+		}
+		InflowPoint ip;
+		const Vector3 p = marker->get_global_position();
+		ip.position = Vector2(p.x, p.z);
+		ip.area = double(marker->has_meta("area") ? real_t(marker->get_meta("area")) : inflow_area) * 1.0e6;
+		if (ip.area > 0.0) {
+			pts.push_back(ip);
+		}
+	}
+	return pts;
+}
+
+// The node each inflow enters at on a p_nx x p_ny grid of p_dx spacing: the one under the marker, or, when that is
+// an outlet (an open map edge or the sea), the nearest node within 8 that is not, so the water runs over the land.
+void TerrainGenerator3D::_inflow_grid(const LocalVector<InflowPoint> &p_points, int p_nx, int p_ny, double p_dx, const uint8_t *p_outlet, LocalVector<double> &r_area) const {
+	r_area.resize(p_nx * p_ny);
+	memset(r_area.ptr(), 0, sizeof(double) * p_nx * p_ny);
+	auto outlet = [&](int x, int z) {
+		return (p_outlet && p_outlet[z * p_nx + x]) || ((outlet_edges & 1) && x == 0) || ((outlet_edges & 2) && x == p_nx - 1) || ((outlet_edges & 4) && z == 0) || ((outlet_edges & 8) && z == p_ny - 1);
+	};
+	for (const InflowPoint &ip : p_points) {
+		const int cx = CLAMP(int(Math::round((ip.position.x - result_rect.position.x) / p_dx)), 0, p_nx - 1);
+		const int cz = CLAMP(int(Math::round((ip.position.y - result_rect.position.y) / p_dx)), 0, p_ny - 1);
+		int best = -1, best_d = 1 << 30;
+		for (int z = MAX(cz - 8, 0); z <= MIN(cz + 8, p_ny - 1); z++) {
+			for (int x = MAX(cx - 8, 0); x <= MIN(cx + 8, p_nx - 1); x++) {
+				const int d = (x - cx) * (x - cx) + (z - cz) * (z - cz);
+				if (d < best_d && !outlet(x, z)) {
+					best = z * p_nx + x;
+					best_d = d;
+				}
+			}
+		}
+		if (best >= 0) {
+			r_area[best] += ip.area;
+		}
+	}
+}
+
+// Where land beyond the map drains in: position (on the ground) and area (m2), one per node.
+Array TerrainGenerator3D::get_inflow_cells() const {
+	Array out;
+	for (uint32_t i = 0; i < inflow_cells.size(); i++) {
+		if (inflow_cells[i] > 0.0f) {
+			Dictionary d;
+			Vector3 p = _cell_position(int(i));
+			p.y = heights[i];
+			d["position"] = p;
+			d["area"] = inflow_cells[i];
+			out.push_back(d);
+		}
+	}
+	return out;
+}
+
 void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 	const int n = nx * ny;
 	lake_info.clear();
@@ -2024,7 +2238,7 @@ void TerrainGenerator3D::_route_rivers() {
 	indeg.resize(n);
 	memset(indeg.ptr(), 0, sizeof(int32_t) * n);
 	for (int i = 0; i < n; i++) {
-		river_area[i] = float(double(cell_size) * cell_size);
+		river_area[i] = float(double(cell_size) * cell_size + (inflow_cells.is_empty() ? 0.0 : double(inflow_cells[i])));
 		if (rec2[i] != i) {
 			indeg[rec2[i]]++;
 		}
@@ -2835,6 +3049,13 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_beach_slope"), &TerrainGenerator3D::get_beach_slope);
 	ClassDB::bind_method(D_METHOD("set_lake_count", "count"), &TerrainGenerator3D::set_lake_count);
 	ClassDB::bind_method(D_METHOD("get_lake_count"), &TerrainGenerator3D::get_lake_count);
+	ClassDB::bind_method(D_METHOD("set_fall_lips", "enable"), &TerrainGenerator3D::set_fall_lips);
+	ClassDB::bind_method(D_METHOD("get_fall_lips"), &TerrainGenerator3D::get_fall_lips);
+	ClassDB::bind_method(D_METHOD("set_inflows", "markers"), &TerrainGenerator3D::set_inflows);
+	ClassDB::bind_method(D_METHOD("get_inflows"), &TerrainGenerator3D::get_inflows);
+	ClassDB::bind_method(D_METHOD("set_inflow_area", "km2"), &TerrainGenerator3D::set_inflow_area);
+	ClassDB::bind_method(D_METHOD("get_inflow_area"), &TerrainGenerator3D::get_inflow_area);
+	ClassDB::bind_method(D_METHOD("get_inflow_cells"), &TerrainGenerator3D::get_inflow_cells);
 	ClassDB::bind_method(D_METHOD("set_lakes", "markers"), &TerrainGenerator3D::set_lakes);
 	ClassDB::bind_method(D_METHOD("get_lakes"), &TerrainGenerator3D::get_lakes);
 	ClassDB::bind_method(D_METHOD("set_lake_depth", "depth"), &TerrainGenerator3D::set_lake_depth);
@@ -2978,6 +3199,10 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lake_min_area", PROPERTY_HINT_RANGE, "0,1e8,1,or_greater,suffix:m²"), "set_lake_min_area", "get_lake_min_area");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lake_spacing", PROPERTY_HINT_RANGE, "0,20000,1,or_greater,suffix:m"), "set_lake_spacing", "get_lake_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lake_evaporation", PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:mm/yr"), "set_lake_evaporation", "get_lake_evaporation");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fall_lips"), "set_fall_lips", "get_fall_lips");
+	ADD_GROUP("Inflows", "inflow");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "inflows", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_inflows", "get_inflows");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "inflow_area", PROPERTY_HINT_RANGE, "0,10000,0.1,or_greater,suffix:km²"), "set_inflow_area", "get_inflow_area");
 
 	ADD_GROUP("Output", "");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "terrain"), "set_terrain", "get_terrain");

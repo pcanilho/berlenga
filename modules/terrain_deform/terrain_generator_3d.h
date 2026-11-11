@@ -144,6 +144,10 @@ private:
 	// Lakes: natural dams across valleys, the water behind them.
 	int lake_count = 0;
 	TypedArray<NodePath> lakes; // markers: a dam where each one stands (metadata "depth" overrides lake_depth; "rock_lip" or "face_slope" for a steep sill)
+	// Inflows: land beyond the map that drains in at a marker (metadata "area" in km2, else inflow_area).
+	TypedArray<NodePath> inflows;
+	real_t inflow_area = 25.0; // km2
+	LocalVector<float> inflow_cells; // m2 entering at each node of the result (empty: none)
 	real_t lake_depth = 20.0; // m of dam above the valley floor
 	real_t lake_catchment = 2.0e5; // m^2, least drainage area at an automatic dam
 	real_t lake_min_area = 10000.0; // m^2
@@ -175,6 +179,21 @@ private:
 	LocalVector<int32_t> water_body;
 	LocalVector<float> water_depth;
 	LocalVector<float> lake_rim; // the level of a lake within three cells, NaN elsewhere
+	// Falls over hard rock: the face stands vertical (the caprock lip, Gilbert 1907; Haviv et al. 2010), sharper than
+	// the grid can hold, so _ground steps the ground there.
+	struct FallLip {
+		Vector2 top; // lip cell, world x z
+		Vector2 dir; // downstream, unit
+		real_t run = 0.0; // m from the lip cell to the foot cell
+		real_t h_top = 0.0, h_bottom = 0.0;
+		real_t half_width = 0.0; // m held vertical either side of the river's line
+	};
+	bool fall_lips = true;
+	LocalVector<FallLip> lips;
+	LocalVector<LocalVector<int>> lip_buckets; // per LIP_BUCKET-metre square of the result
+	int lip_bx = 0, lip_bz = 0;
+	void _bake_lips();
+	float _apply_lips(real_t p_x, real_t p_z, float p_g) const;
 	LocalVector<float> lake_rim_weight; // how firmly the ground holds that level: 1 within a cell, 0 at three
 	LocalVector<int32_t> river_receivers;
 	LocalVector<float> river_area;
@@ -208,6 +227,12 @@ private:
 	void _build_sea_mask(LocalVector<uint8_t> &r_sea) const;
 	void _shape_coast(const LocalVector<uint8_t> &p_sea);
 	void _make_lakes(const LocalVector<uint8_t> &p_sea);
+	struct InflowPoint {
+		Vector2 position;
+		double area = 0.0; // m2
+	};
+	LocalVector<InflowPoint> _inflow_points() const;
+	void _inflow_grid(const LocalVector<InflowPoint> &p_points, int p_nx, int p_ny, double p_dx, const uint8_t *p_outlet, LocalVector<double> &r_area) const;
 	void _route_rivers();
 	float _water_fade(real_t p_x, real_t p_z) const;
 	Ref<ArrayMesh> _lake_outline(int p_lake, const Vector3 &p_origin) const;
@@ -433,6 +458,13 @@ public:
 	real_t get_beach_slope() const { return beach_slope; }
 	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
 	int get_lake_count() const { return lake_count; }
+	void set_fall_lips(bool p_enable) { fall_lips = p_enable; }
+	bool get_fall_lips() const { return fall_lips; }
+	void set_inflows(const TypedArray<NodePath> &p_inflows) { inflows = p_inflows; }
+	TypedArray<NodePath> get_inflows() const { return inflows; }
+	void set_inflow_area(real_t p_km2) { inflow_area = MAX(p_km2, real_t(0.0)); }
+	real_t get_inflow_area() const { return inflow_area; }
+	Array get_inflow_cells() const;
 	void set_lakes(const TypedArray<NodePath> &p_lakes) { lakes = p_lakes; }
 	TypedArray<NodePath> get_lakes() const { return lakes; }
 	void set_lake_depth(real_t p_value) { lake_depth = MAX(p_value, real_t(1.0)); }

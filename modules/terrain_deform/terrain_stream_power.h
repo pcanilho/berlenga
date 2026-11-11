@@ -112,6 +112,9 @@ public:
 		const double *hard_depth = nullptr;
 		// Optional diffusion factor per cell (0..1): bare hard rock does not creep, so its cliffs stay sharp.
 		const double *diffusion_scale = nullptr;
+		// Optional drainage area entering at a cell from beyond the grid (m^2): a river from upstream of the map edge,
+		// or a lake fed by a catchment the map does not hold. It erodes and carries water as that much land would.
+		const double *inflow_area = nullptr;
 	};
 
 	Params p;
@@ -258,6 +261,11 @@ public:
 		// The flux runs down the single receiver tree, so it is spread over that tree's area: dividing it by the
 		// multiple-flow area, which can be far smaller on a cell the tree funnels into, would pile it up there.
 		dep_area.assign(n, cell_area);
+		if (b.inflow_area) {
+			for (int i = 0; i < n; i++) {
+				dep_area[i] += b.inflow_area[i];
+			}
+		}
 		dep_undercut.assign(n, 0);
 		for (int k = n - 1; k >= 0; k--) {
 			const int i = b.stack[k];
@@ -656,7 +664,7 @@ private:
 		const int n = p.nx * p.ny;
 		const double cell_area = p.dx * p.dx;
 		for (int i = 0; i < n; i++) {
-			b.area[i] = cell_area;
+			b.area[i] = b.inflow_area ? cell_area + b.inflow_area[i] : cell_area;
 		}
 		if (p.flow_exponent <= 0.0) {
 			// D8: down the receiver tree, from the top of the stack.

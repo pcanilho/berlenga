@@ -839,6 +839,39 @@ drew a ripple pattern over the plain; the generator now publishes the share of d
 heights at the fan front, from the solver itself (rivers re-cutting the toe each step); more sediment diffusion
 (Fastscape's separate sediment diffusivity) removed them but left a jagged scarp, so it needs more work.
 
+## One main river: inflow from beyond the map, and caprock lips (11 Nov, Paulo's pick)
+
+The valley's rivers carried about 0.1 m3/s at most: the 16 km2 tile holds catchments of 2.6 km2 at best, so no fall
+can be a curtain and no river dominates the plain. Real valleys are fed from far upstream.
+
+Research:
+
+- Landscape models with open boundaries take water and sediment in at boundary nodes: Landlab's flow routing takes a
+  per-node water input (`water__unit_flux_in`), FastScape and goSPL a precipitation or inflow field. Drainage area
+  is the stream power law's proxy for discharge, so an inflow of land is extra area at a node.
+- Large rivers are graded (Mackin 1948): with 60 km2 coming in at the map edge the river cut a gorge through the range
+  to sea level and its falls went to the side streams. Falls on large rivers sit where a hard caprock lip holds them
+  (Niagara; Gilbert 1907; Haviv et al. 2010), which the strata model already makes.
+- A free-falling jet needs a face it clears: a vertical or undercut lip. The jet leaves the brink near critical depth
+  (Rouse 1936), at v = (g q)^(1/3) per unit width, and travels v sqrt(2H/g) out over a drop H. A steep face that
+  recedes further than that is a cascade (horsetail), not a plunge.
+
+Built:
+
+- `inflows` (markers, metadata `area` in km2, default `inflow_area` 25): land beyond the map draining in at the
+  marker's node (the nearest node off an outlet edge or the sea). It counts as drainage area in every erosion step
+  and level, in deposition, in the rivers' routing and in the monthly runoff (at the climate of the node it enters
+  at), so discharge and the water balance stay one. `get_inflow_cells()` lists them. No sediment comes in with it.
+- `fall_lips` (default on): falls of 4 m or more over rock at least half hard keep a vertical face. The grid holds a
+  drop over a whole 16 m cell at best (25 m drop: about 58 degrees), so the ground holds the lip's height to the
+  middle of the drop and the foot's after it, the step taking 1 m, across the river's width plus 12 m fading into the
+  slope. `get_waterfalls()` now gives `face_run`, `jet_throw` and `free_fall` by the rule above.
+- Showcase valley (`--layout=valley --inflow=60 --inflow-at=lake`): 60 km2 into the high lake gives its outflow 2.2
+  m3/s (3.0 at the spring peak); it falls 63 m over a caprock lip (jet 4.6 m out, face 1 m) and the plain's streams
+  join it as one main river to the sea. At the north edge instead (`--inflow-at=edge`) it cuts a graded gorge with no
+  fall. The river module tests clearance against its sections' bed (4 m ground body in the bench, sections apart),
+  so it still sees the face as a ramp; sampling the face by raycast as the lip already is would make it agree.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

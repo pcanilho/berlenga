@@ -260,6 +260,19 @@ func _generate() -> void:
 	if lake_marker != null:
 		var lp: Array[NodePath] = [gen.get_path_to(lake_marker)]
 		gen.lakes = lp
+		if args.has("inflow"):
+			# The main river's catchment reaches past the map's north edge: that land drains in where the river
+			# enters (--inflow-x/z, default the north edge above the cirque), so the high lake and its fall carry it.
+			# --inflow-at=lake: it drains into the high lake instead (a catchment behind the cirque).
+			var inflow := lake_marker
+			if args.get("inflow-at", "edge") != "lake":
+				inflow = Node3D.new()
+				inflow.name = "Inflow"
+				inflow.position = Vector3(float(args.get("inflow-x", "0")), 0, float(args.get("inflow-z", "-2048")))
+				add_child(inflow)
+			inflow.set_meta("area", float(args["inflow"]))
+			var ip: Array[NodePath] = [gen.get_path_to(inflow)]
+			gen.inflows = ip
 	var t := Time.get_ticks_msec()
 	# One climate for the rivers (rain and snowmelt by month), the data map's climate fields and the plants: a mild
 	# coast with the wet wind from the sea (south, +Z).
@@ -442,6 +455,19 @@ func _lake_and_fall() -> void:
 		fall_height = float(tall["height"])
 		var fd := bottom - top
 		fall_dir = Vector2(fd.x, fd.z).normalized() if Vector2(fd.x, fd.z).length() > 0.1 else Vector2(0, 1)
+		if args.has("lip-profile"):
+			var lt: Vector3 = tall["top"]
+			var lb: Vector3 = tall["bottom"]
+			var dd := Vector3(lb.x - lt.x, 0, lb.z - lt.z).normalized()
+			var prof := PackedStringArray()
+			for k in range(-4, 44, 2):
+				var q := lt + dd * float(k)
+				prof.append("%d:%.1f" % [k, gen.get_height(q)])
+			_log("lip profile (m along: height) " + " ".join(prof))
+		if args.has("list-falls"):
+			for f in gen_falls:
+				var run: float = Vector2(f["top"].x - f["bottom"].x, f["top"].z - f["bottom"].z).length()
+				_log("  fall %.0f m over %.0f m, Q %.2f, hardness %.2f, face %.1f m, jet %.1f m, free %s, top %s" % [f["height"], run, f["discharge"], f["hardness"], f["face_run"], f["jet_throw"], str(f["free_fall"]), f["top"]])
 		_log("waterfalls from the generator: %d, tallest %.0f m high, %.0f m wide, %.1f m3/s at %s" % [gen_falls.size(), tall["height"], tall["width"], tall["discharge"], top])
 	_log("lake at %s level %.1f m" % [lake_center, lake_level])
 
