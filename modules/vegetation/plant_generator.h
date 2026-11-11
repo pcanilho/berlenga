@@ -140,7 +140,16 @@ private:
 		PackedColorArray colors; // Ambient occlusion guess, multiplies the albedo.
 		PackedInt32Array indices;
 	};
-	enum Surface {
+	struct CardSurface {
+		int surface = -1; // Index in the ImporterMesh.
+		Array arrays;
+		PackedFloat32Array custom; // Per vertex: card pivot xyz; w: length in mm + rank.
+		Dictionary lods; // Error (mesh units) to the kept triangles.
+		float last_card_error = 0.0f; // The last level that drops cards, and its index count.
+		int last_card_indices = 0;
+	};
+	bool _card_lods(const Builder &p_builder, CardSurface &r_cards) const;
+		enum Surface {
 		SURFACE_LEAF,
 		SURFACE_STEM,
 		SURFACE_PETAL,
