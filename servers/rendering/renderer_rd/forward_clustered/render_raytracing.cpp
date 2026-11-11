@@ -7134,6 +7134,7 @@ RID RenderRaytracing::update_uniform_set(RTViewportState *p_state, const RenderD
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_MAX_TRANSPARENCY_LAYERS_REFLECTION] = (float)GLOBAL_GET_CACHED(int, "rendering/pathtracing/max_transparency_layers_reflection");
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_MAX_TRANSPARENCY_LAYERS_INDIRECT] = (float)GLOBAL_GET_CACHED(int, "rendering/pathtracing/max_transparency_layers_indirect");
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSPARENCY_MAX_BOUNCE] = (float)GLOBAL_GET_CACHED(int, "rendering/pathtracing/transparency_max_bounce");
+		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSMISSION_BOUNCES] = (float)GLOBAL_GET_CACHED(int, "rendering/pathtracing/transmission_bounces");
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSPARENT_COUNT] = (float)p_state->transparent_instance_count;
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSPARENCY_INDIRECT_RANGE] = (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/transparency_indirect_range");
 		rt_ubo.params[SceneShaderRaytracing::RT_PARAM_TRANSPARENCY_INDIRECT_FADE] = (float)GLOBAL_GET_CACHED(double, "rendering/pathtracing/transparency_indirect_fade");

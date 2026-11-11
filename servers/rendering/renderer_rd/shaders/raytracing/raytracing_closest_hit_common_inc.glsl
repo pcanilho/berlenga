@@ -1203,7 +1203,13 @@ bool sample_surface_continuation(HitData h, MaterialResult m, vec3 N, vec3 V, in
 				return false;
 			}
 			ps.throughput *= trans_weight / p_trans;
-			ps.packed_bounces_flags = inc_total_bounce(ps.packed_bounces_flags) & ~LAST_BOUNCE_DIFFUSE_FLAG;
+			// Transmission after the path's first bounce is free (Cycles keeps transmission bounces apart the
+			// same way, at any roughness): out through a pane's back face, or in and out of ice, the light keeps
+			// its bounces for what lies beyond. Raygen caps the extra segments (RT_PARAM_TRANSMISSION_BOUNCES).
+			// The first crossing counts, so "no bounces yet" still means the camera's own hit.
+			bool free_crossing = get_total_bounces(ps.packed_bounces_flags) > 0u && get_rt_param(RT_PARAM_TRANSMISSION_BOUNCES) > 0.0 &&
+					(ps.packed_bounces_flags & RT_IR_DIFFUSE_FLAG) == 0u;
+			ps.packed_bounces_flags = (free_crossing ? ps.packed_bounces_flags : inc_total_bounce(ps.packed_bounces_flags)) & ~LAST_BOUNCE_DIFFUSE_FLAG;
 			if (material.roughness > SINGULAR_ROUGHNESS_MAX) {
 				ps.packed_bounces_flags |= NON_SINGULAR_PATH_FLAG;
 			}

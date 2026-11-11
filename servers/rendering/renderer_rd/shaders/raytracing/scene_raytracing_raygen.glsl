@@ -902,7 +902,10 @@ void main() {
 		vec3 ir_x2 = vec3(0.0);
 		vec3 ir_n2 = vec3(0.0, 0.0, 1.0);
 
-		[[dont_unroll]] for (uint bounce = 0u; bounce <= max_bounces; bounce++) {
+		// Transmission past the first bounce does not count toward max_bounces (see the transmission lobe in
+		// sample_surface_continuation()); the extra segments it may take are capped here.
+		const uint segment_limit = max_bounces + uint(get_rt_param(RT_PARAM_TRANSMISSION_BOUNCES));
+		[[dont_unroll]] for (uint bounce = 0u; bounce <= segment_limit; bounce++) {
 			vec3 throughput_entry = ps.throughput;
 			vec3 radiance_pre = ps.radiance;
 			uint flags_entry = ps.packed_bounces_flags;

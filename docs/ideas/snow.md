@@ -841,8 +841,11 @@ where melt water runs off the snow above into air below freezing.
     ripple map, wide so that mipmaps blend only close strengths.
   - A solid cone bends what is behind it upward: under an eave the path tracer shows the wood's
     shaded underside through the ice, which needs a fourth bounce for the sky lighting it. At the
-    default 3 bounces it is black. The bench's icicle view uses 6; scenes with clear ice next to
-    shaded surfaces want 5 or more. Raster refracts at the front face only, so it shows the sky
+    default 3 bounces it was black. Fixed (11 Nov) with a transmission budget apart from the bounce
+    count, as Cycles keeps one: after the first bounce, crossing a transmissive surface or reflecting
+    inside it is free, up to `rendering/pathtracing/transmission_bounces` (default 4, rt_param 58)
+    extra segments. At 3 bounces plus 4 the icicle view matches 6 plain bounces within noise, in
+    about 70% of the time (79 s against 113 s on the software renderer). Raster refracts at the front face only, so it shows the sky
     where the path tracer shows the eave; the ice reads as clear in both.
   - The bench view is now backlit, at the icicles' height, against a snowy land (`--close` for 100%).
 

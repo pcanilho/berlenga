@@ -1143,10 +1143,6 @@ func _build_view() -> void:
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = bounces
-	if view == "icicles" and bounces == 3:
-		# Seen through clear ice, the eave's shaded underside is three bounces away (in, out, the wood) and needs
-		# more for the sky that lights it: at 3 it shows black through the ice.
-		env.pathtracing_max_bounces = 6
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)

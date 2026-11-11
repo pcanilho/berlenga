@@ -214,6 +214,7 @@ public:
 	static constexpr int RT_PARAM_SNOW_CATCH_MAP = 55;
 	// Indirect light reuse (binding 52, ReSTIR GI): 0 off, else 1 + the slot written + 2 when last frame's is valid.
 	static constexpr int RT_PARAM_INDIRECT_REUSE = 56;
+	static constexpr int RT_PARAM_TRANSMISSION_BOUNCES = 58; // Extra segments for smooth transmission past the first, outside max bounces (rendering/pathtracing/transmission_bounces).
 	static constexpr int RT_PARAM_SNOW_EXACT_GLINTS = 57; // 1: every snow grain is a facet, per ray (docs/ideas/snow.md, follow-up 5).
 	// GroundSurface3D's deform map (ground_deform_map: dent, rim, albedo and roughness factors) for its
 	// BaseMaterial3D patch: bindless index (0 = none) and the field's world XZ origin and size.
