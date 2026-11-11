@@ -20,7 +20,7 @@ Berlenga is a Godot 4 fork with Vulkan path tracing and DLSS Ray Reconstruction,
 - **[Snow](https://berlenga.canilho.net/features/snow/)**: a snowpack from the weather map that falls, settles, melts, slides and drifts, covering materials raster and path traced; deep snow with tracks; falling and blowing snow; baked winters and cornices.
 - **[Vegetation](https://berlenga.canilho.net/features/vegetation/)**: biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones for plants in the wind.
 - **[Weather](https://berlenga.canilho.net/features/weather/)**: one weather map for wind, storms, rain, wet surfaces and puddles, driving water, cloth and hair.
-- **[Sky and clouds](https://berlenga.canilho.net/features/sky-and-clouds/)**: sun and moon set by date, time and place; a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
+- **[Sky and clouds](https://berlenga.canilho.net/features/sky-and-clouds/)**: sun and moon set by date, time and place; a scattering atmosphere with twilight; a cloud layer from the weather map, reprojected, seen by path tracing, with shadows on the ground.
 - **[Water](https://berlenga.canilho.net/features/water/)**: refraction, murky water, caustics, ocean, currents, boat wakes, white water, rivers and waterfalls, shore waves, camera under water.
 - **[Exposure](https://berlenga.canilho.net/features/exposure/)**: histogram metering, dark-scene key, local exposure.
 - **[Physics](https://berlenga.canilho.net/features/physics/)**: PhysX 5 alongside Jolt: cloth, tearing, destruction, path-traced smoke.
