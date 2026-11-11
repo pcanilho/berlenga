@@ -56,6 +56,7 @@ class GrassField3D : public Node3D {
 	};
 
 	NodePath data_map;
+	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
 	Ref<PlantSpecies> rules;
 	float density = 60.0f; // Blades per square metre, near the camera.
 	Vector2 blade_height = Vector2(0.25f, 0.6f);
@@ -66,6 +67,7 @@ class GrassField3D : public Node3D {
 	Color tip_color = Color(0.45f, 0.6f, 0.22f);
 	Color dry_color = Color(0.55f, 0.48f, 0.28f);
 	float dryness = 0.2f;
+	float color_variation = 0.5f;
 	float radius = 40.0f;
 	float tile_size = 8.0f;
 	Vector2 fallback_wind = Vector2(2.0f, 0.5f);
@@ -79,6 +81,7 @@ class GrassField3D : public Node3D {
 	Vector4 fade_band; // Last centre and band sent to the shaders.
 	static GrassField3D *fade_owner; // The field whose band the ground shader reads.
 	bool ground_baked = false;
+	class VegetationField3D *_get_canopy(const PlantSpecies *p_rules) const;
 	Ref<ImageTexture> ground_texture;
 
 	// Trample field (docs/ideas/grass.md, contact): bend per texel around the camera, pressed by
@@ -122,6 +125,8 @@ protected:
 public:
 	void set_data_map(const NodePath &p_path);
 	NodePath get_data_map() const { return data_map; }
+	void set_canopy_field(const NodePath &p_path);
+	NodePath get_canopy_field() const { return canopy_field; }
 	void set_rules(const Ref<PlantSpecies> &p_rules);
 	Ref<PlantSpecies> get_rules() const { return rules; }
 	void set_density(float p_density);
@@ -142,6 +147,8 @@ public:
 	Color get_dry_color() const { return dry_color; }
 	void set_dryness(float p_dryness);
 	float get_dryness() const { return dryness; }
+	void set_color_variation(float p_amount);
+	float get_color_variation() const { return color_variation; }
 	void set_radius(float p_radius);
 	float get_radius() const { return radius; }
 	void set_tile_size(float p_size);

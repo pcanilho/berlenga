@@ -1076,7 +1076,7 @@
     "deposition"
    ],
    "note": "",
-   "what": "rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors.",
+   "what": "rivers drop sediment where they slow (Yuan et al. 2019), building flat alluvial valley floors; solved exactly per step along the river tree, at about half the earlier cost.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Rivers, coasts and lakes"
@@ -1549,6 +1549,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Snowpack on a worker thread",
+   "settings": [
+    "SnowCover3D.background_updates"
+   ],
+   "note": "",
+   "what": "snowpack updates run off the main thread and swap in when done, so the frame never waits; main-thread share per update about 6 ms down to about 1 ms.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Snow climate",
    "settings": [
     "SnowClimate",
@@ -1623,6 +1634,17 @@
    ],
    "note": "",
    "what": "deep snow as geometry with prints and tracks; bodies sink by weight (Bekker) and rest in their own tracks; tracks refill with new snow and wind; print edges stay clean at fine deform resolutions, with pushed-aside snow sliding at its repose angle.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Deep snow"
+  },
+  {
+   "name": "Deep snow on the GPU",
+   "settings": [
+    "SnowSurface3D.gpu_simulation"
+   ],
+   "note": "",
+   "what": "pressing, slumping and refilling run in compute shaders, main-thread cost 1.5 ms down to 0.04 ms with the same prints; the CPU path stays for Compatibility.",
    "page": "snow",
    "title": "Snow",
    "topic": "Deep snow"

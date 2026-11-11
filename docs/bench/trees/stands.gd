@@ -8,6 +8,7 @@ extends Node3D
 #   --map=path.png    the placement maps of every stand in one image
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
+#   --inside          with --plot: the view from inside the stand, 70 m deep
 #   --variants=N      meshes per species (default 1)
 #   --region=path.png make_woodland() over a 6 km massif with its climate (placement only, no
 #                     meshes): the stands as belts on a hillshade
@@ -380,6 +381,14 @@ func _render_plot(i: int, args: Dictionary) -> void:
 	add_child(cam)
 	cam.position = Vector3(-30, 45, SIZE * 0.62)
 	cam.look_at(Vector3(5, 4, 0))
+	if args.has("inside"):
+		# Standing in the stand: a short view (and shadow) distance keeps a CPU render bounded.
+		cam.far = 70.0
+		sun.directional_shadow_max_distance = 70.0
+		var eye := Vector3(-20, 0, 30)
+		eye.y = valley.get_height(eye) + 1.7
+		cam.position = eye
+		cam.look_at(eye + Vector3(0.6, 0.12, -1))
 	for k in (8 if raster else 12):
 		await RenderingServer.frame_post_draw
 	var out: String = args.get("out", "/tmp/plot.png")

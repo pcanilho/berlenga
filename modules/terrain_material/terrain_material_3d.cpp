@@ -380,6 +380,8 @@ void fragment() {
 	}
 	if (grass_tint_enabled) {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
+		// Plants thinned away by distance leave their colour on the ground (VegetationField3D).
+		c += "\talbedo = vegetation_far(wp, albedo, CAMERA_POSITION_WORLD);\n";
 	}
 	if (ground_deform_enabled) {
 		// Freshly turned ground is darker until it dries.

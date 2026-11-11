@@ -332,12 +332,7 @@ float GroundDeformField::body_sinkage(const Body &p_body, float p_n, float p_kc,
 // length l = (E h^3 / (12 (1 - nu^2) k))^(1/4) (Hertz 1884; Hetenyi 1946), and the pieces tip into the
 // hole. With E ~ 50 MPa and k ~ 1e5 N/m3 (our estimates for a crust over soft snow) a 2 cm crust has
 // l ~ 0.13 m, growing as h^(3/4).
-static constexpr float CRACK_LENGTH = 0.13f; // m at 2 cm
-static constexpr float PLATE = 0.12f; // m, the pieces heaped in the rim
-static constexpr int CRACK_SECTORS = 7; // radial cracks around a break
-static constexpr float BOW_SPEED = 4.0f; // m/s at which the bow wave is full
-static constexpr float BOW_GAIN = 3.0f; // weight of the rim straight ahead over behind, less one, at full speed
-static constexpr float BOW_REACH = 1.0f; // the rim ahead reaches this much further, in ring widths, at full speed
+// CRACK_LENGTH, PLATE, CRACK_SECTORS and the BOW_ constants are in the header (the GPU field uses them too).
 
 float GroundDeformField::body_pressure(const Body &p_body, float p_sinkage) {
 	if (p_body.mass <= 0.0f) {
@@ -358,6 +353,10 @@ float GroundDeformField::body_pressure(const Body &p_body, float p_sinkage) {
 
 float GroundDeformField::press(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) {
 	if (!valid || p_radius <= 0.0f || (p_box && (p_half.x <= 0.0f || p_half.y <= 0.0f))) {
+		return 0.0f;
+	}
+	if (stamp_sink) {
+		stamp_sink->stamp(p_columns, p_position, p_radius, p_half, p_yaw, p_box, p_bottom, p_sink, p_round, p_contact_tolerance, p_velocity);
 		return 0.0f;
 	}
 	const int n = resolution;

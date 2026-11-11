@@ -6,6 +6,9 @@ Import("env_modules")
 
 env_snow = env_modules.Clone()
 
+# The print field's compute shader (docs/ideas/snow.md, follow-up 13).
+env_snow.GLSL_HEADER("snow_deform.glsl")
+
 module_obj = []
 env_snow.add_source_files(module_obj, "*.cpp")
 env.modules_sources += module_obj

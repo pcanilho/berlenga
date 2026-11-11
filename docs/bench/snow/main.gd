@@ -27,6 +27,8 @@ extends Node3D
 #                     (sparkle) prints the share of glinting pixels and the mean luminance
 #   --view=shelter    a shed and young spruces after a snowfall: bare ground under the roof, snow in the
 #                     crowns and less under them (--test=shelter for the checks)
+#   --test=background updates on worker threads (follow-up 14): the same pack as updates run in the frame,
+#                     the getters steady while one runs, the main thread's share of each update
 #   --test=crust      melt-freeze crusts: formed by a thaw and a frost, harder each cycle, a boot breaks a
 #                     first-cycle crust and stands on a second-cycle one, new snow over it
 #   --view=windblown  a ridge after new snow and a day of 15 m/s wind (--snow=H hours of wind, default 24;
@@ -123,6 +125,8 @@ func _ready() -> void:
 			await _run_failure_tests()
 		elif only == "icicles":
 			_run_icicle_tests()
+		elif only == "background":
+			await _run_background_tests()
 
 		else:
 			await _run_tests()
@@ -310,6 +314,7 @@ func _run_tests() -> void:
 	await _run_climate_tests()
 	await _run_failure_tests()
 	_run_icicle_tests()
+	await _run_background_tests()
 
 	# Cost: a 512 m map at 2 m (256 x 256), snowing with drift.
 	await _setup("mountain", 512.0, 256, -2.0)
@@ -350,6 +355,7 @@ func _walk(z: float, from_x: float = -3.0, to_x: float = 3.0) -> void:
 	var steps_n := int((to_x - from_x) / 0.1)
 	for i in steps_n + 1:
 		var x := from_x + i * 0.1
+		surface.sync_deformation() # the walker is set on the surface it left: the same on the GPU as on the CPU
 		var top := surface.get_surface_height_at(Vector3(x, 0, z))
 		wk.global_position = Vector3(x, top + 0.9, z)
 		await get_tree().physics_frame
@@ -358,6 +364,7 @@ func _walk(z: float, from_x: float = -3.0, to_x: float = 3.0) -> void:
 
 
 func _trail_stats(z: float) -> Dictionary:
+	surface.sync_deformation()
 	# Mean dent along the trail's middle, and the rim beside it: mean and coefficient of variation.
 	# Beside it (0.25 m from the middle, past the boot and its rim ring): how far the surface is down.
 	var dsum := 0.0
@@ -465,9 +472,11 @@ func _run_crust_tests() -> void:
 	_check("a thaw and a frost make a melt-freeze crust", wet_strength == 0.0 and wetness > 0.5 and c1 == 1.0 and t1 > 0.005 and t1 <= 0.05, "wet %.2f in the thaw (bears %.0f kPa), then %.0f cycle, %.1f cm, %.1f kPa" % [wetness, wet_strength, c1, t1 * 100.0, st1])
 	var boot := 75.0 * 9.81 / 1000.0 / 0.035
 	surface.clear_deformation()
+	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
 	var v0 := surface.get_moved_volume()
 	await _walk(3.0)
 	var broken := _trail_stats(3.0)
+	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
 	var vol := surface.get_moved_volume() - v0
 	_check("a boot (%.0f kPa) breaks a first-cycle crust" % boot, st1 < boot and broken.dent > 0.05, "%.3f m deep" % broken.dent)
 	_check("the crust cracks around the hole and the pieces tip in", broken.edge > 0.01 and broken.cv > 0.3 and vol.y <= 0.3 * vol.x + 1e-4, "%.3f m down 25 cm from the middle, varying %.0f%% along it (jagged); rim %.4f of %.4f m3 pressed" % [broken.edge, broken.cv * 100.0, vol.y, vol.x])
@@ -512,6 +521,7 @@ func _surface_setup(swe: float, density: float) -> void:
 	surface.name = "Surface"
 	surface.snow_cover = NodePath("../SnowCover3D") if has_node("SnowCover3D") else NodePath("")
 	surface.follow_target = NodePath("../Probe")
+	surface.gpu_simulation = not OS.get_cmdline_user_args().has("--gpu=0")
 	add_child(surface)
 	await get_tree().physics_frame
 	await get_tree().physics_frame
@@ -571,6 +581,7 @@ func _run_surface_tests() -> void:
 
 	# Collision follows the deformed surface.
 	await get_tree().create_timer(0.2).timeout
+	surface.sync_deformation() # on the GPU the heights come back a few rendered frames late
 	var space := get_world_3d().direct_space_state
 	var q := PhysicsRayQueryParameters3D.create(Vector3(p.x, 5, p.z), Vector3(p.x, -5, p.z))
 	var hit := space.intersect_ray(q)
@@ -590,6 +601,7 @@ func _run_surface_tests() -> void:
 	for i in 240:
 		await get_tree().physics_frame
 	var sink := d0 - (ball.global_position.y - 0.25)
+	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
 	var bd := surface.get_dent_at(ball.global_position)
 	_check("a ball sinks into fresh snow and rests there", sink > 0.03 and sink < want + 0.03 and absf(sink - bd) < 0.04, "sank %.3f m, print %.3f m, floor %.3f m" % [sink, bd, want])
 	ball.queue_free()
@@ -606,6 +618,7 @@ func _run_surface_tests() -> void:
 	for i in 60:
 		wk.global_position = Vector3(-3.0 + i * 0.1, d0 + 0.9, 3.0)
 		await get_tree().physics_frame
+	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
 	var trail := surface.get_dent_at(Vector3(0.0, 0, 3.0))
 	_check("a character walking leaves a trail", trail > 0.1, "%.3f m deep" % trail)
 	wk.queue_free()
@@ -617,13 +630,16 @@ func _run_surface_tests() -> void:
 	probe.global_position = Vector3.ZERO
 	for i in 4:
 		await get_tree().physics_frame
+	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
 	var back := surface.get_dent_at(Vector3(0.0, 0, 3.0))
 	_check("trails survive leaving and coming back", cached > 0 and absf(back - trail) < 0.002, "%d tiles cached, %.3f m after, %.3f m before" % [cached, back, trail])
 
 	# New snow settles into the prints; the pack settling shrinks the step; melt takes it all.
+	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
 	var before := surface.get_dent_at(p)
 	snow.add_snow(10.0, 100.0) # 0.1 m of new snow
 	await get_tree().physics_frame
+	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
 	var after := surface.get_dent_at(p)
 	_check("new snow fills prints (refill_share 0.5)", absf((before - after) - 0.05) < 0.005, "%.3f m to %.3f m" % [before, after])
 	snow.advance(14.0 * 24.0 * 3600.0)
@@ -631,6 +647,7 @@ func _run_surface_tests() -> void:
 	var rho2 := snow.get_density_at(p)
 	var d2 := snow.get_depth_at(p)
 	var cap := d2 * (1.0 - rho2 / 450.0) / (1.0 - 0.3 * rho2 / 450.0)
+	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
 	_check("settled pack: the print is no deeper than the compaction allows", surface.get_dent_at(p) <= cap + 0.002, "%.3f m, limit %.3f m (pack %.0f kg/m3, %.2f m)" % [surface.get_dent_at(p), cap, rho2, d2])
 	weather.temperature = 10.0
 	weather.snap_to_settings()
@@ -639,6 +656,7 @@ func _run_surface_tests() -> void:
 	sun.rotation_degrees = Vector3(-60, 0, 0)
 	snow.advance(30.0 * 24.0 * 3600.0)
 	await get_tree().physics_frame
+	surface.sync_deformation() # the GPU field is read back a frame or two late; wait for it
 	_check("melted out: no prints, surface on the ground", surface.get_dent_at(p) == 0.0 and absf(surface.get_surface_height_at(p)) < 0.001, "dent %.3f, surface %.3f, pack %.3f m" % [surface.get_dent_at(p), surface.get_surface_height_at(p), snow.get_depth_at(p)])
 
 	# Cost of a frame with four movers in the field.
@@ -805,6 +823,102 @@ func _run_shelter_tests() -> void:
 	var held2 := snow.get_canopy_load_at(Vector3(0, 0, 0))
 	var under2 := snow.get_swe_at(Vector3(0, 0, 0))
 	_check("it unloads onto the snow below", held2 < held * 0.5 and under2 > under, "%.1f mm left in the canopy after a day at -1 C in 6 m/s wind; %.1f mm below (was %.1f)" % [held2, under2, under])
+
+
+# Follow-up 14: the cover's updates on worker threads, swapped in when done. A snowy, windy, sunny mountain with a
+# world tier is run through the same physics frames twice, once updating in the frame and once in the
+# background: the packs must come out the same, and the getters must not change while an update runs.
+func _background_run(background: bool, updates: int) -> Dictionary:
+	await _setup("mountain", 512.0, 256, 0.5)
+	weather.rain_rate = 2.0
+	weather.cloud_cover = 0.6
+	weather.wind_speed = 12.0
+	weather.snap_to_settings()
+	weather.advance(1.0)
+	sun.visible = true
+	sun.rotation_degrees = Vector3(-35.0, 150.0, 0.0)
+	snow.add_snow(150.0, 200.0)
+	snow.climate = _climate(9.0)
+	snow.bake_climate(Rect2(-2048, -2048, 4096, 4096), 64)
+	snow.world_update_every = 3
+	# Warm up in the frame: Sx for this wind baked on both tiers, so no bake lands mid-run.
+	snow.advance(60.0)
+	snow.advance_world(3600.0)
+	snow.background_updates = background
+	snow.update_rate = 2.0
+	var start: int = snow.get_update_count()
+	var main_ms: Array[float] = []
+	var work_ms := 0.0
+	var steady := true
+	var seen: int = start
+	var water := snow.get_total_water()
+	var probe := Vector3(37.0, 0, -61.0)
+	var probe_swe := snow.get_swe_at(probe)
+	var busy_frames := 0
+	while snow.get_update_count() < start + updates:
+		await get_tree().physics_frame
+		if snow.get_update_count() != seen:
+			seen = snow.get_update_count()
+			main_ms.append(snow.get_main_thread_msec())
+			work_ms += snow.get_update_time_msec()
+			water = snow.get_total_water()
+			probe_swe = snow.get_swe_at(probe)
+		if snow.is_updating():
+			busy_frames += 1
+			if snow.get_total_water() != water or snow.get_swe_at(probe) != probe_swe:
+				steady = false
+	snow.update_rate = 0.0001
+	snow.sync_update()
+	var r := {}
+	var grid := PackedFloat32Array()
+	for z in range(-240, 241, 24):
+		for x in range(-240, 241, 24):
+			var q := Vector3(x, 0, z)
+			grid.append(snow.get_swe_at(q))
+			grid.append(snow.get_density_at(q))
+			grid.append(snow.get_crust_thickness_at(q))
+	for z in range(-1900, 1901, 200):
+		for x in range(-1900, 1901, 200):
+			grid.append(snow.get_world_swe_at(Vector3(x, 0, z)))
+	r.grid = grid
+	r.water = snow.get_total_water()
+	r.main_ms = main_ms
+	r.work_ms = work_ms / maxf(main_ms.size(), 1)
+	r.steady = steady
+	r.busy_frames = busy_frames
+	r.failures = snow.get_cornice_failure_count()
+	return r
+
+
+func _run_background_tests() -> void:
+	print("Follow-up 14: cover updates in the background")
+	var n := 12
+	var a: Dictionary = await _background_run(false, n)
+	var b: Dictionary = await _background_run(true, n)
+	var ga: PackedFloat32Array = a.grid
+	var gb: PackedFloat32Array = b.grid
+	var worst := 0.0
+	for i in ga.size():
+		worst = maxf(worst, absf(ga[i] - gb[i]))
+	_check("the same pack as updating in the frame", worst == 0.0 and a.water == b.water, "%d samples over both tiers, largest difference %.6f; water %.1f against %.1f kg" % [ga.size(), worst, a.water, b.water])
+	_check("getters steady while an update runs", b.steady and b.busy_frames > 0, "%d physics frames with an update in flight" % b.busy_frames)
+	var ma: Array[float] = a.main_ms
+	var mb: Array[float] = b.main_ms
+	var fmt := func(m: Array[float]) -> String:
+		var s := 0.0
+		var top := 0.0
+		for v in m:
+			s += v
+			top = maxf(top, v)
+		return "mean %.2f ms, worst %.2f ms" % [s / maxf(m.size(), 1), top]
+	print("  main thread per update, 256 x 256 cells and a 64 x 64 world tier every 3rd update: in the frame %s; in the background %s (cells, drift, slides and cornices %.2f ms on a worker)" % [fmt.call(ma), fmt.call(mb), b.work_ms])
+	var top_b := 0.0
+	var top_a := 0.0
+	for v in mb:
+		top_b = maxf(top_b, v)
+	for v in ma:
+		top_a = maxf(top_a, v)
+	_check("the frame no longer waits for the update", top_b < 0.5 * top_a, "worst %.2f ms against %.2f ms" % [top_b, top_a])
 
 
 func _climate(wind_speed: float) -> SnowClimate:
@@ -1420,6 +1534,8 @@ func _build_trail(cam: Camera3D) -> void:
 			surface.deform_extent = float(v[1])
 			if v.size() > 2:
 				surface.detail_spacing = float(v[2])
+		if a == "--gpu=0":
+			surface.gpu_simulation = false # the print field on the CPU (default: compute shaders where there is a GPU)
 	add_child(surface)
 	# Movers, driven on set paths so the shot is the same each run: a walker whose two boots print the
 	# snow (boot boxes in the snow_deform group, 80 kg on 0.035 m2: Bekker), a cart wheel and two balls
@@ -1532,6 +1648,9 @@ func _build_trail(cam: Camera3D) -> void:
 			walking = true
 	walking = false
 	print("surface step %.2f ms" % surface.get_step_time_msec())
+	surface.sync_deformation()
+	var mv := surface.get_moved_volume()
+	print("print field on the %s: dent %.4f m3, rim %.4f m3" % ["GPU" if surface.is_gpu_active() else "CPU", mv.x, mv.y])
 	if we and not raster:
 		we.environment.pathtracing_enabled = true
 	await _save_frame("")

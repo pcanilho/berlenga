@@ -34,6 +34,20 @@
 				Time the last [method populate] took, in milliseconds.
 			</description>
 		</method>
+		<method name="get_conifer_at" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Share of the canopy over [param global_position] that is needle-leaved ([member PlantSpecies.canopy_conifer]), weighted by how much each crown covers it: [code]0.0[/code] under broadleaf trees or in the open, [code]1.0[/code] under conifers.
+			</description>
+		</method>
+		<method name="get_floor_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				Shader code for terrain materials: [code]forest_floor(world_pos, albedo)[/code] returns the ground's albedo with the forest floor laid over it where the canopy closes, leaf litter under broadleaf crowns, needles over duff with feather moss drifts under conifers, a patchwork in mixed stands. It reads the [code]forest_floor_map[/code] and [code]forest_floor_rect[/code] global shader parameters (see [member forest_floor_enabled]). Use it in a fragment shader. [method GrassField3D.get_ground_shader_code] includes it and its [code]grass_ground()[/code] calls it, so materials that use the grass ground get the litter too.
+				It also gives [code]vegetation_far(world_pos, albedo, camera_pos)[/code]: call it after [code]grass_ground()[/code] with [code]CAMERA_POSITION_WORLD[/code]. Where plants with a [member PlantSpecies.far_color] grew, it blends their colour into the ground as the plant shader thins them away with distance, with the same curve: none up to 35% of the species' range, all of it at the range. It reads the [code]vegetation_far_map[/code], [code]vegetation_far_rect[/code] and [code]vegetation_far_range[/code] global shader parameters, published after each [method populate] that places such plants.
+			</description>
+		</method>
 		<method name="get_shade_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -75,6 +89,9 @@
 		</member>
 		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="32.0">
 			Width in metres of a tile: one point pattern and one [MultiMeshInstance3D] per mesh per tile, so tiles out of view are culled.
+		</member>
+		<member name="forest_floor_enabled" type="bool" setter="set_forest_floor_enabled" getter="is_forest_floor_enabled" default="true">
+			If [code]true[/code], each [method populate] that places canopy crowns publishes canopy closure ([method get_shade_at]) and conifer share ([method get_conifer_at]) on half-metre cells over the data map's rect as the [code]forest_floor_map[/code] and [code]forest_floor_rect[/code] global shader parameters, read by [method get_floor_shader_code]. A field without crowns leaves them as they are, so one field can own the trees while others place the plants.
 		</member>
 		<member name="weather_map" type="NodePath" setter="set_weather_map" getter="get_weather_map" default="NodePath(&quot;&quot;)">
 			Path to a [WeatherMap3D]. After each [method populate] the placed canopy species are written to its [member WeatherMap3D.canopy_map] over the data map's rect (about 1 m cells): crown top height in red, leaf area index over 4 in green, taking [member PlantSpecies.canopy_opacity] as [code]1 - exp(-0.5 LAI)[/code]. [method WeatherMap3D.get_canopy_closure_at] then matches [method get_shade_at], and snow, wind and light under the trees all see the same forest. This replaces any canopy map already set there.
