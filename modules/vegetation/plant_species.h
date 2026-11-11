@@ -77,6 +77,8 @@ private:
 	float patch_scale = 0.0f; // 0: no patches.
 	float patch_cover = 0.5f;
 	int patch_seed = 0;
+	int mask_channel = -1; // VegetationField3D.density_mask channel that scales this species (0 R .. 3 A), -1 none.
+	bool mask_invert = false; // Grow where the mask is low instead.
 	bool patch_invert = false; // Grow between the patches instead (same scale, cover and seed: the exact complement).
 	float visibility_range = 0.0f; // 0: always drawn.
 	Color far_color = Color(0, 0, 0, 0); // The plant seen from far above (rgb) and how much ground it hides (a).
@@ -100,6 +102,10 @@ public:
 	float get_patch_cover() const { return patch_cover; }
 	void set_patch_seed(int p_seed) { patch_seed = p_seed; }
 	int get_patch_seed() const { return patch_seed; }
+	void set_mask_channel(int p_channel) { mask_channel = CLAMP(p_channel, -1, 3); }
+	int get_mask_channel() const { return mask_channel; }
+	void set_mask_invert(bool p_invert) { mask_invert = p_invert; }
+	bool is_mask_invert() const { return mask_invert; }
 	void set_patch_invert(bool p_invert) { patch_invert = p_invert; }
 	bool is_patch_invert() const { return patch_invert; }
 	float get_patch_weight(const Vector3 &p_pos) const;

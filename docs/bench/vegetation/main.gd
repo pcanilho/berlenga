@@ -304,6 +304,38 @@ func _checks() -> void:
 	tree_sp.set_rule_range(PlantSpecies.RULE_TEMPERATURE, Vector2(-100.0, 100.0))
 	field.populate()
 	_check("shade: no canopy, no shade", field.get_placements(1).size() == bushes_open and field.get_shade_at(t0) == 0.0, field.get_placements(1).size())
+	# Density mask: a clearing painted into the red channel keeps the trees out of it; the bushes,
+	# reading the inverted channel, grow only there.
+	var all_trees := field.get_placements(0).size()
+	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	img.fill(Color(1, 1, 1, 1))
+	var rect: Rect2 = dm.get_map_rect()
+	var centre := rect.get_center()
+	var radius := rect.size.x * 0.25
+	for y in 64:
+		for x in 64:
+			var w := rect.position + Vector2((x + 0.5) / 64.0 * rect.size.x, (y + 0.5) / 64.0 * rect.size.y)
+			if w.distance_to(centre) < radius:
+				img.set_pixel(x, y, Color(0, 1, 1, 1))
+	field.density_mask = ImageTexture.create_from_image(img)
+	field.density_mask_rect = rect
+	tree_sp.mask_channel = 0
+	var bush_sp: PlantSpecies = field.biome.species[1]
+	bush_sp.mask_channel = 0
+	bush_sp.mask_invert = true
+	field.populate()
+	var in_clearing := 0
+	for t in field.get_placements(0):
+		if Vector2(t.x, t.z).distance_to(centre) < radius - rect.size.x / 64.0:
+			in_clearing += 1
+	var bush_out := 0
+	for b in field.get_placements(1):
+		if Vector2(b.x, b.z).distance_to(centre) > radius + rect.size.x / 64.0:
+			bush_out += 1
+	_check("density mask: no tree in the clearing, bushes only inside it", in_clearing == 0 and bush_out == 0 and field.get_placements(0).size() < all_trees and field.get_placements(1).size() > 0, [in_clearing, bush_out, field.get_placements(0).size(), all_trees])
+	tree_sp.mask_channel = -1
+	bush_sp.mask_channel = -1
+	field.density_mask = null
 	print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 
 func _build_view() -> void:
