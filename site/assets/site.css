@@ -140,6 +140,21 @@ dialog::backdrop{background:rgba(5,9,14,.72);backdrop-filter:blur(4px)}
 .foot p{margin:0}
 
 /* Small screens */
+/* On this page */
+.content:has(.with-toc){max-width:1180px}
+.with-toc{display:grid;grid-template-columns:minmax(0,1fr) 190px;gap:48px;align-items:start}
+.toc{position:sticky;top:88px;font-size:13.5px;border-left:1px solid var(--line);padding-left:16px}
+.toc p{margin:0 0 8px;font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.toc ul,.toc-inline ul{list-style:none;margin:0;padding:0}
+.toc li{margin:0}
+.toc a{display:block;padding:4px 0;color:var(--muted);transition:color .12s}
+.toc a:hover{color:var(--text);text-decoration:none}
+.toc a.on{color:var(--accent);font-weight:600}
+.toc-inline{display:none}
+.toc-inline ul{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 8px}
+.toc-inline a{display:inline-block;padding:5px 12px;border:1px solid var(--line);border-radius:999px;font-size:13.5px;color:var(--muted);background:var(--bg2)}
+.toc-inline a:hover{color:var(--text);text-decoration:none}
+@media (max-width:1240px){.with-toc{display:block}.toc{display:none}.toc-inline{display:block}}
 @media (max-width:1000px){.search{min-width:0}.search-label{display:none}.search kbd{display:none}.search{width:36px;padding:0;justify-content:center}}
 @media (max-width:860px){
   .menu{display:inline-grid}

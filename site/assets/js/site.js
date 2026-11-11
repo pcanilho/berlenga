@@ -234,3 +234,18 @@ document.querySelectorAll('.content img.zoomable').forEach((img) => {
   if (img.complete && img.naturalWidth) setupPair(img);
   else img.addEventListener('load', () => setupPair(img), { once: true });
 });
+
+// On this page: highlight the topic being read.
+(() => {
+  const links = [...document.querySelectorAll('.toc a')];
+  if (!links.length) return;
+  const heads = links.map(a => document.getElementById(decodeURIComponent(a.hash.slice(1)))).filter(Boolean);
+  const update = () => {
+    let cur = 0;
+    heads.forEach((h, i) => { if (h.getBoundingClientRect().top < 140) cur = i; });
+    if (innerHeight + scrollY >= document.body.scrollHeight - 4) cur = heads.length - 1;
+    links.forEach((a, i) => a.classList.toggle('on', i === cur));
+  };
+  addEventListener('scroll', update, { passive: true });
+  update();
+})();

@@ -1,10 +1,15 @@
 {{ define "main" }}
+{{ $toc := gt (len (findRE `<li>` .TableOfContents)) 1 }}
+<div class="{{ if $toc }}with-toc{{ end }}">
 <article>
   {{ if eq .Section "features" }}<p class="eyebrow">Features</p>{{ end }}
   <h1>{{ .Title }}</h1>
   {{ with .Params.summary }}<p class="lead">{{ . }}</p>{{ end }}
+  {{ if $toc }}<nav class="toc-inline" aria-label="On this page" data-pagefind-ignore>{{ .TableOfContents }}</nav>{{ end }}
   <div class="prose">{{ .Content }}</div>
 </article>
+{{ if $toc }}<aside class="toc" aria-label="On this page" data-pagefind-ignore><p>On this page</p>{{ .TableOfContents }}</aside>{{ end }}
+</div>
 {{ if eq .Section "features" }}
 <nav class="pager" aria-label="Pages" data-pagefind-ignore>
   {{ $list := (site.GetPage "/features").Pages.ByWeight }}{{ $i := 0 }}{{ range $k, $p := $list }}{{ if eq $p $ }}{{ $i = $k }}{{ end }}{{ end }}

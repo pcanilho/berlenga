@@ -36,3 +36,7 @@ target = "assets"
 [[module.mounts]]
 source = "../docs/REFERENCES.md"
 target = "assets/references.md"
+
+[markup.tableOfContents]
+startLevel = 2
+endLevel = 2
