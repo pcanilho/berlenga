@@ -222,6 +222,11 @@ Error VegetationField3D::populate() {
 			mask_img->decompress();
 		}
 	}
+	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
+	const VegetationField3D *other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+	if (other == this) {
+		other = nullptr;
+	}
 	auto mask_at = [&](const Vector2 &p_xz, int p_channel) -> float {
 		if (mask_img.is_null() || mask_img->is_empty() || !density_mask_rect.has_point(p_xz)) {
 			return 1.0f;
@@ -302,7 +307,16 @@ Error VegetationField3D::populate() {
 					float suit = sp->get_suitability(map, p3);
 					if ((shade_rule || conifer_rule) && suit > 0.0f) {
 						float conifer = 0.0f;
-						const float shade = _shade_at(xz, &conifer);
+						float shade = _shade_at(xz, &conifer);
+						if (other) {
+							// Both canopies stop light: transmissions multiply; the stand type is
+							// each one's share of the cover.
+							const Vector3 g(xz.x, 0.0f, xz.y);
+							const float os = other->get_shade_at(g);
+							const float oc = other->get_conifer_at(g);
+							conifer = (shade + os) > 1e-4f ? (conifer * shade + oc * os) / (shade + os) : 0.0f;
+							shade = 1.0f - (1.0f - shade) * (1.0f - os);
+						}
 						if (shade_rule) {
 							suit *= sp->rule_weight(PlantSpecies::RULE_SHADE, shade);
 						}
@@ -1036,6 +1050,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_density_mask"), &VegetationField3D::get_density_mask);
 	ClassDB::bind_method(D_METHOD("set_density_mask_rect", "rect"), &VegetationField3D::set_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
+	ClassDB::bind_method(D_METHOD("set_canopy_field", "path"), &VegetationField3D::set_canopy_field);
+	ClassDB::bind_method(D_METHOD("get_canopy_field"), &VegetationField3D::get_canopy_field);
 	ClassDB::bind_method(D_METHOD("set_weather_map", "path"), &VegetationField3D::set_weather_map);
 	ClassDB::bind_method(D_METHOD("get_weather_map"), &VegetationField3D::get_weather_map);
 	ClassDB::bind_method(D_METHOD("set_tile_size", "size"), &VegetationField3D::set_tile_size);
@@ -1060,6 +1076,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "forest_floor_enabled"), "set_forest_floor_enabled", "is_forest_floor_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "density_mask", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_density_mask", "get_density_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "density_mask_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_density_mask_rect", "get_density_mask_rect");

@@ -85,6 +85,9 @@
 		<member name="biome" type="Biome" setter="set_biome" getter="get_biome">
 			The species to place.
 		</member>
+		<member name="canopy_field" type="NodePath" setter="set_canopy_field" getter="get_canopy_field" default="NodePath(&quot;&quot;)">
+			Another [VegetationField3D] whose crowns also shade this field's plants, as [member GrassField3D.canopy_field] does for grass. Its shade and conifer share combine with this field's own crowns (transmissions multiply), so a small herb field around the camera grows its shade plants under a large forest field's trees.
+		</member>
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			The [TerrainDataMap3D] that gives height, slope, wetness and water. Its area is the area planted.
 		</member>

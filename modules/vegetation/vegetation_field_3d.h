@@ -66,6 +66,7 @@ class VegetationField3D : public Node3D {
 		float conifer = 0.0f; // 1 for a needle-leaved crown.
 	};
 	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
+	NodePath canopy_field; // Another VegetationField3D whose crowns also shade this one's plants.
 	// Painted or generated density over a world rect: each species reads one channel (PlantSpecies.mask_channel).
 	Ref<Texture2D> density_mask;
 	Rect2 density_mask_rect;
@@ -128,6 +129,8 @@ public:
 	Ref<Texture2D> get_density_mask() const { return density_mask; }
 	void set_density_mask_rect(const Rect2 &p_rect) { density_mask_rect = p_rect; }
 	Rect2 get_density_mask_rect() const { return density_mask_rect; }
+	void set_canopy_field(const NodePath &p_path) { canopy_field = p_path; }
+	NodePath get_canopy_field() const { return canopy_field; }
 	void set_weather_map(const NodePath &p_path) { weather_map = p_path; }
 	NodePath get_weather_map() const { return weather_map; }
 	void set_tile_size(float p_size);
