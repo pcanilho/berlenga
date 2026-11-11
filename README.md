@@ -298,7 +298,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Terrain deformation** (`TerrainDeformer3D`, `TerrainBrush3D`): non-destructive height brushes (rivers, craters, plots) over Terrain3D or a height map; moving a brush restores the ground.
 - **Terrain data maps** (`TerrainDataMap3D`): bakes slope, curvature, water flow, wetness, water depth and distance to water around a point, for placing plants and for materials; a 512 map bakes once in about 0.2 s.
 
-<details><summary>Images: mountain generation, coarse to fine, crests, tile erosion, material detail, waterfalls, river flow by month, geology, coast, climate, ground material, Landscape3D, footprints, terrain data maps</summary>
+<details><summary>Images: mountain generation, coarse to fine, crests, tile erosion, material detail, waterfalls, deposition, river flow by month, geology, coast, climate, ground material, Landscape3D, footprints, terrain data maps</summary>
 
 ![Generated mountain range, shaded relief with rivers](docs/media/terrain-generator-map.jpg)
 
@@ -331,6 +331,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Rivers and waterfalls on a layered range, and river long profiles before and after](docs/media/terrain-waterfalls.jpg)
 
 *Rock layers: rivers step down over the hard bands, leaving waterfalls up to 30 m.*
+
+![A generated range around a wide flat valley floor that runs down to the beach, raster](docs/media/terrain-deposition.jpg)
+
+*River deposition: the rivers fill the valley between the ridges with a flat alluvial floor.*
 
 ![River flow by month in three climates, and snow lying by height](docs/media/terrain-runoff.jpg)
 
