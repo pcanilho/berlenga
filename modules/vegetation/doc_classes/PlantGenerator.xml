@@ -94,7 +94,7 @@
 			How worn the leaves are, from [code]0.0[/code] (every leaf whole and green) to [code]1.0[/code]: uneven halves, round insect bites out of the margin with dried rims, dead tips on grass-like blades, and older, lower leaves yellowing and browning. Each leaf draws its wear from its own hash, so changing it does not change the plant's shape. The browning travels in the vertex colour's alpha.
 		</member>
 		<member name="litter_leaves" type="Array" setter="set_litter_leaves" getter="get_litter_leaves" default="[]">
-			For [constant PRESET_LEAF_LITTER]: the stand's fallen leaves ([method stand_litter_leaves]). Each card then carries about two layers of those leaves over its disc, picked by share and shaped by kind: simple, lobed with rounded lobes, palmate, pinnate (mostly loose leaflets, now and then a whole leaf) or digitate. Fresh leaves keep their fallen colour; older ones darken to grey brown and curl. Empty: generic broadleaf litter.
+			For [constant PRESET_LEAF_LITTER]: the stand's fallen leaves ([method stand_litter_leaves]). Each card then carries about two layers of those leaves over its disc, picked by share and shaped by kind: simple, lobed with rounded lobes, palmate, pinnate (mostly loose leaflets, now and then a whole leaf) or digitate. Fresh leaves keep their fallen colour; older ones fade to a dull tan brown and curl. Empty: generic broadleaf litter.
 		</member>
 		<member name="lods" type="bool" setter="set_lods" getter="get_lods" default="true">
 			If [code]true[/code], distance LODs are generated (meshoptimizer), so plants far from the camera draw a fraction of their triangles.

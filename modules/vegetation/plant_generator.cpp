@@ -1028,8 +1028,8 @@ void PlantGenerator::_build_leaf_litter() {
 // is a leaf form as TreeGenerator.get_leaf_form() gives it (kind, count, depth, width as half width
 // over length, size in metres) with the stand's share of the litter ("share"), its fallen colour
 // ("color", the autumn colour) and the share of this year's leaves still fresh ("fresh"). Fresh
-// leaves keep that colour; older ones darken to a grey brown, curl and lose their tissue. A card
-// carries about two layers of leaves over its disc, so big leaves come few and small ones many.
+// leaves keep that colour; older ones fade to a dull tan brown and curl. A card
+// carries about 1.3 layers of leaves over its disc, so big leaves come few and small ones many.
 void PlantGenerator::_build_stand_litter() {
 	float total = 0.0f;
 	for (int i = 0; i < litter_leaves.size(); i++) {
@@ -1039,7 +1039,7 @@ void PlantGenerator::_build_stand_litter() {
 		return;
 	}
 	const float disc = 0.13f;
-	float area_left = 2.0f * Math::PI * disc * disc;
+	float area_left = 1.3f * Math::PI * disc * disc;
 	int guard = 0;
 	while (area_left > 0.0f && guard++ < 60) {
 		float pick = rng.randf() * total;
@@ -1058,10 +1058,10 @@ void PlantGenerator::_build_stand_litter() {
 		const float size = CLAMP(float(f.get("size", 0.08f)), 0.02f, 0.4f) * _rand(0.75f, 1.15f);
 		const Color fallen = f.get("color", Color(0.35f, 0.2f, 0.07f));
 		const float fresh = CLAMP(float(f.get("fresh", 0.3f)), 0.0f, 1.0f);
-		// Weathered: darker, greyer brown (tannins oxidised, tissue thinning).
+		// Weathered: a duller, paler tan-brown as the pigments break down and the tissue thins.
 		const bool is_fresh = rng.randf() < fresh;
 		const float k = _rand(0.8f, 1.15f);
-		Color c = is_fresh ? fallen : fallen.lerp(Color(0.2f, 0.13f, 0.08f), _rand(0.5f, 0.85f)) * 0.8f;
+		Color c = is_fresh ? fallen : fallen.lerp(Color(0.36f, 0.25f, 0.15f), _rand(0.4f, 0.8f)); // Bleached tan-brown.
 		c = c * k;
 		const Color tint(c.r / MAX(leaf_color.r, 0.01f), c.g / MAX(leaf_color.g, 0.01f), c.b / MAX(leaf_color.b, 0.01f));
 		const float r = disc * Math::sqrt(rng.randf());
@@ -1564,20 +1564,25 @@ void PlantGenerator::_build_needle_litter() {
 // Fallen twigs and small branches: grey-brown sticks lying on the litter, forked, a few side
 // shoots, the thicker ones cracked short.
 void PlantGenerator::_build_twigs() {
-	const int sticks = int(_rand(1.0f, 4.0f));
+	// Fine woody debris under 1 cm (docs/ideas/forest-floor.md, step 6; Brown 1974's classes):
+	// short broken pieces, a few forked, most of them thin; the trees' generator lays the sticks
+	// and branches from 1 cm up. A card scatters several over half a metre.
+	const int sticks = int(_rand(4.0f, 9.0f));
 	for (int i = 0; i < sticks; i++) {
-		const float len = _rand(0.15f, 0.7f);
-		const float r0 = len * _rand(0.012f, 0.025f);
-		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.03f, 0.06f)), Vector3(0, 1, 0)), Vector3(_rand(-0.15f, 0.15f), r0, _rand(-0.15f, 0.15f)));
-		const LocalVector<Transform3D> fr = _stem_frames(b, len, _rand(-0.4f, 0.4f), 5);
-		_add_stem(b, len, r0, r0 * 0.4f, _rand(-0.4f, 0.4f), 5, 0.0f);
-		const int sides = int(_rand(1.0f, 5.0f));
+		const float u = rng.randf();
+		const float len = Math::lerp(0.05f, 0.35f, u * u);
+		const float r0 = Math::lerp(0.001f, 0.0045f, rng.randf() * (0.4f + 0.6f * u)); // 2 to 9 mm thick.
+		Transform3D b(organ_frame(polar_dir(_rand(0.0f, Math::TAU), _rand(-0.03f, 0.05f)), Vector3(0, 1, 0)), Vector3(_rand(-0.25f, 0.25f), r0 * 0.6f, _rand(-0.25f, 0.25f)));
+		const float bend = _rand(-0.35f, 0.35f);
+		const LocalVector<Transform3D> fr = _stem_frames(b, len, bend, 4);
+		_add_stem(b, len, r0, r0 * _rand(0.45f, 0.8f), bend, 4, 0.0f);
+		// Longer pieces keep a side twig or two; short ones are broken bits.
+		const int sides = len > 0.15f ? int(_rand(0.0f, 3.0f)) : 0;
 		for (int k = 0; k < sides; k++) {
-			const Transform3D at = _frame_at(fr, _rand(0.2f, 0.85f));
+			const Transform3D at = _frame_at(fr, _rand(0.25f, 0.85f));
 			const float sgn = rng.randf() < 0.5f ? -1.0f : 1.0f;
-			const Vector3 d = (at.basis.get_column(2) + at.basis.get_column(0) * sgn * _rand(0.6f, 1.2f) + Vector3(0, _rand(-0.1f, 0.25f), 0)).normalized();
-			const float sl = len * _rand(0.15f, 0.4f);
-			_add_stem(Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), sl, r0 * 0.45f, r0 * 0.15f, _rand(-0.4f, 0.4f), 3, 0.0f);
+			const Vector3 d = (at.basis.get_column(2) + at.basis.get_column(0) * sgn * _rand(0.6f, 1.2f) + Vector3(0, _rand(-0.05f, 0.2f), 0)).normalized();
+			_add_stem(Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), len * _rand(0.15f, 0.4f), r0 * 0.5f, r0 * 0.25f, _rand(-0.4f, 0.4f), 2, 0.0f);
 		}
 	}
 }
@@ -3880,7 +3885,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 	const FloorSpec seedling = { P::PRESET_SEEDLING, 0.8f, 0.15f, 0.5f, 0.8f, 1.2f, 5.0f, 0.3f, 0.4f, 0.97f, 0.1f, 0.0f, 1.0f, 30.0f };
 	const FloorSpec sorrel = { P::PRESET_WOOD_SORREL, 0.25f, 0.1f, 0.9f, 0.9f, 1.2f, 3.0f, 0.35f, 0.55f, 1.0f, 0.15f, 0.0f, 1.0f, 18.0f };
 	const FloorSpec moss = { P::PRESET_MOSS, 0.3f, 0.0f, 0.6f, 0.8f, 1.6f, 4.0f, 0.3f, 0.6f, 1.0f, 0.15f, 0.0f, 1.0f, 15.0f };
-	const FloorSpec twigs = { P::PRESET_TWIGS, 0.9f, 0.0f, 0.5f, 0.8f, 1.2f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 1.0f, 18.0f };
+	const FloorSpec twigs = { P::PRESET_TWIGS, 0.55f, 0.0f, 0.7f, 0.8f, 1.2f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 1.0f, 18.0f };
 	const FloorSpec leaves = { P::PRESET_LEAF_LITTER, 0.2f, 0.0f, 0.6f, 1.2f, 1.8f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 0.5f, 15.0f };
 	const FloorSpec needles = { P::PRESET_NEEDLE_LITTER, 0.35f, 0.0f, 0.8f, 0.8f, 1.3f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.5f, 1.0f, 15.0f };
 	const FloorSpec bilberry = { P::PRESET_BILBERRY, 0.35f, 0.12f, 0.9f, 1.0f, 1.4f, 7.0f, 0.6f, 0.3f, 1.0f, 0.15f, 0.4f, 1.0f, 25.0f };
@@ -3983,9 +3988,63 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		case FLOOR_MAX:
 			break;
 	}
+	// How much leaf litter lies on the ground (docs/ideas/forest-floor.md, step 6): a stand drops
+	// about its leaf area each autumn (F layers) and it decays at k per year (Hobbie et al. 2006),
+	// so t years after the fall the layers are F exp(-k t) / (1 - exp(-k)) and they hide
+	// 1 - exp(-layers) of the ground. Leaf fall taken as 1 November; without a season, midsummer.
+	struct Decay {
+		float layers, k;
+	};
+	Decay decay = { 5.0f, 0.3f };
+	Color twig_bark(0.3f, 0.26f, 0.21f);
+	switch (p_stand) {
+		case FLOOR_BEECH:
+			decay = { 5.0f, 0.3f };
+			twig_bark = Color(0.36f, 0.34f, 0.31f); // Smooth grey.
+			break;
+		case FLOOR_OAK_MIXED:
+			decay = { 5.0f, 0.45f }; // Oak slow, lime, hazel and ash fast.
+			twig_bark = Color(0.27f, 0.22f, 0.17f);
+			break;
+		case FLOOR_MONTANE_CONIFER:
+			decay = { 2.5f, 0.3f };
+			twig_bark = Color(0.3f, 0.24f, 0.18f);
+			break;
+		case FLOOR_RIPARIAN:
+			decay = { 4.0f, 1.5f }; // Alder litter is gone within the year.
+			twig_bark = Color(0.24f, 0.2f, 0.17f);
+			break;
+		case FLOOR_HEDGEROW:
+			decay = { 3.0f, 0.8f };
+			twig_bark = Color(0.26f, 0.21f, 0.16f);
+			break;
+		case FLOOR_NORTHERN_HARDWOOD:
+			decay = { 5.0f, 0.4f };
+			twig_bark = Color(0.33f, 0.3f, 0.26f);
+			break;
+		case FLOOR_EASTERN_OAK:
+			decay = { 5.0f, 0.35f };
+			twig_bark = Color(0.26f, 0.21f, 0.17f);
+			break;
+		case FLOOR_PINE_HEATH:
+		case FLOOR_SUBALPINE:
+		case FLOOR_PINE_HEMLOCK:
+			twig_bark = Color(0.33f, 0.24f, 0.17f); // Pine and spruce twigs, reddish.
+			break;
+		default:
+			break;
+	}
+	const float day = p_season.has("day_of_year") ? float(p_season["day_of_year"]) : 196.0f;
+	const float since_fall = Math::fposmod(day - 305.0f, 365.0f) / 365.0f;
+	const float layers = decay.layers * Math::exp(-decay.k * since_fall) / (1.0f - Math::exp(-decay.k));
+	const float leaf_cover = 1.0f - Math::exp(-layers);
+
 	TypedArray<Resource> out;
 	int seed_base = 1000 + int(p_stand) * 100;
-	for (const FloorSpec &f : set) {
+	for (FloorSpec f : set) {
+		if (f.preset == P::PRESET_LEAF_LITTER) {
+			f.density = CLAMP(0.9f * leaf_cover, 0.1f, 0.9f);
+		}
 		Ref<PlantGenerator> gen;
 		gen.instantiate();
 		gen->set_textures(p_textures);
@@ -3994,6 +4053,9 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		gen->set_seed(seed_base);
 		if (f.preset == P::PRESET_LEAF_LITTER) {
 			gen->set_litter_leaves(stand_litter_leaves(p_stand, p_season));
+		}
+		if (f.preset == P::PRESET_TWIGS) {
+			gen->stem_color = twig_bark;
 		}
 		Ref<PlantSpecies> sp;
 		sp.instantiate();

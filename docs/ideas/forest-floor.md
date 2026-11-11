@@ -196,7 +196,14 @@ module owns leaf litter, twigs under 1 cm and the small plants.
 Built (1): `PlantGenerator.stand_litter_leaves(stand, season)` and `litter_leaves`; `make_floor`
 gives its leaf litter the stand's leaves (forms and fallen colours from the tree generator when
 present, the same values in a table otherwise). Cards hold about two layers of leaves, so a card
-of red oak has ten big leaves and one of hawthorn forty small ones.
+of red oak has a few big leaves and one of hawthorn many small ones.
+
+Built (2, 4): `make_floor` sets the leaf litter's density from the decay model above per stand
+(beech F 5, k 0.3; oak mixed 5, 0.45; riparian 4, 1.5; hedgerow 3, 0.8; North American
+hardwoods 5, 0.35 to 0.4), at the season's day (leaf fall 1 November, midsummer without one).
+Twigs are now the class under 1 cm: 4 to 9 pieces a card, 5 to 35 cm long, 2 to 9 mm thick, the
+short ones broken bits and the longer ones forked, in the stand's twig bark colour, about ten
+visible a square metre under closed crowns.
 
 Checks: raster and path traced before/after at `--forest=in` (beech, oak, spruce) and the
 forest edge; counts per square metre against the figures above; triangles and placement cost.
