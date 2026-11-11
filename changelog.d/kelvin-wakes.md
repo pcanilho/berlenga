@@ -1,0 +1,3 @@
+### Added
+- PhysXWaterWake3D `dispersive` (on by default): the wake's waves are stepped in Fourier space with deep-water dispersion (eWave, Tessendorf 2014), so each wavelength travels at its own speed and a moving hull leaves the Kelvin pattern: a 19.5 degree wedge with transverse waves behind the stern and diverging waves on its arms. The hull acts as a pressure patch. Off keeps the wave equation at `wave_speed`. The grid rounds up to a power of two (192 cells over 48 m become 256 over 64 m).
+- PhysXWaterWake3D `breaking_slope` (0.3): with `dispersive`, the wave slope past which wake waves break into foam.
