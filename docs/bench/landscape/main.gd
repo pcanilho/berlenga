@@ -12,7 +12,7 @@ extends Node3D
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 16)
 #   --view=wide|lake|lakewater|valley|fall|beach|peak   camera (default wide; lakewater: low over the lake;
-#                         valley: from behind the high lake down to the clearing)
+#                         valley: from behind the high lake down to the clearing; treeline: the clearing's edge)
 #   --strike[=1] [--strike-x= --strike-z=]   force a lightning strike just before the frame is saved
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
 #   --falls           print every waterfall the rivers found (lip, landing, height)
@@ -603,7 +603,7 @@ func _build_weather() -> void:
 	sun.name = "Sun"
 	sun.light_energy = 1.6
 	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 6000.0
+	sun.directional_shadow_max_distance = float(args.get("shadow-max", "6000"))
 	add_child(sun)
 	# The sun from a date, a time and a place (SkyClock, Meeus): the month is the rivers' month, so the light,
 	# the flows and the snowmelt are one day. World -Z is north; mid-latitude mountains on a western coast.
@@ -966,6 +966,18 @@ func _build_camera() -> void:
 			cam.fov = 60.0
 			cam.position = Vector3(c.x, maxf(height_at(c.x, c.z) + 40.0, lake_level + float(args.get("valley-up", "140"))), c.z)
 			cam.look_at(Vector3(lk.x, lake_level - 220.0, lk.z + 900.0))
+		"treeline":
+			# Where the clearing's mask meets the forest: walk north up the valley from the plain until the sediment
+			# thins out, then look at that edge from the grass.
+			var ex := float(args.get("treeline-x", "300"))
+			var ez := 400.0
+			while ez > -1500.0 and gen.get_sediment_depth(Vector3(ex, 0, ez)) > 0.4:
+				ez -= 16.0
+			cam.fov = 50.0
+			var cz := ez + 220.0
+			cam.position = Vector3(ex - 60.0, height_at(ex - 60.0, cz) + 14.0, cz)
+			cam.look_at(Vector3(ex, height_at(ex, ez) + 10.0, ez))
+			_log("treeline edge at (%.0f, %.0f)" % [ex, ez])
 		"lakewater":
 			# Low over the water at one end of the lake, looking along it to the mountains behind: the water cell
 			# farthest from the water's centroid, pulled a little back over the water.
@@ -1005,11 +1017,33 @@ func _build_camera() -> void:
 			cam.look_at(Vector3(ahead.x, lake_level + 22.0, ahead.z))
 			_log("lakewater camera over %d water cells, %.0f m from the far end" % [cells.size(), c.distance_to(mid) * 2.0])
 		"fall":
+			# Downstream of the fall, at the first spot with a clear view of the whole drop (gorges hide it).
 			var fd3 := Vector3(fall_dir.x, 0, fall_dir.y)
 			var side := Vector3(-fall_dir.y, 0, fall_dir.x)
-			cam.position = fall_point + fd3 * 90.0 + side * 30.0 + Vector3(0, 2.0, 0)
-			cam.position.y = height_at(cam.position.x, cam.position.z) + 8.0
-			cam.look_at(fall_point + Vector3(0, -6, 0))
+			var mid := fall_point + Vector3(0, -12, 0)
+			var best := Vector3.ZERO
+			var found := false
+			for dist in [90.0, 130.0, 180.0, 240.0, 320.0]:
+				for off in [0.0, 25.0, -25.0, 50.0, -50.0]:
+					var c: Vector3 = fall_point + fd3 * dist + side * off
+					c.y = height_at(c.x, c.z) + 10.0
+					var clear := true
+					for t in range(1, 20):
+						var q := c.lerp(mid, t / 20.0)
+						if height_at(q.x, q.z) > q.y - 1.0:
+							clear = false
+							break
+					if clear:
+						best = c
+						found = true
+						break
+				if found:
+					break
+			if not found:
+				best = fall_point + fd3 * 200.0
+				best.y = height_at(best.x, best.z) + 60.0
+			cam.position = best
+			cam.look_at(mid)
 		"beach":
 			cam.fov = 60.0
 			cam.position = Vector3(40.0, 0.0, coast_z - 60.0)
