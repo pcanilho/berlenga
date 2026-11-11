@@ -1710,6 +1710,28 @@ Cost: two 256^2 complex FFTs and three 256^2 passes a step, about what one ocean
 (the GPU timing goes on the PC queue). The CPU side is unchanged.
 
 
+## Step 5i: raster reflections from above (11 Nov, bug)
+
+The raster surface seen from above was `unshaded`: a tint shaped by a fixed pseudo-light, with no sky and
+no sun in it (an old fix for blown-out blending, when the surface was lit as if opaque and then blended
+over the lit floor). So a raster sea showed no glitter path and no sky at grazing angles, where the path
+tracer shows both, and boat wakes were nearly invisible in raster.
+
+Now, still unshaded and still blended (so the old blow-out cannot come back), the surface adds what it
+reflects and lets through only the rest: `out = old (1 - F) + F sky(r) + sun`, written for blend_mix.
+
+- `F`: the exact unpolarized Fresnel term, air into water (2% looking down, most of the light at grazing).
+- Sky: a 128 x 64 radiance panorama of the environment's sky (`sky_bake_panorama`), baked again every
+  four seconds, read along the reflected ray (turned up to the horizon where a steep wave points it down).
+- Sun: a GGX lobe at `pathtraced_roughness` (Bruneton, Neyret and Holzschuch 2010 light the sea with a
+  microfacet sun the same way), its roughness widened by how fast the normal turns across the pixel
+  (geometric specular antialiasing, Tokuyoshi and Kaplanyan 2019): close up the glints are sharp, far
+  out they merge into a glitter path instead of flickering.
+- None on foam or dry sand. `PhysXWaterSurface3D.raster_reflections` (on) is the opt-out.
+
+Unresolved: raster cloud shadows do not dim the glitter (an unshaded material does not read the light's
+shadow); the path tracer's do.
+
 ## Sources
 
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).
