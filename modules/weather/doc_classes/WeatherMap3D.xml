@@ -145,6 +145,12 @@
 				Cloud type at [param position], 0 (stratus) to 1 (cumulonimbus), as in the Nubis weather map.
 			</description>
 		</method>
+		<method name="get_day_of_year" qualifiers="const">
+			<return type="int" />
+			<description>
+				Day of the year (1 to 365) of the [member sky_clock]'s date, or [member season_day] without one.
+			</description>
+		</method>
 		<method name="get_gust_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
@@ -183,6 +189,20 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Rain rate at [param position], in mm/h.
+			</description>
+		</method>
+		<method name="get_season">
+			<return type="Dictionary" />
+			<description>
+				The season at [member ground_height] on [method get_day_of_year]: one state for every system that follows the year (trees, ground plants, snow, water). Keys: [code]day_of_year[/code]; [code]latitude_deg[/code]; [code]photoperiod_h[/code], day length (Forsythe et al. 1995); [code]temperature[/code], the day's mean, C; [code]forcing[/code], growing degree days above 5 C since 1 January; [code]chilling[/code], days with a mean of 0 to 5 C since 1 November (Cannell and Smith 1983); [code]senescence[/code], from the first day after midsummer the day is under 13.2 h, the sum of max(0, 20 - T) (photoperiod / 13.2)² (Delpierre et al. 2009); [code]snow_depth[/code] (m), [code]snow_cover[/code] (0 to 1) and [code]snow_line_m[/code] (m), from a degree-day snowpack built since 1 August; [code]soil_frost[/code], freezing degree days since 1 August under no snow, thawed back by warm days (K days); [code]soil_moisture[/code], 0 to 1 of the soil's water capacity (a Thornthwaite and Mather bucket).
+				The sums run over a climatological year from [member climate] (a harmonic of its January and July means, as TerrainGenerator3D's water balance), shifted by [member season_anomaly], so any date is right at once. Cached until the day changes or the anomaly moves 0.25 K. Ground snow at a place is [code]SnowCover3D[/code]'s; this is the site's.
+			</description>
+		</method>
+		<method name="get_season_at_height" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="height" type="float" />
+			<description>
+				[method get_season] at another height (m), with the climate's lapse rate. Not cached.
 			</description>
 		</method>
 		<method name="get_shelter_at" qualifiers="const">
@@ -344,6 +364,9 @@
 		<member name="canopy_map_rect" type="Rect2" setter="set_canopy_map_rect" getter="get_canopy_map_rect" default="Rect2(-256, -256, 512, 512)">
 			The world rect [member canopy_map] covers (x and z of its corner, then its size).
 		</member>
+		<member name="climate" type="Resource" setter="set_climate" getter="get_climate">
+			The climate of the place for [method get_season]: a [code]ClimateRecipe[/code], or any resource with its property names (temperature_january, temperature_july, lapse_rate_january, lapse_rate_july, reference_height, precipitation, precipitation_seasonality, precipitation_peak_month, rain_snow_threshold, daily_temperature_spread, melt_factor, soil_capacity, latitude). Without one, a temperate default (3 C in January, 22 C in July, 900 mm).
+		</member>
 		<member name="cloud_base_height" type="float" setter="set_cloud_base_height" getter="get_cloud_base_height" default="1500.0">
 			Height of the cloud base, in metres above y = 0.
 		</member>
@@ -425,6 +448,12 @@
 		<member name="roughness_length" type="float" setter="set_roughness_length" getter="get_roughness_length" default="0.03">
 			Aerodynamic roughness length z0 of the ground, in metres: about 0.0002 over the sea, 0.03 over open land, 0.5 to 1 over a town. It sets how the wind slows near the ground and how gusty it is.
 		</member>
+		<member name="season_anomaly" type="float" setter="set_season_anomaly" getter="get_season_anomaly" default="0.0">
+			How much warmer (K) this year runs than the [member climate]: the live air temperature's departure from the climate's mean for the day, averaged over about a month of weather time while the map runs. Set it for a warm or cold year.
+		</member>
+		<member name="season_day" type="int" setter="set_season_day" getter="get_season_day" default="135">
+			Day of the year for [method get_season] when there is no [member sky_clock] (135 is 15 May).
+		</member>
 		<member name="shelter_enabled" type="bool" setter="set_shelter_enabled" getter="get_shelter_enabled" default="true">
 			Wind near the ground drops inside plant canopies ([method add_canopy], [member canopy_map]) and in the lee of obstacles ([method add_shelter_box], the [code]weather_shelter[/code] group), on a square of [member shelter_extent] around the camera. Applies to [method get_wind_at] and, through [code]weather_shelter_map[/code], to shaders.
 		</member>
@@ -433,6 +462,9 @@
 		</member>
 		<member name="shelter_resolution" type="int" setter="set_shelter_resolution" getter="get_shelter_resolution" default="256">
 			Cells across the shelter square (2 m cells by default).
+		</member>
+		<member name="sky_clock" type="NodePath" setter="set_sky_clock" getter="get_sky_clock" default="NodePath(&quot;&quot;)">
+			The [SkyClock] whose date and latitude [method get_season] uses.
 		</member>
 		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
 			The [DirectionalLight3D] the clouds shadow. The map sets that light's [member Light3D.light_projector], [member DirectionalLight3D.projector_size] and [member DirectionalLight3D.projector_offset] to its cloud shadow, which darkens the ground in raster and path traced rendering alike, and clears the projector again when the map leaves the tree. Empty: no cloud shadows.
