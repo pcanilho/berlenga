@@ -30,6 +30,8 @@
 
 #include "weather_sky_material.h"
 
+#include "atmosphere.h"
+
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/main/viewport.h"
@@ -38,8 +40,9 @@
 #include "scene/resources/sky.h"
 #include "servers/rendering/rendering_server.h"
 
-Ref<Shader> WeatherSkyMaterial::shared_shader;
-Ref<Shader> WeatherSkyMaterial::shared_shader_plain;
+Ref<Shader> WeatherSkyMaterial::shared_shaders[4];
+Ref<ImageTexture> WeatherSkyMaterial::atmo_transmittance_tex;
+Ref<ImageTexture> WeatherSkyMaterial::atmo_multiscatter_tex;
 
 namespace {
 
@@ -59,6 +62,18 @@ uniform float turbidity : hint_range(0, 1000) = 10.0;
 uniform float sun_disk_scale : hint_range(0, 360) = 1.0;
 uniform vec4 ground_color : source_color = vec4(0.1, 0.07, 0.034, 1.0);
 uniform float exposure : hint_range(0, 128) = 1.0;
+
+group_uniforms atmosphere; // The scattering atmosphere (atmosphere_model SCATTERING); lights set by SkyClock.
+uniform int atmo_steps : hint_range(8, 64) = 32;
+uniform int atmo_radiance_steps : hint_range(4, 32) = 12;
+uniform int atmo_cloud_air_steps : hint_range(4, 32) = 12; // the air in front of the clouds
+uniform bool atmo_driven = false;
+uniform vec3 atmo_sun_direction = vec3(0.0, 1.0, 0.0);
+uniform vec3 atmo_sun_irradiance = vec3(0.0); // above the air, in light energy units
+uniform vec3 atmo_moon_direction = vec3(0.0, -1.0, 0.0);
+uniform vec3 atmo_moon_irradiance = vec3(0.0);
+uniform float atmo_sun_angular_size = 0.00930; // rad, diameter
+group_uniforms;
 
 group_uniforms clouds;
 // Raymarch steps for the screen, and for the radiance map (lighting and path traced bounces).
@@ -147,7 +162,15 @@ float cloud_phase(float cos_theta, float p_c) {
 // not at the march step: at grazing angles a step is hundreds of metres, and the shape noise read
 // at that scale is a few texels across, whose trilinear blend thresholded is a box (flat faces,
 // square corners). Along the ray the jitter (and the reprojection) average the steps instead.
-vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel) {
+// r_depth: the distance to the clouds seen, weighted by how much each step hides (for the air in front).
+vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambient_top, vec3 ambient_bottom, int steps, float jitter, float p_pixel, out float r_depth) {
+#ifdef ATMO_SCATTERING
+	// The air in front hazes far clouds into the horizon (aerial perspective), so the deck runs out to it.
+	const float far = 200000.0;
+#else
+	float far = cloud_far;
+#endif
+	r_depth = 0.0;
 	vec3 ro = vec3(0.0, PLANET_RADIUS + cam.y, 0.0);
 	float r_base = PLANET_RADIUS + cloud_base_height;
 	float r_top = PLANET_RADIUS + cloud_top_max;
@@ -171,10 +194,11 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		t0 = ht.x;
 		t1 = hb.x > 0.0 ? hb.x : ht.y;
 	}
-	if (t0 > cloud_far) {
+	if (t0 > far) {
 		return vec4(0.0, 0.0, 0.0, 1.0);
 	}
-	t1 = min(t1, t0 + cloud_far);
+	t1 = min(t1, t0 + far);
+	float depth_sum = 0.0;
 	float ds = (t1 - t0) / float(steps);
 	float cos_theta = dot(rd, sun_dir);
 	vec3 radiance = vec3(0.0);
@@ -221,13 +245,15 @@ vec4 march_clouds(vec3 cam, vec3 rd, vec3 sun_dir, vec3 sun_radiance, vec3 ambie
 		// Energy-conserving step (Hillaire 2016): albedo 1, so the scattering is the extinction.
 		float tr = exp(-sigma * ds);
 		radiance += transmittance * light * (1.0 - tr);
+		depth_sum += t * transmittance * (1.0 - tr);
 		transmittance *= tr;
 		if (transmittance < 0.01) {
 			break;
 		}
 	}
 	// Far clouds fade into the air.
-	float fade = 1.0 - smoothstep(0.5 * cloud_far, cloud_far, t0);
+	r_depth = transmittance < 1.0 ? depth_sum / (1.0 - transmittance) : t1;
+	float fade = 1.0 - smoothstep(0.5 * far, far, t0);
 	return vec4(radiance * fade, mix(1.0, transmittance, fade));
 }
 
@@ -251,7 +277,102 @@ vec3 lightning_glow(vec3 cam, vec3 rd, float opacity) {
 	return sum * lightning_color * opacity;
 }
 
+#ifdef ATMO_SCATTERING
+// The two bodies lighting the air: SkyClock's sun and moon when it drives the sky, else the first
+// directional light taken as the sun above the air.
+void atmo_lights(out vec3 l0, out vec3 e0, out vec3 l1, out vec3 e1, out float size0) {
+	if (atmo_driven) {
+		l0 = normalize(atmo_sun_direction);
+		e0 = atmo_sun_irradiance;
+		l1 = normalize(atmo_moon_direction);
+		e1 = atmo_moon_irradiance;
+		size0 = atmo_sun_angular_size;
+	} else {
+		l0 = LIGHT0_ENABLED ? normalize(LIGHT0_DIRECTION) : UP;
+		e0 = LIGHT0_ENABLED ? LIGHT0_COLOR * LIGHT0_ENERGY : vec3(0.0);
+		l1 = -UP;
+		e1 = vec3(0.0);
+		size0 = LIGHT0_ENABLED ? LIGHT0_SIZE : atmo_sun_angular_size;
+	}
+}
+#endif
+
 void sky() {
+#ifdef ATMO_SCATTERING
+	vec3 l0;
+	vec3 e0;
+	vec3 l1;
+	vec3 e1;
+	float size0;
+	atmo_lights(l0, e0, l1, e1, size0);
+	float cam_h = max(POSITION.y, 1.0);
+	float r_cam = atmo_radii.x + cam_h;
+	if (AT_QUARTER_RES_PASS) {
+		// The air alone: smooth, so a quarter of the resolution carries it (Hillaire's sky-view table
+		// is coarser still); its transmittance in alpha for what lies past it.
+		vec3 t_view;
+		vec3 air = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, 1e12, AT_CUBEMAP_PASS ? atmo_radiance_steps : atmo_steps, 0.3, t_view).rgb;
+		if (atmo_far_water > 0.0 && atmo_hits_ground(r_cam, EYEDIR.y)) {
+			// Open water past the scene: the sky mirrored at the angle the ray meets the curved sea, by
+			// Fresnel (Schlick, water), seen through the air in front (Bruneton 2010 lights an ocean so).
+			float t_hit = atmo_ray_sphere(r_cam, EYEDIR.y, atmo_radii.x, false);
+			vec3 up_hit = normalize(vec3(0.0, r_cam, 0.0) + EYEDIR * t_hit);
+			float c = clamp(-dot(EYEDIR, up_hit), 0.0, 1.0);
+			vec2 hz = length(EYEDIR.xz) > 1e-5 ? normalize(EYEDIR.xz) : vec2(1.0, 0.0);
+			vec3 rm = vec3(hz.x * sqrt(1.0 - c * c), c, hz.y * sqrt(1.0 - c * c));
+			vec3 t_m;
+			vec3 mirrored = atmo_scatter(1.0, rm, l0, e0, l1, e1, 1e12, 8, 0.5, t_m).rgb;
+			float fresnel = 0.02 + 0.98 * pow(1.0 - c, 5.0);
+			air += t_view * atmo_far_water * fresnel * mirrored;
+		}
+		COLOR = air;
+		ALPHA = 1.0;
+	} else if (AT_HALF_RES_PASS) {
+		// The clouds over the air.
+		vec4 air = vec4(QUARTER_RES_COLOR.rgb, 1.0);
+		float r_c = atmo_radii.x + cloud_base_height;
+		vec3 sun_radiance = e0 * atmo_light_transmittance(r_c, l0.y) * cloud_brightness;
+		vec3 t_up;
+		vec3 ambient_top = atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, t_up).rgb * cloud_brightness;
+		vec3 ambient_bottom = ambient_top * 0.5 + ground_color.rgb * sun_radiance * max(l0.y, 0.0) * (1.0 - 0.7 * cloud_cover) / PI;
+		float jitter = AT_CUBEMAP_PASS ? 0.5 : fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+#ifdef CLOUD_REPROJECTION
+		jitter = AT_CUBEMAP_PASS ? 0.5 : fract(jitter + 0.61803399 * floor(TIME * 60.0));
+#endif
+		vec3 dir_dx = dFdx(EYEDIR);
+		vec3 dir_dy = dFdy(EYEDIR);
+		float pixel_angle = max(length(dir_dx), length(dir_dy));
+		vec4 clouds = vec4(0.0, 0.0, 0.0, 1.0);
+		float cloud_depth = 0.0;
+		if (dot(e0, vec3(1.0)) > 0.0) {
+			clouds = march_clouds(POSITION, EYEDIR, l0, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter, pixel_angle, cloud_depth);
+		}
+		if (clouds.a < 0.999) {
+			// Aerial perspective (Hillaire 2020): the clouds seen through the air in front of them, which
+			// also scatters light toward the eye; what the clouds let through sees the whole sky behind.
+			vec3 t_front;
+			vec3 front = atmo_scatter(cam_h, EYEDIR, l0, e0, l1, e1, cloud_depth, atmo_cloud_air_steps, 0.5, t_front).rgb;
+			COLOR = (1.0 - clouds.a) * front + t_front * clouds.rgb + air.rgb * clouds.a;
+		} else {
+			COLOR = air.rgb;
+		}
+		ALPHA = clouds.a;
+	} else {
+		// The sun's disc through the air, behind the clouds.
+		vec3 disc = vec3(0.0);
+		float c0 = dot(EYEDIR, l0);
+		float half_size = 0.5 * size0 * sun_disk_scale;
+		float sundisk = smoothstep(cos(half_size * 2.0), cos(half_size), c0);
+		if (sundisk > 0.0 && !atmo_hits_ground(r_cam, EYEDIR.y)) {
+			disc = e0 * atmo_transmittance_to_top(r_cam, EYEDIR.y) * sundisk;
+		}
+		vec3 glow = vec3(0.0);
+		if (lightning_count > 0 && !AT_CUBEMAP_PASS) {
+			glow = lightning_glow(POSITION, EYEDIR, 1.0 - HALF_RES_COLOR.a);
+		}
+		COLOR = (HALF_RES_COLOR.rgb + disc * HALF_RES_COLOR.a + glow) * exposure;
+	}
+#else
 	vec3 sun_dir = LIGHT0_ENABLED ? normalize(LIGHT0_DIRECTION) : UP;
 	float light_energy = LIGHT0_ENABLED ? LIGHT0_ENERGY : 0.0;
 	if (AT_HALF_RES_PASS) {
@@ -270,7 +391,8 @@ void sky() {
 		vec3 dir_dx = dFdx(EYEDIR);
 		vec3 dir_dy = dFdy(EYEDIR);
 		float pixel_angle = max(length(dir_dx), length(dir_dy));
-		vec4 clouds = march_clouds(POSITION, EYEDIR, sun_dir, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter, pixel_angle);
+		float cloud_depth;
+		vec4 clouds = march_clouds(POSITION, EYEDIR, sun_dir, sun_radiance, ambient_top, ambient_bottom, AT_CUBEMAP_PASS ? cloud_radiance_steps : cloud_steps, jitter, pixel_angle, cloud_depth);
 		COLOR = clouds.rgb;
 		ALPHA = clouds.a;
 	} else {
@@ -282,6 +404,7 @@ void sky() {
 		}
 		COLOR = (air * HALF_RES_COLOR.a + HALF_RES_COLOR.rgb + glow) * exposure;
 	}
+#endif
 }
 )";
 
@@ -356,18 +479,62 @@ Ref<Environment> WeatherSkyMaterial::find_environment(Node *p_node) {
 }
 
 void WeatherSkyMaterial::_update_shader() {
-	Ref<Shader> &shader = cloud_reprojection ? shared_shader : shared_shader_plain;
+	const int key = (cloud_reprojection ? 1 : 0) + (atmosphere_model == ATMOSPHERE_SCATTERING ? 2 : 0);
+	Ref<Shader> &shader = shared_shaders[key];
 	if (shader.is_null()) {
 		shader.instantiate();
 		String head = String(SKY_HEAD);
+		String defines;
 		if (cloud_reprojection) {
-			head = head.replace("shader_type sky;\n", "shader_type sky;\n#define CLOUD_REPROJECTION\n");
+			defines += "#define CLOUD_REPROJECTION\n";
 		} else {
 			head = head.replace("half_res_reprojection, ", "");
 		}
-		shader->set_code(head + String(WeatherClouds::GLSL) + String(SKY_BODY));
+		if (atmosphere_model == ATMOSPHERE_SCATTERING) {
+			defines += "#define ATMO_SCATTERING\n";
+			head = head.replace("use_half_res_pass, ", "use_half_res_pass, use_quarter_res_pass, ");
+		}
+		head = head.replace("shader_type sky;\n", "shader_type sky;\n" + defines);
+		shader->set_code(head + String(WeatherClouds::GLSL) + String(WeatherAtmosphere::GLSL) + String(SKY_BODY));
 	}
 	set_shader(shader);
+	_update_atmosphere_textures();
+}
+
+// The atmosphere's tables, baked once (Earth's air; about 0.3 s on one core) and shared by every sky.
+void WeatherSkyMaterial::_update_atmosphere_textures() {
+	if (atmosphere_model != ATMOSPHERE_SCATTERING) {
+		return;
+	}
+	if (atmo_transmittance_tex.is_null()) {
+		const WeatherAtmosphere::Params params;
+		atmo_transmittance_tex = ImageTexture::create_from_image(WeatherAtmosphere::bake_transmittance(params));
+		atmo_multiscatter_tex = ImageTexture::create_from_image(WeatherAtmosphere::bake_multiscatter(params));
+	}
+	RS::get_singleton()->material_set_param(get_rid(), "atmo_transmittance", atmo_transmittance_tex->get_rid());
+	RS::get_singleton()->material_set_param(get_rid(), "atmo_multiscatter_lut", atmo_multiscatter_tex->get_rid());
+}
+
+void WeatherSkyMaterial::set_atmosphere_model(AtmosphereModel p_model) {
+	if (atmosphere_model == p_model) {
+		return;
+	}
+	atmosphere_model = p_model;
+	_update_shader();
+}
+
+WeatherSkyMaterial::AtmosphereModel WeatherSkyMaterial::get_atmosphere_model() const {
+	return atmosphere_model;
+}
+
+void WeatherSkyMaterial::set_atmosphere_lights(const Vector3 &p_sun_direction, const Vector3 &p_sun_irradiance, const Vector3 &p_moon_direction, const Vector3 &p_moon_irradiance) {
+	RenderingServer *rs = RS::get_singleton();
+	const RID m = get_rid();
+	rs->material_set_param(m, "atmo_driven", true);
+	rs->material_set_param(m, "atmo_sun_direction", p_sun_direction);
+	rs->material_set_param(m, "atmo_sun_irradiance", p_sun_irradiance);
+	rs->material_set_param(m, "atmo_moon_direction", p_moon_direction);
+	rs->material_set_param(m, "atmo_moon_irradiance", p_moon_irradiance);
 }
 
 void WeatherSkyMaterial::set_cloud_reprojection(bool p_enabled) {
@@ -386,11 +553,20 @@ void WeatherSkyMaterial::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_cloud_reprojection", "enabled"), &WeatherSkyMaterial::set_cloud_reprojection);
 	ClassDB::bind_method(D_METHOD("is_cloud_reprojection_enabled"), &WeatherSkyMaterial::is_cloud_reprojection_enabled);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cloud_reprojection"), "set_cloud_reprojection", "is_cloud_reprojection_enabled");
+	ClassDB::bind_method(D_METHOD("set_atmosphere_model", "model"), &WeatherSkyMaterial::set_atmosphere_model);
+	ClassDB::bind_method(D_METHOD("get_atmosphere_model"), &WeatherSkyMaterial::get_atmosphere_model);
+	ClassDB::bind_method(D_METHOD("set_atmosphere_lights", "sun_direction", "sun_irradiance", "moon_direction", "moon_irradiance"), &WeatherSkyMaterial::set_atmosphere_lights);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "atmosphere_model", PROPERTY_HINT_ENUM, "Physical Sky,Scattering"), "set_atmosphere_model", "get_atmosphere_model");
+	BIND_ENUM_CONSTANT(ATMOSPHERE_PHYSICAL_SKY);
+	BIND_ENUM_CONSTANT(ATMOSPHERE_SCATTERING);
 }
 
 void WeatherSkyMaterial::cleanup() {
-	shared_shader.unref();
-	shared_shader_plain.unref();
+	for (Ref<Shader> &sh : shared_shaders) {
+		sh.unref();
+	}
+	atmo_transmittance_tex.unref();
+	atmo_multiscatter_tex.unref();
 	WeatherClouds::free_textures();
 }
 
