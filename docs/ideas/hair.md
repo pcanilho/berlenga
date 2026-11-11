@@ -557,6 +557,23 @@ to compile its hit shader (the object vanished), and the dynamic BLAS scheduler 
 larger than the whole refit budget (1.5 M triangles), so a 30k-strand groom stayed where it was
 first built while the raster hair moved.
 
+## Checked: lighter path traced strands
+
+The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,
+24-point groom is 2.8 M triangles, refit every frame). Checked before building anything lighter:
+
+- NVIDIA's disjoint orthogonal triangle strips (DOTS, RTXCR sample, `CurveTessellation.cpp`) are
+  also two orthogonal quads a segment, four triangles: the same count as ours, so no saving.
+- Linear swept spheres (LSS, `VK_NV_linear_swept_spheres`): one vertex a segment, NVIDIA measures
+  about 2x faster and 5x less memory than DOTS, but only 50-series GPUs have it; it cannot be
+  tested on the cloud's software Vulkan or a 40-series card.
+- Fewer segments where a strand runs straight (Douglas-Peucker on the groomed strand, as Unreal's
+  groom LOD vertex decimation): with a tolerance of 0.2 mm (below a root width) the straight bench
+  groom keeps 14 of 20 points on average, 17 for the 95th percentile and 18 at most, so the fixed
+  slots shrink by about 10%; the wavy groom keeps all 24 (waves and frizz need every point).
+
+None was built: no option gives a large saving without losing detail on a 40-series GPU.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.
