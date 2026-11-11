@@ -524,15 +524,8 @@ func _run_weather() -> void:
 		weather.advance(3600.0)
 		snow.advance(3600.0)
 	_log("weather + snow %.0f h in %d ms" % [hours, Time.get_ticks_msec() - t])
-	# Snowfall beyond the particle box is fog (SnowFall3D.get_extinction), wired by hand here.
-	set_process(true)
-
-
-func _process(_dt: float) -> void:
-	if snowfall and env and args.get("view", "wide") == "peak":
-		var ext := snowfall.get_extinction()
-		env.fog_enabled = ext > 0.0
-		env.fog_density = ext
+	# Snowfall beyond the particle box is haze: SnowFall3D pushes it into the weather map's precipitation
+	# extinction, which the volumetric fog reads; nothing is wired here.
 
 
 # --- Vegetation --------------------------------------------------------------------------------------------------
@@ -1042,14 +1035,16 @@ func _checks() -> void:
 		await get_tree().process_frame
 	var rate_peak := snowfall.get_snowfall_rate()
 	var flakes_peak := snowfall.get_visible_flakes()
+	var haze_peak := weather.get_precipitation_extinction_at(probe_node.global_position)
 	var vis_peak := snowfall.get_visibility()
 	probe_node.global_position = Vector3(0, height_at(0, 1200) + 2.0, 1200)
 	for i in 20:
 		await get_tree().process_frame
 	var rate_coast := snowfall.get_snowfall_rate()
+	var haze_coast := weather.get_precipitation_extinction_at(probe_node.global_position)
 	check(rate_peak > 0.1 and flakes_peak > 0 and rate_coast < 0.02 * weather.rain_rate, "snow falls on the peak in the storm (%.1f mm/h, %d flakes, visibility %.0f m) and not at the coast (%.2f mm/h, under 2%% of the rain)" % [rate_peak, flakes_peak, vis_peak, rate_coast])
 	snowfall.follow_target = NodePath("")
-	check(false, "snowfall extinction feeds the fog by itself (wired by a script here)", true)
+	check(snowfall.haze_enabled and haze_peak > 0.0 and haze_peak > haze_coast * 2.0, "falling and blowing snow thicken the fog on the peak by themselves (extinction %.4f /m on the peak, %.4f at the coast)" % [haze_peak, haze_coast])
 	check(false, "falling rain particles from the weather (none in the engine)", true)
 	await _wind_snow_check()
 	var passes := 0
