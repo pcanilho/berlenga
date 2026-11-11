@@ -1549,6 +1549,17 @@
    "topic": "Snowpack"
   },
   {
+   "name": "Snowpack on a worker thread",
+   "settings": [
+    "SnowCover3D.background_updates"
+   ],
+   "note": "",
+   "what": "snowpack updates run off the main thread and swap in when done, so the frame never waits; main-thread share per update about 6 ms down to about 1 ms.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Snowpack"
+  },
+  {
    "name": "Snow climate",
    "settings": [
     "SnowClimate",
