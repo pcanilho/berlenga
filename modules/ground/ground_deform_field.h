@@ -53,6 +53,12 @@ class SceneTree;
 class GroundDeformField {
 public:
 	static constexpr int TILE = 64;
+	static constexpr float CRACK_LENGTH = 0.13f; // m at 2 cm (the crust's characteristic length, see press())
+	static constexpr float PLATE = 0.12f; // m, the pieces heaped in the rim
+	static constexpr int CRACK_SECTORS = 7; // radial cracks around a break
+	static constexpr float BOW_SPEED = 4.0f; // m/s at which the bow wave is full
+	static constexpr float BOW_GAIN = 3.0f; // weight of the rim straight ahead over behind, less one, at full speed
+	static constexpr float BOW_REACH = 1.0f; // the rim ahead reaches this much further, in ring widths, at full speed
 
 	struct Column {
 		float surface = 0.0f; // undisturbed surface height (ground, or ground plus snow)
@@ -76,6 +82,14 @@ public:
 		float mass = 0.0f; // kg on the ground, 0 = only pushes to its underside
 		float area = 0.0f; // contact area, m2, 0 = from the shape
 	};
+	class Columns;
+	// Where presses go instead of this field when set: the GPU field (SnowSurface3D, docs/ideas/snow.md
+	// follow-up 13) takes each press as a stamp.
+	class StampSink {
+	public:
+		virtual void stamp(const Columns &p_columns, Vector3 p_position, float p_radius, Vector2 p_half, float p_yaw, bool p_box, float p_bottom, float p_sink, bool p_round, float p_contact_tolerance, Vector2 p_velocity) = 0;
+		virtual ~StampSink() {}
+	};
 	class Columns {
 	public:
 		virtual Column column(float p_x, float p_z) const = 0;
@@ -89,6 +103,7 @@ public:
 	int max_cached_tiles = 1024;
 	bool track_fresh = false; // a third channel, 1 where freshly turned, decayed by the owner
 	float press_settle = 0.0f; // seconds of slumping a pressed tile owes (0: none, snow)
+	StampSink *stamp_sink = nullptr;
 
 	Vector2i origin; // texel index of the first texel
 	bool valid = false;

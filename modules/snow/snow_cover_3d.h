@@ -58,6 +58,7 @@ class WeatherMap3D;
 class SnowCover3D : public Node3D {
 	GDCLASS(SnowCover3D, Node3D);
 	friend class SnowCornice3D;
+	friend class SnowSurface3D;
 
 	static SnowCover3D *active;
 

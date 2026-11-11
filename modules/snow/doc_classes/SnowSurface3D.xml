@@ -49,7 +49,7 @@
 		<method name="get_moved_volume" qualifiers="const">
 			<return type="Vector2" />
 			<description>
-				Returns the volume of the prints (x) and of the rims (y) over the live field, in cubic metres.
+				Returns the volume of the prints (x) and of the rims (y) over the live field, in cubic metres. On the GPU path, as of the last read back (see [method sync_deformation]).
 			</description>
 		</method>
 		<method name="get_rim_at" qualifiers="const">
@@ -78,6 +78,12 @@
 				Returns the surface's material, for its parameters.
 			</description>
 		</method>
+		<method name="is_gpu_active" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] when the print field runs in compute shaders: [member gpu_simulation] is on, deformation is on and there is a [RenderingDevice] (Forward+ or Mobile).
+			</description>
+		</method>
 		<method name="press">
 			<return type="float" />
 			<param index="0" name="position" type="Vector3" />
@@ -100,6 +106,12 @@
 			<param index="5" name="velocity" type="Vector3" default="Vector3(0, 0, 0)" />
 			<description>
 				Like [method press], with a flat rectangular print [param size] wide (x) and long (y), turned by [param yaw] radians about up: a boot, a runner, a crate.
+			</description>
+		</method>
+		<method name="sync_deformation">
+			<return type="void" />
+			<description>
+				On the GPU path, waits for the field and reads it back now, so [method get_dent_at], [method get_rim_at], [method get_moved_volume] and the collision patch show everything pressed so far. It stalls the GPU: for tests and tools, not every frame. Does nothing on the CPU path.
 			</description>
 		</method>
 		<method name="refresh_ground">
@@ -169,6 +181,9 @@
 		</member>
 		<member name="follow_target" type="NodePath" setter="set_follow_target" getter="get_follow_target" default="NodePath(&quot;&quot;)">
 			The node the mesh and the deformation field follow. Empty: the current camera.
+		</member>
+		<member name="gpu_simulation" type="bool" setter="set_gpu_simulation" getter="is_gpu_simulation" default="true">
+			Runs the print field (pressing, slumping, refilling, the tile cache and the collision heights) in compute shaders where there is a [RenderingDevice]; the texture the snow samples is written there directly. Collision and the queries use a copy read back a few frames late. Off, or on the Compatibility renderer, the field runs on the CPU. Turning it over starts the field empty.
 		</member>
 		<member name="ground_spacing" type="float" setter="set_ground_spacing" getter="get_ground_spacing" default="0.25">
 			The spacing of the ground samples under the mesh, in metres.
