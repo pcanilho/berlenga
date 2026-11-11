@@ -1145,6 +1145,30 @@ Result, showcase valley at 10000 years: 2.2e6 m3, aprons fill the hollows at the
 fall stays. Off by default and in the bench (`--scree-age=10000` to see it): the difference is modest at 16 m cells,
 and it reads as rock until the ground shader gets a scree material (next step: mark it in the talus channel).
 
+## Faster ice stage (11 Nov night)
+
+Measured (showcase valley): the steady-ice solve is 96% of the ice stage, 1.26 of 1.30 s, in 128 solves (6000
+pseudo-steps for the first, 200 warm-started for each after) on a 65 x 65 ice grid; a pseudo-step costs about 9 ns a
+node, so the loop itself is already lean. The solve never settles: the largest steady-state imbalance stays at 15 to
+37 m/yr after each warm start, so the terrain depends on the iteration path, and any change to the iterations
+changes the result.
+
+Tried:
+
+- Accelerated pseudo-transient (a damped second-order update, Räss et al. 2022, GMD 15): diverges on the shallow-ice
+  equation's H^5 diffusivity at damping 0.9 and 0.95, even with the stable step.
+- Larger pseudo steps (0.1 instead of 0.03 d^2/D): slower and worse (oscillation, imbalance doubled).
+- Coarse-to-fine in time: the ice ages between river steps on a 128 m ice grid, the last glaciation on 64 m
+  (`glacial_coarse_cell`, 0 = off). The ice stage takes a third of the time (1.29 to 0.42 s; 8.1 to 2.2 s with an
+  inflow glacier). The terrain is similar but not the same: the showcase lake shrinks from 3.0 to 2.3 ha and the
+  fall moves; on the automatic valley the side-valley tarns do not form (the coarse ice wears the cirques
+  differently). Kept as an option for previews and very large worlds, off by default.
+
+The real fix is a converged steady-ice solver: the steady shallow-ice sheet as an obstacle problem solved by Newton
+with a multigrid inner solve (Jouvet and Bueler 2012, SIAM J. Appl. Math. 72; Bueler 2016, J. Glaciology 62), which
+settles in tens of iterations instead of thousands and makes the result independent of the iteration path. It
+changes the terrain once (to the converged answer), so it needs a before/after look.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

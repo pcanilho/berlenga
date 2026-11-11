@@ -453,6 +453,15 @@ bool TerrainGenerator3D::generate() {
 			glac.sources.push_back(src);
 		}
 	}
+	// The ice ages between the river steps can run on a coarser ice grid (glacial_coarse_cell): the steady-ice solve
+	// is 96% of the stage, and a grid twice as coarse has a quarter of the nodes and takes four times longer pseudo
+	// steps. The last glaciation, the one whose basins and walls are left, always runs on glac's 64 m grid.
+	TerrainGlacial glac_mid = glac;
+	TerrainGlacial *mid = &glac;
+	if (glacial_coarse_cell > 0.0) {
+		glac_mid.p.cell = double(glacial_coarse_cell);
+		mid = &glac_mid;
+	}
 	const bool glacial = glacial_enabled && glacial_erosion > 0.0;
 	uint64_t glacial_usec = 0;
 	int glacial_count = 0;
@@ -494,7 +503,7 @@ bool TerrainGenerator3D::generate() {
 		strata_time += double(time_step);
 		if (glacial && glacial_share > 0.0 && ++glacial_count % 8 == 0) {
 			const uint64_t tg = OS::get_singleton()->get_ticks_usec();
-			glac.erode(sp.b.height, sp.p.nx, sp.p.ny, sp.p.dx, 8.0 * double(time_step) * double(glacial_share), sp.b.sediment, sp.b.outlet, sp.b.sill, sp.b.sill_level, glacial_scale(sp.p.nx, sp.p.ny, sp.p.dx));
+			mid->erode(sp.b.height, sp.p.nx, sp.p.ny, sp.p.dx, 8.0 * double(time_step) * double(glacial_share), sp.b.sediment, sp.b.outlet, sp.b.sill, sp.b.sill_level, glacial_scale(sp.p.nx, sp.p.ny, sp.p.dx));
 			glacial_usec += OS::get_singleton()->get_ticks_usec() - tg;
 		}
 		return c;
@@ -4534,6 +4543,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_glacial_rock_scale"), &TerrainGenerator3D::get_glacial_rock_scale);
 	ClassDB::bind_method(D_METHOD("set_glacial_inflow_balance", "value"), &TerrainGenerator3D::set_glacial_inflow_balance);
 	ClassDB::bind_method(D_METHOD("get_glacial_inflow_balance"), &TerrainGenerator3D::get_glacial_inflow_balance);
+	ClassDB::bind_method(D_METHOD("set_glacial_coarse_cell", "metres"), &TerrainGenerator3D::set_glacial_coarse_cell);
+	ClassDB::bind_method(D_METHOD("get_glacial_coarse_cell"), &TerrainGenerator3D::get_glacial_coarse_cell);
 	ClassDB::bind_method(D_METHOD("set_glacial_sliding", "value"), &TerrainGenerator3D::set_glacial_sliding);
 	ClassDB::bind_method(D_METHOD("get_glacial_sliding"), &TerrainGenerator3D::get_glacial_sliding);
 	ClassDB::bind_method(D_METHOD("get_last_glacial_eroded"), &TerrainGenerator3D::get_last_glacial_eroded);
@@ -4762,6 +4773,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_variation", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_glacial_rock_variation", "get_glacial_rock_variation");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_scale", PROPERTY_HINT_RANGE, "16,4000,1,suffix:m"), "set_glacial_rock_scale", "get_glacial_rock_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_inflow_balance", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater,suffix:m/yr"), "set_glacial_inflow_balance", "get_glacial_inflow_balance");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_coarse_cell", PROPERTY_HINT_RANGE, "0,512,1,suffix:m"), "set_glacial_coarse_cell", "get_glacial_coarse_cell");
 
 	ADD_GROUP("Coast", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_edges", PROPERTY_HINT_FLAGS, "-X,+X,-Z,+Z"), "set_ocean_edges", "get_ocean_edges");

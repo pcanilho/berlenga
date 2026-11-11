@@ -312,6 +312,7 @@ func _generate() -> void:
 		gen.glacial_rock_variation = float(args.get("rock-var", "0"))
 		gen.glacial_rock_scale = float(args.get("rock-scale", "500"))
 		gen.glacial_inflow_balance = float(args.get("ice-inflow", "0"))
+		gen.glacial_coarse_cell = float(args.get("ice-coarse", "0"))
 		gen.glacial_erosion = float(args.get("glacial-erosion", "1"))
 	if args.has("refine"):
 		gen.refine_steps = int(args["refine"])
