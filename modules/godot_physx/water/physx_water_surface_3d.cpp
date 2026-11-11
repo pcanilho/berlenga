@@ -1135,6 +1135,9 @@ void fragment() {
 	vec2 cuv_fade = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float shallow = (1.0 - fade_r(v_rest_xz, cuv_fade)) * shallow_tint;
 	vec3 base_rgb = mix(water_color.rgb, shallow_color.rgb, shallow) * mix(0.75, 1.15, ndotl);
+#if !defined(RT)
+	base_rgb *= water_raster_body_light(); // lit by the sun and sky, as the foam beside it is
+#endif
 	float base_a = mix(water_color.a, shallow_color.a, shallow);
 	// Thin water is clear: the swash film and the last few cm at the edge let
 	// the sand show through, turning opaque by ~25 cm of depth.
