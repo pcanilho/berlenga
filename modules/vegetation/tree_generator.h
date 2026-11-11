@@ -340,7 +340,9 @@ public:
 	// Moss on bark (docs/ideas/trees.md section 5c): a tint at every LOD and a displaced moss
 	// shell over the bark at LOD 0, by species, height, upper faces and decay.
 	float moss_cover = 1.0f;
+	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
 	Climber climber = CLIMBER_NONE;
+	float shed_radius_max = 0.14f; // Thickest limb _shed_branch() picks (FORM_STICKS: 4 cm).
 	float climber_cover = 0.6f;
 	float _moss_amount() const;
 	float _moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount) const;
@@ -443,6 +445,7 @@ private:
 		FORM_SNAG, // Standing dead, decay classes 2-4 over the variants.
 		FORM_LOG, // Fallen dead, decay classes 2-4.
 		FORM_BRANCH, // A shed limb on the ground (coarse woody debris under the logs' size).
+		FORM_STICKS, // Small shed branches, 1-4 cm, scattered densely between the plants.
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
 
@@ -478,6 +481,8 @@ public:
 	Climber get_climber() const { return climber; }
 	void set_climber_cover(float p_cover) { climber_cover = CLAMP(p_cover, 0.0f, 1.0f); }
 	float get_climber_cover() const { return climber_cover; }
+	void set_compress_vertices(bool p_enable) { compress_vertices = p_enable; }
+	bool is_compress_vertices() const { return compress_vertices; }
 	void set_moss_cover(float p_cover) { moss_cover = MAX(p_cover, 0.0f); }
 	float get_moss_cover() const { return moss_cover; }
 	void set_fallen_branch(bool p_fallen_branch) { fallen_branch = p_fallen_branch; }

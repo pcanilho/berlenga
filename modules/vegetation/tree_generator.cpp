@@ -2570,12 +2570,17 @@ void TreeGenerator::_fell() {
 void TreeGenerator::_shed_branch() {
 	RandomPCG br;
 	br.seed(uint64_t(seed) * 2246822519u + 17u);
-	const float target = Math::lerp(0.04f, 0.14f, br.randf());
+	// Small limbs far outnumber big ones on the floor: 1-14 cm, weighted to the thin end
+	// (thinner twig litter is the ground plants').
+	const float pick_u = br.randf();
+	const float target = Math::lerp(0.01f, MAX(shed_radius_max, 0.01f), pick_u * pick_u);
 	int pick = -1;
 	float best = 1e9f;
 	for (int i = 1; i < int(nodes.size()); i++) {
 		const Node &n = nodes[i];
-		if (n.removed || n.order != 1 || nodes[n.parent].order != 0 || nodes[n.parent].main == i) {
+		// A limb off a stem; sticks may be any branch's side shoot.
+		const bool limb = n.order == 1 && nodes[n.parent].order == 0;
+		if (n.removed || n.order < 1 || nodes[n.parent].main == i || (!limb && shed_radius_max > 0.05f)) {
 			continue;
 		}
 		// Prefer a limb of about the target girth that is also long: a short stub of the right
@@ -3686,7 +3691,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			arrays[Mesh::ARRAY_BONES] = b.bones;
 			arrays[Mesh::ARRAY_WEIGHTS] = b.weights;
 		}
-		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods);
+		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0);
 		Ref<StandardMaterial3D> m;
 		m.instantiate();
 		m->set_albedo(Color(1, 1, 1));
@@ -3925,7 +3930,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	p_stand_grown = p_form != FORM_OPEN;
 	// Wood lying on the ground does not sway: logs and fallen branches are never rigged.
 	const bool saved_rigged = rigged;
-	if (p_form == FORM_LOG || p_form == FORM_BRANCH) {
+	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
 		rigged = false;
 	}
 	const int key = (int(p_preset) * 8 + int(p_form)) * 2 + (rigged ? 1 : 0);
@@ -3968,10 +3973,11 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			if (p_form == FORM_SNAG || p_form == FORM_LOG) {
 				decay_class = 2 + v % 3;
 				fallen = p_form == FORM_LOG;
-			} else if (p_form == FORM_BRANCH) {
+			} else if (p_form == FORM_BRANCH || p_form == FORM_STICKS) {
 				// Freshly shed (twigs still on) to well rotted.
 				decay_class = 1 + v % 3;
 				fallen_branch = true;
+				shed_radius_max = p_form == FORM_STICKS ? 0.04f : 0.14f;
 			}
 			// Climbers on some of the variants of their usual hosts (section 5b): ivy on about a
 			// quarter of rough- and smooth-barked broadleaves (and their snags), lianas on another
@@ -4006,6 +4012,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		decay_class = saved_decay;
 		fallen = saved_fallen;
 		fallen_branch = saved_branch;
+		shed_radius_max = 0.14f;
 		climber = saved_climber;
 		climber_cover = saved_climber_cover;
 		mesh_cache[key] = meshes;
@@ -4037,7 +4044,10 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	Ref<PlantSpecies> sp;
 	sp.instantiate();
 	sp->set_meta("preset", int(p_preset));
-	static const char *form_names[] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)" };
+	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
+		sp->set_meta("deadwood", true);
+	}
+	static const char *form_names[] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -4104,6 +4114,17 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			sp->set_align_to_ground(1.0f);
 			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
 			break;
+		case FORM_STICKS:
+			// Dense and close. Beech branches of 1-10 cm rot within about 18 years (t95; Muller-
+			// Using and Bartsch, Eur. J. Forest Res. 128, 2009), a mean stay near 6 years, so a
+			// branch fall of roughly 1 Mg/ha a year keeps about 6 Mg/ha (11 m3/ha) on the floor.
+			// Sticks every 1.5 m (about 1,600/ha, 1-4 cm) plus the shed limbs come close to that.
+			sp->set_spacing(1.5f);
+			sp->set_canopy_radius(0.0f);
+			sp->set_canopy_opacity(0.0f);
+			sp->set_align_to_ground(1.0f);
+			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
+			break;
 		case FORM_LOG:
 			sp->set_spacing(h.stand_spacing * 2.5f);
 			sp->set_canopy_radius(0.0f);
@@ -4125,7 +4146,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		Color far = Color(leaf.r * self_shade, leaf.g * self_shade, leaf.b * self_shade, conifer ? 0.85f : 0.9f);
 		if (p_form == FORM_SAPLING) {
 			far.a = 0.5f;
-		} else if (p_form == FORM_SNAG || p_form == FORM_LOG || p_form == FORM_BRANCH) {
+		} else if (p_form == FORM_SNAG || p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
 			const Color wood = bark.lerp(Color(0.42f, 0.39f, 0.33f), 0.6f);
 			far = Color(wood.r, wood.g, wood.b, p_form == FORM_SNAG ? 0.15f : 0.1f);
 		}
@@ -4347,7 +4368,9 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		log->set_density(0.4f);
 		Ref<PlantSpecies> branch = _stand_species(lead, true, p_variants, FORM_BRANCH);
 		branch->set_density(0.7f);
-		for (const Ref<PlantSpecies> &extra : { sap, snag, log, branch }) {
+		Ref<PlantSpecies> sticks = _stand_species(lead, true, p_variants, FORM_STICKS);
+		sticks->set_density(1.0f);
+		for (const Ref<PlantSpecies> &extra : { sap, snag, log, branch, sticks }) {
 			// Inside the stand's own belt.
 			for (int r = 0; r < PlantSpecies::RULE_MAX; r++) {
 				if (PlantSpecies::Rule(r) == PlantSpecies::RULE_SHADE) {
@@ -4503,6 +4526,32 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		_fell();
 	}
 	Ref<ArrayMesh> mesh = _build_mesh();
+	if (fallen || fallen_branch) {
+		// Where the wood lies (mesh space), for plants grown through and around it: the thickest
+		// axis from the root, start, end and radius at its start.
+		int s0 = -1;
+		for (int i = 1; i < int(nodes.size()); i++) {
+			const Node &n = nodes[i];
+			if (n.removed || (n.parent >= 0 && !nodes[n.parent].removed && nodes[n.parent].main == i)) {
+				continue;
+			}
+			if (s0 < 0 || n.radius > nodes[s0].radius) {
+				s0 = i;
+			}
+		}
+		if (s0 >= 0) {
+			int last = s0;
+			for (int k = s0; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+				last = k;
+			}
+			const Vector3 a = nodes[s0].start, b = nodes[last].end();
+			PackedFloat32Array axis;
+			for (float v : { a.x, a.y, a.z, b.x, b.y, b.z, nodes[s0].radius }) {
+				axis.push_back(v);
+			}
+			mesh->set_meta(SNAME("tree_deadwood_axis"), axis);
+		}
+	}
 	bark_color = living_bark;
 	leaf_color = living_leaf;
 	generation_usec = OS::get_singleton()->get_ticks_usec() - t0;
@@ -4534,6 +4583,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_fallen"), &TreeGenerator::is_fallen);
 	ClassDB::bind_method(D_METHOD("set_fallen_branch", "fallen_branch"), &TreeGenerator::set_fallen_branch);
 	ClassDB::bind_method(D_METHOD("set_moss_cover", "cover"), &TreeGenerator::set_moss_cover);
+	ClassDB::bind_method(D_METHOD("set_compress_vertices", "enable"), &TreeGenerator::set_compress_vertices);
+	ClassDB::bind_method(D_METHOD("is_compress_vertices"), &TreeGenerator::is_compress_vertices);
 	ClassDB::bind_method(D_METHOD("set_climber", "climber"), &TreeGenerator::set_climber);
 	ClassDB::bind_method(D_METHOD("get_climber"), &TreeGenerator::get_climber);
 	ClassDB::bind_method(D_METHOD("set_climber_cover", "cover"), &TreeGenerator::set_climber_cover);
@@ -4588,6 +4639,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen"), "set_fallen", "is_fallen");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen_branch"), "set_fallen_branch", "is_fallen_branch");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moss_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_moss_cover", "get_moss_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "compress_vertices"), "set_compress_vertices", "is_compress_vertices");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "climber", PROPERTY_HINT_ENUM, "None,Ivy,Liana,Honeysuckle"), "set_climber", "get_climber");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "climber_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_climber_cover", "get_climber_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::AABB, "envelope"), "set_envelope", "get_envelope");

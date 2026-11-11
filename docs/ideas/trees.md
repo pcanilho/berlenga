@@ -136,6 +136,24 @@ Our plan (assets stay out of git: everything is procedural):
 Checks: 100% crops raster against PT (detail kept), texel density along a stem, no seams around
 or along, cost of the near trunks (vertices, BLAS memory).
 
+### 2b. Species leaves (plan, 11 Nov; Paulo picked)
+
+Leaf architecture by species (Ellis et al., *Manual of Leaf Architecture*, 2009): simple
+(beech, birch, lime, alder, willow, holly), pinnately lobed (oaks: rounded lobes in white and
+pedunculate oak, bristle-tipped in red oak; hawthorn deeply lobed), palmately lobed (sycamore and
+maples), pinnately compound (ash, rowan, elder) and palmately compound (horse chestnut).
+Silhouette is geometry, never alpha: the path tracer sees the true outline and needs no any-hit.
+- Blade: the current folded lens with a width profile per form; lobes sampled at peak and sinus
+  (two rows per lobe); palmate leaves as lobes fanned from the petiole; compound leaves as
+  leaflets along a rachis or from one point.
+- LOD: the detailed blade is LOD 0 (and the path tracer); coarser levels keep today's simple
+  lens of the same area as a stored twin, so far LODs cost what they do now.
+- Texture: venation baked per form (Runions et al., *Modeling and Visualization of Leaf
+  Venation Patterns*, SIGGRAPH 2005, for the look; drawn here as a midrib, secondaries at the
+  species' angle and a margin band), multiplying the vertex colour; a weak normal map for vein
+  relief.
+- The leaf form and colour per species are exposed for the ground plants' leaf litter.
+
 ## 3. Wind
 
 - **Vertex-shader layers** (Sousa, GPU Gems 3 ch. 16; Horizon Zero Dawn: distance to trunk,
@@ -252,6 +270,16 @@ and touch bending of section 7a add a contact moment to the same bones.
   (Loubet and Neyret, *Hybrid Mesh-Volume LoDs*, EG 2017) are the far-far answer; a later
   stage, and it overlaps with the voxel stand-ins already noted for vegetation.
 
+### 4a. Measured (11 Nov)
+
+- **Compressed vertices** (`compress_vertices`, on): Godot's compressed format (positions as
+  16-bit fractions of the mesh box, octahedral normal and tangent, 16-bit UVs). Vertex memory
+  of the stand-grown oak, beech and spruce falls to 67% (80% rigged, where the skin weights
+  dominate). Raster at 100% crop: indistinguishable (mean 0.48/255, sub-pixel edge shifts);
+  path traced: same mean, differences at noise level. The path tracer reads the format.
+- **Shadow meshes**: no gain. The renderer uses an ArrayMesh shadow mesh only with the shared
+  shadow material, which wind-skinned (particle-trails) and two-sided leaf materials never get.
+
 ## 5. Shrubs, hedges, the in-between forms and deadwood
 
 - **Shrubs** are the same growth model with basitonic dominance: many stems from the base,
@@ -318,6 +346,17 @@ Our plan, joint with vegetation (which builds the leaves with its plant generato
 3. Controls: `climber` (none, ivy, clematis, honeysuckle), `climber_cover` 0-1, and the stand
    methods set them per stand (ivy in oak, beech and riparian woods; lianas in riparian and
    oak-lime-ash on rich soils).
+
+**As built (11 Nov).** Shed limbs are 1-14 cm, weighted to the thin end. `FORM_STICKS` adds
+a dense scatter of 1-4 cm side shoots every 1.5 m inside the stand's belt and in its clearings
+(shade 0-1). Calibration: beech branches of 1-10 cm rot within about 18 years (t95, Muller-Using
+and Bartsch, Eur. J. Forest Res. 128, 2009), a mean stay near 6 years, so a branch fall near
+1 Mg/ha a year keeps about 6 Mg/ha (11 m3/ha) of fine wood on the floor; sticks plus limbs come
+close. Forestry measures it by Brown's line-intersect classes (under 0.6 cm, 0.6-2.5, 2.5-7.6,
+logs over 7.6 cm); the split with the ground plants follows that: twig litter under 1 cm is
+theirs, wood from 1 cm up is ours. Interface for plants growing through deadwood: log, branch
+and stick species carry meta `deadwood`, and each of their meshes `tree_deadwood_axis`
+(a, b, radius in mesh space; transform by the placement).
 
 ### 5c. Moss on bark (as built, 11 Nov)
 
