@@ -60,6 +60,9 @@ class SnowIcicles3D : public Node3D {
 	bool sites_dirty = true;
 	MeshInstance3D *mesh_instance = nullptr;
 	Ref<StandardMaterial3D> default_material;
+	Ref<StandardMaterial3D> default_core_material;
+	Ref<Material> core_material;
+	bool hazy_core = true;
 	uint64_t seen_update = 0;
 	float drawn_change = 0.0f;
 	float last_supply = 0.0f; // kg/h along the whole edge, last step
@@ -108,4 +111,8 @@ public:
 	int get_seed() const { return seed; }
 	void set_material(const Ref<Material> &p_material);
 	Ref<Material> get_material() const { return material; }
+	void set_core_material(const Ref<Material> &p_material);
+	Ref<Material> get_core_material() const { return core_material; }
+	void set_hazy_core(bool p_enabled);
+	bool get_hazy_core() const { return hazy_core; }
 };

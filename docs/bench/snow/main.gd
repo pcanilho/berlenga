@@ -42,7 +42,7 @@ extends Node3D
 #                     freezes all of it, melting back
 #   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
 #                     first cornice falls, a moment later (the blocks tumbling)
-#   --view=icicles    a snowy roof's eave after a sunny day at -4 C: icicles in raster or path traced
+#   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
 #                     under the boots, balls and wheel; 2 holds the boots (--close: down on the boot prints)
 #   --view=props      close: bumpy ground, boxes, a sphere, a 45 degree board and a 70 degree wall after snow
@@ -1125,7 +1125,12 @@ func _build_view() -> void:
 	var env := Environment.new()
 	# A sky, so path traced shadows are lit by it as raster's are by the ambient.
 	var sky := Sky.new()
-	sky.sky_material = ProceduralSkyMaterial.new()
+	var sky_material := ProceduralSkyMaterial.new()
+	if view == "icicles":
+		# A snowy land below the horizon, not the default brown: clear ice shows what lies behind and below it.
+		sky_material.ground_horizon_color = Color(0.72, 0.75, 0.8)
+		sky_material.ground_bottom_color = Color(0.55, 0.58, 0.62)
+	sky.sky_material = sky_material
 	env.sky = sky
 	env.background_mode = Environment.BG_SKY
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
@@ -1134,6 +1139,10 @@ func _build_view() -> void:
 	env.pathtracing_enabled = not raster
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = bounces
+	if view == "icicles" and bounces == 3:
+		# Seen through clear ice, the eave's shaded underside is three bounces away (in, out, the wood) and needs
+		# more for the sky that lights it: at 3 it shows black through the ice.
+		env.pathtracing_max_bounces = 6
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -1469,8 +1478,9 @@ func _build_icicles(cam: Camera3D) -> void:
 	snow.drift_enabled = false
 	sun.visible = true
 	sun.shadow_enabled = true
-	# A low afternoon sun from behind the shed, so light comes through the ice.
-	sun.rotation_degrees = Vector3(-18.0, 160.0, 0.0)
+	# A low afternoon sun ahead of the camera, in front of the eave so the roof does not shade the ice:
+	# backlit, the light comes through it.
+	sun.look_at_from_position(Vector3.ZERO, Vector3(1.0, -0.16, -0.45))
 	_add_terrain(32.0, 128, Color(0.36, 0.33, 0.28), 2.0)
 	snow.height_source = NodePath("")
 	var floor_body := StaticBody3D.new()
@@ -1498,16 +1508,22 @@ func _build_icicles(cam: Camera3D) -> void:
 	var ice := SnowIcicles3D.new()
 	ice.name = "Icicles"
 	ice.spacing = 0.12
-	ice.edge = PackedVector3Array([Vector3(-4.95, eave_y, 0.17), Vector3(-0.05, eave_y, 0.17)])
+	ice.edge = PackedVector3Array([Vector3(-4.95, eave_y, 0.12), Vector3(-0.05, eave_y, 0.12)])
 	add_child(ice)
 	# Three days: six hours of melt off the sunny roof (0.3 mm/h over its 3.4 m) at -4 C, then a night at -8 C.
 	for day in 3:
 		ice.grow(6.0, -4.0, 0.5, 0.3 * 3.4)
 		ice.grow(18.0, -8.0, 0.5, 0.0)
 	print("icicles: %d sites, longest %.2f m, %.2f kg of ice" % [ice.get_icicle_count(), ice.get_longest(), ice.get_ice_mass()])
-	cam.position = Vector3(-1.5, 1.85, 1.25)
-	cam.look_at(Vector3(-2.1, 2.08, 0.17))
+	# At the icicles' height along the eave, the sky and the field behind them.
+	cam.position = Vector3(-0.2, 2.05, 1.1)
+	cam.look_at(Vector3(-2.2, 2.1, 0.17))
 	cam.fov = 50.0
+	if OS.get_cmdline_user_args().has("--close"):
+		# The longest icicles at 100%: the ripples, the clear sheath and the hazy core.
+		cam.position = Vector3(-0.1, 2.1, 0.75)
+		cam.look_at(Vector3(-0.6, 2.12, 0.17))
+		cam.fov = 30.0
 	await get_tree().process_frame
 	await _save_frame("")
 	get_tree().quit()

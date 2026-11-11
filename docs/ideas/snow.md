@@ -824,6 +824,20 @@ where melt water runs off the snow above into air below freezing.
   Lozowski: close to conical). The material is clear ice: transmission, IOR 1.31, specular 0.335 for
   1.8% reflectance, no absorption over a few centimetres. Centimetre ripples along it come from a
   normal map (Ueno 2003; Chen and Morris 2013: about 1 cm whatever the icicle).
+- **Look, revised (11 Nov).** The first shots read as dark, opaque cones. Three causes, three fixes:
+  - Ice that holds impurities (roof water does) is hazy, not from air but from pockets of impure
+    water caught in layers as the icicle thickens (Ladan and Morris 2022). So each icicle has a
+    hazy core: a cone of 0.4 of its radius over 0.8 of its length (the tip, the newest ice, stays
+    clear), white, rough 0.5 and back lit so light comes through it (`hazy_core`, `core_material`).
+    It is opaque so the clear ice around it refracts it in raster as under path tracing.
+  - The ripple slope drops from 0.12 to 0.06 (a ripple about 0.1 mm high on its 1 cm). At 0.12 the
+    path tracer bent alternate ripples onto the sky and onto the eave, black and white stripes.
+  - A solid cone bends what is behind it upward: under an eave the path tracer shows the wood's
+    shaded underside through the ice, which needs a fourth bounce for the sky lighting it. At the
+    default 3 bounces it is black. The bench's icicle view uses 6; scenes with clear ice next to
+    shaded surfaces want 5 or more. Raster refracts at the front face only, so it shows the sky
+    where the path tracer shows the eave; the ice reads as clear in both.
+  - The bench view is now backlit, at the icicles' height, against a snowy land (`--close` for 100%).
 
 **Checks** (`--test=icicles`):
 - The rates above. Colder and windier grow faster; nothing grows above 0 C.
@@ -859,3 +873,4 @@ Sources:
 - Ueno, Morphological instability of the solid-liquid interface in crystal growth under supercooled
   liquid film flow and natural convection airflow, Physics of Fluids 15, 2003.
 - Chen and Morris, On the origin and evolution of icicle ripples, New Journal of Physics 15, 2013.
+- Ladan and Morris, Pattern of inclusions inside rippled icicles, Physical Review E 106, 054211, 2022.

@@ -102,11 +102,17 @@
 		<member name="catchment_length" type="float" setter="set_catchment_length" getter="get_catchment_length" default="3.0">
 			How far up the roof or slope above the edge the melt water comes from, in metres.
 		</member>
+		<member name="core_material" type="Material" setter="set_core_material" getter="get_core_material">
+			The hazy core's material; empty uses cloudy white ice that lets light through to its back.
+		</member>
 		<member name="edge" type="PackedVector3Array" setter="set_edge" getter="get_edge" default="PackedVector3Array()">
 			The edge the icicles hang from, as a line of points in local space.
 		</member>
 		<member name="heat_loss" type="float" setter="set_heat_loss" getter="get_heat_loss" default="0.0">
 			Heat leaking through the roof under the snow, in W/m², melting it from below while there is snow (the source of icicles and ice dams on heated buildings). 0 for an unheated roof or a rock ledge.
+		</member>
+		<member name="hazy_core" type="bool" setter="set_hazy_core" getter="get_hazy_core" default="true">
+			If [code]true[/code], each icicle has a hazy core inside its clear ice: the cloudiness of pockets of impure water caught as it thickens. Its tip stays clear. Off for icicles of pure water, clear throughout.
 		</member>
 		<member name="material" type="Material" setter="set_material" getter="get_material">
 			The material; empty uses clear ice.

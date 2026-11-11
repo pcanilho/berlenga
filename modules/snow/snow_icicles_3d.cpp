@@ -62,6 +62,10 @@ constexpr float SPONGY_LIQUID = 0.26f;
 constexpr float WALL_WETTED = 0.5f;
 // Ripples along icicles: about a centimetre apart whatever the icicle (Ueno 2003; Chen and Morris 2013).
 constexpr float RIPPLE_WAVELENGTH = 0.01f;
+// The hazy core: pockets of impure water caught in layers as the icicle thickens (Ladan and Morris 2022) cloud
+// the ice inside the newest clear layer; the tip, the newest ice, stays clear.
+constexpr float CORE_RADIUS = 0.4f;
+constexpr float CORE_REACH = 0.8f;
 
 float buoyancy_rayleigh(float p_delta, float p_size) {
 	// g beta dT L^3 / (nu alpha), beta = 1 / 273 K.
@@ -328,8 +332,9 @@ void SnowIcicles3D::_ensure_children() {
 		const int w = 4, h = 32;
 		Ref<Image> img = Image::create_empty(w, h, false, Image::FORMAT_RGB8);
 		for (int y = 0; y < h; y++) {
-			// One ripple: the surface tilts up and down along the icicle, a slope of 0.12 at most (a ripple a few tenths of a millimetre high).
-			const float s = 0.12f * Math::cos(float(Math::TAU) * (y + 0.5f) / h);
+			// One ripple: the surface tilts up and down along the icicle, a slope of 0.06 at most (a ripple about a tenth of a
+			// millimetre high on its 1 cm wavelength). Steeper, path traced refraction breaks the ice into black and white bands.
+			const float s = 0.06f * Math::cos(float(Math::TAU) * (y + 0.5f) / h);
 			const Vector3 nrm = Vector3(0.0f, s, 1.0f).normalized();
 			for (int x = 0; x < w; x++) {
 				img->set_pixel(x, y, Color(nrm.x * 0.5f + 0.5f, nrm.y * 0.5f + 0.5f, nrm.z * 0.5f + 0.5f));
@@ -338,6 +343,16 @@ void SnowIcicles3D::_ensure_children() {
 		img->generate_mipmaps();
 		default_material->set_feature(BaseMaterial3D::FEATURE_NORMAL_MAPPING, true);
 		default_material->set_texture(BaseMaterial3D::TEXTURE_NORMAL, ImageTexture::create_from_image(img));
+	}
+	if (default_core_material.is_null()) {
+		// Cloudy ice: the inclusions scatter, so it is white and rough, and lets light through to its back
+		// (backlight) as a frosted pane does. Opaque, so the clear ice around it refracts it in raster too.
+		default_core_material.instantiate();
+		default_core_material->set_albedo(Color(0.72f, 0.77f, 0.82f));
+		default_core_material->set_roughness(0.5f);
+		default_core_material->set_specular(0.335f);
+		default_core_material->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
+		default_core_material->set_backlight(Color(0.6f, 0.66f, 0.72f));
 	}
 }
 
@@ -349,36 +364,39 @@ void SnowIcicles3D::_build_mesh() {
 	// Each icicle a cone from its root radius to the drop at its tip (Szilder and Lozowski 1994: near
 	// conical), rounded at the tip, ten sides; UV.y counts ripples down it, UV.x goes round.
 	constexpr int SIDES = 10;
-	Vector<Vector3> verts;
-	Vector<Vector3> normals;
-	Vector<float> tangents;
-	Vector<Vector2> uvs;
-	Vector<int> indices;
-	for (const Icicle &ic : icicles) {
-		if (ic.length < 0.01f) {
-			continue;
-		}
-		const int rings = CLAMP(int(Math::ceil(ic.length / 0.03f)), 2, 40);
-		const int base = verts.size();
-		const float slope = (ic.radius - TIP_RADIUS) / ic.length;
+	struct Surface {
+		Vector<Vector3> verts;
+		Vector<Vector3> normals;
+		Vector<float> tangents;
+		Vector<Vector2> uvs;
+		Vector<int> indices;
+	};
+	// p_scale shrinks the radius, p_reach the length: the hazy core is a thinner cone that stops short of the tip.
+	auto add_cone = [](Surface &p_out, const Icicle &p_ic, float p_scale, float p_reach) {
+		const float length = p_ic.length * p_reach;
+		const float root = p_ic.radius * p_scale;
+		const float tip = TIP_RADIUS * p_scale;
+		const int rings = CLAMP(int(Math::ceil(length / 0.03f)), 2, 40);
+		const int base = p_out.verts.size();
+		const float slope = (root - tip) / length;
 		for (int r = 0; r <= rings; r++) {
-			const float z = ic.length * r / rings;
-			float rad = TIP_RADIUS + (ic.radius - TIP_RADIUS) * (1.0f - z / ic.length);
+			const float z = length * r / rings;
+			float rad = tip + (root - tip) * (1.0f - z / length);
 			if (r == rings) {
 				rad = 0.0f; // the rounded tip closes to a point below the drop
 			}
-			const float y = r == rings ? z + TIP_RADIUS : z;
+			const float y = r == rings ? z + tip : z;
 			for (int s = 0; s <= SIDES; s++) {
 				const float a = float(Math::TAU) * s / SIDES;
 				const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
-				verts.push_back(ic.position + out * rad - Vector3(0.0f, y, 0.0f));
-				normals.push_back((out + Vector3(0.0f, -slope, 0.0f)).normalized());
+				p_out.verts.push_back(p_ic.position + out * rad - Vector3(0.0f, y, 0.0f));
+				p_out.normals.push_back((out + Vector3(0.0f, -slope, 0.0f)).normalized());
 				const Vector3 t(-Math::sin(a), 0.0f, Math::cos(a));
-				tangents.push_back(t.x);
-				tangents.push_back(t.y);
-				tangents.push_back(t.z);
-				tangents.push_back(1.0f);
-				uvs.push_back(Vector2(float(s) / SIDES, y / RIPPLE_WAVELENGTH));
+				p_out.tangents.push_back(t.x);
+				p_out.tangents.push_back(t.y);
+				p_out.tangents.push_back(t.z);
+				p_out.tangents.push_back(1.0f);
+				p_out.uvs.push_back(Vector2(float(s) / SIDES, y / RIPPLE_WAVELENGTH));
 			}
 		}
 		for (int r = 0; r < rings; r++) {
@@ -388,41 +406,59 @@ void SnowIcicles3D::_build_mesh() {
 				const int b0 = a0 + SIDES + 1;
 				const int b1 = b0 + 1;
 				// Clockwise seen from outside (Godot's front faces).
-				indices.push_back(a0);
-				indices.push_back(b0);
-				indices.push_back(a1);
-				indices.push_back(a1);
-				indices.push_back(b0);
-				indices.push_back(b1);
+				p_out.indices.push_back(a0);
+				p_out.indices.push_back(b0);
+				p_out.indices.push_back(a1);
+				p_out.indices.push_back(a1);
+				p_out.indices.push_back(b0);
+				p_out.indices.push_back(b1);
 			}
 		}
 		// The root's cap, inside the eave (closes the ice for refraction).
-		const int c = verts.size();
-		verts.push_back(ic.position);
-		normals.push_back(Vector3(0, 1, 0));
-		tangents.push_back(1.0f);
-		tangents.push_back(0.0f);
-		tangents.push_back(0.0f);
-		tangents.push_back(1.0f);
-		uvs.push_back(Vector2(0.5f, 0.0f));
+		const int c = p_out.verts.size();
+		p_out.verts.push_back(p_ic.position);
+		p_out.normals.push_back(Vector3(0, 1, 0));
+		p_out.tangents.push_back(1.0f);
+		p_out.tangents.push_back(0.0f);
+		p_out.tangents.push_back(0.0f);
+		p_out.tangents.push_back(1.0f);
+		p_out.uvs.push_back(Vector2(0.5f, 0.0f));
 		for (int s = 0; s < SIDES; s++) {
-			indices.push_back(c);
-			indices.push_back(base + s);
-			indices.push_back(base + s + 1);
+			p_out.indices.push_back(c);
+			p_out.indices.push_back(base + s);
+			p_out.indices.push_back(base + s + 1);
+		}
+	};
+	Surface ice;
+	Surface core;
+	for (const Icicle &ic : icicles) {
+		if (ic.length < 0.01f) {
+			continue;
+		}
+		add_cone(ice, ic, 1.0f, 1.0f);
+		if (hazy_core && ic.length > 0.05f) {
+			add_cone(core, ic, CORE_RADIUS, CORE_REACH);
 		}
 	}
 	Ref<ArrayMesh> mesh;
-	if (!indices.is_empty()) {
-		mesh.instantiate();
+	for (int i = 0; i < 2; i++) {
+		const Surface &sf = i == 0 ? ice : core;
+		if (sf.indices.is_empty()) {
+			continue;
+		}
+		if (mesh.is_null()) {
+			mesh.instantiate();
+		}
 		Array arrays;
 		arrays.resize(Mesh::ARRAY_MAX);
-		arrays[Mesh::ARRAY_VERTEX] = verts;
-		arrays[Mesh::ARRAY_NORMAL] = normals;
-		arrays[Mesh::ARRAY_TANGENT] = tangents;
-		arrays[Mesh::ARRAY_TEX_UV] = uvs;
-		arrays[Mesh::ARRAY_INDEX] = indices;
+		arrays[Mesh::ARRAY_VERTEX] = sf.verts;
+		arrays[Mesh::ARRAY_NORMAL] = sf.normals;
+		arrays[Mesh::ARRAY_TANGENT] = sf.tangents;
+		arrays[Mesh::ARRAY_TEX_UV] = sf.uvs;
+		arrays[Mesh::ARRAY_INDEX] = sf.indices;
 		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
-		mesh->surface_set_material(0, material.is_valid() ? material : Ref<Material>(default_material));
+		Ref<Material> m = i == 0 ? (material.is_valid() ? material : Ref<Material>(default_material)) : (core_material.is_valid() ? core_material : Ref<Material>(default_core_material));
+		mesh->surface_set_material(mesh->get_surface_count() - 1, m);
 	}
 	mesh_instance->set_mesh(mesh);
 }
@@ -480,9 +516,17 @@ void SnowIcicles3D::set_seed(int p_seed) {
 
 void SnowIcicles3D::set_material(const Ref<Material> &p_material) {
 	material = p_material;
-	if (mesh_instance && mesh_instance->get_mesh().is_valid()) {
-		mesh_instance->get_mesh()->surface_set_material(0, material.is_valid() ? material : Ref<Material>(default_material));
-	}
+	_build_mesh();
+}
+
+void SnowIcicles3D::set_core_material(const Ref<Material> &p_material) {
+	core_material = p_material;
+	_build_mesh();
+}
+
+void SnowIcicles3D::set_hazy_core(bool p_enabled) {
+	hazy_core = p_enabled;
+	_build_mesh();
 }
 
 void SnowIcicles3D::_bind_methods() {
@@ -512,6 +556,10 @@ void SnowIcicles3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_seed"), &SnowIcicles3D::get_seed);
 	ClassDB::bind_method(D_METHOD("set_material", "material"), &SnowIcicles3D::set_material);
 	ClassDB::bind_method(D_METHOD("get_material"), &SnowIcicles3D::get_material);
+	ClassDB::bind_method(D_METHOD("set_core_material", "material"), &SnowIcicles3D::set_core_material);
+	ClassDB::bind_method(D_METHOD("get_core_material"), &SnowIcicles3D::get_core_material);
+	ClassDB::bind_method(D_METHOD("set_hazy_core", "enabled"), &SnowIcicles3D::set_hazy_core);
+	ClassDB::bind_method(D_METHOD("get_hazy_core"), &SnowIcicles3D::get_hazy_core);
 
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "edge"), "set_edge", "get_edge");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spacing", PROPERTY_HINT_RANGE, "0.02,2,0.01,suffix:m"), "set_spacing", "get_spacing");
@@ -520,4 +568,6 @@ void SnowIcicles3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_length", PROPERTY_HINT_RANGE, "0.01,10,0.01,suffix:m"), "set_max_length", "get_max_length");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hazy_core"), "set_hazy_core", "get_hazy_core");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "core_material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_core_material", "get_core_material");
 }
