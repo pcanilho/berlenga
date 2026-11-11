@@ -737,7 +737,7 @@
     "raster_reflections"
    ],
    "note": "",
-   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows.",
+   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -1311,7 +1311,7 @@
    "name": "Grass edge fade",
    "settings": [],
    "note": "always on",
-   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge.",
+   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -1360,7 +1360,7 @@
     "PlantGenerator"
    ],
    "note": "",
-   "what": "meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs, for `PlantSpecies.meshes`.",
+   "what": "meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -1439,6 +1439,19 @@
    ],
    "note": "",
    "what": "plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Plant impostors",
+   "settings": [
+    "PlantGenerator.make_impostor()",
+    "add_impostors()",
+    "impostor_range"
+   ],
+   "note": "",
+   "what": "large plants turn into octahedral impostors past a range in raster (brambles and bracken past 15 m), while path tracing keeps the meshes; an oak wood view drops from 3.91M to 2.98M triangles.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
