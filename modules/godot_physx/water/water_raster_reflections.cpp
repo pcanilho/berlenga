@@ -103,6 +103,23 @@ void WaterRasterReflections::update(Node3D *p_node, const Ref<ShaderMaterial> &p
 					sky_texture = ImageTexture::create_from_image(pano);
 				}
 				p_material->set_shader_parameter("raster_sky_panorama", sky_texture);
+				// Irradiance on a level surface: the upper half of the panorama (rows from the zenith),
+				// each texel's radiance times cos(theta) and its solid angle.
+				const int w = pano->get_width();
+				const int h = pano->get_height();
+				const double d_theta = Math::PI / h;
+				const double d_phi = Math::TAU / w;
+				Vector3 e;
+				for (int j = 0; j < h / 2; j++) {
+					const double theta = (j + 0.5) * d_theta;
+					const double weight = Math::cos(theta) * Math::sin(theta) * d_theta * d_phi;
+					Color row;
+					for (int i = 0; i < w; i++) {
+						row += pano->get_pixel(i, j);
+					}
+					e += Vector3(row.r, row.g, row.b) * weight;
+				}
+				sky_irradiance = e;
 			}
 			sky_rebake = lit ? 240 : 10;
 			sky_energy = lit ? 1.0f : 0.0f;
@@ -110,4 +127,5 @@ void WaterRasterReflections::update(Node3D *p_node, const Ref<ShaderMaterial> &p
 		energy = sky_energy * env->get_bg_energy_multiplier();
 	}
 	p_material->set_shader_parameter("raster_sky_energy", energy);
+	p_material->set_shader_parameter("raster_sky_irradiance", sky_irradiance);
 }
