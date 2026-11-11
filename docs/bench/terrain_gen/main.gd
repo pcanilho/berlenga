@@ -90,6 +90,7 @@ func _ready() -> void:
 	elif args.has("landscape-test"):
 		gen.generate()
 		_landscape_checks()
+		await _landscape_collision_checks()
 		print("%d checks, %d failed" % [checks, failures])
 		print("PASS" if failures == 0 else "FAIL")
 		get_tree().quit(1 if failures else 0)
@@ -1273,6 +1274,102 @@ func _landscape_checks() -> void:
 	check(int(bs["triangles"]) > 0 and float(bs["update_usec"]) < 5000.0, "1 km at 1 m picks its levels (no builds) in under 5 ms (%.0f us)" % bs["update_usec"])
 	big.queue_free()
 	ls.queue_free()
+
+
+func _landscape_collision_checks() -> void:
+	# Ground collision: static heightfields at full detail around a target, split like the drawn level 0 mesh.
+	var ls := Landscape3D.new()
+	ls.spacing = 2.0
+	ls.chunk_quads = 32
+	ls.collision_radius = 100.0
+	ls.collision_layer = 1 << 5 # apart from the bench's own ground
+	var target := Node3D.new()
+	add_child(target)
+	var probe := Vector3(-300.0, 0.0, 100.0)
+	target.position = probe + Vector3(0, gen.get_height(probe) + 2.0, 0)
+	add_child(ls)
+	ls.source = ls.get_path_to(gen)
+	ls.collision_target = ls.get_path_to(target)
+	ls.rebuild()
+	var st: Dictionary = ls.get_stats()
+	var size := ls.chunk_quads * ls.spacing
+	var o := Vector2(-2048.0, -2048.0)
+	var tc := Vector2i(floori((probe.x - o.x) / size), floori((probe.z - o.y) / size))
+	check(int(st["collision_tiles"]) > 0 and ls.is_chunk_loaded(tc) and ls.has_chunk_collision(tc), "ground collision built under the target at once, read in full (%d tiles, %.1f ms)" % [st["collision_tiles"], float(st["collision_usec"]) / 1000.0])
+	ls.load_all_heights()
+	ls.update_collision()
+	var grid := ls.get_chunk_grid()
+	var cover := true
+	var tiles := 0
+	for cz in grid.y:
+		for cx in grid.x:
+			var r := Rect2(o + Vector2(cx, cz) * size, Vector2(size, size))
+			var q := Vector2(clampf(probe.x, r.position.x, r.end.x), clampf(probe.z, r.position.y, r.end.y))
+			var d := q.distance_to(Vector2(probe.x, probe.z))
+			var has := ls.has_chunk_collision(Vector2i(cx, cz))
+			tiles += 1 if has else 0
+			cover = cover and (has == (d <= ls.collision_radius) or (has and d <= ls.collision_radius * 1.25))
+	check(cover, "tiles cover the chunks within the radius and none past 1.25 x (%d tiles)" % tiles)
+	await get_tree().physics_frame
+	await get_tree().physics_frame
+	var space := get_world_3d().direct_space_state
+	var h := func(i: int, j: int) -> float: return ls.get_height(Vector3(o.x + i * ls.spacing, 0, o.y + j * ls.spacing))
+	var worst := 0.0
+	var missed := 0
+	var other := 0.0
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	for k in 400:
+		# Grid points, edge midpoints and cell centres, where the drawn triangles are known exactly.
+		var i := floori((probe.x - o.x) / ls.spacing) + rng.randi_range(-40, 40)
+		var j := floori((probe.z - o.y) / ls.spacing) + rng.randi_range(-40, 40)
+		var kind := k % 3
+		var fx := float(i) + (0.5 if kind != 0 else 0.0)
+		var fz := float(j) + (0.5 if kind == 2 else 0.0)
+		var want: float = h.call(i, j)
+		if kind == 1:
+			want = 0.5 * (h.call(i, j) + h.call(i + 1, j))
+		elif kind == 2:
+			want = 0.5 * (h.call(i, j) + h.call(i + 1, j + 1)) if (i + j) % 2 == 0 else 0.5 * (h.call(i + 1, j) + h.call(i, j + 1))
+			other = maxf(other, absf(0.5 * (h.call(i, j) + h.call(i + 1, j + 1)) - 0.5 * (h.call(i + 1, j) + h.call(i, j + 1))))
+		var p := Vector3(o.x + fx * ls.spacing, 0, o.y + fz * ls.spacing)
+		var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(Vector3(p.x, want + 50.0, p.z), Vector3(p.x, want - 50.0, p.z), 1 << 5))
+		if hit.is_empty():
+			missed += 1
+		else:
+			worst = maxf(worst, absf(hit["position"].y - want))
+	check(missed == 0 and worst < 0.01, "rays land on the drawn triangles, diagonals included (worst %.4f m, %d missed of 400; the other split is up to %.2f m off)" % [worst, missed, other])
+	var far := probe + Vector3(600.0, 0, 0)
+	var far_hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(far + Vector3(0, 3000, 0), far - Vector3(0, 3000, 0), 1 << 5))
+	check(far_hit.is_empty(), "no collision past the radius")
+	# Moving on frees the old tiles and builds the new ones.
+	target.position = far + Vector3(0, gen.get_height(far) + 2.0, 0)
+	ls.update_collision()
+	st = ls.get_stats()
+	var ftc := Vector2i(floori((far.x - o.x) / size), floori((far.z - o.y) / size))
+	check(ls.has_chunk_collision(ftc) and not ls.has_chunk_collision(tc), "the tiles follow the target (%d tiles, %.1f ms to move)" % [st["collision_tiles"], float(st["collision_usec"]) / 1000.0])
+	ls.collision_enabled = false
+	check(int(ls.get_stats()["collision_tiles"]) == 0, "collision off frees every tile")
+	# Cost at game settings: 1 m spacing, 64-quad chunks, 192 m radius, ground read in full; a 64 m step.
+	var game := Landscape3D.new()
+	game.collision_target = NodePath()
+	add_child(game)
+	game.source = game.get_path_to(gen)
+	game.stream_heights = false
+	game.collision_enabled = false
+	game.rebuild()
+	game.collision_target = game.get_path_to(target)
+	target.position = probe + Vector3(0, gen.get_height(probe) + 2.0, 0)
+	game.collision_enabled = true
+	game.update_collision()
+	var first: float = game.get_stats()["collision_usec"]
+	target.position += Vector3(64.0, 0, 0)
+	game.update_collision()
+	var gs: Dictionary = game.get_stats()
+	print("     collision at 1 m, 192 m radius: %d tiles, %.1f ms all at once, %.1f ms for a 64 m step" % [gs["collision_tiles"], first / 1000.0, float(gs["collision_usec"]) / 1000.0])
+	game.queue_free()
+	ls.queue_free()
+	target.queue_free()
 
 
 func _deposition_checks() -> void:
