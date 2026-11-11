@@ -780,7 +780,9 @@ uint32_t SceneShaderRaytracing::compute_rt_flags(RID p_environment, bool p_fog_e
 		flags |= RT_FLAG_DECALS_ENABLED;
 	}
 
-	if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering")) {
+	// Only where the device has shader execution reordering: the SER pipeline does not build on one that
+	// lacks it (e.g. Mesa's CPU driver), and the frame then falls back to an untraced image.
+	if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering") && RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_INVOCATION_REORDER)) {
 		flags |= RT_FLAG_SER_ENABLED;
 	}
 
@@ -2041,7 +2043,7 @@ void SceneShaderRaytracing::init(const String p_defines) {
 			// SER and shadow settings, with and without Ray Reconstruction) on worker
 			// threads, so the first traced frame only has to create its pipeline.
 			uint32_t predicted = RT_FLAG_NONE;
-			if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering")) {
+			if (GLOBAL_GET("rendering/pathtracing/use_shader_execution_reordering") && RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_INVOCATION_REORDER)) {
 				predicted |= RT_FLAG_SER_ENABLED;
 			}
 			if (GLOBAL_GET("rendering/pathtracing/use_simple_shadows")) {

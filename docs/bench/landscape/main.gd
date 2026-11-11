@@ -21,6 +21,7 @@ extends Node3D
 #   --snow=climate|none   the winter baked by SnowClimate (default), or a snow-free ground for stills
 #   --month=N --time=H    0-based month of the rivers and the SkyClock date (default 4, 15 May) and local time (16.5)
 #   --day=N               day of the month (default 15)
+#   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
 #   --prints=0            no GroundSurface3D (footprints) node
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
@@ -619,7 +620,7 @@ func _build_weather() -> void:
 	sun = DirectionalLight3D.new()
 	sun.name = "Sun"
 	sun.light_energy = 1.6
-	sun.shadow_enabled = true
+	sun.shadow_enabled = args.get("sun-shadow", "1") != "0"
 	sun.directional_shadow_max_distance = float(args.get("shadow-max", "6000"))
 	add_child(sun)
 	# The sun from a date, a time and a place (SkyClock, Meeus): the month is the rivers' month, so the light,
@@ -645,7 +646,8 @@ func _build_weather() -> void:
 	add_child(anchor)
 	add_child(weather)
 	weather.follow_target = weather.get_path_to(anchor)
-	weather.sun_light = weather.get_path_to(sun)
+	if args.get("cloud-shadow", "1") != "0":
+		weather.sun_light = weather.get_path_to(sun) # the clouds' shadow, as the sun's projector
 	env = Environment.new()
 	sky_mat = WeatherSkyMaterial.new()
 	if args.has("atmosphere"):
