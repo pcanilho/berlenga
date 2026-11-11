@@ -31,6 +31,7 @@
 #include "physx_water_surface_3d.h"
 
 #include "physx_water_wake_3d.h"
+#include "water_raster_reflections.h"
 
 #include "core/config/engine.h"
 #include "core/math/face3.h"
@@ -277,15 +278,8 @@ uniform vec3 underwater_sun_irradiance = vec3(0.0);
 uniform vec3 underwater_sky_radiance = vec3(0.0);
 // How dark the thin line where the surface crosses the lens is (0 none).
 uniform float underwater_meniscus : hint_range(0.0, 1.0) = 0.35;
-// Raster reflections, seen from above: the sky mirrored by the exact Fresnel term (from a small panorama of
-// the environment's sky) and the sun's glitter (GGX, Bruneton, Neyret and Holzschuch 2010 for the sea; the
-// roughness widened by how fast the normal turns across the pixel, Tokuyoshi and Kaplanyan 2019, so a far
-// sea gathers its glints into a glitter path instead of aliasing). The path tracer has its own.
-uniform bool raster_reflections = true;
-uniform sampler2D raster_sky_panorama : filter_linear, repeat_enable, hint_default_black;
-uniform float raster_sky_energy = 0.0; // 0 = no sky baked (then no sky term)
-uniform vec3 raster_sun_travel = vec3(0.0, -1.0, 0.0); // the direction sunlight travels
-uniform vec3 raster_sun_irradiance = vec3(0.0); // pi x energy x colour, as a raster light
+// Raster reflections from above (water_raster_reflections.h).
+)" WATER_RASTER_REFLECTIONS_GLSL R"(
 #if (defined(UNDERWATER_FOG) || defined(UNDERWATER_SURFACE)) && !defined(RT)
 uniform sampler2D underwater_screen : hint_screen_texture, filter_linear, repeat_disable;
 uniform sampler2D underwater_depth : hint_depth_texture, filter_nearest, repeat_disable;
@@ -1179,49 +1173,11 @@ void fragment() {
 #else
 	ALPHA = water_a + wet_a;
 	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);
-	if (raster_reflections && camera_above) {
-		vec3 p_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-		vec3 v = normalize(CAMERA_POSITION_WORLD - p_w);
-		vec3 n_w = dot(world_normal, v) < 0.0 ? world_normal - 2.0 * dot(world_normal, v) * v : world_normal;
-		n_w = normalize(n_w);
-		float nv = clamp(dot(n_w, v), 1e-3, 1.0);
-		// Exact unpolarized Fresnel, air into water.
-		float st = sqrt(max(1.0 - nv * nv, 0.0)) / 1.33;
-		float ct = sqrt(max(1.0 - st * st, 0.0));
-		float rs = (nv - 1.33 * ct) / (nv + 1.33 * ct);
-		float rp = (1.33 * nv - ct) / (1.33 * nv + ct);
-		float fres = 0.5 * (rs * rs + rp * rp);
-		float surface = smoothstep(0.0, soft, shore) * (1.0 - foam); // open water: foam and dry sand are rough
-		float f_eff = fres * surface;
-		vec3 add = vec3(0.0);
-		vec3 r = reflect(-v, n_w);
-		r.y = max(r.y, 0.01); // a ray turned down by a steep wave sees the horizon's sky
-		r = normalize(r);
-		if (raster_sky_energy > 0.0) {
-			vec2 pc = vec2(atan(r.x, -r.z) + PI, acos(clamp(r.y, -1.0, 1.0))) / vec2(2.0 * PI, PI);
-			add += f_eff * textureLod(raster_sky_panorama, pc, 0.0).rgb * raster_sky_energy;
-		}
-		vec3 l = -raster_sun_travel;
-		float nl = dot(n_w, l);
-		if (nl > 0.0 && dot(raster_sun_irradiance, vec3(1.0)) > 0.0) {
-			vec3 hv = normalize(l + v);
-			float nh = clamp(dot(n_w, hv), 0.0, 1.0);
-			float a2 = pathtraced_roughness * pathtraced_roughness;
-			a2 *= a2;
-			vec3 dndx = dFdx(n_w);
-			vec3 dndy = dFdy(n_w);
-			a2 = clamp(a2 + min(0.5 * (dot(dndx, dndx) + dot(dndy, dndy)), 0.18), 1e-6, 1.0);
-			float den = nh * nh * (a2 - 1.0) + 1.0;
-			float d_ggx = a2 / (PI * den * den);
-			float hvd = clamp(dot(hv, v), 0.0, 1.0);
-			float fh = 0.02 + 0.98 * pow(1.0 - hvd, 5.0);
-			add += raster_sun_irradiance * (fh * d_ggx / (4.0 * nv)) * surface;
-		}
-		// What showed through before is now only what the surface lets through: out = old (1 - F) + add,
-		// written for blend_mix.
-		float a_new = 1.0 - (1.0 - ALPHA) * (1.0 - f_eff);
-		ALBEDO = (ALBEDO * ALPHA * (1.0 - f_eff) + add) / max(a_new, 1e-4);
-		ALPHA = a_new;
+	if (camera_above) {
+		// Open water reflects; foam and dry sand are rough.
+		vec4 refl = water_raster_reflect(ALBEDO, ALPHA, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), pathtraced_roughness);
+		ALBEDO = refl.rgb;
+		ALPHA = refl.a;
 	}
 #endif
 #endif // UNDERWATER_SURFACE
@@ -3820,26 +3776,6 @@ void PhysXWaterSurface3D::_set_underwater_shown(bool p_shown) {
 
 // Shows the underwater passes while the camera is within reach of the water and feeds them the
 // camera's side of the surface and the light entering the water.
-// The sun: the first visible directional light, looked up again now and then.
-DirectionalLight3D *PhysXWaterSurface3D::_find_sun() {
-	DirectionalLight3D *sun = ObjectDB::get_instance<DirectionalLight3D>(underwater_sun);
-	if ((sun == nullptr || !sun->is_inside_tree()) && underwater_sun_search-- <= 0) {
-		underwater_sun_search = 60;
-		underwater_sun = ObjectID();
-		sun = nullptr;
-		TypedArray<Node> lights = get_tree()->get_root()->find_children("*", "DirectionalLight3D", true, false);
-		for (int i = 0; i < lights.size(); i++) {
-			DirectionalLight3D *l = Object::cast_to<DirectionalLight3D>(lights[i]);
-			if (l != nullptr && l->is_visible_in_tree() && l->get_sky_mode() != DirectionalLight3D::SKY_MODE_SKY_ONLY) {
-				underwater_sun = l->get_instance_id();
-				sun = l;
-				break;
-			}
-		}
-	}
-	return sun != nullptr && sun->is_inside_tree() ? sun : nullptr;
-}
-
 void PhysXWaterSurface3D::set_raster_reflections(bool p_enabled) {
 	raster_reflections = p_enabled;
 	if (water_material.is_valid()) {
@@ -3847,56 +3783,8 @@ void PhysXWaterSurface3D::set_raster_reflections(bool p_enabled) {
 	}
 }
 
-// The sun's direction and irradiance, and a small panorama of the sky (radiance, baked again every few
-// seconds for a sky that changes with the time of day), for the raster surface's reflections.
 void PhysXWaterSurface3D::_update_raster_reflections() {
-	if (water_material.is_null()) {
-		return;
-	}
-	water_material->set_shader_parameter("raster_reflections", raster_reflections);
-	if (!raster_reflections) {
-		return;
-	}
-	const Viewport *vp = get_viewport();
-	const Camera3D *cam = vp != nullptr ? vp->get_camera_3d() : nullptr;
-	DirectionalLight3D *sun = _find_sun();
-	Vector3 travel(0, -1, 0);
-	Vector3 irradiance;
-	if (sun != nullptr && sun->is_visible_in_tree()) {
-		travel = -sun->get_global_transform().basis.get_column(2).normalized();
-		const Color c = sun->get_color().srgb_to_linear() * sun->get_param(Light3D::PARAM_ENERGY) * Math::PI;
-		irradiance = Vector3(c.r, c.g, c.b);
-	}
-	water_material->set_shader_parameter("raster_sun_travel", travel);
-	water_material->set_shader_parameter("raster_sun_irradiance", irradiance);
-
-	Ref<Environment> env = cam != nullptr ? cam->get_environment() : Ref<Environment>();
-	if (env.is_null() && get_world_3d().is_valid()) {
-		env = get_world_3d()->get_environment();
-	}
-	float energy = 0.0f;
-	if (env.is_valid() && env->get_background() == Environment::BG_SKY && env->get_sky().is_valid()) {
-		const RID sky_rid = env->get_sky()->get_rid();
-		if (sky_rid != raster_sky_baked || --raster_sky_rebake <= 0) {
-			raster_sky_baked = sky_rid;
-			Ref<Image> pano = RS::get_singleton()->sky_bake_panorama(sky_rid, 1.0, false, Size2i(128, 64));
-			bool lit = false;
-			if (pano.is_valid() && !pano->is_empty()) {
-				lit = pano->get_pixel(pano->get_width() / 2, pano->get_height() / 4).get_luminance() > 0.0f;
-				if (raster_sky_texture.is_valid() && raster_sky_texture->get_size() == pano->get_size() && raster_sky_texture->get_format() == pano->get_format()) {
-					raster_sky_texture->update(pano);
-				} else {
-					raster_sky_texture = ImageTexture::create_from_image(pano);
-				}
-				water_material->set_shader_parameter("raster_sky_panorama", raster_sky_texture);
-			}
-			// Until the sky has been drawn once the bake comes back black: try again soon.
-			raster_sky_rebake = lit ? 240 : 10;
-			raster_sky_energy = lit ? 1.0f : 0.0f;
-		}
-		energy = raster_sky_energy * env->get_bg_energy_multiplier();
-	}
-	water_material->set_shader_parameter("raster_sky_energy", energy);
+	raster_reflection_state.update(this, water_material, raster_reflections);
 }
 
 void PhysXWaterSurface3D::_update_underwater() {
@@ -3923,7 +3811,7 @@ void PhysXWaterSurface3D::_update_underwater() {
 	}
 	underwater_camera_below = cp.y < h;
 
-	DirectionalLight3D *sun = _find_sun();
+	DirectionalLight3D *sun = raster_reflection_state.find_sun(this);
 	Vector3 sun_dir(0, -1, 0);
 	Vector3 sun_irradiance;
 	if (sun != nullptr && sun->is_visible_in_tree()) {

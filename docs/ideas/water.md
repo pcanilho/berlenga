@@ -1729,6 +1729,10 @@ reflects and lets through only the rest: `out = old (1 - F) + F sky(r) + sun`, w
   out they merge into a glitter path instead of flickering.
 - None on foam or dry sand. `PhysXWaterSurface3D.raster_reflections` (on) is the opt-out.
 
+Rivers (`PhysXRiver3D`) had the same unlit raster look and now share the code
+(`water_raster_reflections.h`: the GLSL and the sun and sky lookup), with their own `raster_reflections`.
+Waterfall sheets keep the tint.
+
 Unresolved: raster cloud shadows do not dim the glitter (an unshaded material does not read the light's
 shadow); the path tracer's do.
 

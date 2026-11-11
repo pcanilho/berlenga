@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "water_raster_reflections.h"
 #include "water_solver.h"
 
 #include "core/math/random_pcg.h"
@@ -645,20 +646,14 @@ private:
 	Ref<ShaderMaterial> underwater_fog_material;
 	Ref<ShaderMaterial> underwater_surface_material;
 	LocalVector<StringName> underwater_shared_params; // uniforms the passes copy from water_material
-	ObjectID underwater_sun;
-	int underwater_sun_search = 0;
 	RID underwater_sky_baked;
 	int underwater_sky_rebake = 0;
 	Color underwater_sky_radiance;
 	void _update_underwater();
 	void _set_underwater_shown(bool p_shown);
-	DirectionalLight3D *_find_sun();
-	// Raster reflections from above (sky panorama + sun glitter), see the shader's raster_reflections.
+	// Raster reflections from above (sky panorama + sun glitter), see water_raster_reflections.h.
 	bool raster_reflections = true;
-	RID raster_sky_baked;
-	int raster_sky_rebake = 0;
-	Ref<ImageTexture> raster_sky_texture;
-	float raster_sky_energy = 0.0f;
+	WaterRasterReflections raster_reflection_state;
 	void _update_raster_reflections();
 	bool caustics_enabled = false; // off by default: a draw pass every frame, only worth it over a visible floor
 	Vector3 caustics_sun_direction = Vector3(-0.35f, -1.0f, -0.25f);
