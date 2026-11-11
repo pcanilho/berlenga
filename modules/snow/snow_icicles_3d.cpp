@@ -31,6 +31,7 @@
 #include "snow_icicles_3d.h"
 #include "snow_cover_3d.h"
 
+#include "core/templates/hashfuncs.h"
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "modules/weather/weather_map_3d.h"
@@ -62,6 +63,15 @@ constexpr float SPONGY_LIQUID = 0.26f;
 constexpr float WALL_WETTED = 0.5f;
 // Ripples along icicles: about a centimetre apart whatever the icicle (Ueno 2003; Chen and Morris 2013).
 constexpr float RIPPLE_WAVELENGTH = 0.01f;
+// Ripples start flat and grow as the icicle does (Chen and Morris 2013 watched their amplitude grow over
+// hours of growth): here none below 10 cm, full at half a metre, and smooth over the last 4 cm to the tip,
+// the newest ice. Under path tracing even a slope of 0.01 swings what the ice refracts between the eave and
+// the sky, so short icicles with ripples show bands.
+constexpr float RIPPLE_SLOPE = 0.06f;
+constexpr float RIPPLE_START_LENGTH = 0.1f;
+constexpr float RIPPLE_FULL_LENGTH = 0.5f;
+constexpr float RIPPLE_TIP_FADE = 0.04f;
+constexpr int RIPPLE_COLUMNS = 64; // wide, so mipmaps (halving both ways) only blend near strengths
 // The hazy core: pockets of impure water caught in layers as the icicle thickens (Ladan and Morris 2022) cloud
 // the ice inside the newest clear layer; the tip, the newest ice, stays clear.
 constexpr float CORE_RADIUS = 0.4f;
@@ -329,14 +339,15 @@ void SnowIcicles3D::_ensure_children() {
 		default_material->set_transmission_ior(1.31f);
 		// Clear ice absorbs little over a few centimetres (its blue needs metres), so no absorption: in raster it
 		// would be measured to the depth behind the icicle, the sky.
-		const int w = 4, h = 32;
+		// One ripple down its height (UV.y), its strength across (UV.x): column 0 smooth, the last a slope of 0.06
+		// (a ripple about a tenth of a millimetre high on its 1 cm wavelength). Steeper, path traced refraction
+		// breaks the ice into black and white bands.
+		const int w = RIPPLE_COLUMNS, h = 32;
 		Ref<Image> img = Image::create_empty(w, h, false, Image::FORMAT_RGB8);
 		for (int y = 0; y < h; y++) {
-			// One ripple: the surface tilts up and down along the icicle, a slope of 0.06 at most (a ripple about a tenth of a
-			// millimetre high on its 1 cm wavelength). Steeper, path traced refraction breaks the ice into black and white bands.
-			const float s = 0.06f * Math::cos(float(Math::TAU) * (y + 0.5f) / h);
-			const Vector3 nrm = Vector3(0.0f, s, 1.0f).normalized();
 			for (int x = 0; x < w; x++) {
+				const float s = RIPPLE_SLOPE * float(x) / (w - 1) * Math::cos(float(Math::TAU) * (y + 0.5f) / h);
+				const Vector3 nrm = Vector3(0.0f, s, 1.0f).normalized();
 				img->set_pixel(x, y, Color(nrm.x * 0.5f + 0.5f, nrm.y * 0.5f + 0.5f, nrm.z * 0.5f + 0.5f));
 			}
 		}
@@ -372,7 +383,8 @@ void SnowIcicles3D::_build_mesh() {
 		Vector<int> indices;
 	};
 	// p_scale shrinks the radius, p_reach the length: the hazy core is a thinner cone that stops short of the tip.
-	auto add_cone = [](Surface &p_out, const Icicle &p_ic, float p_scale, float p_reach) {
+	// p_phase shifts the ripples so neighbours' bands do not line up.
+	auto add_cone = [](Surface &p_out, const Icicle &p_ic, float p_scale, float p_reach, float p_phase) {
 		const float length = p_ic.length * p_reach;
 		const float root = p_ic.radius * p_scale;
 		const float tip = TIP_RADIUS * p_scale;
@@ -396,7 +408,9 @@ void SnowIcicles3D::_build_mesh() {
 				p_out.tangents.push_back(t.y);
 				p_out.tangents.push_back(t.z);
 				p_out.tangents.push_back(1.0f);
-				p_out.uvs.push_back(Vector2(float(s) / SIDES, y / RIPPLE_WAVELENGTH));
+				// The ripples are round the icicle, so UV.x picks their strength instead of going round.
+				const float grown = CLAMP((p_ic.length - RIPPLE_START_LENGTH) / (RIPPLE_FULL_LENGTH - RIPPLE_START_LENGTH), 0.0f, 1.0f) * CLAMP((p_ic.length - z) / RIPPLE_TIP_FADE, 0.0f, 1.0f);
+				p_out.uvs.push_back(Vector2((grown * (RIPPLE_COLUMNS - 1) + 0.5f) / RIPPLE_COLUMNS, y / RIPPLE_WAVELENGTH + p_phase));
 			}
 		}
 		for (int r = 0; r < rings; r++) {
@@ -422,7 +436,7 @@ void SnowIcicles3D::_build_mesh() {
 		p_out.tangents.push_back(0.0f);
 		p_out.tangents.push_back(0.0f);
 		p_out.tangents.push_back(1.0f);
-		p_out.uvs.push_back(Vector2(0.5f, 0.0f));
+		p_out.uvs.push_back(Vector2(0.5f / RIPPLE_COLUMNS, 0.0f));
 		for (int s = 0; s < SIDES; s++) {
 			p_out.indices.push_back(c);
 			p_out.indices.push_back(base + s);
@@ -431,13 +445,15 @@ void SnowIcicles3D::_build_mesh() {
 	};
 	Surface ice;
 	Surface core;
-	for (const Icicle &ic : icicles) {
+	for (int i = 0; i < icicles.size(); i++) {
+		const Icicle &ic = icicles[i];
 		if (ic.length < 0.01f) {
 			continue;
 		}
-		add_cone(ice, ic, 1.0f, 1.0f);
+		const float phase = float(hash_murmur3_one_32(uint32_t(i) + uint32_t(seed) * 7919u) & 0xffffu) / 65536.0f;
+		add_cone(ice, ic, 1.0f, 1.0f, phase);
 		if (hazy_core && ic.length > 0.05f) {
-			add_cone(core, ic, CORE_RADIUS, CORE_REACH);
+			add_cone(core, ic, CORE_RADIUS, CORE_REACH, phase);
 		}
 	}
 	Ref<ArrayMesh> mesh;

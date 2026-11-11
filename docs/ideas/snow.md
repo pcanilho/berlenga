@@ -832,6 +832,13 @@ where melt water runs off the snow above into air below freezing.
     It is opaque so the clear ice around it refracts it in raster as under path tracing.
   - The ripple slope drops from 0.12 to 0.06 (a ripple about 0.1 mm high on its 1 cm). At 0.12 the
     path tracer bent alternate ripples onto the sky and onto the eave, black and white stripes.
+  - Even at 0.06 every cone still showed regular stripes under path tracing. Painting the eave red
+    turned the stripes red: they are the eave refracted, cut into bands by the ripples, because a slope
+    of only 0.01 swings a ray through the cone between the eave and the sky. Without the ripple map
+    the eave shows as one smooth patch. Ripples grow with the icicle (Chen and Morris 2013), so they now
+    do here: none below 10 cm, full slope at 50 cm, smooth over the last 4 cm to the tip, and a random
+    phase per icicle so neighbours' bands do not line up. The strength rides in UV.x across a 64 by 32
+    ripple map, wide so that mipmaps blend only close strengths.
   - A solid cone bends what is behind it upward: under an eave the path tracer shows the wood's
     shaded underside through the ice, which needs a fourth bounce for the sky lighting it. At the
     default 3 bounces it is black. The bench's icicle view uses 6; scenes with clear ice next to
