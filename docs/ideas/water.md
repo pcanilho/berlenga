@@ -1017,6 +1017,11 @@ take the scene's lights, shadows and sky: the fall sheet is a lit material,
 and the river keeps its open-water look (own colour, sky and sun reflections)
 as EMISSION while its white water goes to a lit ALBEDO. The reflection term is
 linear in the colour, so the split is exact and open water is unchanged.
+PhysXWaterSurface3D's raster foam (whitecaps, shore foam, the rim) and wet
+sand take the same split: open water stays as it was, foam and wet sand are lit.
+In the water bench with the sun turned down (`--sun-energy=0.1`) the surf no
+longer glows brighter than the sand beside it; in full sun the frame barely
+changes.
 
 ## Step 5a: ocean wave cascades and the TMA spectrum (9 Nov)
 

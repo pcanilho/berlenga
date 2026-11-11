@@ -45,6 +45,7 @@ extends Node3D
 #   --view=top      straight down over the surf zone
 #   --dive=M        over the --seq frames, lower the camera by M metres (through the surface at --view=waterline)
 #   --cam-dy=M      raise (or lower) the camera by M metres
+#   --sun-energy=E  the sun's energy (default 1; 0 = in shade, lit by the sky only)
 #   --dump-shader=path  write the water material's shader code to a file
 #   --shader-file=path  replace the water material's shader with this file (try a shader change without a rebuild)
 #   --perf          print the mean process and physics time per frame (after frame 60) and the cost of sample_height()
@@ -64,6 +65,7 @@ var out := ""
 var debug_mode := 0
 var slope_deg := -1.0
 var cam_dy := 0.0
+var sun_energy := 1.0
 var dive := 0.0
 var bench_cam: Camera3D
 var water_params := {}
@@ -171,6 +173,7 @@ func _ready() -> void:
 		elif a == "--lip-debug": lip_debug = true
 		elif a == "--hide-lips": hide_lips = true
 		elif a.begins_with("--cam-dy="): cam_dy = float(a.substr(9))
+		elif a.begins_with("--sun-energy="): sun_energy = float(a.substr(13))
 		elif a.begins_with("--dive="): dive = float(a.substr(7))
 		elif a.begins_with("--water="):
 			var wkv := a.substr(8).split(":", true, 1)
@@ -202,6 +205,7 @@ func _ready() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-50, -140, 0)
 	sun.shadow_enabled = true
+	sun.light_energy = sun_energy
 	if view == "boat_sun":
 		# Low, ahead of the camera: the glitter path runs down the wake and lights up its waves.
 		sun.look_at_from_position(Vector3.ZERO, Vector3(36.0, -10.0, 28.0))

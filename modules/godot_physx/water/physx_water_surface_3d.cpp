@@ -91,7 +91,7 @@ namespace {
 // height field the vertex is displaced by -- the surface used to move but
 // never actually shade like it moved, which was a real, separate
 // contributor to an earlier "looks flat" complaint. Feeds a small, bounded,
-// self-contained shading term in fragment() (unshaded, not Godot's real
+// self-contained shading term in fragment() (emission, not Godot's real
 // PBR NORMAL) -- see fragment()'s own comment for why real PBR lighting on
 // this material caused a genuine overexposure bug.
 const char *WATER_SHADER_SRC = R"(
@@ -113,7 +113,9 @@ render_mode cull_disabled, rt_blas_rebuild;
 // lights. The raster look below stays as it is.
 render_mode cull_disabled;
 #else
-render_mode blend_mix, cull_disabled, unshaded;
+// Lit, but open water writes only EMISSION (see the end of fragment()), so only foam and wet sand take the
+// scene's light.
+render_mode blend_mix, cull_disabled;
 #endif
 
 uniform sampler2D ripple_height_tex : hint_default_black, filter_linear, repeat_disable;
@@ -1173,14 +1175,30 @@ void fragment() {
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #endif
 #else
-	ALPHA = water_a + wet_a;
-	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);
+	// Open water keeps its own bounded look above (no PBR light on it, which is what blew out when it was
+	// lit as a whole and blended over the lit floor): it goes to EMISSION. Foam (whitecaps, shore foam, the
+	// rim) and wet sand are rough diffuse surfaces: they go to ALBEDO and take the scene's lights, shadows
+	// and sky, so a whitecap under a cloud shadow or in the evening no longer glows (the path tracer
+	// already lit them; docs/ideas/water.md "Step 4f", raster lighting). Same split as PhysXRiver3D's.
+	float a0 = water_a + wet_a;
+	float inv_a0 = 1.0 / max(a0, 1e-4);
+	vec3 open_rgb = base_rgb * (1.0 - foam) * water_a * inv_a0;
+	vec3 lit_rgb = (foam_color.rgb * foam * water_a + wet_sand_color.rgb * wet_a) * inv_a0;
+	vec4 refl = vec4(open_rgb, a0);
 	if (camera_above) {
 		// Open water reflects; foam and dry sand are rough.
-		vec4 refl = water_raster_reflect(ALBEDO, ALPHA, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), pathtraced_roughness);
-		ALBEDO = refl.rgb;
-		ALPHA = refl.a;
+		refl = water_raster_reflect(open_rgb, a0, world_normal, (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD, smoothstep(0.0, soft, shore) * (1.0 - foam), pathtraced_roughness);
 	}
+	// The reflection is linear in the colour: the lit part keeps what the surface let through (1 - F).
+	float through = a0 < 0.9999 ? clamp((1.0 - refl.a) / (1.0 - a0), 0.0, 1.0) : 1.0;
+	float lit_w = clamp((foam * water_a + wet_a) * inv_a0, 0.0, 1.0);
+	NORMAL = n;
+	EMISSION = refl.rgb;
+	ALBEDO = lit_rgb * a0 * through / max(refl.a, 1e-4);
+	ROUGHNESS = 0.85;
+	SPECULAR = 0.25 * lit_w;
+	METALLIC = 0.0;
+	ALPHA = refl.a;
 #endif
 #endif // UNDERWATER_SURFACE
 }
