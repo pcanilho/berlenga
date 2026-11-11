@@ -180,6 +180,14 @@ front visibly rolls through the stand because the waves' phases depend on positi
    MultiMesh with `bones_per_instance` (placement times the bone chain), so raster and the path
    tracer skin the same pose. Trees past `wind_range` keep their rest pose.
 
+In a forest, one TreeWind3D aims at the VegetationField3D: the field gives a rigged mesh's cells
+rest bones (`TreeWind3D.fill_rest`), near and far cells alike, and the solver poses every cell it
+finds (a test beech stand: 78 cells, 625 trees, 7.6 ms on four CPU threads, so the compute
+version matters at forest scale). The path tracer drops per-instance COLOR and INSTANCE_CUSTOM
+on MultiMeshes with more than 12 bones per instance; the tree material reads neither, so nothing
+visible differs, but no tree material may use them for tint, season or phase without lifting
+that limit first.
+
 The CPU solver runs over worker threads and is the reference; a compute version of the same sum
 is the step for forest scale on the PC (one thread per bone, as in The Witcher 4). The colliders
 and touch bending of section 7a add a contact moment to the same bones.

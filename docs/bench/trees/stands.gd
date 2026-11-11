@@ -7,6 +7,7 @@ extends Node3D
 #   --test            place every stand, print the counts and PASS/FAIL, quit
 #   --map=path.png    the placement maps of every stand in one image
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
+#   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
 #   --variants=N      meshes per species (default 1)
 #   --region=path.png make_woodland() over a 6 km massif with its climate (placement only, no
 #                     meshes): the stands as belts on a hillshade
@@ -61,6 +62,7 @@ func run(args: Dictionary) -> void:
 		_habitat_checks()
 		_stand_checks()
 		_mask_check()
+		await _wind_check()
 		get_tree().quit(1 if fails > 0 else 0)
 	elif args.has("map"):
 		_draw_maps(args["map"])
@@ -206,6 +208,51 @@ func _mask_check() -> void:
 	_check(total > 0 and inside == 0, "clearing mask: no trees or shrubs in the painted clearing (%d of %d)" % [inside, total])
 	f.queue_free()
 
+func _rigged_instances(f: VegetationField3D) -> Array:
+	var out := []
+	for c in f.get_children(true):
+		var mmi := c as MultiMeshInstance3D
+		if mmi and mmi.multimesh and TreeWind3D.get_mesh_bone_count(mmi.multimesh.mesh) > 0:
+			out.append(mmi)
+	return out
+
+func _wind_check() -> void:
+	# Rigged stand meshes placed by the field get rest bones (TreeWind3D.fill_rest), and one
+	# TreeWind3D aimed at the field poses every cell MultiMesh, near and far, from the wind.
+	gen.rigged = true
+	var biome := gen.make_stand(TreeGenerator.STAND_BEECH, variants)
+	gen.rigged = false
+	var f := _field(biome)
+	var mmis := _rigged_instances(f)
+	_check(mmis.size() > 0, "rigged beech stand: %d cell MultiMeshes carry bones" % mmis.size())
+	var wind := TreeWind3D.new()
+	wind.fallback_wind = Vector2(12, 0)
+	wind.collision_enabled = false
+	add_child(wind)
+	wind.target = wind.get_path_to(f)
+	await get_tree().process_frame
+	wind.set_time(1.0)
+	wind.update(0.0)
+	var before := []
+	for mmi in mmis:
+		before.append(RenderingServer.multimesh_get_buffer(mmi.multimesh.get_rid()))
+	wind.set_time(2.3)
+	wind.update(0.0)
+	var moved := 0
+	for i in mmis.size():
+		if RenderingServer.multimesh_get_buffer(mmis[i].multimesh.get_rid()) != before[i]:
+			moved += 1
+	if wind.get_target_count() == 0:
+		# A VegetationField3D older than its rigged-mesh support draws the stand unposed.
+		print("SKIP rigged field: this VegetationField3D gives rigged meshes no rest bones")
+		wind.queue_free()
+		f.queue_free()
+		return
+	_check(wind.get_target_count() == mmis.size(), "wind finds every rigged cell (%d of %d)" % [wind.get_target_count(), mmis.size()])
+	_check(moved == mmis.size(), "wind moves every rigged cell (%d of %d), %d instances solved in %.2f ms" % [moved, mmis.size(), wind.get_solved_instances(), wind.get_solve_msec()])
+	wind.queue_free()
+	f.queue_free()
+
 func _draw_maps(path: String) -> void:
 	var px := 320
 	var cols := 4
@@ -258,8 +305,20 @@ func _disc(img: Image, cx: float, cy: float, r: float, c: Color, ox: int, oy: in
 
 func _render_plot(i: int, args: Dictionary) -> void:
 	var raster: bool = args.has("raster")
+	gen.rigged = args.has("wind")
 	var biome := _biome(i)
+	gen.rigged = false
 	var f := _field(biome)
+	if args.has("wind"):
+		# Posed by the wind at --time seconds (rigged meshes, one TreeWind3D on the field).
+		var wind := TreeWind3D.new()
+		wind.fallback_wind = Vector2(float(args.get("wind", "10")), 0)
+		wind.active = false
+		add_child(wind)
+		wind.target = wind.get_path_to(f)
+		await get_tree().process_frame
+		wind.set_time(float(args.get("time", "2")))
+		wind.update(0.0)
 	print("%s: %d plants" % [STAND_NAMES[i], f.get_plant_count()])
 	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
