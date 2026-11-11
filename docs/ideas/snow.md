@@ -972,3 +972,18 @@ as the column's mass over its depth, albedo weighted by water; crusts and cornic
 Only world cells the square covers whole are fed. Check (`--test=climate`): 30 mm of fresh snow on the
 square shows in the world tier under it (373 to 384 mm, the square's 394 mm less an hour of the world's
 own update), nothing changes beyond it.
+
+## Follow-up 12: sparkle on reflected and bounced rays (11 Nov 2026)
+
+Stage 5's footprint grid needs a footprint, and the path tracer had one only for camera rays (pixel angle
+times distance), so snow seen in a mirror, a window or water showed the plain rough lobe. The path tracer
+already carries ray cones from the camera through every bounce for texture levels (Akenine-Moller,
+Nilsson, Andersson, Barre-Brisebois, Toth and Karras 2019, "Texture Level of Detail Strategies for
+Real-Time Ray Tracing"; with the JCGT 2021 follow-up), so the grid now sizes itself by that cone on every
+ray after the first. Camera rays keep the pixel footprint, as raster. Exact glints (follow-up 5) were
+already per ray on every bounce and are unchanged.
+
+Check: `--view=sparkle --mirror --spp=16`, an overhead mirror showing the snow ahead toward the sun. In
+the mirror the snow went from flat (standard deviation 4.5 of 255) to speckled (4.8) at the coarse grid
+level its 10 m path resolves; exact glints there give 16.2. The snow seen directly is unchanged (mean
+difference 0.2 of 255, sample noise). Image: fork/snow/stage5/mirror_glints_before_after_exact.png.

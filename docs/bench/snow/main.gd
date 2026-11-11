@@ -43,6 +43,7 @@ extends Node3D
 #   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
+#   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections
 #   --sled            (trail view) a sled pulled at 4 m/s for 2 s and lifted away: its bow wave and berm
 #   --deform=R,E[,S]  (trail view) deformation texels R over E m, triangles every S m
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
@@ -1779,6 +1780,33 @@ func _build_sparkle(cam: Camera3D) -> void:
 	cam.position = Vector3(0.0, 1.5, 6.0)
 	cam.look_at(Vector3(0.0, 0.0, -3.0))
 	cam.fov = 50.0
+	var mirror_rect := Rect2i()
+	if OS.get_cmdline_user_args().has("--mirror"):
+		# An overhead mirror tilted down and forward: it shows the snow ahead from above, toward the low
+		# sun, so its reflection should glint like the snow seen directly (path traced: reflected rays).
+		cam.look_at(Vector3(0.0, 0.9, -3.0))
+		var mirror := MeshInstance3D.new()
+		var q := QuadMesh.new()
+		q.size = Vector2(3.0, 1.6)
+		mirror.mesh = q
+		var mm := StandardMaterial3D.new()
+		mm.metallic = 1.0
+		mm.roughness = 0.0
+		mm.albedo_color = Color(0.95, 0.95, 0.95)
+		mirror.material_override = mm
+		add_child(mirror)
+		var n := Vector3(0.0, -0.97, 0.24).normalized()
+		mirror.look_at_from_position(Vector3(0.0, 2.6, 0.0), Vector3(0.0, 2.6, 0.0) - n)
+		# Its rectangle on screen, for counting glints inside it.
+		var pts := []
+		for c in [Vector2(-1.5, -0.8), Vector2(1.5, -0.8), Vector2(-1.5, 0.8), Vector2(1.5, 0.8)]:
+			pts.append(cam.unproject_position(mirror.global_transform * Vector3(c.x, c.y, 0.0)))
+		var lo := Vector2(1e9, 1e9)
+		var hi := Vector2(-1e9, -1e9)
+		for pt: Vector2 in pts:
+			lo = lo.min(pt)
+			hi = hi.max(pt)
+		mirror_rect = Rect2i(Vector2i(lo) + Vector2i(8, 8), Vector2i(hi - lo) - Vector2i(16, 16))
 	await get_tree().physics_frame
 	snow.refresh_heights()
 	_precipitate(8.0, 2.0)
@@ -1814,6 +1842,18 @@ func _build_sparkle(cam: Camera3D) -> void:
 			if lum[y * w + x] > ring / 8.0 * 1.2:
 				count += 1
 	print("sparkle: glinting %.3f%% of %d pixels, mean luminance %.4f" % [100.0 * count / total, total, mean_lum / total])
+	if mirror_rect.size.x > 0:
+		var mc := 0
+		var mt := 0
+		for y in range(maxi(mirror_rect.position.y, 2), mini(mirror_rect.end.y, h - 2)):
+			for x in range(maxi(mirror_rect.position.x, 2), mini(mirror_rect.end.x, w - 2)):
+				var ring := 0.0
+				for d in [Vector2i(-2, 0), Vector2i(2, 0), Vector2i(0, -2), Vector2i(0, 2), Vector2i(-2, -2), Vector2i(2, 2), Vector2i(-2, 2), Vector2i(2, -2)]:
+					ring += lum[(y + d.y) * w + x + d.x]
+				mt += 1
+				if lum[y * w + x] > ring / 8.0 * 1.2:
+					mc += 1
+		print("sparkle: in the mirror %s, glinting %.3f%% of %d pixels" % [str(mirror_rect), 100.0 * mc / maxi(mt, 1), mt])
 	get_tree().quit()
 
 
