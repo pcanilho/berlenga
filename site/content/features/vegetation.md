@@ -12,6 +12,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Plant placement: trees on dry ground, bushes between them, reeds along the banks (placeholder meshes).*
 
+- **Streamed placement** (`VegetationField3D.streaming`, `stream_radius`, 200 m default): tiles are placed on worker threads around the camera, identical to a full placement; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.
 - **Placement by geology** (`TerrainDataMap3D.geology_source`; `PlantSpecies` `soil_depth_range`, `rock_range`, `talus_range`): plants follow the generated soil, rock and scree; trees stay off bare rock and thin soil, grass thins on rock.
 - **Placement by climate** (`temperature_range`, `january_temperature_range`, `precipitation_range`, `aridity_range`, `sunlight_range`): species by temperature, winter frost, rain, aridity and sunlight.
 - **Density masks** (`density_mask`, `density_mask_rect`; per species `mask_channel`, `mask_invert`): a painted texture thins or clears any species per channel, for clearings and paths.
@@ -83,6 +84,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 - **Per-stem sway** (always on): each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.
 - **Near and far meshes** (`PlantSpecies.near_meshes`, `near_range`): heavier meshes near the camera, crossfaded with dithering a few plants at a time.
 - **Far thinning** (`PlantSpecies.far_color`): plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.
+- **Plant impostors** (`PlantGenerator.make_impostor()`, `add_impostors()`, `impostor_range`): large plants turn into octahedral impostors past a range in raster (brambles and bracken past 15 m), while path tracing keeps the meshes; an oak wood view drops from 3.91M to 2.98M triangles.
 
 ## Instances
 

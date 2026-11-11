@@ -50,6 +50,11 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		{ "terrain_geology_map", "sampler2D" },
 		{ "terrain_geology_rect", "vec4" },
 		{ "terrain_detail_keep_map", "sampler2D" },
+		// The generator's fall spray, and the plant cover colour the far ground blends to (vegetation publishes it).
+		{ "terrain_spray_potential", "sampler2D" },
+		{ "terrain_spray_rect", "vec4" },
+		{ "terrain_cover_map", "sampler2D" },
+		{ "terrain_cover_rect", "vec4" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {

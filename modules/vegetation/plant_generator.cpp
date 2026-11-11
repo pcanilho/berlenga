@@ -2769,18 +2769,9 @@ bool PlantGenerator::_card_lods(const Builder &p_builder, CardSurface &r_cards) 
 	return true;
 }
 
-Ref<Shader> PlantGenerator::shaders[2];
-
-Ref<Shader> PlantGenerator::_plant_shader(bool p_textured) {
-	Ref<Shader> &sh = shaders[p_textured ? 1 : 0];
-	if (sh.is_valid()) {
-		return sh;
-	}
-	String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
-	if (p_textured) {
-		code += "#define PLANT_TEXTURED\n";
-	}
-	code += WeatherMap3D::get_wind_shader_code();
+// Shared by the plant shader and the impostor shader (plant_impostor.cpp): wind, wetness, snow.
+String PlantGenerator::shader_common_code() {
+	String code = WeatherMap3D::get_wind_shader_code();
 	// The wind code already declares weather_map_rect: the wetness lines without their globals.
 	code += BaseMaterial3D::get_wetness_functions_code(false);
 	code += BaseMaterial3D::get_snow_shader_code();
@@ -2796,9 +2787,41 @@ float weather_wetness_at(vec3 p_world_pos) {
 	return textureLod(weather_state_map, uv, 0.0).g;
 }
 
+global uniform vec4 grass_wind; // xy: fallback wind (m/s, x and z), z: the grass's response (rad per m/s).
+
+vec3 plant_wind(vec3 wp, float h) {
+	if (weather_map_rect.z > 0.0) {
+		return weather_wind(wp, h);
+	}
+	vec2 w = grass_wind.xy;
+	float s = length(w);
+	if (s < 1e-4) {
+		return vec3(0.0);
+	}
+	vec2 d = w / s;
+	float phase = dot(wp.xz, d) * 0.12 - TIME * s * 0.12;
+	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
+	return vec3(w.x, 0.0, w.y) * g;
+}
+)";
+	return code;
+}
+
+Ref<Shader> PlantGenerator::shaders[2];
+
+Ref<Shader> PlantGenerator::_plant_shader(bool p_textured) {
+	Ref<Shader> &sh = shaders[p_textured ? 1 : 0];
+	if (sh.is_valid()) {
+		return sh;
+	}
+	String code = "shader_type spatial;\nrender_mode cull_disabled;\n\n";
+	if (p_textured) {
+		code += "#define PLANT_TEXTURED\n";
+	}
+	code += shader_common_code();
+	code += R"(
 global uniform sampler2D grass_trample_map;
 global uniform vec4 grass_trample_rect;
-global uniform vec4 grass_wind; // xy: fallback wind (m/s, x and z), z: the grass's response (rad per m/s).
 
 uniform vec3 base_color : source_color = vec3(1.0);
 uniform vec3 backlight_color : source_color = vec3(0.0);
@@ -2815,20 +2838,6 @@ uniform sampler2D backlight_tex : hint_default_black, filter_linear_mipmap_aniso
 varying vec3 v_world;
 varying vec3 v_geo_n;
 
-vec3 plant_wind(vec3 wp, float h) {
-	if (weather_map_rect.z > 0.0) {
-		return weather_wind(wp, h);
-	}
-	vec2 w = grass_wind.xy;
-	float s = length(w);
-	if (s < 1e-4) {
-		return vec3(0.0);
-	}
-	vec2 d = w / s;
-	float phase = dot(wp.xz, d) * 0.12 - TIME * s * 0.12;
-	float g = 1.0 + 0.45 * sin(phase) + 0.2 * sin(phase * 2.7 + dot(wp.xz, vec2(-d.y, d.x)) * 0.2);
-	return vec3(w.x, 0.0, w.y) * g;
-}
 
 vec3 rotate_about(vec3 v, vec3 axis, float a) {
 	return v * cos(a) + cross(axis, v) * sin(a) + axis * dot(axis, v) * (1.0 - cos(a));
@@ -2985,6 +2994,7 @@ void fragment() {
 void PlantGenerator::free_shaders() {
 	shaders[0].unref();
 	shaders[1].unref();
+	impostor_shader.unref();
 }
 
 Ref<ShaderMaterial> PlantGenerator::_textured_material(const TextureSet &p_set, float p_roughness) const {
@@ -3455,7 +3465,7 @@ struct FloorSpec {
 };
 } // namespace
 
-TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_variants, bool p_textures) {
+TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_variants, bool p_textures, float p_impostor_range) {
 	using P = PlantGenerator;
 	// Shared by every stand.
 	const FloorSpec gap_bramble = { P::PRESET_BRAMBLE, 1.4f, 0.6f, 0.8f, 0.8f, 1.2f, 7.0f, 0.4f, 0.05f, 0.7f, 0.15f, 0.0f, 1.0f, 45.0f };
@@ -3614,6 +3624,11 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			const Color lc = gen->get_leaf_color() * 0.8f;
 			sp->set_far_color(Color(lc.r, lc.g, lc.b, CLAMP(h / 0.6f, 0.2f, 0.9f)));
 		}
+		// The larger shrubs, dense with thousands of triangles each, turn into impostors past the
+		// range (raster only; docs/ideas/vegetation-lod-streaming.md).
+		if (p_impostor_range > 0.0f && (f.preset == P::PRESET_BRAMBLE || f.preset == P::PRESET_BRACKEN)) {
+			add_impostors(sp, p_impostor_range);
+		}
 		sp->set_meta("floor", true);
 		out.push_back(sp);
 		seed_base += 11;
@@ -3694,7 +3709,9 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_WOOD_ANEMONE);
 	BIND_ENUM_CONSTANT(PRESET_IVY);
 	BIND_ENUM_CONSTANT(PRESET_HEATHER);
-	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_impostor", "mesh", "frames", "frame_size"), &PlantGenerator::make_impostor, DEFVAL(8), DEFVAL(64));
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("add_impostors", "species", "range", "frames", "frame_size"), &PlantGenerator::add_impostors, DEFVAL(8), DEFVAL(64));
 	BIND_ENUM_CONSTANT(FLOOR_BEECH);
 	BIND_ENUM_CONSTANT(FLOOR_OAK_MIXED);
 	BIND_ENUM_CONSTANT(FLOOR_MONTANE_CONIFER);

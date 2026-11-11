@@ -164,7 +164,7 @@
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
-				Slope in radians (0 is flat).
+				Slope in [b]radians[/b], not degrees (0 is flat; [code]rad_to_deg()[/code] for degrees, as [PlantSpecies] slope rules use).
 			</description>
 		</method>
 		<method name="get_snow_fraction_at" qualifiers="const">

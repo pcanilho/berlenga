@@ -22,8 +22,19 @@
 			<param index="0" name="stand" type="int" enum="PlantGenerator.FloorStand" />
 			<param index="1" name="variants" type="int" default="3" />
 			<param index="2" name="textures" type="bool" default="true" />
+			<param index="3" name="impostor_range" type="float" default="15.0" />
 			<description>
-				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code].
+				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance.
+			</description>
+		</method>
+		<method name="add_impostors" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="species" type="Resource" />
+			<param index="1" name="range" type="float" />
+			<param index="2" name="frames" type="int" default="8" />
+			<param index="3" name="frame_size" type="int" default="64" />
+			<description>
+				Gives a [PlantSpecies] impostors of its meshes ([method make_impostor]): its meshes move to [member PlantSpecies.near_meshes] and are drawn up to [param range] metres, the impostors beyond, with a dithered crossfade. Raster only: under path tracing [VegetationField3D] draws the meshes at every distance, so path tracing keeps the plants' depth and shadows. The species must not have near meshes yet.
 			</description>
 		</method>
 		<method name="apply_preset_colors">
@@ -43,6 +54,15 @@
 			<param index="0" name="count" type="int" />
 			<description>
 				Builds [param count] plants with seeds [member seed], [member seed] + 1, and so on.
+			</description>
+		</method>
+		<method name="make_impostor" qualifiers="static">
+			<return type="ArrayMesh" />
+			<param index="0" name="mesh" type="Mesh" />
+			<param index="1" name="frames" type="int" default="8" />
+			<param index="2" name="frame_size" type="int" default="64" />
+			<description>
+				Bakes an octahedral impostor of a plant (Brucks, 2018): the plant seen from [param frames] by [param frames] directions over the upper hemisphere, each [param frame_size] texels square and fitted to the plant, into an albedo and coverage atlas and a normal, depth and back light atlas. Returns a quad whose shader turns it to the view, blends the three nearest views, and moves each pixel to the plant's surface by the baked depth, so it meets the ground and casts and receives shadows like the mesh. Wind, wetness, snow and [VegetationField3D]'s far thinning work as on the plant shader. The quad has the meta [code]impostor_of[/code] set to [param mesh]. About 2.8 MB of textures with the defaults; baking runs on all cores.
 			</description>
 		</method>
 	</methods>

@@ -46,6 +46,9 @@ class PlantGenerator : public Resource {
 
 public:
 	static void free_shaders();
+	static String shader_common_code(); // Wind, wetness and snow lines shared with the impostor shader.
+	static Ref<ArrayMesh> make_impostor(const Ref<Mesh> &p_mesh, int p_frames = 8, int p_frame_size = 64);
+	static void add_impostors(const Ref<Resource> &p_species, float p_range, int p_frames = 8, int p_frame_size = 64);
 	enum Preset {
 		PRESET_DANDELION,
 		PRESET_PLANTAIN,
@@ -224,6 +227,8 @@ private:
 	void _add_pad(const Vector3 &p_centre, float p_radius, float p_heading);
 
 	static Ref<Shader> shaders[2]; // Plain and textured, shared by every generated plant.
+	static Ref<Shader> impostor_shader; // plant_impostor.cpp.
+	static Ref<Shader> _impostor_shader();
 	static Ref<Shader> _plant_shader(bool p_textured);
 	Ref<ShaderMaterial> _material(const Color &p_color, float p_roughness, bool p_backlight) const;
 	Ref<ShaderMaterial> _textured_material(const TextureSet &p_set, float p_roughness) const;
@@ -281,7 +286,7 @@ public:
 		FLOOR_PINE_HEMLOCK,
 		FLOOR_MAX,
 	};
-	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true);
+	static TypedArray<Resource> make_floor(FloorStand p_stand, int p_variants = 3, bool p_textures = true, float p_impostor_range = 15.0f);
 };
 
 VARIANT_ENUM_CAST(PlantGenerator::Preset);

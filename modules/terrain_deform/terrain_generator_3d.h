@@ -95,6 +95,8 @@ private:
 	real_t detail_gully_weight = 0.5;
 	real_t detail_assumed_slope = 0.6;
 	real_t detail_crest = 1.0; // ridged noise on crests, times the gully amplitude
+	real_t cliff_ledge_spacing = 0.0; // m between rock beds stepped into faces steeper than 40 degrees; 0 = off
+	real_t cliff_ledge_strength = 1.0;
 
 	// Tile erosion (stage 4): droplet hydraulic plus thermal erosion on a fine grid, in overlapping tiles.
 	bool tile_erosion_enabled = false;
@@ -123,6 +125,20 @@ private:
 	real_t strata_dip_direction = 0.0; // degrees clockwise from north, the way the layers go down
 	real_t strata_wobble = 12.0; // m, layer heights wander by this much
 	real_t strata_channel_area = 20000.0; // m^2, drainage from which the bed's rock counts (channel heads)
+
+	// Glaciers (docs/ideas/terrain-generation.md, "Glacial erosion"): ice from the shallow ice approximation erodes
+	// troughs, cirques and overdeepened basins; ice ages alternate with the rivers, and a last glaciation after them
+	// leaves its basins as lakes.
+	bool glacial_enabled = false;
+	real_t glacial_ela = 500.0; // m, equilibrium line altitude
+	real_t glacial_share = 0.5; // share of the run's time under ice
+	real_t glacial_final = 100000.0; // years of the last glaciation, after the rivers
+	real_t glacial_erosion = 1.0; // multiplier on K_g of Herman et al. 2015
+	real_t glacial_sliding = 1.0; // sliding speed over depth-averaged ice speed
+	real_t last_glacial_eroded = 0.0;
+	real_t last_glacial_ice_area = 0.0;
+	real_t last_glacial_msec = 0.0;
+	LocalVector<float> glacial_ice; // m, ice of the last glaciation at its end
 	real_t river_runoff = 1000.0; // mm/yr, without a climate_recipe
 	Ref<ClimateRecipe> climate_recipe; // rivers from rain and snowmelt (terrain_runoff.h)
 	int river_month = -1; // the month build_river_paths and get_rivers use, -1 the annual mean
@@ -144,6 +160,11 @@ private:
 	// Lakes: natural dams across valleys, the water behind them.
 	int lake_count = 0;
 	TypedArray<NodePath> lakes; // markers: a dam where each one stands (metadata "depth" overrides lake_depth; "rock_lip" or "face_slope" for a steep sill)
+	// Inflows: land beyond the map that drains in at a marker (metadata "area" in km2, else inflow_area).
+	TypedArray<NodePath> inflows;
+	real_t inflow_area = 25.0; // km2
+	LocalVector<float> inflow_cells; // m2 entering at each node of the result (empty: none)
+	LocalVector<float> sill_cells; // resistant sill round an inflow, 0..1 (empty: none)
 	real_t lake_depth = 20.0; // m of dam above the valley floor
 	real_t lake_catchment = 2.0e5; // m^2, least drainage area at an automatic dam
 	real_t lake_min_area = 10000.0; // m^2
@@ -175,6 +196,43 @@ private:
 	LocalVector<int32_t> water_body;
 	LocalVector<float> water_depth;
 	LocalVector<float> lake_rim; // the level of a lake within three cells, NaN elsewhere
+	// Falls over hard rock: the face stands vertical (the caprock lip, Gilbert 1907; Haviv et al. 2010), sharper than
+	// the grid can hold, so _ground steps the ground there.
+	struct FallLip {
+		Vector2 origin; // the lip cell the rivers left, world x z (get_waterfalls matches on it)
+		Vector2 top; // where the step starts: the lip cell, or the worn-back lip at a gorge's head
+		Vector2 dir; // downstream, unit
+		real_t run = 0.0; // m from the lip cell to the foot cell
+		real_t h_top = 0.0, h_bottom = 0.0;
+		real_t half_width = 0.0; // m held vertical either side of the river's line
+	};
+	// Plunge pools at the foot of falls (Mason and Arumugam 1985 depth, Pagliara et al. 2006 shape).
+	struct PlungePool {
+		Vector2 top; // the fall's lip cell, to match it in get_waterfalls
+		Vector2 center;
+		Vector2 dir; // downstream, unit
+		real_t radius = 0.0, depth = 0.0, foot = 0.0; // the floor is foot - depth at the centre
+	};
+	// Gorges below falls whose lip has worn back upstream (knickpoint retreat).
+	struct Gorge {
+		Vector2 origin; // the lip cell the rivers left
+		LocalVector<Vector2> points; // new lip first, down to the old foot
+		real_t half_width = 3.0;
+		real_t floor_top = 0.0, floor_bottom = 0.0, length = 0.0;
+	};
+	double gorge_age = 0.0; // years of lip retreat; 0 none
+	double gorge_rate = 0.013; // m a year per sqrt(m3/s)
+	LocalVector<Gorge> gorges;
+	bool fall_lips = true;
+	bool plunge_pools = true;
+	bool fan_backfill = true;
+	int last_slots_filled = 0;
+	LocalVector<FallLip> lips;
+	LocalVector<PlungePool> pools;
+	LocalVector<LocalVector<int>> lip_buckets; // per LIP_BUCKET-metre square of the result
+	int lip_bx = 0, lip_bz = 0;
+	void _bake_lips();
+	float _apply_lips(real_t p_x, real_t p_z, float p_g) const;
 	LocalVector<float> lake_rim_weight; // how firmly the ground holds that level: 1 within a cell, 0 at three
 	LocalVector<int32_t> river_receivers;
 	LocalVector<float> river_area;
@@ -208,6 +266,16 @@ private:
 	void _build_sea_mask(LocalVector<uint8_t> &r_sea) const;
 	void _shape_coast(const LocalVector<uint8_t> &p_sea);
 	void _make_lakes(const LocalVector<uint8_t> &p_sea);
+	void _basin_lakes(std::vector<uint8_t> &r_taken);
+	struct InflowPoint {
+		Vector2 position;
+		double area = 0.0; // m2
+		double sill = 0.0; // m radius of resistant rock round the entry (0: none)
+		double level = NAN; // height (eroded metres) the sill is not worn below
+		double erosion = 1.0; // share of the area that erodes (1: all; 0: water only)
+	};
+	LocalVector<InflowPoint> _inflow_points() const;
+	void _inflow_grid(const LocalVector<InflowPoint> &p_points, int p_nx, int p_ny, double p_dx, const uint8_t *p_outlet, LocalVector<double> &r_area, LocalVector<double> &r_sill, LocalVector<double> &r_level, LocalVector<double> *r_water) const;
 	void _route_rivers();
 	float _water_fade(real_t p_x, real_t p_z) const;
 	Ref<ArrayMesh> _lake_outline(int p_lake, const Vector3 &p_origin) const;
@@ -215,6 +283,12 @@ private:
 	Vector3 _lake_center(int p_lake) const;
 	Ref<ImageTexture> geology_texture;
 	Ref<ImageTexture> detail_keep_texture; // share of the erosion detail kept, per node (_bake_detail_keep)
+	// Static spray potential of the falls (0..1) on its own finer grid over the result (_bake_spray).
+	real_t spray_cell = 4.0;
+	int spray_nx = 0, spray_ny = 0;
+	LocalVector<float> spray;
+	Ref<ImageTexture> spray_texture;
+	void _bake_spray();
 	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).
 	int tile_nx = 0;
 	int tile_nz = 0;
@@ -268,6 +342,7 @@ private:
 	void _bake_runoff(const LocalVector<uint8_t> &p_sea);
 	float _runoff_sample(int p_field, real_t p_x, real_t p_z) const;
 	float _flow(int p_cell, int p_month) const;
+	void _fall_contract(Dictionary &r_fall, const PackedVector3Array &p_pts, int p_k, int p_e, const PackedInt32Array &p_cells, real_t p_width, real_t p_v0) const;
 	void _route_runoff(const LocalVector<int32_t> &p_receivers, const LocalVector<int32_t> &p_order);
 	void _alluvium_reach();
 	void _bake_detail_keep();
@@ -343,6 +418,10 @@ public:
 	real_t get_detail_reach() const { return detail_reach; }
 	void set_detail_gully_weight(real_t p_value) { detail_gully_weight = CLAMP(p_value, real_t(0.05), real_t(1.0)); }
 	real_t get_detail_gully_weight() const { return detail_gully_weight; }
+	void set_cliff_ledge_spacing(real_t p_value) { cliff_ledge_spacing = MAX(p_value, real_t(0.0)); }
+	real_t get_cliff_ledge_spacing() const { return cliff_ledge_spacing; }
+	void set_cliff_ledge_strength(real_t p_value) { cliff_ledge_strength = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
+	real_t get_cliff_ledge_strength() const { return cliff_ledge_strength; }
 	void set_detail_crest(real_t p_value) { detail_crest = MAX(p_value, real_t(0.0)); }
 	real_t get_detail_crest() const { return detail_crest; }
 	void set_detail_assumed_slope(real_t p_value) { detail_assumed_slope = MAX(p_value, real_t(0.01)); }
@@ -375,6 +454,22 @@ public:
 	real_t get_talus_angle() const { return talus_angle; }
 	void set_talus_reach(real_t p_value) { talus_reach = MAX(p_value, real_t(1.0)); }
 	real_t get_talus_reach() const { return talus_reach; }
+	void set_glacial_enabled(bool p_enable) { glacial_enabled = p_enable; }
+	bool is_glacial_enabled() const { return glacial_enabled; }
+	void set_glacial_ela(real_t p_value) { glacial_ela = p_value; }
+	real_t get_glacial_ela() const { return glacial_ela; }
+	void set_glacial_share(real_t p_value) { glacial_share = CLAMP(p_value, real_t(0.0), real_t(1.0)); }
+	real_t get_glacial_share() const { return glacial_share; }
+	void set_glacial_final(real_t p_value) { glacial_final = MAX(p_value, real_t(0.0)); }
+	real_t get_glacial_final() const { return glacial_final; }
+	void set_glacial_erosion(real_t p_value) { glacial_erosion = MAX(p_value, real_t(0.0)); }
+	real_t get_glacial_erosion() const { return glacial_erosion; }
+	void set_glacial_sliding(real_t p_value) { glacial_sliding = MAX(p_value, real_t(0.0)); }
+	real_t get_glacial_sliding() const { return glacial_sliding; }
+	real_t get_last_glacial_eroded() const { return last_glacial_eroded; }
+	real_t get_last_glacial_ice_area() const { return last_glacial_ice_area; }
+	real_t get_last_glacial_msec() const { return last_glacial_msec; }
+	real_t get_glacier_depth(const Vector3 &p_global_position) const;
 	void set_strata_enabled(bool p_enable) { strata_enabled = p_enable; }
 	bool is_strata_enabled() const { return strata_enabled; }
 	void set_strata_channel_area(real_t p_value) { strata_channel_area = MAX(p_value, real_t(0.0)); }
@@ -433,6 +528,22 @@ public:
 	real_t get_beach_slope() const { return beach_slope; }
 	void set_lake_count(int p_count) { lake_count = CLAMP(p_count, 0, 256); }
 	int get_lake_count() const { return lake_count; }
+	void set_gorge_age(double p_years) { gorge_age = MAX(p_years, 0.0); }
+	double get_gorge_age() const { return gorge_age; }
+	void set_gorge_rate(double p_rate) { gorge_rate = MAX(p_rate, 0.0); }
+	double get_gorge_rate() const { return gorge_rate; }
+	void set_fan_backfill(bool p_enable) { fan_backfill = p_enable; }
+	bool get_fan_backfill() const { return fan_backfill; }
+	int get_last_slots_filled() const { return last_slots_filled; }
+	void set_plunge_pools(bool p_enable) { plunge_pools = p_enable; }
+	bool get_plunge_pools() const { return plunge_pools; }
+	void set_fall_lips(bool p_enable) { fall_lips = p_enable; }
+	bool get_fall_lips() const { return fall_lips; }
+	void set_inflows(const TypedArray<NodePath> &p_inflows) { inflows = p_inflows; }
+	TypedArray<NodePath> get_inflows() const { return inflows; }
+	void set_inflow_area(real_t p_km2) { inflow_area = MAX(p_km2, real_t(0.0)); }
+	real_t get_inflow_area() const { return inflow_area; }
+	Array get_inflow_cells() const;
 	void set_lakes(const TypedArray<NodePath> &p_lakes) { lakes = p_lakes; }
 	TypedArray<NodePath> get_lakes() const { return lakes; }
 	void set_lake_depth(real_t p_value) { lake_depth = MAX(p_value, real_t(1.0)); }
@@ -491,6 +602,11 @@ public:
 	real_t get_rock_hardness(const Vector3 &p_global_position) const;
 	Array get_river_sites(real_t p_min_area = 1.0e5, real_t p_min_discharge = 0.0, real_t p_run = 200.0) const;
 	Array get_waterfalls(real_t p_min_area = 1.0e5, real_t p_min_height = 5.0) const;
+	PackedVector4Array get_boulders(const Rect2 &p_rect, real_t p_density = 1.0) const;
+	void set_spray_cell(real_t p_cell) { spray_cell = MAX(p_cell, real_t(0.0)); }
+	real_t get_spray_cell() const { return spray_cell; }
+	real_t get_spray_potential(const Vector3 &p_global_position) const;
+	Ref<Image> get_spray_image() const;
 	Color get_geology_at(const Vector3 &p_global_position) const;
 	Ref<Image> get_geology_image() const;
 	Ref<Texture2D> get_geology_texture() const { return geology_texture; }

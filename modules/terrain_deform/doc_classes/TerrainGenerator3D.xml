@@ -136,6 +136,12 @@
 				Generated heights per grid node, [constant Image.FORMAT_RF], metres.
 			</description>
 		</method>
+		<method name="get_inflow_cells" qualifiers="const">
+			<return type="Array" />
+			<description>
+				Where land beyond the map drains in ([member inflows]): a [Dictionary] per node with [code]position[/code] (on the ground) and [code]area[/code] (m²).
+			</description>
+		</method>
 		<method name="get_lake_result_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -326,7 +332,7 @@
 			<param index="0" name="min_area" type="float" default="100000.0" />
 			<param index="1" name="min_height" type="float" default="5.0" />
 			<description>
-				Waterfalls along the rivers of [method get_rivers] ([param min_area]): runs of the channel steeper than 45 degrees in the eroded ground that drop at least [param min_height] m. Soft rock never stands steeper than [member critical_slope], so they form where rivers cut the hard bands of [member strata_enabled]. Each is a [Dictionary]: [code]top[/code] and [code]bottom[/code] (the lip and the foot, on the ground), [code]height[/code], [code]width[/code] and [code]discharge[/code] (of the river at the lip), [code]river[/code] (index in [method get_rivers]), [code]index[/code] (the lip's point in that river) and [code]hardness[/code] (of the rock at the lip; a lip that has just broken off stands on soft rock for a while).
+				Waterfalls along the rivers of [method get_rivers] ([param min_area]): runs of the channel steeper than 45 degrees in the eroded ground that drop at least [param min_height] m. Soft rock never stands steeper than [member critical_slope], so they form where rivers cut the hard bands of [member strata_enabled]. Each is a [Dictionary]: [code]top[/code] and [code]bottom[/code] (the lip and the foot, on the ground), [code]height[/code], [code]width[/code] and [code]discharge[/code] (of the river at the lip), [code]river[/code] (index in [method get_rivers]), [code]index[/code] (the lip's point in that river) and [code]hardness[/code] (of the rock at the lip; a lip that has just broken off stands on soft rock for a while), [code]face_run[/code] (m the face recedes over the drop: 3 where [member fall_lips] keeps it vertical), [code]jet_throw[/code] (m a free jet from the brink travels out over the drop, at critical flow) and [code]free_fall[/code] (the jet clears the face: a plunge rather than a cascade).
 			</description>
 		</method>
 		<method name="get_world_rect" qualifiers="const">
@@ -436,6 +442,9 @@
 		<member name="erodibility" type="float" setter="set_erodibility" getter="get_erodibility" default="2e-05">
 			Stream power coefficient [code]K[/code]. Relief at equilibrium grows with [member uplift] / [member erodibility].
 		</member>
+		<member name="fall_lips" type="bool" setter="set_fall_lips" getter="get_fall_lips" default="true">
+			Falls of 4 m or more over hard rock (the strata's caprock) keep a vertical face: the ground holds the lip's height to the middle of the drop and the foot's after it, over 3 m, so the jet falls free. The grid alone holds a drop over a whole cell at best.
+		</member>
 		<member name="flow_exponent" type="float" setter="set_flow_exponent" getter="get_flow_exponent" default="1.0">
 			Drainage area is shared among all lower neighbours in proportion to slope to this power (multiple flow directions, Quinn et al. 1991, Freeman 1991). 0 routes all flow to the steepest neighbour (D8), which leaves straight 45 degree valleys.
 		</member>
@@ -450,6 +459,12 @@
 		</member>
 		<member name="hillslope_diffusion" type="float" setter="set_hillslope_diffusion" getter="get_hillslope_diffusion" default="0.01">
 			Soil creep [code]k_d[/code] in square metres per year: rounds hilltops and softens ridges. 0 keeps sharp ridges.
+		</member>
+		<member name="inflow_area" type="float" setter="set_inflow_area" getter="get_inflow_area" default="25.0">
+			Area (km²) an inflow marker without [code]area[/code] metadata brings in.
+		</member>
+		<member name="inflows" type="NodePath[]" setter="set_inflows" getter="get_inflows" default="[]">
+			Markers ([Node3D]) where land beyond the map drains in: a river from upstream of the map edge, or a lake fed by a catchment behind its ridge. Metadata [code]area[/code] (km²), else [member inflow_area]. It enters at the marker's node (the nearest one off an outlet edge or the sea) and counts as that much drainage area in erosion, deposition, the rivers and their monthly discharge (at the rain and melt of the node it enters at). It brings no sediment. More metadata: [code]erosion[/code] (0..1, the share of that area that erodes; 0 brings water only), [code]sill[/code] (m: resistant rock round the entry, eroding 200 times slower and standing at 85 degrees) and [code]level[/code] (m: the sill is not worn below this height once uplift has raised it there). A marker with [code]sill[/code] or [code]level[/code] and no [code]area[/code] is a sill only.
 		</member>
 		<member name="initial_roughness" type="float" setter="set_initial_roughness" getter="get_initial_roughness" default="1.0">
 			Height of the seeded random roughness the simulation starts from, in metres.

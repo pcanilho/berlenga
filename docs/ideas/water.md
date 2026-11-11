@@ -1023,6 +1023,14 @@ In the water bench with the sun turned down (`--sun-energy=0.1`) the surf no
 longer glows brighter than the sand beside it; in full sun the frame barely
 changes.
 
+**Open water's body light (11 Nov).** The open water's own colour (deep and
+shallow tint) was still emission at a fixed brightness, so with the sky clock
+the sea glowed blue at dusk and at night. It is now that colour times the light
+a level white diffuse surface would return under the sun and the baked sky
+(irradiance over pi): the sun from the light the reflections already track, the
+sky's irradiance summed from the same small panorama, cos-weighted. With the
+reflections off (no baked sky), the colour is drawn as set, as before.
+
 ## Step 5a: ocean wave cascades and the TMA spectrum (9 Nov)
 
 ### Problem

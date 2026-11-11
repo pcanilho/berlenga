@@ -61,6 +61,22 @@ thousands of triangles a plant at any distance.
    42k to 17k, bramble unchanged (its leaves were already reduced by meshoptimizer). Raster
    crops match; path traced frames before and after differ by 0.15 of 255 on average (the
    path tracer draws the full mesh and the shader keeps every card at full size up close).
+   **Built (1b).** `PlantGenerator.make_impostor()` bakes on the CPU (all cores, about 0.1 s a
+   plant): 8 x 8 hemi-octahedral views with frame directions at the cell centres (the lowest
+   ring looks about 7 degrees down, so flat leaves do not vanish edge-on), each 64 texels fitted
+   to the plant's extent from that side, 4 x 4 samples a texel. Atlas A: albedo (as the plant
+   shader colours it, wear included) and coverage, raised by half so leaves under a texel still
+   pass the alpha test, with mips that keep the share passing (Castaño 2010). Atlas B: normal
+   (octahedral), depth, back light. The shader blends the three nearest views (Brucks),
+   reprojects each through the view ray, writes depth from the baked depth and lights at that
+   surface (`LIGHT_VERTEX`); shadow casters sit 8% of the radius behind it so the camera's views
+   do not shadow themselves. `add_impostors(species, range)` moves the meshes to near meshes and
+   puts impostors beyond; `make_floor()` does it for bramble and bracken at 15 m. Under path
+   tracing VegetationField3D swaps its impostor cells back to the meshes (checked four times a
+   second, and at populate), so path tracing loses nothing.
+   Oak wood view in the grass bench (`--forest=in --stand=oak --prims`): 3.91M to 2.98M
+   triangles a frame; `make_floor` 0.9 s to 1.5 s; about 17 MB of textures for the six
+   impostors. Single bramble at 20 and 35 m: impostor and mesh alike.
 3. **Measure**: triangles per hectare in the grass bench's heath and beech floors before and
    after, raster and path traced at 100% crop, GPU time on the PC.
 
@@ -101,6 +117,29 @@ square would take minutes and hold every plant in memory.
    rect and waits.
 6. GPU placement (Horizon) only if the CPU workers do not keep up at a run's speed: the CPU path
    reuses all the rule code and the trees' and snow's readers of the placements.
+
+**Built (2).** `VegetationField3D.streaming`. Placement is split into a read-only setup
+(`_make_setup()`, main thread), `_place()` over a tile rect (any thread) and `_commit_species()`
+(main thread). Each species gets a halo, worked back from the last species: how far around a
+tile it must be placed for every later species, itself placed over its own halo, to see the same
+footprints and crowns as in one placement of the whole map. A streamed tile places each species
+over the tile plus its halo and keeps only the tile, so it is bit-identical to `populate()`
+(vegetation bench `--test`: three species, shade bushes under tree crowns, two centres).
+`populate()` runs the same code over the whole rect. Tiles go to WorkerThreadPool nearest
+first, as many as there are workers; the main thread adds each tile's species to the scene within
+`stream_budget_msec`, only out to that species' visibility range (herbs near, trees all of the
+radius), and frees tiles a tile and a half past `stream_radius` (hysteresis). The canopy, stand
+shade, forest floor (out to `stream_maps_radius`, 96 m) and far colour (out to `stream_radius`)
+maps are computed from the tiles on a worker as the centre moves and only handed over on the
+main thread; freed tiles stay alive until that job is done. Other fields read this field's
+crowns under a read lock, so a streamed herb layer can shade from a streamed forest.
+
+Measured (`--stream-cost`: 1 km map, trees with crowns over the 12-species oak floor from
+`make_floor()`, 16 m tiles, 200 m radius, running at 6 m/s, 4 cloud cores): about 600 tiles and
+600k plants held; the four workers keep up (rarely more than 2 jobs in flight after the start,
+which fills the radius in about 3 s); main thread at most 1.5 to 3.9 ms a frame (2 ms budget
+plus one tile); handing over the maps 0.6 to 2 ms. Publishing the maps on the main thread had
+cost 20 to 29 ms, which is why they moved to a worker.
 
 ## References
 

@@ -104,6 +104,9 @@ private:
 	bool wetness_enabled = true;
 	bool snow_enabled = true;
 	float snow_max_slope = 60.0f;
+	bool far_blend_enabled = false;
+	float far_start = 300.0;
+	float far_fade = 150.0;
 	bool ground_deform_enabled = true;
 
 	Ref<Shader> shader;
@@ -144,6 +147,12 @@ public:
 	void use_generator(Object *p_generator);
 	void set_grass_tint_enabled(bool p_enabled);
 	bool is_grass_tint_enabled() const { return grass_tint_enabled; }
+	void set_far_blend_enabled(bool p_enabled);
+	bool is_far_blend_enabled() const { return far_blend_enabled; }
+	void set_far_start(float p_value);
+	float get_far_start() const { return far_start; }
+	void set_far_fade(float p_value);
+	float get_far_fade() const { return far_fade; }
 	void set_wetness_enabled(bool p_enabled);
 	bool is_wetness_enabled() const { return wetness_enabled; }
 	void set_snow_enabled(bool p_enabled);

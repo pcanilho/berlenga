@@ -737,7 +737,7 @@
     "raster_reflections"
    ],
    "note": "",
-   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows.",
+   "what": "raster sea and rivers reflect the sky and the sun's glitter by the exact Fresnel term, matching the path tracer; raster waterfalls, white water, sea foam and wet sand take the scene's shadows, sky light and cloud shadows; the water's own colour is lit by sun and sky, so the sea darkens at dusk.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -1071,6 +1071,42 @@
    "topic": "Generation"
   },
   {
+   "name": "Glacial erosion",
+   "settings": [
+    "glacial_enabled",
+    "glacial_ela",
+    "glacial_erosion"
+   ],
+   "note": "",
+   "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Cliff ledges",
+   "settings": [
+    "cliff_ledge_spacing",
+    "cliff_ledge_strength"
+   ],
+   "note": "",
+   "what": "rock beds of uneven thickness step faces steeper than 40 degrees into ledges.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Fallen blocks",
+   "settings": [
+    "get_boulders(rect, density)"
+   ],
+   "note": "",
+   "what": "blocks shed by cliffs rest below them, the largest furthest out.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
    "name": "River deposition",
    "settings": [
     "deposition"
@@ -1111,6 +1147,42 @@
    ],
    "note": "",
    "what": "position, discharge, catchment, drop and run along every river, for placing lakes and falls.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Waterfall records",
+   "settings": [
+    "get_waterfalls()"
+   ],
+   "note": "",
+   "what": "each fall's type, lip, face profiles, tiers, power, impact speed and plunge pool, for water effects.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Plunge pools and gorges",
+   "settings": [
+    "plunge_pools",
+    "gorge_age",
+    "gorge_rate"
+   ],
+   "note": "",
+   "what": "falls of 4 m or more scour a pool that holds water, and lips over hard rock wear back upstream into slot gorges.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
+   "name": "Spray map",
+   "settings": [
+    "terrain_spray_potential",
+    "get_spray_potential()"
+   ],
+   "note": "",
+   "what": "where fall spray keeps the ground wet, from each fall's power and distance.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Rivers, coasts and lakes"
@@ -1240,6 +1312,18 @@
    "topic": "Placement"
   },
   {
+   "name": "Streamed placement",
+   "settings": [
+    "VegetationField3D.streaming",
+    "stream_radius"
+   ],
+   "note": "",
+   "what": "tiles are placed on worker threads around the camera, identical to a full placement; 2 to 3 ms of main-thread time a frame through 1 km of oak wood.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
    "name": "Placement by geology",
    "settings": [
     "TerrainDataMap3D.geology_source",
@@ -1311,7 +1395,7 @@
    "name": "Grass edge fade",
    "settings": [],
    "note": "always on",
-   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge.",
+   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -1360,7 +1444,7 @@
     "PlantGenerator"
    ],
    "note": "",
-   "what": "meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs, for `PlantSpecies.meshes`.",
+   "what": "meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -1439,6 +1523,19 @@
    ],
    "note": "",
    "what": "plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Plant impostors",
+   "settings": [
+    "PlantGenerator.make_impostor()",
+    "add_impostors()",
+    "impostor_range"
+   ],
+   "note": "",
+   "what": "large plants turn into octahedral impostors past a range in raster (brambles and bracken past 15 m), while path tracing keeps the meshes; an oak wood view drops from 3.91M to 2.98M triangles.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
