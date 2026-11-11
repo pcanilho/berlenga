@@ -427,6 +427,7 @@ private:
 
 	int ocean_grid_resolution = 64;
 	Vector2 ocean_domain_size = Vector2(40, 40);
+	int _resolved_ocean_grid_resolution() const;
 	float wind_speed = 8.0f;
 	Vector2 wind_direction = Vector2(1, 0);
 	float wave_amplitude = 1.0f;
