@@ -99,6 +99,7 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 - **Ocean swell** (`wave_cascades`): up to four wave layers give long swell under the chop without visible tiling, whitecaps where they add up, on a shallow-water (TMA) spectrum; set `depth` to the real depth for open sea (the 3 m default damps long waves).
 - **Measured wave spreading** (`wave_spreading`, `swell`): Donelan-Banner spreading as Horvath (2015) fits it, with swell; slopes at 14 m/s match Cox and Munk's measurements.
+- **Raster reflections** (`PhysXWaterSurface3D.raster_reflections`): raster water reflects the sky and the sun's glitter by the exact Fresnel term, matching the path tracer.
 - **Whitecaps by wind speed** (`whitecap_auto`, on; `whitecap_cover_scale`): whitecap cover follows the wind speed as measured at sea (Monahan 1980), whatever the wave settings.
 - **Finer water mesh up close** (`mesh_detail`).
 - **Shore waves** (`shore_waves`): swell turns with the seabed, grows in the shallows, breaks and runs up the sand (Stockdon run-up).
@@ -116,7 +117,7 @@ Each feature that changes the look or the cost can be turned off with the settin
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
 - **Camera under water** (path traced automatically; raster with `underwater_enabled`): fog, scattering, Snell's window, image split at the water line.
 
-<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, whitecaps, currents, live flow, boat wakes, white water, rivers, under water</summary>
+<details><summary>Images and clips: murky water, caustics, ocean, wave spreading, reflections, whitecaps, currents, live flow, boat wakes, white water, rivers, under water</summary>
 
 ![The pool with clear and with murky water](docs/media/murky-water.jpg)
 
@@ -137,6 +138,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![Sea surface height from above, 160 m at 14 m/s, four spreading models](docs/media/ocean-spreading.jpg)
 
 *Wave spreading: cos² gave long parallel crests; the measured spreading breaks them up, and swell adds long crests back.*
+
+![Raster sea toward the sun, before and with raster_reflections](docs/media/water-reflections.jpg)
+
+*Raster reflections: the flat dark sea now shows the sky and a band of sun glitter.*
 
 ![Sea from above at 6, 14 and 20 m/s, fixed whitecap threshold and whitecap_auto](docs/media/whitecaps.jpg)
 
