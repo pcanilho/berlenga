@@ -43,7 +43,7 @@ extends Node3D
 #   --view=cornice --crack=D  D days of thaw after the bake (the tension crack opening); --fall: on until the
 #                     first cornice falls, a moment later (the blocks tumbling)
 #   --view=icicles    a snowy roof's eave after sunny days at -4 C, backlit: clear ice with a hazy core [--close for 100%]
-#   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections
+#   --mirror          (sparkle view) an overhead mirror showing the snow ahead: glints in reflections (--close: the mirror fills the frame)
 #   --sled            (trail view) a sled pulled at 4 m/s for 2 s and lifted away: its bow wave and berm
 #   --deform=R,E[,S]  (trail view) deformation texels R over E m, triangles every S m
 #   --crust=N         (trail view) a 2 cm crust of N melt-freeze cycles on the snow: 1 breaks into plates
@@ -1807,6 +1807,13 @@ func _build_sparkle(cam: Camera3D) -> void:
 			lo = lo.min(pt)
 			hi = hi.max(pt)
 		mirror_rect = Rect2i(Vector2i(lo) + Vector2i(8, 8), Vector2i(hi - lo) - Vector2i(16, 16))
+		if OS.get_cmdline_user_args().has("--close"):
+			# Up at the mirror, the reflected snow filling the frame.
+			q.size = Vector2(5.0, 3.0)
+			cam.position = Vector3(0.0, 1.4, 2.6)
+			cam.look_at(Vector3(0.0, 2.6, 0.0))
+			cam.fov = 45.0
+			mirror_rect = Rect2i(0, 0, int(get_viewport().get_visible_rect().size.x), int(get_viewport().get_visible_rect().size.y)).grow(-8)
 	await get_tree().physics_frame
 	snow.refresh_heights()
 	_precipitate(8.0, 2.0)
