@@ -1124,6 +1124,27 @@ Built (11 Nov night, Paulo picked all four proposals at 21:25):
   the ice-free peaks, up to about 30 m; the lakes at the foot grow behind them (20 to 23 ha, 8.6 to 10.6 ha).
   About 4e5 m3 of debris at 3000 years (the bench default with `--auto-lake`). Cost under 0.1 s.
 
+## Scree (built 11 Nov night, Paulo picked it with the others)
+
+What makes it: rock walls retreat by rockfall, about 0.1 to 1 mm/yr since the ice left (Sass 2005; Hales and Roering
+2005, sensitive to frost cracking). The blocks fall down the wall, gather in its gullies and stop where the ground
+flattens below it: cones under gullies, aprons under plain faces, straight at the angle of repose with a concave toe
+where the large blocks run further (Statham 1976; Luckman 2013, Treatise on Geomorphology 7.15). Streams undercut
+their toes and carry them off. Graphics papers place blocks on such slopes (Paris et al. 2020) but shape the ground by
+thermal erosion only; World Creator and Gaea have debris layers of the same kind.
+
+Built: `scree_age` (years, 0 = off). Supply: walls over 50 degrees (a 45 degree threshold took the sharp crests
+between two slopes as walls and studded the slopes with cones) retreat 0.5 mm/yr. Transport: multiple flow
+directions by slope^4 (single direction gathered a whole wall onto a few cells: one 90 m cone buried the pool lake
+under the 338 m fall). Deposit: where the ground falls below 38 degrees, a half cone against the wall at
+`talus_angle` with its last third eased out, merged by maximum, then two 3x3 passes on the scree only. No scree in
+standing water (priority-flood basins, Barnes et al. 2014), on streams of 5 ha or more, or within 48 m of rivers of
+1 km2 (they work their floor). No soil added: it stays bare.
+
+Result, showcase valley at 10000 years: 2.2e6 m3, aprons fill the hollows at the feet of the walls; every lake and
+fall stays. Off by default and in the bench (`--scree-age=10000` to see it): the difference is modest at 16 m cells,
+and it reads as rock until the ground shader gets a scree material (next step: mark it in the talus channel).
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

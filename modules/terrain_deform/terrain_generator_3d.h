@@ -226,6 +226,8 @@ private:
 	double gorge_age = 0.0; // years of lip retreat; 0 none
 	double moraine_age = 0.0; // years the last glaciation's margins stood still, building moraines; 0 none
 	double last_moraine_volume = 0.0; // m3 of debris the last generate() laid in moraines
+	double scree_age = 0.0; // years cliffs have shed scree onto cones at their feet; 0 none
+	double last_scree_volume = 0.0; // m3 of scree the last generate() laid
 	double gorge_rate = 0.013; // m a year per sqrt(m3/s)
 	LocalVector<Gorge> gorges;
 	bool fall_lips = true;
@@ -544,6 +546,9 @@ public:
 	void set_moraine_age(double p_years) { moraine_age = MAX(p_years, 0.0); }
 	double get_moraine_age() const { return moraine_age; }
 	double get_last_moraine_volume() const { return last_moraine_volume; }
+	void set_scree_age(double p_years) { scree_age = MAX(p_years, 0.0); }
+	double get_scree_age() const { return scree_age; }
+	double get_last_scree_volume() const { return last_scree_volume; }
 	void set_gorge_rate(double p_rate) { gorge_rate = MAX(p_rate, 0.0); }
 	double get_gorge_rate() const { return gorge_rate; }
 	void set_fan_backfill(bool p_enable) { fan_backfill = p_enable; }
