@@ -1380,7 +1380,7 @@ int TreeGenerator::get_dead_branch_count() const {
 }
 
 // A generalized cylinder along a polyline, framed by parallel transport (Bishop frames).
-void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color) {
+void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height, float p_relief) {
 	const int rings = int(p_points.size());
 	if (rings < 2) {
 		return;
@@ -1395,6 +1395,23 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 	const float girth = Math::TAU * MAX(p_radii[0], 0.001f);
 	const float repeats = MAX(1.0f, Math::round(girth / BARK_TILE));
 	const float circumference = girth / repeats;
+	// Displacement: the bark family's height (metres, 0 on plate tops, negative in cracks),
+	// bilinear and wrapped, along the surface normal.
+	const float *hdata = nullptr;
+	int hn = 0;
+	Vector<uint8_t> hbuf;
+	if (p_height && p_relief > 0.0f) {
+		hbuf = p_height->get_data();
+		hdata = reinterpret_cast<const float *>(hbuf.ptr());
+		hn = p_height->get_width();
+	}
+	auto relief_at = [&](float p_u, float p_v) -> float {
+		const float x = (p_u - Math::floor(p_u)) * hn - 0.5f, y = (p_v - Math::floor(p_v)) * hn - 0.5f;
+		const int x0 = int(Math::floor(x)), y0 = int(Math::floor(y));
+		const float fx = x - x0, fy = y - y0;
+		auto at = [&](int i, int j) { return hdata[((j % hn + hn) % hn) * hn + ((i % hn + hn) % hn)]; };
+		return Math::lerp(Math::lerp(at(x0, y0), at(x0 + 1, y0), fx), Math::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx), fy);
+	};
 	for (int r = 0; r < rings; r++) {
 		Vector3 t2;
 		if (r == 0) {
@@ -1418,7 +1435,11 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 		for (int s = 0; s <= p_sides; s++) {
 			const float ang = Math::TAU * s / p_sides;
 			const Vector3 dir = nrm * Math::cos(ang) + bin * Math::sin(ang);
-			r_b.verts.push_back(p_points[r] + dir * p_radii[r]);
+			float rr = p_radii[r];
+			if (hdata) {
+				rr += p_relief * relief_at(float(s) / p_sides * repeats, v);
+			}
+			r_b.verts.push_back(p_points[r] + dir * rr);
 			r_b.normals.push_back(dir);
 			r_b.uvs.push_back(Vector2(float(s) / p_sides * repeats, v));
 			r_b.colors.push_back(p_color);
@@ -1781,7 +1802,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	Vector<uint8_t> abytes, nbytes, rbytes;
 	abytes.resize(N * N * 3);
 	nbytes.resize(N * N * 3);
-	rbytes.resize(N * N);
+	rbytes.resize(N * N * 3);
 	Vector<uint8_t> hbytes;
 	hbytes.resize(N * N * 4);
 	for (int y = 0; y < N; y++) {
@@ -1800,7 +1821,11 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 			nbytes.write[k * 3 + 0] = uint8_t(Math::round((n.x * 0.5f + 0.5f) * 255.0f));
 			nbytes.write[k * 3 + 1] = uint8_t(Math::round((n.y * 0.5f + 0.5f) * 255.0f));
 			nbytes.write[k * 3 + 2] = uint8_t(Math::round((n.z * 0.5f + 0.5f) * 255.0f));
-			rbytes.write[k] = uint8_t(Math::round(rw[k] * 255.0f));
+			// ORM layout (occlusion 1, roughness, metal 0): the path tracer reads a roughness
+			// texture as ORM, so a one-channel map would read as roughness 0 there.
+			rbytes.write[k * 3 + 0] = 255;
+			rbytes.write[k * 3 + 1] = uint8_t(Math::round(rw[k] * 255.0f));
+			rbytes.write[k * 3 + 2] = 0;
 			memcpy(hbytes.ptrw() + k * 4, &hw[k], 4);
 		}
 	}
@@ -1808,7 +1833,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 	ai->generate_mipmaps();
 	Ref<Image> ni = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, nbytes);
 	ni->generate_mipmaps(true);
-	Ref<Image> ri = Image::create_from_data(N, N, false, Image::FORMAT_L8, rbytes);
+	Ref<Image> ri = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, rbytes);
 	ri->generate_mipmaps();
 	set.albedo = ImageTexture::create_from_image(ai);
 	set.normal = ImageTexture::create_from_image(ni);
@@ -2400,8 +2425,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		const float tint = 0.92f + 0.16f * float((uint32_t(s) * 2654435761u) >> 24) / 255.0f;
 		col = Color(col.r * tint, col.g * tint, col.b * tint);
 		bark.bone = node_bone[s];
-		{
+		const bool relief = bark_relief > 0.0f && r0 >= RELIEF_MIN_RADIUS;
+		// A mesh without LODs (the near variants) carries the relief tube alone.
+		if (!(relief && skip_lods)) {
 			Vector4i part;
+			bark.role = relief ? Builder::ROLE_PLAIN : Builder::ROLE_ALL;
 			bark.begin(part);
 			_tube(bark, pts, rad, sides, 0.0f, col);
 			bark.end(part, r0);
@@ -2409,6 +2437,35 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				_skin_stem(bark, part, s, pts, sides);
 			}
 		}
+		if (relief) {
+			// LOD 0 and the path tracer: the same tube at about 2.5 cm around and 5 cm along,
+			// displaced by the bark's relief. Bark thickens with girth, so thin limbs carry a
+			// quarter of a mature trunk's furrow depth (Kratt et al. 2015, cambial growth).
+			LocalVector<Vector3> rp;
+			LocalVector<float> rr;
+			for (int i = 0; i + 1 < int(pts.size()); i++) {
+				const int steps = MAX(1, int(Math::ceil(pts[i].distance_to(pts[i + 1]) / 0.05f)));
+				for (int k = 0; k < steps; k++) {
+					const float t = float(k) / steps;
+					rp.push_back(pts[i].lerp(pts[i + 1], t));
+					rr.push_back(Math::lerp(rad[i], rad[i + 1], t));
+				}
+			}
+			rp.push_back(pts[pts.size() - 1]);
+			rr.push_back(rad[rad.size() - 1]);
+			const int rsides = CLAMP(int(Math::ceil(Math::TAU * r0 / 0.025f)), 24, 128);
+			const float scale = bark_relief * CLAMP(r0 / 0.35f, 0.25f, 1.0f);
+			const BarkSet &bs = _bark_set(_bark_kind(preset));
+			Vector4i part;
+			bark.role = skip_lods ? Builder::ROLE_ALL : Builder::ROLE_RELIEF;
+			bark.begin(part);
+			_tube(bark, rp, rr, rsides, 0.0f, col, bs.height.ptr(), scale);
+			bark.end(part, r0);
+			if (rigged) {
+				_skin_stem(bark, part, s, rp, rsides);
+			}
+		}
+		bark.role = Builder::ROLE_ALL;
 		if (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) {
 			// A snapped top: splinters of pale wood standing up from the rim.
 			const Node &tn = nodes[broken_tip];
@@ -2743,6 +2800,33 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// Simplification of Aggregate Detail, SIGGRAPH 2007). Real leaves at every level, never
 		// cards, so shadows and path-traced rays still meet foliage; the path tracer uses LOD 0.
 		const Dictionary lods = skip_lods ? Dictionary() : (s == 0 ? _bark_lods(b) : _leaf_lods(b));
+		if (s == 0) {
+			// LOD 0 draws the relief tubes in place of the plain ones they cover.
+			bool any_plain = false;
+			for (uint32_t i = 0; i < b.parts.size(); i++) {
+				any_plain = any_plain || b.part_role[i] == Builder::ROLE_PLAIN;
+			}
+			if (any_plain) {
+				PackedInt32Array full;
+				full.resize(b.indices.size());
+				int at = 0, from = 0;
+				int32_t *fw = full.ptrw();
+				for (uint32_t i = 0; i < b.parts.size(); i++) {
+					const Vector4i &pt = b.parts[i];
+					if (b.part_role[i] != Builder::ROLE_PLAIN) {
+						continue;
+					}
+					// Keep everything up to this part, then skip it.
+					memcpy(fw + at, b.indices.ptr() + from, sizeof(int32_t) * (pt.x - from));
+					at += pt.x - from;
+					from = pt.x + pt.y;
+				}
+				memcpy(fw + at, b.indices.ptr() + from, sizeof(int32_t) * (b.indices.size() - from));
+				at += b.indices.size() - from;
+				full.resize(at);
+				b.indices = full;
+			}
+		}
 		arrays[Mesh::ARRAY_VERTEX] = b.verts;
 		arrays[Mesh::ARRAY_NORMAL] = b.normals;
 		arrays[Mesh::ARRAY_TEX_UV] = b.uvs;
@@ -2771,7 +2855,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, bs.albedo);
 			m->set_roughness(1.0f);
 			m->set_texture(BaseMaterial3D::TEXTURE_ROUGHNESS, bs.roughness);
-			m->set_roughness_texture_channel(BaseMaterial3D::TEXTURE_CHANNEL_RED);
+			m->set_roughness_texture_channel(BaseMaterial3D::TEXTURE_CHANNEL_GREEN);
 			if (b.use_tangents) {
 				m->set_feature(BaseMaterial3D::FEATURE_NORMAL_MAPPING, true);
 				m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, bs.normal);
@@ -2822,7 +2906,7 @@ Dictionary TreeGenerator::_bark_lods(const Builder &p_bark) const {
 	for (const auto &level : TREE_LODS) {
 		PackedInt32Array idx;
 		for (uint32_t i = 0; i < p_bark.parts.size(); i++) {
-			if (p_bark.part_size[i] < level.min_radius) {
+			if (p_bark.part_size[i] < level.min_radius || p_bark.part_role[i] == Builder::ROLE_RELIEF) {
 				continue;
 			}
 			const Vector4i &pt = p_bark.parts[i];
@@ -3533,6 +3617,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_collider_radius", "radius"), &TreeGenerator::set_collider_radius);
 	ClassDB::bind_method(D_METHOD("get_collider_radius"), &TreeGenerator::get_collider_radius);
 	ClassDB::bind_method(D_METHOD("get_collision_capsules"), &TreeGenerator::get_collision_capsules);
+	ClassDB::bind_method(D_METHOD("set_bark_relief", "relief"), &TreeGenerator::set_bark_relief);
+	ClassDB::bind_method(D_METHOD("get_bark_relief"), &TreeGenerator::get_bark_relief);
 	ClassDB::bind_method(D_METHOD("set_rigged", "rigged"), &TreeGenerator::set_rigged);
 	ClassDB::bind_method(D_METHOD("is_rigged"), &TreeGenerator::is_rigged);
 	ClassDB::bind_method(D_METHOD("get_bone_count"), &TreeGenerator::get_bone_count);
@@ -3569,6 +3655,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mask_invert"), "set_mask_invert", "get_mask_invert");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "needle_sprays"), "set_needle_sprays", "get_needle_sprays");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "rigged"), "set_rigged", "is_rigged");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_relief", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_bark_relief", "get_bark_relief");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "decay_class", PROPERTY_HINT_RANGE, "0,5,1"), "set_decay_class", "get_decay_class");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fallen"), "set_fallen", "is_fallen");
 	ADD_PROPERTY(PropertyInfo(Variant::AABB, "envelope"), "set_envelope", "get_envelope");

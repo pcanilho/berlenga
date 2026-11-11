@@ -35,6 +35,7 @@
 
 #include "core/config/engine.h"
 #include "core/math/random_pcg.h"
+#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
@@ -488,8 +489,19 @@ void TreeWind3D::_scan() {
 	}
 	Node *root = get_node_or_null(target_path);
 	if (root) {
+		// A streaming VegetationField3D adds and frees cells as the camera moves and says so with
+		// "populated": scan on the next update rather than the next once-a-second sweep, so new
+		// cells never show a frame of rest pose.
+		const Callable on_populated = callable_mp(this, &TreeWind3D::_on_target_populated);
+		if (root->has_signal(SNAME("populated")) && !root->is_connected(SNAME("populated"), on_populated)) {
+			root->connect(SNAME("populated"), on_populated);
+		}
 		_scan_node(root);
 	}
+}
+
+void TreeWind3D::_on_target_populated() {
+	rescan_timer = 0.0f;
 }
 
 void TreeWind3D::rescan() {

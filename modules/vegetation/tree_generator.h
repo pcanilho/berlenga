@@ -208,6 +208,15 @@ private:
 		PackedInt32Array bones;
 		PackedFloat32Array weights;
 		int bone = 0;
+		// Bark relief (section 2a): a displaced tube is drawn only at LOD 0 (and by the path
+		// tracer), the plain tube it replaces only at the coarser levels.
+		enum Role : uint8_t {
+			ROLE_ALL,
+			ROLE_RELIEF,
+			ROLE_PLAIN,
+		};
+		LocalVector<uint8_t> part_role;
+		uint8_t role = ROLE_ALL;
 		void begin(Vector4i &r_part) const { r_part = Vector4i(indices.size(), 0, verts.size(), 0); }
 		void end(Vector4i &r_part, float p_size) {
 			r_part.y = indices.size() - r_part.x;
@@ -231,6 +240,7 @@ private:
 			if (r_part.y > 0) {
 				parts.push_back(r_part);
 				part_size.push_back(p_size);
+				part_role.push_back(role);
 			}
 		}
 	};
@@ -278,6 +288,8 @@ private:
 	bool needle_sprays = false;
 	float near_needle_range = 0.0f; // Metres; > 0 gives placed conifers a full-needle near mesh.
 	bool skip_lods = false;
+	float bark_relief = 1.0f; // Scales the displaced bark of LOD 0; 0 = plain tubes only.
+	static constexpr float RELIEF_MIN_RADIUS = 0.08f; // Stems and limbs this thick get relief.
 	bool rigged = false;
 	int decay_class = 0; // 0 living; 1-5 deadwood decay classes (Maser et al. 1979).
 	bool fallen = false; // Lying on the ground as a log.
@@ -364,7 +376,7 @@ private:
 	void _bend_under_gravity();
 	void _measure();
 
-	static void _tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color);
+	static void _tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height = nullptr, float p_relief = 0.0f);
 	void _add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, const Vector3 &p_up, float p_size, const Color &p_color);
 	void _add_needle(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, float p_size, const Color &p_color);
 	void _add_spray(Builder &r_b, const Vector3 &p_base, const Vector3 &p_dir, float p_length, float p_half_width, const Vector3 &p_side, const Color &p_color);
@@ -420,6 +432,8 @@ public:
 	int get_mask_channel() const { return mask_channel; }
 	void set_near_needle_range(float p_range) { near_needle_range = MAX(p_range, 0.0f); }
 	float get_near_needle_range() const { return near_needle_range; }
+	void set_bark_relief(float p_relief) { bark_relief = MAX(p_relief, 0.0f); }
+	float get_bark_relief() const { return bark_relief; }
 	void set_needle_sprays(bool p_sprays) { needle_sprays = p_sprays; }
 	bool get_needle_sprays() const { return needle_sprays; }
 	void set_decay_class(int p_class) { decay_class = CLAMP(p_class, 0, 5); }
