@@ -1168,6 +1168,10 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			raytracing_capabilities.validation = raytracing_validation_features.rayTracingValidation;
 		}
 
+		if (enabled_device_extension_names.has(VK_EXT_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME)) {
+			raytracing_capabilities.invocation_reorder_support = raytracing_invocation_reorder_features.rayTracingInvocationReorder;
+		}
+
 		if (enabled_device_extension_names.has(VK_KHR_RAY_QUERY_EXTENSION_NAME)) {
 			ray_query_support = ray_query_features.rayQuery;
 		}
@@ -8241,6 +8245,8 @@ bool RenderingDeviceDriverVulkan::has_feature(Features p_feature) {
 			return shader_capabilities.shader_device_clock_is_supported;
 		case SUPPORTS_VERTEX_PIPELINE_STORES:
 			return physical_device_features.vertexPipelineStoresAndAtomics;
+		case SUPPORTS_RAYTRACING_INVOCATION_REORDER:
+			return raytracing_capabilities.raytracing_pipeline_support && raytracing_capabilities.invocation_reorder_support;
 		default:
 			return false;
 	}

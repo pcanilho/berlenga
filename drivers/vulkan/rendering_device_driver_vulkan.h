@@ -108,6 +108,7 @@ class RenderingDeviceDriverVulkan : public RenderingDeviceDriver {
 		uint32_t shader_group_handle_size_aligned = 0;
 		uint32_t shader_group_base_alignment = 0;
 		bool validation = false;
+		bool invocation_reorder_support = false; // VK_EXT_ray_tracing_invocation_reorder (shader execution reordering).
 	};
 
 	struct DescriptorIndexingCapabilities {
