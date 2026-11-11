@@ -213,6 +213,22 @@ public:
 	bool get_foam_enabled() const { return foam_enabled; }
 	void set_foam_threshold(float p_threshold);
 	float get_foam_threshold() const { return foam_threshold; }
+	// Whitecap cover from the wind (on by default): the threshold is steered
+	// each step so the share of sea under foam follows the measured law of
+	// Monahan and O'Muircheartaigh (1980), W = 3.84e-6 U^3.41 (about 1% at
+	// 10 m/s, 3% at 14 m/s, none below ~3 m/s), times whitecap_cover_scale.
+	// foam_threshold is then only the starting point. Off = the fixed
+	// foam_threshold, as before.
+	void set_whitecap_auto(bool p_auto);
+	bool get_whitecap_auto() const { return whitecap_auto; }
+	void set_whitecap_cover_scale(float p_scale);
+	float get_whitecap_cover_scale() const { return whitecap_cover_scale; }
+	// The cover the wind asks for (0..1) and the cover measured on the
+	// foam grids at the last readback (-1 before the first one).
+	float get_whitecap_target_cover() const;
+	float get_whitecap_cover() const { return whitecap_measured; }
+	// The threshold in use (foam_threshold, or the steered one).
+	float get_effective_foam_threshold() const { return _live_foam_threshold(); }
 	void set_foam_persistence(float p_seconds);
 	float get_foam_persistence() const { return foam_persistence; }
 	// Shore foam: waves arriving over water shallower than this (meters,
@@ -508,6 +524,15 @@ private:
 	NormalMode normal_mode = NORMAL_MODE_PER_PIXEL;
 	bool foam_enabled = true;
 	float foam_threshold = 0.7f;
+	bool whitecap_auto = true;
+	float whitecap_cover_scale = 1.0f;
+	float whitecap_threshold = 0.7f; // steered threshold
+	float whitecap_pushed = -100.0f; // last one sent to the solvers and material
+	float whitecap_measured = -1.0f;
+	double whitecap_clock = -1.0;
+	float _live_foam_threshold() const { return whitecap_auto ? whitecap_threshold : foam_threshold; }
+	void _steer_whitecaps();
+	void _push_foam_settings();
 	float foam_persistence = 2.5f;
 	float shore_foam_band = 0.5f;
 	// Open water past the simulated square (render_extent > domain, no surface_mesh): true = it is open, deep sea

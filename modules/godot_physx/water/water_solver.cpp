@@ -221,7 +221,7 @@ void WaterSolverGPU::_rt_free_buffers() {
 	RID *bufs[] = { &buf_params, &buf_state_a, &buf_state_b, &buf_height, &buf_spheres, &buf_impulses,
 		&buf_ocean_init_params, &buf_ocean_evolve_params, &buf_fft_params, &buf_fft_rows_params, &buf_fft_cols_params, &buf_h0, &buf_ocean_spec, &buf_fft_a, &buf_fft_b,
 		&buf_ocean_spec_dz, &buf_fft_c, &buf_fft_d, &buf_ocean_spec_c, &buf_fft_e, &buf_fft_f, &buf_ocean_spec_d, &buf_fft_g, &buf_fft_h,
-		&buf_blit_ripple_params, &buf_blit_ocean_params, &buf_caustics_params, &buf_foam_params, &buf_shore_foam_params, &buf_shore_foam_copy_params, &buf_swash_params, &buf_swash_copy_params };
+		&buf_blit_ripple_params, &buf_blit_ocean_params, &buf_caustics_params, &buf_foam_params, &buf_foam_cover, &buf_shore_foam_params, &buf_shore_foam_copy_params, &buf_swash_params, &buf_swash_copy_params };
 	for (RID *b : bufs) {
 		if (b->is_valid()) {
 			rd->free_rid(*b);
@@ -526,12 +526,13 @@ void WaterSolverGPU::_rt_build_buffers() {
 		uset_blit_ocean = rd->uniform_set_create(uniforms, shader_blit_ocean, 0);
 	}
 	buf_foam_params = rd->uniform_buffer_create(FOAM_PARAMS_BYTES);
+	buf_foam_cover = rd->storage_buffer_create(sizeof(uint32_t));
 	{
 		Vector<RD::Uniform> uniforms;
-		const RID ids[4] = { buf_foam_params, tex_ocean_deriv, tex_ocean_disp, tex_ocean_foam };
-		for (int bnd = 0; bnd < 4; bnd++) {
+		const RID ids[5] = { buf_foam_params, tex_ocean_deriv, tex_ocean_disp, tex_ocean_foam, buf_foam_cover };
+		for (int bnd = 0; bnd < 5; bnd++) {
 			RD::Uniform u;
-			u.uniform_type = bnd == 0 ? RD::UNIFORM_TYPE_UNIFORM_BUFFER : RD::UNIFORM_TYPE_IMAGE;
+			u.uniform_type = bnd == 0 ? RD::UNIFORM_TYPE_UNIFORM_BUFFER : (bnd == 4 ? RD::UNIFORM_TYPE_STORAGE_BUFFER : RD::UNIFORM_TYPE_IMAGE);
 			u.binding = bnd;
 			u.append_id(ids[bnd]);
 			uniforms.push_back(u);
@@ -1080,6 +1081,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 		memcpy(fb.ptrw(), fp, sizeof(fp));
 		memcpy(fb.ptrw() + sizeof(fp), fr, sizeof(fr));
 		rd->buffer_update(buf_foam_params, 0, FOAM_PARAMS_BYTES, fb.ptr());
+		rd->buffer_clear(buf_foam_cover, 0, sizeof(uint32_t));
 		RD::ComputeListID cl = rd->compute_list_begin();
 		rd->compute_list_bind_compute_pipeline(cl, pipeline_foam);
 		rd->compute_list_bind_uniform_set(cl, uset_foam, 0);
@@ -1184,6 +1186,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 				sw[i] = dd[i * 2 + 1];
 			}
 		}
+		_rt_store_foam_cover(rd->buffer_get_data(buf_foam_cover, 0, sizeof(uint32_t)));
 		height_ready.set();
 		return;
 	}
@@ -1200,6 +1203,25 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 	}
 	rd->buffer_get_data_async(buf_fft_b, callable_mp(this, &WaterSolverGPU::rt_on_ocean_height).bind(ocean_time_accum, p_self), 0, on * on * 2 * sizeof(float));
 	rd->buffer_get_data_async(buf_fft_d, callable_mp(this, &WaterSolverGPU::rt_on_ocean_dz).bind(p_self), 0, on * on * 2 * sizeof(float));
+	rd->buffer_get_data_async(buf_foam_cover, callable_mp(this, &WaterSolverGPU::rt_on_foam_cover).bind(p_self), 0, sizeof(uint32_t));
+}
+
+void WaterSolverGPU::rt_on_foam_cover(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self) {
+	_rt_store_foam_cover(p_data);
+}
+
+// The foam pass's sum (1/1024 per texel) as the mean foam over the grid.
+void WaterSolverGPU::_rt_store_foam_cover(const PackedByteArray &p_data) {
+	if (p_data.size() < (int)sizeof(uint32_t) || !foam_enabled) {
+		foam_cover_bits.set(0xFFFFFFFFu); // unknown
+		return;
+	}
+	uint32_t sum;
+	memcpy(&sum, p_data.ptr(), sizeof(uint32_t));
+	const float cover = (float)((double)sum / (1024.0 * (double)ocean_grid_resolution * (double)ocean_grid_resolution));
+	uint32_t bits;
+	memcpy(&bits, &cover, sizeof(uint32_t));
+	foam_cover_bits.set(bits);
 }
 
 void WaterSolverGPU::rt_on_ripple_state(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self) {
@@ -1831,6 +1853,19 @@ RID WaterSolver::get_ocean_displacement_texture_rd_rid() const {
 		return RID();
 	}
 	return gpu->tex_ocean_disp;
+}
+
+float WaterSolver::get_foam_cover() const {
+	if (gpu.is_null()) {
+		return -1.0f;
+	}
+	const uint32_t bits = gpu->foam_cover_bits.get();
+	if (bits == 0xFFFFFFFFu) {
+		return -1.0f;
+	}
+	float cover;
+	memcpy(&cover, &bits, sizeof(float));
+	return cover;
 }
 
 void WaterSolver::get_ocean_dz_grid(Vector<float> &r_dz) const {

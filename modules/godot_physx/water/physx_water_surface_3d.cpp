@@ -1331,6 +1331,13 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_foam_enabled"), &PhysXWaterSurface3D::get_foam_enabled);
 	ClassDB::bind_method(D_METHOD("set_foam_threshold", "threshold"), &PhysXWaterSurface3D::set_foam_threshold);
 	ClassDB::bind_method(D_METHOD("get_foam_threshold"), &PhysXWaterSurface3D::get_foam_threshold);
+	ClassDB::bind_method(D_METHOD("set_whitecap_auto", "enabled"), &PhysXWaterSurface3D::set_whitecap_auto);
+	ClassDB::bind_method(D_METHOD("get_whitecap_auto"), &PhysXWaterSurface3D::get_whitecap_auto);
+	ClassDB::bind_method(D_METHOD("set_whitecap_cover_scale", "scale"), &PhysXWaterSurface3D::set_whitecap_cover_scale);
+	ClassDB::bind_method(D_METHOD("get_whitecap_cover_scale"), &PhysXWaterSurface3D::get_whitecap_cover_scale);
+	ClassDB::bind_method(D_METHOD("get_whitecap_target_cover"), &PhysXWaterSurface3D::get_whitecap_target_cover);
+	ClassDB::bind_method(D_METHOD("get_whitecap_cover"), &PhysXWaterSurface3D::get_whitecap_cover);
+	ClassDB::bind_method(D_METHOD("get_effective_foam_threshold"), &PhysXWaterSurface3D::get_effective_foam_threshold);
 	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXWaterSurface3D::set_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXWaterSurface3D::get_foam_persistence);
 	ClassDB::bind_method(D_METHOD("set_shore_foam_band", "depth"), &PhysXWaterSurface3D::set_shore_foam_band);
@@ -1450,6 +1457,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "choppiness", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_choppiness", "get_choppiness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "foam_enabled"), "set_foam_enabled", "get_foam_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_threshold", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_foam_threshold", "get_foam_threshold");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "whitecap_auto"), "set_whitecap_auto", "get_whitecap_auto");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "whitecap_cover_scale", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_whitecap_cover_scale", "get_whitecap_cover_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_foam_band", PROPERTY_HINT_RANGE, "0,5,0.05,or_greater,suffix:m"), "set_shore_foam_band", "get_shore_foam_band");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "open_sea_beyond"), "set_open_sea_beyond", "get_open_sea_beyond");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_undertow", PROPERTY_HINT_RANGE, "0,1.5,0.01,or_greater,suffix:m/s"), "set_shore_undertow", "get_shore_undertow");
@@ -1605,7 +1614,7 @@ void PhysXWaterSurface3D::_configure_cascades(const WaterSolver::Settings &p_bas
 		c->domain = s.ocean_domain_size;
 		c->solver.set_rest_threshold(1e-3f);
 		c->solver.configure(s);
-		c->solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+		c->solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 		extra_cascades.push_back(c);
 	}
 }
@@ -3477,20 +3486,20 @@ void PhysXWaterSurface3D::set_choppiness(float p_choppiness) {
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("choppiness", choppiness);
 	}
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 }
 
 void PhysXWaterSurface3D::set_foam_enabled(bool p_enabled) {
 	foam_enabled = p_enabled;
 	if (water_material.is_valid()) {
-		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? foam_threshold : -100.0f);
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? _live_foam_threshold() : -100.0f);
 	}
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 }
 
 void PhysXWaterSurface3D::set_shore_undertow(float p_speed) {
 	shore_undertow = MAX(p_speed, 0.0f);
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 }
 
 void PhysXWaterSurface3D::set_swash_run_up(float p_height) {
@@ -3517,20 +3526,91 @@ void PhysXWaterSurface3D::set_open_sea_beyond(bool p_open) {
 
 void PhysXWaterSurface3D::set_shore_foam_band(float p_depth) {
 	shore_foam_band = MAX(p_depth, 0.0f);
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 }
 
 void PhysXWaterSurface3D::set_foam_threshold(float p_threshold) {
 	foam_threshold = p_threshold;
+	whitecap_threshold = p_threshold; // the steering starts again from here
 	if (water_material.is_valid()) {
-		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? foam_threshold : -100.0f);
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? _live_foam_threshold() : -100.0f);
 	}
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
+}
+
+void PhysXWaterSurface3D::set_whitecap_auto(bool p_auto) {
+	whitecap_auto = p_auto;
+	whitecap_threshold = foam_threshold;
+	whitecap_clock = -1.0;
+	_push_foam_settings();
+}
+
+void PhysXWaterSurface3D::set_whitecap_cover_scale(float p_scale) {
+	whitecap_cover_scale = MAX(p_scale, 0.0f);
+}
+
+// Monahan and O'Muircheartaigh (1980), the fit to all their open-ocean
+// photographs: W = 3.84e-6 U10^3.41, U10 the wind 10 m up in m/s.
+float PhysXWaterSurface3D::get_whitecap_target_cover() const {
+	return MIN(3.84e-6f * Math::pow(MAX(wind_speed, 0.0f), 3.41f) * whitecap_cover_scale, 0.5f);
+}
+
+// The threshold, the material's crest threshold and every cascade's foam
+// pass, all from one place.
+void PhysXWaterSurface3D::_push_foam_settings() {
+	const float th = _live_foam_threshold();
+	whitecap_pushed = th;
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? th : -100.0f);
+	}
+	solver.set_foam_settings(foam_enabled, choppiness, th, foam_persistence, shore_foam_band, shore_undertow);
+	for (WaveCascade *c : extra_cascades) {
+		c->solver.set_foam_settings(foam_enabled, choppiness, th, foam_persistence, shore_foam_band, shore_undertow);
+	}
+}
+
+// Steers the foam threshold so the whitecap cover follows the wind. The
+// cover is each cascade's mean foam read back from its foam pass; the
+// cascades draw their foam on top of each other (max), so for independent
+// fields the share left clear is the product of each one's. An integral
+// controller in log cover: the cover spans decades with the wind (0.1% to
+// 10%), and a threshold step changes it by a factor, not an amount.
+void PhysXWaterSurface3D::_steer_whitecaps() {
+	const float c0 = foam_enabled ? solver.get_foam_cover() : -1.0f;
+	if (c0 < 0.0f) {
+		whitecap_measured = -1.0f;
+		whitecap_clock = -1.0;
+		return;
+	}
+	double clear = 1.0 - c0;
+	for (WaveCascade *c : extra_cascades) {
+		const float ci = c->solver.get_foam_cover();
+		if (ci >= 0.0f) {
+			clear *= 1.0 - ci;
+		}
+	}
+	whitecap_measured = (float)(1.0 - clear);
+	if (!whitecap_auto) {
+		whitecap_clock = -1.0;
+		return;
+	}
+	const double dt = whitecap_clock < 0.0 ? 0.0 : water_time - whitecap_clock;
+	whitecap_clock = water_time;
+	if (dt <= 0.0 || dt > 0.5) {
+		return;
+	}
+	constexpr float FLOOR = 1e-4f; // below this both read as clear sea
+	constexpr float GAIN = 0.08f; // threshold change per second per e-fold of error
+	const float err = CLAMP(Math::log((whitecap_measured + FLOOR) / (get_whitecap_target_cover() + FLOOR)), -3.0f, 3.0f);
+	whitecap_threshold = CLAMP(whitecap_threshold - GAIN * err * (float)dt, -1.0f, 1.5f);
+	if (Math::abs(whitecap_threshold - whitecap_pushed) > 0.002f) {
+		_push_foam_settings();
+	}
 }
 
 void PhysXWaterSurface3D::set_foam_persistence(float p_seconds) {
 	foam_persistence = MAX(p_seconds, 0.05f);
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 }
 
 void PhysXWaterSurface3D::set_normal_mode(NormalMode p_mode) {
@@ -4051,7 +4131,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	_detach_textures();
 	solver.configure(s);
 	_configure_cascades(s);
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 	solver.set_flow_foam(flow_foam, flow_foam_persistence);
 	if (!solver.has_device() && !warned_no_device) {
@@ -4199,6 +4279,7 @@ void PhysXWaterSurface3D::_frame_update() {
 }
 
 void PhysXWaterSurface3D::_after_step() {
+	_steer_whitecaps();
 	if (solver.is_available()) {
 		bool cascades_ready = true;
 		for (WaveCascade *c : extra_cascades) {
@@ -4301,7 +4382,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 	}
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("wave_cascade_count", 1 + (int)extra_cascades.size());
-		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? foam_threshold : -100.0f);
+		water_material->set_shader_parameter("foam_crest_threshold", foam_enabled ? _live_foam_threshold() : -100.0f);
 	}
 	textures_bound = true;
 	_update_flow_material(); // the live flow's texture exists now

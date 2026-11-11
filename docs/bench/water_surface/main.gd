@@ -21,6 +21,9 @@ extends Node3D
 #   --out=path.png  save the last frame and quit
 #   --height-out=path.png  the surface height over 160 m of open sea (sample_height), and the slope spread along x and
 #                   z, at the last frame
+#   --whitecaps=U1,U2,...  step the wind through these speeds (m/s), --whitecap-hold frames each, and print the
+#                   whitecap cover the wind asks for (Monahan) against the cover on the foam grids, and the threshold
+#   --whitecap-hold=N  frames at each wind speed (default 600)
 #   --debug=N       path tracing debug view (Environment.pathtracing_debug_mode)
 #   --water=param:value  a water shader parameter, e.g. --water=pathtraced_scattering:Vector3(0,0,0)
 #   --node=prop:value  a PhysXWaterSurface3D property (e.g. live_flow:false)
@@ -70,6 +73,10 @@ var n := 0
 var water: Node3D
 var sea_series := PackedFloat32Array()
 var height_out := ""
+var whitecap_winds := PackedFloat32Array()
+var whitecap_hold := 600
+var whitecap_sum := Vector3.ZERO
+var whitecap_count := 0
 var profile := false
 var perf := false
 var breakers := false
@@ -123,6 +130,9 @@ func _ready() -> void:
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--height-out="): height_out = a.substr(13)
+		elif a.begins_with("--whitecaps="):
+			for w in a.substr(12).split(","): whitecap_winds.push_back(float(w))
+		elif a.begins_with("--whitecap-hold="): whitecap_hold = int(a.substr(16))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
 		elif a.begins_with("--current="):
@@ -417,6 +427,8 @@ func _process(_delta: float) -> void:
 		print(line)
 	if height_out != "" and n == frames - 1:
 		_save_heights()
+	if not whitecap_winds.is_empty():
+		_whitecap_step()
 	if view == "sea" and n > 30:
 		# Significant wave height, 4 sigma of the height at one point over time (a line through the square is
 		# shorter than the swell).
@@ -469,3 +481,24 @@ func _process(_delta: float) -> void:
 			if b is RigidBody3D:
 				print("box at ", b.global_position, " flow there ", water.call("sample_flow", b.global_position))
 		get_tree().quit()
+
+
+# --whitecaps: hold each wind speed, average the second half of the hold.
+func _whitecap_step() -> void:
+	var i := n / whitecap_hold
+	var k := n % whitecap_hold
+	if i >= whitecap_winds.size():
+		get_tree().quit()
+		return
+	if k < 5:
+		water.call("set_wind_speed", whitecap_winds[i]) # again over a few frames: the first ones come before the solver is up
+	if k == 0:
+		whitecap_sum = Vector3.ZERO
+		whitecap_count = 0
+	var cover := float(water.call("get_whitecap_cover"))
+	if k >= whitecap_hold / 2 and cover >= 0.0:
+		whitecap_sum += Vector3(float(water.call("get_whitecap_target_cover")), cover, float(water.call("get_effective_foam_threshold")))
+		whitecap_count += 1
+	if k == whitecap_hold - 1:
+		var m := whitecap_sum / maxi(whitecap_count, 1)
+		print("WHITECAPS U=%.1f m/s target %.3f%% cover %.3f%% threshold %.3f (auto %s)" % [whitecap_winds[i], 100.0 * m.x, 100.0 * m.y, m.z, str(water.get("whitecap_auto"))])
