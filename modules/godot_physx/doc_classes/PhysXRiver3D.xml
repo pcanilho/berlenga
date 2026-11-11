@@ -88,7 +88,7 @@
 			<return type="Vector3" />
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
-				Depth-averaged water velocity (m/s, world) at a world position; zero off the river. It bends round rocks: the flow is a stream function solved over the river with Manning's friction (the diffusive wave), so the water parts in front of a rock, runs faster past its sides and slows behind it.
+				Depth-averaged water velocity (m/s, world) at a world position; zero off the river. It bends round rocks: the flow is a stream function solved over the river with Manning's friction (the diffusive wave), so the water parts in front of a rock, runs faster past its sides and slows behind it. The solve is multigrid-preconditioned conjugate gradients; the project setting [code]physics/physx_3d/water/multigrid_flow[/code] off goes back to the older, slower SOR sweeps.
 			</description>
 		</method>
 		<method name="sample_foam" qualifiers="const">

@@ -36,6 +36,8 @@ extends Node3D
 #   --node=prop:value  a PhysXWaterSurface3D property (e.g. live_flow:false)
 #   --current=X,Z   a current in m/s (flow round the rocks, boxes drift)
 #   --flow-out=path.png  save the solved flow (speed as brightness, direction as hue) and quit
+#   --bake-time=N   with --flow-out, first time N flow bakes (rebake_flow) with the multigrid solver and with the
+#                   older SOR sweeps (physics/physx_3d/water/multigrid_flow), and print the mean of each
 #   --pt-from=N     rasterize until frame N, path trace from then on (a long settle at raster speed)
 #   --tracers=N     N white flecks floating on the surface, carried by sample_flow() (shows the flow)
 #   --seq=N         also save the N frames after --frames, as path_0000.png ... (for a GIF)
@@ -68,6 +70,7 @@ var water_params := {}
 var node_params := {}
 var current := Vector2.ZERO
 var flow_out := ""
+var bake_time := 0
 var seq := 0
 var seq_step := 1
 var tracers := 0
@@ -151,6 +154,7 @@ func _ready() -> void:
 			var c := a.substr(10).split(",")
 			current = Vector2(float(c[0]), float(c[1]))
 		elif a.begins_with("--flow-out="): flow_out = a.substr(11)
+		elif a.begins_with("--bake-time="): bake_time = int(a.substr(12))
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
 		elif a.begins_with("--seq-step="): seq_step = maxi(int(a.substr(11)), 1)
 		elif a.begins_with("--tracers="): tracers = int(a.substr(10))
@@ -599,6 +603,17 @@ func _process(_delta: float) -> void:
 			if out == "":
 				get_tree().quit()
 	if flow_out != "" and n >= frames:
+		if bake_time > 0:
+			var keep: bool = ProjectSettings.get_setting("physics/physx_3d/water/multigrid_flow")
+			for mg in [true, false]:
+				ProjectSettings.set_setting("physics/physx_3d/water/multigrid_flow", mg)
+				water.call("rebake_flow")
+				var t0 := Time.get_ticks_usec()
+				for i in bake_time:
+					water.call("rebake_flow")
+				print("flow bake (%s, grid %d): %.2f ms" % ["multigrid" if mg else "SOR", water.get("grid_resolution"), (Time.get_ticks_usec() - t0) / 1000.0 / bake_time])
+			ProjectSettings.set_setting("physics/physx_3d/water/multigrid_flow", keep)
+			water.call("rebake_flow")
 		# The flow as the surface samples it, over the simulated square (40 m), 10 cm a pixel.
 		var size := 400
 		var vis := Image.create(size, size, false, Image.FORMAT_RGB8)
