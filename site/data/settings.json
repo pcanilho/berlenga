@@ -1190,6 +1190,19 @@
    "topic": "Ground"
   },
   {
+   "name": "Landscape3D collision",
+   "settings": [
+    "collision_enabled",
+    "collision_radius",
+    "collision_target"
+   ],
+   "note": "",
+   "what": "full-detail heightfield tiles follow the player and match the drawn triangles.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Footprints in ground",
    "settings": [
     "GroundSurface3D",
