@@ -129,6 +129,15 @@ String TerrainMaterial3D::get_shader_code() const {
 	if (ground_deform_enabled) {
 		c += BaseMaterial3D::get_ground_deform_shader_code();
 	}
+	if (far_blend_enabled) {
+		// The plant cover seen from afar (vegetation publishes it; rect width 0 = none: the ground stays as it is).
+		c += R"(
+global uniform sampler2D terrain_cover_map : hint_default_black, filter_linear; // rgb sRGB cover colour, a cover share
+global uniform vec4 terrain_cover_rect;
+uniform float tm_far_start = 300.0;
+uniform float tm_far_fade = 150.0;
+)";
+	}
 	c += R"(
 uniform bool tm_geology = true;
 uniform float tm_sea_level = 0.0;
@@ -378,10 +387,29 @@ void fragment() {
 	sn = terrain_detail_normal(wp, sn, tm_detail_octaves, footprint);
 )";
 	}
+	if (far_blend_enabled) {
+		c += "\tvec3 tm_bare = albedo;\n";
+	}
 	if (grass_tint_enabled) {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
 		// Plants thinned away by distance leave their colour on the ground (VegetationField3D).
 		c += "\talbedo = vegetation_far(wp, albedo, CAMERA_POSITION_WORLD);\n";
+	}
+	if (far_blend_enabled) {
+		// Far ground: the bare ground under the plant cover's colour by its cover share, taking over from the near
+		// grass tint and vegetation_far() between far_start and far_start + far_fade (one source for both: the
+		// vegetation builds the cover map from the same colours). Before rain and snow, which still lie on it.
+		c += R"(	if (terrain_cover_rect.z > 0.0) {
+		float far_t = smoothstep(tm_far_start, tm_far_start + tm_far_fade, length(wp - CAMERA_POSITION_WORLD));
+		vec2 cuv = (wp.xz - terrain_cover_rect.xy) / terrain_cover_rect.zw;
+		if (far_t > 0.0 && all(greaterThanEqual(cuv, vec2(0.0))) && all(lessThanEqual(cuv, vec2(1.0)))) {
+			vec4 cover = textureLod(terrain_cover_map, cuv, 0.0);
+			vec3 cs = cover.rgb;
+			vec3 cover_lin = mix(cs / 12.92, pow((cs + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), cs));
+			albedo = mix(albedo, mix(tm_bare, cover_lin, cover.a), far_t);
+		}
+	}
+)";
 	}
 	if (ground_deform_enabled) {
 		// Freshly turned ground is darker until it dries.
@@ -438,6 +466,10 @@ void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_blend_depth", blend_depth);
 	set_shader_parameter("tm_detail_octaves", detail_octaves);
 	set_shader_parameter("tm_snow_max_slope", snow_max_slope);
+	if (far_blend_enabled) {
+		set_shader_parameter("tm_far_start", far_start);
+		set_shader_parameter("tm_far_fade", far_fade);
+	}
 	for (int i = 0; i < LAYER_MAX; i++) {
 		const String n = LAYER_NAMES[i];
 		const Ref<TerrainMaterialLayer> &l = layers[i];
@@ -524,6 +556,14 @@ MAT_SETTER_CODE(bool, grass_tint_enabled)
 MAT_SETTER_CODE(bool, wetness_enabled)
 MAT_SETTER_CODE(bool, snow_enabled)
 MAT_SETTER_CODE(bool, ground_deform_enabled)
+MAT_SETTER(float, far_start, MAX(p_value, 0.0f))
+MAT_SETTER(float, far_fade, MAX(p_value, 1.0f))
+
+void TerrainMaterial3D::set_far_blend_enabled(bool p_enabled) {
+	far_blend_enabled = p_enabled;
+	update_shader();
+	_update_params();
+}
 
 void TerrainMaterial3D::use_generator(Object *p_generator) {
 	TerrainGenerator3D *gen = Object::cast_to<TerrainGenerator3D>(p_generator);
@@ -561,6 +601,9 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::BOOL, snow_enabled, is_snow_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, snow_max_slope, get_snow_max_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")
 	BIND_PROP(Variant::BOOL, ground_deform_enabled, is_ground_deform_enabled, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::BOOL, far_blend_enabled, is_far_blend_enabled, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::FLOAT, far_start, get_far_start, PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m")
+	BIND_PROP(Variant::FLOAT, far_fade, get_far_fade, PROPERTY_HINT_RANGE, "1,2000,1,or_greater,suffix:m")
 #undef BIND_PROP
 
 	BIND_ENUM_CONSTANT(LAYER_ROCK);

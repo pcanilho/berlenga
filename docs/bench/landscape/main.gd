@@ -12,6 +12,7 @@ extends Node3D
 #   --raster          raster only
 #   --spp=N           path tracing samples (default 16)
 #   --boulders=D     rockfall blocks below cliffs at density D (default 1, 0 none), grey stand-ins
+#   --far-blend [--far-start=M]   TerrainMaterial3D's far blend over a test plant cover map
 #   --lake-pick=high  the lake views and checks use the highest lake (default the biggest)
 #   --view=wide|lake|lakewater|valley|fall|beach|peak|treeline|meadow   camera (default wide; lakewater: low over the lake;
 #                         valley: from behind the high lake down to the clearing; treeline: the clearing's edge)
@@ -77,6 +78,7 @@ var prints: GroundSurface3D
 var prints_probe: Node3D
 var sun: DirectionalLight3D
 var boulder_spot := Vector3.ZERO
+var cover_tex: ImageTexture
 var clock: SkyClock
 var cam: Camera3D
 var env: Environment
@@ -689,6 +691,23 @@ func _build_ground() -> void:
 		var tm := TerrainMaterial3D.new()
 		tm.use_generator(gen)
 		tm.detail_octaves = int(args.get("mdetail", "4"))
+		if args.has("far-blend"):
+			# Far ground blend against a test cover map (vegetation publishes the real one): dark green cover over
+			# the low ground, thinning out with height, 8 m texels over the generator's area.
+			tm.far_blend_enabled = true
+			tm.far_start = float(args.get("far-start", "300"))
+			var cn := 512
+			var ci := Image.create(cn, cn, false, Image.FORMAT_RGBA8)
+			for zz in cn:
+				for xx in cn:
+					var px := -2048.0 + xx * 8.0
+					var pz := -2048.0 + zz * 8.0
+					var hh := gen.get_height(Vector3(px, 0, pz))
+					var cov := clampf(1.0 - (hh - 60.0) / 300.0, 0.0, 0.85) if hh > 2.0 else 0.0
+					ci.set_pixel(xx, zz, Color(0.16, 0.24, 0.09, cov))
+			cover_tex = ImageTexture.create_from_image(ci)
+			RenderingServer.global_shader_parameter_set("terrain_cover_map", cover_tex.get_rid())
+			RenderingServer.global_shader_parameter_set("terrain_cover_rect", Vector4(-2048, -2048, 4096, 4096))
 		tm.update_shader()
 		ground_mat = tm
 	else:
