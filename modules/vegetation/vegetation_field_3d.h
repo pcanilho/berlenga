@@ -172,6 +172,30 @@ class VegetationField3D : public Node3D {
 	void _maps_wants(Maps &r_maps) const;
 	static void _compute_maps(Maps &r_maps, const LocalVector<const LocalVector<Crown> *> &p_crowns, const LocalVector<const LocalVector<FarAdd> *> &p_far);
 	void _apply_maps(Maps &p_maps);
+	// The plant cover seen from far above for distant terrain (terrain_cover_* globals,
+	// TerrainMaterial3D's far blend), from the species' rules over the whole map.
+	bool cover_map_enabled = false;
+	NodePath cover_grass;
+	float cover_cell = 4.0f;
+	Ref<Texture2D> cover_texture;
+	struct CoverJob {
+		const PlaceSetup *setup = nullptr;
+		Ref<PlantSpecies> grass; // Null: no grass layer.
+		Color grass_far; // Linear.
+		Rect2 rect;
+		int w = 0;
+		int h = 0;
+		uint8_t *out = nullptr;
+		// Per species, the crowns' mean shade over its own pattern at a kept share of 0, 0.1 ... 1,
+		// as -ln(1 - shade) so species add up.
+		LocalVector<LocalVector<float>> crown_k;
+		// Pass 0 writes the crowns per texel (k, conifer k, colour times k), blurred by the crown
+		// size between the passes; pass 1 adds the plants and grass under them.
+		int pass = 0;
+		LocalVector<float> crowns; // 5 per texel.
+	};
+	static void _cover_row(void *p_job, uint32_t p_row);
+	void _build_cover(const PlaceSetup &p_setup);
 	mutable RWLock crown_lock; // Crowns and stand: another field reads them from its workers.
 
 	// Streaming around a centre: tiles placed on WorkerThreadPool nearest first, committed on the
@@ -266,6 +290,14 @@ public:
 	int get_seed() const { return seed; }
 	void set_populate_on_ready(bool p_enable);
 	bool is_populate_on_ready() const { return populate_on_ready; }
+
+	void set_cover_map_enabled(bool p_enable) { cover_map_enabled = p_enable; }
+	bool is_cover_map_enabled() const { return cover_map_enabled; }
+	void set_cover_grass(const NodePath &p_path) { cover_grass = p_path; }
+	NodePath get_cover_grass() const { return cover_grass; }
+	void set_cover_cell(float p_cell) { cover_cell = CLAMP(p_cell, 0.5f, 64.0f); }
+	float get_cover_cell() const { return cover_cell; }
+	Ref<Texture2D> get_cover_texture() const { return cover_texture; }
 
 	void set_streaming(bool p_enable);
 	bool is_streaming() const { return streaming; }

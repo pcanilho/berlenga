@@ -141,6 +141,38 @@ which fills the radius in about 3 s); main thread at most 1.5 to 3.9 ms a frame 
 plus one tile); handing over the maps 0.6 to 2 ms. Publishing the maps on the main thread had
 cost 20 to 29 ms, which is why they moved to a worker.
 
+## 4. Far colour: plant cover for distant terrain
+
+Past about 300 m nothing is placed, but a wooded slope must still read dark green and a meadow
+pale. Engines bake a world colour map for the far field (Frostbite's terrain colour map,
+Andersson 2007; Far Cry 5's world colour map, McLaren 2018; UE's landscape macro variation).
+TerrainMaterial3D's far blend reads `terrain_cover_map` (RGBA8: sRGB cover colour, alpha the
+share of ground hidden) and `terrain_cover_rect`.
+
+**Built.** `VegetationField3D.cover_map_enabled` builds it over the whole data map at
+`cover_cell` (4 m), from the rules, not the placed plants, so it reaches every kilometre while only
+the camera's surroundings are placed. Three layers seen from above: crowns, the plants under
+them, the grass under those. Crowns: for each canopy species, the mean shade its crowns cast
+over its own Poisson pattern at kept shares 0, 0.1 ... 1 (the same crown profile as
+`get_shade_at()`), looked up by density times suitability; the regular spacing covers more ground
+than Beer's law with random crowns would (which would need a clumping index, Nilson 1971).
+Crowns spread past their trunks, so the crown layer is blurred by the crown radius (mean kept).
+Plants with a far colour: count per square metre times their far disc, as `vegetation_far()`
+weighs placed plants, by the shade and stand type of those crowns. Grass: `cover_grass`'s rules
+and `GrassField3D.get_far_color()`. Suitability is averaged over four points per texel and the
+result box-filtered 3 x 3 (premultiplied), so patches a few metres across give their mean cover
+rather than speckle. Check (vegetation bench): the expected crown cover is 0.330 against 0.342
+under the placed crowns. Cost: about 70 ms on four cores for a square kilometre of oak wood at
+4 m (`--stream-cost` saves the map), once per populate or stream start.
+
+**Grass far colour (open).** `get_far_color()` is still the hand-matched blend (base to tip, some
+dry, times 0.32). A turbid-medium canopy model (Monsi and Saeki 1953; Ross 1981 G-function; as
+in Bruneton and Neyret 2012) was tried against rendered blades in five variants (grass bench
+`--far-match`): off by 1.0 to 1.6x, no better than the hand match (0.6 to 1.1x). Most of the
+visible step at the grass edge is the bare ground's specular sheen at grazing angles, which the
+blades hide; the colour is the smaller part. Next: measure the colour from a small render of
+the blades themselves.
+
 ## References
 
 - SpeedTree documentation, "Level of detail" (leaf reduction and scaling).

@@ -485,14 +485,19 @@ void GrassField3D::_update_fade(const Vector2 &p_center) {
 		fade_owner = this;
 		RenderingServer *rs = RenderingServer::get_singleton();
 		rs->global_shader_parameter_set("grass_ground_fade", band);
-		// The blades seen from a distance: mostly the upper blade, some dry, darkened by the shade the
-		// sward casts on itself (matched to the field's mean colour in the grass bench).
-		const Color b = base_color.srgb_to_linear();
-		const Color t = tip_color.srgb_to_linear();
-		const Color d = dry_color.srgb_to_linear();
-		const Color far = b.lerp(t, 0.6f).lerp(d, dryness * 0.35f) * 0.32f;
+		const Color far = get_far_color();
 		rs->global_shader_parameter_set("grass_ground_far", Vector4(far.r, far.g, far.b, 1.0f));
 	}
+}
+
+// The blades seen from a distance (linear): mostly the upper blade, some dry, darkened by the shade
+// the sward casts on itself (matched to the field's mean colour in the grass bench).
+Color GrassField3D::get_far_color() const {
+	const Color b = base_color.srgb_to_linear();
+	const Color t = tip_color.srgb_to_linear();
+	const Color d = dry_color.srgb_to_linear();
+	const Color far = b.lerp(t, 0.6f).lerp(d, dryness * 0.35f) * 0.32f;
+	return Color(far.r, far.g, far.b, 1.0f);
 }
 
 void GrassField3D::_update_tiles(const Vector3 &p_center) {
@@ -1117,6 +1122,7 @@ void GrassField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD(#m_get), &GrassField3D::m_get);
 	GRASS_BIND(set_data_map, get_data_map, "path")
 	GRASS_BIND(set_rules, get_rules, "rules")
+	ClassDB::bind_method(D_METHOD("get_far_color"), &GrassField3D::get_far_color);
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")
 	GRASS_BIND(set_density, get_density, "density")
 	GRASS_BIND(set_blade_height, get_blade_height, "height")

@@ -139,6 +139,7 @@ public:
 	float get_clump_size() const { return clump_size; }
 	void set_lean(float p_lean);
 	float get_lean() const { return lean; }
+	Color get_far_color() const;
 	void set_base_color(const Color &p_color);
 	Color get_base_color() const { return base_color; }
 	void set_tip_color(const Color &p_color);

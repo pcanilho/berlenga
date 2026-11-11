@@ -170,6 +170,7 @@ func _setup_stream_cost() -> void:
 	runner.position = Vector3(-300, 0, -300)
 	field.stream_target = field.get_path_to(runner)
 	field.stream_radius = 200.0
+	field.cover_map_enabled = true
 	var cam := Camera3D.new()
 	cam.position = Vector3(0, 400, 0)
 	cam.rotation_degrees = Vector3(90, 0, 0) # At the sky: the cost of streaming, not of drawing.
@@ -180,7 +181,13 @@ func _process(dt: float) -> void:
 		return
 	if not field.streaming:
 		print("STREAM_COST species=%d" % field.biome.species.size())
+		var tc := Time.get_ticks_usec()
 		field.streaming = true
+		await get_tree().process_frame
+		await get_tree().process_frame
+		if field.get_cover_texture():
+			field.get_cover_texture().get_image().save_png("user://cover_map.png")
+			print("STREAM_COST cover map %s saved, first frames %.0f ms" % [str(field.get_cover_texture().get_size()), (Time.get_ticks_usec() - tc) / 1000.0])
 	stream_t += dt
 	# Fixed steps, as if at 60 fps, so the run covers the same ground however slow the frame.
 	runner.position += Vector3(1, 0, 1).normalized() * 6.0 / 60.0
@@ -453,6 +460,31 @@ func _checks() -> void:
 	_check("near swap: every tree drawn near and far, split by range", near_n == far_n and near_n == field.get_placements(0).size() and unmatched == 0 and bad_range == 0 and field.get_placements(0) == first, [near_n, far_n, field.get_placements(0).size(), unmatched, bad_range])
 	tree_sp.near_meshes = []
 	tree_sp.near_range = 0.0
+	# Cover map for distant terrain: the expected crown cover from the rules matches the placed one.
+	tree_sp.canopy_radius = 3.0
+	field.cover_map_enabled = true
+	field.populate()
+	var cimg: Image = field.get_cover_texture().get_image()
+	var expect := 0.0
+	var placed := 0.0
+	var cn := 0
+	for cz in range(2, cimg.get_height() - 2):
+		for cx in range(2, cimg.get_width() - 2):
+			var cw := Vector3(-SIZE * 0.5 + (cx + 0.5) * 4.0, 0, -SIZE * 0.5 + (cz + 0.5) * 4.0)
+			expect += cimg.get_pixel(cx, cz).a
+			var sh := 0.0
+			for o in [Vector3(-1, 0, -1), Vector3(1, 0, -1), Vector3(-1, 0, 1), Vector3(1, 0, 1)]:
+				sh += field.get_shade_at(cw + o) * 0.25
+			placed += sh
+			cn += 1
+	var water_a := 0.0
+	for cz in cimg.get_height():
+		for cx in cimg.get_width():
+			if dm.get_water_depth_at(Vector3(-SIZE * 0.5 + (cx + 0.5) * 4.0, 0, -SIZE * 0.5 + (cz + 0.5) * 4.0)) > 0.3:
+				water_a = maxf(water_a, cimg.get_pixel(cx, cz).a)
+	_check("cover map: expected crown cover matches the placed crowns (20%), none on the lake", cn > 50 and absf(expect - placed) < 0.2 * placed and water_a < 0.05, [expect / cn, placed / cn, water_a, cimg.get_size()])
+	field.cover_map_enabled = false
+	tree_sp.canopy_radius = 0.0
 	# Impostors: the species' meshes near, their baked impostors (two triangles each) past the range.
 	var real_meshes: Array = tree_sp.meshes.duplicate()
 	PlantGenerator.add_impostors(tree_sp, 30.0, 4, 16)
