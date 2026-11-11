@@ -1317,6 +1317,19 @@
    "topic": "Grass"
   },
   {
+   "name": "Layered meadow",
+   "settings": [
+    "GrassField3D.color_variation",
+    "get_ground_shader_code()",
+    "canopy_field"
+   ],
+   "note": "",
+   "what": "blades vary in colour over the field and per blade, some dead from the root, with midribs and tapered tips; the ground under the grass becomes matching turf, and the sward follows the canopy shade.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Trampling",
    "settings": [
     "grass_trample",
@@ -1340,6 +1353,95 @@
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
+  },
+  {
+   "name": "Plant generator",
+   "settings": [
+    "PlantGenerator"
+   ],
+   "note": "",
+   "what": "meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs, for `PlantSpecies.meshes`.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Forest floor",
+   "settings": [
+    "PlantGenerator.make_floor(stand, variants)",
+    "VegetationField3D.forest_floor_enabled"
+   ],
+   "note": "",
+   "what": "herbs, mosses and seedlings by the stand above, and the ground under closed canopy turns to leaf, needle or moss litter.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Wetland plants",
+   "settings": [
+    "PlantSpecies.floating",
+    "water_depth_range"
+   ],
+   "note": "",
+   "what": "reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Leaf wear",
+   "settings": [
+    "PlantGenerator.leaf_wear"
+   ],
+   "note": "",
+   "what": "insect bites, uneven halves, dead tips and older leaves yellowing and browning, per leaf.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Bending",
+   "settings": [
+    "GrassField3D"
+   ],
+   "note": "",
+   "what": "plants bend away from bodies and spring back, and lean in the wind.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Per-stem sway",
+   "settings": [],
+   "note": "always on",
+   "what": "each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Near and far meshes",
+   "settings": [
+    "PlantSpecies.near_meshes",
+    "near_range"
+   ],
+   "note": "",
+   "what": "heavier meshes near the camera, crossfaded with dithering a few plants at a time.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Far thinning",
+   "settings": [
+    "PlantSpecies.far_color"
+   ],
+   "note": "",
+   "what": "plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
   },
   {
    "name": "GPU-placed instances",

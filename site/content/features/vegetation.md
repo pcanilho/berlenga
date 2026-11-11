@@ -1,7 +1,7 @@
 ---
 title: "Vegetation"
 weight: 60
-summary: "Biome plant placement from terrain maps; grass in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones."
+summary: "Biome plant placement from terrain maps; grass and generated meadow, forest floor and wetland plants in the weather's wind; GPU-placed instances seen by path tracing; per-instance bones."
 ---
 
 ## Placement
@@ -35,6 +35,12 @@ summary: "Biome plant placement from terrain maps; grass in the weather's wind; 
 
   *Grass edge fade: the band where grass ends blends into the ground.*
 
+- **Layered meadow** (`GrassField3D.color_variation`, `get_ground_shader_code()`, `canopy_field`): blades vary in colour over the field and per blade, some dead from the root, with midribs and tapered tips; the ground under the grass becomes matching turf, and the sward follows the canopy shade.
+
+  ![A meadow by a lake, before and after the layered meadow](media/meadow-layers.jpg)
+
+  *Layered meadow: finer, denser grass with turf between the blades instead of bare ground.*
+
 - **Trampling** (`grass_trample` group, `GrassField3D.trample_recovery`): bodies lay grass down and it springs back.
 
   ![A body walking through grass that lies down and springs back, raster](media/grass-trample.gif)
@@ -46,6 +52,37 @@ summary: "Biome plant placement from terrain maps; grass in the weather's wind; 
   ![Sparse grass before, then with ground cover](media/grass-carpet.jpg)
 
   *Ground cover: bare ground between blades is filled with undercoat, clover and flowers.*
+
+## Plants
+
+- **Plant generator** (`PlantGenerator`, 33 presets): meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs, for `PlantSpecies.meshes`.
+
+  ![Generated dandelions and plantains, three seeds each](media/plant-generator.jpg)
+
+  *Plant generator: three seeds each of dandelion and plantain.*
+
+- **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above, and the ground under closed canopy turns to leaf, needle or moss litter.
+- **Wetland plants** (`PlantSpecies.floating`, `water_depth_range`): reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.
+
+  ![A swamp with reeds, bulrushes and water lilies, raster and path traced](media/wetland-plants.jpg)
+
+  *Wetland plants: reeds and bulrushes stand in the shallows, lilies float.*
+
+- **Leaf wear** (`PlantGenerator.leaf_wear`): insect bites, uneven halves, dead tips and older leaves yellowing and browning, per leaf.
+
+  ![A dock plant without and with leaf wear](media/leaf-wear.jpg)
+
+  *Leaf wear: lower leaves yellow and brown, margins bitten.*
+
+- **Bending** (`GrassField3D` trample field, no colliders): plants bend away from bodies and spring back, and lean in the wind.
+
+  ![Nettles standing, then bent away from a body](media/plants-bend.jpg)
+
+  *Bending: the nettles part round the body.*
+
+- **Per-stem sway** (always on): each frond, cane and stem rocks about its own base at a frequency set by its height and stiffness.
+- **Near and far meshes** (`PlantSpecies.near_meshes`, `near_range`): heavier meshes near the camera, crossfaded with dithering a few plants at a time.
+- **Far thinning** (`PlantSpecies.far_color`): plants thin out one by one in blue-noise order with distance and leave their colour on the ground beyond, with no tile pops.
 
 ## Instances
 
