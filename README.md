@@ -434,12 +434,12 @@ Each feature that changes the look or the cost can be turned off with the settin
 - **Wind moves lying snow** (`SnowCover3D.wind_transport_enabled`): windward shoulders and crests are scoured and the lee fills with wind-packed snow.
 - **Melt-freeze crusts** (`SnowCover3D.crust_enabled`): a thawed surface refreezes into a crust that hardens each cycle; boots break thin ones into tipped pieces and stand on hard ones.
 - **Cornices crack and fall** (`cornice_failure_enabled`): a creeping tension crack, tumbling blocks, debris below.
-- **Icicles** (`SnowIcicles3D`): grown from roof melt water below freezing.
+- **Icicles** (`SnowIcicles3D`, `hazy_core`): grown from roof melt water below freezing; clear ice with a hazy core.
 - **Sparkle**: dry snow glints from ice grains (its own mirror lobe, raster and path traced), lost when wet.
 - **Exact path traced sparkle** (`snow_exact_glints`, off by default): every 2 mm ice grain is a facet hit per ray.
 - **Snow on materials** (BaseMaterial3D `snow_enabled`): surfaces are covered from the snowpack, flattest facets first, raster and path traced; `get_snow_shader_code()` for ShaderMaterials.
 
-<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, cornice fall, sparkle, shelter, crust, wind transport</summary>
+<details><summary>Images and clips: snow on a mountain, snow on props, snowfall and melt, tracks, falling snow, snow climate, cornices, cornice fall, icicles, sparkle, shelter, crust, wind transport</summary>
 
 ![Snow on a mountain, raster and path traced](docs/media/snow-mountain.jpg)
 
@@ -484,6 +484,10 @@ Each feature that changes the look or the cost can be turned off with the settin
 ![A cornice with a tension crack, then fallen into blocks below, raster and path traced](docs/media/snow-cornice-fall.jpg)
 
 *Cornice fall: a crack opens behind the lip, then the lip breaks into tumbling blocks.*
+
+![Backlit icicles under an eave, raster](docs/media/snow-icicles.jpg)
+
+*Icicles: clear ice with a hazy core, longest where the most melt water drips.*
 
 ![Snow surface close up: dry in raster, dry path traced, and wet](docs/media/snow-sparkle.jpg)
 
