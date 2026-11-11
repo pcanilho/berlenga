@@ -138,11 +138,8 @@ func _ready() -> void:
 	env.pathtracing_samples_per_pixel = spp
 	env.pathtracing_max_bounces = bounces
 	env.pathtracing_debug_mode = debug_mode
-	# Volumetric fog with no fog of its own, so the falls' mist (PhysXWaterMist3D, a FogVolume) shows in raster.
-	env.volumetric_fog_enabled = falls
-	env.volumetric_fog_density = 0.0
+	# The falls' mist (PhysXWaterMist3D) turns the volumetric fog on itself, with no fog of its own.
 	env.volumetric_fog_anisotropy = 0.6
-	env.volumetric_fog_ambient_inject = 1.0
 	bench_env = env
 	var we := WorldEnvironment.new()
 	we.environment = env
