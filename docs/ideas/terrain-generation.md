@@ -1057,6 +1057,28 @@ Built (11 Nov):
   ice), so the trunk is never glaciated at the map edge and no riegel forms on it. That needs ice inflow at the
   edge, an ice flux boundary at the inflow cell; the showcase keeps its marked bar until then.
 
+Ice inflow at the map edge (built 11 Nov, Paulo picked at 20:23):
+
+- How regional ice models do it: a model that covers only part of an ice mass takes the ice crossing its boundary
+  as a prescribed flux or thickness there and lets no ice leave through that strip (PISM's regional mode holds the
+  boundary strip fixed; flowline models feed the upstream flux in as a source). The flux through a cross-section of
+  a steady glacier is the net balance summed over the area above it.
+- Built: `glacial_inflow_balance` (m/yr, 0 = off) times each inflow's off-map area is the ice it brings, added as
+  accumulation on the ice grid in a Gaussian of 128 m sigma round the entry (a single node took 25 to 100 m of ice
+  a pseudo-step and the solve did not settle). The edge beside the entry takes the surface of the node inside it,
+  so no ice crosses there, and it wears as that node does, so the trough runs on past the map with no step at the
+  boundary. Copying the thickness instead of the surface let ice pour in from the higher edge without limit (5 km
+  thick, residual 1e14).
+- Result (`--layout=valley --auto-lake`, 0.03 m/yr over 60 km², erosion x5): the main valley gets a trunk glacier
+  up to 230 m thick, a trough and a chain of lakes down it (104 m, 56 m at 5.8 ha, 32 m) with steps between them;
+  the side valleys keep their tarns (348, 159, 124 m). The solve settles (residual 15 m/yr). Erosion x15 with ice
+  inflow wears the trough 550 m deep and the solve does not settle: x15 suits cirque glaciers, not a trunk.
+- Why no lake at 450 m on the main river: without the hand-made bowl the main valley floor enters the map at about
+  160 m, so its lakes sit below that. A high lake on the trunk needs high ground there to begin with (the bowl's
+  uplift), not just ice.
+- Cost: the ice stage takes 7 to 8 s with an inflow glacier against 2.5 s without (a larger ice area means shorter
+  erosion sub-steps). Only when the setting is on.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

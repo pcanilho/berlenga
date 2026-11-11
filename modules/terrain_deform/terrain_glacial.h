@@ -83,6 +83,14 @@ public:
 	// The ice grid's thickness, kept between calls for a warm start (cleared when the grid changes).
 	std::vector<double> ice;
 
+	// Ice flowing in from beyond the grid (a glacier whose catchment lies off the map): at (u, v), the fraction of
+	// the grid's width and height, q m^3 of ice a year. Fed in as extra accumulation spread over the nearest interior
+	// nodes, and the edge there passes no ice out (a regional model's inflow boundary, as in PISM's regional mode).
+	struct Source {
+		double u = 0.0, v = 0.0, q = 0.0;
+	};
+	std::vector<Source> sources;
+
 	// Erodes p_bed (nx * ny, spacing dx) by glacial erosion over p_years. Optional p_sediment: loose fill on top,
 	// removed first. Optional p_fixed: cells that stay (outlets, the sea).
 	// Optional p_resist (0..1): resistant bedrock (a riegel or cirque threshold) quarried 200 times slower at 1;
@@ -107,6 +115,7 @@ public:
 		rate.resize(m);
 		flux.resize(m);
 		total.assign(size_t(nx) * ny, 0.0);
+		_build_sources();
 		double t = 0.0;
 		for (int guard = 0; t < p_years && guard < p.max_sub_steps; guard++) {
 			for (int z = 0; z < gz; z++) {
@@ -200,6 +209,48 @@ private:
 	double gd = 0.0;
 	bool first = true;
 	std::vector<double> bed, rate, flux, total, qx, qz, dc, tmp;
+	std::vector<double> src; // m/yr of ice added per node from sources (empty: none)
+	std::vector<int> edge_in; // per node: the interior node an inflow edge node copies its thickness from, or -1
+
+	void _build_sources() {
+		src.clear();
+		edge_in.clear();
+		if (sources.empty() || gx < 3 || gz < 3) {
+			return;
+		}
+		const int m = gx * gz;
+		src.assign(m, 0.0);
+		edge_in.assign(m, -1);
+		const int r = 5; // nodes; Gaussian sigma two nodes (128 m), so a large flux does not land on a single node
+		for (const Source &s : sources) {
+			if (!(s.q > 0.0)) {
+				continue;
+			}
+			const int cx = std::clamp((int)std::lround(s.u * (gx - 1)), 1, gx - 2);
+			const int cz = std::clamp((int)std::lround(s.v * (gz - 1)), 1, gz - 2);
+			double ws = 0.0;
+			for (int pass = 0; pass < 2; pass++) {
+				for (int z = std::max(cz - r, 1); z <= std::min(cz + r, gz - 2); z++) {
+					for (int x = std::max(cx - r, 1); x <= std::min(cx + r, gx - 2); x++) {
+						const double w = std::exp(-0.125 * double((x - cx) * (x - cx) + (z - cz) * (z - cz)));
+						if (pass == 0) {
+							ws += w;
+						} else {
+							src[z * gx + x] += s.q / (gd * gd) * w / ws;
+						}
+					}
+				}
+			}
+			// The edge beside the entry holds the thickness of the node inside it: no ice leaves there.
+			for (int z = std::max(cz - r - 1, 0); z <= std::min(cz + r + 1, gz - 1); z++) {
+				for (int x = std::max(cx - r - 1, 0); x <= std::min(cx + r + 1, gx - 1); x++) {
+					if (x == 0 || z == 0 || x == gx - 1 || z == gz - 1) {
+						edge_in[z * gx + x] = std::clamp(z, 1, gz - 2) * gx + std::clamp(x, 1, gx - 2);
+					}
+				}
+			}
+		}
+	}
 
 	double _gamma() const {
 		const double rg = 910.0 * 9.81;
@@ -264,14 +315,19 @@ private:
 				for (int x = 0; x < gx; x++) {
 					const int i = z * gx + x;
 					if (x == 0 || z == 0 || x == gx - 1 || z == gz - 1) {
-						H[i] = 0.0; // ice leaves the grid at its edges
+						// Ice leaves the grid at its edges, except beside an inflow: there the edge's surface matches the
+						// node inside it (no surface slope across the boundary, so no ice crosses it either way).
+						H[i] = edge_in.empty() || edge_in[i] < 0 ? 0.0 : std::max(0.0, bed[edge_in[i]] + H[edge_in[i]] - bed[i]);
 						continue;
 					}
 					const double div = (qx[i] - qx[i - 1] + qz[i] - qz[i - gx]) / d;
 					const double s = bed[i] + H[i];
-					const double mb = std::min(p.balance_gradient * (s - p.ela), p.max_accumulation);
+					const double mb = std::min(p.balance_gradient * (s - p.ela), p.max_accumulation) + (src.empty() ? 0.0 : src[i]);
 					const double r = mb - div;
-					const double dtau = std::min(0.03 * d * d / (dc[i] + 1e-9), 20.0);
+					double dtau = std::min(0.03 * d * d / (dc[i] + 1e-9), 20.0);
+					if (!src.empty() && src[i] > 0.0) {
+						dtau = std::min(dtau, 100.0 / src[i]); // a source node rises at most 100 m an iteration
+					}
 					const double hn = std::max(0.0, H[i] + dtau * r);
 					if (last && hn > 1.0) {
 						res = std::max(res, std::fabs(r));
@@ -321,6 +377,15 @@ private:
 					continue; // supercooling: the water freezes on the adverse slope and the bed is not quarried
 				}
 				rate[i] = p.erodibility * std::pow(tmp[i], p.exponent);
+			}
+		}
+		if (!edge_in.empty()) {
+			// The trough runs on past the map at an inflow: its edge wears as the node inside it does, so no step is
+			// left at the boundary.
+			for (int i = 0; i < m; i++) {
+				if (edge_in[i] >= 0) {
+					rate[i] = rate[edge_in[i]];
+				}
 			}
 		}
 	}
