@@ -578,6 +578,18 @@
    "topic": ""
   },
   {
+   "name": "Raster refraction through solids",
+   "settings": [
+    "transmission_thickness",
+    "KHR_materials_volume"
+   ],
+   "note": "",
+   "what": "raster refraction leaves a solid through its far side, not just the front face.",
+   "page": "materials",
+   "title": "Materials",
+   "topic": ""
+  },
+  {
    "name": "Clearcoat",
    "settings": [
     "rendering/pathtracing/clearcoat"
@@ -1569,6 +1581,19 @@
    ],
    "note": "",
    "what": "deep snow as geometry with prints and tracks; bodies sink by weight (Bekker) and rest in their own tracks; tracks refill with new snow and wind; print edges stay clean at fine deform resolutions, with pushed-aside snow sliding at its repose angle.",
+   "page": "snow",
+   "title": "Snow",
+   "topic": "Deep snow"
+  },
+  {
+   "name": "Bow wave",
+   "settings": [
+    "velocity",
+    "SnowSurface3D.press()",
+    "press_box()"
+   ],
+   "note": "",
+   "what": "fast bodies push the rim ahead (full at 4 m/s), leaving side berms and an end mound, mass kept; snow and ground.",
    "page": "snow",
    "title": "Snow",
    "topic": "Deep snow"

@@ -66,6 +66,12 @@ summary: "A snowpack from the weather map that falls, settles, melts, slides and
 
   *Print edges: spikes and toothed walls before; clean rims now.*
 
+- **Bow wave** (`velocity` on `SnowSurface3D.press()`, `press_box()`; automatic for bodies in the deform groups): fast bodies push the rim ahead (full at 4 m/s), leaving side berms and an end mound, mass kept; snow and ground.
+
+  ![A sled's track in snow with berms and a mound at its end, raster](media/snow-bow-wave.jpg)
+
+  *Bow wave: a sled's track with raised berms along its sides and a mound where it stopped.*
+
 ## Falling snow
 
 - **Falling snow** (`SnowFall3D`): falling and blowing snow from the weather; flake counts, sizes and fall speeds from snowfall measurements, drawn as motion streaks; roofs shelter, snow blows above the wind threshold, `get_extinction()` feeds fog.
