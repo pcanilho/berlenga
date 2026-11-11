@@ -60,6 +60,7 @@ func run(args: Dictionary) -> void:
 	if args.has("test"):
 		_habitat_checks()
 		_stand_checks()
+		_mask_check()
 		get_tree().quit(1 if fails > 0 else 0)
 	elif args.has("map"):
 		_draw_maps(args["map"])
@@ -168,6 +169,37 @@ func _stand_checks() -> void:
 			var per_ha := canopy_total / area_ha
 			_check(per_ha < 700.0, "woodland: canopy trees do not stack across stands (%.0f per ha)" % per_ha)
 		f.queue_free()
+
+func _mask_check() -> void:
+	# A clearing painted into the field's density mask (red 0 inside a 40 m disc) keeps every tree
+	# and woody shrub out once TreeGenerator.mask_channel points at red.
+	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	img.fill(Color(1, 1, 1, 1))
+	for y in 64:
+		for x in 64:
+			if Vector2(x - 31.5, y - 31.5).length() < 16.0:
+				img.set_pixel(x, y, Color(0, 1, 1, 1))
+	gen.mask_channel = 0
+	var biome := gen.make_stand(TreeGenerator.STAND_BEECH, variants)
+	gen.mask_channel = -1
+	var f := VegetationField3D.new()
+	f.populate_on_ready = false
+	f.tile_size = 40.0
+	f.biome = biome
+	f.density_mask = ImageTexture.create_from_image(img)
+	f.density_mask_rect = Rect2(-SIZE * 0.5, -SIZE * 0.5, SIZE, SIZE)
+	add_child(f)
+	f.data_map = f.get_path_to(dm)
+	f.populate()
+	var inside := 0
+	var total := 0
+	for s in biome.species.size():
+		for p in f.get_placements(s):
+			total += 1
+			if Vector2(p.x, p.z).length() < 16.0 / 64.0 * SIZE - 3.0:
+				inside += 1
+	_check(total > 0 and inside == 0, "clearing mask: no trees or shrubs in the painted clearing (%d of %d)" % [inside, total])
+	f.queue_free()
 
 func _draw_maps(path: String) -> void:
 	var px := 320

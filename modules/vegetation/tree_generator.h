@@ -204,6 +204,8 @@ private:
 	Phyllotaxis phyllotaxis = PHYLLOTAXIS_ALTERNATE;
 	float forest_shade = 0.0f;
 	float forest_spacing = 4.0f;
+	int mask_channel = -1; // Passed to every PlantSpecies the stand methods build.
+	bool mask_invert = false;
 	Color bark_color = Color(0.3f, 0.26f, 0.21f);
 	Color leaf_color = Color(0.16f, 0.3f, 0.08f);
 
@@ -277,6 +279,10 @@ public:
 	float get_forest_shade() const { return forest_shade; }
 	void set_forest_spacing(float p_spacing) { forest_spacing = p_spacing; }
 	float get_forest_spacing() const { return forest_spacing; }
+	void set_mask_channel(int p_channel) { mask_channel = CLAMP(p_channel, -1, 3); }
+	int get_mask_channel() const { return mask_channel; }
+	void set_mask_invert(bool p_invert) { mask_invert = p_invert; }
+	bool get_mask_invert() const { return mask_invert; }
 	void set_bark_color(const Color &p_color) { bark_color = p_color; }
 	Color get_bark_color() const { return bark_color; }
 	void set_leaf_color(const Color &p_color) { leaf_color = p_color; }

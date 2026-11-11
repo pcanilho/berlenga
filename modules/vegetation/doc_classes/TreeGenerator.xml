@@ -216,6 +216,12 @@
 		<member name="leaves_per_internode" type="float" setter="set_param" getter="get_param" default="32.0">
 			Leaves or needles per internode.
 		</member>
+		<member name="mask_channel" type="int" setter="set_mask_channel" getter="get_mask_channel" default="-1">
+			Channel of [member VegetationField3D.density_mask] (0 red to 3 alpha) that every species from [method make_species], [method make_stand] and [method make_woodland] reads, so painted clearings and paths keep trees and woody shrubs out. -1 ignores the mask.
+		</member>
+		<member name="mask_invert" type="bool" setter="set_mask_invert" getter="get_mask_invert" default="false">
+			Grow where the mask is low instead of where it is high.
+		</member>
 		<member name="maturity" type="float" setter="set_param" getter="get_param" default="20.0">
 			Years over which apical dominance moves from [member apical_dominance] to [member apical_dominance_old].
 		</member>
