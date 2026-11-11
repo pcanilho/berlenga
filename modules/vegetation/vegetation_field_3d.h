@@ -84,6 +84,12 @@ class VegetationField3D : public Node3D {
 	void _publish_far(const Rect2 &p_rect);
 	static constexpr float CROWN_CELL = 8.0f;
 	LocalVector<Crown> crowns;
+	// Shade weighed by stand closure and the conifer share, on half-metre cells (_build_stand()).
+	LocalVector<float> stand_shade;
+	LocalVector<float> stand_conifer;
+	Vector2i stand_size;
+	Rect2 stand_rect;
+	void _build_stand(const Rect2 &p_rect);
 	HashMap<Vector2i, LocalVector<int>> crown_grid;
 	float max_crown_radius = 0.0f;
 	float _shade_at(const Vector2 &p_xz, float *r_conifer = nullptr) const;
@@ -139,5 +145,6 @@ public:
 	PackedVector3Array get_placements(int p_species) const;
 	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
 	float get_shade_at(const Vector3 &p_global_position) const;
+	float get_stand_shade_at(const Vector3 &p_global_position) const;
 	float get_conifer_at(const Vector3 &p_global_position) const;
 };

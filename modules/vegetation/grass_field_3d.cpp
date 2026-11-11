@@ -337,7 +337,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			if (p_map) {
 				float suit = r->get_suitability(p_map, p);
 				if (canopy && suit > 0.0f) {
-					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_shade_at(p));
+					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
 				}
 				if (rank >= keep * suit) {
 					continue;
@@ -536,7 +536,7 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 				const Vector3 p(rect.x + (x + 0.5f) * size / res, 0.0f, rect.y + (z + 0.5f) * size / res);
 				float suit = r->get_suitability(p_map, p);
 				if (canopy && suit > 0.0f) {
-					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_shade_at(p));
+					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
 				}
 				w[z * res + x] = uint8_t(CLAMP(suit, 0.0f, 1.0f) * 255.0f + 0.5f);
 			}

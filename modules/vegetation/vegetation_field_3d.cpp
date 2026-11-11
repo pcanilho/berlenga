@@ -481,6 +481,7 @@ Error VegetationField3D::populate() {
 		}
 	}
 	_publish_canopy(rect);
+	_build_stand(rect);
 	_publish_floor(rect);
 	_publish_far(rect);
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
@@ -588,17 +589,21 @@ void VegetationField3D::_publish_canopy(const Rect2 &p_rect) {
 	wm->set_canopy_map(ImageTexture::create_from_image(img));
 }
 
-// The forest floor under the placed crowns, for the ground's shader (get_floor_shader_code()):
-// litter cover (the shade, 1 - transmitted sky light, weighed by how closed the stand is) in red and the conifer share of the
-// cover in green, on half-metre cells. Under a closed canopy the floor is litter, not soil
-// (docs/ideas/forest-floor.md), and its kind follows the trees: leaves under broadleaves,
-// needles and moss under conifers.
-void VegetationField3D::_publish_floor(const Rect2 &p_rect) {
-	if (!forest_floor_enabled || !is_inside_tree() || crowns.is_empty()) {
-		return; // Another field with crowns may own the floor map; an empty one leaves it alone.
+// The shade under the stand, on half-metre cells: the crowns' shade weighed by how closed the
+// stand is (_build_stand()). Under one open-grown tree the ground keeps its sward and gets no
+// litter mat, as an open-grown tree sheds onto grass that keeps growing, so its leaves blow away
+// or rot in the sward; under a closed canopy it is the full shade. The forest floor map and the
+// grass's shade rule (get_stand_shade_at()) both read it.
+void VegetationField3D::_build_stand(const Rect2 &p_rect) {
+	stand_shade.clear();
+	stand_conifer.clear();
+	stand_rect = p_rect;
+	if (crowns.is_empty()) {
+		return;
 	}
 	const int w = CLAMP(int(Math::ceil(p_rect.size.x * 2.0f)), 1, 2048);
 	const int h = CLAMP(int(Math::ceil(p_rect.size.y * 2.0f)), 1, 2048);
+	stand_size = Vector2i(w, h);
 	LocalVector<float> shade;
 	LocalVector<float> conifer;
 	shade.resize(w * h);
@@ -609,10 +614,7 @@ void VegetationField3D::_publish_floor(const Rect2 &p_rect) {
 			shade[y * w + x] = _shade_at(p, &conifer[y * w + x]);
 		}
 	}
-	// A litter mat needs a stand, not one tree: an open-grown tree sheds onto grass that keeps
-	// growing under its crown, so its leaves blow away or rot in the sward instead of building a
-	// layer. The closure of the stand is the mean shade over about 5 m around
-	// (a separable box blur of the shade grid), and the litter's share is the shade weighed by it.
+	// The closure of the stand: the mean shade over about 5 m around (a separable box blur).
 	const int rad_x = MAX(1, int(Math::round(5.0f * w / p_rect.size.x)));
 	const int rad_y = MAX(1, int(Math::round(5.0f * h / p_rect.size.y)));
 	LocalVector<float> tmp;
@@ -657,13 +659,50 @@ void VegetationField3D::_publish_floor(const Rect2 &p_rect) {
 			}
 		}
 	}
+	stand_shade.resize(w * h);
+	for (int i = 0; i < w * h; i++) {
+		stand_shade[i] = shade[i] * Math::smoothstep(0.25f, 0.65f, stand[i]);
+	}
+	stand_conifer = conifer;
+}
+
+float VegetationField3D::get_stand_shade_at(const Vector3 &p_global_position) const {
+	if (stand_shade.is_empty()) {
+		return get_shade_at(p_global_position);
+	}
+	const float fx = (p_global_position.x - stand_rect.position.x) / stand_rect.size.x * stand_size.x - 0.5f;
+	const float fy = (p_global_position.z - stand_rect.position.y) / stand_rect.size.y * stand_size.y - 0.5f;
+	if (fx < -0.5f || fy < -0.5f || fx > stand_size.x - 0.5f || fy > stand_size.y - 0.5f) {
+		return get_shade_at(p_global_position);
+	}
+	const int x0 = CLAMP(int(Math::floor(fx)), 0, stand_size.x - 1);
+	const int y0 = CLAMP(int(Math::floor(fy)), 0, stand_size.y - 1);
+	const int x1 = MIN(x0 + 1, stand_size.x - 1);
+	const int y1 = MIN(y0 + 1, stand_size.y - 1);
+	const float tx = CLAMP(fx - x0, 0.0f, 1.0f);
+	const float ty = CLAMP(fy - y0, 0.0f, 1.0f);
+	const float a = Math::lerp(stand_shade[y0 * stand_size.x + x0], stand_shade[y0 * stand_size.x + x1], tx);
+	const float b = Math::lerp(stand_shade[y1 * stand_size.x + x0], stand_shade[y1 * stand_size.x + x1], tx);
+	return Math::lerp(a, b, ty);
+}
+
+// The forest floor under the placed crowns, for the ground's shader (get_floor_shader_code()):
+// litter cover (the shade, 1 - transmitted sky light, weighed by how closed the stand is) in red and the conifer share of the
+// cover in green, on half-metre cells. Under a closed canopy the floor is litter, not soil
+// (docs/ideas/forest-floor.md), and its kind follows the trees: leaves under broadleaves,
+// needles and moss under conifers.
+void VegetationField3D::_publish_floor(const Rect2 &p_rect) {
+	if (!forest_floor_enabled || !is_inside_tree() || crowns.is_empty() || stand_shade.is_empty()) {
+		return; // Another field with crowns may own the floor map; an empty one leaves it alone.
+	}
+	const int w = stand_size.x;
+	const int h = stand_size.y;
 	Vector<uint8_t> data;
 	data.resize(w * h * 2);
 	uint8_t *d = data.ptrw();
 	for (int i = 0; i < w * h; i++) {
-		const float litter = shade[i] * Math::smoothstep(0.25f, 0.65f, stand[i]);
-		d[i * 2 + 0] = uint8_t(CLAMP(litter, 0.0f, 1.0f) * 255.0f + 0.5f);
-		d[i * 2 + 1] = uint8_t(CLAMP(conifer[i], 0.0f, 1.0f) * 255.0f + 0.5f);
+		d[i * 2 + 0] = uint8_t(CLAMP(stand_shade[i], 0.0f, 1.0f) * 255.0f + 0.5f);
+		d[i * 2 + 1] = uint8_t(CLAMP(stand_conifer[i], 0.0f, 1.0f) * 255.0f + 0.5f);
 	}
 	floor_texture = ImageTexture::create_from_image(Image::create_from_data(w, h, false, Image::FORMAT_RG8, data));
 	RenderingServer *rs = RenderingServer::get_singleton();
@@ -1012,6 +1051,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
+	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);
 	ClassDB::bind_method(D_METHOD("set_forest_floor_enabled", "enabled"), &VegetationField3D::set_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
