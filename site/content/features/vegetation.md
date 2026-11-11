@@ -65,6 +65,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
   *Plant generator: three seeds each of dandelion and plantain.*
 
 - **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above, and the ground under closed canopy turns to leaf, needle or moss litter.
+- **Leaf drift** (`PlantSpecies.litter_range`): fallen leaves drift past the crowns into edges and clearings.
 - **Wetland plants** (`PlantSpecies.floating`, `water_depth_range`): reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.
 
   ![A swamp with reeds, bulrushes and water lilies, raster and path traced](media/wetland-plants.jpg)
