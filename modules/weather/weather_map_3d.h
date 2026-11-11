@@ -31,6 +31,7 @@
 #pragma once
 
 #include "weather_clouds.h"
+#include "weather_season.h"
 #include "weather_shelter.h"
 
 #include "core/io/image.h"
@@ -95,6 +96,15 @@ private:
 	float cloud_scale = 6000.0f; // m, size of the cloud cover noise
 	float rain_rate = 0.0f; // mm/h
 	float temperature = 15.0f; // C
+	// Season (weather_season.h): the date from a SkyClock, or season_day; the climate from a ClimateRecipe.
+	NodePath sky_clock;
+	int season_day = 135; // day of the year without a SkyClock (15 May)
+	Ref<Resource> climate;
+	float season_anomaly = 0.0f; // K: the live air against the climate, over about a month
+	bool season_cached = false;
+	int season_cache_day = 0;
+	float season_cache_anomaly = 0.0f;
+	WeatherSeason::State season_cache;
 	float humidity = 0.7f; // relative, 0..1
 	float surface_storage = 0.5f; // mm a surface holds before water pools
 	float puddle_max_depth = 20.0f; // mm
@@ -292,6 +302,8 @@ private:
 	float _patch_at(Vector2 p_xz, float p_height) const;
 	void _bake_shelter();
 
+	WeatherSeason::Climate _season_climate() const;
+
 protected:
 	void _notification(int p_what);
 	static void _bind_methods();
@@ -487,6 +499,18 @@ public:
 		float sun_visibility_at(Vector3 p_position) const;
 	};
 	Snapshot get_snapshot() const;
+
+	void set_sky_clock(const NodePath &p_path);
+	NodePath get_sky_clock() const { return sky_clock; }
+	void set_season_day(int p_day);
+	int get_season_day() const { return season_day; }
+	void set_climate(const Ref<Resource> &p_climate);
+	Ref<Resource> get_climate() const { return climate; }
+	float get_season_anomaly() const { return season_anomaly; }
+	void set_season_anomaly(float p_kelvin);
+	int get_day_of_year() const;
+	Dictionary get_season();
+	Dictionary get_season_at_height(float p_height) const;
 	// Bakes the cloud shadow now and waits for it (normally it runs in the background).
 	void update_cloud_shadow();
 	double get_weather_time() const { return weather_time; }

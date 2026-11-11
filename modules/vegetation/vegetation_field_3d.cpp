@@ -299,6 +299,9 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			if (ps.crown_max > 0.0f && (later.sp->uses_shade() || later.sp->uses_conifer())) {
 				halo = MAX(halo, later.halo + ps.crown_max * 1.4f);
 			}
+			if (ps.crown_max > 0.0f && later.sp->uses_litter()) {
+				halo = MAX(halo, later.halo + ps.crown_max + 3.0f * LITTER_SPREAD);
+			}
 		}
 		ps.halo = halo;
 	}
@@ -347,6 +350,37 @@ float crown_shade(const Grid &p_grid, const Crowns &p_crowns, float p_reach, flo
 		*r_conifer = needles / weight;
 	}
 	return 1.0f - transmit;
+}
+
+// Leaf fall from the crowns (docs/ideas/forest-floor.md, step 6, "Where it lands"): every crown
+// drops its leaves under itself and, with an exponential tail (Ferrari and Sugita 1996), past its
+// edge over LITTER_SPREAD metres, so edges and clearings get a drift that thins outwards. Summed
+// as a deposit and turned into cover: about 1 under closed crowns.
+template <typename Grid, typename Crowns>
+float crown_litter(const Grid &p_grid, const Crowns &p_crowns, float p_reach, float p_cell, const Vector2 &p_xz) {
+	if (p_crowns.is_empty()) {
+		return 0.0f;
+	}
+	const int r = int(Math::ceil(p_reach / p_cell));
+	const Vector2i gc(int(Math::floor(p_xz.x / p_cell)), int(Math::floor(p_xz.y / p_cell)));
+	float deposit = 0.0f;
+	for (int dz = -r; dz <= r; dz++) {
+		for (int dx = -r; dx <= r; dx++) {
+			const LocalVector<int> *bucket = p_grid.getptr(gc + Vector2i(dx, dz));
+			if (!bucket) {
+				continue;
+			}
+			for (int idx : *bucket) {
+				const auto &c = p_crowns[idx];
+				const float beyond = c.xz.distance_to(p_xz) - c.radius;
+				if (beyond > 3.0f * VegetationField3D::LITTER_SPREAD) {
+					continue;
+				}
+				deposit += c.opacity * (1.0f - c.conifer) * (beyond <= 0.0f ? 1.0f : Math::exp(-beyond / VegetationField3D::LITTER_SPREAD));
+			}
+		}
+	}
+	return 1.0f - Math::exp(-3.0f * deposit);
 }
 
 } // namespace
@@ -410,6 +444,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const int reach = int(Math::ceil((fp + p_setup.max_footprint) / grid_cell));
 		const bool shade_rule = sp->uses_shade();
 		const bool conifer_rule = sp->uses_conifer();
+		const bool litter_rule = sp->uses_litter();
 		const float canopy_r = sp->get_canopy_radius();
 		const float range = sp->get_visibility_range();
 		const float halo = p_halo ? ps.halo : 0.0f;
@@ -462,6 +497,13 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						if (conifer_rule) {
 							suit *= sp->rule_weight(PlantSpecies::RULE_CONIFER, conifer);
 						}
+					}
+					if (litter_rule && suit > 0.0f) {
+						float litter = crown_litter(local_crown_grid, local_crowns, p_setup.crown_max + 3.0f * LITTER_SPREAD, CROWN_CELL, xz);
+						if (p_setup.other) {
+							litter = 1.0f - (1.0f - litter) * (1.0f - p_setup.other->get_litter_at(Vector3(xz.x, 0.0f, xz.y)));
+						}
+						suit *= sp->rule_weight(PlantSpecies::RULE_LITTER, litter);
 					}
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
 						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
@@ -1484,6 +1526,11 @@ float VegetationField3D::get_conifer_at(const Vector3 &p_global_position) const 
 	return conifer;
 }
 
+float VegetationField3D::get_litter_at(const Vector3 &p_global_position) const {
+	RWLockRead guard(crown_lock);
+	return crown_litter(crown_grid, crowns, max_crown_radius + 3.0f * LITTER_SPREAD, CROWN_CELL, Vector2(p_global_position.x, p_global_position.z));
+}
+
 PackedVector3Array VegetationField3D::get_placements(int p_species) const {
 	PackedVector3Array res;
 	if (streaming) {
@@ -1951,6 +1998,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_forest_floor_enabled", "enabled"), &VegetationField3D::set_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("is_forest_floor_enabled"), &VegetationField3D::is_forest_floor_enabled);
 	ClassDB::bind_method(D_METHOD("get_conifer_at", "global_position"), &VegetationField3D::get_conifer_at);
+	ClassDB::bind_method(D_METHOD("get_litter_at", "global_position"), &VegetationField3D::get_litter_at);
 	ClassDB::bind_method(D_METHOD("set_cover_map_enabled", "enable"), &VegetationField3D::set_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("is_cover_map_enabled"), &VegetationField3D::is_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("set_cover_grass", "path"), &VegetationField3D::set_cover_grass);

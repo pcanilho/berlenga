@@ -1169,6 +1169,20 @@ with a multigrid inner solve (Jouvet and Bueler 2012, SIAM J. Appl. Math. 72; Bu
 settles in tens of iterations instead of thousands and makes the result independent of the iteration path. It
 changes the terrain once (to the converged answer), so it needs a before/after look.
 
+## Ice-worn rock (built 11 Nov night)
+
+What it is: rock the ice slid over is abraded smooth on the faces that meet the flow (stoss) and quarried into
+steps on the faces it leaves (lee): roches moutonnees and whalebacks, streamlined along the flow, scratched by
+striations parallel to it (Glasser and Bennett 2004; Hallet 1979 and 1996 on abrasion and quarrying; Krabbendam and
+Glasser 2011 on whalebacks vs roches moutonnees). At our scale it lives in the detail normal, not in the geometry.
+
+Built: `ice_worn_detail` (off by default). The generator publishes `terrain_ice_flow` (RGBA8 on the geology grid:
+rg the last glaciers' flow direction down their surface, b the wear, full at 20 m of glacial erosion) and
+`terrain_ice_flow_rect` (zero: off). terrain_detail_normal() then scales the detail's slope along the flow: faces
+rising into the flow by 1 - 0.7 wear, faces falling away by 1 + 0.8 wear, and adds striations 0.35 m apart across
+the flow (faded by the pixel footprint). Showcase cirque from the floor: the slopes the ice ran down lose their soft
+gullies on one side and keep sharp steps on the other; the effect is subtle at a distance, as it is in nature.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

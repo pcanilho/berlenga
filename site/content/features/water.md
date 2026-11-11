@@ -154,6 +154,7 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
     *Waterfall mist: a haze now rises from the pool and drifts past the fall.*
 
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
+- **Contact waterfalls** (`PhysXWaterfalls3D`, `contact_falls`): water that clings to steep rock, clear at the lip and white below the inception point, with spray off ledges.
 - **Faster flow bakes** (`physics/physx_3d/water/multigrid_flow`): multigrid-preconditioned conjugate gradients bake the flow 7 to 10 times faster than SOR.
 
 ## Under water
