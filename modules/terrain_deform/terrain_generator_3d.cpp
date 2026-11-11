@@ -1620,6 +1620,19 @@ void TerrainGenerator3D::_shape_coast(const LocalVector<uint8_t> &p_sea) {
 	}
 }
 
+// A marker's downstream dam face: "face_slope" metadata (rise over run), or "rock_lip" for a bedrock sill (a steep
+// face of 3, about 72 degrees) that holds a lake right above a waterfall without burying the fall under a debris
+// apron, as the default landslide-dam face (0.35) does on a steep reach. -1: the default.
+double TerrainGenerator3D::_marker_face_slope(const Node3D *p_marker) {
+	if (p_marker->has_meta("face_slope")) {
+		return MAX(double(p_marker->get_meta("face_slope")), 0.05);
+	}
+	if (p_marker->has_meta("rock_lip") && bool(p_marker->get_meta("rock_lip"))) {
+		return 3.0;
+	}
+	return -1.0;
+}
+
 // Lakes: the dams on lake markers first, then automatic ones on valley floors with at least lake_catchment above
 // them, in a seeded order, lake_spacing apart, away from the sea.
 void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
@@ -1647,8 +1660,10 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 	lp.max_cells = MAX(n / 4, 16);
 	std::vector<float> before(n);
 	LocalVector<Vector2i> sites;
-	auto try_site = [&](int32_t p_site, real_t p_depth, const char **r_why = nullptr) -> bool {
+	const double default_face = lp.face_slope;
+	auto try_site = [&](int32_t p_site, real_t p_depth, const char **r_why = nullptr, double p_face = -1.0) -> bool {
 		lp.dam_height = p_depth;
+		lp.face_slope = p_face > 0.0 ? p_face : default_face;
 		lp.dam_half_width = MAX(10.0 * p_depth, 3.0 * cell_size);
 		memcpy(before.data(), heights.ptr(), sizeof(float) * n);
 		TerrainCoast::Lake lake;
@@ -1720,7 +1735,7 @@ void TerrainGenerator3D::_make_lakes(const LocalVector<uint8_t> &p_sea) {
 			why = "it stands outside the generated area";
 		} else if (best < 0) {
 			why = "no free valley floor within three cells (it is in the sea, in another lake, or on a ridge)";
-		} else if (!try_site(best, depth, &why) && !why) {
+		} else if (!try_site(best, depth, &why, _marker_face_slope(marker)) && !why) {
 			why = "no lake formed";
 		}
 		if (why) {

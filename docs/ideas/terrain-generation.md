@@ -803,6 +803,13 @@ Results:
   predicts. With `base_uplift` 0, 45% of the land ends up on over 1 m of alluvium.
 - Cost: 2.6 to 3.5 s (+35%) on the rising world, and 1.9 to 3.4 s on still ground, where most passes run to 12.
 
+A lake above a waterfall (fix, 11 Nov): the showcase put a lake marker 120 to 300 m up a river with a 34 m fall,
+and the fall vanished. Marker dams are landslide dams (Costa and Schuster 1988) with a 0.35 downstream face; on a
+steep reach that apron runs hundreds of metres down the valley and buries the fall's lip. Lakes above falls in
+nature sit behind a bedrock lip (cirque and hanging-valley sills). Markers now take `rock_lip` metadata (a face of 3,
+about 72 degrees) or `face_slope`. On the valley layout, a 60 m marker dam 250 m above two falls (31 and 26 m)
+buried both; with `rock_lip` both stay and the lake spills over its own 70 m lip.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

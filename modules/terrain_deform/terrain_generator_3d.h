@@ -143,7 +143,7 @@ private:
 
 	// Lakes: natural dams across valleys, the water behind them.
 	int lake_count = 0;
-	TypedArray<NodePath> lakes; // markers: a dam where each one stands (metadata "depth" overrides lake_depth)
+	TypedArray<NodePath> lakes; // markers: a dam where each one stands (metadata "depth" overrides lake_depth; "rock_lip" or "face_slope" for a steep sill)
 	real_t lake_depth = 20.0; // m of dam above the valley floor
 	real_t lake_catchment = 2.0e5; // m^2, least drainage area at an automatic dam
 	real_t lake_min_area = 10000.0; // m^2
@@ -209,6 +209,7 @@ private:
 	void _route_rivers();
 	float _water_fade(real_t p_x, real_t p_z) const;
 	Ref<ArrayMesh> _lake_outline(int p_lake, const Vector3 &p_origin) const;
+	static double _marker_face_slope(const Node3D *p_marker);
 	Vector3 _lake_center(int p_lake) const;
 	Ref<ImageTexture> geology_texture;
 	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).

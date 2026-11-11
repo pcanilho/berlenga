@@ -458,7 +458,7 @@
 			Least distance (m) between automatic dams.
 		</member>
 		<member name="lakes" type="NodePath[]" setter="set_lakes" getter="get_lakes" default="[]">
-			Lake markers (any [Node3D]): a dam at each, on the valley floor nearest to it, before the automatic ones. A [code]"depth"[/code] metadata overrides [member lake_depth].
+			Lake markers (any [Node3D]): a dam at each, on the valley floor nearest to it, before the automatic ones. A [code]"depth"[/code] metadata overrides [member lake_depth]. By default the dam is a landslide dam whose downstream face slopes at 0.35 (19 degrees); on a steep reach that apron runs far down the valley and can bury a waterfall below the lake. A [code]"rock_lip"[/code] metadata set to [code]true[/code] makes the dam a bedrock sill with a face of about 72 degrees, so a lake can sit right above a fall and spill over it; [code]"face_slope"[/code] (rise over run) sets the face directly.
 		</member>
 		<member name="max_height" type="float" setter="set_max_height" getter="get_max_height" default="0.0">
 			When above 0, the relief is scaled so the highest point is this far above [member sea_level]. 0 keeps the simulated heights.
