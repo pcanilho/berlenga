@@ -444,13 +444,45 @@ bool TerrainGenerator3D::generate() {
 	const bool glacial = glacial_enabled && glacial_erosion > 0.0;
 	uint64_t glacial_usec = 0;
 	int glacial_count = 0;
+	// Rock quality under the ice: joint density varies over hundreds of metres, and glaciers quarry well-jointed rock
+	// far faster (Duhnforth et al. 2010). exp(variation x two octaves of noise), mean about 1; soft patches dig
+	// basins, sound rock stands as bars (Cook and Swift 2012). Built per grid size (coarse levels have their own).
+	std::vector<double> rock_scale, rock_combined;
+	int rock_scale_nx = 0;
+	auto glacial_scale = [&](int p_nx, int p_ny, double p_dx) -> const double * {
+		if (glacial_rock_variation <= 0.0) {
+			return nullptr;
+		}
+		if (rock_scale_nx != p_nx || rock_scale.size() != size_t(p_nx) * p_ny) {
+			rock_scale.resize(size_t(p_nx) * p_ny);
+			rock_scale_nx = p_nx;
+			const uint32_t rs = uint32_t(seed) * 0x9E3779B1u + 4242u;
+			const double L = double(glacial_rock_scale);
+			for (int z = 0; z < p_ny; z++) {
+				for (int x = 0; x < p_nx; x++) {
+					const double wx = result_rect.position.x + x * p_dx, wz = result_rect.position.y + z * p_dx;
+					const double v = 0.75 * _gen_value_noise(rs, wx, wz, L) + 0.35 * _gen_value_noise(rs + 1u, wx, wz, 0.43 * L);
+					rock_scale[size_t(z) * p_nx + x] = Math::exp(double(glacial_rock_variation) * v);
+				}
+			}
+		}
+		// Hard beds of the strata quarry slower too (riegels where a trough crosses a hard bed).
+		if (strata_enabled && strata_k.size() == uint32_t(p_nx * p_ny)) {
+			rock_combined.resize(rock_scale.size());
+			for (size_t i = 0; i < rock_scale.size(); i++) {
+				rock_combined[i] = rock_scale[i] * strata_k[i];
+			}
+			return rock_combined.data();
+		}
+		return rock_scale.data();
+	};
 	auto strata_step = [&](int p_n, const double *p_h, const double *p_up) -> double {
 		strata_update(p_n, p_h, p_up);
 		const double c = sp.step();
 		strata_time += double(time_step);
 		if (glacial && glacial_share > 0.0 && ++glacial_count % 8 == 0) {
 			const uint64_t tg = OS::get_singleton()->get_ticks_usec();
-			glac.erode(sp.b.height, sp.p.nx, sp.p.ny, sp.p.dx, 8.0 * double(time_step) * double(glacial_share), sp.b.sediment, sp.b.outlet, sp.b.sill, sp.b.sill_level);
+			glac.erode(sp.b.height, sp.p.nx, sp.p.ny, sp.p.dx, 8.0 * double(time_step) * double(glacial_share), sp.b.sediment, sp.b.outlet, sp.b.sill, sp.b.sill_level, glacial_scale(sp.p.nx, sp.p.ny, sp.p.dx));
 			glacial_usec += OS::get_singleton()->get_ticks_usec() - tg;
 		}
 		return c;
@@ -615,7 +647,7 @@ bool TerrainGenerator3D::generate() {
 	LocalVector<double> unfilled;
 	if (glacial && glacial_final > 0.0) {
 		const uint64_t tg = OS::get_singleton()->get_ticks_usec();
-		glac.erode(h.ptr(), nx, ny, cell_size, double(glacial_final), sed.ptr(), sp.b.outlet, sill_fine.is_empty() ? nullptr : sill_fine.ptr(), level_fine.is_empty() ? nullptr : level_fine.ptr());
+		glac.erode(h.ptr(), nx, ny, cell_size, double(glacial_final), sed.ptr(), sp.b.outlet, sill_fine.is_empty() ? nullptr : sill_fine.ptr(), level_fine.is_empty() ? nullptr : level_fine.ptr(), glacial_scale(nx, ny, cell_size));
 		glacial_usec += OS::get_singleton()->get_ticks_usec() - tg;
 		// Walls the ice left steeper than rock stands for long (the trough's side, the step below a riegel) shed
 		// rockfall until they are no steeper than strata_cliff_angle; the debris piles at their feet. One
@@ -4050,6 +4082,10 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_glacial_final"), &TerrainGenerator3D::get_glacial_final);
 	ClassDB::bind_method(D_METHOD("set_glacial_erosion", "value"), &TerrainGenerator3D::set_glacial_erosion);
 	ClassDB::bind_method(D_METHOD("get_glacial_erosion"), &TerrainGenerator3D::get_glacial_erosion);
+	ClassDB::bind_method(D_METHOD("set_glacial_rock_variation", "value"), &TerrainGenerator3D::set_glacial_rock_variation);
+	ClassDB::bind_method(D_METHOD("get_glacial_rock_variation"), &TerrainGenerator3D::get_glacial_rock_variation);
+	ClassDB::bind_method(D_METHOD("set_glacial_rock_scale", "value"), &TerrainGenerator3D::set_glacial_rock_scale);
+	ClassDB::bind_method(D_METHOD("get_glacial_rock_scale"), &TerrainGenerator3D::get_glacial_rock_scale);
 	ClassDB::bind_method(D_METHOD("set_glacial_sliding", "value"), &TerrainGenerator3D::set_glacial_sliding);
 	ClassDB::bind_method(D_METHOD("get_glacial_sliding"), &TerrainGenerator3D::get_glacial_sliding);
 	ClassDB::bind_method(D_METHOD("get_last_glacial_eroded"), &TerrainGenerator3D::get_last_glacial_eroded);
@@ -4269,6 +4305,8 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_final", PROPERTY_HINT_RANGE, "0,1000000,100,or_greater,suffix:yr"), "set_glacial_final", "get_glacial_final");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_erosion", PROPERTY_HINT_RANGE, "0,100,0.01,or_greater,exp"), "set_glacial_erosion", "get_glacial_erosion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_sliding", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_glacial_sliding", "get_glacial_sliding");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_variation", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_glacial_rock_variation", "get_glacial_rock_variation");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "glacial_rock_scale", PROPERTY_HINT_RANGE, "16,4000,1,suffix:m"), "set_glacial_rock_scale", "get_glacial_rock_scale");
 
 	ADD_GROUP("Coast", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_edges", PROPERTY_HINT_FLAGS, "-X,+X,-Z,+Z"), "set_ocean_edges", "get_ocean_edges");
