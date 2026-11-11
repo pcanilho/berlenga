@@ -1333,6 +1333,16 @@ func _wetland_species() -> Array:
 	return [lily, cattail, reed, rush, sedge]
 
 
+func _suit_one(rule: int, base: PlantSpecies) -> float:
+	var sp := PlantSpecies.new()
+	sp.set_rule_range(rule, base.get_rule_range(rule))
+	sp.set_rule_fade(rule, base.get_rule_fade(rule))
+	return sp.get_suitability_at(data_map, _dbg_pt)
+
+
+var _dbg_pt := Vector3.ZERO
+
+
 # --- Links -------------------------------------------------------------------------------------------------------
 
 func _checks() -> void:
@@ -1523,7 +1533,18 @@ func _checks() -> void:
 	for f in layers:
 		f.update_at(meadow_pt)
 		g += f.get_blade_count()
-		per.append("%s %d" % [f.name, f.get_blade_count()])
+		var suit: float = f.rules.get_suitability_at(data_map, meadow_pt) if f.rules else -1.0
+		per.append("%s %d (suitability %.2f)" % [f.name, f.get_blade_count(), suit])
+	_dbg_pt = meadow_pt
+	if args.has("grass-debug") and not sward.is_empty():
+		var base: PlantSpecies = (sward[1] as GrassField3D).rules.duplicate()
+		var r0 := PlantSpecies.new()
+		for rr in [PlantSpecies.RULE_SLOPE, PlantSpecies.RULE_WATER_DISTANCE, PlantSpecies.RULE_HEIGHT, PlantSpecies.RULE_SHADE]:
+			r0.set_rule_range(rr, base.get_rule_range(rr))
+			print("rule %d range %s fade %.2f alone -> %.2f" % [rr, base.get_rule_range(rr), base.get_rule_fade(rr), _suit_one(rr, base)])
+		print("default species -> %.2f, data map shade %.2f slope %.1f water %.1f" % [PlantSpecies.new().get_suitability_at(data_map, meadow_pt), data_map.get_shade_at(meadow_pt) if data_map.has_method("get_shade_at") else -1.0, data_map.get_slope_at(meadow_pt), data_map.get_water_distance_at(meadow_pt)])
+	if veg.has_method("get_stand_shade_at"):
+		per.append("stand shade %.2f at %s" % [veg.get_stand_shade_at(meadow_pt), str(meadow_pt.round())])
 	check(g > 0, "grass grows from the data map's rules on a meadow (%d blades: %s); it bends with weather_wind" % [g, ", ".join(per)])
 	for f in layers:
 		f.update_at(cam.global_position)
