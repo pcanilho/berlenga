@@ -354,6 +354,7 @@ func _generate() -> void:
 	gen.gorge_age = float(args.get("gorge-age", "12000"))
 	gen.moraine_age = float(args.get("moraine-age", "0"))
 	gen.scree_age = float(args.get("scree-age", "0"))
+	gen.meander_age = float(args.get("meander-age", "0"))
 	gen.fan_backfill = not args.has("no-backfill")
 	if args.has("glacial"):
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
@@ -475,6 +476,8 @@ func _generate() -> void:
 	_log("generate %d ms, grid %s, last change %.3f m, fan slots filled %d" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change(), gen.get_last_slots_filled()])
 	if gen.moraine_age > 0.0:
 		_log("moraines: %.0f m3 of debris" % gen.get_last_moraine_volume())
+	if gen.meander_age > 0.0:
+		_log("meanders: %d reaches, %d oxbows" % [gen.get_last_meander_count(), gen.get_last_oxbow_count()])
 	if gen.scree_age > 0.0:
 		_log("scree: %.0f m3" % gen.get_last_scree_volume())
 	if gen.glacial_enabled:
@@ -692,6 +695,9 @@ func _save_map(path: String) -> void:
 		_log("river %d: %d pts, head %s, mouth %s, area %.2f km2, Q %.2f m3/s (max month %.2f), ends %s, joins %d" % [ri, rp.size(),
 				str(rp[0].round()), str(rp[rp.size() - 1].round()), ar[ar.size() - 1] / 1e6, r["discharge"],
 				Array(r["monthly_discharge"]).max(), r["ends_in"], r["joins"]])
+		if args.has("river-dump") and ri == int(args.get("river-dump", "0")):
+			for k in range(0, rp.size(), 4):
+				_log("  pt %d %s ground %.2f" % [k, str(rp[k]), gen.get_height(rp[k])])
 		ri += 1
 	for f in gen.get_waterfalls(float(args.get("min-area", "1500000")), 2.0):
 		_log("fall: top %s h %.1f m, w %.1f m, Q %.2f m3/s, river %d" % [str(f["top"].round()), f["height"], f["width"], f["discharge"], f["river"]])

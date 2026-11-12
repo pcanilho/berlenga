@@ -230,6 +230,9 @@ private:
 	double last_moraine_volume = 0.0; // m3 of debris the last generate() laid in moraines
 	double scree_age = 0.0; // years cliffs have shed scree onto cones at their feet; 0 none
 	double last_scree_volume = 0.0; // m3 of scree the last generate() laid
+	double meander_age = 0.0; // years the rivers on flat alluvial floors have meandered; 0 none
+	int last_meander_count = 0; // reaches meandered by the last generate()
+	int last_oxbow_count = 0;
 	double gorge_rate = 0.013; // m a year per sqrt(m3/s)
 	LocalVector<Gorge> gorges;
 	bool fall_lips = true;
@@ -239,6 +242,22 @@ private:
 	LocalVector<FallLip> lips;
 	LocalVector<PlungePool> pools;
 	LocalVector<LocalVector<int>> lip_buckets; // per LIP_BUCKET-metre square of the result
+	// Meandered channels (world x, z), cut into the full-resolution ground and followed by the rivers' points.
+	struct Channel {
+		LocalVector<Vector2> points;
+		LocalVector<real_t> bed; // bed height at each point
+		LocalVector<real_t> dep; // channel depth at each point (eased in and out at the ends)
+		real_t half_width = 5.0, depth = 1.0;
+		bool reach = false; // the river's course (else an oxbow)
+		LocalVector<Vector2> tail; // the river's next cells below a reach
+	};
+	static constexpr real_t CHANNEL_BUCKET = 32.0;
+	LocalVector<Channel> channels;
+	LocalVector<LocalVector<int>> chan_buckets;
+	int chan_bx = 0, chan_bz = 0;
+	LocalVector<int32_t> channel_of_cell; // the channel cut through each cell, -1 none
+	float _apply_channels(real_t p_x, real_t p_z, float p_g) const;
+	void _bucket_channels();
 	int lip_bx = 0, lip_bz = 0;
 	void _bake_lips();
 	float _apply_lips(real_t p_x, real_t p_z, float p_g) const;
@@ -556,6 +575,10 @@ public:
 	void set_scree_age(double p_years) { scree_age = MAX(p_years, 0.0); }
 	double get_scree_age() const { return scree_age; }
 	double get_last_scree_volume() const { return last_scree_volume; }
+	void set_meander_age(double p_years) { meander_age = MAX(p_years, 0.0); }
+	double get_meander_age() const { return meander_age; }
+	int get_last_meander_count() const { return last_meander_count; }
+	int get_last_oxbow_count() const { return last_oxbow_count; }
 	void set_gorge_rate(double p_rate) { gorge_rate = MAX(p_rate, 0.0); }
 	double get_gorge_rate() const { return gorge_rate; }
 	void set_fan_backfill(bool p_enable) { fan_backfill = p_enable; }
