@@ -523,7 +523,7 @@ void fragment() {
 // stays strands.
 const char *HAIR_CARD_HEAD = R"(
 shader_type spatial;
-render_mode cull_disabled, rt_vertex_dynamic, hair_cards, alpha_motion_vectors;
+render_mode cull_disabled, rt_vertex_dynamic, hair_cards, alpha_motion_vectors, depth_prepass_alpha;
 )";
 
 const char *HAIR_CARD_FUNCS = R"(
@@ -697,6 +697,12 @@ void fragment() {
 		coverage = 1.0 - pow(max(1.0 - coverage, 1e-4), tt_block);
 	}
 #endif
+	// Two passes, as hair cards have been drawn since Scheuermann (GDC 2004): the cards' dense
+	// cores (80% or more) write depth first, then everything blends far to near over them. The
+	// cards are sorted whole, by their middle, but each runs the length of the hair, so a card
+	// behind could still draw over the front of another: a lit card from beside the head showed
+	// through the shadowed hair in front of it, and the head's outline read through the cards.
+	OPAQUE_PREPASS_THRESHOLD = 0.8;
 	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
 		float noise = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))) + texel.a);
 		if (coverage <= noise) {
@@ -1661,6 +1667,9 @@ void PhysXHair3D::_build_cards(const AABB &p_bounds) {
 	card_instance = memnew(MeshInstance3D);
 	add_child(card_instance, false, INTERNAL_MODE_BACK);
 	card_instance->set_mesh(mesh);
+	// As the strands (blended, left out of the shadow maps): the depth pre-pass would otherwise
+	// let the cards cast into them.
+	card_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
 	card_instance->set_custom_aabb(p_bounds);
 	card_instance->set_visible(false);
 }

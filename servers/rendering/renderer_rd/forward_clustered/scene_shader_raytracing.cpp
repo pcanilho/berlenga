@@ -2096,6 +2096,7 @@ void SceneShaderRaytracing::init(const String p_defines) {
 
 		actions.renames["ALPHA_SCISSOR_THRESHOLD"] = "alpha_scissor_threshold";
 		actions.renames["ALPHA_HASH_SCALE"] = "alpha_hash_scale";
+		actions.renames["OPAQUE_PREPASS_THRESHOLD"] = "opaque_prepass_threshold_out";
 		actions.renames["SCENE_DEPTH"] = "rt_scene_depth";
 		actions.renames["ALPHA_ANTIALIASING_EDGE"] = "alpha_antialiasing_edge";
 		actions.renames["ALPHA_TEXTURE_COORDINATE"] = "alpha_texture_coordinate";

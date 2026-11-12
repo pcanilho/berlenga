@@ -83,6 +83,7 @@ float anisotropy = 0.0;
 vec2 anisotropy_flow = vec2(1.0, 0.0);
 float alpha_scissor_threshold = -1.0; // Negative until the shader writes ALPHA_SCISSOR_THRESHOLD; 0 keeps every texel, as in raster.
 float alpha_hash_scale = 1.0;
+float opaque_prepass_threshold_out = 0.99; // OPAQUE_PREPASS_THRESHOLD: raster only
 vec3 light_vertex = vec3(0.0);
 float directional_shadow_offset = 0.0; // DIRECTIONAL_SHADOW_OFFSET: raster shadow maps only
 float positional_shadow_offset = 0.0; // POSITIONAL_SHADOW_OFFSET: raster shadow maps only

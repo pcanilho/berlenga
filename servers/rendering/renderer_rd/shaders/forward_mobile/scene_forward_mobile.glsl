@@ -1254,6 +1254,10 @@ void main() {
 	float alpha_hash_scale_highp = 1.0;
 #endif // ALPHA_HASH_USED
 
+#ifdef OPAQUE_PREPASS_THRESHOLD_USED
+	float opaque_prepass_threshold_out = scene_data.opaque_prepass_threshold;
+#endif
+
 #ifdef ALPHA_ANTIALIASING_EDGE_USED
 	float alpha_antialiasing_edge_highp = 0.0;
 	vec2 alpha_texture_coordinate = vec2(0.0, 0.0);
@@ -1432,7 +1436,12 @@ void main() {
 
 #ifdef MODE_RENDER_DEPTH
 #if defined(USE_OPAQUE_PREPASS) || defined(ALPHA_ANTIALIASING_EDGE_USED)
-	if (alpha < half(scene_data.opaque_prepass_threshold)) {
+#ifdef OPAQUE_PREPASS_THRESHOLD_USED
+	float prepass_threshold = scene_data.opaque_prepass_threshold > 0.9 ? opaque_prepass_threshold_out : scene_data.opaque_prepass_threshold;
+#else
+	float prepass_threshold = scene_data.opaque_prepass_threshold;
+#endif
+	if (alpha < half(prepass_threshold)) {
 		discard;
 	}
 #endif // USE_OPAQUE_PREPASS || ALPHA_ANTIALIASING_EDGE_USED

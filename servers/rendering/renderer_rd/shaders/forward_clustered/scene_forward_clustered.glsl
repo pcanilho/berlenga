@@ -1353,6 +1353,10 @@ void fragment_shader(in SceneData scene_data) {
 	float alpha_hash_scale = 1.0;
 #endif // ALPHA_HASH_USED
 
+#ifdef OPAQUE_PREPASS_THRESHOLD_USED
+	float opaque_prepass_threshold_out = scene_data.opaque_prepass_threshold;
+#endif
+
 #ifdef ALPHA_ANTIALIASING_EDGE_USED
 	float alpha_antialiasing_edge = 0.0;
 	vec2 alpha_texture_coordinate = vec2(0.0, 0.0);
@@ -1476,7 +1480,14 @@ void fragment_shader(in SceneData scene_data) {
 
 #ifdef MODE_RENDER_DEPTH
 #if defined(USE_OPAQUE_PREPASS) || defined(ALPHA_ANTIALIASING_EDGE_USED)
-	if (alpha < scene_data.opaque_prepass_threshold) {
+#ifdef OPAQUE_PREPASS_THRESHOLD_USED
+	// The material's own threshold in the pre-pass (0.99 there by default); the other depth
+	// passes (shadows: 0.1) keep theirs.
+	float prepass_threshold = scene_data.opaque_prepass_threshold > 0.9 ? opaque_prepass_threshold_out : scene_data.opaque_prepass_threshold;
+#else
+	float prepass_threshold = scene_data.opaque_prepass_threshold;
+#endif
+	if (alpha < prepass_threshold) {
 		discard;
 	}
 #endif // USE_OPAQUE_PREPASS || ALPHA_ANTIALIASING_EDGE_USED

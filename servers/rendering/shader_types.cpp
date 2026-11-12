@@ -228,6 +228,8 @@ ShaderTypes::ShaderTypes() {
 
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_SCISSOR_THRESHOLD"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_HASH_SCALE"] = ShaderLanguage::TYPE_FLOAT;
+	// render_mode depth_prepass_alpha: the alpha from which a fragment enters the depth pre-pass (default 0.99).
+	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["OPAQUE_PREPASS_THRESHOLD"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_ANTIALIASING_EDGE"] = ShaderLanguage::TYPE_FLOAT;
 	shader_modes[RSE::SHADER_SPATIAL].functions["fragment"].built_ins["ALPHA_TEXTURE_COORDINATE"] = ShaderLanguage::TYPE_VEC2;
 
