@@ -24,10 +24,6 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 - **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced.
 
-  ![A grass carpet with undercoat, clover and flowers, raster and path traced](media/grass-field.jpg)
-
-  *Grass: a full carpet, raster and path traced.*
-
   ![Grass bending as gusts travel downwind, raster](media/grass-wind.gif)
 
   *Grass in wind: gusts sweep across the field downwind.*
