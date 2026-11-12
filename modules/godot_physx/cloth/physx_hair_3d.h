@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "hair_cards.h"
 #include "hair_strand_solver.h"
 
 #include "scene/3d/node_3d.h"
@@ -110,6 +111,15 @@ class PhysXHair3D : public Node3D {
 	float wet_look = 0.0f; // the wetness last set on the material
 	float rain_shelter = 1.0f; // share of the rain that reaches the hair (roofs above it)
 	float rain_shelter_timer = 0.0f;
+	// Hair cards for distant hair (docs/ideas/hair.md, stage 2p).
+	bool cards_enabled = false;
+	int card_count = 256;
+	float card_distance = 15.0f; // m from the camera at which the strands give way to cards
+	MeshInstance3D *card_instance = nullptr;
+	Ref<ShaderMaterial> card_material;
+	Ref<HairCardBake> card_bake;
+	int card_first = 0; // the cards' strands follow the groom's in the solver; 0: no cards
+	bool card_mode = false; // drawing cards (far) instead of strands
 	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
 	struct BodyCache {
 		ObjectID mesh_instance;
@@ -132,6 +142,7 @@ class PhysXHair3D : public Node3D {
 	bool build_pending = false;
 
 	static Ref<Shader> render_shaders[2]; // Godot standard lighting, hair shading
+	static Ref<Shader> card_shaders[2];
 
 	void _groom_changed();
 	void _queue_build();
@@ -142,7 +153,9 @@ class PhysXHair3D : public Node3D {
 	Vector3 _fibre_absorption() const;
 	Vector2 _fibre_roughness() const;
 	void _update_wetness(double p_delta);
-	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) const;
+	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_guide_pool = 0) const;
+	void _set_look(const Ref<ShaderMaterial> &p_material) const;
+	void _build_cards(const AABB &p_bounds);
 	int _render_points(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, PackedInt32Array &r_points) const;
 	Color _mass_color() const;
 	void _body_triangles(PackedVector3Array &r_tris);
@@ -255,6 +268,13 @@ public:
 	float get_drying_time() const;
 	void set_wet_clumping(float p_clumping);
 	float get_wet_clumping() const;
+	void set_cards_enabled(bool p_enabled);
+	bool is_cards_enabled() const;
+	void set_card_count(int p_count);
+	int get_card_count() const;
+	void set_card_distance(float p_distance);
+	float get_card_distance() const;
+	bool is_drawing_cards() const;
 	void set_collision_spheres(const PackedVector4Array &p_spheres);
 	PackedVector4Array get_collision_spheres() const;
 

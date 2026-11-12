@@ -692,6 +692,56 @@ Built on PhysXHair3D (`wetness`, `weather_wetting`, `water_capacity`, `drying_ti
 - The fibre index in the path tracer stays 1.55: a wet index would need a new HAIR output through
   every renderer, for a highlight change the roughness already gives.
 
+## Stage 2p: hair cards for crowds
+
+Far away a head of strands costs the same simulation, sort and deep shadow work as up close, and
+the path tracer still refits every strand. Games draw distant (and most) hair as cards: textured
+strips laid along clumps of strands. How cards are made from a strand groom:
+
+- Unreal's groom cards (Groom asset Cards, Hair Card Generator, Dataflow): clumps of strands each
+  become a few cards; per card textures of coverage, depth, tangent, root UV, along-the-strand
+  coordinate and a seed; "Guide-Based" cards are skinned to the nearest simulated guide; the
+  groom's LOD switches strands to cards by screen size.
+- K. Wu et al., DiffHairCard (2025, arXiv 2505.18805): k-means on strands with Wang et al.'s 2009
+  shape distance; the card follows the cluster's mean strand with rotation-minimising (Bishop)
+  frames; its half width at each sample is the largest offset of the cluster's strands along the
+  card's binormal; the root orientation is the one (of a set of candidates) with the least
+  out-of-plane error; the strands are projected into card space as 2D curves (not rasterised
+  from a render) for coverage, tangent, depth and occlusion; optional crossed second card.
+  Their differentiable-rendering refinement takes ~46 min a groom, too slow at load.
+- Tojo, Hu, Umetani, Li, Strands2Cards (SIGGRAPH Asia 2025): wisps clustered, each skinned to a
+  normalised pose in UV space for its texture, textures shared between similar wisps, strips fitted
+  by differentiable rendering.
+
+Built (`cards_enabled`, off by default; `card_count`, `card_distance`), DiffHairCard's fitting
+without the optimisation pass, baked once when the hair is built:
+
+- k-means (k-means++ seeds) of the strands resampled to 8 points by length, Wang's shape distance;
+  each card is the cluster's mean strand at the drawn point count (up to 16), with Bishop frames
+  and the angle about it with the least spread of the strands out of its plane (DiffHairCard
+  searches candidates; the least-squares answer is the principal axis of the offsets, in closed
+  form); half width from the strands' offsets along the axis (a 95th percentile, so one flyaway
+  does not widen it). Baked once per groom and settings and shared by every node using them.
+- Two crossed strips a card, each with its own projection baked into a shared atlas tile:
+  coverage (each strand's width over the texel, summed as 1 - prod(1 - c)), the strands' tilt in
+  the card plane (the raster highlight follows the real strands, not the card) and a per-strand
+  seed. Each strip counts by how squarely it faces the view, the two weights summing to one, as
+  optical depth (opacity 1 - (1 - c)^w), so crossed cards neither double nor thin the hair.
+- The card's mean strand is simulated as one more follower strand (its three nearest guides), so
+  cards move with the same guides, wind, collisions and wet clumping as the strands. In card mode
+  only the guides and the card strands run: the other followers and the draw-order sort are
+  skipped.
+- Self-shadowing: the deep opacity maps are made from the cards' strands, each splatted as wide as
+  its clump with the clump's coverage (a strand heaped into one cell lets light through beside it
+  and left the cards too bright), and read per card point as the strands read them.
+- The cards take the strands' raster hair shading (the strand direction from the card, tilted by
+  the baked tilt). Opacity is blended as the strands' is; the hair is one colour, so the unsorted
+  cards' order barely shows. Alpha hash (Unreal's masked cards) was tried first and is noise
+  without TAA. Shadow maps keep a share of texels (stochastic transparency).
+- Raster only. Under the path tracer the hair stays strands at every distance: traced as cards
+  (opaque at random by coverage) the hair came out near black and lost its strands, which the
+  path tracer must not do. Crowds under the path tracer keep the strands' cost.
+
 ## Checked: lighter path traced strands
 
 The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,
@@ -757,3 +807,7 @@ groom to test with.
 - Lekner, Dorf. Why Some Things Are Darker When Wet. Applied Optics 27(7), 1988.
 - Bico, Roman, Moulin, Boudaoud. Elastocapillary Coalescence in Wet Hair. Nature 432, 2004.
 - Gash. An Analytical Model of Rainfall Interception by Forests. QJRMS 105, 1979.
+- K. Wu et al. DiffHairCard: Auto Hair Card Extraction with Differentiable Rendering. arXiv 2505.18805, 2025.
+- Tojo, Hu, Umetani, Li. Strands2Cards: Automatic Generation of Hair Cards from Strands. SIGGRAPH Asia 2025.
+- Wang, Yu, Zhou, Guo, Shum. Example-based Hair Geometry Synthesis. SIGGRAPH 2009.
+- Epic Games. Unreal Engine documentation: Setting up Cards and Meshes for Grooms; Hair Card Generator.

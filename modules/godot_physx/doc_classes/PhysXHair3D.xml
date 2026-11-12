@@ -12,6 +12,12 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="is_drawing_cards" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns [code]true[/code] while the hair is drawn as cards (see [member cards_enabled]).
+			</description>
+		</method>
 		<method name="reset_simulation">
 			<description>
 				Puts every strand back in its groomed pose on the head, at rest. Call it after teleporting the character.
@@ -19,6 +25,15 @@
 		</method>
 	</methods>
 	<members>
+		<member name="card_count" type="int" setter="set_card_count" getter="get_card_count" default="256">
+			How many cards the strands are clustered into. Each card is two crossed strips.
+		</member>
+		<member name="card_distance" type="float" setter="set_card_distance" getter="get_card_distance" default="15.0">
+			Distance from the camera, in metres, past which the hair is drawn as cards (with [member cards_enabled]). It comes back to strands 5% nearer.
+		</member>
+		<member name="cards_enabled" type="bool" setter="set_cards_enabled" getter="is_cards_enabled" default="false">
+			If [code]true[/code], hair cards are baked from the groom when the hair is built (shared by every node with the same groom and settings), and past [member card_distance] the hair is drawn as cards instead of strands: textured strips along clumps of strands, which move with the same guide strands. Only the guides and the cards are then simulated, so distant hair costs a small fraction of strands. Raster only: while the environment path traces, the hair stays strands at every distance.
+		</member>
 		<member name="collision_body" type="NodePath" setter="set_collision_body" getter="get_collision_body" default="NodePath(&quot;&quot;)">
 			A [MeshInstance3D] the strands stay out of, as AMD TressFX's SDF collision: every frame its triangles (skinned on the CPU when it has a [Skin], else placed by its transform) build a signed distance field around them on the GPU (seeded by the triangles, filled by jump flooding), and points inside the body or closer than the margin are pushed out along it and stop. Use a closed, low-poly proxy of the body (shoulders, neck, back; a few thousand triangles). Empty: only [member collision_spheres].
 		</member>
