@@ -1142,6 +1142,18 @@ void fragment() {
 	// Thin water is clear: the swash film and the last few cm at the edge let
 	// the sand show through, turning opaque by ~25 cm of depth.
 	base_a *= mix(0.4, 1.0, smoothstep(0.0, 0.25, shore));
+#if !defined(RT)
+	// The seabed fades with depth (Beer-Lambert, the path tracer's own absorption): light from it crosses the water
+	// down and back up along the view. Without it, a shelf deepening to 17 m stayed visible as a pale band out to the
+	// end of the measured seabed, where it stopped in a straight line against the open sea.
+	{
+		vec3 p_w = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		float mu = max(abs(normalize(p_w - CAMERA_POSITION_WORLD).y), 0.05);
+		float sigma = dot(pathtraced_absorption, vec3(1.0 / 3.0));
+		float bed = max(depth_r(v_rest_xz, cuv_fade), 0.0);
+		base_a = mix(1.0, base_a, exp(-sigma * bed * (1.0 + 1.0 / mu)));
+	}
+#endif
 	ALBEDO = mix(base_rgb, foam_color.rgb, foam);
 	float water_a = mix(base_a, foam_color.a, foam) * smoothstep(0.0, soft, shore);
 	// Wet sand under and behind the swash: blended in where the water is
