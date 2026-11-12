@@ -71,7 +71,7 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Wet hair: soaked strands darken, clump and lie flatter in the same wind.*
 
-- **Snow on hair** (`snow`, `snow_capacity`): snow from the weather settles on the top layer and windward side as small clumps, and melts into wetness.
+- **Snow on hair** (`snow`, `snow_capacity`): snow from the weather settles on the top layer and windward side as small clumps, on strands and hair cards alike, and melts into wetness.
 
   ![Strand hair before and after snowfall, raster](media/hair-snow.jpg)
 
