@@ -934,6 +934,78 @@ LocalVector<Transform3D> PlantGenerator::_stem_frames(const Transform3D &p_base,
 	return frames;
 }
 
+// A stem through given frames (a path bent by something other than one even bend: lodged on the
+// ground). Same tube as _add_stem().
+void PlantGenerator::_add_stem_along(const LocalVector<Transform3D> &p_frames, float p_r0, float p_r1, float p_wind_base, Surface p_surface) {
+	if (p_frames.size() < 2) {
+		return;
+	}
+	Builder &b = builders[p_surface];
+	_begin_organ(p_frames[0].origin);
+	const int sides = 5;
+	const int n = int(p_frames.size()) - 1;
+	const int first = b.verts.size();
+	for (int i = 0; i <= n; i++) {
+		const float t = float(i) / n;
+		const float r = Math::lerp(p_r0, p_r1, t);
+		const float wind = MIN(1.0f, p_wind_base + (1.0f - p_wind_base) * t);
+		const Basis f = p_frames[i].basis.orthonormalized();
+		for (int s = 0; s < sides; s++) {
+			const float a = s * Math::TAU / sides;
+			b.verts.push_back(p_frames[i].origin + (f.get_column(0) * Math::cos(a) + f.get_column(1) * Math::sin(a)) * r);
+			b.uvs.push_back(Vector2(float(s) / sides, t));
+			b.uv2s.push_back(Vector2(wind, 0.0f));
+			const float ao = 0.7f + 0.3f * t;
+			b.colors.push_back(Color(ao, ao, ao));
+		}
+		plant_height = MAX(plant_height, p_frames[i].origin.y);
+	}
+	for (int i = 0; i < n; i++) {
+		for (int s = 0; s < sides; s++) {
+			const int a = first + i * sides + s;
+			const int c = first + i * sides + (s + 1) % sides;
+			b.indices.append_array(PackedInt32Array({ a, c, a + sides, c, c + sides, a + sides }));
+		}
+	}
+	_tag_organ(b);
+}
+
+// Lodging: walks a stem's frames from its base and lays every frame that would pass below p_floor
+// on the ground instead (pointing the same way, levelled), and every frame after it too, so a
+// stem that bows over arches down and lies along the ground rather than through it.
+static void ground_follow(LocalVector<Transform3D> &r_frames, float p_floor, bool &r_grounded) {
+	if (r_frames.is_empty()) {
+		return;
+	}
+	Vector3 p = r_frames[0].origin;
+	Vector3 last_flat = Vector3(r_frames[0].basis.get_column(2).x, 0.0f, r_frames[0].basis.get_column(2).z);
+	LocalVector<Vector3> steps;
+	for (uint32_t i = 1; i < r_frames.size(); i++) {
+		steps.push_back(r_frames[i].origin - r_frames[i - 1].origin);
+	}
+	for (uint32_t i = 0; i < r_frames.size(); i++) {
+		Vector3 d = r_frames[i].basis.get_column(2);
+		Vector3 flat(d.x, 0.0f, d.z);
+		if (flat.length_squared() > 1e-6f) {
+			last_flat = flat;
+		}
+		const float len = i + 1 < r_frames.size() ? steps[i].length() : 0.0f;
+		if (r_grounded) {
+			// Lying: levelled along its last heading.
+			r_frames[i].basis = organ_frame(last_flat.normalized(), Vector3(0, 1, 0));
+		}
+		r_frames[i].origin = p;
+		if (i + 1 < r_frames.size()) {
+			p += r_frames[i].basis.get_column(2) * len;
+			if (p.y < p_floor) {
+				// This step reaches the ground: it ends there, and the rest lies along it.
+				p.y = p_floor;
+				r_grounded = true;
+			}
+		}
+	}
+}
+
 Transform3D PlantGenerator::_frame_at(const LocalVector<Transform3D> &p_frames, float p_s) const {
 	const int segs = int(p_frames.size()) - 1;
 	const float fi = CLAMP(p_s, 0.0f, 1.0f) * segs;
@@ -1628,22 +1700,30 @@ void PlantGenerator::_build_bracken() {
 	const FrondSeason fs = _frond_season(300.0f, 400.0f, 220.0f, 250.0f);
 	auto frond = [&](float p_unfurl, float p_dead, float p_lodge) {
 		const Wither wither(this, p_dead);
-		Transform3D base = stem_base(_rand(0.0f, Math::TAU), Math::lerp(_rand(1.35f, 1.52f), 0.12f, p_lodge));
+		// Lodged fronds (dead, storm, snow) bow over: the stipe arches down from a lower start and
+		// the blade drapes from it onto the ground and lies there (ground_follow), never standing
+		// on a bare straight stalk.
+		Transform3D base = stem_base(_rand(0.0f, Math::TAU), Math::lerp(_rand(1.35f, 1.52f), 0.4f, p_lodge));
 		base.origin = Vector3(_rand(-0.25f, 0.25f), 0.0f, _rand(-0.25f, 0.25f));
 		// The stipe lengthens first, then the blade unrolls from its crook.
 		const float stipe = _rand(0.35f, 0.75f) * MIN(1.0f, 0.25f + 1.4f * p_unfurl);
-		const LocalVector<Transform3D> sf = _stem_frames(base, stipe, _rand(0.05f, 0.2f), 4);
-		_add_stem(base, stipe, 0.0045f, 0.0035f, sf.size() > 0 ? 0.1f : 0.0f, 4, 0.0f);
-		// The blade: a knee at the top of the stipe, then a nearly flat blade drooping a little.
+		const float stipe_bend = _rand(0.05f, 0.2f) + 1.7f * p_lodge;
+		bool grounded = false;
+		LocalVector<Transform3D> sf = _stem_frames(base, stipe, stipe_bend, 6);
+		ground_follow(sf, 0.015f, grounded);
+		_add_stem_along(sf, 0.0045f, 0.0035f, 0.0f);
+		// The blade: a knee at the top of the stipe, then a nearly flat blade drooping a little;
+		// lodged, it hangs from the bowed stipe to the ground.
 		Transform3D top = sf[sf.size() - 1];
-		// Lying down, the blade stays on the stipe's line (no knee down into the ground).
-		top.basis = Basis(top.basis.get_column(0), _rand(0.85f, 1.1f) * smoothstep_f(0.3f, 0.8f, p_unfurl) * (1.0f - p_lodge)) * top.basis;
+		const float knee = _rand(0.85f, 1.1f) * smoothstep_f(0.3f, 0.8f, p_unfurl) * (1.0f - p_lodge) + 0.6f * p_lodge;
+		top.basis = Basis(top.basis.get_column(0), grounded ? 0.0f : knee) * top.basis;
 		top.basis.orthonormalize();
 		const float blade = _rand(0.45f, 0.85f) * Math::lerp(0.2f, 1.0f, p_unfurl);
 		const float turn = Math::lerp(6.5f, _rand(0.25f, 0.5f), smoothstep_f(0.0f, 0.75f, p_unfurl)) * (1.0f - 0.9f * p_lodge);
 		const float pinna_grow = p_unfurl * Math::sqrt(p_unfurl);
-		const LocalVector<Transform3D> rf = _stem_frames(top, blade, turn, 10);
-		_add_stem(top, blade, 0.0035f, 0.001f, turn, 10, 0.3f);
+		LocalVector<Transform3D> rf = _stem_frames(top, blade, turn, 10);
+		ground_follow(rf, 0.015f, grounded);
+		_add_stem_along(rf, 0.0035f, 0.001f, 0.3f);
 		const int pairs = int(_rand(8.0f, 12.0f));
 		for (int k = 0; k < pairs; k++) {
 			const float s = Math::lerp(0.08f, 0.95f, float(k) / (pairs - 1));
@@ -1671,18 +1751,21 @@ void PlantGenerator::_build_bracken() {
 					_add_leaf(SURFACE_LEAF, pb, l, Math::lerp(0.4f, 1.0f, s));
 					continue;
 				}
-				const LocalVector<Transform3D> pf = _stem_frames(pb, plen, 0.25f, 4);
-				_add_stem(pb, plen, 0.0012f, 0.0005f, 0.25f, 4, Math::lerp(0.4f, 1.0f, s));
-				// Pinnules crowded along the pinna, nearly touching, so the blade reads as one lamina.
-				const int pinnules = int(Math::lerp(8.0f, 15.0f, plen / (blade * 0.52f)));
+				// A pinna lying on the ground stays on it (no droop into the soil).
+				const float pbend = at.origin.y < 0.08f ? 0.0f : 0.25f;
+				const LocalVector<Transform3D> pf = _stem_frames(pb, plen, pbend, 4);
+				_add_stem(pb, plen, 0.0012f, 0.0005f, pbend, 4, Math::lerp(0.4f, 1.0f, s));
+				// Pinnules crowded along the pinna, overlapping at their bases, so the blade reads as
+				// one lamina and not as a comb of separate teeth (bracken pinnules are confluent).
+				const int pinnules = int(Math::lerp(11.0f, 20.0f, plen / (blade * 0.52f)));
 				for (int q = 0; q < pinnules; q++) {
 					const float u = Math::lerp(0.12f, 0.95f, float(q) / MAX(pinnules - 1, 1));
 					const Transform3D pa = _frame_at(pf, u);
 					const float side2 = (q % 2 == 0) ? 1.0f : -1.0f;
 					Leaf l;
 					l.shape = LEAF_LANCEOLATE;
-					l.length = plen * 0.32f * (1.0f - 0.6f * u);
-					l.width = l.length * 0.36f;
+					l.length = plen * 0.36f * (1.0f - 0.55f * u);
+					l.width = l.length * 0.46f;
 					l.lobes = 5;
 					l.lobe_depth = 0.38f;
 					l.fold = 0.12f;

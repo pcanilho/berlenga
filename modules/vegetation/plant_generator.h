@@ -201,6 +201,7 @@ private:
 	void _add_leaf(Surface p_surface, const Transform3D &p_base, const Leaf &p_leaf, float p_wind_base, float p_ao = 1.0f, const Color &p_tint = Color(1, 1, 1));
 	LocalVector<Transform3D> _stem_frames(const Transform3D &p_base, float p_length, float p_bend, int p_segments) const;
 	Transform3D _frame_at(const LocalVector<Transform3D> &p_frames, float p_s) const;
+	void _add_stem_along(const LocalVector<Transform3D> &p_frames, float p_r0, float p_r1, float p_wind_base, Surface p_surface = SURFACE_STEM);
 	void _add_grass_tuft(int p_blades, float p_length_min, float p_length_max, float p_width_min, float p_width_max, float p_spread);
 	Transform3D _add_stem(const Transform3D &p_base, float p_length, float p_r0, float p_r1, float p_bend, int p_segments, float p_wind_base, Surface p_surface = SURFACE_STEM);
 	void _add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height, const Color &p_tint = Color(1, 1, 1));

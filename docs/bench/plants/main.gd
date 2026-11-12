@@ -134,6 +134,11 @@ func _ready() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-40, 150, 0)
 	sun.shadow_enabled = true
+	if close >= 0:
+		# Close views: the shadow map over the few metres in view, so plant shadows are sharp and not
+		# soft blobs from the default 100 m cascades.
+		sun.directional_shadow_max_distance = 12.0
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.light_energy = 2.0
 	add_child(sun)
 	if push or wind != Vector2.ZERO:

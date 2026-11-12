@@ -116,7 +116,10 @@ the field drops it in summer. Checks in the plants bench: bracken 12 cm high in 
 33 cm in early May, 65 cm in July, 36 cm in December; the fern 2, 5, 23, 23 cm (it yellows in
 December but stands); anemone absent in February and July, present in April. With a default
 WeatherMap3D (a warm continental climate) bracken is still green in early November and russet
-by mid December.
+by mid December. A lodged frond bows over: its stipe starts lower and arches, the blade hangs from it, and
+wherever stipe or blade would pass into the soil it lies along the ground from there on (the
+builder walks the frames and levels them), so dead fronds lie in a mat or arch over it rather than
+standing on straight stalks.
 
 **Step 4, shots across the year.** The grass bench takes `--day=D` (a WeatherMap3D on that day
 drives every grass field's `season_source` and the plants' `season`) and `--drought` (a dry
