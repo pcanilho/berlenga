@@ -1404,10 +1404,9 @@ bool TerrainGenerator3D::generate() {
 			const int i = order[k];
 			if (rcv[i] >= 0) {
 				acc[rcv[i]] += acc[i];
-				// A lake on the way keeps the meltwater's gravel: the river out of it runs clear and does not braid.
-				if (fill[i] - h[i] < 0.5) {
-					ice[rcv[i]] += ice[i];
-				}
+				// The braidplain dates from the ice's last stand, when the glacier fed it directly: lakes in the basins it
+				// left behind came after.
+				ice[rcv[i]] += ice[i];
 			}
 		}
 		if (meander_cell.size() != uint32_t(n)) {
@@ -1480,7 +1479,10 @@ bool TerrainGenerator3D::generate() {
 				// Gravel enough to braid: meltwater from ice upstream, or the thick fill of a fan (fans' streams braid,
 				// Blair and McPherson 1994).
 				const bool gravel = ice[i] >= 0.05 * acc[i] || sm / (k1 - k0 + 1) > 1.0;
-				flags[k] = acc[i] >= min_area && S >= 0.012 * Math::pow(qm, -0.44) && S < 0.05 && gravel && glacial_ice[i] < 1.0f && fill[i] - h[i] < 0.5 && h[i] > double(sea_level) + 1.5 && !meander_cell[i];
+				// Meltwater rivers braid at their summer floods, several times the mean flow: the threshold on that (bankfull)
+				// discharge, taken as five times the mean for an ice-fed river.
+				const double qb = ice[i] >= 0.05 * acc[i] ? 5.0 * qm : qm;
+				flags[k] = acc[i] >= min_area && S >= 0.012 * Math::pow(qb, -0.44) && S < 0.05 && gravel && glacial_ice[i] < 1.0f && fill[i] - h[i] < 0.5 && h[i] > double(sea_level) + 1.5 && !meander_cell[i];
 			}
 			for (int k = 0, last = -1; k < pn; k++) {
 				if (flags[k]) {
