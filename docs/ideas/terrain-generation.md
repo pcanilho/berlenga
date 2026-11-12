@@ -1303,7 +1303,8 @@ hairlines that beat into moire, and darkened the frame, because the fade went by
 spans metres in one pixel at any distance) and the cracks were widened to stay 2.5 pixels wide, so their share of
 the face grew with distance. The established cure is band limiting the pattern itself: the cracks are a box-filtered
 pulse train (Apodaca and Gritz 2000, Advanced RenderMan ch. 11), integrated over each pixel's footprint along each
-set's normal from the screen derivatives of the world position, so a pixel shows the cracks' area, not a line; every
+set's normal from the pixel's footprint (a ray cone's ellipse, Akenine-Moller et al. 2019, so the path tracer, which has
+no screen derivatives, filters as the raster does), so a pixel shows the cracks' area, not a line; every
 other feature (block steps and tones, crack relief, the roughness octaves, stones) is frequency clamped (Norton,
 Rockwood and Skolmoski 1982) to its mean as a pixel spans a quarter to half its size; the normal's difference step
 grows with the pixel. Faces are lifted by the cracks' mean darkening and stones divided by their measured mean

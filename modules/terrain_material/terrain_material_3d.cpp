@@ -328,8 +328,8 @@ float tm_rd_cracks(float x, float c, float w) {
 float tm_rd_clamp(float w, float per) {
 	return 1.0 - smoothstep(0.25, 0.5, w / per);
 }
-// Height (m) and shade (mean 1 over any area, so the detail never darkens the ground) at p. dx and dy are the world
-// position's screen derivatives: the filter widths are anisotropic, long along a face seen edge-on.
+// Height (m) and shade (mean 1 over any area, so the detail never darkens the ground) at p. dx and dy are the axes of
+// the pixel's footprint on the ground: the filter widths are anisotropic, long along a face seen edge-on.
 vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
 	float hgt = 0.0, shade = 1.0;
 	float wmax = max(length(dx), length(dy)) / tm_rock_detail_scale;
@@ -550,7 +550,16 @@ void fragment() {
 	if (rock_detail_enabled) {
 		// Rock joints and loose stones where the ground is rock or scree (heightfield detail cannot reach steep faces).
 		c += R"(	{
-		vec3 rd_dx = dFdx(wp), rd_dy = dFdy(wp);
+		// The pixel's footprint on the ground as a ray cone's ellipse (Akenine-Moller et al. 2019, texture LOD for
+		// ray tracing): the cone's width across the view, stretched by 1 / cos along it. No screen derivatives, so
+		// the path tracer (which has none) filters exactly as the raster does.
+		vec3 rd_v = wp - CAMERA_POSITION_WORLD;
+		float rd_cone = length(rd_v) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+		rd_v = normalize(rd_v);
+		vec3 rd_t1 = cross(rd_v, wn);
+		rd_t1 = dot(rd_t1, rd_t1) > 1e-8 ? normalize(rd_t1) : normalize(cross(wn, vec3(1.0, 0.0, 0.0) + vec3(0.0, 0.0, 1.0) * step(0.9, abs(wn.x))));
+		vec3 rd_t2 = cross(wn, rd_t1);
+		vec3 rd_dx = rd_t1 * rd_cone, rd_dy = rd_t2 * rd_cone / max(abs(dot(rd_v, wn)), 0.05);
 		float rd_shade;
 		// Joints and beds on bare faces steeper than about 45 degrees (full past 57); gentler rock keeps the
 		// generator's own detail.
