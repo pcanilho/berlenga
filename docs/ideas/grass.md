@@ -332,6 +332,192 @@ plant is placed, so it costs nothing per frame:
   (its dry share falls by up to 70%), a sunny slope adds a quarter.
 - only leaves and stems respond; petals, litter, twigs and dead (worn) tissue keep their colour.
 
+## GPU grass (research, stage 3)
+
+Paulo's pick, 11 Nov: denser grass for the same cost, as Ghost of Tsushima does it. Research
+before code.
+
+### What the published games do
+
+- **Ghost of Tsushima** (Wohllaib, GDC 2021). No blade is stored. Every frame a compute pass walks
+  the tiles near the camera, reads the painted grass type and density maps, makes each candidate
+  blade from a position hash, culls it against the frustum and by distance, and appends survivors
+  to an instance buffer drawn indirectly. There are two vertex counts, 15 near and 7 far, and
+  density falls off smoothly per blade, not per tile.
+- **Ghost of Yotei** (Sucker Punch tech deep dive, PlayStation Blog, 23 Oct 2025). The same GPU
+  compute renderer, now emitting twice as much grass and as many renderable items. Compute jobs
+  occlusion-cull, allocate memory and fill draw records. In a far mountain view, "over one million
+  trees, rocks, and bushes are culled down to about sixty thousand individual items". Weapon swings
+  write a cut buffer that the grass reads.
+- **Horizon Zero Dawn** (van Muijden, GDC 2017). Placement rules are evaluated on the GPU over
+  terrain maps in tiles around the camera, and the density maps are made from rules rather than
+  painted. This is the part we already do on the CPU with `PlantSpecies` and `TerrainDataMap3D`.
+- **Frostbite** (Wihlidal, GDC 2016) and **Assassin's Creed Unity** (Haar and Aaltonen,
+  SIGGRAPH 2015) laid out GPU-driven culling and compaction into indirect draws, which every later
+  grass system relies on.
+- **Unreal Engine 5.7** added Nanite Foliage (instanced assemblies, voxelised far foliage). It is
+  aimed at trees and shrubs. Grass in UE still comes from the Grass Type / PCG paths.
+
+### Where our grass spends its time today
+
+- **CPU build per tile.** At 60 blades/m2 an 8 m tile builds in about 0.25 ms. The loop is per
+  blade: rule checks, height lookup, light grid, packing. At three to five times the density that
+  becomes 0.75 to 1.25 ms per tile, and 12 tiles in a frame (`max_tiles_per_frame`) makes a 9 to
+  15 ms spike whenever the camera crosses a tile line. This is what caps density now.
+- **Raster draws whole tiles.** Godot culls each tile's MultiMesh by its AABB, so with 8 m tiles
+  per-blade frustum culling would save little; most of the drawn blades are in view.
+- **The path tracer's merged BLAS cap.** A tile of 3,840 blades at about 8 triangles is 31k
+  triangles, under `multimesh_merged_blas_max_triangles` (65,536). Three times the density is 92k:
+  the tile would fall to the expanded path, one TLAS record per blade. Denser grass needs smaller
+  tiles (4 m: 23k) or fewer triangles far out.
+
+### What fits this engine
+
+The path tracer settles the design. `multimesh_mark_buffer_rd_changed()`
+(gpu-multimesh-records.md) brings GPU-written records to the path tracer cheaply when they change
+as tiles stream in. Records culled and rewritten every frame, as in Ghost of Tsushima, would mean
+a merged BLAS rebuilt every frame for every near tile, and blades behind the camera would drop out
+of reflections and shadows. Path tracing must not remove detail. So:
+
+1. **Stage 3a: GPU tile fill (Horizon placement, Tsushima blades).** On the CPU, per tile, only a
+   small map is baked: suitability x shade rule, light and ground height, on 0.5 m texels (256
+   texels for an 8 m tile instead of 3,840 blades). It is built from the same `PlantSpecies` rules,
+   so placement does not change. A compute shader then writes the tile's records straight into its
+   MultiMesh (`multimesh_get_buffer_rd_rid`) from the same hashes, blue-noise rank, clumps, light
+   packing and custom data as the CPU loop today, and calls `multimesh_mark_buffer_rd_changed`.
+   Blades come out identical, so raster and path tracing stay matched, but the per-blade work moves
+   to the GPU, where 10k blades are a few microseconds. The current CPU path stays as the
+   reference and the fallback (`--test` compares both).
+2. **Density and tile size.** With the CPU cost gone, raise near density (for example 60 to
+   180/m2) and use 4 m tiles inside the path tracer's animated radius so every tile stays a merged
+   BLAS. Thinning by rank keeps working per blade. Check the refit budget (1.5M triangles) against
+   the new near count; past it, the far tiles hold their pose as now.
+3. **Stage 3b (later, raster only): per-frame visible compaction.** For raster without path
+   tracing, a compute pass can cull blades against the frustum and Hi-Z and apply smooth distance
+   thinning and a 7-vertex far blade into an indirect MultiMesh (`use_indirect`). With path tracing
+   on, the tile records stay the source. This is only worth doing if the PC timings show vertex cost
+   from blades out of view or occluded.
+
+Cloud checks: identical records CPU vs GPU (hash of the buffers), tile build time before/after,
+raster vs path traced crops of the denser field at 100%, with no SHADER ERROR. GPU frame timings
+need the PC.
+
+### Built (3a)
+
+`GrassField3D.gpu_fill` (on by default), `modules/vegetation/grass_fill.glsl`. Per tile the CPU
+lists the candidate cells (blue-noise rank under the level's keep, in a fixed order), bakes the
+rules and the canopy's shade rule into a 0.5 m suitability grid, and passes the 1 m light grid
+and the map's height texels under the tile; one compute thread per candidate makes the blade
+with the same hashes, clumps, shade avoidance and packing as the CPU loop and writes its 16
+floats in place (a rejected candidate is written as a zero record), then
+`multimesh_mark_buffer_rd_changed()`. The MultiMesh gets the tile's box as a custom AABB, so it
+draws before the records' readback lands. A suitability corner at zero keeps the cell empty, so
+blades never creep into water by interpolation.
+
+Measured on the cloud (lavapipe, bench `docs/bench/grass --test`):
+
+| | CPU loop | GPU fill |
+| --- | --- | --- |
+| Blades matching the CPU set | | 99.1% (tall grass), 100% (undercoat) |
+| Main thread, whole tall field at 60/m2 | 23.4 ms | 14.1 ms |
+| Undercoat field (640/m2, short radius) | 29.4 ms | 17.6 ms |
+| Tall field at 180/m2 | 70.7 ms | 38.9 ms |
+
+Raster frames of both paths in still air differ by 0.14 of 255 on average. Two fixes found on
+the way, both for every grass field and MultiMesh: the blue-noise rank took a mutex per blade
+(now a one-time static), and MultiMesh allocation sent a zeroed copy through the staging buffer
+(now `buffer_clear` on the GPU), which together were most of the CPU path's cost too.
+What stays on the CPU per tile: the candidate list, the rules grid and the MultiMesh itself.
+Moving candidates to the GPU would need compaction and a count the CPU does not have; not worth
+it until the PC shows the remaining cost matters. GPU time per tile needs the PC.
+
+## Light inside the sward (raster against the path tracer)
+
+Asked for: raster grass darkening inside the sward the way the path tracer shows it. Measured
+first (bench `docs/bench/grass`, still air, 60/m2, mean luminance of the near, mid and far bands,
+AgX): raster was not too light but too dark, front-lit 38.9 / 42.2 / 79.8 against the path
+tracer's 46.0 / 49.6 / 82.9, backlit 43.4 / 44.1 / 77.3 against 49.7 / 48.4 / 77.4. Bare ground
+matches to 0.5, sky to 0, so it is the blades.
+
+What the literature does. Light in a canopy falls off as exp(-k L) with the leaf area L above
+(Monsi and Saeki 1953), k about 0.5 / sin(sun) for the direct beam and 0.7..0.8 for sky light on
+upright blades; the light leaves scatter slows that to exp(-k sqrt(1 - s) L), s their reflectance
+plus transmittance (Goudriaan 1977), and a deep sward reflects (1 - sqrt(1 - s)) / (1 + sqrt(1 - s))
+of it back up (two-stream, Sellers 1985). Games fake it: an albedo ramp to the root as the main
+AO (Call of Duty BO4, Pesce), Ghost of Tsushima the same plus translucency; offline tests at
+Activision found grass too dark without translucency even with GI.
+
+What we found and changed:
+
+- The root ramp (x0.6 at the root) sat in the albedo, so the path tracer, which shades the
+  blades for real, darkened roots twice. It is now AO, exp(-0.8 sqrt(1 - s) L) with
+  L = blades/m2 x mean height x width x 0.7 above the point; AO is raster-only (the path
+  tracer ignores it). Path tracer near band 46.0 -> 47.7, raster 38.9 -> 41.1.
+- Shadow passes widened every blade towards the light's camera (the view-space thickening reads
+  CAMERA_POSITION_WORLD, which is the light there): the sward cast about twice its shadow. Now
+  MAIN_CAM_INV_VIEW_MATRIX. Small in the band means (+0.5) but right.
+- Tried and dropped: a custom light() (raster only too) with the transmitted sun the path
+  tracer's shadow rays keep (albedo x BACKLIGHT per blade) and the Goudriaan scattered and
+  upward light. Measured +1 of 255; not worth replacing Godot's light model for it.
+- Where the rest of the gap is: shadowed pixels now match (10th and 25th percentile 13.3 / 24.7
+  against 14.0 / 27.0); the lit blades differ (75th 60 against 70), and only in a dense sward.
+  Ruled out by experiment: blade shape (single blades at 3/m2 without the undercoat land on the
+  same pixels in both; two-sided quads and MultiMesh quads with rotated instances and custom
+  normals shade identically, 0.651 lit and 0.369 backlit in both), the view-space widening (the
+  path tracer follows view_facing), per-blade colour varyings, the trample field and the wind.
+  Raster without sun shadows comes within 0.5 of the path tracer, so the open question is how
+  much light reaches the blades a shadow map puts in shadow: the path tracer's light between
+  blades (bounces, translucent shadow rays) against the raster's none. A measured fix needs the
+  PC (denoised frames, more bounces) before guessing a fill term.
+
+## Gusts rolling over meadows (research)
+
+What we have: `WeatherMap3D` already carries the turbulence the grass reads. Kaimal gust waves
+(24 plane waves, frozen turbulence) and gust patches of about 6 m riding at 1.8 times the wind at
+1 m (Raupach, Finnigan and Brunet 1996), the coherent sweeps behind honami (Inoue 1955). The
+blades bend with the wind at their two-thirds height, instantly: a blade follows every wave at
+once, quasi-statically, and the only motion of its own is a sine flutter.
+
+What a crop does (Py, de Langre and Moulia 2006, wheat and alfalfa filmed and modelled; de Langre
+2008 review): each stem is a damped oscillator, f0 about 1 to 3 Hz, damping 0.05 to 0.2. The
+broadband wind drives it through the oscillator's transfer function: slow gusts are followed
+with no lag, waves near f0 are amplified and lag a quarter turn, faster ones are filtered out.
+Neighbouring stems near f0 lock in: the canopy waves at its own frequency, and the waves travel
+downwind at the convection speed Uc of the canopy's mixing layer (about 1.8 U(h)), wavelength
+Uc / f0, 1.5 to 4 m for a meadow. That travelling resonance is the honami people see.
+
+Games: Ghost of Tsushima samples a scrolling wind field per blade and adds a per-blade
+oscillation (Rockenbeck, Wohllaib 2021); UE's grass wind is a material noise. Neither has the
+transfer function or the lock-in.
+
+Plan (one stateless shader function, the same model the trees use in TreeWind3D, so a meadow and
+the trees beside it answer the same gust the same way):
+
+1. Gust waves through the blade's oscillator: each Kaimal wave keeps its phase speed but gets
+   gain 1 / |1 - r^2 + 2 i zeta r| (capped at the quasi-static 1) and its lag, r = k U / omega0.
+   Mean wind and patches stay quasi-static (well below f0).
+2. Resonance with lock-in: the narrow-band sway Davenport's resonant part gives,
+   variance S(f0) pi f0 / (4 zeta), drawn as a wave travelling downwind at Uc with wavelength
+   Uc / f0 (Py 2006), per clump a small phase jitter so it is not a perfect sheet.
+3. f0 per clump from blade height (taller and softer is slower, about 2 Hz at 0.4 m), zeta 0.1.
+4. No change to WeatherMap3D or plant_wind(): the grass reads `weather_gusts`,
+   `weather_wind_info` and the patches as they are.
+
+Measure: wind on, raster clip over the meadow for the gallery, path traced frame, cost per frame
+(the gust loop is already per vertex; the change adds a multiply per wave and two cosines).
+
+### Built (gusts)
+
+`grass_weather_wind()` in the blade shader, used whenever a `WeatherMap3D` publishes wind; the
+fallback wind is unchanged. f0 = 2 Hz x sqrt(0.4 m / height), 1..4 Hz; zeta 0.1. Waves with
+r < 0.25 pass as they are (gain within 7%), r > 4 are dropped (gain under 1/15).
+
+Measured (bench `--raster --weather --wind=5,1`, 30 fps, 90 frames, luminance in 8 px blocks):
+temporal power at 1.6 to 2.6 Hz rises 2 to 4 times (the blades' own band, travelling downwind),
+below 1 Hz it falls by about 15% (the slow gusts as before, the flutter sine's 3.9 Hz peak goes).
+Cost on the cloud's software rasterizer: 1.64 s -> 1.81 s per frame (+10%, vertex work on the
+CPU); GPU cost needs the PC. Path traced frame clean. Clip in the gallery.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.
@@ -342,3 +528,13 @@ plant is placed, so it costs nothing per frame:
 - Sousa, Vegetation Procedural Animation and Shading in Crysis, GPU Gems 3, ch. 16 (2007).
 - SimpleGrassTextured, https://github.com/IcterusGames/SimpleGrassTextured (MIT), code read.
 - GodotGrass, https://github.com/2Retr0/GodotGrass (MIT), code read.
+- Sucker Punch, Ghost of Yotei tech deep dive, PlayStation Blog, 23 Oct 2025.
+- Wihlidal, Optimizing the Graphics Pipeline with Compute, GDC 2016.
+- Haar, Aaltonen, GPU-Driven Rendering Pipelines, SIGGRAPH 2015 Advances course.
+- Py, de Langre, Moulia, A frequency lock-in mechanism in the interaction between wind and crop canopies, J. Fluid Mech. 568, 2006.
+- de Langre, Effects of wind on plants, Annu. Rev. Fluid Mech. 40, 2008.
+- Inoue, Studies of the phenomena of waving plants ("honami") caused by wind, J. Agric. Meteorol. 11, 1955.
+- Monsi, Saeki, On the factor light in plant communities and its importance for matter production, 1953 (Annals of Botany 2005 translation).
+- Goudriaan, Crop micrometeorology: a simulation study, Pudoc 1977.
+- Sellers, Canopy reflectance, photosynthesis and transpiration, Int. J. Remote Sensing 6, 1985.
+- Pesce, Making a greener grass, part 2 (Call of Duty: Black Ops 4 vegetation), c0de517e.com, 2024.

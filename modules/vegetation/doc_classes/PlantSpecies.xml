@@ -136,6 +136,12 @@
 		<member name="near_meshes" type="Mesh[]" setter="set_near_meshes" getter="get_near_meshes" default="[]">
 			Heavier meshes drawn within [member near_range], one per entry of [member meshes] in the same order (a shorter list repeats). Each plant keeps its variant, so a tree with real needles near the camera and needle sprays beyond it stays the same tree. The field cuts such a species into cells about a quarter of [member near_range] across (at least 4 m), so the swap happens a few plants at a time, and crossfades the two over the last tenth of the range with a dither.
 		</member>
+		<member name="near_mesh_key" type="int" setter="set_near_mesh_key" getter="get_near_mesh_key" default="0">
+			Passed to [member near_mesh_source]'s [code]request_near_mesh[/code], to say which plant's near meshes are wanted.
+		</member>
+		<member name="near_mesh_source" type="Object" setter="set_near_mesh_source" getter="get_near_mesh_source">
+			Near meshes on demand, for heavy meshes only plants that come near need: an object with [code]request_near_mesh(key: int, variant: int) -&gt; Mesh[/code], returning [code]null[/code] while the mesh is still being built. Used when [member near_meshes] is empty and [member near_range] is above 0: [VegetationField3D] asks for each cell within 1.2 x [member near_range] of the camera every frame until it has the mesh, then draws it with the same crossfade as [member near_meshes], and frees the cell beyond 1.5 x, so the source can free meshes nothing draws. Only the object's id is kept: keep the source alive yourself.
+		</member>
 		<member name="near_range" type="float" setter="set_near_range" getter="get_near_range" default="0.0">
 			Distance in metres within which [member near_meshes] are drawn instead of [member meshes]. 0 turns the swap off.
 		</member>

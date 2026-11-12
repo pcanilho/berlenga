@@ -63,6 +63,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *River deposition: the rivers fill the valley between the ridges with a flat alluvial floor.*
 
+- **Meandering rivers** (`meander_age`, years, off by default): bends grow and migrate across flat valley floors; cut-off loops leave oxbows that silt up, and the river water follows the new course.
+
 - **Rivers fed by rain and snowmelt** (`climate_recipe`, `river_month`): a monthly water balance from the climate sets each river's flow, month by month.
 
   ![River flow by month in three climates, and snow lying by height](media/terrain-runoff.jpg)
@@ -109,6 +111,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   ![A generated range with its ground material under the cloud layer: rock, scree, soil, forest and a sand beach, raster vs path traced](media/terrain-ground.jpg)
 
   *Ground material: rock on crests and cliffs, grass and soil on the slopes, a sand beach at the coast, all from the generator's geology.*
+
+- **Sky occlusion** (`TerrainGenerator3D.sky_occlusion`, `TerrainMaterial3D.sky_occlusion`): raster ground is lit only by the sky its hills leave open, from a horizon bake and the live sky, matching path tracing at dusk.
 
 - **Far blend** (TerrainMaterial3D `far_blend_enabled`, `far_start`, `far_fade`, off by default): far ground takes the colour of the plant cover map.
 

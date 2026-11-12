@@ -9,6 +9,11 @@ extends Node3D
 #   --wind=x,z       fallback wind in m/s (default 3,1); 0,0 for still grass
 #   --weather        a WeatherMap3D drives the wind instead
 #   --frames=N       frames before the capture (default 20)
+#   --grass-density=N  blades per m2 of the tall grass near the camera (default: the field's, 120)
+#   --sun-yaw=D      sun heading in degrees (default 150, against the light; -30 lights the view from behind)
+#   env GRASS_DIAG=noshadow|nosun|nograss|notrample|novf|vf1|nounder|bounce0|ssaa: lighting diagnostics (grass.md, "Light inside the sward")
+#   --cpu-fill       build grass tiles on the CPU instead of the GPU fill (grass.md, stage 3a)
+#   --litter-wind=x,z  downwind lean of the leaf drift (VegetationField3D.litter_wind), e.g. 0.6,0
 #   --out=path.png   save the last frame
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
@@ -55,6 +60,10 @@ var trample := false
 var layers := true
 var close := false
 var forest := false
+var litter_wind := Vector2()
+var grass_density := 0.0
+var gpu_fill := true
+var sun_yaw := 150.0
 var forest_in := false
 var stand := "beech"
 var stand_set := false
@@ -78,6 +87,7 @@ var under: GrassField3D
 var cover: VegetationField3D
 var far_match := false
 var far_a := Color()
+var far_w := Color()
 var ball: StaticBody3D
 var walker: Node3D
 var t := 0.0
@@ -131,6 +141,12 @@ func _ready() -> void:
 			forest = true
 			forest_in = true
 		elif a == "--notex": notex = true
+		elif a.begins_with("--grass-density="): grass_density = float(a.substr(16))
+		elif a == "--cpu-fill": gpu_fill = false
+		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
+		elif a.begins_with("--litter-wind="):
+			var lw := a.substr(14).split(",")
+			litter_wind = Vector2(float(lw[0]), float(lw[1]))
 		elif a.begins_with("--stand="):
 			stand = a.substr(8)
 			stand_set = true
@@ -169,6 +185,11 @@ func _ready() -> void:
 	grass = GrassField3D.new()
 	grass.name = "Grass"
 	grass.fallback_wind = wind
+	if grass_density > 0.0:
+		grass.density = grass_density
+	if OS.get_environment("GRASS_DIAG").contains("vf1"):
+		grass.view_facing = 1.0
+	grass.gpu_fill = gpu_fill
 	add_child(grass)
 	grass.data_map = grass.get_path_to(dm)
 	if layers:
@@ -224,6 +245,7 @@ func _ready() -> void:
 		cover.tile_size = 4.0
 		cover.biome = _cover_biome()
 		cover.forest_floor_enabled = not no_floor
+		cover.litter_wind = litter_wind
 		if clearing >= 0:
 			_set_clearing()
 		add_child(cover)
@@ -294,8 +316,23 @@ void fragment() {
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-28, 150, 0)
-	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-28, sun_yaw, 0)
+	sun.shadow_enabled = not OS.get_environment("GRASS_DIAG").contains("noshadow")
+	if OS.get_environment("GRASS_DIAG").contains("ssaa"):
+		get_viewport().scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+		get_viewport().scaling_3d_scale = 2.0
+	if OS.get_environment("GRASS_DIAG").contains("nounder"):
+		_hide_under.call_deferred()
+	if OS.get_environment("GRASS_DIAG").contains("nograss"):
+		_hide_grass.call_deferred()
+	if OS.get_environment("GRASS_DIAG").contains("notrample"):
+		_no_trample.call_deferred()
+	if OS.get_environment("GRASS_DIAG").contains("novf"):
+		_no_view_facing.call_deferred()
+	if OS.get_environment("GRASS_DIAG").contains("nosun"):
+		sun.light_energy = 0.0
+	if OS.get_environment("GRASS_DIAG").contains("bounce0"):
+		env.pathtracing_max_bounces = 0
 	add_child(sun)
 	# Movers: a ball (radius from its SphereShape3D) and a walker (radius from its meta).
 	ball = StaticBody3D.new()
@@ -976,6 +1013,39 @@ func _ground_mesh() -> Mesh:
 	st.generate_normals()
 	return st.commit()
 
+func _fill_compare(field: GrassField3D, label: String) -> void:
+	var gpu_set := _blade_keys(field)
+	var t0 := Time.get_ticks_usec()
+	field.gpu_fill = false
+	for i in 20:
+		field.update_at(cam.global_position)
+	var cpu_ms := (Time.get_ticks_usec() - t0) / 1000.0
+	var cpu_set := _blade_keys(field)
+	var same := 0
+	for k in gpu_set:
+		if cpu_set.has(k): same += 1
+	var match_share := float(same) / maxf(cpu_set.size(), 1.0)
+	_check("GPU fill matches the CPU blades (%s)" % label, absf(gpu_set.size() - cpu_set.size()) < cpu_set.size() * 0.03 and match_share > 0.97, "gpu %d cpu %d shared %.3f" % [gpu_set.size(), cpu_set.size(), match_share])
+	t0 = Time.get_ticks_usec()
+	field.gpu_fill = true
+	for i in 20:
+		field.update_at(cam.global_position)
+	print("GRASS_FILL_MS %s cpu=%.1f gpu=%.1f (main thread, whole field)" % [label, cpu_ms, (Time.get_ticks_usec() - t0) / 1000.0])
+
+# Live blades of a field as keys (position to the millimetre, height and width to 0.1 mm).
+func _blade_keys(field: GrassField3D) -> Dictionary:
+	var keys := {}
+	for ch in field.get_children(true):
+		if ch is MultiMeshInstance3D:
+			var mm: MultiMesh = ch.multimesh
+			var buf := RenderingServer.multimesh_get_buffer(mm.get_rid())
+			for i in mm.instance_count:
+				var b := i * 16
+				if buf[b] == 0.0 and buf[b + 2] == 0.0:
+					continue
+				keys[Vector4i(roundi(buf[b + 3] * 1000.0), roundi(buf[b + 7] * 1000.0), roundi(buf[b + 11] * 1000.0), roundi(buf[b + 12] * 10000.0))] = true
+	return keys
+
 func _check(label: String, ok: bool, value) -> void:
 	print("%s %s: %s" % ["PASS" if ok else "FAIL", label, str(value)])
 	if not ok:
@@ -997,7 +1067,10 @@ func _checks() -> void:
 		if ch is MultiMeshInstance3D:
 			var mm: MultiMesh = ch.multimesh
 			for i in mm.instance_count:
-				var p := mm.get_instance_transform(i).origin
+				var xf := mm.get_instance_transform(i)
+				if xf.basis.x.length_squared() == 0.0:
+					continue # A candidate the GPU fill rejected (zero record).
+				var p := xf.origin
 				var d := Vector2(p.x, p.z).distance_to(c)
 				# Inside the tall patches only (the rest is lawn by design).
 				var inside := tall == null or tall.get_patch_weight(p) > 0.99
@@ -1021,9 +1094,14 @@ func _checks() -> void:
 	var ring_area := PI * (36.0 * 36.0 - 32.0 * 32.0) * ring_hits / 4000.0
 	var near_density: float = near / max(near_area, 0.01)
 	var far_density: float = far / max(ring_area, 0.01)
-	_check("near density about 60 /m2", near_density > 45.0 and near_density < 70.0, near_density)
+	_check("near density about %d /m2" % int(grass.density), near_density > grass.density * 0.75 and near_density < grass.density * 1.17, near_density)
 	_check("far ring thinned (LOD)", far_density < near_density * 0.3, far_density)
 	_check("no grass under water", wet == 0, wet)
+	# GPU tile fill (grass.md, stage 3a) against the CPU loop: the same blades but at rule edges.
+	if grass.gpu_fill and GrassField3D.is_gpu_fill_available():
+		_fill_compare(grass, "tall grass")
+		if under:
+			_fill_compare(under, "undercoat")
 	if under:
 		var un := 0
 		var uwet := 0
@@ -1176,6 +1254,13 @@ func _process(dt: float) -> void:
 		fwd.y = 0.0
 		var p := cam.position + fwd.normalized() * 0.3
 		cam.position = Vector3(p.x, height(p.x, p.z) + 2.0, p.z)
+	# Before/after of the far colour bake: the earlier hand-matched far colour, set over the baked one.
+	if OS.get_environment("GRASS_DIAG").contains("handfar") and n == frames - 5:
+		var bl := grass.base_color.srgb_to_linear()
+		var tl := grass.tip_color.srgb_to_linear()
+		var dl := grass.dry_color.srgb_to_linear()
+		var hand := bl.lerp(tl, 0.65).lerp(dl, grass.dryness * 0.35) * 0.355
+		RenderingServer.global_shader_parameter_set("grass_ground_far", Vector4(hand.r, hand.g, hand.b, 1.0))
 	if not clip.is_empty() and n >= 20:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(clip.path_join("f%03d.png" % (n - 20)))
@@ -1219,6 +1304,23 @@ func _process(dt: float) -> void:
 		await RenderingServer.frame_post_draw
 		var c := _region_mean()
 		print("GRASS_FAR_MATCH old far_ground=%s ratio=%s" % [str(c), str(Color(far_a.r / c.r, far_a.g / c.g, far_a.b / c.b))])
+		# A white far colour: the light on the far ground, so blades over it is the albedo it needs.
+		RenderingServer.global_shader_parameter_set("grass_ground_far", Vector4(1, 1, 1, 1))
+		return
+	if far_match and n == frames + 36:
+		await RenderingServer.frame_post_draw
+		far_w = _region_mean()
+		RenderingServer.global_shader_parameter_set("grass_ground_far", Vector4(0, 0, 0, 1))
+		return
+	if far_match and n == frames + 48:
+		# Black: what the far ground shows besides its albedo (bare ground, sheen), so the albedo
+		# that matches the blades is (blades - black) / (white - black).
+		await RenderingServer.frame_post_draw
+		var k := _region_mean()
+		var w := far_w
+		var need := Color((far_a.r - k.r) / (w.r - k.r), (far_a.g - k.g) / (w.g - k.g), (far_a.b - k.b) / (w.b - k.b))
+		var got := grass.get_far_color()
+		print("GRASS_FAR_NEED white=%s black=%s needed=%s published=%s baked=%s published/needed=%s" % [str(w), str(k), str(need), str(got), str(grass.is_far_color_baked()), str(Color(got.r / need.r, got.g / need.g, got.b / need.b))])
 		get_tree().quit()
 		return
 	if far_match or n < frames:
@@ -1234,3 +1336,26 @@ func _process(dt: float) -> void:
 		get_viewport().get_texture().get_image().save_png(out)
 		print("saved ", out)
 	get_tree().quit()
+
+
+func _hide_grass() -> void:
+	grass.visible = false
+	if under:
+		under.visible = false
+
+
+func _no_trample() -> void:
+	grass.trample_enabled = false
+	if under:
+		under.trample_enabled = false
+
+
+func _no_view_facing() -> void:
+	grass.view_facing = 0.0
+	if under:
+		under.view_facing = 0.0
+
+
+func _hide_under() -> void:
+	if under:
+		under.visible = false

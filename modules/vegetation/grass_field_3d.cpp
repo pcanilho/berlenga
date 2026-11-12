@@ -35,11 +35,19 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/os/mutex.h"
 #include "core/os/os.h"
 #include "core/templates/hashfuncs.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/light_3d.h"
+#include "scene/3d/mesh_instance_3d.h"
+#include "scene/3d/world_environment.h"
+#include "scene/resources/3d/primitive_meshes.h"
+#include "scene/resources/3d/sky_material.h"
+#include "scene/resources/environment.h"
+#include "scene/resources/sky.h"
 #include "scene/3d/multimesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/main/scene_tree.h"
@@ -49,7 +57,11 @@
 #include "scene/resources/3d/cylinder_shape_3d.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/resources/multimesh.h"
+#include "servers/rendering/rendering_device.h"
+#include "servers/rendering/rendering_device_binds.h"
 #include "servers/rendering/rendering_server.h"
+
+#include "grass_fill.glsl.gen.h"
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/weather/weather_map_3d.h"
@@ -71,14 +83,8 @@ float unit(uint32_t p_h, int p_shift) {
 // putting each next point in the largest void (lowest Gaussian energy, wrapping round).
 constexpr int BLUE_SIZE = 64;
 
-const uint16_t *blue_ranks() {
+const uint16_t *build_blue_ranks() {
 	static uint16_t ranks[BLUE_SIZE * BLUE_SIZE];
-	static bool built = false;
-	static BinaryMutex lock;
-	MutexLock guard(lock);
-	if (built) {
-		return ranks;
-	}
 	const int n = BLUE_SIZE * BLUE_SIZE;
 	float kernel[BLUE_SIZE * BLUE_SIZE];
 	for (int y = 0; y < BLUE_SIZE; y++) {
@@ -111,7 +117,13 @@ const uint16_t *blue_ranks() {
 			}
 		}
 	}
-	built = true;
+	return ranks;
+}
+
+// Built once, on first use (thread-safe static initialisation): no lock per call, which cost more
+// than the rest of a blade's placement.
+const uint16_t *blue_ranks() {
+	static const uint16_t *ranks = build_blue_ranks();
 	return ranks;
 }
 
@@ -133,7 +145,85 @@ float blue_rank(int p_x, int p_z) {
 	return (float(ranks[z * BLUE_SIZE + x]) + 0.5f) / float(BLUE_SIZE * BLUE_SIZE);
 }
 
+// GPU tile fill (docs/ideas/grass.md, stage 3a): one compute pipeline for every field, built on
+// the render thread the first time a tile is filled.
+struct GrassFillGPU {
+	RID shader;
+	RID pipeline;
+	bool tried = false;
+	bool ok = false;
+};
+GrassFillGPU grass_fill_gpu;
+
+constexpr int FILL_HEADER = 40;
+constexpr float FILL_SUIT_STEP = 0.5f;
+
+void grass_fill_rt(RID p_multimesh, const PackedFloat32Array &p_inputs, int p_count) {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	RenderingDevice *rd = rs ? rs->get_rendering_device() : nullptr;
+	if (!rd) {
+		return;
+	}
+	if (!grass_fill_gpu.tried) {
+		grass_fill_gpu.tried = true;
+		Ref<RDShaderFile> sf;
+		sf.instantiate();
+		if (sf->parse_versions_from_text(grass_fill_shader_glsl) == OK) {
+			grass_fill_gpu.shader = rd->shader_create_from_spirv(sf->get_spirv_stages());
+			if (grass_fill_gpu.shader.is_valid()) {
+				grass_fill_gpu.pipeline = rd->compute_pipeline_create(grass_fill_gpu.shader);
+			}
+		}
+		grass_fill_gpu.ok = grass_fill_gpu.pipeline.is_valid();
+		ERR_FAIL_COND_MSG(!grass_fill_gpu.ok, "GrassField3D: the tile fill compute shader failed to build.");
+	}
+	if (!grass_fill_gpu.ok) {
+		return;
+	}
+	const RID records = rs->multimesh_get_buffer_rd_rid(p_multimesh);
+	if (!records.is_valid()) {
+		return;
+	}
+	const Vector<uint8_t> bytes = p_inputs.to_byte_array();
+	const RID inputs = rd->storage_buffer_create(bytes.size(), bytes);
+	Vector<RD::Uniform> uniforms;
+	RD::Uniform u0(RD::UNIFORM_TYPE_STORAGE_BUFFER, 0, records);
+	RD::Uniform u1(RD::UNIFORM_TYPE_STORAGE_BUFFER, 1, inputs);
+	uniforms.push_back(u0);
+	uniforms.push_back(u1);
+	const RID set = rd->uniform_set_create(uniforms, grass_fill_gpu.shader, 0);
+	const RD::ComputeListID cl = rd->compute_list_begin();
+	rd->compute_list_bind_compute_pipeline(cl, grass_fill_gpu.pipeline);
+	rd->compute_list_bind_uniform_set(cl, set, 0);
+	rd->compute_list_dispatch(cl, (p_count + 63) / 64, 1, 1);
+	rd->compute_list_end();
+	rd->free_rid(set);
+	rd->free_rid(inputs);
+	rs->multimesh_mark_buffer_rd_changed(p_multimesh);
+}
+
 } // namespace
+
+static void grass_fill_free_rt() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	RenderingDevice *rd = rs ? rs->get_rendering_device() : nullptr;
+	if (rd && grass_fill_gpu.shader.is_valid()) {
+		rd->free_rid(grass_fill_gpu.shader); // Frees the pipeline with it.
+	}
+	grass_fill_gpu = GrassFillGPU();
+}
+
+void GrassField3D::free_gpu_fill() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (rs && grass_fill_gpu.shader.is_valid()) {
+		rs->call_on_render_thread(callable_mp_static(&grass_fill_free_rt));
+	}
+}
+
+bool GrassField3D::is_gpu_fill_available() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	return rs && rs->get_rendering_device() != nullptr && !(grass_fill_gpu.tried && !grass_fill_gpu.ok);
+}
 
 // Shared by the blades and the ground under them (get_ground_shader_code()), so both drift to the
 // same colours at the same places: a gap between blades then shows the base of the same sward.
@@ -198,6 +288,14 @@ void GrassField3D::_ensure_resources() {
 		// Bent and scaled in the shader: bounds for the tallest blade bent any way.
 		const float h = MAX(blade_height.x, blade_height.y) * 1.1f;
 		blade_mesh->set_custom_aabb(AABB(Vector3(-h, -0.05f, -h), Vector3(2.0f * h, h + 0.1f, 2.0f * h)));
+		// The path tracer merges a MultiMesh into one BLAS only under a triangle cap; above it every
+		// blade becomes its own TLAS record, far slower to build and trace (grass.md, stage 3).
+		const int tris = 2 * (blade_segments - 1) + 1;
+		const int cap = int(GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"));
+		const float tile_tris = density * tile_size * tile_size * tris;
+		if (cap > 0 && tile_tris > cap) {
+			WARN_PRINT(vformat("GrassField3D \"%s\": a full tile holds about %d triangles, over the path tracer's merged BLAS cap (%d); lower tile_size to %.1f m or less.", get_name(), int(tile_tris), cap, Math::sqrt(float(cap) / (density * tris))));
+		}
 	}
 	if (material.is_null()) {
 		_build_material();
@@ -213,11 +311,91 @@ void GrassField3D::_build_material() {
 	code += "global uniform sampler2D weather_state_map;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	code += WeatherMap3D::get_wind_shader_code();
+	code += vformat("#define WEATHER_GUST_COUNT %d\n#define WEATHER_GUSTS_PER_AXIS %d\n", WeatherMap3D::GUST_COUNT, WeatherMap3D::GUSTS_PER_AXIS);
 	code += R"(
+// weather_wind() as felt by a blade: a damped oscillator of angular frequency omega0 and damping
+// zeta (Py, de Langre and Moulia 2006). The mean wind and the gust patches are slow and pass as
+// they are; each Kaimal gust wave goes through the oscillator's transfer function (gain capped at
+// the quasi-static 1, with its lag), as TreeWind3D does for branches. On top, the resonant sway
+// Davenport's resonant part gives, locked in across the sward: it travels downwind at the canopy's
+// convection speed with wavelength Uc / f0, the honami. jitter (0..1) shifts a clump's phase a
+// little so the wave is not one sheet.
+vec3 grass_weather_wind(vec3 wp, float height, float omega0, float zeta, float jitter, float time) {
+	if (weather_map_rect.z <= 0.0 || weather_map_rect.w <= 0.0) {
+		return vec3(0.0);
+	}
+	float z0 = max(weather_wind_info.w, 1e-5);
+	vec2 m10 = textureLod(weather_wind_map, (wp.xz - weather_map_rect.xy) / weather_map_rect.zw, 0.0).rg;
+	vec4 sh = vec4(0.0, 0.0, 1.0, 0.0);
+	if (weather_shelter_rect.z > 0.0) {
+		vec2 su = (wp.xz - weather_shelter_rect.xy) / weather_shelter_rect.zw;
+		if (su.x >= 0.0 && su.y >= 0.0 && su.x <= 1.0 && su.y <= 1.0) {
+			sh = textureLod(weather_shelter_map, su, 0.0);
+		}
+	}
+	float z = max(height, 1.5 * z0);
+	float f = weather_shelter_factor(z, z0, sh);
+	float profile = weather_open_profile(z, z0);
+	vec2 m = m10 * (profile * f * weather_patch(wp.xz, z));
+	vec3 v = vec3(m.x, 0.0, m.y);
+	float speed = length(m10);
+	if (speed < 1e-3 || weather_wind_info.z <= 0.0) {
+		return v;
+	}
+	float sigma = weather_wind_info.z * speed * sqrt(f);
+	vec2 ea = weather_wind_info.xy;
+	vec2 ec = vec2(-ea.y, ea.x);
+	float a = dot(wp.xz, ea);
+	float cr = dot(wp.xz, ec);
+	vec3 g = vec3(0.0);
+	for (int i = 0; i < WEATHER_GUST_COUNT; i++) {
+		vec4 w = texelFetch(weather_gusts, ivec2(i, 0), 0);
+		float r = abs(w.x) * speed / omega0;
+		float ph = w.x * a + w.y * cr + w.w;
+		float c;
+		if (r < 0.25) {
+			// Well below resonance: gain within 7% of 1, lag under 3 degrees.
+			c = w.z * cos(ph);
+		} else if (r > 4.0) {
+			// Filtered out: gain under 1/15.
+			c = 0.0;
+		} else {
+			float re = 1.0 - r * r;
+			float im = 2.0 * zeta * r;
+			float mag = max(sqrt(re * re + im * im), 1e-4);
+			c = w.z * min(1.0 / mag, 1.0) / mag * (cos(ph) * re + sin(ph) * im);
+		}
+		if (i < WEATHER_GUSTS_PER_AXIS) {
+			g.x += c;
+		} else if (i < 2 * WEATHER_GUSTS_PER_AXIS) {
+			g.y += c;
+		} else {
+			g.z += c;
+		}
+	}
+	vec2 along = m10 / speed;
+	vec2 across = vec2(-along.y, along.x);
+	// Resonance: Kaimal along-wind density at f0 (integral length 8.1 x 7 m at 10 m, as the gust
+	// waves), over the oscillator's band pi f0 / (4 zeta), as two waves at omega0 (1 -+ zeta) for
+	// the beating envelope, both travelling at the canopy's convection speed (1.8 U(h), Raupach
+	// et al. 1996).
+	float f0 = omega0 / 6.2832;
+	float lu = 56.7 / speed;
+	float density = sigma * sigma * 4.0 * lu / pow(1.0 + 6.0 * f0 * lu, 5.0 / 3.0);
+	float amp = sqrt(density * 3.1416 * f0 / (4.0 * zeta));
+	float uc = max(1.8 * profile * f * speed, 0.3);
+	float wa = omega0 * (1.0 - zeta);
+	float wb = omega0 * (1.0 + zeta);
+	float along_pos = dot(wp.xz, along);
+	float res = amp * (cos(wa * (time - along_pos / uc) + jitter * 1.2) + cos(wb * (time - along_pos / uc) + 2.1 + jitter * 1.2));
+	vec2 hz = (along * g.x + across * g.y) * sigma + along * res;
+	return v + vec3(hz.x, g.z * sigma, hz.y);
+}
+
 // The weather map's wind; without one, fallback_wind with gusts rolling downwind.
-vec3 grass_wind(vec3 wp, float h, float time) {
+vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
 	if (weather_map_rect.z > 0.0) {
-		return weather_wind(wp, h);
+		return grass_weather_wind(wp, h, omega0, 0.1, jitter, time);
 	}
 	float s = length(fallback_wind);
 	if (s < 1e-4) {
@@ -255,7 +433,9 @@ void vertex() {
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
 
 	// Wind at two thirds of the blade, in the blade's frame; flutter on top.
-	vec3 wind_l = to_local * grass_wind(base_w, max(h * 0.66, 0.05), TIME);
+	// A blade's own frequency: about 2 Hz at 0.4 m, slower when taller and softer (de Langre 2008).
+	float omega0 = 6.2832 * clamp(2.0 * sqrt(0.4 / max(h, 0.05)), 1.0, 4.0);
+	vec3 wind_l = to_local * grass_wind(base_w, max(h * 0.66, 0.05), TIME, omega0, rnd);
 	vec2 wl = wind_l.xz;
 	float ws = length(wl);
 	float flutter = sin(TIME * (2.5 + 2.0 * rnd) + rnd * 6.2832 + dot(base_w.xz, vec2(0.7, 0.5))) * 0.25 * clamp(ws * 0.15, 0.0, 1.0);
@@ -285,8 +465,10 @@ void vertex() {
 	float taper = 1.0 - 0.9 * t * t;
 	p += across * side * w * taper;
 	// Seen edge-on a blade is a line: widen it across the view instead (Ghost of Tsushima's
-	// view-space thickening), so the field stays full from every side.
-	vec3 cam_l = to_local * (CAMERA_POSITION_WORLD - base_w);
+	// view-space thickening), so the field stays full from every side. Always towards the main
+	// camera: in a shadow pass the light's camera would widen every blade across the sun and the
+	// sward would cast about twice the shadow it has.
+	vec3 cam_l = to_local * (MAIN_CAM_INV_VIEW_MATRIX[3].xyz - base_w);
 	vec2 to_cam = cam_l.xz - p.xz;
 	float cam_d = length(to_cam);
 	if (cam_d > 1e-3) {
@@ -320,6 +502,7 @@ void vertex() {
 }
 
 uniform float dryness;
+uniform float sward_lai = 1.0;
 
 void fragment() {
 	float t = smoothstep(0.0, 1.0, v_t);
@@ -337,8 +520,6 @@ void fragment() {
 	float rib = 1.0 - smoothstep(0.0, 0.12 + fw, x);
 	float veins = 0.5 + 0.5 * cos(x * 6.2832 * 3.5);
 	c *= 1.0 + detail * (0.18 * rib - 0.07 * veins * (1.0 - rib) - 0.12 * x * x);
-	// Darker towards the root, where the field shades itself.
-	c *= mix(0.6, 1.0, t);
 	c = vegetation_light_tint(c, v_light);
 	// Wet blades (Lagarde 2013, low porosity): a little darker and glossier.
 	float wet_factor = mix(1.0, 0.2, 0.25);
@@ -346,7 +527,15 @@ void fragment() {
 	ROUGHNESS = 0.55 * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet);
 	SPECULAR = 0.35;
 	BACKLIGHT = ALBEDO * 0.7;
+	// Sky light inside the sward (Monsi and Saeki 1953): diffuse light falls off as
+	// exp(-k L) with the leaf area L above, k about 0.8 for upright blades, and light the blades
+	// scatter on slows that to k sqrt(1 - scattering) (Goudriaan 1977). In AO, so only the
+	// raster's ambient takes it: its shadow maps already darken the sun there, and the path
+	// tracer sees the blades themselves (it used to take this darkening in the albedo too).
+	float scatter = clamp(dot(ALBEDO, vec3(0.3, 0.59, 0.11)) * 1.7, 0.0, 0.95);
+	AO = exp(-0.8 * sqrt(1.0 - scatter) * sward_lai * (1.0 - v_t));
 }
+
 )";
 	Ref<Shader> shader;
 	shader.instantiate();
@@ -363,6 +552,8 @@ void fragment() {
 	material->set_shader_parameter("trample_rect", Vector4());
 	material->set_shader_parameter("view_facing", view_facing);
 	material->set_shader_parameter("fade_band", fade_band);
+	// One-sided leaf area per ground area: blades per m2 x mean height x width x 0.7 (the taper).
+	material->set_shader_parameter("sward_lai", density * 0.5f * (blade_height.x + blade_height.y) * blade_width * 0.7f);
 	if (blade_mesh.is_valid()) {
 		blade_mesh->surface_set_material(0, material);
 	}
@@ -402,10 +593,14 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			light_grid[gz * lg + gx] = (1.0f - sh) * (p_map ? VegetationLight::exposure(p_map, sun_mean, q.x, q.z) : 1.0f);
 		}
 	}
-	LocalVector<Transform3D> xforms;
-	LocalVector<Color> customs;
 	// Wider blades where fewer remain, so the field keeps its coverage at a distance.
 	const float width = blade_width / Math::sqrt(keep);
+	if (gpu_fill && is_gpu_fill_available()) {
+		_build_tile_gpu(p_tile, p_lod, p_map, r.ptr(), canopy, light_grid, lg, width);
+		return;
+	}
+	LocalVector<Transform3D> xforms;
+	LocalVector<Color> customs;
 	for (int iz = iz0; iz < iz1; iz++) {
 		for (int ix = ix0; ix < ix1; ix++) {
 			const uint32_t hb = cell_hash(ix, iz, 0x9E3779B9u);
@@ -481,6 +676,174 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	tiles.insert(p_tile, tile);
 }
 
+// The tile's blades on the GPU (stage 3a). The CPU lists the candidate cells (those the rank keeps at
+// this level, in a fixed order), bakes the rules into a 0.5 m suitability grid and hands over the
+// light grid and the patch of map heights under the tile; the compute shader makes each blade from
+// the same hashes as the CPU loop and writes the records in place. Rejected candidates are written
+// as zero (degenerate) records.
+void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const VegetationField3D *p_canopy, const LocalVector<float> &p_light, int p_lg, float p_width) {
+	const float keep = 1.0f / float(1 << p_lod);
+	const float cell = 1.0f / Math::sqrt(MAX(density, 0.01f));
+	const float x0 = p_tile.x * tile_size;
+	const float z0 = p_tile.y * tile_size;
+	const int ix0 = int(Math::floor(x0 / cell));
+	const int iz0 = int(Math::floor(z0 / cell));
+	const int ix1 = int(Math::floor((x0 + tile_size) / cell));
+	const int iz1 = int(Math::floor((z0 + tile_size) / cell));
+	const float ground_y = get_global_position().y;
+	const Transform3D to_local = get_global_transform().affine_inverse();
+
+	LocalVector<float> cand;
+	for (int iz = iz0; iz < iz1; iz++) {
+		for (int ix = ix0; ix < ix1; ix++) {
+			const float rank = blue_rank(ix, iz);
+			if (rank >= keep) {
+				continue;
+			}
+			union {
+				int32_t i;
+				float f;
+			} bx, bz;
+			bx.i = ix;
+			bz.i = iz;
+			cand.push_back(bx.f);
+			cand.push_back(bz.f);
+			cand.push_back(rank);
+		}
+	}
+	const int count = int(cand.size() / 3);
+	Tile tile;
+	tile.lod = p_lod;
+	if (count == 0) {
+		tiles.insert(p_tile, tile);
+		return;
+	}
+
+	// Rules baked on a 0.5 m grid (the CPU path evaluates them per blade).
+	const int sg_n = int(Math::ceil(tile_size / FILL_SUIT_STEP)) + 1;
+	LocalVector<float> suit;
+	// Heights: the map texels under the tile, so the shader samples exactly as get_height_at() does.
+	int hp_x0 = 0, hp_z0 = 0, hp_w = 1, hp_h = 1;
+	LocalVector<float> heights;
+	Rect2 map_rect;
+	int map_n = 1;
+	float y_min = ground_y, y_max = ground_y;
+	if (p_map) {
+		suit.resize(sg_n * sg_n);
+		for (int j = 0; j < sg_n; j++) {
+			for (int i = 0; i < sg_n; i++) {
+				const Vector3 q(x0 + i * FILL_SUIT_STEP, ground_y, z0 + j * FILL_SUIT_STEP);
+				float v = p_rules->get_suitability(p_map, q);
+				if (p_canopy && v > 0.0f) {
+					v *= p_rules->rule_weight(PlantSpecies::RULE_SHADE, p_canopy->get_stand_shade_at(q));
+				}
+				suit[j * sg_n + i] = v;
+			}
+		}
+		map_rect = p_map->get_map_rect();
+		if (height_image.is_null() || height_rect != map_rect) {
+			height_image = p_map->get_channel_image(TerrainDataMap3D::CHANNEL_HEIGHT);
+			height_rect = map_rect;
+		}
+		map_n = height_image.is_valid() ? height_image->get_width() : 0;
+		if (map_n > 0) {
+			const float mc = map_rect.size.x / map_n;
+			hp_x0 = CLAMP(int(Math::floor((x0 - map_rect.position.x) / mc - 0.5f)), 0, map_n - 1);
+			hp_z0 = CLAMP(int(Math::floor((z0 - map_rect.position.y) / mc - 0.5f)), 0, map_n - 1);
+			const int hp_x1 = CLAMP(int(Math::floor((x0 + tile_size - map_rect.position.x) / mc - 0.5f)) + 1, 0, map_n - 1);
+			const int hp_z1 = CLAMP(int(Math::floor((z0 + tile_size - map_rect.position.y) / mc - 0.5f)) + 1, 0, map_n - 1);
+			hp_w = hp_x1 - hp_x0 + 1;
+			hp_h = hp_z1 - hp_z0 + 1;
+			const float *hd = reinterpret_cast<const float *>(height_image->get_data().ptr());
+			heights.resize(hp_w * hp_h);
+			y_min = 1e30f;
+			y_max = -1e30f;
+			for (int j = 0; j < hp_h; j++) {
+				for (int i = 0; i < hp_w; i++) {
+					const float h = hd[(hp_z0 + j) * map_n + hp_x0 + i];
+					heights[j * hp_w + i] = h;
+					y_min = MIN(y_min, h);
+					y_max = MAX(y_max, h);
+				}
+			}
+		}
+	}
+	if (suit.is_empty()) {
+		suit.push_back(1.0f);
+	}
+	if (heights.is_empty()) {
+		heights.push_back(ground_y);
+	}
+
+	PackedFloat32Array in;
+	in.resize(FILL_HEADER);
+	float *h = in.ptrw();
+	for (int k = 0; k < FILL_HEADER; k++) {
+		h[k] = 0.0f;
+	}
+	h[0] = x0;
+	h[1] = z0;
+	h[2] = cell;
+	h[3] = keep;
+	h[4] = p_width;
+	h[5] = blade_height.x;
+	h[6] = blade_height.y;
+	h[7] = lean;
+	h[8] = clump_size;
+	h[9] = ground_y;
+	h[10] = (p_map && map_n > 0) ? 1.0f : 0.0f;
+	h[11] = FILL_SUIT_STEP;
+	h[12] = float(sg_n);
+	h[13] = float(p_lg);
+	h[14] = float(hp_x0);
+	h[15] = float(hp_z0);
+	h[16] = float(hp_w);
+	h[17] = float(hp_h);
+	h[18] = map_rect.position.x;
+	h[19] = map_rect.position.y;
+	h[20] = map_n > 0 ? map_rect.size.x / map_n : 1.0f;
+	h[21] = float(map_n);
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++) {
+			h[22 + r * 3 + c] = to_local.basis.rows[r][c];
+		}
+		h[31 + r] = to_local.origin[r];
+	}
+	h[34] = float(count);
+	const int off_cand = FILL_HEADER;
+	const int off_suit = off_cand + int(cand.size());
+	const int off_light = off_suit + int(suit.size());
+	const int off_height = off_light + int(p_light.size());
+	h[35] = float(off_cand);
+	h[36] = float(off_suit);
+	h[37] = float(off_light);
+	h[38] = float(off_height);
+	in.resize(off_height + int(heights.size()));
+	float *w = in.ptrw();
+	memcpy(w + off_cand, cand.ptr(), cand.size() * sizeof(float));
+	memcpy(w + off_suit, suit.ptr(), suit.size() * sizeof(float));
+	memcpy(w + off_light, p_light.ptr(), p_light.size() * sizeof(float));
+	memcpy(w + off_height, heights.ptr(), heights.size() * sizeof(float));
+
+	Ref<MultiMesh> mm;
+	mm.instantiate();
+	mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+	mm->set_use_custom_data(true);
+	mm->set_mesh(blade_mesh);
+	mm->set_instance_count(count);
+	// The records never reach the CPU before the first frame: give culling the tile's box.
+	const float top = blade_height.y * 1.5f + 0.2f;
+	const AABB world_box(Vector3(x0 - 1.0f, y_min - 0.2f, z0 - 1.0f), Vector3(tile_size + 2.0f, y_max - y_min + top + 0.2f, tile_size + 2.0f));
+	mm->set_custom_aabb(to_local.xform(world_box));
+	RenderingServer::get_singleton()->call_on_render_thread(callable_mp_static(&grass_fill_rt).bind(mm->get_rid(), in, count));
+	tile.mmi = memnew(MultiMeshInstance3D);
+	tile.mmi->set_multimesh(mm);
+	tile.mmi->set_name(vformat("Grass_%d_%d", p_tile.x, p_tile.y));
+	add_child(tile.mmi, false, INTERNAL_MODE_BACK);
+	blade_count += count;
+	tiles.insert(p_tile, tile);
+}
+
 void GrassField3D::_free_tile(Tile &p_tile) {
 	if (p_tile.mmi) {
 		Ref<MultiMesh> mm = p_tile.mmi->get_multimesh();
@@ -522,14 +885,236 @@ void GrassField3D::_update_fade(const Vector2 &p_center) {
 	}
 }
 
-// The blades seen from a distance (linear): mostly the upper blade, some dry, darkened by the shade
-// the sward casts on itself (matched to the field's mean colour in the grass bench).
+// The blades seen from a distance (linear), as the far ground's albedo: measured from a render of
+// the blades once that has run (_far_bake_start()), the hand-matched blend before it and without a
+// renderer.
 Color GrassField3D::get_far_color() const {
+	return far_baked ? far_color_baked : _far_color_hand();
+}
+
+// Mostly the upper blade, some dry, darkened by the shade the sward casts on itself (matched to the
+// field's mean colour in the grass bench).
+Color GrassField3D::_far_color_hand() const {
 	const Color b = base_color.srgb_to_linear();
 	const Color t = tip_color.srgb_to_linear();
 	const Color d = dry_color.srgb_to_linear();
-	const Color far = b.lerp(t, 0.6f).lerp(d, dryness * 0.35f) * 0.32f;
+	const Color far = b.lerp(t, 0.65f).lerp(d, dryness * 0.35f) * 0.355f;
 	return Color(far.r, far.g, far.b, 1.0f);
+}
+
+// Far colour bake. Impostor baking (Brucks 2018) for a whole sward: what the raster draws, so shape,
+// lean, colour along the blade, shadows inside the sward and the ground between blades all count.
+// A canopy-reflectance model tracing the blades on the CPU (Raytran, Govaerts and Verstraete 1998)
+// would have to copy the raster's lighting and drift when the blade shader changes.
+namespace {
+constexpr float FAR_BAKE_VIEW_DEG = 7.0f; // The view a far meadow is seen in (eye 1.7 m, 14 m out).
+constexpr float FAR_BAKE_SUN_DEG = 30.0f;
+constexpr float FAR_BAKE_ORTHO = 2.0f; // Metres across the image.
+constexpr float FAR_BAKE_CAM_DIST = 20.0f;
+constexpr int FAR_BAKE_SIZE = 96;
+constexpr int FAR_BAKE_AZIMUTHS = 4; // Sun behind, beside and facing the view: their mean.
+constexpr int FAR_BAKE_FRAMES = 3; // Frames each view renders before it is read (shadows, sky).
+} // namespace
+
+void GrassField3D::_queue_far_bake() {
+	far_bake_queued = true;
+	_far_bake_free(); // A bake under way is of the old look: start again.
+}
+
+void GrassField3D::_far_bake_free() {
+	if (far_bake_vp) {
+		far_bake_vp->queue_free();
+	}
+	far_bake_vp = nullptr;
+	far_bake_sun = nullptr;
+	far_bake_blades = nullptr;
+	far_bake_ground_mat.unref();
+	far_bake_state = -1;
+}
+
+void GrassField3D::_far_bake_start() {
+	far_bake_queued = false;
+	// The raster renderer only: headless and the compatibility renderer keep the hand-matched colour.
+	if (!is_inside_tree() || !RenderingServer::get_singleton()->get_rendering_device()) {
+		return;
+	}
+	_ensure_resources();
+	const float e = Math::deg_to_rad(FAR_BAKE_VIEW_DEG);
+	const float hmax = MAX(blade_height.x, blade_height.y) * 1.1f;
+	// The patch every view ray crosses from the top of the sward to the ground (view along -z).
+	const float half_w = FAR_BAKE_ORTHO * 0.5f + hmax + 0.5f;
+	const float z_lo = -FAR_BAKE_ORTHO * 0.5f / Math::sin(e) - hmax - 0.5f;
+	const float z_hi = FAR_BAKE_ORTHO * 0.5f / Math::sin(e) + hmax / Math::tan(e) + hmax + 0.5f;
+
+	// The blades as _build_tile() makes them, on open flat ground (light 1), every one kept.
+	const float cell = 1.0f / Math::sqrt(MAX(density, 0.01f));
+	const int ix0 = int(Math::floor(-half_w / cell));
+	const int ix1 = int(Math::ceil(half_w / cell));
+	const int iz0 = int(Math::floor(z_lo / cell));
+	const int iz1 = int(Math::ceil(z_hi / cell));
+	LocalVector<Transform3D> xforms;
+	LocalVector<Color> customs;
+	for (int iz = iz0; iz < iz1; iz++) {
+		for (int ix = ix0; ix < ix1; ix++) {
+			const uint32_t hb = cell_hash(ix, iz, 0x9E3779B9u);
+			const float rank = blue_rank(ix, iz);
+			const uint32_t hj = cell_hash(ix, iz, 0x85EBCA6Bu);
+			const float x = (ix + unit(hj, 0)) * cell;
+			const float z = (iz + unit(hj, 8)) * cell;
+			const int cx = int(Math::floor(x / clump_size));
+			const int cz = int(Math::floor(z / clump_size));
+			const uint32_t hc = cell_hash(cx, cz, 0xC2B2AE35u);
+			const float rnd = unit(hb, 16);
+			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16));
+			const float yaw = unit(hc, 8) * Math::TAU + (unit(hj, 24) - 0.5f) * 1.6f;
+			xforms.push_back(Transform3D(Basis(Vector3(0, 1, 0), yaw), Vector3(x, 0.0f, z)));
+			const float order = Math::floor(Math::fmod(rank * 8.0f, 1.0f) * 255.0f);
+			const float blade_lean = MIN(lean * (0.4f + 1.2f * unit(hc, 16)), 3.99f);
+			customs.push_back(Color(height, blade_width, VegetationLight::pack(1.0f) * 4.0f + blade_lean, order + 0.999f * Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
+		}
+	}
+	Ref<MultiMesh> mm;
+	mm.instantiate();
+	mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+	mm->set_use_custom_data(true);
+	mm->set_mesh(blade_mesh);
+	mm->set_instance_count(xforms.size());
+	for (uint32_t i = 0; i < xforms.size(); i++) {
+		mm->set_instance_transform(i, xforms[i]);
+		mm->set_instance_custom_data(i, customs[i]);
+	}
+	// The field's own material, without the outer band or trample.
+	Ref<ShaderMaterial> mat = material->duplicate();
+	mat->set_shader_parameter("fade_band", Vector4());
+	mat->set_shader_parameter("trample_rect", Vector4());
+
+	SubViewport *vp = memnew(SubViewport);
+	vp->set_name("FarColourBake");
+	vp->set_size(Size2i(FAR_BAKE_SIZE, FAR_BAKE_SIZE));
+	vp->set_use_own_world_3d(true);
+	vp->set_use_hdr_2d(true); // Linear and unclamped.
+	vp->set_update_mode(SubViewport::UPDATE_ALWAYS);
+	add_child(vp, false, INTERNAL_MODE_BACK);
+
+	Ref<Environment> env;
+	env.instantiate();
+	Ref<Sky> sky;
+	sky.instantiate();
+	sky->set_material(memnew(ProceduralSkyMaterial));
+	sky->set_process_mode(Sky::PROCESS_MODE_QUALITY);
+	env->set_background(Environment::BG_SKY);
+	env->set_sky(sky);
+	env->set_ambient_source(Environment::AMBIENT_SOURCE_SKY);
+	env->set_tonemapper(Environment::TONE_MAPPER_LINEAR);
+	WorldEnvironment *we = memnew(WorldEnvironment);
+	we->set_environment(env);
+	vp->add_child(we);
+
+	MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+	mmi->set_multimesh(mm);
+	mmi->set_material_override(mat);
+	vp->add_child(mmi);
+
+	far_bake_ground_mat.instantiate();
+	MeshInstance3D *ground = memnew(MeshInstance3D);
+	Ref<PlaneMesh> plane;
+	plane.instantiate();
+	plane->set_size(Vector2(2.0f * half_w + 4.0f, z_hi - z_lo + 4.0f));
+	plane->set_material(far_bake_ground_mat);
+	ground->set_mesh(plane);
+	ground->set_position(Vector3(0.0f, 0.0f, 0.5f * (z_lo + z_hi)));
+	vp->add_child(ground);
+
+	DirectionalLight3D *sun = memnew(DirectionalLight3D);
+	sun->set_shadow(true);
+	sun->set_shadow_mode(DirectionalLight3D::SHADOW_ORTHOGONAL);
+	sun->set_param(Light3D::PARAM_SHADOW_MAX_DISTANCE, FAR_BAKE_CAM_DIST + z_hi);
+	vp->add_child(sun);
+
+	Camera3D *cam = memnew(Camera3D);
+	const Vector3 target(0.0f, 0.5f * hmax, 0.0f);
+	const Vector3 dir(0.0f, -Math::sin(e), -Math::cos(e));
+	const Vector3 eye = target - dir * FAR_BAKE_CAM_DIST;
+	cam->set_transform(Transform3D(Basis::looking_at(dir), eye));
+	cam->set_orthogonal(FAR_BAKE_ORTHO, 0.5f, 2.0f * FAR_BAKE_CAM_DIST + z_hi);
+	vp->add_child(cam);
+	cam->set_current(true);
+
+	far_bake_vp = vp;
+	far_bake_sun = sun;
+	far_bake_blades = mmi;
+	far_bake_sum = Color(0, 0, 0, 0);
+	far_bake_state = 0;
+	far_bake_wait = 0;
+	_far_bake_step(); // Sets up the first view.
+}
+
+// One process frame of the bake. Views 0 .. FAR_BAKE_AZIMUTHS - 1: the sward with the sun turned
+// round the view; then the bare far ground's material (roughness 0.95, specular 0.1, as
+// grass_ground_specular() leaves it) in white, then in black. The far ground shows its albedo times
+// the white's diffuse light plus the black's sheen, so the albedo that matches the blades is
+// (blades - black) / (white - black): at the low angles a far meadow is seen at, the sheen is up to
+// half of what the blades send. Each view renders FAR_BAKE_FRAMES frames, then is read.
+void GrassField3D::_far_bake_step() {
+	if (far_bake_wait == 0) {
+		const bool bare = far_bake_state >= FAR_BAKE_AZIMUTHS;
+		const Color gt = ground_tint_enabled ? Color(ground_tint.r, ground_tint.g, ground_tint.b) : Color(0.11f, 0.12f, 0.06f);
+		far_bake_ground_mat->set_albedo(bare ? (far_bake_state == FAR_BAKE_AZIMUTHS ? Color(1, 1, 1) : Color(0, 0, 0)) : gt);
+		far_bake_ground_mat->set_roughness(0.95f);
+		far_bake_ground_mat->set_specular(0.1f);
+		far_bake_blades->set_visible(!bare);
+		far_bake_sun->set_rotation_degrees(Vector3(-FAR_BAKE_SUN_DEG, 360.0f / FAR_BAKE_AZIMUTHS * MIN(far_bake_state, FAR_BAKE_AZIMUTHS - 1), 0.0f));
+	}
+	if (++far_bake_wait <= FAR_BAKE_FRAMES + (far_bake_state == 0 ? 2 : 0)) {
+		return;
+	}
+	far_bake_wait = 0;
+	Ref<Image> img = far_bake_vp->get_texture()->get_image();
+	if (img.is_null() || img->is_empty()) {
+		_far_bake_free();
+		return;
+	}
+	if (img->get_format() == Image::FORMAT_RGBA8 || img->get_format() == Image::FORMAT_RGB8) {
+		img->srgb_to_linear(); // An sRGB target (no HDR 2D): back to linear.
+	}
+	Color sum(0, 0, 0, 0);
+	for (int y = 0; y < img->get_height(); y++) {
+		for (int x = 0; x < img->get_width(); x++) {
+			sum += img->get_pixel(x, y);
+		}
+	}
+	sum /= float(img->get_width() * img->get_height());
+	if (far_bake_state < FAR_BAKE_AZIMUTHS) {
+		far_bake_sum += sum / float(FAR_BAKE_AZIMUTHS);
+		far_bake_state++;
+		return;
+	}
+	if (far_bake_state == FAR_BAKE_AZIMUTHS) {
+		far_bake_white = sum;
+		far_bake_state++;
+		return;
+	}
+	_far_bake_free();
+	const Color diffuse = far_bake_white - sum;
+	if (diffuse.r <= 1e-4f || diffuse.g <= 1e-4f || diffuse.b <= 1e-4f) {
+		return;
+	}
+	// The sheen never takes more than three quarters of the blades' light (a dark sward seen very low).
+	Color far;
+	for (int c = 0; c < 3; c++) {
+		far[c] = MAX(far_bake_sum[c] - sum[c], 0.25f * far_bake_sum[c]) / diffuse[c];
+	}
+	far.a = 1.0f;
+	if (!Math::is_finite(far.r) || !Math::is_finite(far.g) || !Math::is_finite(far.b)) {
+		return;
+	}
+	far_color_baked = Color(CLAMP(far.r, 0.0f, 1.0f), CLAMP(far.g, 0.0f, 1.0f), CLAMP(far.b, 0.0f, 1.0f), 1.0f);
+	far_baked = true;
+	print_verbose(vformat("GrassField3D \"%s\": far colour %s (hand-matched %s).", get_name(), far_color_baked, _far_color_hand()));
+	if (fade_owner == this) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_far", Vector4(far_color_baked.r, far_color_baked.g, far_color_baked.b, 1.0f));
+	}
+	emit_signal(SNAME("far_color_changed"));
 }
 
 void GrassField3D::_update_tiles(const Vector3 &p_center) {
@@ -766,10 +1351,12 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 void GrassField3D::set_blade_segments(int p_segments) {
 	blade_segments = CLAMP(p_segments, 1, 8);
 	rebuild();
+	_queue_far_bake();
 }
 
 void GrassField3D::set_view_facing(float p_facing) {
 	view_facing = CLAMP(p_facing, 0.0f, 1.0f);
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("view_facing", view_facing);
 	}
@@ -778,11 +1365,13 @@ void GrassField3D::set_view_facing(float p_facing) {
 void GrassField3D::set_ground_tint(const Color &p_color) {
 	ground_tint = p_color;
 	ground_baked = false;
+	_queue_far_bake();
 }
 
 void GrassField3D::set_ground_tint_enabled(bool p_enabled) {
 	ground_tint_enabled = p_enabled;
 	ground_baked = false;
+	_queue_far_bake();
 	if (!p_enabled && is_inside_tree()) {
 		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_rect", Vector4());
 	}
@@ -1049,6 +1638,7 @@ void GrassField3D::_notification(int p_what) {
 		case NOTIFICATION_READY: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_process_internal(true);
+				_queue_far_bake();
 			}
 		} break;
 		case NOTIFICATION_PREDELETE: {
@@ -1065,6 +1655,11 @@ void GrassField3D::_notification(int p_what) {
 			}
 			if (trample_enabled && !trample.is_empty()) {
 				_trample_step(get_process_delta_time());
+			}
+			if (far_bake_vp) {
+				_far_bake_step();
+			} else if (far_bake_queued) {
+				_far_bake_start();
 			}
 		} break;
 	}
@@ -1102,18 +1697,23 @@ void GrassField3D::set_rules(const Ref<PlantSpecies> &p_rules) {
 	GRASS_SET_REBUILD(rules, p_rules)
 }
 void GrassField3D::set_density(float p_density) {
+	_queue_far_bake();
 	GRASS_SET_REBUILD(density, CLAMP(p_density, 0.1f, 1000.0f))
 }
 void GrassField3D::set_blade_height(const Vector2 &p_height) {
+	_queue_far_bake();
 	GRASS_SET_REBUILD(blade_height, Vector2(MAX(p_height.x, 0.01f), MAX(p_height.y, 0.01f)))
 }
 void GrassField3D::set_blade_width(float p_width) {
+	_queue_far_bake();
 	GRASS_SET_REBUILD(blade_width, MAX(p_width, 0.001f))
 }
 void GrassField3D::set_clump_size(float p_size) {
+	_queue_far_bake();
 	GRASS_SET_REBUILD(clump_size, MAX(p_size, 0.05f))
 }
 void GrassField3D::set_lean(float p_lean) {
+	_queue_far_bake();
 	GRASS_SET_REBUILD(lean, CLAMP(p_lean, 0.0f, 1.4f))
 }
 void GrassField3D::set_radius(float p_radius) {
@@ -1125,12 +1725,14 @@ void GrassField3D::set_tile_size(float p_size) {
 
 void GrassField3D::set_base_color(const Color &p_color) {
 	base_color = p_color;
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("base_color", base_color);
 	}
 }
 void GrassField3D::set_tip_color(const Color &p_color) {
 	tip_color = p_color;
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("tip_color", tip_color);
 	}
@@ -1138,6 +1740,7 @@ void GrassField3D::set_tip_color(const Color &p_color) {
 void GrassField3D::set_dry_color(const Color &p_color) {
 	dry_color = p_color;
 	ground_baked = false;
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("dry_color", dry_color);
 	}
@@ -1145,6 +1748,7 @@ void GrassField3D::set_dry_color(const Color &p_color) {
 void GrassField3D::set_color_variation(float p_amount) {
 	color_variation = CLAMP(p_amount, 0.0f, 1.0f);
 	ground_baked = false;
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("color_variation", color_variation);
 	}
@@ -1153,6 +1757,7 @@ void GrassField3D::set_color_variation(float p_amount) {
 void GrassField3D::set_dryness(float p_dryness) {
 	dryness = CLAMP(p_dryness, 0.0f, 1.0f);
 	ground_baked = false;
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("dryness", dryness);
 	}
@@ -1171,13 +1776,32 @@ void GrassField3D::set_wind_response(float p_response) {
 	}
 }
 
+void GrassField3D::set_gpu_fill(bool p_enabled) {
+	if (gpu_fill == p_enabled) {
+		return;
+	}
+	gpu_fill = p_enabled;
+	// The same blades either way: only the tiles are rebuilt, not the mesh or the material.
+	for (KeyValue<Vector2i, Tile> &kv : tiles) {
+		_free_tile(kv.value);
+	}
+	tiles.clear();
+	blade_count = 0;
+}
+
 void GrassField3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_gpu_fill", "enabled"), &GrassField3D::set_gpu_fill);
+	ClassDB::bind_method(D_METHOD("is_gpu_fill"), &GrassField3D::is_gpu_fill);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("is_gpu_fill_available"), &GrassField3D::is_gpu_fill_available);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gpu_fill"), "set_gpu_fill", "is_gpu_fill");
 #define GRASS_BIND(m_set, m_get, m_arg) \
 	ClassDB::bind_method(D_METHOD(#m_set, m_arg), &GrassField3D::m_set); \
 	ClassDB::bind_method(D_METHOD(#m_get), &GrassField3D::m_get);
 	GRASS_BIND(set_data_map, get_data_map, "path")
 	GRASS_BIND(set_rules, get_rules, "rules")
 	ClassDB::bind_method(D_METHOD("get_far_color"), &GrassField3D::get_far_color);
+	ClassDB::bind_method(D_METHOD("is_far_color_baked"), &GrassField3D::is_far_color_baked);
+	ADD_SIGNAL(MethodInfo("far_color_changed"));
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")
 	GRASS_BIND(set_density, get_density, "density")
 	GRASS_BIND(set_blade_height, get_blade_height, "height")

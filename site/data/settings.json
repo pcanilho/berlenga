@@ -271,6 +271,14 @@
    "about": "When enabled, setting `MultiMesh.buffer` keeps a CPU-side mirror of the instance transform data in sync with the GPU buffer."
   },
   {
+   "name": "rendering/pathtracing/linear_swept_spheres",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, on a device with linear swept spheres (Vulkan `VK_NV_ray_tracing_linear_swept_spheres`, hardware hair primitives) the path tracer traces strand hair (`render_mode hair_strands` on a mesh of two crossed strips per strand point, as PhysXHair3D draws it) as round tubes between the strand points, one primitive per segment instead of four triangles, and shades each fibre from where the ray meets it across its width.",
+   "page": "hair",
+   "title": "Hair"
+  },
+  {
    "name": "rendering/pathtracing/multimesh_merged_blas_max_triangles",
    "type": "int",
    "default": "65536",
@@ -853,10 +861,11 @@
    "name": "Contact waterfalls",
    "settings": [
     "PhysXWaterfalls3D",
-    "contact_falls"
+    "contact_falls",
+    "wet_margin"
    ],
    "note": "",
-   "what": "water that clings to steep rock, clear at the lip and white below the inception point, with spray off ledges.",
+   "what": "water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges.",
    "page": "water",
    "title": "Water",
    "topic": "Currents and rivers"
@@ -958,6 +967,17 @@
    "topic": "Strands"
   },
   {
+   "name": "Swept sphere strands",
+   "settings": [
+    "rendering/pathtracing/linear_swept_spheres"
+   ],
+   "note": "",
+   "what": "where the GPU traces swept spheres in hardware, strands are traced as round tubes, one primitive per segment, and shaded where the ray meets the fibre; other GPUs keep crossed strips. Not yet checked on supporting hardware.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
    "name": "Raster strands",
    "settings": [],
    "note": "TressFX coverage",
@@ -976,7 +996,7 @@
     "lod_strand_ratio"
    ],
    "note": "",
-   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand.",
+   "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand. Straight hair is drawn through fewer points with the same look (`simplify_tolerance`).",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"
@@ -1002,6 +1022,19 @@
    ],
    "note": "",
    "what": "strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
+   "name": "Strand-strand collision",
+   "settings": [
+    "strand_collision",
+    "strand_collision_radius",
+    "strand_collision_friction"
+   ],
+   "note": "",
+   "what": "guide strands no longer pass through each other, with friction.",
    "page": "hair",
    "title": "Hair",
    "topic": "Collision"
@@ -1164,6 +1197,17 @@
    "topic": "Rivers, coasts and lakes"
   },
   {
+   "name": "Meandering rivers",
+   "settings": [
+    "meander_age"
+   ],
+   "note": "",
+   "what": "bends grow and migrate across flat valley floors; cut-off loops leave oxbows that silt up, and the river water follows the new course.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
    "name": "Rivers fed by rain and snowmelt",
    "settings": [
     "climate_recipe",
@@ -1290,6 +1334,18 @@
    ],
    "note": "",
    "what": "rock, scree, soil, alluvium and sand from the generator's geology, height-blended, biplanar cliffs, erosion detail, wetness and snow.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Sky occlusion",
+   "settings": [
+    "TerrainGenerator3D.sky_occlusion",
+    "TerrainMaterial3D.sky_occlusion"
+   ],
+   "note": "",
+   "what": "raster ground is lit only by the sky its hills leave open, from a horizon bake and the live sky, matching path tracing at dusk.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
@@ -1467,7 +1523,18 @@
     "GrassField3D"
    ],
    "note": "",
-   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.",
+   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind (each blade answers gusts at its own frequency, about 2 Hz, and the sway rolls downwind as waves) and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
+   "name": "Grass on the GPU",
+   "settings": [
+    "GrassField3D.gpu_fill"
+   ],
+   "note": "",
+   "what": "grass tiles are filled in compute, about 40% less main-thread cost per tile.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -1476,7 +1543,7 @@
    "name": "Grass edge fade",
    "settings": [],
    "note": "always on",
-   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.",
+   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond (measured from a render of the blades, so any grass look matches), so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
@@ -1537,7 +1604,7 @@
     "VegetationField3D.forest_floor_enabled"
    ],
    "note": "",
-   "what": "herbs, mosses and seedlings by the stand above, and the ground under closed canopy turns to leaf, needle or moss litter.",
+   "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -1545,10 +1612,11 @@
   {
    "name": "Leaf drift",
    "settings": [
-    "PlantSpecies.litter_range"
+    "PlantSpecies.litter_range",
+    "VegetationField3D.litter_wind"
    ],
    "note": "",
-   "what": "fallen leaves drift past the crowns into edges and clearings.",
+   "what": "fallen leaves drift past the crowns into edges and clearings, farther downwind.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

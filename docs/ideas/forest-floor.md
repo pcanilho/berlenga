@@ -210,14 +210,29 @@ opacity, full under the crown and falling off as e^(-d/6 m) past its rim (most l
 within about one tree height of the stem, Ferrari and Sugita 1996), cut at 18 m; litter is
 1 - e^(-3 x deposit). Leaf litter and twigs in `make_floor` take `litter_range` (0.12 and 0.35 up)
 instead of a shade floor, so a beech edge spills leaves several metres into the meadow while
-twigs stay closer in. Not yet: skew downwind of the prevailing wind, and trapping in hollows
-and against logs.
+twigs stay closer in. Downwind lean: the tail's e-folding distance is 6 m x (1 + k cos θ), θ
+from the downwind direction, k = `litter_wind` length (from the weather map's wind, 0.05 per m/s,
+up to 0.8), so an edge facing downwind gets a longer drift and the windward edge a shorter one.
+Not yet: trapping in hollows and against logs.
+
+Built (5, seedlings): `make_floor` hands the stand's leaves to its seedlings too, so each seedling
+is one of the stand's trees by share, with true leaves in that tree's form at about two thirds of
+the adult size (shade leaves of young trees) and seed leaves as the genus has them: a broad fan
+pair for beech, a strap pair for maples and ash, none for oaks (hypogeal germination).
+
+Built (5, herbs): two broad-leaved herbs for the lighter floor (Ellenberg light values 4 to 6):
+common dog-violet (*Viola riviniana*: rosette of rounded heart-shaped leaves 2 to 4 cm, nodding
+blue-violet flowers) at shade 0.2 to 0.9, and herb Robert (*Geranium robertianum*: red straggling
+stems, leaves of three lobed leaflets, small pink flowers) at shade 0.1 to 0.75, in beech, oak,
+hedgerow and (violet only) northern hardwood floors (Stace 2019; Ellenberg 1996). Meadow rosettes
+(plantain, dandelion, clover, yarrow) were already placed in the sward by the grass layer.
 
 Checks: raster and path traced before/after at `--forest=in` (beech, oak, spruce) and the
 forest edge; counts per square metre against the figures above; triangles and placement cost.
 
 ## References
 
+- Stace, *New Flora of the British Isles*, 4th ed., 2019.
 - Ellenberg, *Vegetation Mitteleuropas mit den Alpen*, 5th ed., 1996; Ellenberg and Leuschner,
   6th ed., 2010.
 - Gilliam, "The ecological significance of the herbaceous layer in temperate forest

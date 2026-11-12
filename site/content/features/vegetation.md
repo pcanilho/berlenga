@@ -22,17 +22,18 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 ## Grass
 
-- **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.
+- **Grass** (`GrassField3D`): blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind (each blade answers gusts at its own frequency, about 2 Hz, and the sway rolls downwind as waves) and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced.
 
-  ![A grass carpet with undercoat, clover and flowers, raster and path traced](media/grass-field.jpg)
+  ![A dense meadow close up, raster and path traced](media/grass-field.jpg)
 
-  *Grass: a full carpet, raster and path traced.*
+  *Grass: the same blades in raster and path tracing; path tracing adds the light bounced between them.*
 
   ![Grass bending as gusts travel downwind, raster](media/grass-wind.gif)
 
   *Grass in wind: gusts sweep across the field downwind.*
 
-- **Grass edge fade** (always on): blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.
+- **Grass on the GPU** (`GrassField3D.gpu_fill`, on by default): grass tiles are filled in compute, about 40% less main-thread cost per tile.
+- **Grass edge fade** (always on): blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond (measured from a render of the blades, so any grass look matches), so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.
 
   ![Grass seen from above its radius: a hard edge before, a fade after](media/grass-outer-band.jpg)
 
@@ -58,14 +59,14 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 ## Plants
 
-- **Plant generator** (`PlantGenerator`, 33 presets): meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.
+- **Plant generator** (`PlantGenerator`, 35 presets): meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.
 
   ![Generated dandelions and plantains, three seeds each](media/plant-generator.jpg)
 
   *Plant generator: three seeds each of dandelion and plantain.*
 
-- **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above, and the ground under closed canopy turns to leaf, needle or moss litter.
-- **Leaf drift** (`PlantSpecies.litter_range`): fallen leaves drift past the crowns into edges and clearings.
+- **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.
+- **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`): fallen leaves drift past the crowns into edges and clearings, farther downwind.
 - **Wetland plants** (`PlantSpecies.floating`, `water_depth_range`): reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.
 
   ![A swamp with reeds, bulrushes and water lilies, raster and path traced](media/wetland-plants.jpg)

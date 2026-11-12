@@ -63,6 +63,9 @@ public:
 	bool history = false; // buf_last holds last frame's output
 	RID buf_tris, buf_sdf; // the collision body's triangles and its distance field
 	RID buf_vol, buf_vol_rest; // the hair volume grid (density, momentum) and the groom's own density
+	RID buf_render_points; // per strand the points drawn: (first, count), then the indices
+	RID buf_coll_cells, buf_coll_delta, buf_point_strand; // strand-strand collision: spatial hash, corrections, each point's strand
+	int coll_buckets = 0;
 	int vol_cells = 0; // a side, 0: no volume grid
 	int tris_capacity = 0; // triangles buf_tris holds
 	RID uniform_set;
@@ -76,7 +79,7 @@ public:
 	bool needs_reset = true;
 
 	void rt_compile(Ref<HairStrandSolverGPU> p_self);
-	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points, PackedFloat32Array p_vol_rest, int p_vol_cells);
+	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points, PackedInt32Array p_render_points, PackedFloat32Array p_vol_rest, int p_vol_cells);
 	void rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArray p_params, int p_substeps, PackedFloat32Array p_tris);
 	void rt_make_uniform_set();
 	void rt_reset(Ref<HairStrandSolverGPU> p_self);
@@ -126,6 +129,8 @@ public:
 		bool volume_enabled = true; // hair-hair interaction through a density grid (Petrovic 2005)
 		float volume_friction = 0.2f; // pull toward the neighbours' mean velocity, per 1/60 s
 		float volume_stiffness = 1.0f; // push out of hair packed denser than the groom
+		float collision_radius = 0.0f; // strand-strand collision between guides: half the distance kept (m); 0: off
+		float collision_friction = 0.3f; // share of the sliding between touching guides taken off
 		// Deep opacity maps (Yuksel and Keyser 2008), one per light, up to DOM_SLOTS; none: off.
 		struct DeepShadowLight {
 			Vector3 center; // world, the hair's bounding sphere
@@ -146,7 +151,9 @@ public:
 	// p_slot_points > 0: the output texture holds the strands sorted far to near from the camera
 	// (for blending), p_slot_points texels each (padded past a strand's end, w = -1; otherwise w is
 	// the share of the strand's points). 0: one texel per point, in groom order.
-	void build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow, int p_slot_points = 0);
+	// p_render_points (sorted output only): per strand (first, count) into the list that follows
+	// them, the strand's points drawn (local indices, root to tip); empty: every point.
+	void build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_strands, const PackedFloat32Array &p_follow, int p_slot_points = 0, const PackedInt32Array &p_render_points = PackedInt32Array());
 	// p_xform: groom space -> world this frame.
 	void step(const Transform3D &p_xform, double p_delta, int p_substeps, const Settings &p_settings);
 	void reset();

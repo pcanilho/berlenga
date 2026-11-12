@@ -164,6 +164,13 @@ HitData compute_hit_data() {
 
 		h.is_front_face = rt_triangle_front_facing(geom);
 		h.geometry_normal = rt_side_checked_normal(geom, h.geometry_normal, h.is_front_face);
+#ifdef RT_LSS
+		// A swept sphere: the round fibre's own normal, always met from outside.
+		if (rt_lss_hit && dot(rt_lss_offset, rt_lss_offset) > 0.0) {
+			h.geometry_normal = normalize(rt_lss_offset);
+			h.is_front_face = true;
+		}
+#endif
 	}
 
 	h.hit_pos = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
@@ -273,7 +280,7 @@ vec3 rt_hit_prev_world_pos(vec3 hit_pos) {
 	}
 #endif
 #ifdef RT_HIT_ATTRIBS_DECLARED
-	prev_obj_pos = rt_prev_triangle_object_pos(geom, gl_PrimitiveID, attribs, prev_obj_pos);
+	prev_obj_pos = rt_prev_triangle_object_pos(geom, RT_HIT_PRIMITIVE_ID, attribs, prev_obj_pos);
 #endif
 
 	return rt_prev_world_pos(geom_idx, prev_obj_pos, mat4(gl_ObjectToWorldEXT));
@@ -487,7 +494,7 @@ vec3 debug_directional_shadow_blocker(vec3 p_geometry_normal, uint p_receiver_sh
 		if (transparent && (mat_flags & (RT_MAT_FLAG_NO_RAY_QUERY_ALPHA | RT_MAT_FLAG_INSTANCE_FADE)) == RT_MAT_FLAG_NO_RAY_QUERY_ALPHA) {
 			continue;
 		}
-		vec4 surface = ray_query_surface(geometry_idx, rayQueryGetIntersectionPrimitiveIndexEXT(rq, false), rayQueryGetIntersectionBarycentricsEXT(rq, false), 0.0);
+		vec4 surface = ray_query_surface(geometry_idx, RT_RQ_PRIMITIVE(rq, false), RT_RQ_BARYCENTRICS(rq, false), 0.0);
 		if (transparent) {
 			// Expected value of ray_query_shadow_transmittance's stochastic coverage.
 			transmittance *= (1.0 - surface.a) * mix(vec3(1.0), surface.rgb, surface.a);
@@ -1045,7 +1052,7 @@ vec3 shade_local_surface(HitData h, MaterialResult m, vec3 N, vec3 V, bool p_is_
 	}
 	if (p_bsdf_pdf > 0.0 && any(notEqual(m.emissive, vec3(0.0)))) {
 		// The emissive surfaces' light sample at the last vertex found this light too.
-		emission_weight *= rt_emissive_hit_weight(h.geometry_idx, gl_PrimitiveID, gl_WorldRayOriginEXT, h.hit_pos, p_bsdf_pdf);
+		emission_weight *= rt_emissive_hit_weight(h.geometry_idx, RT_HIT_PRIMITIVE_ID, gl_WorldRayOriginEXT, h.hit_pos, p_bsdf_pdf);
 	}
 	vec3 lit = m.emissive * emission_weight;
 	MaterialProperties material = material_properties_from_result(h, m, N, V);
@@ -1317,11 +1324,11 @@ vec2 dlss_rr_specular_motion_vector(vec3 p_hit_pos, vec3 p_prev_hit_pos, vec3 p_
 	// A/B: TerminateOnFirstHit stops at whichever hit traversal finds first, not the closest.
 	rayQueryInitializeEXT(spec_rq, tlas, RT_RAY_FLAGS | gl_RayFlagsTerminateOnFirstHitEXT, p_mask, spec_origin, 0.001, spec_dir, 10000.0);
 	while (rayQueryProceedEXT(spec_rq)) {
-		if (rayQueryGetIntersectionTypeEXT(spec_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT &&
+		if (RT_RQ_IS_TRIANGLE(spec_rq) &&
 				ray_query_alpha_test(
 						RT_RQ_GEOMETRY_IDX(spec_rq, false),
-						rayQueryGetIntersectionPrimitiveIndexEXT(spec_rq, false),
-						rayQueryGetIntersectionBarycentricsEXT(spec_rq, false))) {
+						RT_RQ_PRIMITIVE(spec_rq, false),
+						RT_RQ_BARYCENTRICS(spec_rq, false))) {
 			rayQueryConfirmIntersectionEXT(spec_rq);
 		}
 	}
@@ -1335,8 +1342,8 @@ vec2 dlss_rr_specular_motion_vector(vec3 p_hit_pos, vec3 p_prev_hit_pos, vec3 p_
 	vec3 reflected_pos = spec_origin + spec_dir * spec_t;
 	uint reflected_geom_idx = RT_RQ_GEOMETRY_IDX(spec_rq, true);
 	vec3 reflected_obj_pos = rt_prev_triangle_object_pos(geometries[reflected_geom_idx],
-			uint(rayQueryGetIntersectionPrimitiveIndexEXT(spec_rq, true)),
-			rayQueryGetIntersectionBarycentricsEXT(spec_rq, true),
+			uint(RT_RQ_PRIMITIVE(spec_rq, true)),
+			RT_RQ_BARYCENTRICS(spec_rq, true),
 			(mat4(rayQueryGetIntersectionWorldToObjectEXT(spec_rq, true)) * vec4(reflected_pos, 1.0)).xyz);
 	vec3 reflected_prev_pos = rt_prev_world_pos(reflected_geom_idx, reflected_obj_pos,
 			mat4(rayQueryGetIntersectionObjectToWorldEXT(spec_rq, true)));

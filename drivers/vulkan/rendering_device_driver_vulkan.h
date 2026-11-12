@@ -109,6 +109,7 @@ class RenderingDeviceDriverVulkan : public RenderingDeviceDriver {
 		uint32_t shader_group_base_alignment = 0;
 		bool validation = false;
 		bool invocation_reorder_support = false; // VK_EXT_ray_tracing_invocation_reorder (shader execution reordering).
+		bool linear_swept_spheres_support = false; // VK_NV_ray_tracing_linear_swept_spheres with VK_KHR_maintenance5.
 	};
 
 	struct DescriptorIndexingCapabilities {
@@ -740,6 +741,8 @@ public:
 		// Per geometry, chained into its triangles when it carries an opacity micromap.
 		TightLocalVector<VkAccelerationStructureTrianglesOpacityMicromapEXT> micromap_attachments;
 		TightLocalVector<VkMicromapUsageEXT> micromap_usages;
+		// Per geometry, chained into it when it is linear swept spheres.
+		TightLocalVector<VkAccelerationStructureGeometryLinearSweptSpheresDataNV> lss_data;
 	};
 
 	struct MicromapInfo {
@@ -747,6 +750,7 @@ public:
 		TightLocalVector<VkMicromapUsageEXT> usages;
 	};
 
+	void _rt_pipeline_allow_swept_spheres(VkRayTracingPipelineCreateInfoKHR &r_create_info, VkPipelineCreateFlags2CreateInfoKHR &r_flags2);
 	virtual AccelerationStructureID blas_create(VectorView<AccelerationStructureGeometry> p_geometries, BitField<AccelerationStructureFlagBits> p_flags) override final;
 	virtual AccelerationStructureID tlas_create(uint32_t p_max_instance_count, BitField<AccelerationStructureFlagBits> p_flags) override final;
 	virtual void acceleration_structure_instance_write(uint8_t *r_driver_instance, const AccelerationStructureInstance &p_instance) override final;

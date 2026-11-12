@@ -35,10 +35,9 @@
 #include "terrain_erosion_filter.h"
 #include "terrain_geology.h"
 #include "terrain_glacial.h"
-
-#include <algorithm>
 #include "terrain_hydraulic.h"
 #include "terrain_runoff.h"
+#include "terrain_sky.h"
 #include "terrain_stream_power.h"
 
 #include "core/config/engine.h"
@@ -48,11 +47,17 @@
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/path_3d.h"
+#include "scene/3d/world_environment.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/curve.h"
+#include "scene/resources/environment.h"
+#include "scene/resources/sky.h"
 #include "servers/rendering/rendering_server.h"
+
+#include <algorithm>
 
 static inline int _gen_floor_div(int p_a, int p_b) {
 	const int q = p_a / p_b;
@@ -890,6 +895,473 @@ bool TerrainGenerator3D::generate() {
 			h[i] = top[i];
 		}
 	};
+	// Meanders: on the flat alluvial floors the main rivers bend and migrate for meander_age years (Howard and Knutson
+	// 1984: bank migration from the local curvature plus an upstream-weighted sum of it, Omega = -1, Gamma = 2.5;
+	// Sylvester et al. 2019; Paris et al. 2023 for terrain), cut off their tightest loops (oxbows) and are carved
+	// into the ground along their last course; the oxbows stay as shallow abandoned channels.
+	last_meander_count = 0;
+	last_oxbow_count = 0;
+	LocalVector<uint8_t> meander_cell; // the cut channels: the fan backfill leaves them open
+	auto meander_pass = [&]() {
+		channels.clear();
+		chan_buckets.clear();
+		channel_of_cell.clear();
+		if (meander_age <= 0.0) {
+			return;
+		}
+		const double c = double(cell_size);
+		// Drainage as the solver routes it (D8 on its priority-flood filled surface), so the reaches found here are
+		// the courses the rivers take and the new channel replaces the old one exactly.
+		LocalVector<int32_t> rcv, order;
+		LocalVector<double> fill, acc;
+		rcv.resize(n);
+		order.resize(n);
+		fill.resize(n);
+		{
+			LocalVector<double> keep;
+			keep.resize(n);
+			memcpy(keep.ptr(), h.ptr(), sizeof(double) * n);
+			sp.route();
+			memcpy(fill.ptr(), h.ptr(), sizeof(double) * n);
+			memcpy(h.ptr(), keep.ptr(), sizeof(double) * n);
+			for (int i = 0; i < n; i++) {
+				rcv[i] = sp.b.receiver[i] == i ? -1 : sp.b.receiver[i];
+				order[i] = sp.b.stack[i];
+			}
+		}
+		// Drainage area on that tree, with the land beyond the map that drains in at the inflows.
+		acc.resize(n);
+		for (int i = 0; i < n; i++) {
+			acc[i] = c * c + (water_fine.is_empty() ? 0.0 : water_fine[i]);
+		}
+		for (int k = int(order.size()) - 1; k >= 0; k--) {
+			const int i = order[k];
+			if (rcv[i] >= 0) {
+				acc[rcv[i]] += acc[i];
+			}
+		}
+		auto hb = [&](double px, double pz) { // bilinear ground at grid-metre coordinates
+			const double fx = CLAMP(px / c, 0.0, double(nx - 1)), fz = CLAMP(pz / c, 0.0, double(ny - 1));
+			const int x0 = MIN(int(fx), nx - 2), z0 = MIN(int(fz), ny - 2);
+			const double tx = fx - x0, tz = fz - z0;
+			return (h[z0 * nx + x0] * (1 - tx) + h[z0 * nx + x0 + 1] * tx) * (1 - tz) + (h[(z0 + 1) * nx + x0] * (1 - tx) + h[(z0 + 1) * nx + x0 + 1] * tx) * tz;
+		};
+		const double min_area = 2.0e6; // m2: rivers, not brooks
+		LocalVector<uint8_t> used;
+		used.resize(n);
+		memset(used.ptr(), 0, n);
+		LocalVector<int32_t> up_count;
+		up_count.resize(n);
+		memset(up_count.ptr(), 0, sizeof(int32_t) * n);
+		for (int i = 0; i < n; i++) {
+			if (rcv[i] >= 0 && acc[i] >= min_area && acc[rcv[i]] >= min_area) {
+				up_count[rcv[i]]++;
+			}
+		}
+		uint32_t rng = uint32_t(seed) * 0x9E3779B1u + 0x51ED27u;
+		auto rnd = [&]() {
+			rng ^= rng << 13;
+			rng ^= rng >> 17;
+			rng ^= rng << 5;
+			return double(rng) / 4294967296.0;
+		};
+		struct Curve {
+			LocalVector<Vector2> pts;
+			double w = 10.0, z0 = 0.0, z1 = 0.0;
+			LocalVector<LocalVector<Vector2>> oxbows;
+			LocalVector<double> oxbow_t; // year each was cut off
+			LocalVector<int32_t> cells;
+		};
+		LocalVector<Curve> curves;
+		for (int head = 0; head < n; head++) {
+			if (acc[head] < min_area || up_count[head] != 0 || used[head] || double(river_width_coefficient) * Math::sqrt(acc[head] * 6.0e-8) < 0.5 * c) {
+				continue;
+			}
+			// Down the river; runs over the flat alluvial floor (gradient under Leopold and Wolman's (1957) meandering
+			// threshold S = 0.012 Q^-0.44, loose fill over half a metre, not standing water) of at least 12 cells become
+			// meander reaches. Gradient and fill are means over 9 cells along the river, so one D8 step does not cut a reach.
+			LocalVector<int32_t> path;
+			LocalVector<double> dist;
+			for (int i = head; i >= 0 && !used[i]; i = rcv[i]) {
+				used[i] = 1;
+				if (sp.b.outlet && sp.b.outlet[i]) {
+					break;
+				}
+				if (!path.is_empty()) {
+					const int p0 = path[path.size() - 1];
+					const int dx = i % nx - p0 % nx, dz = i / nx - p0 / nx;
+					dist.push_back(dist[dist.size() - 1] + (dx != 0 && dz != 0 ? Math::SQRT2 : 1.0) * c);
+				} else {
+					dist.push_back(0.0);
+				}
+				path.push_back(i);
+			}
+			const int pn = int(path.size());
+			LocalVector<uint8_t> flats;
+			flats.resize(pn);
+			for (int k = 0; k < pn; k++) {
+				const int k0 = MAX(k - 4, 0), k1 = MIN(k + 4, pn - 1);
+				double sm = 0.0;
+				for (int t = k0; t <= k1; t++) {
+					sm += sed[path[t]];
+				}
+				const int i = path[k];
+				const double qm = MAX(acc[i] * 6.0e-8, 0.01);
+				const double S = k1 > k0 ? (h[path[k0]] - h[path[k1]]) / (dist[k1] - dist[k0]) : 1.0;
+				flats[k] = S < 0.012 * Math::pow(qm, -0.44) && sm / (k1 - k0 + 1) > 0.1 && fill[i] - h[i] < 0.5 && h[i] > double(sea_level) + 1.5; // above the tidal reach
+			}
+			// A short steeper or thinner stretch (up to four cells) inside a floodplain does not end the reach.
+			for (int k = 0, last = -1; k < pn; k++) {
+				if (flats[k]) {
+					if (last >= 0 && k - last - 1 <= 4) {
+						for (int t = last + 1; t < k; t++) {
+							flats[t] = 1;
+						}
+					}
+					last = k;
+				}
+			}
+			LocalVector<int32_t> run;
+			for (int k = 0; k <= pn; k++) {
+				const bool flat = k < pn && flats[k];
+				if (flat) {
+					run.push_back(path[k]);
+				} else {
+					if (run.size() >= 12) {
+						Curve cv;
+						cv.cells = run;
+						const double a = acc[run[run.size() - 1]];
+						cv.w = MAX(double(river_width_coefficient) * Math::sqrt(a * 6.0e-8), 4.0);
+						for (uint32_t r = 0; r < run.size(); r++) {
+							cv.pts.push_back(Vector2((run[r] % nx) * c, (run[r] / nx) * c));
+						}
+						curves.push_back(cv);
+					}
+					run.clear();
+				}
+			}
+		}
+		for (Curve &cv : curves) {
+			const double w = cv.w;
+			const double ds = MAX(0.25 * w, 2.0);
+			auto resample = [&](LocalVector<Vector2> &p) {
+				LocalVector<Vector2> o;
+				o.push_back(p[0]);
+				double carry = 0.0;
+				for (uint32_t k = 1; k < p.size(); k++) {
+					const Vector2 a = p[k - 1], b = p[k];
+					const double L = a.distance_to(b);
+					double t = ds - carry;
+					while (t <= L) {
+						o.push_back(a + (b - a) * real_t(t / L));
+						t += ds;
+					}
+					carry = L - (t - ds);
+				}
+				if (o[o.size() - 1].distance_to(p[p.size() - 1]) > 0.25 * ds) {
+					o.push_back(p[p.size() - 1]);
+				} else {
+					o[o.size() - 1] = p[p.size() - 1];
+				}
+				p = o;
+			};
+			// Smooth the D8 path, then resample at half a width.
+			for (int pass = 0; pass < 4; pass++) {
+				LocalVector<Vector2> q;
+				q = cv.pts;
+				for (uint32_t k = 1; k + 1 < cv.pts.size(); k++) {
+					q[k] = (cv.pts[k - 1] + cv.pts[k] * 2.0f + cv.pts[k + 1]) * 0.25f;
+				}
+				cv.pts = q;
+			}
+			resample(cv.pts);
+			cv.z0 = hb(cv.pts[0].x, cv.pts[0].y);
+			cv.z1 = hb(cv.pts[cv.pts.size() - 1].x, cv.pts[cv.pts.size() - 1].y);
+			const double floor_top = MAX(cv.z0, cv.z1) + 3.0; // banks above this are the valley's walls (bedrock)
+			// A wander to start the bends: smooth noise along the river at about the meander wavelength (11 widths,
+			// Leopold and Wolman 1960), a width high. Any start grows into the meander wavelength; this one gets there
+			// sooner than a valley floor's straight run would.
+			{
+				double sacc = 0.0;
+				LocalVector<Vector2> q;
+				q = cv.pts;
+				for (uint32_t k = 2; k + 2 < cv.pts.size(); k++) {
+					sacc += cv.pts[k].distance_to(cv.pts[k - 1]);
+					const Vector2 tg = (cv.pts[k + 1] - cv.pts[k - 1]).normalized();
+					const double off = w * TerrainErosionFilter::fbm(uint32_t(seed) ^ 0x68E31DA4u, sacc, double(curves.size()) * 977.0, 11.0 * w, 2);
+					q[k] += Vector2(-tg.y, tg.x) * real_t(off * MIN(1.0, MIN(double(k), double(cv.pts.size() - 1 - k)) / 6.0));
+				}
+				cv.pts = q;
+				resample(cv.pts);
+			}
+			// m/yr of bank migration per unit dimensionless curvature: banks move about 2% of the width a year at R1 0.5,
+			// the median of measured rates (Hooke 2003; Constantine et al. 2014). meanderpy's 0.3 w/yr is for big rivers in
+			// fast-forward.
+			const double kl = 0.04 * w;
+			const double alpha = 2.0 * 0.02 / (w / 33.0); // 2 Cf / depth, meanderpy's Cf 0.02 and width/depth 33 (Sylvester et al. 2019)
+			double t = 0.0;
+			int guard = 0;
+			while (t < meander_age && guard++ < 200000 && cv.pts.size() > 6) {
+				const int m = int(cv.pts.size());
+				LocalVector<double> r0, r1;
+				LocalVector<Vector2> nrm;
+				r0.resize(m);
+				r1.resize(m);
+				nrm.resize(m);
+				for (int k = 0; k < m; k++) {
+					const Vector2 a = cv.pts[MAX(k - 1, 0)], b = cv.pts[k], e = cv.pts[MIN(k + 1, m - 1)];
+					const Vector2 tg = (e - a);
+					const double L = MAX(double(tg.length()), 1e-6);
+					nrm[k] = Vector2(-tg.y, tg.x) / real_t(L);
+					// Signed curvature from the turning angle over the two segments.
+					const Vector2 d1 = b - a, d2 = e - b;
+					const double cr = double(d1.x) * d2.y - double(d1.y) * d2.x;
+					const double l1 = MAX(double(d1.length()), 1e-6), l2 = MAX(double(d2.length()), 1e-6);
+					const double ang = Math::atan2(cr, double(d1.dot(d2)));
+					r0[k] = (k == 0 || k == m - 1) ? 0.0 : ang / (0.5 * (l1 + l2)) * w;
+					(void)l1;
+				}
+				// Curvature smoothed over a few points (two 1-2-1 passes), so the resampling's point-scale kinks do not
+				// grow into loops of their own.
+				for (int pass = 0; pass < 2; pass++) {
+					LocalVector<double> sm;
+					sm = r0;
+					for (int k = 1; k + 1 < m; k++) {
+						sm[k] = 0.25 * (r0[k - 1] + 2.0 * r0[k] + r0[k + 1]);
+					}
+					r0 = sm;
+				}
+				for (int k = 0; k < m; k++) {
+					double sum = 0.0, wsum = 0.0, xi = 0.0;
+					for (int q = k; q >= 0 && xi < 6.0 / alpha; q--) {
+						const double g = Math::exp(-alpha * xi);
+						sum += r0[q] * g;
+						wsum += g;
+						if (q > 0) {
+							xi += cv.pts[q].distance_to(cv.pts[q - 1]);
+						}
+					}
+					r1[k] = -1.0 * r0[k] + 2.5 * (wsum > 0.0 ? sum / wsum : 0.0);
+				}
+				// The reach's ends hold (they meet the river's fixed course above and below): migration fades to nothing
+				// over ten widths at each end, so the belt does not drift off and leave a straight run to a pinned end.
+				LocalVector<double> hold;
+				hold.resize(m);
+				{
+					double run = 0.0, len = 0.0;
+					for (int k = 1; k < m; k++) {
+						len += cv.pts[k].distance_to(cv.pts[k - 1]);
+					}
+					for (int k = 0; k < m; k++) {
+						if (k > 0) {
+							run += cv.pts[k].distance_to(cv.pts[k - 1]);
+						}
+						const double f = CLAMP(MIN(run, len - run) / (10.0 * w), 0.0, 1.0);
+						hold[k] = f * f * (3.0 - 2.0 * f);
+					}
+				}
+				for (int k = 0; k < m; k++) {
+					r1[k] *= hold[k];
+				}
+				double vmax = 1e-9;
+				for (int k = 2; k < m - 2; k++) {
+					vmax = MAX(vmax, Math::abs(kl * r1[k]));
+				}
+				const double dt = MIN(meander_age - t, 0.25 * ds / vmax);
+				for (int k = 2; k < m - 2; k++) {
+					// Toward the outer bank: a bend turning left (positive curvature) moves right, against the left normal.
+					// Banks of uneven strength (clay plugs, old fills: Motta et al. 2012) keep bending straight reaches.
+					const double erod = 1.0 + 0.6 * TerrainErosionFilter::fbm(uint32_t(seed) ^ 0x2545F491u, cv.pts[k].x, cv.pts[k].y, 4.0 * w, 2);
+					// ... and push it a little to one side or the other where they differ across the river, which seeds new
+					// bends on a straight run (the upstream end feeds none: bends travel down the reach).
+					// That pattern changes from flood to flood, faded between epochs of 300 years.
+					const double ep = t / 300.0;
+					const uint32_t e0 = uint32_t(ep);
+					const double ef = ep - double(e0);
+					const double n0 = TerrainErosionFilter::fbm((uint32_t(seed) ^ 0x1B873593u) + e0 * 0x9E3779B1u, cv.pts[k].x, cv.pts[k].y, 8.0 * w, 2);
+					const double n1 = TerrainErosionFilter::fbm((uint32_t(seed) ^ 0x1B873593u) + (e0 + 1) * 0x9E3779B1u, cv.pts[k].x, cv.pts[k].y, 8.0 * w, 2);
+					const double side = 0.3 * hold[k] * (n0 + (n1 - n0) * ef);
+					const Vector2 np = cv.pts[k] - nrm[k] * real_t(kl * (erod * r1[k] + side) * dt);
+					if (np.x < c || np.y < c || np.x > (nx - 2) * c || np.y > (ny - 2) * c) {
+						continue;
+					}
+					if (hb(np.x, np.y) > floor_top) {
+						continue; // the bank is the valley wall: rock, it does not move
+					}
+					cv.pts[k] = np;
+				}
+				t += dt;
+				resample(cv.pts);
+				// Cutoffs: a loop whose neck closes to under a width is cut through; the loop is left as an oxbow.
+				// Chute cutoffs too (Howard 1996): within three widths, a course over five times the straight way across
+				// is cut through the point bar in a flood.
+				const uint32_t gap = uint32_t(MAX(8.0, Math::ceil(4.0 * w / ds))); // a loop is at least four widths round
+				for (uint32_t a = 0; a < cv.pts.size() && (guard % 8) == 0; a++) {
+					for (uint32_t b = a + gap; b < cv.pts.size(); b++) {
+						const double dab = cv.pts[a].distance_to(cv.pts[b]);
+						if (dab < MAX(0.9 * w, ds) || (dab < 3.0 * w && double(b - a) * ds > 5.0 * dab)) {
+							LocalVector<Vector2> ox;
+							for (uint32_t q = a; q <= b; q++) {
+								ox.push_back(cv.pts[q]);
+							}
+							cv.oxbows.push_back(std::move(ox));
+							cv.oxbow_t.push_back(t);
+							LocalVector<Vector2> keep;
+							for (uint32_t q = 0; q <= a; q++) {
+								keep.push_back(cv.pts[q]);
+							}
+							for (uint32_t q = b; q < cv.pts.size(); q++) {
+								keep.push_back(cv.pts[q]);
+							}
+							cv.pts = keep;
+							// The new straight cut is not straight for long: the flood leaves it rough.
+							for (uint32_t q = a > 2 ? a - 2 : 2; q < MIN(a + 3, cv.pts.size() - 2); q++) {
+								const Vector2 tq = (cv.pts[q + 1] - cv.pts[q - 1]).normalized();
+								cv.pts[q] += Vector2(-tq.y, tq.x) * real_t((rnd() - 0.5) * 0.3 * w);
+							}
+							b = cv.pts.size();
+						}
+					}
+				}
+			}
+			// No bend tighter than 1.5 widths in radius (rivers' bends rarely are: Leopold and Wolman 1960, Hickin
+			// 1974): the discrete model can kink tighter, and the water's ribbon would fold over itself there.
+			for (int pass = 0; pass < 30; pass++) {
+				bool kinked = false;
+				LocalVector<Vector2> q;
+				q = cv.pts;
+				for (uint32_t k = 1; k + 1 < cv.pts.size(); k++) {
+					const Vector2 d1 = cv.pts[k] - cv.pts[k - 1], d2 = cv.pts[k + 1] - cv.pts[k];
+					const double ang = Math::abs(Math::atan2(double(d1.x) * d2.y - double(d1.y) * d2.x, double(d1.dot(d2))));
+					const double L = 0.5 * double(d1.length() + d2.length());
+					if (ang > L / (1.5 * w)) {
+						q[k] = (cv.pts[k - 1] + cv.pts[k + 1]) * 0.5f;
+						kinked = true;
+					}
+				}
+				cv.pts = q;
+				if (!kinked) {
+					break;
+				}
+				resample(cv.pts);
+			}
+			last_meander_count++;
+		}
+		// Carve: the floodplain is levelled back over the old straight course, then the channel is cut along the new
+		// one (depth a twelfth of the width, at least a metre, parabolic across), its bed falling evenly from the
+		// reach's top to its end; oxbows at half that depth.
+		meander_cell.resize(n);
+		memset(meander_cell.ptr(), 0, n);
+		channel_of_cell.resize(n);
+		for (int i = 0; i < n; i++) {
+			channel_of_cell[i] = -1;
+		}
+		const Vector2 world0 = result_rect.position;
+		for (Curve &cv : curves) {
+			const double w = cv.w;
+			const double depth = MAX(w / 12.0, 1.0);
+			double total = 0.0;
+			LocalVector<double> sacc;
+			sacc.push_back(0.0);
+			for (uint32_t k = 1; k < cv.pts.size(); k++) {
+				total += cv.pts[k].distance_to(cv.pts[k - 1]);
+				sacc.push_back(total);
+			}
+			// Fill the old course (and the cells beside it) to just over the floodplain's even fall, so the water takes
+			// the new channel wherever the two cross.
+			for (uint32_t k = 0; k < cv.cells.size(); k++) {
+				const double plain = cv.z0 + (cv.z1 - cv.z0) * double(k) / double(MAX(int(cv.cells.size()) - 1, 1));
+				const int cx = cv.cells[k] % nx, cz = cv.cells[k] / nx;
+				for (int dz = -1; dz <= 1; dz++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						const int xx = cx + dx, zz = cz + dz;
+						if (xx < 0 || zz < 0 || xx >= nx || zz >= ny || (sp.b.outlet && sp.b.outlet[zz * nx + xx])) {
+							continue;
+						}
+						double &hh = h[zz * nx + xx];
+						const double up = MAX(plain + 0.3 - hh, 0.0);
+						hh += up;
+						sed[zz * nx + xx] += up;
+					}
+				}
+			}
+			// The cut eases in over three widths at the reach's head. At its foot the bed may not rise (the water would
+			// pond behind the step): the river's course below is cut down to it instead (the tail, once the ground is final).
+			auto ramp = [&](double p_s) { return CLAMP(p_s / (3.0 * w), 0.0, 1.0); };
+			// The same channel at full resolution, for the ground and the rivers' points.
+			auto add_channel = [&](const LocalVector<Vector2> &pts, const LocalVector<double> *sp_acc, double dep, double p_bed) {
+				Channel ch;
+				ch.reach = sp_acc != nullptr;
+				ch.half_width = real_t(0.5 * w);
+				ch.depth = real_t(dep);
+				for (uint32_t k = 0; k < pts.size(); k++) {
+					ch.points.push_back(world0 + pts[k]);
+					const double plain = sp_acc ? cv.z0 + (cv.z1 - cv.z0) * (*sp_acc)[k] / MAX(total, 1.0) : p_bed + dep;
+					const double d = sp_acc ? dep * ramp((*sp_acc)[k]) : dep;
+					ch.bed.push_back(real_t(plain - d));
+					ch.dep.push_back(real_t(d));
+				}
+				channels.push_back(std::move(ch));
+				return int(channels.size()) - 1;
+			};
+			auto carve = [&](const LocalVector<Vector2> &pts, const LocalVector<double> *sp_acc, double dep, int p_channel) {
+				const double half = 0.5 * w + 0.5 * c;
+				for (uint32_t k = 0; k + 1 < pts.size(); k++) {
+					const Vector2 a = pts[k], b = pts[k + 1];
+					const int x0 = MAX(int((MIN(a.x, b.x) - half) / c), 0), x1 = MIN(int((MAX(a.x, b.x) + half) / c) + 1, nx - 1);
+					const int z0 = MAX(int((MIN(a.y, b.y) - half) / c), 0), z1 = MIN(int((MAX(a.y, b.y) + half) / c) + 1, ny - 1);
+					const Vector2 ab = b - a;
+					const double l2 = MAX(double(ab.length_squared()), 1e-9);
+					for (int z = z0; z <= z1; z++) {
+						for (int x = x0; x <= x1; x++) {
+							const Vector2 p(x * c, z * c);
+							const double tt = CLAMP(double((p - a).dot(ab)) / l2, 0.0, 1.0);
+							const double d = p.distance_to(a + ab * real_t(tt));
+							if (d > half) {
+								continue;
+							}
+							const double sfrac = sp_acc ? ((*sp_acc)[k] + tt * Math::sqrt(l2)) / MAX(total, 1.0) : 0.5;
+							const double plain = cv.z0 + (cv.z1 - cv.z0) * sfrac;
+							const double u = d / half;
+							const double bed = plain - (sp_acc ? dep * ramp(sfrac * total) : dep) * (1.0 - u * u);
+							const int i = z * nx + x;
+							if (!(sp.b.outlet && sp.b.outlet[i])) {
+								h[i] = MIN(h[i], bed);
+								meander_cell[i] = 1;
+								if (p_channel >= 0 && d <= 0.5 * w + 0.25 * c) {
+									channel_of_cell[i] = p_channel;
+								}
+							}
+						}
+					}
+				}
+			};
+			// Oxbows silt up after the cut (floods fill them from the river end; most are dry hollows within a few
+			// centuries, Constantine et al. 2010): half the channel's depth when cut, an e-fold every 400 years, gone
+			// under 0.15 m.
+			for (uint32_t q = 0; q < cv.oxbows.size(); q++) {
+				const LocalVector<Vector2> &ox = cv.oxbows[q];
+				const double dep = 0.5 * depth * Math::exp(-(meander_age - cv.oxbow_t[q]) / 400.0);
+				if (dep < 0.15) {
+					continue;
+				}
+				const double ends = 0.5 * (hb(ox[0].x, ox[0].y) + hb(ox[ox.size() - 1].x, ox[ox.size() - 1].y));
+				add_channel(ox, nullptr, dep, ends - dep);
+				carve(ox, nullptr, dep, -1);
+				last_oxbow_count++;
+			}
+			{
+				const int ci = add_channel(cv.pts, &sacc, depth, 0.0);
+				// The river's next cells below the reach: the channel's end may not lie under them.
+				int q = rcv[cv.cells[cv.cells.size() - 1]];
+				for (int k = 0; k < 48 && q >= 0; k++, q = rcv[q]) {
+					channels[ci].tail.push_back(world0 + Vector2((q % nx) * c, (q / nx) * c));
+				}
+				carve(cv.pts, &sacc, depth, ci);
+			}
+		}
+		_bucket_channels();
+	};
 	if (glacial && glacial_final > 0.0) {
 		const uint64_t tg = OS::get_singleton()->get_ticks_usec();
 		glac.erode(h.ptr(), nx, ny, cell_size, double(glacial_final), sed.ptr(), sp.b.outlet, sill_fine.is_empty() ? nullptr : sill_fine.ptr(), level_fine.is_empty() ? nullptr : level_fine.ptr(), glacial_scale(nx, ny, cell_size));
@@ -1193,10 +1665,12 @@ bool TerrainGenerator3D::generate() {
 			}
 		}
 		scree_pass();
-		unfilled.resize(n);
+			meander_pass();
+			unfilled.resize(n);
 		memcpy(unfilled.ptr(), h.ptr(), sizeof(double) * n);
 	} else {
 		scree_pass();
+		meander_pass();
 	}
 	last_glacial_msec = real_t(double(glacial_usec) / 1000.0);
 	sill_cells.clear();
@@ -1236,7 +1710,7 @@ bool TerrainGenerator3D::generate() {
 			for (int z = 1; z < ny - 1; z++) {
 				for (int x = 1; x < nx - 1; x++) {
 					const int i = z * nx + x;
-					if (sed[i] < 0.3 || area[i] >= river_area) {
+					if (sed[i] < 0.3 || area[i] >= river_area || (!meander_cell.is_empty() && meander_cell[i])) {
 						continue;
 					}
 					double nb[8];
@@ -1333,6 +1807,13 @@ bool TerrainGenerator3D::generate() {
 		sediment[i] = float(sed[i] * scale);
 		uplift_field[i] = float(up[i] * 1.0e3);
 	}
+	// The meandered channels into the same heights: their floodplain level scaled like the ground, their depth kept.
+	for (Channel &ch : channels) {
+		for (uint32_t k = 0; k < ch.bed.size(); k++) {
+			const double plain = double(ch.bed[k]) + double(ch.dep[k]);
+			ch.bed[k] = real_t(sea_level + (plain - sea_level) * scale + height_offset - double(ch.dep[k]));
+		}
+	}
 	// Loose fill cannot stand steeper than its critical slope: what the solver left on such ground (deposits on hard
 	// sill cells that do not wear, then faces cut below them) is rock with scree, not soil. Faded from 85% to 110%
 	// of the critical gradient, as the geology fades soil (otherwise a 74 degree bar face read as 390 m of soil and
@@ -1358,6 +1839,10 @@ bool TerrainGenerator3D::generate() {
 	_alluvium_reach();
 
 	// Seabed and beaches below and along the coast.
+	LocalVector<float> pre_coast; // the meandered channels follow what the coast and the lakes do to the ground
+	if (!channels.is_empty()) {
+		pre_coast = heights;
+	}
 	const uint64_t tw = OS::get_singleton()->get_ticks_usec();
 	if (has_sea) {
 		_shape_coast(sea_mask);
@@ -1376,6 +1861,77 @@ bool TerrainGenerator3D::generate() {
 	_bake_runoff(sea_mask);
 	// Lakes behind natural dams (they change the ground, so before the geology).
 	_make_lakes(sea_mask);
+	if (!pre_coast.is_empty()) {
+		// Oxbows move with the ground under them. A reach's floodplain runs evenly between the final ground at its two
+		// ends (detail included), so the channel meets the river's course above and below it exactly: the water may
+		// not climb out of it.
+		chan_buckets.clear();
+		for (Channel &ch : channels) {
+			if (!ch.reach) {
+				for (uint32_t k = 0; k < ch.bed.size(); k++) {
+					ch.bed[k] += _sample(heights, ch.points[k].x, ch.points[k].y) - _sample(pre_coast, ch.points[k].x, ch.points[k].y);
+				}
+				continue;
+			}
+			const uint32_t last = ch.points.size() - 1;
+			const real_t g0 = _ground(ch.points[0].x, ch.points[0].y);
+			real_t g1 = _ground(ch.points[last].x, ch.points[last].y);
+			g1 = MIN(g1, g0);
+			real_t len = 0.0, run = 0.0;
+			for (uint32_t k = 1; k <= last; k++) {
+				len += ch.points[k].distance_to(ch.points[k - 1]);
+			}
+			for (uint32_t k = 0; k <= last; k++) {
+				if (k > 0) {
+					run += ch.points[k].distance_to(ch.points[k - 1]);
+				}
+				ch.bed[k] = Math::lerp(g0, g1, run / MAX(len, real_t(1e-3))) - ch.dep[k];
+			}
+		}
+		// Below each reach the river's course is cut down to the channel's bed and falls gently on until it meets
+		// the ground (a millimetre per metre at least), so the water never climbs out of the channel.
+		const uint32_t count = channels.size();
+		for (uint32_t ci = 0; ci < count; ci++) {
+			if (!channels[ci].reach || channels[ci].tail.is_empty()) {
+				continue;
+			}
+			Channel t;
+			t.half_width = channels[ci].half_width;
+			const Vector2 p0 = channels[ci].points[channels[ci].points.size() - 1];
+			const real_t b0 = channels[ci].bed[channels[ci].bed.size() - 1];
+			t.points.push_back(p0);
+			t.bed.push_back(b0);
+			t.dep.push_back(channels[ci].dep[channels[ci].dep.size() - 1]);
+			// The cells smoothed as the rivers' points are (two 1-2-1 passes), so the cut lies under the water.
+			LocalVector<Vector2> tp;
+			tp.push_back(p0);
+			for (const Vector2 &q : channels[ci].tail) {
+				tp.push_back(q);
+			}
+			for (int pass = 0; pass < 2; pass++) {
+				LocalVector<Vector2> sm;
+				sm = tp;
+				for (uint32_t k = 1; k + 1 < tp.size(); k++) {
+					sm[k] = (tp[k - 1] + tp[k] * 2.0f + tp[k + 1]) * 0.25f;
+				}
+				tp = sm;
+			}
+			real_t bed = b0;
+			int dry = 0;
+			for (uint32_t k = 1; k < tp.size() && dry < 3; k++) {
+				const real_t g = _ground(tp[k].x, tp[k].y);
+				bed = MIN(g, bed - 0.001f * tp[k].distance_to(tp[k - 1]));
+				t.points.push_back(tp[k]);
+				t.bed.push_back(bed);
+				t.dep.push_back(MAX(g - bed, real_t(0.0)));
+				dry = g - bed < 0.05f ? dry + 1 : 0; // three cells on with nothing to cut: the course is met
+			}
+			if (t.points.size() >= 2) {
+				channels.push_back(std::move(t));
+			}
+		}
+		_bucket_channels();
+	}
 	uint64_t water_usec = OS::get_singleton()->get_ticks_usec() - tw;
 	soil.resize(n);
 	rock.resize(n);
@@ -1414,6 +1970,9 @@ bool TerrainGenerator3D::generate() {
 	_bake_spray();
 	_publish_globals();
 	_erode_tiles();
+	// After the tiles: the sky is read from the final ground.
+	_bake_sky();
+	_publish_globals();
 	last_generate_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("generated"));
 	return true;
@@ -1424,12 +1983,19 @@ void TerrainGenerator3D::clear_result() {
 	nx = 0;
 	ny = 0;
 	heights.clear();
+	sky_vis.clear();
+	sky_horizon.clear();
+	sky_sh.clear();
+	sky_nx = sky_ny = 0;
 	drainage.clear();
 	sediment.clear();
 	alluvium_reach.clear();
 	inflow_cells.clear();
 	sill_cells.clear();
 	glacial_ice.clear();
+	channels.clear();
+	chan_buckets.clear();
+	channel_of_cell.clear();
 	lips.clear();
 	lip_buckets.clear();
 	uplift_field.clear();
@@ -1713,6 +2279,9 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 			g = MAX(g, MIN(_sample(heights, p_x, p_z), result_min + 0.15f));
 		}
 	}
+	if (!chan_buckets.is_empty()) {
+		g = _apply_channels(p_x, p_z, g);
+	}
 	// Around a lake the detail and the tile erosion may not take ground that was above the water below it: the
 	// shore and the dam hold the lake, and its surface ends where they rise.
 	if (!lake_rim.is_empty()) {
@@ -1730,6 +2299,87 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 		}
 	}
 	return lip_buckets.is_empty() ? g : _apply_lips(p_x, p_z, g);
+}
+
+void TerrainGenerator3D::_bucket_channels() {
+	chan_buckets.clear();
+	if (channels.is_empty()) {
+	return;
+	}
+	const Vector2 world0 = result_rect.position;
+	{
+		chan_bx = int(Math::ceil(result_rect.size.x / CHANNEL_BUCKET)) + 1;
+		chan_bz = int(Math::ceil(result_rect.size.y / CHANNEL_BUCKET)) + 1;
+		chan_buckets.resize(chan_bx * chan_bz);
+		for (uint32_t ci = 0; ci < channels.size(); ci++) {
+			const Channel &ch = channels[ci];
+			Rect2 box(ch.points[0], Vector2());
+			for (const Vector2 &q : ch.points) {
+				box.expand_to(q);
+			}
+			box = box.grow(2.0f * ch.half_width + 1.0f);
+			const int x0 = CLAMP(int(Math::floor((box.position.x - world0.x) / CHANNEL_BUCKET)), 0, chan_bx - 1);
+			const int x1 = CLAMP(int(Math::floor((box.get_end().x - world0.x) / CHANNEL_BUCKET)), 0, chan_bx - 1);
+			const int z0 = CLAMP(int(Math::floor((box.position.y - world0.y) / CHANNEL_BUCKET)), 0, chan_bz - 1);
+			const int z1 = CLAMP(int(Math::floor((box.get_end().y - world0.y) / CHANNEL_BUCKET)), 0, chan_bz - 1);
+			for (int z = z0; z <= z1; z++) {
+				for (int x = x0; x <= x1; x++) {
+					const real_t bx0 = world0.x + x * CHANNEL_BUCKET, bz0 = world0.y + z * CHANNEL_BUCKET;
+					const Rect2 cell(bx0, bz0, CHANNEL_BUCKET, CHANNEL_BUCKET);
+					bool near = false;
+					for (uint32_t k = 0; k < ch.points.size() && !near; k++) {
+						near = cell.grow(2.0f * ch.half_width + 1.0f).has_point(ch.points[k]);
+					}
+					if (near) {
+						chan_buckets[z * chan_bx + x].push_back(int(ci));
+					}
+				}
+			}
+		}
+	}
+}
+
+// The meandered channels at full resolution: a parabolic bed within the half width, its banks easing back to the
+// ground over a half width more. Only lowers the ground.
+float TerrainGenerator3D::_apply_channels(real_t p_x, real_t p_z, float p_g) const {
+	const int bx = int(Math::floor((p_x - result_rect.position.x) / CHANNEL_BUCKET));
+	const int bz = int(Math::floor((p_z - result_rect.position.y) / CHANNEL_BUCKET));
+	if (bx < 0 || bz < 0 || bx >= chan_bx || bz >= chan_bz) {
+		return p_g;
+	}
+	float g = p_g;
+	const Vector2 pp(p_x, p_z);
+	for (int ci : chan_buckets[bz * chan_bx + bx]) {
+		const Channel &ch = channels[ci];
+		real_t best = 1e30f, bed = 0.0, dep = 0.0;
+		for (uint32_t k = 1; k < ch.points.size(); k++) {
+			const Vector2 a = ch.points[k - 1], b = ch.points[k];
+			const Vector2 ab = b - a;
+			const real_t l2 = MAX(ab.length_squared(), real_t(1e-6));
+			const real_t t = CLAMP((pp - a).dot(ab) / l2, real_t(0.0), real_t(1.0));
+			const real_t dd = pp.distance_to(a + ab * t);
+			if (dd < best) {
+				best = dd;
+				bed = Math::lerp(ch.bed[k - 1], ch.bed[k], t);
+				dep = Math::lerp(ch.dep[k - 1], ch.dep[k], t);
+			}
+		}
+		const real_t hw = ch.half_width;
+		if (best >= 2.0f * hw) {
+			continue;
+		}
+		const real_t top = bed + dep;
+		real_t target;
+		if (best <= hw) {
+			const real_t u = best / hw;
+			target = bed + dep * u * u;
+		} else {
+			const real_t t = (best - hw) / hw;
+			target = Math::lerp(top, real_t(g), t * t * (3.0f - 2.0f * t));
+		}
+		g = MIN(g, float(target));
+	}
+	return g;
 }
 
 // Bilinear on the tile erosion grid (its cells are fine: a few metres).
@@ -2629,6 +3279,16 @@ void TerrainGenerator3D::_publish_globals() {
 		set_global("terrain_spray_potential", spray_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 		set_global("terrain_spray_rect", Vector4(r.position.x, r.position.y, (spray_nx - 1) * spray_cell, (spray_ny - 1) * spray_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
 	}
+	// Sky occlusion for the ground's ambient light; a zero rect switches it off.
+	if (sky_texture.is_valid()) {
+		set_global("terrain_sky_map", sky_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAY);
+		set_global("terrain_sky_rect", Vector4(r.position.x, r.position.y, (sky_nx - 1) * sky_cell, (sky_ny - 1) * sky_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_global("terrain_sky_full", Vector4(sky_full[0], sky_full[1], sky_full[2], sky_full[3]), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_global("terrain_sky_full2", Vector4(sky_full[4], sky_full[5], sky_full[6], sky_full[7]), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_global("terrain_sky_full3", sky_full[8], RSE::GLOBAL_VAR_TYPE_FLOAT);
+	} else {
+		set_global("terrain_sky_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
 }
 
 /* Boulders below cliffs (docs/ideas/terrain-generation.md, "Rocks below cliffs") */
@@ -2807,6 +3467,248 @@ void TerrainGenerator3D::_bake_spray() {
 	} else {
 		spray_texture = ImageTexture::create_from_image(img);
 	}
+}
+
+/* Sky occlusion (docs/ideas/terrain-material.md, "Sky occlusion") */
+
+// The final ground on a grid sky_cell apart, its sky view factor and bent normal (TerrainSky), as an RGBA8 texture:
+// r the sky view factor, gba the bent normal * 0.5 + 0.5.
+void TerrainGenerator3D::_bake_sky() {
+	sky_vis.clear();
+	sky_horizon.clear();
+	sky_sh.clear();
+	sky_nx = sky_ny = 0;
+	if (!sky_occlusion || nx < 2 || ny < 2) {
+		sky_texture.unref();
+		last_sky_msec = 0.0;
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	sky_nx = MAX(2, int(Math::floor((nx - 1) * result_cell / sky_cell)) + 1);
+	sky_ny = MAX(2, int(Math::floor((ny - 1) * result_cell / sky_cell)) + 1);
+	const int n = sky_nx * sky_ny;
+	LocalVector<float> h;
+	h.resize(n);
+	_fill(result_rect.position.x, result_rect.position.y, sky_cell, sky_nx, sky_ny, h.ptr());
+	for (int i = 0; i < n; i++) {
+		if (Math::is_nan(h[i])) {
+			h[i] = result_min;
+		}
+	}
+	sky_vis.resize(n);
+	sky_horizon.resize(size_t(n) * TerrainSky::DIRECTIONS);
+	TerrainSky::compute(h.ptr(), sky_nx, sky_ny, float(sky_cell), float(sky_distance), sky_vis.ptr(), sky_horizon.ptr());
+	// Until the sky's own light is read (update_sky_light), an even sky.
+	TerrainSky::SkyBins even;
+	TerrainSky::even_sky(even);
+	_sky_light(&even);
+	sky_light_last.clear();
+	sky_light_wait = 0.0;
+	last_sky_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+}
+
+void TerrainGenerator3D::_upload_sky() {
+	Vector<Ref<Image>> layers;
+	for (int l = 0; l < 3; l++) {
+		const Ref<Image> img = get_sky_image(l);
+		if (img.is_null()) {
+			return;
+		}
+		layers.push_back(img);
+	}
+	if (sky_texture.is_valid() && sky_texture->get_width() == sky_nx && sky_texture->get_height() == sky_ny) {
+		for (int l = 0; l < 3; l++) {
+			sky_texture->update_layer(layers[l], l);
+		}
+	} else {
+		sky_texture.instantiate();
+		sky_texture->create_from_images(layers);
+	}
+}
+
+namespace {
+struct SkyLightJob {
+	const TerrainSky::SkyBins *bins;
+	const uint8_t *horizon;
+	float *sh;
+	float inv_c0;
+	int nx;
+};
+constexpr int SKY_SH = TerrainSky::SH;
+} // namespace
+
+void TerrainGenerator3D::_sky_light_row(void *p_job, uint32_t p_row) {
+	const SkyLightJob *job = static_cast<const SkyLightJob *>(p_job);
+	for (int x = 0; x < job->nx; x++) {
+		const size_t i = size_t(p_row) * job->nx + x;
+		float *sh = job->sh + i * SKY_SH;
+		TerrainSky::seen_sky(*job->bins, job->horizon + i * TerrainSky::DIRECTIONS, sh);
+		for (int k = 0; k < SKY_SH; k++) {
+			sh[k] *= job->inv_c0;
+		}
+	}
+}
+
+// Every node's seen sky from these bins, and the texture.
+void TerrainGenerator3D::_sky_light(const void *p_bins) {
+	const TerrainSky::SkyBins &bins = *static_cast<const TerrainSky::SkyBins *>(p_bins);
+	const int n = sky_nx * sky_ny;
+	if (sky_nx < 2 || sky_horizon.size() != size_t(n) * TerrainSky::DIRECTIONS || !(bins.full[0] > 0.0f)) {
+		return;
+	}
+	const float inv = 1.0f / bins.full[0];
+	for (int k = 0; k < SKY_SH; k++) {
+		sky_full[k] = bins.full[k] * inv;
+	}
+	sky_sh.resize(n * SKY_SH);
+	SkyLightJob job{ &bins, sky_horizon.ptr(), sky_sh.ptr(), inv, sky_nx };
+	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_sky_light_row, &job, sky_ny, -1, true, SNAME("TerrainSkyLight"));
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	_upload_sky();
+	if (is_inside_tree()) {
+		_publish_globals();
+	}
+}
+
+// The ground's occlusion of the sky as it is now: from a radiance panorama of the sky (as
+// RenderingServer.sky_bake_panorama returns it), the share of the light raster gathers around each node's bent
+// normal that really reaches it past its horizons. A low sunset glow behind a ridge is then taken away, where an
+// even sky's view factor would leave most of it.
+bool TerrainGenerator3D::update_sky_light(const Ref<Image> &p_panorama) {
+	ERR_FAIL_COND_V(p_panorama.is_null() || p_panorama->is_empty(), false);
+	const int n = sky_nx * sky_ny;
+	if (sky_nx < 2 || sky_horizon.size() != size_t(n) * TerrainSky::DIRECTIONS) {
+		return false;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	Ref<Image> pano = p_panorama;
+	if (pano->get_format() != Image::FORMAT_RGBF) {
+		pano = p_panorama->duplicate();
+		pano->convert(Image::FORMAT_RGBF);
+	}
+	const Vector<uint8_t> data = pano->get_data();
+	TerrainSky::SkyBins bins;
+	TerrainSky::gather_sky(reinterpret_cast<const float *>(data.ptr()), pano->get_width(), pano->get_height(), bins);
+	_sky_light(&bins);
+	last_sky_light_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	return true;
+}
+
+void TerrainGenerator3D::set_sky_light_source(const NodePath &p_path) {
+	sky_light_source = p_path;
+	sky_light_wait = 0.0;
+	sky_light_last.clear();
+	if (is_inside_tree()) {
+		set_process_internal(!sky_light_source.is_empty());
+	}
+}
+
+void TerrainGenerator3D::_sky_light_poll(double p_delta) {
+	sky_light_wait -= p_delta;
+	if (sky_light_wait > 0.0 || sky_nx < 2) {
+		return;
+	}
+	Node *src = get_node_or_null(sky_light_source);
+	if (!src) {
+		return;
+	}
+	Ref<Environment> env;
+	if (WorldEnvironment *we = Object::cast_to<WorldEnvironment>(src)) {
+		env = we->get_environment();
+	} else if (Camera3D *cam = Object::cast_to<Camera3D>(src)) {
+		env = cam->get_environment();
+	}
+	if (env.is_null() || env->get_sky().is_null()) {
+		return;
+	}
+	// A small panorama is enough for light this broad (the bins are 22.5 by 11.25 degrees).
+	Ref<Image> pano = RenderingServer::get_singleton()->sky_bake_panorama(env->get_sky()->get_rid(), 1.0, false, Size2i(64, 32));
+	if (pano.is_null() || pano->is_empty()) {
+		return;
+	}
+	pano->convert(Image::FORMAT_RGBF);
+	const Vector<uint8_t> data = pano->get_data();
+	const float *f = reinterpret_cast<const float *>(data.ptr());
+	const int count = data.size() / int(sizeof(float));
+	double sum = 0.0;
+	for (int i = 0; i < count; i++) {
+		sum += f[i];
+	}
+	if (!(sum > 1e-6)) {
+		return; // the sky is not drawn yet: try again next frame
+	}
+	sky_light_wait = sky_light_interval;
+	// Skip the update while the sky stays within 2% of the last one used.
+	if (sky_light_last.size() == count) {
+		double diff = 0.0, total = 0.0;
+		const float *l = sky_light_last.ptr();
+		for (int i = 0; i < count; i++) {
+			diff += Math::abs(f[i] - l[i]);
+			total += Math::abs(l[i]);
+		}
+		if (diff <= 0.02 * MAX(total, 1e-9)) {
+			return;
+		}
+	}
+	sky_light_last.resize(count);
+	memcpy(sky_light_last.ptrw(), f, count * sizeof(float));
+	update_sky_light(pano);
+}
+
+void TerrainGenerator3D::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_READY:
+		case NOTIFICATION_ENTER_TREE: {
+			set_process_internal(!sky_light_source.is_empty());
+		} break;
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			_sky_light_poll(get_process_delta_time());
+		} break;
+	}
+}
+
+void TerrainGenerator3D::set_sky_occlusion(bool p_enable) {
+	if (sky_occlusion == p_enable) {
+		return;
+	}
+	sky_occlusion = p_enable;
+	if (nx >= 2) {
+		_bake_sky();
+		_publish_globals();
+	}
+}
+
+real_t TerrainGenerator3D::get_sky_visibility(const Vector3 &p_global_position) const {
+	if (sky_nx < 2 || sky_vis.size() != uint32_t(sky_nx * sky_ny)) {
+		return 1.0;
+	}
+	const real_t gx = CLAMP((p_global_position.x - result_rect.position.x) / sky_cell, real_t(0.0), real_t(sky_nx - 1));
+	const real_t gz = CLAMP((p_global_position.z - result_rect.position.y) / sky_cell, real_t(0.0), real_t(sky_ny - 1));
+	const int x0 = MIN(int(gx), sky_nx - 2), z0 = MIN(int(gz), sky_ny - 2);
+	const real_t fx = gx - x0, fz = gz - z0;
+	const float *r0 = sky_vis.ptr() + z0 * sky_nx, *r1 = r0 + sky_nx;
+	return Math::lerp(Math::lerp(real_t(r0[x0]), real_t(r0[x0 + 1]), fx), Math::lerp(real_t(r1[x0]), real_t(r1[x0 + 1]), fx), fz);
+}
+
+// One layer of the sky texture: RGBA half of harmonics 4 * p_layer onwards (the last layer holds one).
+Ref<Image> TerrainGenerator3D::get_sky_image(int p_layer) const {
+	const int n = sky_nx * sky_ny;
+	ERR_FAIL_INDEX_V(p_layer, 3, Ref<Image>());
+	if (sky_nx < 2 || sky_sh.size() != uint32_t(n * SKY_SH)) {
+		return Ref<Image>();
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(n * 4 * sizeof(float));
+	float *w = reinterpret_cast<float *>(bytes.ptrw());
+	for (int i = 0; i < n; i++) {
+		for (int k = 0; k < 4; k++) {
+			const int c = p_layer * 4 + k;
+			w[i * 4 + k] = c < SKY_SH ? sky_sh[i * SKY_SH + c] : 0.0f;
+		}
+	}
+	Ref<Image> img = Image::create_from_data(sky_nx, sky_ny, false, Image::FORMAT_RGBAF, bytes);
+	img->convert(Image::FORMAT_RGBAH);
+	return img;
 }
 
 Ref<Image> TerrainGenerator3D::get_spray_image() const {
@@ -4294,26 +5196,82 @@ Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells) const {
 			}
 			pts = tmp;
 		}
+		// Along a meandered reach the water follows the channel's own curve (finer than the cells): the run of cells
+		// the channel was cut through is replaced by its points, each taking the area of the run's cell at the same
+		// fraction along. Callers that want the cells keep one point per cell.
+		std::vector<Vector3> spts;
+		std::vector<int32_t> scell;
+		std::vector<uint8_t> son; // on a channel: the point's height is its water surface already
+		spts.reserve(m);
+		scell.reserve(m);
+		for (int k = 0; k < m; k++) {
+			const int ci = !p_cells && channel_of_cell.size() == uint32_t(n) ? channel_of_cell[rv.cells[k]] : -1;
+			if (ci < 0 || k == 0) {
+				spts.push_back(pts[k]);
+				scell.push_back(rv.cells[k]);
+				son.push_back(0);
+				continue;
+			}
+			// The river may cross the loops on the grid: it takes the channel from the first cell on it to the last.
+			int e = k;
+			for (int q = k + 1; q < m; q++) {
+				if (channel_of_cell[rv.cells[q]] == ci) {
+					e = q;
+				}
+			}
+			const Channel &ch = channels[ci];
+			auto nearest = [&](const Vector3 &q) {
+				int best = 0;
+				real_t bd = 1e30f;
+				for (uint32_t t = 0; t < ch.points.size(); t++) {
+					const real_t dd = ch.points[t].distance_squared_to(Vector2(q.x, q.z));
+					if (dd < bd) {
+						bd = dd;
+						best = int(t);
+					}
+				}
+				return best;
+			};
+			const int a = nearest(pts[k]), b = nearest(pts[e]);
+			if (b - a >= 2) {
+				for (int t = a; t <= b; t++) {
+					// The water stands at about 0.6 of the bankfull depth over the bed at ordinary flow.
+					spts.push_back(Vector3(ch.points[t].x, ch.bed[t] + 0.6f * ch.dep[t], ch.points[t].y));
+					son.push_back(1);
+					scell.push_back(rv.cells[k + int(Math::round(double(e - k) * double(t - a) / double(b - a)))]);
+				}
+			} else {
+				for (int t = k; t <= e; t++) {
+					spts.push_back(pts[t]);
+					scell.push_back(rv.cells[t]);
+					son.push_back(0);
+				}
+			}
+			k = e;
+		}
+		const int sm = int(spts.size());
 		PackedVector3Array points;
 		PackedFloat32Array widths;
 		PackedFloat32Array areas;
-		points.resize(m);
-		widths.resize(m);
-		areas.resize(m);
-		for (int k = 0; k < m; k++) {
-			const real_t a = river_area[rv.cells[k]];
-			Vector3 p = pts[k];
-			p.y = _ground(p.x, p.z);
+		points.resize(sm);
+		widths.resize(sm);
+		areas.resize(sm);
+		for (int k = 0; k < sm; k++) {
+			const real_t a = river_area[scell[k]];
+			Vector3 p = spts[k];
+			if (!son[k]) {
+				p.y = _ground(p.x, p.z);
+			}
 			// At a mouth in the sea or a lake, on the water rather than its bed. The last point sits on the water even
 			// where the shore's erosion detail (full strength in the shallowest margin) lifts the ground above it.
-			const int32_t b = water_body.size() == uint32_t(n) ? water_body[rv.cells[k]] : 0;
+			const int32_t b = water_body.size() == uint32_t(n) ? water_body[scell[k]] : 0;
 			if (b >= 1) {
 				const real_t level = b == 1 ? real_t(result_min) : lake_info[b - 2].level;
-				p.y = k == m - 1 ? level : MAX(p.y, level);
+				p.y = k == sm - 1 ? level : MAX(p.y, level);
 			}
 			points.set(k, p);
 			areas.set(k, a);
-			widths.set(k, river_width_coefficient * Math::sqrt(_flow(rv.cells[k], river_month)));
+			widths.set(k, river_width_coefficient * Math::sqrt(_flow(scell[k], river_month)));
 		}
 		const int mouth = rv.joins >= 0 && m > 1 ? rv.cells[m - 2] : rv.cells[m - 1];
 		Dictionary d;
@@ -4742,6 +5700,21 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_spray_cell"), &TerrainGenerator3D::get_spray_cell);
 	ClassDB::bind_method(D_METHOD("get_spray_potential", "global_position"), &TerrainGenerator3D::get_spray_potential);
 	ClassDB::bind_method(D_METHOD("get_spray_image"), &TerrainGenerator3D::get_spray_image);
+	ClassDB::bind_method(D_METHOD("set_sky_occlusion", "enable"), &TerrainGenerator3D::set_sky_occlusion);
+	ClassDB::bind_method(D_METHOD("is_sky_occlusion_enabled"), &TerrainGenerator3D::is_sky_occlusion_enabled);
+	ClassDB::bind_method(D_METHOD("set_sky_cell", "metres"), &TerrainGenerator3D::set_sky_cell);
+	ClassDB::bind_method(D_METHOD("get_sky_cell"), &TerrainGenerator3D::get_sky_cell);
+	ClassDB::bind_method(D_METHOD("set_sky_distance", "metres"), &TerrainGenerator3D::set_sky_distance);
+	ClassDB::bind_method(D_METHOD("get_sky_distance"), &TerrainGenerator3D::get_sky_distance);
+	ClassDB::bind_method(D_METHOD("get_sky_visibility", "global_position"), &TerrainGenerator3D::get_sky_visibility);
+	ClassDB::bind_method(D_METHOD("get_sky_image", "layer"), &TerrainGenerator3D::get_sky_image, DEFVAL(0));
+	ClassDB::bind_method(D_METHOD("get_last_sky_msec"), &TerrainGenerator3D::get_last_sky_msec);
+	ClassDB::bind_method(D_METHOD("get_last_sky_light_msec"), &TerrainGenerator3D::get_last_sky_light_msec);
+	ClassDB::bind_method(D_METHOD("update_sky_light", "panorama"), &TerrainGenerator3D::update_sky_light);
+	ClassDB::bind_method(D_METHOD("set_sky_light_source", "path"), &TerrainGenerator3D::set_sky_light_source);
+	ClassDB::bind_method(D_METHOD("get_sky_light_source"), &TerrainGenerator3D::get_sky_light_source);
+	ClassDB::bind_method(D_METHOD("set_sky_light_interval", "seconds"), &TerrainGenerator3D::set_sky_light_interval);
+	ClassDB::bind_method(D_METHOD("get_sky_light_interval"), &TerrainGenerator3D::get_sky_light_interval);
 	ClassDB::bind_method(D_METHOD("set_gorge_age", "years"), &TerrainGenerator3D::set_gorge_age);
 	ClassDB::bind_method(D_METHOD("get_gorge_age"), &TerrainGenerator3D::get_gorge_age);
 	ClassDB::bind_method(D_METHOD("set_moraine_age", "years"), &TerrainGenerator3D::set_moraine_age);
@@ -4750,6 +5723,10 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_scree_age", "years"), &TerrainGenerator3D::set_scree_age);
 	ClassDB::bind_method(D_METHOD("get_scree_age"), &TerrainGenerator3D::get_scree_age);
 	ClassDB::bind_method(D_METHOD("get_last_scree_volume"), &TerrainGenerator3D::get_last_scree_volume);
+	ClassDB::bind_method(D_METHOD("set_meander_age", "years"), &TerrainGenerator3D::set_meander_age);
+	ClassDB::bind_method(D_METHOD("get_meander_age"), &TerrainGenerator3D::get_meander_age);
+	ClassDB::bind_method(D_METHOD("get_last_meander_count"), &TerrainGenerator3D::get_last_meander_count);
+	ClassDB::bind_method(D_METHOD("get_last_oxbow_count"), &TerrainGenerator3D::get_last_oxbow_count);
 	ClassDB::bind_method(D_METHOD("set_gorge_rate", "rate"), &TerrainGenerator3D::set_gorge_rate);
 	ClassDB::bind_method(D_METHOD("get_gorge_rate"), &TerrainGenerator3D::get_gorge_rate);
 	ClassDB::bind_method(D_METHOD("set_fan_backfill", "enable"), &TerrainGenerator3D::set_fan_backfill);
@@ -4929,8 +5906,14 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_age", PROPERTY_HINT_RANGE, "0,100000,100,or_greater,suffix:yr"), "set_gorge_age", "get_gorge_age");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moraine_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_moraine_age", "get_moraine_age");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scree_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_scree_age", "get_scree_age");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "meander_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_meander_age", "get_meander_age");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_rate", PROPERTY_HINT_RANGE, "0,0.1,0.0001,or_greater"), "set_gorge_rate", "get_gorge_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_cell", PROPERTY_HINT_RANGE, "0,32,0.5,suffix:m"), "set_spray_cell", "get_spray_cell");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sky_occlusion"), "set_sky_occlusion", "is_sky_occlusion_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sky_cell", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_sky_cell", "get_sky_cell");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sky_light_source", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WorldEnvironment,Camera3D"), "set_sky_light_source", "get_sky_light_source");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sky_light_interval", PROPERTY_HINT_RANGE, "0,60,0.1,suffix:s"), "set_sky_light_interval", "get_sky_light_interval");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sky_distance", PROPERTY_HINT_RANGE, "0,20000,10,suffix:m"), "set_sky_distance", "get_sky_distance");
 	ADD_GROUP("Inflows", "inflow");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "inflows", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_inflows", "get_inflows");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "inflow_area", PROPERTY_HINT_RANGE, "0,10000,0.1,or_greater,suffix:km²"), "set_inflow_area", "get_inflow_area");

@@ -190,6 +190,11 @@ void VegetationField3D::_clear_generated() {
 		memdelete(mmi);
 	}
 	generated.clear();
+	for (KeyValue<ObjectID, LazyNear> &kv : lazy_near) {
+		kv.value.far = nullptr;
+		_lazy_near_free(kv.value);
+	}
+	lazy_near.clear();
 	impostor_cells.clear();
 	impostor_meshes.clear();
 	set_process_internal(false);
@@ -249,6 +254,18 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 	if (r_setup.other == this) {
 		r_setup.other = nullptr;
 	}
+	// Leaf drift downwind: litter_wind, or else the weather's wind (autumn gales carry leaves
+	// furthest; 10 m/s leans the drift by half).
+	Vector2 skew = litter_wind;
+	if (skew == Vector2() && !weather_map.is_empty()) {
+		const WeatherMap3D *wm = Object::cast_to<WeatherMap3D>(get_node_or_null(weather_map));
+		if (wm && wm->get_wind_direction() != Vector2()) {
+			skew = wm->get_wind_direction().normalized() * (0.05f * wm->get_wind_speed());
+		}
+	}
+	r_setup.litter_skew = skew.limit_length(0.8f);
+	r_setup.litter_reach = 3.0f * LITTER_SPREAD * (1.0f + r_setup.litter_skew.length());
+	litter_skew = r_setup.litter_skew;
 	const TypedArray<PlantSpecies> species_list = biome->get_species();
 	const int count = species_list.size();
 	r_setup.species.resize(count);
@@ -300,7 +317,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 				halo = MAX(halo, later.halo + ps.crown_max * 1.4f);
 			}
 			if (ps.crown_max > 0.0f && later.sp->uses_litter()) {
-				halo = MAX(halo, later.halo + ps.crown_max + 3.0f * LITTER_SPREAD);
+				halo = MAX(halo, later.halo + ps.crown_max + r_setup.litter_reach);
 			}
 		}
 		ps.halo = halo;
@@ -356,8 +373,10 @@ float crown_shade(const Grid &p_grid, const Crowns &p_crowns, float p_reach, flo
 // drops its leaves under itself and, with an exponential tail (Ferrari and Sugita 1996), past its
 // edge over LITTER_SPREAD metres, so edges and clearings get a drift that thins outwards. Summed
 // as a deposit and turned into cover: about 1 under closed crowns.
+// p_skew leans the tail downwind (its direction, the way the wind blows toward; its length k makes
+// the drift reach 1 + k times as far downwind and 1 - k times as far upwind).
 template <typename Grid, typename Crowns>
-float crown_litter(const Grid &p_grid, const Crowns &p_crowns, float p_reach, float p_cell, const Vector2 &p_xz) {
+float crown_litter(const Grid &p_grid, const Crowns &p_crowns, float p_reach, float p_cell, const Vector2 &p_xz, const Vector2 &p_skew) {
 	if (p_crowns.is_empty()) {
 		return 0.0f;
 	}
@@ -372,11 +391,18 @@ float crown_litter(const Grid &p_grid, const Crowns &p_crowns, float p_reach, fl
 			}
 			for (int idx : *bucket) {
 				const auto &c = p_crowns[idx];
-				const float beyond = c.xz.distance_to(p_xz) - c.radius;
-				if (beyond > 3.0f * VegetationField3D::LITTER_SPREAD) {
+				const Vector2 to = p_xz - c.xz;
+				const float dist = to.length();
+				const float beyond = dist - c.radius;
+				if (beyond <= 0.0f) {
+					deposit += c.opacity * (1.0f - c.conifer);
 					continue;
 				}
-				deposit += c.opacity * (1.0f - c.conifer) * (beyond <= 0.0f ? 1.0f : Math::exp(-beyond / VegetationField3D::LITTER_SPREAD));
+				const float spread = VegetationField3D::LITTER_SPREAD * (1.0f + to.dot(p_skew) / dist);
+				if (beyond > 3.0f * spread) {
+					continue;
+				}
+				deposit += c.opacity * (1.0f - c.conifer) * Math::exp(-beyond / spread);
 			}
 		}
 	}
@@ -499,7 +525,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						}
 					}
 					if (litter_rule && suit > 0.0f) {
-						float litter = crown_litter(local_crown_grid, local_crowns, p_setup.crown_max + 3.0f * LITTER_SPREAD, CROWN_CELL, xz);
+						float litter = crown_litter(local_crown_grid, local_crowns, p_setup.crown_max + p_setup.litter_reach, CROWN_CELL, xz, p_setup.litter_skew);
 						if (p_setup.other) {
 							litter = 1.0f - (1.0f - litter) * (1.0f - p_setup.other->get_litter_at(Vector3(xz.x, 0.0f, xz.y)));
 						}
@@ -593,6 +619,91 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 	}
 }
 
+// A cell's MultiMesh: one record per plant, or for a rigged tree one per bone, which TreeWind3D
+// (target: this field) poses each frame.
+void VegetationField3D::_fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &p_mesh, const LocalVector<Transform3D> &p_xforms, const LocalVector<Color> &p_customs) {
+#ifdef VEGETATION_HAS_TREE_WIND
+	if (TreeWind3D::get_mesh_bone_count(p_mesh) > 0) {
+		TreeWind3D::fill_rest(p_mm, p_mesh, p_xforms, p_customs);
+		return;
+	}
+#endif
+	p_mm->set_instance_count(p_xforms.size());
+	for (uint32_t i = 0; i < p_xforms.size(); i++) {
+		p_mm->set_instance_transform(i, p_xforms[i]);
+		p_mm->set_instance_custom_data(i, p_customs[i]);
+	}
+}
+
+// Near meshes on demand. Within 1.2 x near_range a far cell asks its source for the near mesh
+// every frame until it has it, then gets its near cell with the same crossfade as eager near
+// meshes; beyond 1.5 x the near cell is freed (and the source may free the mesh).
+void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
+	for (KeyValue<ObjectID, LazyNear> &kv : lazy_near) {
+		LazyNear &c = kv.value;
+		const float d = c.centre.distance_to(p_camera);
+		if (c.near) {
+			if (d > c.range * 1.5f) {
+				_lazy_near_free(c);
+			}
+			continue;
+		}
+		if (d > c.range * 1.2f) {
+			continue;
+		}
+		Object *src = ObjectDB::get_instance(c.source);
+		if (!src) {
+			continue;
+		}
+		const Ref<Mesh> mesh = src->call(SNAME("request_near_mesh"), c.key, c.variant);
+		if (mesh.is_null()) {
+			continue; // Still building.
+		}
+		Ref<MultiMesh> mm;
+		mm.instantiate();
+		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+		mm->set_use_custom_data(true);
+		mm->set_mesh(mesh);
+		_fill_cell(mm, mesh, c.xforms, c.customs);
+		const float margin = MAX(c.range * 0.1f, 1.0f);
+		c.near = memnew(MultiMeshInstance3D);
+		c.near->set_name(String(c.far->get_name()) + "_Near");
+		c.near->set_multimesh(mm);
+		c.near->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
+		c.near->set_visibility_range_end(c.range);
+		c.near->set_visibility_range_end_margin(margin);
+		add_child(c.near, false, INTERNAL_MODE_BACK);
+		c.far->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
+		c.far->set_visibility_range_begin(c.range);
+		c.far->set_visibility_range_begin_margin(margin);
+	}
+}
+
+void VegetationField3D::_lazy_near_free(LazyNear &p_cell) {
+	if (!p_cell.near) {
+		return;
+	}
+	if (p_cell.near->get_parent()) {
+		p_cell.near->get_parent()->remove_child(p_cell.near);
+	}
+	memdelete(p_cell.near);
+	p_cell.near = nullptr;
+	if (p_cell.far) {
+		p_cell.far->set_visibility_range_begin(0.0f);
+		p_cell.far->set_visibility_range_begin_margin(0.0f);
+	}
+}
+
+void VegetationField3D::_lazy_near_drop(MultiMeshInstance3D *p_far) {
+	LazyNear *c = lazy_near.getptr(p_far->get_instance_id());
+	if (!c) {
+		return;
+	}
+	c->far = nullptr;
+	_lazy_near_free(*c);
+	lazy_near.erase(p_far->get_instance_id());
+}
+
 // Adds a placed tile's plants to the scene: one MultiMeshInstance3D per species mesh variant,
 // split into cells where the species swaps meshes by distance. Main thread.
 void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes) {
@@ -620,11 +731,14 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 		if (near_range > 0.0f && ps.near_meshes.size() > 0) {
 			near_mesh = ps.near_meshes[v % ps.near_meshes.size()];
 		}
+		// Near meshes on demand: cells as for a near mesh, the far pass only for now
+		// (_lazy_near_update() adds the near cells as the camera comes close).
+		Object *near_source = near_range > 0.0f && ps.near_meshes.is_empty() ? ps.sp->get_near_mesh_source() : nullptr;
 		// Godot's visibility range measures to the centre of the whole MultiMesh, so a
 		// species with a near mesh is cut into small cells: the swap then happens a few
 		// plants at a time instead of a whole tile at once.
 		const float ts = p_setup.tile_size;
-		const int cells = near_mesh.is_valid() ? CLAMP(int(Math::ceil(ts / near_cell)), 1, 16) : 1;
+		const int cells = near_mesh.is_valid() || near_source ? CLAMP(int(Math::ceil(ts / near_cell)), 1, 16) : 1;
 		const Vector2 tile_origin = Vector2(tx * ts, tz * ts);
 		LocalVector<LocalVector<uint32_t>> buckets;
 		buckets.resize(cells * cells);
@@ -646,26 +760,13 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 				mm->set_use_custom_data(true);
 				mm->set_mesh(near_pass ? near_mesh : mesh);
 				const Ref<Mesh> draw_mesh = near_pass ? near_mesh : mesh;
-#ifdef VEGETATION_HAS_TREE_WIND
-				if (TreeWind3D::get_mesh_bone_count(draw_mesh) > 0) {
-					// A rigged tree: one record per bone, which TreeWind3D (target: this
-					// field) poses each frame.
-					LocalVector<Transform3D> bx;
-					LocalVector<Color> bc;
-					for (uint32_t i : buckets[b]) {
-						bx.push_back(so.xforms[v][i]);
-						bc.push_back(so.customs[v][i]);
-					}
-					TreeWind3D::fill_rest(mm, draw_mesh, bx, bc);
-				} else
-#endif
-				{
-					mm->set_instance_count(buckets[b].size());
-					for (uint32_t i = 0; i < buckets[b].size(); i++) {
-						mm->set_instance_transform(i, so.xforms[v][buckets[b][i]]);
-						mm->set_instance_custom_data(i, so.customs[v][buckets[b][i]]);
-					}
+				LocalVector<Transform3D> bx;
+				LocalVector<Color> bc;
+				for (uint32_t i : buckets[b]) {
+					bx.push_back(so.xforms[v][i]);
+					bc.push_back(so.customs[v][i]);
 				}
+				_fill_cell(mm, draw_mesh, bx, bc);
 				MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 				mmi->set_name(cells > 1 ? vformat("Plants%s_%d_%d_%d_%d_%d", near_pass ? "Near" : "", s, v, tx, tz, b) : vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
 				mmi->set_multimesh(mm);
@@ -690,6 +791,21 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 				}
 				add_child(mmi, false, INTERNAL_MODE_BACK);
 				r_nodes.push_back(mmi);
+				if (near_source) {
+					LazyNear cell;
+					cell.far = mmi;
+					cell.source = near_source->get_instance_id();
+					cell.key = ps.sp->get_near_mesh_key();
+					cell.variant = v;
+					cell.range = near_range;
+					for (const Transform3D &x : bx) {
+						cell.centre += p_setup.global_xf.xform(x.origin);
+					}
+					cell.centre /= MAX(int(bx.size()), 1);
+					cell.xforms = bx;
+					cell.customs = bc;
+					lazy_near.insert(mmi->get_instance_id(), cell);
+				}
 				if (!near_pass && draw_mesh->has_meta(SNAME("impostor_of"))) {
 					impostor_cells.push_back(mmi);
 					impostor_meshes.push_back(draw_mesh);
@@ -1107,6 +1223,11 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 			job.grass.instantiate(); // The grass's default rules: dry land.
 		}
 		job.grass_far = grass->get_far_color();
+		// The grass measures its far colour from a render a few frames in: the map follows it.
+		const Callable on_far = callable_mp(this, &VegetationField3D::_on_grass_far_color);
+		if (!grass->is_connected(SNAME("far_color_changed"), on_far)) {
+			grass->connect(SNAME("far_color_changed"), on_far);
+		}
 	}
 	// The crowns over each canopy species' own pattern (the tile, wrapped), as _shade_at() sees
 	// them: exact for the spacing of a Poisson-disk stand, which covers more ground than crowns
@@ -1245,6 +1366,17 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 	print_verbose(vformat("VegetationField3D: cover map %dx%d in %.1f ms.", job.w, job.h, (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0));
 }
 
+void VegetationField3D::_on_grass_far_color() {
+	if (stream_setup_valid) {
+		_build_cover(stream_setup);
+		return;
+	}
+	PlaceSetup setup;
+	if (_make_setup(setup)) {
+		_build_cover(setup);
+	}
+}
+
 Error VegetationField3D::populate() {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	_clear_generated();
@@ -1283,7 +1415,7 @@ Error VegetationField3D::populate() {
 	_maps_wants(maps);
 	_compute_maps(maps, crown_lists, far_lists);
 	_apply_maps(maps);
-	set_process_internal(!impostor_cells.is_empty());
+	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty());
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("populated"));
 	return OK;
@@ -1528,7 +1660,7 @@ float VegetationField3D::get_conifer_at(const Vector3 &p_global_position) const 
 
 float VegetationField3D::get_litter_at(const Vector3 &p_global_position) const {
 	RWLockRead guard(crown_lock);
-	return crown_litter(crown_grid, crowns, max_crown_radius + 3.0f * LITTER_SPREAD, CROWN_CELL, Vector2(p_global_position.x, p_global_position.z));
+	return crown_litter(crown_grid, crowns, max_crown_radius + 3.0f * LITTER_SPREAD * (1.0f + litter_skew.length()), CROWN_CELL, Vector2(p_global_position.x, p_global_position.z), litter_skew);
 }
 
 PackedVector3Array VegetationField3D::get_placements(int p_species) const {
@@ -1576,6 +1708,7 @@ Vector3 VegetationField3D::_stream_centre() const {
 
 void VegetationField3D::_stream_free_species(StreamTile *p_tile, int p_species) {
 	for (MultiMeshInstance3D *mmi : p_tile->nodes[p_species]) {
+		_lazy_near_drop(mmi);
 		const int64_t idx = impostor_cells.find(mmi);
 		if (idx >= 0) {
 			impostor_cells.remove_at_unordered(idx);
@@ -1941,6 +2074,9 @@ void VegetationField3D::_notification(int p_what) {
 			if (streaming) {
 				_stream_update(get_process_delta_time());
 			}
+			if (!lazy_near.is_empty()) {
+				_lazy_near_update(_stream_centre());
+			}
 		} break;
 	}
 }
@@ -1978,6 +2114,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("set_canopy_field", "path"), &VegetationField3D::set_canopy_field);
 	ClassDB::bind_method(D_METHOD("get_canopy_field"), &VegetationField3D::get_canopy_field);
+	ClassDB::bind_method(D_METHOD("set_litter_wind", "wind"), &VegetationField3D::set_litter_wind);
+	ClassDB::bind_method(D_METHOD("get_litter_wind"), &VegetationField3D::get_litter_wind);
 	ClassDB::bind_method(D_METHOD("set_weather_map", "path"), &VegetationField3D::set_weather_map);
 	ClassDB::bind_method(D_METHOD("get_weather_map"), &VegetationField3D::get_weather_map);
 	ClassDB::bind_method(D_METHOD("set_tile_size", "size"), &VegetationField3D::set_tile_size);
@@ -2022,6 +2160,7 @@ void VegetationField3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "biome", PROPERTY_HINT_RESOURCE_TYPE, "Biome"), "set_biome", "get_biome");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "litter_wind"), "set_litter_wind", "get_litter_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "forest_floor_enabled"), "set_forest_floor_enabled", "is_forest_floor_enabled");

@@ -58,7 +58,7 @@ class GrassField3D : public Node3D {
 	NodePath data_map;
 	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
 	Ref<PlantSpecies> rules;
-	float density = 60.0f; // Blades per square metre, near the camera.
+	float density = 120.0f; // Blades per square metre, near the camera.
 	Vector2 blade_height = Vector2(0.25f, 0.6f);
 	float blade_width = 0.04f;
 	float clump_size = 1.2f;
@@ -100,16 +100,41 @@ class GrassField3D : public Node3D {
 	Ref<ImageTexture> trample_texture;
 	HashMap<ObjectID, Vector3> trample_last;
 
+	bool gpu_fill = true; // Fill tiles with the compute shader (stage 3a) when a RenderingDevice exists.
+	Ref<Image> height_image; // The data map's height channel, for the GPU fill.
+	Rect2 height_rect;
+
 	HashMap<Vector2i, Tile> tiles;
 	Ref<ArrayMesh> blade_mesh;
 	Ref<ShaderMaterial> material;
 	int blade_count = 0;
 	double build_msec = 0.0;
 
+	// Far colour bake (docs/ideas/vegetation-lod-streaming.md, section 4): a patch of these blades
+	// rendered in a private world, then a white ground under the same light; their ratio is the
+	// colour the far ground takes. Runs once each time the blades' look changes.
+	class SubViewport *far_bake_vp = nullptr;
+	class DirectionalLight3D *far_bake_sun = nullptr;
+	MultiMeshInstance3D *far_bake_blades = nullptr;
+	Ref<StandardMaterial3D> far_bake_ground_mat;
+	int far_bake_state = -1;
+	int far_bake_wait = 0;
+	bool far_bake_queued = false;
+	bool far_baked = false;
+	Color far_bake_sum;
+	Color far_bake_white;
+	Color far_color_baked;
+	void _queue_far_bake();
+	void _far_bake_start();
+	void _far_bake_step();
+	void _far_bake_free();
+	Color _far_color_hand() const;
+
 	void _ensure_resources();
 	void _build_material();
 	int _lod_for(float p_distance) const;
 	void _build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map);
+	void _build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const class VegetationField3D *p_canopy, const LocalVector<float> &p_light, int p_lg, float p_width);
 	void _free_tile(Tile &p_tile);
 	void _update_fade(const Vector2 &p_center);
 	void _update_tiles(const Vector3 &p_center);
@@ -124,6 +149,10 @@ protected:
 	static void _bind_methods();
 
 public:
+	void set_gpu_fill(bool p_enabled);
+	bool is_gpu_fill() const { return gpu_fill; }
+	static bool is_gpu_fill_available();
+	static void free_gpu_fill();
 	void set_data_map(const NodePath &p_path);
 	NodePath get_data_map() const { return data_map; }
 	void set_canopy_field(const NodePath &p_path);
@@ -141,6 +170,7 @@ public:
 	void set_lean(float p_lean);
 	float get_lean() const { return lean; }
 	Color get_far_color() const;
+	bool is_far_color_baked() const { return far_baked; }
 	void set_base_color(const Color &p_color);
 	Color get_base_color() const { return base_color; }
 	void set_tip_color(const Color &p_color);

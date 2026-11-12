@@ -2025,7 +2025,12 @@ void SceneShaderRaytracing::init(const String p_defines) {
 	for (uint32_t mask = 0; mask < variant_count; mask++) {
 		modes_ptr[mask] = _raygen_variant_preamble(mask);
 	}
-	raygen_shader.initialize(modes, p_defines);
+	// Strand hair as linear swept spheres, on devices that have them (render_raytracing.cpp builds them).
+	String defines = p_defines;
+	if (GLOBAL_GET("rendering/pathtracing/linear_swept_spheres") && RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES)) {
+		defines += "\n#define RT_LSS\n";
+	}
+	raygen_shader.initialize(modes, defines);
 
 	// Slot 0: default HG (source_hash stays zero).
 	{

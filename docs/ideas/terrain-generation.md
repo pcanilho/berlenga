@@ -1183,6 +1183,44 @@ rising into the flow by 1 - 0.7 wear, faces falling away by 1 + 0.8 wear, and ad
 the flow (faded by the pixel footprint). Showcase cirque from the floor: the slopes the ice ran down lose their soft
 gullies on one side and keep sharp steps on the other; the effect is subtle at a distance, as it is in nature.
 
+## Meandering rivers (built 12 Nov, Paulo picked it with the others at 23:04)
+
+Rivers on flat alluvial floors wander: the outer bank of a bend erodes, the inner one builds a point bar, the bends
+grow and travel downstream until a loop closes on itself and is cut off, leaving an oxbow. Engines and terrain tools
+mostly draw rivers as splines (World Machine, Gaea, UE's water plugin); the established way to *grow* a meander belt
+is the Howard and Knutson (1984) migration model, as in Ikeda, Parker and Sawai (1981) and meanderpy (Sylvester et al.
+2019). Built that way:
+
+- **Which reaches.** Down the solver's own drainage, stretches under Leopold and Wolman's (1957) braiding threshold
+  S = 0.012 Q^-0.44, on loose fill, not ponded, above the tidal reach (1.5 m over sea level), at least 12 cells; slope
+  and fill are 9-cell means along the river and gaps of up to 4 cells are bridged. Rivers narrower than half a cell
+  (the grid cannot hold their bends) are left alone. Steeper sediment-rich reaches are braided instead (next item).
+- **Migration.** R1 = -R0 + 2.5 x the upstream-weighted mean curvature (decay 2 Cf / depth, Cf 0.02, depth w/33 as in
+  meanderpy). Banks move kl R1 toward the outer bank, kl 0.04 w per year: about 2% of the width a year at R1 0.5, the
+  median measured rate (Hooke 2003; Constantine et al. 2014). meanderpy's 0.3 w per year is for big rivers in fast
+  forward; at that rate a 14 m river cut off a loop every few years. The valley wall stops a bank (3 m above the
+  reach's floodplain). Migration fades out over ten widths at each end, where the reach meets the fixed course.
+- **Seeding bends.** The model only grows bends that exist, and they travel downstream, so a reach whose upstream end
+  feeds none goes straight behind them. The start gets a wander a width high at the meander wavelength (11 w,
+  Leopold and Wolman 1960). Banks of uneven strength (Motta et al. 2012) scale the rate and push the bank a little to
+  one side, in a pattern that changes every few centuries. A new cutoff is left slightly rough.
+- **Cutoffs.** Neck cutoffs (two points four widths apart along the river closer than 0.9 w) and chute cutoffs within
+  three widths when the course is five times the way across (Howard 1996). Curvature is smoothed over a few points so
+  the resampling's kinks do not grow into loops.
+- **Oxbows** silt up after the cut: half the channel depth at first, an e-fold every 400 years, left out under 0.15 m.
+- **Carving.** The old course is filled to the floodplain. The new channel is cut at full resolution: a parabolic
+  bed of depth w/12, banks easing over another half width, eased in over three widths at the reach's head. At its
+  foot the bed may not rise (the river's surface never climbs, so the water behind such a step vanished downstream):
+  once the ground is final, the floodplain runs evenly between the ground at the reach's two ends and the course
+  below is cut down to the channel's bed, falling a millimetre per metre, until it meets the ground.
+  The 16 m grid could not hold a 14 m river: cut there alone, the cleanup filled it and the water stayed on the
+  old cells. The grid keeps a coarse copy so the drainage follows. The water's points follow the channel's own
+  curve at 0.6 of the bankfull depth, and the cut follows what the coast and the lakes later do to the ground.
+
+Showcase valley at 3000 years: the clearing reach reaches sinuosity 2.0 (pressed against its walls) and the plain above
+the beach 1.7, with 28 cut-off loops of which the youngest still show as hollows. Generation takes about 1.5 s
+longer. Off by default; with it off the result is unchanged.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
@@ -1321,3 +1359,13 @@ gullies on one side and keep sharp steps on the other; the effect is subtle at a
   https://www.pcgamer.com/heres-how-frontier-rebuilt-a-galaxys-worth-of-planets-for-elite-dangerous-odyssey
 - Terrain3D https://github.com/TokisanGames/Terrain3D ; HTerrain
   https://github.com/Zylann/godot_heightmap_plugin
+- Howard, A. D. and Knutson, T. R. (1984). Sufficient conditions for river meandering: a simulation approach. Water Resources Research 20(11).
+- Howard, A. D. (1996). Modelling channel evolution and floodplain morphology. In Floodplain Processes, Wiley.
+- Ikeda, S., Parker, G. and Sawai, K. (1981). Bend theory of river meanders. Journal of Fluid Mechanics 112.
+- Sylvester, Z., Durkin, P. and Covault, J. A. (2019). High curvatures drive river meandering. Geology 47(3). meanderpy.
+- Leopold, L. B. and Wolman, M. G. (1957). River channel patterns: braided, meandering and straight. USGS Professional Paper 282-B.
+- Hooke, J. M. (2003). River meander behaviour and instability. Transactions of the Institute of British Geographers 28.
+- Constantine, J. A. et al. (2014). Sediment supply as a driver of river meandering and floodplain evolution in the Amazon Basin. Nature Geoscience 7.
+- Motta, D., Abad, J. D., Langendoen, E. J. and Garcia, M. H. (2012). The effects of floodplain soil heterogeneity on meander planform shape. Water Resources Research 48.
+- Leopold, L. B. and Wolman, M. G. (1960). River meanders. GSA Bulletin 71.
+- Constantine, J. A., Dunne, T., Piégay, H. and Kondolf, G. M. (2010). Controls on the alluviation of oxbow lakes by bed-material load. Sedimentology 57.

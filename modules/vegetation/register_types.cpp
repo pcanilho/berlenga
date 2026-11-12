@@ -86,4 +86,5 @@ void uninitialize_vegetation_module(ModuleInitializationLevel p_level) {
 	}
 	TreeGenerator::free_climber_leaves();
 	PlantGenerator::free_shaders();
+	GrassField3D::free_gpu_fill();
 }

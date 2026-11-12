@@ -212,6 +212,7 @@ func _physics_process(_d: float) -> void:
 	if test:
 		_checks()
 		await _stream_checks()
+		await _lazy_near_checks()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -550,6 +551,66 @@ func _same(got: PackedVector3Array, want: Dictionary, centre: Vector2, radius: f
 		if not want.has(p):
 			return false
 	return true
+
+# Near meshes on demand (PlantSpecies.near_mesh_source): a source that is still "building" for its
+# first calls, then hands out one mesh; near cells appear only round the target and go when it leaves.
+class NearSource extends RefCounted:
+	var mesh: Mesh
+	var calls := 0
+	var keys := {}
+	func request_near_mesh(key: int, variant: int) -> Mesh:
+		calls += 1
+		keys[key] = true
+		return mesh if calls > 3 else null
+
+func _lazy_near_count(f: VegetationField3D, m: Mesh) -> Array:
+	var near := 0
+	var cells := 0
+	var far_begin := 0
+	for ch in f.get_children(true):
+		if not ch is MultiMeshInstance3D or ch.multimesh.mesh == null:
+			continue
+		if ch.multimesh.mesh == m:
+			near += ch.multimesh.instance_count
+			cells += 1
+		elif ch.visibility_range_begin > 0.0:
+			far_begin += 1
+	return [near, cells, far_begin]
+
+func _lazy_near_checks() -> void:
+	var tree_sp: PlantSpecies = field.biome.species[0]
+	var src := NearSource.new()
+	src.mesh = BoxMesh.new()
+	tree_sp.near_meshes = []
+	tree_sp.near_range = 30.0
+	tree_sp.near_mesh_source = src
+	tree_sp.near_mesh_key = 7
+	var target := Node3D.new()
+	add_child(target)
+	target.global_position = Vector3(5000, 0, 5000)
+	field.stream_target = field.get_path_to(target)
+	field.populate()
+	for i in 3:
+		await get_tree().process_frame
+	var away: Array = _lazy_near_count(field, src.mesh)
+	var t: Vector3 = field.get_placements(0)[0]
+	target.global_position = t
+	for i in 8:
+		await get_tree().process_frame
+	var near: Array = _lazy_near_count(field, src.mesh)
+	var want := 0
+	for p in field.get_placements(0):
+		if Vector2(p.x, p.z).distance_to(Vector2(t.x, t.z)) < 20.0:
+			want += 1
+	target.global_position = Vector3(5000, 0, 5000)
+	await get_tree().process_frame
+	var gone: Array = _lazy_near_count(field, src.mesh)
+	_check("near meshes on demand: none far away, built round the target once ready, freed after", away[0] == 0 and src.calls > 3 and near[0] >= want and near[0] > 0 and near[1] == near[2] and near[0] < field.get_placements(0).size() and gone[0] == 0 and gone[2] == 0 and src.keys.has(7), [away, near, want, gone, src.calls, field.get_placements(0).size()])
+	tree_sp.near_mesh_source = null
+	tree_sp.near_range = 0.0
+	field.stream_target = NodePath()
+	field.populate()
+	target.queue_free()
 
 func _stream_checks() -> void:
 	field.weather_map = NodePath()

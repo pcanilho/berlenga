@@ -84,9 +84,12 @@ void get_triangle_indices_ex(in GeometryData geom, uint primitive_id, out uint i
 }
 
 #if defined(RT_STAGE_CLOSEST_HIT) || defined(RT_STAGE_ANY_HIT) || defined(RT_STAGE_INTERSECTION)
-// Convenience wrapper using gl_PrimitiveID (hit shaders only).
+#ifndef RT_HIT_PRIMITIVE_ID
+#define RT_HIT_PRIMITIVE_ID gl_PrimitiveID
+#endif
+// Convenience wrapper using the hit's primitive (hit shaders only).
 void get_triangle_indices(in GeometryData geom, out uint i0, out uint i1, out uint i2) {
-	get_triangle_indices_ex(geom, gl_PrimitiveID, i0, i1, i2);
+	get_triangle_indices_ex(geom, RT_HIT_PRIMITIVE_ID, i0, i1, i2);
 }
 #endif
 

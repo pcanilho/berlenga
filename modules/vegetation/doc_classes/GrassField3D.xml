@@ -13,7 +13,13 @@
 		<method name="get_far_color" qualifiers="const">
 			<return type="Color" />
 			<description>
-				The field seen from a distance, linear: the colour the ground under the grass takes where the blades have thinned away ([code]grass_ground_far[/code]), and the grass layer of [member VegetationField3D.cover_grass].
+				The field seen from a distance, linear: the colour the ground under the grass takes where the blades have thinned away ([code]grass_ground_far[/code]), and the grass layer of [member VegetationField3D.cover_grass]. Measured from a small render of the field's own blades a few frames after it enters the tree and after each change to its look ([signal far_color_changed]); a hand-matched blend of its colours before that and without a RenderingDevice.
+			</description>
+		</method>
+		<method name="is_far_color_baked" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] once [method get_far_color] comes from the render of the blades.
 			</description>
 		</method>
 		<method name="add_trample">
@@ -35,7 +41,7 @@
 		<method name="get_blade_count" qualifiers="const">
 			<return type="int" />
 			<description>
-				Returns the number of blades in all live tiles.
+				Returns the number of blades in all live tiles. With [member gpu_fill] it counts the candidates sent to the shader, including those the rules then leave empty.
 			</description>
 		</method>
 		<method name="get_build_time_msec" qualifiers="const">
@@ -68,6 +74,12 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the trample bend at [param position]: a world x/z direction whose length is the amount, from 0 (upright) to 1 (flat). Zero outside the trample field.
+			</description>
+		</method>
+		<method name="is_gpu_fill_available" qualifiers="static">
+			<return type="bool" />
+			<description>
+				Whether [member gpu_fill] can run: there is a [RenderingDevice] and the fill's compute shader built.
 			</description>
 		</method>
 		<method name="rebuild">
@@ -109,7 +121,7 @@
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			Path to a [TerrainDataMap3D] giving the ground height and the maps [member rules] read.
 		</member>
-		<member name="density" type="float" setter="set_density" getter="get_density" default="60.0">
+		<member name="density" type="float" setter="set_density" getter="get_density" default="120.0">
 			Blades per square metre near the camera.
 		</member>
 		<member name="dry_color" type="Color" setter="set_dry_color" getter="get_dry_color" default="Color(0.55, 0.48, 0.28, 1)">
@@ -120,6 +132,9 @@
 		</member>
 		<member name="fallback_wind" type="Vector2" setter="set_fallback_wind" getter="get_fallback_wind" default="Vector2(2, 0.5)">
 			Wind velocity (x, z) in metres per second, used when no [WeatherMap3D] publishes wind.
+		</member>
+		<member name="gpu_fill" type="bool" setter="set_gpu_fill" getter="is_gpu_fill" default="true">
+			Fill each tile's blades with a compute shader instead of the CPU loop. The CPU lists the cells the tile keeps at its level and bakes [member rules] into a 0.5 m grid; the shader makes every blade from the same hashes, clumps and light and writes the records straight into the tile's [MultiMesh] ([method RenderingServer.multimesh_mark_buffer_rd_changed]), so the path tracer sees them as before. The blades match the CPU path except within a few centimetres of a rule's edge; the main-thread cost of a tile drops by about 40%. Falls back to the CPU without a [RenderingDevice].
 		</member>
 		<member name="ground_tint" type="Color" setter="set_ground_tint" getter="get_ground_tint" default="Color(0.05, 0.09, 0.025, 0.85)">
 			Colour the ground takes under the grass (the shaded thatch between blades), with alpha as the strength. Read by terrain shaders through [method get_ground_shader_code].
@@ -167,4 +182,11 @@
 			How far blades bend for a given wind speed.
 		</member>
 	</members>
+	<signals>
+		<signal name="far_color_changed">
+			<description>
+				Emitted when the render of the blades has given a new [method get_far_color].
+			</description>
+		</signal>
+	</signals>
 </class>

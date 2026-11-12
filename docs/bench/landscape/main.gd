@@ -21,11 +21,14 @@ extends Node3D
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
 #   --falls           print every waterfall the rivers found (lip, landing, height)
 #   --probe           print coast profiles, lakes and rivers from the generator
-#   --weather=storm|clear         weather state (default storm)
+#   --weather=storm|clear         weather state (default storm); --wind=m/s overrides its wind speed
 #   --snow=climate|none   the winter baked by SnowClimate (default), or a snow-free ground for stills
 #   --month=N --time=H    0-based month of the rivers and the SkyClock date (default 4, 15 May) and local time (16.5)
 #   --day=N               day of the month (default 15)
 #   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
+#   --sun-off             no sun at all: what the sky alone lights
+#   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
+#   --water-param=name:value[;...]   set sea shader uniforms (floats, true/false, colours as r,g,b,a)
 #   --prints=0            no GroundSurface3D (footprints) node
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
@@ -34,6 +37,7 @@ extends Node3D
 #   --trees=cones|generated  forest: stand-in cones (default) or TreeGenerator's rigged woodland with wind
 #                         (--tree-variants=N, default 2)
 #   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
+#   --clip=N              with --out, N frames in a row (out_0000.png...), for clips; run with --fixed-fps 24
 #   --checks              with --out, run the link checks before the picture (they change the scene)
 
 const STEP := 4.0 # metres between ground vertices
@@ -163,7 +167,27 @@ func _ready() -> void:
 		var ct: Texture2D = veg.get_cover_texture()
 		_log("far cover map %s in %d ms (forest placed again)" % [str(ct.get_size()) if ct else "missing", Time.get_ticks_msec() - tc])
 	_run_weather()
+	if veg != null and veg.streaming:
+		# A streamed forest settles round the camera; the views on its trees are framed again on what it placed.
+		await _forest_settle()
+		if args.get("view", "wide") in ["forestfloor", "woodedge"]:
+			cam.queue_free()
+			_build_camera()
+			cam.make_current()
+			await _forest_settle()
 	_log("setup done in %d ms" % (Time.get_ticks_msec() - t_start))
+	if args.has("sun-off"):
+		sun.visible = false # an A/B frame: what the sky alone lights
+	if args.has("water-param") and ocean != null and ocean.get_water_material() != null:
+		# --water-param=name:value[;name:value]: a sea shader uniform for an A/B frame (floats; bools as true/false).
+		for kv in String(args["water-param"]).split(";"):
+			var pv := kv.split(":")
+			var val: Variant = (pv[1] == "true") if pv[1] in ["true", "false"] else float(pv[1])
+			if "," in pv[1]:
+				var c := pv[1].split_floats(",")
+				val = Color(c[0], c[1], c[2], c[3])
+			ocean.get_water_material().set_shader_parameter(pv[0], val)
+			_log("sea %s = %s" % [pv[0], val])
 	for i in 30:
 		await get_tree().process_frame
 	# The checks move probes, press prints and step the weather: a picture only runs them when asked (--checks),
@@ -175,9 +199,11 @@ func _ready() -> void:
 		return
 	# The streamed ground cover settles round the camera before the picture.
 	var sw := 0
+	get_viewport().disable_3d = true # placing only: the frames draw nothing
 	while cover != null and not cover.is_stream_idle() and sw < 1200:
 		await get_tree().process_frame
 		sw += 1
+	get_viewport().disable_3d = false
 	if cover != null:
 		_log("cover: %d plants in %d tiles after %d frames, %s" % [cover.get_plant_count(), cover.get_stream_tile_count(), sw, str(cover.get_stream_stats())])
 	# The snowpack updates on a worker thread: the picture waits for the last update to land.
@@ -206,10 +232,52 @@ func _ready() -> void:
 			await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	var out: String = args.get("out", "")
+	if args.has("clip") and out != "":
+		# --clip=N: N frames in a row to out with a frame number before its extension (run with --fixed-fps 24 so
+		# the wind and the shaders' TIME step a 24th of a second each frame however slow the frame is).
+		for i in int(args["clip"]):
+			get_viewport().get_texture().get_image().save_png(out.get_basename() + "_%04d.png" % i)
+			await RenderingServer.frame_post_draw
+		_log("saved %s frames to %s_####.png" % [args["clip"], out.get_basename()])
+		get_tree().quit(0)
+		return
 	if out != "":
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved " + out)
+		if gen != null:
+			_log("sky light update %.1f ms" % gen.get_last_sky_light_msec())
 	get_tree().quit(0)
+
+
+# Broad-leaved trees of the forest field (any species, stand-ins or generated): crowns of 2 m and more where the
+# stands are not conifer.
+func _broadleaf_trees() -> PackedVector3Array:
+	var out := PackedVector3Array()
+	for i in veg.biome.species.size():
+		var sp := veg.biome.species[i] as PlantSpecies
+		if sp == null or sp.canopy_radius < 2.0:
+			continue
+		for tp in veg.get_placements(i):
+			if veg.get_conifer_at(tp) < 0.3:
+				out.push_back(tp)
+	return out
+
+
+func _forest_settle() -> void:
+	var n := 0
+	# Nothing is drawn while it places (a frame of a generated forest takes seconds on a CPU renderer), and each
+	# frame may place for longer than in play.
+	get_viewport().disable_3d = true
+	var budget: float = veg.stream_budget_msec
+	veg.stream_budget_msec = 500.0
+	for i in 3:
+		await get_tree().process_frame
+	while not veg.is_stream_idle() and n < 3000:
+		await get_tree().process_frame
+		n += 1
+	veg.stream_budget_msec = budget
+	get_viewport().disable_3d = false
+	_log("forest: %d plants in %d tiles after %d frames" % [veg.get_plant_count(), veg.get_stream_tile_count(), n])
 
 
 func _log(s: String) -> void:
@@ -305,6 +373,7 @@ func _generate() -> void:
 	gen.gorge_age = float(args.get("gorge-age", "12000"))
 	gen.moraine_age = float(args.get("moraine-age", "0"))
 	gen.scree_age = float(args.get("scree-age", "0"))
+	gen.meander_age = float(args.get("meander-age", "0"))
 	gen.fan_backfill = not args.has("no-backfill")
 	if args.has("glacial"):
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
@@ -400,6 +469,8 @@ func _generate() -> void:
 	climate.wind_from = 190.0
 	gen.climate_recipe = climate
 	gen.river_month = int(args.get("month", "4")) # spring: the snowmelt flood
+	# --sky-occlusion=0: the ground's raster ambient light without the hills' sky occlusion (an A/B frame).
+	gen.sky_occlusion = args.get("sky-occlusion", "1") != "0"
 	gen.generate()
 	if lake_marker != null and not args.has("lake-x"):
 		# The high lake sits above the range's tallest fall: a marker up its river from the lip, then the ground is
@@ -423,9 +494,11 @@ func _generate() -> void:
 				(lake_marker.get_meta("inflow") as Node3D).position = lake_marker.position
 			_log("high lake marker %.0f m up the river from the %.0f m fall at %s" % [run, tall["height"], tall["top"]])
 			gen.generate()
-	_log("generate %d ms, grid %s, last change %.3f m, fan slots filled %d" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change(), gen.get_last_slots_filled()])
+	_log("generate %d ms, grid %s, last change %.3f m, fan slots filled %d, sky occlusion %.0f ms" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change(), gen.get_last_slots_filled(), gen.get_last_sky_msec()])
 	if gen.moraine_age > 0.0:
 		_log("moraines: %.0f m3 of debris" % gen.get_last_moraine_volume())
+	if gen.meander_age > 0.0:
+		_log("meanders: %d reaches, %d oxbows" % [gen.get_last_meander_count(), gen.get_last_oxbow_count()])
 	if gen.scree_age > 0.0:
 		_log("scree: %.0f m3" % gen.get_last_scree_volume())
 	if gen.glacial_enabled:
@@ -643,6 +716,9 @@ func _save_map(path: String) -> void:
 		_log("river %d: %d pts, head %s, mouth %s, area %.2f km2, Q %.2f m3/s (max month %.2f), ends %s, joins %d" % [ri, rp.size(),
 				str(rp[0].round()), str(rp[rp.size() - 1].round()), ar[ar.size() - 1] / 1e6, r["discharge"],
 				Array(r["monthly_discharge"]).max(), r["ends_in"], r["joins"]])
+		if args.has("river-dump") and ri == int(args.get("river-dump", "0")):
+			for k in range(0, rp.size(), 4):
+				_log("  pt %d %s ground %.2f" % [k, str(rp[k]), gen.get_height(rp[k])])
 		ri += 1
 	for f in gen.get_waterfalls(float(args.get("min-area", "1500000")), 2.0):
 		_log("fall: top %s h %.1f m, w %.1f m, Q %.2f m3/s, river %d" % [str(f["top"].round()), f["height"], f["width"], f["discharge"], f["river"]])
@@ -1036,6 +1112,10 @@ func _build_weather() -> void:
 	anchor.name = "WorldAnchor"
 	add_child(anchor)
 	add_child(weather)
+	# One season state for every system (WeatherMap3D.get_season): the date from the SkyClock, the year's weather
+	# from the same climate as the rivers and the plants.
+	weather.climate = climate
+	weather.sky_clock = weather.get_path_to(clock)
 	weather.follow_target = weather.get_path_to(anchor)
 	if args.get("cloud-shadow", "1") != "0":
 		weather.sun_light = weather.get_path_to(sun) # the clouds' shadow, as the sun's projector
@@ -1059,6 +1139,9 @@ func _build_weather() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+	# The ground's sky occlusion weighs the hidden sky by the sky's own light (read back when it changes).
+	if gen != null and args.get("sky-light", "1") != "0":
+		gen.sky_light_source = gen.get_path_to(we)
 	# Snow: a winter baked over the whole world (SnowClimate: snow line, shaded faces, loaded lee slopes, cornices),
 	# carried on by the weather; a finer near square follows the camera.
 	snow = SnowCover3D.new()
@@ -1113,7 +1196,7 @@ func _weather_settings() -> void:
 	# One weather state drives all of it. Storm: cold wet air, a storm cell over the hills, strong wind from the sea.
 	var storm: bool = args.get("weather", "storm") == "storm"
 	weather.wind_direction = Vector2(-0.2, -1.0).normalized() # onshore, from the sea up the valleys
-	weather.wind_speed = 13.0 if storm else 4.0
+	weather.wind_speed = float(args.get("wind", "13" if storm else "4"))
 	weather.cloud_cover = 0.85 if storm else 0.3
 	weather.cloud_type = 0.85 if storm else 0.4
 	weather.rain_rate = 8.0 if storm else 0.0
@@ -1239,8 +1322,15 @@ func _build_vegetation() -> void:
 		conifer.set_rule_range(PlantSpecies.RULE_HEIGHT, Vector2(6, 100000))
 	# The forest as shelter for the wind: the field writes its stands into the weather map's canopy.
 	veg.weather_map = veg.get_path_to(weather)
-	veg.populate()
-	_log("forest %d plants in %d ms" % [veg.get_plant_count(), Time.get_ticks_msec() - t])
+	# --forest-radius=R: the forest streams round the camera instead of covering the world at once.
+	var fr := float(args.get("forest-radius", "0"))
+	if fr > 0.0:
+		veg.streaming = true
+		veg.stream_radius = fr
+		_log("forest streams round the camera, %.0f m" % fr)
+	else:
+		veg.populate()
+		_log("forest %d plants in %d ms" % [veg.get_plant_count(), Time.get_ticks_msec() - t])
 	if generated_trees:
 		_tree_wind()
 	# Grass near the camera, on the same maps, moved by the weather's wind.
@@ -1426,6 +1516,9 @@ func _build_camera() -> void:
 	cam.fov = 55.0
 	add_child(cam)
 	var view: String = args.get("view", "wide")
+	if view in ["forestfloor", "woodedge"] and veg.streaming and _broadleaf_trees().is_empty():
+		# The streamed forest has not placed yet: stand at the clearing's edge first, framed again once it has.
+		view = "meadow"
 	var coast_z := _coast_z(0.0)
 	match view:
 		"lake":
@@ -1484,6 +1577,68 @@ func _build_camera() -> void:
 			cam.position = Vector3(ex - 60.0, height_at(ex - 60.0, cz) + 14.0, cz)
 			cam.look_at(Vector3(ex, height_at(ex, ez) + 10.0, ez))
 			_log("treeline edge at (%.0f, %.0f)" % [ex, ez])
+		"forestfloor":
+			# Inside a broad-leaved stand at kneeling height, looking 14 m along the floor under closed crowns.
+			var trees2 := _broadleaf_trees()
+			var fpick := Vector3.INF
+			var fdir := Vector3.ZERO
+			var fbest := -1.0
+			for tp in trees2:
+				if tp.y < 3.0:
+					continue
+				for k in 8:
+					var d := Vector3(cos(TAU * k / 8.0), 0, sin(TAU * k / 8.0))
+					var sh := minf(veg.get_stand_shade_at(tp + d * 4.0), veg.get_stand_shade_at(tp + d * 14.0))
+					if sh > fbest and rad_to_deg(data_map.get_slope_at(tp + d * 4.0)) < 12.0:
+						fbest = sh
+						fpick = tp
+						fdir = d
+				if fbest > 0.8:
+					break
+			if fpick == Vector3.INF:
+				fpick = Vector3(0, height_at(0, 0), 0)
+				fdir = Vector3(0, 0, 1)
+			var cf := fpick + fdir * 4.0 + Vector3(-fdir.z, 0, fdir.x) * 1.5
+			cf.y = height_at(cf.x, cf.z) + 1.1
+			var lf := fpick + fdir * 14.0
+			lf.y = height_at(lf.x, lf.z) + 0.2
+			cam.fov = 65.0
+			cam.position = cf
+			cam.look_at(lf)
+			_log("forestfloor camera at %s, stand shade %.2f, litter %.2f" % [str(cf), fbest, veg.get_litter_at(lf)])
+		"woodedge":
+			# At a broad-leaved wood's edge at eye height, 9 m out from a rim tree, looking at the leaf drift that thins
+			# past its crowns (get_litter_at), on open ground with no stand shade behind the camera.
+			var trees := _broadleaf_trees()
+			var pick := Vector3.INF
+			var pdir := Vector3.ZERO
+			var best_h := INF
+			for tp in trees:
+				if tp.y < 3.0 or tp.y > best_h:
+					continue
+				for k in 16:
+					var d := Vector3(cos(TAU * k / 16.0), 0, sin(TAU * k / 16.0))
+					var q := tp + d * 12.0
+					if veg.get_stand_shade_at(q) > 0.05 or veg.get_litter_at(tp + d * 3.0) < 0.3:
+						continue
+					if rad_to_deg(data_map.get_slope_at(q)) > 15.0:
+						continue
+					pick = tp
+					pdir = d
+					best_h = tp.y
+					break
+			if pick == Vector3.INF:
+				_log("woodedge: no open rim on a broad-leaved stand, falling back to the meadow view")
+				pick = Vector3(0, height_at(0, 0), 0)
+				pdir = Vector3(0, 0, 1)
+			var ce := pick + pdir * 9.0
+			ce.y = height_at(ce.x, ce.z) + 1.6
+			var la := pick + pdir * 2.0
+			la.y = height_at(la.x, la.z) + 0.4
+			cam.fov = 60.0
+			cam.position = ce
+			cam.look_at(la)
+			_log("woodedge camera at %s, litter %.2f at the rim, %.2f under the camera" % [str(ce), veg.get_litter_at(pick + pdir * 3.0), veg.get_litter_at(ce)])
 		"meadow":
 			# Standing in the clearing at eye height, 60 m short of the forest edge (the treeline view's edge), looking
 			# across the herbs and grass at it.
@@ -1588,13 +1743,19 @@ func _build_camera() -> void:
 					d.y = 0
 					d = d.normalized()
 					var h := top.y - bot.y
-					var mid := bot.lerp(top, 0.45)
+					# --contact-look=f: aim at that fraction of the drop up from the foot (default 0.45).
+					var mid := bot.lerp(top, float(args.get("contact-look", "0.45")))
 					var side := Vector3(-d.z, 0, d.x)
 					var c := bot + d * maxf(h * 1.6, 25.0) + Vector3(0, h * 0.3, 0)
 					var found := false
 					# The first spot in front of the face with a clear line to its middle (gorges hide it).
 					for lift in [0.0, 0.5, 1.0, 2.0]:
-						for k in [2.0, 2.6, 3.4, 4.5]:
+						# --contact-dist=m: a close-up from about that far (else two to four and a half drops away).
+						var ks := [2.0, 2.6, 3.4, 4.5]
+						if args.has("contact-dist"):
+							var k0 := float(args["contact-dist"]) / maxf(h, 1.0)
+							ks = [k0, k0 * 1.25, k0 * 1.6, k0 * 2.0]
+						for k in ks:
 							for o in [0.35, -0.35, 0.0, 0.7, -0.7]:
 								if found:
 									continue
@@ -1612,6 +1773,8 @@ func _build_camera() -> void:
 					cam.position = c
 					cam.look_at(mid)
 					cam.fov = clampf(rad_to_deg(2.0 * atan(0.8 * h / c.distance_to(mid))), 25.0, 70.0)
+					if args.has("contact-fov"):
+						cam.fov = float(args["contact-fov"])
 					if args.has("contact-cam"):
 						# --contact-cam=back,up: straight down the fall's own direction from the foot, back and up (m).
 						var bu: PackedStringArray = args["contact-cam"].split(",")
@@ -1665,7 +1828,10 @@ func _build_cover() -> void:
 		sp.set_rule_fade(PlantSpecies.RULE_SHADE, 0.2)
 	# The forest floor under the forest field's crowns: the montane conifer set (spruce, fir, beech: the stand-in
 	# cones and balls), bigger plants first, sorted by the crowns' conifer share.
-	var floor_sp: Array = PlantGenerator.make_floor(PlantGenerator.FLOOR_MONTANE_CONIFER, 3)
+	# --floor=beech|oak|hedgerow|montane picks the floor set (beech and oak floors carry the violets and herb robert).
+	var floors := {"montane": PlantGenerator.FLOOR_MONTANE_CONIFER, "beech": PlantGenerator.FLOOR_BEECH,
+			"oak": PlantGenerator.FLOOR_OAK_MIXED, "hedgerow": PlantGenerator.FLOOR_HEDGEROW}
+	var floor_sp: Array = PlantGenerator.make_floor(floors.get(args.get("floor", "montane"), PlantGenerator.FLOOR_MONTANE_CONIFER), 3)
 	b.species = floor_sp.slice(0, 3) + _wetland_species() + meadow_sp + floor_sp.slice(3)
 	for sp in b.species:
 		var ps := sp as PlantSpecies
@@ -2051,6 +2217,10 @@ func _checks() -> void:
 	for m in [11, 0, 1, 2, 3]:
 		q_wet = maxf(q_wet, float(md[m]) if md.size() == 12 else 0.0)
 	check(q_wet > q_summer * 1.5, "rivers follow the seasons: winter and spring high water, a late-summer low (%.2f against %.2f m3/s)" % [q_wet, q_summer])
+	var season: Dictionary = weather.get_season()
+	var want_day: int = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334][clock.month - 1] + clock.day
+	check(season.has("day_of_year") and absi(int(season["day_of_year"]) - want_day) <= 1 and season.get("photoperiod_h", 0.0) > 0.0,
+			"one season state from the SkyClock and the climate (day %d, %.1f h of daylight, forcing %.2f, snow line %.0f m)" % [int(season.get("day_of_year", -1)), float(season.get("photoperiod_h", 0.0)), float(season.get("forcing", 0.0)), float(season.get("snow_line_m", 0.0))])
 	check(melt > 0.0, "snow on the high ground holds winter water for the spring melt (%.0f mm on the peak in March)" % melt)
 	check(false, "the live weather's rain raises rivers and lakes (flows follow the climate by month, not the storm overhead)", true)
 	# Footprints: sand on the beach, mud on the lake bank in the rain, litter under the forest, none on bare rock.

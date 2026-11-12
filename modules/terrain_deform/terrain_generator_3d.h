@@ -30,12 +30,13 @@
 
 #pragma once
 
+#include "climate_recipe.h"
+
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/mesh.h"
 
-#include "climate_recipe.h"
 #include "modules/noise/noise.h"
 
 // Generates mountain ranges for a whole world: uplift (where the rock rises: a painted map, Path3D ranges, noise)
@@ -230,6 +231,9 @@ private:
 	double last_moraine_volume = 0.0; // m3 of debris the last generate() laid in moraines
 	double scree_age = 0.0; // years cliffs have shed scree onto cones at their feet; 0 none
 	double last_scree_volume = 0.0; // m3 of scree the last generate() laid
+	double meander_age = 0.0; // years the rivers on flat alluvial floors have meandered; 0 none
+	int last_meander_count = 0; // reaches meandered by the last generate()
+	int last_oxbow_count = 0;
 	double gorge_rate = 0.013; // m a year per sqrt(m3/s)
 	LocalVector<Gorge> gorges;
 	bool fall_lips = true;
@@ -239,6 +243,22 @@ private:
 	LocalVector<FallLip> lips;
 	LocalVector<PlungePool> pools;
 	LocalVector<LocalVector<int>> lip_buckets; // per LIP_BUCKET-metre square of the result
+	// Meandered channels (world x, z), cut into the full-resolution ground and followed by the rivers' points.
+	struct Channel {
+		LocalVector<Vector2> points;
+		LocalVector<real_t> bed; // bed height at each point
+		LocalVector<real_t> dep; // channel depth at each point (eased in and out at the ends)
+		real_t half_width = 5.0, depth = 1.0;
+		bool reach = false; // the river's course (else an oxbow)
+		LocalVector<Vector2> tail; // the river's next cells below a reach
+	};
+	static constexpr real_t CHANNEL_BUCKET = 32.0;
+	LocalVector<Channel> channels;
+	LocalVector<LocalVector<int>> chan_buckets;
+	int chan_bx = 0, chan_bz = 0;
+	LocalVector<int32_t> channel_of_cell; // the channel cut through each cell, -1 none
+	float _apply_channels(real_t p_x, real_t p_z, float p_g) const;
+	void _bucket_channels();
 	int lip_bx = 0, lip_bz = 0;
 	void _bake_lips();
 	float _apply_lips(real_t p_x, real_t p_z, float p_g) const;
@@ -298,6 +318,28 @@ private:
 	LocalVector<float> spray;
 	Ref<ImageTexture> spray_texture;
 	Ref<ImageTexture> ice_flow_texture; // rg flow direction, b wear (ice_worn_detail)
+	// Sky occlusion of the ground (_bake_sky): sky view factor and bent normal on their own grid over the result.
+	bool sky_occlusion = true;
+	real_t sky_cell = 8.0;
+	real_t sky_distance = 4000.0;
+	int sky_nx = 0, sky_ny = 0;
+	LocalVector<float> sky_vis;
+	LocalVector<uint8_t> sky_horizon; // TerrainSky::DIRECTIONS per node
+	LocalVector<float> sky_sh; // 9 per node: the seen sky's harmonics over the whole sky's first
+	float sky_full[9] = { 1, 0, 0, 0, 0, 0, 0, 0, 0 }; // the whole sky's harmonics over its first
+	Ref<Texture2DArray> sky_texture; // three layers of RGBA half: harmonics 0-3, 4-7, 8
+	double last_sky_msec = 0.0;
+	double last_sky_light_msec = 0.0;
+	// The sky light, read back from an environment's sky now and then (sky_light_source).
+	NodePath sky_light_source;
+	real_t sky_light_interval = 2.0;
+	double sky_light_wait = 0.0;
+	PackedFloat32Array sky_light_last; // the last panorama used, to skip updates when the sky has not changed
+	void _bake_sky();
+	void _upload_sky();
+	static void _sky_light_row(void *p_job, uint32_t p_row);
+	void _sky_light(const void *p_bins);
+	void _sky_light_poll(double p_delta);
 	void _bake_spray();
 	// Tile erosion result on its own grid (tile_nx x tile_nz nodes from result_rect's corner, tile_cell apart).
 	int tile_nx = 0;
@@ -347,6 +389,7 @@ private:
 	};
 	static void _fill_row(void *p_job, uint32_t p_row);
 	void _publish_globals();
+	void _notification(int p_what);
 	Vector3 _cell_position(int p_cell) const;
 	Array _rivers(real_t p_min_area, bool p_cells) const;
 	void _bake_runoff(const LocalVector<uint8_t> &p_sea);
@@ -556,6 +599,10 @@ public:
 	void set_scree_age(double p_years) { scree_age = MAX(p_years, 0.0); }
 	double get_scree_age() const { return scree_age; }
 	double get_last_scree_volume() const { return last_scree_volume; }
+	void set_meander_age(double p_years) { meander_age = MAX(p_years, 0.0); }
+	double get_meander_age() const { return meander_age; }
+	int get_last_meander_count() const { return last_meander_count; }
+	int get_last_oxbow_count() const { return last_oxbow_count; }
 	void set_gorge_rate(double p_rate) { gorge_rate = MAX(p_rate, 0.0); }
 	double get_gorge_rate() const { return gorge_rate; }
 	void set_fan_backfill(bool p_enable) { fan_backfill = p_enable; }
@@ -633,6 +680,21 @@ public:
 	real_t get_spray_cell() const { return spray_cell; }
 	real_t get_spray_potential(const Vector3 &p_global_position) const;
 	Ref<Image> get_spray_image() const;
+	void set_sky_occlusion(bool p_enable);
+	bool is_sky_occlusion_enabled() const { return sky_occlusion; }
+	void set_sky_cell(real_t p_cell) { sky_cell = MAX(p_cell, real_t(1.0)); }
+	real_t get_sky_cell() const { return sky_cell; }
+	void set_sky_distance(real_t p_distance) { sky_distance = MAX(p_distance, real_t(0.0)); }
+	real_t get_sky_distance() const { return sky_distance; }
+	real_t get_sky_visibility(const Vector3 &p_global_position) const;
+	Ref<Image> get_sky_image(int p_layer = 0) const;
+	double get_last_sky_msec() const { return last_sky_msec; }
+	double get_last_sky_light_msec() const { return last_sky_light_msec; }
+	bool update_sky_light(const Ref<Image> &p_panorama);
+	void set_sky_light_source(const NodePath &p_path);
+	NodePath get_sky_light_source() const { return sky_light_source; }
+	void set_sky_light_interval(real_t p_seconds) { sky_light_interval = MAX(p_seconds, real_t(0.0)); }
+	real_t get_sky_light_interval() const { return sky_light_interval; }
 	Color get_geology_at(const Vector3 &p_global_position) const;
 	Ref<Image> get_geology_image() const;
 	Ref<Texture2D> get_geology_texture() const { return geology_texture; }

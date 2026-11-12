@@ -1633,6 +1633,33 @@ void PlantGenerator::_build_wood_sorrel() {
 // (advance regeneration, waiting under the canopy for a gap) grow flat horizontal sprays from the
 // upper nodes, the shade form that catches the 1 to 5% of light that reaches the floor.
 void PlantGenerator::_build_seedling() {
+	// A seedling of one of the stand's trees (litter_leaves, as for the leaf litter): its true leaves
+	// take that tree's form at about two thirds of the adult size (shade leaves of young trees).
+	int kind = -1, count = 0;
+	float depth = 0.0f, half_w = 0.3f, adult = 0.0f;
+	if (!litter_leaves.is_empty()) {
+		float total = 0.0f;
+		for (int i = 0; i < litter_leaves.size(); i++) {
+			total += float(Dictionary(litter_leaves[i]).get("share", 1.0f));
+		}
+		float pick = rng.randf() * total;
+		Dictionary f = litter_leaves[0];
+		for (int i = 0; i < litter_leaves.size(); i++) {
+			f = litter_leaves[i];
+			pick -= float(f.get("share", 1.0f));
+			if (pick <= 0.0f) {
+				break;
+			}
+		}
+		kind = int(f.get("kind", 0));
+		count = int(f.get("count", 0));
+		depth = CLAMP(float(f.get("depth", 0.0f)), 0.0f, 0.8f);
+		half_w = CLAMP(float(f.get("width", 0.3f)), 0.05f, 0.7f);
+		adult = CLAMP(float(f.get("size", 0.08f)), 0.02f, 0.4f);
+		if (kind == 5) {
+			kind = -1; // Conifer seedlings are not built here.
+		}
+	}
 	const float len = _rand(0.08f, 0.75f);
 	const float age = CLAMP((len - 0.15f) / 0.5f, 0.0f, 1.0f);
 	const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.4f, 1.55f));
@@ -1658,13 +1685,22 @@ void PlantGenerator::_build_seedling() {
 		az += Math::PI;
 		const Vector3 side(Math::cos(az), 0.0f, Math::sin(az));
 		if (k == 0 && age < 0.3f) {
-			// Seed leaves: a fleshy pair, fan-shaped, wider than long.
+			// Seed leaves: a fleshy pair, fan-shaped and wider than long (beech), strap-shaped (maples,
+			// ash), or none above ground where they stay in the seed (oaks).
+			if (kind == 1) {
+				continue;
+			}
 			Leaf c = l;
 			c.lobes = 0;
 			c.length = _rand(0.015f, 0.02f);
 			c.width = c.length * 1.8f;
 			c.petiole = 0.1f;
 			c.fold = 0.05f;
+			if (kind >= 2) {
+				c.shape = LEAF_LANCEOLATE;
+				c.length = _rand(0.025f, 0.035f);
+				c.width = c.length * 0.25f;
+			}
 			for (int s = -1; s <= 1; s += 2) {
 				const Vector3 cd = (Vector3(-side.z, 0.0f, side.x) * float(s) + Vector3(0, 0.25f, 0)).normalized();
 				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(cd, up), at.origin), c, t1);
@@ -1674,7 +1710,11 @@ void PlantGenerator::_build_seedling() {
 		// Shade leaves: large and thin, the lowest the oldest.
 		l.length = _rand(0.045f, 0.075f) * (0.75f + 0.25f * age);
 		l.width = l.length * _rand(0.55f, 0.65f);
-		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((side + Vector3(0, 0.12f, 0)).normalized(), up), at.origin), l, t1);
+		if (kind >= 0) {
+			_add_seedling_leaf(Transform3D(organ_frame((side + Vector3(0, 0.12f, 0)).normalized(), up), at.origin), kind, count, depth, half_w, adult * _rand(0.55f, 0.75f) * (0.75f + 0.25f * age), t1);
+		} else {
+			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((side + Vector3(0, 0.12f, 0)).normalized(), up), at.origin), l, t1);
+		}
 		// Side shoots from the upper nodes, longest low down: a layered, flat crown.
 		if (age > 0.25f && t1 > 0.3f && t1 < 0.92f && rng.randf() < 0.3f + 0.35f * age) {
 			const Vector3 sd = (side + Vector3(0, _rand(0.0f, 0.15f), 0)).normalized();
@@ -1691,9 +1731,99 @@ void PlantGenerator::_build_seedling() {
 				Leaf sl_leaf = l;
 				sl_leaf.length = _rand(0.035f, 0.065f) * (1.0f - 0.25f * j / sn);
 				sl_leaf.width = sl_leaf.length * _rand(0.55f, 0.65f);
-				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((across + fwd * 0.45f + Vector3(0, 0.05f, 0)).normalized(), up), s_at.origin), sl_leaf, MIN(1.0f, t1 + 0.1f * (j + 1)));
+				const Transform3D lf_at(organ_frame((across + fwd * 0.45f + Vector3(0, 0.05f, 0)).normalized(), up), s_at.origin);
+				if (kind >= 0) {
+					_add_seedling_leaf(lf_at, kind, count, depth, half_w, adult * _rand(0.45f, 0.65f) * (1.0f - 0.25f * j / sn), MIN(1.0f, t1 + 0.1f * (j + 1)));
+				} else {
+					_add_leaf(SURFACE_LEAF, lf_at, sl_leaf, MIN(1.0f, t1 + 0.1f * (j + 1)));
+				}
 			}
 		}
+	}
+}
+
+// One true leaf of a tree seedling in the tree's form (kind as in litter_leaves): simple, lobed,
+// palmate, pinnate (a short rachis with 3 to 5 leaflets, as young ash and rowan carry) or digitate.
+void PlantGenerator::_add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t) {
+	Leaf l;
+	l.shape = LEAF_OVATE;
+	l.length = p_size;
+	l.width = p_size * 2.0f * p_half_width;
+	l.petiole = 0.1f;
+	l.fold = 0.15f;
+	l.bend = 0.1f;
+	l.segments = 6;
+	const Basis &frame = p_at.basis;
+	switch (p_kind) {
+		case 1:
+			l.lobes = MAX(p_count, 1);
+			l.lobe_depth = p_depth;
+			l.round_lobes = true;
+			l.segments = MAX(6, l.lobes * 3);
+			_add_leaf(SURFACE_LEAF, p_at, l, p_t);
+			break;
+		case 2:
+			l.shape = LEAF_PALMATE;
+			l.width = p_size * 1.05f;
+			l.lobes = MAX((p_count - 1) / 2, 1);
+			l.lobe_depth = p_depth;
+			l.segments = 8;
+			l.petiole = 0.3f;
+			_add_leaf(SURFACE_LEAF, p_at, l, p_t);
+			break;
+		case 3: {
+			const int n = CLAMP(p_count / 2, 1, 2) * 2 + 1;
+			Leaf rachis;
+			rachis.shape = LEAF_LINEAR;
+			rachis.length = p_size * 0.7f;
+			rachis.width = 0.002f;
+			rachis.fold = 0.0f;
+			rachis.segments = 3;
+			_add_leaf(SURFACE_LEAF, p_at, rachis, p_t);
+			Leaf lf = l;
+			lf.shape = LEAF_LANCEOLATE;
+			lf.length = p_size * 1.6f / (n + 1);
+			lf.width = lf.length * 0.4f;
+			lf.petiole = 0.03f;
+			lf.lobes = 6;
+			lf.lobe_depth = 0.04f;
+			for (int q = 0; q < n; q++) {
+				const bool tip = q == n - 1;
+				const float u = (q / 2 + 1.0f) / (n / 2 + 1.0f);
+				const float side = (q % 2 == 0) ? 1.0f : -1.0f;
+				const Vector3 d = tip ? frame.get_column(2) : (frame.get_column(2) * 0.5f + frame.get_column(0) * side).normalized();
+				const Vector3 p = p_at.origin + frame.get_column(2) * (tip ? rachis.length : u * rachis.length * 0.9f);
+				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, frame.get_column(1)), p), lf, p_t);
+			}
+		} break;
+		case 4: {
+			const int n = MAX(p_count, 5);
+			Leaf lf = l;
+			lf.shape = LEAF_SPATULATE;
+			lf.length = p_size * 0.6f;
+			lf.width = lf.length * 0.42f;
+			lf.petiole = 0.0f;
+			Leaf stalk;
+			stalk.shape = LEAF_LINEAR;
+			stalk.length = p_size * 0.4f;
+			stalk.width = 0.002f;
+			stalk.fold = 0.0f;
+			stalk.segments = 2;
+			_add_leaf(SURFACE_LEAF, p_at, stalk, p_t);
+			const Vector3 hub = p_at.origin + frame.get_column(2) * stalk.length;
+			for (int q = 0; q < n; q++) {
+				const float ang = (float(q) / MAX(n - 1, 1) - 0.5f) * 2.6f;
+				const Vector3 d = (frame.get_column(2) * Math::cos(ang) + frame.get_column(0) * Math::sin(ang)).normalized();
+				Leaf lq = lf;
+				lq.length *= 1.0f - 0.35f * Math::abs(ang) / 1.3f;
+				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, frame.get_column(1)), hub), lq, p_t);
+			}
+		} break;
+		default:
+			l.lobes = 6;
+			l.lobe_depth = 0.04f;
+			_add_leaf(SURFACE_LEAF, p_at, l, p_t);
+			break;
 	}
 }
 
@@ -1798,6 +1928,114 @@ void PlantGenerator::_build_wood_anemone() {
 				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, face), top.origin), t, 1.0f);
 			}
 			_add_head(SURFACE_CENTRE, Transform3D(fb, top.origin), 0.0025f, 0.003f);
+		}
+	}
+}
+
+// Common dog-violet (Viola riviniana; Stace 2019): a rosette of long-stalked, heart-shaped leaves
+// 1.5 to 4 cm across with rounded teeth, held 4 to 10 cm up, and nodding blue-violet flowers
+// 1.5 to 2.5 cm across on their own arched stalks: five petals, the lowest broad with a pale spur.
+// Woods, hedge banks and grassland in half shade.
+void PlantGenerator::_build_violet() {
+	const int leaves = int(_rand(8.0f, 16.0f));
+	Leaf l;
+	l.shape = LEAF_ROUND;
+	l.lobes = 7;
+	l.lobe_depth = 0.05f;
+	l.round_lobes = true;
+	l.petiole = 0.0f;
+	l.fold = 0.25f; // The blade cupped and rolled in at the base.
+	l.bend = 0.25f;
+	l.segments = 8;
+	for (int i = 0; i < leaves; i++) {
+		const float az = _rand(0.0f, Math::TAU);
+		const float young = _rand(0.0f, 1.0f);
+		const Transform3D top = _add_stem(stem_base(az, _rand(0.9f, 1.35f)), _rand(0.03f, 0.07f), 0.0011f, 0.0008f, _rand(0.3f, 0.7f), 4, 0.0f);
+		l.length = _rand(0.02f, 0.04f) * (0.7f + 0.3f * young);
+		l.width = l.length * _rand(0.9f, 1.05f);
+		const Vector3 d = (polar_dir(az, 0.0f) + Vector3(0, _rand(0.0f, 0.35f), 0)).normalized();
+		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), top.origin), l, 1.0f);
+	}
+	const int flowers = int(_rand(0.0f, 5.0f));
+	Leaf p;
+	p.shape = LEAF_SPATULATE;
+	p.fold = 0.15f;
+	p.bend = -0.2f;
+	p.segments = 3;
+	for (int f = 0; f < flowers; f++) {
+		// The stalk arches over so the flower faces sideways and a little down.
+		const Transform3D top = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.0f, 1.35f)), _rand(0.06f, 0.12f), 0.0008f, 0.0006f, _rand(0.8f, 1.3f), 5, 0.0f);
+		const Vector3 face = (top.basis.get_column(2) * Vector3(1, 0, 1) + Vector3(0, -0.15f, 0)).normalized();
+		const Basis fb = organ_frame(face, Vector3(0, 1, 0));
+		const float sz = _rand(0.008f, 0.011f);
+		// Two upper petals, two side petals, one broad lower lip.
+		const float ang[5] = { 1.2f, 1.95f, -0.25f, 3.4f, -1.57f };
+		for (int k = 0; k < 5; k++) {
+			const Vector3 d = (fb.get_column(0) * Math::cos(ang[k]) + fb.get_column(1) * Math::sin(ang[k]) + face * 0.35f).normalized();
+			p.length = k == 4 ? sz * 1.15f : sz;
+			p.width = k == 4 ? sz * 0.9f : sz * 0.65f;
+			_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, face), top.origin), p, 1.0f);
+		}
+		_add_head(SURFACE_CENTRE, Transform3D(fb, top.origin), 0.0012f, 0.002f);
+	}
+}
+
+// Herb Robert (Geranium robertianum; Stace 2019): a straggling herb 10 to 40 cm, its stems and
+// stalks flushed red (more in sun), leaves cut into three to five deeply lobed leaflets, and
+// small pink flowers of five rounded petals 1.4 to 1.8 cm across in pairs. Woodland rides,
+// clearings, hedge bottoms and old walls: the light patches of the floor.
+void PlantGenerator::_build_herb_robert() {
+	const int stems = int(_rand(3.0f, 7.0f));
+	Leaf lf;
+	lf.shape = LEAF_PALMATE;
+	lf.lobes = 2;
+	lf.lobe_depth = 0.6f;
+	lf.petiole = 0.15f;
+	lf.fold = 0.15f;
+	lf.bend = 0.3f;
+	lf.segments = 7;
+	Leaf p;
+	p.shape = LEAF_SPATULATE;
+	p.fold = 0.1f;
+	p.bend = -0.15f;
+	p.segments = 3;
+	for (int i = 0; i < stems; i++) {
+		const float az = _rand(0.0f, Math::TAU);
+		const float len = _rand(0.1f, 0.3f);
+		const float bend = _rand(0.3f, 0.7f);
+		const Transform3D base = stem_base(az, _rand(0.9f, 1.3f));
+		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 6);
+		const Transform3D top = _add_stem(base, len, 0.0016f, 0.001f, bend, 6, 0.0f);
+		const int nodes = int(_rand(3.0f, 5.0f));
+		for (int n = 0; n < nodes; n++) {
+			const Transform3D at = _frame_at(fr, (n + 1.0f) / (nodes + 1.0f));
+			for (int s = -1; s <= 1; s += 2) {
+				// Opposite leaves on long stalks; each blade of three leaflets fanned out.
+				const Vector3 side = (at.basis.get_column(0) * float(s) + Vector3(0, 0.3f, 0)).normalized();
+				const Transform3D stalk = _add_stem(Transform3D(organ_frame(side, Vector3(0, 1, 0)), at.origin), _rand(0.02f, 0.045f), 0.0006f, 0.0005f, 0.3f, 2, 0.5f);
+				const float size = _rand(0.022f, 0.035f) * (1.15f - 0.3f * n / nodes);
+				for (int q = -1; q <= 1; q++) {
+					const Vector3 fwd = stalk.basis.get_column(2) * Vector3(1, 0, 1);
+					const Vector3 across = fwd.cross(Vector3(0, 1, 0)).normalized();
+					const Vector3 d = (fwd.normalized() + across * (1.1f * q) + Vector3(0, 0.1f, 0)).normalized();
+					lf.length = size * (q == 0 ? 1.0f : 0.8f);
+					lf.width = lf.length * 0.9f;
+					_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), stalk.origin), lf, 0.8f);
+				}
+			}
+		}
+		if (rng.randf() < 0.8f) {
+			const Vector3 face = (top.basis.get_column(2) + Vector3(0, 0.6f, 0)).normalized();
+			const Basis fb = organ_frame(face, Vector3(0, 1, 0));
+			const float sz = _rand(0.007f, 0.009f);
+			p.length = sz;
+			p.width = sz * 0.7f;
+			for (int k = 0; k < 5; k++) {
+				const float a = k * Math::TAU / 5.0f;
+				const Vector3 d = (fb.get_column(0) * Math::cos(a) + fb.get_column(1) * Math::sin(a) + face * 0.3f).normalized();
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, face), top.origin), p, 1.0f);
+			}
+			_add_head(SURFACE_CENTRE, Transform3D(fb, top.origin), 0.0012f, 0.0015f);
 		}
 	}
 }
@@ -2353,6 +2591,23 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.venation = VENATION_PARALLEL;
 			t.parallel_veins = 1;
 			t.yellowing = 0.2f;
+			break;
+		case PRESET_VIOLET:
+			l.shape = LEAF_ROUND;
+			l.lobes = 7;
+			l.lobe_depth = 0.05f;
+			t.aspect = 1.0f;
+			t.venation = VENATION_PALMATE;
+			t.yellowing = 0.1f;
+			break;
+		case PRESET_HERB_ROBERT:
+			l.shape = LEAF_PALMATE;
+			l.lobes = 2;
+			l.lobe_depth = 0.6f;
+			t.aspect = 0.9f;
+			t.venation = VENATION_PALMATE;
+			t.yellowing = 0.1f;
+			t.spots = 0.2f;
 			break;
 		case PRESET_WATER_LILY:
 			l.shape = LEAF_ROUND;
@@ -3463,6 +3718,18 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.05f, 0.15f, 0.04f); // Dark, glossy.
 			stem_color = Color(0.22f, 0.2f, 0.12f);
 			break;
+		case PRESET_VIOLET:
+			leaf_color = Color(0.1f, 0.27f, 0.06f);
+			stem_color = Color(0.2f, 0.3f, 0.1f);
+			petal_color = Color(0.36f, 0.27f, 0.62f); // Blue-violet.
+			centre_color = Color(0.9f, 0.85f, 0.75f);
+			break;
+		case PRESET_HERB_ROBERT:
+			leaf_color = Color(0.16f, 0.3f, 0.07f);
+			stem_color = Color(0.45f, 0.12f, 0.1f); // Red stems.
+			petal_color = Color(0.85f, 0.38f, 0.6f); // Pink.
+			centre_color = Color(0.9f, 0.6f, 0.7f);
+			break;
 		case PRESET_HEATHER:
 			leaf_color = Color(0.13f, 0.22f, 0.07f); // Dark, dull green.
 			stem_color = Color(0.25f, 0.18f, 0.12f);
@@ -3582,6 +3849,12 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 			break;
 		case PRESET_HEATHER:
 			_build_heather();
+			break;
+		case PRESET_VIOLET:
+			_build_violet();
+			break;
+		case PRESET_HERB_ROBERT:
+			_build_herb_robert();
 			break;
 		case PRESET_MAX:
 			break;
@@ -3888,6 +4161,10 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 	const FloorSpec twigs = { P::PRESET_TWIGS, 0.55f, 0.0f, 0.7f, 0.8f, 1.2f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 1.0f, 18.0f };
 	const FloorSpec leaves = { P::PRESET_LEAF_LITTER, 0.2f, 0.0f, 0.6f, 1.2f, 1.8f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.0f, 0.5f, 15.0f };
 	const FloorSpec needles = { P::PRESET_NEEDLE_LITTER, 0.35f, 0.0f, 0.8f, 0.8f, 1.3f, 0.0f, 0.0f, 0.3f, 1.0f, 0.2f, 0.5f, 1.0f, 15.0f };
+	// Broad-leaved herbs of the lighter floor (Ellenberg light 4 to 6): violets in half shade,
+	// herb Robert in rides, gaps and edges.
+	const FloorSpec violet = { P::PRESET_VIOLET, 0.3f, 0.06f, 0.6f, 0.9f, 1.2f, 4.0f, 0.3f, 0.2f, 0.9f, 0.15f, 0.0f, 0.6f, 18.0f };
+	const FloorSpec herb_robert = { P::PRESET_HERB_ROBERT, 0.4f, 0.1f, 0.6f, 0.8f, 1.2f, 5.0f, 0.3f, 0.1f, 0.75f, 0.15f, 0.0f, 0.7f, 25.0f };
 	const FloorSpec bilberry = { P::PRESET_BILBERRY, 0.35f, 0.12f, 0.9f, 1.0f, 1.4f, 7.0f, 0.6f, 0.3f, 1.0f, 0.15f, 0.4f, 1.0f, 25.0f };
 	LocalVector<FloorSpec> set;
 	switch (p_stand) {
@@ -3896,7 +4173,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			set = LocalVector<FloorSpec>({ gap_bramble, gap_foxglove, fern, seedling,
 				{ P::PRESET_WOODRUFF, 0.3f, 0.1f, 0.9f, 0.9f, 1.2f, 4.0f, 0.3f, 0.5f, 1.0f, 0.15f, 0.0f, 0.5f, 20.0f },
 				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 5.0f, 0.3f, 0.4f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
-				sorrel, moss, twigs, leaves, needles });
+				violet, herb_robert, sorrel, moss, twigs, leaves, needles });
 			set[2].density = 0.35f; // Few ferns under beech.
 			set[3].density = 0.8f; // Beech seedlings carpet the floor.
 			break;
@@ -3906,7 +4183,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				{ P::PRESET_IVY, 0.6f, 0.0f, 0.9f, 0.9f, 1.3f, 6.0f, 0.45f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 25.0f },
 				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 6.0f, 0.4f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
 				{ P::PRESET_WOODRUFF, 0.3f, 0.1f, 0.7f, 0.9f, 1.2f, 4.0f, 0.2f, 0.5f, 1.0f, 0.15f, 0.0f, 0.5f, 20.0f },
-				moss, twigs, leaves, needles });
+				violet, herb_robert, moss, twigs, leaves, needles });
 			set[0].shade_max = 0.9f; // Bramble runs under oak, not only in gaps.
 			set[0].patch_cover = 0.5f;
 			break;
@@ -3951,7 +4228,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 				{ P::PRESET_NETTLE, 0.5f, 0.15f, 0.8f, 0.9f, 1.3f, 5.0f, 0.45f, 0.0f, 0.9f, 0.15f, 0.0f, 1.0f, 35.0f },
 				gap_foxglove, fern,
 				{ P::PRESET_IVY, 0.6f, 0.0f, 0.9f, 0.9f, 1.3f, 5.0f, 0.5f, 0.2f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f },
-				twigs, leaves });
+				violet, herb_robert, twigs, leaves });
 			set[0].shade_max = 0.95f;
 			set[0].density = 1.0f;
 			set[0].patch_cover = 0.7f;
@@ -3962,7 +4239,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			// wood sorrel, maple seedlings by the thousand.
 			set = LocalVector<FloorSpec>({ gap_bramble, fern, seedling,
 				{ P::PRESET_WOOD_ANEMONE, 0.25f, 0.08f, 0.9f, 0.9f, 1.2f, 6.0f, 0.45f, 0.3f, 1.0f, 0.15f, 0.0f, 0.6f, 20.0f },
-				sorrel, moss, twigs, leaves, needles });
+				violet, sorrel, moss, twigs, leaves, needles });
 			set[1].density = 0.8f;
 			set[1].patch_cover = 0.55f;
 			set[2].density = 0.9f;
@@ -4051,7 +4328,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		gen->set_preset(f.preset);
 		gen->apply_preset_colors();
 		gen->set_seed(seed_base);
-		if (f.preset == P::PRESET_LEAF_LITTER) {
+		if (f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_SEEDLING) {
 			gen->set_litter_leaves(stand_litter_leaves(p_stand, p_season));
 		}
 		if (f.preset == P::PRESET_TWIGS) {
@@ -4143,11 +4420,13 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("generate_variants", "count"), &PlantGenerator::generate_variants);
 	ClassDB::bind_method(D_METHOD("apply_preset_colors"), &PlantGenerator::apply_preset_colors);
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Dandelion,Plantain,Clover,Fern,Sedge,Daisy,Buttercup,Nettle,Thistle,Yarrow,Dock,Cocksfoot,Timothy,Dry Grass,Leaf Litter,Moss,Bilberry,Bracken,Bramble,Foxglove,Reed,Cattail,Rush,Water Lily,Needle Litter,Twigs,Wood Sorrel,Seedling,Feather Moss,Woodruff,Wood Anemone,Ivy,Heather"), "set_preset", "get_preset");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Dandelion,Plantain,Clover,Fern,Sedge,Daisy,Buttercup,Nettle,Thistle,Yarrow,Dock,Cocksfoot,Timothy,Dry Grass,Leaf Litter,Moss,Bilberry,Bracken,Bramble,Foxglove,Reed,Cattail,Rush,Water Lily,Needle Litter,Twigs,Wood Sorrel,Seedling,Feather Moss,Woodruff,Wood Anemone,Ivy,Heather,Violet,Herb Robert"), "set_preset", "get_preset");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "size", PROPERTY_HINT_RANGE, "0.1,4,0.01"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leaf_wear", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_leaf_wear", "get_leaf_wear");
+	ClassDB::bind_method(D_METHOD("set_litter_leaves", "leaves"), &PlantGenerator::set_litter_leaves);
+	ClassDB::bind_method(D_METHOD("get_litter_leaves"), &PlantGenerator::get_litter_leaves);
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "litter_leaves"), "set_litter_leaves", "get_litter_leaves");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "textures"), "set_textures", "get_textures");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "texture_size", PROPERTY_HINT_RANGE, "32,2048,1"), "set_texture_size", "get_texture_size");
@@ -4190,10 +4469,10 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_WOOD_ANEMONE);
 	BIND_ENUM_CONSTANT(PRESET_IVY);
 	BIND_ENUM_CONSTANT(PRESET_HEATHER);
+	BIND_ENUM_CONSTANT(PRESET_VIOLET);
+	BIND_ENUM_CONSTANT(PRESET_HERB_ROBERT);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
-	ClassDB::bind_method(D_METHOD("set_litter_leaves", "leaves"), &PlantGenerator::set_litter_leaves);
-	ClassDB::bind_method(D_METHOD("get_litter_leaves"), &PlantGenerator::get_litter_leaves);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));
 	BIND_ENUM_CONSTANT(CLIMBER_IVY);
 	BIND_ENUM_CONSTANT(CLIMBER_CLEMATIS);
