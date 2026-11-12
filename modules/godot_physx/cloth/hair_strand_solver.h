@@ -65,6 +65,9 @@ public:
 	RID buf_vol, buf_vol_rest; // the hair volume grid (density, momentum) and the groom's own density
 	RID buf_render_points; // per strand the points drawn: (first, count), then the indices
 	RID buf_coll_cells, buf_coll_delta, buf_point_strand; // strand-strand collision: spatial hash, corrections, each point's strand
+	RID tex_cloth; // a cloth's simulated positions (not owned), or tex_cloth_dummy
+	RID tex_cloth_dummy, buf_cloth_tris; // the cloth's triangles (three particles each)
+	int cloth_tri_count = 0;
 	int coll_buckets = 0;
 	int vol_cells = 0; // a side, 0: no volume grid
 	int tris_capacity = 0; // triangles buf_tris holds
@@ -86,6 +89,7 @@ public:
 	void rt_reset(Ref<HairStrandSolverGPU> p_self);
 	void rt_hold(Ref<HairStrandSolverGPU> p_self);
 	void rt_drop_history(Ref<HairStrandSolverGPU> p_self);
+	void rt_set_cloth(Ref<HairStrandSolverGPU> p_self, RID p_texture, PackedInt32Array p_tris);
 	void rt_free_buffers();
 	void rt_free(Ref<HairStrandSolverGPU> p_self);
 
@@ -97,6 +101,7 @@ class HairStrandSolver {
 	void _dispatch(const Callable &p_call) const;
 	Transform3D last_xform;
 	bool has_last = false;
+	int cloth_tris = 0;
 	double time = 0.0;
 	// The hair volume grid, groom space: its corner, cell and the groom's mean density.
 	Vector3 vol_origin;
@@ -140,6 +145,12 @@ public:
 		// followers, no draw-order sort after the first, only the cards' slots written).
 		int card_first = 0;
 		bool cards_only = false;
+		// A cloth the hair rests on (set_cloth gives its texture and triangles): its texture's
+		// space -> world, its world bounds, its texture's width and its thickness (m).
+		Transform3D cloth_xform;
+		AABB cloth_bounds;
+		int cloth_texture_width = 1;
+		float cloth_thickness = 0.0f;
 		// Deep opacity maps (Yuksel and Keyser 2008), one per light, up to DOM_SLOTS; none: off.
 		struct DeepShadowLight {
 			Vector3 center; // world, the hair's bounding sphere
@@ -172,6 +183,10 @@ public:
 	// The next frame writes no motion (its previous positions are its own): after the strands
 	// were not drawn for a while (hair cards), so stale history gives no false motion.
 	void drop_history();
+	// A PhysXSkinnedCloth3D the hair collides with (its simulated triangles join the collision
+	// body's distance field each frame); an invalid texture or no triangles: none.
+	void set_cloth(RID p_texture, const PackedInt32Array &p_tris);
+	int get_cloth_triangle_count() const { return cloth_tris; }
 
 	RID get_position_texture_rd_rid() const;
 	RID get_previous_position_texture_rd_rid() const;

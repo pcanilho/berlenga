@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "physx_hair_3d.h"
+#include "physx_skinned_cloth_3d.h"
 
 #include "core/config/engine.h"
 #include "core/math/geometry_3d.h"
@@ -437,6 +438,7 @@ const char *HAIR_CARD_FUNCS = R"(
 uniform sampler2D card_atlas : filter_linear_mipmap, repeat_disable;
 uniform float card_clump = 0.0; // wet clumping, as the strands'
 varying vec3 card_across; // view space: this strip's axis (raster lighting)
+varying float card_fan; // how far the card's guides fanned apart since the groom (the card widens by it)
 
 void vertex() {
 	strand_seed = 0.0;
@@ -448,7 +450,10 @@ void vertex() {
 	vec4 here = hair_point(CUSTOM0.x);
 	vec4 before = hair_point(CUSTOM0.y);
 	vec4 after = hair_point(CUSTOM0.z);
-	float along = clamp(here.w - 4.0, 0.0, 1.0);
+	// w: 4 + along + 8 * fan (64ths), the solver's encoding for a card's strand.
+	float fan_q = floor((here.w - 4.0) / 8.0);
+	float along = clamp(here.w - 4.0 - 8.0 * fan_q, 0.0, 1.0);
+	card_fan = clamp(fan_q / 64.0, 0.5, 4.0);
 	vec3 p = here.xyz;
 	vec3 t0 = CUSTOM2.xyz;
 	vec3 t = after.xyz - before.xyz;
@@ -464,7 +469,8 @@ void vertex() {
 	}
 	ax -= t * dot(ax, t);
 	ax = dot(ax, ax) > 1e-12 ? normalize(ax) : normalize(cross(t, abs(t.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-	float half_width = CUSTOM2.w * (1.0 - card_clump * smoothstep(0.0, 0.3, along));
+	// The clump fans out (or closes) with its guides: the card as much wider, and thinner below.
+	float half_width = CUSTOM2.w * card_fan * (1.0 - card_clump * smoothstep(0.0, 0.3, along));
 	VERTEX = p + ax * (half_width * CUSTOM0.w);
 	NORMAL = normalize(cross(ax, t));
 	TANGENT = ax;
@@ -517,7 +523,16 @@ void fragment() {
 	float f = dot(NORMAL, VIEW);
 	float o = dot(TANGENT, VIEW);
 	float facing = f * f / max(f * f + o * o, 1e-6);
-	float coverage = 1.0 - pow(max(1.0 - texel.r, 1e-4), facing);
+	// Fanned out, the same strands spread over a wider card: optical depth over the fan.
+	float coverage = 1.0 - pow(max(1.0 - texel.r, 1e-4), facing / max(card_fan, 0.5));
+	// Lit as the strands are: a fibre has no surface normal, so the ambient and reflected light
+	// take the normal facing the viewer about the strands' direction (the strands' ribbon normal;
+	// Unreal's hair does the same for its cards, Karis 2016). The card's own normal caught the sky
+	// on cards tipped up and read lighter than the strands.
+	vec3 hair_n = VIEW - light_tangent * dot(VIEW, light_tangent);
+	NORMAL = dot(hair_n, hair_n) > 1e-8 ? normalize(hair_n) : VIEW;
+	BINORMAL = light_tangent;
+	TANGENT = normalize(cross(light_tangent, NORMAL));
 #ifdef HAIR_SCATTERING
 	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
 		// As the strands: what the fibres pass straight on (TT) is not blocked.
@@ -984,12 +999,19 @@ void PhysXHair3D::_build() {
 	// decimation), within simplify_tolerance of the root width, below what a strand's own width
 	// shows. Every point still simulates and casts into the deep shadows.
 	PackedInt32Array render_points;
-	const int slot_points = _render_points(pts, counts, render_points);
+	int slot_points = _render_points(pts, counts, render_points);
+	const int drawn_points = slot_points; // the strands' drawn points (the slots may hold more)
 
 	// Hair cards: each card's centre line is one more strand, after the groom's, simulated as a
 	// follower of its nearest guides and drawn (from the first slots of the output) by the cards.
-	if (cards_enabled && slot_points >= 2) {
-		const int samples = CLAMP(slot_points, 2, 16);
+	// The cards take the groomed points, not the drawn ones: a straight strand simplifies to its two
+	// ends, and a card through only those cuts through the head as the strand drapes around it.
+	int groom_points = 0;
+	for (int i = 0; i < groom_strands; i++) {
+		groom_points = MAX(groom_points, counts[i]);
+	}
+	if (cards_enabled && groom_points >= 2) {
+		const int samples = CLAMP(groom_points, 2, 16);
 		uint32_t h = hash_murmur3_one_64((uint64_t)pts.size());
 		h = hash_murmur3_one_32((uint32_t)(card_count * 64 + samples), h);
 		h = hash_murmur3_one_float(root_width, h);
@@ -1002,6 +1024,7 @@ void PhysXHair3D::_build() {
 	if (card_bake.is_valid() && card_bake->card_count > 0) {
 		card_first = groom_strands;
 		const int cs = card_bake->samples;
+		slot_points = MAX(slot_points, cs); // each card strand's slot holds all its points
 		const int base = pts.size();
 		pts.append_array(card_bake->points);
 		// The drawn points: every card point (the header grows by the cards' entries).
@@ -1080,8 +1103,8 @@ void PhysXHair3D::_build() {
 		}
 	}
 	const int strand_count = counts.size();
-	if (slot_points >= 2) {
-		verts.resize(strand_count * slot_points * 4);
+	if (drawn_points >= 2) {
+		verts.resize(strand_count * drawn_points * 4);
 		uvs.resize(verts.size());
 		normals.resize(verts.size());
 		tangents.resize(verts.size() * 4);
@@ -1096,23 +1119,24 @@ void PhysXHair3D::_build() {
 		int start = 0;
 		for (int slot = 0; slot < strand_count; slot++) {
 			const int n = MAX(counts[slot], 1);
-			for (int k = 0; k < slot_points; k++) {
-				const int t = slot * slot_points + k;
+			for (int k = 0; k < drawn_points; k++) {
+				const int t = slot * slot_points + k; // texel: the solver's slot stride
+				const int tm = slot * drawn_points + k; // vertex group
 				// Rest position: the groom in groom order (vertex() replaces it).
 				const Vector3 p = pts[MIN(start + MIN(k, n - 1), pts.size() - 1)];
 				for (int strip = 0; strip < 2; strip++) {
 					for (int side = 0; side < 2; side++) {
-						const int vi = t * 4 + strip * 2 + side;
+						const int vi = tm * 4 + strip * 2 + side;
 						v[vi] = p;
 						nr[vi] = Vector3(0, 0, 1);
 						tg[vi * 4 + 0] = 1.0f;
 						tg[vi * 4 + 1] = 0.0f;
 						tg[vi * 4 + 2] = 0.0f;
 						tg[vi * 4 + 3] = 1.0f;
-						uv[vi] = Vector2(float(side), float(k) / float(MAX(slot_points - 1, 1)));
+						uv[vi] = Vector2(float(side), float(k) / float(MAX(drawn_points - 1, 1)));
 						c0[vi * 4 + 0] = float(t);
 						c0[vi * 4 + 1] = float(slot * slot_points + MAX(k - 1, 0));
-						c0[vi * 4 + 2] = float(slot * slot_points + MIN(k + 1, slot_points - 1));
+						c0[vi * 4 + 2] = float(slot * slot_points + MIN(k + 1, drawn_points - 1));
 						c0[vi * 4 + 3] = side == 0 ? -1.0f : 1.0f;
 						c1[vi * 4 + 0] = 0.0f;
 						c1[vi * 4 + 1] = 0.0f;
@@ -1121,9 +1145,9 @@ void PhysXHair3D::_build() {
 					}
 				}
 			}
-			for (int k = 0; k + 1 < slot_points; k++) {
+			for (int k = 0; k + 1 < drawn_points; k++) {
 				for (int strip = 0; strip < 2; strip++) {
-					const int v0 = (slot * slot_points + k) * 4 + strip * 2;
+					const int v0 = (slot * drawn_points + k) * 4 + strip * 2;
 					const int v2 = v0 + 4;
 					indices.push_back(v0);
 					indices.push_back(v0 + 1);
@@ -1169,6 +1193,7 @@ void PhysXHair3D::_build() {
 		ERR_FAIL_MSG("PhysXHair3D: no RenderingDevice, the hair can't be simulated.");
 	}
 	solver->build(rest, strands, _follow_data(pts, counts, groom_strands), slot_points, render_points);
+	cloth_cache = ClothCache(); // the new solver is given the cloth on its first step
 	pos_texture.instantiate();
 	pos_texture->set_texture_rd_rid(solver->get_position_texture_rd_rid());
 	prev_pos_texture.instantiate();
@@ -1318,6 +1343,7 @@ void PhysXHair3D::_step(double p_delta) {
 		s.spheres.push_back(Vector4(c.x, c.y, c.z, sp.w * scale));
 	}
 	_body_triangles(s.body_triangles);
+	_cloth_settings(s);
 	s.body_cell_size = collision_cell_size;
 	s.volume_enabled = volume_enabled;
 	s.volume_friction = volume_friction;
@@ -1987,6 +2013,102 @@ void PhysXHair3D::_body_triangles(PackedVector3Array &r_tris) {
 	}
 }
 
+// The cloth the hair rests on (TressFX's SDF collision, fed the cloth's simulated triangles): its
+// render copy's triangles as particle triples, given to the solver once per cloth build, which reads
+// their positions from the cloth's position texture each frame on the GPU (no readback).
+void PhysXHair3D::_cloth_settings(HairStrandSolver::Settings &r_settings) {
+	PhysXSkinnedCloth3D *cloth = collision_cloth.is_empty() || !is_inside_tree() ? nullptr : Object::cast_to<PhysXSkinnedCloth3D>(get_node_or_null(collision_cloth));
+	MeshInstance3D *ri = cloth ? cloth->get_render_instance() : nullptr;
+	const RID tex = cloth ? cloth->get_position_texture_rd_rid() : RID();
+	Ref<Mesh> mesh = ri ? ri->get_mesh() : Ref<Mesh>();
+	if (ri == nullptr || mesh.is_null() || !tex.is_valid() || !ri->is_inside_tree()) {
+		if (cloth_cache.texture.is_valid() && solver) {
+			solver->set_cloth(RID(), PackedInt32Array());
+		}
+		cloth_cache = ClothCache();
+		return;
+	}
+	ClothCache &c = cloth_cache;
+	if (c.cloth != cloth->get_instance_id() || c.mesh != mesh->get_rid() || c.texture != tex) {
+		c = ClothCache();
+		c.cloth = cloth->get_instance_id();
+		c.mesh = mesh->get_rid();
+		c.texture = tex;
+		const PackedInt32Array particles = cloth->get_vertex_particles();
+		for (int sf = 0; sf < mesh->get_surface_count(); sf++) {
+			if (mesh->surface_get_primitive_type(sf) != Mesh::PRIMITIVE_TRIANGLES) {
+				continue;
+			}
+			const Array arrays = mesh->surface_get_arrays(sf);
+			const PackedInt32Array idx = arrays[Mesh::ARRAY_INDEX];
+			const PackedVector3Array vx = arrays[Mesh::ARRAY_VERTEX];
+			const PackedVector3Array nx = arrays[Mesh::ARRAY_NORMAL];
+			const int vc = vx.size();
+			const int n = idx.is_empty() ? vc - vc % 3 : idx.size() - idx.size() % 3;
+			// The outside is where the mesh's normals face: wound so the cross product points there
+			// (Godot winds clockwise; the cloth may be authored either way).
+			bool flip = true;
+			if (n >= 3 && nx.size() == vc) {
+				const int i0 = idx.is_empty() ? 0 : idx[0], i1 = idx.is_empty() ? 1 : idx[1], i2 = idx.is_empty() ? 2 : idx[2];
+				if (i0 < vc && i1 < vc && i2 < vc) {
+					const Vector3 fn = (vx[i1] - vx[i0]).cross(vx[i2] - vx[i0]);
+					flip = fn.dot(nx[i0] + nx[i1] + nx[i2]) < 0.0f;
+				}
+			}
+			for (int i = 0; i < n; i += 3) {
+				int v[3];
+				bool ok = true;
+				for (int k = 0; k < 3; k++) {
+					v[k] = idx.is_empty() ? i + k : idx[i + k];
+					ok = ok && v[k] >= 0 && v[k] < particles.size();
+				}
+				if (!ok) {
+					continue;
+				}
+				const int a = particles[v[0]], b = particles[v[1]], d = particles[v[2]];
+				if (a == b || b == d || a == d) {
+					continue; // welded to a point: no area
+				}
+				c.tris.push_back(a);
+				c.tris.push_back(flip ? d : b);
+				c.tris.push_back(flip ? b : d);
+			}
+		}
+		if (solver) {
+			solver->set_cloth(tex, c.tris);
+		}
+	}
+	if (c.tris.is_empty()) {
+		return;
+	}
+	r_settings.cloth_xform = ri->get_global_transform();
+	// Where the cloth can be: its render copy's bounds (grown by how far it swings).
+	const AABB local = ri->get_custom_aabb().has_volume() ? ri->get_custom_aabb() : ri->get_aabb().grow(0.1f);
+	r_settings.cloth_bounds = r_settings.cloth_xform.xform(local);
+	r_settings.cloth_texture_width = cloth->get_position_texture_width();
+	r_settings.cloth_thickness = cloth_thickness;
+}
+
+void PhysXHair3D::set_collision_cloth(const NodePath &p_path) {
+	collision_cloth = p_path;
+	if (cloth_cache.texture.is_valid() && solver) {
+		solver->set_cloth(RID(), PackedInt32Array());
+	}
+	cloth_cache = ClothCache();
+}
+
+NodePath PhysXHair3D::get_collision_cloth() const {
+	return collision_cloth;
+}
+
+void PhysXHair3D::set_cloth_thickness(float p_thickness) {
+	cloth_thickness = MAX(p_thickness, 0.0f);
+}
+
+float PhysXHair3D::get_cloth_thickness() const {
+	return cloth_thickness;
+}
+
 void PhysXHair3D::set_collision_body(const NodePath &p_path) {
 	collision_body = p_path;
 	body_cache = BodyCache();
@@ -2235,6 +2357,10 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_turbulence_size"), &PhysXHair3D::get_turbulence_size);
 	ClassDB::bind_method(D_METHOD("set_collision_body", "path"), &PhysXHair3D::set_collision_body);
 	ClassDB::bind_method(D_METHOD("get_collision_body"), &PhysXHair3D::get_collision_body);
+	ClassDB::bind_method(D_METHOD("set_collision_cloth", "path"), &PhysXHair3D::set_collision_cloth);
+	ClassDB::bind_method(D_METHOD("get_collision_cloth"), &PhysXHair3D::get_collision_cloth);
+	ClassDB::bind_method(D_METHOD("set_cloth_thickness", "thickness"), &PhysXHair3D::set_cloth_thickness);
+	ClassDB::bind_method(D_METHOD("get_cloth_thickness"), &PhysXHair3D::get_cloth_thickness);
 	ClassDB::bind_method(D_METHOD("set_collision_cell_size", "size"), &PhysXHair3D::set_collision_cell_size);
 	ClassDB::bind_method(D_METHOD("get_collision_cell_size"), &PhysXHair3D::get_collision_cell_size);
 	ClassDB::bind_method(D_METHOD("set_deep_shadows", "enabled"), &PhysXHair3D::set_deep_shadows);
@@ -2317,6 +2443,8 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence_size", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater,suffix:m"), "set_turbulence_size", "get_turbulence_size");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "collision_spheres"), "set_collision_spheres", "get_collision_spheres");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "collision_body", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_collision_body", "get_collision_body");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "collision_cloth", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXSkinnedCloth3D"), "set_collision_cloth", "get_collision_cloth");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cloth_thickness", PROPERTY_HINT_RANGE, "0,0.05,0.001,or_greater,suffix:m"), "set_cloth_thickness", "get_cloth_thickness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_cell_size", PROPERTY_HINT_RANGE, "0.001,0.1,0.001,suffix:m"), "set_collision_cell_size", "get_collision_cell_size");
 	ADD_GROUP("Volume", "volume_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "volume_enabled"), "set_volume_enabled", "is_volume_enabled");
