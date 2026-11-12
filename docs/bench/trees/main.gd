@@ -37,6 +37,7 @@ const HEIGHT_RANGE := [Vector2(12, 30), Vector2(14, 34), Vector2(10, 28), Vector
 		Vector2(15, 37), Vector2(12, 30), Vector2(15, 35), Vector2(15, 32), Vector2(18, 46), Vector2(15, 40), Vector2(15, 35),
 		Vector2(12, 30), Vector2(15, 32), Vector2(3, 9), Vector2(1.5, 6)]
 
+var junction_side := 1 # --junction-side=-1: the junction view from the limb's other side.
 var test := false
 var raster := false
 var spp := 16
@@ -96,9 +97,12 @@ func _ready() -> void:
 			decays = true
 		elif a.begins_with("--day="):
 			day = int(a.substr(6))
+		elif a.begins_with("--junction-side="):
+			junction_side = int(a.substr(16))
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
-			overrides[kv[0]] = float(kv[1])
+			# "true"/"false" as 1/0: float("true") is 0, which silently turned a switch off.
+			overrides[kv[0]] = 1.0 if kv[1] == "true" else (0.0 if kv[1] == "false" else float(kv[1]))
 	if test:
 		_run_test()
 		get_tree().quit(1 if fails > 0 else 0)
@@ -341,6 +345,11 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[0] + 0.8, 1.3, 4.5)
 		cam.look_at(Vector3(xs[0], 1.9, 0))
 		cam.fov = 60.0
+		if OS.has_environment("CAM"):
+			var cv := OS.get_environment("CAM").split_floats(",")
+			cam.position = Vector3(xs[0] + cv[0], cv[1], cv[2])
+			cam.look_at(Vector3(xs[0] + cv[3], cv[4], cv[5]))
+			cam.fov = cv[6]
 	elif view == "junction":
 		# Close on where a low limb leaves the first tree's trunk (trees.md 2d): the lowest limb
 		# of 4 cm or more, seen from its side at 2 m, a little below.
@@ -350,8 +359,18 @@ func _build_scene() -> void:
 			var a := Vector3(caps[c], caps[c + 1], caps[c + 2])
 			var b := Vector3(caps[c + 3], caps[c + 4], caps[c + 5])
 			var dir := (b - a).normalized()
-			# A limb's first capsule starts on its parent's axis, off the trunk's foot.
-			if caps[c + 6] < 0.04 or dir.y > 0.85 or a.y < 0.8:
+			# A limb's first capsule starts on its parent's axis, off the trunk's foot. It must be
+			# a true limb (under half the trunk's girth: thicker is a fork, which gets no weld),
+			# spreading rather than steep or hanging.
+			if caps[c + 6] < 0.04 or dir.y > 0.7 or dir.y < 0.0 or a.y < 0.8:
+				continue
+			var trunk_r := 0.0
+			for t in range(0, caps.size(), 8):
+				var ta := Vector3(caps[t], caps[t + 1], caps[t + 2])
+				var tb := Vector3(caps[t + 3], caps[t + 4], caps[t + 5])
+				if Vector2(ta.x, ta.z).length() < 0.4 and ta.y <= a.y and tb.y >= a.y and (tb - ta).normalized().y > 0.85:
+					trunk_r = max(trunk_r, caps[t + 6])
+			if trunk_r <= 0.0 or caps[c + 6] > 0.5 * trunk_r or Vector2(a.x, a.z).length() > trunk_r:
 				continue
 			if best < 0 or a.y < caps[best + 1]:
 				best = c
@@ -360,6 +379,8 @@ func _build_scene() -> void:
 			var b := Vector3(caps[best + 3], caps[best + 4], caps[best + 5])
 			var hd := Vector3(b.x - a.x, 0, b.z - a.z).normalized()
 			var side := hd.cross(Vector3.UP)
+			if junction_side < 0:
+				side = -side
 			var target := Vector3(xs[0], 0, 0) + a + hd * caps[best + 6] * 2.0
 			cam.position = target + side * 2.0 - hd * 0.6 + Vector3(0, -0.3, 0)
 			cam.look_at(target)

@@ -727,6 +727,25 @@ Shigo's anatomy, since it stays a tube (no implicit polygonizer, no extra triang
 - **Bench.** `--view=bole` (oak base, Paulo's angle) and `--view=junction` (the lowest thick
   limb, 2 m off). Close-up views now keep sun shadows within 40 m: the 300 m cascades turned
   leaf shadow flecks into blocky pale speckle that looked like a mesh fault.
+- **Docs-shot review (12 Nov afternoon).**
+  - Veteran burls grew with the radius under them, so a burl placed on the root flare
+    ballooned. They now sit above the flare (from the flare height plus 25 cm) and scale with
+    the stem's own girth, capped at 1.15 of it.
+  - Twigs under the collision radius were never tested, so thin shoots ran straight through
+    thick limbs near the base. Wood from 4 mm is now tested against limbs of 5 cm and up, and
+    deflects or is cut like the rest.
+  - An axis keeps a lateral's girth up to the fork where the lateral outgrew it (a leader
+    overtaken), in the tube and in weld()'s parent model alike.
+  - What read as sawn stubs: on the sycamore bole, limbs heading at the camera whose shaded
+    underside crease looks like an open end (no open geometry there). On the oak, near-equal
+    forks, which weld() leaves alone: the fork's first ring sits on the parent's axis, tilted,
+    and where the parent narrows past the fork the ring's far side stands proud as an open
+    rim. A rounded start cap and a start sunk down the parent's axis were both tried; the
+    first made bulbs, the second a visible inner ring. The fix is real crotch geometry
+    (2d, codominant forks), next.
+  - Bench: `--set=prop:true` was parsed as 0 (float("true")), so "weld on" shots were weld off.
+    `--junction-side=-1` views the junction from the limb's other side. The junction view
+    picks a true limb (under half the trunk's girth, spreading, starting inside the trunk).
 
 ## 8b. Woodland memory (12 Nov)
 

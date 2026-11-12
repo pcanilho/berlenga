@@ -1504,7 +1504,10 @@ void TreeGenerator::_prune_collisions() {
 			n.removed = true;
 			continue;
 		}
-		if (n.order == 0 || n.radius < min_r || n.length <= 0.0f) {
+		// Twigs (4-12 mm) are tested only against scaffold wood (5 cm and up): inside the crown
+		// they hide among the leaves, but one passing through a big limb shows in plain view.
+		const bool twig = n.radius < min_r;
+		if (n.order == 0 || n.radius < 0.004f || n.length <= 0.0f) {
 			continue;
 		}
 		const Vector3 a = n.start, b = n.end();
@@ -1520,7 +1523,7 @@ void TreeGenerator::_prune_collisions() {
 					}
 					for (int j : *cell) {
 						const Node &o = nodes[j];
-						if (j == i || o.removed || o.radius < n.radius || near_kin(i, j) || is_ancestor(j, i) || is_ancestor(i, j)) {
+						if (j == i || o.removed || o.radius < n.radius || (twig && o.radius < 0.05f) || near_kin(i, j) || is_ancestor(j, i) || is_ancestor(i, j)) {
 							continue;
 						}
 						float s, t;
@@ -3326,7 +3329,9 @@ void TreeGenerator::_apply_veteran() {
 	const int burls = int(Math::floor(veteran * big * Math::lerp(0.5f, 3.5f, vr.randf())));
 	for (int k = 0; k < burls; k++) {
 		const float hh = r_stem * Math::lerp(0.3f, 0.7f, vr.randf());
-		add(VET_BURL, Math::lerp(0.4f, crown, vr.randf()), hh, hh * Math::lerp(0.8f, 1.3f, vr.randf()), Math::lerp(0.3f, 0.55f, vr.randf()));
+		// Clear of the ground: a burl reaching into the root flare ballooned out over the soil.
+		const float lo = MIN(MAX(0.4f, hh + 0.25f), crown);
+		add(VET_BURL, Math::lerp(lo, MAX(crown, lo), vr.randf()), hh, hh * Math::lerp(0.8f, 1.3f, vr.randf()), Math::lerp(0.3f, 0.55f, vr.randf()));
 	}
 	// Epicormic shoots: clusters from dormant buds on the stem, many on oak and lime.
 	if (!conifer) {
@@ -3893,7 +3898,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			const Node &n = nodes[p_n];
 			const int nx = n.main;
-			segs[nseg++] = { n.start, n.dir, n.length, n.radius, nx >= 0 && !nodes[nx].removed ? nodes[nx].radius : n.radius * 0.6f };
+			float rb = nx >= 0 && !nodes[nx].removed ? nodes[nx].radius : n.radius * 0.6f;
+			for (int l = n.first_lateral; l >= 0; l = nodes[l].next_sibling) {
+				if (!nodes[l].removed) {
+					rb = MAX(rb, MIN(nodes[l].radius, n.radius)); // As the tube (a fork keeps its girth).
+				}
+			}
+			segs[nseg++] = { n.start, n.dir, n.length, n.radius, rb };
 		};
 		// Up to two internodes before and three after along the parent's axis: a steep limb's
 		// footprint runs a long way up its parent.
@@ -4318,6 +4329,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	// callus lip and darkened, burls pushed out with lumps. Works on the undisplaced tube (ring centre
 	// + radial normal), so plain, relief and moss tubes move alike; then normals are rebuilt there.
 	const float vet_base_y = nodes[0].start.y;
+	const float vet_r_stem = veteran_stem >= 0 ? nodes[veteran_stem].radius * 1.15f : 1.0f;
 	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour) {
 		if (veteran_features.is_empty()) {
 			return;
@@ -4358,7 +4370,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				if (f.kind == VET_BURL) {
 					const float k = 1.0f - MIN(e * e, 1.0f);
 					const float lump = 0.75f + 0.5f * moss_noise(p_pts[ring] + n * r * 4.0f, 0x6275726cu);
-					off += f.amount * r * k * Math::sqrt(k) * lump;
+					// Sized by the stem, not the root flare's swollen radius.
+					off += f.amount * MIN(r, vet_r_stem) * k * Math::sqrt(k) * lump;
 					w_any = MAX(w_any, k > 0.0f ? 1.0f : 0.0f);
 				} else {
 					// A hollow: deep inside, the floor rough; a callus lip of new wood around it.
@@ -4441,7 +4454,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		rad.push_back(r0);
 		for (int c = 0; c < int(chain.size()); c++) {
 			const Node &n = nodes[chain[c]];
-			const float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * 0.6f;
+			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * 0.6f;
+			// Where a lateral has outgrown the axis's own continuation (a leader overtaken at a
+			// fork), the axis keeps the lateral's girth to the fork: narrowing to the thinner
+			// continuation, it left the lateral's base standing out as a stub.
+			for (int l = n.first_lateral; l >= 0; l = nodes[l].next_sibling) {
+				if (!nodes[l].removed) {
+					r_end = MAX(r_end, MIN(nodes[l].radius, n.radius));
+				}
+			}
 			// Load for the wind rig: frontal area and green mass of the wood. Wood thinner than
 			// 5 cm is inside the crown and as sheltered as the leaves there.
 			node_drag[chain[c]] += (n.radius + r_end) * n.length;
