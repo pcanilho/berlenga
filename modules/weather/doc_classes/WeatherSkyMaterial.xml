@@ -8,6 +8,7 @@
 		A [WeatherMap3D] in the scene sends it the cloud cover, type, storms and drift at its [member WeatherMap3D.update_rate]; without one, the sky shows the defaults. Set the [Sky]'s [member Sky.process_mode] to [constant Sky.PROCESS_MODE_INCREMENTAL] or [constant Sky.PROCESS_MODE_REALTIME] so the lighting follows the moving clouds.
 		Its uniforms are under [b]Shader Parameters[/b]: the older atmosphere's (as [PhysicalSkyMaterial]); the [code]atmosphere[/code] group ([code]atmo_steps[/code], [code]atmo_radiance_steps[/code], [code]atmo_cloud_air_steps[/code], and [code]atmo_far_water[/code], 1 when open sea runs on past the scene to the horizon); and [code]cloud_steps[/code], [code]cloud_radiance_steps[/code], [code]cloud_light_steps[/code], [code]cloud_far[/code] and [code]cloud_brightness[/code]. The [code]weather_map[/code] group is set by the map.
 		Under path tracing, bounce rays see the clouds through the radiance map. Enable [member Environment.pathtracing_sky_shader_enabled] for camera rays to see them at full detail.
+		Dusk and night skies are dark, smooth gradients that 8-bit output steps into bands: enable [member Viewport.use_debanding] (or [code]rendering/anti_aliasing/quality/use_debanding[/code]), which dithers after tonemapping. The sky adds no dither of its own, since noise added before exposure and tonemapping is scaled by them.
 		[b]Note:[/b] The moon lights the air but is not drawn yet, and there are no stars yet.
 	</description>
 	<tutorials>

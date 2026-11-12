@@ -105,6 +105,8 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=", true, 1)
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
+	# 8-bit debanding after tonemapping (the viewport's dither; --debanding=0 to see the raw quantisation).
+	get_viewport().use_debanding = args.get("debanding", "1") != "0"
 	if args.get("layout", "range") == "valley":
 		# The valley's settings (any can be overridden): a still floor where the rivers drop their load into a flat
 		# alluvial plain (Yuan et al. 2019), no general uplift, the high block lower in the middle to gather a trunk
