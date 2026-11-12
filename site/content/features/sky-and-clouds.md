@@ -30,7 +30,7 @@ summary: "Sun and moon set by date, time and place; a scattering atmosphere with
 - **Cloud reprojection** (`WeatherSkyMaterial.cloud_reprojection`, on by default): clouds draw a sixteenth of their pixels each frame and reproject the rest (Nubis), still full resolution.
 - **Cloud shadows** (`sun_light`): the clouds' shadow is baked into the sun's projector, matching in raster and path tracing.
 
-  ![Cloud shadows moving across a field, seen from above, path traced](media/weather-cloud-shadows.jpg)
+  ![Cloud shadows on a field, seen from above, path traced](media/weather-cloud-shadows.jpg)
 
   *Cloud shadows: dark patches on the ground under the clouds.*
 
