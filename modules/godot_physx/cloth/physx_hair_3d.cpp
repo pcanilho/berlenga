@@ -133,6 +133,7 @@ varying vec4 dom_trans; // vertex to fragment and light(): per map, the light it
 varying vec4 dom_past; // vertex to fragment: per map, metres past the first hair (-1: none)
 varying vec3 dom_world; // fragment to light(): the fragment's world position
 varying vec3 light_tangent; // fragment to light(): along the fibres, view space
+varying float hair_snow; // fragment to light(): 1 where snow lies on a card (lit as snow, not fibre)
 
 // Coverage summed up to depth p_rel past the first hair, from a cell's layers.
 float dom_coverage(vec4 p_cell, float p_rel) {
@@ -299,6 +300,7 @@ void vertex() {
 
 void fragment() {
 	light_tangent = strand_tangent;
+	hair_snow = 0.0;
 	vec3 sigma;
 	vec3 mass;
 	fibre_look(strand_seed, UV.y, sigma, mass);
@@ -468,7 +470,12 @@ void light() {
 		}
 	}
 	s += sqrt(base) * scatter * pow(base / luma, vec3(1.0 - shadow));
-	SPECULAR_LIGHT += max(s, vec3(0.0)) * LIGHT_COLOR * attenuation;
+	if (hair_snow > 0.5) {
+		// Snow on a card: matte (Lambert; ALBEDO is the snow's), as the snow's own clumps.
+		DIFFUSE_LIGHT += max(dot(NORMAL, LIGHT), 0.0) * ATTENUATION * LIGHT_COLOR / PI;
+	} else {
+		SPECULAR_LIGHT += max(s, vec3(0.0)) * LIGHT_COLOR * attenuation;
+	}
 }
 #endif
 )";
@@ -691,6 +698,25 @@ void fragment() {
 	HAIR = 1.0;
 	HAIR_ABSORPTION = sigma;
 	HAIR_ROUGHNESS = fibre_roughness;
+	// Snow on the cards (the strands' snow clumps are not drawn with them): from the snow's deep
+	// opacity map, as the clumps, the hair's top layer holds it; each texel of the atlas is snow or
+	// fibre by its own draw, a clump's 2.5 mm being well under a pixel at card distances. The
+	// clumps (one a strand where the snow holds, about 3 strands a cm^2 on top, 2.5 mm across)
+	// cover about 15% of the top layer.
+	hair_snow = 0.0;
+	if (snow_cover > 0.0 && dom_snow_slot >= 0 && dom_snow_slot < dom_maps && !IN_SHADOW_PASS) {
+		float absorb = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		float above = -log(max(dom_trans[dom_snow_slot], 1e-6)) / max(absorb * dom_density, 1e-4);
+		float held = snow_cover * exp(-2.0 * above);
+		vec2 texel = floor(UV * vec2(textureSize(card_atlas, 0)));
+		float r = fract(sin(dot(vec3(texel, card_tile_u * 997.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+		if (r < 0.15 * held) {
+			hair_snow = 1.0;
+			ALBEDO = vec3(0.85);
+			ROUGHNESS = 0.9;
+			NORMAL = normalize(mat3(VIEW_MATRIX) * dom_slot[dom_snow_slot * 4 + 3].xyz);
+		}
+	}
 	dom_world = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	if (dom_maps > 0 && !IN_PATH_TRACER && !IN_SHADOW_PASS) {
 		// As the strands: the shadow map lookups skip the hair's own layers (the maps carry them).
@@ -892,6 +918,9 @@ void PhysXHair3D::_update_wetness(double p_delta) {
 		snow_look = snow;
 		if (snow_material.is_valid()) {
 			snow_material->set_shader_parameter("snow_cover", snow_look);
+		}
+		if (card_material.is_valid()) {
+			card_material->set_shader_parameter("snow_cover", snow_look);
 		}
 	}
 	if (Math::abs(wetness - wet_look) >= 0.01f || (wetness != wet_look && (wetness == 0.0f || wetness == 1.0f))) {
@@ -1165,6 +1194,7 @@ void PhysXHair3D::_make_material() {
 		card_material->set_shader_parameter("dom_maps", 0);
 		card_material->set_shader_parameter("card_clump", wet_look * wet_clumping);
 		card_material->set_shader_parameter("card_scalp", card_scalp);
+		card_material->set_shader_parameter("snow_cover", snow_look);
 		_set_look(card_material);
 		card_instance->set_material_override(card_material);
 	}
