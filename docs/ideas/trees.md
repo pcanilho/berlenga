@@ -741,8 +741,11 @@ Shigo's anatomy, since it stays a tube (no implicit polygonizer, no extra triang
     forks, which weld() leaves alone: the fork's first ring sits on the parent's axis, tilted,
     and where the parent narrows past the fork the ring's far side stands proud as an open
     rim. A rounded start cap and a start sunk down the parent's axis were both tried; the
-    first made bulbs, the second a visible inner ring. The fix is real crotch geometry
-    (2d, codominant forks), next.
+    first made bulbs, the second a visible inner ring. Fixed as branching-tube meshes do it
+    (Lluch et al. 2004, one mesh for the branching structure; SpeedTree's fork splits): the
+    fork's base runs up inside the parent with rings parallel to the parent's, no wider than
+    0.9 of it and shifted toward the side the fork leaves on, then turns out through the
+    crotch. The collar's rings near the parent's axis are dropped for these.
   - Bench: `--set=prop:true` was parsed as 0 (float("true")), so "weld on" shots were weld off.
     `--junction-side=-1` views the junction from the limb's other side. The junction view
     picks a true limb (under half the trunk's girth, spreading, starting inside the trunk).

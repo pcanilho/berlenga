@@ -4527,6 +4527,39 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			pts = cp;
 			rad = cr;
 		}
+		// Forks (a limb over 0.6 of its parent's girth, which weld() leaves as a crotch) started
+		// on the parent's axis with their first ring tilted to their own heading: where the
+		// parent narrowed past the fork, that ring's far side stood out as an open rim, a sawn
+		// stub. As in a branching-tube mesh (Lluch et al. 2004; SpeedTree's fork splits), the
+		// fork's base now runs up inside the parent, its rings parallel to the parent's and
+		// shifted toward the side it leaves on, then turns out through the crotch.
+		if (!stem && pts.size() >= 2 && r0 > 0.6f * nodes[first.parent].radius) {
+			const Node &par = nodes[first.parent];
+			const float rp = par.radius;
+			Vector3 side = first.dir - par.dir * first.dir.dot(par.dir);
+			side = side.length() > 1e-4f ? side.normalized() : Vector3();
+			const float rc = MIN(rad[0], rp * 0.9f);
+			const float off = MAX(0.0f, rp * 0.92f - rc);
+			const Vector3 base = pts[0] + side * off;
+			LocalVector<Vector3> cp;
+			LocalVector<float> cr;
+			const float ks[3] = { 1.2f, 0.7f, 0.25f };
+			for (int k = 0; k < 3; k++) {
+				cp.push_back(base - par.dir * (rc * ks[k]));
+				cr.push_back(rc);
+			}
+			// The collar's extra rings near the axis would pull the turn back to the axis.
+			uint32_t i = 1;
+			while (i + 1 < pts.size() && pts[i].distance_to(pts[0]) < rp * 0.8f) {
+				i++;
+			}
+			for (; i < pts.size(); i++) {
+				cp.push_back(pts[i]);
+				cr.push_back(rad[i]);
+			}
+			pts = cp;
+			rad = cr;
+		}
 		// The tube is open at its end. Thin tips close to under a millimetre on their own; an
 		// axis that stops thick (a shed or snapped continuation, a pruned limb) would show its
 		// hollow inside as a flat dark disc. It ends in a rounded callus instead (wound wood
