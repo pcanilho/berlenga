@@ -37,6 +37,7 @@
 #include "scene/3d/node_3d.h"
 #include "scene/resources/3d/hair_groom.h"
 
+class Camera3D;
 class MeshInstance3D;
 class Shader;
 class ShaderMaterial;
@@ -128,6 +129,8 @@ class PhysXHair3D : public Node3D {
 	bool cards_enabled = false;
 	int card_count = 1024;
 	float card_distance = 15.0f; // m from the camera at which the strands give way to cards
+	float card_screen_size = 0.07f; // cards below this screen size (diameter / view height); 0: by card_distance
+	float _screen_size(const Camera3D *p_camera) const;
 	MeshInstance3D *card_instance = nullptr;
 	Ref<ShaderMaterial> card_material;
 	Ref<HairCardBake> card_bake;
@@ -321,6 +324,9 @@ public:
 	bool is_cards_enabled() const;
 	void set_card_count(int p_count);
 	int get_card_count() const;
+	void set_card_screen_size(float p_size);
+	float get_card_screen_size() const;
+	float get_screen_size() const;
 	void set_card_distance(float p_distance);
 	float get_card_distance() const;
 	bool is_drawing_cards() const;

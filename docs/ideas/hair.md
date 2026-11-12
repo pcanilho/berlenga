@@ -876,6 +876,26 @@ nothing for any valid value. Bench `--hair=far8`: 12 to 22 black pixels on the h
 after in every run (far8, near, wind).
 
 
+### Cards by screen size, not distance
+
+Cards stand in for clumps of strands; large on screen each shows as its own strip with its tip
+(seen in the docs pair at 8 m enlarged 4x, and in any zoomed-in shot past card_distance). How
+others pick: Unreal's groom LODs switch by screen size (the bounds' projected size over the
+screen's height), as its static mesh LODs; TressFX and Frostbite thin strands by distance, but
+for the hair's own LOD, not a switch to cards. Paulo picked screen size (12 Nov).
+
+`card_screen_size` (default 0.07): the hair's bounding sphere's diameter over the view's height,
+from the camera's projection (so the field of view and an orthographic camera count, and the
+resolution does not); cards below it, strands back 5% above it. 0.07 is about 15 m with a 75
+degree field of view for the bench's long hair (bench: 8 m 0.129 strands, 15 m 0.069 and 20 m
+0.052 cards), so a default camera switches where it did. `card_distance` stays for
+`card_screen_size` 0; `get_screen_size()` reports the current value.
+
+Open: on the bench's backlit head, card interiors read warmer than the strands (8 m: R +6%,
+B -9% inside the hair, away from its edges; 15 m interior 15% brighter). Not the deep opacity
+read (half a clump deeper: no change) and not the cards' normal (viewer-facing as the strands':
+no change).
+
 ### Fixed: a line where the skull's shadow starts on hanging cards
 
 Seen from 8 m at 1080p and enlarged, the cards showed a faint outline: a dark disc over the crown,

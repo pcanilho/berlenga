@@ -12,6 +12,12 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_screen_size" qualifiers="const">
+			<return type="float" />
+			<description>
+				The hair's screen size from the current camera: its bounding sphere's diameter over the view's height. See [member card_screen_size].
+			</description>
+		</method>
 		<method name="is_drawing_cards" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -29,7 +35,10 @@
 			How many cards the strands are clustered into. Each card is two crossed strips.
 		</member>
 		<member name="card_distance" type="float" setter="set_card_distance" getter="get_card_distance" default="15.0">
-			Distance from the camera, in metres, past which the hair is drawn as cards (with [member cards_enabled]). It comes back to strands 5% nearer.
+			How far from the camera, in metres, the strands give way to cards, when [member card_screen_size] is [code]0[/code].
+		</member>
+		<member name="card_screen_size" type="float" setter="set_card_screen_size" getter="get_card_screen_size" default="0.07">
+			The screen size below which the strands give way to cards: the hair's bounding sphere's diameter over the view's height (as Unreal Engine's groom LODs), whatever the distance, field of view or resolution. Cards stand in for clumps of strands and show as strips when large on screen, so a zoomed-in camera keeps the strands. [code]0.07[/code] matches about 15 m with a 75 degree field of view for a head of long hair. [code]0[/code]: switch by [member card_distance] instead. [method get_screen_size] gives the hair's current screen size.
 		</member>
 		<member name="cards_enabled" type="bool" setter="set_cards_enabled" getter="is_cards_enabled" default="false">
 			If [code]true[/code], hair cards are baked from the groom when the hair is built (shared by every node with the same groom and settings), and past [member card_distance] the hair is drawn as cards instead of strands: textured strips along clumps of strands, which move with the same guide strands. Only the guides and the cards are then simulated, so distant hair costs a small fraction of strands. Raster only: while the environment path traces, the hair stays strands at every distance.
