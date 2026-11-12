@@ -81,7 +81,6 @@ public:
 	int slot_points = 0; // > 0: the output is in draw order, this many texels per strand
 	int sort_size = 1;
 	bool needs_reset = true;
-	bool sorted = false; // the draw order has been sorted once since the build (cards have their slots)
 
 	void rt_compile(Ref<HairStrandSolverGPU> p_self);
 	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points, PackedInt32Array p_render_points, PackedFloat32Array p_vol_rest, int p_vol_cells);

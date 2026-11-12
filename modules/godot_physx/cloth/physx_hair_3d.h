@@ -129,6 +129,7 @@ class PhysXHair3D : public Node3D {
 	MeshInstance3D *card_instance = nullptr;
 	Ref<ShaderMaterial> card_material;
 	Ref<HairCardBake> card_bake;
+	Ref<ImageTexture> card_data; // per card point: both strips' axes and half widths, its direction, the tiles
 	Vector4 card_scalp; // the scalp's sphere for the cards (centre, radius; w 0: none)
 	int card_first = 0; // the cards' strands follow the groom's in the solver; 0: no cards
 	bool card_mode = false; // drawing cards (far) instead of strands

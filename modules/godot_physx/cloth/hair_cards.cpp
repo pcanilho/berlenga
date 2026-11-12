@@ -330,8 +330,8 @@ Ref<HairCardBake> HairCardBake::bake(const PackedVector3Array &p_points, const P
 		}
 		// The strands projected into each strip's tile (DiffHairCard projects them as curves rather
 		// than rendering them): per row along the card, each strand's place across it, its width
-		// over the texel's as coverage, combined as 1 - prod(1 - c); its tilt across the strip and a
-		// per-strand seed averaged by coverage.
+		// over the texel's as coverage, summed as optical depth (-ln(1 - c) each); its tilt across
+		// the strip and a per-strand seed averaged by coverage.
 		for (int a = 0; a < 2; a++) {
 			const int tile = card * 2 + a;
 			const int tx = (tile % per_row) * tile_w;
@@ -371,7 +371,7 @@ Ref<HairCardBake> HairCardBake::bake(const PackedVector3Array &p_points, const P
 						}
 						const float cov = alpha * (o == 0 ? 1.0f - fx : fx);
 						const int idx = (ty + y) * atlas_w + tx + xx;
-						cover[idx] = 1.0f - (1.0f - cover[idx]) * (1.0f - cov);
+						cover[idx] -= Math::log(MAX(1.0f - cov, 1e-4f));
 						tilt[idx] += tl * cov;
 						seed[idx] += Math::abs(sd) * cov;
 						weight[idx] += cov;
@@ -382,21 +382,63 @@ Ref<HairCardBake> HairCardBake::bake(const PackedVector3Array &p_points, const P
 		card++;
 	}
 
-	PackedByteArray data;
-	data.resize(atlas_w * atlas_h * 4);
-	uint8_t *w = data.ptrw();
+	// The atlas holds the optical depth, not the coverage, and makes its own mipmaps: a pixel
+	// that spans several texels sees the strands of all of them, each by its share of the pixel,
+	// so it lets through exp(-mean depth), the transmittance of the mean depth. Mipmaps of the
+	// coverage gave the mean transmittance instead, which (exp being convex) is more, and the
+	// cards grew see-through with distance where the strands do not. The depth takes 16 bits, R
+	// high and B low; filtering is linear in each, so the sampled depth stays exact.
 	for (int i = 0; i < atlas_w * atlas_h; i++) {
 		const float wt = weight[i];
-		const float tl = wt > 0.0f ? tilt[i] / wt : 0.0f;
-		const float sd = wt > 0.0f ? seed[i] / wt : 0.5f;
-		w[i * 4 + 0] = (uint8_t)CLAMP(Math::round(cover[i] * 255.0f), 0.0f, 255.0f);
-		w[i * 4 + 1] = (uint8_t)CLAMP(Math::round((0.5f + 0.5f * CLAMP(tl, -1.0f, 1.0f)) * 255.0f), 0.0f, 255.0f);
-		w[i * 4 + 2] = 0;
-		w[i * 4 + 3] = (uint8_t)CLAMP(Math::round(sd * 255.0f), 0.0f, 255.0f);
+		tilt[i] = wt > 0.0f ? 0.5f + 0.5f * CLAMP(tilt[i] / wt, -1.0f, 1.0f) : 0.5f;
+		seed[i] = wt > 0.0f ? seed[i] / wt : 0.5f;
+		cover[i] = MIN(cover[i] / CARD_DEPTH_MAX, 1.0f);
 	}
-	r->atlas = Image::create_from_data(atlas_w, atlas_h, false, Image::FORMAT_RGBA8, data);
-	// Mipmaps average the coverage, which keeps the hair's opacity under stochastic (hashed) alpha.
-	r->atlas->generate_mipmaps();
+	r->atlas = Image::create_empty(atlas_w, atlas_h, true, Image::FORMAT_RGBA8);
+	PackedByteArray data = r->atlas->get_data();
+	uint8_t *w = data.ptrw();
+	int lw = atlas_w;
+	int lh = atlas_h;
+	for (int level = 0; level <= r->atlas->get_mipmap_count(); level++) {
+		int64_t ofs, size;
+		int mw, mh;
+		r->atlas->get_mipmap_offset_size_and_dimensions(level, ofs, size, mw, mh);
+		if (level > 0) {
+			// Box filter from the level above (lw x lh) to this one (mw x mh), in place.
+			for (int y = 0; y < mh; y++) {
+				for (int x = 0; x < mw; x++) {
+					float d = 0.0f, g = 0.0f, a = 0.0f;
+					int n = 0;
+					for (int oy = 0; oy < 2; oy++) {
+						for (int ox = 0; ox < 2; ox++) {
+							const int sx = MIN(x * 2 + ox, lw - 1);
+							const int sy = MIN(y * 2 + oy, lh - 1);
+							const int si = sy * lw + sx;
+							d += cover[si];
+							g += tilt[si];
+							a += seed[si];
+							n++;
+						}
+					}
+					const int di = y * mw + x;
+					cover[di] = d / n;
+					tilt[di] = g / n;
+					seed[di] = a / n;
+				}
+			}
+			lw = mw;
+			lh = mh;
+		}
+		uint8_t *o = w + ofs;
+		for (int i = 0; i < mw * mh; i++) {
+			const int q = (int)Math::round(cover[i] * 65535.0f);
+			o[i * 4 + 0] = (uint8_t)(q >> 8);
+			o[i * 4 + 1] = (uint8_t)CLAMP(Math::round(tilt[i] * 255.0f), 0.0f, 255.0f);
+			o[i * 4 + 2] = (uint8_t)(q & 255);
+			o[i * 4 + 3] = (uint8_t)CLAMP(Math::round(seed[i] * 255.0f), 0.0f, 255.0f);
+		}
+	}
+	r->atlas->set_data(atlas_w, atlas_h, true, Image::FORMAT_RGBA8, data);
 	return r;
 }
 
