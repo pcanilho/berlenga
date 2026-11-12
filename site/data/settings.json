@@ -1339,6 +1339,18 @@
    "topic": "Ground"
   },
   {
+   "name": "Sky occlusion",
+   "settings": [
+    "TerrainGenerator3D.sky_occlusion",
+    "TerrainMaterial3D.sky_occlusion"
+   ],
+   "note": "",
+   "what": "raster ground is lit only by the sky its hills leave open, from a horizon bake and the live sky, matching path tracing at dusk.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Far blend",
    "settings": [
     "far_blend_enabled",
@@ -1531,7 +1543,7 @@
    "name": "Grass edge fade",
    "settings": [],
    "note": "always on",
-   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond, so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.",
+   "what": "blades thin and shrink across the outer band of the grass radius, and the ground takes their colour beyond (measured from a render of the blades, so any grass look matches), so the grass has no hard edge; it thins evenly with distance by blue-noise blade ranks, with no clumps or gaps.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
