@@ -41,6 +41,8 @@
 #include "scene/main/scene_tree.h"
 #include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
+#include "scene/resources/curve_texture.h"
+#include "scene/resources/gradient_texture.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/particle_process_material.h"
 
@@ -103,7 +105,7 @@ GPUParticles3D *make_spray(const Transform3D &p_xf, float p_speed, float p_width
 	GPUParticles3D *spray = memnew(GPUParticles3D);
 	spray->set_name("FallSpray");
 	spray->set_transform(p_xf);
-	spray->set_amount(CLAMP((int)(p_power / 200.0f), 32, 4096));
+	spray->set_amount(CLAMP((int)(p_power / 100.0f), 64, 4096));
 	const float rise = 0.35f * p_speed;
 	spray->set_lifetime(MAX(0.6f, 2.0f * rise / GRAVITY));
 	spray->set_pre_process_time(2.0);
@@ -119,8 +121,8 @@ GPUParticles3D *make_spray(const Transform3D &p_xf, float p_speed, float p_width
 	pm->set_gravity(Vector3(0, -GRAVITY, 0));
 	pm->set_param_min(ParticleProcessMaterial::PARAM_DAMPING, 0.5f);
 	pm->set_param_max(ParticleProcessMaterial::PARAM_DAMPING, 1.5f);
-	pm->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.04f);
-	pm->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 0.12f);
+	pm->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.02f);
+	pm->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 0.06f);
 	spray->set_process_material(pm);
 	Ref<SphereMesh> drop;
 	drop.instantiate();
@@ -137,6 +139,82 @@ GPUParticles3D *make_spray(const Transform3D &p_xf, float p_speed, float p_width
 	return spray;
 }
 
+// The cloud of fine spray over an impact: soft camera-facing puffs that rise a little, spread and fade (the
+// drops alone read as dots from a few metres; the white haze around a splash is what the eye takes as spray).
+GPUParticles3D *make_spray_puffs(const Transform3D &p_xf, float p_speed, float p_width, float p_power) {
+	GPUParticles3D *puffs = memnew(GPUParticles3D);
+	puffs->set_name("FallSprayPuffs");
+	puffs->set_transform(p_xf);
+	puffs->set_amount(CLAMP((int)(p_power / 400.0f), 12, 512));
+	puffs->set_lifetime(1.6);
+	puffs->set_pre_process_time(2.0);
+	const float size = CLAMP(0.15f * p_speed, 0.3f, 1.5f); // m across at birth
+	puffs->set_visibility_aabb(AABB(Vector3(-p_width - 4.0f, -2.0f, -6.0f), Vector3(2.0f * p_width + 8.0f, 8.0f, 12.0f)));
+	Ref<ParticleProcessMaterial> pm;
+	pm.instantiate();
+	pm->set_emission_shape(ParticleProcessMaterial::EMISSION_SHAPE_BOX);
+	pm->set_emission_box_extents(Vector3(0.5f * p_width, 0.1f, 0.3f));
+	pm->set_direction(Vector3(0, 1, -0.5f));
+	pm->set_spread(60.0f);
+	pm->set_param_min(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.1f * p_speed);
+	pm->set_param_max(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.25f * p_speed);
+	pm->set_gravity(Vector3(0, -1.0f, 0)); // fine drops: held up by the air the fall drags along
+	pm->set_param_min(ParticleProcessMaterial::PARAM_DAMPING, 2.0f);
+	pm->set_param_max(ParticleProcessMaterial::PARAM_DAMPING, 4.0f);
+	pm->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.6f * size);
+	pm->set_param_max(ParticleProcessMaterial::PARAM_SCALE, size);
+	pm->set_param_min(ParticleProcessMaterial::PARAM_ANGLE, -180.0f);
+	pm->set_param_max(ParticleProcessMaterial::PARAM_ANGLE, 180.0f);
+	Ref<Curve> grow;
+	grow.instantiate();
+	grow->add_point(Vector2(0.0f, 0.4f));
+	grow->add_point(Vector2(1.0f, 1.0f));
+	Ref<CurveTexture> grow_tex;
+	grow_tex.instantiate();
+	grow_tex->set_curve(grow);
+	pm->set_param_texture(ParticleProcessMaterial::PARAM_SCALE, grow_tex);
+	Ref<Gradient> fade;
+	fade.instantiate();
+	fade->set_offset(0, 0.0f);
+	fade->set_color(0, Color(1, 1, 1, 0.0f));
+	fade->set_offset(1, 1.0f);
+	fade->set_color(1, Color(1, 1, 1, 0.0f));
+	fade->add_point(0.15f, Color(1, 1, 1, 0.5f));
+	Ref<GradientTexture1D> fade_tex;
+	fade_tex.instantiate();
+	fade_tex->set_gradient(fade);
+	pm->set_color_ramp(fade_tex);
+	puffs->set_process_material(pm);
+	// A soft round blot: radial falloff to nothing at the rim.
+	Ref<Gradient> blot;
+	blot.instantiate();
+	blot->set_color(0, Color(1, 1, 1, 1));
+	blot->set_color(1, Color(1, 1, 1, 0));
+	blot->add_point(0.45f, Color(1, 1, 1, 0.45f));
+	Ref<GradientTexture2D> blot_tex;
+	blot_tex.instantiate();
+	blot_tex->set_gradient(blot);
+	blot_tex->set_fill(GradientTexture2D::FILL_RADIAL);
+	blot_tex->set_fill_from(Vector2(0.5f, 0.5f));
+	blot_tex->set_fill_to(Vector2(1.0f, 0.5f));
+	blot_tex->set_width(64);
+	blot_tex->set_height(64);
+	Ref<QuadMesh> quad;
+	quad.instantiate();
+	Ref<StandardMaterial3D> qm;
+	qm.instantiate();
+	qm->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
+	qm->set_billboard_mode(BaseMaterial3D::BILLBOARD_PARTICLES);
+	qm->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+	qm->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, blot_tex);
+	qm->set_albedo(Color(0.93f, 0.95f, 0.97f));
+	qm->set_roughness(1.0f);
+	qm->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+	quad->set_material(qm);
+	puffs->set_draw_pass_mesh(0, quad);
+	return puffs;
+}
+
 // The film of water over the rock. A contact fall is a thin sheet that clings to the face, so it reads by its
 // margins: where the film thins out the rock shows through darkened and glossy, and the water's edge wanders
 // with the relief instead of running ruler-straight. Vertex data: COLOR.r = metres inside the water's edge
@@ -147,13 +225,13 @@ shader_type spatial;
 #if defined(RT)
 render_mode cull_back;
 #else
-render_mode blend_mix, cull_back, depth_draw_never;
+render_mode blend_mix, cull_disabled, depth_draw_never;
 #endif
 
 uniform float water_time = 0.0;
 uniform vec4 water_color : source_color = vec4(0.30, 0.40, 0.40, 0.35);
 uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
-// Wet rock beside the water: a darkening veil with a sharp, sky-coloured gloss.
+// Wet rock beside the water: a darkening veil with a soft gloss (damp rock, not a mirror: roughness 0.3).
 uniform vec4 wet_color : source_color = vec4(0.02, 0.025, 0.03, 0.4);
 uniform float wet_margin = 0.6;
 uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
@@ -184,9 +262,9 @@ void fragment() {
 	float down = UV2.y;
 	// The margin wanders with the relief: slow swings over metres and small fingers, fixed to the rock (the
 	// film follows the same grooves all the time), each side on its own pattern.
-	float side = step(wet_margin + half_w, UV.y) * 17.0;
-	float wander = (f_noise(vec2(down * 0.35, side)) - 0.5) * 2.0;
-	wander += 0.4 * (f_noise(vec2(down * 1.7 + 5.0, side + 3.0)) - 0.5) * 2.0;
+	// Slowly varying across too, so the two sides wander apart (no switch line to show).
+	float wander = (f_noise(vec2(down * 0.35, UV.y * 0.25)) - 0.5) * 2.0;
+	wander += 0.4 * (f_noise(vec2(down * 1.7 + 5.0, UV.y * 0.6 + 3.0)) - 0.5) * 2.0;
 	float e = edge_m + wander * edge_wander * half_w;
 	// Streaks ride the water.
 	vec2 p = vec2(UV.y * streak_scale, (UV.x - water_time) * streak_rate);
@@ -198,12 +276,14 @@ void fragment() {
 	// Wet rock: splash and seep reach out in patches, not as an even band.
 	float seep = f_noise(vec2(down * 1.1, UV.y * 1.9)) * 0.6 + f_noise(vec2(down * 4.3, UV.y * 5.7)) * 0.4;
 	float wet = smoothstep(0.0, 0.25, e + wet_margin * (seep * 1.2 - 0.2));
+	// Nothing on the outermost column (the mesh's rim, whose normal has one neighbour only).
+	wet *= smoothstep(-wet_margin, -wet_margin + 0.2, edge_m);
 	// Fine texture of the white water: lumps and thin spots that move with it.
 	float lumps = f_noise(p * vec2(2.0, 1.4) + 11.0) * 0.6 + f_noise(p * vec2(6.0, 4.0) - 5.0) * 0.4;
 #if defined(RT)
 	float cover = water > 0.5 ? 1.0 : wet * wet_color.a;
 	ALBEDO = water > 0.5 ? mix(vec3(1.0), foam_color.rgb * (0.82 + 0.18 * lumps), foam) : wet_color.rgb;
-	ROUGHNESS = water > 0.5 ? mix(pathtraced_roughness, 0.8, foam) : 0.12;
+	ROUGHNESS = water > 0.5 ? mix(pathtraced_roughness, 0.8, foam) : 0.3;
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = water > 0.5 ? 1.0 - foam : 0.0;
@@ -214,7 +294,9 @@ void fragment() {
 	vec3 water_rgb = mix(water_color.rgb, foam_color.rgb * (0.82 + 0.18 * lumps), foam);
 	float water_a = mix(water_color.a, foam_color.a * mix(0.55, 1.0, smoothstep(0.25, 0.6, lumps)), foam) * mix(0.6, 1.0, film);
 	ALBEDO = mix(wet_color.rgb, water_rgb, water);
-	ROUGHNESS = mix(0.12, mix(pathtraced_roughness + 0.1, 0.85, foam), water);
+	// A film a few millimetres thick over rough rock is not a mirror: its gloss broadens toward the margins (a sharp
+	// sun glint there drew a bright seam along the edge).
+	ROUGHNESS = mix(0.3, mix(mix(0.35, pathtraced_roughness + 0.1, film), 0.85, foam), water);
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	ALPHA = max(water * water_a, wet * wet_color.a);
@@ -357,7 +439,7 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 		const Vector3 lip_c = lip_at(offsets[c]);
 		PackedVector2Array pts;
 		if (ask) {
-			const int n = CLAMP((int)Math::ceil(reach / 0.5f), 2, 2048);
+			const int n = CLAMP((int)Math::ceil(reach / 0.25f), 2, 4096);
 			for (int i = 0; i <= n; i++) {
 				const float run = reach * i / n;
 				const Vector3 q = Vector3(lip_c.x, 0.0f, lip_c.z) + dir * run;
@@ -444,15 +526,23 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			const float s_from_lip = fr * len;
 			const float target = s_from_lip > li ? equilibrium_air(sin_a) : 0.0f;
 			// The surface whitens within a metre or two of the inception point (the boundary layer breaks through
-			// there); on gentler steps it detrains as quickly.
-			air += (target - air) * (1.0f - Math::exp(-ds / 1.5f));
+			// there). On a gentler step the bubbles take longer to rise out than they took to get in, so the water
+			// stays white across a ledge instead of clearing in patches.
+			air += (target - air) * (1.0f - Math::exp(-ds / (target > air ? 1.5f : 6.0f)));
 			// Bulked thickness over the rock: the clear-water depth swelled by the air it carries.
 			const float depth = col.edge > 0.0f ? MAX(col.q / MAX(v, 0.1f), 0.003f) / (1.0f - MIN(air, 0.9f)) : 0.0f;
 			const Vector2 n2 = Vector2(-t.y, t.x).y < 0.0f ? Vector2(t.y, -t.x) : Vector2(-t.y, t.x);
 			const Vector3 base = Vector3(lip_c.x, face.top.y, lip_c.z) + dir * p.x + up * p.y;
 			const Vector3 nrm = (dir * n2.x + up * n2.y).normalized();
 			// Clear of the ground mesh, whose triangles cut the chords of a steep face.
-			col.points.push_back(base + nrm * (depth + 0.05f + 0.15f * sin_a));
+			Vector3 pt = base + nrm * (depth + 0.05f + 0.15f * sin_a);
+			if (ask) {
+				// Over a convex edge (a ledge's brink) the line's chords cut the corner: keep the sheet on top of
+				// the rock right under it.
+				const float g = p_source->call("get_height", pt);
+				pt.y = MAX(pt.y, g + 0.05f + depth);
+			}
+			col.points.push_back(pt);
 			col.speed.push_back(v);
 			col.air.push_back(air);
 			col.travel.push_back(travel);
@@ -654,12 +744,18 @@ void PhysXWaterfalls3D::_build_effects() {
 				GPUParticles3D *s = make_spray(xf, v, face.width, power);
 				add_child(s, false, INTERNAL_MODE_BACK);
 				effects.push_back(s);
+				GPUParticles3D *pf = make_spray_puffs(xf, v, face.width, power);
+				add_child(pf, false, INTERNAL_MODE_BACK);
+				effects.push_back(pf);
 			}
 			const float v = face.impact_speed;
 			const float power = 0.5f * 1000.0f * face.discharge * v * v;
 			GPUParticles3D *s = make_spray(Transform3D(lb, inv.xform(face.foot)), v, face.width, power);
 			add_child(s, false, INTERNAL_MODE_BACK);
 			effects.push_back(s);
+			GPUParticles3D *pf = make_spray_puffs(Transform3D(lb, inv.xform(face.foot)), v, face.width, power);
+			add_child(pf, false, INTERNAL_MODE_BACK);
+			effects.push_back(pf);
 		}
 		// A trickle down the rock (spring melt, a side stream) wets it but throws no measurable mist.
 		if (mist && face.discharge >= mist_min_discharge) {

@@ -81,7 +81,7 @@ private:
 	float min_height = 5.0f;
 	float rock_roughness = 0.15f; // k_s, m
 	float friction_factor = 0.2f; // Darcy-Weisbach f of white water on rough rock (Chanson: 0.1 to 0.3 on steps)
-	float row_spacing = 1.0f; // m along the face
+	float row_spacing = 0.5f; // m along the face (a ledge's brink between rows 1 m apart cut through the sheet)
 	float wet_margin = 0.6f; // m of wet rock either side of the water
 
 	LocalVector<Face> faces;

@@ -1920,7 +1920,7 @@ fork can.
   and drapes a sheet down every fall that is not a free plunge (`type` cascade, horsetail or tiered).
 - The sheet covers the wet part of the lip only: the brink points no higher than 1.5 critical depths over the
   lowest one (a gorge's lip line runs up its walls). Each column follows the ground under it, sampled every
-  0.5 m with the source's `get_height()`; without one, it falls back to the record's three face profiles,
+  0.25 m with the source's `get_height()`; without one, it falls back to the record's three face profiles,
   smoothed with a centripetal Catmull-Rom spline. A first build that only used the profiles left 30% of the
   sheet under the ground on the valley layout (gorge walls); following the ground leaves 3%.
 - Per row: speed from `dv/ds = (g sin a - f v^3 / 8q) / v` (`friction_factor` 0.2), so the sheet speeds up on

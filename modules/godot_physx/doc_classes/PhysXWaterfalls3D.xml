@@ -68,7 +68,7 @@
 		<member name="rock_roughness" type="float" setter="set_rock_roughness" getter="get_rock_roughness" default="0.15">
 			Roughness height of the rock face (m), for the inception point.
 		</member>
-		<member name="row_spacing" type="float" setter="set_row_spacing" getter="get_row_spacing" default="1.0">
+		<member name="row_spacing" type="float" setter="set_row_spacing" getter="get_row_spacing" default="0.5">
 			Distance (m) between rows of the sheet down the face.
 		</member>
 		<member name="source" type="NodePath" setter="set_source" getter="get_source" default="NodePath(&quot;&quot;)">
