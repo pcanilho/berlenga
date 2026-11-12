@@ -65,6 +65,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Meandering rivers** (`meander_age`, years, off by default): bends grow and migrate across flat valley floors; cut-off loops leave oxbows that silt up, and the river water follows the new course.
 
+  ![A river across a valley floor before and after 3000 years of meandering, raster](media/terrain-meanders.jpg)
+
+  *Meandering rivers: after 3000 years the river winds in loops across the floor.*
+
 - **Rivers fed by rain and snowmelt** (`climate_recipe`, `river_month`): a monthly water balance from the climate sets each river's flow, month by month.
 
   ![River flow by month in three climates, and snow lying by height](media/terrain-runoff.jpg)
