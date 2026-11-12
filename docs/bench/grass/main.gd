@@ -9,6 +9,8 @@ extends Node3D
 #   --wind=x,z       fallback wind in m/s (default 3,1); 0,0 for still grass
 #   --weather        a WeatherMap3D drives the wind instead
 #   --frames=N       frames before the capture (default 20)
+#   --grass-density=N  blades per m2 of the tall grass near the camera (default 60)
+#   --cpu-fill       build grass tiles on the CPU instead of the GPU fill (grass.md, stage 3a)
 #   --litter-wind=x,z  downwind lean of the leaf drift (VegetationField3D.litter_wind), e.g. 0.6,0
 #   --out=path.png   save the last frame
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
@@ -57,6 +59,8 @@ var layers := true
 var close := false
 var forest := false
 var litter_wind := Vector2()
+var grass_density := 0.0
+var gpu_fill := true
 var forest_in := false
 var stand := "beech"
 var stand_set := false
@@ -133,6 +137,8 @@ func _ready() -> void:
 			forest = true
 			forest_in = true
 		elif a == "--notex": notex = true
+		elif a.begins_with("--grass-density="): grass_density = float(a.substr(16))
+		elif a == "--cpu-fill": gpu_fill = false
 		elif a.begins_with("--litter-wind="):
 			var lw := a.substr(14).split(",")
 			litter_wind = Vector2(float(lw[0]), float(lw[1]))
@@ -174,6 +180,9 @@ func _ready() -> void:
 	grass = GrassField3D.new()
 	grass.name = "Grass"
 	grass.fallback_wind = wind
+	if grass_density > 0.0:
+		grass.density = grass_density
+	grass.gpu_fill = gpu_fill
 	add_child(grass)
 	grass.data_map = grass.get_path_to(dm)
 	if layers:
@@ -982,6 +991,39 @@ func _ground_mesh() -> Mesh:
 	st.generate_normals()
 	return st.commit()
 
+func _fill_compare(field: GrassField3D, label: String) -> void:
+	var gpu_set := _blade_keys(field)
+	var t0 := Time.get_ticks_usec()
+	field.gpu_fill = false
+	for i in 20:
+		field.update_at(cam.global_position)
+	var cpu_ms := (Time.get_ticks_usec() - t0) / 1000.0
+	var cpu_set := _blade_keys(field)
+	var same := 0
+	for k in gpu_set:
+		if cpu_set.has(k): same += 1
+	var match_share := float(same) / maxf(cpu_set.size(), 1.0)
+	_check("GPU fill matches the CPU blades (%s)" % label, absf(gpu_set.size() - cpu_set.size()) < cpu_set.size() * 0.03 and match_share > 0.97, "gpu %d cpu %d shared %.3f" % [gpu_set.size(), cpu_set.size(), match_share])
+	t0 = Time.get_ticks_usec()
+	field.gpu_fill = true
+	for i in 20:
+		field.update_at(cam.global_position)
+	print("GRASS_FILL_MS %s cpu=%.1f gpu=%.1f (main thread, whole field)" % [label, cpu_ms, (Time.get_ticks_usec() - t0) / 1000.0])
+
+# Live blades of a field as keys (position to the millimetre, height and width to 0.1 mm).
+func _blade_keys(field: GrassField3D) -> Dictionary:
+	var keys := {}
+	for ch in field.get_children(true):
+		if ch is MultiMeshInstance3D:
+			var mm: MultiMesh = ch.multimesh
+			var buf := RenderingServer.multimesh_get_buffer(mm.get_rid())
+			for i in mm.instance_count:
+				var b := i * 16
+				if buf[b] == 0.0 and buf[b + 2] == 0.0:
+					continue
+				keys[Vector4i(roundi(buf[b + 3] * 1000.0), roundi(buf[b + 7] * 1000.0), roundi(buf[b + 11] * 1000.0), roundi(buf[b + 12] * 10000.0))] = true
+	return keys
+
 func _check(label: String, ok: bool, value) -> void:
 	print("%s %s: %s" % ["PASS" if ok else "FAIL", label, str(value)])
 	if not ok:
@@ -1003,7 +1045,10 @@ func _checks() -> void:
 		if ch is MultiMeshInstance3D:
 			var mm: MultiMesh = ch.multimesh
 			for i in mm.instance_count:
-				var p := mm.get_instance_transform(i).origin
+				var xf := mm.get_instance_transform(i)
+				if xf.basis.x.length_squared() == 0.0:
+					continue # A candidate the GPU fill rejected (zero record).
+				var p := xf.origin
 				var d := Vector2(p.x, p.z).distance_to(c)
 				# Inside the tall patches only (the rest is lawn by design).
 				var inside := tall == null or tall.get_patch_weight(p) > 0.99
@@ -1030,6 +1075,11 @@ func _checks() -> void:
 	_check("near density about 60 /m2", near_density > 45.0 and near_density < 70.0, near_density)
 	_check("far ring thinned (LOD)", far_density < near_density * 0.3, far_density)
 	_check("no grass under water", wet == 0, wet)
+	# GPU tile fill (grass.md, stage 3a) against the CPU loop: the same blades but at rule edges.
+	if grass.gpu_fill and GrassField3D.is_gpu_fill_available():
+		_fill_compare(grass, "tall grass")
+		if under:
+			_fill_compare(under, "undercoat")
 	if under:
 		var un := 0
 		var uwet := 0

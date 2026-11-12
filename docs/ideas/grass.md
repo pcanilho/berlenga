@@ -402,6 +402,35 @@ Cloud checks: identical records CPU vs GPU (hash of the buffers), tile build tim
 raster vs path traced crops of the denser field at 100%, with no SHADER ERROR. GPU frame timings
 need the PC.
 
+### Built (3a)
+
+`GrassField3D.gpu_fill` (on by default), `modules/vegetation/grass_fill.glsl`. Per tile the CPU
+lists the candidate cells (blue-noise rank under the level's keep, in a fixed order), bakes the
+rules and the canopy's shade rule into a 0.5 m suitability grid, and passes the 1 m light grid
+and the map's height texels under the tile; one compute thread per candidate makes the blade
+with the same hashes, clumps, shade avoidance and packing as the CPU loop and writes its 16
+floats in place (a rejected candidate is written as a zero record), then
+`multimesh_mark_buffer_rd_changed()`. The MultiMesh gets the tile's box as a custom AABB, so it
+draws before the records' readback lands. A suitability corner at zero keeps the cell empty, so
+blades never creep into water by interpolation.
+
+Measured on the cloud (lavapipe, bench `docs/bench/grass --test`):
+
+| | CPU loop | GPU fill |
+| --- | --- | --- |
+| Blades matching the CPU set | | 99.1% (tall grass), 100% (undercoat) |
+| Main thread, whole tall field at 60/m2 | 23.4 ms | 14.1 ms |
+| Undercoat field (640/m2, short radius) | 29.4 ms | 17.6 ms |
+| Tall field at 180/m2 | 70.7 ms | 38.9 ms |
+
+Raster frames of both paths in still air differ by 0.14 of 255 on average. Two fixes found on
+the way, both for every grass field and MultiMesh: the blue-noise rank took a mutex per blade
+(now a one-time static), and MultiMesh allocation sent a zeroed copy through the staging buffer
+(now `buffer_clear` on the GPU), which together were most of the CPU path's cost too.
+What stays on the CPU per tile: the candidate list, the rules grid and the MultiMesh itself.
+Moving candidates to the GPU would need compaction and a count the CPU does not have; not worth
+it until the PC shows the remaining cost matters. GPU time per tile needs the PC.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.

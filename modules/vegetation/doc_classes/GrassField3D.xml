@@ -35,7 +35,7 @@
 		<method name="get_blade_count" qualifiers="const">
 			<return type="int" />
 			<description>
-				Returns the number of blades in all live tiles.
+				Returns the number of blades in all live tiles. With [member gpu_fill] it counts the candidates sent to the shader, including those the rules then leave empty.
 			</description>
 		</method>
 		<method name="get_build_time_msec" qualifiers="const">
@@ -68,6 +68,12 @@
 			<param index="0" name="position" type="Vector3" />
 			<description>
 				Returns the trample bend at [param position]: a world x/z direction whose length is the amount, from 0 (upright) to 1 (flat). Zero outside the trample field.
+			</description>
+		</method>
+		<method name="is_gpu_fill_available" qualifiers="static">
+			<return type="bool" />
+			<description>
+				Whether [member gpu_fill] can run: there is a [RenderingDevice] and the fill's compute shader built.
 			</description>
 		</method>
 		<method name="rebuild">
@@ -120,6 +126,9 @@
 		</member>
 		<member name="fallback_wind" type="Vector2" setter="set_fallback_wind" getter="get_fallback_wind" default="Vector2(2, 0.5)">
 			Wind velocity (x, z) in metres per second, used when no [WeatherMap3D] publishes wind.
+		</member>
+		<member name="gpu_fill" type="bool" setter="set_gpu_fill" getter="is_gpu_fill" default="true">
+			Fill each tile's blades with a compute shader instead of the CPU loop. The CPU lists the cells the tile keeps at its level and bakes [member rules] into a 0.5 m grid; the shader makes every blade from the same hashes, clumps and light and writes the records straight into the tile's [MultiMesh] ([method RenderingServer.multimesh_mark_buffer_rd_changed]), so the path tracer sees them as before. The blades match the CPU path except within a few centimetres of a rule's edge; the main-thread cost of a tile drops by about 40%. Falls back to the CPU without a [RenderingDevice].
 		</member>
 		<member name="ground_tint" type="Color" setter="set_ground_tint" getter="get_ground_tint" default="Color(0.05, 0.09, 0.025, 0.85)">
 			Colour the ground takes under the grass (the shaded thatch between blades), with alpha as the strength. Read by terrain shaders through [method get_ground_shader_code].

@@ -35,6 +35,7 @@
 
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
+#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/os/mutex.h"
 #include "core/os/os.h"
@@ -49,7 +50,11 @@
 #include "scene/resources/3d/cylinder_shape_3d.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/resources/multimesh.h"
+#include "servers/rendering/rendering_device.h"
+#include "servers/rendering/rendering_device_binds.h"
 #include "servers/rendering/rendering_server.h"
+
+#include "grass_fill.glsl.gen.h"
 
 #include "modules/terrain_deform/terrain_data_map_3d.h"
 #include "modules/weather/weather_map_3d.h"
@@ -71,14 +76,8 @@ float unit(uint32_t p_h, int p_shift) {
 // putting each next point in the largest void (lowest Gaussian energy, wrapping round).
 constexpr int BLUE_SIZE = 64;
 
-const uint16_t *blue_ranks() {
+const uint16_t *build_blue_ranks() {
 	static uint16_t ranks[BLUE_SIZE * BLUE_SIZE];
-	static bool built = false;
-	static BinaryMutex lock;
-	MutexLock guard(lock);
-	if (built) {
-		return ranks;
-	}
 	const int n = BLUE_SIZE * BLUE_SIZE;
 	float kernel[BLUE_SIZE * BLUE_SIZE];
 	for (int y = 0; y < BLUE_SIZE; y++) {
@@ -111,7 +110,13 @@ const uint16_t *blue_ranks() {
 			}
 		}
 	}
-	built = true;
+	return ranks;
+}
+
+// Built once, on first use (thread-safe static initialisation): no lock per call, which cost more
+// than the rest of a blade's placement.
+const uint16_t *blue_ranks() {
+	static const uint16_t *ranks = build_blue_ranks();
 	return ranks;
 }
 
@@ -133,7 +138,69 @@ float blue_rank(int p_x, int p_z) {
 	return (float(ranks[z * BLUE_SIZE + x]) + 0.5f) / float(BLUE_SIZE * BLUE_SIZE);
 }
 
+// GPU tile fill (docs/ideas/grass.md, stage 3a): one compute pipeline for every field, built on
+// the render thread the first time a tile is filled.
+struct GrassFillGPU {
+	RID shader;
+	RID pipeline;
+	bool tried = false;
+	bool ok = false;
+};
+GrassFillGPU grass_fill_gpu;
+
+constexpr int FILL_HEADER = 40;
+constexpr float FILL_SUIT_STEP = 0.5f;
+
+void grass_fill_rt(RID p_multimesh, const PackedFloat32Array &p_inputs, int p_count) {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	RenderingDevice *rd = rs ? rs->get_rendering_device() : nullptr;
+	if (!rd) {
+		return;
+	}
+	if (!grass_fill_gpu.tried) {
+		grass_fill_gpu.tried = true;
+		Ref<RDShaderFile> sf;
+		sf.instantiate();
+		if (sf->parse_versions_from_text(grass_fill_shader_glsl) == OK) {
+			grass_fill_gpu.shader = rd->shader_create_from_spirv(sf->get_spirv_stages());
+			if (grass_fill_gpu.shader.is_valid()) {
+				grass_fill_gpu.pipeline = rd->compute_pipeline_create(grass_fill_gpu.shader);
+			}
+		}
+		grass_fill_gpu.ok = grass_fill_gpu.pipeline.is_valid();
+		ERR_FAIL_COND_MSG(!grass_fill_gpu.ok, "GrassField3D: the tile fill compute shader failed to build.");
+	}
+	if (!grass_fill_gpu.ok) {
+		return;
+	}
+	const RID records = rs->multimesh_get_buffer_rd_rid(p_multimesh);
+	if (!records.is_valid()) {
+		return;
+	}
+	const Vector<uint8_t> bytes = p_inputs.to_byte_array();
+	const RID inputs = rd->storage_buffer_create(bytes.size(), bytes);
+	Vector<RD::Uniform> uniforms;
+	RD::Uniform u0(RD::UNIFORM_TYPE_STORAGE_BUFFER, 0, records);
+	RD::Uniform u1(RD::UNIFORM_TYPE_STORAGE_BUFFER, 1, inputs);
+	uniforms.push_back(u0);
+	uniforms.push_back(u1);
+	const RID set = rd->uniform_set_create(uniforms, grass_fill_gpu.shader, 0);
+	const RD::ComputeListID cl = rd->compute_list_begin();
+	rd->compute_list_bind_compute_pipeline(cl, grass_fill_gpu.pipeline);
+	rd->compute_list_bind_uniform_set(cl, set, 0);
+	rd->compute_list_dispatch(cl, (p_count + 63) / 64, 1, 1);
+	rd->compute_list_end();
+	rd->free_rid(set);
+	rd->free_rid(inputs);
+	rs->multimesh_mark_buffer_rd_changed(p_multimesh);
+}
+
 } // namespace
+
+bool GrassField3D::is_gpu_fill_available() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	return rs && rs->get_rendering_device() != nullptr && !(grass_fill_gpu.tried && !grass_fill_gpu.ok);
+}
 
 // Shared by the blades and the ground under them (get_ground_shader_code()), so both drift to the
 // same colours at the same places: a gap between blades then shows the base of the same sward.
@@ -402,10 +469,14 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			light_grid[gz * lg + gx] = (1.0f - sh) * (p_map ? VegetationLight::exposure(p_map, sun_mean, q.x, q.z) : 1.0f);
 		}
 	}
-	LocalVector<Transform3D> xforms;
-	LocalVector<Color> customs;
 	// Wider blades where fewer remain, so the field keeps its coverage at a distance.
 	const float width = blade_width / Math::sqrt(keep);
+	if (gpu_fill && is_gpu_fill_available()) {
+		_build_tile_gpu(p_tile, p_lod, p_map, r.ptr(), canopy, light_grid, lg, width);
+		return;
+	}
+	LocalVector<Transform3D> xforms;
+	LocalVector<Color> customs;
 	for (int iz = iz0; iz < iz1; iz++) {
 		for (int ix = ix0; ix < ix1; ix++) {
 			const uint32_t hb = cell_hash(ix, iz, 0x9E3779B9u);
@@ -478,6 +549,174 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 		add_child(tile.mmi, false, INTERNAL_MODE_BACK);
 		blade_count += xforms.size();
 	}
+	tiles.insert(p_tile, tile);
+}
+
+// The tile's blades on the GPU (stage 3a). The CPU lists the candidate cells (those the rank keeps at
+// this level, in a fixed order), bakes the rules into a 0.5 m suitability grid and hands over the
+// light grid and the patch of map heights under the tile; the compute shader makes each blade from
+// the same hashes as the CPU loop and writes the records in place. Rejected candidates are written
+// as zero (degenerate) records.
+void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const VegetationField3D *p_canopy, const LocalVector<float> &p_light, int p_lg, float p_width) {
+	const float keep = 1.0f / float(1 << p_lod);
+	const float cell = 1.0f / Math::sqrt(MAX(density, 0.01f));
+	const float x0 = p_tile.x * tile_size;
+	const float z0 = p_tile.y * tile_size;
+	const int ix0 = int(Math::floor(x0 / cell));
+	const int iz0 = int(Math::floor(z0 / cell));
+	const int ix1 = int(Math::floor((x0 + tile_size) / cell));
+	const int iz1 = int(Math::floor((z0 + tile_size) / cell));
+	const float ground_y = get_global_position().y;
+	const Transform3D to_local = get_global_transform().affine_inverse();
+
+	LocalVector<float> cand;
+	for (int iz = iz0; iz < iz1; iz++) {
+		for (int ix = ix0; ix < ix1; ix++) {
+			const float rank = blue_rank(ix, iz);
+			if (rank >= keep) {
+				continue;
+			}
+			union {
+				int32_t i;
+				float f;
+			} bx, bz;
+			bx.i = ix;
+			bz.i = iz;
+			cand.push_back(bx.f);
+			cand.push_back(bz.f);
+			cand.push_back(rank);
+		}
+	}
+	const int count = int(cand.size() / 3);
+	Tile tile;
+	tile.lod = p_lod;
+	if (count == 0) {
+		tiles.insert(p_tile, tile);
+		return;
+	}
+
+	// Rules baked on a 0.5 m grid (the CPU path evaluates them per blade).
+	const int sg_n = int(Math::ceil(tile_size / FILL_SUIT_STEP)) + 1;
+	LocalVector<float> suit;
+	// Heights: the map texels under the tile, so the shader samples exactly as get_height_at() does.
+	int hp_x0 = 0, hp_z0 = 0, hp_w = 1, hp_h = 1;
+	LocalVector<float> heights;
+	Rect2 map_rect;
+	int map_n = 1;
+	float y_min = ground_y, y_max = ground_y;
+	if (p_map) {
+		suit.resize(sg_n * sg_n);
+		for (int j = 0; j < sg_n; j++) {
+			for (int i = 0; i < sg_n; i++) {
+				const Vector3 q(x0 + i * FILL_SUIT_STEP, ground_y, z0 + j * FILL_SUIT_STEP);
+				float v = p_rules->get_suitability(p_map, q);
+				if (p_canopy && v > 0.0f) {
+					v *= p_rules->rule_weight(PlantSpecies::RULE_SHADE, p_canopy->get_stand_shade_at(q));
+				}
+				suit[j * sg_n + i] = v;
+			}
+		}
+		map_rect = p_map->get_map_rect();
+		if (height_image.is_null() || height_rect != map_rect) {
+			height_image = p_map->get_channel_image(TerrainDataMap3D::CHANNEL_HEIGHT);
+			height_rect = map_rect;
+		}
+		map_n = height_image.is_valid() ? height_image->get_width() : 0;
+		if (map_n > 0) {
+			const float mc = map_rect.size.x / map_n;
+			hp_x0 = CLAMP(int(Math::floor((x0 - map_rect.position.x) / mc - 0.5f)), 0, map_n - 1);
+			hp_z0 = CLAMP(int(Math::floor((z0 - map_rect.position.y) / mc - 0.5f)), 0, map_n - 1);
+			const int hp_x1 = CLAMP(int(Math::floor((x0 + tile_size - map_rect.position.x) / mc - 0.5f)) + 1, 0, map_n - 1);
+			const int hp_z1 = CLAMP(int(Math::floor((z0 + tile_size - map_rect.position.y) / mc - 0.5f)) + 1, 0, map_n - 1);
+			hp_w = hp_x1 - hp_x0 + 1;
+			hp_h = hp_z1 - hp_z0 + 1;
+			const float *hd = reinterpret_cast<const float *>(height_image->get_data().ptr());
+			heights.resize(hp_w * hp_h);
+			y_min = 1e30f;
+			y_max = -1e30f;
+			for (int j = 0; j < hp_h; j++) {
+				for (int i = 0; i < hp_w; i++) {
+					const float h = hd[(hp_z0 + j) * map_n + hp_x0 + i];
+					heights[j * hp_w + i] = h;
+					y_min = MIN(y_min, h);
+					y_max = MAX(y_max, h);
+				}
+			}
+		}
+	}
+	if (suit.is_empty()) {
+		suit.push_back(1.0f);
+	}
+	if (heights.is_empty()) {
+		heights.push_back(ground_y);
+	}
+
+	PackedFloat32Array in;
+	in.resize(FILL_HEADER);
+	float *h = in.ptrw();
+	for (int k = 0; k < FILL_HEADER; k++) {
+		h[k] = 0.0f;
+	}
+	h[0] = x0;
+	h[1] = z0;
+	h[2] = cell;
+	h[3] = keep;
+	h[4] = p_width;
+	h[5] = blade_height.x;
+	h[6] = blade_height.y;
+	h[7] = lean;
+	h[8] = clump_size;
+	h[9] = ground_y;
+	h[10] = (p_map && map_n > 0) ? 1.0f : 0.0f;
+	h[11] = FILL_SUIT_STEP;
+	h[12] = float(sg_n);
+	h[13] = float(p_lg);
+	h[14] = float(hp_x0);
+	h[15] = float(hp_z0);
+	h[16] = float(hp_w);
+	h[17] = float(hp_h);
+	h[18] = map_rect.position.x;
+	h[19] = map_rect.position.y;
+	h[20] = map_n > 0 ? map_rect.size.x / map_n : 1.0f;
+	h[21] = float(map_n);
+	for (int r = 0; r < 3; r++) {
+		for (int c = 0; c < 3; c++) {
+			h[22 + r * 3 + c] = to_local.basis.rows[r][c];
+		}
+		h[31 + r] = to_local.origin[r];
+	}
+	h[34] = float(count);
+	const int off_cand = FILL_HEADER;
+	const int off_suit = off_cand + int(cand.size());
+	const int off_light = off_suit + int(suit.size());
+	const int off_height = off_light + int(p_light.size());
+	h[35] = float(off_cand);
+	h[36] = float(off_suit);
+	h[37] = float(off_light);
+	h[38] = float(off_height);
+	in.resize(off_height + int(heights.size()));
+	float *w = in.ptrw();
+	memcpy(w + off_cand, cand.ptr(), cand.size() * sizeof(float));
+	memcpy(w + off_suit, suit.ptr(), suit.size() * sizeof(float));
+	memcpy(w + off_light, p_light.ptr(), p_light.size() * sizeof(float));
+	memcpy(w + off_height, heights.ptr(), heights.size() * sizeof(float));
+
+	Ref<MultiMesh> mm;
+	mm.instantiate();
+	mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+	mm->set_use_custom_data(true);
+	mm->set_mesh(blade_mesh);
+	mm->set_instance_count(count);
+	// The records never reach the CPU before the first frame: give culling the tile's box.
+	const float top = blade_height.y * 1.5f + 0.2f;
+	const AABB world_box(Vector3(x0 - 1.0f, y_min - 0.2f, z0 - 1.0f), Vector3(tile_size + 2.0f, y_max - y_min + top + 0.2f, tile_size + 2.0f));
+	mm->set_custom_aabb(to_local.xform(world_box));
+	RenderingServer::get_singleton()->call_on_render_thread(callable_mp_static(&grass_fill_rt).bind(mm->get_rid(), in, count));
+	tile.mmi = memnew(MultiMeshInstance3D);
+	tile.mmi->set_multimesh(mm);
+	tile.mmi->set_name(vformat("Grass_%d_%d", p_tile.x, p_tile.y));
+	add_child(tile.mmi, false, INTERNAL_MODE_BACK);
+	blade_count += count;
 	tiles.insert(p_tile, tile);
 }
 
@@ -1171,7 +1410,24 @@ void GrassField3D::set_wind_response(float p_response) {
 	}
 }
 
+void GrassField3D::set_gpu_fill(bool p_enabled) {
+	if (gpu_fill == p_enabled) {
+		return;
+	}
+	gpu_fill = p_enabled;
+	// The same blades either way: only the tiles are rebuilt, not the mesh or the material.
+	for (KeyValue<Vector2i, Tile> &kv : tiles) {
+		_free_tile(kv.value);
+	}
+	tiles.clear();
+	blade_count = 0;
+}
+
 void GrassField3D::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_gpu_fill", "enabled"), &GrassField3D::set_gpu_fill);
+	ClassDB::bind_method(D_METHOD("is_gpu_fill"), &GrassField3D::is_gpu_fill);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("is_gpu_fill_available"), &GrassField3D::is_gpu_fill_available);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gpu_fill"), "set_gpu_fill", "is_gpu_fill");
 #define GRASS_BIND(m_set, m_get, m_arg) \
 	ClassDB::bind_method(D_METHOD(#m_set, m_arg), &GrassField3D::m_set); \
 	ClassDB::bind_method(D_METHOD(#m_get), &GrassField3D::m_get);

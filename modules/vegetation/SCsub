@@ -6,6 +6,9 @@ Import("env_modules")
 
 env_vegetation = env_modules.Clone()
 
+# GrassField3D's tile fill (docs/ideas/grass.md, stage 3a).
+env_vegetation.GLSL_HEADER("grass_fill.glsl")
+
 module_obj = []
 env_vegetation.add_source_files(module_obj, "*.cpp")
 env.modules_sources += module_obj

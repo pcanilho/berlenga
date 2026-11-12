@@ -100,6 +100,10 @@ class GrassField3D : public Node3D {
 	Ref<ImageTexture> trample_texture;
 	HashMap<ObjectID, Vector3> trample_last;
 
+	bool gpu_fill = true; // Fill tiles with the compute shader (stage 3a) when a RenderingDevice exists.
+	Ref<Image> height_image; // The data map's height channel, for the GPU fill.
+	Rect2 height_rect;
+
 	HashMap<Vector2i, Tile> tiles;
 	Ref<ArrayMesh> blade_mesh;
 	Ref<ShaderMaterial> material;
@@ -110,6 +114,7 @@ class GrassField3D : public Node3D {
 	void _build_material();
 	int _lod_for(float p_distance) const;
 	void _build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map);
+	void _build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const class VegetationField3D *p_canopy, const LocalVector<float> &p_light, int p_lg, float p_width);
 	void _free_tile(Tile &p_tile);
 	void _update_fade(const Vector2 &p_center);
 	void _update_tiles(const Vector3 &p_center);
@@ -124,6 +129,9 @@ protected:
 	static void _bind_methods();
 
 public:
+	void set_gpu_fill(bool p_enabled);
+	bool is_gpu_fill() const { return gpu_fill; }
+	static bool is_gpu_fill_available();
 	void set_data_map(const NodePath &p_path);
 	NodePath get_data_map() const { return data_map; }
 	void set_canopy_field(const NodePath &p_path);
