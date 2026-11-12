@@ -64,6 +64,7 @@ var litter_wind := Vector2()
 var grass_density := 0.0
 var gpu_fill := true
 var sun_yaw := 150.0
+var sun_node: DirectionalLight3D
 var forest_in := false
 var stand := "beech"
 var stand_set := false
@@ -185,6 +186,8 @@ func _ready() -> void:
 	grass = GrassField3D.new()
 	grass.name = "Grass"
 	grass.fallback_wind = wind
+	if OS.get_environment("GRASS_RADIUS") != "":
+		grass.radius = float(OS.get_environment("GRASS_RADIUS")) # Which level of detail the far-match region sees.
 	if grass_density > 0.0:
 		grass.density = grass_density
 	if OS.get_environment("GRASS_DIAG").contains("vf1"):
@@ -316,6 +319,7 @@ void fragment() {
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
+	sun_node = sun
 	sun.rotation_degrees = Vector3(-28, sun_yaw, 0)
 	sun.shadow_enabled = not OS.get_environment("GRASS_DIAG").contains("noshadow")
 	if OS.get_environment("GRASS_DIAG").contains("ssaa"):
@@ -1349,6 +1353,19 @@ func _process(dt: float) -> void:
 		var need := Color((far_a.r - k.r) / (w.r - k.r), (far_a.g - k.g) / (w.g - k.g), (far_a.b - k.b) / (w.b - k.b))
 		var got := grass.get_far_color()
 		print("GRASS_FAR_NEED white=%s black=%s needed=%s published=%s baked=%s published/needed=%s" % [str(w), str(k), str(need), str(got), str(grass.is_far_color_baked()), str(Color(got.r / need.r, got.g / need.g, got.b / need.b))])
+		# The white and black above went through the sun-azimuth factor too, so published/needed is
+		# the match with it; without it the far ground would show the plain mean.
+		# The sun term GrassField3D publishes (grass_ground_sun), from the bench's sun.
+		var ld := -sun_node.global_transform.basis.z
+		var lh := Vector2(ld.x, ld.z).length()
+		var sun_v := Vector4(ld.x / lh, ld.z / lh, minf(lh / cos(deg_to_rad(30.0)), 1.15) * clampf((-ld.y + 0.05) / 0.1, 0.0, 1.0), 0.0)
+		var lobes := grass.get_far_color_lobes()
+		var fwd := -cam.global_transform.basis.z
+		var c1 := Vector2(fwd.x, fwd.z).normalized().dot(Vector2(sun_v.x, sun_v.y))
+		var f := Color(1, 1, 1)
+		for i in 3:
+			f[i] = maxf(1.0 + sun_v.z * (lobes[0][i] * c1 + lobes[1][i] * (2.0 * c1 * c1 - 1.0)), 0.1)
+		print("GRASS_FAR_AZIMUTH cos=%.2f strength=%.2f factor=%s lobes=%s ratio_with=%s ratio_without=%s" % [c1, sun_v.z, str(f), str(lobes), str(Color(got.r / need.r, got.g / need.g, got.b / need.b)), str(Color(got.r / (need.r * f.r), got.g / (need.g * f.g), got.b / (need.b * f.b)))])
 		get_tree().quit()
 		return
 	if far_match or n < frames:

@@ -121,9 +121,20 @@ class GrassField3D : public Node3D {
 	int far_bake_wait = 0;
 	bool far_bake_queued = false;
 	bool far_baked = false;
-	Color far_bake_sum;
-	Color far_bake_white;
+	Color far_bake_view[9]; // Mean of each view: sward at the four sun azimuths, white, black at the four.
 	Color far_color_baked;
+	// The far colour's change with the sun's azimuth from the view (phi): factor 1 + lobe1 cos(phi)
+	// + lobe2 cos(2 phi) per channel, fitted to the four baked azimuths (canopy BRDF hot spot).
+	Color far_lobe1;
+	Color far_lobe2;
+	NodePath sun_light; // The DirectionalLight3D whose azimuth turns the far colour; empty: the first in the scene.
+	ObjectID sun_cache;
+	int sun_search_wait = 0;
+	Vector4 published_sun;
+	Vector4 published_view;
+	class DirectionalLight3D *_get_sun();
+	void _publish_sun_view(const Vector3 &p_camera);
+	void _publish_far();
 	void _queue_far_bake();
 	void _far_bake_start();
 	void _far_bake_step();
@@ -171,6 +182,9 @@ public:
 	float get_lean() const { return lean; }
 	Color get_far_color() const;
 	bool is_far_color_baked() const { return far_baked; }
+	PackedColorArray get_far_color_lobes() const;
+	void set_sun_light(const NodePath &p_path);
+	NodePath get_sun_light() const { return sun_light; }
 	void set_base_color(const Color &p_color);
 	Color get_base_color() const { return base_color; }
 	void set_tip_color(const Color &p_color);
