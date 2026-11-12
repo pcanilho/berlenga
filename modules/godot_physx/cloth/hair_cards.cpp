@@ -33,6 +33,7 @@
 #include "hair_cards.h"
 
 #include "core/math/random_pcg.h"
+#include "core/object/worker_thread_pool.h"
 #include "core/os/mutex.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
@@ -159,22 +160,42 @@ Ref<HairCardBake> HairCardBake::bake(const PackedVector3Array &p_points, const P
 	}
 	LocalVector<int> label;
 	label.resize(sc);
-	for (int iter = 0; iter < 8; iter++) {
-		bool changed = false;
-		for (int s = 0; s < sc; s++) {
+	LocalVector<int> next_label;
+	next_label.resize(sc);
+	// The assignment (strands x clumps distances) is most of the bake: spread over the worker threads.
+	struct Assign {
+		const Vector3 *feat;
+		const Vector3 *centres;
+		int *out;
+		int k_count;
+		void run(uint32_t p_strand, void *) {
+			const Vector3 *a = feat + p_strand * FEATURE_POINTS;
 			float best = 1e30f;
 			int best_c = 0;
 			for (int c = 0; c < k_count; c++) {
-				const float d = distance(&feat[s * FEATURE_POINTS], &centres[c * FEATURE_POINTS]);
+				const Vector3 *b = centres + c * FEATURE_POINTS;
+				float d = 0.0f;
+				for (int i = 0; i < FEATURE_POINTS; i++) {
+					d += a[i].distance_squared_to(b[i]);
+				}
 				if (d < best) {
 					best = d;
 					best_c = c;
 				}
 			}
-			if (iter == 0 || label[s] != best_c) {
+			out[p_strand] = best_c;
+		}
+	};
+	for (int iter = 0; iter < 8; iter++) {
+		Assign assign{ feat.ptr(), centres.ptr(), next_label.ptr(), k_count };
+		WorkerThreadPool::GroupID group = WorkerThreadPool::get_singleton()->add_template_group_task(&assign, &Assign::run, (void *)nullptr, sc, -1, true, String("HairCardBake"));
+		WorkerThreadPool::get_singleton()->wait_for_group_task_completion(group);
+		bool changed = false;
+		for (int s = 0; s < sc; s++) {
+			if (iter == 0 || label[s] != next_label[s]) {
 				changed = true;
 			}
-			label[s] = best_c;
+			label[s] = next_label[s];
 		}
 		if (!changed) {
 			break;

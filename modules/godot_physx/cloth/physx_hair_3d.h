@@ -124,7 +124,7 @@ class PhysXHair3D : public Node3D {
 	float rain_shelter_timer = 0.0f;
 	// Hair cards for distant hair (docs/ideas/hair.md, stage 2p).
 	bool cards_enabled = false;
-	int card_count = 256;
+	int card_count = 1024;
 	float card_distance = 15.0f; // m from the camera at which the strands give way to cards
 	MeshInstance3D *card_instance = nullptr;
 	Ref<ShaderMaterial> card_material;
