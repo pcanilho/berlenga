@@ -43,6 +43,10 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 - **Seasonal grass** (`GrassField3D.season_source`): grass browns in drought and hard cold and stays green in a mild winter, read from the season.
 
+  ![The same meadow in July, a normal year and a summer drought, raster](media/grass-drought.jpg)
+
+  *Seasonal grass: in a summer drought whole blades die back to straw.*
+
 - **Layered meadow** (`GrassField3D.color_variation`, `get_ground_shader_code()`, `canopy_field`): blades vary in colour over the field and per blade, some dead from the root, with midribs and tapered tips; the ground under the grass becomes matching turf, and the sward follows the canopy shade.
 
   ![A meadow by a lake, before and after the layered meadow](media/meadow-layers.jpg)
