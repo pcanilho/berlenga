@@ -265,7 +265,6 @@ private:
 		float volumetric_length = 64.0f;
 		float volumetric_ambient_inject = 0.0f;
 		float volumetric_anisotropy = 0.2f;
-		float volumetric_sky_affect = 1.0f;
 	} fog_base;
 	Ref<Environment> fog_environment;
 	float applied_haze = -1.0f;

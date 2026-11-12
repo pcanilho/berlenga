@@ -140,7 +140,6 @@ void WeatherMap3D::_restore_fog() {
 		fog_environment->set_volumetric_fog_length(fog_base.volumetric_length);
 		fog_environment->set_volumetric_fog_ambient_inject(fog_base.volumetric_ambient_inject);
 		fog_environment->set_volumetric_fog_anisotropy(fog_base.volumetric_anisotropy);
-		fog_environment->set_volumetric_fog_sky_affect(fog_base.volumetric_sky_affect);
 	}
 	fog_base.saved = false;
 	fog_environment.unref();
@@ -185,7 +184,6 @@ void WeatherMap3D::_apply_haze() {
 		fog_base.volumetric_length = env->get_volumetric_fog_length();
 		fog_base.volumetric_ambient_inject = env->get_volumetric_fog_ambient_inject();
 		fog_base.volumetric_anisotropy = env->get_volumetric_fog_anisotropy();
-		fog_base.volumetric_sky_affect = env->get_volumetric_fog_sky_affect();
 		fog_base.saved = true;
 	}
 
@@ -193,11 +191,9 @@ void WeatherMap3D::_apply_haze() {
 	const Vector3 at = _follow_position();
 	float uniform = 0.0f;
 	bool layers = false;
-	bool other_layers = false; // Layers besides the aerosol haze (precipitation, blowing snow).
 	for (const HazeSource &h : haze_sources) {
 		if (h.height_scale > 0.0f) {
 			layers = layers || h.sigma > 0.0f;
-			other_layers = other_layers || (h.sigma > 0.0f && h.source != get_instance_id());
 		} else {
 			uniform += h.sigma * _haze_weight(h, at);
 		}
@@ -229,9 +225,6 @@ void WeatherMap3D::_apply_haze() {
 		// d'Almeida et al. 1991), which is what makes the air glow and the shafts show toward the sun.
 		// Falling rain and snow are as forward or more, so the layers share it.
 		env->set_volumetric_fog_anisotropy(aerosol_haze ? 0.6f : fog_base.volumetric_anisotropy);
-		// The sky already holds the aerosol along its whole path (the sky's Mie term), so with only the
-		// haze in the froxels the sky is left alone; precipitation does veil it.
-		env->set_volumetric_fog_sky_affect(other_layers || !aerosol_haze ? fog_base.volumetric_sky_affect : 0.0f);
 	}
 	// Falling and blowing snow is lit mostly by the sky (single-scatter albedo about 0.97), so the
 	// layers take the ambient light in full unless the project set its own share.
