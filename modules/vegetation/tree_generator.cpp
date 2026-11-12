@@ -3928,13 +3928,17 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		if (nseg == 0) {
 			return;
 		}
-		// Signed distance from a segment's bark (a little under it, 0.98, so no gap shows), and
-		// the axial parameter; outside the segment's length it does not count.
+		// Signed distance from a segment's bark, and the axial parameter; outside the segment's
+		// length it does not count. The bark is taken a little under the parent's polygon: between
+		// its vertices the tube lies inside the round radius by r (1 - cos(pi / sides)), up to 4%
+		// on a thin limb, and a seam on the round radius would stand proud of the faces.
+		const int par_sides = CLAMP(int(Math::ceil(Math::TAU * par.radius / 0.03f)), 3, 24);
+		const float bark_in = 0.98f * Math::cos(float(Math::PI) / float(par_sides));
 		auto seg_at = [&](const Seg &p_s, const Vector3 &p_q, float &r_t, Vector3 &r_radial) {
 			const Vector3 rel = p_q - p_s.a;
 			r_t = rel.dot(p_s.u) / p_s.len;
 			r_radial = rel - p_s.u * rel.dot(p_s.u);
-			return 0.98f * Math::lerp(p_s.ra, p_s.rb, CLAMP(r_t, 0.0f, 1.0f));
+			return bark_in * Math::lerp(p_s.ra, p_s.rb, CLAMP(r_t, 0.0f, 1.0f));
 		};
 		const float r0 = child.radius;
 		const bool steep = d.cross(par.dir).length() < 0.5f;
@@ -3983,7 +3987,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				for (int k = 0; k < nseg; k++) {
 					const Vector3 rel = p_q - segs[k].a;
 					const float t = CLAMP(rel.dot(segs[k].u) / segs[k].len, 0.0f, 1.0f);
-					const float rk = 0.98f * Math::lerp(segs[k].ra, segs[k].rb, t);
+					const float rk = bark_in * Math::lerp(segs[k].ra, segs[k].rb, t);
 					best = MIN(best, (rel - segs[k].u * (t * segs[k].len)).length() - rk);
 				}
 				return best; // < 0: inside.
@@ -4107,9 +4111,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		pd = has_down ? pd.normalized() : Vector3();
 		LocalVector<float> wts;
 		wts.resize(p_part.w);
+		LocalVector<uint8_t> inside;
+		inside.resize(p_part.w);
 		for (int i = 0; i < p_part.w; i++) {
 			const int ring = i / (p_sides + 1);
 			wts[i] = 0.0f;
+			inside[i] = 0;
 			if (ring >= int(p_pts.size())) {
 				continue;
 			}
@@ -4118,7 +4125,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			for (int k = 0; k < nseg; k++) {
 				float t;
 				Vector3 radial;
-				const float rk = seg_at(segs[k], qf[i], t, radial) / 0.98f;
+				const float rk = seg_at(segs[k], qf[i], t, radial) / bark_in;
 				if (t < -0.05f || t > 1.05f || radial.length_squared() < 1e-12f) {
 					continue;
 				}
@@ -4126,6 +4133,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			const float w = Math::pow(CLAMP(1.0f - out / (1.5f * r0), 0.0f, 1.0f), 2.0f);
 			wts[i] = w;
+			inside[i] = out < -0.05f * r0;
 			}
 			// The spread is set per line down the tube, from where that line's seam lies under the
 			// limb, then smoothed round the tube: set vertex by vertex, neighbouring lines met the
@@ -4200,7 +4208,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 							const Vector3 shift = -par.dir * (dn * f);
 							vv[p_part.z + i] += shift;
 							qf[i] += shift;
-							uv[p_part.z + i].y -= dn * f * par.dir.dot(d) / circumference;
+							// The bark is drawn out over the whole distance the point moved, which keeps
+							// its texel density over the collar of a limb square to its parent.
+							uv[p_part.z + i].y -= dn * f / circumference;
 							// Branch bark ridge (Shigo 1985): in the crotch the two barks push
 							// together into a low ridge just above the seam.
 							const float lw = col_lower[kc];
@@ -4246,6 +4256,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (w <= 0.0f) {
 				continue;
 			}
+			if (inside[i]) {
+				// Well inside the parent's model: hidden if the model is right, and where it is
+				// not (it is not the mesh everywhere), the tube's own normal is the right one;
+				// turned to the parent's, such points lit up as pale flaps in the sun.
+				continue;
+			}
 			Vector3 g = acc[i];
 			if (g.length_squared() > 1e-16f) {
 				g.normalize();
@@ -4260,7 +4276,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			for (int k = 0; k < nseg; k++) {
 				float t;
 				Vector3 radial;
-				const float rk = seg_at(segs[k], qf[i], t, radial) / 0.98f;
+				const float rk = seg_at(segs[k], qf[i], t, radial) / bark_in;
 				if (t < -0.05f || t > 1.05f || radial.length_squared() < 1e-12f) {
 					continue;
 				}

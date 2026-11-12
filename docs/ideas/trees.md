@@ -708,6 +708,13 @@ Shigo's anatomy, since it stays a tube (no implicit polygonizer, no extra triang
 - **Crossing limbs.** Before cutting, a limb that runs into thicker wood is swung away from it,
   rotating the whole limb about its base by up to 30 degrees in three tries (Plastic Trees'
   response to obstacles). Only if that fails is it cut. `get_collision_deflect_count()`.
+- **Pale flaps** (12 Nov, after the merge): in sun, limbs running close along a trunk showed
+  pale, torn-edged flaps (sycamore most). Normals were the cause, not texture: points the
+  parent's capsule model calls well inside the parent took the parent's normal, but the model is
+  not the mesh everywhere and some of those points are in view. Points more than 0.05 r inside
+  the model now keep the tube's own normal. The seam also goes on the parent polygon's inner
+  circle (r cos(pi / sides)) rather than 0.98 r, since between vertices the faceted tube lies up
+  to 4% inside the round radius.
 - **Cost.** Limbs the old collision test cut (it also caught limbs overlapping their own parent
   inside the trunk) now stay or bend away, so trees keep wood and leaves they had lost: oak
   variant 1 went from 58,172 to 66,253 internodes and 16.6M to 25.7M near leaf vertices. The
