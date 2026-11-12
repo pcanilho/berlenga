@@ -219,6 +219,20 @@ func _physics_process(_d: float) -> void:
 	else:
 		_render_later()
 
+# Mean and standard deviation of a cover map's alpha, inside its border.
+func _alpha_stats(img: Image) -> Array:
+	var sum := 0.0
+	var sq := 0.0
+	var n := 0
+	for y in range(2, img.get_height() - 2):
+		for x in range(2, img.get_width() - 2):
+			var a := img.get_pixel(x, y).a
+			sum += a
+			sq += a * a
+			n += 1
+	var m := sum / maxf(n, 1)
+	return [m, sqrt(maxf(sq / maxf(n, 1) - m * m, 0.0))]
+
 func _check(label: String, ok: bool, value) -> void:
 	print("%s %s: %s" % ["PASS" if ok else "FAIL", label, str(value)])
 	if not ok:
@@ -500,8 +514,30 @@ func _checks() -> void:
 			if dm.get_water_depth_at(Vector3(-SIZE * 0.5 + (cx + 0.5) * 4.0, 0, -SIZE * 0.5 + (cz + 0.5) * 4.0)) > 0.3:
 				water_a = maxf(water_a, cimg.get_pixel(cx, cz).a)
 	_check("cover map: expected crown cover matches the placed crowns (20%), none on the lake", cn > 50 and absf(expect - placed) < 0.2 * placed and water_a < 0.05, [expect / cn, placed / cn, water_a, cimg.get_size()])
-	field.cover_map_enabled = false
+	# Grass layers: a tall sward in patches reads part bare from afar unless the undercoat that fills
+	# its gaps is a layer too (cover_grass_layers).
 	tree_sp.canopy_radius = 0.0
+	var tall_g := GrassField3D.new()
+	var tall_r := PlantSpecies.new()
+	tall_r.patch_scale = 9.0
+	tall_r.patch_cover = 0.55
+	tall_g.rules = tall_r
+	var under_g := GrassField3D.new()
+	under_g.rules = PlantSpecies.new()
+	add_child(tall_g)
+	add_child(under_g)
+	field.cover_grass = field.get_path_to(tall_g)
+	field.populate()
+	var one: Array = _alpha_stats(field.get_cover_texture().get_image())
+	field.cover_grass_layers = [field.get_path_to(under_g)]
+	field.populate()
+	var two: Array = _alpha_stats(field.get_cover_texture().get_image())
+	_check("cover map grass layers: the undercoat fills the tall grass's gaps (more cover, less patchy)", two[0] > one[0] + 0.1 and two[1] < one[1] * 0.6, [one, two])
+	field.cover_grass = NodePath()
+	field.cover_grass_layers = []
+	tall_g.queue_free()
+	under_g.queue_free()
+	field.cover_map_enabled = false
 	# Impostors: the species' meshes near, their baked impostors (two triangles each) past the range.
 	var real_meshes: Array = tree_sp.meshes.duplicate()
 	PlantGenerator.add_impostors(tree_sp, 30.0, 4, 16)

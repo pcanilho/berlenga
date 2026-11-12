@@ -182,12 +182,14 @@ class VegetationField3D : public Node3D {
 	// TerrainMaterial3D's far blend), from the species' rules over the whole map.
 	bool cover_map_enabled = false;
 	NodePath cover_grass;
+	TypedArray<NodePath> cover_grass_layers; // More GrassField3D under cover_grass, top down (an undercoat).
 	float cover_cell = 4.0f;
 	Ref<Texture2D> cover_texture;
 	struct CoverJob {
 		const PlaceSetup *setup = nullptr;
-		Ref<PlantSpecies> grass; // Null: no grass layer.
-		Color grass_far; // Linear.
+		// The grass layers, top down (cover_grass, then cover_grass_layers): rules and far colour (linear).
+		LocalVector<Ref<PlantSpecies>> grass;
+		LocalVector<Color> grass_far;
 		Rect2 rect;
 		int w = 0;
 		int h = 0;
@@ -322,6 +324,8 @@ public:
 	bool is_cover_map_enabled() const { return cover_map_enabled; }
 	void set_cover_grass(const NodePath &p_path) { cover_grass = p_path; }
 	NodePath get_cover_grass() const { return cover_grass; }
+	void set_cover_grass_layers(const TypedArray<NodePath> &p_paths) { cover_grass_layers = p_paths; }
+	TypedArray<NodePath> get_cover_grass_layers() const { return cover_grass_layers; }
 	void set_cover_cell(float p_cell) { cover_cell = CLAMP(p_cell, 0.5f, 64.0f); }
 	float get_cover_cell() const { return cover_cell; }
 	Ref<Texture2D> get_cover_texture() const { return cover_texture; }

@@ -1183,17 +1183,26 @@ void VegetationField3D::_cover_row(void *p_job, uint32_t p_row) {
 		if (c_sum > 0.0f) {
 			plants /= c_sum;
 		}
-		// The grass under them.
-		float g = 0.0f;
-		if (job.grass.is_valid()) {
+		// The grass under them, layer by layer from the top: a tall sward in patches over an
+		// undercoat that fills the gaps between them reads as the undercoat there, not bare soil.
+		float bare = 1.0f;
+		Vector3 grass;
+		for (uint32_t l = 0; l < job.grass.size(); l++) {
+			float gl = 0.0f;
 			for (const Vector3 &q : subs) {
-				g += CLAMP(job.grass->get_suitability(map, q), 0.0f, 1.0f) * 0.25f;
+				gl += CLAMP(job.grass[l]->get_suitability(map, q), 0.0f, 1.0f) * 0.25f;
 			}
-			if (job.grass->uses_shade()) {
-				g *= job.grass->rule_weight(PlantSpecies::RULE_SHADE, closure);
+			if (job.grass[l]->uses_shade()) {
+				gl *= job.grass[l]->rule_weight(PlantSpecies::RULE_SHADE, closure);
 			}
+			const Color &fc = job.grass_far[l];
+			grass += Vector3(fc.r, fc.g, fc.b) * (gl * bare);
+			bare *= 1.0f - gl;
 		}
-		const Vector3 grass(job.grass_far.r, job.grass_far.g, job.grass_far.b);
+		const float g = 1.0f - bare;
+		if (g > 0.0f) {
+			grass /= g;
+		}
 		const float ground_a = 1.0f - (1.0f - g) * (1.0f - a_plants);
 		Vector3 ground = ground_a > 0.0f ? (grass * (g * (1.0f - a_plants)) + plants * a_plants) / ground_a : Vector3();
 		const float a = 1.0f - (1.0f - ground_a) * (1.0f - closure);
@@ -1216,13 +1225,24 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 	job.rect = p_setup.rect;
 	job.w = CLAMP(int(Math::ceil(job.rect.size.x / cover_cell)), 1, 4096);
 	job.h = CLAMP(int(Math::ceil(job.rect.size.y / cover_cell)), 1, 4096);
-	GrassField3D *grass = cover_grass.is_empty() ? nullptr : Object::cast_to<GrassField3D>(get_node_or_null(cover_grass));
-	if (grass) {
-		job.grass = grass->get_rules();
-		if (job.grass.is_null()) {
-			job.grass.instantiate(); // The grass's default rules: dry land.
+	LocalVector<NodePath> grass_paths;
+	if (!cover_grass.is_empty()) {
+		grass_paths.push_back(cover_grass);
+	}
+	for (int i = 0; i < cover_grass_layers.size(); i++) {
+		grass_paths.push_back(cover_grass_layers[i]);
+	}
+	for (const NodePath &gp : grass_paths) {
+		GrassField3D *grass = Object::cast_to<GrassField3D>(get_node_or_null(gp));
+		if (!grass) {
+			continue;
 		}
-		job.grass_far = grass->get_far_color();
+		Ref<PlantSpecies> rules = grass->get_rules();
+		if (rules.is_null()) {
+			rules.instantiate(); // The grass's default rules: dry land.
+		}
+		job.grass.push_back(rules);
+		job.grass_far.push_back(grass->get_far_color());
 		// The grass measures its far colour from a render a few frames in: the map follows it.
 		const Callable on_far = callable_mp(this, &VegetationField3D::_on_grass_far_color);
 		if (!grass->is_connected(SNAME("far_color_changed"), on_far)) {
@@ -2141,6 +2161,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_cover_map_enabled"), &VegetationField3D::is_cover_map_enabled);
 	ClassDB::bind_method(D_METHOD("set_cover_grass", "path"), &VegetationField3D::set_cover_grass);
 	ClassDB::bind_method(D_METHOD("get_cover_grass"), &VegetationField3D::get_cover_grass);
+	ClassDB::bind_method(D_METHOD("set_cover_grass_layers", "paths"), &VegetationField3D::set_cover_grass_layers);
+	ClassDB::bind_method(D_METHOD("get_cover_grass_layers"), &VegetationField3D::get_cover_grass_layers);
 	ClassDB::bind_method(D_METHOD("set_cover_cell", "cell"), &VegetationField3D::set_cover_cell);
 	ClassDB::bind_method(D_METHOD("get_cover_cell"), &VegetationField3D::get_cover_cell);
 	ClassDB::bind_method(D_METHOD("get_cover_texture"), &VegetationField3D::get_cover_texture);
@@ -2173,6 +2195,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_GROUP("Cover map", "cover_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cover_map_enabled"), "set_cover_map_enabled", "is_cover_map_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "cover_grass", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D"), "set_cover_grass", "get_cover_grass");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "cover_grass_layers", PROPERTY_HINT_ARRAY_TYPE, vformat("%s/%s:%s", Variant::NODE_PATH, PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GrassField3D")), "set_cover_grass_layers", "get_cover_grass_layers");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cover_cell", PROPERTY_HINT_RANGE, "0.5,64,0.5,suffix:m"), "set_cover_cell", "get_cover_cell");
 	ADD_GROUP("Streaming", "stream");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "streaming"), "set_streaming", "is_streaming");
