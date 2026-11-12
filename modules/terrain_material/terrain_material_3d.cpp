@@ -106,7 +106,7 @@ void TerrainMaterialLayer::_bind_methods() {
 
 static const char *LAYER_NAMES[TerrainMaterial3D::LAYER_MAX] = { "rock", "scree", "soil", "alluvium", "sand" };
 static const Color LAYER_DEFAULT_COLORS[TerrainMaterial3D::LAYER_MAX] = {
-	Color(0.36, 0.35, 0.33), Color(0.48, 0.46, 0.42), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46)
+	Color(0.36, 0.35, 0.33), Color(0.41, 0.40, 0.37), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46)
 };
 
 String TerrainMaterial3D::get_shader_code() const {
@@ -230,6 +230,18 @@ TmProj tm_projection(vec3 p, vec3 n, float scale, bool cliff) {
 	r.w0 = w.x / s;
 	r.w1 = w.y / s;
 	return r;
+}
+
+// Value noise for the layers' large-scale breakup (no textures needed).
+float tm_vn_hash(vec3 p) {
+	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+}
+float tm_vn(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(tm_vn_hash(i), tm_vn_hash(i + vec3(1, 0, 0)), f.x), mix(tm_vn_hash(i + vec3(0, 1, 0)), tm_vn_hash(i + vec3(1, 1, 0)), f.x), f.y),
+			mix(mix(tm_vn_hash(i + vec3(0, 0, 1)), tm_vn_hash(i + vec3(1, 0, 1)), f.x), mix(tm_vn_hash(i + vec3(0, 1, 1)), tm_vn_hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
 
 // A tangent-space normal from a projection plane as a world-space perturbation (whiteout-style: added to the
@@ -426,7 +438,16 @@ void fragment() {
 		// blend lets the scree's stones stand out of the soil).
 		float till = clamp(-g.z, 0.0, 1.0) * (1.0 - rock);
 		tm_till = till;
-		float scree = clamp(g.z, 0.0, 1.0) * (1.0 - rock) + 0.45 * till;
+		// Talus edges are lobed tongues of debris, not the geology map's smooth ovals: the cover is pushed in and
+		// out by noise stretched down the fall line (8 to 40 m), so a fan reads as streaks and lobes from afar.
+		float sg = clamp(g.z, 0.0, 1.0);
+		if (sg > 0.0) {
+			vec2 fall = normalize(wn.xz + vec2(1e-4));
+			vec3 sp = vec3(dot(wp.xz, vec2(-fall.y, fall.x)) / 9.0, wp.y / 40.0, dot(wp.xz, fall) / 40.0);
+			float edge = min(sg * 3.0, 1.0) * min((1.0 - sg) * 3.0, 1.0); // none inside the fan or off it
+			sg = clamp(sg + edge * ((tm_vn(sp) - 0.5) * 0.9 + (tm_vn(sp * 3.1 + 7.0) - 0.5) * 0.3), 0.0, 1.0);
+		}
+		float scree = sg * (1.0 - rock) + 0.45 * till;
 		float rest = max(1.0 - rock - scree, 0.0);
 		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w);
 		w[0] = rock;
@@ -478,6 +499,13 @@ void fragment() {
 		vec3 d;
 		float h;
 		tm_scree(wp, wn, cliff, a, r, d, h);
+		// Debris streaks down the fall line and patches of older, lichened blocks: a tone that varies by about a
+		// fifth over 5 to 30 m (mean kept), so a talus slope is not one flat colour at a distance.
+		{
+			vec2 fall = normalize(wn.xz + vec2(1e-4));
+			vec3 sp = vec3(dot(wp.xz, vec2(-fall.y, fall.x)) / 5.0, wp.y / 30.0, dot(wp.xz, fall) / 30.0);
+			a *= 0.9 + 0.2 * tm_vn(sp + 3.0);
+		}
 		tm_stone_h = h;
 		alb[1] = a;
 		rgh[1] = r;
