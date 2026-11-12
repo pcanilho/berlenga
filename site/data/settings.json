@@ -2126,6 +2126,18 @@
    "topic": ""
   },
   {
+   "name": "Haze and cloud shadow in fog",
+   "settings": [
+    "aerosol_haze",
+    "haze_visibility"
+   ],
+   "note": "",
+   "what": "volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
    "name": "Wet surfaces and puddles",
    "settings": [
     "surface_storage",
