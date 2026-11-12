@@ -43,9 +43,14 @@
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/curve_texture.h"
 #include "scene/resources/gradient_texture.h"
-#include "scene/resources/shader.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/particle_process_material.h"
+#include "scene/resources/shader.h"
+
+#include "modules/modules_enabled.gen.h" // For weather.
+#ifdef MODULE_WEATHER_ENABLED
+#include "modules/weather/weather_map_3d.h"
+#endif
 
 namespace {
 constexpr float GRAVITY = 9.81f;
@@ -223,7 +228,8 @@ void fragment() {
 // The film of water over the rock. A contact fall is a thin sheet that clings to the face, so it reads by its
 // margins: where the film thins out the rock shows through darkened and glossy, and the water's edge wanders
 // with the relief instead of running ruler-straight. Vertex data: COLOR.r = metres inside the water's edge
-// (-1..1 m packed into 0..1), COLOR.g = aeration (0..0.9 packed into 0..1), COLOR.b = half the water's width / 4 m;
+// (-1..1 m packed into 0..1), COLOR.g = aeration (0..0.9 packed into 0..1), COLOR.b = half the water's width / 4 m,
+// COLOR.a = 1 on the rock, or half a free jet's unbroken share (the sheet of a plunge, fraying out past L_b);
 // UV = (seconds of travel from the lip, metres across), UV2 = (speed m/s, metres down the face).
 const char *CONTACT_SHADER_SRC = R"(
 shader_type spatial;
@@ -284,9 +290,16 @@ void fragment() {
 	float film = smoothstep(0.0, 0.5 * max(half_w, 0.2), e);
 	float foam = smoothstep(0.15, 0.85, aeration * mix(0.55, 1.0, film) + (streak - 0.5) * 0.9);
 	float water = smoothstep(-0.03, 0.12, e);
+	// A free jet comes apart past its break-up length: holes that ride the flow open as its unbroken share falls,
+	// leaving tongues and clumps (the falling clumps below take over). No wet rock beside it: it is in the air.
+	// COLOR.a: a jet's unbroken share in 0..0.5; on rock, 0.75..1 carries the share of the face the flow covers.
+	bool free_jet = COLOR.a < 0.625;
+	float jet_cover = free_jet ? COLOR.a * 2.0 : 1.0;
+	float tongues = 0.65 * f_noise(p * vec2(0.6, 0.22) + 23.0) + 0.35 * f_noise(p * vec2(1.7, 0.6) - 9.0);
+	water *= smoothstep(tongues - 0.1, tongues + 0.1, jet_cover * 1.25 - 0.12);
 	// A thin flow over stepped rock falls ledge to ledge as threads (nappe flow) and leaves wet rock between them.
 	// The threads keep to the rock's grooves, so the pattern is fixed to the face, long down it and narrow across.
-	float flow_cover = clamp((COLOR.a - 0.75) * 4.0, 0.0, 1.0);
+	float flow_cover = free_jet ? 1.0 : clamp((COLOR.a - 0.75) * 4.0, 0.0, 1.0);
 	float threads = 0.6 * f_noise(vec2(UV.y * 1.4 + 41.0, down * 0.15)) + 0.4 * f_noise(vec2(UV.y * 3.9 - 17.0, down * 0.45));
 	// The noise sits mostly within 0.2..0.8, so this threshold leaves about flow_cover of the face under water.
 	water *= smoothstep(threads - 0.06, threads + 0.06, 0.2 + 0.68 * flow_cover);
@@ -296,6 +309,7 @@ void fragment() {
 	float wet = smoothstep(-0.2, 0.45, e + wet_margin * (seep * 1.2 - 0.2));
 	// Nothing on the outermost column (the mesh's rim, whose normal has one neighbour only).
 	wet *= smoothstep(-wet_margin, -wet_margin + 0.2, edge_m);
+	wet = free_jet ? 0.0 : wet;
 	// Fine texture of the white water: lumps and thin spots that move with it.
 	float lumps = f_noise(p * vec2(2.0, 1.4) + 11.0) * 0.6 + f_noise(p * vec2(6.0, 4.0) - 5.0) * 0.4;
 #if defined(RT)
@@ -679,6 +693,528 @@ void PhysXWaterfalls3D::_sky_spec(Face &r_face, int p_col, Object *p_source) {
 	}
 }
 
+// Tall free falls (step 6b). The jet leaves the brink at the brink depth 0.715 y_c (Rouse 1936) and falls as a
+// projectile; its surface disturbances reach the core after L_b = 6 q^0.32 m (Horeni 1956; Castillo et al. 2015),
+// where the sheet comes apart into clumps and drops. The sheet is drawn to there and frays out over another L_b;
+// the clumps are GPU particles launched over the break-up zone, slowed by quadratic air drag towards their
+// terminal speeds (Gunn and Kinzer 1949: about 9 m/s for drops, more for clumps), spread by the jet's turbulence
+// (a few per cent of its speed, Ervine and Falvey 1987) and the air's eddies, and carried by the wind.
+namespace {
+constexpr float CLUMP_VT_MIN = 9.0f; // m/s: rain-sized drops
+constexpr float CLUMP_VT_MAX = 26.0f; // m/s: decimetre clumps
+constexpr float CLUMP_SIZE_MIN = 0.35f; // m across, drawn (a clump with its own spray round it)
+constexpr float CLUMP_SIZE_MAX = 1.4f;
+constexpr float CLUMP_KICK = 0.05f; // of the jet's speed, random, at the break-up
+constexpr float STREAK_TIME = 0.1f; // s of travel a streak covers
+
+struct ClumpRng {
+	uint32_t s;
+	float next() {
+		s = s * 1664525u + 1013904223u;
+		uint32_t x = s;
+		x ^= x >> 16;
+		x *= 0x7feb352du;
+		x ^= x >> 15;
+		return float(x & 0xffffff) / float(0xffffff);
+	}
+};
+
+const char *COLUMN_SHADER_SRC = R"(
+shader_type particles;
+render_mode disable_force;
+
+// World space: the break-up zone's two ends and the jet's velocity there, the lip's across direction.
+uniform vec3 zone_a;
+uniform vec3 zone_b;
+uniform vec3 vel_a;
+uniform vec3 vel_b;
+uniform vec3 across = vec3(1.0, 0.0, 0.0);
+uniform float half_width = 2.0;
+uniform float vt_min = 9.0;
+uniform float vt_max = 26.0;
+uniform float size_min = 0.35;
+uniform float size_max = 1.4;
+uniform float kick = 0.05;
+uniform float turbulence = 0.5;
+uniform vec3 wind;
+uniform float floor_y = -1e9;
+uniform float streak_time = 0.1;
+// The cliff the water left, facing downstream: how far out from the brink its rock stands at 16 heights from the
+// floor (face_out[0]) to the brink (face_out[15]). Clumps blown back against it run down it.
+uniform vec3 face_point;
+uniform vec3 face_normal = vec3(0.0, 0.0, 1.0);
+uniform float face_out[16];
+
+float face_at(float y) {
+	float f = clamp((y - floor_y) / max(face_point.y - floor_y, 1.0), 0.0, 1.0) * 15.0;
+	int i = min(int(f), 14);
+	return mix(face_out[i], face_out[i + 1], f - float(i));
+}
+
+uint c_hash(uint x) {
+	x ^= x >> 16u;
+	x *= 0x7feb352du;
+	x ^= x >> 15u;
+	x *= 0x846ca68bu;
+	x ^= x >> 16u;
+	return x;
+}
+
+float c_rand(inout uint s) {
+	s = c_hash(s);
+	return float(s & 0xffffffu) / 16777215.0;
+}
+
+// The clump's streak: y along its velocity (the streak's length), x and z its size.
+void orient(inout mat4 xf, vec3 v, float size) {
+	float vl = max(length(v), 0.05);
+	vec3 y = v / vl;
+	vec3 ref = abs(y.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+	vec3 x = normalize(cross(ref, y));
+	float len = max(2.5 * size, vl * streak_time);
+	xf[0] = vec4(x * size, 0.0);
+	xf[1] = vec4(y * len, 0.0);
+	xf[2] = vec4(normalize(cross(x, y)) * size, 0.0);
+}
+
+void start() {
+	uint s = c_hash(NUMBER * 747796405u + INDEX * 2891336453u + RANDOM_SEED);
+	float a = c_rand(s) * 2.0 - 1.0;
+	float z = c_rand(s);
+	// A bigger clump falls faster.
+	float k = c_rand(s);
+	vec3 v = mix(vel_a, vel_b, z);
+	vec3 jd = normalize(v);
+	vec3 thick = normalize(cross(across, jd));
+	TRANSFORM = mat4(1.0);
+	TRANSFORM[3].xyz = mix(zone_a, zone_b, z) + across * a * half_width + thick * (c_rand(s) - 0.5) * 0.6;
+	float ang = c_rand(s) * 6.2831853;
+	VELOCITY = v + vec3(cos(ang), c_rand(s) - 0.5, sin(ang)) * kick * length(v);
+	CUSTOM = vec4(mix(vt_min, vt_max, k), mix(size_min, size_max, k), c_rand(s) * 6.2831853, 0.0);
+	COLOR = vec4(c_rand(s), c_rand(s), 0.0, 0.0);
+	orient(TRANSFORM, VELOCITY, CUSTOM.y);
+}
+
+void process() {
+	CUSTOM.w += DELTA;
+	// Drag on the speed through the air (the wind and the eddy this clump is in), quadratic, so the clump tends to
+	// its terminal speed vt: a = g - g |u| u / vt^2.
+	vec3 eddy = vec3(cos(CUSTOM.z), 0.0, sin(CUSTOM.z)) * turbulence * COLOR.g;
+	vec3 rel = VELOCITY - wind - eddy;
+	VELOCITY += (vec3(0.0, -9.81, 0.0) - 9.81 * length(rel) / (CUSTOM.x * CUSTOM.x) * rel) * DELTA;
+	float out_of_face = dot(TRANSFORM[3].xyz - face_point, face_normal) - face_at(TRANSFORM[3].y);
+	if (out_of_face < 0.3) {
+		TRANSFORM[3].xyz += face_normal * (0.3 - out_of_face);
+		VELOCITY -= face_normal * min(dot(VELOCITY, face_normal), 0.0);
+	}
+	orient(TRANSFORM, VELOCITY, CUSTOM.y);
+	COLOR.a = smoothstep(0.0, 0.4, CUSTOM.w);
+	if (TRANSFORM[3].y < floor_y) {
+		ACTIVE = false;
+	}
+}
+)";
+
+// A falling clump: a dense, rounded head with a tail of spray, turned round its own axis to face the camera.
+// COLOR: r a seed, a the fade-in; the particle's transform carries the streak's direction, length and size.
+const char *STREAK_SHADER_SRC = R"(
+shader_type spatial;
+#if defined(RT)
+// Traced: stochastic transparency (Enderton et al. 2010). Each texel is either water or nothing, with the streak's
+// opacity as the chance, so a ray can pass through any number of streaks without spending the traced
+// transparency layers on their faint edges; the samples of a pixel average to the same coverage.
+render_mode cull_disabled, diffuse_lambert_wrap, specular_disabled;
+#else
+render_mode blend_mix, depth_draw_never, cull_disabled, diffuse_lambert_wrap, specular_disabled;
+#endif
+
+uniform vec3 water_color : source_color = vec3(0.92, 0.94, 0.96);
+uniform float opacity : hint_range(0.0, 1.0) = 0.6;
+varying float v_coverage;
+
+float s_hash(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+float s_noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(s_hash(i), s_hash(i + vec2(1.0, 0.0)), u.x), mix(s_hash(i + vec2(0.0, 1.0)), s_hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+void vertex() {
+	vec3 axis = MODEL_MATRIX[1].xyz;
+	float w = length(MODEL_MATRIX[0].xyz);
+	vec3 centre = MODEL_MATRIX[3].xyz;
+	vec3 to_cam = INV_VIEW_MATRIX[3].xyz - centre;
+	// Never thinner than a pixel and a half: a far streak keeps its width on screen and gives up opacity
+	// instead, so the column stays a veil instead of aliasing into speckle (Persson's phone-wire AA, 2012).
+	// Passes without a viewport (the path tracer's capture) keep the true width: they average many samples a pixel.
+	float pixel = VIEWPORT_SIZE.y >= 1.0 ? 2.0 * length(to_cam) / max(abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y, 1e-4) : 0.0;
+	float min_w = 1.5 * pixel;
+	v_coverage = min_w > 0.0 ? min(w / min_w, 1.0) : 1.0;
+	w = max(w, min_w);
+	vec3 side = cross(axis, to_cam);
+	side = dot(side, side) > 1e-10 ? normalize(side) : normalize(MODEL_MATRIX[0].xyz);
+	vec3 facing = normalize(cross(side, axis));
+	if (dot(facing, to_cam) < 0.0) {
+		facing = -facing;
+	}
+	mat4 mat_world = mat4(vec4(side * w, 0.0), vec4(axis, 0.0), vec4(facing, 0.0), vec4(centre, 1.0));
+	MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;
+	MODELVIEW_NORMAL_MATRIX = mat3(VIEW_MATRIX) * mat3(normalize(side), normalize(axis), facing);
+}
+
+void fragment() {
+	float u = UV.x * 2.0 - 1.0;
+	float tail = UV.y; // 0 at the head (the front, along the velocity), 1 at the end of the tail
+	float seed = COLOR.r * 97.0;
+	float body = smoothstep(0.0, 0.12, tail) * pow(1.0 - tail, 1.3);
+	float half_here = mix(1.0, 0.5, tail);
+	float prof = 1.0 - smoothstep(0.25 * half_here, half_here, abs(u));
+	float fibre = s_noise(vec2(u * 3.5 + seed, tail * 2.5 + seed * 0.37));
+	ALBEDO = water_color;
+	BACKLIGHT = water_color * 0.5;
+	ROUGHNESS = 0.7;
+	float a = clamp(prof * body * mix(0.45, 1.0, fibre) * opacity * COLOR.a * v_coverage, 0.0, 1.0);
+#if defined(RT)
+	ALPHA = s_hash(floor(UV * vec2(24.0, 48.0)) + seed * 13.1) < a ? 1.0 : 0.0;
+	ALPHA_SCISSOR_THRESHOLD = 0.5;
+#else
+	ALPHA = a;
+#endif
+}
+)";
+} // namespace
+
+String PhysXWaterfalls3D::get_column_shader_code() {
+	return String(COLUMN_SHADER_SRC);
+}
+
+String PhysXWaterfalls3D::get_streak_shader_code() {
+	return String(STREAK_SHADER_SRC);
+}
+
+Vector3 PhysXWaterfalls3D::_wind_at(const Vector3 &p_position) const {
+#ifdef MODULE_WEATHER_ENABLED
+	if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
+		return weather->get_wind_at(p_position);
+	}
+#endif
+	(void)p_position;
+	return Vector3();
+}
+
+void PhysXWaterfalls3D::_build_plunge(const Dictionary &p_fall, Object *p_source) {
+	Plunge pl;
+	pl.id = p_fall.get("id", String());
+	pl.height = p_fall.get("height", 0.0f);
+	pl.discharge = p_fall.get("discharge", 0.0f);
+	const Vector3 top = p_fall.get("top", Vector3());
+	const Vector3 bottom = p_fall.get("bottom", Vector3());
+	Vector3 dir = p_fall.get("direction", bottom - top);
+	dir.y = 0.0f;
+	dir = dir.length_squared() > 1e-8f ? dir.normalized() : Vector3(0, 0, 1);
+	pl.direction = dir;
+	const Vector3 across(-dir.z, 0.0f, dir.x);
+	if (pl.discharge <= 0.0f || pl.height < min_height || _water_level(top, p_source) > top.y + 0.5f) {
+		return;
+	}
+	const bool ask = p_source != nullptr && p_source->has_method("get_height");
+	// The brink: the record's top is the bed cell above the drop, which can sit back from the edge; walk downstream
+	// to where the ground falls away (steeper than 45 degrees).
+	Vector3 brink = top;
+	if (ask) {
+		const float run = MAX(Vector2(bottom.x - top.x, bottom.z - top.z).length(), 1.0f);
+		float prev = p_source->call("get_height", top);
+		for (float s = 0.5f; s <= run; s += 0.5f) {
+			const Vector3 q = top + dir * s;
+			const float g = p_source->call("get_height", q);
+			if (!Math::is_finite(g) || g < prev - 0.5f) {
+				break;
+			}
+			brink = Vector3(q.x, g, q.z);
+			prev = g;
+		}
+	}
+	// The water across the lip: where the record's shares put it, about 4 sqrt(Q) m wide (as the contact falls).
+	const PackedVector3Array lip = p_fall.get("lip_points", PackedVector3Array());
+	const PackedFloat32Array share = p_fall.get("lip_share", PackedFloat32Array());
+	const float lw = MAX(float(p_fall.get("lip_width", p_fall.get("width", 2.0f))), 0.6f);
+	float centre = 0.0f;
+	float total = 0.0f;
+	for (int i = 0; i < MIN(lip.size(), share.size()); i++) {
+		centre += MAX(share[i], 0.0f) * (lip[i] - top).dot(across);
+		total += MAX(share[i], 0.0f);
+	}
+	centre = total > 0.0f ? centre / total : 0.0f;
+	const float width = CLAMP(4.0f * Math::sqrt(pl.discharge), 0.6f, lw);
+	pl.width = width;
+	const float q = pl.discharge / width;
+	const float yc = Math::pow(q * q / GRAVITY, 1.0f / 3.0f);
+	const float yb = 0.715f * yc;
+	const float v0 = q / MAX(yb, 1e-3f);
+	pl.lip_speed = v0;
+	pl.breakup = 6.0f * Math::pow(q, 0.32f);
+	Vector3 lip_c = brink + across * centre;
+	if (ask) {
+		lip_c.y = MAX(float(p_source->call("get_height", lip_c)), brink.y);
+	}
+	lip_c.y += 0.5f * yb;
+	pl.top = lip_c;
+	// The level the column lands on: the plunge pool's, standing water's, or the ground's.
+	if (p_fall.has("pool_level")) {
+		pl.floor = p_fall["pool_level"];
+	} else {
+		const float g = ask ? float(p_source->call("get_height", bottom)) : bottom.y;
+		pl.floor = MAX(Math::is_finite(g) ? g : bottom.y, _water_level(bottom, p_source));
+	}
+	if (pl.top.y - pl.floor < min_height) {
+		return;
+	}
+	// The sheet: projectile columns across the water, to where it has frayed out (2 L_b) or meets the ground.
+	const float lb = pl.breakup;
+	const float sheet_len = 2.0f * lb;
+	const int cols = CLAMP((int)Math::ceil(width / 0.35f) + 1, 4, 48);
+	const Vector3 up(0, 1, 0);
+	auto jet_at = [&](float t) {
+		return dir * (v0 * t) - up * (0.5f * GRAVITY * t * t);
+	};
+	auto jet_vel = [&](float t) {
+		return dir * v0 - up * (GRAVITY * t);
+	};
+	// Times along the jet, rows about 0.4 m apart.
+	LocalVector<float> times;
+	LocalVector<float> arcs;
+	{
+		float t = 0.0f;
+		float s = 0.0f;
+		times.push_back(0.0f);
+		arcs.push_back(0.0f);
+		while (s < sheet_len && times.size() < 512) {
+			const float dt = 0.4f / MAX(jet_vel(t).length(), 0.1f);
+			const Vector3 a = jet_at(t);
+			t += dt;
+			s += jet_at(t).distance_to(a);
+			times.push_back(t);
+			arcs.push_back(s);
+			if (lip_c.y + jet_at(t).y < pl.floor) {
+				break;
+			}
+		}
+	}
+	Face face;
+	face.id = pl.id;
+	face.type = "plunge";
+	face.top = lip_c;
+	face.direction = dir;
+	face.height = pl.height;
+	face.discharge = pl.discharge;
+	face.width = width;
+	face.plunge = plunges.size();
+	for (int c = 0; c < cols; c++) {
+		const float u = float(c) / (cols - 1); // 0..1 across
+		const float o = (u - 0.5f) * width;
+		Column col;
+		col.q = MAX(1.5f * q * (1.0f - (2.0f * u - 1.0f) * (2.0f * u - 1.0f)), 0.15f * q);
+		for (uint32_t r = 0; r < times.size(); r++) {
+			const float t = times[r];
+			const float s = arcs[r];
+			// The jet widens at a few per cent of its travel (its turbulence intensity).
+			const float spread = 1.0f + 0.03f * s / MAX(0.5f * width, 0.5f);
+			Vector3 p = lip_c + across * (o * spread) + jet_at(t);
+			if (ask && r > 0) {
+				// Never inside the rock (the jet hugs a face that leans out).
+				const float g = p_source->call("get_height", p);
+				if (Math::is_finite(g) && p.y < g + 0.05f && s < lb) {
+					p.y = g + 0.05f;
+				}
+			}
+			col.points.push_back(p);
+			col.speed.push_back(jet_vel(t).length());
+			// The nappe whitens from its surface in as it goes (air drawn in by the disturbances that break it).
+			col.air.push_back(0.9f * (1.0f - Math::exp(-2.5f * s / MAX(lb, 0.1f))));
+			col.travel.push_back(t);
+			col.dist.push_back(s);
+			col.cover.push_back(CLAMP(2.0f - s / MAX(lb, 0.1f), 0.0f, 1.0f));
+		}
+		col.edge = MIN(o + 0.5f * width, 0.5f * width - o);
+		face.columns.push_back(col);
+	}
+	// The break-up zone, where the clumps are launched: from 0.75 L_b, inside the fraying sheet, to 1.8 L_b.
+	auto time_at_arc = [&](float p_s) {
+		for (uint32_t r = 1; r < arcs.size(); r++) {
+			if (arcs[r] >= p_s) {
+				const float f = (p_s - arcs[r - 1]) / MAX(arcs[r] - arcs[r - 1], 1e-4f);
+				return Math::lerp(times[r - 1], times[r], f);
+			}
+		}
+		return times[times.size() - 1];
+	};
+	const float ta = time_at_arc(0.75f * lb);
+	const float tb = time_at_arc(1.8f * lb);
+	pl.zone_start = lip_c + jet_at(ta);
+	pl.zone_end = lip_c + jet_at(tb);
+	pl.zone_start_velocity = jet_vel(ta);
+	pl.zone_end_velocity = jet_vel(tb);
+	// The cliff under the brink: at 16 heights, how far out from the brink the ground first drops below that
+	// height (a heightfield cliff leans out over its last cell), plus half a metre of clearance.
+	pl.face_out.resize(16);
+	for (int k = 0; k < 16; k++) {
+		const float y = pl.floor + (lip_c.y - pl.floor) * k / 15.0f;
+		float out = 0.0f;
+		if (ask) {
+			for (float s = -20.0f; s <= 80.0f; s += 0.25f) {
+				const float g = p_source->call("get_height", lip_c + dir * s);
+				if (Math::is_finite(g) && g < y) {
+					out = s;
+					break;
+				}
+			}
+		}
+		pl.face_out.set(k, MAX(out, -20.0f) + 0.5f);
+	}
+	_simulate_column(pl, _wind_at(lip_c.lerp(Vector3(lip_c.x, pl.floor, lip_c.z), 0.5f)) * wind_exposure, p_source);
+	face.foot = pl.foot;
+	face.impact_speed = pl.landing_speed;
+	faces.push_back(face);
+	plunges.push_back(pl);
+}
+
+// The column on the CPU: an ensemble of clumps drawn as the GPU draws them, for where the column lands, how fast,
+// how wide and how far the wind carries it, and how long the slowest take.
+void PhysXWaterfalls3D::_simulate_column(Plunge &r_plunge, const Vector3 &p_wind, Object *p_source) const {
+	const int n = 192;
+	const float dt = 1.0f / 30.0f;
+	const Vector3 across(-r_plunge.direction.z, 0.0f, r_plunge.direction.x);
+	auto face_at = [&](float p_y) {
+		const float f = CLAMP((p_y - r_plunge.floor) / MAX(r_plunge.top.y - r_plunge.floor, 1.0f), 0.0f, 1.0f) * 15.0f;
+		const int i = MIN((int)f, 14);
+		return Math::lerp(r_plunge.face_out[i], r_plunge.face_out[i + 1], f - i);
+	};
+	auto run = [&](const Vector3 &p_air, Vector3 &r_mean, float &r_speed, float &r_time, float &r_spread) {
+		ClumpRng rng{ 12345u };
+		r_mean = Vector3();
+		r_speed = 0.0f;
+		r_time = 0.0f;
+		float s1 = 0.0f;
+		float s2 = 0.0f;
+		for (int i = 0; i < n; i++) {
+			const float a = rng.next() * 2.0f - 1.0f;
+			const float z = rng.next();
+			const float k = rng.next();
+			const Vector3 v0 = r_plunge.zone_start_velocity.lerp(r_plunge.zone_end_velocity, z);
+			Vector3 p = r_plunge.zone_start.lerp(r_plunge.zone_end, z) + across * a * 0.5f * r_plunge.width;
+			const float ang = rng.next() * Math::TAU;
+			Vector3 v = v0 + Vector3(Math::cos(ang), rng.next() - 0.5f, Math::sin(ang)) * CLUMP_KICK * v0.length();
+			const float vt = Math::lerp(CLUMP_VT_MIN, CLUMP_VT_MAX, k);
+			const float eang = rng.next() * Math::TAU;
+			const Vector3 eddy = Vector3(Math::cos(eang), 0.0f, Math::sin(eang)) * column_turbulence * rng.next();
+			float t = 0.0f;
+			while (p.y > r_plunge.floor && t < 300.0f) {
+				const Vector3 rel = v - p_air - eddy;
+				v += (Vector3(0.0f, -GRAVITY, 0.0f) - rel * (GRAVITY * rel.length() / (vt * vt))) * dt;
+				const float out_of_face = (p - r_plunge.top).dot(r_plunge.direction) - face_at(p.y);
+				if (out_of_face < 0.3f) {
+					p += r_plunge.direction * (0.3f - out_of_face);
+					v -= r_plunge.direction * MIN(v.dot(r_plunge.direction), 0.0f);
+				}
+				p += v * dt;
+				t += dt;
+			}
+			r_mean += p;
+			r_speed += v.length();
+			r_time = MAX(r_time, t);
+			const float x = (p - r_plunge.top).dot(across);
+			s1 += x;
+			s2 += x * x;
+		}
+		r_mean /= n;
+		r_speed /= n;
+		r_spread = Math::sqrt(MAX(s2 / n - (s1 / n) * (s1 / n), 0.0f));
+	};
+	Vector3 mean;
+	Vector3 calm;
+	float speed = 0.0f;
+	float time = 0.0f;
+	float spread = 0.0f;
+	float calm_speed = 0.0f;
+	float calm_time = 0.0f;
+	float calm_spread = 0.0f;
+	run(p_wind, mean, speed, time, spread);
+	run(Vector3(), calm, calm_speed, calm_time, calm_spread);
+	(void)p_source;
+	r_plunge.foot = Vector3(mean.x, r_plunge.floor, mean.z);
+	r_plunge.landing_speed = speed;
+	r_plunge.fall_time = time;
+	r_plunge.column_width = MAX(4.0f * spread, r_plunge.width);
+	r_plunge.drift = Vector2(mean.x - calm.x, mean.z - calm.z).length();
+}
+
+GPUParticles3D *PhysXWaterfalls3D::_make_column(Plunge &r_plunge, const Transform3D &p_inv) const {
+	const float fallen = MAX(r_plunge.zone_start.y - r_plunge.floor, 1.0f);
+	const float lifetime = r_plunge.fall_time * 1.05f + 0.5f;
+	// About four clumps on each square metre of the column's face (each streak a metre or two long, partly
+	// see-through, so the core reads white and the edges thin), fewer for a small flow; the particle slots stay
+	// taken for the slowest clump's whole fall.
+	const float w_mean = 0.5f * (r_plunge.width + r_plunge.column_width);
+	const float alive = column_density * 4.0f * w_mean * fallen * CLAMP(r_plunge.discharge / 2.0f, 0.35f, 1.5f);
+	const float mean_fall = MAX(fallen / MAX(0.5f * (r_plunge.landing_speed + r_plunge.zone_start_velocity.length()), 1.0f), 0.5f);
+	r_plunge.streaks = CLAMP((int)(alive * lifetime / mean_fall), 256, 40000);
+	GPUParticles3D *col = memnew(GPUParticles3D);
+	col->set_name("FallColumn");
+	col->set_transform(Transform3D(Basis(), p_inv.xform(r_plunge.zone_start)));
+	col->set_amount(r_plunge.streaks);
+	col->set_lifetime(lifetime);
+	col->set_pre_process_time(lifetime);
+	col->set_use_local_coordinates(false);
+	col->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+	const float reach = 0.5f * r_plunge.column_width + r_plunge.drift + Vector2(r_plunge.foot.x - r_plunge.zone_start.x, r_plunge.foot.z - r_plunge.zone_start.z).length() + 15.0f;
+	col->set_visibility_aabb(AABB(Vector3(-reach, -fallen - 5.0f, -reach), Vector3(2.0f * reach, fallen + 15.0f, 2.0f * reach)));
+	Ref<Shader> ps;
+	ps.instantiate();
+	ps->set_code(get_column_shader_code());
+	Ref<ShaderMaterial> pm;
+	pm.instantiate();
+	pm->set_shader(ps);
+	const Vector3 across(-r_plunge.direction.z, 0.0f, r_plunge.direction.x);
+	pm->set_shader_parameter("zone_a", r_plunge.zone_start);
+	pm->set_shader_parameter("zone_b", r_plunge.zone_end);
+	pm->set_shader_parameter("vel_a", r_plunge.zone_start_velocity);
+	pm->set_shader_parameter("vel_b", r_plunge.zone_end_velocity);
+	pm->set_shader_parameter("across", across);
+	pm->set_shader_parameter("half_width", 0.5f * r_plunge.width);
+	pm->set_shader_parameter("vt_min", CLUMP_VT_MIN);
+	pm->set_shader_parameter("vt_max", CLUMP_VT_MAX);
+	pm->set_shader_parameter("size_min", CLUMP_SIZE_MIN);
+	pm->set_shader_parameter("size_max", CLUMP_SIZE_MAX);
+	pm->set_shader_parameter("kick", CLUMP_KICK);
+	pm->set_shader_parameter("turbulence", column_turbulence);
+	pm->set_shader_parameter("wind", _wind_at(r_plunge.top.lerp(r_plunge.foot, 0.5f)) * wind_exposure);
+	pm->set_shader_parameter("face_point", r_plunge.top);
+	pm->set_shader_parameter("face_normal", r_plunge.direction);
+	pm->set_shader_parameter("face_out", r_plunge.face_out);
+	pm->set_shader_parameter("floor_y", r_plunge.floor);
+	pm->set_shader_parameter("streak_time", STREAK_TIME);
+	col->set_process_material(pm);
+	r_plunge.column_material = pm;
+	Ref<QuadMesh> quad;
+	quad.instantiate();
+	Ref<Shader> ss;
+	ss.instantiate();
+	ss->set_code(get_streak_shader_code());
+	Ref<ShaderMaterial> sm;
+	sm.instantiate();
+	sm->set_shader(ss);
+	sm->set_render_priority(1);
+	quad->set_material(sm);
+	col->set_draw_pass_mesh(0, quad);
+	return col;
+}
+
 String PhysXWaterfalls3D::get_contact_shader_code() {
 	return String(CONTACT_SHADER_SRC);
 }
@@ -734,10 +1270,15 @@ void PhysXWaterfalls3D::_build_mesh() {
 				uvs.push_back(Vector2(col.travel[r], across_m));
 				uv2s.push_back(Vector2(col.speed[r], col.dist[r]));
 				// Aeration as a share of the most a sheet can hold (0.9): the streaks still show through white water.
-				// 0.75..1 carries the share of the face the flow covers.
-				const Vector3 d = col.points[MIN(r + 1, rows - 1)] - col.points[MAX(r - 1, 0)];
-				const float tan_slope = Math::abs(d.y) / MAX(Vector2(d.x, d.z).length(), 0.05f);
-				const float cover_a = 0.75f + 0.25f * flow_cover(col.q, rock_step, tan_slope);
+				// A jet's unbroken share in 0..0.5; on rock, 0.75..1 carries the share of the face the flow covers.
+				float cover_a;
+				if (col.cover.size() > r) {
+					cover_a = 0.5f * col.cover[r];
+				} else {
+					const Vector3 d = col.points[MIN(r + 1, rows - 1)] - col.points[MAX(r - 1, 0)];
+					const float tan_slope = Math::abs(d.y) / MAX(Vector2(d.x, d.z).length(), 0.05f);
+					cover_a = 0.75f + 0.25f * flow_cover(col.q, rock_step, tan_slope);
+				}
 				colors.push_back(Color(edge, CLAMP(col.air[r] / 0.9f, 0.0f, 1.0f), CLAMP(0.125f * face.width, 0.0f, 1.0f), cover_a));
 				sky.push_back(face.sky_spec.size() > r ? face.sky_spec[r] : 1.0f);
 			}
@@ -797,6 +1338,9 @@ void PhysXWaterfalls3D::_clear_effects() {
 		}
 	}
 	effects.clear();
+	for (Plunge &pl : plunges) {
+		pl.column = nullptr;
+	}
 }
 
 void PhysXWaterfalls3D::_build_effects() {
@@ -806,6 +1350,9 @@ void PhysXWaterfalls3D::_build_effects() {
 	}
 	const Transform3D inv = (is_inside_tree() ? get_global_transform() : get_transform()).affine_inverse();
 	for (const Face &face : faces) {
+		if (face.plunge >= 0) {
+			continue; // a free jet's sheet: its column, spray and veil follow
+		}
 		const Vector3 across(-face.direction.z, 0.0f, face.direction.x);
 		// Local frame of a fall: x across, y up, -z downstream.
 		Basis b(across, Vector3(0, 1, 0), -face.direction);
@@ -859,6 +1406,52 @@ void PhysXWaterfalls3D::_build_effects() {
 			effects.push_back(m);
 		}
 	}
+	for (Plunge &pl : plunges) {
+		const Vector3 across(-pl.direction.z, 0.0f, pl.direction.x);
+		Basis b(across, Vector3(0, 1, 0), -pl.direction);
+		b.orthonormalize();
+		const Basis lb = inv.basis * b;
+		// The broken column: falling clumps from the break-up zone to the floor.
+		pl.column = _make_column(pl, inv);
+		add_child(pl.column, false, INTERNAL_MODE_BACK);
+		effects.push_back(pl.column);
+		const float v = pl.landing_speed;
+		const float power = 0.5f * 1000.0f * pl.discharge * v * v; // W
+		if (spray) {
+			const Transform3D xf(lb, inv.xform(pl.foot));
+			GPUParticles3D *s = make_spray(xf, v, pl.column_width, power);
+			add_child(s, false, INTERNAL_MODE_BACK);
+			effects.push_back(s);
+			GPUParticles3D *pf = make_spray_puffs(xf, v, pl.column_width, power);
+			add_child(pf, false, INTERNAL_MODE_BACK);
+			effects.push_back(pf);
+		}
+		if (mist && pl.discharge >= mist_min_discharge) {
+			// The veil: mist from the impact, blown out along the pool by the air the column drags down, and shed
+			// by the clumps all the way down (a share fed evenly up the column). The atomised share grows with the
+			// square of the landing speed, as the contact falls', and with the length of the fall the drops are
+			// stripped over.
+			const float reach = CLAMP(6.0f + 0.3f * pl.height, 8.0f, 60.0f);
+			const float side = pl.column_width + 2.0f * reach;
+			const float tall = CLAMP(0.5f * pl.height + 20.0f, 20.0f, 200.0f);
+			PhysXWaterMist3D *m = memnew(PhysXWaterMist3D);
+			m->set_name("FallVeil");
+			m->set_transform(Transform3D(lb, inv.xform(pl.foot)));
+			m->set_size(Vector3(side, tall, side));
+			m->set_cell_size(MAX(0.5f, MAX(side, tall) / 64.0f));
+			m->set_source_position(Vector3(0.0f, 1.0f, 0.0f));
+			const float half = 0.5f * pl.column_width + 1.0f;
+			m->set_source_extents(Vector3(half, 1.0f, half));
+			m->set_column_height(tall - 8.0f);
+			m->set_column_share(0.35f);
+			m->set_jet_direction(Vector3(0.0f, 0.0f, -1.0f));
+			m->set_jet_speed(MIN(0.3f * v, 12.0f));
+			const float vv = MAX(v, 1.0f) / 10.0f;
+			m->set_source_rate(mist_amount * 1e-5f * vv * vv * 1000.0f * pl.discharge * 1000.0f * (1.0f + pl.height / 30.0f)); // g/s
+			add_child(m, false, INTERNAL_MODE_BACK);
+			effects.push_back(m);
+		}
+	}
 }
 
 // The standing water's level over a point (a lake's where its rectangle covers it and the ground is below the
@@ -883,7 +1476,9 @@ float PhysXWaterfalls3D::_water_level(const Vector3 &p_position, Object *p_sourc
 }
 
 void PhysXWaterfalls3D::rebuild() {
+	_clear_effects();
 	faces.clear();
+	plunges.clear();
 	Node *src = has_node(source) ? get_node(source) : nullptr;
 	sea_level = -1e30f;
 	lake_rects.clear();
@@ -901,17 +1496,22 @@ void PhysXWaterfalls3D::rebuild() {
 			}
 		}
 	}
-	if (contact_falls && src != nullptr && src->has_method("get_waterfalls")) {
+	if ((contact_falls || plunge_falls) && src != nullptr && src->has_method("get_waterfalls")) {
 		const Array falls = src->call("get_waterfalls");
 		for (int i = 0; i < falls.size(); i++) {
 			const Dictionary f = falls[i];
 			const String type = f.get("type", String());
-			// Free falls (plunge) are the falling sheet's: PhysXRiver3D's curtain and, for tall ones, the broken
-			// column (step 6b).
-			if (type.is_empty() || type == "plunge" || float(f.get("height", 0.0f)) < min_height) {
+			if (type.is_empty() || float(f.get("height", 0.0f)) < min_height) {
 				continue;
 			}
-			_build_face(f, src);
+			// Free falls: a jet sheet that breaks up into a falling column (step 6b); the rest cling to the rock.
+			if (type == "plunge") {
+				if (plunge_falls) {
+					_build_plunge(f, src);
+				}
+			} else if (contact_falls) {
+				_build_face(f, src);
+			}
 		}
 	}
 	_build_mesh();
@@ -949,6 +1549,9 @@ void PhysXWaterfalls3D::_exclude_from_rivers() {
 Array PhysXWaterfalls3D::get_contact_falls() const {
 	Array out;
 	for (const Face &face : faces) {
+		if (face.plunge >= 0) {
+			continue;
+		}
 		Dictionary d;
 		d["id"] = face.id;
 		d["type"] = face.type;
@@ -965,6 +1568,28 @@ Array PhysXWaterfalls3D::get_contact_falls() const {
 	return out;
 }
 
+Array PhysXWaterfalls3D::get_plunge_falls() const {
+	Array out;
+	for (const Plunge &pl : plunges) {
+		Dictionary d;
+		d["id"] = pl.id;
+		d["height"] = pl.height;
+		d["discharge"] = pl.discharge;
+		d["width"] = pl.width;
+		d["top"] = pl.top;
+		d["lip_speed"] = pl.lip_speed;
+		d["breakup_length"] = pl.breakup;
+		d["foot"] = pl.foot;
+		d["landing_speed"] = pl.landing_speed;
+		d["fall_time"] = pl.fall_time;
+		d["column_width"] = pl.column_width;
+		d["drift"] = pl.drift;
+		d["streaks"] = pl.streaks;
+		out.push_back(d);
+	}
+	return out;
+}
+
 void PhysXWaterfalls3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
@@ -974,6 +1599,16 @@ void PhysXWaterfalls3D::_notification(int p_what) {
 			water_time += get_process_delta_time();
 			if (material.is_valid() && !faces.is_empty()) {
 				material->set_shader_parameter(SNAME("water_time"), (float)Math::fmod(water_time, 3600.0));
+			}
+			// The wind on the falling columns, twice a second.
+			wind_wait -= get_process_delta_time();
+			if (wind_wait <= 0.0 && !plunges.is_empty()) {
+				wind_wait = 0.5;
+				for (const Plunge &pl : plunges) {
+					if (pl.column_material.is_valid()) {
+						pl.column_material->set_shader_parameter(SNAME("wind"), _wind_at(pl.top.lerp(pl.foot, 0.5f)) * wind_exposure);
+					}
+				}
 			}
 		} break;
 	}
@@ -985,6 +1620,22 @@ void PhysXWaterfalls3D::set_source(const NodePath &p_path) {
 
 void PhysXWaterfalls3D::set_contact_falls(bool p_enabled) {
 	contact_falls = p_enabled;
+}
+
+void PhysXWaterfalls3D::set_plunge_falls(bool p_enabled) {
+	plunge_falls = p_enabled;
+}
+
+void PhysXWaterfalls3D::set_column_density(float p_density) {
+	column_density = MAX(p_density, 0.0f);
+}
+
+void PhysXWaterfalls3D::set_wind_exposure(float p_share) {
+	wind_exposure = MAX(p_share, 0.0f);
+}
+
+void PhysXWaterfalls3D::set_column_turbulence(float p_speed) {
+	column_turbulence = MAX(p_speed, 0.0f);
 }
 
 void PhysXWaterfalls3D::set_spray(bool p_enabled) {
@@ -1063,6 +1714,17 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_source"), &PhysXWaterfalls3D::get_source);
 	ClassDB::bind_method(D_METHOD("set_contact_falls", "enabled"), &PhysXWaterfalls3D::set_contact_falls);
 	ClassDB::bind_method(D_METHOD("get_contact_falls_enabled"), &PhysXWaterfalls3D::get_contact_falls_enabled);
+	ClassDB::bind_method(D_METHOD("get_plunge_falls"), &PhysXWaterfalls3D::get_plunge_falls);
+	ClassDB::bind_method(D_METHOD("set_plunge_falls", "enabled"), &PhysXWaterfalls3D::set_plunge_falls);
+	ClassDB::bind_method(D_METHOD("get_plunge_falls_enabled"), &PhysXWaterfalls3D::get_plunge_falls_enabled);
+	ClassDB::bind_method(D_METHOD("set_column_density", "density"), &PhysXWaterfalls3D::set_column_density);
+	ClassDB::bind_method(D_METHOD("get_column_density"), &PhysXWaterfalls3D::get_column_density);
+	ClassDB::bind_method(D_METHOD("set_wind_exposure", "share"), &PhysXWaterfalls3D::set_wind_exposure);
+	ClassDB::bind_method(D_METHOD("get_wind_exposure"), &PhysXWaterfalls3D::get_wind_exposure);
+	ClassDB::bind_method(D_METHOD("set_column_turbulence", "speed"), &PhysXWaterfalls3D::set_column_turbulence);
+	ClassDB::bind_method(D_METHOD("get_column_turbulence"), &PhysXWaterfalls3D::get_column_turbulence);
+	ClassDB::bind_static_method("PhysXWaterfalls3D", D_METHOD("get_column_shader_code"), &PhysXWaterfalls3D::get_column_shader_code);
+	ClassDB::bind_static_method("PhysXWaterfalls3D", D_METHOD("get_streak_shader_code"), &PhysXWaterfalls3D::get_streak_shader_code);
 	ClassDB::bind_method(D_METHOD("set_spray", "enabled"), &PhysXWaterfalls3D::set_spray);
 	ClassDB::bind_method(D_METHOD("get_spray"), &PhysXWaterfalls3D::get_spray);
 	ClassDB::bind_method(D_METHOD("set_mist", "enabled"), &PhysXWaterfalls3D::set_mist);
@@ -1090,6 +1752,10 @@ void PhysXWaterfalls3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "source"), "set_source", "get_source");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "contact_falls"), "set_contact_falls", "get_contact_falls_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunge_falls"), "set_plunge_falls", "get_plunge_falls_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "column_density", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_column_density", "get_column_density");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "column_turbulence", PROPERTY_HINT_RANGE, "0,5,0.05,suffix:m/s"), "set_column_turbulence", "get_column_turbulence");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_exposure", PROPERTY_HINT_RANGE, "0,1,0.01,or_greater"), "set_wind_exposure", "get_wind_exposure");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "spray"), "set_spray", "get_spray");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mist"), "set_mist", "get_mist");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mist_amount", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_mist_amount", "get_mist_amount");

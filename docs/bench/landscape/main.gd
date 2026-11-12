@@ -278,6 +278,40 @@ func _ready() -> void:
 			for k in range(0, cv.point_count, 2):
 				var p: Vector3 = rv.global_transform * cv.get_point_position(k)
 				_log("  surf %d (%.0f, %.0f) ground %.2f surface %.2f depth %.2f" % [k, p.x, p.z, gen.get_height(p), rv.sample_height(p), rv.sample_depth(p)])
+	if args.has("probe-pixel"):
+		# --probe-pixel=x,y: what is drawn there (the ground under it, and every visual whose box covers it).
+		var pp: PackedStringArray = args["probe-pixel"].split(",")
+		var cam3: Camera3D = get_viewport().get_camera_3d()
+		var px := Vector2(float(pp[0]), float(pp[1]))
+		var o := cam3.project_ray_origin(px)
+		var dv := cam3.project_ray_normal(px)
+		var hit := Vector3.ZERO
+		for i in 40000:
+			var q := o + dv * (i * 0.25)
+			if q.y < gen.get_height(q):
+				hit = q
+				break
+		_log("probe %s: ground at %s" % [px, hit])
+		var stack: Array[Node] = [self]
+		while not stack.is_empty():
+			var n: Node = stack.pop_back()
+			for ch in n.get_children(true):
+				stack.append(ch)
+			if n is VisualInstance3D and n.is_visible_in_tree():
+				var bb: AABB = n.global_transform * n.get_aabb()
+				if bb.size.x < 3000.0 and bb.grow(1.0).has_point(Vector3(hit.x, clampf(hit.y, bb.position.y, bb.end.y), hit.z)):
+					_log("  %s (%s) box %s" % [n.get_path(), n.get_class(), bb])
+	if args.has("river-falls"):
+		for r in rivers:
+			var pc: Curve3D = r.curve
+			if pc != null and pc.point_count > 1:
+				_log("  river %s from %s to %s" % [r.name, r.to_global(pc.get_point_position(0)), r.to_global(pc.get_point_position(pc.point_count - 1))])
+			for rf in r.get_waterfalls():
+				_log("  river %s fall at %s, %.1f m high, %.1f m wide, throw %.1f m" % [r.name, rf["lip"], rf["height"], rf["width"], rf["throw"]])
+	for wf in find_children("Waterfalls", "", true, false):
+		for ch in wf.get_children(true):
+			if ch.name.begins_with("FallVeil") or ch.name.begins_with("FallMist"):
+				_log("  %s max density %.3f g/m3, size %s" % [ch.name, ch.get_max_density(), ch.size])
 	get_tree().quit(0)
 
 
@@ -807,7 +841,8 @@ func _lake_and_fall() -> void:
 			var lb: Vector3 = tall["bottom"]
 			var dd := Vector3(lb.x - lt.x, 0, lb.z - lt.z).normalized()
 			var prof := PackedStringArray()
-			for k in range(-4, 44, 2):
+			var reach := maxi(int(args["lip-profile"]), 44) # --lip-profile=N: metres out from the lip
+			for k in range(-4, reach, 2 if reach <= 44 else 4):
 				var q := lt + dd * float(k)
 				prof.append("%d:%.1f" % [k, gen.get_height(q)])
 			_log("lip profile (m along: height) " + " ".join(prof))
@@ -1030,6 +1065,11 @@ func _build_water() -> void:
 		# --rock-step=M: step height of the rock thin contact falls run over (0.01: the flow always covers the face).
 		if args.has("rock-step"):
 			wf.rock_step = float(args["rock-step"])
+		# --plunge-falls=0: tall falls drawn as before the broken column (the river's own ribbon fall), for A/B frames.
+		if args.has("plunge-falls"):
+			wf.plunge_falls = args["plunge-falls"] != "0"
+		if args.has("column-density"):
+			wf.column_density = float(args["column-density"])
 		wf.rebuild()
 		# --contact-shader=path: draw the contact sheets with this shader code instead (look tests without a rebuild).
 		if args.has("contact-shader"):
@@ -1041,6 +1081,9 @@ func _build_water() -> void:
 		for f in wf.get_contact_falls():
 			_log("contact fall %s" % [f])
 		contact_falls = wf.get_contact_falls()
+		if wf.has_method("get_plunge_falls"):
+			for f in wf.get_plunge_falls():
+				_log("plunge fall %s" % [f])
 		if args.has("contact-debug"):
 			for ch in wf.get_children(true):
 				if ch is MeshInstance3D and ch.mesh != null:
