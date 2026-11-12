@@ -271,6 +271,14 @@
    "about": "When enabled, setting `MultiMesh.buffer` keeps a CPU-side mirror of the instance transform data in sync with the GPU buffer."
   },
   {
+   "name": "rendering/pathtracing/linear_swept_spheres",
+   "type": "bool",
+   "default": "true",
+   "about": "If `true`, on a device with linear swept spheres (Vulkan `VK_NV_ray_tracing_linear_swept_spheres`, hardware hair primitives) the path tracer traces strand hair (`render_mode hair_strands` on a mesh of two crossed strips per strand point, as PhysXHair3D draws it) as round tubes between the strand points, one primitive per segment instead of four triangles, and shades each fibre from where the ray meets it across its width.",
+   "page": "hair",
+   "title": "Hair"
+  },
+  {
    "name": "rendering/pathtracing/multimesh_merged_blas_max_triangles",
    "type": "int",
    "default": "65536",
@@ -954,6 +962,17 @@
    ],
    "note": "",
    "what": "AMD TressFX's simulation on GPU compute, guide and follow strands, velocity shock propagation, wind with gusts and turbulence, collision spheres.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Swept sphere strands",
+   "settings": [
+    "rendering/pathtracing/linear_swept_spheres"
+   ],
+   "note": "",
+   "what": "where the GPU traces swept spheres in hardware, strands are traced as round tubes, one primitive per segment, and shaded where the ray meets the fibre; other GPUs keep crossed strips. Not yet checked on supporting hardware.",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"

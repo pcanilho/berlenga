@@ -39,6 +39,7 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Moving strand hair: the groom streams and flutters in gusting wind.*
 
+- **Swept sphere strands** (`rendering/pathtracing/linear_swept_spheres`): where the GPU traces swept spheres in hardware, strands are traced as round tubes, one primitive per segment, and shaded where the ray meets the fibre; other GPUs keep crossed strips. Not yet checked on supporting hardware.
 - **Raster strands** (TressFX coverage): blended and sorted far to near on the GPU each frame; smooth without TAA or MSAA, and the hair shadows itself.
 
   ![Raster strand hair: older soft strands, then sharp sorted strands](media/hair-raster.jpg)
