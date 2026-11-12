@@ -374,8 +374,64 @@ beyond. Two meshes per variant, same variant order, so each tree keeps its shape
   only the trees in a narrow ring pay for both meshes.
 - Species without near meshes keep one MultiMesh per tile, as before.
 
+## Tall meadow flowers and seed heads (research)
+
+A summer hay meadow reads from its flowering layer: stems that stand clear of the sward at 0.4
+to 1 m, with colour in a few points per square metre, white plates of umbels, and the rust and
+brown of ripening seed. The meadow so far stops at about 0.45 m (daisy, buttercup, yarrow) with
+grass panicles (cocksfoot, timothy) and dock above; the reference meadows (KCD2's, Crysis') carry
+a taller, mixed forb layer. The plants come from the lowland hay meadow: European habitat 6510
+(Arrhenatherion) and its British form MG5, *Cynosurus cristatus* - *Centaurea nigra* grassland
+(Rodwell 1992), whose constant forbs include common knapweed, oxeye daisy, ribwort plantain,
+bird's-foot trefoil and common sorrel, with field scabious and wild carrot on drier, limey soils.
+Forms from Stace (2019) and Grime, Hodgson and Hunt (2007):
+
+- **Common knapweed** (*Centaurea nigra*, `PRESET_KNAPWEED`): stiff, branched stems 0.3 to 0.8 m,
+  narrow lanceolate leaves (lower ones lobed), heads 2 to 3 cm: a hard dark-brown ball of
+  fringed bracts with a brush of purple disc florets and no rays. In seed the brush falls and
+  the heads stay as dark knobs.
+- **Field scabious** (*Knautia arvensis*, `PRESET_SCABIOUS`): hairy, few-branched stems 0.3 to
+  1 m, deeply lobed stem leaves in pairs, flat lilac heads 3 to 4 cm whose outer florets are
+  larger (a pincushion with a frill). In seed, a bristly green-brown ball.
+- **Wild carrot** (*Daucus carota*, `PRESET_WILD_CARROT`): finely divided, carrot-like leaves,
+  ridged stems 0.3 to 1 m, a compound umbel 3 to 7 cm: 20 to 40 rays, each ending in a small
+  umbel of white florets, often one dark purple floret in the centre, a ruff of pinnate bracts
+  under it. In fruit the rays curve inwards into a hollow "bird's nest".
+- **Common sorrel** (*Rumex acetosa*, `PRESET_SORREL`): arrow-shaped (hastate) leaves, a slender
+  stem 0.3 to 0.8 m with a narrow branched panicle of tiny whorled flowers that turn red, then
+  rust-brown seeds: the red haze over a meadow in early summer.
+
+Modelling: inflorescences as their architecture types (Prusinkiewicz and Lindenmayer 1990,
+"The Algorithmic Beauty of Plants", ch. 3 and 4: racemes, panicles, compound umbels, capitula
+with Vogel's phyllotaxis; Prusinkiewicz et al. 2007 for the panicle and umbel families),
+on the generator's stems, heads and Vogel florets. Each plant is in flower or in seed by its
+seed for now (about a quarter in seed), so a meadow shows both; the seasons item will set the
+share from `WeatherMap3D.get_season()`. In the grass bench a tall-flowers species in patches
+(knapweed with sorrel in the open, scabious and carrot on the drier ground), seen to about 30 m;
+then far colour points. Checks: plants bench raster and path traced at 100% crop, triangles
+and generation time per plant, the meadow shot.
+
+**Built.** `PRESET_KNAPWEED`, `PRESET_SCABIOUS`, `PRESET_WILD_CARROT`, `PRESET_SORREL` (PRESET_MAX
+39). A quarter of each in seed: knapweed keeps its dark knobs, scabious turns to bristly balls,
+wild carrot's rays curl up and in and its florets brown (vertex tint), sorrel goes rust-brown.
+Plants bench (seed 0): knapweed 568 triangles, 0.64 m, 10 ms; scabious 1,400, 0.78 m, 12 ms;
+wild carrot 3,282, 0.84 m, 25 ms; sorrel 1,564, 0.78 m, 21 ms (before the distance LODs). The
+plants bench close view now backs off for plants over 0.45 m. Grass bench meadow: two species,
+knapweed with sorrel (spacing 0.35 m, patches) and scabious with wild carrot 8 m or more from
+water, scale 1.1 to 1.4, seen to 30 m, their far colour a third towards the flower colour:
+8,151 and 2,487 plants on the bench meadow, populate 190 to 229 ms, frame 1.46 to 1.70 s on
+the CPU rasteriser (GPU timing on the PC).
+Path traced (grass bench `--close`): the flowers keep their heads, spires and umbels; with
+about 8,000 more wind-moved plants near the camera the path tracer's first builds of the near
+grass tiles (500,000 triangles a frame, `RTSchedulerBudgets`) take longer: the near blades were
+still missing at 40 frames and in place at 120. Shots from a standing start need the longer warm-up.
+
 ## References
 
+- Rodwell (ed.), British Plant Communities, vol. 3: Grasslands and montane communities, Cambridge 1992 (MG5).
+- Stace, New Flora of the British Isles, 4th ed., 2019.
+- Grime, Hodgson and Hunt, Comparative Plant Ecology, 2nd ed., 2007.
+- Prusinkiewicz, Erasmus, Lane, Harder and Coen, "Evolution and development of inflorescence architectures", Science 316, 2007.
 - Prusinkiewicz, Lindenmayer, *The Algorithmic Beauty of Plants*, 1990.
 - Prusinkiewicz, Mündermann, Karwowski, Lane, "The use of positional information in the
   modeling of plants", SIGGRAPH 2001.

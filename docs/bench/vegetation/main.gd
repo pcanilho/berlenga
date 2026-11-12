@@ -219,6 +219,20 @@ func _physics_process(_d: float) -> void:
 	else:
 		_render_later()
 
+# Mean and standard deviation of a cover map's alpha, inside its border.
+func _alpha_stats(img: Image) -> Array:
+	var sum := 0.0
+	var sq := 0.0
+	var n := 0
+	for y in range(2, img.get_height() - 2):
+		for x in range(2, img.get_width() - 2):
+			var a := img.get_pixel(x, y).a
+			sum += a
+			sq += a * a
+			n += 1
+	var m := sum / maxf(n, 1)
+	return [m, sqrt(maxf(sq / maxf(n, 1) - m * m, 0.0))]
+
 func _check(label: String, ok: bool, value) -> void:
 	print("%s %s: %s" % ["PASS" if ok else "FAIL", label, str(value)])
 	if not ok:
@@ -500,8 +514,30 @@ func _checks() -> void:
 			if dm.get_water_depth_at(Vector3(-SIZE * 0.5 + (cx + 0.5) * 4.0, 0, -SIZE * 0.5 + (cz + 0.5) * 4.0)) > 0.3:
 				water_a = maxf(water_a, cimg.get_pixel(cx, cz).a)
 	_check("cover map: expected crown cover matches the placed crowns (20%), none on the lake", cn > 50 and absf(expect - placed) < 0.2 * placed and water_a < 0.05, [expect / cn, placed / cn, water_a, cimg.get_size()])
-	field.cover_map_enabled = false
+	# Grass layers: a tall sward in patches reads part bare from afar unless the undercoat that fills
+	# its gaps is a layer too (cover_grass_layers).
 	tree_sp.canopy_radius = 0.0
+	var tall_g := GrassField3D.new()
+	var tall_r := PlantSpecies.new()
+	tall_r.patch_scale = 9.0
+	tall_r.patch_cover = 0.55
+	tall_g.rules = tall_r
+	var under_g := GrassField3D.new()
+	under_g.rules = PlantSpecies.new()
+	add_child(tall_g)
+	add_child(under_g)
+	field.cover_grass = field.get_path_to(tall_g)
+	field.populate()
+	var one: Array = _alpha_stats(field.get_cover_texture().get_image())
+	field.cover_grass_layers = [field.get_path_to(under_g)]
+	field.populate()
+	var two: Array = _alpha_stats(field.get_cover_texture().get_image())
+	_check("cover map grass layers: the undercoat fills the tall grass's gaps (more cover, less patchy)", two[0] > one[0] + 0.1 and two[1] < one[1] * 0.6, [one, two])
+	field.cover_grass = NodePath()
+	field.cover_grass_layers = []
+	tall_g.queue_free()
+	under_g.queue_free()
+	field.cover_map_enabled = false
 	# Impostors: the species' meshes near, their baked impostors (two triangles each) past the range.
 	var real_meshes: Array = tree_sp.meshes.duplicate()
 	PlantGenerator.add_impostors(tree_sp, 30.0, 4, 16)
@@ -602,8 +638,37 @@ func _lazy_near_checks() -> void:
 	for p in field.get_placements(0):
 		if Vector2(p.x, p.z).distance_to(Vector2(t.x, t.z)) < 20.0:
 			want += 1
+	# Path traced, the crossfade margins go (the tracer would see both cells inside them), and come back.
+	var margins := func() -> Array:
+		var on := 0
+		var off := 0
+		for ch in field.get_children(true):
+			if ch is MultiMeshInstance3D and ch.visibility_range_fade_mode == GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF:
+				var m: float = ch.visibility_range_begin_margin + ch.visibility_range_end_margin
+				if m > 0.0:
+					on += 1
+				else:
+					off += 1
+		return [on, off]
+	var raster_m: Array = margins.call()
+	var env := Environment.new()
+	env.pathtracing_enabled = true
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+	get_viewport().use_pathtracing = true
+	for i in 3:
+		await get_tree().create_timer(0.3).timeout
+	var traced_m: Array = margins.call()
+	get_viewport().use_pathtracing = false
+	we.queue_free()
+	for i in 3:
+		await get_tree().create_timer(0.3).timeout
+	var back_m: Array = margins.call()
+	_check("near swap under path tracing: no crossfade margins (no plant traced twice), back after", raster_m[0] > 0 and traced_m[0] == 0 and traced_m[1] == raster_m[0] + raster_m[1] and back_m[0] == raster_m[0], [raster_m, traced_m, back_m])
 	target.global_position = Vector3(5000, 0, 5000)
-	await get_tree().process_frame
+	for i in 3:
+		await get_tree().process_frame
 	var gone: Array = _lazy_near_count(field, src.mesh)
 	_check("near meshes on demand: none far away, built round the target once ready, freed after", away[0] == 0 and src.calls > 3 and near[0] >= want and near[0] > 0 and near[1] == near[2] and near[0] < field.get_placements(0).size() and gone[0] == 0 and gone[2] == 0 and src.keys.has(7), [away, near, want, gone, src.calls, field.get_placements(0).size()])
 	tree_sp.near_mesh_source = null

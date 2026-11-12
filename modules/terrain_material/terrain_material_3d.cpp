@@ -281,6 +281,7 @@ void fragment() {
 	float w[5];
 	float steep = 1.0 - smoothstep(tm_rock_cos - 0.08, tm_rock_cos + 0.04, wn.y);
 	float beach_sand = -1.0;
+	float tm_till = 0.0;
 	if (tm_geology && terrain_geology_rect.z > 0.0) {
 		vec4 g = terrain_geology(wp);
 		beach_sand = clamp(-g.x, 0.0, 1.0);
@@ -288,7 +289,11 @@ void fragment() {
 		// faces past the cliff slope are forced bare.
 		float cliff_rock = 1.0 - smoothstep(tm_cliff_cos - 0.08, tm_cliff_cos + 0.04, wn.y);
 		float rock = max(clamp(g.y, 0.0, 1.0), cliff_rock);
-		float scree = clamp(g.z, 0.0, 1.0) * (1.0 - rock);
+		// Moraine till (negative talus): unsorted debris under a thin soil, soil with stones through it (the height
+		// blend lets the scree's stones stand out of the soil).
+		float till = clamp(-g.z, 0.0, 1.0) * (1.0 - rock);
+		tm_till = till;
+		float scree = clamp(g.z, 0.0, 1.0) * (1.0 - rock) + 0.45 * till;
 		float rest = max(1.0 - rock - scree, 0.0);
 		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w);
 		w[0] = rock;
@@ -316,6 +321,7 @@ void fragment() {
 	vec3 dns[5];
 	float hb[5];
 	float top = -1e9;
+	float tm_stone_h = 0.0;
 	for (int i = 0; i < 5; i++) {
 		alb[i] = vec3(0.0);
 		rgh[i] = 1.0;
@@ -339,6 +345,7 @@ void fragment() {
 		vec3 d;
 		float h;
 		tm_scree(wp, wn, cliff, a, r, d, h);
+		tm_stone_h = h;
 		alb[1] = a;
 		rgh[1] = r;
 		dns[1] = d;
@@ -412,6 +419,11 @@ void fragment() {
 	}
 	if (grass_tint_enabled) {
 		c += "\talbedo = grass_ground(wp, albedo);\n";
+		// Moraine till keeps its stones above the turf: the scree layer's tallest blocks stand out of the sward
+		// (a grassed moraine is soil and grass with boulders through it, not a meadow).
+		// Without a scree height map there are no blocks to pick out: the till keeps the stones' share as a tint.
+		const bool stone_h = layers[LAYER_SCREE].is_valid() && layers[LAYER_SCREE]->get_height_texture().is_valid();
+		c += vformat("\tif (tm_till > 0.0) {\n\t\talbedo = mix(albedo, alb[1], tm_till * %s);\n\t}\n", stone_h ? "smoothstep(0.5, 0.7, tm_stone_h)" : "0.45");
 		// Plants thinned away by distance leave their colour on the ground (VegetationField3D).
 		c += "\talbedo = vegetation_far(wp, albedo, CAMERA_POSITION_WORLD);\n";
 	}

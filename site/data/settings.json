@@ -273,7 +273,7 @@
   {
    "name": "rendering/pathtracing/linear_swept_spheres",
    "type": "bool",
-   "default": "true",
+   "default": "false",
    "about": "If `true`, on a device with linear swept spheres (Vulkan `VK_NV_ray_tracing_linear_swept_spheres`, hardware hair primitives) the path tracer traces strand hair (`render_mode hair_strands` on a mesh of two crossed strips per strand point, as PhysXHair3D draws it) as round tubes between the strand points, one primitive per segment instead of four triangles, and shades each fibre from where the ray meets it across its width.",
    "page": "hair",
    "title": "Hair"
@@ -865,7 +865,7 @@
     "wet_margin"
    ],
    "note": "",
-   "what": "water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges.",
+   "what": "water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges. Thin falls over stepped rock run ledge to ledge as threads with wet rock between them, as their flow sets (`rock_step`); big flows stay fully covered.",
    "page": "water",
    "title": "Water",
    "topic": "Currents and rivers"
@@ -1002,6 +1002,17 @@
    "topic": "Strands"
   },
   {
+   "name": "Hair cards for crowds",
+   "settings": [
+    "cards_enabled"
+   ],
+   "note": "",
+   "what": "distant strand hair can switch to textured cards baked from its own groom, simulating only its guides; raster only, path tracing keeps the strands.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
    "name": "Motion vectors for strands",
    "settings": [
     "PREVIOUS_FRAME",
@@ -1009,6 +1020,19 @@
    ],
    "note": "",
    "what": "TAA, FSR 2 and DLSS follow moving hair instead of smearing it; shaders get `PREVIOUS_FRAME` and `render_mode alpha_motion_vectors`.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Wet hair",
+   "settings": [
+    "wetness",
+    "weather_wetting",
+    "wet_clumping"
+   ],
+   "note": "",
+   "what": "strands soak in rain and dry over time, turning darker, glossier, heavier, flatter and clumped.",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"
@@ -1135,7 +1159,7 @@
     "moraine_age"
    ],
    "note": "",
-   "what": "debris carried down the last glaciers builds ridges at their margins that dam lakes.",
+   "what": "debris carried down the last glaciers builds ridges at their margins that dam lakes. Till draws as soil with stones through it, the stones kept above the grass.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -1169,7 +1193,7 @@
     "scree_age"
    ],
    "note": "",
-   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors.",
+   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"

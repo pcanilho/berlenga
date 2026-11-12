@@ -1836,7 +1836,7 @@ ProjectSettings::ProjectSettings() {
 	// Read by the Vulkan driver before the rendering server starts: whether to ask for VK_EXT_opacity_micromap.
 	GLOBAL_DEF_RST("rendering/pathtracing/opacity_micromaps", false);
 	// Read by the Vulkan driver too: whether to ask for VK_NV_ray_tracing_linear_swept_spheres.
-	GLOBAL_DEF_RST("rendering/pathtracing/linear_swept_spheres", true);
+	GLOBAL_DEF_RST("rendering/pathtracing/linear_swept_spheres", false);
 
 	GLOBAL_DEF_RST("rendering/rendering_device/d3d12/max_resource_descriptors", 65536);
 	custom_prop_info["rendering/rendering_device/d3d12/max_resource_descriptors"] = PropertyInfo(Variant::INT, "rendering/rendering_device/d3d12/max_resource_descriptors", PROPERTY_HINT_RANGE, "512,1000000");

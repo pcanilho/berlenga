@@ -46,6 +46,7 @@
 #include "scene/main/window.h"
 #include "scene/resources/3d/skin.h"
 #include "scene/resources/3d/world_3d.h"
+#include "scene/resources/environment.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/texture_rd.h"
@@ -117,6 +118,7 @@ varying flat float strand_seed; // 0..1 per strand: its own shadow-map noise
 varying vec4 dom_trans; // vertex to fragment and light(): per map, the light it lets through
 varying vec4 dom_past; // vertex to fragment: per map, metres past the first hair (-1: none)
 varying vec3 dom_world; // fragment to light(): the fragment's world position
+varying vec3 light_tangent; // fragment to light(): along the fibres, view space
 
 // Coverage summed up to depth p_rel past the first hair, from a cell's layers.
 float dom_coverage(vec4 p_cell, float p_rel) {
@@ -132,20 +134,77 @@ float dom_coverage(vec4 p_cell, float p_rel) {
 	return p_cell.w;
 }
 
+// The deep opacity maps at a world point: per map the light let through and the metres past the
+// first hair (-1: none).
+void dom_lookup(vec3 world, out vec4 r_trans, out vec4 r_past) {
+	r_trans = vec4(1.0);
+	r_past = vec4(-1.0);
+	// The deep opacity maps: how much hair (and whether the head or body) lies between this
+	// strand point and each light, smooth across the layers and filtered across 4 cells.
+	// Per point, not per fragment: a strand is far thinner than a cell, and the segments
+	// are about as long as one.
+	float absorb = 1.0;
+#ifdef HAIR_SCATTERING
+	absorb = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+#endif
+	for (int k = 0; k < 4; k++) {
+		if (k >= dom_maps) {
+			break;
+		}
+		vec4 sc = dom_slot[k * 4];
+		vec4 su = dom_slot[k * 4 + 1];
+		vec4 sv = dom_slot[k * 4 + 2];
+		vec4 sl = dom_slot[k * 4 + 3];
+		vec2 m;
+		float tl;
+		if (su.w > 0.5) {
+			vec3 d = world - (sc.xyz + sl.xyz * sl.w);
+			float z = max(-dot(d, sl.xyz), 1e-4);
+			m = (vec2(dot(d, su.xyz), dot(d, sv.xyz)) / (z * sv.w) * 0.5 + 0.5) * float(dom_cells) - 0.5;
+			tl = max(length(d) - (sl.w - sc.w), 0.0);
+		} else {
+			vec3 d = world - sc.xyz;
+			m = (vec2(dot(d, su.xyz), dot(d, sv.xyz)) / (2.0 * sc.w) + 0.5) * float(dom_cells) - 0.5;
+			tl = sc.w - dot(d, sl.xyz);
+		}
+		ivec2 c = ivec2(floor(m));
+		vec2 f = m - vec2(c);
+		ivec2 row = ivec2(0, k * dom_cells);
+		float trans = 0.0;
+		float front = 1e9;
+		for (int j = 0; j < 4; j++) {
+			ivec2 o = ivec2(j & 1, j >> 1);
+			ivec2 cc = clamp(c + o, ivec2(0), ivec2(dom_cells - 1)) + row;
+			vec4 cell = texelFetch(hair_deep_shadow, cc, 0);
+			float opaque = texelFetch(hair_deep_shadow, cc + ivec2(dom_cells, 0), 0).x;
+			float covered = 0.0;
+			if (cell.x < 1e8) {
+				covered = dom_coverage(cell, tl - cell.x);
+				front = min(front, cell.x);
+			}
+			vec2 w = mix(1.0 - f, f, vec2(o));
+			trans += w.x * w.y * exp(-absorb * dom_density * covered) * (tl > opaque + 0.01 ? 0.0 : 1.0);
+		}
+		r_trans[k] = trans;
+		r_past[k] = front < 1e8 ? max(tl - front, 0.0) : -1.0;
+	}
+}
+
 void vertex() {
 	strand_seed = fract(sin(floor((CUSTOM0.x + 0.5) / float(max(slot_points, 1))) * 12.9898) * 43758.5453);
 	vec4 here = hair_point(CUSTOM0.x);
 	vec4 before = hair_point(CUSTOM0.y);
 	vec4 after = hair_point(CUSTOM0.z);
+	bool card_strand = here.w > 3.5; // a hair card's strand: drawn by the card mesh only
 	bool lod_dropped = here.w > 1.5;
-	float along = lod_dropped ? here.w - 2.0 : here.w;
+	float along = card_strand ? here.w - 4.0 : (lod_dropped ? here.w - 2.0 : here.w);
 	vec3 p = here.xyz;
 	vec3 t = (after.w < 0.0 ? p : after.xyz) - (before.w < 0.0 ? p : before.xyz);
 	t = dot(t, t) > 1e-14 ? normalize(t) : vec3(0.0, 1.0, 0.0);
 	vec3 a = normalize(cross(t, abs(t.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	vec3 across = CUSTOM1.w > 0.5 ? cross(t, a) : a;
 	// Past the strand's end (a shorter strand padded to the slot) the width is zero: nothing drawn.
-	float half_width = along < 0.0 ? 0.0 : 0.5 * mix(root_width, tip_width, along);
+	float half_width = along < 0.0 || card_strand ? 0.0 : 0.5 * mix(root_width, tip_width, along);
 	UV = vec2(CUSTOM0.w > 0.0 ? 1.0 : 0.0, max(along, 0.0));
 	VERTEX = p + across * (half_width * CUSTOM0.w);
 	NORMAL = cross(across, t);
@@ -159,56 +218,11 @@ void vertex() {
 	dom_past = vec4(-1.0);
 	// The second strip draws nothing in raster (collapsed below), so it skips the lookups.
 	if (dom_maps > 0 && !IN_PATH_TRACER && !IN_SHADOW_PASS && !PREVIOUS_FRAME && CUSTOM1.w < 0.5) {
-		// The deep opacity maps: how much hair (and whether the head or body) lies between this
-		// strand point and each light, smooth across the layers and filtered across 4 cells.
-		// Per point, not per fragment: a strand is far thinner than a cell, and the segments
-		// are about as long as one.
-		vec3 world = (MODEL_MATRIX * vec4(p, 1.0)).xyz;
-		float absorb = 1.0;
-#ifdef HAIR_SCATTERING
-		absorb = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
-#endif
-		for (int k = 0; k < 4; k++) {
-			if (k >= dom_maps) {
-				break;
-			}
-			vec4 sc = dom_slot[k * 4];
-			vec4 su = dom_slot[k * 4 + 1];
-			vec4 sv = dom_slot[k * 4 + 2];
-			vec4 sl = dom_slot[k * 4 + 3];
-			vec2 m;
-			float tl;
-			if (su.w > 0.5) {
-				vec3 d = world - (sc.xyz + sl.xyz * sl.w);
-				float z = max(-dot(d, sl.xyz), 1e-4);
-				m = (vec2(dot(d, su.xyz), dot(d, sv.xyz)) / (z * sv.w) * 0.5 + 0.5) * float(dom_cells) - 0.5;
-				tl = max(length(d) - (sl.w - sc.w), 0.0);
-			} else {
-				vec3 d = world - sc.xyz;
-				m = (vec2(dot(d, su.xyz), dot(d, sv.xyz)) / (2.0 * sc.w) + 0.5) * float(dom_cells) - 0.5;
-				tl = sc.w - dot(d, sl.xyz);
-			}
-			ivec2 c = ivec2(floor(m));
-			vec2 f = m - vec2(c);
-			ivec2 row = ivec2(0, k * dom_cells);
-			float trans = 0.0;
-			float front = 1e9;
-			for (int j = 0; j < 4; j++) {
-				ivec2 o = ivec2(j & 1, j >> 1);
-				ivec2 cc = clamp(c + o, ivec2(0), ivec2(dom_cells - 1)) + row;
-				vec4 cell = texelFetch(hair_deep_shadow, cc, 0);
-				float opaque = texelFetch(hair_deep_shadow, cc + ivec2(dom_cells, 0), 0).x;
-				float covered = 0.0;
-				if (cell.x < 1e8) {
-					covered = dom_coverage(cell, tl - cell.x);
-					front = min(front, cell.x);
-				}
-				vec2 w = mix(1.0 - f, f, vec2(o));
-				trans += w.x * w.y * exp(-absorb * dom_density * covered) * (tl > opaque + 0.01 ? 0.0 : 1.0);
-			}
-			dom_trans[k] = trans;
-			dom_past[k] = front < 1e8 ? max(tl - front, 0.0) : -1.0;
-		}
+		vec4 lt;
+		vec4 lp;
+		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, lt, lp);
+		dom_trans = lt;
+		dom_past = lp;
 	}
 	if (!IN_PATH_TRACER) {
 		// Raster (and its shadow maps): AMD TressFX's strand rendering. One ribbon facing the camera,
@@ -244,6 +258,7 @@ void vertex() {
 }
 
 void fragment() {
+	light_tangent = strand_tangent;
 	ALBEDO = hair_color.rgb;
 	ROUGHNESS = fibre_roughness.x;
 	ANISOTROPY = 0.8;
@@ -333,7 +348,7 @@ float hair_f(float c) {
 }
 
 void light() {
-	vec3 T = normalize(strand_tangent);
+	vec3 T = normalize(light_tangent);
 	vec3 base = ALBEDO;
 	float sin_l = clamp(dot(T, LIGHT), -1.0, 1.0);
 	float sin_v = clamp(dot(T, VIEW), -1.0, 1.0);
@@ -404,11 +419,131 @@ void light() {
 
 } // namespace
 
+// Hair cards (docs/ideas/hair.md, stage 2p): the card mesh drawn from the cards' own simulated
+// strands (the first slots of hair_positions). Each vertex is one side of one of a card's two
+// crossed strips at one of its points: CUSTOM0 = (texel, previous texel, next texel, side -1 or 1),
+// CUSTOM1 = the strip's axis at rest (groom space) and which strip, CUSTOM2 = the card's direction
+// at rest and the strip's half width there; UV in the atlas tile. The strip's axis turns with the
+// card's centre line. Opacity is the atlas coverage, blended as the strands are (the hair is one
+// colour, so the cards' order barely shows); shadow maps keep that share of their texels
+// (stochastic transparency, Enderton et al. 2010). Raster only: under the path tracer the hair
+// stays strands.
+const char *HAIR_CARD_HEAD = R"(
+shader_type spatial;
+render_mode cull_disabled, rt_vertex_dynamic, hair_cards, alpha_motion_vectors;
+)";
+
+const char *HAIR_CARD_FUNCS = R"(
+uniform sampler2D card_atlas : filter_linear_mipmap, repeat_disable;
+uniform float card_clump = 0.0; // wet clumping, as the strands'
+varying vec3 card_across; // view space: this strip's axis (raster lighting)
+
+void vertex() {
+	strand_seed = 0.0;
+	dom_trans = vec4(1.0);
+	dom_past = vec4(-1.0);
+	strand_across = 0.0;
+	strand_half_px = 1.0;
+	strand_drawn_px = 1.0;
+	vec4 here = hair_point(CUSTOM0.x);
+	vec4 before = hair_point(CUSTOM0.y);
+	vec4 after = hair_point(CUSTOM0.z);
+	float along = clamp(here.w - 4.0, 0.0, 1.0);
+	vec3 p = here.xyz;
+	vec3 t0 = CUSTOM2.xyz;
+	vec3 t = after.xyz - before.xyz;
+	t = dot(t, t) > 1e-14 ? normalize(t) : t0;
+	// The strip's axis at rest turned as the card's centre line turned (rotation from t0 to t).
+	vec3 ax = CUSTOM1.xyz;
+	vec3 k = cross(t0, t);
+	float s = length(k);
+	if (s > 1e-6) {
+		k /= s;
+		float c = dot(t0, t);
+		ax = ax * c + cross(k, ax) * s + k * dot(k, ax) * (1.0 - c);
+	}
+	ax -= t * dot(ax, t);
+	ax = dot(ax, ax) > 1e-12 ? normalize(ax) : normalize(cross(t, abs(t.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+	float half_width = CUSTOM2.w * (1.0 - card_clump * smoothstep(0.0, 0.3, along));
+	VERTEX = p + ax * (half_width * CUSTOM0.w);
+	NORMAL = normalize(cross(ax, t));
+	TANGENT = ax;
+	BINORMAL = t;
+	strand_tangent = normalize(mat3(MODELVIEW_MATRIX) * t);
+	card_across = normalize(mat3(MODELVIEW_MATRIX) * ax);
+	if (dom_maps > 0 && !IN_PATH_TRACER && !IN_SHADOW_PASS && !PREVIOUS_FRAME) {
+		// The deep opacity maps, made from the cards' own strands (each as wide as its clump).
+		vec4 lt;
+		vec4 lp;
+		dom_lookup((MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz, lt, lp);
+		dom_trans = lt;
+		dom_past = lp;
+	}
+}
+
+void fragment() {
+	vec4 texel = texture(card_atlas, UV);
+	// The strands' own direction: the card's, tilted across the strip as the baked strands run.
+	float tilt = texel.g * 2.0 - 1.0;
+	light_tangent = normalize(strand_tangent + card_across * (tilt / max(sqrt(1.0 - tilt * tilt), 0.05)));
+	ALBEDO = hair_color.rgb;
+	ROUGHNESS = fibre_roughness.x;
+	ANISOTROPY = 0.8;
+	ANISOTROPY_FLOW = vec2(1.0, 0.0); // as the strands: the highlight runs across them
+	HAIR = 1.0;
+	HAIR_ABSORPTION = fibre_absorption;
+	HAIR_ROUGHNESS = fibre_roughness;
+	dom_world = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	if (dom_maps > 0 && !IN_PATH_TRACER && !IN_SHADOW_PASS) {
+		// As the strands: the shadow map lookups skip the hair's own layers (the maps carry them).
+		float local_past = -1.0;
+		for (int k = 0; k < 4; k++) {
+			if (k >= dom_maps) {
+				break;
+			}
+			if (dom_slot[k * 4 + 1].w > 0.5) {
+				local_past = max(local_past, dom_past[k]);
+			} else if (dom_past[k] >= 0.0) {
+				DIRECTIONAL_SHADOW_OFFSET = dom_past[k] + 0.005;
+			}
+		}
+		if (local_past >= 0.0) {
+			POSITIONAL_SHADOW_OFFSET = local_past + 0.005;
+		}
+	}
+	// The two crossed strips hold the same hair seen two ways: each counts by how squarely it
+	// faces the view, the two weights summing to one, as optical depth (1 - (1 - c)^w), so where
+	// both show the same coverage together they let through what one clump does.
+	float f = dot(NORMAL, VIEW);
+	float o = dot(TANGENT, VIEW);
+	float facing = f * f / max(f * f + o * o, 1e-6);
+	float coverage = 1.0 - pow(max(1.0 - texel.r, 1e-4), facing);
+#ifdef HAIR_SCATTERING
+	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
+		// As the strands: what the fibres pass straight on (TT) is not blocked.
+		coverage *= 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+	}
+#endif
+	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
+		float noise = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))) + texel.a);
+		if (coverage <= noise) {
+			discard;
+		}
+		coverage = 1.0;
+	}
+	ALPHA = coverage;
+}
+)";
+
 Ref<Shader> PhysXHair3D::render_shaders[2];
+Ref<Shader> PhysXHair3D::card_shaders[2];
 
 void PhysXHair3D::free_shared() {
 	render_shaders[0].unref();
 	render_shaders[1].unref();
+	card_shaders[0].unref();
+	card_shaders[1].unref();
+	HairCardBake::clear_cache();
 	HairStrandSolverGPU::free_shared();
 }
 
@@ -418,7 +553,78 @@ Vector3 PhysXHair3D::_fibre_absorption() const {
 	const float m = -Math::log(MAX(1.0f - melanin, 1e-4f));
 	const Vector3 eu(0.506f, 0.841f, 1.653f);
 	const Vector3 pheo(0.343f, 0.733f, 1.924f);
-	return (eu * (1.0f - melanin_redness) + pheo * melanin_redness) * m;
+	// Wet hair is darker (Lekner and Dorf 1988): water between the fibres nearly matches their
+	// index (1.33 against 1.55), so each fibre reflects less back out and light goes deeper into
+	// the hair, crossing more fibres before it leaves, and more of it is absorbed. Taken as the
+	// fibres absorbing up to half again as much when soaked.
+	return (eu * (1.0f - melanin_redness) + pheo * melanin_redness) * m * (1.0f + 0.5f * wet_look);
+}
+
+// The fibre roughness, longitudinal and azimuthal. A wet fibre is smoother along its length: the
+// water film fills in the cuticle scales and gives a near mirror surface, so the highlight is
+// narrower and brighter (Ward et al. 2004; Gupta and Magnenat-Thalmann 2007, roughness
+// x (1 - c w)), here halved when soaked.
+Vector2 PhysXHair3D::_fibre_roughness() const {
+	return Vector2(roughness * (1.0f - 0.5f * wet_look), radial_roughness);
+}
+
+// Rain wets the hair and the air dries it. Rain from the WeatherMap3D (mm/h) less what the
+// canopy above catches (free throughfall, Gash 1979: the share of the sky the canopy leaves
+// open) and nothing under a roof (a ray up from the top of the hair, every half second) fills
+// water_capacity mm; drying takes the soaked hair to dry in drying_time at an even rate (the
+// constant rate period of drying, while the surface stays wet). The look follows in steps of
+// 1%, so the material is not set every frame.
+void PhysXHair3D::_update_wetness(double p_delta) {
+	const float dt = (float)p_delta;
+#ifdef MODULE_WEATHER_ENABLED
+	float rain = 0.0f;
+	if (weather_wetting && dt > 0.0f && is_inside_tree()) {
+		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
+			const Vector3 at = render_instance ? render_instance->get_global_transform().xform(render_instance->get_aabb()).get_center() : get_global_transform().origin;
+			rain = weather->get_rain_at(at);
+			if (rain > 0.0f) {
+				rain *= 1.0f - CLAMP(weather->get_canopy_closure_at(at), 0.0f, 1.0f);
+				rain_shelter_timer -= dt;
+				if (rain_shelter_timer <= 0.0f) {
+					rain_shelter_timer = 0.5f;
+					rain_shelter = 1.0f;
+					const Ref<World3D> w = get_world_3d();
+					PhysicsDirectSpaceState3D *space = w.is_valid() ? PhysicsServer3D::get_singleton()->space_get_direct_state(w->get_space()) : nullptr;
+					if (space) {
+						Vector3 top = at;
+						if (render_instance) {
+							const AABB box = render_instance->get_global_transform().xform(render_instance->get_aabb());
+							top.y = box.position.y + box.size.y;
+						}
+						PhysicsDirectSpaceState3D::RayParameters ray;
+						ray.from = top + Vector3(0.0f, 0.1f, 0.0f);
+						ray.to = ray.from + Vector3(0.0f, 100.0f, 0.0f);
+						PhysicsDirectSpaceState3D::RayResult hit;
+						if (space->intersect_ray(ray, hit)) {
+							rain_shelter = 0.0f;
+						}
+					}
+				}
+				rain *= rain_shelter;
+			}
+		}
+	}
+	if (weather_wetting && dt > 0.0f) {
+		wetness += dt * rain / (3600.0f * MAX(water_capacity, 0.01f));
+		if (rain <= 0.0f) {
+			wetness -= dt / MAX(drying_time, 1.0f);
+		}
+		wetness = CLAMP(wetness, 0.0f, 1.0f);
+	}
+#endif
+	if (Math::abs(wetness - wet_look) >= 0.01f || (wetness != wet_look && (wetness == 0.0f || wetness == 1.0f))) {
+		wet_look = wetness;
+		_set_look(copy_material);
+		_set_look(card_material);
+		if (card_material.is_valid()) {
+			card_material->set_shader_parameter("card_clump", wet_look * wet_clumping);
+		}
+	}
 }
 
 // The colour a mass of such fibres shows (Chiang et al. 2016, section 4.2), for the rasterizer.
@@ -496,8 +702,10 @@ int PhysXHair3D::_render_points(const PackedVector3Array &p_points, const Packed
 // Guide strands and who follows them (HairWorks guide curves, TressFX follow hairs): a seeded
 // random share of the strands simulates, and every other strand follows its three nearest guides
 // by root, weighted by inverse squared distance. 8 floats per strand, see HairStrandSolver::build().
-PackedFloat32Array PhysXHair3D::_follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) const {
+PackedFloat32Array PhysXHair3D::_follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_guide_pool) const {
 	const int sc = p_counts.size();
+	// Only the first p_guide_pool strands can be guides (the hair cards' strands, after them, follow).
+	const int pool = p_guide_pool > 0 ? MIN(p_guide_pool, sc) : sc;
 	PackedFloat32Array follow;
 	follow.resize(sc * 8);
 	float *f = follow.ptrw();
@@ -510,14 +718,14 @@ PackedFloat32Array PhysXHair3D::_follow_data(const PackedVector3Array &p_points,
 		roots[i] = p_points[start];
 		start += p_counts[i];
 	}
-	const int guide_n = guide_ratio >= 1.0f ? sc : CLAMP((int)Math::ceil(sc * guide_ratio), 1, sc);
+	const int guide_n = guide_ratio >= 1.0f ? pool : CLAMP((int)Math::ceil(pool * guide_ratio), 1, pool);
 	LocalVector<int> order;
-	order.resize(sc);
-	for (int i = 0; i < sc; i++) {
+	order.resize(pool);
+	for (int i = 0; i < pool; i++) {
 		order[i] = i;
 	}
 	RandomPCG rng{ 0x6a1du };
-	for (int i = sc - 1; i > 0; i--) {
+	for (int i = pool - 1; i > 0; i--) {
 		SWAP(order[i], order[rng.rand() % (uint32_t)(i + 1)]);
 	}
 	LocalVector<bool> guide;
@@ -623,7 +831,7 @@ void PhysXHair3D::_make_material() {
 	}
 	copy_material->set_shader_parameter("hair_color", _mass_color());
 	copy_material->set_shader_parameter("fibre_absorption", _fibre_absorption());
-	copy_material->set_shader_parameter("fibre_roughness", Vector2(roughness, radial_roughness));
+	copy_material->set_shader_parameter("fibre_roughness", _fibre_roughness());
 	copy_material->set_shader_parameter("hair_positions", pos_texture);
 	copy_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
 	copy_material->set_shader_parameter("hair_deep_shadow", deep_shadow_texture);
@@ -639,6 +847,46 @@ void PhysXHair3D::_make_material() {
 	if (render_instance) {
 		render_instance->set_material_override(copy_material);
 	}
+	if (card_instance && card_bake.is_valid()) {
+		Ref<Shader> &shader = card_shaders[hair_shading ? 1 : 0];
+		if (shader.is_null()) {
+			// The strand shader's uniforms, varyings and light(), with the cards' own vertex() and fragment().
+			const String strand = HAIR_RENDER_SHADER;
+			const int body = strand.find("void vertex() {");
+			const int light = strand.find("#ifdef HAIR_SCATTERING\n// Unreal Engine's hair shading");
+			shader.instantiate();
+			shader->set_code(String(HAIR_CARD_HEAD) + (hair_shading ? "#define HAIR_SCATTERING\n" : "") + strand.substr(0, body) + HAIR_CARD_FUNCS + (light >= 0 ? strand.substr(light) : String()));
+		}
+		if (card_material.is_null()) {
+			card_material.instantiate();
+		}
+		card_material->set_shader(shader);
+		if (card_bake->texture.is_null()) {
+			card_bake->texture = ImageTexture::create_from_image(card_bake->atlas);
+		}
+		card_material->set_shader_parameter("card_atlas", card_bake->texture);
+		card_material->set_shader_parameter("hair_positions", pos_texture);
+		card_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
+		card_material->set_shader_parameter("slot_points", draw_slot_points);
+		card_material->set_shader_parameter("texture_width", solver ? solver->get_texture_width() : 1);
+		card_material->set_shader_parameter("hair_deep_shadow", deep_shadow_texture);
+		card_material->set_shader_parameter("dom_cells", HairStrandSolverGPU::DOM_CELLS);
+		card_material->set_shader_parameter("dom_layers", HairStrandSolver::deep_shadow_layers());
+		card_material->set_shader_parameter("dom_maps", 0);
+		card_material->set_shader_parameter("card_clump", wet_look * wet_clumping);
+		_set_look(card_material);
+		card_instance->set_material_override(card_material);
+	}
+}
+
+// The fibres' colour and optics (melanin, roughness, wetness) on a hair material.
+void PhysXHair3D::_set_look(const Ref<ShaderMaterial> &p_material) const {
+	if (p_material.is_null()) {
+		return;
+	}
+	p_material->set_shader_parameter("hair_color", _mass_color());
+	p_material->set_shader_parameter("fibre_absorption", _fibre_absorption());
+	p_material->set_shader_parameter("fibre_roughness", _fibre_roughness());
 }
 
 void PhysXHair3D::_groom_changed() {
@@ -656,6 +904,18 @@ void PhysXHair3D::_clear() {
 		render_instance->queue_free();
 		render_instance = nullptr;
 	}
+	if (card_instance) {
+		card_instance->queue_free();
+		card_instance = nullptr;
+	}
+	if (card_material.is_valid()) {
+		card_material->set_shader_parameter("hair_positions", Variant());
+		card_material->set_shader_parameter("hair_previous_positions", Variant());
+		card_material.unref();
+	}
+	card_bake.unref();
+	card_first = 0;
+	card_mode = false;
 	if (copy_material.is_valid()) {
 		copy_material->set_shader_parameter("hair_positions", Variant());
 		copy_material->set_shader_parameter("hair_previous_positions", Variant());
@@ -715,8 +975,58 @@ void PhysXHair3D::_build() {
 		return;
 	}
 
-	const PackedVector3Array pts = groom->get_points();
-	const PackedInt32Array counts = groom->get_strand_point_counts();
+	PackedVector3Array pts = groom->get_points();
+	PackedInt32Array counts = groom->get_strand_point_counts();
+	const int groom_strands = counts.size();
+
+	// The points the strands are drawn through: where a strand runs straight its middle points are
+	// left out of the render mesh (Douglas-Peucker on the groomed strand, as Unreal's groom LOD
+	// decimation), within simplify_tolerance of the root width, below what a strand's own width
+	// shows. Every point still simulates and casts into the deep shadows.
+	PackedInt32Array render_points;
+	const int slot_points = _render_points(pts, counts, render_points);
+
+	// Hair cards: each card's centre line is one more strand, after the groom's, simulated as a
+	// follower of its nearest guides and drawn (from the first slots of the output) by the cards.
+	if (cards_enabled && slot_points >= 2) {
+		const int samples = CLAMP(slot_points, 2, 16);
+		uint32_t h = hash_murmur3_one_64((uint64_t)pts.size());
+		h = hash_murmur3_one_32((uint32_t)(card_count * 64 + samples), h);
+		h = hash_murmur3_one_float(root_width, h);
+		h = hash_murmur3_one_float(tip_width, h);
+		h = hash_murmur3_one_float(pts[0].x, h);
+		h = hash_murmur3_one_float(pts[pts.size() - 1].y, h);
+		const uint64_t key = ((uint64_t)groom->get_instance_id()) ^ ((uint64_t)h << 32) ^ (uint64_t)h;
+		card_bake = HairCardBake::get_cached(key, pts, counts, card_count, samples, root_width, tip_width);
+	}
+	if (card_bake.is_valid() && card_bake->card_count > 0) {
+		card_first = groom_strands;
+		const int cs = card_bake->samples;
+		const int base = pts.size();
+		pts.append_array(card_bake->points);
+		// The drawn points: every card point (the header grows by the cards' entries).
+		PackedInt32Array rp;
+		const int total = groom_strands + card_bake->card_count;
+		const int old_list = render_points.size() - groom_strands * 2;
+		rp.resize(total * 2 + old_list + card_bake->card_count * cs);
+		int *w = rp.ptrw();
+		for (int i = 0; i < groom_strands * 2; i++) {
+			w[i] = render_points[i];
+		}
+		for (int i = 0; i < old_list; i++) {
+			w[total * 2 + i] = render_points[groom_strands * 2 + i];
+		}
+		for (int c = 0; c < card_bake->card_count; c++) {
+			counts.push_back(cs);
+			w[(groom_strands + c) * 2] = old_list + c * cs;
+			w[(groom_strands + c) * 2 + 1] = cs;
+			for (int k = 0; k < cs; k++) {
+				w[total * 2 + old_list + c * cs + k] = k;
+			}
+		}
+		render_points = rp;
+		(void)base;
+	}
 
 	// Solver input: rest points with their segment lengths, strand ranges.
 	PackedFloat32Array rest;
@@ -741,13 +1051,6 @@ void PhysXHair3D::_build() {
 			start += n;
 		}
 	}
-
-	// The points the strands are drawn through: where a strand runs straight its middle points are
-	// left out of the render mesh (Douglas-Peucker on the groomed strand, as Unreal's groom LOD
-	// decimation), within simplify_tolerance of the root width, below what a strand's own width
-	// shows. Every point still simulates and casts into the deep shadows.
-	PackedInt32Array render_points;
-	const int slot_points = _render_points(pts, counts, render_points);
 
 	// Render mesh: two crossed strips per drawn point, as HairMesh, the positions rebuilt in
 	// vertex() from the solver's output, which holds the strands sorted far to near from the camera
@@ -865,7 +1168,7 @@ void PhysXHair3D::_build() {
 		render_instance = nullptr;
 		ERR_FAIL_MSG("PhysXHair3D: no RenderingDevice, the hair can't be simulated.");
 	}
-	solver->build(rest, strands, _follow_data(pts, counts), slot_points, render_points);
+	solver->build(rest, strands, _follow_data(pts, counts, groom_strands), slot_points, render_points);
 	pos_texture.instantiate();
 	pos_texture->set_texture_rd_rid(solver->get_position_texture_rd_rid());
 	prev_pos_texture.instantiate();
@@ -873,9 +1176,104 @@ void PhysXHair3D::_build() {
 	deep_shadow_texture.instantiate();
 	deep_shadow_texture->set_texture_rd_rid(solver->get_deep_shadow_texture_rd_rid());
 	draw_slot_points = MAX(slot_points, 1);
+	if (card_first > 0) {
+		_build_cards(bounds.grow(longest + 0.05f));
+	}
 	_make_material();
 	built = true;
 	_step(0.0);
+}
+
+// The card mesh: per card point two crossed strips (four vertices), placed in vertex() from the
+// card's simulated strand, which sorts to slot c for card c.
+void PhysXHair3D::_build_cards(const AABB &p_bounds) {
+	const HairCardBake &b = **card_bake;
+	const int cs = b.samples;
+	const int nc = b.card_count;
+	const Vector2 atlas_size(b.atlas->get_width(), b.atlas->get_height());
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedVector2Array uvs;
+	PackedFloat32Array custom0, custom1, custom2;
+	PackedInt32Array indices;
+	verts.resize(nc * cs * 4);
+	normals.resize(verts.size());
+	uvs.resize(verts.size());
+	custom0.resize(verts.size() * 4);
+	custom1.resize(verts.size() * 4);
+	custom2.resize(verts.size() * 4);
+	Vector3 *v = verts.ptrw();
+	Vector3 *nr = normals.ptrw();
+	Vector2 *uv = uvs.ptrw();
+	float *c0 = custom0.ptrw();
+	float *c1 = custom1.ptrw();
+	float *c2 = custom2.ptrw();
+	for (int c = 0; c < nc; c++) {
+		for (int k = 0; k < cs; k++) {
+			const int i = c * cs + k;
+			const Vector3 t = (b.points[c * cs + MIN(k + 1, cs - 1)] - b.points[c * cs + MAX(k - 1, 0)]).normalized();
+			for (int strip = 0; strip < 2; strip++) {
+				const int tile = c * 2 + strip;
+				const float tx = b.tiles[tile * 4 + 0];
+				const float ty = b.tiles[tile * 4 + 1];
+				const float tw = b.tiles[tile * 4 + 2];
+				const float th = b.tiles[tile * 4 + 3];
+				const float along = float(k) / float(cs - 1);
+				for (int side = 0; side < 2; side++) {
+					const int vi = i * 4 + strip * 2 + side;
+					v[vi] = b.points[i];
+					nr[vi] = Vector3(0, 0, 1);
+					// Texel centres at the tile's edges, so neighbouring tiles do not bleed in.
+					uv[vi] = Vector2((tx + 0.5f + (tw - 1.0f) * float(side)) / atlas_size.x, (ty + 0.5f + (th - 1.0f) * along) / atlas_size.y);
+					c0[vi * 4 + 0] = float(c * draw_slot_points + k);
+					c0[vi * 4 + 1] = float(c * draw_slot_points + MAX(k - 1, 0));
+					c0[vi * 4 + 2] = float(c * draw_slot_points + MIN(k + 1, cs - 1));
+					c0[vi * 4 + 3] = side == 0 ? -1.0f : 1.0f;
+					const Vector3 ax = b.axis[strip][i];
+					c1[vi * 4 + 0] = ax.x;
+					c1[vi * 4 + 1] = ax.y;
+					c1[vi * 4 + 2] = ax.z;
+					c1[vi * 4 + 3] = float(strip);
+					c2[vi * 4 + 0] = t.x;
+					c2[vi * 4 + 1] = t.y;
+					c2[vi * 4 + 2] = t.z;
+					c2[vi * 4 + 3] = b.half_width[strip][i];
+				}
+			}
+		}
+		for (int k = 0; k + 1 < cs; k++) {
+			for (int strip = 0; strip < 2; strip++) {
+				const int v0 = (c * cs + k) * 4 + strip * 2;
+				const int v2 = v0 + 4;
+				indices.push_back(v0);
+				indices.push_back(v0 + 1);
+				indices.push_back(v2);
+				indices.push_back(v0 + 1);
+				indices.push_back(v2 + 1);
+				indices.push_back(v2);
+			}
+		}
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_TEX_UV] = uvs;
+	arrays[Mesh::ARRAY_CUSTOM0] = custom0;
+	arrays[Mesh::ARRAY_CUSTOM1] = custom1;
+	arrays[Mesh::ARRAY_CUSTOM2] = custom2;
+	arrays[Mesh::ARRAY_INDEX] = indices;
+	const uint64_t format = ((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT) |
+			((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM1_SHIFT) |
+			((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM2_SHIFT);
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), format);
+	card_instance = memnew(MeshInstance3D);
+	add_child(card_instance, false, INTERNAL_MODE_BACK);
+	card_instance->set_mesh(mesh);
+	card_instance->set_custom_aabb(p_bounds);
+	card_instance->set_visible(false);
 }
 
 void PhysXHair3D::_step(double p_delta) {
@@ -926,6 +1324,8 @@ void PhysXHair3D::_step(double p_delta) {
 	s.volume_stiffness = volume_stiffness;
 	s.collision_radius = strand_collision ? strand_collision_radius : 0.0f;
 	s.collision_friction = strand_collision_friction;
+	s.wet = wetness;
+	s.wet_clumping = wet_clumping;
 	s.output_xform = render_instance ? render_instance->get_global_transform().affine_inverse() : xform.affine_inverse();
 	// The draw order is sorted from the viewport's camera.
 	const Camera3D *camera = is_inside_tree() ? get_viewport()->get_camera_3d() : nullptr;
@@ -939,6 +1339,35 @@ void PhysXHair3D::_step(double p_delta) {
 		const float d = camera->get_global_transform().origin.distance_to(xform.origin);
 		const float t = lod_end_distance > lod_start_distance ? CLAMP((d - lod_start_distance) / (lod_end_distance - lod_start_distance), 0.0f, 1.0f) : (d >= lod_end_distance ? 1.0f : 0.0f);
 		s.lod_keep = Math::lerp(1.0f, lod_strand_ratio, t);
+	}
+	// Hair cards past card_distance (5% nearer to come back, so the switch does not flicker): the
+	// strands are hidden and only the guides and the cards' strands run.
+	if (card_instance && card_first > 0) {
+		const float d = camera ? camera->get_global_transform().origin.distance_to(xform.origin) : 0.0f;
+		bool far = card_mode ? d >= 0.95f * card_distance : d >= card_distance;
+		// The path tracer keeps the strands at every distance (it must not lose their detail).
+		Ref<Environment> env = camera ? camera->get_environment() : Ref<Environment>();
+		if (env.is_null() && get_world_3d().is_valid()) {
+			env = get_world_3d()->get_environment();
+			if (env.is_null()) {
+				env = get_world_3d()->get_fallback_environment();
+			}
+		}
+		if (env.is_valid() && env->is_pathtracing_enabled()) {
+			far = false;
+		}
+		if (far != card_mode) {
+			card_mode = far;
+			card_instance->set_visible(card_mode);
+			if (render_instance) {
+				render_instance->set_visible(!card_mode);
+			}
+			if (!card_mode) {
+				solver->drop_history(); // the strands' last positions are stale
+			}
+		}
+		s.card_first = card_first;
+		s.cards_only = card_mode;
 	}
 	if (copy_material.is_valid() && !Math::is_equal_approx(1.0f / s.lod_keep, lod_width_scale)) {
 		lod_width_scale = 1.0f / s.lod_keep;
@@ -955,6 +1384,12 @@ void PhysXHair3D::_step(double p_delta) {
 		hair.radius = 0.5f * box.size.length();
 		s.root_width = root_width;
 		s.tip_width = tip_width;
+		if (card_mode && card_bake.is_valid() && card_bake->card_count > 0) {
+			// The maps from the cards' strands, each standing for its clump's strands side by side.
+			const float clump = float(card_first) / float(card_bake->card_count);
+			s.root_width *= clump;
+			s.tip_width *= clump;
+		}
 		if (hair.radius > 0.0f) {
 			if (DirectionalLight3D *light = _deep_shadow_light()) {
 				HairStrandSolver::Settings::DeepShadowLight dl = hair;
@@ -988,10 +1423,16 @@ void PhysXHair3D::_step(double p_delta) {
 				params.write[i] = Vector4(slots[i * 4], slots[i * 4 + 1], slots[i * 4 + 2], slots[i * 4 + 3]);
 			}
 			copy_material->set_shader_parameter("dom_slot", params);
+			if (card_material.is_valid()) {
+				card_material->set_shader_parameter("dom_slot", params);
+			}
 		}
 		if (maps != deep_shadow_on) {
 			deep_shadow_on = maps;
 			copy_material->set_shader_parameter("dom_maps", maps);
+			if (card_material.is_valid()) {
+				card_material->set_shader_parameter("dom_maps", maps);
+			}
 		}
 	}
 	solver->step(xform, p_delta, substeps, s);
@@ -1119,6 +1560,9 @@ void PhysXHair3D::_notification(int p_what) {
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (build_pending) {
 				_build();
+			}
+			if (built) {
+				_update_wetness(Engine::get_singleton()->is_editor_hint() ? 0.0 : get_process_delta_time());
 			}
 			if (built && solver != nullptr && simulating) {
 				_step(get_process_delta_time());
@@ -1631,6 +2075,85 @@ void PhysXHair3D::set_strand_collision_friction(float p_friction) {
 	strand_collision_friction = CLAMP(p_friction, 0.0f, 1.0f);
 }
 
+void PhysXHair3D::set_wetness(float p_wetness) {
+	wetness = CLAMP(p_wetness, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_wetness() const {
+	return wetness;
+}
+
+void PhysXHair3D::set_weather_wetting(bool p_enabled) {
+	weather_wetting = p_enabled;
+}
+
+bool PhysXHair3D::get_weather_wetting() const {
+	return weather_wetting;
+}
+
+void PhysXHair3D::set_water_capacity(float p_mm) {
+	water_capacity = MAX(p_mm, 0.01f);
+}
+
+float PhysXHair3D::get_water_capacity() const {
+	return water_capacity;
+}
+
+void PhysXHair3D::set_drying_time(float p_seconds) {
+	drying_time = MAX(p_seconds, 1.0f);
+}
+
+float PhysXHair3D::get_drying_time() const {
+	return drying_time;
+}
+
+void PhysXHair3D::set_wet_clumping(float p_clumping) {
+	wet_clumping = CLAMP(p_clumping, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_wet_clumping() const {
+	return wet_clumping;
+}
+
+void PhysXHair3D::set_cards_enabled(bool p_enabled) {
+	if (cards_enabled == p_enabled) {
+		return;
+	}
+	cards_enabled = p_enabled;
+	_queue_build();
+}
+
+bool PhysXHair3D::is_cards_enabled() const {
+	return cards_enabled;
+}
+
+void PhysXHair3D::set_card_count(int p_count) {
+	p_count = CLAMP(p_count, 1, 1024);
+	if (card_count == p_count) {
+		return;
+	}
+	card_count = p_count;
+	if (cards_enabled) {
+		_queue_build();
+	}
+}
+
+int PhysXHair3D::get_card_count() const {
+	return card_count;
+}
+
+void PhysXHair3D::set_card_distance(float p_distance) {
+	card_distance = MAX(p_distance, 0.0f);
+}
+
+float PhysXHair3D::get_card_distance() const {
+	return card_distance;
+}
+
+bool PhysXHair3D::is_drawing_cards() const {
+	return card_mode;
+}
+
 float PhysXHair3D::get_strand_collision_friction() const {
 	return strand_collision_friction;
 }
@@ -1732,6 +2255,23 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_strand_collision_radius"), &PhysXHair3D::get_strand_collision_radius);
 	ClassDB::bind_method(D_METHOD("set_strand_collision_friction", "friction"), &PhysXHair3D::set_strand_collision_friction);
 	ClassDB::bind_method(D_METHOD("get_strand_collision_friction"), &PhysXHair3D::get_strand_collision_friction);
+	ClassDB::bind_method(D_METHOD("set_wetness", "wetness"), &PhysXHair3D::set_wetness);
+	ClassDB::bind_method(D_METHOD("get_wetness"), &PhysXHair3D::get_wetness);
+	ClassDB::bind_method(D_METHOD("set_weather_wetting", "enabled"), &PhysXHair3D::set_weather_wetting);
+	ClassDB::bind_method(D_METHOD("get_weather_wetting"), &PhysXHair3D::get_weather_wetting);
+	ClassDB::bind_method(D_METHOD("set_water_capacity", "mm"), &PhysXHair3D::set_water_capacity);
+	ClassDB::bind_method(D_METHOD("get_water_capacity"), &PhysXHair3D::get_water_capacity);
+	ClassDB::bind_method(D_METHOD("set_drying_time", "seconds"), &PhysXHair3D::set_drying_time);
+	ClassDB::bind_method(D_METHOD("get_drying_time"), &PhysXHair3D::get_drying_time);
+	ClassDB::bind_method(D_METHOD("set_wet_clumping", "clumping"), &PhysXHair3D::set_wet_clumping);
+	ClassDB::bind_method(D_METHOD("get_wet_clumping"), &PhysXHair3D::get_wet_clumping);
+	ClassDB::bind_method(D_METHOD("set_cards_enabled", "enabled"), &PhysXHair3D::set_cards_enabled);
+	ClassDB::bind_method(D_METHOD("is_cards_enabled"), &PhysXHair3D::is_cards_enabled);
+	ClassDB::bind_method(D_METHOD("set_card_count", "count"), &PhysXHair3D::set_card_count);
+	ClassDB::bind_method(D_METHOD("get_card_count"), &PhysXHair3D::get_card_count);
+	ClassDB::bind_method(D_METHOD("set_card_distance", "distance"), &PhysXHair3D::set_card_distance);
+	ClassDB::bind_method(D_METHOD("get_card_distance"), &PhysXHair3D::get_card_distance);
+	ClassDB::bind_method(D_METHOD("is_drawing_cards"), &PhysXHair3D::is_drawing_cards);
 	ClassDB::bind_method(D_METHOD("set_collision_spheres", "spheres"), &PhysXHair3D::set_collision_spheres);
 	ClassDB::bind_method(D_METHOD("get_collision_spheres"), &PhysXHair3D::get_collision_spheres);
 	ClassDB::bind_method(D_METHOD("reset_simulation"), &PhysXHair3D::reset_simulation);
@@ -1786,4 +2326,14 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "strand_collision"), "set_strand_collision", "is_strand_collision");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strand_collision_radius", PROPERTY_HINT_RANGE, "0,0.01,0.0001,or_greater,suffix:m"), "set_strand_collision_radius", "get_strand_collision_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strand_collision_friction", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_strand_collision_friction", "get_strand_collision_friction");
+	ADD_GROUP("Cards", "card");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cards_enabled"), "set_cards_enabled", "is_cards_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "card_count", PROPERTY_HINT_RANGE, "1,1024,1"), "set_card_count", "get_card_count");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "card_distance", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m"), "set_card_distance", "get_card_distance");
+	ADD_GROUP("Wet", "");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness", "get_wetness");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wetting"), "set_weather_wetting", "get_weather_wetting");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_capacity", PROPERTY_HINT_RANGE, "0.1,5,0.1,or_greater,suffix:mm"), "set_water_capacity", "get_water_capacity");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drying_time", PROPERTY_HINT_RANGE, "60,14400,1,or_greater,suffix:s"), "set_drying_time", "get_drying_time");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_clumping", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wet_clumping", "get_wet_clumping");
 }

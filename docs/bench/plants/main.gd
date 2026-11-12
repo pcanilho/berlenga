@@ -18,7 +18,7 @@ extends Node3D
 #   --stand=S        give the litter and seedling presets the leaves of floor stand S (make_floor's FloorStand)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -161,8 +161,17 @@ func _ready() -> void:
 		cam.position = Vector3(0, 1.5, 1.7)
 		cam.look_at(Vector3(0, 0.15, 0))
 	elif close >= 0:
-		cam.position = Vector3(0, 0.42, 0.85)
-		cam.look_at(Vector3(0, 0.1, 0))
+		# Tall plants (meadow flowers, nettles): back off to the tallest of the three.
+		var h := 0.0
+		for ch in get_children():
+			if ch is MeshInstance3D and ch.mesh:
+				h = maxf(h, (ch as MeshInstance3D).get_aabb().end.y)
+		if h > 0.45:
+			cam.position = Vector3(0, h * 0.75, h * 1.55)
+			cam.look_at(Vector3(0, h * 0.42, 0))
+		else:
+			cam.position = Vector3(0, 0.42, 0.85)
+			cam.look_at(Vector3(0, 0.1, 0))
 	else:
 		cam.position = Vector3(2.2, 2.3, 5.9)
 		cam.look_at(Vector3(2.2, 0.1, 1.8))

@@ -77,6 +77,7 @@ public:
 	int slot_points = 0; // > 0: the output is in draw order, this many texels per strand
 	int sort_size = 1;
 	bool needs_reset = true;
+	bool sorted = false; // the draw order has been sorted once since the build (cards have their slots)
 
 	void rt_compile(Ref<HairStrandSolverGPU> p_self);
 	void rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_strands, PackedFloat32Array p_follow, int p_slot_points, PackedInt32Array p_render_points, PackedFloat32Array p_vol_rest, int p_vol_cells);
@@ -84,6 +85,7 @@ public:
 	void rt_make_uniform_set();
 	void rt_reset(Ref<HairStrandSolverGPU> p_self);
 	void rt_hold(Ref<HairStrandSolverGPU> p_self);
+	void rt_drop_history(Ref<HairStrandSolverGPU> p_self);
 	void rt_free_buffers();
 	void rt_free(Ref<HairStrandSolverGPU> p_self);
 
@@ -131,6 +133,13 @@ public:
 		float volume_stiffness = 1.0f; // push out of hair packed denser than the groom
 		float collision_radius = 0.0f; // strand-strand collision between guides: half the distance kept (m); 0: off
 		float collision_friction = 0.3f; // share of the sliding between touching guides taken off
+		float wet = 0.0f; // 0 dry .. 1 soaked: heavier, softer, flatter (Ward et al. 2004)
+		float wet_clumping = 0.0f; // how far wet followers gather onto their guides (0..1)
+		// Hair cards: the strands from card_first on are the cards' (followers drawn by the card
+		// mesh); 0: none. cards_only: only the guides and the card strands run (no other
+		// followers, no draw-order sort after the first, only the cards' slots written).
+		int card_first = 0;
+		bool cards_only = false;
 		// Deep opacity maps (Yuksel and Keyser 2008), one per light, up to DOM_SLOTS; none: off.
 		struct DeepShadowLight {
 			Vector3 center; // world, the hair's bounding sphere
@@ -160,6 +169,9 @@ public:
 	// The hair stops moving (the simulation is paused): last frame's positions become this
 	// frame's, so the motion vectors fall to zero.
 	void hold();
+	// The next frame writes no motion (its previous positions are its own): after the strands
+	// were not drawn for a while (hair cards), so stale history gives no false motion.
+	void drop_history();
 
 	RID get_position_texture_rd_rid() const;
 	RID get_previous_position_texture_rd_rid() const;

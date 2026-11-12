@@ -80,7 +80,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 spheres[MAX_SPHERES]; // world centre, radius
 	vec4 sdf_origin; // xyz the grid's corner (world), w the cell size (m)
 	ivec4 sdf_dims; // xyz cells, w triangles (0: no collision body)
-	vec4 sdf_misc; // x unused, y collision margin (m)
+	vec4 sdf_misc; // x the distance field's band, y collision margin (m), z wet clumping (0..1), w hair cards: the strands before the card strands (negative: cards only), 0 none
 	vec4 vol_origin; // xyz the volume grid's corner (groom space), w its cell (m)
 	vec4 vol_misc; // x friction (per substep), y pressure stiffness (m^2/s^2), z mean groom density, w cells a side (0: off)
 	vec4 dom_misc; // deep opacity maps: x cells a side, y the strands' root width (m), z their tip width (m), w maps (0: off)
@@ -194,6 +194,20 @@ float hash11(float x) {
 }
 
 // A fixed random rank in 0..1 per strand (PCG hash), for the LOD subset.
+// Hair cards (sdf_misc.w): strands from card_first() on are the cards' own strands, simulated as
+// followers and drawn by the card mesh only. Cards only (negative): the other followers are idle.
+int card_first() {
+	return int(abs(sdf_misc.w) + 0.5);
+}
+
+bool is_card_strand(int s) {
+	return sdf_misc.w != 0.0 && s >= card_first();
+}
+
+bool skipped_by_cards(int s) {
+	return sdf_misc.w < 0.0 && s < card_first() && follow[s * 2].w >= 0.0;
+}
+
 float strand_rank(int s) {
 	uint v = uint(s) * 747796405u + 2891336453u;
 	uint w = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
@@ -416,20 +430,29 @@ void dom_strand(int s, int p_slot, bool accumulate) {
 		float along = (float(i) + 0.5) / float(max(count - 1, 1));
 		float width = mix(dom_misc.y, dom_misc.z, along);
 		float coverage = width * (across / float(samples)) / (cell * cell);
+		// A hair card's strand stands for its whole clump (width is the clump's): its coverage is
+		// spread over a square as wide as the clump, as the clump's own strands would lie, not
+		// heaped in one cell (which would let light through the gaps beside it).
+		int spread = is_card_strand(s) ? clamp(int(0.5 * width / cell), 0, 4) : 0;
+		float share = coverage / float((2 * spread + 1) * (2 * spread + 1));
 		for (int k = 0; k < samples; k++) {
 			vec3 m = dom_map(mix(a, b, (float(k) + 0.5) / float(samples)));
-			ivec2 cc = ivec2(floor(m.xy + 0.5));
-			if (any(lessThan(cc, ivec2(0))) || any(greaterThanEqual(cc, ivec2(n)))) {
-				continue;
+			for (int dy = -spread; dy <= spread; dy++) {
+				for (int dx = -spread; dx <= spread; dx++) {
+					ivec2 cc = ivec2(floor(m.xy + 0.5)) + ivec2(dx, dy);
+					if (any(lessThan(cc, ivec2(0))) || any(greaterThanEqual(cc, ivec2(n)))) {
+						continue;
+					}
+					int ci = cc.y * n + cc.x;
+					if (!accumulate) {
+						atomicMin(dom_depth[p_slot * cells * 2 + ci], floatBitsToUint(m.z));
+						continue;
+					}
+					float rel = m.z - uintBitsToFloat(dom_depth[p_slot * cells * 2 + ci]);
+					int layer = rel < dom_layers.x ? 0 : (rel < dom_layers.y ? 1 : 2);
+					atomicAdd(dom_accum[(p_slot * cells + ci) * 3 + layer], int(share * DOM_SCALE + 0.5));
+				}
 			}
-			int ci = cc.y * n + cc.x;
-			if (!accumulate) {
-				atomicMin(dom_depth[p_slot * cells * 2 + ci], floatBitsToUint(m.z));
-				continue;
-			}
-			float rel = m.z - uintBitsToFloat(dom_depth[p_slot * cells * 2 + ci]);
-			int layer = rel < dom_layers.x ? 0 : (rel < dom_layers.y ? 1 : 2);
-			atomicAdd(dom_accum[(p_slot * cells + ci) * 3 + layer], int(coverage * DOM_SCALE + 0.5));
 		}
 	}
 }
@@ -457,7 +480,8 @@ void main() {
 				dom_accum[(slot * cells + id) * 3 + 2] = 0;
 			}
 		} else if (pass.mode == MODE_DOM_FRONT || pass.mode == MODE_DOM_ACCUM) {
-			if (id < counts.x) {
+			// The cards' strands make the maps while the hair is drawn as cards, the others otherwise.
+			if (id < counts.x && (sdf_misc.w < 0.0) == is_card_strand(id)) {
 				dom_strand(id, slot, pass.mode == MODE_DOM_ACCUM);
 			}
 		} else if (pass.mode == MODE_DOM_OPAQUE) {
@@ -758,7 +782,7 @@ void main() {
 		// One thread per strand (followers too, after MODE_FOLLOW), past the two pinned points:
 		// a point closer than the margin is pushed out along the gradient and stops there, as on
 		// the collision spheres (TressFX CollideHairVerticesWithSdf).
-		if (id >= counts.x) {
+		if (id >= counts.x || skipped_by_cards(id)) {
 			return;
 		}
 		int first = strands[id].x;
@@ -794,7 +818,10 @@ void main() {
 			return;
 		}
 		float key = 3.0e38; // padding sorts last
-		if (id < counts.x && strands[id].y > 0) {
+		if (is_card_strand(id) && id < counts.x) {
+			// Hair cards' strands sort first, in their own order, so card c always has slot c.
+			key = -1.0e30 + float(id - card_first()) * 1.0e24;
+		} else if (id < counts.x && strands[id].y > 0) {
 			vec3 mid = pos[strands[id].x + strands[id].y / 2].xyz;
 			key = (world_to_view * vec4(mid, 1.0)).z; // more negative is farther
 		}
@@ -848,7 +875,9 @@ void main() {
 		// Distance LOD (TressFX): a fixed random subset of the strands is left out of the raster
 		// draw, flagged by along + 2; the render shader widens the rest to keep the hair's opacity.
 		// The path tracer still draws every strand at its real width.
-		if (along >= 0.0 && strand_rank(strand) >= air.w) {
+		if (along >= 0.0 && is_card_strand(strand)) {
+			along += 4.0; // a hair card's strand (4..5): drawn by the card mesh, not as a strand
+		} else if (along >= 0.0 && strand_rank(strand) >= air.w) {
 			along += 2.0;
 		}
 		vec3 o = to_world(world_to_out, pos[sp].xyz);
@@ -892,13 +921,20 @@ void main() {
 		// groomed self carried by its nearest guides: each guide's point at the same share of its
 		// length, plus the groomed offset from it turned with the guide's segment. The strands move
 		// in clumps and keep their own curl.
-		if (is_guide) {
+		if (is_guide || skipped_by_cards(id)) {
 			return;
 		}
 		vec4 gi = follow[id * 2];
 		vec4 gw = follow[id * 2 + 1];
+		// Wet hair clumps: the water between neighbouring fibres pulls them together where their
+		// free length beats their bending stiffness (elastocapillary coalescence, Bico et al. 2004),
+		// so the clumps close from a little past the root out to the tips. Each follower's groomed
+		// offset from its guides shrinks by the clumping (Gupta and Magnenat-Thalmann 2007 pull the
+		// child strands to their guides the same way).
+		float clump = sdf_misc.z;
 		for (int i = 0; i < n; i++) {
 			float t = float(i) / float(max(n - 1, 1));
+			float keep = 1.0 - clump * smoothstep(0.0, 0.3, t);
 			vec3 own = to_world(m, rest[first + i].xyz);
 			vec3 p = vec3(0.0);
 			for (int c = 0; c < 3; c++) {
@@ -918,7 +954,7 @@ void main() {
 				vec3 gr = to_world(m, mix(rest[gf + i0].xyz, rest[gf + i1].xyz, f));
 				vec3 d_cur = pos[gf + i1].xyz - pos[gf + s0].xyz;
 				vec3 d_rest = basis * (rest[gf + i1].xyz - rest[gf + s0].xyz);
-				vec3 off = own - gr;
+				vec3 off = (own - gr) * keep;
 				if (dot(d_cur, d_cur) > 1e-14 && dot(d_rest, d_rest) > 1e-14) {
 					off = rotate_between(normalize(d_rest), normalize(d_cur), off);
 				}

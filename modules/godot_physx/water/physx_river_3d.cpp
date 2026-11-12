@@ -248,8 +248,13 @@ void fragment() {
 	float lace = lace_a * w + lace_b * (1.0 - w);
 	// Foam caught along the waterline, broken into lace.
 	float edge_band = edge_foam * (1.0 - smoothstep(0.0, 0.12, depth)) * smoothstep(-0.01, 0.02, depth);
-	float foam = clamp(max(max(v_info.g, live_foam), edge_band) * (1.0 + foam_breakup) - lace * foam_breakup, 0.0, 1.0);
+	// Capped below 1 so the lace always opens: at full strength the white water would cover whole sections of
+	// the ribbon as solid blocks with straight ends.
+	float foam = clamp(min(max(max(v_info.g, live_foam), edge_band), 0.85) * (1.0 + foam_breakup) - lace * foam_breakup, 0.0, 1.0);
 	foam = foam * foam * (3.0 - 2.0 * foam);
+	// The ribbon's own sides (where water spread over flat ground reaches them) and its fade into the water at the
+	// mouth, broken by the bank's relief, so neither shows as a ruler-straight edge.
+	float bank_fade = smoothstep(0.0, 0.7, v_info.b * 1.6 - 0.45 + (relief - 0.5) * 0.9);
 
 #if defined(RT)
 	NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
@@ -263,7 +268,7 @@ void fragment() {
 	SCATTERING = pathtraced_scattering;
 	SCATTERING_ANISOTROPY = pathtraced_scattering_anisotropy;
 	// Gone past the waterline and the banks' fade, as in raster.
-	ALPHA = smoothstep(0.0, max(edge_softness, 1e-3), depth) * v_info.b;
+	ALPHA = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 #else
 	// Open water keeps PhysXWaterSurface3D's raster look: its own colour with a
@@ -277,7 +282,7 @@ void fragment() {
 	float deep = smoothstep(0.0, 1.2, depth);
 	vec3 base_rgb = mix(shallow_color.rgb, water_color.rgb, deep) * mix(0.75, 1.15, ndotl) * water_raster_body_light();
 	float base_a = mix(shallow_color.a, water_color.a, deep);
-	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * v_info.b;
+	float edge = smoothstep(0.0, max(edge_softness, 1e-3), depth) * bank_fade;
 	float a0 = mix(base_a, foam_color.a, foam) * edge;
 	// The reflection term is linear in the colour, so the water's part and the
 	// foam's part split exactly: what was one unshaded colour is now emission
@@ -2020,7 +2025,12 @@ void PhysXRiver3D::_build_mesh() {
 			const Vector3 v = tangent * sec.speed_at[j] + sec.side * sec.across_at[j];
 			uv2s.set(k, Vector2(v.x, v.z));
 			const float foam = sec.foam_at[j] * sec.mouth_fade;
-			const float width_fade = (1.0f - CLAMP((Math::abs(n) - 0.5f * sec.width) / MAX(bank_margin, 1e-3f), 0.0f, 1.0f)) * sec.mouth_fade;
+			// Where the water still stands at the ribbon's outer sample (spread over flat ground wider than the
+			// channel, as onto a beach), the ribbon would cut it off along a straight line: fade it out over the
+			// outer third instead, and the shader breaks that fade up with the bank's relief.
+			const bool spills = sec.depth[n < 0.0f ? 0 : m] > 0.0f;
+			const float fade_from = spills ? 0.65f * half : 0.5f * sec.width;
+			const float width_fade = (1.0f - CLAMP((Math::abs(n) - fade_from) / MAX(half - fade_from, 1e-3f), 0.0f, 1.0f)) * sec.mouth_fade;
 			colors.set(k, Color(CLAMP((sec.depth[j] + 1.0f) * 0.25f, 0.0f, 1.0f), foam, width_fade, 1.0f));
 		}
 	}

@@ -13,8 +13,10 @@
 - `scree_age`: rock walls shed scree for that many years into aprons and cones at their feet, kept out of lakes and river floors.
 - `glacial_coarse_cell`: the ice ages between river steps can run on a coarser ice grid, about three times faster (the terrain is similar, not the same).
 - `ice_worn_detail`: rock the last glaciers wore keeps smooth faces toward the ice flow, stepped faces away from it, and fine striations (`terrain_ice_flow` global).
+- Scree from `scree_age` and moraine till from `moraine_age` show in the ground: scree as bare blocks, till as soil with stones through it (geology talus channel, negative for till).
 - `meander_age`: rivers on flat alluvial floors meander for that many years (Howard-Knutson bank migration, neck and chute cutoffs, oxbows that silt up), cut into the full-resolution ground with the river water following the bends (`get_last_meander_count()`, `get_last_oxbow_count()`).
 ### Fixed
+- Below a meandered reach the river's routed course is cut to the channel's bed all the way to its mouth (through the beach berm), so the water no longer thins over a bank at the reach's foot or stops short of the sea.
 - `get_waterfalls()`: the brink moves to the channel when the river's cell sits on a slot's edge, the lip spans the wetted width only, and falls under a lake or the sea, or under the minimum height once on the channel, are left out.
 - Abandoned one-cell river slots on fans are backfilled (`fan_backfill`, on).
 - Detail no longer fades on faces steeper than loose fill can stand, however much sediment the cells around them hold.

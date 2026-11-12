@@ -125,6 +125,9 @@
 		<member name="cover_grass" type="NodePath" setter="set_cover_grass" getter="get_cover_grass" default="NodePath(&quot;&quot;)">
 			A [GrassField3D] whose rules and far colour ([method GrassField3D.get_far_color]) are the cover map's bottom layer.
 		</member>
+		<member name="cover_grass_layers" type="NodePath[]" setter="set_cover_grass_layers" getter="get_cover_grass_layers" default="[]">
+			More [GrassField3D] layers under [member cover_grass] for the cover map, top down: an undercoat that fills the gaps between patches of tall grass. Each layer's share is its rules' suitability over what the layers above leave, in its own [method GrassField3D.get_far_color]; without them the gaps read as bare ground from afar.
+		</member>
 		<member name="cover_map_enabled" type="bool" setter="set_cover_map_enabled" getter="is_cover_map_enabled" default="false">
 			Builds the plant cover seen from far above over the whole [member data_map] and publishes it as the [code]terrain_cover_map[/code] (RGBA8: sRGB cover colour, alpha the share of ground hidden) and [code]terrain_cover_rect[/code] globals, which [TerrainMaterial3D]'s far blend reads. It comes from the species' rules, not the placed plants, so it covers the map while only the camera's surroundings are placed ([member streaming]): crowns from above (the share each canopy species shades over its own placement pattern at its local density, spread by the crown radius), the plants with a [member PlantSpecies.far_color] under them by the shade and stand type those crowns give, and the [member cover_grass] under those. Built on worker threads on [method populate] or when streaming starts (about 70 ms for a square kilometre of oak wood at 4 m).
 		</member>
