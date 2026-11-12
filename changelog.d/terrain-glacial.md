@@ -14,6 +14,7 @@
 - `glacial_coarse_cell`: the ice ages between river steps can run on a coarser ice grid, about three times faster (the terrain is similar, not the same).
 - `ice_worn_detail`: rock the last glaciers wore keeps smooth faces toward the ice flow, stepped faces away from it, and fine striations (`terrain_ice_flow` global).
 - Scree from `scree_age` and moraine till from `moraine_age` show in the ground: scree as bare blocks, till as soil with stones through it (geology talus channel, negative for till).
+- TerrainMaterial3D `rock_detail_enabled`, `rock_detail_scale`: steep rock gets bedding planes and staggered joints, scree and till get loose stones, from world-space noise (no textures, no stretching on any face), faded out with distance.
 - `meander_age`: rivers on flat alluvial floors meander for that many years (Howard-Knutson bank migration, neck and chute cutoffs, oxbows that silt up), cut into the full-resolution ground with the river water following the bends (`get_last_meander_count()`, `get_last_oxbow_count()`).
 ### Fixed
 - Below a meandered reach the river's routed course is cut to the channel's bed all the way to its mouth (through the beach berm), so the water no longer thins over a bank at the reach's foot or stops short of the sea.
