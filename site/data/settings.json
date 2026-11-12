@@ -1197,6 +1197,17 @@
    "topic": "Rivers, coasts and lakes"
   },
   {
+   "name": "Meandering rivers",
+   "settings": [
+    "meander_age"
+   ],
+   "note": "",
+   "what": "bends grow and migrate across flat valley floors; cut-off loops leave oxbows that silt up, and the river water follows the new course.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Rivers, coasts and lakes"
+  },
+  {
    "name": "Rivers fed by rain and snowmelt",
    "settings": [
     "climate_recipe",
@@ -1500,7 +1511,7 @@
     "GrassField3D"
    ],
    "note": "",
-   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind and darken in rain; path traced.",
+   "what": "blades grow round the camera in clumps, follow `TerrainDataMap3D` rules, thin with distance, bend in the `WeatherMap3D` wind (each blade answers gusts at its own frequency, about 2 Hz, and the sway rolls downwind as waves) and darken in rain; near tall grass at 120 blades per m²; the sward darkens inside from its leaf area (raster AO) and casts its blades' true shadow; path traced.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
