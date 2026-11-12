@@ -265,6 +265,14 @@ void GrassField3D::_ensure_resources() {
 		// Bent and scaled in the shader: bounds for the tallest blade bent any way.
 		const float h = MAX(blade_height.x, blade_height.y) * 1.1f;
 		blade_mesh->set_custom_aabb(AABB(Vector3(-h, -0.05f, -h), Vector3(2.0f * h, h + 0.1f, 2.0f * h)));
+		// The path tracer merges a MultiMesh into one BLAS only under a triangle cap; above it every
+		// blade becomes its own TLAS record, far slower to build and trace (grass.md, stage 3).
+		const int tris = 2 * (blade_segments - 1) + 1;
+		const int cap = int(GLOBAL_GET("rendering/pathtracing/multimesh_merged_blas_max_triangles"));
+		const float tile_tris = density * tile_size * tile_size * tris;
+		if (cap > 0 && tile_tris > cap) {
+			WARN_PRINT(vformat("GrassField3D \"%s\": a full tile holds about %d triangles, over the path tracer's merged BLAS cap (%d); lower tile_size to %.1f m or less.", get_name(), int(tile_tris), cap, Math::sqrt(float(cap) / (density * tris))));
+		}
 	}
 	if (material.is_null()) {
 		_build_material();
