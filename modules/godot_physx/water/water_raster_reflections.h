@@ -46,12 +46,14 @@ class DirectionalLight3D;
 // water gathers its glints into a glitter path instead of flickering. The materials stay unshaded and
 // blended: water_raster_reflect() adds what the surface reflects and lets through only the rest.
 //
-// WATER_RASTER_REFLECTIONS_GLSL goes in a shader's global scope (uniforms + the function). Call from
+// WATER_RASTER_REFLECTIONS_GLSL goes in a shader's global scope (uniforms + the function). It is a plain
+// constant, not a macro: a raw string spanning lines inside #define is not portable (GCC 11 rejects it).
+// Call from
 // fragment():
 //   vec4 r = water_raster_reflect(ALBEDO, ALPHA, world_normal, world_position, CAMERA_POSITION_WORLD, surface, roughness);
 //   ALBEDO = r.rgb; ALPHA = r.a;
 // where surface (0..1) is how much of the pixel is open water (0 on foam, past the waterline).
-#define WATER_RASTER_REFLECTIONS_GLSL R"(
+inline constexpr const char *WATER_RASTER_REFLECTIONS_GLSL = R"(
 uniform bool raster_reflections = true;
 uniform sampler2D raster_sky_panorama : filter_linear, repeat_enable, hint_default_black;
 uniform float raster_sky_energy = 0.0; // 0 = no sky baked (then no sky term)
@@ -111,7 +113,7 @@ vec4 water_raster_reflect(vec3 p_albedo, float p_alpha, vec3 p_normal, vec3 p_wo
 	float a_new = 1.0 - (1.0 - p_alpha) * (1.0 - f_eff);
 	return vec4((p_albedo * p_alpha * (1.0 - f_eff) + add) / max(a_new, 1e-4), a_new);
 }
-)"
+)";
 
 // The CPU side: finds the sun and bakes the sky panorama, and sets the uniforms above on a material.
 // Call update() once a frame.
