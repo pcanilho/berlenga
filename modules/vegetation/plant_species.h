@@ -65,6 +65,13 @@ public:
 		RULE_LITTER, // Leaf fall from the placed canopy, 0 none to 1 under closed crowns, drifting past the crowns (VegetationField3D).
 		RULE_MAX,
 	};
+	// How the species meets fallen wood placed in the field (meshes with tree_deadwood_axis).
+	enum DeadwoodRule {
+		DEADWOOD_AVOID, // Kept off a log's footprint.
+		DEADWOOD_ON, // Only on the upper surface of logs at least deadwood_min_radius thick.
+		DEADWOOD_BESIDE, // Only within deadwood_band of a log's side.
+		DEADWOOD_IGNORE,
+	};
 
 private:
 	TypedArray<Mesh> meshes;
@@ -102,6 +109,10 @@ private:
 	bool canopy_conifer = false; // The crown drops needles, not leaves: picks the floor under it.
 	Vector2 ranges[RULE_MAX];
 	float fades[RULE_MAX] = {};
+	DeadwoodRule deadwood_rule = DEADWOOD_AVOID;
+	float deadwood_band = 0.6f; // Metres from the log's side (DEADWOOD_BESIDE).
+	float deadwood_min_radius = 0.08f; // The thinnest log it grows on (DEADWOOD_ON), metres.
+	bool deadwood_uphill = false; // DEADWOOD_BESIDE on the uphill side only (trapped leaves).
 
 protected:
 	static void _bind_methods();
@@ -159,6 +170,15 @@ public:
 	void set_floating(bool p_floating);
 	bool is_floating() const { return floating; }
 
+	void set_deadwood_rule(DeadwoodRule p_rule) { deadwood_rule = p_rule; }
+	DeadwoodRule get_deadwood_rule() const { return deadwood_rule; }
+	void set_deadwood_band(float p_band) { deadwood_band = MAX(p_band, 0.01f); }
+	float get_deadwood_band() const { return deadwood_band; }
+	void set_deadwood_min_radius(float p_radius) { deadwood_min_radius = MAX(p_radius, 0.0f); }
+	float get_deadwood_min_radius() const { return deadwood_min_radius; }
+	void set_deadwood_uphill(bool p_uphill) { deadwood_uphill = p_uphill; }
+	bool is_deadwood_uphill() const { return deadwood_uphill; }
+
 	void set_rule_range(Rule p_rule, const Vector2 &p_range);
 	Vector2 get_rule_range(Rule p_rule) const;
 	void set_rule_fade(Rule p_rule, float p_fade);
@@ -174,6 +194,7 @@ public:
 };
 
 VARIANT_ENUM_CAST(PlantSpecies::Rule);
+VARIANT_ENUM_CAST(PlantSpecies::DeadwoodRule);
 
 // Plant species in priority order: earlier species are placed first and later ones keep clear
 // of their footprints (trees, then bushes, then ground cover).

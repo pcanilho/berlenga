@@ -230,6 +230,39 @@ hedgerow and (violet only) northern hardwood floors (Stace 2019; Ellenberg 1996)
 Checks: raster and path traced before/after at `--forest=in` (beech, oak, spruce) and the
 forest edge; counts per square metre against the figures above; triangles and placement cost.
 
+## Plants on and around fallen wood (research, step 6.6)
+
+What grows there, from the deadwood ecology literature:
+
+- **On the log.** Bryophytes colonise a fallen trunk by decay stage: on fresh bark only the
+  epiphytes it carried down; as bark loosens and the wood softens, mosses spread over the top and
+  upper sides and cover most of it by the middle decay classes (Soderstrom 1988 on spruce logs;
+  Odor et al. 2006 on beech deadwood across Europe), the underside and the soil contact staying
+  bare. Thick logs carry more and keep it longer (more surface, slower drying). Wood sorrel,
+  ferns and tree seedlings root on well-rotted logs: "nurse logs", where spruce and hemlock
+  seedlings stand in rows along the trunk (Harmon and Franklin 1989; Kuuluvainen and Kalmari
+  2003 in boreal spruce).
+- **Beside it.** The log shades a strip and keeps the soil under its sides moist, so ferns and
+  shade herbs follow its line; fallen leaves pile against its uphill side, where the slope's
+  litter creep stops (Orndorff and Lang 1981 measured litter trapped by obstacles on forest
+  slopes).
+- **Under it.** Nothing: the trunk lies on the ground. Grass and herbs placed through it were the
+  visible fault.
+
+As built: the trees module gives each deadwood mesh its axis (`tree_deadwood_axis`: start, end
+and radius in mesh space) and marks the species `deadwood`. VegetationField3D transforms the
+axes of the placed logs into a hash grid (its own and its canopy field's), and each species
+takes one deadwood rule (`PlantSpecies.deadwood_rule`):
+
+- `DEADWOOD_AVOID` (default): kept off the log's footprint (closer to the axis than its radius).
+- `DEADWOOD_ON`: only on logs at least `deadwood_min_radius` thick, set on the upper surface
+  (height and tilt from the cylinder), the upper two thirds of its width.
+- `DEADWOOD_BESIDE`: only within `deadwood_band` metres of the log's side, thinning out across
+  the band; `deadwood_uphill` keeps it to the uphill side (trapped leaves).
+- `DEADWOOD_IGNORE`: as before.
+
+Decay is not in the interface; log thickness stands for it (thin branches stay bare).
+
 ## References
 
 - Stace, *New Flora of the British Isles*, 4th ed., 2019.
@@ -253,3 +286,8 @@ forest edge; counts per square metre against the figures above; triangles and pl
 - Carrier, "Procedural World Generation of Far Cry 5", GDC 2018.
 - Glanville, "Texture Bombing", GPU Gems, 2004; Heitz and Neyret, "High-Performance By-Example
   Noise using a Histogram-Preserving Blending Operator", HPG 2018.
+- Soderstrom, "Sequence of bryophytes and lichens in relation to substrate variables of decaying coniferous wood in Northern Sweden", Nordic Journal of Botany 8, 1988.
+- Odor et al., "Diversity of dead wood inhabiting fungi and bryophytes in semi-natural beech forests in Europe", Biological Conservation 131, 2006.
+- Harmon and Franklin, "Tree seedlings on logs in Picea-Tsuga forests of Oregon and Washington", Ecology 70, 1989.
+- Kuuluvainen and Kalmari, "Regeneration microsites of Picea abies seedlings in a windthrow area of a boreal old-growth forest", Annales Botanici Fennici 40, 2003.
+- Orndorff and Lang, "Leaf litter redistribution in a West Virginia hardwood forest", Journal of Ecology 69, 1981.

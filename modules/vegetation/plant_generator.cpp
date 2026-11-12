@@ -4450,6 +4450,9 @@ struct FloorSpec {
 	float conifer_min, conifer_max; // 0..1: any stand.
 	float visibility;
 	float water_max = 0.0f; // > 0: within this distance of water (riparian).
+	PlantSpecies::DeadwoodRule deadwood = PlantSpecies::DEADWOOD_AVOID;
+	float deadwood_size = 0.0f; // DEADWOOD_ON: the thinnest log (radius, m); DEADWOOD_BESIDE: the band (m).
+	bool uphill = false; // DEADWOOD_BESIDE: the uphill side only.
 };
 } // namespace
 
@@ -4737,10 +4740,39 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 	const float layers = decay.layers * Math::exp(-decay.k * since_fall) / (1.0f - Math::exp(-decay.k));
 	const float leaf_cover = 1.0f - Math::exp(-layers);
 
+	// On and beside fallen wood (docs/ideas/forest-floor.md, 6.6), after the floor's own species
+	// (their indices stay put; the floor already keeps off the logs): moss over the upper side of any log, wood sorrel and seedlings rooted on thick
+	// rotting ones (nurse logs), ferns along the side, leaves banked against the uphill side under
+	// broadleaves. Nothing grows until the trees module places logs.
+	if (!set.is_empty()) {
+		FloorSpec log_moss = { P::PRESET_MOSS, 0.16f, 0.0f, 0.95f, 0.6f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.15f, 0.0f, 1.0f, 15.0f };
+		log_moss.deadwood = PlantSpecies::DEADWOOD_ON;
+		log_moss.deadwood_size = 0.05f;
+		FloorSpec log_sorrel = { P::PRESET_WOOD_SORREL, 0.3f, 0.0f, 0.45f, 0.7f, 1.0f, 0.0f, 0.0f, 0.2f, 1.0f, 0.15f, 0.0f, 1.0f, 18.0f };
+		log_sorrel.deadwood = PlantSpecies::DEADWOOD_ON;
+		log_sorrel.deadwood_size = 0.15f;
+		FloorSpec log_seedling = { P::PRESET_SEEDLING, 0.45f, 0.0f, 0.35f, 0.7f, 1.1f, 0.0f, 0.0f, 0.0f, 0.97f, 0.1f, 0.0f, 1.0f, 30.0f };
+		log_seedling.deadwood = PlantSpecies::DEADWOOD_ON;
+		log_seedling.deadwood_size = 0.2f;
+		FloorSpec log_fern = { P::PRESET_FERN, 0.8f, 0.15f, 0.7f, 1.0f, 1.6f, 0.0f, 0.0f, 0.3f, 1.0f, 0.15f, 0.0f, 1.0f, 35.0f };
+		log_fern.deadwood = PlantSpecies::DEADWOOD_BESIDE;
+		log_fern.deadwood_size = 0.7f;
+		FloorSpec log_leaves = { P::PRESET_LEAF_LITTER, 0.22f, 0.0f, 0.9f, 1.0f, 1.4f, 0.0f, 0.0f, 0.0f, 1.0f, 0.15f, 0.0f, 0.6f, 15.0f };
+		log_leaves.deadwood = PlantSpecies::DEADWOOD_BESIDE;
+		log_leaves.deadwood_size = 0.35f;
+		log_leaves.uphill = true;
+		const bool broadleaf = p_stand != FLOOR_PINE_HEATH && p_stand != FLOOR_SUBALPINE && p_stand != FLOOR_PINE_HEMLOCK && p_stand != FLOOR_MONTANE_CONIFER;
+		for (const FloorSpec &f : { log_moss, log_sorrel, log_seedling, log_fern }) {
+			set.push_back(f);
+		}
+		if (broadleaf) {
+			set.push_back(log_leaves);
+		}
+	}
 	TypedArray<Resource> out;
 	int seed_base = 1000 + int(p_stand) * 100;
 	for (FloorSpec f : set) {
-		if (f.preset == P::PRESET_LEAF_LITTER) {
+		if (f.preset == P::PRESET_LEAF_LITTER && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
 			f.density = CLAMP(0.9f * leaf_cover, 0.1f, 0.9f);
 		}
 		Ref<PlantGenerator> gen;
@@ -4783,7 +4815,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 			sp->set_rule_fade(PlantSpecies::RULE_WATER_DISTANCE, f.water_max * 0.3f);
 		}
 		sp->set_visibility_range(f.visibility);
-		if (f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_TWIGS) {
+		if ((f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_TWIGS) && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
 			// Litter lies where the crowns drop it, drifting past their edges into the light
 			// (PlantSpecies.RULE_LITTER), not only in their shade. Twigs fall nearer the trunk.
 			sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, 1.0f));
@@ -4806,6 +4838,17 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		// range (raster only; docs/ideas/vegetation-lod-streaming.md).
 		if (p_impostor_range > 0.0f && (f.preset == P::PRESET_BRAMBLE || f.preset == P::PRESET_BRACKEN)) {
 			add_impostors(sp, p_impostor_range);
+		}
+		if (f.deadwood != PlantSpecies::DEADWOOD_AVOID) {
+			sp->set_deadwood_rule(f.deadwood);
+			if (f.deadwood == PlantSpecies::DEADWOOD_ON) {
+				sp->set_deadwood_min_radius(f.deadwood_size);
+				sp->set_align_to_ground(1.0f); // Set on the log's curved upper side.
+			} else {
+				sp->set_deadwood_band(f.deadwood_size);
+				sp->set_deadwood_uphill(f.uphill);
+			}
+			sp->set_far_color(Color(0, 0, 0, 0)); // Too few to colour the far ground.
 		}
 		sp->set_meta("floor", true);
 		out.push_back(sp);
@@ -4841,7 +4884,7 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("generate_variants", "count"), &PlantGenerator::generate_variants);
 	ClassDB::bind_method(D_METHOD("apply_preset_colors"), &PlantGenerator::apply_preset_colors);
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Dandelion,Plantain,Clover,Fern,Sedge,Daisy,Buttercup,Nettle,Thistle,Yarrow,Dock,Cocksfoot,Timothy,Dry Grass,Leaf Litter,Moss,Bilberry,Bracken,Bramble,Foxglove,Reed,Cattail,Rush,Water Lily,Needle Litter,Twigs,Wood Sorrel,Seedling,Feather Moss,Woodruff,Wood Anemone,Ivy,Heather,Violet,Herb Robert"), "set_preset", "get_preset");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Dandelion,Plantain,Clover,Fern,Sedge,Daisy,Buttercup,Nettle,Thistle,Yarrow,Dock,Cocksfoot,Timothy,Dry Grass,Leaf Litter,Moss,Bilberry,Bracken,Bramble,Foxglove,Reed,Cattail,Rush,Water Lily,Needle Litter,Twigs,Wood Sorrel,Seedling,Feather Moss,Woodruff,Wood Anemone,Ivy,Heather,Violet,Herb Robert,Knapweed,Scabious,Wild Carrot,Sorrel"), "set_preset", "get_preset");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "size", PROPERTY_HINT_RANGE, "0.1,4,0.01"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");

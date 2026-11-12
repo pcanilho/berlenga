@@ -64,7 +64,27 @@ class VegetationField3D : public Node3D {
 		Vector2 xz;
 		float footprint = 0.0f;
 		int species = 0;
+		bool deadwood = false; // A log: plants on and beside it ignore its footprint.
 	};
+	// A placed log (a species marked "deadwood" whose meshes carry tree_deadwood_axis), in world space.
+	struct Deadwood {
+		Vector3 a, b;
+		float radius = 0.0f;
+	};
+	// The log nearest a point, as seen from above.
+	struct DeadwoodHit {
+		float side = 1e9f; // Metres from the log's side across the ground; negative under it.
+		float radius = 0.0f;
+		float top = 0.0f; // Height of the log's upper surface over the point (under it).
+		Vector3 normal = Vector3(0, 1, 0); // The surface's normal there.
+		Vector2 across; // Unit direction from the axis to the point, across the ground.
+	};
+	static constexpr float DEADWOOD_CELL = 4.0f;
+	LocalVector<Deadwood> deadwood;
+	HashMap<Vector2i, LocalVector<int>> deadwood_grid;
+	float deadwood_max_radius = 0.0f;
+	// The nearest log within reach of its side, this field's own (under crown_lock).
+	bool _deadwood_at(const Vector2 &p_xz, float p_reach, DeadwoodHit &r_hit) const;
 	// A placed crown that shades the ground under it.
 	struct Crown {
 		Vector2 xz;
@@ -118,6 +138,8 @@ class VegetationField3D : public Node3D {
 		float crown_max = 0.0f; // The largest crown radius it can place.
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
 		Color far_color; // Linear; alpha: how much ground it hides far away.
+		LocalVector<PackedFloat32Array> deadwood_axes; // Per variant: start, end, radius (mesh space); empty if not deadwood.
+		float deadwood_reach = 0.0f; // How far its logs reach from the plant's origin (times its largest scale); 0: not deadwood.
 	};
 	struct PlaceSetup {
 		LocalVector<PlaceSpecies> species;
@@ -136,6 +158,7 @@ class VegetationField3D : public Node3D {
 		float sun_mean = 0.0f; // VegetationLight::sun_mean().
 		Vector2 litter_skew; // crown_litter()'s downwind lean.
 		float litter_reach = 0.0f; // How far past a crown its litter can land.
+		float deadwood_reach = 0.0f; // The widest a log reaches from its origin plus the widest deadwood band of a species.
 	};
 	struct FarAdd {
 		Vector2 xz;
@@ -153,8 +176,10 @@ class VegetationField3D : public Node3D {
 		LocalVector<Species> species;
 		LocalVector<Crown> crowns;
 		LocalVector<FarAdd> far;
+		LocalVector<Deadwood> deadwood;
 		int count = 0;
 	};
+	void _publish_deadwood(const LocalVector<const LocalVector<Deadwood> *> &p_lists);
 	bool _make_setup(PlaceSetup &r_setup);
 	void _place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const;
 	void _commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes);
@@ -353,6 +378,8 @@ public:
 	int get_plant_count() const { return plant_count; }
 	double get_populate_time_msec() const { return populate_msec; }
 	PackedVector3Array get_placements(int p_species) const;
+	int get_deadwood_count() const;
+	Dictionary get_deadwood_at(const Vector3 &p_global_position, float p_reach = 0.0f) const;
 	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
 	float get_shade_at(const Vector3 &p_global_position) const;
 	float get_stand_shade_at(const Vector3 &p_global_position) const;
