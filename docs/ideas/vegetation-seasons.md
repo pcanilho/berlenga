@@ -77,11 +77,38 @@ rebuild), and the far colour is measured again when it moves by more than 0.05. 
 grass bench: a mild wet winter 1.0, a -7 C winter 0.03, a summer drought 0.0, a dry spell at a
 quarter of capacity 0.5.
 
+**Step 2, flowering.** `PlantGenerator.season` takes the season state; each flowering preset has
+a window in degree days (base 5 C, from 1 January): the British flowering months of the floras
+(Stace 2019) turned into the degree days of a lowland year (about 110 by the end of March, 415 by
+the end of May, 1055 by the end of July, 1665 by the end of September). Degree days rather than
+dates, because first flowering follows thermal time (Fitter and Fitter 2002), so a warm year, a
+warmer climate or a lower valley flowers earlier on its own. A population flowers as a spread of
+individual heads (Rathcke and Lacey 1985): each flowering stem draws its place in the window from
+a hash (not the generator's random stream, so a plant without a season is built as before). In a
+flush the stems open in turn over the first 55% of the window and flower for 45% of it; daisy,
+clover, yarrow and herb Robert keep opening heads, with a quarter in seed. After its flowers a
+stem goes to seed: dandelion clocks (beaks with pappus parachutes on a sphere), thistledown, a
+green ball of buttercup or anemone achenes, violet and wood sorrel capsules, herb Robert's beak,
+foxglove capsules filling the spike from the bottom as the bells open higher up, the wild carrot's
+nest. Tall flowers die back over about 400 degree days through the shader's dead-tissue term
+(vertex alpha: yellowing to brown, less light through) and stand through winter, a share of them
+into the next spring (60% in January, none by June). Short-lived seed heads go after their hold.
+`get_bloom_shares(preset, season)` gives the shares in leaf, flower and seed, for tests and for
+deciding when to generate a species again. Checks in the plants bench (`--test`): knapweed
+before its window all leaves, in August 59% in flower and 41% in seed, in autumn all in seed, in
+January 47% of last year's stalks; anemone in flower in April, done by July; daisy a quarter in
+seed in summer; every flowering preset builds through the year; a knapweed rosette in May (5 cm)
+and 75 cm in July. Not yet: spring plants (anemone) keep their leaves after flowering; their
+dying back belongs with the bracken and ferns (step 3), as the field's seasonal presence.
+
 ## References
 
 - Jolly, Nemani and Running, "A generalized, bioclimatic index to predict foliar phenology in response to climate", Global Change Biology 11, 2005.
 - Hufkens et al., "Productivity of North American grasslands is increased under future climate scenarios despite rising aridity", Nature Climate Change 6, 2016.
 - Fitter and Fitter, "Rapid changes in flowering time in British plants", Science 296, 2002.
+- Stace, "New Flora of the British Isles", 4th edition, C&M Floristics, 2019.
+- Rathcke and Lacey, "Phenological patterns of terrestrial plants", Annual Review of Ecology and Systematics 16, 1985.
+- Grime, Hodgson and Hunt, "Comparative Plant Ecology", 2nd edition, Castlepoint Press, 2007.
 - Delpierre et al., "Modelling interannual and spatial variability of leaf senescence for three deciduous tree species in France", Agricultural and Forest Meteorology 149, 2009.
 - Watt, "The ecological status of bracken", Botanical Journal of the Linnean Society 73, 1976.
 - Zhang et al., "Monitoring vegetation phenology using MODIS", Remote Sensing of Environment 84, 2003.

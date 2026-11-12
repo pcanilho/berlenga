@@ -203,7 +203,7 @@ private:
 	Transform3D _frame_at(const LocalVector<Transform3D> &p_frames, float p_s) const;
 	void _add_grass_tuft(int p_blades, float p_length_min, float p_length_max, float p_width_min, float p_width_max, float p_spread);
 	Transform3D _add_stem(const Transform3D &p_base, float p_length, float p_r0, float p_r1, float p_bend, int p_segments, float p_wind_base, Surface p_surface = SURFACE_STEM);
-	void _add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height);
+	void _add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height, const Color &p_tint = Color(1, 1, 1));
 	void _add_ray_flower(const Transform3D &p_top, float p_radius, int p_rays, const Leaf &p_petal);
 	void _add_vogel_head(const Transform3D &p_top, float p_radius, int p_florets, const Leaf &p_floret);
 	void _add_cup_flower(const Transform3D &p_top, float p_radius);
@@ -261,6 +261,38 @@ private:
 	float leaf_wear = 0.5f;
 	Array litter_leaves; // Leaf litter: the stand's fallen leaves (forms with share and colour); empty: generic.
 	uint32_t leaf_serial = 0; // Counts the leaves of a plant: their wear draws from it, not from rng.
+	// Flowering through the year (docs/ideas/vegetation-seasons.md, step 2): the season's degree days
+	// (forcing, base 5 C, from 1 January) and day; -1 without a season. Each flowering stem draws
+	// its own place in the population's flowering from bloom_serial, not from rng.
+	Dictionary season;
+	float bloom_forcing = -1.0f;
+	int bloom_day = 0;
+	uint32_t bloom_serial = 0;
+	enum Bloom {
+		BLOOM_NONE, // Not yet flowering (leaves only), or the seed head has gone.
+		BLOOM_FLOWER,
+		BLOOM_SEED,
+	};
+	struct Phenology {
+		float onset = 0.0f; // Degree days to the first flowers.
+		float end = 0.0f; // Degree days to the last.
+		float hold = -1.0f; // Degree days the seed heads stand after flowering; -1: through winter.
+		bool flush = true; // One flush (each head in turn); false: flowering on and off through the window.
+	};
+	static bool _phenology(Preset p_preset, Phenology &r_phenology);
+	static Bloom _bloom_stage(Preset p_preset, float p_forcing, int p_day, float p_u, float p_u2, float *r_progress, float *r_dead = nullptr);
+	// A flowering stem's stage. Without a season the builder's own draw decides (in seed or in flower).
+	// r_dead: how far a stem in seed has died back (0 green, 1 a standing dead stalk).
+	Bloom _bloom(bool p_mixed_seed = false, float *r_progress = nullptr, float *r_dead = nullptr);
+	// Everything added while it lives (a flowering stem, its leaves and heads) takes the colours of a
+	// dead stalk by p_dead, through the vertex colours.
+	struct Wither {
+		PlantGenerator *generator = nullptr;
+		float dead = 0.0f;
+		int from[SURFACE_MAX] = {};
+		Wither(PlantGenerator *p_generator, float p_dead);
+		~Wither();
+	};
 	HashMap<uint64_t, TextureSet> texture_cache;
 	LeafTexture _leaf_texture_spec(bool p_petal) const;
 	TextureSet _bake_leaf_texture(const LeafTexture &p_spec, uint32_t p_seed) const;
@@ -293,6 +325,9 @@ public:
 	void set_leaf_wear(float p_wear) { leaf_wear = CLAMP(p_wear, 0.0f, 1.0f); }
 	void set_litter_leaves(const Array &p_leaves) { litter_leaves = p_leaves; }
 	Array get_litter_leaves() const { return litter_leaves; }
+	void set_season(const Dictionary &p_season);
+	Dictionary get_season() const { return season; }
+	static Vector3 get_bloom_shares(Preset p_preset, const Dictionary &p_season);
 	float get_leaf_wear() const { return leaf_wear; }
 	int get_texture_size() const { return texture_size; }
 	Ref<ArrayMesh> generate();

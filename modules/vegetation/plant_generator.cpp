@@ -261,7 +261,7 @@ Transform3D PlantGenerator::_add_stem(const Transform3D &p_base, float p_length,
 	return Transform3D(f, p);
 }
 
-void PlantGenerator::_add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height) {
+void PlantGenerator::_add_head(Surface p_surface, const Transform3D &p_base, float p_radius, float p_height, const Color &p_tint) {
 	// A dome along the base's z: flower centres, clover heads, plantain spikes.
 	Builder &b = builders[p_surface];
 	const int rings = 4;
@@ -277,7 +277,7 @@ void PlantGenerator::_add_head(Surface p_surface, const Transform3D &p_base, flo
 			b.verts.push_back(p_base.origin + (f.get_column(0) * Math::cos(a) + f.get_column(1) * Math::sin(a)) * rad + f.get_column(2) * h);
 			b.uvs.push_back(Vector2(float(s) / sectors, u));
 			b.uv2s.push_back(Vector2(1.0f, 0.0f));
-			b.colors.push_back(Color(1, 1, 1));
+			b.colors.push_back(p_tint);
 		}
 	}
 	for (int r = 0; r < rings; r++) {
@@ -342,6 +342,188 @@ void PlantGenerator::_add_cup_flower(const Transform3D &p_top, float p_radius) {
 	_add_head(SURFACE_CENTRE, p_top, p_radius * 0.3f, p_radius * 0.25f);
 }
 
+// Flowering by thermal time (docs/ideas/vegetation-seasons.md, step 2). First flowering of herbs
+// follows the degree days above 5 C since 1 January (Fitter and Fitter 2002); the windows below are
+// the British flowering months of the floras (Stace 2019) turned into degree days of a lowland
+// year (about 110 by the end of March, 415 May, 1055 July, 1665 September). A population flowers
+// as a spread of individual heads (Rathcke and Lacey 1985): in a flush each head opens in turn
+// over the first 55% of the window and flowers for 45% of it; continuous flowerers keep opening
+// heads, a quarter of them in seed at any time.
+bool PlantGenerator::_phenology(Preset p_preset, Phenology &r_phenology) {
+	switch (p_preset) {
+		case PRESET_WOOD_ANEMONE:
+			r_phenology = { 70.0f, 330.0f, 60.0f, true }; // March to May; leaves gone by midsummer.
+			return true;
+		case PRESET_VIOLET:
+			r_phenology = { 80.0f, 380.0f, 100.0f, true };
+			return true;
+		case PRESET_DANDELION:
+			r_phenology = { 90.0f, 450.0f, 60.0f, true }; // The April flush; clocks blow within days.
+			return true;
+		case PRESET_DAISY:
+			r_phenology = { 90.0f, 1750.0f, 80.0f, false }; // March to October.
+			return true;
+		case PRESET_WOOD_SORREL:
+			r_phenology = { 130.0f, 420.0f, 80.0f, true };
+			return true;
+		case PRESET_WOODRUFF:
+			r_phenology = { 170.0f, 600.0f, 150.0f, true };
+			return true;
+		case PRESET_HERB_ROBERT:
+			r_phenology = { 170.0f, 1650.0f, 150.0f, false };
+			return true;
+		case PRESET_BUTTERCUP:
+			r_phenology = { 260.0f, 1050.0f, 200.0f, true };
+			return true;
+		case PRESET_SORREL:
+			r_phenology = { 300.0f, 750.0f, 500.0f, true }; // Rust-red panicles stand into late summer.
+			return true;
+		case PRESET_CLOVER:
+			r_phenology = { 450.0f, 1600.0f, 150.0f, false };
+			return true;
+		case PRESET_FOXGLOVE:
+			r_phenology = { 500.0f, 1300.0f, -1.0f, true };
+			return true;
+		case PRESET_YARROW:
+			r_phenology = { 500.0f, 1800.0f, -1.0f, false };
+			return true;
+		case PRESET_KNAPWEED:
+			r_phenology = { 550.0f, 1650.0f, -1.0f, true };
+			return true;
+		case PRESET_WILD_CARROT:
+			r_phenology = { 600.0f, 1700.0f, -1.0f, true }; // The "bird's nest" umbels stand all winter.
+			return true;
+		case PRESET_SCABIOUS:
+			r_phenology = { 750.0f, 1700.0f, -1.0f, true };
+			return true;
+		case PRESET_THISTLE:
+			r_phenology = { 800.0f, 1650.0f, -1.0f, true };
+			return true;
+		case PRESET_HEATHER:
+			r_phenology = { 1150.0f, 1700.0f, -1.0f, true }; // August and September; brown bells all winter.
+			return true;
+		default:
+			return false;
+	}
+}
+
+PlantGenerator::Bloom PlantGenerator::_bloom_stage(Preset p_preset, float p_forcing, int p_day, float p_u, float p_u2, float *r_progress, float *r_dead) {
+	if (r_progress) {
+		*r_progress = -1.0f;
+	}
+	float dead = 0.0f;
+	if (!r_dead) {
+		r_dead = &dead;
+	}
+	*r_dead = 0.0f;
+	Phenology ph;
+	if (!_phenology(p_preset, ph)) {
+		return BLOOM_FLOWER;
+	}
+	const float span = MAX(ph.end - ph.onset, 1.0f);
+	if (p_forcing < ph.onset) {
+		// Before this year's flowers: last year's seed stalks still standing early in the year, fewer
+		// as winter storms and snow flatten them, none by June.
+		if (ph.hold < 0.0f && p_day > 0 && p_day < 150 && p_u2 < 0.6f * (1.0f - float(p_day) / 150.0f)) {
+			*r_dead = 1.0f;
+			return BLOOM_SEED;
+		}
+		return BLOOM_NONE;
+	}
+	if (ph.flush) {
+		const float open = ph.onset + 0.55f * p_u * span;
+		const float shut = open + 0.45f * span;
+		if (p_forcing < open) {
+			return BLOOM_NONE;
+		}
+		if (p_forcing < shut) {
+			if (r_progress) {
+				*r_progress = (p_forcing - open) / (shut - open);
+			}
+			return BLOOM_FLOWER;
+		}
+		// Stems die back over some 400 degree days (four to six weeks) after their flowers.
+		*r_dead = CLAMP((p_forcing - shut) / 400.0f, 0.0f, 1.0f);
+		return (ph.hold < 0.0f || p_forcing - shut < ph.hold) ? BLOOM_SEED : BLOOM_NONE;
+	}
+	if (p_forcing < ph.onset + 0.1f * p_u * span) {
+		return BLOOM_NONE;
+	}
+	if (p_forcing <= ph.end) {
+		const float seed_share = 0.25f * MIN((p_forcing - ph.onset) / (0.2f * span), 1.0f);
+		if (r_progress) {
+			*r_progress = 0.5f;
+		}
+		return p_u2 < seed_share ? BLOOM_SEED : BLOOM_FLOWER;
+	}
+	*r_dead = CLAMP((p_forcing - ph.end) / 300.0f, 0.0f, 1.0f);
+	return (ph.hold < 0.0f || p_forcing - ph.end < ph.hold * (0.5f + p_u)) ? BLOOM_SEED : BLOOM_NONE;
+}
+
+PlantGenerator::Bloom PlantGenerator::_bloom(bool p_mixed_seed, float *r_progress, float *r_dead) {
+	const uint32_t h = hash_murmur3_one_32(bloom_serial++, hash_murmur3_one_32(uint32_t(seed) * 131u + uint32_t(preset) + 0x5EEDu));
+	if (bloom_forcing < 0.0f) {
+		if (r_progress) {
+			*r_progress = -1.0f;
+		}
+		if (r_dead) {
+			*r_dead = 0.0f;
+		}
+		return p_mixed_seed ? BLOOM_SEED : BLOOM_FLOWER;
+	}
+	const float u = float(h & 0xFFFFu) / 65535.0f;
+	const float u2 = float(h >> 16) / 65535.0f;
+	return _bloom_stage(preset, bloom_forcing, bloom_day, u, u2, r_progress, r_dead);
+}
+
+PlantGenerator::Wither::Wither(PlantGenerator *p_generator, float p_dead) :
+		generator(p_generator), dead(p_dead) {
+	for (int i = 0; i < SURFACE_MAX; i++) {
+		from[i] = generator->builders[i].colors.size();
+	}
+}
+
+PlantGenerator::Wither::~Wither() {
+	if (dead <= 0.0f) {
+		return;
+	}
+	// The vertex alpha is the shader's dead tissue (1 - alpha): yellowing, then browning to
+	// dead_color with the texture's pattern kept, less light through, matte.
+	for (int i = 0; i < SURFACE_MAX; i++) {
+		PackedColorArray &c = generator->builders[i].colors;
+		for (int k = from[i]; k < c.size(); k++) {
+			Color v = c[k];
+			v.a = MIN(v.a, 1.0f - dead);
+			c.write[k] = v;
+		}
+	}
+}
+
+void PlantGenerator::set_season(const Dictionary &p_season) {
+	season = p_season;
+	bloom_forcing = p_season.has("forcing") ? float(p_season["forcing"]) : -1.0f;
+	bloom_day = p_season.has("day_of_year") ? int(p_season["day_of_year"]) : 0;
+}
+
+// The population's shares (x: no flowers, y: in flower, z: in seed) on a season's day: for tests,
+// and for callers to tell when a species' look has moved enough to generate it again.
+Vector3 PlantGenerator::get_bloom_shares(Preset p_preset, const Dictionary &p_season) {
+	if (!p_season.has("forcing")) {
+		return Vector3(0.0f, 1.0f, 0.0f);
+	}
+	const float forcing = p_season["forcing"];
+	const int day = p_season.has("day_of_year") ? int(p_season["day_of_year"]) : 0;
+	Vector3 shares;
+	const int n = 32;
+	for (int i = 0; i < n; i++) {
+		for (int j = 0; j < n; j++) {
+			const Bloom b = _bloom_stage(p_preset, forcing, day, (i + 0.5f) / n, (j + 0.5f) / n, nullptr);
+			shares[int(b)] += 1.0f / float(n * n);
+		}
+	}
+	return shares;
+}
+
 static float smoothstep_f(float p_a, float p_b, float p_x) {
 	return Math::smoothstep(p_a, p_b, p_x);
 }
@@ -374,7 +556,42 @@ void PlantGenerator::_build_dandelion() {
 	}
 	const int stalks = rng.randf() < 0.6f ? 1 : 2;
 	for (int s = 0; s < stalks; s++) {
+		const Bloom bloom = _bloom();
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
 		const Transform3D top = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.3f, 1.5f)), _rand(0.16f, 0.3f), 0.0025f, 0.002f, _rand(-0.25f, 0.25f), 6, 0.0f);
+		if (bloom == BLOOM_SEED) {
+			// The clock: achenes on a small receptacle, each a long beak ending in a parachute of
+			// fine pappus hairs, a ball about 3.5 cm across (achenes on a Fibonacci sphere).
+			_add_head(SURFACE_STEM, top, 0.003f, 0.003f);
+			Leaf beak;
+			beak.shape = LEAF_LINEAR;
+			beak.length = 0.012f;
+			beak.width = 0.0007f;
+			beak.fold = 0.0f;
+			beak.bend = 0.0f;
+			beak.segments = 1;
+			Leaf hair = beak;
+			hair.length = 0.0055f;
+			hair.width = 0.0006f;
+			const int n_seeds = 60;
+			for (int n = 0; n < n_seeds; n++) {
+				const float y = 1.0f - 1.75f * (n + 0.5f) / n_seeds;
+				const float r = Math::sqrt(MAX(0.0f, 1.0f - y * y));
+				const float a = n * GOLDEN_ANGLE;
+				const Vector3 d = top.basis.xform(Vector3(Math::cos(a) * r, Math::sin(a) * r, y)).normalized();
+				_add_leaf(SURFACE_CENTRE, Transform3D(organ_frame(d, top.basis.get_column(2)), top.origin + d * 0.002f), beak, 1.0f);
+				const Vector3 tip = top.origin + d * 0.014f;
+				const Basis pb = organ_frame(d, top.basis.get_column(2));
+				for (int k = 0; k < 6; k++) {
+					const float ak = k * Math::TAU / 6.0f + n;
+					const Vector3 out = (pb.get_column(0) * Math::cos(ak) + pb.get_column(1) * Math::sin(ak) + d * 0.35f).normalized();
+					_add_leaf(SURFACE_CENTRE, Transform3D(organ_frame(out, d), tip), hair, 1.0f);
+				}
+			}
+			continue;
+		}
 		Leaf fl;
 		fl.shape = LEAF_LINEAR;
 		fl.length = 0.017f;
@@ -442,7 +659,10 @@ void PlantGenerator::_build_clover() {
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(radial, Vector3(0, 1, 0)), top.origin), l, 1.0f);
 		}
 	}
-	if (rng.randf() < 0.65f) {
+	const Bloom bloom = rng.randf() < 0.65f ? _bloom() : BLOOM_NONE;
+	if (bloom != BLOOM_NONE) {
+		// Spent florets turn brown and hang down around the pods.
+		const Color tint = bloom == BLOOM_SEED ? Color(0.55f, 0.45f, 0.32f) : Color(1, 1, 1);
 		const Transform3D top = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.3f, 1.5f)), _rand(0.09f, 0.15f), 0.0012f, 0.001f, 0.0f, 4, 0.0f);
 		Leaf fl;
 		fl.shape = LEAF_LINEAR;
@@ -453,11 +673,11 @@ void PlantGenerator::_build_clover() {
 		const int florets = 36;
 		for (int n = 0; n < florets; n++) {
 			// Fibonacci sphere, upper 85%; lower florets droop (older, as on real clover).
-			const float y = 1.0f - 1.7f * (n + 0.5f) / florets;
+			const float y = (bloom == BLOOM_SEED ? 0.4f : 1.0f) - (bloom == BLOOM_SEED ? 1.4f : 1.7f) * (n + 0.5f) / florets;
 			const float r = Math::sqrt(MAX(0.0f, 1.0f - y * y));
 			const float a = n * GOLDEN_ANGLE;
 			const Vector3 d = top.basis.xform(Vector3(Math::cos(a) * r, Math::sin(a) * r, y)).normalized();
-			_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, top.basis.get_column(2)), top.origin + d * 0.003f), fl, 1.0f);
+			_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, top.basis.get_column(2)), top.origin + d * 0.003f), fl, 1.0f, 1.0f, tint);
 		}
 	}
 }
@@ -555,6 +775,10 @@ void PlantGenerator::_build_daisy() {
 	}
 	const int stems = int(_rand(1.0f, 4.0f));
 	for (int s = 0; s < stems; s++) {
+		const Bloom bloom = _bloom();
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.35f, 1.52f));
 		const float len = _rand(0.25f, 0.45f);
 		const float bend = _rand(-0.2f, 0.2f);
@@ -580,6 +804,11 @@ void PlantGenerator::_build_daisy() {
 		petal.fold = 0.05f;
 		petal.bend = 0.15f;
 		petal.segments = 4;
+		if (bloom == BLOOM_SEED) {
+			// Rays fallen: the disc alone, a dull green-brown cone of achenes.
+			_add_head(SURFACE_CENTRE, top, 0.006f, 0.005f, Color(0.5f, 0.58f, 0.3f));
+			continue;
+		}
 		_add_ray_flower(top, 0.008f, int(_rand(20.0f, 30.0f)), petal);
 	}
 }
@@ -602,15 +831,27 @@ void PlantGenerator::_build_buttercup() {
 	}
 	const int stems = int(_rand(1.0f, 3.0f));
 	for (int s = 0; s < stems; s++) {
+		const Bloom bloom = _bloom();
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
+		// In fruit, a small green ball of achenes where the cup was.
+		auto flower = [&](const Transform3D &p_top, float p_radius) {
+			if (bloom == BLOOM_SEED) {
+				_add_head(SURFACE_STEM, p_top, p_radius * 0.35f, p_radius * 0.5f);
+			} else {
+				_add_cup_flower(p_top, p_radius);
+			}
+		};
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.35f, 1.52f));
 		const Transform3D top = _add_stem(base, _rand(0.28f, 0.48f), 0.0018f, 0.0013f, _rand(-0.2f, 0.2f), 8, 0.0f);
-		_add_cup_flower(top, _rand(0.012f, 0.016f));
+		flower(top, _rand(0.012f, 0.016f));
 		// A branch with a second flower, from two thirds up.
 		if (rng.randf() < 0.7f) {
 			Transform3D fork = base.interpolate_with(top, 0.65f);
 			fork.basis = organ_frame(fork.basis.get_column(2) + fork.basis.get_column(0) * _rand(-0.8f, 0.8f), Vector3(0, 1, 0));
 			const Transform3D top2 = _add_stem(fork, _rand(0.08f, 0.14f), 0.0012f, 0.001f, 0.2f, 4, 0.6f);
-			_add_cup_flower(top2, _rand(0.011f, 0.014f));
+			flower(top2, _rand(0.011f, 0.014f));
 		}
 	}
 }
@@ -724,6 +965,12 @@ void PlantGenerator::_build_thistle() {
 	if (rng.randf() < 0.2f) {
 		return; // A first-year rosette: no stem yet.
 	}
+	float dead = 0.0f;
+	const Bloom bloom = _bloom(false, nullptr, &dead);
+	if (bloom == BLOOM_NONE) {
+		return; // The stem bolts with the flowering.
+	}
+	const Wither wither(this, dead);
 	const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.42f, 1.56f));
 	const float len = _rand(0.4f, 0.75f);
 	const LocalVector<Transform3D> frames = _stem_frames(base, len, 0.1f, 10);
@@ -746,8 +993,29 @@ void PlantGenerator::_build_thistle() {
 		_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((radial + at.basis.get_column(2) * 0.5f).normalized(), at.basis.get_column(2)), at.origin), l, u);
 	}
 	auto add_head = [&](const Transform3D &p_top, float p_r) {
-		// Involucre: a dome of the stem colour; the florets: a brush of thin purple strands.
-		_add_head(SURFACE_STEM, Transform3D(p_top.basis, p_top.origin - p_top.basis.get_column(2) * p_r * 0.6f), p_r, p_r * 1.8f);
+		// Involucre: a dome of the stem colour; the florets: a brush of thin purple strands. In seed
+		// the dome browns and the florets give way to a loose puff of down.
+		const bool seed_head = bloom == BLOOM_SEED;
+		_add_head(SURFACE_STEM, Transform3D(p_top.basis, p_top.origin - p_top.basis.get_column(2) * p_r * 0.6f), p_r, p_r * 1.8f, seed_head ? Color(0.75f, 0.62f, 0.45f) : Color(1, 1, 1));
+		if (seed_head) {
+			// A shaving brush of pappus out of the top of the involucre, the outer hairs splaying.
+			Leaf down;
+			down.shape = LEAF_LINEAR;
+			down.length = p_r * 1.5f;
+			down.width = 0.0022f;
+			down.fold = 0.0f;
+			down.bend = -0.25f;
+			down.segments = 2;
+			const Basis f = p_top.basis;
+			for (int n = 0; n < 44; n++) {
+				const float uu = Math::sqrt((n + 0.5f) / 44.0f);
+				const float a = n * GOLDEN_ANGLE;
+				const Vector3 radial = f.get_column(0) * Math::cos(a) + f.get_column(1) * Math::sin(a);
+				const Vector3 d = (f.get_column(2) + radial * uu * 0.8f).normalized();
+				_add_leaf(SURFACE_CENTRE, Transform3D(organ_frame(d, f.get_column(2)), p_top.origin + f.get_column(2) * p_r * 0.9f + radial * p_r * uu * 0.5f), down, 1.0f);
+			}
+			return;
+		}
 		Leaf fl;
 		fl.shape = LEAF_LINEAR;
 		fl.length = p_r * 1.6f;
@@ -809,6 +1077,14 @@ void PlantGenerator::_build_yarrow() {
 	}
 	const int stems = int(_rand(1.0f, 3.0f));
 	for (int s = 0; s < stems; s++) {
+		float dead = 0.0f;
+		const Bloom bloom = _bloom(false, nullptr, &dead);
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
+		const Wither wither(this, dead);
+		// Dead corymbs stand brown through winter.
+		const Color head_tint = bloom == BLOOM_SEED ? Color(0.45f, 0.38f, 0.28f) : Color(1, 1, 1);
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.42f, 1.56f));
 		const float len = _rand(0.3f, 0.55f);
 		const LocalVector<Transform3D> frames = _stem_frames(base, len, 0.0f, 8);
@@ -841,7 +1117,7 @@ void PlantGenerator::_build_yarrow() {
 			const float rs = _rand(0.0f, Math::TAU);
 			for (int k = 0; k < 5; k++) {
 				const Vector3 radial = polar_dir(rs + k * Math::TAU / 5.0f, 0.15f);
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(radial, Vector3(0, 1, 0)), ht.origin + radial * 0.0012f), ray, 1.0f);
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(radial, Vector3(0, 1, 0)), ht.origin + radial * 0.0012f), ray, 1.0f, 1.0f, head_tint);
 			}
 		}
 	}
@@ -1451,6 +1727,18 @@ void PlantGenerator::_build_foxglove() {
 		l.segments = 9;
 		_add_leaf(SURFACE_LEAF, stem_base(spin + i * GOLDEN_ANGLE, Math::lerp(0.35f, 0.9f, u)), l, 0.0f, Math::lerp(0.75f, 1.0f, u));
 	}
+	// The spike opens from the bottom up over the plant's flowering (Grime et al. 2007); the lower
+	// bells drop as the top ones open, leaving their seed capsules. In seed: capsules all the way up.
+	float progress = -1.0f;
+	float dead = 0.0f;
+	const Bloom bloom = _bloom(false, &progress, &dead);
+	if (bloom == BLOOM_NONE) {
+		return; // A rosette: the first year, or before the spike rises.
+	}
+	const Wither wither(this, dead);
+	if (bloom == BLOOM_SEED) {
+		progress = 1.2f;
+	}
 	Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.48f, 1.57f));
 	const float len = _rand(0.6f, 1.2f);
 	const float bend = _rand(-0.12f, 0.12f);
@@ -1482,7 +1770,15 @@ void PlantGenerator::_build_foxglove() {
 		const Transform3D at = _frame_at(fr, s);
 		const float a = face + _rand(-0.6f, 0.6f);
 		const Vector3 side(Math::cos(a), 0.0f, Math::sin(a));
-		const float open = 1.0f - smoothstep_f(0.6f, 1.0f, u); // Buds at the top.
+		// Without a season, the mid-flowering spike: buds at the top, every lower bell open.
+		const float open = progress < 0.0f ? 1.0f - smoothstep_f(0.6f, 1.0f, u) : 1.0f - smoothstep_f(progress + 0.15f, progress + 0.45f, u);
+		if (progress >= 0.0f && u < progress) {
+			// A capsule on its pedicel, pointing up and out, green going brown.
+			Transform3D cb(organ_frame((side * 0.6f + Vector3(0, 0.8f, 0)).normalized(), Vector3(0, 1, 0)), at.origin + side * 0.006f);
+			const Transform3D ct = _add_stem(cb, 0.006f, 0.0008f, 0.0008f, 0.0f, 1, s);
+			_add_head(SURFACE_STEM, ct, 0.0035f, 0.009f, bloom == BLOOM_SEED ? Color(0.8f, 0.6f, 0.42f) : Color(1, 1, 1));
+			continue;
+		}
 		const float tube = Math::lerp(0.012f, 0.045f, open);
 		// Short pedicel, then the bell hangs out and down.
 		Transform3D fb(organ_frame((side * 0.8f + Vector3(0, -0.6f, 0)).normalized(), Vector3(0, 1, 0)), at.origin + side * 0.008f);
@@ -1614,7 +1910,15 @@ void PlantGenerator::_build_wood_sorrel() {
 	}
 	const int flowers = int(_rand(0.0f, 4.0f));
 	for (int f = 0; f < flowers; f++) {
+		const Bloom bloom = _bloom();
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
 		const Transform3D top = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.3f, 1.5f)), _rand(0.06f, 0.1f), 0.0008f, 0.0006f, _rand(0.3f, 0.8f), 4, 0.0f);
+		if (bloom == BLOOM_SEED) {
+			_add_head(SURFACE_STEM, top, 0.002f, 0.005f); // The capsule that flings the seeds.
+			continue;
+		}
 		Leaf p;
 		p.shape = LEAF_SPATULATE;
 		p.length = 0.009f;
@@ -1866,7 +2170,15 @@ void PlantGenerator::_build_woodruff() {
 				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), l, Math::lerp(0.3f, 1.0f, s));
 			}
 		}
-		if (rng.randf() < 0.6f) {
+		const Bloom bloom = rng.randf() < 0.6f ? _bloom() : BLOOM_NONE;
+		if (bloom == BLOOM_SEED) {
+			// Small bristly fruits, green, in the old flower heads' place.
+			const Transform3D top = fr[fr.size() - 1];
+			for (int f = 0; f < 4; f++) {
+				const Vector3 off = polar_dir(_rand(0.0f, Math::TAU), _rand(0.6f, 1.2f)) * _rand(0.004f, 0.01f);
+				_add_head(SURFACE_STEM, Transform3D(organ_frame(Vector3(0, 1, 0), Vector3(1, 0, 0)), top.origin + off), 0.0016f, 0.002f);
+			}
+		} else if (bloom == BLOOM_FLOWER) {
 			const Transform3D top = fr[fr.size() - 1];
 			const int flowers = int(_rand(4.0f, 9.0f));
 			for (int f = 0; f < flowers; f++) {
@@ -1908,7 +2220,9 @@ void PlantGenerator::_build_wood_anemone() {
 		const float len = _rand(0.1f, 0.22f);
 		const float bend = _rand(0.1f, 0.35f);
 		const LocalVector<Transform3D> fr = _stem_frames(base, len, bend, 5);
-		const Transform3D top = _add_stem(base, len, 0.0012f, 0.0009f, bend, 5, 0.0f);
+		// Out of flower, the stem ends a little above the leaf whorl (no bare flower stalk).
+		const Bloom stage = _bloom();
+		const Transform3D top = _add_stem(base, stage == BLOOM_NONE ? len * 0.68f : len, 0.0012f, 0.0009f, stage == BLOOM_NONE ? bend * 0.68f : bend, 5, 0.0f);
 		const Transform3D at = _frame_at(fr, 0.62f);
 		const float spin = _rand(0.0f, Math::TAU);
 		for (int k = 0; k < 3; k++) {
@@ -1917,7 +2231,11 @@ void PlantGenerator::_build_wood_anemone() {
 			const Vector3 d = polar_dir(spin + k * Math::TAU / 3.0f, _rand(0.05f, 0.3f));
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(d, Vector3(0, 1, 0)), at.origin), l, 0.7f);
 		}
-		if (rng.randf() < 0.85f) {
+		const Bloom bloom = rng.randf() < 0.85f ? stage : BLOOM_NONE;
+		if (bloom == BLOOM_SEED) {
+			// Tepals fallen: a nodding green head of achenes.
+			_add_head(SURFACE_STEM, Transform3D(organ_frame((top.basis.get_column(2) + Vector3(0, -0.6f, 0)).normalized(), Vector3(0, 1, 0)), top.origin), 0.0035f, 0.005f);
+		} else if (bloom == BLOOM_FLOWER) {
 			const Vector3 face = (top.basis.get_column(2) + Vector3(0, -0.4f, 0)).normalized();
 			const Basis fb = organ_frame(face, Vector3(0, 1, 0));
 			const int tepals = rng.randf() < 0.5f ? 6 : 7;
@@ -1964,6 +2282,16 @@ void PlantGenerator::_build_violet() {
 	p.bend = -0.2f;
 	p.segments = 3;
 	for (int f = 0; f < flowers; f++) {
+		const Bloom bloom = _bloom();
+		if (bloom == BLOOM_NONE) {
+			continue;
+		}
+		if (bloom == BLOOM_SEED) {
+			// The capsule stands up on its straightened stalk, three-valved, green.
+			const Transform3D ct = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.25f, 1.5f)), _rand(0.05f, 0.1f), 0.0008f, 0.0006f, _rand(0.0f, 0.3f), 4, 0.0f);
+			_add_head(SURFACE_STEM, ct, 0.003f, 0.009f);
+			continue;
+		}
 		// The stalk arches over so the flower faces sideways and a little down.
 		const Transform3D top = _add_stem(stem_base(_rand(0.0f, Math::TAU), _rand(1.0f, 1.35f)), _rand(0.06f, 0.12f), 0.0008f, 0.0006f, _rand(0.8f, 1.3f), 5, 0.0f);
 		const Vector3 face = (top.basis.get_column(2) * Vector3(1, 0, 1) + Vector3(0, -0.15f, 0)).normalized();
@@ -2025,7 +2353,12 @@ void PlantGenerator::_build_herb_robert() {
 				}
 			}
 		}
-		if (rng.randf() < 0.8f) {
+		const Bloom bloom = rng.randf() < 0.8f ? _bloom() : BLOOM_NONE;
+		if (bloom == BLOOM_SEED) {
+			// The crane's bill: the fruit's long beak, pointing up.
+			const Vector3 up = (top.basis.get_column(2) + Vector3(0, 1.2f, 0)).normalized();
+			_add_stem(Transform3D(organ_frame(up, Vector3(1, 0, 0)), top.origin), _rand(0.015f, 0.022f), 0.0011f, 0.0003f, 0.0f, 2, 1.0f);
+		} else if (bloom == BLOOM_FLOWER) {
 			const Vector3 face = (top.basis.get_column(2) + Vector3(0, 0.6f, 0)).normalized();
 			const Basis fb = organ_frame(face, Vector3(0, 1, 0));
 			const float sz = _rand(0.007f, 0.009f);
@@ -2051,7 +2384,8 @@ void PlantGenerator::_build_herb_robert() {
 // Common knapweed (Centaurea nigra): stiff branched stems, narrow leaves, heads that are a hard
 // dark ball of fringed bracts under a brush of purple florets; in seed, dark knobs alone.
 void PlantGenerator::_build_knapweed() {
-	const bool in_seed = rng.randf() < 0.25f;
+	const bool mixed_seed = rng.randf() < 0.25f; // Without a season: a quarter of the plants in seed.
+	bool in_seed = mixed_seed;
 	const int basal = int(_rand(3.0f, 7.0f));
 	const float spin = _rand(0.0f, Math::TAU);
 	for (int i = 0; i < basal; i++) {
@@ -2092,6 +2426,13 @@ void PlantGenerator::_build_knapweed() {
 	};
 	const int stems = int(_rand(1.0f, 3.5f));
 	for (int s = 0; s < stems; s++) {
+		float dead = 0.0f;
+		const Bloom bloom = _bloom(mixed_seed, nullptr, &dead);
+		if (bloom == BLOOM_NONE) {
+			continue; // Leaves only: before the stems bolt, or after they fall.
+		}
+		const Wither wither(this, dead);
+		in_seed = bloom == BLOOM_SEED;
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.38f, 1.55f));
 		const float len = _rand(0.35f, 0.75f);
 		const float bend = _rand(-0.15f, 0.15f);
@@ -2129,7 +2470,8 @@ void PlantGenerator::_build_knapweed() {
 // leaves, and flat lilac heads whose outer florets are larger, a pincushion with a frill; in seed
 // a bristly ball.
 void PlantGenerator::_build_scabious() {
-	const bool in_seed = rng.randf() < 0.25f;
+	const bool mixed_seed = rng.randf() < 0.25f; // Without a season: a quarter of the plants in seed.
+	bool in_seed = mixed_seed;
 	const int basal = int(_rand(4.0f, 8.0f));
 	const float spin = _rand(0.0f, Math::TAU);
 	for (int i = 0; i < basal; i++) {
@@ -2173,6 +2515,13 @@ void PlantGenerator::_build_scabious() {
 	};
 	const int stems = int(_rand(1.0f, 3.0f));
 	for (int s = 0; s < stems; s++) {
+		float dead = 0.0f;
+		const Bloom bloom = _bloom(mixed_seed, nullptr, &dead);
+		if (bloom == BLOOM_NONE) {
+			continue; // Leaves only: before the stems bolt, or after they fall.
+		}
+		const Wither wither(this, dead);
+		in_seed = bloom == BLOOM_SEED;
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.35f, 1.52f));
 		const float len = _rand(0.4f, 0.85f);
 		const float bend = _rand(-0.2f, 0.2f);
@@ -2211,7 +2560,8 @@ void PlantGenerator::_build_scabious() {
 // each ending in a small umbel of white florets, one dark floret at the centre, a ruff of
 // divided bracts under it; in fruit the rays curl inwards into a hollow "bird's nest".
 void PlantGenerator::_build_wild_carrot() {
-	const bool in_seed = rng.randf() < 0.25f;
+	const bool mixed_seed = rng.randf() < 0.25f; // Without a season: a quarter of the plants in seed.
+	bool in_seed = mixed_seed;
 	auto feather = [&](const Transform3D &p_base, float p_length, float p_wind, float p_droop) {
 		const int segs = 6;
 		const LocalVector<Transform3D> fr = _stem_frames(p_base, p_length, p_droop, segs);
@@ -2295,6 +2645,13 @@ void PlantGenerator::_build_wild_carrot() {
 	};
 	const int stems = int(_rand(1.0f, 2.99f));
 	for (int s = 0; s < stems; s++) {
+		float dead = 0.0f;
+		const Bloom bloom = _bloom(mixed_seed, nullptr, &dead);
+		if (bloom == BLOOM_NONE) {
+			continue; // Leaves only: before the stems bolt, or after they fall.
+		}
+		const Wither wither(this, dead);
+		in_seed = bloom == BLOOM_SEED;
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.4f, 1.55f));
 		const float len = _rand(0.4f, 0.9f);
 		const float bend = _rand(-0.12f, 0.12f);
@@ -2322,7 +2679,8 @@ void PlantGenerator::_build_wild_carrot() {
 // Common sorrel (Rumex acetosa): arrow-shaped leaves on long stalks, a slender stem and a narrow
 // branched panicle of tiny whorled flowers that turn red, then rust-brown in seed.
 void PlantGenerator::_build_sorrel() {
-	const bool in_seed = rng.randf() < 0.25f;
+	const bool mixed_seed = rng.randf() < 0.25f; // Without a season: a quarter of the plants in seed.
+	bool in_seed = mixed_seed;
 	const int basal = int(_rand(4.0f, 8.0f));
 	const float spin = _rand(0.0f, Math::TAU);
 	for (int i = 0; i < basal; i++) {
@@ -2344,8 +2702,8 @@ void PlantGenerator::_build_sorrel() {
 	fl.fold = 0.3f;
 	fl.bend = 0.0f;
 	fl.segments = 2;
-	const Color tint = in_seed ? Color(0.62f, 0.5f, 0.42f) : Color(1, 1, 1);
 	auto whorls = [&](const LocalVector<Transform3D> &p_fr, float p_from, float p_to, float p_wind) {
+		const Color tint = in_seed ? Color(0.62f, 0.5f, 0.42f) : Color(1, 1, 1);
 		const int n = int((p_to - p_from) * 22.0f) + 2;
 		for (int k = 0; k < n; k++) {
 			const float s = Math::lerp(p_from, p_to, float(k) / (n - 1));
@@ -2360,6 +2718,13 @@ void PlantGenerator::_build_sorrel() {
 	};
 	const int stems = int(_rand(1.0f, 2.99f));
 	for (int s = 0; s < stems; s++) {
+		float dead = 0.0f;
+		const Bloom bloom = _bloom(mixed_seed, nullptr, &dead);
+		if (bloom == BLOOM_NONE) {
+			continue; // Leaves only: before the stems bolt, or after they fall.
+		}
+		const Wither wither(this, dead);
+		in_seed = bloom == BLOOM_SEED;
 		const Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.42f, 1.56f));
 		const float len = _rand(0.35f, 0.8f);
 		const float bend = _rand(-0.15f, 0.15f);
@@ -2451,12 +2816,16 @@ void PlantGenerator::_build_heather() {
 	bell.width = 0.004f;
 	bell.fold = 0.5f;
 	const float flowering = rng.randf();
+	// Without a season, six plants in ten in flower; with one, the plant's stage. Spent bells stay
+	// on the shoots, brown, through winter.
+	const Bloom bloom = (flowering < 0.6f || bloom_forcing >= 0.0f) ? _bloom() : BLOOM_NONE;
+	const Color bell_tint = bloom == BLOOM_SEED ? Color(0.62f, 0.45f, 0.38f) : Color(1, 1, 1);
 	auto shoot = [&](const Transform3D &p_base, float p_len, float p_r, float p_wind) -> void {
 		const float bend = _rand(-0.3f, 0.3f);
 		const LocalVector<Transform3D> fr = _stem_frames(p_base, p_len, bend, 3);
 		_add_stem(p_base, p_len, p_r, p_r * 0.5f, bend, 3, p_wind);
 		const int scales = int(p_len / 0.0055f);
-		const float spike = flowering < 0.6f ? 0.35f : 0.0f; // Top share of the shoot in flower.
+		const float spike = bloom != BLOOM_NONE ? 0.35f : 0.0f; // Top share of the shoot in flower.
 		for (int k = 0; k < scales; k++) {
 			const float s = 0.1f + 0.9f * float(k) / MAX(scales - 1, 1);
 			const Transform3D at = _frame_at(fr, s);
@@ -2464,7 +2833,7 @@ void PlantGenerator::_build_heather() {
 			const Vector3 radial = at.basis.get_column(0) * Math::cos(a) + at.basis.get_column(1) * Math::sin(a);
 			if (s > 1.0f - spike) {
 				const Vector3 d = (radial - at.basis.get_column(2) * 0.3f).normalized();
-				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, at.basis.get_column(2)), at.origin), bell, Math::lerp(p_wind, 1.0f, s));
+				_add_leaf(SURFACE_PETAL, Transform3D(organ_frame(d, at.basis.get_column(2)), at.origin), bell, Math::lerp(p_wind, 1.0f, s), 1.0f, bell_tint);
 			} else {
 				sc.length = _rand(0.008f, 0.014f);
 				_add_leaf(SURFACE_LEAF, Transform3D(organ_frame((radial * 0.7f + at.basis.get_column(2)).normalized(), Vector3(0, 1, 0)), at.origin), sc, Math::lerp(p_wind, 1.0f, s));
@@ -3957,7 +4326,7 @@ void PlantGenerator::apply_preset_colors() {
 	switch (preset) {
 		case PRESET_DANDELION:
 			petal_color = Color(1.0f, 0.75f, 0.03f);
-			centre_color = Color(0.95f, 0.65f, 0.05f);
+			centre_color = Color(0.9f, 0.9f, 0.86f); // The clock's pappus (the flower is all florets).
 			break;
 		case PRESET_PLANTAIN:
 			leaf_color = Color(0.13f, 0.27f, 0.07f);
@@ -3994,6 +4363,7 @@ void PlantGenerator::apply_preset_colors() {
 			leaf_color = Color(0.13f, 0.25f, 0.09f);
 			stem_color = Color(0.2f, 0.3f, 0.12f);
 			petal_color = Color(0.55f, 0.12f, 0.45f);
+			centre_color = Color(0.86f, 0.84f, 0.8f); // Thistledown.
 			break;
 		case PRESET_YARROW:
 			leaf_color = Color(0.13f, 0.27f, 0.08f);
@@ -4158,6 +4528,7 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 	organ = 0;
 	organ_bases.clear();
 	leaf_serial = 0;
+	bloom_serial = 0;
 	rng.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(preset) + 1);
 	switch (preset) {
 		case PRESET_DANDELION:
@@ -4781,6 +5152,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		gen->set_preset(f.preset);
 		gen->apply_preset_colors();
 		gen->set_seed(seed_base);
+		gen->set_season(p_season);
 		if (f.preset == P::PRESET_LEAF_LITTER || f.preset == P::PRESET_SEEDLING) {
 			gen->set_litter_leaves(stand_litter_leaves(p_stand, p_season));
 		}
@@ -4892,6 +5264,10 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_litter_leaves", "leaves"), &PlantGenerator::set_litter_leaves);
 	ClassDB::bind_method(D_METHOD("get_litter_leaves"), &PlantGenerator::get_litter_leaves);
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "litter_leaves"), "set_litter_leaves", "get_litter_leaves");
+	ClassDB::bind_method(D_METHOD("set_season", "season"), &PlantGenerator::set_season);
+	ClassDB::bind_method(D_METHOD("get_season"), &PlantGenerator::get_season);
+	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_bloom_shares", "preset", "season"), &PlantGenerator::get_bloom_shares);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "textures"), "set_textures", "get_textures");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "texture_size", PROPERTY_HINT_RANGE, "32,2048,1"), "set_texture_size", "get_texture_size");
 	ADD_GROUP("Colors", "");

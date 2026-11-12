@@ -11,11 +11,13 @@ extends Node3D
 #   --push           with --close: a body stands on the middle plant (bent through the trample field)
 #   --still          with --push: the body stands there but the trample field is off (the before shot)
 #   --top            with --close: straight down on the middle plant (leaf outlines)
+#   --head           with --close: the top of the first plant from 15 cm (flower and seed heads)
 #   --wear=W         leaf wear 0..1 (default the generator's 0.5)
 #   --wind=x,z       fallback wind for the plants (default none)
 #   --dump=dir       save the baked textures of the first seed as PNGs
 #   --seq=N          save N frames in a row as path_000.png... (run with --fixed-fps 30 for a clip)
 #   --stand=S        give the litter and seedling presets the leaves of floor stand S (make_floor's FloorStand)
+#   --season=F,D     flowering stage for degree days F (base 5 C, from 1 January) on day of year D
 #   --out=path.png   save the frame
 
 const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel"]
@@ -34,8 +36,10 @@ var push := false
 var still := false
 var wear := -1.0
 var top := false
+var head := false
 var seq := 0
 var wind := Vector2.ZERO
+var season := {}
 var n := 0
 var fails := 0
 
@@ -52,9 +56,13 @@ func _ready() -> void:
 		elif a == "--push": push = true
 		elif a == "--still": still = true
 		elif a == "--top": top = true
+		elif a == "--head": head = true
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
 		elif a.begins_with("--wear="): wear = float(a.substr(7))
 		elif a.begins_with("--stand="): stand = int(a.substr(8))
+		elif a.begins_with("--season="):
+			var sv := a.substr(9).split(",")
+			season = {"forcing": float(sv[0]), "day_of_year": int(sv[1]) if sv.size() > 1 else 180}
 		elif a.begins_with("--wind="):
 			var w := a.substr(7).split(",")
 			wind = Vector2(float(w[0]), float(w[1]))
@@ -68,6 +76,7 @@ func _ready() -> void:
 		gen.leaf_wear = wear
 	if stand >= 0:
 		gen.litter_leaves = PlantGenerator.stand_litter_leaves(stand)
+	gen.season = season
 	for p in NAMES.size():
 		if close >= 0 and p != close:
 			continue
@@ -153,6 +162,18 @@ func _ready() -> void:
 			var span: float = max(bb.size.y, max(bb.size.x, bb.size.z))
 			cam.position = c + Vector3(0, span * 0.35, span * 1.9)
 		cam.look_at(c)
+	elif close >= 0 and head:
+		# The highest vertex of the first plant and what is near it: a flower or seed head.
+		var mi0 := get_child(0) as MeshInstance3D
+		var best := Vector3(0, -1, 0)
+		for si in mi0.mesh.get_surface_count():
+			for v in mi0.mesh.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]:
+				if v.y > best.y:
+					best = v
+		best += mi0.position - Vector3(0, 0.015, 0)
+		cam.fov = 30
+		cam.position = best + Vector3(0, 0.03, 0.15)
+		cam.look_at(best)
 	elif close >= 0 and top:
 		cam.position = Vector3(0, 0.75, 0.001)
 		cam.look_at(Vector3(0, 0, 0))
@@ -238,7 +259,65 @@ func _checks() -> void:
 		for sp in set:
 			ok = ok and (sp as PlantSpecies).meshes.size() == 1 and ((sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_SHADE) != Vector2(0, 1) or (sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_LITTER) != Vector2(0, 1) or (sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_WATER_DISTANCE).y < 100.0 or (sp as PlantSpecies).deadwood_rule != PlantSpecies.DEADWOOD_AVOID)
 		_check("floor set %d" % st, ok, set.size())
+	_bloom_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+
+# Flowering by degree days (docs/ideas/vegetation-seasons.md, step 2).
+func _bloom_checks() -> void:
+	var P := PlantGenerator
+	var s: Vector3 = P.get_bloom_shares(P.PRESET_KNAPWEED, {"forcing": 300.0, "day_of_year": 160})
+	_check("knapweed before its window: leaves only", s.x > 0.99, s)
+	s = P.get_bloom_shares(P.PRESET_KNAPWEED, {"forcing": 1300.0, "day_of_year": 220})
+	_check("knapweed in August: mostly in flower, some in seed", s.y > 0.5 and s.z > 0.2, s)
+	s = P.get_bloom_shares(P.PRESET_KNAPWEED, {"forcing": 1900.0, "day_of_year": 300})
+	_check("knapweed in autumn: seed heads standing", s.z > 0.99, s)
+	s = P.get_bloom_shares(P.PRESET_KNAPWEED, {"forcing": 0.0, "day_of_year": 30})
+	_check("knapweed in January: some of last year's stalks", s.z > 0.2 and s.z < 0.6, s)
+	s = P.get_bloom_shares(P.PRESET_WOOD_ANEMONE, {"forcing": 200.0, "day_of_year": 110})
+	_check("anemone in April: in flower", s.y > 0.6, s)
+	s = P.get_bloom_shares(P.PRESET_WOOD_ANEMONE, {"forcing": 1000.0, "day_of_year": 200})
+	_check("anemone in July: done", s.x > 0.99, s)
+	s = P.get_bloom_shares(P.PRESET_DAISY, {"forcing": 900.0, "day_of_year": 190})
+	_check("daisy in summer: flowering on, a quarter in seed", s.y > 0.6 and s.z > 0.15 and s.z < 0.3, s)
+	s = P.get_bloom_shares(P.PRESET_NETTLE, {"forcing": 100.0})
+	_check("no window: always as built", s == Vector3(0, 1, 0), s)
+	var presets := [P.PRESET_DANDELION, P.PRESET_CLOVER, P.PRESET_DAISY, P.PRESET_BUTTERCUP, P.PRESET_THISTLE, P.PRESET_YARROW, P.PRESET_FOXGLOVE, P.PRESET_WOOD_SORREL, P.PRESET_WOODRUFF, P.PRESET_WOOD_ANEMONE, P.PRESET_VIOLET, P.PRESET_HERB_ROBERT, P.PRESET_HEATHER, P.PRESET_KNAPWEED, P.PRESET_SCABIOUS, P.PRESET_WILD_CARROT, P.PRESET_SORREL]
+	var days := [[0.0, 20], [200.0, 110], [500.0, 150], [1000.0, 200], [1500.0, 240], [1900.0, 300]]
+	for p in presets:
+		var g := PlantGenerator.new()
+		g.textures = false
+		g.lods = false
+		g.preset = p
+		g.seed = 3
+		var plain := _tris(g.generate())
+		g.season = {}
+		var ok := _tris(g.generate()) == plain
+		var line := ""
+		var heights := []
+		for d in days:
+			g.season = {"forcing": d[0], "day_of_year": d[1]}
+			var tot := 0
+			var hmax := 0.0
+			for sd in 4:
+				g.seed = 3 + sd
+				var m := g.generate()
+				tot += _tris(m)
+				hmax = maxf(hmax, m.get_aabb().end.y)
+				ok = ok and _tris(m) > 20
+			g.seed = 3
+			heights.append(hmax)
+			line += " %d:%d/%.2f" % [int(d[0]), tot, hmax]
+		_check("%s through the year (forcing:tris/height)%s" % [NAMES[p], line], ok, plain)
+	# Tall flowers: rosettes before the stems bolt, tall in flower.
+	var k := PlantGenerator.new()
+	k.textures = false
+	k.preset = P.PRESET_KNAPWEED
+	k.seed = 5
+	k.season = {"forcing": 300.0, "day_of_year": 160}
+	var low := k.generate().get_aabb().end.y
+	k.season = {"forcing": 1000.0, "day_of_year": 200}
+	var high := k.generate().get_aabb().end.y
+	_check("knapweed: rosette in May, tall in July", low < 0.15 and high > 0.3, Vector2(low, high))
 
 func _process(_d: float) -> void:
 	n += 1
