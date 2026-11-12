@@ -58,6 +58,12 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Motion vectors: before, only part of the hair reports its motion; after, every strand does.*
 
+- **Wet hair** (`wetness`, `weather_wetting`, `wet_clumping`): strands soak in rain and dry over time, turning darker, glossier, heavier, flatter and clumped.
+
+  ![The same hair in the same wind, dry and soaked by rain, raster](media/hair-wet.jpg)
+
+  *Wet hair: soaked strands darken, clump and lie flatter in the same wind.*
+
 ## Collision
 
 - **Body collision** (`PhysXHair3D`: `collision_body`, `collision_cell_size`): strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.

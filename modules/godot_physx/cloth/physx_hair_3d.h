@@ -101,6 +101,15 @@ class PhysXHair3D : public Node3D {
 	bool strand_collision = true;
 	float strand_collision_radius = 0.002f;
 	float strand_collision_friction = 0.3f;
+	// Wet hair (Ward et al. 2004; Gupta and Magnenat-Thalmann 2007): 0 dry, 1 soaked.
+	float wetness = 0.0f;
+	bool weather_wetting = true; // rain from the WeatherMap3D wets the hair; it dries without
+	float water_capacity = 1.0f; // mm of rain that soak the hair
+	float drying_time = 3600.0f; // s from soaked to dry
+	float wet_clumping = 0.8f; // how far wet strands gather onto their guides (0..1)
+	float wet_look = 0.0f; // the wetness last set on the material
+	float rain_shelter = 1.0f; // share of the rain that reaches the hair (roofs above it)
+	float rain_shelter_timer = 0.0f;
 	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
 	struct BodyCache {
 		ObjectID mesh_instance;
@@ -131,6 +140,8 @@ class PhysXHair3D : public Node3D {
 	void _make_material();
 	void _step(double p_delta);
 	Vector3 _fibre_absorption() const;
+	Vector2 _fibre_roughness() const;
+	void _update_wetness(double p_delta);
 	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) const;
 	int _render_points(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, PackedInt32Array &r_points) const;
 	Color _mass_color() const;
@@ -234,6 +245,16 @@ public:
 	void set_strand_collision_friction(float p_friction);
 	float get_strand_collision_friction() const;
 	float get_volume_stiffness() const;
+	void set_wetness(float p_wetness);
+	float get_wetness() const;
+	void set_weather_wetting(bool p_enabled);
+	bool get_weather_wetting() const;
+	void set_water_capacity(float p_mm);
+	float get_water_capacity() const;
+	void set_drying_time(float p_seconds);
+	float get_drying_time() const;
+	void set_wet_clumping(float p_clumping);
+	float get_wet_clumping() const;
 	void set_collision_spheres(const PackedVector4Array &p_spheres);
 	PackedVector4Array get_collision_spheres() const;
 

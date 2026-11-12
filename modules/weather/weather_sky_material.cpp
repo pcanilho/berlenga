@@ -51,7 +51,10 @@ namespace {
 const char *SKY_HEAD = R"(
 // NOTE: Shader of WeatherSkyMaterial (modules/weather).
 shader_type sky;
-render_mode use_half_res_pass, half_res_reprojection, use_debanding;
+// No use_debanding: it adds +-1/255 per channel (green opposite red and blue) in linear HDR before the exposure
+// and the tonemapper, which at dusk turned it into a magenta and green checker along the horizon, and the
+// reprojected quarter pass froze it into 4x4 blocks. The viewport's own debanding dithers after tonemapping.
+render_mode use_half_res_pass, half_res_reprojection;
 
 uniform float rayleigh : hint_range(0, 64) = 2.0;
 uniform vec4 rayleigh_color : source_color = vec4(0.3, 0.405, 0.6, 1.0);

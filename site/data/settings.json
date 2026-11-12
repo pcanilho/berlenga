@@ -273,7 +273,7 @@
   {
    "name": "rendering/pathtracing/linear_swept_spheres",
    "type": "bool",
-   "default": "true",
+   "default": "false",
    "about": "If `true`, on a device with linear swept spheres (Vulkan `VK_NV_ray_tracing_linear_swept_spheres`, hardware hair primitives) the path tracer traces strand hair (`render_mode hair_strands` on a mesh of two crossed strips per strand point, as PhysXHair3D draws it) as round tubes between the strand points, one primitive per segment instead of four triangles, and shades each fibre from where the ray meets it across its width.",
    "page": "hair",
    "title": "Hair"
@@ -1009,6 +1009,19 @@
    ],
    "note": "",
    "what": "TAA, FSR 2 and DLSS follow moving hair instead of smearing it; shaders get `PREVIOUS_FRAME` and `render_mode alpha_motion_vectors`.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Wet hair",
+   "settings": [
+    "wetness",
+    "weather_wetting",
+    "wet_clumping"
+   ],
+   "note": "",
+   "what": "strands soak in rain and dry over time, turning darker, glossier, heavier, flatter and clumped.",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"

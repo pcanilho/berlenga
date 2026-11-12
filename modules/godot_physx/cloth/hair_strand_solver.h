@@ -131,6 +131,8 @@ public:
 		float volume_stiffness = 1.0f; // push out of hair packed denser than the groom
 		float collision_radius = 0.0f; // strand-strand collision between guides: half the distance kept (m); 0: off
 		float collision_friction = 0.3f; // share of the sliding between touching guides taken off
+		float wet = 0.0f; // 0 dry .. 1 soaked: heavier, softer, flatter (Ward et al. 2004)
+		float wet_clumping = 0.0f; // how far wet followers gather onto their guides (0..1)
 		// Deep opacity maps (Yuksel and Keyser 2008), one per light, up to DOM_SLOTS; none: off.
 		struct DeepShadowLight {
 			Vector3 center; // world, the hair's bounding sphere
