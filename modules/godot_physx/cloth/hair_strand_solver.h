@@ -64,6 +64,8 @@ public:
 	RID buf_tris, buf_sdf; // the collision body's triangles and its distance field
 	RID buf_vol, buf_vol_rest; // the hair volume grid (density, momentum) and the groom's own density
 	RID buf_render_points; // per strand the points drawn: (first, count), then the indices
+	RID buf_coll_cells, buf_coll_delta, buf_point_strand; // strand-strand collision: spatial hash, corrections, each point's strand
+	int coll_buckets = 0;
 	int vol_cells = 0; // a side, 0: no volume grid
 	int tris_capacity = 0; // triangles buf_tris holds
 	RID uniform_set;
@@ -127,6 +129,8 @@ public:
 		bool volume_enabled = true; // hair-hair interaction through a density grid (Petrovic 2005)
 		float volume_friction = 0.2f; // pull toward the neighbours' mean velocity, per 1/60 s
 		float volume_stiffness = 1.0f; // push out of hair packed denser than the groom
+		float collision_radius = 0.0f; // strand-strand collision between guides: half the distance kept (m); 0: off
+		float collision_friction = 0.3f; // share of the sliding between touching guides taken off
 		// Deep opacity maps (Yuksel and Keyser 2008), one per light, up to DOM_SLOTS; none: off.
 		struct DeepShadowLight {
 			Vector3 center; // world, the hair's bounding sphere

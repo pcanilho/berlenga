@@ -601,6 +601,26 @@ Measured on the cloud with the map passes run 20 times a frame to isolate them: 
 frames before, 1.8 s after (-68%). Picture: sun scene mean difference 0.04 levels (error against
 the path tracer 42.9 -> 41.4), lamp scene 0.11 levels (104.8 -> 109.4, about one level a region).
 
+## Stage 2m: strand-strand collision
+
+The hair volume (Petrovic et al. 2005, stage 2f) keeps the hair's density but its cells are about
+2 cm, so single guide strands still pass through each other. Huang et al. 2023 handle hair-hair
+contact on a 1 cm Eulerian grid with Drucker-Prager friction, which still cannot stop two strands
+crossing inside a cell; the established real time answer is position based contact between strand
+points (Müller et al. 2007) found through a spatial hash (Teschner et al. 2003), with each point's
+corrections averaged (Jacobi, Macklin et al. 2014) so the result does not depend on the order.
+
+Built on the guides only (the followers take their places from them), once a frame after the
+substeps: MODE_COLL_CLEAR empties a hash of buckets (the next power of two at least twice the guide
+points, 8 points a bucket), MODE_COLL_INSERT puts each guide point into its cell's bucket,
+MODE_COLL_SOLVE looks through the 27 neighbouring cells for points of other strands closer than
+`strand_collision_radius` (default 2 mm, a lock's thickness) and averages the push apart, less
+`strand_collision_friction` of the sliding between them, and MODE_COLL_APPLY moves the points. The
+two root points stay pinned. On the wavy bench head shake the hair is a little fuller where it
+falls over itself (frame 75 against no collision: mean 0.25 levels, 99th percentile 6.3); with an
+8 mm radius 0.45 / 12. Cloud time with and without is within its noise (four small passes over
+the guide points).
+
 ## Checked: lighter path traced strands
 
 The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,

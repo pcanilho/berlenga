@@ -924,6 +924,8 @@ void PhysXHair3D::_step(double p_delta) {
 	s.volume_enabled = volume_enabled;
 	s.volume_friction = volume_friction;
 	s.volume_stiffness = volume_stiffness;
+	s.collision_radius = strand_collision ? strand_collision_radius : 0.0f;
+	s.collision_friction = strand_collision_friction;
 	s.output_xform = render_instance ? render_instance->get_global_transform().affine_inverse() : xform.affine_inverse();
 	// The draw order is sorted from the viewport's camera.
 	const Camera3D *camera = is_inside_tree() ? get_viewport()->get_camera_3d() : nullptr;
@@ -1609,6 +1611,30 @@ float PhysXHair3D::get_volume_stiffness() const {
 	return volume_stiffness;
 }
 
+void PhysXHair3D::set_strand_collision(bool p_enabled) {
+	strand_collision = p_enabled;
+}
+
+bool PhysXHair3D::is_strand_collision() const {
+	return strand_collision;
+}
+
+void PhysXHair3D::set_strand_collision_radius(float p_radius) {
+	strand_collision_radius = MAX(p_radius, 0.0f);
+}
+
+float PhysXHair3D::get_strand_collision_radius() const {
+	return strand_collision_radius;
+}
+
+void PhysXHair3D::set_strand_collision_friction(float p_friction) {
+	strand_collision_friction = CLAMP(p_friction, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_strand_collision_friction() const {
+	return strand_collision_friction;
+}
+
 void PhysXHair3D::set_collision_spheres(const PackedVector4Array &p_spheres) {
 	collision_spheres = p_spheres;
 }
@@ -1700,6 +1726,12 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_volume_friction"), &PhysXHair3D::get_volume_friction);
 	ClassDB::bind_method(D_METHOD("set_volume_stiffness", "stiffness"), &PhysXHair3D::set_volume_stiffness);
 	ClassDB::bind_method(D_METHOD("get_volume_stiffness"), &PhysXHair3D::get_volume_stiffness);
+	ClassDB::bind_method(D_METHOD("set_strand_collision", "enabled"), &PhysXHair3D::set_strand_collision);
+	ClassDB::bind_method(D_METHOD("is_strand_collision"), &PhysXHair3D::is_strand_collision);
+	ClassDB::bind_method(D_METHOD("set_strand_collision_radius", "radius"), &PhysXHair3D::set_strand_collision_radius);
+	ClassDB::bind_method(D_METHOD("get_strand_collision_radius"), &PhysXHair3D::get_strand_collision_radius);
+	ClassDB::bind_method(D_METHOD("set_strand_collision_friction", "friction"), &PhysXHair3D::set_strand_collision_friction);
+	ClassDB::bind_method(D_METHOD("get_strand_collision_friction"), &PhysXHair3D::get_strand_collision_friction);
 	ClassDB::bind_method(D_METHOD("set_collision_spheres", "spheres"), &PhysXHair3D::set_collision_spheres);
 	ClassDB::bind_method(D_METHOD("get_collision_spheres"), &PhysXHair3D::get_collision_spheres);
 	ClassDB::bind_method(D_METHOD("reset_simulation"), &PhysXHair3D::reset_simulation);
@@ -1750,4 +1782,8 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "volume_enabled"), "set_volume_enabled", "is_volume_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "volume_friction", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_volume_friction", "get_volume_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "volume_stiffness", PROPERTY_HINT_RANGE, "0,2,0.01,or_greater"), "set_volume_stiffness", "get_volume_stiffness");
+	ADD_GROUP("Strand Collision", "strand_collision");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "strand_collision"), "set_strand_collision", "is_strand_collision");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strand_collision_radius", PROPERTY_HINT_RANGE, "0,0.01,0.0001,or_greater,suffix:m"), "set_strand_collision_radius", "get_strand_collision_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strand_collision_friction", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_strand_collision_friction", "get_strand_collision_friction");
 }
