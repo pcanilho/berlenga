@@ -652,6 +652,8 @@ extension, such a surface whose index list has that pattern is built as LSS inst
 Everywhere else the shaders and the BLAS are built exactly as before, which is all the cloud and a
 40-series card can check; the LSS path needs a 50-series GPU to test.
 
+Built (#258). The setting is off by default until the swept sphere path has run on a 50-series GPU.
+
 ## Checked: lighter path traced strands
 
 The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,
