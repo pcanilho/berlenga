@@ -2929,7 +2929,30 @@ void TreeGenerator::_apply_veteran() {
 	}
 	const float crown = MAX(bole - 0.3f, 1.5f);
 	auto add = [&](VeteranKind p_kind, float p_h, float p_half_h, float p_half_w, float p_amount) {
-		veteran_features.push_back({ p_kind, p_h, vr.randf() * float(Math::TAU), p_half_h, p_half_w, p_amount });
+		// Features that change the stem's surface keep apart: a burl swelling out of a hollow's
+		// dark mouth reads as a dark lump. A few bearings are tried, else the feature is dropped.
+		const bool surface = p_kind != VET_EPICORMIC;
+		for (int attempt = 0; attempt < 6; attempt++) {
+			const float az = vr.randf() * float(Math::TAU);
+			bool clear = true;
+			if (surface) {
+				for (const VeteranFeature &o : veteran_features) {
+					if (o.kind == VET_EPICORMIC) {
+						continue;
+					}
+					const float dh = Math::abs(p_h - o.h) / (p_half_h + o.half_h + 0.05f);
+					const float da = Math::abs(Math::angle_difference(az, o.azimuth)) * r_stem / (p_half_w + o.half_w + 0.05f);
+					if (dh * dh + da * da < 1.4f * 1.4f) {
+						clear = false;
+						break;
+					}
+				}
+			}
+			if (clear) {
+				veteran_features.push_back({ p_kind, p_h, az, p_half_h, p_half_w, p_amount });
+				return;
+			}
+		}
 	};
 	const float big = CLAMP((r_stem - 0.08f) / 0.4f, 0.2f, 1.0f); // Girth: more and larger features.
 	// A basal hollow, opening at the root collar.
@@ -3710,7 +3733,6 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					const float k = 1.0f - MIN(e * e, 1.0f);
 					const float lump = 0.75f + 0.5f * moss_noise(p_pts[ring] + n * r * 4.0f, 0x6275726cu);
 					off += f.amount * r * k * Math::sqrt(k) * lump;
-					dark = MIN(dark, 1.0f - 0.12f * k);
 					w_any = MAX(w_any, k > 0.0f ? 1.0f : 0.0f);
 				} else {
 					// A hollow: deep inside, the floor rough; a callus lip of new wood around it.
