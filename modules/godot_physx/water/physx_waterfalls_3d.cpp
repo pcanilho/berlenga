@@ -43,6 +43,7 @@
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/curve_texture.h"
 #include "scene/resources/gradient_texture.h"
+#include "scene/resources/shader.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/particle_process_material.h"
 
@@ -145,10 +146,10 @@ GPUParticles3D *make_spray_puffs(const Transform3D &p_xf, float p_speed, float p
 	GPUParticles3D *puffs = memnew(GPUParticles3D);
 	puffs->set_name("FallSprayPuffs");
 	puffs->set_transform(p_xf);
-	puffs->set_amount(CLAMP((int)(p_power / 400.0f), 12, 512));
+	puffs->set_amount(CLAMP((int)(p_power / 200.0f), 24, 512));
 	puffs->set_lifetime(1.6);
 	puffs->set_pre_process_time(2.0);
-	const float size = CLAMP(0.15f * p_speed, 0.3f, 1.5f); // m across at birth
+	const float size = CLAMP(0.4f * p_speed, 0.8f, 2.5f); // m across when grown
 	puffs->set_visibility_aabb(AABB(Vector3(-p_width - 4.0f, -2.0f, -6.0f), Vector3(2.0f * p_width + 8.0f, 8.0f, 12.0f)));
 	Ref<ParticleProcessMaterial> pm;
 	pm.instantiate();
@@ -179,37 +180,41 @@ GPUParticles3D *make_spray_puffs(const Transform3D &p_xf, float p_speed, float p
 	fade->set_color(0, Color(1, 1, 1, 0.0f));
 	fade->set_offset(1, 1.0f);
 	fade->set_color(1, Color(1, 1, 1, 0.0f));
-	fade->add_point(0.15f, Color(1, 1, 1, 0.5f));
+	fade->add_point(0.15f, Color(1, 1, 1, 0.45f));
 	Ref<GradientTexture1D> fade_tex;
 	fade_tex.instantiate();
 	fade_tex->set_gradient(fade);
 	pm->set_color_ramp(fade_tex);
 	puffs->set_process_material(pm);
-	// A soft round blot: radial falloff to nothing at the rim.
-	Ref<Gradient> blot;
-	blot.instantiate();
-	blot->set_color(0, Color(1, 1, 1, 1));
-	blot->set_color(1, Color(1, 1, 1, 0));
-	blot->add_point(0.45f, Color(1, 1, 1, 0.45f));
-	Ref<GradientTexture2D> blot_tex;
-	blot_tex.instantiate();
-	blot_tex->set_gradient(blot);
-	blot_tex->set_fill(GradientTexture2D::FILL_RADIAL);
-	blot_tex->set_fill_from(Vector2(0.5f, 0.5f));
-	blot_tex->set_fill_to(Vector2(1.0f, 0.5f));
-	blot_tex->set_width(64);
-	blot_tex->set_height(64);
+	// A soft round blot facing the camera (the particle billboard of BaseMaterial3D), its falloff computed rather
+	// than read from a texture; fine spray lets light through, so it is lit from behind as well (BACKLIGHT).
 	Ref<QuadMesh> quad;
 	quad.instantiate();
-	Ref<StandardMaterial3D> qm;
+	Ref<Shader> sh;
+	sh.instantiate();
+	sh->set_code(R"(
+shader_type spatial;
+render_mode blend_mix, depth_draw_never, cull_disabled, specular_disabled;
+uniform vec3 spray_color : source_color = vec3(0.93, 0.95, 0.97);
+void vertex() {
+	mat4 mat_world = mat4(normalize(INV_VIEW_MATRIX[0]), normalize(INV_VIEW_MATRIX[1]), normalize(INV_VIEW_MATRIX[2]), MODEL_MATRIX[3]);
+	mat_world = mat_world * mat4(vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0), vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0), vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0), vec4(0.0, 0.0, 0.0, 1.0));
+	MODELVIEW_MATRIX = VIEW_MATRIX * mat_world;
+	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
+}
+void fragment() {
+	float r = length(UV * 2.0 - 1.0);
+	float blot = 1.0 - smoothstep(0.15, 1.0, r);
+	ALBEDO = spray_color;
+	BACKLIGHT = spray_color * 0.6;
+	ROUGHNESS = 1.0;
+	ALPHA = blot * COLOR.a;
+}
+)");
+	Ref<ShaderMaterial> qm;
 	qm.instantiate();
-	qm->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
-	qm->set_billboard_mode(BaseMaterial3D::BILLBOARD_PARTICLES);
-	qm->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-	qm->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, blot_tex);
-	qm->set_albedo(Color(0.93f, 0.95f, 0.97f));
-	qm->set_roughness(1.0f);
-	qm->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+	qm->set_shader(sh);
+	qm->set_render_priority(1); // over the sheet it rises from (both are sorted as transparent)
 	quad->set_material(qm);
 	puffs->set_draw_pass_mesh(0, quad);
 	return puffs;
@@ -225,7 +230,7 @@ shader_type spatial;
 #if defined(RT)
 render_mode cull_back;
 #else
-render_mode blend_mix, cull_disabled, depth_draw_never;
+render_mode blend_mix, cull_back, depth_draw_never;
 #endif
 
 uniform float water_time = 0.0;
