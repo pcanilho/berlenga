@@ -1012,6 +1012,9 @@ func _build_water() -> void:
 		wf.name = "Waterfalls"
 		add_child(wf)
 		wf.source = wf.get_path_to(gen)
+		# --rock-step=M: step height of the rock thin contact falls run over (0.01: the flow always covers the face).
+		if args.has("rock-step"):
+			wf.rock_step = float(args["rock-step"])
 		wf.rebuild()
 		for f in wf.get_contact_falls():
 			_log("contact fall %s" % [f])

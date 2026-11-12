@@ -18,6 +18,15 @@
 				The mean air concentration self-aerated flow reaches on a chute of this slope, [code]0.9 sin a[/code] (Chanson 1993), at most 0.9.
 			</description>
 		</method>
+		<method name="flow_cover" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="q" type="float" />
+			<param index="1" name="step" type="float" />
+			<param index="2" name="tan_slope" type="float" />
+			<description>
+				Share (0.3 to 1) of a stepped face that a flow of [param q] m²/s covers over steps [param step] m high on a slope [param tan_slope] (rise over run). Below the onset of skimming flow, critical depth over step height 1.2 - 0.325 h/l (Chanson 2001), the water falls ledge to ledge as threads with wet rock between them.
+			</description>
+		</method>
 		<method name="get_contact_shader_code" qualifiers="static">
 			<return type="String" />
 			<description>
@@ -67,6 +76,9 @@
 		</member>
 		<member name="rock_roughness" type="float" setter="set_rock_roughness" getter="get_rock_roughness" default="0.15">
 			Roughness height of the rock face (m), for the inception point.
+		</member>
+		<member name="rock_step" type="float" setter="set_rock_step" getter="get_rock_step" default="0.8">
+			Height (m) of the steps and ledges a contact fall runs over. A thin flow falls from ledge to ledge as threads with wet rock between them (nappe flow) and covers the face only once its critical depth nears this height (skimming flow, Chanson 2001).
 		</member>
 		<member name="row_spacing" type="float" setter="set_row_spacing" getter="get_row_spacing" default="0.5">
 			Distance (m) between rows of the sheet down the face.
