@@ -434,7 +434,6 @@ void light() {
 #endif
 )";
 
-
 // Snow on the hair (docs/ideas/hair.md, stage 2r): small clumps of crystals caught on the strands,
 // drawn as their own mesh, one closed blob (an octahedron, smooth shaded) per vertex group, its
 // corner in NORMAL. Each group belongs to a slot of hair_positions: CUSTOM0 = (the slot's first
@@ -513,12 +512,13 @@ void fragment() {
 } // namespace
 
 // Hair cards (docs/ideas/hair.md, stage 2p): the card mesh drawn from the cards' own simulated
-// strands (the first slots of hair_positions). Each vertex is one side of one of a card's two
-// crossed strips at one of its points: CUSTOM0 = (texel, previous texel, next texel, side -1 or 1),
-// CUSTOM1 = the strip's axis at rest (groom space) and the other strip's half width, CUSTOM2 = the
-// card's direction at rest and the strip's half width there; UV in the atlas tile. The strip's axis turns with the
-// card's centre line. Opacity is the atlas coverage, blended as the strands are (the hair is one
-// colour, so the cards' order barely shows); shadow maps keep that share of their texels
+// strands (the first slots of hair_positions, sorted far to near so the blend runs back to front
+// as the strands'). Each vertex is one side of one of a strip's points in a slot: CUSTOM0 = (texel,
+// previous texel, next texel, side -1 or 1), CUSTOM1 = (point, strip, share along). The card in
+// the slot (named by the previous positions' w) gives the rest from card_data: the strip's axis at
+// rest (groom space) and half width, the other strip's half width, the card's direction at rest
+// and the atlas tile. The strip's axis turns with the card's centre line. Opacity comes from the
+// atlas's optical depth, blended as the strands are; shadow maps keep that share of their texels
 // (stochastic transparency, Enderton et al. 2010). Raster only: under the path tracer the hair
 // stays strands.
 const char *HAIR_CARD_HEAD = R"(
@@ -528,6 +528,8 @@ render_mode cull_disabled, rt_vertex_dynamic, hair_cards, alpha_motion_vectors;
 
 const char *HAIR_CARD_FUNCS = R"(
 uniform sampler2D card_atlas : filter_linear_mipmap, repeat_disable;
+uniform sampler2D card_data : filter_nearest, repeat_disable;
+uniform vec2 card_tile = vec2(32.0, 256.0); // a tile's size in the atlas, in texels
 uniform float card_clump = 0.0; // wet clumping, as the strands'
 // The scalp as a sphere (centre, radius) fitted to the strands' roots, in the hair's space (w 0: none).
 uniform vec4 card_scalp = vec4(0.0);
@@ -544,16 +546,29 @@ void vertex() {
 	vec4 here = hair_point(CUSTOM0.x);
 	vec4 before = hair_point(CUSTOM0.y);
 	vec4 after = hair_point(CUSTOM0.z);
-	// w: 4 + along + 8 * fan (64ths), the solver's encoding for a card's strand.
-	float fan_q = floor((here.w - 4.0) / 8.0);
-	float along = clamp(here.w - 4.0 - 8.0 * fan_q, 0.0, 1.0);
+	int ti = int(CUSTOM0.x + 0.5);
+	ivec2 texel = ivec2(ti % texture_width, ti / texture_width);
+	// The card drawn in this slot (-2 - card in the previous positions' w) and what it holds.
+	int card = int(-texelFetch(hair_previous_positions, texel, 0).w - 2.0 + 0.5);
+	int point = int(CUSTOM1.x + 0.5);
+	int strip = int(CUSTOM1.y + 0.5);
+	vec4 own = texelFetch(card_data, ivec2(point * 4 + strip, card), 0); // axis, the other's half width
+	float own_half = texelFetch(card_data, ivec2(point * 4 + 1 - strip, card), 0).w;
+	vec3 t0 = texelFetch(card_data, ivec2(point * 4 + 2, card), 0).xyz;
+	vec4 tiles = texelFetch(card_data, ivec2(point * 4 + 3, card), 0);
+	vec2 tile = strip == 0 ? tiles.xy : tiles.zw;
+	UV = (tile + vec2(0.5 + (card_tile.x - 1.0) * (CUSTOM0.w * 0.5 + 0.5), 0.5 + (card_tile.y - 1.0) * CUSTOM1.z)) / vec2(textureSize(card_atlas, 0));
+	// w: 4 + along + 8 * fan (64ths), the solver's encoding for a card's strand (this frame's: the
+	// previous positions' w names the card).
+	float w = texelFetch(hair_positions, texel, 0).w;
+	float fan_q = floor((w - 4.0) / 8.0);
+	float along = clamp(w - 4.0 - 8.0 * fan_q, 0.0, 1.0);
 	card_fan = clamp(fan_q / 64.0, 0.5, 4.0);
 	vec3 p = here.xyz;
-	vec3 t0 = CUSTOM2.xyz;
 	vec3 t = after.xyz - before.xyz;
 	t = dot(t, t) > 1e-14 ? normalize(t) : t0;
 	// The strip's axis at rest turned as the card's centre line turned (rotation from t0 to t).
-	vec3 ax = CUSTOM1.xyz;
+	vec3 ax = own.xyz;
 	vec3 k = cross(t0, t);
 	float s = length(k);
 	if (s > 1e-6) {
@@ -564,8 +579,18 @@ void vertex() {
 	ax -= t * dot(ax, t);
 	ax = dot(ax, ax) > 1e-12 ? normalize(ax) : normalize(cross(t, abs(t.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	// The clump fans out (or closes) with its guides: the card as much wider, and thinner below.
-	float half_width = CUSTOM2.w * card_fan * (1.0 - card_clump * smoothstep(0.0, 0.3, along));
-	VERTEX = p + ax * (half_width * CUSTOM0.w);
+	float half_width = own_half * card_fan * (1.0 - card_clump * smoothstep(0.0, 0.3, along));
+	float drawn = half_width;
+	if (!IN_PATH_TRACER) {
+		// A card under a pixel wide falls between the pixels' centres, and the hair behind it
+		// shows: as the strands (TressFX), it is drawn at least 0.71 px a side (capped as theirs,
+		// 2 mm in shadow maps and 1 cm otherwise), and its optical depth thinned to match.
+		vec4 clip = PROJECTION_MATRIX * (MODELVIEW_MATRIX * vec4(p, 1.0));
+		float px = 2.0 * clip.w / max(abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y, 1e-6);
+		drawn = max(half_width, min(0.71 * px, IN_SHADOW_PASS ? 0.002 : 0.01));
+		card_fan *= drawn / max(half_width, 1e-7);
+	}
+	VERTEX = p + ax * (drawn * CUSTOM0.w);
 	if (card_scalp.w > 0.0) {
 		// The card stands for a slab of strands, as wide as one strip and as thick as the other,
 		// centred on its simulated strand, which the collision keeps only just off the scalp: the
@@ -579,7 +604,7 @@ void vertex() {
 			out_dir /= r;
 			vec3 bx = normalize(cross(t, ax));
 			float a_out = dot(ax, out_dir);
-			float other = CUSTOM1.w * half_width / max(CUSTOM2.w, 1e-6);
+			float other = own.w * half_width / max(own_half, 1e-6);
 			float support = half_width * abs(a_out) + other * abs(dot(bx, out_dir));
 			float sag = half_width * half_width * (1.0 - a_out * a_out) / (2.0 * max(r, 0.5 * card_scalp.w));
 			VERTEX += out_dir * max(support + sag - (r - card_scalp.w), 0.0);
@@ -636,13 +661,20 @@ void fragment() {
 		}
 	}
 	// The two crossed strips hold the same hair seen two ways: each counts by how squarely it
-	// faces the view, the two weights summing to one, as optical depth (1 - (1 - c)^w), so where
-	// both show the same coverage together they let through what one clump does.
+	// faces the view (f^2 / (f^2 + o^2), the two summing to one), as optical depth. A strip seen
+	// at an angle packs its strands into less of the screen: per pixel their depth is the
+	// strands' projected area (width x length x sin a, a the view's angle to the strands) over
+	// the strip's (its width x length x |f|), so it grows by sin a / |f|. Weighted, that is
+	// |f| / sqrt(f^2 + o^2) of the atlas's depth. Left out, the hair seen obliquely lost up to
+	// a third of its opacity.
 	float f = dot(NORMAL, VIEW);
 	float o = dot(TANGENT, VIEW);
-	float facing = f * f / max(f * f + o * o, 1e-6);
-	// Fanned out, the same strands spread over a wider card: optical depth over the fan.
-	float coverage = 1.0 - pow(max(1.0 - texel.r, 1e-4), facing / max(card_fan, 0.5));
+	float facing = abs(f) / max(sqrt(f * f + o * o), 1e-3);
+	// Fanned out (or widened to a pixel), the same strands spread over a wider card: optical
+	// depth over the fan.
+	// The atlas holds the strands' optical depth (16 bits, R high and B low, over 8).
+	float depth = (texel.r * 65280.0 + texel.b * 255.0) * (8.0 / 65535.0);
+	float coverage = 1.0 - exp(-depth * facing / max(card_fan, 0.5));
 	// Lit as the strands are: a fibre has no surface normal, so the ambient and reflected light
 	// take the strands' own ribbon frame, rebuilt here about the card's strand direction: across
 	// = T x eye (eye from the camera to the point, view space), normal = across x T, which faces
@@ -1034,6 +1066,8 @@ void PhysXHair3D::_make_material() {
 			card_bake->texture = ImageTexture::create_from_image(card_bake->atlas);
 		}
 		card_material->set_shader_parameter("card_atlas", card_bake->texture);
+		card_material->set_shader_parameter("card_data", card_data);
+		card_material->set_shader_parameter("card_tile", Vector2(card_bake->tiles[2], card_bake->tiles[3]));
 		card_material->set_shader_parameter("hair_positions", pos_texture);
 		card_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
 		card_material->set_shader_parameter("slot_points", draw_slot_points);
@@ -1547,54 +1581,55 @@ void PhysXHair3D::_build_cards(const AABB &p_bounds) {
 	const HairCardBake &b = **card_bake;
 	const int cs = b.samples;
 	const int nc = b.card_count;
-	const Vector2 atlas_size(b.atlas->get_width(), b.atlas->get_height());
-	PackedVector3Array verts;
-	PackedVector3Array normals;
-	PackedVector2Array uvs;
-	PackedFloat32Array custom0, custom1, custom2;
-	PackedInt32Array indices;
-	verts.resize(nc * cs * 4);
-	normals.resize(verts.size());
-	uvs.resize(verts.size());
-	custom0.resize(verts.size() * 4);
-	custom1.resize(verts.size() * 4);
-	custom2.resize(verts.size() * 4);
-	Vector3 *v = verts.ptrw();
-	Vector3 *nr = normals.ptrw();
-	Vector2 *uv = uvs.ptrw();
-	float *c0 = custom0.ptrw();
-	float *c1 = custom1.ptrw();
-	float *c2 = custom2.ptrw();
+	// What each card holds, read by the card drawn in a slot (the slots follow the draw order, far
+	// to near): per point four texels, (strip 0's axis, strip 1's half width), (strip 1's axis,
+	// strip 0's half width), (the card's direction at rest, 0), (both strips' tiles: x, y in
+	// texels).
+	Ref<Image> data = Image::create_empty(cs * 4, nc, false, Image::FORMAT_RGBAF);
 	for (int c = 0; c < nc; c++) {
 		for (int k = 0; k < cs; k++) {
 			const int i = c * cs + k;
 			const Vector3 t = (b.points[c * cs + MIN(k + 1, cs - 1)] - b.points[c * cs + MAX(k - 1, 0)]).normalized();
 			for (int strip = 0; strip < 2; strip++) {
-				const int tile = c * 2 + strip;
-				const float tx = b.tiles[tile * 4 + 0];
-				const float ty = b.tiles[tile * 4 + 1];
-				const float tw = b.tiles[tile * 4 + 2];
-				const float th = b.tiles[tile * 4 + 3];
-				const float along = float(k) / float(cs - 1);
+				const Vector3 ax = b.axis[strip][i];
+				data->set_pixel(k * 4 + strip, c, Color(ax.x, ax.y, ax.z, b.half_width[1 - strip][i]));
+			}
+			data->set_pixel(k * 4 + 2, c, Color(t.x, t.y, t.z, 0.0f));
+			data->set_pixel(k * 4 + 3, c, Color(b.tiles[c * 8 + 0], b.tiles[c * 8 + 1], b.tiles[c * 8 + 4], b.tiles[c * 8 + 5]));
+		}
+	}
+	card_data = ImageTexture::create_from_image(data);
+	// The mesh: per slot point two crossed strips (four vertices), placed in vertex() from the
+	// simulated points: CUSTOM0 = (texel, previous texel, next texel, side -1 or 1), CUSTOM1 =
+	// (point, strip, share along, 0).
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedFloat32Array custom0, custom1;
+	PackedInt32Array indices;
+	verts.resize(nc * cs * 4);
+	normals.resize(verts.size());
+	custom0.resize(verts.size() * 4);
+	custom1.resize(verts.size() * 4);
+	Vector3 *v = verts.ptrw();
+	Vector3 *nr = normals.ptrw();
+	float *c0 = custom0.ptrw();
+	float *c1 = custom1.ptrw();
+	for (int c = 0; c < nc; c++) {
+		for (int k = 0; k < cs; k++) {
+			const int i = c * cs + k;
+			for (int strip = 0; strip < 2; strip++) {
 				for (int side = 0; side < 2; side++) {
 					const int vi = i * 4 + strip * 2 + side;
 					v[vi] = b.points[i];
 					nr[vi] = Vector3(0, 0, 1);
-					// Texel centres at the tile's edges, so neighbouring tiles do not bleed in.
-					uv[vi] = Vector2((tx + 0.5f + (tw - 1.0f) * float(side)) / atlas_size.x, (ty + 0.5f + (th - 1.0f) * along) / atlas_size.y);
 					c0[vi * 4 + 0] = float(c * draw_slot_points + k);
 					c0[vi * 4 + 1] = float(c * draw_slot_points + MAX(k - 1, 0));
 					c0[vi * 4 + 2] = float(c * draw_slot_points + MIN(k + 1, cs - 1));
 					c0[vi * 4 + 3] = side == 0 ? -1.0f : 1.0f;
-					const Vector3 ax = b.axis[strip][i];
-					c1[vi * 4 + 0] = ax.x;
-					c1[vi * 4 + 1] = ax.y;
-					c1[vi * 4 + 2] = ax.z;
-					c1[vi * 4 + 3] = b.half_width[1 - strip][i]; // the other strip's: the clump's thickness
-					c2[vi * 4 + 0] = t.x;
-					c2[vi * 4 + 1] = t.y;
-					c2[vi * 4 + 2] = t.z;
-					c2[vi * 4 + 3] = b.half_width[strip][i];
+					c1[vi * 4 + 0] = float(k);
+					c1[vi * 4 + 1] = float(strip);
+					c1[vi * 4 + 2] = float(k) / float(cs - 1);
+					c1[vi * 4 + 3] = 0.0f;
 				}
 			}
 		}
@@ -1615,14 +1650,11 @@ void PhysXHair3D::_build_cards(const AABB &p_bounds) {
 	arrays.resize(Mesh::ARRAY_MAX);
 	arrays[Mesh::ARRAY_VERTEX] = verts;
 	arrays[Mesh::ARRAY_NORMAL] = normals;
-	arrays[Mesh::ARRAY_TEX_UV] = uvs;
 	arrays[Mesh::ARRAY_CUSTOM0] = custom0;
 	arrays[Mesh::ARRAY_CUSTOM1] = custom1;
-	arrays[Mesh::ARRAY_CUSTOM2] = custom2;
 	arrays[Mesh::ARRAY_INDEX] = indices;
 	const uint64_t format = ((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT) |
-			((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM1_SHIFT) |
-			((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM2_SHIFT);
+			((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM1_SHIFT);
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
 	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), format);

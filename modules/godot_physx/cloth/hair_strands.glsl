@@ -100,7 +100,7 @@ layout(push_constant, std430) uniform Pass {
 	int mode;
 	float frac; // substep fraction, for blending the head's transform
 	float frac_prev; // the previous substep's
-	int pad1; // MODE_SORT_STEP: the bitonic block size k (frac holds the stride j); MODE_SDF_JUMP: the step; MODE_OUTPUT: 1 with history
+	int pad1; // MODE_SORT_KEYS: cards only, how many (0: every strand); MODE_SORT_STEP: the bitonic block size k (frac holds the stride j); MODE_SDF_JUMP: the step; MODE_OUTPUT: 1 with history
 }
 pass;
 
@@ -849,18 +849,24 @@ void main() {
 	if (pass.mode == MODE_SORT_KEYS) {
 		// Blended strands must be drawn far to near (TressFX sorts its fragments per pixel; here
 		// whole strands are sorted by their middle point's depth, a bitonic sort on the GPU).
-		if (id >= int(inertia.w + 0.5)) {
+		// pass.pad1 > 0: hair cards only, nothing else drawn: just the cards' strands are sorted,
+		// pad1 of them (a power of two) from card_first() on.
+		if (id >= (pass.pad1 > 0 ? pass.pad1 : int(inertia.w + 0.5))) {
 			return;
 		}
+		int s = pass.pad1 > 0 ? card_first() + id : id;
 		float key = 3.0e38; // padding sorts last
-		if (is_card_strand(id) && id < counts.x) {
-			// Hair cards' strands sort first, in their own order, so card c always has slot c.
-			key = -1.0e30 + float(id - card_first()) * 1.0e24;
-		} else if (id < counts.x && strands[id].y > 0) {
-			vec3 mid = pos[strands[id].x + strands[id].y / 2].xyz;
+		if (s < counts.x && strands[s].y > 0) {
+			vec3 mid = pos[strands[s].x + strands[s].y / 2].xyz;
 			key = (world_to_view * vec4(mid, 1.0)).z; // more negative is farther
+			if (is_card_strand(s)) {
+				// Hair cards' strands take the first slots (the card mesh draws them), far to near
+				// among themselves as the strands are: blended out of order, a card behind drew over
+				// one in front, and the hair read lighter and thinner than its strands.
+				key -= 1.0e7;
+			}
 		}
-		order[id] = vec2(key, float(id));
+		order[id] = vec2(key, float(s));
 		return;
 	}
 	if (pass.mode == MODE_SORT_STEP) {
@@ -926,7 +932,10 @@ void main() {
 			last[sp] = vec4(o, 1.0);
 		}
 		imageStore(out_image, ivec2(id % w, id / w), vec4(o, along));
-		imageStore(prev_image, ivec2(id % w, id / w), vec4(before, along));
+		// A card's slot: the previous positions' w names the card drawn there (-2 - card), since
+		// the slots follow the draw order. Negative, it reads as past the strand's end to the
+		// strand mesh.
+		imageStore(prev_image, ivec2(id % w, id / w), vec4(before, is_card_strand(strand) ? -2.0 - float(strand - card_first()) : along));
 		return;
 	}
 

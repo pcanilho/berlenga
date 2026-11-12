@@ -1692,12 +1692,12 @@
    "topic": "Plants"
   },
   {
-   "name": "Flowering by season",
+   "name": "Plants by season",
    "settings": [
     "PlantGenerator.season"
    ],
    "note": "",
-   "what": "17 flowering herbs open, go to seed and die back to standing stalks by degree days.",
+   "what": "17 flowering herbs open, go to seed and die back to standing stalks by degree days; fern croziers unroll in spring, fronds die back russet and lie flat through winter, and wood anemone dies down after flowering.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

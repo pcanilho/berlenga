@@ -358,7 +358,6 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 	buf_vol_rest = storage_from(rd, (const uint8_t *)p_vol_rest.ptr(), vol_cells > 0 ? vol_count * 4 : 0);
 	rt_make_uniform_set();
 	needs_reset = true;
-	sorted = false;
 	built.set();
 }
 
@@ -665,21 +664,25 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 		run(MODE_DOM_ACCUM, 1.0f, 1.0f, strand_count, m);
 		run(MODE_DOM_RESOLVE, 1.0f, 1.0f, dom_cells, m);
 	}
-	// Hair cards only: the cards' strands sit in the first slots once sorted, and nothing else
-	// is drawn, so the sort is skipped and only their slots are written.
+	// Hair cards only: the cards' strands take the first slots and nothing else is drawn, so only
+	// they are sorted and only their slots are written.
 	const float card_flag = fl[SDF_PARAMS + 11];
 	const bool cards_only = card_flag < 0.0f;
 	const int card_strands = card_flag != 0.0f ? MAX(strand_count - (int)(Math::abs(card_flag) + 0.5f), 0) : 0;
 	if (slot_points > 0) {
-		if (!cards_only || !sorted) {
-			// Draw order, far to near: bitonic sort of the strands by depth.
-			run(MODE_SORT_KEYS, 1.0f, 1.0f, sort_size);
-			for (int k = 2; k <= sort_size; k <<= 1) {
-				for (int j = k >> 1; j > 0; j >>= 1) {
-					run(MODE_SORT_STEP, (float)j, 0.0f, sort_size, k);
-				}
+		// Draw order, far to near: bitonic sort of the strands by depth.
+		int n = sort_size;
+		if (cards_only) {
+			n = 1;
+			while (n < card_strands) {
+				n <<= 1;
 			}
-			sorted = true;
+		}
+		run(MODE_SORT_KEYS, 1.0f, 1.0f, n, cards_only ? n : 0);
+		for (int k = 2; k <= n; k <<= 1) {
+			for (int j = k >> 1; j > 0; j >>= 1) {
+				run(MODE_SORT_STEP, (float)j, 0.0f, n, k);
+			}
 		}
 		run(MODE_OUTPUT, 1.0f, 1.0f, (cards_only ? card_strands : strand_count) * slot_points, history ? 1 : 0);
 	} else {

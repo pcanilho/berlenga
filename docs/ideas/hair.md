@@ -788,10 +788,41 @@ the sky's light off only 1.5 times. Three causes, none of them the deep opacity 
 
 Result: close up the cards are within 7% of the strands (mean 47.1 against 44.1), at 8 m within 38%
 (28.8 against 20.9; before, 40.7: 95% lighter). What is left at 8 m is mostly the body showing
-between the hanging cards at the shoulders, where the strands cover it. Also found, in the
+between the hanging cards at the shoulders, where the strands cover it (fixed below). Also found, in the
 renderer's code (not yet measured): Godot leaves alpha-blended materials out of its shadow
 passes, so the strands' and cards' shadow-pass code only runs for the path tracer's shadow rays,
 and the deep opacity maps carry the hair's self-shadowing in raster. Cards stay off by default.
+
+### Fixed: cards see-through over the shoulders and head
+
+Turning the cards' opacity to 1 wherever the atlas holds any hair showed no gaps: the body showed
+through low opacity, not between cards. Four causes:
+
+- Draw order: the strands are sorted far to near every frame (bitonic sort on the GPU) because
+  they are blended, but the cards kept a fixed order (card c in slot c, sorted once). A card
+  behind drew over one in front, and lit hair from the back of the head showed through the dark
+  front layer everywhere but in front of the head (where the head hides it): the head's outline
+  showed as a dark disc. The cards' strands are now sorted every frame too (only theirs, a few
+  hundred), and the card in each slot is named in the previous positions' w (-2 - card), so the
+  card mesh reads its card's axes, widths and tiles from a small texture (card_data).
+- Mipmaps: the atlas held coverage, and its mipmaps averaged it. A pixel spanning several texels
+  sees all their strands, each by its share of the pixel, so it lets through exp(-mean depth); the
+  mean of the texels' transmittances is more (exp is convex), so the cards grew see-through with
+  distance. The atlas now holds the optical depth (16 bits: R high, B low byte; filtering is linear
+  in each) and makes its own mipmaps of it.
+- Sub-pixel cards: a card under a pixel wide falls between pixel centres. As the strands
+  (TressFX), it is now drawn at least 0.71 px a side (capped at 1 cm, 2 mm in shadow maps) and
+  its depth thinned by as much.
+- Oblique strips: a strip seen at an angle packs its strands into less of the screen, so their
+  depth per pixel grows by sin a / |f| (a the view's angle to the strands, f the strip's facing).
+  The strips' weights (f^2 / (f^2 + o^2)) left this out, and an oblique card lost up to a third of
+  its opacity.
+
+Result (bench mean luminance): close up 44.8 against the strands' 44.1 (47.1 before), at 8 m 23.6
+against 21.0 (28.8 before), at 15 m 24.8 against 22.9. Making the cards' depth half as much again
+closes the rest at 8 m (21.8) but takes them past the strands close up, so it is left: the
+remaining 12% at 8 m is not explained yet. The sort adds about 36 small dispatches a frame for
+256 cards (the strands' own sort runs over all 30,000).
 
 ### Fixed: black specks on strands with deep shadows
 

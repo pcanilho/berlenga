@@ -4544,6 +4544,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			rad.push_back(r_end);
 		}
 		const bool stem = first.parent == 0;
+		// The root collar (flare and sink) belongs to a stem standing in the soil. A log or a
+		// fallen limb lies along the ground, every ring of it near the base height: the flare
+		// swelled the whole log and the sink dove its open butt into the soil, where it showed
+		// from above as a log with its top missing.
+		const bool collar = stem && flare > 0.0f && !fallen && !fallen_branch;
 		if (!stem && r0 > 0.01f && pts.size() >= 2) {
 			// Branch collar: a limb swells where it leaves its parent, so its base meets the
 			// parent's bark in a smooth fillet instead of a pipe pushed into a pipe (the welded
@@ -4645,7 +4650,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				rad.push_back(rim_r * rs[k]);
 			}
 		}
-		if (stem && flare > 0.0f) {
+		if (collar) {
 			for (int i = 0; i < int(pts.size()); i++) {
 				const float h = MAX(0.0f, pts[i].y - nodes[0].start.y);
 				// The root collar: over the last ~20 cm the flare splays out into the roots, so
@@ -4658,6 +4663,28 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const Vector3 d0 = pts.size() >= 2 ? (pts[1] - pts[0]).normalized() : Vector3(0, 1, 0);
 			const float lean = Math::sqrt(MAX(0.0f, 1.0f - d0.y * d0.y));
 			pts[0] -= Vector3(0, 0.15f + rad[0] * lean, 0);
+		}
+		if (stem && (fallen || fallen_branch) && pts.size() >= 2 && rad[0] >= 0.006f) {
+			// A standing stem's base is under the soil; a log's or a fallen limb's lies in the
+			// open and showed the tube's hollow inside. It closes under a short broken face, as
+			// the snapped tip does.
+			const Vector3 d0 = (pts[1] - pts[0]).normalized();
+			const Vector3 p0 = pts[0];
+			const float r_base = rad[0];
+			const float ks[3] = { 1.0f, 0.75f, 0.4f };
+			const float rs[3] = { 0.0f, 0.68f, 0.93f };
+			LocalVector<Vector3> cp;
+			LocalVector<float> cr;
+			for (int k = 0; k < 3; k++) {
+				cp.push_back(p0 - d0 * (r_base * 0.15f * ks[k]));
+				cr.push_back(r_base * rs[k]);
+			}
+			for (uint32_t i = 0; i < pts.size(); i++) {
+				cp.push_back(pts[i]);
+				cr.push_back(rad[i]);
+			}
+			pts = cp;
+			rad = cr;
 		}
 		if (climber != CLIMBER_NONE && r0 >= 0.02f) {
 			// Kept for the climbers: the axis as meshed, its radii and the bone at each point.
