@@ -69,6 +69,7 @@ public:
 		PackedVector3Array ledges; // world
 		PackedFloat32Array ledge_speed; // m/s of the water striking each
 		Vector3 foot;
+		PackedFloat32Array sky_spec; // per row: share of the reflected sky the terrain leaves open (1 without heights)
 	};
 
 private:
@@ -116,6 +117,7 @@ public:
 	// Share of a steep face a thin flow covers: falls step to step as threads (nappe flow) below the onset of
 	// skimming flow, y_c / h > 1.2 - 0.325 h/l (Chanson 2001), and covers the rock above it.
 	static float flow_cover(float p_q, float p_step, float p_tan_slope);
+	static void _sky_spec(Face &r_face, int p_col, Object *p_source);
 	Array get_contact_falls() const;
 
 	void set_source(const NodePath &p_path);
