@@ -348,6 +348,11 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[0] + 0.6, 1.1, 3.0)
 		cam.look_at(Vector3(xs[0], 0.45, 0))
 		cam.fov = 45.0
+		if OS.has_environment("CAM"): # As on the bole view: "dx,y,z,lx,ly,lz,fov" from the tree.
+			var cv := OS.get_environment("CAM").split_floats(",")
+			cam.position = Vector3(xs[0] + cv[0], cv[1], cv[2])
+			cam.look_at(Vector3(xs[0] + cv[3], cv[4], cv[5]))
+			cam.fov = cv[6]
 	elif view == "veteran":
 		var out := Vector3(cos(vet_az), 0, sin(vet_az))
 		var cy := float(OS.get_environment("VCAMY")) if OS.has_environment("VCAMY") else 1.5
