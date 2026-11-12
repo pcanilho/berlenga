@@ -175,14 +175,229 @@ void Landscape3D::_measure_task(uint32_t p_index, void *p_userdata) {
 	_measure_chunk(p_index % cw, p_index / cw);
 }
 
-// Mesh cache keys: the chunk's height generation, chunk index, level (3 bits), edge mask (4 bits).
+// Mesh cache keys: the chunk's height generation, chunk index, level (3 bits), edge mask (9 bits: 4 coarser sides,
+// cliff relief on, 4 sides whose neighbour has none).
 uint64_t Landscape3D::_mesh_key(int p_chunk, int p_level, int p_mask) const {
-	return (uint64_t(chunks[p_chunk].gen) << 32) | (uint64_t(p_chunk) << 7) | (uint64_t(p_level) << 4) | uint64_t(p_mask);
+	return (uint64_t(chunks[p_chunk].gen) << 36) | (uint64_t(p_chunk) << 12) | (uint64_t(p_level) << 9) | uint64_t(p_mask);
 }
 
 // Vertex data of one chunk mesh, ready for the renderer. Reads only the grid and the indices, so it runs on worker
 // threads while the main thread leaves both alone.
+// Cliff relief (cliff_relief). A heightfield has no vertices on a face steeper than its spacing: a 30 m wall is one
+// strip of stretched triangles, whatever the shader draws on it. So at the finest level the triangles of steep faces
+// are refined where an edge spans more height than the spacing (red-green refinement: an edge is split by its own
+// end points only, so the two triangles on it, in this chunk or the next, always agree and nothing cracks), and every
+// vertex is pushed out along the face's horizontal normal by a rock relief: beds 3 m thick that stand proud or sit
+// back (differential erosion of strata; ledges), staggered joint blocks along them, and roughness. Displacement along
+// the normal is how REDengine 3 (Gollent 2014) and Frostbite (Widmark 2012) break up terrain cliffs. Sides whose
+// neighbour is coarser keep their vertices and edges as they are, so the stitching there is untouched.
+static inline float _lc_hash(int32_t a, int32_t b, int32_t c) {
+	uint32_t h = uint32_t(a) * 0x8DA6B343u ^ uint32_t(b) * 0xD8163841u ^ uint32_t(c) * 0xCB1AB31Fu;
+	h ^= h >> 13;
+	h *= 0x5BD1E995u;
+	h ^= h >> 15;
+	return float(h & 0xFFFFFFu) / float(0xFFFFFF);
+}
+
+static inline float _lc_noise(const Vector3 &p) {
+	const Vector3 i = p.floor();
+	Vector3 f = p - i;
+	f = f * f * (Vector3(3, 3, 3) - 2.0f * f);
+	const int32_t x = int32_t(i.x), y = int32_t(i.y), z = int32_t(i.z);
+	auto hh = [&](int dx, int dy, int dz) { return _lc_hash(x + dx, y + dy, z + dz + 7919); };
+	const float a = Math::lerp(Math::lerp(hh(0, 0, 0), hh(1, 0, 0), f.x), Math::lerp(hh(0, 1, 0), hh(1, 1, 0), f.x), f.y);
+	const float b = Math::lerp(Math::lerp(hh(0, 0, 1), hh(1, 0, 1), f.x), Math::lerp(hh(0, 1, 1), hh(1, 1, 1), f.x), f.y);
+	return Math::lerp(a, b, f.z);
+}
+
+Vector3 Landscape3D::_normal_at(real_t p_x, real_t p_z) const {
+	const int x = int(Math::floor(p_x)), z = int(Math::floor(p_z));
+	const real_t u = p_x - x, v = p_z - z;
+	return (_normal(x, z) * (1 - u) * (1 - v) + _normal(x + 1, z) * u * (1 - v) + _normal(x, z + 1) * (1 - u) * v + _normal(x + 1, z + 1) * u * v).normalized();
+}
+
+// Metres out of the face (negative: back into it) at a point of the landscape's own space, before cliff_relief.
+float Landscape3D::_cliff_offset(const Vector3 &p) const {
+	// Beds: warped, 3 m thick, each proud or recessed by its own amount; the step to the next bed rounded over its top
+	// metre (a ledge's lip, not a saw cut, and no deep undercut a light cannot reach).
+	const real_t T = 3.0;
+	const real_t yb = p.y + (_lc_noise(p * 0.05f) - 0.5f) * 4.0f;
+	const int32_t bed = int32_t(Math::floor(yb / T));
+	const real_t fy = yb - bed * T;
+	const float o0 = _lc_hash(bed, 11, 3) * 2.0f - 1.0f;
+	const float o1 = _lc_hash(bed + 1, 11, 3) * 2.0f - 1.0f;
+	const real_t ty = CLAMP((fy - (T - 1.0f)) / 1.0f, real_t(0.0), real_t(1.0));
+	float o = Math::lerp(o0, o1, float(ty * ty * (3.0f - 2.0f * ty)));
+	// Joints across the beds, 4.5 m apart and staggered bed to bed, each block a little forward or back.
+	const real_t u = p.x * 0.8f + p.z * 0.6f + _lc_hash(bed, 5, 1) * 4.5f;
+	const int32_t jb = int32_t(Math::floor(u / 4.5f));
+	const real_t fu = u - jb * 4.5f;
+	const float j0 = _lc_hash(bed, jb, 9) - 0.5f, j1 = _lc_hash(bed, jb + 1, 9) - 0.5f;
+	const real_t tu = CLAMP((fu - 3.9f) / 0.6f, real_t(0.0), real_t(1.0));
+	o += 0.6f * Math::lerp(j0, j1, float(tu * tu * (3.0f - 2.0f * tu)));
+	// Roughness.
+	o += 0.5f * (_lc_noise(p * 0.7f) - 0.5f) + 0.2f * (_lc_noise(p * 2.1f + Vector3(3, 1, 7)) - 0.5f);
+	return o;
+}
+
+// The displaced point for a point on the heightfield surface (landscape space).
+Vector3 Landscape3D::_cliff_point(const Vector3 &p, real_t p_weight_scale) const {
+	const Vector3 n = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
+	const Vector2 m(n.x, n.z);
+	const real_t ml = m.length();
+	if (ml < 1e-4f || p_weight_scale <= 0.0) {
+		return p;
+	}
+	// Faces past about 50 degrees, full past about 62.
+	const real_t w = (1.0f - CLAMP((n.y - 0.47f) / (0.64f - 0.47f), real_t(0.0), real_t(1.0)));
+	if (w <= 0.0) {
+		return p;
+	}
+	const real_t ws = w * w * (3.0f - 2.0f * w) * p_weight_scale;
+	const real_t d = cliff_relief * _cliff_offset(p) * ws;
+	return p + Vector3(m.x / ml, 0.0, m.y / ml) * d;
+}
+
+void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
+	const int cx = r_job.chunk % cw;
+	const int cz = r_job.chunk / cw;
+	const int n = chunk_quads;
+	const int row = n + 1;
+	const Vector3 corner(origin.x + cx * chunk_quads * spacing, 0.0, origin.y + cz * chunk_quads * spacing);
+	LocalVector<Vector3> base; // landscape space
+	LocalVector<real_t> keep; // 1 = free to move, 0 = on a side stitched to a coarser neighbour
+	base.resize(row * row);
+	keep.resize(row * row);
+	for (int j = 0; j <= n; j++) {
+		for (int i = 0; i <= n; i++) {
+			const int x = cx * chunk_quads + i, z = cz * chunk_quads + j;
+			base[j * row + i] = Vector3(origin.x + x * spacing, _h(x, z), origin.y + z * spacing);
+			const int fm = r_job.mask | (r_job.mask >> 5);
+			const bool fixed = (j == 0 && (fm & 1)) || (i == n && (fm & 2)) || (j == n && (fm & 4)) || (i == 0 && (fm & 8));
+			keep[j * row + i] = fixed ? 0.0 : 1.0;
+		}
+	}
+	auto on_fixed_side = [&](const Vector3 &a, const Vector3 &b) {
+		const real_t x0 = corner.x, x1 = corner.x + n * spacing, z0 = corner.z, z1 = corner.z + n * spacing;
+		const real_t e = spacing * 1e-3f;
+		const int fm = r_job.mask | (r_job.mask >> 5);
+		return ((fm & 1) && Math::abs(a.z - z0) < e && Math::abs(b.z - z0) < e) || ((fm & 2) && Math::abs(a.x - x1) < e && Math::abs(b.x - x1) < e) || ((fm & 4) && Math::abs(a.z - z1) < e && Math::abs(b.z - z1) < e) || ((fm & 8) && Math::abs(a.x - x0) < e && Math::abs(b.x - x0) < e);
+	};
+	auto split = [&](int a, int b) -> bool {
+		const real_t dy = Math::abs(base[a].y - base[b].y);
+		return dy > 1.0f * spacing && !on_fixed_side(base[a], base[b]);
+	};
+	HashMap<uint64_t, int> mids;
+	auto mid = [&](int a, int b) -> int {
+		const uint64_t k = a < b ? (uint64_t(a) << 32 | uint32_t(b)) : (uint64_t(b) << 32 | uint32_t(a));
+		if (const int *f = mids.getptr(k)) {
+			return *f;
+		}
+		const int id = int(base.size());
+		base.push_back((base[a] + base[b]) * 0.5f);
+		keep.push_back(MIN(keep[a], keep[b]) < 1.0 ? (keep[a] + keep[b]) * 0.5f : 1.0f);
+		mids.insert(k, id);
+		return id;
+	};
+	LocalVector<int> tris;
+	struct T {
+		int a, b, c, depth;
+	};
+	LocalVector<T> stack;
+	const LocalVector<int> &idx = indices[0][r_job.mask & 15];
+	for (uint32_t t = 0; t < idx.size(); t += 3) {
+		stack.push_back({ idx[t], idx[t + 1], idx[t + 2], 0 });
+		while (!stack.is_empty()) {
+			const T tr = stack[stack.size() - 1];
+			stack.remove_at(stack.size() - 1);
+			int v[3] = { tr.a, tr.b, tr.c };
+			bool s[3] = { false, false, false };
+			int cnt = 0;
+			if (tr.depth < 6) {
+				for (int e = 0; e < 3; e++) {
+					s[e] = split(v[e], v[(e + 1) % 3]);
+					cnt += s[e] ? 1 : 0;
+				}
+			}
+			if (cnt == 0) {
+				tris.push_back(v[0]);
+				tris.push_back(v[1]);
+				tris.push_back(v[2]);
+				continue;
+			}
+			const int d = tr.depth + 1;
+			if (cnt == 3) {
+				const int ab = mid(v[0], v[1]), bc = mid(v[1], v[2]), ca = mid(v[2], v[0]);
+				stack.push_back({ v[0], ab, ca, d });
+				stack.push_back({ ab, v[1], bc, d });
+				stack.push_back({ ca, bc, v[2], d });
+				stack.push_back({ ab, bc, ca, d });
+				continue;
+			}
+			// Rotate so the split edges start at the first: one split edge is v0-v1, two are v0-v1 and v1-v2.
+			int r = 0;
+			if (cnt == 1) {
+				r = s[0] ? 0 : (s[1] ? 1 : 2);
+			} else {
+				r = !s[2] ? 0 : (!s[0] ? 1 : 2);
+			}
+			const int a = v[r], b = v[(r + 1) % 3], c = v[(r + 2) % 3];
+			if (cnt == 1) {
+				const int m = mid(a, b);
+				stack.push_back({ a, m, c, d });
+				stack.push_back({ m, b, c, d });
+			} else {
+				const int ab = mid(a, b), bc = mid(b, c);
+				stack.push_back({ ab, b, bc, d });
+				stack.push_back({ a, ab, bc, d });
+				stack.push_back({ a, bc, c, d });
+			}
+		}
+	}
+	// Displace, and the normal from the displaced surface around each point (seamless: it reads positions only).
+	PackedVector3Array verts;
+	PackedVector3Array norms;
+	verts.resize(base.size());
+	norms.resize(base.size());
+	Vector3 *vp = verts.ptrw();
+	Vector3 *nw = norms.ptrw();
+	const real_t e = 0.3f;
+	for (uint32_t i = 0; i < base.size(); i++) {
+		const Vector3 p = base[i];
+		vp[i] = _cliff_point(p, keep[i]) - corner;
+		const Vector3 nb = _normal_at((p.x - origin.x) / spacing, (p.z - origin.y) / spacing);
+		if (nb.y > 0.64f || keep[i] <= 0.0) {
+			nw[i] = nb;
+			continue;
+		}
+		Vector3 t1 = nb.cross(Vector3(0, 1, 0));
+		t1 = t1.length_squared() > 1e-8f ? t1.normalized() : Vector3(1, 0, 0);
+		const Vector3 t2 = t1.cross(nb);
+		const Vector3 du = _cliff_point(p + t1 * e, keep[i]) - _cliff_point(p - t1 * e, keep[i]);
+		const Vector3 dv = _cliff_point(p + t2 * e, keep[i]) - _cliff_point(p - t2 * e, keep[i]);
+		Vector3 nn = dv.cross(du);
+		if (nn.dot(nb) < 0.0) {
+			nn = -nn;
+		}
+		nw[i] = nn.length_squared() > 1e-12f ? nn.normalized() : nb;
+	}
+	PackedInt32Array ia;
+	ia.resize(tris.size());
+	memcpy(ia.ptrw(), tris.ptr(), tris.size() * sizeof(int));
+	Array arrays;
+	arrays.resize(RSE::ARRAY_MAX);
+	arrays[RSE::ARRAY_VERTEX] = verts;
+	arrays[RSE::ARRAY_NORMAL] = norms;
+	arrays[RSE::ARRAY_INDEX] = ia;
+	RS::get_singleton()->mesh_create_surface_data_from_arrays(&r_job.surface, RSE::PRIMITIVE_TRIANGLES, arrays);
+	r_job.triangles = int(tris.size() / 3);
+}
+
 void Landscape3D::_build_surface(MeshJob &r_job) const {
+	if (r_job.mask & 16) {
+		_build_cliff_surface(r_job);
+		return;
+	}
 	const int cx = r_job.chunk % cw;
 	const int cz = r_job.chunk / cw;
 	const int s = 1 << r_job.level;
@@ -201,7 +416,7 @@ void Landscape3D::_build_surface(MeshJob &r_job) const {
 			nw[j * (n + 1) + i] = _normal(x, z);
 		}
 	}
-	const LocalVector<int> &idx = indices[r_job.level][r_job.mask];
+	const LocalVector<int> &idx = indices[r_job.level][r_job.mask & 15];
 	PackedInt32Array ia;
 	ia.resize(idx.size());
 	memcpy(ia.ptrw(), idx.ptr(), idx.size() * sizeof(int));
@@ -609,6 +824,11 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 		}
 	}
 	target_mask.resize(n);
+	LocalVector<uint8_t> rel;
+	rel.resize(n);
+	for (int i = 0; i < n; i++) {
+		rel[i] = cliff_relief * scale_of[i] >= lod_error * 0.5 ? 1 : 0;
+	}
 	bool ready = true;
 	for (int z = 0; z < ch; z++) {
 		for (int x = 0; x < cw; x++) {
@@ -625,6 +845,17 @@ bool Landscape3D::_pick_lods(const Transform3D &p_camera, const Projection &p_pr
 			}
 			if (x > 0 && want[z * cw + x - 1] > l) {
 				mask |= 8;
+			}
+			// Cliff relief on the finest chunks where it spans half the pixel error or more; sides next to a chunk
+			// without it keep their edges (bits 5 to 8), like sides next to a coarser one.
+			if (cliff_relief > 0.0 && l == 0 && rel[z * cw + x]) {
+				mask |= 16;
+				const int nbi[4] = { z > 0 ? (z - 1) * cw + x : -1, x < cw - 1 ? z * cw + x + 1 : -1, z < ch - 1 ? (z + 1) * cw + x : -1, x > 0 ? z * cw + x - 1 : -1 };
+				for (int sd = 0; sd < 4; sd++) {
+					if (nbi[sd] >= 0 && !(want[nbi[sd]] == 0 && rel[nbi[sd]])) {
+						mask |= 32 << sd;
+					}
+				}
 			}
 			target_mask[z * cw + x] = mask;
 			if (ready && !meshes.has(_mesh_key(z * cw + x, l, mask))) {
@@ -973,6 +1204,18 @@ void Landscape3D::set_lod_error(real_t p_pixels) {
 	lods_dirty = true;
 }
 
+void Landscape3D::set_cliff_relief(real_t p_metres) {
+	if (Math::is_equal_approx(cliff_relief, MAX(p_metres, real_t(0.0)))) {
+		return;
+	}
+	cliff_relief = MAX(p_metres, real_t(0.0));
+	// New meshes for every chunk (the cache keys carry the height generation).
+	for (uint32_t i = 0; i < chunks.size(); i++) {
+		chunks[i].gen++;
+	}
+	lods_dirty = true;
+}
+
 void Landscape3D::set_material(const Ref<Material> &p_material) {
 	material = p_material;
 	_apply_material();
@@ -1154,7 +1397,7 @@ int Landscape3D::get_chunk_lod(const Vector2i &p_chunk) const {
 
 int Landscape3D::get_chunk_edge_mask(const Vector2i &p_chunk) const {
 	ERR_FAIL_COND_V(p_chunk.x < 0 || p_chunk.y < 0 || p_chunk.x >= cw || p_chunk.y >= ch, -1);
-	return chunks[p_chunk.y * cw + p_chunk.x].mask;
+	return chunks[p_chunk.y * cw + p_chunk.x].mask & 15;
 }
 
 bool Landscape3D::is_chunk_loaded(const Vector2i &p_chunk) const {
@@ -1173,7 +1416,7 @@ PackedVector3Array Landscape3D::get_chunk_triangles(const Vector2i &p_chunk) con
 	PackedVector3Array out;
 	ERR_FAIL_COND_V(p_chunk.x < 0 || p_chunk.y < 0 || p_chunk.x >= cw || p_chunk.y >= ch, out);
 	const Chunk &c = chunks[p_chunk.y * cw + p_chunk.x];
-	const LocalVector<int> &idx = indices[c.lod][c.mask];
+	const LocalVector<int> &idx = indices[c.lod][c.mask & 15];
 	ERR_FAIL_COND_V(idx.is_empty(), out);
 	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
 	const int s = 1 << c.lod;
@@ -1337,6 +1580,8 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_lod_error"), &Landscape3D::get_lod_error);
 	ClassDB::bind_method(D_METHOD("set_material", "material"), &Landscape3D::set_material);
 	ClassDB::bind_method(D_METHOD("get_material"), &Landscape3D::get_material);
+	ClassDB::bind_method(D_METHOD("set_cliff_relief", "metres"), &Landscape3D::set_cliff_relief);
+	ClassDB::bind_method(D_METHOD("get_cliff_relief"), &Landscape3D::get_cliff_relief);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enable"), &Landscape3D::set_cast_shadows);
 	ClassDB::bind_method(D_METHOD("is_casting_shadows"), &Landscape3D::is_casting_shadows);
 	ClassDB::bind_method(D_METHOD("set_camera", "path"), &Landscape3D::set_camera);
@@ -1385,6 +1630,7 @@ void Landscape3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_error", PROPERTY_HINT_RANGE, "0.05,16,0.05,suffix:px"), "set_lod_error", "get_lod_error");
 	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material", "get_material");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cliff_relief", PROPERTY_HINT_RANGE, "0,2,0.05,or_greater,suffix:m"), "set_cliff_relief", "get_cliff_relief");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_shadows"), "set_cast_shadows", "is_casting_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "stream_heights"), "set_stream_heights", "is_streaming_heights");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "camera", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Camera3D"), "set_camera", "get_camera");
