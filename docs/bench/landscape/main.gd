@@ -282,6 +282,8 @@ func _ready() -> void:
 	if out != "":
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved " + out)
+		if landscape:
+			_log("landscape at the frame %s" % [landscape.get_stats()])
 		if weather != null and weather.aerosol_haze:
 			var cam4: Camera3D = get_viewport().get_camera_3d()
 			_log("aerosol haze %s /m at the camera, volumetric fog %s, length %.0f m" % [str(weather.get_precipitation_extinction_at(cam4.global_position)), env.volumetric_fog_enabled, env.volumetric_fog_length])
@@ -1006,6 +1008,7 @@ func _build_ground() -> void:
 		add_child(landscape)
 		landscape.material = ground_mat
 		landscape.lod_error = float(args.get("lod-error", "2"))
+		landscape.cliff_relief = float(args.get("cliff-relief", "0")) # --cliff-relief=M: rock ledges built into steep faces
 		landscape.source = landscape.get_path_to(gen)
 		var own_body := ground_body == null
 		landscape.collision_enabled = own_body

@@ -56,6 +56,8 @@ class PhysXHair3D : public Node3D {
 	float tip_width = 0.0001f;
 	float melanin = 0.5f;
 	float melanin_redness = 0.0f;
+	float grey_ratio = 0.0f; // the share of strands with no melanin
+	float sun_bleaching = 0.0f; // how much the sun has lightened the lengths toward the tips
 	float roughness = 0.3f;
 	float radial_roughness = 0.3f;
 	bool hair_shading = true;
@@ -124,7 +126,7 @@ class PhysXHair3D : public Node3D {
 	float rain_shelter_timer = 0.0f;
 	// Hair cards for distant hair (docs/ideas/hair.md, stage 2p).
 	bool cards_enabled = false;
-	int card_count = 256;
+	int card_count = 1024;
 	float card_distance = 15.0f; // m from the camera at which the strands give way to cards
 	MeshInstance3D *card_instance = nullptr;
 	Ref<ShaderMaterial> card_material;
@@ -164,6 +166,14 @@ class PhysXHair3D : public Node3D {
 	static Ref<Shader> render_shaders[2]; // Godot standard lighting, hair shading
 	static Ref<Shader> card_shaders[2];
 	static Ref<Shader> snow_shader;
+	// The strands' copy drawn only into the shadow maps (cast_hair_shadows).
+	bool cast_hair_shadows = true;
+	MeshInstance3D *shadow_instance = nullptr;
+	Ref<ShaderMaterial> shadow_material;
+	LocalVector<StringName> shadow_params;
+	static Ref<Shader> shadow_shaders[2];
+	void _make_shadow_copy();
+	void _sync_shadow_copy();
 
 	void _groom_changed();
 	void _queue_build();
@@ -172,6 +182,8 @@ class PhysXHair3D : public Node3D {
 	void _make_material();
 	void _step(double p_delta);
 	Vector3 _fibre_absorption() const;
+	Vector3 _fibre_absorption_pheo() const;
+	float _mass_exponent() const;
 	Vector2 _fibre_roughness() const;
 	void _update_wetness(double p_delta);
 	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_guide_pool = 0) const;
@@ -202,6 +214,10 @@ public:
 	float get_tip_width() const;
 	void set_melanin(float p_melanin);
 	float get_melanin() const;
+	void set_grey_ratio(float p_ratio);
+	float get_grey_ratio() const;
+	void set_sun_bleaching(float p_amount);
+	float get_sun_bleaching() const;
 	void set_melanin_redness(float p_redness);
 	float get_melanin_redness() const;
 	void set_roughness(float p_roughness);
@@ -299,6 +315,8 @@ public:
 	float get_snow_capacity() const;
 	void set_wet_clumping(float p_clumping);
 	float get_wet_clumping() const;
+	void set_cast_hair_shadows(bool p_enabled);
+	bool is_casting_hair_shadows() const;
 	void set_cards_enabled(bool p_enabled);
 	bool is_cards_enabled() const;
 	void set_card_count(int p_count);

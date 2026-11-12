@@ -25,7 +25,7 @@
 		</method>
 	</methods>
 	<members>
-		<member name="card_count" type="int" setter="set_card_count" getter="get_card_count" default="256">
+		<member name="card_count" type="int" setter="set_card_count" getter="get_card_count" default="1024">
 			How many cards the strands are clustered into. Each card is two crossed strips.
 		</member>
 		<member name="card_distance" type="float" setter="set_card_distance" getter="get_card_distance" default="15.0">
@@ -33,6 +33,9 @@
 		</member>
 		<member name="cards_enabled" type="bool" setter="set_cards_enabled" getter="is_cards_enabled" default="false">
 			If [code]true[/code], hair cards are baked from the groom when the hair is built (shared by every node with the same groom and settings), and past [member card_distance] the hair is drawn as cards instead of strands: textured strips along clumps of strands, which move with the same guide strands. Only the guides and the cards are then simulated, so distant hair costs a small fraction of strands. Raster only: while the environment path traces, the hair stays strands at every distance.
+		</member>
+		<member name="cast_hair_shadows" type="bool" setter="set_cast_hair_shadows" getter="is_casting_hair_shadows" default="true">
+			The strands cast into the shadow maps, so the hair shades the face, neck and shoulders under it and the ground. Godot leaves blended materials out of the shadow maps, so a copy of the strands is drawn there alone, each strand at its own share of texels (stochastic transparency). Not with [member render_material] set, nor while cards are drawn; the path tracer traces the strands themselves.
 		</member>
 		<member name="cloth_thickness" type="float" setter="set_cloth_thickness" getter="get_cloth_thickness" default="0.005">
 			How far, in metres, the strands rest above [member collision_cloth]'s simulated surface (on top of the collision margin): the cloth's own thickness.
@@ -73,6 +76,9 @@
 		</member>
 		<member name="global_stiffness" type="float" setter="set_global_stiffness" getter="get_global_stiffness" default="0.1">
 			How strongly the points within [member global_range] are pulled toward their groomed pose on the head, per 1/60 s (TressFX's global shape constraint).
+		</member>
+		<member name="grey_ratio" type="float" setter="set_grey_ratio" getter="get_grey_ratio" default="0.0">
+			The share of strands that are grey: grown with no melanin, only the keratin's own faint yellow left (canities). Each strand is grey or not by its own seed, so grey hairs show singly among the coloured ones. Cards mix the share into each clump's colour.
 		</member>
 		<member name="groom" type="HairGroom" setter="set_groom" getter="get_groom">
 			The strands, in this node's space.
@@ -151,6 +157,9 @@
 		</member>
 		<member name="substeps" type="int" setter="set_substeps" getter="get_substeps" default="4">
 			Solver steps per frame. More keeps long hair stiffer and fast heads cleaner, at a small GPU cost.
+		</member>
+		<member name="sun_bleaching" type="float" setter="set_sun_bleaching" getter="get_sun_bleaching" default="0.0">
+			How much sunlight has lightened the hair, from [code]0[/code] (none) to [code]1[/code]. Light breaks the dark melanin (eumelanin) down faster than the red (pheomelanin), so the lengths that have grown out longest, toward the tips, turn lighter and warmer, from about a fifth of the way down.
 		</member>
 		<member name="tip_width" type="float" setter="set_tip_width" getter="get_tip_width" default="0.0001">
 			The width of a strand at the tip, in metres.

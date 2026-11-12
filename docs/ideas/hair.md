@@ -840,6 +840,30 @@ against 44.1, at 8 m 22.1 against 21.0, at 15 m 23.9 against 22.9, and no outlin
 wind (whose cards were 22% lighter, 52.4 against 43.0) now reads 13% darker (37.6), with a few
 dark blotches where the frizz's cores overlap; cards stay off by default.
 
+### Fixed: dots, stepped edges and stripes on cards seen enlarged
+
+Seen at 1080p from 8 m and enlarged, the cards showed rows of bright dots, hard stepped edges where
+the strands fade out, and stripes with the skin showing low between them. Causes and fixes:
+
+- Dots: the pre-pass took a fragment by its own texel's opacity, so single bright texels inside a
+  strip wrote depth and the lit hair behind showed in specks. A strip now joins the pre-pass by its
+  row: the atlas row's mean depth at the mip the strip is drawn with (its 32 texels across in one
+  read), turned to coverage over the clump's own width; 70% or more, and not within half a pixel
+  of the strip's edge.
+- Stepped edges: a strip's edge cut its texels off at once. Strips over 4 px wide now fade over
+  their last pixel (fwidth across the strip), as an antialiased line; under 2 px they are left.
+- Stripes: 256 cards for 30,000 strands drew strips 6 to 8 px wide at 8 m on a 1080p screen, too
+  few to hide that each is one strip. 1024 cards (now the default; 3% of the strands) close the
+  gaps; the bake's clustering runs on the worker threads (1.3 s for 1024 cards on 4 cores).
+- Deep shadows: a card's strand sits in the middle of its clump, so the maps saw the clump start
+  there and its own half in front of it was missing; the cards over the crown read lit where the
+  strands are shaded. A card now reads the maps half its width further from the light, as its
+  clump's strands are on average.
+
+Result (bench mean luminance, against the strands): close up 42.5 against 44.1, at 8 m 21.2 against
+20.7, at 15 m 22.6 against 22.9. Still seen enlarged: a faint line where the skull's shadow on the
+hanging hair begins.
+
 ### Fixed: black specks on strands with deep shadows
 
 Rare black 2x2 pixel blocks on strands, only with deep shadows on. Turned off one step at a time:
@@ -851,6 +875,54 @@ between vertex and light(); not pinned further on llvmpipe. light() now clamps i
 nothing for any valid value. Bench `--hair=far8`: 12 to 22 black pixels on the hair before, 0
 after in every run (far8, near, wind).
 
+
+### Fixed: the strands cast no shadow in raster
+
+The strands' material blends (ALPHA), and Godot leaves blended materials out of the shadow maps
+(casts_shadows), so the stochastic shadow-pass discard in the strand shader never ran: no shadow of
+the hair on the face, neck, shoulders or ground, only the deep opacity maps' self-shadow. Unreal and
+TressFX draw the strands into the shadow maps. Fix: a copy of the strands, drawn only into the
+shadow maps (SHADOWS_ONLY), with the same shader compiled without ALPHA (HAIR_SHADOW_COPY), its
+uniforms copied from the strands' each frame. `cast_hair_shadows` (on by default) turns it off. It
+is hidden while cards are drawn, with a user's own render_material, and under the path tracer (whose
+rays meet the strands). The hair's own look does not change (its lookups already skip its layers
+with deep shadows on): bench `--hair=near` hair 28.5 against 28.4 before; the neck under it 37.8
+against 38.3; the ground beside 53.4 against 63.4. Cost: one more depth-only draw of the strands per
+shadow cascade (the LOD share applies), not measured on the cloud (no GPU).
+
+## Stage 2s: grey hairs and sun-bleached lengths
+
+Real heads are not one colour. How others do it: Unreal's groom carries a per-strand seed and root
+and tip colours for the material to vary; Frostbite and the Pixar/Weta hair shaders vary melanin per
+strand (Chiang et al. 2016's melanin parametrisation, which the strands already use). The causes:
+
+- Grey hair (canities): follicles stop making melanin, and the strand grows with only the keratin's
+  own faint yellow absorption. Grey heads are a mix, strand by strand, so grey reads as salt and
+  pepper, not as a lighter colour.
+- Sun bleaching: UV and visible light break eumelanin down faster than pheomelanin (Nogueira and
+  Joekes 2004, J. Photochem. Photobiol. B 74), so hair lightens and warms. The lengths that have
+  grown out longest, toward the tips, have had the most sun.
+
+Ours: `grey_ratio` (share of strands with no melanin; each strand picks by its own seed) and
+`sun_bleaching` (0..1: from a fifth of the way down to the tips, eumelanin falls by up to 80% and
+pheomelanin by 30%). The fibre's absorption and its mass colour (d'Eon et al. 2011) are computed
+per fragment, so the path tracer's hair BSDF gets the same fibre. Cards mix the grey share into each
+clump's colour. Both 0 by default; the strands' look is then unchanged (bench `--hair=near` the
+same). Bench tokens `grey` (0.17) and `bleach` (0.8).
+
+## Stage 2t: snow and wetness on cards
+
+The snow's clumps (stage 2r) are drawn on the strands only, so hair that switched to cards lost
+its snow. The cards now take it in their own fragment: the same snow deep opacity map gives each
+card point the hair above it toward where the snow comes from, and the top layer holds snow as on
+the strands (snow_cover x exp(-2 x hair above)). A clump is 2.5 mm across, far under a pixel at
+card distances, so each atlas texel is snow or fibre by its own hash, at the clumps' share of the
+top layer (one a strand where snow holds, about 3 strands a cm^2, about 15%). Snow texels are lit
+as snow (Lambert, albedo 0.85, facing where the snow comes from), not as fibre. Bench
+`--hair=far15_cards_snow` against `far15_snow`: specks of the same density, on the windward side.
+
+Wetness already reaches the cards: `_set_look` gives them the darker, glossier fibres and
+`card_clump` the wet clumping (bench `far15_cards_wet` against `far15_wet` alike).
 
 ## Stage 2q: hair resting on cloth
 

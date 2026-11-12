@@ -102,6 +102,7 @@ class Landscape3D : public Node3D {
 	int chunk_quads = 64;
 	int lod_levels = 5;
 	real_t lod_error = 1.0;
+	real_t cliff_relief = 0.0; // m, rock ledges built into faces steeper than about 50 degrees at the finest level (0 = off)
 	Ref<Material> material;
 	bool cast_shadows = true;
 	NodePath camera_path;
@@ -157,6 +158,10 @@ class Landscape3D : public Node3D {
 
 	float _h(int p_x, int p_z) const;
 	Vector3 _normal(int p_x, int p_z) const;
+	Vector3 _normal_at(real_t p_x, real_t p_z) const; // bilinear, in grid units
+	float _cliff_offset(const Vector3 &p_world) const;
+	Vector3 _cliff_point(const Vector3 &p_world, real_t p_weight_scale) const;
+	void _build_cliff_surface(MeshJob &r_job) const;
 	const LocalVector<int> &_indices(int p_level, int p_mask);
 	void _measure(const float *p_h, int p_stride, float *r_error, float &r_min, float &r_max) const;
 	void _measure_chunk(int p_cx, int p_cz);
@@ -210,6 +215,8 @@ public:
 	int get_lod_levels() const { return lod_levels; }
 	void set_lod_error(real_t p_pixels);
 	real_t get_lod_error() const { return lod_error; }
+	void set_cliff_relief(real_t p_metres);
+	real_t get_cliff_relief() const { return cliff_relief; }
 	void set_material(const Ref<Material> &p_material);
 	Ref<Material> get_material() const { return material; }
 	void set_cast_shadows(bool p_enable);

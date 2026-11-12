@@ -24,6 +24,12 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Deep opacity shadows: raster darkens the hair with depth like the path tracer; path tracing shows more fuzz at the edges.*
 
+- **Hair shadows** (`cast_hair_shadows`, on by default): raster strand hair casts shadows on the face, body and ground.
+
+  ![Strand hair over the ground: shadow from the head only, then from the strands, raster](media/hair-shadows.jpg)
+
+  *Hair shadows: the shadow on the ground now takes the shape of the strands.*
+
 - **Custom hair shaders**: `HAIR`, `HAIR_ABSORPTION`, `HAIR_ROUGHNESS` and `POSITIONAL_SHADOW_OFFSET` outputs; `hair_strands` and `hair_cards` render modes; `IN_PATH_TRACER` built-in.
 
 ## Strands
@@ -65,11 +71,21 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Wet hair: soaked strands darken, clump and lie flatter in the same wind.*
 
-- **Snow on hair** (`snow`, `snow_capacity`): snow from the weather settles on the top layer and windward side as small clumps, and melts into wetness.
+- **Snow on hair** (`snow`, `snow_capacity`): snow from the weather settles on the top layer and windward side as small clumps, on strands and hair cards alike, and melts into wetness.
 
   ![Strand hair before and after snowfall, raster](media/hair-snow.jpg)
 
   *Snow on hair: flakes settle through the outer strands.*
+
+- **Grey and sun-bleached hair** (`grey_ratio`, `sun_bleaching`, off by default): single grey strands mixed through the hair, and lengths lighter and warmer toward the tips.
+
+  ![The same strand hair plain and with grey strands, raster](media/hair-grey.jpg)
+
+  *Grey strands: single grey hairs through the brown.*
+
+  ![The same strand hair plain and sun-bleached, raster](media/hair-sun-bleached.jpg)
+
+  *Sun-bleached: the lengths lighten toward the tips.*
 
 ## Collision
 

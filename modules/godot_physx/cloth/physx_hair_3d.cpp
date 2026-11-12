@@ -83,6 +83,13 @@ uniform sampler2D hair_previous_positions : filter_nearest, repeat_disable; // l
 uniform int texture_width = 1;
 uniform vec4 hair_color : source_color = vec4(0.3, 0.2, 0.1, 1.0);
 uniform vec3 fibre_absorption = vec3(0.4, 0.7, 1.4);
+// Colour variation (docs/ideas/hair.md, stage 2s): the red melanin's share of fibre_absorption,
+// the share of grey strands, how much the sun has bleached the lengths, and d'Eon et al. 2011's
+// mass colour exponent (hair_color = exp(-d sqrt(absorption))).
+uniform vec3 fibre_absorption_pheo = vec3(0.0);
+uniform float grey_ratio = 0.0;
+uniform float sun_bleach = 0.0;
+uniform float mass_d = 5.97;
 uniform vec2 fibre_roughness = vec2(0.3, 0.3);
 uniform float root_width = 0.0004;
 uniform float tip_width = 0.0001;
@@ -126,6 +133,7 @@ varying vec4 dom_trans; // vertex to fragment and light(): per map, the light it
 varying vec4 dom_past; // vertex to fragment: per map, metres past the first hair (-1: none)
 varying vec3 dom_world; // fragment to light(): the fragment's world position
 varying vec3 light_tangent; // fragment to light(): along the fibres, view space
+varying float hair_snow; // fragment to light(): 1 where snow lies on a card (lit as snow, not fibre)
 
 // Coverage summed up to depth p_rel past the first hair, from a cell's layers.
 float dom_coverage(vec4 p_cell, float p_rel) {
@@ -142,8 +150,8 @@ float dom_coverage(vec4 p_cell, float p_rel) {
 }
 
 // The deep opacity maps at a world point: per map the light let through and the metres past the
-// first hair (-1: none).
-void dom_lookup(vec3 world, out vec4 r_trans, out vec4 r_past) {
+// first hair (-1: none). p_inside: metres the point's own hair reaches toward the light past it.
+void dom_lookup(vec3 world, float p_inside, out vec4 r_trans, out vec4 r_past) {
 	r_trans = vec4(1.0);
 	r_past = vec4(-1.0);
 	// The deep opacity maps: how much hair (and whether the head or body) lies between this
@@ -186,7 +194,7 @@ void dom_lookup(vec3 world, out vec4 r_trans, out vec4 r_past) {
 			float opaque = texelFetch(hair_deep_shadow, cc + ivec2(dom_cells, 0), 0).x;
 			float covered = 0.0;
 			if (cell.x < 1e8) {
-				covered = dom_coverage(cell, tl - cell.x);
+				covered = dom_coverage(cell, tl + p_inside - cell.x);
 				front = min(front, cell.x);
 			}
 			vec2 w = mix(1.0 - f, f, vec2(o));
@@ -194,6 +202,32 @@ void dom_lookup(vec3 world, out vec4 r_trans, out vec4 r_past) {
 		}
 		r_trans[k] = trans;
 		r_past[k] = front < 1e8 ? max(tl - front, 0.0) : -1.0;
+	}
+}
+
+// A fibre's absorption and mass colour along its length, p_along (0 root, 1 tip). p_seed: the
+// strand's own 0..1, or -1 for a clump of strands (a card), which takes the grey share as a mix.
+// Grey hairs grow from follicles that no longer make melanin (canities): the keratin's own faint
+// yellow is left. Sunlight breaks eumelanin down faster than pheomelanin (Nogueira and Joekes
+// 2004): the lengths that have grown out longest, toward the tips, lighten and turn warmer.
+void fibre_look(float p_seed, float p_along, out vec3 r_sigma, out vec3 r_color) {
+	r_sigma = fibre_absorption;
+	r_color = hair_color.rgb;
+	if (grey_ratio <= 0.0 && sun_bleach <= 0.0) {
+		return;
+	}
+	float bleach = sun_bleach * smoothstep(0.2, 1.0, p_along);
+	vec3 eu = fibre_absorption - fibre_absorption_pheo;
+	r_sigma = eu * (1.0 - 0.8 * bleach) + fibre_absorption_pheo * (1.0 - 0.3 * bleach);
+	r_color = exp(-mass_d * sqrt(r_sigma));
+	const vec3 grey_sigma = vec3(0.03, 0.045, 0.09);
+	vec3 grey_color = exp(-mass_d * sqrt(grey_sigma));
+	if (p_seed < 0.0) {
+		r_sigma = mix(r_sigma, grey_sigma, grey_ratio);
+		r_color = mix(r_color, grey_color, grey_ratio);
+	} else if (fract(p_seed * 113.17 + 0.37) < grey_ratio) {
+		r_sigma = grey_sigma;
+		r_color = grey_color;
 	}
 }
 
@@ -227,7 +261,7 @@ void vertex() {
 	if (dom_maps > 0 && !IN_PATH_TRACER && !IN_SHADOW_PASS && !PREVIOUS_FRAME && CUSTOM1.w < 0.5) {
 		vec4 lt;
 		vec4 lp;
-		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, lt, lp);
+		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, 0.0, lt, lp);
 		dom_trans = lt;
 		dom_past = lp;
 	}
@@ -266,12 +300,16 @@ void vertex() {
 
 void fragment() {
 	light_tangent = strand_tangent;
-	ALBEDO = hair_color.rgb;
+	hair_snow = 0.0;
+	vec3 sigma;
+	vec3 mass;
+	fibre_look(strand_seed, UV.y, sigma, mass);
+	ALBEDO = mass;
 	ROUGHNESS = fibre_roughness.x;
 	ANISOTROPY = 0.8;
 	ANISOTROPY_FLOW = vec2(1.0, 0.0); // The highlight runs across the strands.
 	HAIR = 1.0;
-	HAIR_ABSORPTION = fibre_absorption;
+	HAIR_ABSORPTION = sigma;
 	HAIR_ROUGHNESS = fibre_roughness;
 	float coverage = 1.0;
 	if (!IN_PATH_TRACER) {
@@ -293,7 +331,7 @@ void fragment() {
 		// absorption across it, Unreal's Tp at normal incidence) is not blocked, as in dual
 		// scattering's forward transmittance (Zinke et al. 2008). Blonde hair lets most light
 		// through and dark hair little; the shadow behind n strands falls as that to the n-th power.
-		coverage *= 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		coverage *= 1.0 - 0.91 * dot(sqrt(mass), vec3(0.2126, 0.7152, 0.0722));
 	}
 #endif
 	if (IN_SHADOW_PASS) {
@@ -337,7 +375,10 @@ void fragment() {
 	// rt_force_opaque: the path tracer traces the strands as solid fibres (ALPHA is 1 there).
 	// Blended, as TressFX blends its strands: each fades over what lies behind it by the share of
 	// the pixel it covers. Thin strands are faint, so the blend barely depends on draw order.
+	// The shadow copy writes no ALPHA: Godot leaves blended materials out of the shadow maps.
+#ifndef HAIR_SHADOW_COPY
 	ALPHA = coverage;
+#endif
 }
 
 #ifdef HAIR_SCATTERING
@@ -429,7 +470,12 @@ void light() {
 		}
 	}
 	s += sqrt(base) * scatter * pow(base / luma, vec3(1.0 - shadow));
-	SPECULAR_LIGHT += max(s, vec3(0.0)) * LIGHT_COLOR * attenuation;
+	if (hair_snow > 0.5) {
+		// Snow on a card: matte (Lambert; ALBEDO is the snow's), as the snow's own clumps.
+		DIFFUSE_LIGHT += max(dot(NORMAL, LIGHT), 0.0) * ATTENUATION * LIGHT_COLOR / PI;
+	} else {
+		SPECULAR_LIGHT += max(s, vec3(0.0)) * LIGHT_COLOR * attenuation;
+	}
 }
 #endif
 )";
@@ -483,7 +529,7 @@ void vertex() {
 			p = mix(a.xyz, b.xyz, clamp(fk - k, 0.0, 1.0));
 			vec4 st;
 			vec4 sp;
-			dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, st, sp);
+			dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, 0.0, st, sp);
 			float absorb = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
 			// Strands above this point, toward the snow: it lies on the top layer only.
 			float above = -log(max(st[dom_snow_slot], 1e-6)) / max(absorb * dom_density, 1e-4);
@@ -534,6 +580,9 @@ uniform float card_clump = 0.0; // wet clumping, as the strands'
 // The scalp as a sphere (centre, radius) fitted to the strands' roots, in the hair's space (w 0: none).
 uniform vec4 card_scalp = vec4(0.0);
 varying vec3 card_across; // view space: this strip's axis (raster lighting)
+varying float card_side; // -1..1 across the strip
+varying float card_tile_u; // the atlas u of this strip's tile centre
+varying float card_grow; // how much wider than its clump the strip is drawn (to a pixel)
 varying float card_fan; // how far the card's guides fanned apart since the groom (the card widens by it)
 
 void vertex() {
@@ -558,6 +607,8 @@ void vertex() {
 	vec4 tiles = texelFetch(card_data, ivec2(point * 4 + 3, card), 0);
 	vec2 tile = strip == 0 ? tiles.xy : tiles.zw;
 	UV = (tile + vec2(0.5 + (card_tile.x - 1.0) * (CUSTOM0.w * 0.5 + 0.5), 0.5 + (card_tile.y - 1.0) * CUSTOM1.z)) / vec2(textureSize(card_atlas, 0));
+	card_side = CUSTOM0.w;
+	card_tile_u = (tile.x + 0.5 * card_tile.x) / float(textureSize(card_atlas, 0).x);
 	// w: 4 + along + 8 * fan (64ths), the solver's encoding for a card's strand (this frame's: the
 	// previous positions' w names the card).
 	float w = texelFetch(hair_positions, texel, 0).w;
@@ -581,6 +632,7 @@ void vertex() {
 	// The clump fans out (or closes) with its guides: the card as much wider, and thinner below.
 	float half_width = own_half * card_fan * (1.0 - card_clump * smoothstep(0.0, 0.3, along));
 	float drawn = half_width;
+	card_grow = 1.0;
 	if (!IN_PATH_TRACER) {
 		// A card under a pixel wide falls between the pixels' centres, and the hair behind it
 		// shows: as the strands (TressFX), it is drawn at least 0.71 px a side (capped as theirs,
@@ -588,7 +640,8 @@ void vertex() {
 		vec4 clip = PROJECTION_MATRIX * (MODELVIEW_MATRIX * vec4(p, 1.0));
 		float px = 2.0 * clip.w / max(abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y, 1e-6);
 		drawn = max(half_width, min(0.71 * px, IN_SHADOW_PASS ? 0.002 : 0.01));
-		card_fan *= drawn / max(half_width, 1e-7);
+		card_grow = drawn / max(half_width, 1e-7);
+		card_fan *= card_grow;
 	}
 	VERTEX = p + ax * (drawn * CUSTOM0.w);
 	if (card_scalp.w > 0.0) {
@@ -619,9 +672,12 @@ void vertex() {
 		// The deep opacity maps, made from the cards' own strands (each as wide as its clump), read
 		// on the card's centre line: the strip's edges reach out of the map's hair sideways, in
 		// front of the hair toward the light, and read as lit where the clump's strands are not.
+		// The map has the card's strand at the clump's centre, but the clump is about as deep as
+		// it is wide and half its strands lie behind the rest: read half a clump further from
+		// the light, as the clump's strands are shaded on average.
 		vec4 lt;
 		vec4 lp;
-		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, lt, lp);
+		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, half_width, lt, lp);
 		dom_trans = lt;
 		dom_past = lp;
 	}
@@ -632,13 +688,35 @@ void fragment() {
 	// The strands' own direction: the card's, tilted across the strip as the baked strands run.
 	float tilt = texel.g * 2.0 - 1.0;
 	light_tangent = normalize(strand_tangent + card_across * (tilt / max(sqrt(1.0 - tilt * tilt), 0.05)));
-	ALBEDO = hair_color.rgb;
+	vec3 sigma;
+	vec3 mass;
+	fibre_look(-1.0, UV.y, sigma, mass); // a clump: its grey share mixed in
+	ALBEDO = mass;
 	ROUGHNESS = fibre_roughness.x;
 	ANISOTROPY = 0.8;
 	ANISOTROPY_FLOW = vec2(1.0, 0.0); // as the strands: the highlight runs across them
 	HAIR = 1.0;
-	HAIR_ABSORPTION = fibre_absorption;
+	HAIR_ABSORPTION = sigma;
 	HAIR_ROUGHNESS = fibre_roughness;
+	// Snow on the cards (the strands' snow clumps are not drawn with them): from the snow's deep
+	// opacity map, as the clumps, the hair's top layer holds it; each texel of the atlas is snow or
+	// fibre by its own draw, a clump's 2.5 mm being well under a pixel at card distances. The
+	// clumps (one a strand where the snow holds, about 3 strands a cm^2 on top, 2.5 mm across)
+	// cover about 15% of the top layer.
+	hair_snow = 0.0;
+	if (snow_cover > 0.0 && dom_snow_slot >= 0 && dom_snow_slot < dom_maps && !IN_SHADOW_PASS) {
+		float absorb = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		float above = -log(max(dom_trans[dom_snow_slot], 1e-6)) / max(absorb * dom_density, 1e-4);
+		float held = snow_cover * exp(-2.0 * above);
+		vec2 texel = floor(UV * vec2(textureSize(card_atlas, 0)));
+		float r = fract(sin(dot(vec3(texel, card_tile_u * 997.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+		if (r < 0.15 * held) {
+			hair_snow = 1.0;
+			ALBEDO = vec3(0.85);
+			ROUGHNESS = 0.9;
+			NORMAL = normalize(mat3(VIEW_MATRIX) * dom_slot[dom_snow_slot * 4 + 3].xyz);
+		}
+	}
 	dom_world = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	if (dom_maps > 0 && !IN_PATH_TRACER && !IN_SHADOW_PASS) {
 		// As the strands: the shadow map lookups skip the hair's own layers (the maps carry them).
@@ -675,6 +753,15 @@ void fragment() {
 	// The atlas holds the strands' optical depth (16 bits, R high and B low, over 8).
 	float depth = (texel.r * 65280.0 + texel.b * 255.0) * (8.0 / 65535.0);
 	float coverage = 1.0 - exp(-depth * facing / max(card_fan, 0.5));
+	// The strip's edges antialiased: a pixel whose centre lies within half a pixel of the edge
+	// takes the share of it the strip covers, so a strip a few pixels wide is not a stepped band.
+	// Under about three pixels the strip already stands for its strands by its width (vertex()
+	// widens it to a pixel and thins it to match), and fading its edges would lose that opacity.
+	float edge = (1.0 - abs(card_side)) / max(fwidth(card_side), 1e-6);
+	float strip_px = 2.0 / max(fwidth(card_side), 1e-6);
+	if (!IN_SHADOW_PASS) {
+		coverage *= mix(1.0, clamp(edge + 0.5, 0.0, 1.0), smoothstep(2.0, 4.0, strip_px));
+	}
 	// Lit as the strands are: a fibre has no surface normal, so the ambient and reflected light
 	// take the strands' own ribbon frame, rebuilt here about the card's strand direction: across
 	// = T x eye (eye from the camera to the point, view space), normal = across x T, which faces
@@ -693,7 +780,7 @@ void fragment() {
 		// exp(-share * total coverage); a card's coverage is already the clump's combined
 		// 1 - exp(-total), so the share applies to its optical depth, not to it (as a factor it
 		// let much more light through a dense clump than its strands do).
-		float tt_block = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		float tt_block = 1.0 - 0.91 * dot(sqrt(mass), vec3(0.2126, 0.7152, 0.0722));
 		coverage = 1.0 - pow(max(1.0 - coverage, 1e-4), tt_block);
 	}
 #endif
@@ -702,7 +789,14 @@ void fragment() {
 	// cards are sorted whole, by their middle, but each runs the length of the hair, so a card
 	// behind could still draw over the front of another: a lit card from beside the head showed
 	// through the shadowed hair in front of it, and the head's outline read through the cards.
-	OPAQUE_PREPASS_THRESHOLD = 0.8;
+	// Which fragments are core is read from the strip's mean across (its tile at the mip one texel
+	// wide), not from the texel itself: a strip a pixel or two wide otherwise passed and failed
+	// along its length, and the hair behind showed through in rows of dots.
+	vec4 row = textureLod(card_atlas, vec2(card_tile_u, UV.y), log2(card_tile.x));
+	float row_depth = (row.r * 65280.0 + row.b * 255.0) * (8.0 / 65535.0);
+	// (Before the widening to a pixel: the clump's own core.)
+	float row_cover = 1.0 - exp(-row_depth * facing / max(card_fan / card_grow, 0.5));
+	OPAQUE_PREPASS_THRESHOLD = row_cover >= 0.7 && edge >= 0.5 ? 0.0 : 2.0;
 	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
 		float noise = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))) + texel.a);
 		if (coverage <= noise) {
@@ -717,6 +811,7 @@ void fragment() {
 Ref<Shader> PhysXHair3D::render_shaders[2];
 Ref<Shader> PhysXHair3D::card_shaders[2];
 Ref<Shader> PhysXHair3D::snow_shader;
+Ref<Shader> PhysXHair3D::shadow_shaders[2];
 
 void PhysXHair3D::free_shared() {
 	render_shaders[0].unref();
@@ -724,6 +819,8 @@ void PhysXHair3D::free_shared() {
 	card_shaders[0].unref();
 	card_shaders[1].unref();
 	snow_shader.unref();
+	shadow_shaders[0].unref();
+	shadow_shaders[1].unref();
 	HairCardBake::clear_cache();
 	HairStrandSolverGPU::free_shared();
 }
@@ -822,6 +919,9 @@ void PhysXHair3D::_update_wetness(double p_delta) {
 		if (snow_material.is_valid()) {
 			snow_material->set_shader_parameter("snow_cover", snow_look);
 		}
+		if (card_material.is_valid()) {
+			card_material->set_shader_parameter("snow_cover", snow_look);
+		}
 	}
 	if (Math::abs(wetness - wet_look) >= 0.01f || (wetness != wet_look && (wetness == 0.0f || wetness == 1.0f))) {
 		wet_look = wetness;
@@ -835,9 +935,20 @@ void PhysXHair3D::_update_wetness(double p_delta) {
 }
 
 // The colour a mass of such fibres shows (Chiang et al. 2016, section 4.2), for the rasterizer.
-Color PhysXHair3D::_mass_color() const {
+// The red melanin's share of _fibre_absorption().
+Vector3 PhysXHair3D::_fibre_absorption_pheo() const {
+	const float m = -Math::log(MAX(1.0f - melanin, 1e-4f));
+	return Vector3(0.343f, 0.733f, 1.924f) * melanin_redness * m * (1.0f + 0.5f * wet_look);
+}
+
+// d'Eon et al. 2011's exponent from absorption to the mass colour, by the azimuthal roughness.
+float PhysXHair3D::_mass_exponent() const {
 	const float b = CLAMP(radial_roughness, 0.01f, 1.0f);
-	const float d = 5.969f - 0.215f * b + 2.532f * b * b - 10.73f * b * b * b + 5.574f * b * b * b * b + 0.245f * b * b * b * b * b;
+	return 5.969f - 0.215f * b + 2.532f * b * b - 10.73f * b * b * b + 5.574f * b * b * b * b + 0.245f * b * b * b * b * b;
+}
+
+Color PhysXHair3D::_mass_color() const {
+	const float d = _mass_exponent();
 	const Vector3 s = _fibre_absorption();
 	return Color(Math::exp(-d * Math::sqrt(s.x)), Math::exp(-d * Math::sqrt(s.y)), Math::exp(-d * Math::sqrt(s.z))).linear_to_srgb();
 }
@@ -1036,9 +1147,7 @@ void PhysXHair3D::_make_material() {
 		copy_material.instantiate();
 		copy_material->set_shader(shader);
 	}
-	copy_material->set_shader_parameter("hair_color", _mass_color());
-	copy_material->set_shader_parameter("fibre_absorption", _fibre_absorption());
-	copy_material->set_shader_parameter("fibre_roughness", _fibre_roughness());
+	_set_look(copy_material);
 	copy_material->set_shader_parameter("hair_positions", pos_texture);
 	copy_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
 	copy_material->set_shader_parameter("hair_deep_shadow", deep_shadow_texture);
@@ -1054,6 +1163,7 @@ void PhysXHair3D::_make_material() {
 	if (render_instance) {
 		render_instance->set_material_override(copy_material);
 	}
+	_make_shadow_copy();
 	if (card_instance && card_bake.is_valid()) {
 		Ref<Shader> &shader = card_shaders[hair_shading ? 1 : 0];
 		if (shader.is_null()) {
@@ -1084,6 +1194,7 @@ void PhysXHair3D::_make_material() {
 		card_material->set_shader_parameter("dom_maps", 0);
 		card_material->set_shader_parameter("card_clump", wet_look * wet_clumping);
 		card_material->set_shader_parameter("card_scalp", card_scalp);
+		card_material->set_shader_parameter("snow_cover", snow_look);
 		_set_look(card_material);
 		card_instance->set_material_override(card_material);
 	}
@@ -1120,6 +1231,10 @@ void PhysXHair3D::_set_look(const Ref<ShaderMaterial> &p_material) const {
 	p_material->set_shader_parameter("hair_color", _mass_color());
 	p_material->set_shader_parameter("fibre_absorption", _fibre_absorption());
 	p_material->set_shader_parameter("fibre_roughness", _fibre_roughness());
+	p_material->set_shader_parameter("fibre_absorption_pheo", _fibre_absorption_pheo());
+	p_material->set_shader_parameter("mass_d", _mass_exponent());
+	p_material->set_shader_parameter("grey_ratio", grey_ratio);
+	p_material->set_shader_parameter("sun_bleach", sun_bleaching);
 }
 
 void PhysXHair3D::_groom_changed() {
@@ -1133,6 +1248,16 @@ void PhysXHair3D::_queue_build() {
 }
 
 void PhysXHair3D::_clear() {
+	if (shadow_instance) {
+		shadow_instance->queue_free();
+		shadow_instance = nullptr;
+	}
+	if (shadow_material.is_valid()) {
+		shadow_material->set_shader_parameter("hair_positions", Variant());
+		shadow_material->set_shader_parameter("hair_previous_positions", Variant());
+		shadow_material->set_shader_parameter("hair_deep_shadow", Variant());
+		shadow_material.unref();
+	}
 	if (render_instance) {
 		render_instance->queue_free();
 		render_instance = nullptr;
@@ -1870,7 +1995,86 @@ void PhysXHair3D::_step(double p_delta) {
 			snow_instance->set_visible(show);
 		}
 	}
+	_sync_shadow_copy();
 	solver->step(xform, p_delta, substeps, s);
+}
+
+// The strands cast into the shadow maps through a copy drawn only there (Godot leaves blended
+// materials out of them): the hair shades the face, neck and shoulders under it, as the strands
+// in Unreal and TressFX do. Not with a material of the user's own (its shader is not ours), and
+// not under the path tracer, whose rays meet the strands themselves.
+void PhysXHair3D::_make_shadow_copy() {
+	if (shadow_instance) {
+		shadow_instance->queue_free();
+		shadow_instance = nullptr;
+	}
+	shadow_material.unref();
+	shadow_params.clear();
+	if (!cast_hair_shadows || render_instance == nullptr || render_instance->get_mesh().is_null() || copy_material.is_null() ||
+			(render_material.is_valid() && render_material->get_shader().is_valid())) {
+		return;
+	}
+	Ref<Shader> &shader = shadow_shaders[hair_shading ? 1 : 0];
+	if (shader.is_null()) {
+		shader.instantiate();
+		shader->set_code(String(HAIR_RENDER_HEAD) + (hair_shading ? "#define HAIR_SCATTERING\n" : "") + "#define HAIR_SHADOW_COPY\n" + HAIR_RENDER_SHADER);
+	}
+	shadow_material.instantiate();
+	shadow_material->set_shader(shader);
+	List<PropertyInfo> uniforms;
+	shader->get_shader_uniform_list(&uniforms);
+	for (const PropertyInfo &u : uniforms) {
+		if (u.usage & PROPERTY_USAGE_GROUP || u.usage & PROPERTY_USAGE_SUBGROUP || u.usage & PROPERTY_USAGE_CATEGORY) {
+			continue;
+		}
+		shadow_params.push_back(u.name);
+	}
+	shadow_instance = memnew(MeshInstance3D);
+	add_child(shadow_instance, false, INTERNAL_MODE_BACK);
+	shadow_instance->set_mesh(render_instance->get_mesh());
+	shadow_instance->set_custom_aabb(render_instance->get_custom_aabb());
+	shadow_instance->set_layer_mask(render_instance->get_layer_mask());
+	shadow_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+	shadow_instance->set_material_override(shadow_material);
+	_sync_shadow_copy();
+}
+
+void PhysXHair3D::_sync_shadow_copy() {
+	if (shadow_instance == nullptr || shadow_material.is_null() || copy_material.is_null()) {
+		return;
+	}
+	for (const StringName &name : shadow_params) {
+		shadow_material->set_shader_parameter(name, copy_material->get_shader_parameter(name));
+	}
+	bool show = render_instance && render_instance->is_visible() && !card_mode;
+	if (show && is_inside_tree()) {
+		const Camera3D *camera = get_viewport()->get_camera_3d();
+		Ref<Environment> env = camera ? camera->get_environment() : Ref<Environment>();
+		if (env.is_null() && get_world_3d().is_valid()) {
+			env = get_world_3d()->get_environment();
+			if (env.is_null()) {
+				env = get_world_3d()->get_fallback_environment();
+			}
+		}
+		if (env.is_valid() && env->is_pathtracing_enabled()) {
+			show = false;
+		}
+	}
+	if (shadow_instance->is_visible() != show) {
+		shadow_instance->set_visible(show);
+	}
+}
+
+void PhysXHair3D::set_cast_hair_shadows(bool p_enabled) {
+	if (cast_hair_shadows == p_enabled) {
+		return;
+	}
+	cast_hair_shadows = p_enabled;
+	_make_shadow_copy();
+}
+
+bool PhysXHair3D::is_casting_hair_shadows() const {
+	return cast_hair_shadows;
 }
 
 DirectionalLight3D *PhysXHair3D::_deep_shadow_light() {
@@ -2079,6 +2283,28 @@ void PhysXHair3D::set_melanin(float p_melanin) {
 
 float PhysXHair3D::get_melanin() const {
 	return melanin;
+}
+
+void PhysXHair3D::set_grey_ratio(float p_ratio) {
+	grey_ratio = CLAMP(p_ratio, 0.0f, 1.0f);
+	_set_look(copy_material);
+	_set_look(card_material);
+	_set_look(snow_material);
+}
+
+float PhysXHair3D::get_grey_ratio() const {
+	return grey_ratio;
+}
+
+void PhysXHair3D::set_sun_bleaching(float p_amount) {
+	sun_bleaching = CLAMP(p_amount, 0.0f, 1.0f);
+	_set_look(copy_material);
+	_set_look(card_material);
+	_set_look(snow_material);
+}
+
+float PhysXHair3D::get_sun_bleaching() const {
+	return sun_bleaching;
 }
 
 void PhysXHair3D::set_melanin_redness(float p_redness) {
@@ -2724,6 +2950,10 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_tip_width"), &PhysXHair3D::get_tip_width);
 	ClassDB::bind_method(D_METHOD("set_melanin", "melanin"), &PhysXHair3D::set_melanin);
 	ClassDB::bind_method(D_METHOD("get_melanin"), &PhysXHair3D::get_melanin);
+	ClassDB::bind_method(D_METHOD("set_grey_ratio", "ratio"), &PhysXHair3D::set_grey_ratio);
+	ClassDB::bind_method(D_METHOD("get_grey_ratio"), &PhysXHair3D::get_grey_ratio);
+	ClassDB::bind_method(D_METHOD("set_sun_bleaching", "amount"), &PhysXHair3D::set_sun_bleaching);
+	ClassDB::bind_method(D_METHOD("get_sun_bleaching"), &PhysXHair3D::get_sun_bleaching);
 	ClassDB::bind_method(D_METHOD("set_melanin_redness", "redness"), &PhysXHair3D::set_melanin_redness);
 	ClassDB::bind_method(D_METHOD("get_melanin_redness"), &PhysXHair3D::get_melanin_redness);
 	ClassDB::bind_method(D_METHOD("set_roughness", "roughness"), &PhysXHair3D::set_roughness);
@@ -2820,6 +3050,8 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_snow_capacity"), &PhysXHair3D::get_snow_capacity);
 	ClassDB::bind_method(D_METHOD("set_wet_clumping", "clumping"), &PhysXHair3D::set_wet_clumping);
 	ClassDB::bind_method(D_METHOD("get_wet_clumping"), &PhysXHair3D::get_wet_clumping);
+	ClassDB::bind_method(D_METHOD("set_cast_hair_shadows", "enabled"), &PhysXHair3D::set_cast_hair_shadows);
+	ClassDB::bind_method(D_METHOD("is_casting_hair_shadows"), &PhysXHair3D::is_casting_hair_shadows);
 	ClassDB::bind_method(D_METHOD("set_cards_enabled", "enabled"), &PhysXHair3D::set_cards_enabled);
 	ClassDB::bind_method(D_METHOD("is_cards_enabled"), &PhysXHair3D::is_cards_enabled);
 	ClassDB::bind_method(D_METHOD("set_card_count", "count"), &PhysXHair3D::set_card_count);
@@ -2838,9 +3070,12 @@ void PhysXHair3D::_bind_methods() {
 	ADD_GROUP("Look", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melanin", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_melanin", "get_melanin");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melanin_redness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_melanin_redness", "get_melanin_redness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "grey_ratio", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_grey_ratio", "get_grey_ratio");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sun_bleaching", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_sun_bleaching", "get_sun_bleaching");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radial_roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_radial_roughness", "get_radial_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hair_shading"), "set_hair_shading", "is_hair_shading");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_hair_shadows"), "set_cast_hair_shadows", "is_casting_hair_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deep_shadows"), "set_deep_shadows", "is_deep_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "deep_shadow_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_deep_shadow_light", "get_deep_shadow_light");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "deep_shadow_local_lights", PROPERTY_HINT_RANGE, "0,3,1"), "set_deep_shadow_local_lights", "get_deep_shadow_local_lights");

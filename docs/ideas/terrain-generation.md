@@ -1279,6 +1279,25 @@ the way down, a rounded V narrowing downwards with walls wandering by a quarter 
 at the foot of the run (as for falls without a lip). get_waterfalls() keeps its keys; the tall falls' face profiles
 and type now follow the real face.
 
+## Cliff relief in the geometry (12 Nov; Paulo's "then displaced cliffs")
+
+Why: the shader detail cannot change a silhouette or cast a ledge's shadow, and a heightfield has no vertices on a
+wall: a 30 m face at 1 m spacing is one strip of stretched triangles. Established ways: displacement along the normal
+on tessellated terrain (REDengine 3, Gollent 2014; Frostbite, Widmark 2012; UE4 landscape tessellation, UE5 Nanite
+displacement), or placed cliff meshes (Far Cry 5, Horizon). The second needs assets; the first needs vertices where
+the wall is.
+
+Built: Landscape3D `cliff_relief` (m, 0 = off). On the finest level, where the relief spans at least half the
+pixel error (near the camera), triangles whose edges climb more than the grid spacing are refined by red-green
+refinement driven by each edge's own end points (both sides of an edge agree, so no cracks, also across chunks), and
+every vertex on faces past about 50 degrees is pushed along the face's horizontal normal: warped beds 3 m thick
+standing proud or set back (differential erosion; ledges), their steps rounded over a metre, staggered joint blocks
+4.5 m apart, roughness. Normals come from the displaced surface around each point (positions only, so seamless).
+Sides next to a chunk without relief keep their vertices and edges, as sides next to a coarser chunk do. Raster and
+path traced frames at the bar face match (the BLAS holds the ledges). Cost on the bench at 0.6 m: a view close to the
+338 m wall goes from 2.6 to 5.5 M triangles; a wide view of it is unchanged (relief beyond the radius is subpixel and
+left to the shader). Next: the far strata in the shader, matched to these beds.
+
 ## Rock detail on steep faces and scree (12 Nov; Paulo picked shader detail first, then displaced cliffs)
 
 Why: the generator's erosion detail is a heightfield (offsets in y over x z), so faces near vertical get none: gorge

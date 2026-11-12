@@ -940,6 +940,17 @@
    "topic": "Shading"
   },
   {
+   "name": "Hair shadows",
+   "settings": [
+    "cast_hair_shadows"
+   ],
+   "note": "",
+   "what": "raster strand hair casts shadows on the face, body and ground.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
    "name": "Custom hair shaders",
    "settings": [
     "HAIR",
@@ -1057,7 +1068,19 @@
     "snow_capacity"
    ],
    "note": "",
-   "what": "snow from the weather settles on the top layer and windward side as small clumps, and melts into wetness.",
+   "what": "snow from the weather settles on the top layer and windward side as small clumps, on strands and hair cards alike, and melts into wetness.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Grey and sun-bleached hair",
+   "settings": [
+    "grey_ratio",
+    "sun_bleaching"
+   ],
+   "note": "",
+   "what": "single grey strands mixed through the hair, and lengths lighter and warmer toward the tips.",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"
@@ -1418,6 +1441,17 @@
    ],
    "note": "",
    "what": "steep rock shows bedding planes and joints, and scree and till show loose stones, with no textures and no stretching on any face.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
+   "name": "Cliff relief",
+   "settings": [
+    "cliff_relief"
+   ],
+   "note": "",
+   "what": "steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Ground"
