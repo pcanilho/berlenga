@@ -764,9 +764,77 @@ distance. Three causes, three fixes:
 
 Tried and not kept: more cards (512, 1024), full width instead of the 95th percentile, cards faced
 out from the groom's centre, and a coverage gain of 2 to 4 all left the gaps; the gaps were the
-fanning. Left: the cards still read about a fifth lighter than the strands at 8 to 15 m in the
-bench (mean 53 against 43 on the hair), from weaker self-shadowing (their deep opacity maps are
-built from one strand a clump). Cards stay off by default.
+fanning. Left then: the cards still read lighter than the strands, put down to weaker
+self-shadowing.
+
+Measured again, one light at a time (bench `--hair=far8_cards` against `far8`, the hair's mean
+luminance; and close up): with the sun off the cards were 2.5 times as bright as the strands, with
+the sky's light off only 1.5 times. Three causes, none of them the deep opacity maps:
+
+- Sky reflection: the cards faced their normal toward the viewer, but the strands' ribbon frame
+  (across = strand x eye, normal = across x strand) faces away from it, and Godot's horizon term
+  then leaves out the reflected sky on the strands. The cards took a full sky reflection (a grey
+  sheen; setting SPECULAR to 0 took 20% off the cards and 1% off the strands). The cards now build
+  the strands' own frame about their strand direction.
+- Scalp through the cards at the crown: a card is a slab of strands centred on its simulated strand,
+  which the collision keeps only just off the body, so the slab's inner half and a flat strip's
+  edges (the sagitta over the round scalp) sank into the head, and the scalp showed between the
+  cards. The card strand now keeps half the clump's thickness more off the body (spheres and the
+  distance field), and near the scalp (a sphere fitted to the roots, least squares) each strip is
+  raised until its slab clears it.
+- Deep opacity lookups at the strip's edges: the edges reach sideways out of the hair the map was
+  built from, in front of it toward the light, and read as lit. The cards now read the maps on
+  their centre line.
+
+Result: close up the cards are within 7% of the strands (mean 47.1 against 44.1), at 8 m within 38%
+(28.8 against 20.9; before, 40.7: 95% lighter). What is left at 8 m is mostly the body showing
+between the hanging cards at the shoulders, where the strands cover it (fixed below). Also found, in the
+renderer's code (not yet measured): Godot leaves alpha-blended materials out of its shadow
+passes, so the strands' and cards' shadow-pass code only runs for the path tracer's shadow rays,
+and the deep opacity maps carry the hair's self-shadowing in raster. Cards stay off by default.
+
+### Fixed: cards see-through over the shoulders and head
+
+Turning the cards' opacity to 1 wherever the atlas holds any hair showed no gaps: the body showed
+through low opacity, not between cards. Four causes:
+
+- Draw order: the strands are sorted far to near every frame (bitonic sort on the GPU) because
+  they are blended, but the cards kept a fixed order (card c in slot c, sorted once). A card
+  behind drew over one in front, and lit hair from the back of the head showed through the dark
+  front layer everywhere but in front of the head (where the head hides it): the head's outline
+  showed as a dark disc. The cards' strands are now sorted every frame too (only theirs, a few
+  hundred), and the card in each slot is named in the previous positions' w (-2 - card), so the
+  card mesh reads its card's axes, widths and tiles from a small texture (card_data).
+- Mipmaps: the atlas held coverage, and its mipmaps averaged it. A pixel spanning several texels
+  sees all their strands, each by its share of the pixel, so it lets through exp(-mean depth); the
+  mean of the texels' transmittances is more (exp is convex), so the cards grew see-through with
+  distance. The atlas now holds the optical depth (16 bits: R high, B low byte; filtering is linear
+  in each) and makes its own mipmaps of it.
+- Sub-pixel cards: a card under a pixel wide falls between pixel centres. As the strands
+  (TressFX), it is now drawn at least 0.71 px a side (capped at 1 cm, 2 mm in shadow maps) and
+  its depth thinned by as much.
+- Oblique strips: a strip seen at an angle packs its strands into less of the screen, so their
+  depth per pixel grows by sin a / |f| (a the view's angle to the strands, f the strip's facing).
+  The strips' weights (f^2 / (f^2 + o^2)) left this out, and an oblique card lost up to a third of
+  its opacity.
+
+Result (bench mean luminance): close up 44.8 against the strands' 44.1 (47.1 before), at 8 m 23.6
+against 21.0 (28.8 before), at 15 m 24.8 against 22.9. Making the cards' depth half as much again
+closes the rest at 8 m (21.8) but takes them past the strands close up, so it is left: the
+remaining 12% at 8 m is not explained yet. The sort adds about 36 small dispatches a frame for
+256 cards (the strands' own sort runs over all 30,000).
+
+### Fixed: black specks on strands with deep shadows
+
+Rare black 2x2 pixel blocks on strands, only with deep shadows on. Turned off one step at a time:
+not the shadow-map offset into the hair (DIRECTIONAL_SHADOW_OFFSET), not the multiple-scattering
+term; gone when light() does not multiply by the map's transmittance, and gone as well with that
+transmittance clamped to 0..1 (min alone and max alone each clear it, so the value reaching light()
+was not a number). The per-vertex values check finite and in range, so the bad value appears
+between vertex and light(); not pinned further on llvmpipe. light() now clamps it, which changes
+nothing for any valid value. Bench `--hair=far8`: 12 to 22 black pixels on the hair before, 0
+after in every run (far8, near, wind).
+
 
 ## Stage 2q: hair resting on cloth
 
@@ -799,6 +867,40 @@ seeding (the field's flood is the same size); measured below.
 
 Bench: `--hair=cloth` puts a capelet 4 cm off the shoulders, its hem free to move 3 cm;
 `--hair=nocloth` is the same without the collision.
+
+## Stage 2r: snow settling on hair
+
+Snow on a head of hair lies on the top layer only, as small white clumps of crystals caught
+between strands, thicker on the side the wind drives it at; above freezing, or warmed by the
+head, it melts into the hair as water. Before this, the hair's weather wetting (stage 2o) took the
+weather's whole precipitation as rain, so a snowfall soaked the hair. How others do it:
+
+- Hedstrom and Pomeroy (1998), snow interception by a canopy: the catch is the snowfall times how
+  much room is left, `dL = P (1 - L / L_max)`; the load fills fast at first, then slows.
+- Hock (2003), degree-day melt: about 0.2 to 0.6 mm of water an hour per degree above freezing for
+  snow; the low end for snow lying in the open on a cold surface.
+- Jennings et al. (2018), rain/snow split from air temperature and humidity: the weather map
+  already uses it for its own surfaces (`WeatherMap3D.rain_fraction`).
+- Games (Red Dead Redemption 2, The Last of Us Part II): snow on characters is a texture mask
+  painted from above; it does not follow the hair's layers or move with the strands.
+
+Built (`snow`, `snow_capacity`): the precipitation splits into rain and snow; rain wets as before,
+snow fills a load by Hedstrom and Pomeroy, melts by a degree-day rate (0.2 mm/h/°C) plus 0.05 mm/h
+from the head's warmth, and the melt adds to the wetness. Where it lies: one more deep opacity map
+(stage 2j) seen from where the snow comes from, the fall (1 m/s, Locatelli and Hobbs 1974's
+aggregates) against the wind, so the map gives each strand point the hair above it, in the snow's
+direction. Snow is drawn as its own mesh: six small blobs per strand (octahedra, smooth shaded,
+irregularly scaled), each at a random point along its strand, keyed by the strand's root so a
+strand keeps its clumps when the blend sort moves it between slots. A blob shows with a weight
+`snow · exp(-2 · hair above)` against its own random number, so only the top layer holds snow, and
+sits on the strand's side the snow came from; clumps are 1.25 to 3.75 mm across at full load
+(white, albedo 0.85, matte). The others shrink to nothing. Tried first: widening the strand itself
+where it held snow; the width ran along the whole segment between two strand points, so snow
+showed as white streaks a couple of centimetres long, not clumps. The blobs are opaque geometry,
+so the path tracer traces the same clumps. The map costs one more slot only while snow lies, and
+needs hair_shading's deep opacity maps. Not on the cards yet (hidden in card mode).
+
+Bench: `--hair=snow` holds snow at 1.
 
 ## Checked: lighter path traced strands
 
@@ -870,3 +972,7 @@ groom to test with.
 - Wang, Yu, Zhou, Guo, Shum. Example-based Hair Geometry Synthesis. SIGGRAPH 2009.
 - Epic Games. Unreal Engine documentation: Setting up Cards and Meshes for Grooms; Hair Card Generator.
 - Bridson, Fedkiw, Anderson. Robust Treatment of Collisions, Contact and Friction for Cloth Animation. SIGGRAPH 2002.
+- Hedstrom, Pomeroy. Measurements and Modelling of Snow Interception in the Boreal Forest. Hydrological Processes 12, 1998.
+- Hock. Temperature Index Melt Modelling in Mountain Areas. Journal of Hydrology 282, 2003.
+- Jennings, Winchell, Livneh, Molotch. Spatial Variation of the Rain-Snow Temperature Threshold across the Northern Hemisphere. Nature Communications 9, 2018.
+- Locatelli, Hobbs. Fall Speeds and Masses of Solid Precipitation Particles. JGR 79, 1974.

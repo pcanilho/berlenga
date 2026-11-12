@@ -94,6 +94,18 @@
 		<member name="curvature_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(-1000, 1000)">
 			Ground curvature range in 1/m: positive in hollows and valley floors, negative on ridges.
 		</member>
+		<member name="deadwood_band" type="float" setter="set_deadwood_band" getter="get_deadwood_band" default="0.6">
+			With [constant DEADWOOD_BESIDE]: how far from a log's side the species grows, in metres, thinning out across the band.
+		</member>
+		<member name="deadwood_min_radius" type="float" setter="set_deadwood_min_radius" getter="get_deadwood_min_radius" default="0.08">
+			With [constant DEADWOOD_ON]: the thinnest log it grows on (radius, metres). Thickness stands for decay: thin branches stay bare, thick rotting trunks carry seedlings.
+		</member>
+		<member name="deadwood_rule" type="int" setter="set_deadwood_rule" getter="get_deadwood_rule" enum="PlantSpecies.DeadwoodRule" default="0">
+			How the species meets fallen wood placed by [VegetationField3D] (this field's or its [member VegetationField3D.canopy_field]'s): species with the meta [code]deadwood[/code] whose meshes carry the meta [code]tree_deadwood_axis[/code] (start, end and radius in mesh space, as [code]TreeGenerator[/code] gives its logs, fallen branches and sticks).
+		</member>
+		<member name="deadwood_uphill" type="bool" setter="set_deadwood_uphill" getter="is_deadwood_uphill" default="false">
+			With [constant DEADWOOD_BESIDE]: only on the uphill side of a log on sloping ground, where creeping leaf litter piles against it.
+		</member>
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1.0">
 			Fraction of the Poisson-disk points kept where every rule is fully met, from 0 to 1.
 		</member>
@@ -299,6 +311,18 @@
 		</constant>
 		<constant name="RULE_MAX" value="18" enum="Rule">
 			Number of rules.
+		</constant>
+		<constant name="DEADWOOD_AVOID" value="0" enum="DeadwoodRule">
+			Kept off a log's footprint (closer to its axis than its radius, seen from above).
+		</constant>
+		<constant name="DEADWOOD_ON" value="1" enum="DeadwoodRule">
+			Only on logs at least [member deadwood_min_radius] thick, set on the upper surface (height and tilt from the cylinder, the upper two thirds of its width; use [member align_to_ground] 1 to follow the curve). Mosses, wood sorrel, seedlings on nurse logs.
+		</constant>
+		<constant name="DEADWOOD_BESIDE" value="2" enum="DeadwoodRule">
+			Only within [member deadwood_band] of a log's side. Ferns along a trunk, leaves banked against it.
+		</constant>
+		<constant name="DEADWOOD_IGNORE" value="3" enum="DeadwoodRule">
+			Fallen wood does not matter to it.
 		</constant>
 	</constants>
 </class>

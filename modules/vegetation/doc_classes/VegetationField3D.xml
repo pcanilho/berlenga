@@ -33,6 +33,20 @@
 				Removes every placed plant.
 			</description>
 		</method>
+		<method name="get_deadwood_at" qualifiers="const">
+			<return type="Dictionary" />
+			<param index="0" name="global_position" type="Vector3" />
+			<param index="1" name="reach" type="float" default="0.0" />
+			<description>
+				The placed log whose side is nearest the point, seen from above, if it is within [param reach] metres: [code]side[/code] (metres from its side, negative under it), [code]radius[/code], [code]top[/code] (the height of its upper surface over the point) and [code]normal[/code]. Empty when none is that close. Logs are the placed plants of species with the meta [code]deadwood[/code] whose meshes carry [code]tree_deadwood_axis[/code] (see [member PlantSpecies.deadwood_rule]).
+			</description>
+		</method>
+		<method name="get_deadwood_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many logs the last placement put down (with their axes).
+			</description>
+		</method>
 		<method name="get_placements" qualifiers="const">
 			<return type="PackedVector3Array" />
 			<param index="0" name="species" type="int" />

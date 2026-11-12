@@ -183,6 +183,9 @@ void VegetationField3D::_clear_generated() {
 		crowns.clear();
 		crown_grid.clear();
 		max_crown_radius = 0.0f;
+		deadwood.clear();
+		deadwood_grid.clear();
+		deadwood_max_radius = 0.0f;
 	}
 	for (MultiMeshInstance3D *mmi : generated) {
 		if (mmi->get_parent()) {
@@ -296,6 +299,26 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		r_setup.crown_max = MAX(r_setup.crown_max, ps.crown_max);
 		const Color far_srgb = ps.sp->get_far_color();
 		ps.far_color = Color(far_srgb.r, far_srgb.g, far_srgb.b).srgb_to_linear() * Color(1, 1, 1, 0) + Color(0, 0, 0, far_srgb.a);
+		// Fallen wood from the trees module: each mesh's axis (docs/ideas/forest-floor.md, 6.6).
+		if (bool(ps.sp->get_meta(SNAME("deadwood"), false))) {
+			const float smax = MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
+			for (const Ref<Mesh> &m : ps.meshes) {
+				PackedFloat32Array axis;
+				if (m.is_valid() && m->has_meta(SNAME("tree_deadwood_axis"))) {
+					axis = m->get_meta(SNAME("tree_deadwood_axis"));
+				}
+				if (axis.size() < 7) {
+					axis.clear();
+				} else {
+					const float reach = MAX(Vector3(axis[0], axis[1], axis[2]).length(), Vector3(axis[3], axis[4], axis[5]).length()) + axis[6];
+					ps.deadwood_reach = MAX(ps.deadwood_reach, reach * smax);
+				}
+				ps.deadwood_axes.push_back(axis);
+			}
+		}
+		if (ps.sp->get_deadwood_rule() == PlantSpecies::DEADWOOD_BESIDE) {
+			r_setup.deadwood_reach = MAX(r_setup.deadwood_reach, ps.sp->get_deadwood_band());
+		}
 	}
 	// Halo: how far around a tile each species must be placed for the tile to come out exactly
 	// as in one placement of the whole map. Only earlier species act on later ones (footprints
@@ -320,6 +343,9 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 			}
 			if (ps.crown_max > 0.0f && later.sp->uses_litter()) {
 				halo = MAX(halo, later.halo + ps.crown_max + r_setup.litter_reach);
+			}
+			if (ps.deadwood_reach > 0.0f && later.sp->get_deadwood_rule() != PlantSpecies::DEADWOOD_IGNORE) {
+				halo = MAX(halo, later.halo + ps.deadwood_reach + later.sp->get_deadwood_band());
 			}
 		}
 		ps.halo = halo;
@@ -417,6 +443,109 @@ float crown_litter(const Grid &p_grid, const Crowns &p_crowns, float p_reach, fl
 // p_halo each species is also placed around them as far as later species need it (its halo),
 // so the tiles come out as they would in one placement of the whole map; plants outside
 // p_tiles are not returned. Reads only p_setup and the data map: safe on a worker thread.
+namespace {
+
+// Logs in a hash grid of DEADWOOD_CELL cells: each in every cell its footprint overlaps.
+template <typename Grid, typename Log>
+void deadwood_insert(Grid &r_grid, const Log &p_log, int p_index, float p_cell) {
+	const float x0 = MIN(p_log.a.x, p_log.b.x) - p_log.radius, x1 = MAX(p_log.a.x, p_log.b.x) + p_log.radius;
+	const float z0 = MIN(p_log.a.z, p_log.b.z) - p_log.radius, z1 = MAX(p_log.a.z, p_log.b.z) + p_log.radius;
+	for (int cz = int(Math::floor(z0 / p_cell)); cz <= int(Math::floor(z1 / p_cell)); cz++) {
+		for (int cx = int(Math::floor(x0 / p_cell)); cx <= int(Math::floor(x1 / p_cell)); cx++) {
+			r_grid[Vector2i(cx, cz)].push_back(p_index);
+		}
+	}
+}
+
+// The log whose side is nearest the point (within p_reach), seen from above: a log is a cylinder
+// round its axis, so over its footprint the upper surface stands sqrt(r^2 - d^2) over the axis.
+template <typename Grid, typename Logs, typename Hit>
+bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_xz, float p_reach, float p_cell, Hit &r_hit) {
+	if (p_logs.is_empty()) {
+		return false;
+	}
+	bool found = false;
+	const int cx0 = int(Math::floor((p_xz.x - p_reach) / p_cell)), cx1 = int(Math::floor((p_xz.x + p_reach) / p_cell));
+	const int cz0 = int(Math::floor((p_xz.y - p_reach) / p_cell)), cz1 = int(Math::floor((p_xz.y + p_reach) / p_cell));
+	for (int cz = cz0; cz <= cz1; cz++) {
+		for (int cx = cx0; cx <= cx1; cx++) {
+			const auto *bucket = p_grid.getptr(Vector2i(cx, cz));
+			if (!bucket) {
+				continue;
+			}
+			for (int idx : *bucket) {
+				const auto &d = p_logs[idx];
+				const Vector2 a(d.a.x, d.a.z), ab = Vector2(d.b.x, d.b.z) - a;
+				const float len2 = ab.length_squared();
+				const float t = len2 > 1e-8f ? CLAMP((p_xz - a).dot(ab) / len2, 0.0f, 1.0f) : 0.0f;
+				const Vector2 off = p_xz - (a + ab * t);
+				const float dist = off.length();
+				const float side = dist - d.radius;
+				if (side > p_reach || side >= r_hit.side) {
+					continue;
+				}
+				found = true;
+				r_hit.side = side;
+				r_hit.radius = d.radius;
+				r_hit.across = dist > 1e-5f ? off / dist : Vector2();
+				const Vector3 c = d.a.lerp(d.b, t);
+				const float h = d.radius * d.radius - dist * dist;
+				if (h > 0.0f) {
+					const float up = Math::sqrt(h);
+					r_hit.top = c.y + up;
+					r_hit.normal = Vector3(off.x, up, off.y) / MAX(d.radius, 1e-4f);
+				} else {
+					r_hit.top = c.y;
+					r_hit.normal = Vector3(0, 1, 0);
+				}
+			}
+		}
+	}
+	return found;
+}
+
+} // namespace
+
+int VegetationField3D::get_deadwood_count() const {
+	RWLockRead guard(crown_lock);
+	return deadwood.size();
+}
+
+// The placed log whose side is nearest the point, within reach: side (m from its side across the
+// ground, negative under it), radius, top (height of its upper surface there) and normal; empty
+// when there is none.
+Dictionary VegetationField3D::get_deadwood_at(const Vector3 &p_global_position, float p_reach) const {
+	DeadwoodHit hit;
+	Dictionary d;
+	if (_deadwood_at(Vector2(p_global_position.x, p_global_position.z), MAX(p_reach, 0.0f), hit)) {
+		d["side"] = hit.side;
+		d["radius"] = hit.radius;
+		d["top"] = hit.top;
+		d["normal"] = hit.normal;
+	}
+	return d;
+}
+
+bool VegetationField3D::_deadwood_at(const Vector2 &p_xz, float p_reach, DeadwoodHit &r_hit) const {
+	RWLockRead guard(crown_lock);
+	return deadwood_nearest(deadwood_grid, deadwood, p_xz, p_reach, DEADWOOD_CELL, r_hit);
+}
+
+// The placed logs, for other fields' plants (canopy_field) and get_deadwood_at().
+void VegetationField3D::_publish_deadwood(const LocalVector<const LocalVector<Deadwood> *> &p_lists) {
+	RWLockWrite guard(crown_lock);
+	deadwood.clear();
+	deadwood_grid.clear();
+	deadwood_max_radius = 0.0f;
+	for (const LocalVector<Deadwood> *list : p_lists) {
+		for (const Deadwood &d : *list) {
+			deadwood.push_back(d);
+			deadwood_insert(deadwood_grid, d, deadwood.size() - 1, DEADWOOD_CELL);
+			deadwood_max_radius = MAX(deadwood_max_radius, d.radius);
+		}
+	}
+}
+
 void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles, bool p_halo, LocalVector<TileOut> &r_tiles) const {
 	const int species_count = p_setup.species.size();
 	const float ts = p_setup.tile_size;
@@ -435,6 +564,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 	LocalVector<Placed> placed;
 	LocalVector<Crown> local_crowns;
 	HashMap<Vector2i, LocalVector<int>> local_crown_grid;
+	LocalVector<Deadwood> local_deadwood; // Logs placed so far (and the canopy field's, through _deadwood_at()).
+	HashMap<Vector2i, LocalVector<int>> local_deadwood_grid;
 	const float crown_reach = p_setup.crown_max * 1.4f;
 	const Image *mask = p_setup.mask_img.ptr();
 	auto mask_at = [&](const Vector2 &p_xz, int p_channel) -> float {
@@ -475,6 +606,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const bool litter_rule = sp->uses_litter();
 		const float canopy_r = sp->get_canopy_radius();
 		const float range = sp->get_visibility_range();
+		const bool is_log = ps.deadwood_reach > 0.0f;
+		const PlantSpecies::DeadwoodRule dw_rule = is_log ? PlantSpecies::DEADWOOD_IGNORE : sp->get_deadwood_rule();
+		const bool dw_near = dw_rule == PlantSpecies::DEADWOOD_ON || dw_rule == PlantSpecies::DEADWOOD_BESIDE;
+		const float dw_band = sp->get_deadwood_band();
 		const float halo = p_halo ? ps.halo : 0.0f;
 		const int ht = int(Math::ceil(halo / ts));
 		const int tx0 = MAX(p_tiles.position.x - ht, map_tx0);
@@ -537,6 +672,45 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
 						suit *= sp->is_mask_invert() ? 1.0f - m : m;
 					}
+					// Fallen wood (docs/ideas/forest-floor.md, 6.6): off its footprint, on its upper
+					// surface or along its side, by the species' rule.
+					bool on_log = false;
+					DeadwoodHit hit;
+					if (dw_rule != PlantSpecies::DEADWOOD_IGNORE && suit > 0.0f) {
+						const float dw_reach = dw_rule == PlantSpecies::DEADWOOD_BESIDE ? dw_band : 0.0f;
+						bool found = deadwood_nearest(local_deadwood_grid, local_deadwood, xz, dw_reach, DEADWOOD_CELL, hit);
+						if (p_setup.other) {
+							found = p_setup.other->_deadwood_at(xz, dw_reach, hit) || found;
+						}
+						if (dw_rule == PlantSpecies::DEADWOOD_AVOID) {
+							if (found && hit.side < 0.0f) {
+								suit = 0.0f;
+							}
+						} else if (!found) {
+							suit = 0.0f;
+						} else if (dw_rule == PlantSpecies::DEADWOOD_ON) {
+							// The upper two thirds of its width, on logs thick enough.
+							if (hit.side > -hit.radius / 3.0f || hit.radius < sp->get_deadwood_min_radius()) {
+								suit = 0.0f;
+							}
+							on_log = true;
+						} else {
+							if (hit.side < 0.0f) {
+								suit = 0.0f;
+							}
+							suit *= 1.0f - CLAMP(hit.side / dw_band, 0.0f, 1.0f);
+							if (sp->is_deadwood_uphill() && suit > 0.0f) {
+								// Leaves creeping downhill stop against its uphill side.
+								const float slope = map->get_slope_at(p3);
+								const float aspect = map->get_aspect_at(p3);
+								const Vector2 downhill(Math::sin(aspect), Math::cos(aspect));
+								const float uphill = -hit.across.dot(downhill);
+								suit *= Math::lerp(1.0f, CLAMP(uphill * 2.0f, 0.0f, 1.0f), CLAMP(slope / Math::deg_to_rad(4.0f), 0.0f, 1.0f));
+							}
+						}
+					} else if (dw_near) {
+						suit = 0.0f;
+					}
 					const float keep = sp->get_density() * suit;
 					if (rank >= keep) {
 						continue;
@@ -552,7 +726,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							}
 							for (int idx : *bucket) {
 								const Placed &o = placed[idx];
-								if (o.species == s) {
+								if (o.species == s || (o.deadwood && dw_near)) {
 									continue;
 								}
 								const float min_d = fp + o.footprint;
@@ -566,7 +740,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (blocked) {
 						continue;
 					}
-					placed.push_back({ xz, fp, s });
+					placed.push_back({ xz, fp, s, is_log });
 					grid[gc].push_back(placed.size() - 1);
 
 					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
@@ -580,15 +754,16 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							out->crowns.push_back(crown);
 						}
 					}
-					if (!out) {
+					if (!out && !is_log) {
 						continue; // Placed only for the plants of the tiles asked for.
 					}
-					// Floating plants sit on the water surface, level, over the ground below it.
+					// Floating plants sit on the water surface, level, over the ground below it;
+					// plants on a log on its upper surface, tilted with it.
 					const bool floats = sp->is_floating();
-					const float y = map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : 0.0f);
+					const float y = on_log ? hit.top : map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : 0.0f);
 					const float slope = floats ? 0.0f : map->get_slope_at(p3);
 					const float aspect = map->get_aspect_at(p3);
-					const Vector3 normal(Math::sin(aspect) * Math::sin(slope), Math::cos(slope), Math::cos(aspect) * Math::sin(slope));
+					const Vector3 normal = on_log ? hit.normal : Vector3(Math::sin(aspect) * Math::sin(slope), Math::cos(slope), Math::cos(aspect) * Math::sin(slope));
 					const Vector3 up = Vector3(0, 1, 0).lerp(normal, align).normalized();
 					Basis b;
 					const Vector3 axis = Vector3(0, 1, 0).cross(up);
@@ -600,6 +775,18 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					b.scale(Vector3(scale, scale, scale));
 					const int variant = MIN(int(r * variants), variants - 1);
 					const Transform3D world(b, Vector3(xz.x, y, xz.y));
+					if (is_log && variant < int(ps.deadwood_axes.size()) && ps.deadwood_axes[variant].size() >= 7) {
+						const PackedFloat32Array &ax = ps.deadwood_axes[variant];
+						const Deadwood log = { world.xform(Vector3(ax[0], ax[1], ax[2])), world.xform(Vector3(ax[3], ax[4], ax[5])), ax[6] * scale };
+						local_deadwood.push_back(log);
+						deadwood_insert(local_deadwood_grid, log, local_deadwood.size() - 1, DEADWOOD_CELL);
+						if (out) {
+							out->deadwood.push_back(log);
+						}
+					}
+					if (!out) {
+						continue;
+					}
 					out->species[s].xforms[variant].push_back(p_setup.to_local * world);
 					// Custom data for the plant shader: the rank among the plants kept here (blue noise,
 					// so thinning by distance keeps the field even), the species' range, size, species.
@@ -1430,11 +1617,14 @@ Error VegetationField3D::populate() {
 			_commit_species(setup, t, s, generated);
 		}
 	}
+	LocalVector<const LocalVector<Deadwood> *> deadwood_lists;
 	for (const TileOut &t : outs) {
 		plant_count += t.count;
 		crown_lists.push_back(&t.crowns);
 		far_lists.push_back(&t.far);
+		deadwood_lists.push_back(&t.deadwood);
 	}
+	_publish_deadwood(deadwood_lists);
 	Maps maps;
 	maps.maps_rect = rect;
 	maps.far_rect = rect;
@@ -1957,10 +2147,13 @@ void VegetationField3D::_stream_publish(const Vector2 &p_centre) {
 	const Rect2 &rect = stream_setup.rect;
 	StreamMapsJob *job = memnew(StreamMapsJob);
 	job->field = this;
+	LocalVector<const LocalVector<Deadwood> *> deadwood_lists;
 	for (const KeyValue<Vector2i, StreamTile *> &kv : stream_tiles) {
 		job->crowns.push_back(&kv.value->out.crowns);
 		job->far.push_back(&kv.value->out.far);
+		deadwood_lists.push_back(&kv.value->out.deadwood);
 	}
+	_publish_deadwood(deadwood_lists);
 	// Shade maps near the centre on fine cells; far colour out to the radius.
 	const float mr = MIN(stream_maps_radius, stream_radius);
 	job->maps.maps_rect = Rect2(p_centre - Vector2(mr, mr), Vector2(mr, mr) * 2.0f).intersection(rect);
@@ -2178,6 +2371,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_plant_count"), &VegetationField3D::get_plant_count);
 	ClassDB::bind_method(D_METHOD("get_populate_time_msec"), &VegetationField3D::get_populate_time_msec);
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
+	ClassDB::bind_method(D_METHOD("get_deadwood_count"), &VegetationField3D::get_deadwood_count);
+	ClassDB::bind_method(D_METHOD("get_deadwood_at", "global_position", "reach"), &VegetationField3D::get_deadwood_at, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
 	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);

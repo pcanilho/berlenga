@@ -100,7 +100,7 @@ layout(push_constant, std430) uniform Pass {
 	int mode;
 	float frac; // substep fraction, for blending the head's transform
 	float frac_prev; // the previous substep's
-	int pad1; // MODE_SORT_STEP: the bitonic block size k (frac holds the stride j); MODE_SDF_JUMP: the step; MODE_OUTPUT: 1 with history
+	int pad1; // MODE_SORT_KEYS: cards only, how many (0: every strand); MODE_SORT_STEP: the bitonic block size k (frac holds the stride j); MODE_SDF_JUMP: the step; MODE_OUTPUT: 1 with history
 }
 pass;
 
@@ -820,6 +820,7 @@ void main() {
 		}
 		int first = strands[id].x;
 		int n = strands[id].y;
+		float card_margin = is_card_strand(id) ? rest[first].w : 0.0; // see MODE_FOLLOW
 		vec3 lo = sdf_origin.xyz;
 		vec3 hi = sdf_origin.xyz + vec3(sdf_dims.xyz) * sdf_origin.w;
 		float h = 0.5 * sdf_origin.w;
@@ -829,7 +830,8 @@ void main() {
 				continue;
 			}
 			float d = sdf_at(p);
-			if (d >= sdf_misc.y) {
+			float margin = sdf_misc.y + card_margin;
+			if (d >= margin) {
 				continue;
 			}
 			vec3 g = vec3(sdf_at(p + vec3(h, 0, 0)) - sdf_at(p - vec3(h, 0, 0)),
@@ -838,7 +840,7 @@ void main() {
 			if (dot(g, g) < 1e-12) {
 				continue;
 			}
-			p += normalize(g) * (sdf_misc.y - d);
+			p += normalize(g) * (margin - d);
 			pos[first + i] = vec4(p, pos[first + i].w); // w: a card strand's fan (MODE_FOLLOW)
 			prev[first + i] = vec4(p, 1.0);
 		}
@@ -847,18 +849,24 @@ void main() {
 	if (pass.mode == MODE_SORT_KEYS) {
 		// Blended strands must be drawn far to near (TressFX sorts its fragments per pixel; here
 		// whole strands are sorted by their middle point's depth, a bitonic sort on the GPU).
-		if (id >= int(inertia.w + 0.5)) {
+		// pass.pad1 > 0: hair cards only, nothing else drawn: just the cards' strands are sorted,
+		// pad1 of them (a power of two) from card_first() on.
+		if (id >= (pass.pad1 > 0 ? pass.pad1 : int(inertia.w + 0.5))) {
 			return;
 		}
+		int s = pass.pad1 > 0 ? card_first() + id : id;
 		float key = 3.0e38; // padding sorts last
-		if (is_card_strand(id) && id < counts.x) {
-			// Hair cards' strands sort first, in their own order, so card c always has slot c.
-			key = -1.0e30 + float(id - card_first()) * 1.0e24;
-		} else if (id < counts.x && strands[id].y > 0) {
-			vec3 mid = pos[strands[id].x + strands[id].y / 2].xyz;
+		if (s < counts.x && strands[s].y > 0) {
+			vec3 mid = pos[strands[s].x + strands[s].y / 2].xyz;
 			key = (world_to_view * vec4(mid, 1.0)).z; // more negative is farther
+			if (is_card_strand(s)) {
+				// Hair cards' strands take the first slots (the card mesh draws them), far to near
+				// among themselves as the strands are: blended out of order, a card behind drew over
+				// one in front, and the hair read lighter and thinner than its strands.
+				key -= 1.0e7;
+			}
 		}
-		order[id] = vec2(key, float(id));
+		order[id] = vec2(key, float(s));
 		return;
 	}
 	if (pass.mode == MODE_SORT_STEP) {
@@ -924,7 +932,10 @@ void main() {
 			last[sp] = vec4(o, 1.0);
 		}
 		imageStore(out_image, ivec2(id % w, id / w), vec4(o, along));
-		imageStore(prev_image, ivec2(id % w, id / w), vec4(before, along));
+		// A card's slot: the previous positions' w names the card drawn there (-2 - card), since
+		// the slots follow the draw order. Negative, it reads as past the strand's end to the
+		// strand mesh.
+		imageStore(prev_image, ivec2(id % w, id / w), vec4(before, is_card_strand(strand) ? -2.0 - float(strand - card_first()) : along));
 		return;
 	}
 
@@ -937,6 +948,10 @@ void main() {
 		return;
 	}
 	bool is_guide = follow[id * 2].w < 0.0;
+	// A hair card's strand is the centre of a slab of strands: it keeps half the slab's
+	// thickness (held in its first rest point's w, unused otherwise) more off the body, so the
+	// card's strands rest on it rather than half inside it.
+	float card_margin = is_card_strand(id) ? rest[first].w : 0.0;
 
 	if (pass.mode == MODE_RESET) {
 		for (int i = 0; i < n; i++) {
@@ -1006,7 +1021,7 @@ void main() {
 			}
 			for (int s = 0; s < counts.w; s++) {
 				vec3 d = p - spheres[s].xyz;
-				float r = spheres[s].w + misc.y;
+				float r = spheres[s].w + misc.y + card_margin;
 				float l2 = dot(d, d);
 				if (l2 < r * r && l2 > 1e-14) {
 					p = spheres[s].xyz + d * (r / sqrt(l2));

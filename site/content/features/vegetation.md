@@ -39,6 +39,14 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Grass edge fade: the band where grass ends blends into the ground.*
 
+- **Far grass in sunlight** (`GrassField3D.sun_light`): distant grass brightens looking away from the sun and darkens looking into it, measured from the blades at four sun headings.
+
+- **Seasonal grass** (`GrassField3D.season_source`): grass browns in drought and hard cold and stays green in a mild winter, read from the season.
+
+  ![The same meadow in July, a normal year and a summer drought, raster](media/grass-drought.jpg)
+
+  *Seasonal grass: in a summer drought whole blades die back to straw.*
+
 - **Layered meadow** (`GrassField3D.color_variation`, `get_ground_shader_code()`, `canopy_field`): blades vary in colour over the field and per blade, some dead from the root, with midribs and tapered tips; the ground under the grass becomes matching turf, and the sward follows the canopy shade.
 
   ![A meadow by a lake, before and after the layered meadow](media/meadow-layers.jpg)
@@ -69,7 +77,9 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Meadow flowers: daisies, buttercups, scabious and sorrel standing above the grass.*
 
+- **Plants by season** (`PlantGenerator.season`): 17 flowering herbs open, go to seed and die back to standing stalks by degree days; fern croziers unroll in spring, fronds die back russet and lie flat through winter, and wood anemone dies down after flowering.
 - **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.
+- **Plants on deadwood** (`PlantSpecies.deadwood_rule`): ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.
 - **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`): fallen leaves drift past the crowns into edges and clearings, farther downwind.
 - **Wetland plants** (`PlantSpecies.floating`, `water_depth_range`): reed, bulrush, rush and water lilies zoned by water depth, lilies floating on the surface.
 

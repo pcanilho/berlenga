@@ -106,7 +106,7 @@ void TerrainMaterialLayer::_bind_methods() {
 
 static const char *LAYER_NAMES[TerrainMaterial3D::LAYER_MAX] = { "rock", "scree", "soil", "alluvium", "sand" };
 static const Color LAYER_DEFAULT_COLORS[TerrainMaterial3D::LAYER_MAX] = {
-	Color(0.36, 0.35, 0.33), Color(0.48, 0.46, 0.42), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46)
+	Color(0.36, 0.35, 0.33), Color(0.41, 0.40, 0.37), Color(0.2, 0.22, 0.1), Color(0.28, 0.27, 0.16), Color(0.7, 0.62, 0.46)
 };
 
 String TerrainMaterial3D::get_shader_code() const {
@@ -232,6 +232,18 @@ TmProj tm_projection(vec3 p, vec3 n, float scale, bool cliff) {
 	return r;
 }
 
+// Value noise for the layers' large-scale breakup (no textures needed).
+float tm_vn_hash(vec3 p) {
+	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453123);
+}
+float tm_vn(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(tm_vn_hash(i), tm_vn_hash(i + vec3(1, 0, 0)), f.x), mix(tm_vn_hash(i + vec3(0, 1, 0)), tm_vn_hash(i + vec3(1, 1, 0)), f.x), f.y),
+			mix(mix(tm_vn_hash(i + vec3(0, 0, 1)), tm_vn_hash(i + vec3(1, 0, 1)), f.x), mix(tm_vn_hash(i + vec3(0, 1, 1)), tm_vn_hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+
 // A tangent-space normal from a projection plane as a world-space perturbation (whiteout-style: added to the
 // geometric normal along the plane's two axes).
 vec3 tm_perturb(vec3 nt, ivec2 axes) {
@@ -315,9 +327,24 @@ float tm_rd_noise(vec3 p) {
 	float e = tm_rd_hash3(i + vec3(0, 0, 1)).x, g = tm_rd_hash3(i + vec3(1, 0, 1)).x, h = tm_rd_hash3(i + vec3(0, 1, 1)).x, k = tm_rd_hash3(i + vec3(1, 1, 1)).x;
 	return mix(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), mix(mix(e, g, f.x), mix(h, k, f.x), f.y), f.z);
 }
-// Height (m) and a crack/shade term (0 in a crack or between stones, 1 on a face) at p.
-vec2 tm_rd_height(vec3 p, float face, float scree, float fp) {
+// Box-filtered pulse train (Apodaca and Gritz 2000, Advanced RenderMan ch. 11): the share of [x - w/2, x + w/2]
+// inside cracks of width c (in periods) centred on every integer, so a pixel sees the cracks' area, never a line.
+float tm_rd_cracks(float x, float c, float w) {
+	w = max(w, 1e-4);
+	float x0 = x - 0.5 * w + 0.5 * c, x1 = x + 0.5 * w + 0.5 * c;
+	float i0 = floor(x0) * c + min(fract(x0), c), i1 = floor(x1) * c + min(fract(x1), c);
+	return clamp((i1 - i0) / w, 0.0, 1.0);
+}
+// Frequency clamping (Norton, Rockwood and Skolmoski 1982): a feature of period per fades to its mean as a pixel
+// spans a quarter to half of it, so nothing beats into moire at a distance or at a grazing angle.
+float tm_rd_clamp(float w, float per) {
+	return 1.0 - smoothstep(0.25, 0.5, w / per);
+}
+// Height (m) and shade (mean 1 over any area, so the detail never darkens the ground) at p. dx and dy are the axes of
+// the pixel's footprint on the ground: the filter widths are anisotropic, long along a face seen edge-on.
+vec2 tm_rd_height(vec3 p, float face, float scree, vec3 dx, vec3 dy) {
 	float hgt = 0.0, shade = 1.0;
+	float wmax = max(length(dx), length(dy)) / tm_rock_detail_scale;
 	if (face > 0.0) {
 		// Bedding planes about 1.2 m apart, warped, and two sets of joints across them at a regional strike, each
 		// bed's joints offset from the next (staggered blocks, as jointed sedimentary and granitic walls break).
@@ -326,45 +353,62 @@ vec2 tm_rd_height(vec3 p, float face, float scree, float fp) {
 		vec2 da = vec2(cos(strike), sin(strike)), db = vec2(-da.y, da.x);
 		float yb = q.y + (tm_rd_noise(q * 0.21) - 0.5) * 0.9;
 		float by = floor(yb / 1.2);
-		float fy = fract(yb / 1.2) * 1.2;
 		float u = dot(q.xz, da) + tm_rd_hash3(vec3(by, 1.0, 7.0)).x * 2.5 + (tm_rd_noise(q * 0.5) - 0.5) * 0.4;
 		float ia = floor(u / 2.5);
-		float fa = fract(u / 2.5) * 2.5;
 		float v = dot(q.xz, db) + tm_rd_hash3(vec3(by, ia, 3.0)).y * 3.5 + (tm_rd_noise(q * 0.47 + 5.0) - 0.5) * 0.4;
 		float ib = floor(v / 3.5);
-		float fb = fract(v / 3.5) * 3.5;
-		float d = min(min(min(fy, 1.2 - fy), min(fa, 2.5 - fa)), min(fb, 3.5 - fb));
-		float crack = smoothstep(0.0, max(0.06, 2.5 * fp), d); // never thinner than the pixels: no crawling lines
+		float fa = fract(u / 2.5) * 2.5, fb = fract(v / 3.5) * 3.5;
+		// Filter widths along each set's normal (with a little softening so near cracks are not hard edged).
+		vec3 ga = vec3(da.x, 0.0, da.y), gb = vec3(db.x, 0.0, db.y);
+		float wy = (abs(dx.y) + abs(dy.y)) / tm_rock_detail_scale + 0.01;
+		float wa = (abs(dot(dx, ga)) + abs(dot(dy, ga))) / tm_rock_detail_scale + 0.01;
+		float wb = (abs(dot(dx, gb)) + abs(dot(dy, gb))) / tm_rock_detail_scale + 0.01;
+		const float cw = 0.05; // crack width (m)
+		float cy = tm_rd_cracks(yb / 1.2, cw / 1.2, wy / 1.2);
+		float ca = tm_rd_cracks(u / 2.5, cw / 2.5, wa / 2.5);
+		float cb = tm_rd_cracks(v / 3.5, cw / 3.5, wb / 3.5);
+		float cov = 1.0 - (1.0 - cy) * (1.0 - ca) * (1.0 - cb);
+		float cov0 = 1.0 - (1.0 - cw / 1.2) * (1.0 - cw / 2.5) * (1.0 - cw / 3.5);
+		// Cracks shade to 0.82 and the faces are lifted so the mean over the pattern stays 1.
+		float crack_shade = mix(1.0, 0.82, cov) / (1.0 - 0.18 * cov0);
+		// Per-block tone and relief, clamped once a pixel spans a fair part of a bed.
 		vec3 bh = tm_rd_hash3(vec3(by, ia, ib));
-		float blk = (bh.x - 0.5) * 0.10 + dot(vec2(fa / 2.5 - 0.5, fb / 3.5 - 0.5), bh.yz - 0.5) * 0.12; // proud, recessed, tilted
-		float rough = (tm_rd_noise(q * 1.3) - 0.5) * 0.08 + (tm_rd_noise(q * 4.1) - 0.5) * 0.025;
-		hgt += face * ((crack - 1.0) * 0.08 + blk + rough);
-		shade = mix(shade, mix(mix(0.72, 0.9, smoothstep(0.02, 0.1, fp)), 1.0, crack) * (0.93 + 0.14 * bh.x), face);
+		float kb = tm_rd_clamp(wmax, 1.2);
+		// Block steps and crack relief are edges a pixel cannot hold: gone before one spans a crack's width.
+		float kc = tm_rd_clamp(wmax, 0.2);
+		float blk = kc * ((bh.x - 0.5) * 0.10 + dot(vec2(fa / 2.5 - 0.5, fb / 3.5 - 0.5), bh.yz - 0.5) * 0.12);
+		float rough = tm_rd_clamp(wmax, 0.77) * (tm_rd_noise(q * 1.3) - 0.5) * 0.08 + tm_rd_clamp(wmax, 0.24) * (tm_rd_noise(q * 4.1) - 0.5) * 0.025;
+		// Crack relief from the unfiltered profile, clamped by the crack's own size against the pixel.
+		float d = min(min(min(fract(yb / 1.2) * 1.2, 1.2 - fract(yb / 1.2) * 1.2), min(fa, 2.5 - fa)), min(fb, 3.5 - fb));
+		float crel = kc * (smoothstep(0.0, 0.06, d) - 1.0) * 0.06;
+		hgt += face * (crel + blk + rough);
+		shade = mix(shade, crack_shade * (1.0 + kb * 0.14 * (bh.x - 0.5)), face);
 	}
 	if (scree > 0.0) {
 		vec3 wv = tm_rd_worley(p / (0.35 * tm_rock_detail_scale));
 		float r = 0.55 + 0.3 * wv.z;
 		float dome = sqrt(max(1.0 - (wv.x / r) * (wv.x / r), 0.0));
-		hgt += scree * dome * 0.08 * tm_rock_detail_scale;
-		shade = mix(shade, mix(0.78, 1.0, smoothstep(0.0, 0.5, dome)) * (0.92 + 0.16 * wv.z), scree);
+		float ks = tm_rd_clamp(wmax, 0.35);
+		float x2 = min((wv.x / r) * (wv.x / r), 1.0);
+		hgt += scree * ks * (1.0 - x2) * sqrt(1.0 - x2) * 0.08 * tm_rock_detail_scale; // flat at the rim: no edge to alias
+		// 0.958 is the stones' mean shade (measured over the cells), so the mean stays 1.
+		shade = mix(shade, mix(1.0, mix(0.78, 1.0, smoothstep(0.0, 0.5, dome)) * (0.92 + 0.16 * wv.z) / 0.958, ks), scree);
 	}
 	return vec2(hgt, shade);
 }
-// The perturbed normal (surface gradient of the height field) and the shade, faded out where a pixel covers it.
-vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, float footprint, out float shade) {
-	// Faded out before a pixel spans a tenth of a bed (joints) or a quarter of a stone, so nothing aliases into lines.
-	float fs = footprint / tm_rock_detail_scale;
+// The perturbed normal (surface gradient of the height field) and the shade; past the clamps only the mean is left.
+vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, vec3 dx, vec3 dy, out float shade) {
 	shade = 1.0;
-	face *= 1.0 - smoothstep(0.03, 0.12, fs);
-	scree *= 1.0 - smoothstep(0.02, 0.08, fs);
-	if (face + scree <= 1e-3) {
-		return sn;
+	float wmax = max(length(dx), length(dy)) / tm_rock_detail_scale;
+	if (face + scree <= 1e-3 || wmax > 0.6) {
+		return sn; // every feature has faded to its mean (shade 1, flat)
 	}
-	const float e = 0.03;
-	vec2 h0 = tm_rd_height(p, face, scree, footprint);
-	float hx = tm_rd_height(p + vec3(e, 0.0, 0.0), face, scree, footprint).x;
-	float hy = tm_rd_height(p + vec3(0.0, e, 0.0), face, scree, footprint).x;
-	float hz = tm_rd_height(p + vec3(0.0, 0.0, e), face, scree, footprint).x;
+	// The difference step grows with the pixel, so it never samples across an edge the pixel cannot resolve.
+	float e = max(0.03, 0.5 * wmax * tm_rock_detail_scale);
+	vec2 h0 = tm_rd_height(p, face, scree, dx, dy);
+	float hx = tm_rd_height(p + vec3(e, 0.0, 0.0), face, scree, dx, dy).x;
+	float hy = tm_rd_height(p + vec3(0.0, e, 0.0), face, scree, dx, dy).x;
+	float hz = tm_rd_height(p + vec3(0.0, 0.0, e), face, scree, dx, dy).x;
 	vec3 grad = vec3(hx - h0.x, hy - h0.x, hz - h0.x) / e;
 	vec3 sg = grad - n * dot(n, grad);
 	shade = h0.y;
@@ -394,7 +438,16 @@ void fragment() {
 		// blend lets the scree's stones stand out of the soil).
 		float till = clamp(-g.z, 0.0, 1.0) * (1.0 - rock);
 		tm_till = till;
-		float scree = clamp(g.z, 0.0, 1.0) * (1.0 - rock) + 0.45 * till;
+		// Talus edges are lobed tongues of debris, not the geology map's smooth ovals: the cover is pushed in and
+		// out by noise stretched down the fall line (8 to 40 m), so a fan reads as streaks and lobes from afar.
+		float sg = clamp(g.z, 0.0, 1.0);
+		if (sg > 0.0) {
+			vec2 fall = normalize(wn.xz + vec2(1e-4));
+			vec3 sp = vec3(dot(wp.xz, vec2(-fall.y, fall.x)) / 9.0, wp.y / 40.0, dot(wp.xz, fall) / 40.0);
+			float edge = min(sg * 3.0, 1.0) * min((1.0 - sg) * 3.0, 1.0); // none inside the fan or off it
+			sg = clamp(sg + edge * ((tm_vn(sp) - 0.5) * 0.9 + (tm_vn(sp * 3.1 + 7.0) - 0.5) * 0.3), 0.0, 1.0);
+		}
+		float scree = sg * (1.0 - rock) + 0.45 * till;
 		float rest = max(1.0 - rock - scree, 0.0);
 		float alluvium = smoothstep(tm_alluvium_area, tm_alluvium_area + 1.0, g.w);
 		w[0] = rock;
@@ -446,6 +499,13 @@ void fragment() {
 		vec3 d;
 		float h;
 		tm_scree(wp, wn, cliff, a, r, d, h);
+		// Debris streaks down the fall line and patches of older, lichened blocks: a tone that varies by about a
+		// fifth over 5 to 30 m (mean kept), so a talus slope is not one flat colour at a distance.
+		{
+			vec2 fall = normalize(wn.xz + vec2(1e-4));
+			vec3 sp = vec3(dot(wp.xz, vec2(-fall.y, fall.x)) / 5.0, wp.y / 30.0, dot(wp.xz, fall) / 30.0);
+			a *= 0.9 + 0.2 * tm_vn(sp + 3.0);
+		}
 		tm_stone_h = h;
 		alb[1] = a;
 		rgh[1] = r;
@@ -518,11 +578,21 @@ void fragment() {
 	if (rock_detail_enabled) {
 		// Rock joints and loose stones where the ground is rock or scree (heightfield detail cannot reach steep faces).
 		c += R"(	{
-		float rd_fp = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+		// The pixel's footprint on the ground as a ray cone's ellipse (Akenine-Moller et al. 2019, texture LOD for
+		// ray tracing): the cone's width across the view, stretched by 1 / cos along it. No screen derivatives, so
+		// the path tracer (which has none) filters exactly as the raster does.
+		vec3 rd_v = wp - CAMERA_POSITION_WORLD;
+		float rd_cone = length(rd_v) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+		rd_v = normalize(rd_v);
+		vec3 rd_t1 = cross(rd_v, wn);
+		rd_t1 = dot(rd_t1, rd_t1) > 1e-8 ? normalize(rd_t1) : normalize(cross(wn, vec3(1.0, 0.0, 0.0) + vec3(0.0, 0.0, 1.0) * step(0.9, abs(wn.x))));
+		vec3 rd_t2 = cross(wn, rd_t1);
+		vec3 rd_dx = rd_t1 * rd_cone, rd_dy = rd_t2 * rd_cone / max(abs(dot(rd_v, wn)), 0.05);
 		float rd_shade;
-		// Joints and beds on faces steeper than about 35 degrees; gentler rock keeps the generator's own detail.
-		float rd_face = clamp(w[0], 0.0, 1.0) * (1.0 - smoothstep(0.7, 0.85, wn.y));
-		sn = tm_rock_detail(wp, wn, sn, rd_face, clamp(w[1], 0.0, 1.0), rd_fp, rd_shade);
+		// Joints and beds on bare faces steeper than about 45 degrees (full past 57); gentler rock keeps the
+		// generator's own detail.
+		float rd_face = clamp(w[0], 0.0, 1.0) * (1.0 - smoothstep(0.55, 0.72, wn.y));
+		sn = tm_rock_detail(wp, wn, sn, rd_face, clamp(w[1], 0.0, 1.0), rd_dx, rd_dy, rd_shade);
 		albedo *= rd_shade;
 	}
 )";

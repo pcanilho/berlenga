@@ -21,6 +21,7 @@ var test := false
 var raster := false
 var spp := 16
 var out := ""
+var deadwood_view := false
 var n := 0
 var dm: TerrainDataMap3D
 var field: VegetationField3D
@@ -59,6 +60,9 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
+		elif a == "--deadwood":
+			deadwood_view = true
+			size = 48.0 # A patch of the stand: lavapipe renders the whole map's trees too slowly.
 		elif a == "--stream-cost":
 			stream_cost = true
 			size = 1024.0
@@ -204,6 +208,9 @@ func _physics_process(_d: float) -> void:
 	dm.bake()
 	if stream_cost:
 		return
+	if deadwood_view:
+		await _deadwood_view()
+		return
 	var err := field.populate()
 	var counts := []
 	for s in 3:
@@ -213,6 +220,7 @@ func _physics_process(_d: float) -> void:
 		_checks()
 		await _stream_checks()
 		await _lazy_near_checks()
+		_deadwood_checks()
 		print("VEG_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	if out.is_empty():
 		get_tree().quit(1 if fails > 0 else 0)
@@ -599,6 +607,95 @@ class NearSource extends RefCounted:
 		keys[key] = true
 		return mesh if calls > 3 else null
 
+# Plants and fallen wood (docs/ideas/forest-floor.md, 6.6): logs as the trees module marks them
+# (species meta "deadwood", mesh meta tree_deadwood_axis), in a canopy field; a ground cover that
+# must keep off them, moss on them and ferns along them in a second field.
+func _deadwood_checks() -> void:
+	var r := 0.3
+	var log_mesh := CylinderMesh.new()
+	log_mesh.top_radius = r
+	log_mesh.bottom_radius = r
+	log_mesh.height = 6.0
+	var m := _mesh(log_mesh, 0.0, Color(0.3, 0.22, 0.15))
+	var st := SurfaceTool.new()
+	st.append_from(m, 0, Transform3D(Basis(Vector3(0, 0, 1), PI / 2), Vector3(0, r, 0)))
+	var lm := st.commit()
+	lm.set_meta("tree_deadwood_axis", PackedFloat32Array([-3.0, r, 0.0, 3.0, r, 0.0, r]))
+	var logs := PlantSpecies.new()
+	logs.meshes = [lm]
+	logs.spacing = 12.0
+	logs.footprint = 0.0
+	logs.scale_range = Vector2(1, 1)
+	logs.set_meta("deadwood", true)
+	var wood := VegetationField3D.new()
+	wood.name = "Wood"
+	wood.populate_on_ready = false
+	var wb := Biome.new()
+	wb.species = [logs]
+	wood.biome = wb
+	add_child(wood)
+	wood.data_map = wood.get_path_to(dm)
+	wood.populate()
+	var small := BoxMesh.new()
+	small.size = Vector3(0.05, 0.05, 0.05)
+	var sm := _mesh(small, 0.025, Color(0.2, 0.4, 0.1))
+	var cover := PlantSpecies.new()
+	cover.meshes = [sm]
+	cover.spacing = 0.25
+	cover.footprint = 0.0
+	var moss := PlantSpecies.new()
+	moss.meshes = [sm]
+	moss.spacing = 0.2
+	moss.footprint = 0.0
+	moss.deadwood_rule = PlantSpecies.DEADWOOD_ON
+	moss.deadwood_min_radius = 0.1
+	moss.align_to_ground = 1.0
+	var fern := PlantSpecies.new()
+	fern.meshes = [sm]
+	fern.spacing = 0.3
+	fern.footprint = 0.0
+	fern.deadwood_rule = PlantSpecies.DEADWOOD_BESIDE
+	fern.deadwood_band = 0.6
+	var ground := VegetationField3D.new()
+	ground.name = "DeadwoodGround"
+	ground.populate_on_ready = false
+	var gb := Biome.new()
+	gb.species = [cover, moss, fern]
+	ground.biome = gb
+	add_child(ground)
+	ground.data_map = ground.get_path_to(dm)
+	ground.canopy_field = ground.get_path_to(wood)
+	ground.populate()
+	var nlogs: int = wood.get_deadwood_count()
+	var under := 0
+	for p in ground.get_placements(0):
+		var h: Dictionary = wood.get_deadwood_at(p)
+		if not h.is_empty() and h["side"] < -0.01:
+			under += 1
+	var on_ok := 0
+	var on_bad := 0
+	for p in ground.get_placements(1):
+		var h: Dictionary = wood.get_deadwood_at(p)
+		if not h.is_empty() and absf(p.y - h["top"]) < 0.01 and p.y > dm.get_height_at(p) + 0.05: # Above the ground (a level log on a slope sinks at one end).
+			on_ok += 1
+		else:
+			on_bad += 1
+	var beside_ok := 0
+	var beside_bad := 0
+	for p in ground.get_placements(2):
+		var h: Dictionary = wood.get_deadwood_at(p, 0.6)
+		if not h.is_empty() and h["side"] >= -0.001 and h["side"] <= 0.6:
+			beside_ok += 1
+		else:
+			beside_bad += 1
+	print("VEG_DEADWOOD logs=%d cover_under_logs=%d on=%d/%d beside=%d/%d" % [nlogs, under, on_ok, on_bad, beside_ok, beside_bad])
+	_check("deadwood: logs placed with their axes", nlogs > 10, nlogs)
+	_check("deadwood: ground cover keeps off the logs", under == 0 and ground.get_placements(0).size() > 1000, under)
+	_check("deadwood: moss only on the logs' upper surface", on_ok > 100 and on_bad == 0, [on_ok, on_bad])
+	_check("deadwood: ferns only along the logs", beside_ok > 20 and beside_bad == 0, [beside_ok, beside_bad])
+	ground.queue_free()
+	wood.queue_free()
+
 func _lazy_near_count(f: VegetationField3D, m: Mesh) -> Array:
 	var near := 0
 	var cells := 0
@@ -794,6 +891,76 @@ func _ground_mesh() -> Mesh:
 				st.add_vertex(q[i])
 	st.generate_normals()
 	return st.commit()
+
+# --deadwood --out=path.png: a beech stand from TreeGenerator (trees, logs, fallen branches,
+# sticks) over the beech floor set, looking at a log: moss and wood sorrel on it, ferns and
+# banked leaves along it.
+func _deadwood_view() -> void:
+	field.queue_free()
+	var t0 := Time.get_ticks_msec()
+	var tg := TreeGenerator.new()
+	var wood := VegetationField3D.new()
+	wood.name = "Wood"
+	wood.populate_on_ready = false
+	wood.biome = tg.make_stand(TreeGenerator.STAND_BEECH, 1)
+	print("VEG_DEADWOOD_VIEW stand made in %d ms" % (Time.get_ticks_msec() - t0))
+	add_child(wood)
+	wood.data_map = wood.get_path_to(dm)
+	wood.populate()
+	print("VEG_DEADWOOD_VIEW stand placed in %d ms" % (Time.get_ticks_msec() - t0))
+	var log_i := -1
+	for i in wood.biome.species.size():
+		var sp: PlantSpecies = wood.biome.species[i]
+		if sp.has_meta("deadwood") and sp.resource_name.contains("(log)"):
+			log_i = i
+	var at := Vector3(0, height(0, 0), 0)
+	if log_i >= 0 and wood.get_placements(log_i).size() > 0:
+		var best := 1e9
+		for p in wood.get_placements(log_i):
+			var d := Vector2(p.x, p.z).length()
+			if d < best:
+				best = d
+				at = p
+	var cam := Camera3D.new()
+	add_child(cam)
+	cam.position = at + Vector3(1.0, 2.0, 1.4)
+	cam.fov = 60.0
+	cam.look_at(at + Vector3(0, 0.2, 0))
+	cam.current = true
+	var ground := VegetationField3D.new()
+	ground.name = "Floor"
+	ground.populate_on_ready = false
+	var gb := Biome.new()
+	var floor_set: Array[PlantSpecies] = []
+	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_BEECH, 3, true))
+	gb.species = floor_set
+	print("VEG_DEADWOOD_VIEW floor made in %d ms" % (Time.get_ticks_msec() - t0))
+	ground.biome = gb
+	ground.tile_size = 8.0
+	add_child(ground)
+	ground.data_map = ground.get_path_to(dm)
+	ground.canopy_field = ground.get_path_to(wood)
+	ground.streaming = true
+	ground.stream_target = ground.get_path_to(cam)
+	ground.stream_radius = 30.0
+	ground.populate()
+	print("VEG_DEADWOOD_VIEW logs=%d log_species=%d at=%s" % [wood.get_deadwood_count(), log_i, str(at)])
+	if OS.get_environment("VEG_DW_MOSS") != "":
+		# Close on a moss cushion on the log (the first of make_floor's log species).
+		for i in 3:
+			await get_tree().process_frame
+		var mi := floor_set.size() - (5 if floor_set.size() > 0 else 0)
+		var best := 1e9
+		for p in ground.get_placements(mi):
+			var d := p.distance_to(at)
+			if d < best:
+				best = d
+				cam.position = p + Vector3(0.5, 0.45, 0.5)
+				cam.look_at(p)
+		print("VEG_DEADWOOD_VIEW moss species %d (%s) count %d nearest %.2f" % [mi, floor_set[mi].resource_name, ground.get_placements(mi).size(), best])
+	for i in 15:
+		await get_tree().process_frame
+	_render_later()
 
 func _render_later() -> void:
 	for i in (6 if raster else 10):

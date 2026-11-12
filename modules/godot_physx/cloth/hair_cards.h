@@ -54,7 +54,9 @@ public:
 	PackedFloat32Array half_width[2];
 	// Per card and strip, the tile in the atlas: x, y, w, h in texels.
 	PackedInt32Array tiles;
-	// R coverage, G the strands' tilt across the strip (0.5: along the card), B unused, A a seed.
+	// The strands' optical depth over CARD_DEPTH_MAX in 16 bits (R high, B low byte), G their tilt
+	// across the strip (0.5: along the card), A a seed. Mipmapped by optical depth.
+	static constexpr float CARD_DEPTH_MAX = 8.0f;
 	Ref<Image> atlas;
 	Ref<ImageTexture> texture; // made from the atlas by the first node that draws the cards
 

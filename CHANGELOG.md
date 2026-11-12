@@ -6,6 +6,162 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-d76a902c (2026-11-12)
+
+### Added
+- The Linux arm64 editor and export templates include Blast (fracture), built with the system compiler since NVIDIA's Blast tooling has no arm64 packages.
+- `PhysXWaterfalls3D`: water that stays on steep rock (cascades, horsetails) from a terrain's waterfall records, clear at the lip and white below the inception point, with spray off ledges and mist along the face. `PhysXRiver3D.fall_exclusions` keeps rivers from drawing those falls again as free jets.
+- Forest floor: the ground under closed canopy turns to litter by the stand above (leaves, needles, feather moss), `VegetationField3D.forest_floor_enabled`, `get_floor_shader_code()`; included in `GrassField3D.get_ground_shader_code()`.
+- PlantGenerator forest floor presets: needle litter, twigs, wood sorrel, seedling, feather moss, woodruff, wood anemone, ivy, heather.
+- `PlantGenerator.make_floor(stand, variants)`: forest floor species for ten stand types (beech, oak mixed, montane conifer, subalpine, pine heath, riparian, hedgerow, northern hardwood, eastern oak, pine-hemlock).
+- Volumetric fog takes the cloud shadow projected on the sun, so cloud shafts show in the fog.
+- WeatherMap3D `aerosol_haze`, `haze_visibility`, `haze_height`: background haze from visibility and humidity, lit by the volumetric fog.
+- `GrassField3D.gpu_fill` (on by default): grass tiles are filled by a compute shader that writes the blades straight into each tile's MultiMesh, seen by the path tracer as before; about 40% less main-thread time per tile, more at higher densities.
+- Hair cards for distant strand hair: PhysXHair3D bakes textured cards from its groom (clustered clumps of strands, shared by every node with the same groom) and draws them in raster past `card_distance`, simulating only the guides and the cards (the path tracer keeps the strands) (`cards_enabled`, off by default; `card_count`, `card_distance`)
+- Strand hair rests on simulated cloth: PhysXHair3D's `collision_cloth` names a PhysXSkinnedCloth3D whose moving triangles join the hair's collision field each frame, read on the GPU, so hair lies on a collar or hood instead of sinking through it (`cloth_thickness`)
+- PhysXHair3D `deep_shadow_local_lights` (default 3): the omni and spot lights that light the hair most get their own deep opacity map (a perspective view from the light), so hair shadows itself smoothly under lamps as under the sun
+- Spatial shader fragment output `POSITIONAL_SHADOW_OFFSET`: moves the fragment's omni and spot shadow lookups toward each light by that many metres
+- PhysXHair3D `simplify_tolerance` (default 0.5 of the root width): straight runs of a strand are drawn through fewer of its points (Douglas-Peucker on the groom), fewer triangles for the path tracer to refit with no visible change; every point still simulates
+- PhysXHair3D strand-strand collision (`strand_collision`, `strand_collision_radius`, `strand_collision_friction`): guide strands no longer pass through each other; a spatial hash finds close guide points once a frame and pushes them apart with friction, the followers come along
+- Path tracer: strand hair is traced as linear swept spheres (round tubes, one primitive per segment) on GPUs with `VK_NV_ray_tracing_linear_swept_spheres`, and shaded from where the ray meets the round fibre; other GPUs keep the crossed strips (`rendering/pathtracing/linear_swept_spheres`)
+- RenderingDevice: `SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES` and a linear swept spheres BLAS geometry type
+- Wet strand hair: rain from the weather map soaks PhysXHair3D hair (less under a canopy, none under a roof) and it dries over time; wet hair is darker, glossier, heavier, hangs flatter and gathers into clumps (`wetness`, `weather_wetting`, `water_capacity`, `drying_time`, `wet_clumping`)
+- Landscape3D: ground collision near a target (`collision_enabled`, `collision_radius`, `collision_target`, layer, mask, `physics_material`): one static heightfield per chunk at full detail, built and freed as the target moves (49 chunks in under 2 ms at 1 m, 0.3 ms per 64 m step). PhysX heightfields take a `fan_blocks` key so their cells split like the drawn mesh and bodies rest on the drawn triangles.
+- Landscape3D: a heightfield ground drawn as static chunk meshes with an LOD chain picked by projected error (`lod_error`, pixels), neighbours one level apart with stitched edges (no cracks, no skirts). A level change swaps the chunk's mesh, so under path tracing each mesh keeps one BLAS and a moving camera costs no rebuilds or refits. Reads a TerrainGenerator3D (`source`) or a height image.
+- TerrainGenerator3D: `changing` signal before a generate replaces its result.
+- `BaseMaterial3D.transmission_thickness` (glTF `KHR_materials_volume` `thicknessFactor`, imported and exported): raster refraction through a solid bends the view ray again where it leaves the far side (Filament's solid sphere model) and absorbs over the path inside. `SnowIcicles3D` ice uses 4 cm.
+- Generated plants bend away from bodies and spring back through `GrassField3D`'s trample field (no colliders), lean in the wind, and keep their leaf textures, wetness and snow: one shared plant shader. `GrassField3D` publishes `grass_trample_map`, `grass_trample_rect` and `grass_wind` as global uniforms.
+- `PlantGenerator.make_climber_leaves(climber, variants)`: single ivy, clematis and honeysuckle leaves (base at the origin, +Z, 1 m) with the plant material, for vines.
+- Ground plants thin out by distance one by one, shrinking away in blue-noise rank order (no tile pops), and leave their colour on the ground beyond (`PlantSpecies.far_color`, `vegetation_far()` in the ground shader code).
+- `PlantGenerator.PRESET_VIOLET` (common dog-violet) and `PRESET_HERB_ROBERT`: broad-leaved herbs of the lighter forest floor; `make_floor()` places them in beech, oak, hedgerow and (violet) northern hardwood stands, in half shade and gaps.
+- `PlantGenerator`: procedural meadow plants (dandelion, plantain, clover, fern, sedge, daisy, buttercup) with seed variations, phyllotaxis and positional functions, double-sided back-lit leaves with generated vein textures (albedo, normal and translucency maps), and distance LODs, for `PlantSpecies.meshes`.
+- `PlantGenerator.make_impostor()` and `add_impostors()`: octahedral impostors for large plants past a range, raster only (path tracing keeps the meshes). `make_floor()` gives brambles and bracken impostors past 15 m (`impostor_range`).
+- `PlantSpecies.litter_range` (`RULE_LITTER`) and `VegetationField3D.get_litter_at()`: fallen leaves drift past the crowns of broad-leaved trees into forest edges and clearings, thinning over about 6 m; `PlantGenerator.make_floor()` places leaf litter and twigs by it.
+- `VegetationField3D.litter_wind`: the leaf drift reaches farther downwind and less upwind, from the weather map's wind by default.
+- `PlantGenerator.leaf_wear`: insect bites out of leaf margins, uneven halves, dead tips on grass-like blades, and older, lower leaves yellowing and browning; drawn per leaf, so the plant's shape does not change.
+- `PlantSpecies.near_meshes` and `near_range`: heavier meshes drawn near the camera with a dithered crossfade to `meshes` beyond, swapped a few plants at a time.
+- `PlantSpecies.spray_range` (`RULE_SPRAY`) and `TerrainDataMap3D.get_spray_at()`: plants keep out of a waterfall's spray zone (the terrain generator's spray map) unless they take it; mosses do.
+- `PlantGenerator.litter_leaves` and `stand_litter_leaves(stand, season)`: forest floor leaf litter made of the stand's own fallen leaves (beech, oak lobes, maple palms, ash leaflets, chestnut hands), fresh leaves in their autumn colour among older grey-brown ones. `make_floor()` takes a `season`.
+- Forest floor leaf litter amount follows each stand's leaf fall and decay rate and the season; twigs are the class under 1 cm in the stand's bark colour.
+- `PlantGenerator.PRESET_KNAPWEED`, `PRESET_SCABIOUS`, `PRESET_WILD_CARROT` and `PRESET_SORREL`: the tall flowers of a hay meadow, standing clear of the grass, about a quarter of each in seed (dark knobs, bristly balls, curled umbels, rust-brown spires).
+- `PlantGenerator` wetland presets: common reed, bulrush, soft rush and white water lily. `PlantSpecies.floating` sets plants on the water surface, for floating-leaved plants zoned by `water_depth_range`.
+- Generated plants sway in the wind: each frond, cane and stem rocks about its own base at a natural frequency set by its height and stiffness, with its own phase.
+- `PhysXWaterfalls3D`: tall free falls (`plunge_falls`). The jet sheet whitens and comes apart after its break-up length (`6 q^0.32` m), then falls as clumps drawn as soft streaks, each slowed by air drag to its own terminal speed, widened by the air's eddies (`column_turbulence`) and carried by the weather's wind (`column_density` sets how many). Spray lands at the speed the drag leaves, and a tall mist veil hangs along the column. `get_plunge_falls()` reports break-up length, landing speed, fall time, column width and wind drift.
+- `PhysXWaterMist3D`: `column_height` and `column_share` feed mist up a falling column as well as at the source.
+- Path tracing: `rendering/pathtracing/transmission_bounces` (default 4). After a path's first bounce, crossing glass, ice or water does not spend `pathtracing_max_bounces`; up to this many extra segments are traced instead. Clear ice under shaded eaves and back faces of panes no longer go black at 3 bounces.
+- Releases ship export templates (`godot-fork-export-templates-<build>.tpz`: Windows x86_64, Linux x86_64 and arm64, debug and release) with PhysX and its libraries, installed from Editor > Manage Export Templates > Install from File.
+- The Linux arm64 editor and templates include PhysX and Flow (Blast too when its arm64 build succeeds).
+- `WeatherSkyMaterial.atmosphere_model` SCATTERING (default): the Hillaire 2020 atmosphere (transmittance and multiple-scattering tables, Rayleigh, Mie and ozone) lit by both the sun and the moon, with twilight and the Earth's shadow. The clouds reach the horizon through aerial perspective. `atmo_far_water` shows open sea past the scene. `PHYSICAL_SKY` keeps the older model.
+- `SkyClock.drive_light_energy` and `energy_per_lux`: the sun and moon lights take their colour and strength from the same transmittance and their brightness above the air, and drive the sky.
+- `SkyClock`: date, time and place on Earth point the sun and moon lights (Meeus ephemeris, moon parallax, refraction) and give the moon's phase, bright limb and brightness, sidereal time and a celestial basis for stars. `docs/bench/sky --test` checks it against Meeus' worked examples.
+- Snow and ground prints: a bow wave. Bodies in the deform groups lean their rim forward with their speed (full at 4 m/s), and rim they meet again is shoved on, so a fast body pushes a wave ahead that spills into side berms and is left as a mound where it stops. `SnowSurface3D.press()` and `press_box()` take a `velocity`.
+- Snow: `SnowClimate.recipe` takes the terrain's `ClimateRecipe` (temperatures, lapse rates, wet-day wind, the year's precipitation and its seasonality), and `SnowCover3D.climate_map` takes a `TerrainDataMap3D` whose orographic precipitation field sets where more snow falls, in place of `precipitation_gradient`. One climate for snow, rivers and plants.
+- TerrainGenerator3D `deposition` (G of Yuan et al. 2019): rivers drop sediment where they slow, so ranges rising out of still ground get flat alluvial valley floors with winding rivers. Off (0) by default, with output unchanged byte for byte.
+- TerrainMaterial3D: `far_blend_enabled`, `far_start`, `far_fade`. Past `far_start` the ground takes the plant cover's colour from the `terrain_cover_map` / `terrain_cover_rect` globals, replacing the near grass tint and plants' far colour, before wetness and snow. Off by default.
+- TerrainGenerator3D: glacial stage (`glacial_enabled`, `glacial_ela`, `glacial_share`, `glacial_final`, `glacial_erosion`, `glacial_sliding`). Shallow-ice glaciers alternate with the rivers and wear troughs and basins; the last glaciation's basins become lakes by themselves (`get_glacier_depth()`, `get_last_glacial_*`). Walls the ice leaves past `strata_cliff_angle` shed rockfall to their foot.
+- Sills with a `level` are a hard band at that height (a riegel): rock above it wears down normally. Range paths with `basin` metadata scale the uplift down (a high bowl).
+- `cliff_ledge_spacing`, `cliff_ledge_strength`: rock beds of uneven thickness stepped into faces steeper than 40 degrees.
+- `get_waterfalls()` fall record for the water code: `id`, `direction`, `type` (plunge, horsetail, cascade, tiered), `lip_points` with `lip_share` (Manning share of the flow), `lip_width`, `caprock`, `overhang`, three `face_profiles`, `tiers`, `ledges`, `power`, `breakup_length`, drag-limited `impact_speed` and `impact_speed_free`, `discharge_months`, and the plunge pool: `pool_center`, `pool_radius`, `pool_depth`, `pool_level`, `lands_in` (pool, lake, sea, ground).
+- `plunge_pools` (on): a scour hole below each fall of 4 m or more (Mason and Arumugam depth), with its tail bar downstream so it holds water.
+- `terrain_spray_potential` global map (with `terrain_spray_rect`, `spray_cell` 4 m, `get_spray_potential()`, `get_spray_image()`): the static share of fall spray each place can get, from each fall's power and the distance to its water.
+- `gorge_age`, `gorge_rate`: lips over hard rock wear back upstream (knickpoint retreat, rate times sqrt(Q), a twentieth in massive rock) and leave a slot gorge below the fall; never into a lake. `get_waterfalls()` reports the fall at the gorge's head.
+- `get_boulders(rect, density)`: blocks shed by cliffs, resting where their travel angle drops below the shadow angle, larger blocks further out; (x, y, z, radius) for placement.
+- `glacial_rock_variation`, `glacial_rock_scale`: rock quality under the ice (joint density) varies the glacial erosion rate, so the ice digs its own basins and leaves its own bars: tarns and paternoster lakes form with no markers.
+- `glacial_inflow_balance`: glaciers whose catchment lies beyond the map come in with their rivers (net balance times each inflow's off-map area), so the main valley gets its trough and chain of lakes with no markers.
+- `moraine_age`: the last glaciation's margins build moraines (wall rockfall and basal debris carried down the ice, laid at its edge), terminal loops and lateral ridges that dam lakes behind them.
+- `scree_age`: rock walls shed scree for that many years into aprons and cones at their feet, kept out of lakes and river floors.
+- `glacial_coarse_cell`: the ice ages between river steps can run on a coarser ice grid, about three times faster (the terrain is similar, not the same).
+- `ice_worn_detail`: rock the last glaciers wore keeps smooth faces toward the ice flow, stepped faces away from it, and fine striations (`terrain_ice_flow` global).
+- Scree from `scree_age` and moraine till from `moraine_age` show in the ground: scree as bare blocks, till as soil with stones through it (geology talus channel, negative for till).
+- TerrainMaterial3D `rock_detail_enabled`, `rock_detail_scale`: steep rock gets bedding planes and staggered joints, scree and till get loose stones, from world-space noise (no textures, no stretching on any face), faded out with distance.
+- `meander_age`: rivers on flat alluvial floors meander for that many years (Howard-Knutson bank migration, neck and chute cutoffs, oxbows that silt up), cut into the full-resolution ground with the river water following the bends (`get_last_meander_count()`, `get_last_oxbow_count()`).
+- TerrainGenerator3D: `inflows` markers bring land from beyond the map (`area` km2, `inflow_area`) into erosion, deposition, the rivers and their monthly discharge; `get_inflow_cells()`. `fall_lips` keeps falls over hard rock vertical in the ground so the jet falls free; `get_waterfalls()` reports `face_run`, `jet_throw` and `free_fall`.
+- TerrainGenerator3D: `get_river_sites(min_area, min_discharge, run)` lists river points with their discharge, drainage area and the drop over the next `run` metres, for placing lakes and falls.
+- TerrainGenerator3D lake markers take `rock_lip` (or `face_slope`) metadata: a bedrock sill instead of a landslide dam, so a lake can sit right above a waterfall and spill over it instead of burying the fall under the dam's apron.
+- Terrain sky occlusion: the generator keeps each point's horizons and, from the live sky, the sky it sees; raster ground takes ambient light only from that sky (`TerrainGenerator3D.sky_occlusion`, `sky_light_source`; `TerrainMaterial3D.sky_occlusion_enabled`). Slopes under a ridge no longer glow with a sunset the ridge hides, matching the path tracer.
+- `PlantSpecies.canopy_conifer` and the `conifer_range` rule: floor plants follow the stand type overhead (broadleaf or needle-leaved crowns); `VegetationField3D.get_conifer_at()`.
+- VegetationField3D `cover_grass_layers`: more GrassField3D under `cover_grass` for the cover map, top down, so an undercoat filling the gaps between patches of tall grass no longer reads as bare ground from afar.
+- `VegetationField3D.cover_map_enabled`: the plant cover seen from far above over the whole map (crowns, plants under them, grass), from the rules, published as `terrain_cover_map` / `terrain_cover_rect` for distant terrain. `GrassField3D.get_far_color()`.
+- `VegetationField3D.density_mask` and `density_mask_rect`, `PlantSpecies.mask_channel` and `mask_invert`: painted or generated density masks open clearings and confine species to areas.
+- PlantSpecies `near_mesh_source` and `near_mesh_key`: near meshes on demand. VegetationField3D asks the source for a cell's near mesh once the camera is within 1.2 x `near_range` and frees the cell beyond 1.5 x, so heavy near meshes exist only for plants that come close.
+- `VegetationField3D.streaming`: places plants in tiles on worker threads around the camera (or `stream_target`) out to `stream_radius`, each species only out to its visibility range, identical to a full `populate()`; the canopy, forest floor and far colour maps follow the camera. About 2 to 3 ms of main-thread time a frame at a run through dense woodland (`stream_budget_msec`).
+- PhysXWaterMist3D: mist from falling water as a small simulated grid (settling, evaporation with the humidity, carried by the spray wind and the weather's wind), drawn in raster as a FogVolume and under path tracing as a traced medium. PhysXRiver3D's waterfalls now make mist on every build (before: only with NVIDIA Flow and a PhysXFlow3D in the scene); `fall_mist_amount` scales it.
+- `WeatherMap3D.get_season()`: one season state for every system (day length, warmth and chill sums for budburst, leaf colouring sum, snow depth, cover and line, soil frost, soil moisture) from a `SkyClock` date and a `ClimateRecipe`, shifted by the live weather.
+- WeatherMap3D snapshot: a read-only copy of rain, cloud cover and cloud shadow that worker threads can sample (C++).
+
+### Changed
+- `PhysXWaterfalls3D`: contact falls are as wide as their flow (`4 sqrt(Q)` m), thick and white in the middle and thin at the sides, with soft edges that wander down the face and wet rock beside them (`wet_margin`). The sheet no longer shows saw-tooth edges or holes below ledges, stays white across a ledge, and its spray shows soft puffs as well as drops.
+- Thin contact falls over stepped rock fall ledge to ledge as threads with wet rock between them (nappe flow), and cover the face only as their flow nears the step height (`rock_step`).
+- Docs site (Hugo, GitHub Pages) with a page per feature area; README shortened to a landing page.
+- `GrassField3D`: blade colour varies over the field and per blade (`color_variation`), a share of dry blades are dead from the root, blades carry a midrib and veins and taper near the tip.
+- `GrassField3D.get_ground_shader_code()`: the ground under grass becomes turf matched to the blades (same colour patches, streaks, thatch), so gaps between blades show grass, not soil.
+- `GrassField3D.canopy_field`: the sward follows the canopy shade of a `VegetationField3D`.
+- GrassField3D measures its far colour from a small render of its own blades (`get_far_color()`, `is_far_color_baked()`, signal `far_color_changed`), so the far meadow matches the blades for any grass look, lean included; VegetationField3D's cover map follows it.
+- The far meadow's colour turns with the sun's heading from the view, brighter looking down-sun (the canopy hot spot), darker into the sun: GrassField3D's far colour bake renders the blades with the sun at four headings and fits the change (`get_far_color_lobes()`), and `grass_ground()` applies it with the sun from `sun_light` (or the scene's first DirectionalLight3D).
+- MultiMesh buffers are cleared on the GPU when allocated instead of uploading a zeroed copy.
+- GrassField3D's blue-noise rank no longer takes a lock per blade.
+- GrassField3D: with a WeatherMap3D, each blade answers the gusts as a damped oscillator (about 2 Hz, slower when taller): slow gusts pass, gusts near its own frequency are amplified and lag, and the sward's resonant sway travels downwind as honami (Py, de Langre and Moulia 2006). Same model as TreeWind3D.
+- GrassField3D: near density defaults to 120 blades/m2 (was 60), affordable with the GPU fill.
+- GrassField3D: the darkening towards the root moved from the blades' albedo to AO, from the leaf area above (Monsi-Saeki, Goudriaan); the path tracer no longer darkens the roots twice, and raster ambient follows the sward's density.
+- PhysXHair3D deep shadows: strands are drawn into the deep opacity maps once per cell into the nearest cell (as a rasterized line) instead of twice per cell into four, about a third of the maps' cost for the same picture
+- `rendering/pathtracing/linear_swept_spheres` is off by default until swept sphere hair has been checked on a GPU that has it
+- Landscape3D: meshes for new levels are built on worker threads and shown together once all are ready, so moving no longer stalls the main thread (42 ms to under 1 ms when 200 m of chunks change). With a TerrainGenerator3D source (`stream_heights`), the ground is read as a 4 m grid first and in full per chunk where the view needs it, nearest first; `load_all_heights()` reads the rest. Heights baked to an image load the 4 km, 1 m ground in under a second.
+- `PlantGenerator.make_floor()` seedlings are now young plants of the stand's own trees (beech, oak, sycamore, ash, maple), with their leaf forms; `litter_leaves` also applies to `PRESET_SEEDLING`.
+- `PhysXWaterMist3D`: mist fades out over the last cells at the box's sides and top, so the box never shows as a hard-edged block.
+- README: transmission bounces, vegetation density masks, rock-lip lakes.
+- README: river deposition line; Yuan et al. 2019 in references.
+- README: raster waterfalls lit by the scene, with image.
+- README: wide ground shot with raster reflections on the sea.
+- README: lake ripples image.
+- README: lake ripples line.
+- README: Landscape3D line and image.
+- README: sea foam lit by the scene; re-rendered waterfall pair.
+- README: Sky and clouds section with the sun and moon clock.
+- README: waterfall mist line and image.
+- Path tracing: snow sparkle (the footprint grid) now also shows on reflected and bounced rays, sized by each ray's cone, so snow seen in a mirror, water or a window glints, and the light snow bounces carries its glints. Exact glints already applied to every bounce.
+- Snow: the near square feeds its state back to the world tier under it (area averages of water, liquid, density and albedo) before each world update and before it moves, so drifts, slides and melt worked out on the fine cells are kept when the square moves away and back.
+- TerrainGenerator3D: `deposition` solves each step exactly in two sweeps along the receiver tree before its Gauss-Seidel passes, so a step needs one or two passes instead of about seven (the deposition part of a generate 0.73 to 0.40 s). `get_last_deposition_passes()` reports them.
+- Grass and ground plants take the light they grow in: under crowns their leaves are darker and bluer green and grass grows longer and laxer; on sunny slopes leaves are paler and yellower, grass shorter and drier. Open flat ground is unchanged. Petals and litter keep their colour.
+
+### Fixed
+- Contact falls no longer draw a pale saw-tooth fringe beside the water: damp rock is darkened and nearly matte with a soft edge, the clear film is drawn at the wet rock's darkness, and gully walls dim the film's raster sky reflection.
+- Raster waterfall sheets and river white water were unshaded with a fixed light, so a cascade in a shaded valley glowed flat white; both are now lit by the scene's lights, shadows and sky (open water keeps its look).
+- Volumetric fog no longer drops fog volumes thinner than 0.001 /m: density is stored at 1/65536 /m with stochastic rounding.
+- GrassField3D no longer ends in a hard line at its radius: blades thin out one at a time and shrink over the outer band, and the ground under the grass turns to the blades' colour (`grass_ground_fade`, `grass_ground_far`).
+- GrassField3D: in shadow passes blades widened towards the light's camera, so the sward cast more shadow than it has; they now widen towards the main camera.
+- GrassField3D: the GPU fill's compute shader is freed at exit.
+- Hair cards no longer read see-through and bluish beside strands: cards are lit like the strands, widen as their clump fans out with its guides, and follow every groomed point of a straight strand
+- Lakes and other fetch-limited water lay flat: their short wind waves were finer than the FFT grid. The grid is now raised until the waves' peak is resolved (up to 256), so a lake at 4 m/s shows its ripples.
+- TerrainGenerator3D: a lake marker that made no lake failed silently; it now warns with the reason.
+- Raster waterfall mist was invisible unless the scene turned on volumetric fog by hand: PhysXWaterMist3D now turns the Environment's volumetric fog on (density 0, sky-lit) while a mist is live and puts it back after (#239).
+- `PlantGenerator.litter_leaves` was not registered as a property, so scripts could not set it.
+- Light projectors and decals now follow updates to their texture in raster. The raster kept the first image of an updated texture (such as the weather's cloud shadow), so raster cloud shadows sat in the wrong place.
+- Path tracing: a dynamic mesh larger than `rendering/pathtracing/dynamic_blas_update_triangle_budget` (such as a simulated hair groom) was never refit after its first build, so it stood still while the raster moved; the first refit of a frame now ignores the budget, as the first build already did
+- Path tracing: a material writing `BENT_NORMAL_MAP` failed to compile its hit shader and the object vanished
+- Path tracing on devices without shader execution reordering (VK_EXT_ray_tracing_invocation_reorder), such as Mesa's CPU Vulkan driver: the reordering pipeline failed to build and the frame fell back to an untraced, unshadowed image. Reordering is now used only where the device supports it (`RenderingDevice.SUPPORTS_RAYTRACING_INVOCATION_REORDER`).
+- Path tracing: a MultiMesh surface whose vertex shader is captured is left out until its first capture is built, instead of being traced as its bare mesh (grass blades showed as flat 1 m strips until the dynamic build budget reached them).
+- Windows and macOS editor downloads build again after the vegetation far-colour and gorge changes (narrowing and ambiguous lerp errors on MSVC and Apple clang).
+- Windows, macOS and Linux x86_64 editor downloads build again: vegetation, raster water reflections and river code now compile with MSVC, Apple clang and GCC 11.
+- River white water no longer saturates into solid white bands at short rapids: its foam keeps an open lace.
+- River water spread wider than its ribbon (onto beaches and flats) fades out along the bank's relief instead of ending in a straight edge.
+- The weather sky no longer shows a magenta and green checker along the horizon at dusk.
+- Raster water hides the seabed with depth, by the path tracer's own absorption, so a shallow shelf no longer shows as a pale band ending in a straight line at the edge of the measured seabed.
+- Raster sea foam (whitecaps, shore foam) and wet sand were unshaded, so they glowed in shade, at dusk and under cloud shadows; they now take the scene's lights, shadows and sky, as under path tracing (open water keeps its look).
+- The flat grey band between a cloud deck and a sea horizon.
+- Snow: with no world tier, ground outside the snowpack's square shows no snow (raster and path traced) and `SnowCover3D.get_depth_at()` returns 0 there, instead of stretching the square's edge outward.
+- Snow and ground prints: footprints are stamped with antialiased edges, loose pushed-aside snow slides off at its repose angle (no more spikes between overlapping steps at fine deform settings), and `SnowSurface3D` prefilters the deformation to its vertex spacing when its triangles are coarser than the deform texels.
+- TerrainGenerator3D: the erosion detail no longer cuts trenches along river channels on an alluvial floor or a comb of gullies into a fan toe: it fades over the first half metre of alluvium (was 2 m), and the fade reaches 32 m past the deposit and then thins out over 3/8 of `detail_wavelength`.
+- TerrainMaterial3D: the detail normal fades where the geometric detail does (alluvium, water, coastal strip), from a new `terrain_detail_keep_map` shader global, so alluvial plains no longer shade with a ripple pattern.
+- TerrainMaterial3D with a generator painted sand on all ground under `beach_height`, turning low coastal plains into sand flats. Sand now follows the generator's beaches (passed in the geology map's soil channel as -1..0), plus the ground under the sea.
+- TerrainGenerator3D with `deposition`: the bedrock detail filter (gullies, crest noise) fades out over the first 2 m of alluvium, so fan fronts and terrace banks no longer grow rocky knobs.
+- Below a meandered reach the river's routed course is cut to the channel's bed all the way to its mouth (through the beach berm), so the water no longer thins over a bank at the reach's foot or stops short of the sea.
+- `get_waterfalls()`: the brink moves to the channel when the river's cell sits on a slot's edge, the lip spans the wetted width only, and falls under a lake or the sea, or under the minimum height once on the channel, are left out.
+- Abandoned one-cell river slots on fans are backfilled (`fan_backfill`, on).
+- Detail no longer fades on faces steeper than loose fill can stand, however much sediment the cells around them hold.
+- Loose fill no longer reads as soil on ground steeper than `critical_slope` (a 74 degree bar face showed 390 m of soil and grew plants).
+- VegetationField3D: under path tracing the near-swap cells drop their crossfade margins, so plants in the band are no longer traced twice (near and far mesh); the margins come back when path tracing is off.
+- Raster open water (sea, lakes, rivers) no longer glows at dusk and night: its body colour is lit by the sun and the baked sky's irradiance.
+
 ## build-a86e608b (2026-11-11)
 
 ### Changed

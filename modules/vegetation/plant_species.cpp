@@ -288,6 +288,19 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_radius", PROPERTY_HINT_RANGE, "0,30,0.1,or_greater,suffix:m"), "set_canopy_radius", "get_canopy_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_opacity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_canopy_opacity", "get_canopy_opacity");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "canopy_conifer"), "set_canopy_conifer", "is_canopy_conifer");
+	ClassDB::bind_method(D_METHOD("set_deadwood_rule", "rule"), &PlantSpecies::set_deadwood_rule);
+	ClassDB::bind_method(D_METHOD("get_deadwood_rule"), &PlantSpecies::get_deadwood_rule);
+	ClassDB::bind_method(D_METHOD("set_deadwood_band", "band"), &PlantSpecies::set_deadwood_band);
+	ClassDB::bind_method(D_METHOD("get_deadwood_band"), &PlantSpecies::get_deadwood_band);
+	ClassDB::bind_method(D_METHOD("set_deadwood_min_radius", "radius"), &PlantSpecies::set_deadwood_min_radius);
+	ClassDB::bind_method(D_METHOD("get_deadwood_min_radius"), &PlantSpecies::get_deadwood_min_radius);
+	ClassDB::bind_method(D_METHOD("set_deadwood_uphill", "uphill"), &PlantSpecies::set_deadwood_uphill);
+	ClassDB::bind_method(D_METHOD("is_deadwood_uphill"), &PlantSpecies::is_deadwood_uphill);
+	ADD_GROUP("Deadwood", "deadwood_");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "deadwood_rule", PROPERTY_HINT_ENUM, "Avoid,On,Beside,Ignore"), "set_deadwood_rule", "get_deadwood_rule");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deadwood_band", PROPERTY_HINT_RANGE, "0.01,5,0.01,suffix:m"), "set_deadwood_band", "get_deadwood_band");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "deadwood_min_radius", PROPERTY_HINT_RANGE, "0,1,0.005,suffix:m"), "set_deadwood_min_radius", "get_deadwood_min_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deadwood_uphill"), "set_deadwood_uphill", "is_deadwood_uphill");
 	ADD_GROUP("Patches", "patch_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_scale", PROPERTY_HINT_RANGE, "0,100,0.1,or_greater,suffix:m"), "set_patch_scale", "get_patch_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_patch_cover", "get_patch_cover");
@@ -353,6 +366,10 @@ void PlantSpecies::_bind_methods() {
 	BIND_ENUM_CONSTANT(RULE_SPRAY);
 	BIND_ENUM_CONSTANT(RULE_LITTER);
 	BIND_ENUM_CONSTANT(RULE_MAX);
+	BIND_ENUM_CONSTANT(DEADWOOD_AVOID);
+	BIND_ENUM_CONSTANT(DEADWOOD_ON);
+	BIND_ENUM_CONSTANT(DEADWOOD_BESIDE);
+	BIND_ENUM_CONSTANT(DEADWOOD_IGNORE);
 }
 
 void Biome::set_species(const TypedArray<PlantSpecies> &p_species) {

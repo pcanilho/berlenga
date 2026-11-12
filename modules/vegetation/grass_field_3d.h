@@ -68,6 +68,19 @@ class GrassField3D : public Node3D {
 	Color tip_color = Color(0.45f, 0.6f, 0.22f);
 	Color dry_color = Color(0.55f, 0.48f, 0.28f);
 	float dryness = 0.2f;
+	// The year (docs/ideas/vegetation-seasons.md): a WeatherMap3D whose season browns the sward in
+	// drought and hard cold. season_green 1: as dryness says; 0: all thatch.
+	NodePath season_source;
+	float season_response = 1.0f;
+	float season_green = 1.0f;
+	float season_baked_dryness = -1.0f; // The effective dryness of the last far colour bake.
+	int season_wait = 0;
+	bool ground_published = false; // This field's _bake_ground() set the grass_ground_* globals.
+	float _dryness() const { return CLAMP(dryness + (1.0f - dryness) * (1.0f - season_green) * season_response, 0.0f, 1.0f); }
+	// Summer dormancy and winter kill take whole blades down to the crown (Volaire and Norton 2006),
+	// not only their tips: the share of blades dead from the root.
+	float _dormant() const { return CLAMP((1.0f - season_green) * season_response, 0.0f, 1.0f); }
+	void _season_step();
 	float sun_mean = 0.0f; // VegetationLight::sun_mean() of the data map.
 	float color_variation = 0.5f;
 	float radius = 40.0f;
@@ -122,9 +135,20 @@ class GrassField3D : public Node3D {
 	int far_bake_wait = 0;
 	bool far_bake_queued = false;
 	bool far_baked = false;
-	Color far_bake_sum;
-	Color far_bake_white;
+	Color far_bake_view[9]; // Mean of each view: sward at the four sun azimuths, white, black at the four.
 	Color far_color_baked;
+	// The far colour's change with the sun's azimuth from the view (phi): factor 1 + lobe1 cos(phi)
+	// + lobe2 cos(2 phi) per channel, fitted to the four baked azimuths (canopy BRDF hot spot).
+	Color far_lobe1;
+	Color far_lobe2;
+	NodePath sun_light; // The DirectionalLight3D whose azimuth turns the far colour; empty: the first in the scene.
+	ObjectID sun_cache;
+	int sun_search_wait = 0;
+	Vector4 published_sun;
+	Vector4 published_view;
+	class DirectionalLight3D *_get_sun();
+	void _publish_sun_view(const Vector3 &p_camera);
+	void _publish_far();
 	void _queue_far_bake();
 	void _far_bake_start();
 	void _far_bake_step();
@@ -172,6 +196,9 @@ public:
 	float get_lean() const { return lean; }
 	Color get_far_color() const;
 	bool is_far_color_baked() const { return far_baked; }
+	PackedColorArray get_far_color_lobes() const;
+	void set_sun_light(const NodePath &p_path);
+	NodePath get_sun_light() const { return sun_light; }
 	void set_base_color(const Color &p_color);
 	Color get_base_color() const { return base_color; }
 	void set_tip_color(const Color &p_color);
@@ -180,6 +207,13 @@ public:
 	Color get_dry_color() const { return dry_color; }
 	void set_dryness(float p_dryness);
 	float get_dryness() const { return dryness; }
+	void set_season_source(const NodePath &p_path);
+	NodePath get_season_source() const { return season_source; }
+	void set_season_response(float p_response);
+	float get_season_response() const { return season_response; }
+	float get_season_green() const { return season_green; }
+	float get_effective_dryness() const { return _dryness(); }
+	static float season_greenness(const Dictionary &p_season);
 	void set_color_variation(float p_amount);
 	float get_color_variation() const { return color_variation; }
 	void set_radius(float p_radius);

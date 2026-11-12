@@ -17,6 +17,22 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_bloom_shares" qualifiers="static">
+			<return type="Vector3" />
+			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
+			<param index="1" name="season" type="Dictionary" />
+			<description>
+				The shares of a preset's flowering stems on the day of [param season] ([member season]): [code]x[/code] none (leaves only), [code]y[/code] in flower, [code]z[/code] in seed. Use it to tell when a species' look has moved enough to generate its meshes again. Presets without a flowering window, and a season without [code]forcing[/code], give [code]Vector3(0, 1, 0)[/code].
+			</description>
+		</method>
+		<method name="get_presence" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="preset" type="int" enum="PlantGenerator.Preset" />
+			<param index="1" name="season" type="Dictionary" />
+			<description>
+				The share of a preset's plants above ground on the day of [param season]: wood anemone, a spring plant, comes up in late winter and dies down by early summer; every other preset is 1. [method make_floor] scales its densities by it.
+			</description>
+		</method>
 		<method name="make_floor" qualifiers="static">
 			<return type="Resource[]" />
 			<param index="0" name="stand" type="int" enum="PlantGenerator.FloorStand" />
@@ -25,7 +41,7 @@
 			<param index="3" name="impostor_range" type="float" default="15.0" />
 			<param index="4" name="season" type="Dictionary" default="{}" />
 			<description>
-				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance. The leaf litter is the stand's own fallen leaves ([method stand_litter_leaves]); [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for the fallen colours and the share of fresh leaves.
+				Returns the forest floor for a stand type as [PlantSpecies], bigger plants first: gap and edge plants in the half-light, shade herbs, mosses, twigs and litter on the closed floor. Each is placed by [constant PlantSpecies.RULE_SHADE] from the placed canopy and, where the stand matters, by [constant PlantSpecies.RULE_CONIFER] (leaf litter under broadleaves, needle litter and bilberry under conifers), so a mixed stand sorts its own floor. Append them to a [Biome] after its trees. The stands match the tree generator's stand types. Each species has the meta [code]floor[/code] set to [code]true[/code]. Brambles and bracken draw impostors past [param impostor_range] metres ([method add_impostors]); 0 keeps their meshes at every distance. The leaf litter is the stand's own fallen leaves ([method stand_litter_leaves]); [param season] is a season state as [code]WeatherMap3D.get_season()[/code] returns it, for the fallen colours, the share of fresh leaves and the flowering ([member season]).
 			</description>
 		</method>
 		<method name="stand_litter_leaves" qualifiers="static">
@@ -105,6 +121,9 @@
 		</member>
 		<member name="preset" type="int" setter="set_preset" getter="get_preset" enum="PlantGenerator.Preset" default="0">
 			The kind of plant.
+		</member>
+		<member name="season" type="Dictionary" setter="set_season" getter="get_season" default="{}">
+			The season state as [code]WeatherMap3D.get_season()[/code] returns it; its [code]forcing[/code] (degree days above 5 C since 1 January) and [code]day_of_year[/code] set the flowering of the flowering presets. Each has a window in degree days from the British flowering records: wood anemone, violet and dandelion in early spring, wood sorrel and woodruff in spring, buttercup and sorrel in early summer, foxglove, clover, yarrow, knapweed, wild carrot, scabious and thistle through summer, heather late; daisy, clover, yarrow and herb Robert flower on and off through theirs. Before the window a plant is leaves only (tall flowers are rosettes); each stem then opens in its turn, goes to seed (dandelion clocks, thistledown, buttercup and anemone achenes, foxglove capsules filling the spike from the bottom, wild carrot nests) and, for the tall flowers, dies back to a brown stalk that stands through winter, a share of them into the next spring. Bracken and the woodland fern follow it too: croziers rise and unroll in spring, the fronds stand green through summer, yellow and die with the season's [code]senescence[/code] sum (or a hard frost), lodge under autumn storms and snow, and last year's dead fronds lie flat until the new ones have unrolled. Empty: every stem in flower or, for the tall meadow flowers, a quarter in seed; ferns full and green.
 		</member>
 		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
 			Seed of the random variation: each seed gives another plant of the same kind.

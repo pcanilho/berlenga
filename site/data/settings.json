@@ -1051,6 +1051,18 @@
    "topic": "Strands"
   },
   {
+   "name": "Snow on hair",
+   "settings": [
+    "snow",
+    "snow_capacity"
+   ],
+   "note": "",
+   "what": "snow from the weather settles on the top layer and windward side as small clumps, and melts into wetness.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
    "name": "Body collision",
    "settings": [
     "PhysXHair3D",
@@ -1609,6 +1621,28 @@
    "topic": "Grass"
   },
   {
+   "name": "Far grass in sunlight",
+   "settings": [
+    "GrassField3D.sun_light"
+   ],
+   "note": "",
+   "what": "distant grass brightens looking away from the sun and darkens looking into it, measured from the blades at four sun headings.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
+   "name": "Seasonal grass",
+   "settings": [
+    "GrassField3D.season_source"
+   ],
+   "note": "",
+   "what": "grass browns in drought and hard cold and stays green in a mild winter, read from the season.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Layered meadow",
    "settings": [
     "GrassField3D.color_variation",
@@ -1658,6 +1692,17 @@
    "topic": "Plants"
   },
   {
+   "name": "Plants by season",
+   "settings": [
+    "PlantGenerator.season"
+   ],
+   "note": "",
+   "what": "17 flowering herbs open, go to seed and die back to standing stalks by degree days; fern croziers unroll in spring, fronds die back russet and lie flat through winter, and wood anemone dies down after flowering.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
    "name": "Forest floor",
    "settings": [
     "PlantGenerator.make_floor(stand, variants)",
@@ -1665,6 +1710,17 @@
    ],
    "note": "",
    "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Plants on deadwood",
+   "settings": [
+    "PlantSpecies.deadwood_rule"
+   ],
+   "note": "",
+   "what": "ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -2121,6 +2177,18 @@
    ],
    "note": "",
    "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Haze and cloud shadow in fog",
+   "settings": [
+    "aerosol_haze",
+    "haze_visibility"
+   ],
+   "note": "",
+   "what": "volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

@@ -1323,10 +1323,15 @@ void TreeGenerator::_bend_under_gravity() {
 		n.dir = acc[i].xform(n.dir).normalized();
 		const Node &par = nodes[n.parent];
 		n.start = n.parent == 0 ? par.start : par.end();
-		// Branches resting on the ground run along it instead of through it.
-		if (n.start.y + n.dir.y * n.length < 0.08f && n.dir.y < 0.0f) {
-			n.dir.y = 0.0f;
-			n.dir = n.dir.length_squared() > 1e-6f ? n.dir.normalized() : Vector3(1, 0, 0);
+		// Branches resting on the ground run along it instead of through it. The axis keeps its
+		// own radius clear of the soil: held only at 8 cm, a thick low limb sank half its girth
+		// into the ground and its bark showed a ragged line where it crossed the surface.
+		const float clear = MAX(0.08f, n.radius + 0.03f);
+		if (n.order > 0 && n.start.y + n.dir.y * n.length < clear && n.dir.y < 0.0f) {
+			Vector3 h(n.dir.x, 0.0f, n.dir.z);
+			h = h.length_squared() > 1e-6f ? h.normalized() : Vector3(1, 0, 0);
+			const float drop = MIN(0.0f, (clear - n.start.y) / MAX(n.length, 1e-4f));
+			n.dir = (h + Vector3(0, drop, 0)).normalized();
 		}
 	}
 }
@@ -1712,7 +1717,10 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 			const Vector3 dir = nrm * Math::cos(ang) + bin * Math::sin(ang);
 			float rr = p_radii[r];
 			if (hdata) {
-				rr += p_relief * relief_at(float(s) / p_sides * repeats, v);
+				// Faded out at the soil line (the tree's ground is y = 0): plates and furrows cut
+				// the ground plane in a ragged line, read as a rim around the root collar.
+				const float gy = p_points[r].y + dir.y * rr;
+				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * Math::smoothstep(-0.02f, 0.2f, gy);
 			}
 			r_b.verts.push_back(p_points[r] + dir * rr);
 			r_b.normals.push_back(dir);
@@ -3317,7 +3325,8 @@ void TreeGenerator::_apply_veteran() {
 	const int rot = int(Math::floor(veteran * big * Math::lerp(0.5f, 2.5f, vr.randf())));
 	for (int k = 0; k < rot; k++) {
 		const float hh = Math::lerp(0.1f, 0.25f, vr.randf());
-		add(VET_ROT_HOLE, Math::lerp(1.2f, crown, vr.randf()), hh, hh * Math::lerp(0.5f, 0.8f, vr.randf()), Math::lerp(0.45f, 0.6f, vr.randf()));
+		// Clear of the crotch: one cut into the first fork read as a missing polygon.
+		add(VET_ROT_HOLE, Math::lerp(1.2f, MAX(1.2f, crown - hh - 0.4f), vr.randf()), hh, hh * Math::lerp(0.5f, 0.8f, vr.randf()), Math::lerp(0.45f, 0.6f, vr.randf()));
 	}
 	// Woodpecker holes, round, 4-6 cm across (great spotted; black woodpecker 9-12 cm, oval).
 	const int pecks = int(Math::floor(veteran * Math::lerp(0.3f, 3.0f, vr.randf())));
@@ -3883,6 +3892,22 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// collar code leaves these alone too).
 			return;
 		}
+		// A limb on a fork's first internodes: the fork's base runs inside its own parent there
+		// (the fork start in the mesh loop), so the parent's axis is not where its bark is, and
+		// the slide and spread tore the limb's base into flaps. It stays a plain crotch.
+		{
+			int x = child.parent;
+			for (int k = 0; k < 2 && x > 0; k++) {
+				const int px = nodes[x].parent;
+				if (px >= 0 && nodes[px].main != x) {
+					if (nodes[x].radius > 0.6f * nodes[px].radius) {
+						return;
+					}
+					break;
+				}
+				x = px;
+			}
+		}
 		// The parent axis around the junction as up to three straight segments (the internode
 		// before, the parent internode, the one after), each a tapered cylinder: at a fork the
 		// parent's axis bends, and a single infinite cylinder would weld onto bark that is not
@@ -4193,7 +4218,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						}
 						col_down = nd;
 					}
-					for (int pass = 0; pass < 2; pass++) {
+					// The same smoothing arc on every tube: the relief tube has up to five times the
+					// sides of the plain one, and two passes there left its collar edge in teeth.
+					const int smooth_passes = MAX(2, int(Math::round(2.0f * Math::pow(float(p_sides) / 24.0f, 2.0f))));
+					for (int pass = 0; pass < smooth_passes; pass++) {
 						LocalVector<float> sm;
 						sm.resize(p_sides);
 						for (int k = 0; k < p_sides; k++) {
@@ -4330,9 +4358,31 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	// callus lip and darkened, burls pushed out with lumps. Works on the undisplaced tube (ring centre
 	// + radial normal), so plain, relief and moss tubes move alike; then normals are rebuilt there.
 	const float vet_base_y = nodes[0].start.y;
+	// Stems that share the bole: forks off the main stem low down, as thick as it nearly. On an
+	// open-grown broadleaf they wrap the lower bole, and features cut into the main stem alone
+	// were hidden behind them. They carry the same features, each on its own surface.
+	LocalVector<uint8_t> vet_share;
+	vet_share.resize(nodes.size());
+	for (uint32_t i = 0; i < nodes.size(); i++) {
+		vet_share[i] = 0;
+	}
+	if (veteran_stem >= 0 && !veteran_features.is_empty()) {
+		float top = 0.0f;
+		for (const VeteranFeature &f : veteran_features) {
+			top = MAX(top, f.h + f.half_h);
+		}
+		const float r_vs = nodes[veteran_stem].radius;
+		for (int i = veteran_stem; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
+			for (int l = nodes[i].first_lateral; l >= 0; l = nodes[l].next_sibling) {
+				if (!nodes[l].removed && nodes[l].radius > 0.4f * r_vs && nodes[l].start.y - vet_base_y < top) {
+					vet_share[l] = 1;
+				}
+			}
+		}
+	}
 	const float vet_r_stem = veteran_stem >= 0 ? nodes[veteran_stem].radius * 1.15f : 1.0f;
-	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour) {
-		if (veteran_features.is_empty()) {
+	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour, int p_features) {
+		if (veteran_features.is_empty() || !p_features) {
 			return;
 		}
 		Vector3 *vv = r_b.verts.ptrw();
@@ -4356,7 +4406,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			float dark = 1.0f;
 			float w_any = 0.0f;
 			for (const VeteranFeature &f : veteran_features) {
-				if (f.kind == VET_EPICORMIC || f.kind == VET_WOODPECKER) {
+				if (!p_features) {
+					break;
+				}
+				// A basal hollow is the main stem's alone: the forks around it took a second dent
+				// at the same bearing, and the two folded through each other.
+				if (f.kind == VET_EPICORMIC || f.kind == VET_WOODPECKER || (f.kind == VET_BASAL_HOLLOW && p_features < 2)) {
 					continue;
 				}
 				const float dh = (h - f.h) / f.half_h;
@@ -4369,20 +4424,29 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					continue;
 				}
 				if (f.kind == VET_BURL) {
-					const float k = 1.0f - MIN(e * e, 1.0f);
-					const float lump = 0.75f + 0.5f * moss_noise(p_pts[ring] + n * r * 4.0f, 0x6275726cu);
+					// (1 - e^2)^2 meets the bark with no crease, and the lumps are broad: fine noise
+					// on the tube's rings came out as crumpled facets, not a rounded burl.
+					const float k0 = 1.0f - MIN(e * e, 1.0f);
+					const float k = k0 * k0;
+					const float lump = 0.85f + 0.3f * moss_noise(p_pts[ring] + n * r * 1.5f, 0x6275726cu);
 					// Sized by the stem, not the root flare's swollen radius.
-					off += f.amount * MIN(r, vet_r_stem) * k * Math::sqrt(k) * lump;
+					off += f.amount * MIN(r, vet_r_stem) * k * lump;
 					w_any = MAX(w_any, k > 0.0f ? 1.0f : 0.0f);
 				} else {
 					// A hollow: deep inside, the floor rough; a callus lip of new wood around it.
-					if (e < 1.0f) {
-						const float rough = 0.85f + 0.3f * moss_noise(p_pts[ring] + n * r * 6.0f, 0x686f6cu);
-						off -= f.amount * r * Math::smoothstep(1.0f, 0.55f, e) * rough;
-						dark = MIN(dark, Math::lerp(1.0f, 0.16f, Math::smoothstep(1.0f, 0.7f, e)));
-					} else {
-						off += 0.08f * r * Math::sin(float(Math::PI) * (e - 1.0f) / 0.4f);
+					// The wall falls away gradually from the rim into a deep, dark floor, and the
+					// callus (woundwood, Shigo 1985) is a rounded roll over the edge, so the hole
+					// has depth and a soft lip instead of a flat-sided slot.
+					if (e < 1.1f) {
+						// Broad, gentle roughness, and no deeper than half the stem's own radius:
+						// sized by the flare's swollen radius and roughened finely, the floor
+						// folded through itself in pale blades.
+						const float rough = 0.9f + 0.2f * moss_noise(p_pts[ring] + n * r * 1.2f, 0x686f6cu);
+						off -= MIN(f.amount, 0.5f) * MIN(r, vet_r_stem) * Math::smoothstep(1.1f, 0.35f, e) * rough;
+						dark = MIN(dark, Math::lerp(1.0f, 0.12f, Math::smoothstep(1.0f, 0.55f, e)));
 					}
+					const float lip = (e - 1.02f) / 0.14f;
+					off += 0.12f * MIN(r, vet_r_stem) * Math::exp(-lip * lip);
 					w_any = 1.0f;
 				}
 			}
@@ -4480,6 +4544,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			rad.push_back(r_end);
 		}
 		const bool stem = first.parent == 0;
+		// The root collar (flare and sink) belongs to a stem standing in the soil. A log or a
+		// fallen limb lies along the ground, every ring of it near the base height: the flare
+		// swelled the whole log and the sink dove its open butt into the soil, where it showed
+		// from above as a log with its top missing.
+		const bool collar = stem && flare > 0.0f && !fallen && !fallen_branch;
 		if (!stem && r0 > 0.01f && pts.size() >= 2) {
 			// Branch collar: a limb swells where it leaves its parent, so its base meets the
 			// parent's bark in a smooth fillet instead of a pipe pushed into a pipe (the welded
@@ -4544,8 +4613,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			LocalVector<Vector3> cp;
 			LocalVector<float> cr;
 			const float ks[3] = { 1.2f, 0.7f, 0.25f };
+			// A fork low on the stem must not run down out of the ground: its open start
+			// showed beside the root flare.
+			const float room = MAX(0.0f, (base.y - nodes[0].start.y - 0.1f) / MAX(par.dir.y, 0.2f));
+			const float drop = MIN(rc * ks[0], room) / ks[0];
 			for (int k = 0; k < 3; k++) {
-				cp.push_back(base - par.dir * (rc * ks[k]));
+				cp.push_back(base - par.dir * (drop * ks[k]));
 				cr.push_back(rc);
 			}
 			// The collar's extra rings near the axis would pull the turn back to the axis.
@@ -4577,13 +4650,41 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				rad.push_back(rim_r * rs[k]);
 			}
 		}
-		if (stem && flare > 0.0f) {
+		if (collar) {
 			for (int i = 0; i < int(pts.size()); i++) {
 				const float h = MAX(0.0f, pts[i].y - nodes[0].start.y);
-				rad[i] *= 1.0f + flare * Math::exp(-h / MAX(0.05f, trunk_r * 2.5f));
+				// The root collar: over the last ~20 cm the flare splays out into the roots, so
+				// the bark runs into the ground at a shallow angle instead of standing on it as
+				// a wall with a hard rim (the buttress roots continue under the surface).
+				rad[i] *= (1.0f + flare * Math::exp(-h / MAX(0.05f, trunk_r * 2.5f))) * (1.0f + 0.15f * flare * Math::exp(-h / 0.12f));
 			}
-			// Sink the base below the ground line.
-			pts[0] -= Vector3(0, 0.15f, 0);
+			// Sink the base below the ground line, deeper on a leaning stem: the base ring lies
+			// square to the stem, and on a lean its high side rose out of the ground, an open rim.
+			const Vector3 d0 = pts.size() >= 2 ? (pts[1] - pts[0]).normalized() : Vector3(0, 1, 0);
+			const float lean = Math::sqrt(MAX(0.0f, 1.0f - d0.y * d0.y));
+			pts[0] -= Vector3(0, 0.15f + rad[0] * lean, 0);
+		}
+		if (stem && (fallen || fallen_branch) && pts.size() >= 2 && rad[0] >= 0.006f) {
+			// A standing stem's base is under the soil; a log's or a fallen limb's lies in the
+			// open and showed the tube's hollow inside. It closes under a short broken face, as
+			// the snapped tip does.
+			const Vector3 d0 = (pts[1] - pts[0]).normalized();
+			const Vector3 p0 = pts[0];
+			const float r_base = rad[0];
+			const float ks[3] = { 1.0f, 0.75f, 0.4f };
+			const float rs[3] = { 0.0f, 0.68f, 0.93f };
+			LocalVector<Vector3> cp;
+			LocalVector<float> cr;
+			for (int k = 0; k < 3; k++) {
+				cp.push_back(p0 - d0 * (r_base * 0.15f * ks[k]));
+				cr.push_back(r_base * rs[k]);
+			}
+			for (uint32_t i = 0; i < pts.size(); i++) {
+				cp.push_back(pts[i]);
+				cr.push_back(rad[i]);
+			}
+			pts = cp;
+			rad = cr;
 		}
 		if (climber != CLIMBER_NONE && r0 >= 0.02f) {
 			// Kept for the climbers: the axis as meshed, its radii and the bone at each point.
@@ -4623,8 +4724,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (rigged) {
 				_skin_stem(bark, part, s, pts, sides);
 			}
-			if (s == veteran_stem) {
-				veteran_deform(bark, part, pts, rad, sides, true);
+			if (s == veteran_stem || vet_share[s]) {
+				veteran_deform(bark, part, pts, rad, sides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 			}
 			if (!stem && junction_weld) {
 				weld(bark, part, s, pts, rad, sides);
@@ -4660,8 +4761,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				if (rigged) {
 					_skin_stem(bark, part, s, rp, rsides);
 				}
-				if (s == veteran_stem) {
-					veteran_deform(bark, part, rp, rr, rsides, true);
+				if (s == veteran_stem || vet_share[s]) {
+					veteran_deform(bark, part, rp, rr, rsides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 				}
 				if (!stem && junction_weld) {
 					weld(bark, part, s, rp, rr, rsides);
@@ -4678,8 +4779,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				moss.begin(part);
 				_tube(moss, rp, rr, rsides, 0.0f, col);
 				moss.end(part, r0);
-				if (s == veteran_stem) {
-					veteran_deform(moss, part, rp, rr, rsides, false);
+				if (s == veteran_stem || vet_share[s]) {
+					veteran_deform(moss, part, rp, rr, rsides, false, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 				}
 				// The bark's own displacement under each shell vertex (as the relief tube has it).
 				const Vector<uint8_t> bh_buf = bs.height->get_data();

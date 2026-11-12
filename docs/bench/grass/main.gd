@@ -14,6 +14,9 @@ extends Node3D
 #   env GRASS_DIAG=noshadow|nosun|nograss|notrample|novf|vf1|nounder|bounce0|ssaa: lighting diagnostics (grass.md, "Light inside the sward")
 #   --cpu-fill       build grass tiles on the CPU instead of the GPU fill (grass.md, stage 3a)
 #   --litter-wind=x,z  downwind lean of the leaf drift (VegetationField3D.litter_wind), e.g. 0.6,0
+#   --day=D          the season of day D from a WeatherMap3D: the sward's greenness, flowering,
+#                    ferns (docs/ideas/vegetation-seasons.md)
+#   --drought        with --day: a dry climate (300 mm a year, falling in winter), for a summer drought
 #   --out=path.png   save the last frame
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
@@ -54,6 +57,10 @@ var clip := ""
 var n := 0
 var dm: TerrainDataMap3D
 var grass: GrassField3D
+var season_day := 0
+var drought := false
+var season_map: WeatherMap3D
+var bench_season := {}
 var cam: Camera3D
 var fails := 0
 var trample := false
@@ -64,6 +71,7 @@ var litter_wind := Vector2()
 var grass_density := 0.0
 var gpu_fill := true
 var sun_yaw := 150.0
+var sun_node: DirectionalLight3D
 var forest_in := false
 var stand := "beech"
 var stand_set := false
@@ -151,6 +159,8 @@ func _ready() -> void:
 			stand = a.substr(8)
 			stand_set = true
 			forest = true
+		elif a.begins_with("--day="): season_day = int(a.substr(6))
+		elif a == "--drought": drought = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -158,6 +168,19 @@ func _ready() -> void:
 		elif a.begins_with("--wind="):
 			var p := a.substr(7).split(",")
 			wind = Vector2(float(p[0]), float(p[1]))
+	if season_day > 0:
+		season_map = WeatherMap3D.new()
+		season_map.name = "Season"
+		if drought:
+			var rc := ClimateRecipe.new()
+			rc.precipitation = 300.0
+			rc.precipitation_seasonality = 0.9
+			rc.precipitation_peak_month = 0
+			season_map.climate = rc
+		season_map.season_day = season_day
+		add_child(season_map)
+		bench_season = season_map.get_season()
+		print("GRASS_DAY %d %s" % [season_day, str(bench_season)])
 	var w := int(SIZE) + 1
 	var data := PackedFloat32Array()
 	data.resize(w * w)
@@ -185,6 +208,8 @@ func _ready() -> void:
 	grass = GrassField3D.new()
 	grass.name = "Grass"
 	grass.fallback_wind = wind
+	if OS.get_environment("GRASS_RADIUS") != "":
+		grass.radius = float(OS.get_environment("GRASS_RADIUS")) # Which level of detail the far-match region sees.
 	if grass_density > 0.0:
 		grass.density = grass_density
 	if OS.get_environment("GRASS_DIAG").contains("vf1"):
@@ -192,6 +217,8 @@ func _ready() -> void:
 	grass.gpu_fill = gpu_fill
 	add_child(grass)
 	grass.data_map = grass.get_path_to(dm)
+	if season_map:
+		grass.season_source = grass.get_path_to(season_map)
 	if layers:
 		var tall := PlantSpecies.new()
 		tall.patch_scale = TALL_PATCH
@@ -218,6 +245,8 @@ func _ready() -> void:
 		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
 		grass.ground_tint_enabled = false # The undercoat grows everywhere, so it owns the tint.
 		add_child(under)
+		if season_map:
+			under.season_source = under.get_path_to(season_map)
 		under.data_map = under.get_path_to(dm)
 		# Turf: a third, very dense and very short grid near the camera only (Serious Sam 4's
 		# overlapped density grids), where gaps between the longer blades show the most.
@@ -237,6 +266,8 @@ func _ready() -> void:
 		turf.dryness = 0.35
 		turf.ground_tint_enabled = false
 		add_child(turf)
+		if season_map:
+			turf.season_source = turf.get_path_to(season_map)
 		turf.data_map = turf.get_path_to(dm)
 		turf.visible = not no_turf
 		cover = VegetationField3D.new()
@@ -316,6 +347,7 @@ void fragment() {
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
+	sun_node = sun
 	sun.rotation_degrees = Vector3(-28, sun_yaw, 0)
 	sun.shadow_enabled = not OS.get_environment("GRASS_DIAG").contains("noshadow")
 	if OS.get_environment("GRASS_DIAG").contains("ssaa"):
@@ -541,6 +573,7 @@ func _variants(preset: int, count: int, size := 1.0) -> Array:
 	gen.preset = preset
 	gen.size = size
 	gen.apply_preset_colors()
+	gen.season = bench_season
 	var meshes := gen.generate_variants(count)
 	for m in meshes:
 		m.set_meta("preset", preset)
@@ -810,7 +843,7 @@ func _stand_floor() -> Array:
 			"pine": PlantGenerator.FLOOR_PINE_HEATH, "larch": PlantGenerator.FLOOR_SUBALPINE}
 	if not stand_set or not sets.has(stand):
 		return _floor_species()
-	return Array(PlantGenerator.make_floor(sets[stand], 3, not notex, 0.0 if no_impostors else 15.0))
+	return Array(PlantGenerator.make_floor(sets[stand], 3, not notex, 0.0 if no_impostors else 15.0, bench_season))
 
 # The wood's stand-in trees by --stand. Conifers set canopy_conifer, which the floor reads.
 func _stand_trees() -> Array:
@@ -1079,7 +1112,31 @@ func _check(label: String, ok: bool, value) -> void:
 	if not ok:
 		fails += 1
 
+# The sward through the year (docs/ideas/vegetation-seasons.md, step 1): greenness from the
+# season state's soil moisture and temperature, into the blades' and ground's dryness.
+func _season_checks() -> void:
+	var g := func(t: float, m: float) -> float:
+		return GrassField3D.season_greenness({"temperature": t, "soil_moisture": m})
+	_check("season: mild wet winter stays green", g.call(5.0, 0.9) > 0.95, g.call(5.0, 0.9))
+	_check("season: hard winter goes tan", g.call(-7.0, 0.9) < 0.1, g.call(-7.0, 0.9))
+	_check("season: summer drought browns it", g.call(20.0, 0.08) < 0.01, g.call(20.0, 0.08))
+	_check("season: a dry spell half browns it", absf(g.call(20.0, 0.25) - 0.5) < 0.1, g.call(20.0, 0.25))
+	_check("season: no season, as set", GrassField3D.season_greenness({}) == 1.0, GrassField3D.season_greenness({}))
+	var base := grass.dryness
+	grass.dryness = 0.2
+	grass.season_response = 1.0
+	# The field's own read of a WeatherMap3D, through the effective dryness.
+	var wm := WeatherMap3D.new()
+	wm.name = "Seasons"
+	add_child(wm)
+	grass.season_source = grass.get_path_to(wm)
+	print("GRASS_SEASON day=%d season=%s green=%.3f dryness=%.3f" % [wm.get_day_of_year(), str(wm.get_season()), grass.get_season_green(), grass.get_effective_dryness()])
+	grass.season_source = NodePath()
+	wm.queue_free()
+	grass.dryness = base
+
 func _checks() -> void:
+	_season_checks()
 	var count := grass.get_blade_count()
 	_check("blades placed", count > 10000, count)
 	print("GRASS_STATS blades=%d tiles=%d last_build_ms=%.1f" % [count, grass.get_tile_count(), grass.get_build_time_msec()])
@@ -1349,6 +1406,19 @@ func _process(dt: float) -> void:
 		var need := Color((far_a.r - k.r) / (w.r - k.r), (far_a.g - k.g) / (w.g - k.g), (far_a.b - k.b) / (w.b - k.b))
 		var got := grass.get_far_color()
 		print("GRASS_FAR_NEED white=%s black=%s needed=%s published=%s baked=%s published/needed=%s" % [str(w), str(k), str(need), str(got), str(grass.is_far_color_baked()), str(Color(got.r / need.r, got.g / need.g, got.b / need.b))])
+		# The white and black above went through the sun-azimuth factor too, so published/needed is
+		# the match with it; without it the far ground would show the plain mean.
+		# The sun term GrassField3D publishes (grass_ground_sun), from the bench's sun.
+		var ld := -sun_node.global_transform.basis.z
+		var lh := Vector2(ld.x, ld.z).length()
+		var sun_v := Vector4(ld.x / lh, ld.z / lh, minf(lh / cos(deg_to_rad(30.0)), 1.15) * clampf((-ld.y + 0.05) / 0.1, 0.0, 1.0), 0.0)
+		var lobes := grass.get_far_color_lobes()
+		var fwd := -cam.global_transform.basis.z
+		var c1 := Vector2(fwd.x, fwd.z).normalized().dot(Vector2(sun_v.x, sun_v.y))
+		var f := Color(1, 1, 1)
+		for i in 3:
+			f[i] = maxf(1.0 + sun_v.z * (lobes[0][i] * c1 + lobes[1][i] * (2.0 * c1 * c1 - 1.0)), 0.1)
+		print("GRASS_FAR_AZIMUTH cos=%.2f strength=%.2f factor=%s lobes=%s ratio_with=%s ratio_without=%s" % [c1, sun_v.z, str(f), str(lobes), str(Color(got.r / need.r, got.g / need.g, got.b / need.b)), str(Color(got.r / (need.r * f.r), got.g / (need.g * f.g), got.b / (need.b * f.b)))])
 		get_tree().quit()
 		return
 	if far_match or n < frames:

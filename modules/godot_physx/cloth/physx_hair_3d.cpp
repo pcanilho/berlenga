@@ -101,6 +101,11 @@ uniform vec4 dom_slot[16];
 uniform vec3 dom_layers = vec3(0.01, 0.04, 0.15);
 uniform int dom_cells = 256;
 uniform float dom_density = 0.3; // calibrated to the path tracer: fibres pass much of the light on (TT)
+// Snow settled on the hair (docs/ideas/hair.md, stage 2r): the share of the hair's top layer it
+// covers, and the deep opacity map (dom_snow_slot, -1: none) seen from where the snow comes from,
+// which gives each point the hair above it.
+uniform float snow_cover = 0.0;
+uniform int dom_snow_slot = -1;
 
 // xyz the point, w its share along the strand (by point), or -1 past the strand's end; w + 2 on a
 // strand the distance LOD leaves out of the raster draw.
@@ -316,6 +321,9 @@ void fragment() {
 			if (k >= dom_maps) {
 				break;
 			}
+			if (k == dom_snow_slot) {
+				continue; // the snow's map: no light
+			}
 			if (dom_slot[k * 4 + 1].w > 0.5) {
 				local_past = max(local_past, dom_past[k]);
 			} else if (dom_past[k] >= 0.0) {
@@ -400,6 +408,9 @@ void light() {
 			if (k >= dom_maps) {
 				break;
 			}
+			if (k == dom_snow_slot) {
+				continue; // the snow's map: no light
+			}
 			vec4 sl = dom_slot[k * 4 + 3];
 			bool is_local = dom_slot[k * 4 + 1].w > 0.5;
 			if (is_local == LIGHT_IS_DIRECTIONAL) {
@@ -407,8 +418,12 @@ void light() {
 			}
 			vec3 to_light = is_local ? normalize(dom_slot[k * 4].xyz + sl.xyz * sl.w - dom_world) : sl.xyz;
 			if (dot(lw, to_light) > 0.999) {
-				attenuation *= dom_trans[k];
-				shadow = LIGHT_IS_DIRECTIONAL ? clamp(attenuation, 0.0, 1.0) : dom_trans[k];
+				// Clamped: a transmittance is 0..1, and an out-of-range value interpolated across a
+				// strand (seen on llvmpipe; gone with the clamp, the maps' own values check fine per
+				// vertex) blacked out 2x2 pixel blocks of strands in the deep shadow path.
+				float tr = clamp(dom_trans[k], 0.0, 1.0);
+				attenuation *= tr;
+				shadow = LIGHT_IS_DIRECTIONAL ? clamp(attenuation, 0.0, 1.0) : tr;
 				break;
 			}
 		}
@@ -419,15 +434,91 @@ void light() {
 #endif
 )";
 
+// Snow on the hair (docs/ideas/hair.md, stage 2r): small clumps of crystals caught on the strands,
+// drawn as their own mesh, one closed blob (an octahedron, smooth shaded) per vertex group, its
+// corner in NORMAL. Each group belongs to a slot of hair_positions: CUSTOM0 = (the slot's first
+// texel, which clump of the strand, its drawn points, 0). The strand's root (fixed to the scalp)
+// keys its random numbers, so a strand keeps its clumps when the blend sort moves it to another
+// slot. A clump sits at a random point past the scalp, where the deep opacity map seen from where
+// the snow comes from shows little hair above it (the top layer), on the side the snow comes from;
+// the others shrink to nothing. Opaque, so the path tracer traces the same clumps.
+const char *HAIR_SNOW_HEAD = R"(
+shader_type spatial;
+render_mode cull_disabled, rt_vertex_dynamic;
+#define HAIR_SCATTERING
+)";
+
+const char *HAIR_SNOW_FUNCS = R"(
+uniform vec3 snow_albedo = vec3(0.85);
+uniform float snow_grain = 0.0025; // m, a clump's typical diameter (the load grows it)
+
+float snow_hash(vec3 q, float salt) {
+	return fract(sin(dot(q, vec3(12.9898, 78.233, 37.719)) + salt * 17.13) * 43758.5453);
+}
+
+void vertex() {
+	strand_seed = 0.0;
+	dom_trans = vec4(1.0);
+	dom_past = vec4(-1.0);
+	strand_across = 0.0;
+	strand_half_px = 1.0;
+	strand_drawn_px = 1.0;
+	strand_tangent = vec3(0.0, 1.0, 0.0);
+	float base = CUSTOM0.x;
+	float n = max(CUSTOM0.z, 2.0);
+	vec4 root = hair_point(base);
+	vec3 p = root.xyz;
+	float size = 0.0;
+	vec3 key = floor(root.xyz * 5000.0) + vec3(CUSTOM0.y * 7.0); // 0.2 mm: the root's place
+	vec3 up = vec3(0.0, 1.0, 0.0);
+	// root.w: 0..1 a drawn strand, 2..3 one the raster's distance LOD leaves out (it still holds
+	// snow), past 3.5 a hair card's strand, below 0 none.
+	if (snow_cover > 0.0 && dom_snow_slot >= 0 && dom_snow_slot < dom_maps && root.w >= 0.0 && root.w < 3.5) {
+		float fk = (0.03 + 0.97 * snow_hash(key, 1.0)) * (n - 1.0);
+		float k = min(floor(fk), n - 2.0);
+		vec4 a = hair_point(base + k);
+		vec4 b = hair_point(base + k + 1.0);
+		if (a.w >= 0.0 && a.w < 3.5) {
+			b = b.w >= 0.0 && b.w < 3.5 ? b : a;
+			p = mix(a.xyz, b.xyz, clamp(fk - k, 0.0, 1.0));
+			vec4 st;
+			vec4 sp;
+			dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, st, sp);
+			float absorb = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+			// Strands above this point, toward the snow: it lies on the top layer only.
+			float above = -log(max(st[dom_snow_slot], 1e-6)) / max(absorb * dom_density, 1e-4);
+			float held = snow_cover * exp(-2.0 * above);
+			float r = snow_hash(key, 3.0);
+			size = snow_grain * (0.4 + 0.6 * snow_cover) * (0.5 + snow_hash(key, 4.0)) * smoothstep(r - 0.05, r + 0.05, held);
+			up = normalize(inverse(mat3(MODEL_MATRIX)) * dom_slot[dom_snow_slot * 4 + 3].xyz);
+		}
+	}
+	// An irregular blob, a little flattened where it rests, on the strand's side the snow came from.
+	vec3 sc = vec3(0.7 + 0.6 * snow_hash(key, 5.0), 0.7 + 0.6 * snow_hash(key, 6.0), 0.7 + 0.6 * snow_hash(key, 7.0));
+	vec3 c = NORMAL * sc; // NORMAL: the blob's corner (VERTEX is its rest place)
+	c -= up * dot(c, up) * 0.35;
+	VERTEX = p + up * (0.4 * size) + c * (0.5 * size);
+	NORMAL = normalize(VERTEX - p - up * (0.4 * size) + up * 1e-9);
+}
+
+void fragment() {
+	// Snow scatters light many times between its crystals: bright, matte, no fibre highlight.
+	ALBEDO = snow_albedo;
+	ROUGHNESS = 0.9;
+	SPECULAR = 0.3;
+}
+)";
+
 } // namespace
 
 // Hair cards (docs/ideas/hair.md, stage 2p): the card mesh drawn from the cards' own simulated
-// strands (the first slots of hair_positions). Each vertex is one side of one of a card's two
-// crossed strips at one of its points: CUSTOM0 = (texel, previous texel, next texel, side -1 or 1),
-// CUSTOM1 = the strip's axis at rest (groom space) and which strip, CUSTOM2 = the card's direction
-// at rest and the strip's half width there; UV in the atlas tile. The strip's axis turns with the
-// card's centre line. Opacity is the atlas coverage, blended as the strands are (the hair is one
-// colour, so the cards' order barely shows); shadow maps keep that share of their texels
+// strands (the first slots of hair_positions, sorted far to near so the blend runs back to front
+// as the strands'). Each vertex is one side of one of a strip's points in a slot: CUSTOM0 = (texel,
+// previous texel, next texel, side -1 or 1), CUSTOM1 = (point, strip, share along). The card in
+// the slot (named by the previous positions' w) gives the rest from card_data: the strip's axis at
+// rest (groom space) and half width, the other strip's half width, the card's direction at rest
+// and the atlas tile. The strip's axis turns with the card's centre line. Opacity comes from the
+// atlas's optical depth, blended as the strands are; shadow maps keep that share of their texels
 // (stochastic transparency, Enderton et al. 2010). Raster only: under the path tracer the hair
 // stays strands.
 const char *HAIR_CARD_HEAD = R"(
@@ -437,7 +528,11 @@ render_mode cull_disabled, rt_vertex_dynamic, hair_cards, alpha_motion_vectors;
 
 const char *HAIR_CARD_FUNCS = R"(
 uniform sampler2D card_atlas : filter_linear_mipmap, repeat_disable;
+uniform sampler2D card_data : filter_nearest, repeat_disable;
+uniform vec2 card_tile = vec2(32.0, 256.0); // a tile's size in the atlas, in texels
 uniform float card_clump = 0.0; // wet clumping, as the strands'
+// The scalp as a sphere (centre, radius) fitted to the strands' roots, in the hair's space (w 0: none).
+uniform vec4 card_scalp = vec4(0.0);
 varying vec3 card_across; // view space: this strip's axis (raster lighting)
 varying float card_fan; // how far the card's guides fanned apart since the groom (the card widens by it)
 
@@ -451,16 +546,29 @@ void vertex() {
 	vec4 here = hair_point(CUSTOM0.x);
 	vec4 before = hair_point(CUSTOM0.y);
 	vec4 after = hair_point(CUSTOM0.z);
-	// w: 4 + along + 8 * fan (64ths), the solver's encoding for a card's strand.
-	float fan_q = floor((here.w - 4.0) / 8.0);
-	float along = clamp(here.w - 4.0 - 8.0 * fan_q, 0.0, 1.0);
+	int ti = int(CUSTOM0.x + 0.5);
+	ivec2 texel = ivec2(ti % texture_width, ti / texture_width);
+	// The card drawn in this slot (-2 - card in the previous positions' w) and what it holds.
+	int card = int(-texelFetch(hair_previous_positions, texel, 0).w - 2.0 + 0.5);
+	int point = int(CUSTOM1.x + 0.5);
+	int strip = int(CUSTOM1.y + 0.5);
+	vec4 own = texelFetch(card_data, ivec2(point * 4 + strip, card), 0); // axis, the other's half width
+	float own_half = texelFetch(card_data, ivec2(point * 4 + 1 - strip, card), 0).w;
+	vec3 t0 = texelFetch(card_data, ivec2(point * 4 + 2, card), 0).xyz;
+	vec4 tiles = texelFetch(card_data, ivec2(point * 4 + 3, card), 0);
+	vec2 tile = strip == 0 ? tiles.xy : tiles.zw;
+	UV = (tile + vec2(0.5 + (card_tile.x - 1.0) * (CUSTOM0.w * 0.5 + 0.5), 0.5 + (card_tile.y - 1.0) * CUSTOM1.z)) / vec2(textureSize(card_atlas, 0));
+	// w: 4 + along + 8 * fan (64ths), the solver's encoding for a card's strand (this frame's: the
+	// previous positions' w names the card).
+	float w = texelFetch(hair_positions, texel, 0).w;
+	float fan_q = floor((w - 4.0) / 8.0);
+	float along = clamp(w - 4.0 - 8.0 * fan_q, 0.0, 1.0);
 	card_fan = clamp(fan_q / 64.0, 0.5, 4.0);
 	vec3 p = here.xyz;
-	vec3 t0 = CUSTOM2.xyz;
 	vec3 t = after.xyz - before.xyz;
 	t = dot(t, t) > 1e-14 ? normalize(t) : t0;
 	// The strip's axis at rest turned as the card's centre line turned (rotation from t0 to t).
-	vec3 ax = CUSTOM1.xyz;
+	vec3 ax = own.xyz;
 	vec3 k = cross(t0, t);
 	float s = length(k);
 	if (s > 1e-6) {
@@ -471,18 +579,49 @@ void vertex() {
 	ax -= t * dot(ax, t);
 	ax = dot(ax, ax) > 1e-12 ? normalize(ax) : normalize(cross(t, abs(t.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 	// The clump fans out (or closes) with its guides: the card as much wider, and thinner below.
-	float half_width = CUSTOM2.w * card_fan * (1.0 - card_clump * smoothstep(0.0, 0.3, along));
-	VERTEX = p + ax * (half_width * CUSTOM0.w);
+	float half_width = own_half * card_fan * (1.0 - card_clump * smoothstep(0.0, 0.3, along));
+	float drawn = half_width;
+	if (!IN_PATH_TRACER) {
+		// A card under a pixel wide falls between the pixels' centres, and the hair behind it
+		// shows: as the strands (TressFX), it is drawn at least 0.71 px a side (capped as theirs,
+		// 2 mm in shadow maps and 1 cm otherwise), and its optical depth thinned to match.
+		vec4 clip = PROJECTION_MATRIX * (MODELVIEW_MATRIX * vec4(p, 1.0));
+		float px = 2.0 * clip.w / max(abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y, 1e-6);
+		drawn = max(half_width, min(0.71 * px, IN_SHADOW_PASS ? 0.002 : 0.01));
+		card_fan *= drawn / max(half_width, 1e-7);
+	}
+	VERTEX = p + ax * (drawn * CUSTOM0.w);
+	if (card_scalp.w > 0.0) {
+		// The card stands for a slab of strands, as wide as one strip and as thick as the other,
+		// centred on its simulated strand, which the collision keeps only just off the scalp: the
+		// slab's inner half, and a flat strip's edges over the round scalp (the sagitta,
+		// half_width^2 / (2 R)), sank into the head, and the scalp showed between the cards at the
+		// crown, where each strand on its own lies on it. Near the scalp (a sphere fitted to the
+		// roots) the card is raised until the slab clears it; elsewhere it stays put.
+		vec3 out_dir = p - card_scalp.xyz;
+		float r = length(out_dir);
+		if (r > 1e-5) {
+			out_dir /= r;
+			vec3 bx = normalize(cross(t, ax));
+			float a_out = dot(ax, out_dir);
+			float other = own.w * half_width / max(own_half, 1e-6);
+			float support = half_width * abs(a_out) + other * abs(dot(bx, out_dir));
+			float sag = half_width * half_width * (1.0 - a_out * a_out) / (2.0 * max(r, 0.5 * card_scalp.w));
+			VERTEX += out_dir * max(support + sag - (r - card_scalp.w), 0.0);
+		}
+	}
 	NORMAL = normalize(cross(ax, t));
 	TANGENT = ax;
 	BINORMAL = t;
 	strand_tangent = normalize(mat3(MODELVIEW_MATRIX) * t);
 	card_across = normalize(mat3(MODELVIEW_MATRIX) * ax);
 	if (dom_maps > 0 && !IN_PATH_TRACER && !IN_SHADOW_PASS && !PREVIOUS_FRAME) {
-		// The deep opacity maps, made from the cards' own strands (each as wide as its clump).
+		// The deep opacity maps, made from the cards' own strands (each as wide as its clump), read
+		// on the card's centre line: the strip's edges reach out of the map's hair sideways, in
+		// front of the hair toward the light, and read as lit where the clump's strands are not.
 		vec4 lt;
 		vec4 lp;
-		dom_lookup((MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz, lt, lp);
+		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, lt, lp);
 		dom_trans = lt;
 		dom_past = lp;
 	}
@@ -508,6 +647,9 @@ void fragment() {
 			if (k >= dom_maps) {
 				break;
 			}
+			if (k == dom_snow_slot) {
+				continue; // the snow's map: no light
+			}
 			if (dom_slot[k * 4 + 1].w > 0.5) {
 				local_past = max(local_past, dom_past[k]);
 			} else if (dom_past[k] >= 0.0) {
@@ -519,25 +661,40 @@ void fragment() {
 		}
 	}
 	// The two crossed strips hold the same hair seen two ways: each counts by how squarely it
-	// faces the view, the two weights summing to one, as optical depth (1 - (1 - c)^w), so where
-	// both show the same coverage together they let through what one clump does.
+	// faces the view (f^2 / (f^2 + o^2), the two summing to one), as optical depth. A strip seen
+	// at an angle packs its strands into less of the screen: per pixel their depth is the
+	// strands' projected area (width x length x sin a, a the view's angle to the strands) over
+	// the strip's (its width x length x |f|), so it grows by sin a / |f|. Weighted, that is
+	// |f| / sqrt(f^2 + o^2) of the atlas's depth. Left out, the hair seen obliquely lost up to
+	// a third of its opacity.
 	float f = dot(NORMAL, VIEW);
 	float o = dot(TANGENT, VIEW);
-	float facing = f * f / max(f * f + o * o, 1e-6);
-	// Fanned out, the same strands spread over a wider card: optical depth over the fan.
-	float coverage = 1.0 - pow(max(1.0 - texel.r, 1e-4), facing / max(card_fan, 0.5));
+	float facing = abs(f) / max(sqrt(f * f + o * o), 1e-3);
+	// Fanned out (or widened to a pixel), the same strands spread over a wider card: optical
+	// depth over the fan.
+	// The atlas holds the strands' optical depth (16 bits, R high and B low, over 8).
+	float depth = (texel.r * 65280.0 + texel.b * 255.0) * (8.0 / 65535.0);
+	float coverage = 1.0 - exp(-depth * facing / max(card_fan, 0.5));
 	// Lit as the strands are: a fibre has no surface normal, so the ambient and reflected light
-	// take the normal facing the viewer about the strands' direction (the strands' ribbon normal;
-	// Unreal's hair does the same for its cards, Karis 2016). The card's own normal caught the sky
-	// on cards tipped up and read lighter than the strands.
-	vec3 hair_n = VIEW - light_tangent * dot(VIEW, light_tangent);
-	NORMAL = dot(hair_n, hair_n) > 1e-8 ? normalize(hair_n) : VIEW;
+	// take the strands' own ribbon frame, rebuilt here about the card's strand direction: across
+	// = T x eye (eye from the camera to the point, view space), normal = across x T, which faces
+	// away from the viewer. Facing the viewer instead, the cards took a full reflection of the sky
+	// that the strands' frame leaves out (its horizon term), and read about a fifth lighter.
+	vec3 eye = normalize(VERTEX);
+	vec3 across = cross(light_tangent, eye);
+	across = dot(across, across) > 1e-8 ? normalize(across) : card_across;
+	NORMAL = normalize(cross(across, light_tangent));
 	BINORMAL = light_tangent;
-	TANGENT = normalize(cross(light_tangent, NORMAL));
+	TANGENT = across;
 #ifdef HAIR_SCATTERING
 	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
-		// As the strands: what the fibres pass straight on (TT) is not blocked.
-		coverage *= 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		// As the strands: what the fibres pass straight on (TT) is not blocked. The strands each
+		// block that share of their own coverage, so behind n of them the light is
+		// exp(-share * total coverage); a card's coverage is already the clump's combined
+		// 1 - exp(-total), so the share applies to its optical depth, not to it (as a factor it
+		// let much more light through a dense clump than its strands do).
+		float tt_block = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		coverage = 1.0 - pow(max(1.0 - coverage, 1e-4), tt_block);
 	}
 #endif
 	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
@@ -553,12 +710,14 @@ void fragment() {
 
 Ref<Shader> PhysXHair3D::render_shaders[2];
 Ref<Shader> PhysXHair3D::card_shaders[2];
+Ref<Shader> PhysXHair3D::snow_shader;
 
 void PhysXHair3D::free_shared() {
 	render_shaders[0].unref();
 	render_shaders[1].unref();
 	card_shaders[0].unref();
 	card_shaders[1].unref();
+	snow_shader.unref();
 	HairCardBake::clear_cache();
 	HairStrandSolverGPU::free_shared();
 }
@@ -626,17 +785,43 @@ void PhysXHair3D::_update_wetness(double p_delta) {
 		}
 	}
 	if (weather_wetting && dt > 0.0f) {
-		wetness += dt * rain / (3600.0f * MAX(water_capacity, 0.01f));
-		if (rain <= 0.0f) {
+		// The precipitation splits into rain and snow by the air's temperature and humidity
+		// (Jennings et al. 2018, as the weather map's own surfaces): only the rain wets at once.
+		float air = 0.0f;
+		float snowfall = 0.0f;
+		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
+			air = weather->get_air_temperature();
+			const float liquid = WeatherMap3D::rain_fraction(air, weather->get_air_humidity());
+			snowfall = rain * (1.0f - liquid);
+			rain *= liquid;
+		}
+		// Snow caught by the hair (Hedstrom and Pomeroy 1998's interception: the catch slows as the
+		// load nears what the hair holds) melts by a degree-day rate above freezing (0.2 mm an hour a
+		// degree, Hock 2003's range for snow) plus a little from the head's warmth; the melt wets it.
+		const float cap = MAX(snow_capacity, 0.01f);
+		float load = snow * cap;
+		load += dt / 3600.0f * snowfall * (1.0f - load / cap);
+		const float melt = MIN(load, dt / 3600.0f * (0.2f * MAX(air, 0.0f) + 0.05f));
+		load -= melt;
+		snow = CLAMP(load / cap, 0.0f, 1.0f);
+		wetness += dt * rain / (3600.0f * MAX(water_capacity, 0.01f)) + melt / MAX(water_capacity, 0.01f);
+		if (rain <= 0.0f && melt <= 0.0f) {
 			wetness -= dt / MAX(drying_time, 1.0f);
 		}
 		wetness = CLAMP(wetness, 0.0f, 1.0f);
 	}
 #endif
+	if (Math::abs(snow - snow_look) >= 0.01f || (snow != snow_look && (snow == 0.0f || snow == 1.0f))) {
+		snow_look = snow;
+		if (snow_material.is_valid()) {
+			snow_material->set_shader_parameter("snow_cover", snow_look);
+		}
+	}
 	if (Math::abs(wetness - wet_look) >= 0.01f || (wetness != wet_look && (wetness == 0.0f || wetness == 1.0f))) {
 		wet_look = wetness;
 		_set_look(copy_material);
 		_set_look(card_material);
+		_set_look(snow_material);
 		if (card_material.is_valid()) {
 			card_material->set_shader_parameter("card_clump", wet_look * wet_clumping);
 		}
@@ -881,6 +1066,8 @@ void PhysXHair3D::_make_material() {
 			card_bake->texture = ImageTexture::create_from_image(card_bake->atlas);
 		}
 		card_material->set_shader_parameter("card_atlas", card_bake->texture);
+		card_material->set_shader_parameter("card_data", card_data);
+		card_material->set_shader_parameter("card_tile", Vector2(card_bake->tiles[2], card_bake->tiles[3]));
 		card_material->set_shader_parameter("hair_positions", pos_texture);
 		card_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
 		card_material->set_shader_parameter("slot_points", draw_slot_points);
@@ -890,8 +1077,32 @@ void PhysXHair3D::_make_material() {
 		card_material->set_shader_parameter("dom_layers", HairStrandSolver::deep_shadow_layers());
 		card_material->set_shader_parameter("dom_maps", 0);
 		card_material->set_shader_parameter("card_clump", wet_look * wet_clumping);
+		card_material->set_shader_parameter("card_scalp", card_scalp);
 		_set_look(card_material);
 		card_instance->set_material_override(card_material);
+	}
+	if (snow_instance) {
+		if (snow_shader.is_null()) {
+			// The strand shader's uniforms, varyings and deep opacity lookup, with the snow's own
+			// vertex() and fragment() (Godot's standard lighting: snow is a diffuse grain).
+			const String strand = HAIR_RENDER_SHADER;
+			snow_shader.instantiate();
+			snow_shader->set_code(String(HAIR_SNOW_HEAD) + strand.substr(0, strand.find("void vertex() {")) + HAIR_SNOW_FUNCS);
+		}
+		if (snow_material.is_null()) {
+			snow_material.instantiate();
+		}
+		snow_material->set_shader(snow_shader);
+		snow_material->set_shader_parameter("hair_positions", pos_texture);
+		snow_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
+		snow_material->set_shader_parameter("texture_width", solver ? solver->get_texture_width() : 1);
+		snow_material->set_shader_parameter("hair_deep_shadow", deep_shadow_texture);
+		snow_material->set_shader_parameter("dom_cells", HairStrandSolverGPU::DOM_CELLS);
+		snow_material->set_shader_parameter("dom_layers", HairStrandSolver::deep_shadow_layers());
+		snow_material->set_shader_parameter("dom_maps", 0);
+		snow_material->set_shader_parameter("snow_cover", snow_look);
+		_set_look(snow_material);
+		snow_instance->set_material_override(snow_material);
 	}
 }
 
@@ -930,6 +1141,17 @@ void PhysXHair3D::_clear() {
 		card_material.unref();
 	}
 	card_bake.unref();
+	if (snow_instance) {
+		snow_instance->queue_free();
+		snow_instance = nullptr;
+	}
+	if (snow_material.is_valid()) {
+		snow_material->set_shader_parameter("hair_positions", Variant());
+		snow_material->set_shader_parameter("hair_previous_positions", Variant());
+		snow_material->set_shader_parameter("hair_deep_shadow", Variant());
+		snow_material.unref();
+	}
+	snow_slot_set = -2;
 	card_first = 0;
 	card_mode = false;
 	if (copy_material.is_valid()) {
@@ -1023,6 +1245,7 @@ void PhysXHair3D::_build() {
 		card_bake = HairCardBake::get_cached(key, pts, counts, card_count, samples, root_width, tip_width);
 	}
 	if (card_bake.is_valid() && card_bake->card_count > 0) {
+		card_scalp = _fit_scalp(pts, counts);
 		card_first = groom_strands;
 		const int cs = card_bake->samples;
 		slot_points = MAX(slot_points, cs); // each card strand's slot holds all its points
@@ -1071,6 +1294,17 @@ void PhysXHair3D::_build() {
 				r[(start + k) * 4 + 1] = p.y;
 				r[(start + k) * 4 + 2] = p.z;
 				r[(start + k) * 4 + 3] = k > 0 ? p.distance_to(pts[start + k - 1]) : 0.0f;
+			}
+			if (card_first > 0 && i >= card_first && n > 0) {
+				// A card's strand: the first point's w (unused) holds half the clump's thickness,
+				// the other strip's half width, which the solver keeps off the body.
+				const HairCardBake &b = **card_bake;
+				const int c = i - card_first;
+				float thick = 0.0f;
+				for (int k = 0; k < b.samples; k++) {
+					thick += b.half_width[1][c * b.samples + k];
+				}
+				r[start * 4 + 3] = thick / float(MAX(b.samples, 1));
 			}
 			start += n;
 		}
@@ -1205,9 +1439,140 @@ void PhysXHair3D::_build() {
 	if (card_first > 0) {
 		_build_cards(bounds.grow(longest + 0.05f));
 	}
+	_build_snow(bounds.grow(longest + 0.05f), pts, counts, slot_points, drawn_points);
 	_make_material();
 	built = true;
 	_step(0.0);
+}
+
+// The scalp as a sphere through the strands' roots (an algebraic least-squares fit: |p|^2 = 2 c.p + k,
+// R^2 = k + |c|^2), for the cards' lift over it. w 0 when the roots don't fit a sphere.
+Vector4 PhysXHair3D::_fit_scalp(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) {
+	double m[4][5] = {};
+	int n = 0;
+	int start = 0;
+	AABB box;
+	for (int i = 0; i < p_counts.size(); i++) {
+		if (p_counts[i] > 0 && start < p_points.size()) {
+			const Vector3 p = p_points[start];
+			const double row[4] = { 2.0 * p.x, 2.0 * p.y, 2.0 * p.z, 1.0 };
+			const double b = p.length_squared();
+			for (int r = 0; r < 4; r++) {
+				for (int c = 0; c < 4; c++) {
+					m[r][c] += row[r] * row[c];
+				}
+				m[r][4] += row[r] * b;
+			}
+			box = n == 0 ? AABB(p, Vector3()) : box.expand(p);
+			n++;
+		}
+		start += MAX(p_counts[i], 0);
+	}
+	if (n < 8) {
+		return Vector4();
+	}
+	// Gaussian elimination with partial pivoting.
+	for (int c = 0; c < 4; c++) {
+		int pivot = c;
+		for (int r = c + 1; r < 4; r++) {
+			if (Math::abs(m[r][c]) > Math::abs(m[pivot][c])) {
+				pivot = r;
+			}
+		}
+		if (Math::abs(m[pivot][c]) < 1e-12) {
+			return Vector4();
+		}
+		for (int k = 0; k < 5; k++) {
+			SWAP(m[c][k], m[pivot][k]);
+		}
+		for (int r = 0; r < 4; r++) {
+			if (r != c) {
+				const double f = m[r][c] / m[c][c];
+				for (int k = c; k < 5; k++) {
+					m[r][k] -= f * m[c][k];
+				}
+			}
+		}
+	}
+	const Vector3 centre(m[0][4] / m[0][0], m[1][4] / m[1][1], m[2][4] / m[2][2]);
+	const double r2 = m[3][4] / m[3][3] + (double)centre.length_squared();
+	const float size = box.get_longest_axis_size();
+	if (!(r2 > 0.0) || !Math::is_finite((float)r2)) {
+		return Vector4();
+	}
+	const float radius = (float)Math::sqrt(r2);
+	// A patch of roots too flat for a sphere (a beard, a single lock) fits a huge one: no lift.
+	if (radius > 4.0f * MAX(size, 1e-4f)) {
+		return Vector4();
+	}
+	return Vector4(centre.x, centre.y, centre.z, radius);
+}
+
+// The snow mesh (stage 2r): per strand SNOW_CLUMPS blobs of six vertices (an octahedron), placed in
+// vertex() on the strand in their slot; hidden while no snow lies on the hair.
+static constexpr int SNOW_CLUMPS = 6;
+
+void PhysXHair3D::_build_snow(const AABB &p_bounds, const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_slot_points, int p_drawn_points) {
+	const int strands = p_counts.size();
+	if (strands <= 0 || p_points.is_empty() || p_drawn_points < 2) {
+		return;
+	}
+	static const Vector3 corners[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1) };
+	static const int faces[8][3] = { { 0, 2, 4 }, { 2, 1, 4 }, { 1, 3, 4 }, { 3, 0, 4 }, { 2, 0, 5 }, { 1, 2, 5 }, { 3, 1, 5 }, { 0, 3, 5 } };
+	const int blobs = strands * SNOW_CLUMPS;
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedFloat32Array custom0;
+	PackedInt32Array indices;
+	verts.resize(blobs * 6);
+	normals.resize(blobs * 6);
+	custom0.resize(blobs * 6 * 4);
+	indices.resize(blobs * 24);
+	Vector3 *v = verts.ptrw();
+	Vector3 *nr = normals.ptrw();
+	float *c0 = custom0.ptrw();
+	int *ix = indices.ptrw();
+	// Rest positions: millimetre blobs spread along the groomed strands, so the path tracer's
+	// acceleration structure is built around where the clumps can be (a refit from blobs piled
+	// at the origin left its boxes overlapping, and every ray crossed them all).
+	int start = 0;
+	for (int b = 0; b < blobs; b++) {
+		const int slot = b / SNOW_CLUMPS;
+		const int n = MAX(p_counts[slot], 1);
+		if (b > 0 && b % SNOW_CLUMPS == 0) {
+			start += MAX(p_counts[slot - 1], 0);
+		}
+		const float f = 0.03f + 0.97f * float((b * 2654435761u) % 1024u) / 1023.0f;
+		const Vector3 at = p_points[MIN(start + int(f * float(n - 1)), p_points.size() - 1)];
+		for (int c = 0; c < 6; c++) {
+			const int vi = b * 6 + c;
+			v[vi] = at + corners[c] * 0.001f;
+			nr[vi] = corners[c];
+			c0[vi * 4 + 0] = float(slot * p_slot_points);
+			c0[vi * 4 + 1] = float(b % SNOW_CLUMPS);
+			c0[vi * 4 + 2] = float(p_drawn_points);
+			c0[vi * 4 + 3] = 0.0f;
+		}
+		for (int f = 0; f < 8; f++) {
+			for (int k = 0; k < 3; k++) {
+				ix[b * 24 + f * 3 + k] = b * 6 + faces[f][k];
+			}
+		}
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_CUSTOM0] = custom0;
+	arrays[Mesh::ARRAY_INDEX] = indices;
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), (uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT);
+	snow_instance = memnew(MeshInstance3D);
+	add_child(snow_instance, false, INTERNAL_MODE_BACK);
+	snow_instance->set_mesh(mesh);
+	snow_instance->set_custom_aabb(p_bounds);
+	snow_instance->set_visible(false);
 }
 
 // The card mesh: per card point two crossed strips (four vertices), placed in vertex() from the
@@ -1216,54 +1581,55 @@ void PhysXHair3D::_build_cards(const AABB &p_bounds) {
 	const HairCardBake &b = **card_bake;
 	const int cs = b.samples;
 	const int nc = b.card_count;
-	const Vector2 atlas_size(b.atlas->get_width(), b.atlas->get_height());
-	PackedVector3Array verts;
-	PackedVector3Array normals;
-	PackedVector2Array uvs;
-	PackedFloat32Array custom0, custom1, custom2;
-	PackedInt32Array indices;
-	verts.resize(nc * cs * 4);
-	normals.resize(verts.size());
-	uvs.resize(verts.size());
-	custom0.resize(verts.size() * 4);
-	custom1.resize(verts.size() * 4);
-	custom2.resize(verts.size() * 4);
-	Vector3 *v = verts.ptrw();
-	Vector3 *nr = normals.ptrw();
-	Vector2 *uv = uvs.ptrw();
-	float *c0 = custom0.ptrw();
-	float *c1 = custom1.ptrw();
-	float *c2 = custom2.ptrw();
+	// What each card holds, read by the card drawn in a slot (the slots follow the draw order, far
+	// to near): per point four texels, (strip 0's axis, strip 1's half width), (strip 1's axis,
+	// strip 0's half width), (the card's direction at rest, 0), (both strips' tiles: x, y in
+	// texels).
+	Ref<Image> data = Image::create_empty(cs * 4, nc, false, Image::FORMAT_RGBAF);
 	for (int c = 0; c < nc; c++) {
 		for (int k = 0; k < cs; k++) {
 			const int i = c * cs + k;
 			const Vector3 t = (b.points[c * cs + MIN(k + 1, cs - 1)] - b.points[c * cs + MAX(k - 1, 0)]).normalized();
 			for (int strip = 0; strip < 2; strip++) {
-				const int tile = c * 2 + strip;
-				const float tx = b.tiles[tile * 4 + 0];
-				const float ty = b.tiles[tile * 4 + 1];
-				const float tw = b.tiles[tile * 4 + 2];
-				const float th = b.tiles[tile * 4 + 3];
-				const float along = float(k) / float(cs - 1);
+				const Vector3 ax = b.axis[strip][i];
+				data->set_pixel(k * 4 + strip, c, Color(ax.x, ax.y, ax.z, b.half_width[1 - strip][i]));
+			}
+			data->set_pixel(k * 4 + 2, c, Color(t.x, t.y, t.z, 0.0f));
+			data->set_pixel(k * 4 + 3, c, Color(b.tiles[c * 8 + 0], b.tiles[c * 8 + 1], b.tiles[c * 8 + 4], b.tiles[c * 8 + 5]));
+		}
+	}
+	card_data = ImageTexture::create_from_image(data);
+	// The mesh: per slot point two crossed strips (four vertices), placed in vertex() from the
+	// simulated points: CUSTOM0 = (texel, previous texel, next texel, side -1 or 1), CUSTOM1 =
+	// (point, strip, share along, 0).
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedFloat32Array custom0, custom1;
+	PackedInt32Array indices;
+	verts.resize(nc * cs * 4);
+	normals.resize(verts.size());
+	custom0.resize(verts.size() * 4);
+	custom1.resize(verts.size() * 4);
+	Vector3 *v = verts.ptrw();
+	Vector3 *nr = normals.ptrw();
+	float *c0 = custom0.ptrw();
+	float *c1 = custom1.ptrw();
+	for (int c = 0; c < nc; c++) {
+		for (int k = 0; k < cs; k++) {
+			const int i = c * cs + k;
+			for (int strip = 0; strip < 2; strip++) {
 				for (int side = 0; side < 2; side++) {
 					const int vi = i * 4 + strip * 2 + side;
 					v[vi] = b.points[i];
 					nr[vi] = Vector3(0, 0, 1);
-					// Texel centres at the tile's edges, so neighbouring tiles do not bleed in.
-					uv[vi] = Vector2((tx + 0.5f + (tw - 1.0f) * float(side)) / atlas_size.x, (ty + 0.5f + (th - 1.0f) * along) / atlas_size.y);
 					c0[vi * 4 + 0] = float(c * draw_slot_points + k);
 					c0[vi * 4 + 1] = float(c * draw_slot_points + MAX(k - 1, 0));
 					c0[vi * 4 + 2] = float(c * draw_slot_points + MIN(k + 1, cs - 1));
 					c0[vi * 4 + 3] = side == 0 ? -1.0f : 1.0f;
-					const Vector3 ax = b.axis[strip][i];
-					c1[vi * 4 + 0] = ax.x;
-					c1[vi * 4 + 1] = ax.y;
-					c1[vi * 4 + 2] = ax.z;
-					c1[vi * 4 + 3] = float(strip);
-					c2[vi * 4 + 0] = t.x;
-					c2[vi * 4 + 1] = t.y;
-					c2[vi * 4 + 2] = t.z;
-					c2[vi * 4 + 3] = b.half_width[strip][i];
+					c1[vi * 4 + 0] = float(k);
+					c1[vi * 4 + 1] = float(strip);
+					c1[vi * 4 + 2] = float(k) / float(cs - 1);
+					c1[vi * 4 + 3] = 0.0f;
 				}
 			}
 		}
@@ -1284,14 +1650,11 @@ void PhysXHair3D::_build_cards(const AABB &p_bounds) {
 	arrays.resize(Mesh::ARRAY_MAX);
 	arrays[Mesh::ARRAY_VERTEX] = verts;
 	arrays[Mesh::ARRAY_NORMAL] = normals;
-	arrays[Mesh::ARRAY_TEX_UV] = uvs;
 	arrays[Mesh::ARRAY_CUSTOM0] = custom0;
 	arrays[Mesh::ARRAY_CUSTOM1] = custom1;
-	arrays[Mesh::ARRAY_CUSTOM2] = custom2;
 	arrays[Mesh::ARRAY_INDEX] = indices;
 	const uint64_t format = ((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT) |
-			((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM1_SHIFT) |
-			((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM2_SHIFT);
+			((uint64_t)Mesh::ARRAY_CUSTOM_RGBA_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM1_SHIFT);
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
 	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), format);
@@ -1403,6 +1766,7 @@ void PhysXHair3D::_step(double p_delta) {
 	// Deep opacity maps (hair_shading's light() applies them): one toward the directional light,
 	// and one from each of the omni and spot lights that light the hair most.
 	int maps = 0;
+	int snow_slot = -1;
 	float slots[HairStrandSolverGPU::DOM_SLOTS * 16] = {};
 	if (deep_shadows && hair_shading && render_instance && (render_material.is_null() || render_material->get_shader().is_null())) {
 		const AABB box = render_instance->get_global_transform().xform(render_instance->get_aabb());
@@ -1423,6 +1787,18 @@ void PhysXHair3D::_step(double p_delta) {
 				dl.light = light->get_global_transform().basis.get_column(2).normalized();
 				if (HairStrandSolver::deep_shadow_slot(dl, slots + maps * 16)) {
 					s.dom_lights.push_back(dl);
+					maps++;
+				}
+			}
+			// The snow's map: seen from where the snow comes from, the fall (1 m/s, Locatelli and
+			// Hobbs 1974's aggregates) against the wind, so wind-driven snow lands on the windward side.
+			if (snow_look > 0.0f && maps < HairStrandSolverGPU::DOM_SLOTS) {
+				HairStrandSolver::Settings::DeepShadowLight sl = hair;
+				const Vector3 from = Vector3(0.0f, 1.0f, 0.0f) - s.wind;
+				sl.light = from.length_squared() > 1e-8f ? from.normalized() : Vector3(0.0f, 1.0f, 0.0f);
+				if (HairStrandSolver::deep_shadow_slot(sl, slots + maps * 16)) {
+					s.dom_lights.push_back(sl);
+					snow_slot = maps;
 					maps++;
 				}
 			}
@@ -1453,6 +1829,19 @@ void PhysXHair3D::_step(double p_delta) {
 			if (card_material.is_valid()) {
 				card_material->set_shader_parameter("dom_slot", params);
 			}
+			if (snow_material.is_valid() && snow_slot >= 0) {
+				snow_material->set_shader_parameter("dom_slot", params);
+			}
+		}
+		if (snow_slot != snow_slot_set) {
+			snow_slot_set = snow_slot;
+			copy_material->set_shader_parameter("dom_snow_slot", snow_slot);
+			if (card_material.is_valid()) {
+				card_material->set_shader_parameter("dom_snow_slot", snow_slot);
+			}
+			if (snow_material.is_valid()) {
+				snow_material->set_shader_parameter("dom_snow_slot", snow_slot);
+			}
 		}
 		if (maps != deep_shadow_on) {
 			deep_shadow_on = maps;
@@ -1460,6 +1849,16 @@ void PhysXHair3D::_step(double p_delta) {
 			if (card_material.is_valid()) {
 				card_material->set_shader_parameter("dom_maps", maps);
 			}
+			if (snow_material.is_valid()) {
+				snow_material->set_shader_parameter("dom_maps", maps);
+			}
+		}
+	}
+	if (snow_instance) {
+		// The snow's clumps while snow lies on the strands (the cards hold none yet).
+		const bool show = snow_slot >= 0 && !card_mode && render_instance && render_instance->is_visible();
+		if (snow_instance->is_visible() != show) {
+			snow_instance->set_visible(show);
 		}
 	}
 	solver->step(xform, p_delta, substeps, s);
@@ -2222,6 +2621,22 @@ float PhysXHair3D::get_water_capacity() const {
 	return water_capacity;
 }
 
+void PhysXHair3D::set_snow(float p_snow) {
+	snow = CLAMP(p_snow, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_snow() const {
+	return snow;
+}
+
+void PhysXHair3D::set_snow_capacity(float p_mm) {
+	snow_capacity = MAX(p_mm, 0.01f);
+}
+
+float PhysXHair3D::get_snow_capacity() const {
+	return snow_capacity;
+}
+
 void PhysXHair3D::set_drying_time(float p_seconds) {
 	drying_time = MAX(p_seconds, 1.0f);
 }
@@ -2390,6 +2805,10 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_water_capacity"), &PhysXHair3D::get_water_capacity);
 	ClassDB::bind_method(D_METHOD("set_drying_time", "seconds"), &PhysXHair3D::set_drying_time);
 	ClassDB::bind_method(D_METHOD("get_drying_time"), &PhysXHair3D::get_drying_time);
+	ClassDB::bind_method(D_METHOD("set_snow", "snow"), &PhysXHair3D::set_snow);
+	ClassDB::bind_method(D_METHOD("get_snow"), &PhysXHair3D::get_snow);
+	ClassDB::bind_method(D_METHOD("set_snow_capacity", "mm"), &PhysXHair3D::set_snow_capacity);
+	ClassDB::bind_method(D_METHOD("get_snow_capacity"), &PhysXHair3D::get_snow_capacity);
 	ClassDB::bind_method(D_METHOD("set_wet_clumping", "clumping"), &PhysXHair3D::set_wet_clumping);
 	ClassDB::bind_method(D_METHOD("get_wet_clumping"), &PhysXHair3D::get_wet_clumping);
 	ClassDB::bind_method(D_METHOD("set_cards_enabled", "enabled"), &PhysXHair3D::set_cards_enabled);
@@ -2464,5 +2883,7 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wetting"), "set_weather_wetting", "get_weather_wetting");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_capacity", PROPERTY_HINT_RANGE, "0.1,5,0.1,or_greater,suffix:mm"), "set_water_capacity", "get_water_capacity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drying_time", PROPERTY_HINT_RANGE, "60,14400,1,or_greater,suffix:s"), "set_drying_time", "get_drying_time");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_snow", "get_snow");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "snow_capacity", PROPERTY_HINT_RANGE, "0.1,10,0.1,or_greater,suffix:mm"), "set_snow_capacity", "get_snow_capacity");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_clumping", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wet_clumping", "get_wet_clumping");
 }
