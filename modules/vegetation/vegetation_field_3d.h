@@ -80,7 +80,7 @@ class VegetationField3D : public Node3D {
 		Vector2 across; // Unit direction from the axis to the point, across the ground.
 	};
 	static constexpr float DEADWOOD_CELL = 4.0f;
-	static constexpr float DEADWOOD_MOSS_LIFT = 0.015f; // Plants on a log stand on its moss, this far proud of the bark.
+	static constexpr float DEADWOOD_MOSS_LIFT = 0.022f; // Plants on a log stand on its moss (the trees' shell, 1.1 to 2.5 cm proud of the bark).
 	LocalVector<Deadwood> deadwood;
 	HashMap<Vector2i, LocalVector<int>> deadwood_grid;
 	float deadwood_max_radius = 0.0f;

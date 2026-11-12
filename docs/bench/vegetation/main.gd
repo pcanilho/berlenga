@@ -676,7 +676,7 @@ func _deadwood_checks() -> void:
 	var on_bad := 0
 	for p in ground.get_placements(1):
 		var h: Dictionary = wood.get_deadwood_at(p)
-		if not h.is_empty() and p.y - h["top"] > 0.005 and p.y - h["top"] < 0.035 and p.y > dm.get_height_at(p) + 0.05: # Above the ground (a level log on a slope sinks at one end).
+		if not h.is_empty() and p.y - h["top"] > 0.01 and p.y - h["top"] < 0.045 and p.y > dm.get_height_at(p) + 0.05: # Above the ground (a level log on a slope sinks at one end).
 			on_ok += 1
 		else:
 			on_bad += 1
@@ -691,7 +691,7 @@ func _deadwood_checks() -> void:
 	print("VEG_DEADWOOD logs=%d cover_under_logs=%d on=%d/%d beside=%d/%d" % [nlogs, under, on_ok, on_bad, beside_ok, beside_bad])
 	_check("deadwood: logs placed with their axes", nlogs > 10, nlogs)
 	_check("deadwood: ground cover keeps off the logs", under == 0 and ground.get_placements(0).size() > 1000, under)
-	# On the log's moss, 1.5 cm proud of the bark (VegetationField3D.DEADWOOD_MOSS_LIFT, more where it slopes).
+	# On the log's moss, 2.2 cm proud of the bark (VegetationField3D.DEADWOOD_MOSS_LIFT, more where it slopes).
 	_check("deadwood: moss only on the logs' upper surface", on_ok > 100 and on_bad == 0, [on_ok, on_bad])
 	_check("deadwood: ferns only along the logs", beside_ok > 20 and beside_bad == 0, [beside_ok, beside_bad])
 	ground.queue_free()
