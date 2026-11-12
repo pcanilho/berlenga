@@ -333,6 +333,26 @@ private:
 	AABB envelope; // Clipping volume for hedges and topiary (size 0: off).
 	float collider_radius = 0.08f; // Wood thicker than this gets collision capsules.
 	int broken_tip = -1; // Stem node whose end is a broken top.
+	// Old-tree features (docs/ideas/trees.md 5e): tree-related microhabitats of veteran trees.
+	float veteran = 0.0f;
+	enum VeteranKind : uint8_t {
+		VET_BASAL_HOLLOW,
+		VET_ROT_HOLE,
+		VET_WOODPECKER,
+		VET_BURL,
+		VET_EPICORMIC,
+	};
+	struct VeteranFeature {
+		VeteranKind kind;
+		float h; // Height above the stem base (m).
+		float azimuth; // Radians around the stem.
+		float half_h; // Half height (m).
+		float half_w; // Half width (m of girth).
+		float amount; // Depth or bulge, as a share of the local radius; shoots for epicormics.
+	};
+	LocalVector<VeteranFeature> veteran_features;
+	int veteran_stem = -1;
+	void _apply_veteran();
 	bool mask_invert = false;
 	Color bark_color = Color(0.3f, 0.26f, 0.21f);
 	Color leaf_color = Color(0.16f, 0.3f, 0.08f);
@@ -572,6 +592,13 @@ public:
 		mesh_cache.clear();
 	}
 	float get_leaf_flutter() const { return leaf_flutter; }
+	void set_veteran(float p_amount) {
+		veteran = CLAMP(p_amount, 0.0f, 1.0f);
+		mesh_cache.clear();
+	}
+	float get_veteran() const { return veteran; }
+	int get_veteran_feature_count() const { return veteran_features.size(); }
+	Array get_veteran_features() const;
 
 	Ref<ArrayMesh> generate();
 

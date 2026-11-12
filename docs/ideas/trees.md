@@ -476,6 +476,34 @@ layer, so we build geometry:
 - Cost: oak open-grown 56k moss triangles on 4.2M of bark; stand-grown oak 19k on 0.8M; a
   class 3 oak log 190k on 0.18M.
 
+### 5e. Old trees (as built, 11 Nov; Paulo picked)
+
+Veteran trees carry tree-related microhabitats (TreMs). Larrieu et al. (*Tree related
+microhabitats in temperate and Mediterranean European forests: a hierarchical typology for
+inventory standardization*, Ecological Indicators 84, 2018) catalogue 47 types in 7 forms:
+cavities, injuries and exposed wood, crown deadwood, excrescences, fruiting bodies, epiphytes
+and exudates. Their number rises steeply with diameter, and trees over about 70 cm carry
+several (Vuidot et al. 2011; Larrieu and Cabanettes 2012). We build the ones that read at game
+distance; epiphytes (moss, ivy) and crown deadwood (dead limbs) already exist:
+- **Crown breakage** (injury): for broadleaves, the stem snapped at 60-85% of the height, with
+  the existing splintered-top geometry. Limbs below the break keep growing.
+- **Basal hollow** (cavity, heart rot reaching the root collar): an opening 0.9-2.2 stem radii
+  tall, pushed 50-70% of the radius into the stem, rough-floored and dark, with a callus lip.
+- **Rot holes** (cavity where a limb broke off): 20-50 cm, on the clear bole.
+- **Woodpecker holes**: round, 5 cm (great spotted) or oval, 12 cm (black woodpecker, a quarter
+  of them), 2.5 m up to the crown. They are their own small disc with a pale chiselled rim, since
+  the stem's vertices are too coarse for them.
+- **Burls** (excrescences): lumpy swellings of 0.3-0.7 stem radii, 30-55% of the radius proud
+  (at 18-35% they did not read at 4 m).
+- **Epicormic shoots**: clusters of 3-8 thin water shoots from dormant buds on the stem, many on
+  oak and lime and few elsewhere, leafy by season.
+Hollows, burls and shoots sit on the clear bole: below the crown base and below the first fork
+with a limb over 45% of the stem's radius, since in the first renders features higher up hid among
+the limbs. `veteran` (0-1, default 0) sets how many; `get_veteran_features()` lists them (kind,
+height, azimuth, size) for birds, bats and gameplay. Stems under 16 cm diameter get none. Features are cut
+into the main stem's plain, relief and moss tubes alike, working on the undisplaced tube so the
+three stay together, and normals are rebuilt there. The tree's growth and skeleton do not change.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

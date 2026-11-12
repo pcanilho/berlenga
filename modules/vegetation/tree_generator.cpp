@@ -2855,6 +2855,134 @@ void TreeGenerator::_apply_decay() {
 	bark_color = bark_color.lerp(WEATHERED[decay_class], decay_class >= 3 ? 0.85f : 0.55f);
 }
 
+// Old trees (docs/ideas/trees.md 5e): the tree-related microhabitats that come with age and girth
+// (Larrieu et al., Ecological Indicators 84, 2018, the TreM typology; Vuidot et al. 2011 and
+// Larrieu and Cabanettes 2012: their number rises steeply with diameter). A crown broken by
+// storm or snow, a basal hollow where heart rot reached the root collar, rot holes and woodpecker
+// holes higher up, burls, and epicormic shoots on the stem (oak and lime above all). `veteran`
+// 0-1 sets how many; the stem keeps its shape and growth, the features are cut into its mesh.
+void TreeGenerator::_apply_veteran() {
+	RandomPCG vr;
+	vr.seed(uint64_t(seed) * 2654435761u + 0x7e7e7eu);
+	const float base_y = nodes[0].start.y;
+	// The main stem: the thickest axis from the root.
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		if (n.parent == 0 && !n.removed && (veteran_stem < 0 || n.radius > nodes[veteran_stem].radius)) {
+			veteran_stem = i;
+		}
+	}
+	if (veteran_stem < 0 || nodes[veteran_stem].radius < 0.08f) {
+		veteran_stem = -1;
+		return; // Too thin to carry any (TreMs are rare under 40 cm diameter).
+	}
+	const float r_stem = nodes[veteran_stem].radius;
+	const bool conifer = params[PARAM_NEEDLES] > 0.5f;
+	// Crown breakage: the top snapped at 55-85% of the height, the stem's leader gone above it.
+	if (vr.randf() < 0.45f * veteran && !conifer) {
+		const float cut_y = height * Math::lerp(0.6f, 0.85f, vr.randf());
+		for (int i = veteran_stem; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
+			Node &n = nodes[i];
+			if (n.start.y - base_y >= cut_y) {
+				n.removed = true;
+			} else if (n.end().y - base_y > cut_y && n.dir.y > 0.05f) {
+				n.length = MAX((cut_y - (n.start.y - base_y)) / n.dir.y, 0.02f);
+				const int next = n.main;
+				n.main = -1;
+				broken_tip = i;
+				if (next >= 0) {
+					nodes[next].removed = true;
+				}
+				break;
+			}
+		}
+		for (int i = 1; i < int(nodes.size()); i++) {
+			if (!nodes[i].removed && nodes[i].parent > 0 && nodes[nodes[i].parent].removed) {
+				nodes[i].removed = true;
+			}
+		}
+		height = 0.0f;
+		for (const Node &n : nodes) {
+			if (!n.removed) {
+				height = MAX(height, n.end().y - base_y);
+			}
+		}
+	}
+	// Features sit on the clear bole, below the crown base and the first big fork: above that the
+	// stem is a tangle of limbs and a hollow or burl would hide in it (or open into a limb).
+	float bole = crown_base;
+	{
+		LocalVector<bool> on_stem;
+		on_stem.resize(nodes.size());
+		for (uint32_t i = 0; i < nodes.size(); i++) {
+			on_stem[i] = false;
+		}
+		for (int i = veteran_stem; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
+			on_stem[i] = true;
+		}
+		for (uint32_t i = 1; i < nodes.size(); i++) {
+			const Node &n = nodes[i];
+			if (!n.removed && n.parent >= 0 && on_stem[n.parent] && !on_stem[i] && n.radius > 0.45f * r_stem) {
+				bole = MIN(bole, n.start.y - base_y);
+			}
+		}
+	}
+	const float crown = MAX(bole - 0.3f, 1.5f);
+	auto add = [&](VeteranKind p_kind, float p_h, float p_half_h, float p_half_w, float p_amount) {
+		veteran_features.push_back({ p_kind, p_h, vr.randf() * float(Math::TAU), p_half_h, p_half_w, p_amount });
+	};
+	const float big = CLAMP((r_stem - 0.08f) / 0.4f, 0.2f, 1.0f); // Girth: more and larger features.
+	// A basal hollow, opening at the root collar.
+	if (vr.randf() < 0.55f * veteran * big) {
+		const float hh = r_stem * Math::lerp(0.9f, 2.2f, vr.randf());
+		add(VET_BASAL_HOLLOW, hh * 0.85f, hh, r_stem * Math::lerp(0.5f, 0.9f, vr.randf()), Math::lerp(0.5f, 0.7f, vr.randf()));
+	}
+	// Rot holes where a limb broke off long ago, on the stem below the crown.
+	const int rot = int(Math::floor(veteran * big * Math::lerp(0.5f, 2.5f, vr.randf())));
+	for (int k = 0; k < rot; k++) {
+		const float hh = Math::lerp(0.1f, 0.25f, vr.randf());
+		add(VET_ROT_HOLE, Math::lerp(1.2f, crown, vr.randf()), hh, hh * Math::lerp(0.5f, 0.8f, vr.randf()), Math::lerp(0.45f, 0.6f, vr.randf()));
+	}
+	// Woodpecker holes, round, 4-6 cm across (great spotted; black woodpecker 9-12 cm, oval).
+	const int pecks = int(Math::floor(veteran * Math::lerp(0.3f, 3.0f, vr.randf())));
+	for (int k = 0; k < pecks; k++) {
+		const bool black = vr.randf() < 0.25f;
+		const float rh = black ? 0.06f : 0.025f;
+		add(VET_WOODPECKER, Math::lerp(2.5f, MAX(crown * 1.2f, 3.0f), vr.randf()), rh, black ? rh * 0.75f : rh, 0.75f);
+	}
+	// Burls: rounded swellings of tangled wood.
+	const int burls = int(Math::floor(veteran * big * Math::lerp(0.5f, 3.5f, vr.randf())));
+	for (int k = 0; k < burls; k++) {
+		const float hh = r_stem * Math::lerp(0.3f, 0.7f, vr.randf());
+		add(VET_BURL, Math::lerp(0.4f, crown, vr.randf()), hh, hh * Math::lerp(0.8f, 1.3f, vr.randf()), Math::lerp(0.3f, 0.55f, vr.randf()));
+	}
+	// Epicormic shoots: clusters from dormant buds on the stem, many on oak and lime.
+	if (!conifer) {
+		const bool prone = preset == PRESET_OAK || preset == PRESET_LIME || preset == PRESET_WHITE_OAK || preset == PRESET_RED_OAK;
+		const int clusters = int(Math::floor(veteran * (prone ? Math::lerp(3.0f, 8.0f, vr.randf()) : Math::lerp(0.0f, 2.5f, vr.randf()))));
+		for (int k = 0; k < clusters; k++) {
+			add(VET_EPICORMIC, Math::lerp(0.6f, crown, vr.randf()), 0.0f, 0.0f, Math::lerp(3.0f, 8.0f, vr.randf()));
+		}
+	}
+}
+
+// The old-tree features of the last generate(): kind (0 basal hollow, 1 rot hole, 2 woodpecker hole,
+// 3 burl, 4 epicormic shoots), height above the stem base, azimuth (radians from +X towards +Z),
+// half height and half width in metres. Cavities are where birds, bats and beetles live.
+Array TreeGenerator::get_veteran_features() const {
+	Array out;
+	for (const VeteranFeature &f : veteran_features) {
+		Dictionary d;
+		d["kind"] = int(f.kind);
+		d["height"] = f.h;
+		d["azimuth"] = f.azimuth;
+		d["half_height"] = f.half_h;
+		d["half_width"] = f.half_w;
+		out.push_back(d);
+	}
+	return out;
+}
+
 // A log: the snag felled where it stood, lying along a random bearing, its stem resting on the
 // ground. Limbs that would reach into the ground broke off in the fall.
 void TreeGenerator::_fell() {
@@ -3537,6 +3665,114 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 		}
 	};
+	// Old-tree features cut into the main stem's tubes (5e): hollows and rot holes pushed in with a
+	// callus lip and darkened, burls pushed out with lumps. Works on the undisplaced tube (ring centre
+	// + radial normal), so plain, relief and moss tubes move alike; then normals are rebuilt there.
+	const float vet_base_y = nodes[0].start.y;
+	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour) {
+		if (veteran_features.is_empty()) {
+			return;
+		}
+		Vector3 *vv = r_b.verts.ptrw();
+		Vector3 *nn = r_b.normals.ptrw();
+		Color *cc = r_b.colors.ptrw();
+		LocalVector<float> touched;
+		touched.resize(p_part.w);
+		bool any = false;
+		for (int i = 0; i < p_part.w; i++) {
+			touched[i] = 0.0f;
+			const int v = p_part.z + i;
+			const int ring = i / (p_sides + 1);
+			if (ring >= int(p_pts.size())) {
+				break;
+			}
+			const Vector3 n = nn[v];
+			const float r = p_rad[ring];
+			const float h = p_pts[ring].y - vet_base_y;
+			const float az = Math::atan2(n.z, n.x);
+			float off = 0.0f;
+			float dark = 1.0f;
+			float w_any = 0.0f;
+			for (const VeteranFeature &f : veteran_features) {
+				if (f.kind == VET_EPICORMIC || f.kind == VET_WOODPECKER) {
+					continue;
+				}
+				const float dh = (h - f.h) / f.half_h;
+				if (Math::abs(dh) > 1.5f) {
+					continue;
+				}
+				const float da = Math::angle_difference(f.azimuth, az) * r / f.half_w;
+				const float e = Math::sqrt(dh * dh + da * da);
+				if (e > 1.4f) {
+					continue;
+				}
+				if (f.kind == VET_BURL) {
+					const float k = 1.0f - MIN(e * e, 1.0f);
+					const float lump = 0.75f + 0.5f * moss_noise(p_pts[ring] + n * r * 4.0f, 0x6275726cu);
+					off += f.amount * r * k * Math::sqrt(k) * lump;
+					dark = MIN(dark, 1.0f - 0.12f * k);
+					w_any = MAX(w_any, k > 0.0f ? 1.0f : 0.0f);
+				} else {
+					// A hollow: deep inside, the floor rough; a callus lip of new wood around it.
+					if (e < 1.0f) {
+						const float rough = 0.85f + 0.3f * moss_noise(p_pts[ring] + n * r * 6.0f, 0x686f6cu);
+						off -= f.amount * r * Math::smoothstep(1.0f, 0.55f, e) * rough;
+						dark = MIN(dark, Math::lerp(1.0f, 0.16f, Math::smoothstep(1.0f, 0.7f, e)));
+					} else {
+						off += 0.08f * r * Math::sin(float(Math::PI) * (e - 1.0f) / 0.4f);
+					}
+					w_any = 1.0f;
+				}
+			}
+			if (w_any > 0.0f) {
+				vv[v] += n * off;
+				if (p_colour) {
+					cc[v] = Color(cc[v].r * dark, cc[v].g * dark, cc[v].b * dark, cc[v].a);
+				}
+				touched[i] = 1.0f;
+				any = true;
+			}
+		}
+		if (!any) {
+			return;
+		}
+		// Normals of the touched vertices from the faces around them; a ring's seam pair shares one.
+		LocalVector<Vector3> acc;
+		acc.resize(p_part.w);
+		for (Vector3 &a : acc) {
+			a = Vector3();
+		}
+		const int *ix = r_b.indices.ptr();
+		for (int q = p_part.x; q + 2 < p_part.x + p_part.y; q += 3) {
+			const int a = ix[q] - p_part.z, b = ix[q + 1] - p_part.z, c = ix[q + 2] - p_part.z;
+			if (a < 0 || b < 0 || c < 0 || a >= p_part.w || b >= p_part.w || c >= p_part.w) {
+				continue;
+			}
+			const Vector3 fn = (vv[p_part.z + c] - vv[p_part.z + a]).cross(vv[p_part.z + b] - vv[p_part.z + a]);
+			acc[a] += fn;
+			acc[b] += fn;
+			acc[c] += fn;
+		}
+		for (int i = 0; i < p_part.w; i += p_sides + 1) {
+			if (i + p_sides < p_part.w) {
+				const Vector3 sum = acc[i] + acc[i + p_sides];
+				acc[i] = sum;
+				acc[i + p_sides] = sum;
+			}
+		}
+		for (int i = 0; i < p_part.w; i++) {
+			// Touched vertices and their ring neighbours, so the edge of a feature shades smoothly.
+			const bool near = touched[i] > 0.0f || (i > 0 && touched[i - 1] > 0.0f) || (i + 1 < p_part.w && touched[i + 1] > 0.0f) ||
+					(i >= p_sides + 1 && touched[i - p_sides - 1] > 0.0f) || (i + p_sides + 1 < p_part.w && touched[i + p_sides + 1] > 0.0f);
+			if (near && acc[i].length_squared() > 1e-16f) {
+				Vector3 fnrm = acc[i].normalized();
+				if (fnrm.dot(nn[p_part.z + i]) < 0.0f) {
+					fnrm = -fnrm; // Winding: keep the outward side.
+				}
+				nn[p_part.z + i] = fnrm;
+			}
+		}
+	};
 	LocalVector<Vector3> pts;
 	LocalVector<float> rad;
 	LocalVector<int> chain;
@@ -3656,6 +3892,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (rigged) {
 				_skin_stem(bark, part, s, pts, sides);
 			}
+			if (s == veteran_stem) {
+				veteran_deform(bark, part, pts, rad, sides, true);
+			}
 			if (!stem && junction_weld) {
 				weld(bark, part, s, pts, rad, sides);
 			}
@@ -3690,6 +3929,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				if (rigged) {
 					_skin_stem(bark, part, s, rp, rsides);
 				}
+				if (s == veteran_stem) {
+					veteran_deform(bark, part, rp, rr, rsides, true);
+				}
 				if (!stem && junction_weld) {
 					weld(bark, part, s, rp, rr, rsides);
 				}
@@ -3705,6 +3947,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				moss.begin(part);
 				_tube(moss, rp, rr, rsides, 0.0f, col);
 				moss.end(part, r0);
+				if (s == veteran_stem) {
+					veteran_deform(moss, part, rp, rr, rsides, false);
+				}
 				// The bark's own displacement under each shell vertex (as the relief tube has it).
 				const Vector<uint8_t> bh_buf = bs.height->get_data();
 				const float *bh = reinterpret_cast<const float *>(bh_buf.ptr());
@@ -3856,6 +4101,122 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				bark.indices.push_back(b0 + 4);
 			}
 			bark.end(part, r);
+		}
+		if (s == veteran_stem && !veteran_features.is_empty()) {
+			// Woodpecker holes and epicormic shoots: their own small geometry on the stem.
+			auto stem_at = [&](float p_h, float p_az, Vector3 &r_p, Vector3 &r_out, float &r_r, int &r_bone) {
+				int k = 0;
+				while (k + 2 < int(pts.size()) && pts[k + 1].y - vet_base_y < p_h) {
+					k++;
+				}
+				const float y0 = pts[k].y - vet_base_y, y1 = pts[k + 1].y - vet_base_y;
+				const float t = CLAMP((p_h - y0) / MAX(y1 - y0, 1e-4f), 0.0f, 1.0f);
+				const Vector3 c = pts[k].lerp(pts[k + 1], t);
+				r_r = Math::lerp(rad[k], rad[k + 1], t);
+				r_out = Vector3(Math::cos(p_az), 0.0f, Math::sin(p_az));
+				r_p = c + r_out * r_r;
+				int ci = 0;
+				for (int q = 0; q < int(chain.size()); q++) {
+					if (nodes[chain[q]].start.y - vet_base_y <= p_h) {
+						ci = q;
+					}
+				}
+				r_bone = node_bone[chain[ci]];
+			};
+			RandomPCG er;
+			er.seed(uint64_t(seed) * 40503u + 0x5e5e5eu);
+			const LeafSeason vls = _leaf_season(preset, season);
+			for (const VeteranFeature &f : veteran_features) {
+				Vector3 p, out;
+				float r;
+				int bone;
+				stem_at(f.h, f.azimuth, p, out, r, bone);
+				if (f.kind == VET_WOODPECKER) {
+					// A dark opening with a pale rim of chiselled wood, just proud of the bark.
+					const Vector3 up(0, 1, 0);
+					const Vector3 side = up.cross(out).normalized();
+					const int k = 14;
+					bark.bone = bone;
+					Vector4i part;
+					bark.begin(part);
+					const int b0 = bark.verts.size();
+					const Color hole(0.02f, 0.018f, 0.015f), rim = bark_color.lerp(Color(0.55f, 0.47f, 0.36f), 0.6f);
+					bark.verts.push_back(p + out * 0.004f);
+					bark.normals.push_back(out);
+					bark.uvs.push_back(Vector2(0.5f, 0.5f));
+					bark.colors.push_back(hole);
+					for (int ring = 0; ring < 2; ring++) {
+						const float sc = ring == 0 ? 1.0f : 1.3f;
+						for (int q = 0; q < k; q++) {
+							const float a = float(Math::TAU) * q / k;
+							bark.verts.push_back(p + out * (ring == 0 ? 0.005f : 0.002f) + side * (Math::cos(a) * f.half_w * sc) + up * (Math::sin(a) * f.half_h * sc));
+							bark.normals.push_back(out);
+							bark.uvs.push_back(Vector2(0.5f + 0.5f * Math::cos(a), 0.5f + 0.5f * Math::sin(a)));
+							bark.colors.push_back(ring == 0 ? hole : rim);
+						}
+					}
+					for (int q = 0; q < k; q++) {
+						const int a = b0 + 1 + q, b = b0 + 1 + (q + 1) % k;
+						bark.indices.push_back(b0);
+						bark.indices.push_back(b);
+						bark.indices.push_back(a);
+						bark.indices.push_back(a);
+						bark.indices.push_back(b);
+						bark.indices.push_back(b + k);
+						bark.indices.push_back(a);
+						bark.indices.push_back(b + k);
+						bark.indices.push_back(a + k);
+					}
+					bark.end(part, f.half_w);
+				} else if (f.kind == VET_EPICORMIC) {
+					// A cluster of thin upright water shoots from dormant buds, leafy in season.
+					const int shoots = MAX(1, int(f.amount));
+					for (int k = 0; k < shoots; k++) {
+						Vector3 bp, bo;
+						float br;
+						int bb;
+						stem_at(f.h + (er.randf() - 0.5f) * 0.3f, f.azimuth + (er.randf() - 0.5f) * 0.6f, bp, bo, br, bb);
+						const Vector3 dir = (bo * 0.75f + Vector3(0, 0.65f, 0) + Vector3(er.randf() - 0.5f, er.randf() * 0.3f, er.randf() - 0.5f) * 0.4f).normalized();
+						const float len = Math::lerp(0.2f, 0.65f, er.randf());
+						const float sr = Math::lerp(0.003f, 0.006f, er.randf());
+						LocalVector<Vector3> sp;
+						LocalVector<float> srr;
+						sp.push_back(bp - bo * 0.01f);
+						srr.push_back(sr);
+						sp.push_back(bp + dir * (len * 0.5f) + Vector3(0, -0.03f, 0));
+						srr.push_back(sr * 0.75f);
+						sp.push_back(bp + dir * len + Vector3(0, -0.02f, 0));
+						srr.push_back(sr * 0.4f);
+						bark.bone = bb;
+						Vector4i part;
+						bark.begin(part);
+						_tube(bark, sp, srr, 3, 0.0f, bark_color.lerp(Color(0.3f, 0.25f, 0.15f), 0.3f));
+						bark.end(part, sr);
+						if (vls.out <= 0.0f || vls.fallen >= 1.0f) {
+							continue;
+						}
+						const int nl = 4 + int(er.randf() * 5.0f);
+						for (int q = 0; q < nl; q++) {
+							const float u = (q + 1.0f) / nl;
+							const Vector3 at = u < 0.5f ? sp[0].lerp(sp[1], u * 2.0f) : sp[1].lerp(sp[2], u * 2.0f - 1.0f);
+							const Vector3 sd = dir.cross(Vector3(0, 1, 0)).normalized() * ((q & 1) ? 1.0f : -1.0f);
+							const Vector3 lo = (sd * 0.8f + dir * 0.5f).normalized();
+							const float j = 0.85f + 0.3f * er.randf();
+							Color c(leaf_color.r * j, leaf_color.g * j, leaf_color.b);
+							if (vls.autumn > er.randf()) {
+								c = c.lerp(vls.color, 0.8f);
+							}
+							const Vector3 lup = (Vector3(0, 1, 0) + bo * 0.4f).normalized();
+							leaves.bone = bb;
+							Vector4i lp;
+							leaves.begin(lp);
+							_add_leaf(leaves, at, lo, lup, params[PARAM_LEAF_SIZE] * Math::lerp(0.8f, 1.1f, er.randf()) * MAX(vls.out, 0.3f), c);
+							leaves.end(lp, 0.0f);
+							leaf_count++;
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -5212,8 +5573,12 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	// classes (the stand snags and logs) starts each one from the living colours.
 	const Color living_bark = bark_color;
 	const Color living_leaf = leaf_color;
+	veteran_features.clear();
+	veteran_stem = -1;
 	if (decay_class > 0) {
 		_apply_decay();
+	} else if (veteran > 0.0f && !fallen && !fallen_branch) {
+		_apply_veteran();
 	}
 	if (fallen_branch) {
 		_shed_branch();
@@ -5284,6 +5649,10 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_junction_weld", "enabled"), &TreeGenerator::set_junction_weld);
 	ClassDB::bind_method(D_METHOD("set_climber_plant_leaves", "enabled"), &TreeGenerator::set_climber_plant_leaves);
 	ClassDB::bind_method(D_METHOD("set_leaf_flutter", "amount"), &TreeGenerator::set_leaf_flutter);
+	ClassDB::bind_method(D_METHOD("set_veteran", "amount"), &TreeGenerator::set_veteran);
+	ClassDB::bind_method(D_METHOD("get_veteran"), &TreeGenerator::get_veteran);
+	ClassDB::bind_method(D_METHOD("get_veteran_feature_count"), &TreeGenerator::get_veteran_feature_count);
+	ClassDB::bind_method(D_METHOD("get_veteran_features"), &TreeGenerator::get_veteran_features);
 	ClassDB::bind_method(D_METHOD("get_leaf_flutter"), &TreeGenerator::get_leaf_flutter);
 	ClassDB::bind_method(D_METHOD("get_climber_plant_leaves"), &TreeGenerator::get_climber_plant_leaves);
 	ClassDB::bind_method(D_METHOD("get_junction_weld"), &TreeGenerator::get_junction_weld);
@@ -5335,6 +5704,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "junction_weld"), "set_junction_weld", "get_junction_weld");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "climber_plant_leaves"), "set_climber_plant_leaves", "get_climber_plant_leaves");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "leaf_flutter", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_leaf_flutter", "get_leaf_flutter");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "veteran", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_veteran", "get_veteran");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "phyllotaxis", PROPERTY_HINT_ENUM, "Alternate,Opposite,Whorled"), "set_phyllotaxis", "get_phyllotaxis");
 	ADD_GROUP("Stand", "forest_");
