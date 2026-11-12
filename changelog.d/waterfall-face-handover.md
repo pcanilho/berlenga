@@ -1,0 +1,1 @@
+- Waterfalls: a tall fall whose face leans into its jet now keeps contact with the rock (from the brink, or from where the jet meets the face) instead of leaving gaps where the column ran into the rock; the handed-over sheet fans out down the face.
