@@ -68,6 +68,16 @@ class GrassField3D : public Node3D {
 	Color tip_color = Color(0.45f, 0.6f, 0.22f);
 	Color dry_color = Color(0.55f, 0.48f, 0.28f);
 	float dryness = 0.2f;
+	// The year (docs/ideas/vegetation-seasons.md): a WeatherMap3D whose season browns the sward in
+	// drought and hard cold. season_green 1: as dryness says; 0: all thatch.
+	NodePath season_source;
+	float season_response = 1.0f;
+	float season_green = 1.0f;
+	float season_baked_dryness = -1.0f; // The effective dryness of the last far colour bake.
+	int season_wait = 0;
+	bool ground_published = false; // This field's _bake_ground() set the grass_ground_* globals.
+	float _dryness() const { return CLAMP(dryness + (1.0f - dryness) * (1.0f - season_green) * season_response, 0.0f, 1.0f); }
+	void _season_step();
 	float sun_mean = 0.0f; // VegetationLight::sun_mean() of the data map.
 	float color_variation = 0.5f;
 	float radius = 40.0f;
@@ -194,6 +204,13 @@ public:
 	Color get_dry_color() const { return dry_color; }
 	void set_dryness(float p_dryness);
 	float get_dryness() const { return dryness; }
+	void set_season_source(const NodePath &p_path);
+	NodePath get_season_source() const { return season_source; }
+	void set_season_response(float p_response);
+	float get_season_response() const { return season_response; }
+	float get_season_green() const { return season_green; }
+	float get_effective_dryness() const { return _dryness(); }
+	static float season_greenness(const Dictionary &p_season);
 	void set_color_variation(float p_amount);
 	float get_color_variation() const { return color_variation; }
 	void set_radius(float p_radius);

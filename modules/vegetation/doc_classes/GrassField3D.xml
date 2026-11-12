@@ -22,6 +22,18 @@
 				How the far colour changes with the sun's azimuth from the view, [code]phi[/code]: two colours [code]l1[/code], [code]l2[/code], per channel, for the factor [code]1 + l1 cos(phi) + l2 cos(2 phi)[/code] the ground under far grass takes ([code]phi[/code] 0: the sun behind the viewer, where a sward is brightest). Fitted to the render of the blades with the sun at four headings; zero before that.
 			</description>
 		</method>
+		<method name="get_effective_dryness" qualifiers="const">
+			<return type="float" />
+			<description>
+				The dryness the blades and ground show: [member dryness] browned by the season (see [member season_source]).
+			</description>
+		</method>
+		<method name="get_season_green" qualifiers="const">
+			<return type="float" />
+			<description>
+				The sward's greenness from the last season read, 0 to 1 (1 without a [member season_source]).
+			</description>
+		</method>
 		<method name="is_far_color_baked" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -94,6 +106,13 @@
 				Frees every tile; they are built again around the camera on the next frames.
 			</description>
 		</method>
+		<method name="season_greenness" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="season" type="Dictionary" />
+			<description>
+				How green a temperate sward is for a season state ([method WeatherMap3D.get_season]), 0 to 1: grassland greenness follows soil water and temperature (PhenoGrass, Hufkens et al. 2016; the Growing Season Index of Jolly et al. 2005 without its day-length term, as a temperate sward stays green through short days). [code]smoothstep(0.1, 0.4, soil_moisture) * smoothstep(-8, 2, temperature)[/code]: a summer drought browns it, a hard winter leaves it tan, a mild wet winter keeps it green. 1 for an empty state.
+			</description>
+		</method>
 		<method name="update_at">
 			<return type="void" />
 			<param index="0" name="center" type="Vector3" />
@@ -156,6 +175,12 @@
 		</member>
 		<member name="rules" type="PlantSpecies" setter="set_rules" getter="get_rules">
 			Where grass grows: the rules of a [PlantSpecies] over the maps of [member data_map]. Its spacing, footprint and meshes are ignored. Without rules, grass grows on dry land only.
+		</member>
+		<member name="season_response" type="float" setter="set_season_response" getter="get_season_response" default="1.0">
+			How much the season browns the sward, 0 (not at all) to 1.
+		</member>
+		<member name="season_source" type="NodePath" setter="set_season_source" getter="get_season_source" default="NodePath(&quot;&quot;)">
+			Path to a [WeatherMap3D] whose season ([method WeatherMap3D.get_season]) turns the sward through the year: once a second its greenness ([method season_greenness]) raises the blades' and the ground's dryness towards all thatch (effective dryness [code]dryness + (1 - dryness) (1 - green) season_response[/code]), and the far colour is measured again when that moves by more than 0.05. Empty: [member dryness] as set.
 		</member>
 		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
 			Path to the [DirectionalLight3D] whose heading turns the far grass colour (see [method get_far_color_lobes]). Empty: the first visible [DirectionalLight3D] in the field's world. The widest field publishes it with the camera position as [code]grass_ground_sun[/code] and [code]grass_ground_view[/code]; the effect lessens as the sun climbs and is off with the sun down.

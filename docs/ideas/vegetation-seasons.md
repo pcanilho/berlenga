@@ -64,6 +64,19 @@ of a 96 x 96 view), so the far meadow follows the near one.
    winter.
 5. Raster and path-traced shots through the year (spring, high summer, drought, autumn, winter).
 
+## Built
+
+**Step 1, sward greenness.** `GrassField3D.season_source` reads the season once a second. The
+day-length ramp of the Growing Season Index is left out: it describes when growth starts, but a
+temperate sward stays green through short days, and with it every British winter turned the
+grass brown. What is left follows PhenoGrass (Hufkens et al. 2016), where grassland greenness is
+driven by soil water and temperature: green = smoothstep(0.1, 0.4, soil moisture) x
+smoothstep(-8, 2, daily mean C). The effective dryness is dryness + (1 - dryness)(1 - green) x
+`season_response`; it goes to the blade shader and the ground's thatch at once (a uniform, no
+rebuild), and the far colour is measured again when it moves by more than 0.05. Checks in the
+grass bench: a mild wet winter 1.0, a -7 C winter 0.03, a summer drought 0.0, a dry spell at a
+quarter of capacity 0.5.
+
 ## References
 
 - Jolly, Nemani and Running, "A generalized, bioclimatic index to predict foliar phenology in response to climate", Global Change Biology 11, 2005.

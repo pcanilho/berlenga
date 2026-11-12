@@ -1083,7 +1083,31 @@ func _check(label: String, ok: bool, value) -> void:
 	if not ok:
 		fails += 1
 
+# The sward through the year (docs/ideas/vegetation-seasons.md, step 1): greenness from the
+# season state's soil moisture and temperature, into the blades' and ground's dryness.
+func _season_checks() -> void:
+	var g := func(t: float, m: float) -> float:
+		return GrassField3D.season_greenness({"temperature": t, "soil_moisture": m})
+	_check("season: mild wet winter stays green", g.call(5.0, 0.9) > 0.95, g.call(5.0, 0.9))
+	_check("season: hard winter goes tan", g.call(-7.0, 0.9) < 0.1, g.call(-7.0, 0.9))
+	_check("season: summer drought browns it", g.call(20.0, 0.08) < 0.01, g.call(20.0, 0.08))
+	_check("season: a dry spell half browns it", absf(g.call(20.0, 0.25) - 0.5) < 0.1, g.call(20.0, 0.25))
+	_check("season: no season, as set", GrassField3D.season_greenness({}) == 1.0, GrassField3D.season_greenness({}))
+	var base := grass.dryness
+	grass.dryness = 0.2
+	grass.season_response = 1.0
+	# The field's own read of a WeatherMap3D, through the effective dryness.
+	var wm := WeatherMap3D.new()
+	wm.name = "Seasons"
+	add_child(wm)
+	grass.season_source = grass.get_path_to(wm)
+	print("GRASS_SEASON day=%d season=%s green=%.3f dryness=%.3f" % [wm.get_day_of_year(), str(wm.get_season()), grass.get_season_green(), grass.get_effective_dryness()])
+	grass.season_source = NodePath()
+	wm.queue_free()
+	grass.dryness = base
+
 func _checks() -> void:
+	_season_checks()
 	var count := grass.get_blade_count()
 	_check("blades placed", count > 10000, count)
 	print("GRASS_STATS blades=%d tiles=%d last_build_ms=%.1f" % [count, grass.get_tile_count(), grass.get_build_time_msec()])

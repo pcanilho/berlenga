@@ -547,7 +547,7 @@ void fragment() {
 	material->set_shader_parameter("base_color", base_color);
 	material->set_shader_parameter("tip_color", tip_color);
 	material->set_shader_parameter("dry_color", dry_color);
-	material->set_shader_parameter("dryness", dryness);
+	material->set_shader_parameter("dryness", _dryness());
 	material->set_shader_parameter("color_variation", color_variation);
 	material->set_shader_parameter("fallback_wind", fallback_wind);
 	material->set_shader_parameter("wind_response", wind_response);
@@ -899,7 +899,7 @@ Color GrassField3D::_far_color_hand() const {
 	const Color b = base_color.srgb_to_linear();
 	const Color t = tip_color.srgb_to_linear();
 	const Color d = dry_color.srgb_to_linear();
-	const Color far = b.lerp(t, 0.65f).lerp(d, dryness * 0.35f) * 0.355f;
+	const Color far = b.lerp(t, 0.65f).lerp(d, _dryness() * 0.35f) * 0.355f;
 	return Color(far.r, far.g, far.b, 1.0f);
 }
 
@@ -937,6 +937,9 @@ void GrassField3D::_far_bake_start() {
 	far_bake_queued = false;
 	// The raster renderer only: headless and the compatibility renderer keep the hand-matched colour.
 	if (!is_inside_tree() || !RenderingServer::get_singleton()->get_rendering_device()) {
+		if (fade_owner == this && is_inside_tree()) {
+			_publish_far(); // The hand-matched colour, for the look as it is now.
+		}
 		return;
 	}
 	_ensure_resources();
@@ -1343,7 +1346,8 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	rs->global_shader_parameter_set("grass_ground_map", ground_texture->get_rid());
 	rs->global_shader_parameter_set("grass_ground_rect", rect);
 	rs->global_shader_parameter_set("grass_ground_color", Vector4(ground_tint.r, ground_tint.g, ground_tint.b, ground_tint.a));
-	rs->global_shader_parameter_set("grass_ground_dry", Vector4(dry_color.r, dry_color.g, dry_color.b, dryness));
+	rs->global_shader_parameter_set("grass_ground_dry", Vector4(dry_color.r, dry_color.g, dry_color.b, _dryness()));
+	ground_published = true;
 	rs->global_shader_parameter_set("grass_ground_params", Vector4(color_variation, 0.0f, 0.0f, 0.0f));
 }
 
@@ -1768,6 +1772,7 @@ void GrassField3D::_notification(int p_what) {
 			if (trample_enabled && !trample.is_empty()) {
 				_trample_step(get_process_delta_time());
 			}
+			_season_step();
 			if (far_bake_vp) {
 				_far_bake_step();
 			} else if (far_bake_queued) {
@@ -1872,7 +1877,67 @@ void GrassField3D::set_dryness(float p_dryness) {
 	ground_baked = false;
 	_queue_far_bake();
 	if (material.is_valid()) {
-		material->set_shader_parameter("dryness", dryness);
+		material->set_shader_parameter("dryness", _dryness());
+	}
+}
+
+void GrassField3D::set_season_source(const NodePath &p_path) {
+	season_source = p_path;
+	season_wait = 0;
+	if (p_path.is_empty()) {
+		season_green = 1.0f;
+		set_dryness(dryness);
+	}
+}
+
+void GrassField3D::set_season_response(float p_response) {
+	season_response = CLAMP(p_response, 0.0f, 1.0f);
+	set_dryness(dryness);
+}
+
+// How green the sward is for a season state (WeatherMap3D.get_season()), 0 to 1. Grassland
+// greenness follows soil water and temperature (PhenoGrass, Hufkens et al. 2016; the Growing
+// Season Index of Jolly et al. 2005 without its day-length term, since a temperate sward stays
+// green through short days): drought browns it as the soil dries below about 40% of capacity,
+// and a hard winter (daily means well below freezing) leaves it tan, while a mild maritime
+// winter keeps it green.
+float GrassField3D::season_greenness(const Dictionary &p_season) {
+	if (p_season.is_empty()) {
+		return 1.0f;
+	}
+	const float moisture = float(p_season.get("soil_moisture", 1.0f));
+	const float temperature = float(p_season.get("temperature", 10.0f));
+	const float wet = Math::smoothstep(0.1f, 0.4f, moisture);
+	const float warm = Math::smoothstep(-8.0f, 2.0f, temperature);
+	return CLAMP(wet * warm, 0.0f, 1.0f);
+}
+
+// Once a second: the season's greenness into the blades' and the ground's dryness, and a new far
+// colour bake when the look has moved enough to show.
+void GrassField3D::_season_step() {
+	if (season_source.is_empty() || season_wait-- > 0) {
+		return;
+	}
+	season_wait = 60;
+	WeatherMap3D *wm = Object::cast_to<WeatherMap3D>(get_node_or_null(season_source));
+	if (!wm) {
+		return;
+	}
+	const float g = season_greenness(wm->get_season());
+	if (Math::abs(g - season_green) < 0.005f) {
+		return;
+	}
+	season_green = g;
+	const float d = _dryness();
+	if (material.is_valid()) {
+		material->set_shader_parameter("dryness", d);
+	}
+	if (ground_published && is_inside_tree()) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_dry", Vector4(dry_color.r, dry_color.g, dry_color.b, d));
+	}
+	if (season_baked_dryness < 0.0f || Math::abs(d - season_baked_dryness) > 0.05f) {
+		season_baked_dryness = d;
+		_queue_far_bake();
 	}
 }
 void GrassField3D::set_fallback_wind(const Vector2 &p_wind) {
@@ -1927,6 +1992,11 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_tip_color, get_tip_color, "color")
 	GRASS_BIND(set_dry_color, get_dry_color, "color")
 	GRASS_BIND(set_dryness, get_dryness, "dryness")
+	GRASS_BIND(set_season_source, get_season_source, "path")
+	GRASS_BIND(set_season_response, get_season_response, "response")
+	ClassDB::bind_method(D_METHOD("get_season_green"), &GrassField3D::get_season_green);
+	ClassDB::bind_method(D_METHOD("get_effective_dryness"), &GrassField3D::get_effective_dryness);
+	ClassDB::bind_static_method("GrassField3D", D_METHOD("season_greenness", "season"), &GrassField3D::season_greenness);
 	GRASS_BIND(set_color_variation, get_color_variation, "amount")
 	GRASS_BIND(set_radius, get_radius, "radius")
 	GRASS_BIND(set_tile_size, get_tile_size, "size")
@@ -1972,6 +2042,8 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "tip_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_tip_color", "get_tip_color");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "dry_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_dry_color", "get_dry_color");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dryness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_dryness", "get_dryness");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "season_source", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_season_source", "get_season_source");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "season_response", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_season_response", "get_season_response");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "color_variation", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_color_variation", "get_color_variation");
 	ADD_GROUP("Ground", "ground_");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ground_tint_enabled"), "set_ground_tint_enabled", "is_ground_tint_enabled");
