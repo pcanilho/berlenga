@@ -103,6 +103,7 @@ private:
 		Vector<float> buffer;
 		float *write = nullptr; // buffer.ptrw() for the frame's workers.
 		LocalVector<uint8_t> moving; // Per instance: solved last frame (else at rest).
+		LocalVector<uint8_t> slot; // Per instance: its frame within an update period (staggers the load).
 		HashMap<int, Touch> touch;
 		struct Body {
 			RID body;
@@ -131,6 +132,12 @@ private:
 	float break_speed = 3.0f; // m/s; a faster body snaps thin branches it bends far.
 	float break_radius = 0.04f;
 	int max_pieces = 32;
+	bool lod_enabled = true;
+	float lod_pixel_error = 0.5f; // Largest pose error the LOD may leave, in pixels.
+	float budget_msec = 0.0f; // 0: none; else the LOD coarsens while the solve runs over it.
+	float lod_bias = 1.0f;
+	uint64_t frame_index = 0;
+	int skipped_instances = 0;
 	HashMap<ObjectID, Vector3> contact_last;
 	LocalVector<Contact> contacts;
 	LocalVector<ObjectID> pieces;
@@ -153,6 +160,7 @@ private:
 		Target *target = nullptr;
 		int instance = 0;
 		Transform3D world; // MultiMesh space to world.
+		float min_length = 0.0f; // Bones shorter than this (tree space) ride their parent.
 	};
 	LocalVector<Job> jobs;
 	const WeatherMap3D *frame_weather = nullptr;
@@ -179,7 +187,7 @@ public:
 	// The wind a point sees: mean, gust frame and sigma (weather map or fallback).
 	WindSample sample_wind(const Vector3 &p_position, float p_height) const;
 	// The skinning transforms (in the tree's own space) of one instance at the current time.
-	void solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch = nullptr) const;
+	void solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch = nullptr, float p_min_length = 0.0f) const;
 
 	// A MultiMesh of rigged trees at rest: bones_per_instance records per placement.
 	static Ref<MultiMesh> make_multimesh(const Ref<Mesh> &p_mesh, const TypedArray<Transform3D> &p_transforms, const PackedColorArray &p_custom_data = PackedColorArray());
@@ -235,6 +243,14 @@ public:
 	void update(double p_delta);
 	int get_target_count() const { return targets.size(); }
 	int get_solved_instances() const { return solved_instances; }
+	int get_skipped_instances() const { return skipped_instances; }
+	void set_lod_enabled(bool p_enabled) { lod_enabled = p_enabled; }
+	bool is_lod_enabled() const { return lod_enabled; }
+	void set_lod_pixel_error(float p_px) { lod_pixel_error = MAX(p_px, 0.01f); }
+	float get_lod_pixel_error() const { return lod_pixel_error; }
+	void set_budget_msec(float p_msec) { budget_msec = MAX(p_msec, 0.0f); }
+	float get_budget_msec() const { return budget_msec; }
+	float get_lod_bias() const { return lod_bias; }
 	float get_solve_msec() const { return solve_usec / 1000.0f; }
 	// For tests: each bone's sway frequency (Hz) at scale 1, and the bone rotations (axis * angle,
 	// tree space) of a rig at a placement and the current time.

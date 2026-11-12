@@ -50,6 +50,18 @@
 				Time the last [method update] took (ms).
 			</description>
 		</method>
+		<method name="get_lod_bias" qualifiers="const">
+			<return type="float" />
+			<description>
+				How far [member budget_msec] has coarsened the level of detail: 1 at [member lod_pixel_error], up to 8.
+			</description>
+		</method>
+		<method name="get_skipped_instances" qualifiers="const">
+			<return type="int" />
+			<description>
+				Instances in range that the level of detail held at their last pose in the last [method update].
+			</description>
+		</method>
 		<method name="get_solved_instances" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -115,6 +127,9 @@
 		<member name="collision_range" type="float" setter="set_collision_range" getter="get_collision_range" default="60.0">
 			Instances closer than this to the camera (m) have colliders.
 		</member>
+		<member name="budget_msec" type="float" setter="set_budget_msec" getter="get_budget_msec" default="0.0">
+			If above 0, the solve time (ms) to stay under: while a frame runs over it, the level of detail coarsens, and it relaxes back once there is room. 0 keeps the error at [member lod_pixel_error].
+		</member>
 		<member name="drag_scale" type="float" setter="set_drag_scale" getter="get_drag_scale" default="1.0">
 			Scales the wind's drag on every tree.
 		</member>
@@ -123,6 +138,12 @@
 		</member>
 		<member name="fallback_wind" type="Vector2" setter="set_fallback_wind" getter="get_fallback_wind" default="Vector2(4, 0)">
 			Wind at 10 m (x, z; m/s) without a weather map.
+		</member>
+		<member name="lod_enabled" type="bool" setter="set_lod_enabled" getter="is_lod_enabled" default="true">
+			Solves each tree at the rate and with the bones its size on screen can show, and trees out of view (and their shadows) at a low rate. Needs a perspective camera; without one every tree is solved in full.
+		</member>
+		<member name="lod_pixel_error" type="float" setter="set_lod_pixel_error" getter="get_lod_pixel_error" default="0.5">
+			Largest pose error on screen (pixels) the level of detail may leave, from a pose held for some frames or a small bone riding its parent.
 		</member>
 		<member name="max_bend" type="float" setter="set_max_bend" getter="get_max_bend" default="0.5">
 			Largest turn of one bone (radians), approached smoothly.

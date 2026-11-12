@@ -64,6 +64,10 @@ func run(args: Dictionary) -> void:
 		_stand_checks()
 		_mask_check()
 		await _wind_check()
+		await _wind_lod_check(int(args.get("frames", "40")))
+		get_tree().quit(1 if fails > 0 else 0)
+	elif args.has("wind-lod"):
+		await _wind_lod_check(int(args.get("frames", "120")), args.get("view", "eye"))
 		get_tree().quit(1 if fails > 0 else 0)
 	elif args.has("map"):
 		_draw_maps(args["map"])
@@ -260,6 +264,101 @@ func _wind_check() -> void:
 	_check(wind.get_target_count() == mmis.size(), "wind finds every rigged cell (%d of %d)" % [wind.get_target_count(), mmis.size()])
 	_check(moved == mmis.size(), "wind moves every rigged cell (%d of %d), %d instances solved in %.2f ms" % [moved, mmis.size(), wind.get_solved_instances(), wind.get_solve_msec()])
 	wind.queue_free()
+	f.queue_free()
+
+# Wind level of detail (trees.md 3c): a camera at eye height on the stand's edge, looking across
+# it. One TreeWind3D solves with the LOD, a second solves everything every frame; the pose
+# difference of every bone, projected to pixels at that tree's distance, is the LOD's error.
+func _wind_lod_check(frames: int, view: String = "eye") -> void:
+	gen.rigged = true
+	var biome := gen.make_stand(TreeGenerator.STAND_BEECH, variants)
+	gen.rigged = false
+	var f := _field(biome)
+	var mmis := _rigged_instances(f)
+	var cam := Camera3D.new()
+	cam.fov = 60.0
+	add_child(cam)
+	var y := 1.7
+	if view == "over":
+		# Over the stand from outside it, as a high third-person or strategy camera sees a forest.
+		cam.look_at_from_position(Vector3(-SIZE * 0.5 - 60.0, 45.0, -SIZE * 0.5 - 60.0), Vector3(0, 0, 0))
+	else:
+		cam.look_at_from_position(Vector3(-SIZE * 0.5 + 2.0, y, -10.0), Vector3(SIZE * 0.5, y + 6.0, 20.0))
+	cam.make_current()
+	var winds := []
+	for lod in [true, false]:
+		var w := TreeWind3D.new()
+		w.fallback_wind = Vector2(12, 0)
+		w.collision_enabled = false
+		w.touch_enabled = false
+		w.lod_enabled = lod
+		if lod and OS.get_environment("LOD_PX") != "":
+			w.lod_pixel_error = float(OS.get_environment("LOD_PX"))
+		w.wind_range = 400.0
+		add_child(w)
+		w.target = w.get_path_to(f)
+		winds.append(w)
+	await get_tree().process_frame
+	var vp_h := float(get_viewport().get_visible_rect().size.y)
+	var px_per_rad := 0.5 * vp_h / tan(deg_to_rad(cam.fov * 0.5))
+	var ms := [0.0, 0.0]
+	var solved := [0, 0]
+	var skipped := 0
+	var worst := 0.0
+	var errs := PackedFloat32Array()
+	var dt := 1.0 / 60.0
+	for frame in frames:
+		var bufs := []
+		for k in 2:
+			var w: TreeWind3D = winds[k]
+			w.set_time(5.0 + frame * dt)
+			w.update(dt)
+			ms[k] += w.get_solve_msec()
+			solved[k] += w.get_solved_instances()
+			if k == 0:
+				skipped += w.get_skipped_instances()
+			var b := []
+			for mmi in mmis:
+				b.append(RenderingServer.multimesh_get_buffer(mmi.multimesh.get_rid()))
+			bufs.append(b)
+		if frame < 10:
+			continue # Every held instance has been solved once.
+		for m in mmis.size():
+			var mm: MultiMesh = mmis[m].multimesh
+			var k: int = mm.bones_per_instance
+			var h: float = mm.mesh.get_aabb().size.y
+			var a: PackedFloat32Array = bufs[0][m]
+			var c: PackedFloat32Array = bufs[1][m]
+			var xf: Transform3D = mmis[m].global_transform
+			for i in mm.instance_count / k:
+				var o := i * k * 20
+				var at := xf * Vector3(c[o + 3], c[o + 7], c[o + 11])
+				var rel := cam.global_transform.affine_inverse() * at
+				if rel.z > -0.5:
+					continue # Behind the camera.
+				if not cam.is_position_in_frustum(at + Vector3(0, h * 0.5, 0)) and not cam.is_position_in_frustum(at):
+					continue
+				var px_per_m := px_per_rad / at.distance_to(cam.global_position)
+				var e := 0.0
+				for b in k:
+					var q := o + b * 20
+					# Origin error plus the basis error over the tree's height.
+					var d0 := Vector3(a[q + 3] - c[q + 3], a[q + 7] - c[q + 7], a[q + 11] - c[q + 11]).length()
+					var d1 := 0.0
+					for r in [0, 4, 8]:
+						d1 = max(d1, Vector3(a[q + r] - c[q + r], a[q + r + 1] - c[q + r + 1], a[q + r + 2] - c[q + r + 2]).length())
+					e = max(e, (d0 + d1 * h * 0.5) * px_per_m)
+				errs.append(e)
+				worst = max(worst, e)
+	errs.sort()
+	var p99 := errs[int(errs.size() * 0.99)] if errs.size() > 0 else 0.0
+	var n := float(frames)
+	print(view + " wind LOD: %.2f ms/frame (%.0f trees solved, %.0f held) vs %.2f ms full (%.0f trees); on-screen error p99 %.2f px, max %.2f px over %d tree frames" % [ms[0] / n, solved[0] / n, skipped / n, ms[1] / n, solved[1] / n, p99, worst, errs.size()])
+	_check(ms[0] < ms[1], "wind LOD solves faster than full (%.2f vs %.2f ms)" % [ms[0] / n, ms[1] / n])
+	_check(p99 < 1.0, "wind LOD error under 1 px for 99%% of trees in view (%.2f px)" % p99)
+	for w in winds:
+		w.queue_free()
+	cam.queue_free()
 	f.queue_free()
 
 func _draw_maps(path: String) -> void:

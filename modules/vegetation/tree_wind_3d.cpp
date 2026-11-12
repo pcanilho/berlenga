@@ -259,7 +259,7 @@ void TreeWind3D::_gather_waves() {
 	}
 }
 
-void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch) const {
+void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32_t p_seed, Transform3D *r_bones, const Touch *p_touch, float p_min_length) const {
 	const uint32_t count = p_rig.bones.size();
 	if (count == 0) {
 		return;
@@ -276,6 +276,11 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 	const uint32_t per_axis = MAX(wave_count / 3, 1u);
 	for (uint32_t b = 1; b < count; b++) {
 		const Bone &bone = p_rig.bones[b];
+		if (bone.length < p_min_length && !(p_touch && p_touch->active)) {
+			// Too small on screen to see its own sway: it rides its parent.
+			r_bones[b] = r_bones[MIN(uint32_t(bone.parent), b - 1)];
+			continue;
+		}
 		const Vector3 load_local = bone.pivot + bone.centroid;
 		const Vector3 at = p_world.xform(load_local);
 		const WindSample ws = sample_wind(at, MAX(load_local.y * scale, 0.5f));
@@ -292,9 +297,11 @@ void TreeWind3D::solve_pose(const Rig &p_rig, const Transform3D &p_world, uint32
 			const float r = Math::abs(w.x) * base_speed / omega0;
 			const float re = 1.0f - r * r;
 			const float im = 2.0f * zeta * r;
-			const float gain = MIN(1.0f / MAX(Math::sqrt(re * re + im * im), 1e-4f), 1.0f);
-			const float lag = Math::atan2(im, re);
-			g[MIN(i / per_axis, 2u)] += w.z * gain * Math::cos(w.x * pa + w.y * pc + w.w - lag);
+			// gain * cos(phase - lag), with cos and sin of the lag from re and im (no atan2).
+			const float mag = MAX(Math::sqrt(re * re + im * im), 1e-4f);
+			const float gain = MIN(1.0f / mag, 1.0f) / mag;
+			const float ph = w.x * pa + w.y * pc + w.w;
+			g[MIN(i / per_axis, 2u)] += w.z * gain * (Math::cos(ph) * re + Math::sin(ph) * im);
 		}
 		const Vector3 along(ws.along.x, 0.0f, ws.along.y);
 		const Vector3 across(-ws.along.y, 0.0f, ws.along.x);
@@ -348,7 +355,7 @@ void TreeWind3D::_solve_job(uint32_t p_index, int p_unused) {
 	Transform3D bones[256];
 	const Vector3 o = placement.origin;
 	const uint32_t seed = hash_u32(uint32_t(int(o.x * 16.0f)) * 73856093u ^ uint32_t(int(o.z * 16.0f)) * 19349663u);
-	solve_pose(*t.rig, job.world * placement, seed, bones, t.touch.getptr(job.instance));
+	solve_pose(*t.rig, job.world * placement, seed, bones, t.touch.getptr(job.instance), job.min_length);
 	float *w = t.write + size_t(job.instance) * t.bones * RECORD_FLOATS;
 	for (int b = 0; b < t.bones; b++) {
 		const Transform3D r = placement * bones[b];
@@ -457,6 +464,7 @@ void TreeWind3D::_scan_node(Node *p_node) {
 				t.placements.resize(n);
 				t.customs.resize(n);
 				t.moving.resize(n);
+				t.slot.resize(n);
 				const float *r = t.buffer.ptr();
 				for (int i = 0; i < n; i++) {
 					const float *f = r + size_t(i) * k * RECORD_FLOATS;
@@ -468,6 +476,7 @@ void TreeWind3D::_scan_node(Node *p_node) {
 					t.placements[i] = x;
 					t.customs[i] = Color(f[16], f[17], f[18], f[19]);
 					t.moving[i] = 0;
+					t.slot[i] = uint8_t(hash_u32(uint32_t(i) * 2654435761u ^ uint32_t(n)) & 0xffu);
 				}
 				targets.push_back(t);
 			}
@@ -523,9 +532,30 @@ void TreeWind3D::update(double p_delta) {
 	}
 	_gather_waves();
 	Vector3 eye = is_inside_tree() ? get_global_position() : Vector3();
+	// Level of detail (the significance scheme of Unreal's Animation Budget Allocator and the
+	// wind qualities per LOD of SpeedTree; docs/ideas/trees.md section 3c): a tree's pose is solved
+	// at a rate and with the bones its size on screen can show, so the pose error stays under
+	// lod_pixel_error pixels. Without a camera every tree is solved in full.
+	Camera3D *cam = nullptr;
 	if (is_inside_tree() && get_viewport() && get_viewport()->get_camera_3d()) {
-		eye = get_viewport()->get_camera_3d()->get_global_position();
+		cam = get_viewport()->get_camera_3d();
+		eye = cam->get_global_position();
 	}
+	bool lod = lod_enabled && cam && cam->get_projection() == Camera3D::PROJECTION_PERSPECTIVE;
+	Vector<Plane> frustum;
+	float px_per_rad = 0.0f; // Pixels per metre at 1 m.
+	if (lod) {
+		frustum = cam->get_frustum();
+		const float h_px = MAX(get_viewport()->get_visible_rect().size.height, 1.0f);
+		const float half = Math::deg_to_rad(cam->get_fov() * 0.5f);
+		// fov is vertical unless the camera keeps the width.
+		const Size2 vs = get_viewport()->get_visible_rect().size;
+		const float span = cam->get_keep_aspect_mode() == Camera3D::KEEP_WIDTH ? MAX(vs.width, 1.0f) : h_px;
+		px_per_rad = 0.5f * span / MAX(Math::tan(half), 1e-3f);
+	}
+	frame_index++;
+	const float dt = CLAMP(float(p_delta), 1.0f / 240.0f, 0.1f);
+	int skipped = 0;
 	jobs.clear();
 	_gather_contacts(p_delta);
 	LocalVector<Target *> changed;
@@ -543,8 +573,41 @@ void TreeWind3D::update(double p_delta) {
 		for (uint32_t i = 0; i < t.placements.size(); i++) {
 			const Vector3 at = world.xform(t.placements[i].origin);
 			const bool touched = touch_enabled && _touch_instance(t, int(i), world * t.placements[i], p_delta);
-			if (touched || at.distance_to(eye) <= wind_range) {
-				jobs.push_back({ &t, int(i), world });
+			const float dist = at.distance_to(eye);
+			if (touched || dist <= wind_range) {
+				float min_length = 0.0f;
+				if (lod && !touched) {
+					const float scale = MAX(Math::pow(float(Math::abs(world.basis.determinant() * t.placements[i].basis.determinant())), 1.0f / 3.0f), 1e-3f);
+					const float extent = t.rig->extent * scale;
+					const Vector3 mid = at + Vector3(0.0f, 0.5f * extent, 0.0f);
+					// Out of view, with room for the shadow it casts into view: held at a low rate,
+					// so reflections and a turn of the camera find it near its pose.
+					bool seen = true;
+					for (const Plane &pl : frustum) {
+						if (pl.distance_to(mid) > extent * 2.5f) {
+							seen = false;
+							break;
+						}
+					}
+					const float px_per_m = px_per_rad / MAX(dist, 0.1f);
+					const float err = lod_pixel_error * lod_bias;
+					// A crown sways its height times about 0.04 per second at its tip (Moore and
+					// Maguire 2004: 0.2-0.6 Hz, tips a few per cent of the height); a pose held
+					// for n frames lags by n times that per frame.
+					const float drift_px = 0.04f * extent * dt * px_per_m * MAX(base_speed / 8.0f, 0.5f);
+					int period = CLAMP(int(err / MAX(drift_px, 1e-6f)), 1, 8);
+					if (!seen) {
+						period = 8;
+					}
+					if (period > 1 && (frame_index + t.slot[i]) % uint64_t(period) != 0) {
+						skipped++;
+						continue;
+					}
+					// A bone bends some 0.15 rad at most in a strong wind; shorter than this, its
+					// own turn moves its tip less than the error on screen.
+					min_length = err / (0.15f * px_per_m * scale);
+				}
+				jobs.push_back({ &t, int(i), world, min_length });
 				t.moving[i] = 1;
 				any = true;
 			} else if (t.moving[i]) {
@@ -581,7 +644,19 @@ void TreeWind3D::update(double p_delta) {
 		RenderingServer::get_singleton()->multimesh_set_buffer(t->multimesh->get_rid(), t->buffer);
 	}
 	solved_instances = jobs.size();
+	skipped_instances = skipped;
 	solve_usec = OS::get_singleton()->get_ticks_usec() - t0;
+	if (budget_msec > 0.0f && lod) {
+		// Over the budget the LOD coarsens; well under it, it relaxes back to the set error.
+		const float ms = solve_usec / 1000.0f;
+		if (ms > budget_msec) {
+			lod_bias = MIN(lod_bias * 1.15f, 8.0f);
+		} else if (ms < 0.7f * budget_msec) {
+			lod_bias = MAX(lod_bias / 1.05f, 1.0f);
+		}
+	} else {
+		lod_bias = 1.0f;
+	}
 }
 
 void TreeWind3D::_gather_contacts(double p_delta) {
@@ -1018,6 +1093,14 @@ void TreeWind3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_target"), &TreeWind3D::get_target);
 	ClassDB::bind_method(D_METHOD("set_weather_map", "path"), &TreeWind3D::set_weather_map);
 	ClassDB::bind_method(D_METHOD("get_weather_map"), &TreeWind3D::get_weather_map);
+	ClassDB::bind_method(D_METHOD("set_lod_enabled", "enabled"), &TreeWind3D::set_lod_enabled);
+	ClassDB::bind_method(D_METHOD("is_lod_enabled"), &TreeWind3D::is_lod_enabled);
+	ClassDB::bind_method(D_METHOD("set_lod_pixel_error", "pixels"), &TreeWind3D::set_lod_pixel_error);
+	ClassDB::bind_method(D_METHOD("get_lod_pixel_error"), &TreeWind3D::get_lod_pixel_error);
+	ClassDB::bind_method(D_METHOD("set_budget_msec", "msec"), &TreeWind3D::set_budget_msec);
+	ClassDB::bind_method(D_METHOD("get_budget_msec"), &TreeWind3D::get_budget_msec);
+	ClassDB::bind_method(D_METHOD("get_lod_bias"), &TreeWind3D::get_lod_bias);
+	ClassDB::bind_method(D_METHOD("get_skipped_instances"), &TreeWind3D::get_skipped_instances);
 	ClassDB::bind_method(D_METHOD("set_wind_range", "range"), &TreeWind3D::set_wind_range);
 	ClassDB::bind_method(D_METHOD("get_wind_range"), &TreeWind3D::get_wind_range);
 	ClassDB::bind_method(D_METHOD("set_drag_scale", "scale"), &TreeWind3D::set_drag_scale);
@@ -1070,6 +1153,9 @@ void TreeWind3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "target"), "set_target", "get_target");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "weather_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WeatherMap3D"), "set_weather_map", "get_weather_map");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_range", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_wind_range", "get_wind_range");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lod_enabled"), "set_lod_enabled", "is_lod_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_pixel_error", PROPERTY_HINT_RANGE, "0.05,8,0.05,suffix:px"), "set_lod_pixel_error", "get_lod_pixel_error");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "budget_msec", PROPERTY_HINT_RANGE, "0,20,0.1,suffix:ms"), "set_budget_msec", "get_budget_msec");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drag_scale", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_drag_scale", "get_drag_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stiffness_scale", PROPERTY_HINT_RANGE, "0.1,4,0.01"), "set_stiffness_scale", "get_stiffness_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_bend", PROPERTY_HINT_RANGE, "0.05,1.5,0.01,radians_as_degrees"), "set_max_bend", "get_max_bend");

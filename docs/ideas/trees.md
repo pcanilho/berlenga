@@ -267,6 +267,42 @@ about 9 m/s, and moves a leaf's tip by millimetres and its edges by about a cent
   and in the path tracer.
 - Climber leaves flutter too; needles do not.
 
+### 3c. Wind cost budget (as built, 12 Nov; Paulo picked)
+
+The wind solve is closed-form in time, so a pose can be solved at any frame without history,
+which makes rate and bone LOD cheap to add.
+- **Significance per tree**: the scheme of Unreal's Animation Budget Allocator and its update
+  rate optimisation (tick rate from screen size, staggered across frames), with SpeedTree's
+  wind quality per LOD. A tree's crown tip moves about 4% of its height per second at 8 m/s
+  wind (0.2-0.6 Hz sway, Moore and Maguire 2004). From that and the tree's pixels per metre, the
+  pose is held for as many frames (1-8) as keep its lag under `lod_pixel_error` (0.5 px).
+  Instances take a hashed frame slot so the held ones spread evenly.
+- **Bone LOD**: a bone shorter than the error over 0.15 rad of bend rides its parent.
+- **Out of view**: a tree whose bounding sphere, grown by 2.5 heights for its shadow, is
+  outside the frustum is solved every 8th frame. Reflections and a camera turn still find it
+  near its pose.
+- **Budget**: with `budget_msec` above 0, the error grows (up to 8x) while the solve runs over
+  and relaxes back below 70%. It is off by default, so the error bound holds.
+- **Math**: the gust transfer function's lag came from atan2 per wave per bone; cos(phase - lag)
+  now uses re and im directly. The result is the same and the full solve is about 30% faster.
+
+Bench `--stands --wind-lod [--view=over]`, 615 rigged beech in the 160 m stand, 1080p, fov 60.
+Two solvers run on the same frames, one with LOD and one without, and the bone pose difference
+is projected to pixels at each tree's distance:
+
+| view | full solve | with LOD | trees solved | error p99 / max |
+|---|---|---|---|---|
+| eye height, at the stand edge | 5.1-7.6 ms | 4.3-5.2 ms | 382 of 615 | 0.47 / 0.75 px |
+| over the stand from 85 m out | 5.1 ms | 2.7 ms | 152 of 615 | 0.55 / 0.93 px |
+
+The times are wall time on the 4-core cloud machine. Of the 2.7 ms, the worker solve is about
+1.1 ms (4.3 ms without LOD). The rest is the MultiMesh buffer upload (0.8-1.5 ms here, on a
+software Vulkan). The PC should time the upload: if it is real there, cells that changed only a
+few instances want a region update. `--stands --test` checks that the LOD is faster and its p99
+error stays under 1 px. Trees past `wind_range` (200 m) still hold their rest pose. With the
+LOD they cost about one eighth, so a longer range is now cheap, but that is a separate look
+change.
+
 ### 3a. The solver we build (stage 3)
 
 Wind on a tree is a structure loaded by turbulence, the problem wind engineers solve for
