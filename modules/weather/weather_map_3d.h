@@ -250,6 +250,11 @@ private:
 		Ref<FogMaterial> material;
 	};
 	LocalVector<HazeSource> haze_sources;
+	bool aerosol_haze = false;
+	float haze_visibility = 40.0f; // km, dry air (relative humidity 0)
+	float haze_height = 1200.0f; // m, the aerosol's scale height (the boundary layer)
+	float applied_aerosol = -1.0f;
+	void _update_aerosol();
 	bool drive_environment_fog = true;
 	struct FogBase {
 		bool saved = false;
@@ -260,6 +265,7 @@ private:
 		float volumetric_density = 0.0f;
 		float volumetric_length = 64.0f;
 		float volumetric_ambient_inject = 0.0f;
+		float volumetric_anisotropy = 0.2f;
 	} fog_base;
 	Ref<Environment> fog_environment;
 	float applied_haze = -1.0f;
@@ -356,6 +362,15 @@ public:
 	static float rain_fraction(float p_celsius, float p_humidity);
 	void set_humidity(float p_humidity);
 	float get_humidity() const { return humidity; }
+	// Background aerosol haze (docs/ideas/weather.md, "Godrays"): what lets the sun's shafts show.
+	void set_aerosol_haze(bool p_enabled);
+	bool get_aerosol_haze() const { return aerosol_haze; }
+	void set_haze_visibility(float p_km);
+	float get_haze_visibility() const { return haze_visibility; }
+	void set_haze_height(float p_m);
+	float get_haze_height() const { return haze_height; }
+	// Extinction (1/m) at the ground of the aerosol haze for a dry visibility (km) and relative humidity.
+	static float aerosol_extinction(float p_dry_visibility_km, float p_humidity);
 	void set_surface_storage(float p_mm);
 	float get_surface_storage() const { return surface_storage; }
 	void set_puddle_max_depth(float p_mm);

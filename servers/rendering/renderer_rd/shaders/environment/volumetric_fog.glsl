@@ -10,12 +10,28 @@
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
-#define DENSITY_SCALE 1024.0
+// Fixed point for the density sums (an atomic int per froxel). 1/1024 per metre cut off any fog thinner
+// than about 4 km visibility (aerosol haze, 1e-4 to 1e-3 /m, rounded to nothing); 1/65536 resolves down to
+// 1.5e-5 /m and still sums to 32768 /m. Writes are also dithered (stochastic rounding, varied per frame
+// so the temporal reprojection averages it out), so the sum is unbiased below one step as well.
+#define DENSITY_SCALE 65536.0
 
 #include "../cluster_data_inc.glsl"
 #include "../light_data_inc.glsl"
 
 #define M_PI 3.14159265359
+
+// Uniform [0, 1) per froxel, per frame and per stream (PCG hash, Jarzynski and Olano 2020).
+uint fog_pcg(uint v) {
+	uint state = v * 747796405u + 2891336453u;
+	uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+	return (word >> 22u) ^ word;
+}
+
+float fog_dither(ivec3 p_pos, uint p_frame, uint p_stream) {
+	uint h = fog_pcg(uint(p_pos.x) + fog_pcg(uint(p_pos.y) + fog_pcg(uint(p_pos.z) + fog_pcg(p_frame * 4u + p_stream))));
+	return float(h >> 8u) * (1.0 / 16777216.0);
+}
 
 #include "../samplers_inc.glsl"
 
@@ -226,8 +242,8 @@ void main() {
 
 #ifdef DENSITY_USED
 		density *= cull_mask;
-		if (abs(density) > 0.001) {
-			int final_density = int(density * DENSITY_SCALE);
+		if (abs(density) > 1e-7) {
+			int final_density = int(floor(clamp(density, -16384.0, 16384.0) * DENSITY_SCALE + fog_dither(pos, scene_params.temporal_frame, 0u)));
 #ifdef NO_IMAGE_ATOMICS
 			atomicAdd(density_only_map[lpos], uint(final_density));
 #else
@@ -270,7 +286,9 @@ void main() {
 			{
 				vec3 scattering = albedo * clamp(density, 0.0, 1.0);
 				scattering = clamp(scattering, vec3(0.0), vec3(1.0));
-				uvec3 scattering_u = uvec3(scattering.r * 2047.0, scattering.g * 2047.0, scattering.b * 1023.0);
+				// Thin fog scatters less than one 11-bit step (1/2047 per metre), so the rounding is dithered too.
+				float d = fog_dither(pos, scene_params.temporal_frame, 1u);
+				uvec3 scattering_u = uvec3(min(floor(scattering * vec3(2047.0, 2047.0, 1023.0) + d), vec3(2047.0, 2047.0, 1023.0)));
 				// R and G have 11 bits each and B has 10. Then pack them into a 32 bit uint
 				uint final_scattering = scattering_u.r << 21 | scattering_u.g << 10 | scattering_u.b;
 #ifdef NO_IMAGE_ATOMICS
