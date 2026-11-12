@@ -47,7 +47,16 @@ if env["platform"] == "windows":
     if physx_gpu:
         physx_libs.append("PhysXGpu_64")  # import lib for PhysXGpu_64.dll
 elif env["platform"] == "linuxbsd":
-    physx_lib = os.path.join(physx_sdk, "bin", "linux.x86_64", "release")
+    # PhysX names its arm64 output folder linux.aarch64 where Godot says arm64.
+    _physx_arch = "aarch64" if env["arch"] == "arm64" else env["arch"]
+    physx_lib = os.path.join(physx_sdk, "bin", "linux." + _physx_arch, "release")
+    if not os.path.isdir(physx_lib) and env["arch"] == "arm64":
+        # Fall back to whichever arm output folder the SDK build made.
+        import glob
+
+        _arm = [d for d in glob.glob(os.path.join(physx_sdk, "bin", "linux.*", "release")) if "arm" in d or "aarch64" in d]
+        if _arm:
+            physx_lib = _arm[0]
     # No GPU lib to link on Linux, PhysX loads it itself at runtime.
     physx_libs = list(physx_static_libs)
 else:

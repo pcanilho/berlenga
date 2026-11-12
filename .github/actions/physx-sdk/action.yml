@@ -23,7 +23,17 @@ runs:
       shell: bash
       run: |
         if [ "$RUNNER_OS" = "Windows" ]; then plat=windows; else plat=linuxbsd; fi
-        python modules/godot_physx/misc/build_physx.py --platform "$plat" --blast --flow --jobs 4
+        extra=""
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          # The presets build with clang; the arm64 runner image may not carry it.
+          if ! command -v clang++ >/dev/null || ! command -v cmake >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y clang cmake
+          fi
+          # Blast's own build is only proven on x86_64: on arm64 a failed Blast build
+          # leaves it out (no fracture) instead of failing the release.
+          if [ "$RUNNER_ARCH" = "ARM64" ]; then extra="--blast-optional"; fi
+        fi
+        python modules/godot_physx/misc/build_physx.py --platform "$plat" --blast --flow $extra --jobs 4
 
     - name: Save PhysX SDK cache
       if: steps.cache.outputs.cache-hit != 'true'

@@ -1,6 +1,7 @@
 name: Release (editor builds)
 
-# Builds the Windows, macOS and Linux editors from main and publishes them as the latest release.
+# Builds the Windows, macOS and Linux editors and the Windows and Linux export templates from main
+# and publishes them as the latest release.
 # Another branch or commit can be built on demand; its zips stay workflow artifacts.
 # Runs on demand, and every Monday when main has moved since the last release.
 on:
@@ -258,9 +259,7 @@ jobs:
       - name: Setup Python and SCons
         uses: ./.github/actions/godot-deps
 
-      # The PhysX module is built and tested on x86_64 only; other builds skip it.
       - name: PhysX, Blast and Flow SDKs
-        if: matrix.arch == 'x86_64'
         uses: ./.github/actions/physx-sdk
 
       - name: Build
@@ -295,12 +294,105 @@ jobs:
             godot-fork-linux-*.zip
             hashes-linux-*.md
 
+  # Export templates for Windows x86_64 and Linux x86_64/arm64, debug and release, with the same
+  # modules as the editors (PhysX included). The publish job packs them into one .tpz.
+  templates:
+    permissions:
+      contents: read
+    needs: check
+    if: needs.check.outputs.publish == 'true'
+    name: template (${{ matrix.platform }} ${{ matrix.arch }} ${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: windows, arch: x86_64, runner: windows-latest, target: template_release }
+          - { platform: windows, arch: x86_64, runner: windows-latest, target: template_debug }
+          - { platform: linuxbsd, arch: x86_64, runner: ubuntu-22.04, target: template_release }
+          - { platform: linuxbsd, arch: x86_64, runner: ubuntu-22.04, target: template_debug }
+          - { platform: linuxbsd, arch: arm64, runner: ubuntu-22.04-arm, target: template_release }
+          - { platform: linuxbsd, arch: arm64, runner: ubuntu-22.04-arm, target: template_debug }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 340
+    env:
+      SCONS_CACHE: ${{ github.workspace }}/.scons_cache/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.check.outputs.sha }}
+
+      - name: Restore build cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: release-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.target }}|${{ needs.check.outputs.sha }}
+          restore-keys: release-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.target }}|
+
+      - name: Install build dependencies
+        if: matrix.platform == 'linuxbsd'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libx11-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev libglu1-mesa-dev libasound2-dev libpulse-dev libudev-dev libxi-dev libxrandr-dev libwayland-dev wayland-protocols libwayland-bin
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: PhysX, Blast and Flow SDKs
+        uses: ./.github/actions/physx-sdk
+
+      - name: Build
+        shell: bash
+        run: |
+          extra=""
+          if [ "${{ matrix.platform }}" = "windows" ]; then extra="d3d12=no"; fi
+          scons platform=${{ matrix.platform }} arch=${{ matrix.arch }} target=${{ matrix.target }} optimize=speed lto=none debug_symbols=no accesskit=no $extra cache_path="$SCONS_CACHE" cache_limit=7 $PHYSX_SCONS_ARGS
+
+      - name: Save build cache
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.SCONS_CACHE }}
+          key: release-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.target }}|${{ needs.check.outputs.sha }}
+        continue-on-error: true
+
+      - name: Package
+        shell: bash
+        run: |
+          # Named as the editor's Export Templates manager expects them.
+          kind=${{ matrix.target }}; kind=${kind#template_}
+          arch=${{ matrix.arch }}
+          mkdir -p tpl/templates
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            cp bin/godot.windows.${{ matrix.target }}.$arch.exe tpl/templates/windows_${kind}_$arch.exe
+            cp bin/godot.windows.${{ matrix.target }}.$arch.console.exe tpl/templates/windows_${kind}_${arch}_console.exe
+            # PhysX module runtime libraries (Blast, Flow): the export ships them from here.
+            cp bin/*.dll tpl/templates/ 2>/dev/null || true
+          else
+            bin=bin/godot.linuxbsd.${{ matrix.target }}.$arch
+            strip "$bin"
+            cp "$bin" tpl/templates/linux_$kind.$arch
+            chmod +x tpl/templates/linux_$kind.$arch
+            # Same names on every Linux arch, so each arch's libraries get their own folder.
+            mkdir -p tpl/templates/linux_$arch
+            cp bin/*.so tpl/templates/linux_$arch/ 2>/dev/null || true
+          fi
+          ls -la tpl/templates
+
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: template-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.target }}
+          path: tpl/
+
   publish:
     permissions:
       actions: read
       contents: write
-    needs: [check, windows, macos, linux]
-    # Windows is required; a failed macOS or Linux build only leaves that zip out.
+    needs: [check, windows, macos, linux, templates]
+    # Windows is required; a failed macOS or Linux build only leaves that zip out, and a
+    # failed export template leaves the templates out.
     if: always() && needs.check.outputs.publish == 'true' && needs.check.outputs.release == 'true' && needs.windows.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -316,6 +408,25 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      - name: Pack the export templates
+        env:
+          SHORT: ${{ needs.check.outputs.short }}
+          SHA: ${{ needs.check.outputs.sha }}
+          TEMPLATES: ${{ needs.templates.result }}
+        run: |
+          if [ -d dist/templates ]; then
+            if [ "$TEMPLATES" = "success" ]; then
+              # The editor installs templates for the version they name, which must match its own.
+              mkdir -p /tmp/built && git show "$SHA:version.py" > /tmp/built/version.py
+              python3 -c "import sys; sys.path.insert(0, '/tmp/built'); import version as v; n = '%d.%d' % (v.major, v.minor) + ('.%d' % v.patch if v.patch else ''); print(n + '.' + v.status + v.module_config)" > dist/templates/version.txt
+              echo "Templates for $(cat dist/templates/version.txt)"
+              (cd dist && zip -9 -r "godot-fork-export-templates-$SHORT.tpz" templates)
+            else
+              echo "::warning::An export template build failed; this release has no export templates."
+            fi
+            rm -rf dist/templates
+          fi
 
       - name: Publish
         id: publish
@@ -344,15 +455,17 @@ jobs:
             --jq '[.jobs[] | select((.conclusion == "cancelled" or .conclusion == "failure") and ([.steps[]? | select(.conclusion != null and .conclusion != "skipped")] | length) == 0) | .name] | join(", ")')
           state=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq ".[] | select(.tag_name == \"$tag\") | if .draft then \"draft\" else \"published\" end" | head -1)
 
+          shopt -s nullglob
+          files=(dist/*.zip dist/*.tpz)
           if [ "$state" = published ]; then
             echo "$tag is already published (immutable); nothing to add."
             exit 0
           fi
           if [ -z "$state" ]; then
-            gh release create "$tag" dist/*.zip --repo "$GITHUB_REPOSITORY" --target "$SHA" \
+            gh release create "$tag" "${files[@]}" --repo "$GITHUB_REPOSITORY" --target "$SHA" \
               --title "build $short (editor)" --notes-file notes.md --generate-notes --draft
           else
-            gh release upload "$tag" dist/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$tag" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
             gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$tag" -f target_commitish="$SHA" --jq .body > generated.md
             { echo; cat generated.md; } >> notes.md
             gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file notes.md

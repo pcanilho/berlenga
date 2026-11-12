@@ -90,8 +90,23 @@ void PhysXExportPlugin::_export_begin(const HashSet<String> &p_features, bool p_
 	const Ref<EditorExportPlatform> platform = get_export_platform();
 	LocalVector<String> missing_effects;
 	LocalVector<PackedStringArray> missing_files;
+	// Linux libraries share names across architectures, so a templates folder holding several
+	// keeps each architecture's in its own subfolder (linux_x86_64/, linux_arm64/, as the
+	// release's export templates do); a folder with only one keeps them beside the template.
+	String lib_dir = template_dir;
+	if (linuxbsd) {
+		for (const char *arch : { "x86_64", "arm64", "arm32", "x86_32", "rv64", "ppc64", "loongarch64" }) {
+			if (p_features.has(arch)) {
+				const String sub = template_dir.path_join(String("linux_") + arch);
+				if (DirAccess::exists(sub)) {
+					lib_dir = sub;
+				}
+				break;
+			}
+		}
+	}
 	for (const ModuleLibrary &library : libraries) {
-		const String path = template_dir.path_join(windows ? library.windows : library.linuxbsd);
+		const String path = lib_dir.path_join(windows ? library.windows : library.linuxbsd);
 		if (FileAccess::exists(path)) {
 			add_shared_object(path, Vector<String>(), String());
 			continue;
@@ -109,7 +124,7 @@ void PhysXExportPlugin::_export_begin(const HashSet<String> &p_features, bool p_
 		for (uint32_t i = 0; i < missing_effects.size(); i++) {
 			platform->add_message(EditorExportPlatform::EXPORT_MESSAGE_WARNING, "PhysX",
 					vformat("Not found next to the export template, so not exported: %s. Without %s, %s. Copy %s into %s from the build that made the template (see the PhysX module README, \"Exporting a game\").",
-							String(", ").join(missing_files[i]), missing_files[i].size() > 1 ? "them" : "it", missing_effects[i], missing_files[i].size() > 1 ? "them" : "it", template_dir));
+							String(", ").join(missing_files[i]), missing_files[i].size() > 1 ? "them" : "it", missing_effects[i], missing_files[i].size() > 1 ? "them" : "it", lib_dir));
 		}
 	}
 
