@@ -273,6 +273,8 @@ class VegetationField3D : public Node3D {
 		LocalVector<Color> customs;
 	};
 	HashMap<ObjectID, LazyNear> lazy_near;
+	bool has_near_swap = false; // Some cells swap to near meshes (their margins follow path tracing).
+	void _set_swap_margins(bool p_traced);
 	void _lazy_near_update(const Vector3 &p_camera);
 	void _lazy_near_drop(MultiMeshInstance3D *p_far);
 	void _lazy_near_free(LazyNear &p_cell);

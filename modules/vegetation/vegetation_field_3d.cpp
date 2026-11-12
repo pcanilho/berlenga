@@ -195,6 +195,7 @@ void VegetationField3D::_clear_generated() {
 		_lazy_near_free(kv.value);
 	}
 	lazy_near.clear();
+	has_near_swap = false;
 	impostor_cells.clear();
 	impostor_meshes.clear();
 	set_process_internal(false);
@@ -665,7 +666,7 @@ void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
 		mm->set_use_custom_data(true);
 		mm->set_mesh(mesh);
 		_fill_cell(mm, mesh, c.xforms, c.customs);
-		const float margin = MAX(c.range * 0.1f, 1.0f);
+		const float margin = impostors_traced ? 0.0f : MAX(c.range * 0.1f, 1.0f);
 		c.near = memnew(MultiMeshInstance3D);
 		c.near->set_name(String(c.far->get_name()) + "_Near");
 		c.near->set_multimesh(mm);
@@ -773,7 +774,10 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 				if (near_mesh.is_valid()) {
 					// Crossfade: both draw over the margin, each dithered in or out
 					// (GeometryInstance3D fade mode Self), so the swap never pops.
-					const float margin = MAX(near_range * 0.1f, 1.0f);
+					// No margin under path tracing: the TLAS takes both cells inside it (no dither
+					// there), so plants in the band would be traced twice (_set_swap_margins()).
+					const float margin = impostors_traced ? 0.0f : MAX(near_range * 0.1f, 1.0f);
+					has_near_swap = true;
 					mmi->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
 					if (near_pass) {
 						mmi->set_visibility_range_end(near_range);
@@ -792,6 +796,7 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 				add_child(mmi, false, INTERNAL_MODE_BACK);
 				r_nodes.push_back(mmi);
 				if (near_source) {
+					has_near_swap = true;
 					LazyNear cell;
 					cell.far = mmi;
 					cell.source = near_source->get_instance_id();
@@ -1435,7 +1440,7 @@ Error VegetationField3D::populate() {
 	_maps_wants(maps);
 	_compute_maps(maps, crown_lists, far_lists);
 	_apply_maps(maps);
-	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty());
+	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty() || has_near_swap);
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("populated"));
 	return OK;
@@ -2041,8 +2046,30 @@ bool VegetationField3D::_path_traced() const {
 	return env.is_valid() && env->is_pathtracing_enabled();
 }
 
+// The near swap's crossfade margins: both cells draw inside them, dithered in and out, which the
+// path tracer does not do; it would trace the plants there twice. Margins off while traced.
+void VegetationField3D::_set_swap_margins(bool p_traced) {
+	for (int i = 0; i < get_child_count(true); i++) {
+		GeometryInstance3D *gi = Object::cast_to<GeometryInstance3D>(get_child(i, true));
+		if (!gi || gi->get_visibility_range_fade_mode() != GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF) {
+			continue;
+		}
+		const float begin = gi->get_visibility_range_begin();
+		if (begin > 0.0f) {
+			gi->set_visibility_range_begin_margin(p_traced ? 0.0f : MAX(begin * 0.1f, 1.0f));
+		}
+		if (String(gi->get_name()).contains("Near")) {
+			const float end = gi->get_visibility_range_end();
+			gi->set_visibility_range_end_margin(p_traced ? 0.0f : MAX(end * 0.1f, 1.0f));
+		}
+	}
+}
+
 void VegetationField3D::_update_impostors(bool p_traced) {
 	impostors_traced = p_traced;
+	if (has_near_swap) {
+		_set_swap_margins(p_traced);
+	}
 	for (uint32_t i = 0; i < impostor_cells.size(); i++) {
 		Ref<MultiMesh> mm = impostor_cells[i]->get_multimesh();
 		if (mm.is_valid()) {
