@@ -77,6 +77,9 @@
 		<member name="global_stiffness" type="float" setter="set_global_stiffness" getter="get_global_stiffness" default="0.1">
 			How strongly the points within [member global_range] are pulled toward their groomed pose on the head, per 1/60 s (TressFX's global shape constraint).
 		</member>
+		<member name="grey_ratio" type="float" setter="set_grey_ratio" getter="get_grey_ratio" default="0.0">
+			The share of strands that are grey: grown with no melanin, only the keratin's own faint yellow left (canities). Each strand is grey or not by its own seed, so grey hairs show singly among the coloured ones. Cards mix the share into each clump's colour.
+		</member>
 		<member name="groom" type="HairGroom" setter="set_groom" getter="get_groom">
 			The strands, in this node's space.
 		</member>
@@ -154,6 +157,9 @@
 		</member>
 		<member name="substeps" type="int" setter="set_substeps" getter="get_substeps" default="4">
 			Solver steps per frame. More keeps long hair stiffer and fast heads cleaner, at a small GPU cost.
+		</member>
+		<member name="sun_bleaching" type="float" setter="set_sun_bleaching" getter="get_sun_bleaching" default="0.0">
+			How much sunlight has lightened the hair, from [code]0[/code] (none) to [code]1[/code]. Light breaks the dark melanin (eumelanin) down faster than the red (pheomelanin), so the lengths that have grown out longest, toward the tips, turn lighter and warmer, from about a fifth of the way down.
 		</member>
 		<member name="tip_width" type="float" setter="set_tip_width" getter="get_tip_width" default="0.0001">
 			The width of a strand at the tip, in metres.

@@ -56,6 +56,8 @@ class PhysXHair3D : public Node3D {
 	float tip_width = 0.0001f;
 	float melanin = 0.5f;
 	float melanin_redness = 0.0f;
+	float grey_ratio = 0.0f; // the share of strands with no melanin
+	float sun_bleaching = 0.0f; // how much the sun has lightened the lengths toward the tips
 	float roughness = 0.3f;
 	float radial_roughness = 0.3f;
 	bool hair_shading = true;
@@ -180,6 +182,8 @@ class PhysXHair3D : public Node3D {
 	void _make_material();
 	void _step(double p_delta);
 	Vector3 _fibre_absorption() const;
+	Vector3 _fibre_absorption_pheo() const;
+	float _mass_exponent() const;
 	Vector2 _fibre_roughness() const;
 	void _update_wetness(double p_delta);
 	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_guide_pool = 0) const;
@@ -210,6 +214,10 @@ public:
 	float get_tip_width() const;
 	void set_melanin(float p_melanin);
 	float get_melanin() const;
+	void set_grey_ratio(float p_ratio);
+	float get_grey_ratio() const;
+	void set_sun_bleaching(float p_amount);
+	float get_sun_bleaching() const;
 	void set_melanin_redness(float p_redness);
 	float get_melanin_redness() const;
 	void set_roughness(float p_roughness);
