@@ -1473,6 +1473,17 @@
    "topic": "Grass"
   },
   {
+   "name": "Grass on the GPU",
+   "settings": [
+    "GrassField3D.gpu_fill"
+   ],
+   "note": "",
+   "what": "grass tiles are filled in compute, about 40% less main-thread cost per tile.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Grass edge fade",
    "settings": [],
    "note": "always on",
