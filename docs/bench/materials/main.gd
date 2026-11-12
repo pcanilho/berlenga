@@ -50,7 +50,7 @@ extends Node3D
 #                     alone (deep_shadows off), "lamp" for night under an omni light beside the head
 #                     ("spotlamp" a spot light; "nolocal" without the lamp's own deep shadow map),
 #                     "nosimplify" to draw every groomed point (simplify_tolerance 0), "nocollide" without
-#                     strand-strand collision between guides; "box" for broad
+#                     strand-strand collision between guides; "wet" for soaked hair; "box" for broad
 #                     rounded shoulders (spheres only on the skull), "body" to make the shoulders (with
 #                     or without "box") the collision body, held still and seen from the side,
 #                     "skinned" to skin them to a tilted bone (the head stays still), "hidebox" to see the drape;
@@ -735,6 +735,10 @@ func _strands_sim() -> void:
 			h.deep_shadow_local_lights = 0
 	if hair.contains("all"):
 		h.guide_ratio = 1.0
+	if hair.contains("wet"):
+		# Soaked hair (wetness 1, held there): darker, glossier, heavier and clumped.
+		h.weather_wetting = false
+		h.wetness = 1.0
 	h.wind = Vector3(1.5, 0, 0)
 	if hair.contains("wind"):
 		# Head held still in a moderate breeze (6 m/s, Beaufort 4) with gusts.

@@ -80,7 +80,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 spheres[MAX_SPHERES]; // world centre, radius
 	vec4 sdf_origin; // xyz the grid's corner (world), w the cell size (m)
 	ivec4 sdf_dims; // xyz cells, w triangles (0: no collision body)
-	vec4 sdf_misc; // x unused, y collision margin (m)
+	vec4 sdf_misc; // x the distance field's band, y collision margin (m), z wet clumping (0..1)
 	vec4 vol_origin; // xyz the volume grid's corner (groom space), w its cell (m)
 	vec4 vol_misc; // x friction (per substep), y pressure stiffness (m^2/s^2), z mean groom density, w cells a side (0: off)
 	vec4 dom_misc; // deep opacity maps: x cells a side, y the strands' root width (m), z their tip width (m), w maps (0: off)
@@ -897,8 +897,15 @@ void main() {
 		}
 		vec4 gi = follow[id * 2];
 		vec4 gw = follow[id * 2 + 1];
+		// Wet hair clumps: the water between neighbouring fibres pulls them together where their
+		// free length beats their bending stiffness (elastocapillary coalescence, Bico et al. 2004),
+		// so the clumps close from a little past the root out to the tips. Each follower's groomed
+		// offset from its guides shrinks by the clumping (Gupta and Magnenat-Thalmann 2007 pull the
+		// child strands to their guides the same way).
+		float clump = sdf_misc.z;
 		for (int i = 0; i < n; i++) {
 			float t = float(i) / float(max(n - 1, 1));
+			float keep = 1.0 - clump * smoothstep(0.0, 0.3, t);
 			vec3 own = to_world(m, rest[first + i].xyz);
 			vec3 p = vec3(0.0);
 			for (int c = 0; c < 3; c++) {
@@ -918,7 +925,7 @@ void main() {
 				vec3 gr = to_world(m, mix(rest[gf + i0].xyz, rest[gf + i1].xyz, f));
 				vec3 d_cur = pos[gf + i1].xyz - pos[gf + s0].xyz;
 				vec3 d_rest = basis * (rest[gf + i1].xyz - rest[gf + s0].xyz);
-				vec3 off = own - gr;
+				vec3 off = (own - gr) * keep;
 				if (dot(d_cur, d_cur) > 1e-14 && dot(d_rest, d_rest) > 1e-14) {
 					off = rotate_between(normalize(d_rest), normalize(d_cur), off);
 				}

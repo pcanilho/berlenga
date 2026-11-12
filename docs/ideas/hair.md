@@ -654,6 +654,44 @@ Everywhere else the shaders and the BLAS are built exactly as before, which is a
 
 Built (#258). The setting is off by default until the swept sphere path has run on a 50-series GPU.
 
+## Stage 2o: wet hair from the rain
+
+What changes when hair gets wet, from the literature:
+
+- Ward, Galoppo and Lin, "Modeling Hair Influenced by Water and Styling Products" (CASA 2004): wet hair
+  is darker and shinier, heavier, softer and gathers into clumps. A thin water film smooths the
+  cuticle scales into a near mirror surface; light kept inside the wet mass is absorbed more.
+- Gupta and Magnenat-Thalmann, "Interactive Rendering of Optical Effects in Wet Hair" (VRST 2007):
+  hair takes up about 45% of its dry weight in water; the fibre roughness falls as
+  alpha (1 - c w); bending stiffness x (1 - 0.45 w); child strands are pulled onto their guides
+  as w rises.
+- Lekner and Dorf, "Why some things are darker when wet" (Applied Optics 1988): water between
+  the scatterers nearly matches their index (1.33 against keratin's 1.55, relative 1.165, so a
+  fibre's reflection at normal incidence drops from 4.6% to 0.6%), light goes deeper and is
+  absorbed over more fibres.
+- Bico, Roman, Moulin and Boudaoud, "Adhesion: Elastocapillary coalescence in wet hair" (Nature 2004):
+  water pulls neighbouring fibres together where their free length beats their bending stiffness,
+  so clumps close from a little past the root out to the tips.
+- None of them gives a drying rate.
+
+Built on PhysXHair3D (`wetness`, `weather_wetting`, `water_capacity`, `drying_time`,
+`wet_clumping`), off when nothing wets the hair:
+
+- Wetting: rain from the WeatherMap3D (mm/h) less what the canopy catches (free throughfall,
+  Gash 1979: the share of sky the canopy leaves open), none under a roof (a ray up from the top of
+  the hair every 0.5 s), fills `water_capacity` (1 mm: about 27 g of water, 45% of a head of hair,
+  over a 0.03 m2 crown). Drying is an even rate, soaked to dry in `drying_time` (1 h by default, a
+  guess at air drying long hair; no measured rate found).
+- Look (raster and path tracer, the same parameters): the longitudinal roughness halves when soaked
+  and the fibre absorption rises by half (the darkening, standing in for index matching; tuned, not
+  measured). The raster mass colour follows the absorption.
+- Motion: mass x (1 + 0.45 w), so the air's drag moves the strands less; global and local shape
+  stiffness x (1 - 0.45 w), so the hair hangs flatter; the volume's push apart x (1 - w);
+  followers' groomed offsets from their guides shrink by `wet_clumping` x w, ramping in over the
+  first 30% of the strand.
+- The fibre index in the path tracer stays 1.55: a wet index would need a new HAIR output through
+  every renderer, for a highlight change the roughness already gives.
+
 ## Checked: lighter path traced strands
 
 The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,
@@ -714,3 +752,8 @@ groom to test with.
 - Blender manual, Principled Hair BSDF (Chiang and Huang models).
 - Unreal Engine documentation, Groom Strands; AMD TressFX (GPUOpen).
 - pbrt-v4, `HairBxDF` (Pharr, Jakob, Humphreys).
+- Ward, Galoppo, Lin. Modeling Hair Influenced by Water and Styling Products. CASA 2004.
+- Gupta, Magnenat-Thalmann. Interactive Rendering of Optical Effects in Wet Hair. VRST 2007.
+- Lekner, Dorf. Why Some Things Are Darker When Wet. Applied Optics 27(7), 1988.
+- Bico, Roman, Moulin, Boudaoud. Elastocapillary Coalescence in Wet Hair. Nature 432, 2004.
+- Gash. An Analytical Model of Rainfall Interception by Forests. QJRMS 105, 1979.
