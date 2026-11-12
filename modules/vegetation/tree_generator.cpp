@@ -1713,7 +1713,7 @@ int TreeGenerator::get_dead_branch_count() const {
 }
 
 // A generalized cylinder along a polyline, framed by parallel transport (Bishop frames).
-void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height, float p_relief) {
+void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height, float p_relief, float p_girth_r, bool p_soil_fade) {
 	const int rings = int(p_points.size());
 	if (rings < 2) {
 		return;
@@ -1725,7 +1725,9 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 	float v = p_v0;
 	// A whole number of bark tiles around the stem (no seam), v in the same tile width so the
 	// pattern keeps its aspect; thin shoots carry one tile, a finer pattern, as young bark is.
-	const float girth = Math::TAU * MAX(p_radii[0], 0.001f);
+	// A tube that starts in a closed cap (a log's butt) passes the stem's radius: from the cap's
+	// zero radius the bark tiled every few millimetres and mipmapped to a flat colour.
+	const float girth = Math::TAU * MAX(p_girth_r > 0.0f ? p_girth_r : p_radii[0], 0.001f);
 	const float repeats = MAX(1.0f, Math::round(girth / BARK_TILE));
 	const float circumference = girth / repeats;
 	// Displacement: the bark family's height (metres, 0 on plate tops, negative in cracks),
@@ -1771,9 +1773,10 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 			float rr = p_radii[r];
 			if (hdata) {
 				// Faded out at the soil line (the tree's ground is y = 0): plates and furrows cut
-				// the ground plane in a ragged line, read as a rim around the root collar.
+				// the ground plane in a ragged line, read as a rim around the root collar. Not on
+				// fallen wood, which lies across that plane: its underside lost its furrows.
 				const float gy = p_points[r].y + dir.y * rr;
-				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * Math::smoothstep(-0.02f, 0.2f, gy);
+				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f);
 			}
 			r_b.verts.push_back(p_points[r] + dir * rr);
 			r_b.normals.push_back(dir);
@@ -1793,7 +1796,8 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 		for (int s = 0; s < p_sides; s++) {
 			const int a = base + r * (p_sides + 1) + s;
 			const int b = a + p_sides + 1;
-			// Clockwise front faces (Godot).
+			// Counter-clockwise seen from outside, as the other bark builders wind; _build_mesh()
+			// flips the bark and moss to Godot's clockwise front faces.
 			r_b.indices.push_back(a);
 			r_b.indices.push_back(a + 1);
 			r_b.indices.push_back(b);
@@ -2575,13 +2579,17 @@ float moss_noise(const Vector3 &p_p, uint32_t p_salt) {
 // Moss weight 0..1 at a bark point: a skirt at the foot of the stem where stemflow and splash
 // keep the bark wet, the upper faces of level limbs and logs where water and litter settle, broken
 // into patches (Barkman 1958). Aspect is left out: placed trees turn about their axis.
-float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount) const {
+float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount, bool p_clamp) const {
 	const float h = MAX(p_pos.y - p_ground, 0.0f);
-	const float foot = Math::exp(-h / 1.1f);
+	// Fallen wood lies within the skirt's height all round, which spread the moss evenly over
+	// its underside too. On a log it grows over the upper half and down the flanks, and the
+	// face pressed into the litter stays bare (Soderstrom 1988).
+	const float foot = (fallen || fallen_branch) ? Math::smoothstep(-0.45f, 0.25f, p_normal.y) : Math::exp(-h / 1.1f);
 	const float up = p_normal.y;
 	const float top = CLAMP((up - 0.35f) / 0.5f, 0.0f, 1.0f) * 0.75f;
 	const float patch = 0.65f * moss_noise(p_pos * 2.2f, 0x6d6f7373u + uint32_t(seed)) + 0.35f * moss_noise(p_pos * 7.0f, 0x6d6f7374u);
-	return CLAMP(p_amount * MAX(foot, top) * (1.9f * patch - 0.25f), 0.0f, 1.0f);
+	const float w = p_amount * MAX(foot, top) * (1.9f * patch - 0.25f);
+	return p_clamp ? CLAMP(w, 0.0f, 1.0f) : w;
 }
 
 // Moss texture over one bark tile: a turf of tiny shoots (2-4 mm) gathered into cushions a few
@@ -2618,6 +2626,21 @@ const TreeGenerator::BarkSet &TreeGenerator::_moss_set() {
 			// Shoot tips are paler and yellower; the turf between them and the gaps between
 			// cushions are dark.
 			tw[y * N + x] = 0.55f + 0.35f * shoots + 0.25f * tips - 0.35f * (1.0f - c);
+		}
+	}
+	{
+		// The noises are far narrower than their nominal range (a tone spread of about 0.06):
+		// the turf read as a flat colour. Scanned moss varies by about 40% of its mean across a
+		// few centimetres (lit tips against shaded gaps), so the tone is stretched to that.
+		double sum = 0.0, sq = 0.0;
+		for (int k = 0; k < N * N; k++) {
+			sum += tw[k];
+			sq += double(tw[k]) * tw[k];
+		}
+		const float mean = float(sum / (N * N));
+		const float sd = float(Math::sqrt(MAX(sq / (N * N) - double(mean) * mean, 1e-8)));
+		for (int k = 0; k < N * N; k++) {
+			tw[k] = 0.55f + (tw[k] - mean) * (0.22f / sd);
 		}
 	}
 	for (int y = 0; y < N; y++) {
@@ -4717,6 +4740,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const float lean = Math::sqrt(MAX(0.0f, 1.0f - d0.y * d0.y));
 			pts[0] -= Vector3(0, 0.15f + rad[0] * lean, 0);
 		}
+		float girth_r = -1.0f; // The bark tiles' radius when the tube starts in a cap.
 		if (stem && (fallen || fallen_branch) && pts.size() >= 2 && rad[0] >= 0.006f) {
 			// A standing stem's base is under the soil; a log's or a fallen limb's lies in the
 			// open and showed the tube's hollow inside. It closes under a short broken face, as
@@ -4724,6 +4748,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const Vector3 d0 = (pts[1] - pts[0]).normalized();
 			const Vector3 p0 = pts[0];
 			const float r_base = rad[0];
+			girth_r = r_base;
 			const float ks[3] = { 1.0f, 0.75f, 0.4f };
 			const float rs[3] = { 0.0f, 0.68f, 0.93f };
 			LocalVector<Vector3> cp;
@@ -4776,7 +4801,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			Vector4i part;
 			bark.role = relief ? Builder::ROLE_PLAIN : Builder::ROLE_ALL;
 			bark.begin(part);
-			_tube(bark, pts, rad, sides, 0.0f, col);
+			_tube(bark, pts, rad, sides, 0.0f, col, nullptr, 0.0f, girth_r);
 			bark.end(part, r0);
 			moss_tint(bark, part);
 			if (rigged) {
@@ -4813,7 +4838,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				Vector4i part;
 				bark.role = skip_lods ? Builder::ROLE_ALL : Builder::ROLE_RELIEF;
 				bark.begin(part);
-				_tube(bark, rp, rr, rsides, 0.0f, col, bs.height.ptr(), scale);
+				_tube(bark, rp, rr, rsides, 0.0f, col, bs.height.ptr(), scale, girth_r, !(fallen || fallen_branch));
 				bark.end(part, r0);
 				moss_tint(bark, part);
 				if (rigged) {
@@ -4835,7 +4860,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				Vector4i part;
 				moss.bone = node_bone[s];
 				moss.begin(part);
-				_tube(moss, rp, rr, rsides, 0.0f, col);
+				_tube(moss, rp, rr, rsides, 0.0f, col, nullptr, 0.0f, girth_r);
 				moss.end(part, r0);
 				if (s == veteran_stem || vet_share[s]) {
 					veteran_deform(moss, part, rp, rr, rsides, false, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
@@ -4856,29 +4881,56 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				};
 				// Moss fills the furrows first, then grows over the plates (Barkman 1958): the moss
 				// surface rises from the furrow floor to above the plate tops as its weight grows,
-				// and wherever it is below the bark it stays hidden just under it.
+				// and wherever it is below the bark it stays hidden under it.
 				const float floor_d = relief ? -0.045f * scale : -0.004f; // Below the deepest furrow (3 cm plus grain).
 				if (rigged) {
 					_skin_stem(moss, part, s, rp, rsides);
 				}
 				LocalVector<float> wv;
 				wv.resize(part.w);
+				// The weight before its clamp, and how much it changes from one vertex to the next:
+				// on heavily mossed wood (logs) the weight crossed the whole ramp between two
+				// vertices, so the edge could only fall on the grid and drew it as stairs. The ramp
+				// is widened to span at least two and a half vertices, so the surface crosses the
+				// bark at the weight's own contour, between vertices.
+				const int ring = rsides + 1;
+				LocalVector<float> raw;
+				raw.resize(part.w);
+				for (int i = 0; i < part.w; i++) {
+					raw[i] = _moss_at(moss.verts[part.z + i], moss.normals[part.z + i], moss_ground, moss_k, false);
+				}
 				for (int i = 0; i < part.w; i++) {
 					const int v = part.z + i;
 					const Vector3 n = moss.normals[v];
-					const float w = _moss_at(moss.verts[v], n, moss_ground, moss_k);
+					const float w = CLAMP(raw[i], 0.0f, 1.0f);
+					float step = 0.0f;
+					if (part.w % ring == 0) {
+						const int rs = i / ring, sd = i % ring;
+						const int nb[4] = { rs > 0 ? i - ring : -1, i + ring < part.w ? i + ring : -1, rs * ring + (sd + rsides - 1) % rsides, rs * ring + (sd + 1) % rsides };
+						for (int k = 0; k < 4; k++) {
+							if (nb[k] >= 0) {
+								step = MAX(step, Math::abs(raw[nb[k]] - raw[i]));
+							}
+						}
+					}
 					// Hummocks a hand across: the vertices are 2.5 cm apart, so the texture's 4 cm
 					// cushions stay in the normal map and the geometry carries only what it resolves.
 					const float hummock = moss_noise(moss.verts[v] * 9.0f, 0x6d6f7376u);
 					// A narrow ramp: the moss edge is a contour of the smooth weight that only dips into
 					// the furrows just ahead of it; a wide one shows the 2.5 cm vertex grid as blocks
 					// where furrows are partly filled.
-					const float ramp = CLAMP((w - 0.35f) / 0.25f, 0.0f, 1.0f);
+					// Centred where it was (0.35 to 0.6), so the moss covers as much as before.
+					const float ramp = CLAMP(0.5f + (raw[i] - 0.475f) / MAX(0.25f, 2.5f * step), 0.0f, 1.0f);
 					const float fill = Math::lerp(floor_d, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
-					const float under = bark_disp(moss.uvs[v]);
+					// As the relief tube has it: faded out at a standing stem's soil line.
+					const float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, moss.verts[v].y));
 					// Shown where the fill stands above the bark; wv carries the margin.
 					wv[i] = fill - under;
-					moss.verts.write[v] = moss.verts[v] + n * MAX(fill, under - 0.004f);
+					// Below the bark the shell keeps its own depth rather than hugging the bark's
+					// underside: the edge then falls where the fill crosses the bark between two
+					// vertices, not pulled out to the nearer vertex, which drew the edge as stairs
+					// of the 2.5 cm grid.
+					moss.verts.write[v] = moss.verts[v] + n * fill;
 					// Wetter, deeper moss is darker; thin moss on dry faces yellower.
 					const float dry = moss_noise(moss.verts[v] * 1.3f, 0x6d6f7375u);
 					moss.colors.write[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - w * 0.4f, 0.0f, 1.0f));
@@ -5467,6 +5519,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
 			continue;
+		}
+		if (s == 0 || s == 2) {
+			// The bark and moss builders wind their triangles counter-clockwise seen from outside;
+			// Godot's front faces wind clockwise (as PlantGenerator flips its builders). Unflipped,
+			// the raster drew every stem's far inner wall, and the moss shell lay behind it.
+			int32_t *iw = b.indices.ptrw();
+			for (int64_t i = 0; i + 2 < b.indices.size(); i += 3) {
+				SWAP(iw[i + 1], iw[i + 2]);
+			}
 		}
 		Array arrays;
 		arrays.resize(Mesh::ARRAY_MAX);

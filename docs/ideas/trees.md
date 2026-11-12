@@ -515,14 +515,32 @@ layer, so we build geometry:
   upper faces) times patch noise.
 - **Tint** at every LOD: the bark's vertex colour goes to moss green with the weight.
 - **Shell** at LOD 0 and for the path tracer, on wood 5 cm and up: the displaced bark tube
-  again, lifted by up to 1.8 cm of moss (hand-sized hummocks) where the weight is high and kept
-  4 mm under the bark where it fades, so the edge needs no alpha; it enters furrows just ahead
+  again, lifted by up to 1.8 cm of moss (hand-sized hummocks) where the weight is high and sunk
+  under the bark where it fades, so the edge needs no alpha; it enters furrows just ahead
   of the plates. Quads wholly under the bark are dropped. Its own surface "moss": a baked turf
   texture (shoots of about 3 mm in cushions of about 4 cm, domain-warped), matte.
 - Aspect is not used: placed trees turn about their axis, so a north side baked into the mesh
   would point anywhere.
 - Cost: oak open-grown 56k moss triangles on 4.2M of bark; stand-grown oak 19k on 0.8M; a
   class 3 oak log 190k on 0.18M.
+- Fixes (12 Nov), from a fallen beech that read as a flat lime capsule with stepped windows:
+  - **Winding.** Every bark and moss tube was wound counter-clockwise seen from outside, but
+    Godot's front faces (and the path tracer's back-face culling) are clockwise. Raster and path
+    tracer both drew each stem's far inner wall; on a cylinder the lighting looks almost right,
+    so it went unseen, but the moss shell lay behind the bark. `_build_mesh()` now flips the bark
+    and moss builders, as PlantGenerator does.
+  - **Tiling on logs.** The closed butt starts the tube at radius 0, and the bark tile width came
+    from the first ring: bark and moss tiled every few millimetres and mipmapped to one colour.
+    The tube now takes the stem's radius for its tiles.
+  - **Edge.** On heavily mossed wood the weight crossed the whole ramp between two vertices, and
+    the shell hugged the bark's underside, so the edge snapped to the 2.5 cm grid as stairs. The
+    ramp now spans at least 2.5 vertices (from the unclamped weight) and the shell keeps its own
+    depth below the bark, so the edge falls between vertices.
+  - **Where on a log.** The stem-foot skirt covered a lying log all round, its underside too; on
+    fallen wood the skirt is replaced by the upper half and flanks (the face in the litter stays
+    bare). Fallen wood also keeps its bark relief (the soil-line fade is for standing stems).
+  - **Turf contrast.** The baked turf's tone spread was about 0.06 of its mean; stretched to 0.22
+    (lit tips against shaded gaps, as scanned moss shows).
 
 ### 5e. Old trees (as built, 11 Nov; Paulo picked)
 

@@ -424,7 +424,7 @@ public:
 	float shed_radius_max = 0.14f; // Thickest limb _shed_branch() picks (FORM_STICKS: 4 cm).
 	float climber_cover = 0.6f;
 	float _moss_amount() const;
-	float _moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount) const;
+	float _moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount, bool p_clamp = true) const;
 	static constexpr float MOSS_SHELL_MIN_RADIUS = 0.05f;
 	static constexpr float BARK_TILE = 0.4f; // Metres of bark one texture tile covers.
 	static constexpr int RIG_STRIDE = 18;
@@ -479,7 +479,7 @@ private:
 	void _prune_collisions();
 	void _measure();
 
-	static void _tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height = nullptr, float p_relief = 0.0f);
+	static void _tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height = nullptr, float p_relief = 0.0f, float p_girth_r = -1.0f, bool p_soil_fade = true);
 	void _add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3 &p_out, const Vector3 &p_up, float p_size, const Color &p_color);
 	// Species leaves (docs/ideas/trees.md section 2b): the detailed blade at LOD 0 and for the
 	// path tracer, a simple lens of the same area (its twin) at the coarser levels.
