@@ -26,7 +26,11 @@ layout(push_constant, std430) uniform Params {
 	ivec2 offset; // the pixel of each block drawn this frame
 	ivec2 low_size;
 	uint history_valid;
-	uint pad;
+	uint drawn; // samples this frame's pixel has had since the history was reset, this one included
+	float history_scale; // this frame's pre-exposure over the history's
+	float pad0;
+	float pad1;
+	float pad2;
 }
 params;
 
@@ -76,7 +80,28 @@ bool reproject(ivec2 px, out vec4 r_color) {
 		return false;
 	}
 	r_color = sample_history(prev_uv);
+	r_color.rgb *= params.history_scale; // alpha is the clouds' transmittance, not light
 	return true;
+}
+
+// The history clamped to the range of this frame's samples around the pixel (the 3x3 drawn pixels
+// nearest it, min/max as TAA resolves bound their history; Karis, "High Quality Temporal
+// Supersampling", SIGGRAPH 2014): clouds that drifted or grew while the pixel waited 16 frames for its
+// next sample don't trail behind. A min/max box, not variance clipping, so thin bright detail (lit
+// cloud edges) narrower than the 4-pixel sample spacing is kept.
+vec4 clamp_history(ivec2 px, vec4 p_prev) {
+	// The drawn pixels themselves (not bilinear taps, which would dilute a lone bright sample).
+	ivec2 c = ivec2(floor((vec2(px) - vec2(params.offset)) * 0.25 + 0.5));
+	vec4 lo = vec4(1e20);
+	vec4 hi = vec4(-1e20);
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			vec4 s = texelFetch(new_samples, clamp(c + ivec2(x, y), ivec2(0), params.low_size - 1), 0);
+			lo = min(lo, s);
+			hi = max(hi, s);
+		}
+	}
+	return clamp(p_prev, lo, hi);
 }
 
 void main() {
@@ -88,11 +113,19 @@ void main() {
 	ivec2 o = px & 3;
 	vec4 prev;
 	bool seen = reproject(px, prev);
+	if (seen) {
+		prev = clamp_history(px, prev);
+	}
 	if (all(equal(o, params.offset)) && all(lessThan(q, params.low_size))) {
 		// Drawn this frame: averaged with what this pixel held, so the march's jitter, which
-		// changes every frame, settles instead of showing (an exponential mean over its updates).
+		// changes every frame, settles instead of showing. Its first sample replaces the upsampled
+		// fill it held (blocky, a sixteenth of the pixels), the next ones make a running mean, then
+		// an exponential mean over about the last four (the history clamp keeps it on the moving clouds; a weight of a
+		// half left the jitter visible as a fixed checker across each 4x4 block, and kept the first
+		// fill's blocks for several cycles).
 		vec4 fresh = texelFetch(new_samples, q, 0);
-		imageStore(dest, px, seen ? mix(prev, fresh, 0.5) : fresh);
+		float w = 1.0 / float(min(max(params.drawn, 1u), 4u));
+		imageStore(dest, px, seen ? mix(prev, fresh, w) : fresh);
 		return;
 	}
 	if (seen) {
