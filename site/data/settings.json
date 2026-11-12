@@ -1609,6 +1609,17 @@
    "topic": "Grass"
   },
   {
+   "name": "Far grass in sunlight",
+   "settings": [
+    "GrassField3D.sun_light"
+   ],
+   "note": "",
+   "what": "distant grass brightens looking away from the sun and darkens looking into it, measured from the blades at four sun headings.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Layered meadow",
    "settings": [
     "GrassField3D.color_variation",
