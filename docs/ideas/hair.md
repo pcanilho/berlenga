@@ -590,6 +590,17 @@ darker mass the path tracer shows). The sun scene is unchanged (error 42.9 befor
 `wavy_spotlamp` renders the spot light's map. Cost on the cloud's software Vulkan, 60 frames: 184 s
 without the lamp's map, 197 s with it (+7%); the GPU cost is on the PC queue.
 
+## Stage 2l: cheaper deep shadows
+
+The maps' splat passes (MODE_DOM_FRONT and MODE_DOM_ACCUM) cost most of the maps: every strand
+segment sampled twice per cell it crosses, each sample splatted bilinearly into 4 cells with an
+atomic each. Unreal rasterizes each strand into its deep shadow map as a line (one texel per
+step); the hair shader already filters across 4 cells when it reads. So each segment is now
+sampled once per cell it crosses, each sample into its nearest cell: an eighth of the atomics.
+Measured on the cloud with the map passes run 20 times a frame to isolate them: 5.6 s per 20
+frames before, 1.8 s after (-68%). Picture: sun scene mean difference 0.04 levels (error against
+the path tracer 42.9 -> 41.4), lamp scene 0.11 levels (104.8 -> 109.4, about one level a region).
+
 ## Checked: lighter path traced strands
 
 The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,
