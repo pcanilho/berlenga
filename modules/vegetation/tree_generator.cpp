@@ -3872,7 +3872,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		const Node &child = nodes[p_node];
 		const Node &par = nodes[child.parent];
 		const Vector3 d = child.dir;
-		if (d.cross(par.dir).length() < 0.12f || child.radius < 0.01f || child.radius > 1.0f * par.radius) {
+		if (d.cross(par.dir).length() < 0.12f || child.radius < 0.01f || child.radius > 0.6f * par.radius) {
 			// A crotch of near-parallel or near-equal stems: no single surface to weld onto (the
 			// collar code leaves these alone too).
 			return;

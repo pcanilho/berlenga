@@ -682,9 +682,11 @@ anatomy, Shigo 1985 (the branch collar: the limb's wood runs down the parent bef
 out, the trunk collar wraps it, and a raised branch bark ridge sits in the crotch); Pirk et al.
 2012 (Plastic Trees: branches bend away from obstacles). Built SpeedTree's version, shaped by
 Shigo's anatomy, since it stays a tube (no implicit polygonizer, no extra triangles):
-- **Every limb welds.** The parent is up to six segments (two before the junction, three after)
-  tested as a union of capsules. Each vertex marches out of the union and bisects to the bark.
-  A weld fails only past the far end of the modelled parent. On the open oak no limb is skipped.
+- **Every limb welds** up to 0.6 of its parent's radius; above that it is a fork of near-equal
+  stems, a crotch (welded, an oak's low fork turned into a blocky hood). The parent is up to six
+  segments (two before the junction, three after) tested as a union of capsules. Each vertex
+  marches out of the union and bisects to the bark. A weld fails only past the far end of the
+  modelled parent. On the open oak no limb under that ratio is skipped.
 - **Steep limbs** (under 30 degrees off the parent) are not slid: on the bark they lay almost
   tangent and showed through the furrows as long slivers. They stay crotches, with normals
   blended.
