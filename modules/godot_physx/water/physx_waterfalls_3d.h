@@ -83,6 +83,7 @@ private:
 	float friction_factor = 0.2f; // Darcy-Weisbach f of white water on rough rock (Chanson: 0.1 to 0.3 on steps)
 	float row_spacing = 0.5f; // m along the face (a ledge's brink between rows 1 m apart cut through the sheet)
 	float wet_margin = 0.6f; // m of wet rock either side of the water
+	float rock_step = 0.8f; // m: height of the steps and ledges a thin flow runs over (nappe vs skimming flow)
 
 	LocalVector<Face> faces;
 	// Standing water from the source (sea level, lakes as rectangle and level): a sheet stops where it meets it.
@@ -110,6 +111,11 @@ public:
 	static String get_contact_shader_code();
 	void set_wet_margin(float p_margin);
 	float get_wet_margin() const;
+	void set_rock_step(float p_step);
+	float get_rock_step() const;
+	// Share of a steep face a thin flow covers: falls step to step as threads (nappe flow) below the onset of
+	// skimming flow, y_c / h > 1.2 - 0.325 h/l (Chanson 2001), and covers the rock above it.
+	static float flow_cover(float p_q, float p_step, float p_tan_slope);
 	Array get_contact_falls() const;
 
 	void set_source(const NodePath &p_path);

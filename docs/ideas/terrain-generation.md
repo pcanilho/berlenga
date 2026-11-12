@@ -1145,6 +1145,14 @@ Result, showcase valley at 10000 years: 2.2e6 m3, aprons fill the hollows at the
 fall stays. Off by default and in the bench (`--scree-age=10000` to see it): the difference is modest at 16 m cells,
 and it reads as rock until the ground shader gets a scree material (next step: mark it in the talus channel).
 
+Materials (12 Nov, Paulo picked "scree and till materials" at 23:04): the geology image's talus channel (blue) now
+carries what loose cover lies on the ground. Scree from `scree_age` is 0..1 (smoothstep of its depth over 1 m), so
+the cones and aprons read as angular blocks with no soil; moraine till from `moraine_age` is written negative
+(0..-1, its depth over 2 m) where it is deeper than the scree. TerrainMaterial3D draws till as soil with stones
+through it (the scree layer at 0.45 of the till weight, the height blend lifts the stones out of the soil), the way
+fresh moraine looks: a sandy, silty matrix full of rounded boulders (Benn and Evans ch. 11), unlike scree's bare
+sorted blocks. Old maps keep working: nothing negative was ever written there.
+
 ## Faster ice stage (11 Nov night)
 
 Measured (showcase valley): the steady-ice solve is 96% of the ice stage, 1.26 of 1.30 s, in 128 solves (6000
@@ -1220,6 +1228,33 @@ is the Howard and Knutson (1984) migration model, as in Ikeda, Parker and Sawai 
 Showcase valley at 3000 years: the clearing reach reaches sinuosity 2.0 (pressed against its walls) and the plain above
 the beach 1.7, with 28 cut-off loops of which the youngest still show as hollows. Generation takes about 1.5 s
 longer. Off by default; with it off the result is unchanged.
+
+## Braided outwash (research, 12 Nov; Paulo picked it with the others at 23:04)
+
+Why: below a glacier, or where one stood, the meltwater carries more gravel than one channel can move. It spreads
+over a wide flat gravel floor (a sandur or valley train) and splits into many shallow channels round bars that shift
+every flood. Alpine and Icelandic valleys and New Zealand's braided rivers read this way; a single meandering or
+straight channel there looks wrong.
+
+What decides it: the Leopold and Wolman (1957) line, slope above about 0.012 Q^-0.44 at bankfull discharge Q, with
+high bedload and weak (unvegetated, gravel) banks; the same threshold this generator already uses to keep meanders
+below it. Width grows with discharge (Parker 1976; braidplain width tens of times the channel width), the channel
+count with stream power (Ashmore 1991; Egozi and Ashmore 2008 count 2 to 6 active channels at typical powers).
+
+Established models:
+- Murray and Paola (1994, Nature 371): the cellular braided river. Water is routed cell to cell down the slope,
+  shared among the three downstream neighbours by slope^n, and moves sediment as a nonlinear function of the
+  discharge; bars and channels braid on their own. Cheap, grid based, the standard reduced-complexity model.
+- Thomas and Nicholas (2002), Nicholas (2013, Earth Surface Processes and Landforms): the same with a shallow-water
+  flow solve, for the shapes of bars; heavier than a terrain generator needs.
+- Engines: World Creator and Gaea draw river networks but no braids; Star Citizen's planets have none seen.
+
+Design: `outwash_age` (years, 0 = off). Find the reaches above the Leopold-Wolman line with plenty of sediment that
+lie below the last glaciation's margins (meltwater supply) or carry its moraine and scree; grade a braidplain across
+them, flat across and as wide as Parker's width; then run a Murray-Paola pass on a fine grid (4 m) over that plain
+for the years given, carving the active channels and leaving the bars. The ground there is bare gravel (alluvium,
+no soil), the water follows the deepest channel with the side channels shallow, and the plants stay off the active
+plain (bars older than a few decades take willows and grass in the real thing, a later step).
 
 ## Sources
 

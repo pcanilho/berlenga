@@ -244,6 +244,25 @@ func _ready() -> void:
 		_log("saved " + out)
 		if gen != null:
 			_log("sky light update %.1f ms" % gen.get_last_sky_light_msec())
+		if args.has("geo-dump"):
+			# Loose cover on the generator's geology as a picture: till red, scree green.
+			var gi: Image = gen.get_geology_image()
+			var tm := Image.create(gi.get_width(), gi.get_height(), false, Image.FORMAT_RGB8)
+			var nt := 0
+			for y in gi.get_height():
+				for x in gi.get_width():
+					var b := gi.get_pixel(x, y).b
+					if b < -0.05: nt += 1
+					tm.set_pixel(x, y, Color(clampf(-b, 0, 1), clampf(b, 0, 1), 0))
+			tm.save_png(args.get("geo-dump"))
+			_log("geo %dx%d till cells %d" % [gi.get_width(), gi.get_height(), nt])
+		if args.has("surface-dump"):
+			# The water surface each river solved along its course, against the ground (dry stretches show depth 0).
+			var rv = rivers[int(args.get("surface-dump", "0"))]
+			var cv: Curve3D = rv.curve
+			for k in range(0, cv.point_count, 2):
+				var p: Vector3 = rv.global_transform * cv.get_point_position(k)
+				_log("  surf %d (%.0f, %.0f) ground %.2f surface %.2f depth %.2f" % [k, p.x, p.z, gen.get_height(p), rv.sample_height(p), rv.sample_depth(p)])
 	get_tree().quit(0)
 
 
@@ -993,6 +1012,9 @@ func _build_water() -> void:
 		wf.name = "Waterfalls"
 		add_child(wf)
 		wf.source = wf.get_path_to(gen)
+		# --rock-step=M: step height of the rock thin contact falls run over (0.01: the flow always covers the face).
+		if args.has("rock-step"):
+			wf.rock_step = float(args["rock-step"])
 		wf.rebuild()
 		for f in wf.get_contact_falls():
 			_log("contact fall %s" % [f])

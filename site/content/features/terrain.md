@@ -49,10 +49,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   *Rock layers: rivers step down over the hard bands, leaving waterfalls up to 30 m.*
 
 - **Glacial erosion** (`glacial_enabled`, `glacial_ela`, `glacial_erosion`): ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain.
-- **Moraines** (`moraine_age`, years, 0 = off): debris carried down the last glaciers builds ridges at their margins that dam lakes.
+- **Moraines** (`moraine_age`, years, 0 = off): debris carried down the last glaciers builds ridges at their margins that dam lakes. Till draws as soil with stones through it, the stones kept above the grass.
 - **Ice-worn rock** (`ice_worn_detail`): faces toward the old ice flow are smoothed, faces away are stepped, with striations.
 - **Cliff ledges** (`cliff_ledge_spacing`, `cliff_ledge_strength`): rock beds of uneven thickness step faces steeper than 40 degrees into ledges.
-- **Scree** (`scree_age`): rock walls shed aprons and cones at their feet, kept out of lakes and river floors.
+- **Scree** (`scree_age`): rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks.
 - **Fallen blocks** (`get_boulders(rect, density)`): blocks shed by cliffs rest below them, the largest furthest out.
 
 ## Rivers, coasts and lakes
@@ -64,6 +64,10 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
   *River deposition: the rivers fill the valley between the ridges with a flat alluvial floor.*
 
 - **Meandering rivers** (`meander_age`, years, off by default): bends grow and migrate across flat valley floors; cut-off loops leave oxbows that silt up, and the river water follows the new course.
+
+  ![A river across a valley floor before and after 3000 years of meandering, raster](media/terrain-meanders.jpg)
+
+  *Meandering rivers: after 3000 years the river winds in loops across the floor.*
 
 - **Rivers fed by rain and snowmelt** (`climate_recipe`, `river_month`): a monthly water balance from the climate sets each river's flow, month by month.
 
