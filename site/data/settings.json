@@ -1446,6 +1446,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Cliff relief",
+   "settings": [
+    "cliff_relief"
+   ],
+   "note": "",
+   "what": "steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Far blend",
    "settings": [
     "far_blend_enabled",
