@@ -4376,7 +4376,7 @@ float TerrainGenerator3D::_apply_lips(real_t p_x, real_t p_z, float p_g) const {
 		const real_t floor_h = Math::lerp(gg.floor_top, gg.floor_bottom, CLAMP(at / MAX(gg.length, real_t(1e-3)), real_t(0.0), real_t(1.0)));
 		const real_t w = best <= gg.half_width ? 1.0 : 1.0 - (best - gg.half_width) / GORGE_WALL;
 		if (g > floor_h) {
-			g = float(Math::lerp(real_t(g), floor_h, w * w * (3.0 - 2.0 * w)));
+			g = float(Math::lerp(real_t(g), floor_h, real_t(w * w * (3.0 - 2.0 * w))));
 		}
 	}
 	for (int i : bucket) {

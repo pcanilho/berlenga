@@ -610,7 +610,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (ps.far_color.a > 0.0f && range > 0.0f) {
 						// The ground a plant hides: a disc of half its spacing, scaled.
 						const float rr = 0.5f * sp->get_spacing() * scale;
-						out->far.push_back({ xz, ps.far_color, ps.far_color.a * Math::PI * rr * rr, range });
+						out->far.push_back({ xz, ps.far_color, float(ps.far_color.a * Math::PI * rr * rr), range });
 					}
 					out->species[s].positions.push_back(world.origin);
 					out->count++;
