@@ -164,6 +164,7 @@ uniform float tm_sea_level = 0.0;
 uniform float tm_beach_height = 2.5;
 uniform float tm_rock_cos = 0.766;
 uniform float tm_cliff_cos = 0.643;
+uniform float tm_rock_detail_scale = 1.0;
 uniform float tm_alluvium_area = 5.5;
 uniform float tm_blend_depth = 0.2;
 uniform int tm_detail_octaves = 4;
@@ -270,6 +271,105 @@ vec3 tm_perturb(vec3 nt, ivec2 axes) {
 		// Prints in the ground (GroundSurface3D): the terrain sinks under the printed patch, and the patch, drawn
 		// with a copy of this material, takes the printed surface.
 		c += "\nvoid vertex() {\n\tground_deform_vertex(MODEL_MATRIX, VERTEX, NORMAL, TANGENT, BINORMAL);\n}\n";
+	}
+	if (rock_detail_enabled) {
+		c += R"(
+// Rock detail on steep faces and scree with no textures (rock_detail_enabled): a height in metres from 3D noise in
+// world space, so no projection stretches on any face, turned into a normal by Mikkelsen's (2010) surface gradient.
+// Faces: joint blocks (3D Worley cells stretched into beds about 1.2 m thick and joints 2.5 m apart, Priest 1993
+// spacing), their cracks, and two octaves of roughness. Scree: loose stones 0.2 to 0.6 m (rounded cells).
+vec3 tm_rd_hash3(vec3 p) {
+	p = vec3(dot(p, vec3(127.1, 311.7, 74.7)), dot(p, vec3(269.5, 183.3, 246.1)), dot(p, vec3(113.5, 271.9, 124.6)));
+	return fract(sin(p) * 43758.5453123);
+}
+// F1, F2 and the nearest cell's hash.
+vec3 tm_rd_worley(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	float f1 = 8.0, f2 = 8.0, id = 0.0;
+	for (int z = -1; z <= 1; z++) {
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				vec3 o = vec3(float(x), float(y), float(z));
+				vec3 hsh = tm_rd_hash3(i + o);
+				vec3 d = o + hsh * 0.8 + 0.1 - f;
+				float dd = dot(d, d);
+				if (dd < f1) {
+					f2 = f1;
+					f1 = dd;
+					id = hsh.x;
+				} else if (dd < f2) {
+					f2 = dd;
+				}
+			}
+		}
+	}
+	return vec3(sqrt(f1), sqrt(f2), id);
+}
+float tm_rd_noise(vec3 p) {
+	vec3 i = floor(p);
+	vec3 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = tm_rd_hash3(i).x, b = tm_rd_hash3(i + vec3(1, 0, 0)).x, c = tm_rd_hash3(i + vec3(0, 1, 0)).x, d = tm_rd_hash3(i + vec3(1, 1, 0)).x;
+	float e = tm_rd_hash3(i + vec3(0, 0, 1)).x, g = tm_rd_hash3(i + vec3(1, 0, 1)).x, h = tm_rd_hash3(i + vec3(0, 1, 1)).x, k = tm_rd_hash3(i + vec3(1, 1, 1)).x;
+	return mix(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), mix(mix(e, g, f.x), mix(h, k, f.x), f.y), f.z);
+}
+// Height (m) and a crack/shade term (0 in a crack or between stones, 1 on a face) at p.
+vec2 tm_rd_height(vec3 p, float face, float scree, float fp) {
+	float hgt = 0.0, shade = 1.0;
+	if (face > 0.0) {
+		// Bedding planes about 1.2 m apart, warped, and two sets of joints across them at a regional strike, each
+		// bed's joints offset from the next (staggered blocks, as jointed sedimentary and granitic walls break).
+		vec3 q = p / tm_rock_detail_scale;
+		float strike = tm_rd_noise(q * 0.004) * 6.2832;
+		vec2 da = vec2(cos(strike), sin(strike)), db = vec2(-da.y, da.x);
+		float yb = q.y + (tm_rd_noise(q * 0.21) - 0.5) * 0.9;
+		float by = floor(yb / 1.2);
+		float fy = fract(yb / 1.2) * 1.2;
+		float u = dot(q.xz, da) + tm_rd_hash3(vec3(by, 1.0, 7.0)).x * 2.5 + (tm_rd_noise(q * 0.5) - 0.5) * 0.4;
+		float ia = floor(u / 2.5);
+		float fa = fract(u / 2.5) * 2.5;
+		float v = dot(q.xz, db) + tm_rd_hash3(vec3(by, ia, 3.0)).y * 3.5 + (tm_rd_noise(q * 0.47 + 5.0) - 0.5) * 0.4;
+		float ib = floor(v / 3.5);
+		float fb = fract(v / 3.5) * 3.5;
+		float d = min(min(min(fy, 1.2 - fy), min(fa, 2.5 - fa)), min(fb, 3.5 - fb));
+		float crack = smoothstep(0.0, max(0.06, 2.5 * fp), d); // never thinner than the pixels: no crawling lines
+		vec3 bh = tm_rd_hash3(vec3(by, ia, ib));
+		float blk = (bh.x - 0.5) * 0.10 + dot(vec2(fa / 2.5 - 0.5, fb / 3.5 - 0.5), bh.yz - 0.5) * 0.12; // proud, recessed, tilted
+		float rough = (tm_rd_noise(q * 1.3) - 0.5) * 0.08 + (tm_rd_noise(q * 4.1) - 0.5) * 0.025;
+		hgt += face * ((crack - 1.0) * 0.08 + blk + rough);
+		shade = mix(shade, mix(mix(0.72, 0.9, smoothstep(0.02, 0.1, fp)), 1.0, crack) * (0.93 + 0.14 * bh.x), face);
+	}
+	if (scree > 0.0) {
+		vec3 wv = tm_rd_worley(p / (0.35 * tm_rock_detail_scale));
+		float r = 0.55 + 0.3 * wv.z;
+		float dome = sqrt(max(1.0 - (wv.x / r) * (wv.x / r), 0.0));
+		hgt += scree * dome * 0.08 * tm_rock_detail_scale;
+		shade = mix(shade, mix(0.78, 1.0, smoothstep(0.0, 0.5, dome)) * (0.92 + 0.16 * wv.z), scree);
+	}
+	return vec2(hgt, shade);
+}
+// The perturbed normal (surface gradient of the height field) and the shade, faded out where a pixel covers it.
+vec3 tm_rock_detail(vec3 p, vec3 n, vec3 sn, float face, float scree, float footprint, out float shade) {
+	// Faded out before a pixel spans a tenth of a bed (joints) or a quarter of a stone, so nothing aliases into lines.
+	float fs = footprint / tm_rock_detail_scale;
+	shade = 1.0;
+	face *= 1.0 - smoothstep(0.03, 0.12, fs);
+	scree *= 1.0 - smoothstep(0.02, 0.08, fs);
+	if (face + scree <= 1e-3) {
+		return sn;
+	}
+	const float e = 0.03;
+	vec2 h0 = tm_rd_height(p, face, scree, footprint);
+	float hx = tm_rd_height(p + vec3(e, 0.0, 0.0), face, scree, footprint).x;
+	float hy = tm_rd_height(p + vec3(0.0, e, 0.0), face, scree, footprint).x;
+	float hz = tm_rd_height(p + vec3(0.0, 0.0, e), face, scree, footprint).x;
+	vec3 grad = vec3(hx - h0.x, hy - h0.x, hz - h0.x) / e;
+	vec3 sg = grad - n * dot(n, grad);
+	shade = h0.y;
+	return normalize(sn - sg);
+}
+)";
 	}
 	c += R"(
 void fragment() {
@@ -414,6 +514,18 @@ void fragment() {
 	sn = terrain_detail_normal(wp, sn, tm_detail_octaves, footprint);
 )";
 	}
+	if (rock_detail_enabled) {
+		// Rock joints and loose stones where the ground is rock or scree (heightfield detail cannot reach steep faces).
+		c += R"(	{
+		float rd_fp = length(wp - CAMERA_POSITION_WORLD) * 2.0 / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
+		float rd_shade;
+		// Joints and beds on faces steeper than about 35 degrees; gentler rock keeps the generator's own detail.
+		float rd_face = clamp(w[0], 0.0, 1.0) * (1.0 - smoothstep(0.7, 0.85, wn.y));
+		sn = tm_rock_detail(wp, wn, sn, rd_face, clamp(w[1], 0.0, 1.0), rd_fp, rd_shade);
+		albedo *= rd_shade;
+	}
+)";
+	}
 	if (far_blend_enabled) {
 		c += "\tvec3 tm_bare = albedo;\n\tfloat tm_far_t = 0.0;\n\tfloat tm_far_cover = 0.0;\n";
 	}
@@ -532,6 +644,7 @@ void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_beach_height", beach_height);
 	set_shader_parameter("tm_rock_cos", Math::cos(Math::deg_to_rad(rock_slope)));
 	set_shader_parameter("tm_cliff_cos", Math::cos(Math::deg_to_rad(cliff_slope)));
+	set_shader_parameter("tm_rock_detail_scale", rock_detail_scale);
 	set_shader_parameter("tm_alluvium_area", alluvium_area);
 	set_shader_parameter("tm_blend_depth", blend_depth);
 	set_shader_parameter("tm_detail_octaves", detail_octaves);
@@ -626,6 +739,8 @@ MAT_SETTER(int, detail_octaves, CLAMP(p_value, 0, 8))
 MAT_SETTER(float, snow_max_slope, CLAMP(p_value, 0.0f, 90.0f))
 MAT_SETTER_CODE(const String &, detail_code)
 MAT_SETTER_CODE(bool, grass_tint_enabled)
+MAT_SETTER_CODE(bool, rock_detail_enabled)
+MAT_SETTER(float, rock_detail_scale, CLAMP(p_value, 0.1f, 10.0f))
 MAT_SETTER_CODE(bool, wetness_enabled)
 MAT_SETTER_CODE(bool, snow_enabled)
 MAT_SETTER_CODE(bool, ground_deform_enabled)
@@ -677,6 +792,8 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::INT, detail_octaves, get_detail_octaves, PROPERTY_HINT_RANGE, "0,8")
 	BIND_PROP(Variant::STRING, detail_code, get_detail_code, PROPERTY_HINT_MULTILINE_TEXT, "")
 	BIND_PROP(Variant::BOOL, grass_tint_enabled, is_grass_tint_enabled, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::BOOL, rock_detail_enabled, is_rock_detail_enabled, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::FLOAT, rock_detail_scale, get_rock_detail_scale, PROPERTY_HINT_RANGE, "0.1,10,0.01")
 	BIND_PROP(Variant::BOOL, wetness_enabled, is_wetness_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::BOOL, snow_enabled, is_snow_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, snow_max_slope, get_snow_max_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")

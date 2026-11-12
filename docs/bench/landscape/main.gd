@@ -892,6 +892,7 @@ func _build_ground() -> void:
 		var tm := TerrainMaterial3D.new()
 		tm.use_generator(gen)
 		tm.detail_octaves = int(args.get("mdetail", "4"))
+		tm.rock_detail_enabled = args.has("rock-detail")
 		if args.has("far-cover"):
 			# Far ground blend against the plant cover map the world field builds (cover_map_enabled below).
 			tm.far_blend_enabled = true
