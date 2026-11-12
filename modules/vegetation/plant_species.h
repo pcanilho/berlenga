@@ -87,6 +87,12 @@ private:
 	// meshes beyond it, with a dithered crossfade over the last tenth.
 	TypedArray<Mesh> near_meshes;
 	float near_range = 0.0f; // 0: no near swap.
+	// Near meshes on demand instead (heavy meshes built only for plants that come near): an object
+	// with request_near_mesh(key: int, variant: int) -> Mesh, null while it is still building.
+	// Used when near_meshes is empty and near_range > 0; VegetationField3D asks per cell within
+	// 1.2 x near_range and drops the cell beyond 1.5 x, so the source can free unused meshes.
+	ObjectID near_mesh_source;
+	int near_mesh_key = 0;
 	Color far_color = Color(0, 0, 0, 0); // The plant seen from far above (rgb) and how much ground it hides (a).
 	// A canopy species shades what grows under it: crown radius (times the plant's scale) and
 	// the share of light its crown stops.
@@ -119,6 +125,10 @@ public:
 	TypedArray<Mesh> get_near_meshes() const { return near_meshes; }
 	void set_near_range(float p_range) { near_range = MAX(p_range, 0.0f); }
 	float get_near_range() const { return near_range; }
+	void set_near_mesh_source(Object *p_source) { near_mesh_source = p_source ? p_source->get_instance_id() : ObjectID(); }
+	Object *get_near_mesh_source() const { return ObjectDB::get_instance(near_mesh_source); }
+	void set_near_mesh_key(int p_key) { near_mesh_key = p_key; }
+	int get_near_mesh_key() const { return near_mesh_key; }
 	void set_visibility_range(float p_range) { visibility_range = MAX(p_range, 0.0f); }
 	float get_visibility_range() const { return visibility_range; }
 	void set_far_color(const Color &p_color) { far_color = p_color; }

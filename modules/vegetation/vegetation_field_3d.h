@@ -39,6 +39,7 @@
 #include "core/templates/safe_refcount.h"
 #include "scene/3d/node_3d.h"
 
+class MultiMesh;
 class MultiMeshInstance3D;
 class PlantSpecies;
 class Mesh;
@@ -256,6 +257,24 @@ class VegetationField3D : public Node3D {
 	// tracing they draw the plant's mesh instead (the impostor's "impostor_of").
 	LocalVector<MultiMeshInstance3D *> impostor_cells;
 	LocalVector<Ref<Mesh>> impostor_meshes; // Per cell.
+	// Near meshes on demand (PlantSpecies.near_mesh_source): per far cell, by its instance id, the
+	// plants it holds, so the near cell is built once the source has the mesh.
+	struct LazyNear {
+		MultiMeshInstance3D *far = nullptr;
+		MultiMeshInstance3D *near = nullptr;
+		ObjectID source;
+		int key = 0;
+		int variant = 0;
+		float range = 0.0f;
+		Vector3 centre; // Global, where the visibility range measures from.
+		LocalVector<Transform3D> xforms;
+		LocalVector<Color> customs;
+	};
+	HashMap<ObjectID, LazyNear> lazy_near;
+	void _lazy_near_update(const Vector3 &p_camera);
+	void _lazy_near_drop(MultiMeshInstance3D *p_far);
+	void _lazy_near_free(LazyNear &p_cell);
+	static void _fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &p_mesh, const LocalVector<Transform3D> &p_xforms, const LocalVector<Color> &p_customs);
 	bool impostors_traced = false;
 	double impostor_check = 0.0;
 	bool _path_traced() const;

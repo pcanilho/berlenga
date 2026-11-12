@@ -252,6 +252,10 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_near_meshes"), &PlantSpecies::get_near_meshes);
 	ClassDB::bind_method(D_METHOD("set_near_range", "range"), &PlantSpecies::set_near_range);
 	ClassDB::bind_method(D_METHOD("get_near_range"), &PlantSpecies::get_near_range);
+	ClassDB::bind_method(D_METHOD("set_near_mesh_source", "source"), &PlantSpecies::set_near_mesh_source);
+	ClassDB::bind_method(D_METHOD("get_near_mesh_source"), &PlantSpecies::get_near_mesh_source);
+	ClassDB::bind_method(D_METHOD("set_near_mesh_key", "key"), &PlantSpecies::set_near_mesh_key);
+	ClassDB::bind_method(D_METHOD("get_near_mesh_key"), &PlantSpecies::get_near_mesh_key);
 	ClassDB::bind_method(D_METHOD("set_visibility_range", "range"), &PlantSpecies::set_visibility_range);
 	ClassDB::bind_method(D_METHOD("get_visibility_range"), &PlantSpecies::get_visibility_range);
 	ClassDB::bind_method(D_METHOD("set_far_color", "color"), &PlantSpecies::set_far_color);
@@ -277,6 +281,8 @@ void PlantSpecies::_bind_methods() {
 	ADD_GROUP("Near", "near_");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "near_meshes", PROPERTY_HINT_ARRAY_TYPE, MAKE_RESOURCE_TYPE_HINT("Mesh")), "set_near_meshes", "get_near_meshes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_range", PROPERTY_HINT_RANGE, "0,500,0.5,or_greater,suffix:m"), "set_near_range", "get_near_range");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "near_mesh_source", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NONE), "set_near_mesh_source", "get_near_mesh_source");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "near_mesh_key"), "set_near_mesh_key", "get_near_mesh_key");
 	ADD_GROUP("Canopy", "canopy_");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_radius", PROPERTY_HINT_RANGE, "0,30,0.1,or_greater,suffix:m"), "set_canopy_radius", "get_canopy_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "canopy_opacity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_canopy_opacity", "get_canopy_opacity");

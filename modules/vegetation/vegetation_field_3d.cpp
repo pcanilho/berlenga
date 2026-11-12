@@ -190,6 +190,11 @@ void VegetationField3D::_clear_generated() {
 		memdelete(mmi);
 	}
 	generated.clear();
+	for (KeyValue<ObjectID, LazyNear> &kv : lazy_near) {
+		kv.value.far = nullptr;
+		_lazy_near_free(kv.value);
+	}
+	lazy_near.clear();
 	impostor_cells.clear();
 	impostor_meshes.clear();
 	set_process_internal(false);
@@ -614,6 +619,91 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 	}
 }
 
+// A cell's MultiMesh: one record per plant, or for a rigged tree one per bone, which TreeWind3D
+// (target: this field) poses each frame.
+void VegetationField3D::_fill_cell(const Ref<MultiMesh> &p_mm, const Ref<Mesh> &p_mesh, const LocalVector<Transform3D> &p_xforms, const LocalVector<Color> &p_customs) {
+#ifdef VEGETATION_HAS_TREE_WIND
+	if (TreeWind3D::get_mesh_bone_count(p_mesh) > 0) {
+		TreeWind3D::fill_rest(p_mm, p_mesh, p_xforms, p_customs);
+		return;
+	}
+#endif
+	p_mm->set_instance_count(p_xforms.size());
+	for (uint32_t i = 0; i < p_xforms.size(); i++) {
+		p_mm->set_instance_transform(i, p_xforms[i]);
+		p_mm->set_instance_custom_data(i, p_customs[i]);
+	}
+}
+
+// Near meshes on demand. Within 1.2 x near_range a far cell asks its source for the near mesh
+// every frame until it has it, then gets its near cell with the same crossfade as eager near
+// meshes; beyond 1.5 x the near cell is freed (and the source may free the mesh).
+void VegetationField3D::_lazy_near_update(const Vector3 &p_camera) {
+	for (KeyValue<ObjectID, LazyNear> &kv : lazy_near) {
+		LazyNear &c = kv.value;
+		const float d = c.centre.distance_to(p_camera);
+		if (c.near) {
+			if (d > c.range * 1.5f) {
+				_lazy_near_free(c);
+			}
+			continue;
+		}
+		if (d > c.range * 1.2f) {
+			continue;
+		}
+		Object *src = ObjectDB::get_instance(c.source);
+		if (!src) {
+			continue;
+		}
+		const Ref<Mesh> mesh = src->call(SNAME("request_near_mesh"), c.key, c.variant);
+		if (mesh.is_null()) {
+			continue; // Still building.
+		}
+		Ref<MultiMesh> mm;
+		mm.instantiate();
+		mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+		mm->set_use_custom_data(true);
+		mm->set_mesh(mesh);
+		_fill_cell(mm, mesh, c.xforms, c.customs);
+		const float margin = MAX(c.range * 0.1f, 1.0f);
+		c.near = memnew(MultiMeshInstance3D);
+		c.near->set_name(String(c.far->get_name()) + "_Near");
+		c.near->set_multimesh(mm);
+		c.near->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
+		c.near->set_visibility_range_end(c.range);
+		c.near->set_visibility_range_end_margin(margin);
+		add_child(c.near, false, INTERNAL_MODE_BACK);
+		c.far->set_visibility_range_fade_mode(GeometryInstance3D::VISIBILITY_RANGE_FADE_SELF);
+		c.far->set_visibility_range_begin(c.range);
+		c.far->set_visibility_range_begin_margin(margin);
+	}
+}
+
+void VegetationField3D::_lazy_near_free(LazyNear &p_cell) {
+	if (!p_cell.near) {
+		return;
+	}
+	if (p_cell.near->get_parent()) {
+		p_cell.near->get_parent()->remove_child(p_cell.near);
+	}
+	memdelete(p_cell.near);
+	p_cell.near = nullptr;
+	if (p_cell.far) {
+		p_cell.far->set_visibility_range_begin(0.0f);
+		p_cell.far->set_visibility_range_begin_margin(0.0f);
+	}
+}
+
+void VegetationField3D::_lazy_near_drop(MultiMeshInstance3D *p_far) {
+	LazyNear *c = lazy_near.getptr(p_far->get_instance_id());
+	if (!c) {
+		return;
+	}
+	c->far = nullptr;
+	_lazy_near_free(*c);
+	lazy_near.erase(p_far->get_instance_id());
+}
+
 // Adds a placed tile's plants to the scene: one MultiMeshInstance3D per species mesh variant,
 // split into cells where the species swaps meshes by distance. Main thread.
 void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut &p_tile, int p_species, LocalVector<MultiMeshInstance3D *> &r_nodes) {
@@ -641,11 +731,14 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 		if (near_range > 0.0f && ps.near_meshes.size() > 0) {
 			near_mesh = ps.near_meshes[v % ps.near_meshes.size()];
 		}
+		// Near meshes on demand: cells as for a near mesh, the far pass only for now
+		// (_lazy_near_update() adds the near cells as the camera comes close).
+		Object *near_source = near_range > 0.0f && ps.near_meshes.is_empty() ? ps.sp->get_near_mesh_source() : nullptr;
 		// Godot's visibility range measures to the centre of the whole MultiMesh, so a
 		// species with a near mesh is cut into small cells: the swap then happens a few
 		// plants at a time instead of a whole tile at once.
 		const float ts = p_setup.tile_size;
-		const int cells = near_mesh.is_valid() ? CLAMP(int(Math::ceil(ts / near_cell)), 1, 16) : 1;
+		const int cells = near_mesh.is_valid() || near_source ? CLAMP(int(Math::ceil(ts / near_cell)), 1, 16) : 1;
 		const Vector2 tile_origin = Vector2(tx * ts, tz * ts);
 		LocalVector<LocalVector<uint32_t>> buckets;
 		buckets.resize(cells * cells);
@@ -667,26 +760,13 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 				mm->set_use_custom_data(true);
 				mm->set_mesh(near_pass ? near_mesh : mesh);
 				const Ref<Mesh> draw_mesh = near_pass ? near_mesh : mesh;
-#ifdef VEGETATION_HAS_TREE_WIND
-				if (TreeWind3D::get_mesh_bone_count(draw_mesh) > 0) {
-					// A rigged tree: one record per bone, which TreeWind3D (target: this
-					// field) poses each frame.
-					LocalVector<Transform3D> bx;
-					LocalVector<Color> bc;
-					for (uint32_t i : buckets[b]) {
-						bx.push_back(so.xforms[v][i]);
-						bc.push_back(so.customs[v][i]);
-					}
-					TreeWind3D::fill_rest(mm, draw_mesh, bx, bc);
-				} else
-#endif
-				{
-					mm->set_instance_count(buckets[b].size());
-					for (uint32_t i = 0; i < buckets[b].size(); i++) {
-						mm->set_instance_transform(i, so.xforms[v][buckets[b][i]]);
-						mm->set_instance_custom_data(i, so.customs[v][buckets[b][i]]);
-					}
+				LocalVector<Transform3D> bx;
+				LocalVector<Color> bc;
+				for (uint32_t i : buckets[b]) {
+					bx.push_back(so.xforms[v][i]);
+					bc.push_back(so.customs[v][i]);
 				}
+				_fill_cell(mm, draw_mesh, bx, bc);
 				MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
 				mmi->set_name(cells > 1 ? vformat("Plants%s_%d_%d_%d_%d_%d", near_pass ? "Near" : "", s, v, tx, tz, b) : vformat("Plants_%d_%d_%d_%d", s, v, tx, tz));
 				mmi->set_multimesh(mm);
@@ -711,6 +791,21 @@ void VegetationField3D::_commit_species(const PlaceSetup &p_setup, const TileOut
 				}
 				add_child(mmi, false, INTERNAL_MODE_BACK);
 				r_nodes.push_back(mmi);
+				if (near_source) {
+					LazyNear cell;
+					cell.far = mmi;
+					cell.source = near_source->get_instance_id();
+					cell.key = ps.sp->get_near_mesh_key();
+					cell.variant = v;
+					cell.range = near_range;
+					for (const Transform3D &x : bx) {
+						cell.centre += p_setup.global_xf.xform(x.origin);
+					}
+					cell.centre /= MAX(int(bx.size()), 1);
+					cell.xforms = bx;
+					cell.customs = bc;
+					lazy_near.insert(mmi->get_instance_id(), cell);
+				}
 				if (!near_pass && draw_mesh->has_meta(SNAME("impostor_of"))) {
 					impostor_cells.push_back(mmi);
 					impostor_meshes.push_back(draw_mesh);
@@ -1320,7 +1415,7 @@ Error VegetationField3D::populate() {
 	_maps_wants(maps);
 	_compute_maps(maps, crown_lists, far_lists);
 	_apply_maps(maps);
-	set_process_internal(!impostor_cells.is_empty());
+	set_process_internal(!impostor_cells.is_empty() || !lazy_near.is_empty());
 	populate_msec = (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("populated"));
 	return OK;
@@ -1613,6 +1708,7 @@ Vector3 VegetationField3D::_stream_centre() const {
 
 void VegetationField3D::_stream_free_species(StreamTile *p_tile, int p_species) {
 	for (MultiMeshInstance3D *mmi : p_tile->nodes[p_species]) {
+		_lazy_near_drop(mmi);
 		const int64_t idx = impostor_cells.find(mmi);
 		if (idx >= 0) {
 			impostor_cells.remove_at_unordered(idx);
@@ -1977,6 +2073,9 @@ void VegetationField3D::_notification(int p_what) {
 			}
 			if (streaming) {
 				_stream_update(get_process_delta_time());
+			}
+			if (!lazy_near.is_empty()) {
+				_lazy_near_update(_stream_centre());
 			}
 		} break;
 	}
