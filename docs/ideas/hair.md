@@ -891,10 +891,42 @@ degree field of view for the bench's long hair (bench: 8 m 0.129 strands, 15 m 0
 0.052 cards), so a default camera switches where it did. `card_distance` stays for
 `card_screen_size` 0; `get_screen_size()` reports the current value.
 
-Open: on the bench's backlit head, card interiors read warmer than the strands (8 m: R +6%,
-B -9% inside the hair, away from its edges; 15 m interior 15% brighter). Not the deep opacity
-read (half a clump deeper: no change) and not the cards' normal (viewer-facing as the strands':
-no change).
+### The step at the switch: clump self-shadow and a cross-fade
+
+On the bench's backlit head, card interiors read warmer and lighter than the strands at the
+switch (15 m, inside the hair away from its edges, 0..255 after tone mapping: strands R 18.6,
+G 10.0, B 4.2; cards 21.9, 12.0, 4.3, 15% brighter), a visible step in one frame. Checked, in
+order:
+
+- Colour space: the atlas holds optical depth as data (RGBA8, no source_color hint) and is read
+  linear, as it should be. Not the cause.
+- Sun and sky apart (bench `BNOSUN`, `BNOAMB`, linear tone mapping, same pixels for both): under
+  sky light alone the cards match within 4% (blue 20% low); under the sun alone they take about
+  2.3x the strands' light, all of it through the deep opacity maps, in lit patches on the far
+  side of the head from the light.
+- Not the deep map's content (cards reading the strands' own map: same patches), not where the
+  cards read it (on the card as drawn, lifted off the scalp: same), not the splat's footprint
+  (a box sized to the clump, 3x wider: same), not the head's shadow (opaque test off: same).
+- Cards drawn solid (alpha 1) match the strands drawn solid within 5%. The patches are sunlit
+  hair behind showing through the front cards: each card blends one clump over what lies behind
+  it, where the strands blend many at different depths. A lower pre-pass threshold (0.25 or
+  0.35) hides it but streaks the hair and darkens it 10 to 20% at 8 m: rejected.
+
+Two parts, both kept:
+
+- Clump self-shadow: a card is lit as its clump's centre strand, while the clump's own strands
+  shade each other. Its mean transmittance through its own depth, (1 - e^-k) / k with
+  k = absorb x dom_density x the row's optical depth from the atlas, scales the light (strands: 1).
+  15 m interior 21.1, 11.5, 4.1 (was 21.9, 12.0, 4.3).
+- Cross-fade (`card_transition`, 0.5 s), as LOD transitions are (Unreal's groom LODs, Godot's
+  visibility ranges). The cards fade in over the strands, then the strands fade out beneath them
+  (the hair never thins midway: a straight alpha cross-fade of two blended layers would); the
+  strands stay simulated, and the deep maps and the shadow casters stay the strands', until the
+  cards are drawn alone. Cards draw over the strands while both are drawn (render priority 1).
+  Dithered fades (complementary screen-door masks) need TAA to resolve; this needs nothing.
+  Bench at 15 m, whole hair, along the fade: 28.9 (strands), 28.5, 27.5 (both full), 27.9, 28.7
+  (cards), so the step becomes a 0.5 s glide with a 4% dip. The path tracer switches at once (it
+  always keeps the strands).
 
 ### Fixed: a line where the skull's shadow starts on hanging cards
 

@@ -94,6 +94,7 @@ uniform vec2 fibre_roughness = vec2(0.3, 0.3);
 uniform float root_width = 0.0004;
 uniform float tip_width = 0.0001;
 uniform float lod_width_scale = 1.0; // raster: 1 / the share of strands drawn (distance LOD)
+uniform float lod_fade = 1.0; // raster: the cross-fade between strands and cards (1: shown in full)
 uniform int slot_points = 1; // texels per strand
 
 // The deep opacity maps (Yuksel and Keyser 2008, as Unreal's hair), built by the solver, one per
@@ -134,6 +135,7 @@ varying vec4 dom_past; // vertex to fragment: per map, metres past the first hai
 varying vec3 dom_world; // fragment to light(): the fragment's world position
 varying vec3 light_tangent; // fragment to light(): along the fibres, view space
 varying float hair_snow; // fragment to light(): 1 where snow lies on a card (lit as snow, not fibre)
+varying float hair_self; // fragment to light(): a card's light left by its own clump (1 for strands)
 
 // Coverage summed up to depth p_rel past the first hair, from a cell's layers.
 float dom_coverage(vec4 p_cell, float p_rel) {
@@ -301,6 +303,7 @@ void vertex() {
 void fragment() {
 	light_tangent = strand_tangent;
 	hair_snow = 0.0;
+	hair_self = 1.0;
 	vec3 sigma;
 	vec3 mass;
 	fibre_look(strand_seed, UV.y, sigma, mass);
@@ -377,7 +380,7 @@ void fragment() {
 	// the pixel it covers. Thin strands are faint, so the blend barely depends on draw order.
 	// The shadow copy writes no ALPHA: Godot leaves blended materials out of the shadow maps.
 #ifndef HAIR_SHADOW_COPY
-	ALPHA = coverage;
+	ALPHA = coverage * lod_fade;
 #endif
 }
 
@@ -469,6 +472,7 @@ void light() {
 			}
 		}
 	}
+	attenuation *= hair_self;
 	s += sqrt(base) * scatter * pow(base / luma, vec3(1.0 - shadow));
 	if (hair_snow > 0.5) {
 		// Snow on a card: matte (Lambert; ALBEDO is the snow's), as the snow's own clumps.
@@ -794,6 +798,14 @@ void fragment() {
 	// (Before the widening to a pixel: the clump's own core.)
 	float row_cover = 1.0 - exp(-row_depth * facing / max(card_fan / card_grow, 0.5));
 	OPAQUE_PREPASS_THRESHOLD = row_cover >= 0.5 && edge >= 0.5 ? 0.0 : 2.0;
+	// The clump's own shadow: the deep opacity maps are read on the card's centre line, so the
+	// card is lit as its clump's middle strand, while the clump's strands shade one another. Its
+	// mean transmittance through its own optical depth k, (1 - e^-k) / k, scales the light.
+	{
+		float absorb = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		float k = absorb * dom_density * row_depth;
+		hair_self = k > 1e-4 ? (1.0 - exp(-k)) / k : 1.0;
+	}
 	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
 		float noise = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))) + texel.a);
 		if (coverage <= noise) {
@@ -801,7 +813,7 @@ void fragment() {
 		}
 		coverage = 1.0;
 	}
-	ALPHA = coverage;
+	ALPHA = IN_SHADOW_PASS ? coverage : coverage * lod_fade;
 }
 )";
 
@@ -1282,6 +1294,9 @@ void PhysXHair3D::_clear() {
 	snow_slot_set = -2;
 	card_first = 0;
 	card_mode = false;
+	card_target = false;
+	card_fade = 0.0f;
+	card_fade_set = -1.0f;
 	if (copy_material.is_valid()) {
 		copy_material->set_shader_parameter("hair_positions", Variant());
 		copy_material->set_shader_parameter("hair_previous_positions", Variant());
@@ -1868,10 +1883,10 @@ void PhysXHair3D::_step(double p_delta) {
 	// as strips. card_screen_size 0: by card_distance instead.
 	if (card_instance && card_first > 0) {
 		const float d = camera ? camera->get_global_transform().origin.distance_to(xform.origin) : 0.0f;
-		bool far = card_mode ? d >= 0.95f * card_distance : d >= card_distance;
+		bool far = card_target ? d >= 0.95f * card_distance : d >= card_distance;
 		if (card_screen_size > 0.0f && camera && render_instance) {
 			const float size = _screen_size(camera);
-			far = card_mode ? size <= 1.05f * card_screen_size : size <= card_screen_size;
+			far = card_target ? size <= 1.05f * card_screen_size : size <= card_screen_size;
 		}
 		// The path tracer keeps the strands at every distance (it must not lose their detail).
 		Ref<Environment> env = camera ? camera->get_environment() : Ref<Environment>();
@@ -1881,21 +1896,50 @@ void PhysXHair3D::_step(double p_delta) {
 				env = get_world_3d()->get_fallback_environment();
 			}
 		}
-		if (env.is_valid() && env->is_pathtracing_enabled()) {
-			far = false;
-		}
-		if (far != card_mode) {
-			card_mode = far;
-			card_instance->set_visible(card_mode);
-			if (render_instance) {
-				render_instance->set_visible(!card_mode);
-			}
+		const bool path_traced = env.is_valid() && env->is_pathtracing_enabled();
+		card_target = far && !path_traced;
+		// Cross-faded, as LOD transitions are (Unreal's and Godot's own visibility ranges): cards
+		// cannot match the strands exactly (each blends one clump where the strands blend many
+		// at different depths, so sunlit hair behind shows through a little more), and a switch in
+		// one frame shows that as a step. The cards fade in over the strands, then the strands
+		// fade out beneath them, so the hair never thins midway; the strands stay simulated until
+		// the cards are drawn alone.
+		const float step = card_transition > 0.0f && !path_traced ? float(p_delta) / card_transition : 1.0f;
+		card_fade = card_target ? MIN(card_fade + step, 1.0f) : MAX(card_fade - step, 0.0f);
+		const bool cards_only = card_fade >= 1.0f;
+		if (cards_only != card_mode) {
+			card_mode = cards_only;
 			if (!card_mode) {
 				solver->drop_history(); // the strands' last positions are stale
 			}
 		}
+		card_instance->set_visible(card_fade > 0.0f);
+		// One caster at a time: the cards' shadow once they are drawn alone, as the maps then are.
+		card_instance->set_cast_shadows_setting(card_mode ? GeometryInstance3D::SHADOW_CASTING_SETTING_ON : GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+		if (render_instance) {
+			render_instance->set_visible(card_fade < 1.0f);
+		}
+		if (card_fade != card_fade_set) {
+			card_fade_set = card_fade;
+			if (copy_material.is_valid()) {
+				copy_material->set_shader_parameter("lod_fade", CLAMP(2.0f - 2.0f * card_fade, 0.0f, 1.0f));
+			}
+			if (card_material.is_valid()) {
+				card_material->set_shader_parameter("lod_fade", CLAMP(2.0f * card_fade, 0.0f, 1.0f));
+				// Over the strands while both are drawn.
+				card_material->set_render_priority(card_fade > 0.0f && card_fade < 1.0f ? 1 : 0);
+			}
+		}
 		s.card_first = card_first;
 		s.cards_only = card_mode;
+	} else if (card_fade_set != 0.0f) {
+		// No cards (turned off mid-fade): the strands in full.
+		card_target = false;
+		card_fade = 0.0f;
+		card_fade_set = 0.0f;
+		if (copy_material.is_valid()) {
+			copy_material->set_shader_parameter("lod_fade", 1.0f);
+		}
 	}
 	if (copy_material.is_valid() && !Math::is_equal_approx(1.0f / s.lod_keep, lod_width_scale)) {
 		lod_width_scale = 1.0f / s.lod_keep;
@@ -2939,6 +2983,14 @@ float PhysXHair3D::get_card_screen_size() const {
 	return card_screen_size;
 }
 
+void PhysXHair3D::set_card_transition(float p_seconds) {
+	card_transition = MAX(p_seconds, 0.0f);
+}
+
+float PhysXHair3D::get_card_transition() const {
+	return card_transition;
+}
+
 float PhysXHair3D::get_screen_size() const {
 	if (!is_inside_tree() || render_instance == nullptr) {
 		return 0.0f;
@@ -3090,6 +3142,8 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_card_count"), &PhysXHair3D::get_card_count);
 	ClassDB::bind_method(D_METHOD("set_card_screen_size", "size"), &PhysXHair3D::set_card_screen_size);
 	ClassDB::bind_method(D_METHOD("get_card_screen_size"), &PhysXHair3D::get_card_screen_size);
+	ClassDB::bind_method(D_METHOD("set_card_transition", "seconds"), &PhysXHair3D::set_card_transition);
+	ClassDB::bind_method(D_METHOD("get_card_transition"), &PhysXHair3D::get_card_transition);
 	ClassDB::bind_method(D_METHOD("get_screen_size"), &PhysXHair3D::get_screen_size);
 	ClassDB::bind_method(D_METHOD("set_card_distance", "distance"), &PhysXHair3D::set_card_distance);
 	ClassDB::bind_method(D_METHOD("get_card_distance"), &PhysXHair3D::get_card_distance);
@@ -3157,6 +3211,7 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cards_enabled"), "set_cards_enabled", "is_cards_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "card_count", PROPERTY_HINT_RANGE, "1,1024,1"), "set_card_count", "get_card_count");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "card_screen_size", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_card_screen_size", "get_card_screen_size");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "card_transition", PROPERTY_HINT_RANGE, "0,3,0.01,suffix:s"), "set_card_transition", "get_card_transition");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "card_distance", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m"), "set_card_distance", "get_card_distance");
 	ADD_GROUP("Wet", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness", "get_wetness");

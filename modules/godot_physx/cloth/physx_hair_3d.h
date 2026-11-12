@@ -137,7 +137,11 @@ class PhysXHair3D : public Node3D {
 	Ref<ImageTexture> card_data; // per card point: both strips' axes and half widths, its direction, the tiles
 	Vector4 card_scalp; // the scalp's sphere for the cards (centre, radius; w 0: none)
 	int card_first = 0; // the cards' strands follow the groom's in the solver; 0: no cards
-	bool card_mode = false; // drawing cards (far) instead of strands
+	bool card_mode = false; // cards only: the strands hidden and idle
+	bool card_target = false; // the switch's side (cards when far), card_fade heads to it
+	float card_fade = 0.0f; // 0 strands .. 1 cards: the cross-fade between them
+	float card_fade_set = -1.0f; // the fade the materials hold
+	float card_transition = 0.5f; // s for the cross-fade
 	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
 	struct BodyCache {
 		ObjectID mesh_instance;
@@ -326,6 +330,8 @@ public:
 	int get_card_count() const;
 	void set_card_screen_size(float p_size);
 	float get_card_screen_size() const;
+	void set_card_transition(float p_seconds);
+	float get_card_transition() const;
 	float get_screen_size() const;
 	void set_card_distance(float p_distance);
 	float get_card_distance() const;
