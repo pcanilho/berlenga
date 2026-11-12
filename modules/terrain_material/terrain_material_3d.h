@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -101,6 +102,8 @@ private:
 	int detail_octaves = 4;
 	String detail_code;
 	bool grass_tint_enabled = true;
+	bool rock_detail_enabled = false;
+	float rock_detail_scale = 1.0f;
 	bool wetness_enabled = true;
 	bool snow_enabled = true;
 	float snow_max_slope = 60.0f;
@@ -149,6 +152,10 @@ public:
 	void use_generator(Object *p_generator);
 	void set_grass_tint_enabled(bool p_enabled);
 	bool is_grass_tint_enabled() const { return grass_tint_enabled; }
+	void set_rock_detail_enabled(bool p_enabled);
+	bool is_rock_detail_enabled() const { return rock_detail_enabled; }
+	void set_rock_detail_scale(float p_scale);
+	float get_rock_detail_scale() const { return rock_detail_scale; }
 	void set_sky_occlusion_enabled(bool p_enabled);
 	bool is_sky_occlusion_enabled() const { return sky_occlusion_enabled; }
 	void set_sky_occlusion(float p_amount);

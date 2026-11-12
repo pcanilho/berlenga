@@ -11,7 +11,7 @@ header = """\
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
-/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+$berlenga/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
 /* Permission is hereby granted, free of charge, to any person obtaining  */
@@ -34,6 +34,22 @@ header = """\
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 """
+
+# Berlenga: files that exist only in this fork also carry the Berlenga line,
+# above the Godot notice. Files shared with upstream keep the Godot header
+# unchanged, so upstream merges stay clean. A fork-only file gets the line
+# when it sits under one of the fork's own directories below, or when it
+# already has the line (add it by hand once for a new fork file elsewhere).
+berlenga_line = "/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */\n"
+berlenga_marker = "Paulo Canilho and Berlenga contributors"
+berlenga_dirs = (
+    "modules/ground/",
+    "modules/snow/",
+    "modules/terrain_deform/",
+    "modules/terrain_material/",
+    "modules/vegetation/",
+    "modules/weather/",
+)
 
 if len(sys.argv) < 2:
     print("Invalid usage of copyright_headers.py, it should be called with a path to one or multiple files.")
@@ -59,6 +75,13 @@ for f in sys.argv[1:]:
         text = header.replace(rep_fl, rep_fi)
     else:
         text = header.replace("$filename", fsingle)
+    with open(fname.strip(), "r", encoding="utf-8") as fileread:
+        has_berlenga = berlenga_marker in fileread.read(4096)
+    path = os.path.relpath(os.path.abspath(fname.strip())).replace("\\", "/")
+    if has_berlenga or path.startswith(berlenga_dirs):
+        text = text.replace("$berlenga", berlenga_line)
+    else:
+        text = text.replace("$berlenga", "")
     text += "\n"
 
     # We now have the proper header, so we want to ignore the one in the original file

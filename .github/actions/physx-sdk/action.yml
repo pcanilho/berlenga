@@ -23,7 +23,21 @@ runs:
       shell: bash
       run: |
         if [ "$RUNNER_OS" = "Windows" ]; then plat=windows; else plat=linuxbsd; fi
-        python modules/godot_physx/misc/build_physx.py --platform "$plat" --blast --flow --jobs 4
+        extra=""
+        if [ "$RUNNER_OS" = "Linux" ]; then
+          # The presets build with clang; the arm64 runner image may not carry it.
+          if ! command -v clang++ >/dev/null || ! command -v cmake >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y clang cmake
+          fi
+          if [ "$RUNNER_ARCH" = "ARM64" ]; then
+            # arm64 builds Blast with build_blast_plain.py, whose fracture authoring needs
+            # Boost.Multiprecision headers. If Blast still fails there, the release ships
+            # without it (no fracture on arm64) instead of failing.
+            sudo apt-get install -y libboost-dev || { sudo apt-get update && sudo apt-get install -y libboost-dev; }
+            extra="--blast-optional"
+          fi
+        fi
+        python modules/godot_physx/misc/build_physx.py --platform "$plat" --blast --flow $extra --jobs 4
 
     - name: Save PhysX SDK cache
       if: steps.cache.outputs.cache-hit != 'true'

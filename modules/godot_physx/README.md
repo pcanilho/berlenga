@@ -188,9 +188,16 @@ nodes show a configuration warning and stay inert.
 
 ## Exporting a game
 
-Godot's downloadable export templates don't contain this module, so a game
-exports with a template you build yourself, **with the same options as the
-editor** (`physx_gpu`, `blast_sdk`, `flow_sdk`):
+Each release of this fork ships `godot-fork-export-templates-<build>.tpz`:
+Windows x86_64 and Linux x86_64/arm64 templates, debug and release, built
+with the same modules as that release's editors and with the module's
+libraries included (Linux ones in `linux_x86_64/` and `linux_arm64/`). Install
+it with **Editor → Manage Export Templates → Install from File** and exports
+work with no custom path.
+
+Godot's own downloadable export templates don't contain this module, so with
+an editor you build yourself, a game exports with a template you build too,
+**with the same options as the editor** (`physx_gpu`, `blast_sdk`, `flow_sdk`):
 
 ```
 scons platform=windows target=template_release physx_sdk=<path> physx_gpu=yes blast_sdk=<path> flow_sdk=<path>

@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -877,6 +878,32 @@ Vector3 WeatherMap3D::get_wind_at(Vector3 p_position, float p_height_above_groun
 	const Vector2 m = m10 * (WeatherShelter::open_profile(h, z0) * f * _patch_at(xz, h));
 	const Vector3 gust = _gust_at(p_position, m10) * Math::sqrt(f);
 	return Vector3(m.x, 0.0f, m.y) + gust;
+}
+
+void WeatherMap3D::get_wind_parts(Vector3 p_position, float p_height_above_ground, Vector3 &r_mean, Vector2 &r_along, float &r_sigma) const {
+	const float z0 = MAX(roughness_length, 1e-5f);
+	float h = p_height_above_ground >= 0.0f ? p_height_above_ground : p_position.y - ground_height;
+	h = MAX(h, z0 * 1.5f);
+	const Vector2 m10 = get_mean_wind_at(p_position);
+	const Vector2 xz(p_position.x, p_position.z);
+	float f = 1.0f;
+	if (shelter_enabled) {
+		float cell[4];
+		shelter.sample(xz, cell);
+		f = WeatherShelter::factor(h, z0, cell);
+	}
+	const Vector2 m = m10 * (WeatherShelter::open_profile(h, z0) * f * _patch_at(xz, h));
+	r_mean = Vector3(m.x, 0.0f, m.y);
+	const float speed = m10.length();
+	r_along = speed > 1e-3f ? m10 / speed : cur_wind_direction;
+	r_sigma = speed < 1e-3f ? 0.0f : MAX(gust_intensity, 0.0f) * SIGMA_U_PER_USTAR * KARMAN / Math::log(10.0f / z0) * speed * Math::sqrt(f);
+}
+
+void WeatherMap3D::get_gust_waves(LocalVector<Vector4> &r_waves) const {
+	r_waves.resize(GUST_COUNT);
+	for (int i = 0; i < GUST_COUNT; i++) {
+		r_waves[i] = Vector4(gusts[i].k.x, gusts[i].k.y, gusts[i].amplitude, float(gusts[i].phase));
+	}
 }
 
 float WeatherMap3D::get_shelter_at(Vector3 p_position, float p_height_above_ground) const {

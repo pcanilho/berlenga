@@ -54,12 +54,22 @@ def main():
                     file, digest = line[2:].rsplit(": ", 1)
                     exe_hashes.append(f"| `{file}` | `{digest.strip()}` |")
 
-    out = [changes, "", "## Downloads", "", f"Editor builds from `main` at `{short}`.", ""]
-    out += ["| Build | Runs | Download | SHA-256 of the zip |", "| --- | --- | --- | --- |"] + rows
+    tpz = glob.glob(os.path.join(dist, "godot-fork-export-templates-*.tpz"))
+    if tpz:
+        tpz_name = os.path.basename(tpz[0])
+        url = f"https://github.com/{repo}/releases/download/build-{short}/{tpz_name}"
+        rows.append(
+            f"| Export templates | Windows x86_64, Linux x86_64 and arm64; debug and release; PhysX libraries included | [{tpz_name}]({url}) | `{sha256(tpz[0])}` |"
+        )
+
+    out = [changes, "", "## Downloads", "", f"Editor builds and export templates from `main` at `{short}`.", ""]
+    out += ["| Build | Runs | Download | SHA-256 of the file |", "| --- | --- | --- | --- |"] + rows
     out += [
         "",
         "- Windows: the DLSS, Streamline and Reflex DLLs are not included. Take them from NVIDIA's Streamline and DLSS SDKs (or the NVIDIA-RTX/godot releases) and place them next to the exe; they stay under NVIDIA's terms.",
     ]
+    if tpz:
+        out.append("- Export templates: in the editor, Editor > Manage Export Templates > Install from File, and pick the .tpz. Exports to Windows and Linux then carry the PhysX libraries the game needs.")
     if any("macOS" in r for r in rows):
         out.append("- macOS: ad-hoc signed, not notarized. On first launch right-click Godot.app and choose Open, or run `xattr -cr Godot.app`.")
     if exe_hashes:
