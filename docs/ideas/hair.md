@@ -910,6 +910,20 @@ per fragment, so the path tracer's hair BSDF gets the same fibre. Cards mix the 
 clump's colour. Both 0 by default; the strands' look is then unchanged (bench `--hair=near` the
 same). Bench tokens `grey` (0.17) and `bleach` (0.8).
 
+## Stage 2t: snow and wetness on cards
+
+The snow's clumps (stage 2r) are drawn on the strands only, so hair that switched to cards lost
+its snow. The cards now take it in their own fragment: the same snow deep opacity map gives each
+card point the hair above it toward where the snow comes from, and the top layer holds snow as on
+the strands (snow_cover x exp(-2 x hair above)). A clump is 2.5 mm across, far under a pixel at
+card distances, so each atlas texel is snow or fibre by its own hash, at the clumps' share of the
+top layer (one a strand where snow holds, about 3 strands a cm^2, about 15%). Snow texels are lit
+as snow (Lambert, albedo 0.85, facing where the snow comes from), not as fibre. Bench
+`--hair=far15_cards_snow` against `far15_snow`: specks of the same density, on the windward side.
+
+Wetness already reaches the cards: `_set_look` gives them the darker, glossier fibres and
+`card_clump` the wet clumping (bench `far15_cards_wet` against `far15_wet` alike).
+
 ## Stage 2q: hair resting on cloth
 
 Long hair lies on a collar, a hood or a coat's shoulders, and the cloth there moves. The collision
