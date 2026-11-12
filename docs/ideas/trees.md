@@ -746,6 +746,27 @@ Shigo's anatomy, since it stays a tube (no implicit polygonizer, no extra triang
     fork's base runs up inside the parent with rings parallel to the parent's, no wider than
     0.9 of it and shifted toward the side the fork leaves on, then turns out through the
     crotch. The collar's rings near the parent's axis are dropped for these.
+  - Beech (many stems from one base): limbs on a fork's first internodes welded onto the fork's
+    axis model, but the fork's base now runs inside its own parent, so the slide and spread
+    tore their bases into flaps with toothed edges. Those limbs stay plain crotches. The relief
+    tube (up to 128 sides) now smooths the collar's spread over the same arc as the plain
+    tube (passes scale with sides squared); two passes there left its edge in teeth.
+  - Veteran features (docs review of the oak pair): rot holes stay below the first fork (one
+    cut into the crotch read as a missing polygon); hollows deepen gradually from the rim to a
+    dark floor under a rolled callus lip (woundwood, Shigo 1985) instead of a flat-sided slot;
+    burls are (1 - e^2)^2 with broad lumps, no crease at their edge and no crumpled facets.
+  - Root collar: the flare ended in a skirt standing on the ground, its rim visible, and on a
+    leaning stem the base ring rose out of the soil on its high side. The base now sinks by
+    the lean and splays over the last ~20 cm, and bark relief fades out at the soil line
+    (plates and furrows cut the ground plane in a ragged line). Buttress lobes (Mattheck's
+    buttress form) were tried and taken out: lobes that spread below the ground broke through
+    it in slivers, and lobes held at the ground line still did. A real fix wants the lobes as
+    their own geometry that dives steeply under the surface.
+  - The basal hollow folded through itself in pale blades: it was sized by the flare's swollen
+    radius, roughened finely, and the low forks dented the same bearing again. It is now the
+    main stem's alone, no deeper than half the stem's own radius, with broad roughness.
+  - Bench `--view=veteran`: the lower 4 m of the bole facing its basal hollow (or largest
+    feature; `VAZ` env fixes the azimuth for a pair), lit by a low sun from the camera's side.
   - Bench: `--set=prop:true` was parsed as 0 (float("true")), so "weld on" shots were weld off.
     `--junction-side=-1` views the junction from the limb's other side. The junction view
     picks a true limb (under half the trunk's girth, spreading, starting inside the trunk).

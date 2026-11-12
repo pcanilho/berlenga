@@ -128,7 +128,7 @@ func _gen(p: int, forest: bool, s: int) -> Dictionary:
 	return {"mesh": mesh, "height": g.get_height(), "crown_radius": g.get_crown_radius(), "crown_base": g.get_crown_base(),
 		"internodes": g.get_internode_count(), "leaves": g.get_leaf_count(), "dead": g.get_dead_branch_count(),
 		"shed": g.get_shed_count(), "tris": tris, "ms": g.get_generation_usec() / 1000.0,
-		"capsules": g.get_collision_capsules()}
+		"capsules": g.get_collision_capsules(), "features": g.get_veteran_features()}
 
 # The shared season state (WeatherMap3D.get_season(), section 2c) for a 0 C January / 18 C July
 # climate at the weather's own latitude (46 N without a SkyClock) on a given day; the stand-in
@@ -315,6 +315,25 @@ func _build_scene() -> void:
 		# Close-ups: the cascades over 300 m blur the leaves' shadow flecks into blocky speckle.
 		sun.directional_shadow_max_distance = 40.0
 	add_child(sun)
+	var vet_az := 0.0
+	if view == "veteran":
+		# The lower 4 m of the first tree's bole, facing its basal hollow (else its largest
+		# feature), lit side-on by a low sun from the camera's side so hollows and burls model.
+		var best_k := 99
+		for f in first_info.features:
+			if int(f.kind) != 2 and int(f.kind) < best_k:
+				best_k = int(f.kind)
+				vet_az = float(f.azimuth)
+		if OS.has_environment("VAZ"):
+			vet_az = float(OS.get_environment("VAZ"))
+		print("veteran view azimuth %.4f" % vet_az)
+		for f in first_info.features:
+			print("feature ", f)
+		var la := vet_az + deg_to_rad(55.0)
+		var target := Vector3(xs[0], 1.4, 0)
+		var ldir := Vector3(cos(la) * cos(deg_to_rad(18.0)), sin(deg_to_rad(18.0)), sin(la) * cos(deg_to_rad(18.0)))
+		sun.look_at_from_position(target + ldir * 10.0, target)
+		sun.directional_shadow_max_distance = 40.0
 	var cam := Camera3D.new()
 	cam.fov = 40.0
 	add_child(cam)
@@ -329,6 +348,12 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[0] + 0.6, 1.1, 3.0)
 		cam.look_at(Vector3(xs[0], 0.45, 0))
 		cam.fov = 45.0
+	elif view == "veteran":
+		var out := Vector3(cos(vet_az), 0, sin(vet_az))
+		var cy := float(OS.get_environment("VCAMY")) if OS.has_environment("VCAMY") else 1.5
+		cam.position = Vector3(xs[0], cy, 0) + out * 4.6
+		cam.look_at(Vector3(xs[0], 1.6 if cy > 1.0 else 0.4, 0))
+		cam.fov = 50.0
 	elif view == "log":
 		# The last plant in the row (the log with --decays) from 3.5 m, slightly above.
 		cam.position = Vector3(xs[xs.size() - 1] + 1.0, 1.6, 3.5)
