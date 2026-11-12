@@ -4758,10 +4758,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		if (stem) {
 			sides = MAX(sides, 10);
 		}
+		// The preset bark colours (and bark_color, an inspector colour) are sRGB, as measured bark
+		// is quoted; the bark material reads vertex colour as linear, so they convert here. Read
+		// as linear, beech came out near 0.45 albedo and birch 0.74, about twice real bark (beech
+		// about 0.15 to 0.2, birch about 0.5), and logs and trunks rendered almost white.
 		Color col = bark_color;
 		if (first.dead) {
 			col = col.lerp(Color(0.42f, 0.4f, 0.37f), 0.6f);
 		}
+		col = col.srgb_to_linear();
 		const float tint = 0.92f + 0.16f * float((uint32_t(s) * 2654435761u) >> 24) / 255.0f;
 		col = Color(col.r * tint, col.g * tint, col.b * tint);
 		bark.bone = node_bone[s];
@@ -5026,7 +5031,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					Vector4i part;
 					bark.begin(part);
 					const int b0 = bark.verts.size();
-					const Color hole(0.02f, 0.018f, 0.015f), rim = bark_color.lerp(Color(0.55f, 0.47f, 0.36f), 0.6f);
+					const Color hole(0.02f, 0.018f, 0.015f), rim = bark_color.lerp(Color(0.55f, 0.47f, 0.36f), 0.6f).srgb_to_linear();
 					bark.verts.push_back(p + out * 0.004f);
 					bark.normals.push_back(out);
 					bark.uvs.push_back(Vector2(0.5f, 0.5f));
@@ -5061,7 +5066,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// epicormics): a few new shoots and some older ones with side twigs. Young
 					// bark is a warmer brown than the grey stem.
 					const int shoots = MAX(1, int(f.amount));
-					const Color shoot_bark = bark_color.lerp(Color(0.33f, 0.24f, 0.15f), 0.6f);
+					const Color shoot_bark = bark_color.lerp(Color(0.33f, 0.24f, 0.15f), 0.6f).srgb_to_linear();
 					for (int k = 0; k < shoots; k++) {
 						Vector3 bp, bo;
 						float br;
@@ -5271,7 +5276,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					rad.push_back(br);
 					pts.push_back(b0 + bdir * blen);
 					rad.push_back(br * 0.6f);
-					{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color); bark.end(part, rad[0]); }
+					{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color.srgb_to_linear()); bark.end(part, rad[0]); }
 				}
 				if (needle_sprays) {
 					// One brush as two crossed alpha-cut sprays (the needle image is drawn from the
@@ -5339,7 +5344,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const Vector3 tip = mid + tip_dir * (p_len * 0.5f);
 			pts.push_back(tip);
 			rad.push_back(p_r * 0.5f);
-			{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color); bark.end(part, rad[0]); }
+			{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color.srgb_to_linear()); bark.end(part, rad[0]); }
 			node_drag[i] += 1.5f * p_r * p_len * exposure;
 			Vector3 side0 = p_dir.cross(Vector3(0, 1, 0));
 			side0 = side0.length_squared() > 1e-6f ? side0.normalized() : perp;
