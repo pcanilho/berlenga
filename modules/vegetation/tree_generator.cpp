@@ -1863,6 +1863,13 @@ void TreeGenerator::_add_leaf(Builder &r_b, const Vector3 &p_base, const Vector3
 	}
 	const float slot_area = 2.0f * 0.656f * hw * p_size * float(n_eff); // Lens area: 2 W L x 0.656.
 	// The twin: today's lens (n_eff slots of it), for LOD 1 and coarser.
+	if (far_leaves) {
+		// A far mesh (near_leaf_range): the twin is the leaf at every level. Lobes and leaflets
+		// are under a pixel beyond the near range; the near mesh keeps them.
+		const float k = Math::sqrt(float(n_eff));
+		_add_blade(r_b, start, along, side, n, p_size * k, hw * k, 3, 0, 0.0f, p_color);
+		return;
+	}
 	{
 		const float k = Math::sqrt(float(n_eff));
 		const int ti = leaf_twins.indices.size(), tv = leaf_twins.verts.size();
@@ -2451,6 +2458,7 @@ void TreeGenerator::_climber_stem(Builder &r_bark, const LocalVector<Vector3> &p
 
 // Liana stands for clematis (old man's beard), the hanging climber of rich lowland woods.
 Array TreeGenerator::plant_climber_cache[4];
+LocalVector<TreeGenerator::ClimberLeafShape> TreeGenerator::plant_climber_shapes[4];
 
 Array TreeGenerator::_plant_climber_leaves(Climber p_climber) {
 	Array *cache = plant_climber_cache;
@@ -2460,6 +2468,18 @@ Array TreeGenerator::_plant_climber_leaves(Climber p_climber) {
 	if (cache[p_climber].is_empty()) {
 		const int kind = p_climber == CLIMBER_IVY ? PlantGenerator::CLIMBER_IVY : (p_climber == CLIMBER_LIANA ? PlantGenerator::CLIMBER_CLEMATIS : PlantGenerator::CLIMBER_HONEYSUCKLE);
 		cache[p_climber] = PlantGenerator::make_climber_leaves(kind, 4);
+		LocalVector<ClimberLeafShape> &shapes = plant_climber_shapes[p_climber];
+		shapes.clear();
+		for (int i = 0; i < cache[p_climber].size(); i++) {
+			const Ref<ArrayMesh> m = cache[p_climber][i];
+			const Array a = m->surface_get_arrays(0);
+			ClimberLeafShape sh;
+			sh.verts = a[Mesh::ARRAY_VERTEX];
+			sh.normals = a[Mesh::ARRAY_NORMAL];
+			sh.uvs = a[Mesh::ARRAY_TEX_UV];
+			sh.indices = a[Mesh::ARRAY_INDEX];
+			shapes.push_back(sh);
+		}
 	}
 	return cache[p_climber];
 }
@@ -2474,12 +2494,11 @@ void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const 
 		// The ground plants' leaf for this climber (lies in XZ, base at the origin, +Z, 1 m),
 		// one of its variants, turned onto our blade frame and scaled to the leaf's length.
 		const uint32_t h = hash_murmur3_one_32(uint32_t(climber_leaves.size() / 11), uint32_t(seed) * 7919u + 13u);
-		const Ref<ArrayMesh> m = plant[h % uint32_t(plant.size())];
-		const Array a = m->surface_get_arrays(0);
-		const PackedVector3Array mv = a[Mesh::ARRAY_VERTEX];
-		const PackedVector3Array mn = a[Mesh::ARRAY_NORMAL];
-		const PackedVector2Array mu = a[Mesh::ARRAY_TEX_UV];
-		const PackedInt32Array mi = a[Mesh::ARRAY_INDEX];
+		const ClimberLeafShape &shape = plant_climber_shapes[climber][h % plant_climber_shapes[climber].size()];
+		const PackedVector3Array &mv = shape.verts;
+		const PackedVector3Array &mn = shape.normals;
+		const PackedVector2Array &mu = shape.uvs;
+		const PackedInt32Array &mi = shape.indices;
 		Vector3 z = p_out - p_normal * p_out.dot(p_normal);
 		z = z.length_squared() > 1e-8f ? z.normalized() : p_normal.cross(Vector3(1, 0, 0)).normalized();
 		const Vector3 y = p_normal.normalized();
@@ -4802,6 +4821,25 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			arrays[Mesh::ARRAY_WEIGHTS] = b.weights;
 		}
 		mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), lods, compress_vertices ? Mesh::ARRAY_FLAG_COMPRESS_ATTRIBUTES : 0);
+		if (material_source.is_valid()) {
+			// A near mesh shares its far mesh's materials: the same shaders and batches, and no
+			// reads back from the RenderingServer (which wait on the render thread) off the main
+			// thread.
+			const char *names[4] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves" };
+			int found = -1;
+			for (int i = 0; i < material_source->get_surface_count(); i++) {
+				if (material_source->surface_get_name(i) == names[s]) {
+					found = i;
+					break;
+				}
+			}
+			if (found >= 0) {
+				const int at = mesh->get_surface_count() - 1;
+				mesh->surface_set_name(at, names[s]);
+				mesh->surface_set_material(at, material_source->surface_get_material(found));
+				continue;
+			}
+		}
 		Ref<StandardMaterial3D> m;
 		m.instantiate();
 		m->set_albedo(Color(1, 1, 1));
@@ -5165,6 +5203,155 @@ void TreeGenerator::apply_habitat(const Ref<PlantSpecies> &p_species) const {
 // One species of a stand. The stand-grown form (grown with neighbours: tall, narrow, high crown
 // base) fills the stand; the open-grown form is the same tree in a clearing or at an edge, kept
 // there by a shade rule, and shrubs get the shade their light value allows.
+// One variant of a stand species (the loop in _stand_species(), and near meshes on demand).
+void TreeGenerator::_setup_variant(Preset p_preset, Form p_form, int p_variant, int p_base_seed, float p_base_cover) {
+	seed = p_base_seed * 31 + p_variant;
+	if (p_form == FORM_SNAG || p_form == FORM_LOG) {
+		decay_class = 2 + p_variant % 3;
+		fallen = p_form == FORM_LOG;
+	} else if (p_form == FORM_BRANCH || p_form == FORM_STICKS) {
+		// Freshly shed (twigs still on) to well rotted.
+		decay_class = 1 + p_variant % 3;
+		fallen_branch = true;
+		shed_radius_max = p_form == FORM_STICKS ? 0.04f : 0.14f;
+	}
+	// Climbers on some of the variants of their usual hosts (section 5b): ivy on about a
+	// quarter of rough- and smooth-barked broadleaves (and their snags), lianas on another
+	// share in rich woods, honeysuckle twining in shrubs. The generator's climber_cover
+	// scales them (0: none).
+	climber = CLIMBER_NONE;
+	if (p_base_cover > 0.0f && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_SNAG || p_form == FORM_UNDERSTORY)) {
+		const uint32_t bit = 1u << int(p_preset);
+		const uint32_t ivy_hosts = (1u << PRESET_OAK) | (1u << PRESET_BEECH) | (1u << PRESET_ASH) | (1u << PRESET_SYCAMORE_MAPLE) | (1u << PRESET_LIME) |
+				(1u << PRESET_BLACK_ALDER) | (1u << PRESET_WHITE_WILLOW) | (1u << PRESET_HORSE_CHESTNUT) | (1u << PRESET_HAWTHORN) | (1u << PRESET_ELDER) |
+				(1u << PRESET_SUGAR_MAPLE) | (1u << PRESET_RED_MAPLE) | (1u << PRESET_RED_OAK) | (1u << PRESET_WHITE_OAK) | (1u << PRESET_AMERICAN_BEECH) | (1u << PRESET_YELLOW_BIRCH);
+		const uint32_t liana_hosts = (1u << PRESET_OAK) | (1u << PRESET_ASH) | (1u << PRESET_LIME) | (1u << PRESET_SYCAMORE_MAPLE) | (1u << PRESET_BLACK_ALDER) |
+				(1u << PRESET_WHITE_WILLOW) | (1u << PRESET_SUGAR_MAPLE) | (1u << PRESET_RED_MAPLE) | (1u << PRESET_RED_OAK) | (1u << PRESET_WHITE_OAK);
+		const uint32_t twine_hosts = (1u << PRESET_HAZEL) | (1u << PRESET_HAWTHORN) | (1u << PRESET_ROWAN) | (1u << PRESET_ELDER) | (1u << PRESET_WITCH_HAZEL);
+		if (p_variant % 4 == 1 && (ivy_hosts & bit)) {
+			climber = CLIMBER_IVY;
+			climber_cover = p_base_cover * Math::lerp(0.5f, 1.0f, float((uint32_t(seed) * 2654435761u) >> 24) / 255.0f);
+		} else if (p_variant % 4 == 3 && p_form != FORM_SNAG && (liana_hosts & bit)) {
+			climber = CLIMBER_LIANA;
+			climber_cover = p_base_cover;
+		} else if (p_variant % 4 == 2 && p_form != FORM_SNAG && (twine_hosts & bit)) {
+			climber = CLIMBER_HONEYSUCKLE;
+			climber_cover = p_base_cover;
+		}
+	}
+}
+
+// Everything generate() reads, so a copy grows the same tree; the textures are shared.
+void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
+	preset = p_from.preset;
+	seed = p_from.seed;
+	memcpy(params, p_from.params, sizeof(params));
+	phyllotaxis = p_from.phyllotaxis;
+	forest_shade = p_from.forest_shade;
+	forest_spacing = p_from.forest_spacing;
+	needle_sprays = p_from.needle_sprays;
+	skip_lods = p_from.skip_lods;
+	bark_relief = p_from.bark_relief;
+	rigged = p_from.rigged;
+	decay_class = p_from.decay_class;
+	fallen = p_from.fallen;
+	fallen_branch = p_from.fallen_branch;
+	envelope = p_from.envelope;
+	collider_radius = p_from.collider_radius;
+	veteran = p_from.veteran;
+	bark_color = p_from.bark_color;
+	leaf_color = p_from.leaf_color;
+	junction_weld = p_from.junction_weld;
+	season = p_from.season.duplicate(true);
+	climber_plant_leaves = p_from.climber_plant_leaves;
+	leaf_flutter = p_from.leaf_flutter;
+	moss_cover = p_from.moss_cover;
+	compress_vertices = p_from.compress_vertices;
+	climber = p_from.climber;
+	shed_radius_max = p_from.shed_radius_max;
+	climber_cover = p_from.climber_cover;
+	species_leaf_forms = p_from.species_leaf_forms;
+	leaf_texture = p_from.leaf_texture;
+	spray_texture = p_from.spray_texture;
+	for (int i = 0; i < BARK_MAX; i++) {
+		bark_sets[i] = p_from.bark_sets[i];
+	}
+	moss_set = p_from.moss_set;
+}
+
+void TreeGenerator::_near_task(void *p_self) {
+	TreeGenerator *self = static_cast<TreeGenerator *>(p_self);
+	self->_setup_variant(self->preset, self->near_form, self->near_task_variant, self->near_base_seed, self->near_base_cover);
+	self->material_source = self->near_far_meshes.size() > self->near_task_variant ? Ref<ArrayMesh>(self->near_far_meshes[self->near_task_variant]) : Ref<ArrayMesh>();
+	self->near_result = self->generate();
+	self->material_source.unref();
+	// Keep the copy small between requests: the growth state is only needed while growing.
+	self->nodes.reset();
+	self->buds.reset();
+	self->spurs.reset();
+	self->shadow.reset();
+	self->supports.reset();
+	self->leaf_twins = Builder();
+	self->leaf_twin_of.clear();
+	self->climber_leaf_b = Builder();
+}
+
+Ref<Mesh> TreeGenerator::request_near_mesh(int p_key, int p_variant) {
+	ERR_FAIL_COND_V_MSG(near_key < 0 || p_key != near_key, Ref<Mesh>(), "Not a near mesh source for this key.");
+	ERR_FAIL_COND_V(p_variant < 0, Ref<Mesh>());
+	// A finished build: hand it over.
+	if (near_task != WorkerThreadPool::INVALID_TASK_ID && WorkerThreadPool::get_singleton()->is_task_completed(near_task)) {
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(near_task);
+		near_task = WorkerThreadPool::INVALID_TASK_ID;
+		near_ready = near_result;
+		near_ready_variant = near_task_variant;
+		near_result.unref();
+	}
+	// Still in use somewhere (another cell of the same variant): the same mesh. Only the users
+	// hold it, so it is freed as soon as the field frees its last near cell.
+	if (ObjectID *id = near_built.getptr(p_variant)) {
+		Mesh *m = ObjectDB::get_instance<Mesh>(*id);
+		if (m) {
+			return Ref<Mesh>(m);
+		}
+		near_built.erase(p_variant);
+	}
+	if (near_ready.is_valid() && near_ready_variant == p_variant) {
+		Ref<Mesh> m = near_ready;
+		near_built[p_variant] = m->get_instance_id();
+		near_ready.unref();
+		near_ready_variant = -1;
+		return m;
+	}
+	if (near_task == WorkerThreadPool::INVALID_TASK_ID) {
+		// One build at a time per species, at low priority.
+		near_ready.unref(); // Not claimed: the camera moved on.
+		near_ready_variant = -1;
+		near_task_variant = p_variant;
+		near_task = WorkerThreadPool::get_singleton()->add_native_task(&TreeGenerator::_near_task, this, false, "TreeGenerator near mesh");
+	}
+	return Ref<Mesh>();
+}
+
+int TreeGenerator::get_near_mesh_count() const {
+	int n = 0;
+	for (const KeyValue<int, ObjectID> &b : near_built) {
+		n += ObjectDB::get_instance(b.value) ? 1 : 0;
+	}
+	for (const KeyValue<int, Ref<TreeGenerator>> &kv : near_sources) {
+		for (const KeyValue<int, ObjectID> &b : kv.value->near_built) {
+			n += ObjectDB::get_instance(b.value) ? 1 : 0;
+		}
+	}
+	return n;
+}
+
+TreeGenerator::~TreeGenerator() {
+	if (near_task != WorkerThreadPool::INVALID_TASK_ID) {
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(near_task);
+	}
+}
+
 Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form) {
 	if (p_form == FORM_OPEN && p_stand_grown) {
 		p_form = FORM_STAND;
@@ -5210,46 +5397,37 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		if (p_form == FORM_SAPLING) {
 			params[PARAM_YEARS] = MAX(6.0f, Math::round(params[PARAM_YEARS] * 0.2f));
 		}
+		// Leaf detail near, on demand: lobed and compound leaves are simple lenses in the far
+		// meshes, and a copy of this generator, as set up here, builds the full-leaf mesh of a
+		// variant when the field asks for it (request_near_mesh()).
+		const LeafKind leaf_kind = LEAF_FORMS[p_preset].kind;
+		const bool near_split = near_leaf_range > 0.0f && p_variants > 0 && params[PARAM_NEEDLES] <= 0.5f &&
+				(leaf_kind == LEAF_LOBED || leaf_kind == LEAF_PALMATE || leaf_kind == LEAF_PINNATE || leaf_kind == LEAF_DIGITATE) &&
+				(p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY || p_form == FORM_SAPLING);
+		if (near_split) {
+			Ref<TreeGenerator> src;
+			src.instantiate();
+			src->_copy_generation_state(*this);
+			src->near_key = key;
+			src->near_form = p_form;
+			src->near_base_seed = saved_seed;
+			src->near_base_cover = saved_climber_cover;
+			near_sources[key] = src;
+		} else {
+			near_sources.erase(key);
+		}
+		far_leaves = near_split;
 		for (int v = 0; v < n; v++) {
-			seed = saved_seed * 31 + v;
-			if (p_form == FORM_SNAG || p_form == FORM_LOG) {
-				decay_class = 2 + v % 3;
-				fallen = p_form == FORM_LOG;
-			} else if (p_form == FORM_BRANCH || p_form == FORM_STICKS) {
-				// Freshly shed (twigs still on) to well rotted.
-				decay_class = 1 + v % 3;
-				fallen_branch = true;
-				shed_radius_max = p_form == FORM_STICKS ? 0.04f : 0.14f;
-			}
-			// Climbers on some of the variants of their usual hosts (section 5b): ivy on about a
-			// quarter of rough- and smooth-barked broadleaves (and their snags), lianas on another
-			// share in rich woods, honeysuckle twining in shrubs. The generator's climber_cover
-			// scales them (0: none).
-			climber = CLIMBER_NONE;
-			if (saved_climber_cover > 0.0f && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_SNAG || p_form == FORM_UNDERSTORY)) {
-				const uint32_t bit = 1u << int(p_preset);
-				const uint32_t ivy_hosts = (1u << PRESET_OAK) | (1u << PRESET_BEECH) | (1u << PRESET_ASH) | (1u << PRESET_SYCAMORE_MAPLE) | (1u << PRESET_LIME) |
-						(1u << PRESET_BLACK_ALDER) | (1u << PRESET_WHITE_WILLOW) | (1u << PRESET_HORSE_CHESTNUT) | (1u << PRESET_HAWTHORN) | (1u << PRESET_ELDER) |
-						(1u << PRESET_SUGAR_MAPLE) | (1u << PRESET_RED_MAPLE) | (1u << PRESET_RED_OAK) | (1u << PRESET_WHITE_OAK) | (1u << PRESET_AMERICAN_BEECH) | (1u << PRESET_YELLOW_BIRCH);
-				const uint32_t liana_hosts = (1u << PRESET_OAK) | (1u << PRESET_ASH) | (1u << PRESET_LIME) | (1u << PRESET_SYCAMORE_MAPLE) | (1u << PRESET_BLACK_ALDER) |
-						(1u << PRESET_WHITE_WILLOW) | (1u << PRESET_SUGAR_MAPLE) | (1u << PRESET_RED_MAPLE) | (1u << PRESET_RED_OAK) | (1u << PRESET_WHITE_OAK);
-				const uint32_t twine_hosts = (1u << PRESET_HAZEL) | (1u << PRESET_HAWTHORN) | (1u << PRESET_ROWAN) | (1u << PRESET_ELDER) | (1u << PRESET_WITCH_HAZEL);
-				if (v % 4 == 1 && (ivy_hosts & bit)) {
-					climber = CLIMBER_IVY;
-					climber_cover = saved_climber_cover * Math::lerp(0.5f, 1.0f, float((uint32_t(seed) * 2654435761u) >> 24) / 255.0f);
-				} else if (v % 4 == 3 && p_form != FORM_SNAG && (liana_hosts & bit)) {
-					climber = CLIMBER_LIANA;
-					climber_cover = saved_climber_cover;
-				} else if (v % 4 == 2 && p_form != FORM_SNAG && (twine_hosts & bit)) {
-					climber = CLIMBER_HONEYSUCKLE;
-					climber_cover = saved_climber_cover;
-				}
-			}
+			_setup_variant(p_preset, p_form, v, saved_seed, saved_climber_cover);
 			Ref<ArrayMesh> mesh = generate();
 			crown += crown_radius;
 			if (p_variants > 0) {
 				meshes.push_back(mesh);
 			}
+		}
+		far_leaves = false;
+		if (near_split) {
+			near_sources[key]->near_far_meshes = meshes;
 		}
 		decay_class = saved_decay;
 		fallen = saved_fallen;
@@ -5297,6 +5475,15 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		meshes.resize(p_variants);
 	}
 	sp->set_meshes(meshes);
+	if (near_leaf_range > 0.0f && near_sources.has(key)) {
+		// VegetationField3D builds the near cells from it as trees come close; the species
+		// holds the source (the field keeps only its id).
+		const Ref<TreeGenerator> &src = near_sources[key];
+		sp->set_near_mesh_source(src.ptr());
+		sp->set_near_mesh_key(key);
+		sp->set_meta(SNAME("_near_mesh_source"), src);
+		sp->set("near_range", near_leaf_range);
+	}
 	if (near_needle_range > 0.0f && near_cache.has(key)) {
 		// PlantSpecies near_meshes/near_range (vegetation module); a no-op without them.
 		sp->set("near_meshes", near_cache[key]);
@@ -5411,6 +5598,7 @@ void TreeGenerator::clear_cache() {
 	mesh_cache.clear();
 	crown_cache.clear();
 	near_cache.clear();
+	near_sources.clear();
 }
 
 // Stands, in placement order: the stand's canopy trees first (stand-grown form; a second species
@@ -5888,6 +6076,10 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bone_count"), &TreeGenerator::get_bone_count);
 	ClassDB::bind_method(D_METHOD("set_near_needle_range", "range"), &TreeGenerator::set_near_needle_range);
 	ClassDB::bind_method(D_METHOD("get_near_needle_range"), &TreeGenerator::get_near_needle_range);
+	ClassDB::bind_method(D_METHOD("set_near_leaf_range", "range"), &TreeGenerator::set_near_leaf_range);
+	ClassDB::bind_method(D_METHOD("get_near_leaf_range"), &TreeGenerator::get_near_leaf_range);
+	ClassDB::bind_method(D_METHOD("request_near_mesh", "key", "variant"), &TreeGenerator::request_near_mesh);
+	ClassDB::bind_method(D_METHOD("get_near_mesh_count"), &TreeGenerator::get_near_mesh_count);
 	ClassDB::bind_method(D_METHOD("set_bark_color", "color"), &TreeGenerator::set_bark_color);
 	ClassDB::bind_method(D_METHOD("get_bark_color"), &TreeGenerator::get_bark_color);
 	ClassDB::bind_method(D_METHOD("set_leaf_color", "color"), &TreeGenerator::set_leaf_color);
@@ -5935,6 +6127,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::AABB, "envelope"), "set_envelope", "get_envelope");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collider_radius", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:m"), "set_collider_radius", "get_collider_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_needle_range", PROPERTY_HINT_RANGE, "0,100,0.5,suffix:m"), "set_near_needle_range", "get_near_needle_range");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "near_leaf_range", PROPERTY_HINT_RANGE, "0,200,0.5,suffix:m"), "set_near_leaf_range", "get_near_leaf_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "forest_spacing", PROPERTY_HINT_RANGE, "1,20,0.1,suffix:m"), "set_forest_spacing", "get_forest_spacing");
 	ADD_GROUP("Colors", "");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "bark_color"), "set_bark_color", "get_bark_color");

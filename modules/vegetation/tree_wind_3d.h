@@ -146,6 +146,7 @@ private:
 	double time = 0.0;
 	float rescan_timer = 0.0f;
 	void _on_target_populated();
+	void _on_target_child(Node *p_child);
 	HashMap<uint64_t, Rig> rigs; // By mesh instance id.
 	LocalVector<Target> targets;
 	LocalVector<Vector4> waves; // Gust waves (k along, k across, amplitude, phase).

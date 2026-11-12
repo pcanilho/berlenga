@@ -698,6 +698,49 @@ near range and generated on demand, as `near_meshes` already does for needles. T
 would carry only the leaf twins (LOD 1 and coarser). Species would also be generated when a
 tile in range first needs them, and freed when none does.
 
+## 8c. Leaf detail near, on demand (12 Nov; Paulo's pick)
+
+`TreeGenerator.near_leaf_range` (metres, 0 = off; 60 for the showcase). Species with lobed or
+compound leaves (oak, red and white oak, hawthorn, sycamore, sugar and red maple, ash, horse
+chestnut, rowan, elder) are generated with each leaf as its simple twin, the lens of the same
+area that LOD 1 and coarser already drew (section 2b). Their PlantSpecies get
+`near_mesh_source` (a copy of the generator as set up for that species) and `near_mesh_key`.
+VegetationField3D (vegetation, 9cd277f3) calls `request_near_mesh(key, variant)` for cells
+within 1.2 x the range; the copy grows that variant again on a low-priority worker thread, one
+at a time per species, and returns null until it is done. The near mesh is exactly the mesh the
+generator makes without the split (bench check: vertices, indices, UVs, every LOD, rig). Only
+the field's MultiMeshes hold it, so it is freed when the field frees its last near cell (beyond
+1.5 x the range). The species holds the source alive.
+
+Why no look change: lobes and leaflets are 1 to 3 cm, a fifth of a pixel at 60 m in 1080p
+(about 12 px per metre at 75 degrees) and half a pixel in 4K. Raster at that distance already
+draws LOD 1 or coarser (the twins) at Godot's 1 px LOD threshold beyond about 35 m in 1080p and
+70 m in 4K; the path tracer draws LOD 0, now the lens of the same area, where it can't resolve
+the lobes. Near meshes share the far meshes' materials (same shaders and batches).
+
+Two things the worker thread exposed, both fixed: climber leaves read each ivy leaf back from
+the RenderingServer (a wait on the render thread per leaf; now read once per climber), and the
+leaf flutter material read the base shader back. The near build takes its far mesh's materials
+instead, so a near build never waits on the main thread.
+
+Shots (oak, sycamore, rowan; 1080p pixel density): at 60 m and 100 m with Godot's default LOD
+threshold the far and full trees are the same image (crown luminance 97.5 vs 97.6, sky seen
+through 0.389 vs 0.390). Forcing LOD 0 everywhere, a stand-in for what the path tracer sees, the
+lens crowns are about 2% darker at 60 m (98.6 vs 100.7) and 1% at 100 m: the same small step the
+raster LOD 0 to LOD 1 switch already makes there. A denoised path-traced pair goes on the PC list.
+
+Measured: open oak leaves 14.9M to 4.3M vertices per variant. European woodland, one variant:
+103.2M to 81.1M vertices (leaves 64.8M to 42.8M; bark, needles and moss unchanged). A near oak
+takes about 6 s to build on one cloud core (the PC is several times faster), so a tree coming
+closer at walking pace has it before the 60 m crossfade; at speed the far mesh, which looks the
+same there, stays a few seconds longer.
+
+Simple-leaved species (beech, birch, willow, alder, lime) are unchanged: their LOD 0 leaves are
+already their only form. Next possible step (needs a card): far meshes that start at LOD 1 for
+every broadleaf, the stochastically pruned, area-preserving level (Cook et al. 2007), which
+raster already draws beyond the near range; it changes what the path tracer sees at distance, so
+it needs a path-traced comparison first.
+
 ## 8a. Species, habitats and stands (as built)
 
 Seventeen presets: oak, beech, birch, Scots pine, Norway spruce, hazel, hawthorn, small-leaved

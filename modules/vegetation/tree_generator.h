@@ -33,6 +33,7 @@
 #include "core/io/resource.h"
 #include "core/math/random_pcg.h"
 #include "core/templates/hash_map.h"
+#include "core/object/worker_thread_pool.h"
 #include "core/templates/local_vector.h"
 #include "plant_species.h"
 #include "scene/resources/material.h"
@@ -304,10 +305,22 @@ private:
 	Ref<Material> _flutter_material(const Ref<StandardMaterial3D> &p_base, float p_leaf_size) const;
 	static Array _plant_climber_leaves(Climber p_climber);
 	static Array plant_climber_cache[4];
+	// The same leaves' arrays, read once: reading a mesh back from the RenderingServer waits on
+	// the render thread for every leaf, and blocks near meshes built on worker threads.
+	struct ClimberLeafShape {
+		PackedVector3Array verts;
+		PackedVector3Array normals;
+		PackedVector2Array uvs;
+		PackedInt32Array indices;
+	};
+	static LocalVector<ClimberLeafShape> plant_climber_shapes[4];
 
 public:
 	static void free_climber_leaves() {
 		for (Array &a : plant_climber_cache) {
+			a.clear();
+		}
+		for (LocalVector<ClimberLeafShape> &a : plant_climber_shapes) {
 			a.clear();
 		}
 	}
@@ -323,6 +336,11 @@ private:
 	int mask_channel = -1; // Passed to every PlantSpecies the stand methods build.
 	bool needle_sprays = false;
 	float near_needle_range = 0.0f; // Metres; > 0 gives placed conifers a full-needle near mesh.
+	// Leaf detail near, on demand (docs/ideas/trees.md 8b): metres; > 0 gives placed trees with
+	// lobed or compound leaves a far mesh of simple leaves, and their species a near_mesh_source
+	// that builds the full-leaf mesh when a tree first comes within this range.
+	float near_leaf_range = 0.0f;
+	bool far_leaves = false; // _add_leaf(): species leaves as their simple twins only.
 	bool skip_lods = false;
 	float bark_relief = 1.0f; // Scales the displaced bark of LOD 0; 0 = plain tubes only.
 	static constexpr float RELIEF_MIN_RADIUS = 0.08f; // Stems and limbs this thick get relief.
@@ -518,6 +536,25 @@ private:
 		FORM_UNDERSTORY, // A shrub grown in a stand's shade: taller, thinner, fewer leaves.
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
+	// One variant's state in a stand species: seed, decay and climber.
+	void _setup_variant(Preset p_preset, Form p_form, int p_variant, int p_base_seed, float p_base_cover);
+	// Near meshes on demand: one source (a copy of the generator as set up for the species) per
+	// species key, shared by every PlantSpecies of that key and kept alive by them.
+	HashMap<int, Ref<TreeGenerator>> near_sources;
+	void _copy_generation_state(const TreeGenerator &p_from);
+	int near_key = -1;
+	Form near_form = FORM_OPEN;
+	int near_base_seed = 0;
+	float near_base_cover = 0.0f;
+	HashMap<int, ObjectID> near_built; // Variant -> mesh, held only by its users (the field's cells).
+	Ref<ArrayMesh> near_ready; // A finished mesh not yet handed out.
+	int near_ready_variant = -1;
+	WorkerThreadPool::TaskID near_task = WorkerThreadPool::INVALID_TASK_ID;
+	int near_task_variant = -1;
+	Ref<ArrayMesh> near_result;
+	TypedArray<Mesh> near_far_meshes; // The species' far meshes, whose materials a near mesh shares.
+	Ref<ArrayMesh> material_source;
+	static void _near_task(void *p_self);
 
 protected:
 	static void _bind_methods();
@@ -538,6 +575,16 @@ public:
 	void set_mask_channel(int p_channel) { mask_channel = CLAMP(p_channel, -1, 3); }
 	int get_mask_channel() const { return mask_channel; }
 	void set_near_needle_range(float p_range) { near_needle_range = MAX(p_range, 0.0f); }
+	void set_near_leaf_range(float p_range) {
+		near_leaf_range = MAX(p_range, 0.0f);
+		mesh_cache.clear();
+		near_sources.clear();
+	}
+	float get_near_leaf_range() const { return near_leaf_range; }
+	// For PlantSpecies.near_mesh_source: the full-leaf mesh of one variant (index into the
+	// species' meshes), or null while it is being built on a worker thread.
+	Ref<Mesh> request_near_mesh(int p_key, int p_variant);
+	int get_near_mesh_count() const;
 	float get_near_needle_range() const { return near_needle_range; }
 	void set_bark_relief(float p_relief) { bark_relief = MAX(p_relief, 0.0f); }
 	float get_bark_relief() const { return bark_relief; }
@@ -627,6 +674,7 @@ public:
 	int get_generation_usec() const { return int(generation_usec); }
 
 	TreeGenerator();
+	~TreeGenerator();
 };
 
 VARIANT_ENUM_CAST(TreeGenerator::Preset);

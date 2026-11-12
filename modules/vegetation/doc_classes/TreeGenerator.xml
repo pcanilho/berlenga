@@ -103,6 +103,12 @@
 				Leaves or needles of the last tree grown.
 			</description>
 		</method>
+		<method name="get_near_mesh_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many full-leaf near meshes built by [method request_near_mesh] are in use now.
+			</description>
+		</method>
 		<method name="get_param" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="param" type="int" enum="TreeGenerator.Param" />
@@ -138,6 +144,14 @@
 			<param index="1" name="region" type="int" enum="TreeGenerator.Region" default="0" />
 			<description>
 				Returns one [Biome] with every woodland stand of [param region]. Europe (all but [constant STAND_HEDGEROW]): riparian, subalpine, montane conifer, beech, oak mixed and pine heath. North America: pine-hemlock, northern hardwood and eastern oak. Canopy trees of all stands come first. Climate rules keep each stand to its belt; where belts overlap, later stands only fill the gaps earlier crowns leave. Append floor species after it.
+			</description>
+		</method>
+		<method name="request_near_mesh">
+			<return type="Mesh" />
+			<param index="0" name="key" type="int" />
+			<param index="1" name="variant" type="int" />
+			<description>
+				For [member PlantSpecies.near_mesh_source]: returns the full-leaf mesh of [param variant] (an index into the species' meshes), or [code]null[/code] while it is still being built on a worker thread (one at a time per species). Only its users hold the mesh, so it is freed once nothing draws it. See [member near_leaf_range].
 			</description>
 		</method>
 		<method name="set_param">
@@ -251,6 +265,9 @@
 		</member>
 		<member name="max_shoot" type="float" setter="set_param" getter="get_param" default="2.0">
 			Most internodes one bud can grow in a year.
+		</member>
+		<member name="near_leaf_range" type="float" setter="set_near_leaf_range" getter="get_near_leaf_range" default="0.0">
+			Metres. Above 0, placed trees and shrubs with lobed or compound leaves (oak, maples, ash, rowan, elder, hawthorn, horse chestnut) keep only simple leaves of the same area in their meshes, and their species get a [member PlantSpecies.near_mesh_source] that builds the full-leaf mesh of a variant when a tree first comes within this range, then frees it when none is near. Lobes and leaflets are under a pixel beyond about 60 m. Keep this generator or the species alive while the field draws them.
 		</member>
 		<member name="near_needle_range" type="float" setter="set_near_needle_range" getter="get_near_needle_range" default="0.0">
 			Above 0, conifer species from [method make_species], [method make_stand] and [method make_woodland] also carry one full-needle mesh as [code]near_meshes[/code], drawn by [VegetationField3D] within this many metres (about 30 suits), with needle sprays beyond. A full-needle spruce is about 30M vertices, so only one variant is made.

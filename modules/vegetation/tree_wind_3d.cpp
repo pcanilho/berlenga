@@ -505,12 +505,24 @@ void TreeWind3D::_scan() {
 		if (root->has_signal(SNAME("populated")) && !root->is_connected(SNAME("populated"), on_populated)) {
 			root->connect(SNAME("populated"), on_populated);
 		}
+		// Near cells built on demand (PlantSpecies.near_mesh_source) appear one at a time as
+		// children of the field, without "populated".
+		const Callable on_child = callable_mp(this, &TreeWind3D::_on_target_child);
+		if (!root->is_connected(SNAME("child_entered_tree"), on_child)) {
+			root->connect(SNAME("child_entered_tree"), on_child);
+		}
 		_scan_node(root);
 	}
 }
 
 void TreeWind3D::_on_target_populated() {
 	rescan_timer = 0.0f;
+}
+
+void TreeWind3D::_on_target_child(Node *p_child) {
+	if (Object::cast_to<MultiMeshInstance3D>(p_child)) {
+		rescan_timer = 0.0f;
+	}
 }
 
 void TreeWind3D::rescan() {
