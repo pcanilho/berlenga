@@ -676,6 +676,8 @@ bool TerrainGenerator3D::generate() {
 	// where it builds cones against the wall at the angle of repose (talus cones, Statham 1976; Luckman 2013).
 	// Loose and coarse: no soil is added on it.
 	last_scree_volume = 0.0;
+	scree_cover.clear();
+	till_cover.clear();
 	auto scree_pass = [&]() {
 		if (scree_age <= 0.0) {
 			return;
@@ -891,7 +893,9 @@ bool TerrainGenerator3D::generate() {
 			}
 			memcpy(top.ptr(), sm.ptr(), sizeof(double) * n);
 		}
+		scree_cover.resize(n);
 		for (int i = 0; i < n; i++) {
+			scree_cover[i] = float(MAX(top[i] - h[i], 0.0)); // for the ground material: scree, not soil
 			h[i] = top[i];
 		}
 	};
@@ -1601,7 +1605,9 @@ bool TerrainGenerator3D::generate() {
 					}
 				}
 			}
+			till_cover.resize(n);
 			for (int i = 0; i < n; i++) {
+				till_cover[i] = float(MAX(top[i] - h[i], 0.0)); // for the ground material: till
 				if (top[i] > h[i]) {
 					sed[i] += top[i] - h[i]; // till: loose, soil on it
 					h[i] = top[i];
@@ -1955,6 +1961,14 @@ bool TerrainGenerator3D::generate() {
 	}
 	gp.steepness_ref = MAX(umax / MAX(double(erodibility), 1e-12), 1e-6);
 	TerrainGeology::compute(gp, heights.ptr(), drainage.ptr(), sediment.ptr(), receivers.ptr(), stack.ptr(), soil.ptr(), rock.ptr(), talus.ptr());
+	// The scree the walls shed (scree_age) is scree at the surface, a metre of it full: it reads as scree to the
+	// material and to plant rules, however the solver's sediment has it.
+	if (scree_cover.size() == uint32_t(n)) {
+		for (int i = 0; i < n; i++) {
+			const float t = CLAMP(scree_cover[i], 0.0f, 1.0f);
+			talus[i] = MAX(talus[i], t * t * (3.0f - 2.0f * t));
+		}
+	}
 	Ref<Image> geo = get_geology_image();
 	if (geology_texture.is_valid() && geology_texture->get_width() == nx && geology_texture->get_height() == ny) {
 		geology_texture->update(geo);
@@ -3227,7 +3241,7 @@ Color TerrainGenerator3D::get_geology_at(const Vector3 &p_global_position) const
 	return Color(get_soil_depth(p_global_position), get_rock_exposure(p_global_position), get_talus(p_global_position), std::log10(double(MAX(a, real_t(1.0)))));
 }
 
-// RGBA float: soil depth (m), rock exposure, talus, log10 drainage area (m^2).
+// RGBA float: soil depth (m), rock exposure, talus (or -1..0 moraine till), log10 drainage area (m^2).
 Ref<Image> TerrainGenerator3D::get_geology_image() const {
 	const int n = nx * ny;
 	if (nx <= 0 || soil.size() != uint32_t(n)) {
@@ -3241,7 +3255,10 @@ Ref<Image> TerrainGenerator3D::get_geology_image() const {
 		// so materials put sand on beaches and not on every low coastal plain.
 		w[i * 4 + 0] = (beach.size() == uint32_t(n) && beach[i] > 0.0f) ? -beach[i] : soil[i];
 		w[i * 4 + 1] = rock[i];
-		w[i * 4 + 2] = talus[i];
+		// Moraine till (moraine_age) as a negative talus, -1..0, where it is more than the scree: unsorted stony
+		// debris under a thin soil, which the material shows as soil with stones through it.
+		const float till = till_cover.size() == uint32_t(n) ? CLAMP(till_cover[i] / 2.0f, 0.0f, 1.0f) : 0.0f;
+		w[i * 4 + 2] = till > talus[i] ? -till : talus[i];
 		w[i * 4 + 3] = float(std::log10(MAX(double(drainage[i]), 1.0)));
 	}
 	return Image::create_from_data(nx, ny, false, Image::FORMAT_RGBAF, bytes);
@@ -3775,7 +3792,7 @@ void TerrainGenerator3D::_bake_detail_keep() {
 String TerrainGenerator3D::get_geology_shader_code() {
 	String c;
 	c += "// Geology from TerrainGenerator3D (TerrainGenerator3D.get_geology_shader_code()).\n";
-	c += "// terrain_geology(p) = (soil depth m, or -1..0 on beach sand; rock exposure 0..1, talus 0..1, log10 drainage area m2)\n";
+	c += "// terrain_geology(p) = (soil depth m, or -1..0 on beach sand; rock exposure 0..1, talus 0..1 or -1..0 moraine till, log10 drainage area m2)\n";
 	c += "global uniform sampler2D terrain_geology_map;\n";
 	c += "global uniform vec4 terrain_geology_rect;\n\n";
 	c += "vec4 terrain_geology(vec3 world_pos) {\n";
@@ -5232,7 +5249,31 @@ Array TerrainGenerator3D::_rivers(real_t p_min_area, bool p_cells) const {
 				}
 				return best;
 			};
-			const int a = nearest(pts[k]), b = nearest(pts[e]);
+			// From the reach's head when the river comes in near it, to its foot when it leaves near that (the grid
+			// course may cut a corner on to the channel a little way down).
+			int a = nearest(pts[k]), b = nearest(pts[e]);
+			const Vector2 head = ch.points[0], foot = ch.points[ch.points.size() - 1];
+			if (a > 0 && spts.size() > 1) {
+				// The grid course ran past the head: back up to its point nearest the head, and take the channel whole.
+				int best = -1;
+				real_t bd = 4.0f * result_cell;
+				for (int q = int(spts.size()) - 1; q >= MAX(int(spts.size()) - 8, 1); q--) {
+					const real_t dd = head.distance_to(Vector2(spts[q].x, spts[q].z));
+					if (dd < bd) {
+						bd = dd;
+						best = q;
+					}
+				}
+				if (best >= 0) {
+					spts.resize(best + 1);
+					scell.resize(best + 1);
+					son.resize(best + 1);
+					a = 0;
+				}
+			}
+			if (e + 1 < m && foot.distance_to(Vector2(pts[e + 1].x, pts[e + 1].z)) < 4.0f * result_cell) {
+				b = int(ch.points.size()) - 1;
+			}
 			if (b - a >= 2) {
 				for (int t = a; t <= b; t++) {
 					// The water stands at about 0.6 of the bankfull depth over the bed at ordinary flow.

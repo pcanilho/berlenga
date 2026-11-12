@@ -231,6 +231,7 @@ private:
 	double last_moraine_volume = 0.0; // m3 of debris the last generate() laid in moraines
 	double scree_age = 0.0; // years cliffs have shed scree onto cones at their feet; 0 none
 	double last_scree_volume = 0.0; // m3 of scree the last generate() laid
+	LocalVector<float> scree_cover, till_cover; // m of scree and of moraine till laid on each cell, for the materials
 	double meander_age = 0.0; // years the rivers on flat alluvial floors have meandered; 0 none
 	int last_meander_count = 0; // reaches meandered by the last generate()
 	int last_oxbow_count = 0;
