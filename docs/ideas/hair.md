@@ -621,6 +621,37 @@ falls over itself (frame 75 against no collision: mean 0.25 levels, 99th percent
 8 mm radius 0.45 / 12. Cloud time with and without is within its noise (four small passes over
 the guide points).
 
+## Stage 2n: swept spheres on GPUs that have them (plan)
+
+Linear swept spheres (LSS, `VK_NV_ray_tracing_linear_swept_spheres`, NVIDIA RTX Hair; shipped in
+Indiana Jones and The Witcher 3 remaster, 50-series only): the ray tracing hardware intersects a
+round tube between two points with a radius at each end, so a strand segment is one primitive with
+one point and one radius per strand point, against our four triangles over eight vertices. NVIDIA
+measures about 2x faster tracing and 5x less memory than its own crossed-strip geometry (DOTS), and
+the hit is on the real round fibre, so the fibre offset h of the Chiang model is exact instead of
+read across a flat strip.
+
+The path tracer already knows which surfaces are strands (`render_mode hair_strands`, HairMesh
+layout: four vertices per point, two strips, four triangles per segment). On a device with the
+extension, such a surface whose index list has that pattern is built as LSS instead of triangles:
+
+- Driver: the extension and its `linearSweptSpheres` feature are requested; the BLAS takes a new
+  geometry type (`VkAccelerationStructureGeometryLinearSweptSpheresDataNV` chained on the geometry,
+  positions and radii from one vec4 buffer, successive indexing, chained end caps); ray tracing
+  pipelines get `VK_PIPELINE_CREATE_2_RAY_TRACING_ALLOW_SPHERES_AND_LINEAR_SWEPT_SPHERES_BIT_NV`.
+- Every frame, after the vertex capture, a small pass writes each point's centre (between the two
+  sides of its first strip) and radius (half the strip's width); the segment list is built once.
+- Shaders get `RT_LSS` (and `GL_NV_linear_swept_spheres`) only on such devices. A swept sphere hit
+  is mapped to the first strip's triangle at the same place along the segment, with barycentrics on
+  the strip's centre line, so every attribute (UV, colour, previous position for motion vectors)
+  comes from the same captured vertices as today; the hair shading then takes the exact h from the
+  hit and the round fibre's normal.
+- Ray queries (shadows, transmitted shadows) treat a swept sphere candidate as an opaque hit
+  (the strands are `rt_force_opaque`).
+
+Everywhere else the shaders and the BLAS are built exactly as before, which is all the cloud and a
+40-series card can check; the LSS path needs a 50-series GPU to test.
+
 ## Checked: lighter path traced strands
 
 The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,

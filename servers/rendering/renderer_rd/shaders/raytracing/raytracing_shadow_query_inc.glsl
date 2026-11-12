@@ -52,7 +52,7 @@ vec3 ray_query_shadow_transmittance(vec3 origin, vec3 direction, float t_min, fl
 	rayQueryInitializeEXT(shadow_rq, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsNoOpaqueEXT, mask, origin, t_min, direction, t_max);
 
 	while (rayQueryProceedEXT(shadow_rq)) {
-		if (rayQueryGetIntersectionTypeEXT(shadow_rq, false) != gl_RayQueryCandidateIntersectionTriangleEXT) {
+		if (!RT_RQ_IS_TRIANGLE(shadow_rq)) {
 			continue;
 		}
 		uint geometry_idx = RT_RQ_GEOMETRY_IDX(shadow_rq, false);
@@ -62,8 +62,8 @@ vec3 ray_query_shadow_transmittance(vec3 origin, vec3 direction, float t_min, fl
 			bool back = (mat_flags & RT_MAT_FLAG_BACKLIT) != 0u && RT_SHADOW_QUERY_BACK_LIGHTING;
 			if (trans || back) {
 				// Glass and back-lit surfaces, as the any-hit shader filters them.
-				uint primitive_id = rayQueryGetIntersectionPrimitiveIndexEXT(shadow_rq, false);
-				vec2 candidate_bary = rayQueryGetIntersectionBarycentricsEXT(shadow_rq, false);
+				uint primitive_id = RT_RQ_PRIMITIVE(shadow_rq, false);
+				vec2 candidate_bary = RT_RQ_BARYCENTRICS(shadow_rq, false);
 				vec4 surface = ray_query_surface(geometry_idx, primitive_id, candidate_bary, lod);
 				MaterialData mat = rt_entry_material(geometry_idx);
 				MaterialLayerTextures layers = material_layer_textures_none();
@@ -98,7 +98,7 @@ vec3 ray_query_shadow_transmittance(vec3 origin, vec3 direction, float t_min, fl
 			continue;
 		}
 
-		vec4 surface = ray_query_surface(geometry_idx, rayQueryGetIntersectionPrimitiveIndexEXT(shadow_rq, false), rayQueryGetIntersectionBarycentricsEXT(shadow_rq, false), lod);
+		vec4 surface = ray_query_surface(geometry_idx, RT_RQ_PRIMITIVE(shadow_rq, false), RT_RQ_BARYCENTRICS(shadow_rq, false), lod);
 		if (transparent_shadow && surface.a < 0.999) {
 			// Coverage filters the light by (1 - alpha), tinted, without a coin flip's noise.
 			transmittance *= (1.0 - surface.a) * mix(vec3(1.0), surface.rgb, surface.a);

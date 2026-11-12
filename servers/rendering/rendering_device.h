@@ -1434,6 +1434,7 @@ public:
 		enum Type {
 			TYPE_TRIANGLES,
 			TYPE_AABBS,
+			TYPE_LINEAR_SWEPT_SPHERES,
 		};
 
 		struct Triangles {
@@ -1470,9 +1471,24 @@ public:
 		// read by `blas_create()`. Kept inside a `Geometry` sub-struct so the
 		// access syntax (`g.geometry.triangles.*`) matches the driver-layer
 		// AccelerationStructureGeometry::geometry union.
+		// Linear swept spheres (SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES): storage buffers with
+		// BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT and BUFFER_CREATION_DEVICE_ADDRESS_BIT;
+		// points of `stride` bytes (a float3 centre, then a float radius) and one uint32 per segment, the index of
+		// its first point (the segment runs to the next point).
+		struct LinearSweptSpheres {
+			RID buffer;
+			uint32_t offset = 0;
+			uint32_t stride = 16;
+			uint32_t point_count = 0;
+			RID index_buffer;
+			uint32_t index_offset = 0;
+			uint32_t segment_count = 0;
+		};
+
 		struct Geometry {
 			Triangles triangles;
 			Aabbs aabbs;
+			LinearSweptSpheres swept_spheres;
 		};
 
 		Type type = TYPE_TRIANGLES;

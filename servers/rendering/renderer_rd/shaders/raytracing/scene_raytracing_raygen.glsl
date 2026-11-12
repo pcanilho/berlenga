@@ -1547,6 +1547,9 @@ void main() {
 #ifdef USE_SER
 #extension GL_EXT_shader_invocation_reorder : enable
 #endif
+#ifdef RT_LSS
+#extension GL_NV_linear_swept_spheres : require
+#endif
 
 #define GLSL 1
 #define RT_STAGE_CLOSEST_HIT 1
@@ -1558,7 +1561,17 @@ void main() {
 #include "raytracing_common_inc.glsl"
 // clang-format on
 
+#ifdef RT_LSS
+// A swept sphere hit writes no barycentrics: rt_lss_resolve() sets these to its strip triangle's.
+vec2 rt_hit_bary = vec2(0.0);
+int rt_hit_primitive = 0;
+bool rt_lss_hit = false;
+vec3 rt_lss_offset = vec3(0.0); // From the tube's axis to the hit, world space.
+#define attribs rt_hit_bary
+#define RT_HIT_PRIMITIVE_ID rt_hit_primitive
+#else
 #define attribs hit_attribs.bary_or_uv
+#endif
 #define RT_HIT_ATTRIBS_DECLARED
 
 #include "raytracing_hit_inc.glsl"
@@ -1704,7 +1717,31 @@ vec4 snow_glint(vec3 p_pos, vec3 p_n, float p_footprint) {
 	return vec4(f, share / chance / sqrt(max(share * grains, 1.0)));
 }
 
+#ifdef RT_LSS
+// Swept sphere hits read their attributes on the strip triangle at the same place along the segment
+// (rt_lss_triangle), and keep where the ray met the round fibre for the normal and the hair's fibre offset.
+void rt_lss_resolve() {
+	rt_lss_hit = gl_HitIsLSSNV;
+	if (!rt_lss_hit) {
+		rt_hit_bary = hit_attribs.bary_or_uv;
+		rt_hit_primitive = gl_PrimitiveID;
+		return;
+	}
+	vec3 p0 = gl_HitLSSPositionsNV[0];
+	vec3 axis = gl_HitLSSPositionsNV[1] - p0;
+	vec3 hit_obj = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * gl_HitTEXT;
+	float len2 = dot(axis, axis);
+	float u = len2 > 0.0 ? clamp(dot(hit_obj - p0, axis) / len2, 0.0, 1.0) : 0.0;
+	rt_hit_primitive = rt_lss_triangle(gl_PrimitiveID, u);
+	rt_hit_bary = rt_lss_barycentrics(u);
+	rt_lss_offset = mat3(gl_ObjectToWorldEXT) * (hit_obj - (p0 + axis * u));
+}
+#endif
+
 void main() {
+#ifdef RT_LSS
+	rt_lss_resolve();
+#endif
 	if ((payload.packed_bounces_flags & SSS_PROBE_FLAG) != 0u) {
 		rt_sss_probe_hit();
 		return;
@@ -1797,6 +1834,13 @@ void main() {
 		if (dot(v_perp, v_perp) > 1e-12 && dot(across, across) > 1e-12) {
 			m.hair_params.w = clamp((2.0 * clamp(rt_uv.x, 0.0, 1.0) - 1.0) * dot(normalize(across), cross(normalize(v_perp), t)), -0.999, 0.999);
 		}
+#ifdef RT_LSS
+		// A swept sphere hit is on the round fibre itself: h is where it met it across the view.
+		vec3 lss_offset = rt_lss_offset - dot(rt_lss_offset, t) * t;
+		if (rt_lss_hit && dot(v_perp, v_perp) > 1e-12 && dot(lss_offset, lss_offset) > 0.0) {
+			m.hair_params.w = clamp(dot(normalize(lss_offset), normalize(cross(normalize(v_perp), t))), -0.999, 0.999);
+		}
+#endif
 #else
 #ifdef HAIR_CARDS
 		m.hair_cards = true;
@@ -1924,6 +1968,13 @@ void main() {
 				vec3 y = cross(normalize(v_perp), t);
 				m.hair_params.w = clamp((2.0 * clamp(h.uv.x, 0.0, 1.0) - 1.0) * dot(normalize(across), y), -0.999, 0.999);
 			}
+#ifdef RT_LSS
+			// A swept sphere hit is on the round fibre itself: h is where it met it across the view.
+			vec3 lss_offset = rt_lss_offset - dot(rt_lss_offset, t) * t;
+			if (rt_lss_hit && dot(v_perp, v_perp) > 1e-12 && dot(lss_offset, lss_offset) > 0.0) {
+				m.hair_params.w = clamp(dot(normalize(lss_offset), normalize(cross(normalize(v_perp), t))), -0.999, 0.999);
+			}
+#endif
 			m.hair_strand = true;
 		} else if (direction == 0u) {
 			// Away from the crown, in object space (skinned meshes trace their posed vertices).
@@ -2139,6 +2190,9 @@ void main() {
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_ARB_gpu_shader_int64 : require
 #extension GL_EXT_nonuniform_qualifier : require
+#ifdef RT_LSS
+#extension GL_NV_linear_swept_spheres : require
+#endif
 
 #define GLSL 1
 #define RT_STAGE_ANY_HIT 1
@@ -2148,7 +2202,17 @@ void main() {
 #include "raytracing_common_inc.glsl"
 // clang-format on
 
+#ifdef RT_LSS
+// A swept sphere hit writes no barycentrics: rt_lss_resolve() sets these to its strip triangle's.
+vec2 rt_hit_bary = vec2(0.0);
+int rt_hit_primitive = 0;
+bool rt_lss_hit = false;
+vec3 rt_lss_offset = vec3(0.0); // From the tube's axis to the hit, world space.
+#define attribs rt_hit_bary
+#define RT_HIT_PRIMITIVE_ID rt_hit_primitive
+#else
 #define attribs hit_attribs.bary_or_uv
+#endif
 #define RT_HIT_ATTRIBS_DECLARED
 
 #include "raytracing_hit_inc.glsl"
@@ -2190,7 +2254,31 @@ layout(set = 0, binding = 32, std430) readonly buffer MotionTransforms {
 #include "raytracing_custom_globals_inc.glsl"
 #endif
 
+#ifdef RT_LSS
+// Swept sphere hits read their attributes on the strip triangle at the same place along the segment
+// (rt_lss_triangle), and keep where the ray met the round fibre for the normal and the hair's fibre offset.
+void rt_lss_resolve() {
+	rt_lss_hit = gl_HitIsLSSNV;
+	if (!rt_lss_hit) {
+		rt_hit_bary = hit_attribs.bary_or_uv;
+		rt_hit_primitive = gl_PrimitiveID;
+		return;
+	}
+	vec3 p0 = gl_HitLSSPositionsNV[0];
+	vec3 axis = gl_HitLSSPositionsNV[1] - p0;
+	vec3 hit_obj = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * gl_HitTEXT;
+	float len2 = dot(axis, axis);
+	float u = len2 > 0.0 ? clamp(dot(hit_obj - p0, axis) / len2, 0.0, 1.0) : 0.0;
+	rt_hit_primitive = rt_lss_triangle(gl_PrimitiveID, u);
+	rt_hit_bary = rt_lss_barycentrics(u);
+	rt_lss_offset = mat3(gl_ObjectToWorldEXT) * (hit_obj - (p0 + axis * u));
+}
+#endif
+
 void main() {
+#ifdef RT_LSS
+	rt_lss_resolve();
+#endif
 	uint geometry_idx = RT_HIT_GEOMETRY_IDX;
 	GeometryData geom = geometries[geometry_idx];
 	MaterialData mat = rt_entry_material(geometry_idx);

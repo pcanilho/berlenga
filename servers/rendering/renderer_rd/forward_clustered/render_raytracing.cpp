@@ -154,6 +154,8 @@ static void _release_deformed_entry(RTDeformedCacheEntry &r_entry) {
 	_free_rid_if_valid(r_entry.owned_ib);
 	_free_rid_if_valid(r_entry.owned_vb_full);
 	_free_rid_if_valid(r_entry.prev_pos_vb);
+	_free_rid_if_valid(r_entry.lss_points);
+	_free_rid_if_valid(r_entry.lss_segments);
 }
 
 static void _reset_deformed_entry(RTDeformedCacheEntry &r_entry) {
@@ -197,6 +199,9 @@ static bool _rt_merged_mm_entry_expired(const RTMergedMMEntry &p_entry, uint32_t
 	static const uint32_t MM_BLAS_CACHE_TTL = (uint32_t)GLOBAL_GET("rendering/pathtracing/multimesh_blas_cache_ttl_frames");
 	return p_entry.last_used_frame != 0 && p_frame - p_entry.last_used_frame > MM_BLAS_CACHE_TTL;
 }
+
+static bool _fill_surface_blas_geometry(void *p_mesh_surface, RID p_vertex_buffer_override, RID p_index_buffer_override, bool p_force_uncompressed,
+		RTSurfaceData *r_surf_data, RD::AccelerationStructureGeometry &r_as_geom, uint32_t p_lod);
 
 // Refreshes the entry's private index copy; call only after its BLAS was freed.
 static void _copy_deformed_indices(void *p_mesh_surface, uint32_t p_vertex_count, uint64_t p_cache_key, RTDeformedCacheEntry &r_entry) {
@@ -533,6 +538,18 @@ void RenderRaytracing::initialize(RenderForwardClustered *p_owner) {
 		RD::get_singleton()->set_resource_name(mm_merge_shader.pipeline[i], "RT MM merge pipeline [mode=" + itos(i) + "]");
 	}
 
+	// Strand hair as linear swept spheres, where the device has them (the shaders get RT_LSS alike).
+	lss_enabled = GLOBAL_GET("rendering/pathtracing/linear_swept_spheres") && RD::get_singleton()->has_feature(RD::SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES);
+	if (lss_enabled) {
+		Vector<String> lss_modes;
+		lss_modes.push_back("\n");
+		lss_shader.shader.initialize(lss_modes);
+		lss_shader.version = lss_shader.shader.version_create();
+		lss_shader.version_shader = lss_shader.shader.version_get_shader(lss_shader.version, 0);
+		lss_shader.pipeline = RD::get_singleton()->compute_pipeline_create(lss_shader.version_shader);
+		lss_enabled = lss_shader.pipeline.is_valid();
+	}
+
 	_omm_initialize();
 }
 
@@ -564,6 +581,9 @@ RenderRaytracing::~RenderRaytracing() {
 	}
 
 	mm_merge_shader.shader.version_free(mm_merge_shader.version);
+	if (lss_shader.version.is_valid()) {
+		lss_shader.shader.version_free(lss_shader.version);
+	}
 	if (omm_shader.version.is_valid()) {
 		omm_shader.shader.version_free(omm_shader.version);
 	}
@@ -1534,6 +1554,13 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 	BitField<RD::BufferCreationBits> prev_flags = RD::BUFFER_CREATION_AS_STORAGE_BIT |
 			RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT;
 
+	// Swept spheres read the positions in a compute pass: the owned copy is then a storage buffer too.
+	if (p_source.swept_spheres) {
+		owned_full_flags.set_flag(RD::BUFFER_CREATION_AS_STORAGE_BIT);
+		if (!entry.owned_vb_storage) {
+			entry.owned_vb_full_capacity = 0;
+		}
+	}
 	// Reallocate owned storage if the surface grew.
 	if (entry.owned_vb_full_capacity < full_size) {
 		if (entry.ptr && entry.ptr->blas.is_valid()) {
@@ -1544,6 +1571,7 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 		entry.owned_vb_full = rd->vertex_buffer_create(full_size, Span<uint8_t>(), owned_full_flags);
 		ERR_FAIL_COND_V(!entry.owned_vb_full.is_valid(), nullptr);
 		entry.owned_vb_full_capacity = full_size;
+		entry.owned_vb_storage = p_source.swept_spheres;
 		rd->set_resource_name(entry.owned_vb_full, "RT deformed owned VB [" + itos(p_source.cache_key) + "]");
 		entry.prev_pos_seeded = false;
 		needs_new_blas = true;
@@ -1584,11 +1612,19 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 		}
 		_free_rid_if_valid(entry.ptr->blas);
 		_copy_deformed_indices(p_mesh_surface, vertex_count, p_source.cache_key, entry);
-		_populate_surface_blas(p_mesh_surface, entry.owned_vb_full, entry.owned_ib, true, true, true,
-				static_cast<uint32_t>(p_source.cache_key), entry.ptr, r_dirty_blas_list);
+		entry.lss_checked = false;
+		if (!(p_source.swept_spheres && lss_enabled && _populate_swept_spheres_blas(p_mesh_surface, vertex_count, p_source.cache_key, entry, r_dirty_blas_list))) {
+			_free_rid_if_valid(entry.lss_points);
+			_free_rid_if_valid(entry.lss_segments);
+			_populate_surface_blas(p_mesh_surface, entry.owned_vb_full, entry.owned_ib, true, true, true,
+					static_cast<uint32_t>(p_source.cache_key), entry.ptr, r_dirty_blas_list);
+		}
 		entry.blas_built_once = entry.ptr->blas.is_valid();
 	} else if (data_changed) {
 		cache_misses++;
+		if (entry.lss_points.is_valid()) {
+			_update_swept_sphere_points(entry);
+		}
 		// Rewriting the BLAS in place is only ordered after earlier traces of the frame by the owned_vb_full copy above.
 		LocalVector<RID> &queue = p_source.force_rebuild ? r_dirty_blas_list : r_dirty_blas_update_list;
 		queue.push_back(entry.ptr->blas);
@@ -1615,6 +1651,113 @@ RTSurfaceData *RenderRaytracing::process_deformed_surface(
 	touch.commit();
 
 	return entry.ptr;
+}
+
+// Linear swept spheres of a strand surface: when its triangles are two crossed strips per strand point, as
+// PhysXHair3D draws them (four vertices a point, the first strip's two sides first; per segment the first
+// strip's two triangles, then the second's), segment j becomes one tube from point a/4 to the next, a its
+// first index. The shaders read a hit's attributes on the first strip (rt_lss_triangle). False, leaving
+// the entry without points, when the layout differs: the caller then builds triangles.
+bool RenderRaytracing::_populate_swept_spheres_blas(void *p_mesh_surface, uint32_t p_vertex_count, uint64_t p_cache_key, RTDeformedCacheEntry &r_entry, LocalVector<RID> &r_dirty_blas_list) {
+	RD *rd = RD::get_singleton();
+	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+	const RID index_source = mesh_storage->mesh_surface_get_index_buffer(p_mesh_surface);
+	const uint32_t index_count = index_source.is_valid() ? mesh_storage->mesh_surface_get_index_count(p_mesh_surface) : 0;
+	if (!r_entry.owned_vb_storage || index_count == 0 || index_count % 12u != 0 || p_vertex_count % 4u != 0 || p_vertex_count < 8) {
+		return false;
+	}
+	const uint32_t point_count = p_vertex_count / 4u;
+	const uint32_t segment_count = index_count / 12u;
+
+	if (!r_entry.lss_checked || r_entry.lss_point_count != point_count || r_entry.lss_segment_count != segment_count || !r_entry.lss_segments.is_valid()) {
+		// Read once per rebuild of the surface (a stall), never per frame.
+		r_entry.lss_checked = true;
+		_free_rid_if_valid(r_entry.lss_points);
+		_free_rid_if_valid(r_entry.lss_segments);
+		r_entry.lss_point_count = 0;
+		r_entry.lss_segment_count = 0;
+		const bool is_16bit = p_vertex_count <= 65536;
+		const Vector<uint8_t> bytes = rd->buffer_get_data(index_source, 0, index_count * (is_16bit ? 2u : 4u));
+		if (bytes.size() < int64_t(index_count * (is_16bit ? 2u : 4u))) {
+			return false;
+		}
+		const uint16_t *i16 = (const uint16_t *)bytes.ptr();
+		const uint32_t *i32 = (const uint32_t *)bytes.ptr();
+		static const uint32_t pattern[12] = { 0, 1, 4, 1, 5, 4, 2, 3, 6, 3, 7, 6 };
+		Vector<uint32_t> segments;
+		segments.resize(segment_count);
+		uint32_t *seg = segments.ptrw();
+		for (uint32_t j = 0; j < segment_count; j++) {
+			const uint32_t base = j * 12u;
+			const uint32_t a = is_16bit ? i16[base] : i32[base];
+			if (a % 4u != 0 || a + 7u >= p_vertex_count) {
+				return false;
+			}
+			for (uint32_t k = 1; k < 12; k++) {
+				const uint32_t v = is_16bit ? i16[base + k] : i32[base + k];
+				if (v != a + pattern[k]) {
+					return false;
+				}
+			}
+			seg[j] = a / 4u;
+		}
+		const BitField<RD::BufferCreationBits> input_flags = RD::BUFFER_CREATION_DEVICE_ADDRESS_BIT | RD::BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT;
+		r_entry.lss_segments = rd->storage_buffer_create(segment_count * 4u, segments.to_byte_array(), 0, input_flags);
+		r_entry.lss_points = rd->storage_buffer_create(point_count * 16u, Vector<uint8_t>(), 0, input_flags);
+		if (!r_entry.lss_segments.is_valid() || !r_entry.lss_points.is_valid()) {
+			_free_rid_if_valid(r_entry.lss_points);
+			_free_rid_if_valid(r_entry.lss_segments);
+			return false;
+		}
+		rd->set_resource_name(r_entry.lss_segments, "RT swept sphere segments [" + itos(p_cache_key) + "]");
+		rd->set_resource_name(r_entry.lss_points, "RT swept sphere points [" + itos(p_cache_key) + "]");
+		r_entry.lss_point_count = point_count;
+		r_entry.lss_segment_count = segment_count;
+	}
+
+	// The geometry entry and its buffer addresses as for triangles: the shaders fetch every attribute from them.
+	RTSurfaceData *surf_data = r_entry.ptr;
+	blas_transform_pool.release(surf_data->blas_transform);
+	RD::AccelerationStructureGeometry triangles;
+	if (!_fill_surface_blas_geometry(p_mesh_surface, r_entry.owned_vb_full, r_entry.owned_ib, true, surf_data, triangles, 0)) {
+		return false;
+	}
+	_update_swept_sphere_points(r_entry);
+
+	RD::AccelerationStructureGeometry geometry;
+	geometry.type = RD::AccelerationStructureGeometry::TYPE_LINEAR_SWEPT_SPHERES;
+	geometry.flags = triangles.flags;
+	geometry.geometry.swept_spheres.buffer = r_entry.lss_points;
+	geometry.geometry.swept_spheres.stride = 16;
+	geometry.geometry.swept_spheres.point_count = r_entry.lss_point_count;
+	geometry.geometry.swept_spheres.index_buffer = r_entry.lss_segments;
+	geometry.geometry.swept_spheres.segment_count = r_entry.lss_segment_count;
+	surf_data->blas = _create_blas({ &geometry, 1 }, true, true, "RT BLAS swept spheres [" + itos(p_cache_key) + "]", r_dirty_blas_list);
+	return surf_data->blas.is_valid();
+}
+
+// Writes each point's tube (centre, radius) from the entry's copy of the capture.
+void RenderRaytracing::_update_swept_sphere_points(RTDeformedCacheEntry &r_entry) {
+	RD *rd = RD::get_singleton();
+	Vector<RD::Uniform> uniforms;
+	{
+		RD::Uniform u(RD::UNIFORM_TYPE_STORAGE_BUFFER, 0, r_entry.owned_vb_full);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u(RD::UNIFORM_TYPE_STORAGE_BUFFER, 1, r_entry.lss_points);
+		uniforms.push_back(u);
+	}
+	RID uniform_set = rd->uniform_set_create(uniforms, lss_shader.version_shader, 0, /*p_linear_pool=*/true);
+	ERR_FAIL_COND(!uniform_set.is_valid());
+	const uint32_t push[4] = { r_entry.lss_point_count, 0, 0, 0 };
+	RD::ComputeListID list = rd->compute_list_begin();
+	rd->compute_list_bind_compute_pipeline(list, lss_shader.pipeline);
+	rd->compute_list_bind_uniform_set(list, uniform_set, 0);
+	rd->compute_list_set_push_constant(list, push, sizeof(push));
+	rd->compute_list_dispatch_threads(list, r_entry.lss_point_count, 1, 1);
+	rd->compute_list_end();
+	rd->free_rid(uniform_set);
 }
 
 // Skinned / blend shape vertex buffer of a mesh instance surface; `current_vb` is invalid when the surface isn't deformed.
@@ -5912,6 +6055,7 @@ RTDeformedGeometrySource RTTlasBuilder::_deformed_source(const Instance &p_inst,
 		source = _rt_mesh_instance_source(p_inst.mesh_instance, surf->surface_index);
 		source.cache_handle = &surf->rt_deformed_handle;
 	}
+	source.swept_spheres = captured && rt.lss_enabled && surf->shader && surf->shader->hair_strands;
 	source.surface_counter = p_surface.surface_counter;
 	return source;
 }

@@ -604,6 +604,14 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	if (GLOBAL_GET("rendering/pathtracing/opacity_micromaps")) {
 		_register_requested_device_extension(VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME, false);
 	}
+	// Strand hair as linear swept spheres (hardware hair primitives). Their pipeline flag is a 64-bit
+	// VkPipelineCreateFlags2 bit, set through VK_KHR_maintenance5; both are dropped below unless the device
+	// has the swept spheres, so other devices enable exactly what they did before.
+	if (GLOBAL_GET("rendering/pathtracing/linear_swept_spheres")) {
+		_register_requested_device_extension(VK_NV_RAY_TRACING_LINEAR_SWEPT_SPHERES_EXTENSION_NAME, false);
+		_register_requested_device_extension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, false);
+		_register_requested_device_extension(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, false); // Required by VK_KHR_maintenance5 below Vulkan 1.3.
+	}
 	_register_requested_device_extension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, false);
 
 	// We don't actually use this extension, but some runtime components on some platforms
@@ -697,6 +705,16 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 		CharString extension_name(device_extensions[i].extensionName);
 		if (requested_device_extensions.has(extension_name)) {
 			enabled_device_extension_names.insert(extension_name);
+		}
+	}
+
+	// The device is created for Vulkan 1.2, so VK_KHR_maintenance5 also needs VK_KHR_dynamic_rendering enabled.
+	if (!enabled_device_extension_names.has(VK_NV_RAY_TRACING_LINEAR_SWEPT_SPHERES_EXTENSION_NAME) || !enabled_device_extension_names.has(VK_KHR_MAINTENANCE_5_EXTENSION_NAME) ||
+			!enabled_device_extension_names.has(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)) {
+		for (const char *name : { VK_NV_RAY_TRACING_LINEAR_SWEPT_SPHERES_EXTENSION_NAME, VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME }) {
+			if (requested_device_extensions.has(name)) {
+				enabled_device_extension_names.erase(name);
+			}
 		}
 	}
 
@@ -949,6 +967,8 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
 		VkPhysicalDeviceFaultFeaturesEXT device_fault_features = {};
 		VkPhysicalDeviceOpacityMicromapFeaturesEXT opacity_micromap_features = {};
+		VkPhysicalDeviceRayTracingLinearSweptSpheresFeaturesNV lss_features = {};
+		VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5_features = {};
 
 		const bool use_1_2_features = physical_device_properties.apiVersion >= VK_API_VERSION_1_2;
 		if (use_1_2_features) {
@@ -1055,6 +1075,15 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			opacity_micromap_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT;
 			opacity_micromap_features.pNext = next_features;
 			next_features = &opacity_micromap_features;
+		}
+
+		if (enabled_device_extension_names.has(VK_NV_RAY_TRACING_LINEAR_SWEPT_SPHERES_EXTENSION_NAME)) {
+			lss_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_LINEAR_SWEPT_SPHERES_FEATURES_NV;
+			lss_features.pNext = next_features;
+			next_features = &lss_features;
+			maintenance5_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR;
+			maintenance5_features.pNext = next_features;
+			next_features = &maintenance5_features;
 		}
 
 		if (enabled_device_extension_names.has(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME)) {
@@ -1174,6 +1203,11 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 
 		if (enabled_device_extension_names.has(VK_KHR_RAY_QUERY_EXTENSION_NAME)) {
 			ray_query_support = ray_query_features.rayQuery;
+		}
+
+		if (enabled_device_extension_names.has(VK_NV_RAY_TRACING_LINEAR_SWEPT_SPHERES_EXTENSION_NAME)) {
+			raytracing_capabilities.linear_swept_spheres_support = raytracing_capabilities.raytracing_pipeline_support && ray_query_support &&
+					lss_features.linearSweptSpheres && maintenance5_features.maintenance5;
 		}
 
 		if (enabled_device_extension_names.has(VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME)) {
@@ -1578,6 +1612,19 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		raytracing_invocation_reorder_features.pNext = create_info_next;
 		raytracing_invocation_reorder_features.rayTracingInvocationReorder = VK_TRUE;
 		create_info_next = &raytracing_invocation_reorder_features;
+	}
+
+	VkPhysicalDeviceRayTracingLinearSweptSpheresFeaturesNV lss_features = {};
+	VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5_features = {};
+	if (raytracing_capabilities.linear_swept_spheres_support) {
+		lss_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_LINEAR_SWEPT_SPHERES_FEATURES_NV;
+		lss_features.pNext = create_info_next;
+		lss_features.linearSweptSpheres = VK_TRUE;
+		create_info_next = &lss_features;
+		maintenance5_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR;
+		maintenance5_features.pNext = create_info_next;
+		maintenance5_features.maintenance5 = VK_TRUE;
+		create_info_next = &maintenance5_features;
 	}
 
 	VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
@@ -6589,6 +6636,21 @@ static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_LOW_MEMORY_BIT, VK_
 static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_GEOMETRY_OPAQUE_BIT, VK_GEOMETRY_OPAQUE_BIT_KHR));
 static_assert(ENUM_MEMBERS_EQUAL(RDD::ACCELERATION_STRUCTURE_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT, VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR));
 
+#if VULKAN_RAYTRACING_ENABLED
+// Tracing a BLAS of linear swept spheres needs the pipeline, and each of its libraries, to allow them: a 64-bit
+// VkPipelineCreateFlags2 bit, which replaces the create info's flags once chained.
+void RenderingDeviceDriverVulkan::_rt_pipeline_allow_swept_spheres(VkRayTracingPipelineCreateInfoKHR &r_create_info, VkPipelineCreateFlags2CreateInfoKHR &r_flags2) {
+	if (!raytracing_capabilities.linear_swept_spheres_support) {
+		return;
+	}
+	r_flags2 = {};
+	r_flags2.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR;
+	r_flags2.pNext = r_create_info.pNext;
+	r_flags2.flags = VkPipelineCreateFlags2KHR(r_create_info.flags) | VK_PIPELINE_CREATE_2_RAY_TRACING_ALLOW_SPHERES_AND_LINEAR_SWEPT_SPHERES_BIT_NV;
+	r_create_info.pNext = &r_flags2;
+}
+#endif
+
 RDD::AccelerationStructureID RenderingDeviceDriverVulkan::blas_create(VectorView<AccelerationStructureGeometry> p_geometries, BitField<AccelerationStructureFlagBits> p_flags) {
 #if VULKAN_RAYTRACING_ENABLED
 	// Opacity micromaps: the attachments and their usages live as long as the structure, since every build and
@@ -6610,6 +6672,13 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::blas_create(VectorView
 	if (has_micromap) {
 		accel_info->micromap_attachments.resize(p_geometries.size());
 		accel_info->micromap_usages.resize(micromap_usage_total);
+	}
+	for (uint32_t i = 0; i < p_geometries.size(); i++) {
+		if (p_geometries[i].type == AccelerationStructureGeometry::TYPE_LINEAR_SWEPT_SPHERES) {
+			ERR_FAIL_COND_V_MSG(!raytracing_capabilities.linear_swept_spheres_support, AccelerationStructureID(), "Vulkan linear swept spheres are not supported by this device.");
+			accel_info->lss_data.resize(p_geometries.size());
+			break;
+		}
 	}
 	uint32_t micromap_usage_next = 0;
 
@@ -6682,6 +6751,29 @@ RDD::AccelerationStructureID RenderingDeviceDriverVulkan::blas_create(VectorView
 				vk_geometry.geometry.aabbs.data.deviceAddress = buffer_get_device_address(a.buffer) + a.offset;
 				vk_geometry.geometry.aabbs.stride = a.stride;
 				primitive_count = a.count;
+			} break;
+
+			case AccelerationStructureGeometry::TYPE_LINEAR_SWEPT_SPHERES: {
+				// The swept spheres hang off the geometry itself; its union stays unused.
+				const AccelerationStructureGeometry::LinearSweptSpheres &l = geometry.geometry.swept_spheres;
+				VkAccelerationStructureGeometryLinearSweptSpheresDataNV &lss = accel_info->lss_data[i];
+				lss = {};
+				lss.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_LINEAR_SWEPT_SPHERES_DATA_NV;
+				const VkDeviceAddress points = buffer_get_device_address(l.buffer) + l.offset;
+				lss.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+				lss.vertexData.deviceAddress = points;
+				lss.vertexStride = l.stride;
+				lss.radiusFormat = VK_FORMAT_R32_SFLOAT;
+				lss.radiusData.deviceAddress = points + 12;
+				lss.radiusStride = l.stride;
+				lss.indexType = VK_INDEX_TYPE_UINT32;
+				lss.indexData.deviceAddress = buffer_get_device_address(l.index_buffer) + l.index_offset;
+				lss.indexStride = sizeof(uint32_t);
+				lss.indexingMode = VK_RAY_TRACING_LSS_INDEXING_MODE_SUCCESSIVE_NV;
+				lss.endCapsMode = VK_RAY_TRACING_LSS_PRIMITIVE_END_CAPS_MODE_CHAINED_NV;
+				vk_geometry.geometryType = VK_GEOMETRY_TYPE_LINEAR_SWEPT_SPHERES_NV;
+				vk_geometry.pNext = &lss;
+				primitive_count = l.segment_count;
 			} break;
 		}
 
@@ -7246,6 +7338,8 @@ RDD::RaytracingPipelineID RenderingDeviceDriverVulkan::_rt_pipeline_library_crea
 	pipeline_create_info.pGroups = shader_groups;
 	pipeline_create_info.maxPipelineRayRecursionDepth = p_max_trace_recursion_depth;
 	pipeline_create_info.pLibraryInterface = &library_interface;
+	VkPipelineCreateFlags2CreateInfoKHR flags2_info = {};
+	_rt_pipeline_allow_swept_spheres(pipeline_create_info, flags2_info);
 
 	VkPipeline vk_pipeline = VK_NULL_HANDLE;
 	VkResult err = device_functions.CreateRaytracingPipelinesKHR(vk_device, VK_NULL_HANDLE, pipelines_cache.vk_cache, 1, &pipeline_create_info, nullptr, &vk_pipeline);
@@ -7366,6 +7460,8 @@ RDD::RaytracingPipelineID RenderingDeviceDriverVulkan::_rt_pipeline_link(VectorV
 	if (opacity_micromap_capabilities.supported) {
 		pipeline_create_info.flags |= VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT;
 	}
+	VkPipelineCreateFlags2CreateInfoKHR flags2_info = {};
+	_rt_pipeline_allow_swept_spheres(pipeline_create_info, flags2_info);
 
 	VkPipeline vk_pipeline = VK_NULL_HANDLE;
 	VkResult err = device_functions.CreateRaytracingPipelinesKHR(vk_device, VK_NULL_HANDLE, pipelines_cache.vk_cache, 1, &pipeline_create_info, nullptr, &vk_pipeline);
@@ -8247,6 +8343,8 @@ bool RenderingDeviceDriverVulkan::has_feature(Features p_feature) {
 			return physical_device_features.vertexPipelineStoresAndAtomics;
 		case SUPPORTS_RAYTRACING_INVOCATION_REORDER:
 			return raytracing_capabilities.raytracing_pipeline_support && raytracing_capabilities.invocation_reorder_support;
+		case SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES:
+			return raytracing_capabilities.linear_swept_spheres_support;
 		default:
 			return false;
 	}
