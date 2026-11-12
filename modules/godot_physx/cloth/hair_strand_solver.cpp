@@ -335,6 +335,7 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 	buf_vol_rest = storage_from(rd, (const uint8_t *)p_vol_rest.ptr(), vol_cells > 0 ? vol_count * 4 : 0);
 	rt_make_uniform_set();
 	needs_reset = true;
+	sorted = false;
 	built.set();
 }
 
@@ -586,15 +587,23 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 		run(MODE_DOM_ACCUM, 1.0f, 1.0f, strand_count, m);
 		run(MODE_DOM_RESOLVE, 1.0f, 1.0f, dom_cells, m);
 	}
+	// Hair cards only: the cards' strands sit in the first slots once sorted, and nothing else
+	// is drawn, so the sort is skipped and only their slots are written.
+	const float card_flag = fl[SDF_PARAMS + 11];
+	const bool cards_only = card_flag < 0.0f;
+	const int card_strands = card_flag != 0.0f ? MAX(strand_count - (int)(Math::abs(card_flag) + 0.5f), 0) : 0;
 	if (slot_points > 0) {
-		// Draw order, far to near: bitonic sort of the strands by depth.
-		run(MODE_SORT_KEYS, 1.0f, 1.0f, sort_size);
-		for (int k = 2; k <= sort_size; k <<= 1) {
-			for (int j = k >> 1; j > 0; j >>= 1) {
-				run(MODE_SORT_STEP, (float)j, 0.0f, sort_size, k);
+		if (!cards_only || !sorted) {
+			// Draw order, far to near: bitonic sort of the strands by depth.
+			run(MODE_SORT_KEYS, 1.0f, 1.0f, sort_size);
+			for (int k = 2; k <= sort_size; k <<= 1) {
+				for (int j = k >> 1; j > 0; j >>= 1) {
+					run(MODE_SORT_STEP, (float)j, 0.0f, sort_size, k);
+				}
 			}
+			sorted = true;
 		}
-		run(MODE_OUTPUT, 1.0f, 1.0f, strand_count * slot_points, history ? 1 : 0);
+		run(MODE_OUTPUT, 1.0f, 1.0f, (cards_only ? card_strands : strand_count) * slot_points, history ? 1 : 0);
 	} else {
 		run(MODE_OUTPUT, 1.0f, 1.0f, point_count, history ? 1 : 0);
 	}
@@ -885,6 +894,9 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 		f[VOL_PARAMS + 7] = (float)vol_cells;
 	}
 	f[SDF_PARAMS + 10] = wet * CLAMP(p_settings.wet_clumping, 0.0f, 1.0f); // sdf_misc.z: wet clumping
+	if (p_settings.card_first > 0) {
+		f[SDF_PARAMS + 11] = p_settings.cards_only ? -(float)p_settings.card_first : (float)p_settings.card_first; // sdf_misc.w
+	}
 	last_xform = p_xform;
 	has_last = true;
 	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_step).bind(gpu, bytes, substeps, tris));
@@ -949,6 +961,17 @@ bool HairStrandSolver::deep_shadow_slot(const Settings::DeepShadowLight &p_light
 
 RID HairStrandSolver::get_previous_position_texture_rd_rid() const {
 	return gpu.is_valid() ? gpu->tex_out_prev : RID();
+}
+
+void HairStrandSolverGPU::rt_drop_history(Ref<HairStrandSolverGPU> p_self) {
+	history = false;
+}
+
+void HairStrandSolver::drop_history() {
+	if (gpu.is_null()) {
+		return;
+	}
+	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_drop_history).bind(gpu));
 }
 
 void HairStrandSolver::hold() {
