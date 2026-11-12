@@ -63,6 +63,8 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *River deposition: the rivers fill the valley between the ridges with a flat alluvial floor.*
 
+- **Meandering rivers** (`meander_age`, years, off by default): bends grow and migrate across flat valley floors; cut-off loops leave oxbows that silt up, and the river water follows the new course.
+
 - **Rivers fed by rain and snowmelt** (`climate_recipe`, `river_month`): a monthly water balance from the climate sets each river's flow, month by month.
 
   ![River flow by month in three climates, and snow lying by height](media/terrain-runoff.jpg)
