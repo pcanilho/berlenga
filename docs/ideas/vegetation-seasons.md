@@ -118,6 +118,16 @@ December but stands); anemone absent in February and July, present in April. Wit
 WeatherMap3D (a warm continental climate) bracken is still green in early November and russet
 by mid December.
 
+**Step 4, shots across the year.** The grass bench takes `--day=D` (a WeatherMap3D on that day
+drives every grass field's `season_source` and the plants' `season`) and `--drought` (a dry
+climate: 300 mm a year, falling in winter, so soil water is near 0.1 by midsummer). The first
+drought shot showed only the blade tips browned over green bases: dryness was built for a dry
+hay meadow, where the tips go first. In a real summer drought, and after a hard winter, cool-season
+grasses go dormant and whole leaves die back to the crown (Volaire and Norton 2006). So the
+season now also sets `dormant` = (1 - greenness) x `season_response` in the blade shader, the share
+of blades dead from the root (up to 85%); without a season it is 0 and the grass looks as before.
+Checked raster and path traced.
+
 ## References
 
 - Jolly, Nemani and Running, "A generalized, bioclimatic index to predict foliar phenology in response to climate", Global Change Biology 11, 2005.
@@ -128,5 +138,6 @@ by mid December.
 - Grime, Hodgson and Hunt, "Comparative Plant Ecology", 2nd edition, Castlepoint Press, 2007.
 - Delpierre et al., "Modelling interannual and spatial variability of leaf senescence for three deciduous tree species in France", Agricultural and Forest Meteorology 149, 2009.
 - Watt, "The ecological status of bracken", Botanical Journal of the Linnean Society 73, 1976.
+- Volaire and Norton, "Summer dormancy in perennial temperate grasses", Annals of Botany 98, 2006.
 - Shirreffs, "Anemone nemorosa L.", Biological Flora of the British Isles, Journal of Ecology 73, 1985.
 - Zhang et al., "Monitoring vegetation phenology using MODIS", Remote Sensing of Environment 84, 2003.

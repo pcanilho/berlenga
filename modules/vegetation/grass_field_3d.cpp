@@ -504,6 +504,7 @@ void vertex() {
 }
 
 uniform float dryness;
+uniform float dormant; // Share of blades dead to the crown in a drought or hard winter (season).
 uniform float sward_lai = 1.0;
 
 void fragment() {
@@ -513,7 +514,7 @@ void fragment() {
 	vec3 tipc = mix(tip_color, dry_color, step(1.0 - dry_share, v_dry) * smoothstep(0.3, 1.0, v_t));
 	vec3 c = mix(base_color, tipc, t) * v_tint;
 	// Some blades of the dry fraction are dead from the root (thatch), straw that greys with age.
-	float dead = step(1.0 - dry_share * 0.3, v_dry);
+	float dead = step(1.0 - max(dry_share * 0.3, dormant * 0.85), v_dry);
 	c = mix(c, dry_color * mix(0.7, 1.0, t) * (0.75 + 0.5 * fract(v_dry * 31.0)), dead);
 	// Midrib and parallel veins (monocot leaves), faded out once a blade is under a few pixels wide.
 	float x = abs(UV.x - 0.5) * 2.0;
@@ -548,6 +549,7 @@ void fragment() {
 	material->set_shader_parameter("tip_color", tip_color);
 	material->set_shader_parameter("dry_color", dry_color);
 	material->set_shader_parameter("dryness", _dryness());
+	material->set_shader_parameter("dormant", _dormant());
 	material->set_shader_parameter("color_variation", color_variation);
 	material->set_shader_parameter("fallback_wind", fallback_wind);
 	material->set_shader_parameter("wind_response", wind_response);
@@ -1878,6 +1880,7 @@ void GrassField3D::set_dryness(float p_dryness) {
 	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("dryness", _dryness());
+		material->set_shader_parameter("dormant", _dormant());
 	}
 }
 
@@ -1931,6 +1934,7 @@ void GrassField3D::_season_step() {
 	const float d = _dryness();
 	if (material.is_valid()) {
 		material->set_shader_parameter("dryness", d);
+		material->set_shader_parameter("dormant", _dormant());
 	}
 	if (ground_published && is_inside_tree()) {
 		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_dry", Vector4(dry_color.r, dry_color.g, dry_color.b, d));

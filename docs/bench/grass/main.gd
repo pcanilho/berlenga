@@ -14,6 +14,9 @@ extends Node3D
 #   env GRASS_DIAG=noshadow|nosun|nograss|notrample|novf|vf1|nounder|bounce0|ssaa: lighting diagnostics (grass.md, "Light inside the sward")
 #   --cpu-fill       build grass tiles on the CPU instead of the GPU fill (grass.md, stage 3a)
 #   --litter-wind=x,z  downwind lean of the leaf drift (VegetationField3D.litter_wind), e.g. 0.6,0
+#   --day=D          the season of day D from a WeatherMap3D: the sward's greenness, flowering,
+#                    ferns (docs/ideas/vegetation-seasons.md)
+#   --drought        with --day: a dry climate (300 mm a year, falling in winter), for a summer drought
 #   --out=path.png   save the last frame
 #   --clip=dir       save every frame from 20 on as PNGs (for a GIF)
 #   --layers=0       only the tall blades (no undercoat, ground tint, view facing, clover, flowers)
@@ -54,6 +57,10 @@ var clip := ""
 var n := 0
 var dm: TerrainDataMap3D
 var grass: GrassField3D
+var season_day := 0
+var drought := false
+var season_map: WeatherMap3D
+var bench_season := {}
 var cam: Camera3D
 var fails := 0
 var trample := false
@@ -152,6 +159,8 @@ func _ready() -> void:
 			stand = a.substr(8)
 			stand_set = true
 			forest = true
+		elif a.begins_with("--day="): season_day = int(a.substr(6))
+		elif a == "--drought": drought = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--frames="): frames = int(a.substr(9))
 		elif a.begins_with("--out="): out = a.substr(6)
@@ -159,6 +168,19 @@ func _ready() -> void:
 		elif a.begins_with("--wind="):
 			var p := a.substr(7).split(",")
 			wind = Vector2(float(p[0]), float(p[1]))
+	if season_day > 0:
+		season_map = WeatherMap3D.new()
+		season_map.name = "Season"
+		if drought:
+			var rc := ClimateRecipe.new()
+			rc.precipitation = 300.0
+			rc.precipitation_seasonality = 0.9
+			rc.precipitation_peak_month = 0
+			season_map.climate = rc
+		season_map.season_day = season_day
+		add_child(season_map)
+		bench_season = season_map.get_season()
+		print("GRASS_DAY %d %s" % [season_day, str(bench_season)])
 	var w := int(SIZE) + 1
 	var data := PackedFloat32Array()
 	data.resize(w * w)
@@ -195,6 +217,8 @@ func _ready() -> void:
 	grass.gpu_fill = gpu_fill
 	add_child(grass)
 	grass.data_map = grass.get_path_to(dm)
+	if season_map:
+		grass.season_source = grass.get_path_to(season_map)
 	if layers:
 		var tall := PlantSpecies.new()
 		tall.patch_scale = TALL_PATCH
@@ -221,6 +245,8 @@ func _ready() -> void:
 		under.ground_tint = Color(0.05, 0.085, 0.025, 1.0)
 		grass.ground_tint_enabled = false # The undercoat grows everywhere, so it owns the tint.
 		add_child(under)
+		if season_map:
+			under.season_source = under.get_path_to(season_map)
 		under.data_map = under.get_path_to(dm)
 		# Turf: a third, very dense and very short grid near the camera only (Serious Sam 4's
 		# overlapped density grids), where gaps between the longer blades show the most.
@@ -240,6 +266,8 @@ func _ready() -> void:
 		turf.dryness = 0.35
 		turf.ground_tint_enabled = false
 		add_child(turf)
+		if season_map:
+			turf.season_source = turf.get_path_to(season_map)
 		turf.data_map = turf.get_path_to(dm)
 		turf.visible = not no_turf
 		cover = VegetationField3D.new()
@@ -545,6 +573,7 @@ func _variants(preset: int, count: int, size := 1.0) -> Array:
 	gen.preset = preset
 	gen.size = size
 	gen.apply_preset_colors()
+	gen.season = bench_season
 	var meshes := gen.generate_variants(count)
 	for m in meshes:
 		m.set_meta("preset", preset)
@@ -814,7 +843,7 @@ func _stand_floor() -> Array:
 			"pine": PlantGenerator.FLOOR_PINE_HEATH, "larch": PlantGenerator.FLOOR_SUBALPINE}
 	if not stand_set or not sets.has(stand):
 		return _floor_species()
-	return Array(PlantGenerator.make_floor(sets[stand], 3, not notex, 0.0 if no_impostors else 15.0))
+	return Array(PlantGenerator.make_floor(sets[stand], 3, not notex, 0.0 if no_impostors else 15.0, bench_season))
 
 # The wood's stand-in trees by --stand. Conifers set canopy_conifer, which the floor reads.
 func _stand_trees() -> Array:

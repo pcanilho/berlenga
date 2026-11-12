@@ -77,6 +77,9 @@ class GrassField3D : public Node3D {
 	int season_wait = 0;
 	bool ground_published = false; // This field's _bake_ground() set the grass_ground_* globals.
 	float _dryness() const { return CLAMP(dryness + (1.0f - dryness) * (1.0f - season_green) * season_response, 0.0f, 1.0f); }
+	// Summer dormancy and winter kill take whole blades down to the crown (Volaire and Norton 2006),
+	// not only their tips: the share of blades dead from the root.
+	float _dormant() const { return CLAMP((1.0f - season_green) * season_response, 0.0f, 1.0f); }
 	void _season_step();
 	float sun_mean = 0.0f; // VegetationLight::sun_mean() of the data map.
 	float color_variation = 0.5f;
