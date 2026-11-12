@@ -11,6 +11,7 @@ extends Node3D
 #   --push           with --close: a body stands on the middle plant (bent through the trample field)
 #   --still          with --push: the body stands there but the trample field is off (the before shot)
 #   --top            with --close: straight down on the middle plant (leaf outlines)
+#   --wide           with --close: from 2.5 m, a little above (spreading or lodged plants)
 #   --head           with --close: the top of the first plant from 15 cm (flower and seed heads)
 #   --wear=W         leaf wear 0..1 (default the generator's 0.5)
 #   --wind=x,z       fallback wind for the plants (default none)
@@ -18,6 +19,7 @@ extends Node3D
 #   --seq=N          save N frames in a row as path_000.png... (run with --fixed-fps 30 for a clip)
 #   --stand=S        give the litter and seedling presets the leaves of floor stand S (make_floor's FloorStand)
 #   --season=F,D     flowering stage for degree days F (base 5 C, from 1 January) on day of year D
+#   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
 const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel"]
@@ -37,6 +39,7 @@ var still := false
 var wear := -1.0
 var top := false
 var head := false
+var wide := false
 var seq := 0
 var wind := Vector2.ZERO
 var season := {}
@@ -57,9 +60,15 @@ func _ready() -> void:
 		elif a == "--still": still = true
 		elif a == "--top": top = true
 		elif a == "--head": head = true
+		elif a == "--wide": wide = true
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
 		elif a.begins_with("--wear="): wear = float(a.substr(7))
 		elif a.begins_with("--stand="): stand = int(a.substr(8))
+		elif a.begins_with("--day="):
+			var wm := WeatherMap3D.new()
+			add_child(wm)
+			wm.season_day = int(a.substr(6))
+			season = wm.get_season()
 		elif a.begins_with("--season="):
 			var sv := a.substr(9).split(",")
 			season = {"forcing": float(sv[0]), "day_of_year": int(sv[1]) if sv.size() > 1 else 180}
@@ -162,6 +171,9 @@ func _ready() -> void:
 			var span: float = max(bb.size.y, max(bb.size.x, bb.size.z))
 			cam.position = c + Vector3(0, span * 0.35, span * 1.9)
 		cam.look_at(c)
+	elif close >= 0 and wide:
+		cam.position = Vector3(0, 1.3, 2.4)
+		cam.look_at(Vector3(0, 0.2, 0))
 	elif close >= 0 and head:
 		# The highest vertex of the first plant and what is near it: a flower or seed head.
 		var mi0 := get_child(0) as MeshInstance3D
@@ -318,6 +330,27 @@ func _bloom_checks() -> void:
 	k.season = {"forcing": 1000.0, "day_of_year": 200}
 	var high := k.generate().get_aabb().end.y
 	_check("knapweed: rosette in May, tall in July", low < 0.15 and high > 0.3, Vector2(low, high))
+	# Ferns and spring plants through the year (step 3), on a default WeatherMap3D's days.
+	var wm := WeatherMap3D.new()
+	add_child(wm)
+	var seasons := {}
+	for d in [45, 125, 200, 345]:
+		wm.season_day = d
+		seasons[d] = wm.get_season()
+	wm.queue_free()
+	for p in [P.PRESET_BRACKEN, P.PRESET_FERN]:
+		var g := PlantGenerator.new()
+		g.textures = false
+		g.preset = p
+		g.seed = 2
+		var hs := {}
+		for d in seasons:
+			g.season = seasons[d]
+			hs[d] = g.generate().get_aabb().end.y
+		var tall := 0.4 if p == P.PRESET_BRACKEN else 0.15
+		_check("%s: flat in winter, croziers in May, full in July, no taller in December" % NAMES[p], hs[45] < 0.25 and hs[125] < hs[200] and hs[200] > tall and hs[345] <= hs[200], hs)
+	var pres := [P.get_presence(P.PRESET_WOOD_ANEMONE, seasons[45]), P.get_presence(P.PRESET_WOOD_ANEMONE, {"forcing": 200.0}), P.get_presence(P.PRESET_WOOD_ANEMONE, seasons[200]), P.get_presence(P.PRESET_FERN, seasons[200])]
+	_check("anemone above ground in spring only", pres[0] == 0.0 and pres[1] == 1.0 and pres[2] == 0.0 and pres[3] == 1.0, pres)
 
 func _process(_d: float) -> void:
 	n += 1

@@ -531,6 +531,48 @@ static float smoothstep_f(float p_a, float p_b, float p_x) {
 	return Math::smoothstep(p_a, p_b, p_x);
 }
 
+// Fern fronds through the year (docs/ideas/vegetation-seasons.md, step 3). Without a season: one
+// set of full green fronds, as before. p_emerge, p_unroll: degree days to the first croziers and
+// from there to full fronds; p_onset, p_span: the senescence sum (Delpierre et al. 2009, as the
+// trees use it) over which they yellow and die. A day below -1 C mean in autumn kills them.
+PlantGenerator::FrondSeason PlantGenerator::_frond_season(float p_emerge, float p_unroll, float p_onset, float p_span) const {
+	FrondSeason fs;
+	if (bloom_forcing < 0.0f) {
+		return fs;
+	}
+	const float senescence = season.get("senescence", 0.0f);
+	const float temperature = season.get("temperature", 10.0f);
+	const float snow = season.get("snow_depth", 0.0f);
+	fs.unfurl = CLAMP((bloom_forcing - p_emerge) / p_unroll, 0.0f, 1.0f);
+	fs.dead = CLAMP((senescence - p_onset) / p_span, 0.0f, 1.0f);
+	if (bloom_day > 240 && temperature < -1.0f) {
+		fs.dead = 1.0f;
+	}
+	// Dead fronds lodge as the autumn's storms and the snow come.
+	fs.lodge = CLAMP(0.6f * smoothstep_f(0.6f, 1.0f, fs.dead) + snow / 0.15f, 0.0f, 1.0f);
+	if (bloom_day > 0 && bloom_day < 200 && fs.unfurl < 1.0f) {
+		// Last year's fronds, flattened by winter, until the new ones close over them.
+		fs.old_share = 1.0f - fs.unfurl;
+		fs.old_lodge = CLAMP(0.6f + float(bloom_day) / 150.0f + snow / 0.15f, 0.0f, 1.0f);
+	}
+	if (fs.unfurl <= 0.0f && fs.old_share <= 0.0f) {
+		fs.old_share = 1.0f; // Never bare: some dead fronds lie on the crown.
+		fs.old_lodge = 1.0f;
+	}
+	return fs;
+}
+
+// Spring ephemerals are above ground only part of the year: wood anemone shoots in late winter,
+// flowers, and its leaves yellow and die down by early summer (Shirreffs 1985).
+float PlantGenerator::get_presence(Preset p_preset, const Dictionary &p_season) {
+	if (!p_season.has("forcing") || p_preset != PRESET_WOOD_ANEMONE) {
+		return 1.0f;
+	}
+	const float forcing = p_season["forcing"];
+	return smoothstep_f(15.0f, 40.0f, forcing) * (1.0f - smoothstep_f(650.0f, 720.0f, forcing));
+}
+
+
 static Transform3D stem_base(float p_azimuth, float p_elevation) {
 	return Transform3D(organ_frame(polar_dir(p_azimuth, p_elevation), Vector3(0, 1, 0)), Vector3());
 }
@@ -691,13 +733,20 @@ void PlantGenerator::_build_fern() {
 	const int fronds = int(_rand(4.0f, 8.0f));
 	const float spin = _rand(0.0f, Math::TAU);
 	const float big = _rand(0.3f, 0.55f);
-	for (int i = 0; i < fronds; i++) {
-		const float u = float(i) / fronds;
-		const float length = big * (1.0f - 0.3f * u) * _rand(0.85f, 1.1f);
+	// Through the year (docs/ideas/vegetation-seasons.md, step 3): croziers in spring, green
+	// through summer, dying back with the senescence sum; in winter last year's fronds lie dead
+	// around the crown until the new ones have unfurled.
+	const FrondSeason fs = _frond_season(200.0f, 350.0f, 300.0f, 380.0f);
+	auto frond = [&](int p_i, float p_unfurl, float p_dead, float p_lodge) {
+		const Wither wither(this, p_dead);
+		const float u = float(p_i) / fronds;
+		const float grow = Math::lerp(0.15f, 1.0f, p_unfurl);
+		const float length = big * (1.0f - 0.3f * u) * _rand(0.85f, 1.1f) * grow;
 		const int segs = 12;
-		Basis f = organ_frame(polar_dir(spin + i * GOLDEN_ANGLE, Math::lerp(0.95f, 1.25f, u)), Vector3(0, 1, 0));
+		Basis f = organ_frame(polar_dir(spin + p_i * GOLDEN_ANGLE, Math::lerp(Math::lerp(0.95f, 1.25f, u), 0.2f, p_lodge)), Vector3(0, 1, 0));
 		Vector3 p(0, 0.01f, 0);
-		const float arch = _rand(1.0f, 1.6f);
+		// A crozier: the rachis rolled into a crook (circinate vernation), unrolling as it grows.
+		const float arch = Math::lerp(7.0f, _rand(1.0f, 1.6f), smoothstep_f(0.0f, 0.7f, p_unfurl)) + p_lodge;
 		LocalVector<Transform3D> frames;
 		// Rachis, stepped here so the pinnae can sit on it.
 		const Transform3D start(f, p);
@@ -711,13 +760,14 @@ void PlantGenerator::_build_fern() {
 		}
 		_add_stem(start, length, 0.002f, 0.0008f, arch, segs, 0.0f);
 		const int pinnae = int(_rand(14.0f, 22.0f));
+		const float pinna_grow = p_unfurl * Math::sqrt(p_unfurl);
 		for (int k = 0; k < pinnae; k++) {
 			const float s = Math::lerp(0.18f, 0.97f, float(k) / (pinnae - 1));
 			const float fi = s * segs;
 			const int fa = MIN(int(fi), segs - 1);
 			const Transform3D fr = frames[fa].interpolate_with(frames[fa + 1], fi - fa);
 			const float side = (k % 2 == 0) ? 1.0f : -1.0f;
-			const float plen = length * 0.32f * Math::pow(float(MAX(0.0f, Math::sin(Math::PI * (s - 0.1f) / 0.92f))), 0.6f) * (1.0f - 0.25f * s);
+			const float plen = length / grow * pinna_grow * 0.32f * Math::pow(float(MAX(0.0f, Math::sin(Math::PI * (s - 0.1f) / 0.92f))), 0.6f) * (1.0f - 0.25f * s);
 			if (plen < 0.004f) {
 				continue;
 			}
@@ -726,12 +776,20 @@ void PlantGenerator::_build_fern() {
 			l.shape = LEAF_LANCEOLATE;
 			l.length = plen;
 			l.width = plen * 0.28f;
-			l.fold = 0.15f;
-			l.bend = 0.35f;
+			l.fold = 0.15f + 0.4f * p_dead; // Dead pinnae curl.
+			l.bend = 0.35f + 0.6f * p_lodge;
 			l.lobes = 7;
 			l.lobe_depth = 0.45f;
 			l.segments = 8;
 			_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, fr.basis.get_column(1)), fr.origin), l, s);
+		}
+	};
+	for (int i = 0; i < fronds; i++) {
+		if (fs.old_share > 0.0f && float(i) < fronds * fs.old_share + 0.5f) {
+			frond(i, 1.0f, 1.0f, fs.old_lodge);
+		}
+		if (fs.unfurl > 0.0f) {
+			frond(i, fs.unfurl, fs.dead, fs.lodge);
 		}
 	}
 }
@@ -1563,18 +1621,27 @@ void PlantGenerator::_build_bilberry() {
 // two to three times pinnate: pinnae longest at the base, pinnules lobed (Page 1976).
 void PlantGenerator::_build_bracken() {
 	const int fronds = int(_rand(2.0f, 5.0f));
-	for (int i = 0; i < fronds; i++) {
-		Transform3D base = stem_base(_rand(0.0f, Math::TAU), _rand(1.35f, 1.52f));
+	// Through the year (Watt 1976): croziers push up in May once the
+	// soil has warmed, unroll over five or six weeks, stand green all summer, turn yellow then
+	// russet with the autumn and the first frosts, and stand dead into winter, lodging under wind
+	// and snow; in spring last year's fronds lie flat among the new croziers.
+	const FrondSeason fs = _frond_season(300.0f, 400.0f, 220.0f, 250.0f);
+	auto frond = [&](float p_unfurl, float p_dead, float p_lodge) {
+		const Wither wither(this, p_dead);
+		Transform3D base = stem_base(_rand(0.0f, Math::TAU), Math::lerp(_rand(1.35f, 1.52f), 0.12f, p_lodge));
 		base.origin = Vector3(_rand(-0.25f, 0.25f), 0.0f, _rand(-0.25f, 0.25f));
-		const float stipe = _rand(0.35f, 0.75f);
+		// The stipe lengthens first, then the blade unrolls from its crook.
+		const float stipe = _rand(0.35f, 0.75f) * MIN(1.0f, 0.25f + 1.4f * p_unfurl);
 		const LocalVector<Transform3D> sf = _stem_frames(base, stipe, _rand(0.05f, 0.2f), 4);
 		_add_stem(base, stipe, 0.0045f, 0.0035f, sf.size() > 0 ? 0.1f : 0.0f, 4, 0.0f);
 		// The blade: a knee at the top of the stipe, then a nearly flat blade drooping a little.
 		Transform3D top = sf[sf.size() - 1];
-		top.basis = Basis(top.basis.get_column(0), _rand(0.85f, 1.1f)) * top.basis;
+		// Lying down, the blade stays on the stipe's line (no knee down into the ground).
+		top.basis = Basis(top.basis.get_column(0), _rand(0.85f, 1.1f) * smoothstep_f(0.3f, 0.8f, p_unfurl) * (1.0f - p_lodge)) * top.basis;
 		top.basis.orthonormalize();
-		const float blade = _rand(0.45f, 0.85f);
-		const float turn = _rand(0.25f, 0.5f);
+		const float blade = _rand(0.45f, 0.85f) * Math::lerp(0.2f, 1.0f, p_unfurl);
+		const float turn = Math::lerp(6.5f, _rand(0.25f, 0.5f), smoothstep_f(0.0f, 0.75f, p_unfurl)) * (1.0f - 0.9f * p_lodge);
+		const float pinna_grow = p_unfurl * Math::sqrt(p_unfurl);
 		const LocalVector<Transform3D> rf = _stem_frames(top, blade, turn, 10);
 		_add_stem(top, blade, 0.0035f, 0.001f, turn, 10, 0.3f);
 		const int pairs = int(_rand(8.0f, 12.0f));
@@ -1582,7 +1649,10 @@ void PlantGenerator::_build_bracken() {
 			const float s = Math::lerp(0.08f, 0.95f, float(k) / (pairs - 1));
 			const Transform3D at = _frame_at(rf, s);
 			// Triangular blade: pinnae shorten from the base to the tip.
-			const float plen = blade * 0.5f * Math::pow(1.0f - s, 0.85f) + 0.02f;
+			const float plen = (blade * 0.5f * Math::pow(1.0f - s, 0.85f) + 0.02f) * pinna_grow;
+			if (plen < 0.008f) {
+				continue; // Pinnae still rolled into the crozier.
+			}
 			for (int side = -1; side <= 1; side += 2) {
 				const Vector3 out = (at.basis.get_column(0) * float(side) + at.basis.get_column(2) * 0.3f).normalized();
 				// The blade is held flat: every lamina faces the sky.
@@ -1622,6 +1692,14 @@ void PlantGenerator::_build_bracken() {
 					_add_leaf(SURFACE_LEAF, Transform3D(organ_frame(fwd, Vector3(0, 1, 0)), pa.origin), l, Math::lerp(0.5f, 1.0f, s));
 				}
 			}
+		}
+	};
+	for (int i = 0; i < fronds; i++) {
+		if (fs.old_share > 0.0f && float(i) < fronds * fs.old_share + 0.5f) {
+			frond(1.0f, 1.0f, fs.old_lodge);
+		}
+		if (fs.unfurl > 0.0f) {
+			frond(fs.unfurl, fs.dead, fs.lodge);
 		}
 	}
 }
@@ -2204,6 +2282,8 @@ void PlantGenerator::_build_woodruff() {
 // flower of six to seven tepals, nodding a little.
 void PlantGenerator::_build_wood_anemone() {
 	const int stems = int(_rand(4.0f, 10.0f));
+	// The leaves yellow from about 550 degree days and are gone by 720 (get_presence()).
+	const Wither wither(this, bloom_forcing < 0.0f ? 0.0f : CLAMP((bloom_forcing - 550.0f) / 150.0f, 0.0f, 1.0f));
 	Leaf l;
 	l.shape = LEAF_PALMATE;
 	l.lobes = 3;
@@ -5149,6 +5229,7 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		if (f.preset == P::PRESET_LEAF_LITTER && f.deadwood == PlantSpecies::DEADWOOD_AVOID) {
 			f.density = CLAMP(0.9f * leaf_cover, 0.1f, 0.9f);
 		}
+		f.density *= get_presence(f.preset, p_season); // Spring plants gone by summer.
 		Ref<PlantGenerator> gen;
 		gen.instantiate();
 		gen->set_textures(p_textures);
@@ -5271,6 +5352,7 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_season"), &PlantGenerator::get_season);
 	ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "season"), "set_season", "get_season");
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_bloom_shares", "preset", "season"), &PlantGenerator::get_bloom_shares);
+	ClassDB::bind_static_method("PlantGenerator", D_METHOD("get_presence", "preset", "season"), &PlantGenerator::get_presence);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "textures"), "set_textures", "get_textures");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "texture_size", PROPERTY_HINT_RANGE, "32,2048,1"), "set_texture_size", "get_texture_size");
 	ADD_GROUP("Colors", "");

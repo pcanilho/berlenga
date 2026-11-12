@@ -101,6 +101,23 @@ seed in summer; every flowering preset builds through the year; a knapweed roset
 and 75 cm in July. Not yet: spring plants (anemone) keep their leaves after flowering; their
 dying back belongs with the bracken and ferns (step 3), as the field's seasonal presence.
 
+**Step 3, ferns and spring plants.** Bracken and the woodland fern take the same season. A
+frond rises as a crozier, the rachis rolled into a crook (circinate vernation), and unrolls as
+the degree days pass (bracken from 300 over 400, male fern from 200 over 350): the stipe
+lengthens first, the blade's curl opens and the pinnae grow in. The fronds die with the
+senescence sum the trees use (Delpierre et al. 2009; bracken from 220 over 250, ahead of beech,
+the fern from 350 over 380), or at once on an autumn day below -1 C, through the shader's dead
+tissue (yellow, then russet). Dead fronds lodge with the season's storms and the snow (depth over
+15 cm flattens them). From January to the end of unrolling, last year's fronds lie flat and dead
+among the new ones, fewer as the new fronds close over them; the plant is never bare. Wood
+anemone, a spring plant, yellows from 550 degree days and is gone by 720 (Shirreffs 1985);
+`get_presence()` gives the share above ground and `make_floor()` scales its density by it, so
+the field drops it in summer. Checks in the plants bench: bracken 12 cm high in February (lodged),
+33 cm in early May, 65 cm in July, 36 cm in December; the fern 2, 5, 23, 23 cm (it yellows in
+December but stands); anemone absent in February and July, present in April. With a default
+WeatherMap3D (a warm continental climate) bracken is still green in early November and russet
+by mid December.
+
 ## References
 
 - Jolly, Nemani and Running, "A generalized, bioclimatic index to predict foliar phenology in response to climate", Global Change Biology 11, 2005.
@@ -111,4 +128,5 @@ dying back belongs with the bracken and ferns (step 3), as the field's seasonal 
 - Grime, Hodgson and Hunt, "Comparative Plant Ecology", 2nd edition, Castlepoint Press, 2007.
 - Delpierre et al., "Modelling interannual and spatial variability of leaf senescence for three deciduous tree species in France", Agricultural and Forest Meteorology 149, 2009.
 - Watt, "The ecological status of bracken", Botanical Journal of the Linnean Society 73, 1976.
+- Shirreffs, "Anemone nemorosa L.", Biological Flora of the British Isles, Journal of Ecology 73, 1985.
 - Zhang et al., "Monitoring vegetation phenology using MODIS", Remote Sensing of Environment 84, 2003.

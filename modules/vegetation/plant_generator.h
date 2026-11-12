@@ -281,6 +281,14 @@ private:
 	};
 	static bool _phenology(Preset p_preset, Phenology &r_phenology);
 	static Bloom _bloom_stage(Preset p_preset, float p_forcing, int p_day, float p_u, float p_u2, float *r_progress, float *r_dead = nullptr);
+	struct FrondSeason {
+		float unfurl = 1.0f; // This year's fronds: 0 none yet, 0..1 croziers unrolling, 1 full.
+		float dead = 0.0f; // Their dying back (the shader's dead tissue).
+		float lodge = 0.0f; // Lying down: 0 upright, 1 flat on the ground.
+		float old_share = 0.0f; // Last year's dead fronds still lying there, as a share of the fronds.
+		float old_lodge = 1.0f;
+	};
+	FrondSeason _frond_season(float p_emerge, float p_unroll, float p_onset, float p_span) const;
 	// A flowering stem's stage. Without a season the builder's own draw decides (in seed or in flower).
 	// r_dead: how far a stem in seed has died back (0 green, 1 a standing dead stalk).
 	Bloom _bloom(bool p_mixed_seed = false, float *r_progress = nullptr, float *r_dead = nullptr);
@@ -328,6 +336,7 @@ public:
 	void set_season(const Dictionary &p_season);
 	Dictionary get_season() const { return season; }
 	static Vector3 get_bloom_shares(Preset p_preset, const Dictionary &p_season);
+	static float get_presence(Preset p_preset, const Dictionary &p_season);
 	float get_leaf_wear() const { return leaf_wear; }
 	int get_texture_size() const { return texture_size; }
 	Ref<ArrayMesh> generate();
