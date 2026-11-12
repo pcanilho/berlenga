@@ -1216,6 +1216,22 @@ func _build_water() -> void:
 				lake = l
 	rivers = gen.build_river_paths(self, float(args.get("min-area", "1500000")))
 	_log("water + %d rivers built in %d ms (%d lakes)" % [rivers.size(), Time.get_ticks_msec() - t, lakes.size()])
+	if args.has("braid"):
+		# --braid=x0,z0,x1,z1,width,q: a wide reach over the plain (cross_spacing 2 m), whose one level across
+		# each section fills only the ground below it: the braided-plain test.
+		var b: PackedStringArray = String(args["braid"]).split(",")
+		var bp := PackedVector3Array()
+		for k in 9:
+			var u := k / 8.0
+			var x := lerpf(float(b[0]), float(b[2]), u)
+			var z := lerpf(float(b[1]), float(b[3]), u)
+			bp.append(Vector3(x, height_at(x, z) + 1.0, z))
+		var br := _river("Braid", bp, PackedFloat32Array([40.0]), float(b[5]), ocean)
+		br.default_width = float(b[4])
+		br.widths = PackedFloat32Array([float(b[4])])
+		br.cross_spacing = float(args.get("braid-spacing", "2"))
+		br.snap_to_ground = true
+		_log("braid reach %s width %s q %s" % [str(bp[0]), b[4], b[5]])
 	# Contact falls (cascades and horsetails down steep rock) from the generator's fall records.
 	if ClassDB.class_exists("PhysXWaterfalls3D"):
 		var wf = ClassDB.instantiate("PhysXWaterfalls3D")

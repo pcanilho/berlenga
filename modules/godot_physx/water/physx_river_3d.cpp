@@ -427,6 +427,8 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_step_length"), &PhysXRiver3D::get_step_length);
 	ClassDB::bind_method(D_METHOD("set_cross_segments", "segments"), &PhysXRiver3D::set_cross_segments);
 	ClassDB::bind_method(D_METHOD("get_cross_segments"), &PhysXRiver3D::get_cross_segments);
+	ClassDB::bind_method(D_METHOD("set_cross_spacing", "spacing"), &PhysXRiver3D::set_cross_spacing);
+	ClassDB::bind_method(D_METHOD("get_cross_spacing"), &PhysXRiver3D::get_cross_spacing);
 	ClassDB::bind_method(D_METHOD("set_bank_margin", "margin"), &PhysXRiver3D::set_bank_margin);
 	ClassDB::bind_method(D_METHOD("get_bank_margin"), &PhysXRiver3D::get_bank_margin);
 	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXRiver3D::set_foam_persistence);
@@ -541,6 +543,7 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_GROUP("Mesh", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "step_length", PROPERTY_HINT_RANGE, "0.1,10,0.05,or_greater,suffix:m"), "set_step_length", "get_step_length");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "cross_segments", PROPERTY_HINT_RANGE, "2,64,1"), "set_cross_segments", "get_cross_segments");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cross_spacing", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_cross_spacing", "get_cross_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bank_margin", PROPERTY_HINT_RANGE, "0,10,0.05,or_greater,suffix:m"), "set_bank_margin", "get_bank_margin");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "water_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_water_material", "get_water_material");
 }
@@ -563,6 +566,7 @@ RIVER_SETTER(obstacle_collision_mask, uint32_t, obstacle_collision_mask, p_value
 RIVER_SETTER(step_length, float, step_length, MAX(p_value, 0.05f))
 RIVER_SETTER(cross_segments, int, cross_segments, CLAMP(p_value, 2, 256))
 RIVER_SETTER(bank_margin, float, bank_margin, MAX(p_value, 0.0f))
+RIVER_SETTER(cross_spacing, float, cross_spacing, MAX(p_value, 0.0f))
 RIVER_SETTER(foam_persistence, float, foam_persistence, MAX(p_value, 0.05f))
 RIVER_SETTER(carve, bool, carve, p_value)
 RIVER_SETTER(carve_depth, float, carve_depth, MAX(p_value, 0.0f))
@@ -806,7 +810,7 @@ float PhysXRiver3D::_psi_at(const Vector3 &p_world, float &r_depth) const {
 		return 0.0f;
 	}
 	const bool on = _strip_at(p_world, i, t, n);
-	const int m = cross_segments;
+	const int m = cross_count;
 	auto value = [&](const Section &p_sec, const LocalVector<float> &p_values) -> float {
 		return cross_value(p_sec, p_values, n, bank_margin, m);
 	};
@@ -1364,8 +1368,18 @@ void PhysXRiver3D::_build() {
 		bed[i] = bed_found[i] ? y : sec.centre.y - (given_depth[i] > 0.0f ? given_depth[i] : 0.0f);
 	}
 
+	// Vertices across: cross_segments, or enough for cross_spacing over the widest section.
+	cross_count = cross_segments;
+	if (cross_spacing > 0.0f) {
+		float widest = 0.0f;
+		for (const Section &sec : sections) {
+			widest = MAX(widest, sec.width);
+		}
+		cross_count = CLAMP((int)Math::ceil((widest + 2.0f * bank_margin) / cross_spacing), cross_segments, 256);
+	}
+
 	// Ground across each section, measured once (independent of the water).
-	const int m = cross_segments;
+	const int m = cross_count;
 	LocalVector<float> ground;
 	LocalVector<uint8_t> ground_found;
 	ground.resize(count * (m + 1));
@@ -1664,7 +1678,7 @@ void PhysXRiver3D::_build() {
 // downstream along the flow.
 void PhysXRiver3D::_solve_flow(float p_ds) {
 	const int count = (int)sections.size();
-	const int m = cross_segments;
+	const int m = cross_count;
 	const int row = m + 1;
 	const int cells = count * row;
 	constexpr float DRY = 0.02f; // m: shallower is a wall
@@ -2010,7 +2024,7 @@ void PhysXRiver3D::_build_mesh() {
 		_build_fall_mesh();
 		return;
 	}
-	const int m = cross_segments;
+	const int m = cross_count;
 	const int row = m + 1;
 	PackedVector3Array verts;
 	PackedVector3Array normals;
@@ -2298,7 +2312,7 @@ void PhysXRiver3D::_build_fall_mesh() {
 		fall_material->set_shader(shader);
 	}
 	fall_instance->set_material_override(fall_material);
-	const int m = cross_segments;
+	const int m = cross_count;
 	PackedVector3Array verts;
 	PackedVector3Array normals;
 	PackedVector2Array uvs;
@@ -2629,8 +2643,8 @@ float PhysXRiver3D::sample_depth(const Vector3 &p_world_pos) const {
 	if (!_locate(p_world_pos, i, t, n)) {
 		return 0.0f;
 	}
-	return Math::lerp(cross_value(sections[i], sections[i].depth, n, bank_margin, cross_segments),
-			cross_value(sections[i + 1], sections[i + 1].depth, n, bank_margin, cross_segments), t);
+	return Math::lerp(cross_value(sections[i], sections[i].depth, n, bank_margin, cross_count),
+			cross_value(sections[i + 1], sections[i + 1].depth, n, bank_margin, cross_count), t);
 }
 
 float PhysXRiver3D::sample_height(const Vector3 &p_world_pos) const {
@@ -2640,8 +2654,8 @@ float PhysXRiver3D::sample_height(const Vector3 &p_world_pos) const {
 	if (!_locate(p_world_pos, i, t, n)) {
 		return -Math::INF;
 	}
-	const float d = Math::lerp(cross_value(sections[i], sections[i].depth, n, bank_margin, cross_segments),
-			cross_value(sections[i + 1], sections[i + 1].depth, n, bank_margin, cross_segments), t);
+	const float d = Math::lerp(cross_value(sections[i], sections[i].depth, n, bank_margin, cross_count),
+			cross_value(sections[i + 1], sections[i + 1].depth, n, bank_margin, cross_count), t);
 	if (d <= 0.0f) {
 		return -Math::INF;
 	}
@@ -2658,10 +2672,10 @@ Vector3 PhysXRiver3D::sample_flow(const Vector3 &p_world_pos) const {
 	if (!_locate(p_world_pos, i, t, n)) {
 		return Vector3();
 	}
-	const float v = Math::lerp(cross_value(sections[i], sections[i].speed_at, n, bank_margin, cross_segments),
-			cross_value(sections[i + 1], sections[i + 1].speed_at, n, bank_margin, cross_segments), t);
-	const float a = Math::lerp(cross_value(sections[i], sections[i].across_at, n, bank_margin, cross_segments),
-			cross_value(sections[i + 1], sections[i + 1].across_at, n, bank_margin, cross_segments), t);
+	const float v = Math::lerp(cross_value(sections[i], sections[i].speed_at, n, bank_margin, cross_count),
+			cross_value(sections[i + 1], sections[i + 1].speed_at, n, bank_margin, cross_count), t);
+	const float a = Math::lerp(cross_value(sections[i], sections[i].across_at, n, bank_margin, cross_count),
+			cross_value(sections[i + 1], sections[i + 1].across_at, n, bank_margin, cross_count), t);
 	const Vector3 side = sections[i].side.lerp(sections[i + 1].side, t).normalized();
 	const Vector3 tangent(-side.z, 0.0f, side.x);
 	const Vector2 live = _live_velocity_at(p_world_pos);
@@ -2675,8 +2689,8 @@ float PhysXRiver3D::sample_foam(const Vector3 &p_world_pos) const {
 	if (!_locate(p_world_pos, i, t, n)) {
 		return 0.0f;
 	}
-	return Math::lerp(cross_value(sections[i], sections[i].foam_at, n, bank_margin, cross_segments),
-			cross_value(sections[i + 1], sections[i + 1].foam_at, n, bank_margin, cross_segments), t);
+	return Math::lerp(cross_value(sections[i], sections[i].foam_at, n, bank_margin, cross_count),
+			cross_value(sections[i + 1], sections[i + 1].foam_at, n, bank_margin, cross_count), t);
 }
 
 float PhysXRiver3D::get_length() const {

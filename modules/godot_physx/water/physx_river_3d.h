@@ -111,6 +111,10 @@ private:
 	uint32_t obstacle_collision_mask = 0; // rocks measured on top of the (base) ground
 	float step_length = 1.0f; // m between cross-sections
 	int cross_segments = 12;
+	// Most metres between cross-section vertices (0: off). A wide reach (a braided gravel plain) needs
+	// vertices every few metres for its threads; the count taken is the larger of the two.
+	float cross_spacing = 0.0f;
+	int cross_count = 12; // the vertices across in use: cross_segments, or more for cross_spacing
 	float bank_margin = 1.0f; // m of ribbon past each bank, for the waterline fade
 	float foam_persistence = 4.0f; // s
 	Ref<ShaderMaterial> water_material;
@@ -233,6 +237,8 @@ public:
 	float get_step_length() const { return step_length; }
 	void set_cross_segments(int p_segments);
 	int get_cross_segments() const { return cross_segments; }
+	void set_cross_spacing(float p_spacing);
+	float get_cross_spacing() const { return cross_spacing; }
 	void set_bank_margin(float p_margin);
 	float get_bank_margin() const { return bank_margin; }
 	void set_foam_persistence(float p_seconds);

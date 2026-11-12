@@ -141,6 +141,9 @@
 		<member name="cross_segments" type="int" setter="set_cross_segments" getter="get_cross_segments" default="12">
 			Samples across the river, for the ground, the depth and the flow.
 		</member>
+		<member name="cross_spacing" type="float" setter="set_cross_spacing" getter="get_cross_spacing" default="0.0">
+			Most metres between samples across the river (0: off); the river takes more than [member cross_segments] where its widest section needs them. For a braided reach, make the river as wide as the gravel plain with a spacing of about 2 m: the surface is the one level across each section that carries the discharge over the measured ground, so only the low threads fill and the bars stay dry, and they flood as the discharge rises.
+		</member>
 		<member name="default_width" type="float" setter="set_default_width" getter="get_default_width" default="4.0">
 			The width (m) where [member widths] has no value.
 		</member>
