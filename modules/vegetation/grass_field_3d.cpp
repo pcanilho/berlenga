@@ -304,11 +304,91 @@ void GrassField3D::_build_material() {
 	code += "global uniform sampler2D weather_state_map;\n";
 	// The weather module declares its globals, so this compiles with or without a WeatherMap3D.
 	code += WeatherMap3D::get_wind_shader_code();
+	code += vformat("#define WEATHER_GUST_COUNT %d\n#define WEATHER_GUSTS_PER_AXIS %d\n", WeatherMap3D::GUST_COUNT, WeatherMap3D::GUSTS_PER_AXIS);
 	code += R"(
+// weather_wind() as felt by a blade: a damped oscillator of angular frequency omega0 and damping
+// zeta (Py, de Langre and Moulia 2006). The mean wind and the gust patches are slow and pass as
+// they are; each Kaimal gust wave goes through the oscillator's transfer function (gain capped at
+// the quasi-static 1, with its lag), as TreeWind3D does for branches. On top, the resonant sway
+// Davenport's resonant part gives, locked in across the sward: it travels downwind at the canopy's
+// convection speed with wavelength Uc / f0, the honami. jitter (0..1) shifts a clump's phase a
+// little so the wave is not one sheet.
+vec3 grass_weather_wind(vec3 wp, float height, float omega0, float zeta, float jitter, float time) {
+	if (weather_map_rect.z <= 0.0 || weather_map_rect.w <= 0.0) {
+		return vec3(0.0);
+	}
+	float z0 = max(weather_wind_info.w, 1e-5);
+	vec2 m10 = textureLod(weather_wind_map, (wp.xz - weather_map_rect.xy) / weather_map_rect.zw, 0.0).rg;
+	vec4 sh = vec4(0.0, 0.0, 1.0, 0.0);
+	if (weather_shelter_rect.z > 0.0) {
+		vec2 su = (wp.xz - weather_shelter_rect.xy) / weather_shelter_rect.zw;
+		if (su.x >= 0.0 && su.y >= 0.0 && su.x <= 1.0 && su.y <= 1.0) {
+			sh = textureLod(weather_shelter_map, su, 0.0);
+		}
+	}
+	float z = max(height, 1.5 * z0);
+	float f = weather_shelter_factor(z, z0, sh);
+	float profile = weather_open_profile(z, z0);
+	vec2 m = m10 * (profile * f * weather_patch(wp.xz, z));
+	vec3 v = vec3(m.x, 0.0, m.y);
+	float speed = length(m10);
+	if (speed < 1e-3 || weather_wind_info.z <= 0.0) {
+		return v;
+	}
+	float sigma = weather_wind_info.z * speed * sqrt(f);
+	vec2 ea = weather_wind_info.xy;
+	vec2 ec = vec2(-ea.y, ea.x);
+	float a = dot(wp.xz, ea);
+	float cr = dot(wp.xz, ec);
+	vec3 g = vec3(0.0);
+	for (int i = 0; i < WEATHER_GUST_COUNT; i++) {
+		vec4 w = texelFetch(weather_gusts, ivec2(i, 0), 0);
+		float r = abs(w.x) * speed / omega0;
+		float ph = w.x * a + w.y * cr + w.w;
+		float c;
+		if (r < 0.25) {
+			// Well below resonance: gain within 7% of 1, lag under 3 degrees.
+			c = w.z * cos(ph);
+		} else if (r > 4.0) {
+			// Filtered out: gain under 1/15.
+			c = 0.0;
+		} else {
+			float re = 1.0 - r * r;
+			float im = 2.0 * zeta * r;
+			float mag = max(sqrt(re * re + im * im), 1e-4);
+			c = w.z * min(1.0 / mag, 1.0) / mag * (cos(ph) * re + sin(ph) * im);
+		}
+		if (i < WEATHER_GUSTS_PER_AXIS) {
+			g.x += c;
+		} else if (i < 2 * WEATHER_GUSTS_PER_AXIS) {
+			g.y += c;
+		} else {
+			g.z += c;
+		}
+	}
+	vec2 along = m10 / speed;
+	vec2 across = vec2(-along.y, along.x);
+	// Resonance: Kaimal along-wind density at f0 (integral length 8.1 x 7 m at 10 m, as the gust
+	// waves), over the oscillator's band pi f0 / (4 zeta), as two waves at omega0 (1 -+ zeta) for
+	// the beating envelope, both travelling at the canopy's convection speed (1.8 U(h), Raupach
+	// et al. 1996).
+	float f0 = omega0 / 6.2832;
+	float lu = 56.7 / speed;
+	float density = sigma * sigma * 4.0 * lu / pow(1.0 + 6.0 * f0 * lu, 5.0 / 3.0);
+	float amp = sqrt(density * 3.1416 * f0 / (4.0 * zeta));
+	float uc = max(1.8 * profile * f * speed, 0.3);
+	float wa = omega0 * (1.0 - zeta);
+	float wb = omega0 * (1.0 + zeta);
+	float along_pos = dot(wp.xz, along);
+	float res = amp * (cos(wa * (time - along_pos / uc) + jitter * 1.2) + cos(wb * (time - along_pos / uc) + 2.1 + jitter * 1.2));
+	vec2 hz = (along * g.x + across * g.y) * sigma + along * res;
+	return v + vec3(hz.x, g.z * sigma, hz.y);
+}
+
 // The weather map's wind; without one, fallback_wind with gusts rolling downwind.
-vec3 grass_wind(vec3 wp, float h, float time) {
+vec3 grass_wind(vec3 wp, float h, float time, float omega0, float jitter) {
 	if (weather_map_rect.z > 0.0) {
-		return weather_wind(wp, h);
+		return grass_weather_wind(wp, h, omega0, 0.1, jitter, time);
 	}
 	float s = length(fallback_wind);
 	if (s < 1e-4) {
@@ -346,7 +426,9 @@ void vertex() {
 	mat3 to_local = inverse(mat3(MODEL_MATRIX));
 
 	// Wind at two thirds of the blade, in the blade's frame; flutter on top.
-	vec3 wind_l = to_local * grass_wind(base_w, max(h * 0.66, 0.05), TIME);
+	// A blade's own frequency: about 2 Hz at 0.4 m, slower when taller and softer (de Langre 2008).
+	float omega0 = 6.2832 * clamp(2.0 * sqrt(0.4 / max(h, 0.05)), 1.0, 4.0);
+	vec3 wind_l = to_local * grass_wind(base_w, max(h * 0.66, 0.05), TIME, omega0, rnd);
 	vec2 wl = wind_l.xz;
 	float ws = length(wl);
 	float flutter = sin(TIME * (2.5 + 2.0 * rnd) + rnd * 6.2832 + dot(base_w.xz, vec2(0.7, 0.5))) * 0.25 * clamp(ws * 0.15, 0.0, 1.0);

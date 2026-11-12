@@ -470,6 +470,54 @@ What we found and changed:
   blades (bounces, translucent shadow rays) against the raster's none. A measured fix needs the
   PC (denoised frames, more bounces) before guessing a fill term.
 
+## Gusts rolling over meadows (research)
+
+What we have: `WeatherMap3D` already carries the turbulence the grass reads. Kaimal gust waves
+(24 plane waves, frozen turbulence) and gust patches of about 6 m riding at 1.8 times the wind at
+1 m (Raupach, Finnigan and Brunet 1996), the coherent sweeps behind honami (Inoue 1955). The
+blades bend with the wind at their two-thirds height, instantly: a blade follows every wave at
+once, quasi-statically, and the only motion of its own is a sine flutter.
+
+What a crop does (Py, de Langre and Moulia 2006, wheat and alfalfa filmed and modelled; de Langre
+2008 review): each stem is a damped oscillator, f0 about 1 to 3 Hz, damping 0.05 to 0.2. The
+broadband wind drives it through the oscillator's transfer function: slow gusts are followed
+with no lag, waves near f0 are amplified and lag a quarter turn, faster ones are filtered out.
+Neighbouring stems near f0 lock in: the canopy waves at its own frequency, and the waves travel
+downwind at the convection speed Uc of the canopy's mixing layer (about 1.8 U(h)), wavelength
+Uc / f0, 1.5 to 4 m for a meadow. That travelling resonance is the honami people see.
+
+Games: Ghost of Tsushima samples a scrolling wind field per blade and adds a per-blade
+oscillation (Rockenbeck, Wohllaib 2021); UE's grass wind is a material noise. Neither has the
+transfer function or the lock-in.
+
+Plan (one stateless shader function, the same model the trees use in TreeWind3D, so a meadow and
+the trees beside it answer the same gust the same way):
+
+1. Gust waves through the blade's oscillator: each Kaimal wave keeps its phase speed but gets
+   gain 1 / |1 - r^2 + 2 i zeta r| (capped at the quasi-static 1) and its lag, r = k U / omega0.
+   Mean wind and patches stay quasi-static (well below f0).
+2. Resonance with lock-in: the narrow-band sway Davenport's resonant part gives,
+   variance S(f0) pi f0 / (4 zeta), drawn as a wave travelling downwind at Uc with wavelength
+   Uc / f0 (Py 2006), per clump a small phase jitter so it is not a perfect sheet.
+3. f0 per clump from blade height (taller and softer is slower, about 2 Hz at 0.4 m), zeta 0.1.
+4. No change to WeatherMap3D or plant_wind(): the grass reads `weather_gusts`,
+   `weather_wind_info` and the patches as they are.
+
+Measure: wind on, raster clip over the meadow for the gallery, path traced frame, cost per frame
+(the gust loop is already per vertex; the change adds a multiply per wave and two cosines).
+
+### Built (gusts)
+
+`grass_weather_wind()` in the blade shader, used whenever a `WeatherMap3D` publishes wind; the
+fallback wind is unchanged. f0 = 2 Hz x sqrt(0.4 m / height), 1..4 Hz; zeta 0.1. Waves with
+r < 0.25 pass as they are (gain within 7%), r > 4 are dropped (gain under 1/15).
+
+Measured (bench `--raster --weather --wind=5,1`, 30 fps, 90 frames, luminance in 8 px blocks):
+temporal power at 1.6 to 2.6 Hz rises 2 to 4 times (the blades' own band, travelling downwind),
+below 1 Hz it falls by about 15% (the slow gusts as before, the flutter sine's 3.9 Hz peak goes).
+Cost on the cloud's software rasterizer: 1.64 s -> 1.81 s per frame (+10%, vertex work on the
+CPU); GPU cost needs the PC. Path traced frame clean. Clip in the gallery.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.
@@ -483,6 +531,9 @@ What we found and changed:
 - Sucker Punch, Ghost of Yotei tech deep dive, PlayStation Blog, 23 Oct 2025.
 - Wihlidal, Optimizing the Graphics Pipeline with Compute, GDC 2016.
 - Haar, Aaltonen, GPU-Driven Rendering Pipelines, SIGGRAPH 2015 Advances course.
+- Py, de Langre, Moulia, A frequency lock-in mechanism in the interaction between wind and crop canopies, J. Fluid Mech. 568, 2006.
+- de Langre, Effects of wind on plants, Annu. Rev. Fluid Mech. 40, 2008.
+- Inoue, Studies of the phenomena of waving plants ("honami") caused by wind, J. Agric. Meteorol. 11, 1955.
 - Monsi, Saeki, On the factor light in plant communities and its importance for matter production, 1953 (Annals of Botany 2005 translation).
 - Goudriaan, Crop micrometeorology: a simulation study, Pudoc 1977.
 - Sellers, Canopy reflectance, photosynthesis and transpiration, Int. J. Remote Sensing 6, 1985.
