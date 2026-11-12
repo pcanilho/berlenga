@@ -793,6 +793,18 @@ renderer's code (not yet measured): Godot leaves alpha-blended materials out of 
 passes, so the strands' and cards' shadow-pass code only runs for the path tracer's shadow rays,
 and the deep opacity maps carry the hair's self-shadowing in raster. Cards stay off by default.
 
+### Fixed: black specks on strands with deep shadows
+
+Rare black 2x2 pixel blocks on strands, only with deep shadows on. Turned off one step at a time:
+not the shadow-map offset into the hair (DIRECTIONAL_SHADOW_OFFSET), not the multiple-scattering
+term; gone when light() does not multiply by the map's transmittance, and gone as well with that
+transmittance clamped to 0..1 (min alone and max alone each clear it, so the value reaching light()
+was not a number). The per-vertex values check finite and in range, so the bad value appears
+between vertex and light(); not pinned further on llvmpipe. light() now clamps it, which changes
+nothing for any valid value. Bench `--hair=far8`: 12 to 22 black pixels on the hair before, 0
+after in every run (far8, near, wind).
+
+
 ## Stage 2q: hair resting on cloth
 
 Long hair lies on a collar, a hood or a coat's shoulders, and the cloth there moves. The collision

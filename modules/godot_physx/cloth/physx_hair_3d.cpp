@@ -418,8 +418,12 @@ void light() {
 			}
 			vec3 to_light = is_local ? normalize(dom_slot[k * 4].xyz + sl.xyz * sl.w - dom_world) : sl.xyz;
 			if (dot(lw, to_light) > 0.999) {
-				attenuation *= dom_trans[k];
-				shadow = LIGHT_IS_DIRECTIONAL ? clamp(attenuation, 0.0, 1.0) : dom_trans[k];
+				// Clamped: a transmittance is 0..1, and an out-of-range value interpolated across a
+				// strand (seen on llvmpipe; gone with the clamp, the maps' own values check fine per
+				// vertex) blacked out 2x2 pixel blocks of strands in the deep shadow path.
+				float tr = clamp(dom_trans[k], 0.0, 1.0);
+				attenuation *= tr;
+				shadow = LIGHT_IS_DIRECTIONAL ? clamp(attenuation, 0.0, 1.0) : tr;
 				break;
 			}
 		}
