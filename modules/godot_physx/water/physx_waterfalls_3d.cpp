@@ -278,6 +278,12 @@ void fragment() {
 	float film = smoothstep(0.0, 0.5 * max(half_w, 0.2), e);
 	float foam = smoothstep(0.15, 0.85, aeration * mix(0.55, 1.0, film) + (streak - 0.5) * 0.9);
 	float water = smoothstep(-0.03, 0.12, e);
+	// A thin flow over stepped rock falls ledge to ledge as threads (nappe flow) and leaves wet rock between them.
+	// The threads keep to the rock's grooves, so the pattern is fixed to the face, long down it and narrow across.
+	float flow_cover = clamp((COLOR.a - 0.75) * 4.0, 0.0, 1.0);
+	float threads = 0.6 * f_noise(vec2(UV.y * 1.4 + 41.0, down * 0.15)) + 0.4 * f_noise(vec2(UV.y * 3.9 - 17.0, down * 0.45));
+	// The noise sits mostly within 0.2..0.8, so this threshold leaves about flow_cover of the face under water.
+	water *= smoothstep(threads - 0.06, threads + 0.06, 0.2 + 0.68 * flow_cover);
 	// Wet rock: splash and seep reach out in patches, not as an even band.
 	float seep = f_noise(vec2(down * 1.1, UV.y * 1.9)) * 0.6 + f_noise(vec2(down * 4.3, UV.y * 5.7)) * 0.4;
 	float wet = smoothstep(0.0, 0.25, e + wet_margin * (seep * 1.2 - 0.2));
@@ -669,7 +675,11 @@ void PhysXWaterfalls3D::_build_mesh() {
 				uvs.push_back(Vector2(col.travel[r], across_m));
 				uv2s.push_back(Vector2(col.speed[r], col.dist[r]));
 				// Aeration as a share of the most a sheet can hold (0.9): the streaks still show through white water.
-				colors.push_back(Color(edge, CLAMP(col.air[r] / 0.9f, 0.0f, 1.0f), CLAMP(0.125f * face.width, 0.0f, 1.0f), 1.0f));
+				// 0.75..1 carries the share of the face the flow covers.
+				const Vector3 d = col.points[MIN(r + 1, rows - 1)] - col.points[MAX(r - 1, 0)];
+				const float tan_slope = Math::abs(d.y) / MAX(Vector2(d.x, d.z).length(), 0.05f);
+				const float cover_a = 0.75f + 0.25f * flow_cover(col.q, rock_step, tan_slope);
+				colors.push_back(Color(edge, CLAMP(col.air[r] / 0.9f, 0.0f, 1.0f), CLAMP(0.125f * face.width, 0.0f, 1.0f), cover_a));
 			}
 		}
 		for (int c = 0; c + 1 < cols; c++) {
@@ -958,6 +968,29 @@ float PhysXWaterfalls3D::get_wet_margin() const {
 	return wet_margin;
 }
 
+void PhysXWaterfalls3D::set_rock_step(float p_step) {
+	rock_step = MAX(p_step, 0.01f);
+}
+
+float PhysXWaterfalls3D::get_rock_step() const {
+	return rock_step;
+}
+
+// Flow down a stepped or ledged face (Chanson 2001, "The Hydraulics of Stepped Chutes and Spillways"): with
+// critical depth y_c = (q^2/g)^(1/3) and step height h, step length l, the water falls from step to step as free
+// nappes up to y_c/h = 0.89 - 0.4 h/l and skims over the steps as one coherent stream from y_c/h = 1.2 - 0.325 h/l.
+// In nappe flow the rock between the nappes shows (wet); the cover rises through the transition regime.
+float PhysXWaterfalls3D::flow_cover(float p_q, float p_step, float p_tan_slope) {
+	const float hl = CLAMP(p_tan_slope, 0.1f, 2.5f);
+	const float yc = Math::pow(MAX(p_q, 0.0f) * MAX(p_q, 0.0f) / 9.81f, 1.0f / 3.0f);
+	const float r = yc / MAX(p_step, 0.01f);
+	const float nappe = MAX(0.89f - 0.4f * hl, 0.12f);
+	const float skim = MAX(1.2f - 0.325f * hl, nappe + 0.2f);
+	float t = CLAMP((r - 0.5f * nappe) / (skim - 0.5f * nappe), 0.0f, 1.0f);
+	t = t * t * (3.0f - 2.0f * t);
+	return 0.3f + 0.7f * t;
+}
+
 void PhysXWaterfalls3D::set_row_spacing(float p_spacing) {
 	row_spacing = MAX(p_spacing, 0.25f);
 }
@@ -985,6 +1018,9 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_friction_factor"), &PhysXWaterfalls3D::get_friction_factor);
 	ClassDB::bind_method(D_METHOD("set_wet_margin", "margin"), &PhysXWaterfalls3D::set_wet_margin);
 	ClassDB::bind_method(D_METHOD("get_wet_margin"), &PhysXWaterfalls3D::get_wet_margin);
+	ClassDB::bind_method(D_METHOD("set_rock_step", "step"), &PhysXWaterfalls3D::set_rock_step);
+	ClassDB::bind_method(D_METHOD("get_rock_step"), &PhysXWaterfalls3D::get_rock_step);
+	ClassDB::bind_static_method("PhysXWaterfalls3D", D_METHOD("flow_cover", "q", "step", "tan_slope"), &PhysXWaterfalls3D::flow_cover);
 	ClassDB::bind_static_method("PhysXWaterfalls3D", D_METHOD("get_contact_shader_code"), &PhysXWaterfalls3D::get_contact_shader_code);
 	ClassDB::bind_method(D_METHOD("set_row_spacing", "spacing"), &PhysXWaterfalls3D::set_row_spacing);
 	ClassDB::bind_method(D_METHOD("get_row_spacing"), &PhysXWaterfalls3D::get_row_spacing);
@@ -1001,6 +1037,7 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_roughness", PROPERTY_HINT_RANGE, "0.001,1,0.001,suffix:m"), "set_rock_roughness", "get_rock_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction_factor", PROPERTY_HINT_RANGE, "0.005,1,0.001"), "set_friction_factor", "get_friction_factor");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_margin", PROPERTY_HINT_RANGE, "0,3,0.05,suffix:m"), "set_wet_margin", "get_wet_margin");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_step", PROPERTY_HINT_RANGE, "0.05,5,0.05,suffix:m"), "set_rock_step", "get_rock_step");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "row_spacing", PROPERTY_HINT_RANGE, "0.25,10,0.05,suffix:m"), "set_row_spacing", "get_row_spacing");
 }
 
