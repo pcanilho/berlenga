@@ -65,6 +65,12 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Wet hair: soaked strands darken, clump and lie flatter in the same wind.*
 
+- **Snow on hair** (`snow`, `snow_capacity`): snow from the weather settles on the top layer and windward side as small clumps, and melts into wetness.
+
+  ![Strand hair before and after snowfall, raster](media/hair-snow.jpg)
+
+  *Snow on hair: flakes settle through the outer strands.*
+
 ## Collision
 
 - **Body collision** (`PhysXHair3D`: `collision_body`, `collision_cell_size`): strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.
