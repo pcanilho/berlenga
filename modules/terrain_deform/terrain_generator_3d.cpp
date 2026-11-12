@@ -1734,7 +1734,24 @@ bool TerrainGenerator3D::generate() {
 					rel[r * C + cc] = float(CLAMP(double(rel[r * C + cc]) * sc, -depth, 0.4 * depth) * fade * ends);
 				}
 			}
+			// The mean-flow water surface: per row, the level that wets about 30% of the plain (Ashmore 1991: three to six
+			// active threads across a braidplain), threads up to the river's depth under it, bars standing above it.
+			LocalVector<float> stage_rel;
+			stage_rel.resize(R);
+			{
+				LocalVector<float> rowv;
+				rowv.resize(C);
+				for (int r = 0; r < R; r++) {
+					for (int cc = 0; cc < C; cc++) {
+						rowv[cc] = rel[r * C + cc];
+					}
+					rowv.sort();
+					stage_rel[r] = rowv[uint32_t(0.3 * (C - 1))];
+				}
+			}
 			Channel bp;
+			bp.stage_rel = stage_rel;
+			bp.head_cell = rc.cells[MIN(2u, rc.cells.size() - 1)]; // a cell into the reach (the first may be a lake's)
 			bp.half_width = real_t(0.5 * half); // the buckets reach twice this: the whole floor
 			bp.braid_half = real_t(half);
 			bp.braid_cols = C;
@@ -2311,6 +2328,32 @@ bool TerrainGenerator3D::generate() {
 		chan_buckets.clear();
 		for (Channel &ch : channels) {
 			if (!ch.braid.is_empty()) {
+				// The plain's water surface on the final floor, never rising downstream.
+				// (the closest non-rising profile to the floor's, by pooling adjacent violators: a plain min dropped
+				// the surface under a bump all the way down).
+				const uint32_t np = ch.points.size();
+				ch.stage.resize(np);
+				LocalVector<double> val, wt;
+				LocalVector<uint32_t> len;
+				for (uint32_t k = 0; k < np; k++) {
+					val.push_back(double(_ground(ch.points[k].x, ch.points[k].y)) + ch.stage_rel[k]);
+					wt.push_back(1.0);
+					len.push_back(1);
+					while (val.size() > 1 && val[val.size() - 1] > val[val.size() - 2]) {
+						const uint32_t a = val.size() - 2, b = val.size() - 1;
+						val[a] = (val[a] * wt[a] + val[b] * wt[b]) / (wt[a] + wt[b]);
+						wt[a] += wt[b];
+						len[a] += len[b];
+						val.resize(b);
+						wt.resize(b);
+						len.resize(b);
+					}
+				}
+				for (uint32_t blk = 0, k = 0; blk < val.size(); blk++) {
+					for (uint32_t t = 0; t < len[blk]; t++) {
+						ch.stage[k++] = real_t(val[blk]);
+					}
+				}
 				continue;
 			}
 			if (ch.braid_thread) {
@@ -4499,8 +4542,8 @@ void TerrainGenerator3D::_cut_tails() {
 	}
 }
 
-// The braidplains outwash_age made: each a Dictionary with its centre line (world x z) and its half width (m), for
-// placement (no plants on the active gravel) and the water.
+// The braidplains outwash_age made, for the water (a sheet over the plain at its stage: threads are wherever the bed
+// dips below it, Peytavie et al. 2019) and for placement (no plants on the active gravel).
 Array TerrainGenerator3D::get_braidplains() const {
 	Array out;
 	for (const Channel &ch : channels) {
@@ -4508,12 +4551,30 @@ Array TerrainGenerator3D::get_braidplains() const {
 			continue;
 		}
 		PackedVector2Array line;
-		for (const Vector2 &p : ch.points) {
-			line.push_back(p);
+		PackedFloat32Array halves, stage;
+		for (uint32_t k = 0; k < ch.points.size(); k++) {
+			line.push_back(ch.points[k]);
+			halves.push_back(ch.braid_half);
+			stage.push_back(k < ch.stage.size() ? float(ch.stage[k]) : NAN);
 		}
 		Dictionary d;
-		d["line"] = line;
+		d["line"] = line; // centre line, world x z, downstream
 		d["half_width"] = ch.braid_half;
+		d["half_widths"] = halves; // per point
+		d["stage"] = stage; // mean-flow water surface per point, world y, flat across, never rising downstream
+		// m3/s at the head: the most any cell under the first tenth of the line carries (a lake cell there reads none).
+		float q = ch.head_cell >= 0 ? _flow(ch.head_cell, river_month) : 0.0f;
+		for (uint32_t k = 0; k <= ch.points.size() / 10; k++) {
+			const int x = CLAMP(int(Math::round((ch.points[k].x - result_rect.position.x) / result_cell)), 0, nx - 1);
+			const int z = CLAMP(int(Math::round((ch.points[k].y - result_rect.position.y) / result_cell)), 0, ny - 1);
+			q = MAX(q, _flow(z * nx + x, river_month));
+		}
+		d["discharge"] = q;
+		d["head_cell"] = ch.head_cell;
+		// The river feeding it: the get_rivers() river whose points pass the head (within half_width) runs on through
+		// the plain as its main thread and leaves it at the foot.
+		d["head"] = line[0];
+		d["foot"] = line[line.size() - 1];
 		out.push_back(d);
 	}
 	return out;

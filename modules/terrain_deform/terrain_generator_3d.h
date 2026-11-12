@@ -261,6 +261,9 @@ private:
 		int braid_cols = 0;
 		real_t braid_half = 0.0;
 		bool braid_thread = false;
+		LocalVector<float> stage_rel; // a braidplain's mean-flow water surface over its floor, per row
+		LocalVector<real_t> stage; // the same in world height once the ground is final
+		int head_cell = -1; // the river cell at the plain's head (its discharge)
 	};
 	static constexpr real_t CHANNEL_BUCKET = 32.0;
 	LocalVector<Channel> channels;

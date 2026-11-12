@@ -601,6 +601,32 @@ func _generate() -> void:
 		for bp in gen.get_braidplains():
 			var ln: PackedVector2Array = bp["line"]
 			_log("  braidplain %s to %s, %.0f m wide" % [str(ln[0]), str(ln[ln.size() - 1]), 2.0 * float(bp["half_width"])])
+			if args.has("braid-probe"):
+				# The ground across the plain at a third of the way down: its channels and bars.
+				var k := ln.size() / 3
+				var dv: Vector2 = (ln[k + 1] - ln[k - 1]).normalized()
+				var nv := Vector2(-dv.y, dv.x)
+				var row := ""
+				var off := -float(bp["half_width"])
+				while off <= float(bp["half_width"]):
+					var q: Vector2 = ln[k] + nv * off
+					row += " %.2f" % gen.get_height(Vector3(q.x, 0, q.y))
+					off += 4.0
+				_log("  across:" + row)
+				var st: PackedFloat32Array = bp["stage"]
+				var wet := 0
+				var tot := 0
+				for r2 in range(0, ln.size(), maxi(ln.size() / 12, 1)):
+					var d3: Vector2 = (ln[mini(r2 + 1, ln.size() - 1)] - ln[maxi(r2 - 1, 0)]).normalized()
+					var n3 := Vector2(-d3.y, d3.x)
+					var o3 := -float(bp["half_width"])
+					while o3 <= float(bp["half_width"]):
+						var q3: Vector2 = ln[r2] + n3 * o3
+						if gen.get_height(Vector3(q3.x, 0, q3.y)) < st[r2]:
+							wet += 1
+						tot += 1
+						o3 += 6.0
+				_log("  stage at a third %.2f, head %.2f, foot %.2f; %d%% of the plain under it; %.1f m3/s at the head" % [st[k], st[0], st[st.size() - 1], 100 * wet / maxi(tot, 1), float(bp["discharge"])])
 	if gen.scree_age > 0.0:
 		_log("scree: %.0f m3" % gen.get_last_scree_volume())
 	if gen.glacial_enabled:
@@ -1465,6 +1491,11 @@ func _build_vegetation() -> void:
 	meadow.set_rule_range(PlantSpecies.RULE_SLOPE, Vector2(0, 28))
 	meadow.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(3, 1000000))
 	meadow.set_rule_range(PlantSpecies.RULE_HEIGHT, Vector2(3, 700))
+	# No sward on scree, outwash gravel or bare rock (talus -1..0 is moraine till, which grasses over).
+	meadow.set_rule_range(PlantSpecies.RULE_TALUS, Vector2(-1.0, 0.3))
+	meadow.set_rule_fade(PlantSpecies.RULE_TALUS, 0.15)
+	meadow.set_rule_range(PlantSpecies.RULE_ROCK, Vector2(0, 0.4))
+	meadow.set_rule_fade(PlantSpecies.RULE_ROCK, 0.1)
 	grass = GrassField3D.new()
 	grass.name = "Grass"
 	grass.rules = meadow

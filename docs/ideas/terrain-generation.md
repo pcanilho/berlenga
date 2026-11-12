@@ -1256,6 +1256,16 @@ for the years given, carving the active channels and leaving the bars. The groun
 no soil), the water follows the deepest channel with the side channels shallow, and the plants stay off the active
 plain (bars older than a few decades take willows and grass in the real thing, a later step).
 
+Built (off by default; on main without the water): reaches below the last ice stand (or on fans) whose 5-cell slope
+is at or above 0.012 qb^-0.44 (qb five times the mean flow when the river is ice-fed) and under 0.05 are graded to a
+flat plain clamp(6w, 3 cells, 400 m) wide and run through Murray-Paola for clamp(age/5, 60, 900) steps: water shared
+to the three cells below by slope^0.5, sediment flux (Q S)^2.5, lateral bank collapse 0.3, adaptive time step. The
+relief is detrended per row, scaled so the deepest 3% sit a thread depth (0.06 w, 0.5 to 2 m) down, and faded at the
+edges; the plain is bare gravel. `get_braidplains()` gives the water its contract: centre line, half widths, stage per
+point (30th percentile of the relief per row, made non-increasing downstream by isotonic regression), discharge at
+the head, head and foot positions and the head cell (for the feeding river). Dry, a plain reads as flat pale gravel
+with half a metre of relief: the braids show once the water sheet (Valence, Peytavie et al. 2019) lies over it.
+
 ## Rock detail on steep faces and scree (12 Nov; Paulo picked shader detail first, then displaced cliffs)
 
 Why: the generator's erosion detail is a heightfield (offsets in y over x z), so faces near vertical get none: gorge
