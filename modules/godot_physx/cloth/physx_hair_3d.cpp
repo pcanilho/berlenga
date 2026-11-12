@@ -83,6 +83,13 @@ uniform sampler2D hair_previous_positions : filter_nearest, repeat_disable; // l
 uniform int texture_width = 1;
 uniform vec4 hair_color : source_color = vec4(0.3, 0.2, 0.1, 1.0);
 uniform vec3 fibre_absorption = vec3(0.4, 0.7, 1.4);
+// Colour variation (docs/ideas/hair.md, stage 2s): the red melanin's share of fibre_absorption,
+// the share of grey strands, how much the sun has bleached the lengths, and d'Eon et al. 2011's
+// mass colour exponent (hair_color = exp(-d sqrt(absorption))).
+uniform vec3 fibre_absorption_pheo = vec3(0.0);
+uniform float grey_ratio = 0.0;
+uniform float sun_bleach = 0.0;
+uniform float mass_d = 5.97;
 uniform vec2 fibre_roughness = vec2(0.3, 0.3);
 uniform float root_width = 0.0004;
 uniform float tip_width = 0.0001;
@@ -197,6 +204,32 @@ void dom_lookup(vec3 world, float p_inside, out vec4 r_trans, out vec4 r_past) {
 	}
 }
 
+// A fibre's absorption and mass colour along its length, p_along (0 root, 1 tip). p_seed: the
+// strand's own 0..1, or -1 for a clump of strands (a card), which takes the grey share as a mix.
+// Grey hairs grow from follicles that no longer make melanin (canities): the keratin's own faint
+// yellow is left. Sunlight breaks eumelanin down faster than pheomelanin (Nogueira and Joekes
+// 2004): the lengths that have grown out longest, toward the tips, lighten and turn warmer.
+void fibre_look(float p_seed, float p_along, out vec3 r_sigma, out vec3 r_color) {
+	r_sigma = fibre_absorption;
+	r_color = hair_color.rgb;
+	if (grey_ratio <= 0.0 && sun_bleach <= 0.0) {
+		return;
+	}
+	float bleach = sun_bleach * smoothstep(0.2, 1.0, p_along);
+	vec3 eu = fibre_absorption - fibre_absorption_pheo;
+	r_sigma = eu * (1.0 - 0.8 * bleach) + fibre_absorption_pheo * (1.0 - 0.3 * bleach);
+	r_color = exp(-mass_d * sqrt(r_sigma));
+	const vec3 grey_sigma = vec3(0.03, 0.045, 0.09);
+	vec3 grey_color = exp(-mass_d * sqrt(grey_sigma));
+	if (p_seed < 0.0) {
+		r_sigma = mix(r_sigma, grey_sigma, grey_ratio);
+		r_color = mix(r_color, grey_color, grey_ratio);
+	} else if (fract(p_seed * 113.17 + 0.37) < grey_ratio) {
+		r_sigma = grey_sigma;
+		r_color = grey_color;
+	}
+}
+
 void vertex() {
 	strand_seed = fract(sin(floor((CUSTOM0.x + 0.5) / float(max(slot_points, 1))) * 12.9898) * 43758.5453);
 	vec4 here = hair_point(CUSTOM0.x);
@@ -266,12 +299,15 @@ void vertex() {
 
 void fragment() {
 	light_tangent = strand_tangent;
-	ALBEDO = hair_color.rgb;
+	vec3 sigma;
+	vec3 mass;
+	fibre_look(strand_seed, UV.y, sigma, mass);
+	ALBEDO = mass;
 	ROUGHNESS = fibre_roughness.x;
 	ANISOTROPY = 0.8;
 	ANISOTROPY_FLOW = vec2(1.0, 0.0); // The highlight runs across the strands.
 	HAIR = 1.0;
-	HAIR_ABSORPTION = fibre_absorption;
+	HAIR_ABSORPTION = sigma;
 	HAIR_ROUGHNESS = fibre_roughness;
 	float coverage = 1.0;
 	if (!IN_PATH_TRACER) {
@@ -293,7 +329,7 @@ void fragment() {
 		// absorption across it, Unreal's Tp at normal incidence) is not blocked, as in dual
 		// scattering's forward transmittance (Zinke et al. 2008). Blonde hair lets most light
 		// through and dark hair little; the shadow behind n strands falls as that to the n-th power.
-		coverage *= 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		coverage *= 1.0 - 0.91 * dot(sqrt(mass), vec3(0.2126, 0.7152, 0.0722));
 	}
 #endif
 	if (IN_SHADOW_PASS) {
@@ -645,12 +681,15 @@ void fragment() {
 	// The strands' own direction: the card's, tilted across the strip as the baked strands run.
 	float tilt = texel.g * 2.0 - 1.0;
 	light_tangent = normalize(strand_tangent + card_across * (tilt / max(sqrt(1.0 - tilt * tilt), 0.05)));
-	ALBEDO = hair_color.rgb;
+	vec3 sigma;
+	vec3 mass;
+	fibre_look(-1.0, UV.y, sigma, mass); // a clump: its grey share mixed in
+	ALBEDO = mass;
 	ROUGHNESS = fibre_roughness.x;
 	ANISOTROPY = 0.8;
 	ANISOTROPY_FLOW = vec2(1.0, 0.0); // as the strands: the highlight runs across them
 	HAIR = 1.0;
-	HAIR_ABSORPTION = fibre_absorption;
+	HAIR_ABSORPTION = sigma;
 	HAIR_ROUGHNESS = fibre_roughness;
 	dom_world = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	if (dom_maps > 0 && !IN_PATH_TRACER && !IN_SHADOW_PASS) {
@@ -715,7 +754,7 @@ void fragment() {
 		// exp(-share * total coverage); a card's coverage is already the clump's combined
 		// 1 - exp(-total), so the share applies to its optical depth, not to it (as a factor it
 		// let much more light through a dense clump than its strands do).
-		float tt_block = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		float tt_block = 1.0 - 0.91 * dot(sqrt(mass), vec3(0.2126, 0.7152, 0.0722));
 		coverage = 1.0 - pow(max(1.0 - coverage, 1e-4), tt_block);
 	}
 #endif
@@ -867,9 +906,20 @@ void PhysXHair3D::_update_wetness(double p_delta) {
 }
 
 // The colour a mass of such fibres shows (Chiang et al. 2016, section 4.2), for the rasterizer.
-Color PhysXHair3D::_mass_color() const {
+// The red melanin's share of _fibre_absorption().
+Vector3 PhysXHair3D::_fibre_absorption_pheo() const {
+	const float m = -Math::log(MAX(1.0f - melanin, 1e-4f));
+	return Vector3(0.343f, 0.733f, 1.924f) * melanin_redness * m * (1.0f + 0.5f * wet_look);
+}
+
+// d'Eon et al. 2011's exponent from absorption to the mass colour, by the azimuthal roughness.
+float PhysXHair3D::_mass_exponent() const {
 	const float b = CLAMP(radial_roughness, 0.01f, 1.0f);
-	const float d = 5.969f - 0.215f * b + 2.532f * b * b - 10.73f * b * b * b + 5.574f * b * b * b * b + 0.245f * b * b * b * b * b;
+	return 5.969f - 0.215f * b + 2.532f * b * b - 10.73f * b * b * b + 5.574f * b * b * b * b + 0.245f * b * b * b * b * b;
+}
+
+Color PhysXHair3D::_mass_color() const {
+	const float d = _mass_exponent();
 	const Vector3 s = _fibre_absorption();
 	return Color(Math::exp(-d * Math::sqrt(s.x)), Math::exp(-d * Math::sqrt(s.y)), Math::exp(-d * Math::sqrt(s.z))).linear_to_srgb();
 }
@@ -1068,9 +1118,7 @@ void PhysXHair3D::_make_material() {
 		copy_material.instantiate();
 		copy_material->set_shader(shader);
 	}
-	copy_material->set_shader_parameter("hair_color", _mass_color());
-	copy_material->set_shader_parameter("fibre_absorption", _fibre_absorption());
-	copy_material->set_shader_parameter("fibre_roughness", _fibre_roughness());
+	_set_look(copy_material);
 	copy_material->set_shader_parameter("hair_positions", pos_texture);
 	copy_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
 	copy_material->set_shader_parameter("hair_deep_shadow", deep_shadow_texture);
@@ -1153,6 +1201,10 @@ void PhysXHair3D::_set_look(const Ref<ShaderMaterial> &p_material) const {
 	p_material->set_shader_parameter("hair_color", _mass_color());
 	p_material->set_shader_parameter("fibre_absorption", _fibre_absorption());
 	p_material->set_shader_parameter("fibre_roughness", _fibre_roughness());
+	p_material->set_shader_parameter("fibre_absorption_pheo", _fibre_absorption_pheo());
+	p_material->set_shader_parameter("mass_d", _mass_exponent());
+	p_material->set_shader_parameter("grey_ratio", grey_ratio);
+	p_material->set_shader_parameter("sun_bleach", sun_bleaching);
 }
 
 void PhysXHair3D::_groom_changed() {
@@ -2203,6 +2255,28 @@ float PhysXHair3D::get_melanin() const {
 	return melanin;
 }
 
+void PhysXHair3D::set_grey_ratio(float p_ratio) {
+	grey_ratio = CLAMP(p_ratio, 0.0f, 1.0f);
+	_set_look(copy_material);
+	_set_look(card_material);
+	_set_look(snow_material);
+}
+
+float PhysXHair3D::get_grey_ratio() const {
+	return grey_ratio;
+}
+
+void PhysXHair3D::set_sun_bleaching(float p_amount) {
+	sun_bleaching = CLAMP(p_amount, 0.0f, 1.0f);
+	_set_look(copy_material);
+	_set_look(card_material);
+	_set_look(snow_material);
+}
+
+float PhysXHair3D::get_sun_bleaching() const {
+	return sun_bleaching;
+}
+
 void PhysXHair3D::set_melanin_redness(float p_redness) {
 	melanin_redness = CLAMP(p_redness, 0.0f, 1.0f);
 	if (built) {
@@ -2846,6 +2920,10 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_tip_width"), &PhysXHair3D::get_tip_width);
 	ClassDB::bind_method(D_METHOD("set_melanin", "melanin"), &PhysXHair3D::set_melanin);
 	ClassDB::bind_method(D_METHOD("get_melanin"), &PhysXHair3D::get_melanin);
+	ClassDB::bind_method(D_METHOD("set_grey_ratio", "ratio"), &PhysXHair3D::set_grey_ratio);
+	ClassDB::bind_method(D_METHOD("get_grey_ratio"), &PhysXHair3D::get_grey_ratio);
+	ClassDB::bind_method(D_METHOD("set_sun_bleaching", "amount"), &PhysXHair3D::set_sun_bleaching);
+	ClassDB::bind_method(D_METHOD("get_sun_bleaching"), &PhysXHair3D::get_sun_bleaching);
 	ClassDB::bind_method(D_METHOD("set_melanin_redness", "redness"), &PhysXHair3D::set_melanin_redness);
 	ClassDB::bind_method(D_METHOD("get_melanin_redness"), &PhysXHair3D::get_melanin_redness);
 	ClassDB::bind_method(D_METHOD("set_roughness", "roughness"), &PhysXHair3D::set_roughness);
@@ -2962,6 +3040,8 @@ void PhysXHair3D::_bind_methods() {
 	ADD_GROUP("Look", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melanin", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_melanin", "get_melanin");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "melanin_redness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_melanin_redness", "get_melanin_redness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "grey_ratio", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_grey_ratio", "get_grey_ratio");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sun_bleaching", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_sun_bleaching", "get_sun_bleaching");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radial_roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_radial_roughness", "get_radial_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hair_shading"), "set_hair_shading", "is_hair_shading");

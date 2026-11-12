@@ -890,6 +890,26 @@ with deep shadows on): bench `--hair=near` hair 28.5 against 28.4 before; the ne
 against 38.3; the ground beside 53.4 against 63.4. Cost: one more depth-only draw of the strands per
 shadow cascade (the LOD share applies), not measured on the cloud (no GPU).
 
+## Stage 2s: grey hairs and sun-bleached lengths
+
+Real heads are not one colour. How others do it: Unreal's groom carries a per-strand seed and root
+and tip colours for the material to vary; Frostbite and the Pixar/Weta hair shaders vary melanin per
+strand (Chiang et al. 2016's melanin parametrisation, which the strands already use). The causes:
+
+- Grey hair (canities): follicles stop making melanin, and the strand grows with only the keratin's
+  own faint yellow absorption. Grey heads are a mix, strand by strand, so grey reads as salt and
+  pepper, not as a lighter colour.
+- Sun bleaching: UV and visible light break eumelanin down faster than pheomelanin (Nogueira and
+  Joekes 2004, J. Photochem. Photobiol. B 74), so hair lightens and warms. The lengths that have
+  grown out longest, toward the tips, have had the most sun.
+
+Ours: `grey_ratio` (share of strands with no melanin; each strand picks by its own seed) and
+`sun_bleaching` (0..1: from a fifth of the way down to the tips, eumelanin falls by up to 80% and
+pheomelanin by 30%). The fibre's absorption and its mass colour (d'Eon et al. 2011) are computed
+per fragment, so the path tracer's hair BSDF gets the same fibre. Cards mix the grey share into each
+clump's colour. Both 0 by default; the strands' look is then unchanged (bench `--hair=near` the
+same). Bench tokens `grey` (0.17) and `bleach` (0.8).
+
 ## Stage 2q: hair resting on cloth
 
 Long hair lies on a collar, a hood or a coat's shoulders, and the cloth there moves. The collision
