@@ -699,6 +699,8 @@ func _strands_sim() -> void:
 	h.lod_enabled = not hair.contains("nolod")
 	h.volume_enabled = not hair.contains("novolume")
 	h.deep_shadows = not hair.contains("nodeep")
+	# "nohairshadow": the strands cast no shadow (cast_hair_shadows off).
+	h.cast_hair_shadows = not hair.contains("nohairshadow")
 	h.strand_collision = not hair.contains("nocollide")
 	if hair.contains("nosimplify"):
 		# Every groomed point drawn (simplify_tolerance 0).
