@@ -58,7 +58,7 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Distance LOD: fewer, wider strands far away, with the same look.*
 
-- **Hair cards for crowds** (`cards_enabled`, off by default): distant strand hair can switch to textured cards baked from its own groom, simulating only its guides; raster only, path tracing keeps the strands.
+- **Hair cards for crowds** (`cards_enabled`, off by default; `card_screen_size`): strand hair that gets small on screen switches to textured cards baked from its own groom, simulating only its guides, so close-ups and zoomed cameras keep the strands; raster only, path tracing keeps the strands.
 - **Motion vectors for strands**: TAA, FSR 2 and DLSS follow moving hair instead of smearing it; shaders get `PREVIOUS_FRAME` and `render_mode alpha_motion_vectors`.
 
   ![Moving strand hair: motion vectors before and after, then TAA before and after](media/hair-motion-vectors.jpg)

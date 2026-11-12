@@ -878,7 +878,7 @@
     "wind_exposure"
    ],
    "note": "",
-   "what": "tall falls break up into a falling column of clumps slowed by the air, inside a spray veil and soft mist.",
+   "what": "tall falls break up into a falling column of clumps slowed by the air, inside a spray veil and soft mist; where the face leans into the jet, the fall keeps to the rock and fans out down it.",
    "page": "water",
    "title": "Water",
    "topic": "Currents and rivers"
@@ -1028,10 +1028,11 @@
   {
    "name": "Hair cards for crowds",
    "settings": [
-    "cards_enabled"
+    "cards_enabled",
+    "card_screen_size"
    ],
    "note": "",
-   "what": "distant strand hair can switch to textured cards baked from its own groom, simulating only its guides; raster only, path tracing keeps the strands.",
+   "what": "strand hair that gets small on screen switches to textured cards baked from its own groom, simulating only its guides, so close-ups and zoomed cameras keep the strands; raster only, path tracing keeps the strands.",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"
