@@ -940,6 +940,17 @@
    "topic": "Shading"
   },
   {
+   "name": "Hair shadows",
+   "settings": [
+    "cast_hair_shadows"
+   ],
+   "note": "",
+   "what": "raster strand hair casts shadows on the face, body and ground.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Shading"
+  },
+  {
    "name": "Custom hair shaders",
    "settings": [
     "HAIR",
