@@ -1363,6 +1363,439 @@ bool TerrainGenerator3D::generate() {
 		}
 		_bucket_channels();
 	};
+	// Braided outwash: below the last glaciers the meltwater's gravel spreads over a wide flat floor and splits round
+	// shifting bars (a sandur or valley train). Reaches above Leopold and Wolman's (1957) braiding threshold with ice in
+	// their catchment get a braidplain about six widths across, graded flat across, and Murray and Paola's (1994)
+	// cellular braided river runs over it for outwash_age years on a grid straightened along the reach: water shares
+	// out to the three cells below by slope^0.5, carries gravel as (Q S)^2.5 and lets the banks fall in sideways.
+	// The relief it leaves (channels and bars, scaled to the river's depth) is laid on the full-resolution ground; the
+	// water takes the strongest thread.
+	auto outwash_pass = [&]() {
+		last_braid_count = 0;
+		if (outwash_age <= 0.0 || glacial_ice.size() != uint32_t(n)) {
+			return;
+		}
+		const double c = double(cell_size);
+		const Vector2 world0 = result_rect.position;
+		LocalVector<int32_t> rcv, order;
+		LocalVector<double> fill, acc, ice;
+		rcv.resize(n);
+		order.resize(n);
+		fill.resize(n);
+		{
+			LocalVector<double> keep;
+			keep.resize(n);
+			memcpy(keep.ptr(), h.ptr(), sizeof(double) * n);
+			sp.route();
+			memcpy(fill.ptr(), h.ptr(), sizeof(double) * n);
+			memcpy(h.ptr(), keep.ptr(), sizeof(double) * n);
+			for (int i = 0; i < n; i++) {
+				rcv[i] = sp.b.receiver[i] == i ? -1 : sp.b.receiver[i];
+				order[i] = sp.b.stack[i];
+			}
+		}
+		acc.resize(n);
+		ice.resize(n);
+		for (int i = 0; i < n; i++) {
+			acc[i] = c * c + (water_fine.is_empty() ? 0.0 : water_fine[i]);
+			ice[i] = glacial_ice[i] > 2.0f ? acc[i] : 0.0; // a glacier coming in from beyond the map brings its meltwater too
+		}
+		for (int k = int(order.size()) - 1; k >= 0; k--) {
+			const int i = order[k];
+			if (rcv[i] >= 0) {
+				acc[rcv[i]] += acc[i];
+				// A lake on the way keeps the meltwater's gravel: the river out of it runs clear and does not braid.
+				if (fill[i] - h[i] < 0.5) {
+					ice[rcv[i]] += ice[i];
+				}
+			}
+		}
+		if (meander_cell.size() != uint32_t(n)) {
+			meander_cell.resize(n);
+			memset(meander_cell.ptr(), 0, n);
+		}
+		if (channel_of_cell.size() != uint32_t(n)) {
+			channel_of_cell.resize(n);
+			for (int i = 0; i < n; i++) {
+				channel_of_cell[i] = -1;
+			}
+		}
+		const double min_area = 2.0e6;
+		LocalVector<uint8_t> used;
+		used.resize(n);
+		memset(used.ptr(), 0, n);
+		LocalVector<int32_t> up_count;
+		up_count.resize(n);
+		memset(up_count.ptr(), 0, sizeof(int32_t) * n);
+		for (int i = 0; i < n; i++) {
+			if (rcv[i] >= 0 && acc[i] >= min_area && acc[rcv[i]] >= min_area) {
+				up_count[rcv[i]]++;
+			}
+		}
+		uint32_t rng = uint32_t(seed) * 0x2545F491u + 0x7F4A7C15u;
+		auto rnd = [&]() {
+			rng ^= rng << 13;
+			rng ^= rng >> 17;
+			rng ^= rng << 5;
+			return double(rng) / 4294967296.0;
+		};
+		struct Reach {
+			LocalVector<int32_t> cells;
+			double w = 10.0;
+		};
+		LocalVector<Reach> reaches;
+		for (int head = 0; head < n; head++) {
+			if (acc[head] < min_area || up_count[head] != 0 || used[head]) {
+				continue;
+			}
+			LocalVector<int32_t> path;
+			LocalVector<double> dist;
+			for (int i = head; i >= 0 && !used[i]; i = rcv[i]) {
+				used[i] = 1;
+				if (sp.b.outlet && sp.b.outlet[i]) {
+					break;
+				}
+				if (!path.is_empty()) {
+					const int p0 = path[path.size() - 1];
+					const int dx = i % nx - p0 % nx, dz = i / nx - p0 / nx;
+					dist.push_back(dist[dist.size() - 1] + (dx != 0 && dz != 0 ? Math::SQRT2 : 1.0) * c);
+				} else {
+					dist.push_back(0.0);
+				}
+				path.push_back(i);
+			}
+			const int pn = int(path.size());
+			LocalVector<uint8_t> flags;
+			flags.resize(pn);
+			for (int k = 0; k < pn; k++) {
+				const int k0 = MAX(k - 2, 0), k1 = MIN(k + 2, pn - 1);
+				const int i = path[k];
+				const double qm = MAX(acc[i] * 6.0e-8, 0.01);
+				const double S = k1 > k0 ? (h[path[k0]] - h[path[k1]]) / (dist[k1] - dist[k0]) : 0.0;
+				// Above the braiding line but not a torrent, fed by ice, out of the ice, dry, above the sea, not meandering.
+				double sm = 0.0;
+				for (int t = k0; t <= k1; t++) {
+					sm += sed[path[t]];
+				}
+				// Gravel enough to braid: meltwater from ice upstream, or the thick fill of a fan (fans' streams braid,
+				// Blair and McPherson 1994).
+				const bool gravel = ice[i] >= 0.05 * acc[i] || sm / (k1 - k0 + 1) > 1.0;
+				flags[k] = acc[i] >= min_area && S >= 0.012 * Math::pow(qm, -0.44) && S < 0.05 && gravel && glacial_ice[i] < 1.0f && fill[i] - h[i] < 0.5 && h[i] > double(sea_level) + 1.5 && !meander_cell[i];
+			}
+			for (int k = 0, last = -1; k < pn; k++) {
+				if (flags[k]) {
+					if (last >= 0 && k - last - 1 <= 5) {
+						for (int t = last + 1; t < k; t++) {
+							flags[t] = 1;
+						}
+					}
+					last = k;
+				}
+			}
+			LocalVector<int32_t> run;
+			for (int k = 0; k <= pn; k++) {
+				if (k < pn && flags[k] && !meander_cell[path[k]]) {
+					run.push_back(path[k]);
+				} else {
+					if (run.size() >= 6) {
+						Reach r;
+						r.cells = run;
+						r.w = MAX(double(river_width_coefficient) * Math::sqrt(acc[run[run.size() - 1]] * 6.0e-8), 4.0);
+						reaches.push_back(r);
+					}
+					run.clear();
+				}
+			}
+		}
+		for (Reach &rc : reaches) {
+			const double w = rc.w;
+			const double half = CLAMP(6.0 * w, 3.0 * c, 400.0);
+			const double ds = CLAMP(0.25 * w, 2.0, 8.0);
+			const double depth = CLAMP(0.06 * w, 0.5, 2.0);
+			// Centre line: the D8 path smoothed, resampled at ds; the floor's level along it smoothed and never rising.
+			LocalVector<Vector2> cl;
+			for (int32_t i : rc.cells) {
+				cl.push_back(Vector2((i % nx) * c, (i / nx) * c));
+			}
+			for (int pass = 0; pass < 6; pass++) {
+				LocalVector<Vector2> q;
+				q = cl;
+				for (uint32_t k = 1; k + 1 < cl.size(); k++) {
+					q[k] = (cl[k - 1] + cl[k] * 2.0f + cl[k + 1]) * 0.25f;
+				}
+				cl = q;
+			}
+			LocalVector<double> lvl;
+			const int cn = int(rc.cells.size());
+			lvl.resize(cn);
+			for (int k = 0; k < cn; k++) {
+				double sm = 0.0;
+				int cnt = 0;
+				for (int t = MAX(k - 3, 0); t <= MIN(k + 3, cn - 1); t++) {
+					sm += h[rc.cells[t]];
+					cnt++;
+				}
+				lvl[k] = sm / cnt;
+				if (k > 0) {
+					lvl[k] = MIN(lvl[k], lvl[k - 1] - 1e-4 * c);
+				}
+			}
+			LocalVector<Vector2> line;
+			LocalVector<double> lz, sacc;
+			line.push_back(cl[0]);
+			lz.push_back(lvl[0]);
+			sacc.push_back(0.0);
+			{
+				double carry = 0.0;
+				for (int k = 1; k < cn; k++) {
+					const Vector2 a = cl[k - 1], b = cl[k];
+					const double L = a.distance_to(b);
+					double t = ds - carry;
+					while (t <= L) {
+						line.push_back(a + (b - a) * real_t(t / L));
+						lz.push_back(Math::lerp(lvl[k - 1], lvl[k], t / MAX(L, 1e-9)));
+						sacc.push_back(sacc[sacc.size() - 1] + ds);
+						t += ds;
+					}
+					carry = L - (t - ds);
+				}
+			}
+			const int R = int(line.size());
+			if (R < 8) {
+				continue;
+			}
+			LocalVector<Vector2> nrm;
+			nrm.resize(R);
+			for (int k = 0; k < R; k++) {
+				const Vector2 d = (line[MIN(k + 1, R - 1)] - line[MAX(k - 1, 0)]).normalized();
+				nrm[k] = Vector2(-d.y, d.x);
+			}
+			const double S = MAX((lz[0] - lz[R - 1]) / MAX(sacc[R - 1], 1.0), 1e-3);
+			// Grade the floor on the coarse grid: flat across, at the centre line's level, lowering only; the floor is
+			// bare gravel (no soil, read as loose stones by the ground) and the fan backfill leaves it open.
+			for (int k = 0; k + 1 < R; k++) {
+				const Vector2 a = line[k], b = line[k + 1];
+				const double hh = half + 0.5 * c;
+				const int x0 = MAX(int((MIN(a.x, b.x) - hh) / c), 0), x1 = MIN(int((MAX(a.x, b.x) + hh) / c) + 1, nx - 1);
+				const int z0 = MAX(int((MIN(a.y, b.y) - hh) / c), 0), z1 = MIN(int((MAX(a.y, b.y) + hh) / c) + 1, ny - 1);
+				const Vector2 ab = b - a;
+				const double l2 = MAX(double(ab.length_squared()), 1e-9);
+				for (int z = z0; z <= z1; z++) {
+					for (int x = x0; x <= x1; x++) {
+						const Vector2 p(x * c, z * c);
+						const double tt = CLAMP(double((p - a).dot(ab)) / l2, 0.0, 1.0);
+						const double d = p.distance_to(a + ab * real_t(tt));
+						if (d > hh) {
+							continue;
+						}
+						const int i = z * nx + x;
+						if (sp.b.outlet && sp.b.outlet[i]) {
+							continue;
+						}
+						const double level = Math::lerp(lz[k], lz[k + 1], tt);
+						// The floor's edge eases up into the valley side over the last cell.
+						const double edge = CLAMP((d - half) / (0.5 * c), 0.0, 1.0);
+						const double target = level + edge * MAX(h[i] - level, 0.0);
+						if (h[i] > target) {
+							sed[i] = MAX(sed[i] - (h[i] - target), 0.0);
+							h[i] = target;
+						}
+						meander_cell[i] = 1;
+						if (d <= half) {
+							if (scree_cover.size() != uint32_t(n)) {
+								scree_cover.resize(n);
+								memset(scree_cover.ptr(), 0, sizeof(float) * n);
+							}
+							scree_cover[i] = 1.0f;
+						}
+					}
+				}
+			}
+			// Murray and Paola's cellular braided river on the straightened floor: rows down the reach, columns across.
+			const int C = MAX(int(2.0 * half / ds) + 1, 5);
+			const double dn = 2.0 * half / double(C - 1);
+			LocalVector<double> z, Q, Qn, qsin, qsout;
+			z.resize(R * C);
+			Q.resize(R * C);
+			Qn.resize(R * C);
+			qsin.resize(R * C);
+			qsout.resize(R * C);
+			for (int r = 0; r < R; r++) {
+				for (int cc = 0; cc < C; cc++) {
+					z[r * C + cc] = -S * r * ds + (rnd() - 0.5) * 0.02 * depth;
+				}
+			}
+			const double dg = Math::sqrt(ds * ds + dn * dn);
+			const double kl = 0.3; // bank collapse into a channel, per unit lateral slope (MP's lateral transport)
+			const int iters = CLAMP(int(outwash_age / 5.0), 60, 900);
+			for (int it = 0; it < iters; it++) {
+				memset(Q.ptr(), 0, sizeof(double) * R * C);
+				memset(qsin.ptr(), 0, sizeof(double) * R * C);
+				memset(qsout.ptr(), 0, sizeof(double) * R * C);
+				// The water comes in over the middle half of the top row, a little unevenly.
+				for (int cc = C / 4; cc <= 3 * C / 4; cc++) {
+					Q[cc] = 0.5 + rnd();
+				}
+				for (int r = 0; r < R; r++) {
+					for (int cc = 0; cc < C; cc++) {
+						const int i = r * C + cc;
+						const double q = Q[i];
+						if (q <= 0.0) {
+							continue;
+						}
+						double s[3], wgt[3];
+						int nb[3];
+						double sum = 0.0;
+						bool any_down = false;
+						for (int t = 0; t < 3; t++) {
+							const int k = cc + t - 1;
+							nb[t] = (k >= 0 && k < C) ? k : -1;
+							if (nb[t] < 0) {
+								s[t] = 0.0;
+								continue;
+							}
+							const double below = r + 1 < R ? z[(r + 1) * C + k] : z[r * C + k] - S * ds;
+							s[t] = (z[i] - below) / (t == 1 ? ds : dg);
+							any_down = any_down || s[t] > 0.0;
+						}
+						for (int t = 0; t < 3; t++) {
+							wgt[t] = nb[t] < 0 ? 0.0 : (any_down ? (s[t] > 0.0 ? Math::sqrt(s[t]) : 0.0) : 1.0 / Math::sqrt(MAX(-s[t], 1e-6)));
+							sum += wgt[t];
+						}
+						if (sum <= 0.0) {
+							continue;
+						}
+						for (int t = 0; t < 3; t++) {
+							if (wgt[t] <= 0.0) {
+								continue;
+							}
+							const double qk = q * wgt[t] / sum;
+							const double qs = Math::pow(MAX(qk * s[t], 0.0), 2.5);
+							qsout[i] += qs;
+							if (r + 1 < R) {
+								Q[(r + 1) * C + nb[t]] += qk;
+								qsin[(r + 1) * C + nb[t]] += qs;
+							}
+						}
+					}
+				}
+				// The top row is fed what it passes on (the river brings as much gravel as it can carry there).
+				for (int cc = 0; cc < C; cc++) {
+					qsin[cc] = qsout[cc];
+				}
+				double mx = 0.0;
+				for (int i = 0; i < R * C; i++) {
+					mx = MAX(mx, Math::abs(qsin[i] - qsout[i]));
+				}
+				if (mx <= 0.0) {
+					break;
+				}
+				const double dt = 0.02 * S * ds / mx; // no cell moves more than a fiftieth of a row's drop a step
+				for (int i = 0; i < R * C; i++) {
+					z[i] += (qsin[i] - qsout[i]) * dt;
+				}
+				// Banks fall in sideways where the water runs below them.
+				for (int r = 1; r < R; r++) {
+					for (int cc = 0; cc + 1 < C; cc++) {
+						const int a = r * C + cc, b = a + 1;
+						const double f = kl * (z[a] - z[b]) / dn * (Q[a] + Q[b] > 0.0 ? 1.0 : 0.0) * 0.02 * S * ds;
+						z[a] -= f;
+						z[b] += f;
+					}
+				}
+				memcpy(Qn.ptr(), Q.ptr(), sizeof(double) * R * C);
+			}
+			// The relief against the plane: each row's mean taken out, scaled so the deepest channels are the river's
+			// depth, bars standing up to 0.4 of it; fading out over the floor's outer fifth.
+			LocalVector<float> rel;
+			rel.resize(R * C);
+			LocalVector<double> devs;
+			for (int r = 0; r < R; r++) {
+				double m = 0.0;
+				for (int cc = 0; cc < C; cc++) {
+					m += z[r * C + cc];
+				}
+				m /= C;
+				for (int cc = 0; cc < C; cc++) {
+					rel[r * C + cc] = float(z[r * C + cc] - m);
+					devs.push_back(z[r * C + cc] - m);
+				}
+			}
+			devs.sort();
+			const double low = -devs[uint32_t(0.03 * devs.size())];
+			const double sc = low > 1e-9 ? depth / low : 0.0;
+			for (int r = 0; r < R; r++) {
+				const double ends = MIN(MIN(r * ds, (R - 1 - r) * ds) / (2.0 * w), 1.0); // eased in and out at the ends
+				for (int cc = 0; cc < C; cc++) {
+					const double u = Math::abs(-half + cc * dn) / half;
+					const double fade = 1.0 - CLAMP((u - 0.8) / 0.2, 0.0, 1.0);
+					rel[r * C + cc] = float(CLAMP(double(rel[r * C + cc]) * sc, -depth, 0.4 * depth) * fade * ends);
+				}
+			}
+			Channel bp;
+			bp.half_width = real_t(0.5 * half); // the buckets reach twice this: the whole floor
+			bp.braid_half = real_t(half);
+			bp.braid_cols = C;
+			bp.braid = rel;
+			for (int k = 0; k < R; k++) {
+				bp.points.push_back(world0 + line[k]);
+				bp.bed.push_back(0.0f);
+				bp.dep.push_back(0.0f);
+			}
+			channels.push_back(std::move(bp));
+			// The water's thread: from the strongest inflow down the strongest flow of the last step.
+			int col = C / 2;
+			{
+				double best = -1.0;
+				for (int cc = 0; cc < C; cc++) {
+					if (Qn[cc] > best) {
+						best = Qn[cc];
+						col = cc;
+					}
+				}
+			}
+			Channel th;
+			th.reach = true;
+			th.braid_thread = true;
+			th.half_width = real_t(MAX(0.5 * w, 2.0));
+			th.depth = real_t(0.5 * depth);
+			for (int r = 0; r < R; r++) {
+				if (r > 0) {
+					int nb = col;
+					double best = -1.0;
+					for (int t = -1; t <= 1; t++) {
+						const int k = col + t;
+						if (k >= 0 && k < C && Qn[r * C + k] > best) {
+							best = Qn[r * C + k];
+							nb = k;
+						}
+					}
+					col = nb;
+				}
+				const double off = -half + col * dn;
+				th.points.push_back(world0 + line[r] + nrm[r] * real_t(off));
+				th.bed.push_back(rel[r * C + col]); // relative to the floor until the ground is final
+				th.dep.push_back(real_t(0.5 * depth));
+			}
+			for (int pass = 0; pass < 2; pass++) {
+				LocalVector<Vector2> q;
+				q = th.points;
+				for (uint32_t k = 1; k + 1 < th.points.size(); k++) {
+					q[k] = (th.points[k - 1] + th.points[k] * 2.0f + th.points[k + 1]) * 0.25f;
+				}
+				th.points = q;
+			}
+			th.points[0] = world0 + line[0];
+			th.foot_cell = rc.cells[rc.cells.size() - 1];
+			channels.push_back(std::move(th));
+			const int ti = int(channels.size()) - 1;
+			for (int32_t i : rc.cells) {
+				channel_of_cell[i] = ti;
+			}
+			last_braid_count++;
+		}
+		_bucket_channels();
+	};
 	if (glacial && glacial_final > 0.0) {
 		const uint64_t tg = OS::get_singleton()->get_ticks_usec();
 		glac.erode(h.ptr(), nx, ny, cell_size, double(glacial_final), sed.ptr(), sp.b.outlet, sill_fine.is_empty() ? nullptr : sill_fine.ptr(), level_fine.is_empty() ? nullptr : level_fine.ptr(), glacial_scale(nx, ny, cell_size));
@@ -1669,11 +2102,13 @@ bool TerrainGenerator3D::generate() {
 		}
 		scree_pass();
 			meander_pass();
+			outwash_pass();
 			unfilled.resize(n);
 		memcpy(unfilled.ptr(), h.ptr(), sizeof(double) * n);
 	} else {
 		scree_pass();
 		meander_pass();
+		outwash_pass();
 	}
 	last_glacial_msec = real_t(double(glacial_usec) / 1000.0);
 	sill_cells.clear();
@@ -1812,6 +2247,9 @@ bool TerrainGenerator3D::generate() {
 	}
 	// The meandered channels into the same heights: their floodplain level scaled like the ground, their depth kept.
 	for (Channel &ch : channels) {
+		if (ch.braid_thread || !ch.braid.is_empty()) {
+			continue; // relative to the floor
+		}
 		for (uint32_t k = 0; k < ch.bed.size(); k++) {
 			const double plain = double(ch.bed[k]) + double(ch.dep[k]);
 			ch.bed[k] = real_t(sea_level + (plain - sea_level) * scale + height_offset - double(ch.dep[k]));
@@ -1870,6 +2308,21 @@ bool TerrainGenerator3D::generate() {
 		// not climb out of it.
 		chan_buckets.clear();
 		for (Channel &ch : channels) {
+			if (!ch.braid.is_empty()) {
+				continue;
+			}
+			if (ch.braid_thread) {
+				// The thread lies in the floor's relief: its bed the final ground there plus that relief, never rising.
+				const uint32_t last = ch.points.size() - 1;
+				const real_t step = 0.0005f * ch.points[0].distance_to(ch.points[MIN(last, 1u)]);
+				for (uint32_t k = 0; k <= last; k++) {
+					ch.bed[k] = _ground(ch.points[k].x, ch.points[k].y) + ch.bed[k] - ch.dep[k] * 0.6f;
+					if (k > 0) {
+						ch.bed[k] = MIN(ch.bed[k], ch.bed[k - 1] - step);
+					}
+				}
+				continue;
+			}
 			if (!ch.reach) {
 				for (uint32_t k = 0; k < ch.bed.size(); k++) {
 					ch.bed[k] += _sample(heights, ch.points[k].x, ch.points[k].y) - _sample(pre_coast, ch.points[k].x, ch.points[k].y);
@@ -2321,6 +2774,34 @@ float TerrainGenerator3D::_apply_channels(real_t p_x, real_t p_z, float p_g) con
 	const Vector2 pp(p_x, p_z);
 	for (int ci : chan_buckets[bz * chan_bx + bx]) {
 		const Channel &ch = channels[ci];
+		if (!ch.braid.is_empty()) {
+			// A braidplain: the nearest row along it and the signed offset across, its relief bilinear.
+			real_t bd = 1e30f, off = 0.0, row = 0.0;
+			for (uint32_t k = 1; k < ch.points.size(); k++) {
+				const Vector2 a = ch.points[k - 1], b = ch.points[k];
+				const Vector2 ab = b - a;
+				const real_t l2 = MAX(ab.length_squared(), real_t(1e-6));
+				const real_t t = CLAMP((pp - a).dot(ab) / l2, real_t(0.0), real_t(1.0));
+				const Vector2 q = pp - (a + ab * t);
+				const real_t dd = q.length_squared();
+				if (dd < bd) {
+					bd = dd;
+					row = real_t(k - 1) + t;
+					off = (ab.x * q.y - ab.y * q.x) / Math::sqrt(l2);
+				}
+			}
+			if (off <= -ch.braid_half || off >= ch.braid_half) {
+				continue;
+			}
+			const int C = ch.braid_cols;
+			const int R = int(ch.points.size());
+			const real_t fc = (off + ch.braid_half) / (2.0f * ch.braid_half) * real_t(C - 1);
+			const int c0 = CLAMP(int(fc), 0, C - 2), r0 = CLAMP(int(row), 0, R - 2);
+			const real_t tc = CLAMP(fc - c0, real_t(0.0), real_t(1.0)), tr = CLAMP(row - r0, real_t(0.0), real_t(1.0));
+			const float v = Math::lerp(Math::lerp(ch.braid[r0 * C + c0], ch.braid[r0 * C + c0 + 1], float(tc)), Math::lerp(ch.braid[(r0 + 1) * C + c0], ch.braid[(r0 + 1) * C + c0 + 1], float(tc)), float(tr));
+			g += v;
+			continue;
+		}
 		real_t best = 1e30f, bed = 0.0, dep = 0.0;
 		for (uint32_t k = 1; k < ch.points.size(); k++) {
 			const Vector2 a = ch.points[k - 1], b = ch.points[k];
@@ -4014,6 +4495,26 @@ void TerrainGenerator3D::_cut_tails() {
 	if (any) {
 		_bucket_channels();
 	}
+}
+
+// The braidplains outwash_age made: each a Dictionary with its centre line (world x z) and its half width (m), for
+// placement (no plants on the active gravel) and the water.
+Array TerrainGenerator3D::get_braidplains() const {
+	Array out;
+	for (const Channel &ch : channels) {
+		if (ch.braid.is_empty()) {
+			continue;
+		}
+		PackedVector2Array line;
+		for (const Vector2 &p : ch.points) {
+			line.push_back(p);
+		}
+		Dictionary d;
+		d["line"] = line;
+		d["half_width"] = ch.braid_half;
+		out.push_back(d);
+	}
+	return out;
 }
 
 Vector3 TerrainGenerator3D::_cell_position(int p_cell) const {
@@ -5803,6 +6304,10 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_meander_age"), &TerrainGenerator3D::get_meander_age);
 	ClassDB::bind_method(D_METHOD("get_last_meander_count"), &TerrainGenerator3D::get_last_meander_count);
 	ClassDB::bind_method(D_METHOD("get_last_oxbow_count"), &TerrainGenerator3D::get_last_oxbow_count);
+	ClassDB::bind_method(D_METHOD("set_outwash_age", "years"), &TerrainGenerator3D::set_outwash_age);
+	ClassDB::bind_method(D_METHOD("get_outwash_age"), &TerrainGenerator3D::get_outwash_age);
+	ClassDB::bind_method(D_METHOD("get_last_braid_count"), &TerrainGenerator3D::get_last_braid_count);
+	ClassDB::bind_method(D_METHOD("get_braidplains"), &TerrainGenerator3D::get_braidplains);
 	ClassDB::bind_method(D_METHOD("set_gorge_rate", "rate"), &TerrainGenerator3D::set_gorge_rate);
 	ClassDB::bind_method(D_METHOD("get_gorge_rate"), &TerrainGenerator3D::get_gorge_rate);
 	ClassDB::bind_method(D_METHOD("set_fan_backfill", "enable"), &TerrainGenerator3D::set_fan_backfill);
@@ -5983,6 +6488,7 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "moraine_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_moraine_age", "get_moraine_age");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scree_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_scree_age", "get_scree_age");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "meander_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_meander_age", "get_meander_age");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "outwash_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_outwash_age", "get_outwash_age");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_rate", PROPERTY_HINT_RANGE, "0,0.1,0.0001,or_greater"), "set_gorge_rate", "get_gorge_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_cell", PROPERTY_HINT_RANGE, "0,32,0.5,suffix:m"), "set_spray_cell", "get_spray_cell");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sky_occlusion"), "set_sky_occlusion", "is_sky_occlusion_enabled");

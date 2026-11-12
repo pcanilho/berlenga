@@ -289,7 +289,21 @@ func _ready() -> void:
 			_log("geo %dx%d till cells %d" % [gi.get_width(), gi.get_height(), nt])
 		if args.has("surface-dump"):
 			# The water surface each river solved along its course, against the ground (dry stretches show depth 0).
-			var rv = rivers[int(args.get("surface-dump", "0"))]
+			var ri := int(args.get("surface-dump", "0"))
+			if ri < 0:
+				# The river passing nearest the --look point.
+				var lp := _vec3_arg(args.get("look", "0,0,0"))
+				var bd := 1e30
+				for k in rivers.size():
+					var cvk: Curve3D = rivers[k].curve
+					for j in cvk.point_count:
+						var q: Vector3 = rivers[k].global_transform * cvk.get_point_position(j)
+						var dq := Vector2(q.x - lp.x, q.z - lp.z).length()
+						if dq < bd:
+							bd = dq
+							ri = k
+				_log("  surface-dump: river %d passes %.0f m from the look point" % [ri, bd])
+			var rv = rivers[ri]
 			var cv: Curve3D = rv.curve
 			for k in range(0, cv.point_count, 2):
 				var p: Vector3 = rv.global_transform * cv.get_point_position(k)
@@ -456,6 +470,7 @@ func _generate() -> void:
 	gen.moraine_age = float(args.get("moraine-age", "0"))
 	gen.scree_age = float(args.get("scree-age", "0"))
 	gen.meander_age = float(args.get("meander-age", "0"))
+	gen.outwash_age = float(args.get("outwash-age", "0"))
 	gen.fan_backfill = not args.has("no-backfill")
 	if args.has("glacial"):
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
@@ -581,6 +596,11 @@ func _generate() -> void:
 		_log("moraines: %.0f m3 of debris" % gen.get_last_moraine_volume())
 	if gen.meander_age > 0.0:
 		_log("meanders: %d reaches, %d oxbows" % [gen.get_last_meander_count(), gen.get_last_oxbow_count()])
+	if gen.outwash_age > 0.0:
+		_log("braided outwash: %d reaches" % gen.get_last_braid_count())
+		for bp in gen.get_braidplains():
+			var ln: PackedVector2Array = bp["line"]
+			_log("  braidplain %s to %s, %.0f m wide" % [str(ln[0]), str(ln[ln.size() - 1]), 2.0 * float(bp["half_width"])])
 	if gen.scree_age > 0.0:
 		_log("scree: %.0f m3" % gen.get_last_scree_volume())
 	if gen.glacial_enabled:

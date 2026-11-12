@@ -236,6 +236,8 @@ private:
 	double meander_age = 0.0; // years the rivers on flat alluvial floors have meandered; 0 none
 	int last_meander_count = 0; // reaches meandered by the last generate()
 	int last_oxbow_count = 0;
+	double outwash_age = 0.0; // years the glacial outwash rivers have braided; 0 none
+	int last_braid_count = 0;
 	double gorge_rate = 0.013; // m a year per sqrt(m3/s)
 	LocalVector<Gorge> gorges;
 	bool fall_lips = true;
@@ -253,6 +255,12 @@ private:
 		real_t half_width = 5.0, depth = 1.0;
 		bool reach = false; // the river's course (else an oxbow)
 		int foot_cell = -1; // a reach's last cell: the river's course below it is cut once the rivers are routed
+		// A braidplain (outwash_age): relief rows along the points, braid_cols across braid_half each side, added to
+		// the ground; braid_thread marks the water's thread through one (its bed relative to the floor until final).
+		LocalVector<float> braid;
+		int braid_cols = 0;
+		real_t braid_half = 0.0;
+		bool braid_thread = false;
 	};
 	static constexpr real_t CHANNEL_BUCKET = 32.0;
 	LocalVector<Channel> channels;
@@ -606,6 +614,10 @@ public:
 	double get_meander_age() const { return meander_age; }
 	int get_last_meander_count() const { return last_meander_count; }
 	int get_last_oxbow_count() const { return last_oxbow_count; }
+	void set_outwash_age(double p_years) { outwash_age = MAX(p_years, 0.0); }
+	double get_outwash_age() const { return outwash_age; }
+	int get_last_braid_count() const { return last_braid_count; }
+	Array get_braidplains() const;
 	void set_gorge_rate(double p_rate) { gorge_rate = MAX(p_rate, 0.0); }
 	double get_gorge_rate() const { return gorge_rate; }
 	void set_fan_backfill(bool p_enable) { fan_backfill = p_enable; }
