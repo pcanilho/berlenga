@@ -511,8 +511,8 @@ void fragment() {
 // Hair cards (docs/ideas/hair.md, stage 2p): the card mesh drawn from the cards' own simulated
 // strands (the first slots of hair_positions). Each vertex is one side of one of a card's two
 // crossed strips at one of its points: CUSTOM0 = (texel, previous texel, next texel, side -1 or 1),
-// CUSTOM1 = the strip's axis at rest (groom space) and which strip, CUSTOM2 = the card's direction
-// at rest and the strip's half width there; UV in the atlas tile. The strip's axis turns with the
+// CUSTOM1 = the strip's axis at rest (groom space) and the other strip's half width, CUSTOM2 = the
+// card's direction at rest and the strip's half width there; UV in the atlas tile. The strip's axis turns with the
 // card's centre line. Opacity is the atlas coverage, blended as the strands are (the hair is one
 // colour, so the cards' order barely shows); shadow maps keep that share of their texels
 // (stochastic transparency, Enderton et al. 2010). Raster only: under the path tracer the hair
@@ -525,6 +525,8 @@ render_mode cull_disabled, rt_vertex_dynamic, hair_cards, alpha_motion_vectors;
 const char *HAIR_CARD_FUNCS = R"(
 uniform sampler2D card_atlas : filter_linear_mipmap, repeat_disable;
 uniform float card_clump = 0.0; // wet clumping, as the strands'
+// The scalp as a sphere (centre, radius) fitted to the strands' roots, in the hair's space (w 0: none).
+uniform vec4 card_scalp = vec4(0.0);
 varying vec3 card_across; // view space: this strip's axis (raster lighting)
 varying float card_fan; // how far the card's guides fanned apart since the groom (the card widens by it)
 
@@ -560,16 +562,37 @@ void vertex() {
 	// The clump fans out (or closes) with its guides: the card as much wider, and thinner below.
 	float half_width = CUSTOM2.w * card_fan * (1.0 - card_clump * smoothstep(0.0, 0.3, along));
 	VERTEX = p + ax * (half_width * CUSTOM0.w);
+	if (card_scalp.w > 0.0) {
+		// The card stands for a slab of strands, as wide as one strip and as thick as the other,
+		// centred on its simulated strand, which the collision keeps only just off the scalp: the
+		// slab's inner half, and a flat strip's edges over the round scalp (the sagitta,
+		// half_width^2 / (2 R)), sank into the head, and the scalp showed between the cards at the
+		// crown, where each strand on its own lies on it. Near the scalp (a sphere fitted to the
+		// roots) the card is raised until the slab clears it; elsewhere it stays put.
+		vec3 out_dir = p - card_scalp.xyz;
+		float r = length(out_dir);
+		if (r > 1e-5) {
+			out_dir /= r;
+			vec3 bx = normalize(cross(t, ax));
+			float a_out = dot(ax, out_dir);
+			float other = CUSTOM1.w * half_width / max(CUSTOM2.w, 1e-6);
+			float support = half_width * abs(a_out) + other * abs(dot(bx, out_dir));
+			float sag = half_width * half_width * (1.0 - a_out * a_out) / (2.0 * max(r, 0.5 * card_scalp.w));
+			VERTEX += out_dir * max(support + sag - (r - card_scalp.w), 0.0);
+		}
+	}
 	NORMAL = normalize(cross(ax, t));
 	TANGENT = ax;
 	BINORMAL = t;
 	strand_tangent = normalize(mat3(MODELVIEW_MATRIX) * t);
 	card_across = normalize(mat3(MODELVIEW_MATRIX) * ax);
 	if (dom_maps > 0 && !IN_PATH_TRACER && !IN_SHADOW_PASS && !PREVIOUS_FRAME) {
-		// The deep opacity maps, made from the cards' own strands (each as wide as its clump).
+		// The deep opacity maps, made from the cards' own strands (each as wide as its clump), read
+		// on the card's centre line: the strip's edges reach out of the map's hair sideways, in
+		// front of the hair toward the light, and read as lit where the clump's strands are not.
 		vec4 lt;
 		vec4 lp;
-		dom_lookup((MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz, lt, lp);
+		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, lt, lp);
 		dom_trans = lt;
 		dom_past = lp;
 	}
@@ -617,17 +640,25 @@ void fragment() {
 	// Fanned out, the same strands spread over a wider card: optical depth over the fan.
 	float coverage = 1.0 - pow(max(1.0 - texel.r, 1e-4), facing / max(card_fan, 0.5));
 	// Lit as the strands are: a fibre has no surface normal, so the ambient and reflected light
-	// take the normal facing the viewer about the strands' direction (the strands' ribbon normal;
-	// Unreal's hair does the same for its cards, Karis 2016). The card's own normal caught the sky
-	// on cards tipped up and read lighter than the strands.
-	vec3 hair_n = VIEW - light_tangent * dot(VIEW, light_tangent);
-	NORMAL = dot(hair_n, hair_n) > 1e-8 ? normalize(hair_n) : VIEW;
+	// take the strands' own ribbon frame, rebuilt here about the card's strand direction: across
+	// = T x eye (eye from the camera to the point, view space), normal = across x T, which faces
+	// away from the viewer. Facing the viewer instead, the cards took a full reflection of the sky
+	// that the strands' frame leaves out (its horizon term), and read about a fifth lighter.
+	vec3 eye = normalize(VERTEX);
+	vec3 across = cross(light_tangent, eye);
+	across = dot(across, across) > 1e-8 ? normalize(across) : card_across;
+	NORMAL = normalize(cross(across, light_tangent));
 	BINORMAL = light_tangent;
-	TANGENT = normalize(cross(light_tangent, NORMAL));
+	TANGENT = across;
 #ifdef HAIR_SCATTERING
 	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
-		// As the strands: what the fibres pass straight on (TT) is not blocked.
-		coverage *= 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		// As the strands: what the fibres pass straight on (TT) is not blocked. The strands each
+		// block that share of their own coverage, so behind n of them the light is
+		// exp(-share * total coverage); a card's coverage is already the clump's combined
+		// 1 - exp(-total), so the share applies to its optical depth, not to it (as a factor it
+		// let much more light through a dense clump than its strands do).
+		float tt_block = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
+		coverage = 1.0 - pow(max(1.0 - coverage, 1e-4), tt_block);
 	}
 #endif
 	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
@@ -1008,6 +1039,7 @@ void PhysXHair3D::_make_material() {
 		card_material->set_shader_parameter("dom_layers", HairStrandSolver::deep_shadow_layers());
 		card_material->set_shader_parameter("dom_maps", 0);
 		card_material->set_shader_parameter("card_clump", wet_look * wet_clumping);
+		card_material->set_shader_parameter("card_scalp", card_scalp);
 		_set_look(card_material);
 		card_instance->set_material_override(card_material);
 	}
@@ -1175,6 +1207,7 @@ void PhysXHair3D::_build() {
 		card_bake = HairCardBake::get_cached(key, pts, counts, card_count, samples, root_width, tip_width);
 	}
 	if (card_bake.is_valid() && card_bake->card_count > 0) {
+		card_scalp = _fit_scalp(pts, counts);
 		card_first = groom_strands;
 		const int cs = card_bake->samples;
 		slot_points = MAX(slot_points, cs); // each card strand's slot holds all its points
@@ -1223,6 +1256,17 @@ void PhysXHair3D::_build() {
 				r[(start + k) * 4 + 1] = p.y;
 				r[(start + k) * 4 + 2] = p.z;
 				r[(start + k) * 4 + 3] = k > 0 ? p.distance_to(pts[start + k - 1]) : 0.0f;
+			}
+			if (card_first > 0 && i >= card_first && n > 0) {
+				// A card's strand: the first point's w (unused) holds half the clump's thickness,
+				// the other strip's half width, which the solver keeps off the body.
+				const HairCardBake &b = **card_bake;
+				const int c = i - card_first;
+				float thick = 0.0f;
+				for (int k = 0; k < b.samples; k++) {
+					thick += b.half_width[1][c * b.samples + k];
+				}
+				r[start * 4 + 3] = thick / float(MAX(b.samples, 1));
 			}
 			start += n;
 		}
@@ -1363,6 +1407,69 @@ void PhysXHair3D::_build() {
 	_step(0.0);
 }
 
+// The scalp as a sphere through the strands' roots (an algebraic least-squares fit: |p|^2 = 2 c.p + k,
+// R^2 = k + |c|^2), for the cards' lift over it. w 0 when the roots don't fit a sphere.
+Vector4 PhysXHair3D::_fit_scalp(const PackedVector3Array &p_points, const PackedInt32Array &p_counts) {
+	double m[4][5] = {};
+	int n = 0;
+	int start = 0;
+	AABB box;
+	for (int i = 0; i < p_counts.size(); i++) {
+		if (p_counts[i] > 0 && start < p_points.size()) {
+			const Vector3 p = p_points[start];
+			const double row[4] = { 2.0 * p.x, 2.0 * p.y, 2.0 * p.z, 1.0 };
+			const double b = p.length_squared();
+			for (int r = 0; r < 4; r++) {
+				for (int c = 0; c < 4; c++) {
+					m[r][c] += row[r] * row[c];
+				}
+				m[r][4] += row[r] * b;
+			}
+			box = n == 0 ? AABB(p, Vector3()) : box.expand(p);
+			n++;
+		}
+		start += MAX(p_counts[i], 0);
+	}
+	if (n < 8) {
+		return Vector4();
+	}
+	// Gaussian elimination with partial pivoting.
+	for (int c = 0; c < 4; c++) {
+		int pivot = c;
+		for (int r = c + 1; r < 4; r++) {
+			if (Math::abs(m[r][c]) > Math::abs(m[pivot][c])) {
+				pivot = r;
+			}
+		}
+		if (Math::abs(m[pivot][c]) < 1e-12) {
+			return Vector4();
+		}
+		for (int k = 0; k < 5; k++) {
+			SWAP(m[c][k], m[pivot][k]);
+		}
+		for (int r = 0; r < 4; r++) {
+			if (r != c) {
+				const double f = m[r][c] / m[c][c];
+				for (int k = c; k < 5; k++) {
+					m[r][k] -= f * m[c][k];
+				}
+			}
+		}
+	}
+	const Vector3 centre(m[0][4] / m[0][0], m[1][4] / m[1][1], m[2][4] / m[2][2]);
+	const double r2 = m[3][4] / m[3][3] + (double)centre.length_squared();
+	const float size = box.get_longest_axis_size();
+	if (!(r2 > 0.0) || !Math::is_finite((float)r2)) {
+		return Vector4();
+	}
+	const float radius = (float)Math::sqrt(r2);
+	// A patch of roots too flat for a sphere (a beard, a single lock) fits a huge one: no lift.
+	if (radius > 4.0f * MAX(size, 1e-4f)) {
+		return Vector4();
+	}
+	return Vector4(centre.x, centre.y, centre.z, radius);
+}
+
 // The snow mesh (stage 2r): per strand SNOW_CLUMPS blobs of six vertices (an octahedron), placed in
 // vertex() on the strand in their slot; hidden while no snow lies on the hair.
 static constexpr int SNOW_CLUMPS = 6;
@@ -1479,7 +1586,7 @@ void PhysXHair3D::_build_cards(const AABB &p_bounds) {
 					c1[vi * 4 + 0] = ax.x;
 					c1[vi * 4 + 1] = ax.y;
 					c1[vi * 4 + 2] = ax.z;
-					c1[vi * 4 + 3] = float(strip);
+					c1[vi * 4 + 3] = b.half_width[1 - strip][i]; // the other strip's: the clump's thickness
 					c2[vi * 4 + 0] = t.x;
 					c2[vi * 4 + 1] = t.y;
 					c2[vi * 4 + 2] = t.z;

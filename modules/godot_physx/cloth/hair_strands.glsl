@@ -820,6 +820,7 @@ void main() {
 		}
 		int first = strands[id].x;
 		int n = strands[id].y;
+		float card_margin = is_card_strand(id) ? rest[first].w : 0.0; // see MODE_FOLLOW
 		vec3 lo = sdf_origin.xyz;
 		vec3 hi = sdf_origin.xyz + vec3(sdf_dims.xyz) * sdf_origin.w;
 		float h = 0.5 * sdf_origin.w;
@@ -829,7 +830,8 @@ void main() {
 				continue;
 			}
 			float d = sdf_at(p);
-			if (d >= sdf_misc.y) {
+			float margin = sdf_misc.y + card_margin;
+			if (d >= margin) {
 				continue;
 			}
 			vec3 g = vec3(sdf_at(p + vec3(h, 0, 0)) - sdf_at(p - vec3(h, 0, 0)),
@@ -838,7 +840,7 @@ void main() {
 			if (dot(g, g) < 1e-12) {
 				continue;
 			}
-			p += normalize(g) * (sdf_misc.y - d);
+			p += normalize(g) * (margin - d);
 			pos[first + i] = vec4(p, pos[first + i].w); // w: a card strand's fan (MODE_FOLLOW)
 			prev[first + i] = vec4(p, 1.0);
 		}
@@ -937,6 +939,10 @@ void main() {
 		return;
 	}
 	bool is_guide = follow[id * 2].w < 0.0;
+	// A hair card's strand is the centre of a slab of strands: it keeps half the slab's
+	// thickness (held in its first rest point's w, unused otherwise) more off the body, so the
+	// card's strands rest on it rather than half inside it.
+	float card_margin = is_card_strand(id) ? rest[first].w : 0.0;
 
 	if (pass.mode == MODE_RESET) {
 		for (int i = 0; i < n; i++) {
@@ -1006,7 +1012,7 @@ void main() {
 			}
 			for (int s = 0; s < counts.w; s++) {
 				vec3 d = p - spheres[s].xyz;
-				float r = spheres[s].w + misc.y;
+				float r = spheres[s].w + misc.y + card_margin;
 				float l2 = dot(d, d);
 				if (l2 < r * r && l2 > 1e-14) {
 					p = spheres[s].xyz + d * (r / sqrt(l2));

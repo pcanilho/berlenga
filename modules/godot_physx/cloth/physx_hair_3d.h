@@ -129,6 +129,7 @@ class PhysXHair3D : public Node3D {
 	MeshInstance3D *card_instance = nullptr;
 	Ref<ShaderMaterial> card_material;
 	Ref<HairCardBake> card_bake;
+	Vector4 card_scalp; // the scalp's sphere for the cards (centre, radius; w 0: none)
 	int card_first = 0; // the cards' strands follow the groom's in the solver; 0: no cards
 	bool card_mode = false; // drawing cards (far) instead of strands
 	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
@@ -175,6 +176,7 @@ class PhysXHair3D : public Node3D {
 	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_guide_pool = 0) const;
 	void _set_look(const Ref<ShaderMaterial> &p_material) const;
 	void _build_cards(const AABB &p_bounds);
+	static Vector4 _fit_scalp(const PackedVector3Array &p_points, const PackedInt32Array &p_counts);
 	void _build_snow(const AABB &p_bounds, const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_slot_points, int p_drawn_points);
 	int _render_points(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, PackedInt32Array &r_points) const;
 	Color _mass_color() const;
