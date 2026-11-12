@@ -161,6 +161,17 @@ float cloud_phase(float cos_theta, float p_c) {
 	return mix(henyey_greenstein(cos_theta, 0.8 * p_c), henyey_greenstein(cos_theta, -0.3 * p_c), 0.3);
 }
 
+// A new start for the march each frame, uncorrelated between frames. The reprojection draws each pixel
+// every 16th frame, so a golden-ratio step per frame (0.618 * 16 = 0.888 a revisit) gave one pixel's
+// samples nearly the same start, and their mean a fixed bias that showed as a dot pattern over each 4x4
+// block. A hash of the frame (PCG, Jarzynski and Olano 2020) is unbiased however often a pixel is drawn.
+float frame_jitter(float p_time) {
+	uint v = uint(floor(p_time * 60.0)) * 747796405u + 2891336453u;
+	uint word = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
+	word = (word >> 22u) ^ word;
+	return float(word >> 8u) * (1.0 / 16777216.0);
+}
+
 // Clouds along rd from the camera: radiance (rgb) and transmittance (a).
 // p_pixel: the angle (rad) one pixel spans. The noise is read at the pixel's footprint, t * p_pixel,
 // not at the march step: at grazing angles a step is hundreds of metres, and the shape noise read
@@ -341,7 +352,7 @@ void sky() {
 		vec3 ambient_bottom = ambient_top * 0.5 + ground_color.rgb * sun_radiance * max(l0.y, 0.0) * (1.0 - 0.7 * cloud_cover) / PI;
 		float jitter = AT_CUBEMAP_PASS ? 0.5 : fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
 #ifdef CLOUD_REPROJECTION
-		jitter = AT_CUBEMAP_PASS ? 0.5 : fract(jitter + 0.61803399 * floor(TIME * 60.0));
+		jitter = AT_CUBEMAP_PASS ? 0.5 : fract(jitter + frame_jitter(TIME));
 #endif
 		vec3 dir_dx = dFdx(EYEDIR);
 		vec3 dir_dy = dFdy(EYEDIR);
@@ -388,7 +399,7 @@ void sky() {
 		float jitter = AT_CUBEMAP_PASS ? 0.5 : fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
 #ifdef CLOUD_REPROJECTION
 		// Reprojected (half_res_reprojection): a new start each frame, which the resolve averages.
-		jitter = AT_CUBEMAP_PASS ? 0.5 : fract(jitter + 0.61803399 * floor(TIME * 60.0));
+		jitter = AT_CUBEMAP_PASS ? 0.5 : fract(jitter + frame_jitter(TIME));
 #endif
 		// One pixel's angle, from the eye direction's change to the next pixel (the pass is uniform, so
 		// the derivatives are defined here).

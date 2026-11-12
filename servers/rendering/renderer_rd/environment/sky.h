@@ -246,6 +246,7 @@ public:
 		Projection prev_projection;
 		Size2i size;
 		uint32_t frame = 0;
+		uint32_t since_reset = 0; // frames drawn since the history was last invalid
 		bool valid = false;
 
 		virtual void configure(RenderSceneBuffersRD *p_render_buffers) override { valid = false; }

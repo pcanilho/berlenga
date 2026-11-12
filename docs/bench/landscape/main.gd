@@ -236,7 +236,10 @@ func _ready() -> void:
 		var pitch := deg_to_rad(float(args["face-sun"]))
 		cam5.look_at(cam5.global_position + flat * cos(pitch) - Vector3.UP * sin(pitch))
 		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
-	var frames := int(args.get("frames", "6" if args.has("raster") else "40"))
+	# Raster: 160 frames, so the sky's reprojected clouds (one pixel of each 4x4 block a frame) have had ten
+	# samples a pixel; fewer leave the first frame's upsampled blocks and the march jitter in the picture
+	# (a game reaches that within a second or two of a cut).
+	var frames := int(args.get("frames", "160" if args.has("raster") else "40"))
 	for i in frames:
 		if no_till_tex != null:
 			RenderingServer.global_shader_parameter_set("terrain_geology_map", no_till_tex.get_rid())

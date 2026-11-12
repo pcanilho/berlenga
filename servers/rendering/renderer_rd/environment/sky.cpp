@@ -1437,6 +1437,13 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 
 	const uint32_t step = bayer[state->frame & 15];
 	state->frame++;
+	if (!state->valid) {
+		state->since_reset = 0;
+	}
+	// Each block's pixel is drawn once every 16 frames, so this is how many samples it has had since the
+	// history was last reset, this one included.
+	const uint32_t drawn = state->since_reset / 16 + 1;
+	state->since_reset++;
 	const Vector2i offset(step & 3, step >> 2);
 
 	// The pass's pixel (i, j) draws full resolution pixel (4i + offset.x, 4j + offset.y): its
@@ -1471,7 +1478,7 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 		int32_t offset[2];
 		int32_t low_size[2];
 		uint32_t history_valid;
-		uint32_t pad;
+		uint32_t drawn;
 	} pc;
 	static_assert(sizeof(PushConstant) == 112);
 	auto store_columns = [](const Basis &p_basis, float *r_dst) {
@@ -1500,7 +1507,7 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 	pc.low_size[0] = low_size.x;
 	pc.low_size[1] = low_size.y;
 	pc.history_valid = state->valid ? 1u : 0u;
-	pc.pad = 0;
+	pc.drawn = drawn;
 
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 	RID sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
