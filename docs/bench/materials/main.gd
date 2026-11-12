@@ -752,6 +752,7 @@ func _strands_sim() -> void:
 		# Hair cards at any distance (card_distance 0): the strands' clumps as textured strips.
 		h.cards_enabled = true
 		h.card_distance = 0.0
+		h.card_screen_size = 1.0
 	if hair.contains("wet"):
 		# Soaked hair (wetness 1, held there): darker, glossier, heavier and clumped.
 		h.weather_wetting = false

@@ -1861,11 +1861,18 @@ void PhysXHair3D::_step(double p_delta) {
 		const float t = lod_end_distance > lod_start_distance ? CLAMP((d - lod_start_distance) / (lod_end_distance - lod_start_distance), 0.0f, 1.0f) : (d >= lod_end_distance ? 1.0f : 0.0f);
 		s.lod_keep = Math::lerp(1.0f, lod_strand_ratio, t);
 	}
-	// Hair cards past card_distance (5% nearer to come back, so the switch does not flicker): the
-	// strands are hidden and only the guides and the cards' strands run.
+	// Hair cards when the hair is small on screen (5% larger to come back, so the switch does not
+	// flicker): the strands are hidden and only the guides and the cards' strands run. As
+	// Unreal's groom LODs, by screen size: the hair's bounding sphere's diameter over the view's
+	// height, so a zoomed-in camera or a larger screen keeps the strands where cards would show
+	// as strips. card_screen_size 0: by card_distance instead.
 	if (card_instance && card_first > 0) {
 		const float d = camera ? camera->get_global_transform().origin.distance_to(xform.origin) : 0.0f;
 		bool far = card_mode ? d >= 0.95f * card_distance : d >= card_distance;
+		if (card_screen_size > 0.0f && camera && render_instance) {
+			const float size = _screen_size(camera);
+			far = card_mode ? size <= 1.05f * card_screen_size : size <= card_screen_size;
+		}
 		// The path tracer keeps the strands at every distance (it must not lose their detail).
 		Ref<Environment> env = camera ? camera->get_environment() : Ref<Environment>();
 		if (env.is_null() && get_world_3d().is_valid()) {
@@ -2912,6 +2919,34 @@ int PhysXHair3D::get_card_count() const {
 	return card_count;
 }
 
+// The hair's bounding sphere's diameter over the camera's view height (Unreal's screen size).
+float PhysXHair3D::_screen_size(const Camera3D *p_camera) const {
+	const AABB box = render_instance->get_global_transform().xform(render_instance->get_aabb());
+	const float diameter = box.size.length();
+	const Projection proj = p_camera->get_camera_projection();
+	if (p_camera->get_projection() == Camera3D::PROJECTION_ORTHOGONAL) {
+		return diameter * 0.5f * proj.columns[1][1];
+	}
+	const float z = MAX(-p_camera->get_global_transform().affine_inverse().xform(box.get_center()).z, 1e-3f);
+	return diameter * 0.5f * proj.columns[1][1] / z;
+}
+
+void PhysXHair3D::set_card_screen_size(float p_size) {
+	card_screen_size = CLAMP(p_size, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_card_screen_size() const {
+	return card_screen_size;
+}
+
+float PhysXHair3D::get_screen_size() const {
+	if (!is_inside_tree() || render_instance == nullptr) {
+		return 0.0f;
+	}
+	const Camera3D *camera = get_viewport()->get_camera_3d();
+	return camera ? _screen_size(camera) : 0.0f;
+}
+
 void PhysXHair3D::set_card_distance(float p_distance) {
 	card_distance = MAX(p_distance, 0.0f);
 }
@@ -3053,6 +3088,9 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_cards_enabled"), &PhysXHair3D::is_cards_enabled);
 	ClassDB::bind_method(D_METHOD("set_card_count", "count"), &PhysXHair3D::set_card_count);
 	ClassDB::bind_method(D_METHOD("get_card_count"), &PhysXHair3D::get_card_count);
+	ClassDB::bind_method(D_METHOD("set_card_screen_size", "size"), &PhysXHair3D::set_card_screen_size);
+	ClassDB::bind_method(D_METHOD("get_card_screen_size"), &PhysXHair3D::get_card_screen_size);
+	ClassDB::bind_method(D_METHOD("get_screen_size"), &PhysXHair3D::get_screen_size);
 	ClassDB::bind_method(D_METHOD("set_card_distance", "distance"), &PhysXHair3D::set_card_distance);
 	ClassDB::bind_method(D_METHOD("get_card_distance"), &PhysXHair3D::get_card_distance);
 	ClassDB::bind_method(D_METHOD("is_drawing_cards"), &PhysXHair3D::is_drawing_cards);
@@ -3118,6 +3156,7 @@ void PhysXHair3D::_bind_methods() {
 	ADD_GROUP("Cards", "card");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cards_enabled"), "set_cards_enabled", "is_cards_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "card_count", PROPERTY_HINT_RANGE, "1,1024,1"), "set_card_count", "get_card_count");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "card_screen_size", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_card_screen_size", "get_card_screen_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "card_distance", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m"), "set_card_distance", "get_card_distance");
 	ADD_GROUP("Wet", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness", "get_wetness");
