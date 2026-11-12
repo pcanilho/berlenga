@@ -757,16 +757,14 @@ Shigo's anatomy, since it stays a tube (no implicit polygonizer, no extra triang
     burls are (1 - e^2)^2 with broad lumps, no crease at their edge and no crumpled facets.
   - Root collar: the flare ended in a skirt standing on the ground, its rim visible, and on a
     leaning stem the base ring rose out of the soil on its high side. The base now sinks by
-    the lean, splays over the last ~20 cm, and the flare is 4-7 buttress lobes (Mattheck's
-    buttress form, per-tree count and phase) that keep spreading below the ground line, so
-    the bark runs into the soil at a shallow angle.
-  - On open-grown oak and lime the lower bole is a bundle of low forks around the main stem,
-    which hid the main stem's features. Forks off the main stem below the highest feature, over
-    0.4 of its girth, now carry the same features on their own surfaces. Low limbs keep their
-    own radius (plus 3 cm) clear of the soil after the gravity sag (held at 8 cm on the axis,
-    a thick one sank half its girth), and a fork's base inside its parent stops 10 cm above
-    the ground. Still open: where the root collar meets the ground its bark relief cuts the
-    plane in a ragged line.
+    the lean and splays over the last ~20 cm, and bark relief fades out at the soil line
+    (plates and furrows cut the ground plane in a ragged line). Buttress lobes (Mattheck's
+    buttress form) were tried and taken out: lobes that spread below the ground broke through
+    it in slivers, and lobes held at the ground line still did. A real fix wants the lobes as
+    their own geometry that dives steeply under the surface.
+  - The basal hollow folded through itself in pale blades: it was sized by the flare's swollen
+    radius, roughened finely, and the low forks dented the same bearing again. It is now the
+    main stem's alone, no deeper than half the stem's own radius, with broad roughness.
   - Bench `--view=veteran`: the lower 4 m of the bole facing its basal hollow (or largest
     feature; `VAZ` env fixes the azimuth for a pair), lit by a low sun from the camera's side.
   - Bench: `--set=prop:true` was parsed as 0 (float("true")), so "weld on" shots were weld off.

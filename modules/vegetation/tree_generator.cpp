@@ -1717,7 +1717,10 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 			const Vector3 dir = nrm * Math::cos(ang) + bin * Math::sin(ang);
 			float rr = p_radii[r];
 			if (hdata) {
-				rr += p_relief * relief_at(float(s) / p_sides * repeats, v);
+				// Faded out at the soil line (the tree's ground is y = 0): plates and furrows cut
+				// the ground plane in a ragged line, read as a rim around the root collar.
+				const float gy = p_points[r].y + dir.y * rr;
+				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * Math::smoothstep(-0.02f, 0.2f, gy);
 			}
 			r_b.verts.push_back(p_points[r] + dir * rr);
 			r_b.normals.push_back(dir);
@@ -4378,15 +4381,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 	}
 	const float vet_r_stem = veteran_stem >= 0 ? nodes[veteran_stem].radius * 1.15f : 1.0f;
-	// Buttress roots (the root collar of open-grown trees; Mattheck's buttress form): the flare is
-	// not round but a few lobes that run out and down into the soil, so the stem enters the ground
-	// at a shallow angle with no rim. Lobe count and phase per tree.
-	RandomPCG root_rng;
-	root_rng.seed(uint64_t(seed) * 2654435761u + 0x726f6f74u);
-	const int root_lobes = 4 + int(root_rng.rand() % 4u);
-	const float root_phase = root_rng.randf() * float(Math::TAU);
-	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour, bool p_features, bool p_roots) {
-		if ((veteran_features.is_empty() || !p_features) && !p_roots) {
+	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour, int p_features) {
+		if (veteran_features.is_empty() || !p_features) {
 			return;
 		}
 		Vector3 *vv = r_b.verts.ptrw();
@@ -4409,20 +4405,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			float off = 0.0f;
 			float dark = 1.0f;
 			float w_any = 0.0f;
-			if (p_roots && h < 3.0f * trunk_r) {
-				const float lobe = Math::pow(0.5f + 0.5f * Math::cos(float(root_lobes) * (az - root_phase)), 3.0f);
-				// Below the ground line the lobes keep spreading, so the visible bark slopes in.
-				// Not too far: a lobe lying almost flat met the ground plane edge-on and its edge
-				// flickered through the soil in a ragged line.
-				const float fall = Math::exp(-MAX(h, 0.0f) / MAX(0.05f, 0.45f * trunk_r)) * (1.0f + 0.4f * CLAMP(-h / 0.3f, 0.0f, 1.0f));
-				off += trunk_r * flare * 0.5f * (lobe - 0.2f) * fall;
-				w_any = 1.0f;
-			}
 			for (const VeteranFeature &f : veteran_features) {
 				if (!p_features) {
 					break;
 				}
-				if (f.kind == VET_EPICORMIC || f.kind == VET_WOODPECKER) {
+				// A basal hollow is the main stem's alone: the forks around it took a second dent
+				// at the same bearing, and the two folded through each other.
+				if (f.kind == VET_EPICORMIC || f.kind == VET_WOODPECKER || (f.kind == VET_BASAL_HOLLOW && p_features < 2)) {
 					continue;
 				}
 				const float dh = (h - f.h) / f.half_h;
@@ -4449,8 +4438,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// callus (woundwood, Shigo 1985) is a rounded roll over the edge, so the hole
 					// has depth and a soft lip instead of a flat-sided slot.
 					if (e < 1.1f) {
-						const float rough = 0.85f + 0.3f * moss_noise(p_pts[ring] + n * r * 3.0f, 0x686f6cu);
-						off -= f.amount * r * Math::smoothstep(1.1f, 0.35f, e) * rough;
+						// Broad, gentle roughness, and no deeper than half the stem's own radius:
+						// sized by the flare's swollen radius and roughened finely, the floor
+						// folded through itself in pale blades.
+						const float rough = 0.9f + 0.2f * moss_noise(p_pts[ring] + n * r * 1.2f, 0x686f6cu);
+						off -= MIN(f.amount, 0.5f) * MIN(r, vet_r_stem) * Math::smoothstep(1.1f, 0.35f, e) * rough;
 						dark = MIN(dark, Math::lerp(1.0f, 0.12f, Math::smoothstep(1.0f, 0.55f, e)));
 					}
 					const float lip = (e - 1.02f) / 0.14f;
@@ -4705,8 +4697,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (rigged) {
 				_skin_stem(bark, part, s, pts, sides);
 			}
-			if (s == veteran_stem || vet_share[s] || (stem && flare > 0.0f)) {
-				veteran_deform(bark, part, pts, rad, sides, true, s == veteran_stem || vet_share[s], stem && flare > 0.0f);
+			if (s == veteran_stem || vet_share[s]) {
+				veteran_deform(bark, part, pts, rad, sides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 			}
 			if (!stem && junction_weld) {
 				weld(bark, part, s, pts, rad, sides);
@@ -4742,8 +4734,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				if (rigged) {
 					_skin_stem(bark, part, s, rp, rsides);
 				}
-				if (s == veteran_stem || vet_share[s] || (stem && flare > 0.0f)) {
-					veteran_deform(bark, part, rp, rr, rsides, true, s == veteran_stem || vet_share[s], stem && flare > 0.0f);
+				if (s == veteran_stem || vet_share[s]) {
+					veteran_deform(bark, part, rp, rr, rsides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 				}
 				if (!stem && junction_weld) {
 					weld(bark, part, s, rp, rr, rsides);
@@ -4760,8 +4752,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				moss.begin(part);
 				_tube(moss, rp, rr, rsides, 0.0f, col);
 				moss.end(part, r0);
-				if (s == veteran_stem || vet_share[s] || (stem && flare > 0.0f)) {
-					veteran_deform(moss, part, rp, rr, rsides, false, s == veteran_stem || vet_share[s], stem && flare > 0.0f);
+				if (s == veteran_stem || vet_share[s]) {
+					veteran_deform(moss, part, rp, rr, rsides, false, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 				}
 				// The bark's own displacement under each shell vertex (as the relief tube has it).
 				const Vector<uint8_t> bh_buf = bs.height->get_data();
