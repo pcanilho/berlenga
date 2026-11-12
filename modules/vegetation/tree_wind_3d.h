@@ -114,7 +114,7 @@ private:
 
 	NodePath target_path = NodePath("..");
 	NodePath weather_map_path;
-	float wind_range = 200.0f;
+	float wind_range = 1000.0f;
 	float drag_scale = 1.0f;
 	float stiffness_scale = 1.0f;
 	float max_bend = 0.5f;

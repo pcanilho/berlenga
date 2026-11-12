@@ -607,9 +607,11 @@ void TreeWind3D::update(double p_delta) {
 					// Maguire 2004: 0.2-0.6 Hz, tips a few per cent of the height); a pose held
 					// for n frames lags by n times that per frame.
 					const float drift_px = 0.04f * extent * dt * px_per_m * MAX(base_speed / 8.0f, 0.5f);
-					int period = CLAMP(int(err / MAX(drift_px, 1e-6f)), 1, 8);
+					// Past 200 m (the wind reaches 1 km) a tree a few pixels tall may hold its
+					// pose up to 32 frames; nearer, 8 keeps the sway's curve inside the bound.
+					int period = CLAMP(int(err / MAX(drift_px, 1e-6f)), 1, dist > 200.0f ? 32 : 8);
 					if (!seen) {
-						period = 8;
+						period = MAX(period, 8);
 					}
 					if (period > 1 && (frame_index + t.slot[i]) % uint64_t(period) != 0) {
 						skipped++;

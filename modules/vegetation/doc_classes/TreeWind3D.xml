@@ -172,8 +172,8 @@
 		<member name="weather_map" type="NodePath" setter="set_weather_map" getter="get_weather_map" default="NodePath(&quot;&quot;)">
 			The [WeatherMap3D] whose wind, shelter and gusts move the trees.
 		</member>
-		<member name="wind_range" type="float" setter="set_wind_range" getter="get_wind_range" default="200.0">
-			Instances closer than this to the camera (m) move; further ones hold their rest pose.
+		<member name="wind_range" type="float" setter="set_wind_range" getter="get_wind_range" default="1000.0">
+			Instances closer than this to the camera (m) move; further ones hold their rest pose. With [member lod_enabled], far trees are posed only as often and with only the limbs their size on screen can show, so a wide range costs little.
 		</member>
 	</members>
 </class>

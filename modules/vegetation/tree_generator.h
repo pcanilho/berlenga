@@ -33,6 +33,7 @@
 #include "core/io/resource.h"
 #include "core/math/random_pcg.h"
 #include "core/templates/hash_map.h"
+#include "core/templates/hash_set.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/templates/local_vector.h"
 #include "plant_species.h"
@@ -351,6 +352,7 @@ private:
 	AABB envelope; // Clipping volume for hedges and topiary (size 0: off).
 	float collider_radius = 0.08f; // Wood thicker than this gets collision capsules.
 	int broken_tip = -1; // Stem node whose end is a broken top.
+	HashSet<int> broken_ends; // Limbs that rubbed on thicker wood and snapped (_prune_collisions()).
 	// Old-tree features (docs/ideas/trees.md 5e): tree-related microhabitats of veteran trees.
 	float veteran = 0.0f;
 	enum VeteranKind : uint8_t {
@@ -450,6 +452,7 @@ public:
 private:
 	int shed_count = 0;
 	int collision_prunes = 0;
+	int collision_deflects = 0;
 	uint64_t generation_usec = 0;
 
 	void _set_north_american(Preset p_preset);
@@ -482,6 +485,11 @@ private:
 	Builder leaf_twins;
 	HashMap<int, Vector4i> leaf_twin_of; // Leaf part index -> its twin's indices and vertices in leaf_twins.
 	bool species_leaf_forms = true; // Off for climbers' leaves.
+	int twin_scale_preset = -1;
+	float twin_scale = 1.0f;
+	float twin_scale_width = 0.0f;
+	float _twin_area_scale();
+	void _add_species_blade(Builder &r_b, const Vector3 &p_start, const Vector3 &p_along, const Vector3 &p_side, const Vector3 &p_n, float p_size, float p_hw, float p_slot_area, const Color &p_color);
 	uint32_t compound_slot = 0;
 	Ref<Texture2D> leaf_texture;
 	Ref<Texture2D> _leaf_texture();
@@ -671,6 +679,7 @@ public:
 	float get_leaf_area_index() const { return leaf_area_index; }
 	int get_shed_count() const { return shed_count; }
 	int get_collision_prune_count() const { return collision_prunes; }
+	int get_collision_deflect_count() const { return collision_deflects; }
 	int get_generation_usec() const { return int(generation_usec); }
 
 	TreeGenerator();

@@ -293,6 +293,11 @@ which makes rate and bone LOD cheap to add.
 - **Math**: the gust transfer function's lag came from atan2 per wave per bone; cos(phase - lag)
   now uses re and im directly. The result is the same and the full solve is about 30% faster.
 
+- **Range** (12 Nov; the far-wind card, approved with "address all open issues"):
+  `wind_range` is 1000 m (was 200). Past 200 m trees stood still while near ones moved in the
+  same wind. Far out, the same error bound lets a tree hold its pose up to 32 frames (8 before)
+  and only its big limbs are posed, so a far tree costs a small fraction of a near one.
+
 Bench `--stands --wind-lod [--view=over]`, 615 rigged beech in the 160 m stand, 1080p, fov 60.
 Two solvers run on the same frames, one with LOD and one without, and the bone pose difference
 is projected to pixels at each tree's distance:
@@ -538,8 +543,12 @@ distance; epiphytes (moss, ivy) and crown deadwood (dead limbs) already exist:
   the stem's vertices are too coarse for them.
 - **Burls** (excrescences): lumpy swellings of 0.3-0.7 stem radii, 30-55% of the radius proud
   (at 18-35% they did not read at 4 m).
-- **Epicormic shoots**: clusters of 3-8 thin water shoots from dormant buds on the stem, many on
-  oak and lime and few elsewhere, leafy by season.
+- **Epicormic shoots**: clusters of 3-8 water shoots from dormant buds on the stem, many on
+  oak and lime and few elsewhere, leafy by season. They live for years and branch (Meier,
+  Saunders and Michler 2012; Colin et al. 2010 on oak), so each shoot has an age: 0.3-1.1 m long,
+  4-11 mm thick, out from the bark then up, older ones with 1-3 side twigs, in a warmer brown than
+  the stem. In winter a cluster reads as a twiggy brush (12 Nov; before, single 3-6 mm shoots
+  were lost against the bark).
 Hollows, burls and shoots sit on the clear bole: below the crown base and below the first fork
 with a limb over 45% of the stem's radius, since in the first renders features higher up hid among
 the limbs. `veteran` (0-1, default 0) sets how many; `get_veteran_features()` lists them (kind,
@@ -659,6 +668,57 @@ the tree still reads the trample field as before.
 Needs the PC (no GPU or denoiser in the cloud): GPU timings of the wind pass and of leaf
 geometry versus OMM cards, denoised path traced crops at 100%, and the forest-scale bench.
 
+### 2e. Branch collars (12 Nov; Paulo picked "Collar flare and bark ridge")
+
+Paulo's close-up of an open oak's base: limbs met the trunk as two solids with a hard crease, a
+thick limb ended in a flat cut, and limbs crossed near the base. Most limbs over 5 cm had in
+fact never been welded: their tube left the three modelled parent segments through an open end
+and 2d skipped them.
+
+Research. SpeedTree's weld (weld offset, spread up and down, blend, light-seam reduction that
+bends normals toward the parent, extra weld segments); Galbraith et al. 2004 (BlobTree trees:
+implicit blend, base pulled back by 1.75 r); Lim et al. 2020 (skin surfaces at joints); the
+anatomy, Shigo 1985 (the branch collar: the limb's wood runs down the parent before turning
+out, the trunk collar wraps it, and a raised branch bark ridge sits in the crotch); Pirk et al.
+2012 (Plastic Trees: branches bend away from obstacles). Built SpeedTree's version, shaped by
+Shigo's anatomy, since it stays a tube (no implicit polygonizer, no extra triangles):
+- **Every limb welds.** The parent is up to six segments (two before the junction, three after)
+  tested as a union of capsules. Each vertex marches out of the union and bisects to the bark.
+  A weld fails only past the far end of the modelled parent. On the open oak no limb is skipped.
+- **Steep limbs** (under 30 degrees off the parent) are not slid: on the bark they lay almost
+  tangent and showed through the furrows as long slivers. They stay crotches, with normals
+  blended.
+- **One seam ring.** Only the outermost slid ring of each line down the tube is the seam. The
+  rings inside go back into the parent (collapsed onto the seam they showed as discs through
+  furrows). The rings after it are spaced evenly out to the first ring well clear, so the top of
+  a steep limb does not fold back in a crescent.
+- **Collar flare.** The seam moves down the parent's axis, which keeps it on the bark: by 0.1 r
+  on top of the limb, up to 1 r underneath. The rings after it follow less and less over 1.5
+  limb radii, a teardrop drawn down the bark. The spread is set per line of the tube and
+  smoothed round it; set per vertex, neighbouring lines met the bark a ring apart and the edge
+  came out in teeth.
+- **Branch bark ridge.** In the crotch (top of the limb) the bark rises in a low ridge, 0.1 r
+  high, just above the seam.
+- **Shading.** Normals come from the welded faces and turn to the parent's bark at the seam.
+  The tangent frame follows (Gram-Schmidt), so the bark normal map is not skewed there.
+- **Limbs ending in a flat cut.** A limb over 3 cm that a collision would cut now goes back to
+  its parent instead (no tree self-prunes a living limb into a sawn stub). Cut limbs keep a
+  rounded end of three rings (wound wood) instead of an open tube, and any kept cut over 1.5 cm
+  gets the splintered rim of a broken end.
+- **Crossing limbs.** Before cutting, a limb that runs into thicker wood is swung away from it,
+  rotating the whole limb about its base by up to 30 degrees in three tries (Plastic Trees'
+  response to obstacles). Only if that fails is it cut. `get_collision_deflect_count()`.
+- **Cost.** Limbs the old collision test cut (it also caught limbs overlapping their own parent
+  inside the trunk) now stay or bend away, so trees keep wood and leaves they had lost: oak
+  variant 1 went from 58,172 to 66,253 internodes and 16.6M to 25.7M near leaf vertices. The
+  European woodland (one variant, far leaves) went from 81.1M to 88.5M vertices (bark 29.8M to
+  33.1M with the end caps and collar rings, leaves 42.8M to 46.0M). In the cloud, `--stands
+  --test` now runs out of memory in the near-leaves check after all other checks pass; the
+  check passes alone on variant 0. `--test` passes in chunks of eight presets (`--presets=`).
+- **Bench.** `--view=bole` (oak base, Paulo's angle) and `--view=junction` (the lowest thick
+  limb, 2 m off). Close-up views now keep sun shadows within 40 m: the 300 m cascades turned
+  leaf shadow flecks into blocky pale speckle that looked like a mesh fault.
+
 ## 8b. Woodland memory (12 Nov)
 
 The showcase scene ran out of memory (about 14 GB) generating the European woodland before
@@ -734,6 +794,13 @@ Measured: open oak leaves 14.9M to 4.3M vertices per variant. European woodland,
 takes about 6 s to build on one cloud core (the PC is several times faster), so a tree coming
 closer at walking pace has it before the 60 m crossfade; at speed the far mesh, which looks the
 same there, stays a few seconds longer.
+
+Twin area (12 Nov): the twin was sized by the lens formula, not by what the species blade
+covers. Measured on one leaf per species, an ash or horse chestnut twin was 16% larger than its
+leaflets, an oak twin 5% smaller than its lobed blade. The twin is now scaled to the species
+blade's measured area (`_twin_area_scale`, once per species). Forced LOD 0 at 60 m: oak 104.8 vs
+105.0, rowan 128.8 vs 129.1 (was 1-2% apart), sycamore 92.5 vs 94.5 (was 3%), whose remaining
+step is the lens against the fanned palm's shading, not area.
 
 Simple-leaved species (beech, birch, willow, alder, lime) are unchanged: their LOD 0 leaves are
 already their only form. Next possible step (needs a card): far meshes that start at LOD 1 for

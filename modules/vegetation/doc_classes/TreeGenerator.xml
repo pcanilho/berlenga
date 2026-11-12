@@ -48,6 +48,18 @@
 				Collision capsules for wood thicker than [member collider_radius] in the last generated tree: 8 floats each, the two ends (x, y, z), the radius and the rig bone carrying it. [method generate] also stores them as the mesh meta [code]tree_colliders[/code].
 			</description>
 		</method>
+		<method name="get_collision_deflect_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many times the last [method generate] swung a limb (and everything on it) away from thicker wood it would have grown into, up to 20 degrees about where it leaves its parent, as limbs grow away from obstacles (Pirk et al. 2012).
+			</description>
+		</method>
+		<method name="get_collision_prune_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many limbs the last [method generate] cut back because they ran into thicker wood and could not swing clear: the thinner limb dies back to the contact and ends in a broken, splintered tip; a thick limb that would keep only a short stub goes back to its parent.
+			</description>
+		</method>
 		<method name="get_crown_base" qualifiers="const">
 			<return type="float" />
 			<description>

@@ -123,7 +123,8 @@ func _gen(p: int, forest: bool, s: int) -> Dictionary:
 		tris += mesh.surface_get_array_index_len(i) / 3
 	return {"mesh": mesh, "height": g.get_height(), "crown_radius": g.get_crown_radius(), "crown_base": g.get_crown_base(),
 		"internodes": g.get_internode_count(), "leaves": g.get_leaf_count(), "dead": g.get_dead_branch_count(),
-		"shed": g.get_shed_count(), "tris": tris, "ms": g.get_generation_usec() / 1000.0}
+		"shed": g.get_shed_count(), "tris": tris, "ms": g.get_generation_usec() / 1000.0,
+		"capsules": g.get_collision_capsules()}
 
 # The shared season state (WeatherMap3D.get_season(), section 2c) for a 0 C January / 18 C July
 # climate at the weather's own latitude (46 N without a SkyClock) on a given day; the stand-in
@@ -306,6 +307,9 @@ func _build_scene() -> void:
 	sun.light_energy = 1.4
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 300.0
+	if view in ["bole", "junction", "fork", "leaf"]:
+		# Close-ups: the cascades over 300 m blur the leaves' shadow flecks into blocky speckle.
+		sun.directional_shadow_max_distance = 40.0
 	add_child(sun)
 	var cam := Camera3D.new()
 	cam.fov = 40.0
@@ -332,6 +336,34 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[0] + 2.2, cb + 0.6, 2.6)
 		cam.look_at(Vector3(xs[0], cb + 0.4, 0))
 		cam.fov = 40.0
+	elif view == "bole":
+		# Standing 4.5 m from the first tree, eye at 1.3 m, looking at where the low limbs leave.
+		cam.position = Vector3(xs[0] + 0.8, 1.3, 4.5)
+		cam.look_at(Vector3(xs[0], 1.9, 0))
+		cam.fov = 60.0
+	elif view == "junction":
+		# Close on where a low limb leaves the first tree's trunk (trees.md 2d): the lowest limb
+		# of 4 cm or more, seen from its side at 2 m, a little below.
+		var caps: PackedFloat32Array = first_info.capsules
+		var best := -1
+		for c in range(0, caps.size(), 8):
+			var a := Vector3(caps[c], caps[c + 1], caps[c + 2])
+			var b := Vector3(caps[c + 3], caps[c + 4], caps[c + 5])
+			var dir := (b - a).normalized()
+			# A limb's first capsule starts on its parent's axis, off the trunk's foot.
+			if caps[c + 6] < 0.04 or dir.y > 0.85 or a.y < 0.8:
+				continue
+			if best < 0 or a.y < caps[best + 1]:
+				best = c
+		if best >= 0:
+			var a := Vector3(caps[best], caps[best + 1], caps[best + 2])
+			var b := Vector3(caps[best + 3], caps[best + 4], caps[best + 5])
+			var hd := Vector3(b.x - a.x, 0, b.z - a.z).normalized()
+			var side := hd.cross(Vector3.UP)
+			var target := Vector3(xs[0], 0, 0) + a + hd * caps[best + 6] * 2.0
+			cam.position = target + side * 2.0 - hd * 0.6 + Vector3(0, -0.3, 0)
+			cam.look_at(target)
+		cam.fov = 40.0
 	elif view == "crop" or view == "leaf":
 		var h: float = first_info.height
 		cam.position = Vector3(xs[0] + first_info.crown_radius * 0.9, h * 0.62, 4.0)
@@ -344,6 +376,8 @@ func _build_scene() -> void:
 		cam.look_at(Vector3(cx, tallest * 0.42, -6))
 
 func _render_later() -> void:
+	if OS.has_environment("WIRE"):
+		get_viewport().debug_draw = Viewport.DEBUG_DRAW_WIREFRAME
 	for i in (8 if raster else 12):
 		await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(out)
