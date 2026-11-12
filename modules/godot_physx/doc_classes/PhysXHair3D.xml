@@ -134,6 +134,12 @@
 		<member name="simulating" type="bool" setter="set_simulating" getter="is_simulating" default="true">
 			When off, the strands hold their last pose relative to the head.
 		</member>
+		<member name="snow" type="float" setter="set_snow" getter="get_snow" default="0.0">
+			How much snow lies on the hair: [code]0[/code] none, [code]1[/code] as much as [member snow_capacity] holds. It settles on the top layer, where no hair above shields it, and on the side the wind drives it at; each covered strand point carries a small white clump of crystals. Set by snowfall when [member weather_wetting] is on (snow is caught more slowly as the load fills), it melts above freezing and from the head's warmth, and the melt water wets the hair. Can be set directly.
+		</member>
+		<member name="snow_capacity" type="float" setter="set_snow_capacity" getter="get_snow_capacity" default="1.0">
+			Millimetres of snow (as water) the hair holds when [member snow] is [code]1[/code].
+		</member>
 		<member name="strand_collision" type="bool" setter="set_strand_collision" getter="is_strand_collision" default="true">
 			Keeps the guide strands from passing through each other: once a frame their points are hashed into a grid and pushed apart where two strands come closer than [member strand_collision_radius] (position based, as Müller et al. 2007, with averaged corrections as Macklin et al. 2014). The follower strands take their places from the guides, so they follow. Works with the hair volume, which keeps the hair's overall density.
 		</member>
@@ -177,7 +183,7 @@
 			Millimetres of rain that soak the hair: at 5 mm/h with the default the hair is soaked in 12 minutes.
 		</member>
 		<member name="weather_wetting" type="bool" setter="set_weather_wetting" getter="get_weather_wetting" default="true">
-			If [code]true[/code], rain from the active [WeatherMap3D] wets the hair (less what a canopy catches, none under a roof found by a ray up from the hair) and it dries when the rain stops. With no weather map, or no rain, the hair stays as [member wetness] is set.
+			If [code]true[/code], precipitation from the active [WeatherMap3D] reaches the hair (less what a canopy catches, none under a roof found by a ray up from the hair) and it dries when that stops. The weather map splits it into rain, which wets the hair at once, and snow, which settles as [member snow] and wets it as it melts. With no weather map, or no rain, the hair stays as [member wetness] is set.
 		</member>
 		<member name="weather_wind" type="bool" setter="set_weather_wind" getter="get_weather_wind" default="true">
 			If [code]true[/code] and a [WeatherMap3D] is in the scene, its wind at this node (mean wind plus gusts) is added to [member wind].

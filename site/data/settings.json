@@ -1051,6 +1051,18 @@
    "topic": "Strands"
   },
   {
+   "name": "Snow on hair",
+   "settings": [
+    "snow",
+    "snow_capacity"
+   ],
+   "note": "",
+   "what": "snow from the weather settles on the top layer and windward side as small clumps, and melts into wetness.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
    "name": "Body collision",
    "settings": [
     "PhysXHair3D",
