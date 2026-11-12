@@ -853,10 +853,11 @@
    "name": "Contact waterfalls",
    "settings": [
     "PhysXWaterfalls3D",
-    "contact_falls"
+    "contact_falls",
+    "wet_margin"
    ],
    "note": "",
-   "what": "water that clings to steep rock, clear at the lip and white below the inception point, with spray off ledges.",
+   "what": "water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges.",
    "page": "water",
    "title": "Water",
    "topic": "Currents and rivers"
