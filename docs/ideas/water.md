@@ -2077,3 +2077,18 @@ fork can.
 - Zhao, A fast sweeping method for eikonal equations, Math. Comp. 74, 2005.
 - McCowan, On the highest wave of permanent type, Phil. Mag. 38, 1894; Dean and Dalrymple, Water Wave Mechanics
   for Engineers and Scientists (shoaling, refraction, breaking).
+
+## Raster seabed fade with depth (12 Nov)
+
+The showcase valley's sea is a shelf that deepens from the beach to about 17 m at the end of the measured seabed
+(the generator's world rectangle). In raster the sea surface had a fixed alpha (`water_color.a`), so the shelf
+showed through it at every depth: a pale, glint-free band along the coast that stopped in a straight line where the
+seabed ends and open sea begins. The path tracer already absorbs light along the path through the water (its
+`pathtraced_absorption` medium).
+
+Fix (raster only): the surface's opacity follows Beer-Lambert transmittance of light from the bed, down and back
+up along the view, `T = exp(-sigma d (1 + 1 / mu))`, with `sigma` the mean of `pathtraced_absorption` (so raster
+and path tracing fade the bed alike), `d` the still-water depth and `mu` the cosine of the view to the vertical.
+Alpha goes from the water's own value over the shallows to opaque where the bed is gone. The swash film and the
+waterline's cut-out are unchanged. Same technique as depth-based water opacity in UE's single-layer water and
+HDRP's water (absorption distance).
