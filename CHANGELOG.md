@@ -6,6 +6,27 @@ Every pull request adds its entry as a file in `changelog.d/` (see [changelog.d/
 
 ## Unreleased
 
+## build-6b31f67b (2026-11-12)
+
+### Changed
+- GrassField3D with a `season_source`: a summer drought or hard winter now kills whole blades to the crown, not only their tips.
+
+### Added
+- GrassField3D follows the year: `season_source` (a WeatherMap3D) browns the sward in drought and hard cold from the season's soil moisture and temperature (`season_greenness()`, `season_response`, `get_effective_dryness()`), blades, ground and far colour together.
+- Snow settles on strand hair: PhysXHair3D's `snow` lies on the top layer, where no hair above shields it and on the side the wind drives it at, read from an extra deep opacity map; it is caught from the weather's snowfall, melts above freezing and from the head's warmth, and the melt wets the hair (`snow`, `snow_capacity`)
+- Bracken and ferns follow the season (`PlantGenerator.season`): croziers unroll in spring, fronds die back russet in autumn and lie lodged through winter. Wood anemone dies down after flowering: `get_presence()`, applied by `make_floor()`.
+- PlantGenerator flowers by the season: `season` (WeatherMap3D.get_season()) opens each flowering preset's stems through a window in degree days and takes them to seed (dandelion clocks, thistledown, foxglove capsules, wild carrot nests); tall flowers die back to brown stalks that stand through winter. `get_bloom_shares()`; `make_floor()` passes its season on.
+- `outwash_age`: gravel reaches below the last ice stand or on fans become braided outwash plains (Murray-Paola cellular braiding on a flat graded plain, bare gravel); `get_braidplains()` gives each plain's centre line, half widths, water stage per point, head discharge and source (`get_last_braid_count()`).
+- Ground plants meet fallen wood: `PlantSpecies.deadwood_rule` keeps plants off logs (default), grows them on a log's upper surface (`DEADWOOD_ON`, `deadwood_min_radius`) or along its side (`DEADWOOD_BESIDE`, `deadwood_band`, `deadwood_uphill`), reading the axes of the trees module's logs, fallen branches and sticks; `VegetationField3D.get_deadwood_at()`. `PlantGenerator.make_floor()` adds moss, wood sorrel and seedlings on logs, ferns along them and leaves banked on their uphill side.
+
+### Fixed
+- Hair cards no longer read much lighter than the strands they replace: they light with the strands' own shading frame (no sky sheen), sit clear of the scalp and body by their clump's thickness, and read the deep shadows on their centre line
+- Hair cards no longer let the head and shoulders show through them: they draw far to near like the strands, keep their opacity at a distance and when seen at an angle, and widen to a pixel when thinner
+- Snowfall no longer soaks strand hair as if it were rain: the weather's precipitation is split into rain and snow by the air's temperature and humidity
+- Strand hair with deep shadows no longer shows rare black pixel specks
+- Rock detail no longer draws moire hairlines at a distance or at grazing angles, and no longer darkens the ground: cracks are box filtered over each pixel's footprint, every other feature fades to its mean, it filters the same under path tracing, and it stays off rock gentler than 45 degrees.
+- Falls over 25 m keep the face they fall over, with a notch at the lip, instead of a straight-sided slot and a flat pad at the foot.
+
 ## build-d76a902c (2026-11-12)
 
 ### Added
