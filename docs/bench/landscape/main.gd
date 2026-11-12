@@ -38,6 +38,7 @@ extends Node3D
 #   --clip=N              with --out, N frames in a row (out_0000.png...), for clips; run with --fixed-fps 24
 #   --checks              with --out, run the link checks before the picture (they change the scene)
 
+var no_till_tex: ImageTexture
 const STEP := 4.0 # metres between ground vertices
 const X0 := -2048.0
 const Z0 := -2048.0
@@ -137,6 +138,16 @@ func _ready() -> void:
 	t_start = Time.get_ticks_msec()
 	_generate()
 	_lake_and_fall()
+	if args.has("no-till"):
+		# The ground material without the moraine till (its negative talus cleared): a till-only before shot.
+		var gi: Image = gen.get_geology_image()
+		for y in gi.get_height():
+			for x in gi.get_width():
+				var gc := gi.get_pixel(x, y)
+				if gc.b < 0.0:
+					gi.set_pixel(x, y, Color(gc.r, gc.g, 0.0, gc.a))
+		no_till_tex = ImageTexture.create_from_image(gi)
+		RenderingServer.global_shader_parameter_set("terrain_geology_map", no_till_tex.get_rid())
 	if args.has("map"):
 		_save_map(args["map"])
 		get_tree().quit(0)
@@ -217,6 +228,8 @@ func _ready() -> void:
 		landscape.update_lods_from_camera()
 	var frames := int(args.get("frames", "6" if args.has("raster") else "40"))
 	for i in frames:
+		if no_till_tex != null:
+			RenderingServer.global_shader_parameter_set("terrain_geology_map", no_till_tex.get_rid())
 		await get_tree().process_frame
 	if env.pathtracing_enabled:
 		var w := 0
@@ -1808,6 +1821,7 @@ func _build_camera() -> void:
 			lv.y = height_at(lv.x, lv.z) - lv.y
 		cam.position = cv
 		cam.look_at(lv)
+		_log("cam %.1f,%.1f,%.1f look %.1f,%.1f,%.1f" % [cv.x, cv.y, cv.z, lv.x, lv.y, lv.z])
 	for g in sward:
 		g.update_at(cam.global_position)
 	if sward.is_empty():
