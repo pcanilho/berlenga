@@ -819,10 +819,26 @@ through low opacity, not between cards. Four causes:
   its opacity.
 
 Result (bench mean luminance): close up 44.8 against the strands' 44.1 (47.1 before), at 8 m 23.6
-against 21.0 (28.8 before), at 15 m 24.8 against 22.9. Making the cards' depth half as much again
-closes the rest at 8 m (21.8) but takes them past the strands close up, so it is left: the
-remaining 12% at 8 m is not explained yet. The sort adds about 36 small dispatches a frame for
-256 cards (the strands' own sort runs over all 30,000).
+against 21.0 (28.8 before), at 15 m 24.8 against 22.9. The sort adds about 36 small dispatches a
+frame for 256 cards (the strands' own sort runs over all 30,000).
+
+The rest at 8 m, and a faint outline of the head through the crown, was not opacity: drawn as
+black hair, cards and strands let through the same light (52.1 against 52.3). With the sun alone
+and no deep shadows the cards read 25.3 against 20.7, with no shadow maps 44.0 against 42.8, and
+with the head casting no shadow 37.2 against 36.5: the head's shadow, on the hair hanging beside
+it. Both hang in the same place (a map of each fragment's distance from the head's shadow volume
+matches), and drawn opaque, the front layers of both lie in the shadow alike. The difference is
+the blend: a card runs the whole length of the hair, and the cards are sorted whole by their
+middle, so a lit card from beside the head still drew over the shadowed front of another.
+
+Fix, the two-pass hair of Scheuermann (GDC 2004): the cards' dense cores (80% or more) write depth
+in the pre-pass (depth_prepass_alpha), then all of the cards blend far to near over them. Godot's
+pre-pass keeps only fragments of 99% or more, so a spatial shader can now set its own threshold
+(OPAQUE_PREPASS_THRESHOLD, fragment output; the shadow passes keep theirs). The pre-pass would let
+the cards cast into the shadow maps, so they cast none, as the strands. Result: close up 43.8
+against 44.1, at 8 m 22.1 against 21.0, at 15 m 23.9 against 22.9, and no outline. Wavy hair in
+wind (whose cards were 22% lighter, 52.4 against 43.0) now reads 13% darker (37.6), with a few
+dark blotches where the frizz's cores overlap; cards stay off by default.
 
 ### Fixed: black specks on strands with deep shadows
 
