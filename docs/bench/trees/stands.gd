@@ -9,6 +9,7 @@ extends Node3D
 #   --plot=N          render stand N (TreeGenerator.Stand) on the valley (--out=path.png, --raster, --spp=N)
 #   --wind=U          with --plot: rigged trees posed by a U m/s wind (TreeWind3D) at --time=T s
 #   --inside          with --plot: the view from inside the stand, 70 m deep
+#   --deep            with --inside: from among the canopy trees, away from the stream
 #   --variants=N      meshes per species (default 1)
 #   --region=path.png make_woodland() over a 6 km massif with its climate (placement only, no
 #                     meshes): the stands as belts on a hillshade
@@ -493,9 +494,14 @@ func _render_plot(i: int, args: Dictionary) -> void:
 		cam.far = 70.0
 		sun.directional_shadow_max_distance = 70.0
 		var eye := Vector3(0, 0, 45) # on the stream bed, the one gap in the stand
+		var look := Vector3(-0.35, 0.18, -1)
+		if args.has("deep"):
+			# Among the canopy trees, away from the stream, looking into the closed stand.
+			eye = Vector3(-40, 0, 30)
+			look = Vector3(-1, 0.22, -0.6)
 		eye.y = valley.get_height(eye) + 1.7
 		cam.position = eye
-		cam.look_at(eye + Vector3(-0.35, 0.18, -1))
+		cam.look_at(eye + look)
 	for k in (8 if raster else 12):
 		await RenderingServer.frame_post_draw
 	var out: String = args.get("out", "/tmp/plot.png")

@@ -217,8 +217,15 @@ implicit surfaces, so it adds no triangles.
 - Left alone: near-parallel limbs (under about 12 degrees) and near-equal forks (limb over 0.6
   of the parent's radius). These are crotches with bark inclusion, not collars, and need
   a crotch model of their own.
-- Seen while testing: some limbs pass through a neighbouring stem (space colonisation keeps
-  buds apart, not grown wood). That was there before the weld and is a separate fix.
+- Seen while testing: some limbs passed through a neighbouring stem or limb. Growth keeps buds
+  apart through the shadow grid, not the wood they become, and the radii and the sag under
+  gravity come after growth. Fixed (12 Nov) the way trees settle it: two branches that touch
+  rub, the bark wears through and the thinner one dies back to the contact (branch abrasion;
+  crown shyness, Putz et al. 1984, Fish et al. 2006). After the sag, wood over 1.2 cm is tested
+  against thicker wood that is not its close kin, as capsules in a 0.75 m grid. The thinner
+  limb is cut just short of the contact and everything beyond it goes; stems are never cut.
+  An open oak loses 82 of 65,000 internodes this way, a forest sycamore 186 of 32,000. Crowns
+  look the same at a distance and generation time does not change. `get_collision_prune_count()`.
 
 ## 3. Wind
 
@@ -651,6 +658,45 @@ the tree still reads the trample field as before.
 
 Needs the PC (no GPU or denoiser in the cloud): GPU timings of the wind pass and of leaf
 geometry versus OMM cards, denoised path traced crops at 100%, and the forest-scale bench.
+
+## 8b. Woodland memory (12 Nov)
+
+The showcase scene ran out of memory (about 14 GB) generating the European woodland before
+anything was placed. Measured per species with `make_woodland(1)`: open-grown broadleaves
+carry 10-20M vertices each. Their LOD 0 is every leaf as geometry, and index LODs keep that
+vertex buffer resident even for far trees. Stand-grown trees carry 0.1-4M.
+
+Fixed (waste and bugs, no change in look):
+- **Shrubs under a canopy** were grown as open-field domes, for example a 14 m wide-crowned
+  holly with leaves to the ground (9.9M vertices). They now grow in the stand's shade
+  (FORM_UNDERSTORY, "(understory)"), drawn up and thin, as an understory is. Hedgerows keep the
+  open form. The beech stand's shrub layer went from 23.4M to 3.4M vertices.
+- **Open-grown forms** in a stand go only where the canopy leaves real light (shade under 0.3),
+  whatever the species tolerates.
+- **Leaf blades** had three coincident vertices at the base and at the tip, so four zero-area
+  triangles and four spare vertices per blade (half of a two-step leaflet). Under flutter the
+  tip pair also split into a sliver. The ends are now one vertex each: -22% vertices and -19%
+  triangles over the woodland.
+- **Deadwood order**: snags and logs are placed before the shrub layer, so a dense understory
+  no longer leaves them no room.
+
+European woodland, one variant, unique meshes: 117.5M vertices before the blade fix, 92.0M
+after; generation 31 s. The open forms are still about 70% of that.
+
+How the established systems hold this at scale:
+- **UE5 Nanite foliage / assemblies** (Witcher 4 demo, 2025): a tree is a trunk plus
+  micro-instanced parts (leaves, twigs), about 12 unique parts in 2,160 instances. One tree on
+  disk went from 3.5 GB to 29 MB. Far clusters become voxels. One bone per part, skinned in
+  compute.
+- **AMD and Coburg, Real-Time GPU Tree Generation** (HPG 2025): no stored trees. Work graphs
+  with mesh nodes generate them every frame (34.8 GiB to 51 KiB in their demo).
+- **Streaming**: classic engines keep separate LOD meshes, so far LODs never hold LOD 0
+  vertices, and they stream by distance.
+
+What the next step is (design change, on a card): LOD 0 leaf geometry kept only for trees in a
+near range and generated on demand, as `near_meshes` already does for needles. The far meshes
+would carry only the leaf twins (LOD 1 and coarser). Species would also be generated when a
+tile in range first needs them, and freed when none does.
 
 ## 8a. Species, habitats and stands (as built)
 

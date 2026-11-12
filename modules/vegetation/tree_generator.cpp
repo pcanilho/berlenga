@@ -1330,6 +1330,157 @@ void TreeGenerator::_bend_under_gravity() {
 	}
 }
 
+// Limbs through wood. Growth keeps buds apart through the shadow grid, not the wood they become,
+// and the radii (pipe model) and the sag under gravity come after growth, so a limb can end up
+// running through a neighbouring stem or limb. In a real crown two touching branches rub, the
+// bark wears through and the thinner one dies back to the contact (branch abrasion; crown
+// shyness, Putz et al. 1984, Fish et al. 2006). So the thinner wood is cut just short of the
+// contact and everything beyond it goes. Stems (order 0) are never cut. Contacts within the
+// junction where a limb leaves its parent are the weld's, not collisions.
+void TreeGenerator::_prune_collisions() {
+	collision_prunes = 0;
+	const int count = int(nodes.size());
+	const float min_r = 0.012f; // Thinner wood is twigs, hidden in the foliage.
+	const float cell_size = 0.75f;
+	HashMap<Vector3i, LocalVector<int>> grid;
+	auto cell_of = [&](const Vector3 &p) {
+		return Vector3i(int(Math::floor(p.x / cell_size)), int(Math::floor(p.y / cell_size)), int(Math::floor(p.z / cell_size)));
+	};
+	for (int i = 1; i < count; i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.radius < min_r || n.length <= 0.0f) {
+			continue;
+		}
+		const Vector3 a = n.start, b = n.end();
+		const Vector3 lo = a.min(b) - Vector3(n.radius, n.radius, n.radius);
+		const Vector3 hi = a.max(b) + Vector3(n.radius, n.radius, n.radius);
+		const Vector3i c0 = cell_of(lo), c1 = cell_of(hi);
+		for (int x = c0.x; x <= c1.x; x++) {
+			for (int y = c0.y; y <= c1.y; y++) {
+				for (int z = c0.z; z <= c1.z; z++) {
+					grid[Vector3i(x, y, z)].push_back(i);
+				}
+			}
+		}
+	}
+	// Closest points of two segments (Ericson, Real-Time Collision Detection 5.1.9).
+	auto closest = [](const Vector3 &p1, const Vector3 &q1, const Vector3 &p2, const Vector3 &q2, float &r_s, float &r_t) {
+		const Vector3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
+		const float a = d1.dot(d1), e = d2.dot(d2), f = d2.dot(r);
+		float s = 0.0f, t = 0.0f;
+		if (a <= 1e-9f && e <= 1e-9f) {
+			r_s = r_t = 0.0f;
+			return r.length();
+		}
+		if (a <= 1e-9f) {
+			t = CLAMP(f / e, 0.0f, 1.0f);
+		} else {
+			const float c = d1.dot(r);
+			if (e <= 1e-9f) {
+				s = CLAMP(-c / a, 0.0f, 1.0f);
+			} else {
+				const float bb = d1.dot(d2);
+				const float denom = a * e - bb * bb;
+				s = denom > 1e-9f ? CLAMP((bb * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
+				t = (bb * s + f) / e;
+				if (t < 0.0f) {
+					t = 0.0f;
+					s = CLAMP(-c / a, 0.0f, 1.0f);
+				} else if (t > 1.0f) {
+					t = 1.0f;
+					s = CLAMP((bb - c) / a, 0.0f, 1.0f);
+				}
+			}
+		}
+		r_s = s;
+		r_t = t;
+		return (p1 + d1 * s - (p2 + d2 * t)).length();
+	};
+	// Ancestors within a few internodes share the junction; they are never a collision.
+	auto near_kin = [&](int p_a, int p_b) {
+		for (int k = 0, x = p_a; k < 4 && x > 0; k++, x = nodes[x].parent) {
+			if (nodes[x].parent == p_b) {
+				return true;
+			}
+		}
+		for (int k = 0, x = p_b; k < 4 && x > 0; k++, x = nodes[x].parent) {
+			if (nodes[x].parent == p_a) {
+				return true;
+			}
+		}
+		return nodes[p_a].parent == nodes[p_b].parent;
+	};
+	auto is_ancestor = [&](int p_anc, int p_of) {
+		for (int x = nodes[p_of].parent; x > 0; x = nodes[x].parent) {
+			if (x == p_anc) {
+				return true;
+			}
+		}
+		return false;
+	};
+	for (int i = 1; i < count; i++) {
+		Node &n = nodes[i];
+		if (n.removed) {
+			continue;
+		}
+		if (n.parent > 0 && nodes[n.parent].removed) {
+			n.removed = true;
+			continue;
+		}
+		if (n.order == 0 || n.radius < min_r || n.length <= 0.0f) {
+			continue;
+		}
+		const Vector3 a = n.start, b = n.end();
+		const Vector3i c0 = cell_of(a.min(b)), c1 = cell_of(a.max(b));
+		float cut = 2.0f; // Fraction of the internode kept, 2: no contact.
+		for (int x = c0.x; x <= c1.x && cut > 1.0f; x++) {
+			for (int y = c0.y; y <= c1.y && cut > 1.0f; y++) {
+				for (int z = c0.z; z <= c1.z && cut > 1.0f; z++) {
+					const LocalVector<int> *cell = grid.getptr(Vector3i(x, y, z));
+					if (!cell) {
+						continue;
+					}
+					for (int j : *cell) {
+						const Node &o = nodes[j];
+						if (j == i || o.removed || o.radius < n.radius || near_kin(i, j) || is_ancestor(j, i) || is_ancestor(i, j)) {
+							continue;
+						}
+						float s, t;
+						const float d = closest(a, b, o.start, o.end(), s, t);
+						if (d >= 0.85f * (n.radius + o.radius)) {
+							continue;
+						}
+						// Inside the junction this limb grows out of: the weld's business.
+						const float along = s * n.length;
+						const Node *par = n.parent > 0 ? &nodes[n.parent] : nullptr;
+						if (par && along < 2.0f * par->radius + n.radius && o.start.distance_to(a) < 4.0f * (par->radius + o.radius)) {
+							continue;
+						}
+						cut = MIN(cut, s);
+						break;
+					}
+				}
+			}
+		}
+		if (cut <= 1.0f) {
+			const float keep = cut * n.length - 1.2f * n.radius;
+			if (keep < 0.05f || keep < 2.0f * n.radius) {
+				n.removed = true; // Children follow as the loop reaches them.
+			} else {
+				n.length = keep;
+				if (n.main >= 0) {
+					nodes[n.main].removed = true;
+				}
+				for (int c = n.first_lateral; c >= 0; c = nodes[c].next_sibling) {
+					nodes[c].removed = true;
+				}
+				n.leafy = false;
+			}
+			collision_prunes++;
+		}
+	}
+}
+
 void TreeGenerator::_measure() {
 	height = 0.0f;
 	crown_radius = 0.0f;
@@ -1622,7 +1773,12 @@ Dictionary TreeGenerator::get_leaf_season(Preset p_preset, const Dictionary &p_s
 // tip), with p_lobes lobes a side cut p_depth into it: pointed (a tip row between sinus rows) or
 // rounded (two shoulder rows between sinus rows, as in oak).
 void TreeGenerator::_add_blade(Builder &r_b, const Vector3 &p_start, const Vector3 &p_along, const Vector3 &p_side, const Vector3 &p_n, float p_length, float p_half_width, int p_steps, int p_lobes, float p_depth, const Color &p_color, bool p_round, float p_shape) {
-	const int base = r_b.verts.size();
+	// Rows of three vertices (midrib, two margins) along the blade. The base and the tip have no
+	// width, so they are one vertex each: three there would make four zero-area triangles and
+	// four spare vertices per blade (half of a two-step leaflet), and under flutter the margin
+	// pair at the tip would split into a sliver.
+	LocalVector<int> row;
+	row.resize(p_steps + 1);
 	for (int i = 0; i <= p_steps; i++) {
 		const float t = float(i) / p_steps;
 		float w = p_half_width * Math::sin(Math::PI * Math::pow(t, p_shape));
@@ -1637,10 +1793,14 @@ void TreeGenerator::_add_blade(Builder &r_b, const Vector3 &p_start, const Vecto
 		const float droop = -0.25f * p_length * t * t;
 		const Vector3 mid = p_start + p_along * (t * p_length) + p_n * droop;
 		const Vector3 fold = p_n * (0.12f * w);
+		row[i] = r_b.verts.size();
 		r_b.verts.push_back(mid);
 		r_b.normals.push_back(p_n);
 		r_b.uvs.push_back(Vector2(0.5f, t));
 		r_b.colors.push_back(p_color);
+		if (i == 0 || i == p_steps) {
+			continue;
+		}
 		r_b.verts.push_back(mid + p_side * w + fold);
 		r_b.normals.push_back((p_n - p_side * 0.2f).normalized());
 		r_b.uvs.push_back(Vector2(1.0f, t));
@@ -1650,20 +1810,29 @@ void TreeGenerator::_add_blade(Builder &r_b, const Vector3 &p_start, const Vecto
 		r_b.uvs.push_back(Vector2(0.0f, t));
 		r_b.colors.push_back(p_color);
 	}
+	auto tri = [&](int a, int b, int c) {
+		r_b.indices.push_back(a);
+		r_b.indices.push_back(b);
+		r_b.indices.push_back(c);
+	};
 	for (int i = 0; i < p_steps; i++) {
-		const int m0 = base + i * 3, m1 = m0 + 3;
-		r_b.indices.push_back(m0);
-		r_b.indices.push_back(m1);
-		r_b.indices.push_back(m0 + 1);
-		r_b.indices.push_back(m0 + 1);
-		r_b.indices.push_back(m1);
-		r_b.indices.push_back(m1 + 1);
-		r_b.indices.push_back(m0);
-		r_b.indices.push_back(m0 + 2);
-		r_b.indices.push_back(m1);
-		r_b.indices.push_back(m0 + 2);
-		r_b.indices.push_back(m1 + 2);
-		r_b.indices.push_back(m1);
+		const int m0 = row[i], m1 = row[i + 1];
+		const bool base = i == 0, tip = i + 1 == p_steps;
+		if (base && tip) {
+			continue; // One step: a line.
+		}
+		if (base) {
+			tri(m0, m1, m1 + 1);
+			tri(m0, m1 + 2, m1);
+		} else if (tip) {
+			tri(m0, m1, m0 + 1);
+			tri(m0, m0 + 2, m1);
+		} else {
+			tri(m0, m1, m0 + 1);
+			tri(m0 + 1, m1, m1 + 1);
+			tri(m0, m0 + 2, m1);
+			tri(m0 + 2, m1 + 2, m1);
+		}
 	}
 }
 
@@ -5057,7 +5226,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 			// share in rich woods, honeysuckle twining in shrubs. The generator's climber_cover
 			// scales them (0: none).
 			climber = CLIMBER_NONE;
-			if (saved_climber_cover > 0.0f && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_SNAG)) {
+			if (saved_climber_cover > 0.0f && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_SNAG || p_form == FORM_UNDERSTORY)) {
 				const uint32_t bit = 1u << int(p_preset);
 				const uint32_t ivy_hosts = (1u << PRESET_OAK) | (1u << PRESET_BEECH) | (1u << PRESET_ASH) | (1u << PRESET_SYCAMORE_MAPLE) | (1u << PRESET_LIME) |
 						(1u << PRESET_BLACK_ALDER) | (1u << PRESET_WHITE_WILLOW) | (1u << PRESET_HORSE_CHESTNUT) | (1u << PRESET_HAWTHORN) | (1u << PRESET_ELDER) |
@@ -5093,7 +5262,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 		// One full-needle variant for the near range (the field repeats it over the variants):
 		// about 30M vertices for a spruce, so one only, and no LOD copies since it is only drawn
 		// close. GPU memory and path tracing cost of it are not yet measured.
-		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND)) {
+		if (params[PARAM_NEEDLES] > 0.5f && near_needle_range > 0.0f && p_variants > 0 && (p_form == FORM_OPEN || p_form == FORM_STAND || p_form == FORM_UNDERSTORY)) {
 			needle_sprays = false;
 			skip_lods = true;
 			seed = saved_seed * 31;
@@ -5121,7 +5290,7 @@ Ref<PlantSpecies> TreeGenerator::_stand_species(Preset p_preset, bool p_stand_gr
 	if (p_form == FORM_LOG || p_form == FORM_BRANCH || p_form == FORM_STICKS) {
 		sp->set_meta("deadwood", true);
 	}
-	static const char *form_names[] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)" };
+	static const char *form_names[] = { " (open)", " (stand)", " (sapling)", " (snag)", " (log)", " (fallen branch)", " (sticks)", " (understory)" };
 	sp->set_name(String(preset_names[p_preset]) + form_names[p_form]);
 	TypedArray<Mesh> meshes = mesh_cache[key];
 	if (p_variants < meshes.size()) {
@@ -5273,11 +5442,22 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 	auto open = [&](Preset p, float p_density) {
 		Ref<PlantSpecies> sp = _stand_species(p, false, p_variants);
 		sp->set_density(p_density);
+		// Open-grown crowns (low, wide, limbs to the ground) only where the canopy leaves real
+		// light: edges, streams and large gaps. Under a closed canopy they read as orchard trees.
+		// Shade tolerance (the habitat's shade_max) says where the species survives; this form
+		// also needs the light it grew in.
+		sp->set_rule_range(PlantSpecies::RULE_SHADE, Vector2(0.0f, MIN(sp->get_rule_range(PlantSpecies::RULE_SHADE).y, 0.3f)));
 		list.push_back(sp);
 		return sp;
 	};
+	int shrub_start = -1; // Where the shrub layer begins in the list.
 	auto shrub = [&](Preset p, float p_density) {
-		Ref<PlantSpecies> sp = _stand_species(p, false, p_variants);
+		if (shrub_start < 0) {
+			shrub_start = list.size();
+		}
+		// Under a canopy the shrub layer grows in shade: drawn up and thin (the shade form), not
+		// the dense dome of a shrub in the open. Hedgerows stand in the open.
+		Ref<PlantSpecies> sp = _stand_species(p, false, p_variants, p_stand == STAND_HEDGEROW ? FORM_OPEN : FORM_UNDERSTORY);
 		sp->set_density(p_density);
 		list.push_back(sp);
 		return sp;
@@ -5448,7 +5628,7 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 		branch->set_density(0.7f);
 		Ref<PlantSpecies> sticks = _stand_species(lead, true, p_variants, FORM_STICKS);
 		sticks->set_density(1.0f);
-		for (const Ref<PlantSpecies> &extra : { sap, snag, log, branch, sticks }) {
+		for (const Ref<PlantSpecies> &extra : { snag, log, sap, branch, sticks }) {
 			// Inside the stand's own belt.
 			for (int r = 0; r < PlantSpecies::RULE_MAX; r++) {
 				if (PlantSpecies::Rule(r) == PlantSpecies::RULE_SHADE) {
@@ -5457,7 +5637,14 @@ Ref<Biome> TreeGenerator::make_stand(Stand p_stand, int p_variants) {
 				extra->set_rule_range(PlantSpecies::Rule(r), first->get_rule_range(PlantSpecies::Rule(r)));
 				extra->set_rule_fade(PlantSpecies::Rule(r), first->get_rule_fade(PlantSpecies::Rule(r)));
 			}
-			list.push_back(extra);
+			if ((extra == snag || extra == log) && shrub_start >= 0) {
+				// Dead trees stand and lie where they fell, before the shrub layer fills the
+				// floor around them (placed after it, a dense understory left no room for them).
+				list.insert(shrub_start, extra);
+				shrub_start++;
+			} else {
+				list.push_back(extra);
+			}
 		}
 	}
 	if (p_stand == STAND_HEDGEROW) {
@@ -5588,6 +5775,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	}
 	_compute_radii();
 	_bend_under_gravity();
+	_prune_collisions();
 	_measure();
 	_mark_spurs(years);
 	broken_tip = -1;
@@ -5675,6 +5863,7 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_veteran"), &TreeGenerator::get_veteran);
 	ClassDB::bind_method(D_METHOD("get_veteran_feature_count"), &TreeGenerator::get_veteran_feature_count);
 	ClassDB::bind_method(D_METHOD("get_veteran_features"), &TreeGenerator::get_veteran_features);
+	ClassDB::bind_method(D_METHOD("get_collision_prune_count"), &TreeGenerator::get_collision_prune_count);
 	ClassDB::bind_method(D_METHOD("get_leaf_flutter"), &TreeGenerator::get_leaf_flutter);
 	ClassDB::bind_method(D_METHOD("get_climber_plant_leaves"), &TreeGenerator::get_climber_plant_leaves);
 	ClassDB::bind_method(D_METHOD("get_junction_weld"), &TreeGenerator::get_junction_weld);

@@ -431,6 +431,7 @@ public:
 
 private:
 	int shed_count = 0;
+	int collision_prunes = 0;
 	uint64_t generation_usec = 0;
 
 	void _set_north_american(Preset p_preset);
@@ -452,6 +453,7 @@ private:
 	void _shed(int p_year);
 	void _compute_radii();
 	void _bend_under_gravity();
+	void _prune_collisions();
 	void _measure();
 
 	static void _tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height = nullptr, float p_relief = 0.0f);
@@ -513,6 +515,7 @@ private:
 		FORM_LOG, // Fallen dead, decay classes 2-4.
 		FORM_BRANCH, // A shed limb on the ground (coarse woody debris under the logs' size).
 		FORM_STICKS, // Small shed branches, 1-4 cm, scattered densely between the plants.
+		FORM_UNDERSTORY, // A shrub grown in a stand's shade: taller, thinner, fewer leaves.
 	};
 	Ref<PlantSpecies> _stand_species(Preset p_preset, bool p_stand_grown, int p_variants, Form p_form = FORM_OPEN);
 
@@ -620,6 +623,7 @@ public:
 	int get_leaf_count() const { return leaf_count; }
 	float get_leaf_area_index() const { return leaf_area_index; }
 	int get_shed_count() const { return shed_count; }
+	int get_collision_prune_count() const { return collision_prunes; }
 	int get_generation_usec() const { return int(generation_usec); }
 
 	TreeGenerator();
