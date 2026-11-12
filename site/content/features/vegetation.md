@@ -59,7 +59,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 ## Plants
 
-- **Plant generator** (`PlantGenerator`, 35 presets): meadow plants including tall flowers (knapweed, field scabious, wild carrot, common sorrel, some in seed), forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.
+- **Plant generator** (`PlantGenerator`, 39 presets): meadow plants including tall flowers (knapweed, field scabious, wild carrot, common sorrel, some in seed), forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.
 
   ![Generated dandelions and plantains, three seeds each](media/plant-generator.jpg)
 
