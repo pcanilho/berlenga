@@ -871,6 +871,19 @@
    "topic": "Currents and rivers"
   },
   {
+   "name": "Plunging waterfalls",
+   "settings": [
+    "plunge_falls",
+    "column_density",
+    "wind_exposure"
+   ],
+   "note": "",
+   "what": "tall falls break up into a falling column of clumps slowed by the air, inside a spray veil and soft mist.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
    "name": "Faster flow bakes",
    "settings": [
     "physics/physx_3d/water/multigrid_flow"
