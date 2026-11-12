@@ -1632,6 +1632,17 @@
    "topic": "Grass"
   },
   {
+   "name": "Seasonal grass",
+   "settings": [
+    "GrassField3D.season_source"
+   ],
+   "note": "",
+   "what": "grass browns in drought and hard cold and stays green in a mild winter, read from the season.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Layered meadow",
    "settings": [
     "GrassField3D.color_variation",
@@ -1688,6 +1699,17 @@
    ],
    "note": "",
    "what": "herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Plants"
+  },
+  {
+   "name": "Plants on deadwood",
+   "settings": [
+    "PlantSpecies.deadwood_rule"
+   ],
+   "note": "",
+   "what": "ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

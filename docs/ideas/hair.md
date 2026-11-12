@@ -764,9 +764,46 @@ distance. Three causes, three fixes:
 
 Tried and not kept: more cards (512, 1024), full width instead of the 95th percentile, cards faced
 out from the groom's centre, and a coverage gain of 2 to 4 all left the gaps; the gaps were the
-fanning. Left: the cards still read about a fifth lighter than the strands at 8 to 15 m in the
-bench (mean 53 against 43 on the hair), from weaker self-shadowing (their deep opacity maps are
-built from one strand a clump). Cards stay off by default.
+fanning. Left then: the cards still read lighter than the strands, put down to weaker
+self-shadowing.
+
+Measured again, one light at a time (bench `--hair=far8_cards` against `far8`, the hair's mean
+luminance; and close up): with the sun off the cards were 2.5 times as bright as the strands, with
+the sky's light off only 1.5 times. Three causes, none of them the deep opacity maps:
+
+- Sky reflection: the cards faced their normal toward the viewer, but the strands' ribbon frame
+  (across = strand x eye, normal = across x strand) faces away from it, and Godot's horizon term
+  then leaves out the reflected sky on the strands. The cards took a full sky reflection (a grey
+  sheen; setting SPECULAR to 0 took 20% off the cards and 1% off the strands). The cards now build
+  the strands' own frame about their strand direction.
+- Scalp through the cards at the crown: a card is a slab of strands centred on its simulated strand,
+  which the collision keeps only just off the body, so the slab's inner half and a flat strip's
+  edges (the sagitta over the round scalp) sank into the head, and the scalp showed between the
+  cards. The card strand now keeps half the clump's thickness more off the body (spheres and the
+  distance field), and near the scalp (a sphere fitted to the roots, least squares) each strip is
+  raised until its slab clears it.
+- Deep opacity lookups at the strip's edges: the edges reach sideways out of the hair the map was
+  built from, in front of it toward the light, and read as lit. The cards now read the maps on
+  their centre line.
+
+Result: close up the cards are within 7% of the strands (mean 47.1 against 44.1), at 8 m within 38%
+(28.8 against 20.9; before, 40.7: 95% lighter). What is left at 8 m is mostly the body showing
+between the hanging cards at the shoulders, where the strands cover it. Also found, in the
+renderer's code (not yet measured): Godot leaves alpha-blended materials out of its shadow
+passes, so the strands' and cards' shadow-pass code only runs for the path tracer's shadow rays,
+and the deep opacity maps carry the hair's self-shadowing in raster. Cards stay off by default.
+
+### Fixed: black specks on strands with deep shadows
+
+Rare black 2x2 pixel blocks on strands, only with deep shadows on. Turned off one step at a time:
+not the shadow-map offset into the hair (DIRECTIONAL_SHADOW_OFFSET), not the multiple-scattering
+term; gone when light() does not multiply by the map's transmittance, and gone as well with that
+transmittance clamped to 0..1 (min alone and max alone each clear it, so the value reaching light()
+was not a number). The per-vertex values check finite and in range, so the bad value appears
+between vertex and light(); not pinned further on llvmpipe. light() now clamps it, which changes
+nothing for any valid value. Bench `--hair=far8`: 12 to 22 black pixels on the hair before, 0
+after in every run (far8, near, wind).
+
 
 ## Stage 2q: hair resting on cloth
 
