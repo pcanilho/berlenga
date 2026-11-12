@@ -7,19 +7,7 @@ summary: "Sun and moon set by date, time and place; a scattering atmosphere with
 - **Sun and moon clock** (`SkyClock`): date, time and place point the sun and moon lights, with moon phases (Meeus); the sun is within 0.0004 degrees of the ephemeris and sunrise within half a minute of the almanac (`docs/bench/sky --test`).
 - **Sky atmosphere** (`WeatherSkyMaterial.atmosphere_model`, `SkyClock.drive_light_energy`): multiple scattering (Hillaire 2020) lit by sun and moon, with twilight, the Earth's shadow and clouds hazed to the horizon; `atmo_far_water` hazes far sea, `energy_per_lux` scales the lights.
 
-  ![The same island under the old sky and the new atmosphere](media/sky-atmosphere.jpg)
-
-  *Sky atmosphere: the dark grey band at the horizon is gone and far clouds fade into haze.*
-
-  ![The island at sunset under the old sky and the new atmosphere](media/sky-sunset.jpg)
-
-  *Sunset: the old sky goes black; the atmosphere lights the clouds orange from below the horizon.*
-
 - **Cloud layer** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
-
-  ![A cloud layer over a field of blocks, raster and path traced](media/weather-clouds.jpg)
-
-  *Clouds: the layer seen from the ground, with its shadows on the field, raster and path traced.*
 
 - **Clouds that never repeat** (always on): shape noise read at two scales with an irrational ratio.
 
