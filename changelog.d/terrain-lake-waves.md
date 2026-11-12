@@ -1,1 +1,0 @@
-- TerrainGenerator3D.build_water(): lake waves at their physical, fetch-limited height (the 0.2 wave scale is gone).
