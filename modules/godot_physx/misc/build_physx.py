@@ -185,7 +185,17 @@ def main():
         if not os.path.isfile(blast_script):
             sys.exit("no Blast build script at " + blast_script)
         blast_ok = True
-        if is_windows:
+        blast_platform = "windows-x86_64" if is_windows else "linux-" + platform.machine()
+        blast_sdk = os.path.join(blast_dir, "_build", blast_platform, "release", "blast-sdk")
+        if not is_windows and platform.machine() == "aarch64":
+            # NVIDIA's Blast tooling pulls host packages that don't exist for arm64:
+            # build the four libraries the module links with the system compiler.
+            plain = [sys.executable, os.path.join(HERE, "build_blast_plain.py"), blast_dir, blast_sdk, "--jobs", str(args.jobs)]
+            if args.blast_optional:
+                blast_ok = subprocess.call(plain) == 0
+            else:
+                run(plain, cwd=blast_dir)
+        elif is_windows:
             run([blast_script], cwd=blast_dir)
         else:
             # Use our own compiler instead of NVIDIA's build container (patch 0005).
@@ -198,8 +208,6 @@ def main():
                 else:
                     run(blast_cmd, cwd=blast_dir)
 
-        blast_platform = "windows-x86_64" if is_windows else "linux-" + platform.machine()
-        blast_sdk = os.path.join(blast_dir, "_build", blast_platform, "release", "blast-sdk")
         if blast_ok and not os.path.isdir(os.path.join(blast_sdk, "include")):
             if not args.blast_optional:
                 sys.exit("Blast build finished but no SDK at " + blast_sdk)

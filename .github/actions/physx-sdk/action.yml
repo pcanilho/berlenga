@@ -29,9 +29,13 @@ runs:
           if ! command -v clang++ >/dev/null || ! command -v cmake >/dev/null; then
             sudo apt-get update && sudo apt-get install -y clang cmake
           fi
-          # Blast's own build is only proven on x86_64: on arm64 a failed Blast build
-          # leaves it out (no fracture) instead of failing the release.
-          if [ "$RUNNER_ARCH" = "ARM64" ]; then extra="--blast-optional"; fi
+          if [ "$RUNNER_ARCH" = "ARM64" ]; then
+            # arm64 builds Blast with build_blast_plain.py, whose fracture authoring needs
+            # Boost.Multiprecision headers. If Blast still fails there, the release ships
+            # without it (no fracture on arm64) instead of failing.
+            sudo apt-get install -y libboost-dev || { sudo apt-get update && sudo apt-get install -y libboost-dev; }
+            extra="--blast-optional"
+          fi
         fi
         python modules/godot_physx/misc/build_physx.py --platform "$plat" --blast --flow $extra --jobs 4
 
