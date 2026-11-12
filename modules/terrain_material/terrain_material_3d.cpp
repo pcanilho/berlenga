@@ -32,15 +32,16 @@
 
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+
 #include "modules/terrain_deform/terrain_generator_3d.h"
 #include "modules/vegetation/grass_field_3d.h"
 
 // --- TerrainMaterialLayer -----------------------------------------------------------------------------------------
 
-#define LAYER_SETTER(m_type, m_name)                         \
+#define LAYER_SETTER(m_type, m_name) \
 	void TerrainMaterialLayer::set_##m_name(m_type p_value) { \
-		m_name = p_value;                                     \
-		emit_changed();                                       \
+		m_name = p_value; \
+		emit_changed(); \
 	}
 
 LAYER_SETTER(const Ref<Texture2D> &, albedo_texture)
@@ -136,6 +137,25 @@ global uniform sampler2D terrain_cover_map : hint_default_black, filter_linear; 
 global uniform vec4 terrain_cover_rect;
 uniform float tm_far_start = 300.0;
 uniform float tm_far_fade = 150.0;
+)";
+	}
+	if (sky_occlusion_enabled) {
+		// The ground's sky occlusion (TerrainGenerator3D.sky_occlusion; rect width 0 = none).
+		c += R"(
+global uniform sampler2DArray terrain_sky_map : filter_linear; // the seen sky's nine harmonics, 4 + 4 + 1
+global uniform vec4 terrain_sky_rect;
+global uniform vec4 terrain_sky_full; // the whole sky's
+global uniform vec4 terrain_sky_full2;
+global uniform float terrain_sky_full3;
+uniform float tm_sky_occlusion = 1.0;
+
+// Irradiance on n from nine harmonics (Ramamoorthi and Hanrahan 2001), the basis of TerrainSky::sh_basis.
+float tm_sky_irradiance(vec4 a, vec4 b, float c, vec3 n) {
+	return 3.141593 * 0.282095 * a.x
+			+ 2.094395 * 0.488603 * (a.y * n.y + a.z * n.z + a.w * n.x)
+			+ 0.785398 * (1.092548 * (b.x * n.x * n.y + b.y * n.y * n.z + b.w * n.x * n.z)
+					+ 0.315392 * b.z * (3.0 * n.z * n.z - 1.0) + 0.546274 * c * (n.x * n.x - n.y * n.y));
+}
 )";
 	}
 	c += R"(
@@ -450,6 +470,34 @@ void fragment() {
 	SPECULAR = specular;
 	NORMAL = normalize((VIEW_MATRIX * vec4(sn, 0.0)).xyz);
 )";
+	if (sky_occlusion_enabled) {
+		// Raster ambient light sees only the sky the hills leave open (docs/ideas/terrain-material.md, "Sky
+		// occlusion"): the irradiance of the sky this ground sees over that of the whole sky, both from nine
+		// harmonics, on the shading normal. The path tracer finds the hills itself.
+		c += R"(#if !defined(RT)
+	if (terrain_sky_rect.z > 0.0 && tm_sky_occlusion > 0.0) {
+		vec2 sky_size = vec2(textureSize(terrain_sky_map, 0).xy);
+		vec2 sky_g = clamp((wp.xz - terrain_sky_rect.xy) / terrain_sky_rect.zw, 0.0, 1.0);
+		vec2 sky_uv = (sky_g * (sky_size - 1.0) + 0.5) / sky_size;
+		vec4 sky_a = textureLod(terrain_sky_map, vec3(sky_uv, 0.0), 0.0);
+		vec4 sky_b = textureLod(terrain_sky_map, vec3(sky_uv, 1.0), 0.0);
+		float sky_c = textureLod(terrain_sky_map, vec3(sky_uv, 2.0), 0.0).x;
+		float sky_seen = max(tm_sky_irradiance(sky_a, sky_b, sky_c, sn), 0.0);
+		float sky_all = max(tm_sky_irradiance(terrain_sky_full, terrain_sky_full2, terrain_sky_full3, sn), 1e-4);
+		// The hidden sky is replaced by ground lit like this one, not by black: the multi-bounce fit of Jimenez et
+		// al. 2016 (GTAO) on the ground's albedo.
+		float sky_v = clamp(sky_seen / sky_all, 0.0, 1.0);
+		float sky_alb = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+		float sky_ma = 2.0404 * sky_alb - 0.3324;
+		float sky_mb = -4.7951 * sky_alb + 0.6417;
+		float sky_mc = 2.7552 * sky_alb + 0.6903;
+		sky_v = max(sky_v, ((sky_v * sky_ma + sky_mb) * sky_v + sky_mc) * sky_v);
+		AO = mix(1.0, sky_v, tm_sky_occlusion);
+		AO_LIGHT_AFFECT = 0.0;
+	}
+#endif
+)";
+	}
 	if (snow_enabled) {
 		// Sparkle on dry snow. The ground has no mesh tangents, so the frame is built around the normal.
 		c += R"(	{
@@ -476,6 +524,9 @@ void TerrainMaterial3D::_update_params() {
 	set_shader_parameter("tm_blend_depth", blend_depth);
 	set_shader_parameter("tm_detail_octaves", detail_octaves);
 	set_shader_parameter("tm_snow_max_slope", snow_max_slope);
+	if (sky_occlusion_enabled) {
+		set_shader_parameter("tm_sky_occlusion", sky_occlusion);
+	}
 	if (far_blend_enabled) {
 		set_shader_parameter("tm_far_start", far_start);
 		set_shader_parameter("tm_far_fade", far_fade);
@@ -541,15 +592,15 @@ Ref<TerrainMaterialLayer> TerrainMaterial3D::get_layer(Layer p_layer) const {
 	return layers[p_layer];
 }
 
-#define MAT_SETTER(m_type, m_name, m_expr)                     \
-	void TerrainMaterial3D::set_##m_name(m_type p_value) {     \
-		m_name = m_expr;                                       \
-		_update_params();                                      \
+#define MAT_SETTER(m_type, m_name, m_expr) \
+	void TerrainMaterial3D::set_##m_name(m_type p_value) { \
+		m_name = m_expr; \
+		_update_params(); \
 	}
-#define MAT_SETTER_CODE(m_type, m_name)                        \
-	void TerrainMaterial3D::set_##m_name(m_type p_value) {     \
-		m_name = p_value;                                      \
-		update_shader();                                       \
+#define MAT_SETTER_CODE(m_type, m_name) \
+	void TerrainMaterial3D::set_##m_name(m_type p_value) { \
+		m_name = p_value; \
+		update_shader(); \
 	}
 
 MAT_SETTER(bool, geology_enabled, p_value)
@@ -568,6 +619,13 @@ MAT_SETTER_CODE(bool, snow_enabled)
 MAT_SETTER_CODE(bool, ground_deform_enabled)
 MAT_SETTER(float, far_start, MAX(p_value, 0.0f))
 MAT_SETTER(float, far_fade, MAX(p_value, 1.0f))
+
+void TerrainMaterial3D::set_sky_occlusion_enabled(bool p_enabled) {
+	sky_occlusion_enabled = p_enabled;
+	update_shader();
+}
+
+MAT_SETTER(float, sky_occlusion, CLAMP(p_value, 0.0f, 1.0f))
 
 void TerrainMaterial3D::set_far_blend_enabled(bool p_enabled) {
 	far_blend_enabled = p_enabled;
@@ -589,9 +647,9 @@ void TerrainMaterial3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_layer", "layer", "value"), &TerrainMaterial3D::set_layer);
 	ClassDB::bind_method(D_METHOD("get_layer", "layer"), &TerrainMaterial3D::get_layer);
 	ClassDB::bind_method(D_METHOD("use_generator", "generator"), &TerrainMaterial3D::use_generator);
-#define BIND_PROP(m_type, m_name, m_get, m_hint, m_hint_str)                                                          \
-	ClassDB::bind_method(D_METHOD("set_" #m_name, "value"), &TerrainMaterial3D::set_##m_name);                        \
-	ClassDB::bind_method(D_METHOD(#m_get), &TerrainMaterial3D::m_get);                                                \
+#define BIND_PROP(m_type, m_name, m_get, m_hint, m_hint_str) \
+	ClassDB::bind_method(D_METHOD("set_" #m_name, "value"), &TerrainMaterial3D::set_##m_name); \
+	ClassDB::bind_method(D_METHOD(#m_get), &TerrainMaterial3D::m_get); \
 	ADD_PROPERTY(PropertyInfo(m_type, #m_name, m_hint, m_hint_str), "set_" #m_name, #m_get);
 
 	for (int i = 0; i < LAYER_MAX; i++) {
@@ -611,6 +669,8 @@ void TerrainMaterial3D::_bind_methods() {
 	BIND_PROP(Variant::BOOL, snow_enabled, is_snow_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, snow_max_slope, get_snow_max_slope, PROPERTY_HINT_RANGE, "0,90,0.1,degrees")
 	BIND_PROP(Variant::BOOL, ground_deform_enabled, is_ground_deform_enabled, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::BOOL, sky_occlusion_enabled, is_sky_occlusion_enabled, PROPERTY_HINT_NONE, "")
+	BIND_PROP(Variant::FLOAT, sky_occlusion, get_sky_occlusion, PROPERTY_HINT_RANGE, "0,1,0.01")
 	BIND_PROP(Variant::BOOL, far_blend_enabled, is_far_blend_enabled, PROPERTY_HINT_NONE, "")
 	BIND_PROP(Variant::FLOAT, far_start, get_far_start, PROPERTY_HINT_RANGE, "0,5000,1,or_greater,suffix:m")
 	BIND_PROP(Variant::FLOAT, far_fade, get_far_fade, PROPERTY_HINT_RANGE, "1,2000,1,or_greater,suffix:m")

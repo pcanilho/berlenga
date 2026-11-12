@@ -214,6 +214,18 @@
 				Mean runoff over the land of the last [method generate] with a [member climate_recipe], in mm a year. Lakes balance their inflow and evaporation with it.
 			</description>
 		</method>
+		<method name="get_last_sky_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Milliseconds the last sky occlusion bake took (see [member sky_occlusion]).
+			</description>
+		</method>
+		<method name="get_last_sky_light_msec" qualifiers="const">
+			<return type="float" />
+			<description>
+				Milliseconds the last [method update_sky_light] took.
+			</description>
+		</method>
 		<method name="get_river_sites" qualifiers="const">
 			<return type="Array" />
 			<param index="0" name="min_area" type="float" default="100000.0" />
@@ -263,6 +275,20 @@
 			<return type="Image" />
 			<description>
 				Sediment thickness per grid node, [constant Image.FORMAT_RF], metres.
+			</description>
+		</method>
+		<method name="get_sky_image" qualifiers="const">
+			<return type="Image" />
+			<param index="0" name="layer" type="int" default="0" />
+			<description>
+				One layer of the ground's seen sky, [member sky_cell] apart from the result's corner: RGBA half of the nine spherical harmonics (luminance, over the whole sky's first) of the sky each node sees past its horizons, harmonics 0 to 3 in [param layer] 0, 4 to 7 in 1, 8 in 2. Published to shaders as the [code]terrain_sky_map[/code] array, with [code]terrain_sky_rect[/code] and the whole sky's harmonics in [code]terrain_sky_full[/code], [code]terrain_sky_full2[/code] and [code]terrain_sky_full3[/code]. Empty without [member sky_occlusion].
+			</description>
+		</method>
+		<method name="get_sky_visibility" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The sky view factor at [param global_position], 0 to 1 (1 without [member sky_occlusion]).
 			</description>
 		</method>
 		<method name="get_snow_water_at" qualifiers="const">
@@ -372,6 +398,13 @@
 			<return type="int" />
 			<description>
 				Writes the generated heights into the ground's vertices inside the rectangle. Returns the number written.
+			</description>
+		</method>
+		<method name="update_sky_light">
+			<return type="bool" />
+			<param index="0" name="panorama" type="Image" />
+			<description>
+				Weighs each node's seen sky by the light of [param panorama], a radiance panorama as [method RenderingServer.sky_bake_panorama] returns it, and updates the sky texture. [member sky_light_source] does this by itself. Returns [code]false[/code] without a sky occlusion bake.
 			</description>
 		</method>
 	</methods>
@@ -543,6 +576,21 @@
 		</member>
 		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(4096, 4096)">
 			Width (X) and depth (Z) in metres of the rectangle generated, centred on the node.
+		</member>
+		<member name="sky_cell" type="float" setter="set_sky_cell" getter="get_sky_cell" default="8.0">
+			Spacing in metres of the sky occlusion grid.
+		</member>
+		<member name="sky_distance" type="float" setter="set_sky_distance" getter="get_sky_distance" default="4000.0">
+			How far in metres each node looks for its horizon. Past the result the ground counts as level.
+		</member>
+		<member name="sky_light_interval" type="float" setter="set_sky_light_interval" getter="get_sky_light_interval" default="2.0">
+			Seconds between reads of the sky for [member sky_light_source]. A read that finds the sky within 2% of the last one used changes nothing.
+		</member>
+		<member name="sky_light_source" type="NodePath" setter="set_sky_light_source" getter="get_sky_light_source" default="NodePath(&quot;&quot;)">
+			A [WorldEnvironment] or [Camera3D] whose sky lights the ground: its radiance is read back as a small panorama now and then ([member sky_light_interval]) and passed to [method update_sky_light]. Without it the seen sky is weighed as an even sky.
+		</member>
+		<member name="sky_occlusion" type="bool" setter="set_sky_occlusion" getter="is_sky_occlusion_enabled" default="true">
+			Bake the ground's horizons after [method generate], in 16 directions out to [member sky_distance], and from them the sky each node sees (see [method get_sky_image]). [TerrainMaterial3D] reads it for raster ambient light ([member TerrainMaterial3D.sky_occlusion_enabled]), so slopes the hills hide from part of the sky, such as a low sunset glow, do not take its light; the path tracer finds the hills itself.
 		</member>
 		<member name="soil_depth_scale" type="float" setter="set_soil_depth_scale" getter="get_soil_depth_scale" default="0.5">
 			Depth over which soil production halves, e-fold (h0 in Heimsath et al. 1997). Larger gives deeper soils.

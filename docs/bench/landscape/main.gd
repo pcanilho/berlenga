@@ -26,6 +26,9 @@ extends Node3D
 #   --month=N --time=H    0-based month of the rivers and the SkyClock date (default 4, 15 May) and local time (16.5)
 #   --day=N               day of the month (default 15)
 #   --cloud-shadow=0 --sun-shadow=0   no cloud shadow on the sun; no raster sun shadow map
+#   --sun-off             no sun at all: what the sky alone lights
+#   --sky-occlusion=0     ground ambient light without the hills' sky occlusion; --sky-light=0 an even sky for it
+#   --water-param=name:value[;...]   set sea shader uniforms (floats, true/false, colours as r,g,b,a)
 #   --prints=0            no GroundSurface3D (footprints) node
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
@@ -162,6 +165,18 @@ func _ready() -> void:
 		_log("far cover map %s in %d ms (forest placed again)" % [str(ct.get_size()) if ct else "missing", Time.get_ticks_msec() - tc])
 	_run_weather()
 	_log("setup done in %d ms" % (Time.get_ticks_msec() - t_start))
+	if args.has("sun-off"):
+		sun.visible = false # an A/B frame: what the sky alone lights
+	if args.has("water-param") and ocean != null and ocean.get_water_material() != null:
+		# --water-param=name:value[;name:value]: a sea shader uniform for an A/B frame (floats; bools as true/false).
+		for kv in String(args["water-param"]).split(";"):
+			var pv := kv.split(":")
+			var val: Variant = (pv[1] == "true") if pv[1] in ["true", "false"] else float(pv[1])
+			if "," in pv[1]:
+				var c := pv[1].split_floats(",")
+				val = Color(c[0], c[1], c[2], c[3])
+			ocean.get_water_material().set_shader_parameter(pv[0], val)
+			_log("sea %s = %s" % [pv[0], val])
 	for i in 30:
 		await get_tree().process_frame
 	# The checks move probes, press prints and step the weather: a picture only runs them when asked (--checks),
@@ -207,6 +222,8 @@ func _ready() -> void:
 	if out != "":
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved " + out)
+		if gen != null:
+			_log("sky light update %.1f ms" % gen.get_last_sky_light_msec())
 	get_tree().quit(0)
 
 
@@ -412,6 +429,8 @@ func _generate() -> void:
 	climate.wind_from = 190.0
 	gen.climate_recipe = climate
 	gen.river_month = int(args.get("month", "4")) # spring: the snowmelt flood
+	# --sky-occlusion=0: the ground's raster ambient light without the hills' sky occlusion (an A/B frame).
+	gen.sky_occlusion = args.get("sky-occlusion", "1") != "0"
 	gen.generate()
 	if lake_marker != null and not args.has("lake-x"):
 		# The high lake sits above the range's tallest fall: a marker up its river from the lip, then the ground is
@@ -435,7 +454,7 @@ func _generate() -> void:
 				(lake_marker.get_meta("inflow") as Node3D).position = lake_marker.position
 			_log("high lake marker %.0f m up the river from the %.0f m fall at %s" % [run, tall["height"], tall["top"]])
 			gen.generate()
-	_log("generate %d ms, grid %s, last change %.3f m, fan slots filled %d" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change(), gen.get_last_slots_filled()])
+	_log("generate %d ms, grid %s, last change %.3f m, fan slots filled %d, sky occlusion %.0f ms" % [Time.get_ticks_msec() - t, gen.get_grid_size(), gen.get_last_change(), gen.get_last_slots_filled(), gen.get_last_sky_msec()])
 	if gen.moraine_age > 0.0:
 		_log("moraines: %.0f m3 of debris" % gen.get_last_moraine_volume())
 	if gen.scree_age > 0.0:
@@ -1075,6 +1094,9 @@ func _build_weather() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+	# The ground's sky occlusion weighs the hidden sky by the sky's own light (read back when it changes).
+	if gen != null and args.get("sky-light", "1") != "0":
+		gen.sky_light_source = gen.get_path_to(we)
 	# Snow: a winter baked over the whole world (SnowClimate: snow line, shaded faces, loaded lee slopes, cornices),
 	# carried on by the weather; a finer near square follows the camera.
 	snow = SnowCover3D.new()

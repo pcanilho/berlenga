@@ -58,6 +58,12 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		// The last glaciers' flow and wear, for ice-worn rock in the detail normal (TerrainGenerator3D.ice_worn_detail).
 		{ "terrain_ice_flow", "sampler2D" },
 		{ "terrain_ice_flow_rect", "vec4" },
+		// The ground's seen sky (TerrainGenerator3D.sky_occlusion).
+		{ "terrain_sky_map", "sampler2DArray" },
+		{ "terrain_sky_rect", "vec4" },
+		{ "terrain_sky_full", "vec4" },
+		{ "terrain_sky_full2", "vec4" },
+		{ "terrain_sky_full3", "float" },
 	};
 	for (const auto &g : globals) {
 		if (ProjectSettings::get_singleton()->has_setting(String("shader_globals/") + g.name)) {
@@ -65,7 +71,7 @@ void initialize_terrain_material_module(ModuleInitializationLevel p_level) {
 		}
 		Dictionary d;
 		d["type"] = g.type;
-		d["value"] = String(g.type) == "vec4" ? Variant(Vector4()) : Variant("");
+		d["value"] = String(g.type) == "vec4" ? Variant(Vector4()) : (String(g.type) == "float" ? Variant(0.0) : Variant(""));
 		GLOBAL_DEF(PropertyInfo(Variant::DICTIONARY, String("shader_globals/") + g.name, PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), d);
 	}
 }
