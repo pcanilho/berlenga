@@ -21,7 +21,7 @@ extends Node3D
 #   --ground=terrain|standard   ground material: TerrainMaterial3D (default) or the vertex-coloured StandardMaterial3D
 #   --falls           print every waterfall the rivers found (lip, landing, height)
 #   --probe           print coast profiles, lakes and rivers from the generator
-#   --weather=storm|clear         weather state (default storm)
+#   --weather=storm|clear         weather state (default storm); --wind=m/s overrides its wind speed
 #   --snow=climate|none   the winter baked by SnowClimate (default), or a snow-free ground for stills
 #   --month=N --time=H    0-based month of the rivers and the SkyClock date (default 4, 15 May) and local time (16.5)
 #   --day=N               day of the month (default 15)
@@ -32,6 +32,7 @@ extends Node3D
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
 #   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
+#   --clip=N              with --out, N frames in a row (out_0000.png...), for clips; run with --fixed-fps 24
 #   --checks              with --out, run the link checks before the picture (they change the scene)
 
 const STEP := 4.0 # metres between ground vertices
@@ -161,6 +162,14 @@ func _ready() -> void:
 		var ct: Texture2D = veg.get_cover_texture()
 		_log("far cover map %s in %d ms (forest placed again)" % [str(ct.get_size()) if ct else "missing", Time.get_ticks_msec() - tc])
 	_run_weather()
+	if veg != null and veg.streaming:
+		# A streamed forest settles round the camera; the views on its trees are framed again on what it placed.
+		await _forest_settle()
+		if args.get("view", "wide") in ["forestfloor", "woodedge"]:
+			cam.queue_free()
+			_build_camera()
+			cam.make_current()
+			await _forest_settle()
 	_log("setup done in %d ms" % (Time.get_ticks_msec() - t_start))
 	for i in 30:
 		await get_tree().process_frame
@@ -173,9 +182,11 @@ func _ready() -> void:
 		return
 	# The streamed ground cover settles round the camera before the picture.
 	var sw := 0
+	get_viewport().disable_3d = true # placing only: the frames draw nothing
 	while cover != null and not cover.is_stream_idle() and sw < 1200:
 		await get_tree().process_frame
 		sw += 1
+	get_viewport().disable_3d = false
 	if cover != null:
 		_log("cover: %d plants in %d tiles after %d frames, %s" % [cover.get_plant_count(), cover.get_stream_tile_count(), sw, str(cover.get_stream_stats())])
 	# The snowpack updates on a worker thread: the picture waits for the last update to land.
@@ -204,6 +215,15 @@ func _ready() -> void:
 			await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	var out: String = args.get("out", "")
+	if args.has("clip") and out != "":
+		# --clip=N: N frames in a row to out with a frame number before its extension (run with --fixed-fps 24 so
+		# the wind and the shaders' TIME step a 24th of a second each frame however slow the frame is).
+		for i in int(args["clip"]):
+			get_viewport().get_texture().get_image().save_png(out.get_basename() + "_%04d.png" % i)
+			await RenderingServer.frame_post_draw
+		_log("saved %s frames to %s_####.png" % [args["clip"], out.get_basename()])
+		get_tree().quit(0)
+		return
 	if out != "":
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved " + out)
@@ -222,6 +242,23 @@ func _broadleaf_trees() -> PackedVector3Array:
 			if veg.get_conifer_at(tp) < 0.3:
 				out.push_back(tp)
 	return out
+
+
+func _forest_settle() -> void:
+	var n := 0
+	# Nothing is drawn while it places (a frame of a generated forest takes seconds on a CPU renderer), and each
+	# frame may place for longer than in play.
+	get_viewport().disable_3d = true
+	var budget: float = veg.stream_budget_msec
+	veg.stream_budget_msec = 500.0
+	for i in 3:
+		await get_tree().process_frame
+	while not veg.is_stream_idle() and n < 3000:
+		await get_tree().process_frame
+		n += 1
+	veg.stream_budget_msec = budget
+	get_viewport().disable_3d = false
+	_log("forest: %d plants in %d tiles after %d frames" % [veg.get_plant_count(), veg.get_stream_tile_count(), n])
 
 
 func _log(s: String) -> void:
@@ -1129,7 +1166,7 @@ func _weather_settings() -> void:
 	# One weather state drives all of it. Storm: cold wet air, a storm cell over the hills, strong wind from the sea.
 	var storm: bool = args.get("weather", "storm") == "storm"
 	weather.wind_direction = Vector2(-0.2, -1.0).normalized() # onshore, from the sea up the valleys
-	weather.wind_speed = 13.0 if storm else 4.0
+	weather.wind_speed = float(args.get("wind", "13" if storm else "4"))
 	weather.cloud_cover = 0.85 if storm else 0.3
 	weather.cloud_type = 0.85 if storm else 0.4
 	weather.rain_rate = 8.0 if storm else 0.0
@@ -1252,8 +1289,15 @@ func _build_vegetation() -> void:
 		conifer.set_rule_range(PlantSpecies.RULE_HEIGHT, Vector2(6, 100000))
 	# The forest as shelter for the wind: the field writes its stands into the weather map's canopy.
 	veg.weather_map = veg.get_path_to(weather)
-	veg.populate()
-	_log("forest %d plants in %d ms" % [veg.get_plant_count(), Time.get_ticks_msec() - t])
+	# --forest-radius=R: the forest streams round the camera instead of covering the world at once.
+	var fr := float(args.get("forest-radius", "0"))
+	if fr > 0.0:
+		veg.streaming = true
+		veg.stream_radius = fr
+		_log("forest streams round the camera, %.0f m" % fr)
+	else:
+		veg.populate()
+		_log("forest %d plants in %d ms" % [veg.get_plant_count(), Time.get_ticks_msec() - t])
 	# Grass near the camera, on the same maps, moved by the weather's wind.
 	var meadow := PlantSpecies.new()
 	meadow.set_rule_range(PlantSpecies.RULE_SLOPE, Vector2(0, 28))
@@ -1418,6 +1462,9 @@ func _build_camera() -> void:
 	cam.fov = 55.0
 	add_child(cam)
 	var view: String = args.get("view", "wide")
+	if view in ["forestfloor", "woodedge"] and veg.streaming and _broadleaf_trees().is_empty():
+		# The streamed forest has not placed yet: stand at the clearing's edge first, framed again once it has.
+		view = "meadow"
 	var coast_z := _coast_z(0.0)
 	match view:
 		"lake":
