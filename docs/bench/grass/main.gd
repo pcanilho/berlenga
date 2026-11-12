@@ -87,6 +87,7 @@ var under: GrassField3D
 var cover: VegetationField3D
 var far_match := false
 var far_a := Color()
+var far_w := Color()
 var ball: StaticBody3D
 var walker: Node3D
 var t := 0.0
@@ -1253,6 +1254,13 @@ func _process(dt: float) -> void:
 		fwd.y = 0.0
 		var p := cam.position + fwd.normalized() * 0.3
 		cam.position = Vector3(p.x, height(p.x, p.z) + 2.0, p.z)
+	# Before/after of the far colour bake: the earlier hand-matched far colour, set over the baked one.
+	if OS.get_environment("GRASS_DIAG").contains("handfar") and n == frames - 5:
+		var bl := grass.base_color.srgb_to_linear()
+		var tl := grass.tip_color.srgb_to_linear()
+		var dl := grass.dry_color.srgb_to_linear()
+		var hand := bl.lerp(tl, 0.65).lerp(dl, grass.dryness * 0.35) * 0.355
+		RenderingServer.global_shader_parameter_set("grass_ground_far", Vector4(hand.r, hand.g, hand.b, 1.0))
 	if not clip.is_empty() and n >= 20:
 		await RenderingServer.frame_post_draw
 		get_viewport().get_texture().get_image().save_png(clip.path_join("f%03d.png" % (n - 20)))
@@ -1296,6 +1304,23 @@ func _process(dt: float) -> void:
 		await RenderingServer.frame_post_draw
 		var c := _region_mean()
 		print("GRASS_FAR_MATCH old far_ground=%s ratio=%s" % [str(c), str(Color(far_a.r / c.r, far_a.g / c.g, far_a.b / c.b))])
+		# A white far colour: the light on the far ground, so blades over it is the albedo it needs.
+		RenderingServer.global_shader_parameter_set("grass_ground_far", Vector4(1, 1, 1, 1))
+		return
+	if far_match and n == frames + 36:
+		await RenderingServer.frame_post_draw
+		far_w = _region_mean()
+		RenderingServer.global_shader_parameter_set("grass_ground_far", Vector4(0, 0, 0, 1))
+		return
+	if far_match and n == frames + 48:
+		# Black: what the far ground shows besides its albedo (bare ground, sheen), so the albedo
+		# that matches the blades is (blades - black) / (white - black).
+		await RenderingServer.frame_post_draw
+		var k := _region_mean()
+		var w := far_w
+		var need := Color((far_a.r - k.r) / (w.r - k.r), (far_a.g - k.g) / (w.g - k.g), (far_a.b - k.b) / (w.b - k.b))
+		var got := grass.get_far_color()
+		print("GRASS_FAR_NEED white=%s black=%s needed=%s published=%s baked=%s published/needed=%s" % [str(w), str(k), str(need), str(got), str(grass.is_far_color_baked()), str(Color(got.r / need.r, got.g / need.g, got.b / need.b))])
 		get_tree().quit()
 		return
 	if far_match or n < frames:

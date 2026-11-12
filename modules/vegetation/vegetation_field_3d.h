@@ -201,6 +201,7 @@ class VegetationField3D : public Node3D {
 	};
 	static void _cover_row(void *p_job, uint32_t p_row);
 	void _build_cover(const PlaceSetup &p_setup);
+	void _on_grass_far_color();
 	mutable RWLock crown_lock; // Crowns and stand: another field reads them from its workers.
 
 	// Streaming around a centre: tiles placed on WorkerThreadPool nearest first, committed on the

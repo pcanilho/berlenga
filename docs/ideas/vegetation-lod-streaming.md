@@ -177,14 +177,48 @@ set `SPECULAR = grass_ground_specular(wp, specular)`. Re-matched on 12 Nov after
 their albedo root ramp (now AO) and went to 120 blades/m2: the blades had turned 7 / 19 / 4% (rgb)
 brighter than the far ground; now tip share 0.65 and x0.355, giving blades over far ground of
 0.97 / 1.06 / 0.85 (default), 1.01 / 0.97 / 0.89 (dry), 1.01 / 1.12 / 1.03 (lawn), 1.04 / 0.99 /
-1.00 (dark); blue is the smallest channel. Next: measure the colour from a small render of the
-blades themselves, so every grass setting matches without a hand fit.
+1.00 (dark); blue is the smallest channel. Lean blades still read 1.45 / 1.45 / 1.93 over the far
+ground: a hand fit of colours cannot see geometry (leaning blades turn their faces to the sky).
+
+**Grass far colour from a render (research).** Two established ways to get the far look of a
+plant cover from the plants themselves. (a) Render them: impostor baking (Brucks 2018, and this
+module's octahedral impostors), as the far colour maps above are baked offline from the world. (b) Trace explicit canopy geometry: Monte Carlo ray tracing
+of 3D plant models for canopy reflectance (Raytran, Govaerts and Verstraete 1998; FLIGHT, North
+1996; DART, Gastellu-Etchegorry 1996), which beat turbid-medium models where leaves clump or
+lean. Both see shape, lean, colour along the blade, shadows inside the sward and the ground
+between blades. (b) would re-implement the raster's lighting (Burley diffuse, backlight, AO,
+shadow maps) on the CPU and drift whenever the blade shader changes; (a) measures what is drawn.
+Plan, (a): GrassField3D renders a patch of its own blades (same material, same packing, no fade
+band) in a small private world, over its ground tint, orthographic at a low view elevation
+(7 degrees, the view in which a far meadow is seen), lit by a sun at 30 degrees and a procedural
+sky, averaged over four sun azimuths round the view; then a white flat ground under the same
+light. The effective albedo is the ratio, per channel (linear, HDR target). It runs once after
+the blades' look changes, a few frames, and publishes `grass_ground_far`; the cover map takes
+it too. Without a renderer (headless, no RenderingDevice) the hand-matched colour stays.
+
+**Built (far colour bake).** As planned, with one correction: the far ground also shows a sheen
+and, where the cover is partial, bare soil, so the bake reads the far ground's own material in
+white and in black and takes (blades - black) / (white - black). Six views of 3 to 5 frames
+(96 x 96, HDR) about 0.4 s after start or after a look setting changes; `get_far_color()` returns
+it, `is_far_color_baked()` says so, `far_color_changed` fires and VegetationField3D rebuilds its
+cover map. Check (grass bench `--far-match`, undercoat hidden, the albedo the far ground needs
+measured with white and black far colours, averaged over sun yaws 60 / 150 / 240 / 330): baked
+over needed 0.93 / 0.96 / 0.92 (rgb, default), 1.03 / 1.03 / 1.09 (lean, the hand fit was 1.45 to
+1.93 off), 0.90 / 0.87 / 0.88 (dry), 0.92 / 0.96 / 0.81 (lawn), 0.76 / 0.75 / 0.74 (dark). The
+hand-matched colour had been fitted to the bench's one sun direction (into the sun): over the
+four directions the meadow needs 0.7 to 2.6 times it. Left: one colour for every sun direction.
+A sward seen into the sun reads darker than one seen down-sun (the canopy hot spot, Kuusk 1991),
+by up to 3.5 times here; a far colour per sun azimuth would need the sun's direction in the
+ground shader. Very dark grass bakes about a quarter too dark (unexplained so far).
 
 ## References
 
 - SpeedTree documentation, "Level of detail" (leaf reduction and scaling).
 - Epic Games, Nanite foliage and "Preserve Area", Unreal Engine 5 documentation.
 - Brucks, "Octahedral Impostors", 2018.
+- Govaerts and Verstraete, "Raytran: a Monte Carlo ray-tracing model to compute light scattering in three-dimensional heterogeneous media", IEEE TGRS 36, 1998.
+- Kuusk, "The hot spot effect in plant canopy reflectance", in Photon-Vegetation Interactions, Springer 1991.
+- North, "Three-dimensional forest light interaction model using a Monte Carlo method", IEEE TGRS 34, 1996.
 - van Muijden, "GPU-Based Procedural Placement in Horizon Zero Dawn", GDC 2017.
 - Wohllaib, "Procedural Grass Rendering in Ghost of Tsushima", GDC 2021.
 - Andersson, "Terrain Rendering in Frostbite Using Procedural Shader Splatting", SIGGRAPH 2007.

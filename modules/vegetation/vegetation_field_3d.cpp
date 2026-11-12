@@ -1128,6 +1128,11 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 			job.grass.instantiate(); // The grass's default rules: dry land.
 		}
 		job.grass_far = grass->get_far_color();
+		// The grass measures its far colour from a render a few frames in: the map follows it.
+		const Callable on_far = callable_mp(this, &VegetationField3D::_on_grass_far_color);
+		if (!grass->is_connected(SNAME("far_color_changed"), on_far)) {
+			grass->connect(SNAME("far_color_changed"), on_far);
+		}
 	}
 	// The crowns over each canopy species' own pattern (the tile, wrapped), as _shade_at() sees
 	// them: exact for the spacing of a Poisson-disk stand, which covers more ground than crowns
@@ -1264,6 +1269,17 @@ void VegetationField3D::_build_cover(const PlaceSetup &p_setup) {
 	rs->global_shader_parameter_set("terrain_cover_map", cover_texture->get_rid());
 	rs->global_shader_parameter_set("terrain_cover_rect", Vector4(job.rect.position.x, job.rect.position.y, job.rect.size.x, job.rect.size.y));
 	print_verbose(vformat("VegetationField3D: cover map %dx%d in %.1f ms.", job.w, job.h, (OS::get_singleton()->get_ticks_usec() - t0) / 1000.0));
+}
+
+void VegetationField3D::_on_grass_far_color() {
+	if (stream_setup_valid) {
+		_build_cover(stream_setup);
+		return;
+	}
+	PlaceSetup setup;
+	if (_make_setup(setup)) {
+		_build_cover(setup);
+	}
 }
 
 Error VegetationField3D::populate() {

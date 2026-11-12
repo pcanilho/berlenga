@@ -13,7 +13,13 @@
 		<method name="get_far_color" qualifiers="const">
 			<return type="Color" />
 			<description>
-				The field seen from a distance, linear: the colour the ground under the grass takes where the blades have thinned away ([code]grass_ground_far[/code]), and the grass layer of [member VegetationField3D.cover_grass].
+				The field seen from a distance, linear: the colour the ground under the grass takes where the blades have thinned away ([code]grass_ground_far[/code]), and the grass layer of [member VegetationField3D.cover_grass]. Measured from a small render of the field's own blades a few frames after it enters the tree and after each change to its look ([signal far_color_changed]); a hand-matched blend of its colours before that and without a RenderingDevice.
+			</description>
+		</method>
+		<method name="is_far_color_baked" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] once [method get_far_color] comes from the render of the blades.
 			</description>
 		</method>
 		<method name="add_trample">
@@ -176,4 +182,11 @@
 			How far blades bend for a given wind speed.
 		</member>
 	</members>
+	<signals>
+		<signal name="far_color_changed">
+			<description>
+				Emitted when the render of the blades has given a new [method get_far_color].
+			</description>
+		</signal>
+	</signals>
 </class>

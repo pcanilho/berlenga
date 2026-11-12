@@ -41,6 +41,13 @@
 #include "core/os/os.h"
 #include "core/templates/hashfuncs.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/light_3d.h"
+#include "scene/3d/mesh_instance_3d.h"
+#include "scene/3d/world_environment.h"
+#include "scene/resources/3d/primitive_meshes.h"
+#include "scene/resources/3d/sky_material.h"
+#include "scene/resources/environment.h"
+#include "scene/resources/sky.h"
 #include "scene/3d/multimesh_instance_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/main/scene_tree.h"
@@ -878,14 +885,236 @@ void GrassField3D::_update_fade(const Vector2 &p_center) {
 	}
 }
 
-// The blades seen from a distance (linear): mostly the upper blade, some dry, darkened by the shade
-// the sward casts on itself (matched to the field's mean colour in the grass bench).
+// The blades seen from a distance (linear), as the far ground's albedo: measured from a render of
+// the blades once that has run (_far_bake_start()), the hand-matched blend before it and without a
+// renderer.
 Color GrassField3D::get_far_color() const {
+	return far_baked ? far_color_baked : _far_color_hand();
+}
+
+// Mostly the upper blade, some dry, darkened by the shade the sward casts on itself (matched to the
+// field's mean colour in the grass bench).
+Color GrassField3D::_far_color_hand() const {
 	const Color b = base_color.srgb_to_linear();
 	const Color t = tip_color.srgb_to_linear();
 	const Color d = dry_color.srgb_to_linear();
 	const Color far = b.lerp(t, 0.65f).lerp(d, dryness * 0.35f) * 0.355f;
 	return Color(far.r, far.g, far.b, 1.0f);
+}
+
+// Far colour bake. Impostor baking (Brucks 2018) for a whole sward: what the raster draws, so shape,
+// lean, colour along the blade, shadows inside the sward and the ground between blades all count.
+// A canopy-reflectance model tracing the blades on the CPU (Raytran, Govaerts and Verstraete 1998)
+// would have to copy the raster's lighting and drift when the blade shader changes.
+namespace {
+constexpr float FAR_BAKE_VIEW_DEG = 7.0f; // The view a far meadow is seen in (eye 1.7 m, 14 m out).
+constexpr float FAR_BAKE_SUN_DEG = 30.0f;
+constexpr float FAR_BAKE_ORTHO = 2.0f; // Metres across the image.
+constexpr float FAR_BAKE_CAM_DIST = 20.0f;
+constexpr int FAR_BAKE_SIZE = 96;
+constexpr int FAR_BAKE_AZIMUTHS = 4; // Sun behind, beside and facing the view: their mean.
+constexpr int FAR_BAKE_FRAMES = 3; // Frames each view renders before it is read (shadows, sky).
+} // namespace
+
+void GrassField3D::_queue_far_bake() {
+	far_bake_queued = true;
+	_far_bake_free(); // A bake under way is of the old look: start again.
+}
+
+void GrassField3D::_far_bake_free() {
+	if (far_bake_vp) {
+		far_bake_vp->queue_free();
+	}
+	far_bake_vp = nullptr;
+	far_bake_sun = nullptr;
+	far_bake_blades = nullptr;
+	far_bake_ground_mat.unref();
+	far_bake_state = -1;
+}
+
+void GrassField3D::_far_bake_start() {
+	far_bake_queued = false;
+	// The raster renderer only: headless and the compatibility renderer keep the hand-matched colour.
+	if (!is_inside_tree() || !RenderingServer::get_singleton()->get_rendering_device()) {
+		return;
+	}
+	_ensure_resources();
+	const float e = Math::deg_to_rad(FAR_BAKE_VIEW_DEG);
+	const float hmax = MAX(blade_height.x, blade_height.y) * 1.1f;
+	// The patch every view ray crosses from the top of the sward to the ground (view along -z).
+	const float half_w = FAR_BAKE_ORTHO * 0.5f + hmax + 0.5f;
+	const float z_lo = -FAR_BAKE_ORTHO * 0.5f / Math::sin(e) - hmax - 0.5f;
+	const float z_hi = FAR_BAKE_ORTHO * 0.5f / Math::sin(e) + hmax / Math::tan(e) + hmax + 0.5f;
+
+	// The blades as _build_tile() makes them, on open flat ground (light 1), every one kept.
+	const float cell = 1.0f / Math::sqrt(MAX(density, 0.01f));
+	const int ix0 = int(Math::floor(-half_w / cell));
+	const int ix1 = int(Math::ceil(half_w / cell));
+	const int iz0 = int(Math::floor(z_lo / cell));
+	const int iz1 = int(Math::ceil(z_hi / cell));
+	LocalVector<Transform3D> xforms;
+	LocalVector<Color> customs;
+	for (int iz = iz0; iz < iz1; iz++) {
+		for (int ix = ix0; ix < ix1; ix++) {
+			const uint32_t hb = cell_hash(ix, iz, 0x9E3779B9u);
+			const float rank = blue_rank(ix, iz);
+			const uint32_t hj = cell_hash(ix, iz, 0x85EBCA6Bu);
+			const float x = (ix + unit(hj, 0)) * cell;
+			const float z = (iz + unit(hj, 8)) * cell;
+			const int cx = int(Math::floor(x / clump_size));
+			const int cz = int(Math::floor(z / clump_size));
+			const uint32_t hc = cell_hash(cx, cz, 0xC2B2AE35u);
+			const float rnd = unit(hb, 16);
+			const float height = Math::lerp(blade_height.x, blade_height.y, 0.65f * unit(hc, 0) + 0.35f * unit(hj, 16));
+			const float yaw = unit(hc, 8) * Math::TAU + (unit(hj, 24) - 0.5f) * 1.6f;
+			xforms.push_back(Transform3D(Basis(Vector3(0, 1, 0), yaw), Vector3(x, 0.0f, z)));
+			const float order = Math::floor(Math::fmod(rank * 8.0f, 1.0f) * 255.0f);
+			const float blade_lean = MIN(lean * (0.4f + 1.2f * unit(hc, 16)), 3.99f);
+			customs.push_back(Color(height, blade_width, VegetationLight::pack(1.0f) * 4.0f + blade_lean, order + 0.999f * Math::fmod(rnd + 0.37f * unit(hc, 24), 1.0f)));
+		}
+	}
+	Ref<MultiMesh> mm;
+	mm.instantiate();
+	mm->set_transform_format(MultiMesh::TRANSFORM_3D);
+	mm->set_use_custom_data(true);
+	mm->set_mesh(blade_mesh);
+	mm->set_instance_count(xforms.size());
+	for (uint32_t i = 0; i < xforms.size(); i++) {
+		mm->set_instance_transform(i, xforms[i]);
+		mm->set_instance_custom_data(i, customs[i]);
+	}
+	// The field's own material, without the outer band or trample.
+	Ref<ShaderMaterial> mat = material->duplicate();
+	mat->set_shader_parameter("fade_band", Vector4());
+	mat->set_shader_parameter("trample_rect", Vector4());
+
+	SubViewport *vp = memnew(SubViewport);
+	vp->set_name("FarColourBake");
+	vp->set_size(Size2i(FAR_BAKE_SIZE, FAR_BAKE_SIZE));
+	vp->set_use_own_world_3d(true);
+	vp->set_use_hdr_2d(true); // Linear and unclamped.
+	vp->set_update_mode(SubViewport::UPDATE_ALWAYS);
+	add_child(vp, false, INTERNAL_MODE_BACK);
+
+	Ref<Environment> env;
+	env.instantiate();
+	Ref<Sky> sky;
+	sky.instantiate();
+	sky->set_material(memnew(ProceduralSkyMaterial));
+	sky->set_process_mode(Sky::PROCESS_MODE_QUALITY);
+	env->set_background(Environment::BG_SKY);
+	env->set_sky(sky);
+	env->set_ambient_source(Environment::AMBIENT_SOURCE_SKY);
+	env->set_tonemapper(Environment::TONE_MAPPER_LINEAR);
+	WorldEnvironment *we = memnew(WorldEnvironment);
+	we->set_environment(env);
+	vp->add_child(we);
+
+	MultiMeshInstance3D *mmi = memnew(MultiMeshInstance3D);
+	mmi->set_multimesh(mm);
+	mmi->set_material_override(mat);
+	vp->add_child(mmi);
+
+	far_bake_ground_mat.instantiate();
+	MeshInstance3D *ground = memnew(MeshInstance3D);
+	Ref<PlaneMesh> plane;
+	plane.instantiate();
+	plane->set_size(Vector2(2.0f * half_w + 4.0f, z_hi - z_lo + 4.0f));
+	plane->set_material(far_bake_ground_mat);
+	ground->set_mesh(plane);
+	ground->set_position(Vector3(0.0f, 0.0f, 0.5f * (z_lo + z_hi)));
+	vp->add_child(ground);
+
+	DirectionalLight3D *sun = memnew(DirectionalLight3D);
+	sun->set_shadow(true);
+	sun->set_shadow_mode(DirectionalLight3D::SHADOW_ORTHOGONAL);
+	sun->set_param(Light3D::PARAM_SHADOW_MAX_DISTANCE, FAR_BAKE_CAM_DIST + z_hi);
+	vp->add_child(sun);
+
+	Camera3D *cam = memnew(Camera3D);
+	const Vector3 target(0.0f, 0.5f * hmax, 0.0f);
+	const Vector3 dir(0.0f, -Math::sin(e), -Math::cos(e));
+	const Vector3 eye = target - dir * FAR_BAKE_CAM_DIST;
+	cam->set_transform(Transform3D(Basis::looking_at(dir), eye));
+	cam->set_orthogonal(FAR_BAKE_ORTHO, 0.5f, 2.0f * FAR_BAKE_CAM_DIST + z_hi);
+	vp->add_child(cam);
+	cam->set_current(true);
+
+	far_bake_vp = vp;
+	far_bake_sun = sun;
+	far_bake_blades = mmi;
+	far_bake_sum = Color(0, 0, 0, 0);
+	far_bake_state = 0;
+	far_bake_wait = 0;
+	_far_bake_step(); // Sets up the first view.
+}
+
+// One process frame of the bake. Views 0 .. FAR_BAKE_AZIMUTHS - 1: the sward with the sun turned
+// round the view; then the bare far ground's material (roughness 0.95, specular 0.1, as
+// grass_ground_specular() leaves it) in white, then in black. The far ground shows its albedo times
+// the white's diffuse light plus the black's sheen, so the albedo that matches the blades is
+// (blades - black) / (white - black): at the low angles a far meadow is seen at, the sheen is up to
+// half of what the blades send. Each view renders FAR_BAKE_FRAMES frames, then is read.
+void GrassField3D::_far_bake_step() {
+	if (far_bake_wait == 0) {
+		const bool bare = far_bake_state >= FAR_BAKE_AZIMUTHS;
+		const Color gt = ground_tint_enabled ? Color(ground_tint.r, ground_tint.g, ground_tint.b) : Color(0.11f, 0.12f, 0.06f);
+		far_bake_ground_mat->set_albedo(bare ? (far_bake_state == FAR_BAKE_AZIMUTHS ? Color(1, 1, 1) : Color(0, 0, 0)) : gt);
+		far_bake_ground_mat->set_roughness(0.95f);
+		far_bake_ground_mat->set_specular(0.1f);
+		far_bake_blades->set_visible(!bare);
+		far_bake_sun->set_rotation_degrees(Vector3(-FAR_BAKE_SUN_DEG, 360.0f / FAR_BAKE_AZIMUTHS * MIN(far_bake_state, FAR_BAKE_AZIMUTHS - 1), 0.0f));
+	}
+	if (++far_bake_wait <= FAR_BAKE_FRAMES + (far_bake_state == 0 ? 2 : 0)) {
+		return;
+	}
+	far_bake_wait = 0;
+	Ref<Image> img = far_bake_vp->get_texture()->get_image();
+	if (img.is_null() || img->is_empty()) {
+		_far_bake_free();
+		return;
+	}
+	if (img->get_format() == Image::FORMAT_RGBA8 || img->get_format() == Image::FORMAT_RGB8) {
+		img->srgb_to_linear(); // An sRGB target (no HDR 2D): back to linear.
+	}
+	Color sum(0, 0, 0, 0);
+	for (int y = 0; y < img->get_height(); y++) {
+		for (int x = 0; x < img->get_width(); x++) {
+			sum += img->get_pixel(x, y);
+		}
+	}
+	sum /= float(img->get_width() * img->get_height());
+	if (far_bake_state < FAR_BAKE_AZIMUTHS) {
+		far_bake_sum += sum / float(FAR_BAKE_AZIMUTHS);
+		far_bake_state++;
+		return;
+	}
+	if (far_bake_state == FAR_BAKE_AZIMUTHS) {
+		far_bake_white = sum;
+		far_bake_state++;
+		return;
+	}
+	_far_bake_free();
+	const Color diffuse = far_bake_white - sum;
+	if (diffuse.r <= 1e-4f || diffuse.g <= 1e-4f || diffuse.b <= 1e-4f) {
+		return;
+	}
+	// The sheen never takes more than three quarters of the blades' light (a dark sward seen very low).
+	Color far;
+	for (int c = 0; c < 3; c++) {
+		far[c] = MAX(far_bake_sum[c] - sum[c], 0.25f * far_bake_sum[c]) / diffuse[c];
+	}
+	far.a = 1.0f;
+	if (!Math::is_finite(far.r) || !Math::is_finite(far.g) || !Math::is_finite(far.b)) {
+		return;
+	}
+	far_color_baked = Color(CLAMP(far.r, 0.0f, 1.0f), CLAMP(far.g, 0.0f, 1.0f), CLAMP(far.b, 0.0f, 1.0f), 1.0f);
+	far_baked = true;
+	print_verbose(vformat("GrassField3D \"%s\": far colour %s (hand-matched %s).", get_name(), far_color_baked, _far_color_hand()));
+	if (fade_owner == this) {
+		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_far", Vector4(far_color_baked.r, far_color_baked.g, far_color_baked.b, 1.0f));
+	}
+	emit_signal(SNAME("far_color_changed"));
 }
 
 void GrassField3D::_update_tiles(const Vector3 &p_center) {
@@ -1122,10 +1351,12 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 void GrassField3D::set_blade_segments(int p_segments) {
 	blade_segments = CLAMP(p_segments, 1, 8);
 	rebuild();
+	_queue_far_bake();
 }
 
 void GrassField3D::set_view_facing(float p_facing) {
 	view_facing = CLAMP(p_facing, 0.0f, 1.0f);
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("view_facing", view_facing);
 	}
@@ -1134,11 +1365,13 @@ void GrassField3D::set_view_facing(float p_facing) {
 void GrassField3D::set_ground_tint(const Color &p_color) {
 	ground_tint = p_color;
 	ground_baked = false;
+	_queue_far_bake();
 }
 
 void GrassField3D::set_ground_tint_enabled(bool p_enabled) {
 	ground_tint_enabled = p_enabled;
 	ground_baked = false;
+	_queue_far_bake();
 	if (!p_enabled && is_inside_tree()) {
 		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_rect", Vector4());
 	}
@@ -1405,6 +1638,7 @@ void GrassField3D::_notification(int p_what) {
 		case NOTIFICATION_READY: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_process_internal(true);
+				_queue_far_bake();
 			}
 		} break;
 		case NOTIFICATION_PREDELETE: {
@@ -1421,6 +1655,11 @@ void GrassField3D::_notification(int p_what) {
 			}
 			if (trample_enabled && !trample.is_empty()) {
 				_trample_step(get_process_delta_time());
+			}
+			if (far_bake_vp) {
+				_far_bake_step();
+			} else if (far_bake_queued) {
+				_far_bake_start();
 			}
 		} break;
 	}
@@ -1458,18 +1697,23 @@ void GrassField3D::set_rules(const Ref<PlantSpecies> &p_rules) {
 	GRASS_SET_REBUILD(rules, p_rules)
 }
 void GrassField3D::set_density(float p_density) {
+	_queue_far_bake();
 	GRASS_SET_REBUILD(density, CLAMP(p_density, 0.1f, 1000.0f))
 }
 void GrassField3D::set_blade_height(const Vector2 &p_height) {
+	_queue_far_bake();
 	GRASS_SET_REBUILD(blade_height, Vector2(MAX(p_height.x, 0.01f), MAX(p_height.y, 0.01f)))
 }
 void GrassField3D::set_blade_width(float p_width) {
+	_queue_far_bake();
 	GRASS_SET_REBUILD(blade_width, MAX(p_width, 0.001f))
 }
 void GrassField3D::set_clump_size(float p_size) {
+	_queue_far_bake();
 	GRASS_SET_REBUILD(clump_size, MAX(p_size, 0.05f))
 }
 void GrassField3D::set_lean(float p_lean) {
+	_queue_far_bake();
 	GRASS_SET_REBUILD(lean, CLAMP(p_lean, 0.0f, 1.4f))
 }
 void GrassField3D::set_radius(float p_radius) {
@@ -1481,12 +1725,14 @@ void GrassField3D::set_tile_size(float p_size) {
 
 void GrassField3D::set_base_color(const Color &p_color) {
 	base_color = p_color;
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("base_color", base_color);
 	}
 }
 void GrassField3D::set_tip_color(const Color &p_color) {
 	tip_color = p_color;
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("tip_color", tip_color);
 	}
@@ -1494,6 +1740,7 @@ void GrassField3D::set_tip_color(const Color &p_color) {
 void GrassField3D::set_dry_color(const Color &p_color) {
 	dry_color = p_color;
 	ground_baked = false;
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("dry_color", dry_color);
 	}
@@ -1501,6 +1748,7 @@ void GrassField3D::set_dry_color(const Color &p_color) {
 void GrassField3D::set_color_variation(float p_amount) {
 	color_variation = CLAMP(p_amount, 0.0f, 1.0f);
 	ground_baked = false;
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("color_variation", color_variation);
 	}
@@ -1509,6 +1757,7 @@ void GrassField3D::set_color_variation(float p_amount) {
 void GrassField3D::set_dryness(float p_dryness) {
 	dryness = CLAMP(p_dryness, 0.0f, 1.0f);
 	ground_baked = false;
+	_queue_far_bake();
 	if (material.is_valid()) {
 		material->set_shader_parameter("dryness", dryness);
 	}
@@ -1551,6 +1800,8 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_data_map, get_data_map, "path")
 	GRASS_BIND(set_rules, get_rules, "rules")
 	ClassDB::bind_method(D_METHOD("get_far_color"), &GrassField3D::get_far_color);
+	ClassDB::bind_method(D_METHOD("is_far_color_baked"), &GrassField3D::is_far_color_baked);
+	ADD_SIGNAL(MethodInfo("far_color_changed"));
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")
 	GRASS_BIND(set_density, get_density, "density")
 	GRASS_BIND(set_blade_height, get_blade_height, "height")

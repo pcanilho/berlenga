@@ -110,6 +110,26 @@ class GrassField3D : public Node3D {
 	int blade_count = 0;
 	double build_msec = 0.0;
 
+	// Far colour bake (docs/ideas/vegetation-lod-streaming.md, section 4): a patch of these blades
+	// rendered in a private world, then a white ground under the same light; their ratio is the
+	// colour the far ground takes. Runs once each time the blades' look changes.
+	class SubViewport *far_bake_vp = nullptr;
+	class DirectionalLight3D *far_bake_sun = nullptr;
+	MultiMeshInstance3D *far_bake_blades = nullptr;
+	Ref<StandardMaterial3D> far_bake_ground_mat;
+	int far_bake_state = -1;
+	int far_bake_wait = 0;
+	bool far_bake_queued = false;
+	bool far_baked = false;
+	Color far_bake_sum;
+	Color far_bake_white;
+	Color far_color_baked;
+	void _queue_far_bake();
+	void _far_bake_start();
+	void _far_bake_step();
+	void _far_bake_free();
+	Color _far_color_hand() const;
+
 	void _ensure_resources();
 	void _build_material();
 	int _lod_for(float p_distance) const;
@@ -150,6 +170,7 @@ public:
 	void set_lean(float p_lean);
 	float get_lean() const { return lean; }
 	Color get_far_color() const;
+	bool is_far_color_baked() const { return far_baked; }
 	void set_base_color(const Color &p_color);
 	Color get_base_color() const { return base_color; }
 	void set_tip_color(const Color &p_color);
