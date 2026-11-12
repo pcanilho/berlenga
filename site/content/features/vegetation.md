@@ -39,6 +39,8 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
   *Grass edge fade: the band where grass ends blends into the ground.*
 
+- **Far grass in sunlight** (`GrassField3D.sun_light`): distant grass brightens looking away from the sun and darkens looking into it, measured from the blades at four sun headings.
+
 - **Layered meadow** (`GrassField3D.color_variation`, `get_ground_shader_code()`, `canopy_field`): blades vary in colour over the field and per blade, some dead from the root, with midribs and tapered tips; the ground under the grass becomes matching turf, and the sward follows the canopy shade.
 
   ![A meadow by a lake, before and after the layered meadow](media/meadow-layers.jpg)

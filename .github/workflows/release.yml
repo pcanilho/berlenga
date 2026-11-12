@@ -25,8 +25,11 @@ on:
 # Each job asks only for what it needs.
 permissions: {}
 
+# GitHub keeps one pending run per group and cancels the one it replaces, so build-only test
+# runs get their own group: a test can never knock out a waiting release. A newer release
+# replacing a waiting one is fine, since the check job builds main as it is when it starts.
 concurrency:
-  group: release
+  group: ${{ inputs.build_only && 'release-test' || 'release' }}
   cancel-in-progress: false
 
 env:

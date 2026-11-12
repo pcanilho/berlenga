@@ -16,6 +16,12 @@
 				The field seen from a distance, linear: the colour the ground under the grass takes where the blades have thinned away ([code]grass_ground_far[/code]), and the grass layer of [member VegetationField3D.cover_grass]. Measured from a small render of the field's own blades a few frames after it enters the tree and after each change to its look ([signal far_color_changed]); a hand-matched blend of its colours before that and without a RenderingDevice.
 			</description>
 		</method>
+		<method name="get_far_color_lobes" qualifiers="const">
+			<return type="PackedColorArray" />
+			<description>
+				How the far colour changes with the sun's azimuth from the view, [code]phi[/code]: two colours [code]l1[/code], [code]l2[/code], per channel, for the factor [code]1 + l1 cos(phi) + l2 cos(2 phi)[/code] the ground under far grass takes ([code]phi[/code] 0: the sun behind the viewer, where a sward is brightest). Fitted to the render of the blades with the sun at four headings; zero before that.
+			</description>
+		</method>
 		<method name="is_far_color_baked" qualifiers="const">
 			<return type="bool" />
 			<description>
@@ -150,6 +156,9 @@
 		</member>
 		<member name="rules" type="PlantSpecies" setter="set_rules" getter="get_rules">
 			Where grass grows: the rules of a [PlantSpecies] over the maps of [member data_map]. Its spacing, footprint and meshes are ignored. Without rules, grass grows on dry land only.
+		</member>
+		<member name="sun_light" type="NodePath" setter="set_sun_light" getter="get_sun_light" default="NodePath(&quot;&quot;)">
+			Path to the [DirectionalLight3D] whose heading turns the far grass colour (see [method get_far_color_lobes]). Empty: the first visible [DirectionalLight3D] in the field's world. The widest field publishes it with the camera position as [code]grass_ground_sun[/code] and [code]grass_ground_view[/code]; the effect lessens as the sun climbs and is off with the sun down.
 		</member>
 		<member name="tile_size" type="float" setter="set_tile_size" getter="get_tile_size" default="8.0">
 			Edge of a tile, in metres.

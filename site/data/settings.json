@@ -1609,6 +1609,17 @@
    "topic": "Grass"
   },
   {
+   "name": "Far grass in sunlight",
+   "settings": [
+    "GrassField3D.sun_light"
+   ],
+   "note": "",
+   "what": "distant grass brightens looking away from the sun and darkens looking into it, measured from the blades at four sun headings.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Layered meadow",
    "settings": [
     "GrassField3D.color_variation",
@@ -2121,6 +2132,18 @@
    ],
    "note": "",
    "what": "snow and rain haze the air in raster fog and the path traced medium; blowing snow is a lit layer near the ground.",
+   "page": "weather",
+   "title": "Weather",
+   "topic": ""
+  },
+  {
+   "name": "Haze and cloud shadow in fog",
+   "settings": [
+    "aerosol_haze",
+    "haze_visibility"
+   ],
+   "note": "",
+   "what": "volumetric fog takes the cloud shadow, and the weather adds haze from visibility and humidity.",
    "page": "weather",
    "title": "Weather",
    "topic": ""

@@ -43,6 +43,7 @@
 #include "core/templates/hashfuncs.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
+#include "scene/main/window.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/world_environment.h"
 #include "scene/resources/3d/primitive_meshes.h"
@@ -881,8 +882,7 @@ void GrassField3D::_update_fade(const Vector2 &p_center) {
 		fade_owner = this;
 		RenderingServer *rs = RenderingServer::get_singleton();
 		rs->global_shader_parameter_set("grass_ground_fade", band);
-		const Color far = get_far_color();
-		rs->global_shader_parameter_set("grass_ground_far", Vector4(far.r, far.g, far.b, 1.0f));
+		_publish_far();
 	}
 }
 
@@ -1044,7 +1044,6 @@ void GrassField3D::_far_bake_start() {
 	far_bake_vp = vp;
 	far_bake_sun = sun;
 	far_bake_blades = mmi;
-	far_bake_sum = Color(0, 0, 0, 0);
 	far_bake_state = 0;
 	far_bake_wait = 0;
 	_far_bake_step(); // Sets up the first view.
@@ -1052,19 +1051,23 @@ void GrassField3D::_far_bake_start() {
 
 // One process frame of the bake. Views 0 .. FAR_BAKE_AZIMUTHS - 1: the sward with the sun turned
 // round the view; then the bare far ground's material (roughness 0.95, specular 0.1, as
-// grass_ground_specular() leaves it) in white, then in black. The far ground shows its albedo times
-// the white's diffuse light plus the black's sheen, so the albedo that matches the blades is
-// (blades - black) / (white - black): at the low angles a far meadow is seen at, the sheen is up to
-// half of what the blades send. Each view renders FAR_BAKE_FRAMES frames, then is read.
+// grass_ground_specular() leaves it) in white, then in black at each azimuth. The far ground shows
+// its albedo times the white's diffuse light plus the black's sheen, so the albedo that matches the
+// blades is (blades - black) / (white - black): at the low angles a far meadow is seen at, the
+// sheen is up to half of what the blades send, and it turns with the sun as the blades do. Each
+// view renders FAR_BAKE_FRAMES frames, then is read.
 void GrassField3D::_far_bake_step() {
+	constexpr int WHITE = FAR_BAKE_AZIMUTHS;
+	constexpr int VIEWS = 2 * FAR_BAKE_AZIMUTHS + 1;
 	if (far_bake_wait == 0) {
-		const bool bare = far_bake_state >= FAR_BAKE_AZIMUTHS;
+		const bool bare = far_bake_state >= WHITE;
+		const int azimuth = far_bake_state < WHITE ? far_bake_state : (far_bake_state == WHITE ? 0 : far_bake_state - WHITE - 1);
 		const Color gt = ground_tint_enabled ? Color(ground_tint.r, ground_tint.g, ground_tint.b) : Color(0.11f, 0.12f, 0.06f);
-		far_bake_ground_mat->set_albedo(bare ? (far_bake_state == FAR_BAKE_AZIMUTHS ? Color(1, 1, 1) : Color(0, 0, 0)) : gt);
+		far_bake_ground_mat->set_albedo(bare ? (far_bake_state == WHITE ? Color(1, 1, 1) : Color(0, 0, 0)) : gt);
 		far_bake_ground_mat->set_roughness(0.95f);
 		far_bake_ground_mat->set_specular(0.1f);
 		far_bake_blades->set_visible(!bare);
-		far_bake_sun->set_rotation_degrees(Vector3(-FAR_BAKE_SUN_DEG, 360.0f / FAR_BAKE_AZIMUTHS * MIN(far_bake_state, FAR_BAKE_AZIMUTHS - 1), 0.0f));
+		far_bake_sun->set_rotation_degrees(Vector3(-FAR_BAKE_SUN_DEG, 360.0f / FAR_BAKE_AZIMUTHS * azimuth, 0.0f));
 	}
 	if (++far_bake_wait <= FAR_BAKE_FRAMES + (far_bake_state == 0 ? 2 : 0)) {
 		return;
@@ -1084,38 +1087,131 @@ void GrassField3D::_far_bake_step() {
 			sum += img->get_pixel(x, y);
 		}
 	}
-	sum /= float(img->get_width() * img->get_height());
-	if (far_bake_state < FAR_BAKE_AZIMUTHS) {
-		far_bake_sum += sum / float(FAR_BAKE_AZIMUTHS);
-		far_bake_state++;
-		return;
-	}
-	if (far_bake_state == FAR_BAKE_AZIMUTHS) {
-		far_bake_white = sum;
-		far_bake_state++;
+	far_bake_view[far_bake_state] = sum / float(img->get_width() * img->get_height());
+	if (++far_bake_state < VIEWS) {
 		return;
 	}
 	_far_bake_free();
-	const Color diffuse = far_bake_white - sum;
+	// The albedo each azimuth needs. The white's diffuse light does not turn with the sun (the
+	// ground is Lambertian under its sheen), so one white view serves all four. The sheen never
+	// takes more than three quarters of the blades' light (a dark sward seen very low).
+	const Color diffuse = far_bake_view[WHITE] - far_bake_view[WHITE + 1];
 	if (diffuse.r <= 1e-4f || diffuse.g <= 1e-4f || diffuse.b <= 1e-4f) {
 		return;
 	}
-	// The sheen never takes more than three quarters of the blades' light (a dark sward seen very low).
-	Color far;
-	for (int c = 0; c < 3; c++) {
-		far[c] = MAX(far_bake_sum[c] - sum[c], 0.25f * far_bake_sum[c]) / diffuse[c];
+	Color need[FAR_BAKE_AZIMUTHS];
+	Color mean(0, 0, 0, 0);
+	for (int k = 0; k < FAR_BAKE_AZIMUTHS; k++) {
+		const Color &b = far_bake_view[k];
+		const Color &black = far_bake_view[WHITE + 1 + k];
+		for (int c = 0; c < 3; c++) {
+			need[k][c] = MAX(b[c] - black[c], 0.25f * b[c]) / diffuse[c];
+		}
+		mean += need[k] / float(FAR_BAKE_AZIMUTHS);
 	}
-	far.a = 1.0f;
-	if (!Math::is_finite(far.r) || !Math::is_finite(far.g) || !Math::is_finite(far.b)) {
+	if (!Math::is_finite(mean.r) || !Math::is_finite(mean.g) || !Math::is_finite(mean.b) || mean.r <= 0.0f || mean.g <= 0.0f || mean.b <= 0.0f) {
 		return;
 	}
-	far_color_baked = Color(CLAMP(far.r, 0.0f, 1.0f), CLAMP(far.g, 0.0f, 1.0f), CLAMP(far.b, 0.0f, 1.0f), 1.0f);
+	// The azimuths are 0 (sun behind the view, the hot spot), 90, 180 (into the sun) and 270, so
+	// c(phi) = a0 + a1 cos(phi) + a2 cos(2 phi) through them: a1 = (front - back) / 2,
+	// a2 = (front + back - sides) / 4. Bounded so the factor stays between 0.1 and 1.9.
+	for (int c = 0; c < 3; c++) {
+		float l1 = 0.5f * (need[0][c] - need[2][c]) / mean[c];
+		float l2 = 0.25f * (need[0][c] + need[2][c] - need[1][c] - need[3][c]) / mean[c];
+		const float total = Math::abs(l1) + Math::abs(l2);
+		if (total > 0.9f) {
+			l1 *= 0.9f / total;
+			l2 *= 0.9f / total;
+		}
+		far_lobe1[c] = l1;
+		far_lobe2[c] = l2;
+	}
+	far_lobe1.a = far_lobe2.a = 0.0f;
+	far_color_baked = Color(CLAMP(mean.r, 0.0f, 1.0f), CLAMP(mean.g, 0.0f, 1.0f), CLAMP(mean.b, 0.0f, 1.0f), 1.0f);
 	far_baked = true;
-	print_verbose(vformat("GrassField3D \"%s\": far colour %s (hand-matched %s).", get_name(), far_color_baked, _far_color_hand()));
+	print_verbose(vformat("GrassField3D \"%s\": far colour %s (hand-matched %s), sun azimuth lobes %s %s.", get_name(), far_color_baked, _far_color_hand(), far_lobe1, far_lobe2));
 	if (fade_owner == this) {
-		RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_far", Vector4(far_color_baked.r, far_color_baked.g, far_color_baked.b, 1.0f));
+		_publish_far();
 	}
 	emit_signal(SNAME("far_color_changed"));
+}
+
+// The far colour and its azimuth lobes, for grass_ground(). The fade owner's only.
+void GrassField3D::_publish_far() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const Color far = get_far_color();
+	rs->global_shader_parameter_set("grass_ground_far", Vector4(far.r, far.g, far.b, 1.0f));
+	const Color l1 = far_baked ? far_lobe1 : Color(0, 0, 0, 0);
+	const Color l2 = far_baked ? far_lobe2 : Color(0, 0, 0, 0);
+	rs->global_shader_parameter_set("grass_ground_far_lobe1", Vector4(l1.r, l1.g, l1.b, 0.0f));
+	rs->global_shader_parameter_set("grass_ground_far_lobe2", Vector4(l2.r, l2.g, l2.b, 0.0f));
+}
+
+PackedColorArray GrassField3D::get_far_color_lobes() const {
+	PackedColorArray r;
+	r.push_back(far_baked ? far_lobe1 : Color(0, 0, 0, 0));
+	r.push_back(far_baked ? far_lobe2 : Color(0, 0, 0, 0));
+	return r;
+}
+
+void GrassField3D::set_sun_light(const NodePath &p_path) {
+	sun_light = p_path;
+	sun_cache = ObjectID();
+	sun_search_wait = 0;
+}
+
+// The sun for the far colour's azimuth: sun_light, else the first visible DirectionalLight3D in
+// this field's world (looked for again about once a second while there is none).
+DirectionalLight3D *GrassField3D::_get_sun() {
+	if (!sun_light.is_empty()) {
+		return Object::cast_to<DirectionalLight3D>(get_node_or_null(sun_light));
+	}
+	DirectionalLight3D *sun = Object::cast_to<DirectionalLight3D>(ObjectDB::get_instance(sun_cache));
+	if (sun && sun->is_inside_tree() && sun->is_visible_in_tree()) {
+		return sun;
+	}
+	sun_cache = ObjectID();
+	if (sun_search_wait-- > 0) {
+		return nullptr;
+	}
+	sun_search_wait = 60;
+	const Ref<World3D> world = get_world_3d();
+	TypedArray<Node> lights = get_tree()->get_root()->find_children("*", "DirectionalLight3D", true, false);
+	for (int i = 0; i < lights.size(); i++) {
+		DirectionalLight3D *l = Object::cast_to<DirectionalLight3D>(lights[i]);
+		if (l && l->is_visible_in_tree() && l->get_world_3d() == world) {
+			sun_cache = l->get_instance_id();
+			return l;
+		}
+	}
+	return nullptr;
+}
+
+// The sun's heading and the camera, so grass_ground() can turn the far colour with the azimuth
+// between them. The lobes were baked with the sun 30 degrees up; the azimuth matters less as the
+// sun climbs (none at the zenith) and goes with the sun below the horizon.
+void GrassField3D::_publish_sun_view(const Vector3 &p_camera) {
+	Vector4 sun_v;
+	DirectionalLight3D *sun = _get_sun();
+	if (sun && sun->is_visible_in_tree() && sun->get_param(Light3D::PARAM_ENERGY) > 0.0f) {
+		const Vector3 d = -sun->get_global_transform().basis.get_column(Vector3::AXIS_Z).normalized(); // Where the light travels.
+		const float h = Vector2(d.x, d.z).length();
+		const float up = -d.y; // Sine of the sun's elevation.
+		if (h > 1e-4f) {
+			const float strength = MIN(h / Math::cos(Math::deg_to_rad(FAR_BAKE_SUN_DEG)), 1.15f) * CLAMP((up + 0.05f) / 0.1f, 0.0f, 1.0f);
+			sun_v = Vector4(d.x / h, d.z / h, strength, 0.0f);
+		}
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (!sun_v.is_equal_approx(published_sun)) {
+		published_sun = sun_v;
+		rs->global_shader_parameter_set("grass_ground_sun", sun_v);
+	}
+	const Vector4 view(p_camera.x, p_camera.y, p_camera.z, 1.0f);
+	if (!view.is_equal_approx(published_view)) {
+		published_view = view;
+		rs->global_shader_parameter_set("grass_ground_view", view);
+	}
 }
 
 void GrassField3D::_update_tiles(const Vector3 &p_center) {
@@ -1266,6 +1362,10 @@ global uniform vec4 grass_ground_dry; // rgb: thatch colour; a: the grass's dryn
 global uniform vec4 grass_ground_params; // x: colour variation.
 global uniform vec4 grass_ground_fade; // xy: centre of the blades, z: where the last is gone, w: the band they thin over.
 global uniform vec4 grass_ground_far; // rgb: the blades' colour seen from a distance.
+global uniform vec4 grass_ground_far_lobe1; // rgb: its change with cos of the sun's azimuth from the view.
+global uniform vec4 grass_ground_far_lobe2; // rgb: and with cos of twice that azimuth.
+global uniform vec4 grass_ground_sun; // xy: the sun light's heading (xz); z: how much the azimuth counts.
+global uniform vec4 grass_ground_view; // xyz: the camera.
 )";
 	code += GRASS_COLOR_CODE;
 	code += VegetationField3D::get_floor_shader_code();
@@ -1339,6 +1439,14 @@ vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 	if (gone > 0.0) {
 		vec2 xz = world_pos.xz;
 		vec3 far = grass_ground_far.rgb * grass_patch_tint(xz, grass_noise(xz * 3.0), 0.5, grass_ground_params.x);
+		// A sward looked at down-sun shows its lit faces (the hot spot), into the sun its shadowed
+		// sides: the bake's azimuth lobes, by the angle between the view and the sun's light.
+		vec2 to = xz - grass_ground_view.xz;
+		float to_len = length(to);
+		if (grass_ground_sun.z > 0.0 && to_len > 1e-3) {
+			float c1 = dot(to / to_len, grass_ground_sun.xy);
+			far *= max(1.0 + grass_ground_sun.z * (grass_ground_far_lobe1.rgb * c1 + grass_ground_far_lobe2.rgb * (2.0 * c1 * c1 - 1.0)), vec3(0.1));
+		}
 		// Keep the turf's streaks and thatch as brightness, so the far sward is not flat.
 		float lum = dot(turf, vec3(0.3, 0.59, 0.11)) / max(dot(grass_ground_color.rgb, vec3(0.3, 0.59, 0.11)), 1e-3);
 		turf = mix(turf, far * clamp(lum, 0.5, 1.5), gone);
@@ -1653,6 +1761,9 @@ void GrassField3D::_notification(int p_what) {
 			Camera3D *cam = vp ? vp->get_camera_3d() : nullptr;
 			if (cam) {
 				update_at(cam->get_global_position());
+				if (fade_owner == this) {
+					_publish_sun_view(cam->get_global_position());
+				}
 			}
 			if (trample_enabled && !trample.is_empty()) {
 				_trample_step(get_process_delta_time());
@@ -1671,6 +1782,7 @@ GrassField3D::~GrassField3D() {
 		fade_owner = nullptr;
 		if (RenderingServer::get_singleton()) {
 			RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_fade", Vector4());
+			RenderingServer::get_singleton()->global_shader_parameter_set("grass_ground_sun", Vector4());
 		}
 	}
 	// Tile instances are internal children: Node frees them before this runs.
@@ -1802,6 +1914,8 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_rules, get_rules, "rules")
 	ClassDB::bind_method(D_METHOD("get_far_color"), &GrassField3D::get_far_color);
 	ClassDB::bind_method(D_METHOD("is_far_color_baked"), &GrassField3D::is_far_color_baked);
+	ClassDB::bind_method(D_METHOD("get_far_color_lobes"), &GrassField3D::get_far_color_lobes);
+	GRASS_BIND(set_sun_light, get_sun_light, "path")
 	ADD_SIGNAL(MethodInfo("far_color_changed"));
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")
 	GRASS_BIND(set_density, get_density, "density")
@@ -1845,6 +1959,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rules", PROPERTY_HINT_RESOURCE_TYPE, "PlantSpecies"), "set_rules", "get_rules");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "0.1,400,0.1,or_greater,suffix:/m²"), "set_density", "get_density");
 	ADD_GROUP("Blades", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "blade_height", PROPERTY_HINT_NONE, "suffix:m"), "set_blade_height", "get_blade_height");

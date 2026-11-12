@@ -822,10 +822,15 @@ void Fog::volumetric_fog_update(const VolumetricFogSettings &p_settings, const P
 
 	// Default textures are never freed, so switching to or from them won't invalidate the sets by itself
 	// (e.g. no shadow atlas while path tracing, then back to raster).
-	if (fog->shadow_atlas_depth != shadow_atlas_depth || fog->directional_shadow_depth != directional_shadow_depth || fog->radiance_texture != radiance_texture) {
+	RID decal_atlas = texture_storage->decal_atlas_get_texture_srgb();
+	if (decal_atlas.is_null()) {
+		decal_atlas = texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_WHITE);
+	}
+	if (fog->shadow_atlas_depth != shadow_atlas_depth || fog->directional_shadow_depth != directional_shadow_depth || fog->radiance_texture != radiance_texture || fog->decal_atlas != decal_atlas) {
 		fog->shadow_atlas_depth = shadow_atlas_depth;
 		fog->directional_shadow_depth = directional_shadow_depth;
 		fog->radiance_texture = radiance_texture;
+		fog->decal_atlas = decal_atlas;
 		fog->sync_gi_dependent_sets_validity(true);
 	}
 
@@ -1026,6 +1031,16 @@ void Fog::volumetric_fog_update(const VolumetricFogSettings &p_settings, const P
 				u.append_id(p_settings.area_light_atlas);
 			}
 
+			uniforms.push_back(u);
+			copy_uniforms.push_back(u);
+		}
+
+		{
+			// Directional light projectors (cloud shadows) shade the fog as they shade surfaces.
+			RD::Uniform u;
+			u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+			u.binding = 22;
+			u.append_id(fog->decal_atlas);
 			uniforms.push_back(u);
 			copy_uniforms.push_back(u);
 		}

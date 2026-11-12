@@ -227,6 +227,22 @@ cos(2 phi), phi between the view and the sun's light, flattened as the sun climb
 the zenith) and off with no sun. The cover map stays the mean; TerrainMaterial3D's far blend
 can take the same factor for its grass share (terrain's file, offered to its thread).
 
+**Far grass colour by sun direction (built).** The bake now renders the sward with the sun at
+the four headings and the bare ground white once and black at each heading (nine views, about
+30 frames of a 96 x 96 view, once per look change), and publishes the per-channel lobes
+(`get_far_color_lobes()`, globals `grass_ground_far_lobe1/2`). The widest field publishes the
+sun's heading and strength from `sun_light` (or the first visible DirectionalLight3D of its
+world) as `grass_ground_sun` and the camera as `grass_ground_view`, each only when it changes;
+`grass_ground()` multiplies the far colour by 1 + s (l1 cos phi + l2 cos 2 phi), bounded at 0.1.
+Measured on the default tall grass: l1 about 0.5 to 0.6 (blue 0.7), l2 under 0.1, so a far
+meadow is about 1.5x its mean looking down-sun and 0.5x into the sun. The grass bench
+(`--far-match`, four sun headings, raster) sees the same swing: the colour the far ground needs
+is 2.0x brighter at cos phi = 0.74 than at -0.74, where the lobes give 2.3x, and the spread of
+far/needed over the headings falls from 0.39..1.43 to 0.56..0.89. What remains is a level
+offset of the bench's region, which lies on a slope facing the camera (seen well above the 7
+degree view the bake assumes): the far colour has no view-elevation term yet. Cost: one extra
+dot product and a few multiplies in the ground shader where the blades have thinned away.
+
 ## References
 
 - SpeedTree documentation, "Level of detail" (leaf reduction and scaling).
