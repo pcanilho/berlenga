@@ -33,6 +33,7 @@
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
 
+class GPUParticles3D;
 class MeshInstance3D;
 
 // Waterfalls from a terrain generator's fall records (TerrainGenerator3D.get_waterfalls(): lip points with their
@@ -50,6 +51,7 @@ public:
 		PackedFloat32Array air; // mean air concentration C, 0..1
 		PackedFloat32Array travel; // s since the lip
 		PackedFloat32Array dist; // m down the face from the lip
+		PackedFloat32Array cover; // a free jet's unbroken share, 1..0 past the break-up length (empty on the rock)
 		float q = 0.0f; // m^2/s
 		float edge = 0.0f; // m inside the water's margin (< 0 on the wet rock beyond it)
 	};
@@ -69,7 +71,35 @@ public:
 		PackedVector3Array ledges; // world
 		PackedFloat32Array ledge_speed; // m/s of the water striking each
 		Vector3 foot;
+		int plunge = -1; // a free jet's sheet: its index in plunges
 		PackedFloat32Array sky_spec; // per row: share of the reflected sky the terrain leaves open (1 without heights)
+	};
+	// A tall free fall (plunge): the jet leaves the lip as a sheet, breaks up after L_b = 6 q^0.32 m (Horeni 1956)
+	// and falls on as clumps and drops slowed by the air towards their terminal speeds. docs/ideas/water.md
+	// "Step 6b".
+	struct Plunge {
+		String id;
+		Vector3 top; // the lip, middle of the water
+		Vector3 direction; // horizontal, downstream
+		float height = 0.0f;
+		float discharge = 0.0f;
+		float width = 0.0f; // the water's, at the lip
+		float lip_speed = 0.0f;
+		float breakup = 0.0f; // m along the jet
+		Vector3 zone_start; // the break-up zone, where clumps are launched (world)
+		Vector3 zone_end;
+		Vector3 zone_start_velocity;
+		Vector3 zone_end_velocity;
+		float floor = 0.0f; // the level the column lands on (pool, lake, ground)
+		Vector3 foot; // where the column lands, mean
+		float landing_speed = 0.0f;
+		float fall_time = 0.0f; // s for the slowest clumps from the break-up to the floor
+		float column_width = 0.0f; // across, at the floor (95% of the water)
+		float drift = 0.0f; // m the wind carries the column's foot
+		PackedFloat32Array face_out; // m out from the brink the cliff stands, at 16 heights from the floor up
+		int streaks = 0;
+		GPUParticles3D *column = nullptr;
+		Ref<ShaderMaterial> column_material;
 	};
 
 private:
@@ -85,8 +115,16 @@ private:
 	float row_spacing = 0.5f; // m along the face (a ledge's brink between rows 1 m apart cut through the sheet)
 	float wet_margin = 0.6f; // m of wet rock either side of the water
 	float rock_step = 0.8f; // m: height of the steps and ledges a thin flow runs over (nappe vs skimming flow)
+	bool plunge_falls = true;
+	float column_density = 1.0f; // scales the falling clumps drawn for a broken column
+	float column_turbulence = 0.5f; // m/s: the air's eddies round a falling column, which widen it as it falls
+	// Share of the open wind a falling column feels: it stands in the lee of its own cliff, and the air inside it is
+	// dragged down with the water.
+	float wind_exposure = 0.3f;
 
 	LocalVector<Face> faces;
+	LocalVector<Plunge> plunges;
+	double wind_wait = 0.0;
 	// Standing water from the source (sea level, lakes as rectangle and level): a sheet stops where it meets it.
 	float sea_level = -1e30f;
 	LocalVector<Rect2> lake_rects;
@@ -98,6 +136,10 @@ private:
 	double water_time = 0.0;
 
 	void _build_face(const Dictionary &p_fall, Object *p_source);
+	void _build_plunge(const Dictionary &p_fall, Object *p_source);
+	void _simulate_column(Plunge &r_plunge, const Vector3 &p_wind, Object *p_source) const;
+	GPUParticles3D *_make_column(Plunge &r_plunge, const Transform3D &p_inv) const;
+	Vector3 _wind_at(const Vector3 &p_position) const;
 	void _exclude_from_rivers();
 	void _build_mesh();
 	void _build_effects();
@@ -119,6 +161,17 @@ public:
 	static float flow_cover(float p_q, float p_step, float p_tan_slope);
 	static void _sky_spec(Face &r_face, int p_col, Object *p_source);
 	Array get_contact_falls() const;
+	Array get_plunge_falls() const;
+	static String get_column_shader_code();
+	static String get_streak_shader_code();
+	void set_plunge_falls(bool p_enabled);
+	bool get_plunge_falls_enabled() const { return plunge_falls; }
+	void set_column_density(float p_density);
+	float get_column_density() const { return column_density; }
+	void set_wind_exposure(float p_share);
+	float get_wind_exposure() const { return wind_exposure; }
+	void set_column_turbulence(float p_speed);
+	float get_column_turbulence() const { return column_turbulence; }
 
 	void set_source(const NodePath &p_path);
 	NodePath get_source() const { return source; }

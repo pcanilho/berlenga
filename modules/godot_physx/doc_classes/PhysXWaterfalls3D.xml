@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="PhysXWaterfalls3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
-		Contact waterfalls: water that stays on steep rock, from a terrain's waterfall records.
+		Waterfalls from a terrain's waterfall records: water that stays on steep rock, and tall free falls that break up in the air.
 	</brief_description>
 	<description>
 		Reads [code]get_waterfalls()[/code] from [member source] (a [code]TerrainGenerator3D[/code], or any node returning the same records: [code]type[/code], [code]top[/code], [code]bottom[/code], [code]height[/code], [code]discharge[/code], [code]direction[/code], [code]lip_points[/code], [code]lip_share[/code], [code]lip_width[/code], [code]face_profiles[/code], [code]ledges[/code]) and drapes a sheet of water down every fall that is not a free plunge (cascades, horsetails and tiered falls).
 		The sheet covers the wet part of the lip and follows the ground under each column (the source's [code]get_height()[/code] every 0.5 m, else the record's three face profiles smoothed with a centripetal Catmull-Rom spline). Down each column: speed from gravity against Darcy-Weisbach friction ([member friction_factor]) on the depth, so the sheet nears the normal speed [code](8 g q sin a / f)^(1/3)[/code] of chute flow (Chanson 1993) and slows on the foot; no air above the inception point (Wood, Ackers and Loveless 1983, [method inception_length]) and air towards [method equilibrium_air] below it; thickness bulked by the air. Clear water at the lip, white below, with streaks carried at the water's speed.
-		Spray at each ledge and at the foot, and a [PhysXWaterMist3D] along the face for falls carrying at least [member mist_min_discharge]. Every [PhysXRiver3D] in the tree is told about these faces ([member PhysXRiver3D.fall_exclusions]), so it does not draw them again as free jets.
+		Spray at each ledge and at the foot, and a [PhysXWaterMist3D] along the face for falls carrying at least [member mist_min_discharge].
+		Free falls ([code]type[/code] plunge, [member plunge_falls]): the jet leaves the brink at the brink depth (0.715 of critical depth, Rouse 1936) and falls as a projectile sheet that whitens and comes apart after the break-up length [code]L_b = 6 q^0.32[/code] m (Horeni 1956). From there the water falls as clumps (GPU particles drawn as soft streaks) launched over the break-up zone, each slowed by quadratic air drag towards its own terminal speed (9 to 26 m/s, Gunn and Kinzer 1949 for drops), spread by the jet's turbulence and the air's eddies ([member column_turbulence]) and carried by the [code]WeatherMap3D[/code] wind. Spray where the column lands, at the speed the drag leaves it, and a tall [PhysXWaterMist3D] veil fed at the impact and up the column.
+		Every [PhysXRiver3D] in the tree is told about these falls ([member PhysXRiver3D.fall_exclusions]), so it does not draw them again.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -39,6 +41,24 @@
 				One dictionary per contact fall drawn: [code]id[/code], [code]type[/code], [code]height[/code], [code]discharge[/code] (m³/s), [code]inception_length[/code] (m from the lip), [code]air_at_foot[/code], [code]air_peak[/code], [code]impact_speed[/code] (m/s at the foot), [code]ledges[/code] and [code]rows[/code].
 			</description>
 		</method>
+		<method name="get_column_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				The particle shader of a broken column's clumps: launched over the break-up zone, quadratic drag towards each clump's terminal speed, eddies and wind, killed at the floor.
+			</description>
+		</method>
+		<method name="get_plunge_falls" qualifiers="const">
+			<return type="Array" />
+			<description>
+				One dictionary per free fall drawn: [code]id[/code], [code]height[/code], [code]discharge[/code] (m³/s), [code]width[/code] (m of water at the lip), [code]top[/code], [code]lip_speed[/code] (m/s), [code]breakup_length[/code] (m), [code]foot[/code] (where the column lands, mean), [code]landing_speed[/code] (m/s, mean), [code]fall_time[/code] (s for the slowest clumps), [code]column_width[/code] (m across at the foot, 95% of the water), [code]drift[/code] (m the wind moves the foot) and [code]streaks[/code] (particles).
+			</description>
+		</method>
+		<method name="get_streak_shader_code" qualifiers="static">
+			<return type="String" />
+			<description>
+				The shader a falling clump is drawn with: a dense rounded head and a tail of spray along its velocity, turned round that axis to face the camera.
+			</description>
+		</method>
 		<method name="inception_length" qualifiers="static">
 			<return type="float" />
 			<param index="0" name="q" type="float" />
@@ -56,6 +76,12 @@
 		</method>
 	</methods>
 	<members>
+		<member name="column_density" type="float" setter="set_column_density" getter="get_column_density" default="1.0">
+			Scales the number of falling clumps drawn for a broken column.
+		</member>
+		<member name="column_turbulence" type="float" setter="set_column_turbulence" getter="get_column_turbulence" default="0.5">
+			Speed (m/s) of the air's eddies round a falling column: the clumps drift apart with them, so the column widens as it falls.
+		</member>
 		<member name="contact_falls" type="bool" setter="set_contact_falls" getter="get_contact_falls_enabled" default="true">
 			Draws the contact falls. Off, the node draws nothing and the rivers draw their falls as before.
 		</member>
@@ -86,8 +112,14 @@
 		<member name="source" type="NodePath" setter="set_source" getter="get_source" default="NodePath(&quot;&quot;)">
 			The node whose [code]get_waterfalls()[/code] lists the falls.
 		</member>
+		<member name="plunge_falls" type="bool" setter="set_plunge_falls" getter="get_plunge_falls_enabled" default="true">
+			Draws the free falls: the jet sheet, its broken column, spray and veil. Off, the rivers draw them as before.
+		</member>
 		<member name="spray" type="bool" setter="set_spray" getter="get_spray" default="true">
 			Spray at each ledge and at the foot of each face.
+		</member>
+		<member name="wind_exposure" type="float" setter="set_wind_exposure" getter="get_wind_exposure" default="0.3">
+			Share of the open wind a falling column feels: it stands in the lee of its own cliff, and the air inside it is dragged down with the water. Clumps the wind blows back against the cliff run down its face.
 		</member>
 		<member name="wet_margin" type="float" setter="set_wet_margin" getter="get_wet_margin" default="0.6">
 			Width (m) of wet rock drawn either side of the water: darker and glossy, in patches.

@@ -1952,6 +1952,80 @@ fork can.
 - `get_contact_falls()` reports per fall `inception_length`, `air_at_foot`, `air_peak`, `impact_speed`, ledges
   and rows. Opt-out: `contact_falls = false`.
 
+## Step 6b: tall plunge falls, the broken column and its veil (12 Nov, second waterfall stage)
+
+Gap: the valley's 338 m fall (Q 3.9 m3/s, 14 m lip) is drawn by its river as the short-fall curtain: a thin,
+hard-edged white slab, whole from top to bottom. The scene's mist at its foot is a block with a hard outline.
+
+### What a tall free fall shows
+
+- **The sheet breaks up within metres.** A nappe disintegrates once its surface disturbances reach the core:
+  `L_b = 6 q^0.32` m (Horeni 1956, as used by Castillo et al. 2015 and Carrillo 2020). At q = 0.28 m2/s that is
+  4 m. Below it the fall is no longer a sheet but clumps and streaks ("comets": a dense head with a trail of
+  spray) inside a growing cloud of drops.
+- **Clumps slow to their terminal speed.** Air drag `F = 0.5 rho_a Cd A v^2` caps each piece at
+  `v_t = sqrt(8 rho_w g r / (3 rho_a Cd))`: about 9 m/s for 2.5 mm raindrop-sized drops (Gunn and Kinzer 1949),
+  20 to 30 m/s for decimetre clumps. Speed down the column follows
+  `v^2 = v_t^2 + (v_0^2 - v_t^2) exp(-2 g z / v_t^2)`: a 338 m fall lands near 25 m/s, not the free-fall 81 m/s.
+  The generator's record already says so (impact 9 m/s for the finest share).
+- **The column spreads.** A turbulent jet spreads at about its turbulence intensity, a few per cent of its
+  length (Ervine and Falvey 1987), and drag on the smaller drops widens it further; the slowest drops drift with
+  the wind by `wind * fall time`. Tall falls read as a widening, wind-bent veil (Yosemite, Angel Falls), whiter
+  at the core.
+- **Spray and mist.** The impact throws spray at a share of the landing speed; the finest drops stay airborne
+  and rise as a cloud (the "waterfall wind" the column drags down spreads along the pool). Mist also leaves the
+  column all the way down.
+
+### How others do it
+
+- Film: layered sheet, instanced streak particles and volumes for spray and mist (DreamWorks, "How to Train
+  Your Dragon: The Hidden World", 2019 talk on its procedural waterfalls).
+- Games: panning meshes for the top, particle streaks (ribbons or stretched billboards) for the broken water,
+  sprite or volumetric mist at the foot (UE Niagara setups; realtimevfx "Season" waterfall breakdown).
+- No engine ties the break-up height or the column's speed to the flow; hydraulics gives both.
+
+### Design
+
+1. `PhysXWaterfalls3D` takes free falls too (`type` plunge, or `free` true). Rivers drop their own curtain for
+   them through `fall_exclusions`, as for contact falls.
+2. **Jet.** Columns across the lip follow the projectile from the lip speed. The same sheet mesh and shader as
+   the contact falls; air rises to white over `L_b`, and past `L_b` the sheet loses coverage (noise riding the
+   flow) until it is gone by about `2 L_b`.
+3. **Broken column.** GPU particles launched across the lip width at the break-up point with the jet's speed and
+   direction, each with its own terminal speed from a size spread, quadratic drag, a lateral kick of a few per
+   cent of its speed, and the weather's wind. Drawn as velocity-stretched soft streaks (white, lit, partly
+   see-through), so the column reads as falling water and widens and bends on its own.
+4. **Foot.** Spray and puffs at the landing (stage 1's), at the landing speed the drag gives.
+5. **Veil.** A `PhysXWaterMist3D` the height of the column with a line source along it plus the foot source,
+   so mist hangs along the fall and drifts with the wind. Its box gets soft walls (the density fades to zero
+   over the last cells), which also fixes the hard-edged block.
+6. **Report.** `get_plunge_falls()`: break-up length, landing speed, column width at the foot, drift.
+
+### Built (12 Nov)
+
+- `PhysXWaterfalls3D.plunge_falls` (on by default) takes the `plunge` records. The record's `top` is the bed cell
+  above the drop, which on the valley sits 44 m back from the edge, so the brink is found by walking downstream
+  until the ground falls away. The jet leaves at the brink depth 0.715 y_c; its sheet is the contact sheet's mesh
+  and shader with `COLOR.a` carrying the unbroken share (1 to `L_b`, 0 at `2 L_b`), torn by noise riding the flow,
+  and no wet rock beside it.
+- The column is one `GPUParticles3D` with its own particle shader: clumps launched over the break-up zone
+  (0.75 to 1.8 `L_b`), terminal speeds 9 to 26 m/s with size, drag `a = g - g |u| u / v_t^2` on the speed
+  relative to the air, a 5 % kick, a per-clump eddy (`column_turbulence`) and the WeatherMap3D wind times
+  `wind_exposure` (0.3: the column is in its cliff's lee and drags its own air down; at full exposure the
+  valley's wind carried it 160 m back into the mountain). The cliff under the brink is sampled at 16 heights,
+  so clumps blown against it run down its face instead of through the rock.
+- Streaks: a camera-facing quad turned round the velocity, a dense head and a tail of spray. Never thinner than
+  1.5 pixels, trading width for opacity (Persson's phone-wire AA), so a far column is a veil, not speckle. Traced:
+  stochastic transparency (Enderton et al. 2010), because thousands of faint streak edges used up the four traced
+  transparency layers and the column all but vanished under PT.
+- A CPU ensemble of 192 clumps runs the same physics for the report and the spray and veil placement.
+- Valley fall r1_19m: lip 7.9 m of water at 2.4 m/s, `L_b` 4.8 m, lands at 16.9 m/s mean (free fall 81 m/s),
+  slowest clumps 37 s, column 23 m wide at the foot, 9 m of wind drift, 40,000 streaks.
+- Veil: `PhysXWaterMist3D.column_height` / `column_share` feed a share of the mist evenly up the column; its rate
+  grows with the fall's height (drops stripped all the way down). Every mist box now fades to nothing over its
+  last three cells at the sides and top, which removes the hard-edged block.
+- Open: GPU cost on the PC (40k quads, alpha blended); the stage 3 work (mist wetting rock, sound).
+
 ## Sources
 
 - Wood, Ackers and Loveless, General method for critical point on spillways, J. Hydraulic Eng. 109(2), 1983;
