@@ -236,7 +236,7 @@ render_mode blend_mix, cull_back, depth_draw_never;
 uniform float water_time = 0.0;
 uniform vec4 water_color : source_color = vec4(0.30, 0.40, 0.40, 0.35);
 uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
-// Wet rock beside the water: a darkening veil with a soft gloss (damp rock, not a mirror: roughness 0.3).
+// Wet rock beside the water: a darkening veil, nearly matte (damp rock: roughness 0.6).
 uniform vec4 wet_color : source_color = vec4(0.02, 0.025, 0.03, 0.4);
 uniform float wet_margin = 0.6;
 uniform vec3 pathtraced_absorption = vec3(0.6, 0.14, 0.1);
@@ -258,6 +258,12 @@ float f_noise(vec2 p) {
 	vec2 u = f * f * (3.0 - 2.0 * f);
 	return mix(mix(f_hash(i), f_hash(i + vec2(1.0, 0.0)), u.x),
 			mix(f_hash(i + vec2(0.0, 1.0)), f_hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+varying float v_sky_spec;
+
+void vertex() {
+	v_sky_spec = CUSTOM0.r;
 }
 
 void fragment() {
@@ -286,7 +292,8 @@ void fragment() {
 	water *= smoothstep(threads - 0.06, threads + 0.06, 0.2 + 0.68 * flow_cover);
 	// Wet rock: splash and seep reach out in patches, not as an even band.
 	float seep = f_noise(vec2(down * 1.1, UV.y * 1.9)) * 0.6 + f_noise(vec2(down * 4.3, UV.y * 5.7)) * 0.4;
-	float wet = smoothstep(0.0, 0.25, e + wet_margin * (seep * 1.2 - 0.2));
+	// A soft edge: damp rock fades out over half a metre (a hard edge drew the noise as a saw-tooth fringe).
+	float wet = smoothstep(-0.2, 0.45, e + wet_margin * (seep * 1.2 - 0.2));
 	// Nothing on the outermost column (the mesh's rim, whose normal has one neighbour only).
 	wet *= smoothstep(-wet_margin, -wet_margin + 0.2, edge_m);
 	// Fine texture of the white water: lumps and thin spots that move with it.
@@ -294,7 +301,7 @@ void fragment() {
 #if defined(RT)
 	float cover = water > 0.5 ? 1.0 : wet * wet_color.a;
 	ALBEDO = water > 0.5 ? mix(vec3(1.0), foam_color.rgb * (0.82 + 0.18 * lumps), foam) : wet_color.rgb;
-	ROUGHNESS = water > 0.5 ? mix(pathtraced_roughness, 0.8, foam) : 0.3;
+	ROUGHNESS = water > 0.5 ? mix(pathtraced_roughness, 0.8, foam) : 0.6;
 	SPECULAR = 0.5;
 	METALLIC = 0.0;
 	TRANSMISSION = water > 0.5 ? 1.0 - foam : 0.0;
@@ -302,13 +309,22 @@ void fragment() {
 	ABSORPTION = pathtraced_absorption;
 	ALPHA = cover;
 #else
-	vec3 water_rgb = mix(water_color.rgb, foam_color.rgb * (0.82 + 0.18 * lumps), foam);
-	float water_a = mix(water_color.a, foam_color.a * mix(0.55, 1.0, smoothstep(0.25, 0.6, lumps)), foam) * mix(0.6, 1.0, film);
+	// Clear water a few millimetres deep over rock shows the rock darkened (the water fills its pores and cuts the
+	// diffuse reflection, Lekner and Dorf 1988), not a pale water colour: blended over the rock, water_color's
+	// albedo drew a light fringe along the margins. Its tint stays, at the wet rock's darkness.
+	vec3 clear_rgb = water_color.rgb * (dot(wet_color.rgb, vec3(1.0 / 3.0)) / max(dot(water_color.rgb, vec3(1.0 / 3.0)), 1e-3));
+	vec3 water_rgb = mix(clear_rgb, foam_color.rgb * (0.82 + 0.18 * lumps), foam);
+	float water_a = mix(max(water_color.a, wet_color.a), foam_color.a * mix(0.55, 1.0, smoothstep(0.25, 0.6, lumps)), foam) * mix(0.6, 1.0, film);
 	ALBEDO = mix(wet_color.rgb, water_rgb, water);
 	// A film a few millimetres thick over rough rock is not a mirror: its gloss broadens toward the margins (a sharp
 	// sun glint there drew a bright seam along the edge).
-	ROUGHNESS = mix(0.3, mix(mix(0.35, pathtraced_roughness + 0.1, film), 0.85, foam), water);
-	SPECULAR = 0.5;
+	// Damp rock beside the water is darkened but stays nearly matte: its pores hold the water and no film lies on
+	// top, so it has no sheen of its own (Lekner and Dorf 1988). A glossy margin caught the sun as a pale band.
+	ROUGHNESS = mix(0.6, mix(mix(0.45, pathtraced_roughness + 0.1, film), 0.85, foam), water);
+	// The raster reflection reads the sky probe, which knows nothing of the gully's walls: scale the film's reflectance
+	// by the sky its horizons leave open (F0 and the grazing term follow SPECULAR squared). Path tracing traces the
+	// walls itself.
+	SPECULAR = 0.5 * sqrt(clamp(v_sky_spec, 0.0, 1.0));
 	METALLIC = 0.0;
 	ALPHA = max(water * water_a, wet * wet_color.a);
 #endif
@@ -618,7 +634,49 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	if (mid.speed.size() > 0) {
 		face.impact_speed = mid.speed[mid.speed.size() - 1];
 	}
+	_sky_spec(face, main_col, p_source);
 	faces.push_back(face);
+}
+
+// Horizon-based specular occlusion (after Jimenez et al. 2016, "Practical Real-Time Strategies for Accurate
+// Indirect Occlusion"; Lagarde and de Rousiers 2014): the film on the rock mirrors what lies out in front of the
+// face, and in a gully that is mostly the opposite wall, not the sky the raster reflection probe holds. Per row of
+// the middle column, the terrain's horizon is marched in five directions across the outward half-space; the open
+// share of each is 1 - sin(horizon elevation) (the cosine-weighted sky above a horizon), averaged.
+void PhysXWaterfalls3D::_sky_spec(Face &r_face, int p_col, Object *p_source) {
+	const Column &mid = r_face.columns[p_col];
+	const int rows = mid.points.size();
+	r_face.sky_spec.resize(rows);
+	r_face.sky_spec.fill(1.0f);
+	if (p_source == nullptr || !p_source->has_method("get_height") || rows == 0) {
+		return;
+	}
+	Vector3 out = Vector3(r_face.direction.x, 0.0f, r_face.direction.z);
+	if (out.length_squared() < 1e-6f) {
+		return;
+	}
+	out.normalize();
+	const int step = 2;
+	for (int r = 0; r < rows; r += step) {
+		const Vector3 p = mid.points[r];
+		float open = 0.0f;
+		for (int a = -2; a <= 2; a++) {
+			const Vector3 d = out.rotated(Vector3(0, 1, 0), a * float(Math::PI) / 6.0f);
+			float hz = 0.0f;
+			for (float dist = 3.0f; dist < 400.0f; dist *= 1.6f) {
+				const Vector3 q = p + d * dist;
+				const float g = p_source->call("get_height", q);
+				hz = MAX(hz, Math::atan2(g - p.y, dist));
+			}
+			open += 1.0f - Math::sin(hz);
+		}
+		r_face.sky_spec.set(r, open / 5.0f);
+	}
+	for (int r = 1; r < rows; r += step) {
+		const float a = r_face.sky_spec[r - 1];
+		const float b = r + 1 < rows ? r_face.sky_spec[r + 1] : a;
+		r_face.sky_spec.set(r, 0.5f * (a + b));
+	}
 }
 
 String PhysXWaterfalls3D::get_contact_shader_code() {
@@ -646,6 +704,7 @@ void PhysXWaterfalls3D::_build_mesh() {
 	PackedVector2Array uvs;
 	PackedVector2Array uv2s;
 	PackedColorArray colors;
+	PackedFloat32Array sky; // CUSTOM0.r: the reflected sky left open (horizon specular occlusion)
 	PackedInt32Array indices;
 	for (const Face &face : faces) {
 		const int cols = face.columns.size();
@@ -680,6 +739,7 @@ void PhysXWaterfalls3D::_build_mesh() {
 				const float tan_slope = Math::abs(d.y) / MAX(Vector2(d.x, d.z).length(), 0.05f);
 				const float cover_a = 0.75f + 0.25f * flow_cover(col.q, rock_step, tan_slope);
 				colors.push_back(Color(edge, CLAMP(col.air[r] / 0.9f, 0.0f, 1.0f), CLAMP(0.125f * face.width, 0.0f, 1.0f), cover_a));
+				sky.push_back(face.sky_spec.size() > r ? face.sky_spec[r] : 1.0f);
 			}
 		}
 		for (int c = 0; c + 1 < cols; c++) {
@@ -721,10 +781,11 @@ void PhysXWaterfalls3D::_build_mesh() {
 	arrays[Mesh::ARRAY_TEX_UV] = uvs;
 	arrays[Mesh::ARRAY_TEX_UV2] = uv2s;
 	arrays[Mesh::ARRAY_COLOR] = colors;
+	arrays[Mesh::ARRAY_CUSTOM0] = sky;
 	arrays[Mesh::ARRAY_INDEX] = indices;
 	Ref<ArrayMesh> mesh;
 	mesh.instantiate();
-	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), Mesh::ARRAY_CUSTOM_R_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT);
 	mesh_instance->set_mesh(mesh);
 }
 

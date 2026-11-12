@@ -1031,6 +1031,13 @@ func _build_water() -> void:
 		if args.has("rock-step"):
 			wf.rock_step = float(args["rock-step"])
 		wf.rebuild()
+		# --contact-shader=path: draw the contact sheets with this shader code instead (look tests without a rebuild).
+		if args.has("contact-shader"):
+			for ch in wf.get_children(true):
+				if ch is MeshInstance3D and ch.material_override is ShaderMaterial and ch.material_override.shader.code.contains("wet_margin"):
+					var sh := Shader.new()
+					sh.code = FileAccess.get_file_as_string(args["contact-shader"])
+					ch.material_override.shader = sh
 		for f in wf.get_contact_falls():
 			_log("contact fall %s" % [f])
 		contact_falls = wf.get_contact_falls()
