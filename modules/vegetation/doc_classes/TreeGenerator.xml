@@ -1,0 +1,683 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TreeGenerator" inherits="Resource" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Grows trees and woody shrubs with a self-organizing growth model, and places them as species and forest stands.
+	</brief_description>
+	<description>
+		Grows a tree year by year with the self-organizing model of Palubicki et al. 2009: buds compete for light in a shadow-propagation grid, vigor is split between each axis and its laterals by the Borchert-Honda model, and branches that stay in shade are shed, some kept as dead wood. The developmental parameters (apical dominance and control, tropisms, bud fate) follow Stava et al. 2014, and branch radii follow the pipe model. [method generate] returns an [ArrayMesh] with a bark surface and a leaves or needles surface; the measurements ([method get_height], [method get_crown_radius], [method get_crown_base]) describe the last tree grown.
+		Each [enum Preset] is a European species with its own parameters and its habitat. [member forest_shade] grows the tree among neighbours [member forest_spacing] apart (tall, narrow crown, high crown base) instead of in the open.
+		For placement, [method make_species] returns a [PlantSpecies] with generated variants, climate rules and canopy values, and [method make_stand] and [method make_woodland] return [Biome]s for [VegetationField3D]: stand-grown canopy trees first, open-grown trees in the gaps and at the edges, then the shrub layer.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="apply_habitat" qualifiers="const">
+			<return type="void" />
+			<param index="0" name="species" type="PlantSpecies" />
+			<description>
+				Sets the climate, terrain and water rules of the current [member preset] on [param species]: annual and January temperature, the dry end of precipitation and aridity, slope, soil depth, no growth in water, and for alder and willow the distance to water. Ranges have soft edges.
+			</description>
+		</method>
+		<method name="clear_cache">
+			<return type="void" />
+			<description>
+				Frees the meshes kept by [method make_species], [method make_stand] and [method make_woodland].
+			</description>
+		</method>
+		<method name="generate">
+			<return type="ArrayMesh" />
+			<description>
+				Grows the tree of the current [member preset], [member seed] and parameters, and returns its mesh. The same settings always give the same tree.
+			</description>
+		</method>
+		<method name="get_bole_height" qualifiers="const">
+			<return type="float" />
+			<description>
+				Clear bole of the last tree grown: the height of the lowest live limb over 2 cm thick leaving a stem. Stand-grown trees self-prune to a long clear bole.
+			</description>
+		</method>
+		<method name="get_bone_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Bones of the wind rig of the last [method generate] with [member rigged] on (0 otherwise).
+			</description>
+		</method>
+		<method name="get_collision_capsules" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<description>
+				Collision capsules for wood thicker than [member collider_radius] in the last generated tree: 8 floats each, the two ends (x, y, z), the radius and the rig bone carrying it. [method generate] also stores them as the mesh meta [code]tree_colliders[/code].
+			</description>
+		</method>
+		<method name="get_collision_deflect_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many times the last [method generate] swung a limb (and everything on it) away from thicker wood it would have grown into, up to 20 degrees about where it leaves its parent, as limbs grow away from obstacles (Pirk et al. 2012).
+			</description>
+		</method>
+		<method name="get_collision_prune_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many limbs the last [method generate] cut back because they ran into thicker wood and could not swing clear: the thinner limb dies back to the contact and ends in a broken, splintered tip; a thick limb that would keep only a short stub goes back to its parent.
+			</description>
+		</method>
+		<method name="get_crown_base" qualifiers="const">
+			<return type="float" />
+			<description>
+				Height of the lowest foliage of the last tree grown (2nd percentile of leaf heights), in metres.
+			</description>
+		</method>
+		<method name="get_crown_radius" qualifiers="const">
+			<return type="float" />
+			<description>
+				Crown radius of the last tree grown (the drip line: 95th percentile of the horizontal reach of the foliage), in metres.
+			</description>
+		</method>
+		<method name="get_dead_branch_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Shed branches kept as dead wood on the last tree grown.
+			</description>
+		</method>
+		<method name="get_foliage_profile" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<param index="0" name="bins" type="int" default="10" />
+			<description>
+				Mean horizontal reach (metres from the stem) of the leafy shoots of the last tree grown, in [param bins] equal height slices from the ground to the top. A slice with no foliage reads 0.
+			</description>
+		</method>
+		<method name="get_generation_usec" qualifiers="const">
+			<return type="int" />
+			<description>
+				Time the last [method generate] took, in microseconds.
+			</description>
+		</method>
+		<method name="get_height" qualifiers="const">
+			<return type="float" />
+			<description>
+				Height of the last tree grown, in metres.
+			</description>
+		</method>
+		<method name="get_internode_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Internodes (stem segments) of the last tree grown.
+			</description>
+		</method>
+		<method name="get_leaf_area_index" qualifiers="const">
+			<return type="float" />
+			<description>
+				Leaf area of the last broadleaf tree grown divided by its crown's ground area. The mesh is thinned to at most 5.5, the average of temperate broadleaf crowns. Zero for conifers.
+			</description>
+		</method>
+		<method name="get_leaf_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Leaves or needles of the last tree grown.
+			</description>
+		</method>
+		<method name="get_near_mesh_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many full-leaf near meshes built by [method request_near_mesh] are in use now.
+			</description>
+		</method>
+		<method name="get_param" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="param" type="int" enum="TreeGenerator.Param" />
+			<description>
+				Returns a growth parameter.
+			</description>
+		</method>
+		<method name="get_shed_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Branches shed while the last tree grew.
+			</description>
+		</method>
+		<method name="make_species">
+			<return type="PlantSpecies" />
+			<param index="0" name="stand_grown" type="bool" />
+			<param index="1" name="variants" type="int" default="3" />
+			<description>
+				Returns a [PlantSpecies] of the current [member preset]: [param variants] meshes (seeds derived from [member seed]), the preset's habitat ([method apply_habitat]), canopy radius and opacity for shade, spacing and footprint. [param stand_grown] grows the trees as in a closed stand; otherwise they are open-grown and keep to light gaps through a shade rule. With [param variants] 0 the species has no meshes but is measured, for placement maps. Meshes are cached per preset and form.
+			</description>
+		</method>
+		<method name="make_stand">
+			<return type="Biome" />
+			<param index="0" name="stand" type="int" enum="TreeGenerator.Stand" />
+			<param index="1" name="variants" type="int" default="3" />
+			<description>
+				Returns a [Biome] for one [enum Stand], in placement order: canopy trees (stand-grown; a second species shares the ground through complementary patches), open-grown trees in gaps, then shrubs limited by shade. Each species carries its habitat, narrowed to the stand's belt where the stand has one.
+			</description>
+		</method>
+		<method name="make_woodland">
+			<return type="Biome" />
+			<param index="0" name="variants" type="int" default="3" />
+			<param index="1" name="region" type="int" enum="TreeGenerator.Region" default="0" />
+			<description>
+				Returns one [Biome] with every woodland stand of [param region]. Europe (all but [constant STAND_HEDGEROW]): riparian, subalpine, montane conifer, beech, oak mixed and pine heath. North America: pine-hemlock, northern hardwood and eastern oak. Canopy trees of all stands come first. Climate rules keep each stand to its belt; where belts overlap, later stands only fill the gaps earlier crowns leave. Append floor species after it.
+			</description>
+		</method>
+		<method name="request_near_mesh">
+			<return type="Mesh" />
+			<param index="0" name="key" type="int" />
+			<param index="1" name="variant" type="int" />
+			<description>
+				For [member PlantSpecies.near_mesh_source]: returns the full-leaf mesh of [param variant] (an index into the species' meshes), or [code]null[/code] while it is still being built on a worker thread (one at a time per species). Only its users hold the mesh, so it is freed once nothing draws it. See [member near_leaf_range].
+			</description>
+		</method>
+		<method name="set_param">
+			<return type="void" />
+			<param index="0" name="param" type="int" enum="TreeGenerator.Param" />
+			<param index="1" name="value" type="float" />
+			<description>
+				Sets a growth parameter.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="apical_control" type="float" setter="set_param" getter="get_param" default="1.0">
+			Vigor factor per branching order (Stava 2014): below 1, branches grow less the further they are from the leader, which keeps conifers excurrent.
+		</member>
+		<member name="apical_dominance" type="float" setter="set_param" getter="get_param" default="0.57">
+			Borchert-Honda lambda in the first years: the share of vigor the main axis keeps over its laterals.
+		</member>
+		<member name="apical_dominance_old" type="float" setter="set_param" getter="get_param" default="0.49">
+			Borchert-Honda lambda once the tree reaches [member maturity]; decurrent broadleaves drop it to spread their crowns.
+		</member>
+		<member name="bark_color" type="Color" setter="set_bark_color" getter="get_bark_color" default="Color(0.27, 0.24, 0.2, 1)">
+			Bark colour (vertex colour of the bark surface).
+		</member>
+		<member name="basal_sprouts" type="float" setter="set_param" getter="get_param" default="0.0">
+			Chance a year of a new stem sprouting from the base (coppice shrubs).
+		</member>
+		<member name="branch_angle" type="float" setter="set_param" getter="get_param" default="50.0">
+			Angle between a lateral bud and its parent axis, in degrees.
+		</member>
+		<member name="branch_angle_variance" type="float" setter="set_param" getter="get_param" default="10.0">
+			Random variation of [member branch_angle], in degrees.
+		</member>
+		<member name="bud_idle_years" type="float" setter="set_param" getter="get_param" default="3.0">
+			Years a lateral bud waits without growing before it dies.
+		</member>
+		<member name="bud_light_min" type="float" setter="set_param" getter="get_param" default="0.0">
+			Light below which a bud dies.
+		</member>
+		<member name="collider_radius" type="float" setter="set_collider_radius" getter="get_collider_radius" default="0.08">
+			Wood thicker than this gets collision capsules ([method get_collision_capsules]); 0 turns them off.
+		</member>
+		<member name="crown_cone" type="float" setter="set_param" getter="get_param" default="0.0">
+			Excurrent crown shape: a branch reaches out at most this many times its depth below the top of the tree, so spruce, fir, larch and pine keep a cone (Kantola and Makela 2004). Shoots that would leave the cone wait until the leader has grown. 0 turns it off.
+		</member>
+		<member name="dead_branch_keep" type="float" setter="set_param" getter="get_param" default="0.15">
+			Share of shed branches kept on the tree as dead wood.
+		</member>
+		<member name="decay_class" type="int" setter="set_decay_class" getter="get_decay_class" default="0">
+			0 for a living tree; 1 to 5 are the deadwood decay classes foresters use (Maser et al. 1979): 1 dead with twigs and bark, 2 twigs lost, 3 bark sloughing and the top snapped, 4 limb stubs on a stem broken lower, 5 a stump.
+		</member>
+		<member name="direction_noise" type="float" setter="set_param" getter="get_param" default="14.0">
+			Random deviation of each shoot, in degrees.
+		</member>
+		<member name="divergence" type="float" setter="set_param" getter="get_param" default="137.5">
+			Angle between successive lateral buds around the axis, in degrees (137.5 is the golden angle).
+		</member>
+		<member name="envelope" type="AABB" setter="set_envelope" getter="get_envelope" default="AABB(0, 0, 0, 0, 0, 0)">
+			A clipping volume (tree space). Shoots that would grow out of it are cut back each year, as a hedge trimmer does (Palubicki 2009), which gives clipped hedges and topiary. A zero size turns it off.
+		</member>
+		<member name="fallen" type="bool" setter="set_fallen" getter="is_fallen" default="false">
+			Lays the tree on the ground as a log along a random bearing; limbs that would reach into the ground break off, and on a decayed log ([member decay_class] 3 or more) so do the ones standing up.
+		</member>
+		<member name="forest_shade" type="float" setter="set_forest_shade" getter="get_forest_shade" default="0.0">
+			Side shade from neighbours: 0 grows the tree in the open; around 0.6 grows it in a closed stand.
+		</member>
+		<member name="forest_spacing" type="float" setter="set_forest_spacing" getter="get_forest_spacing" default="4.0">
+			Distance to the neighbours when [member forest_shade] is above 0, in metres: the crown keeps to half of it.
+		</member>
+		<member name="gravitropism" type="float" setter="set_param" getter="get_param" default="0.04">
+			Upward (positive) or downward (negative) bend of branch shoots.
+		</member>
+		<member name="gravity_bending" type="float" setter="set_param" getter="get_param" default="0.0">
+			Bending of branches under their own weight (Euler-Bernoulli).
+		</member>
+		<member name="internode_length" type="float" setter="set_param" getter="get_param" default="0.45">
+			Shoot segment length in the first year, in metres; also the cell size of the shadow grid.
+		</member>
+		<member name="internode_length_age" type="float" setter="set_param" getter="get_param" default="0.985">
+			Factor per year on the internode length: shoots shorten as the tree ages.
+		</member>
+		<member name="lateral_extension" type="float" setter="set_param" getter="get_param" default="1.0">
+			Shoot length factor per branching order, up to order 2. It changes only how far branches reach, not how many buds or leaves they carry; below 1 it gives the narrow cone of open-grown spruce, fir and larch (Wilson 2000).
+		</member>
+		<member name="leader_growth" type="float" setter="set_param" getter="get_param" default="0.65">
+			Most metres a stem's leader grows in a year (about 0.6 for beech and maple, up to 1 for birch, larch and white pine). It keeps stand-grown trees, whose shaded sides send all vigor up, to real heights and crown depths. 0 removes the limit.
+		</member>
+		<member name="leaf_color" type="Color" setter="set_leaf_color" getter="get_leaf_color" default="Color(0.13, 0.25, 0.06, 1)">
+			Leaf or needle colour.
+		</member>
+		<member name="leaf_size" type="float" setter="set_param" getter="get_param" default="0.11">
+			Leaf (or needle) length, in metres.
+		</member>
+		<member name="leaf_width" type="float" setter="set_param" getter="get_param" default="0.32">
+			Leaf width as a share of its length.
+		</member>
+		<member name="leaf_years" type="float" setter="set_param" getter="get_param" default="1.0">
+			Years leaves stay on a shoot (1 for deciduous trees, several for evergreen needles).
+		</member>
+		<member name="leaves_per_internode" type="float" setter="set_param" getter="get_param" default="32.0">
+			Leaves or needles per internode.
+		</member>
+		<member name="mask_channel" type="int" setter="set_mask_channel" getter="get_mask_channel" default="-1">
+			Channel of [member VegetationField3D.density_mask] (0 red to 3 alpha) that every species from [method make_species], [method make_stand] and [method make_woodland] reads, so painted clearings and paths keep trees and woody shrubs out. -1 ignores the mask.
+		</member>
+		<member name="mask_invert" type="bool" setter="set_mask_invert" getter="get_mask_invert" default="false">
+			Grow where the mask is low instead of where it is high.
+		</member>
+		<member name="maturity" type="float" setter="set_param" getter="get_param" default="20.0">
+			Years over which apical dominance moves from [member apical_dominance] to [member apical_dominance_old].
+		</member>
+		<member name="max_shoot" type="float" setter="set_param" getter="get_param" default="2.0">
+			Most internodes one bud can grow in a year.
+		</member>
+		<member name="near_leaf_range" type="float" setter="set_near_leaf_range" getter="get_near_leaf_range" default="0.0">
+			Metres. Above 0, placed trees and shrubs with lobed or compound leaves (oak, maples, ash, rowan, elder, hawthorn, horse chestnut) keep only simple leaves of the same area in their meshes, and their species get a [member PlantSpecies.near_mesh_source] that builds the full-leaf mesh of a variant when a tree first comes within this range, then frees it when none is near. Lobes and leaflets are under a pixel beyond about 60 m. Keep this generator or the species alive while the field draws them.
+		</member>
+		<member name="near_needle_range" type="float" setter="set_near_needle_range" getter="get_near_needle_range" default="0.0">
+			Above 0, conifer species from [method make_species], [method make_stand] and [method make_woodland] also carry one full-needle mesh as [code]near_meshes[/code], drawn by [VegetationField3D] within this many metres (about 30 suits), with needle sprays beyond. A full-needle spruce is about 30M vertices, so only one variant is made.
+		</member>
+		<member name="needle_sprays" type="bool" setter="set_needle_sprays" getter="get_needle_sprays" default="false">
+			Conifers draw each shoot's needles as two crossed sprays with a generated needle image (hashed alpha with alpha to coverage) instead of one triangle per needle: a spruce falls from about 53M to 7M vertices and keeps its needle coverage at distance. Up close the sprays read flatter than real needles, so [method generate] keeps real needles by default for a tree near the camera, while [method make_species], [method make_stand] and [method make_woodland] always use sprays.
+		</member>
+		<member name="needles" type="float" setter="set_param" getter="get_param" default="0.0">
+			Above 0, foliage is needles on bottle-brush shoots instead of leaves.
+		</member>
+		<member name="phototropism" type="float" setter="set_param" getter="get_param" default="0.12">
+			How strongly shoots turn toward the light.
+		</member>
+		<member name="phyllotaxis" type="int" setter="set_phyllotaxis" getter="get_phyllotaxis" enum="TreeGenerator.Phyllotaxis" default="0">
+			Bud arrangement: alternate, opposite or whorled.
+		</member>
+		<member name="pipe_exponent" type="float" setter="set_param" getter="get_param" default="2.1">
+			Exponent of the pipe model: a parent's radius to this power is the sum of its children's.
+		</member>
+		<member name="preset" type="int" setter="set_preset" getter="get_preset" enum="TreeGenerator.Preset" default="0">
+			The species. Setting it resets every parameter to the species values.
+		</member>
+		<member name="rigged" type="bool" setter="set_rigged" getter="is_rigged" default="false">
+			Builds a wind rig: bones from the grown branch graph, skin weights on every vertex, and each bone's stiffness, load and inertia as the mesh meta [code]tree_rig[/code] ([constant RIG_STRIDE] floats a bone, see [enum RigField]). The materials are then skinned from MultiMesh instance bones, so a rigged mesh is drawn through [method TreeWind3D.make_multimesh] (or a MultiMesh with [member MultiMesh.bones_per_instance] set to its bone count), and [TreeWind3D] moves it.
+		</member>
+		<member name="root_flare" type="float" setter="set_param" getter="get_param" default="0.7">
+			Widening of the trunk at the ground.
+		</member>
+		<member name="seed" type="int" setter="set_seed" getter="get_seed" default="0">
+			Random seed of the tree.
+		</member>
+		<member name="shadow_depth" type="float" setter="set_param" getter="get_param" default="4.0">
+			Layers of the shadow pyramid below each bud.
+		</member>
+		<member name="shadow_falloff" type="float" setter="set_param" getter="get_param" default="1.25">
+			Base of the shadow decay with depth in the pyramid.
+		</member>
+		<member name="shadow_strength" type="float" setter="set_param" getter="get_param" default="0.08">
+			Shade one bud casts in its own cell.
+		</member>
+		<member name="shed_ratio" type="float" setter="set_param" getter="get_param" default="0.056">
+			Branches whose light per internode falls below this share of the tree's are shed.
+		</member>
+		<member name="stem_spread" type="float" setter="set_param" getter="get_param" default="0.0">
+			Lean of the stems of a multi-stemmed shrub, in degrees.
+		</member>
+		<member name="stems" type="float" setter="set_param" getter="get_param" default="1.0">
+			Stems from the base (shrubs).
+		</member>
+		<member name="tip_radius" type="float" setter="set_param" getter="get_param" default="0.004">
+			Radius of a shoot tip, in metres.
+		</member>
+		<member name="trunk_gravitropism" type="float" setter="set_param" getter="get_param" default="0.35">
+			How strongly the trunk grows upright.
+		</member>
+		<member name="twig_droop" type="float" setter="set_param" getter="get_param" default="0.0">
+			Hang of the twigs on branches (spruce, larch, willow).
+		</member>
+		<member name="vigor" type="float" setter="set_param" getter="get_param" default="2.0">
+			Vigor per unit of light gathered.
+		</member>
+		<member name="whorl_buds" type="float" setter="set_param" getter="get_param" default="5.0">
+			Lateral buds per whorl ([constant PHYLLOTAXIS_WHORLED]).
+		</member>
+		<member name="years" type="float" setter="set_param" getter="get_param" default="45.0">
+			Years of growth.
+		</member>
+	</members>
+	<constants>
+		<constant name="PRESET_OAK" value="0" enum="Preset">
+			Pedunculate oak (Quercus robur).
+		</constant>
+		<constant name="PRESET_BEECH" value="1" enum="Preset">
+			European beech (Fagus sylvatica).
+		</constant>
+		<constant name="PRESET_BIRCH" value="2" enum="Preset">
+			Silver birch (Betula pendula).
+		</constant>
+		<constant name="PRESET_SCOTS_PINE" value="3" enum="Preset">
+			Scots pine (Pinus sylvestris).
+		</constant>
+		<constant name="PRESET_NORWAY_SPRUCE" value="4" enum="Preset">
+			Norway spruce (Picea abies).
+		</constant>
+		<constant name="PRESET_HAZEL" value="5" enum="Preset">
+			Hazel (Corylus avellana), a multi-stemmed shrub.
+		</constant>
+		<constant name="PRESET_HAWTHORN" value="6" enum="Preset">
+			Hawthorn (Crataegus monogyna), a shrub or small tree.
+		</constant>
+		<constant name="PRESET_LIME" value="7" enum="Preset">
+			Small-leaved lime (Tilia cordata).
+		</constant>
+		<constant name="PRESET_SYCAMORE_MAPLE" value="8" enum="Preset">
+			Sycamore maple (Acer pseudoplatanus).
+		</constant>
+		<constant name="PRESET_ASH" value="9" enum="Preset">
+			Ash (Fraxinus excelsior).
+		</constant>
+		<constant name="PRESET_HORSE_CHESTNUT" value="10" enum="Preset">
+			Horse chestnut (Aesculus hippocastanum).
+		</constant>
+		<constant name="PRESET_BLACK_ALDER" value="11" enum="Preset">
+			Black alder (Alnus glutinosa).
+		</constant>
+		<constant name="PRESET_WHITE_WILLOW" value="12" enum="Preset">
+			White willow (Salix alba).
+		</constant>
+		<constant name="PRESET_LARCH" value="13" enum="Preset">
+			European larch (Larix decidua).
+		</constant>
+		<constant name="PRESET_SILVER_FIR" value="14" enum="Preset">
+			Silver fir (Abies alba).
+		</constant>
+		<constant name="PRESET_ROWAN" value="15" enum="Preset">
+			Rowan (Sorbus aucuparia).
+		</constant>
+		<constant name="PRESET_ELDER" value="16" enum="Preset">
+			Elder (Sambucus nigra), a shrub.
+		</constant>
+		<constant name="PRESET_HOLLY" value="17" enum="Preset">
+			Holly (Ilex aquifolium), an evergreen shrub or small tree leafy to the ground; the shrub layer of oceanic beech and oak woods.
+		</constant>
+		<constant name="PRESET_YEW" value="18" enum="Preset">
+			Yew (Taxus baccata), an evergreen with flat needles and a broad dense crown, the most shade tolerant European tree.
+		</constant>
+		<constant name="PRESET_BOX" value="19" enum="Preset">
+			Box (Buxus sempervirens), a dense evergreen shrub with small opposite leaves.
+		</constant>
+		<constant name="PRESET_SUGAR_MAPLE" value="20" enum="Preset">
+			Sugar maple (Acer saccharum), a tall, very shade-tolerant maple with a dense oval crown.
+		</constant>
+		<constant name="PRESET_RED_MAPLE" value="21" enum="Preset">
+			Red maple (Acer rubrum), a smaller maple of wet and dry ground alike, with red twigs.
+		</constant>
+		<constant name="PRESET_RED_OAK" value="22" enum="Preset">
+			Northern red oak (Quercus rubra), straighter and more upright than the European oak.
+		</constant>
+		<constant name="PRESET_WHITE_OAK" value="23" enum="Preset">
+			White oak (Quercus alba): a short bole and a wide-spreading crown when open-grown.
+		</constant>
+		<constant name="PRESET_WHITE_PINE" value="24" enum="Preset">
+			Eastern white pine (Pinus strobus), tall, with level whorls in tiers and long soft needles.
+		</constant>
+		<constant name="PRESET_HEMLOCK" value="25" enum="Preset">
+			Eastern hemlock (Tsuga canadensis), a nodding leader and fine drooping sprays; casts the deepest shade.
+		</constant>
+		<constant name="PRESET_AMERICAN_BEECH" value="26" enum="Preset">
+			American beech (Fagus grandifolia), like the European beech with a rounder crown.
+		</constant>
+		<constant name="PRESET_PAPER_BIRCH" value="27" enum="Preset">
+			Paper birch (Betula papyrifera), a boreal pioneer with chalk-white bark and twigs that do not hang.
+		</constant>
+		<constant name="PRESET_YELLOW_BIRCH" value="28" enum="Preset">
+			Yellow birch (Betula alleghaniensis), bronze peeling bark and a broad crown.
+		</constant>
+		<constant name="PRESET_WITCH_HAZEL" value="29" enum="Preset">
+			Witch-hazel (Hamamelis virginiana), a spreading understorey shrub.
+		</constant>
+		<constant name="PRESET_MOUNTAIN_LAUREL" value="30" enum="Preset">
+			Mountain laurel (Kalmia latifolia), an evergreen shrub that forms thickets in oak woods.
+		</constant>
+		<constant name="PRESET_MAX" value="31" enum="Preset">
+			Number of presets.
+		</constant>
+		<constant name="STAND_BEECH" value="0" enum="Stand">
+			Beech forest with sycamore and ash; sparse shrubs.
+		</constant>
+		<constant name="STAND_OAK_MIXED" value="1" enum="Stand">
+			Oak and lime in clumps, ash in moist hollows, hazel coppice, birch and hawthorn in gaps.
+		</constant>
+		<constant name="STAND_MONTANE_CONIFER" value="2" enum="Stand">
+			Spruce, fir and beech of the montane belt (about 1.5 to 6 C annual mean).
+		</constant>
+		<constant name="STAND_SUBALPINE" value="3" enum="Stand">
+			Larch and spruce up to the tree line, rowan.
+		</constant>
+		<constant name="STAND_PINE_HEATH" value="4" enum="Stand">
+			Scots pine on dry ground (under about 750 mm), with birch and rowan.
+		</constant>
+		<constant name="STAND_RIPARIAN" value="5" enum="Stand">
+			Alder, willow and elder along water.
+		</constant>
+		<constant name="STAND_HEDGEROW" value="6" enum="Stand">
+			Hawthorn, hazel, elder and rowan with open-grown oak, lime and horse chestnut standards; for hedge lines the scene places itself.
+		</constant>
+		<constant name="STAND_NORTHERN_HARDWOOD" value="7" enum="Stand">
+			Sugar maple and American beech in clumps, yellow birch, hemlock on moist ground, witch-hazel beneath.
+		</constant>
+		<constant name="STAND_EASTERN_OAK" value="8" enum="Stand">
+			White and red oak in clumps with red maple; mountain laurel thickets and witch-hazel beneath.
+		</constant>
+		<constant name="STAND_PINE_HEMLOCK" value="9" enum="Stand">
+			Eastern white pine over hemlock, with red maple, and paper birch in openings.
+		</constant>
+		<constant name="STAND_MAX" value="10" enum="Stand">
+			Number of stand types.
+		</constant>
+		<constant name="REGION_EUROPE" value="0" enum="Region">
+			The European stands, for [method make_woodland].
+		</constant>
+		<constant name="REGION_NORTH_AMERICA" value="1" enum="Region">
+			The eastern North American stands, for [method make_woodland].
+		</constant>
+		<constant name="REGION_MAX" value="2" enum="Region">
+			Number of regions.
+		</constant>
+		<constant name="MAX_BONES" value="48">
+			Most bones a rigged tree gets.
+		</constant>
+		<constant name="RIG_STRIDE" value="18">
+			Floats per bone in the [code]tree_rig[/code] mesh meta.
+		</constant>
+		<constant name="RIG_PARENT" value="0" enum="RigField">
+			Parent bone (the root bone 0 has -1).
+		</constant>
+		<constant name="RIG_PIVOT_X" value="1" enum="RigField">
+			Bone pivot (its base), x.
+		</constant>
+		<constant name="RIG_PIVOT_Y" value="2" enum="RigField">
+			Bone pivot, y.
+		</constant>
+		<constant name="RIG_PIVOT_Z" value="3" enum="RigField">
+			Bone pivot, z.
+		</constant>
+		<constant name="RIG_CENTROID_X" value="4" enum="RigField">
+			Centroid of the drag area the bone carries, relative to the pivot, x.
+		</constant>
+		<constant name="RIG_CENTROID_Y" value="5" enum="RigField">
+			Drag centroid, y.
+		</constant>
+		<constant name="RIG_CENTROID_Z" value="6" enum="RigField">
+			Drag centroid, z.
+		</constant>
+		<constant name="RIG_AREA" value="7" enum="RigField">
+			Effective frontal area of the wood and foliage the bone carries (m²).
+		</constant>
+		<constant name="RIG_STIFFNESS" value="8" enum="RigField">
+			Bending stiffness at the pivot (N m per radian).
+		</constant>
+		<constant name="RIG_INERTIA" value="9" enum="RigField">
+			Moment of inertia of the carried load about the pivot (kg m²).
+		</constant>
+		<constant name="RIG_ZETA" value="10" enum="RigField">
+			Damping ratio.
+		</constant>
+		<constant name="RIG_RADIUS" value="11" enum="RigField">
+			Wood radius a third of the way up the bone (m).
+		</constant>
+		<constant name="RIG_LENGTH" value="12" enum="RigField">
+			Bone length (m).
+		</constant>
+		<constant name="RIG_DIR_X" value="13" enum="RigField">
+			Bone direction, x.
+		</constant>
+		<constant name="RIG_DIR_Y" value="14" enum="RigField">
+			Bone direction, y.
+		</constant>
+		<constant name="RIG_DIR_Z" value="15" enum="RigField">
+			Bone direction, z.
+		</constant>
+		<constant name="RIG_GROUP" value="16" enum="RigField">
+			First bone of the axis (stem or limb) this bone belongs to; an axis sways as one mode.
+		</constant>
+		<constant name="RIG_MASS" value="17" enum="RigField">
+			Green mass the bone carries (kg).
+		</constant>
+		<constant name="PHYLLOTAXIS_ALTERNATE" value="0" enum="Phyllotaxis">
+			One lateral bud per node, turned by [member divergence].
+		</constant>
+		<constant name="PHYLLOTAXIS_OPPOSITE" value="1" enum="Phyllotaxis">
+			Two opposite buds per node, pairs crossed.
+		</constant>
+		<constant name="PHYLLOTAXIS_WHORLED" value="2" enum="Phyllotaxis">
+			A whorl of buds at the end of each year's shoot only (pines, spruces, firs, larches).
+		</constant>
+		<constant name="PARAM_YEARS" value="0" enum="Param">
+			Index of [member years].
+		</constant>
+		<constant name="PARAM_INTERNODE_LENGTH" value="1" enum="Param">
+			Index of [member internode_length].
+		</constant>
+		<constant name="PARAM_INTERNODE_LENGTH_AGE" value="2" enum="Param">
+			Index of [member internode_length_age].
+		</constant>
+		<constant name="PARAM_MAX_SHOOT" value="3" enum="Param">
+			Index of [member max_shoot].
+		</constant>
+		<constant name="PARAM_VIGOR" value="4" enum="Param">
+			Index of [member vigor].
+		</constant>
+		<constant name="PARAM_APICAL_DOMINANCE" value="5" enum="Param">
+			Index of [member apical_dominance].
+		</constant>
+		<constant name="PARAM_APICAL_DOMINANCE_OLD" value="6" enum="Param">
+			Index of [member apical_dominance_old].
+		</constant>
+		<constant name="PARAM_MATURITY" value="7" enum="Param">
+			Index of [member maturity].
+		</constant>
+		<constant name="PARAM_BRANCH_ANGLE" value="8" enum="Param">
+			Index of [member branch_angle].
+		</constant>
+		<constant name="PARAM_BRANCH_ANGLE_VARIANCE" value="9" enum="Param">
+			Index of [member branch_angle_variance].
+		</constant>
+		<constant name="PARAM_DIVERGENCE" value="10" enum="Param">
+			Index of [member divergence].
+		</constant>
+		<constant name="PARAM_WHORL_BUDS" value="11" enum="Param">
+			Index of [member whorl_buds].
+		</constant>
+		<constant name="PARAM_DIRECTION_NOISE" value="12" enum="Param">
+			Index of [member direction_noise].
+		</constant>
+		<constant name="PARAM_PHOTOTROPISM" value="13" enum="Param">
+			Index of [member phototropism].
+		</constant>
+		<constant name="PARAM_GRAVITROPISM" value="14" enum="Param">
+			Index of [member gravitropism].
+		</constant>
+		<constant name="PARAM_TRUNK_GRAVITROPISM" value="15" enum="Param">
+			Index of [member trunk_gravitropism].
+		</constant>
+		<constant name="PARAM_SHADOW_STRENGTH" value="16" enum="Param">
+			Index of [member shadow_strength].
+		</constant>
+		<constant name="PARAM_SHADOW_FALLOFF" value="17" enum="Param">
+			Index of [member shadow_falloff].
+		</constant>
+		<constant name="PARAM_SHADOW_DEPTH" value="18" enum="Param">
+			Index of [member shadow_depth].
+		</constant>
+		<constant name="PARAM_BUD_LIGHT_MIN" value="19" enum="Param">
+			Index of [member bud_light_min].
+		</constant>
+		<constant name="PARAM_BUD_IDLE_YEARS" value="20" enum="Param">
+			Index of [member bud_idle_years].
+		</constant>
+		<constant name="PARAM_SHED_RATIO" value="21" enum="Param">
+			Index of [member shed_ratio].
+		</constant>
+		<constant name="PARAM_DEAD_BRANCH_KEEP" value="22" enum="Param">
+			Index of [member dead_branch_keep].
+		</constant>
+		<constant name="PARAM_TIP_RADIUS" value="23" enum="Param">
+			Index of [member tip_radius].
+		</constant>
+		<constant name="PARAM_PIPE_EXPONENT" value="24" enum="Param">
+			Index of [member pipe_exponent].
+		</constant>
+		<constant name="PARAM_GRAVITY_BENDING" value="25" enum="Param">
+			Index of [member gravity_bending].
+		</constant>
+		<constant name="PARAM_STEMS" value="26" enum="Param">
+			Index of [member stems].
+		</constant>
+		<constant name="PARAM_STEM_SPREAD" value="27" enum="Param">
+			Index of [member stem_spread].
+		</constant>
+		<constant name="PARAM_BASAL_SPROUTS" value="28" enum="Param">
+			Index of [member basal_sprouts].
+		</constant>
+		<constant name="PARAM_ROOT_FLARE" value="29" enum="Param">
+			Index of [member root_flare].
+		</constant>
+		<constant name="PARAM_LEAF_SIZE" value="30" enum="Param">
+			Index of [member leaf_size].
+		</constant>
+		<constant name="PARAM_LEAVES_PER_INTERNODE" value="31" enum="Param">
+			Index of [member leaves_per_internode].
+		</constant>
+		<constant name="PARAM_LEAF_YEARS" value="32" enum="Param">
+			Index of [member leaf_years].
+		</constant>
+		<constant name="PARAM_NEEDLES" value="33" enum="Param">
+			Index of [member needles].
+		</constant>
+		<constant name="PARAM_TWIG_DROOP" value="34" enum="Param">
+			Index of [member twig_droop].
+		</constant>
+		<constant name="PARAM_LEAF_WIDTH" value="35" enum="Param">
+			Index of [member leaf_width].
+		</constant>
+		<constant name="PARAM_APICAL_CONTROL" value="36" enum="Param">
+			Index of [member apical_control].
+		</constant>
+		<constant name="PARAM_LATERAL_EXTENSION" value="37" enum="Param">
+			Index of [member lateral_extension].
+		</constant>
+		<constant name="PARAM_CROWN_CONE" value="38" enum="Param">
+			Index of [member crown_cone].
+		</constant>
+		<constant name="PARAM_LEADER_GROWTH" value="39" enum="Param">
+			Index of [member leader_growth].
+		</constant>
+		<constant name="PARAM_MAX" value="40" enum="Param">
+			Number of parameters.
+		</constant>
+	</constants>
+</class>

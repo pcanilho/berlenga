@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -879,6 +880,32 @@ Vector3 WeatherMap3D::get_wind_at(Vector3 p_position, float p_height_above_groun
 	return Vector3(m.x, 0.0f, m.y) + gust;
 }
 
+void WeatherMap3D::get_wind_parts(Vector3 p_position, float p_height_above_ground, Vector3 &r_mean, Vector2 &r_along, float &r_sigma) const {
+	const float z0 = MAX(roughness_length, 1e-5f);
+	float h = p_height_above_ground >= 0.0f ? p_height_above_ground : p_position.y - ground_height;
+	h = MAX(h, z0 * 1.5f);
+	const Vector2 m10 = get_mean_wind_at(p_position);
+	const Vector2 xz(p_position.x, p_position.z);
+	float f = 1.0f;
+	if (shelter_enabled) {
+		float cell[4];
+		shelter.sample(xz, cell);
+		f = WeatherShelter::factor(h, z0, cell);
+	}
+	const Vector2 m = m10 * (WeatherShelter::open_profile(h, z0) * f * _patch_at(xz, h));
+	r_mean = Vector3(m.x, 0.0f, m.y);
+	const float speed = m10.length();
+	r_along = speed > 1e-3f ? m10 / speed : cur_wind_direction;
+	r_sigma = speed < 1e-3f ? 0.0f : MAX(gust_intensity, 0.0f) * SIGMA_U_PER_USTAR * KARMAN / Math::log(10.0f / z0) * speed * Math::sqrt(f);
+}
+
+void WeatherMap3D::get_gust_waves(LocalVector<Vector4> &r_waves) const {
+	r_waves.resize(GUST_COUNT);
+	for (int i = 0; i < GUST_COUNT; i++) {
+		r_waves[i] = Vector4(gusts[i].k.x, gusts[i].k.y, gusts[i].amplitude, float(gusts[i].phase));
+	}
+}
+
 float WeatherMap3D::get_shelter_at(Vector3 p_position, float p_height_above_ground) const {
 	if (!shelter_enabled) {
 		return 1.0f;
@@ -1598,6 +1625,13 @@ void WeatherMap3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_surface_water_source", "owner", "rates", "resolution", "rect"), &WeatherMap3D::set_surface_water_source);
 	ClassDB::bind_method(D_METHOD("clear_surface_water_source", "owner"), &WeatherMap3D::clear_surface_water_source);
 	ClassDB::bind_method(D_METHOD("set_humidity", "humidity"), &WeatherMap3D::set_humidity);
+	ClassDB::bind_method(D_METHOD("set_aerosol_haze", "enabled"), &WeatherMap3D::set_aerosol_haze);
+	ClassDB::bind_method(D_METHOD("get_aerosol_haze"), &WeatherMap3D::get_aerosol_haze);
+	ClassDB::bind_method(D_METHOD("set_haze_visibility", "km"), &WeatherMap3D::set_haze_visibility);
+	ClassDB::bind_method(D_METHOD("get_haze_visibility"), &WeatherMap3D::get_haze_visibility);
+	ClassDB::bind_method(D_METHOD("set_haze_height", "m"), &WeatherMap3D::set_haze_height);
+	ClassDB::bind_method(D_METHOD("get_haze_height"), &WeatherMap3D::get_haze_height);
+	ClassDB::bind_static_method("WeatherMap3D", D_METHOD("aerosol_extinction", "dry_visibility_km", "humidity"), &WeatherMap3D::aerosol_extinction);
 	ClassDB::bind_method(D_METHOD("get_humidity"), &WeatherMap3D::get_humidity);
 	ClassDB::bind_method(D_METHOD("set_surface_storage", "mm"), &WeatherMap3D::set_surface_storage);
 	ClassDB::bind_method(D_METHOD("get_surface_storage"), &WeatherMap3D::get_surface_storage);
@@ -1746,6 +1780,9 @@ void WeatherMap3D::_bind_methods() {
 	ADD_GROUP("Air and Surfaces", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "temperature", PROPERTY_HINT_RANGE, "-60,60,0.1,suffix:C"), "set_temperature", "get_temperature");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "humidity", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_humidity", "get_humidity");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "aerosol_haze"), "set_aerosol_haze", "get_aerosol_haze");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_visibility", PROPERTY_HINT_RANGE, "0.05,200,0.05,or_greater,suffix:km"), "set_haze_visibility", "get_haze_visibility");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "haze_height", PROPERTY_HINT_RANGE, "10,5000,10,suffix:m"), "set_haze_height", "get_haze_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "surface_storage", PROPERTY_HINT_RANGE, "0.01,10,0.01,suffix:mm"), "set_surface_storage", "get_surface_storage");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "puddle_max_depth", PROPERTY_HINT_RANGE, "0,200,0.1,suffix:mm"), "set_puddle_max_depth", "get_puddle_max_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "puddle_drain_rate", PROPERTY_HINT_RANGE, "0,100,0.1,suffix:mm/h"), "set_puddle_drain_rate", "get_puddle_drain_rate");

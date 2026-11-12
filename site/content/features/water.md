@@ -160,6 +160,8 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
   *Contact waterfall: white water down the face, thinning at its soft edges, with darker wet rock beside it.*
 
+- **Plunging waterfalls** (`plunge_falls`, `column_density`, `wind_exposure`): tall falls break up into a falling column of clumps slowed by the air, inside a spray veil and soft mist.
+
 - **Faster flow bakes** (`physics/physx_3d/water/multigrid_flow`): multigrid-preconditioned conjugate gradients bake the flow 7 to 10 times faster than SOR.
 
 ## Under water

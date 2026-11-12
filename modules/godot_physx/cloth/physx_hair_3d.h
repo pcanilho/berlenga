@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -86,6 +87,8 @@ class PhysXHair3D : public Node3D {
 	float guide_ratio = 0.1f;
 	PackedVector4Array collision_spheres; // this node's space: centre, radius
 	NodePath collision_body;
+	NodePath collision_cloth; // a PhysXSkinnedCloth3D the hair rests on
+	float cloth_thickness = 0.005f;
 	float collision_cell_size = 0.01f;
 	bool deep_shadows = true;
 	NodePath deep_shadow_light;
@@ -131,6 +134,13 @@ class PhysXHair3D : public Node3D {
 		int per_vertex = 0;
 	} body_cache;
 	PackedVector3Array skinned;
+	struct ClothCache {
+		ObjectID cloth;
+		RID mesh;
+		RID texture;
+		PackedInt32Array tris; // three particles each
+	} cloth_cache;
+	void _cloth_settings(HairStrandSolver::Settings &r_settings);
 
 	HairStrandSolver *solver = nullptr;
 	MeshInstance3D *render_instance = nullptr;
@@ -238,6 +248,10 @@ public:
 	float get_turbulence_size() const;
 	void set_collision_body(const NodePath &p_path);
 	NodePath get_collision_body() const;
+	void set_collision_cloth(const NodePath &p_path);
+	NodePath get_collision_cloth() const;
+	void set_cloth_thickness(float p_thickness);
+	float get_cloth_thickness() const;
 	void set_collision_cell_size(float p_size);
 	float get_collision_cell_size() const;
 	void set_deep_shadows(bool p_enabled);

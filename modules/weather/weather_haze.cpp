@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -139,6 +140,7 @@ void WeatherMap3D::_restore_fog() {
 		fog_environment->set_volumetric_fog_density(fog_base.volumetric_density);
 		fog_environment->set_volumetric_fog_length(fog_base.volumetric_length);
 		fog_environment->set_volumetric_fog_ambient_inject(fog_base.volumetric_ambient_inject);
+		fog_environment->set_volumetric_fog_anisotropy(fog_base.volumetric_anisotropy);
 	}
 	fog_base.saved = false;
 	fog_environment.unref();
@@ -149,6 +151,7 @@ void WeatherMap3D::_apply_haze() {
 	if (!drive_environment_fog || Engine::get_singleton()->is_editor_hint() || active != this) {
 		return;
 	}
+	_update_aerosol();
 	// Drop sources that were freed without clearing.
 	for (int i = int(haze_sources.size()) - 1; i >= 0; i--) {
 		if (!ObjectDB::get_instance(haze_sources[i].source)) {
@@ -181,6 +184,7 @@ void WeatherMap3D::_apply_haze() {
 		fog_base.volumetric_density = env->get_volumetric_fog_density();
 		fog_base.volumetric_length = env->get_volumetric_fog_length();
 		fog_base.volumetric_ambient_inject = env->get_volumetric_fog_ambient_inject();
+		fog_base.volumetric_anisotropy = env->get_volumetric_fog_anisotropy();
 		fog_base.saved = true;
 	}
 
@@ -213,9 +217,15 @@ void WeatherMap3D::_apply_haze() {
 	// would fill the air everywhere, so it stays at zero.
 	// Its 64 m default reach would also cut the layer off a little way from the camera; 300 m covers
 	// a raised camera looking down on the ground.
+	// The aerosol haze is thin (a few 1e-4 /m): its shafts build up over a kilometre or more of air, so the froxels
+	// reach 1.5 km while it is on (their depth slices still crowd near the camera).
 	if (!fog_base.volumetric_enabled) {
 		env->set_volumetric_fog_density(0.0f);
-		env->set_volumetric_fog_length(MAX(fog_base.volumetric_length, 300.0f));
+		env->set_volumetric_fog_length(MAX(fog_base.volumetric_length, aerosol_haze ? 1500.0f : 300.0f));
+		// Aerosol scatters strongly forward (Henyey-Greenstein g about 0.6 to 0.7 for continental haze,
+		// d'Almeida et al. 1991), which is what makes the air glow and the shafts show toward the sun.
+		// Falling rain and snow are as forward or more, so the layers share it.
+		env->set_volumetric_fog_anisotropy(aerosol_haze ? 0.6f : fog_base.volumetric_anisotropy);
 	}
 	// Falling and blowing snow is lit mostly by the sky (single-scatter albedo about 0.97), so the
 	// layers take the ambient light in full unless the project set its own share.
@@ -253,4 +263,48 @@ void WeatherMap3D::_apply_haze() {
 		h.volume->set_size(Vector3(width, height, width));
 		h.volume->set_global_position(Vector3(centre.x, _haze_base(h), centre.z));
 	}
+}
+
+// Background aerosol haze. Koschmieder: a black target fades to the 2% contrast threshold at the
+// meteorological visibility V, so the extinction is 3.912 / V. Hygroscopic aerosol swells with the
+// relative humidity, its extinction growing as (1 - RH)^-gamma (Hanel 1976; Kasten 1969), gamma about
+// 0.35 for continental aerosol, capped at RH 0.98 (beyond it the haze is mist, a different source).
+// Its single-scatter albedo is about 0.9 (continental, mid-visible), and it thins with height over the
+// boundary layer's scale height. The froxel fog lights it with the sun, the sun's shadow maps and the
+// cloud shadow projected on the sun, which is where the shafts come from.
+float WeatherMap3D::aerosol_extinction(float p_dry_visibility_km, float p_humidity) {
+	const float rh = CLAMP(p_humidity, 0.0f, 0.98f);
+	return 3.912f / (MAX(p_dry_visibility_km, 0.05f) * 1000.0f) * Math::pow(1.0f - rh, -0.35f);
+}
+
+void WeatherMap3D::_update_aerosol() {
+	if (!aerosol_haze) {
+		if (applied_aerosol >= 0.0f) {
+			clear_precipitation_extinction(this);
+			applied_aerosol = -1.0f;
+		}
+		return;
+	}
+	const float sigma = aerosol_extinction(haze_visibility, cur_humidity);
+	if (applied_aerosol < 0.0f || Math::abs(sigma - applied_aerosol) > 0.02f * applied_aerosol) {
+		applied_aerosol = sigma;
+		set_precipitation_extinction(this, sigma, haze_height, 0.9f);
+	}
+}
+
+void WeatherMap3D::set_aerosol_haze(bool p_enabled) {
+	aerosol_haze = p_enabled;
+	if (is_inside_tree()) {
+		_update_aerosol();
+	}
+}
+
+void WeatherMap3D::set_haze_visibility(float p_km) {
+	haze_visibility = MAX(p_km, 0.05f);
+	applied_aerosol = aerosol_haze ? 0.0f : applied_aerosol;
+}
+
+void WeatherMap3D::set_haze_height(float p_m) {
+	haze_height = MAX(p_m, 10.0f);
+	applied_aerosol = aerosol_haze ? 0.0f : applied_aerosol;
 }

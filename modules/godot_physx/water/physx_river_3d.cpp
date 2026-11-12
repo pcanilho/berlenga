@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -42,7 +43,9 @@
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/gpu_particles_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/mesh.h"
@@ -60,7 +63,7 @@ namespace {
 // The river surface. Per vertex (built by PhysXRiver3D): UV = (arc length,
 // distance across) in m, UV2 = flow (local xz, m/s), COLOR.r = water depth
 // encoded as (d + 1) / 4, COLOR.g = white water, COLOR.b = fade past the banks.
-const char *RIVER_SHADER_SRC = R"(
+const char *RIVER_SHADER_SRC_HEAD = R"(
 shader_type spatial;
 #if defined(RT)
 // The path tracer's copy is a medium boundary: it bends light, tints with
@@ -118,7 +121,8 @@ uniform vec3 live_tilt = vec3(0.0);
 uniform sampler2D live_height_tex : hint_default_black, filter_linear, repeat_disable;
 uniform sampler2D live_flow_tex : hint_default_black, filter_linear, repeat_disable;
 // Raster reflections from above (water_raster_reflections.h).
-)" WATER_RASTER_REFLECTIONS_GLSL R"(
+)";
+const char *RIVER_SHADER_SRC_TAIL = R"(
 varying vec3 v_world;
 varying vec2 v_flow;
 varying vec4 v_info;
@@ -302,6 +306,12 @@ void fragment() {
 #endif
 }
 )";
+
+// The whole shader: head, the raster reflections (water_raster_reflections.h), tail.
+static const String &river_shader_src() {
+	static const String src = String(RIVER_SHADER_SRC_HEAD) + WATER_RASTER_REFLECTIONS_GLSL + RIVER_SHADER_SRC_TAIL;
+	return src;
+}
 
 // A waterfall's falling sheet: a thin slab of water (two faces q/|v| apart, so
 // the path tracer refracts through a real sheet). Per vertex (built by
@@ -1988,7 +1998,7 @@ void PhysXRiver3D::_build_mesh() {
 	if (water_material.is_null()) {
 		Ref<Shader> shader;
 		shader.instantiate();
-		shader->set_code(RIVER_SHADER_SRC);
+		shader->set_code(river_shader_src());
 		water_material.instantiate();
 		water_material->set_shader(shader);
 		_live_material();

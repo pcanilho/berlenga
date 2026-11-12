@@ -679,3 +679,40 @@ to the fog both renderers already read.
   that is more. Beyond it, only the uniform part hazes the distance. An analytic height-fog integral
   in `fog_inc.glsl` (Unreal's) would carry the layer to any distance. It is the next step if a
   far-off ground blizzard is needed.
+
+## Godrays (12 Nov 2026)
+
+Paulo picked all three stages ("All, plus traced PT haze").
+
+Shafts of light (crepuscular rays) are sunlight scattered towards the eye by particles in the air,
+seen where shadowed and lit air sit side by side along the view. They need two things: something in the
+air (aerosol haze, mist, precipitation), and a shadow that reaches into that air (clouds, ridges, trees).
+Clear air alone (Rayleigh only, about 0.012 /km) scatters too little over a scene to show them.
+
+What other engines do:
+- **Unreal 5**: Volumetric Fog (froxels, Wronski 2014 / Hillaire 2015) takes the sun's shadow maps, its
+  light function and the volumetric clouds' shadow map; the Sky Atmosphere takes the cloud shadow into
+  its aerial perspective for shafts at kilometre scale.
+- **HDRP**: volumetric fog lit through the sun's cookie, which is where the volumetric clouds put their
+  shadow.
+- **Frostbite** (Hillaire 2015, "Physically based and unified volumetric rendering"): froxel fog with
+  participating media from the weather, lit by shadow maps and light projections.
+- Screen-space radial blur (Mitchell, GPU Gems 3 ch. 13) is cheap but is not lighting: rejected.
+
+Stages:
+1. **Froxel fog through the cloud shadow, and weather haze.** The fork's cloud shadow is a projector on
+   the sun (DirectionalLight3D). The volumetric fog now samples it per froxel (binding 22, the sRGB decal
+   atlas), as surfaces do. WeatherMap3D `aerosol_haze` adds background aerosol: extinction from
+   Koschmieder (3.912 / visibility), grown with relative humidity as (1 - RH)^-0.35 (Hänel 1976), albedo
+   0.9, thinning over `haze_height` (1.2 km), through the existing haze layers (a FogVolume the froxels
+   light). Path tracing reads the same froxels on camera segments.
+   Found on the way: Godot's froxel fog stores each froxel's density as fixed point at 1/1024 per metre
+   and its scattering in 11 bits (1/2047), and skips any volume thinner than 0.001 /m, so haze below
+   about 4 km visibility vanished entirely (a 5e-4 /m layer changed no pixel). The density sum is now at
+   1/65536 (still 32768 /m of headroom in the int), the skip is gone, and both writes use stochastic
+   rounding (a PCG hash per froxel and frame) that the temporal reprojection averages, so the sums are
+   unbiased however thin the fog.
+2. **Shafts across the sky**: the cloud shadow in the atmosphere's aerial perspective (Hillaire 2020 LUT,
+   Unreal's "cloud shadow on atmosphere"), for rays beyond the froxel range.
+3. **Traced haze under path tracing**: a real medium with equiangular sampling of the sun's segment
+   (Kulla and Fajardo 2012), its shadow rays reading the cloud projector.

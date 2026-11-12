@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -38,7 +39,9 @@
 #include "modules/weather/weather_map_3d.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "servers/rendering/rendering_server.h"
 
 GroundSurface3D *GroundSurface3D::active = nullptr;

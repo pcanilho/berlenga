@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -36,9 +37,9 @@
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/fog_volume.h"
 #include "scene/main/viewport.h"
+#include "scene/resources/3d/fog_material.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/environment.h"
-#include "scene/resources/3d/fog_material.h"
 #include "scene/resources/image_texture.h"
 #include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_volumes.h"
 
@@ -207,6 +208,16 @@ void PhysXWaterMist3D::_build_grid() {
 	const Vector3 ext = source_extents.abs().maxf(0.05f);
 	const float r0 = MAX(2.0f * ext.z, 1.5f);
 	float weight_sum = 0.0f;
+	// The falling column over the source (a tall free fall sheds mist all the way down): a second soft box from the
+	// source's top up to column_height, fed with column_share of the rate.
+	const bool has_column = column_height > ext.y && column_share > 0.0f;
+	const float col_mid = 0.5f * (ext.y + column_height);
+	const Vector3 col_ext(ext.x, 0.5f * (column_height - ext.y), ext.z);
+	LocalVector<float> column_w;
+	float column_sum = 0.0f;
+	if (has_column) {
+		column_w.resize(n);
+	}
 	for (int z = 0; z < dims.z; z++) {
 		for (int y = 0; y < dims.y; y++) {
 			for (int x = 0; x < dims.x; x++) {
@@ -219,6 +230,12 @@ void PhysXWaterMist3D::_build_grid() {
 				const float w = Math::exp(-out_of.length_squared());
 				source[c] = w;
 				weight_sum += w;
+				if (has_column) {
+					const Vector3 out_col = ((q - Vector3(0.0f, col_mid, 0.0f)).abs() - col_ext).maxf(0.0f) / cell;
+					const float wc = Math::exp(-out_col.length_squared());
+					column_w[c] = wc;
+					column_sum += wc;
+				}
 				// The spray wind: the air the fall drags down leaves the impact as a wall jet, spreading out
 				// from the impact line and slowing as it widens (r0 / (r0 + r)), its layer thickening with
 				// distance (about 0.1 r, Glauert 1956); none goes back against the jet (the cliff). Near the
@@ -237,9 +254,14 @@ void PhysXWaterMist3D::_build_grid() {
 		}
 	}
 	// Normalised so the source adds source_rate grams a second in all.
-	const float scale = (emitting && weight_sum > 0.0f) ? source_rate / (weight_sum * cell * cell * cell) : 0.0f;
+	const float share = has_column && column_sum > 0.0f ? CLAMP(column_share, 0.0f, 1.0f) : 0.0f;
+	const float scale = (emitting && weight_sum > 0.0f) ? (1.0f - share) * source_rate / (weight_sum * cell * cell * cell) : 0.0f;
+	const float column_scale = (emitting && share > 0.0f) ? share * source_rate / (column_sum * cell * cell * cell) : 0.0f;
 	for (int i = 0; i < n; i++) {
 		source[i] *= scale;
+		if (share > 0.0f) {
+			source[i] += column_w[i] * column_scale;
+		}
 	}
 }
 
@@ -423,7 +445,7 @@ void PhysXWaterMist3D::_upload() {
 		uint16_t *w = (uint16_t *)bytes.ptrw();
 		const float *rho = density.ptr() + z * d.x * d.y;
 		for (int i = 0; i < d.x * d.y; i++) {
-			w[i] = Math::make_half_float(rho[i]);
+			w[i] = Math::make_half_float(rho[i] * _wall_fade(i % d.x, i / d.x, z));
 		}
 		slices.write[z] = Image::create_from_data(d.x, d.y, false, Image::FORMAT_RH, bytes);
 	}
@@ -461,11 +483,24 @@ void PhysXWaterMist3D::advance(float p_seconds) {
 	_upload();
 }
 
+// Soft walls: what is drawn fades to nothing over the last cells at the sides and the top of the box, so the box
+// never shows as an outline (the mist inside it reaches the walls wherever the air carries it). The floor keeps its
+// mist: the box stands on the ground.
+float PhysXWaterMist3D::_wall_fade(int p_x, int p_y, int p_z) const {
+	auto ramp = [](int p_i, int p_n) {
+		const float w = MIN(3.0f, 0.25f * p_n);
+		const float t = CLAMP(float(MIN(p_i, p_n - 1 - p_i)) / MAX(w, 1.0f), 0.0f, 1.0f);
+		return t * t * (3.0f - 2.0f * t);
+	};
+	const float top = CLAMP(float(dims.y - 1 - p_y) / MAX(MIN(3.0f, 0.25f * dims.y), 1.0f), 0.0f, 1.0f);
+	return ramp(p_x, dims.x) * ramp(p_z, dims.z) * top * top * (3.0f - 2.0f * top);
+}
+
 float PhysXWaterMist3D::get_cell_density(int p_x, int p_y, int p_z) const {
 	if (p_x < 0 || p_y < 0 || p_z < 0 || p_x >= dims.x || p_y >= dims.y || p_z >= dims.z) {
 		return 0.0f;
 	}
-	return density[(p_z * dims.y + p_y) * dims.x + p_x];
+	return density[(p_z * dims.y + p_y) * dims.x + p_x] * _wall_fade(p_x, p_y, p_z);
 }
 
 float PhysXWaterMist3D::sample_density(const Vector3 &p_world) const {
@@ -541,6 +576,16 @@ void PhysXWaterMist3D::set_source_rate(float p_rate) {
 	grid_dirty = true;
 }
 
+void PhysXWaterMist3D::set_column_height(float p_height) {
+	column_height = MAX(p_height, 0.0f);
+	grid_dirty = true;
+}
+
+void PhysXWaterMist3D::set_column_share(float p_share) {
+	column_share = CLAMP(p_share, 0.0f, 1.0f);
+	grid_dirty = true;
+}
+
 void PhysXWaterMist3D::set_emitting(bool p_emitting) {
 	emitting = p_emitting;
 	grid_dirty = true;
@@ -579,6 +624,10 @@ void PhysXWaterMist3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_source_position"), &PhysXWaterMist3D::get_source_position);
 	ClassDB::bind_method(D_METHOD("set_source_extents", "extents"), &PhysXWaterMist3D::set_source_extents);
 	ClassDB::bind_method(D_METHOD("get_source_extents"), &PhysXWaterMist3D::get_source_extents);
+	ClassDB::bind_method(D_METHOD("set_column_height", "height"), &PhysXWaterMist3D::set_column_height);
+	ClassDB::bind_method(D_METHOD("get_column_height"), &PhysXWaterMist3D::get_column_height);
+	ClassDB::bind_method(D_METHOD("set_column_share", "share"), &PhysXWaterMist3D::set_column_share);
+	ClassDB::bind_method(D_METHOD("get_column_share"), &PhysXWaterMist3D::get_column_share);
 	ClassDB::bind_method(D_METHOD("set_source_rate", "grams_per_second"), &PhysXWaterMist3D::set_source_rate);
 	ClassDB::bind_method(D_METHOD("get_source_rate"), &PhysXWaterMist3D::get_source_rate);
 	ClassDB::bind_method(D_METHOD("set_jet_speed", "speed"), &PhysXWaterMist3D::set_jet_speed);
@@ -610,6 +659,8 @@ void PhysXWaterMist3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "source_position", PROPERTY_HINT_NONE, "suffix:m"), "set_source_position", "get_source_position");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "source_extents", PROPERTY_HINT_NONE, "suffix:m"), "set_source_extents", "get_source_extents");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "source_rate", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:g/s"), "set_source_rate", "get_source_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "column_height", PROPERTY_HINT_RANGE, "0,500,0.5,or_greater,suffix:m"), "set_column_height", "get_column_height");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "column_share", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_column_share", "get_column_share");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "jet_speed", PROPERTY_HINT_RANGE, "0,30,0.1,suffix:m/s"), "set_jet_speed", "get_jet_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "jet_direction"), "set_jet_direction", "get_jet_direction");
 	ADD_GROUP("Air", "");

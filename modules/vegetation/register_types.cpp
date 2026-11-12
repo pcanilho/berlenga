@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -33,6 +34,8 @@
 #include "grass_field_3d.h"
 #include "plant_generator.h"
 #include "plant_species.h"
+#include "tree_generator.h"
+#include "tree_wind_3d.h"
 #include "vegetation_field_3d.h"
 
 #include "core/config/project_settings.h"
@@ -46,6 +49,8 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 	GDREGISTER_CLASS(Biome);
 	GDREGISTER_CLASS(VegetationField3D);
 	GDREGISTER_CLASS(GrassField3D);
+	GDREGISTER_CLASS(TreeGenerator);
+	GDREGISTER_CLASS(TreeWind3D);
 	GDREGISTER_CLASS(PlantGenerator);
 	// Declared so terrain shaders using GrassField3D.get_ground_shader_code() compile without a field.
 	const struct {
@@ -84,6 +89,7 @@ void uninitialize_vegetation_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
+	TreeGenerator::free_climber_leaves();
 	PlantGenerator::free_shaders();
 	GrassField3D::free_gpu_fill();
 }

@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -71,7 +72,7 @@ float PlantGenerator::_leaf_width(const Leaf &p_leaf, float p_t) {
 	float w = 0.0f;
 	switch (p_leaf.shape) {
 		case LEAF_LANCEOLATE:
-			w = Math::pow(Math::sin(Math::PI * Math::pow(t, 0.8f)), 0.8f);
+			w = Math::pow(float(Math::sin(Math::PI * Math::pow(t, 0.8f))), 0.8f);
 			break;
 		case LEAF_OVATE:
 			w = Math::sin(Math::PI * Math::pow(t, 0.7f));
@@ -83,7 +84,7 @@ float PlantGenerator::_leaf_width(const Leaf &p_leaf, float p_t) {
 			w = Math::pow(MAX(0.0f, 1.0f - t), 0.55f);
 			break;
 		case LEAF_SPATULATE:
-			w = Math::pow(MAX(0.0f, Math::sin(Math::PI * Math::pow(t, 1.8f))), 0.7f);
+			w = Math::pow(float(MAX(0.0f, Math::sin(Math::PI * Math::pow(t, 1.8f)))), 0.7f);
 			break;
 		case LEAF_PALMATE:
 			w = Math::sqrt(MAX(0.0f, Math::sin(Math::PI * t)));
@@ -493,7 +494,7 @@ void PlantGenerator::_build_fern() {
 			const int fa = MIN(int(fi), segs - 1);
 			const Transform3D fr = frames[fa].interpolate_with(frames[fa + 1], fi - fa);
 			const float side = (k % 2 == 0) ? 1.0f : -1.0f;
-			const float plen = length * 0.32f * Math::pow(MAX(0.0f, Math::sin(Math::PI * (s - 0.1f) / 0.92f)), 0.6f) * (1.0f - 0.25f * s);
+			const float plen = length * 0.32f * Math::pow(float(MAX(0.0f, Math::sin(Math::PI * (s - 0.1f) / 0.92f))), 0.6f) * (1.0f - 0.25f * s);
 			if (plen < 0.004f) {
 				continue;
 			}

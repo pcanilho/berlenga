@@ -871,6 +871,19 @@
    "topic": "Currents and rivers"
   },
   {
+   "name": "Plunging waterfalls",
+   "settings": [
+    "plunge_falls",
+    "column_density",
+    "wind_exposure"
+   ],
+   "note": "",
+   "what": "tall falls break up into a falling column of clumps slowed by the air, inside a spray veil and soft mist.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
    "name": "Faster flow bakes",
    "settings": [
     "physics/physx_3d/water/multigrid_flow"
@@ -1046,6 +1059,18 @@
    ],
    "note": "",
    "what": "strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
+   "name": "Hair on cloth",
+   "settings": [
+    "collision_cloth",
+    "cloth_thickness"
+   ],
+   "note": "",
+   "what": "strands rest on simulated cloth such as a collar or hood, lying over it as it moves.",
    "page": "hair",
    "title": "Hair",
    "topic": "Collision"
@@ -1375,6 +1400,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Rock detail",
+   "settings": [
+    "rock_detail_enabled"
+   ],
+   "note": "",
+   "what": "steep rock shows bedding planes and joints, and scree and till show loose stones, with no textures and no stretching on any face.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Far blend",
    "settings": [
     "far_blend_enabled",
@@ -1616,7 +1652,7 @@
     "PlantGenerator"
    ],
    "note": "",
-   "what": "meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
+   "what": "meadow plants including tall flowers (knapweed, field scabious, wild carrot, common sorrel, some in seed), forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"
@@ -1754,6 +1790,261 @@
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Instances"
+  },
+  {
+   "name": "Tree generator",
+   "settings": [
+    "TreeGenerator",
+    "preset",
+    "years",
+    "seed"
+   ],
+   "note": "",
+   "what": "trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 31 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`).",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Stand and open forms",
+   "settings": [
+    "forest_shade",
+    "forest_spacing"
+   ],
+   "note": "",
+   "what": "trees grown in a closed stand shed their lower limbs to a long clear bole under a narrow crown; open-grown trees keep leaves down to their lower limbs.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Conifer crowns",
+   "settings": [
+    "crown_cone"
+   ],
+   "note": "",
+   "what": "spruce, fir, larch, pine and hemlock keep their cone, with branches to the top.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Stands",
+   "settings": [
+    "make_stand",
+    "make_woodland"
+   ],
+   "note": "",
+   "what": "ten stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock. Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Shrubs and hedges",
+   "settings": [
+    "stems",
+    "envelope"
+   ],
+   "note": "",
+   "what": "many-stemmed shrubs, drawn up and thin under a canopy; hedges and topiary clipped to a box.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Clearings",
+   "settings": [
+    "mask_channel"
+   ],
+   "note": "",
+   "what": "painted clearings and paths keep trees and shrubs out.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Branch collars",
+   "settings": [
+    "junction_weld"
+   ],
+   "note": "",
+   "what": "branches flare into their parent in a short collar with a bark ridge in the crotch. Limbs that would grow into thicker wood bend away or die back to it.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Bark",
+   "settings": [
+    "bark_relief"
+   ],
+   "note": "",
+   "what": "a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Bark moss",
+   "settings": [
+    "moss_cover"
+   ],
+   "note": "",
+   "what": "moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Climbers",
+   "settings": [
+    "climber",
+    "climber_cover"
+   ],
+   "note": "",
+   "what": "ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Leaf shapes",
+   "settings": [
+    "TreeGenerator.get_leaf_form()"
+   ],
+   "note": "",
+   "what": "simple, lobed, palmate and compound leaves per species, with the true outline as geometry.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Needles",
+   "settings": [
+    "needle_sprays",
+    "near_needle_range"
+   ],
+   "note": "",
+   "what": "real needles near the camera, crossed needle sprays beyond.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Near leaf detail",
+   "settings": [
+    "near_leaf_range"
+   ],
+   "note": "",
+   "what": "lobed and compound leaves are built only for trees near the camera; further out each leaf is a simple leaf of the same area.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Seasons",
+   "settings": [
+    "season"
+   ],
+   "note": "",
+   "what": "leaves come out, turn and fall by species from the shared season state; larch turns gold and goes bare, evergreens stay.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Tree LODs",
+   "settings": [],
+   "note": "",
+   "what": "far levels drop thin wood and thin out leaves, enlarging the rest so leaf area holds; leaves stay geometry at every level.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Old trees",
+   "settings": [
+    "veteran"
+   ],
+   "note": "",
+   "what": "basal hollows, rot holes, woodpecker holes, burls, epicormic shoots and snapped crowns on the clear bole, listed by `get_veteran_features()`.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Deadwood",
+   "settings": [
+    "decay_class",
+    "fallen"
+   ],
+   "note": "",
+   "what": "standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Fallen branches",
+   "settings": [
+    "fallen_branch"
+   ],
+   "note": "",
+   "what": "shed limbs and sticks on the forest floor, from the stand's own trees.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
+   "name": "Tree wind",
+   "settings": [
+    "TreeWind3D",
+    "TreeGenerator.rigged"
+   ],
+   "note": "",
+   "what": "trees sway in the weather map's wind and gusts, each limb at its own frequency.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wind and touch"
+  },
+  {
+   "name": "Leaf flutter",
+   "settings": [
+    "leaf_flutter"
+   ],
+   "note": "",
+   "what": "leaves flutter and twist on their stalks in the same wind as grass and plants.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wind and touch"
+  },
+  {
+   "name": "Far wind",
+   "settings": [
+    "wind_range",
+    "lod_enabled",
+    "lod_pixel_error",
+    "budget_msec"
+   ],
+   "note": "",
+   "what": "trees move in the wind out to 1 km, with far ones posed less often and with fewer limbs.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wind and touch"
+  },
+  {
+   "name": "Colliders and touch",
+   "settings": [
+    "collision_enabled",
+    "touch_enabled",
+    "break_speed"
+   ],
+   "note": "",
+   "what": "trunks and limbs collide near the camera; characters and vehicles push branches aside, and fast bodies snap thin ones off.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wind and touch"
   },
   {
    "name": "Weather map",

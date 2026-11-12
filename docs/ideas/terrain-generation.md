@@ -1256,6 +1256,25 @@ for the years given, carving the active channels and leaving the bars. The groun
 no soil), the water follows the deepest channel with the side channels shallow, and the plants stay off the active
 plain (bars older than a few decades take willows and grass in the real thing, a later step).
 
+## Rock detail on steep faces and scree (12 Nov; Paulo picked shader detail first, then displaced cliffs)
+
+Why: the generator's erosion detail is a heightfield (offsets in y over x z), so faces near vertical get none: gorge
+walls and cliffs read as smooth stretched slabs, and scree as flat paint, wherever the rock textures are missing or
+too coarse (the showcase found it on the gorge walls; the scree and till docs pairs did not read for the same reason).
+
+Established ways: triplanar or biplanar texture projection (Quilez 2020 for biplanar; UE and HDRP cliff materials)
+needs textures; procedural solid noise in world space needs none and cannot stretch (Perlin 1985, Worley 1996), and
+Mikkelsen's (2010) surface gradient turns any 3D height into a normal with no tangent frame. Real walls break along
+bedding planes and two joint sets near right angles to them (Priest 1993; spacings of decimetres to metres), with
+the blocks of one bed offset from the next; scree is loose blocks of 0.1 to 1 m.
+
+Built: TerrainMaterial3D `rock_detail_enabled` (off by default), `rock_detail_scale`. Faces of rock steeper than
+about 35 degrees: warped beds 1.2 m thick, joints 2.5 and 3.5 m apart at a strike that turns slowly over the map,
+staggered bed to bed, each block a little proud, recessed or tilted, cracks shaded, two octaves of roughness. Scree
+(and the stones in till): rounded stones about 0.35 m. The cracks never get thinner than 2.5 pixels and the detail
+fades out before a pixel covers a tenth of a bed or a quarter of a stone, so nothing aliases into lines. Next:
+displaced geometry on faces over 60 degrees for close views.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.

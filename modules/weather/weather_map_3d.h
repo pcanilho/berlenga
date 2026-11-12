@@ -5,6 +5,7 @@
 /*                             GODOT ENGINE                               */
 /*                        https://godotengine.org                         */
 /**************************************************************************/
+/* Copyright (c) 2026-present Paulo Canilho and Berlenga contributors.    */
 /* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
 /* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
 /*                                                                        */
@@ -249,6 +250,11 @@ private:
 		Ref<FogMaterial> material;
 	};
 	LocalVector<HazeSource> haze_sources;
+	bool aerosol_haze = false;
+	float haze_visibility = 40.0f; // km, dry air (relative humidity 0)
+	float haze_height = 1200.0f; // m, the aerosol's scale height (the boundary layer)
+	float applied_aerosol = -1.0f;
+	void _update_aerosol();
 	bool drive_environment_fog = true;
 	struct FogBase {
 		bool saved = false;
@@ -259,6 +265,7 @@ private:
 		float volumetric_density = 0.0f;
 		float volumetric_length = 64.0f;
 		float volumetric_ambient_inject = 0.0f;
+		float volumetric_anisotropy = 0.2f;
 	} fog_base;
 	Ref<Environment> fog_environment;
 	float applied_haze = -1.0f;
@@ -355,6 +362,15 @@ public:
 	static float rain_fraction(float p_celsius, float p_humidity);
 	void set_humidity(float p_humidity);
 	float get_humidity() const { return humidity; }
+	// Background aerosol haze (docs/ideas/weather.md, "Godrays"): what lets the sun's shafts show.
+	void set_aerosol_haze(bool p_enabled);
+	bool get_aerosol_haze() const { return aerosol_haze; }
+	void set_haze_visibility(float p_km);
+	float get_haze_visibility() const { return haze_visibility; }
+	void set_haze_height(float p_m);
+	float get_haze_height() const { return haze_height; }
+	// Extinction (1/m) at the ground of the aerosol haze for a dry visibility (km) and relative humidity.
+	static float aerosol_extinction(float p_dry_visibility_km, float p_humidity);
 	void set_surface_storage(float p_mm);
 	float get_surface_storage() const { return surface_storage; }
 	void set_puddle_max_depth(float p_mm);
@@ -456,6 +472,16 @@ public:
 	Vector3 get_wind_at(Vector3 p_position, float p_height_above_ground = -1.0f) const;
 	// Mean wind at 10 m, no gusts (x, z).
 	Vector2 get_mean_wind_at(Vector3 p_position) const;
+	// The parts of get_wind_at() for solvers that filter the turbulence themselves (TreeWind3D):
+	// the mean air velocity (log law, shelter, gust patches), the along-wind direction of the gust
+	// frame and the gust standard deviation there (m/s, shelter included).
+	void get_wind_parts(Vector3 p_position, float p_height_above_ground, Vector3 &r_mean, Vector2 &r_along, float &r_sigma) const;
+	// The gust waves: per wave (k along, k across) in the base wind's frame (rad/m), amplitude per
+	// unit sigma and phase; wave i drives axis i / GUSTS_PER_AXIS (along, across, vertical). The
+	// pattern moves with the base wind, so a wave's frequency is k along times get_base_wind_speed().
+	void get_gust_waves(LocalVector<Vector4> &r_waves) const;
+	Vector2 get_base_wind_direction() const { return cur_wind_direction; }
+	float get_base_wind_speed() const { return cur_wind_speed; }
 	float get_rain_at(Vector3 p_position) const; // mm/h
 	float get_cloud_cover_at(Vector3 p_position) const;
 	float get_cloud_type_at(Vector3 p_position) const;
