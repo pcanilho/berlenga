@@ -840,6 +840,30 @@ against 44.1, at 8 m 22.1 against 21.0, at 15 m 23.9 against 22.9, and no outlin
 wind (whose cards were 22% lighter, 52.4 against 43.0) now reads 13% darker (37.6), with a few
 dark blotches where the frizz's cores overlap; cards stay off by default.
 
+### Fixed: dots, stepped edges and stripes on cards seen enlarged
+
+Seen at 1080p from 8 m and enlarged, the cards showed rows of bright dots, hard stepped edges where
+the strands fade out, and stripes with the skin showing low between them. Causes and fixes:
+
+- Dots: the pre-pass took a fragment by its own texel's opacity, so single bright texels inside a
+  strip wrote depth and the lit hair behind showed in specks. A strip now joins the pre-pass by its
+  row: the atlas row's mean depth at the mip the strip is drawn with (its 32 texels across in one
+  read), turned to coverage over the clump's own width; 70% or more, and not within half a pixel
+  of the strip's edge.
+- Stepped edges: a strip's edge cut its texels off at once. Strips over 4 px wide now fade over
+  their last pixel (fwidth across the strip), as an antialiased line; under 2 px they are left.
+- Stripes: 256 cards for 30,000 strands drew strips 6 to 8 px wide at 8 m on a 1080p screen, too
+  few to hide that each is one strip. 1024 cards (now the default; 3% of the strands) close the
+  gaps; the bake's clustering runs on the worker threads (1.3 s for 1024 cards on 4 cores).
+- Deep shadows: a card's strand sits in the middle of its clump, so the maps saw the clump start
+  there and its own half in front of it was missing; the cards over the crown read lit where the
+  strands are shaded. A card now reads the maps half its width further from the light, as its
+  clump's strands are on average.
+
+Result (bench mean luminance, against the strands): close up 42.5 against 44.1, at 8 m 21.2 against
+20.7, at 15 m 22.6 against 22.9. Still seen enlarged: a faint line where the skull's shadow on the
+hanging hair begins.
+
 ### Fixed: black specks on strands with deep shadows
 
 Rare black 2x2 pixel blocks on strands, only with deep shadows on. Turned off one step at a time:

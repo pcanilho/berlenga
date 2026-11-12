@@ -142,8 +142,8 @@ float dom_coverage(vec4 p_cell, float p_rel) {
 }
 
 // The deep opacity maps at a world point: per map the light let through and the metres past the
-// first hair (-1: none).
-void dom_lookup(vec3 world, out vec4 r_trans, out vec4 r_past) {
+// first hair (-1: none). p_inside: metres the point's own hair reaches toward the light past it.
+void dom_lookup(vec3 world, float p_inside, out vec4 r_trans, out vec4 r_past) {
 	r_trans = vec4(1.0);
 	r_past = vec4(-1.0);
 	// The deep opacity maps: how much hair (and whether the head or body) lies between this
@@ -186,7 +186,7 @@ void dom_lookup(vec3 world, out vec4 r_trans, out vec4 r_past) {
 			float opaque = texelFetch(hair_deep_shadow, cc + ivec2(dom_cells, 0), 0).x;
 			float covered = 0.0;
 			if (cell.x < 1e8) {
-				covered = dom_coverage(cell, tl - cell.x);
+				covered = dom_coverage(cell, tl + p_inside - cell.x);
 				front = min(front, cell.x);
 			}
 			vec2 w = mix(1.0 - f, f, vec2(o));
@@ -227,7 +227,7 @@ void vertex() {
 	if (dom_maps > 0 && !IN_PATH_TRACER && !IN_SHADOW_PASS && !PREVIOUS_FRAME && CUSTOM1.w < 0.5) {
 		vec4 lt;
 		vec4 lp;
-		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, lt, lp);
+		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, 0.0, lt, lp);
 		dom_trans = lt;
 		dom_past = lp;
 	}
@@ -483,7 +483,7 @@ void vertex() {
 			p = mix(a.xyz, b.xyz, clamp(fk - k, 0.0, 1.0));
 			vec4 st;
 			vec4 sp;
-			dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, st, sp);
+			dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, 0.0, st, sp);
 			float absorb = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
 			// Strands above this point, toward the snow: it lies on the top layer only.
 			float above = -log(max(st[dom_snow_slot], 1e-6)) / max(absorb * dom_density, 1e-4);
@@ -534,6 +534,9 @@ uniform float card_clump = 0.0; // wet clumping, as the strands'
 // The scalp as a sphere (centre, radius) fitted to the strands' roots, in the hair's space (w 0: none).
 uniform vec4 card_scalp = vec4(0.0);
 varying vec3 card_across; // view space: this strip's axis (raster lighting)
+varying float card_side; // -1..1 across the strip
+varying float card_tile_u; // the atlas u of this strip's tile centre
+varying float card_grow; // how much wider than its clump the strip is drawn (to a pixel)
 varying float card_fan; // how far the card's guides fanned apart since the groom (the card widens by it)
 
 void vertex() {
@@ -558,6 +561,8 @@ void vertex() {
 	vec4 tiles = texelFetch(card_data, ivec2(point * 4 + 3, card), 0);
 	vec2 tile = strip == 0 ? tiles.xy : tiles.zw;
 	UV = (tile + vec2(0.5 + (card_tile.x - 1.0) * (CUSTOM0.w * 0.5 + 0.5), 0.5 + (card_tile.y - 1.0) * CUSTOM1.z)) / vec2(textureSize(card_atlas, 0));
+	card_side = CUSTOM0.w;
+	card_tile_u = (tile.x + 0.5 * card_tile.x) / float(textureSize(card_atlas, 0).x);
 	// w: 4 + along + 8 * fan (64ths), the solver's encoding for a card's strand (this frame's: the
 	// previous positions' w names the card).
 	float w = texelFetch(hair_positions, texel, 0).w;
@@ -581,6 +586,7 @@ void vertex() {
 	// The clump fans out (or closes) with its guides: the card as much wider, and thinner below.
 	float half_width = own_half * card_fan * (1.0 - card_clump * smoothstep(0.0, 0.3, along));
 	float drawn = half_width;
+	card_grow = 1.0;
 	if (!IN_PATH_TRACER) {
 		// A card under a pixel wide falls between the pixels' centres, and the hair behind it
 		// shows: as the strands (TressFX), it is drawn at least 0.71 px a side (capped as theirs,
@@ -588,7 +594,8 @@ void vertex() {
 		vec4 clip = PROJECTION_MATRIX * (MODELVIEW_MATRIX * vec4(p, 1.0));
 		float px = 2.0 * clip.w / max(abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y, 1e-6);
 		drawn = max(half_width, min(0.71 * px, IN_SHADOW_PASS ? 0.002 : 0.01));
-		card_fan *= drawn / max(half_width, 1e-7);
+		card_grow = drawn / max(half_width, 1e-7);
+		card_fan *= card_grow;
 	}
 	VERTEX = p + ax * (drawn * CUSTOM0.w);
 	if (card_scalp.w > 0.0) {
@@ -619,9 +626,12 @@ void vertex() {
 		// The deep opacity maps, made from the cards' own strands (each as wide as its clump), read
 		// on the card's centre line: the strip's edges reach out of the map's hair sideways, in
 		// front of the hair toward the light, and read as lit where the clump's strands are not.
+		// The map has the card's strand at the clump's centre, but the clump is about as deep as
+		// it is wide and half its strands lie behind the rest: read half a clump further from
+		// the light, as the clump's strands are shaded on average.
 		vec4 lt;
 		vec4 lp;
-		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, lt, lp);
+		dom_lookup((MODEL_MATRIX * vec4(p, 1.0)).xyz, half_width, lt, lp);
 		dom_trans = lt;
 		dom_past = lp;
 	}
@@ -675,6 +685,15 @@ void fragment() {
 	// The atlas holds the strands' optical depth (16 bits, R high and B low, over 8).
 	float depth = (texel.r * 65280.0 + texel.b * 255.0) * (8.0 / 65535.0);
 	float coverage = 1.0 - exp(-depth * facing / max(card_fan, 0.5));
+	// The strip's edges antialiased: a pixel whose centre lies within half a pixel of the edge
+	// takes the share of it the strip covers, so a strip a few pixels wide is not a stepped band.
+	// Under about three pixels the strip already stands for its strands by its width (vertex()
+	// widens it to a pixel and thins it to match), and fading its edges would lose that opacity.
+	float edge = (1.0 - abs(card_side)) / max(fwidth(card_side), 1e-6);
+	float strip_px = 2.0 / max(fwidth(card_side), 1e-6);
+	if (!IN_SHADOW_PASS) {
+		coverage *= mix(1.0, clamp(edge + 0.5, 0.0, 1.0), smoothstep(2.0, 4.0, strip_px));
+	}
 	// Lit as the strands are: a fibre has no surface normal, so the ambient and reflected light
 	// take the strands' own ribbon frame, rebuilt here about the card's strand direction: across
 	// = T x eye (eye from the camera to the point, view space), normal = across x T, which faces
@@ -702,7 +721,14 @@ void fragment() {
 	// cards are sorted whole, by their middle, but each runs the length of the hair, so a card
 	// behind could still draw over the front of another: a lit card from beside the head showed
 	// through the shadowed hair in front of it, and the head's outline read through the cards.
-	OPAQUE_PREPASS_THRESHOLD = 0.8;
+	// Which fragments are core is read from the strip's mean across (its tile at the mip one texel
+	// wide), not from the texel itself: a strip a pixel or two wide otherwise passed and failed
+	// along its length, and the hair behind showed through in rows of dots.
+	vec4 row = textureLod(card_atlas, vec2(card_tile_u, UV.y), log2(card_tile.x));
+	float row_depth = (row.r * 65280.0 + row.b * 255.0) * (8.0 / 65535.0);
+	// (Before the widening to a pixel: the clump's own core.)
+	float row_cover = 1.0 - exp(-row_depth * facing / max(card_fan / card_grow, 0.5));
+	OPAQUE_PREPASS_THRESHOLD = row_cover >= 0.7 && edge >= 0.5 ? 0.0 : 2.0;
 	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
 		float noise = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))) + texel.a);
 		if (coverage <= noise) {

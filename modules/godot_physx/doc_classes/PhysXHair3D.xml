@@ -25,7 +25,7 @@
 		</method>
 	</methods>
 	<members>
-		<member name="card_count" type="int" setter="set_card_count" getter="get_card_count" default="256">
+		<member name="card_count" type="int" setter="set_card_count" getter="get_card_count" default="1024">
 			How many cards the strands are clustered into. Each card is two crossed strips.
 		</member>
 		<member name="card_distance" type="float" setter="set_card_distance" getter="get_card_distance" default="15.0">
