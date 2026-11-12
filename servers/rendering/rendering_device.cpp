@@ -472,6 +472,44 @@ RID RenderingDevice::blas_create(Span<AccelerationStructureGeometry> p_geometrie
 
 				_check_transfer_worker_buffer(aabb_buffer);
 			} break;
+
+			case AccelerationStructureGeometry::TYPE_LINEAR_SWEPT_SPHERES: {
+				const AccelerationStructureGeometry::LinearSweptSpheres &l_in = rd_geometry.geometry.swept_spheres;
+				RDD::AccelerationStructureGeometry::LinearSweptSpheres &l_out = rdd_geometry.geometry.swept_spheres;
+
+				ERR_FAIL_COND_V_MSG(!has_feature(SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES), RID(), "The current rendering device has no linear swept spheres.");
+				ERR_FAIL_COND_V_MSG(l_in.segment_count == 0 || l_in.point_count < 2, RID(), "A swept spheres geometry needs at least one segment.");
+				ERR_FAIL_COND_V_MSG(l_in.stride < 16, RID(), "Swept sphere point stride must be at least 16 bytes (float3 centre, float radius).");
+
+				Buffer *point_buffer = storage_buffer_owner.get_or_null(l_in.buffer);
+				ERR_FAIL_NULL_V_MSG(point_buffer, RID(), "The swept sphere point buffer must be a valid storage buffer.");
+				ERR_FAIL_COND_V_MSG((uint64_t(l_in.offset) + uint64_t(l_in.point_count) * l_in.stride) > point_buffer->size, RID(), "The swept sphere points are outside their buffer.");
+				Buffer *segment_buffer = storage_buffer_owner.get_or_null(l_in.index_buffer);
+				ERR_FAIL_NULL_V_MSG(segment_buffer, RID(), "The swept sphere segment buffer must be a valid storage buffer.");
+				ERR_FAIL_COND_V_MSG((uint64_t(l_in.index_offset) + uint64_t(l_in.segment_count) * 4u) > segment_buffer->size, RID(), "The swept sphere segments are outside their buffer.");
+
+				rdd_geometry.type = RDD::AccelerationStructureGeometry::TYPE_LINEAR_SWEPT_SPHERES;
+				l_out.buffer = point_buffer->driver_id;
+				l_out.offset = l_in.offset;
+				l_out.stride = l_in.stride;
+				l_out.point_count = l_in.point_count;
+				l_out.index_buffer = segment_buffer->driver_id;
+				l_out.index_offset = l_in.index_offset;
+				l_out.segment_count = l_in.segment_count;
+
+				for (Buffer *buffer : { point_buffer, segment_buffer }) {
+					if (buffer->draw_tracker != nullptr) {
+						draw_trackers.push_back(buffer->draw_tracker);
+					}
+					_check_transfer_worker_buffer(buffer);
+				}
+				if (point_buffer->draw_tracker == nullptr) {
+					untracked_buffers.insert(l_in.buffer);
+				}
+				if (segment_buffer->draw_tracker == nullptr) {
+					untracked_buffers.insert(l_in.index_buffer);
+				}
+			} break;
 		}
 	}
 
@@ -511,6 +549,10 @@ RID RenderingDevice::blas_create(Span<AccelerationStructureGeometry> p_geometrie
 			} break;
 			case AccelerationStructureGeometry::TYPE_AABBS: {
 				_add_dependency(id, geometry.geometry.aabbs.buffer);
+			} break;
+			case AccelerationStructureGeometry::TYPE_LINEAR_SWEPT_SPHERES: {
+				_add_dependency(id, geometry.geometry.swept_spheres.buffer);
+				_add_dependency(id, geometry.geometry.swept_spheres.index_buffer);
 			} break;
 		}
 	}
@@ -10586,6 +10628,7 @@ void RenderingDevice::_bind_methods() {
 	BIND_ENUM_CONSTANT(SUPPORTS_HDR_OUTPUT);
 	BIND_ENUM_CONSTANT(SUPPORTS_SHADER_DEVICE_CLOCK);
 	BIND_ENUM_CONSTANT(SUPPORTS_RAYTRACING_INVOCATION_REORDER);
+	BIND_ENUM_CONSTANT(SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES);
 	BIND_ENUM_CONSTANT(SUPPORTS_VERTEX_PIPELINE_STORES);
 
 	BIND_ENUM_CONSTANT(LIMIT_MAX_BOUND_UNIFORM_SETS);

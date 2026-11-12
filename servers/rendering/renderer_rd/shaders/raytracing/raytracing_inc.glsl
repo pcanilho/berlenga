@@ -11,6 +11,28 @@
 #define RT_HIT_GEOMETRY_IDX (gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT)
 #define RT_RQ_GEOMETRY_IDX(m_rq, m_committed) uint(rayQueryGetIntersectionInstanceCustomIndexEXT(m_rq, m_committed) + rayQueryGetIntersectionGeometryIndexEXT(m_rq, m_committed))
 
+#ifdef RT_LSS
+// Linear swept spheres (strand hair on devices that have them, render_raytracing.cpp): segment j of a strand
+// surface is the round tube around triangles 4j..4j+3 of its two crossed strips (four vertices a point, the
+// first strip's two sides first). A hit u along the segment reads its attributes on the first strip's centre
+// line: triangle 4j (v0, v0+1, v0+4) up to the middle, 4j+1 (v0+1, v0+5, v0+4) after, with barycentrics of
+// their second and third vertices.
+int rt_lss_triangle(int p_segment, float p_u) {
+	return p_segment * 4 + (p_u < 0.5 ? 0 : 1);
+}
+vec2 rt_lss_barycentrics(float p_u) {
+	return p_u < 0.5 ? vec2(0.5, p_u) : vec2(p_u - 0.5, 0.5);
+}
+// Ray query candidates and commits that are swept spheres, as their strip triangle.
+#define RT_RQ_IS_TRIANGLE(m_rq) (rayQueryGetIntersectionTypeEXT(m_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT || rayQueryIsLSSHitNV(m_rq, false))
+#define RT_RQ_PRIMITIVE(m_rq, m_committed) (rayQueryIsLSSHitNV(m_rq, m_committed) ? rt_lss_triangle(rayQueryGetIntersectionPrimitiveIndexEXT(m_rq, m_committed), rayQueryGetIntersectionLSSHitValueNV(m_rq, m_committed)) : rayQueryGetIntersectionPrimitiveIndexEXT(m_rq, m_committed))
+#define RT_RQ_BARYCENTRICS(m_rq, m_committed) (rayQueryIsLSSHitNV(m_rq, m_committed) ? rt_lss_barycentrics(rayQueryGetIntersectionLSSHitValueNV(m_rq, m_committed)) : rayQueryGetIntersectionBarycentricsEXT(m_rq, m_committed))
+#else
+#define RT_RQ_IS_TRIANGLE(m_rq) (rayQueryGetIntersectionTypeEXT(m_rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
+#define RT_RQ_PRIMITIVE(m_rq, m_committed) rayQueryGetIntersectionPrimitiveIndexEXT(m_rq, m_committed)
+#define RT_RQ_BARYCENTRICS(m_rq, m_committed) rayQueryGetIntersectionBarycentricsEXT(m_rq, m_committed)
+#endif
+
 #ifndef PI
 #define PI 3.141592653589f
 #endif

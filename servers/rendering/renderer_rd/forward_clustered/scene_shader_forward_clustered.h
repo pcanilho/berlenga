@@ -285,6 +285,7 @@ public:
 		// render_mode rt_force_opaque / rt_force_transparent of the shader itself, for shaders without an RT variant.
 		bool rt_force_opaque = false;
 		bool rt_force_transparent = false;
+		bool hair_strands = false; // render_mode hair_strands: the path tracer may trace it as swept spheres.
 		bool uses_discard = false;
 		bool uses_roughness = false;
 		bool uses_normal = false;

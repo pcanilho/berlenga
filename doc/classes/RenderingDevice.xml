@@ -2876,6 +2876,9 @@
 		<constant name="SUPPORTS_RAYTRACING_INVOCATION_REORDER" value="16" enum="Features">
 			Support for shader execution reordering in ray tracing pipelines. On Vulkan, requires [code]VK_EXT_ray_tracing_invocation_reorder[/code] and its [code]rayTracingInvocationReorder[/code] feature. The path tracer uses it only when this is supported.
 		</constant>
+		<constant name="SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES" value="17" enum="Features">
+			Support for linear swept spheres in acceleration structures (round tubes between two points, for hair). On Vulkan, requires [code]VK_NV_ray_tracing_linear_swept_spheres[/code] and its [code]linearSweptSpheres[/code] feature, [code]VK_KHR_maintenance5[/code], ray queries and ray tracing pipelines, and [member ProjectSettings.rendering/pathtracing/linear_swept_spheres].
+		</constant>
 		<constant name="LIMIT_MAX_BOUND_UNIFORM_SETS" value="0" enum="Limit">
 			Maximum number of uniform sets that can be bound at a given time.
 		</constant>

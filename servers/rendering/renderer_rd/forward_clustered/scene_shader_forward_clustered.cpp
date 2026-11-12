@@ -68,6 +68,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	uses_alpha_motion_vectors = false;
 	rt_force_opaque = false;
 	rt_force_transparent = false;
+	hair_strands = false;
 	uses_discard = false;
 	uses_roughness = false;
 	uses_normal = false;
@@ -172,6 +173,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.render_mode_flags["alpha_motion_vectors"] = &uses_alpha_motion_vectors;
 	actions.render_mode_flags["rt_force_opaque"] = &rt_force_opaque;
 	actions.render_mode_flags["rt_force_transparent"] = &rt_force_transparent;
+	actions.render_mode_flags["hair_strands"] = &hair_strands;
 
 	actions.usage_flag_pointers["SSS_STRENGTH"] = &uses_sss;
 	actions.usage_flag_pointers["SSS_TRANSMITTANCE_DEPTH"] = &uses_transmittance;
