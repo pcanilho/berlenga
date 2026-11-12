@@ -418,7 +418,78 @@ Vector3 PhysXHair3D::_fibre_absorption() const {
 	const float m = -Math::log(MAX(1.0f - melanin, 1e-4f));
 	const Vector3 eu(0.506f, 0.841f, 1.653f);
 	const Vector3 pheo(0.343f, 0.733f, 1.924f);
-	return (eu * (1.0f - melanin_redness) + pheo * melanin_redness) * m;
+	// Wet hair is darker (Lekner and Dorf 1988): water between the fibres nearly matches their
+	// index (1.33 against 1.55), so each fibre reflects less back out and light goes deeper into
+	// the hair, crossing more fibres before it leaves, and more of it is absorbed. Taken as the
+	// fibres absorbing up to half again as much when soaked.
+	return (eu * (1.0f - melanin_redness) + pheo * melanin_redness) * m * (1.0f + 0.5f * wet_look);
+}
+
+// The fibre roughness, longitudinal and azimuthal. A wet fibre is smoother along its length: the
+// water film fills in the cuticle scales and gives a near mirror surface, so the highlight is
+// narrower and brighter (Ward et al. 2004; Gupta and Magnenat-Thalmann 2007, roughness
+// x (1 - c w)), here halved when soaked.
+Vector2 PhysXHair3D::_fibre_roughness() const {
+	return Vector2(roughness * (1.0f - 0.5f * wet_look), radial_roughness);
+}
+
+// Rain wets the hair and the air dries it. Rain from the WeatherMap3D (mm/h) less what the
+// canopy above catches (free throughfall, Gash 1979: the share of the sky the canopy leaves
+// open) and nothing under a roof (a ray up from the top of the hair, every half second) fills
+// water_capacity mm; drying takes the soaked hair to dry in drying_time at an even rate (the
+// constant rate period of drying, while the surface stays wet). The look follows in steps of
+// 1%, so the material is not set every frame.
+void PhysXHair3D::_update_wetness(double p_delta) {
+	const float dt = (float)p_delta;
+#ifdef MODULE_WEATHER_ENABLED
+	float rain = 0.0f;
+	if (weather_wetting && dt > 0.0f && is_inside_tree()) {
+		if (const WeatherMap3D *weather = WeatherMap3D::get_active()) {
+			const Vector3 at = render_instance ? render_instance->get_global_transform().xform(render_instance->get_aabb()).get_center() : get_global_transform().origin;
+			rain = weather->get_rain_at(at);
+			if (rain > 0.0f) {
+				rain *= 1.0f - CLAMP(weather->get_canopy_closure_at(at), 0.0f, 1.0f);
+				rain_shelter_timer -= dt;
+				if (rain_shelter_timer <= 0.0f) {
+					rain_shelter_timer = 0.5f;
+					rain_shelter = 1.0f;
+					const Ref<World3D> w = get_world_3d();
+					PhysicsDirectSpaceState3D *space = w.is_valid() ? PhysicsServer3D::get_singleton()->space_get_direct_state(w->get_space()) : nullptr;
+					if (space) {
+						Vector3 top = at;
+						if (render_instance) {
+							const AABB box = render_instance->get_global_transform().xform(render_instance->get_aabb());
+							top.y = box.position.y + box.size.y;
+						}
+						PhysicsDirectSpaceState3D::RayParameters ray;
+						ray.from = top + Vector3(0.0f, 0.1f, 0.0f);
+						ray.to = ray.from + Vector3(0.0f, 100.0f, 0.0f);
+						PhysicsDirectSpaceState3D::RayResult hit;
+						if (space->intersect_ray(ray, hit)) {
+							rain_shelter = 0.0f;
+						}
+					}
+				}
+				rain *= rain_shelter;
+			}
+		}
+	}
+	if (weather_wetting && dt > 0.0f) {
+		wetness += dt * rain / (3600.0f * MAX(water_capacity, 0.01f));
+		if (rain <= 0.0f) {
+			wetness -= dt / MAX(drying_time, 1.0f);
+		}
+		wetness = CLAMP(wetness, 0.0f, 1.0f);
+	}
+#endif
+	if (Math::abs(wetness - wet_look) >= 0.01f || (wetness != wet_look && (wetness == 0.0f || wetness == 1.0f))) {
+		wet_look = wetness;
+		if (copy_material.is_valid()) {
+			copy_material->set_shader_parameter("hair_color", _mass_color());
+			copy_material->set_shader_parameter("fibre_absorption", _fibre_absorption());
+			copy_material->set_shader_parameter("fibre_roughness", _fibre_roughness());
+		}
+	}
 }
 
 // The colour a mass of such fibres shows (Chiang et al. 2016, section 4.2), for the rasterizer.
@@ -623,7 +694,7 @@ void PhysXHair3D::_make_material() {
 	}
 	copy_material->set_shader_parameter("hair_color", _mass_color());
 	copy_material->set_shader_parameter("fibre_absorption", _fibre_absorption());
-	copy_material->set_shader_parameter("fibre_roughness", Vector2(roughness, radial_roughness));
+	copy_material->set_shader_parameter("fibre_roughness", _fibre_roughness());
 	copy_material->set_shader_parameter("hair_positions", pos_texture);
 	copy_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
 	copy_material->set_shader_parameter("hair_deep_shadow", deep_shadow_texture);
@@ -926,6 +997,8 @@ void PhysXHair3D::_step(double p_delta) {
 	s.volume_stiffness = volume_stiffness;
 	s.collision_radius = strand_collision ? strand_collision_radius : 0.0f;
 	s.collision_friction = strand_collision_friction;
+	s.wet = wetness;
+	s.wet_clumping = wet_clumping;
 	s.output_xform = render_instance ? render_instance->get_global_transform().affine_inverse() : xform.affine_inverse();
 	// The draw order is sorted from the viewport's camera.
 	const Camera3D *camera = is_inside_tree() ? get_viewport()->get_camera_3d() : nullptr;
@@ -1119,6 +1192,9 @@ void PhysXHair3D::_notification(int p_what) {
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (build_pending) {
 				_build();
+			}
+			if (built) {
+				_update_wetness(Engine::get_singleton()->is_editor_hint() ? 0.0 : get_process_delta_time());
 			}
 			if (built && solver != nullptr && simulating) {
 				_step(get_process_delta_time());
@@ -1631,6 +1707,46 @@ void PhysXHair3D::set_strand_collision_friction(float p_friction) {
 	strand_collision_friction = CLAMP(p_friction, 0.0f, 1.0f);
 }
 
+void PhysXHair3D::set_wetness(float p_wetness) {
+	wetness = CLAMP(p_wetness, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_wetness() const {
+	return wetness;
+}
+
+void PhysXHair3D::set_weather_wetting(bool p_enabled) {
+	weather_wetting = p_enabled;
+}
+
+bool PhysXHair3D::get_weather_wetting() const {
+	return weather_wetting;
+}
+
+void PhysXHair3D::set_water_capacity(float p_mm) {
+	water_capacity = MAX(p_mm, 0.01f);
+}
+
+float PhysXHair3D::get_water_capacity() const {
+	return water_capacity;
+}
+
+void PhysXHair3D::set_drying_time(float p_seconds) {
+	drying_time = MAX(p_seconds, 1.0f);
+}
+
+float PhysXHair3D::get_drying_time() const {
+	return drying_time;
+}
+
+void PhysXHair3D::set_wet_clumping(float p_clumping) {
+	wet_clumping = CLAMP(p_clumping, 0.0f, 1.0f);
+}
+
+float PhysXHair3D::get_wet_clumping() const {
+	return wet_clumping;
+}
+
 float PhysXHair3D::get_strand_collision_friction() const {
 	return strand_collision_friction;
 }
@@ -1732,6 +1848,16 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_strand_collision_radius"), &PhysXHair3D::get_strand_collision_radius);
 	ClassDB::bind_method(D_METHOD("set_strand_collision_friction", "friction"), &PhysXHair3D::set_strand_collision_friction);
 	ClassDB::bind_method(D_METHOD("get_strand_collision_friction"), &PhysXHair3D::get_strand_collision_friction);
+	ClassDB::bind_method(D_METHOD("set_wetness", "wetness"), &PhysXHair3D::set_wetness);
+	ClassDB::bind_method(D_METHOD("get_wetness"), &PhysXHair3D::get_wetness);
+	ClassDB::bind_method(D_METHOD("set_weather_wetting", "enabled"), &PhysXHair3D::set_weather_wetting);
+	ClassDB::bind_method(D_METHOD("get_weather_wetting"), &PhysXHair3D::get_weather_wetting);
+	ClassDB::bind_method(D_METHOD("set_water_capacity", "mm"), &PhysXHair3D::set_water_capacity);
+	ClassDB::bind_method(D_METHOD("get_water_capacity"), &PhysXHair3D::get_water_capacity);
+	ClassDB::bind_method(D_METHOD("set_drying_time", "seconds"), &PhysXHair3D::set_drying_time);
+	ClassDB::bind_method(D_METHOD("get_drying_time"), &PhysXHair3D::get_drying_time);
+	ClassDB::bind_method(D_METHOD("set_wet_clumping", "clumping"), &PhysXHair3D::set_wet_clumping);
+	ClassDB::bind_method(D_METHOD("get_wet_clumping"), &PhysXHair3D::get_wet_clumping);
 	ClassDB::bind_method(D_METHOD("set_collision_spheres", "spheres"), &PhysXHair3D::set_collision_spheres);
 	ClassDB::bind_method(D_METHOD("get_collision_spheres"), &PhysXHair3D::get_collision_spheres);
 	ClassDB::bind_method(D_METHOD("reset_simulation"), &PhysXHair3D::reset_simulation);
@@ -1786,4 +1912,10 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "strand_collision"), "set_strand_collision", "is_strand_collision");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strand_collision_radius", PROPERTY_HINT_RANGE, "0,0.01,0.0001,or_greater,suffix:m"), "set_strand_collision_radius", "get_strand_collision_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "strand_collision_friction", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_strand_collision_friction", "get_strand_collision_friction");
+	ADD_GROUP("Wet", "");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness", "get_wetness");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "weather_wetting"), "set_weather_wetting", "get_weather_wetting");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_capacity", PROPERTY_HINT_RANGE, "0.1,5,0.1,or_greater,suffix:mm"), "set_water_capacity", "get_water_capacity");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drying_time", PROPERTY_HINT_RANGE, "60,14400,1,or_greater,suffix:s"), "set_drying_time", "get_drying_time");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_clumping", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wet_clumping", "get_wet_clumping");
 }

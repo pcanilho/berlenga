@@ -760,15 +760,22 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 	ints[3] = MIN(p_settings.spheres.size(), HairStrandSolverGPU::MAX_SPHERES);
 	// step
 	f[4] = dt;
-	f[5] = Math::exp(-MAX(p_settings.damping, 0.0f) * 60.0f * dt); // TressFX's decay, per substep
-	f[6] = per_substep(p_settings.global_stiffness);
+	// Wet hair (Ward, Galoppo and Lin 2004; Gupta and Magnenat-Thalmann 2007): the fibres take up
+	// to 45% of their weight in water, so the same air drag moves them less (the decay toward the
+	// air's velocity slows with the mass), and the water softens the keratin, so the groomed shape
+	// holds less against gravity (bending x (1 - 0.45 w), Gupta).
+	const float wet = CLAMP(p_settings.wet, 0.0f, 1.0f);
+	const float wet_mass = 1.0f + 0.45f * wet;
+	const float wet_bend = 1.0f - 0.45f * wet;
+	f[5] = Math::exp(-MAX(p_settings.damping, 0.0f) * 60.0f * dt / wet_mass); // TressFX's decay, per substep
+	f[6] = per_substep(p_settings.global_stiffness * wet_bend);
 	f[7] = CLAMP(p_settings.global_range, 0.0f, 1.0f);
 	// accel
 	f[8] = p_settings.gravity.x;
 	f[9] = p_settings.gravity.y;
 	f[10] = p_settings.gravity.z;
 	// TressFX halves the local stiffness and caps it (1.0 is unstable); given per 1/60 s.
-	f[11] = per_substep(0.5f * MIN(MAX(p_settings.local_stiffness, 0.0f), 0.95f));
+	f[11] = per_substep(0.5f * MIN(MAX(p_settings.local_stiffness * wet_bend, 0.0f), 0.95f));
 	// wind
 	f[12] = p_settings.wind.x;
 	f[13] = p_settings.wind.y;
@@ -871,10 +878,13 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 		f[VOL_PARAMS + 2] = vol_origin.z;
 		f[VOL_PARAMS + 3] = vol_cell;
 		f[VOL_PARAMS + 4] = per_substep(MAX(p_settings.volume_friction, 0.0f));
-		f[VOL_PARAMS + 5] = MAX(p_settings.volume_stiffness, 0.0f);
+		// Water holds wet strands together (elastocapillary coalescence, Bico et al. 2004) instead
+		// of the hair springing apart to its groomed volume.
+		f[VOL_PARAMS + 5] = MAX(p_settings.volume_stiffness, 0.0f) * (1.0f - wet);
 		f[VOL_PARAMS + 6] = vol_mean;
 		f[VOL_PARAMS + 7] = (float)vol_cells;
 	}
+	f[SDF_PARAMS + 10] = wet * CLAMP(p_settings.wet_clumping, 0.0f, 1.0f); // sdf_misc.z: wet clumping
 	last_xform = p_xform;
 	has_last = true;
 	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_step).bind(gpu, bytes, substeps, tris));

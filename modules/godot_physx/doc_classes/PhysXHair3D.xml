@@ -41,6 +41,9 @@
 			With [member hair_shading], the strands shade themselves from the directional light ([member deep_shadow_light]) and the main omni and spot lights ([member deep_shadow_local_lights]) with deep opacity maps (Yuksel and Keyser 2008, as Unreal Engine's hair): each frame the solver records, from the light, where the first hair is, how much hair lies in three layers past it, and where the collision spheres and [member collision_body] are, and each strand takes the light that passes the hair and head in front of it. The self-shadow is smooth instead of the shadow map's grain, and light thins through the hair as through real hair. The hair still casts into the shadow map for everything else, each strand at its own share of texels (stochastic transparency), so a shadow behind several strands builds up as their product. Other lights shadow the hair through the shadow maps as before (and lose the hair's self-shadow from them when a map's light shares their kind, as their shadow lookups move past the hair too). Off: the shadow maps alone, as before.
 			[b]Note:[/b] the head counts only through [member collision_spheres] and [member collision_body]; something opaque inside the hair that neither covers does not shadow the hair from that light.
 		</member>
+		<member name="drying_time" type="float" setter="set_drying_time" getter="get_drying_time" default="3600.0">
+			Seconds the hair takes to dry from soaked when no rain falls on it, at an even rate.
+		</member>
 		<member name="fixed_gravity" type="Vector3" setter="set_fixed_gravity" getter="get_fixed_gravity" default="Vector3(0, -9.8, 0)">
 			The gravity used when [member use_world_gravity] is off.
 		</member>
@@ -104,6 +107,9 @@
 		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.3">
 			How rough the fibres are along their length: low gives a tight, bright highlight.
 		</member>
+		<member name="simplify_tolerance" type="float" setter="set_simplify_tolerance" getter="get_simplify_tolerance" default="0.5">
+			Where a groomed strand runs straight, the strands are drawn (raster and path traced) through fewer of its points: Douglas-Peucker on the groomed strand, as Unreal Engine's groom decimation, keeping every point the strand would otherwise stray from by more than this share of [member root_width]. Below a strand's own width the drawn hair looks the same, with fewer triangles for the path tracer to refit and fewer vertices to shade. Every point still simulates. Wavy, curly and frizzy grooms keep most of their points. [code]0[/code]: every point is drawn.
+		</member>
 		<member name="simulating" type="bool" setter="set_simulating" getter="is_simulating" default="true">
 			When off, the strands hold their last pose relative to the head.
 		</member>
@@ -118,9 +124,6 @@
 		</member>
 		<member name="substeps" type="int" setter="set_substeps" getter="get_substeps" default="4">
 			Solver steps per frame. More keeps long hair stiffer and fast heads cleaner, at a small GPU cost.
-		</member>
-		<member name="simplify_tolerance" type="float" setter="set_simplify_tolerance" getter="get_simplify_tolerance" default="0.5">
-			Where a groomed strand runs straight, the strands are drawn (raster and path traced) through fewer of its points: Douglas-Peucker on the groomed strand, as Unreal Engine's groom decimation, keeping every point the strand would otherwise stray from by more than this share of [member root_width]. Below a strand's own width the drawn hair looks the same, with fewer triangles for the path tracer to refit and fewer vertices to shade. Every point still simulates. Wavy, curly and frizzy grooms keep most of their points. [code]0[/code]: every point is drawn.
 		</member>
 		<member name="tip_width" type="float" setter="set_tip_width" getter="get_tip_width" default="0.0001">
 			The width of a strand at the tip, in metres.
@@ -149,8 +152,20 @@
 		<member name="vsp_coeff" type="float" setter="set_vsp_coeff" getter="get_vsp_coeff" default="0.8">
 			How much of the head's motion each substep carries the whole strand, and its velocity, along (TressFX's velocity shock propagation). [code]0[/code] leaves the hair to catch up by itself; higher keeps it with the head when the character turns or runs.
 		</member>
+		<member name="water_capacity" type="float" setter="set_water_capacity" getter="get_water_capacity" default="1.0">
+			Millimetres of rain that soak the hair: at 5 mm/h with the default the hair is soaked in 12 minutes.
+		</member>
+		<member name="weather_wetting" type="bool" setter="set_weather_wetting" getter="get_weather_wetting" default="true">
+			If [code]true[/code], rain from the active [WeatherMap3D] wets the hair (less what a canopy catches, none under a roof found by a ray up from the hair) and it dries when the rain stops. With no weather map, or no rain, the hair stays as [member wetness] is set.
+		</member>
 		<member name="weather_wind" type="bool" setter="set_weather_wind" getter="get_weather_wind" default="true">
 			If [code]true[/code] and a [WeatherMap3D] is in the scene, its wind at this node (mean wind plus gusts) is added to [member wind].
+		</member>
+		<member name="wet_clumping" type="float" setter="set_wet_clumping" getter="get_wet_clumping" default="0.8">
+			How far wet strands gather onto their guide strands, from a little past the root out to the tips. [code]0[/code]: wet hair keeps its groomed spread.
+		</member>
+		<member name="wetness" type="float" setter="set_wetness" getter="get_wetness" default="0.0">
+			How wet the hair is: [code]0[/code] dry, [code]1[/code] soaked. Wet hair is darker and glossier, heavier (less blown by the wind), softer (hangs flatter) and gathers into clumps. Set by rain when [member weather_wetting] is on, and can be set directly.
 		</member>
 		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
 			The air's velocity in world space, in m/s. Strands take up its velocity at the rate set by [member damping]; a head moving through still air is slowed the same way.
