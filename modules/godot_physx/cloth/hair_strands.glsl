@@ -52,6 +52,10 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 #define MODE_SDF_FINAL 11
 #define MODE_VOL_CLEAR 12
 #define MODE_VOL_SPLAT 13
+#define MODE_COLL_CLEAR 20
+#define MODE_COLL_INSERT 21
+#define MODE_COLL_SOLVE 22
+#define MODE_COLL_APPLY 23
 #define MODE_DOM_CLEAR 14
 #define MODE_DOM_FRONT 15
 #define MODE_DOM_OPAQUE 16
@@ -86,6 +90,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	// for a local light, the tangent of the half angle the hair fills seen from it; toward the
 	// light and, for a local light, its distance from the centre.
 	vec4 dom_slot[DOM_SLOTS * 4];
+	vec4 coll_misc; // strand-strand collision: x radius (m, 0: off), y hash buckets (a power of two), z friction (0..1), w stiffness (0..1)
 };
 
 layout(push_constant, std430) uniform Pass {
@@ -152,6 +157,18 @@ layout(set = 0, binding = 11, std430) restrict readonly buffer VolRest {
 
 layout(set = 0, binding = 17, std430) restrict readonly buffer RenderPoints {
 	int render_points[]; // per strand (first, count) into the list after them: the points drawn (local indices)
+};
+
+layout(set = 0, binding = 18, std430) restrict buffer CollCells {
+	int coll_cells[]; // per hash bucket: point count, then COLL_BUCKET point indices
+};
+
+layout(set = 0, binding = 19, std430) restrict buffer CollDelta {
+	vec4 coll_delta[]; // per point: the collision's correction (xyz)
+};
+
+layout(set = 0, binding = 20, std430) restrict readonly buffer PointStrand {
+	int point_strand[]; // per point: its strand
 };
 
 layout(set = 0, binding = 6, std430) restrict readonly buffer Follow {
@@ -263,6 +280,14 @@ float sdf_at(vec3 p) {
 	float x01 = mix(sdf_cell(c + ivec3(0, 0, 1)), sdf_cell(c + ivec3(1, 0, 1)), f.x);
 	float x11 = mix(sdf_cell(c + ivec3(0, 1, 1)), sdf_cell(c + ivec3(1, 1, 1)), f.x);
 	return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
+}
+
+
+// Strand-strand collision: the spatial hash's bucket for a cell (Teschner et al. 2003's primes).
+#define COLL_BUCKET 8
+int coll_hash(ivec3 c, int buckets) {
+	uint h = (uint(c.x) * 73856093u) ^ (uint(c.y) * 19349663u) ^ (uint(c.z) * 83492791u);
+	return int(h & uint(buckets - 1));
 }
 
 const float VOL_SCALE = 1024.0;
@@ -413,7 +438,7 @@ void main() {
 	int id = int(gl_GlobalInvocationID.x);
 
 	int slot_points = int(inertia.z + 0.5);
-	if (pass.mode >= MODE_DOM_CLEAR) {
+	if (pass.mode >= MODE_DOM_CLEAR && pass.mode <= MODE_DOM_RESOLVE) {
 		int n = int(dom_misc.x);
 		int cells = n * n;
 		// pass.pad1: which map (light).
@@ -507,6 +532,94 @@ void main() {
 				uint opaque = dom_depth[depth_base + cells + id];
 				imageStore(dom_image, at + ivec2(n, 0), vec4(opaque == DOM_FAR ? 1e9 : uintBitsToFloat(opaque), 0.0, 0.0, 0.0));
 			}
+		}
+		return;
+	}
+
+	if (pass.mode >= MODE_COLL_CLEAR && pass.mode <= MODE_COLL_APPLY) {
+		// Strand-strand collision between guide strands (position based, Muller et al. 2007, as
+		// the particle contacts of Macklin et al. 2014): the guides' points go into a spatial hash
+		// of cells one collision diameter wide, and two points of different strands closer than
+		// the diameter are pushed apart along the line between them, half each, with friction
+		// taking off part of their sliding. The grid (MODE_VOL_*) keeps the hair's volume at the
+		// cell scale (2 cm); this keeps neighbouring guides, and so the clumps that follow them,
+		// from passing through each other below it.
+		float r = coll_misc.x;
+		int buckets = int(coll_misc.y);
+		float cell = 2.0 * r;
+		if (pass.mode == MODE_COLL_CLEAR) {
+			if (id < buckets) {
+				coll_cells[id * (COLL_BUCKET + 1)] = 0;
+			}
+			return;
+		}
+		if (id >= counts.y) {
+			return;
+		}
+		int s = point_strand[id];
+		bool guide = follow[s * 2].w < 0.0;
+		int local_i = id - strands[s].x;
+		if (pass.mode == MODE_COLL_APPLY) {
+			// Position based: the correction also becomes velocity (position minus previous), so
+			// the strands part instead of grinding through each other next step.
+			vec4 d = coll_delta[id];
+			if (guide && local_i >= 2 && dot(d.xyz, d.xyz) > 0.0) {
+				pos[id].xyz += d.xyz;
+			}
+			coll_delta[id] = vec4(0.0);
+			return;
+		}
+		if (!guide || local_i < 1) {
+			return;
+		}
+		vec3 p = pos[id].xyz;
+		ivec3 c = ivec3(floor(p / cell));
+		if (pass.mode == MODE_COLL_INSERT) {
+			int b = coll_hash(c, buckets) * (COLL_BUCKET + 1);
+			int slot = atomicAdd(coll_cells[b], 1);
+			if (slot < COLL_BUCKET) {
+				coll_cells[b + 1 + slot] = id;
+			}
+			return;
+		}
+		// MODE_COLL_SOLVE: the 27 cells around, Jacobi (each point its own correction).
+		if (local_i < 2) {
+			return;
+		}
+		vec3 corr = vec3(0.0);
+		int touching = 0;
+		vec3 v = p - prev[id].xyz;
+		vec3 slide = vec3(0.0);
+		for (int k = 0; k < 27; k++) {
+			ivec3 cc = c + ivec3(k % 3, (k / 3) % 3, k / 9) - 1;
+			int b = coll_hash(cc, buckets) * (COLL_BUCKET + 1);
+			int nb = min(coll_cells[b], COLL_BUCKET);
+			for (int j = 0; j < nb; j++) {
+				int o = coll_cells[b + 1 + j];
+				if (point_strand[o] == s) {
+					continue;
+				}
+				vec3 q = pos[o].xyz;
+				vec3 d = p - q;
+				float dist2 = dot(d, d);
+				if (dist2 >= 4.0 * r * r || dist2 < 1e-14) {
+					continue;
+				}
+				float dist = sqrt(dist2);
+				vec3 nrm = d / dist;
+				corr += nrm * (0.5 * (2.0 * r - dist));
+				// Relative sliding this frame, for the friction.
+				vec3 rel = v - (q - prev[o].xyz);
+				slide += rel - nrm * dot(rel, nrm);
+				touching++;
+			}
+		}
+		if (touching > 0) {
+			// Averaged over the contacts (Jacobi, as Macklin's constraint averaging), so a point
+			// pressed from many sides moves no further than one contact would push it.
+			corr *= coll_misc.w / float(touching);
+			corr -= coll_misc.z * slide / float(touching); // friction: part of the sliding undone
+			coll_delta[id] = vec4(corr, 0.0);
 		}
 		return;
 	}

@@ -107,6 +107,15 @@
 		<member name="simulating" type="bool" setter="set_simulating" getter="is_simulating" default="true">
 			When off, the strands hold their last pose relative to the head.
 		</member>
+		<member name="strand_collision" type="bool" setter="set_strand_collision" getter="is_strand_collision" default="true">
+			Keeps the guide strands from passing through each other: once a frame their points are hashed into a grid and pushed apart where two strands come closer than [member strand_collision_radius] (position based, as Müller et al. 2007, with averaged corrections as Macklin et al. 2014). The follower strands take their places from the guides, so they follow. Works with the hair volume, which keeps the hair's overall density.
+		</member>
+		<member name="strand_collision_friction" type="float" setter="set_strand_collision_friction" getter="get_strand_collision_friction" default="0.3">
+			How much of the sliding between two touching guide strands is removed. [code]0[/code]: they slide freely; [code]1[/code]: they stick.
+		</member>
+		<member name="strand_collision_radius" type="float" setter="set_strand_collision_radius" getter="get_strand_collision_radius" default="0.002">
+			How close two guide strands may come, in metres. Each guide stands for a lock of follower strands, so this is a lock's thickness rather than a single hair's.
+		</member>
 		<member name="substeps" type="int" setter="set_substeps" getter="get_substeps" default="4">
 			Solver steps per frame. More keeps long hair stiffer and fast heads cleaner, at a small GPU cost.
 		</member>

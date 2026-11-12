@@ -43,8 +43,8 @@
 
 namespace {
 // std140 Params in hair_strands.glsl: 7 vec4, 4 mat4, MAX_SPHERES vec4, 3 vec4 (SDF), 2 vec4 (volume),
-// 2 + 4 per map vec4 (deep opacity maps).
-constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16 + (7 + HairStrandSolverGPU::DOM_SLOTS * 4) * 16;
+// 2 + 4 per map vec4 (deep opacity maps), 1 vec4 (strand-strand collision).
+constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16 + (8 + HairStrandSolverGPU::DOM_SLOTS * 4) * 16;
 constexpr int SDF_PARAMS = (7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16) / 4; // float index
 constexpr uint32_t GROUP = 64; // local_size_x
 
@@ -73,10 +73,16 @@ enum Mode {
 	MODE_DOM_OPAQUE_TRIS = 17,
 	MODE_DOM_ACCUM = 18,
 	MODE_DOM_RESOLVE = 19,
+	MODE_COLL_CLEAR = 20,
+	MODE_COLL_INSERT = 21,
+	MODE_COLL_SOLVE = 22,
+	MODE_COLL_APPLY = 23,
 };
 constexpr int VOL_PARAMS = SDF_PARAMS + 12; // float index
 constexpr int VOL_CELLS = 32; // a side
 constexpr int DOM_PARAMS = VOL_PARAMS + 8; // float index
+constexpr int COLL_PARAMS = DOM_PARAMS + 8 + HairStrandSolverGPU::DOM_SLOTS * 16; // float index
+constexpr int COLL_BUCKET = 8; // points a hash bucket holds (hair_strands.glsl)
 
 struct PassConstants {
 	int32_t mode;
@@ -180,7 +186,7 @@ void HairStrandSolverGPU::rt_free_buffers() {
 		rd->free_rid(uniform_set);
 	}
 	uniform_set = RID();
-	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &tex_out_prev, &buf_last, &buf_dom_depth, &buf_dom_accum, &tex_dom, &buf_tris, &buf_sdf, &buf_vol, &buf_vol_rest, &buf_render_points };
+	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &tex_out_prev, &buf_last, &buf_dom_depth, &buf_dom_accum, &tex_dom, &buf_tris, &buf_sdf, &buf_vol, &buf_vol_rest, &buf_render_points, &buf_coll_cells, &buf_coll_delta, &buf_point_strand };
 	history = false;
 	vol_cells = 0;
 	tris_capacity = 0;
@@ -245,6 +251,31 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 			}
 		}
 		buf_render_points = storage_from(rd, (const uint8_t *)rp.ptr(), rp.size() * 4);
+	}
+	{
+		// Strand-strand collision: each point's strand, and a spatial hash sized for the guides'
+		// points (about two buckets each).
+		PackedInt32Array owner;
+		owner.resize(point_count);
+		int *o = owner.ptrw();
+		int guide_points = 0;
+		for (int s = 0; s < strand_count; s++) {
+			const int first = p_strands[s * 2];
+			const int n = p_strands[s * 2 + 1];
+			for (int k = 0; k < n && first + k < point_count; k++) {
+				o[first + k] = s;
+			}
+			if (p_follow[s * 8 + 3] < 0.0f) {
+				guide_points += n;
+			}
+		}
+		buf_point_strand = storage_from(rd, (const uint8_t *)owner.ptr(), point_count * 4);
+		coll_buckets = 1;
+		while (coll_buckets < guide_points * 2) {
+			coll_buckets <<= 1;
+		}
+		buf_coll_cells = storage_from(rd, nullptr, coll_buckets * (COLL_BUCKET + 1) * 4);
+		buf_coll_delta = storage_from(rd, nullptr, point_count * 16);
 	}
 	sort_size = 1;
 	while (sort_size < strand_count) {
@@ -385,6 +416,27 @@ void HairStrandSolverGPU::rt_make_uniform_set() {
 	}
 	{
 		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 18;
+		u.append_id(buf_coll_cells);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 19;
+		u.append_id(buf_coll_delta);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 20;
+		u.append_id(buf_point_strand);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
 		u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
 		u.binding = 12;
 		u.append_id(tex_out_prev);
@@ -463,6 +515,7 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 	float *fl = (float *)params.ptrw();
 	fl[26] = (float)slot_points;
 	fl[27] = (float)sort_size;
+	fl[COLL_PARAMS + 1] = (float)coll_buckets;
 	if (vol_cells == 0) {
 		fl[VOL_PARAMS + 7] = 0.0f; // no grid: the volume stays off
 	}
@@ -493,6 +546,14 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 	const int substeps = MAX(p_substeps, 1);
 	for (int s = 0; s < substeps; s++) {
 		run(MODE_STEP, (float)(s + 1) / (float)substeps, (float)s / (float)substeps, strand_count);
+	}
+	if (fl[COLL_PARAMS] > 0.0f && coll_buckets > 0) {
+		// Strand-strand collision between the guides, once a frame, before the followers take
+		// their places from them.
+		run(MODE_COLL_CLEAR, 1.0f, 1.0f, coll_buckets);
+		run(MODE_COLL_INSERT, 1.0f, 1.0f, point_count);
+		run(MODE_COLL_SOLVE, 1.0f, 1.0f, point_count);
+		run(MODE_COLL_APPLY, 1.0f, 1.0f, point_count);
 	}
 	run(MODE_FOLLOW, 1.0f, 1.0f, strand_count);
 	if (tri_count > 0) {
@@ -796,6 +857,12 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 		d[4] = layers.x;
 		d[5] = layers.y;
 		d[6] = layers.z;
+	}
+	// Strand-strand collision between guides.
+	if (p_settings.collision_radius > 0.0f) {
+		f[COLL_PARAMS + 0] = p_settings.collision_radius;
+		f[COLL_PARAMS + 2] = CLAMP(p_settings.collision_friction, 0.0f, 1.0f);
+		f[COLL_PARAMS + 3] = 1.0f;
 	}
 	// The hair volume (Petrovic et al. 2005).
 	if (p_settings.volume_enabled && vol_cells > 0) {
