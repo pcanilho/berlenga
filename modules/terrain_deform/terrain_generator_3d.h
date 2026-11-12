@@ -251,7 +251,7 @@ private:
 		LocalVector<real_t> dep; // channel depth at each point (eased in and out at the ends)
 		real_t half_width = 5.0, depth = 1.0;
 		bool reach = false; // the river's course (else an oxbow)
-		LocalVector<Vector2> tail; // the river's next cells below a reach
+		int foot_cell = -1; // a reach's last cell: the river's course below it is cut once the rivers are routed
 	};
 	static constexpr real_t CHANNEL_BUCKET = 32.0;
 	LocalVector<Channel> channels;
@@ -260,6 +260,7 @@ private:
 	LocalVector<int32_t> channel_of_cell; // the channel cut through each cell, -1 none
 	float _apply_channels(real_t p_x, real_t p_z, float p_g) const;
 	void _bucket_channels();
+	void _cut_tails();
 	int lip_bx = 0, lip_bz = 0;
 	void _bake_lips();
 	float _apply_lips(real_t p_x, real_t p_z, float p_g) const;

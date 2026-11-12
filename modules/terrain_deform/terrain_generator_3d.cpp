@@ -1356,11 +1356,7 @@ bool TerrainGenerator3D::generate() {
 			}
 			{
 				const int ci = add_channel(cv.pts, &sacc, depth, 0.0);
-				// The river's next cells below the reach: the channel's end may not lie under them.
-				int q = rcv[cv.cells[cv.cells.size() - 1]];
-				for (int k = 0; k < 48 && q >= 0; k++, q = rcv[q]) {
-					channels[ci].tail.push_back(world0 + Vector2((q % nx) * c, (q / nx) * c));
-				}
+				channels[ci].foot_cell = cv.cells[cv.cells.size() - 1];
 				carve(cv.pts, &sacc, depth, ci);
 			}
 		}
@@ -1894,48 +1890,6 @@ bool TerrainGenerator3D::generate() {
 				ch.bed[k] = Math::lerp(g0, g1, run / MAX(len, real_t(1e-3))) - ch.dep[k];
 			}
 		}
-		// Below each reach the river's course is cut down to the channel's bed and falls gently on until it meets
-		// the ground (a millimetre per metre at least), so the water never climbs out of the channel.
-		const uint32_t count = channels.size();
-		for (uint32_t ci = 0; ci < count; ci++) {
-			if (!channels[ci].reach || channels[ci].tail.is_empty()) {
-				continue;
-			}
-			Channel t;
-			t.half_width = channels[ci].half_width;
-			const Vector2 p0 = channels[ci].points[channels[ci].points.size() - 1];
-			const real_t b0 = channels[ci].bed[channels[ci].bed.size() - 1];
-			t.points.push_back(p0);
-			t.bed.push_back(b0);
-			t.dep.push_back(channels[ci].dep[channels[ci].dep.size() - 1]);
-			// The cells smoothed as the rivers' points are (two 1-2-1 passes), so the cut lies under the water.
-			LocalVector<Vector2> tp;
-			tp.push_back(p0);
-			for (const Vector2 &q : channels[ci].tail) {
-				tp.push_back(q);
-			}
-			for (int pass = 0; pass < 2; pass++) {
-				LocalVector<Vector2> sm;
-				sm = tp;
-				for (uint32_t k = 1; k + 1 < tp.size(); k++) {
-					sm[k] = (tp[k - 1] + tp[k] * 2.0f + tp[k + 1]) * 0.25f;
-				}
-				tp = sm;
-			}
-			real_t bed = b0;
-			int dry = 0;
-			for (uint32_t k = 1; k < tp.size() && dry < 3; k++) {
-				const real_t g = _ground(tp[k].x, tp[k].y);
-				bed = MIN(g, bed - 0.001f * tp[k].distance_to(tp[k - 1]));
-				t.points.push_back(tp[k]);
-				t.bed.push_back(bed);
-				t.dep.push_back(MAX(g - bed, real_t(0.0)));
-				dry = g - bed < 0.05f ? dry + 1 : 0; // three cells on with nothing to cut: the course is met
-			}
-			if (t.points.size() >= 2) {
-				channels.push_back(std::move(t));
-			}
-		}
 		_bucket_channels();
 	}
 	uint64_t water_usec = OS::get_singleton()->get_ticks_usec() - tw;
@@ -1977,6 +1931,7 @@ bool TerrainGenerator3D::generate() {
 	}
 	const uint64_t tr = OS::get_singleton()->get_ticks_usec();
 	_route_rivers();
+	_cut_tails();
 	_bake_lips();
 	water_usec += OS::get_singleton()->get_ticks_usec() - tr;
 	last_water_msec = double(water_usec) / 1000.0;
@@ -3979,6 +3934,85 @@ vec3 terrain_detail_normal(vec3 world_pos, vec3 world_normal, int octaves, float
 }
 )GLSL";
 	return c;
+}
+
+// Below each meandered reach the river's routed course is cut down to the channel's bed and falls gently on (a
+// millimetre per metre at least) to its mouth, so the water never climbs out of the channel or stops against a rise
+// on the way (a beach berm at the mouth). The cut follows the routed cells smoothed as get_rivers() smooths them, so
+// it lies under the water's own points.
+void TerrainGenerator3D::_cut_tails() {
+	const int n = nx * ny;
+	if (channels.is_empty() || river_receivers.size() != uint32_t(n) || channel_of_cell.size() != uint32_t(n)) {
+		return;
+	}
+	const uint32_t count = channels.size();
+	bool any = false;
+	for (uint32_t ci = 0; ci < count; ci++) {
+		if (!channels[ci].reach || channels[ci].foot_cell < 0) {
+			continue;
+		}
+		// Down the routed course while it stays on the channel, keeping two cells behind for the smoothing.
+		LocalVector<int> chain;
+		int q = channels[ci].foot_cell;
+		for (int guard = 0; guard < n; guard++) {
+			chain.push_back(q);
+			const int r = river_receivers[q];
+			if (r < 0 || r == q || channel_of_cell[r] != int32_t(ci)) {
+				break;
+			}
+			q = r;
+		}
+		const int e = int(chain.size()) - 1;
+		for (int guard = 0; guard < 400; guard++) {
+			const int r = river_receivers[q];
+			if (r < 0 || r == q) {
+				break;
+			}
+			chain.push_back(r);
+			if (water_body.size() == uint32_t(n) && water_body[r] != 0) {
+				break; // the river ends in the sea or a lake
+			}
+			q = r;
+		}
+		if (int(chain.size()) - e < 2) {
+			continue;
+		}
+		const int s0 = MAX(e - 2, 0);
+		LocalVector<Vector2> tp;
+		for (int k = s0; k < int(chain.size()); k++) {
+			const Vector3 p = _cell_position(chain[k]);
+			tp.push_back(Vector2(p.x, p.z));
+		}
+		for (int pass = 0; pass < 2; pass++) {
+			LocalVector<Vector2> sm;
+			sm = tp;
+			for (uint32_t k = 1; k + 1 < tp.size(); k++) {
+				sm[k] = (tp[k - 1] + tp[k] * 2.0f + tp[k + 1]) * 0.25f;
+			}
+			tp = sm;
+		}
+		const Channel &rc = channels[ci];
+		Channel t;
+		t.half_width = rc.half_width;
+		t.points.push_back(rc.points[rc.points.size() - 1]);
+		t.bed.push_back(rc.bed[rc.bed.size() - 1]);
+		t.dep.push_back(rc.dep[rc.dep.size() - 1]);
+		real_t bed = t.bed[0];
+		for (uint32_t k = uint32_t(e - s0 + 1); k < tp.size(); k++) {
+			const real_t g = _ground(tp[k].x, tp[k].y);
+			bed = MIN(g, bed - 0.001f * tp[k].distance_to(t.points[t.points.size() - 1]));
+			t.points.push_back(tp[k]);
+			t.bed.push_back(bed);
+			t.dep.push_back(MAX(g - bed, real_t(0.0)));
+		}
+		if (t.points.size() >= 2) {
+			channels.push_back(std::move(t));
+			any = true;
+		}
+	}
+	if (any) {
+		_bucket_channels();
+	}
 }
 
 Vector3 TerrainGenerator3D::_cell_position(int p_cell) const {
