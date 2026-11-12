@@ -1400,6 +1400,17 @@
    "topic": "Ground"
   },
   {
+   "name": "Rock detail",
+   "settings": [
+    "rock_detail_enabled"
+   ],
+   "note": "",
+   "what": "steep rock shows bedding planes and joints, and scree and till show loose stones, with no textures and no stretching on any face.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Ground"
+  },
+  {
    "name": "Far blend",
    "settings": [
     "far_blend_enabled",
