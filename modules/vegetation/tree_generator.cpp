@@ -1764,8 +1764,20 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 		nrm = (nrm - t2 * nrm.dot(t2)).normalized();
 		t = t2;
 		const Vector3 bin = t.cross(nrm);
+		// A tube that starts in a closed cap: v runs over the surface (the cap's rings are close
+		// along the axis but far apart across it, which smeared the bark into radial streaks), and
+		// the normals lean back with the radius' slope, so the cap is lit as an end face rather
+		// than as more of the cylinder.
+		const bool capped = p_girth_r > 0.0f;
 		if (r > 0) {
-			v += p_points[r].distance_to(p_points[r - 1]) / circumference;
+			const float d = p_points[r].distance_to(p_points[r - 1]);
+			v += (capped ? Math::sqrt(d * d + (p_radii[r] - p_radii[r - 1]) * (p_radii[r] - p_radii[r - 1])) : d) / circumference;
+		}
+		float slope = 0.0f;
+		if (capped) {
+			const int r0 = MAX(r - 1, 0), r1 = MIN(r + 1, rings - 1);
+			const float len = p_points[r1].distance_to(p_points[r0]);
+			slope = len > 1e-6f ? CLAMP((p_radii[r1] - p_radii[r0]) / len, -6.0f, 6.0f) : 0.0f;
 		}
 		for (int s = 0; s <= p_sides; s++) {
 			const float ang = Math::TAU * s / p_sides;
@@ -1776,15 +1788,28 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				// the ground plane in a ragged line, read as a rim around the root collar. Not on
 				// fallen wood, which lies across that plane: its underside lost its furrows.
 				const float gy = p_points[r].y + dir.y * rr;
-				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f);
+				// None on a cap's end face: the furrows ran into its centre as pleats.
+				const float face = 1.0f - CLAMP(Math::abs(slope) - 0.5f, 0.0f, 1.0f);
+				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f) * face;
 			}
 			r_b.verts.push_back(p_points[r] + dir * rr);
-			r_b.normals.push_back(dir);
-			r_b.uvs.push_back(Vector2(float(s) / p_sides * repeats, v));
-			r_b.colors.push_back(p_color);
+			const Vector3 n_out = capped ? (dir - t * slope).normalized() : dir;
+			// The cap's end face is mapped flat across it, in the colour of weathered end grain:
+			// mapped round the stem, the bark tiles converged on its centre as radial pleats.
+			const bool end_face = capped && Math::abs(slope) > 1.0f;
+			r_b.normals.push_back(n_out);
+			if (end_face) {
+				const float rf = p_radii[r] / BARK_TILE;
+				r_b.uvs.push_back(Vector2(0.5f + rf * Math::cos(ang), 0.5f + rf * Math::sin(ang)));
+				r_b.colors.push_back(p_color.lerp(Color(0.3f, 0.24f, 0.17f), 0.7f));
+			} else {
+				r_b.uvs.push_back(Vector2(float(s) / p_sides * repeats, v));
+				r_b.colors.push_back(p_color);
+			}
 			if (r_b.use_tangents) {
-				// Along u; the binormal (normal x tangent) then runs along the stem, with v.
-				const Vector3 tan = bin * Math::cos(ang) - nrm * Math::sin(ang);
+				// Along u; the binormal (normal x tangent) then runs along the stem, with v. On the
+				// end face u runs along the frame's normal axis.
+				const Vector3 tan = end_face ? (nrm - n_out * nrm.dot(n_out)).normalized() : bin * Math::cos(ang) - nrm * Math::sin(ang);
 				r_b.tangents.push_back(tan.x);
 				r_b.tangents.push_back(tan.y);
 				r_b.tangents.push_back(tan.z);
@@ -4896,8 +4921,13 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				const int ring = rsides + 1;
 				LocalVector<float> raw;
 				raw.resize(part.w);
+				// No moss on a log's broken butt face (the closed cap's rings).
+				const float cap_end = girth_r > 0.0f ? girth_r * 0.15f + 1e-4f : -1.0f;
 				for (int i = 0; i < part.w; i++) {
 					raw[i] = _moss_at(moss.verts[part.z + i], moss.normals[part.z + i], moss_ground, moss_k, false);
+					if (cap_end > 0.0f && i / ring < int(rp.size()) && rp[i / ring].distance_to(rp[0]) < cap_end) {
+						raw[i] = -1.0f;
+					}
 				}
 				for (int i = 0; i < part.w; i++) {
 					const int v = part.z + i;

@@ -539,6 +539,9 @@ layer, so we build geometry:
   - **Where on a log.** The stem-foot skirt covered a lying log all round, its underside too; on
     fallen wood the skirt is replaced by the upper half and flanks (the face in the litter stays
     bare). Fallen wood also keeps its bark relief (the soil-line fade is for standing stems).
+  - **Butt face.** The closed butt's rings take normals that lean with the radius' slope, v over
+    the surface, flat mapping and an end-grain colour on the face, no relief and no moss: the
+    bark had converged on its centre as radial pleats.
   - **Turf contrast.** The baked turf's tone spread was about 0.06 of its mean; stretched to 0.22
     (lit tips against shaded gaps, as scanned moss shows).
 
