@@ -115,7 +115,7 @@
 		<member name="data_map" type="NodePath" setter="set_data_map" getter="get_data_map" default="NodePath(&quot;&quot;)">
 			Path to a [TerrainDataMap3D] giving the ground height and the maps [member rules] read.
 		</member>
-		<member name="density" type="float" setter="set_density" getter="get_density" default="60.0">
+		<member name="density" type="float" setter="set_density" getter="get_density" default="120.0">
 			Blades per square metre near the camera.
 		</member>
 		<member name="dry_color" type="Color" setter="set_dry_color" getter="get_dry_color" default="Color(0.55, 0.48, 0.28, 1)">

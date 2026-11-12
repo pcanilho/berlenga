@@ -431,6 +431,40 @@ What stays on the CPU per tile: the candidate list, the rules grid and the Multi
 Moving candidates to the GPU would need compaction and a count the CPU does not have; not worth
 it until the PC shows the remaining cost matters. GPU time per tile needs the PC.
 
+## Light inside the sward (raster against the path tracer)
+
+Asked for: raster grass darkening inside the sward the way the path tracer shows it. Measured
+first (bench `docs/bench/grass`, still air, 60/m2, mean luminance of the near, mid and far bands,
+AgX): raster was not too light but too dark, front-lit 38.9 / 42.2 / 79.8 against the path
+tracer's 46.0 / 49.6 / 82.9, backlit 43.4 / 44.1 / 77.3 against 49.7 / 48.4 / 77.4. Bare ground
+matches to 0.5, sky to 0, so it is the blades.
+
+What the literature does. Light in a canopy falls off as exp(-k L) with the leaf area L above
+(Monsi and Saeki 1953), k about 0.5 / sin(sun) for the direct beam and 0.7..0.8 for sky light on
+upright blades; the light leaves scatter slows that to exp(-k sqrt(1 - s) L), s their reflectance
+plus transmittance (Goudriaan 1977), and a deep sward reflects (1 - sqrt(1 - s)) / (1 + sqrt(1 - s))
+of it back up (two-stream, Sellers 1985). Games fake it: an albedo ramp to the root as the main
+AO (Call of Duty BO4, Pesce), Ghost of Tsushima the same plus translucency; offline tests at
+Activision found grass too dark without translucency even with GI.
+
+What we found and changed:
+
+- The root ramp (x0.6 at the root) sat in the albedo, so the path tracer, which shades the
+  blades for real, darkened roots twice. It is now AO, exp(-0.8 sqrt(1 - s) L) with
+  L = blades/m2 x mean height x width x 0.7 above the point; AO is raster-only (the path
+  tracer ignores it). Path tracer near band 46.0 -> 47.7, raster 38.9 -> 41.1.
+- Shadow passes widened every blade towards the light's camera (the view-space thickening reads
+  CAMERA_POSITION_WORLD, which is the light there): the sward cast about twice its shadow. Now
+  MAIN_CAM_INV_VIEW_MATRIX. Small in the band means (+0.5) but right.
+- Tried and dropped: a custom light() (raster only too) with the transmitted sun the path
+  tracer's shadow rays keep (albedo x BACKLIGHT per blade) and the Goudriaan scattered and
+  upward light. Measured +1 of 255; not worth replacing Godot's light model for it.
+- Where the rest of the gap is: shadowed pixels now match (10th and 25th percentile 13.3 / 24.7
+  against 14.0 / 27.0); the lit blades differ (75th 60 against 70). With blade height, width
+  and rest lean forced to constants raster and path tracer draw the same sward, so the path
+  tracer reads the blades' per-instance data differently: its blades are taller, thinner and
+  lean one way. That is a path tracer bug, followed up separately.
+
 ## References
 
 - Wohllaib, Procedural Grass in Ghost of Tsushima, GDC 2021.
@@ -444,3 +478,7 @@ it until the PC shows the remaining cost matters. GPU time per tile needs the PC
 - Sucker Punch, Ghost of Yotei tech deep dive, PlayStation Blog, 23 Oct 2025.
 - Wihlidal, Optimizing the Graphics Pipeline with Compute, GDC 2016.
 - Haar, Aaltonen, GPU-Driven Rendering Pipelines, SIGGRAPH 2015 Advances course.
+- Monsi, Saeki, On the factor light in plant communities and its importance for matter production, 1953 (Annals of Botany 2005 translation).
+- Goudriaan, Crop micrometeorology: a simulation study, Pudoc 1977.
+- Sellers, Canopy reflectance, photosynthesis and transpiration, Int. J. Remote Sensing 6, 1985.
+- Pesce, Making a greener grass, part 2 (Call of Duty: Black Ops 4 vegetation), c0de517e.com, 2024.

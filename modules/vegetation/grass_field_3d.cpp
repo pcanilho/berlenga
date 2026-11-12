@@ -197,6 +197,22 @@ void grass_fill_rt(RID p_multimesh, const PackedFloat32Array &p_inputs, int p_co
 
 } // namespace
 
+static void grass_fill_free_rt() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	RenderingDevice *rd = rs ? rs->get_rendering_device() : nullptr;
+	if (rd && grass_fill_gpu.shader.is_valid()) {
+		rd->free_rid(grass_fill_gpu.shader); // Frees the pipeline with it.
+	}
+	grass_fill_gpu = GrassFillGPU();
+}
+
+void GrassField3D::free_gpu_fill() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (rs && grass_fill_gpu.shader.is_valid()) {
+		rs->call_on_render_thread(callable_mp_static(&grass_fill_free_rt));
+	}
+}
+
 bool GrassField3D::is_gpu_fill_available() {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	return rs && rs->get_rendering_device() != nullptr && !(grass_fill_gpu.tried && !grass_fill_gpu.ok);
@@ -360,8 +376,10 @@ void vertex() {
 	float taper = 1.0 - 0.9 * t * t;
 	p += across * side * w * taper;
 	// Seen edge-on a blade is a line: widen it across the view instead (Ghost of Tsushima's
-	// view-space thickening), so the field stays full from every side.
-	vec3 cam_l = to_local * (CAMERA_POSITION_WORLD - base_w);
+	// view-space thickening), so the field stays full from every side. Always towards the main
+	// camera: in a shadow pass the light's camera would widen every blade across the sun and the
+	// sward would cast about twice the shadow it has.
+	vec3 cam_l = to_local * (MAIN_CAM_INV_VIEW_MATRIX[3].xyz - base_w);
 	vec2 to_cam = cam_l.xz - p.xz;
 	float cam_d = length(to_cam);
 	if (cam_d > 1e-3) {
@@ -395,6 +413,7 @@ void vertex() {
 }
 
 uniform float dryness;
+uniform float sward_lai = 1.0;
 
 void fragment() {
 	float t = smoothstep(0.0, 1.0, v_t);
@@ -412,8 +431,6 @@ void fragment() {
 	float rib = 1.0 - smoothstep(0.0, 0.12 + fw, x);
 	float veins = 0.5 + 0.5 * cos(x * 6.2832 * 3.5);
 	c *= 1.0 + detail * (0.18 * rib - 0.07 * veins * (1.0 - rib) - 0.12 * x * x);
-	// Darker towards the root, where the field shades itself.
-	c *= mix(0.6, 1.0, t);
 	c = vegetation_light_tint(c, v_light);
 	// Wet blades (Lagarde 2013, low porosity): a little darker and glossier.
 	float wet_factor = mix(1.0, 0.2, 0.25);
@@ -421,7 +438,15 @@ void fragment() {
 	ROUGHNESS = 0.55 * mix(1.0, wet_factor, 0.5 * v_wet) * mix(1.0, 0.4, v_wet);
 	SPECULAR = 0.35;
 	BACKLIGHT = ALBEDO * 0.7;
+	// Sky light inside the sward (Monsi and Saeki 1953): diffuse light falls off as
+	// exp(-k L) with the leaf area L above, k about 0.8 for upright blades, and light the blades
+	// scatter on slows that to k sqrt(1 - scattering) (Goudriaan 1977). In AO, so only the
+	// raster's ambient takes it: its shadow maps already darken the sun there, and the path
+	// tracer sees the blades themselves (it used to take this darkening in the albedo too).
+	float scatter = clamp(dot(ALBEDO, vec3(0.3, 0.59, 0.11)) * 1.7, 0.0, 0.95);
+	AO = exp(-0.8 * sqrt(1.0 - scatter) * sward_lai * (1.0 - v_t));
 }
+
 )";
 	Ref<Shader> shader;
 	shader.instantiate();
@@ -438,6 +463,8 @@ void fragment() {
 	material->set_shader_parameter("trample_rect", Vector4());
 	material->set_shader_parameter("view_facing", view_facing);
 	material->set_shader_parameter("fade_band", fade_band);
+	// One-sided leaf area per ground area: blades per m2 x mean height x width x 0.7 (the taper).
+	material->set_shader_parameter("sward_lai", density * 0.5f * (blade_height.x + blade_height.y) * blade_width * 0.7f);
 	if (blade_mesh.is_valid()) {
 		blade_mesh->surface_set_material(0, material);
 	}

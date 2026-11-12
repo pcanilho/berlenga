@@ -58,7 +58,7 @@ class GrassField3D : public Node3D {
 	NodePath data_map;
 	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
 	Ref<PlantSpecies> rules;
-	float density = 60.0f; // Blades per square metre, near the camera.
+	float density = 120.0f; // Blades per square metre, near the camera.
 	Vector2 blade_height = Vector2(0.25f, 0.6f);
 	float blade_width = 0.04f;
 	float clump_size = 1.2f;
@@ -132,6 +132,7 @@ public:
 	void set_gpu_fill(bool p_enabled);
 	bool is_gpu_fill() const { return gpu_fill; }
 	static bool is_gpu_fill_available();
+	static void free_gpu_fill();
 	void set_data_map(const NodePath &p_path);
 	NodePath get_data_map() const { return data_map; }
 	void set_canopy_field(const NodePath &p_path);

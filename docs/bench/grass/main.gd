@@ -9,7 +9,9 @@ extends Node3D
 #   --wind=x,z       fallback wind in m/s (default 3,1); 0,0 for still grass
 #   --weather        a WeatherMap3D drives the wind instead
 #   --frames=N       frames before the capture (default 20)
-#   --grass-density=N  blades per m2 of the tall grass near the camera (default 60)
+#   --grass-density=N  blades per m2 of the tall grass near the camera (default: the field's, 120)
+#   --sun-yaw=D      sun heading in degrees (default 150, against the light; -30 lights the view from behind)
+#   env GRASS_DIAG=noshadow|nosun|nograss|notrample|novf|bounce0: lighting diagnostics (grass.md, "Light inside the sward")
 #   --cpu-fill       build grass tiles on the CPU instead of the GPU fill (grass.md, stage 3a)
 #   --litter-wind=x,z  downwind lean of the leaf drift (VegetationField3D.litter_wind), e.g. 0.6,0
 #   --out=path.png   save the last frame
@@ -61,6 +63,7 @@ var forest := false
 var litter_wind := Vector2()
 var grass_density := 0.0
 var gpu_fill := true
+var sun_yaw := 150.0
 var forest_in := false
 var stand := "beech"
 var stand_set := false
@@ -139,6 +142,7 @@ func _ready() -> void:
 		elif a == "--notex": notex = true
 		elif a.begins_with("--grass-density="): grass_density = float(a.substr(16))
 		elif a == "--cpu-fill": gpu_fill = false
+		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
 		elif a.begins_with("--litter-wind="):
 			var lw := a.substr(14).split(",")
 			litter_wind = Vector2(float(lw[0]), float(lw[1]))
@@ -309,8 +313,18 @@ void fragment() {
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-28, 150, 0)
-	sun.shadow_enabled = true
+	sun.rotation_degrees = Vector3(-28, sun_yaw, 0)
+	sun.shadow_enabled = OS.get_environment("GRASS_DIAG") != "noshadow"
+	if OS.get_environment("GRASS_DIAG") == "nograss":
+		_hide_grass.call_deferred()
+	if OS.get_environment("GRASS_DIAG") == "notrample":
+		_no_trample.call_deferred()
+	if OS.get_environment("GRASS_DIAG") == "novf":
+		_no_view_facing.call_deferred()
+	if OS.get_environment("GRASS_DIAG") == "nosun":
+		sun.light_energy = 0.0
+	if OS.get_environment("GRASS_DIAG") == "bounce0":
+		env.pathtracing_max_bounces = 0
 	add_child(sun)
 	# Movers: a ball (radius from its SphereShape3D) and a walker (radius from its meta).
 	ball = StaticBody3D.new()
@@ -1072,7 +1086,7 @@ func _checks() -> void:
 	var ring_area := PI * (36.0 * 36.0 - 32.0 * 32.0) * ring_hits / 4000.0
 	var near_density: float = near / max(near_area, 0.01)
 	var far_density: float = far / max(ring_area, 0.01)
-	_check("near density about 60 /m2", near_density > 45.0 and near_density < 70.0, near_density)
+	_check("near density about %d /m2" % int(grass.density), near_density > grass.density * 0.75 and near_density < grass.density * 1.17, near_density)
 	_check("far ring thinned (LOD)", far_density < near_density * 0.3, far_density)
 	_check("no grass under water", wet == 0, wet)
 	# GPU tile fill (grass.md, stage 3a) against the CPU loop: the same blades but at rule edges.
@@ -1290,3 +1304,21 @@ func _process(dt: float) -> void:
 		get_viewport().get_texture().get_image().save_png(out)
 		print("saved ", out)
 	get_tree().quit()
+
+
+func _hide_grass() -> void:
+	grass.visible = false
+	if under:
+		under.visible = false
+
+
+func _no_trample() -> void:
+	grass.trample_enabled = false
+	if under:
+		under.trample_enabled = false
+
+
+func _no_view_facing() -> void:
+	grass.view_facing = 0.0
+	if under:
+		under.view_facing = 0.0
