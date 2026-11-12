@@ -186,7 +186,7 @@ func _ready() -> void:
 	grass.fallback_wind = wind
 	if grass_density > 0.0:
 		grass.density = grass_density
-	if OS.get_environment("GRASS_DIAG") == "vf1":
+	if OS.get_environment("GRASS_DIAG").contains("vf1"):
 		grass.view_facing = 1.0
 	grass.gpu_fill = gpu_fill
 	add_child(grass)
@@ -317,20 +317,20 @@ void fragment() {
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-28, sun_yaw, 0)
 	sun.shadow_enabled = not OS.get_environment("GRASS_DIAG").contains("noshadow")
-	if OS.get_environment("GRASS_DIAG") == "ssaa":
+	if OS.get_environment("GRASS_DIAG").contains("ssaa"):
 		get_viewport().scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
 		get_viewport().scaling_3d_scale = 2.0
 	if OS.get_environment("GRASS_DIAG").contains("nounder"):
 		_hide_under.call_deferred()
-	if OS.get_environment("GRASS_DIAG") == "nograss":
+	if OS.get_environment("GRASS_DIAG").contains("nograss"):
 		_hide_grass.call_deferred()
-	if OS.get_environment("GRASS_DIAG") == "notrample":
+	if OS.get_environment("GRASS_DIAG").contains("notrample"):
 		_no_trample.call_deferred()
-	if OS.get_environment("GRASS_DIAG") == "novf":
+	if OS.get_environment("GRASS_DIAG").contains("novf"):
 		_no_view_facing.call_deferred()
-	if OS.get_environment("GRASS_DIAG") == "nosun":
+	if OS.get_environment("GRASS_DIAG").contains("nosun"):
 		sun.light_energy = 0.0
-	if OS.get_environment("GRASS_DIAG") == "bounce0":
+	if OS.get_environment("GRASS_DIAG").contains("bounce0"):
 		env.pathtracing_max_bounces = 0
 	add_child(sun)
 	# Movers: a ball (radius from its SphereShape3D) and a walker (radius from its meta).
