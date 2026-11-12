@@ -1,0 +1,74 @@
+# Ground vegetation through the year
+
+Grass, flowers, ferns and litter follow the one season state (`WeatherMap3D.get_season()`, keys
+in its class reference), as trees do with `TreeGenerator.get_leaf_season()`. This note covers
+everything under about 1.5 m (VegetationField3D, GrassField3D, PlantGenerator).
+
+## What changes, and the published models for it
+
+**Sward greenness.** Remote sensing tracks the green-up and browning of grassland with the
+Growing Season Index (Jolly, Nemani and Running 2005): the product of three ramps, on the daily
+minimum temperature (-2 to 5 C), day length (10 to 11 h) and vapour pressure deficit (4.1 to
+0.9 kPa), smoothed over 21 days. It fits the start and end of the season across biomes within
+days. Here the season state has the day's mean temperature, day length and soil moisture (a
+Thornthwaite and Mather bucket), so the index is temperature x day length x moisture, with the
+moisture ramp standing in for the deficit (Jolly et al. use the deficit as the drought term; in
+grassland the soil water is the better one, Hufkens et al. 2016). The index sets how much of the
+sward is green; the rest is last year's thatch (`dry_color`). A temperate grass in a mild winter
+stays half green; a continental one goes tan; a summer drought browns the sward until rain.
+
+**Flowering.** First flowering dates of herbs follow thermal time, the degree days above a base
+since 1 January (Fitter and Fitter 2002: 385 British species, about 4 days earlier per 1 C), with
+a window of a few weeks to months. The season state carries this sum (`forcing`, base 5 C). Each
+flowering preset gets an onset and an end in degree days, from those records and the floras:
+wood anemone and violet in early spring, wood sorrel and woodruff in spring, sorrel, foxglove,
+herb Robert and wild carrot in early summer, knapweed, scabious and yarrow in high summer into
+autumn. Before the onset the plant is in leaf only; after the end its heads are seed heads (the
+tall flowers already build a seed form, `in_seed`); the share in seed rises through the window.
+
+**Ferns and bracken.** Bracken croziers rise in May, the fronds are green through summer, turn
+russet with the first frosts and stand dead and brown through winter, lodging under snow
+(Watt 1976, bracken ecology). Male fern and the other woodland ferns follow the same course
+later and partly stay green. Driven by the senescence sum (Delpierre et al. 2009) and frost.
+
+**Litter.** Already seasonal: `stand_litter_leaves()` takes the fallen fraction and autumn colour
+from the trees (`get_leaf_season()`), so fresh leaves fall into the older brown litter.
+
+**Snow.** Snow cover belongs to the snow system (SnowCover3D); plants under deep snow are hidden
+by it. No work here beyond hiding grass blades where the snow is deeper than they are tall.
+
+## How games do it
+
+Forza Horizon 4 swaps authored looks per season; Microsoft Flight Simulator changes ground and
+tree colour with the date. Neither, as far as published, ties ground plants to a climate model.
+The plan here keeps one state for everything and changes looks in two ways:
+
+- **Colour by a uniform, every day.** Greenness and frond colour are shader parameters (no mesh
+  rebuild): the grass material's dryness and the plant shader's season tint. Path tracing reads
+  the same material, so it follows.
+- **Shape by a rebuild, rarely.** Flowers opening, seed heads and leaf-only plants are mesh
+  variants: species re-generate when their stage crosses a step (a quarter of the window), a few
+  times a year per species, over several frames.
+
+The far grass colour bake re-runs when the greenness moves by more than 0.05 (it is a few frames
+of a 96 x 96 view), so the far meadow follows the near one.
+
+## Plan
+
+1. `season_source` (a WeatherMap3D) on GrassField3D and VegetationField3D; a daily read.
+2. Sward greenness index (Jolly 2005 ramps with soil moisture) into GrassField3D's dryness and
+   the far colour bake; bench with `--day=` across the year.
+3. Flowering windows per preset in degree days; leaf-only, flowering and seed forms, re-generated
+   when the stage steps.
+4. Bracken and fern frond colour by the senescence sum and frost; standing dead fronds in
+   winter.
+5. Raster and path-traced shots through the year (spring, high summer, drought, autumn, winter).
+
+## References
+
+- Jolly, Nemani and Running, "A generalized, bioclimatic index to predict foliar phenology in response to climate", Global Change Biology 11, 2005.
+- Hufkens et al., "Productivity of North American grasslands is increased under future climate scenarios despite rising aridity", Nature Climate Change 6, 2016.
+- Fitter and Fitter, "Rapid changes in flowering time in British plants", Science 296, 2002.
+- Delpierre et al., "Modelling interannual and spatial variability of leaf senescence for three deciduous tree species in France", Agricultural and Forest Meteorology 149, 2009.
+- Watt, "The ecological status of bracken", Botanical Journal of the Linnean Society 73, 1976.
+- Zhang et al., "Monitoring vegetation phenology using MODIS", Remote Sensing of Environment 84, 2003.
