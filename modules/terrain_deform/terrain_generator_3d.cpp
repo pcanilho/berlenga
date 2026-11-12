@@ -1219,6 +1219,27 @@ bool TerrainGenerator3D::generate() {
 					}
 				}
 			}
+			// No bend tighter than 1.5 widths in radius (rivers' bends rarely are: Leopold and Wolman 1960, Hickin
+			// 1974): the discrete model can kink tighter, and the water's ribbon would fold over itself there.
+			for (int pass = 0; pass < 30; pass++) {
+				bool kinked = false;
+				LocalVector<Vector2> q;
+				q = cv.pts;
+				for (uint32_t k = 1; k + 1 < cv.pts.size(); k++) {
+					const Vector2 d1 = cv.pts[k] - cv.pts[k - 1], d2 = cv.pts[k + 1] - cv.pts[k];
+					const double ang = Math::abs(Math::atan2(double(d1.x) * d2.y - double(d1.y) * d2.x, double(d1.dot(d2))));
+					const double L = 0.5 * double(d1.length() + d2.length());
+					if (ang > L / (1.5 * w)) {
+						q[k] = (cv.pts[k - 1] + cv.pts[k + 1]) * 0.5f;
+						kinked = true;
+					}
+				}
+				cv.pts = q;
+				if (!kinked) {
+					break;
+				}
+				resample(cv.pts);
+			}
 			last_meander_count++;
 		}
 		// Carve: the floodplain is levelled back over the old straight course, then the channel is cut along the new
