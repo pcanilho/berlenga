@@ -328,6 +328,7 @@ public:
 		RID shadow_atlas_depth;
 		RID directional_shadow_depth;
 		RID radiance_texture;
+		RID decal_atlas; // the sRGB decal atlas (directional projectors), or the default white
 
 		struct {
 			RID process_uniform_set_density;

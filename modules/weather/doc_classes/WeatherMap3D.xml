@@ -24,6 +24,14 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="aerosol_extinction" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="dry_visibility_km" type="float" />
+			<param index="1" name="humidity" type="float" />
+			<description>
+				Extinction (1/m) at the ground of the background aerosol haze: Koschmieder's 3.912 / visibility for dry air, grown with the relative humidity as (1 - RH)^-0.35 (Hänel 1976), with the humidity capped at 0.98.
+			</description>
+		</method>
 		<method name="add_canopy">
 			<return type="int" />
 			<param index="0" name="center" type="Vector2" />
@@ -355,6 +363,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="aerosol_haze" type="bool" setter="set_aerosol_haze" getter="get_aerosol_haze" default="false">
+			Fills the air with background aerosol haze, from [member haze_visibility] and the air's humidity, thinning with height over [member haze_height]. The volumetric fog lights it with the sun, the sun's shadows and the cloud shadow, so shafts of light show between clouds and past ridges. Off, the air is clear unless the [Environment] adds fog.
+		</member>
 		<member name="canopy_map" type="Texture2D" setter="set_canopy_map" getter="get_canopy_map">
 			A map of plant canopies over [member canopy_map_rect]: canopy height in red (metres in a float texture, else times [member canopy_map_max_height]) and Cionco's attenuation coefficient over 4 in green. For vegetation systems that place whole forests.
 		</member>
@@ -420,6 +431,12 @@
 		</member>
 		<member name="gust_patch_strength" type="float" setter="set_gust_patch_strength" getter="get_gust_patch_strength" default="0.35">
 			How much the gust patches vary the wind near the ground: the standard deviation of the speed over its mean (0.3 to 0.5 at the top of crops and forests, Finnigan 2000). [code]0[/code] turns them off.
+		</member>
+		<member name="haze_height" type="float" setter="set_haze_height" getter="get_haze_height" default="1200.0">
+			Scale height (m) of the aerosol haze: its density falls by 1/e over this height above the ground (the boundary layer).
+		</member>
+		<member name="haze_visibility" type="float" setter="set_haze_visibility" getter="get_haze_visibility" default="40.0">
+			Visibility (km) through the aerosol haze in dry air. Humid air lowers it as the aerosol swells.
 		</member>
 		<member name="humidity" type="float" setter="set_humidity" getter="get_humidity" default="0.7">
 			Relative humidity of the air, 0 to 1. Drier air dries surfaces faster. While it rains, the air is taken as at least 97%.

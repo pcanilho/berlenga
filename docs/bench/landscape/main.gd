@@ -226,6 +226,14 @@ func _ready() -> void:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
 		landscape.update_lods_from_camera()
+	if args.has("face-sun") and sun != null:
+		# --face-sun=PITCH: turn the camera to the sun's azimuth, PITCH degrees below the horizon (godray shots).
+		var cam5: Camera3D = get_viewport().get_camera_3d()
+		var to_sun := sun.global_basis.z
+		var flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
+		var pitch := deg_to_rad(float(args["face-sun"]))
+		cam5.look_at(cam5.global_position + flat * cos(pitch) - Vector3.UP * sin(pitch))
+		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
 	var frames := int(args.get("frames", "6" if args.has("raster") else "40"))
 	for i in frames:
 		if no_till_tex != null:
@@ -257,6 +265,12 @@ func _ready() -> void:
 	if out != "":
 		get_viewport().get_texture().get_image().save_png(out)
 		_log("saved " + out)
+		if weather != null and weather.aerosol_haze:
+			var cam4: Camera3D = get_viewport().get_camera_3d()
+			_log("aerosol haze %s /m at the camera, volumetric fog %s, length %.0f m" % [str(weather.get_precipitation_extinction_at(cam4.global_position)), env.volumetric_fog_enabled, env.volumetric_fog_length])
+			for fv in weather.get_children(true):
+				if fv is FogVolume:
+					_log("haze volume at %s size %s density %s falloff %s cam %s" % [str(fv.global_position), str(fv.size), str(fv.material.density), str(fv.material.height_falloff), str(cam4.global_position)])
 		if gen != null:
 			_log("sky light update %.1f ms" % gen.get_last_sky_light_msec())
 		if args.has("geo-dump"):
@@ -1286,7 +1300,12 @@ func _weather_settings() -> void:
 	weather.cloud_type = 0.85 if storm else 0.4
 	weather.rain_rate = 8.0 if storm else 0.0
 	weather.temperature = 5.0 if storm else 12.0
-	weather.humidity = 0.95 if storm else 0.6
+	weather.humidity = float(args.get("humidity", "0.95" if storm else "0.6"))
+	# --haze=1 [--haze-visibility=KM] [--cloud-cover=C]: background aerosol haze, lit through the cloud shadow (godrays).
+	weather.aerosol_haze = args.get("haze", "0") != "0"
+	weather.haze_visibility = float(args.get("haze-visibility", "40"))
+	if args.has("cloud-cover"):
+		weather.cloud_cover = float(args["cloud-cover"])
 	weather.snap_to_settings()
 	if storm:
 		weather.cloud_thickness = 2500.0 # a deep storm cell: about 1.6 flashes a minute
