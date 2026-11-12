@@ -769,6 +769,7 @@ public:
 		enum Type {
 			TYPE_TRIANGLES,
 			TYPE_AABBS,
+			TYPE_LINEAR_SWEPT_SPHERES,
 		};
 
 		struct Triangles {
@@ -802,9 +803,23 @@ public:
 			uint32_t count;
 		};
 
+		// Linear swept spheres (SUPPORTS_RAYTRACING_LINEAR_SWEPT_SPHERES): points of `stride` bytes, each a float3
+		// centre followed by a float radius, and one uint32 per segment, the index of its first point (the segment
+		// runs to the next point).
+		struct LinearSweptSpheres {
+			BufferID buffer;
+			uint32_t offset;
+			uint32_t stride;
+			uint32_t point_count;
+			BufferID index_buffer;
+			uint32_t index_offset;
+			uint32_t segment_count;
+		};
+
 		union Geometry {
 			Triangles triangles;
 			Aabbs aabbs;
+			LinearSweptSpheres swept_spheres;
 			Geometry() {}
 		};
 

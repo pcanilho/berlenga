@@ -1920,15 +1920,31 @@ fork can.
   and drapes a sheet down every fall that is not a free plunge (`type` cascade, horsetail or tiered).
 - The sheet covers the wet part of the lip only: the brink points no higher than 1.5 critical depths over the
   lowest one (a gorge's lip line runs up its walls). Each column follows the ground under it, sampled every
-  0.5 m with the source's `get_height()`; without one, it falls back to the record's three face profiles,
+  0.25 m with the source's `get_height()`; without one, it falls back to the record's three face profiles,
   smoothed with a centripetal Catmull-Rom spline. A first build that only used the profiles left 30% of the
   sheet under the ground on the valley layout (gorge walls); following the ground leaves 3%.
 - Per row: speed from `dv/ds = (g sin a - f v^3 / 8q) / v` (`friction_factor` 0.2), so the sheet speeds up on
   the steep part and slows on the foot; air 0 above the inception point and towards `0.9 sin a` below it over
   about 1.5 m (the surface whitens right at the inception point; a first build with 5 m left a 16 m main-river
-  cascade with its inception at 11 m clear all the way down); thickness `q / v / (1 - C)`. The sheet uses the river fall shader: whiteness from `C / 0.9`,
-  streaks scrolled with the travel time.
-- Spray (`GPUParticles3D`) at each ledge of the record and at the foot, scaled by `0.5 rho Q v^2`; a
+  cascade with its inception at 11 m clear all the way down); it leaves over 6 m, since bubbles rise out more slowly
+  than they are drawn in, so the water stays white across a ledge; thickness `q / v / (1 - C)`. Rows every 0.5 m, each
+  vertex kept above the rock under it (a ledge's brink between rows 1 m apart cut through the sheet).
+- Width and shape across (look fix, 11 Nov; the first build drew a flat strip the width of the wetted lip with
+  saw-tooth edges, because its outer columns were 1 to 2 m apart and the river fall shader cut holes along the
+  edge with a hard threshold): the water runs `4 sqrt(Q)` m wide (hydraulic geometry of steep channels,
+  width about `a Q^0.5`, Leopold and Maddock 1953), at most the wetted lip, centred where the lip shares put it.
+  Across it the flow per metre is a parabola, `1.5 q (1 - (2u - 1)^2)`, so the middle is thick and white and the
+  sides thin out. Columns are 0.15 to 0.4 m apart, each following the ground, and run `wet_margin` (0.6 m) past
+  the water on both sides.
+- Own shader (`get_contact_shader_code()`): each vertex carries its distance inside the water's edge. The edge
+  wanders with the face (two octaves of noise fixed to the rock, down the face, a share of the half-width), so
+  the sheet narrows and widens as it goes down; the water fades in over 15 cm, so no step shows. Past the edge
+  the rock is wet in patches: darker and glossy (wet surfaces lose albedo and roughness, Lagarde 2013), drawn as
+  a dark, low-roughness veil. White water has fine lumps and thin spots riding the flow; near the margins the
+  film is thinner, less white and more see-through. Path tracing uses the same edge as a cut-out and the wet veil
+  as partial coverage.
+- Spray (`GPUParticles3D`) at each ledge of the record and at the foot, scaled by `0.5 rho Q v^2`: drops, and soft
+  camera-facing puffs that rise, spread and fade (the drops alone read as dots from a few metres); a
   `PhysXWaterMist3D` box over the face with a line source along it, only for falls carrying at least
   `mist_min_discharge` (0.2 m3/s): a trickle wets the rock but throws no measurable mist.
 - Rivers draw their own falls from their beds. `PhysXRiver3D.fall_exclusions` takes the lips drawn here, so a
@@ -1940,6 +1956,9 @@ fork can.
 
 - Wood, Ackers and Loveless, General method for critical point on spillways, J. Hydraulic Eng. 109(2), 1983;
   Chanson, Self-aerated flows on chutes and spillways, J. Hydraulic Eng. 119(2), 1993.
+- Leopold and Maddock, The hydraulic geometry of stream channels, USGS Professional Paper 252, 1953.
+- Lagarde, Water drop 2b: dynamic rain and its effects (wet surfaces), 2013:
+  https://seblagarde.wordpress.com/2013/04/14/water-drop-2b-dynamic-rain-and-its-effects/
 - Stockdon, Holman, Howd and Sallenger, Empirical parameterization of setup, swash, and runup, Coastal Engineering 53 (2006).
 - Battjes, Surf similarity, Coastal Engineering Proceedings (1974).
 - Fournier and Reeves, A simple model of ocean waves, SIGGRAPH 1986.
@@ -2077,3 +2096,18 @@ fork can.
 - Zhao, A fast sweeping method for eikonal equations, Math. Comp. 74, 2005.
 - McCowan, On the highest wave of permanent type, Phil. Mag. 38, 1894; Dean and Dalrymple, Water Wave Mechanics
   for Engineers and Scientists (shoaling, refraction, breaking).
+
+## Raster seabed fade with depth (12 Nov)
+
+The showcase valley's sea is a shelf that deepens from the beach to about 17 m at the end of the measured seabed
+(the generator's world rectangle). In raster the sea surface had a fixed alpha (`water_color.a`), so the shelf
+showed through it at every depth: a pale, glint-free band along the coast that stopped in a straight line where the
+seabed ends and open sea begins. The path tracer already absorbs light along the path through the water (its
+`pathtraced_absorption` medium).
+
+Fix (raster only): the surface's opacity follows Beer-Lambert transmittance of light from the bed, down and back
+up along the view, `T = exp(-sigma d (1 + 1 / mu))`, with `sigma` the mean of `pathtraced_absorption` (so raster
+and path tracing fade the bed alike), `d` the still-water depth and `mu` the cosine of the view to the vertical.
+Alpha goes from the water's own value over the shallows to opaque where the bed is gone. The swash film and the
+waterline's cut-out are unchanged. Same technique as depth-based water opacity in UE's single-layer water and
+HDRP's water (absorption distance).

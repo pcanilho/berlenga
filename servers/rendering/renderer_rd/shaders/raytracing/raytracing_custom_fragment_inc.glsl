@@ -25,7 +25,7 @@ mat4 rt_view_matrix = transpose(mat4(scene_data_block.data.view_matrix[0],
 
 GeometryData rt_geom = geometries[rt_geometry_idx];
 #ifdef RT_USES_INSTANCE_CUSTOM
-instance_custom = fetch_instance_custom(rt_geom, uint(gl_PrimitiveID));
+instance_custom = fetch_instance_custom(rt_geom, uint(RT_HIT_PRIMITIVE_ID));
 #endif
 read_model_matrix = mat4(gl_ObjectToWorldEXT);
 // Matches the rasterizer's uniform-scale case; instance scale flags that would
@@ -55,7 +55,7 @@ tangent = mat3(rt_world_to_object) * rt_tangent;
 binormal = mat3(rt_world_to_object) * rt_bitangent;
 uv_interp = rt_uv;
 uv2_interp = rt_uv2;
-color_interp = rt_color * fetch_instance_color(rt_geom, uint(gl_PrimitiveID));
+color_interp = rt_color * fetch_instance_color(rt_geom, uint(RT_HIT_PRIMITIVE_ID));
 // VIEW is view-space in the rasterizer; rotate the incoming ray to match.
 view = -normalize(mat3(rt_view_matrix) * gl_WorldRayDirectionEXT);
 rt_front_facing = rt_front_face;

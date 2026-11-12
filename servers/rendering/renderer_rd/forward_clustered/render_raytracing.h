@@ -45,6 +45,7 @@
 #include "servers/rendering/renderer_rd/forward_clustered/render_raytracing_validation.h" // IWYU pragma: keep. Class layout depends on RT_VALIDATION_ENABLED.
 #include "servers/rendering/renderer_rd/shaders/raytracing/multimesh_merge.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/raytracing/opacity_micromap.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/raytracing/swept_spheres.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"
 #include "servers/rendering/rendering_device.h"
 
@@ -915,6 +916,9 @@ struct RTDeformedGeometrySource {
 	uint64_t cache_key = 0; // Caller-defined cache identity.
 	uint32_t cache_version = 0; // Changes when the resource behind `cache_key` is recycled.
 	uint32_t surface_counter = 0; // Changes when the underlying mesh surface changes.
+	// A captured render_mode hair_strands surface on a device with linear swept spheres: traced as swept
+	// spheres when its triangles are laid out as two crossed strips per point (process_deformed_surface).
+	bool swept_spheres = false;
 
 	// False for static surfaces, which are traced from their mesh buffers.
 	bool is_deformed() const { return captured || current_vb.is_valid(); }
@@ -996,6 +1000,7 @@ struct RTDeformedCacheEntry {
 
 	RID owned_vb_full;
 	uint32_t owned_vb_full_capacity = 0; // Bytes; grow-only.
+	bool owned_vb_storage = false; // owned_vb_full is also a storage buffer (swept spheres read it).
 	RID prev_pos_vb;
 	uint64_t prev_pos_vb_address = 0; // Device address of prev_pos_vb, taken when it is allocated.
 	uint32_t prev_pos_vb_capacity = 0; // Bytes; grow-only.
@@ -1009,6 +1014,15 @@ struct RTDeformedCacheEntry {
 	bool prev_pos_current = false; // prev_pos_vb already equals the positions in owned_vb_full.
 
 	RTCaptureState capture; // Vertex capture held by this entry, for captured mesh surfaces.
+
+	// Linear swept spheres of a strand surface (RTDeformedGeometrySource::swept_spheres): one point (centre,
+	// radius) per four vertices, written from each new capture, and one segment per four triangles, the index
+	// of its first point. Both are invalid while the surface is traced as triangles.
+	RID lss_points;
+	RID lss_segments;
+	uint32_t lss_point_count = 0;
+	uint32_t lss_segment_count = 0;
+	bool lss_checked = false; // The surface's index layout was checked (since its last BLAS rebuild).
 };
 
 // A surface whose raster vertex() output is captured for the path tracer this frame.
@@ -1701,6 +1715,17 @@ class RenderRaytracing {
 		uint64_t known = 0;
 		uint64_t unknown = 0;
 	} omm_stats;
+
+	// Strand hair as linear swept spheres (RTDeformedGeometrySource::swept_spheres).
+	struct SweptSpheresShader {
+		SweptSpheresShaderRD shader;
+		RID version;
+		RID version_shader;
+		RID pipeline;
+	} lss_shader;
+	bool lss_enabled = false; // The device has linear swept spheres and the project asks for them.
+	bool _populate_swept_spheres_blas(void *p_mesh_surface, uint32_t p_vertex_count, uint64_t p_cache_key, RTDeformedCacheEntry &r_entry, LocalVector<RID> &r_dirty_blas_list);
+	void _update_swept_sphere_points(RTDeformedCacheEntry &r_entry);
 
 	void _omm_initialize();
 	void _omm_finalize();

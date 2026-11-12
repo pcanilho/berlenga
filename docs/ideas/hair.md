@@ -601,6 +601,57 @@ Measured on the cloud with the map passes run 20 times a frame to isolate them: 
 frames before, 1.8 s after (-68%). Picture: sun scene mean difference 0.04 levels (error against
 the path tracer 42.9 -> 41.4), lamp scene 0.11 levels (104.8 -> 109.4, about one level a region).
 
+## Stage 2m: strand-strand collision
+
+The hair volume (Petrovic et al. 2005, stage 2f) keeps the hair's density but its cells are about
+2 cm, so single guide strands still pass through each other. Huang et al. 2023 handle hair-hair
+contact on a 1 cm Eulerian grid with Drucker-Prager friction, which still cannot stop two strands
+crossing inside a cell; the established real time answer is position based contact between strand
+points (Müller et al. 2007) found through a spatial hash (Teschner et al. 2003), with each point's
+corrections averaged (Jacobi, Macklin et al. 2014) so the result does not depend on the order.
+
+Built on the guides only (the followers take their places from them), once a frame after the
+substeps: MODE_COLL_CLEAR empties a hash of buckets (the next power of two at least twice the guide
+points, 8 points a bucket), MODE_COLL_INSERT puts each guide point into its cell's bucket,
+MODE_COLL_SOLVE looks through the 27 neighbouring cells for points of other strands closer than
+`strand_collision_radius` (default 2 mm, a lock's thickness) and averages the push apart, less
+`strand_collision_friction` of the sliding between them, and MODE_COLL_APPLY moves the points. The
+two root points stay pinned. On the wavy bench head shake the hair is a little fuller where it
+falls over itself (frame 75 against no collision: mean 0.25 levels, 99th percentile 6.3); with an
+8 mm radius 0.45 / 12. Cloud time with and without is within its noise (four small passes over
+the guide points).
+
+## Stage 2n: swept spheres on GPUs that have them (plan)
+
+Linear swept spheres (LSS, `VK_NV_ray_tracing_linear_swept_spheres`, NVIDIA RTX Hair; shipped in
+Indiana Jones and The Witcher 3 remaster, 50-series only): the ray tracing hardware intersects a
+round tube between two points with a radius at each end, so a strand segment is one primitive with
+one point and one radius per strand point, against our four triangles over eight vertices. NVIDIA
+measures about 2x faster tracing and 5x less memory than its own crossed-strip geometry (DOTS), and
+the hit is on the real round fibre, so the fibre offset h of the Chiang model is exact instead of
+read across a flat strip.
+
+The path tracer already knows which surfaces are strands (`render_mode hair_strands`, HairMesh
+layout: four vertices per point, two strips, four triangles per segment). On a device with the
+extension, such a surface whose index list has that pattern is built as LSS instead of triangles:
+
+- Driver: the extension and its `linearSweptSpheres` feature are requested; the BLAS takes a new
+  geometry type (`VkAccelerationStructureGeometryLinearSweptSpheresDataNV` chained on the geometry,
+  positions and radii from one vec4 buffer, successive indexing, chained end caps); ray tracing
+  pipelines get `VK_PIPELINE_CREATE_2_RAY_TRACING_ALLOW_SPHERES_AND_LINEAR_SWEPT_SPHERES_BIT_NV`.
+- Every frame, after the vertex capture, a small pass writes each point's centre (between the two
+  sides of its first strip) and radius (half the strip's width); the segment list is built once.
+- Shaders get `RT_LSS` (and `GL_NV_linear_swept_spheres`) only on such devices. A swept sphere hit
+  is mapped to the first strip's triangle at the same place along the segment, with barycentrics on
+  the strip's centre line, so every attribute (UV, colour, previous position for motion vectors)
+  comes from the same captured vertices as today; the hair shading then takes the exact h from the
+  hit and the round fibre's normal.
+- Ray queries (shadows, transmitted shadows) treat a swept sphere candidate as an opaque hit
+  (the strands are `rt_force_opaque`).
+
+Everywhere else the shaders and the BLAS are built exactly as before, which is all the cloud and a
+40-series card can check; the LSS path needs a 50-series GPU to test.
+
 ## Checked: lighter path traced strands
 
 The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,

@@ -98,6 +98,9 @@ class PhysXHair3D : public Node3D {
 	bool volume_enabled = true;
 	float volume_friction = 0.2f;
 	float volume_stiffness = 1.0f;
+	bool strand_collision = true;
+	float strand_collision_radius = 0.002f;
+	float strand_collision_friction = 0.3f;
 	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
 	struct BodyCache {
 		ObjectID mesh_instance;
@@ -224,6 +227,12 @@ public:
 	void set_volume_friction(float p_friction);
 	float get_volume_friction() const;
 	void set_volume_stiffness(float p_stiffness);
+	void set_strand_collision(bool p_enabled);
+	bool is_strand_collision() const;
+	void set_strand_collision_radius(float p_radius);
+	float get_strand_collision_radius() const;
+	void set_strand_collision_friction(float p_friction);
+	float get_strand_collision_friction() const;
 	float get_volume_stiffness() const;
 	void set_collision_spheres(const PackedVector4Array &p_spheres);
 	PackedVector4Array get_collision_spheres() const;

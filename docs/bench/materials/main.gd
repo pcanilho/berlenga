@@ -49,7 +49,8 @@ extends Node3D
 #                     antialiasing, "mvview" to see the motion vectors, "nodeep" for the shadow map
 #                     alone (deep_shadows off), "lamp" for night under an omni light beside the head
 #                     ("spotlamp" a spot light; "nolocal" without the lamp's own deep shadow map),
-#                     "nosimplify" to draw every groomed point (simplify_tolerance 0); "box" for broad
+#                     "nosimplify" to draw every groomed point (simplify_tolerance 0), "nocollide" without
+#                     strand-strand collision between guides; "box" for broad
 #                     rounded shoulders (spheres only on the skull), "body" to make the shoulders (with
 #                     or without "box") the collision body, held still and seen from the side,
 #                     "skinned" to skin them to a tilted bone (the head stays still), "hidebox" to see the drape;
@@ -692,6 +693,7 @@ func _strands_sim() -> void:
 	h.lod_enabled = not hair.contains("nolod")
 	h.volume_enabled = not hair.contains("novolume")
 	h.deep_shadows = not hair.contains("nodeep")
+	h.strand_collision = not hair.contains("nocollide")
 	if hair.contains("nosimplify"):
 		# Every groomed point drawn (simplify_tolerance 0).
 		h.simplify_tolerance = 0.0
