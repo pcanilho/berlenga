@@ -1051,6 +1051,18 @@
    "topic": "Collision"
   },
   {
+   "name": "Hair on cloth",
+   "settings": [
+    "collision_cloth",
+    "cloth_thickness"
+   ],
+   "note": "",
+   "what": "strands rest on simulated cloth such as a collar or hood, lying over it as it moves.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
    "name": "Strand-strand collision",
    "settings": [
     "strand_collision",
@@ -1616,7 +1628,7 @@
     "PlantGenerator"
    ],
    "note": "",
-   "what": "meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
+   "what": "meadow plants including tall flowers (knapweed, field scabious, wild carrot, common sorrel, some in seed), forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

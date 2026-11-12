@@ -73,6 +73,12 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Body collision: with spheres only the hair sinks into the shoulders; with the shoulders as the body it drapes over them, also when skinned and tilted.*
 
+- **Hair on cloth** (`collision_cloth`, `cloth_thickness`): strands rest on simulated cloth such as a collar or hood, lying over it as it moves.
+
+  ![Strand hair over a cloth capelet: sinking through it, then resting on it, raster](media/hair-cloth.jpg)
+
+  *Hair on cloth: before, the hair sinks through the capelet; after, it lies over it.*
+
 - **Strand-strand collision** (`strand_collision`, `strand_collision_radius`, `strand_collision_friction`): guide strands no longer pass through each other, with friction.
 - **Hair volume** (`volume_enabled`, `volume_friction`, `volume_stiffness`): strands push and drag on each other through a density grid, so hair keeps its volume.
 
