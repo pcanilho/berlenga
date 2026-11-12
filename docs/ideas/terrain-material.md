@@ -74,6 +74,62 @@ blend and detail normal and before ground deformation, wetness and snow, which s
 width 0) leave the ground as it is. Distance is from the camera to the shaded point, the same rule
 `vegetation_far()` uses, also on path-traced bounce hits.
 
+## Sky occlusion: raster ambient light only from the sky the hills leave open (12 Nov)
+
+The fault: at dusk a slope under a higher ridge was lit red in raster and dark under path tracing. With the sun
+switched off the raster frame barely changed (6.4 against 6.6), so the light was the sky's: raster ambient light
+integrates the whole sky around the normal (the radiance map), including the low sunset glow that the far valley
+wall hides. The path tracer traces the wall and the slope goes dark (2.6). Daytime valleys carry the same error,
+weaker. Screen-space AO reaches a few metres; this is hundreds.
+
+How others do it:
+
+- Horizon mapping (Max 1988) and the sky view factor of a sloped surface under its terrain horizons (Dozier and
+  Frew 1990), the standard in terrain radiation models; our climate bake already uses both (`terrain_climate.h`).
+- Bent normals and a scalar occlusion (Landis 2002; Unreal's distance field AO for the sky light; Godot's
+  `BENT_NORMAL_MAP`). Open worlds bake a top-down world AO from the heightfield.
+- Precomputed visibility as spherical harmonics (Sloan, Kautz and Snyder 2002), with order 2 enough for irradiance
+  (Ramamoorthi and Hanrahan 2001).
+
+What we tried, measured at three ground points against the exact integral of the real sunset panorama:
+
+| method | left slope | right slope | floor |
+|---|---|---|---|
+| exact (the panorama, the horizons, the cosine) | 0.59 | 0.66 | 0.82 |
+| sky view factor + bent normal (v1) | 0.91 | 0.76 | 0.84 |
+| first-order harmonics on the pixel normal | 0.61 | 0.60 | 0.68 |
+| second-order harmonics (built) | 0.58 | 0.67 | 0.80 |
+
+A ratio per 8 m cell weighted by the sky's light (v2) rendered barely darker: the cell's normal is not the pixel's.
+A view factor treats the sky as even; at dusk nearly all of it is a band a few degrees high in the west, exactly
+what a ridge hides, so the occlusion must be weighed by the sky's own light, and per pixel normal (the 8 m cell's
+normal can face the other way from a gully side).
+
+What we build:
+
+- `TerrainGenerator3D.sky_occlusion` (default on), after `generate()`: the final ground on a grid `sky_cell` (8 m)
+  apart, horizons in 16 directions out to `sky_distance` (4 km, steps growing 8%, past the result the ground counts
+  as level), kept per node (16 bytes). About 0.8 s for the 4 km valley.
+- The sky's light: `sky_light_source` (a WorldEnvironment or Camera3D) is read back as a 64x32 radiance panorama
+  (`RenderingServer.sky_bake_panorama`) every `sky_light_interval` (2 s), and only when it has changed by more
+  than 2%. It is gathered into 16 x 16 direction bins; each node's seen sky (bins above its horizons, the horizon's
+  bin in part) goes into nine harmonics of luminance, over the whole sky's first. About 90 ms on worker threads for
+  513 x 513 nodes; `update_sky_light(panorama)` does the same by hand. Before any panorama, an even sky.
+- Three layers of RGBA half (`terrain_sky_map`, a sampler2DArray) and the whole sky's harmonics
+  (`terrain_sky_full`, `terrain_sky_full2`, `terrain_sky_full3`) as globals.
+- `TerrainMaterial3D.sky_occlusion_enabled` (default on), raster only (`#if !defined(RT)`): `AO` = irradiance of the
+  seen sky over that of the whole sky, both on the shading normal (so the detail normal keeps its shading),
+  `AO_LIGHT_AFFECT` 0 (direct light untouched), then the multi-bounce fit of Jimenez et al. 2016 (GTAO) on the
+  ground's albedo, since the hidden sky is replaced by lit ground, not black. `sky_occlusion` scales it.
+  Small-scale occlusion stays with SSAO.
+
+Result (valley view, mean pixel value, raster without / with / path traced): dusk ground 1.42 / 1.00 / 1.07, the
+slope under the west wall 2.60 / 1.82 / 1.06; afternoon ground 24.4 / 22.2 / 22.8, a shaded slope 16.4 / 11.9 /
+13.6 (raster has no bounce light from the sunlit wall opposite).
+
+Cost: three bilinear fetches and two nine-term sums per ground pixel; the readback is a 64x32 copy every few
+seconds while the sky changes. GPU timings on the PC before merge are owed.
+
 ## Cost and quality
 
 - Raster: biplanar doubles fetches only on steep pixels; five layers with height blend is about what Terrain3D

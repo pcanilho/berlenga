@@ -108,6 +108,8 @@ private:
 	float far_start = 300.0;
 	float far_fade = 150.0;
 	bool ground_deform_enabled = true;
+	bool sky_occlusion_enabled = true;
+	float sky_occlusion = 1.0f;
 
 	Ref<Shader> shader;
 	bool dirty = false;
@@ -147,6 +149,10 @@ public:
 	void use_generator(Object *p_generator);
 	void set_grass_tint_enabled(bool p_enabled);
 	bool is_grass_tint_enabled() const { return grass_tint_enabled; }
+	void set_sky_occlusion_enabled(bool p_enabled);
+	bool is_sky_occlusion_enabled() const { return sky_occlusion_enabled; }
+	void set_sky_occlusion(float p_amount);
+	float get_sky_occlusion() const { return sky_occlusion; }
 	void set_far_blend_enabled(bool p_enabled);
 	bool is_far_blend_enabled() const { return far_blend_enabled; }
 	void set_far_start(float p_value);

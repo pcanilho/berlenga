@@ -35,10 +35,9 @@
 #include "terrain_erosion_filter.h"
 #include "terrain_geology.h"
 #include "terrain_glacial.h"
-
-#include <algorithm>
 #include "terrain_hydraulic.h"
 #include "terrain_runoff.h"
+#include "terrain_sky.h"
 #include "terrain_stream_power.h"
 
 #include "core/config/engine.h"
@@ -48,11 +47,17 @@
 #include "core/object/class_db.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/3d/path_3d.h"
+#include "scene/3d/world_environment.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/curve.h"
+#include "scene/resources/environment.h"
+#include "scene/resources/sky.h"
 #include "servers/rendering/rendering_server.h"
+
+#include <algorithm>
 
 static inline int _gen_floor_div(int p_a, int p_b) {
 	const int q = p_a / p_b;
@@ -1965,6 +1970,9 @@ bool TerrainGenerator3D::generate() {
 	_bake_spray();
 	_publish_globals();
 	_erode_tiles();
+	// After the tiles: the sky is read from the final ground.
+	_bake_sky();
+	_publish_globals();
 	last_generate_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("generated"));
 	return true;
@@ -1975,6 +1983,10 @@ void TerrainGenerator3D::clear_result() {
 	nx = 0;
 	ny = 0;
 	heights.clear();
+	sky_vis.clear();
+	sky_horizon.clear();
+	sky_sh.clear();
+	sky_nx = sky_ny = 0;
 	drainage.clear();
 	sediment.clear();
 	alluvium_reach.clear();
@@ -3267,6 +3279,16 @@ void TerrainGenerator3D::_publish_globals() {
 		set_global("terrain_spray_potential", spray_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2D);
 		set_global("terrain_spray_rect", Vector4(r.position.x, r.position.y, (spray_nx - 1) * spray_cell, (spray_ny - 1) * spray_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
 	}
+	// Sky occlusion for the ground's ambient light; a zero rect switches it off.
+	if (sky_texture.is_valid()) {
+		set_global("terrain_sky_map", sky_texture->get_rid(), RSE::GLOBAL_VAR_TYPE_SAMPLER2DARRAY);
+		set_global("terrain_sky_rect", Vector4(r.position.x, r.position.y, (sky_nx - 1) * sky_cell, (sky_ny - 1) * sky_cell), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_global("terrain_sky_full", Vector4(sky_full[0], sky_full[1], sky_full[2], sky_full[3]), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_global("terrain_sky_full2", Vector4(sky_full[4], sky_full[5], sky_full[6], sky_full[7]), RSE::GLOBAL_VAR_TYPE_VEC4);
+		set_global("terrain_sky_full3", sky_full[8], RSE::GLOBAL_VAR_TYPE_FLOAT);
+	} else {
+		set_global("terrain_sky_rect", Vector4(), RSE::GLOBAL_VAR_TYPE_VEC4);
+	}
 }
 
 /* Boulders below cliffs (docs/ideas/terrain-generation.md, "Rocks below cliffs") */
@@ -3445,6 +3467,248 @@ void TerrainGenerator3D::_bake_spray() {
 	} else {
 		spray_texture = ImageTexture::create_from_image(img);
 	}
+}
+
+/* Sky occlusion (docs/ideas/terrain-material.md, "Sky occlusion") */
+
+// The final ground on a grid sky_cell apart, its sky view factor and bent normal (TerrainSky), as an RGBA8 texture:
+// r the sky view factor, gba the bent normal * 0.5 + 0.5.
+void TerrainGenerator3D::_bake_sky() {
+	sky_vis.clear();
+	sky_horizon.clear();
+	sky_sh.clear();
+	sky_nx = sky_ny = 0;
+	if (!sky_occlusion || nx < 2 || ny < 2) {
+		sky_texture.unref();
+		last_sky_msec = 0.0;
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	sky_nx = MAX(2, int(Math::floor((nx - 1) * result_cell / sky_cell)) + 1);
+	sky_ny = MAX(2, int(Math::floor((ny - 1) * result_cell / sky_cell)) + 1);
+	const int n = sky_nx * sky_ny;
+	LocalVector<float> h;
+	h.resize(n);
+	_fill(result_rect.position.x, result_rect.position.y, sky_cell, sky_nx, sky_ny, h.ptr());
+	for (int i = 0; i < n; i++) {
+		if (Math::is_nan(h[i])) {
+			h[i] = result_min;
+		}
+	}
+	sky_vis.resize(n);
+	sky_horizon.resize(size_t(n) * TerrainSky::DIRECTIONS);
+	TerrainSky::compute(h.ptr(), sky_nx, sky_ny, float(sky_cell), float(sky_distance), sky_vis.ptr(), sky_horizon.ptr());
+	// Until the sky's own light is read (update_sky_light), an even sky.
+	TerrainSky::SkyBins even;
+	TerrainSky::even_sky(even);
+	_sky_light(&even);
+	sky_light_last.clear();
+	sky_light_wait = 0.0;
+	last_sky_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+}
+
+void TerrainGenerator3D::_upload_sky() {
+	Vector<Ref<Image>> layers;
+	for (int l = 0; l < 3; l++) {
+		const Ref<Image> img = get_sky_image(l);
+		if (img.is_null()) {
+			return;
+		}
+		layers.push_back(img);
+	}
+	if (sky_texture.is_valid() && sky_texture->get_width() == sky_nx && sky_texture->get_height() == sky_ny) {
+		for (int l = 0; l < 3; l++) {
+			sky_texture->update_layer(layers[l], l);
+		}
+	} else {
+		sky_texture.instantiate();
+		sky_texture->create_from_images(layers);
+	}
+}
+
+namespace {
+struct SkyLightJob {
+	const TerrainSky::SkyBins *bins;
+	const uint8_t *horizon;
+	float *sh;
+	float inv_c0;
+	int nx;
+};
+constexpr int SKY_SH = TerrainSky::SH;
+} // namespace
+
+void TerrainGenerator3D::_sky_light_row(void *p_job, uint32_t p_row) {
+	const SkyLightJob *job = static_cast<const SkyLightJob *>(p_job);
+	for (int x = 0; x < job->nx; x++) {
+		const size_t i = size_t(p_row) * job->nx + x;
+		float *sh = job->sh + i * SKY_SH;
+		TerrainSky::seen_sky(*job->bins, job->horizon + i * TerrainSky::DIRECTIONS, sh);
+		for (int k = 0; k < SKY_SH; k++) {
+			sh[k] *= job->inv_c0;
+		}
+	}
+}
+
+// Every node's seen sky from these bins, and the texture.
+void TerrainGenerator3D::_sky_light(const void *p_bins) {
+	const TerrainSky::SkyBins &bins = *static_cast<const TerrainSky::SkyBins *>(p_bins);
+	const int n = sky_nx * sky_ny;
+	if (sky_nx < 2 || sky_horizon.size() != size_t(n) * TerrainSky::DIRECTIONS || !(bins.full[0] > 0.0f)) {
+		return;
+	}
+	const float inv = 1.0f / bins.full[0];
+	for (int k = 0; k < SKY_SH; k++) {
+		sky_full[k] = bins.full[k] * inv;
+	}
+	sky_sh.resize(n * SKY_SH);
+	SkyLightJob job{ &bins, sky_horizon.ptr(), sky_sh.ptr(), inv, sky_nx };
+	WorkerThreadPool::GroupID g = WorkerThreadPool::get_singleton()->add_native_group_task(&TerrainGenerator3D::_sky_light_row, &job, sky_ny, -1, true, SNAME("TerrainSkyLight"));
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(g);
+	_upload_sky();
+	if (is_inside_tree()) {
+		_publish_globals();
+	}
+}
+
+// The ground's occlusion of the sky as it is now: from a radiance panorama of the sky (as
+// RenderingServer.sky_bake_panorama returns it), the share of the light raster gathers around each node's bent
+// normal that really reaches it past its horizons. A low sunset glow behind a ridge is then taken away, where an
+// even sky's view factor would leave most of it.
+bool TerrainGenerator3D::update_sky_light(const Ref<Image> &p_panorama) {
+	ERR_FAIL_COND_V(p_panorama.is_null() || p_panorama->is_empty(), false);
+	const int n = sky_nx * sky_ny;
+	if (sky_nx < 2 || sky_horizon.size() != size_t(n) * TerrainSky::DIRECTIONS) {
+		return false;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	Ref<Image> pano = p_panorama;
+	if (pano->get_format() != Image::FORMAT_RGBF) {
+		pano = p_panorama->duplicate();
+		pano->convert(Image::FORMAT_RGBF);
+	}
+	const Vector<uint8_t> data = pano->get_data();
+	TerrainSky::SkyBins bins;
+	TerrainSky::gather_sky(reinterpret_cast<const float *>(data.ptr()), pano->get_width(), pano->get_height(), bins);
+	_sky_light(&bins);
+	last_sky_light_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	return true;
+}
+
+void TerrainGenerator3D::set_sky_light_source(const NodePath &p_path) {
+	sky_light_source = p_path;
+	sky_light_wait = 0.0;
+	sky_light_last.clear();
+	if (is_inside_tree()) {
+		set_process_internal(!sky_light_source.is_empty());
+	}
+}
+
+void TerrainGenerator3D::_sky_light_poll(double p_delta) {
+	sky_light_wait -= p_delta;
+	if (sky_light_wait > 0.0 || sky_nx < 2) {
+		return;
+	}
+	Node *src = get_node_or_null(sky_light_source);
+	if (!src) {
+		return;
+	}
+	Ref<Environment> env;
+	if (WorldEnvironment *we = Object::cast_to<WorldEnvironment>(src)) {
+		env = we->get_environment();
+	} else if (Camera3D *cam = Object::cast_to<Camera3D>(src)) {
+		env = cam->get_environment();
+	}
+	if (env.is_null() || env->get_sky().is_null()) {
+		return;
+	}
+	// A small panorama is enough for light this broad (the bins are 22.5 by 11.25 degrees).
+	Ref<Image> pano = RenderingServer::get_singleton()->sky_bake_panorama(env->get_sky()->get_rid(), 1.0, false, Size2i(64, 32));
+	if (pano.is_null() || pano->is_empty()) {
+		return;
+	}
+	pano->convert(Image::FORMAT_RGBF);
+	const Vector<uint8_t> data = pano->get_data();
+	const float *f = reinterpret_cast<const float *>(data.ptr());
+	const int count = data.size() / int(sizeof(float));
+	double sum = 0.0;
+	for (int i = 0; i < count; i++) {
+		sum += f[i];
+	}
+	if (!(sum > 1e-6)) {
+		return; // the sky is not drawn yet: try again next frame
+	}
+	sky_light_wait = sky_light_interval;
+	// Skip the update while the sky stays within 2% of the last one used.
+	if (sky_light_last.size() == count) {
+		double diff = 0.0, total = 0.0;
+		const float *l = sky_light_last.ptr();
+		for (int i = 0; i < count; i++) {
+			diff += Math::abs(f[i] - l[i]);
+			total += Math::abs(l[i]);
+		}
+		if (diff <= 0.02 * MAX(total, 1e-9)) {
+			return;
+		}
+	}
+	sky_light_last.resize(count);
+	memcpy(sky_light_last.ptrw(), f, count * sizeof(float));
+	update_sky_light(pano);
+}
+
+void TerrainGenerator3D::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_READY:
+		case NOTIFICATION_ENTER_TREE: {
+			set_process_internal(!sky_light_source.is_empty());
+		} break;
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			_sky_light_poll(get_process_delta_time());
+		} break;
+	}
+}
+
+void TerrainGenerator3D::set_sky_occlusion(bool p_enable) {
+	if (sky_occlusion == p_enable) {
+		return;
+	}
+	sky_occlusion = p_enable;
+	if (nx >= 2) {
+		_bake_sky();
+		_publish_globals();
+	}
+}
+
+real_t TerrainGenerator3D::get_sky_visibility(const Vector3 &p_global_position) const {
+	if (sky_nx < 2 || sky_vis.size() != uint32_t(sky_nx * sky_ny)) {
+		return 1.0;
+	}
+	const real_t gx = CLAMP((p_global_position.x - result_rect.position.x) / sky_cell, real_t(0.0), real_t(sky_nx - 1));
+	const real_t gz = CLAMP((p_global_position.z - result_rect.position.y) / sky_cell, real_t(0.0), real_t(sky_ny - 1));
+	const int x0 = MIN(int(gx), sky_nx - 2), z0 = MIN(int(gz), sky_ny - 2);
+	const real_t fx = gx - x0, fz = gz - z0;
+	const float *r0 = sky_vis.ptr() + z0 * sky_nx, *r1 = r0 + sky_nx;
+	return Math::lerp(Math::lerp(real_t(r0[x0]), real_t(r0[x0 + 1]), fx), Math::lerp(real_t(r1[x0]), real_t(r1[x0 + 1]), fx), fz);
+}
+
+// One layer of the sky texture: RGBA half of harmonics 4 * p_layer onwards (the last layer holds one).
+Ref<Image> TerrainGenerator3D::get_sky_image(int p_layer) const {
+	const int n = sky_nx * sky_ny;
+	ERR_FAIL_INDEX_V(p_layer, 3, Ref<Image>());
+	if (sky_nx < 2 || sky_sh.size() != uint32_t(n * SKY_SH)) {
+		return Ref<Image>();
+	}
+	Vector<uint8_t> bytes;
+	bytes.resize(n * 4 * sizeof(float));
+	float *w = reinterpret_cast<float *>(bytes.ptrw());
+	for (int i = 0; i < n; i++) {
+		for (int k = 0; k < 4; k++) {
+			const int c = p_layer * 4 + k;
+			w[i * 4 + k] = c < SKY_SH ? sky_sh[i * SKY_SH + c] : 0.0f;
+		}
+	}
+	Ref<Image> img = Image::create_from_data(sky_nx, sky_ny, false, Image::FORMAT_RGBAF, bytes);
+	img->convert(Image::FORMAT_RGBAH);
+	return img;
 }
 
 Ref<Image> TerrainGenerator3D::get_spray_image() const {
@@ -5436,6 +5700,21 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_spray_cell"), &TerrainGenerator3D::get_spray_cell);
 	ClassDB::bind_method(D_METHOD("get_spray_potential", "global_position"), &TerrainGenerator3D::get_spray_potential);
 	ClassDB::bind_method(D_METHOD("get_spray_image"), &TerrainGenerator3D::get_spray_image);
+	ClassDB::bind_method(D_METHOD("set_sky_occlusion", "enable"), &TerrainGenerator3D::set_sky_occlusion);
+	ClassDB::bind_method(D_METHOD("is_sky_occlusion_enabled"), &TerrainGenerator3D::is_sky_occlusion_enabled);
+	ClassDB::bind_method(D_METHOD("set_sky_cell", "metres"), &TerrainGenerator3D::set_sky_cell);
+	ClassDB::bind_method(D_METHOD("get_sky_cell"), &TerrainGenerator3D::get_sky_cell);
+	ClassDB::bind_method(D_METHOD("set_sky_distance", "metres"), &TerrainGenerator3D::set_sky_distance);
+	ClassDB::bind_method(D_METHOD("get_sky_distance"), &TerrainGenerator3D::get_sky_distance);
+	ClassDB::bind_method(D_METHOD("get_sky_visibility", "global_position"), &TerrainGenerator3D::get_sky_visibility);
+	ClassDB::bind_method(D_METHOD("get_sky_image", "layer"), &TerrainGenerator3D::get_sky_image, DEFVAL(0));
+	ClassDB::bind_method(D_METHOD("get_last_sky_msec"), &TerrainGenerator3D::get_last_sky_msec);
+	ClassDB::bind_method(D_METHOD("get_last_sky_light_msec"), &TerrainGenerator3D::get_last_sky_light_msec);
+	ClassDB::bind_method(D_METHOD("update_sky_light", "panorama"), &TerrainGenerator3D::update_sky_light);
+	ClassDB::bind_method(D_METHOD("set_sky_light_source", "path"), &TerrainGenerator3D::set_sky_light_source);
+	ClassDB::bind_method(D_METHOD("get_sky_light_source"), &TerrainGenerator3D::get_sky_light_source);
+	ClassDB::bind_method(D_METHOD("set_sky_light_interval", "seconds"), &TerrainGenerator3D::set_sky_light_interval);
+	ClassDB::bind_method(D_METHOD("get_sky_light_interval"), &TerrainGenerator3D::get_sky_light_interval);
 	ClassDB::bind_method(D_METHOD("set_gorge_age", "years"), &TerrainGenerator3D::set_gorge_age);
 	ClassDB::bind_method(D_METHOD("get_gorge_age"), &TerrainGenerator3D::get_gorge_age);
 	ClassDB::bind_method(D_METHOD("set_moraine_age", "years"), &TerrainGenerator3D::set_moraine_age);
@@ -5630,6 +5909,11 @@ void TerrainGenerator3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "meander_age", PROPERTY_HINT_RANGE, "0,20000,100,or_greater,suffix:yr"), "set_meander_age", "get_meander_age");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gorge_rate", PROPERTY_HINT_RANGE, "0,0.1,0.0001,or_greater"), "set_gorge_rate", "get_gorge_rate");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_cell", PROPERTY_HINT_RANGE, "0,32,0.5,suffix:m"), "set_spray_cell", "get_spray_cell");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "sky_occlusion"), "set_sky_occlusion", "is_sky_occlusion_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sky_cell", PROPERTY_HINT_RANGE, "1,64,0.5,suffix:m"), "set_sky_cell", "get_sky_cell");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sky_light_source", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "WorldEnvironment,Camera3D"), "set_sky_light_source", "get_sky_light_source");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sky_light_interval", PROPERTY_HINT_RANGE, "0,60,0.1,suffix:s"), "set_sky_light_interval", "get_sky_light_interval");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sky_distance", PROPERTY_HINT_RANGE, "0,20000,10,suffix:m"), "set_sky_distance", "get_sky_distance");
 	ADD_GROUP("Inflows", "inflow");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "inflows", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_inflows", "get_inflows");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "inflow_area", PROPERTY_HINT_RANGE, "0,10000,0.1,or_greater,suffix:km²"), "set_inflow_area", "get_inflow_area");
