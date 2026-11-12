@@ -59,11 +59,15 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 ## Plants
 
-- **Plant generator** (`PlantGenerator`, 35 presets): meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.
+- **Plant generator** (`PlantGenerator`, 39 presets): meadow plants including tall flowers (knapweed, field scabious, wild carrot, common sorrel, some in seed), forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.
 
   ![Generated dandelions and plantains, three seeds each](media/plant-generator.jpg)
 
   *Plant generator: three seeds each of dandelion and plantain.*
+
+  ![A meadow with tall flowers among the grass, raster](media/tall-meadow.jpg)
+
+  *Meadow flowers: daisies, buttercups, scabious and sorrel standing above the grass.*
 
 - **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.
 - **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`): fallen leaves drift past the crowns into edges and clearings, farther downwind.

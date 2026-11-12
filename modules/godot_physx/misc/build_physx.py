@@ -61,6 +61,11 @@ def main():
         help="also build the Blast SDK (NvBlast + extensions) from this same checkout's blast/ subdirectory",
     )
     ap.add_argument(
+        "--blast-optional",
+        action="store_true",
+        help="with --blast: if Blast fails to build, carry on without it (the module then builds with no Blast support)",
+    )
+    ap.add_argument(
         "--flow",
         action="store_true",
         help="also build NVIDIA Flow (nvflow + nvflowext) from this same checkout's flow/ subdirectory",
@@ -81,7 +86,12 @@ def main():
     ap.add_argument("--config", default="release", choices=["release", "checked", "profile", "debug"])
     args = ap.parse_args()
 
-    preset_base = "vc17win64-godot" if args.platform == "windows" else "linux64-godot"
+    if args.platform == "windows":
+        preset_base = "vc17win64-godot"
+    elif platform.machine() == "aarch64":
+        preset_base = "linux-aarch64-godot"
+    else:
+        preset_base = "linux64-godot"
     preset = preset_base + "-gpu" if args.gpu else preset_base
     preset_file = os.path.join(PRESET_DIR, preset + ".xml")
     if not os.path.isfile(preset_file):
@@ -174,6 +184,7 @@ def main():
         blast_script = os.path.join(blast_dir, "build.bat" if is_windows else "build.sh")
         if not os.path.isfile(blast_script):
             sys.exit("no Blast build script at " + blast_script)
+        blast_ok = True
         if is_windows:
             run([blast_script], cwd=blast_dir)
         else:
@@ -182,19 +193,27 @@ def main():
             # Parallel codegen sometimes leaves a half written header, a rerun fixes it.
             if subprocess.call(blast_cmd, cwd=blast_dir) != 0:
                 print("Blast build failed, retrying once")
-                run(blast_cmd, cwd=blast_dir)
+                if args.blast_optional:
+                    blast_ok = subprocess.call(blast_cmd, cwd=blast_dir) == 0
+                else:
+                    run(blast_cmd, cwd=blast_dir)
 
-        blast_platform = "windows-x86_64" if is_windows else "linux-x86_64"
+        blast_platform = "windows-x86_64" if is_windows else "linux-" + platform.machine()
         blast_sdk = os.path.join(blast_dir, "_build", blast_platform, "release", "blast-sdk")
-        if not os.path.isdir(os.path.join(blast_sdk, "include")):
-            sys.exit("Blast build finished but no SDK at " + blast_sdk)
+        if blast_ok and not os.path.isdir(os.path.join(blast_sdk, "include")):
+            if not args.blast_optional:
+                sys.exit("Blast build finished but no SDK at " + blast_sdk)
+            blast_ok = False
 
-        scons_args.append("blast_sdk=" + blast_sdk.replace("\\", "/"))
-
-        print()
-        print("Blast SDK ready:")
-        print("    " + blast_sdk)
-        print("SCsub copies Blast's libraries next to the Godot binary.")
+        if blast_ok:
+            scons_args.append("blast_sdk=" + blast_sdk.replace("\\", "/"))
+            print()
+            print("Blast SDK ready:")
+            print("    " + blast_sdk)
+            print("SCsub copies Blast's libraries next to the Godot binary.")
+        else:
+            print()
+            print("::warning::Blast did not build; carrying on without it (--blast-optional).")
 
     if args.flow:
         # Flow lives in the same checkout too (its flow/ subdirectory), with its

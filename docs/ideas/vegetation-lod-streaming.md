@@ -211,12 +211,31 @@ A sward seen into the sun reads darker than one seen down-sun (the canopy hot sp
 by up to 3.5 times here; a far colour per sun azimuth would need the sun's direction in the
 ground shader. Very dark grass bakes about a quarter too dark (unexplained so far).
 
+**Far grass colour by sun direction (research).** A sward is not Lambertian: seen down-sun it
+shows its lit faces and few shadows (the hot spot, Kuusk 1991; Gerstl and Simmer 1986), seen
+into the sun mostly shadowed sides and backlit edges. Measured canopy BRDFs are described in
+the remote-sensing kernels (Roujean, Leroy and Deschamps 1992; Ross-Li, Wanner, Lucht and
+Strahler 1995/2000) as a few smooth functions of the sun and view angles; over the azimuth
+between them a low-order Fourier series is enough (Walthall et al. 1985 used cos and cos^2).
+Here the bake already renders the sward at sun azimuths 0, 90, 180 and 270 degrees from the
+view, so it gives c(phi) = a0 + a1 cos(phi) + a2 cos(2 phi) per channel exactly at those four
+(a0 the mean, a1 = (front - back) / 2, a2 = (front + back - sides) / 4). Plan: the bake
+publishes a1 / a0 and a2 / a0 (`grass_ground_far_lobes`), GrassField3D the sun's direction
+from a DirectionalLight3D (`sun_light`, else the first in the scene) and the camera position
+(`grass_view`), and the far colour in `grass_ground()` takes the factor 1 + l1 cos(phi) + l2
+cos(2 phi), phi between the view and the sun's light, flattened as the sun climbs (no azimuth at
+the zenith) and off with no sun. The cover map stays the mean; TerrainMaterial3D's far blend
+can take the same factor for its grass share (terrain's file, offered to its thread).
+
 ## References
 
 - SpeedTree documentation, "Level of detail" (leaf reduction and scaling).
 - Epic Games, Nanite foliage and "Preserve Area", Unreal Engine 5 documentation.
 - Brucks, "Octahedral Impostors", 2018.
 - Govaerts and Verstraete, "Raytran: a Monte Carlo ray-tracing model to compute light scattering in three-dimensional heterogeneous media", IEEE TGRS 36, 1998.
+- Roujean, Leroy and Deschamps, "A bidirectional reflectance model of the Earth's surface for the correction of remote sensing data", JGR 97, 1992.
+- Lucht, Schaaf and Strahler, "An algorithm for the retrieval of albedo from space using semiempirical BRDF models", IEEE TGRS 38, 2000.
+- Walthall, Norman, Welles, Campbell and Blad, "Simple equation to approximate the bidirectional reflectance from vegetative canopies and bare soil surfaces", Applied Optics 24, 1985.
 - Kuusk, "The hot spot effect in plant canopy reflectance", in Photon-Vegetation Interactions, Springer 1991.
 - North, "Three-dimensional forest light interaction model using a Monte Carlo method", IEEE TGRS 34, 1996.
 - van Muijden, "GPU-Based Procedural Placement in Horizon Zero Dawn", GDC 2017.

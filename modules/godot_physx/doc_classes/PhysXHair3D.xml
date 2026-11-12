@@ -34,11 +34,17 @@
 		<member name="cards_enabled" type="bool" setter="set_cards_enabled" getter="is_cards_enabled" default="false">
 			If [code]true[/code], hair cards are baked from the groom when the hair is built (shared by every node with the same groom and settings), and past [member card_distance] the hair is drawn as cards instead of strands: textured strips along clumps of strands, which move with the same guide strands. Only the guides and the cards are then simulated, so distant hair costs a small fraction of strands. Raster only: while the environment path traces, the hair stays strands at every distance.
 		</member>
+		<member name="cloth_thickness" type="float" setter="set_cloth_thickness" getter="get_cloth_thickness" default="0.005">
+			How far, in metres, the strands rest above [member collision_cloth]'s simulated surface (on top of the collision margin): the cloth's own thickness.
+		</member>
 		<member name="collision_body" type="NodePath" setter="set_collision_body" getter="get_collision_body" default="NodePath(&quot;&quot;)">
 			A [MeshInstance3D] the strands stay out of, as AMD TressFX's SDF collision: every frame its triangles (skinned on the CPU when it has a [Skin], else placed by its transform) build a signed distance field around them on the GPU (seeded by the triangles, filled by jump flooding), and points inside the body or closer than the margin are pushed out along it and stop. Use a closed, low-poly proxy of the body (shoulders, neck, back; a few thousand triangles). Empty: only [member collision_spheres].
 		</member>
 		<member name="collision_cell_size" type="float" setter="set_collision_cell_size" getter="get_collision_cell_size" default="0.01">
 			The cell of [member collision_body]'s distance field, in metres. Grown when the body is too large for 64 cells a side.
+		</member>
+		<member name="collision_cloth" type="NodePath" setter="set_collision_cloth" getter="get_collision_cloth" default="NodePath(&quot;&quot;)">
+			A [PhysXSkinnedCloth3D] the strands rest on (a collar, a hood, a coat's shoulders): its simulated triangles join [member collision_body]'s distance field each frame, read on the GPU from the cloth's own positions, so hair lies on the cloth as it moves and does not pass through it. The cloth's outside is the side its mesh normals face: strands that start under it near its surface are put back on top, as hair lies over clothes, and kept [member cloth_thickness] off it. Empty: none.
 		</member>
 		<member name="collision_spheres" type="PackedVector4Array" setter="set_collision_spheres" getter="get_collision_spheres" default="PackedVector4Array()">
 			Spheres the strands stay out of, in this node's space: [code]x, y, z[/code] the centre and [code]w[/code] the radius. Usually the skull, the neck and the shoulders. Up to 32. For a body shape spheres fit badly, see [member collision_body].

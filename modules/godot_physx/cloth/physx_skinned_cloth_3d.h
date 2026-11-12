@@ -247,6 +247,10 @@ public:
 	int get_particle_count() const { return particle_count; }
 	MeshInstance3D *get_render_instance() const;
 	PackedInt32Array get_vertex_particles() const { return vertex_particles; }
+	// The simulated positions (RGBA32F, the render copy's space, one texel per particle, rows of
+	// get_position_texture_width()), on the main RenderingDevice; invalid before a build.
+	RID get_position_texture_rd_rid() const { return solver ? solver->get_position_texture_rd_rid() : RID(); }
+	int get_position_texture_width() const { return solver ? solver->get_texture_width() : 1; }
 	Array get_body_capsules() const;
 
 	PhysXSkinnedCloth3D();

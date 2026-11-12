@@ -871,6 +871,19 @@
    "topic": "Currents and rivers"
   },
   {
+   "name": "Plunging waterfalls",
+   "settings": [
+    "plunge_falls",
+    "column_density",
+    "wind_exposure"
+   ],
+   "note": "",
+   "what": "tall falls break up into a falling column of clumps slowed by the air, inside a spray veil and soft mist.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Currents and rivers"
+  },
+  {
    "name": "Faster flow bakes",
    "settings": [
     "physics/physx_3d/water/multigrid_flow"
@@ -1046,6 +1059,18 @@
    ],
    "note": "",
    "what": "strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
+   "name": "Hair on cloth",
+   "settings": [
+    "collision_cloth",
+    "cloth_thickness"
+   ],
+   "note": "",
+   "what": "strands rest on simulated cloth such as a collar or hood, lying over it as it moves.",
    "page": "hair",
    "title": "Hair",
    "topic": "Collision"
@@ -1616,7 +1641,7 @@
     "PlantGenerator"
    ],
    "note": "",
-   "what": "meadow, forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
+   "what": "meadow plants including tall flowers (knapweed, field scabious, wild carrot, common sorrel, some in seed), forest floor and wetland plants with seed variations, phyllotaxis, back-lit leaves with generated vein textures, and distance LODs that drop whole leaf cards and enlarge the rest to keep coverage (112k to 70k triangles on a heath), for `PlantSpecies.meshes`.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Plants"

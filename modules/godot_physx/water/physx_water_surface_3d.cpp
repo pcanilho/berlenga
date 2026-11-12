@@ -94,7 +94,7 @@ namespace {
 // self-contained shading term in fragment() (emission, not Godot's real
 // PBR NORMAL) -- see fragment()'s own comment for why real PBR lighting on
 // this material caused a genuine overexposure bug.
-const char *WATER_SHADER_SRC = R"(
+const char *WATER_SHADER_SRC_HEAD = R"(
 shader_type spatial;
 // The same source builds four materials. Plain: the surface. BREAKER_LIP: the plunging lips' sheet, whose
 // vertices are already in place (so the path tracer reads its mesh as it is). UNDERWATER_SURFACE: its next pass while
@@ -283,7 +283,8 @@ uniform vec3 underwater_sky_radiance = vec3(0.0);
 // How dark the thin line where the surface crosses the lens is (0 none).
 uniform float underwater_meniscus : hint_range(0.0, 1.0) = 0.35;
 // Raster reflections from above (water_raster_reflections.h).
-)" WATER_RASTER_REFLECTIONS_GLSL R"(
+)";
+const char *WATER_SHADER_SRC_TAIL = R"(
 #if (defined(UNDERWATER_FOG) || defined(UNDERWATER_SURFACE)) && !defined(RT)
 uniform sampler2D underwater_screen : hint_screen_texture, filter_linear, repeat_disable;
 uniform sampler2D underwater_depth : hint_depth_texture, filter_nearest, repeat_disable;
@@ -1220,6 +1221,12 @@ void fragment() {
 #endif // UNDERWATER_FOG
 )";
 
+// The whole shader: head, the raster reflections (water_raster_reflections.h), tail.
+static const String &water_shader_src() {
+	static const String src = String(WATER_SHADER_SRC_HEAD) + WATER_RASTER_REFLECTIONS_GLSL + WATER_SHADER_SRC_TAIL;
+	return src;
+}
+
 // Sign of the X/Z cross product of an up-facing PlaneMesh triangle -- measured
 // from PlaneMesh itself rather than assumed from a winding convention.
 real_t plane_mesh_xz_winding() {
@@ -2124,13 +2131,13 @@ static float _front_winding() {
 // parameters, so it shades like the water but never moves its vertices (the path tracer then reads the mesh
 // directly instead of capturing it). A custom water_material draws the lips itself (vertex colour alpha 0).
 Ref<Material> PhysXWaterSurface3D::_breaker_material() {
-	if (water_material.is_null() || water_material->get_shader().is_null() || water_material->get_shader()->get_code() != String(WATER_SHADER_SRC)) {
+	if (water_material.is_null() || water_material->get_shader().is_null() || water_material->get_shader()->get_code() != water_shader_src()) {
 		return water_material;
 	}
 	if (breaker_material.is_null()) {
 		Ref<Shader> shader;
 		shader.instantiate();
-		shader->set_code(String("#define BREAKER_LIP\n") + WATER_SHADER_SRC);
+		shader->set_code(String("#define BREAKER_LIP\n") + water_shader_src());
 		breaker_material.instantiate();
 		breaker_material->set_shader(shader);
 		List<PropertyInfo> uniforms;
@@ -3820,14 +3827,14 @@ void PhysXWaterSurface3D::_set_underwater_shown(bool p_shown) {
 		// The same source as the surface, built twice more (see WATER_SHADER_SRC's head).
 		Ref<Shader> fog_shader;
 		fog_shader.instantiate();
-		fog_shader->set_code(String("#define UNDERWATER_FOG\n") + WATER_SHADER_SRC);
+		fog_shader->set_code(String("#define UNDERWATER_FOG\n") + water_shader_src());
 		underwater_fog_material.instantiate();
 		underwater_fog_material->set_shader(fog_shader);
 		// Before the surface's underside among the transparent draws, which then covers it.
 		underwater_fog_material->set_render_priority(-1);
 		Ref<Shader> surface_shader;
 		surface_shader.instantiate();
-		surface_shader->set_code(String("#define UNDERWATER_SURFACE\n") + WATER_SHADER_SRC);
+		surface_shader->set_code(String("#define UNDERWATER_SURFACE\n") + water_shader_src());
 		underwater_surface_material.instantiate();
 		underwater_surface_material->set_shader(surface_shader);
 		List<PropertyInfo> uniforms;
@@ -4048,7 +4055,7 @@ void PhysXWaterSurface3D::_rebuild() {
 	if (water_material.is_null()) {
 		Ref<Shader> shader;
 		shader.instantiate();
-		shader->set_code(WATER_SHADER_SRC);
+		shader->set_code(water_shader_src());
 		Ref<ShaderMaterial> m;
 		m.instantiate();
 		m->set_shader(shader);
