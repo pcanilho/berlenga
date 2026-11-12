@@ -876,6 +876,28 @@ nothing for any valid value. Bench `--hair=far8`: 12 to 22 black pixels on the h
 after in every run (far8, near, wind).
 
 
+### Fixed: a line where the skull's shadow starts on hanging cards
+
+Seen from 8 m at 1080p and enlarged, the cards showed a faint outline: a dark disc over the crown,
+a lighter band and V-shaped lines below it. The usual suspects were ruled out one at a time:
+- not the raster shadow of the head (DIRECTIONAL_SHADOW_OFFSET off: unchanged);
+- not the collision spheres' opaque depth in the deep opacity map (its test off: unchanged);
+- not the cards' points lying cm apart (the maps read per fragment: unchanged);
+- not how a card is splatted into the map. Unreal voxelizes the cards' own geometry for their
+  self-shadowing, and both a round bundle (a disc of cells, each with its chord in depth) and a
+  twice-wider square left it as it was.
+With the cards' pre-pass off, the outline grew into the head's whole shape. So it was what lies
+behind the front cards showing through them: the hair on the far side of the head where the
+front cards turned see-through, and the lit hair hanging below it elsewhere. The strands' front
+layer, many thin fibres evenly spread, hides it.
+
+Fix: front cards join the pre-pass (Scheuermann's opaque first pass) from a row coverage of 50%,
+not 70%. The half-clump-deeper read of the maps added in the last fix only offset the darker,
+fuller front layer, and goes. Result against the strands: 8 m 20.7 against 20.7, 15 m 23.0
+against 22.9, close up 41.8 against 44.1; the outline is gone. A dithered threshold (30% to 70%
+by pixel noise) softened the edge further, but stippled the hair without TAA; not used.
+Still seen enlarged 4x: a few small lit flecks where the crown cards' tips end.
+
 ### Fixed: the strands cast no shadow in raster
 
 The strands' material blends (ALPHA), and Godot leaves blended materials out of the shadow maps
