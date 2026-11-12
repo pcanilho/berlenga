@@ -65,6 +65,7 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Body collision: with spheres only the hair sinks into the shoulders; with the shoulders as the body it drapes over them, also when skinned and tilted.*
 
+- **Strand-strand collision** (`strand_collision`, `strand_collision_radius`, `strand_collision_friction`): guide strands no longer pass through each other, with friction.
 - **Hair volume** (`volume_enabled`, `volume_friction`, `volume_stiffness`): strands push and drag on each other through a density grid, so hair keeps its volume.
 
   ![Strand hair shaking and in wind, hair volume off and on](media/hair-volume.jpg)

@@ -1008,6 +1008,19 @@
    "topic": "Collision"
   },
   {
+   "name": "Strand-strand collision",
+   "settings": [
+    "strand_collision",
+    "strand_collision_radius",
+    "strand_collision_friction"
+   ],
+   "note": "",
+   "what": "guide strands no longer pass through each other, with friction.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Collision"
+  },
+  {
    "name": "Hair volume",
    "settings": [
     "volume_enabled",
