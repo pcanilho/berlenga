@@ -6035,6 +6035,149 @@ Array TerrainGenerator3D::build_river_paths(Node *p_parent, real_t p_min_area) {
 				a->set("mouth_target", a->get_path_to(b));
 			}
 		}
+		// Braided reaches (outwash_age): the river feeding a braidplain ends at its head into a river of its own as
+		// wide as the plain, whose level the water solves per section from the discharge over the measured bed (so
+		// only the threads run wet and the bars stand dry); that one ends into the rest of the river below the foot.
+		const Array plains = get_braidplains();
+		for (int bi = 0; bi < plains.size(); bi++) {
+			const Dictionary bp = plains[bi];
+			const PackedVector2Array line = bp["line"];
+			const PackedFloat32Array halves = bp["half_widths"];
+			if (line.size() < 2) {
+				continue;
+			}
+			const Vector2 head = line[0], foot = line[line.size() - 1];
+			const real_t reach = MAX(real_t(halves[0]), real_t(20.0));
+			// The feeding river: the one carrying the most water past the head.
+			int best = -1, kh = -1;
+			real_t best_q = -1.0;
+			for (int r = 0; r < rivers.size(); r++) {
+				const Dictionary d = rivers[r];
+				const PackedVector3Array pts = d["points"];
+				for (int k = 0; k < pts.size(); k++) {
+					if (Vector2(pts[k].x, pts[k].z).distance_to(head) < reach && real_t(float(d["own_discharge"])) > best_q) {
+						best = r;
+						kh = k;
+						best_q = float(d["own_discharge"]);
+						break;
+					}
+				}
+			}
+			if (best < 0 || kh < 1) {
+				continue;
+			}
+			const Dictionary d = rivers[best];
+			const PackedVector3Array pts = d["points"];
+			const PackedFloat32Array ws = d["widths"];
+			int kf = -1;
+			real_t fd = 1e30f;
+			for (int k = kh; k < pts.size(); k++) {
+				const real_t dd = Vector2(pts[k].x, pts[k].z).distance_to(foot);
+				if (dd < fd) {
+					fd = dd;
+					kf = k;
+				}
+			}
+			Node *above = Object::cast_to<Node>(nodes[best]);
+			Path3D *above_path = Object::cast_to<Path3D>(above);
+			const NodePath old_target = above->get("mouth_target");
+			Node *old_tgt = old_target.is_empty() ? nullptr : above->get_node_or_null(old_target);
+			// Above: cut at the head.
+			Ref<Curve3D> ca;
+			ca.instantiate();
+			PackedFloat32Array wa;
+			for (int k = 0; k <= kh; k++) {
+				ca->add_point(to_local.xform(pts[k]));
+				wa.push_back(k < ws.size() ? ws[k] : ws[ws.size() - 1]);
+			}
+			above_path->set_curve(ca);
+			above->set("widths", wa);
+			// The plain.
+			Path3D *plain = Object::cast_to<Path3D>(ClassDB::instantiate("PhysXRiver3D"));
+			ERR_CONTINUE(!plain);
+			plain->set_name(vformat("Braidplain%d", bi));
+			Ref<Curve3D> cb;
+			cb.instantiate();
+			PackedFloat32Array wb;
+			for (int k = 0; k < line.size(); k++) {
+				const Vector3 p3(line[k].x, 0.0, line[k].y);
+				cb->add_point(to_local.xform(Vector3(p3.x, float(get_height(p3)), p3.z)));
+				wb.push_back(2.0f * (k < halves.size() ? halves[k] : halves[halves.size() - 1]));
+			}
+			plain->set_curve(cb);
+			plain->set("widths", wb);
+			plain->set("discharge", d["own_discharge"]);
+			plain->set("snap_to_ground", true);
+			bool has_spacing = false;
+			plain->get("cross_spacing", &has_spacing);
+			if (has_spacing) {
+				plain->set("cross_spacing", 2.0); // about 2 m between cross vertices, so the threads resolve
+			}
+			plain->set_meta("braidplain", bi);
+			p_parent->add_child(plain, true);
+			nodes.push_back(plain);
+			above->set("mouth_target", above->get_path_to(plain));
+			// Below: the rest of the river from the foot, into wherever the river ended.
+			Node *after = old_tgt;
+			if (kf >= 0 && kf + 2 < pts.size()) {
+				Path3D *below = Object::cast_to<Path3D>(ClassDB::instantiate("PhysXRiver3D"));
+				ERR_CONTINUE(!below);
+				below->set_name(vformat("River%dBelowBraid%d", best, bi));
+				Ref<Curve3D> cc;
+				cc.instantiate();
+				PackedFloat32Array wc;
+				for (int k = kf; k < pts.size(); k++) {
+					cc->add_point(to_local.xform(pts[k]));
+					wc.push_back(k < ws.size() ? ws[k] : ws[ws.size() - 1]);
+				}
+				below->set_curve(cc);
+				below->set("widths", wc);
+				below->set("discharge", d["own_discharge"]);
+				p_parent->add_child(below, true);
+				nodes.push_back(below);
+				if (old_tgt) {
+					below->set("mouth_target", below->get_path_to(old_tgt));
+				}
+				after = below;
+			}
+			if (after) {
+				plain->set("mouth_target", plain->get_path_to(after));
+			}
+			// Tributaries of the cut river join the piece their mouth lies on (the water places a mouth along its
+			// target's own curve, so one aimed at the upper piece would land past its end).
+			for (int t = 0; t < rivers.size(); t++) {
+				const Dictionary dt = rivers[t];
+				if (int(dt["joins"]) != best || t >= nodes.size()) {
+					continue;
+				}
+				const PackedVector3Array tp = dt["points"];
+				if (tp.is_empty()) {
+					continue;
+				}
+				const Vector2 mouth(tp[tp.size() - 1].x, tp[tp.size() - 1].z);
+				int km = 0;
+				real_t md = 1e30f;
+				for (int k = 0; k < pts.size(); k++) {
+					const real_t dd = Vector2(pts[k].x, pts[k].z).distance_squared_to(mouth);
+					if (dd < md) {
+						md = dd;
+						km = k;
+					}
+				}
+				Node *tn = Object::cast_to<Node>(nodes[t]);
+				Node *to = km <= kh ? above : ((km < kf || after == old_tgt || !after) ? static_cast<Node *>(plain) : after);
+				if (tn && to && tn->is_inside_tree() && to->is_inside_tree()) {
+					tn->set("mouth_target", tn->get_path_to(to));
+				}
+			}
+			if (Engine::get_singleton()->is_editor_hint()) {
+				Node *own = p_parent->get_owner() ? p_parent->get_owner() : p_parent;
+				plain->set_owner(own);
+				if (after && after != old_tgt) {
+					after->set_owner(own);
+				}
+			}
+		}
 	}
 	return nodes;
 }

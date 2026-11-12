@@ -34,7 +34,7 @@ extends Node3D
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
-#   --trees=cones|generated  forest: stand-in cones (default) or TreeGenerator's rigged woodland with wind
+#   --trees=cones|generated|none  forest: stand-in cones (default), TreeGenerator's rigged woodland with wind, or not drawn
 #                         (--tree-variants=N, default 2)
 #   --atmosphere=scattering|physical   sky air: Hillaire 2020 multiple scattering (default) or the older PhysicalSky model
 #   --clip=N              with --out, N frames in a row (out_0000.png...), for clips; run with --fixed-fps 24
@@ -80,6 +80,7 @@ var lightning: WeatherLightning3D
 var probe: Node3D
 var data_map: TerrainDataMap3D
 var veg: VegetationField3D
+var _tree_gen: Object
 var grass: GrassField3D
 var sward: Array = [] # the grass layers (tall, undercoat, turf)
 var cover: VegetationField3D # meadow herbs and waterside plants near the camera
@@ -175,6 +176,10 @@ func _ready() -> void:
 		# when it places: placed again here once the grass is set up.
 		var tc := Time.get_ticks_msec()
 		veg.cover_grass = veg.get_path_to(grass)
+		var under_field := get_node_or_null("Undercoat")
+		if under_field != null and "cover_grass_layers" in veg:
+			# The undercoat fills the gaps between the tall grass patches, far as near.
+			veg.cover_grass_layers = [veg.get_path_to(under_field)]
 		veg.cover_map_enabled = true
 		veg.populate()
 		var ct: Texture2D = veg.get_cover_texture()
@@ -228,12 +233,14 @@ func _ready() -> void:
 		# Landscape3D streams heights coarse first: load every chunk exactly before the picture.
 		landscape.load_all_heights()
 		landscape.update_lods_from_camera()
-	if args.has("face-sun") and sun != null:
+	if (args.has("face-sun") or args.has("face-away")) and sun != null:
 		# --face-sun=PITCH: turn the camera to the sun's azimuth, PITCH degrees below the horizon (godray shots).
 		var cam5: Camera3D = get_viewport().get_camera_3d()
 		var to_sun := sun.global_basis.z
 		var flat := Vector3(to_sun.x, 0.0, to_sun.z).normalized()
-		var pitch := deg_to_rad(float(args["face-sun"]))
+		if not args.has("face-sun"):
+			flat = -flat # --face-away=PITCH: the same, looking down-sun (far grass colour pairs)
+		var pitch := deg_to_rad(float(args.get("face-sun", args.get("face-away", "0"))))
 		cam5.look_at(cam5.global_position + flat * cos(pitch) - Vector3.UP * sin(pitch))
 		_log("facing the sun: azimuth dir %s, sun elevation %.1f deg" % [str(flat), rad_to_deg(asin(clampf(to_sun.y, -1.0, 1.0)))])
 	var frames := int(args.get("frames", "6" if args.has("raster") else "40"))
@@ -1455,6 +1462,9 @@ func _build_vegetation() -> void:
 	veg.tile_size = 128.0
 	veg.populate_on_ready = false
 	add_child(veg)
+	if args.get("trees", "cones") == "none":
+		veg.visible = false # --trees=none: placed (the other systems still read it) but not drawn, for views with no stand-ins
+
 	veg.data_map = veg.get_path_to(data_map)
 	if args.get("layout", "range") == "valley":
 		# The clearing: the trees keep off the alluvial floor, read from the generator's sediment (a floodplain
@@ -1476,7 +1486,7 @@ func _build_vegetation() -> void:
 	# The forest as shelter for the wind: the field writes its stands into the weather map's canopy.
 	veg.weather_map = veg.get_path_to(weather)
 	# --forest-radius=R: the forest streams round the camera instead of covering the world at once.
-	var fr := float(args.get("forest-radius", "0"))
+	var fr := float(args.get("forest-radius", "150" if generated_trees else "0"))
 	if fr > 0.0:
 		veg.streaming = true
 		veg.stream_radius = fr
@@ -1551,6 +1561,8 @@ func _build_vegetation() -> void:
 			r.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.3))
 			r.set_rule_fade(PlantSpecies.RULE_SHADE, 0.4)
 			g.canopy_field = g.get_path_to(veg)
+			if "season_source" in g:
+				g.season_source = g.get_path_to(weather) # the sward's colour follows the season
 
 
 # Footprints in the ground around the camera: sand on the beach, mud on wet banks, leaf litter under the forest, none
@@ -1610,10 +1622,22 @@ func _prints_at(p: Vector3) -> Dictionary:
 # limb colliders near the camera. Needs the trees branch until it is on main.
 func _generated_forest(clearing: bool) -> Biome:
 	var tg := TreeGenerator.new()
+	_tree_gen = tg # the species build their near leaves from it on demand: kept alive
 	tg.rigged = true
+	if "near_leaf_range" in tg:
+		tg.near_leaf_range = float(args.get("near-leaf-range", "60"))
 	if clearing:
 		tg.mask_channel = 0 # the valley's clearing mask (red), as the cones use it
-	var b: Biome = tg.make_woodland(int(args.get("tree-variants", "2")), TreeGenerator.REGION_EUROPE)
+	# One variant by default: each variant adds about the woodland's memory again (88M vertices at one).
+	var variants := int(args.get("tree-variants", "1"))
+	var stands := {"beech": TreeGenerator.STAND_BEECH, "oak": TreeGenerator.STAND_OAK_MIXED,
+			"montane": TreeGenerator.STAND_MONTANE_CONIFER, "hedgerow": TreeGenerator.STAND_HEDGEROW}
+	var b: Biome
+	if args.has("tree-stand"):
+		# --tree-stand=beech|oak|montane|hedgerow: one stand only (its trees, sapling, snag and log).
+		b = tg.make_stand(stands.get(args["tree-stand"], TreeGenerator.STAND_BEECH), variants)
+	else:
+		b = tg.make_woodland(variants, TreeGenerator.REGION_EUROPE)
 	_log("generated woodland: %d species" % b.species.size())
 	return b
 
@@ -1885,7 +1909,9 @@ func _build_camera() -> void:
 				best.y = height_at(best.x, best.z) + maxf(60.0, 0.3 * h)
 			cam.position = best
 			cam.look_at(mid)
-			cam.fov = clampf(rad_to_deg(2.0 * atan(0.75 * h / best.distance_to(mid))), 25.0, 70.0)
+			# --fall-fill=F: the drop fills that share of the frame height (default about two thirds).
+			var fill := float(args.get("fall-fill", "0.67"))
+			cam.fov = clampf(rad_to_deg(2.0 * atan(0.5 * h / fill / best.distance_to(mid))), 10.0, 70.0)
 		"contact":
 			# One contact fall (--contact=id, default the one with most water), seen from below and in front.
 			var want: String = args.get("contact", "")
@@ -2035,6 +2061,8 @@ func _set_far_color(sp: PlantSpecies) -> void:
 	pg.preset = m.get_meta("preset", 0)
 	pg.apply_preset_colors()
 	var lc: Color = pg.leaf_color * 0.8
+	if pg.preset in [PlantGenerator.PRESET_KNAPWEED, PlantGenerator.PRESET_SCABIOUS, PlantGenerator.PRESET_WILD_CARROT, PlantGenerator.PRESET_SORREL]:
+		lc = lc.lerp(pg.petal_color, 0.35) # tall flowers: their colour shows from afar
 	sp.far_color = Color(lc.r, lc.g, lc.b, clampf(m.get_aabb().end.y / 0.6, 0.2, 0.9))
 
 
@@ -2074,7 +2102,15 @@ func _meadow_species() -> Array:
 	yarrow.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 3.0)
 	var dry := _plant([PlantGenerator.PRESET_DRY_GRASS], 0.3, 0.0, 0.55, 12.0)
 	dry.scale_range = Vector2(0.7, 1.2)
-	var list := [flowers, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry]
+	# Tall meadow flowers (the grass bench's recipe): knapweed and sorrel through the meadow, scabious and wild carrot
+	# on the drier ground, standing clear of the grass.
+	var tall := _plant([PlantGenerator.PRESET_KNAPWEED, PlantGenerator.PRESET_SORREL], 0.35, 0.08, 0.8, 30.0, 7.0, 0.5, 61)
+	tall.scale_range = Vector2(1.1, 1.4)
+	var tall_dry := _plant([PlantGenerator.PRESET_SCABIOUS, PlantGenerator.PRESET_WILD_CARROT], 0.4, 0.08, 0.75, 30.0, 8.0, 0.35, 67)
+	tall_dry.scale_range = Vector2(1.1, 1.4)
+	tall_dry.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(8.0, 1000000.0))
+	tall_dry.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 4.0)
+	var list := [flowers, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry, tall, tall_dry]
 	return list
 
 

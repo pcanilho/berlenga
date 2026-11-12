@@ -1,5 +1,7 @@
 ### Added
-- `outwash_age`: gravel reaches below the last ice stand or on fans become braided outwash plains (Murray-Paola cellular braiding on a flat graded plain, bare gravel); `get_braidplains()` gives each plain's centre line, half widths, water stage per point, head discharge and source (`get_last_braid_count()`).
+- `outwash_age`: gravel reaches below the last ice stand or on fans become braided outwash plains (Murray-Paola cellular braiding on a flat graded plain, bare gravel); `get_braidplains()` gives each plain's centre line, half widths, water stage per point, head discharge and source (`get_last_braid_count()`). `build_river_paths()` ends the feeding river at the plain's head into a river as wide as the plain (snapped to the ground, so the water solves which threads run wet), which ends into the rest of the river below the foot; the cut river's tributaries join the piece their mouth lies on.
 ### Fixed
+- The far ground blend (`far_blend_enabled`) takes the grass's sun-azimuth lobes, brighter looking down-sun and darker into it, so far cover and grass fields agree at any heading.
+- Scree and fans no longer read as pale smooth ovals from afar: the default scree colour sits closer to the rock's, the edges break into lobes and tongues down the fall line, and the tone streaks over 5 to 30 m.
 - Rock detail no longer draws moire hairlines at a distance or at grazing angles, and no longer darkens the ground: cracks are box filtered over each pixel's footprint, every other feature fades to its mean, it filters the same under path tracing, and it stays off rock gentler than 45 degrees.
 - Falls over 25 m keep the face they fall over, with a notch at the lip, instead of a straight-sided slot and a flat pad at the foot.
