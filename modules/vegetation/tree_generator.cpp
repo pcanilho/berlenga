@@ -940,7 +940,45 @@ void TreeGenerator::_build_shadow_grid(int p_year) {
 			}
 		}
 	}
+	if (forest_shade <= 0.0f && _nurse_scrub_height() > 0.0f) {
+		// Shelter in youth (trees.md 2f): most open-grown oaks came up through thorny scrub or a
+		// browse line (Vera 2000; the wood-pasture oaks of Rackham 2006), which shaded out and
+		// browsed their low limbs and left a clear trunk under a crown that spread above it.
+		// Shade to the scrub's height, off the stem's own line, kills those limbs as a stand does.
+		const float scrub = _nurse_scrub_height();
+		const Vector3 base = nodes[0].start;
+		for (int y = 0; y < grid_size.y; y++) {
+			const float wy = grid_origin.y + (y + 0.5f) * cell - base.y;
+			const float below = CLAMP((scrub - wy) / MAX(0.6f, cell), 0.0f, 1.0f);
+			if (below <= 0.0f) {
+				continue;
+			}
+			for (int z = 0; z < grid_size.z; z++) {
+				for (int x = 0; x < grid_size.x; x++) {
+					const float dx = grid_origin.x + (x + 0.5f) * cell - base.x;
+					const float dz = grid_origin.z + (z + 0.5f) * cell - base.z;
+					const float r = Math::sqrt(dx * dx + dz * dz);
+					shadow[_cell_index(Vector3i(x, y, z))] += 1.6f * below * Math::smoothstep(0.2f, 0.2f + 1.5f * cell, r);
+				}
+			}
+		}
+	}
 	(void)p_year;
+}
+
+// The height of the scrub an open-grown tree came up through, 0 for none: about two in three
+// pedunculate oaks by seed, 3 to 4.5 m (trees.md 2f); the rest forked low in the open.
+float TreeGenerator::_nurse_scrub_height() const {
+	if (preset != PRESET_OAK || fallen || fallen_branch) {
+		return 0.0f;
+	}
+	const uint32_t h = uint32_t(seed) * 2654435761u + 0x6e757273u;
+	const uint32_t m = (h ^ (h >> 15)) * 2246822519u;
+	const float u = float((m ^ (m >> 13)) & 0xffffu) / 65535.0f;
+	if (u >= 0.67f) {
+		return 0.0f;
+	}
+	return Math::lerp(3.0f, 4.5f, u / 0.67f);
 }
 
 void TreeGenerator::_grow_year(int p_year) {
@@ -1196,14 +1234,29 @@ void TreeGenerator::_grow_year(int p_year) {
 // their lower dead limbs for decades; pines and birches prune themselves clean).
 void TreeGenerator::_shed(int p_year) {
 	const float ratio = params[PARAM_SHED_RATIO];
+	// Under the scrub of an open-grown tree's youth (trees.md 2f) the limbs off the stem die once
+	// the leader has grown clear of it: shaded and browsed, they drop and leave a clear trunk.
+	float scrub = forest_shade <= 0.0f ? _nurse_scrub_height() : 0.0f;
+	if (scrub > 0.0f) {
+		float stem_top = nodes[0].start.y;
+		for (const Node &n : nodes) {
+			if (!n.removed && n.order == 0) {
+				stem_top = MAX(stem_top, n.end().y);
+			}
+		}
+		if (stem_top - nodes[0].start.y < scrub + 0.5f) {
+			scrub = 0.0f;
+		}
+	}
 	LocalVector<int> stack;
 	for (int i = 1; i < int(nodes.size()); i++) {
 		Node &n = nodes[i];
 		if (n.removed || n.dead || n.parent <= 0 || nodes[n.parent].main == i || n.born > p_year - 2) {
 			continue;
 		}
+		const bool under_scrub = scrub > 0.0f && nodes[n.parent].order == 0 && n.start.y - nodes[0].start.y < scrub;
 		const float light = (n.light_main + n.light_lateral) / float(MAX(1, n.count));
-		if (light >= ratio) {
+		if (light >= ratio && !under_scrub) {
 			continue;
 		}
 		const bool keep = rng.randf() < params[PARAM_DEAD_BRANCH_KEEP];

@@ -471,6 +471,7 @@ private:
 	float _shadow_at(const Vector3 &p_pos) const;
 	Vector3 _best_lit_direction(const Vector3 &p_pos, const Vector3 &p_dir) const;
 
+	float _nurse_scrub_height() const;
 	void _grow_year(int p_year);
 	void _shed(int p_year);
 	void _compute_radii();

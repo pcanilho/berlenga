@@ -771,6 +771,26 @@ Shigo's anatomy, since it stays a tube (no implicit polygonizer, no extra triang
     `--junction-side=-1` views the junction from the limb's other side. The junction view
     picks a true limb (under half the trunk's girth, spreading, starting inside the trunk).
 
+### 2f. Clear trunks on open-grown oaks (12 Nov; Paulo picked "Mix of both")
+
+Open-grown oaks came out as a broom of stems forking about a metre up: grown alone in full light
+from the first year, the young tree kept every low limb, and the strongest of them grew into
+co-leaders. Real parkland oaks mostly have a clear trunk of 3 to 5 m under a spreading crown,
+because they did not grow up in the open. Vera (*Grazing Ecology and Forest History*, 2000)
+shows pedunculate oak regenerating inside thorny scrub (blackthorn, hawthorn) in grazed land: the
+scrub shields the sapling from browsing and shades its low limbs, which die and drop, and the
+crown spreads once the leader clears it. Rackham (*Woodlands*, 2006) describes the same history
+for wood-pasture oaks, along with a browse line. Oaks that came up without that shelter fork low.
+
+As built: `_nurse_scrub_height()` gives about two in three open-grown pedunculate oaks (by seed)
+a scrub of 3 to 4.5 m, and 0 for the rest. While the tree grows (no forest shade), the shadow
+grid gets shade below that height, kept off the stem's own line. Once the leader is 0.5 m above
+the scrub, `_shed()` drops the limbs leaving the stem below it, as a stand drops its shaded limbs.
+The leader's own continuation is never shed. Limbs from above the scrub that bend down under
+their own weight can still sweep low, as on real open oaks. Stand-grown oaks are unchanged, since
+their stand already clears the bole. The other oaks (white and red) and lime are left as they are
+until they are looked at.
+
 ## 8b. Woodland memory (12 Nov)
 
 The showcase scene ran out of memory (about 14 GB) generating the European woodland before
