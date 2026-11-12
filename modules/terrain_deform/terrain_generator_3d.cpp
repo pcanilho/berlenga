@@ -4964,14 +4964,16 @@ float TerrainGenerator3D::_apply_lips(real_t p_x, real_t p_z, float p_g) const {
 		}
 		auto fade = [](real_t x) { return x * x * (real_t(3.0) - real_t(2.0) * x); };
 		if (l.notch) {
-			// The notch: up to 0.4 of the river's width deep at the brink (2 to 10 m), fading in over LIP_END
-			// upstream and out down the face (gone by a third of the run), a rounded V that narrows as it goes
+			// The notch: up to 0.4 of the river's width deep (2 to 10 m) from 6 m below the brink, fading out down the
+			// face (gone by a third of the run), a rounded V that narrows as it goes
 			// down, its walls wandering by a quarter of its width (jointed rock, not a saw cut).
-			if (s < -LIP_END || s > l.run) {
+			// The brink itself keeps its height: the river and its lake are graded to it (a notch through the lip would
+			// drain the lake and leave the water above the rock), so the cleft opens just over the edge.
+			if (s <= 0.0 || s > l.run) {
 				continue;
 			}
 			const real_t sa = s / MAX(l.run, real_t(1.0));
-			const real_t depth_at = CLAMP(0.4f * l.half_width, real_t(2.0), real_t(10.0)) * (s < 0.0 ? fade(CLAMP(1.0 + s / LIP_END, 0.0, 1.0)) : fade(CLAMP(1.0 - 3.0 * sa, 0.0, 1.0)));
+			const real_t depth_at = CLAMP(0.4f * l.half_width, real_t(2.0), real_t(10.0)) * fade(CLAMP(s / 6.0, 0.0, 1.0)) * fade(CLAMP(1.0 - 3.0 * sa, 0.0, 1.0));
 			if (depth_at <= 0.0) {
 				continue;
 			}

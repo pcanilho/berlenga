@@ -33,6 +33,13 @@
 				The sides of [param chunk] stitched to a coarser neighbour: bit 0 toward -Z, 1 toward +X, 2 toward +Z, 3 toward -X.
 			</description>
 		</method>
+		<method name="get_cliff_point" qualifiers="const">
+			<return type="Vector3" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				Where the drawn surface lies over a point of the heightfield surface: the point itself, or pushed out of or into a steep face by [member cliff_relief]. For water laid on a face.
+			</description>
+		</method>
 		<method name="get_chunk_grid" qualifiers="const">
 			<return type="Vector2i" />
 			<description>
@@ -140,6 +147,9 @@
 		</member>
 		<member name="cast_shadows" type="bool" setter="set_cast_shadows" getter="is_casting_shadows" default="true">
 			Whether the ground casts shadows.
+		</member>
+		<member name="cliff_relief" type="float" setter="set_cliff_relief" getter="get_cliff_relief" default="0.0">
+			Metres of rock relief built into faces steeper than about 50 degrees near the camera: the finest level's triangles are refined there without cracks and pushed out into ledges of 3 m beds and staggered joint blocks. 0 turns it off.
 		</member>
 		<member name="chunk_quads" type="int" setter="set_chunk_quads" getter="get_chunk_quads" default="64">
 			Quads along a chunk's side at full detail (a power of two, 8 to 256).

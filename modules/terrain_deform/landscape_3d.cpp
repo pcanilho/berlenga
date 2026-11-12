@@ -219,22 +219,22 @@ Vector3 Landscape3D::_normal_at(real_t p_x, real_t p_z) const {
 // Metres out of the face (negative: back into it) at a point of the landscape's own space, before cliff_relief.
 float Landscape3D::_cliff_offset(const Vector3 &p) const {
 	// Beds: warped, 3 m thick, each proud or recessed by its own amount; the step to the next bed rounded over its top
-	// metre (a ledge's lip, not a saw cut, and no deep undercut a light cannot reach).
+	// metre and a half (a ledge's lip, not a saw cut; and at least two vertex rows, so the step does not alias).
 	const real_t T = 3.0;
 	const real_t yb = p.y + (_lc_noise(p * 0.05f) - 0.5f) * 4.0f;
 	const int32_t bed = int32_t(Math::floor(yb / T));
 	const real_t fy = yb - bed * T;
 	const float o0 = _lc_hash(bed, 11, 3) * 2.0f - 1.0f;
 	const float o1 = _lc_hash(bed + 1, 11, 3) * 2.0f - 1.0f;
-	const real_t ty = CLAMP((fy - (T - 1.0f)) / 1.0f, real_t(0.0), real_t(1.0));
+	const real_t ty = CLAMP((fy - (T - 1.5f)) / 1.5f, real_t(0.0), real_t(1.0));
 	float o = Math::lerp(o0, o1, float(ty * ty * (3.0f - 2.0f * ty)));
 	// Joints across the beds, 4.5 m apart and staggered bed to bed, each block a little forward or back.
 	const real_t u = p.x * 0.8f + p.z * 0.6f + _lc_hash(bed, 5, 1) * 4.5f;
 	const int32_t jb = int32_t(Math::floor(u / 4.5f));
 	const real_t fu = u - jb * 4.5f;
 	const float j0 = _lc_hash(bed, jb, 9) - 0.5f, j1 = _lc_hash(bed, jb + 1, 9) - 0.5f;
-	const real_t tu = CLAMP((fu - 3.9f) / 0.6f, real_t(0.0), real_t(1.0));
-	o += 0.6f * Math::lerp(j0, j1, float(tu * tu * (3.0f - 2.0f * tu)));
+	const real_t tu = CLAMP((fu - 3.0f) / 1.5f, real_t(0.0), real_t(1.0));
+	o += 1.2f * Math::lerp(j0, j1, float(tu * tu * (3.0f - 2.0f * tu)));
 	// Roughness.
 	o += 0.5f * (_lc_noise(p * 0.7f) - 0.5f) + 0.2f * (_lc_noise(p * 2.1f + Vector3(3, 1, 7)) - 0.5f);
 	return o;
@@ -256,6 +256,16 @@ Vector3 Landscape3D::_cliff_point(const Vector3 &p, real_t p_weight_scale) const
 	const real_t ws = w * w * (3.0f - 2.0f * w) * p_weight_scale;
 	const real_t d = cliff_relief * _cliff_offset(p) * ws;
 	return p + Vector3(m.x / ml, 0.0, m.y / ml) * d;
+}
+
+Vector3 Landscape3D::get_cliff_point(const Vector3 &p_global_position) const {
+	// Where the drawn surface is over a point of the heightfield surface (global space): the point itself unless
+	// cliff_relief pushes it out of or into a steep face. For water laid on a face (falls, sheets).
+	if (cliff_relief <= 0.0 || heights.is_empty()) {
+		return p_global_position;
+	}
+	const Transform3D xf = is_inside_tree() ? get_global_transform() : Transform3D();
+	return xf.xform(_cliff_point(xf.affine_inverse().xform(p_global_position), 1.0));
 }
 
 void Landscape3D::_build_cliff_surface(MeshJob &r_job) const {
@@ -1582,6 +1592,7 @@ void Landscape3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_material"), &Landscape3D::get_material);
 	ClassDB::bind_method(D_METHOD("set_cliff_relief", "metres"), &Landscape3D::set_cliff_relief);
 	ClassDB::bind_method(D_METHOD("get_cliff_relief"), &Landscape3D::get_cliff_relief);
+	ClassDB::bind_method(D_METHOD("get_cliff_point", "global_position"), &Landscape3D::get_cliff_point);
 	ClassDB::bind_method(D_METHOD("set_cast_shadows", "enable"), &Landscape3D::set_cast_shadows);
 	ClassDB::bind_method(D_METHOD("is_casting_shadows"), &Landscape3D::is_casting_shadows);
 	ClassDB::bind_method(D_METHOD("set_camera", "path"), &Landscape3D::set_camera);

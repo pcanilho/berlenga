@@ -217,6 +217,7 @@ public:
 	real_t get_lod_error() const { return lod_error; }
 	void set_cliff_relief(real_t p_metres);
 	real_t get_cliff_relief() const { return cliff_relief; }
+	Vector3 get_cliff_point(const Vector3 &p_global_position) const;
 	void set_material(const Ref<Material> &p_material);
 	Ref<Material> get_material() const { return material; }
 	void set_cast_shadows(bool p_enable);
