@@ -240,6 +240,11 @@ func _ready() -> void:
 	# samples a pixel; fewer leave the first frame's upsampled blocks and the march jitter in the picture
 	# (a game reaches that within a second or two of a cut).
 	var frames := int(args.get("frames", "160" if args.has("raster") else "40"))
+	if weather != null and not args.has("clip") and args.get("still-weather", "1") != "0":
+		# A still picture: the weather (cloud drift) holds while the frames settle. Here a frame takes
+		# seconds, so the clouds would move a long way between a pixel's samples (each pixel of the sky's
+		# 4x4 blocks is drawn every 16th frame) and the resolve would average them into a blur.
+		weather.time_scale = 0.0
 	for i in frames:
 		if no_till_tex != null:
 			RenderingServer.global_shader_parameter_set("terrain_geology_map", no_till_tex.get_rid())

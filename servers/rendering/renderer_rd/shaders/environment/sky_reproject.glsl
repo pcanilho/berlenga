@@ -27,6 +27,10 @@ layout(push_constant, std430) uniform Params {
 	ivec2 low_size;
 	uint history_valid;
 	uint drawn; // samples this frame's pixel has had since the history was reset, this one included
+	float history_scale; // this frame's pre-exposure over the history's
+	float pad0;
+	float pad1;
+	float pad2;
 }
 params;
 
@@ -76,38 +80,28 @@ bool reproject(ivec2 px, out vec4 r_color) {
 		return false;
 	}
 	r_color = sample_history(prev_uv);
+	r_color.rgb *= params.history_scale; // alpha is the clouds' transmittance, not light
 	return true;
 }
 
-// The history clipped to what this frame's samples around the pixel allow: variance clipping (Salvi,
-// "An Excursion in Temporal Supersampling", GDC 2016) over the 3x3 drawn pixels nearest it, as Nubis
-// bounds its reprojected clouds. The clouds drift and grow while each pixel waits 16 frames for its
-// next sample; unclipped, the history trails behind them and the freshly drawn pixels stand out of
-// it as a lattice of dots, and the long mean below would smear them.
-vec4 clip_history(ivec2 px, vec4 p_prev) {
-	// Bilinear taps at the pixel's own place in the low grid, so the bounds vary smoothly across a
-	// block (nearest taps gave every pixel of a block one box, and clipped regions showed as squares).
-	vec2 low_uv = ((vec2(px) - vec2(params.offset)) * 0.25 + 0.5) / vec2(params.low_size);
-	vec2 texel = 1.0 / vec2(params.low_size);
-	vec4 m1 = vec4(0.0);
-	vec4 m2 = vec4(0.0);
+// The history clamped to the range of this frame's samples around the pixel (the 3x3 drawn pixels
+// nearest it, min/max as TAA resolves bound their history; Karis, "High Quality Temporal
+// Supersampling", SIGGRAPH 2014): clouds that drifted or grew while the pixel waited 16 frames for its
+// next sample don't trail behind. A min/max box, not variance clipping, so thin bright detail (lit
+// cloud edges) narrower than the 4-pixel sample spacing is kept.
+vec4 clamp_history(ivec2 px, vec4 p_prev) {
+	// The drawn pixels themselves (not bilinear taps, which would dilute a lone bright sample).
+	ivec2 c = ivec2(floor((vec2(px) - vec2(params.offset)) * 0.25 + 0.5));
+	vec4 lo = vec4(1e20);
+	vec4 hi = vec4(-1e20);
 	for (int y = -1; y <= 1; y++) {
 		for (int x = -1; x <= 1; x++) {
-			vec4 s = textureLod(new_samples, low_uv + vec2(x, y) * texel, 0.0);
-			m1 += s;
-			m2 += s * s;
+			vec4 s = texelFetch(new_samples, clamp(c + ivec2(x, y), ivec2(0), params.low_size - 1), 0);
+			lo = min(lo, s);
+			hi = max(hi, s);
 		}
 	}
-	m1 /= 9.0;
-	vec4 sigma = sqrt(max(m2 / 9.0 - m1 * m1, vec4(0.0)));
-	const float gamma = 1.25;
-	vec4 hi = m1 + gamma * sigma;
-	// Clip toward the mean along the line to it (keeps the hue, unlike a per-channel clamp).
-	vec4 d = p_prev - m1;
-	vec4 ext = max(hi - m1, vec4(1e-5));
-	vec4 r = abs(d) / ext;
-	float k = max(max(r.x, r.y), max(r.z, r.w));
-	return k > 1.0 ? m1 + d / k : p_prev;
+	return clamp(p_prev, lo, hi);
 }
 
 void main() {
@@ -120,13 +114,13 @@ void main() {
 	vec4 prev;
 	bool seen = reproject(px, prev);
 	if (seen) {
-		prev = clip_history(px, prev);
+		prev = clamp_history(px, prev);
 	}
 	if (all(equal(o, params.offset)) && all(lessThan(q, params.low_size))) {
 		// Drawn this frame: averaged with what this pixel held, so the march's jitter, which
 		// changes every frame, settles instead of showing. Its first sample replaces the upsampled
 		// fill it held (blocky, a sixteenth of the pixels), the next ones make a running mean, then
-		// an exponential mean over about the last four (the history clip keeps it on the moving clouds; a weight of a
+		// an exponential mean over about the last four (the history clamp keeps it on the moving clouds; a weight of a
 		// half left the jitter visible as a fixed checker across each 4x4 block, and kept the first
 		// fill's blocks for several cycles).
 		vec4 fresh = texelFetch(new_samples, q, 0);

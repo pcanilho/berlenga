@@ -161,15 +161,15 @@ float cloud_phase(float cos_theta, float p_c) {
 	return mix(henyey_greenstein(cos_theta, 0.8 * p_c), henyey_greenstein(cos_theta, -0.3 * p_c), 0.3);
 }
 
-// A new start for the march each frame, uncorrelated between frames. The reprojection draws each pixel
-// every 16th frame, so a golden-ratio step per frame (0.618 * 16 = 0.888 a revisit) gave one pixel's
-// samples nearly the same start, and their mean a fixed bias that showed as a dot pattern over each 4x4
-// block. A hash of the frame (PCG, Jarzynski and Olano 2020) is unbiased however often a pixel is drawn.
-float frame_jitter(float p_time) {
-	uint v = uint(floor(p_time * 60.0)) * 747796405u + 2891336453u;
-	uint word = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
-	word = (word >> 22u) ^ word;
-	return float(word >> 8u) * (1.0 / 16777216.0);
+// The march's start: interleaved gradient noise (Jimenez, "Next Generation Post Processing in Call of
+// Duty: Advanced Warfare", SIGGRAPH 2014), its pattern shifted every frame by 5.588238 pixels as his
+// temporal variant does. The reprojection draws each pixel every 16th frame; a start shared by the whole
+// frame (a per-frame step added to a fixed pattern) gave all the pixels drawn that frame the same bias,
+// and with a handful of samples a pixel that showed as a lattice over each 4x4 block. A per-frame step of
+// the golden ratio also nearly repeated at the 16-frame revisit (0.888 a revisit).
+float march_jitter(vec2 p_pixel, float p_time) {
+	vec2 p = p_pixel + 5.588238 * float(int(floor(p_time * 60.0)) % 64);
+	return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
 
 // Clouds along rd from the camera: radiance (rgb) and transmittance (a).
@@ -350,9 +350,9 @@ void sky() {
 		vec3 t_up;
 		vec3 ambient_top = atmo_scatter(cloud_base_height, UP, l0, e0, l1, e1, 1e12, 8, 0.5, t_up).rgb * cloud_brightness;
 		vec3 ambient_bottom = ambient_top * 0.5 + ground_color.rgb * sun_radiance * max(l0.y, 0.0) * (1.0 - 0.7 * cloud_cover) / PI;
-		float jitter = AT_CUBEMAP_PASS ? 0.5 : fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+		float jitter = AT_CUBEMAP_PASS ? 0.5 : march_jitter(FRAGCOORD.xy, 0.0);
 #ifdef CLOUD_REPROJECTION
-		jitter = AT_CUBEMAP_PASS ? 0.5 : fract(jitter + frame_jitter(TIME));
+		jitter = AT_CUBEMAP_PASS ? 0.5 : march_jitter(FRAGCOORD.xy, TIME);
 #endif
 		vec3 dir_dx = dFdx(EYEDIR);
 		vec3 dir_dy = dFdy(EYEDIR);
@@ -396,10 +396,10 @@ void sky() {
 		vec3 ambient_top = atmosphere(UP, sun_dir, light_energy, LIGHT0_COLOR, LIGHT0_SIZE, false) * cloud_brightness;
 		// From below: the sky's light off the ground (its colour as albedo), lit by the sun where clear.
 		vec3 ambient_bottom = ambient_top * 0.5 + ground_color.rgb * sun_radiance * max(sun_dir.y, 0.0) * (1.0 - 0.7 * cloud_cover) / PI;
-		float jitter = AT_CUBEMAP_PASS ? 0.5 : fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))));
+		float jitter = AT_CUBEMAP_PASS ? 0.5 : march_jitter(FRAGCOORD.xy, 0.0);
 #ifdef CLOUD_REPROJECTION
 		// Reprojected (half_res_reprojection): a new start each frame, which the resolve averages.
-		jitter = AT_CUBEMAP_PASS ? 0.5 : fract(jitter + frame_jitter(TIME));
+		jitter = AT_CUBEMAP_PASS ? 0.5 : march_jitter(FRAGCOORD.xy, TIME);
 #endif
 		// One pixel's angle, from the eye direction's change to the next pixel (the pass is uniform, so
 		// the derivatives are defined here).

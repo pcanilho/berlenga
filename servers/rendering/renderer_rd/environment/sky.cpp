@@ -1479,8 +1479,10 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 		int32_t low_size[2];
 		uint32_t history_valid;
 		uint32_t drawn;
+		float history_scale; // this frame's pre-exposure over the history's
+		float pad[3];
 	} pc;
-	static_assert(sizeof(PushConstant) == 112);
+	static_assert(sizeof(PushConstant) == 128);
 	auto store_columns = [](const Basis &p_basis, float *r_dst) {
 		for (int c = 0; c < 3; c++) {
 			const Vector3 col = p_basis.get_column(c);
@@ -1508,6 +1510,11 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 	pc.low_size[1] = low_size.y;
 	pc.history_valid = state->valid ? 1u : 0u;
 	pc.drawn = drawn;
+	// The pass's colour carries the luminance multiplier (the camera's pre-exposure), which auto exposure
+	// changes every frame while it adapts: the history is rescaled to this frame's, or the pixels drawn
+	// this frame stand apart from the rest as a 4x4 lattice.
+	pc.history_scale = (state->valid && state->prev_luminance > 0.0f) ? p_luminance_multiplier / state->prev_luminance : 1.0f;
+	pc.pad[0] = pc.pad[1] = pc.pad[2] = 0.0f;
 
 	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
 	RID sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
@@ -1527,6 +1534,7 @@ void SkyRD::_reproject_half_res(Ref<RenderSceneBuffersRD> p_render_buffers, Sky 
 
 	state->prev_orientation = p_orientation;
 	state->prev_projection = p_projection;
+	state->prev_luminance = p_luminance_multiplier;
 	state->valid = true;
 }
 
