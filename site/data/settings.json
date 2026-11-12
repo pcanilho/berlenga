@@ -1074,6 +1074,18 @@
    "topic": "Strands"
   },
   {
+   "name": "Grey and sun-bleached hair",
+   "settings": [
+    "grey_ratio",
+    "sun_bleaching"
+   ],
+   "note": "",
+   "what": "single grey strands mixed through the hair, and lengths lighter and warmer toward the tips.",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
    "name": "Body collision",
    "settings": [
     "PhysXHair3D",

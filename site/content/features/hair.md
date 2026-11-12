@@ -77,6 +77,16 @@ summary: "Fibre shading, strand grooms, TressFX strand simulation with body coll
 
   *Snow on hair: flakes settle through the outer strands.*
 
+- **Grey and sun-bleached hair** (`grey_ratio`, `sun_bleaching`, off by default): single grey strands mixed through the hair, and lengths lighter and warmer toward the tips.
+
+  ![The same strand hair plain and with grey strands, raster](media/hair-grey.jpg)
+
+  *Grey strands: single grey hairs through the brown.*
+
+  ![The same strand hair plain and sun-bleached, raster](media/hair-sun-bleached.jpg)
+
+  *Sun-bleached: the lengths lighten toward the tips.*
+
 ## Collision
 
 - **Body collision** (`PhysXHair3D`: `collision_body`, `collision_cell_size`): strands collide with a body mesh, skinned or not, through a distance field built on the GPU every frame.
