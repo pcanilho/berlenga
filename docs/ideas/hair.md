@@ -876,6 +876,20 @@ nothing for any valid value. Bench `--hair=far8`: 12 to 22 black pixels on the h
 after in every run (far8, near, wind).
 
 
+### Fixed: the strands cast no shadow in raster
+
+The strands' material blends (ALPHA), and Godot leaves blended materials out of the shadow maps
+(casts_shadows), so the stochastic shadow-pass discard in the strand shader never ran: no shadow of
+the hair on the face, neck, shoulders or ground, only the deep opacity maps' self-shadow. Unreal and
+TressFX draw the strands into the shadow maps. Fix: a copy of the strands, drawn only into the
+shadow maps (SHADOWS_ONLY), with the same shader compiled without ALPHA (HAIR_SHADOW_COPY), its
+uniforms copied from the strands' each frame. `cast_hair_shadows` (on by default) turns it off. It
+is hidden while cards are drawn, with a user's own render_material, and under the path tracer (whose
+rays meet the strands). The hair's own look does not change (its lookups already skip its layers
+with deep shadows on): bench `--hair=near` hair 28.5 against 28.4 before; the neck under it 37.8
+against 38.3; the ground beside 53.4 against 63.4. Cost: one more depth-only draw of the strands per
+shadow cascade (the LOD share applies), not measured on the cloud (no GPU).
+
 ## Stage 2q: hair resting on cloth
 
 Long hair lies on a collar, a hood or a coat's shoulders, and the cloth there moves. The collision

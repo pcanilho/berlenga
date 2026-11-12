@@ -164,6 +164,14 @@ class PhysXHair3D : public Node3D {
 	static Ref<Shader> render_shaders[2]; // Godot standard lighting, hair shading
 	static Ref<Shader> card_shaders[2];
 	static Ref<Shader> snow_shader;
+	// The strands' copy drawn only into the shadow maps (cast_hair_shadows).
+	bool cast_hair_shadows = true;
+	MeshInstance3D *shadow_instance = nullptr;
+	Ref<ShaderMaterial> shadow_material;
+	LocalVector<StringName> shadow_params;
+	static Ref<Shader> shadow_shaders[2];
+	void _make_shadow_copy();
+	void _sync_shadow_copy();
 
 	void _groom_changed();
 	void _queue_build();
@@ -299,6 +307,8 @@ public:
 	float get_snow_capacity() const;
 	void set_wet_clumping(float p_clumping);
 	float get_wet_clumping() const;
+	void set_cast_hair_shadows(bool p_enabled);
+	bool is_casting_hair_shadows() const;
 	void set_cards_enabled(bool p_enabled);
 	bool is_cards_enabled() const;
 	void set_card_count(int p_count);

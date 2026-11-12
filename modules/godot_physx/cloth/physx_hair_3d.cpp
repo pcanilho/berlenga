@@ -337,7 +337,10 @@ void fragment() {
 	// rt_force_opaque: the path tracer traces the strands as solid fibres (ALPHA is 1 there).
 	// Blended, as TressFX blends its strands: each fades over what lies behind it by the share of
 	// the pixel it covers. Thin strands are faint, so the blend barely depends on draw order.
+	// The shadow copy writes no ALPHA: Godot leaves blended materials out of the shadow maps.
+#ifndef HAIR_SHADOW_COPY
 	ALPHA = coverage;
+#endif
 }
 
 #ifdef HAIR_SCATTERING
@@ -743,6 +746,7 @@ void fragment() {
 Ref<Shader> PhysXHair3D::render_shaders[2];
 Ref<Shader> PhysXHair3D::card_shaders[2];
 Ref<Shader> PhysXHair3D::snow_shader;
+Ref<Shader> PhysXHair3D::shadow_shaders[2];
 
 void PhysXHair3D::free_shared() {
 	render_shaders[0].unref();
@@ -750,6 +754,8 @@ void PhysXHair3D::free_shared() {
 	card_shaders[0].unref();
 	card_shaders[1].unref();
 	snow_shader.unref();
+	shadow_shaders[0].unref();
+	shadow_shaders[1].unref();
 	HairCardBake::clear_cache();
 	HairStrandSolverGPU::free_shared();
 }
@@ -1080,6 +1086,7 @@ void PhysXHair3D::_make_material() {
 	if (render_instance) {
 		render_instance->set_material_override(copy_material);
 	}
+	_make_shadow_copy();
 	if (card_instance && card_bake.is_valid()) {
 		Ref<Shader> &shader = card_shaders[hair_shading ? 1 : 0];
 		if (shader.is_null()) {
@@ -1159,6 +1166,16 @@ void PhysXHair3D::_queue_build() {
 }
 
 void PhysXHair3D::_clear() {
+	if (shadow_instance) {
+		shadow_instance->queue_free();
+		shadow_instance = nullptr;
+	}
+	if (shadow_material.is_valid()) {
+		shadow_material->set_shader_parameter("hair_positions", Variant());
+		shadow_material->set_shader_parameter("hair_previous_positions", Variant());
+		shadow_material->set_shader_parameter("hair_deep_shadow", Variant());
+		shadow_material.unref();
+	}
 	if (render_instance) {
 		render_instance->queue_free();
 		render_instance = nullptr;
@@ -1896,7 +1913,86 @@ void PhysXHair3D::_step(double p_delta) {
 			snow_instance->set_visible(show);
 		}
 	}
+	_sync_shadow_copy();
 	solver->step(xform, p_delta, substeps, s);
+}
+
+// The strands cast into the shadow maps through a copy drawn only there (Godot leaves blended
+// materials out of them): the hair shades the face, neck and shoulders under it, as the strands
+// in Unreal and TressFX do. Not with a material of the user's own (its shader is not ours), and
+// not under the path tracer, whose rays meet the strands themselves.
+void PhysXHair3D::_make_shadow_copy() {
+	if (shadow_instance) {
+		shadow_instance->queue_free();
+		shadow_instance = nullptr;
+	}
+	shadow_material.unref();
+	shadow_params.clear();
+	if (!cast_hair_shadows || render_instance == nullptr || render_instance->get_mesh().is_null() || copy_material.is_null() ||
+			(render_material.is_valid() && render_material->get_shader().is_valid())) {
+		return;
+	}
+	Ref<Shader> &shader = shadow_shaders[hair_shading ? 1 : 0];
+	if (shader.is_null()) {
+		shader.instantiate();
+		shader->set_code(String(HAIR_RENDER_HEAD) + (hair_shading ? "#define HAIR_SCATTERING\n" : "") + "#define HAIR_SHADOW_COPY\n" + HAIR_RENDER_SHADER);
+	}
+	shadow_material.instantiate();
+	shadow_material->set_shader(shader);
+	List<PropertyInfo> uniforms;
+	shader->get_shader_uniform_list(&uniforms);
+	for (const PropertyInfo &u : uniforms) {
+		if (u.usage & PROPERTY_USAGE_GROUP || u.usage & PROPERTY_USAGE_SUBGROUP || u.usage & PROPERTY_USAGE_CATEGORY) {
+			continue;
+		}
+		shadow_params.push_back(u.name);
+	}
+	shadow_instance = memnew(MeshInstance3D);
+	add_child(shadow_instance, false, INTERNAL_MODE_BACK);
+	shadow_instance->set_mesh(render_instance->get_mesh());
+	shadow_instance->set_custom_aabb(render_instance->get_custom_aabb());
+	shadow_instance->set_layer_mask(render_instance->get_layer_mask());
+	shadow_instance->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+	shadow_instance->set_material_override(shadow_material);
+	_sync_shadow_copy();
+}
+
+void PhysXHair3D::_sync_shadow_copy() {
+	if (shadow_instance == nullptr || shadow_material.is_null() || copy_material.is_null()) {
+		return;
+	}
+	for (const StringName &name : shadow_params) {
+		shadow_material->set_shader_parameter(name, copy_material->get_shader_parameter(name));
+	}
+	bool show = render_instance && render_instance->is_visible() && !card_mode;
+	if (show && is_inside_tree()) {
+		const Camera3D *camera = get_viewport()->get_camera_3d();
+		Ref<Environment> env = camera ? camera->get_environment() : Ref<Environment>();
+		if (env.is_null() && get_world_3d().is_valid()) {
+			env = get_world_3d()->get_environment();
+			if (env.is_null()) {
+				env = get_world_3d()->get_fallback_environment();
+			}
+		}
+		if (env.is_valid() && env->is_pathtracing_enabled()) {
+			show = false;
+		}
+	}
+	if (shadow_instance->is_visible() != show) {
+		shadow_instance->set_visible(show);
+	}
+}
+
+void PhysXHair3D::set_cast_hair_shadows(bool p_enabled) {
+	if (cast_hair_shadows == p_enabled) {
+		return;
+	}
+	cast_hair_shadows = p_enabled;
+	_make_shadow_copy();
+}
+
+bool PhysXHair3D::is_casting_hair_shadows() const {
+	return cast_hair_shadows;
 }
 
 DirectionalLight3D *PhysXHair3D::_deep_shadow_light() {
@@ -2846,6 +2942,8 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_snow_capacity"), &PhysXHair3D::get_snow_capacity);
 	ClassDB::bind_method(D_METHOD("set_wet_clumping", "clumping"), &PhysXHair3D::set_wet_clumping);
 	ClassDB::bind_method(D_METHOD("get_wet_clumping"), &PhysXHair3D::get_wet_clumping);
+	ClassDB::bind_method(D_METHOD("set_cast_hair_shadows", "enabled"), &PhysXHair3D::set_cast_hair_shadows);
+	ClassDB::bind_method(D_METHOD("is_casting_hair_shadows"), &PhysXHair3D::is_casting_hair_shadows);
 	ClassDB::bind_method(D_METHOD("set_cards_enabled", "enabled"), &PhysXHair3D::set_cards_enabled);
 	ClassDB::bind_method(D_METHOD("is_cards_enabled"), &PhysXHair3D::is_cards_enabled);
 	ClassDB::bind_method(D_METHOD("set_card_count", "count"), &PhysXHair3D::set_card_count);
@@ -2867,6 +2965,7 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "radial_roughness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_radial_roughness", "get_radial_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "hair_shading"), "set_hair_shading", "is_hair_shading");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "cast_hair_shadows"), "set_cast_hair_shadows", "is_casting_hair_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "deep_shadows"), "set_deep_shadows", "is_deep_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "deep_shadow_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_deep_shadow_light", "get_deep_shadow_light");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "deep_shadow_local_lights", PROPERTY_HINT_RANGE, "0,3,1"), "set_deep_shadow_local_lights", "get_deep_shadow_local_lights");

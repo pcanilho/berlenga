@@ -34,6 +34,9 @@
 		<member name="cards_enabled" type="bool" setter="set_cards_enabled" getter="is_cards_enabled" default="false">
 			If [code]true[/code], hair cards are baked from the groom when the hair is built (shared by every node with the same groom and settings), and past [member card_distance] the hair is drawn as cards instead of strands: textured strips along clumps of strands, which move with the same guide strands. Only the guides and the cards are then simulated, so distant hair costs a small fraction of strands. Raster only: while the environment path traces, the hair stays strands at every distance.
 		</member>
+		<member name="cast_hair_shadows" type="bool" setter="set_cast_hair_shadows" getter="is_casting_hair_shadows" default="true">
+			The strands cast into the shadow maps, so the hair shades the face, neck and shoulders under it and the ground. Godot leaves blended materials out of the shadow maps, so a copy of the strands is drawn there alone, each strand at its own share of texels (stochastic transparency). Not with [member render_material] set, nor while cards are drawn; the path tracer traces the strands themselves.
+		</member>
 		<member name="cloth_thickness" type="float" setter="set_cloth_thickness" getter="get_cloth_thickness" default="0.005">
 			How far, in metres, the strands rest above [member collision_cloth]'s simulated surface (on top of the collision margin): the cloth's own thickness.
 		</member>
