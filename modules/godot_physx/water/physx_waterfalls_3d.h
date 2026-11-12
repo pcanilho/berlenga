@@ -105,6 +105,8 @@ public:
 
 private:
 	NodePath source;
+	NodePath surface; // a Landscape3D: the drawn rock the sheets lie on (get_cliff_point)
+	Object *surface_obj = nullptr; // during rebuild()
 	bool contact_falls = true;
 	bool spray = true;
 	bool mist = true;
@@ -176,6 +178,8 @@ public:
 
 	void set_source(const NodePath &p_path);
 	NodePath get_source() const { return source; }
+	void set_surface(const NodePath &p_path);
+	NodePath get_surface() const { return surface; }
 	void set_contact_falls(bool p_enabled);
 	bool get_contact_falls_enabled() const { return contact_falls; }
 	void set_spray(bool p_enabled);

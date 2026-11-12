@@ -590,7 +590,14 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			const Vector3 nrm = (dir * n2.x + up * n2.y).normalized();
 			// Clear of the ground mesh, whose triangles cut the chords of a steep face.
 			Vector3 pt = base + nrm * (depth + 0.05f + 0.15f * sin_a);
-			if (ask) {
+			// Where the drawn rock stands off the heightfield (Landscape3D's cliff_relief ledges), the sheet goes
+			// with it, over the ledges' tops and down their fronts.
+			Vector3 moved;
+			if (surface_obj != nullptr) {
+				moved = Vector3(surface_obj->call("get_cliff_point", base)) - base;
+			}
+			pt += moved;
+			if (ask && moved.length_squared() < 1e-6f) {
 				// Over a convex edge (a ledge's brink) the line's chords cut the corner: keep the sheet on top of
 				// the rock right under it.
 				const float g = p_source->call("get_height", pt);
@@ -1607,6 +1614,8 @@ void PhysXWaterfalls3D::rebuild() {
 	faces.clear();
 	plunges.clear();
 	Node *src = has_node(source) ? get_node(source) : nullptr;
+	Node *srf = has_node(surface) ? get_node(surface) : nullptr;
+	surface_obj = srf != nullptr && srf->has_method("get_cliff_point") ? srf : nullptr;
 	sea_level = -1e30f;
 	lake_rects.clear();
 	lake_levels.clear();
@@ -1745,6 +1754,10 @@ void PhysXWaterfalls3D::set_source(const NodePath &p_path) {
 	source = p_path;
 }
 
+void PhysXWaterfalls3D::set_surface(const NodePath &p_path) {
+	surface = p_path;
+}
+
 void PhysXWaterfalls3D::set_contact_falls(bool p_enabled) {
 	contact_falls = p_enabled;
 }
@@ -1839,6 +1852,8 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_contact_falls"), &PhysXWaterfalls3D::get_contact_falls);
 	ClassDB::bind_method(D_METHOD("set_source", "path"), &PhysXWaterfalls3D::set_source);
 	ClassDB::bind_method(D_METHOD("get_source"), &PhysXWaterfalls3D::get_source);
+	ClassDB::bind_method(D_METHOD("set_surface", "path"), &PhysXWaterfalls3D::set_surface);
+	ClassDB::bind_method(D_METHOD("get_surface"), &PhysXWaterfalls3D::get_surface);
 	ClassDB::bind_method(D_METHOD("set_contact_falls", "enabled"), &PhysXWaterfalls3D::set_contact_falls);
 	ClassDB::bind_method(D_METHOD("get_contact_falls_enabled"), &PhysXWaterfalls3D::get_contact_falls_enabled);
 	ClassDB::bind_method(D_METHOD("get_plunge_falls"), &PhysXWaterfalls3D::get_plunge_falls);
@@ -1878,6 +1893,7 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ClassDB::bind_static_method("PhysXWaterfalls3D", D_METHOD("equilibrium_air", "sin_slope"), &PhysXWaterfalls3D::equilibrium_air);
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "source"), "set_source", "get_source");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "surface"), "set_surface", "get_surface");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "contact_falls"), "set_contact_falls", "get_contact_falls_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunge_falls"), "set_plunge_falls", "get_plunge_falls_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "column_density", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_column_density", "get_column_density");

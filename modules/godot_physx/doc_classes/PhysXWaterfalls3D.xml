@@ -112,6 +112,9 @@
 		<member name="source" type="NodePath" setter="set_source" getter="get_source" default="NodePath(&quot;&quot;)">
 			The node whose [code]get_waterfalls()[/code] lists the falls.
 		</member>
+		<member name="surface" type="NodePath" setter="set_surface" getter="get_surface" default="NodePath(&quot;&quot;)">
+			A [Landscape3D] drawing the ground: the contact sheets follow its drawn rock ([code]get_cliff_point()[/code]), so they lie over the ledges [member Landscape3D.cliff_relief] builds into steep faces. Empty: they lie on the source's heightfield.
+		</member>
 		<member name="plunge_falls" type="bool" setter="set_plunge_falls" getter="get_plunge_falls_enabled" default="true">
 			Draws the free falls: the jet sheet, its broken column, spray and veil. Off, the rivers draw them as before.
 		</member>
