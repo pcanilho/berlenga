@@ -1926,7 +1926,9 @@ fork can.
 - Per row: speed from `dv/ds = (g sin a - f v^3 / 8q) / v` (`friction_factor` 0.2), so the sheet speeds up on
   the steep part and slows on the foot; air 0 above the inception point and towards `0.9 sin a` below it over
   about 1.5 m (the surface whitens right at the inception point; a first build with 5 m left a 16 m main-river
-  cascade with its inception at 11 m clear all the way down); thickness `q / v / (1 - C)`.
+  cascade with its inception at 11 m clear all the way down); it leaves over 6 m, since bubbles rise out more slowly
+  than they are drawn in, so the water stays white across a ledge; thickness `q / v / (1 - C)`. Rows every 0.5 m, each
+  vertex kept above the rock under it (a ledge's brink between rows 1 m apart cut through the sheet).
 - Width and shape across (look fix, 11 Nov; the first build drew a flat strip the width of the wetted lip with
   saw-tooth edges, because its outer columns were 1 to 2 m apart and the river fall shader cut holes along the
   edge with a hard threshold): the water runs `4 sqrt(Q)` m wide (hydraulic geometry of steep channels,
@@ -1941,7 +1943,8 @@ fork can.
   a dark, low-roughness veil. White water has fine lumps and thin spots riding the flow; near the margins the
   film is thinner, less white and more see-through. Path tracing uses the same edge as a cut-out and the wet veil
   as partial coverage.
-- Spray (`GPUParticles3D`) at each ledge of the record and at the foot, scaled by `0.5 rho Q v^2`; a
+- Spray (`GPUParticles3D`) at each ledge of the record and at the foot, scaled by `0.5 rho Q v^2`: drops, and soft
+  camera-facing puffs that rise, spread and fade (the drops alone read as dots from a few metres); a
   `PhysXWaterMist3D` box over the face with a line source along it, only for falls carrying at least
   `mist_min_discharge` (0.2 m3/s): a trickle wets the rock but throws no measurable mist.
 - Rivers draw their own falls from their beds. `PhysXRiver3D.fall_exclusions` takes the lips drawn here, so a
