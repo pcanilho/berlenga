@@ -676,7 +676,7 @@ func _deadwood_checks() -> void:
 	var on_bad := 0
 	for p in ground.get_placements(1):
 		var h: Dictionary = wood.get_deadwood_at(p)
-		if not h.is_empty() and absf(p.y - h["top"]) < 0.01 and p.y > dm.get_height_at(p) + 0.05: # Above the ground (a level log on a slope sinks at one end).
+		if not h.is_empty() and p.y - h["top"] > 0.005 and p.y - h["top"] < 0.035 and p.y > dm.get_height_at(p) + 0.05: # Above the ground (a level log on a slope sinks at one end).
 			on_ok += 1
 		else:
 			on_bad += 1
@@ -691,6 +691,7 @@ func _deadwood_checks() -> void:
 	print("VEG_DEADWOOD logs=%d cover_under_logs=%d on=%d/%d beside=%d/%d" % [nlogs, under, on_ok, on_bad, beside_ok, beside_bad])
 	_check("deadwood: logs placed with their axes", nlogs > 10, nlogs)
 	_check("deadwood: ground cover keeps off the logs", under == 0 and ground.get_placements(0).size() > 1000, under)
+	# On the log's moss, 1.5 cm proud of the bark (VegetationField3D.DEADWOOD_MOSS_LIFT, more where it slopes).
 	_check("deadwood: moss only on the logs' upper surface", on_ok > 100 and on_bad == 0, [on_ok, on_bad])
 	_check("deadwood: ferns only along the logs", beside_ok > 20 and beside_bad == 0, [beside_ok, beside_bad])
 	ground.queue_free()
@@ -933,6 +934,13 @@ func _deadwood_view() -> void:
 	var gb := Biome.new()
 	var floor_set: Array[PlantSpecies] = []
 	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_BEECH, 3, true))
+	if OS.get_environment("VEG_DW_OFF") != "":
+		# The before shot: the floor blind to the logs (nothing on or beside them, plants through them).
+		for sp in floor_set:
+			if sp.deadwood_rule == PlantSpecies.DEADWOOD_ON or sp.deadwood_rule == PlantSpecies.DEADWOOD_BESIDE:
+				sp.density = 0.0
+			else:
+				sp.deadwood_rule = PlantSpecies.DEADWOOD_IGNORE
 	gb.species = floor_set
 	print("VEG_DEADWOOD_VIEW floor made in %d ms" % (Time.get_ticks_msec() - t0))
 	ground.biome = gb

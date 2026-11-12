@@ -760,7 +760,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// Floating plants sit on the water surface, level, over the ground below it;
 					// plants on a log on its upper surface, tilted with it.
 					const bool floats = sp->is_floating();
-					const float y = on_log ? hit.top : map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : 0.0f);
+					// On a log: on the moss that covers its upper side, not on the bare wood under it
+					// (the trees' moss shell stands up to about 2 cm proud of the bark, section 5c of
+					// trees.md), so cushions and seedlings are not swallowed by it.
+					const float y = on_log ? hit.top + DEADWOOD_MOSS_LIFT / MAX(hit.normal.y, 0.5f) : map->get_height_at(p3) + (floats ? map->get_water_depth_at(p3) : 0.0f);
 					const float slope = floats ? 0.0f : map->get_slope_at(p3);
 					const float aspect = map->get_aspect_at(p3);
 					const Vector3 normal = on_log ? hit.normal : Vector3(Math::sin(aspect) * Math::sin(slope), Math::cos(slope), Math::cos(aspect) * Math::sin(slope));

@@ -1610,7 +1610,9 @@ void PlantGenerator::_build_moss() {
 			const int a = first + r * sectors + k;
 			const int c = first + r * sectors + (k + 1) % sectors;
 			// The centre ring is degenerate (all at the middle): its triangles collapse harmlessly.
-			b.indices.append_array(PackedInt32Array({ a, a + sectors, c, c, a + sectors, c + sectors }));
+			// Counter-clockwise seen from above, as every builder winds a surface's upper side
+			// (the mesh pass flips them for Godot), so the dome's outer face is its front face.
+			b.indices.append_array(PackedInt32Array({ a, c, a + sectors, c, c + sectors, a + sectors }));
 		}
 	}
 	plant_height = MAX(plant_height, height * 1.3f);
@@ -3923,6 +3925,9 @@ PlantGenerator::TextureSet PlantGenerator::_bake_moss_texture(uint32_t p_seed) c
 		const float t = tone[i];
 		Color c = base * (0.25f + 0.95f * h);
 		c = c.lerp(Color(base.r * 1.6f + 0.04f, base.g * 1.3f + 0.03f, base.b * 0.8f), h * t * 0.6f); // Fresh, yellower tips.
+		// The bytes are sRGB: scaled so the cushion's mean green albedo is about 0.06 linear,
+		// inside the 0.05 to 0.1 measured for mosses (and the trees' moss shell), not 0.02.
+		c *= 1.55f;
 		aw[i * 3 + 0] = uint8_t(CLAMP(c.get_r8(), 0, 255));
 		aw[i * 3 + 1] = uint8_t(CLAMP(c.get_g8(), 0, 255));
 		aw[i * 3 + 2] = uint8_t(CLAMP(c.get_b8(), 0, 255));
