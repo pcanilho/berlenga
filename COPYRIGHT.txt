@@ -377,6 +377,54 @@ Comment: PhysX 5 physics module for Godot
 Copyright: 2026, Wild Ox Studios
 License: Expat
 
+Files: modules/ground/*
+ modules/snow/*
+ modules/terrain_deform/*
+ modules/terrain_material/*
+ modules/vegetation/*
+ modules/weather/*
+ modules/godot_physx/cloth/hair_cards.cpp
+ modules/godot_physx/cloth/hair_cards.h
+ modules/godot_physx/cloth/hair_strand_solver.cpp
+ modules/godot_physx/cloth/hair_strand_solver.h
+ modules/godot_physx/cloth/physx_hair_3d.cpp
+ modules/godot_physx/cloth/physx_hair_3d.h
+ modules/godot_physx/tests/test_xpbd_cloth_grid.h
+ modules/godot_physx/water/flow_poisson.cpp
+ modules/godot_physx/water/flow_poisson.h
+ modules/godot_physx/water/physx_river_3d.cpp
+ modules/godot_physx/water/physx_river_3d.h
+ modules/godot_physx/water/physx_water_mist_3d.cpp
+ modules/godot_physx/water/physx_water_mist_3d.h
+ modules/godot_physx/water/physx_waterfalls_3d.cpp
+ modules/godot_physx/water/physx_waterfalls_3d.h
+ modules/godot_physx/water/water_fft_rows.glsl
+ modules/godot_physx/water/water_raster_reflections.cpp
+ modules/godot_physx/water/water_raster_reflections.h
+ modules/godot_physx/water/water_wake_modes.glsl
+ scene/resources/3d/hair_groom.cpp
+ scene/resources/3d/hair_groom.h
+ servers/rendering/renderer_rd/forward_clustered/render_raytracing_omm.cpp
+ servers/rendering/renderer_rd/forward_clustered/render_raytracing_persistent.h
+ servers/rendering/renderer_rd/forward_clustered/render_raytracing_volumes.cpp
+ servers/rendering/renderer_rd/forward_clustered/render_raytracing_volumes.h
+ servers/rendering/renderer_rd/shaders/effects/local_exposure.glsl
+ servers/rendering/renderer_rd/shaders/effects/luminance_histogram.glsl
+ servers/rendering/renderer_rd/shaders/effects/transparency_composite.glsl
+ servers/rendering/renderer_rd/shaders/environment/sky_reproject.glsl
+ servers/rendering/renderer_rd/shaders/raytracing/opacity_micromap.glsl
+ servers/rendering/renderer_rd/shaders/raytracing/raytracing_caustics_inc.glsl
+ servers/rendering/renderer_rd/shaders/raytracing/raytracing_hair_inc.glsl
+ servers/rendering/renderer_rd/shaders/raytracing/raytracing_indirect_reuse_inc.glsl
+ servers/rendering/renderer_rd/shaders/raytracing/raytracing_radiance_cache_inc.glsl
+ servers/rendering/renderer_rd/shaders/raytracing/raytracing_volume_inc.glsl
+ servers/rendering/renderer_rd/shaders/raytracing/swept_spheres.glsl
+Comment: Berlenga (files that exist only in this fork of Godot Engine)
+Copyright: 2026-present, Paulo Canilho and Berlenga contributors
+ 2014-present, Godot Engine contributors
+ 2007-2014, Juan Linietsky, Ariel Manzur
+License: Expat
+
 Files: modules/godot_physx/cloth/hair_strands.glsl
 Comment: AMD TressFX 4.1 hair simulation (ported from TressFXSimulation.hlsl and TressFXSDFCollision.hlsl)
 Copyright: 2019, Advanced Micro Devices, Inc.

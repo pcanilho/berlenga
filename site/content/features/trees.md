@@ -7,6 +7,11 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 ## Growth
 
 - **Tree generator** (`TreeGenerator`: `preset`, `years`, `seed`): trees and woody shrubs grow bud by bud, competing for light, so the same settings always give the same tree. 31 species from Europe and eastern North America, each with its climate, slope and soil habitat (`apply_habitat`).
+
+  ![Seven tree species grown in the open, raster](media/trees-species.jpg)
+
+  *Tree generator: seven species grown in the open.*
+
 - **Stand and open forms** (`forest_shade`, `forest_spacing`): trees grown in a closed stand shed their lower limbs to a long clear bole under a narrow crown; open-grown trees keep leaves down to their lower limbs.
 - **Conifer crowns** (`crown_cone`): spruce, fir, larch, pine and hemlock keep their cone, with branches to the top.
 - **Stands** (`make_stand`, `make_woodland`): ten stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock. Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.
