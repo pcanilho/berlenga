@@ -884,7 +884,7 @@ Color GrassField3D::get_far_color() const {
 	const Color b = base_color.srgb_to_linear();
 	const Color t = tip_color.srgb_to_linear();
 	const Color d = dry_color.srgb_to_linear();
-	const Color far = b.lerp(t, 0.6f).lerp(d, dryness * 0.35f) * 0.32f;
+	const Color far = b.lerp(t, 0.65f).lerp(d, dryness * 0.35f) * 0.355f;
 	return Color(far.r, far.g, far.b, 1.0f);
 }
 

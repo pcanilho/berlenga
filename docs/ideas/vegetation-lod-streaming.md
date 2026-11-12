@@ -173,8 +173,12 @@ visible step at the grass edge was the bare ground's specular sheen at grazing a
 blades hide: `grass_ground_specular()` (GrassField3D's ground shader code) now lowers the
 ground's specular to 0.1 under the sward, and the far meadow matches the blades within 5% in the
 default grass (it read pale grey before). Ground shaders that call `grass_ground()` should also
-set `SPECULAR = grass_ground_specular(wp, specular)`. Next: measure the colour from a small
-render of the blades themselves, so other grass settings match as well.
+set `SPECULAR = grass_ground_specular(wp, specular)`. Re-matched on 12 Nov after the blades lost
+their albedo root ramp (now AO) and went to 120 blades/m2: the blades had turned 7 / 19 / 4% (rgb)
+brighter than the far ground; now tip share 0.65 and x0.355, giving blades over far ground of
+0.97 / 1.06 / 0.85 (default), 1.01 / 0.97 / 0.89 (dry), 1.01 / 1.12 / 1.03 (lawn), 1.04 / 0.99 /
+1.00 (dark); blue is the smallest channel. Next: measure the colour from a small render of the
+blades themselves, so every grass setting matches without a hand fit.
 
 ## References
 
