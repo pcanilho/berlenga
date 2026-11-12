@@ -865,7 +865,7 @@
     "wet_margin"
    ],
    "note": "",
-   "what": "water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges.",
+   "what": "water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges. Thin falls over stepped rock run ledge to ledge as threads with wet rock between them, as their flow sets (`rock_step`); big flows stay fully covered.",
    "page": "water",
    "title": "Water",
    "topic": "Currents and rivers"
@@ -997,6 +997,17 @@
    ],
    "note": "",
    "what": "far away, fewer and wider strands with the same look; simulation and path tracing keep every strand. Straight hair is drawn through fewer points with the same look (`simplify_tolerance`).",
+   "page": "hair",
+   "title": "Hair",
+   "topic": "Strands"
+  },
+  {
+   "name": "Hair cards for crowds",
+   "settings": [
+    "cards_enabled"
+   ],
+   "note": "",
+   "what": "distant strand hair can switch to textured cards baked from its own groom, simulating only its guides; raster only, path tracing keeps the strands.",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"
@@ -1148,7 +1159,7 @@
     "moraine_age"
    ],
    "note": "",
-   "what": "debris carried down the last glaciers builds ridges at their margins that dam lakes.",
+   "what": "debris carried down the last glaciers builds ridges at their margins that dam lakes. Till draws as soil with stones through it, the stones kept above the grass.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -1182,7 +1193,7 @@
     "scree_age"
    ],
    "note": "",
-   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors.",
+   "what": "rock walls shed aprons and cones at their feet, kept out of lakes and river floors. Scree draws as bare blocks.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
