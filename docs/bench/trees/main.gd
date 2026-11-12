@@ -327,6 +327,8 @@ func _build_scene() -> void:
 		if OS.has_environment("VAZ"):
 			vet_az = float(OS.get_environment("VAZ"))
 		print("veteran view azimuth %.4f" % vet_az)
+		for f in first_info.features:
+			print("feature ", f)
 		var la := vet_az + deg_to_rad(55.0)
 		var target := Vector3(xs[0], 1.4, 0)
 		var ldir := Vector3(cos(la) * cos(deg_to_rad(18.0)), sin(deg_to_rad(18.0)), sin(la) * cos(deg_to_rad(18.0)))
