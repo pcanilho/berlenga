@@ -2026,6 +2026,27 @@ hard-edged white slab, whole from top to bottom. The scene's mist at its foot is
   last three cells at the sides and top, which removes the hard-edged block.
 - Open: GPU cost on the PC (40k quads, alpha blended); the stage 3 work (mist wetting rock, sound).
 
+### Faces that lean into the jet (12 Nov, bug)
+
+The glacial valley's tall fall (338 m) left gaps: a dry stretch under the brink, the column hidden in places, a
+stub at the foot. The ground profile down the fall's centre line showed why: the face is not a cliff but a slope of
+about 70 degrees (3.5 m down for each metre out), so the free jet (2.5 m/s off the lip, 2.5 m out after a 5 m drop)
+is inside the rock within a few metres of the lip, and the column's clumps were pushed out of the face all the way
+down, riding just over a heightfield whose drawn mesh can stand in front of them. Real water there keeps contact
+with the rock: a horsetail fall, not a plunge. The face search for the column also stopped at 80 m out, so a face
+running further out than that read as no face at all.
+
+- At 96 heights down the drop the face's run out from the lip is set against the free jet's,
+  `v0 sqrt(2 d / g)` (drag only shortens it). The jet meets the face where the rock stands beyond it at four heights
+  in a row, so a rounded brink the water clears does not count.
+- Meeting within `2 L_b` or 15 % of the drop: the fall is built as a contact fall from the brink. Further down: the
+  column falls free to the meeting height and lands on the rock there, and a contact sheet starts at that point and
+  runs to the foot.
+- A handed-over sheet fans out down the face at the jet's turbulence rate (3 % of its travel, as the plunge sheet
+  spreads), thinner as it widens; the generator's own contact falls keep their width.
+- The column's face search reaches the whole run of the fall plus 40 m.
+- Valley fall r1_19m: now a 338 m contact fall from the brink, unbroken to the foot.
+
 ## Sources
 
 - Wood, Ackers and Loveless, General method for critical point on spillways, J. Hydraulic Eng. 109(2), 1983;

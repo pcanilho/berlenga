@@ -465,6 +465,12 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	// the source can be asked for heights (get_height), else between the record's three profiles (at -0.35, 0 and
 	// +0.35 of the lip width). Cut a little past the foot and smoothed with a centripetal Catmull-Rom spline.
 	const bool ask = p_source != nullptr && p_source->has_method("get_height");
+	// A long free-falling drop handed to the rock (a plunge whose face leans into its jet) fans out down the face at
+	// the jet's turbulence rate, a few per cent of its travel; the generator's own contact falls keep their width.
+	const float spread_rate = ask ? float(p_fall.get("spread", 0.0f)) : 0.0f;
+	auto lateral = [&](float p_offset, float p_s) {
+		return (p_offset - centre) * spread_rate * p_s / MAX(0.5f * width, 0.5f);
+	};
 	float reach = 0.0f;
 	for (int l = 0; l < 3; l++) {
 		const PackedVector3Array prof = profiles[l];
@@ -482,10 +488,14 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 		PackedVector2Array pts;
 		if (ask) {
 			const int n = CLAMP((int)Math::ceil(reach / 0.25f), 2, 4096);
+			float travel_s = 0.0f;
 			for (int i = 0; i <= n; i++) {
 				const float run = reach * i / n;
-				const Vector3 q = Vector3(lip_c.x, 0.0f, lip_c.z) + dir * run;
+				const Vector3 q = Vector3(lip_c.x, 0.0f, lip_c.z) + dir * run + across * lateral(offsets[c], travel_s);
 				const float y = float(p_source->call("get_height", q)) - face.top.y;
+				if (i > 0) {
+					travel_s += Vector2(run, y).distance_to(pts[pts.size() - 1]);
+				}
 				pts.push_back(Vector2(run, y));
 				// The drop counts from this column's own brink (a lip line can cross ground below the record's top).
 				if (y <= pts[0].y - face.height - 1.0f) {
@@ -572,9 +582,11 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			// stays white across a ledge instead of clearing in patches.
 			air += (target - air) * (1.0f - Math::exp(-ds / (target > air ? 1.5f : 6.0f)));
 			// Bulked thickness over the rock: the clear-water depth swelled by the air it carries.
-			const float depth = col.edge > 0.0f ? MAX(col.q / MAX(v, 0.1f), 0.003f) / (1.0f - MIN(air, 0.9f)) : 0.0f;
+			// (Spread thinner where it fans out.)
+			const float fan = 1.0f + spread_rate * s_from_lip / MAX(0.5f * width, 0.5f);
+			const float depth = col.edge > 0.0f ? MAX(col.q / fan / MAX(v, 0.1f), 0.003f) / (1.0f - MIN(air, 0.9f)) : 0.0f;
 			const Vector2 n2 = Vector2(-t.y, t.x).y < 0.0f ? Vector2(t.y, -t.x) : Vector2(-t.y, t.x);
-			const Vector3 base = Vector3(lip_c.x, face.top.y, lip_c.z) + dir * p.x + up * p.y;
+			const Vector3 base = Vector3(lip_c.x, face.top.y, lip_c.z) + dir * p.x + up * p.y + across * lateral(offsets[c], s_from_lip);
 			const Vector3 nrm = (dir * n2.x + up * n2.y).normalized();
 			// Clear of the ground mesh, whose triangles cut the chords of a steep face.
 			Vector3 pt = base + nrm * (depth + 0.05f + 0.15f * sin_a);
@@ -976,6 +988,108 @@ void PhysXWaterfalls3D::_build_plunge(const Dictionary &p_fall, Object *p_source
 	if (pl.top.y - pl.floor < min_height) {
 		return;
 	}
+	// Where the rock meets the jet. A heightfield cannot undercut, and a tall face that leans out (a steep slope
+	// rather than a cliff) stands in the jet's path: the water rides down the rock there instead of falling free,
+	// as a horsetail fall does. Down the drop, the face's run out from the lip at each height against the free jet's
+	// (drag only shortens it); the jet meets the face where the rock stands beyond it for a stretch, not at a
+	// rounded brink it clears again.
+	const float max_run = Vector2(bottom.x - top.x, bottom.z - top.z).length() + 40.0f;
+	auto ground_at = [&](const Vector3 &p_at) {
+		const float g = p_source->call("get_height", p_at);
+		return Math::is_finite(g) ? g : -1e30f;
+	};
+	float meet_y = -1e30f;
+	float meet_run = 0.0f;
+	if (ask) {
+		const int n = 96;
+		const float drop = pl.top.y - pl.floor;
+		LocalVector<uint8_t> inside;
+		LocalVector<float> runs;
+		float s = -2.0f;
+		for (int k = 0; k < n; k++) {
+			const float d = drop * (k + 1) / n;
+			const float y = pl.top.y - d;
+			// Monotone: a lower height first drops away no nearer the lip.
+			while (s < max_run && ground_at(lip_c + dir * s) >= y) {
+				s += 0.25f;
+			}
+			const float jet = v0 * Math::sqrt(2.0f * d / GRAVITY);
+			inside.push_back(s < max_run && s > jet + 0.3f ? 1 : 0);
+			runs.push_back(s);
+		}
+		for (int k = 0; k < n; k++) {
+			bool held = true;
+			for (int j = k; j < MIN(k + 4, n); j++) {
+				held = held && inside[j];
+			}
+			if (held) {
+				meet_y = pl.top.y - drop * (k + 1) / n;
+				meet_run = runs[k];
+				break;
+			}
+		}
+	}
+	if (meet_y > -1e29f) {
+		const float d_meet = pl.top.y - meet_y;
+		const float drop = pl.top.y - pl.floor;
+		if (d_meet < MAX(2.0f * pl.breakup, 0.15f * drop) || meet_y - pl.floor < min_height) {
+			// It leaves the lip only to land on the rock at once: a fall that keeps contact all the way.
+			if (contact_falls) {
+				Dictionary f = p_fall.duplicate();
+				f["type"] = "horsetail";
+				f["spread"] = 0.03f;
+				_build_face(f, p_source);
+			}
+			return;
+		}
+		// It falls free to the face, then runs down it: the column lands on the rock there and a contact sheet
+		// takes the water from that point to the foot.
+		if (contact_falls) {
+			const Vector3 m = lip_c + dir * meet_run;
+			const float lw_m = MAX(float(p_fall.get("lip_width", width)), width);
+			PackedVector3Array mlip;
+			for (int i = 0; i < 8; i++) {
+				const Vector3 q = m + across * ((float(i) / 7.0f - 0.5f) * lw_m);
+				mlip.push_back(Vector3(q.x, ground_at(q), q.z));
+			}
+			PackedFloat32Array mshare;
+			mshare.resize(8);
+			mshare.fill(1.0f / 8.0f);
+			const float reach = Vector2(bottom.x - m.x, bottom.z - m.z).length() + 8.0f;
+			const float mtop = ground_at(m);
+			Array profiles;
+			for (int line = 0; line < 3; line++) {
+				PackedVector3Array prof;
+				prof.push_back(Vector3(0.0f, 0.0f, 0.0f));
+				prof.push_back(Vector3(reach, pl.floor - mtop, 0.0f));
+				profiles.push_back(prof);
+			}
+			Array ledges;
+			const Array all_ledges = p_fall.get("ledges", Array());
+			for (int i = 0; i < all_ledges.size(); i++) {
+				const Dictionary l = all_ledges[i];
+				if (Vector3(l.get("position", Vector3())).y < mtop) {
+					ledges.push_back(l);
+				}
+			}
+			Dictionary f;
+			f["id"] = String(pl.id) + "_face";
+			f["type"] = "horsetail";
+			f["top"] = Vector3(m.x, mtop, m.z);
+			f["bottom"] = bottom;
+			f["height"] = mtop - pl.floor;
+			f["discharge"] = pl.discharge;
+			f["direction"] = dir;
+			f["lip_points"] = mlip;
+			f["lip_share"] = mshare;
+			f["lip_width"] = lw_m;
+			f["face_profiles"] = profiles;
+			f["ledges"] = ledges;
+			f["spread"] = 0.03f;
+			_build_face(f, p_source);
+		}
+		pl.floor = meet_y;
+	}
 	// The sheet: projectile columns across the water, to where it has frayed out (2 L_b) or meets the ground.
 	const float lb = pl.breakup;
 	const float sheet_len = 2.0f * lb;
@@ -1068,7 +1182,7 @@ void PhysXWaterfalls3D::_build_plunge(const Dictionary &p_fall, Object *p_source
 		const float y = pl.floor + (lip_c.y - pl.floor) * k / 15.0f;
 		float out = 0.0f;
 		if (ask) {
-			for (float s = -20.0f; s <= 80.0f; s += 0.25f) {
+			for (float s = -20.0f; s <= max_run; s += 0.25f) {
 				const float g = p_source->call("get_height", lip_c + dir * s);
 				if (Math::is_finite(g) && g < y) {
 					out = s;
@@ -1250,15 +1364,27 @@ void PhysXWaterfalls3D::_build_mesh() {
 		}
 		const int rows = face.columns[0].points.size();
 		const int base = verts.size();
+		// How far the sheet has fanned out at each row (1 where it keeps its lip's width): the margin's metres and
+		// the across texture coordinate scale with it, so the feathered edge and the streaks keep their size.
+		const Vector3 face_across(-face.direction.z, 0.0f, face.direction.x);
+		LocalVector<float> fan;
+		fan.resize(rows);
+		{
+			const float w0 = (face.columns[cols - 1].points[0] - face.columns[0].points[0]).dot(face_across);
+			for (int r = 0; r < rows; r++) {
+				const float w = (face.columns[cols - 1].points[r] - face.columns[0].points[r]).dot(face_across);
+				fan[r] = Math::abs(w0) > 1e-4f ? MAX(w / w0, 1.0f) : 1.0f;
+			}
+		}
 		float across_m = 0.0f;
 		for (int c = 0; c < cols; c++) {
 			const Column &col = face.columns[c];
 			if (c > 0) {
 				across_m += col.points[0].distance_to(face.columns[c - 1].points[0]);
 			}
-			// Metres inside the water's margin, -1..1 m packed into 0..1 (the shader feathers it).
-			const float edge = CLAMP(0.5f + 0.5f * col.edge, 0.0f, 1.0f);
 			for (int r = 0; r < rows; r++) {
+				// Metres inside the water's margin, -1..1 m packed into 0..1 (the shader feathers it).
+				const float edge = CLAMP(0.5f + 0.5f * col.edge * fan[r], 0.0f, 1.0f);
 				verts.push_back(inv.xform(col.points[r]));
 				const Vector3 a = col.points[MIN(r + 1, rows - 1)] - col.points[MAX(r - 1, 0)];
 				const Vector3 across = face.columns[MIN(c + 1, cols - 1)].points[r] - face.columns[MAX(c - 1, 0)].points[r];
@@ -1268,7 +1394,7 @@ void PhysXWaterfalls3D::_build_mesh() {
 					n = -n;
 				}
 				normals.push_back(inv.basis.xform(n.normalized()).normalized());
-				uvs.push_back(Vector2(col.travel[r], across_m));
+				uvs.push_back(Vector2(col.travel[r], across_m * fan[r]));
 				uv2s.push_back(Vector2(col.speed[r], col.dist[r]));
 				// Aeration as a share of the most a sheet can hold (0.9): the streaks still show through white water.
 				// A jet's unbroken share in 0..0.5; on rock, 0.75..1 carries the share of the face the flow covers.
