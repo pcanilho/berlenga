@@ -490,6 +490,9 @@ PlantGenerator::Wither::~Wither() {
 	// The vertex alpha is the shader's dead tissue (1 - alpha): yellowing, then browning to
 	// dead_color with the texture's pattern kept, less light through, matte.
 	for (int i = 0; i < SURFACE_MAX; i++) {
+		if (i == SURFACE_CENTRE && generator->preset == PRESET_THISTLE) {
+			continue; // Thistledown: dry pappus, white.
+		}
 		PackedColorArray &c = generator->builders[i].colors;
 		for (int k = from[i]; k < c.size(); k++) {
 			Color v = c[k];
