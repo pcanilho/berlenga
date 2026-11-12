@@ -56,6 +56,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 #define MODE_COLL_INSERT 21
 #define MODE_COLL_SOLVE 22
 #define MODE_COLL_APPLY 23
+#define MODE_SDF_CLOTH 24
 #define MODE_DOM_CLEAR 14
 #define MODE_DOM_FRONT 15
 #define MODE_DOM_OPAQUE 16
@@ -91,6 +92,8 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	// light and, for a local light, its distance from the centre.
 	vec4 dom_slot[DOM_SLOTS * 4];
 	vec4 coll_misc; // strand-strand collision: x radius (m, 0: off), y hash buckets (a power of two), z friction (0..1), w stiffness (0..1)
+	vec4 cloth_misc; // cloth: x triangles (0: none), y its position texture's width, z the first of them in tris[], w its thickness (m)
+	mat4 cloth_xform; // the cloth's position texture space -> world
 };
 
 layout(push_constant, std430) uniform Pass {
@@ -139,8 +142,8 @@ layout(set = 0, binding = 7, std430) restrict buffer Order {
 	vec2 order[]; // draw order, far to near: x the strand's depth key, y the strand
 };
 
-layout(set = 0, binding = 8, std430) restrict readonly buffer Tris {
-	vec4 tris[]; // the collision body's triangles, world: three points each
+layout(set = 0, binding = 8, std430) restrict buffer Tris {
+	vec4 tris[]; // the collision body's triangles, world: three points each (w 2: a cloth's, MODE_SDF_CLOTH)
 };
 
 layout(set = 0, binding = 9, std430) restrict buffer Sdf {
@@ -165,6 +168,12 @@ layout(set = 0, binding = 18, std430) restrict buffer CollCells {
 
 layout(set = 0, binding = 19, std430) restrict buffer CollDelta {
 	vec4 coll_delta[]; // per point: the collision's correction (xyz)
+};
+
+// A PhysXSkinnedCloth3D the hair rests on: its simulated positions and its triangles' particles.
+layout(set = 0, binding = 21, rgba32f) uniform restrict readonly image2D cloth_image;
+layout(set = 0, binding = 22, std430) restrict readonly buffer ClothTris {
+	ivec4 cloth_tris[]; // three particles a triangle
 };
 
 layout(set = 0, binding = 20, std430) restrict readonly buffer PointStrand {
@@ -433,6 +442,9 @@ void dom_strand(int s, int p_slot, bool accumulate) {
 		// A hair card's strand stands for its whole clump (width is the clump's): its coverage is
 		// spread over a square as wide as the clump, as the clump's own strands would lie, not
 		// heaped in one cell (which would let light through the gaps beside it).
+		if (is_card_strand(s)) {
+			width *= clamp(pos[first + i].w, 0.5, 4.0); // the clump fanned out with its guides
+		}
 		int spread = is_card_strand(s) ? clamp(int(0.5 * width / cell), 0, 4) : 0;
 		float share = coverage / float((2 * spread + 1) * (2 * spread + 1));
 		for (int k = 0; k < samples; k++) {
@@ -757,9 +769,28 @@ void main() {
 		sdf[sdf_cells() + id] = best;
 		return;
 	}
+	if (pass.mode == MODE_SDF_CLOTH) {
+		// The cloth's triangles from its simulated positions this frame, after the body's, marked
+		// (w 2) as a sheet.
+		int n = int(cloth_misc.x + 0.5);
+		if (id >= n) {
+			return;
+		}
+		int w = max(int(cloth_misc.y + 0.5), 1);
+		int base = (int(cloth_misc.z + 0.5) + id) * 3;
+		for (int k = 0; k < 3; k++) {
+			int p = cloth_tris[id][k];
+			vec3 q = imageLoad(cloth_image, ivec2(p % w, p / w)).xyz;
+			tris[base + k] = vec4((cloth_xform * vec4(q, 1.0)).xyz, 2.0);
+		}
+		return;
+	}
 	if (pass.mode == MODE_SDF_FINAL) {
 		// The signed distance to the nearest triangle, signed by its face (TressFX's choice; right
-		// past convex edges, approximate in concave ones). A closed body is assumed.
+		// past convex edges, approximate in concave ones). A closed body is assumed. A cloth is a
+		// sheet worn over the body: signed the same way (its outside is where its normals face),
+		// so hair that starts under it near the surface is put back on top, as hair lies over
+		// clothes; less its thickness.
 		if (id >= sdf_cells()) {
 			return;
 		}
@@ -775,7 +806,9 @@ void main() {
 		vec3 q = closest_on_triangle(p, a, b, c);
 		float d = length(p - q);
 		vec3 n = cross(b - a, c - a);
-		sdf[id] = floatBitsToUint(dot(p - q, n) < 0.0 ? -d : d);
+		float sd = dot(p - q, n) < 0.0 ? -d : d;
+		// A cloth's triangles: less its thickness, so hair rests on its surface.
+		sdf[id] = floatBitsToUint(tris[t * 3].w > 1.5 ? sd - cloth_misc.w : sd);
 		return;
 	}
 	if (pass.mode == MODE_SDF_COLLIDE) {
@@ -806,7 +839,7 @@ void main() {
 				continue;
 			}
 			p += normalize(g) * (sdf_misc.y - d);
-			pos[first + i] = vec4(p, 1.0);
+			pos[first + i] = vec4(p, pos[first + i].w); // w: a card strand's fan (MODE_FOLLOW)
 			prev[first + i] = vec4(p, 1.0);
 		}
 		return;
@@ -876,7 +909,9 @@ void main() {
 		// draw, flagged by along + 2; the render shader widens the rest to keep the hair's opacity.
 		// The path tracer still draws every strand at its real width.
 		if (along >= 0.0 && is_card_strand(strand)) {
-			along += 4.0; // a hair card's strand (4..5): drawn by the card mesh, not as a strand
+			// A hair card's strand (4 + along + 8 * fan in 64ths): drawn by the card mesh, not as a
+			// strand.
+			along += 4.0 + 8.0 * floor(clamp(pos[sp].w, 0.0, 8.0) * 64.0 + 0.5);
 		} else if (along >= 0.0 && strand_rank(strand) >= air.w) {
 			along += 2.0;
 		}
@@ -937,7 +972,11 @@ void main() {
 			float keep = 1.0 - clump * smoothstep(0.0, 0.3, t);
 			vec3 own = to_world(m, rest[first + i].xyz);
 			vec3 p = vec3(0.0);
+			vec3 g_now[3];
+			vec3 g_rest[3];
 			for (int c = 0; c < 3; c++) {
+				g_now[c] = vec3(0.0);
+				g_rest[c] = vec3(0.0);
 				float w = gw[c];
 				if (w <= 0.0) {
 					continue;
@@ -954,6 +993,8 @@ void main() {
 				vec3 gr = to_world(m, mix(rest[gf + i0].xyz, rest[gf + i1].xyz, f));
 				vec3 d_cur = pos[gf + i1].xyz - pos[gf + s0].xyz;
 				vec3 d_rest = basis * (rest[gf + i1].xyz - rest[gf + s0].xyz);
+				g_now[c] = gp;
+				g_rest[c] = gr;
 				vec3 off = (own - gr) * keep;
 				if (dot(d_cur, d_cur) > 1e-14 && dot(d_rest, d_rest) > 1e-14) {
 					off = rotate_between(normalize(d_rest), normalize(d_cur), off);
@@ -971,7 +1012,23 @@ void main() {
 					p = spheres[s].xyz + d * (r / sqrt(l2));
 				}
 			}
-			pos[first + i] = vec4(p, 1.0);
+			// A hair card's strand: how far its guides have fanned apart (or closed) since the groom,
+			// in w. Its clump's strands sit between the same guides, so the clump widens with them;
+			// the card widens and thins by as much (its strands' total width kept).
+			float fan = 1.0;
+			if (is_card_strand(id)) {
+				float d_now = 0.0;
+				float d_rest = 0.0;
+				for (int c = 0; c < 3; c++) {
+					int e = (c + 1) % 3;
+					if (gw[c] > 0.0 && gw[e] > 0.0) {
+						d_now += distance(g_now[c], g_now[e]);
+						d_rest += distance(g_rest[c], g_rest[e]);
+					}
+				}
+				fan = d_rest > 1e-5 ? clamp(d_now / d_rest, 0.5, 4.0) : 1.0;
+			}
+			pos[first + i] = vec4(p, fan);
 		}
 		return;
 	}

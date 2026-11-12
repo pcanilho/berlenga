@@ -742,6 +742,64 @@ without the optimisation pass, baked once when the hair is built:
   (opaque at random by coverage) the hair came out near black and lost its strands, which the
   path tracer must not do. Crowds under the path tracer keep the strands' cost.
 
+### Checked: cards against strands at the switch distance
+
+Compared at 8, 15 and 25 m (`--hair=farN_cards` against `farN`), straight hair shaken and wavy hair
+in wind. The cards read lighter, bluish and see-through, the head showing through them, at every
+distance. Three causes, three fixes:
+
+- Lighting: the cards took Godot's ambient and reflected light by their own face, so cards tipped
+  up caught the sky. They now light with the normal facing the viewer about the strands, as the
+  strands' ribbons do (and as Unreal's hair lights its cards, Karis 2016). The blue cast is gone.
+- Fanning: the cards keep the clump's width from the groom, but a draped clump fans out with its
+  guides (its strands sit between the same guides), so the strands spread over the head while
+  the cards stayed narrow ribbons with gaps between. Each card point now takes how far its guides
+  have moved apart since the groom (the solver writes it with the card's strand) and the card
+  widens by that much, thinning by the same factor (optical depth over the fan), so the strands'
+  total width is kept. The gaps close.
+- Points: the cards took the drawn point count, which simplify_tolerance cuts to the two ends of
+  a straight strand; a card through only those cuts through the head as the strand drapes. Cards
+  now take up to 16 groomed points (the solver's slots grow to hold them; the strands' mesh keeps
+  its own points).
+
+Tried and not kept: more cards (512, 1024), full width instead of the 95th percentile, cards faced
+out from the groom's centre, and a coverage gain of 2 to 4 all left the gaps; the gaps were the
+fanning. Left: the cards still read about a fifth lighter than the strands at 8 to 15 m in the
+bench (mean 53 against 43 on the hair), from weaker self-shadowing (their deep opacity maps are
+built from one strand a clump). Cards stay off by default.
+
+## Stage 2q: hair resting on cloth
+
+Long hair lies on a collar, a hood or a coat's shoulders, and the cloth there moves. The collision
+body (stage 2h) is a skinned proxy of the body; a simulated garment is not in it, so hair sank into
+the cloth down to the body under it. How others do it:
+
+- AMD TressFX 4.1: hair collides with a signed distance field built on the GPU each frame from a
+  skinned collision mesh's triangles (seeded, then jump flooded); that is what the collision body
+  already is.
+- Unreal's groom: hair collides with the physics asset's capsules (Niagara), not with Chaos cloth;
+  hair on cloth is faked with the body's capsules swollen.
+- Bridson, Fedkiw, Anderson, Robust Treatment of Collisions, Contact and Friction for Cloth (2002):
+  a cloth is a sheet with a thickness, kept apart from what touches it by its distance less that
+  thickness.
+
+Built (`collision_cloth` names a PhysXSkinnedCloth3D, `cloth_thickness`): TressFX's distance field
+fed the cloth's simulated triangles as well as the body's. The node gives the solver the cloth's
+triangles once (its render copy's indices mapped to particles); each frame a pass reads their
+corners straight from the cloth's position texture on the GPU (no readback), into the triangle
+buffer after the body's, and the field is seeded and flooded over both. Cloth triangles are marked
+and their distance has its thickness taken off. The distance is signed by the cloth's face, as the
+body's is (its outside is where the mesh normals face), not unsigned as a free sheet's: tried
+unsigned first, hair that the groom's rest pose already put under the capelet stayed under it
+(the push only ever moved it further from the sheet, on the side it was). Signed, hair under the
+cloth near its surface goes back over it, which is where hair lies on clothes. The cloth's triangles also shadow the hair in the
+deep opacity maps, as the body's do. One frame of lag at most (the cloth's step order), under a
+centimetre at walking speed. Cost: one pass over the cloth's triangles plus their share of the
+seeding (the field's flood is the same size); measured below.
+
+Bench: `--hair=cloth` puts a capelet 4 cm off the shoulders, its hem free to move 3 cm;
+`--hair=nocloth` is the same without the collision.
+
 ## Checked: lighter path traced strands
 
 The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,
@@ -811,3 +869,4 @@ groom to test with.
 - Tojo, Hu, Umetani, Li. Strands2Cards: Automatic Generation of Hair Cards from Strands. SIGGRAPH Asia 2025.
 - Wang, Yu, Zhou, Guo, Shum. Example-based Hair Geometry Synthesis. SIGGRAPH 2009.
 - Epic Games. Unreal Engine documentation: Setting up Cards and Meshes for Grooms; Hair Card Generator.
+- Bridson, Fedkiw, Anderson. Robust Treatment of Collisions, Contact and Friction for Cloth Animation. SIGGRAPH 2002.

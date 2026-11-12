@@ -44,7 +44,8 @@
 namespace {
 // std140 Params in hair_strands.glsl: 7 vec4, 4 mat4, MAX_SPHERES vec4, 3 vec4 (SDF), 2 vec4 (volume),
 // 2 + 4 per map vec4 (deep opacity maps), 1 vec4 (strand-strand collision).
-constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16 + (8 + HairStrandSolverGPU::DOM_SLOTS * 4) * 16;
+// Then 1 vec4 and 1 mat4 (the cloth).
+constexpr int PARAMS_BYTES = 7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16 + (8 + HairStrandSolverGPU::DOM_SLOTS * 4) * 16 + 16 + 64;
 constexpr int SDF_PARAMS = (7 * 16 + 4 * 64 + HairStrandSolverGPU::MAX_SPHERES * 16) / 4; // float index
 constexpr uint32_t GROUP = 64; // local_size_x
 
@@ -77,12 +78,14 @@ enum Mode {
 	MODE_COLL_INSERT = 21,
 	MODE_COLL_SOLVE = 22,
 	MODE_COLL_APPLY = 23,
+	MODE_SDF_CLOTH = 24,
 };
 constexpr int VOL_PARAMS = SDF_PARAMS + 12; // float index
 constexpr int VOL_CELLS = 32; // a side
 constexpr int DOM_PARAMS = VOL_PARAMS + 8; // float index
 constexpr int COLL_PARAMS = DOM_PARAMS + 8 + HairStrandSolverGPU::DOM_SLOTS * 16; // float index
 constexpr int COLL_BUCKET = 8; // points a hash bucket holds (hair_strands.glsl)
+constexpr int CLOTH_PARAMS = COLL_PARAMS + 4; // float index: cloth_misc, then cloth_xform
 
 struct PassConstants {
 	int32_t mode;
@@ -186,8 +189,10 @@ void HairStrandSolverGPU::rt_free_buffers() {
 		rd->free_rid(uniform_set);
 	}
 	uniform_set = RID();
-	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &tex_out_prev, &buf_last, &buf_dom_depth, &buf_dom_accum, &tex_dom, &buf_tris, &buf_sdf, &buf_vol, &buf_vol_rest, &buf_render_points, &buf_coll_cells, &buf_coll_delta, &buf_point_strand };
+	RID *rids[] = { &buf_params, &buf_rest, &buf_strands, &buf_pos, &buf_prev, &buf_follow, &buf_order, &tex_out, &tex_out_prev, &buf_last, &buf_dom_depth, &buf_dom_accum, &tex_dom, &buf_tris, &buf_sdf, &buf_vol, &buf_vol_rest, &buf_render_points, &buf_coll_cells, &buf_coll_delta, &buf_point_strand, &tex_cloth_dummy, &buf_cloth_tris };
 	history = false;
+	tex_cloth = RID();
+	cloth_tri_count = 0;
 	vol_cells = 0;
 	tris_capacity = 0;
 	for (RID *r : rids) {
@@ -329,6 +334,23 @@ void HairStrandSolverGPU::rt_build(Ref<HairStrandSolverGPU> p_self, PackedFloat3
 	// No collision body yet: placeholders, grown on the first step that has one.
 	buf_tris = storage_from(rd, nullptr, 16);
 	buf_sdf = storage_from(rd, nullptr, 16);
+	// No cloth: a one-texel stand-in for its positions, set_cloth binds the real one.
+	{
+		RD::TextureFormat cf;
+		cf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
+		cf.width = 1;
+		cf.height = 1;
+		cf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+		Vector<uint8_t> zero;
+		zero.resize(16);
+		memset(zero.ptrw(), 0, 16);
+		Vector<Vector<uint8_t>> cd;
+		cd.push_back(zero);
+		tex_cloth_dummy = rd->texture_create(cf, RD::TextureView(), cd);
+	}
+	tex_cloth = tex_cloth_dummy;
+	buf_cloth_tris = storage_from(rd, nullptr, 16);
+	cloth_tri_count = 0;
 	vol_cells = p_vol_rest.size() == p_vol_cells * p_vol_cells * p_vol_cells ? p_vol_cells : 0;
 	const int vol_count = vol_cells * vol_cells * vol_cells;
 	buf_vol = storage_from(rd, nullptr, vol_count * 16);
@@ -471,7 +493,45 @@ void HairStrandSolverGPU::rt_make_uniform_set() {
 		u.append_id(tex_dom);
 		uniforms.push_back(u);
 	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+		u.binding = 21;
+		u.append_id(tex_cloth.is_valid() && rd->texture_is_valid(tex_cloth) ? tex_cloth : tex_cloth_dummy);
+		uniforms.push_back(u);
+	}
+	{
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 22;
+		u.append_id(buf_cloth_tris);
+		uniforms.push_back(u);
+	}
 	uniform_set = rd->uniform_set_create(uniforms, shader, 0);
+}
+
+void HairStrandSolverGPU::rt_set_cloth(Ref<HairStrandSolverGPU> p_self, RID p_texture, PackedInt32Array p_tris) {
+	if (rd == nullptr || !built.is_set()) {
+		return;
+	}
+	const int n = p_tris.size() / 3;
+	const bool valid = n > 0 && p_texture.is_valid() && rd->texture_is_valid(p_texture);
+	if (buf_cloth_tris.is_valid()) {
+		rd->free_rid(buf_cloth_tris);
+	}
+	PackedInt32Array packed;
+	packed.resize(MAX(valid ? n : 0, 1) * 4);
+	int *w = packed.ptrw();
+	memset(w, 0, packed.size() * sizeof(int));
+	for (int i = 0; valid && i < n; i++) {
+		w[i * 4 + 0] = p_tris[i * 3 + 0];
+		w[i * 4 + 1] = p_tris[i * 3 + 1];
+		w[i * 4 + 2] = p_tris[i * 3 + 2];
+	}
+	buf_cloth_tris = storage_from(rd, (const uint8_t *)packed.ptr(), packed.size() * 4);
+	tex_cloth = valid ? p_texture : tex_cloth_dummy;
+	cloth_tri_count = valid ? n : 0;
+	rt_make_uniform_set();
 }
 
 void HairStrandSolverGPU::rt_reset(Ref<HairStrandSolverGPU> p_self) {
@@ -495,7 +555,16 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 	if (rd == nullptr || !built.is_set() || uniform_set.is_null() || p_params.size() != PARAMS_BYTES) {
 		return;
 	}
-	const int tri_count = p_tris.size() / 12;
+	if (tex_cloth != tex_cloth_dummy && !rd->texture_is_valid(tex_cloth)) {
+		// The cloth was rebuilt or freed (its uniform set went with it): none until set again.
+		tex_cloth = tex_cloth_dummy;
+		cloth_tri_count = 0;
+		rt_make_uniform_set();
+	}
+	const int body_tris = p_tris.size() / 12;
+	// The cloth's triangles follow the body's in the same buffer (MODE_SDF_CLOTH writes them).
+	const int cloth_count = (tex_cloth != tex_cloth_dummy && rd->texture_is_valid(tex_cloth)) ? MIN(cloth_tri_count, (int)(((const float *)p_params.ptr())[CLOTH_PARAMS] + 0.5f)) : 0;
+	const int tri_count = body_tris + cloth_count;
 	if (tri_count > 0) {
 		if (tri_count > tris_capacity) {
 			// Grown (with headroom) only when the body has more triangles than before.
@@ -506,7 +575,9 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 			buf_sdf = storage_from(rd, nullptr, MAX_SDF_CELLS * 8);
 			rt_make_uniform_set();
 		}
-		rd->buffer_update(buf_tris, 0, tri_count * 48, p_tris.ptr());
+		if (body_tris > 0) {
+			rd->buffer_update(buf_tris, 0, body_tris * 48, p_tris.ptr());
+		}
 	}
 	PackedByteArray params = p_params;
 	int32_t *counts = (int32_t *)params.ptrw();
@@ -517,6 +588,9 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 	fl[26] = (float)slot_points;
 	fl[27] = (float)sort_size;
 	fl[COLL_PARAMS + 1] = (float)coll_buckets;
+	fl[CLOTH_PARAMS + 0] = (float)cloth_count;
+	fl[CLOTH_PARAMS + 2] = (float)body_tris;
+	counts[SDF_PARAMS + 7] = tri_count; // what this frame holds (the cloth may have gone)
 	if (vol_cells == 0) {
 		fl[VOL_PARAMS + 7] = 0.0f; // no grid: the volume stays off
 	}
@@ -558,6 +632,9 @@ void HairStrandSolverGPU::rt_step(Ref<HairStrandSolverGPU> p_self, PackedByteArr
 	}
 	run(MODE_FOLLOW, 1.0f, 1.0f, strand_count);
 	if (tri_count > 0) {
+		if (cloth_count > 0) {
+			run(MODE_SDF_CLOTH, 1.0f, 1.0f, cloth_count);
+		}
 		const int32_t *sd = (const int32_t *)params.ptr() + SDF_PARAMS + 4;
 		const int cells = sd[0] * sd[1] * sd[2];
 		run(MODE_SDF_CLEAR, 1.0f, 1.0f, cells);
@@ -819,12 +896,17 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 	// The collision body: its triangles, padded to vec4, and a grid around them (TressFX's SDF),
 	// cells grown so the grid fits in 64^3.
 	PackedFloat32Array tris;
-	const int tri_count = p_settings.body_triangles.size() / 3;
+	const int body_count = p_settings.body_triangles.size() / 3;
+	const int cloth_count = p_settings.cloth_bounds.has_volume() || p_settings.cloth_bounds.has_surface() ? cloth_tris : 0;
+	const int tri_count = body_count + cloth_count;
 	if (tri_count > 0) {
-		tris.resize(tri_count * 12);
+		tris.resize(body_count * 12);
 		float *t = tris.ptrw();
-		AABB box(p_settings.body_triangles[0], Vector3());
-		for (int i = 0; i < tri_count * 3; i++) {
+		AABB box = body_count > 0 ? AABB(p_settings.body_triangles[0], Vector3()) : p_settings.cloth_bounds;
+		if (body_count > 0 && cloth_count > 0) {
+			box.merge_with(p_settings.cloth_bounds);
+		}
+		for (int i = 0; i < body_count * 3; i++) {
 			const Vector3 &v = p_settings.body_triangles[i];
 			box.expand_to(v);
 			t[i * 4 + 0] = v.x;
@@ -852,6 +934,10 @@ void HairStrandSolver::step(const Transform3D &p_xform, double p_delta, int p_su
 		ints[SDF_PARAMS + 7] = tri_count;
 		f[SDF_PARAMS + 8] = band;
 		f[SDF_PARAMS + 9] = MAX(p_settings.margin, 0.0f);
+		f[CLOTH_PARAMS + 0] = (float)cloth_count;
+		f[CLOTH_PARAMS + 1] = (float)MAX(p_settings.cloth_texture_width, 1);
+		f[CLOTH_PARAMS + 3] = MAX(p_settings.cloth_thickness, 0.0f);
+		put_mat4(f + CLOTH_PARAMS + 4, p_settings.cloth_xform);
 	}
 	// The deep opacity maps, one per light.
 	{
@@ -965,6 +1051,14 @@ RID HairStrandSolver::get_previous_position_texture_rd_rid() const {
 
 void HairStrandSolverGPU::rt_drop_history(Ref<HairStrandSolverGPU> p_self) {
 	history = false;
+}
+
+void HairStrandSolver::set_cloth(RID p_texture, const PackedInt32Array &p_tris) {
+	if (gpu.is_null()) {
+		return;
+	}
+	cloth_tris = p_texture.is_valid() ? p_tris.size() / 3 : 0;
+	_dispatch(callable_mp(gpu.ptr(), &HairStrandSolverGPU::rt_set_cloth).bind(gpu, p_texture, p_tris));
 }
 
 void HairStrandSolver::drop_history() {
