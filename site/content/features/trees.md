@@ -21,6 +21,10 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 ## Wood and leaves
 
 - **Branch collars** (`junction_weld`): branches flare into their parent in a short collar with a bark ridge in the crotch. Limbs that would grow into thicker wood bend away or die back to it.
+
+  ![A sycamore's limbs meeting its trunk, without and with the weld, raster](media/trees-junction.jpg)
+
+  *Branch collars: the hard seam where each limb enters the trunk becomes a soft flare with the bark running through.*
 - **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing.
 - **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.
 - **Climbers** (`climber`, `climber_cover`): ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree.

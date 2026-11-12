@@ -13,6 +13,10 @@ summary: "Sun and moon set by date, time and place; a scattering atmosphere with
 
 - **Cloud layer** (`cloud_base_height`, `cloud_thickness`, `cloud_density`): shaped from the weather map's cover, cloud type and storms; drawn by `WeatherSkyMaterial` and seen by path traced rays (`pathtracing_sky_shader_enabled`).
 
+  ![A cloud layer over a meadow under mountains, raster and path traced](media/weather-clouds.jpg)
+
+  *Clouds: the layer seen from the ground over a meadow, raster and path traced.*
+
 - **Clouds that never repeat** (always on): shape noise read at two scales with an irrational ratio.
 
   ![Cloud cover from above over 24 km, before and after the fix](media/clouds-repeat.jpg)
