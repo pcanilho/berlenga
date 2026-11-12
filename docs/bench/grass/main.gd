@@ -11,7 +11,7 @@ extends Node3D
 #   --frames=N       frames before the capture (default 20)
 #   --grass-density=N  blades per m2 of the tall grass near the camera (default: the field's, 120)
 #   --sun-yaw=D      sun heading in degrees (default 150, against the light; -30 lights the view from behind)
-#   env GRASS_DIAG=noshadow|nosun|nograss|notrample|novf|bounce0: lighting diagnostics (grass.md, "Light inside the sward")
+#   env GRASS_DIAG=noshadow|nosun|nograss|notrample|novf|vf1|nounder|bounce0|ssaa: lighting diagnostics (grass.md, "Light inside the sward")
 #   --cpu-fill       build grass tiles on the CPU instead of the GPU fill (grass.md, stage 3a)
 #   --litter-wind=x,z  downwind lean of the leaf drift (VegetationField3D.litter_wind), e.g. 0.6,0
 #   --out=path.png   save the last frame
@@ -186,6 +186,8 @@ func _ready() -> void:
 	grass.fallback_wind = wind
 	if grass_density > 0.0:
 		grass.density = grass_density
+	if OS.get_environment("GRASS_DIAG") == "vf1":
+		grass.view_facing = 1.0
 	grass.gpu_fill = gpu_fill
 	add_child(grass)
 	grass.data_map = grass.get_path_to(dm)
@@ -314,7 +316,12 @@ void fragment() {
 	add_child(we)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-28, sun_yaw, 0)
-	sun.shadow_enabled = OS.get_environment("GRASS_DIAG") != "noshadow"
+	sun.shadow_enabled = not OS.get_environment("GRASS_DIAG").contains("noshadow")
+	if OS.get_environment("GRASS_DIAG") == "ssaa":
+		get_viewport().scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+		get_viewport().scaling_3d_scale = 2.0
+	if OS.get_environment("GRASS_DIAG").contains("nounder"):
+		_hide_under.call_deferred()
 	if OS.get_environment("GRASS_DIAG") == "nograss":
 		_hide_grass.call_deferred()
 	if OS.get_environment("GRASS_DIAG") == "notrample":
@@ -1322,3 +1329,8 @@ func _no_view_facing() -> void:
 	grass.view_facing = 0.0
 	if under:
 		under.view_facing = 0.0
+
+
+func _hide_under() -> void:
+	if under:
+		under.visible = false

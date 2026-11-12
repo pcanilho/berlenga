@@ -460,10 +460,15 @@ What we found and changed:
   tracer's shadow rays keep (albedo x BACKLIGHT per blade) and the Goudriaan scattered and
   upward light. Measured +1 of 255; not worth replacing Godot's light model for it.
 - Where the rest of the gap is: shadowed pixels now match (10th and 25th percentile 13.3 / 24.7
-  against 14.0 / 27.0); the lit blades differ (75th 60 against 70). With blade height, width
-  and rest lean forced to constants raster and path tracer draw the same sward, so the path
-  tracer reads the blades' per-instance data differently: its blades are taller, thinner and
-  lean one way. That is a path tracer bug, followed up separately.
+  against 14.0 / 27.0); the lit blades differ (75th 60 against 70), and only in a dense sward.
+  Ruled out by experiment: blade shape (single blades at 3/m2 without the undercoat land on the
+  same pixels in both; two-sided quads and MultiMesh quads with rotated instances and custom
+  normals shade identically, 0.651 lit and 0.369 backlit in both), the view-space widening (the
+  path tracer follows view_facing), per-blade colour varyings, the trample field and the wind.
+  Raster without sun shadows comes within 0.5 of the path tracer, so the open question is how
+  much light reaches the blades a shadow map puts in shadow: the path tracer's light between
+  blades (bounces, translucent shadow rays) against the raster's none. A measured fix needs the
+  PC (denoised frames, more bounces) before guessing a fill term.
 
 ## References
 
