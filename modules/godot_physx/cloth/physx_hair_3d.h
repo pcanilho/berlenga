@@ -98,6 +98,7 @@ class PhysXHair3D : public Node3D {
 	LocalVector<ObjectID> deep_shadow_local_cache; // shadowed omni and spot lights found by the search
 	uint64_t deep_shadow_local_search_frame = 0;
 	int deep_shadow_on = 0; // deep opacity maps last set on the material
+	int snow_slot_set = -2; // the snow's map last set on the material (-2: not yet)
 	int draw_slot_points = 1;
 	bool volume_enabled = true;
 	float volume_friction = 0.2f;
@@ -113,6 +114,13 @@ class PhysXHair3D : public Node3D {
 	float wet_clumping = 0.8f; // how far wet strands gather onto their guides (0..1)
 	float wet_look = 0.0f; // the wetness last set on the material
 	float rain_shelter = 1.0f; // share of the rain that reaches the hair (roofs above it)
+	// Snow settled on the hair (stage 2r): the share of its top layer covered (0..1), and the snow
+	// (mm of water) that covers it.
+	float snow = 0.0f;
+	float snow_capacity = 1.0f;
+	float snow_look = 0.0f; // the cover last set on the material
+	MeshInstance3D *snow_instance = nullptr; // the clumps of snow on the strands
+	Ref<ShaderMaterial> snow_material;
 	float rain_shelter_timer = 0.0f;
 	// Hair cards for distant hair (docs/ideas/hair.md, stage 2p).
 	bool cards_enabled = false;
@@ -153,6 +161,7 @@ class PhysXHair3D : public Node3D {
 
 	static Ref<Shader> render_shaders[2]; // Godot standard lighting, hair shading
 	static Ref<Shader> card_shaders[2];
+	static Ref<Shader> snow_shader;
 
 	void _groom_changed();
 	void _queue_build();
@@ -166,6 +175,7 @@ class PhysXHair3D : public Node3D {
 	PackedFloat32Array _follow_data(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_guide_pool = 0) const;
 	void _set_look(const Ref<ShaderMaterial> &p_material) const;
 	void _build_cards(const AABB &p_bounds);
+	void _build_snow(const AABB &p_bounds, const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_slot_points, int p_drawn_points);
 	int _render_points(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, PackedInt32Array &r_points) const;
 	Color _mass_color() const;
 	void _body_triangles(PackedVector3Array &r_tris);
@@ -280,6 +290,10 @@ public:
 	float get_water_capacity() const;
 	void set_drying_time(float p_seconds);
 	float get_drying_time() const;
+	void set_snow(float p_snow);
+	float get_snow() const;
+	void set_snow_capacity(float p_mm);
+	float get_snow_capacity() const;
 	void set_wet_clumping(float p_clumping);
 	float get_wet_clumping() const;
 	void set_cards_enabled(bool p_enabled);

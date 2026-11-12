@@ -800,6 +800,40 @@ seeding (the field's flood is the same size); measured below.
 Bench: `--hair=cloth` puts a capelet 4 cm off the shoulders, its hem free to move 3 cm;
 `--hair=nocloth` is the same without the collision.
 
+## Stage 2r: snow settling on hair
+
+Snow on a head of hair lies on the top layer only, as small white clumps of crystals caught
+between strands, thicker on the side the wind drives it at; above freezing, or warmed by the
+head, it melts into the hair as water. Before this, the hair's weather wetting (stage 2o) took the
+weather's whole precipitation as rain, so a snowfall soaked the hair. How others do it:
+
+- Hedstrom and Pomeroy (1998), snow interception by a canopy: the catch is the snowfall times how
+  much room is left, `dL = P (1 - L / L_max)`; the load fills fast at first, then slows.
+- Hock (2003), degree-day melt: about 0.2 to 0.6 mm of water an hour per degree above freezing for
+  snow; the low end for snow lying in the open on a cold surface.
+- Jennings et al. (2018), rain/snow split from air temperature and humidity: the weather map
+  already uses it for its own surfaces (`WeatherMap3D.rain_fraction`).
+- Games (Red Dead Redemption 2, The Last of Us Part II): snow on characters is a texture mask
+  painted from above; it does not follow the hair's layers or move with the strands.
+
+Built (`snow`, `snow_capacity`): the precipitation splits into rain and snow; rain wets as before,
+snow fills a load by Hedstrom and Pomeroy, melts by a degree-day rate (0.2 mm/h/°C) plus 0.05 mm/h
+from the head's warmth, and the melt adds to the wetness. Where it lies: one more deep opacity map
+(stage 2j) seen from where the snow comes from, the fall (1 m/s, Locatelli and Hobbs 1974's
+aggregates) against the wind, so the map gives each strand point the hair above it, in the snow's
+direction. Snow is drawn as its own mesh: six small blobs per strand (octahedra, smooth shaded,
+irregularly scaled), each at a random point along its strand, keyed by the strand's root so a
+strand keeps its clumps when the blend sort moves it between slots. A blob shows with a weight
+`snow · exp(-2 · hair above)` against its own random number, so only the top layer holds snow, and
+sits on the strand's side the snow came from; clumps are 1.25 to 3.75 mm across at full load
+(white, albedo 0.85, matte). The others shrink to nothing. Tried first: widening the strand itself
+where it held snow; the width ran along the whole segment between two strand points, so snow
+showed as white streaks a couple of centimetres long, not clumps. The blobs are opaque geometry,
+so the path tracer traces the same clumps. The map costs one more slot only while snow lies, and
+needs hair_shading's deep opacity maps. Not on the cards yet (hidden in card mode).
+
+Bench: `--hair=snow` holds snow at 1.
+
 ## Checked: lighter path traced strands
 
 The path tracer sees each strand as two crossed strips, four triangles a segment (a 30k-strand,
@@ -870,3 +904,7 @@ groom to test with.
 - Wang, Yu, Zhou, Guo, Shum. Example-based Hair Geometry Synthesis. SIGGRAPH 2009.
 - Epic Games. Unreal Engine documentation: Setting up Cards and Meshes for Grooms; Hair Card Generator.
 - Bridson, Fedkiw, Anderson. Robust Treatment of Collisions, Contact and Friction for Cloth Animation. SIGGRAPH 2002.
+- Hedstrom, Pomeroy. Measurements and Modelling of Snow Interception in the Boreal Forest. Hydrological Processes 12, 1998.
+- Hock. Temperature Index Melt Modelling in Mountain Areas. Journal of Hydrology 282, 2003.
+- Jennings, Winchell, Livneh, Molotch. Spatial Variation of the Rain-Snow Temperature Threshold across the Northern Hemisphere. Nature Communications 9, 2018.
+- Locatelli, Hobbs. Fall Speeds and Masses of Solid Precipitation Particles. JGR 79, 1974.
