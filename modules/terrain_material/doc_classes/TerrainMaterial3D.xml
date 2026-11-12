@@ -90,6 +90,12 @@
 		<member name="sea_level" type="float" setter="set_sea_level" getter="get_sea_level" default="0.0">
 			Height of the sea, the base of the beach band.
 		</member>
+		<member name="sky_occlusion" type="float" setter="set_sky_occlusion" getter="get_sky_occlusion" default="1.0">
+			How much of the ground's sky occlusion applies, 0 to 1.
+		</member>
+		<member name="sky_occlusion_enabled" type="bool" setter="set_sky_occlusion_enabled" getter="is_sky_occlusion_enabled" default="true">
+			Raster only: the ground's ambient light comes from the sky its surface sees ([member TerrainGenerator3D.sky_occlusion]): ambient occlusion is the irradiance of that sky over the whole sky's, on the shading normal, from the harmonics in the [code]terrain_sky_map[/code] global. Without it, a slope under higher ground takes light from the whole sky, such as a low sunset glow the hills hide. The path tracer ignores it.
+		</member>
 		<member name="snow_enabled" type="bool" setter="set_snow_enabled" getter="is_snow_enabled" default="true">
 			Lay the [SnowCover3D] snowpack over the ground.
 		</member>
