@@ -228,6 +228,18 @@
 		<constant name="PRESET_HERB_ROBERT" value="34" enum="Preset">
 			Herb Robert: a straggling herb with red stems, opposite leaves of three deeply lobed leaflets on long stalks, and small pink five-petalled flowers at the stem tips; woodland rides, gaps, edges and hedge bottoms.
 		</constant>
+		<constant name="PRESET_KNAPWEED" value="35" enum="Preset">
+			Common knapweed ([i]Centaurea nigra[/i]): stiff branched stems to 0.75 m, heads a dark knob of bracts under a brush of purple florets; about a quarter in seed (knobs alone).
+		</constant>
+		<constant name="PRESET_SCABIOUS" value="36" enum="Preset">
+			Field scabious ([i]Knautia arvensis[/i]): stems to 0.85 m with pairs of lobed leaves, flat lilac pincushion heads; about a quarter in seed (bristly balls).
+		</constant>
+		<constant name="PRESET_WILD_CARROT" value="37" enum="Preset">
+			Wild carrot ([i]Daucus carota[/i]): feathery leaves, a compound umbel of white florets with a dark centre floret; about a quarter in fruit, the umbel curled into a bird's nest.
+		</constant>
+		<constant name="PRESET_SORREL" value="38" enum="Preset">
+			Common sorrel ([i]Rumex acetosa[/i]): arrow-shaped leaves, a slender panicle of tiny whorled red flowers; about a quarter in rust-brown seed.
+		</constant>
 		<constant name="CLIMBER_IVY" value="0" enum="Climber">
 			Ivy (Hedera helix): palmate, shallow lobes, dark and glossy with pale veins.
 		</constant>
@@ -237,7 +249,7 @@
 		<constant name="CLIMBER_HONEYSUCKLE" value="2" enum="Climber">
 			Honeysuckle (Lonicera periclymenum): ovate, short-stalked, dull green.
 		</constant>
-		<constant name="PRESET_MAX" value="35" enum="Preset">
+		<constant name="PRESET_MAX" value="39" enum="Preset">
 			Number of presets.
 		</constant>
 		<constant name="FLOOR_BEECH" value="0" enum="FloorStand">

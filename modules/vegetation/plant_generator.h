@@ -93,6 +93,10 @@ public:
 		PRESET_HEATHER,
 		PRESET_VIOLET,
 		PRESET_HERB_ROBERT,
+		PRESET_KNAPWEED,
+		PRESET_SCABIOUS,
+		PRESET_WILD_CARROT,
+		PRESET_SORREL,
 		PRESET_MAX,
 	};
 
@@ -234,6 +238,10 @@ private:
 	void _build_seedling();
 	void _build_violet();
 	void _build_herb_robert();
+	void _build_knapweed();
+	void _build_scabious();
+	void _build_wild_carrot();
+	void _build_sorrel();
 	void _add_seedling_leaf(const Transform3D &p_at, int p_kind, int p_count, float p_depth, float p_half_width, float p_size, float p_t);
 	void _build_woodruff();
 	void _build_wood_anemone();

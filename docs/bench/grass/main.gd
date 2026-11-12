@@ -564,6 +564,8 @@ func _set_far_colors(b: Biome) -> void:
 		gen.preset = preset
 		gen.apply_preset_colors()
 		var lc: Color = gen.leaf_color * 0.8
+		if preset in [PlantGenerator.PRESET_KNAPWEED, PlantGenerator.PRESET_SCABIOUS, PlantGenerator.PRESET_WILD_CARROT, PlantGenerator.PRESET_SORREL]:
+			lc = lc.lerp(gen.petal_color, 0.35) # Tall flowers: their colour shows from afar.
 		spc.far_color = Color(lc.r, lc.g, lc.b, clampf(m.get_aabb().end.y / 0.6, 0.2, 0.9))
 
 func _cover_biome() -> Biome:
@@ -662,8 +664,34 @@ func _cover_biome() -> Biome:
 	dry.density = 0.55
 	dry.scale_range = Vector2(0.7, 1.2)
 	dry.visibility_range = 12.0
+	# Tall meadow flowers (plant-generator.md): knapweed and sorrel through the meadow, scabious and
+	# wild carrot on the drier ground; they stand clear of the grass and read from further away.
+	var tall := PlantSpecies.new()
+	tall.meshes = _variants(PlantGenerator.PRESET_KNAPWEED, 3) + _variants(PlantGenerator.PRESET_SORREL, 3)
+	tall.spacing = 0.35
+	tall.footprint = 0.08
+	tall.density = 0.8
+	tall.scale_range = Vector2(1.1, 1.4)
+	tall.patch_scale = 7.0
+	tall.patch_cover = 0.5
+	tall.patch_seed = 61
+	tall.visibility_range = 30.0
+	var tall_dry := PlantSpecies.new()
+	tall_dry.meshes = _variants(PlantGenerator.PRESET_SCABIOUS, 3) + _variants(PlantGenerator.PRESET_WILD_CARROT, 3)
+	tall_dry.spacing = 0.4
+	tall_dry.footprint = 0.08
+	tall_dry.density = 0.75
+	tall_dry.scale_range = Vector2(1.1, 1.4)
+	tall_dry.patch_scale = 8.0
+	tall_dry.patch_cover = 0.35
+	tall_dry.patch_seed = 67
+	tall_dry.set_rule_range(PlantSpecies.RULE_WATER_DISTANCE, Vector2(8.0, 1000000.0))
+	tall_dry.set_rule_fade(PlantSpecies.RULE_WATER_DISTANCE, 4.0)
+	tall_dry.visibility_range = 30.0
 	var b := Biome.new()
-	b.species = [flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry]
+	b.species = [flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry, tall, tall_dry]
+	if OS.get_environment("GRASS_DIAG").contains("notall"):
+		b.species = b.species.slice(0, 10)
 	if forest:
 		for sp in b.species:
 			(sp as PlantSpecies).set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.0, 0.4))
@@ -1216,7 +1244,7 @@ func _process(dt: float) -> void:
 			var counts := []
 			for i in cover.biome.species.size():
 				counts.append(cover.get_placements(i).size())
-			print("GRASS_COVER %s = %s ms=%.1f" % ["(tree, bramble, bracken, foxglove) flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry grass (fern, bilberry, moss, litter)", str(counts), cover.get_populate_time_msec()])
+			print("GRASS_COVER %s = %s ms=%.1f" % ["(tree, bramble, bracken, foxglove) flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry grass, tall flowers, tall dry flowers (fern, bilberry, moss, litter)", str(counts), cover.get_populate_time_msec()])
 			if forest:
 				grass.rebuild()
 				under.rebuild()
