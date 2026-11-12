@@ -621,6 +621,19 @@ void fragment() {
 			vec4 cover = textureLod(terrain_cover_map, cuv, 0.0);
 			vec3 cs = cover.rgb;
 			vec3 cover_lin = mix(cs / 12.92, pow((cs + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), cs));
+)";
+		if (grass_tint_enabled) {
+			// The same sun-azimuth lobes as grass_ground()'s far sward (the bake of the blades): brighter looking
+			// down-sun, darker into it, so the far cover and the grass fields agree at any heading.
+			c += R"(			vec2 tm_to = wp.xz - grass_ground_view.xz;
+			float tm_to_len = length(tm_to);
+			if (grass_ground_sun.z > 0.0 && tm_to_len > 1e-3) {
+				float c1 = dot(tm_to / tm_to_len, grass_ground_sun.xy);
+				cover_lin *= max(1.0 + grass_ground_sun.z * (grass_ground_far_lobe1.rgb * c1 + grass_ground_far_lobe2.rgb * (2.0 * c1 * c1 - 1.0)), vec3(0.1));
+			}
+)";
+		}
+		c += R"(
 			albedo = mix(albedo, mix(tm_bare, cover_lin, cover.a), far_t);
 			tm_far_t = far_t;
 			tm_far_cover = cover.a;

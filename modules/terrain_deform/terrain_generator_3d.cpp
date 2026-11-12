@@ -6143,6 +6143,33 @@ Array TerrainGenerator3D::build_river_paths(Node *p_parent, real_t p_min_area) {
 			if (after) {
 				plain->set("mouth_target", plain->get_path_to(after));
 			}
+			// Tributaries of the cut river join the piece their mouth lies on (the water places a mouth along its
+			// target's own curve, so one aimed at the upper piece would land past its end).
+			for (int t = 0; t < rivers.size(); t++) {
+				const Dictionary dt = rivers[t];
+				if (int(dt["joins"]) != best || t >= nodes.size()) {
+					continue;
+				}
+				const PackedVector3Array tp = dt["points"];
+				if (tp.is_empty()) {
+					continue;
+				}
+				const Vector2 mouth(tp[tp.size() - 1].x, tp[tp.size() - 1].z);
+				int km = 0;
+				real_t md = 1e30f;
+				for (int k = 0; k < pts.size(); k++) {
+					const real_t dd = Vector2(pts[k].x, pts[k].z).distance_squared_to(mouth);
+					if (dd < md) {
+						md = dd;
+						km = k;
+					}
+				}
+				Node *tn = Object::cast_to<Node>(nodes[t]);
+				Node *to = km <= kh ? above : ((km < kf || after == old_tgt || !after) ? static_cast<Node *>(plain) : after);
+				if (tn && to && tn->is_inside_tree() && to->is_inside_tree()) {
+					tn->set("mouth_target", tn->get_path_to(to));
+				}
+			}
 			if (Engine::get_singleton()->is_editor_hint()) {
 				Node *own = p_parent->get_owner() ? p_parent->get_owner() : p_parent;
 				plain->set_owner(own);
