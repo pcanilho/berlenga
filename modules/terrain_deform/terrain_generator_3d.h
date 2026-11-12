@@ -212,6 +212,7 @@ private:
 		real_t run = 0.0; // m from the lip cell to the foot cell
 		real_t h_top = 0.0, h_bottom = 0.0;
 		real_t half_width = 0.0; // m held vertical either side of the river's line
+		bool notch = false; // a tall fall: the face is left as it stands and only a notch is cut at the lip
 	};
 	// Plunge pools at the foot of falls (Mason and Arumugam 1985 depth, Pagliara et al. 2006 shape).
 	struct PlungePool {

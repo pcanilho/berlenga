@@ -1266,6 +1266,19 @@ point (30th percentile of the relief per row, made non-increasing downstream by 
 the head, head and foot positions and the head cell (for the feeding river). Dry, a plain reads as flat pale gravel
 with half a metre of relief: the braids show once the water sheet (Valence, Peytavie et al. 2019) lies over it.
 
+## Tall falls keep their face (12 Nov, bug from the showcase)
+
+The lip model builds a step: the ground over the fall's run is held at the lip's height to mid-run and at the
+foot's after it. Right for a ledge of a few metres, wrong for the 338 m fall off the bar: it cut a straight-sided box
+into the face with a flat pad at the bottom. Real falls off hanging-valley lips and riegels (Yosemite, Staubbach,
+Lauterbrunnen) leave the wall as it stands and notch only the brink, the cleft narrowing and shallowing down the
+face, with rockfall and a scour basin at the foot (Crosby and Whipple 2006 on hanging valleys; Lamb et al. 2007 on
+falls cutting back by undercutting and block toppling). So falls over 25 m (NOTCH_DROP) keep the ground and get a
+notch: up to 0.4 of the river's width deep at the brink (2 to 10 m), fading in over 8 m upstream and gone a third of
+the way down, a rounded V narrowing downwards with walls wandering by a quarter of its width; the plunge pool sits
+at the foot of the run (as for falls without a lip). get_waterfalls() keeps its keys; the tall falls' face profiles
+and type now follow the real face.
+
 ## Rock detail on steep faces and scree (12 Nov; Paulo picked shader detail first, then displaced cliffs)
 
 Why: the generator's erosion detail is a heightfield (offsets in y over x z), so faces near vertical get none: gorge
@@ -1284,6 +1297,19 @@ staggered bed to bed, each block a little proud, recessed or tilted, cracks shad
 (and the stones in till): rounded stones about 0.35 m. The cracks never get thinner than 2.5 pixels and the detail
 fades out before a pixel covers a tenth of a bed or a quarter of a stone, so nothing aliases into lines. Next:
 displaced geometry on faces over 60 degrees for close views.
+
+Fix (12 Nov, from the showcase): from about 150 m and at grazing angles the first build covered slopes in dark
+hairlines that beat into moire, and darkened the frame, because the fade went by distance only (a face seen edge-on
+spans metres in one pixel at any distance) and the cracks were widened to stay 2.5 pixels wide, so their share of
+the face grew with distance. The established cure is band limiting the pattern itself: the cracks are a box-filtered
+pulse train (Apodaca and Gritz 2000, Advanced RenderMan ch. 11), integrated over each pixel's footprint along each
+set's normal from the screen derivatives of the world position, so a pixel shows the cracks' area, not a line; every
+other feature (block steps and tones, crack relief, the roughness octaves, stones) is frequency clamped (Norton,
+Rockwood and Skolmoski 1982) to its mean as a pixel spans a quarter to half its size; the normal's difference step
+grows with the pixel. Faces are lifted by the cracks' mean darkening and stones divided by their measured mean
+(0.958), so the shade averages 1 over any area: the mean brightness on and off matched to 0.01 of 255 at 150 m and
+at grazing angles. Cracks shade to 0.82 (was 0.72) and the faces get the detail past 45 degrees (full past 57), so
+gentle rock keeps the generator's own detail.
 
 ## Sources
 

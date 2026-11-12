@@ -2611,6 +2611,7 @@ constexpr real_t LIP_FACE = 3.0; // m the face takes from the lip's height to th
 constexpr real_t LIP_SIDE = 12.0; // m beside the held width over which the step fades into the slope
 constexpr real_t GORGE_WALL = 2.0; // m over which a gorge wall rises from its floor to the ground beside it
 constexpr real_t POOL_BAR = 1.4; // the tail bar reaches this many pool radii from the centre
+constexpr real_t NOTCH_DROP = 25.0; // m: taller falls keep their face and get a notch at the lip instead of a step
 constexpr real_t LIP_END = 8.0; // m before the lip and past the foot over which it fades
 } // namespace
 
@@ -4839,6 +4840,11 @@ void TerrainGenerator3D::_bake_lips() {
 				lip.h_top = h_top;
 				lip.h_bottom = h_foot;
 				lip.half_width = width;
+				// Tall falls (a hanging valley's lip, a bar face) do not get a built step: the face is already there
+				// and the water runs over it. The river only notches the lip, the notch narrowing and shallowing down
+				// the face (Yosemite, Staubbach, the falls off riegels: a cleft at the brink, the wall sheer below,
+				// rockfall at the foot; Crosby and Whipple 2006, Lamb et al. 2007).
+				lip.notch = h_top - h_foot > NOTCH_DROP;
 				lips.push_back(lip);
 			}
 			// The pool where the jet lands: past the face (the lip's step sits mid-run), or at the foot of a fall that
@@ -4848,8 +4854,9 @@ void TerrainGenerator3D::_bake_lips() {
 				const real_t q = MAX(real_t(_flow(u, river_month)) / real_t(widths[k] > 0.5f ? widths[k] : 0.5f), real_t(1e-4));
 				const real_t v0 = Math::pow(9.81f * q, real_t(1.0 / 3.0));
 				const real_t throw_m = v0 * Math::sqrt(2.0f * MAX(h_top - h_foot, real_t(0.0)) / 9.81f);
-				const real_t face_at = lipped ? 0.5f * run - 0.5f * LIP_FACE : 0.0f;
-				const real_t face_end = lipped ? 0.5f * run + 0.5f * LIP_FACE : run;
+				const bool stepped = lipped && !(h_top - h_foot > NOTCH_DROP);
+				const real_t face_at = stepped ? 0.5f * run - 0.5f * LIP_FACE : 0.0f;
+				const real_t face_end = stepped ? 0.5f * run + 0.5f * LIP_FACE : run;
 				// Mason and Arumugam 1985: D + Y = 3.27 q^0.60 H^0.05 h^0.15 / (g^0.30 d^0.10); tailwater h at the
 				// critical depth, cobbles d = 0.3 m. At least 1.5 m (a fall of 4 m or more always leaves a hollow).
 				const real_t h = MAX(Math::pow(q * q / 9.81f, real_t(1.0 / 3.0)), real_t(0.2));
@@ -4956,6 +4963,29 @@ float TerrainGenerator3D::_apply_lips(real_t p_x, real_t p_z, float p_g) const {
 			continue;
 		}
 		auto fade = [](real_t x) { return x * x * (real_t(3.0) - real_t(2.0) * x); };
+		if (l.notch) {
+			// The notch: up to 0.4 of the river's width deep at the brink (2 to 10 m), fading in over LIP_END
+			// upstream and out down the face (gone by a third of the run), a rounded V that narrows as it goes
+			// down, its walls wandering by a quarter of its width (jointed rock, not a saw cut).
+			if (s < -LIP_END || s > l.run) {
+				continue;
+			}
+			const real_t sa = s / MAX(l.run, real_t(1.0));
+			const real_t depth_at = CLAMP(0.4f * l.half_width, real_t(2.0), real_t(10.0)) * (s < 0.0 ? fade(CLAMP(1.0 + s / LIP_END, 0.0, 1.0)) : fade(CLAMP(1.0 - 3.0 * sa, 0.0, 1.0)));
+			if (depth_at <= 0.0) {
+				continue;
+			}
+			const uint32_t ns = uint32_t(seed) * 0x9E3779B1u + uint32_t(i) * 7919u;
+			const real_t hw = MAX(0.6f * l.half_width, real_t(3.0)) * (1.0f - 0.5f * CLAMP(sa * 3.0, 0.0, 1.0)) * (1.0f + 0.25f * TerrainErosionFilter::fbm(ns, s, 13.0, 6.0, 3));
+			const real_t side = (q.cross(l.dir) > 0.0 ? 1.0 : -1.0);
+			const real_t x = (t + 0.15f * hw * TerrainErosionFilter::fbm(ns + 1u, s, side * 29.0, 4.0, 2)) / MAX(hw, real_t(1.0));
+			if (x >= 1.0) {
+				continue;
+			}
+			const real_t prof = fade(1.0 - x) * (1.0 - 0.3 * x); // flat-ish bed, walls steepening outwards
+			g = float(real_t(g) - depth_at * prof);
+			continue;
+		}
 		const real_t wa = s < 0.0 ? fade(CLAMP(1.0 + s / LIP_END, 0.0, 1.0)) : (s > l.run ? fade(CLAMP(1.0 - (s - l.run) / LIP_END, 0.0, 1.0)) : 1.0);
 		const real_t wl = t <= l.half_width ? 1.0 : fade(CLAMP(1.0 - (t - l.half_width) / LIP_SIDE, 0.0, 1.0));
 		const real_t w = wa * wl;
