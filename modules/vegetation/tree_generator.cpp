@@ -4559,7 +4559,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			const float soil = 1.0f - Math::smoothstep(0.0f, 0.3f, h);
 			const Color c = cc[v];
-			cc[v] = c.lerp(Color(0.045f, 0.032f, 0.02f, c.a), p_k * 0.85f * soil);
+			cc[v] = c.lerp(Color(0.085f, 0.065f, 0.045f, c.a), p_k * 0.7f * soil);
 		}
 	};
 	// The roots' bearings (on the ridges) and run lengths. None under a basal hollow: the rot
@@ -4653,7 +4653,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// buttress).
 					const float y_floor = Math::lerp(h, MIN(h, -0.25f * trunk_r), Math::smoothstep(0.25f, 0.7f, t));
 					d = Math::lerp(d, d_root, Math::smoothstep(0.0f, 0.75f, w));
-					y = Math::lerp(y_floor, y_root, w);
+					// The furrows were cut for the stem's girth; swept out along a root they
+					// stretched into deep black grooves. Shallower the further out they go.
+					relief_off[i] *= 1.0f - 0.65f * w * Math::smoothstep(0.1f, 0.6f, t);
+					// The height falls away gently towards the flank's foot, so the root meets the
+					// soil at a shallow angle: a steep flank left a dark crevice along the ground
+					// under the path tracer.
+					const float wy = q < 1.0f ? Math::pow(1.0f - q * q, 1.6f) : 0.0f;
+					y = Math::lerp(y_floor, y_root, wy);
 				}
 				moved[i] = 1;
 			}
@@ -4667,9 +4674,32 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				nw[v] = (nw[v] - Vector3(0, dpdh, 0) - side * dpds).normalized();
 			}
 		}
+		const int rings = p_part.w / ring;
+		// No undercut: down each column of the swept part a ring never comes in nearer the axis
+		// or rises above the ring over it. Where a root's flank narrows faster than it sinks,
+		// the blend pulled lower rings back towards the stem wall, and the flank curled under
+		// itself into thin dark slits (darkest under the path tracer).
+		for (int k = 0; k < ring; k++) {
+			for (int r = rings - 2; r >= 0; r--) {
+				const int i = r * ring + k, above = (r + 1) * ring + k;
+				if (!moved[i] || !moved[above]) {
+					continue;
+				}
+				Vector3 &a = vv[p_part.z + i];
+				const Vector3 &b = vv[p_part.z + above];
+				Vector2 ra(a.x - p_axis.x, a.z - p_axis.z);
+				const float rb = Vector2(b.x - p_axis.x, b.z - p_axis.z).length();
+				const float la = ra.length();
+				if (la < rb && la > 1e-5f) {
+					ra *= rb / la;
+					a.x = p_axis.x + ra.x;
+					a.z = p_axis.z + ra.y;
+				}
+				a.y = MIN(a.y, b.y);
+			}
+		}
 		// Normals of the swept part from the mesh's own grid (round the ring and along the stem),
 		// one winding sign for the part.
-		const int rings = p_part.w / ring;
 		LocalVector<Vector3> fn;
 		fn.resize(p_part.w);
 		float sign_sum = 0.0f;
