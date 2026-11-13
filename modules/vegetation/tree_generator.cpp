@@ -5568,11 +5568,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					const float ramp = CLAMP(0.5f + (raw - 0.475f) / 0.25f, 0.0f, 1.0f);
 					const float hummock = moss_noise(mv[v] * 9.0f, 0x6d6f7376u);
 					float fill = Math::lerp(-0.012f, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
-					// Under the root where the root itself goes under: lifted there, the shell
-					// stood out of the soil past the root's end.
-					const int ri = MIN(i / 13, int(rpts.size()) - 1);
-					const float shows = CLAMP((rpts[ri].y + rrad[ri] * 0.7f - ground_y) / MAX(0.01f, 0.6f * rrad[ri]), 0.0f, 1.0f);
-					fill = Math::lerp(-0.012f, fill, shows);
+					// Thinned to nothing at the soil line, so past the point where the root goes
+					// under the shell does not stand out of the ground. By the vertex's own height:
+					// by the ring's, the shell's edge ran straight across the root.
+					fill *= CLAMP((mv[v].y - ground_y) / 0.04f, 0.0f, 1.0f);
 					mv[v] += mn[v] * fill;
 					const float dry = moss_noise(mv[v] * 1.3f, 0x6d6f7375u);
 					mc[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - raw * 0.4f, 0.0f, 1.0f));
