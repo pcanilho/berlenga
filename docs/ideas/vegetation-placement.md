@@ -146,3 +146,30 @@ and mosses on north faces). All are ignored when the map has no climate. Rain sh
 maps wider than about 20 km (rain drifts that far downwind); on smaller maps temperature and
 sunlight carry the variation. Check: trees kept to the warmer half by a threshold at the median
 tree temperature.
+
+## Rocks (obstacles)
+
+Boulders below cliffs (`TerrainGenerator3D.get_boulders()`, (x, ground y, z, radius)) stood in
+the grass and the plant layer with blades and herbs growing straight through them. Open-world
+pipelines place rocks before vegetation and let them mask it: Far Cry 5's world generation
+(Ubisoft, GDC 2018) places rocks and cliffs in its terrain pass ahead of the vegetation, and
+Horizon Zero Dawn's placement (van Muijden, GDC 2017) lets earlier layers write into the density
+maps later ones read. Ecology adds one thing: rocks are "nurse
+objects", the shelter and runoff at a boulder's foot help seedlings and herbs establish
+(Munguía-Rosas and Sosa 2008, and the nurse-rock studies after it), so plants should grow right
+up to a rock rather than keep a ring clear.
+
+`VegetationField3D.obstacles` and `GrassField3D.obstacles` take the same `PackedVector4Array`,
+each a disc (x, ground y, z, radius) with the radius where the rock meets the soil. A 4 m grid
+(`vegetation_obstacles.h`) finds the rocks near a point. Placement skips a ground plant whose stem
+falls within 3 cm of a rock, a tree whose trunk foot (its measured stem foot times its largest
+scale) reaches one, and a log within its length; leaves may still lean over the rock. The grass
+skips a blade rooted within 2 cm, on both fill paths: the GPU fill drops those candidates on the
+CPU from the same hash the shader places them by, so both paths still match. Tiles no rock
+reaches skip the test. Rock-foot shelter as a rule that favours ferns and herbs there is left for
+later.
+
+Checks: grass bench, no blade inside a 0.7 m rock and 111 blades within 20 cm of its foot;
+vegetation bench, six rocks dropped where cover grew, none of it inside them after, 253 plants
+within 50 cm of their feet. Grass bench `--rocks=N` shows stand-in rocks, `--rocks-through` the
+fields not told of them.

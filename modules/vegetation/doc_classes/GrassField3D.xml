@@ -170,6 +170,9 @@
 		<member name="lean" type="float" setter="set_lean" getter="get_lean" default="0.35">
 			Largest lean of a blade at rest, in metres of tip offset per metre of height.
 		</member>
+		<member name="obstacles" type="PackedVector4Array" setter="set_obstacles" getter="get_obstacles" default="PackedVector4Array()">
+			Rocks on the ground that no blade grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, as [member VegetationField3D.obstacles]. Blades root 2 cm or more off a rock, on both fill paths. Setting it rebuilds the field.
+		</member>
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="40.0">
 			Distance from the camera, in metres, to which tiles are grown.
 		</member>

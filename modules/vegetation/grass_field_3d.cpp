@@ -626,6 +626,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 	}
 	LocalVector<Transform3D> xforms;
 	LocalVector<Color> customs;
+	const bool rocks = _tile_has_obstacles(x0, z0);
 	for (int iz = iz0; iz < iz1; iz++) {
 		for (int ix = ix0; ix < ix1; ix++) {
 			const uint32_t hb = cell_hash(ix, iz, 0x9E3779B9u);
@@ -639,6 +640,9 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			const uint32_t hj = cell_hash(ix, iz, 0x85EBCA6Bu);
 			const float x = (ix + unit(hj, 0)) * cell;
 			const float z = (iz + unit(hj, 8)) * cell;
+			if (rocks && obstacle_grid.blocks(Vector2(x, z), OBSTACLE_MARGIN)) {
+				continue;
+			}
 			const Vector3 p(x, ground_y, z);
 			float y = ground_y;
 			if (p_map) {
@@ -722,11 +726,19 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 	const Transform3D to_local = get_global_transform().affine_inverse();
 
 	LocalVector<float> cand;
+	const bool rocks = _tile_has_obstacles(x0, z0);
 	for (int iz = iz0; iz < iz1; iz++) {
 		for (int ix = ix0; ix < ix1; ix++) {
 			const float rank = blue_rank(ix, iz);
 			if (rank >= keep) {
 				continue;
+			}
+			if (rocks) {
+				// The blade's root as the shader places it (the same hash), kept out of the rocks.
+				const uint32_t hj = cell_hash(ix, iz, 0x85EBCA6Bu);
+				if (obstacle_grid.blocks(Vector2((ix + unit(hj, 0)) * cell, (iz + unit(hj, 8)) * cell), OBSTACLE_MARGIN)) {
+					continue;
+				}
 			}
 			union {
 				int32_t i;
@@ -1895,6 +1907,22 @@ void GrassField3D::set_undergrowth_field(const NodePath &p_path) {
 	GRASS_SET_REBUILD(undergrowth_field, p_path)
 }
 
+// Whether any rock reaches into a tile (so its blades need testing one by one).
+bool GrassField3D::_tile_has_obstacles(float p_x0, float p_z0) const {
+	if (obstacle_grid.is_empty()) {
+		return false;
+	}
+	const float half = tile_size * 0.5f;
+	const float reach = half * float(Math::SQRT2) + OBSTACLE_MARGIN;
+	return obstacle_grid.clearance(Vector2(p_x0 + half, p_z0 + half), reach) <= reach;
+}
+
+void GrassField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
+	obstacles = p_obstacles;
+	obstacle_grid.build(obstacles);
+	rebuild();
+}
+
 VegetationField3D *GrassField3D::_get_undergrowth() const {
 	if (undergrowth_field.is_empty() || !is_inside_tree()) {
 		return nullptr;
@@ -2087,6 +2115,7 @@ void GrassField3D::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("far_color_changed"));
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")
 	GRASS_BIND(set_undergrowth_field, get_undergrowth_field, "path")
+	GRASS_BIND(set_obstacles, get_obstacles, "obstacles")
 	GRASS_BIND(set_density, get_density, "density")
 	GRASS_BIND(set_blade_height, get_blade_height, "height")
 	GRASS_BIND(set_blade_width, get_blade_width, "width")
@@ -2134,6 +2163,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rules", PROPERTY_HINT_RESOURCE_TYPE, "PlantSpecies"), "set_rules", "get_rules");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "undergrowth_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_undergrowth_field", "get_undergrowth_field");
+	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "obstacles"), "set_obstacles", "get_obstacles");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "0.1,400,0.1,or_greater,suffix:/m²"), "set_density", "get_density");
 	ADD_GROUP("Blades", "");

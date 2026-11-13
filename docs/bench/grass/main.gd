@@ -34,6 +34,8 @@ extends Node3D
 #   --turf=0         without the near turf layer
 #   --floor=0        without the litter on the ground under the crowns (cost comparison)
 #   --sward-shade=0  with --forest: the grass grows through the bracken and bramble stands (before shot)
+#   --rocks=N        N boulders (stand-in rounded rocks) 3 to 10 m in front of the camera; the fields keep
+#                    out of them (obstacles) unless --rocks-through
 #   --undergrowth=bracken|bramble   a stand of it in the open meadow, framed from 5 m and 3 m up in side light; the sward
 #                    thins under it (GrassField3D.undergrowth_field), unless --sward-shade=0
 #   --far=0          without the plants' colour on the ground beyond their range (before/after)
@@ -81,6 +83,8 @@ var stand_set := false
 var no_floor := false
 var no_sward := false
 var undergrowth := ""
+var rocks := 0 # --rocks=N: boulders in front of the camera.
+var rocks_through := false # --rocks-through: the fields not told of them (blades and plants grow through).
 var ug_field: VegetationField3D
 var no_far := false
 var far_view := false
@@ -138,6 +142,8 @@ func _ready() -> void:
 		elif a == "--floor=0": no_floor = true
 		elif a == "--sward-shade=0": no_sward = true
 		elif a.begins_with("--undergrowth="): undergrowth = a.substr(14)
+		elif a.begins_with("--rocks="): rocks = int(a.substr(8))
+		elif a == "--rocks-through": rocks_through = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
 		elif a == "--prims": prims = true
@@ -540,6 +546,42 @@ func _frame_undergrowth() -> void:
 	cam.position = Vector3(eye.x, height(eye.x, eye.z) + _env_f("UG_EYE", 3.0), eye.z)
 	cam.look_at(Vector3(best.x, height(best.x, best.z) + _env_f("UG_AT", 0.2), best.z))
 	print("GRASS_UNDERGROWTH stand=%s score=%.1f eye=%s sward=%.2f" % [str(best), best_score, str(cam.position), ug_field.get_sward_shade_at(best)])
+
+# Boulders for --rocks: rounded stand-ins, a little sunk, in front of the camera. Each is a disc
+# on the ground for the fields' obstacles, its radius where the rock meets the soil.
+func _place_rocks() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 23
+	var fwd := -cam.global_transform.basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized()
+	var right := Vector3(-fwd.z, 0, fwd.x)
+	var list := PackedVector4Array()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.42, 0.40, 0.37)
+	mat.roughness = 0.9
+	for k in rocks:
+		var d := rng.randf_range(3.0, 10.0)
+		var q := cam.global_position + fwd * d + right * rng.randf_range(-0.45, 0.45) * d
+		var r := rng.randf_range(0.3, 1.0)
+		var y := height(q.x, q.z)
+		var sm := SphereMesh.new()
+		sm.radius = 1.0
+		sm.height = 2.0
+		sm.radial_segments = 16
+		sm.rings = 8
+		sm.material = mat
+		var mi := MeshInstance3D.new()
+		mi.mesh = sm
+		# Semi-axes r, 0.55 r, r; centre 0.15 r up: the rock meets the ground at 0.96 r.
+		mi.transform = Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(r, 0.55 * r, r)), Vector3(q.x, y + 0.15 * r, q.z))
+		add_child(mi)
+		list.append(Vector4(q.x, y, q.z, 0.96 * r))
+	if not rocks_through:
+		for f in [grass, under, turf, cover, ug_field]:
+			if f:
+				f.obstacles = list
+	print("GRASS_ROCKS %d through=%s" % [list.size(), str(rocks_through)])
 
 func _env_f(k: String, d: float) -> float:
 	return float(OS.get_environment(k)) if OS.get_environment(k) != "" else d
@@ -1329,6 +1371,29 @@ func _checks() -> void:
 	_check("near density about %d /m2" % int(grass.density), near_density > grass.density * 0.75 and near_density < grass.density * 1.17, near_density)
 	_check("far ring thinned (LOD)", far_density < near_density * 0.3, far_density)
 	_check("no grass under water", wet == 0, wet)
+	# Rocks (GrassField3D.obstacles): no blade roots inside a boulder, blades right up to its foot.
+	var rock := Vector4(c.x + 2.0, 0.0, c.y + 1.0, 0.7)
+	grass.obstacles = PackedVector4Array([rock])
+	for i in 3:
+		grass.update_at(cam.global_position)
+	var r_in := 0
+	var r_by := 0
+	for ch in grass.get_children(true):
+		if ch is MultiMeshInstance3D:
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.instance_count:
+				var xf := mm.get_instance_transform(i)
+				if xf.basis.x.length_squared() == 0.0:
+					continue
+				var d := Vector2(xf.origin.x - rock.x, xf.origin.z - rock.z).length() - rock.w
+				if d < 0.019:
+					r_in += 1
+				elif d < 0.2:
+					r_by += 1
+	_check("no grass inside a rock, grass up to its foot (obstacles)", r_in == 0 and r_by > 10, [r_in, r_by])
+	grass.obstacles = PackedVector4Array()
+	for i in 20:
+		grass.update_at(cam.global_position)
 	# GPU tile fill (grass.md, stage 3a) against the CPU loop: the same blades but at rule edges.
 	if grass.gpu_fill and GrassField3D.is_gpu_fill_available():
 		_fill_compare(grass, "tall grass")
@@ -1444,6 +1509,8 @@ func _process(dt: float) -> void:
 	n += 1
 	if n == 2:
 		dm.bake()
+		if rocks > 0:
+			_place_rocks()
 		if cover:
 			cover.populate()
 			var counts := []

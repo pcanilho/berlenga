@@ -165,6 +165,9 @@
 		<member name="litter_wind" type="Vector2" setter="set_litter_wind" getter="get_litter_wind" default="Vector2(0, 0)">
 			Downwind lean of the leaf drift ([method get_litter_at]): its direction is the way the leaf-fall wind blows toward (x, z), its length (up to [code]0.8[/code]) how much farther the drift reaches downwind and the less upwind. Zero: taken from the [member weather_map]'s wind at placement, half a lean at 10 m/s.
 		</member>
+		<member name="obstacles" type="PackedVector4Array" setter="set_obstacles" getter="get_obstacles" default="PackedVector4Array()">
+			Rocks on the ground that no plant grows through: each a disc (x, ground y, z, radius), the radius where the rock meets the soil, for example from [method TerrainGenerator3D.get_boulders]. A ground plant's stem keeps 3 cm off a rock, a tree's trunk foot and a log's length keep clear of it; leaves may still lean over it. Give the same list to the [GrassField3D] layers. Takes effect at the next [method populate].
+		</member>
 		<member name="populate_on_ready" type="bool" setter="set_populate_on_ready" getter="is_populate_on_ready" default="true">
 			If [code]true[/code], populate when ready (once the map is baked) and again whenever the map is baked again, after terrain edits.
 		</member>

@@ -32,6 +32,7 @@
 #pragma once
 
 #include "plant_species.h"
+#include "vegetation_obstacles.h"
 
 #include "core/io/image.h"
 #include "core/templates/hash_map.h"
@@ -58,6 +59,8 @@ class GrassField3D : public Node3D {
 
 	NodePath data_map;
 	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
+	PackedVector4Array obstacles; // Rocks, (x, ground y, z, radius at the soil): no blade grows inside one.
+	VegetationObstacles obstacle_grid;
 	NodePath undergrowth_field; // A VegetationField3D whose bracken and bramble stands shade the sward out (PlantSpecies.sward_shade).
 	Ref<PlantSpecies> rules;
 	float density = 120.0f; // Blades per square metre, near the camera.
@@ -99,6 +102,7 @@ class GrassField3D : public Node3D {
 	bool ground_baked = false;
 	class VegetationField3D *_get_canopy(const PlantSpecies *p_rules) const;
 	class VegetationField3D *_get_undergrowth() const;
+	bool _tile_has_obstacles(float p_x0, float p_z0) const;
 	Ref<ImageTexture> ground_texture;
 	Ref<ImageTexture> ground_litter_texture;
 
@@ -187,6 +191,9 @@ public:
 	NodePath get_canopy_field() const { return canopy_field; }
 	void set_undergrowth_field(const NodePath &p_path);
 	NodePath get_undergrowth_field() const { return undergrowth_field; }
+	void set_obstacles(const PackedVector4Array &p_obstacles);
+	static constexpr float OBSTACLE_MARGIN = 0.02f; // Blades root this far off a rock's foot.
+	PackedVector4Array get_obstacles() const { return obstacles; }
 	void set_rules(const Ref<PlantSpecies> &p_rules);
 	Ref<PlantSpecies> get_rules() const { return rules; }
 	void set_density(float p_density);

@@ -703,6 +703,28 @@ func _deadwood_checks() -> void:
 			elif d < 0.6:
 				near_stem += 1
 	_check("deadwood: ground plants keep out of the canopy field's trunks, and grow up to them", stems.size() > 3 and in_stem == 0 and near_stem > 0, [stems.size(), in_stem, near_stem])
+	# Rocks (VegetationField3D.obstacles): boulders where cover grew; none of it inside them after,
+	# and it grows up to their foot.
+	var covers: Array = ground.get_placements(0)
+	var rocks := PackedVector4Array()
+	for k in mini(6, covers.size()):
+		var q: Vector3 = covers[k * covers.size() / 6]
+		rocks.append(Vector4(q.x, q.y, q.z, 0.4 + 0.3 * k))
+	ground.obstacles = rocks
+	ground.populate()
+	var in_rock := 0
+	var by_rock := 0
+	for si in 3:
+		for p in ground.get_placements(si):
+			for rk in rocks:
+				var d := Vector2(p.x - rk.x, p.z - rk.z).length() - rk.w
+				if d < 0.029: # VegetationField3D's margin is 3 cm.
+					in_rock += 1
+				elif d < 0.5:
+					by_rock += 1
+	_check("rocks: no ground plant inside a boulder, and they grow up to it", rocks.size() == 6 and in_rock == 0 and by_rock > 5, [rocks.size(), in_rock, by_rock])
+	ground.obstacles = PackedVector4Array()
+	ground.populate()
 	var beside_ok := 0
 	var beside_bad := 0
 	for p in ground.get_placements(2):

@@ -254,6 +254,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		}
 		r_setup.mask_rect = density_mask_rect;
 	}
+	r_setup.obstacles = obstacle_grid;
 	// Another field's crowns (canopy_field): a camera-local herb layer under a world forest.
 	r_setup.other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
 	if (r_setup.other == this) {
@@ -741,6 +742,14 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					const float keep = sp->get_density() * suit;
 					if (rank >= keep) {
 						continue;
+					}
+					// Rocks: no stem inside one. A tree's trunk foot clears it, a log its whole
+					// length, a ground plant its stem; leaves may lean over the rock.
+					if (!p_setup.obstacles.is_empty()) {
+						const float om = is_log ? ps.deadwood_reach : (canopy_r > 0.0f ? ps.stem_foot * MAX(scale_range.x, scale_range.y) : 0.0f) + OBSTACLE_MARGIN;
+						if (p_setup.obstacles.blocks(xz, om)) {
+							continue;
+						}
 					}
 					// Stems: ground plants keep out of the trunks' feet (flare and root ridges), this
 					// field's and the canopy field's; other woody species keep their footprints.
@@ -1732,6 +1741,11 @@ float VegetationField3D::_shade_at(const Vector2 &p_xz, float *r_conifer) const 
 // from where the species grow: each one with a sward_shade weighs it by its density there (its
 // rules, patches and the canopy's shade, as placement sees them), so a grass tile reads the same
 // value whenever it is built. Main thread (it looks up the data map and canopy field nodes).
+void VegetationField3D::set_obstacles(const PackedVector4Array &p_obstacles) {
+	obstacles = p_obstacles;
+	obstacle_grid.build(obstacles);
+}
+
 float VegetationField3D::get_sward_shade_at(const Vector3 &p_global_position) const {
 	return sward_at(p_global_position, nullptr);
 }
@@ -2510,6 +2524,8 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_density_mask"), &VegetationField3D::get_density_mask);
 	ClassDB::bind_method(D_METHOD("set_density_mask_rect", "rect"), &VegetationField3D::set_density_mask_rect);
 	ClassDB::bind_method(D_METHOD("get_density_mask_rect"), &VegetationField3D::get_density_mask_rect);
+	ClassDB::bind_method(D_METHOD("set_obstacles", "obstacles"), &VegetationField3D::set_obstacles);
+	ClassDB::bind_method(D_METHOD("get_obstacles"), &VegetationField3D::get_obstacles);
 	ClassDB::bind_method(D_METHOD("set_canopy_field", "path"), &VegetationField3D::set_canopy_field);
 	ClassDB::bind_method(D_METHOD("get_canopy_field"), &VegetationField3D::get_canopy_field);
 	ClassDB::bind_method(D_METHOD("set_litter_wind", "wind"), &VegetationField3D::set_litter_wind);
@@ -2570,6 +2586,7 @@ void VegetationField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "forest_floor_enabled"), "set_forest_floor_enabled", "is_forest_floor_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "density_mask", PROPERTY_HINT_RESOURCE_TYPE, "Texture2D"), "set_density_mask", "get_density_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::RECT2, "density_mask_rect", PROPERTY_HINT_NONE, "suffix:m"), "set_density_mask_rect", "get_density_mask_rect");
+	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR4_ARRAY, "obstacles"), "set_obstacles", "get_obstacles");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tile_size", PROPERTY_HINT_RANGE, "1,256,1,or_greater,suffix:m"), "set_tile_size", "get_tile_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "populate_on_ready"), "set_populate_on_ready", "is_populate_on_ready");
