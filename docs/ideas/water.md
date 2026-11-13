@@ -2047,6 +2047,21 @@ running further out than that read as no face at all.
 - The column's face search reaches the whole run of the fall plus 40 m.
 - Valley fall r1_19m: now a 338 m contact fall from the brink, unbroken to the foot.
 
+### Brink, ledges and veil (13 Nov)
+
+- White water stays white: a sheet fed by a run steeper than a river cascade (0.08 over the last 8 m before the
+  lip) starts at the equilibrium air for that run and has no clear stretch. Bubbles rise out over metres, not in
+  the second the water takes to reach the face; the clear film had drawn a dark gap under the white rapid.
+- PhysXRiver3D draws its surface down to brink depth (0.715 y_c, Rouse 1936) before a lip another node draws, over
+  4 y_c and at least one section, as at its own falls; it stood at full depth up to the hidden stretch.
+- `PhysXWaterfalls3D.surface` (a Landscape3D): with `cliff_relief` the drawn rock stands off the heightfield, so
+  each sheet point moves by `get_cliff_point(base) - base` and runs over the ledges; the heightfield clamp is skipped
+  where it moved.
+- A tall drop handed from a plunge to the rock throws the plunge's foot veil (impact speed, the fanned width, the
+  height factor); the face's line source had spread its mist over a 380 m box to almost nothing.
+- Hanging valley (0f47d01d): its 389 m fall becomes a contact fall from the brink (face 116 m out over the drop);
+  at 0.03 m3/s off a 0.39 km2 catchment it is a thread with no mist, which is right for that flow.
+
 ## Sources
 
 - Wood, Ackers and Loveless, General method for critical point on spillways, J. Hydraulic Eng. 109(2), 1983;
