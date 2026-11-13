@@ -244,6 +244,7 @@ Ref<HairCardBake> HairCardBake::bake(const PackedVector3Array &p_points, const P
 	r->card_count = cards;
 	r->samples = samples;
 	r->points.resize(cards * samples);
+	r->strand_counts.resize(cards);
 	for (int a = 0; a < 2; a++) {
 		r->axis[a].resize(cards * samples);
 		r->half_width[a].resize(cards * samples);
@@ -400,6 +401,7 @@ Ref<HairCardBake> HairCardBake::bake(const PackedVector3Array &p_points, const P
 				}
 			}
 		}
+		r->strand_counts.set(card, list.size());
 		card++;
 	}
 
