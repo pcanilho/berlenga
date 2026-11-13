@@ -12,6 +12,7 @@ extends Node3D
 #   --still          with --push: the body stands there but the trample field is off (the before shot)
 #   --top            with --close: straight down on the middle plant (leaf outlines)
 #   --wide           with --close: from 2.5 m, a little above (spreading or lodged plants)
+#   --patch          with --close: a stand of the preset, 14 x 10 m on beech litter, from 8 m with the sun from the side
 #   --head           with --close: the top of the first plant from 15 cm (flower and seed heads)
 #   --wear=W         leaf wear 0..1 (default the generator's 0.5)
 #   --wind=x,z       fallback wind for the plants (default none)
@@ -29,6 +30,7 @@ var test := false
 var raster := false
 var spp := 16
 var close := -1
+var patch := false
 var stand := -1
 var out := ""
 var macro := false
@@ -61,6 +63,7 @@ func _ready() -> void:
 		elif a == "--top": top = true
 		elif a == "--head": head = true
 		elif a == "--wide": wide = true
+		elif a == "--patch": patch = true
 		elif a.begins_with("--seq="): seq = int(a.substr(6))
 		elif a.begins_with("--wear="): wear = float(a.substr(7))
 		elif a.begins_with("--stand="): stand = int(a.substr(8))
@@ -107,15 +110,55 @@ func _ready() -> void:
 				continue
 			mi.position = Vector3((p % 9) * STEP, 0, (s + (p / 9) * 3.4) * STEP) if close < 0 else Vector3((s - 1) * 0.36, 0, 0)
 			add_child(mi)
+	if close >= 0 and patch:
+		# A stand: eight variants on a jittered 0.45 m grid, thinning at the edges, over leaf litter.
+		for ch in get_children():
+			if ch is MeshInstance3D:
+				ch.free()
+		var variants: Array[Mesh] = []
+		gen.preset = close
+		gen.apply_preset_colors()
+		for s in 8:
+			gen.seed = 10 + s
+			variants.push_back(gen.generate())
+		var litter: Array[Mesh] = []
+		var lg := PlantGenerator.new()
+		lg.textures = not notex
+		lg.preset = PlantGenerator.PRESET_LEAF_LITTER
+		lg.apply_preset_colors()
+		lg.litter_leaves = PlantGenerator.stand_litter_leaves(PlantGenerator.FLOOR_BEECH)
+		for s in 3:
+			lg.seed = s
+			litter.push_back(lg.generate())
+		var rng := RandomNumberGenerator.new()
+		rng.seed = 7
+		for gz in range(-34, 9):
+			for gx in range(-18, 19):
+				var p := Vector3(gx * 0.45 + rng.randf_range(-0.18, 0.18), 0, gz * 0.45 + rng.randf_range(-0.18, 0.18))
+				for k in 2:
+					var lm := MeshInstance3D.new()
+					lm.mesh = litter[rng.randi() % litter.size()]
+					lm.position = Vector3(gx * 0.45 + rng.randf_range(-0.22, 0.22), 0, gz * 0.45 + rng.randf_range(-0.22, 0.22))
+					lm.rotation.y = rng.randf() * TAU
+					add_child(lm)
+				var edge := maxf(absf(p.x) / 7.5, absf(p.z + 6.0) / 9.0)
+				if edge > 1.0 or rng.randf() < smoothstep(0.7, 1.0, edge):
+					continue
+				var mi := MeshInstance3D.new()
+				mi.mesh = variants[rng.randi() % variants.size()]
+				mi.position = p
+				mi.rotation.y = rng.randf() * TAU
+				mi.scale = Vector3.ONE * rng.randf_range(0.85, 1.15)
+				add_child(mi)
 	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(14, 12)
+	pm.size = Vector2(60, 60) if patch else Vector2(14, 12)
 	var gm := StandardMaterial3D.new()
-	gm.albedo_color = Color(0.3, 0.25, 0.18)
+	gm.albedo_color = Color(0.22, 0.16, 0.1) if patch else Color(0.3, 0.25, 0.18) # Patch: the beech litter's brown.
 	gm.roughness = 0.95
 	pm.material = gm
 	ground.mesh = pm
-	ground.position = Vector3(2.2, 0, 1.9)
+	ground.position = Vector3(0, 0, -15) if patch else Vector3(2.2, 0, 1.9)
 	add_child(ground)
 	var env := Environment.new()
 	var sky := Sky.new()
@@ -132,12 +175,12 @@ func _ready() -> void:
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-40, 150, 0)
+	sun.rotation_degrees = Vector3(-30, 80, 0) if patch else Vector3(-40, 150, 0) # Patch: from the right of the view.
 	sun.shadow_enabled = true
 	if close >= 0:
 		# Close views: the shadow map over the few metres in view, so plant shadows are sharp and not
 		# soft blobs from the default 100 m cascades.
-		sun.directional_shadow_max_distance = 12.0
+		sun.directional_shadow_max_distance = 20.0 if patch else 12.0
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	sun.light_energy = 2.0
 	add_child(sun)
@@ -176,6 +219,9 @@ func _ready() -> void:
 			var span: float = max(bb.size.y, max(bb.size.x, bb.size.z))
 			cam.position = c + Vector3(0, span * 0.35, span * 1.9)
 		cam.look_at(c)
+	elif close >= 0 and patch:
+		cam.position = Vector3(0, 3.3, 7.5)
+		cam.look_at(Vector3(0, 0.2, -0.5))
 	elif close >= 0 and wide:
 		cam.position = Vector3(0, 1.3, 2.4)
 		cam.look_at(Vector3(0, 0.2, 0))

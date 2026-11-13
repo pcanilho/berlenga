@@ -119,7 +119,9 @@ WeatherMap3D (a warm continental climate) bracken is still green in early Novemb
 by mid December. A lodged frond bows over: its stipe starts lower and arches, the blade hangs from it, and
 wherever stipe or blade would pass into the soil it lies along the ground from there on (the
 builder walks the frames and levels them), so dead fronds lie in a mat or arch over it rather than
-standing on straight stalks.
+standing on straight stalks. Dead fronds stand russet for some weeks before they lodge: the lodging follows the
+senescence summed after the fronds died (20 to 160), not their colour, so a stand in early
+December is upright and russet and lies flat by the new year.
 
 **Step 4, shots across the year.** The grass bench takes `--day=D` (a WeatherMap3D on that day
 drives every grass field's `season_source` and the plants' `season`) and `--drought` (a dry

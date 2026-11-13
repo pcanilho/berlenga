@@ -548,8 +548,10 @@ PlantGenerator::FrondSeason PlantGenerator::_frond_season(float p_emerge, float 
 	if (bloom_day > 240 && temperature < -1.0f) {
 		fs.dead = 1.0f;
 	}
-	// Dead fronds lodge as the autumn's storms and the snow come.
-	fs.lodge = CLAMP(0.6f * smoothstep_f(0.6f, 1.0f, fs.dead) + snow / 0.15f, 0.0f, 1.0f);
+	// Dead fronds stand russet for some weeks, then lodge as the winter's storms and the snow
+	// come (Watt 1976): by the senescence summed after they died, not by their colour.
+	const float since = senescence - (p_onset + p_span);
+	fs.lodge = CLAMP(0.6f * smoothstep_f(20.0f, 160.0f, since) * fs.dead + snow / 0.15f, 0.0f, 1.0f);
 	if (bloom_day > 0 && bloom_day < 200 && fs.unfurl < 1.0f) {
 		// Last year's fronds, flattened by winter, until the new ones close over them.
 		fs.old_share = 1.0f - fs.unfurl;
