@@ -533,6 +533,18 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	}
 	const int rows = CLAMP((int)Math::ceil(longest / MAX(row_spacing, 0.25f)) + 1, 2, 1024);
 	const Vector3 up(0, 1, 0);
+	// The water arriving at the lip: off a run steep enough to be a river cascade (PhysXRiver3D's 0.08) it is
+	// already white, and a chute keeps those bubbles (they rise out over metres, not in the second it takes to
+	// reach the face), so the sheet starts aerated instead of clearing to a dark film between the white rapids
+	// and the white face.
+	float arriving_air = 0.0f;
+	if (ask) {
+		const Vector3 lc = lip_at(centre);
+		const float rise = float(p_source->call("get_height", lc - dir * 8.0f)) - float(p_source->call("get_height", lc));
+		if (Math::is_finite(rise) && rise / 8.0f > 0.08f) {
+			arriving_air = equilibrium_air(rise / Vector2(8.0f, rise).length());
+		}
+	}
 	for (int c = 0; c < vcols; c++) {
 		Column col;
 		// The speed and air of the thin margins follow the water a little way in (a margin column has no flow).
@@ -543,8 +555,8 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 		const float len = arc[arc.size() - 1];
 		const Vector3 lip_c = lip_at(offsets[c]);
 		const float v0 = Math::pow(GRAVITY * MAX(col.q, 1e-5f), 1.0f / 3.0f);
-		const float li = inception_length(col.q, sin_face, rock_roughness);
-		float air = 0.0f;
+		const float li = arriving_air > 0.0f ? 0.0f : inception_length(col.q, sin_face, rock_roughness);
+		float air = arriving_air;
 		float travel = 0.0f;
 		float prev_v = v0;
 		Vector2 prev_p;
