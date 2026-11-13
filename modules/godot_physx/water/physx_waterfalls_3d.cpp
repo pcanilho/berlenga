@@ -559,6 +559,7 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 		float air = arriving_air;
 		float travel = 0.0f;
 		float prev_v = v0;
+		float relief_env = 0.0f; // m out of the heightfield the sheet stands where the drawn rock is relieved
 		Vector2 prev_p;
 		for (int r = 0; r < rows; r++) {
 			const float fr = float(r) / (rows - 1);
@@ -604,9 +605,16 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			Vector3 pt = base + nrm * (depth + 0.05f + 0.15f * sin_a);
 			// Where the drawn rock stands off the heightfield (Landscape3D's cliff_relief ledges), the sheet goes
 			// with it, over the ledges' tops and down their fronts.
+			// Where the drawn rock stands off the heightfield (Landscape3D's cliff_relief ledges), the sheet goes out
+			// with it, but over the ledges' outer envelope: water leaving a ledge's lip runs on out past the recess
+			// under it and comes back to the rock slowly (half a metre in per metre of travel), instead of tracing
+			// every step and undercut. Only the part out of the face: the relief's own sideways wander across
+			// neighbouring columns had folded the sheet into hatching.
 			Vector3 moved;
 			if (surface_obj != nullptr) {
-				moved = Vector3(surface_obj->call("get_cliff_point", base)) - base;
+				const float out = (Vector3(surface_obj->call("get_cliff_point", base)) - base).dot(dir);
+				relief_env = r > 0 ? MAX(out, relief_env - 0.5f * ds) : out;
+				moved = dir * relief_env;
 			}
 			pt += moved;
 			if (ask && moved.length_squared() < 1e-6f) {
