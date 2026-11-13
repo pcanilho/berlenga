@@ -263,6 +263,23 @@ takes one deadwood rule (`PlantSpecies.deadwood_rule`):
 
 Decay is not in the interface; log thickness stands for it (thin branches stay bare).
 
+## Grass under bracken and bramble
+
+Bracken forms its own stands: its fronds cast a deep shade from June and its dead fronds bury the
+ground in a litter that lasts years, so the grass under a stand is sparse and the stand reads as
+a block of fronds at a wood edge (Marrs and Watt 2006); bramble thickets do the same, less
+completely. The grass fields only thinned under tree crowns, so a bracken patch at the edge stood
+inside full-height meadow grass and was hidden by it from a few metres.
+
+`PlantSpecies.sward_shade` is how much of the sward a species shades out under its stands
+(make_floor: bracken 0.85, bramble 0.7). `VegetationField3D.get_sward_shade_at()` gives it at a
+point: not from the placed plants (they stream round the camera and change as it moves, while a
+grass tile is built once), but from where each such species grows, its density times its
+suitability (rules and patches) times its shade rule under the canopy, combined as
+transmissions. A GrassField3D with `undergrowth_field` set to that field multiplies its blade
+suitability by one minus it, on the tile's 1 m light grid (CPU and GPU fill) and in the far cover
+map. In the grass bench a stand at shade 0.8 or more keeps 18 blades/m² against 109 in the open.
+
 ## References
 
 - Stace, *New Flora of the British Isles*, 4th ed., 2019.
@@ -291,3 +308,4 @@ Decay is not in the interface; log thickness stands for it (thin branches stay b
 - Harmon and Franklin, "Tree seedlings on logs in Picea-Tsuga forests of Oregon and Washington", Ecology 70, 1989.
 - Kuuluvainen and Kalmari, "Regeneration microsites of Picea abies seedlings in a windthrow area of a boreal old-growth forest", Annales Botanici Fennici 40, 2003.
 - Orndorff and Lang, "Leaf litter redistribution in a West Virginia hardwood forest", Journal of Ecology 69, 1981.
+- Marrs and Watt, "Pteridium aquilinum (L.) Kuhn", Biological Flora of the British Isles, Journal of Ecology 94, 2006.

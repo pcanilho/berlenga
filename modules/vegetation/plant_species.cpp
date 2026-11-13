@@ -76,6 +76,11 @@ void PlantSpecies::set_footprint(float p_footprint) {
 	emit_changed();
 }
 
+void PlantSpecies::set_sward_shade(float p_shade) {
+	sward_shade = CLAMP(p_shade, 0.0f, 1.0f);
+	emit_changed();
+}
+
 void PlantSpecies::set_density(float p_density) {
 	density = CLAMP(p_density, 0.0f, 1.0f);
 	emit_changed();
@@ -220,6 +225,8 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_spacing", "spacing"), &PlantSpecies::set_spacing);
 	ClassDB::bind_method(D_METHOD("get_spacing"), &PlantSpecies::get_spacing);
 	ClassDB::bind_method(D_METHOD("set_footprint", "footprint"), &PlantSpecies::set_footprint);
+	ClassDB::bind_method(D_METHOD("set_sward_shade", "shade"), &PlantSpecies::set_sward_shade);
+	ClassDB::bind_method(D_METHOD("get_sward_shade"), &PlantSpecies::get_sward_shade);
 	ClassDB::bind_method(D_METHOD("get_footprint"), &PlantSpecies::get_footprint);
 	ClassDB::bind_method(D_METHOD("set_density", "density"), &PlantSpecies::set_density);
 	ClassDB::bind_method(D_METHOD("get_density"), &PlantSpecies::get_density);
@@ -272,6 +279,7 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "meshes", PROPERTY_HINT_ARRAY_TYPE, MAKE_RESOURCE_TYPE_HINT("Mesh")), "set_meshes", "get_meshes");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spacing", PROPERTY_HINT_RANGE, "0.05,50,0.01,or_greater,suffix:m"), "set_spacing", "get_spacing");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "footprint", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:m"), "set_footprint", "get_footprint");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sward_shade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_sward_shade", "get_sward_shade");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_density", "get_density");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "scale_range"), "set_scale_range", "get_scale_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "align_to_ground", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_align_to_ground", "get_align_to_ground");

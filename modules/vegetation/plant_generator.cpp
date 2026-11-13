@@ -5343,6 +5343,14 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		sp->set_meshes(meshes);
 		sp->set_spacing(f.spacing);
 		sp->set_footprint(f.footprint);
+		// Bracken and bramble shade the sward out under their stands (a GrassField3D reads it
+		// through undergrowth_field): bracken's fronds and litter leave little grass (Marrs and
+		// Watt 2006), bramble a little more.
+		if (f.preset == P::PRESET_BRACKEN) {
+			sp->set_sward_shade(0.85f);
+		} else if (f.preset == P::PRESET_BRAMBLE) {
+			sp->set_sward_shade(0.7f);
+		}
 		sp->set_density(f.density);
 		sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
 		if (f.patch_scale > 0.0f) {

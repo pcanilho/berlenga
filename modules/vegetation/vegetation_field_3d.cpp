@@ -1725,6 +1725,49 @@ float VegetationField3D::_shade_at(const Vector2 &p_xz, float *r_conifer) const 
 	return crown_shade(crown_grid, crowns, max_crown_radius * 1.4f, CROWN_CELL, p_xz, r_conifer);
 }
 
+// How much of the grass the field's tall undergrowth shades out at a point (docs/ideas/
+// forest-floor.md, "Grass under bracken"): bracken and bramble stands cast a deep shade and bury
+// the ground in their litter, so the sward under them thins out (Marrs and Watt 2006 for
+// bracken). Not from the placed plants, which stream round the camera and change as it moves, but
+// from where the species grow: each one with a sward_shade weighs it by its density there (its
+// rules, patches and the canopy's shade, as placement sees them), so a grass tile reads the same
+// value whenever it is built. Main thread (it looks up the data map and canopy field nodes).
+float VegetationField3D::get_sward_shade_at(const Vector3 &p_global_position) const {
+	if (biome.is_null() || !is_inside_tree()) {
+		return 0.0f;
+	}
+	const TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
+	if (!map || !map->is_baked()) {
+		return 0.0f;
+	}
+	const TypedArray<PlantSpecies> species = biome->get_species();
+	float transmit = 1.0f;
+	float shade = -1.0f;
+	for (int i = 0; i < species.size(); i++) {
+		const Ref<PlantSpecies> sp = species[i];
+		if (sp.is_null() || sp->get_sward_shade() <= 0.0f || sp->get_density() <= 0.0f) {
+			continue;
+		}
+		float v = sp->get_density() * sp->get_suitability(map, p_global_position);
+		if (v > 0.0f && sp->uses_shade()) {
+			if (shade < 0.0f) {
+				const Vector2 xz(p_global_position.x, p_global_position.z);
+				float own;
+				{
+					RWLockRead guard(crown_lock);
+					own = _shade_at(xz);
+				}
+				const VegetationField3D *other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+				const float os = (other && other != this) ? other->get_shade_at(p_global_position) : 0.0f;
+				shade = 1.0f - (1.0f - own) * (1.0f - os);
+			}
+			v *= sp->rule_weight(PlantSpecies::RULE_SHADE, shade);
+		}
+		transmit *= 1.0f - sp->get_sward_shade() * CLAMP(v, 0.0f, 1.0f);
+	}
+	return 1.0f - transmit;
+}
+
 float VegetationField3D::get_stand_shade_at(const Vector3 &p_global_position) const {
 	RWLockRead guard(crown_lock);
 	if (stand_shade.is_empty()) {
@@ -2452,6 +2495,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_placements", "species"), &VegetationField3D::get_placements);
 	ClassDB::bind_method(D_METHOD("get_deadwood_count"), &VegetationField3D::get_deadwood_count);
 	ClassDB::bind_method(D_METHOD("get_deadwood_at", "global_position", "reach"), &VegetationField3D::get_deadwood_at, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("get_sward_shade_at", "global_position"), &VegetationField3D::get_sward_shade_at);
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
 	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);

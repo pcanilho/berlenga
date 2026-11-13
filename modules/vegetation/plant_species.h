@@ -77,6 +77,7 @@ private:
 	TypedArray<Mesh> meshes;
 	float spacing = 2.0f;
 	float footprint = 0.5f;
+	float sward_shade = 0.0f; // How much of the grass a stand of it shades out under it (bracken, bramble).
 	float density = 1.0f;
 	Vector2 scale_range = Vector2(0.8f, 1.2f);
 	float align_to_ground = 0.0f;
@@ -159,6 +160,8 @@ public:
 	float get_spacing() const { return spacing; }
 	void set_footprint(float p_footprint);
 	float get_footprint() const { return footprint; }
+	void set_sward_shade(float p_shade);
+	float get_sward_shade() const { return sward_shade; }
 	void set_density(float p_density);
 	float get_density() const { return density; }
 	void set_scale_range(const Vector2 &p_range);

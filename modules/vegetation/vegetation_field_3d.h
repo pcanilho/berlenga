@@ -389,6 +389,7 @@ public:
 	// Canopy shade at a point (0 open sky, 1 dense crown), from the canopy species placed so far.
 	float get_shade_at(const Vector3 &p_global_position) const;
 	float get_stand_shade_at(const Vector3 &p_global_position) const;
+	float get_sward_shade_at(const Vector3 &p_global_position) const;
 	float get_conifer_at(const Vector3 &p_global_position) const;
 	// Leaf fall from the placed crowns, 0 to 1, with a drift past their edges (PlantSpecies.RULE_LITTER).
 	static constexpr float LITTER_SPREAD = 6.0f; // Metres: the drift's e-folding distance past a crown's edge.

@@ -160,6 +160,15 @@ GrassFillGPU grass_fill_gpu;
 constexpr int FILL_HEADER = 40;
 constexpr float FILL_SUIT_STEP = 0.5f;
 
+// A value on a 1 m grid of p_n x p_n over a tile, at tile-local metres.
+float grid_bilinear(const LocalVector<float> &p_grid, int p_n, float p_x, float p_z) {
+	const float lx = CLAMP(p_x, 0.0f, float(p_n - 1));
+	const float lz = CLAMP(p_z, 0.0f, float(p_n - 1));
+	const int gx = MIN(int(lx), p_n - 2);
+	const int gz = MIN(int(lz), p_n - 2);
+	return Math::lerp(Math::lerp(p_grid[gz * p_n + gx], p_grid[gz * p_n + gx + 1], lx - gx), Math::lerp(p_grid[(gz + 1) * p_n + gx], p_grid[(gz + 1) * p_n + gx + 1], lx - gx), lz - gz);
+}
+
 void grass_fill_rt(RID p_multimesh, const PackedFloat32Array &p_inputs, int p_count) {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	RenderingDevice *rd = rs ? rs->get_rendering_device() : nullptr;
@@ -597,10 +606,22 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 			light_grid[gz * lg + gx] = (1.0f - sh) * (p_map ? VegetationLight::exposure(p_map, sun_mean, q.x, q.z) : 1.0f);
 		}
 	}
+	// The undergrowth's shade on the sward (bracken, bramble), on the same grid: the blades thin
+	// out under their stands.
+	const VegetationField3D *under = _get_undergrowth();
+	LocalVector<float> sward_grid;
+	if (under) {
+		sward_grid.resize(lg * lg);
+		for (int gz = 0; gz < lg; gz++) {
+			for (int gx = 0; gx < lg; gx++) {
+				sward_grid[gz * lg + gx] = under->get_sward_shade_at(Vector3(x0 + gx, 0.0f, z0 + gz));
+			}
+		}
+	}
 	// Wider blades where fewer remain, so the field keeps its coverage at a distance.
 	const float width = blade_width / Math::sqrt(keep);
 	if (gpu_fill && is_gpu_fill_available()) {
-		_build_tile_gpu(p_tile, p_lod, p_map, r.ptr(), canopy, light_grid, lg, width);
+		_build_tile_gpu(p_tile, p_lod, p_map, r.ptr(), canopy, light_grid, sward_grid, lg, width);
 		return;
 	}
 	LocalVector<Transform3D> xforms;
@@ -624,6 +645,9 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 				float suit = r->get_suitability(p_map, p);
 				if (canopy && suit > 0.0f) {
 					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
+				}
+				if (!sward_grid.is_empty() && suit > 0.0f) {
+					suit *= 1.0f - grid_bilinear(sward_grid, lg, x - x0, z - z0);
 				}
 				if (rank >= keep * suit) {
 					continue;
@@ -685,7 +709,7 @@ void GrassField3D::_build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap
 // light grid and the patch of map heights under the tile; the compute shader makes each blade from
 // the same hashes as the CPU loop and writes the records in place. Rejected candidates are written
 // as zero (degenerate) records.
-void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const VegetationField3D *p_canopy, const LocalVector<float> &p_light, int p_lg, float p_width) {
+void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const VegetationField3D *p_canopy, const LocalVector<float> &p_light, const LocalVector<float> &p_sward, int p_lg, float p_width) {
 	const float keep = 1.0f / float(1 << p_lod);
 	const float cell = 1.0f / Math::sqrt(MAX(density, 0.01f));
 	const float x0 = p_tile.x * tile_size;
@@ -740,6 +764,9 @@ void GrassField3D::_build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDat
 				float v = p_rules->get_suitability(p_map, q);
 				if (p_canopy && v > 0.0f) {
 					v *= p_rules->rule_weight(PlantSpecies::RULE_SHADE, p_canopy->get_stand_shade_at(q));
+				}
+				if (!p_sward.is_empty() && v > 0.0f) {
+					v *= 1.0f - grid_bilinear(p_sward, p_lg, q.x - x0, q.z - z0);
 				}
 				suit[j * sg_n + i] = v;
 			}
@@ -1322,6 +1349,7 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 			r.instantiate();
 		}
 		const VegetationField3D *canopy = _get_canopy(r.ptr());
+		const VegetationField3D *under = _get_undergrowth();
 		Vector<uint8_t> data;
 		data.resize(res * res);
 		uint8_t *w = data.ptrw();
@@ -1331,6 +1359,9 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 				float suit = r->get_suitability(p_map, p);
 				if (canopy && suit > 0.0f) {
 					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
+				}
+				if (under && suit > 0.0f) {
+					suit *= 1.0f - under->get_sward_shade_at(p);
 				}
 				w[z * res + x] = uint8_t(CLAMP(suit, 0.0f, 1.0f) * 255.0f + 0.5f);
 			}
@@ -1803,6 +1834,17 @@ void GrassField3D::set_canopy_field(const NodePath &p_path) {
 	GRASS_SET_REBUILD(canopy_field, p_path)
 }
 
+void GrassField3D::set_undergrowth_field(const NodePath &p_path) {
+	GRASS_SET_REBUILD(undergrowth_field, p_path)
+}
+
+VegetationField3D *GrassField3D::_get_undergrowth() const {
+	if (undergrowth_field.is_empty() || !is_inside_tree()) {
+		return nullptr;
+	}
+	return Object::cast_to<VegetationField3D>(get_node_or_null(undergrowth_field));
+}
+
 VegetationField3D *GrassField3D::_get_canopy(const PlantSpecies *p_rules) const {
 	if (!p_rules->uses_shade() || canopy_field.is_empty() || !is_inside_tree()) {
 		return nullptr;
@@ -1987,6 +2029,7 @@ void GrassField3D::_bind_methods() {
 	GRASS_BIND(set_sun_light, get_sun_light, "path")
 	ADD_SIGNAL(MethodInfo("far_color_changed"));
 	GRASS_BIND(set_canopy_field, get_canopy_field, "path")
+	GRASS_BIND(set_undergrowth_field, get_undergrowth_field, "path")
 	GRASS_BIND(set_density, get_density, "density")
 	GRASS_BIND(set_blade_height, get_blade_height, "height")
 	GRASS_BIND(set_blade_width, get_blade_width, "width")
@@ -2033,6 +2076,7 @@ void GrassField3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "data_map", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "TerrainDataMap3D"), "set_data_map", "get_data_map");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rules", PROPERTY_HINT_RESOURCE_TYPE, "PlantSpecies"), "set_rules", "get_rules");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "canopy_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_canopy_field", "get_canopy_field");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "undergrowth_field", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "VegetationField3D"), "set_undergrowth_field", "get_undergrowth_field");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "sun_light", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "DirectionalLight3D"), "set_sun_light", "get_sun_light");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "0.1,400,0.1,or_greater,suffix:/m²"), "set_density", "get_density");
 	ADD_GROUP("Blades", "");

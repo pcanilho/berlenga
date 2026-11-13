@@ -33,6 +33,7 @@ extends Node3D
 #   --swamp=close    the same, looking down on a water lily
 #   --turf=0         without the near turf layer
 #   --floor=0        without the litter on the ground under the crowns (cost comparison)
+#   --sward-shade=0  with --forest: the grass grows through the bracken and bramble stands (before shot)
 #   --far=0          without the plants' colour on the ground beyond their range (before/after)
 #   --far            a high view over the land, to see plants thin out and the ground take over
 #   --dolly          from that corner, walk in 0.3 m a frame (with --clip and --frames)
@@ -76,6 +77,7 @@ var forest_in := false
 var stand := "beech"
 var stand_set := false
 var no_floor := false
+var no_sward := false
 var no_far := false
 var far_view := false
 var prims := false
@@ -130,6 +132,7 @@ func _ready() -> void:
 			swamp_close = true
 		elif a == "--turf=0": no_turf = true
 		elif a == "--floor=0": no_floor = true
+		elif a == "--sward-shade=0": no_sward = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
 		elif a == "--prims": prims = true
@@ -290,6 +293,7 @@ func _ready() -> void:
 				r.set_rule_fade(PlantSpecies.RULE_SHADE, 0.4)
 				g.rules = r
 				g.canopy_field = g.get_path_to(cover)
+				g.undergrowth_field = g.get_path_to(cover) # Thinned under the bracken and bramble stands.
 	else:
 		grass.view_facing = 0.0
 		grass.ground_tint_enabled = false
@@ -1033,6 +1037,7 @@ func _floor_species() -> Array:
 	bracken.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.1, 0.8))
 	bracken.set_rule_fade(PlantSpecies.RULE_SHADE, 0.15)
 	bracken.visibility_range = 45.0
+	bracken.sward_shade = 0.0 if no_sward else 0.85 # The grass thins out under the stands (undergrowth_field).
 	var bramble := PlantSpecies.new()
 	bramble.meshes = _variants(PlantGenerator.PRESET_BRAMBLE, 3)
 	bramble.spacing = 1.4
@@ -1045,6 +1050,7 @@ func _floor_species() -> Array:
 	bramble.set_rule_range(PlantSpecies.RULE_SHADE, Vector2(0.05, 0.7))
 	bramble.set_rule_fade(PlantSpecies.RULE_SHADE, 0.15)
 	bramble.visibility_range = 45.0
+	bramble.sward_shade = 0.0 if no_sward else 0.7
 	var foxglove := PlantSpecies.new()
 	foxglove.meshes = _variants(PlantGenerator.PRESET_FOXGLOVE, 3)
 	foxglove.spacing = 0.8
@@ -1135,6 +1141,55 @@ func _season_checks() -> void:
 	wm.queue_free()
 	grass.dryness = base
 
+# Bracken stands shade the sward out (GrassField3D.undergrowth_field, PlantSpecies.sward_shade):
+# under the stands the blades thin by the shade, in the open they are as before.
+func _sward_shade_check(c: Vector2, open_density: float) -> void:
+	var brk := VegetationField3D.new()
+	brk.name = "BrackenStands"
+	brk.populate_on_ready = false
+	var sp := PlantSpecies.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.3, 0.6, 0.3)
+	sp.meshes = [bm]
+	sp.spacing = 0.7
+	sp.patch_scale = 6.0
+	sp.patch_cover = 0.5
+	sp.patch_seed = 11
+	sp.sward_shade = 0.85
+	var bb := Biome.new()
+	bb.species = [sp]
+	brk.biome = bb
+	add_child(brk)
+	brk.data_map = brk.get_path_to(dm)
+	grass.undergrowth_field = grass.get_path_to(brk)
+	for i in 3:
+		grass.update_at(cam.global_position)
+	var tall: PlantSpecies = grass.rules
+	var under_n := 0
+	for ch in grass.get_children(true):
+		if ch is MultiMeshInstance3D:
+			var mm: MultiMesh = ch.multimesh
+			for i in mm.instance_count:
+				var xf := mm.get_instance_transform(i)
+				if xf.basis.x.length_squared() == 0.0:
+					continue
+				var p := xf.origin
+				if Vector2(p.x, p.z).distance_to(c) < 8.0 and (tall == null or tall.get_patch_weight(p) > 0.99) and brk.get_sward_shade_at(p) > 0.8:
+					under_n += 1
+	seed(2)
+	var hits := 0
+	for i in 4000:
+		var a := randf() * TAU
+		var r := sqrt(randf()) * 8.0
+		var q := Vector3(c.x + cos(a) * r, 0, c.y + sin(a) * r)
+		if (tall == null or tall.get_patch_weight(q) > 0.99) and dm.get_water_depth_at(q) <= 0.0 and brk.get_sward_shade_at(q) > 0.8:
+			hits += 1
+	var area := PI * 64.0 * hits / 4000.0
+	var under_density: float = under_n / maxf(area, 0.01)
+	_check("grass thins under bracken stands (undergrowth_field)", hits > 100 and under_density < open_density * 0.2, "%.0f /m2 under, %.0f open, %.1f m2" % [under_density, open_density, area])
+	grass.undergrowth_field = NodePath()
+	brk.queue_free()
+
 func _checks() -> void:
 	_season_checks()
 	var count := grass.get_blade_count()
@@ -1206,6 +1261,7 @@ func _checks() -> void:
 			if tall.get_patch_weight(q) > 0.9: in_tall += 1
 		_check("clover between the tall patches", clover.size() > 1000 and in_tall < clover.size() * 0.02, "%d of %d" % [in_tall, clover.size()])
 		_check("flowers placed", cover.get_placements(0).size() > 500, cover.get_placements(0).size())
+	_sward_shade_check(c, near_density)
 	# Same camera, same field.
 	grass.rebuild()
 	for i in 20:

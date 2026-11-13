@@ -209,6 +209,9 @@
 		<member name="trample_size" type="float" setter="set_trample_size" getter="get_trample_size" default="32.0">
 			Edge, in metres, of the square trample field around the camera.
 		</member>
+		<member name="undergrowth_field" type="NodePath" setter="set_undergrowth_field" getter="get_undergrowth_field" default="NodePath(&quot;&quot;)">
+			Path to a [VegetationField3D] whose tall undergrowth (species with [member PlantSpecies.sward_shade]) shades the sward out: blades thin by [method VegetationField3D.get_sward_shade_at] under its bracken and bramble stands. Usually the herb field, which may differ from [member canopy_field].
+		</member>
 		<member name="view_facing" type="float" setter="set_view_facing" getter="get_view_facing" default="0.6">
 			How much a blade seen edge-on widens across the view (Ghost of Tsushima's view-space thickening), so the field looks full from every side. 0 turns it off.
 		</member>

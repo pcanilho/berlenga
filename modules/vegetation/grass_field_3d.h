@@ -58,6 +58,7 @@ class GrassField3D : public Node3D {
 
 	NodePath data_map;
 	NodePath canopy_field; // A VegetationField3D whose crowns shade the grass (rules.shade_range).
+	NodePath undergrowth_field; // A VegetationField3D whose bracken and bramble stands shade the sward out (PlantSpecies.sward_shade).
 	Ref<PlantSpecies> rules;
 	float density = 120.0f; // Blades per square metre, near the camera.
 	Vector2 blade_height = Vector2(0.25f, 0.6f);
@@ -97,6 +98,7 @@ class GrassField3D : public Node3D {
 	static GrassField3D *fade_owner; // The field whose band the ground shader reads.
 	bool ground_baked = false;
 	class VegetationField3D *_get_canopy(const PlantSpecies *p_rules) const;
+	class VegetationField3D *_get_undergrowth() const;
 	Ref<ImageTexture> ground_texture;
 
 	// Trample field (docs/ideas/grass.md, contact): bend per texel around the camera, pressed by
@@ -159,7 +161,7 @@ class GrassField3D : public Node3D {
 	void _build_material();
 	int _lod_for(float p_distance) const;
 	void _build_tile(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map);
-	void _build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const class VegetationField3D *p_canopy, const LocalVector<float> &p_light, int p_lg, float p_width);
+	void _build_tile_gpu(const Vector2i &p_tile, int p_lod, TerrainDataMap3D *p_map, const PlantSpecies *p_rules, const class VegetationField3D *p_canopy, const LocalVector<float> &p_light, const LocalVector<float> &p_sward, int p_lg, float p_width);
 	void _free_tile(Tile &p_tile);
 	void _update_fade(const Vector2 &p_center);
 	void _update_tiles(const Vector3 &p_center);
@@ -182,6 +184,8 @@ public:
 	NodePath get_data_map() const { return data_map; }
 	void set_canopy_field(const NodePath &p_path);
 	NodePath get_canopy_field() const { return canopy_field; }
+	void set_undergrowth_field(const NodePath &p_path);
+	NodePath get_undergrowth_field() const { return undergrowth_field; }
 	void set_rules(const Ref<PlantSpecies> &p_rules);
 	Ref<PlantSpecies> get_rules() const { return rules; }
 	void set_density(float p_density);
