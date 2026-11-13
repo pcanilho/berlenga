@@ -533,6 +533,18 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	}
 	const int rows = CLAMP((int)Math::ceil(longest / MAX(row_spacing, 0.25f)) + 1, 2, 1024);
 	const Vector3 up(0, 1, 0);
+	// The water arriving at the lip: off a run steep enough to be a river cascade (PhysXRiver3D's 0.08) it is
+	// already white, and a chute keeps those bubbles (they rise out over metres, not in the second it takes to
+	// reach the face), so the sheet starts aerated instead of clearing to a dark film between the white rapids
+	// and the white face.
+	float arriving_air = 0.0f;
+	if (ask) {
+		const Vector3 lc = lip_at(centre);
+		const float rise = float(p_source->call("get_height", lc - dir * 8.0f)) - float(p_source->call("get_height", lc));
+		if (Math::is_finite(rise) && rise / 8.0f > 0.08f) {
+			arriving_air = equilibrium_air(rise / Vector2(8.0f, rise).length());
+		}
+	}
 	for (int c = 0; c < vcols; c++) {
 		Column col;
 		// The speed and air of the thin margins follow the water a little way in (a margin column has no flow).
@@ -543,8 +555,8 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 		const float len = arc[arc.size() - 1];
 		const Vector3 lip_c = lip_at(offsets[c]);
 		const float v0 = Math::pow(GRAVITY * MAX(col.q, 1e-5f), 1.0f / 3.0f);
-		const float li = inception_length(col.q, sin_face, rock_roughness);
-		float air = 0.0f;
+		const float li = arriving_air > 0.0f ? 0.0f : inception_length(col.q, sin_face, rock_roughness);
+		float air = arriving_air;
 		float travel = 0.0f;
 		float prev_v = v0;
 		Vector2 prev_p;
@@ -590,7 +602,14 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 			const Vector3 nrm = (dir * n2.x + up * n2.y).normalized();
 			// Clear of the ground mesh, whose triangles cut the chords of a steep face.
 			Vector3 pt = base + nrm * (depth + 0.05f + 0.15f * sin_a);
-			if (ask) {
+			// Where the drawn rock stands off the heightfield (Landscape3D's cliff_relief ledges), the sheet goes
+			// with it, over the ledges' tops and down their fronts.
+			Vector3 moved;
+			if (surface_obj != nullptr) {
+				moved = Vector3(surface_obj->call("get_cliff_point", base)) - base;
+			}
+			pt += moved;
+			if (ask && moved.length_squared() < 1e-6f) {
 				// Over a convex edge (a ledge's brink) the line's chords cut the corner: keep the sheet on top of
 				// the rock right under it.
 				const float g = p_source->call("get_height", pt);
@@ -661,6 +680,12 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	if (mid.speed.size() > 0) {
 		face.impact_speed = mid.speed[mid.speed.size() - 1];
 	}
+	{
+		const Column &a = face.columns[0];
+		const Column &b = face.columns[face.columns.size() - 1];
+		face.foot_width = MAX(a.points[a.points.size() - 1].distance_to(b.points[b.points.size() - 1]) - 2.0f * wet_margin, width);
+	}
+	face.tall_veil = spread_rate > 0.0f;
 	_sky_spec(face, main_col, p_source);
 	faces.push_back(face);
 }
@@ -1476,6 +1501,31 @@ void PhysXWaterfalls3D::_build_effects() {
 		return;
 	}
 	const Transform3D inv = (is_inside_tree() ? get_global_transform() : get_transform()).affine_inverse();
+	// The veil of a tall drop: mist from the impact, blown out along the pool by the air the falling water drags
+	// down, and shed by the clumps all the way down (a share fed evenly up the column). The atomised share grows
+	// with the square of the landing speed, as the contact falls', and with the length of the fall the drops are
+	// stripped over.
+	auto make_veil = [&](const Basis &p_basis, const Vector3 &p_foot, float p_height, float p_discharge, float p_speed, float p_width) {
+		const float reach = CLAMP(6.0f + 0.3f * p_height, 8.0f, 60.0f);
+		const float side = p_width + 2.0f * reach;
+		const float tall = CLAMP(0.5f * p_height + 20.0f, 20.0f, 200.0f);
+		PhysXWaterMist3D *m = memnew(PhysXWaterMist3D);
+		m->set_name("FallVeil");
+		m->set_transform(Transform3D(p_basis, inv.xform(p_foot)));
+		m->set_size(Vector3(side, tall, side));
+		m->set_cell_size(MAX(0.5f, MAX(side, tall) / 64.0f));
+		m->set_source_position(Vector3(0.0f, 1.0f, 0.0f));
+		const float half = 0.5f * p_width + 1.0f;
+		m->set_source_extents(Vector3(half, 1.0f, half));
+		m->set_column_height(tall - 8.0f);
+		m->set_column_share(0.35f);
+		m->set_jet_direction(Vector3(0.0f, 0.0f, -1.0f));
+		m->set_jet_speed(MIN(0.3f * p_speed, 12.0f));
+		const float vv = MAX(p_speed, 1.0f) / 10.0f;
+		m->set_source_rate(mist_amount * 1e-5f * vv * vv * 1000.0f * p_discharge * 1000.0f * (1.0f + p_height / 30.0f)); // g/s
+		add_child(m, false, INTERNAL_MODE_BACK);
+		effects.push_back(m);
+	};
 	for (const Face &face : faces) {
 		if (face.plunge >= 0) {
 			continue; // a free jet's sheet: its column, spray and veil follow
@@ -1506,6 +1556,11 @@ void PhysXWaterfalls3D::_build_effects() {
 			GPUParticles3D *pf = make_spray_puffs(Transform3D(lb, inv.xform(face.foot)), v, face.width, power);
 			add_child(pf, false, INTERNAL_MODE_BACK);
 			effects.push_back(pf);
+		}
+		// A tall drop handed over from a free jet throws the veil its column would have.
+		if (mist && face.tall_veil && face.discharge >= mist_min_discharge) {
+			make_veil(lb, face.foot, face.height, face.discharge, face.impact_speed, face.foot_width);
+			continue;
 		}
 		// A trickle down the rock (spring melt, a side stream) wets it but throws no measurable mist.
 		if (mist && face.discharge >= mist_min_discharge) {
@@ -1554,29 +1609,7 @@ void PhysXWaterfalls3D::_build_effects() {
 			effects.push_back(pf);
 		}
 		if (mist && pl.discharge >= mist_min_discharge) {
-			// The veil: mist from the impact, blown out along the pool by the air the column drags down, and shed
-			// by the clumps all the way down (a share fed evenly up the column). The atomised share grows with the
-			// square of the landing speed, as the contact falls', and with the length of the fall the drops are
-			// stripped over.
-			const float reach = CLAMP(6.0f + 0.3f * pl.height, 8.0f, 60.0f);
-			const float side = pl.column_width + 2.0f * reach;
-			const float tall = CLAMP(0.5f * pl.height + 20.0f, 20.0f, 200.0f);
-			PhysXWaterMist3D *m = memnew(PhysXWaterMist3D);
-			m->set_name("FallVeil");
-			m->set_transform(Transform3D(lb, inv.xform(pl.foot)));
-			m->set_size(Vector3(side, tall, side));
-			m->set_cell_size(MAX(0.5f, MAX(side, tall) / 64.0f));
-			m->set_source_position(Vector3(0.0f, 1.0f, 0.0f));
-			const float half = 0.5f * pl.column_width + 1.0f;
-			m->set_source_extents(Vector3(half, 1.0f, half));
-			m->set_column_height(tall - 8.0f);
-			m->set_column_share(0.35f);
-			m->set_jet_direction(Vector3(0.0f, 0.0f, -1.0f));
-			m->set_jet_speed(MIN(0.3f * v, 12.0f));
-			const float vv = MAX(v, 1.0f) / 10.0f;
-			m->set_source_rate(mist_amount * 1e-5f * vv * vv * 1000.0f * pl.discharge * 1000.0f * (1.0f + pl.height / 30.0f)); // g/s
-			add_child(m, false, INTERNAL_MODE_BACK);
-			effects.push_back(m);
+			make_veil(lb, pl.foot, pl.height, pl.discharge, v, pl.column_width);
 		}
 	}
 }
@@ -1607,6 +1640,8 @@ void PhysXWaterfalls3D::rebuild() {
 	faces.clear();
 	plunges.clear();
 	Node *src = has_node(source) ? get_node(source) : nullptr;
+	Node *srf = has_node(surface) ? get_node(surface) : nullptr;
+	surface_obj = srf != nullptr && srf->has_method("get_cliff_point") ? srf : nullptr;
 	sea_level = -1e30f;
 	lake_rects.clear();
 	lake_levels.clear();
@@ -1745,6 +1780,10 @@ void PhysXWaterfalls3D::set_source(const NodePath &p_path) {
 	source = p_path;
 }
 
+void PhysXWaterfalls3D::set_surface(const NodePath &p_path) {
+	surface = p_path;
+}
+
 void PhysXWaterfalls3D::set_contact_falls(bool p_enabled) {
 	contact_falls = p_enabled;
 }
@@ -1839,6 +1878,8 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_contact_falls"), &PhysXWaterfalls3D::get_contact_falls);
 	ClassDB::bind_method(D_METHOD("set_source", "path"), &PhysXWaterfalls3D::set_source);
 	ClassDB::bind_method(D_METHOD("get_source"), &PhysXWaterfalls3D::get_source);
+	ClassDB::bind_method(D_METHOD("set_surface", "path"), &PhysXWaterfalls3D::set_surface);
+	ClassDB::bind_method(D_METHOD("get_surface"), &PhysXWaterfalls3D::get_surface);
 	ClassDB::bind_method(D_METHOD("set_contact_falls", "enabled"), &PhysXWaterfalls3D::set_contact_falls);
 	ClassDB::bind_method(D_METHOD("get_contact_falls_enabled"), &PhysXWaterfalls3D::get_contact_falls_enabled);
 	ClassDB::bind_method(D_METHOD("get_plunge_falls"), &PhysXWaterfalls3D::get_plunge_falls);
@@ -1878,6 +1919,7 @@ void PhysXWaterfalls3D::_bind_methods() {
 	ClassDB::bind_static_method("PhysXWaterfalls3D", D_METHOD("equilibrium_air", "sin_slope"), &PhysXWaterfalls3D::equilibrium_air);
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "source"), "set_source", "get_source");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "surface"), "set_surface", "get_surface");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "contact_falls"), "set_contact_falls", "get_contact_falls_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "plunge_falls"), "set_plunge_falls", "get_plunge_falls_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "column_density", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_column_density", "get_column_density");

@@ -1208,6 +1208,9 @@ func _build_water() -> void:
 		wf.name = "Waterfalls"
 		add_child(wf)
 		wf.source = wf.get_path_to(gen)
+		# The drawn ground: sheets lie over the ledges --cliff-relief builds into steep faces.
+		if landscape != null and "surface" in wf:
+			wf.surface = wf.get_path_to(landscape)
 		# --rock-step=M: step height of the rock thin contact falls run over (0.01: the flow always covers the face).
 		if args.has("rock-step"):
 			wf.rock_step = float(args["rock-step"])

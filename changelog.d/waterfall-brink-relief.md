@@ -1,0 +1,1 @@
+- Waterfalls: `PhysXWaterfalls3D.surface` (a Landscape3D) lays contact sheets over `cliff_relief` ledges; a sheet fed by rapids starts white; rivers draw down to the brink before a contact fall; tall falls handed to the rock keep their foot veil.
