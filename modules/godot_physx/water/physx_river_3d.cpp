@@ -2118,6 +2118,7 @@ void PhysXRiver3D::_find_falls(PhysicsDirectSpaceState3D *p_space, const LocalVe
 			const Vector3 foot = to_local.xform(fall_exclusions[e + 1]);
 			const Vector2 l2(lip.x, lip.z);
 			const Vector2 f2(foot.x, foot.z);
+			int first = -1;
 			for (int k = 0; k + 1 < count; k++) {
 				const Vector3 c = sections[k].centre.lerp(sections[k + 1].centre, 0.5f);
 				const Vector2 c2(c.x, c.z);
@@ -2126,6 +2127,29 @@ void PhysXRiver3D::_find_falls(PhysicsDirectSpaceState3D *p_space, const LocalVe
 				const float reach = MAX(6.0f, sections[k].width);
 				if (c2.distance_to(l2 + seg * t) < reach && sections[k].surface < lip.y + 1.0f && sections[k + 1].surface > foot.y - 1.0f) {
 					sections[k].fall_drop = true;
+					if (first < 0) {
+						first = k;
+					}
+				}
+			}
+			// The water draws down to the brink depth before the lip (Rouse 1936), as at the river's own falls:
+			// standing at its full depth up to the hidden stretch, the ribbon ended in a block of water hanging
+			// over the face's first row. Over about 4 y_c, and at least the last section before the lip.
+			if (first > 0) {
+				const Section &sl = sections[first];
+				const float q = sl.discharge / MAX(sl.width, 0.5f);
+				const float yc = Math::pow(q * q / GRAVITY, 1.0f / 3.0f);
+				const float brink = MAX(lip.y, p_bed[first]) + MAX(0.715f * yc, 0.01f);
+				const float span = MAX(4.0f * yc, 1.5f * p_ds);
+				for (int k = first - 1; k >= 0; k--) {
+					Section &sec = sections[k];
+					const float f = 1.0f - (sl.s - sec.s) / span;
+					if (f <= 0.0f) {
+						break;
+					}
+					const float y = Math::lerp(sec.surface, MAX(brink, p_bed[k] + 0.02f), f * f);
+					sec.surface = MIN(sec.surface, y);
+					sec.centre.y = sec.surface;
 				}
 			}
 		}
