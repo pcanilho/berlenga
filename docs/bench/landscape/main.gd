@@ -33,6 +33,7 @@ extends Node3D
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
 #   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
+#                         (--bowl-inflow=km² feeds the bowl from beyond the map; --bowl-inflow-at=x,z)
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
 #   --trees=cones|generated|none  forest: stand-in cones (default), TreeGenerator's rigged woodland with wind, or not drawn
@@ -140,10 +141,11 @@ func _ready() -> void:
 			# Hanging valley over a glacial trough (Paulo's pick, 12 Nov): the main river's glacier comes in from beyond
 			# the map (0.05 m/yr over its 60 km²) and wears a trough to the valley mouth, which the rivers have since
 			# filled flat (3000 years); a side bowl on the east wall, closed by a rock bar (lip at 420 m, its outer side a
-			# 45 degree rock slope), holds a lake whose outflow drops about 370 m off the lip into the trough.
+			# 45 degree rock slope), holds a lake whose outflow drops about 340 m off the lip into the trough. Land past the
+			# ridges drains into the bowl (250 km², --bowl-inflow) so the fall carries about 3 m³/s in the spring melt.
 			vd.merge({"ice-inflow": "0.05", "outwash-age": "3000", "bowl": "900,-1550,420,0.5",
 					"bar": "450,-2040,450,-1650,450,-1300,700,-1200,1500,-1250,2040,-1250", "bar-level": "520,420,480,500,520,540",
-					"bar-apron": "1.0"}, true)
+					"bar-apron": "1.0", "bowl-inflow": "250"}, true)
 		if args.has("lake-x"):
 			vd.erase("no-lake") # a placed high lake instead of the marked bowl's
 		for k in vd:
@@ -559,6 +561,18 @@ func _generate() -> void:
 				inflow.set_meta("level", float(args["inflow-level"]))
 			add_child(inflow)
 			markers.append(gen.get_path_to(inflow))
+		if args.has("bowl-inflow") and args.get("bowl", "none") != "none":
+			# Land beyond the map draining into the side bowl (--bowl-inflow=km², at the bowl's centre or
+			# --bowl-inflow-at=x,z): its own catchment past the ridges, so the hanging fall carries a real flow.
+			var bw2: PackedStringArray = args["bowl"].split(",")
+			var bin := Node3D.new()
+			bin.name = "BowlInflow"
+			var ba: String = args.get("bowl-inflow-at", "")
+			bin.position = Vector3(float(ba.get_slice(",", 0)), 0, float(ba.get_slice(",", 1))) if ba.contains(",") else Vector3(float(bw2[0]), 0, float(bw2[1]))
+			bin.set_meta("area", float(args["bowl-inflow"]))
+			bin.set_meta("erosion", float(args.get("bowl-inflow-erosion", "0")))
+			add_child(bin)
+			markers.append(gen.get_path_to(bin))
 		if args.has("sill"):
 			# A sill of resistant rock (m radius) at the high lake's outlet (or --sill-at=x,z), held at --sill-level:
 			# the river upstream grades to it, the lake sits behind it, and the river falls off it.
