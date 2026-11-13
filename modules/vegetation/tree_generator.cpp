@@ -4651,7 +4651,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// soil at a grazing angle in a ragged line; out along the root the flank
 					// falls below the soil instead (near the stem it still rises into the
 					// buttress).
-					const float y_floor = Math::lerp(h, MIN(h, -0.25f * trunk_r), Math::smoothstep(0.25f, 0.7f, t));
+					const float y_floor = Math::lerp(h, MIN(h, -0.4f * trunk_r), Math::smoothstep(0.08f, 0.4f, t));
 					d = Math::lerp(d, d_root, Math::smoothstep(0.0f, 0.75f, w));
 					// The furrows were cut for the stem's girth; swept out along a root they
 					// stretched into deep black grooves. Shallower the further out they go.
@@ -4740,6 +4740,49 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				tw[0] = tg.x;
 				tw[1] = tg.y;
 				tw[2] = tg.z;
+			}
+		}
+		// Final normals of the swept part from its own triangles, after the relief went back on:
+		// grid normals taken before it disagreed with the faces where a root's flank turns
+		// sharply into the soil, and the path tracer shaded those triangles black (the shading
+		// normal faced away from the light the faces received).
+		{
+			LocalVector<Vector3> acc;
+			acc.resize(p_part.w);
+			for (Vector3 &a : acc) {
+				a = Vector3();
+			}
+			const int *ix = r_b.indices.ptr();
+			for (int q = p_part.x; q + 2 < p_part.x + p_part.y; q += 3) {
+				const int a = ix[q] - p_part.z, b = ix[q + 1] - p_part.z, c = ix[q + 2] - p_part.z;
+				if (a < 0 || b < 0 || c < 0 || a >= p_part.w || b >= p_part.w || c >= p_part.w) {
+					continue;
+				}
+				if (!moved[a] && !moved[b] && !moved[c]) {
+					continue;
+				}
+				const Vector3 f = (vv[p_part.z + c] - vv[p_part.z + a]).cross(vv[p_part.z + b] - vv[p_part.z + a]);
+				acc[a] += f;
+				acc[b] += f;
+				acc[c] += f;
+			}
+			// The ring's seam pair shares one normal.
+			for (int i = 0; i + p_sides < p_part.w; i += ring) {
+				const Vector3 sum = acc[i] + acc[i + p_sides];
+				acc[i] = sum;
+				acc[i + p_sides] = sum;
+			}
+			float ssum = 0.0f;
+			for (int i = 0; i < p_part.w; i++) {
+				if (moved[i] && acc[i].length_squared() > 1e-16f) {
+					ssum += acc[i].normalized().dot(nw[p_part.z + i]);
+				}
+			}
+			const float fs = ssum < 0.0f ? -1.0f : 1.0f;
+			for (int i = 0; i < p_part.w; i++) {
+				if (moved[i] && acc[i].length_squared() > 1e-16f) {
+					nw[p_part.z + i] = acc[i].normalized() * fs;
+				}
 			}
 		}
 		if (p_colour) {
@@ -5377,14 +5420,18 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// Centred where it was (0.35 to 0.6), so the moss covers as much as before.
 					const float ramp = CLAMP(0.5f + (raw[i] - 0.475f) / MAX(0.25f, 2.5f * step), 0.0f, 1.0f);
 					float fill = Math::lerp(floor_d, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
-					if (collar) {
-						// Sunk under the bark at the soil line: where the roots dive, the shell
-						// lifted along their steep normals stood out of the ground as slivers.
-						fill = Math::lerp(floor_d, fill, CLAMP((moss.verts[v].y - ground_y + 0.01f) / 0.02f, 0.0f, 1.0f));
-					}
 					// As the relief tube has it: faded out at a standing stem's soil line.
 					const float under = bark_disp(moss.uvs[v]) * ((fallen || fallen_branch) ? 1.0f : Math::smoothstep(-0.02f, 0.2f, moss.verts[v].y));
 					// Shown where the fill stands above the bark; wv carries the margin.
+					if (collar && raw[i] > 0.3f) {
+						// The foot sleeve covers the bark down to the soil: on the roots' flanks it
+						// broke into tongues with the bark between them standing in a crevice under
+						// the shell's free edge, black under the path tracer.
+						const float hh = moss.verts[v].y - ground_y;
+						if (hh > -0.04f && hh < 0.25f) {
+							fill = MAX(fill, under + 0.004f);
+						}
+					}
 					wv[i] = fill - under;
 					// Below the bark the shell keeps its own depth rather than hugging the bark's
 					// underside: the edge then falls where the fill crosses the bark between two
