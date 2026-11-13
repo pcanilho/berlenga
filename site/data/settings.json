@@ -1603,6 +1603,18 @@
    "topic": "Placement"
   },
   {
+   "name": "Clear of boulders",
+   "settings": [
+    "VegetationField3D.obstacles",
+    "GrassField3D.obstacles"
+   ],
+   "note": "",
+   "what": "grass, ground plants, tree feet and fallen logs keep out of boulders.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Placement"
+  },
+  {
    "name": "Waterfall spray",
    "settings": [
     "PlantSpecies.spray_range"
