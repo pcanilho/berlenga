@@ -1026,14 +1026,15 @@
    "topic": "Strands"
   },
   {
-   "name": "Hair cards for crowds",
+   "name": "Far hair for crowds",
    "settings": [
     "cards_enabled",
     "card_screen_size",
-    "card_transition"
+    "card_transition",
+    "thick_strands"
    ],
    "note": "",
-   "what": "strand hair that gets small on screen cross-fades to textured cards baked from its own groom, simulating only its guides, so close-ups and zoomed cameras keep the strands; raster only, path tracing keeps the strands.",
+   "what": "strand hair that gets small on screen cross-fades to one thick strand per clump, shaded as that clump and simulating only its guides, so close-ups and zoomed cameras keep the full strands; with `thick_strands` off it uses textured cards baked from its own groom instead. Raster only; path tracing keeps the strands.",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"
