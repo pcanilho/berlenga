@@ -5475,6 +5475,112 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 	}
 
+	// Surface roots (trees.md 5d): each root ridge runs on out of the flare as a lateral root over
+	// the soil. Near the stem a lateral tapers fast (the zone of rapid taper, 1-3 stem radii; Eis
+	// 1974, Coutts 1983), then dives. Each root starts inside the stem's flare and ends below the
+	// ground line, so neither end shows, and it rides half buried, its crown arching out of the
+	// soil and sinking back with distance. Shallow-rooted species (high root flare) run further.
+	if (!fallen && !fallen_branch && flare > 0.0f && trunk_r >= 0.08f && !nodes.is_empty() && !nodes[0].removed) {
+		const Vector3 base = nodes[0].start;
+		Color rcol = bark_color.srgb_to_linear();
+		rcol = Color(rcol.r * 0.92f, rcol.g * 0.9f, rcol.b * 0.88f);
+		bark.bone = node_bone.size() > 0 ? node_bone[0] : 0;
+		RandomPCG rr_rng;
+		rr_rng.seed(uint64_t(seed) * 40503u + 0x726f6f73u);
+		LocalVector<Vector3> rpts;
+		LocalVector<float> rrad;
+		for (int k = 0; k < root_ridges; k++) {
+			const float az = root_phase + float(Math::TAU) * k / root_ridges + 0.12f * (rr_rng.randf() - 0.5f);
+			const float len = trunk_r * Math::lerp(2.4f, 3.6f, rr_rng.randf()) * (0.6f + 0.8f * MIN(flare, 1.0f));
+			const float r0 = trunk_r * 0.4f * MIN(1.0f, 0.5f + flare) * Math::lerp(0.8f, 1.15f, rr_rng.randf());
+			const float wob = Math::lerp(-0.25f, 0.25f, rr_rng.randf());
+			rpts.clear();
+			rrad.clear();
+			const int n = 14;
+			for (int i = 0; i <= n; i++) {
+				const float f = float(i) / n;
+				// From inside the stem (40% of its radius out) to the root's end.
+				const float d = trunk_r * 0.4f + len * f;
+				const float a = az + wob * f * f;
+				// Rapid taper over the first half, then a slow tail.
+				// Full girth to the edge of the flare, then the rapid taper out to a tenth.
+				const float edge = trunk_r * 1.5f;
+				const float g = CLAMP((d - edge) / MAX(0.05f, trunk_r * 0.4f + len - edge), 0.0f, 1.0f);
+				const float rad = r0 * Math::lerp(0.2f, 1.0f, 1.0f - g);
+				// The crown of the root stands 0.5 radii above the soil at the stem and sinks
+				// below it towards the end.
+				const float cy = rad * (0.35f - 1.8f * g * Math::sqrt(g));
+				// Roots wander round stones and old roots rather than run as straight spokes.
+				const Vector3 side(-Math::sin(a), 0.0f, Math::cos(a));
+				const Vector3 wander = side * (0.12f * len * f * Math::sin(f * 4.0f + wob * 9.0f)) + Vector3(0, 0.25f * rad * Math::sin(f * 7.0f + wob * 5.0f), 0);
+				rpts.push_back(base + Vector3(Math::cos(a) * d, cy, Math::sin(a) * d) + wander);
+				rrad.push_back(rad);
+			}
+			Vector4i part;
+			bark.role = Builder::ROLE_ALL;
+			bark.begin(part);
+			_tube(bark, rpts, rrad, 12, 0.0f, rcol);
+			bark.end(part, r0);
+			// A surface root is broad and low where it shows, not round like a fallen stick:
+			// spread across its run and flattened, the normals scaled the inverse way.
+			auto flatten = [&](Builder &r_b, const Vector4i &part) {
+				const int ring = 13;
+				Vector3 *vv = r_b.verts.ptrw();
+				Vector3 *nw = r_b.normals.ptrw();
+				for (int i = 0; i < int(rpts.size()); i++) {
+					const Vector3 t = (rpts[MIN(i + 1, int(rpts.size()) - 1)] - rpts[MAX(i - 1, 0)]).normalized();
+					Vector3 lat = Vector3(0, 1, 0).cross(t);
+					if (lat.length_squared() < 1e-6f) {
+						continue;
+					}
+					lat.normalize();
+					const Vector3 upv = t.cross(lat).normalized();
+					for (int k = 0; k < ring && i * ring + k < part.w; k++) {
+						const int v = part.z + i * ring + k;
+						const Vector3 dd = vv[v] - rpts[i];
+						const float dl = dd.dot(lat), du = dd.dot(upv), dt = dd.dot(t);
+						vv[v] = rpts[i] + lat * (dl * 1.5f) + upv * (du * 0.7f) + t * dt;
+						const Vector3 nn = nw[v];
+						nw[v] = (lat * (nn.dot(lat) / 1.5f) + upv * (nn.dot(upv) / 0.7f) + t * nn.dot(t)).normalized();
+					}
+				}
+			};
+			flatten(bark, part);
+			moss_tint(bark, part);
+			soil_tint(bark, part, 0.7f);
+			if (moss_k > 0.05f) {
+				// The moss sleeve carries on over the roots (as the stem's shell, section 5c): the
+				// same tube lifted by the moss's depth where the weight is high and sunk under the
+				// root where it fades, so the sleeve does not stop in a step where a root leaves.
+				const float depth = 0.018f;
+				Vector4i mp;
+				moss.bone = bark.bone;
+				moss.begin(mp);
+				_tube(moss, rpts, rrad, 12, 0.0f, rcol);
+				moss.end(mp, r0);
+				flatten(moss, mp);
+				Vector3 *mv = moss.verts.ptrw();
+				const Vector3 *mn = moss.normals.ptr();
+				Color *mc = moss.colors.ptrw();
+				for (int i = 0; i < mp.w; i++) {
+					const int v = mp.z + i;
+					const float raw = _moss_at(mv[v], mn[v], ground_y, moss_k, false);
+					const float ramp = CLAMP(0.5f + (raw - 0.475f) / 0.25f, 0.0f, 1.0f);
+					const float hummock = moss_noise(mv[v] * 9.0f, 0x6d6f7376u);
+					float fill = Math::lerp(-0.012f, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
+					// Under the root where the root itself goes under: lifted there, the shell
+					// stood out of the soil past the root's end.
+					const int ri = MIN(i / 13, int(rpts.size()) - 1);
+					const float shows = CLAMP((rpts[ri].y + rrad[ri] * 0.7f - ground_y) / MAX(0.01f, 0.6f * rrad[ri]), 0.0f, 1.0f);
+					fill = Math::lerp(-0.012f, fill, shows);
+					mv[v] += mn[v] * fill;
+					const float dry = moss_noise(mv[v] * 1.3f, 0x6d6f7375u);
+					mc[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - raw * 0.4f, 0.0f, 1.0f));
+				}
+				soil_tint(moss, mp, 0.7f);
+			}
+		}
+	}
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
 	const int per = MAX(0, int(params[PARAM_LEAVES_PER_INTERNODE]));
 	const float size = params[PARAM_LEAF_SIZE];

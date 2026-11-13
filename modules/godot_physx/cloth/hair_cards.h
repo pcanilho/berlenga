@@ -49,6 +49,7 @@ public:
 	int samples = 0; // points per card
 	PackedVector3Array points; // groom space, samples per card: the card's mean strand
 	PackedInt32Array strand_counts; // per card: the strands in its clump
+	PackedInt32Array strand_card; // per groom strand: its card
 	// Per card point, for each of the two strips (0: across the clump's spread, 1: across that):
 	// the axis across the strip (unit, groom space) and the strip's half width (m).
 	PackedVector3Array axis[2];

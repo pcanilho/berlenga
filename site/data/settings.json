@@ -1029,12 +1029,12 @@
    "name": "Far hair for crowds",
    "settings": [
     "cards_enabled",
+    "thick_strands",
     "card_screen_size",
-    "card_transition",
-    "thick_strands"
+    "card_transition"
    ],
    "note": "",
-   "what": "strand hair that gets small on screen cross-fades to one thick strand per clump, shaded as that clump and simulating only its guides, so close-ups and zoomed cameras keep the full strands; with `thick_strands` off it uses textured cards baked from its own groom instead. Raster only; path tracing keeps the strands.",
+   "what": "far strand hair hands over to one thick strand per clump, shaded as that clump, a clump at a time once it is 2 pixels across, simulating only the guides once the whole head has handed over, so close-ups and zoomed cameras keep the full strands. With `thick_strands` off, the whole head cross-fades to textured cards baked from its own groom once it gets small on screen. Raster only; path tracing keeps the strands.",
    "page": "hair",
    "title": "Hair",
    "topic": "Strands"
@@ -1212,6 +1212,17 @@
    ],
    "note": "",
    "what": "ice ages alternate with the rivers and carve troughs, cirques and basins that become lakes. With rock quality varied (`glacial_rock_variation`, `glacial_rock_scale`, off by default) the ice digs its own basins and bars, so tarns and chains of lakes form with no markers. Glaciers from beyond the map edge flow in with their rivers and carve the main valley's trough and lakes (`glacial_inflow_balance`, m/yr, 0 = off). A coarser ice grid (`glacial_coarse_cell`) is about 3 times faster, with similar but not identical terrain.",
+   "page": "terrain",
+   "title": "Terrain",
+   "topic": "Generation"
+  },
+  {
+   "name": "Valley fill",
+   "settings": [
+    "outwash_age"
+   ],
+   "note": "",
+   "what": "sediment left after the ice fills glacial troughs to flat floors, while cirque lakes stay open.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
@@ -1975,6 +1986,17 @@
    ],
    "note": "",
    "what": "branches flare into their parent in a short collar with a bark ridge in the crotch. Limbs that would grow into thicker wood bend away or die back to it.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
+   "name": "Surface roots",
+   "settings": [
+    "root_flare"
+   ],
+   "note": "",
+   "what": "buttress roots run out of the trunk flare, tapering as they sink into the soil, longer on shallow-rooted species.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"

@@ -32,6 +32,7 @@ extends Node3D
 #   --prints=0            no GroundSurface3D (footprints) node
 #   --layout=range|valley range: the peaks to the sea (default); valley: a cirque with a high lake (--lake-x/z,
 #                         --lake-depth) above a valley floor to the sea (needs floodplain deposition, in work)
+#   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
 #   --map=path.png        save a top-down map of the generated land (hillshade, water, rivers, falls) and quit
 #   --mesh=landscape|grid ground: Landscape3D, 1 m with LODs (default), or the 4 m grid mesh; --lod-error=px (2)
 #   --trees=cones|generated|none  forest: stand-in cones (default), TreeGenerator's rigged woodland with wind, or not drawn
@@ -135,6 +136,16 @@ func _ready() -> void:
 				vd["ice-inflow"] = "0.03"
 				# Its margins stood still for 3000 years at the end and left moraines.
 				vd["moraine-age"] = "3000"
+		if args.has("hanging"):
+			# Hanging valley over a glacial trough (Paulo's pick, 12 Nov): the main river's glacier comes in from beyond
+			# the map (0.05 m/yr over its 60 km²) and wears a trough to the valley mouth, which the rivers have since
+			# filled flat (3000 years); a side bowl on the east wall, closed by a rock bar (lip at 420 m, its outer side a
+			# 45 degree rock slope), holds a lake whose outflow drops about 370 m off the lip into the trough.
+			vd.merge({"ice-inflow": "0.05", "outwash-age": "3000", "bowl": "900,-1550,420,0.5",
+					"bar": "450,-2040,450,-1650,450,-1300,700,-1200,1500,-1250,2040,-1250", "bar-level": "520,420,480,500,520,540",
+					"bar-apron": "1.0"}, true)
+		if args.has("lake-x"):
+			vd.erase("no-lake") # a placed high lake instead of the marked bowl's
 		for k in vd:
 			if not args.has(k):
 				args[k] = vd[k]
@@ -433,13 +444,23 @@ func _generate() -> void:
 		# A cirque of peaks round the north holding a high lake; its outflow falls off the range front into a wide
 		# grassy valley floor that runs south between two low ridges to the sea.
 		range_nodes.append(_range_path("Cirque", [Vector3(-1900, 0, -700), Vector3(-900, 0, -1600), Vector3(0, 0, -1850), Vector3(900, 0, -1600), Vector3(1900, 0, -700)], 0.0, 1.0))
-		if args.has("bowl"):
+		if args.get("bowl", "none") != "none":
 			# A high bowl among the peaks (x,z,radius,share): uplift scaled down inside it, so its floor stays gentle above
 			# the rock bar that holds its outlet.
 			var bw: PackedStringArray = args["bowl"].split(",")
 			var bowl := _range_path("Bowl", [Vector3(float(bw[0]), 0, float(bw[1])), Vector3(float(bw[0]) + 1.0, 0, float(bw[1]))], float(bw[2]), float(bw[3]))
 			bowl.set_meta("basin", true)
 			range_nodes.append(bowl)
+		if args.has("ridges"):
+			# Extra ridges, "x,z,x,z,...,width,uplift" separated by ";": raised-cosine bands of uplift along the line.
+			var ri := 0
+			for spec in args["ridges"].split(";"):
+				var rv: PackedStringArray = spec.split(",")
+				var rpts: Array[Vector3] = []
+				for k in range(0, rv.size() - 2, 2):
+					rpts.append(Vector3(float(rv[k]), 0, float(rv[k + 1])))
+				range_nodes.append(_range_path("Ridge%d" % ri, rpts, float(rv[rv.size() - 2]), float(rv[rv.size() - 1])))
+				ri += 1
 		range_nodes.append(_range_path("WestRidge", [Vector3(-1500, 0, -900), Vector3(-1450, 0, 1100)], 380.0, 0.35))
 		range_nodes.append(_range_path("EastRidge", [Vector3(1500, 0, -900), Vector3(1450, 0, 1100)], 380.0, 0.35))
 		for y in 64:
@@ -550,28 +571,65 @@ func _generate() -> void:
 				sill.set_meta("level", float(args["sill-level"]))
 			add_child(sill)
 			markers.append(gen.get_path_to(sill))
-		if args.has("bar"):
+		if args.get("bar", "none") != "none":
 			# A bar of resistant rock across the valley (x0,z0,x1,z1), held at --bar-level: a riegel the river and the
 			# ice cross slowly, so the ground above it stays high (sill markers every 32 m).
 			var bv: PackedStringArray = args["bar"].split(",")
 			var bar_pts: Array[Vector3] = []
 			for k in range(0, bv.size() - 1, 2):
 				bar_pts.append(Vector3(float(bv[k]), 0, float(bv[k + 1])))
+			# --bar-level=L, or one level per bar point (L0,L1,...) interpolated along it: a lip lower than the bar's ends.
+			var bl: PackedStringArray = args.get("bar-level", "").split(",")
 			var along: Array[Vector3] = []
+			var along_level: Array[float] = []
 			for k in bar_pts.size() - 1:
 				var steps := maxi(1, int(bar_pts[k].distance_to(bar_pts[k + 1]) / 32.0))
 				for i in steps:
 					along.append(bar_pts[k].lerp(bar_pts[k + 1], float(i) / steps))
+					if bl.size() == bar_pts.size():
+						along_level.append(lerpf(float(bl[k]), float(bl[k + 1]), float(i) / steps))
 			along.append(bar_pts[bar_pts.size() - 1])
+			if bl.size() == bar_pts.size():
+				along_level.append(float(bl[bl.size() - 1]))
 			for i in along.size():
 				var m := Node3D.new()
 				m.name = "Bar%d" % i
 				m.position = along[i]
 				m.set_meta("sill", float(args.get("bar-width", "40")))
-				if args.has("bar-level"):
+				if not along_level.is_empty():
+					m.set_meta("level", along_level[i])
+				elif args.has("bar-level"):
 					m.set_meta("level", float(args["bar-level"]))
 				add_child(m)
 				markers.append(gen.get_path_to(m))
+			if args.has("bar-apron") and args.get("bowl", "none") != "none" and not along_level.is_empty():
+				# The bar's outer side as a rock slope (--bar-apron=rise/run) instead of a wall: hard rock stepping down
+				# away from the bowl every 32 m (overlapping discs, so no ribs between them), except within 160 m of the lip
+				# (the lowest point), where the river falls.
+				var bc: PackedStringArray = args["bowl"].split(",")
+				var centre := Vector3(float(bc[0]), 0, float(bc[1]))
+				var lip := 0
+				for i in along.size():
+					if along_level[i] < along_level[lip]:
+						lip = i
+				var slope := float(args["bar-apron"])
+				var na := 0
+				for i in along.size():
+					if along[i].distance_to(along[lip]) < 160.0:
+						continue
+					var out := (along[i] - centre).normalized()
+					for k in range(1, 10):
+						var lv := along_level[i] - slope * 32.0 * k
+						if lv < 0.0:
+							break
+						var a := Node3D.new()
+						a.name = "Apron%d" % na
+						na += 1
+						a.position = along[i] + out * 32.0 * k
+						a.set_meta("sill", 30.0)
+						a.set_meta("level", lv)
+						add_child(a)
+						markers.append(gen.get_path_to(a))
 		gen.inflows = markers
 	var t := Time.get_ticks_msec()
 	# One climate for the rivers (rain and snowmelt by month), the data map's climate fields and the plants: a mild
@@ -817,6 +875,13 @@ func _range_path(n: String, pts: Array, width: float, uplift: float) -> Path3D:
 # A top-down map of the generated land for laying out a scene quickly: hillshade, sea and lakes in blue, rivers in
 # cyan, the generator's waterfalls in red. 16 m a pixel, north up.
 func _save_map(path: String) -> void:
+	if args.has("profile"):
+		# Heights along rows (--profile=z1,z2,...): every 100 m across the map.
+		for zs in args["profile"].split(","):
+			var row := PackedStringArray()
+			for xi in range(-2000, 2001, 100):
+				row.append("%d" % int(height_at(float(xi), float(zs))))
+			print("[landscape] profile z=%s: %s" % [zs, " ".join(row)])
 	var w := (NX - 1) / 4 + 1
 	var h := (NZ - 1) / 4 + 1
 	var img := Image.create(w, h, false, Image.FORMAT_RGB8)

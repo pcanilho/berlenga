@@ -2231,9 +2231,43 @@ bool TerrainGenerator3D::generate() {
 			if (!iced) {
 				continue;
 			}
-			for (int32_t c : part) {
-				sed[c] = MAX(sed[c] - (h[c] - unfilled[c]), 0.0);
-				h[c] = unfilled[c];
+			// Since the ice left (outwash_age years), its meltwater and the rivers after it have filled the basin from
+			// the bottom up: 0.5 mm a year off a 10 km² catchment (glaciated Alpine catchments yield 0.2 to several mm a
+			// year; Hallet et al. 1996, Hinderer 2001), rising with area as A^0.3 since the big valleys rework the ice's
+			// own deposits (paraglacial yield; Church and Slaymaker 1989). A big valley's trough fills to a flat floor
+			// (Lauterbrunnen, Yosemite), a cirque's small bare catchment leaves its lake.
+			double level = -1e30;
+			if (outwash_age > 0.0) {
+				double catchment = 0.0, lo = 1e30, hi = -1e30;
+				for (int32_t q : part) {
+					catchment = MAX(catchment, sp.b.area[q]);
+					lo = MIN(lo, unfilled[q]);
+					hi = MAX(hi, h[q]);
+				}
+				const double budget = catchment * 0.0005 * Math::pow(catchment / 1.0e7, 0.3) * outwash_age;
+				auto vol = [&](double L) {
+					double v = 0.0;
+					for (int32_t q : part) {
+						v += MAX(MIN(L, h[q]) - unfilled[q], 0.0);
+					}
+					return v * double(cell_size) * double(cell_size);
+				};
+				if (vol(hi) <= budget) {
+					level = hi;
+				} else {
+					double a0 = lo, a1 = hi;
+					for (int it = 0; it < 40; it++) {
+						const double m = 0.5 * (a0 + a1);
+						(vol(m) < budget ? a0 : a1) = m;
+					}
+					level = a0;
+				}
+				print_verbose(vformat("TerrainGenerator3D: ice-worn basin of %d cells, catchment %.2f km2, floor %.0f m, rim %.0f m, filled to %.0f m.", int(part.size()), catchment * 1.0e-6, lo, hi, level));
+			}
+			for (int32_t cc : part) {
+				const double keep = MAX(unfilled[cc], MIN(level, h[cc]));
+				sed[cc] = MAX(sed[cc] - (h[cc] - keep), 0.0);
+				h[cc] = keep;
 			}
 		}
 	}
