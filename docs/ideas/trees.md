@@ -601,6 +601,13 @@ tongues alone read as broken. Tongue lengths run in straight lines between 22 se
 stepped per sector, the walls between tongues faced away from their shading normals and drew
 black slits under the path tracer only. The end grain is weathered grey-brown, the heart darker
 with rot, and its normals and tangents come from the displaced face.
+Surface roots (13 Nov): each root ridge runs on out of the flare as a lateral root. Laterals keep
+their girth to the flare's edge and then taper fast (the zone of rapid taper, within 1-3 stem
+radii; Eis 1974, Coutts 1983) while sinking, so they dive under the soil while still thick
+instead of thinning to a point on top of it. They start inside the stem and end below ground
+(no open ends), are spread 1.5x across and flattened to 0.7x (a surface root shows as a broad
+low ridge, not a round stick), wander sideways, and run further on shallow-rooted species
+(root_flare). They take the stem base's bone, so they do not sway.
 Not done: the flattened underside of class 4-5 logs, and blending into the terrain's own
 material (the ground side: litter and grass placed against the foot, the scene's job).
 
