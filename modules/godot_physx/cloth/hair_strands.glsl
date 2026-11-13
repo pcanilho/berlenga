@@ -935,7 +935,11 @@ void main() {
 		// A card's slot: the previous positions' w names the card drawn there (-2 - card), since
 		// the slots follow the draw order. Negative, it reads as past the strand's end to the
 		// strand mesh.
-		imageStore(prev_image, ivec2(id % w, id / w), vec4(before, is_card_strand(strand) ? -2.0 - float(strand - card_first()) : along));
+		// A strand's slot with cards: its card (clump) rides on w, along + 8 (card + 1), from its first
+		// rest point's w (0: none), so the render shader can hand its segments to the clump's thick
+		// strand (docs/ideas/hair.md, stage 3).
+		float clump = sdf_misc.w != 0.0 ? rest[strands[strand].x].w : 0.0;
+		imageStore(prev_image, ivec2(id % w, id / w), vec4(before, is_card_strand(strand) ? -2.0 - float(strand - card_first()) : along + 8.0 * clump));
 		return;
 	}
 

@@ -1191,6 +1191,25 @@ atlas reads. Dropped on the way: depth from the drawn width (a strip widened to 
 its clump: 15 m sunlit 1.7x), a_F from the deep maps' calibration in S (too weak), and an unbounded
 depth where a clump's end has no width (black segments).
 
+Stage 3b, done: the switch is the paper's, per segment. A strand segment whose clump is at most
+2 px across (its widest point there, in the pixel at the hair's centre) collapses and its clump's
+thick strand draws that stretch; wider clumps draw their strands and their thick strand
+collapses. The clump rides to the strand shader on last frame's position (w = along + 8 (clump
++ 1)), so it costs no buffer. Every clump that thin (2.1 px to leave): the thick strands alone
+with only the guides and clump strands simulated, as the cards did; none: the strands alone.
+Both meshes cast shadows while mixed, each collapsing where the other draws, so the hair's shadow
+stays whole. No cross-fade and no whole-head jump: the hair goes over a few clumps at a time as it
+recedes. Bench, all the hair, 1080p:
+
+| | strands | mixed |
+|---|---|---|
+| 3 m | 27.9 | 27.9 (all strands) |
+| 8 m | 28.5 / 18.2 / 10.7 | 28.0 / 17.8 / 10.3 |
+| 15 m | 28.7 / 18.4 / 10.9 | 29.2 / 18.9 / 11.1 |
+| 30 m | 49.8 | 49.8 (all thick) |
+
+Within 3% at every distance, hue kept. Path tracer: strands throughout, as before.
+
 Stages: (a) hierarchy and thick strands drawn with today's shading and analytic coverage;
 (b) the aggregated shading and S; (c) shadows and deep maps from thick strands, cards retired.
 Cloud: all of it; GPU timings go on the PC list.

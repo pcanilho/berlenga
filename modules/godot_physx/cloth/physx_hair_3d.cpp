@@ -122,7 +122,24 @@ vec4 hair_point(float p_index) {
 	ivec2 texel = ivec2(i % texture_width, i / texture_width);
 	// PREVIOUS_FRAME: the vertex function runs again for last frame's position (motion vectors),
 	// so the ribbon is rebuilt where the strands were then and TAA, FSR 2 and DLSS follow them.
-	return PREVIOUS_FRAME ? texelFetch(hair_previous_positions, texel, 0) : texelFetch(hair_positions, texel, 0);
+	if (PREVIOUS_FRAME) {
+		vec4 v = texelFetch(hair_previous_positions, texel, 0);
+		v.w -= v.w > 6.5 ? 8.0 * floor((v.w + 1.5) / 8.0) : 0.0; // a strand's card rides on w
+		return v;
+	}
+	return texelFetch(hair_positions, texel, 0);
+}
+
+// Thick strands (docs/ideas/hair.md, stage 3; Huang et al., EGSR 2025): per card point, both
+// strips' axes and half widths (see the cards' vertex()); a segment is drawn by its clump's thick
+// strand where the clump is at most 2 pixels across (thick_px: metres a pixel at the hair; 0: off).
+uniform sampler2D card_data : filter_nearest, repeat_disable;
+uniform float thick_px = 0.0;
+uniform int card_samples = 2;
+float clump_pixels(int p_card, int p_point) {
+	float a = texelFetch(card_data, ivec2(p_point * 4, p_card), 0).w;
+	float b = texelFetch(card_data, ivec2(p_point * 4 + 1, p_card), 0).w;
+	return 2.0 * max(a, b) / max(thick_px, 1e-9);
 }
 
 varying float strand_across; // -1..1 across the drawn ribbon (raster)
@@ -250,6 +267,15 @@ void vertex() {
 	vec3 across = CUSTOM1.w > 0.5 ? cross(t, a) : a;
 	// Past the strand's end (a shorter strand padded to the slot) the width is zero: nothing drawn.
 	float half_width = along < 0.0 || card_strand ? 0.0 : 0.5 * mix(root_width, tip_width, along);
+	if (thick_px > 0.0 && half_width > 0.0) {
+		// Where the clump is 2 pixels across or less, its thick strand draws this segment.
+		int i = int(CUSTOM0.x + 0.5);
+		float pw = texelFetch(hair_previous_positions, ivec2(i % texture_width, i / texture_width), 0).w;
+		int clump = pw > 6.5 ? int(floor((pw + 1.5) / 8.0)) - 1 : -1;
+		if (clump >= 0 && clump_pixels(clump, int(along * float(card_samples - 1) + 0.5)) <= 2.0) {
+			half_width = 0.0;
+		}
+	}
 	UV = vec2(CUSTOM0.w > 0.0 ? 1.0 : 0.0, max(along, 0.0));
 	VERTEX = p + across * (half_width * CUSTOM0.w);
 	NORMAL = cross(across, t);
@@ -590,7 +616,6 @@ render_mode cull_disabled, rt_vertex_dynamic, hair_cards, alpha_motion_vectors, 
 
 const char *HAIR_CARD_FUNCS = R"(
 uniform sampler2D card_atlas : filter_linear_mipmap, repeat_disable;
-uniform sampler2D card_data : filter_nearest, repeat_disable;
 uniform vec2 card_tile = vec2(32.0, 256.0); // a tile's size in the atlas, in texels
 uniform float card_clump = 0.0; // wet clumping, as the strands'
 // Thick strands (docs/ideas/hair.md, stage 3; Huang et al., EGSR 2025): each clump drawn as one
@@ -697,7 +722,9 @@ void vertex() {
 		thick_clump.y = clamp(strands * 0.25 * fibre * fibre / max(half_a * half_b, 0.25 * strands * fibre * fibre), 0.0, 1.0);
 		thick_clump.z = strands * fibre / max(2.0 * extent, 1e-7);
 		ax = e;
-		drawn = strip == 0 ? drawn_thick : 0.0;
+		// Mixed with the strands (thick_px > 0): only where the clump is 2 pixels across or less.
+		bool shown = thick_px <= 0.0 || clump_pixels(card, point) <= 2.0;
+		drawn = strip == 0 && shown ? drawn_thick : 0.0;
 		card_grow = 1.0;
 		card_fan = 1.0;
 	}
@@ -1267,6 +1294,11 @@ void PhysXHair3D::_make_material() {
 		}
 		card_material->set_shader_parameter("card_atlas", card_bake->texture);
 		card_material->set_shader_parameter("card_data", card_data);
+		card_material->set_shader_parameter("card_samples", card_bake->samples);
+		if (copy_material.is_valid()) {
+			copy_material->set_shader_parameter("card_data", card_data);
+			copy_material->set_shader_parameter("card_samples", card_bake->samples);
+		}
 		card_material->set_shader_parameter("card_tile", Vector2(card_bake->tiles[2], card_bake->tiles[3]));
 		card_material->set_shader_parameter("hair_positions", pos_texture);
 		card_material->set_shader_parameter("hair_previous_positions", prev_pos_texture);
@@ -1372,6 +1404,9 @@ void PhysXHair3D::_clear() {
 	snow_slot_set = -2;
 	card_first = 0;
 	card_mode = false;
+	thick_width_min = 0.0f;
+	thick_width_max = 0.0f;
+	thick_px_set = false;
 	card_target = false;
 	card_fade = 0.0f;
 	card_fade_set = -1.0f;
@@ -1515,6 +1550,10 @@ void PhysXHair3D::_build() {
 				r[(start + k) * 4 + 1] = p.y;
 				r[(start + k) * 4 + 2] = p.z;
 				r[(start + k) * 4 + 3] = k > 0 ? p.distance_to(pts[start + k - 1]) : 0.0f;
+			}
+			if (card_first > 0 && i < card_first && n > 0 && i < card_bake->strand_card.size()) {
+				// A groom strand: the first point's w (unused) names its card, + 1.
+				r[start * 4 + 3] = float(card_bake->strand_card[i] + 1);
 			}
 			if (card_first > 0 && i >= card_first && n > 0) {
 				// A card's strand: the first point's w (unused) holds half the clump's thickness,
@@ -1820,6 +1859,13 @@ void PhysXHair3D::_build_cards(const AABB &p_bounds) {
 		}
 	}
 	card_data = ImageTexture::create_from_image(data);
+	thick_width_min = 1e9f;
+	thick_width_max = 0.0f;
+	for (int i = 0; i < nc * cs; i++) {
+		const float w = 2.0f * MAX(b.half_width[0][i], b.half_width[1][i]);
+		thick_width_min = MIN(thick_width_min, w);
+		thick_width_max = MAX(thick_width_max, w);
+	}
 	// The mesh: per slot point two crossed strips (four vertices), placed in vertex() from the
 	// simulated points: CUSTOM0 = (texel, previous texel, next texel, side -1 or 1), CUSTOM1 =
 	// (point, strip, share along, 0).
@@ -1960,52 +2006,107 @@ void PhysXHair3D::_step(double p_delta) {
 	// height, so a zoomed-in camera or a larger screen keeps the strands where cards would show
 	// as strips. card_screen_size 0: by card_distance instead.
 	if (card_instance && card_first > 0) {
-		const float d = camera ? camera->get_global_transform().origin.distance_to(xform.origin) : 0.0f;
-		bool far = card_target ? d >= 0.95f * card_distance : d >= card_distance;
-		if (card_screen_size > 0.0f && camera && render_instance) {
-			const float size = _screen_size(camera);
-			far = card_target ? size <= 1.05f * card_screen_size : size <= card_screen_size;
-		}
-		// The path tracer keeps the strands at every distance (it must not lose their detail).
-		Ref<Environment> env = camera ? camera->get_environment() : Ref<Environment>();
-		if (env.is_null() && get_world_3d().is_valid()) {
-			env = get_world_3d()->get_environment();
-			if (env.is_null()) {
-				env = get_world_3d()->get_fallback_environment();
+		Ref<Environment> pt_env = camera ? camera->get_environment() : Ref<Environment>();
+		if (pt_env.is_null() && get_world_3d().is_valid()) {
+			pt_env = get_world_3d()->get_environment();
+			if (pt_env.is_null()) {
+				pt_env = get_world_3d()->get_fallback_environment();
 			}
 		}
-		const bool path_traced = env.is_valid() && env->is_pathtracing_enabled();
-		card_target = far && !path_traced;
-		// Cross-faded, as LOD transitions are (Unreal's and Godot's own visibility ranges): cards
-		// cannot match the strands exactly (each blends one clump where the strands blend many
-		// at different depths, so sunlit hair behind shows through a little more), and a switch in
-		// one frame shows that as a step. The cards fade in over the strands, then the strands
-		// fade out beneath them, so the hair never thins midway; the strands stay simulated until
-		// the cards are drawn alone.
-		const float step = card_transition > 0.0f && !path_traced ? float(p_delta) / card_transition : 1.0f;
-		card_fade = card_target ? MIN(card_fade + step, 1.0f) : MAX(card_fade - step, 0.0f);
-		const bool cards_only = card_fade >= 1.0f;
-		if (cards_only != card_mode) {
-			card_mode = cards_only;
-			if (!card_mode) {
-				solver->drop_history(); // the strands' last positions are stale
+		const bool thick_mode = thick_strands && camera && render_instance && thick_width_max > 0.0f && !(pt_env.is_valid() && pt_env->is_pathtracing_enabled());
+		if (thick_mode) {
+			// Thick strands (docs/ideas/hair.md, stage 3; Huang et al., EGSR 2025): per segment, a
+			// clump at most 2 pixels across is drawn by its thick strand, wider ones by its strands.
+			// The pixel here is the hair's (metres a pixel at its centre), so the strands and the
+			// thick strands make the same call. Every clump that thin: the thick strands alone, and
+			// only the guides and the clumps' strands run (as cards); none: the strands alone.
+			const float view_h = MAX(get_viewport()->get_visible_rect().size.y, 1.0f);
+			const float size = MAX(_screen_size(camera), 1e-6f);
+			const float px = render_instance->get_global_transform().xform(render_instance->get_aabb()).size.length() / (size * view_h);
+			const bool all_thick = thick_width_max / px <= (card_mode ? 2.1f : 2.0f);
+			const bool any_thick = thick_width_min / px <= 2.0f;
+			if (all_thick != card_mode) {
+				card_mode = all_thick;
+				if (!card_mode) {
+					solver->drop_history(); // the strands' last positions are stale
+				}
 			}
-		}
-		card_instance->set_visible(card_fade > 0.0f);
-		// One caster at a time: the cards' shadow once they are drawn alone, as the maps then are.
-		card_instance->set_cast_shadows_setting(card_mode ? GeometryInstance3D::SHADOW_CASTING_SETTING_ON : GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
-		if (render_instance) {
-			render_instance->set_visible(card_fade < 1.0f);
-		}
-		if (card_fade != card_fade_set) {
-			card_fade_set = card_fade;
+			card_target = all_thick;
+			card_fade = all_thick ? 1.0f : 0.0f;
+			card_fade_set = -1.0f;
+			card_instance->set_visible(any_thick);
+			// Both cast while mixed: each collapses where the other draws (the switch uses the
+			// hair's pixel, not the light's), so the shadow is the hair's, once.
+			card_instance->set_cast_shadows_setting(any_thick ? GeometryInstance3D::SHADOW_CASTING_SETTING_ON : GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			render_instance->set_visible(!all_thick);
+			const float mixed_px = any_thick && !all_thick ? px : 0.0f;
+			thick_px_set = true;
 			if (copy_material.is_valid()) {
-				copy_material->set_shader_parameter("lod_fade", CLAMP(2.0f - 2.0f * card_fade, 0.0f, 1.0f));
+				copy_material->set_shader_parameter("lod_fade", 1.0f);
+				copy_material->set_shader_parameter("thick_px", mixed_px);
 			}
 			if (card_material.is_valid()) {
-				card_material->set_shader_parameter("lod_fade", CLAMP(2.0f * card_fade, 0.0f, 1.0f));
-				// Over the strands while both are drawn.
-				card_material->set_render_priority(card_fade > 0.0f && card_fade < 1.0f ? 1 : 0);
+				card_material->set_shader_parameter("lod_fade", 1.0f);
+				card_material->set_shader_parameter("thick_px", mixed_px);
+				card_material->set_render_priority(0);
+			}
+		} else {
+			if (thick_px_set) {
+				thick_px_set = false;
+				if (copy_material.is_valid()) {
+					copy_material->set_shader_parameter("thick_px", 0.0f);
+				}
+				if (card_material.is_valid()) {
+					card_material->set_shader_parameter("thick_px", 0.0f);
+				}
+			}
+			const float d = camera ? camera->get_global_transform().origin.distance_to(xform.origin) : 0.0f;
+			bool far = card_target ? d >= 0.95f * card_distance : d >= card_distance;
+			if (card_screen_size > 0.0f && camera && render_instance) {
+				const float size = _screen_size(camera);
+				far = card_target ? size <= 1.05f * card_screen_size : size <= card_screen_size;
+			}
+			// The path tracer keeps the strands at every distance (it must not lose their detail).
+			Ref<Environment> env = camera ? camera->get_environment() : Ref<Environment>();
+			if (env.is_null() && get_world_3d().is_valid()) {
+				env = get_world_3d()->get_environment();
+				if (env.is_null()) {
+					env = get_world_3d()->get_fallback_environment();
+				}
+			}
+			const bool path_traced = env.is_valid() && env->is_pathtracing_enabled();
+			card_target = far && !path_traced;
+			// Cross-faded, as LOD transitions are (Unreal's and Godot's own visibility ranges): cards
+			// cannot match the strands exactly (each blends one clump where the strands blend many
+			// at different depths, so sunlit hair behind shows through a little more), and a switch in
+			// one frame shows that as a step. The cards fade in over the strands, then the strands
+			// fade out beneath them, so the hair never thins midway; the strands stay simulated until
+			// the cards are drawn alone.
+			const float step = card_transition > 0.0f && !path_traced ? float(p_delta) / card_transition : 1.0f;
+			card_fade = card_target ? MIN(card_fade + step, 1.0f) : MAX(card_fade - step, 0.0f);
+			const bool cards_only = card_fade >= 1.0f;
+			if (cards_only != card_mode) {
+				card_mode = cards_only;
+				if (!card_mode) {
+					solver->drop_history(); // the strands' last positions are stale
+				}
+			}
+			card_instance->set_visible(card_fade > 0.0f);
+			// One caster at a time: the cards' shadow once they are drawn alone, as the maps then are.
+			card_instance->set_cast_shadows_setting(card_mode ? GeometryInstance3D::SHADOW_CASTING_SETTING_ON : GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			if (render_instance) {
+				render_instance->set_visible(card_fade < 1.0f);
+			}
+			if (card_fade != card_fade_set) {
+				card_fade_set = card_fade;
+				if (copy_material.is_valid()) {
+					copy_material->set_shader_parameter("lod_fade", CLAMP(2.0f - 2.0f * card_fade, 0.0f, 1.0f));
+				}
+				if (card_material.is_valid()) {
+					card_material->set_shader_parameter("lod_fade", CLAMP(2.0f * card_fade, 0.0f, 1.0f));
+					// Over the strands while both are drawn.
+					card_material->set_render_priority(card_fade > 0.0f && card_fade < 1.0f ? 1 : 0);
+				}
 			}
 		}
 		s.card_first = card_first;
