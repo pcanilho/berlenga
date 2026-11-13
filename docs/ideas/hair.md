@@ -1093,6 +1093,108 @@ frames at 100% crop are the same with and without (raster mean difference 0.19 l
 traced difference is its noise). Capping the slots at the 95th percentile would save 16% on the
 bench groom but moves 2.6% of strands by up to 0.28 mm, so it was not done.
 
+## Round 4 candidates (researched 12 Nov)
+
+What the hair does now against the published state of the art, and what each would change.
+
+- **Thick strands instead of cards** (Huang et al., Real-time Level-of-Detail Strand-based Hair
+  Rendering, EGSR 2025). Clusters of strands are replaced, past a width of about 2 px, by one
+  elliptical "thick hair" each, shaded with an aggregated elliptical BCSDF fitted to the cluster,
+  so the far hair keeps the strands' look and their dynamics (the thick hairs follow the guides).
+  Reported up to 13x faster far away (0.4 ms against 5.3 ms, RTX 3090), the same up close.
+  Against our cards: no baked atlas, no switch to hide (the clusters thicken continuously), no
+  sorting of long strips, the same deep opacity maps. Their prototype uses tessellation and
+  geometry shaders; ours would draw the thick hairs as the strands' camera-facing ribbons, in the
+  same pass. Cost: precomputing the aggregated BCSDF (minutes in their prototype; per hair colour).
+  Cloud: all of it except GPU timings.
+- **Dual scattering in raster** (Zinke et al. 2008; Unreal's hair uses it with its voxel
+  transmittance; Frostbite's strand hair the same family). Our raster multiple scattering is a
+  wrapped-light term tinted by depth, tuned to the bench; dual scattering derives the forward
+  scattered light through the hair from the fibre's own attenuation and spread, so blonde and
+  grey hair, which scatter most, match the path tracer without tuning. Uses the deep opacity maps
+  we already build (counts of strands in front). Cloud: all of it.
+- **Software rasterized strands** (Lipp et al., Deferred Software Rasterization for Efficient
+  Real-time Hair Rendering, 2026). Compute shaders draw strands as one-pixel lines into a deferred
+  64-bit buffer (atomic min), then filter: 4.4x faster than mesh-shader strands close up, 11x far
+  with LOD (RTX 5080, 127k strands). Needs 64-bit atomics (Vulkan 1.2 or an extension); opaque
+  deferred strands, so our blended look and the shadow pass would change. Large; GPU timings.
+- **ADMM hair dynamics** (Daviet, Interactive Hair Simulation on the GPU using ADMM, SIGGRAPH
+  2023). Discrete elastic rods with Coulomb friction, solved local-global on the GPU: real
+  bending and twisting stiffness and hair-hair friction, where ours is TressFX shape matching
+  with Jacobi collisions on guides. Large.
+- Not taken: hair meshes (Bhokare and Yuksel, SIGGRAPH 2024; strands generated in mesh shaders
+  from a coarse mesh, 100 heads in 2 ms) are patented, and need mesh shaders.
+
+Recommendation: thick strands first. They remove the cards' known limits (strips show up close,
+the step at the switch, the back hair through the front cards) and cost the least far away.
+
+## Stage 3: thick strands instead of cards (Paulo picked 12 Nov)
+
+Huang et al. (EGSR 2025), read in full. What it does:
+
+- Clusters: k-means over whole strands (sum of squared control point distances), a hierarchy of
+  5 to 6 levels, each level's cross-section about 4x the area of the finer one's. A cluster's
+  "thick hair" runs along the mean of its strands' points; per point, PCA of the strands' points
+  gives the cross-section's ellipse (the axis nearest the tangent dropped), radii r_A, r_B, and
+  four corner strands at the ellipse's ends. At run time the centre and corners are skinned from
+  the simulated guides with the strands' own weights, so the thick hair moves as its strands.
+- Drawn as camera-facing strips, picked per segment: a segment takes the coarsest level whose
+  projected width is at most 2 px (Eq. 16, from last frame's widths, one level a frame). No
+  blending between levels: the shading is built to look the same at every level, which is what
+  keeps it from popping (frame-to-frame PSNR above cards in their Fig. 9).
+- Shading: the single-fibre lobes widened and dimmed by how many fibres a ray crosses inside the
+  cluster, n = rho l sqrt(n_total / (pi r_A r_B)) with rho = n_total r^2 / (r_A r_B): A_p =
+  a_F^(n-1) a_p, longitudinal and azimuthal variances grown by (n-1) sigma_F^2 (dual scattering's
+  forward spread, Zinke 2008), a back-scatter lobe, and a shadowing-masking term S (fibres in the
+  cluster hiding each other: without it far hair reads too bright, their Fig. 12, as our cards
+  did). Shadows: the deep opacity maps, as ours.
+- Results: far (0.3% of the screen) 0.4 ms against 5.3 ms, near the same as full strands.
+  Limits: uniform fibres assumed (dual scattering's), afro hair, glints under 2 px, overlapping
+  thick hairs not sorted, no environment light in their prototype.
+
+How it maps onto ours:
+
+- Clusters: the card bake already clusters the groom into `card_count` clumps (1024) and the
+  solver already simulates one strand per clump (the clump's centre, fanned with its guides).
+  Level 1 is that; coarser levels merge clumps 4 to 1 (256, 64, 16), each with its own simulated
+  centre strand and per point radii. No atlas: a thick hair's coverage is analytic, as a strand's
+  (TressFX): its strands' total width over its drawn width, 1 - exp(-depth).
+- Drawn by the strand pass itself, in the same slots and the same sort, not a second mesh: each
+  segment picks its level by its projected width (2 px), so the switch is per segment and gradual
+  across the head instead of the whole hair at once. Strands left out by a coarser level collapse
+  as the distance LOD's dropped strands do today.
+- Shading: our raster light() (Marschner R, TT, TRT plus the scattering term) with the paper's
+  per-cluster changes: attenuation a_F^(n-1), widened lobes, and S. Sky light keeps Godot's.
+- Shadow maps and deep maps: built from the same thick hairs at their level, coverage spread over
+  their width (the cards' path today).
+- Path tracer: unchanged, strands at every distance.
+- Cards: kept until thick strands match or beat them in the bench, then `cards_enabled` maps onto
+  thick strands and the atlas bake goes.
+
+Stage 3a, done (`thick_strands`, on by default): the card mesh draws each clump as one thick
+strand, one strip facing the camera (the second collapses), as wide as the clump's ellipse seen
+from the camera (half extent sqrt((r_A a.e)^2 + (r_B b.e)^2), e = t x eye, never under the
+clump's strands packed tight, sqrt(N) fibres across), opaque by the chord through the ellipse,
+1 - exp(-(4/pi) D sqrt(1 - x^2)), D its N strands' widths over its width. Light inside the clump:
+the fibres along the chord each behind 0 to n of the others, (1 - e^-kn) / kn with the deep maps'
+own k per fibre; with light and view on one side, the paper's shadowing-masking S (P_s a_F + P_n,
+a_F the fibre's TT). Bench, 1080p, all the hair (0..255 after tone mapping):
+
+| | strands | textured cards | thick strands |
+|---|---|---|---|
+| 8 m | 28.5 / 18.2 / 10.7 | 27.8 / 17.3 / 9.1 | 28.8 / 18.5 / 10.8 |
+| 15 m | 28.7 / 18.4 / 10.9 | 28.7 / 17.9 / 9.3 | 29.1 / 18.7 / 10.8 |
+
+Inside the hair, away from its edges, thick strands read 8% (8 m) and 16% (15 m) lighter, as the
+cards did, with the strands' hue (cards: blue a fifth low). One strip a clump instead of two, no
+atlas reads. Dropped on the way: depth from the drawn width (a strip widened to a pixel thinned
+its clump: 15 m sunlit 1.7x), a_F from the deep maps' calibration in S (too weak), and an unbounded
+depth where a clump's end has no width (black segments).
+
+Stages: (a) hierarchy and thick strands drawn with today's shading and analytic coverage;
+(b) the aggregated shading and S; (c) shadows and deep maps from thick strands, cards retired.
+Cloud: all of it; GPU timings go on the PC list.
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.
@@ -1106,6 +1208,12 @@ Recommendation: A now, B's strand work once the open-world game has a close came
 groom to test with.
 
 ## References
+
+- Huang et al. Real-time Level-of-Detail Strand-based Hair Rendering. EGSR 2025 (arXiv 2405.10565).
+- Zinke, Yuksel, Weber, Keyser. Dual Scattering Approximation for Fast Multiple Scattering in Hair. SIGGRAPH 2008.
+- Lipp, Jarabo, Wimmer et al. Deferred Software Rasterization for Efficient Real-time Hair Rendering. 2026 (arXiv 2607.04230).
+- Daviet. Interactive Hair Simulation on the GPU using ADMM. SIGGRAPH 2023.
+- Bhokare, Montalvo, Diaz, Allen, Yuksel. Real-Time Hair Rendering with Hair Meshes. SIGGRAPH 2024.
 
 - Marschner, Jensen, Cammarano, Worley, Hanrahan. Light Scattering from Human Hair Fibers. SIGGRAPH 2003.
 - d'Eon, Francois, Hill, Letteri, Aubry. An Energy-Conserving Hair Reflectance Model. EGSR 2011.
