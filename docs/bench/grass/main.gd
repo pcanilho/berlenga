@@ -34,6 +34,8 @@ extends Node3D
 #   --turf=0         without the near turf layer
 #   --floor=0        without the litter on the ground under the crowns (cost comparison)
 #   --sward-shade=0  with --forest: the grass grows through the bracken and bramble stands (before shot)
+#   --undergrowth=bracken|bramble   a stand of it in the open meadow, framed from 6.5 m and 3.2 m up in side light; the sward
+#                    thins under it (GrassField3D.undergrowth_field), unless --sward-shade=0
 #   --far=0          without the plants' colour on the ground beyond their range (before/after)
 #   --far            a high view over the land, to see plants thin out and the ground take over
 #   --dolly          from that corner, walk in 0.3 m a frame (with --clip and --frames)
@@ -78,6 +80,8 @@ var stand := "beech"
 var stand_set := false
 var no_floor := false
 var no_sward := false
+var undergrowth := ""
+var ug_field: VegetationField3D
 var no_far := false
 var far_view := false
 var prims := false
@@ -133,6 +137,7 @@ func _ready() -> void:
 		elif a == "--turf=0": no_turf = true
 		elif a == "--floor=0": no_floor = true
 		elif a == "--sward-shade=0": no_sward = true
+		elif a.begins_with("--undergrowth="): undergrowth = a.substr(14)
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
 		elif a == "--prims": prims = true
@@ -294,6 +299,32 @@ func _ready() -> void:
 				g.rules = r
 				g.canopy_field = g.get_path_to(cover)
 				g.undergrowth_field = g.get_path_to(cover) # Thinned under the bracken and bramble stands.
+		if undergrowth != "" and not forest:
+			# One undergrowth species in the open meadow, in irregular stands (its patches).
+			var usp := PlantSpecies.new()
+			var bramble := undergrowth == "bramble"
+			usp.meshes = _variants(PlantGenerator.PRESET_BRAMBLE if bramble else PlantGenerator.PRESET_BRACKEN, 4)
+			usp.spacing = 1.2 if bramble else 0.6
+			usp.footprint = 0.0
+			usp.density = 0.95
+			# Open-ground bracken grows tall (1.5 to 2 m in full light), well above the sward.
+			usp.scale_range = Vector2(1.4, 1.8) if not bramble else Vector2(1.0, 1.3)
+			usp.patch_scale = 9.0
+			usp.patch_cover = 0.22
+			usp.patch_seed = 71
+			usp.sward_shade = 0.0 if no_sward else (0.7 if bramble else 0.85)
+			var ub := Biome.new()
+			ub.species = [usp]
+			ug_field = VegetationField3D.new()
+			ug_field.name = "Undergrowth"
+			ug_field.populate_on_ready = false
+			ug_field.tile_size = 8.0
+			ug_field.biome = ub
+			add_child(ug_field)
+			ug_field.data_map = ug_field.get_path_to(dm)
+			for g in [grass, under, turf]:
+				if g:
+					g.undergrowth_field = g.get_path_to(ug_field)
 	else:
 		grass.view_facing = 0.0
 		grass.ground_tint_enabled = false
@@ -469,6 +500,42 @@ func _frame_clearing() -> void:
 	cam.fov = 50.0
 	cam.position = Vector3(eye.x, height(eye.x, eye.y) + 40.0, eye.y)
 	cam.look_at(Vector3(at.x, height(at.x, at.y), at.y))
+
+# An undergrowth stand in the open meadow (--undergrowth): the most compact stand near the usual
+# view with tall grass all round it, seen across it in side light from 7 m.
+func _frame_undergrowth() -> void:
+	var usp: PlantSpecies = ug_field.biome.species[0]
+	var tall: PlantSpecies = grass.rules
+	var best := Vector3()
+	var best_score := -1.0
+	for gz in range(-20, 21):
+		for gx in range(-20, 21):
+			var c := Vector3(gx * 2.0, 0, gz * 2.0)
+			if usp.get_patch_weight(c) < 0.99 or dm.get_water_depth_at(c) > 0.0:
+				continue
+			# Stand inside (radius 1.5 m), sward round it (a ring at 5 to 7 m), tall grass everywhere.
+			var score := 0.0
+			for k in 24:
+				var a := k * TAU / 24.0
+				var dir := Vector3(cos(a), 0, sin(a))
+				var inner := c + dir * 1.5
+				var ring := c + dir * (5.0 + (k % 3))
+				score += usp.get_patch_weight(inner)
+				score += 1.0 - usp.get_patch_weight(ring)
+				if tall and tall.get_patch_weight(ring) < 0.99:
+					score -= 2.0
+				if dm.get_water_depth_at(ring) > 0.0:
+					score -= 4.0
+			if score > best_score:
+				best_score = score
+				best = c
+	# Side light: look across the sun's heading.
+	var sun_dir := -sun_node.global_transform.basis.z
+	var side := Vector3(-sun_dir.z, 0, sun_dir.x).normalized()
+	var eye := best + side * 6.5
+	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 3.2, eye.z)
+	cam.look_at(Vector3(best.x, height(best.x, best.z) + 0.2, best.z))
+	print("GRASS_UNDERGROWTH stand=%s score=%.1f eye=%s sward=%.2f" % [str(best), best_score, str(cam.position), ug_field.get_sward_shade_at(best)])
 
 # Stand at a wood's edge: the tree nearest the usual view, seen from the open side.
 func _frame_forest() -> void:
@@ -1358,6 +1425,13 @@ func _process(dt: float) -> void:
 			for i in cover.biome.species.size():
 				counts.append(cover.get_placements(i).size())
 			print("GRASS_COVER %s = %s ms=%.1f" % ["(tree, bramble, bracken, foxglove) flowers, sedge, plantain, clover, nettle, dock, thistle, tussock, yarrow, dry grass, tall flowers, tall dry flowers (fern, bilberry, moss, litter)", str(counts), cover.get_populate_time_msec()])
+			if ug_field:
+				ug_field.populate()
+				print("GRASS_UNDERGROWTH placements=%d" % ug_field.get_placements(0).size())
+				for g in [grass, under, turf]:
+					if g:
+						g.rebuild()
+				_frame_undergrowth()
 			if forest:
 				grass.rebuild()
 				under.rebuild()
