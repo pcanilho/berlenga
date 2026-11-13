@@ -1748,13 +1748,23 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 		return Math::lerp(Math::lerp(at(x0, y0), at(x0 + 1, y0), fx), Math::lerp(at(x0, y0 + 1), at(x0 + 1, y0 + 1), fx), fy);
 	};
 	for (int r = 0; r < rings; r++) {
+		// The ring's plane follows the axis averaged over about a radius either way: square to
+		// the local tangent, a bend tighter than the stem is thick folded the rings on its inner
+		// side over each other (rings stacked out of order up a thick bole), which drew as a
+		// horizontal seam across the bark.
 		Vector3 t2;
 		if (r == 0) {
 			t2 = t;
-		} else if (r == rings - 1) {
-			t2 = (p_points[r] - p_points[r - 1]).normalized();
 		} else {
-			t2 = (p_points[r + 1] - p_points[r - 1]).normalized();
+			int a = r - 1, b = MIN(r + 1, rings - 1);
+			const float reach = p_radii[r];
+			while (a > 0 && p_points[r].distance_to(p_points[a]) < reach) {
+				a--;
+			}
+			while (b < rings - 1 && p_points[r].distance_to(p_points[b]) < reach) {
+				b++;
+			}
+			t2 = (p_points[b] - p_points[a]).normalized();
 		}
 		// Transport the normal from the previous tangent to this one.
 		const Vector3 axis = t.cross(t2);
