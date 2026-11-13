@@ -2649,10 +2649,10 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 		// bark wet all round, so the moss there is a near-continuous sleeve rather than patches,
 		// its upper edge wandering between about 15 and 60 cm and frayed into tongues; the
 		// patches only take over above it.
-		const float edge = 0.15f + 0.45f * moss_noise(p_pos * Vector3(2.6f, 0.4f, 2.6f), 0x636f6c6cu + uint32_t(seed));
+		const float edge = (0.15f + 0.45f * moss_noise(p_pos * Vector3(2.6f, 0.4f, 2.6f), 0x636f6c6cu + uint32_t(seed))) * CLAMP(p_amount * 1.5f, 0.35f, 1.0f);
 		const float fray = 0.2f * (moss_noise(p_pos * 9.0f, 0x66726179u) - 0.5f);
 		const float collar = 1.0f - Math::smoothstep(edge - 0.18f, edge + 0.18f, h + fray);
-		w = MAX(w, p_amount * collar * (0.8f + 0.6f * patch));
+		w = MAX(w, collar * MIN(1.0f, p_amount * 1.6f) * (0.95f + 0.25f * patch));
 	}
 	return p_clamp ? CLAMP(w, 0.0f, 1.0f) : w;
 }
