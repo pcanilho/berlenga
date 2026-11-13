@@ -27,6 +27,11 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
   *Branch collars: the hard seam where each limb enters the trunk becomes a soft flare with the bark running through.*
 
 - **Surface roots** (`root_flare`): buttress roots run out of the trunk flare, tapering as they sink into the soil, longer on shallow-rooted species.
+
+  ![The foot of an oak with surface roots running into leaf litter, raster](media/trees-roots.jpg)
+
+  *Surface roots: buttress roots spread from the trunk into the litter, with moss in the crotches between them.*
+
 - **Bark** (`bark_relief`): a procedural bark per species from six families (smooth, furrowed, plated, scaly, flaking, papery), with displaced relief on near trunks for raster and path tracing.
 - **Bark moss** (`moss_cover`): moss gathers at the foot of the stem and on the upper faces of limbs, thicker on rough bark and decayed wood, as real cushions near the camera.
 - **Climbers** (`climber`, `climber_cover`): ivy up the stem, clematis hanging from the limbs or honeysuckle twining round them, swaying with the tree.
