@@ -280,6 +280,21 @@ transmissions. A GrassField3D with `undergrowth_field` set to that field multipl
 suitability by one minus it, on the tile's 1 m light grid (CPU and GPU fill) and in the far cover
 map. In the grass bench a stand at shade 0.8 or more keeps 18 blades/m² against 109 in the open.
 
+The ground under a stand. With the sward gone the terrain showed its bare soil, darker than the
+turf round it, so a stand read as a dark hole. Under bracken the ground is its litter: dead fronds,
+rust-brown rachises and pinnae lying every way, a mat that outlasts the winter (Marrs and Watt
+2006); under bramble its fallen leaves over soil. `PlantSpecies.litter_color` (make_floor: bracken
+sRGB about (150, 100, 60) covering 0.95, bramble (115, 92, 64) covering 0.7) goes in a second
+ground map beside the grass cover (`grass_ground_litter`, premultiplied, stored as square roots
+like the far map), and `grass_ground()` lays it after the forest floor and before the turf, with
+streaks of fronds in drifts. `VegetationField3D.get_sward_litter_at()` gives it at a point.
+
+The margin. With the shade linear in the stand's density, the outer metre, where plants stand
+apart, lost its grass while the fronds still left gaps, a bare band in front of every stand. In
+the field grass keeps growing between the plants at a stand's thin margin; the sward goes only
+where the fronds close. The shade and litter now follow smoothstep(0.25, 0.85) of the density,
+so a stand's edge is grass between fronds and the litter starts under the closed canopy.
+
 ## References
 
 - Stace, *New Flora of the British Isles*, 4th ed., 2019.

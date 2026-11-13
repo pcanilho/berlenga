@@ -34,7 +34,7 @@ extends Node3D
 #   --turf=0         without the near turf layer
 #   --floor=0        without the litter on the ground under the crowns (cost comparison)
 #   --sward-shade=0  with --forest: the grass grows through the bracken and bramble stands (before shot)
-#   --undergrowth=bracken|bramble   a stand of it in the open meadow, framed from 6.5 m and 3.2 m up in side light; the sward
+#   --undergrowth=bracken|bramble   a stand of it in the open meadow, framed from 5 m and 3 m up in side light; the sward
 #                    thins under it (GrassField3D.undergrowth_field), unless --sward-shade=0
 #   --far=0          without the plants' colour on the ground beyond their range (before/after)
 #   --far            a high view over the land, to see plants thin out and the ground take over
@@ -313,6 +313,9 @@ func _ready() -> void:
 			usp.patch_cover = 0.22
 			usp.patch_seed = 71
 			usp.sward_shade = 0.0 if no_sward else (0.7 if bramble else 0.85)
+			# Its litter under the stands, as PlantGenerator.make_floor() sets it (dead fronds, leaf litter).
+			if not no_sward:
+				usp.litter_color = Color(0.17, 0.105, 0.05, 0.7) if bramble else Color(0.30, 0.13, 0.045, 0.95)
 			var ub := Biome.new()
 			ub.species = [usp]
 			ug_field = VegetationField3D.new()
@@ -502,7 +505,8 @@ func _frame_clearing() -> void:
 	cam.look_at(Vector3(at.x, height(at.x, at.y), at.y))
 
 # An undergrowth stand in the open meadow (--undergrowth): the most compact stand near the usual
-# view with tall grass all round it, seen across it in side light from 7 m.
+# view with tall grass all round it, seen across it in side light from 5 m and 3 m up (at eye height the fronds are
+# seen edge-on and sink into the grass).
 func _frame_undergrowth() -> void:
 	var usp: PlantSpecies = ug_field.biome.species[0]
 	var tall: PlantSpecies = grass.rules
@@ -532,10 +536,13 @@ func _frame_undergrowth() -> void:
 	# Side light: look across the sun's heading.
 	var sun_dir := -sun_node.global_transform.basis.z
 	var side := Vector3(-sun_dir.z, 0, sun_dir.x).normalized()
-	var eye := best + side * 6.5
-	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 3.2, eye.z)
-	cam.look_at(Vector3(best.x, height(best.x, best.z) + 0.2, best.z))
+	var eye := best + side * _env_f("UG_DIST", 5.0)
+	cam.position = Vector3(eye.x, height(eye.x, eye.z) + _env_f("UG_EYE", 3.0), eye.z)
+	cam.look_at(Vector3(best.x, height(best.x, best.z) + _env_f("UG_AT", 0.2), best.z))
 	print("GRASS_UNDERGROWTH stand=%s score=%.1f eye=%s sward=%.2f" % [str(best), best_score, str(cam.position), ug_field.get_sward_shade_at(best)])
+
+func _env_f(k: String, d: float) -> float:
+	return float(OS.get_environment(k)) if OS.get_environment(k) != "" else d
 
 # Stand at a wood's edge: the tree nearest the usual view, seen from the open side.
 func _frame_forest() -> void:
@@ -1223,6 +1230,7 @@ func _sward_shade_check(c: Vector2, open_density: float) -> void:
 	sp.patch_cover = 0.5
 	sp.patch_seed = 11
 	sp.sward_shade = 0.85
+	sp.litter_color = Color(0.30, 0.13, 0.045, 0.95)
 	var bb := Biome.new()
 	bb.species = [sp]
 	brk.biome = bb
@@ -1254,6 +1262,23 @@ func _sward_shade_check(c: Vector2, open_density: float) -> void:
 	var area := PI * 64.0 * hits / 4000.0
 	var under_density: float = under_n / maxf(area, 0.01)
 	_check("grass thins under bracken stands (undergrowth_field)", hits > 100 and under_density < open_density * 0.2, "%.0f /m2 under, %.0f open, %.1f m2" % [under_density, open_density, area])
+	# Their litter lies where the sward has gone, in its own colour; none on open meadow.
+	var lit_in := 0.0
+	var lit_n := 0
+	var lit_out := 0.0
+	var lit_col := Color(0, 0, 0)
+	for i in 400:
+		var q := Vector3(c.x + randf_range(-8.0, 8.0), 0, c.y + randf_range(-8.0, 8.0))
+		var l := brk.get_sward_litter_at(q)
+		var sh := brk.get_sward_shade_at(q)
+		if sh > 0.8:
+			lit_in += l.a
+			lit_col = l
+			lit_n += 1
+		elif sh <= 0.0:
+			lit_out = maxf(lit_out, l.a)
+	lit_in /= maxi(lit_n, 1)
+	_check("bracken litter under the stands, none in the open (litter_color)", lit_n > 10 and lit_in > 0.8 and lit_out == 0.0 and absf(lit_col.r - 0.30) < 0.01, "cover %.2f under (%d), %.2f open, colour %s" % [lit_in, lit_n, lit_out, str(lit_col)])
 	grass.undergrowth_field = NodePath()
 	brk.queue_free()
 

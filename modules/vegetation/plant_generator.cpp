@@ -5346,10 +5346,15 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		// Bracken and bramble shade the sward out under their stands (a GrassField3D reads it
 		// through undergrowth_field): bracken's fronds and litter leave little grass (Marrs and
 		// Watt 2006), bramble a little more.
+		// Their litter covers the ground under them: bracken's dead fronds lie as a deep mat of
+		// rust-brown rachises and pinnae that outlasts the winter (Marrs and Watt 2006), bramble
+		// drops its leaves over bare soil.
 		if (f.preset == P::PRESET_BRACKEN) {
 			sp->set_sward_shade(0.85f);
+			sp->set_litter_color(PlantSpecies::BRACKEN_LITTER);
 		} else if (f.preset == P::PRESET_BRAMBLE) {
 			sp->set_sward_shade(0.7f);
+			sp->set_litter_color(PlantSpecies::BRAMBLE_LITTER);
 		}
 		sp->set_density(f.density);
 		sp->set_scale_range(Vector2(f.scale_min, f.scale_max));

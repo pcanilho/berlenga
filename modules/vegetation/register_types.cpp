@@ -58,6 +58,7 @@ void initialize_vegetation_module(ModuleInitializationLevel p_level) {
 		const char *type;
 	} globals[] = {
 		{ "grass_ground_map", "sampler2D" },
+		{ "grass_ground_litter", "sampler2D" },
 		{ "grass_ground_rect", "vec4" },
 		{ "grass_ground_color", "vec4" },
 		{ "grass_ground_fade", "vec4" },

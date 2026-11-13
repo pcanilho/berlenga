@@ -1733,6 +1733,21 @@ float VegetationField3D::_shade_at(const Vector2 &p_xz, float *r_conifer) const 
 // rules, patches and the canopy's shade, as placement sees them), so a grass tile reads the same
 // value whenever it is built. Main thread (it looks up the data map and canopy field nodes).
 float VegetationField3D::get_sward_shade_at(const Vector3 &p_global_position) const {
+	return sward_at(p_global_position, nullptr);
+}
+
+Color VegetationField3D::get_sward_litter_at(const Vector3 &p_global_position) const {
+	Color litter;
+	sward_at(p_global_position, &litter);
+	return litter;
+}
+
+// The undergrowth's shade on the sward at a point and, if asked, its litter on the ground there:
+// the species' litter colours weighed by how much each covers, the cover adding as transmissions.
+float VegetationField3D::sward_at(const Vector3 &p_global_position, Color *r_litter) const {
+	if (r_litter) {
+		*r_litter = Color(0, 0, 0, 0);
+	}
 	if (biome.is_null() || !is_inside_tree()) {
 		return 0.0f;
 	}
@@ -1742,10 +1757,16 @@ float VegetationField3D::get_sward_shade_at(const Vector3 &p_global_position) co
 	}
 	const TypedArray<PlantSpecies> species = biome->get_species();
 	float transmit = 1.0f;
+	float bare = 1.0f;
+	Color litter_sum(0, 0, 0, 0);
 	float shade = -1.0f;
 	for (int i = 0; i < species.size(); i++) {
 		const Ref<PlantSpecies> sp = species[i];
-		if (sp.is_null() || sp->get_sward_shade() <= 0.0f || sp->get_density() <= 0.0f) {
+		if (sp.is_null() || sp->get_density() <= 0.0f) {
+			continue;
+		}
+		const float lit = r_litter ? sp->get_litter_color().a : 0.0f;
+		if (sp->get_sward_shade() <= 0.0f && lit <= 0.0f) {
 			continue;
 		}
 		float v = sp->get_density() * sp->get_suitability(map, p_global_position);
@@ -1763,7 +1784,21 @@ float VegetationField3D::get_sward_shade_at(const Vector3 &p_global_position) co
 			}
 			v *= sp->rule_weight(PlantSpecies::RULE_SHADE, shade);
 		}
-		transmit *= 1.0f - sp->get_sward_shade() * CLAMP(v, 0.0f, 1.0f);
+		// The sward goes only where the fronds close over it: at a stand's thin margin, where the
+		// plants stand apart, grass keeps growing between them and no litter mat forms, so the
+		// shade and litter follow the stand's cover, not its density linearly.
+		v = Math::smoothstep(0.25f, 0.85f, CLAMP(v, 0.0f, 1.0f));
+		transmit *= 1.0f - sp->get_sward_shade() * v;
+		if (lit > 0.0f && v > 0.0f) {
+			const Color lc = sp->get_litter_color();
+			const float c = lit * v;
+			bare *= 1.0f - c;
+			litter_sum += Color(lc.r * c, lc.g * c, lc.b * c, c);
+		}
+	}
+	if (r_litter && litter_sum.a > 0.0f) {
+		const float inv = 1.0f / litter_sum.a;
+		*r_litter = Color(litter_sum.r * inv, litter_sum.g * inv, litter_sum.b * inv, 1.0f - bare);
 	}
 	return 1.0f - transmit;
 }
@@ -2496,6 +2531,7 @@ void VegetationField3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_deadwood_count"), &VegetationField3D::get_deadwood_count);
 	ClassDB::bind_method(D_METHOD("get_deadwood_at", "global_position", "reach"), &VegetationField3D::get_deadwood_at, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_sward_shade_at", "global_position"), &VegetationField3D::get_sward_shade_at);
+	ClassDB::bind_method(D_METHOD("get_sward_litter_at", "global_position"), &VegetationField3D::get_sward_litter_at);
 	ClassDB::bind_method(D_METHOD("get_shade_at", "global_position"), &VegetationField3D::get_shade_at);
 	ClassDB::bind_method(D_METHOD("get_stand_shade_at", "global_position"), &VegetationField3D::get_stand_shade_at);
 	ClassDB::bind_static_method("VegetationField3D", D_METHOD("get_floor_shader_code"), &VegetationField3D::get_floor_shader_code);

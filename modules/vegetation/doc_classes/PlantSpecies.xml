@@ -220,6 +220,9 @@
 		<member name="spray_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 0.5)">
 			Waterfall spray potential (0 to 1, [method TerrainDataMap3D.get_spray_at]) where the species grows. By default no plant grows in a fall's soaked zone, where only mosses and wet rock hold; mosses from [method PlantGenerator.make_floor] take [code]Vector2(0, 1)[/code]. Ignored when the map has no geology.
 		</member>
+		<member name="litter_color" type="Color" setter="set_litter_color" getter="get_litter_color" default="Color(0, 0, 0, 0)">
+			The species' own litter on the ground under its stands, linear colour in rgb and how much of the ground it covers in alpha: bracken's mat of dead fronds and bramble's leaves (set by [method PlantGenerator.make_floor]). A [GrassField3D] with [member GrassField3D.undergrowth_field] lays it on the ground where the stands shade the sward out, so the ground there is litter instead of bare soil ([method VegetationField3D.get_sward_litter_at]).
+		</member>
 		<member name="sward_shade" type="float" setter="set_sward_shade" getter="get_sward_shade" default="0.0">
 			How much of the grass a stand of this species shades out under it, 0 to 1: bracken and bramble (0.85 and 0.7 in [method PlantGenerator.make_floor]) leave little sward beneath them. A [GrassField3D] reads it through [member GrassField3D.undergrowth_field] and [method VegetationField3D.get_sward_shade_at].
 		</member>

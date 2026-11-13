@@ -100,6 +100,7 @@ class GrassField3D : public Node3D {
 	class VegetationField3D *_get_canopy(const PlantSpecies *p_rules) const;
 	class VegetationField3D *_get_undergrowth() const;
 	Ref<ImageTexture> ground_texture;
+	Ref<ImageTexture> ground_litter_texture;
 
 	// Trample field (docs/ideas/grass.md, contact): bend per texel around the camera, pressed by
 	// movers and relaxing back, so blades stay stateless and trails persist.

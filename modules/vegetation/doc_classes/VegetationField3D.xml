@@ -107,11 +107,18 @@
 				The shade the ground gets from the stand: [method get_shade_at] weighed by how closed the canopy is over about 5 m around, on half-metre cells after [method populate]. Under a lone open-grown tree it stays low, so the sward and no litter mat stay there; under a closed canopy it equals the shade. [GrassField3D] reads it for its shade rule, and the forest floor's litter follows it.
 			</description>
 		</method>
+		<method name="get_sward_litter_at" qualifiers="const">
+			<return type="Color" />
+			<param index="0" name="global_position" type="Vector3" />
+			<description>
+				The field's undergrowth litter at a point ([member PlantSpecies.litter_color]): the species' litter colours weighed by how much each covers, in rgb, and the combined cover in alpha. Weighed as [method get_sward_shade_at] is. Main thread.
+			</description>
+		</method>
 		<method name="get_sward_shade_at" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
 			<description>
-				How much of the grass the field's tall undergrowth shades out at a point, 0 to 1: each species with [member PlantSpecies.sward_shade] weighed by where it grows (its density, rules, patches and shade rule), not by the placed plants, so it does not change as the field streams. [GrassField3D] reads it through [member GrassField3D.undergrowth_field]. Main thread.
+				How much of the grass the field's tall undergrowth shades out at a point, 0 to 1: each species with [member PlantSpecies.sward_shade] weighed by where it grows (its density, rules, patches and shade rule, eased so a stand's sparse margin keeps its grass), not by the placed plants, so it does not change as the field streams. [GrassField3D] reads it through [member GrassField3D.undergrowth_field]. Main thread.
 			</description>
 		</method>
 		<method name="populate">

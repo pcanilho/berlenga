@@ -1339,6 +1339,7 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 	}
 	Vector4 rect;
 	Ref<Image> img;
+	Ref<Image> litter_img;
 	if (p_map) {
 		const int res = MIN(p_map->get_resolution(), 1024);
 		const float size = p_map->get_size();
@@ -1353,6 +1354,15 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 		Vector<uint8_t> data;
 		data.resize(res * res);
 		uint8_t *w = data.ptrw();
+		// The undergrowth's litter where its stands have shaded the sward out (bracken's dead
+		// fronds), as premultiplied colour stored as its square root (the shader squares it back).
+		Vector<uint8_t> ldata;
+		uint8_t *lw = nullptr;
+		bool any_litter = false;
+		if (under) {
+			ldata.resize(res * res * 4);
+			lw = ldata.ptrw();
+		}
 		for (int z = 0; z < res; z++) {
 			for (int x = 0; x < res; x++) {
 				const Vector3 p(rect.x + (x + 0.5f) * size / res, 0.0f, rect.y + (z + 0.5f) * size / res);
@@ -1360,13 +1370,24 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 				if (canopy && suit > 0.0f) {
 					suit *= r->rule_weight(PlantSpecies::RULE_SHADE, canopy->get_stand_shade_at(p));
 				}
-				if (under && suit > 0.0f) {
-					suit *= 1.0f - under->get_sward_shade_at(p);
+				if (under) {
+					Color lc;
+					const float sh = under->sward_at(p, &lc);
+					suit *= 1.0f - sh;
+					uint8_t *o = lw + (z * res + x) * 4;
+					o[0] = uint8_t(CLAMP(Math::sqrt(lc.r * lc.a), 0.0f, 1.0f) * 255.0f + 0.5f);
+					o[1] = uint8_t(CLAMP(Math::sqrt(lc.g * lc.a), 0.0f, 1.0f) * 255.0f + 0.5f);
+					o[2] = uint8_t(CLAMP(Math::sqrt(lc.b * lc.a), 0.0f, 1.0f) * 255.0f + 0.5f);
+					o[3] = uint8_t(CLAMP(lc.a, 0.0f, 1.0f) * 255.0f + 0.5f);
+					any_litter = any_litter || o[3] > 0;
 				}
 				w[z * res + x] = uint8_t(CLAMP(suit, 0.0f, 1.0f) * 255.0f + 0.5f);
 			}
 		}
 		img = Image::create_from_data(res, res, false, Image::FORMAT_L8, data);
+		if (any_litter) {
+			litter_img = Image::create_from_data(res, res, false, Image::FORMAT_RGBA8, ldata);
+		}
 	} else {
 		// No map: grass everywhere.
 		rect = Vector4(-1e6f, -1e6f, 2e6f, 2e6f);
@@ -1374,9 +1395,18 @@ void GrassField3D::_bake_ground(TerrainDataMap3D *p_map) {
 		data.push_back(255);
 		img = Image::create_from_data(1, 1, false, Image::FORMAT_L8, data);
 	}
+	if (litter_img.is_null()) {
+		// No undergrowth litter: one clear texel.
+		Vector<uint8_t> none;
+		none.resize(4);
+		memset(none.ptrw(), 0, 4);
+		litter_img = Image::create_from_data(1, 1, false, Image::FORMAT_RGBA8, none);
+	}
 	ground_texture = ImageTexture::create_from_image(img);
+	ground_litter_texture = ImageTexture::create_from_image(litter_img);
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->global_shader_parameter_set("grass_ground_map", ground_texture->get_rid());
+	rs->global_shader_parameter_set("grass_ground_litter", ground_litter_texture->get_rid());
 	rs->global_shader_parameter_set("grass_ground_rect", rect);
 	rs->global_shader_parameter_set("grass_ground_color", Vector4(ground_tint.r, ground_tint.g, ground_tint.b, ground_tint.a));
 	rs->global_shader_parameter_set("grass_ground_dry", Vector4(dry_color.r, dry_color.g, dry_color.b, _dryness()));
@@ -1393,6 +1423,7 @@ String GrassField3D::get_ground_shader_code() {
 // streaks of out-of-focus blades, dead thatch, and the dark of the roots. A gap in the carpet then
 // shows more grass, not ground.
 global uniform sampler2D grass_ground_map : filter_linear;
+global uniform sampler2D grass_ground_litter : hint_default_black, filter_linear; // sqrt of premultiplied rgb, a: cover.
 global uniform vec4 grass_ground_rect;
 global uniform vec4 grass_ground_color; // rgb: the sward's root colour; a: how much it covers the soil.
 global uniform vec4 grass_ground_dry; // rgb: thatch colour; a: the grass's dryness.
@@ -1458,10 +1489,36 @@ float grass_ground_specular(vec3 world_pos, float specular) {
 	return mix(specular, min(specular, 0.1), grass_ground_weight(world_pos));
 }
 
-// The ground's albedo under the vegetation: litter where the canopy closes (forest_floor()), then
-// the sward's turf where grass grows.
+// The undergrowth's litter where its stands shade the sward out (PlantSpecies.litter_color):
+// bracken's dead fronds as a mat of rachises and pinnae lying every way in drifts, a little
+// darker in the gaps between them, so the ground under a stand is litter, not bare soil.
+vec3 grass_ground_undergrowth(vec3 world_pos, vec3 albedo) {
+	if (grass_ground_rect.z <= 0.0) {
+		return albedo;
+	}
+	vec2 uv = (world_pos.xz - grass_ground_rect.xy) / grass_ground_rect.zw;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return albedo;
+	}
+	vec4 l = textureLod(grass_ground_litter, uv, 0.0);
+	if (l.a <= 0.0) {
+		return albedo;
+	}
+	vec3 c = l.rgb * l.rgb / l.a;
+	vec2 xz = world_pos.xz;
+	float ang = grass_noise(xz * 0.9 + 3.7) * 6.2832;
+	vec2 dir = vec2(cos(ang), sin(ang));
+	vec2 q = vec2(dot(xz, dir), dot(xz, vec2(-dir.y, dir.x)));
+	float strands = grass_noise(q * vec2(6.0, 38.0)) * 0.6 + grass_noise(q * vec2(2.5, 15.0) + 5.3) * 0.4;
+	c *= 0.7 + 0.55 * strands + 0.15 * (grass_noise(xz * 0.8) - 0.5);
+	return mix(albedo, c, l.a);
+}
+
+// The ground's albedo under the vegetation: litter where the canopy closes (forest_floor()), the
+// undergrowth's litter under its stands, then the sward's turf where grass grows.
 vec3 grass_ground(vec3 world_pos, vec3 albedo) {
 	albedo = forest_floor(world_pos, albedo);
+	albedo = grass_ground_undergrowth(world_pos, albedo);
 	float cover = grass_ground_cover(world_pos);
 	if (cover <= 0.0) {
 		return albedo;

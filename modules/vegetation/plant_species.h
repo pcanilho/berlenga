@@ -78,6 +78,14 @@ private:
 	float spacing = 2.0f;
 	float footprint = 0.5f;
 	float sward_shade = 0.0f; // How much of the grass a stand of it shades out under it (bracken, bramble).
+public:
+	// Ground litter colours for undergrowth (linear): dead bracken fronds, sRGB about (150, 100, 60);
+	// bramble's leaf litter over soil, sRGB about (115, 92, 64), not covering all of it.
+	static inline const Color BRACKEN_LITTER = Color(0.30f, 0.13f, 0.045f, 0.95f);
+	static inline const Color BRAMBLE_LITTER = Color(0.17f, 0.105f, 0.05f, 0.7f);
+
+private:
+	Color litter_color = Color(0, 0, 0, 0); // Its own litter on the ground under its stands (rgb) and how much it covers (a).
 	float density = 1.0f;
 	Vector2 scale_range = Vector2(0.8f, 1.2f);
 	float align_to_ground = 0.0f;
@@ -162,6 +170,8 @@ public:
 	float get_footprint() const { return footprint; }
 	void set_sward_shade(float p_shade);
 	float get_sward_shade() const { return sward_shade; }
+	void set_litter_color(const Color &p_color);
+	Color get_litter_color() const { return litter_color; }
 	void set_density(float p_density);
 	float get_density() const { return density; }
 	void set_scale_range(const Vector2 &p_range);

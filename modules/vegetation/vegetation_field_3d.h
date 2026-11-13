@@ -390,6 +390,10 @@ public:
 	float get_shade_at(const Vector3 &p_global_position) const;
 	float get_stand_shade_at(const Vector3 &p_global_position) const;
 	float get_sward_shade_at(const Vector3 &p_global_position) const;
+	// The undergrowth's own litter under its stands (PlantSpecies.litter_color): rgb colour, a cover.
+	Color get_sward_litter_at(const Vector3 &p_global_position) const;
+	// Both at once (the shade returned, the litter in r_litter when given).
+	float sward_at(const Vector3 &p_global_position, Color *r_litter) const;
 	float get_conifer_at(const Vector3 &p_global_position) const;
 	// Leaf fall from the placed crowns, 0 to 1, with a drift past their edges (PlantSpecies.RULE_LITTER).
 	static constexpr float LITTER_SPREAD = 6.0f; // Metres: the drift's e-folding distance past a crown's edge.
