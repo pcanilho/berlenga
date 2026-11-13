@@ -719,6 +719,14 @@ Our design follows the same split and reuses what the fork has:
    bones are frozen and the part becomes a PhysX rigid body (Blast for trunks later). Felled
    trees and logs are PhysX bodies with the same capsules.
 
+Fixes 13 Nov: the basal hollow opens as a pointed arch, widest at the soil, with a broad callus
+roll centred just inside the rim; past the rim the wall is red-brown rotten wood with no moss.
+Features take their bearing and push from the ring's centre, not the vertex normal (the relief's
+normals swing by tens of degrees, so edge vertices fell in or out at random as pale blades).
+Rebuilt normals take one winding sign per part: flipped per vertex against the old normal, the
+steep side walls flipped at random and shaded as dark and sky-blue patches under the path
+tracer. Tangents are squared to the new normals.
+
 ### 7b. As built
 
 `TreeGenerator.get_collision_capsules()` (also the mesh meta `tree_colliders`): wood thicker
