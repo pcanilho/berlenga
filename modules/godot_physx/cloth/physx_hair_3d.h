@@ -143,6 +143,9 @@ class PhysXHair3D : public Node3D {
 	float card_fade_set = -1.0f; // the fade the materials hold
 	float card_transition = 0.5f; // s for the cross-fade
 	bool thick_strands = true; // far hair as thick strands (EGSR 2025) rather than textured cards
+	float thick_width_min = 0.0f; // the clumps' narrowest and widest full width (m), 0: no clumps
+	float thick_width_max = 0.0f;
+	bool thick_px_set = false;
 	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
 	struct BodyCache {
 		ObjectID mesh_instance;
