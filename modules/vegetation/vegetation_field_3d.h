@@ -93,6 +93,7 @@ class VegetationField3D : public Node3D {
 		float opacity = 0.0f;
 		float top = 0.0f; // Crown top above the ground, metres.
 		float conifer = 0.0f; // 1 for a needle-leaved crown.
+		float stem = 0.0f; // The stem's foot at the soil line (flare and root ridges), metres from its centre.
 	};
 	NodePath weather_map; // A WeatherMap3D that gets the placed canopy as its canopy_map.
 	Vector2 litter_wind; // Downwind lean of the leaf drift; zero: from the weather map's wind.
@@ -110,6 +111,7 @@ class VegetationField3D : public Node3D {
 	};
 	Ref<Texture2D> far_texture;
 	static constexpr float CROWN_CELL = 8.0f;
+	static constexpr float STEM_MARGIN = 0.03f; // Ground plants root this far clear of a stem's foot.
 	LocalVector<Crown> crowns;
 	// Shade weighed by stand closure and the conifer share, on half-metre cells (_build_stand()).
 	LocalVector<float> stand_shade;
@@ -118,6 +120,8 @@ class VegetationField3D : public Node3D {
 	Rect2 stand_rect;
 	HashMap<Vector2i, LocalVector<int>> crown_grid;
 	float max_crown_radius = 0.0f;
+	bool _in_stem(const Vector2 &p_xz, float p_margin) const;
+	static float _foot_radius(const Ref<Mesh> &p_mesh, float p_cap);
 	float _shade_at(const Vector2 &p_xz, float *r_conifer = nullptr) const; // No lock: main thread, or under crown_lock.
 
 	Ref<Biome> biome;
@@ -136,6 +140,7 @@ class VegetationField3D : public Node3D {
 		Pattern pattern;
 		float footprint = 0.0f;
 		float canopy_top = 0.0f;
+		float stem_foot = 0.0f; // Crowned species: the foot radius of its first mesh (other plants keep out of it).
 		float crown_max = 0.0f; // The largest crown radius it can place.
 		float halo = 0.0f; // How far around a tile it must be placed for later species.
 		Color far_color; // Linear; alpha: how much ground it hides far away.

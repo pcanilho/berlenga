@@ -294,6 +294,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 		const float canopy_r = ps.sp->get_canopy_radius();
 		if (canopy_r > 0.0f && ps.meshes.size() > 0 && ps.meshes[0].is_valid()) {
 			ps.canopy_top = ps.meshes[0]->get_aabb().get_end().y;
+			ps.stem_foot = _foot_radius(ps.meshes[0], ps.footprint > 0.0f ? ps.footprint : 1.0f);
 		}
 		ps.crown_max = canopy_r * MAX(ps.sp->get_scale_range().x, ps.sp->get_scale_range().y);
 		r_setup.crown_max = MAX(r_setup.crown_max, ps.crown_max);
@@ -395,6 +396,32 @@ float crown_shade(const Grid &p_grid, const Crowns &p_crowns, float p_reach, flo
 		*r_conifer = needles / weight;
 	}
 	return 1.0f - transmit;
+}
+
+// Whether a point lies within a stem's foot (Crown::stem, plus a margin), from crowns in a hash
+// grid of CROWN_CELL cells; feet are under 2 m across, so the 3 x 3 cells round the point hold them.
+template <typename Grid, typename Crowns>
+bool stem_in(const Grid &p_grid, const Crowns &p_crowns, const Vector2 &p_xz, float p_margin, float p_cell) {
+	if (p_crowns.is_empty()) {
+		return false;
+	}
+	const Vector2i gc(int(Math::floor(p_xz.x / p_cell)), int(Math::floor(p_xz.y / p_cell)));
+	for (int dz = -1; dz <= 1; dz++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			const LocalVector<int> *bucket = p_grid.getptr(gc + Vector2i(dx, dz));
+			if (!bucket) {
+				continue;
+			}
+			for (int idx : *bucket) {
+				const auto &c = p_crowns[idx];
+				const float r = c.stem + p_margin;
+				if (c.stem > 0.0f && c.xz.distance_squared_to(p_xz) < r * r) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
 }
 
 // Leaf fall from the crowns (docs/ideas/forest-floor.md, step 6, "Where it lands"): every crown
@@ -715,6 +742,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (rank >= keep) {
 						continue;
 					}
+					// Stems: ground plants keep out of the trunks' feet (flare and root ridges), this
+					// field's and the canopy field's; other woody species keep their footprints.
+					if (canopy_r <= 0.0f && !is_log && (stem_in(local_crown_grid, local_crowns, xz, STEM_MARGIN, CROWN_CELL) || (p_setup.other && p_setup.other->_in_stem(xz, STEM_MARGIN)))) {
+						continue;
+					}
 					// Footprints of earlier species.
 					bool blocked = false;
 					const Vector2i gc(int(Math::floor(xz.x / grid_cell)), int(Math::floor(xz.y / grid_cell)));
@@ -747,7 +779,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					const float r = pat.randoms[i];
 					const float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f));
 					if (canopy_r > 0.0f) {
-						const Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f };
+						const Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f, ps.stem_foot * scale };
 						local_crowns.push_back(crown);
 						local_crown_grid[Vector2i(int(Math::floor(xz.x / CROWN_CELL)), int(Math::floor(xz.y / CROWN_CELL)))].push_back(local_crowns.size() - 1);
 						if (out) {
@@ -1645,6 +1677,50 @@ Error VegetationField3D::populate() {
 // rim, where diffuse sky light still reaches under the edge; overlapping crowns multiply their
 // transmission. Plants then take it as a shade rule, the way field botany ranks them by light
 // (Ellenberg's L values: bilberry, ferns and mosses in shade, meadow grasses in the open).
+// The radius of a stem's foot at the soil line: the farthest point from the axis where the
+// surface crosses 2 cm above the ground (the flare and root ridges reach out there; TreeGenerator, trees.md
+// 5d), capped at p_cap (the species' footprint) so a shrub's low branches do not count. Measured
+// once per mesh and kept on it.
+float VegetationField3D::_foot_radius(const Ref<Mesh> &p_mesh, float p_cap) {
+	if (p_mesh.is_null()) {
+		return 0.0f;
+	}
+	static const StringName key = SNAME("_vegetation_foot_radius");
+	if (p_mesh->has_meta(key)) {
+		return MIN(float(p_mesh->get_meta(key)), p_cap);
+	}
+	// Where the surface crosses the soil line (2 cm up): every triangle edge that spans it.
+	constexpr float soil = 0.02f;
+	float r = 0.0f;
+	for (int si = 0; si < p_mesh->get_surface_count(); si++) {
+		const Array arrays = p_mesh->surface_get_arrays(si);
+		if (arrays.size() <= Mesh::ARRAY_INDEX) {
+			continue;
+		}
+		const PackedVector3Array v = arrays[Mesh::ARRAY_VERTEX];
+		const PackedInt32Array idx = arrays[Mesh::ARRAY_INDEX];
+		const int n = idx.is_empty() ? v.size() : idx.size();
+		auto vert = [&](int i) { return v[idx.is_empty() ? i : idx[i]]; };
+		for (int t = 0; t + 2 < n; t += 3) {
+			for (int e = 0; e < 3; e++) {
+				const Vector3 a = vert(t + e), b = vert(t + (e + 1) % 3);
+				if ((a.y - soil) * (b.y - soil) > 0.0f || a.y == b.y) {
+					continue;
+				}
+				const Vector3 c = a.lerp(b, (soil - a.y) / (b.y - a.y));
+				r = MAX(r, Vector2(c.x, c.z).length());
+			}
+		}
+	}
+	p_mesh->set_meta(key, r);
+	return MIN(r, p_cap);
+}
+
+bool VegetationField3D::_in_stem(const Vector2 &p_xz, float p_margin) const {
+	RWLockRead guard(crown_lock);
+	return stem_in(crown_grid, crowns, p_xz, p_margin, CROWN_CELL);
+}
+
 float VegetationField3D::_shade_at(const Vector2 &p_xz, float *r_conifer) const {
 	return crown_shade(crown_grid, crowns, max_crown_radius * 1.4f, CROWN_CELL, p_xz, r_conifer);
 }

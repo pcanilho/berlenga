@@ -627,11 +627,23 @@ func _deadwood_checks() -> void:
 	logs.footprint = 0.0
 	logs.scale_range = Vector2(1, 1)
 	logs.set_meta("deadwood", true)
+	# Stand-in trunks (a 25 cm stem from just under the soil): the ground plants keep out of their feet.
+	var trunk_mesh := CylinderMesh.new()
+	trunk_mesh.top_radius = 0.25
+	trunk_mesh.bottom_radius = 0.25
+	trunk_mesh.height = 3.0
+	var trunks := PlantSpecies.new()
+	trunks.meshes = [_mesh(trunk_mesh, 1.4, Color(0.3, 0.25, 0.2))]
+	trunks.spacing = 6.0
+	trunks.footprint = 1.0
+	trunks.scale_range = Vector2(1, 1)
+	trunks.canopy_radius = 3.0
+	trunks.canopy_opacity = 0.5
 	var wood := VegetationField3D.new()
 	wood.name = "Wood"
 	wood.populate_on_ready = false
 	var wb := Biome.new()
-	wb.species = [logs]
+	wb.species = [logs, trunks]
 	wood.biome = wb
 	add_child(wood)
 	wood.data_map = wood.get_path_to(dm)
@@ -680,6 +692,17 @@ func _deadwood_checks() -> void:
 			on_ok += 1
 		else:
 			on_bad += 1
+	var in_stem := 0
+	var near_stem := 0
+	var stems: Array = wood.get_placements(1)
+	for p in ground.get_placements(0):
+		for t in stems:
+			var d := Vector2(p.x - t.x, p.z - t.z).length()
+			if d < 0.25:
+				in_stem += 1
+			elif d < 0.6:
+				near_stem += 1
+	_check("deadwood: ground plants keep out of the canopy field's trunks, and grow up to them", stems.size() > 3 and in_stem == 0 and near_stem > 0, [stems.size(), in_stem, near_stem])
 	var beside_ok := 0
 	var beside_bad := 0
 	for p in ground.get_placements(2):
