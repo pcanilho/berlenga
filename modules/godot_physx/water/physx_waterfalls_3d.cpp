@@ -680,6 +680,12 @@ void PhysXWaterfalls3D::_build_face(const Dictionary &p_fall, Object *p_source) 
 	if (mid.speed.size() > 0) {
 		face.impact_speed = mid.speed[mid.speed.size() - 1];
 	}
+	{
+		const Column &a = face.columns[0];
+		const Column &b = face.columns[face.columns.size() - 1];
+		face.foot_width = MAX(a.points[a.points.size() - 1].distance_to(b.points[b.points.size() - 1]) - 2.0f * wet_margin, width);
+	}
+	face.tall_veil = spread_rate > 0.0f;
 	_sky_spec(face, main_col, p_source);
 	faces.push_back(face);
 }
@@ -1495,6 +1501,31 @@ void PhysXWaterfalls3D::_build_effects() {
 		return;
 	}
 	const Transform3D inv = (is_inside_tree() ? get_global_transform() : get_transform()).affine_inverse();
+	// The veil of a tall drop: mist from the impact, blown out along the pool by the air the falling water drags
+	// down, and shed by the clumps all the way down (a share fed evenly up the column). The atomised share grows
+	// with the square of the landing speed, as the contact falls', and with the length of the fall the drops are
+	// stripped over.
+	auto make_veil = [&](const Basis &p_basis, const Vector3 &p_foot, float p_height, float p_discharge, float p_speed, float p_width) {
+		const float reach = CLAMP(6.0f + 0.3f * p_height, 8.0f, 60.0f);
+		const float side = p_width + 2.0f * reach;
+		const float tall = CLAMP(0.5f * p_height + 20.0f, 20.0f, 200.0f);
+		PhysXWaterMist3D *m = memnew(PhysXWaterMist3D);
+		m->set_name("FallVeil");
+		m->set_transform(Transform3D(p_basis, inv.xform(p_foot)));
+		m->set_size(Vector3(side, tall, side));
+		m->set_cell_size(MAX(0.5f, MAX(side, tall) / 64.0f));
+		m->set_source_position(Vector3(0.0f, 1.0f, 0.0f));
+		const float half = 0.5f * p_width + 1.0f;
+		m->set_source_extents(Vector3(half, 1.0f, half));
+		m->set_column_height(tall - 8.0f);
+		m->set_column_share(0.35f);
+		m->set_jet_direction(Vector3(0.0f, 0.0f, -1.0f));
+		m->set_jet_speed(MIN(0.3f * p_speed, 12.0f));
+		const float vv = MAX(p_speed, 1.0f) / 10.0f;
+		m->set_source_rate(mist_amount * 1e-5f * vv * vv * 1000.0f * p_discharge * 1000.0f * (1.0f + p_height / 30.0f)); // g/s
+		add_child(m, false, INTERNAL_MODE_BACK);
+		effects.push_back(m);
+	};
 	for (const Face &face : faces) {
 		if (face.plunge >= 0) {
 			continue; // a free jet's sheet: its column, spray and veil follow
@@ -1525,6 +1556,11 @@ void PhysXWaterfalls3D::_build_effects() {
 			GPUParticles3D *pf = make_spray_puffs(Transform3D(lb, inv.xform(face.foot)), v, face.width, power);
 			add_child(pf, false, INTERNAL_MODE_BACK);
 			effects.push_back(pf);
+		}
+		// A tall drop handed over from a free jet throws the veil its column would have.
+		if (mist && face.tall_veil && face.discharge >= mist_min_discharge) {
+			make_veil(lb, face.foot, face.height, face.discharge, face.impact_speed, face.foot_width);
+			continue;
 		}
 		// A trickle down the rock (spring melt, a side stream) wets it but throws no measurable mist.
 		if (mist && face.discharge >= mist_min_discharge) {
@@ -1573,29 +1609,7 @@ void PhysXWaterfalls3D::_build_effects() {
 			effects.push_back(pf);
 		}
 		if (mist && pl.discharge >= mist_min_discharge) {
-			// The veil: mist from the impact, blown out along the pool by the air the column drags down, and shed
-			// by the clumps all the way down (a share fed evenly up the column). The atomised share grows with the
-			// square of the landing speed, as the contact falls', and with the length of the fall the drops are
-			// stripped over.
-			const float reach = CLAMP(6.0f + 0.3f * pl.height, 8.0f, 60.0f);
-			const float side = pl.column_width + 2.0f * reach;
-			const float tall = CLAMP(0.5f * pl.height + 20.0f, 20.0f, 200.0f);
-			PhysXWaterMist3D *m = memnew(PhysXWaterMist3D);
-			m->set_name("FallVeil");
-			m->set_transform(Transform3D(lb, inv.xform(pl.foot)));
-			m->set_size(Vector3(side, tall, side));
-			m->set_cell_size(MAX(0.5f, MAX(side, tall) / 64.0f));
-			m->set_source_position(Vector3(0.0f, 1.0f, 0.0f));
-			const float half = 0.5f * pl.column_width + 1.0f;
-			m->set_source_extents(Vector3(half, 1.0f, half));
-			m->set_column_height(tall - 8.0f);
-			m->set_column_share(0.35f);
-			m->set_jet_direction(Vector3(0.0f, 0.0f, -1.0f));
-			m->set_jet_speed(MIN(0.3f * v, 12.0f));
-			const float vv = MAX(v, 1.0f) / 10.0f;
-			m->set_source_rate(mist_amount * 1e-5f * vv * vv * 1000.0f * pl.discharge * 1000.0f * (1.0f + pl.height / 30.0f)); // g/s
-			add_child(m, false, INTERNAL_MODE_BACK);
-			effects.push_back(m);
+			make_veil(lb, pl.foot, pl.height, pl.discharge, v, pl.column_width);
 		}
 	}
 }

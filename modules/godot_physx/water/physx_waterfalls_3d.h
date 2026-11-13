@@ -73,6 +73,8 @@ public:
 		PackedFloat32Array ledge_speed; // m/s of the water striking each
 		Vector3 foot;
 		int plunge = -1; // a free jet's sheet: its index in plunges
+		float foot_width = 0.0f; // the water's width where it lands (wider than at the lip where it fans out)
+		bool tall_veil = false; // a tall drop handed from a plunge: it throws the veil a free column does
 		PackedFloat32Array sky_spec; // per row: share of the reflected sky the terrain leaves open (1 without heights)
 	};
 	// A tall free fall (plunge): the jet leaves the lip as a sheet, breaks up after L_b = 6 q^0.32 m (Horeni 1956)
