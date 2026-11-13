@@ -2644,6 +2644,30 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 	const float top = CLAMP((up - 0.35f) / 0.5f, 0.0f, 1.0f) * 0.75f;
 	const float patch = 0.65f * moss_noise(p_pos * 2.2f, 0x6d6f7373u + uint32_t(seed)) + 0.35f * moss_noise(p_pos * 7.0f, 0x6d6f7374u);
 	float w = p_amount * MAX(foot, top) * (1.9f * patch - 0.25f);
+	float bare = 0.0f;
+	if (foot_roots.on && !fallen && !fallen_branch && h < 0.6f) {
+		// Out on a surface root's upper face the bark shows (it is drier, scuffed and shed of
+		// litter); the moss gathers in the crotches between roots and round the stem's foot.
+		const Vector2 rel(p_pos.x - foot_roots.axis.x, p_pos.z - foot_roots.axis.z);
+		const float r = rel.length();
+		const float out = (r - foot_roots.trunk_r * 1.25f);
+		if (out > 0.0f) {
+			const float az = Math::atan2(rel.y, rel.x);
+			for (uint32_t k = 0; k < foot_roots.az.size(); k++) {
+				if (foot_roots.len[k] <= 0.0f) {
+					continue;
+				}
+				// About where along the root this distance falls (the root's centre runs out
+				// to the flare's edge plus its length).
+				const float t = CLAMP((r - foot_roots.trunk_r * 1.1f - foot_roots.width) / foot_roots.len[k], 0.0f, 1.0f);
+				const float lat = Math::abs(Math::angle_difference(az, foot_roots.az[k] + foot_roots.bend[k] * t * t)) * r;
+				const float on_root = 1.0f - Math::smoothstep(1.0f, 2.0f, lat / foot_roots.width);
+				bare = MAX(bare, on_root * Math::smoothstep(0.0f, 0.2f, out / foot_roots.len[k]) * Math::smoothstep(-0.4f, 0.3f, p_normal.y));
+			}
+			// Patchy, not a clean line: moss creeps up the roots' sides in tongues.
+			bare *= Math::smoothstep(0.0f, 0.4f, patch + 0.3f * bare);
+		}
+	}
 	if (!fallen && !fallen_branch) {
 		// The collar at the foot (trees.md 5d; Studlar 1982): stemflow and splash keep the lowest
 		// bark wet all round, so the moss there is a near-continuous sleeve rather than patches,
@@ -2653,6 +2677,7 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 		const float fray = 0.2f * (moss_noise(p_pos * 9.0f, 0x66726179u) - 0.5f);
 		const float collar = 1.0f - Math::smoothstep(edge - 0.18f, edge + 0.18f, h + fray);
 		w = MAX(w, collar * MIN(1.0f, p_amount * 1.6f) * (0.95f + 0.25f * patch));
+		w *= 1.0f - 0.9f * bare;
 	}
 	return p_clamp ? CLAMP(w, 0.0f, 1.0f) : w;
 }
@@ -4590,6 +4615,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	// moss shell take the same map (bearing from the axis, not the normals, so they agree).
 	const float root_top = trunk_r * 1.2f * MIN(1.0f, 0.5f + flare);
 	const float root_sink = 0.3f;
+	// Each root's radius where it leaves the flare; round or a little wider than tall in section
+	// (Eis 1974: laterals are oval near the stem), sinking into the soil while still thick.
+	const float root_r0 = trunk_r * 0.36f * MIN(1.0f, 0.5f + flare);
+	foot_roots.on = roots_on && !fallen && !fallen_branch && flare > 0.0f && !nodes.is_empty();
+	foot_roots.axis = nodes.is_empty() ? Vector3() : nodes[0].start;
+	foot_roots.trunk_r = trunk_r;
+	foot_roots.width = root_r0 * 1.15f;
+	foot_roots.az = root_az;
+	foot_roots.len = root_len;
+	foot_roots.bend = root_bend;
 	auto root_collar = [&](Builder &r_b, const Vector4i &p_part, int p_sides, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, bool p_colour) {
 		const Vector3 p_axis = p_pts[0];
 		// Down to the sunk base ring, so the swept rings stay spread over the whole root.
@@ -4602,11 +4637,17 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// The bark relief the tube was displaced by, taken off before the sweep and put back
 		// after it, faded out at the swept surface's own soil line: kept at the height it was
 		// built at, the furrows of the roots' tips stood out of the ground as slivers.
-		LocalVector<float> relief_off;
+		LocalVector<float> relief_off, root_w, root_sda, root_ratio;
 		relief_off.resize(p_part.w);
+		root_w.resize(p_part.w);
+		root_sda.resize(p_part.w);
+		root_ratio.resize(p_part.w);
 		for (int i = 0; i < p_part.w; i++) {
 			moved[i] = 0;
 			relief_off[i] = 0.0f;
+			root_w[i] = 0.0f;
+			root_sda[i] = 0.0f;
+			root_ratio[i] = 1.0f;
 			const int v = p_part.z + i;
 			const float h = vv[v].y - ground_y;
 			if (h > 6.0f * trunk_r) {
@@ -4638,29 +4679,33 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				}
 				if (best >= 0) {
 					const float t = CLAMP((root_top - h) / (root_top + sink_here), 0.0f, 1.0f);
-					best_da = Math::abs(Math::angle_difference(az, root_az[best] + root_bend[best] * t * t));
-					const float d_root = r_t + root_push(root_top, root_az[best]) + root_len[best] * Math::pow(t, 1.15f);
-					// Steep buttress at the stem, then the root runs low (about its own radius) and dives.
-					const float y_root = (root_top - 0.22f * trunk_r) * (1.0f - t) * (1.0f - t) + 0.22f * trunk_r * (1.0f - Math::smoothstep(0.6f, 1.0f, t)) - 0.45f * trunk_r * Math::smoothstep(0.7f, 1.0f, t);
-					const float hw = trunk_r * 0.42f * (1.0f - 0.35f * t);
-					const float q = best_da * d_root / hw;
-					// A rounded crown with steeper flanks, not a tent.
-					const float w = q < 1.0f ? Math::pow(1.0f - q * q, 0.75f) : 0.0f;
-					// The flanks: out to the root's distance quickly, and down. Blending the
-					// position straight back to the stem's wall spread thin webs that met the
-					// soil at a grazing angle in a ragged line; out along the root the flank
-					// falls below the soil instead (near the stem it still rises into the
-					// buttress).
-					const float y_floor = Math::lerp(h, MIN(h, -0.4f * trunk_r), Math::smoothstep(0.08f, 0.4f, t));
-					d = Math::lerp(d, d_root, Math::smoothstep(0.0f, 0.75f, w));
+					const float sda = Math::angle_difference(root_az[best] + root_bend[best] * t * t, az);
+					// The root as an oval tube (half width a, half height b) whose centre runs out
+					// from the flare and sinks: about level with the soil for most of its run and
+					// below it at the end, so it enters the ground still thick, its side steep.
+					const float rr = root_r0 * (1.0f - 0.3f * t);
+					const float a_w = rr * 1.15f, b_h = rr * 0.85f;
+					const float d_c = r_t + root_push(root_top, root_az[best]) * (1.0f - t) + root_len[best] * Math::pow(t, 1.1f) + rr * Math::smoothstep(0.0f, 0.3f, t);
+					const float s1 = Math::smoothstep(0.0f, 0.35f, t);
+					const float yc = (root_top - b_h) * (1.0f - s1) * (1.0f - s1) - rr * (0.1f + 1.6f * Math::smoothstep(0.45f, 0.95f, t)) * s1;
+					const float lat = Math::abs(sda) * d_c;
+					const float qe = lat / a_w;
+					// The oval's top, then straight down past its widest point.
+					const float y_e = qe < 1.0f ? yc + b_h * Math::sqrt(1.0f - qe * qe) : yc - (lat - a_w) * 1.2f;
+					// Between roots: the stem's own wall near it, then below the soil.
+					const float y_floor = Math::lerp(h, MIN(h, -0.35f * trunk_r), Math::smoothstep(0.0f, 0.12f, t));
+					// Smooth maximum of the two: a rounded fillet in the crotch where root and
+					// stem meet, no crease.
+					const float kf = rr * Math::lerp(0.55f, 0.12f, Math::smoothstep(0.0f, 0.25f, t));
+					const float hm = CLAMP(0.5f + 0.5f * (y_e - y_floor) / kf, 0.0f, 1.0f);
+					y = Math::lerp(y_floor, y_e, hm) + kf * hm * (1.0f - hm) * 0.5f;
+					d = Math::lerp(d, d_c, hm);
+					root_w[i] = hm;
+					root_sda[i] = sda;
+					root_ratio[i] = d / MAX(1e-3f, r_t);
 					// The furrows were cut for the stem's girth; swept out along a root they
 					// stretched into deep black grooves. Shallower the further out they go.
-					relief_off[i] *= 1.0f - 0.65f * w * Math::smoothstep(0.1f, 0.6f, t);
-					// The height falls away gently towards the flank's foot, so the root meets the
-					// soil at a shallow angle: a steep flank left a dark crevice along the ground
-					// under the path tracer.
-					const float wy = q < 1.0f ? Math::pow(1.0f - q * q, 1.6f) : 0.0f;
-					y = Math::lerp(y_floor, y_root, wy);
+					relief_off[i] *= 1.0f - 0.65f * hm * Math::smoothstep(0.1f, 0.6f, t);
 				}
 				moved[i] = 1;
 			}
@@ -4740,6 +4785,60 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				tw[0] = tg.x;
 				tw[1] = tg.y;
 				tw[2] = tg.z;
+			}
+		}
+		// Even texel density along the roots: v (along the stem, in tile widths) was laid down
+		// for the stem's rings a few centimetres apart; swept out along a root the same rings lie
+		// far apart and the bark and moss tiles stretched into streaks. Down each column, v is
+		// laid again from the swept surface's own arc length, at the stem's scale (from the
+		// unswept rings above, where v already advances by distance over the tile width).
+		{
+			Vector2 *uw = r_b.uvs.ptrw();
+			for (int k = 0; k < ring; k++) {
+				int top = -1;
+				for (int r = rings - 1; r >= 0; r--) {
+					if (moved[r * ring + k]) {
+						top = r;
+						break;
+					}
+				}
+				if (top < 0 || top + 2 >= rings) {
+					continue;
+				}
+				const int a = p_part.z + (top + 1) * ring + k, b = p_part.z + (top + 2) * ring + k;
+				const float len_ab = vv[a].distance_to(vv[b]);
+				if (len_ab < 1e-5f) {
+					continue;
+				}
+				const float per_m = (uw[b].y - uw[a].y) / len_ab;
+				float vcur = uw[a].y;
+				for (int r = top; r >= 0; r--) {
+					const int c = p_part.z + r * ring + k, above = p_part.z + (r + 1) * ring + k;
+					vcur -= vv[c].distance_to(vv[above]) * per_m;
+					uw[c].y = vcur;
+				}
+			}
+			// Across a root too: u spreads with the distance from the axis, so the tiles keep
+			// their width where the rings are swept out wide (they stretched sideways).
+			for (int r = 0; r < rings; r++) {
+				const int i0 = r * ring;
+				if (i0 + 1 >= p_part.w || !moved[i0]) {
+					continue;
+				}
+				// u per radian of bearing, from the ring's first two columns.
+				const Vector3 &p0 = vv[p_part.z + i0], &p1 = vv[p_part.z + i0 + 1];
+				const float a0 = Math::atan2(p0.z - p_axis.z, p0.x - p_axis.x), a1 = Math::atan2(p1.z - p_axis.z, p1.x - p_axis.x);
+				const float dang = Math::angle_difference(a0, a1);
+				if (Math::abs(dang) < 1e-5f) {
+					continue;
+				}
+				const float dudang = (uw[p_part.z + i0 + 1].x - uw[p_part.z + i0].x) / dang;
+				for (int k = 0; k < ring; k++) {
+					const int i = i0 + k;
+					if (root_w[i] > 0.0f || root_ratio[i] != 1.0f) {
+						uw[p_part.z + i].x += root_sda[i] * dudang * (root_ratio[i] - 1.0f);
+					}
+				}
 			}
 		}
 		// Final normals of the swept part from its own triangles, after the relief went back on:

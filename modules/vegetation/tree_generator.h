@@ -424,6 +424,15 @@ public:
 	float shed_radius_max = 0.14f; // Thickest limb _shed_branch() picks (FORM_STICKS: 4 cm).
 	float climber_cover = 0.6f;
 	float _moss_amount() const;
+	// The surface roots of the last generate(), for the moss: bare bark on their upper faces,
+	// moss in the crotches between them (trees.md 5d).
+	struct FootRoots {
+		bool on = false;
+		Vector3 axis;
+		float trunk_r = 0.0f;
+		float width = 0.0f; // Half width of a root's top (m).
+		LocalVector<float> az, len, bend;
+	} foot_roots;
 	float _moss_at(const Vector3 &p_pos, const Vector3 &p_normal, float p_ground, float p_amount, bool p_clamp = true) const;
 	static constexpr float MOSS_SHELL_MIN_RADIUS = 0.05f;
 	static constexpr float BARK_TILE = 0.4f; // Metres of bark one texture tile covers.

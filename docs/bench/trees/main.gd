@@ -18,6 +18,8 @@ extends Node3D
 #   --view=leaf       the crop view zoomed in to single leaves
 #   --view=base|log  the first tree's foot (moss), or the last plant (the log with --decays)
 #   --day=N           day of year: leaves by season, from a stand-in climate (see season_for)
+#   --litter          leaf litter on the ground round the first tree (roots sink into it)
+#   --sun=EL,AZ       sun elevation and azimuth in degrees (default 35,35)
 #   --decays          deadwood: each preset living, then decay classes 1-5, then a log (class 3)
 #   --stands ...      stands and placement instead: see stands.gd
 #   --wind ...        wind on rigged trees: see wind.gd
@@ -49,6 +51,8 @@ var seed := 1
 var view := "side"
 var overrides := {}
 var decays := false
+var litter := false
+var sun_dir := Vector2(-35, 35) # Elevation, azimuth (degrees).
 var day := -1
 var fails := 0
 
@@ -95,6 +99,11 @@ func _ready() -> void:
 			view = a.substr(7)
 		elif a == "--decays":
 			decays = true
+		elif a == "--litter":
+			litter = true
+		elif a.begins_with("--sun="):
+			var sv := a.substr(6).split_floats(",")
+			sun_dir = Vector2(-sv[0], sv[1])
 		elif a.begins_with("--day="):
 			day = int(a.substr(6))
 		elif a.begins_with("--junction-side="):
@@ -288,6 +297,8 @@ func _build_scene() -> void:
 	gm.roughness = 0.95
 	ground.material_override = gm
 	add_child(ground)
+	if litter and xs.size() > 0:
+		_add_litter(Vector3(xs[0], 0, 0))
 	var sky := ProceduralSkyMaterial.new()
 	var sk := Sky.new()
 	sk.sky_material = sky
@@ -307,7 +318,7 @@ func _build_scene() -> void:
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-35, 35, 0)
+	sun.rotation_degrees = Vector3(sun_dir.x, sun_dir.y, 0)
 	sun.light_energy = 1.4
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 300.0
@@ -434,3 +445,55 @@ func _render_later() -> void:
 	get_viewport().get_texture().get_image().save_png(out)
 	print("saved ", out)
 	get_tree().quit(1 if fails > 0 else 0)
+
+
+# Leaf litter round a tree's foot: fallen oak leaves (about 8 x 5 cm, curled, browns from fresh
+# to rotted), lying near flat, dense enough that the roots sink into a covered floor rather than
+# a bare plane. Leaves within the stem are left out; the roots cover the rest.
+func _add_litter(p_at: Vector3) -> void:
+	var sh := Shader.new()
+	sh.code = """shader_type spatial;
+render_mode cull_disabled;
+varying vec3 col;
+void vertex() { col = COLOR.rgb; }
+void fragment() {
+	vec2 q = UV * 2.0 - 1.0;
+	// A lobed oak leaf outline: an ellipse with wavy margins and a stalk.
+	float a = atan(q.y, q.x);
+	float r = length(q * vec2(1.0, 1.6));
+	float lobes = 0.88 + 0.12 * cos(a * 7.0);
+	if (r > lobes) discard;
+	float vein = smoothstep(0.03, 0.0, abs(q.y)) * 0.25;
+	ALBEDO = col * (1.0 - vein) * (0.85 + 0.15 * r);
+	ROUGHNESS = 0.8;
+}"""
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	var qm := QuadMesh.new()
+	qm.size = Vector2(0.09, 0.09)
+	qm.orientation = PlaneMesh.FACE_Y
+	qm.material = mat
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = qm
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	var n := 60000
+	mm.instance_count = n
+	var browns := [Color(0.32, 0.2, 0.09), Color(0.22, 0.14, 0.07), Color(0.4, 0.28, 0.13), Color(0.16, 0.11, 0.06), Color(0.3, 0.24, 0.12)]
+	for i in n:
+		var rr := sqrt(rng.randf()) * 7.0 + 0.25
+		var ang := rng.randf() * TAU
+		var pos := p_at + Vector3(cos(ang) * rr, 0.003 + 0.02 * rng.randf(), sin(ang) * rr)
+		var b := Basis(Vector3.UP, rng.randf() * TAU)
+		b = b * Basis(Vector3.RIGHT, rng.randf_range(-0.35, 0.35)) * Basis(Vector3.FORWARD, rng.randf_range(-0.25, 0.25))
+		var sc := rng.randf_range(0.7, 1.2)
+		b = b.scaled(Vector3(sc, sc, sc))
+		mm.set_instance_transform(i, Transform3D(b, pos))
+		var c: Color = browns[rng.randi() % browns.size()]
+		# The leaf colours are sRGB; the shader's albedo is linear.
+		mm.set_instance_color(i, c.lerp(Color(0.12, 0.1, 0.06), rng.randf() * 0.4).srgb_to_linear())
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	add_child(mi)
