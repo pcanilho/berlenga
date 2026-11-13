@@ -78,6 +78,11 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
   *Meadow flowers: daisies, buttercups, scabious and sorrel standing above the grass.*
 
 - **Plants by season** (`PlantGenerator.season`): 17 flowering herbs open, go to seed and die back to standing stalks by degree days; fern croziers unroll in spring, fronds die back russet and lie flat through winter, and wood anemone dies down after flowering.
+
+  ![A bracken stand on beech litter in July and December, raster](media/plants-season-bracken.jpg)
+
+  *Plants by season: by December the bracken stands dead and russet.*
+
 - **Forest floor** (`PlantGenerator.make_floor(stand, variants)` for 10 stand types; `VegetationField3D.forest_floor_enabled`): herbs, mosses and seedlings by the stand above (seedlings of the stand's own trees, with their leaf forms; dog-violets and herb Robert in the lighter patches), and the ground under closed canopy turns to leaf, needle or moss litter.
 - **Plants on deadwood** (`PlantSpecies.deadwood_rule`): ground plants keep off fallen logs, and moss, wood sorrel, seedlings and ferns grow on and along them.
 - **Leaf drift** (`PlantSpecies.litter_range`, `VegetationField3D.litter_wind`): fallen leaves drift past the crowns into edges and clearings, farther downwind.
