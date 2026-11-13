@@ -1792,11 +1792,31 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 				const float face = 1.0f - CLAMP(Math::abs(slope) - 0.5f, 0.0f, 1.0f);
 				rr += p_relief * relief_at(float(s) / p_sides * repeats, v) * (p_soil_fade ? Math::smoothstep(-0.02f, 0.2f, gy) : 1.0f) * face;
 			}
-			r_b.verts.push_back(p_points[r] + dir * rr);
 			const Vector3 n_out = capped ? (dir - t * slope).normalized() : dir;
 			// The cap's end face is mapped flat across it, in the colour of weathered end grain:
 			// mapped round the stem, the bark tiles converged on its centre as radial pleats.
 			const bool end_face = capped && Math::abs(slope) > 1.0f;
+			Vector3 tongue;
+			if (end_face) {
+				// A diffuse fracture (trees.md 5d): the fibres broke at different lengths, so the
+				// face stands out in tongues along the grain, a sector of the girth each, longest
+				// in the heartwood, shorter at the bark rim.
+				// The length runs between 22 sectors' values in straight lines, so neighbouring
+				// tongues meet in sloped ridges: stepped, the walls between them faced away from
+				// their own shading normals and rendered black under the path tracer.
+				auto len_at = [&](int p_sector) {
+					uint32_t h = uint32_t(p_sector % 22) * 374761393u + uint32_t(Math::round(p_girth_r * 1000.0f)) * 2246822519u;
+					h = (h ^ (h >> 13)) * 1274126177u;
+					const float u = float((h ^ (h >> 16)) & 0xffffu) / 65535.0f;
+					return u * Math::sqrt(u);
+				};
+				const float sa = ang / float(Math::TAU) * 22.0f;
+				const int s0 = int(Math::floor(sa));
+				const float u01 = Math::lerp(len_at(((s0 % 22) + 22) % 22), len_at((((s0 + 1) % 22) + 22) % 22), sa - Math::floor(sa));
+				const float heart = 1.0f - 0.6f * CLAMP(p_radii[r] / p_girth_r, 0.0f, 1.0f);
+				tongue = -t * (p_girth_r * (0.03f + 0.6f * u01) * heart);
+			}
+			r_b.verts.push_back(p_points[r] + dir * rr + tongue);
 			r_b.normals.push_back(n_out);
 			if (end_face) {
 				const float rf = p_radii[r] / BARK_TILE;
@@ -2613,7 +2633,17 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 	const float up = p_normal.y;
 	const float top = CLAMP((up - 0.35f) / 0.5f, 0.0f, 1.0f) * 0.75f;
 	const float patch = 0.65f * moss_noise(p_pos * 2.2f, 0x6d6f7373u + uint32_t(seed)) + 0.35f * moss_noise(p_pos * 7.0f, 0x6d6f7374u);
-	const float w = p_amount * MAX(foot, top) * (1.9f * patch - 0.25f);
+	float w = p_amount * MAX(foot, top) * (1.9f * patch - 0.25f);
+	if (!fallen && !fallen_branch) {
+		// The collar at the foot (trees.md 5d; Studlar 1982): stemflow and splash keep the lowest
+		// bark wet all round, so the moss there is a near-continuous sleeve rather than patches,
+		// its upper edge wandering between about 15 and 60 cm and frayed into tongues; the
+		// patches only take over above it.
+		const float edge = 0.15f + 0.45f * moss_noise(p_pos * Vector3(2.6f, 0.4f, 2.6f), 0x636f6c6cu + uint32_t(seed));
+		const float fray = 0.2f * (moss_noise(p_pos * 9.0f, 0x66726179u) - 0.5f);
+		const float collar = 1.0f - Math::smoothstep(edge - 0.18f, edge + 0.18f, h + fray);
+		w = MAX(w, p_amount * collar * (0.8f + 0.6f * patch));
+	}
 	return p_clamp ? CLAMP(w, 0.0f, 1.0f) : w;
 }
 
@@ -3486,8 +3516,12 @@ void TreeGenerator::_fell() {
 		}
 	}
 	const Basis turn(axis, float(Math::PI) * 0.5f * (0.96f + 0.04f * fr.randf()));
+	// Bedding (trees.md 5d): a fresh log rests on the litter, a decayed one has settled into the
+	// soil and moss (Harmon et al. 1986), sunk 15% of its radius at class 1-2 up to 45% at 5.
+	static const float SINK[6] = { 0.15f, 0.15f, 0.15f, 0.25f, 0.35f, 0.45f };
+	const float lift = trunk_r * (1.0f - SINK[CLAMP(decay_class, 0, 5)]);
 	for (Node &n : nodes) {
-		n.start = base + turn.xform(n.start - base) + Vector3(0, trunk_r * 0.85f, 0);
+		n.start = base + turn.xform(n.start - base) + Vector3(0, lift, 0);
 		n.dir = turn.xform(n.dir);
 	}
 	for (int i = 1; i < int(nodes.size()); i++) {
@@ -4482,6 +4516,72 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		}
 	}
 	const float vet_r_stem = veteran_stem >= 0 ? nodes[veteran_stem].radius * 1.15f : 1.0f;
+	// The root collar meeting the soil (trees.md 5d): main roots leave the stem as 5-7 ridges
+	// (Mattheck's buttress form; Coutts 1983) and the whole foot swells, both pushed out sideways
+	// (along the normal they folded under), growing over the last half metre and still widening
+	// below the soil line, so the surface runs into the ground at a shallow angle with no rim and
+	// no undercut. The soil darkens the bark's foot (splash); the bark, its relief and the moss
+	// shell all take the same push, so the shell stays on the bark.
+	RandomPCG root_rng;
+	root_rng.seed(uint64_t(seed) * 2654435761u + 0x726f6f74u);
+	const int root_ridges = 5 + int(root_rng.rand() % 3u);
+	const float root_phase = root_rng.randf() * float(Math::TAU);
+	const float ground_y = nodes[0].start.y;
+	auto root_push = [&](float p_h, float p_az) -> float {
+		const float ridge = Math::pow(0.5f + 0.5f * Math::cos(float(root_ridges) * (p_az - root_phase)), 3.0f);
+		// Above the soil the swell dies away over about half a stem radius (the ridges) and a
+		// stem radius (the foot); below it keeps widening for 20 cm as the roots spread.
+		const float up = p_h >= 0.0f ? 1.0f : 1.0f + MIN(-p_h, 0.2f) / 0.08f;
+		const float foot = p_h >= 0.0f ? Math::exp(-p_h / MAX(0.05f, trunk_r)) : up;
+		const float rid = p_h >= 0.0f ? Math::exp(-p_h / MAX(0.05f, 0.6f * trunk_r)) : up;
+		return trunk_r * flare * (0.18f * foot + 0.5f * ridge * rid);
+	};
+	// Splash and soil over the bottom 25 cm: darker, browner bark (and moss), applied after the
+	// moss tint so the green does not cover it.
+	auto soil_tint = [&](Builder &r_b, const Vector4i &p_part, float p_k) {
+		const Vector3 *vv = r_b.verts.ptr();
+		Color *cc = r_b.colors.ptrw();
+		for (int i = 0; i < p_part.w; i++) {
+			const int v = p_part.z + i;
+			const float h = vv[v].y - ground_y;
+			if (h > 0.4f) {
+				continue;
+			}
+			const float soil = 1.0f - Math::smoothstep(0.0f, 0.3f, h);
+			const Color c = cc[v];
+			cc[v] = c.lerp(Color(0.045f, 0.032f, 0.02f, c.a), p_k * 0.85f * soil);
+		}
+	};
+	auto root_collar = [&](Builder &r_b, const Vector4i &p_part, bool p_colour) {
+		Vector3 *vv = r_b.verts.ptrw();
+		Vector3 *nw = r_b.normals.ptrw();
+		Color *cc = r_b.colors.ptrw();
+		for (int i = 0; i < p_part.w; i++) {
+			const int v = p_part.z + i;
+			const float h = vv[v].y - ground_y;
+			if (h > 6.0f * trunk_r) {
+				continue;
+			}
+			Vector3 hd(nw[v].x, 0.0f, nw[v].z);
+			if (hd.length_squared() < 1e-6f) {
+				continue;
+			}
+			hd.normalize();
+			const float az = Math::atan2(hd.z, hd.x);
+			const float p = root_push(h, az);
+			vv[v] += hd * p;
+			// The normal of the pushed surface, from the push's slopes up the stem and round it.
+			const float dh = 0.01f, da = 0.01f;
+			const float dpdh = (root_push(h + dh, az) - root_push(h - dh, az)) / (2.0f * dh);
+			const float rxz = MAX(0.05f, Vector2(vv[v].x, vv[v].z).length());
+			const float dpds = (root_push(h, az + da) - root_push(h, az - da)) / (2.0f * da * rxz);
+			const Vector3 side = Vector3(0, 1, 0).cross(hd);
+			nw[v] = (nw[v] - Vector3(0, dpdh, 0) - side * dpds).normalized();
+		}
+		if (p_colour) {
+			soil_tint(r_b, p_part, 1.0f);
+		}
+	};
 	auto veteran_deform = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_rad, int p_sides, bool p_colour, int p_features) {
 		if (veteran_features.is_empty() || !p_features) {
 			return;
@@ -4597,6 +4697,78 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					fnrm = -fnrm; // Winding: keep the outward side.
 				}
 				nn[p_part.z + i] = fnrm;
+			}
+		}
+	};
+	// A log's broken butt keeps the colour of weathered end grain after the moss tint (the face
+	// is the tube's rings within the cap's length of its start; trees.md 5d).
+	auto end_grain = [&](Builder &r_b, const Vector4i &p_part, const LocalVector<Vector3> &p_pts, int p_sides, float p_girth_r, const Color &p_col) {
+		if (p_girth_r <= 0.0f || p_pts.is_empty()) {
+			return;
+		}
+		// Weathered grey-brown end grain, the heart darker with rot, blotched by stain and the
+		// splinters' fresher faces.
+		const Color grain = p_col.lerp(Color(0.17f, 0.135f, 0.095f), 0.75f);
+		const int ring = p_sides + 1;
+		for (int r = 0; r < int(p_pts.size()) && p_pts[r].distance_to(p_pts[0]) < p_girth_r * 0.15f - 1e-4f; r++) {
+			for (int k = 0; k < ring && r * ring + k < p_part.w; k++) {
+				const int v = p_part.z + r * ring + k;
+				const Vector3 q = r_b.verts[v];
+				const float rr = CLAMP(Vector2(q.x - p_pts[0].x, q.z - p_pts[0].z).length() / p_girth_r, 0.0f, 1.0f);
+				const float heart = Math::lerp(0.62f, 1.0f, Math::smoothstep(0.1f, 0.7f, rr));
+				const float blot = 0.75f + 0.5f * moss_noise(q * 9.0f, 0x6772616eu);
+				r_b.colors.write[v] = Color(grain.r * heart * blot, grain.g * heart * blot, grain.b * heart * blot, grain.a);
+			}
+		}
+		// The fibre tongues stand the face's rings at different depths, so its walls are steep
+		// while the face kept the planar normal: under the path tracer the shading normal then lay
+		// below the walls' surface and they rendered black. Normals from the displaced face.
+		int face_rings = 0;
+		while (face_rings < int(p_pts.size()) && p_pts[face_rings].distance_to(p_pts[0]) < p_girth_r * 0.15f - 1e-4f) {
+			face_rings++;
+		}
+		LocalVector<Vector3> fn;
+		fn.resize(face_rings * ring);
+		const Vector3 *vv = r_b.verts.ptr();
+		const Vector3 *nv = r_b.normals.ptr();
+		for (int r = 1; r < face_rings; r++) {
+			const int ra = r - 1, rb = MIN(r + 1, int(p_pts.size()) - 1);
+			for (int k = 0; k < ring; k++) {
+				const int km = (k + p_sides - 1) % p_sides, kp = (k + 1) % p_sides;
+				const Vector3 du = vv[p_part.z + r * ring + kp] - vv[p_part.z + r * ring + km];
+				const Vector3 dr = vv[p_part.z + rb * ring + k] - vv[p_part.z + ra * ring + k];
+				Vector3 n = du.cross(dr);
+				const Vector3 n0 = nv[p_part.z + r * ring + k];
+				if (n.length_squared() < 1e-12f) {
+					n = n0;
+				} else {
+					n.normalize();
+					if (n.dot(n0) < 0.0f) {
+						n = -n;
+					}
+				}
+				fn[r * ring + k] = n;
+			}
+		}
+		Vector3 *nw = r_b.normals.ptrw();
+		for (int r = 1; r < face_rings; r++) {
+			for (int k = 0; k < ring && r * ring + k < p_part.w; k++) {
+				const int v = p_part.z + r * ring + k;
+				nw[v] = fn[r * ring + k];
+				// Keep the tangent square to the new normal, or the normal map's frame skews
+				// and tips the shading normal into the wall.
+				if (r_b.use_tangents && int(r_b.tangents.size()) >= (v + 1) * 4) {
+					float *tw = r_b.tangents.ptrw() + v * 4;
+					Vector3 tg(tw[0], tw[1], tw[2]);
+					tg = tg - nw[v] * nw[v].dot(tg);
+					if (tg.length_squared() < 1e-10f) {
+						tg = nw[v].get_any_perpendicular();
+					}
+					tg.normalize();
+					tw[0] = tg.x;
+					tw[1] = tg.y;
+					tw[2] = tg.z;
+				}
 			}
 		}
 	};
@@ -4774,11 +4946,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const Vector3 p0 = pts[0];
 			const float r_base = rad[0];
 			girth_r = r_base;
-			const float ks[3] = { 1.0f, 0.75f, 0.4f };
-			const float rs[3] = { 0.0f, 0.68f, 0.93f };
+			// Six rings, so the fibre tongues of the break (_tube) have room across the face.
+			const float ks[6] = { 1.0f, 0.97f, 0.9f, 0.78f, 0.6f, 0.35f };
+			const float rs[6] = { 0.0f, 0.25f, 0.5f, 0.7f, 0.85f, 0.96f };
 			LocalVector<Vector3> cp;
 			LocalVector<float> cr;
-			for (int k = 0; k < 3; k++) {
+			for (int k = 0; k < 6; k++) {
 				cp.push_back(p0 - d0 * (r_base * 0.15f * ks[k]));
 				cr.push_back(r_base * rs[k]);
 			}
@@ -4828,7 +5001,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			bark.begin(part);
 			_tube(bark, pts, rad, sides, 0.0f, col, nullptr, 0.0f, girth_r);
 			bark.end(part, r0);
+			if (collar) {
+				root_collar(bark, part, false);
+			}
 			moss_tint(bark, part);
+			end_grain(bark, part, pts, sides, girth_r, col);
+			if (collar) {
+				soil_tint(bark, part, 1.0f);
+			}
 			if (rigged) {
 				_skin_stem(bark, part, s, pts, sides);
 			}
@@ -4865,7 +5045,14 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				bark.begin(part);
 				_tube(bark, rp, rr, rsides, 0.0f, col, bs.height.ptr(), scale, girth_r, !(fallen || fallen_branch));
 				bark.end(part, r0);
+				if (collar) {
+					root_collar(bark, part, false);
+				}
 				moss_tint(bark, part);
+				end_grain(bark, part, rp, rsides, girth_r, col);
+				if (collar) {
+					soil_tint(bark, part, 1.0f);
+				}
 				if (rigged) {
 					_skin_stem(bark, part, s, rp, rsides);
 				}
@@ -4887,6 +5074,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				moss.begin(part);
 				_tube(moss, rp, rr, rsides, 0.0f, col, nullptr, 0.0f, girth_r);
 				moss.end(part, r0);
+				if (collar) {
+					root_collar(moss, part, false);
+				}
 				if (s == veteran_stem || vet_share[s]) {
 					veteran_deform(moss, part, rp, rr, rsides, false, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 				}
@@ -4965,6 +5155,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					const float dry = moss_noise(moss.verts[v] * 1.3f, 0x6d6f7375u);
 					moss.colors.write[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - w * 0.4f, 0.0f, 1.0f));
 				}
+				if (collar) {
+					soil_tint(moss, part, 0.7f);
+				}
 				// Keep quads (two triangles each) with any corner showing.
 				int at = part.x;
 				int32_t *iw = moss.indices.ptrw();
@@ -5035,16 +5228,17 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		bark.role = Builder::ROLE_ALL;
 		const int chain_end = chain[chain.size() - 1];
 		if ((broken_tip >= 0 && chain_end == broken_tip) || broken_ends.has(chain_end)) {
-			// A snapped top: splinters of pale wood standing up from the rim.
-			const Node &tn = nodes[chain_end];
+			// A snapped top: splinters of pale wood standing up from the rim. (A log's broken butt
+			// gets its fibre tongues from _tube instead.)
+			const Vector3 g_dir = nodes[chain_end].dir;
 			const Vector3 e = rim_pt;
 			const float r = rim_r;
-			const Vector3 ref = Math::abs(tn.dir.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
-			const Vector3 u = tn.dir.cross(ref).normalized();
-			const Vector3 v = tn.dir.cross(u);
+			const Vector3 ref = Math::abs(g_dir.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+			const Vector3 u = g_dir.cross(ref).normalized();
+			const Vector3 v = g_dir.cross(u);
 			RandomPCG sr;
 			sr.seed(uint64_t(chain_end) * 2246822519u + uint64_t(seed));
-			const Color wood = Color(0.62f, 0.55f, 0.44f);
+			const Color wood = Color(0.62f, 0.55f, 0.44f).srgb_to_linear();
 			Vector4i part;
 			bark.begin(part);
 			const int spikes = 9;
@@ -5054,7 +5248,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				const Vector3 p0 = e + (u * Math::cos(a0) + v * Math::sin(a0)) * r;
 				const Vector3 p1 = e + (u * Math::cos(a1) + v * Math::sin(a1)) * r;
 				const float am = (a0 + a1) * 0.5f;
-				const Vector3 tip = e + (u * Math::cos(am) + v * Math::sin(am)) * (r * Math::lerp(0.2f, 0.8f, sr.randf())) + tn.dir * (r * Math::lerp(0.3f, 3.0f, sr.randf()));
+				const Vector3 tip = e + (u * Math::cos(am) + v * Math::sin(am)) * (r * Math::lerp(0.2f, 0.8f, sr.randf())) + g_dir * (r * Math::lerp(0.3f, 3.0f, sr.randf()));
 				const Vector3 nrm = (p1 - p0).cross(tip - p0).normalized();
 				const int b0 = bark.verts.size();
 				const Vector3 tri[3] = { p0, tip, p1 };

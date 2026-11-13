@@ -311,7 +311,7 @@ func _build_scene() -> void:
 	sun.light_energy = 1.4
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 300.0
-	if view in ["bole", "junction", "fork", "leaf"]:
+	if view in ["bole", "junction", "fork", "leaf", "veteran", "base"]:
 		# Close-ups: the cascades over 300 m blur the leaves' shadow flecks into blocky speckle.
 		sun.directional_shadow_max_distance = 40.0
 	add_child(sun)

@@ -545,6 +545,65 @@ layer, so we build geometry:
   - **Turf contrast.** The baked turf's tone spread was about 0.06 of its mean; stretched to 0.22
     (lit tips against shaded gaps, as scanned moss shows).
 
+### 5d. Ground contact: root flare, moss at the foot, broken and bedded logs (research, 12 Nov)
+
+Docs declined close-ups because a trunk stood on the ground like a cylinder on a plane, the foot
+moss was one pasted patch, a log's end read as sawn and logs sat on the plane with a hard edge.
+
+What real wood does:
+- **Root flare.** The stem widens over its last metre into the main roots, which run out
+  radially as ridges and dive under the soil 0.5-2 stem radii out; the surface meets the ground
+  at a shallow angle, never as a wall (Mattheck, *Design in Nature*, 1998: buttresses follow the
+  load paths; Coutts 1983 on root architecture).
+- **Soil at the foot.** Splash and stemflow darken and soil-tint the bottom 20-30 cm of bark;
+  litter banks against the windward and upslope side.
+- **Foot moss.** Bryophytes form a near-continuous collar at the base, where stemflow and splash
+  keep the bark wet, with a ragged upper edge that runs higher up the furrows and on the side the
+  stem leans away from (stemflow runs down the underside of a lean); patches only higher up
+  (Barkman 1958; Studlar 1982, bryophytes on tree bases).
+- **Snapped wood.** A stem breaks by diffuse fracture (fibres splinter and pull out at different
+  lengths), clean fracture or buckling (Li, Schwarz, Palubicki, Pirk, Michels and Benes,
+  *Stressful Tree Modeling: Breaking Branches with Strands*, SIGGRAPH 2025; Hadrich et al.,
+  *Interactive Wood Fracture*, SCA 2020). A fallen trunk's butt is a root plate torn out or a
+  stem snapped low: jagged fibre ends and splinters, never a flat disc.
+- **Bedding.** Logs settle as they decay: class 1-2 rest on their limbs or touch the ground
+  along a line, class 3 sits in the litter, class 4-5 sag, flatten underneath and sink a third
+  or more into the soil and moss (Harmon et al. 1986, *Ecology of coarse woody debris in
+  temperate ecosystems*; Sollins 1982).
+
+How engines do it:
+- SpeedTree builds the flare as part of the trunk spine and has a roots generator whose roots
+  follow and enter the ground; artists hide the ground line with blending.
+- Unreal blends meshes into terrain with Runtime Virtual Textures: the mesh material samples the
+  landscape's colour and height and fades to it near the contact; Pixel Depth Offset softens the
+  intersection line. Frostbite and others use the same idea (terrain colour read back in the
+  mesh shader). Godot has no RVT; godotshaders' terrain mesh blending does the same with a
+  height/colour texture.
+- Fracture in games: authored splinter meshes or Voronoi pieces; the papers above give the shape
+  vocabulary (splinter length spread along the grain).
+
+What we build (TreeGenerator only; terrain-colour blending is a material feature for later):
+1. Flare whose wall turns shallow at the soil line and keeps widening just below it, plus 5-7
+   root ridges pushed out sideways that dive under the soil (no undercut).
+2. Soil tint: the bark's vertex colour darkens and browns over the bottom ~25 cm.
+3. Foot moss as a collar: full weight near the soil, a noisy upper edge 15-60 cm, higher on the
+   lean's underside; patch noise only above it.
+4. Log butt as a diffuse fracture: the end face's rings displaced along the grain by angular
+   noise into fibre tongues, plus splinters standing out of the face.
+5. Bedding by decay class: sunk 15% of the radius (class 1-2) to 45% (class 5), the underside
+   flattened from class 4.
+
+As built (12 Nov): 1, 2, 3 (without the lean bias), 4 and the sink of 5. The flare, ridges and
+soil tint act on the bark, its relief tube and the moss shell alike, so the shell stays on the
+bark. The soil tint is applied after the moss tint and on the shell's colour too, or the green
+covered it. Standing out of the butt, splinter sheets read as dark slits and were dropped; the
+tongues alone read as broken. Tongue lengths run in straight lines between 22 sector values:
+stepped per sector, the walls between tongues faced away from their shading normals and drew
+black slits under the path tracer only. The end grain is weathered grey-brown, the heart darker
+with rot, and its normals and tangents come from the displaced face.
+Not done: the flattened underside of class 4-5 logs, and blending into the terrain's own
+material (the ground side: litter and grass placed against the foot, the scene's job).
+
 ### 5e. Old trees (as built, 11 Nov; Paulo picked)
 
 Veteran trees carry tree-related microhabitats (TreMs). Larrieu et al. (*Tree related
