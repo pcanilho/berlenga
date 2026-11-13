@@ -154,7 +154,7 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
     *Waterfall mist: a haze now rises from the pool and drifts past the fall.*
 
   - Living waterline (`edge_lap_height`, `edge_relief`, `edge_foam`): edges lap with the flow, look ragged and carry a thin foam band.
-- **Contact waterfalls** (`PhysXWaterfalls3D`, `contact_falls`, `wet_margin`): water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges. Thin falls over stepped rock run ledge to ledge as threads with wet rock between them, as their flow sets (`rock_step`); big flows stay fully covered.
+- **Contact waterfalls** (`PhysXWaterfalls3D`, `contact_falls`, `wet_margin`, `surface`): water that clings to steep rock, as wide as its flow, clear at the lip and white below the inception point, with soft wandering edges, wet rock beside it and spray off ledges. Thin falls over stepped rock run ledge to ledge as threads with wet rock between them, as their flow sets (`rock_step`); big flows stay fully covered. The sheets follow cliff relief ledge by ledge.
 
   ![A contact waterfall running down a rock face, raster](media/contact-falls.jpg)
 
