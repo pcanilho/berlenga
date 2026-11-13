@@ -1331,6 +1331,76 @@ grows with the pixel. Faces are lifted by the cracks' mean darkening and stones 
 at grazing angles. Cracks shade to 0.82 (was 0.72) and the faces get the detail past 45 degrees (full past 57), so
 gentle rock keeps the generator's own detail.
 
+## Trough floors fill after the ice; the hanging valley layout (12 Nov; Paulo picked "Hanging valley over a glacial trough")
+
+Why: lowering the snow line or bringing the main glacier in wore the showcase's bar away and lost its big fall.
+Real hanging valleys sit above a trough whose floor the rivers filled flat after the ice left (Lauterbrunnen,
+Yosemite: hundreds of metres of fill over the rock; Hinderer 2001).
+
+Built: with `outwash_age` > 0, each closed basin the last glaciation wore is filled from the bottom up by the
+sediment its catchment yielded since: 0.5 mm a year off 10 km², rising as A^0.3 (Hallet, Hunter and Bogen 1996,
+Hinderer 2001; paraglacial yield grows with area, Church and Slaymaker 1989), times `outwash_age`. The fill level is
+found by bisection on the basin's volume. A trunk trough fills to a flat floor; a cirque with a small bare catchment
+keeps most of its lake. Off (no fill, lakes in every worn basin) when `outwash_age` is 0, as before.
+
+The bench's `--hanging` (with `--layout=valley`): `glacial_inflow_balance` 0.05 brings the main glacier in from the
+north edge and wears a trough to the valley mouth, filled flat since. A side bowl on the east wall (`basin` path,
+share 0.5) is closed wall to wall by a bar of resistant rock whose level varies along it (`--bar-level` per point:
+the lip at 420 m, the rest 480 to 540 m), and the bar's outer side is a 45 degree rock slope (`--bar-apron=1.0`:
+hard rock stepping down away from the bowl, except at the lip). It holds a 7.6 ha lake at 420 m whose outflow drops
+373 m off the lip into the trough (free fall, 97 m run). What did not work, for the record: any gap in the bar
+drained the bowl round its end (eight layouts); a level bar left a long smooth wall wherever the land outside wore
+down below it, which the varying levels and the apron fixed. Sculpting guides (next section) will make this one
+drawn guide instead of bench flags.
+
+## Sculpting: guides before erosion, touch-ups after (research, 12 Nov; Paulo picked "Both, guides first" at 20:55)
+
+Why: Paulo asked for hand sculpting of mountains, coasts and beaches. Random uplift gives believable land but not the
+land a level needs: a ridge here, a bay there, a valley the road can follow.
+
+How others do it:
+
+- Authoring by uplift, not by height: the user paints where rock rises and the erosion run makes the relief, so
+  every edit still drains and still looks eroded (Cordonnier, Braun, Cani, Benes, Galin, Peytavie and Guérin 2016,
+  "Large scale terrain generation from tectonic uplift and fluvial erosion", CGF 35(2); Schott, Paris, Fortin,
+  Mellado and Galin 2023, "Large-scale terrain authoring through interactive erosion simulation", ACM TOG 42(5),
+  which paints uplift with live stream-power erosion and adds copy-paste of eroded pieces). This is what
+  TerrainGenerator3D already is: `uplift_map`, Path3D `ranges` and "basin" paths are the guides, without tools.
+- Feature curves with constraints: ridge and valley curves carry elevation and slope, and the land between is
+  interpolated (Hnaidi, Guérin, Akkouche, Peytavie and Galin 2010, "Feature based terrain generation using
+  diffusion equation", CGF 29(7); Gaín, Marais and Strasser 2009, "Terrain sketching"). Génevaux, Galin, Peytavie,
+  Guérin, Briquet, Grosbellet and Benes 2015 ("Terrain modelling from feature primitives", CGF 34(6)) blend
+  primitives in a tree. These fix heights; uplift guides are softer and keep erosion in charge.
+- Subsurface sculpting: edit the rock layers and their hardness, then erode, so a brush makes a cliff band or a
+  riegel rather than a bump (Cordonnier, Cani, Benes, Braun and Galin 2018, "Sculpting mountains: interactive
+  terrain modeling based on subsurface geology", IEEE TVCG 24(5)). Our sill markers and `rock_variation` are this.
+- Coasts: the shoreface follows Dean's equilibrium profile h = A x^(2/3) (Bruun 1954, Dean 1991), already built;
+  beaches sit where wave energy is low (bays) and cliffs on headlands (Komar 1998, "Beach processes and
+  sedimentation"). Gaea's Coast and World Machine's coastal devices erode below a sea level and smooth a band.
+- Engine tools (after generation): Unreal's landscape sculpt brushes (raise/lower, smooth, flatten, ramp, erosion,
+  hydro erosion) and landscape splines that cut a bed with falloff; Unity Terrain Tools (stamp, set height,
+  hydraulic/thermal brushes); Terrain3D in Godot (raise/lower/height/slope). None of them re-route water after a
+  brush: rivers and lakes are separate objects placed by hand.
+
+Plan, in two steps:
+
+1. Guides, read by the generator before erosion (all off unless placed):
+   - `TerrainGuide3D` (Node3D, child of the generator or listed in `guides`): a circle or a Path3D curve, mode
+     raise, lower, ridge (raised cosine band, today's ranges) or valley (a band that scales uplift down to a share,
+     today's basins), with width, strength, falloff and an optional rock hardness (a riegel or a soft band).
+     Today's "basin"/"uplift" path metadata keeps working; guides are the documented way.
+   - Coast guide: a Path3D whose left side is sea (closed curve: an island or a bay), joined to `ocean_edges` and
+     `sea_map`, with per-point beach width and slope (0 width: a cliff), so a bay gets a beach and a headland a
+     cliff. Sea cells become outlets, as now, so rivers end on it.
+   - A coarse preview: the run at 4x the cell size (about 1 s on the PC) whenever a guide moves in the editor, the
+     full run on demand. Editor gizmos for radius and width; uplift painting into `uplift_map` with a brush.
+2. Touch-ups after generation: brushes on the generated heights (raise, lower, smooth, flatten, ramp; the existing
+   TerrainBrush3D shapes) stored as a layer, after which the water is solved again without eroding: flow routing,
+   lakes (Fill-Spill-Merge), rivers, falls and lips, so a dug hollow becomes a pond and a raised dam backs up a lake.
+
+Cost: guides add one pass over the uplift field per guide (milliseconds); the touch-up water solve is the same as
+the generator's final water stage (about 0.3 s at 16 m here).
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
