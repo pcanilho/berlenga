@@ -1683,10 +1683,11 @@
    "name": "Grass under undergrowth",
    "settings": [
     "GrassField3D.undergrowth_field",
-    "PlantSpecies.sward_shade"
+    "PlantSpecies.sward_shade",
+    "PlantSpecies.litter_color"
    ],
    "note": "",
-   "what": "grass thins and shortens under bracken and bramble stands, as their shade kills the sward.",
+   "what": "grass thins and shortens under bracken and bramble stands, as their shade kills the sward, and the stands lay their own litter beneath; thin margins keep their grass.",
    "page": "vegetation",
    "title": "Vegetation",
    "topic": "Grass"
