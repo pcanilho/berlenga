@@ -1668,6 +1668,18 @@
    "topic": "Grass"
   },
   {
+   "name": "Grass under undergrowth",
+   "settings": [
+    "GrassField3D.undergrowth_field",
+    "PlantSpecies.sward_shade"
+   ],
+   "note": "",
+   "what": "grass thins and shortens under bracken and bramble stands, as their shade kills the sward.",
+   "page": "vegetation",
+   "title": "Vegetation",
+   "topic": "Grass"
+  },
+  {
    "name": "Seasonal grass",
    "settings": [
     "GrassField3D.season_source"

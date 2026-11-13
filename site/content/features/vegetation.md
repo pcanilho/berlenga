@@ -41,6 +41,7 @@ summary: "Biome plant placement from terrain maps; grass and generated meadow, f
 
 - **Far grass in sunlight** (`GrassField3D.sun_light`): distant grass brightens looking away from the sun and darkens looking into it, measured from the blades at four sun headings.
 
+- **Grass under undergrowth** (`GrassField3D.undergrowth_field`, `PlantSpecies.sward_shade`): grass thins and shortens under bracken and bramble stands, as their shade kills the sward.
 - **Seasonal grass** (`GrassField3D.season_source`): grass browns in drought and hard cold and stays green in a mild winter, read from the season.
 
   ![The same meadow in July, a normal year and a summer drought, raster](media/grass-drought.jpg)
