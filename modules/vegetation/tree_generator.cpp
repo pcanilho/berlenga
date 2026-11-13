@@ -5523,10 +5523,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			bark.end(part, r0);
 			// A surface root is broad and low where it shows, not round like a fallen stick:
 			// spread across its run and flattened, the normals scaled the inverse way.
-			{
+			auto flatten = [&](Builder &r_b, const Vector4i &part) {
 				const int ring = 13;
-				Vector3 *vv = bark.verts.ptrw();
-				Vector3 *nw = bark.normals.ptrw();
+				Vector3 *vv = r_b.verts.ptrw();
+				Vector3 *nw = r_b.normals.ptrw();
 				for (int i = 0; i < int(rpts.size()); i++) {
 					const Vector3 t = (rpts[MIN(i + 1, int(rpts.size()) - 1)] - rpts[MAX(i - 1, 0)]).normalized();
 					Vector3 lat = Vector3(0, 1, 0).cross(t);
@@ -5544,9 +5544,41 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						nw[v] = (lat * (nn.dot(lat) / 1.5f) + upv * (nn.dot(upv) / 0.7f) + t * nn.dot(t)).normalized();
 					}
 				}
-			}
+			};
+			flatten(bark, part);
 			moss_tint(bark, part);
 			soil_tint(bark, part, 0.7f);
+			if (moss_k > 0.05f) {
+				// The moss sleeve carries on over the roots (as the stem's shell, section 5c): the
+				// same tube lifted by the moss's depth where the weight is high and sunk under the
+				// root where it fades, so the sleeve does not stop in a step where a root leaves.
+				const float depth = 0.018f;
+				Vector4i mp;
+				moss.bone = bark.bone;
+				moss.begin(mp);
+				_tube(moss, rpts, rrad, 12, 0.0f, rcol);
+				moss.end(mp, r0);
+				flatten(moss, mp);
+				Vector3 *mv = moss.verts.ptrw();
+				const Vector3 *mn = moss.normals.ptr();
+				Color *mc = moss.colors.ptrw();
+				for (int i = 0; i < mp.w; i++) {
+					const int v = mp.z + i;
+					const float raw = _moss_at(mv[v], mn[v], ground_y, moss_k, false);
+					const float ramp = CLAMP(0.5f + (raw - 0.475f) / 0.25f, 0.0f, 1.0f);
+					const float hummock = moss_noise(mv[v] * 9.0f, 0x6d6f7376u);
+					float fill = Math::lerp(-0.012f, depth * (0.6f + 0.8f * hummock), ramp * ramp * (3.0f - 2.0f * ramp));
+					// Under the root where the root itself goes under: lifted there, the shell
+					// stood out of the soil past the root's end.
+					const int ri = MIN(i / 13, int(rpts.size()) - 1);
+					const float shows = CLAMP((rpts[ri].y + rrad[ri] * 0.7f - ground_y) / MAX(0.01f, 0.6f * rrad[ri]), 0.0f, 1.0f);
+					fill = Math::lerp(-0.012f, fill, shows);
+					mv[v] += mn[v] * fill;
+					const float dry = moss_noise(mv[v] * 1.3f, 0x6d6f7375u);
+					mc[v] = Color(0.075f, 0.13f, 0.025f).lerp(Color(0.15f, 0.18f, 0.04f), CLAMP(dry * 1.2f - raw * 0.4f, 0.0f, 1.0f));
+				}
+				soil_tint(moss, mp, 0.7f);
+			}
 		}
 	}
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
