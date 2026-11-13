@@ -608,6 +608,23 @@ instead of thinning to a point on top of it. They start inside the stem and end 
 (no open ends), are spread 1.5x across and flattened to 0.7x (a surface root shows as a broad
 low ridge, not a round stick), wander sideways, and run further on shallow-rooted species
 (root_flare). They take the stem base's bone, so they do not sway.
+Root weld (research, 13 Nov). Separate root tubes meet the flare in an intersection crease
+and read as lobes stuck on. The published ways to a continuous junction:
+- One swept mesh refined at the branch point (Lluch, Vivo and Monserrat, *Modelling tree
+  structures using a single polygonal mesh*, Graphical Models 66, 2004): child and parent share
+  vertices, no intersection.
+- Implicit or convolution surfaces round the skeleton (Bloomenthal and Wyvill 1990;
+  Galbraith et al., BlobTree trees, 2004), polygonised: smooth by construction, costly, and the
+  bark UVs must be rebuilt.
+- SpeedTree's branch welding (weld distance and spread blend a child into its parent's mesh),
+  and for scanned trunks vertex or texture blending of the generated roots into the scan.
+Chosen: the first idea in its simplest form. The trunk's own lower surface (from about one stem
+radius above the soil down through the part sunk below it) is swept out into the roots: at a
+root's bearing its rings run outward and down along the root's profile (full girth to the
+flare, then the rapid taper, diving under the soil), between roots they keep the flare and
+sink. Positions blend between the two by a cross-section bump whose width narrows along the
+root, so flanks, crown and trunk are one surface with no crease. Normals come from the
+displaced mesh. Bark, its relief tube and the moss shell take the same map.
 Not done: the flattened underside of class 4-5 logs, and blending into the terrain's own
 material (the ground side: litter and grass placed against the foot, the scene's job).
 
