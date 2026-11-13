@@ -142,6 +142,7 @@ class PhysXHair3D : public Node3D {
 	float card_fade = 0.0f; // 0 strands .. 1 cards: the cross-fade between them
 	float card_fade_set = -1.0f; // the fade the materials hold
 	float card_transition = 0.5f; // s for the cross-fade
+	bool thick_strands = true; // far hair as thick strands (EGSR 2025) rather than textured cards
 	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
 	struct BodyCache {
 		ObjectID mesh_instance;
@@ -332,6 +333,8 @@ public:
 	float get_card_screen_size() const;
 	void set_card_transition(float p_seconds);
 	float get_card_transition() const;
+	void set_thick_strands(bool p_enabled);
+	bool is_thick_strands() const;
 	float get_screen_size() const;
 	void set_card_distance(float p_distance);
 	float get_card_distance() const;

@@ -135,7 +135,9 @@ varying vec4 dom_past; // vertex to fragment: per map, metres past the first hai
 varying vec3 dom_world; // fragment to light(): the fragment's world position
 varying vec3 light_tangent; // fragment to light(): along the fibres, view space
 varying float hair_snow; // fragment to light(): 1 where snow lies on a card (lit as snow, not fibre)
-varying float hair_self; // fragment to light(): a card's light left by its own clump (1 for strands)
+// fragment to light(): x a card's light left by its own clump (1 for strands), y a thick strand's
+// fibre density (0: not one).
+varying vec2 hair_clump;
 
 // Coverage summed up to depth p_rel past the first hair, from a cell's layers.
 float dom_coverage(vec4 p_cell, float p_rel) {
@@ -303,7 +305,8 @@ void vertex() {
 void fragment() {
 	light_tangent = strand_tangent;
 	hair_snow = 0.0;
-	hair_self = 1.0;
+	hair_clump.x = 1.0;
+	hair_clump.y = 0.0;
 	vec3 sigma;
 	vec3 mass;
 	fibre_look(strand_seed, UV.y, sigma, mass);
@@ -472,7 +475,16 @@ void light() {
 			}
 		}
 	}
-	attenuation *= hair_self;
+	attenuation *= hair_clump.x;
+	if (hair_clump.y > 0.0 && cos_phi > 0.0) {
+		// Thick strands' shadowing-masking (Huang et al. 2025, Eqs. 12-15): with light and view on
+		// the same side, fibres in the clump shadow (P_s) or mask (P_m) those seen; a shadowed one
+		// gets the light a fibre passes on, a_F.
+		float a_f = 0.9091 * dot(sqrt(base), vec3(0.2126, 0.7152, 0.0722));
+		float p_s = (1.0 - hair_clump.y) * (1.0 - cos_phi);
+		float p_m = (1.0 - hair_clump.y) * 0.2;
+		attenuation *= p_s * a_f + max(1.0 - p_m - p_s, 0.0);
+	}
 	s += sqrt(base) * scatter * pow(base / luma, vec3(1.0 - shadow));
 	if (hair_snow > 0.5) {
 		// Snow on a card: matte (Lambert; ALBEDO is the snow's), as the snow's own clumps.
@@ -581,6 +593,13 @@ uniform sampler2D card_atlas : filter_linear_mipmap, repeat_disable;
 uniform sampler2D card_data : filter_nearest, repeat_disable;
 uniform vec2 card_tile = vec2(32.0, 256.0); // a tile's size in the atlas, in texels
 uniform float card_clump = 0.0; // wet clumping, as the strands'
+// Thick strands (docs/ideas/hair.md, stage 3; Huang et al., EGSR 2025): each clump drawn as one
+// camera-facing strip as wide as its cross-section's ellipse seen from the camera, its coverage
+// from its strands' total width (no atlas). 0: crossed textured strips (cards).
+uniform bool card_thick = false;
+// vertex to fragment: x the clump's mean optical depth across the strip as drawn, y the share of
+// its cross-section its fibres fill, z its mean optical depth at its own width.
+varying vec3 thick_clump;
 // The scalp as a sphere (centre, radius) fitted to the strands' roots, in the hair's space (w 0: none).
 uniform vec4 card_scalp = vec4(0.0);
 varying vec3 card_across; // view space: this strip's axis (raster lighting)
@@ -647,6 +666,41 @@ void vertex() {
 		card_grow = drawn / max(half_width, 1e-7);
 		card_fan *= card_grow;
 	}
+	thick_clump = vec3(0.0);
+	if (card_thick) {
+		// The clump's ellipse (half widths along this strip's axis and the other's, fanned and
+		// thinned as the strip is) seen from the camera: its half extent across the view, e =
+		// t x eye. Strip 1 collapses: one strip a clump.
+		float scale = half_width / max(own_half, 1e-7);
+		vec3 bx = normalize(cross(t, ax));
+		vec3 pv = (MODELVIEW_MATRIX * vec4(p, 1.0)).xyz;
+		vec3 eye = PROJECTION_MATRIX[3][3] > 0.5 ? vec3(0.0, 0.0, -1.0) : normalize(pv);
+		vec3 e = cross(normalize(mat3(MODELVIEW_MATRIX) * t), eye);
+		e = dot(e, e) > 1e-12 ? normalize(transpose(mat3(MODELVIEW_MATRIX)) * e) : ax;
+		vec3 a_axis = strip == 0 ? ax : bx;
+		vec3 b_axis = strip == 0 ? bx : ax;
+		float half_a = (strip == 0 ? own_half : own.w) * scale;
+		float half_b = (strip == 0 ? own.w : own_half) * scale;
+		// At least the clump's strands packed tight (N fibres in a circle sqrt(N) fibres across):
+		// a clump's end or a padding point has no width of its own, and its depth went unbounded.
+		float strands = texelFetch(card_data, ivec2(point * 4 + 2, card), 0).w;
+		float fibre = mix(root_width, tip_width, along);
+		float extent = max(sqrt(pow(half_a * dot(a_axis, e), 2.0) + pow(half_b * dot(b_axis, e), 2.0)), 0.5 * sqrt(max(strands, 1.0)) * fibre);
+		float drawn_thick = extent;
+		if (!IN_PATH_TRACER) {
+			vec4 clip = PROJECTION_MATRIX * vec4(pv, 1.0);
+			float px = 2.0 * clip.w / max(abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y, 1e-6);
+			drawn_thick = max(extent, min(0.71 * px, IN_SHADOW_PASS ? 0.002 : 0.01));
+		}
+		// The clump's strands side by side over the drawn width: its mean optical depth.
+		thick_clump.x = strands * fibre / max(2.0 * drawn_thick, 1e-7);
+		thick_clump.y = clamp(strands * 0.25 * fibre * fibre / max(half_a * half_b, 0.25 * strands * fibre * fibre), 0.0, 1.0);
+		thick_clump.z = strands * fibre / max(2.0 * extent, 1e-7);
+		ax = e;
+		drawn = strip == 0 ? drawn_thick : 0.0;
+		card_grow = 1.0;
+		card_fan = 1.0;
+	}
 	VERTEX = p + ax * (drawn * CUSTOM0.w);
 	if (card_scalp.w > 0.0) {
 		// The card stands for a slab of strands, as wide as one strip and as thick as the other,
@@ -687,7 +741,7 @@ void vertex() {
 void fragment() {
 	vec4 texel = texture(card_atlas, UV);
 	// The strands' own direction: the card's, tilted across the strip as the baked strands run.
-	float tilt = texel.g * 2.0 - 1.0;
+	float tilt = card_thick ? 0.0 : texel.g * 2.0 - 1.0;
 	light_tangent = normalize(strand_tangent + card_across * (tilt / max(sqrt(1.0 - tilt * tilt), 0.05)));
 	vec3 sigma;
 	vec3 mass;
@@ -753,6 +807,12 @@ void fragment() {
 	// depth over the fan.
 	// The atlas holds the strands' optical depth (16 bits, R high and B low, over 8).
 	float depth = (texel.r * 65280.0 + texel.b * 255.0) * (8.0 / 65535.0);
+	if (card_thick) {
+		// Thick strands: the chord through the clump's ellipse, sqrt(1 - x^2) across the strip,
+		// scaled to the clump's mean (4 / pi); the strip faces the camera.
+		depth = thick_clump.x * (4.0 / PI) * sqrt(max(1.0 - card_side * card_side, 0.0));
+		facing = 1.0;
+	}
 	float coverage = 1.0 - exp(-depth * facing / max(card_fan, 0.5));
 	// The strip's edges antialiased: a pixel whose centre lies within half a pixel of the edge
 	// takes the share of it the strip covers, so a strip a few pixels wide is not a stepped band.
@@ -794,7 +854,7 @@ void fragment() {
 	// wide), not from the texel itself: a strip a pixel or two wide otherwise passed and failed
 	// along its length, and the hair behind showed through in rows of dots.
 	vec4 row = textureLod(card_atlas, vec2(card_tile_u, UV.y), log2(card_tile.x));
-	float row_depth = (row.r * 65280.0 + row.b * 255.0) * (8.0 / 65535.0);
+	float row_depth = card_thick ? thick_clump.x : (row.r * 65280.0 + row.b * 255.0) * (8.0 / 65535.0);
 	// (Before the widening to a pixel: the clump's own core.)
 	float row_cover = 1.0 - exp(-row_depth * facing / max(card_fan / card_grow, 0.5));
 	OPAQUE_PREPASS_THRESHOLD = row_cover >= 0.5 && edge >= 0.5 ? 0.0 : 2.0;
@@ -804,7 +864,22 @@ void fragment() {
 	{
 		float absorb = 1.0 - 0.91 * dot(sqrt(hair_color.rgb), vec3(0.2126, 0.7152, 0.0722));
 		float k = absorb * dom_density * row_depth;
-		hair_self = k > 1e-4 ? (1.0 - exp(-k)) / k : 1.0;
+		hair_clump.x = k > 1e-4 ? (1.0 - exp(-k)) / k : 1.0;
+		hair_clump.y = 0.0;
+		if (card_thick) {
+			// Thick strands (Huang et al. 2025, Eq. 7): the lobes dimmed by the fibres the light
+			// crosses inside the clump, a_F^(n - 1), n - 1 the chord's optical depth here.
+			// a_F: what a fibre passes on forward (TT through its colour, Fresnel in and out).
+			float a_f = 0.9091 * dot(sqrt(mass), vec3(0.2126, 0.7152, 0.0722));
+			// The fibres the light crosses do not change when the strip is widened to a pixel:
+			// counted at the clump's own width.
+			float own_depth = thick_clump.z * (4.0 / PI) * sqrt(max(1.0 - card_side * card_side, 0.0));
+			// Averaged over the fibres along the chord (each behind 0 to n of the others):
+			// (1 - a_F^n) / (n ln(1 / a_F)).
+			float kl = own_depth * absorb * dom_density;
+			hair_clump.x = kl > 1e-4 ? (1.0 - exp(-kl)) / kl : 1.0;
+			hair_clump.y = max(thick_clump.y, 1e-4);
+		}
 	}
 	if (IN_SHADOW_PASS && !IN_PATH_TRACER) {
 		float noise = fract(52.9829189 * fract(dot(FRAGCOORD.xy, vec2(0.06711056, 0.00583715))) + texel.a);
@@ -1203,6 +1278,9 @@ void PhysXHair3D::_make_material() {
 		card_material->set_shader_parameter("dom_maps", 0);
 		card_material->set_shader_parameter("card_clump", wet_look * wet_clumping);
 		card_material->set_shader_parameter("card_scalp", card_scalp);
+		card_material->set_shader_parameter("root_width", root_width);
+		card_material->set_shader_parameter("tip_width", tip_width);
+		card_material->set_shader_parameter("card_thick", thick_strands);
 		card_material->set_shader_parameter("snow_cover", snow_look);
 		_set_look(card_material);
 		card_instance->set_material_override(card_material);
@@ -1737,7 +1815,7 @@ void PhysXHair3D::_build_cards(const AABB &p_bounds) {
 				const Vector3 ax = b.axis[strip][i];
 				data->set_pixel(k * 4 + strip, c, Color(ax.x, ax.y, ax.z, b.half_width[1 - strip][i]));
 			}
-			data->set_pixel(k * 4 + 2, c, Color(t.x, t.y, t.z, 0.0f));
+			data->set_pixel(k * 4 + 2, c, Color(t.x, t.y, t.z, float(b.strand_counts[c])));
 			data->set_pixel(k * 4 + 3, c, Color(b.tiles[c * 8 + 0], b.tiles[c * 8 + 1], b.tiles[c * 8 + 4], b.tiles[c * 8 + 5]));
 		}
 	}
@@ -2991,6 +3069,17 @@ float PhysXHair3D::get_card_transition() const {
 	return card_transition;
 }
 
+void PhysXHair3D::set_thick_strands(bool p_enabled) {
+	thick_strands = p_enabled;
+	if (card_material.is_valid()) {
+		card_material->set_shader_parameter("card_thick", thick_strands);
+	}
+}
+
+bool PhysXHair3D::is_thick_strands() const {
+	return thick_strands;
+}
+
 float PhysXHair3D::get_screen_size() const {
 	if (!is_inside_tree() || render_instance == nullptr) {
 		return 0.0f;
@@ -3144,6 +3233,8 @@ void PhysXHair3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_card_screen_size"), &PhysXHair3D::get_card_screen_size);
 	ClassDB::bind_method(D_METHOD("set_card_transition", "seconds"), &PhysXHair3D::set_card_transition);
 	ClassDB::bind_method(D_METHOD("get_card_transition"), &PhysXHair3D::get_card_transition);
+	ClassDB::bind_method(D_METHOD("set_thick_strands", "enabled"), &PhysXHair3D::set_thick_strands);
+	ClassDB::bind_method(D_METHOD("is_thick_strands"), &PhysXHair3D::is_thick_strands);
 	ClassDB::bind_method(D_METHOD("get_screen_size"), &PhysXHair3D::get_screen_size);
 	ClassDB::bind_method(D_METHOD("set_card_distance", "distance"), &PhysXHair3D::set_card_distance);
 	ClassDB::bind_method(D_METHOD("get_card_distance"), &PhysXHair3D::get_card_distance);
@@ -3212,6 +3303,7 @@ void PhysXHair3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "card_count", PROPERTY_HINT_RANGE, "1,1024,1"), "set_card_count", "get_card_count");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "card_screen_size", PROPERTY_HINT_RANGE, "0,1,0.001"), "set_card_screen_size", "get_card_screen_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "card_transition", PROPERTY_HINT_RANGE, "0,3,0.01,suffix:s"), "set_card_transition", "get_card_transition");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "thick_strands"), "set_thick_strands", "is_thick_strands");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "card_distance", PROPERTY_HINT_RANGE, "0,200,0.1,or_greater,suffix:m"), "set_card_distance", "get_card_distance");
 	ADD_GROUP("Wet", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wetness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_wetness", "get_wetness");

@@ -42,6 +42,11 @@ summary: "Trees and woody shrubs grown by light competition, 31 species in ten s
 ## Old trees and deadwood
 
 - **Old trees** (`veteran`): basal hollows, rot holes, woodpecker holes, burls, epicormic shoots and snapped crowns on the clear bole, listed by `get_veteran_features()`.
+
+  ![An oak's lower trunk at veteran 0 and 1, raster](media/trees-veteran.jpg)
+
+  *Old trees: a basal hollow with a rounded lip, a rot hole, a brush of epicormic shoots and the edge of a burl.*
+
 - **Deadwood** (`decay_class`, `fallen`): standing dead trees, snapped tops, stumps and fallen logs in the five forestry decay classes.
 - **Fallen branches** (`fallen_branch`): shed limbs and sticks on the forest floor, from the stand's own trees.
 

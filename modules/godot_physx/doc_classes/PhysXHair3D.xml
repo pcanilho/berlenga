@@ -173,6 +173,9 @@
 		<member name="sun_bleaching" type="float" setter="set_sun_bleaching" getter="get_sun_bleaching" default="0.0">
 			How much sunlight has lightened the hair, from [code]0[/code] (none) to [code]1[/code]. Light breaks the dark melanin (eumelanin) down faster than the red (pheomelanin), so the lengths that have grown out longest, toward the tips, turn lighter and warmer, from about a fifth of the way down.
 		</member>
+		<member name="thick_strands" type="bool" setter="set_thick_strands" getter="is_thick_strands" default="true">
+			If [code]true[/code], hair drawn as cards (see [member cards_enabled]) draws each clump as one thick strand instead of two textured strips: a strip facing the camera as wide as the clump's cross-section seen from there, as opaque as its strands' total width, and shaded as the clump (its fibres shadowing and masking one another, as Huang et al.'s thick strands, EGSR 2025). Its colour matches the strands where the textured cards read bluish low by about a fifth. [code]false[/code]: textured cards.
+		</member>
 		<member name="tip_width" type="float" setter="set_tip_width" getter="get_tip_width" default="0.0001">
 			The width of a strand at the tip, in metres.
 		</member>

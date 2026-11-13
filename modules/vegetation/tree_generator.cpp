@@ -2649,10 +2649,10 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 		// bark wet all round, so the moss there is a near-continuous sleeve rather than patches,
 		// its upper edge wandering between about 15 and 60 cm and frayed into tongues; the
 		// patches only take over above it.
-		const float edge = 0.15f + 0.45f * moss_noise(p_pos * Vector3(2.6f, 0.4f, 2.6f), 0x636f6c6cu + uint32_t(seed));
+		const float edge = (0.15f + 0.45f * moss_noise(p_pos * Vector3(2.6f, 0.4f, 2.6f), 0x636f6c6cu + uint32_t(seed))) * CLAMP(p_amount * 1.5f, 0.35f, 1.0f);
 		const float fray = 0.2f * (moss_noise(p_pos * 9.0f, 0x66726179u) - 0.5f);
 		const float collar = 1.0f - Math::smoothstep(edge - 0.18f, edge + 0.18f, h + fray);
-		w = MAX(w, p_amount * collar * (0.8f + 0.6f * patch));
+		w = MAX(w, collar * MIN(1.0f, p_amount * 1.6f) * (0.95f + 0.25f * patch));
 	}
 	return p_clamp ? CLAMP(w, 0.0f, 1.0f) : w;
 }
@@ -4609,12 +4609,21 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (ring >= int(p_pts.size())) {
 				break;
 			}
-			const Vector3 n = nn[v];
+			// Bearing and push from the ring's centre, not the vertex normal: the bark relief's
+			// normals swing by tens of degrees, so vertices at the hollow's edge fell in or out of
+			// it at random and folded into pale blades across the opening.
+			Vector3 n = vv[v] - p_pts[ring];
+			n.y = 0.0f;
+			if (n.length_squared() < 1e-8f) {
+				continue;
+			}
+			n.normalize();
 			const float r = p_rad[ring];
 			const float h = p_pts[ring].y - vet_base_y;
 			const float az = Math::atan2(n.z, n.x);
 			float off = 0.0f;
 			float dark = 1.0f;
+			float rot = 0.0f;
 			float w_any = 0.0f;
 			for (const VeteranFeature &f : veteran_features) {
 				if (!p_features) {
@@ -4629,7 +4638,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				if (Math::abs(dh) > 1.5f) {
 					continue;
 				}
-				const float da = Math::angle_difference(f.azimuth, az) * r / f.half_w;
+				float da = Math::angle_difference(f.azimuth, az) * r / f.half_w;
+				if (f.kind == VET_BASAL_HOLLOW) {
+					// A basal hollow opens as a pointed arch, widest at the soil, where the rot
+					// came up through the root collar.
+					da /= 1.0f - 0.45f * CLAMP(dh, 0.0f, 1.0f);
+				}
 				const float e = Math::sqrt(dh * dh + da * da);
 				if (e > 1.4f) {
 					continue;
@@ -4653,18 +4667,27 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 						// sized by the flare's swollen radius and roughened finely, the floor
 						// folded through itself in pale blades.
 						const float rough = 0.9f + 0.2f * moss_noise(p_pts[ring] + n * r * 1.2f, 0x686f6cu);
-						off -= MIN(f.amount, 0.5f) * MIN(r, vet_r_stem) * Math::smoothstep(1.1f, 0.35f, e) * rough;
-						dark = MIN(dark, Math::lerp(1.0f, 0.12f, Math::smoothstep(1.0f, 0.55f, e)));
+						off -= MIN(f.amount, 0.5f) * MIN(r, vet_r_stem) * Math::smoothstep(1.0f, 0.45f, e) * rough;
+						dark = MIN(dark, Math::lerp(1.0f, 0.12f, Math::smoothstep(0.95f, 0.5f, e)));
+						// Past the rim the wall is rotten heartwood, red-brown, not bark.
+						rot = MAX(rot, Math::smoothstep(1.0f, 0.75f, e));
 					}
-					const float lip = (e - 1.02f) / 0.14f;
-					off += 0.12f * MIN(r, vet_r_stem) * Math::exp(-lip * lip);
+					// The callus roll stands on the rim and curls in over it: centred just inside
+					// the opening, broad enough to read as a rounded lip, not a ridge line.
+					const float lip = (e - 0.97f) / 0.2f;
+					off += 0.16f * MIN(r, vet_r_stem) * Math::exp(-lip * lip);
 					w_any = 1.0f;
 				}
 			}
 			if (w_any > 0.0f) {
+				if (!p_colour) {
+					// No moss on the rotten wall: the shell sinks under the bark past the rim.
+					off -= 0.08f * rot;
+				}
 				vv[v] += n * off;
 				if (p_colour) {
-					cc[v] = Color(cc[v].r * dark, cc[v].g * dark, cc[v].b * dark, cc[v].a);
+					const Color c = cc[v].lerp(Color(0.085f, 0.048f, 0.028f, cc[v].a), rot);
+					cc[v] = Color(c.r * dark, c.g * dark, c.b * dark, c.a);
 				}
 				touched[i] = 1.0f;
 				any = true;
@@ -4697,16 +4720,37 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				acc[i + p_sides] = sum;
 			}
 		}
+		// The winding's sign, once for the part from the untouched vertices: flipped vertex by
+		// vertex against the old normal, a hollow's steep side walls (turned near 90 degrees from
+		// the bark's outward normal) flipped at random and shaded as ragged dark and sky-blue
+		// patches under the path tracer.
+		float sign_sum = 0.0f;
+		for (int i = 0; i < p_part.w; i++) {
+			if (touched[i] <= 0.0f && acc[i].length_squared() > 1e-16f) {
+				sign_sum += acc[i].normalized().dot(nn[p_part.z + i]);
+			}
+		}
+		const float wsign = sign_sum < 0.0f ? -1.0f : 1.0f;
 		for (int i = 0; i < p_part.w; i++) {
 			// Touched vertices and their ring neighbours, so the edge of a feature shades smoothly.
 			const bool near = touched[i] > 0.0f || (i > 0 && touched[i - 1] > 0.0f) || (i + 1 < p_part.w && touched[i + 1] > 0.0f) ||
 					(i >= p_sides + 1 && touched[i - p_sides - 1] > 0.0f) || (i + p_sides + 1 < p_part.w && touched[i + p_sides + 1] > 0.0f);
 			if (near && acc[i].length_squared() > 1e-16f) {
-				Vector3 fnrm = acc[i].normalized();
-				if (fnrm.dot(nn[p_part.z + i]) < 0.0f) {
-					fnrm = -fnrm; // Winding: keep the outward side.
-				}
+				const Vector3 fnrm = acc[i].normalized() * wsign;
 				nn[p_part.z + i] = fnrm;
+				// The tangent square to the new normal, or the bark's normal map tips on the walls.
+				if (r_b.use_tangents && int(r_b.tangents.size()) >= (p_part.z + i + 1) * 4) {
+					float *tw = r_b.tangents.ptrw() + (p_part.z + i) * 4;
+					Vector3 tg(tw[0], tw[1], tw[2]);
+					tg -= fnrm * fnrm.dot(tg);
+					if (tg.length_squared() < 1e-10f) {
+						tg = fnrm.get_any_perpendicular();
+					}
+					tg.normalize();
+					tw[0] = tg.x;
+					tw[1] = tg.y;
+					tw[2] = tg.z;
+				}
 			}
 		}
 	};
