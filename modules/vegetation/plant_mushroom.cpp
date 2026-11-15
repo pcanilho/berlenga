@@ -334,7 +334,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 			const float x = Math::lerp(rs / R, 0.985f, float(i) / prof);
 			float z = z0 + top_z(x) + curl_z(x) - thick(x);
 			if (p_m.tube_depth > 0.0f) {
-				z -= p_m.tube_depth * Math::pow(Math::sin(Math::PI * MIN((x - rs / R) / (0.95f - rs / R), 1.0f)), 0.45f);
+				z -= p_m.tube_depth * Math::pow(float(Math::sin(Math::PI * MIN((x - rs / R) / (0.95f - rs / R), 1.0f))), 0.45f);
 			}
 			if (i == prof) {
 				z = MIN(z, z0 + top_z(0.985f) + curl_z(0.985f) - 0.0025f);
@@ -367,7 +367,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 				const float x = Math::lerp(x0, x1, s);
 				const float under = z0 + top_z(x) + curl_z(x) - thick(x);
 				// Deepest a third of the way out, nothing at the margin.
-				float depth = p_m.gill_depth * Math::pow(MAX(Math::sin(Math::PI * Math::pow(s, 0.75f)), 0.0f), 0.6f);
+				float depth = p_m.gill_depth * Math::pow(float(MAX(Math::sin(Math::PI * Math::pow(s, 0.75f)), 0.0f)), 0.6f);
 				Vector3 top_p = cap_point(x, a, under + 0.0015f);
 				Vector3 bot_p = cap_point(x, a, under - depth);
 				if (k % 2 == 0 && p_m.decurrent > 0.0f && i == 0) {
