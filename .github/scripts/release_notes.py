@@ -15,7 +15,7 @@ import sys
 
 # zip name part -> (build, what it runs)
 BUILDS = [
-    ("windows", "Windows x86_64", "Vulkan, path tracing, DLSS Ray Reconstruction (NVIDIA DLLs not included, see below)"),
+    ("windows-x86_64", "Windows x86_64", "Vulkan, path tracing, DLSS Ray Reconstruction (NVIDIA DLLs not included, see below)"),
     ("macos-universal", "macOS universal", "Apple Silicon and Intel; raster only"),
     ("linux-x86_64", "Linux x86_64", "Vulkan, path tracing (no DLSS)"),
     ("linux-arm64", "Linux arm64", "Vulkan, path tracing (no DLSS)"),
@@ -39,7 +39,7 @@ def main():
 
     rows = []
     for key, name, runs in BUILDS:
-        zips = glob.glob(os.path.join(dist, f"godot-fork-{key}-*.zip"))
+        zips = glob.glob(os.path.join(dist, f"berlenga-{key}-*.zip"))
         if not zips:
             continue
         zip_name = os.path.basename(zips[0])
@@ -54,7 +54,7 @@ def main():
                     file, digest = line[2:].rsplit(": ", 1)
                     exe_hashes.append(f"| `{file}` | `{digest.strip()}` |")
 
-    tpz = glob.glob(os.path.join(dist, "godot-fork-export-templates-*.tpz"))
+    tpz = glob.glob(os.path.join(dist, "berlenga-export-templates-*.tpz"))
     if tpz:
         tpz_name = os.path.basename(tpz[0])
         url = f"https://github.com/{repo}/releases/download/build-{short}/{tpz_name}"
@@ -71,7 +71,7 @@ def main():
     if tpz:
         out.append("- Export templates: in the editor, Editor > Manage Export Templates > Install from File, and pick the .tpz. Exports to Windows and Linux then carry the PhysX libraries the game needs.")
     if any("macOS" in r for r in rows):
-        out.append("- macOS: ad-hoc signed, not notarized. On first launch right-click Godot.app and choose Open, or run `xattr -cr Godot.app`.")
+        out.append("- macOS: ad-hoc signed, not notarized. On first launch right-click Berlenga.app and choose Open, or run `xattr -cr Berlenga.app`.")
     if exe_hashes:
         out += ["", "<details><summary>SHA-256 of the executables</summary>", "", "| File | SHA-256 |", "| --- | --- |"] + exe_hashes + ["", "</details>"]
     print("\n".join(out))

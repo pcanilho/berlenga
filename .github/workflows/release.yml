@@ -142,7 +142,7 @@ jobs:
           Copy-Item bin/godot.windows.editor.x86_64.exe, bin/godot.windows.editor.x86_64.console.exe, LICENSE.txt, COPYRIGHT.txt pkg/
           # PhysX module runtime libraries (Blast, Flow), copied next to the editor by the module's SCsub.
           Get-ChildItem bin -Filter *.dll | Copy-Item -Destination pkg/
-          Compress-Archive -Path pkg/* -DestinationPath "godot-fork-windows-$short.zip"
+          Compress-Archive -Path pkg/* -DestinationPath "berlenga-windows-x86_64-$short.zip"
           $editor = (Get-FileHash bin/godot.windows.editor.x86_64.exe -Algorithm SHA256).Hash
           $console = (Get-FileHash bin/godot.windows.editor.x86_64.console.exe -Algorithm SHA256).Hash
           "- godot.windows.editor.x86_64.exe: $editor`n- godot.windows.editor.x86_64.console.exe: $console" | Set-Content hashes-windows.md
@@ -152,7 +152,7 @@ jobs:
         with:
           name: windows
           path: |
-            godot-fork-windows-*.zip
+            berlenga-windows-*.zip
             hashes-windows.md
 
   macos:
@@ -203,23 +203,23 @@ jobs:
         run: |
           short=$SHORT
           lipo -create bin/godot.macos.editor.x86_64 bin/godot.macos.editor.arm64 -output bin/godot.macos.editor.universal
-          cp -R misc/dist/macos_tools.app Godot.app
-          mkdir -p Godot.app/Contents/MacOS
-          cp bin/godot.macos.editor.universal Godot.app/Contents/MacOS/Godot
-          chmod +x Godot.app/Contents/MacOS/Godot
-          codesign --force --deep --sign - Godot.app
+          cp -R misc/dist/macos_tools.app Berlenga.app
+          mkdir -p Berlenga.app/Contents/MacOS
+          cp bin/godot.macos.editor.universal Berlenga.app/Contents/MacOS/Godot
+          chmod +x Berlenga.app/Contents/MacOS/Godot
+          codesign --force --deep --sign - Berlenga.app
           mkdir pkg
-          mv Godot.app pkg/
+          mv Berlenga.app pkg/
           cp LICENSE.txt COPYRIGHT.txt pkg/
-          ditto -c -k pkg "godot-fork-macos-universal-$short.zip"
-          echo "- Godot.app/Contents/MacOS/Godot (universal): $(shasum -a 256 bin/godot.macos.editor.universal | cut -d' ' -f1)" > hashes-macos.md
+          ditto -c -k pkg "berlenga-macos-universal-$short.zip"
+          echo "- Berlenga.app/Contents/MacOS/Godot (universal): $(shasum -a 256 bin/godot.macos.editor.universal | cut -d' ' -f1)" > hashes-macos.md
 
       - name: Upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
           path: |
-            godot-fork-macos-universal-*.zip
+            berlenga-macos-universal-*.zip
             hashes-macos.md
 
   linux:
@@ -286,7 +286,7 @@ jobs:
           # PhysX module runtime libraries (Blast, Flow), found through the editor's $ORIGIN rpath.
           cp bin/*.so pkg/ 2>/dev/null || true
           chmod +x pkg/$bin
-          (cd pkg && zip -9 -r "../godot-fork-linux-${{ matrix.arch }}-$short.zip" .)
+          (cd pkg && zip -9 -r "../berlenga-linux-${{ matrix.arch }}-$short.zip" .)
           echo "- $bin: $(sha256sum bin/$bin | cut -d' ' -f1)" > hashes-linux-${{ matrix.arch }}.md
 
       - name: Upload
@@ -294,7 +294,7 @@ jobs:
         with:
           name: linux-${{ matrix.arch }}
           path: |
-            godot-fork-linux-*.zip
+            berlenga-linux-*.zip
             hashes-linux-*.md
 
   # Export templates for Windows x86_64 and Linux x86_64/arm64, debug and release, with the same
@@ -424,7 +424,7 @@ jobs:
               mkdir -p /tmp/built && git show "$SHA:version.py" > /tmp/built/version.py
               python3 -c "import sys; sys.path.insert(0, '/tmp/built'); import version as v; n = '%d.%d' % (v.major, v.minor) + ('.%d' % v.patch if v.patch else ''); print(n + '.' + v.status + v.module_config)" > dist/templates/version.txt
               echo "Templates for $(cat dist/templates/version.txt)"
-              (cd dist && zip -9 -r "godot-fork-export-templates-$SHORT.tpz" templates)
+              (cd dist && zip -9 -r "berlenga-export-templates-$SHORT.tpz" templates)
             else
               echo "::warning::An export template build failed; this release has no export templates."
             fi
