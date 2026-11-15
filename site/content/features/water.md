@@ -25,6 +25,10 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
   *Caustics: bright lines on the pool floor.*
 
+  ![Clear shallows over sand, raster, caustics_enabled off and on](media/water-raster-caustics.jpg)
+
+  *Raster caustics: sunlight focused by the waves lies in a web over the sand of the shallows.*
+
 - **Caustic cascades** (`rendering/pathtracing/caustics_cascades`): sun caustics out to 256 m, near lines unchanged.
 
 ## Sea and lakes
