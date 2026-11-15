@@ -15,13 +15,13 @@
 		<method name="get_screen_size" qualifiers="const">
 			<return type="float" />
 			<description>
-				The hair's screen size from the current camera: its bounding sphere's diameter over the view's height. See [member card_screen_size].
+				The hair's screen size from the current camera: its bounding sphere's diameter over the view's height.
 			</description>
 		</method>
 		<method name="is_drawing_cards" qualifiers="const">
 			<return type="bool" />
 			<description>
-				Returns [code]true[/code] while the hair is drawn as cards (see [member cards_enabled]).
+				Returns [code]true[/code] while the hair is drawn by thick strands alone, every clump 2 pixels across or less (see [member cards_enabled]).
 			</description>
 		</method>
 		<method name="reset_simulation">
@@ -32,22 +32,13 @@
 	</methods>
 	<members>
 		<member name="card_count" type="int" setter="set_card_count" getter="get_card_count" default="1024">
-			How many cards the strands are clustered into. Each card is two crossed strips.
-		</member>
-		<member name="card_distance" type="float" setter="set_card_distance" getter="get_card_distance" default="15.0">
-			How far from the camera, in metres, the strands give way to cards, when [member card_screen_size] is [code]0[/code].
-		</member>
-		<member name="card_screen_size" type="float" setter="set_card_screen_size" getter="get_card_screen_size" default="0.07">
-			The screen size below which the strands give way to cards: the hair's bounding sphere's diameter over the view's height (as Unreal Engine's groom LODs), whatever the distance, field of view or resolution. Cards stand in for clumps of strands and show as strips when large on screen, so a zoomed-in camera keeps the strands. [code]0.07[/code] matches about 15 m with a 75 degree field of view for a head of long hair. [code]0[/code]: switch by [member card_distance] instead. [method get_screen_size] gives the hair's current screen size.
-		</member>
-		<member name="card_transition" type="float" setter="set_card_transition" getter="get_card_transition" default="0.5">
-			How long, in seconds, the strands and cards cross-fade when the hair switches between them: the cards fade in over the strands, then the strands fade out beneath them, so the switch shows no step. [code]0[/code]: switch in one frame. The path tracer always switches at once.
+			How many clumps the strands are clustered into for the thick strands (see [member cards_enabled]). Each clump is drawn as one strip and simulated as one strand.
 		</member>
 		<member name="cards_enabled" type="bool" setter="set_cards_enabled" getter="is_cards_enabled" default="false">
-			If [code]true[/code], hair cards are baked from the groom when the hair is built (shared by every node with the same groom and settings), and past [member card_distance] the hair is drawn as cards instead of strands: textured strips along clumps of strands, which move with the same guide strands. Only the guides and the cards are then simulated, so distant hair costs a small fraction of strands. Raster only: while the environment path traces, the hair stays strands at every distance.
+			If [code]true[/code], the strands are clustered into clumps when the hair is built (shared by every node with the same groom and settings), and far hair is drawn as thick strands (Huang et al., EGSR 2025): each clump one strip facing the camera, as wide as the clump's cross-section seen from there, as opaque as its strands' total width, and shaded as the clump (its fibres shadowing and masking one another), so its colour matches the strands. The switch is per segment: a stretch of strands whose clump is at most 2 pixels across draws as that clump's thick strand, so the hair hands over a few clumps at a time as it recedes and a zoomed-in camera keeps the strands. Once every clump is that thin, only the guides and the clumps are simulated, so distant hair costs a small fraction of strands. Raster only: while the environment path traces, the hair stays strands at every distance.
 		</member>
 		<member name="cast_hair_shadows" type="bool" setter="set_cast_hair_shadows" getter="is_casting_hair_shadows" default="true">
-			The strands cast into the shadow maps, so the hair shades the face, neck and shoulders under it and the ground. Godot leaves blended materials out of the shadow maps, so a copy of the strands is drawn there alone, each strand at its own share of texels (stochastic transparency). Not with [member render_material] set, nor while cards are drawn; the path tracer traces the strands themselves.
+			The strands cast into the shadow maps, so the hair shades the face, neck and shoulders under it and the ground. Godot leaves blended materials out of the shadow maps, so a copy of the strands is drawn there alone, each strand at its own share of texels (stochastic transparency). Not with [member render_material] set, nor where thick strands draw (they cast their own); the path tracer traces the strands themselves.
 		</member>
 		<member name="cloth_thickness" type="float" setter="set_cloth_thickness" getter="get_cloth_thickness" default="0.005">
 			How far, in metres, the strands rest above [member collision_cloth]'s simulated surface (on top of the collision margin): the cloth's own thickness.
@@ -172,9 +163,6 @@
 		</member>
 		<member name="sun_bleaching" type="float" setter="set_sun_bleaching" getter="get_sun_bleaching" default="0.0">
 			How much sunlight has lightened the hair, from [code]0[/code] (none) to [code]1[/code]. Light breaks the dark melanin (eumelanin) down faster than the red (pheomelanin), so the lengths that have grown out longest, toward the tips, turn lighter and warmer, from about a fifth of the way down.
-		</member>
-		<member name="thick_strands" type="bool" setter="set_thick_strands" getter="is_thick_strands" default="true">
-			If [code]true[/code], hair drawn as cards (see [member cards_enabled]) draws each clump as one thick strand instead of two textured strips: a strip facing the camera as wide as the clump's cross-section seen from there, as opaque as its strands' total width, and shaded as the clump (its fibres shadowing and masking one another, as Huang et al.'s thick strands, EGSR 2025). Its colour matches the strands where the textured cards read bluish low by about a fifth. The switch is per segment: a stretch of strands whose clump is at most 2 pixels across draws as that clump's thick strand, so the hair hands over a few clumps at a time as it recedes, with no cross-fade (see [member card_transition]). [code]false[/code]: textured cards, switched in for the whole hair by [member card_screen_size].
 		</member>
 		<member name="tip_width" type="float" setter="set_tip_width" getter="get_tip_width" default="0.0001">
 			The width of a strand at the tip, in metres.

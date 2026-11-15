@@ -250,30 +250,6 @@ Ref<HairCardBake> HairCardBake::bake(const PackedVector3Array &p_points, const P
 		r->axis[a].resize(cards * samples);
 		r->half_width[a].resize(cards * samples);
 	}
-	r->tiles.resize(cards * 2 * 4);
-
-	// The atlas: two tiles a card (one per strip), 32 texels across and up to 256 along, in rows of
-	// 2048 texels.
-	const int tile_w = 32;
-	const int atlas_w = 2048;
-	const int per_row = atlas_w / tile_w;
-	const int rows = (cards * 2 + per_row - 1) / per_row;
-	int tile_h = 256;
-	while (tile_h > 32 && rows * tile_h > 4096) {
-		tile_h /= 2;
-	}
-	const int atlas_h = MAX(rows * tile_h, 1);
-	LocalVector<float> cover, tilt, seed, weight;
-	cover.resize(atlas_w * atlas_h);
-	tilt.resize(atlas_w * atlas_h);
-	seed.resize(atlas_w * atlas_h);
-	weight.resize(atlas_w * atlas_h);
-	for (int i = 0; i < atlas_w * atlas_h; i++) {
-		cover[i] = 0.0f;
-		tilt[i] = 0.0f;
-		seed[i] = 0.0f;
-		weight[i] = 0.0f;
-	}
 
 	LocalVector<Vector3> mean, tangent, frame_u, frame_v;
 	mean.resize(samples);
@@ -351,57 +327,6 @@ Ref<HairCardBake> HairCardBake::bake(const PackedVector3Array &p_points, const P
 				r->half_width[a].write[i] = MAX(w95 + own, 4.0f * own);
 			}
 		}
-		// The strands projected into each strip's tile (DiffHairCard projects them as curves rather
-		// than rendering them): per row along the card, each strand's place across it, its width
-		// over the texel's as coverage, summed as optical depth (-ln(1 - c) each); its tilt across
-		// the strip and a per-strand seed averaged by coverage.
-		for (int a = 0; a < 2; a++) {
-			const int tile = card * 2 + a;
-			const int tx = (tile % per_row) * tile_w;
-			const int ty = (tile / per_row) * tile_h;
-			r->tiles.write[tile * 4 + 0] = tx;
-			r->tiles.write[tile * 4 + 1] = ty;
-			r->tiles.write[tile * 4 + 2] = tile_w;
-			r->tiles.write[tile * 4 + 3] = tile_h;
-			for (int y = 0; y < tile_h; y++) {
-				const float t = (float(y) + 0.5f) / float(tile_h) * float(samples - 1);
-				const int k0 = MIN((int)t, samples - 2);
-				const float f = t - float(k0);
-				const int i0 = card * samples + k0;
-				const Vector3 m = mean[k0].lerp(mean[k0 + 1], f);
-				const Vector3 axis = r->axis[a][i0].lerp(r->axis[a][i0 + 1], f).normalized();
-				const float hw = Math::lerp(r->half_width[a][i0], r->half_width[a][i0 + 1], f);
-				const float texel = 2.0f * hw / float(tile_w);
-				const float width = Math::lerp(p_root_width, p_tip_width, t / float(samples - 1));
-				const float alpha = MIN(width / MAX(texel, 1e-7f), 1.0f);
-				for (const int s : list) {
-					const Vector3 p = fine[s * samples + k0].lerp(fine[s * samples + k0 + 1], f);
-					const float u = (p - m).dot(axis) / MAX(hw, 1e-7f);
-					if (Math::abs(u) > 1.0f) {
-						continue;
-					}
-					const float x = (u * 0.5f + 0.5f) * float(tile_w) - 0.5f;
-					const int x0 = (int)Math::floor(x);
-					const float fx = x - float(x0);
-					Vector3 d = fine[s * samples + k0 + 1] - fine[s * samples + k0];
-					const float dl = d.length();
-					const float tl = dl > 1e-9f ? d.dot(axis) / dl : 0.0f;
-					const float sd = Math::fract(Math::sin(float(s) * 12.9898f) * 43758.5453f);
-					for (int o = 0; o < 2; o++) {
-						const int xx = x0 + o;
-						if (xx < 0 || xx >= tile_w) {
-							continue;
-						}
-						const float cov = alpha * (o == 0 ? 1.0f - fx : fx);
-						const int idx = (ty + y) * atlas_w + tx + xx;
-						cover[idx] -= Math::log(MAX(1.0f - cov, 1e-4f));
-						tilt[idx] += tl * cov;
-						seed[idx] += Math::abs(sd) * cov;
-						weight[idx] += cov;
-					}
-				}
-			}
-		}
 		r->strand_counts.set(card, list.size());
 		for (const int s : list) {
 			r->strand_card.set(s, card);
@@ -409,63 +334,6 @@ Ref<HairCardBake> HairCardBake::bake(const PackedVector3Array &p_points, const P
 		card++;
 	}
 
-	// The atlas holds the optical depth, not the coverage, and makes its own mipmaps: a pixel
-	// that spans several texels sees the strands of all of them, each by its share of the pixel,
-	// so it lets through exp(-mean depth), the transmittance of the mean depth. Mipmaps of the
-	// coverage gave the mean transmittance instead, which (exp being convex) is more, and the
-	// cards grew see-through with distance where the strands do not. The depth takes 16 bits, R
-	// high and B low; filtering is linear in each, so the sampled depth stays exact.
-	for (int i = 0; i < atlas_w * atlas_h; i++) {
-		const float wt = weight[i];
-		tilt[i] = wt > 0.0f ? 0.5f + 0.5f * CLAMP(tilt[i] / wt, -1.0f, 1.0f) : 0.5f;
-		seed[i] = wt > 0.0f ? seed[i] / wt : 0.5f;
-		cover[i] = MIN(cover[i] / CARD_DEPTH_MAX, 1.0f);
-	}
-	r->atlas = Image::create_empty(atlas_w, atlas_h, true, Image::FORMAT_RGBA8);
-	PackedByteArray data = r->atlas->get_data();
-	uint8_t *w = data.ptrw();
-	int lw = atlas_w;
-	int lh = atlas_h;
-	for (int level = 0; level <= r->atlas->get_mipmap_count(); level++) {
-		int64_t ofs, size;
-		int mw, mh;
-		r->atlas->get_mipmap_offset_size_and_dimensions(level, ofs, size, mw, mh);
-		if (level > 0) {
-			// Box filter from the level above (lw x lh) to this one (mw x mh), in place.
-			for (int y = 0; y < mh; y++) {
-				for (int x = 0; x < mw; x++) {
-					float d = 0.0f, g = 0.0f, a = 0.0f;
-					int n = 0;
-					for (int oy = 0; oy < 2; oy++) {
-						for (int ox = 0; ox < 2; ox++) {
-							const int sx = MIN(x * 2 + ox, lw - 1);
-							const int sy = MIN(y * 2 + oy, lh - 1);
-							const int si = sy * lw + sx;
-							d += cover[si];
-							g += tilt[si];
-							a += seed[si];
-							n++;
-						}
-					}
-					const int di = y * mw + x;
-					cover[di] = d / n;
-					tilt[di] = g / n;
-					seed[di] = a / n;
-				}
-			}
-			lw = mw;
-			lh = mh;
-		}
-		uint8_t *o = w + ofs;
-		for (int i = 0; i < mw * mh; i++) {
-			const int q = (int)Math::round(cover[i] * 65535.0f);
-			o[i * 4 + 0] = (uint8_t)(q >> 8);
-			o[i * 4 + 1] = (uint8_t)CLAMP(Math::round(tilt[i] * 255.0f), 0.0f, 255.0f);
-			o[i * 4 + 2] = (uint8_t)(q & 255);
-			o[i * 4 + 3] = (uint8_t)CLAMP(Math::round(seed[i] * 255.0f), 0.0f, 255.0f);
-		}
-	}
-	r->atlas->set_data(atlas_w, atlas_h, true, Image::FORMAT_RGBA8, data);
 	return r;
 }
 
