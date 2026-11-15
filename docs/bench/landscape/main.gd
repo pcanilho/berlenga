@@ -35,6 +35,7 @@ extends Node3D
 #   --hanging             with --layout=valley: the lake and big fall in a side valley hung above a glacial trough
 #                         (--bowl-inflow=km² feeds the bowl from beyond the map; --bowl-inflow-at=x,z)
 #   --guides              the bowl, ridges and bar as TerrainGuide3D nodes; --coast-guide, --beach-guide: see the code
+#   --ice-converged       with --glacial: solve the steady ice to convergence (glacial_converged)
 #   --touch=x,z,w,d,mode,y[,depth,falloff,bowl];...  TerrainBrush3D touch-ups under the generator (lower, raise,
 #                         flatten, add), the lakes and rivers re-solved after them
 #   --preview-test[=scale] move the first guide and time the generator's coarse guide preview
@@ -335,7 +336,7 @@ func _ready() -> void:
 		return
 	if out != "":
 		get_viewport().get_texture().get_image().save_png(out)
-		_log("saved " + out)
+		_log("saved %s (%d primitives in the frame)" % [out, int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))])
 		if landscape:
 			_log("landscape at the frame %s" % [landscape.get_stats()])
 		if weather != null and weather.aerosol_haze:
@@ -690,6 +691,7 @@ func _generate() -> void:
 		# Ice ages: glaciers carve troughs and cirques, and the last one leaves its basins as lakes.
 		gen.glacial_enabled = true
 		gen.glacial_ela = float(args.get("ela", "500"))
+		gen.glacial_converged = args.has("ice-converged") # the steady ice solved to convergence
 		gen.glacial_share = float(args.get("glacial-share", "0.5"))
 		gen.glacial_final = float(args.get("glacial-final", "100000"))
 		gen.glacial_rock_variation = float(args.get("rock-var", "0"))
@@ -957,7 +959,7 @@ func _generate() -> void:
 	if gen.scree_age > 0.0:
 		_log("scree: %.0f m3" % gen.get_last_scree_volume())
 	if gen.glacial_enabled:
-		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded()])
+		_log("glaciers: %.0f ms, last glaciation %.2f km2 of ice, eroded up to %.0f m, ice imbalance %.2f m/yr (%d cycles)" % [gen.get_last_glacial_msec(), gen.get_last_glacial_ice_area() / 1e6, gen.get_last_glacial_eroded(), gen.get_last_glacial_residual(), gen.get_last_glacial_steps()])
 		for l in gen.get_lake_results():
 			_log("  lake level %.0f m, depth %.0f m, %.1f ha, catchment %.2f km2 at %s, outlet %s" % [l["level"], l["depth"], l["area"] / 1e4, l["catchment"] / 1e6, l["center"], l.get("outlet")])
 	if args.get("boulders", "1") != "0":

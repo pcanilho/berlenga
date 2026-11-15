@@ -52,6 +52,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <vector>
 
 class TerrainGlacial {
@@ -71,11 +72,16 @@ public:
 		int iterations = 200; // warm-started solves
 		int max_sub_steps = 24; // per call; the rest of the time is dropped (the ice has worn what it can)
 		double smoothing = 3.0; // ice cells: Gaussian sigma for the sliding speed (about 200 m, two to three ice thicknesses)
+		// Solve the steady ice to convergence (multigrid, below) instead of a fixed count of pseudo-transient steps.
+		bool converged = false;
+		double tolerance = 0.5; // m/yr: the largest imbalance the converged solve leaves
+		int max_outer = 300; // cycles at most per solve
 	};
 	Params p;
 
 	// Results of the last erode() call.
 	int sub_steps = 0;
+	int outer_steps = 0; // cycles the converged solves took over the call
 	double ice_area = 0.0; // m^2 under more than 1 m of ice
 	double ice_max = 0.0; // m
 	double eroded_max = 0.0; // m over the call
@@ -99,6 +105,7 @@ public:
 	// multiplier on the erosion rate (rock quality).
 	void erode(double *p_bed, int nx, int ny, double dx, double p_years, double *p_sediment = nullptr, const uint8_t *p_fixed = nullptr, const double *p_resist = nullptr, const double *p_level = nullptr, const double *p_scale = nullptr) {
 		sub_steps = 0;
+		outer_steps = 0;
 		eroded_max = 0.0;
 		const int k = std::max(1, (int)std::lround(p.cell / dx));
 		const int mx = (nx - 1) / k + 1 + ((nx - 1) % k ? 1 : 0);
@@ -124,7 +131,11 @@ public:
 					bed[z * gx + x] = p_bed[std::min(z * k, ny - 1) * nx + std::min(x * k, nx - 1)];
 				}
 			}
-			_solve(first ? p.first_iterations : p.iterations);
+			if (p.converged) {
+				_solve_converged(first);
+			} else {
+				_solve(first ? p.first_iterations : p.iterations);
+			}
 			first = false;
 			_erosion_rate();
 			if (p_scale) {
@@ -338,6 +349,430 @@ private:
 			}
 		}
 		residual = res;
+		for (int z = 0; z < gz; z++) {
+			for (int x = 0; x < gx; x++) {
+				const int i = z * gx + x;
+				const double ax = 0.5 * ((x > 0 ? qx[i - 1] : 0.0) + (x < gx - 1 ? qx[i] : 0.0));
+				const double az = 0.5 * ((z > 0 ? qz[i - gx] : 0.0) + (z < gz - 1 ? qz[i] : 0.0));
+				flux[i] = std::sqrt(ax * ax + az * az);
+			}
+		}
+	}
+
+	// The face thickness of Jarosch, Schoof and Anslow 2013 (TC 7): MUSCL reconstruction from both sides, D from
+	// the thinner or thicker side by the sign of the surface step (their eq. 33), so a thin cell above a cliff cannot pass on more ice than it holds and mass is conserved over steep beds. Limited by
+	// minmod: Jarosch et al.'s superbee and van Leer are more compressive, and the relaxation below cycles and runs
+	// away with them on steep beds; minmod settles every state tried.
+	static double _minmod(double r) { return std::max(0.0, std::min(1.0, r)); }
+	static double _muscl_h(double hm, double h0, double h1, double h2, double s0, double s1) {
+		auto ratio = [](double num, double den) { return std::fabs(den) < 1.0e-12 ? (std::fabs(num) < 1.0e-12 ? 1.0 : (num > 0.0 ? 1.0e6 : -1.0e6) * (den >= 0.0 ? 1.0 : -1.0)) : num / den; };
+		const double r0 = ratio(h0 - hm, h1 - h0);
+		const double r1 = ratio(h1 - h0, h2 - h1);
+		const double hmi = h0 + 0.5 * _minmod(r0) * (h1 - h0);
+		const double hpl = h1 - 0.5 * _minmod(r1) * (h2 - h1);
+		const double lo = std::min(hmi, hpl), hi = std::max(hmi, hpl);
+		// eq. 33: down to the right (s1 <= s0) takes the left value's side rule, up the other.
+		if (s1 <= s0) {
+			return hmi <= hpl ? lo : hi;
+		}
+		return hmi <= hpl ? hi : lo;
+	}
+	bool muscl = false;
+
+	// The converged solve's settings: safeguarded root steps per node, the coarse-grid correction's damping, the
+	// most grid levels, the fine sweeps' relaxation once the cycles stop gaining, and how many cycles without a 5%
+	// gain count as stopped.
+	static constexpr int k_root_iterations = 30;
+	static constexpr double k_cycle_damping = 0.5;
+	static constexpr int k_max_levels = 8;
+	static constexpr double k_fine_omega = 1.0;
+	static constexpr int k_cycle_patience = 12;
+
+	// Face diffusivities and fluxes of the ice as it stands (the same SIA faces as _solve: upwind thickness, cross
+	// slope from the neighbours' centred gradients).
+	void _faces(std::vector<double> &r_dx, std::vector<double> &r_dz) {
+		const int m = gx * gz;
+		const double G = _gamma();
+		const double d = gd;
+		const std::vector<double> &H = ice;
+		qx.assign(m, 0.0);
+		qz.assign(m, 0.0);
+		r_dx.assign(m, 0.0);
+		r_dz.assign(m, 0.0);
+		auto sf = [&](int c) { return bed[c] + H[c]; };
+		auto gzc = [&](int c, int cz) {
+			const int a = cz > 0 ? c - gx : c, b = cz < gz - 1 ? c + gx : c;
+			const double span = (cz > 0 ? 1 : 0) + (cz < gz - 1 ? 1 : 0);
+			return span > 0 ? (sf(b) - sf(a)) / (span * d) : 0.0;
+		};
+		auto gxc = [&](int c, int cx) {
+			const int a = cx > 0 ? c - 1 : c, b = cx < gx - 1 ? c + 1 : c;
+			const double span = (cx > 0 ? 1 : 0) + (cx < gx - 1 ? 1 : 0);
+			return span > 0 ? (sf(b) - sf(a)) / (span * d) : 0.0;
+		};
+		for (int z = 0; z < gz; z++) {
+			for (int x = 0; x + 1 < gx; x++) {
+				const int i = z * gx + x, j = i + 1;
+				const double si = sf(i), sj = sf(j);
+				const double sx = (sj - si) / d;
+				const double sz = 0.5 * (gzc(i, z) + gzc(j, z));
+				const double hu = muscl ? _muscl_h(x > 0 ? H[i - 1] : H[i], H[i], H[j], x + 2 < gx ? H[j + 1] : H[j], si, sj) : (si > sj ? H[i] : H[j]);
+				const double h2 = hu * hu;
+				r_dx[i] = G * h2 * h2 * hu * (sx * sx + sz * sz);
+				qx[i] = -r_dx[i] * sx;
+			}
+		}
+		for (int z = 0; z + 1 < gz; z++) {
+			for (int x = 0; x < gx; x++) {
+				const int i = z * gx + x, j = i + gx;
+				const double si = sf(i), sj = sf(j);
+				const double sz = (sj - si) / d;
+				const double sx = 0.5 * (gxc(i, x) + gxc(j, x));
+				const double hu = muscl ? _muscl_h(z > 0 ? H[i - gx] : H[i], H[i], H[j], z + 2 < gz ? H[j + gx] : H[j], si, sj) : (si > sj ? H[i] : H[j]);
+				const double h2 = hu * hu;
+				r_dz[i] = G * h2 * h2 * hu * (sx * sx + sz * sz);
+				qz[i] = -r_dz[i] * sz;
+			}
+		}
+	}
+
+	void _ice_edges() {
+		for (int z = 0; z < gz; z++) {
+			for (int x = 0; x < gx; x++) {
+				if (x == 0 || z == 0 || x == gx - 1 || z == gz - 1) {
+					const int i = z * gx + x;
+					ice[i] = edge_in.empty() || edge_in[i] < 0 ? 0.0 : std::max(0.0, bed[edge_in[i]] + ice[edge_in[i]] - bed[i]);
+				}
+			}
+		}
+	}
+
+	// Steady ice, converged. The steady SIA with H >= 0 is an obstacle problem (Jouvet and Bueler 2012): it is
+	// relaxed pointwise by nonlinear projected Gauss-Seidel (each node in turn takes the thickness that balances its
+	// own four face fluxes and its mass balance, a safeguarded scalar root, clamped at zero; pointwise smoothers work
+	// for the SIA, Bueler 2021), and the smooth error that Gauss-Seidel removes slowly is removed on coarser grids by
+	// full approximation storage multigrid V-cycles (Brandt 1977; Bueler 2021's FAS example), the coarse levels
+	// seeing the bed by injection. Stops once the largest imbalance is under the tolerance, wherever it started.
+	struct Level {
+		int nx = 0, nz = 0;
+		double d = 0.0;
+		std::vector<double> b, h, rhs, src;
+		std::vector<uint8_t> fix; // held: the grid's edge
+	};
+
+	static double _lv_s(const Level &L, int c) { return L.b[c] + L.h[c]; }
+	static double _lv_gz(const Level &L, int c) {
+		const int cz = c / L.nx;
+		const int a = cz > 0 ? c - L.nx : c, b = cz < L.nz - 1 ? c + L.nx : c;
+		const double span = (cz > 0 ? 1 : 0) + (cz < L.nz - 1 ? 1 : 0);
+		return span > 0 ? (_lv_s(L, b) - _lv_s(L, a)) / (span * L.d) : 0.0;
+	}
+	static double _lv_gx(const Level &L, int c) {
+		const int cx = c % L.nx;
+		const int a = cx > 0 ? c - 1 : c, b = cx < L.nx - 1 ? c + 1 : c;
+		const double span = (cx > 0 ? 1 : 0) + (cx < L.nx - 1 ? 1 : 0);
+		return span > 0 ? (_lv_s(L, b) - _lv_s(L, a)) / (span * L.d) : 0.0;
+	}
+
+	// The node's operator at thickness p_h, neighbours as they stand: outflow per area less the mass balance.
+	struct NodeOp {
+		double G, d, bi, cross[4], sj[4], hj[4], bg, ela, acc, src;
+		bool muscl = false;
+		double far[4], near_other[4]; // MUSCL: the thickness beyond the neighbour, and beyond this node, per face
+		double operator()(double p_h) const {
+			const double si = bi + p_h;
+			double out = 0.0;
+			for (int k = 0; k < 4; k++) {
+				const double sl = (si - sj[k]) / d;
+				double hu;
+				if (muscl) {
+					// Faces 0 and 2 have the neighbour on the low side (left), 1 and 3 on the high side.
+					hu = (k & 1) ? _muscl_h(near_other[k], p_h, hj[k], far[k], si, sj[k]) : _muscl_h(far[k], hj[k], p_h, near_other[k], sj[k], si);
+				} else {
+					hu = si > sj[k] ? p_h : hj[k];
+				}
+				const double h2 = hu * hu;
+				out += G * h2 * h2 * hu * (sl * sl + cross[k] * cross[k]) * sl / d;
+			}
+			return out - (std::min(bg * (si - ela), acc) + src);
+		}
+	};
+	NodeOp _node_op(const Level &L, int i) const {
+		NodeOp o;
+		o.G = _gamma();
+		o.d = L.d;
+		o.bi = L.b[i];
+		o.bg = p.balance_gradient;
+		o.ela = p.ela;
+		o.acc = p.max_accumulation;
+		o.src = L.src.empty() ? 0.0 : L.src[i];
+		const int nb[4] = { i - 1, i + 1, i - L.nx, i + L.nx };
+		const double gzi = _lv_gz(L, i), gxi = _lv_gx(L, i);
+		o.cross[0] = 0.5 * (gzi + _lv_gz(L, i - 1));
+		o.cross[1] = 0.5 * (gzi + _lv_gz(L, i + 1));
+		o.cross[2] = 0.5 * (gxi + _lv_gx(L, i - L.nx));
+		o.cross[3] = 0.5 * (gxi + _lv_gx(L, i + L.nx));
+		for (int k = 0; k < 4; k++) {
+			o.sj[k] = _lv_s(L, nb[k]);
+			o.hj[k] = L.h[nb[k]];
+		}
+		o.muscl = muscl;
+		if (muscl) {
+			const int x = i % L.nx, z = i / L.nx;
+			// West: (i-2, i-1 | i, i+1); east: (i-1, i | i+1, i+2); the same in z. Clamped at the edge as _faces does.
+			o.far[0] = x - 1 > 0 ? L.h[i - 2] : L.h[i - 1];
+			o.near_other[0] = L.h[i + 1];
+			o.near_other[1] = L.h[i - 1];
+			o.far[1] = x + 2 < L.nx ? L.h[i + 2] : L.h[i + 1];
+			o.far[2] = z - 1 > 0 ? L.h[i - 2 * L.nx] : L.h[i - L.nx];
+			o.near_other[2] = L.h[i + L.nx];
+			o.near_other[3] = L.h[i - L.nx];
+			o.far[3] = z + 2 < L.nz ? L.h[i + 2 * L.nx] : L.h[i + L.nx];
+		}
+		return o;
+	}
+
+	// Projected nonlinear Gauss-Seidel: each node solves op(h) = rhs for h >= 0 (op rises with h).
+	void _lv_smooth(Level &L, int p_sweeps, bool p_fine, double p_omega = 1.0) {
+		for (int sw = 0; sw < p_sweeps; sw++) {
+			const bool back = sw & 1; // alternate the sweep direction, so no direction is favoured
+			for (int zz = 1; zz + 1 < L.nz; zz++) {
+				const int z = back ? L.nz - 1 - zz : zz;
+				for (int xx = 1; xx + 1 < L.nx; xx++) {
+					const int x = back ? L.nx - 1 - xx : xx;
+					const int i = z * L.nx + x;
+					if (L.fix[i]) {
+						continue;
+					}
+					const NodeOp op = _node_op(L, i);
+					const double r = L.rhs[i];
+					double lo = 0.0, flo = op(0.0) - r;
+					if (flo >= 0.0) {
+						L.h[i] = 0.0;
+						continue;
+					}
+					double hi = std::max(2.0 * L.h[i], 10.0), fhi = op(hi) - r;
+					for (int g = 0; g < 20 && fhi < 0.0; g++) {
+						lo = hi;
+						flo = fhi;
+						hi *= 2.0;
+						fhi = op(hi) - r;
+					}
+					// Illinois regula falsi on [lo, hi].
+					int side = 0;
+					double hh = L.h[i];
+					for (int g = 0; g < k_root_iterations; g++) {
+						hh = (lo * fhi - hi * flo) / (fhi - flo);
+						const double fh = op(hh) - r;
+						if (std::fabs(fh) < 1.0e-5 || hi - lo < 1.0e-4) {
+							break;
+						}
+						if ((fh < 0.0) == (flo < 0.0)) {
+							lo = hh;
+							flo = fh;
+							if (side == -1) {
+								fhi *= 0.5;
+							}
+							side = -1;
+						} else {
+							hi = hh;
+							fhi = fh;
+							if (side == 1) {
+								flo *= 0.5;
+							}
+							side = 1;
+						}
+					}
+					L.h[i] = std::max(0.0, L.h[i] + p_omega * (hh - L.h[i]));
+				}
+			}
+			if (p_fine) {
+				_ice_edges();
+			}
+		}
+	}
+
+	// rhs - op(h), zero where the thickness sits on its bound and the node would rather lose ice (the constraint
+	// holds it there: no correction is wanted).
+	void _lv_residual(const Level &L, std::vector<double> &r_r) const {
+		r_r.assign(size_t(L.nx) * L.nz, 0.0);
+		for (int z = 1; z + 1 < L.nz; z++) {
+			for (int x = 1; x + 1 < L.nx; x++) {
+				const int i = z * L.nx + x;
+				if (L.fix[i]) {
+					continue;
+				}
+				const double r = L.rhs[i] - _node_op(L, i)(L.h[i]);
+				r_r[i] = (L.h[i] <= 0.0 && r < 0.0) ? 0.0 : r;
+			}
+		}
+	}
+
+	void _vcycle(std::vector<Level> &p_lv, int l) {
+		Level &F = p_lv[l];
+		if (l + 1 == int(p_lv.size())) {
+			_lv_smooth(F, 40, l == 0);
+			return;
+		}
+		_lv_smooth(F, 2, l == 0);
+		Level &C = p_lv[l + 1];
+		std::vector<double> r, hc0;
+		_lv_residual(F, r);
+		// Restriction: injection for the thickness, full weighting for the residual.
+		for (int z = 0; z < C.nz; z++) {
+			for (int x = 0; x < C.nx; x++) {
+				C.h[z * C.nx + x] = F.h[(2 * z) * F.nx + 2 * x];
+			}
+		}
+		hc0 = C.h;
+		for (int z = 1; z + 1 < C.nz; z++) {
+			for (int x = 1; x + 1 < C.nx; x++) {
+				const int c = z * C.nx + x;
+				const int f = (2 * z) * F.nx + 2 * x;
+				double rw = 4.0 * r[f] + 2.0 * (r[f - 1] + r[f + 1] + r[f - F.nx] + r[f + F.nx]) + r[f - F.nx - 1] + r[f - F.nx + 1] + r[f + F.nx - 1] + r[f + F.nx + 1];
+				C.rhs[c] = _node_op(C, c)(C.h[c]) + rw / 16.0;
+			}
+		}
+		_vcycle(p_lv, l + 1);
+		// Prolongation of the correction, bilinear; the thickness stays at or above zero.
+		for (int z = 1; z + 1 < F.nz; z++) {
+			for (int x = 1; x + 1 < F.nx; x++) {
+				const int i = z * F.nx + x;
+				if (F.fix[i]) {
+					continue;
+				}
+				const int cx0 = x / 2, cz0 = z / 2, cx1 = (x + 1) / 2, cz1 = (z + 1) / 2;
+				auto e = [&](int cx, int cz) { const int c = cz * C.nx + cx; return C.h[c] - hc0[c]; };
+				const double v = 0.25 * (e(cx0, cz0) + e(cx1, cz0) + e(cx0, cz1) + e(cx1, cz1));
+				F.h[i] = std::max(0.0, F.h[i] + k_cycle_damping * v);
+			}
+		}
+		if (l == 0) {
+			_ice_edges();
+		}
+		_lv_smooth(F, 2, l == 0);
+	}
+
+	void _solve_converged(bool p_cold) {
+		(void)p_cold;
+		const int m = gx * gz;
+		const double d = gd;
+		std::vector<double> &H = ice;
+		std::vector<double> Dx, Dz;
+		double res = 0.0;
+		muscl = true; // the mass-conserving face thickness (Jarosch et al. 2013) for the settled ice
+		_ice_edges();
+		// The levels: halve while both sides stay odd and at least 5 nodes.
+		std::vector<Level> lv(1);
+		lv[0].nx = gx;
+		lv[0].nz = gz;
+		lv[0].d = gd;
+		lv[0].b = bed;
+		lv[0].src = src;
+		lv[0].rhs.assign(m, 0.0);
+		lv[0].fix.assign(m, 0);
+		for (int z = 0; z < gz; z++) {
+			for (int x = 0; x < gx; x++) {
+				lv[0].fix[z * gx + x] = (x == 0 || z == 0 || x == gx - 1 || z == gz - 1) ? 1 : 0;
+			}
+		}
+		while (int(lv.size()) < k_max_levels && lv.back().nx % 2 == 1 && lv.back().nz % 2 == 1 && lv.back().nx >= 9 && lv.back().nz >= 9) {
+			const Level &F = lv.back();
+			Level C;
+			C.nx = (F.nx - 1) / 2 + 1;
+			C.nz = (F.nz - 1) / 2 + 1;
+			C.d = F.d * 2.0;
+			const int mc = C.nx * C.nz;
+			C.b.resize(mc);
+			C.h.assign(mc, 0.0);
+			C.rhs.assign(mc, 0.0);
+			C.fix.assign(mc, 0);
+			if (!F.src.empty()) {
+				C.src.assign(mc, 0.0);
+			}
+			for (int z = 0; z < C.nz; z++) {
+				for (int x = 0; x < C.nx; x++) {
+					const int c = z * C.nx + x, f = (2 * z) * F.nx + 2 * x;
+					C.b[c] = F.b[f];
+					C.fix[c] = (x == 0 || z == 0 || x == C.nx - 1 || z == C.nz - 1) ? 1 : 0;
+					if (!F.src.empty()) {
+						// The same ice a year over the coarse cell's area: the mean rate of the fine nodes it covers.
+						double sum = 0.0, w = 0.0;
+						for (int dz = -1; dz <= 1; dz++) {
+							for (int dx = -1; dx <= 1; dx++) {
+								const int xx = 2 * x + dx, zz = 2 * z + dz;
+								if (xx >= 0 && zz >= 0 && xx < F.nx && zz < F.nz) {
+									const double ww = (dx == 0 ? 2.0 : 1.0) * (dz == 0 ? 2.0 : 1.0);
+									sum += ww * F.src[zz * F.nx + xx];
+									w += ww;
+								}
+							}
+						}
+						C.src[c] = w > 0.0 ? sum / w * 1.0 : 0.0;
+					}
+				}
+			}
+			lv.push_back(C);
+		}
+		double best = 1.0e300;
+		std::vector<double> best_h = H;
+		std::vector<double> imb;
+		int stall = 0;
+		bool use_mg = lv.size() > 1;
+		for (int it = 0; it < p.max_outer; it++) {
+			_faces(Dx, Dz);
+			// The imbalance: on the ice, the mass balance less the flux divergence; off it, only a positive one (ice
+			// that should start to grow).
+			// The measure is the imbalance that all but the worst 0.2% of the ice nodes stay under: a node or two over
+			// a cliff in the bed, where the discrete SIA cannot balance (Jarosch et al. 2013), would hold it up.
+			res = 0.0;
+			imb.clear();
+			for (int z = 1; z + 1 < gz; z++) {
+				for (int x = 1; x + 1 < gx; x++) {
+					const int i = z * gx + x;
+					const double mb = std::min(p.balance_gradient * (bed[i] + H[i] - p.ela), p.max_accumulation) + (src.empty() ? 0.0 : src[i]);
+					const double r = mb - (qx[i] - qx[i - 1] + qz[i] - qz[i - gx]) / d;
+					if (H[i] > 1.0 || (H[i] <= 0.0 && r > 0.0)) {
+						imb.push_back(std::fabs(r));
+					}
+				}
+			}
+			if (!imb.empty()) {
+				const size_t skip = std::min(imb.size() - 1, std::max<size_t>(2, imb.size() / 500));
+				std::nth_element(imb.begin(), imb.begin() + skip, imb.end(), std::greater<double>());
+				res = imb[skip];
+			}
+			if (res < p.tolerance) {
+				break;
+			}
+			// Once the cycles stop gaining (the coarse grids see the bed only roughly, and near the margin their
+			// correction can hold the fine grid back), the fine grid relaxes on its own.
+			if (res > 10.0 * best || !std::isfinite(res)) {
+				// A cycle that ran away (the coarse grids' correction at a steep, thick margin): back to the best
+				// state seen, and on with the fine grid's own relaxation, which cannot.
+				H = best_h;
+				use_mg = false;
+				res = best;
+			} else if (res < 0.95 * best) {
+				best = res;
+				best_h = H;
+				stall = 0;
+			} else if (++stall >= k_cycle_patience) {
+				use_mg = false;
+			}
+			outer_steps++;
+			lv[0].h = H;
+			// _ice_edges and the smoother work on ice; keep them the same vector.
+			std::swap(lv[0].h, H);
+			if (use_mg) {
+				_vcycle(lv, 0);
+			} else {
+				_lv_smooth(lv[0], 6, true, k_fine_omega);
+			}
+			std::swap(lv[0].h, H);
+		}
+		residual = res;
+		_faces(Dx, Dz);
 		for (int z = 0; z < gz; z++) {
 			for (int x = 0; x < gx; x++) {
 				const int i = z * gx + x;

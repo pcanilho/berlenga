@@ -1482,6 +1482,18 @@ What else is out there, and what is worth taking:
   steep beds, after which the obstacle problem is well posed there and Newton or multigrid can converge. That is the
   next step for the solver (Paulo picked: other fixes first, the solver last). Work in progress, harness and dumped
   states: /mnt/project-files/fork/terrain/ice-solver/.
+  MUSCL tried (15 Nov evening): with superbee, as in Jarosch et al., and with van Leer, the projected Gauss-Seidel and
+  the cycles run away on two of five states (the compressive limiters switch between sweeps); defect correction
+  (upwind cycles against the MUSCL defect, Koren 1988) stalls. With the minmod limiter and plain (not over-relaxed)
+  sweeps every one of the 31 captured states settles to 0.5 m/yr, in 0.5 to 10 s (upwind: 0.2 to 3.5 s). In the
+  hanging valley run, converging the last glaciation this way takes the glacial stage from 9 to 87 s; its ice covers
+  6.9 km2 against 5.7 km2 today, and the 12.8 km2 the upwind scheme settled to was mostly ice that scheme invents over
+  steep beds. Maximum erosion stays as today (563 against 583 m). Shipped as `glacial_converged` (Paulo: off by
+  default). Limit: inside a run the solves on the last glaciation's thinner ice stop at the 300-cycle cap. The worst
+  nodes sit in a one-cell trench the erosion cut 700 m under a cliff, whose huge imbalance slows its neighbours; at
+  1000 cycles the run takes 248 s, leaves 5.6 m/yr and gives 7.4 km2 of ice, so the 300-cycle result (29 m/yr) is
+  close to, not at, the steady state. Next if wanted: keep the erosion from cutting single-cell trenches, or treat
+  such nodes as fixed in the solve.
 - Multigrid Eulerian erosion (SapereAude1490, itch.io WebGPU prototype, Nov 2026): grid water mass instead of
   droplets (no atomics), progressive resolution levels, and isotropy choices: FD8 multiple-flow routing instead of D8,
   simplex noise, bicubic sampling and the Scharr gradient. D8 is what gives our side streams their 45-degree bias;
