@@ -2523,3 +2523,31 @@ and drain back, after Chentanez and Müller 2010 section 5:
   them flood as flat white blocks).
 - Bench: water_surface `--view=runup --splash=6,4 --node=wind_speed:1` (mounds dropped near the
   shore every 2 s run up the sand and drain back within about 2 s).
+
+## Wet where water has been (15 Nov, FluidNinja parity step 4a, research)
+
+Paulo's ask (FluidNinja parity): ground, rocks and props stay dark and glossy where water ran over
+them, then dry out: a wave's reach on the sand, a flood's high-water line, splashes on a rock, a
+character's footprints out of a stream. What exists: `WeatherMap3D` wetness (rain film and puddles,
+material-wetness.md) in 32 m cells over 4 km, read by BaseMaterial3D Wetness, terrain, grass, plants
+and hair, raster and path traced. The sea draws its own wet sand behind the swash. Nothing records
+contact with water.
+
+**How others do it.** The film-industry "wet map" (Houdini wetmap, Thinkbox Stoke's wetmap field,
+RealFlow collider wet maps): per texel, wetness = max(wetness, contact) each step, then an
+exponential decay toward dry. FluidNinja LIVE 2 does the same on a render target round the player,
+written by its fluid's density, faded over time, read by the landscape and props. Fluid Flux reads
+its simulation depth for the shore's wetness. Drying speed in reality depends on air temperature,
+humidity and wind (evaporation); sand dries in minutes, rock in tens of minutes.
+
+**Plan.**
+- `WeatherMap3D` gains a contact wetness layer: a square of fine texels (default 512 over 64 m,
+  12.5 cm) that follows the camera, published as global `weather_contact_map` + `weather_contact_rect`.
+  Texel = max(texel, contact), decaying with a drying time from the weather (slower while it rains or
+  in cold, still air; `contact_dry_time` at 20 C as the base).
+- Writers: `add_contact_wetness(pos, radius, amount)` for scripts and bodies, `PhysXLiveWater3D`
+  (its wet cells each tick), the live window of seas, lakes and rivers (wet cells, done on the GPU
+  by the ripple pass), and spray/splash particles landing.
+- Readers: the existing `weather_wetness()` helpers take max(weather, contact): BaseMaterial3D,
+  TerrainMaterial3D, grass, plants; the path tracer the same through three new rt_params.
+- Cost: one more texture read where wetness is already read; a 512^2 R8 texture update a frame.
