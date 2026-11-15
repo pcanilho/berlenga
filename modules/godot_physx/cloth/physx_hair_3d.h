@@ -32,6 +32,7 @@
 #pragma once
 
 #include "hair_cards.h"
+#include "scene/resources/image_texture.h"
 #include "hair_strand_solver.h"
 
 #include "scene/3d/node_3d.h"
@@ -125,27 +126,20 @@ class PhysXHair3D : public Node3D {
 	MeshInstance3D *snow_instance = nullptr; // the clumps of snow on the strands
 	Ref<ShaderMaterial> snow_material;
 	float rain_shelter_timer = 0.0f;
-	// Hair cards for distant hair (docs/ideas/hair.md, stage 2p).
+	// Thick strands for distant hair (docs/ideas/hair.md, stage 3): one strip a clump.
 	bool cards_enabled = false;
 	int card_count = 1024;
-	float card_distance = 15.0f; // m from the camera at which the strands give way to cards
-	float card_screen_size = 0.07f; // cards below this screen size (diameter / view height); 0: by card_distance
 	float _screen_size(const Camera3D *p_camera) const;
 	MeshInstance3D *card_instance = nullptr;
 	Ref<ShaderMaterial> card_material;
 	Ref<HairCardBake> card_bake;
-	Ref<ImageTexture> card_data; // per card point: both strips' axes and half widths, its direction, the tiles
+	Ref<ImageTexture> card_data; // per clump point: its two axes and half widths, its direction, its strand count
 	Vector4 card_scalp; // the scalp's sphere for the cards (centre, radius; w 0: none)
 	int card_first = 0; // the cards' strands follow the groom's in the solver; 0: no cards
-	bool card_mode = false; // cards only: the strands hidden and idle
-	bool card_target = false; // the switch's side (cards when far), card_fade heads to it
-	float card_fade = 0.0f; // 0 strands .. 1 cards: the cross-fade between them
-	float card_fade_set = -1.0f; // the fade the materials hold
-	float card_transition = 0.5f; // s for the cross-fade
-	bool thick_strands = true; // far hair as thick strands (EGSR 2025) rather than textured cards
+	bool card_mode = false; // thick strands only: the strands hidden and idle
 	float thick_width_min = 0.0f; // the clumps' narrowest and widest full width (m), 0: no clumps
 	float thick_width_max = 0.0f;
-	bool thick_px_set = false;
+	float thick_px_set = -1.0f; // the pixel size the materials hold (0: no mixing)
 	// The collision body's mesh, cached: positions, triangle indices, skinning (4 bones each).
 	struct BodyCache {
 		ObjectID mesh_instance;
@@ -332,15 +326,7 @@ public:
 	bool is_cards_enabled() const;
 	void set_card_count(int p_count);
 	int get_card_count() const;
-	void set_card_screen_size(float p_size);
-	float get_card_screen_size() const;
-	void set_card_transition(float p_seconds);
-	float get_card_transition() const;
-	void set_thick_strands(bool p_enabled);
-	bool is_thick_strands() const;
 	float get_screen_size() const;
-	void set_card_distance(float p_distance);
-	float get_card_distance() const;
 	bool is_drawing_cards() const;
 	void set_collision_spheres(const PackedVector4Array &p_spheres);
 	PackedVector4Array get_collision_spheres() const;

@@ -32,15 +32,13 @@
 
 #pragma once
 
-#include "core/io/image.h"
 #include "core/object/ref_counted.h"
 #include "core/variant/variant.h"
-#include "scene/resources/image_texture.h"
 
-// Hair cards baked from a strand groom (see docs/ideas/hair.md, stage 2p): the strands clustered
-// into clumps (k-means, Wang et al. 2009's shape distance), each clump one card along its mean
-// strand with rotation-minimising frames, as K. Wu et al.'s DiffHairCard (2025) fits them, two
-// crossed strips a card, and the clump's strands projected into each strip's tile of an atlas.
+// The clumps far hair is drawn by (docs/ideas/hair.md, stage 3, thick strands): the strands
+// clustered into clumps (k-means, Wang et al. 2009's shape distance), each clump's mean strand with
+// rotation-minimising frames (as K. Wu et al.'s DiffHairCard, 2025) and its cross-section: two
+// axes and the strands' spread along each.
 class HairCardBake : public RefCounted {
 	GDSOFTCLASS(HairCardBake, RefCounted);
 
@@ -50,17 +48,10 @@ public:
 	PackedVector3Array points; // groom space, samples per card: the card's mean strand
 	PackedInt32Array strand_counts; // per card: the strands in its clump
 	PackedInt32Array strand_card; // per groom strand: its card
-	// Per card point, for each of the two strips (0: across the clump's spread, 1: across that):
-	// the axis across the strip (unit, groom space) and the strip's half width (m).
+	// Per card point, the clump's cross-section: two axes (0: along the strands' widest spread,
+	// 1: across that; unit, groom space) and the strands' half spread along each (m).
 	PackedVector3Array axis[2];
 	PackedFloat32Array half_width[2];
-	// Per card and strip, the tile in the atlas: x, y, w, h in texels.
-	PackedInt32Array tiles;
-	// The strands' optical depth over CARD_DEPTH_MAX in 16 bits (R high, B low byte), G their tilt
-	// across the strip (0.5: along the card), A a seed. Mipmapped by optical depth.
-	static constexpr float CARD_DEPTH_MAX = 8.0f;
-	Ref<Image> atlas;
-	Ref<ImageTexture> texture; // made from the atlas by the first node that draws the cards
 
 	// p_points / p_counts: the groom. p_samples: points per card (2 or more).
 	static Ref<HairCardBake> bake(const PackedVector3Array &p_points, const PackedInt32Array &p_counts, int p_cards, int p_samples, float p_root_width, float p_tip_width);

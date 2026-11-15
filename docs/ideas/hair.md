@@ -1214,6 +1214,22 @@ Stages: (a) hierarchy and thick strands drawn with today's shading and analytic 
 (b) the aggregated shading and S; (c) shadows and deep maps from thick strands, cards retired.
 Cloud: all of it; GPU timings go on the PC list.
 
+Tried and dropped: the paper's coarser levels (clumps merged about 4 to 1 by k-means on their mean
+strands: 256, 64, 16; each drawn by its member nearest the merged mean strand, offset to it, each
+segment taking the coarsest level at most 2 px across). At 30 and 60 m the hair went blocky with
+ragged tips, where level 1 stays smooth, and it saves nothing here: the clump mesh runs the same
+vertices at every level, and at those sizes the hair covers a few hundred pixels.
+
+Textured cards retired (Paulo picked 13 Nov). Against thick strands at 30 and 60 m both sit within
+about 8% of the strands (thick strands a little lighter, cards a little warmer); at 8 and 15 m the
+cards read a fifth low in blue. Thick strands draw one strip a clump against two, read no texture
+and need no atlas (2048 x 4096 RGBA8 with mips at 1024 clumps, about 45 MB a groom). Gone:
+`thick_strands`, `card_screen_size`, `card_distance`, `card_transition` and the cross-fade; the
+switch is only the per-segment 2 px one. `cards_enabled` and `card_count` turn on and size the
+thick strands. The clump data is three texels a point (two axes with half widths, the direction
+at rest with the strand count). The strip's v is now its share along the clump, so sun bleaching
+on far hair follows the strand's length (it read the atlas's v before).
+
 ## Options for scope
 
 - **A. Stage 1 only, now.** Hair BCSDF on mesh and card hair, PT and raster, one setting.
