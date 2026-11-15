@@ -751,6 +751,17 @@
    "topic": "Sea and lakes"
   },
   {
+   "name": "Storm seas",
+   "settings": [
+    "crest_spray"
+   ],
+   "note": "",
+   "what": "above 9 m/s of wind, spray tears off breaking crests; above 14 m/s, foam is drawn into streaks along the wind.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
    "name": "Lake ripples",
    "settings": [
     "fetch"
