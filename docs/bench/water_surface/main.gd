@@ -55,6 +55,7 @@ extends Node3D
 #   --lip-debug     draw the breaking lips opaque red (to see their shape)
 #   --breakers      print the breaking lips' size and cost each frame (crest points, vertices, spray rate, CPU ms)
 #   --profile       print the surface height along x = 0, out to sea and up the beach, at the last frame
+#   --plain-sand    noise-toned sand instead of the checker (for shots)
 #   --slope=DEG     the sand's slope (default 5); steeper reaches deep water sooner
 #   --sun-pitch=DEG the sun's height above the horizon (default 50)
 #   --shade=X,Z     a slab 12 m up whose shadow (a 5 m band along x) falls on the water at X,Z (an overhang's shade)
@@ -69,6 +70,7 @@ var frames := 12
 var out := ""
 var debug_mode := 0
 var slope_deg := -1.0
+var plain_sand := false
 var cam_dy := 0.0
 var sun_energy := 1.0
 var dive := 0.0
@@ -170,6 +172,7 @@ func _ready() -> void:
 		elif a.begins_with("--tracers="): tracers = int(a.substr(10))
 		elif a.begins_with("--pt-from="): pt_from = int(a.substr(10))
 		elif a.begins_with("--slope="): slope_deg = float(a.substr(8))
+		elif a == "--plain-sand": plain_sand = true
 		elif a.begins_with("--boat="): boat_speed = float(a.substr(7))
 		elif a.begins_with("--wake-out="): wake_out = a.substr(11)
 		elif a.begins_with("--wake="):
@@ -227,6 +230,18 @@ func _ready() -> void:
 	var sand_mat := StandardMaterial3D.new()
 	sand_mat.albedo_texture = _checker(Color(0.78, 0.7, 0.55), Color(0.62, 0.55, 0.42))
 	sand_mat.uv1_scale = Vector3(100, 100, 1)
+	if plain_sand:
+		# Sand without the checker (for shots): soft noise between two sand tones.
+		var nt := NoiseTexture2D.new()
+		nt.noise = FastNoiseLite.new()
+		nt.noise.frequency = 0.05
+		nt.seamless = true
+		var ramp := Gradient.new()
+		ramp.set_color(0, Color(0.66, 0.59, 0.46))
+		ramp.set_color(1, Color(0.8, 0.73, 0.58))
+		nt.color_ramp = ramp
+		sand_mat.albedo_texture = nt
+		sand_mat.uv1_scale = Vector3(40, 40, 1)
 	sand_mat.roughness = 0.95
 	if slope_deg < 0.0:
 		# Under water the floor needs to fall away faster, for depth to look through.

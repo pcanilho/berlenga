@@ -673,6 +673,7 @@ private:
 	bool underwater_shown = false;
 	Vector3 water_light_sun_dir = Vector3(0, -1, 0);
 	Vector3 water_light_sun_irradiance;
+	Vector3 water_light_sun_travel; // the scene sun's direction of travel while it is up, else zero
 	Vector3 water_light_sky;
 	bool underwater_camera_below = false;
 	MeshInstance3D *underwater_fog_instance = nullptr;

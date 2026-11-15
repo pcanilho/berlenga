@@ -19,7 +19,7 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
   *Murky water: a green glow fills the deep end.*
 
-- **Caustics** (`rendering/pathtracing/caustics`): sunlight lines under rippled water.
+- **Caustics** (`rendering/pathtracing/caustics`; raster `caustics_enabled`, off by default): sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun.
 
   ![A rippled pool, caustics off and on](media/caustics.jpg)
 

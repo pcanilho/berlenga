@@ -671,10 +671,11 @@
   {
    "name": "Caustics",
    "settings": [
-    "rendering/pathtracing/caustics"
+    "rendering/pathtracing/caustics",
+    "caustics_enabled"
    ],
    "note": "",
-   "what": "sunlight lines under rippled water.",
+   "what": "sunlight lines under rippled water. In raster, sunlight focused by the waves moves over the bed under clear water, following the scene's sun.",
    "page": "water",
    "title": "Water",
    "topic": "Light in water"

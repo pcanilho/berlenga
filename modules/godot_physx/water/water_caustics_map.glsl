@@ -74,13 +74,34 @@ layout(location = 0) out vec2 v_flat_xz;
 // 0 = refracted caustics, 1 = the flat water mask (see main()).
 layout(location = 1) flat out int v_mode;
 
+// Cubic B-spline height (Sigg and Hadwiger, GPU Gems 2 ch. 20: four bilinear taps). Bilinear heights have
+// slopes constant over each texel, which focus the light onto the texel edges as a square grid.
+float ocean_h_cubic(vec2 uv) {
+	vec2 res = max(ocean_domain.zw, vec2(1.0));
+	vec2 p = uv * res - 0.5;
+	vec2 i = floor(p);
+	vec2 f = p - i;
+	vec2 f2 = f * f;
+	vec2 f3 = f2 * f;
+	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+	vec2 w3 = f3 / 6.0;
+	vec2 g0 = w0 + w1;
+	vec2 g1 = w2 + w3;
+	vec2 h0 = (i - 0.5 + w1 / g0) / res;
+	vec2 h1 = (i + 1.5 + w3 / g1) / res;
+	return g0.y * (g0.x * texture(ocean_height_tex, vec2(h0.x, h0.y)).r + g1.x * texture(ocean_height_tex, vec2(h1.x, h0.y)).r) +
+			g1.y * (g0.x * texture(ocean_height_tex, vec2(h0.x, h1.y)).r + g1.x * texture(ocean_height_tex, vec2(h1.x, h1.y)).r);
+}
+
 float sample_h(vec2 world_xz) {
 	// Ocean wraps (it's periodic -- that's what lets receivers tile the
 	// map); ripples mirror past their grid, seam-free.
 	vec2 uv_r = world_xz / ripple_domain.xy + 0.5;
 	uv_r = 1.0 - abs(mod(uv_r, 2.0) - 1.0);
-	vec2 uv_o = world_xz / ocean_domain.xy + 0.5; // repeat sampler
-	return texture(ripple_height_tex, uv_r).r + texture(ocean_height_tex, uv_o).r * ocean_fade(world_xz);
+	vec2 uv_o = (world_xz + light_origin.xz) / ocean_domain.xy + 0.5; // repeat sampler; the ocean is anchored to the world, xz to the map's centre
+	return texture(ripple_height_tex, uv_r).r + ocean_h_cubic(uv_o) * ocean_fade(world_xz);
 }
 
 void main() {
@@ -181,11 +202,32 @@ layout(location = 1) flat in int v_mode;
 
 layout(location = 0) out vec4 out_color;
 
+// Cubic B-spline height (Sigg and Hadwiger, GPU Gems 2 ch. 20: four bilinear taps). Bilinear heights have
+// slopes constant over each texel, which focus the light onto the texel edges as a square grid.
+float ocean_h_cubic(vec2 uv) {
+	vec2 res = max(ocean_domain.zw, vec2(1.0));
+	vec2 p = uv * res - 0.5;
+	vec2 i = floor(p);
+	vec2 f = p - i;
+	vec2 f2 = f * f;
+	vec2 f3 = f2 * f;
+	vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+	vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+	vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+	vec2 w3 = f3 / 6.0;
+	vec2 g0 = w0 + w1;
+	vec2 g1 = w2 + w3;
+	vec2 h0 = (i - 0.5 + w1 / g0) / res;
+	vec2 h1 = (i + 1.5 + w3 / g1) / res;
+	return g0.y * (g0.x * texture(ocean_height_tex, vec2(h0.x, h0.y)).r + g1.x * texture(ocean_height_tex, vec2(h1.x, h0.y)).r) +
+			g1.y * (g0.x * texture(ocean_height_tex, vec2(h0.x, h1.y)).r + g1.x * texture(ocean_height_tex, vec2(h1.x, h1.y)).r);
+}
+
 float sample_h(vec2 world_xz) {
 	vec2 uv_r = world_xz / ripple_domain.xy + 0.5;
 	uv_r = 1.0 - abs(mod(uv_r, 2.0) - 1.0);
-	vec2 uv_o = world_xz / ocean_domain.xy + 0.5; // repeat sampler
-	return texture(ripple_height_tex, uv_r).r + texture(ocean_height_tex, uv_o).r * ocean_fade(world_xz);
+	vec2 uv_o = (world_xz + light_origin.xz) / ocean_domain.xy + 0.5; // repeat sampler; the ocean is anchored to the world, xz to the map's centre
+	return texture(ripple_height_tex, uv_r).r + ocean_h_cubic(uv_o) * ocean_fade(world_xz);
 }
 
 vec2 project_refracted_point(vec2 xz, out float incidence) {
@@ -218,7 +260,7 @@ void main() {
 	}
 	vec2 source_dx = dFdx(v_flat_xz);
 	vec2 source_dy = dFdy(v_flat_xz);
-	float incidence;
+	float incidence; // unused: the receivers' own sun light carries the surface's transmission
 	vec2 refracted = project_refracted_point(v_flat_xz, incidence);
 	vec2 refracted_dx = dFdx(refracted);
 	vec2 refracted_dy = dFdy(refracted);
@@ -228,7 +270,10 @@ void main() {
 	float flat_projection_area = abs(light_right_ext.x * light_up_refdepth.z -
 			light_right_ext.z * light_up_refdepth.x);
 	float concentration = flat_projection_area * source_area / max(refracted_area, 1e-9);
-	float focused_light = max(concentration - 1.0, 0.0);
-	float tone = focused_light / (focused_light + 8.0);
-	out_color = vec4(incidence * tone * wet_at(v_flat_xz), 0.0, 0.0, 0.0);
+	// Physical: the sun's irradiance at the reference depth over what a flat surface would let through there
+	// (1 = even light, 0 = none reaches, far above 1 at a focus), summed over every part of the surface that
+	// lands on the texel (additive blending), so where folds overlap their light adds. Held below 64 (a
+	// half float's precision there is still a few percent). Receivers read R + (1 - G): the dry share of a texel
+	// is lit evenly.
+	out_color = vec4(min(concentration, 64.0) * wet_at(v_flat_xz), 0.0, 0.0, 0.0);
 }
