@@ -876,8 +876,11 @@ management).
   1.9; knuckles 1.2 plus 0.06 per cut; the stem flaring over its last half metre), end full-girth
   in their callus knob, and the knuckles reach out to the swollen head's surface carrying their
   stubs and poles. Each knuckle runs on into its thickest pole. A pollard head carries 4 plus 2
-  per cut (up to 14) burrs round it (the old-tree burls of 5e); a stool's lobes are at least
-  0.4 of their length thick, fused into a low mound.
+  per cut (up to 14) burrs round it (the old-tree burls of 5e, each a cluster of knobs, most with
+  a few water shoots); a stool's lobes are at least 0.4 of their length thick, fused into a low
+  mound. Whatever the species' bark, the head itself is knobbly geometry (rings every 4 cm; broad
+  and fine noise knobs, ridged-noise fissures darkened in their floors) with a green film of
+  algae and moss in its hollows and on its tops.
 - **Fixed after the first docs shots (15 Nov).** Later cuts used to leave a stub and sprout from
   its tip, so cut after cut stacked swollen stubs into stepped "telescopes" with dark lips under
   them; the poles left their knuckle as forks from a capped end and sat in round sockets; the
@@ -914,6 +917,35 @@ Citizen's forests are now small visible stories, not the growth model:
    wounds, dead lower branches kept on shaded conifers.
 4. **Hard places.** Exposed roots over banks and rocks (roots draped over a stone or a cut bank),
    wind-flagged and krummholz trees at the treeline and on coasts.
+
+### 5n. Crown parts (15 Nov; Paulo picked "all three": crown details first)
+
+As built (`fruit_cover`, `mistletoe`, `witches_brooms`; surface "crown_parts", vertex colour,
+two-sided, no snow): small shapes placed many times, the way Unreal 5.7's vegetation assemblies
+instance parts, merged into one surface. LOD 0 carries all of it; the coarser LODs keep only the
+mistletoe and brooms, which read from far.
+
+- **Cones** of spiral scales (137.5 degrees), ovoid or cylindrical, open or closed: Scots pine
+  (1-3 at upper shoot tips, 4-7 cm, bent back, grey-tipped scales), Norway spruce (pendant 10-16 cm
+  at the top), larch (2-3.5 cm upright along the shoots, kept for years), hemlock (2 cm), white pine
+  (10-16 cm, slender), alder's woody fruit cones (1.5 cm, in clusters).
+- **Catkins**: hazel (1-3, 2.5 cm closed from August, 6 cm yellow and hanging from late January to
+  April), birch (from late summer, opening in April), alder (3-5, purple, opening February).
+- **Keys**: ash (bunches of 10-28 twisted keys, buff in winter, hanging August to April), maples
+  (paired keys, spread wider on sycamore; fall by late autumn, a fifth left).
+- **Berries**: holly and yew (female trees only, by seed), haws, rowan and elder clusters, each in
+  its months.
+- **Mistletoe** (Viscum album; Phoradendron in North America, darker, broader leaves): on hosts in
+  the upper outer crown, a ball of yellow-green stems forking every year (4-8 years old), paired
+  strap leaves at the ends, white berries from late October to February. Host chance per tree:
+  lime 0.5, hawthorn 0.35, willow 0.3, rowan 0.25, maples, birch, alder, red oak 0.15.
+- **Witches' brooms** (Taphrina betulina) on 45% of birches: a swelling on a limb and 50-120 thin
+  dark shoots from it.
+- **Budget**: about 360 clusters at most per tree, so a 20 m crown does not carry tens of
+  thousands. Cost: lime with three mistletoe balls 11k triangles; hazel in catkin 75k; ash with
+  keys 53k; spruce cones 9k (against millions of bark and leaf triangles).
+- Fixed with it: a birch's thin shoots and leaf twigs took the trunk's white and read as frosted
+  sprays; they are dark red-brown now, turning white from 1-3 cm.
 
 ## 6. What the games at Paulo's bar do
 

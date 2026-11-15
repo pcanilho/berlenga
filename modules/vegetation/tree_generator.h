@@ -324,6 +324,10 @@ private:
 	// Bracket fungi (trees.md 5g): fruiting bodies of wood-decay fungi on veteran trees, snags and
 	// logs, by host and decay class, in their own surface.
 	void _grow_fungi(const Builder &p_bark, Builder &r_fungi);
+	// Small woody and evergreen parts in the crown (section 5n): cones, catkins, seed keys,
+	// mistletoe, witches' brooms. Returns the index count of the large parts (mistletoe, brooms),
+	// which the coarser LODs keep.
+	int _grow_crown_parts(Builder &r_b);
 	Ref<Texture2D> fungus_texture;
 	Ref<Texture2D> wood_texture;
 	Ref<Texture2D> wood_normal_texture;
@@ -437,6 +441,8 @@ private:
 		float amount; // Depth or bulge, as a share of the local radius; shoots for epicormics.
 	};
 	LocalVector<VeteranFeature> veteran_features;
+	float head_y0 = 0.0f; // A pollard head's lowest point (world y) for its knobs and fissures; head_r 0: none.
+	float head_r = 0.0f;
 	int veteran_stem = -1;
 	void _apply_veteran();
 	void _break_limbs();
@@ -492,6 +498,9 @@ public:
 	float moss_cover = 1.0f;
 	float lichen_cover = 1.0f;
 	float fungi_cover = 1.0f; // Bracket fungi on old and dead wood (section 5g); 0 none.
+	float fruit_cover = 1.0f; // Cones, catkins and seed keys in season (section 5n); 0 none.
+	float mistletoe = 1.0f; // Chance and amount of mistletoe on host species (section 5n); 0 none.
+	float witches_brooms = 1.0f; // Chance and amount of witches' brooms (birches; section 5n).
 	float limb_breakage = 1.0f; // Storm-snapped and hanging limbs on living trees (section 5j); 0 none.
 	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
@@ -716,6 +725,12 @@ public:
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
 	void set_fungi_cover(float p_cover) { fungi_cover = MAX(p_cover, 0.0f); }
 	float get_fungi_cover() const { return fungi_cover; }
+	void set_fruit_cover(float p_cover) { fruit_cover = MAX(p_cover, 0.0f); }
+	float get_fruit_cover() const { return fruit_cover; }
+	void set_mistletoe(float p_amount) { mistletoe = MAX(p_amount, 0.0f); }
+	float get_mistletoe() const { return mistletoe; }
+	void set_witches_brooms(float p_amount) { witches_brooms = MAX(p_amount, 0.0f); }
+	float get_witches_brooms() const { return witches_brooms; }
 	void set_limb_breakage(float p_breakage) { limb_breakage = MAX(p_breakage, 0.0f); }
 	float get_limb_breakage() const { return limb_breakage; }
 	float get_bark_peel() const { return bark_peel; }

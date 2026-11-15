@@ -242,6 +242,9 @@
 		<member name="forest_spacing" type="float" setter="set_forest_spacing" getter="get_forest_spacing" default="4.0">
 			Distance to the neighbours when [member forest_shade] is above 0, in metres: the crown keeps to half of it.
 		</member>
+		<member name="fruit_cover" type="float" setter="set_fruit_cover" getter="get_fruit_cover" default="1.0">
+			Cones, catkins, seed keys and berries hanging at the shoot tips in their season (read from [member season]'s day of year), as geometry in the [code]crown_parts[/code] surface, LOD 0 only. 1 is the species' natural amount; 0 none.
+		</member>
 		<member name="gravitropism" type="float" setter="set_param" getter="get_param" default="0.04">
 			Upward (positive) or downward (negative) bend of branch shoots.
 		</member>
@@ -277,6 +280,9 @@
 		</member>
 		<member name="limb_breakage" type="float" setter="set_limb_breakage" getter="get_limb_breakage" default="1.0">
 			Storm-broken limbs on living trees: limbs 5-22 cm thick snap partway out with a splintered end, more on tall and old trees ([member veteran]), and some stay hanging dead beside the break. 0 for none.
+		</member>
+		<member name="mistletoe" type="float" setter="set_mistletoe" getter="get_mistletoe" default="1.0">
+			Mistletoe balls (evergreen forked stems, paired leaves, white berries in winter) on host species (lime, hawthorn, willow, rowan, and less often maples, birches, alder and red oak): the chance a tree carries any and how many. 0 none.
 		</member>
 		<member name="mask_channel" type="int" setter="set_mask_channel" getter="get_mask_channel" default="-1">
 			Channel of [member VegetationField3D.density_mask] (0 red to 3 alpha) that every species from [method make_species], [method make_stand] and [method make_woodland] reads, so painted clearings and paths keep trees and woody shrubs out. -1 ignores the mask.
@@ -358,6 +364,9 @@
 		</member>
 		<member name="whorl_buds" type="float" setter="set_param" getter="get_param" default="5.0">
 			Lateral buds per whorl ([constant PHYLLOTAXIS_WHORLED]).
+		</member>
+		<member name="witches_brooms" type="float" setter="set_witches_brooms" getter="get_witches_brooms" default="1.0">
+			Witches' brooms on birches: dense nests of thin upright shoots from a swollen point on a limb, the work of a fungus. The chance a birch carries any and how many. 0 none.
 		</member>
 		<member name="years" type="float" setter="set_param" getter="get_param" default="45.0">
 			Years of growth.

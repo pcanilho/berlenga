@@ -58,6 +58,7 @@ var overrides := {}
 var decays := false
 var litter := false
 var pollards := false
+var pollard_heights: Array[float] = []
 var sun_dir := Vector2(-35, 35) # Elevation, azimuth (degrees).
 var sun_energy := 1.4
 var day := -1
@@ -301,12 +302,15 @@ func _build_scene() -> void:
 			overrides["cut_cycle"] = t[2]
 			overrides["cut_since"] = t[3]
 			overrides["years"] = t[4]
-			# A lapsed beech pollard of 160 years is a veteran (burls, hollows, epicormic shoots).
+			# A lapsed beech pollard of 160 years is a veteran (burls, hollows, epicormic shoots),
+			# its smooth bark well grown with crust lichens.
 			overrides["veteran"] = t[5] if t.size() > 5 else 0.0
+			overrides["lichen_cover"] = 1.8 if t.size() > 5 else 1.0
 			var d := _gen(t[0], false, seed)
 			xs.append(5.0 * i)
 			_place(d.mesh, Vector3(5.0 * i - (0.8 if i == 2 else 0.0), 0, 3.0 if i == 2 else 0.0))
 			print("%s cut %.2f m: %.1f m tall, %d tris, %.0f ms" % [NAMES[t[0]], t[1], d.height, d.tris, d.ms])
+			pollard_heights.append(d.height)
 		overrides.clear()
 		_add_winter_grass()
 	for p in presets:
@@ -365,7 +369,11 @@ func _build_scene() -> void:
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 300.0
 	if pollards:
-		sun.directional_shadow_max_distance = 40.0
+		# Four splits over 30 m and a large atlas: over 40 m the bole's leaf-free branch shadows
+		# came out in square steps.
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+		sun.directional_shadow_max_distance = 30.0
+		RenderingServer.directional_shadow_atlas_set_size(8192, true)
 	elif view in ["bole", "junction", "fork", "leaf", "veteran", "base"]:
 		# Close-ups: the cascades over 300 m blur the leaves' shadow flecks into blocky speckle.
 		sun.directional_shadow_max_distance = 40.0
@@ -397,6 +405,15 @@ func _build_scene() -> void:
 		cam.position = Vector3(5.0, 1.7, 11.0)
 		cam.look_at(Vector3(5.0, 1.5, 0))
 		cam.fov = 42.0
+		if OS.has_environment("POLLARD"):
+			# One tree whole, filling the frame's height: env POLLARD=0 willow, 1 beech, 2 hazel.
+			var i := int(OS.get_environment("POLLARD"))
+			var at := Vector3(xs[i] - (0.8 if i == 2 else 0.0), 0, 3.0 if i == 2 else 0.0)
+			var h: float = pollard_heights[i] * 1.06
+			cam.fov = 40.0
+			var d := maxf(4.0, h * 0.5 / tan(deg_to_rad(cam.fov * 0.5)))
+			cam.position = at + Vector3(0, h * 0.47, d * 1.18)
+			cam.look_at(at + Vector3(0, h * 0.47, 0))
 		if OS.has_environment("CAM"):
 			var cv := OS.get_environment("CAM").split_floats(",")
 			cam.position = Vector3(cv[0], cv[1], cv[2])
