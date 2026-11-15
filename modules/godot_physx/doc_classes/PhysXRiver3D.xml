@@ -50,7 +50,7 @@
 			<return type="Dictionary" />
 			<param index="0" name="index" type="int" />
 			<description>
-				One cross-section, for tools and tests: [code]centre[/code] (world), [code]s[/code] (m along the river), [code]width[/code], [code]surface[/code] (world height), [code]slope[/code], [code]speed[/code] (mean, m/s), [code]foam[/code], [code]cascade[/code], and per sample across, [code]depths[/code], [code]speeds[/code] (along the river), [code]across[/code] (towards the left bank) and [code]foams[/code].
+				One cross-section, for tools and tests: [code]centre[/code] (world), [code]s[/code] (m along the river), [code]width[/code], [code]surface[/code] (world height), [code]slope[/code], [code]speed[/code] (mean, m/s), [code]foam[/code], [code]cascade[/code], [code]froude[/code] (the section's Froude number), [code]critical_height[/code] (world height of critical depth), [code]jump[/code] (the upstream Froude number of a hydraulic jump that ends here, else 0), [code]superelevation[/code] (m, outside bank above inside bank), and per sample across, [code]depths[/code], [code]speeds[/code] (along the river), [code]across[/code] (towards the left bank) and [code]foams[/code].
 			</description>
 		</method>
 		<method name="get_section_count" qualifiers="const">
@@ -123,6 +123,9 @@
 		<member name="bank_margin" type="float" setter="set_bank_margin" getter="get_bank_margin" default="1.0">
 			How far (m) the water mesh reaches past each bank, so the waterline can follow the measured ground.
 		</member>
+		<member name="bend_superelevation" type="bool" setter="set_bend_superelevation" getter="get_bend_superelevation" default="true">
+			The surface banks up towards the outside of each bend by about [code]U² w / (g r)[/code] (the centrifugal tilt of open-channel flow round a bend), held to half the mean depth across the half width.
+		</member>
 		<member name="carve" type="bool" setter="set_carve" getter="get_carve" default="false">
 			The river designs its own channel and offers it to a terrain deformer as height brushes ([method get_carve_brushes], [signal carve_changed]): a flat floor [member carve_depth] below the uncarved ground that never climbs downstream (through a rise it cuts), banks sloping up to the ground, and at a bend the deep part moved towards the outer bank. The water then sits in that channel. The river does not change any ground itself.
 		</member>
@@ -179,6 +182,9 @@
 		</member>
 		<member name="foam_persistence" type="float" setter="set_foam_persistence" getter="get_foam_persistence" default="4.0">
 			Seconds white water lasts as the current carries it downstream.
+		</member>
+		<member name="gradually_varied_flow" type="bool" setter="set_gradually_varied_flow" getter="get_gradually_varied_flow" default="true">
+			The water surface follows the energy and momentum of the flow (the standard step method) instead of a running normal depth: it pools behind bed bumps and draws down to critical depth before each step and fall. Fast, shallow water at the foot of a step lower than [member fall_min_height] (Rand's depth for a free overfall) runs on until it meets slower water whose momentum holds it, and jumps up there to the sequent depth (Bélanger); a jump with an upstream Froude number above 1.7 gets a white roller. Only where the river's bed is measured on the ground (or snapped) and no depth is given.
 		</member>
 		<member name="ground_collision_mask" type="int" setter="set_ground_collision_mask" getter="get_ground_collision_mask" default="1">
 			The physics layers measured as ground. Only static bodies count.

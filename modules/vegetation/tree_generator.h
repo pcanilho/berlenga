@@ -322,6 +322,11 @@ private:
 	// logs, by host and decay class, in their own surface.
 	void _grow_fungi(const Builder &p_bark, Builder &r_fungi);
 	Ref<Texture2D> fungus_texture;
+	Ref<Texture2D> wood_texture;
+	Ref<Texture2D> wood_normal_texture;
+	Ref<Texture2D> _wood_texture(bool p_normal);
+	Builder wood_b; // Broken wood: fracture faces, splinters, torn bark (surface "wood").
+	void _fracture(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_old, uint32_t p_seed);
 	PackedFloat32Array fungi_points; // Mesh meta tree_fungi: 8 floats per cluster.
 	int64_t fungi_index_end = 0; // Fungi surface indices before the lichen strands (LOD 1 keeps these).
 	Ref<Texture2D> _fungus_texture();
@@ -380,6 +385,13 @@ private:
 	float collider_radius = 0.08f; // Wood thicker than this gets collision capsules.
 	int broken_tip = -1; // Stem node whose end is a broken top.
 	HashSet<int> broken_ends; // Limbs that rubbed on thicker wood and snapped (_prune_collisions()).
+	// The lying stem of a log or fallen limb (deadwood interface): its first node, axis ends and
+	// reach from the axis along it; see _measure_lying().
+	static constexpr int DEADWOOD_SAMPLES = 12;
+	int deadwood_stem = -1;
+	Vector3 deadwood_a, deadwood_b;
+	float deadwood_profile[DEADWOOD_SAMPLES] = {};
+	HashSet<int> hanger_bases; // First nodes of snapped limbs left hanging in the crown (_break_limbs()).
 	// Old-tree features (docs/ideas/trees.md 5e): tree-related microhabitats of veteran trees.
 	float veteran = 0.0f;
 	enum VeteranKind : uint8_t {
@@ -400,6 +412,8 @@ private:
 	LocalVector<VeteranFeature> veteran_features;
 	int veteran_stem = -1;
 	void _apply_veteran();
+	void _break_limbs();
+	void _measure_lying(const Builder &p_b, int p_v0, int p_v1);
 	bool mask_invert = false;
 	Color bark_color = Color(0.3f, 0.26f, 0.21f);
 	Color leaf_color = Color(0.16f, 0.3f, 0.08f);
@@ -447,6 +461,7 @@ public:
 	float moss_cover = 1.0f;
 	float lichen_cover = 1.0f;
 	float fungi_cover = 1.0f; // Bracket fungi on old and dead wood (section 5g); 0 none.
+	float limb_breakage = 1.0f; // Storm-snapped and hanging limbs on living trees (section 5j); 0 none.
 	float bark_peel = 1.0f; // Dead wood sheds its bark by decay class (section 5f); 0 keeps it.
 	bool compress_vertices = true; // Godot's compressed vertex format: 33% less vertex memory, 20% rigged (section 4).
 	Climber climber = CLIMBER_NONE;
@@ -662,6 +677,8 @@ public:
 	void set_bark_peel(float p_peel) { bark_peel = MAX(p_peel, 0.0f); }
 	void set_fungi_cover(float p_cover) { fungi_cover = MAX(p_cover, 0.0f); }
 	float get_fungi_cover() const { return fungi_cover; }
+	void set_limb_breakage(float p_breakage) { limb_breakage = MAX(p_breakage, 0.0f); }
+	float get_limb_breakage() const { return limb_breakage; }
 	float get_bark_peel() const { return bark_peel; }
 	void set_fallen_branch(bool p_fallen_branch) { fallen_branch = p_fallen_branch; }
 	bool is_fallen_branch() const { return fallen_branch; }

@@ -5,6 +5,7 @@ extends Node3D
 # --bounces=N (path tracing bounces after the shot sets its own; 0: direct light only)
 # --flow=property:value (a PhysXFlow3D property in the physx shot, e.g. --flow=ambient_scattering:1)
 # --sky (the physx shot under a procedural sky that is also its ambient light)
+# --sun=pitch,yaw (the physx shot's sun, in degrees)
 # --freeze=N (raster until N frames before the end, then time stops and the path tracer accumulates)
 var shot := "lights"
 var spp := 16
@@ -16,6 +17,7 @@ var rr := false
 var bounces := -1
 var flow_props := {}
 var sky := false
+var sun_rotation := Vector3.INF # --sun=pitch,yaw (degrees): the physx shot's sun
 var freeze := 0
 var n := 0
 var env := Environment.new()
@@ -34,6 +36,9 @@ func _ready() -> void:
 			var fkv := a.substr(7).split(":")
 			flow_props[fkv[0]] = float(fkv[1])
 		elif a == "--sky": sky = true
+		elif a.begins_with("--sun="):
+			var sv := a.substr(6).split(",")
+			sun_rotation = Vector3(float(sv[0]), float(sv[1]), 0)
 		elif a.begins_with("--freeze="): freeze = int(a.substr(9))
 		elif a.begins_with("--set="):
 			var kv := a.substr(6).split(":")
@@ -284,7 +289,7 @@ func shot_physx() -> void:
 		env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	camera(Vector3(0.3, 2.3, 6.6), Vector3(0, 1.2, -0.4), 50)
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-40, 160, 0)
+	sun.rotation_degrees = Vector3(-40, 160, 0) if sun_rotation == Vector3.INF else sun_rotation
 	sun.light_energy = 1.4
 	sun.shadow_enabled = true
 	add_child(sun)

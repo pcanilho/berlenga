@@ -56,7 +56,7 @@ struct RTSparseVolume {
 	float anisotropy = 0.3; // Henyey-Greenstein g
 	float density_majorant = 1.0; // smoke density the extinction is clamped at
 	Color smoke_color = Color(1, 1, 1);
-	float emission_scale = 0.0; // 0: not emissive
+	float emission_scale = 0.0; // the heat ramp's radiance scale (the gas emits it times its extinction); 0: not emissive
 	float temperature_range = 1.0;
 	Color heat_ramp[8];
 };

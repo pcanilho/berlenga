@@ -2279,6 +2279,17 @@
    "topic": "Old trees and deadwood"
   },
   {
+   "name": "Broken limbs",
+   "settings": [
+    "limb_breakage"
+   ],
+   "note": "",
+   "what": "snapped ends get a splintered fracture face and torn bark; storms break limbs on living trees, leaving some hanging.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Old trees and deadwood"
+  },
+  {
    "name": "Fungi",
    "settings": [
     "fungi_cover"

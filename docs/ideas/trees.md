@@ -494,7 +494,12 @@ close. Forestry measures it by Brown's line-intersect classes (under 0.6 cm, 0.6
 logs over 7.6 cm); the split with the ground plants follows that: twig litter under 1 cm is
 theirs, wood from 1 cm up is ours. Interface for plants growing through deadwood: log, branch
 and stick species carry meta `deadwood`, and each of their meshes `tree_deadwood_axis`
-(a, b, radius in mesh space; transform by the placement).
+(mesh space; transform by the placement): a (3), b (3), the widest reach from the a-b line
+anywhere on the lying stem, N (12), then the reach at N points evenly from a to b, linear between
+(the first also takes wood behind a, the last wood beyond b). Measured from the stem's own bark
+and moss as built (15 Nov): it takes in the butt, a root plate and the stem's own bends off the
+straight line, which the first node's radius (the old 7th float) missed by up to half a metre.
+A reader of the first 7 floats keeps out of all the wood.
 
 ### 5c. Moss on bark (as built, 11 Nov)
 
@@ -771,6 +776,34 @@ stays Luft's Ivy Generator walk (2007, 5b).
   `make_climber_leaves` has the variant.
 - **Cost.** Open-grown oak with full ivy: its stems add 158k bark triangles (+4%); the stems'
   side count follows their radius, so thicker stems cost about what the thin ones did.
+
+### 5j. Broken limbs, splinters and hangers (15 Nov; Paulo picked)
+
+A storm-broken limb is the commonest wound on an old tree: wood fails in tension on the side the
+load pulls and buckles on the side it pushes, so the stretched side tears out long splinters of
+the outer wood, the compressed side breaks short, and bark tears back on the stretched side (van
+Casteren et al. 2012, Why don't branches snap?; Li et al., Stressful Tree Modeling: Breaking
+Branches with Strands, SIGGRAPH 2025, fracture by strain thresholds along the fibre). Broken
+limbs and hangers are among the commonest tree-related microhabitats (Larrieu et al. 2018).
+
+- **Fracture (`_fracture`).** Every snapped end (a veteran's broken top, a snag's top, a limb
+  that rubbed through, a storm break) gets a jagged face over the end, higher and more ragged on
+  the tension side; 12-20 three-sided slivers tapering to blunt ends, three quarters on the
+  tension side; and a torn strip of bark. It replaces the nine spikes there were. Green wood
+  (living trees) breaks fibrous: up to 12 more slivers, about twice as long, the face torn
+  further; dry dead wood snaps short and flat. Fresh wood is pale, weathered wood grey. Its own
+  surface "wood" (one LOD) with a fibre texture and normal map.
+- **Storm breaks (`limb_breakage`, default 1).** Living trees (not hedges) lose a Poisson number
+  of limbs: mean 0.5 for a tree of 28 m and up, plus 1 for a full veteran. Limbs 5-22 cm thick
+  above 2.5 m, picked by cross-section and by how much they spread (their own weight bends them
+  too); each snaps 25-65% along its length.
+- **Hangers.** About 45% of spreading breaks keep the broken part hung by a strip of bark: it
+  swings down about the break beside the stub, dead and leafless, with its own fracture facing
+  the stub. One that would reach the ground falls instead.
+- **Cost.** Each fracture is about 670 triangles; a veteran oak with breakage gains 700-2,000
+  triangles (under 0.01%), and generation time is unchanged within noise.
+- **Checks.** Raster and path-traced close-ups keep the same face and splinters (PT does not
+  remove detail).
 
 ## 6. What the games at Paulo's bar do
 

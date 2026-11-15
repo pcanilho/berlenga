@@ -1712,6 +1712,11 @@ int TreeGenerator::get_dead_branch_count() const {
 	return c;
 }
 
+// _tube's first ring frame when non-zero (a stem built in pieces carries it on), and its last.
+// Per thread: meshes are built on worker threads too.
+static thread_local Vector3 tube_carry_nrm;
+static thread_local Vector3 tube_last_nrm;
+
 // A generalized cylinder along a polyline, framed by parallel transport (Bishop frames).
 void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, const LocalVector<float> &p_radii, int p_sides, float p_v0, const Color &p_color, const Image *p_height, float p_relief, float p_girth_r, bool p_soil_fade) {
 	const int rings = int(p_points.size());
@@ -1722,6 +1727,13 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 	Vector3 t = (p_points[1] - p_points[0]).normalized();
 	Vector3 ref = Math::abs(t.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
 	Vector3 nrm = t.cross(ref).normalized();
+	if (tube_carry_nrm != Vector3()) {
+		// Continue a previous tube's frame (a stem built in pieces), so the sides line up.
+		const Vector3 c = tube_carry_nrm - t * tube_carry_nrm.dot(t);
+		if (c.length_squared() > 1e-8f) {
+			nrm = c.normalized();
+		}
+	}
 	float v = p_v0;
 	// A whole number of bark tiles around the stem (no seam), v in the same tile width so the
 	// pattern keeps its aspect; thin shoots carry one tile, a finer pattern, as young bark is.
@@ -1773,6 +1785,7 @@ void TreeGenerator::_tube(Builder &r_b, const LocalVector<Vector3> &p_points, co
 		}
 		nrm = (nrm - t2 * nrm.dot(t2)).normalized();
 		t = t2;
+		tube_last_nrm = nrm;
 		const Vector3 bin = t.cross(nrm);
 		// A tube that starts in a closed cap: v runs over the surface (the cap's rings are close
 		// along the axis but far apart across it, which smeared the bark into radial streaks), and
@@ -2926,6 +2939,238 @@ Ref<Texture2D> TreeGenerator::_fungus_texture() {
 	return fungus_texture;
 }
 
+// Broken wood's texture (trees.md 5j): long fibres along v, a few darker splits, as albedo
+// (grey, the vertex colour tints it) or as its tangent-space normal map.
+Ref<Texture2D> TreeGenerator::_wood_texture(bool p_normal) {
+	Ref<Texture2D> &cache = p_normal ? wood_normal_texture : wood_texture;
+	if (cache.is_valid()) {
+		return cache;
+	}
+	const int N = 256;
+	LocalVector<float> h;
+	h.resize(N * N);
+	for (int y = 0; y < N; y++) {
+		for (int x = 0; x < N; x++) {
+			const float u = (x + 0.5f) / N, v = (y + 0.5f) / N;
+			const float fibre = bark_fbm(u, v, 48, 3, 3, 0x776f6f64u);
+			const float wander = bark_fbm(u, v, 6, 2, 2, 0x77616e64u);
+			const float split = Math::abs(Math::fmod(u * 7.0f + 0.8f * wander + 10.0f, 1.0f) - 0.5f);
+			const float run = Math::smoothstep(0.5f, 0.62f, bark_fbm(u, v, 9, 2, 2, 0x72756e73u));
+			const float check = Math::lerp(1.0f, Math::smoothstep(0.0f, 0.05f, split), run);
+			h[y * N + x] = 0.55f * fibre + 0.45f * check;
+		}
+	}
+	Vector<uint8_t> data;
+	data.resize(N * N * 3);
+	uint8_t *w = data.ptrw();
+	for (int y = 0; y < N; y++) {
+		for (int x = 0; x < N; x++) {
+			const float c = h[y * N + x];
+			if (p_normal) {
+				const float dx = h[y * N + (x + 1) % N] - h[y * N + (x + N - 1) % N];
+				const float dy = h[((y + 1) % N) * N + x] - h[((y + N - 1) % N) * N + x];
+				const Vector3 n = Vector3(-dx * 3.0f, -dy * 3.0f, 1.0f).normalized();
+				w[(y * N + x) * 3 + 0] = uint8_t(CLAMP(n.x * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+				w[(y * N + x) * 3 + 1] = uint8_t(CLAMP(n.y * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+				w[(y * N + x) * 3 + 2] = uint8_t(CLAMP(n.z * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+			} else {
+				const uint8_t g = uint8_t(CLAMP(0.55f + 0.5f * c, 0.0f, 1.0f) * 255.0f);
+				w[(y * N + x) * 3 + 0] = g;
+				w[(y * N + x) * 3 + 1] = g;
+				w[(y * N + x) * 3 + 2] = g;
+			}
+		}
+	}
+	Ref<Image> img = Image::create_from_data(N, N, false, Image::FORMAT_RGB8, data);
+	img->generate_mipmaps(p_normal);
+	cache = ImageTexture::create_from_image(img);
+	return cache;
+}
+
+// The lying stem's girth along its axis (deadwood interface, trees.md 5b). A root flare, root
+// stubs or a torn-out root plate stand out well past the stem's node radius, and the stem's
+// tube is often wider than its first node's radius: plants placed beside the log stood inside
+// the wood. Measured from the stem's own bark and moss vertices [p_v0, p_v1): the furthest
+// reach from the axis in DEADWOOD_SAMPLES bins from end a to end b (the first bin also takes
+// all wood behind a, the last all beyond b).
+void TreeGenerator::_measure_lying(const Builder &p_b, int p_v0, int p_v1) {
+	const Vector3 a = deadwood_a;
+	const float len = a.distance_to(deadwood_b);
+	if (len < 0.01f) {
+		return;
+	}
+	const Vector3 u = (deadwood_b - a) / len;
+	for (int i = p_v0; i < p_v1; i++) {
+		const Vector3 rel = p_b.verts[i] - a;
+		const float d = rel.dot(u);
+		const float perp = (rel - u * d).length();
+		const int bin = CLAMP(int(Math::round(d / len * (DEADWOOD_SAMPLES - 1))), 0, DEADWOOD_SAMPLES - 1);
+		deadwood_profile[bin] = MAX(deadwood_profile[bin], perp);
+	}
+}
+
+// A branch or stem snapped by wind, snow or its own rot (trees.md 5j). Wood fails in tension on
+// the side the load pulls and buckles on the side it pushes: the tension side tears out long
+// splinters of the outer wood, the compression side breaks short and crumpled, and the bark tears
+// back on the tension side (van Casteren et al. 2012, Why don't branches snap?; Li et al.,
+// Stressful Tree Modeling: Breaking Branches with Strands, SIGGRAPH 2025). Built from p_end (the
+// stem's end centre, its radius p_r, axis p_dir): a jagged face over the end, splinters as
+// tapering three-sided slivers, a torn strip of bark. p_old 0 fresh (pale), 1 weathered (grey).
+void TreeGenerator::_fracture(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_old, uint32_t p_seed) {
+	Builder &w = wood_b;
+	RandomPCG sr;
+	sr.seed(uint64_t(p_seed) * 6364136223846793005ull + 0x66726163u);
+	const Vector3 g = p_dir.normalized();
+	const Vector3 world_up(0, 1, 0);
+	// The tension side: up for a limb that bent down under its weight; for a near-vertical stem,
+	// downwind (here a random bearing).
+	Vector3 td = world_up - g * world_up.dot(g);
+	if (td.length_squared() < 0.04f) {
+		const float a = sr.randf() * float(Math::TAU);
+		td = Vector3(Math::cos(a), 0.0f, Math::sin(a));
+		td = td - g * td.dot(g);
+	}
+	td.normalize();
+	const Vector3 sd = g.cross(td);
+	const Color fresh = Color(0.74f, 0.66f, 0.52f).srgb_to_linear();
+	const Color grey = Color(0.52f, 0.5f, 0.46f).srgb_to_linear();
+	const Color wood = fresh.lerp(grey, p_old);
+	const Color heart = wood.lerp(Color(0.42f, 0.33f, 0.24f).srgb_to_linear(), 0.35f);
+	// Green wood is tough and breaks fibrous: the tension side tears out far and in many long
+	// splinters, a greenstick break (van Casteren et al. 2012). Dry dead wood snaps short and flat.
+	const float green = CLAMP(1.0f - 2.0f * p_old, 0.0f, 1.0f);
+	auto push = [&](const Vector3 &p_p, const Vector2 &p_uv, const Color &p_c) {
+		w.verts.push_back(p_p);
+		w.normals.push_back(Vector3());
+		w.uvs.push_back(p_uv);
+		w.colors.push_back(p_c);
+		return w.verts.size() - 1;
+	};
+	auto tri = [&](int a, int b, int c) {
+		w.indices.push_back(a);
+		w.indices.push_back(b);
+		w.indices.push_back(c);
+	};
+	Vector4i part;
+	w.begin(part);
+	// The face: rings from the rim inwards, heights along the axis. The rim ring sits on the stem's
+	// end (height 0) so the face closes it; the face rises steeply inside it and is higher and
+	// more ragged on the tension side.
+	const int sectors = 20;
+	const float ring_rho[5] = { 1.0f, 0.95f, 0.7f, 0.4f, 0.12f };
+	const float phase = sr.randf() * 10.0f;
+	auto face_h = [&](float p_rho, float p_a) {
+		const float c = Math::cos(p_a); // 1 on the tension side.
+		const float jag = 0.5f + 0.5f * Math::sin(p_a * 5.0f + phase + p_rho * 7.0f) * Math::sin(p_a * 3.0f - phase * 1.7f);
+		return p_r * (0.04f + (0.6f + 0.7f * green) * MAX(c, 0.0f) * MAX(c, 0.0f) * (0.3f + 0.7f * p_rho) + 0.3f * jag * p_rho);
+	};
+	const int f0 = w.verts.size();
+	for (int i = 0; i < 5; i++) {
+		for (int k = 0; k < sectors; k++) {
+			const float a = float(Math::TAU) * k / sectors;
+			const float rho = ring_rho[i];
+			// The outer ring a little lower than the face inside it: the bark and the outer wood
+			// break first, so the rim is a ragged step, not a sleeve.
+			const float hh = i == 0 ? 0.0f : face_h(rho, a) * (i == 1 ? 0.55f : 1.0f) * (1.0f + 0.3f * (sr.randf() - 0.5f));
+			const Vector3 p = p_end + (td * Math::cos(a) + sd * Math::sin(a)) * (p_r * rho) + g * hh;
+			// Fibres run along the axis: v up the face's relief, u around.
+			push(p, Vector2(float(k) / sectors * 2.0f, hh / MAX(p_r, 0.01f) * 0.5f + rho * 0.3f), i == 0 ? wood : wood.lerp(heart, 1.0f - rho));
+		}
+	}
+	const int fc = push(p_end + g * (face_h(0.0f, 0.0f) * 0.8f), Vector2(0.5f, 0.1f), heart);
+	for (int i = 0; i < 4; i++) {
+		for (int k = 0; k < sectors; k++) {
+			const int k1 = (k + 1) % sectors;
+			const int a0 = f0 + i * sectors + k, a1 = f0 + i * sectors + k1;
+			const int b0 = f0 + (i + 1) * sectors + k, b1 = f0 + (i + 1) * sectors + k1;
+			tri(a0, b0, a1);
+			tri(a1, b0, b1);
+		}
+	}
+	for (int k = 0; k < sectors; k++) {
+		tri(f0 + 4 * sectors + k, fc, f0 + 4 * sectors + (k + 1) % sectors);
+	}
+	// Splinters: slivers of the outer wood pulled out on the tension side, longest there, a few
+	// short ones elsewhere; each a three-sided sliver tapering to a point, bent a little outwards.
+	const int count = 12 + int(sr.rand() % 9) + int(12.0f * green);
+	for (int q = 0; q < count; q++) {
+		const float a = (sr.randf() < 0.75f ? 0.0f : float(Math::PI)) + (sr.randf() - 0.5f) * 2.2f;
+		const float pull = MAX(Math::cos(a), 0.0f);
+		const float rho = Math::lerp(0.5f, 0.92f, sr.randf());
+		const float len = p_r * Math::lerp(0.25f, 0.6f, sr.randf()) * (0.5f + (1.8f + 2.2f * green) * pull * pull);
+		const float wid = p_r * Math::lerp(0.1f, 0.24f, sr.randf());
+		const Vector3 radial = td * Math::cos(a) + sd * Math::sin(a);
+		const Vector3 tang = g.cross(radial);
+		const Vector3 base = p_end + radial * (p_r * rho) + g * (face_h(rho, a) * 0.6f);
+		const Vector3 dirs = (g + radial * Math::lerp(0.05f, 0.3f, sr.randf()) + tang * (sr.randf() - 0.5f) * 0.25f).normalized();
+		const int segs = 3;
+		const int s0 = w.verts.size();
+		for (int e = 0; e <= segs; e++) {
+			const float f = float(e) / segs;
+			const Vector3 c = base + dirs * (len * f) + radial * (len * 0.15f * f * f);
+			// Splinters end ragged and blunt-ish, not in needles.
+			const float ww = wid * (1.0f - 0.7f * f);
+			// A sliver's section: wide across the grain's tangent, thin radially.
+			const Vector3 c0 = c - tang * ww;
+			const Vector3 c1 = c + tang * ww;
+			const Vector3 c2 = c + radial * (ww * 0.45f);
+			const float vv = f * len / MAX(p_r, 0.01f);
+			push(c0, Vector2(0.0f, vv), wood);
+			push(c1, Vector2(0.15f, vv), wood);
+			push(c2, Vector2(0.08f, vv), wood.lerp(heart, 0.3f));
+		}
+		for (int e = 0; e < segs; e++) {
+			for (int side = 0; side < 3; side++) {
+				const int a0 = s0 + e * 3 + side, a1 = s0 + e * 3 + (side + 1) % 3;
+				const int b0 = a0 + 3, b1 = a1 + 3;
+				tri(a0, b0, a1);
+				tri(a1, b0, b1);
+			}
+		}
+	}
+	// Bark torn back on the tension side: a curved strip lifted off the stem from the rim.
+	{
+		const Color bark_c = bark_color.srgb_to_linear();
+		const float a_mid = (sr.randf() - 0.5f) * 0.8f;
+		const float half = Math::lerp(0.18f, 0.35f, sr.randf());
+		const float len = p_r * Math::lerp(0.3f, 0.8f, sr.randf());
+		const int cols = 4, rows = 3;
+		const int s0 = w.verts.size();
+		for (int j = 0; j <= rows; j++) {
+			const float f = float(j) / rows;
+			for (int c = 0; c <= cols; c++) {
+				const float a = a_mid + (float(c) / cols - 0.5f) * 2.0f * half;
+				const Vector3 radial = td * Math::cos(a) + sd * Math::sin(a);
+				// Peeling: lifts off the stem as it goes out, and its free end is ragged.
+				const float lift = p_r * (0.015f + 0.12f * f * f);
+				const float out = len * f * (1.0f - 0.25f * Math::abs(float(c) / cols - 0.5f) * (j == rows ? 1.0f + sr.randf() : 0.0f));
+				push(p_end + radial * (p_r * 1.01f + lift) + g * out, Vector2(float(c) / cols * 0.3f, f), bark_c);
+			}
+		}
+		for (int j = 0; j < rows; j++) {
+			for (int c = 0; c < cols; c++) {
+				const int a0 = s0 + j * (cols + 1) + c;
+				tri(a0, a0 + cols + 1, a0 + 1);
+				tri(a0 + 1, a0 + cols + 1, a0 + cols + 2);
+			}
+		}
+	}
+	// Normals from the faces (two-sided material; slivers and strip are thin).
+	Vector3 *nw = w.normals.ptrw();
+	const Vector3 *vw = w.verts.ptr();
+	for (int64_t i = part.x; i + 2 < w.indices.size(); i += 3) {
+		const int a = w.indices[i], b = w.indices[i + 1], c = w.indices[i + 2];
+		const Vector3 fn = (vw[c] - vw[a]).cross(vw[b] - vw[a]);
+		nw[a] += fn;
+		nw[b] += fn;
+		nw[c] += fn;
+	}
+	for (int v = part.z; v < w.verts.size(); v++) {
+		nw[v] = nw[v].length_squared() > 1e-20f ? nw[v].normalized() : g;
+	}
+	w.end(part, p_r);
+}
+
 void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 	r_fungi = Builder();
 	fungi_points.clear();
@@ -3906,6 +4151,12 @@ void TreeGenerator::_climber_stem(Builder &r_bark, const LocalVector<Vector3> &p
 		return;
 	}
 	const int piece = 12;
+	// One side count for the whole stem, and the bark's v carried on from piece to piece: a piece
+	// that dropped a side or restarted its texture showed a notch at every joint (each piece is
+	// its own tube, for its own bone).
+	const int sides = p_r0 > 0.006f ? 5 : (p_r0 > 0.003f ? 4 : 3);
+	float v0 = 0.0f;
+	tube_carry_nrm = Vector3();
 	for (int a = 0; a < n - 1; a += piece) {
 		const int b = MIN(a + piece, n - 1);
 		LocalVector<Vector3> pts;
@@ -3914,14 +4165,19 @@ void TreeGenerator::_climber_stem(Builder &r_bark, const LocalVector<Vector3> &p
 			pts.push_back(p_path[i]);
 			rad.push_back(Math::lerp(p_r0, p_r1, float(i) / float(n - 1)));
 		}
-		const int sides = rad[0] > 0.006f ? 5 : (rad[0] > 0.003f ? 4 : 3);
 		r_bark.bone = p_bones[a];
 		r_bark.role = Builder::ROLE_ALL;
 		Vector4i part;
 		r_bark.begin(part);
-		_tube(r_bark, pts, rad, sides, 0.0f, p_color);
+		_tube(r_bark, pts, rad, sides, v0, p_color);
+		tube_carry_nrm = tube_last_nrm;
 		r_bark.end(part, rad[0]);
+		const float circ = Math::TAU * MAX(rad[0], 0.001f) / MAX(1.0f, Math::round(Math::TAU * MAX(rad[0], 0.001f) / BARK_TILE));
+		for (int i = 1; i < int(pts.size()); i++) {
+			v0 += pts[i].distance_to(pts[i - 1]) / circ;
+		}
 	}
+	tube_carry_nrm = Vector3();
 }
 
 // Liana stands for clematis (old man's beard), the hanging climber of rich lowland woods.
@@ -4543,6 +4799,170 @@ void TreeGenerator::_apply_decay() {
 // storm or snow, a basal hollow where heart rot reached the root collar, rot holes and woodpecker
 // holes higher up, burls, and epicormic shoots on the stem (oak and lime above all). `veteran`
 // 0-1 sets how many; the stem keeps its shape and growth, the features are cut into its mesh.
+// Storm-broken limbs on living trees (docs/ideas/trees.md 5j). A gust loads a limb past the
+// strain its wood takes: it snaps partway out, the fibres on the stretched (upper) side
+// tearing into splinters and the compressed side buckling (Li et al., SIGGRAPH 2025, fracture
+// by strain thresholds along the fibre). Old and tall trees carry more of them, veterans most
+// (TreMs: broken limbs and hangers are among the commonest microhabitats, Larrieu et al. 2018).
+// About a third of the snapped limbs stay hung in the crown by a strip of bark and fibre
+// ("hangers", the arborist's term): they swing down beside the break and die there.
+void TreeGenerator::_break_limbs() {
+	if (limb_breakage <= 0.0f || nodes.size() < 8) {
+		return;
+	}
+	RandomPCG br;
+	br.seed(uint64_t(seed) * 0x9e3779b1u + 0x5b5b5bu);
+	const float base_y = nodes[0].start.y;
+	const float mean = limb_breakage * (0.5f * CLAMP((height - 8.0f) / 20.0f, 0.0f, 1.0f) + veteran);
+	if (mean < 0.01f) {
+		return;
+	}
+	int count = 0;
+	{
+		// Poisson: storms break limbs one at a time and independently.
+		const float lim = Math::exp(-mean);
+		float p = br.randf();
+		while (p > lim && count < 12) {
+			count++;
+			p *= br.randf();
+		}
+	}
+	if (count == 0) {
+		return;
+	}
+	// Limbs from forearm to thigh thick, high enough not to be the lowest (shaded-out) ones and
+	// long enough to carry a break and something beyond it.
+	LocalVector<int> cands;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.dead || n.parent <= 0 || nodes[n.parent].main == i || n.radius < 0.05f || n.radius > 0.22f ||
+				n.start.y - base_y < 2.5f) {
+			continue;
+		}
+		float arc = 0.0f;
+		for (int k = i; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+			arc += nodes[k].length;
+		}
+		if (arc >= 1.5f) {
+			cands.push_back(i);
+		}
+	}
+	LocalVector<int> chain;
+	LocalVector<uint8_t> in_sub;
+	for (int b = 0; b < count && !cands.is_empty(); b++) {
+		// The wind's load on a limb grows with its sail and lever, so thick limbs go first
+		// (picked by cross-section), and spreading ones, whose own weight bends them too, before
+		// steep ones.
+		auto load = [&](int p_i) { return nodes[p_i].radius * nodes[p_i].radius * (1.25f - MAX(nodes[p_i].dir.y, 0.0f)); };
+		float total = 0.0f;
+		for (const int c : cands) {
+			total += load(c);
+		}
+		float u = br.randf() * total;
+		uint32_t pick = 0;
+		while (pick + 1 < cands.size() && u > load(cands[pick])) {
+			u -= load(cands[pick]);
+			pick++;
+		}
+		const int a = cands[pick];
+		cands[pick] = cands[cands.size() - 1];
+		cands.resize(cands.size() - 1);
+		if (nodes[a].removed) {
+			continue; // Taken away with an earlier break.
+		}
+		bool gone = false;
+		for (int p = nodes[a].parent; p > 0; p = nodes[p].parent) {
+			gone = gone || nodes[p].removed || hanger_bases.has(p);
+		}
+		if (gone) {
+			continue;
+		}
+		chain.clear();
+		float arc = 0.0f;
+		for (int k = a; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+			chain.push_back(k);
+			arc += nodes[k].length;
+		}
+		const float target = arc * Math::lerp(0.25f, 0.65f, br.randf());
+		int k = -1;
+		float run = 0.0f;
+		for (int c = 0; c + 1 < int(chain.size()); c++) {
+			run += nodes[chain[c]].length;
+			if (run >= target) {
+				k = chain[c];
+				break;
+			}
+		}
+		if (k < 0 || nodes[k].radius < 0.025f) {
+			continue;
+		}
+		const int next = nodes[k].main;
+		for (int l = nodes[k].first_lateral; l >= 0; l = nodes[l].next_sibling) {
+			nodes[l].removed = true;
+		}
+		nodes[k].first_lateral = -1;
+		nodes[k].main = -1;
+		nodes[k].leafy = false;
+		broken_ends.insert(k);
+		// Hung in the crown: the broken part turns down about the break, beside the stub.
+		bool hung = false;
+		// Only a spreading limb leaves its broken part hanging clear; a steep one folds it back
+		// down its own length.
+		if (br.randf() < 0.45f && nodes[next].radius >= 0.02f && nodes[next].dir.y < 0.75f) {
+			in_sub.resize(nodes.size());
+			memset(in_sub.ptr(), 0, in_sub.size());
+			in_sub[next] = 1;
+			for (int i = next + 1; i < int(nodes.size()); i++) {
+				in_sub[i] = (!nodes[i].removed && nodes[i].parent >= 0 && in_sub[nodes[i].parent]) ? 1 : 0;
+			}
+			const Vector3 pivot = nodes[k].end();
+			const Vector3 d = nodes[next].dir;
+			Vector3 hd = Vector3(d.x, 0.0f, d.z);
+			hd = hd.length() > 0.05f ? hd.normalized() : Vector3(Math::cos(br.randf() * Math::TAU), 0.0f, Math::sin(br.randf() * Math::TAU));
+			const Vector3 h = (Vector3(0, -1, 0) + hd * Math::lerp(0.15f, 0.55f, br.randf())).normalized();
+			Vector3 axis = d.cross(h);
+			if (axis.length() > 0.05f) {
+				axis.normalize();
+				const float ang = d.angle_to(h);
+				const float r = nodes[k].radius;
+				const Vector3 shift = axis * (r * 1.1f) + h * (r * 0.4f);
+				float low = 1e9f;
+				for (int i = next; i < int(nodes.size()); i++) {
+					if (in_sub[i]) {
+						low = MIN(low, (pivot + (nodes[i].end() - pivot).rotated(axis, ang) + shift).y);
+					}
+				}
+				if (low - base_y > 0.4f) {
+					for (int i = next; i < int(nodes.size()); i++) {
+						if (!in_sub[i]) {
+							continue;
+						}
+						Node &n = nodes[i];
+						n.start = pivot + (n.start - pivot).rotated(axis, ang) + shift;
+						n.dir = n.dir.rotated(axis, ang).normalized();
+						n.dead = true;
+						n.leafy = false;
+					}
+					nodes[next].next_sibling = -1;
+					nodes[k].first_lateral = next;
+					hanger_bases.insert(next);
+					hung = true;
+				}
+			}
+		}
+		if (!hung) {
+			nodes[next].removed = true; // Down on the ground below.
+		}
+	}
+	for (int i = 1; i < int(nodes.size()); i++) {
+		if (!nodes[i].removed && nodes[i].parent > 0 && nodes[nodes[i].parent].removed) {
+			nodes[i].removed = true;
+		}
+	}
+	for (const int hb : hanger_bases) {
+	}
+}
+
 void TreeGenerator::_apply_veteran() {
 	RandomPCG vr;
 	vr.seed(uint64_t(seed) * 2654435761u + 0x7e7e7eu);
@@ -5158,6 +5578,7 @@ static const struct {
 
 Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	Builder bark;
+	wood_b = Builder();
 	bark.use_tangents = true;
 	Builder leaves;
 	Builder moss;
@@ -6307,10 +6728,20 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	LocalVector<Vector3> pts;
 	LocalVector<float> rad;
 	LocalVector<int> chain;
+	// The lying stem's own bark and moss (deadwood interface): vertex ranges for _measure_lying().
+	int dw_v0 = -1, dw_v1 = -1, dw_m0 = -1, dw_m1 = -1;
 	for (int s = 1; s < int(nodes.size()); s++) {
 		const Node &first = nodes[s];
 		if (first.removed || (first.parent > 0 && nodes[first.parent].main == s)) {
 			continue;
+		}
+		if (dw_v0 >= 0 && dw_v1 < 0) {
+			dw_v1 = int(bark.verts.size());
+			dw_m1 = int(moss.verts.size());
+		}
+		if (s == deadwood_stem) {
+			dw_v0 = int(bark.verts.size());
+			dw_m0 = int(moss.verts.size());
 		}
 		chain.clear();
 		for (int i = s; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
@@ -6349,12 +6780,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			rad.push_back(r_end);
 		}
 		const bool stem = first.parent == 0;
+		// A hanger's base is a fracture hanging beside its stub, not a junction: no branch
+		// collar, fork crotch or weld into the parent.
+		const bool hanger = hanger_bases.has(s);
 		// The root collar (flare and sink) belongs to a stem standing in the soil. A log or a
 		// fallen limb lies along the ground, every ring of it near the base height: the flare
 		// swelled the whole log and the sink dove its open butt into the soil, where it showed
 		// from above as a log with its top missing.
 		const bool collar = stem && flare > 0.0f && !fallen && !fallen_branch;
-		if (!stem && r0 > 0.01f && pts.size() >= 2) {
+		if (!stem && !hanger && r0 > 0.01f && pts.size() >= 2) {
 			// Branch collar: a limb swells where it leaves its parent, so its base meets the
 			// parent's bark in a smooth fillet instead of a pipe pushed into a pipe (the welded
 			// junctions of SpeedTree; Bloomenthal 1985 for the implicit version). The swelling
@@ -6407,7 +6841,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// stub. As in a branching-tube mesh (Lluch et al. 2004; SpeedTree's fork splits), the
 		// fork's base now runs up inside the parent, its rings parallel to the parent's and
 		// shifted toward the side it leaves on, then turns out through the crotch.
-		if (!stem && pts.size() >= 2 && r0 > 0.6f * nodes[first.parent].radius) {
+		if (!stem && !hanger && pts.size() >= 2 && r0 > 0.6f * nodes[first.parent].radius) {
 			const Node &par = nodes[first.parent];
 			const float rp = par.radius;
 			Vector3 side = first.dir - par.dir * first.dir.dot(par.dir);
@@ -6447,7 +6881,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		if (rim_r >= 0.006f && pts.size() >= 2) {
 			const Vector3 dir_end = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized();
 			const bool broken = (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) || broken_ends.has(chain[chain.size() - 1]);
-			const float cap_len = broken ? 0.15f : 0.8f;
+			const float cap_len = broken ? 0.04f : 0.8f; // Under the fracture face, which closes the end.
 			const float ks[3] = { 0.4f, 0.75f, 1.0f };
 			const float rs[3] = { 0.93f, 0.68f, 0.0f };
 			for (int k = 0; k < 3; k++) {
@@ -6627,7 +7061,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			if (s == veteran_stem || vet_share[s]) {
 				veteran_deform(bark, part, pts, rad, sides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 			}
-			if (!stem && junction_weld) {
+			if (!stem && !hanger && junction_weld) {
 				weld(bark, part, s, pts, rad, sides);
 			}
 		}
@@ -6691,7 +7125,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				if (s == veteran_stem || vet_share[s]) {
 					veteran_deform(bark, part, bp, br, bsides, true, s == veteran_stem ? 2 : (vet_share[s] ? 1 : 0));
 				}
-				if (!stem && junction_weld) {
+				if (!stem && !hanger && junction_weld) {
 					weld(bark, part, s, bp, br, bsides);
 				}
 			}
@@ -6869,46 +7303,15 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		bark.role = Builder::ROLE_ALL;
 		const int chain_end = chain[chain.size() - 1];
 		if ((broken_tip >= 0 && chain_end == broken_tip) || broken_ends.has(chain_end)) {
-			// A snapped top: splinters of pale wood standing up from the rim. (A log's broken butt
-			// gets its fibre tongues from _tube instead.)
-			const Vector3 g_dir = nodes[chain_end].dir;
-			const Vector3 e = rim_pt;
-			const float r = rim_r;
-			const Vector3 ref = Math::abs(g_dir.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
-			const Vector3 u = g_dir.cross(ref).normalized();
-			const Vector3 v = g_dir.cross(u);
-			RandomPCG sr;
-			sr.seed(uint64_t(chain_end) * 2246822519u + uint64_t(seed));
-			const Color wood = Color(0.62f, 0.55f, 0.44f).srgb_to_linear();
-			Vector4i part;
-			bark.begin(part);
-			const int spikes = 9;
-			for (int k = 0; k < spikes; k++) {
-				const float a0 = Math::TAU * k / spikes;
-				const float a1 = Math::TAU * (k + 1) / spikes;
-				const Vector3 p0 = e + (u * Math::cos(a0) + v * Math::sin(a0)) * r;
-				const Vector3 p1 = e + (u * Math::cos(a1) + v * Math::sin(a1)) * r;
-				const float am = (a0 + a1) * 0.5f;
-				const Vector3 tip = e + (u * Math::cos(am) + v * Math::sin(am)) * (r * Math::lerp(0.2f, 0.8f, sr.randf())) + g_dir * (r * Math::lerp(0.3f, 3.0f, sr.randf()));
-				const Vector3 nrm = (p1 - p0).cross(tip - p0).normalized();
-				const int b0 = bark.verts.size();
-				const Vector3 tri[3] = { p0, tip, p1 };
-				for (int side = 0; side < 2; side++) {
-					for (int q = 0; q < 3; q++) {
-						bark.verts.push_back(tri[q]);
-						bark.normals.push_back(side == 0 ? nrm : -nrm);
-						bark.uvs.push_back(Vector2(float(q) * 0.5f, 0.0f));
-						bark.colors.push_back(wood);
-					}
-				}
-				bark.indices.push_back(b0);
-				bark.indices.push_back(b0 + 1);
-				bark.indices.push_back(b0 + 2);
-				bark.indices.push_back(b0 + 3);
-				bark.indices.push_back(b0 + 5);
-				bark.indices.push_back(b0 + 4);
-			}
-			bark.end(part, r);
+			// A snapped end: a jagged fracture face and splinters (trees.md 5j). (A log's broken
+			// butt gets its fibre tongues from _tube instead.)
+			wood_b.bone = node_bone[chain_end];
+			_fracture(rim_pt, nodes[chain_end].dir, rim_r, nodes[chain_end].dead || decay_class > 0 ? 1.0f : 0.0f, uint32_t(chain_end) * 2246822519u + uint32_t(seed));
+		}
+		if (hanger && pts.size() >= 2) {
+			// The hanger's own half of the break, facing back up at the stub.
+			wood_b.bone = node_bone[s];
+			_fracture(pts[0], (pts[0] - pts[1]).normalized(), rad[0], 0.0f, uint32_t(s) * 3266489917u + uint32_t(seed));
 		}
 		if (s == veteran_stem && !veteran_features.is_empty()) {
 			// Woodpecker holes and epicormic shoots: their own small geometry on the stem.
@@ -7060,6 +7463,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				}
 			}
 		}
+	}
+	if (dw_v0 >= 0) {
+		_measure_lying(bark, dw_v0, dw_v1 >= 0 ? dw_v1 : int(bark.verts.size()));
+		_measure_lying(moss, dw_m0, dw_m1 >= 0 ? dw_m1 : int(moss.verts.size()));
 	}
 
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
@@ -7381,8 +7788,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	mesh.instantiate();
 	Builder fungi;
 	_grow_fungi(bark, fungi);
-	Builder *builders[5] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi };
-	for (int s = 0; s < 5; s++) {
+	Builder *builders[6] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b };
+	for (int s = 0; s < 6; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
 			continue;
@@ -7420,6 +7827,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				lods = _leaf_lods(b);
 			} else if (s == 3) {
 				lods = _leaf_lods(b, false);
+			} else if (s == 5) {
+				// Broken wood: a few hundred triangles a break, seen from every distance.
 			} else if (s == 4) {
 				// Fungi are a few thousand triangles at most: one level, seen from every distance.
 				// The lichen strands after them (millimetre threads, sub-pixel past a few metres)
@@ -7513,7 +7922,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// A near mesh shares its far mesh's materials: the same shaders and batches, and no
 			// reads back from the RenderingServer (which wait on the render thread) off the main
 			// thread.
-			const char *names[5] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi" };
+			const char *names[6] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi", "wood" };
 			int found = -1;
 			for (int i = 0; i < material_source->get_surface_count(); i++) {
 				if (material_source->surface_get_name(i) == names[s]) {
@@ -7566,6 +7975,16 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			mesh->surface_set_name(mesh->get_surface_count() - 1, "climber_leaves");
+		} else if (s == 5) {
+			// Broken wood (trees.md 5j): fracture faces and splinters, vertex colour by how fresh
+			// the break is, a texture of fibres along v with their relief.
+			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _wood_texture(false));
+			m->set_feature(BaseMaterial3D::FEATURE_NORMAL_MAPPING, true);
+			m->set_texture(BaseMaterial3D::TEXTURE_NORMAL, _wood_texture(true));
+			m->set_normal_scale(0.8f);
+			m->set_roughness(0.85f);
+			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+			mesh->surface_set_name(mesh->get_surface_count() - 1, "wood");
 		} else if (s == 4) {
 			// Fungi: vertex colour per species and zone, a texture of growth lines and pores.
 			m->set_texture(BaseMaterial3D::TEXTURE_ALBEDO, _fungus_texture());
@@ -8112,6 +8531,7 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
 	fungi_cover = p_from.fungi_cover;
+	limb_breakage = p_from.limb_breakage;
 	compress_vertices = p_from.compress_vertices;
 	climber = p_from.climber;
 	shed_radius_max = p_from.shed_radius_max;
@@ -8824,37 +9244,62 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	} else if (veteran > 0.0f && !fallen && !fallen_branch) {
 		_apply_veteran();
 	}
+	hanger_bases.clear();
+	if (decay_class == 0 && !fallen && !fallen_branch && envelope.size == Vector3()) {
+		_break_limbs();
+	}
 	if (fallen_branch) {
 		_shed_branch();
 	} else if (fallen) {
 		_fell();
 	}
-	Ref<ArrayMesh> mesh = _build_mesh();
+	// Where the wood lies (mesh space), for plants grown through and around it: the thickest
+	// axis from the root. Its butt is measured from its bark as the mesh is built.
+	deadwood_stem = -1;
+	int dw_last = -1;
 	if (fallen || fallen_branch) {
-		// Where the wood lies (mesh space), for plants grown through and around it: the thickest
-		// axis from the root, start, end and radius at its start.
-		int s0 = -1;
 		for (int i = 1; i < int(nodes.size()); i++) {
 			const Node &n = nodes[i];
 			if (n.removed || (n.parent >= 0 && !nodes[n.parent].removed && nodes[n.parent].main == i)) {
 				continue;
 			}
-			if (s0 < 0 || n.radius > nodes[s0].radius) {
-				s0 = i;
+			if (deadwood_stem < 0 || n.radius > nodes[deadwood_stem].radius) {
+				deadwood_stem = i;
 			}
 		}
-		if (s0 >= 0) {
-			int last = s0;
-			for (int k = s0; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
-				last = k;
+		if (deadwood_stem >= 0) {
+			for (int k = deadwood_stem; k >= 0 && !nodes[k].removed; k = nodes[k].main) {
+				dw_last = k;
 			}
-			const Vector3 a = nodes[s0].start, b = nodes[last].end();
-			PackedFloat32Array axis;
-			for (float v : { a.x, a.y, a.z, b.x, b.y, b.z, nodes[s0].radius }) {
-				axis.push_back(v);
+			deadwood_a = nodes[deadwood_stem].start;
+			deadwood_b = nodes[dw_last].end();
+			for (float &r : deadwood_profile) {
+				r = 0.0f;
 			}
-			mesh->set_meta(SNAME("tree_deadwood_axis"), axis);
 		}
+	}
+	Ref<ArrayMesh> mesh = _build_mesh();
+	if (deadwood_stem >= 0) {
+		// Layout (trees.md 5b): a (3), b (3), the widest reach from the axis anywhere along it
+		// (a reader of the first 7 floats keeps out of all the wood), the sample count N, then
+		// the reach at N points evenly from a to b (linear between them).
+		const Vector3 a = deadwood_a, b = deadwood_b;
+		float widest = nodes[deadwood_stem].radius;
+		for (int i = 0; i < DEADWOOD_SAMPLES; i++) {
+			// A bin the tube skips (a short stem) takes its neighbours' reach.
+			if (deadwood_profile[i] <= 0.0f) {
+				deadwood_profile[i] = i > 0 ? deadwood_profile[i - 1] : nodes[deadwood_stem].radius;
+			}
+			widest = MAX(widest, deadwood_profile[i]);
+		}
+		PackedFloat32Array axis;
+		for (float v : { a.x, a.y, a.z, b.x, b.y, b.z, widest, float(DEADWOOD_SAMPLES) }) {
+			axis.push_back(v);
+		}
+		for (int i = 0; i < DEADWOOD_SAMPLES; i++) {
+			axis.push_back(deadwood_profile[i]);
+		}
+		mesh->set_meta(SNAME("tree_deadwood_axis"), axis);
 	}
 	bark_color = living_bark;
 	leaf_color = living_leaf;
@@ -8893,6 +9338,8 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
 	ClassDB::bind_method(D_METHOD("set_fungi_cover", "cover"), &TreeGenerator::set_fungi_cover);
 	ClassDB::bind_method(D_METHOD("get_fungi_cover"), &TreeGenerator::get_fungi_cover);
+	ClassDB::bind_method(D_METHOD("set_limb_breakage", "breakage"), &TreeGenerator::set_limb_breakage);
+	ClassDB::bind_method(D_METHOD("get_limb_breakage"), &TreeGenerator::get_limb_breakage);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_form", "preset"), &TreeGenerator::get_leaf_form);
 	ClassDB::bind_static_method("TreeGenerator", D_METHOD("get_leaf_season", "preset", "season"), &TreeGenerator::get_leaf_season);
 	ClassDB::bind_method(D_METHOD("set_season", "season"), &TreeGenerator::set_season);
@@ -8977,6 +9424,7 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fungi_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fungi_cover", "get_fungi_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "limb_breakage", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_limb_breakage", "get_limb_breakage");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "compress_vertices"), "set_compress_vertices", "is_compress_vertices");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "climber", PROPERTY_HINT_ENUM, "None,Ivy,Liana,Honeysuckle"), "set_climber", "get_climber");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "climber_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_climber_cover", "get_climber_cover");
