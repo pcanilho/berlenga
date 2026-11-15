@@ -261,3 +261,13 @@ dialog::backdrop{background:rgba(5,9,14,.72);backdrop-filter:blur(4px)}
 .set-name{white-space:normal!important;word-break:break-word}
 .set-name span{display:block;font-size:11px;opacity:.6}
 .set-table td code{white-space:normal;word-break:break-word}
+
+/* Downloads */
+.dl{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin:16px 0 8px}
+.dl-item{display:flex;flex-direction:column;gap:2px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);color:var(--text);transition:border-color .12s,transform .12s,box-shadow .12s}
+.dl-item:hover{text-decoration:none;border-color:var(--accent);transform:translateY(-1px);box-shadow:var(--shadow)}
+.dl-item b{font-weight:650}
+.dl-item span{font-size:13.5px;color:var(--muted)}
+.dl-item.mine{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.dl-item.mine b::after{content:" · your system";font-weight:500;color:var(--muted);font-size:13px}
+.dl-meta{font-size:14px;color:var(--muted)}

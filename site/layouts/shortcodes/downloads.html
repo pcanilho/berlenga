@@ -1,0 +1,19 @@
+{{- $r := index hugo.Data "release" -}}
+{{- $latest := printf "%s/releases/latest" site.Params.repo -}}
+{{- $kinds := slice
+  (dict "key" "windows" "re" `-windows-` "label" "Windows" "arch" "x86_64")
+  (dict "key" "linux-x64" "re" `-linux-x86_64-` "label" "Linux" "arch" "x86_64")
+  (dict "key" "linux-arm64" "re" `-linux-arm64-` "label" "Linux" "arch" "arm64")
+  (dict "key" "macos" "re" `-macos-` "label" "macOS" "arch" "universal, raster only")
+  (dict "key" "templates" "re" `export-templates.*\.tpz$` "label" "Export templates" "arch" "Windows and Linux")
+-}}
+<div class="dl" data-pagefind-ignore>
+{{- range $kinds -}}
+  {{- $k := . -}}{{- $a := "" -}}
+  {{- with $r -}}{{- range .assets -}}{{- if findRE $k.re .name -}}{{- $a = . -}}{{- end -}}{{- end -}}{{- end -}}
+  <a class="dl-item" data-os="{{ $k.key }}" href="{{ with $a }}{{ .browser_download_url }}{{ else }}{{ $latest }}{{ end }}">
+    <b>{{ $k.label }}</b><span>{{ $k.arch }}{{ with $a }} · {{ lang.FormatNumber 0 (div (float .size) 1048576) }} MB{{ end }}</span>
+  </a>
+{{- end -}}
+</div>
+<p class="dl-meta">{{ with $r }}{{ with .tag_name }}Build <code>{{ strings.TrimPrefix "build-" . }}</code>{{ end }}{{ with .published_at }}, {{ (time .).Format "2 January 2006" }}{{ end }}. {{ end }}<a href="{{ $latest }}">All files and release notes</a>.</p>

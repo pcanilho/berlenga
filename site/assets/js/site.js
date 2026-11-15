@@ -344,3 +344,15 @@ document.querySelectorAll('.content img.zoomable').forEach((img) => {
   window.addEventListener('hashchange', go);
   if (location.hash) requestAnimationFrame(go);
 })();
+
+// Downloads: mark the build for this system.
+(() => {
+  const items = document.querySelectorAll('.dl-item');
+  if (!items.length) return;
+  const ua = navigator.userAgent, plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+  let os = '';
+  if (/Win/i.test(plat) || /Windows/.test(ua)) os = 'windows';
+  else if (/Mac/i.test(plat) || /Mac OS X/.test(ua)) { if (!/iPhone|iPad/.test(ua)) os = 'macos'; }
+  else if (/Linux/i.test(plat) || /Linux/.test(ua)) { if (!/Android/.test(ua)) os = /aarch64|arm64|armv8/i.test(plat + ua) ? 'linux-arm64' : 'linux-x64'; }
+  items.forEach((a) => { if (a.dataset.os === os) a.classList.add('mine'); });
+})();
