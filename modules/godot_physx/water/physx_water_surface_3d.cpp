@@ -802,11 +802,13 @@ float foam_structure(vec2 p, float amount, float footprint) {
 	// Drawn out about one and a half times along the drift.
 	vec2 q = vec2(dot(q0, sd) / 1.5, dot(q0, vec2(-sd.y, sd.x)));
 	vec2 warp = vec2(foam_value_noise(q * 0.9 + 3.7), foam_value_noise(q * 0.9 - 8.1)) - 0.5;
-	vec4 v1 = foam_voronoi(q * 0.5 + warp * 0.8);
-	vec4 v2 = foam_voronoi(q * 1.4 + warp * 1.4 + 11.0);
-	vec4 v3 = foam_voronoi(q * 4.6 + warp * 2.0 - 5.0);
 	float a = clamp(amount, 0.0, 1.0);
 	float open = 1.0 - pow(a, 0.6); // how far the foam has drained
+	// Older foam has been sheared and drawn out longer by the surface currents: a stronger warp.
+	float age_warp = 1.0 + 1.2 * open;
+	vec4 v1 = foam_voronoi(q * 0.5 + warp * 0.8 * age_warp);
+	vec4 v2 = foam_voronoi(q * 1.4 + warp * 1.4 * age_warp + 11.0);
+	vec4 v3 = foam_voronoi(q * 4.6 + warp * 2.0 * age_warp - 5.0);
 	// Ragged, torn edges: the distances jittered by finer noise.
 	float rag = foam_fbm(q * 9.0) - 0.5;
 	float soft1 = 0.015 + footprint * foam_detail_scale * 1.0;
@@ -822,9 +824,10 @@ float foam_structure(vec2 p, float amount, float footprint) {
 	float cover = keep1 * keep2 * mix(1.0, keep3, 0.75);
 	// Torn strands along the larger cells' borders, breaking along their length.
 	float brk = smoothstep(0.4, 0.62, foam_fbm(q * 2.7 + 1.7));
-	float w = (0.025 + 0.07 * a) * brk;
-	float strands = max(1.0 - smoothstep(w - soft1, w + soft1, v1.y - v1.x + 0.06 * rag), 1.0 - smoothstep(w - soft2, w + soft2, v2.y - v2.x + 0.08 * rag));
-	cover = max(cover, strands * smoothstep(0.03, 0.25, a));
+	float w = (0.04 + 0.07 * a) * brk;
+	float strands = max(1.0 - smoothstep(w - soft1, w + soft1, v1.y - v1.x + 0.2 * rag), 1.0 - smoothstep(w - soft2, w + soft2, v2.y - v2.x + 0.25 * rag));
+	// Only where the sheet still holds enough foam (thin foam leaves no web over open water).
+	cover = max(cover, strands * smoothstep(0.15, 0.45, a));
 	// Thin scum of loose bubbles left in the holes.
 	cover = max(cover, 0.22 * smoothstep(0.05, 0.4, a) * smoothstep(0.35, 0.75, foam_fbm(q * 5.3 - 4.1)));
 	// Past where the holes are under a pixel, their mean cover.
@@ -834,14 +837,14 @@ float foam_structure(vec2 p, float amount, float footprint) {
 	// clusters of clumps (about 25 cm) carry on further out.
 	float grain = 1.0 - clamp((footprint - 0.015) / 0.04, 0.0, 1.0);
 	float cluster = 1.0 - clamp((footprint - 0.04) / 0.12, 0.0, 1.0);
-	vec4 k = foam_voronoi(p * 4.0 + 2.3);
-	vec4 c = foam_voronoi(p * 14.0);
-	vec4 c2 = foam_voronoi(p * 25.0 + 7.7);
-	vec4 b = foam_voronoi(p * 40.0);
-	float wall = 1.0 - smoothstep(0.0, 0.3, b.y - b.x);
-	float clump = 1.0 - smoothstep(0.0, 0.18, c.y - c.x); // the gaps between clumps
-	float bubbles = mix(1.0, (0.72 + 0.28 * mix(c.z, c2.z, 0.5)) * (0.82 + 0.18 * wall) * (1.0 - 0.12 * clump), grain);
-	bubbles *= mix(1.0, 0.72 + 0.28 * k.z, cluster);
+	// Smooth, warped noise rather than cells, so the grain has no tile edges: soft clumps, the dark gaps
+	// between them, and the small bright domes of single large bubbles.
+	vec2 pw = p + 0.08 * warp;
+	float clumps = foam_fbm(pw * 16.0 + 4.7);
+	float gaps = smoothstep(0.3, 0.12, foam_fbm(pw * 31.0 - 2.9));
+	float domes = smoothstep(0.8, 0.95, foam_fbm(pw * 38.0 + 9.3));
+	float bubbles = mix(1.0, (0.62 + 0.45 * clumps) * (1.0 - 0.3 * gaps) + 0.12 * domes, grain);
+	bubbles *= mix(1.0, 0.7 + 0.45 * foam_fbm(pw * 3.5 + 2.3), cluster);
 	// Thin foam is translucent, thick foam opaque.
 	float density = smoothstep(0.02, 0.35, a);
 	return clamp(cover * density * bubbles, 0.0, 1.0);
@@ -851,27 +854,16 @@ float foam_structure(vec2 p, float amount, float footprint) {
 // centimetre a pixel.
 vec3 foam_bubble_normal(vec2 p, float footprint) {
 	float grain = 1.0 - clamp((footprint - 0.015) / 0.04, 0.0, 1.0);
-	// The offset from the nearest clump's centre (same cells as foam_structure's clumps, unwarped).
-	vec2 pc = p * 14.0;
-	vec2 i = floor(pc);
-	vec2 f = fract(pc);
-	float d1 = 8.0;
-	vec2 r = vec2(0.0);
-	for (int y = -1; y <= 1; y++) {
-		for (int x = -1; x <= 1; x++) {
-			vec2 g = vec2(float(x), float(y));
-			vec2 o = vec2(foam_hash(i + g), foam_hash(i + g + vec2(17.3, 5.1)));
-			vec2 rr = g + 0.15 + 0.7 * o - f;
-			float d = dot(rr, rr);
-			if (d < d1) {
-				d1 = d;
-				r = -rr;
-			}
-		}
+	if (grain <= 0.0) {
+		return vec3(0.0, 1.0, 0.0);
 	}
-	float h2 = clamp(dot(r, r) / 0.36, 0.0, 0.95);
-	vec2 tilt = r * 1.6 * grain;
-	return normalize(vec3(tilt.x, sqrt(1.0 - h2) + 0.4, tilt.y));
+	// The slope of the clumps' smooth height (the same noise as foam_structure's clumps, unwarped).
+	const float e = 0.01;
+	float h0 = foam_fbm(p * 16.0 + 4.7);
+	float hx = foam_fbm((p + vec2(e, 0.0)) * 16.0 + 4.7);
+	float hz = foam_fbm((p + vec2(0.0, e)) * 16.0 + 4.7);
+	vec2 g = vec2(hx - h0, hz - h0) / e * 0.03 * grain;
+	return normalize(vec3(-g.x, 1.0, -g.y));
 }
 
 // Visible foam for the water resting at world_xz: the persistent foam amount, drawn as foam
@@ -970,7 +962,8 @@ float bubbles_under(vec2 world_xz, vec3 d, vec3 n) {
 	b += ocean_foam_all(world_xz + step_xz * bubble_depth * 0.4);
 	b += ocean_foam_all(world_xz + step_xz * bubble_depth * 1.0);
 	b += ocean_foam_all(world_xz + step_xz * bubble_depth * 1.8);
-	return smoothstep(0.12, 0.6, b / 3.0);
+	// At grazing views the surface mirrors the sky and the plume's light hardly gets out.
+	return smoothstep(0.12, 0.6, b / 3.0) * smoothstep(0.15, 0.4, -d.y);
 }
 
 float foam_at(vec2 world_xz) {

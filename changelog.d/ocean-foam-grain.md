@@ -1,0 +1,1 @@
+- Water: foam grain drawn from smooth noise (no cell tiling), lace strands only where foam is still thick, older foam drawn out further; the bubble plume fades at grazing views.
