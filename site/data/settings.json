@@ -1172,7 +1172,7 @@
     "apron_slope"
    ],
    "note": "",
-   "what": "paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion.",
+   "what": "paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion. With `guide_preview` (off by default), a 4x coarser run follows a guide in the editor as it is drawn.",
    "page": "terrain",
    "title": "Terrain",
    "topic": "Generation"
