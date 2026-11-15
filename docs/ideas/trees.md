@@ -772,8 +772,11 @@ stays Luft's Ivy Generator walk (2007, 5b).
 - **For vegetation.** `tree_climber_leaves` is now 13 floats per leaf: the 11 before (position,
   blade normal, petiole direction, size, light), then the stem's age (0-1) and how far up the
   stem the leaf is (0 foot, 1 tip). Vegetation's adult ivy leaves (unlobed, on shoots standing out
-  from the stem) are for points above about two thirds of an old stem; trees will pick them when
-  `make_climber_leaves` has the variant.
+  from the stem) are for points above about two thirds of an old stem.
+- **Adult leaves (as built).** Ivy leaves on stems of age 0.35 and up switch to vegetation's
+  `CLIMBER_IVY_ADULT` (unlobed, ovate, glossier) above 0.6-0.75 of the stem's height, the band
+  starting lower on older stems, in their own surface `climber_leaves_adult` (its own texture).
+  An old oak with full ivy: about 11% of the climber leaves are adult.
 - **Cost.** Open-grown oak with full ivy: its stems add 158k bark triangles (+4%); the stems'
   side count follows their radius, so thicker stems cost about what the thin ones did.
 
