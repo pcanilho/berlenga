@@ -140,12 +140,12 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
   *White water: foam peels off both sides of the rock.*
 
 - **Rivers** (`PhysXRiver3D`: `discharge`, `roughness`, `max_slope`): drawn as a curve; finds its depth and never runs uphill.
-- **River hydraulics** (`gradually_varied_flow`, `bend_superelevation`, on by default): rivers pool behind bumps, draw down before steps and end fast reaches in a hydraulic jump; the surface banks up round bends.
 
   ![A river with a cascade, raster vs path traced](media/river.jpg)
 
   *Rivers: the cascade and the white water below it.*
 
+- **River hydraulics** (`gradually_varied_flow`, `bend_superelevation`, on by default): rivers pool behind bumps, draw down before steps and end fast reaches in a hydraulic jump; the surface banks up round bends.
   - Cascades into white water; `carve` emits channel brushes for a terrain deformer.
   - Rocks part the current and trail foam (`obstacle_collision_mask`); near the camera they shed eddies and a swinging wake (`live_flow`).
 
