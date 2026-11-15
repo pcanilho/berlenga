@@ -1461,11 +1461,20 @@ What else is out there, and what is worth taking:
   solver to copy. Bueler (SIAM GS 2021) frames the steady ice as an obstacle problem (a variational inequality on
   s >= b) and notes pointwise smoothers do work for the SIA (they fail only for Stokes), and that explicit stepping
   with truncation at the bed is the common practice. Räss et al.'s accelerated pseudo-transient (FastIceFlo, GMD 17,
-  2024) is for SSA velocities and already diverged on our H^5 diffusivity. Chosen: pseudo-transient continuation
-  (Kelley and Keyes 1998) with backward Euler steps whose length follows the residual (SER, Mulder and Van Leer 1985),
-  each step's Mahaffy lagged-diffusivity system solved by projected SOR (Cryer 1971), so H >= 0 holds exactly and the
-  margin is free (Jouvet and Bueler 2012's obstacle form). A multigrid inner solve is the next step only if this is
-  too slow.
+  2024) is for SSA velocities and already diverged on our H^5 diffusivity. Tried, in order (a stand-alone harness on
+  ice states dumped from the hanging valley's run): backward Euler with lagged diffusivity and projected SOR (Picard,
+  Mahaffy 1976) blew up (the lag on H^5 overshoots); nonlinear projected Gauss-Seidel (each node solves its own four
+  face fluxes and mass balance for its thickness, a safeguarded root, clamped at zero) is stable but needs hundreds
+  of sweeps; adding FAS multigrid V-cycles (Brandt 1977) with a damped correction, a fallback to over-relaxed fine
+  sweeps when the cycles stall, and a reset to the best state when a cycle runs away settles every captured state to
+  0.5 m/yr (over all but the worst 0.2% of ice nodes: a node or two over a cliff in the bed cannot balance, Jarosch
+  et al. 2013) in 0.2 to 2 s. Findings: the current solver's ice is far from steady (in captured states the steady
+  ice has up to 50% more volume; the last glaciation covers 12.8 km2 converged against 5.7 km2), so converging
+  changes the glacial terrain markedly. Cost: hundreds of solves per run make a converged run of every ice age take
+  half an hour; converging the last glaciation only takes the valley from 9 to 50 s, and its solves, cold and on a
+  bed moving up to 25 m a step, still stop at the cycle cap. Not shipped: it needs a better coarse-grid treatment of
+  steep beds (or Newton with a banded direct solve, 4225 unknowns) to be fast enough, and Paulo's look at the
+  changed terrain.
 - Multigrid Eulerian erosion (SapereAude1490, itch.io WebGPU prototype, Nov 2026): grid water mass instead of
   droplets (no atomics), progressive resolution levels, and isotropy choices: FD8 multiple-flow routing instead of D8,
   simplex noise, bicubic sampling and the Scharr gradient. D8 is what gives our side streams their 45-degree bias;
