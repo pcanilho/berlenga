@@ -50,7 +50,10 @@ bench.
 3. **Smoke shadows onto the scene (`cast_shadows`).** A Beer shadow map from the sun: one 2D texture over the
    grid's footprint, seen from the sun, holding front depth and optical depth. It is built by marching the sparse
    grid once per frame at a quarter of the grid's resolution. The forward shader multiplies the directional
-   light by `exp(-optical_depth)` behind the front depth. Omni and spot lights come later through the same map
+   light by `exp(-optical_depth)` behind the front depth. Built: a 128² RGBA16F map (transmittance, front
+   and back depth) fit to the grid's bounds along the sun, 48 steps per texel, read by the Forward+ opaque pass
+   through the directional light data a frame later (`LightStorage::directional_volume_shadow_set`); the
+   receiver interpolates linearly between front and back depth. Omni and spot lights come later through the same map
    type per light if it pays off.
 4. **Local lights by default (`light_scattering`).** This is already built. It stays off until it has been
    benched on the PC.
