@@ -1116,7 +1116,7 @@
     "weathering"
    ],
    "note": "",
-   "what": "rocks and stones as real geometry, broken along each rock type's joints, rounded by transport and weathered by rock type; granite, limestone, sandstone, basalt and slate.",
+   "what": "rocks and stones as real geometry, broken along each rock type's joints, rounded by transport and weathered by rock type; joint sets at varying angles, stepped fracture faces and broken corners on fallen blocks; granite, limestone, sandstone, basalt and slate.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Shapes"
