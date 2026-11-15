@@ -90,6 +90,7 @@ var no_sward := false
 var undergrowth := ""
 var grazed := false # --grazed: the tall grass grazed short (upland pasture).
 var ug_dir := Vector3(0, 0, 1)
+var mushroom_view := "" # --mushrooms[=name]: in the wood, close on a group of mushrooms (make_floor's).
 var ug_edge := false # --undergrowth-edge: the stand's edge seen along it from 1 m up.
 var no_rock_foot := false # --no-rock-foot: the floor species without their rock_foot.
 var no_margin := false # --no-margin: undergrowth stands without their margin.
@@ -177,6 +178,7 @@ func _ready() -> void:
 			forest = true
 			forest_in = true
 		elif a == "--notex": notex = true
+		elif a.begins_with("--mushrooms"): mushroom_view = a.substr(12) if a.length() > 12 else "any"
 		elif a.begins_with("--grass-density="): grass_density = float(a.substr(16))
 		elif a == "--cpu-fill": gpu_fill = false
 		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
@@ -617,6 +619,39 @@ func _frame_undergrowth_edge(c: Vector3) -> void:
 	var at := e + ug_dir * 7.0 - out * 1.2
 	cam.look_at(Vector3(at.x, height(at.x, at.z) + 0.5, at.z))
 	print("GRASS_UNDERGROWTH_EDGE edge=%s out=%s run=%d m eye=%s" % [str(e), str(out), best_score, str(cam.position)])
+
+# --mushrooms[=preset index]: the group of mushrooms nearest the view (of that preset), from 0.9 m at
+# 0.35 m up, the sun behind; the stand-in trunks only cast their shadows. Prints each species' count.
+func _frame_mushrooms() -> void:
+	var best := Vector3()
+	var best_d := 1e9
+	for si in cover.biome.species.size():
+		var sp: PlantSpecies = cover.biome.species[si]
+		if not sp.has_meta("mushroom"):
+			continue
+		var pl := cover.get_placements(si)
+		var gen_preset := -1
+		print("GRASS_MUSHROOMS species %d count %d density %.3f" % [si, pl.size(), sp.density])
+		if mushroom_view != "any" and str(si) != mushroom_view:
+			continue
+		for q in pl:
+			var d := Vector2(q.x - cam.global_position.x, q.z - cam.global_position.z).length()
+			if d < best_d:
+				best_d = d
+				best = q
+	if best_d > 1e8:
+		print("GRASS_MUSHROOMS none placed")
+		return
+	var f := -sun_node.global_transform.basis.z
+	f.y = 0.0
+	f = f.normalized()
+	var eye := best - f * 0.9
+	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 0.35, eye.z)
+	cam.look_at(best + Vector3(0, 0.06, 0))
+	for ch in cover.get_children(true):
+		if ch is MultiMeshInstance3D and ch.multimesh and ch.multimesh.mesh and ch.multimesh.mesh.get_aabb().size.y > 4.0:
+			ch.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+	print("GRASS_MUSHROOMS view at %s" % str(best))
 
 # Boulders for --rocks: lumpy weathered rocks, a little sunk, in front of the camera. Each is a disc
 # on the ground for the fields' obstacles, its radius where the rock meets the soil.
@@ -1656,6 +1691,8 @@ func _process(dt: float) -> void:
 					_frame_clearing()
 				else:
 					_frame_forest()
+					if mushroom_view != "":
+						_frame_mushrooms()
 					if rocks > 0:
 						# --forest --rocks: deep in the wood (the point within 40 m with the most
 						# trunks within 12 m), looking where the wood runs on longest, down at the

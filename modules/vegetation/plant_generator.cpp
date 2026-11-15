@@ -567,6 +567,9 @@ PlantGenerator::FrondSeason PlantGenerator::_frond_season(float p_emerge, float 
 // Spring ephemerals are above ground only part of the year: wood anemone shoots in late winter,
 // flowers, and its leaves yellow and die down by early summer (Shirreffs 1985).
 float PlantGenerator::get_presence(Preset p_preset, const Dictionary &p_season) {
+	if (is_mushroom(p_preset)) {
+		return _mushroom_presence(p_preset, p_season);
+	}
 	if (!p_season.has("forcing") || p_preset != PRESET_WOOD_ANEMONE) {
 		return 1.0f;
 	}
@@ -574,6 +577,50 @@ float PlantGenerator::get_presence(Preset p_preset, const Dictionary &p_season) 
 	return smoothstep_f(15.0f, 40.0f, forcing) * (1.0f - smoothstep_f(650.0f, 720.0f, forcing));
 }
 
+
+// Mushrooms fruit in a season (British and central European field guides: chanterelle June to
+// November, brittlegill July to November, fly agaric, cep and honey fungus August or September to
+// November, clouded agaric September to December), in flushes after rain: the soil's moisture
+// (WeatherMap3D's water balance) gates them, and frost and snow end them. Without a season: all
+// present, as other plants.
+float PlantGenerator::_mushroom_presence(Preset p_preset, const Dictionary &p_season) {
+	if (!p_season.has("day_of_year")) {
+		return 1.0f;
+	}
+	float from = 225.0f, to = 320.0f; // Mid August to mid November.
+	switch (p_preset) {
+		case PRESET_CHANTERELLE:
+			from = 170.0f;
+			to = 320.0f;
+			break;
+		case PRESET_BRITTLEGILL:
+			from = 195.0f;
+			to = 320.0f;
+			break;
+		case PRESET_CEP:
+			from = 215.0f;
+			to = 300.0f;
+			break;
+		case PRESET_CLOUDED_AGARIC:
+			from = 250.0f;
+			to = 345.0f;
+			break;
+		default:
+			break;
+	}
+	const float day = p_season["day_of_year"];
+	const float ramp = 14.0f;
+	float w = smoothstep_f(from - ramp, from + ramp, day) * (1.0f - smoothstep_f(to - ramp, to + ramp, day));
+	// The main flush in autumn: fewer at the season's edges in summer.
+	w *= Math::lerp(0.35f, 1.0f, smoothstep_f(200.0f, 250.0f, day));
+	if (p_season.has("soil_moisture")) {
+		w *= smoothstep_f(0.1f, 0.3f, float(p_season["soil_moisture"])); // Only a dry spell stops them.
+	}
+	if (float(p_season.get("temperature", 10.0f)) < -1.0f || float(p_season.get("snow_depth", 0.0f)) > 0.02f) {
+		w = 0.0f;
+	}
+	return w;
+}
 
 static Transform3D stem_base(float p_azimuth, float p_elevation) {
 	return Transform3D(organ_frame(polar_dir(p_azimuth, p_elevation), Vector3(0, 1, 0)), Vector3());
@@ -3541,6 +3588,12 @@ PlantGenerator::LeafTexture PlantGenerator::_leaf_texture_spec(bool p_petal) con
 			t.yellowing = 0.3f;
 			t.spots = 0.5f;
 			break;
+		case PRESET_FLY_AGARIC:
+		case PRESET_CEP:
+		case PRESET_CHANTERELLE:
+		case PRESET_BRITTLEGILL:
+		case PRESET_CLOUDED_AGARIC:
+		case PRESET_HONEY_FUNGUS:
 		case PRESET_MAX:
 			break;
 	}
@@ -4687,6 +4740,37 @@ void PlantGenerator::apply_preset_colors() {
 			stem_color = Color(0.25f, 0.18f, 0.12f);
 			petal_color = Color(0.55f, 0.3f, 0.5f); // Pink-mauve.
 			break;
+		// Mushrooms: petal the cap, centre the gills (or pores), ring and warts, stem the stalk.
+		case PRESET_FLY_AGARIC:
+			petal_color = Color(0.78f, 0.1f, 0.04f);
+			centre_color = Color(0.93f, 0.92f, 0.86f);
+			stem_color = Color(0.92f, 0.9f, 0.84f);
+			break;
+		case PRESET_CEP:
+			petal_color = Color(0.42f, 0.26f, 0.13f);
+			centre_color = Color(0.82f, 0.8f, 0.55f); // Tubes: white, then olive-yellow.
+			stem_color = Color(0.8f, 0.74f, 0.6f);
+			break;
+		case PRESET_CHANTERELLE:
+			petal_color = Color(0.95f, 0.65f, 0.12f);
+			centre_color = Color(0.95f, 0.68f, 0.18f);
+			stem_color = Color(0.93f, 0.66f, 0.2f);
+			break;
+		case PRESET_BRITTLEGILL:
+			petal_color = Color(0.75f, 0.08f, 0.1f);
+			centre_color = Color(0.94f, 0.93f, 0.88f);
+			stem_color = Color(0.93f, 0.92f, 0.88f);
+			break;
+		case PRESET_CLOUDED_AGARIC:
+			petal_color = Color(0.5f, 0.48f, 0.44f);
+			centre_color = Color(0.88f, 0.84f, 0.7f);
+			stem_color = Color(0.78f, 0.75f, 0.68f);
+			break;
+		case PRESET_HONEY_FUNGUS:
+			petal_color = Color(0.68f, 0.48f, 0.2f);
+			centre_color = Color(0.9f, 0.85f, 0.72f);
+			stem_color = Color(0.72f, 0.6f, 0.38f);
+			break;
 		case PRESET_MAX:
 			break;
 	}
@@ -4818,6 +4902,14 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		case PRESET_WILD_CARROT:
 			_build_wild_carrot();
 			break;
+		case PRESET_FLY_AGARIC:
+		case PRESET_CEP:
+		case PRESET_CHANTERELLE:
+		case PRESET_BRITTLEGILL:
+		case PRESET_CLOUDED_AGARIC:
+		case PRESET_HONEY_FUNGUS:
+			_build_mushrooms();
+			break;
 		case PRESET_SORREL:
 			_build_sorrel();
 			break;
@@ -4910,6 +5002,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 				ts = texture_cache.getptr(key);
 			}
 			mat = _textured_material(*ts, 0.9f);
+		} else if (is_mushroom(preset)) {
+			// Thick flesh: no light through. Caps with a slight sheen (moist skin), matt stalks and gills.
+			mat = _material(colors[s], s == SURFACE_PETAL ? 0.45f : 0.85f, false);
 		} else if (textures && (s == SURFACE_LEAF || s == SURFACE_PETAL)) {
 			// One texture set per preset, colour and variant (three per preset): shared by the
 			// plants of a meadow, so a thousand dandelions cost three textures.
@@ -4925,9 +5020,9 @@ Ref<ArrayMesh> PlantGenerator::generate() {
 		}
 		mat->set_shader_parameter("height", MAX(plant_height * size, 0.05f));
 		// Sun and shade leaves: leaves and stems change colour with their light, petals and litter do not.
-		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
+		mat->set_shader_parameter("light_response", s >= SURFACE_PETAL || is_mushroom(preset) || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS ? 0.0f : 1.0f);
 		// Stiffer the bigger and woodier: bramble canes and bracken stipes barely lean in the wind.
-		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY ? 50.0f : 1.5f)));
+		mat->set_shader_parameter("stiffness", preset == PRESET_BRAMBLE ? 4.0f : (preset == PRESET_BRACKEN || preset == PRESET_CATTAIL ? 2.5f : (preset == PRESET_MOSS || preset == PRESET_FEATHER_MOSS || preset == PRESET_LEAF_LITTER || preset == PRESET_NEEDLE_LITTER || preset == PRESET_TWIGS || preset == PRESET_WATER_LILY || is_mushroom(preset) ? 50.0f : 1.5f)));
 		im->add_surface(Mesh::PRIMITIVE_TRIANGLES, arrays, TypedArray<Array>(), Dictionary(), mat, names[s]);
 	}
 	// Distance LODs (meshoptimizer simplification, as the scene importer does): a meadow holds
@@ -5312,6 +5407,63 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		if (broadleaf) {
 			set.push_back(log_leaves);
 		}
+		// Soil mushrooms last, after everything else (docs/ideas/mushrooms.md): few, so they claim
+		// no ground from the herbs. Mycorrhizal ones under their hosts' crowns (shade) by stand
+		// type (conifer share: fly agaric with spruce, pine and birch, cep, chanterelle and
+		// brittlegill with oak, beech and conifers), in loose patches round the hosts; the clouded
+		// agaric in rings and arcs (patch edges); honey fungus in tufts beside deadwood. Their
+		// season and the soil's moisture set their density (get_presence()).
+		const FloorSpec fly_agaric = { P::PRESET_FLY_AGARIC, 2.5f, 0.15f, 0.14f, 0.9f, 1.1f, 10.0f, 0.25f, 0.3f, 1.0f, 0.15f, 0.25f, 1.0f, 30.0f };
+		const FloorSpec cep = { P::PRESET_CEP, 2.5f, 0.15f, 0.1f, 0.9f, 1.1f, 10.0f, 0.25f, 0.4f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f };
+		const FloorSpec chanterelle = { P::PRESET_CHANTERELLE, 1.6f, 0.12f, 0.14f, 0.9f, 1.1f, 6.0f, 0.3f, 0.4f, 1.0f, 0.15f, 0.0f, 1.0f, 20.0f };
+		const FloorSpec brittlegill = { P::PRESET_BRITTLEGILL, 2.0f, 0.1f, 0.12f, 0.9f, 1.1f, 8.0f, 0.3f, 0.4f, 1.0f, 0.15f, 0.0f, 1.0f, 20.0f };
+		const FloorSpec clouded = { P::PRESET_CLOUDED_AGARIC, 0.9f, 0.12f, 0.6f, 0.9f, 1.1f, 9.0f, 0.35f, 0.3f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f };
+		FloorSpec honey = { P::PRESET_HONEY_FUNGUS, 2.0f, 0.2f, 0.35f, 0.9f, 1.1f, 0.0f, 0.0f, 0.0f, 1.0f, 0.15f, 0.0f, 1.0f, 25.0f };
+		honey.deadwood = PlantSpecies::DEADWOOD_BESIDE;
+		honey.deadwood_size = 0.8f;
+		switch (p_stand) {
+			case FLOOR_BEECH:
+			case FLOOR_OAK_MIXED:
+				set.push_back(cep);
+				set.push_back(chanterelle);
+				set.push_back(brittlegill);
+				set.push_back(clouded);
+				set.push_back(honey);
+				break;
+			case FLOOR_MONTANE_CONIFER:
+				set.push_back(fly_agaric);
+				set.push_back(cep);
+				set.push_back(chanterelle);
+				set.push_back(brittlegill);
+				set.push_back(clouded);
+				set.push_back(honey);
+				break;
+			case FLOOR_PINE_HEATH:
+				set.push_back(fly_agaric);
+				set.push_back(cep);
+				set.push_back(chanterelle);
+				set.push_back(brittlegill);
+				break;
+			case FLOOR_SUBALPINE:
+				set.push_back(fly_agaric);
+				set.push_back(brittlegill);
+				break;
+			case FLOOR_NORTHERN_HARDWOOD:
+			case FLOOR_EASTERN_OAK:
+			case FLOOR_PINE_HEMLOCK:
+				// The North American woods have their own fly agaric, chanterelles and honey fungi.
+				set.push_back(fly_agaric);
+				set.push_back(chanterelle);
+				set.push_back(honey);
+				break;
+			case FLOOR_RIPARIAN:
+			case FLOOR_HEDGEROW:
+				set.push_back(clouded);
+				set.push_back(honey);
+				break;
+			default:
+				break;
+		}
 	}
 	TypedArray<Resource> out;
 	int seed_base = 1000 + int(p_stand) * 100;
@@ -5391,10 +5543,16 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		if (f.preset == P::PRESET_MOSS || f.preset == P::PRESET_FEATHER_MOSS) {
 			sp->set_rule_range(PlantSpecies::RULE_SPRAY, Vector2(0.0f, 1.0f)); // Mosses take a fall's spray zone.
 		}
+		if (f.preset == P::PRESET_CLOUDED_AGARIC) {
+			sp->set_patch_ring(0.5f); // Rings and arcs along the patches' edges.
+		}
+		if (is_mushroom(f.preset)) {
+			sp->set_meta("mushroom", true);
+		}
 		// Far away the ground takes the plant's colour (VegetationField3D's vegetation_far_map):
 		// the leaves, a little darker for the shade inside the plant, hiding more ground the
 		// taller the plant. Litter and twigs are the ground's own (forest_floor()).
-		if (f.preset != P::PRESET_LEAF_LITTER && f.preset != P::PRESET_NEEDLE_LITTER && f.preset != P::PRESET_TWIGS && v.size() > 0) {
+		if (f.preset != P::PRESET_LEAF_LITTER && f.preset != P::PRESET_NEEDLE_LITTER && f.preset != P::PRESET_TWIGS && !is_mushroom(f.preset) && v.size() > 0) {
 			const Ref<ArrayMesh> m0 = v[0];
 			const float h = m0.is_valid() ? m0->get_aabb().get_end().y : 0.2f;
 			const Color lc = gen->get_leaf_color() * 0.8f;
@@ -5469,7 +5627,7 @@ void PlantGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("generate_variants", "count"), &PlantGenerator::generate_variants);
 	ClassDB::bind_method(D_METHOD("apply_preset_colors"), &PlantGenerator::apply_preset_colors);
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Dandelion,Plantain,Clover,Fern,Sedge,Daisy,Buttercup,Nettle,Thistle,Yarrow,Dock,Cocksfoot,Timothy,Dry Grass,Leaf Litter,Moss,Bilberry,Bracken,Bramble,Foxglove,Reed,Cattail,Rush,Water Lily,Needle Litter,Twigs,Wood Sorrel,Seedling,Feather Moss,Woodruff,Wood Anemone,Ivy,Heather,Violet,Herb Robert,Knapweed,Scabious,Wild Carrot,Sorrel"), "set_preset", "get_preset");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "preset", PROPERTY_HINT_ENUM, "Dandelion,Plantain,Clover,Fern,Sedge,Daisy,Buttercup,Nettle,Thistle,Yarrow,Dock,Cocksfoot,Timothy,Dry Grass,Leaf Litter,Moss,Bilberry,Bracken,Bramble,Foxglove,Reed,Cattail,Rush,Water Lily,Needle Litter,Twigs,Wood Sorrel,Seedling,Feather Moss,Woodruff,Wood Anemone,Ivy,Heather,Violet,Herb Robert,Knapweed,Scabious,Wild Carrot,Sorrel,Fly Agaric,Cep,Chanterelle,Brittlegill,Clouded Agaric,Honey Fungus"), "set_preset", "get_preset");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "seed"), "set_seed", "get_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "size", PROPERTY_HINT_RANGE, "0.1,4,0.01"), "set_size", "get_size");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "lods"), "set_lods", "get_lods");
@@ -5529,6 +5687,12 @@ void PlantGenerator::_bind_methods() {
 	BIND_ENUM_CONSTANT(PRESET_SCABIOUS);
 	BIND_ENUM_CONSTANT(PRESET_WILD_CARROT);
 	BIND_ENUM_CONSTANT(PRESET_SORREL);
+	BIND_ENUM_CONSTANT(PRESET_FLY_AGARIC);
+	BIND_ENUM_CONSTANT(PRESET_CEP);
+	BIND_ENUM_CONSTANT(PRESET_CHANTERELLE);
+	BIND_ENUM_CONSTANT(PRESET_BRITTLEGILL);
+	BIND_ENUM_CONSTANT(PRESET_CLOUDED_AGARIC);
+	BIND_ENUM_CONSTANT(PRESET_HONEY_FUNGUS);
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_floor", "stand", "variants", "textures", "impostor_range", "season"), &PlantGenerator::make_floor, DEFVAL(3), DEFVAL(true), DEFVAL(15.0f), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("stand_litter_leaves", "stand", "season"), &PlantGenerator::stand_litter_leaves, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("PlantGenerator", D_METHOD("make_climber_leaves", "climber", "variants"), &PlantGenerator::make_climber_leaves, DEFVAL(4));

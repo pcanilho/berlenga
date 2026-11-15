@@ -106,6 +106,7 @@ private:
 	float margin_scale = 1.0f;
 	float margin_lean = 0.0f;
 	bool patch_invert = false; // Grow between the patches instead (same scale, cover and seed: the exact complement).
+	float patch_ring = 0.0f; // > 0: grow only along the patches' edges, in a band this wide (m): fairy rings.
 	float visibility_range = 0.0f; // 0: always drawn.
 	// Near detail: heavier meshes (same variant order as meshes) drawn within near_range,
 	// meshes beyond it, with a dithered crossfade over the last tenth.
@@ -148,6 +149,8 @@ public:
 	bool is_mask_invert() const { return mask_invert; }
 	void set_patch_invert(bool p_invert) { patch_invert = p_invert; }
 	bool is_patch_invert() const { return patch_invert; }
+	void set_patch_ring(float p_width) { patch_ring = CLAMP(p_width, 0.0f, 5.0f); emit_changed(); }
+	float get_patch_ring() const { return patch_ring; }
 	float get_patch_weight(const Vector3 &p_pos) const;
 	// How far inside its patch a point is, in metres (negative outside), and the way out of it on
 	// the ground (unit xz) when asked. 1e6 for species without patches.

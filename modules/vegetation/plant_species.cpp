@@ -240,6 +240,12 @@ float PlantSpecies::get_patch_weight(const Vector3 &p_pos) const {
 	if (patch_scale <= 0.0f) {
 		return 1.0f;
 	}
+	if (patch_ring > 0.0f) {
+		// Fairy rings: the mycelium spreads outward and dies behind, fruiting along its advancing
+		// front (Dowson, Rayner and Boddy 1989): a band along the patches' edges.
+		const float d = get_patch_depth(p_pos) / patch_ring;
+		return Math::exp(-d * d);
+	}
 	// Two octaves of value noise; the threshold keeps patch_cover of the ground, with soft edges.
 	const float x = p_pos.x / patch_scale;
 	const float z = p_pos.z / patch_scale;
@@ -303,6 +309,8 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_mask_invert"), &PlantSpecies::is_mask_invert);
 	ClassDB::bind_method(D_METHOD("set_patch_invert", "invert"), &PlantSpecies::set_patch_invert);
 	ClassDB::bind_method(D_METHOD("is_patch_invert"), &PlantSpecies::is_patch_invert);
+	ClassDB::bind_method(D_METHOD("set_patch_ring", "width"), &PlantSpecies::set_patch_ring);
+	ClassDB::bind_method(D_METHOD("get_patch_ring"), &PlantSpecies::get_patch_ring);
 	ClassDB::bind_method(D_METHOD("get_patch_weight", "global_position"), &PlantSpecies::get_patch_weight);
 	ClassDB::bind_method(D_METHOD("set_near_meshes", "meshes"), &PlantSpecies::set_near_meshes);
 	ClassDB::bind_method(D_METHOD("get_near_meshes"), &PlantSpecies::get_near_meshes);
@@ -367,6 +375,7 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_cover", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_patch_cover", "get_patch_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "patch_seed"), "set_patch_seed", "get_patch_seed");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "patch_invert"), "set_patch_invert", "is_patch_invert");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "patch_ring", PROPERTY_HINT_RANGE, "0,5,0.05,suffix:m"), "set_patch_ring", "get_patch_ring");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mask_channel", PROPERTY_HINT_ENUM, "None:-1,Red:0,Green:1,Blue:2,Alpha:3"), "set_mask_channel", "get_mask_channel");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "mask_invert"), "set_mask_invert", "is_mask_invert");
 

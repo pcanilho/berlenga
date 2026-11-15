@@ -98,6 +98,13 @@ public:
 		PRESET_SCABIOUS,
 		PRESET_WILD_CARROT,
 		PRESET_SORREL,
+		// Woodland-floor mushrooms (docs/ideas/mushrooms.md): soil fungi, real geometry.
+		PRESET_FLY_AGARIC,
+		PRESET_CEP,
+		PRESET_CHANTERELLE,
+		PRESET_BRITTLEGILL,
+		PRESET_CLOUDED_AGARIC,
+		PRESET_HONEY_FUNGUS,
 		PRESET_MAX,
 	};
 
@@ -251,6 +258,40 @@ private:
 	void _build_heather();
 	void _add_pad(const Vector3 &p_centre, float p_radius, float p_heading);
 
+	// Mushrooms (plant_mushroom.cpp): each part a surface of revolution of a profile (Desbenoit et
+	// al. 2004), gills as fins under the cap.
+	struct MushroomForm {
+		float cap_r = 0.04f; // Cap radius (m).
+		float cap_h = 0.025f; // Rise of the cap's top above its margin.
+		float cap_thick = 0.012f; // Flesh at the centre.
+		float dome = 0.6f; // Profile exponent: higher is a rounder, fuller dome.
+		float funnel = 0.0f; // Centre sunk below the margin (chanterelle), fraction of cap_h.
+		float umbo = 0.0f; // A boss at the centre, fraction of cap_h.
+		float curl = 0.0f; // Margin turned down and in (m).
+		float wave = 0.0f; // Wavy margin, fraction of the radius.
+		int wave_k = 5;
+		int gills = 40; // Long gills; short ones between.
+		float gill_depth = 0.006f;
+		float decurrent = 0.0f; // How far the gills run down the stalk (m).
+		float tube_depth = 0.0f; // > 0: a tube layer (pores) instead of gills.
+		float stalk_h = 0.06f;
+		float stalk_r = 0.006f; // At the top.
+		float stalk_base = 1.0f; // Radius at the base over the top's.
+		float bulb = 0.0f; // Extra radius of a basal bulb, over the top radius.
+		int volva = 0; // Rims round the bulb (fly agaric).
+		float ring = 0.0f; // Ring height on the stalk (fraction), 0: none.
+		float ring_w = 0.0f; // Ring skirt width (m).
+		int warts = 0;
+		float wart_r = 0.004f;
+		float scales = 0.0f; // Dark scales on the cap (honey fungus), 0 to 1.
+		Color cap_centre = Color(1, 1, 1); // Tint at the centre against the margin.
+		Color cap_margin = Color(1, 1, 1);
+	};
+	MushroomForm _mushroom_form(float p_age);
+	void _build_mushrooms();
+	void _add_mushroom(const Transform3D &p_base, const MushroomForm &p_form, float p_tilt, float p_tilt_dir);
+	void _add_lathe(Surface p_surface, const LocalVector<Transform3D> &p_frames, const LocalVector<Vector2> &p_rz, const LocalVector<Color> &p_tint, int p_sectors, float p_wave, int p_wave_k, float p_wave_phase, float p_wave_from);
+
 	static Ref<Shader> shaders[2]; // Plain and textured, shared by every generated plant.
 	static Ref<Shader> impostor_shader; // plant_impostor.cpp.
 	static Ref<Shader> _impostor_shader();
@@ -338,6 +379,8 @@ public:
 	Dictionary get_season() const { return season; }
 	static Vector3 get_bloom_shares(Preset p_preset, const Dictionary &p_season);
 	static float get_presence(Preset p_preset, const Dictionary &p_season);
+	static float _mushroom_presence(Preset p_preset, const Dictionary &p_season);
+	static bool is_mushroom(Preset p_preset) { return p_preset >= PRESET_FLY_AGARIC && p_preset <= PRESET_HONEY_FUNGUS; }
 	float get_leaf_wear() const { return leaf_wear; }
 	int get_texture_size() const { return texture_size; }
 	Ref<ArrayMesh> generate();

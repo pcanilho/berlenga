@@ -179,6 +179,9 @@
 		<member name="patch_invert" type="bool" setter="set_patch_invert" getter="is_patch_invert" default="false">
 			If [code]true[/code], the species grows between the patches instead. Two species with the same [member patch_scale], [member patch_cover] and [member patch_seed], one inverted, share the ground exactly (for example tall grass in patches and clover between them).
 		</member>
+		<member name="patch_ring" type="float" setter="set_patch_ring" getter="get_patch_ring" default="0.0">
+			When above 0, the species grows only along the edges of its patches ([member patch_scale], [member patch_cover], [member patch_seed]), in a band about this wide in metres: the arcs and rings in which fairy-ring fungi fruit along their mycelium's advancing front. The weight is [code]exp(-(d / patch_ring)^2)[/code], d the distance to the patch edge. [method PlantGenerator.make_floor] sets it for the clouded agaric.
+		</member>
 		<member name="patch_scale" type="float" setter="set_patch_scale" getter="get_patch_scale" default="0.0">
 			Size of the patches, in metres. The species then grows only in patches (clover beds, flower drifts, stands of tall grass), from value noise over the ground. 0 turns patches off.
 		</member>

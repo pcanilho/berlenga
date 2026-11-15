@@ -7,6 +7,7 @@ extends Node3D
 #   --spp=N          path tracing samples (default 16)
 #   --close=P        close view of preset P (index in NAMES)
 #   --macro          with --close, one plant from a hand span away
+#   --low            with --macro: from 2.5 cm above the ground (a mushroom's gills)
 #   --notex          without the generated leaf textures
 #   --push           with --close: a body stands on the middle plant (bent through the trample field)
 #   --still          with --push: the body stands there but the trample field is off (the before shot)
@@ -23,7 +24,7 @@ extends Node3D
 #   --day=D          the season of day D from a default WeatherMap3D (flowering, fronds)
 #   --out=path.png   save the frame
 
-const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel"]
+const NAMES := ["dandelion", "plantain", "clover", "fern", "sedge", "daisy", "buttercup", "nettle", "thistle", "yarrow", "dock", "cocksfoot", "timothy", "dry_grass", "leaf_litter", "moss", "bilberry", "bracken", "bramble", "foxglove", "reed", "cattail", "rush", "water_lily", "needle_litter", "twigs", "wood_sorrel", "seedling", "feather_moss", "woodruff", "wood_anemone", "ivy", "heather", "violet", "herb_robert", "knapweed", "scabious", "wild_carrot", "sorrel", "fly_agaric", "cep", "chanterelle", "brittlegill", "clouded_agaric", "honey_fungus"]
 const SEEDS := 3
 const STEP := 0.55
 var test := false
@@ -34,6 +35,7 @@ var patch := false
 var stand := -1
 var out := ""
 var macro := false
+var low := false
 var notex := false
 var dump := ""
 var push := false
@@ -56,6 +58,7 @@ func _ready() -> void:
 		elif a.begins_with("--close="): close = int(a.substr(8))
 		elif a.begins_with("--out="): out = a.substr(6)
 		elif a == "--macro": macro = true
+		elif a == "--low": low = true
 		elif a == "--notex": notex = true
 		elif a.begins_with("--dump="): dump = a.substr(7)
 		elif a == "--push": push = true
@@ -212,12 +215,19 @@ func _ready() -> void:
 		var c: Vector3 = (get_child(0) as Node3D).position + bb.get_center()
 		cam.fov = 30
 		if bb.size.y < 0.4:
-			c.y = min(c.y, 0.06)
-			cam.position = c + Vector3(0, max(0.12, bb.size.y * 0.5), max(0.22, max(bb.size.x, bb.size.z) * 0.9))
+			# Low plants framed near the ground; anything taller than a hand span (a fly agaric)
+			# from far enough for the whole height to fit the 30 degree view.
+			c.y = min(c.y, max(0.06, bb.size.y * 0.5))
+			var reach: float = max(0.22, max(max(bb.size.x, bb.size.z) * 0.9, bb.size.y * 2.0))
+			cam.position = c + Vector3(0, max(0.12, bb.size.y * 0.5), reach)
 		else:
 			# Tall plants: the whole plant, from a little above.
 			var span: float = max(bb.size.y, max(bb.size.x, bb.size.z))
 			cam.position = c + Vector3(0, span * 0.35, span * 1.9)
+		if low:
+			c = (get_child(0) as Node3D).position + bb.get_center()
+			c.y = (get_child(0) as Node3D).position.y + bb.position.y + bb.size.y * 0.7
+			cam.position = Vector3(c.x, 0.025, c.z + max(0.2, max(max(bb.size.x, bb.size.z) * 1.6, bb.size.y * 1.8)))
 		cam.look_at(c)
 	elif close >= 0 and patch:
 		cam.position = Vector3(0, 3.3, 7.5)
@@ -322,8 +332,49 @@ func _checks() -> void:
 		for sp in set:
 			ok = ok and (sp as PlantSpecies).meshes.size() == 1 and ((sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_SHADE) != Vector2(0, 1) or (sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_LITTER) != Vector2(0, 1) or (sp as PlantSpecies).get_rule_range(PlantSpecies.RULE_WATER_DISTANCE).y < 100.0 or (sp as PlantSpecies).deadwood_rule != PlantSpecies.DEADWOOD_AVOID)
 		_check("floor set %d" % st, ok, set.size())
+	_mushroom_checks()
 	_bloom_checks()
 	print("PLANTS_RESULT ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
+
+# Woodland-floor mushrooms (docs/ideas/mushrooms.md): real undersides, plausible sizes, the
+# season, the floor sets.
+func _mushroom_checks() -> void:
+	var P := PlantGenerator
+	var tall := {P.PRESET_FLY_AGARIC: [0.06, 0.32], P.PRESET_CEP: [0.04, 0.3], P.PRESET_CHANTERELLE: [0.02, 0.14], P.PRESET_BRITTLEGILL: [0.025, 0.16], P.PRESET_CLOUDED_AGARIC: [0.03, 0.22], P.PRESET_HONEY_FUNGUS: [0.04, 0.3]}
+	for p in tall:
+		var g := PlantGenerator.new()
+		g.preset = p
+		g.apply_preset_colors()
+		var ok := true
+		var info := []
+		for sd in 4:
+			g.seed = sd
+			var m := g.generate()
+			var under := 0
+			var names := []
+			for si in m.get_surface_count():
+				names.append(m.surface_get_name(si))
+				if m.surface_get_name(si) == "centre":
+					under = (m.surface_get_arrays(si)[Mesh.ARRAY_INDEX] as PackedInt32Array).size() / 3
+			var h := m.get_aabb().end.y
+			ok = ok and names.has("petal") and names.has("stem") and under > 200 and h > tall[p][0] and h < tall[p][1]
+			info.append([snappedf(h, 0.001), under, _tris(m)])
+		_check("%s: cap, stalk and a real underside (gills or tubes), %.0f to %.0f cm tall" % [NAMES[p], tall[p][0] * 100, tall[p][1] * 100], ok, info)
+	var pres := [P.get_presence(P.PRESET_CEP, {}), P.get_presence(P.PRESET_CEP, {"day_of_year": 135, "soil_moisture": 0.7, "temperature": 12.0}), P.get_presence(P.PRESET_CEP, {"day_of_year": 270, "soil_moisture": 0.7, "temperature": 12.0}), P.get_presence(P.PRESET_CEP, {"day_of_year": 270, "soil_moisture": 0.1, "temperature": 12.0}), P.get_presence(P.PRESET_CEP, {"day_of_year": 300, "soil_moisture": 0.7, "temperature": -3.0}), P.get_presence(P.PRESET_CHANTERELLE, {"day_of_year": 190, "soil_moisture": 0.7, "temperature": 15.0})]
+	_check("mushrooms: none in May, a flush in a moist autumn, none in drought or frost, chanterelles from early summer", pres[0] == 1.0 and pres[1] == 0.0 and pres[2] > 0.9 and pres[3] == 0.0 and pres[4] == 0.0 and pres[5] > 0.1 and pres[5] < 0.6, pres)
+	var set := P.make_floor(P.FLOOR_MONTANE_CONIFER, 1, false)
+	var found := {}
+	var ring := 0.0
+	var honey_beside := false
+	for sp in set:
+		var mm: Mesh = (sp as PlantSpecies).meshes[0]
+		if (sp as PlantSpecies).has_meta("mushroom"):
+			found[found.size()] = true
+			if (sp as PlantSpecies).patch_ring > 0.0:
+				ring = (sp as PlantSpecies).patch_ring
+			if (sp as PlantSpecies).deadwood_rule == PlantSpecies.DEADWOOD_BESIDE:
+				honey_beside = true
+	_check("montane conifer floor: six mushrooms, the clouded agaric in rings, honey fungus beside deadwood", found.size() == 6 and ring > 0.0 and honey_beside, [found.size(), ring, honey_beside])
 
 # Flowering by degree days (docs/ideas/vegetation-seasons.md, step 2).
 func _bloom_checks() -> void:
