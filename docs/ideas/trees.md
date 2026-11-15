@@ -748,6 +748,30 @@ Two forms, as geometry in the fungi surface:
 - **Bench.** `--view=lichen` (env LV = a vertex of the fungi surface, LDIST), with `--day=20` for
   bare winter twigs. Path tracing keeps every strand.
 
+### 5i. Old ivy stems (15 Nov)
+
+Ivy on an old trunk is a net of woody stems, not a garland of leaves: stems thicken for decades
+to several centimetres, grey-brown and fissured, pressed flat to the bark by their aerial
+rootlets (Metcalfe 2005, Biological Flora of the British Isles: Hedera helix). The climb itself
+stays Luft's Ivy Generator walk (2007, 5b).
+
+- **Age.** Each main stem gets an age from the host's (height over 6-28 m, or `veteran`) times
+  `climber_cover`, jittered per stem; side shoots carry 0.6 of their parent's. Main stems start
+  at 6-11 mm and thicken up to 4.5 times with age; colour goes from brown to grey-brown.
+- **On the bark.** The stem's axis lies 0.8 of its radius out from the bark, plus half the bark
+  relief's furrow depth where LOD 0 displaces it, so stems sit on the ridges rather than inside
+  them (it was a fixed 6 mm lift: thick stems floated, thin ones sank into relief bark).
+- **Rootlets: built and dropped.** Tufts of 3-9 mm hairs either side of the stem below 3.5 m
+  cost about half a million triangles on an old oak and were under a pixel at a metre; a felt
+  fringe needs thousands per stem. Not worth it as geometry.
+- **For vegetation.** `tree_climber_leaves` is now 13 floats per leaf: the 11 before (position,
+  blade normal, petiole direction, size, light), then the stem's age (0-1) and how far up the
+  stem the leaf is (0 foot, 1 tip). Vegetation's adult ivy leaves (unlobed, on shoots standing out
+  from the stem) are for points above about two thirds of an old stem; trees will pick them when
+  `make_climber_leaves` has the variant.
+- **Cost.** Open-grown oak with full ivy: its stems add 158k bark triangles (+4%); the stems'
+  side count follows their radius, so thicker stems cost about what the thin ones did.
+
 ## 6. What the games at Paulo's bar do
 
 - **Kingdom Come: Deliverance 2** (CryEngine): Warhorse has published no vegetation talk; what

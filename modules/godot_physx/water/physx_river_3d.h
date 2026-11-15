@@ -149,6 +149,11 @@ private:
 	PackedFloat32Array live_depth; // still-water depth per window cell, for the tilt fit
 	Vector3 live_tilt; // the window's mean plane (h0, dh/dx, dh/dz), taken out
 	int live_refresh = 0;
+	bool contact_wetness = true;
+	uint64_t contact_wet_serial = 0;
+	int contact_wet_skip = 0; // reads to drop after the window moves (taken before it moved)
+	Vector<float> contact_wet_cells;
+	void _live_wet_ground();
 
 	// Joins: where the river ends (a lake, the sea, or another river), and the
 	// rivers flowing into this one.
@@ -261,6 +266,9 @@ public:
 	bool get_raster_reflections() const { return raster_reflections; }
 	void set_live_flow(bool p_enabled);
 	bool get_live_flow() const { return live_flow; }
+	// Banks and rocks the live water reached stay wet in the weather's contact wetness (WeatherMap3D).
+	void set_contact_wetness(bool p_enabled);
+	bool get_contact_wetness() const { return contact_wetness; }
 	void set_live_domain_size(float p_size);
 	float get_live_domain_size() const { return live_domain_size; }
 	void set_live_grid_resolution(int p_n);

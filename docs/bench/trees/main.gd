@@ -261,6 +261,15 @@ func _place(mesh: Mesh, pos: Vector3) -> void:
 	mi.mesh = mesh
 	mi.position = pos
 	add_child(mi)
+	# env HIDE_SURF=name[,name]: hide those surfaces (e.g. climber_leaves, to see ivy stems).
+	if OS.has_environment("HIDE_SURF"):
+		var hide := OS.get_environment("HIDE_SURF").split(",")
+		var none := StandardMaterial3D.new()
+		none.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		none.albedo_color = Color(0, 0, 0, 0)
+		for si in mesh.get_surface_count():
+			if mesh.surface_get_name(si) in hide:
+				mi.set_surface_override_material(si, none)
 
 func _build_scene() -> void:
 	var presets: Array = pick if not pick.is_empty() else ([preset] if preset >= 0 else range(NAMES.size()))

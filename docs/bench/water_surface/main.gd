@@ -18,6 +18,8 @@ extends Node3D
 #   --view=sea_top  straight down on the open sea from 90 m (crest lengths and crossing seas)
 #   --view=wake     straight down on the rock and the water downstream of it
 #   --raster        raster only, for comparison
+#   --contact       a WeatherMap3D (dry weather) whose contact wetness the sea writes; the sand reads it (wetness on),
+#                   and the wetness up the beach is printed every 60 frames
 #   --wader         two legs (capsules) walking along the shallows at 1.5 m/s with a PhysXWaterPusher3D
 #                   (--wader-nopush: without it); --view=wader looks at them
 #   --spp=N --bounces=N  path tracing samples and bounces (default 16, 3)
@@ -120,6 +122,8 @@ var splash_z := 1e9 # --splash=Z: a mound of water dropped at (0, Z) every 2 s (
 var debug_storm := OS.get_environment("STORM_DEBUG") != ""
 var boat: RigidBody3D
 var wader: AnimatableBody3D
+var contact := false
+var weather: Node3D
 var wader_on := false
 var wader_push := true
 var wake: Node3D
@@ -165,6 +169,7 @@ func _ready() -> void:
 		if a.begins_with("--view="): view = a.substr(7)
 		elif a == "--raster": raster = true
 		elif a == "--wader": wader_on = true
+		elif a == "--contact": contact = true
 		elif a == "--wader-nopush": wader_on = true; wader_push = false
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--bounces="): bounces = int(a.substr(10))
@@ -262,6 +267,13 @@ func _ready() -> void:
 		sand_mat.albedo_texture = nt
 		sand_mat.uv1_scale = Vector3(40, 40, 1)
 	sand_mat.roughness = 0.95
+	if contact and ClassDB.class_exists("WeatherMap3D"):
+		sand_mat.set("wetness_enabled", true)
+		sand_mat.set("wetness_porosity", 0.9)
+		weather = ClassDB.instantiate("WeatherMap3D")
+		weather.set("rain_rate", 0.0)
+		weather.set("drive_environment_fog", false)
+		add_child(weather)
 	if slope_deg < 0.0:
 		# Under water the floor needs to fall away faster, for depth to look through.
 		slope_deg = 12.0 if view in ["submerged", "waterline", "up"] else 5.0
@@ -624,6 +636,11 @@ func _tracers_step(p_dt: float) -> void:
 
 func _process(_delta: float) -> void:
 	n += 1
+	if weather != null and n % 60 == 0:
+		var line := ""
+		for z in [4.0, 6.0, 7.0, 8.0, 8.5, 9.0, 9.5, 10.0, 11.0, 13.0]:
+			line += " z%.1f=%.2f" % [z, weather.call("get_contact_wetness_at", Vector3(0.0, 0.0, z))]
+		print("frame %d contact wetness up the beach:%s" % [n, line])
 	if boat != null:
 		var bp := boat.global_position
 		if view == "boat":

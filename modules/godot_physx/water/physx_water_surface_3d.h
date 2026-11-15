@@ -272,6 +272,10 @@ public:
 	float get_swash_drain_speed() const { return swash_drain_speed; }
 	void set_wet_sand_dry_time(float p_seconds);
 	float get_wet_sand_dry_time() const { return wet_sand_dry_time; }
+	// Wet sand, rocks and props where the sea reached, kept by the weather's contact wetness (WeatherMap3D) and
+	// drying with the weather: what the swash wetted along the shore, still water shallower than half a metre.
+	void set_contact_wetness(bool p_enabled);
+	bool get_contact_wetness() const { return contact_wetness; }
 
 	// Optional shape: any flat mesh whose X/Z footprint (node-local) is the
 	// water's outline -- a disc, a kidney bean, a lake with an island. When
@@ -579,6 +583,10 @@ private:
 	float swash_run_up = 0.3f;
 	float swash_drain_speed = 0.12f;
 	float wet_sand_dry_time = 12.0f;
+	bool contact_wetness = true;
+	uint64_t contact_wet_serial = 0;
+	Vector<float> contact_wet_cells;
+	void _wet_ground();
 	// Longest side of the surface_mesh footprint (0 = none), for auto fetch.
 	real_t footprint_extent = 0.0;
 

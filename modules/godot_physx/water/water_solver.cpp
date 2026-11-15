@@ -30,8 +30,6 @@
 
 #include "water_solver.h"
 
-#include "core/config/project_settings.h"
-
 #include "water_blit_ocean.glsl.gen.h"
 #include "water_blit_ripple.glsl.gen.h"
 #include "water_caustics_map.glsl.gen.h"
@@ -44,6 +42,7 @@
 #include "water_spectrum_init.glsl.gen.h"
 #include "water_swash.glsl.gen.h"
 
+#include "core/config/project_settings.h"
 #include "core/math/math_funcs.h"
 #include "core/object/callable_mp.h"
 #include "core/os/memory.h"
@@ -568,6 +567,7 @@ void WaterSolverGPU::_rt_build_buffers() {
 	{
 		RD::TextureFormat swash_tf = ripple_tf;
 		swash_tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
+		swash_tf.usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT; // (wet sand read back for the weather)
 		Vector<uint8_t> zeros;
 		zeros.resize(cells * 4 * sizeof(float));
 		memset(zeros.ptrw(), 0, zeros.size());
@@ -1160,10 +1160,22 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 	}
 
 	stamp(">Water step end");
+	// Wet sand for the weather's contact wetness, every 8th step (it changes over seconds).
+	bool read_swash = false;
+	if (swash_wet_wanted.is_set() && tex_swash.is_valid()) {
+		if (--swash_read_countdown <= 0) {
+			swash_read_countdown = 8;
+			read_swash = true;
+		}
+	}
 	if (local) {
 		rd->submit();
 		rd->sync();
 		MutexLock lock(cache_mtx);
+		if (read_swash) {
+			const Vector<uint8_t> wraw = rd->texture_get_data(tex_swash, 0);
+			_rt_store_swash(wraw.ptr(), wraw.size());
+		}
 		ocean_cache_time = ocean_time_accum;
 		if (!p_rest) {
 			ripple_cache_time = ocean_time_accum;
@@ -1220,6 +1232,29 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_de
 	rd->buffer_get_data_async(buf_fft_b, callable_mp(this, &WaterSolverGPU::rt_on_ocean_height).bind(ocean_time_accum, p_self), 0, on * on * 2 * sizeof(float));
 	rd->buffer_get_data_async(buf_fft_d, callable_mp(this, &WaterSolverGPU::rt_on_ocean_dz).bind(p_self), 0, on * on * 2 * sizeof(float));
 	rd->buffer_get_data_async(buf_foam_cover, callable_mp(this, &WaterSolverGPU::rt_on_foam_cover).bind(p_self), 0, sizeof(uint32_t));
+	if (read_swash) {
+		rd->texture_get_data_async(tex_swash, 0, callable_mp(this, &WaterSolverGPU::rt_on_swash).bind(p_self));
+	}
+}
+
+void WaterSolverGPU::rt_on_swash(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self) {
+	MutexLock lock(cache_mtx);
+	_rt_store_swash(p_data.ptr(), p_data.size());
+}
+
+// (cache_mtx held.) Keeps g (wetness) of each cell.
+void WaterSolverGPU::_rt_store_swash(const uint8_t *p_data, int p_bytes) {
+	const int cells = grid_resolution * grid_resolution;
+	if (p_data == nullptr || p_bytes < cells * 4 * (int)sizeof(float)) {
+		return;
+	}
+	const float *st = (const float *)p_data;
+	swash_wet_cache.resize(cells);
+	float *w = swash_wet_cache.ptrw();
+	for (int i = 0; i < cells; i++) {
+		w[i] = st[i * 4 + 1];
+	}
+	swash_wet_serial++;
 }
 
 void WaterSolverGPU::rt_on_foam_cover(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self) {
@@ -1869,6 +1904,27 @@ RID WaterSolver::get_ocean_displacement_texture_rd_rid() const {
 		return RID();
 	}
 	return gpu->tex_ocean_disp;
+}
+
+void WaterSolver::set_wetness_readback(bool p_enabled) {
+	if (gpu.is_valid()) {
+		gpu->swash_wet_wanted.set_to(p_enabled);
+	}
+}
+
+bool WaterSolver::get_wetness_grid(Vector<float> &r_wet, int &r_n, uint64_t &r_serial) const {
+	if (gpu.is_null()) {
+		return false;
+	}
+	MutexLock lock(gpu->cache_mtx);
+	const int n = settings.grid_resolution;
+	if (gpu->swash_wet_cache.size() != n * n) {
+		return false;
+	}
+	r_wet = gpu->swash_wet_cache;
+	r_n = n;
+	r_serial = gpu->swash_wet_serial;
+	return true;
 }
 
 float WaterSolver::get_foam_cover() const {

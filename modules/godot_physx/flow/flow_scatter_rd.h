@@ -33,7 +33,9 @@
 
 #include "flow_backend.h"
 
+#include "core/math/basis.h"
 #include "core/math/projection.h"
+#include "core/math/transform_3d.h"
 #include "core/math/vector2i.h"
 #include "core/templates/rid.h"
 #include "core/math/vector3.h"
@@ -50,7 +52,9 @@ class RenderingDevice;
 // what the nearby lights scatter toward the camera -- each light's color and
 // energy with Godot's own distance (and spot cone) falloff, dimmed by the gas
 // between it and the point (a short march toward the light) and by the gas
-// between the point and the camera. The sum is added onto the scene color.
+// between the point and the camera. Ambient and sky light (Params::ambient)
+// are added the same way, dimmed by the gas above each point. The sum is added
+// onto the scene color.
 class FlowScatterRD {
 public:
 	static constexpr int MAX_LIGHTS = 16;
@@ -82,6 +86,23 @@ public:
 		int max_steps = 256;
 		bool shadows = true; // sample the lights' shadows (scene objects block their glow)
 		int resolution_divisor = 4; // 1: every pixel; 2: half resolution each way; 4: quarter
+		// Ambient light in the gas, as Godot's volumetric fog takes it: the ambient color mixed with the
+		// sky's radiance by sky_contribution, scaled by the ambient energy. It is dimmed by the gas above
+		// each point (a short march up: how much of the sky it sees).
+		bool ambient = false;
+		float ambient_color[3] = {}; // linear rgb * ambient energy
+		float sky_contribution = 0.0f;
+		float sky_energy = 0.0f; // the ambient energy, for the sky part
+		RID sky_radiance; // the sky's radiance octmap (RID(): none)
+		float sky_border[2] = { 0.0f, 1.0f }; // the octmap's uv border (SkyRD::sky_get_uv_border_size)
+		Basis sky_inverse; // world direction -> the sky's own orientation
+		// The frame's directional lights (Godot's own light buffer, in view space) light the gas here
+		// instead of in Flow's colormap, with their shadow cascades (walls shade the smoke).
+		int directional_count = 0; // 0: none (Flow's colormap carries the sun)
+		bool directional_shadows = true;
+		RID directional_buffer; // LightStorage::get_directional_light_buffer()
+		RID directional_shadow_atlas; // LightStorage::directional_shadow_get_texture()
+		Transform3D world_to_view; // meters
 	};
 
 private:
@@ -95,9 +116,12 @@ private:
 	RID linear_sampler;
 	RID point_sampler;
 	RID shadow_sampler;
+	RID sky_sampler;
 	RID params_buffer;
 	RID lights_buffer;
+	RID directional_dummy;
 	bool failed = false;
+	bool sky_array = false; // the shader reads the sky as a 2D array (Godot's radiance octmap array)
 
 	bool _ensure(RenderingDevice *p_rd);
 

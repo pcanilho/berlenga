@@ -27,6 +27,8 @@ extends Node3D
 #   --view=fall      the waterfall from the side
 #   --view=fallfront the waterfall from downstream, looking up at the falling sheet
 #   --live           the live window: shallow-water simulation round the rocks (eddies, live foam)
+#   --contact        with --live, a WeatherMap3D (dry) whose contact wetness the live window writes; prints the
+#                    wet share of the window every 60 frames
 #   --mist           with --falls, print the mist's densest point and its spread each second
 #   --report         print the cross-sections and the boxes' positions
 #   --bake-time=N    time N rebuilds with the multigrid flow solve and with the older SOR sweeps
@@ -47,6 +49,8 @@ var mist_report := false
 var bake_time := 0
 var carve := false
 var live := false
+var contact := false
+var weather: Node3D
 var joins := false
 var falls := false
 var lake: Node3D
@@ -107,6 +111,7 @@ func _ready() -> void:
 		elif a.begins_with("--bake-time="): bake_time = int(a.substr(12))
 		elif a == "--carve": carve = true
 		elif a == "--live": live = true
+		elif a == "--contact": contact = true
 		elif a == "--joins": joins = true
 		elif a == "--falls": falls = true
 		elif a.begins_with("--debug="): debug_mode = int(a.substr(8))
@@ -185,6 +190,12 @@ func _ready() -> void:
 		river.set("live_flow", true)
 		river.set("live_domain_size", 32.0)
 		river.set("live_grid_resolution", 160)
+		if contact and ClassDB.class_exists("WeatherMap3D"):
+			weather = ClassDB.instantiate("WeatherMap3D")
+			weather.set("rain_rate", 0.0)
+			weather.set("drive_environment_fog", false)
+			add_child(weather)
+			(func(): weather.set("follow_target", weather.get_path_to(focus))).call_deferred()
 	if carve:
 		river.set("carve", true)
 		river.set("carve_depth", 1.2)
@@ -457,6 +468,16 @@ func _slab(p_size: Vector3, p_pos: Vector3, p_rot: Vector3, p_mat: Material, p_l
 
 func _process(_delta: float) -> void:
 	n += 1
+	if weather != null and n % 60 == 0:
+		var wet_n := 0
+		var total := 0
+		for i in range(-15, 16):
+			for j in range(-15, 16):
+				var p := focus.global_position + Vector3(i, 0.0, j)
+				total += 1
+				if float(weather.call("get_contact_wetness_at", p)) > 0.5:
+					wet_n += 1
+		print("frame %d: contact wetness over half on %d of %d points round the live window" % [n, wet_n, total])
 	if pt_from > 0 and n == pt_from:
 		bench_env.pathtracing_enabled = true
 	if mist_report and n == frames - 1:

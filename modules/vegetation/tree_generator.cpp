@@ -3961,7 +3961,7 @@ void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const 
 	if (!plant.is_empty()) {
 		// The ground plants' leaf for this climber (lies in XZ, base at the origin, +Z, 1 m),
 		// one of its variants, turned onto our blade frame and scaled to the leaf's length.
-		const uint32_t h = hash_murmur3_one_32(uint32_t(climber_leaves.size() / 11), uint32_t(seed) * 7919u + 13u);
+		const uint32_t h = hash_murmur3_one_32(uint32_t(climber_leaves.size() / CLIMBER_LEAF_FLOATS), uint32_t(seed) * 7919u + 13u);
 		const ClimberLeafShape &shape = plant_climber_shapes[climber][h % plant_climber_shapes[climber].size()];
 		const PackedVector3Array &mv = shape.verts;
 		const PackedVector3Array &mn = shape.normals;
@@ -4000,7 +4000,9 @@ void TreeGenerator::_climber_leaf(Builder &r_leaves, const Vector3 &p_at, const 
 	leaf_count++;
 	// Published for vegetation's climber leaf meshes: position, blade normal, petiole direction,
 	// size, light.
-	const float vals[11] = { p_at.x, p_at.y, p_at.z, p_normal.x, p_normal.y, p_normal.z, p_out.x, p_out.y, p_out.z, p_size, 0.5f };
+	// size, light, the stem's age (0 young, 1 old) and how far up the stem the leaf is (0 foot, 1 tip):
+	// old ivy grows adult shoots with unlobed leaves where it reaches the light high up.
+	const float vals[CLIMBER_LEAF_FLOATS] = { p_at.x, p_at.y, p_at.z, p_normal.x, p_normal.y, p_normal.z, p_out.x, p_out.y, p_out.z, p_size, 0.5f, climber_stem_age, climber_stem_up };
 	for (float v : vals) {
 		climber_leaves.push_back(v);
 	}
@@ -4085,11 +4087,17 @@ void TreeGenerator::_grow_climbers(Builder &r_bark, Builder &r_leaves) {
 	const float ground = nodes[0].start.y;
 
 	if (climber == CLIMBER_IVY) {
-		const Color stem_col(0.2f, 0.17f, 0.13f);
+		// Old ivy (Metcalfe 2005, Biological Flora of the British Isles: Hedera helix): stems
+		// thicken for decades, to several centimetres on old trunks, grey-brown and fissured,
+		// pressed to the bark by their aerial rootlets. The ivy's age follows the host's (a tall
+		// or veteran tree has carried it longest). The rootlets themselves (3-9 mm hairs) were
+		// built and dropped: under a pixel at a metre, at half a million triangles a tree.
+		const float ivy_old = CLAMP(Math::lerp(CLAMP((height - 6.0f) / 22.0f, 0.0f, 1.0f), 1.0f, veteran) * climber_cover, 0.0f, 1.0f);
 		struct Shoot {
 			int k;
 			float s, theta, phi, length, r0;
 			int depth;
+			float age;
 		};
 		LocalVector<Shoot> todo;
 		for (uint32_t k = 0; k < supports.size(); k++) {
@@ -4103,7 +4111,8 @@ void TreeGenerator::_grow_climbers(Builder &r_bark, Builder &r_leaves) {
 			const float side = cr.randf() * float(Math::TAU);
 			const int count = 3 + int(climber_cover * 10.0f);
 			for (int c = 0; c < count; c++) {
-				todo.push_back({ int(k), 0.12f + 0.1f * cr.randf(), side + Math::lerp(-1.7f, 1.7f, cr.randf()), 0.0f, reach * Math::lerp(0.55f, 1.0f, cr.randf()), Math::lerp(0.006f, 0.011f, cr.randf()), 0 });
+				const float age = ivy_old * Math::lerp(0.55f, 1.0f, cr.randf());
+				todo.push_back({ int(k), 0.12f + 0.1f * cr.randf(), side + Math::lerp(-1.7f, 1.7f, cr.randf()), 0.0f, reach * Math::lerp(0.55f, 1.0f, cr.randf()), Math::lerp(0.006f, 0.011f, cr.randf()) * (1.0f + 3.5f * age), 0, age });
 			}
 		}
 		const float step = 0.03f;
@@ -4114,10 +4123,22 @@ void TreeGenerator::_grow_climbers(Builder &r_bark, Builder &r_leaves) {
 			shoots++;
 			LocalVector<Vector3> path;
 			LocalVector<int> bones;
+			const float s0 = sh.s;
 			const float s_end = MIN(sh.s + sh.length, frames[sh.k].s[frames[sh.k].s.size() - 1] - 0.05f);
 			int leaf_side = 1;
+			climber_stem_age = sh.age;
+			const float r_tip = 0.0025f;
 			for (int st = 0; sh.s < s_end && st < 4000; st++) {
-				const Surf p = surf(sh.k, sh.s, sh.theta, 0.006f);
+				// The stem lies on the bark: its axis a little less than its radius out (pressed
+				// into the bark's furrows), not floating at a fixed lift.
+				const float f_up = CLAMP((sh.s - s0) / MAX(s_end - s0, 1e-4f), 0.0f, 1.0f);
+				const float r_here = Math::lerp(sh.r0, r_tip, f_up);
+				// Over the bark's relief where LOD 0 displaces it (its ridges stand up to about half
+				// the furrow depth, 4.5 cm times the relief scale, out of the plain tube).
+				const float host_r = surf(sh.k, sh.s, sh.theta, 0.0f).r;
+				const float ridge = (bark_relief > 0.0f && host_r >= RELIEF_MIN_RADIUS) ? 0.0225f * bark_relief * CLAMP(host_r / 0.35f, 0.25f, 1.0f) : 0.0f;
+				const Surf p = surf(sh.k, sh.s, sh.theta, 0.002f + 0.8f * r_here + ridge);
+				climber_stem_up = f_up;
 				path.push_back(p.pos);
 				bones.push_back(p.bone);
 				if (st > 0) {
@@ -4133,7 +4154,7 @@ void TreeGenerator::_grow_climbers(Builder &r_bark, Builder &r_leaves) {
 					_climber_leaf(r_leaves, p.pos + p.out * 0.015f, out, normal, size, p.bone, Color(0.045f * tone, 0.09f * tone, 0.025f * tone));
 				}
 				if (sh.depth < 3 && st > 4 && cr.randf() < 0.05f) {
-					todo.push_back({ sh.k, sh.s, sh.theta, sh.phi + (cr.randf() < 0.5f ? 1.0f : -1.0f), (s_end - sh.s) * Math::lerp(0.3f, 0.7f, cr.randf()), sh.r0 * 0.6f, sh.depth + 1 });
+					todo.push_back({ sh.k, sh.s, sh.theta, sh.phi + (cr.randf() < 0.5f ? 1.0f : -1.0f), (s_end - sh.s) * Math::lerp(0.3f, 0.7f, cr.randf()), MAX(Math::lerp(sh.r0, r_tip, CLAMP((sh.s - s0) / MAX(s_end - s0, 1e-4f), 0.0f, 1.0f)) * 0.6f, 0.003f), sh.depth + 1, sh.age * 0.6f });
 				}
 				sh.s += step * Math::cos(sh.phi);
 				sh.theta += step * Math::sin(sh.phi) / MAX(p.r + 0.006f, 0.02f);
@@ -4141,8 +4162,11 @@ void TreeGenerator::_grow_climbers(Builder &r_bark, Builder &r_leaves) {
 				sh.phi *= 0.95f;
 				sh.phi = CLAMP(sh.phi, -1.3f, 1.3f);
 			}
-			_climber_stem(r_bark, path, bones, sh.r0, 0.0025f, stem_col);
+			// Young stems brown, old ones grey-brown and fissured (the bark texture carries it).
+			_climber_stem(r_bark, path, bones, sh.r0, r_tip, Color(0.2f, 0.17f, 0.13f).lerp(Color(0.3f, 0.27f, 0.23f), sh.age));
 		}
+		climber_stem_age = 0.0f;
+		climber_stem_up = 0.0f;
 	} else if (climber == CLIMBER_LIANA) {
 		const Color stem_col(0.26f, 0.21f, 0.15f);
 		const Color leaf_col(0.05f, 0.085f, 0.025f);

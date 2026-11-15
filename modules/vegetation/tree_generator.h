@@ -574,6 +574,9 @@ private:
 	};
 	LocalVector<Support> supports;
 	PackedFloat32Array climber_leaves;
+	static constexpr int CLIMBER_LEAF_FLOATS = 13; // Mesh meta tree_climber_leaves, per leaf.
+	float climber_stem_age = 0.0f; // The stem the next climber leaf grows on: age 0-1 (meta float 11).
+	float climber_stem_up = 0.0f; // How far up that stem the leaf is, 0-1 (meta float 12).
 	void _grow_climbers(Builder &r_bark, Builder &r_leaves);
 	void _climber_stem(Builder &r_bark, const LocalVector<Vector3> &p_path, const LocalVector<int> &p_bones, float p_r0, float p_r1, const Color &p_color);
 	void _climber_leaf(Builder &r_leaves, const Vector3 &p_at, const Vector3 &p_out, const Vector3 &p_normal, float p_size, int p_bone, const Color &p_color);

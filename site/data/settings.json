@@ -844,6 +844,17 @@
    "topic": "Shore"
   },
   {
+   "name": "Shore wetness",
+   "settings": [
+    "contact_wetness"
+   ],
+   "note": "",
+   "what": "sand, rocks and plants stay wet up to where the waves ran or the river reached, and dry with the weather.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Shore"
+  },
+  {
    "name": "Currents",
    "settings": [
     "current",
@@ -2172,7 +2183,7 @@
     "lichen_cover"
    ],
    "note": "",
-   "what": "lichen on bark, placed by height, crown light, stem age and moss; 0 turns it off.",
+   "what": "lichen on bark, placed by height, crown light, stem age and moss; beard lichens and oakmoss hang from and stand off crown twigs on near trees. 0 turns it off.",
    "page": "trees",
    "title": "Trees",
    "topic": "Wood and leaves"

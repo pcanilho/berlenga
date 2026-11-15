@@ -154,6 +154,12 @@ private:
 	// own after Flow's, see FlowScatterRD). Off by default: it marches every
 	// pixel the gas covers once more, with a short march toward each light.
 	bool light_scattering = false;
+	// Ambient and sky light in the gas, through the same pass (see FlowScatterRD::Params::ambient).
+	// Off: Flow's grey ambient floor under its sun lighting, as before.
+	bool ambient_scattering = false;
+	// The directional lights through the same pass, with their shadow cascades (see
+	// FlowScatterRD::Params::directional_count). Off: Flow's colormap carries the first one.
+	bool sun_scattering = false;
 	int scattering_max_lights = 4;
 	float scattering_strength = 1.0f;
 	float scattering_anisotropy = 0.4f;
@@ -191,6 +197,7 @@ private:
 	bool traced_this_frame = false; // render thread only
 	LocalVector<FlowScatterRD::Light> scatter_lights;
 	void _gather_scatter_lights();
+	void _fill_scatter_ambient(FlowScatterRD::Params &r_params, const RID &p_environment) const;
 	void _fill_scatter_shadows(LocalVector<FlowScatterRD::Light> &r_lights, const PagedArray<RID> *p_instances, const RID &p_shadow_atlas, uint32_t p_flags) const;
 
 	void _start();
@@ -258,6 +265,10 @@ public:
 
 	void set_light_scattering(bool p_v) { light_scattering = p_v; }
 	bool is_light_scattering() const { return light_scattering; }
+	void set_ambient_scattering(bool p_v) { ambient_scattering = p_v; }
+	bool is_ambient_scattering() const { return ambient_scattering; }
+	void set_sun_scattering(bool p_v) { sun_scattering = p_v; }
+	bool is_sun_scattering() const { return sun_scattering; }
 	void set_scattering_max_lights(int p_v) { scattering_max_lights = CLAMP(p_v, 1, FlowScatterRD::MAX_LIGHTS); }
 	int get_scattering_max_lights() const { return scattering_max_lights; }
 	void set_scattering_strength(float p_v) { scattering_strength = MAX(p_v, 0.0f); }
@@ -292,7 +303,7 @@ public:
 	// Under path tracing, before the trace (render thread): prepares the grid and publishes it to the
 	// path tracer (RTVolumes). render_rd then only ends the Flow frame.
 	bool prepare_traced();
-	void render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_rd, const float p_view[16], const float p_projection[16], const Size2i &p_size, const RID &p_depth, const RID &p_color, const Projection &p_inv_view_projection, const Vector3 &p_camera, const PagedArray<RID> *p_lights, const RID &p_shadow_atlas, bool p_first_view = true, bool p_last_view = true);
+	void render_rd(PhysXFlowRenderEffect *p_effect, RenderingDevice *p_rd, const float p_view[16], const float p_projection[16], const Size2i &p_size, const RID &p_depth, const RID &p_color, const Projection &p_inv_view_projection, const Vector3 &p_camera, const PagedArray<RID> *p_lights, const RID &p_shadow_atlas, const RID &p_environment, uint32_t p_directional_count, const Transform3D &p_world_to_view, bool p_first_view = true, bool p_last_view = true);
 
 	PackedStringArray get_configuration_warnings() const override;
 
