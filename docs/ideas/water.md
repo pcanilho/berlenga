@@ -2318,3 +2318,9 @@ pixel to pixel where the waves bend the offset (a stepped edge across the shallo
 sun body term (#286) is off in this mode, its sun being inside the medium's light; glitter, reflections,
 foam and wet sand are as before. The light in the water is now set every frame (also in the editor), not
 only near the camera. Rivers follow.
+
+Step 1b (15 Nov): rivers too. The clear-water code moved into water_raster_reflections.h
+(`water_clear_through`, with `water_light_in_water` deriving the refracted sun and the sky's radiance from the
+raster reflection uniforms both shaders already share), and PhysXRiver3D's shader uses it with the ribbon's
+own depth for the bed (`clear_water`, on). The waterline's foam lace (edge_foam) now shows as the thin line it
+was meant to be; under the old tint's low alpha it was barely visible.

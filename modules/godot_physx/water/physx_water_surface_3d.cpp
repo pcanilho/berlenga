@@ -913,77 +913,6 @@ vec3 uw_light_at_depth(float z) {
 	return (w_sun * exp(-st * z / mu) + w_sky * exp(-st * 1.2 * z)) / (w_sun + w_sky);
 }
 
-#if !defined(RT) && !defined(UNDERWATER_FOG) && !defined(UNDERWATER_SURFACE) && !defined(BREAKER_LIP)
-// Clear water seen from above: the light coming up through the surface at p_s (world) toward the eye, before
-// the surface's own Fresnel reflection. The view ray v refracts into the water along n (Snell), meets what the
-// screen shows behind (its colour and depth, read at the refracted point; where that point is in front of the
-// water, an object standing out of it, the straight-through pixel instead), and that light is dimmed over the
-// path (Beer-Lambert, per channel) after the sunlight reaching it was dimmed on its way down; the water adds
-// its own scattered sun and sky along the path, the sun's as far as it reaches the surface (sun_visibility).
-vec3 clear_water_through(vec3 p_s, vec3 v, vec3 n, vec2 uv, float z_bed, mat4 proj, mat4 view, mat4 inv_proj, mat4 inv_view, out float r_len) {
-	vec3 t = refract(v, n, 1.0 / 1.33);
-	if (dot(t, t) < 1e-6) {
-		t = v;
-	}
-	float d0 = texture(clear_depth, uv).r;
-	float len0 = 1e4;
-	if (d0 > 0.0) {
-		vec4 b = inv_proj * vec4(uv * 2.0 - 1.0, d0, 1.0);
-		len0 = distance((inv_view * vec4(b.xyz / b.w, 1.0)).xyz, p_s);
-	}
-	// Where the straight ray meets the bed at depth z0, the refracted one meets it after z0 / -t.y (a level
-	// bed); its screen point is read for colour and depth. Where that point shows something in front of the
-	// water (a rock standing out of it), the offset is halved, twice, then given up (GPU Gems 2, ch. 19).
-	// The bed's depth under the point: the solver's seabed where it knows it (z_bed >= 0), else from the screen.
-	float z0 = z_bed >= 0.0 ? z_bed : max(-v.y, 0.0) * min(len0, 1e3);
-	float len_r = min(z0 / max(-t.y, 0.05), 60.0);
-	// Given up: the straight-through colour, but the refracted ray's path to the same depth (the straight
-	// ray's own, longer at a glancing view, would change the tint in a step where the offset is given up).
-	vec2 uv_r = uv;
-	float len = len0 < 1e4 ? z0 / max(-t.y, 0.05) : len0;
-	vec4 cs = proj * view * vec4(p_s, 1.0);
-	float d_s = cs.z / cs.w;
-	vec4 c = proj * view * vec4(p_s + t * len_r, 1.0);
-	if (c.w > 0.0) {
-		vec2 q_full = clamp(c.xy / c.w * 0.5 + 0.5, vec2(0.0), vec2(1.0));
-		for (int i = 0; i < 3; i++) {
-			vec2 q = mix(uv, q_full, exp2(-float(i)));
-			float d1 = texture(clear_depth, q).r;
-			// Reverse Z: behind the surface is a smaller depth than the surface's own.
-			if (d1 <= d_s) {
-				uv_r = q;
-				len = 1e4;
-				if (d1 > 0.0) {
-					vec4 b = inv_proj * vec4(q * 2.0 - 1.0, d1, 1.0);
-					len = distance((inv_view * vec4(b.xyz / b.w, 1.0)).xyz, p_s);
-				}
-				break;
-			}
-		}
-	}
-	// The known bed's path, unless something stands nearer on it (a rock, a hull): the screen's depth jumps
-	// from pixel to pixel where waves bend the offset, the seabed's does not.
-	if (z_bed >= 0.0) {
-		len = min(len, z_bed / max(-t.y, 0.05) + 0.25);
-	}
-	r_len = len;
-	vec3 st = uw_sigma_t();
-	vec3 ss = max(pathtraced_scattering, vec3(0.0));
-	vec3 scene = texture(clear_screen, uv_r).rgb;
-	float z_b = max(-t.y, 0.0) * min(len, 1e3);
-	vec3 seen = scene * uw_light_at_depth(z_b) * exp(-st * len);
-	// Scattered along the path: the sun (refracted, phase toward the eye) and the sky, both dimmed with depth.
-	vec3 d = t;
-	vec3 sd = underwater_sun_direction;
-	float mu = max(-sd.y, 0.05);
-	vec3 a = st / mu;
-	vec3 sun = underwater_sun_irradiance * sun_visibility(p_s) * uw_hg(dot(sd, -d), pathtraced_scattering_anisotropy) * uw_segment(st - a * d.y, len);
-	vec3 k = st * 1.2;
-	vec3 sky = underwater_sky_radiance * 0.5 * uw_segment(st - k * d.y, len);
-	return seen + ss * (sun + sky);
-}
-#endif
-
 // Fresnel reflectance of the water's underside (exact, unpolarised), 1 past the critical angle.
 float uw_fresnel_from_below(float cos_i) {
 	const float n1 = 1.33;
@@ -1289,10 +1218,9 @@ void fragment() {
 	clear = clear_water && camera_above && v_lip < 0.5;
 	if (clear) {
 		vec3 p_s = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-		float through_len;
 		float bed_d = depth_r(v_rest_xz, cuv_fade);
 		float z_bed = bed_d < 999.0 ? max(bed_d + p_s.y - (MODEL_MATRIX[3].y + water_level), 0.0) : -1.0;
-		base_rgb = clear_water_through(p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX, through_len);
+		base_rgb = water_clear_through(clear_screen, clear_depth, p_s, normalize(p_s - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, z_bed, pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, underwater_sun_direction, underwater_sun_irradiance, underwater_sky_radiance, PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX);
 		unlit_rgb = vec3(0.0); // its sun is already in it, shadowed
 		base_a = 1.0;
 	}
