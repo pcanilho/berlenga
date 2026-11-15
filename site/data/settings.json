@@ -1135,6 +1135,18 @@
    "topic": "Shapes"
   },
   {
+   "name": "Ground contact and aspect",
+   "settings": [
+    "contact_height",
+    "aspect_strength"
+   ],
+   "note": "",
+   "what": "stones blend into the ground with a soil band at their foot and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
    "name": "Rock fields",
    "settings": [
     "RockField3D",

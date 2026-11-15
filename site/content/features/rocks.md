@@ -19,6 +19,8 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
   *Close-up detail: the same granite face gains pits, hairline cracks and a broken top edge.*
 
+- **Ground contact and aspect** (rock material: `contact_height`, `aspect_strength`): stones blend into the ground with a soil band at their foot and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.
+
 ## Placement
 
 - **Rock fields** (`RockField3D`: `rockfall_`, `scree_`, `glacial_`, `river_`, `shore_`, `cliff_` layers; `layer_enabled`): rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it.
