@@ -2451,7 +2451,7 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 		float mottle; // Albedo variation over plates.
 	};
 	static const Look LOOKS[BARK_MAX] = {
-		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.06f }, // Smooth: no plates, fine grain, lenticels.
+		{ 6, 6, 0.0f, 0.0006f, 0.0004f, 1.0f, 0.1f }, // Smooth: no plates, fine grain, lenticels, creases.
 		{ 6, 3, 0.1f, 0.028f, 0.004f, 0.3f, 0.12f }, // Furrowed: long interlaced ridges.
 		{ 4, 2, 0.16f, 0.03f, 0.0025f, 0.25f, 0.2f }, // Plated: wide flat plates, deep furrows.
 		{ 12, 9, 0.06f, 0.006f, 0.0015f, 0.45f, 0.14f }, // Scaly: small overlapping scales.
@@ -2544,7 +2544,29 @@ const TreeGenerator::BarkSet &TreeGenerator::_bark_set(BarkKind p_kind) {
 					height += m * 0.0004f;
 					r = Math::lerp(r, 0.97f, m);
 				}
-				const float tone = 1.0f + L.mottle * bark_fbm(u, v, 3, 6, 3, salt + 71u) * 2.0f;
+				if (p_kind == BARK_SMOOTH) {
+					// Creases: short fine wrinkles across the stem where the thin bark stretched
+					// as the stem thickened (beech, hornbeam, hazel; Vaucher, Tree Bark, 2003),
+					// a few centimetres long, darker in their fold.
+					const int wu_n = 9, wv_n = 70;
+					const float qx = u * wu_n, qy = v * wv_n;
+					const int jx = int(qx), jy = int(qy);
+					const float pick = bark_hash(jx, jy, salt + 91u);
+					if (pick > 0.55f) {
+						const float cx = 0.5f + 0.4f * (bark_hash(jx, jy, salt + 93u) - 0.5f);
+						const float half = 0.25f + 0.35f * bark_hash(jx, jy, salt + 95u);
+						const float cy = 0.5f + 0.4f * (bark_hash(jx, jy, salt + 97u) - 0.5f);
+						// A gentle bow: the fold sags towards its ends.
+						const float dxw = (qx - jx - cx) / half;
+						const float dyw = (qy - jy - cy - 0.15f * dxw * dxw) / 0.09f;
+						const float m = (1.0f - Math::smoothstep(0.5f, 1.0f, Math::abs(dxw))) * (1.0f - Math::smoothstep(0.3f, 1.0f, Math::abs(dyw)));
+						a = a * Math::lerp(1.0f, 0.8f, m);
+						height -= m * 0.0005f;
+					}
+				}
+				// Patches over a tile and finer blotches: the bark's own tone and the thin films of
+				// green algae and crust lichens on it.
+				const float tone = 1.0f + L.mottle * (bark_fbm(u, v, 3, 6, 3, salt + 71u) * 2.0f + (p_kind == BARK_SMOOTH ? bark_fbm(u, v, 2, 2, 3, salt + 73u) * 1.5f : 0.0f));
 				a = a * tone;
 			}
 			hw[k] = height;
@@ -2728,7 +2750,8 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 	// Fallen wood lies within the skirt's height all round, which spread the moss evenly over
 	// its underside too. On a log it grows over the upper half and down the flanks, and the
 	// face pressed into the litter stays bare (Soderstrom 1988).
-	const float foot = (fallen || fallen_branch) ? Math::smoothstep(-0.45f, 0.25f, p_normal.y) : Math::exp(-h / 1.1f);
+	// A coppice stool stands open to sun and wind after every cut: moss in patches only.
+	const float foot = (fallen || fallen_branch) ? Math::smoothstep(-0.45f, 0.25f, p_normal.y) : Math::exp(-h / 1.1f) * (cut_height > 0.0f && cut_height <= 0.5f ? 0.5f : 1.0f);
 	const float up = p_normal.y;
 	const float top = CLAMP((up - 0.35f) / 0.5f, 0.0f, 1.0f) * 0.75f;
 	const float patch = 0.65f * moss_noise(p_pos * 2.2f, 0x6d6f7373u + uint32_t(seed)) + 0.35f * moss_noise(p_pos * 7.0f, 0x6d6f7374u);
@@ -2762,7 +2785,12 @@ float TreeGenerator::_moss_at(const Vector3 &p_pos, const Vector3 &p_normal, flo
 		// bark wet all round, so the moss there is a near-continuous sleeve rather than patches,
 		// its upper edge wandering between about 15 and 60 cm and frayed into tongues; the
 		// patches only take over above it.
-		const float edge = (0.15f + 0.45f * moss_noise(p_pos * Vector3(2.6f, 0.4f, 2.6f), 0x636f6c6cu + uint32_t(seed))) * CLAMP(p_amount * 1.5f, 0.35f, 1.0f);
+		float edge = (0.15f + 0.45f * moss_noise(p_pos * Vector3(2.6f, 0.4f, 2.6f), 0x636f6c6cu + uint32_t(seed))) * CLAMP(p_amount * 1.5f, 0.35f, 1.0f);
+		if (cut_height > 0.0f && cut_height <= 0.5f) {
+			// A coppice stool is cut every few years and stands in the open after each cut: the
+			// sleeve keeps to its foot, under the stubs and knuckles.
+			edge = MIN(edge, cut_height * 0.45f);
+		}
 		const float fray = 0.2f * (moss_noise(p_pos * 9.0f, 0x66726179u) - 0.5f);
 		const float collar = 1.0f - Math::smoothstep(edge - 0.18f, edge + 0.18f, h + fray);
 		w = MAX(w, collar * MIN(1.0f, p_amount * 1.6f) * (0.95f + 0.25f * patch));
@@ -3037,7 +3065,7 @@ float TreeGenerator::_stem_top() const {
 	return top;
 }
 
-void TreeGenerator::_cut_back(bool p_first) {
+void TreeGenerator::_cut_back(bool p_first, int p_year) {
 	// The girth each piece had when it was cut stays: the stubs and the head keep it.
 	_compute_radii();
 	const float base_y = nodes[0].start.y;
@@ -3105,8 +3133,8 @@ void TreeGenerator::_cut_back(bool p_first) {
 			for (int q = 0; q < knuckles; q++) {
 				const float a = float(Math::TAU) * (q + 0.35f * (rng.randf() - 0.5f)) / knuckles;
 				const Vector3 out(Math::cos(a), 0.0f, Math::sin(a));
-				const Vector3 d = (out + Vector3(0, coppice ? 0.25f : 0.35f, 0)).normalized();
-				const int kn = _add_node(k, top.end() - Vector3(0, r * 0.4f, 0), d, r * Math::lerp(1.0f, 1.35f, rng.randf()), top.order, 0, false);
+				const Vector3 d = (out + Vector3(0, coppice ? 0.12f : 0.35f, 0)).normalized();
+				const int kn = _add_node(k, top.end() - Vector3(0, r * (coppice ? 0.6f : 0.4f), 0), d, r * Math::lerp(1.0f, 1.35f, rng.randf()), top.order, 0, false);
 				nodes[kn].leafy = false;
 				nodes[kn].radius = r * Math::lerp(0.5f, 0.7f, rng.randf());
 				cut_heads.push_back(kn);
@@ -3115,10 +3143,19 @@ void TreeGenerator::_cut_back(bool p_first) {
 			cut_heads.push_back(k);
 		}
 	} else {
-		// Each pole back to a stub a hand long.
+		// Each pole is sawn off close to the knuckle or stool it grew from, leaving a short stub
+		// with a flat cut face; the new sprouts break from round the cut on the knuckle again,
+		// not from the stub, so the head swells in place instead of stacking stub on stub. The
+		// stubs die back and the callus closes over them within a couple of cycles.
+		for (KeyValue<int, int> &kv : cut_stubs) {
+			if (p_year - kv.value > 2 * cut_cycle && !nodes[kv.key].removed) {
+				nodes[kv.key].removed = true;
+			}
+		}
+		HashSet<int> seats;
 		for (const int i : sprout_roots) {
 			Node &n = nodes[i];
-			if (n.removed) {
+			if (n.removed || n.parent <= 0) {
 				continue;
 			}
 			bool gone = false;
@@ -3130,10 +3167,39 @@ void TreeGenerator::_cut_back(bool p_first) {
 			}
 			clear_children(i);
 			cut.insert(i);
-			n.length = MIN(n.length, MAX(n.radius * 1.2f, 0.05f));
-			n.born = 0;
-			cut_heads.push_back(i);
-			fresh.push_back(i);
+			n.length = MIN(n.length, CLAMP(n.radius * 0.9f, 0.03f, 0.1f));
+			n.pole = false;
+			cut_stubs.insert(i, p_year);
+			if (!seats.has(n.parent)) {
+				seats.insert(n.parent);
+				fresh.push_back(n.parent);
+				// The callus over each cut builds the knuckle out a little. A coppice stool spreads
+				// outward by about a centimetre a year as its rim resprouts (Rackham 2006): old
+				// stools are rings of stubs a metre and more across.
+				Node &seat = nodes[n.parent];
+				float grow = 0.0f;
+				if (coppice) {
+					grow = MIN(0.012f * cut_cycle, MAX(0.0f, 0.45f - seat.length));
+				} else if (seat.order == n.order && seat.length < seat.radius * 2.5f) {
+					grow = MIN(0.3f * seat.radius, 0.03f);
+				}
+				if (grow > 0.0f) {
+					seat.length += grow;
+					const Vector3 shift = seat.dir * grow;
+					LocalVector<uint8_t> moved;
+					moved.resize(nodes.size());
+					memset(moved.ptr(), 0, moved.size());
+					moved[n.parent] = 1;
+					for (int c = n.parent + 1; c < int(nodes.size()); c++) {
+						const int pc = nodes[c].parent;
+						if (pc >= 0 && moved[pc]) {
+							moved[c] = 1;
+							nodes[c].start += shift;
+						}
+					}
+				}
+				seat_cuts[n.parent] = (seat_cuts.has(n.parent) ? seat_cuts[n.parent] : 0) + 1;
+			}
 		}
 	}
 	sprout_roots.clear();
@@ -3649,6 +3715,75 @@ void TreeGenerator::_fracture(const Vector3 &p_end, const Vector3 &p_dir, float 
 	}
 	for (int v = part.z; v < w.verts.size(); v++) {
 		nw[v] = nw[v].length_squared() > 1e-20f ? nw[v].normalized() : g;
+	}
+	w.end(part, p_r);
+}
+
+// A sawn pole stub on a pollard head or coppice stool (trees.md 5l): a flat face, a little domed
+// where the saw tore the last fibres, with the annual rings of the pole showing, pale fresh wood
+// greying and darkening from the heart as it weathers (p_age 0 fresh to 1 old), and the bark's
+// thin dark edge at the rim.
+void TreeGenerator::_saw_face(const Vector3 &p_end, const Vector3 &p_dir, float p_r, float p_age, uint32_t p_seed) {
+	Builder &w = wood_b;
+	RandomPCG sr;
+	sr.seed(uint64_t(p_seed) * 6364136223846793005ull + 0x73617775u);
+	const Vector3 g = p_dir.normalized();
+	Vector3 td = Vector3(0, 1, 0) - g * g.y;
+	if (td.length_squared() < 0.04f) {
+		td = Vector3(1, 0, 0) - g * g.x;
+	}
+	td.normalize();
+	const Vector3 sd = g.cross(td);
+	const float age = CLAMP(p_age, 0.0f, 1.0f);
+	const Color fresh = Color(0.8f, 0.7f, 0.52f).srgb_to_linear();
+	const Color grey = Color(0.5f, 0.48f, 0.43f).srgb_to_linear();
+	const Color wood = fresh.lerp(grey, age);
+	const Color heart = wood.lerp(Color(0.3f, 0.24f, 0.17f).srgb_to_linear(), 0.25f + 0.45f * age);
+	const Color rim = bark_color.srgb_to_linear().lerp(Color(0.1f, 0.08f, 0.06f), 0.4f);
+	// Annual rings: about one per 3 mm of radius for a fast coppice pole, offset by the seed.
+	const float rings = MAX(3.0f, p_r / 0.003f);
+	const float phase = sr.randf();
+	Vector4i part;
+	w.begin(part);
+	const int sectors = 18;
+	const int nr = 9;
+	const int f0 = w.verts.size();
+	for (int i = 0; i < nr; i++) {
+		// From the rim (rho 1) inwards; the outermost ring is the bark's edge.
+		const float rho = i == 0 ? 1.0f : 0.96f * (1.0f - float(i - 1) / (nr - 1));
+		const float band = 0.5f + 0.5f * Math::cos(float(Math::TAU) * (rho * rings + phase));
+		Color c = i == 0 ? rim : wood.lerp(heart, (1.0f - rho) * (1.0f - rho)) * (0.86f + 0.14f * band);
+		for (int k = 0; k < sectors; k++) {
+			const float a = float(Math::TAU) * k / sectors;
+			const float hh = i == 0 ? 0.0f : p_r * (0.05f + 0.03f * (1.0f - rho) + 0.01f * (sr.randf() - 0.5f));
+			w.verts.push_back(p_end + (td * Math::cos(a) + sd * Math::sin(a)) * (p_r * rho) + g * hh);
+			w.normals.push_back(g);
+			w.uvs.push_back(Vector2(float(k) / sectors * 2.0f, rho * 0.3f));
+			w.colors.push_back(c);
+		}
+	}
+	const int fc = w.verts.size();
+	w.verts.push_back(p_end + g * (p_r * 0.09f));
+	w.normals.push_back(g);
+	w.uvs.push_back(Vector2(0.5f, 0.0f));
+	w.colors.push_back(heart);
+	for (int i = 0; i + 1 < nr; i++) {
+		for (int k = 0; k < sectors; k++) {
+			const int k1 = (k + 1) % sectors;
+			const int a0 = f0 + i * sectors + k, a1 = f0 + i * sectors + k1;
+			const int b0 = f0 + (i + 1) * sectors + k, b1 = f0 + (i + 1) * sectors + k1;
+			w.indices.push_back(a0);
+			w.indices.push_back(b0);
+			w.indices.push_back(a1);
+			w.indices.push_back(a1);
+			w.indices.push_back(b0);
+			w.indices.push_back(b1);
+		}
+	}
+	for (int k = 0; k < sectors; k++) {
+		w.indices.push_back(f0 + (nr - 1) * sectors + k);
+		w.indices.push_back(fc);
+		w.indices.push_back(f0 + (nr - 1) * sectors + (k + 1) % sectors);
 	}
 	w.end(part, p_r);
 }
@@ -7282,7 +7417,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		for (int c = 0; c < int(chain.size()); c++) {
 			const Node &n = nodes[chain[c]];
 			// A pollard's head or a stool's stub ends full-girth in its callus knob (trees.md 5l).
-			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * (bolling.has(chain[c]) ? 1.0f : 0.6f);
+			float r_end = c + 1 < int(chain.size()) ? nodes[chain[c + 1]].radius : n.radius * (bolling.has(chain[c]) || cut_stubs.has(chain[c]) ? 1.0f : 0.6f);
 			// Where a lateral has outgrown the axis's own continuation (a leader overtaken at a
 			// fork), the axis keeps the lateral's girth to the fork: narrowing to the thinner
 			// continuation, it left the lateral's base standing out as a stub.
@@ -7407,7 +7542,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		float rim_r = rad[rad.size() - 1];
 		if (rim_r >= 0.006f && pts.size() >= 2) {
 			const Vector3 dir_end = (pts[pts.size() - 1] - pts[pts.size() - 2]).normalized();
-			const bool broken = (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) || broken_ends.has(chain[chain.size() - 1]);
+			const bool broken = (broken_tip >= 0 && chain[chain.size() - 1] == broken_tip) || broken_ends.has(chain[chain.size() - 1]) || cut_stubs.has(chain[chain.size() - 1]);
 			const float cap_len = broken ? 0.04f : 0.8f; // Under the fracture face, which closes the end.
 			const float ks[3] = { 0.4f, 0.75f, 1.0f };
 			const float rs[3] = { 0.93f, 0.68f, 0.0f };
@@ -7834,6 +7969,11 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// butt gets its fibre tongues from _tube instead.)
 			wood_b.bone = node_bone[chain_end];
 			_fracture(rim_pt, nodes[chain_end].dir, rim_r, nodes[chain_end].dead || decay_class > 0 ? 1.0f : 0.0f, uint32_t(chain_end) * 2246822519u + uint32_t(seed));
+		} else if (cut_stubs.has(chain_end) && rim_r >= 0.006f) {
+			// A sawn stub (trees.md 5l): weathered by the years since the cut.
+			wood_b.bone = node_bone[chain_end];
+			const float since_cut = float(CLAMP(int(params[PARAM_YEARS]), 1, 300) - cut_stubs[chain_end]);
+			_saw_face(rim_pt, nodes[chain_end].dir, rim_r, since_cut / 6.0f + (decay_class > 0 ? 1.0f : 0.0f), uint32_t(chain_end) * 2246822519u + uint32_t(seed));
 		}
 		if (hanger && pts.size() >= 2) {
 			// The hanger's own half of the break, facing back up at the stub.
@@ -9749,6 +9889,8 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	buds.clear();
 	sprout_roots.clear();
 	cut_heads.clear();
+	cut_stubs.clear();
+	seat_cuts.clear();
 	shed_count = 0;
 	rng.seed(uint64_t(seed) * 0x9E3779B97F4A7C15ull + uint64_t(preset) * 1013904223ull + 1);
 
@@ -9771,10 +9913,12 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	}
 	const int years = CLAMP(int(params[PARAM_YEARS]), 1, 300);
 	int last_cut = -1;
+	int cuts = 0;
 	last_cut_year = -1000;
 	const int since = cut_since >= 0 ? cut_since : 2 + int(uint32_t(seed) * 2654435761u % uint32_t(MAX(cut_cycle - 2, 1)));
 	for (int y = 1; y <= years; y++) {
-		if (params[PARAM_BASAL_SPROUTS] > 0.0f && rng.randf() < params[PARAM_BASAL_SPROUTS]) {
+		// A cut tree's sprouts are its poles, from the head or the stool: no more stems from the base.
+		if (params[PARAM_BASAL_SPROUTS] > 0.0f && rng.randf() < params[PARAM_BASAL_SPROUTS] && last_cut < 0) {
 			add_stem_bud(_rand(0.0f, Math::TAU), spread * _rand(0.3f, 1.0f));
 		}
 		_grow_year(y);
@@ -9783,8 +9927,9 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 			// the last cut cut_since years before the end.
 			const float top = _stem_top();
 			if (last_cut < 0 ? (y >= 8 && top > cut_height + 2.0f && y <= years - since) : (y - last_cut >= cut_cycle && y <= years - since)) {
-				_cut_back(last_cut < 0);
+				_cut_back(last_cut < 0, y);
 				last_cut = y;
+				cuts++;
 				last_cut_year = y;
 			}
 		}
@@ -9799,13 +9944,26 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		// head and its knuckles past the stem below; the stem flares into it over its last half
 		// metre.
 		HashSet<int> &head = bolling;
+		// The ramp below a knuckle must not take its stem top first: the top gets its own swell.
+		HashSet<int> heads;
+		for (const int i : cut_heads) {
+			heads.insert(i);
+		}
 		for (const int i : cut_heads) {
 			if (!nodes[i].removed && !head.has(i)) {
 				head.insert(i);
 				// The stem's top swells most, the knuckles and stubs on it less.
-				nodes[i].radius *= nodes[i].order == 0 && nodes[i].parent > 0 && nodes[nodes[i].parent].order == 0 && nodes[i].first_lateral >= 0 ? 1.6f : 1.3f;
+				// Each cut adds its roll of callus: an old pollard's head stands nearly twice the
+				// bole's girth.
+				const bool stem_top = nodes[i].order == 0 && nodes[i].parent > 0 && nodes[nodes[i].parent].order == 0 && nodes[nodes[i].parent].main == i && nodes[i].first_lateral >= 0;
+				const int seat_n = seat_cuts.has(i) ? seat_cuts[i] : 0;
+				nodes[i].radius *= stem_top ? MIN(1.35f + 0.12f * cuts, 1.9f) : MIN(1.2f + 0.06f * seat_n, 1.5f);
+				if (!stem_top && cut_height <= 0.5f && seat_n > 0) {
+					// A stool's lobes: the callus of every cut, fused into a low knobbly mound.
+					nodes[i].radius = MAX(nodes[i].radius, 0.4f * nodes[i].length);
+				}
 				for (int p = nodes[i].parent, k = 0; p > 0 && k < 6 && nodes[i].start.distance_to(nodes[p].end()) < 0.6f; p = nodes[p].parent, k++) {
-					if (!head.has(p)) {
+					if (!head.has(p) && !heads.has(p)) {
 						nodes[p].radius *= Math::lerp(1.3f, 1.05f, nodes[i].start.distance_to(nodes[p].start) / 0.6f);
 						head.insert(p);
 					}
@@ -9839,6 +9997,32 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				}
 			}
 		}
+		// Sprouts grow as laterals from the knuckle's end, and the knuckle itself has no
+		// continuation: it ended in a rounded cap with its thickest pole leaving it as a fork,
+		// which sank the pole's base into a round socket in the cap. The thickest pole is the
+		// knuckle's continuation instead, so the knuckle runs on into it.
+		for (const int i : cut_heads) {
+			Node &kn = nodes[i];
+			if (kn.removed || (kn.main >= 0 && !nodes[kn.main].removed)) {
+				continue;
+			}
+			int best = -1, prev_best = -1;
+			for (int l = kn.first_lateral, prev = -1; l >= 0; prev = l, l = nodes[l].next_sibling) {
+				if (!nodes[l].removed && nodes[l].pole && !cut_stubs.has(l) && (best < 0 || nodes[l].radius > nodes[best].radius)) {
+					best = l;
+					prev_best = prev;
+				}
+			}
+			if (best >= 0) {
+				if (prev_best >= 0) {
+					nodes[prev_best].next_sibling = nodes[best].next_sibling;
+				} else {
+					kn.first_lateral = nodes[best].next_sibling;
+				}
+				nodes[best].next_sibling = -1;
+				kn.main = best;
+			}
+		}
 	}
 	_bend_under_gravity();
 	_prune_collisions();
@@ -9855,6 +10039,34 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 		_apply_decay();
 	} else if (veteran > 0.0f && !fallen && !fallen_branch) {
 		_apply_veteran();
+	}
+	if (decay_class == 0 && !fallen && !fallen_branch && cut_height > 0.5f && cuts > 0) {
+		// A pollard's head is knobbly, not a smooth bulb: each cut's callus rolls over the stubs
+		// and dormant buds as burrs and knuckles (Read 2000), more of them with every cycle. They
+		// ride on the old-tree features' burls (5e), round the head.
+		int stem = veteran_stem;
+		for (int i = 1; i < int(nodes.size()) && stem < 0; i++) {
+			if (!nodes[i].removed && nodes[i].parent == 0) {
+				stem = i;
+			}
+		}
+		if (stem >= 0) {
+			veteran_stem = stem;
+			RandomPCG hr;
+			hr.seed(uint64_t(seed) * 0x9e3779b1u + 0x68656164u);
+			float r_head = 0.0f;
+			for (int i = stem; i >= 0 && !nodes[i].removed; i = nodes[i].main) {
+				r_head = MAX(r_head, nodes[i].radius);
+			}
+			const int knobs = MIN(4 + 2 * cuts, 14);
+			const float az0 = hr.randf() * float(Math::TAU);
+			for (int k = 0; k < knobs; k++) {
+				const float hh = r_head * Math::lerp(0.18f, 0.32f, hr.randf());
+				const float h = cut_height + r_head * Math::lerp(-0.9f, 0.1f, hr.randf());
+				const float az = az0 + float(Math::TAU) * (k + 0.4f * (hr.randf() - 0.5f)) / knobs;
+				veteran_features.push_back({ VET_BURL, h, az, hh, hh * Math::lerp(0.8f, 1.3f, hr.randf()), Math::lerp(0.25f, 0.45f, hr.randf()) });
+			}
+		}
 	}
 	plate.on = false;
 	hanger_bases.clear();
