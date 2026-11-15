@@ -462,6 +462,10 @@ void PhysXRiver3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_roughness", "roughness"), &PhysXRiver3D::set_roughness);
 	ClassDB::bind_method(D_METHOD("get_roughness"), &PhysXRiver3D::get_roughness);
 	ClassDB::bind_method(D_METHOD("set_max_slope", "slope"), &PhysXRiver3D::set_max_slope);
+	ClassDB::bind_method(D_METHOD("set_gradually_varied_flow", "enabled"), &PhysXRiver3D::set_gradually_varied_flow);
+	ClassDB::bind_method(D_METHOD("get_gradually_varied_flow"), &PhysXRiver3D::get_gradually_varied_flow);
+	ClassDB::bind_method(D_METHOD("set_bend_superelevation", "enabled"), &PhysXRiver3D::set_bend_superelevation);
+	ClassDB::bind_method(D_METHOD("get_bend_superelevation"), &PhysXRiver3D::get_bend_superelevation);
 	ClassDB::bind_method(D_METHOD("get_max_slope"), &PhysXRiver3D::get_max_slope);
 	ClassDB::bind_method(D_METHOD("set_snap_to_ground", "snap"), &PhysXRiver3D::set_snap_to_ground);
 	ClassDB::bind_method(D_METHOD("get_snap_to_ground"), &PhysXRiver3D::get_snap_to_ground);
@@ -554,6 +558,8 @@ void PhysXRiver3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "discharge", PROPERTY_HINT_RANGE, "0.01,1000,0.01,or_greater,suffix:m³/s"), "set_discharge", "get_discharge");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.01,0.15,0.001"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_slope", PROPERTY_HINT_RANGE, "0.005,1,0.005,or_greater"), "set_max_slope", "get_max_slope");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "gradually_varied_flow"), "set_gradually_varied_flow", "get_gradually_varied_flow");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "bend_superelevation"), "set_bend_superelevation", "get_bend_superelevation");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.1,30,0.1,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
 	ADD_GROUP("Mouth", "mouth_");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "mouth_target", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D,PhysXRiver3D"), "set_mouth_target", "get_mouth_target");
@@ -606,6 +612,8 @@ RIVER_SETTER(default_width, float, default_width, MAX(p_value, 0.05f))
 RIVER_SETTER(discharge, float, discharge, MAX(p_value, 0.001f))
 RIVER_SETTER(roughness, float, roughness, CLAMP(p_value, 0.005f, 0.5f))
 RIVER_SETTER(max_slope, float, max_slope, MAX(p_value, 0.001f))
+RIVER_SETTER(gradually_varied_flow, bool, gradually_varied_flow, p_value)
+RIVER_SETTER(bend_superelevation, bool, bend_superelevation, p_value)
 RIVER_SETTER(snap_to_ground, bool, snap_to_ground, p_value)
 RIVER_SETTER(ground_collision_mask, uint32_t, ground_collision_mask, p_value)
 RIVER_SETTER(obstacle_collision_mask, uint32_t, obstacle_collision_mask, p_value)
@@ -1522,6 +1530,16 @@ void PhysXRiver3D::_build() {
 			}
 		}
 	}
+	// The ground without obstacles, for the gradually varied profile (the water goes round rocks: the
+	// flow solve's job, not the section's).
+	LocalVector<float> bare_ground;
+	LocalVector<uint8_t> bare_found;
+	bare_ground.resize(ground.size());
+	bare_found.resize(ground_found.size());
+	for (uint32_t k = 0; k < ground.size(); k++) {
+		bare_ground[k] = ground[k];
+		bare_found[k] = ground_found[k];
+	}
 	// Rocks and other obstacles on their own layers stand on the (base or
 	// carved) ground: a carved river measures the uncarved terrain, which has
 	// no rocks in it.
@@ -1687,6 +1705,368 @@ void PhysXRiver3D::_build() {
 			}
 		}
 	}
+	// Gradually varied flow (docs/ideas/water.md "River profile from hydraulics"): the standard step
+	// method (Chow 1959, ch. 10) on the real cross-sections, replacing normal depth. Subcritical water is
+	// stepped up from its downstream control (the mouth's level, or critical depth where the water must
+	// pass it), supercritical water down from its upstream one; where both exist the one with the larger
+	// specific force holds, so a fast reach ends in a hydraulic jump where the momentum of the slower water
+	// below matches it (Belanger's sequent depth). Falls (bed steps steeper than max_slope) break the steps.
+	for (int i = 0; i < count; i++) {
+		sections[i].froude = 0.0f;
+		sections[i].critical = -Math::INF;
+		sections[i].jump = 0.0f;
+		sections[i].jump_foam = 0.0f;
+		sections[i].tilt = 0.0f;
+	}
+	{
+		// Wet area A, top width T, conveyance K and the hydrostatic force term P = integral(d^2 / 2 dn), on
+		// the ground without obstacles.
+		auto bare_depth = [&](int p_i, int p_j, float p_surface) -> float {
+			const int k = p_i * (m + 1) + p_j;
+			if (bare_found[k]) {
+				return p_surface - bare_ground[k];
+			}
+			return depth_at(p_i, p_j, p_surface, p_surface - bed[p_i]);
+		};
+		auto props_one = [&](int p_i, float p_z, float &r_a, float &r_t, float &r_k, float &r_p) {
+			const Section &sec = sections[p_i];
+			const float dn = (sec.width + 2.0f * bank_margin) / m;
+			r_a = r_t = r_k = r_p = 0.0f;
+			for (int j = 0; j <= m; j++) {
+				const float d = bare_depth(p_i, j, p_z);
+				if (d > 0.0f) {
+					const float w = ((j == 0 || j == m) ? 0.5f : 1.0f) * dn;
+					r_a += w * d;
+					r_t += w;
+					r_k += w * Math::pow(d, 5.0f / 3.0f);
+					r_p += w * 0.5f * d * d;
+				}
+			}
+			r_k /= roughness;
+		};
+		// The widest of the sections within a metre (at the same surface height): a short narrowing, a
+		// boulder in the bed, is passed round rather than choking the river.
+		const int reach = MAX(1, (int)Math::round(1.0f / ds));
+		auto props = [&](int p_i, float p_z, float &r_a, float &r_t, float &r_k, float &r_p) {
+			props_one(p_i, p_z, r_a, r_t, r_k, r_p);
+			for (int o = -reach; o <= reach; o++) {
+				const int q = p_i + o;
+				// Not across a step: below a cascade the same level is a deeper section, not this one.
+				if (o == 0 || q < 0 || q >= count || Math::abs(bed[q] - bed[p_i]) > max_slope * Math::abs(o) * ds) {
+					continue;
+				}
+				float a, t, k, p;
+				props_one(q, p_z, a, t, k, p);
+				if (a > r_a) {
+					r_a = a;
+					r_t = t;
+					r_k = k;
+					r_p = p;
+				}
+			}
+		};
+		auto energy = [&](int p_i, float p_z, float &r_sf) -> float {
+			float a, t, k, p;
+			props(p_i, p_z, a, t, k, p);
+			const float q = sections[p_i].discharge;
+			r_sf = k > 1e-9f ? (q / k) * (q / k) : 1.0f;
+			return p_z + (a > 1e-6f ? q * q / (2.0f * GRAVITY * a * a) : 1e3f);
+		};
+		auto momentum = [&](int p_i, float p_z) -> float {
+			float a, t, k, p;
+			props(p_i, p_z, a, t, k, p);
+			const float q = sections[p_i].discharge;
+			return (a > 1e-6f ? q * q / (GRAVITY * a) : 1e6f) + p;
+		};
+		// Which sections the profile owns: on measured ground (or snapped), no given depth, not past the mouth.
+		LocalVector<uint8_t> owned;
+		owned.resize(count);
+		LocalVector<uint8_t> fall_after; // a bed step steeper than max_slope to the next section
+		fall_after.resize(count);
+		for (int i = 0; i < count; i++) {
+			owned[i] = gradually_varied_flow && given_depth[i] <= 0.0f && (bed_found[i] || snap_to_ground) && sections[i].mouth_fade >= 1.0f;
+			fall_after[i] = i + 1 < count && (bed[i] - bed[i + 1]) / ds > max_slope; // a cascade: max_slope's meaning
+		}
+		// Sections on a cascade keep their surface (the falls' own treatment); the profile breaks there.
+		for (int i = 0; i < count; i++) {
+			if (fall_after[i] || (i > 0 && fall_after[i - 1])) {
+				owned[i] = 0;
+			}
+		}
+		auto brink = [&](int p_i) -> bool { // the last section above a cascade
+			return p_i + 1 < count && (fall_after[p_i + 1] || fall_after[p_i]);
+		};
+		// The lowest point of each section's bare ground (the bed under any rock).
+		LocalVector<float> low;
+		low.resize(count);
+		for (int i = 0; i < count; i++) {
+			low[i] = bed[i];
+			for (int j = 0; j <= m; j++) {
+				const int k = i * (m + 1) + j;
+				if (bare_found[k]) {
+					low[i] = MIN(low[i], bare_ground[k]);
+				}
+			}
+		}
+		// Critical surfaces: Q^2 T / (g A^3) = 1.
+		LocalVector<float> zc;
+		zc.resize(count);
+		for (int i = 0; i < count; i++) {
+			const float q = sections[i].discharge;
+			float lo = 0.002f;
+			float hi = 20.0f;
+			for (int it = 0; it < 40; it++) {
+				const float mid = 0.5f * (lo + hi);
+				float a, t, k, p;
+				props(i, low[i] + mid, a, t, k, p);
+				if (a > 1e-6f && q * q * t / (GRAVITY * a * a * a) > 1.0f) {
+					lo = mid;
+				} else {
+					hi = mid;
+				}
+			}
+			zc[i] = low[i] + 0.5f * (lo + hi);
+			sections[i].critical = zc[i];
+		}
+		if (gradually_varied_flow) {
+			// Subcritical, from downstream up. E_i - Sf_i ds / 2 = E_{i+1} + Sf_{i+1} ds / 2 on the deep branch.
+			LocalVector<float> z_sub;
+			LocalVector<uint8_t> control; // the water passes critical depth here
+			z_sub.resize(count);
+			control.resize(count);
+			// Below a steep reach (normal depth under critical) with nothing holding the water up downstream,
+			// there is no slow water to step: only critical stands in (whose specific force any fast water
+			// beats) until the slope eases, where the water passes critical (the control).
+			bool steep_tail = false;
+			for (int i = count - 1; i >= 0; i--) {
+				control[i] = 0;
+				if (!owned[i]) {
+					z_sub[i] = sections[i].surface;
+					steep_tail = false;
+					continue;
+				}
+				if (steep_tail) {
+					z_sub[i] = zc[i];
+					if (sections[i].surface >= zc[i] || brink(i)) {
+						control[i] = 1;
+						steep_tail = false;
+					}
+					continue;
+				}
+				if (brink(i)) {
+					// A free overfall: critical depth just upstream of the lip (Rouse 1936; the brink's own
+					// drawdown to 0.715 y_c is _find_falls'), unless the pool below drowns the step.
+					float tail = -Math::INF;
+					for (int j = i + 1; j < count; j++) {
+						if (owned[j]) {
+							tail = z_sub[j];
+							break;
+						}
+					}
+					z_sub[i] = MAX(zc[i], tail);
+					control[i] = 1;
+					steep_tail = false;
+					continue;
+				}
+				if (i == count - 1 || !owned[i + 1]) {
+					// The end, the edge of the owned reach, or a brink: normal depth (or the level the reach
+					// below holds), never below critical (a brink's own drawdown is _find_falls').
+					z_sub[i] = MAX(i + 1 < count && !owned[i + 1] ? MAX(sections[i].surface, z_sub[i + 1]) : sections[i].surface, zc[i]);
+					control[i] = brink(i) || z_sub[i] <= zc[i] + 1e-4f;
+					steep_tail = !brink(i) && z_sub[i] <= zc[i] + 1e-4f;
+					continue;
+				}
+				float sf_down;
+				const float e_down = energy(i + 1, z_sub[i + 1], sf_down);
+				const float target = e_down + 0.5f * sf_down * ds;
+				auto residual = [&](float p_z) -> float {
+					float sf;
+					const float e = energy(i, p_z, sf);
+					return e - 0.5f * sf * ds - target;
+				};
+				if (residual(zc[i]) >= 0.0f) {
+					z_sub[i] = zc[i]; // no subcritical water carries this: it passes critical here
+					control[i] = 1;
+					continue;
+				}
+				float lo = zc[i];
+				float hi = zc[i] + 1.0f;
+				while (residual(hi) < 0.0f && hi < zc[i] + 40.0f) {
+					hi += 2.0f * (hi - zc[i]);
+				}
+				for (int it = 0; it < 40; it++) {
+					const float mid = 0.5f * (lo + hi);
+					if (residual(mid) < 0.0f) {
+						lo = mid;
+					} else {
+						hi = mid;
+					}
+				}
+				z_sub[i] = 0.5f * (lo + hi);
+			}
+			// Supercritical, from upstream down, chosen where its specific force is the larger.
+			bool alive = false;
+			float z_prev = 0.0f;
+			float fr_prev = 0.0f;
+			for (int i = 0; i < count; i++) {
+				Section &sec = sections[i];
+				if (!owned[i]) {
+					alive = false;
+					continue;
+				}
+				float z_sup = -Math::INF;
+				if (alive) {
+					float sf_up;
+					const float e_up = energy(i - 1, z_prev, sf_up);
+					const float target = e_up - 0.5f * sf_up * ds;
+					auto residual = [&](float p_z) -> float {
+						float sf;
+						const float e = energy(i, p_z, sf);
+						return e + 0.5f * sf * ds - target;
+					};
+					if (residual(zc[i]) <= 0.0f) {
+						float lo = low[i] + 0.002f;
+						float hi = zc[i];
+						for (int it = 0; it < 40; it++) {
+							const float mid = 0.5f * (lo + hi);
+							if (residual(mid) > 0.0f) {
+								lo = mid;
+							} else {
+								hi = mid;
+							}
+						}
+						z_sup = 0.5f * (lo + hi);
+					} else {
+						alive = false; // too little energy to stay fast: it chokes to critical
+					}
+				} else if (i > 0 && !owned[i - 1]) {
+					// The foot of a step: the water arrives fast and shallow. Rand (1955), for a free overfall
+					// onto a floor h below the brink: y1 = 0.54 h (y_c / h)^1.275, which keeps the fraction
+					// E1 / E0 of the energy above the floor; that fraction is applied to this section's shape.
+					int j = i - 1;
+					bool dropped = false;
+					while (j >= 0 && !owned[j]) {
+						dropped = dropped || fall_after[j];
+						j--;
+					}
+					dropped = dropped || (j >= 0 && fall_after[j]);
+					const float h = j >= 0 ? low[j] - low[i] : 0.0f;
+					const float qw = sections[i].discharge / MAX(sections[i].width, 0.5f);
+					const float yc = Math::pow(qw * qw / GRAVITY, 1.0f / 3.0f);
+					// A waterfall (a drop of fall_min_height or more) plunges into the pool it has dug instead:
+					// natural falls scour one, so its foot stays at the pool's level.
+					const bool plunges = fall_min_height > 0.0f && j >= 0 && zc[j] - sections[i].surface >= fall_min_height;
+					if (dropped && h > yc && !plunges) {
+						const float y1 = MAX(0.54f * h * Math::pow(yc / h, 1.275f), 0.01f);
+						const float kept = (y1 + qw * qw / (2.0f * GRAVITY * y1 * y1)) / (h + 1.5f * yc);
+						float sf;
+						const float target = low[i] + kept * (energy(j, zc[j], sf) - low[i]);
+						if (energy(i, zc[i], sf) < target) {
+							float lo = low[i] + 0.002f;
+							float hi = zc[i];
+							for (int it = 0; it < 40; it++) {
+								const float mid = 0.5f * (lo + hi);
+								if (energy(i, mid, sf) > target) {
+									lo = mid;
+								} else {
+									hi = mid;
+								}
+							}
+							z_sup = 0.5f * (lo + hi);
+						}
+					} else if (sections[i].surface < zc[i] - 1e-3f) {
+						z_sup = sections[i].surface; // a steep reach's own inflow: normal depth
+					}
+				} else if (i == 0 && sections[i].surface < zc[i] - 1e-3f) {
+					z_sup = sections[i].surface;
+				}
+				float z = z_sub[i];
+				if (Math::is_finite(z_sup) && z_sup < z_sub[i] - 1e-4f && momentum(i, z_sup) > momentum(i, z_sub[i])) {
+					z = z_sup;
+					alive = true;
+				} else {
+					// The fast water meets slower water whose momentum it cannot push back: a jump.
+					if (alive && fr_prev > 1.0f) {
+						sec.jump = fr_prev;
+					}
+					alive = false;
+				}
+				// Leaving a control (the water passed critical here) into a steep reach: fast water from here.
+				if (!alive && control[i] && i + 1 < count && owned[i + 1] && !brink(i) && sections[i + 1].surface < zc[i + 1]) {
+					alive = true;
+				}
+				if (brink(i)) {
+					alive = false; // the water drops into the pool below: subcritical from there
+				}
+				sec.surface = z;
+				sec.centre.y = z;
+				float a, t, k, p;
+				props(i, z, a, t, k, p);
+				sec.froude = (a > 1e-6f && t > 1e-6f) ? sec.discharge / (a * Math::sqrt(GRAVITY * a / t)) : 0.0f;
+				z_prev = z;
+				fr_prev = sec.froude;
+			}
+			// Through a cascade the surface only falls: a section the passes did not own keeps the original
+			// running-min level, which can sit above a brink the profile drew down to critical.
+			for (int i = 1; i < count; i++) {
+				if (!owned[i] && (fall_after[i] || fall_after[i - 1]) && sections[i].surface > sections[i - 1].surface) {
+					sections[i].surface = MAX(sections[i - 1].surface, low[i] + 0.002f);
+					sections[i].centre.y = sections[i].surface;
+				}
+			}
+			// Cascades from the profile (as above, but a jump steps the surface up, not down).
+			for (int i = 1; i < count; i++) {
+				if (owned[i]) {
+					const float drop = sections[i - 1].surface - sections[i].surface;
+					sections[i].cascade = drop / ds > max_slope && drop > CASCADE_MIN_DROP;
+				}
+			}
+			// A jump's roller: white water over about six sequent depths (Peterka 1958), stronger the higher
+			// Fr1 (an undular jump, Fr1 below about 1.7, has none: Chanson 1995).
+			for (int i = 0; i < count; i++) {
+				const float fr1 = sections[i].jump;
+				if (fr1 <= 0.0f) {
+					continue;
+				}
+				const float y2 = MAX(sections[i].surface - bed[i], 0.05f);
+				const float roller = 6.0f * y2;
+				float f = CLAMP((fr1 - 1.7f) / 2.8f, 0.0f, 1.0f);
+				const float strength = 0.35f + 0.65f * f * f * (3.0f - 2.0f * f);
+				if (fr1 < 1.7f) {
+					continue;
+				}
+				for (int k = i; k < count && sections[k].s - sections[i].s <= roller; k++) {
+					const float u = (sections[k].s - sections[i].s) / MAX(roller, 1e-3f);
+					sections[k].jump_foam = MAX(sections[k].jump_foam, strength * (1.0f - u * u));
+				}
+			}
+		}
+		// Froude where the profile was not stepped.
+		for (int i = 0; i < count; i++) {
+			Section &sec = sections[i];
+			if (sec.froude <= 0.0f) {
+				float a, t, k, p;
+				props(i, sec.surface, a, t, k, p);
+				sec.froude = (a > 1e-6f && t > 1e-6f) ? sec.discharge / (a * Math::sqrt(GRAVITY * a / t)) : 0.0f;
+			}
+		}
+		// Bend superelevation: the surface banks up to the outside of a bend by about U^2 w / (g r) (Chow 1959,
+		// 17-4), here as a tilt U^2 curvature / g across, held to half the mean depth over the half width.
+		if (bend_superelevation) {
+			for (int i = 0; i < count; i++) {
+				Section &sec = sections[i];
+				float a, t, k, p;
+				props(i, sec.surface, a, t, k, p);
+				if (a <= 1e-6f || t <= 1e-6f || sec.mouth_fade < 1.0f) {
+					continue;
+				}
+				const float u = sec.discharge / a;
+				const float half = 0.5f * sec.width + bank_margin;
+				const float limit = 0.5f * (a / t) / MAX(half, 0.1f);
+				sec.tilt = CLAMP(-sec.curvature * u * u / GRAVITY, -limit, limit);
+			}
+		}
+	}
 	_find_falls(space, bed, ds);
 	for (int i = 0; i < count; i++) {
 		const int a = MAX(0, i - half_window);
@@ -1706,7 +2086,7 @@ void PhysXRiver3D::_build() {
 		float area = 0.0f;
 		float wet_width = 0.0f;
 		for (int j = 0; j <= m; j++) {
-			const float d = depth_at(i, j, sec.surface, sec.surface - bed[i]);
+			const float d = depth_at(i, j, sec.surface + sec.tilt * (-half + j * dn), sec.surface - bed[i]);
 			sec.depth[j] = d;
 			const float w = (j == 0 || j == m) ? 0.5f : 1.0f;
 			if (d > 0.0f) {
@@ -1726,11 +2106,13 @@ void PhysXRiver3D::_build() {
 		const float mean_depth = wet_width > 1e-4f ? area / wet_width : 0.0f;
 		const float froude = mean_depth > 1e-3f ? sec.speed / Math::sqrt(GRAVITY * mean_depth) : 0.0f;
 		float source = CLAMP((froude - 0.8f) / 0.8f, 0.0f, 1.0f);
-		source = source * source * (3.0f - 2.0f * source);
+		// Fast water alone is lace, not a sheet: it whitens only where air gets in (a cascade, a plunge,
+		// a jump's roller), so a long supercritical run below a drop keeps its texture.
+		source = 0.4f * source * source * (3.0f - 2.0f * source);
 		if (sec.cascade) {
 			source = 1.0f;
 		}
-		source = MAX(source, sec.plunge);
+		source = MAX(source, MAX(sec.plunge, sec.jump_foam));
 		carried_foam *= Math::exp(-ds / (MAX(sec.speed, 0.1f) * foam_persistence));
 		carried_foam = MAX(carried_foam, source);
 		sec.foam = carried_foam;
@@ -2044,11 +2426,13 @@ void PhysXRiver3D::_solve_flow(float p_ds) {
 				const float speed = Math::sqrt(sec.speed_at[j] * sec.speed_at[j] + sec.across_at[j] * sec.across_at[j]);
 				const float fr = speed / Math::sqrt(GRAVITY * d);
 				float f = CLAMP((fr - 0.8f) / 0.8f, 0.0f, 1.0f);
-				src = f * f * (3.0f - 2.0f * f);
+				// Lace, not a sheet (as past a rock): fast water whitens through only where air is driven
+				// in, at a cascade, a plunge or a jump's roller.
+				src = 0.4f * f * f * (3.0f - 2.0f * f);
 				if (sec.cascade) {
 					src = 1.0f;
 				}
-				src = MAX(src, sec.plunge);
+				src = MAX(src, MAX(sec.plunge, sec.jump_foam));
 				// A rock next to this sample.
 				bool by_rock = false;
 				for (int di = -1; di <= 1 && !by_rock; di++) {
@@ -2129,7 +2513,7 @@ void PhysXRiver3D::_build_mesh() {
 		for (int j = 0; j <= m; j++) {
 			const int k = i * row + j;
 			const float n = -half + 2.0f * half * j / m;
-			verts.set(k, sec.centre + sec.side * n);
+			verts.set(k, sec.centre + sec.side * n + Vector3(0.0f, sec.tilt * n, 0.0f));
 			uvs.set(k, Vector2(sec.s, n));
 			const Vector3 v = tangent * sec.speed_at[j] + sec.side * sec.across_at[j];
 			uv2s.set(k, Vector2(v.x, v.z));
@@ -2744,7 +3128,7 @@ float PhysXRiver3D::sample_height(const Vector3 &p_world_pos) const {
 	if (d <= 0.0f) {
 		return -Math::INF;
 	}
-	const float local_y = Math::lerp(sections[i].surface, sections[i + 1].surface, t);
+	const float local_y = Math::lerp(sections[i].surface + sections[i].tilt * n, sections[i + 1].surface + sections[i + 1].tilt * n, t);
 	const Transform3D xf = get_global_transform();
 	const Vector3 local = xf.affine_inverse().xform(p_world_pos);
 	return xf.xform(Vector3(local.x, local_y, local.z)).y + _live_height_at(p_world_pos);
@@ -2795,6 +3179,10 @@ Dictionary PhysXRiver3D::get_section(int p_index) const {
 	d["speed"] = sec.speed;
 	d["foam"] = sec.foam;
 	d["cascade"] = sec.cascade;
+	d["froude"] = sec.froude;
+	d["critical_height"] = Math::is_finite(sec.critical) ? xf.xform(Vector3(sec.centre.x, sec.critical, sec.centre.z)).y : -Math::INF;
+	d["jump"] = sec.jump;
+	d["superelevation"] = sec.tilt * (sec.width + 2.0f * bank_margin);
 	d["under_fall"] = sec.fall_drop;
 	d["plunge"] = sec.plunge;
 	PackedFloat32Array depth;

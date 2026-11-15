@@ -2658,3 +2658,55 @@ waterline (where the run-up reached) and dry beyond; river `--live --contact`: t
 round the rocks.
 Known limit: the wet map is 2D, so anything at that spot is wetted whatever its height (a bridge over a
 shallow river bank).
+
+## River profile from hydraulics (15 Nov, Fab idea 1 stage 1)
+
+Paulo's pick "All four ideas to water", first item; references in
+[water-river-hydraulics-reference.md](water-river-hydraulics-reference.md). Until now the river's
+surface was a running normal depth (Manning per section, then a running minimum down the river), so
+it never pooled behind a bump, never drew down before a step, and could not jump.
+
+### Built: `gradually_varied_flow`, `bend_superelevation` (both on)
+
+- **Standard step method** (Chow 1959 ch. 10). Energy `E = z + Q²/(2gA²)`, friction slope
+  `Sf = (Q/K)²` with Manning conveyance, averaged over each half-metre step. Sections are measured on
+  the bare ground (rocks are obstacles, not the channel), each taking the widest section within
+  ±1 m at the same absolute height but never across a step, so one narrow section cannot choke the
+  river.
+- **Two passes.** Subcritical from each downstream control upstream; supercritical from each
+  upstream control down. Where both exist the one with the larger specific force
+  `M = Q²/(gA) + ∫d²/2 dn` wins; where fast water gives way to slow, that section is a hydraulic
+  jump's toe, recorded with its upstream Froude number. The sequent depth comes out of the momentum
+  balance itself (Bélanger), not a formula.
+- **Controls.** Critical depth (found by bisection on `Q²T/(gA³) = 1`) at the brink of every step
+  and fall, unless the pool below drowns it; the existing brink drawdown (0.715 y_c, Rouse 1936)
+  still finishes the lip. Through a cascade's own sections the surface only falls.
+- **Foot of a step** (under `fall_min_height`): the water lands fast and shallow, at Rand's (1955)
+  depth for a free overfall, `y1 = 0.54 h (y_c/h)^1.275`, kept as an energy fraction so it fits the
+  real section. It runs on until the tailwater's momentum holds it, then jumps. A waterfall at or
+  over `fall_min_height` plunges into the pool it has scoured instead (natural falls dig one), so
+  its foot keeps the pool level.
+- **Jump roller.** Fr1 ≥ 1.7: white water over about 6 sequent depths (Peterka 1958), stronger the
+  higher Fr1. Below 1.7 the jump is undular (Chanson 1995): no roller; its undulations are stage 2.
+- **Supercritical lace.** Fast water alone now foams to at most 0.4 (lace, as past a rock) instead
+  of a solid sheet; cascades, plunges and rollers stay fully white. A long fast reach keeps its
+  texture.
+- **Bend superelevation.** Surface tilt across each section `-curvature · U²/g` (Chow 17-4), held
+  to half the mean depth over the half width. Mesh, `sample_height` and the depth across all use it.
+- `get_section` adds `froude`, `critical_height`, `jump`, `superelevation`.
+
+### Results (river bench, raster)
+
+- Default river: the mild upper reach is unchanged within a few cm; the 1.2 m step now draws down
+  to critical over its last 2 m, leaves as a small free fall, and lands as Fr 3 water that runs
+  12 m before a Fr1 1.6 jump (tailwater shallower than the sequent depth: a repelled jump, as on a
+  real drop structure). `--view=jump` shows it side on.
+- Low roughness (`--river=roughness:0.012`, supercritical everywhere): no false jumps; the fast
+  reach is lace, not a white sheet.
+- `--falls`: the 6 m fall and its pool are unchanged.
+- Cost: bake only (once per rebuild, never per frame): the bench river's rebuild goes from 15.5 ms
+  to 33.8 ms on the cloud CPU, the bisections on the real sections being most of it.
+
+Next (stage 2, shader): standing waves `U² = (g/k) tanh(kh)` over bed features, undular jump
+waves for Fr1 1–1.7, cross-waves at `sin β = 1/Fr` from bank changes, and a Froude/regime debug
+overlay.
