@@ -44,5 +44,6 @@ summary: "Clearcoat, back lighting, thin-glass transmission, subsurface scatteri
 - Textures filter like raster (ray cones, anisotropic).
 - Even, tinted glass shadows.
 - `sun_visibility(world_position)` in spatial shaders returns the sun's shadow and cloud shadow at any point, as a 0 to 1 colour (raster, Forward+ and Mobile).
+- `sun_direction()` in spatial shaders gives the sun's world-space direction, and the fragment output `SUN_SHADOW` multiplies the sun's shadow (raster, Forward+ and Mobile).
 - `OPAQUE_PREPASS_THRESHOLD` in `fragment()` picks which fragments of a `depth_prepass_alpha` material write depth (default 0.99), in all three renderers.
 - Back-face normals in `vertex()`; `IN_SHADOW_PASS` in custom shaders; `SPECULAR_NORMAL` output, a separate normal for the specular lobe under path tracing.

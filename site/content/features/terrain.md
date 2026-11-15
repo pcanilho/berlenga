@@ -139,7 +139,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
 - **Rock detail** (`rock_detail_enabled`, off by default): steep rock shows bedding planes and joints, and scree and till show loose stones, with no textures and no stretching on any face.
 
-- **Cliff relief** (Landscape3D `cliff_relief`, metres, off by default): steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too.
+- **Cliff relief** (Landscape3D `cliff_relief`, metres, off by default): steep faces near the camera are refined without cracks and displaced into real bed ledges and joint blocks, path traced too. In raster, ledges shadow each other per pixel where the shadow map is too coarse (TerrainMaterial3D `cliff_self_shadow`, off by default).
 
   ![A cliff face in raking sun, smooth and with cliff relief, raster](media/terrain-cliff-relief.jpg)
 
