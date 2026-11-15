@@ -862,15 +862,30 @@ management).
   growth model cuts the tree back during its years. The first cut, once the stem stands 2 m over
   `cut_height` (and from year 8), takes each stem (coppice, `cut_height` up to 0.5 m) or the
   thickest (pollard) at that height, clears the bole below, and sets 3-6 (stool) or 6-12 (head)
-  short knuckles round the cut. Every `cut_cycle` years each pole grown since goes back to a
-  5 cm stub; one or two sprouts break from each stub, 15-40 degrees off vertical on a stool,
-  20-55 on a head. The last cut is `cut_since` years before the end (-1: within the last cycle).
+  short knuckles round the cut. Every `cut_cycle` years each pole grown since is sawn off 3-10 cm
+  from its knuckle, and one or two new sprouts break from round the cut on the knuckle (not from
+  the stub), 15-40 degrees off vertical on a stool, 20-55 on a head. Each cut builds the knuckle
+  out a little (a stool's by about a centimetre a year, up to 45 cm: old stools are rings of
+  lobes a metre across). Stubs end in a flat sawn face (surface "wood": rings, pale when fresh,
+  grey and dark-hearted with age) and rot off after two cycles. The last cut is `cut_since` years
+  before the end (-1: within the last cycle).
 - **Poles.** A resprout's first four years get 1.6 times the vigor and twice the yearly length
   cap (coppice shoots make 1-3 m a year): straight poles of one age; after that they grow on as
   ordinary limbs, so a lapsed pollard's poles become a crown.
-- **Head.** At the end the head's nodes swell (the stem's top 1.6 times, knuckles and stubs 1.3,
-  the stem flaring over its last half metre), end full-girth in their callus knob, and the
-  knuckles reach out to the swollen head's surface carrying their stubs and poles.
+- **Head.** At the end the head's nodes swell (the stem's top 1.35 times plus 0.12 per cut, up to
+  1.9; knuckles 1.2 plus 0.06 per cut; the stem flaring over its last half metre), end full-girth
+  in their callus knob, and the knuckles reach out to the swollen head's surface carrying their
+  stubs and poles. Each knuckle runs on into its thickest pole. A pollard head carries 4 plus 2
+  per cut (up to 14) burrs round it (the old-tree burls of 5e); a stool's lobes are at least
+  0.4 of their length thick, fused into a low mound.
+- **Fixed after the first docs shots (15 Nov).** Later cuts used to leave a stub and sprout from
+  its tip, so cut after cut stacked swollen stubs into stepped "telescopes" with dark lips under
+  them; the poles left their knuckle as forks from a capped end and sat in round sockets; the
+  head's own swell was skipped (the ramp below a knuckle claimed the stem top first); basal
+  sprouts kept coming after the first cut and grew into big uncut stems on a stool; the foot
+  moss sleeve wrapped the whole stool. Smooth bark (beech, hazel, hornbeam) now carries fine
+  crossways creases and stronger mottling. Bench: `--pollards` (willow pollard, lapsed beech
+  pollard, hazel stool in winter grass).
 - **Cost.** A cut tree is smaller than an uncut one of the same age: willow pollard (cut every
   10 years) 1.1M bark and 1.3M leaf triangles against 5.7M and 8.0M uncut; generation 1.3 s
   against 5.3 s. Hazel coppice regrown 6 years: 91k bark.

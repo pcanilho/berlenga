@@ -13,7 +13,7 @@ extends Node3D
 #   --stand-ins           with --world: the old grey spheres at the rockfall blocks instead of the field (before shots)
 #   --no-rocks            with --world: no rocks at all
 #   --out=path.png        render and quit (path traced unless --raster); --spp=N (16); --size=WxH
-#   --cam=x,y,z --look=x,y,z   a fixed camera
+#   --cam=x,y,z --look=x,y,z   a fixed camera; --sun=elevation,yaw (degrees)
 #   --plants[=off]        with --world: the crevice plants of the view's stones (PlantGenerator.make_stones: scree,
 #                         river or shore; VegetationField3D.obstacles from the field); =off places them hidden (before
 #                         shots, same camera); --dist=m sets the camera's distance from the spot
@@ -42,6 +42,8 @@ func _ready() -> void:
 	raster = args.has("raster")
 	spp = int(args.get("spp", "16"))
 	out = args.get("out", "")
+	if args.has("no-lod"):
+		get_viewport().mesh_lod_threshold = 0.0
 	if args.has("size"):
 		var s: PackedStringArray = args["size"].split("x")
 		get_window().size = Vector2i(int(s[0]), int(s[1]))
@@ -67,6 +69,12 @@ func _ready() -> void:
 		var l: PackedStringArray = args.get("look", "0,0,0").split(",")
 		cam.position = Vector3(float(c[0]), float(c[1]), float(c[2]))
 		cam.look_at(Vector3(float(l[0]), float(l[1]), float(l[2])))
+	if args.has("sun"):
+		# --sun=elevation,yaw in degrees (a low grazing sun shows relief)
+		var sv: PackedStringArray = args["sun"].split(",")
+		for n in get_children():
+			if n is DirectionalLight3D:
+				(n as DirectionalLight3D).rotation_degrees = Vector3(-float(sv[0]), float(sv[1]) if sv.size() > 1 else -50.0, 0)
 	if out != "":
 		_render_later()
 
@@ -110,6 +118,7 @@ func _rock(type: int, family: int, seed: int) -> ArrayMesh:
 	if args.has("weathering"):
 		g.weathering = float(args["weathering"])
 	g.simplify = not args.has("no-simplify")
+	g.close_up = args.has("close-up")
 	return g.generate()
 
 
@@ -159,15 +168,16 @@ func _families() -> void:
 		["granite", "rockfall", 1.3, Vector3(-2.5, 0, 0), 0.5],
 		["granite", "glacial", 1.7, Vector3(0.1, 0, -0.2), 2.4],
 		["sandstone", "cliff_block", 1.3, Vector3(2.8, 0, 0), 0.25],
-		["limestone", "scree", 0.32, Vector3(-1.1, 0, 2.3), 0.9],
-		["basalt", "cobble", 0.22, Vector3(-0.1, 0, 2.5), 2.0],
-		["slate", "pebble", 0.07, Vector3(0.65, 0, 2.7), 0.4],
+		# The small three close to the camera, so a 7 cm pebble still reads.
+		["basalt", "scree", 0.32, Vector3(-0.6, 0, 3.7), 0.9],
+		["limestone", "cobble", 0.22, Vector3(0.0, 0, 3.85), 2.0],
+		["slate", "pebble", 0.07, Vector3(0.62, 0, 4.6), 0.4],
 	]
 	for r in rows:
 		var m := _rock(TYPES.find(r[0]), FAMILIES.find(r[1]), sd)
 		_place_mesh(m, r[2], r[3], r[4])
-	cam.position = Vector3(0.1, 1.25, 6.2)
-	cam.look_at(Vector3(0.1, 0.45, 0.9))
+	cam.position = Vector3(0.05, 0.95, 6.0)
+	cam.look_at(Vector3(0.05, 0.3, 2.0))
 
 
 func _one_rock() -> void:
@@ -250,11 +260,6 @@ func _world() -> void:
 		add_child(rocks)
 		rocks.generator = rocks.get_path_to(gen)
 		rocks.follow_target = rocks.get_path_to(focus)
-		if args.has("plants"):
-			# Hulls on every stone near the spot, for measuring their tops (_stone_caps).
-			rocks.collision_enabled = true
-			rocks.collision_min_size = 0.0
-			rocks.collision_radius = 40.0
 	var view: String = args.get("view", "scree")
 	var spot := _densest(LAYERS.find(view)) if rocks else Vector3(0, 0, 0)
 	spot.y = gen.get_height(spot)
@@ -304,10 +309,21 @@ func _crevice_plants(spot: Vector3, view: String, land: Landscape3D) -> void:
 	veg.populate_on_ready = false
 	veg.biome = biome
 	veg.obstacles = rocks.get_obstacles(Rect2(spot.x - 32.0, spot.z - 32.0, 64.0, 64.0), 0.0)
-	# Moss cushions on the stones' tops, measured on the stones' hulls once physics has them.
-	await get_tree().physics_frame
-	await get_tree().physics_frame
-	_stone_caps(veg, Rect2(spot.x - 32.0, spot.z - 32.0, 64.0, 64.0))
+	# Moss cushions on the stones' tops: each stone's flat cap from its shape (RockField3D.get_stone_caps).
+	var tops := PackedVector4Array()
+	var normals := PackedVector3Array()
+	for layer in LAYERS.size():
+		if LAYERS[layer] == "cliff":
+			continue
+		for cap in rocks.get_stone_caps(layer, Rect2(spot.x - 32.0, spot.z - 32.0, 64.0, 64.0), float(args.get("cap-tol", "0.03"))):
+			var n: Vector3 = cap["cap_normal"]
+			var r := float(cap["cap_radius"])
+			if r >= 0.05 and n.y >= 0.6:
+				var cp: Vector3 = cap["cap_point"]
+				tops.append(Vector4(cp.x, cp.y, cp.z, r * 0.85))
+				normals.append(n)
+	veg.stone_tops = tops
+	veg.stone_top_normals = normals
 	add_child(veg)
 	veg.data_map = veg.get_path_to(dm)
 	veg.populate()
@@ -317,52 +333,6 @@ func _crevice_plants(spot: Vector3, view: String, land: Landscape3D) -> void:
 	veg.visible = args["plants"] != "off"
 	print("crevice plants (%s): %d obstacles, %d stone caps, per species %s, %d ms" % [view, veg.obstacles.size(), veg.stone_tops.size(), str(counts), Time.get_ticks_msec() - t0])
 	plants_ready = true
-
-
-# Each stone's cap: a ray down onto its hull at the stone's centre gives the point and normal; the cap
-# then widens while rays round it stay on that plane within a centimetre (VegetationField3D.stone_top_normals).
-func _stone_caps(veg: VegetationField3D, rect: Rect2) -> void:
-	var space := get_world_3d().direct_space_state
-	var tops := PackedVector4Array()
-	var normals := PackedVector3Array()
-	var ray := func(x: float, z: float, y0: float, y1: float) -> Dictionary:
-		return space.intersect_ray(PhysicsRayQueryParameters3D.create(Vector3(x, y0, z), Vector3(x, y1, z)))
-	for layer in LAYERS.size():
-		if LAYERS[layer] == "cliff":
-			continue
-		for st in rocks.get_stones(layer, rect):
-			var pos: Vector3 = st["position"]
-			var top := float(st["top"])
-			var hit: Dictionary = ray.call(pos.x, pos.z, top + 0.2, float(st["ground"]) - 0.05)
-			if hit.is_empty():
-				continue
-			var p: Vector3 = hit["position"]
-			var n: Vector3 = hit["normal"]
-			if n.y < 0.6:
-				continue
-			var reach := float(st["footprint"]) * 0.6
-			var r := 0.0
-			var step := 0.04
-			while r + step <= reach:
-				var rs := r + step
-				var flat := true
-				for k in 8:
-					var a := TAU * k / 8.0
-					var x := p.x + cos(a) * rs
-					var z := p.z + sin(a) * rs
-					var plane_y := p.y - (n.x * (x - p.x) + n.z * (z - p.z)) / n.y
-					var h: Dictionary = ray.call(x, z, plane_y + 0.2, plane_y - 0.2)
-					if h.is_empty() or absf((h["position"] as Vector3).y - plane_y) > 0.012 or (h["normal"] as Vector3).y < 0.5:
-						flat = false
-						break
-				if not flat:
-					break
-				r = rs
-			if r >= 0.06:
-				tops.append(Vector4(p.x, p.y, p.z, r * 0.85))
-				normals.append(n)
-	veg.stone_tops = tops
-	veg.stone_top_normals = normals
 
 
 func _sunlit(p: Vector3) -> bool:
@@ -565,9 +535,28 @@ func _test() -> void:
 			if (a["position"] as Vector3).distance_to(b["position"]) < rr * 0.6:
 				overlaps += 1
 	check(overlaps <= scree.size() / 50, "scree packs: %d deep overlaps in %d stones" % [overlaps, scree.size()])
+	# Stone caps (where moss and snow settle) from the shapes themselves: on the stone, at its top, facing up.
+	var tc := Time.get_ticks_msec()
+	var caps: Array = rocks.get_stone_caps(RockField3D.LAYER_SCREE, Rect2(scree_at.x - 16, scree_at.z - 16, 32, 32))
+	var bad_caps := 0
+	var usable := 0
+	var radii := 0.0
+	for c in caps:
+		var cp: Vector3 = c["cap_point"]
+		var cn: Vector3 = c["cap_normal"]
+		var sc: float = c["scale"]
+		if cp.y > float(c["top"]) + 0.01 or cp.y < float(c["ground"]) - 0.2 * sc or cn.y < 0.65 or float(c["cap_radius"]) > 2.5 * sc:
+			bad_caps += 1
+		radii += float(c["cap_radius"]) / sc
+		if float(c["cap_radius"]) >= 0.06:
+			usable += 1
+	check(caps.size() > 0 and bad_caps <= caps.size() / 100 and usable > caps.size() / 2, "stone caps: %d stones, %d off their tops or tilted past 50 degrees, %d with a flat radius of 6 cm or more, mean flat radius %.2f of the half size (%d ms)" % [caps.size(), bad_caps, usable, radii / maxf(caps.size(), 1), Time.get_ticks_msec() - tc])
 	var t1 := Time.get_ticks_msec()
 	var obs: PackedVector4Array = rocks.get_obstacles(Rect2(scree_at.x - 128, scree_at.z - 128, 256, 256), 0.25)
 	check(obs.size() > 0, "obstacles for the plant fields: %d stones of 25 cm and more in 256 m round the scree (%d ms)" % [obs.size(), Time.get_ticks_msec() - t1])
+	var t2 := Time.get_ticks_msec()
+	var obs2: PackedVector4Array = rocks.get_obstacles(Rect2(scree_at.x - 128, scree_at.z - 128, 256, 256), 0.25)
+	check(obs2 == obs and Time.get_ticks_msec() - t2 < 100, "obstacles again from the cache: same %d stones in %d ms" % [obs2.size(), Time.get_ticks_msec() - t2])
 	var rivers: Array = rocks.get_stones(RockField3D.LAYER_RIVER, wr)
 	var rounder := 0
 	for s in rivers:
@@ -580,31 +569,43 @@ func _test() -> void:
 	var cells := rocks.build_area(Rect2(scree_at.x - 160, scree_at.z - 160, 320, 320))
 	var build_ms := Time.get_ticks_msec() - tb
 	var meshes := {}
+	var close_meshes := {}
 	var instances := 0
 	var bodies := 0
 	var shapes := 0
 	for n in rocks.get_children(true):
-		if n is MultiMeshInstance3D:
+		if n is MultiMeshInstance3D and n.has_meta("rock_close_up"):
+			var cm: Mesh = (n as MultiMeshInstance3D).multimesh.mesh
+			close_meshes[cm.get_rid()] = cm
+		elif n is MultiMeshInstance3D:
 			var mm: MultiMesh = (n as MultiMeshInstance3D).multimesh
 			instances += mm.instance_count
 			meshes[mm.mesh.get_rid()] = mm.mesh
 		elif n is StaticBody3D:
 			bodies += 1
 			shapes += n.get_child_count()
-	var mesh_bytes := 0
-	for k in meshes:
-		var m: Mesh = meshes[k]
-		for si in m.get_surface_count():
-			# What the renderer holds: vertex, attribute and index buffers and every LOD's indices.
-			var d: Dictionary = RenderingServer.mesh_get_surface(m.get_rid(), si)
-			for key in ["vertex_data", "attribute_data", "skin_data", "index_data"]:
-				if d.has(key):
-					mesh_bytes += (d[key] as PackedByteArray).size()
-			for lod in d.get("lods", []):
-				mesh_bytes += (lod["index_data"] as PackedByteArray).size()
+	var mesh_bytes := _mesh_bytes(meshes)
+	var close_bytes := _mesh_bytes(close_meshes)
 	var inst_bytes := instances * (48 + 16)
 	print("cost: %d cells, %d stones, %d shapes, %.1f MB shapes (LOD0 %d triangles), %.1f MB instances, %d collision bodies / %d hulls, built in %d ms" % [cells, instances, meshes.size(), mesh_bytes / 1048576.0, rocks.get_library_triangle_count(), inst_bytes / 1048576.0, bodies, shapes, build_ms])
 	check(shapes > 0, "collision hulls near the follow target: %d" % shapes)
+	# Close-up shapes for the stones within close_up_radius of the follow target.
+	check(rocks.get_close_up_shape_count() > 0, "close-up shapes near the follow target: %d shapes, %d triangles, %.1f MB" % [rocks.get_close_up_shape_count(), rocks.get_close_up_triangle_count(), close_bytes / 1048576.0])
+
+
+# What the renderer holds for these meshes: vertex, attribute and index buffers and every LOD's indices.
+func _mesh_bytes(meshes: Dictionary) -> int:
+	var bytes := 0
+	for k in meshes:
+		var m: Mesh = meshes[k]
+		for si in m.get_surface_count():
+			var d: Dictionary = RenderingServer.mesh_get_surface(m.get_rid(), si)
+			for key in ["vertex_data", "attribute_data", "skin_data", "index_data"]:
+				if d.has(key):
+					bytes += (d[key] as PackedByteArray).size()
+			for lod in d.get("lods", []):
+				bytes += (lod["index_data"] as PackedByteArray).size()
+	return bytes
 
 
 func _render_later() -> void:

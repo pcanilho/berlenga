@@ -839,7 +839,9 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// Crevice plants: only in the fine soil caught between stones (PlantSpecies.stone_gap).
 					if (suit > 0.0f && sp->get_stone_gap() > 0.0f) {
 						const float gap_reach = 6.0f * PlantSpecies::STONE_GAP_REACH;
-						suit *= sp->stone_gap_weight(p_setup.obstacles.is_empty() ? 1e6f : p_setup.obstacles.second_clearance(xz, gap_reach));
+						float first = 1e6f;
+						const float second = p_setup.obstacles.is_empty() ? 1e6f : p_setup.obstacles.second_clearance(xz, gap_reach, &first);
+						suit *= sp->stone_gap_weight(first, second);
 					}
 					const float keep = sp->get_density() * suit;
 					if (rank >= keep) {
@@ -893,14 +895,28 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (canopy_r <= 0.0f && !is_log && !on_log && !on_top && ps.spread > 0.0f && !p_setup.obstacles.is_empty()) {
 						const float reach = ps.spread * scale;
 						const float c = p_setup.obstacles.clearance(xz, reach, &rock_away);
-						if (c + ROCK_OVERHANG < reach) {
-							rock_fit = (c + ROCK_OVERHANG) / reach;
+						// Crevice plants arch their leaves out over the stones they root between.
+						const float overhang = ROCK_OVERHANG + CREVICE_OVERHANG * sp->get_stone_gap();
+						if (c + overhang < reach) {
+							rock_fit = (c + overhang) / reach;
 							if (rock_fit < ROCK_FIT_MIN) {
 								// Crevice plants live pressed between stones: the smallest fit, not none.
 								if (sp->get_stone_gap() <= 0.0f) {
 									continue;
 								}
 								rock_fit = ROCK_FIT_MIN;
+							}
+						}
+					}
+					// On a stone top: the plant stays on its cap, a cushion only a little over the rim
+					// (STONE_TOP_OVERHANG); smaller to fit, or none where even ROCK_FIT_MIN of it would not.
+					if (on_top && ps.spread > 0.0f) {
+						const float room = float(top_cap.w) - Vector2(xz.x - float(top_cap.x), xz.y - float(top_cap.z)).length() + STONE_TOP_OVERHANG;
+						const float reach = ps.spread * scale;
+						if (room < reach) {
+							rock_fit = room / reach;
+							if (rock_fit < ROCK_FIT_MIN) {
+								continue;
 							}
 						}
 					}
@@ -964,7 +980,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 						const Vector3 lean_axis = Vector3(0, 1, 0).cross(Vector3(margin_out.x, 0.0f, margin_out.y)).normalized();
 						b = Basis(lean_axis, Math::deg_to_rad(sp->get_margin_lean()) * margin) * b;
 					}
-					if (rock_fit < 1.0f) {
+					if (rock_fit < 1.0f && !on_top) {
 						const Vector3 lean_axis = Vector3(0, 1, 0).cross(Vector3(rock_away.x, 0.0f, rock_away.y)).normalized();
 						b = Basis(lean_axis, Math::deg_to_rad(ROCK_LEAN_DEG) * (1.0f - rock_fit) / (1.0f - ROCK_FIT_MIN)) * b;
 					}

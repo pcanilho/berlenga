@@ -1,1 +1,0 @@
-- Water: `PhysXWaterSurface3D.contact_wetness`, `PhysXRiver3D.contact_wetness`. Sand, rocks, plants and props stay wet up to where the waves ran or the river reached, and dry with the weather.

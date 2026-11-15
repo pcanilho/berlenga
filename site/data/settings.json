@@ -1116,7 +1116,20 @@
     "weathering"
    ],
    "note": "",
-   "what": "rocks and stones as real geometry, broken along each rock type's joints, rounded by transport and weathered by rock type; granite, limestone, sandstone, basalt and slate.",
+   "what": "rocks and stones as real geometry, broken along each rock type's joints, rounded by transport and weathered by rock type; joint sets at varying angles, stepped fracture faces and broken corners on fallen blocks; granite, limestone, sandstone, basalt and slate.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
+   "name": "Close-up detail",
+   "settings": [
+    "RockField3D",
+    "close_up_enabled",
+    "close_up_radius"
+   ],
+   "note": "",
+   "what": "stones near the camera get real geometry for their grain: crystals, weathering pits, hairline cracks, spalled flakes and stepped fresh breaks, so the outline breaks too.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Shapes"
@@ -1265,6 +1278,17 @@
    ],
    "note": "",
    "what": "above 9 m/s of wind, breaking crests throw puffs of spume downwind; above 14 m/s, gale foam lies in thin broken streaks along the wind.",
+   "page": "water",
+   "title": "Water",
+   "topic": "Sea and lakes"
+  },
+  {
+   "name": "Ocean detail",
+   "settings": [
+    "detail_waves"
+   ],
+   "note": "",
+   "what": "short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
@@ -1974,6 +1998,19 @@
    ],
    "note": "",
    "what": "ten stand types, from beech, oak-lime, riparian alder and subalpine larch to North American northern hardwood and pine-hemlock. Each places canopy trees, trees in the gaps, saplings, shrubs under their shade and deadwood, and overlapping stands blend at their edges.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Growth"
+  },
+  {
+   "name": "Pollards and coppice",
+   "settings": [
+    "cut_height",
+    "cut_cycle",
+    "cut_since"
+   ],
+   "note": "",
+   "what": "trees cut back on a cycle regrow straight poles from a swollen head or a ground stool; lapsed pollards carry big limbs.",
    "page": "trees",
    "title": "Trees",
    "topic": "Growth"

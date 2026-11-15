@@ -7,11 +7,17 @@ summary: "Rocks and stones as geometry, broken along each rock type's joints and
 
 ## Shapes
 
-- **Rock generator** (`RockGenerator`: `rock_type`, `family`, `transport_distance`, `weathering`): rocks and stones as real geometry, broken along each rock type's joints, rounded by transport and weathered by rock type; granite, limestone, sandstone, basalt and slate.
+- **Rock generator** (`RockGenerator`: `rock_type`, `family`, `transport_distance`, `weathering`): rocks and stones as real geometry, broken along each rock type's joints, rounded by transport and weathered by rock type; joint sets at varying angles, stepped fracture faces and broken corners on fallen blocks; granite, limestone, sandstone, basalt and slate.
 
   ![Thirty generated rocks in five rows of rock type and six columns of family, raster](media/rocks-gallery.jpg)
 
   *Rock generator: one rock type per row and one family per column, from sharp fresh fragments to rounded cobbles and pebbles.*
+
+- **Close-up detail** (`RockField3D`: `close_up_enabled`, `close_up_radius`): stones near the camera get real geometry for their grain: crystals, weathering pits, hairline cracks, spalled flakes and stepped fresh breaks, so the outline breaks too.
+
+  ![A granite block's face at about 1 m in low sun, base shape and close-up shape, raster](media/rocks-closeup.jpg)
+
+  *Close-up detail: the same granite face gains pits, hairline cracks and a broken top edge.*
 
 ## Placement
 

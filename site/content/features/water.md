@@ -2,7 +2,7 @@
 title: "Water"
 weight: 60
 group: "World"
-summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white water, rivers and waterfalls, shore waves, camera under water."
+summary: "Refraction, murky water, caustics, ocean and storm seas, currents, boat wakes, white water, rivers and waterfalls, live water that floods and drains, shore waves, camera under water."
 ---
 
 ## Light in water
@@ -65,6 +65,8 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
   ![Storm sea at 20 m/s looking downwind, without and with storm spray, raster](media/water-storm-seas.jpg)
 
   *Storm seas: at 20 m/s spume blows off the far crests and foam lies in broken streaks along the wind.*
+
+- **Ocean detail** (`detail_waves`, on): short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.
 
 - **Lake ripples** (automatic from `fetch`): on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.
 

@@ -174,6 +174,48 @@ Open: GPU frame and trace cost on the open-world bench (PC queue); river stones 
 roundness bin because the bench rivers are short; vegetation reading the stone list is the vegetation
 thread's pick.
 
+## Round 2 (15 Nov, evening)
+
+Close-up detail as geometry: `RockGenerator.close_up` builds the same stone (same flow on the base coarse grid,
+same centimetre marks sized by the base cell) on a grid of about 3 mm cells at the family's typical size (capped
+at 300 cells), with the rock's millimetre fabric carved into the distance field: granite crystals (Worley cells
+of 2 cm, feldspar proud, quartz lower, etched boundaries, grus), sandstone laminae of 1.2 cm, limestone
+rillenkarren running down the upper faces and micropits, basalt vesicles, slate cleavage steps, conchoidal
+ripples on fresh breaks, glacial striae at least eight cells apart and discontinuous. Features under three cells
+fade out instead of aliasing. `RockField3D.close_up_*`: stones within 8 m of the follow target swap to the
+close-up shape (built on worker threads, two at a time, base instance collapsed meanwhile; at most 12 shapes
+kept, the stale ones dropped after 30 s; no LODs; not for cobbles and pebbles). Bench: 6 shapes, 400k
+triangles, 9.8 MB. Path traced and raster agree at 100% crop: the relief is geometry, so the BLAS has it.
+Shader specks are cellular grains (Worley 1996), irregular polygons, with a glassier middle third (quartz).
+
+Silhouettes: the two cross joint sets meet at 60 to 90 degrees (more spread on fresh fragments), 35% of fresh
+and wall-block faces carry an en echelon step mid-face, corner cuts are three times as many on rockfall and
+scree. The grid is sized by probing the planes' intersection, as acute corners reached past the old a, c, 1 box
+and the mesh was cut open there (a glacial boulder rendered as an open shell).
+
+`get_stones()["top"]` is the hull's support straight up (the box of the axes floated moss on tilted stones).
+`get_stone_caps(layer, rect, tolerance = 0.01)` adds `cap_point`, `cap_normal`, `cap_radius` from surface
+samples of the library mesh (one per 0.06 units): the up-facing samples round the highest one, and the radius
+out to which the up-facing surface stays within the tolerance of that plane. 1282 scree stones in 65 ms.
+
+`get_obstacles` keeps each placement cell's obstacles (16 bytes a stone) until `rebuild()`: 12.7k stones in
+463 ms, then 1 ms. Big blocks (footprint over 25 cm) seat to the mean ground height round the footprint, so on
+crests and knolls they sit in the ground instead of perching on the centre point (at most a third of their
+height deeper).
+
+Review pass (15 Nov, late): the close-up marks are now laid out in the stone's own frame (fixed from the field's
+zero crossings before carving, shared by the base and close-up shapes, so they also match in scale and the swap
+does not pop) and in metres at the family's typical size, which UV2.y carries to the shader. Granite: a crystal
+map of 1.8 cm cells (quartz 30% proud, feldspar lower, each crystal a tilted facet, etched boundaries, cleavage
+glints) and a biotite map of 1.3 cm clots weathered into pits, both read by the shader with the same integer hash
+(rk_crystal), so colour and relief agree; flakes spalled from the rind (6 cm plates), grus pits, hairline cracks on
+a 9 cm map, short hackle steps on fresh breaks. Sandstone laminae of 1.9 cm as ledges by hardness (shader colour
+from the same lamina hash), limestone runnels with knife-edge crests, basalt vesicles as spherical cavities.
+Fresh rockfall and scree fragments spread over the Zingg classes (32% slabs, 23% rods, 20% wedges, the rest
+blocks); the scree toe gets a few 2 to 6 m blocks. Caps: the largest up-facing patch, 3 cm tolerance, on the base
+shape (1196 of 1282 scree stones with a cap of 6 cm or more). Debris skirts of chips round rockfall and glacial
+blocks over 0.8 m; moss favours pole-facing faces and lichen the lit ones (`pole_direction`, `aspect_strength`).
+
 ## Sources
 
 Domokos et al. PNAS 2020 (arXiv 1912.04628); Paris et al. Visual Computer 2020 (hal-02926218);
@@ -181,4 +223,4 @@ Domokos et al. PLOS ONE 2014 (PMC3922984); Novák-Szabó et al. Sci. Adv. 2018; 
 Nat. Commun. 2015; Havasi-Tóth and Fehér arXiv 2310.06932; Peytavie et al. CGF 2009; Dorsey et
 al. SIGGRAPH 1999; Evans and Hungr 1993; Kirkby and Statham 1975; Priest 1993; Epic "PCG in
 Electric Dreams"; SideFX rock generator tutorials; GDC 2018 Far Cry 5 world generation; GDC 2017
-Horizon Zero Dawn GPU placement; itch.io ROCKGEN 2024, rocks-bitch, mooham3d rockgen.
+Horizon Zero Dawn GPU placement; Worley SIGGRAPH 1996; Ford and Williams 2007 (karren); Benn and Evans 2010 (striae, faceted clasts); Migoń 2006 (granite landforms); Kulander et al. 1990 (fracture surfaces); itch.io ROCKGEN 2024, rocks-bitch, mooham3d rockgen.

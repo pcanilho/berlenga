@@ -1,1 +1,0 @@
-- Water: under the surface, the light scattered in the water takes the sun's shadows and cloud shadows (raster), so a shaded bay no longer glows; new spatial shader function `sun_visibility(world_position)`.

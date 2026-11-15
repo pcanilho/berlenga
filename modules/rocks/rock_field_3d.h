@@ -32,9 +32,11 @@
 
 #include "rock_generator.h"
 
+#include "core/object/worker_thread_pool.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
+#include "scene/resources/multimesh.h"
 
 class TerrainGenerator3D;
 class MultiMeshInstance3D;
@@ -90,13 +92,36 @@ private:
 
 	struct Library {
 		LocalVector<Ref<ArrayMesh>> meshes;
+		LocalVector<Ref<ArrayMesh>> close; // close-up versions, built on demand near the target
+		LocalVector<uint8_t> close_state; // 0 none, 1 building, 2 ready
+		LocalVector<uint64_t> close_used; // usec the close-up mesh was last wanted
 		LocalVector<Vector3> axes;
 		LocalVector<float> bottom;
 		LocalVector<PackedVector3Array> hulls;
+		// Surface samples (one per 0.06 units of the mesh) with their normals, for stone caps.
+		LocalVector<LocalVector<Vector3>> cap_points, cap_normals;
+	};
+
+	// get_obstacles per placement cell: (x, ground y, z, footprint) and the stone's size, kept until a rebuild.
+	struct ObstacleCell {
+		LocalVector<Vector4> obstacles;
+		LocalVector<float> sizes;
+	};
+	HashMap<Vector3i, ObstacleCell> obstacle_cache;
+
+	struct Group {
+		uint32_t library = 0;
+		int variant = 0;
+		Ref<MultiMesh> multimesh;
+		LocalVector<Transform3D> xforms;
+		LocalVector<Color> custom;
+		LocalVector<real_t> reach; // m: how far out the stone's surface reaches from its origin
+		LocalVector<bool> near; // drawn by the close-up instance instead
 	};
 
 	struct Cell {
 		LocalVector<MultiMeshInstance3D *> instances;
+		LocalVector<Group> groups;
 		StaticBody3D *body = nullptr;
 		int stones = 0;
 	};
@@ -123,6 +148,9 @@ private:
 	real_t collision_radius = 80.0;
 	uint32_t collision_layer = 1;
 	real_t build_budget_msec = 4.0;
+	bool close_up_enabled = true;
+	real_t close_up_radius = 8.0; // m from the target to a stone's surface
+	int close_up_max_shapes = 12;
 	bool streaming = true;
 
 	ObjectID generator_id;
@@ -136,6 +164,16 @@ private:
 	double last_build_msec = 0.0;
 	double last_library_msec = 0.0;
 	int stone_count = 0;
+	HashMap<uint64_t, MultiMeshInstance3D *> close_instances; // (library << 16 | variant)
+	Vector3 close_target;
+	bool close_dirty = true;
+	struct CloseJob {
+		uint32_t library = 0;
+		int variant = 0;
+		WorkerThreadPool::TaskID task = WorkerThreadPool::INVALID_TASK_ID;
+		void *job = nullptr;
+	};
+	LocalVector<CloseJob> close_jobs;
 
 	TerrainGenerator3D *_get_generator() const;
 	Vector3 _target_position() const;
@@ -151,6 +189,8 @@ private:
 	void _build_cell(const Vector3i &p_key);
 	void _free_cell(Cell &r_cell);
 	void _update_streaming(bool p_all);
+	void _update_close_up(bool p_wait);
+	void _clear_close_up();
 
 protected:
 	void _notification(int p_what);
@@ -201,6 +241,14 @@ public:
 	uint32_t get_collision_layer() const { return collision_layer; }
 	void set_build_budget_msec(real_t p_msec) { build_budget_msec = MAX(p_msec, real_t(0.1)); }
 	real_t get_build_budget_msec() const { return build_budget_msec; }
+	void set_close_up_enabled(bool p_enabled);
+	bool is_close_up_enabled() const { return close_up_enabled; }
+	void set_close_up_radius(real_t p_radius) { close_up_radius = MAX(p_radius, real_t(0.0)); close_dirty = true; }
+	real_t get_close_up_radius() const { return close_up_radius; }
+	void set_close_up_max_shapes(int p_count) { close_up_max_shapes = MAX(p_count, 1); }
+	int get_close_up_max_shapes() const { return close_up_max_shapes; }
+	int get_close_up_shape_count() const;
+	int get_close_up_triangle_count() const;
 	void set_streaming(bool p_streaming);
 	bool is_streaming() const { return streaming; }
 
@@ -215,6 +263,7 @@ public:
 	// The stones of one layer in p_rect, each a Dictionary (position, basis, scale, footprint, film, rock_type,
 	// family, variant): what the layer would place, for tests.
 	Array get_stones(int p_layer, const Rect2 &p_rect);
+	Array get_stone_caps(int p_layer, const Rect2 &p_rect, real_t p_tolerance = 0.03);
 	int get_stone_count() const { return stone_count; }
 	int get_cell_count() const { return cells.size(); }
 	double get_last_build_msec() const { return last_build_msec; }

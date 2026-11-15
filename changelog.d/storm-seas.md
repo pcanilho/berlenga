@@ -1,1 +1,0 @@
-- Water: storm seas. Foam is blown into streaks along the wind from about 14 m/s (full by 22 m/s), and breaking crests throw spray downwind from 9 m/s (`crest_spray`, `crest_spray_amount`). Whitecap cover no longer overshoots for seconds after a sea starts or the wind jumps. Ocean textures start cleared.

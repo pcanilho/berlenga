@@ -1,1 +1,0 @@
-- Water: the sea and lakes are see-through in raster like under path tracing: the bed shows through the shallows, refracted, and fades to the water's own colour with depth (`clear_water`, on by default).
