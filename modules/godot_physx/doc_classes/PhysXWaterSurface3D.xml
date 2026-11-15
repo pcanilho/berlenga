@@ -78,6 +78,18 @@
 				The caustics repeat with the ocean waves, every [member ocean_domain_size]. A receiver can fold its world XZ into the tile around [method get_caustics_origin] ([code]p -= tile * round((p - origin) / tile)[/code]) before projecting, so caustics reach the whole seabed -- all along a beach -- not just the simulated square. The map spans a little more than one tile, so there's no seam.
 			</description>
 		</method>
+		<method name="get_detail_slope_variance" qualifiers="const">
+			<return type="float" />
+			<description>
+				Mean square slope of the [member detail_waves] band, from the Phillips saturation range of the sea's JONSWAP spectrum ([code]alpha / 2 ln(k2 / k1)[/code], alpha from the fetch). Where a pixel is too large to show those waves this variance is added to the water's roughness instead.
+			</description>
+		</method>
+		<method name="get_detail_wave_tile" qualifiers="const">
+			<return type="Vector2" />
+			<description>
+				Side of the [member detail_waves] tile in metres: its band starts where the finest cascade's grid stops.
+			</description>
+		</method>
 		<method name="get_effective_fetch" qualifiers="const">
 			<return type="float" />
 			<description>
@@ -234,6 +246,9 @@
 		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.08">
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
+		</member>
+		<member name="detail_waves" type="bool" setter="set_detail_waves" getter="get_detail_waves" default="true">
+			Short waves the finest cascade's grid cannot carry (from its Nyquist wavelength down to about 8 cm), on a small FFT tile of their own, for the per-pixel normals: crests get their ripples and glitter. Where they are smaller than a pixel they fade out and their slope variance goes to the roughness (Bruneton, Neyret and Holzschuch 2010), so the far sea keeps its glitter without shimmering. One more 128² FFT a step.
 		</member>
 		<member name="depth" type="float" setter="set_depth" getter="get_depth" default="3.0">
 			Still-water depth in meters used everywhere unless [member seabed_from_floor] measures it per cell (then it only applies where no floor is found below the water). Sets the ripple layer's wave speed, [code]sqrt(g * depth)[/code], and the ocean layer's dispersion and spectrum: in shallow water the long waves carry less energy (TMA spectrum), so set it to the real depth of open water (tens of meters for a sea).

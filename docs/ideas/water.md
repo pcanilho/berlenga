@@ -2710,3 +2710,75 @@ it never pooled behind a bump, never drew down before a step, and could not jump
 Next (stage 2, shader): standing waves `U² = (g/k) tanh(kh)` over bed features, undular jump
 waves for Fr1 1–1.7, cross-waves at `sin β = 1/Fr` from bank changes, and a Froude/regime debug
 overlay.
+
+## Ocean detail: ripples, foam, bubbles (15 Nov, research for Paulo)
+
+Paulo: the references show much more detailed crests and foam than our sea. Bench baseline
+(`--view=sea --node=wave_cascades:3`, `--view=storm_low`): near water smooth and rubbery; foam flat
+noise blots.
+
+**Why it looks smooth.** The finest FFT tile is `ocean_domain_size` (40 m) on `ocean_grid_resolution`
+(64 by default, raised to at most 256 by the peak rule): its Nyquist wavelength is 2 L / N, 1.25 m at
+64. Nothing shorter exists, yet in the gravity range the slope spectrum is flat per octave
+(Phillips saturation, `S(k) = alpha / (2 k^3)`, mean square slope per band `alpha / 2 ln(k2 / k1)`), so
+the missing short waves carry about half of the sea's slope: Cox and Munk (1954) measured a total
+`sigma^2 = 0.003 + 5.12e-3 U` (0.054 at 10 m/s), ours resolves well under half of it. The Ocean
+Optics Web Book ("numerical resolution") shows the same: a sampled sea is too smooth unless the
+unresolved slope is put back.
+
+**What others do.**
+- Cascades down to centimetres: War Thunder (NVIDIA CGDC 2015) splits the spectrum into 4 cascades
+  from about 5 m to 1 km, 128 to 512 texels; OceanPro (UE5) three bands, swell, wind waves, ripples;
+  HDRP a separate "Ripples" band with its own local wind; Crest adds a detail normal map.
+- The rest into the BRDF: Bruneton, Neyret and Holzschuch, "Real-time Realistic Ocean Lighting using
+  Seamless Transitions from Geometry to BRDF" (Eurographics 2010): waves too small for a pixel are
+  filtered out of the geometry and their slope variance added to the reflectance's (Beckmann)
+  roughness, so the far sea keeps the right glitter and nothing shimmers. Dupuy and Bruneton 2012 do
+  the same for whitecaps.
+- Foam look: Crest draws a foam texture with its own normals ("Foam Normal Strength"), and a
+  separate bubble layer under it ("Foam Bubbles Color", "Foam Bubbles Parallax", "to give feeling of
+  volume"). War Thunder: foam thickness from surface stretching (squeezed thicker, stretched thinner)
+  and bubbles plus "milkiness" added to the refraction colour. Meta Meow (80.lv, 2024): procedural
+  foam as Voronoi bubble cells, thick foam as a scattering base eroded by a height map. Sea of
+  Thieves (SIGGRAPH 2018): peak foam blurred with feedback, blended with authored textures; crest
+  colour from a peak mask. FluidNinja: no open-ocean foam (its strength is the live 2D solver).
+- Physics of the look: decaying sea foam drains into a network of Plateau borders around ever larger
+  cells (Weaire and Hutzler, The Physics of Foams, 1999), which is the lace an old whitecap leaves;
+  fresh whitecaps are solid. Under a whitecap the entrained bubble plume (Czerski et al.) scatters
+  strongly and glows turquoise through the water above it.
+
+**Plan (Paulo picked all three, 15 Nov).**
+1. A detail cascade: an FFT tile of `8 L / N` metres (5 m at the defaults) on 128 texels carrying the
+   band from the finest cascade's Nyquist down to about 8 cm, normals only (the mesh cannot carry
+   it). Faded out by the pixel's footprint, and the faded slope variance (`alpha_J / 2 ln(k2/k1)`,
+   alpha_J from the fetch law) added to the roughness (Bruneton 2010), so the far sea glitters right
+   instead of shimmering.
+2. Foam as foam: fresh foam solid; as it fades it drains to a Voronoi network of borders (cells about
+   a metre) instead of value noise; a fine bubble-cell layer (centimetres) gives it texture and its
+   own normals, fading to its mean with the footprint. Thickness from the Jacobian: squeezed foam
+   thicker, stretched thinner.
+3. Bubbles under foam: the foam amount read again along the refracted view at about half a metre down
+   (parallax), smooth, lighting the water body turquoise in raster; in the path tracer the same
+   amount raises the water's scattering.
+
+### Built (15 Nov)
+
+- `detail_waves` (on): the detail tile `8 pi / k_min` (5 m at the defaults) on 128 texels, its band
+  from cascade 0's Nyquist (k_min = pi N / L) to about 8 cm, foam pass off. In the fragment its
+  derivatives join the per-pixel normal, shown by the share of the band (in log k) a pixel can hold:
+  `clamp(ln(pi / (2 footprint) / k_min) / ln(k_max / k_min))`, footprint from `fwidth`. The rest of
+  its slope variance (`get_detail_slope_variance()`, Phillips with the fetch's alpha) is added to the
+  water's GGX alpha squared (raster reflections and the path tracer's roughness).
+- Foam (`foam_structure`): holes open per Voronoi cell as the foam drains (radius per cell, two
+  scales, cells warped), then broken strands along the borders; bubble cells of a few cm give grain
+  and their own dome normals (`foam_bubble_normal`); thickness by the Jacobian (x1.2 squeezed, x0.85
+  stretched). Every layer fades to its mean cover past the pixel footprint. The old value-noise lace
+  is gone (`foam_breakup` now only drives the shore foam).
+- Bubbles (`bubbles_under`): the persistent foam read along the refracted view at 0.3 and 0.7 m
+  (`bubble_depth` 0.6), mixed into the body colour (both the sky's and the sun's part) as
+  `bubble_color` (0.40, 0.82, 0.78) at `bubble_strength` 1.2; the path tracer's scattering gains
+  `bubble_scattering` (4 /m) times the same share.
+- Checked on the water bench: `--view=sea --node=wave_cascades:3`, `--view=storm`,
+  `--view=storm_low`, raster before/after and path traced (8 spp on the cloud CPU, no denoiser:
+  noisy, but the lace, grain and plume all show; denoised PT frames go on the PC list). Cost: one
+  128^2 FFT a step and a few Voronoi lookups where there is foam; GPU timing on the PC list.
