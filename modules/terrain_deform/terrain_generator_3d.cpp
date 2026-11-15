@@ -29,6 +29,7 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#include "terrain_brush_3d.h"
 #include "terrain_guide_3d.h"
 #include "terrain_generator_3d.h"
 
@@ -60,6 +61,8 @@
 #include "servers/rendering/rendering_server.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 static inline int _gen_floor_div(int p_a, int p_b) {
 	const int q = p_a / p_b;
@@ -2529,6 +2532,7 @@ bool TerrainGenerator3D::generate() {
 	}
 	const uint64_t tr = OS::get_singleton()->get_ticks_usec();
 	_route_rivers();
+	channels_generated = channels;
 	_cut_tails();
 	_bake_lips();
 	water_usec += OS::get_singleton()->get_ticks_usec() - tr;
@@ -2540,6 +2544,22 @@ bool TerrainGenerator3D::generate() {
 	// After the tiles: the sky is read from the final ground.
 	_bake_sky();
 	_publish_globals();
+	// The touch-ups start from this ground and water.
+	heights_generated = heights;
+	receivers_generated = receivers;
+	water_body_generated = water_body;
+	lakes_generated = lake_info;
+	touch_mask.clear();
+	touch_flat.clear();
+	last_touch_cells = 0;
+	last_touch_lakes = 0;
+	{
+		LocalVector<TerrainBrush3D *> brushes;
+		_brushes(brushes);
+		if (!brushes.is_empty()) {
+			_touch_up();
+		}
+	}
 	last_generate_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
 	emit_signal(SNAME("generated"));
 	return true;
@@ -2587,6 +2607,13 @@ void TerrainGenerator3D::clear_result() {
 	tile_delta.clear();
 	tile_flow.clear();
 	tile_deposit.clear();
+	heights_generated.clear();
+	receivers_generated.clear();
+	water_body_generated.clear();
+	lakes_generated.clear();
+	channels_generated.clear();
+	touch_mask.clear();
+	touch_flat.clear();
 }
 
 // Catmull-Rom bicubic between grid nodes (interpolating, so every node keeps its eroded height), clamped at the
@@ -2841,8 +2868,18 @@ float TerrainGenerator3D::_ground(real_t p_x, real_t p_z) const {
 	if (Math::is_nan(g)) {
 		return g;
 	}
+	// A flatten touch-up keeps its ground flat: the erosion detail fades under it.
+	if (!touch_flat.is_empty()) {
+		const float f = CLAMP(_sample(touch_flat, p_x, p_z), 0.0f, 1.0f);
+		if (f > 0.0f) {
+			const float base = _sample(heights, p_x, p_z);
+			g = base + (g - base) * (1.0f - f);
+		}
+	}
 	if (tile_erosion_enabled && !tile_delta.is_empty()) {
-		g += _tile_sample(tile_delta, p_x, p_z) * _water_fade(p_x, p_z);
+		// The tile erosion's gullies belong to the ground before the touch-ups: they fade where a brush moved it.
+		const float keep = touch_mask.is_empty() ? 1.0f : 1.0f - CLAMP(_sample(touch_mask, p_x, p_z), 0.0f, 1.0f);
+		g += _tile_sample(tile_delta, p_x, p_z) * _water_fade(p_x, p_z) * keep;
 		if (has_sea) {
 			g = MAX(g, MIN(_sample(heights, p_x, p_z), result_min + 0.15f));
 		}
@@ -4270,7 +4307,13 @@ void TerrainGenerator3D::_notification(int p_what) {
 					preview();
 				}
 			}
-			if (preview_wait < 0.0 && sky_light_source.is_empty()) {
+			if (touch_wait >= 0.0) {
+				touch_wait -= get_process_delta_time();
+				if (touch_wait < 0.0 && apply_touch_ups()) {
+					write_to_terrain();
+				}
+			}
+			if (preview_wait < 0.0 && touch_wait < 0.0 && sky_light_source.is_empty()) {
 				set_process_internal(false);
 			}
 		} break;
@@ -5720,7 +5763,8 @@ Array TerrainGenerator3D::get_lake_results() const {
 // Lakes in the rock basins the last glaciation left (cirques, overdeepened troughs): every closed basin of the ground
 // at least lake_min_area in size and 1 m deep fills to its spill point (Priority-Flood, Barnes et al. 2014), and
 // spills over its lowest rim cell, which the rivers below already leave by.
-void TerrainGenerator3D::_basin_lakes(std::vector<uint8_t> &r_taken) {
+void TerrainGenerator3D::_basin_lakes(std::vector<uint8_t> &r_taken, const uint8_t *p_want, double p_min_area) {
+	const double min_area = p_min_area >= 0.0 ? p_min_area : double(lake_min_area);
 	const int n = nx * ny;
 	std::vector<float> fill(heights.ptr(), heights.ptr() + n);
 	std::vector<uint8_t> closed(n, 0);
@@ -5767,7 +5811,7 @@ void TerrainGenerator3D::_basin_lakes(std::vector<uint8_t> &r_taken) {
 		bool iced = false;
 		for (size_t q = 0; q < cells.size(); q++) {
 			const int32_t c = cells[q];
-			iced = iced || glacial_ice[c] > 1.0f;
+			iced = iced || (p_want ? p_want[c] != 0 : glacial_ice[c] > 1.0f);
 			const float d = fill[c] - heights[c];
 			if (d > deepest) {
 				deepest = d;
@@ -5786,8 +5830,8 @@ void TerrainGenerator3D::_basin_lakes(std::vector<uint8_t> &r_taken) {
 				}
 			}
 		}
-		// Only basins the ice wore (the rivers' own hollows fill with sediment as they always have).
-		if (!iced || deepest < 1.0f || double(cells.size()) * cell_size * cell_size < double(lake_min_area)) {
+		// Only basins the ice wore (the rivers' own hollows fill with sediment as they always have), or the touch-ups made.
+		if (!iced || deepest < 1.0f || double(cells.size()) * cell_size * cell_size < min_area) {
 			continue;
 		}
 		// Out of the basin down the receivers (laid on the filled surface): the first cell outside is the sill.
@@ -6504,6 +6548,294 @@ void TerrainGenerator3D::guide_changed() {
 	set_process_internal(true);
 }
 
+void TerrainGenerator3D::_brushes(LocalVector<TerrainBrush3D *> &r_out, Node *p_node) const {
+	const Node *node = p_node ? p_node : this;
+	for (int i = 0; i < node->get_child_count(); i++) {
+		Node *c = node->get_child(i);
+		if (TerrainBrush3D *b = Object::cast_to<TerrainBrush3D>(c)) {
+			if (b->is_enabled() && b->is_inside_tree()) {
+				r_out.push_back(b);
+			}
+		}
+		_brushes(r_out, c);
+	}
+}
+
+// Touch-ups: the brushes in tree order on the generated ground, then the water re-solved where they moved it.
+// Routing: Priority-Flood+epsilon (Barnes et al. 2014) from the generated outlets gives a surface with no pits; each
+// cell keeps its generated receiver where that still runs downhill on it and away from the brushes, else takes the
+// steepest descent on it. Lakes: a generated lake the brushes left alone stays as it was; every closed basin within
+// two cells of a moved cell (or where a moved lake was) fills to its spill point, as the glacial basins do.
+void TerrainGenerator3D::_touch_up() {
+	const int n = nx * ny;
+	if (n <= 0 || heights_generated.size() != uint32_t(n)) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	heights = heights_generated;
+	touch_mask.clear();
+	touch_flat.clear();
+	LocalVector<TerrainBrush3D *> brushes;
+	_brushes(brushes);
+	LocalVector<uint8_t> moved;
+	moved.resize(n);
+	memset(moved.ptr(), 0, n);
+	int count = 0;
+	bool any_flat = false;
+	if (!brushes.is_empty()) {
+		touch_mask.resize(n);
+		touch_flat.resize(n);
+		memset(touch_mask.ptr(), 0, sizeof(float) * n);
+		memset(touch_flat.ptr(), 0, sizeof(float) * n);
+		for (TerrainBrush3D *b : brushes) {
+			const Vector2 sz = b->get_size();
+			if (sz.x <= 0.0 || sz.y <= 0.0) {
+				continue;
+			}
+			const Transform3D xf = b->get_global_transform();
+			const Transform3D inv = xf.affine_inverse();
+			const Rect2 r = b->get_world_rect();
+			const int x0 = MAX(int(Math::floor((r.position.x - result_rect.position.x) / result_cell)), 0);
+			const int z0 = MAX(int(Math::floor((r.position.y - result_rect.position.y) / result_cell)), 0);
+			const int x1 = MIN(int(Math::ceil((r.position.x + r.size.x - result_rect.position.x) / result_cell)), nx - 1);
+			const int z1 = MIN(int(Math::ceil((r.position.y + r.size.y - result_rect.position.y) / result_cell)), ny - 1);
+			const TerrainCarveBrush::Mode mode = TerrainCarveBrush::Mode(int(b->get_mode()));
+			for (int z = z0; z <= z1; z++) {
+				for (int x = x0; x <= x1; x++) {
+					float target, mask;
+					b->sample_world(xf, inv, result_rect.position.x + x * result_cell, result_rect.position.y + z * result_cell, target, mask);
+					if (mask <= 0.0f) {
+						continue;
+					}
+					const int i = z * nx + x;
+					const float h = heights[i];
+					const float nh = TerrainCarveBrush::blend(mode, h, target, mask);
+					if (mode == TerrainCarveBrush::MODE_FLATTEN) {
+						touch_flat[i] = MAX(touch_flat[i], mask);
+						any_flat = true;
+					}
+					if (Math::abs(nh - h) > 0.01f) {
+						heights[i] = nh;
+						touch_mask[i] = MAX(touch_mask[i], mask);
+					}
+				}
+			}
+		}
+		for (int i = 0; i < n; i++) {
+			if (Math::abs(heights[i] - heights_generated[i]) > 0.01f) {
+				moved[i] = 1;
+				count++;
+			}
+		}
+		if (count == 0) {
+			touch_mask.clear();
+		}
+		if (!any_flat) {
+			touch_flat.clear();
+		}
+	}
+	last_touch_cells = count;
+
+	// The channels ride the ground the brushes moved under them.
+	channels = channels_generated;
+	if (count > 0) {
+		for (Channel &ch : channels) {
+			for (uint32_t k = 0; k < ch.points.size(); k++) {
+				const real_t d = _sample(heights, ch.points[k].x, ch.points[k].y) - _sample(heights_generated, ch.points[k].x, ch.points[k].y);
+				if (Math::is_nan(d) || d == 0.0) {
+					continue;
+				}
+				if (k < ch.bed.size()) {
+					ch.bed[k] += d;
+				}
+				if (k < ch.stage.size()) {
+					ch.stage[k] += d;
+				}
+			}
+		}
+	}
+	_bucket_channels();
+
+	if (count == 0) {
+		receivers = receivers_generated;
+		water_body = water_body_generated;
+		lake_info = lakes_generated;
+	} else {
+		static const int DX[8] = { -1, 0, 1, -1, 1, -1, 0, 1 };
+		static const int DZ[8] = { -1, -1, -1, 0, 0, 1, 1, 1 };
+		// Within two cells of a moved one.
+		LocalVector<uint8_t> near;
+		near.resize(n);
+		memset(near.ptr(), 0, n);
+		for (int z = 0; z < ny; z++) {
+			for (int x = 0; x < nx; x++) {
+				if (!moved[z * nx + x]) {
+					continue;
+				}
+				for (int zz = MAX(z - 2, 0); zz <= MIN(z + 2, ny - 1); zz++) {
+					for (int xx = MAX(x - 2, 0); xx <= MIN(x + 2, nx - 1); xx++) {
+						near[zz * nx + xx] = 1;
+					}
+				}
+			}
+		}
+		// Priority-Flood+epsilon from the generated outlets (map edges, the sea, closed ends).
+		LocalVector<float> fill;
+		fill = heights;
+		LocalVector<uint8_t> closed;
+		closed.resize(n);
+		memset(closed.ptr(), 0, n);
+		typedef std::pair<float, int32_t> Item;
+		std::priority_queue<Item, std::vector<Item>, std::greater<Item>> heap;
+		for (int i = 0; i < n; i++) {
+			if (receivers_generated[i] == i || water_body_generated[i] == 1) {
+				closed[i] = 1;
+				heap.push(Item(fill[i], i));
+			}
+		}
+		LocalVector<int32_t> order;
+		order.reserve(n);
+		while (!heap.empty()) {
+			const Item it = heap.top();
+			heap.pop();
+			const int32_t c = it.second;
+			order.push_back(c);
+			const int x = c % nx, z = c / nx;
+			for (int k = 0; k < 8; k++) {
+				const int xx = x + DX[k], zz = z + DZ[k];
+				if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+					continue;
+				}
+				const int j = zz * nx + xx;
+				if (closed[j]) {
+					continue;
+				}
+				closed[j] = 1;
+				if (fill[j] <= fill[c]) {
+					fill[j] = std::nextafter(fill[c], std::numeric_limits<float>::infinity());
+				}
+				heap.push(Item(fill[j], j));
+			}
+		}
+		receivers.resize(n);
+		for (int i = 0; i < n; i++) {
+			const int32_t r0 = receivers_generated[i];
+			if (r0 == i || water_body_generated[i] == 1) {
+				receivers[i] = i;
+				continue;
+			}
+			if (!near[i] && fill[r0] < fill[i]) {
+				receivers[i] = r0;
+				continue;
+			}
+			const int x = i % nx, z = i / nx;
+			int32_t best = i;
+			double steep = 0.0;
+			for (int k = 0; k < 8; k++) {
+				const int xx = x + DX[k], zz = z + DZ[k];
+				if (xx < 0 || zz < 0 || xx >= nx || zz >= ny) {
+					continue;
+				}
+				const int j = zz * nx + xx;
+				if (fill[j] < fill[i]) {
+					const double s = double(fill[i] - fill[j]) / ((DX[k] != 0 && DZ[k] != 0) ? Math::SQRT2 : 1.0);
+					if (s > steep) {
+						steep = s;
+						best = j;
+					}
+				}
+			}
+			receivers[i] = best;
+		}
+		channel_area.resize(n);
+		TerrainGeology::d8_area(n, receivers.ptr(), order.ptr(), double(cell_size) * cell_size, channel_area.ptr());
+
+		// Lakes: the generated ones the brushes left alone, then the basins near the moved ground.
+		water_body.resize(n);
+		lake_info.clear();
+		std::vector<uint8_t> taken(n);
+		std::vector<uint8_t> want(n, 0);
+		LocalVector<uint8_t> hit;
+		hit.resize(lakes_generated.size());
+		memset(hit.ptr(), 0, hit.size());
+		for (int i = 0; i < n; i++) {
+			const int32_t b = water_body_generated[i];
+			if (b >= 2 && near[i]) {
+				hit[b - 2] = 1;
+			}
+		}
+		for (uint32_t k = 0; k < lakes_generated.size(); k++) {
+			const LakeInfo &l = lakes_generated[k];
+			if (l.dam >= 0 && near[l.dam]) {
+				hit[k] = 1;
+			}
+			if (l.outlet >= 0 && near[l.outlet]) {
+				hit[k] = 1;
+			}
+			for (int32_t c : l.outflow) {
+				if (near[c]) {
+					hit[k] = 1;
+				}
+			}
+		}
+		LocalVector<int32_t> renumber;
+		renumber.resize(lakes_generated.size());
+		for (uint32_t k = 0; k < lakes_generated.size(); k++) {
+			renumber[k] = -1;
+			if (!hit[k]) {
+				renumber[k] = int32_t(lake_info.size());
+				lake_info.push_back(lakes_generated[k]);
+			}
+		}
+		for (int i = 0; i < n; i++) {
+			const int32_t b = water_body_generated[i];
+			water_body[i] = 0;
+			taken[i] = 0;
+			if (b == 1) {
+				water_body[i] = 1;
+				taken[i] = 1;
+			} else if (b >= 2 && renumber[b - 2] >= 0) {
+				water_body[i] = 2 + renumber[b - 2];
+				taken[i] = 1;
+			} else if (b >= 2 || near[i]) {
+				want[i] = 1;
+			}
+		}
+		const uint32_t kept = lake_info.size();
+		// A pond of nine cells is enough for a touch-up (a hollow dug on purpose), lake_min_area at most.
+		_basin_lakes(taken, want.data(), MIN(double(lake_min_area), 9.0 * double(cell_size) * cell_size));
+		last_touch_lakes = int(lake_info.size() - kept);
+	}
+	_route_rivers();
+	_cut_tails();
+	_bake_lips();
+	_bake_detail_keep();
+	_bake_spray();
+	_publish_globals();
+	_bake_sky();
+	_publish_globals();
+	last_touch_msec = double(OS::get_singleton()->get_ticks_usec() - t0) / 1000.0;
+	print_verbose(vformat("TerrainGenerator3D: touch-ups moved %d cells, %d new lakes, in %.0f ms.", count, last_touch_lakes, last_touch_msec));
+}
+
+bool TerrainGenerator3D::apply_touch_ups() {
+	if (nx <= 0 || heights_generated.size() != uint32_t(nx * ny)) {
+		return false;
+	}
+	emit_signal(SNAME("changing"));
+	_touch_up();
+	emit_signal(SNAME("generated"));
+	return true;
+}
+
+void TerrainGenerator3D::touch_up_changed() {
+	if (!is_inside_tree() || heights_generated.is_empty()) {
+		return;
+	}
+	touch_wait = 0.4;
+	set_process_internal(true);
+}
+
 int TerrainGenerator3D::preview() {
 	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	const real_t keep = cell_size;
@@ -6759,6 +7091,11 @@ void TerrainGenerator3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_guide_preview_scale", "scale"), &TerrainGenerator3D::set_guide_preview_scale);
 	ClassDB::bind_method(D_METHOD("get_guide_preview_scale"), &TerrainGenerator3D::get_guide_preview_scale);
 	ClassDB::bind_method(D_METHOD("guide_changed"), &TerrainGenerator3D::guide_changed);
+	ClassDB::bind_method(D_METHOD("apply_touch_ups"), &TerrainGenerator3D::apply_touch_ups);
+	ClassDB::bind_method(D_METHOD("touch_up_changed"), &TerrainGenerator3D::touch_up_changed);
+	ClassDB::bind_method(D_METHOD("get_last_touch_up_cells"), &TerrainGenerator3D::get_last_touch_up_cells);
+	ClassDB::bind_method(D_METHOD("get_last_touch_up_lakes"), &TerrainGenerator3D::get_last_touch_up_lakes);
+	ClassDB::bind_method(D_METHOD("get_last_touch_up_msec"), &TerrainGenerator3D::get_last_touch_up_msec);
 	ClassDB::bind_method(D_METHOD("preview"), &TerrainGenerator3D::preview);
 	ClassDB::bind_method(D_METHOD("get_last_preview_msec"), &TerrainGenerator3D::get_last_preview_msec);
 	ClassDB::bind_method(D_METHOD("set_sky_light_source", "path"), &TerrainGenerator3D::set_sky_light_source);

@@ -89,6 +89,9 @@ public:
 	bool is_enabled() const { return enabled; }
 
 	Dictionary get_carve_brush() const;
+	Rect2 get_world_rect() const; // world XZ bounds with the falloff
+	// The target height (or offset, for MODE_ADD) and the mask at a world point; p_inv is p_xf's affine inverse.
+	void sample_world(const Transform3D &p_xf, const Transform3D &p_inv, real_t p_x, real_t p_z, float &r_height, float &r_mask) const;
 
 	TerrainBrush3D();
 };
