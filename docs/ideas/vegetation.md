@@ -216,3 +216,25 @@ The cloud can build and run all of it on Lavapipe; GPU timings and PT/RR crops w
   Jahrmann and Wimmer 2017; Bridson 2007.
 - ProtonScatter https://github.com/HungryProton/scatter; EZ-Tree https://github.com/dgreenheck/ez-tree;
   gdTree3D https://github.com/JekSun97/gdTree3D (all MIT, code read).
+
+## Next round candidates (15 Nov)
+
+- **Plants between stones.** The rock generator (docs/ideas/rocks.md) will lay scree, river cobbles
+  and shore shingle as instanced stones. Real ground flora there lives in the gaps, not on open
+  ground: parsley fern and stone bramble on scree, biting stonecrop and saxifrage cushions in
+  crevices, thrift and sea campion on shingle, wall-rue and spleenworts in rock cracks, cushion moss
+  on stone tops. Placement reads the same stone list as `VegetationObstacles`: a gap rule (distance
+  to the nearest two stones, shade, wetness from contact wetness) instead of the open-ground rules,
+  and moss on stone tops by up-facing, reusing the tree lichen and moss code. This is the main thing
+  the rock generator needs from vegetation; boulders and `get_boulders` can use it first.
+- **No-hitch grass rebuild.** Changing grass settings at runtime rebuilds every tile in one frame
+  (about 40 ms). Spread the rebuild across frames, nearest tiles first, keeping old tiles until the
+  new ones are ready.
+- **Far vegetation as geometry.** UE 5.7 Nanite Foliage turns distant foliage clusters into
+  pixel-sized voxels with stored normal distributions instead of billboards (Epic docs,
+  "Nanite Foliage"). Our far grass is a colour bake on the terrain. A voxel or aggregate far layer
+  would keep volume and parallax at the horizon, but it needs a GPU cost bench first, so it is
+  research only until the PC is back.
+- **Seasons shots.** The seasons code is on main; the before/after shots for the site are not taken.
+- **Plants that give way.** Grass tramples; ferns, bracken and nettles do not. Bend them from the
+  same trample field.
