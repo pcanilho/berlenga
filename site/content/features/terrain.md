@@ -24,6 +24,7 @@ summary: "Mountain ranges raised and eroded per seed, with geology, river networ
 
   *Crests: before, a thin regular comb along the summits; now, irregular crests and pinnacles.*
 
+- **Terrain guides** (`TerrainGuide3D`: Raise, Lower, Bar, `apron_slope`): paths drawn under the generator raise ridges, cut valleys and place rock bars, read before erosion.
 - **Coarse-to-fine erosion** (`coarse_levels`, `refine_steps`): about 3.7 times faster at 4 m cells, with the same relief.
 
   ![The same range eroded directly and coarse to fine, 8 m cells](media/terrain-coarse-to-fine.jpg)
