@@ -2419,8 +2419,16 @@ mask): no visible change on the clear open sea in raster (mean difference 0.05/2
 the path tracer either; the water is too clear for a few metres of path to show. Not worth four extra
 height lookups a pixel.
 
-**Known.** In a storm's first second the longest cascades show wide white patches that clear within about
-two seconds (the persistent foam of the 1.4 km tile); not the steering and not undefined textures. Open.
+**Fixed (15 Nov).** In a storm's first second wide white patches showed and cleared within about two
+seconds. Not the persistent foam (each cascade's cover stayed under 1% from the start) but the material's
+crest foam, the Jacobian of the summed cascades: the cascades' Gaussian draws were seeded by mode index
+alone, and every extra cascade carries the same index band (4 to 24) on a tile `wave_cascade_ratio` times
+larger, so the cascades were scaled copies of one field. At the start their slopes added in phase and the
+sum read as folded; the long waves drifted apart over a couple of seconds. The banded cascades now salt the
+seed with their tile size (independent draws, as the random-phase model asks; Tessendorf 2001). Bench
+storm view, mean brightness of the sea at frame 8: 120 before, 36 after (90 frames: 88 either way). The
+first cascade keeps its draws, so a one-cascade sea is unchanged; multi-cascade seas show different (equally
+likely) waves.
 Bigger, steeper storm waves than the spectrum gives are an art choice: `wave_amplitude` 1.6 and `choppiness`
 1.4 give the Black Flag look on the bench.
 
@@ -2631,3 +2639,22 @@ hollow and a wake behind, the level standing up against a leg. How others do it:
   inside it (no mask yet); speed comes from the body's motion between frames, not its rotation.
 - Benches: live_water `--scene=wade [--no-pusher] [--view=wade_close]`; water_surface `--wader
   [--wader-nopush] --view=wader`.
+
+## Seas and rivers wet the ground (15 Nov, FluidNinja parity step 4a, the rest)
+
+The contact wet map (above) took only live water. The sea already kept its own wet sand behind the swash
+(water_swash.glsl, `wet_sand_dry_time` 12 s, drawn by the sea's material over the floor), but nothing else
+on the shore knew: rocks, plants and props stayed dry, and the sand dried in seconds. Same approach as for
+live water (the wet map is fed by whatever the water covered), here from the swash pass's wetness channel.
+
+**Built.** `PhysXWaterSurface3D.contact_wetness` and `PhysXRiver3D.contact_wetness` (on; the river with
+`live_flow`): the swash texture's wetness (RGBA32F on the ripple grid) is read back every eighth step
+(async, as the other readbacks; about 1 MB for 256^2 cells) while a WeatherMap3D with contact wetness is
+active, and written with `add_contact_wetness_cells()` over land and still water shallower than 0.5 m
+(deeper cells skipped, so a pier or hull over open water is not wetted from below), faded over the grid's
+outer eighth. The river drops the two reads after its window moves. Result (water_surface `--contact
+--view=runup --node=shore_waves:true`): the sand reads wet from the water up to 2.5 m past the still
+waterline (where the run-up reached) and dry beyond; river `--live --contact`: the banks and shallows
+round the rocks.
+Known limit: the wet map is 2D, so anything at that spot is wetted whatever its height (a bridge over a
+shallow river bank).

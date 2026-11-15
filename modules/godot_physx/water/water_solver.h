@@ -203,6 +203,14 @@ public:
 	double ripple_cache_time = 0.0; // the simulation clock at the step each cache was read from
 	double ocean_cache_time = 0.0;
 	SafeFlag height_ready;
+	// Wet sand (the swash texture's g) read back every few steps while wanted (WaterSolver::set_wetness_readback),
+	// for the weather's contact wetness. Guarded by cache_mtx.
+	SafeFlag swash_wet_wanted;
+	int swash_read_countdown = 0; // render thread only
+	Vector<float> swash_wet_cache;
+	uint64_t swash_wet_serial = 0;
+	void _rt_store_swash(const uint8_t *p_data, int p_bytes);
+	void rt_on_swash(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
 
 	// Ripple rest (WaterSolver::set_rest_threshold): consecutive ripple readbacks, all taken after the last step that
 	// had a body or an impulse, whose peak |height - water_level| stayed below the threshold. Written on the render
@@ -548,6 +556,11 @@ public:
 	// Mean whitecap foam (0..1) over the ocean grid at the last readback,
 	// -1 before the first one or with foam off.
 	float get_foam_cover() const;
+	// Wet sand on the ripple grid (0..1, the swash's wetness: 1 under water and where the run-up reached, fading as
+	// it dries), read back from the GPU every few steps once asked for. get_wetness_grid() returns false before
+	// the first read; r_serial changes with each new one.
+	void set_wetness_readback(bool p_enabled);
+	bool get_wetness_grid(Vector<float> &r_wet, int &r_n, uint64_t &r_serial) const;
 	// dh/dx of the ocean layer from the FFT (readback, for tests).
 	void get_ocean_slope_x_grid(Vector<float> &r_slope_x) const;
 
