@@ -635,6 +635,8 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 		const float canopy_r = sp->get_canopy_radius();
 		const float range = sp->get_visibility_range();
 		const bool is_log = ps.deadwood_reach > 0.0f;
+		// The most a point can keep: the density, raised at rock feet (rock_foot).
+		const float max_keep = sp->get_density() * (p_setup.obstacles.is_empty() ? 1.0f : sp->rock_foot_weight(0.0f));
 		const PlantSpecies::DeadwoodRule dw_rule = is_log ? PlantSpecies::DEADWOOD_IGNORE : sp->get_deadwood_rule();
 		const bool dw_near = dw_rule == PlantSpecies::DEADWOOD_ON || dw_rule == PlantSpecies::DEADWOOD_BESIDE;
 		const float dw_band = sp->get_deadwood_band();
@@ -664,7 +666,7 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					// Ordered dither: a point survives where its (per-tile shifted) rank is below
 					// the density there, so density changes smoothly and the pattern stays blue noise.
 					const float rank = Math::fmod(pat.ranks[i] + shift, 1.0f);
-					if (rank >= sp->get_density()) {
+					if (rank >= max_keep) {
 						continue;
 					}
 					const Vector3 p3(xz.x, 0.0f, xz.y);
@@ -739,6 +741,15 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					} else if (dw_near) {
 						suit = 0.0f;
 					}
+					// Rocks as nurse objects: shelter and the rain running off them make their foot
+					// moister, so species that like it gather there (PlantSpecies.rock_foot).
+					if (suit > 0.0f && sp->get_rock_foot() > 0.0f && !p_setup.obstacles.is_empty()) {
+						const float reach = 4.0f * PlantSpecies::ROCK_FOOT_REACH;
+						const float c = p_setup.obstacles.clearance(xz, reach);
+						if (c < reach) {
+							suit *= sp->rock_foot_weight(c);
+						}
+					}
 					const float keep = sp->get_density() * suit;
 					if (rank >= keep) {
 						continue;
@@ -786,7 +797,14 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 
 					// The plant's transform: on the ground, tilted towards its normal, random yaw and size.
 					const float r = pat.randoms[i];
-					const float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f));
+					float scale = Math::lerp(scale_range.x, scale_range.y, Math::fmod(r * 104729.0f, 1.0f));
+					// A stand's margin: smaller plants leaning out to the open (PlantSpecies.margin_*).
+					float margin = 0.0f;
+					Vector2 margin_out;
+					if (sp->get_margin_width() > 0.0f) {
+						margin = sp->margin_at(sp->get_patch_depth(p3, &margin_out));
+						scale *= Math::lerp(1.0f, sp->get_margin_scale(), margin);
+					}
 					if (canopy_r > 0.0f) {
 						const Crown crown = { xz, canopy_r * scale, sp->get_canopy_opacity(), ps.canopy_top * scale, sp->is_canopy_conifer() ? 1.0f : 0.0f, ps.stem_foot * scale };
 						local_crowns.push_back(crown);
@@ -816,6 +834,11 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					}
 					const float yaw = sp->is_random_yaw() ? Math::fmod(r * 7919.0f, 1.0f) * Math::TAU : 0.0f;
 					b = b * Basis(Vector3(0, 1, 0), yaw);
+					if (margin > 0.0f && sp->get_margin_lean() > 0.0f && margin_out != Vector2()) {
+						// Tip the plant's axis towards the open, about the horizontal axis across it.
+						const Vector3 lean_axis = Vector3(0, 1, 0).cross(Vector3(margin_out.x, 0.0f, margin_out.y)).normalized();
+						b = Basis(lean_axis, Math::deg_to_rad(sp->get_margin_lean()) * margin) * b;
+					}
 					b.scale(Vector3(scale, scale, scale));
 					const int variant = MIN(int(r * variants), variants - 1);
 					const Transform3D world(b, Vector3(xz.x, y, xz.y));

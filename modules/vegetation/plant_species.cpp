@@ -205,6 +205,37 @@ static float patch_value_noise(float p_x, float p_z, int p_seed) {
 	return Math::lerp(Math::lerp(a, b, fx), Math::lerp(c, d, fx), fz);
 }
 
+// The patch noise is a smooth field: its value over the threshold divided by its gradient is the
+// distance to the edge to first order (the edge is where it crosses the threshold).
+float PlantSpecies::get_patch_depth(const Vector3 &p_pos, Vector2 *r_out) const {
+	if (patch_scale <= 0.0f) {
+		if (r_out) {
+			*r_out = Vector2();
+		}
+		return 1e6f;
+	}
+	const auto noise = [&](float p_x, float p_z) {
+		const float x = p_x / patch_scale;
+		const float z = p_z / patch_scale;
+		return 0.7f * patch_value_noise(x, z, patch_seed) + 0.3f * patch_value_noise(x * 2.7f + 17.3f, z * 2.7f - 5.1f, patch_seed + 1);
+	};
+	const float threshold = 0.5f + 0.42f * (0.5f - patch_cover) * 2.0f;
+	const float e = MAX(patch_scale * 0.02f, 0.05f);
+	const float n = noise(p_pos.x, p_pos.z);
+	Vector2 g((noise(p_pos.x + e, p_pos.z) - noise(p_pos.x - e, p_pos.z)) / (2.0f * e), (noise(p_pos.x, p_pos.z + e) - noise(p_pos.x, p_pos.z - e)) / (2.0f * e));
+	float inside = n - threshold;
+	if (patch_invert) {
+		inside = -inside;
+		g = -g;
+	}
+	const float gl = g.length();
+	if (r_out) {
+		*r_out = gl > 1e-6f ? -g / gl : Vector2();
+	}
+	// Flat noise (no gradient): deep inside or far outside.
+	return gl > 1e-6f ? inside / gl : (inside > 0.0f ? 1e6f : -1e6f);
+}
+
 float PlantSpecies::get_patch_weight(const Vector3 &p_pos) const {
 	if (patch_scale <= 0.0f) {
 		return 1.0f;
@@ -233,6 +264,15 @@ void PlantSpecies::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_footprint", "footprint"), &PlantSpecies::set_footprint);
 	ClassDB::bind_method(D_METHOD("set_sward_shade", "shade"), &PlantSpecies::set_sward_shade);
 	ClassDB::bind_method(D_METHOD("get_sward_shade"), &PlantSpecies::get_sward_shade);
+	ClassDB::bind_method(D_METHOD("get_patch_depth", "position"), &PlantSpecies::get_patch_depth_at);
+	ClassDB::bind_method(D_METHOD("set_rock_foot", "amount"), &PlantSpecies::set_rock_foot);
+	ClassDB::bind_method(D_METHOD("get_rock_foot"), &PlantSpecies::get_rock_foot);
+	ClassDB::bind_method(D_METHOD("set_margin_width", "width"), &PlantSpecies::set_margin_width);
+	ClassDB::bind_method(D_METHOD("get_margin_width"), &PlantSpecies::get_margin_width);
+	ClassDB::bind_method(D_METHOD("set_margin_scale", "scale"), &PlantSpecies::set_margin_scale);
+	ClassDB::bind_method(D_METHOD("get_margin_scale"), &PlantSpecies::get_margin_scale);
+	ClassDB::bind_method(D_METHOD("set_margin_lean", "degrees"), &PlantSpecies::set_margin_lean);
+	ClassDB::bind_method(D_METHOD("get_margin_lean"), &PlantSpecies::get_margin_lean);
 	ClassDB::bind_method(D_METHOD("set_litter_color", "color"), &PlantSpecies::set_litter_color);
 	ClassDB::bind_method(D_METHOD("get_litter_color"), &PlantSpecies::get_litter_color);
 	ClassDB::bind_method(D_METHOD("get_footprint"), &PlantSpecies::get_footprint);
@@ -289,6 +329,10 @@ void PlantSpecies::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "footprint", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater,suffix:m"), "set_footprint", "get_footprint");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "sward_shade", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_sward_shade", "get_sward_shade");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "litter_color"), "set_litter_color", "get_litter_color");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rock_foot", PROPERTY_HINT_RANGE, "0,8,0.1"), "set_rock_foot", "get_rock_foot");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "margin_width", PROPERTY_HINT_RANGE, "0,20,0.1,or_greater,suffix:m"), "set_margin_width", "get_margin_width");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "margin_scale", PROPERTY_HINT_RANGE, "0.05,1,0.01"), "set_margin_scale", "get_margin_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "margin_lean", PROPERTY_HINT_RANGE, "0,60,0.5,suffix:°"), "set_margin_lean", "get_margin_lean");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_density", "get_density");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "scale_range"), "set_scale_range", "get_scale_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "align_to_ground", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_align_to_ground", "get_align_to_ground");

@@ -166,8 +166,14 @@ falls within 3 cm of a rock, a tree whose trunk foot (its measured stem foot tim
 scale) reaches one, and a log within its length; leaves may still lean over the rock. The grass
 skips a blade rooted within 2 cm, on both fill paths: the GPU fill drops those candidates on the
 CPU from the same hash the shader places them by, so both paths still match. Tiles no rock
-reaches skip the test. Rock-foot shelter as a rule that favours ferns and herbs there is left for
-later.
+reaches skip the test.
+
+Rock foot. `PlantSpecies.rock_foot` multiplies a species' suitability by 1 + rock_foot
+exp(-d / 0.5 m), d the distance past a rock's edge: the shelter and runoff at a boulder's foot,
+where ferns, mosses and seedlings gather in a wood (nurse objects). make_floor: ferns 2.5, mosses
+3, wood sorrel and seedlings 1.5; plants on and beside logs keep their own rules. The rock
+lookup runs only for such species when the field has obstacles. Check: a thin cover (density
+0.2, rock_foot 3) stands 2.9 times as dense within 40 cm of the rocks as 2 to 3 m out (5.5 against 1.9 per m²).
 
 Checks: grass bench, no blade inside a 0.7 m rock and 111 blades within 20 cm of its foot;
 vegetation bench, six rocks dropped where cover grew, none of it inside them after, 253 plants

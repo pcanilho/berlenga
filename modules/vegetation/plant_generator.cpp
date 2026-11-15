@@ -5352,9 +5352,16 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		if (f.preset == P::PRESET_BRACKEN) {
 			sp->set_sward_shade(0.85f);
 			sp->set_litter_color(PlantSpecies::BRACKEN_LITTER);
+			// The stand's front: shorter fronds over its outer few metres, leaning out to the light.
+			sp->set_margin_width(3.0f);
+			sp->set_margin_scale(0.55f);
+			sp->set_margin_lean(20.0f);
 		} else if (f.preset == P::PRESET_BRAMBLE) {
 			sp->set_sward_shade(0.7f);
 			sp->set_litter_color(PlantSpecies::BRAMBLE_LITTER);
+			sp->set_margin_width(2.0f);
+			sp->set_margin_scale(0.7f);
+			sp->set_margin_lean(15.0f);
 		}
 		sp->set_density(f.density);
 		sp->set_scale_range(Vector2(f.scale_min, f.scale_max));
@@ -5397,6 +5404,25 @@ TypedArray<Resource> PlantGenerator::make_floor(FloorStand p_stand, int p_varian
 		// range (raster only; docs/ideas/vegetation-lod-streaming.md).
 		if (p_impostor_range > 0.0f && (f.preset == P::PRESET_BRAMBLE || f.preset == P::PRESET_BRACKEN)) {
 			add_impostors(sp, p_impostor_range);
+		}
+		// Ferns, mosses, wood sorrel and seedlings gather at the foot of rocks (nurse objects:
+		// shelter and runoff), the floor's own, not those on or beside logs.
+		if (f.deadwood != PlantSpecies::DEADWOOD_ON && f.deadwood != PlantSpecies::DEADWOOD_BESIDE) {
+			switch (f.preset) {
+				case P::PRESET_FERN:
+					sp->set_rock_foot(2.5f);
+					break;
+				case P::PRESET_MOSS:
+				case P::PRESET_FEATHER_MOSS:
+					sp->set_rock_foot(3.0f);
+					break;
+				case P::PRESET_WOOD_SORREL:
+				case P::PRESET_SEEDLING:
+					sp->set_rock_foot(1.5f);
+					break;
+				default:
+					break;
+			}
 		}
 		if (f.deadwood != PlantSpecies::DEADWOOD_AVOID) {
 			sp->set_deadwood_rule(f.deadwood);

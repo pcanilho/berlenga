@@ -295,6 +295,24 @@ the field grass keeps growing between the plants at a stand's thin margin; the s
 where the fronds close. The shade and litter now follow smoothstep(0.25, 0.85) of the density,
 so a stand's edge is grass between fronds and the litter starts under the closed canopy.
 
+## Stand margins
+
+From outside, a bracken stand showed a wall of full-height fronds with bare stipes and dark
+ground under its edge. A real stand is graded: Watt's account of bracken (1947, "Pattern and
+process in the plant community") describes the advancing front as a zone of shorter, sparser
+fronds rising over a few metres to the tall "building" phase, so a stand reads as a low dome,
+and the outer fronds reach out and down to the open light. Bramble thickets arch out the same
+way.
+
+`PlantSpecies.margin_width`, `margin_scale` and `margin_lean`: within `margin_width` metres of a
+patch edge a plant shrinks to `margin_scale` of its size at the edge and tips out towards the open
+by up to `margin_lean` degrees, both easing in by smoothstep. The depth comes from the patch noise
+(`get_patch_depth()`): its value over the threshold divided by its gradient, which is the distance
+to the edge to first order, and the gradient gives the way out. make_floor: bracken 3 m, 0.55,
+20 degrees; bramble 2 m, 0.7, 15. Cost: four noise lookups per placed plant of such a species.
+Bench check: depth positive inside every patch, negative outside, 0.11 m on average where the
+weight is a half.
+
 ## References
 
 - Stace, *New Flora of the British Isles*, 4th ed., 2019.

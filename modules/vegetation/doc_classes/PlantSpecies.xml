@@ -9,6 +9,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_patch_depth" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				How far inside one of the species' patches a point lies, in metres: positive inside, negative outside, about 0 where [method get_patch_weight] crosses one half. A large number for species without patches.
+			</description>
+		</method>
 		<method name="get_patch_weight" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="global_position" type="Vector3" />
@@ -136,6 +143,15 @@
 		<member name="litter_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
 			Range of leaf litter fallen from the crowns the plant may grow on ([method VegetationField3D.get_litter_at]): full under broad-leaved crowns, thinning over a few metres past their rim, so litter drifts into edges and clearings. Needle-leaved crowns drop none.
 		</member>
+		<member name="margin_lean" type="float" setter="set_margin_lean" getter="get_margin_lean" default="0.0">
+			How far, in degrees, plants at the very edge of a patch lean out towards the open, easing to upright over [member margin_width]. Bracken 20 and bramble 15 in [method PlantGenerator.make_floor].
+		</member>
+		<member name="margin_scale" type="float" setter="set_margin_scale" getter="get_margin_scale" default="1.0">
+			The size of plants at the very edge of a patch, as a share of their own, growing to full size over [member margin_width]: a bracken stand's advancing front of shorter fronds (0.55 in [method PlantGenerator.make_floor]; bramble 0.7).
+		</member>
+		<member name="margin_width" type="float" setter="set_margin_width" getter="get_margin_width" default="0.0">
+			How deep into its patches a species' margin reaches, in metres (see [member margin_scale] and [member margin_lean]); 0 for none. Only for species with patches ([member patch_scale]). Bracken 3 m and bramble 2 m in [method PlantGenerator.make_floor].
+		</member>
 		<member name="meshes" type="Mesh[]" setter="set_meshes" getter="get_meshes" default="[]">
 			Mesh variants; each plant picks one at random. Plants carry ([code]variant, scale, random, species[/code]) in [code]INSTANCE_CUSTOM[/code] for their materials.
 		</member>
@@ -180,6 +196,9 @@
 		</member>
 		<member name="rock_fade" type="float" setter="set_rule_fade" getter="get_rule_fade" default="0.0">
 			Soft edge of [member rock_range].
+		</member>
+		<member name="rock_foot" type="float" setter="set_rock_foot" getter="get_rock_foot" default="0.0">
+			How much more the species grows at the foot of a rock ([member VegetationField3D.obstacles]), where shelter and the rain running off the rock keep the ground moist: its suitability is multiplied by [code]1 + rock_foot * exp(-d / 0.5)[/code], d the distance past the rock's edge in metres. [method PlantGenerator.make_floor]: ferns 2.5, mosses 3, wood sorrel and seedlings 1.5.
 		</member>
 		<member name="rock_range" type="Vector2" setter="set_rule_range" getter="get_rule_range" default="Vector2(0, 1)">
 			Bare rock exposure (0 to 1) where the species grows, from the map's [member TerrainDataMap3D.geology_source]. Trees and most plants need little: for example [code]Vector2(0, 0.3)[/code]. Ignored when the map has no geology.

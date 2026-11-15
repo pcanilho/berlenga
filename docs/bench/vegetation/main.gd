@@ -723,8 +723,59 @@ func _deadwood_checks() -> void:
 				elif d < 0.5:
 					by_rock += 1
 	_check("rocks: no ground plant inside a boulder, and they grow up to it", rocks.size() == 6 and in_rock == 0 and by_rock > 5, [rocks.size(), in_rock, by_rock])
+	# Rock foot (PlantSpecies.rock_foot): a thin cover gathers at the rocks' feet.
+	cover.density = 0.2
+	cover.rock_foot = 3.0
+	ground.populate()
+	var foot_n := 0
+	var ring_n := 0
+	var foot_a := 0.0
+	var ring_a := 0.0
+	for rk in rocks:
+		foot_a += PI * (pow(rk.w + 0.4, 2.0) - pow(rk.w + 0.03, 2.0))
+		ring_a += PI * (pow(rk.w + 3.0, 2.0) - pow(rk.w + 2.0, 2.0))
+	for p in ground.get_placements(0):
+		var best := 1e9
+		for rk in rocks:
+			best = minf(best, Vector2(p.x - rk.x, p.z - rk.z).length() - rk.w)
+		if best < 0.4:
+			foot_n += 1
+		elif best >= 2.0 and best < 3.0:
+			ring_n += 1
+	var foot_d := foot_n / maxf(foot_a, 0.01)
+	var ring_d := ring_n / maxf(ring_a, 0.01)
+	_check("rock foot: a thin cover gathers at the rocks' feet (rock_foot 3)", ring_n > 10 and foot_d > ring_d * 2.0, "%.1f /m2 at the foot, %.1f /m2 2-3 m out" % [foot_d, ring_d])
+	cover.density = 1.0
+	cover.rock_foot = 0.0
 	ground.obstacles = PackedVector4Array()
 	ground.populate()
+	# Stand margins (PlantSpecies.margin_*): the patch depth is positive inside a patch, negative
+	# outside, and about zero where the patch weight crosses one half.
+	var pm := PlantSpecies.new()
+	pm.patch_scale = 9.0
+	pm.patch_cover = 0.3
+	pm.patch_seed = 5
+	var d_in := 0
+	var d_out := 0
+	var d_bad := 0
+	var d_edge := 0.0
+	var n_edge := 0
+	seed(4)
+	for i in 3000:
+		var q := Vector3(randf_range(-60.0, 60.0), 0, randf_range(-60.0, 60.0))
+		var w := pm.get_patch_weight(q)
+		var dd := pm.get_patch_depth(q)
+		if w > 0.99:
+			d_in += 1
+			if dd <= 0.0: d_bad += 1
+		elif w < 0.01:
+			d_out += 1
+			if dd >= 0.0: d_bad += 1
+		elif absf(w - 0.5) < 0.1:
+			d_edge += absf(dd)
+			n_edge += 1
+	d_edge /= maxi(n_edge, 1)
+	_check("stand margins: patch depth inside > 0, outside < 0, about 0 at the edge", d_in > 100 and d_out > 100 and d_bad == 0 and n_edge > 10 and d_edge < 0.3, [d_in, d_out, d_bad, n_edge, d_edge])
 	var beside_ok := 0
 	var beside_bad := 0
 	for p in ground.get_placements(2):

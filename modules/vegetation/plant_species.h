@@ -98,6 +98,13 @@ private:
 	int patch_seed = 0;
 	int mask_channel = -1; // VegetationField3D.density_mask channel that scales this species (0 R .. 3 A), -1 none.
 	bool mask_invert = false; // Grow where the mask is low instead.
+	// A stand's margin (patch species): plants within margin_width of the patch edge grow smaller,
+	// down to margin_scale of their size at the very edge, and lean out towards the open by up to
+	// margin_lean degrees. Bracken's advancing front (Watt 1947).
+	float rock_foot = 0.0f; // How much more it grows at a rock's foot (obstacles): sheltered, moist ground.
+	float margin_width = 0.0f;
+	float margin_scale = 1.0f;
+	float margin_lean = 0.0f;
 	bool patch_invert = false; // Grow between the patches instead (same scale, cover and seed: the exact complement).
 	float visibility_range = 0.0f; // 0: always drawn.
 	// Near detail: heavier meshes (same variant order as meshes) drawn within near_range,
@@ -142,6 +149,23 @@ public:
 	void set_patch_invert(bool p_invert) { patch_invert = p_invert; }
 	bool is_patch_invert() const { return patch_invert; }
 	float get_patch_weight(const Vector3 &p_pos) const;
+	// How far inside its patch a point is, in metres (negative outside), and the way out of it on
+	// the ground (unit xz) when asked. 1e6 for species without patches.
+	float get_patch_depth(const Vector3 &p_pos, Vector2 *r_out = nullptr) const;
+	float get_patch_depth_at(const Vector3 &p_pos) const { return get_patch_depth(p_pos); }
+	void set_rock_foot(float p_amount) { rock_foot = CLAMP(p_amount, 0.0f, 8.0f); emit_changed(); }
+	float get_rock_foot() const { return rock_foot; }
+	static constexpr float ROCK_FOOT_REACH = 0.5f; // Metres: the e-folding distance of the rock foot's shelter.
+	// The rock foot's weight at a distance past a rock's edge (clearance, metres).
+	float rock_foot_weight(float p_clearance) const { return 1.0f + rock_foot * Math::exp(-MAX(p_clearance, 0.0f) / ROCK_FOOT_REACH); }
+	void set_margin_width(float p_width) { margin_width = MAX(p_width, 0.0f); emit_changed(); }
+	float get_margin_width() const { return margin_width; }
+	void set_margin_scale(float p_scale) { margin_scale = CLAMP(p_scale, 0.05f, 1.0f); emit_changed(); }
+	float get_margin_scale() const { return margin_scale; }
+	void set_margin_lean(float p_degrees) { margin_lean = CLAMP(p_degrees, 0.0f, 60.0f); emit_changed(); }
+	float get_margin_lean() const { return margin_lean; }
+	// The margin's effect at a depth: 0 deep inside, 1 at the edge.
+	float margin_at(float p_depth) const { return margin_width > 0.0f ? 1.0f - Math::smoothstep(0.0f, 1.0f, CLAMP(p_depth / margin_width, 0.0f, 1.0f)) : 0.0f; }
 	void set_near_meshes(const TypedArray<Mesh> &p_meshes) { near_meshes = p_meshes; }
 	TypedArray<Mesh> get_near_meshes() const { return near_meshes; }
 	void set_near_range(float p_range) { near_range = MAX(p_range, 0.0f); }

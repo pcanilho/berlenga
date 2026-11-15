@@ -11,6 +11,7 @@ extends Node3D
 #   --frames=N       frames before the capture (default 20)
 #   --grass-density=N  blades per m2 of the tall grass near the camera (default: the field's, 120)
 #   --sun-yaw=D      sun heading in degrees (default 150, against the light; -30 lights the view from behind)
+#   --sun-elev=D     sun elevation in degrees (default 28)
 #   env GRASS_DIAG=noshadow|nosun|nograss|notrample|novf|vf1|nounder|bounce0|ssaa: lighting diagnostics (grass.md, "Light inside the sward")
 #   --cpu-fill       build grass tiles on the CPU instead of the GPU fill (grass.md, stage 3a)
 #   --litter-wind=x,z  downwind lean of the leaf drift (VegetationField3D.litter_wind), e.g. 0.6,0
@@ -76,6 +77,7 @@ var litter_wind := Vector2()
 var grass_density := 0.0
 var gpu_fill := true
 var sun_yaw := 150.0
+var sun_elev := 28.0
 var sun_node: DirectionalLight3D
 var forest_in := false
 var stand := "beech"
@@ -83,6 +85,7 @@ var stand_set := false
 var no_floor := false
 var no_sward := false
 var undergrowth := ""
+var no_margin := false # --no-margin: undergrowth stands without their margin.
 var rocks := 0 # --rocks=N: boulders in front of the camera.
 var rocks_through := false # --rocks-through: the fields not told of them (blades and plants grow through).
 var ug_field: VegetationField3D
@@ -144,6 +147,7 @@ func _ready() -> void:
 		elif a.begins_with("--undergrowth="): undergrowth = a.substr(14)
 		elif a.begins_with("--rocks="): rocks = int(a.substr(8))
 		elif a == "--rocks-through": rocks_through = true
+		elif a == "--no-margin": no_margin = true
 		elif a == "--far=0": no_far = true
 		elif a == "--far": far_view = true
 		elif a == "--prims": prims = true
@@ -166,6 +170,7 @@ func _ready() -> void:
 		elif a.begins_with("--grass-density="): grass_density = float(a.substr(16))
 		elif a == "--cpu-fill": gpu_fill = false
 		elif a.begins_with("--sun-yaw="): sun_yaw = float(a.substr(10))
+		elif a.begins_with("--sun-elev="): sun_elev = float(a.substr(11))
 		elif a.begins_with("--litter-wind="):
 			var lw := a.substr(14).split(",")
 			litter_wind = Vector2(float(lw[0]), float(lw[1]))
@@ -322,6 +327,11 @@ func _ready() -> void:
 			# Its litter under the stands, as PlantGenerator.make_floor() sets it (dead fronds, leaf litter).
 			if not no_sward:
 				usp.litter_color = Color(0.17, 0.105, 0.05, 0.7) if bramble else Color(0.30, 0.13, 0.045, 0.95)
+			# The stand's margin, as make_floor() sets it (--no-margin: every plant full size, upright).
+			if not no_margin:
+				usp.margin_width = 2.0 if bramble else 3.0
+				usp.margin_scale = 0.7 if bramble else 0.55
+				usp.margin_lean = 15.0 if bramble else 20.0
 			var ub := Biome.new()
 			ub.species = [usp]
 			ug_field = VegetationField3D.new()
@@ -392,7 +402,7 @@ void fragment() {
 	add_child(we)
 	var sun := DirectionalLight3D.new()
 	sun_node = sun
-	sun.rotation_degrees = Vector3(-28, sun_yaw, 0)
+	sun.rotation_degrees = Vector3(-sun_elev, sun_yaw, 0)
 	sun.shadow_enabled = not OS.get_environment("GRASS_DIAG").contains("noshadow")
 	if OS.get_environment("GRASS_DIAG").contains("ssaa"):
 		get_viewport().scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
