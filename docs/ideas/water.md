@@ -2307,3 +2307,14 @@ Proposal (raster; the path tracer needs nothing):
    `sun_visibility` (as under water, #287), so a cliff's or a cloud's shadow darkens the water body itself.
 3. Waves shadowing: the displaced surface casts the sun's shadow onto the troughs and the bed (and the
    caustics take the shadow maps, as HDRP's do).
+
+Step 1 built (15 Nov): `clear_water` (shader parameter, on). The open surface seen from above reads the screen
+behind it at the refracted point (the bed's depth from the solver's seabed, else from the screen; a point
+showing something in front of the water halves the offset twice, then takes the straight pixel) and passes
+it through the medium: the bed's light dimmed on its way down (as the underwater pass does) and along the
+refracted path, plus the sun and sky scattered along it, the sun's as far as `sun_visibility` lets it
+reach the surface. The path length follows the solver's seabed, not the screen's depth, which jumped from
+pixel to pixel where the waves bend the offset (a stepped edge across the shallows). The open water's own
+sun body term (#286) is off in this mode, its sun being inside the medium's light; glitter, reflections,
+foam and wet sand are as before. The light in the water is now set every frame (also in the editor), not
+only near the camera. Rivers follow.
