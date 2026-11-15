@@ -377,6 +377,20 @@ func _build_scene() -> void:
 		cam.position = Vector3(xs[0], cy, 0) + out * 4.6
 		cam.look_at(Vector3(xs[0], 1.6 if cy > 1.0 else 0.4, 0))
 		cam.fov = 50.0
+	elif view == "fungi":
+		# Close on the first tree's fungus cluster number FUNGI (env, default 0): from 0.7 m out
+		# along the wood's normal, a little above and to the side.
+		var fp: PackedFloat32Array = first_info.mesh.get_meta("tree_fungi", PackedFloat32Array())
+		var k := int(OS.get_environment("FUNGI")) if OS.has_environment("FUNGI") else 0
+		var dist := float(OS.get_environment("FDIST")) if OS.has_environment("FDIST") else 0.7
+		if fp.size() >= (k + 1) * 8:
+			var at := Vector3(fp[k * 8], fp[k * 8 + 1], fp[k * 8 + 2]) + Vector3(xs[0], 0, 0)
+			var nrm := Vector3(fp[k * 8 + 3], fp[k * 8 + 4], fp[k * 8 + 5])
+			var flat := Vector3(nrm.x, 0, nrm.z).normalized() if Vector2(nrm.x, nrm.z).length() > 0.2 else Vector3(0, 0, 1)
+			cam.position = at + flat * dist + Vector3(0, 0.25 * dist, 0) + flat.cross(Vector3.UP) * 0.3 * dist
+			cam.look_at(at + Vector3(0, 0.04, 0))
+			print("fungi clusters ", fp.size() / 8, " kind ", fp[k * 8 + 7])
+		cam.fov = 40.0
 	elif view == "log":
 		# The last plant in the row (the log with --decays) from 3.5 m, slightly above.
 		cam.position = Vector3(xs[xs.size() - 1] + 1.0, 1.6, 3.5)
