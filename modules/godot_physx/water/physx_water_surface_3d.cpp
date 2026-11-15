@@ -777,16 +777,18 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 		// They are what reads as a gale from a low view, converging on the horizon downwind.
 		float along = dot(world_xz, sd);
 		float across = dot(world_xz, vec2(-sd.y, sd.x)) + 1.5 * foam_value_noise(vec2(along * 0.02, 3.1)) + 0.4 * foam_value_noise(vec2(along * 0.1, 8.3));
-		// Value noise stretched about fifty to one along the wind, cut at a high level: many thin, broken,
-		// marbled filaments rather than painted lines, gathered into bands by a slower noise across the wind.
-		vec2 sq = vec2(along * 0.06, across * 3.0);
-		float v = 0.6 * foam_value_noise(sq) + 0.4 * foam_value_noise(sq * vec2(5.0, 2.7) + 5.0);
-		float streak = smoothstep(0.52, 0.8, v) * smoothstep(0.05, 0.45, foam_value_noise(vec2(along * 0.012, across * 0.1)));
+		// Value noise stretched about thirty to one along the wind in three octaves, cut at a high level: many
+		// thin marbled filaments rather than painted lines.
+		vec2 sq = vec2(along * 0.08, across * 4.0);
+		float v = 0.55 * foam_value_noise(sq) + 0.3 * foam_value_noise(sq * vec2(3.0, 2.1) + 5.0) + 0.15 * foam_value_noise(sq * vec2(9.0, 1.3) + 11.0);
+		// Broken along their length every few metres, and only gently denser in places (no bands that end).
+		float broken = smoothstep(0.3, 0.6, foam_value_noise(vec2(along * 0.25, across * 2.0) + 3.0));
+		float streak = smoothstep(0.55, 0.78, v) * broken * (0.6 + 0.4 * foam_value_noise(vec2(along * 0.01, across * 0.03)));
 		// A pixel's rough footprint (about 2 mrad, from the grid's centre, which follows the camera; no
 		// derivatives, as the vertex stage calls this too): past where the filaments are thinner than a pixel
 		// they fade toward their mean cover rather than shimmering.
-		streak = mix(streak, 0.12, clamp(0.002 * length(rel) * 3.0 - 0.2, 0.0, 1.0));
-		amount = max(amount, 0.7 * streak * fade * foam_streaks);
+		streak = mix(streak, 0.06, clamp(0.002 * length(rel) * 4.0 - 0.2, 0.0, 1.0));
+		amount = max(amount, 0.6 * streak * fade * foam_streaks);
 	}
 	// White water from the live flow (its velocity texture's b), fading out at the square's edge.
 	if (flow_foam_live) {
@@ -811,13 +813,7 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 		vec2 q = (world_xz - o_b) * foam_detail_scale;
 		n = n * w + (0.5 * foam_value_noise(q) + 0.3 * foam_value_noise(q * 2.7 + 17.0) + 0.2 * foam_value_noise(q * 7.3 - 5.0)) * (1.0 - w);
 	}
-	if (foam_streaks > 0.0) {
-		// Lace stretched ten to one along the wind.
-		vec2 sd = foam_streak_dir;
-		vec2 sp = vec2(dot(p, sd) * 0.1, dot(p, vec2(-sd.y, sd.x)) * 1.2);
-		float ns = 0.6 * foam_value_noise(sp) + 0.4 * foam_value_noise(sp * 2.3 + 7.0);
-		n = mix(n, ns, foam_streaks);
-	}
+	// (The streaks carry their own structure; the whitecaps' lace stays as it is in any wind.)
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and
 	// lacy as the noise eats into it, rather than cutting off at an edge.
 	float f = clamp(amount * (1.0 + foam_breakup) - n * foam_breakup, 0.0, 1.0);
