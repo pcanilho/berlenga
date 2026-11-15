@@ -2119,6 +2119,17 @@
    "topic": "Wood and leaves"
   },
   {
+   "name": "Bark lichen",
+   "settings": [
+    "lichen_cover"
+   ],
+   "note": "",
+   "what": "lichen on bark, placed by height, crown light, stem age and moss; 0 turns it off.",
+   "page": "trees",
+   "title": "Trees",
+   "topic": "Wood and leaves"
+  },
+  {
    "name": "Climbers",
    "settings": [
     "climber",
