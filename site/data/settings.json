@@ -753,10 +753,11 @@
   {
    "name": "Storm seas",
    "settings": [
-    "crest_spray"
+    "crest_spray",
+    "crest_spray_amount"
    ],
    "note": "",
-   "what": "above 9 m/s of wind, spray tears off breaking crests; above 14 m/s, foam is drawn into streaks along the wind.",
+   "what": "above 9 m/s of wind, breaking crests throw puffs of spume downwind; above 14 m/s, gale foam lies in thin broken streaks along the wind.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"
