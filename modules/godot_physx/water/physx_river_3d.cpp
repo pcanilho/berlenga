@@ -301,7 +301,7 @@ void fragment() {
 		vec3 sun_irr;
 		vec3 sky;
 		water_light_in_water(sun_dir, sun_irr, sky);
-		base_rgb = water_clear_through(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, sun_dir, sun_irr, sky, PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX);
+		base_rgb = water_clear_through(clear_screen, clear_depth, v_world, normalize(v_world - CAMERA_POSITION_WORLD), world_normal, SCREEN_UV, max(v_info.r * 4.0 - 1.0, 0.0), pathtraced_absorption, pathtraced_scattering, pathtraced_scattering_anisotropy, sun_dir, sun_irr, sky, water_jitter(FRAGCOORD.xy, TIME), PROJECTION_MATRIX, VIEW_MATRIX, INV_PROJECTION_MATRIX, INV_VIEW_MATRIX);
 		unlit_rgb = vec3(0.0);
 		base_a = 1.0;
 	}

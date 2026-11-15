@@ -191,6 +191,12 @@ void water_light_in_water(out vec3 r_sun_dir, out vec3 r_sun_irradiance, out vec
 	r_sun_irradiance = raster_sun_irradiance * (1.0 - 0.5 * (rs * rs + rp * rp));
 }
 
+// Interleaved gradient noise (Jimenez 2014), a new pattern each frame: per-pixel offsets for marches.
+float water_jitter(vec2 p_frag, float p_time) {
+	p_frag += 5.588238 * floor(p_time * 60.0);
+	return fract(52.9829189 * fract(dot(p_frag, vec2(0.06711056, 0.00583715))));
+}
+
 #if !defined(RT)
 // Clear water seen from above (docs/ideas/water.md "Clear water you can see into"): the light coming up
 // through the surface at p_s toward the eye, before the surface's own Fresnel reflection. The view ray v
@@ -203,8 +209,8 @@ void water_light_in_water(out vec3 r_sun_dir, out vec3 r_sun_irradiance, out vec
 // (Henyey-Greenstein, as far as sun_visibility lets the sun reach the surface) and sky along the path. The
 // medium is the path tracer's: absorption p_ab and scattering p_sc per metre, anisotropy p_g.
 vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v, vec3 n, vec2 uv, float z_bed,
-		vec3 p_ab, vec3 p_sc, float p_g, vec3 p_sun_dir, vec3 p_sun_irr, vec3 p_sky, mat4 proj, mat4 view,
-		mat4 inv_proj, mat4 inv_view) {
+		vec3 p_ab, vec3 p_sc, float p_g, vec3 p_sun_dir, vec3 p_sun_irr, vec3 p_sky, float p_jitter, mat4 proj,
+		mat4 view, mat4 inv_proj, mat4 inv_view) {
 	vec3 t = refract(v, n, 1.0 / 1.33);
 	if (dot(t, t) < 1e-6) {
 		t = v;
@@ -257,13 +263,34 @@ vec3 water_clear_through(sampler2D p_screen, sampler2D p_depth, vec3 p_s, vec3 v
 	// Scattered along the path (closed form, as the underwater pass): depth grows as -t.y per metre.
 	vec3 a = st / mu;
 	vec3 ka = st - a * t.y;
-	vec3 seg_sun = mix(vec3(len), (1.0 - exp(-ka * len)) / ka, step(vec3(1e-4), abs(ka * len)));
+	// The sun's share marched in steps over the near water (shadows in the water: a cliff's or a cloud's shadow
+	// darkens the water body, not only its surface), each step lit as far as the light reached where its
+	// refracted ray entered the water (sun_visibility there), integrated in closed form within the step and
+	// jittered per pixel; past the march the last step's light carries on (as the underwater pass, #287).
+	const int STEPS = 12;
+	float reach = min(len, 4.0 / max(dot(st, vec3(1.0 / 3.0)), 1e-3));
+	float dt = reach / float(STEPS);
+	vec3 seg_sun = vec3(0.0);
+	vec3 vis = vec3(1.0);
+	for (int i = 0; i < STEPS; i++) {
+		float s0 = float(i) * dt;
+		float sj = s0 + p_jitter * dt;
+		float z = max(-t.y * sj, 0.0);
+		vis = sun_visibility(p_s + t * sj - p_sun_dir * (z / mu));
+		vec3 seg = mix(vec3(dt), (1.0 - exp(-ka * dt)) / ka, step(vec3(1e-4), abs(ka * dt)));
+		seg_sun += vis * exp(-ka * s0) * seg;
+	}
+	if (len > reach) {
+		float rest = min(len - reach, 1e4);
+		vec3 seg = mix(vec3(rest), (1.0 - exp(-ka * rest)) / ka, step(vec3(1e-4), abs(ka * rest)));
+		seg_sun += vis * exp(-ka * reach) * seg;
+	}
 	vec3 kb = st - st * 1.2 * t.y;
 	vec3 seg_sky = mix(vec3(len), (1.0 - exp(-kb * len)) / kb, step(vec3(1e-4), abs(kb * len)));
 	float cth = dot(p_sun_dir, -t);
 	float g2 = p_g * p_g;
 	float hg = (1.0 - g2) / (4.0 * PI * pow(max(1.0 + g2 - 2.0 * p_g * cth, 1e-4), 1.5));
-	vec3 sun = p_sun_irr * sun_visibility(p_s) * hg * seg_sun;
+	vec3 sun = p_sun_irr * hg * seg_sun;
 	vec3 sky = p_sky * 0.5 * seg_sky;
 	return seen + max(p_sc, vec3(0.0)) * (sun + sky);
 }
