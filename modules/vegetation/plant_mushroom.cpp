@@ -234,6 +234,9 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 	const int segs = 10;
 	const float sink = 0.01f;
 	const float bend = _rand(-0.25f, 0.25f);
+	// A stalk pushed out of a tuft curves back up towards the light: it leaves the base leaning and
+	// rises to its cap, giving back most of the lean over its length.
+	const float upright = p_tilt > 0.15f ? p_tilt * 0.75f : 0.0f;
 	LocalVector<Transform3D> frames;
 	LocalVector<Vector2> rz;
 	LocalVector<Color> tint;
@@ -256,7 +259,7 @@ void PlantGenerator::_add_mushroom(const Transform3D &p_base, const MushroomForm
 			const float ao = Math::lerp(0.55f, 1.0f, Math::smoothstep(0.0f, 0.35f, t)); // Soil-stained foot.
 			tint.push_back(Color(ao, ao * 0.97f, ao * 0.92f));
 			if (i < segs) {
-				f = Basis(f.get_column(0), bend / segs) * f;
+				f = Basis(lean_axis, upright / segs) * Basis(f.get_column(0), bend / segs) * f;
 				f.orthonormalize();
 				p += f.get_column(2) * (len / segs);
 			}

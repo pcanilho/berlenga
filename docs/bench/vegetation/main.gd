@@ -22,6 +22,7 @@ var raster := false
 var spp := 16
 var out := ""
 var deadwood_view := false
+var mushroom_view := 0 # --mushrooms: 1 with the mushrooms, 2 the same view without them (--mushrooms=off).
 var n := 0
 var dm: TerrainDataMap3D
 var field: VegetationField3D
@@ -60,6 +61,10 @@ func _ready() -> void:
 		elif a == "--raster": raster = true
 		elif a.begins_with("--spp="): spp = int(a.substr(6))
 		elif a.begins_with("--out="): out = a.substr(6)
+		elif a.begins_with("--mushrooms"):
+			mushroom_view = 2 if a == "--mushrooms=off" else 1
+			deadwood_view = true
+			size = 48.0
 		elif a == "--deadwood":
 			deadwood_view = true
 			size = 48.0 # A patch of the stand: lavapipe renders the whole map's trees too slowly.
@@ -1081,7 +1086,16 @@ func _deadwood_view() -> void:
 	ground.populate_on_ready = false
 	var gb := Biome.new()
 	var floor_set: Array[PlantSpecies] = []
-	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_BEECH, 3, true))
+	var floor_season := {}
+	if mushroom_view > 0:
+		# Mid October in the weather's default climate: the beech litter's autumn colours, the
+		# mushrooms fruiting.
+		var wm := WeatherMap3D.new()
+		wm.season_day = 288
+		add_child(wm)
+		floor_season = wm.get_season()
+		wm.queue_free()
+	floor_set.assign(PlantGenerator.make_floor(PlantGenerator.FLOOR_BEECH, 3, true, 15.0, floor_season))
 	if OS.get_environment("VEG_DW_OFF") != "":
 		# The before shot: the floor blind to the logs (nothing on or beside them, plants through them).
 		for sp in floor_set:
@@ -1096,7 +1110,8 @@ func _deadwood_view() -> void:
 	add_child(ground)
 	ground.data_map = ground.get_path_to(dm)
 	ground.canopy_field = ground.get_path_to(wood)
-	ground.streaming = true
+	# The mushroom view places the whole 48 m floor at once, so its tufts are known before framing.
+	ground.streaming = mushroom_view == 0
 	ground.stream_target = ground.get_path_to(cam)
 	ground.stream_radius = 30.0
 	ground.populate()
@@ -1114,9 +1129,98 @@ func _deadwood_view() -> void:
 				cam.position = p + Vector3(0.5, 0.45, 0.5)
 				cam.look_at(p)
 		print("VEG_DEADWOOD_VIEW moss species %d (%s) count %d nearest %.2f" % [mi, floor_set[mi].resource_name, ground.get_placements(mi).size(), best])
+	if mushroom_view > 0:
+		var logs := PackedVector3Array()
+		for i in wood.biome.species.size():
+			var sp: PlantSpecies = wood.biome.species[i]
+			if sp.has_meta("deadwood") and sp.resource_name.contains("(log)"):
+				logs.append_array(wood.get_placements(i))
+		await _frame_mushrooms(ground, floor_set, cam, at, logs)
 	for i in 15:
 		await get_tree().process_frame
+	if mushroom_view == 2:
+		_hide_mushrooms(ground, floor_set)
 	_render_later()
+
+# --mushrooms[=off]: the honey fungus tuft nearest the log in view, from 1 m at knee height, with a
+# birch 3.5 m behind it and a fly agaric group under the birch (the beech stand has no birch, so the
+# two are set by hand; everything else is make_floor's). --mushrooms=off hides every mushroom and
+# keeps the rest, placements and camera the same.
+func _frame_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies], cam: Camera3D, at: Vector3, logs: PackedVector3Array) -> void:
+	var honey := -1
+	for i in floor_set.size():
+		if floor_set[i].has_meta("mushroom"):
+			print("VEG_MUSHROOMS species %d density %.3f band %.2f placed %d" % [i, floor_set[i].density, floor_set[i].deadwood_band, ground.get_placements(i).size()])
+	if OS.get_environment("VEG_MUSH_COUNT") != "":
+		get_tree().quit()
+		return
+	for i in floor_set.size():
+		if floor_set[i].has_meta("mushroom") and floor_set[i].deadwood_rule == PlantSpecies.DEADWOOD_BESIDE:
+			honey = i
+	var tuft := at
+	var best := 1e9
+	# The tuft nearest a log (by the log's centre), and that log.
+	if honey >= 0:
+		for p in ground.get_placements(honey):
+			for l in logs:
+				var d := p.distance_to(l)
+				if d < best:
+					best = d
+					tuft = p
+					at = l
+	print("VEG_MUSHROOMS honey tufts %d, nearest %.2f m from the log at %s" % [ground.get_placements(honey).size() if honey >= 0 else 0, best, str(tuft)])
+	# Looking from the log's side across the tuft: the camera on the side away from the log.
+	var away := Vector3(tuft.x - at.x, 0, tuft.z - at.z)
+	if away.length() < 0.2:
+		away = Vector3(1, 0, 0)
+	away = away.normalized()
+	var side := Vector3(-away.z, 0, away.x)
+	var eye := tuft + side * 0.9 + away * 0.45
+	cam.position = Vector3(eye.x, height(eye.x, eye.z) + 0.5, eye.z)
+	var look := (Vector3(tuft.x, 0, tuft.z) - Vector3(eye.x, 0, eye.z)).normalized()
+	cam.fov = 50.0
+	cam.look_at(Vector3(tuft.x, height(tuft.x, tuft.z) + 0.12, tuft.z) + look * 0.6)
+	var extra: Array[Node3D] = []
+	var tg := TreeGenerator.new()
+	tg.preset = TreeGenerator.PRESET_BIRCH
+	tg.seed = 3
+	var birch := MeshInstance3D.new()
+	birch.mesh = tg.generate()
+	var bp := tuft + look * 3.5 + side * 0.4
+	birch.position = Vector3(bp.x, height(bp.x, bp.z) - 0.05, bp.z)
+	add_child(birch)
+	var pg := PlantGenerator.new()
+	pg.preset = PlantGenerator.PRESET_FLY_AGARIC
+	pg.apply_preset_colors()
+	for k in 2:
+		pg.seed = 7 + k
+		var fa := MeshInstance3D.new()
+		fa.mesh = pg.generate()
+		var fp := tuft + look * (2.5 + 0.5 * k) + side * (0.1 - 0.7 * k)
+		fa.position = Vector3(fp.x, height(fp.x, fp.z), fp.z)
+		fa.rotation.y = 1.3 * k
+		add_child(fa)
+		extra.push_back(fa)
+	if mushroom_view == 2:
+		for n in extra:
+			n.visible = false
+
+# --mushrooms=off: hide the floor's mushroom MultiMeshes once the tiles round the camera are in.
+func _hide_mushrooms(ground: VegetationField3D, floor_set: Array[PlantSpecies]) -> void:
+	var meshes := {}
+	for sp in floor_set:
+		if sp.has_meta("mushroom"):
+			for m in sp.meshes:
+				meshes[m] = true
+			for m in sp.near_meshes:
+				meshes[m] = true
+	var hidden := 0
+	for ch in ground.find_children("*", "MultiMeshInstance3D", true, false):
+		var mmi := ch as MultiMeshInstance3D
+		if mmi.multimesh and meshes.has(mmi.multimesh.mesh):
+			mmi.visible = false
+			hidden += 1
+	print("VEG_MUSHROOMS off: %d mushroom MultiMeshes hidden" % hidden)
 
 func _render_later() -> void:
 	for i in (6 if raster else 10):

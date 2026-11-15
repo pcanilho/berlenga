@@ -185,6 +185,12 @@ func _ready() -> void:
 		# soft blobs from the default 100 m cascades.
 		sun.directional_shadow_max_distance = 20.0 if patch else 12.0
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+		if macro:
+			# A hand span away: the map over 2 m and a small normal bias, so a stalk's shadow starts
+			# at its foot instead of a few centimetres off (peter-panning at the default bias).
+			sun.directional_shadow_max_distance = 2.0
+			sun.shadow_normal_bias = 0.3
+			sun.shadow_bias = 0.02
 	sun.light_energy = 2.0
 	add_child(sun)
 	if push or wind != Vector2.ZERO:
