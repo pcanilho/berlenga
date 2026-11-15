@@ -56,6 +56,11 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
   *Whitecaps: with a fixed threshold the cover barely changes with the wind; now it grows from none at 6 m/s to many at 20 m/s.*
 
 - **Storm seas** (`crest_spray`, `crest_spray_amount`): above 9 m/s of wind, breaking crests throw puffs of spume downwind; above 14 m/s, gale foam lies in thin broken streaks along the wind.
+
+  ![Storm sea at 20 m/s looking downwind, without and with storm spray, raster](media/water-storm-seas.jpg)
+
+  *Storm seas: at 20 m/s spume blows off the far crests and foam lies in broken streaks along the wind.*
+
 - **Lake ripples** (automatic from `fetch`): on short fetches the wave grid gets finer, up to 256 points, so lakes keep their short wind ripples and sun glitter; open sea is unchanged.
 
   ![A lake looking into the sun, raster, with wind ripples and glitter](media/lake-ripples.jpg)
