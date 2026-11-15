@@ -286,3 +286,10 @@ dialog::backdrop{background:rgba(5,9,14,.72);backdrop-filter:blur(4px)}
 
 .cards-group{margin:28px 0 0;font-size:13px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .cards-group .anchor{display:none}
+
+/* Collapsible sidebar groups */
+.navgroup summary{display:flex;align-items:center;justify-content:space-between;cursor:pointer;list-style:none;border-radius:6px}
+.navgroup summary::-webkit-details-marker{display:none}
+.navgroup summary:hover{color:var(--text);opacity:1}
+.navgroup summary svg{transition:transform .15s;opacity:.7}
+.navgroup:not([open]) summary svg{transform:rotate(-90deg)}

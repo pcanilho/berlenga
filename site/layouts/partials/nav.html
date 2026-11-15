@@ -5,10 +5,13 @@
 </ul>
 {{ with site.GetPage "/features" }}{{ $pages := .Pages.ByWeight }}
 {{ range slice "Rendering" "World" "Simulation" "Engine" }}{{ $g := . }}
-<p class="group">{{ $g }}</p>
+{{ $in := where $pages "Params.group" $g }}{{ $here := false }}{{ range $in }}{{ if eq $cur . }}{{ $here = true }}{{ end }}{{ end }}
+<details class="navgroup" data-group="{{ $g }}" open{{ if $here }} data-here{{ end }}>
+<summary class="group">{{ $g }}<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 <ul>
-  {{ range where $pages "Params.group" $g }}<li><a href="{{ .RelPermalink }}" {{ if eq $cur . }}class="on"{{ end }}>{{ .Title }}</a></li>{{ end }}
+  {{ range $in }}<li><a href="{{ .RelPermalink }}" {{ if eq $cur . }}class="on"{{ end }}>{{ .Title }}</a></li>{{ end }}
 </ul>
+</details>
 {{ end }}
 {{ end }}
 <p class="group">More</p>

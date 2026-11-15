@@ -356,3 +356,20 @@ document.querySelectorAll('.content img.zoomable').forEach((img) => {
   else if (/Linux/i.test(plat) || /Linux/.test(ua)) { if (!/Android/.test(ua)) os = /aarch64|arm64|armv8/i.test(plat + ua) ? 'linux-arm64' : 'linux-x64'; }
   items.forEach((a) => { if (a.dataset.os === os) a.classList.add('mine'); });
 })();
+
+// Sidebar groups: remember folded groups; the current page's group stays open.
+(() => {
+  const groups = document.querySelectorAll('.navgroup');
+  if (!groups.length) return;
+  let shut = [];
+  try { shut = JSON.parse(localStorage.getItem('navShut') || '[]'); } catch (e) {}
+  groups.forEach((d) => {
+    if (shut.includes(d.dataset.group) && !d.hasAttribute('data-here')) d.open = false;
+    d.addEventListener('toggle', () => {
+      const s = new Set(shut);
+      if (d.open) s.delete(d.dataset.group); else s.add(d.dataset.group);
+      shut = [...s];
+      try { localStorage.setItem('navShut', JSON.stringify(shut)); } catch (e) {}
+    });
+  });
+})();
