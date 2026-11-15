@@ -10,6 +10,13 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="distance_to" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="point" type="Vector2" />
+			<description>
+				Distance in metres from a global x, z point to the guide's line.
+			</description>
+		</method>
 		<method name="get_bar_points" qualifiers="const">
 			<return type="PackedVector3Array" />
 			<description>
@@ -20,6 +27,13 @@
 			<return type="PackedVector3Array" />
 			<description>
 				The guide's line in global space (one point: the centre).
+			</description>
+		</method>
+		<method name="is_sea_at" qualifiers="const">
+			<return type="bool" />
+			<param index="0" name="point" type="Vector2" />
+			<description>
+				Coast mode: whether a global x, z point is sea by the drawn line, before [member roughness].
 			</description>
 		</method>
 	</methods>
