@@ -261,6 +261,14 @@ takes one deadwood rule (`PlantSpecies.deadwood_rule`):
   the band; `deadwood_uphill` keeps it to the uphill side (trapped leaves).
 - `DEADWOOD_IGNORE`: as before.
 
+Uprooted trees (15 Nov): their logs carry `tree_root_pit` (centre, radius, depth in mesh space,
+radius 0.9 of the root plate). The pit is fresh mineral soil thrown up and washed out under the
+plate: it stays bare until it fills with litter over years (Ulanova 2000, "The effects of
+windthrow on forests at different spatial scales"). VegetationField3D keeps every plant but the
+log out of it (a pit is a `Deadwood` piece flagged `pit`, so it travels with the logs to other
+fields), and `sward_at` returns full shade there so GrassField3D with the field as its
+`undergrowth_field` leaves it bare.
+
 Decay is not in the interface; log thickness stands for it (thin branches stay bare).
 
 ## Grass under bracken and bramble

@@ -642,6 +642,8 @@ func _deadwood_checks() -> void:
 	# of its moss (2.2 cm over the bark, VegetationField3D's DEADWOOD_MOSS_LIFT).
 	var lr := r + 0.022
 	lm.set_meta("tree_deadwood_axis", PackedFloat32Array([-3.0, r, 0.0, 3.0, r, 0.0, lr, 4, lr, lr, lr, lr]))
+	# An uprooted tree's root pit past the foot end (tree_root_pit: centre, radius, depth in mesh space).
+	lm.set_meta("tree_root_pit", PackedFloat32Array([-4.0, 0.0, 0.0, 0.9, 0.5]))
 	var logs := PlantSpecies.new()
 	logs.meshes = [lm]
 	logs.spacing = 12.0
@@ -736,6 +738,26 @@ func _deadwood_checks() -> void:
 		if not h.is_empty() and h["side"] >= 0.0 and h["side"] < 0.85:
 			honey_by += 1
 	_check("deadwood: honey fungus tufts beside the logs", ground.get_placements(3).size() > 0 and honey_by == ground.get_placements(3).size(), [ground.get_placements(3).size(), honey_by, nlogs])
+	# Root pits stay bare soil: no ground cover inside one, and it grows round it.
+	var pits := []
+	for mmi in wood.find_children("*", "MultiMeshInstance3D", true, false):
+		var mm: MultiMesh = mmi.multimesh
+		if mm == null or mm.mesh == null or not mm.mesh.has_meta("tree_root_pit"):
+			continue
+		var pm: PackedFloat32Array = mm.mesh.get_meta("tree_root_pit")
+		for i in mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count:
+			var xf: Transform3D = mmi.global_transform * mm.get_instance_transform(i)
+			pits.append(xf * Vector3(pm[0], pm[1], pm[2]))
+	var in_pit := 0
+	var by_pit := 0
+	for p in ground.get_placements(0):
+		for c in pits:
+			var d := Vector2(p.x - c.x, p.z - c.z).length()
+			if d < 0.88:
+				in_pit += 1
+			elif d < 1.5:
+				by_pit += 1
+	_check("deadwood: root pits of uprooted trees stay bare, cover grows round them", pits.size() > 0 and in_pit == 0 and by_pit > 5, [pits.size(), in_pit, by_pit])
 	_check("deadwood: ground plants keep out of the canopy field's trunks, and grow up to them", stems.size() > 3 and in_stem == 0 and near_stem > 0, [stems.size(), in_stem, near_stem])
 	# Rocks (VegetationField3D.obstacles): boulders where cover grew; none of it inside them after,
 	# and it grows up to their foot.

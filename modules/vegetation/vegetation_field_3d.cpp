@@ -363,6 +363,7 @@ bool VegetationField3D::_make_setup(PlaceSetup &r_setup) {
 					ps.deadwood_reach = MAX(ps.deadwood_reach, reach * smax);
 				}
 				ps.deadwood_axes.push_back(axis);
+				ps.deadwood_pits.push_back(m.is_valid() && m->has_meta(SNAME("tree_root_pit")) ? PackedFloat32Array(m->get_meta(SNAME("tree_root_pit"))) : PackedFloat32Array());
 			}
 		}
 		if (ps.sp->get_deadwood_rule() == PlantSpecies::DEADWOOD_BESIDE) {
@@ -551,7 +552,7 @@ bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_x
 			}
 			for (int idx : *bucket) {
 				const auto &d = p_logs[idx];
-				if (d.radius < p_min_radius) {
+				if (d.pit || d.radius < p_min_radius) {
 					continue;
 				}
 				const Vector2 a(d.a.x, d.a.z), ab = Vector2(d.b.x, d.b.z) - a;
@@ -583,7 +584,28 @@ bool deadwood_nearest(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_x
 	return found;
 }
 
+// Whether the point lies in a root pit (Deadwood.pit) of the list.
+template <typename Grid, typename Logs>
+bool deadwood_pit(const Grid &p_grid, const Logs &p_logs, const Vector2 &p_xz, float p_cell) {
+	const auto *bucket = p_grid.getptr(Vector2i(int(Math::floor(p_xz.x / p_cell)), int(Math::floor(p_xz.y / p_cell))));
+	if (!bucket) {
+		return false;
+	}
+	for (int idx : *bucket) {
+		const auto &d = p_logs[idx];
+		if (d.pit && Vector2(p_xz.x - d.a.x, p_xz.y - d.a.z).length_squared() < d.radius * d.radius) {
+			return true;
+		}
+	}
+	return false;
+}
+
 } // namespace
+
+bool VegetationField3D::_pit_at(const Vector2 &p_xz) const {
+	RWLockRead guard(crown_lock);
+	return deadwood_pit(deadwood_grid, deadwood, p_xz, DEADWOOD_CELL);
+}
 
 int VegetationField3D::get_deadwood_count() const {
 	RWLockRead guard(crown_lock);
@@ -774,6 +796,10 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 					if (sp->get_mask_channel() >= 0 && suit > 0.0f) {
 						const float m = CLAMP(mask_at(xz, sp->get_mask_channel()), 0.0f, 1.0f);
 						suit *= sp->is_mask_invert() ? 1.0f - m : m;
+					}
+					// An uprooted tree's root pit stays bare soil: no plant but the log itself.
+					if (suit > 0.0f && !is_log && (deadwood_pit(local_deadwood_grid, local_deadwood, xz, DEADWOOD_CELL) || (p_setup.other && p_setup.other->_pit_at(xz)))) {
+						continue;
 					}
 					// Fallen wood (docs/ideas/forest-floor.md, 6.6): off its footprint, on its upper
 					// surface or along its side, by the species' rule.
@@ -1009,6 +1035,19 @@ void VegetationField3D::_place(const PlaceSetup &p_setup, const Rect2i &p_tiles,
 							deadwood_insert(local_deadwood_grid, log, local_deadwood.size() - 1, DEADWOOD_CELL);
 							if (out) {
 								out->deadwood.push_back(log);
+							}
+						}
+						// An uprooted tree's pit (cx, cy, cz, radius, depth in mesh space): bare soil.
+						if (variant < int(ps.deadwood_pits.size()) && ps.deadwood_pits[variant].size() >= 4) {
+							const PackedFloat32Array &pit = ps.deadwood_pits[variant];
+							Deadwood d;
+							d.a = d.b = world.xform(Vector3(pit[0], pit[1], pit[2]));
+							d.radius = pit[3] * scale;
+							d.pit = true;
+							local_deadwood.push_back(d);
+							deadwood_insert(local_deadwood_grid, d, local_deadwood.size() - 1, DEADWOOD_CELL);
+							if (out) {
+								out->deadwood.push_back(d);
 							}
 						}
 					}
@@ -2002,6 +2041,14 @@ float VegetationField3D::sward_at(const Vector3 &p_global_position, Color *r_lit
 	const TerrainDataMap3D *map = Object::cast_to<TerrainDataMap3D>(get_node_or_null(data_map));
 	if (!map || !map->is_baked()) {
 		return 0.0f;
+	}
+	// An uprooted tree's root pit is bare soil: no sward (GrassField3D.undergrowth_field).
+	{
+		const Vector2 xz(p_global_position.x, p_global_position.z);
+		const VegetationField3D *other = canopy_field.is_empty() ? nullptr : Object::cast_to<VegetationField3D>(get_node_or_null(canopy_field));
+		if (_pit_at(xz) || (other && other != this && other->_pit_at(xz))) {
+			return 1.0f;
+		}
 	}
 	const TypedArray<PlantSpecies> species = biome->get_species();
 	float transmit = 1.0f;

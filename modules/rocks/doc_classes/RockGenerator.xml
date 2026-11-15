@@ -123,7 +123,10 @@
 		<constant name="FAMILY_CLIFF_BLOCK" value="5" enum="Family">
 			Large jointed blocks set into cliff faces.
 		</constant>
-		<constant name="FAMILY_MAX" value="6" enum="Family">
+		<constant name="FAMILY_CORESTONE" value="6" enum="Family">
+			Tor blocks: joint blocks rounded in place by deep weathering (woolsack edges, flat sheeting faces), most with a weathering pan on top.
+		</constant>
+		<constant name="FAMILY_MAX" value="7" enum="Family">
 			Number of families.
 		</constant>
 	</constants>

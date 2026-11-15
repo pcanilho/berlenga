@@ -169,7 +169,7 @@ uniform float detail_k_min = 5.0; // rad/m, where the band starts
 uniform float detail_variance = 0.0;
 // Bubbles under foam (docs/ideas/water.md "Ocean detail"): the plume a breaking crest drives down scatters light
 // back up through the water above it (Crest's "foam bubbles"; War Thunder's "milkiness").
-uniform vec3 bubble_color : source_color = vec3(0.40, 0.82, 0.78);
+uniform vec3 bubble_color : source_color = vec3(0.42, 0.88, 0.80);
 uniform float bubble_strength : hint_range(0.0, 2.0, 0.01) = 1.2;
 uniform float bubble_depth : hint_range(0.0, 3.0, 0.01) = 0.6; // m, the plume's mean depth (parallax)
 uniform float bubble_scattering : hint_range(0.0, 20.0, 0.1) = 4.0; // 1/m added to the path tracer's water
@@ -786,39 +786,62 @@ vec4 foam_voronoi(vec2 p) {
 	return vec4(sqrt(d1), sqrt(d2), rnd, rx);
 }
 
+float foam_fbm(vec2 p) {
+	return 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.3 + 7.1) + 0.2 * foam_value_noise(p * 5.1 - 3.3);
+}
+
 // How much of the surface foam covers, from its amount (docs/ideas/water.md "Ocean detail"). Fresh foam is a
-// solid sheet. As it drains, films rupture: holes open in it, each its own size, and grow until only strands
-// of the borders between them are left (Plateau borders: Weaire and Hutzler 1999), which thin and break --
-// the marbled lace an old whitecap leaves. Holes at two scales (about a metre and a third of that), their
-// cells warped by value noise; fine bubble cells (a few cm) give the sheet its grain. Each layer fades to its
-// mean cover where it is finer than the pixel (footprint, m).
+// solid sheet. As it drains, films rupture: holes open, each its own size (some cells hold, some open wide),
+// and grow until only torn strands of the borders between them are left (Plateau borders: Weaire and Hutzler
+// 1999), drawn out a little along the wind's surface drift: the marbled lace an old whitecap leaves. Holes at
+// three scales (about 2, 0.7 and 0.2 m) with ragged edges; clumps of bubbles (centimetres to a decimetre) give
+// the sheet its grain. Each layer fades to its mean cover where it is finer than the pixel (footprint, m).
 float foam_structure(vec2 p, float amount, float footprint) {
-	vec2 q = p * foam_detail_scale;
-	vec2 warp = vec2(foam_value_noise(q * 1.3 + 3.7), foam_value_noise(q * 1.3 - 8.1)) - 0.5;
-	vec4 v1 = foam_voronoi(q * 1.1 + warp * 1.2);
-	vec4 v2 = foam_voronoi(q * 3.3 + warp * 2.0 + 11.0);
+	vec2 sd = dot(foam_streak_dir, foam_streak_dir) > 1e-6 ? normalize(foam_streak_dir) : vec2(1.0, 0.0);
+	vec2 q0 = p * foam_detail_scale;
+	// Drawn out about one and a half times along the drift.
+	vec2 q = vec2(dot(q0, sd) / 1.5, dot(q0, vec2(-sd.y, sd.x)));
+	vec2 warp = vec2(foam_value_noise(q * 0.9 + 3.7), foam_value_noise(q * 0.9 - 8.1)) - 0.5;
+	vec4 v1 = foam_voronoi(q * 0.5 + warp * 0.8);
+	vec4 v2 = foam_voronoi(q * 1.4 + warp * 1.4 + 11.0);
+	vec4 v3 = foam_voronoi(q * 4.6 + warp * 2.0 - 5.0);
 	float a = clamp(amount, 0.0, 1.0);
 	float open = 1.0 - pow(a, 0.6); // how far the foam has drained
-	float soft1 = 0.05 + footprint * foam_detail_scale * 2.2;
-	float soft2 = 0.05 + footprint * foam_detail_scale * 6.6;
-	// Holes: radius per cell, growing as the foam drains (and the largest cells opening first).
-	float r1 = open * (0.35 + 0.75 * v1.z);
-	float r2 = open * (0.2 + 0.8 * v2.z);
-	float keep1 = smoothstep(r1 - soft1, r1 + soft1, v1.x);
-	float keep2 = smoothstep(r2 - soft2, r2 + soft2, v2.x);
-	// Strands along the borders, thinning and breaking along their length.
-	float strand = foam_value_noise(q * 2.3 + 1.7);
-	float w = (0.02 + 0.1 * a) * smoothstep(0.25, 0.75, strand);
-	float border = 1.0 - smoothstep(w - soft1 * 0.5, w + soft1 * 0.5, v1.y - v1.x);
-	float cover = max(keep1 * mix(1.0, keep2, 0.85), border * smoothstep(0.05, 0.3, a));
+	// Ragged, torn edges: the distances jittered by finer noise.
+	float rag = foam_fbm(q * 9.0) - 0.5;
+	float soft1 = 0.015 + footprint * foam_detail_scale * 1.0;
+	float soft2 = 0.015 + footprint * foam_detail_scale * 2.8;
+	float soft3 = 0.02 + footprint * foam_detail_scale * 9.2;
+	// Hole radius per cell: about a fifth of the cells hold, the rest open to sizes spread wide.
+	float r1 = open * max(v1.z * 1.5 - 0.3, 0.0);
+	float r2 = open * max(v2.z * 1.4 - 0.25, 0.0);
+	float r3 = open * max(v3.z * 1.2 - 0.15, 0.0);
+	float keep1 = smoothstep(r1 - soft1, r1 + soft1, v1.x + 0.12 * rag);
+	float keep2 = smoothstep(r2 - soft2, r2 + soft2, v2.x + 0.18 * rag);
+	float keep3 = smoothstep(r3 - soft3, r3 + soft3, v3.x + 0.25 * rag);
+	float cover = keep1 * keep2 * mix(1.0, keep3, 0.75);
+	// Torn strands along the larger cells' borders, breaking along their length.
+	float brk = smoothstep(0.4, 0.62, foam_fbm(q * 2.7 + 1.7));
+	float w = (0.025 + 0.07 * a) * brk;
+	float strands = max(1.0 - smoothstep(w - soft1, w + soft1, v1.y - v1.x + 0.06 * rag), 1.0 - smoothstep(w - soft2, w + soft2, v2.y - v2.x + 0.08 * rag));
+	cover = max(cover, strands * smoothstep(0.03, 0.25, a));
+	// Thin scum of loose bubbles left in the holes.
+	cover = max(cover, 0.22 * smoothstep(0.05, 0.4, a) * smoothstep(0.35, 0.75, foam_fbm(q * 5.3 - 4.1)));
 	// Past where the holes are under a pixel, their mean cover.
-	float coarse = clamp(footprint * foam_detail_scale * 3.0 - 0.15, 0.0, 1.0);
-	cover = mix(cover, clamp(1.0 - 1.6 * open * open, 0.05, 1.0), coarse);
-	// Bubble grain: lighter walls, darker cell middles, a few cm across; gone past a centimetre a pixel.
-	float grain = 1.0 - clamp((footprint - 0.004) / 0.012, 0.0, 1.0);
-	vec4 b = foam_voronoi(p * 28.0);
-	float wall = 1.0 - smoothstep(0.0, 0.25, b.y - b.x);
-	float bubbles = mix(1.0, 0.82 + 0.18 * wall, grain);
+	float coarse = clamp(footprint * foam_detail_scale * 4.0 - 0.1, 0.0, 1.0);
+	cover = mix(cover, clamp(1.0 - 1.4 * open * open, 0.05, 1.0), coarse);
+	// Bubble clumps (about 7 cm cells, each its own brightness) and their walls (finer), to a few cm a pixel;
+	// clusters of clumps (about 25 cm) carry on further out.
+	float grain = 1.0 - clamp((footprint - 0.015) / 0.04, 0.0, 1.0);
+	float cluster = 1.0 - clamp((footprint - 0.04) / 0.12, 0.0, 1.0);
+	vec4 k = foam_voronoi(p * 4.0 + 2.3);
+	vec4 c = foam_voronoi(p * 14.0);
+	vec4 c2 = foam_voronoi(p * 25.0 + 7.7);
+	vec4 b = foam_voronoi(p * 40.0);
+	float wall = 1.0 - smoothstep(0.0, 0.3, b.y - b.x);
+	float clump = 1.0 - smoothstep(0.0, 0.18, c.y - c.x); // the gaps between clumps
+	float bubbles = mix(1.0, (0.72 + 0.28 * mix(c.z, c2.z, 0.5)) * (0.82 + 0.18 * wall) * (1.0 - 0.12 * clump), grain);
+	bubbles *= mix(1.0, 0.72 + 0.28 * k.z, cluster);
 	// Thin foam is translucent, thick foam opaque.
 	float density = smoothstep(0.02, 0.35, a);
 	return clamp(cover * density * bubbles, 0.0, 1.0);
@@ -827,15 +850,28 @@ float foam_structure(vec2 p, float amount, float footprint) {
 // The bubbles' own normal (each a low dome a few cm across), for the light to catch the foam's grain; up past a
 // centimetre a pixel.
 vec3 foam_bubble_normal(vec2 p, float footprint) {
-	float grain = 1.0 - clamp((footprint - 0.004) / 0.012, 0.0, 1.0);
-	vec4 b = foam_voronoi(p * 28.0);
-	// From the bubble's centre: its distance, split along x by the feature's offset (z from the rest).
-	float rx = -b.w;
-	float rz = sqrt(max(b.x * b.x - rx * rx, 0.0)) * (foam_hash(floor(p * 28.0)) > 0.5 ? 1.0 : -1.0);
-	vec2 r = vec2(rx, rz);
-	float rr = clamp(dot(r, r) / 0.25, 0.0, 0.95);
-	vec2 tilt = r * 2.0 * grain;
-	return normalize(vec3(tilt.x, sqrt(1.0 - rr) + 0.3, tilt.y));
+	float grain = 1.0 - clamp((footprint - 0.015) / 0.04, 0.0, 1.0);
+	// The offset from the nearest clump's centre (same cells as foam_structure's clumps, unwarped).
+	vec2 pc = p * 14.0;
+	vec2 i = floor(pc);
+	vec2 f = fract(pc);
+	float d1 = 8.0;
+	vec2 r = vec2(0.0);
+	for (int y = -1; y <= 1; y++) {
+		for (int x = -1; x <= 1; x++) {
+			vec2 g = vec2(float(x), float(y));
+			vec2 o = vec2(foam_hash(i + g), foam_hash(i + g + vec2(17.3, 5.1)));
+			vec2 rr = g + 0.15 + 0.7 * o - f;
+			float d = dot(rr, rr);
+			if (d < d1) {
+				d1 = d;
+				r = -rr;
+			}
+		}
+	}
+	float h2 = clamp(dot(r, r) / 0.36, 0.0, 0.95);
+	vec2 tilt = r * 1.6 * grain;
+	return normalize(vec3(tilt.x, sqrt(1.0 - h2) + 0.4, tilt.y));
 }
 
 // Visible foam for the water resting at world_xz: the persistent foam amount, drawn as foam
@@ -928,10 +964,13 @@ float bubbles_under(vec2 world_xz, vec3 d, vec3 n) {
 		return 0.0;
 	}
 	vec2 step_xz = t.xz / max(-t.y, 0.25);
+	// Three depths through the plume. The plume is dense only under fresh breaking (its large bubbles rise out
+	// within a few seconds, while the thin surface lace lingers), so only strong foam above reads as a plume.
 	float b = 0.0;
-	b += ocean_foam_all(world_xz + step_xz * bubble_depth * 0.5);
-	b += ocean_foam_all(world_xz + step_xz * bubble_depth * 1.2);
-	return clamp(0.5 * b, 0.0, 1.0);
+	b += ocean_foam_all(world_xz + step_xz * bubble_depth * 0.4);
+	b += ocean_foam_all(world_xz + step_xz * bubble_depth * 1.0);
+	b += ocean_foam_all(world_xz + step_xz * bubble_depth * 1.8);
+	return smoothstep(0.12, 0.6, b / 3.0);
 }
 
 float foam_at(vec2 world_xz) {
@@ -1259,8 +1298,9 @@ void fragment() {
 			// roughness so the sea keeps its glitter without shimmering (Bruneton, Neyret and Holzschuch 2010).
 			// A pixel shows the waves longer than two of its footprints: the share of the band (in log k, where
 			// the slope variance lies evenly) from the band's start up to that.
+			// The pixel's longer side (along the view at grazing angles), so the band never aliases there.
 			vec2 fw = fwidth(v_rest_xz);
-			float footprint = max(sqrt(fw.x * fw.y), 1e-5);
+			float footprint = max(max(fw.x, fw.y), 1e-5);
 			float k_hi = PI / detail_texel;
 			float shown = clamp(log(PI / (2.0 * footprint) / detail_k_min) / log(k_hi / detail_k_min), 0.0, 1.0);
 			if (shown > 0.0) {
@@ -1528,11 +1568,15 @@ void fragment() {
 			// Far enough for the ray to climb 2.5 m (a high crest's reach above a trough), at most 25 m.
 			float reach = min(2.5 / to_sun.y, 25.0);
 			const int WS = 6;
-			float dt = reach / float(WS);
-			float jit = water_jitter(FRAGCOORD.xy, TIME);
+			// Steps placed on a square law (dense by the pixel, where the nearby ripples shade it, sparse far out)
+			// at fixed midpoints: smooth in position, so a still frame shows no per-pixel jitter pattern.
 			float inside = 0.0;
 			for (int i = 0; i < WS; i++) {
-				vec3 q = p0 + to_sun * ((float(i) + jit) * dt + 0.05);
+				float u0 = float(i) / float(WS);
+				float u1 = float(i + 1) / float(WS);
+				float dt = reach * (u1 * u1 - u0 * u0);
+				float um = (u0 + u1) * 0.5;
+				vec3 q = p0 + to_sun * (reach * um * um + 0.05);
 				// The height resting at q (the crest's sideways sway left out: one lookup per step, not four).
 				float h = base_y + surface_offset(q.xz).y;
 				inside += clamp((h - q.y) / max(to_sun.y * dt, 1e-3), 0.0, 1.0) * dt;

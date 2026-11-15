@@ -1135,6 +1135,18 @@
    "topic": "Shapes"
   },
   {
+   "name": "Ground contact and aspect",
+   "settings": [
+    "contact_height",
+    "aspect_strength"
+   ],
+   "note": "",
+   "what": "stones blend into the ground with a soil band at their foot and take wetness and snow from the weather; moss grows on shaded faces and lichen on sunlit ones.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Shapes"
+  },
+  {
    "name": "Rock fields",
    "settings": [
     "RockField3D",
@@ -1143,10 +1155,24 @@
     "glacial_",
     "river_",
     "shore_",
-    "cliff_"
+    "cliff_",
+    "layer_enabled"
    ],
    "note": "",
    "what": "rocks placed by the processes that put them there: rockfall, scree, glacial till, river beds, shores and cliff courses, streamed round the camera with colliders near it.",
+   "page": "rocks",
+   "title": "Rocks",
+   "topic": "Placement"
+  },
+  {
+   "name": "Tors and coasts",
+   "settings": [
+    "layer_enabled",
+    "LAYER_TOR",
+    "LAYER_COAST"
+   ],
+   "note": "",
+   "what": "tors and outcrops on convex crests, with granite woolsack blocks and weathering pans; sea stacks, arches and wave-cut platforms on rocky coasts.",
    "page": "rocks",
    "title": "Rocks",
    "topic": "Placement"
@@ -1285,10 +1311,11 @@
   {
    "name": "Ocean detail",
    "settings": [
-    "detail_waves"
+    "detail_waves",
+    "bubble_strength"
    ],
    "note": "",
-   "what": "short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
+   "what": "short ripples down to 8 cm, passed to the surface roughness where a pixel cannot show them, so sun glitter stays fine; whitecaps age into lace with bubble grain, and a turquoise bubble plume glows under fresh foam.",
    "page": "water",
    "title": "Water",
    "topic": "Sea and lakes"

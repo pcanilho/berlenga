@@ -3788,6 +3788,623 @@ void TreeGenerator::_saw_face(const Vector3 &p_end, const Vector3 &p_dir, float 
 	w.end(part, p_r);
 }
 
+// Crown parts (trees.md 5n): what a crown carries besides its leaves, as geometry. Cones (pine,
+// spruce, larch, hemlock, alder), catkins (hazel, birch, alder), seed keys (ash, maples), berries
+// (holly, hawthorn, rowan, yew, elder), mistletoe balls on its hosts (Viscum album in Europe,
+// Phoradendron in eastern North America) and witches' brooms on birches (Taphrina betulina).
+// Seasons from the shared season state's day of year: catkins form in late summer, hang closed
+// through winter and open before the leaves; keys and haws hang on into winter; cones persist.
+// Built like Unreal 5.7's procedural vegetation assemblies, in that each part is a small fixed
+// shape placed many times, but merged into one surface here: LOD 0 carries all of it, the coarser
+// levels only the mistletoe and brooms, which read from far.
+int TreeGenerator::_grow_crown_parts(Builder &r_b) {
+	r_b = Builder();
+	if (nodes.size() < 2 || fallen || fallen_branch || decay_class >= 2 || (fruit_cover <= 0.0f && mistletoe <= 0.0f && witches_brooms <= 0.0f)) {
+		return 0;
+	}
+	RandomPCG cr;
+	cr.seed(uint64_t(seed) * 0x2545F4914F6CDD1Dull + uint64_t(preset) * 977u + 0x63726f77u);
+	const float base_y = nodes[0].start.y;
+	const float tall = MAX(height, 0.5f);
+	const float day = season.get("day_of_year", 182.0f);
+	// Inside [p_from, p_to] on the year's wheel (the span may run over New Year).
+	auto in_days = [&](float p_from, float p_to) {
+		return p_from <= p_to ? (day >= p_from && day <= p_to) : (day >= p_from || day <= p_to);
+	};
+	auto lin = [](float r, float g, float b) { return Color(r, g, b).srgb_to_linear(); };
+	auto bone_of = [&](int p_node) { return p_node >= 0 && p_node < int(node_bone.size()) ? node_bone[p_node] : 0; };
+	auto perp = [](const Vector3 &p_d) {
+		const Vector3 ref = Math::abs(p_d.y) < 0.9f ? Vector3(0, 1, 0) : Vector3(1, 0, 0);
+		return p_d.cross(ref).normalized();
+	};
+	auto vert = [&](const Vector3 &p_p, const Vector2 &p_uv, const Color &p_c) {
+		r_b.verts.push_back(p_p);
+		r_b.normals.push_back(Vector3());
+		r_b.uvs.push_back(p_uv);
+		r_b.colors.push_back(p_c);
+		return int(r_b.verts.size()) - 1;
+	};
+	auto tri = [&](int a, int b, int c) {
+		r_b.indices.push_back(a);
+		r_b.indices.push_back(b);
+		r_b.indices.push_back(c);
+	};
+	// Face normals, averaged, for a finished part (all parts are seen from both sides).
+	auto close_part = [&](Vector4i &p_part, float p_size) {
+		Vector3 *nw = r_b.normals.ptrw();
+		const Vector3 *vw = r_b.verts.ptr();
+		for (int64_t i = p_part.x; i + 2 < r_b.indices.size(); i += 3) {
+			const int a = r_b.indices[i], b = r_b.indices[i + 1], c = r_b.indices[i + 2];
+			const Vector3 fn = (vw[b] - vw[a]).cross(vw[c] - vw[a]);
+			nw[a] += fn;
+			nw[b] += fn;
+			nw[c] += fn;
+		}
+		for (int v = p_part.z; v < r_b.verts.size(); v++) {
+			nw[v] = nw[v].length_squared() > 1e-24f ? nw[v].normalized() : Vector3(0, 1, 0);
+		}
+		r_b.end(p_part, p_size);
+	};
+	// A tube along a polyline, p_sides round, closed at its end.
+	auto tube = [&](const LocalVector<Vector3> &p_pts, const LocalVector<float> &p_r, int p_sides, const LocalVector<Color> &p_c) {
+		const int n = int(p_pts.size());
+		Vector3 side = perp((p_pts[1] - p_pts[0]).normalized());
+		const int v0 = r_b.verts.size();
+		for (int i = 0; i < n; i++) {
+			const Vector3 d = (p_pts[MIN(i + 1, n - 1)] - p_pts[MAX(i - 1, 0)]).normalized();
+			side = (side - d * side.dot(d)).normalized();
+			const Vector3 up = d.cross(side);
+			for (int k = 0; k < p_sides; k++) {
+				const float a = float(Math::TAU) * k / p_sides;
+				vert(p_pts[i] + (side * Math::cos(a) + up * Math::sin(a)) * p_r[i], Vector2(float(k) / p_sides, float(i) / n), p_c[i]);
+			}
+		}
+		for (int i = 0; i + 1 < n; i++) {
+			for (int k = 0; k < p_sides; k++) {
+				const int k1 = (k + 1) % p_sides;
+				// Wound so the face normals (close_part) point out of the tube.
+				tri(v0 + i * p_sides + k, v0 + i * p_sides + k1, v0 + (i + 1) * p_sides + k);
+				tri(v0 + i * p_sides + k1, v0 + (i + 1) * p_sides + k1, v0 + (i + 1) * p_sides + k);
+			}
+		}
+		const int tip = vert(p_pts[n - 1] + (p_pts[n - 1] - p_pts[n - 2]).normalized() * p_r[n - 1] * 0.5f, Vector2(0.5f, 1.0f), p_c[n - 1]);
+		for (int k = 0; k < p_sides; k++) {
+			tri(v0 + (n - 1) * p_sides + k, v0 + (n - 1) * p_sides + (k + 1) % p_sides, tip);
+		}
+	};
+	// A berry or seed: a small ball (an octahedron split once).
+	auto ball = [&](const Vector3 &p_c, float p_r, const Color &p_col) {
+		const Vector3 ax[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1) };
+		const int faces[8][3] = { { 0, 2, 4 }, { 2, 1, 4 }, { 1, 3, 4 }, { 3, 0, 4 }, { 2, 0, 5 }, { 1, 2, 5 }, { 3, 1, 5 }, { 0, 3, 5 } };
+		for (int f = 0; f < 8; f++) {
+			const Vector3 a = ax[faces[f][0]], b = ax[faces[f][1]], c = ax[faces[f][2]];
+			const Vector3 ab = (a + b).normalized(), bc = (b + c).normalized(), ca = (c + a).normalized();
+			const int ia = vert(p_c + a * p_r, Vector2(), p_col), ib = vert(p_c + b * p_r, Vector2(), p_col), ic = vert(p_c + c * p_r, Vector2(), p_col);
+			const int iab = vert(p_c + ab * p_r, Vector2(), p_col), ibc = vert(p_c + bc * p_r, Vector2(), p_col), ica = vert(p_c + ca * p_r, Vector2(), p_col);
+			tri(ia, iab, ica);
+			tri(iab, ib, ibc);
+			tri(ica, ibc, ic);
+			tri(iab, ibc, ica);
+		}
+	};
+	// A flat blade (key wing, mistletoe leaf): p_len along p_dir, its width profile over five
+	// stations, turned by p_twist (radians) from base to tip, colour from base to tip.
+	auto blade = [&](const Vector3 &p_at, const Vector3 &p_dir, const Vector3 &p_width, float p_len, float p_w, const float *p_prof, float p_twist, float p_fold, const Color &p_c0, const Color &p_c1) {
+		const int v0 = r_b.verts.size();
+		const Vector3 nrm = p_dir.cross(p_width).normalized();
+		for (int i = 0; i < 5; i++) {
+			const float t = i / 4.0f;
+			const Vector3 wd = p_width.rotated(p_dir, p_twist * t);
+			const Vector3 c = p_at + p_dir * (p_len * t);
+			const float w = p_w * p_prof[i] * 0.5f;
+			const Color col = p_c0.lerp(p_c1, t);
+			vert(c - wd * w + nrm * (p_fold * w), Vector2(0.0f, t), col);
+			vert(c + wd * w + nrm * (p_fold * w), Vector2(1.0f, t), col);
+		}
+		for (int i = 0; i < 4; i++) {
+			const int a = v0 + i * 2;
+			tri(a, a + 2, a + 1);
+			tri(a + 1, a + 2, a + 3);
+		}
+	};
+	// A cone of spiral scales (phyllotaxis 137.5 degrees): p_axis from the stalk to the tip, a
+	// profile fat at the base (ovoid, pines) or even (cylindrical, spruce); open cones' scales
+	// stand out from the axis, closed ones lie along it.
+	auto cone = [&](const Vector3 &p_base, const Vector3 &p_axis, float p_len, float p_r, int p_scales, bool p_cyl, float p_open, const Color &p_in, const Color &p_out) {
+		const Vector3 s0 = perp(p_axis);
+		const Vector3 s1 = p_axis.cross(s0);
+		const float tilt = Math::deg_to_rad(Math::lerp(25.0f, 70.0f, p_open));
+		for (int i = 0; i < p_scales; i++) {
+			const float t = (i + 0.5f) / p_scales;
+			const float prof = p_cyl ? Math::smoothstep(0.0f, 0.12f, t) * (1.0f - 0.7f * Math::smoothstep(0.75f, 1.0f, t)) : Math::pow(MAX(Math::sin(float(Math::PI) * CLAMP(t * 0.85f + 0.1f, 0.0f, 1.0f)), 0.0f), 0.7f);
+			const float a = i * 2.39996f;
+			const Vector3 rad = s0 * Math::cos(a) + s1 * Math::sin(a);
+			const Vector3 root = p_base + p_axis * (p_len * t * 0.92f) + rad * (p_r * 0.25f * prof);
+			const Vector3 d = (rad * Math::sin(tilt) + p_axis * Math::cos(tilt)).normalized();
+			const float sl = p_r * (0.35f + 0.9f * prof);
+			const float sw = p_r * (0.45f + 0.5f * prof);
+			const Vector3 w = d.cross(rad).normalized();
+			const int ia = vert(root, Vector2(0.5f, 0.0f), p_in);
+			const int il = vert(root + d * (sl * 0.55f) - w * (sw * 0.5f) + rad * (sl * 0.08f), Vector2(0.0f, 0.55f), p_in.lerp(p_out, 0.5f));
+			const int ir = vert(root + d * (sl * 0.55f) + w * (sw * 0.5f) + rad * (sl * 0.08f), Vector2(1.0f, 0.55f), p_in.lerp(p_out, 0.5f));
+			const int it = vert(root + d * sl + rad * (sl * 0.12f), Vector2(0.5f, 1.0f), p_out);
+			tri(ia, il, ir);
+			tri(il, it, ir);
+		}
+		// The core under the scales and the stalk.
+		LocalVector<Vector3> cp;
+		LocalVector<float> cr2;
+		LocalVector<Color> cc;
+		for (int k = 0; k < 4; k++) {
+			cp.push_back(p_base + p_axis * (p_len * (k / 3.0f) * 0.95f - (k == 0 ? p_r * 0.3f : 0.0f)));
+			cr2.push_back(p_r * (k == 0 ? 0.12f : 0.3f * (1.0f - 0.5f * k / 3.0f)));
+			cc.push_back(p_in);
+		}
+		tube(cp, cr2, 4, cc);
+	};
+	// A catkin: a tube of tight scales hanging from the shoot, curving under its weight.
+	auto catkin = [&](const Vector3 &p_at, const Vector3 &p_dir, float p_len, float p_r, const Color &p_a, const Color &p_b, float p_hang) {
+		LocalVector<Vector3> cp;
+		LocalVector<float> rr;
+		LocalVector<Color> cc;
+		Vector3 pos = p_at;
+		Vector3 d = p_dir;
+		const int n = 8;
+		for (int k = 0; k <= n; k++) {
+			const float t = float(k) / n;
+			cp.push_back(pos);
+			rr.push_back(p_r * (k == 0 ? 0.45f : (0.85f + 0.15f * Math::sin(t * float(Math::PI))) * (1.0f - 0.55f * Math::smoothstep(0.7f, 1.0f, t))));
+			cc.push_back((k & 1) ? p_a : p_b);
+			d = d.lerp(Vector3(0, -1, 0), p_hang).normalized();
+			pos += d * (p_len / n);
+		}
+		tube(cp, rr, 6, cc);
+	};
+
+	// Shoot tips: where cones, catkins, keys and berries hang.
+	struct Tip {
+		int node;
+		float f; // Height in the crown, 0 base, 1 top.
+	};
+	LocalVector<Tip> tips;
+	for (int i = 1; i < int(nodes.size()); i++) {
+		const Node &n = nodes[i];
+		if (n.removed || n.dead || n.order < 1 || n.radius > 0.02f || (n.main >= 0 && !nodes[n.main].removed)) {
+			continue;
+		}
+		tips.push_back({ i, CLAMP((n.end().y - base_y) / tall, 0.0f, 1.0f) });
+	}
+	const LeafSeason ls = _leaf_season(preset, season);
+	int big_end = 0;
+	// Mistletoe and brooms first: the coarser LODs keep the index range before big_end.
+	{
+		float host = 0.0f;
+		switch (preset) {
+			case PRESET_LIME:
+				host = 0.5f;
+				break;
+			case PRESET_HAWTHORN:
+				host = 0.35f;
+				break;
+			case PRESET_WHITE_WILLOW:
+				host = 0.3f;
+				break;
+			case PRESET_ROWAN:
+				host = 0.25f;
+				break;
+			case PRESET_SYCAMORE_MAPLE:
+			case PRESET_BIRCH:
+			case PRESET_RED_MAPLE:
+			case PRESET_RED_OAK:
+			case PRESET_BLACK_ALDER:
+				host = 0.15f;
+				break;
+			default:
+				break;
+		}
+		const bool american = preset == PRESET_RED_MAPLE || preset == PRESET_RED_OAK;
+		if (host > 0.0f && mistletoe > 0.0f && cr.randf() < MIN(host * mistletoe, 0.95f) && tall > 4.0f) {
+			// Hosts: limbs 1.5-8 cm in the upper, outer crown, where thrushes perch and wipe the
+			// seeds off their bills.
+			LocalVector<int> seats;
+			for (int i = 1; i < int(nodes.size()); i++) {
+				const Node &n = nodes[i];
+				if (!n.removed && !n.dead && n.order >= 1 && n.radius > 0.015f && n.radius < 0.08f && n.end().y - base_y > crown_base + 0.35f * (tall - crown_base)) {
+					seats.push_back(i);
+				}
+			}
+			const int balls = MIN(int(seats.size()), 1 + int(cr.randf() * 7.0f * MIN(mistletoe, 2.0f)));
+			const Color stem_c = american ? lin(0.42f, 0.5f, 0.2f) : lin(0.5f, 0.56f, 0.22f);
+			const Color leaf0 = american ? lin(0.3f, 0.42f, 0.14f) : lin(0.44f, 0.52f, 0.17f);
+			const Color leaf1 = american ? lin(0.34f, 0.46f, 0.16f) : lin(0.58f, 0.62f, 0.22f);
+			const Color berry = american ? lin(0.92f, 0.92f, 0.86f) : lin(0.93f, 0.94f, 0.88f);
+			const bool berries = in_days(300.0f, 60.0f);
+			for (int b = 0; b < balls && !seats.is_empty(); b++) {
+				const int si = int(cr.rand() % seats.size());
+				const int at_node = seats[si];
+				seats.remove_at_unordered(si);
+				const Node &hn = nodes[at_node];
+				const float u = cr.randf();
+				const Vector3 at = hn.start + hn.dir * (hn.length * u);
+				r_b.bone = bone_of(at_node);
+				Vector4i part;
+				r_b.begin(part);
+				// A ball grows one fork a year: 4-8 years.
+				const int levels = 4 + int(cr.randf() * 4.0f);
+				struct Seg {
+					Vector3 p, d;
+					int level;
+					float roll;
+				};
+				LocalVector<Seg> stack;
+				const int first = 3 + int(cr.randf() * 4.0f);
+				for (int k = 0; k < first; k++) {
+					Vector3 d = Vector3(cr.randf() - 0.5f, cr.randf() * 0.8f - 0.1f, cr.randf() - 0.5f).normalized();
+					stack.push_back({ at, d, 0, cr.randf() * float(Math::TAU) });
+				}
+				float reach = 0.0f;
+				while (!stack.is_empty()) {
+					const Seg sg = stack[stack.size() - 1];
+					stack.resize(stack.size() - 1);
+					const float len = Math::lerp(0.035f, 0.06f, cr.randf()) * (sg.level == 0 ? 0.7f : 1.0f);
+					const float r = 0.0035f * (1.0f - 0.08f * sg.level) + 0.0015f * (levels - sg.level) / levels;
+					// Stems swing up a little toward the light.
+					const Vector3 d = (sg.d + Vector3(0, 0.15f, 0)).normalized();
+					const Vector3 e = sg.p + d * len;
+					reach = MAX(reach, e.distance_to(at));
+					LocalVector<Vector3> cp;
+					LocalVector<float> rr;
+					LocalVector<Color> cc;
+					cp.push_back(sg.p);
+					cp.push_back(e);
+					rr.push_back(r);
+					rr.push_back(r * 0.9f);
+					cc.push_back(stem_c);
+					cc.push_back(stem_c);
+					tube(cp, rr, 4, cc);
+					const Vector3 side = perp(d).rotated(d, sg.roll);
+					if (sg.level + 1 < levels) {
+						// Forks in two (now and then three), each plane turned a quarter from the last.
+						const float spread = Math::deg_to_rad(Math::lerp(28.0f, 42.0f, cr.randf()));
+						stack.push_back({ e, d.rotated(side, spread), sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
+						stack.push_back({ e, d.rotated(side, -spread), sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
+						if (cr.randf() < 0.12f) {
+							stack.push_back({ e, d, sg.level + 1, sg.roll + float(Math::PI) * 0.5f });
+						}
+						if (berries && sg.level + 2 >= levels && cr.randf() < 0.35f) {
+							ball(e + side.cross(d) * 0.004f, 0.0045f, berry);
+						}
+					} else {
+						// A pair of leathery, strap-shaped leaves at the end of each shoot.
+						static const float prof[5] = { 0.3f, 0.8f, 1.0f, 0.85f, 0.35f };
+						for (int q = 0; q < 2; q++) {
+							const Vector3 ld = d.rotated(side, (q ? 1.0f : -1.0f) * Math::deg_to_rad(Math::lerp(20.0f, 40.0f, cr.randf())));
+							const float ll = (american ? 0.035f : 0.045f) * Math::lerp(0.8f, 1.2f, cr.randf());
+							blade(e, ld, side.cross(ld).normalized(), ll, ll * (american ? 0.45f : 0.28f), prof, 0.3f * (cr.randf() - 0.5f), 0.15f, leaf0, leaf1);
+						}
+					}
+				}
+				close_part(part, MAX(reach, 0.2f));
+			}
+		}
+		const bool birchy = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH || preset == PRESET_YELLOW_BIRCH;
+		if (birchy && witches_brooms > 0.0f && cr.randf() < MIN(0.45f * witches_brooms, 0.95f) && tall > 5.0f) {
+			LocalVector<int> seats;
+			for (int i = 1; i < int(nodes.size()); i++) {
+				const Node &n = nodes[i];
+				if (!n.removed && !n.dead && n.order >= 1 && n.radius > 0.02f && n.radius < 0.1f && n.end().y - base_y > crown_base) {
+					seats.push_back(i);
+				}
+			}
+			const int brooms = MIN(int(seats.size()), 1 + int(cr.randf() * 4.0f * MIN(witches_brooms, 2.0f)));
+			const Color twig_c = lin(0.27f, 0.15f, 0.11f);
+			const Color knob_c = bark_color.srgb_to_linear() * 0.6f;
+			for (int b = 0; b < brooms && !seats.is_empty(); b++) {
+				const int si = int(cr.rand() % seats.size());
+				const int at_node = seats[si];
+				seats.remove_at_unordered(si);
+				const Node &hn = nodes[at_node];
+				const Vector3 at = hn.start + hn.dir * (hn.length * cr.randf());
+				r_b.bone = bone_of(at_node);
+				Vector4i part;
+				r_b.begin(part);
+				// The infection's swelling, then a dense nest of thin upright shoots from it.
+				ball(at, hn.radius * 1.6f, knob_c);
+				const int twigs = 50 + int(cr.randf() * 70.0f);
+				const Vector3 out = (hn.dir.cross(Vector3(0, 1, 0)).cross(hn.dir)).normalized();
+				float reach = 0.0f;
+				for (int t = 0; t < twigs; t++) {
+					Vector3 d = (out * 0.5f + Vector3(0, 1, 0) + Vector3(cr.randf() - 0.5f, cr.randf() * 0.4f - 0.2f, cr.randf() - 0.5f) * 1.6f).normalized();
+					const float len = Math::lerp(0.12f, 0.45f, cr.randf() * cr.randf() + 0.2f);
+					LocalVector<Vector3> cp;
+					LocalVector<float> rr;
+					LocalVector<Color> cc;
+					Vector3 p = at + d * (hn.radius * 1.2f);
+					for (int k = 0; k < 4; k++) {
+						cp.push_back(p);
+						rr.push_back(Math::lerp(0.0028f, 0.0008f, k / 3.0f));
+						cc.push_back(twig_c);
+						d = (d + Vector3(cr.randf() - 0.5f, 0.1f, cr.randf() - 0.5f) * 0.25f).normalized();
+						p += d * (len / 3.0f);
+					}
+					reach = MAX(reach, p.distance_to(at));
+					tube(cp, rr, 3, cc);
+				}
+				close_part(part, MAX(reach, 0.2f));
+			}
+		}
+		big_end = r_b.indices.size();
+	}
+	if (fruit_cover <= 0.0f || tips.is_empty()) {
+		return big_end;
+	}
+	// Per species: what hangs at the tips, how many tips carry it (in the part of the crown it
+	// keeps to), and how many in a cluster.
+	enum Kind {
+		NONE,
+		CONE_PINE,
+		CONE_SPRUCE,
+		CONE_LARCH,
+		CONE_HEMLOCK,
+		CONE_WHITE_PINE,
+		CATKIN_HAZEL,
+		CATKIN_BIRCH,
+		CATKIN_ALDER,
+		KEYS_ASH,
+		KEYS_MAPLE,
+		BERRY_HOLLY,
+		BERRY_HAW,
+		BERRY_ROWAN,
+		BERRY_YEW,
+		BERRY_ELDER,
+	};
+	Kind kind = NONE;
+	float share = 0.0f, low = 0.0f; // Share of the tips above `low` (0-1 up the crown).
+	switch (preset) {
+		case PRESET_SCOTS_PINE:
+			kind = CONE_PINE, share = 0.12f, low = 0.45f;
+			break;
+		case PRESET_NORWAY_SPRUCE:
+			kind = CONE_SPRUCE, share = 0.15f, low = 0.7f;
+			break;
+		case PRESET_LARCH:
+			kind = CONE_LARCH, share = 0.3f, low = 0.2f;
+			break;
+		case PRESET_HEMLOCK:
+			kind = CONE_HEMLOCK, share = 0.2f, low = 0.3f;
+			break;
+		case PRESET_WHITE_PINE:
+			kind = CONE_WHITE_PINE, share = 0.08f, low = 0.6f;
+			break;
+		case PRESET_HAZEL:
+		case PRESET_WITCH_HAZEL:
+			kind = preset == PRESET_HAZEL ? CATKIN_HAZEL : NONE, share = 0.45f, low = 0.2f;
+			break;
+		case PRESET_BIRCH:
+		case PRESET_PAPER_BIRCH:
+		case PRESET_YELLOW_BIRCH:
+			kind = CATKIN_BIRCH, share = 0.35f, low = 0.3f;
+			break;
+		case PRESET_BLACK_ALDER:
+			kind = CATKIN_ALDER, share = 0.35f, low = 0.25f;
+			break;
+		case PRESET_ASH:
+			kind = KEYS_ASH, share = 0.1f, low = 0.4f;
+			break;
+		case PRESET_SYCAMORE_MAPLE:
+		case PRESET_SUGAR_MAPLE:
+		case PRESET_RED_MAPLE:
+			kind = KEYS_MAPLE, share = 0.1f, low = 0.3f;
+			break;
+		case PRESET_HOLLY:
+			kind = BERRY_HOLLY, share = 0.3f, low = 0.0f;
+			break;
+		case PRESET_HAWTHORN:
+			kind = BERRY_HAW, share = 0.35f, low = 0.2f;
+			break;
+		case PRESET_ROWAN:
+			kind = BERRY_ROWAN, share = 0.12f, low = 0.3f;
+			break;
+		case PRESET_YEW:
+			kind = BERRY_YEW, share = 0.25f, low = 0.0f;
+			break;
+		case PRESET_ELDER:
+			kind = BERRY_ELDER, share = 0.15f, low = 0.2f;
+			break;
+		default:
+			break;
+	}
+	// Dioecious species: only the female trees fruit (holly, yew), by seed.
+	if ((kind == BERRY_HOLLY || kind == BERRY_YEW) && (uint32_t(seed) * 2654435761u >> 16) % 2 == 1) {
+		kind = NONE;
+	}
+	// In season (day of year): keys hang from late summer into spring (ash) or fall by early
+	// winter (maples, a few left); berries ripen in autumn and the birds strip them by midwinter
+	// (holly and haws keep longest); catkins form in late summer, open in late winter and drop.
+	float present = 1.0f;
+	switch (kind) {
+		case KEYS_ASH:
+			present = in_days(200.0f, 120.0f) ? 1.0f : 0.0f;
+			break;
+		case KEYS_MAPLE:
+			present = in_days(180.0f, 320.0f) ? 1.0f : (in_days(320.0f, 60.0f) ? 0.2f : 0.0f);
+			break;
+		case BERRY_HOLLY:
+			present = in_days(270.0f, 75.0f) ? 1.0f : 0.0f;
+			break;
+		case BERRY_HAW:
+			present = in_days(250.0f, 30.0f) ? 1.0f : 0.0f;
+			break;
+		case BERRY_ROWAN:
+			present = in_days(220.0f, 300.0f) ? 1.0f : 0.0f;
+			break;
+		case BERRY_YEW:
+			present = in_days(240.0f, 320.0f) ? 1.0f : 0.0f;
+			break;
+		case BERRY_ELDER:
+			present = in_days(225.0f, 270.0f) ? 1.0f : 0.0f;
+			break;
+		case CATKIN_HAZEL:
+			present = in_days(210.0f, 100.0f) ? 1.0f : 0.0f;
+			break;
+		case CATKIN_BIRCH:
+			present = in_days(220.0f, 135.0f) ? 1.0f : 0.0f;
+			break;
+		default:
+			break;
+	}
+	if (kind == NONE || present <= 0.0f) {
+		return big_end;
+	}
+	// A budget of clusters, so a big crown carries a few hundred, not tens of thousands.
+	int eligible = 0;
+	for (const Tip &t : tips) {
+		eligible += t.f >= low ? 1 : 0;
+	}
+	const float budget = 360.0f * fruit_cover;
+	const float p = MIN(share * fruit_cover * present, eligible > 0 ? budget / eligible : 0.0f);
+	// Catkins open before the leaves: hazel from late January, alder February, birch April.
+	const bool open_catkin = (kind == CATKIN_HAZEL && in_days(20.0f, 100.0f)) || (kind == CATKIN_ALDER && in_days(40.0f, 100.0f)) || (kind == CATKIN_BIRCH && in_days(100.0f, 135.0f));
+	for (const Tip &t : tips) {
+		if (t.f < low || cr.randf() >= p) {
+			continue;
+		}
+		const Node &n = nodes[t.node];
+		const Vector3 at = n.end();
+		const Vector3 d = n.dir;
+		r_b.bone = bone_of(t.node);
+		Vector4i part;
+		r_b.begin(part);
+		const Vector3 sd = perp(d);
+		float size = 0.05f;
+		switch (kind) {
+			case CONE_PINE: {
+				// One to three, ovoid, 4-7 cm, bent back on the shoot; grey-tipped scales.
+				const int k = 1 + int(cr.randf() * cr.randf() * 3.0f);
+				for (int q = 0; q < k; q++) {
+					const Vector3 ax = (d * 0.2f + Vector3(0, -1, 0) + sd.rotated(d, q * 2.1f) * 0.6f).normalized();
+					const float len = Math::lerp(0.04f, 0.065f, cr.randf());
+					const float op = cr.randf() < 0.6f ? Math::lerp(0.5f, 1.0f, cr.randf()) : 0.0f;
+					cone(at - d * 0.02f * q, ax, len, len * 0.32f * (1.0f + 0.4f * op), 56, false, op, lin(0.36f, 0.25f, 0.15f), op > 0.0f ? lin(0.52f, 0.47f, 0.38f) : lin(0.42f, 0.36f, 0.22f));
+				}
+				size = 0.07f;
+			} break;
+			case CONE_WHITE_PINE: {
+				const Vector3 ax = (d * 0.1f + Vector3(0, -1, 0)).normalized();
+				const float len = Math::lerp(0.1f, 0.16f, cr.randf());
+				cone(at, ax, len, len * 0.14f, 70, true, Math::lerp(0.4f, 0.8f, cr.randf()), lin(0.4f, 0.28f, 0.16f), lin(0.6f, 0.5f, 0.36f));
+				size = len;
+			} break;
+			case CONE_SPRUCE: {
+				// Long pendant cylinders, 10-16 cm, at the very top of the crown.
+				const int k = 1 + int(cr.randf() * 2.5f);
+				for (int q = 0; q < k; q++) {
+					const Vector3 ax = (Vector3(0, -1, 0) + sd.rotated(d, q * 2.4f) * 0.25f).normalized();
+					const float len = Math::lerp(0.1f, 0.16f, cr.randf());
+					cone(at - d * 0.03f * q, ax, len, len * 0.17f, 96, true, Math::lerp(0.0f, 0.4f, cr.randf()), lin(0.42f, 0.27f, 0.14f), lin(0.56f, 0.4f, 0.24f));
+				}
+				size = 0.15f;
+			} break;
+			case CONE_LARCH: {
+				// Small upright cones, 2-3.5 cm, kept for years along the branch.
+				const int k = 1 + int(cr.randf() * 3.0f);
+				for (int q = 0; q < k; q++) {
+					const float u = cr.randf();
+					const Vector3 base = n.start + n.dir * (n.length * u) + sd.rotated(d, q * 2.0f) * 0.004f;
+					const Vector3 ax = (Vector3(0, 1, 0) + sd.rotated(d, q * 2.0f) * 0.2f).normalized();
+					const float len = Math::lerp(0.02f, 0.035f, cr.randf());
+					cone(base, ax, len, len * 0.42f, 28, false, 0.85f, lin(0.38f, 0.27f, 0.17f), lin(0.55f, 0.43f, 0.3f));
+				}
+				size = 0.04f;
+			} break;
+			case CONE_HEMLOCK: {
+				const Vector3 ax = (d * 0.3f + Vector3(0, -1, 0)).normalized();
+				const float len = Math::lerp(0.015f, 0.025f, cr.randf());
+				cone(at, ax, len, len * 0.4f, 22, false, 0.8f, lin(0.4f, 0.29f, 0.18f), lin(0.58f, 0.47f, 0.33f));
+				size = 0.03f;
+			} break;
+			case CATKIN_HAZEL:
+			case CATKIN_BIRCH:
+			case CATKIN_ALDER: {
+				const int k = kind == CATKIN_ALDER ? 3 + int(cr.randf() * 3.0f) : 1 + int(cr.randf() * (kind == CATKIN_HAZEL ? 3.0f : 2.0f));
+				const float len0 = kind == CATKIN_HAZEL ? 0.025f : (kind == CATKIN_BIRCH ? 0.025f : 0.03f);
+				const float len1 = kind == CATKIN_HAZEL ? 0.065f : (kind == CATKIN_BIRCH ? 0.06f : 0.08f);
+				const float len = (open_catkin ? len1 : len0) * Math::lerp(0.85f, 1.15f, cr.randf());
+				Color a, b;
+				if (open_catkin) {
+					a = kind == CATKIN_HAZEL ? lin(0.85f, 0.75f, 0.3f) : (kind == CATKIN_BIRCH ? lin(0.72f, 0.6f, 0.3f) : lin(0.55f, 0.32f, 0.2f));
+					b = kind == CATKIN_HAZEL ? lin(0.7f, 0.62f, 0.25f) : (kind == CATKIN_BIRCH ? lin(0.56f, 0.44f, 0.24f) : lin(0.42f, 0.24f, 0.17f));
+				} else {
+					a = kind == CATKIN_HAZEL ? lin(0.52f, 0.42f, 0.28f) : (kind == CATKIN_BIRCH ? lin(0.42f, 0.28f, 0.2f) : lin(0.4f, 0.22f, 0.2f));
+					b = a * 0.8f;
+				}
+				for (int q = 0; q < k; q++) {
+					const Vector3 cd = (d * 0.5f + sd.rotated(d, q * 2.3f) * 0.5f + Vector3(0, open_catkin ? -0.6f : 0.0f, 0)).normalized();
+					catkin(at + cd * 0.004f, cd, len, open_catkin ? 0.0045f : 0.0035f, a, b, open_catkin ? 0.35f : 0.12f);
+				}
+				if (kind == CATKIN_ALDER) {
+					// Last year's woody fruit cones, 1.5 cm, in clusters behind the catkins.
+					const int c = 2 + int(cr.randf() * 4.0f);
+					for (int q = 0; q < c; q++) {
+						const Vector3 ax = (Vector3(0, -1, 0) + sd.rotated(d, q * 1.7f) * 0.6f).normalized();
+						cone(n.start + n.dir * (n.length * 0.5f) + ax * 0.01f, ax, 0.016f, 0.0065f, 18, false, 0.7f, lin(0.25f, 0.16f, 0.1f), lin(0.36f, 0.26f, 0.17f));
+					}
+				}
+				size = len;
+			} break;
+			case KEYS_ASH:
+			case KEYS_MAPLE: {
+				// Ash: bunches of single twisted keys on stalks, buff-brown in winter. Maples:
+				// paired keys, wings spread, green to straw.
+				const bool ash = kind == KEYS_ASH;
+				const int k = ash ? 10 + int(cr.randf() * 18.0f) : 3 + int(cr.randf() * 5.0f);
+				const bool ripe = !in_days(130.0f, 230.0f);
+				const Color c0 = ripe ? lin(0.5f, 0.38f, 0.22f) : lin(0.45f, 0.55f, 0.22f);
+				const Color c1 = ripe ? lin(0.66f, 0.55f, 0.36f) : lin(0.58f, 0.65f, 0.3f);
+				static const float key_prof[5] = { 0.35f, 0.6f, 0.9f, 1.0f, 0.55f };
+				const Vector3 hub = at + Vector3(0, -0.02f, 0);
+				for (int q = 0; q < k; q++) {
+					const Vector3 kd = (Vector3(0, -1, 0) + Vector3(cr.randf() - 0.5f, 0.0f, cr.randf() - 0.5f) * 1.2f).normalized();
+					const Vector3 st = hub + kd * Math::lerp(0.01f, 0.03f, cr.randf());
+					if (ash) {
+						blade(st, kd, perp(kd).rotated(kd, cr.randf() * 3.0f), 0.035f, 0.008f, key_prof, Math::lerp(0.5f, 1.2f, cr.randf()), 0.05f, c0 * 0.8f, c1);
+					} else {
+						const Vector3 w = perp(kd).rotated(kd, cr.randf() * 3.0f);
+						const float spread = Math::deg_to_rad(preset == PRESET_SUGAR_MAPLE ? 30.0f : 45.0f);
+						for (int h = 0; h < 2; h++) {
+							const Vector3 wd = kd.rotated(w.cross(kd).normalized(), (h ? 1.0f : -1.0f) * spread);
+							blade(st, wd, w, 0.04f, 0.012f, key_prof, 0.2f, 0.1f, c0 * 0.75f, c1);
+						}
+						ball(st, 0.004f, c0 * 0.8f);
+					}
+				}
+				size = 0.08f;
+			} break;
+			case BERRY_HOLLY:
+			case BERRY_HAW:
+			case BERRY_ROWAN:
+			case BERRY_YEW:
+			case BERRY_ELDER: {
+				const int k = kind == BERRY_ROWAN ? 15 + int(cr.randf() * 20.0f) : (kind == BERRY_ELDER ? 25 + int(cr.randf() * 30.0f) : 2 + int(cr.randf() * 5.0f));
+				const float br = kind == BERRY_ELDER ? 0.0028f : (kind == BERRY_ROWAN ? 0.0045f : (kind == BERRY_YEW ? 0.004f : 0.005f));
+				const Color c = kind == BERRY_ELDER ? lin(0.08f, 0.05f, 0.08f) : (kind == BERRY_ROWAN ? lin(0.88f, 0.35f, 0.08f) : (kind == BERRY_HAW ? lin(0.55f, 0.08f, 0.06f) : lin(0.75f, 0.06f, 0.05f)));
+				const float spread = kind == BERRY_ROWAN || kind == BERRY_ELDER ? 0.045f : 0.012f;
+				const Vector3 hub = kind == BERRY_HOLLY || kind == BERRY_YEW ? n.start + n.dir * (n.length * 0.6f) : at + Vector3(0, -0.015f, 0);
+				for (int q = 0; q < k; q++) {
+					const Vector3 o = Vector3(cr.randf() - 0.5f, (cr.randf() - 0.8f) * 0.6f, cr.randf() - 0.5f) * (2.0f * spread);
+					ball(hub + o, br * Math::lerp(0.85f, 1.15f, cr.randf()), c * Math::lerp(0.85f, 1.1f, cr.randf()));
+				}
+				size = spread * 2.0f;
+			} break;
+			default:
+				break;
+		}
+		close_part(part, size);
+	}
+	(void)ls;
+	return big_end;
+}
+
 void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 	r_fungi = Builder();
 	fungi_points.clear();
@@ -7185,6 +7802,24 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			float dark = 1.0f;
 			float rot = 0.0f;
 			float w_any = 0.0f;
+			float algae = 0.0f;
+			if (p_features == 2 && head_r > 0.0f && p_pts[ring].y > head_y0) {
+				// A pollard's head (trees.md 5l): knobbly with the callus of every cut and split
+				// by deep fissures where the swellings met (Read 2000), whatever the bark's own
+				// texture; broad knobs, a finer second order, and ridged noise for the fissures.
+				const float win = Math::smoothstep(head_y0, head_y0 + 0.5f * head_r, p_pts[ring].y);
+				const Vector3 hp = p_pts[ring] + n * r;
+				const float k1 = moss_noise(hp * (1.0f / (0.3f * head_r)), 0x6b6e6231u) - 0.5f;
+				const float k2 = moss_noise(hp * (1.0f / (0.1f * head_r)), 0x6b6e6232u) - 0.5f;
+				const float ridge = 1.0f - Math::abs(2.0f * moss_noise(hp * Vector3(1.0f / (0.22f * head_r), 1.0f / (0.7f * head_r), 1.0f / (0.22f * head_r)), 0x6b6e6233u) - 1.0f);
+				const float fis = Math::smoothstep(0.75f, 0.97f, ridge);
+				off += win * head_r * (0.22f * k1 + 0.08f * k2 - 0.09f * fis);
+				dark = MIN(dark, Math::lerp(1.0f, 0.5f, win * fis));
+				// Green algae (Desmococcus) and moss film where water lingers between the knobs
+				// and on their tops; drier, paler grey on the bulges' flanks.
+				algae = win * CLAMP(0.35f + 1.6f * (-k1) + 0.5f * n.y + 0.3f * fis, 0.0f, 0.85f);
+				w_any = 1.0f;
+			}
 			for (const VeteranFeature &f : veteran_features) {
 				if (!p_features) {
 					break;
@@ -7213,7 +7848,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					// on the tube's rings came out as crumpled facets, not a rounded burl.
 					const float k0 = 1.0f - MIN(e * e, 1.0f);
 					const float k = k0 * k0;
-					const float lump = 0.85f + 0.3f * moss_noise(p_pts[ring] + n * r * 1.5f, 0x6275726cu);
+					// A burr is a cluster of knobs (each a bud trace that swelled), not one dome.
+					const Vector3 bp = p_pts[ring] + n * r;
+					const float lump = (0.85f + 0.3f * moss_noise(p_pts[ring] + n * r * 1.5f, 0x6275726cu)) *
+							(0.7f + 0.6f * moss_noise(bp * (2.5f / MAX(f.half_w, 0.02f)), 0x6b6e6f62u));
 					// Sized by the stem, not the root flare's swollen radius.
 					off += f.amount * MIN(r, vet_r_stem) * k * lump;
 					w_any = MAX(w_any, k > 0.0f ? 1.0f : 0.0f);
@@ -7246,7 +7884,8 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				}
 				vv[v] += n * off;
 				if (p_colour) {
-					const Color c = cc[v].lerp(Color(0.085f, 0.048f, 0.028f, cc[v].a), rot);
+					Color c = cc[v].lerp(Color(0.085f, 0.048f, 0.028f, cc[v].a), rot);
+					c = c.lerp(Color(0.13f, 0.16f, 0.07f, c.a), algae);
 					cc[v] = Color(c.r * dark, c.g * dark, c.b * dark, c.a);
 				}
 				touched[i] = 1.0f;
@@ -7551,6 +8190,25 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				rad.push_back(rim_r * rs[k]);
 			}
 		}
+		if (head_r > 0.0f && s == veteran_stem) {
+			// Rings every 4 cm over a pollard's head, for its knobs and fissures (veteran_deform).
+			LocalVector<Vector3> dp;
+			LocalVector<float> dr;
+			for (int i = 0; i < int(pts.size()); i++) {
+				dp.push_back(pts[i]);
+				dr.push_back(rad[i]);
+				if (i + 1 < int(pts.size()) && MAX(pts[i].y, pts[i + 1].y) > head_y0) {
+					const int steps = int(Math::ceil(pts[i].distance_to(pts[i + 1]) / 0.04f));
+					for (int k = 1; k < steps; k++) {
+						const float f = float(k) / steps;
+						dp.push_back(pts[i].lerp(pts[i + 1], f));
+						dr.push_back(Math::lerp(rad[i], rad[i + 1], f));
+					}
+				}
+			}
+			pts = dp;
+			rad = dr;
+		}
 		if (collar) {
 			// Sink the base below the ground line, deeper on a leaning stem: the base ring lies
 			// square to the stem, and on a lean its high side rose out of the ground, an open rim.
@@ -7688,6 +8346,12 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 		// as linear, beech came out near 0.45 albedo and birch 0.74, about twice real bark (beech
 		// about 0.15 to 0.2, birch about 0.5), and logs and trunks rendered almost white.
 		Color col = bark_color;
+		if (preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH || preset == PRESET_YELLOW_BIRCH) {
+			// A birch's white (or yellow) bark comes with girth: its twigs and thin shoots are dark
+			// red-brown and glossy, turning pale from about 2-4 cm (Rushforth, Trees of Britain and
+			// Europe). Thin shoots took the trunk's white and read as frosted sprays.
+			col = Color(0.3f, 0.18f, 0.14f).lerp(col, Math::smoothstep(0.008f, 0.03f, r0));
+		}
 		if (first.dead) {
 			col = col.lerp(Color(0.42f, 0.4f, 0.37f), 0.6f);
 		}
@@ -8144,6 +8808,9 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	}
 
 	const bool needles = params[PARAM_NEEDLES] > 0.5f;
+	// The year's shoots carry young bark: a birch's are dark red-brown, not its trunk's white.
+	const bool birch_twigs = preset == PRESET_BIRCH || preset == PRESET_PAPER_BIRCH || preset == PRESET_YELLOW_BIRCH;
+	const Color twig_col = (birch_twigs ? Color(0.3f, 0.18f, 0.14f) : bark_color).srgb_to_linear();
 	const int per = MAX(0, int(params[PARAM_LEAVES_PER_INTERNODE]));
 	const float size = params[PARAM_LEAF_SIZE];
 	RandomPCG lr;
@@ -8274,7 +8941,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 					rad.push_back(br);
 					pts.push_back(b0 + bdir * blen);
 					rad.push_back(br * 0.6f);
-					{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color.srgb_to_linear()); bark.end(part, rad[0]); }
+					{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, twig_col); bark.end(part, rad[0]); }
 				}
 				if (needle_sprays) {
 					// One brush as two crossed alpha-cut sprays (the needle image is drawn from the
@@ -8342,7 +9009,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			const Vector3 tip = mid + tip_dir * (p_len * 0.5f);
 			pts.push_back(tip);
 			rad.push_back(p_r * 0.5f);
-			{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, bark_color.srgb_to_linear()); bark.end(part, rad[0]); }
+			{ Vector4i part; bark.begin(part); _tube(bark, pts, rad, 3, 0.0f, twig_col); bark.end(part, rad[0]); }
 			node_drag[i] += 1.5f * p_r * p_len * exposure;
 			Vector3 side0 = p_dir.cross(Vector3(0, 1, 0));
 			side0 = side0.length_squared() > 1e-6f ? side0.normalized() : perp;
@@ -8463,8 +9130,10 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 	mesh.instantiate();
 	Builder fungi;
 	_grow_fungi(bark, fungi);
-	Builder *builders[8] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b };
-	for (int s = 0; s < 8; s++) {
+	Builder crown_parts;
+	const int crown_big_end = _grow_crown_parts(crown_parts);
+	Builder *builders[9] = { &bark, &leaves, &moss, &climber_leaf_b, &fungi, &wood_b, &climber_adult_b, &soil_b, &crown_parts };
+	for (int s = 0; s < 9; s++) {
 		Builder &b = *builders[s];
 		if (b.indices.is_empty()) {
 			continue;
@@ -8502,6 +9171,20 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 				lods = _leaf_lods(b);
 			} else if (s == 3 || s == 6) {
 				lods = _leaf_lods(b, false);
+			} else if (s == 8) {
+				// Crown parts (5n): mistletoe balls and brooms are seen from far; cones, catkins
+				// and keys are centimetres across, LOD 0 only.
+				if (crown_big_end < b.indices.size()) {
+					PackedInt32Array keep;
+					if (crown_big_end > 0) {
+						keep = b.indices.slice(0, crown_big_end);
+					} else {
+						keep.push_back(0);
+						keep.push_back(0);
+						keep.push_back(0);
+					}
+					lods[TREE_LODS[0].error] = keep;
+				}
 			} else if (s == 5 || s == 7) {
 				// Broken wood: a few hundred triangles a break, seen from every distance; a root
 				// plate's soil a few thousand.
@@ -8598,7 +9281,7 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			// A near mesh shares its far mesh's materials: the same shaders and batches, and no
 			// reads back from the RenderingServer (which wait on the render thread) off the main
 			// thread.
-			const char *names[8] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi", "wood", "climber_leaves_adult", "soil" };
+			const char *names[9] = { "bark", params[PARAM_NEEDLES] > 0.5f ? "needles" : "leaves", "moss", "climber_leaves", "fungi", "wood", "climber_leaves_adult", "soil", "crown_parts" };
 			int found = -1;
 			for (int i = 0; i < material_source->get_surface_count(); i++) {
 				if (material_source->surface_get_name(i) == names[s]) {
@@ -8651,6 +9334,17 @@ Ref<ArrayMesh> TreeGenerator::_build_mesh() {
 			}
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			mesh->surface_set_name(mesh->get_surface_count() - 1, s == 6 ? "climber_leaves_adult" : "climber_leaves");
+		} else if (s == 8) {
+			// Cones, catkins, keys, mistletoe and brooms (trees.md 5n): vertex colour, the form
+			// is geometry; thin scales, wings and leaves are seen from both sides.
+			m->set_roughness(0.7f);
+			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+			// Millimetre twigs and scales caught snow on every upward face and read as frosted
+			// white sprays; snow on them is below what the snow cover resolves.
+			m->set_feature(BaseMaterial3D::FEATURE_SNOW, false);
+			m->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
+			m->set_backlight(Color(0.12f, 0.14f, 0.05f));
+			mesh->surface_set_name(mesh->get_surface_count() - 1, "crown_parts");
 		} else if (s == 7) {
 			// A root plate's soil and stones (trees.md 5k): vertex colour, the relief is geometry.
 			m->set_roughness(0.95f);
@@ -9214,6 +9908,9 @@ void TreeGenerator::_copy_generation_state(const TreeGenerator &p_from) {
 	lichen_cover = p_from.lichen_cover;
 	bark_peel = p_from.bark_peel;
 	fungi_cover = p_from.fungi_cover;
+	fruit_cover = p_from.fruit_cover;
+	mistletoe = p_from.mistletoe;
+	witches_brooms = p_from.witches_brooms;
 	limb_breakage = p_from.limb_breakage;
 	uprooted = p_from.uprooted;
 	cut_height = p_from.cut_height;
@@ -10035,6 +10732,7 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 	const Color living_leaf = leaf_color;
 	veteran_features.clear();
 	veteran_stem = -1;
+	head_r = 0.0f;
 	if (decay_class > 0) {
 		_apply_decay();
 	} else if (veteran > 0.0f && !fallen && !fallen_branch) {
@@ -10065,7 +10763,13 @@ Ref<ArrayMesh> TreeGenerator::generate() {
 				const float h = cut_height + r_head * Math::lerp(-0.9f, 0.1f, hr.randf());
 				const float az = az0 + float(Math::TAU) * (k + 0.4f * (hr.randf() - 0.5f)) / knobs;
 				veteran_features.push_back({ VET_BURL, h, az, hh, hh * Math::lerp(0.8f, 1.3f, hr.randf()), Math::lerp(0.25f, 0.45f, hr.randf()) });
+				if (hr.randf() < 0.6f) {
+					// Water shoots from the burr's dormant buds.
+					veteran_features.push_back({ VET_EPICORMIC, h, az, 0.0f, 0.0f, Math::lerp(2.0f, 5.0f, hr.randf()) });
+				}
 			}
+			head_y0 = nodes[0].start.y + cut_height - 1.4f * r_head;
+			head_r = r_head;
 		}
 	}
 	plate.on = false;
@@ -10181,6 +10885,12 @@ void TreeGenerator::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_bark_peel", "peel"), &TreeGenerator::set_bark_peel);
 	ClassDB::bind_method(D_METHOD("get_bark_peel"), &TreeGenerator::get_bark_peel);
 	ClassDB::bind_method(D_METHOD("set_fungi_cover", "cover"), &TreeGenerator::set_fungi_cover);
+	ClassDB::bind_method(D_METHOD("set_fruit_cover", "cover"), &TreeGenerator::set_fruit_cover);
+	ClassDB::bind_method(D_METHOD("get_fruit_cover"), &TreeGenerator::get_fruit_cover);
+	ClassDB::bind_method(D_METHOD("set_mistletoe", "amount"), &TreeGenerator::set_mistletoe);
+	ClassDB::bind_method(D_METHOD("get_mistletoe"), &TreeGenerator::get_mistletoe);
+	ClassDB::bind_method(D_METHOD("set_witches_brooms", "amount"), &TreeGenerator::set_witches_brooms);
+	ClassDB::bind_method(D_METHOD("get_witches_brooms"), &TreeGenerator::get_witches_brooms);
 	ClassDB::bind_method(D_METHOD("get_fungi_cover"), &TreeGenerator::get_fungi_cover);
 	ClassDB::bind_method(D_METHOD("set_limb_breakage", "breakage"), &TreeGenerator::set_limb_breakage);
 	ClassDB::bind_method(D_METHOD("get_limb_breakage"), &TreeGenerator::get_limb_breakage);
@@ -10272,6 +10982,9 @@ void TreeGenerator::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lichen_cover", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_lichen_cover", "get_lichen_cover");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bark_peel", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_bark_peel", "get_bark_peel");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fungi_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fungi_cover", "get_fungi_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fruit_cover", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_fruit_cover", "get_fruit_cover");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mistletoe", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_mistletoe", "get_mistletoe");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "witches_brooms", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_witches_brooms", "get_witches_brooms");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "limb_breakage", PROPERTY_HINT_RANGE, "0,3,0.01"), "set_limb_breakage", "get_limb_breakage");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "compress_vertices"), "set_compress_vertices", "is_compress_vertices");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "climber", PROPERTY_HINT_ENUM, "None,Ivy,Liana,Honeysuckle"), "set_climber", "get_climber");

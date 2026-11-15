@@ -67,6 +67,8 @@ public:
 		LAYER_RIVER,
 		LAYER_SHORE,
 		LAYER_CLIFF,
+		LAYER_TOR,
+		LAYER_COAST,
 		LAYER_MAX,
 	};
 
@@ -137,9 +139,9 @@ private:
 	real_t detail = 1.0;
 	real_t lichen_cover = 0.5;
 	real_t moss_cover = 0.4;
-	bool layer_enabled[LAYER_MAX] = { true, true, true, true, true, true };
-	real_t layer_density[LAYER_MAX] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
-	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0 };
+	bool layer_enabled[LAYER_MAX] = { true, true, true, true, true, true, true, true };
+	real_t layer_density[LAYER_MAX] = { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 };
+	real_t layer_radius[LAYER_MAX] = { 600.0, 60.0, 300.0, 120.0, 100.0, 500.0, 900.0, 900.0 };
 	real_t min_size = 0.08; // m, b axis: smaller grains stay in the ground material
 	real_t river_min_area = 2.0e5;
 	int max_stones_per_cell = 12000;

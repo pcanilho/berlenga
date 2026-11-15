@@ -216,6 +216,15 @@ blocks); the scree toe gets a few 2 to 6 m blocks. Caps: the largest up-facing p
 shape (1196 of 1282 scree stones with a cap of 6 cm or more). Debris skirts of chips round rockfall and glacial
 blocks over 0.8 m; moss favours pole-facing faces and lichen the lit ones (`pole_direction`, `aspect_strength`).
 
+Tors and coast (15 Nov, night): `FAMILY_CORESTONE` (joint blocks between sheeting joints, at least half rounded,
+flatter than wall blocks, a weathering pan on most tops: Twidale and Corbin 1963) and `LAYER_TOR`: on each 128 m
+cell the most convex point of thin soil (6-point ring at 15 m, convexity of 0.6 m or more, slope under about 30
+degrees) gets a tor of two to five tiers, base blocks 3 to 7 m set into the bedrock, by rock (granite 0.8, sandstone
+0.5, basalt 0.3), and other crests low one-tier outcrops (Linton 1955 two-stage model). `LAYER_COAST`: sea points 0.8
+to 12 m deep with land 8 m above the water within 50 m get a stack (wall blocks stood on end, sunk into each other
+so the joints read as grooves, a broader foot, fallen blocks round it) or an arch (two piers and a lintel), and a
+jointed rock pavement on the cliff foot with tops just above the water line (Trenhaile 1987; Sunamura 1992).
+
 ## Sources
 
 Domokos et al. PNAS 2020 (arXiv 1912.04628); Paris et al. Visual Computer 2020 (hal-02926218);
@@ -223,4 +232,4 @@ Domokos et al. PLOS ONE 2014 (PMC3922984); Novák-Szabó et al. Sci. Adv. 2018; 
 Nat. Commun. 2015; Havasi-Tóth and Fehér arXiv 2310.06932; Peytavie et al. CGF 2009; Dorsey et
 al. SIGGRAPH 1999; Evans and Hungr 1993; Kirkby and Statham 1975; Priest 1993; Epic "PCG in
 Electric Dreams"; SideFX rock generator tutorials; GDC 2018 Far Cry 5 world generation; GDC 2017
-Horizon Zero Dawn GPU placement; Worley SIGGRAPH 1996; Ford and Williams 2007 (karren); Benn and Evans 2010 (striae, faceted clasts); Migoń 2006 (granite landforms); Kulander et al. 1990 (fracture surfaces); itch.io ROCKGEN 2024, rocks-bitch, mooham3d rockgen.
+Horizon Zero Dawn GPU placement; Worley SIGGRAPH 1996; Ford and Williams 2007 (karren); Benn and Evans 2010 (striae, faceted clasts); Migoń 2006 (granite landforms); Kulander et al. 1990 (fracture surfaces); Linton 1955 and Twidale 1982 (tors); Twidale and Corbin 1963 (gnammas); Trenhaile 1987, Sunamura 1992 (rock coasts); itch.io ROCKGEN 2024, rocks-bitch, mooham3d rockgen.
