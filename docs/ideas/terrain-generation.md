@@ -1452,6 +1452,41 @@ generated map exactly. Left for later: a channel that crossed a raised dam rides
 sea mask does not move with the brushes.
 
 
+## Research pass, 15 Nov (Paulo: "papers, engines, and even itch.io for hidden gems")
+
+What else is out there, and what is worth taking:
+
+- Converged steady ice. Cordonnier et al. 2023 do not solve the SIA at all (a CNN emulator of Blatter's higher-order
+  model, explicit upwind transport at CFL 0.1, a multi-scale Gaussian stack to speed it up), so they give no SIA
+  solver to copy. Bueler (SIAM GS 2021) frames the steady ice as an obstacle problem (a variational inequality on
+  s >= b) and notes pointwise smoothers do work for the SIA (they fail only for Stokes), and that explicit stepping
+  with truncation at the bed is the common practice. Räss et al.'s accelerated pseudo-transient (FastIceFlo, GMD 17,
+  2024) is for SSA velocities and already diverged on our H^5 diffusivity. Chosen: pseudo-transient continuation
+  (Kelley and Keyes 1998) with backward Euler steps whose length follows the residual (SER, Mulder and Van Leer 1985),
+  each step's Mahaffy lagged-diffusivity system solved by projected SOR (Cryer 1971), so H >= 0 holds exactly and the
+  margin is free (Jouvet and Bueler 2012's obstacle form). A multigrid inner solve is the next step only if this is
+  too slow.
+- Multigrid Eulerian erosion (SapereAude1490, itch.io WebGPU prototype, Nov 2026): grid water mass instead of
+  droplets (no atomics), progressive resolution levels, and isotropy choices: FD8 multiple-flow routing instead of D8,
+  simplex noise, bicubic sampling and the Scharr gradient. D8 is what gives our side streams their 45-degree bias;
+  FD8 or D-infinity for the drainage area on hillslopes (keeping D8 for channels, as Esurf 13, 239, 2025 compares) is
+  a candidate.
+- Gaea 2.2 (QuadSpinner, July 2025): Glacier, Snowfield and IceFloe nodes, and Erosion_2 with selective and
+  orographic (rain-shadow) precipitation by mask, slope or altitude. Our runoff already comes from a climate model with
+  orographic rain; ice floes on lakes are an idea for the water thread.
+- Johansen's erosion filter (2026) is what our detail filter follows; its ridge map (branching drainage lines) is not
+  built yet and could drive gully materials.
+- Acerola's Dirt Jam entries (Godot compute erosion with clipmaps, topographic shaders) hold nothing beyond what we
+  have.
+
+Cliff ledges, PT shadows beaded at every vertex: the relief's ledge lips ran across the refined triangles, so a lip
+was a zig-zag of facets and its shadow a row of beads. Now an edge on a face is also split where the relief at its
+middle strays more than 8 cm from the straight line between its ends (error-driven tessellation of a displacement:
+Moreton 2001; Nießner et al. 2016), so vertices gather along the lips and the joints and nowhere else. The decision
+reads the edge's two ends only, so neighbouring chunks agree and nothing cracks. Cost on the cliff view: 11.3 to 13.3
+million primitives (+18%). Making every face edge half a metre long instead (the first try) quadrupled the faces and
+ran the cloud PT out of memory.
+
 ## Sources
 
 - Yuan, Braun, Guerit, Rouby, Cordonnier 2019, "A new efficient method to solve the stream power law model taking into account sediment deposition", JGR Earth Surface 124, 1346-1365.
