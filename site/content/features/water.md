@@ -29,7 +29,7 @@ summary: "Refraction, murky water, caustics, ocean, currents, boat wakes, white 
 
 ## Sea and lakes
 
-- **Clear water** (`clear_water`, on by default): in raster, as under path tracing, the bed shows through the shallows of sea and lakes, refracted, and fades with depth.
+- **Clear water** (`clear_water`, on by default): in raster, as under path tracing, the bed shows through the shallows of sea, lakes and rivers, refracted, and fades with depth.
 
 - **Path-traced ocean** (`PhysXWaterSurface3D`: `pathtraced_absorption`, `pathtraced_scattering`, `pathtraced_roughness`): waves refract, tint and scatter, with caustics on the seabed.
 
