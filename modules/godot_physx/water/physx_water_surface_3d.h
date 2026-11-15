@@ -179,6 +179,15 @@ public:
 	// Most spray droplets alive at once.
 	void set_shore_spray_amount(int p_amount);
 	int get_shore_spray_amount() const { return shore_spray_amount; }
+	// Spray torn off breaking crests by the wind (spume, Andreas 1998): droplets leave the open sea's crests
+	// where the surface folds (the whitecap test) once the wind passes about 9 m/s, more with the wind, and
+	// fly downwind. Drawn like the surf's spray, near the camera. crest_spray_amount: droplets alive at most.
+	void set_crest_spray(bool p_enabled);
+	bool get_crest_spray() const { return crest_spray; }
+	void set_crest_spray_amount(int p_amount);
+	int get_crest_spray_amount() const { return crest_spray_amount; }
+	// Droplets a second leaving the crests at the last update (for tests and profiling).
+	float get_crest_spray_rate() const { return crest_spray_rate; }
 	// The last breaker build: crest points, lip vertices and triangles, the
 	// spray rate (droplets/s) and the CPU time it took (ms).
 	Dictionary get_breaker_stats() const;
@@ -483,6 +492,20 @@ private:
 	float _sample_height_at(Vector3 p_world_pos, ObjectID p_wake, float p_origin_y) const;
 	void _hide_breakers();
 	void _update_breaker_spray(const LocalVector<Vector3> &p_points, const LocalVector<Vector3> &p_dirs, const LocalVector<float> &p_weights, float p_rate, float p_speed);
+	static Ref<Mesh> _spray_droplet_mesh();
+	bool crest_spray = true;
+	int crest_spray_amount = 6000;
+	float crest_spray_rate = 0.0f;
+	uint32_t crest_spray_tick = 0;
+	GPUParticles3D *crest_spray_node = nullptr;
+	Ref<ParticleProcessMaterial> crest_spray_material;
+	Ref<ImageTexture> crest_spray_points_tex;
+	RandomPCG crest_rng;
+	void _update_crest_spray();
+	void _update_foam_streaks();
+	// The summed cascades' Jacobian (Tessendorf's folding test, as the shader's foam) at the resting point
+	// (p_x, p_z) relative to the grid centre, and the surface point it moves to (relative to the node).
+	float _ocean_jacobian_at(float p_x, float p_z, float p_fade, Vector3 &r_point) const;
 	void _bake_shore_waves();
 	void _update_shore_material();
 	// The shore waves' height at (p_x, p_z) relative to the grid centre, and its rate of change.
@@ -538,6 +561,8 @@ private:
 	float whitecap_pushed = -100.0f; // last one sent to the solvers and material
 	float whitecap_measured = -1.0f;
 	double whitecap_clock = -1.0;
+	float whitecap_fit_wind = -1.0f; // the wind the threshold's feedforward last followed
+	double whitecap_fill_start = 0.0; // when the persistent foam last started filling (a start or a big change)
 	float _live_foam_threshold() const { return whitecap_auto ? whitecap_threshold : foam_threshold; }
 	void _steer_whitecaps();
 	void _push_foam_settings();

@@ -218,6 +218,11 @@ uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 uniform float foam_breakup : hint_range(0.0, 1.0) = 0.6;
 // Size of that lace: noise cells per meter, fixed to the water.
 uniform float foam_detail_scale = 1.5;
+// Foam streaks (Beaufort 8 and up, "foam blown in well-marked streaks along the direction of the wind"): set
+// from the wind by PhysXWaterSurface3D. 0 = none; toward 1 fading foam breaks up along foam_streak_dir
+// (downwind) instead of into lace, and trails downwind of the patches it leaves.
+uniform float foam_streaks = 0.0;
+uniform vec2 foam_streak_dir = vec2(1.0, 0.0);
 // Shore foam (0..1) on the ripple grid: the foamy sheet where waves wash in
 // over the shallows (set by PhysXWaterSurface3D; needs a seabed).
 uniform sampler2D shore_foam_tex : hint_default_black, filter_linear, repeat_disable;
@@ -743,6 +748,19 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 		float jacobian = (1.0 + s * der.z) * (1.0 + s * der.w) - s * s * dxz * dxz;
 		amount = max(amount, clamp((foam_crest_threshold - jacobian) / 0.25, 0.0, 1.0) * fade);
 	}
+	// Streaks: older foam drawn out downwind (Langmuir windrows keep it in lines; Thorpe 2004), read back
+	// along the wind from the persistent foam.
+	// Each lane a third of a metre wide across the wind trails its own distance (fixed to the water), so the
+	// trails break into lines rather than repeating the patch whole.
+	if (foam_streaks > 0.0) {
+		vec2 sd = foam_streak_dir;
+		float lane = floor(dot(world_xz, vec2(-sd.y, sd.x)) * 3.0);
+		float d1 = 1.5 + 5.0 * foam_hash(vec2(lane, 3.7));
+		float d2 = 4.0 + 8.0 * foam_hash(vec2(lane, 9.1));
+		// The finest cascade's foam only: the long ones' cells are metres wide and trail as blurred smears.
+		float trail = max(ocean_tex(ocean_foam_tex, world_xz - sd * d1).r * (1.0 - d1 / 14.0), ocean_tex(ocean_foam_tex, world_xz - sd * d2).r * (1.0 - d2 / 14.0));
+		amount = max(amount, 0.8 * trail * fade * foam_streaks);
+	}
 	// White water from the live flow (its velocity texture's b), fading out at the square's edge.
 	if (flow_foam_live) {
 		vec2 a = abs(rel / ripple_domain_size);
@@ -765,6 +783,13 @@ float foam_at_with(vec2 world_xz, vec4 der, vec3 disp) {
 	if (w < 1.0) {
 		vec2 q = (world_xz - o_b) * foam_detail_scale;
 		n = n * w + (0.5 * foam_value_noise(q) + 0.3 * foam_value_noise(q * 2.7 + 17.0) + 0.2 * foam_value_noise(q * 7.3 - 5.0)) * (1.0 - w);
+	}
+	if (foam_streaks > 0.0) {
+		// Lace stretched ten to one along the wind.
+		vec2 sd = foam_streak_dir;
+		vec2 sp = vec2(dot(p, sd) * 0.1, dot(p, vec2(-sd.y, sd.x)) * 1.2);
+		float ns = 0.6 * foam_value_noise(sp) + 0.4 * foam_value_noise(sp * 2.3 + 7.0);
+		n = mix(n, ns, foam_streaks);
 	}
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and
 	// lacy as the noise eats into it, rather than cutting off at an edge.
@@ -1471,6 +1496,11 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_shore_spray_amount", "amount"), &PhysXWaterSurface3D::set_shore_spray_amount);
 	ClassDB::bind_method(D_METHOD("get_shore_spray_amount"), &PhysXWaterSurface3D::get_shore_spray_amount);
 	ClassDB::bind_method(D_METHOD("get_breaker_stats"), &PhysXWaterSurface3D::get_breaker_stats);
+	ClassDB::bind_method(D_METHOD("set_crest_spray", "enabled"), &PhysXWaterSurface3D::set_crest_spray);
+	ClassDB::bind_method(D_METHOD("get_crest_spray"), &PhysXWaterSurface3D::get_crest_spray);
+	ClassDB::bind_method(D_METHOD("set_crest_spray_amount", "amount"), &PhysXWaterSurface3D::set_crest_spray_amount);
+	ClassDB::bind_method(D_METHOD("get_crest_spray_amount"), &PhysXWaterSurface3D::get_crest_spray_amount);
+	ClassDB::bind_method(D_METHOD("get_crest_spray_rate"), &PhysXWaterSurface3D::get_crest_spray_rate);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_period", "period"), &PhysXWaterSurface3D::set_shore_wave_period);
 	ClassDB::bind_method(D_METHOD("get_shore_wave_period"), &PhysXWaterSurface3D::get_shore_wave_period);
 	ClassDB::bind_method(D_METHOD("set_shore_wave_direction", "direction"), &PhysXWaterSurface3D::set_shore_wave_direction);
@@ -1641,6 +1671,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_threshold", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_foam_threshold", "get_foam_threshold");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "whitecap_auto"), "set_whitecap_auto", "get_whitecap_auto");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "whitecap_cover_scale", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_whitecap_cover_scale", "get_whitecap_cover_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "crest_spray"), "set_crest_spray", "get_crest_spray");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "crest_spray_amount", PROPERTY_HINT_RANGE, "16,65536,1"), "set_crest_spray_amount", "get_crest_spray_amount");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_foam_band", PROPERTY_HINT_RANGE, "0,5,0.05,or_greater,suffix:m"), "set_shore_foam_band", "get_shore_foam_band");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "open_sea_beyond"), "set_open_sea_beyond", "get_open_sea_beyond");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_undertow", PROPERTY_HINT_RANGE, "0,1.5,0.01,or_greater,suffix:m/s"), "set_shore_undertow", "get_shore_undertow");
@@ -2825,21 +2857,7 @@ void PhysXWaterSurface3D::_update_breaker_spray(const LocalVector<Vector3> &p_po
 		breaker_spray_material->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.015f);
 		breaker_spray_material->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 0.045f);
 		breaker_spray->set_process_material(breaker_spray_material);
-		Ref<SphereMesh> drop;
-		drop.instantiate();
-		drop->set_radius(0.5f);
-		drop->set_height(1.0f);
-		drop->set_radial_segments(6);
-		drop->set_rings(3);
-		Ref<StandardMaterial3D> dm;
-		dm.instantiate();
-		dm->set_albedo(Color(0.95f, 0.97f, 1.0f));
-		dm->set_roughness(0.5f);
-		// Droplets pass most light on (back lighting, also under path tracing), so spray against the sun glows.
-		dm->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
-		dm->set_backlight(Color(0.8f, 0.85f, 0.85f));
-		drop->set_material(dm);
-		breaker_spray->set_draw_pass_mesh(0, drop);
+		breaker_spray->set_draw_pass_mesh(0, _spray_droplet_mesh());
 		add_child(breaker_spray, false, INTERNAL_MODE_BACK);
 	}
 	if (breaker_spray->get_amount() != shore_spray_amount) {
@@ -2903,6 +2921,200 @@ void PhysXWaterSurface3D::set_shore_spray(bool p_enabled) {
 
 void PhysXWaterSurface3D::set_shore_spray_amount(int p_amount) {
 	shore_spray_amount = CLAMP(p_amount, 16, 65536);
+}
+
+// One droplet, shared by the surf's spray and the crests' spray.
+Ref<Mesh> PhysXWaterSurface3D::_spray_droplet_mesh() {
+	Ref<SphereMesh> drop;
+	drop.instantiate();
+	drop->set_radius(0.5f);
+	drop->set_height(1.0f);
+	drop->set_radial_segments(6);
+	drop->set_rings(3);
+	Ref<StandardMaterial3D> dm;
+	dm.instantiate();
+	dm->set_albedo(Color(0.95f, 0.97f, 1.0f));
+	dm->set_roughness(0.5f);
+	// Droplets pass most light on (back lighting, also under path tracing), so spray against the sun glows.
+	dm->set_feature(BaseMaterial3D::FEATURE_BACKLIGHT, true);
+	dm->set_backlight(Color(0.8f, 0.85f, 0.85f));
+	drop->set_material(dm);
+	return drop;
+}
+
+void PhysXWaterSurface3D::set_crest_spray(bool p_enabled) {
+	crest_spray = p_enabled;
+	if (!crest_spray && crest_spray_node != nullptr) {
+		crest_spray_node->set_emitting(false);
+	}
+}
+
+void PhysXWaterSurface3D::set_crest_spray_amount(int p_amount) {
+	crest_spray_amount = CLAMP(p_amount, 16, 65536);
+}
+
+float PhysXWaterSurface3D::_ocean_jacobian_at(float p_x, float p_z, float p_fade, Vector3 &r_point) const {
+	struct Layer {
+		const Vector<float> *height;
+		const Vector<float> *dx;
+		const Vector<float> *dz;
+		int n;
+		Vector2 domain;
+	};
+	Layer layers[MAX_WAVE_CASCADES];
+	int count = 0;
+	layers[count++] = { &cached_ocean_height, &cached_ocean_dx, &cached_ocean_dz, cached_ocean_n, cached_ocean_domain };
+	for (const WaveCascade *c : extra_cascades) {
+		if (count >= MAX_WAVE_CASCADES) {
+			break;
+		}
+		layers[count++] = { &c->height, &c->dx, &c->dz, c->n, c->cached_domain };
+	}
+	Vector2 oa, ob;
+	const float w = _flow_phases(p_x, p_z, oa, ob);
+	const float s = -choppiness * p_fade;
+	float h = 0.0f, dxx = 0.0f, dzz = 0.0f, dxz = 0.0f;
+	Vector2 d;
+	for (int l = 0; l < count; l++) {
+		const Layer &L = layers[l];
+		if (L.height->is_empty() || L.dx->size() != L.height->size() || L.dz->size() != L.height->size() || L.n <= 0) {
+			continue;
+		}
+		// One cell either side: each layer's own resolution sets its slopes.
+		const float e = MAX(L.domain.x, L.domain.y) / L.n;
+		auto at = [&](const Vector<float> &g, float x, float z) { return _ocean_flow_sample(g, x, z, w, oa, ob, L.n, L.domain); };
+		h += at(*L.height, p_x, p_z);
+		d += Vector2(at(*L.dx, p_x, p_z), at(*L.dz, p_x, p_z));
+		dxx += (at(*L.dx, p_x + e, p_z) - at(*L.dx, p_x - e, p_z)) / (2.0f * e);
+		dzz += (at(*L.dz, p_x, p_z + e) - at(*L.dz, p_x, p_z - e)) / (2.0f * e);
+		dxz += (at(*L.dx, p_x, p_z + e) - at(*L.dx, p_x, p_z - e)) / (2.0f * e);
+	}
+	r_point = Vector3(p_x + grid_center.x + s * d.x, water_level + h * p_fade, p_z + grid_center.y + s * d.y);
+	return (1.0f + s * dxx) * (1.0f + s * dzz) - s * s * dxz * dxz;
+}
+
+// Spume (docs/ideas/water.md "Storm seas"): candidate resting points around the camera, kept where the summed
+// surface folds past the whitecap threshold (the crests the shader whitens), as emitters for droplets blown
+// downwind. Spume appears once the wind passes about 9 m/s (Monahan et al. 1986; Andreas 1998's spray
+// generation function rises steeply above that), so its rate eases in between 9 and 20 m/s. Candidates fall
+// denser near the camera (radius drawn uniformly, not by area), where droplets show.
+void PhysXWaterSurface3D::_update_crest_spray() {
+	const float wind_f = Math::smoothstep(9.0f, 20.0f, wind_speed);
+	const Viewport *vp = get_viewport();
+	const Camera3D *cam = vp != nullptr ? vp->get_camera_3d() : nullptr;
+	if (!crest_spray || wind_f <= 0.0f || cam == nullptr || Engine::get_singleton()->is_editor_hint() || cached_ocean_height.is_empty()) {
+		crest_spray_rate = 0.0f;
+		if (crest_spray_node != nullptr) {
+			crest_spray_node->set_emitting(false);
+		}
+		return;
+	}
+	// The emitters are refreshed every fourth tick (the crests move a few metres in that time; the points stay
+	// valid between), from 384 candidates: about 0.1 ms a tick on the cloud CPU, against 1.8 ms for 1024 every
+	// tick.
+	if (crest_spray_node != nullptr && crest_spray_node->is_emitting() && (crest_spray_tick++ & 3) != 0) {
+		return;
+	}
+	constexpr int CANDIDATES = 384;
+	constexpr int POINTS = 256;
+	constexpr float RADIUS = 40.0f;
+	const float lifetime = 1.2f;
+	const Vector3 origin = get_global_position();
+	const Vector3 cam_pos = cam->get_global_position();
+	// Out of reach of the sea (high above it): nothing to see.
+	if (cam_pos.y - (origin.y + water_level) > 4.0f * RADIUS) {
+		crest_spray_rate = 0.0f;
+		if (crest_spray_node != nullptr) {
+			crest_spray_node->set_emitting(false);
+		}
+		return;
+	}
+	const float threshold = _live_foam_threshold();
+	LocalVector<Vector3> pts;
+	LocalVector<float> wts;
+	float total = 0.0f;
+	for (int i = 0; i < CANDIDATES; i++) {
+		// Not at the lens: droplets a few metres off fill the view as balls.
+		const float r = 8.0f + (RADIUS - 8.0f) * crest_rng.randf();
+		const float a = Math::TAU * crest_rng.randf();
+		const float x = cam_pos.x + r * Math::cos(a) - grid_center.x;
+		const float z = cam_pos.z + r * Math::sin(a) - grid_center.y;
+		if (!is_wet(Vector3(x + grid_center.x, origin.y, z + grid_center.y))) {
+			continue;
+		}
+		const float fade = _ocean_fade_at(x, z);
+		Vector3 p;
+		const float jac = _ocean_jacobian_at(x, z, fade, p);
+		const float wgt = CLAMP((threshold - jac) / 0.25f, 0.0f, 1.0f) * fade;
+		if (wgt > 0.0f) {
+			pts.push_back(p + Vector3(0.0f, origin.y, 0.0f));
+			wts.push_back(wgt);
+			total += wgt;
+		}
+	}
+	if (total <= 0.0f) {
+		crest_spray_rate = 0.0f;
+		if (crest_spray_node != nullptr) {
+			crest_spray_node->set_emitting(false);
+		}
+		return;
+	}
+	if (crest_spray_node == nullptr) {
+		crest_spray_node = memnew(GPUParticles3D);
+		crest_spray_node->set_name("CrestSpray");
+		crest_spray_node->set_use_local_coordinates(false);
+		crest_spray_node->set_lifetime(lifetime);
+		crest_spray_material.instantiate();
+		crest_spray_material->set_emission_shape(ParticleProcessMaterial::EMISSION_SHAPE_POINTS);
+		crest_spray_material->set_spread(20.0f);
+		crest_spray_material->set_param_min(ParticleProcessMaterial::PARAM_DAMPING, 0.1f);
+		crest_spray_material->set_param_max(ParticleProcessMaterial::PARAM_DAMPING, 0.4f);
+		crest_spray_material->set_param_min(ParticleProcessMaterial::PARAM_SCALE, 0.015f);
+		crest_spray_material->set_param_max(ParticleProcessMaterial::PARAM_SCALE, 0.04f);
+		crest_spray_node->set_process_material(crest_spray_material);
+		crest_spray_node->set_draw_pass_mesh(0, _spray_droplet_mesh());
+		add_child(crest_spray_node, false, INTERNAL_MODE_BACK);
+	}
+	if (crest_spray_node->get_amount() != crest_spray_amount) {
+		crest_spray_node->set_amount(crest_spray_amount);
+	}
+	// Systematic resampling by weight into the emission points.
+	Ref<Image> img = Image::create_empty(POINTS, 1, false, Image::FORMAT_RGBF);
+	const float step = total / POINTS;
+	float next = step * crest_rng.randf();
+	float acc = 0.0f;
+	int used = 0;
+	AABB box(pts[0], Vector3());
+	for (uint32_t i = 0; i < pts.size() && used < POINTS; i++) {
+		acc += wts[i];
+		box.expand_to(pts[i]);
+		while (next < acc && used < POINTS) {
+			const Vector3 p = pts[i] + Vector3(crest_rng.random(-0.3f, 0.3f), crest_rng.random(0.0f, 0.15f), crest_rng.random(-0.3f, 0.3f));
+			img->set_pixel(used, 0, Color(p.x, p.y, p.z));
+			used++;
+			next += step;
+		}
+	}
+	if (crest_spray_points_tex.is_null()) {
+		crest_spray_points_tex = ImageTexture::create_from_image(img);
+		crest_spray_material->set_emission_point_texture(crest_spray_points_tex);
+	} else {
+		crest_spray_points_tex->update(img);
+	}
+	crest_spray_material->set_emission_point_count(used);
+	// Torn off downwind and a little up, at a fair part of the wind's speed, then carried by it (a steady
+	// downwind push standing in for the drag that brings small droplets up to the wind's speed).
+	const Vector2 wd = wind_direction.length_squared() > 1e-6f ? wind_direction.normalized() : Vector2(1, 0);
+	crest_spray_material->set_direction(Vector3(wd.x, 0.35f, wd.y).normalized());
+	crest_spray_material->set_param_min(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.25f * wind_speed);
+	crest_spray_material->set_param_max(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY, 0.5f * wind_speed);
+	crest_spray_material->set_gravity(Vector3(wd.x * 0.15f * wind_speed, -9.81f, wd.y * 0.15f * wind_speed));
+	// Rate: the folding share of the candidates times the wind's, up to amount / lifetime.
+	const float share = total / CANDIDATES;
+	crest_spray_rate = crest_spray_amount / lifetime * CLAMP(share * 8.0f, 0.0f, 1.0f) * wind_f;
+	crest_spray_node->set_amount_ratio(CLAMP(crest_spray_rate * lifetime / crest_spray_amount, 0.0f, 1.0f));
+	crest_spray_node->set_visibility_aabb(box.grow(0.6f * wind_speed * lifetime + 4.0f));
+	crest_spray_node->set_emitting(true);
 }
 
 Dictionary PhysXWaterSurface3D::get_breaker_stats() const {
@@ -3029,7 +3241,18 @@ void PhysXWaterSurface3D::remeasure_seabed() {
 
 // The sea state changed: a built solver regenerates its spectrum IN PLACE (no rebuild -- the waves keep their phases,
 // ripples / wakes / foam survive: storms can ramp it); not built yet → the usual rebuild.
+// Foam streaks with the wind: none below Beaufort 7 (about 14 m/s), full by Beaufort 9 (about 22 m/s).
+void PhysXWaterSurface3D::_update_foam_streaks() {
+	if (water_material.is_null()) {
+		return;
+	}
+	const Vector2 wd = wind_direction.length_squared() > 1e-6f ? wind_direction.normalized() : Vector2(1, 0);
+	water_material->set_shader_parameter("foam_streaks", Math::smoothstep(14.0f, 22.0f, wind_speed));
+	water_material->set_shader_parameter("foam_streak_dir", wd);
+}
+
 void PhysXWaterSurface3D::_reinit_spectrum() {
+	_update_foam_streaks();
 	if (solver.is_available() && !Engine::get_singleton()->is_editor_hint()) {
 		solver.reinit_spectrum(wind_speed, wind_direction, wave_amplitude, get_effective_fetch());
 		for (WaveCascade *c : extra_cascades) {
@@ -3766,6 +3989,7 @@ void PhysXWaterSurface3D::set_whitecap_auto(bool p_auto) {
 	whitecap_auto = p_auto;
 	whitecap_threshold = foam_threshold;
 	whitecap_clock = -1.0;
+	whitecap_fit_wind = -1.0f;
 	_push_foam_settings();
 }
 
@@ -3818,14 +4042,38 @@ void PhysXWaterSurface3D::_steer_whitecaps() {
 		whitecap_clock = -1.0;
 		return;
 	}
+	// Feedforward from the wind (the threshold that holds Monahan's cover on the bench sea, 15 Nov: 0.73 at
+	// 6 m/s to 0.82 at 22 m/s, near linear), so a sea that starts or turns stormy starts near its answer.
+	// The measured cover is the persistent foam, which fills toward its steady state as 1 - exp(-t / persistence)
+	// after a start or a big change: steering on the raw reading while it fills winds the threshold up and the
+	// crests flash white for seconds (the overshoot), so the reading is divided by that fill first (a lag
+	// compensated reading; the threshold still settles from wherever the feedforward was wrong).
+	constexpr float FIT_SLOPE = 0.0059f;
+	if (whitecap_fit_wind < 0.0f) {
+		whitecap_threshold = CLAMP(0.694f + FIT_SLOPE * wind_speed, -1.0f, 1.5f);
+		whitecap_fit_wind = wind_speed;
+		whitecap_fill_start = water_time;
+		_push_foam_settings();
+	} else if (Math::abs(wind_speed - whitecap_fit_wind) > 0.25f) {
+		whitecap_threshold = CLAMP(whitecap_threshold + FIT_SLOPE * (wind_speed - whitecap_fit_wind), -1.0f, 1.5f);
+		if (Math::abs(wind_speed - whitecap_fit_wind) > 3.0f) {
+			whitecap_fill_start = water_time;
+		}
+		whitecap_fit_wind = wind_speed;
+		_push_foam_settings();
+	}
 	const double dt = whitecap_clock < 0.0 ? 0.0 : water_time - whitecap_clock;
 	whitecap_clock = water_time;
 	if (dt <= 0.0 || dt > 0.5) {
 		return;
 	}
+	const float fill = 1.0f - Math::exp(-(float)(water_time - whitecap_fill_start) / MAX(foam_persistence, 0.05f));
+	if (fill < 0.15f) {
+		return; // too early to read
+	}
 	constexpr float FLOOR = 1e-4f; // below this both read as clear sea
 	constexpr float GAIN = 0.08f; // threshold change per second per e-fold of error
-	const float err = CLAMP(Math::log((whitecap_measured + FLOOR) / (get_whitecap_target_cover() + FLOOR)), -3.0f, 3.0f);
+	const float err = CLAMP(Math::log((whitecap_measured / fill + FLOOR) / (get_whitecap_target_cover() + FLOOR)), -3.0f, 3.0f);
 	whitecap_threshold = CLAMP(whitecap_threshold - GAIN * err * (float)dt, -1.0f, 1.5f);
 	if (Math::abs(whitecap_threshold - whitecap_pushed) > 0.002f) {
 		_push_foam_settings();
@@ -4173,6 +4421,7 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 			_follow_weather(get_physics_process_delta_time());
 			_update(get_physics_process_delta_time());
 			_update_breakers();
+			_update_crest_spray();
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
@@ -4260,6 +4509,7 @@ void PhysXWaterSurface3D::_rebuild() {
 
 	water_material->set_shader_parameter("ripple_domain_size", active_domain_size);
 	water_material->set_shader_parameter("ocean_domain_size", ocean_domain_size);
+	_update_foam_streaks();
 	water_material->set_shader_parameter("grid_center", grid_center);
 	water_material->set_shader_parameter("open_sea_beyond", open_sea_beyond);
 	water_material->set_shader_parameter("water_level", water_level);
@@ -4391,6 +4641,8 @@ void PhysXWaterSurface3D::_configure_solver() {
 	_detach_textures();
 	solver.configure(s);
 	_configure_cascades(s);
+	// New foam textures start empty: the whitecap steering reads their fill from now.
+	whitecap_fill_start = water_time;
 	solver.set_foam_settings(foam_enabled, choppiness, _live_foam_threshold(), foam_persistence, shore_foam_band, shore_undertow);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 	solver.set_flow_foam(flow_foam, flow_foam_persistence);
