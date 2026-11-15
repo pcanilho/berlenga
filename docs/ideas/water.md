@@ -2402,8 +2402,9 @@ its real depth; the bench's new `--view=storm` (and `storm_sun`) sets a deep gal
   third of a metre across, tens of metres long, wandering by a slow noise), cut high and gathered into
   bands, over the whole sea at foam_streaks; past where a filament is under a pixel (2 mrad footprint
   from the grid centre, since the vertex stage calls foam_at_with and has no derivatives) it fades to
-  its mean cover. Bench `--view=storm_low`: 3.5 m up looking downwind at 20 m/s. Spume puffs are raster
-  only (billboards; the droplets carry the spray under path tracing).
+  its mean cover. Bench `--view=storm_low`: 3.5 m up looking downwind at 20 m/s. The puffs face the
+  camera by `render_mode billboard_particles`, which the path tracer also honours (a vertex() billboard is
+  not run for traced particles: they showed as flat bright rectangles; the falls' puffs had the same bug).
 
 **Tried and dropped.** The sun's path in the water traced to the real surface toward the sun (a crest with
 the sun behind it lit through its thin top, the effect Sea of Thieves and Black Flag fake with a peak
