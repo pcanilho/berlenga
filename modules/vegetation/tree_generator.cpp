@@ -2939,6 +2939,7 @@ void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 	const bool oak = preset == PRESET_OAK || preset == PRESET_RED_OAK || preset == PRESET_WHITE_OAK;
 	const bool lying = fallen || fallen_branch;
 	const float ground = nodes[0].start.y;
+	const float moss_k = _moss_amount();
 	// Clusters to place: (kind, at the foot).
 	struct Want {
 		FungusKind kind;
@@ -3249,16 +3250,26 @@ void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 		if (bi < 0) {
 			continue;
 		}
-		fungi_points.push_back(bv[bi].x);
-		fungi_points.push_back(bv[bi].y);
-		fungi_points.push_back(bv[bi].z);
+		// Fruit bodies push up through moss: on mossed wood the cluster stands on the moss shell's
+		// surface (built on the bark, up to its hummock height above the tube), not on the bark under
+		// it, where a turkey tail or a tuft was buried. The ramp is the shell's own (0.35 to 0.6 of
+		// the weight); the bracket's embedding and the stalks' foot still sink into the cushion.
+		Vector3 anchor = bv[bi];
+		if (moss_k > 0.05f && n.radius >= MOSS_SHELL_MIN_RADIUS) {
+			const float mw = CLAMP(0.5f + (_moss_at(bv[bi], bn[bi], ground, moss_k, false) - 0.475f) / 0.25f, 0.0f, 1.0f);
+			const float shell = 0.018f * CLAMP(n.radius / 0.15f, 0.35f, 1.0f) * 1.3f;
+			anchor += bn[bi] * (shell * mw * mw * (3.0f - 2.0f * mw));
+		}
+		fungi_points.push_back(anchor.x);
+		fungi_points.push_back(anchor.y);
+		fungi_points.push_back(anchor.z);
 		fungi_points.push_back(bn[bi].x);
 		fungi_points.push_back(bn[bi].y);
 		fungi_points.push_back(bn[bi].z);
 		fungi_points.push_back(width);
 		fungi_points.push_back(float(wt.kind));
 		if (agaric) {
-			add_cluster(AGARIC_LOOKS[wt.kind - FUNGUS_BRACKETS], bv[bi], bn[bi], width, bi);
+			add_cluster(AGARIC_LOOKS[wt.kind - FUNGUS_BRACKETS], anchor, bn[bi], width, bi);
 			continue;
 		}
 		Vector3 nout = Vector3(bn[bi].x, 0.0f, bn[bi].z);
@@ -3269,7 +3280,7 @@ void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 		nout.normalize();
 		const Vector3 tan = up.cross(nout).normalized();
 		// The stem's radius across the bracket: distance of the surface point from the axis.
-		const Vector3 rel = bv[bi] - n.start;
+		const Vector3 rel = anchor - n.start;
 		const float surf_r = MAX((rel - n.dir * rel.dot(n.dir)).length(), min_r * 0.8f);
 		const int tiers = lk.tier0 + int(fr.rand() % uint32_t(lk.tier1 - lk.tier0 + 1));
 		float y_off = 0.0f;
@@ -3280,7 +3291,7 @@ void TreeGenerator::_grow_fungi(const Builder &p_bark, Builder &r_fungi) {
 			const float mth = hgt * lk.margin;
 			const float shift = (k == 0 ? 0.0f : (fr.randf() - 0.5f) * width * 0.6f);
 			// The back edge follows the stem's round, sunk a fifth of the depth into the wood.
-			const Vector3 o = bv[bi] + up * y_off + tan * shift;
+			const Vector3 o = anchor + up * y_off + tan * shift;
 			const float embed = depth * 0.22f;
 			const float phase = fr.randf() * float(Math::TAU);
 			const int cols = 16, rows_top = 18, rows_rim = 4, rows_bot = 5;

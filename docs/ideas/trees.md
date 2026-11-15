@@ -718,6 +718,12 @@ wood it grows on:
 - **Cost.** A heavy log or snag gets 2-8 clusters, about 2,000-20,000 triangles, against 1-4 million
   in the tree; one draw call more per tree mesh that has any. Living trees without veteran
   features get none.
+- **Through the moss.** Fruit bodies push up through moss, so on mossed wood a cluster stands on
+  the moss shell's surface (lifted by the shell's own height ramp), not on the bark under it: in
+  the beech stand most turkey tails and tufts on mossy logs were buried. Vegetation bench:
+  `--deadwood` with `VEG_DW_SIZE=96 VEG_DW_SEED=24 VEG_DW_VARIANTS=3 VEG_DW_FUNGI_VIEW=1` frames a
+  class 3 log with a Fomes and a sulphur tuft in the stand; `VEG_DW_FUNGI=0` and the printed
+  `VEG_DW_CAM` give the same view without fungi. About 24 minutes a frame on the cloud.
 
 ## 6. What the games at Paulo's bar do
 
